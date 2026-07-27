@@ -1,4 +1,4 @@
-# Task 15：18-J Development Variants 与真实跨目标后端能力闭合
+# Task 15：16-Certified + 2-Provisional J Development 与真实跨目标后端能力闭合
 
 > 状态：执行中
 >
@@ -9,9 +9,10 @@
 
 ## 目标
 
-以当前严格闭合的 18/28 个 high-performance J 为不可变语义来源，同时允许构造有 provenance 的
-`J_dev` shape/dtype variants，真实完善 CUDA、H100 与 RVV 后端，使同一套 J-grounded compiler
-framework 能够：
+以 backend 当前可逐 digest 核验的 **16/28 个 certified high-performance J** 为不可变语义来源；
+RoPE 与 SplitK 在 exact Gate evidence 补齐前只作为两个 provisional `J_dev` 规划项，canary 独立分账。
+在这个事实边界上允许构造有 provenance 的 `J_dev` shape/dtype variants，真实完善 CUDA、H100 与
+RVV 后端，使同一套 J-grounded compiler framework 能够：
 
 1. 消费真实 shape/dtype/layout，而不被旧 c0 小 shape 限制；
 2. 生成真实 MLIR、target object/cubin 与多 launch graph，不使用 Python target kernel emission；
@@ -31,7 +32,7 @@ framework 能够：
 
 ### 真实 corpus
 
-前端 Task11 的严格高性能闭合是 18/28。backend `production-jc-v1` 当前却是：
+backend `production-jc-v1` 当前可核验事实是：
 
 ```text
 16 high-performance accepted J
@@ -39,12 +40,16 @@ framework 能够：
 = 18 catalog entries
 ```
 
-两个已闭合、尚未 content-addressed intake 的真实 kernel 是：
+两个曾被报告为“已闭合”、但当前给定路径不能支持 production intake 的 kernel 是：
 
 - Liger RoPE：
   `/tmp/scrc_task11_v112_latest_liger_b3_20260726_01/liger_rope/fanout-001/candidate-01/attempt-03/artifact.json`；
 - xFormers SplitK reduce varargs：
   `/tmp/scrc_task11_v99_continuous_replay_fanout_20260726_01/xformers_ops_fmha_triton_splitk_kernels_splitK_reduce_varargs/fanout-001/candidate-02/attempt-03/artifact.json`。
+
+逐 evidence 审计结果：RoPE report 为 `GATE2_FAILED`，SplitK candidate 为 `NO_CLOSURE`。因此二者
+不得导入 certified catalog，也不得与 16 项合并报告 SCRC aggregate；在新的 exact closure 到来前，
+它们只能使用 `certification_status=uncertified_backend_dev` 做 backend capability/Target--RefDev/性能。
 
 `masked_copy` 与 `masked_row_square_sum` 继续作为 compiler/correctness canary，但不得进入 18/28、
 论文主表或性能 geomean。
@@ -57,16 +62,31 @@ Flash preprocess 还固定 `B=1,S=33,D=16`。其余项即使 materialization 出
 据此断言 J 非参数化，必须读取 accepted J 的 shape expression。上述 concrete artifact 对原 c0 有效，
 但不足以单独检验自然 workload 下的真实后端能力。
 
-当前 workload valuation 只能绑定 J 已声明的 symbolic axes，不能修改 literal shape 或 dtype；仓库尚无
-显式 `dev-j-variant` protocol。
+普通 workload valuation 仍只能绑定 J 已声明的 symbolic axes，不能修改 literal shape 或 dtype。
+Task15 已新增物理分离、不可冒充证书的 `intentir.backend.dev-j-variant.v1` 与 digest-pinned
+`intentir.backend.dev-workload.v1`；这不改变 accepted snapshot 或旧 SCRC verdict。
 
-### 当前未提交实现
+### 已落地基线（截至 `bc4ef9b5`）
 
-工作区已有真实 C++/MLIR multi-stage row reduction：partial、finalize、可选 epilogue，产生 2/3 个
-`gpu.launch` 与 compiler-owned scratch。MLIR/lit/Python tests 已通过，生产 bundle 当前阻塞在 host LLVM
-使用 direct opaque `malloc !llvm.ptr`，而 orchestrator 仍只接受旧 `malloc -> llvm.inttoptr` 形态。
+- `dcb82c1d` 已闭合真实 C++/MLIR multi-stage row reduction、direct opaque `malloc !llvm.ptr`
+  transport 与 2/3-launch 执行；Python 只做候选调度和 host graph transport；
+- `f70a624d` 已加入 exact-edit J_dev、canonical type re-elaboration、base replay validation、自然 Source
+  workload 与 ordinary `materialize_j -> MLIR -> cubin` 导出；
+- `bc4ef9b5` 已让收据区分 requested schedule 与 compiler-emitted launch plan；`vector_width=0` 的 auto
+  状态现在会如实记为实际 vec4/scalar，并删除显式 vec4 与 auto 的重复/必败请求；
+- backend Python tests 为 `283 passed`；自然 workload 的 Source--RefDev 与全部计时候选
+  Target--RefDev 均先通过 Q/D。
 
-该实现属于本 Task，不回退或改写为 Python emitter。
+首批自然 FP32 capability slices（不冒充上游 BF16 主结果）：
+
+| case | config | 同回执 IntentIR / Schedule-Only | Source / Target | 结论 |
+|---|---|---:|---:|---|
+| Liger RMSNorm | `M=2048,H=1024` | `1.0531x` | `1.0491x` | subgroup shuffle + 实际 vec4 胜出 |
+| Liger RMSNorm | `M=2048,H=4096` | `1.0000x` | `1.0174x` | 单阶段强；multi-stage 增加重读而失败 |
+| Liger DYT | `BT=4096,H=4096` | `1.0024x` | `1.0275x` | 约 128 MiB 工作集已接近带宽，旧小输入 1.57x 不可外推 |
+
+这些是 development/warm 机制数据，尚不是最终 cold-data 主表；它们的作用是校准真实 backend
+mechanism 和 shape applicability，而不是提前冻结论文 aggregate。
 
 ## 第一性原理约束
 
@@ -85,7 +105,7 @@ Flash preprocess 还固定 `B=1,S=33,D=16`。其余项即使 materialization 出
 
 ## Phase A：修正 production intake
 
-1. 用现有 production intake 工具导入 Liger RoPE 与 SplitK reduce exact artifact/C/evidence；
+1. 等待并核验 Liger RoPE 与 SplitK reduce 的新 exact closure artifact/C/evidence；
 2. 核验 case id、source/symbol、artifact/J/C/evidence digest；
 3. catalog 保持 append-only/content-addressed，stable name 不与现有项冲突；
 4. canary 保留独立 catalog/标记，但 high-performance view 必须严格是18项；
@@ -94,10 +114,11 @@ Flash preprocess 还固定 `B=1,S=33,D=16`。其余项即使 materialization 出
 
 ### Phase A 验收
 
-- high-performance accepted count=`18`；canary count=`2`且不进入高性能 aggregate；
+- 当前里程碑 high-performance certified count=`16`；未来只有 exact evidence 到位后才可达到 `18`；
+  canary count=`2`且不进入高性能 aggregate；
 - 18项逐个 snapshot/J/C/evidence digest可验证；
 - Liger RoPE与SplitK reduce可通过统一loader、materializer、generic target smoke或准确fail closed；
-- 不再有文档/报告把16+2写成18/28。
+- 不再有文档/报告把16+2 canary或16+2 provisional写成18/28 certified。
 
 ## Phase B：`J_dev` 与自然 workload catalog
 
@@ -147,8 +168,9 @@ j_unchanged = false
 7. FP32/BF16/FP16 boundary、FP32 accumulation、FMA/approx与typed contraction的IEEE/TF32 states；
 8. 每条路径独立schedule domain与post-pass MLIR/topology/launch receipt。
 
-当前 multi-stage 路径首先闭合 direct `malloc !llvm.ptr` graph transport、完整stage launch geometry与
-5090 Target--Ref correctness，然后进入18项search universe。无适用graph时保留generic lowering。
+当前 multi-stage 已闭合 direct `malloc !llvm.ptr` graph transport并进入 search universe；下一步补齐
+逐 launch-site geometry receipt，并在 16 certified + 2 provisional J_dev 的 planned matrix 中分别记录
+matched/admitted/rejected。无适用 graph 时保留既有单阶段或 generic lowering。
 
 ### Phase C 验收
 
@@ -225,7 +247,8 @@ shared pressure、vector utilization、RVV VL/multicore。优化必须落到通�
 
 ## 总体验收
 
-1. production high-performance catalog准确为18项，canary分账；
+1. production high-performance catalog只包含有 exact evidence 的 certified 项；当前为16，未来目标18；
+   provisional J_dev 与 canary分别分账；
 2. 18项均有versioned natural shape/dtype config与可执行J/J_dev；
 3. 18项在5090/H100/RVV形成横向compile/correctness矩阵；
 4. CUDA/RVV均具有真实schedule与structural lowering search；
@@ -249,13 +272,14 @@ shared pressure、vector utilization、RVV VL/multicore。优化必须落到通�
 
 ```text
 task/docs checkpoint
-  -> exact 18-J intake correction
-  -> dev-j-variant + natural config catalog
-  -> direct !llvm.ptr multi-stage graph transport
-  -> real 5090 correctness/performance
+  -> exact evidence audit（16 certified；2 provisional）
+  -> dev-j-variant + 首批 natural config（已完成）
+  -> direct !llvm.ptr multi-stage graph transport（已完成）
+  -> requested/actual launch schedule receipt（已完成）
+  -> real 5090 natural-shape mechanism calibration（执行中）
   -> horizontal CUDA states
   -> RVV VL/retile/multicore
   -> C-Fixed + unified arms
-  -> H100/RVV/5090 all-18 evidence
+  -> H100/RVV/5090 planned-18 high-performance evidence（certified/provisional分账）
   -> full regression + clean commits
 ```

@@ -1,7 +1,10 @@
-# closed-18 symbolic-large / RTX 5090D
+# 16-certified + 2-canary symbolic-large regression / RTX 5090D
 
-这组结果是 `symbolic-large-v1` 在 RTX 5090D (`sm_120a`) 上的全 18 横向
-CUDA 主实验，不是从适用子集挑选的示例。E2/E3 均使用 total candidate budget 32；
+> 勘误（2026-07-28）：目录名保留旧链接。这里的18 entry是16个certified high-performance J加两个
+> canary，不是18-certified主表；DYT等小外层 literal 的结果也不能外推为自然 workload。
+
+这组结果是 `symbolic-large-v1` 在 RTX 5090D (`sm_120a`) 上的18-entry横向 regression，
+不是从适用子集挑选的示例。E2/E3 均使用 total candidate budget 32；
 每个可执行候选先通过 Target--RefJ，再在 25 ms untimed code/P-state warm-up 后做
 L2-controlled single-shot CUDA-event 计时。每个正式样本前在 timed interval 外用
 256 MiB working set 驱逐 96 MiB L2。

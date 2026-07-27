@@ -1,6 +1,6 @@
 # IntentIR J-Grounded、Q/D-Certified Lowering-State Search：后端最终设计
 
-> 状态：第五份权威设计（2026-07-24；2026-07-27 closed-18 横向消费、execution-domain search、TileLang-aligned 评测口径与 Roofline 修订）
+> 状态：第五份权威设计（2026-07-24；2026-07-28 修正为 16-certified + 2-provisional + 2-canary 分账，并加入 J_dev/actual-schedule/multi-stage 实施状态）
 >
 > 文件名为保持既有链接稳定而不变。本文不再把 `implementation family` 作为 compiler object、
 > registry key 或 emitter 概念；旧材料中的 `multi-lowering` 统一按本文定义解释为
@@ -700,7 +700,8 @@ field、schema completeness rule 与推导版本；无法证明 completeness 时
 
 后四类都必须标记为 `observation-changing` 并经 Q/D，而不能借 `float_nondeterministic`、Source
 惯例或 target 默认值静态宣称全域等价。若未来项目目标改成脱离 D/Q 的静态 deployment theorem，
-可以另行设计版本化 numeric relations；这不是当前 backend 路线，也不阻塞当前 18 个 J 的消费。
+可以另行设计版本化 numeric relations；这不是当前 backend 路线，也不阻塞当前 certified J 与
+provisional J_dev 的执行域搜索。
 
 现有 `exact|tolerance` 仍有约束力：`exact` 输出不能由 controller 私自改成 tolerance；`tolerance`
 只选择既定 Q class，具体阈值继续由外部 Q 独占。缺少有效 Q、空 D、非法 comparator 或未覆盖的
@@ -1049,7 +1050,7 @@ compute ceiling；有权限时再把 H100 的 DRAM/L2 counters 作为独立事�
 当 latency 超过 lower bound `2x` 时，不再称为 roof-approaching；超过 `10x` 时还必须显式
 写 `latency_or_unmodeled_work_dominated`。只有 J cost complete、不含未建模 SFU、低算术强度且
 latency 位于 `[0.95,2.0]x` logical lower bound 内时，logical Roofline 才能单独支撑 memory-wall
-claim。当前 closed-18 的正式 closure case
+claim。当前 16-certified + 2-canary regression 的 closed-valuation case
 边界数据只有约 1--8 KiB，所以它们首先是 correctness/small-latency workload；不能因 Softmax、Norm
 或 copy 的名字就写成 DRAM-bound。memory-wall 机制实验使用同一个符号 J 的独立大实例：首个冻结
 profile 将 `masked_copy` 的 `x0` 实例化为 16,777,216，Source 的 N/grid、RefJ 与 target 同步绑定，
@@ -1105,7 +1106,7 @@ lowering-state 收益。
 不同结构路径必然经过不同的高层 transformation trace；“同一 code generator”指共享同一 backend
 revision 和 terminal target pipeline，不要求结构分支使用完全相同的高层 rewrite。
 
-### 18.3 closed-18 横向矩阵，不以代表 Kernel 代替全量实验
+### 18.3 planned-18 high-performance 横向矩阵，不以 canary 或代表 Kernel 代替全量实验
 
 主实验的基本单位不是“选几个算子讲故事”，而是一个显式 coverage cell：
 
@@ -1119,15 +1120,23 @@ revision 和 terminal target pipeline，不要求结构分支使用完全相同�
  Q/D protocol)
 ```
 
-当前主矩阵必须从 `corpus/production-jc-v1` 的 **18/18** 条目出发，并在 RTX 5090D、H100
-与 RVV4 上横向扩展。对每个 target：
+当前主矩阵必须区分三类输入，并在 RTX 5090D、H100 与 RVV4 上横向扩展：
 
-- 18/18 都要 materialize、compile 并给出 Target--RefJ correctness 或精确的 fail-closed 状态；
-- CUDA/H100 在 Source 可执行时，18/18 都进入 Source--RefJ 与 Source--Target 主性能表；
-- E0--E4、L0/L1、N0--N3 对全 18 条目执行；不适用的 transformation 记为 `not_matched`，
+```text
+16 certified high-performance J
++ 2 provisional high-performance J_dev（RoPE、SplitK，等待 exact closure）
++ 2 compiler/correctness canary（独立回归，不进论文 aggregate）
+```
+
+对每个 target：
+
+- planned 18 个 high-performance 输入都要 materialize、compile 并给出 Target--RefJ/RefDev
+  correctness 或精确的 fail-closed 状态，但 certified 与 provisional 必须分栏；
+- CUDA/H100 在 Source 可执行时，进入 Source--RefJ/RefDev 与 Source--Target 主性能表；
+- E0--E4、L0/L1、N0--N3 对 planned 18 个 high-performance 输入执行；不适用的 transformation 记为 `not_matched`，
   不从 all-corpus aggregate 中删除；
 - 每个 J 除 closed valuation 外，还要运行所有已登记且只绑定 J-declared symbols 的
-  medium/large valuation；当前 18/18 都至少有一个可绑定 symbol，但 `rows=2`、Flash 的
+  valuation；literal shape/dtype 只能通过显式、uncertified、带 lineage 的 J_dev 修改，`rows=2`、Flash 的
   batch/sequence/head_dim 等 literal 必须原样保留；未来完全没有符号轴的 J 才记
   `literal_shape_only`，不伪造大 shape；
 - 报告同时给出 all-corpus、structure-applicable subset 与每 Kernel 数字，禁止只保留 winner
@@ -1137,7 +1146,8 @@ revision 和 terminal target pipeline，不要求结构分支使用完全相同�
 
 只有开销极高、用于解释机制而非建立性能事实的证据，例如 Nsight/CUPTI 详细 counters、
 Roofline 分解和单变量 instruction-level 剖析，可以在每类结构上选 1--2 个代表 valuation。
-这只是降低“解释证据”成本，不缩小 18-J 主性能、correctness、E2/E3 或 C 消融的横向覆盖。
+这只是降低“解释证据”成本，不缩小 planned high-performance 主性能、correctness、E2/E3 或 C
+消融的横向覆盖；canary 只进入独立 regression 表。
 
 ## 19. 版本与演进规则
 
@@ -1161,21 +1171,15 @@ Roofline 分解和单变量 instruction-level 剖析，可以在每类结构上�
 
 ### 20.1 当前闭合与 production intake 基线（2026-07-26）
 
-当前严格 SCRC 独立覆盖是 **18/28**，J-search 分支已将 18 项全部 content-addressed 冻结到
-`corpus/production-jc-v1` 并实际消费：DYT、Flash backward preprocess、Liger fused-add RMSNorm、
-GeGLU、JSD、Liger LayerNorm、Liger RMSNorm、PolyNorm、Softmax、SwiGLU、TVD、xFormers RMSNorm，
-以及下列新增六项：
+截至 2026-07-28，可由 backend 本地 evidence 逐 digest 核验的严格 high-performance SCRC 覆盖是
+**16/28**。`corpus/production-jc-v1` 的 18 个 entry 实际由 **16 high-performance + 2 canary**
+组成；canary 不得进入 16/28、主性能表或 geomean。
 
-| 已导入 case | frozen snapshot digest | 当前真实后端 consumer |
-|---|---|---|
-| xFormers `_rms_norm_add_kernel` | `e8e5451fa837443024a435b34b125f5c9f2261bdaf178842f80898875cf727be` | inout/post-state、reduction、epilogue、多输出 |
-| Liger Sparsemax | `ca974aed6b5954b197a063f0e96d62652d569b5728608818adcdbfbc3cb11fda` | access-local guard、scan + 双 reduction、logical select/and、generic scan baseline |
-| Liger KLDiv | `b39a3df6d64782be475b5b459f6b7dc01efdb3356fa85abe22a75334f296df7a` | loop scan/carry full-axis step、log/reduction、CUDA/RVV state search |
-| FlashAttention `_layer_norm_fwd_1pass_kernel` | `76ffde5e8eb4e53d0fca5afad8bb1d44ad4ba3f6c9df764dc67b21aa95402480` | runtime value-if、双 reduction、unused ABI preservation、多输出 half epilogue |
-| SCRC canary `masked_copy` | `10d67ee0b4f061e1ce28b3e6b1ebfc371be2825692671c927e80b8e743e4ad49` | direct input/output binding 确定性物化为 `intent.map_unary identity`；generic C++ MLIR 单 cubin；exact Q/D closure |
-| SCRC canary `masked_row_square_sum` | `31208517fc91dca13e48573198090ca46c6905e2c8d814109f0149cd72d9c892` | `map_binary mul -> reduce sum`；row-reduction topology search；tolerance Q/D closure |
+RoPE 与 xFormers SplitK reduce 曾被外部进度口径写成第 17/18 个 closure，但当前提供的 exact 路径
+分别是 `GATE2_FAILED` 与 `NO_CLOSURE`，故不能 production intake。它们在新证据到来前只能作为
+`certification_status=uncertified_backend_dev` 的 provisional backend 输入，不能继承 Gate1/Gate2。
 
-当前 18 项都没有 typed rank-2/3 contraction；名称含 `do_o_dot` 的 Flash preprocess 仍是 FP32
+当前 planned 18 个 high-performance 输入都没有 typed rank-2/3 contraction；名称含 `do_o_dot` 的 Flash preprocess 仍是 FP32
 elementwise multiply + row sum。因此这批的首要数值搜索轴是 reduction tree、FP32 FMA、fusion 与
 materialization，不是 TF32。TF32 只在未来闭合的 `tl.dot`/matmul/完整 Attention contraction 上按
 target capability 枚举，并与 IEEE state 使用同一 Q/D 做配对。
@@ -1183,43 +1187,27 @@ target capability 枚举，并与 IEEE state 使用同一 Q/D 做配对。
 因此：
 
 ```text
-SCRC-closed corpus         = 18
-frozen production catalog = 18
-verified intake queue      = 0
+SCRC-certified high-performance = 16
+provisional high-performance J_dev = 2
+compiler/correctness canary = 2
+verified pending intake = 0
 ```
 
-不得把历史 12/16-kernel 性能数字重标为 18-kernel 结果。导入过程只复制 exact accepted artifact、C、
-Source、Replay 与 closure receipt 并交叉核验 digest，没有重新 Lift、修 J 或按 case name 选择 emitter。后续新 closure
-继续使用同一 append-only intake 工具；同名不同 digest 必须 fail closed，未冻结 `/tmp` 路径不能成为
-长期 truth。
+不得把历史 12/16-kernel 性能数字、16+2 canary 或 16+2 provisional 结果重标为 18-certified 结果。
+正式导入只复制 exact accepted artifact、C、Source、Replay 与 closure receipt 并交叉核验 digest；后续新
+closure 继续使用同一 append-only intake 工具，同名不同 digest 必须 fail closed，未冻结 `/tmp` 路径
+不能成为长期 truth。
 
-当前实现基线为：18/18 可从冻结 J deterministic materialize；18/18 可经通用
-Intent→Linalg→CUDA cubin；17/18 至少有一个注册 C++ whole-graph path，`masked_copy` 由 generic
-C++ MLIR path 生成单 cubin。RTX 5090D 的 v2 equal-budget=32 正式 E2/E3 已覆盖全 18 项：两臂
-各 18/18 完成 opaque Replay、互斥 `D_search/D_cert` 与 held-out Target–Source/Replay/RefJ 三条直接
-闭合；E3/E2 几何平均为 **1.1302x**，E3/Source 为 **1.0928x**，17/18 达到或超过 Source，
-15/18 的 E3/E2 超过 1%。这组结果替代此前不得重标的 closed-12/16 aggregate。
+当前 implementation regression 基线仍可让 catalog 的 18 个 entry（16 high-performance + 2 canary）
+deterministic materialize，并由真实 C++/MLIR path 形成 cubin；这证明后端消费覆盖，不证明 18 个
+high-performance J 已 SCRC closed。`doc/results/production-backend-closed-18/` 目录名与其中 aggregate
+属于历史命名，发布时必须重标为 `16-certified-plus-2-canary development matrix`，canary 从论文
+aggregate 排除。
 
-第一性原理的结构结果来自同一正式回执内的 G0/G1：6 个同时产生 materialized multi-kernel 与
-whole-graph MLIR state 的 J，消除中间物化与 dispatch 的几何平均增益为 **17.1258x**，其中
-GeGLU 10.7662x、LayerNorm 19.8063x、masked row square-sum 39.7813x、PolyNorm 45.0139x、
-Softmax 15.4004x、SwiGLU 4.2902x。它证明 J 的 typed graph 与 B hard boundary 能打开编译图级
-搜索空间；不能把该结果归因于 kernel 名、Python emitter 或局部 peephole。
-
-数值阶梯进一步给出因果分解：N0→N1 的 reduction-tree state 在全 18 项上为 **1.0409x**、12 个
-适用 J 上为 **1.0622x**；N1→N2 的 FMA 只有 **1.0003x**（适用子集 1.0019x），必须作为负结果；
-N2→N3 的 precision/approximation state 在全体为 **1.0676x**、2 个适用 J 上为 **1.1271x**。
-该 ladder 自身只有 `D_search`，正式 winner closure 由上述 E3 报告承担。budget=8 的 role-aware C
-ordering 相对 Erase-C 提高低预算 best latency **1.0195x**；C 不改变候选空间。正式 L0/L1 则在
-10 个真实 post-pass MLIR 观察到 local-B transformation 的 J 上为 **1.0295x**，全 18 项为
-**1.0162x**；这只是次级局部收益。
-
-跨 target 结果使用同一 18-J catalog：H100 E3/E2 为 **1.1196x**，E3/Source 为 **1.0539x**，
-18/18 通过 Source–RefJ 与 Target–RefJ，但缺 Replay 与 held-out 三边，因此不写成 formal backend
-closure；RVV4 的真实 MLIR materialized/fused 搜索 18/18 Target–RefJ correct，E3/E2 为
-**1.1817x**、15/18 winner 使用 B-admitted transformation，同样因缺 Source/Replay `D_cert` 只作为
-同 J/target 的内部因果证据。完整压缩报告与 SHA-256 固化在
-`doc/results/production-backend-closed-18/`。
+该历史矩阵中的 materialized/whole-graph、reduction-tree、FMA、precision/approximation、local-B、
+H100 与 RVV 数字仍可作为机制线索，但不得继续写成“18-certified formal closure”。其中几十倍的
+materialized→whole-graph 比值衡量的是消除低效中间物化与 dispatch，不等于相对成熟 Triton Source
+的端到端加速；H100/RVV 缺少相应 Replay/held-out 边时只能作为 Target--RefJ 或同 target 内部因果证据。
 
 上述数字首先是 **closed valuation 上的全量消费与因果基线**。它们不等于已完成
 production-shape 论文主表：多数原始 closure workload 仅有 KiB 级 boundary，warm-cache 小延迟
@@ -1227,33 +1215,36 @@ production-shape 论文主表：多数原始 closure workload 仅有 KiB 级 bou
 L2-controlled、J-symbolic production valuations，并将 literal-only 格子显式保留。不得把旧的
 closed-valuation aggregate 重命名为新主实验。
 
-横向 valuation intake 已先完成：一个 target-neutral、versioned、fail-closed 的
-`HarnessBindingSpec` 对 18/18 同步绑定 buffer axes、stride/scalar、semantic constexpr、C 与 grid；
-它不进入 compiler path selection。`symbolic-medium-v1` 与 `symbolic-large-v1` 均逐项保持原
-`j_digest` 并通过 `build_workload_jc_suite`，随后两档各 18/18 在 `sm_120a` 真实形成 canonical
-post-pass MLIR 与 cubin。
-其中 `masked_copy` 的 expanded valuation 因 Source 缺 `program_id` 明确标为
-`Target--RefJ-only`。这些是 implementation/coverage smoke，不提前充当正式 latency 表。
+历史横向 valuation 已由 target-neutral、versioned、fail-closed 的 `HarnessBindingSpec` 对 catalog
+18-entry regression matrix 绑定 buffer axes、stride/scalar、semantic constexpr、C 与 grid；它不进入
+compiler path selection。该结果仍按 16 certified + 2 canary 解释。对 J 中 literal shape/dtype 的自然
+工作负载，Task15 新增 `intentir.backend.dev-j-variant.v1` 与
+`intentir.backend.dev-workload.v1`：accepted snapshot 保持不变，variant 记录 exact edits、base replay、
+新 digest 与 `uncertified_backend_dev`，随后仍走普通 `materialize_j -> MLIR -> target`，不由 Python
+发射 kernel。
 
 第一项 horizontal lowering 已落地为通用 tiled-frontier multi-reduce concrete state：同一依赖层的
 独立规约共享 feature-tile traversal，依赖层从 workgroup-cached frontier 继续遍历，各 partial
 先在 warp 内 shuffle，再以每 warp 一个 compact shared partial、每依赖层一个 barrier 完成 block fold；
-epilogue 也从 frontier 取值。large profile 上它按 A/ContractView 真实准入 7/18 项；其余格子
+epilogue 也从 frontier 取值。历史 large regression 上它按 A/ContractView 真实准入 7/18 entry；其余格子
 fail closed 保留。7 项均已形成 true post-pass MLIR/cubin 并通过 Target--RefJ，但当前 5090D
 搜索没有一项由该状态胜出；这是提示继续改进 applicability/topology 的负结果，不伪装成收益。
 
-RTX 5090D 的 `symbolic-large-v1` 横向主回执现已冻结：E2/E3 均 18/18 成功，17 项有 exact Source
-baseline，`masked_copy` 为 Target--RefJ-only。E3 在同一候选回执中强制纳入 fixed-structure
-schedule spine，并以相同 total budget=32、同一 fresh finalist tournament 比较 spine best 与
-expanded best，因此 primary E3/E2 为 **1.0321337x**；独立进程 cross-report ratio **1.0062950x**
-仅作诊断。E2/Source 为 **1.0857808x**，E3/Source 为 **1.1061843x**，C-prior/Erase-C 为
-**1.0036794x**，primary winner 为 7/18。完整摘要、候选回执、spec/compiler digest 与 SHA-256
-固化在 `doc/results/production-backend-symbolic-large-18-sm120a/`。该结果替换“等待正式计时”的
-旧状态，但不覆盖 H100/RVV，也不与 closed-valuation aggregate 混算。
+`doc/results/production-backend-symbolic-large-18-sm120a/` 同样是 16 certified + 2 canary 的历史
+regression，不是 18-certified 主表。其同回执 Schedule-Only/expanded、C/no-C 与 Source 数字可以用于
+检查 runner 和搜索因果口径，但发布 aggregate 必须重新按 16-certified、provisional J_dev、canary
+三类分账，并以自然 shape/dtype 重跑。
+
+首批自然 FP32 development slices 已在 RTX 5090D 跑通真实 Source、RefDev、MLIR/cubin 与全部计时
+候选 Q/D：RMSNorm `M=2048,H=1024` 的同回执 IntentIR/Schedule-Only 为 `1.0531x`、Source/Target
+为 `1.0491x`；`H=4096` 分别为 `1.0000x` 与 `1.0174x`，multi-stage 因额外重读落败；DYT
+`BT=4096,H=4096` 分别为 `1.0024x` 与 `1.0275x`，约 128 MiB 工作集已接近带宽。它们当前是 warm
+机制校准，不是最终 cold-data/BF16 主表；尤其旧小输入的 1.57x 不得外推。
 
 ### 20.2 当前横向里程碑与下一 target
 
-当前 18 个 J 按 A 结构覆盖四类横向路径：
+当前 16-certified + 2-canary regression entry 按 A 结构覆盖四类横向路径；RoPE/SplitK provisional
+J_dev 到位后再加入 planned 18-high-performance matrix，不能用 canary 代替：
 
 | 结构类 | frozen J | 当前共性瓶颈 | 下一批真实 MLIR state |
 |---|---|---|---|
@@ -1264,7 +1255,8 @@ expanded best，因此 primary E3/E2 为 **1.0321337x**；独立进程 cross-rep
 
 实施顺序以“同一 compiler mechanism 横向覆盖一类 J”为原则，不以单个 benchmark 得分为目标：
 
-1. **全量 coverage receipt 先行。** 任何新 pass 提交都要对 18/18 运行 structural match、hard
+1. **全量 coverage receipt 先行。** 任何新 pass 提交都要对当前全部 certified/provisional/canary
+   分账运行 structural match、hard
    admission、post-pass digest 与 correctness；`not_matched` 也是可审计结果。
 2. **CUDA/5090D 与 H100 共用高层 transformation。** 先完成 tail-safe vector load/store、多 reduction
    单趟累积与 producer/epilogue fusion，再补 scan/effect/contraction 状态；只由 target capability
@@ -1273,7 +1265,8 @@ expanded best，因此 primary E3/E2 为 **1.0321337x**；独立进程 cross-rep
    两个 portable exporter 共用；下一步实现 dynamic-VL strip mining、SEW/LMUL 状态、vector
    reduction/scan 和可审计的 multicore state，不把工作停在静态 tile 与 whole-graph fusion。
 4. **搜索与 C 做横向收敛。** 每类 transformation 都进入同一 candidate-state universe；C 只重排
-   全量状态。主表对 18/18 运行 E2/E3/E4，同时给 all-corpus 与 applicable subset。
+   全量状态。主表对 planned 18 个 high-performance 输入运行 E2/E3/E4，同时给 certified、
+   provisional、all-high-performance 与 applicable subset；canary 单列。
 5. **性能验收不代替 correctness。** 所有候选仍先 Target--RefJ；有 Source/Replay 的 target 再完成
    held-out direct edges。主 latency 用 L2-controlled event protocol，Nsight/Roofline 只解释每类机制，
    不代替全 18 表。
@@ -1281,7 +1274,7 @@ expanded best，因此 primary E3/E2 为 **1.0321337x**；独立进程 cross-rep
 禁止为了某一 Kernel 的数字在 Python 中增加 target emission、按 case name 切换 compiler pass、
 改写 frozen J literal 或只运行一个适用子集后声称全量提升。当前仅有一个 J 命中的结构
 也可以实现，但 matcher、pass contract、negative test 与 receipt 必须仍然 source-neutral，并在
-18-J matrix 中呈现其他 17 项的 `not_matched`。
+完整矩阵中呈现其他输入的 `not_matched`。
 
 ### 阶段 B0：IntentOp/ABC ownership 对齐
 
@@ -1296,7 +1289,7 @@ expanded best，因此 primary E3/E2 为 **1.0321337x**；独立进程 cross-rep
 ### 阶段 B1：后端合同入口
 
 **当前状态：已实现。** `materialize_j`、`ContractView`、`Attach_C/Erase_C`、统一
-`SearchAndCloseController`、content-addressed 18-kernel catalog 与 fail-closed rejection 已进入
+`SearchAndCloseController`、content-addressed 16-certified + 2-canary regression catalog 与 fail-closed rejection 已进入
 J-search 分支；旧 artifact 在缺少某个高级 consumer 前提时保留 generic/conservative path，不被静默
 升级。
 
@@ -1312,7 +1305,7 @@ J-search 分支；旧 artifact 在缺少某个高级 consumer 前提时保留 ge
 
 ### 阶段 B2：第一批 lowering-path expansion
 
-**当前状态：第一批已实现并完成 18-J、三 target 的真实消融。** CUDA
+**当前状态：第一批已实现并完成 16-certified + 2-canary regression matrix、三 target 的开发消融。** CUDA
 row/elementwise/padded/generic-Linalg lowering 与 RVV materialized/whole-graph states 均由真实
 post-pass MLIR receipt 驱动。主收益来自 materialization/dispatch elimination、reduction topology 和
 Q/D-admitted precision/approximation；FMA 的接近 1.0x 结果照录。下一步是把同一通用 transformation
@@ -1352,7 +1345,7 @@ kernel emitter，也不另建发射抽象。
 ### 阶段 B4：实验与消融
 
 **当前状态：closed valuation 上的 E2/E3、E3/E4、L0/L1、N0--N3 与 G0/G1 已按
-v2 spec 在 18-J corpus 上执行并归档；第 18.1--18.3 节的全 target、L2-controlled、
+v2 spec 在 16-certified + 2-canary regression corpus 上执行并归档；第 18.1--18.3 节的全 target、L2-controlled、
 production-valuation 横向矩阵是下一个未完成里程碑。**
 
 - E2/E3 正式 CUDA 主实验报告 search cost/time-to-best、all-corpus、applicable subset 与三边 closure；

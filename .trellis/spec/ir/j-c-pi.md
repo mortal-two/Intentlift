@@ -395,10 +395,17 @@ contract。`reduce` attrs 必须
 `subscripts`，并按显式 operand/result rank 校验其输入项、reduction labels 与输出 orientation；
 `lhs_contract_axes`、`rhs_contract_axes` 等别名不能由 fixed code 翻译成 `subscripts`。
 
-当前二值 `assoc` vocabulary 不能被 production backend 静默重解释成完整的 reduction-order
-permission：`float_nondeterministic`/tolerance 不区分 fixed parenthesization、ordered tree 与 leaf
-permutation。需要这些区别的 transformation 必须在未来使用有真实 consumer 的版本化 closed B
-relation；artifact.v7 缺失该 relation 时只走保守 lowering，不影响既有 SCRC verdict。
+当前二值 `assoc` vocabulary 不能被 production backend 静默重解释成完整的、全执行域静态
+reduction-order permission：`float_nondeterministic`/tolerance 不区分 fixed parenthesization、ordered
+tree 与 leaf permutation，也不能单独授权 FMA、approximation 或 accumulator precision 改变。
+
+这不等于 execution-domain backend 只能枚举一种实现。保持 dtype/shape/effect/alias/output carrier 等
+hard boundary 后，改变 reduction tree、FMA 或内部精度的 concrete post-pass MLIR state 必须标记为
+`observation_changing`，由统一 controller 先在冻结 `D_search` 上直接比较 Target--RefJ，性能选择后的
+固定 winner 再在不相交 `D_cert` 上直接比较 Target--Source/Replay/RefJ。它们只能支持相对于该 Q/D、
+observer 与执行域的 claim，不能反向写成 B 的静态权限或全输入域 theorem；缺少 Q/D/controller 时才
+必须退回保守 lowering。未来若需要脱离 Q/D 的静态 deployment theorem，再增加有真实 consumer 的
+versioned closed B numeric relation。上述规则不修改既有 SCRC verdict，也不要求为每个候选改写 J。
 
 准确的 TypeCheck claim 是：
 

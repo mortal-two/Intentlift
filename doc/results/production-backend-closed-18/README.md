@@ -1,6 +1,11 @@
-# 18 个闭合 J 的 production backend 结果
+# 历史 16-certified + 2-canary production backend regression
 
-本目录冻结 2026-07-26 在同一 18-J production catalog 上得到的真实后端结果。所有 target
+> 勘误（2026-07-28）：目录名为保持链接稳定而不变。该 catalog 是 16 个 certified
+> high-performance J + `masked_copy`/`masked_row_square_sum` 两个 canary，不是18个
+> high-performance closure；所有 aggregate 只能作为18-entry development regression，canary必须从论文
+> high-performance aggregate 排除。
+
+本目录冻结 2026-07-26 在同一 18-entry regression catalog 上得到的真实后端结果。所有 target
 kernel 都由 C++/MLIR pipeline 生成；Python 只负责 artifact transport、搜索编排、driver ABI、
 Q/D 执行、计时和报告，不生成目标计算。
 
@@ -20,8 +25,8 @@ J 的核心价值不是给几个局部 peephole 提示，而是提供完整 type
   -> D_cert 的 Target--Source/Replay/RefJ 三条直接闭合（正式 CUDA 主实验）
 ```
 
-在 RTX 5090D 的正式 E2/E3 报告中，E3 相对固定 concrete path 的 schedule-only E2，18 项
-几何平均提升 **1.1302x**；E3 相对 Source 为 **1.0928x**，18/18 winner 都完成 held-out
+在 RTX 5090D 的历史 E2/E3 regression 中，E3 相对固定 concrete path 的 schedule-only E2，18 entry
+几何平均提升 **1.1302x**；E3 相对 Source 为 **1.0928x**，18/18 regression winner 都完成 held-out
 三边 backend closure。更能直接暴露瓶颈的同臂图级对照中，6 个同时存在 materialized 和
 whole-graph state 的 J，消除中间物化与多次 dispatch 的几何平均收益为 **17.1258x**，最高
 PolyNorm 为 **45.0139x**。该大收益来自编译图和内存流量改变，而不是局部指令修补。
@@ -47,7 +52,7 @@ target-supported precision/approximation 在全体为 **1.0676x**、2 个适用 
 
 | 文件 | 内容 | 关键结果 |
 |---|---|---|
-| `cuda-e2-e3-budget32-formal-v4.json.gz` | RTX 5090D，E2/E3，budget=32，正式三边 closure | E3/E2 1.1302x；E3/Source 1.0928x；18/18 closed |
+| `cuda-e2-e3-budget32-formal-v4.json.gz` | RTX 5090D，E2/E3，budget=32，18-entry regression三边 closure | E3/E2 1.1302x；E3/Source 1.0928x；16 certified + 2 canary |
 | `cuda-local-b-budget32-formal-v5.json.gz` | RTX 5090D，L0/L1，真实 post-pass B receipt | 全体 1.0162x；10 个适用 J 1.0295x |
 | `cuda-numeric-ladder-budget32-v3.json.gz` | RTX 5090D，N0/N1/N2/N3 | tree 1.0409x；FMA 1.0003x；precision/approx 1.0676x |
 | `cuda-c-prior-budget8-roleaware-v3.json.gz` | RTX 5090D，E3/Erase-C，budget=8 | C 的低预算 best-latency 优势 1.0195x |
