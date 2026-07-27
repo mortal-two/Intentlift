@@ -1,6 +1,6 @@
 # Task 12：Persistent Single-Owner Transactional Agent Runtime
 
-> 状态：执行中
+> 状态：已归档（2026-07-27；性能与闭合验收未通过，由 Task 13 接续）
 >
 > 类型：Task 11 的独立执行引擎能力任务；不终止、不归档或替代 Task 11。
 >
@@ -200,7 +200,7 @@ Gate1=0 时主动终止。B4 将完整字节写入与既有 preflight 合并到�
 - `single` Lift 现在在同一 adapter/branch 内同时保留 owner session id、完整可审计 message history 与
   同一个 bubblewrap workspace。Runner 只原子刷新 read-only `feedback.json`，当前 candidate 不被历史
   `previous_artifact` 覆盖；旧 staged planner/builder/reviewer 仅保留为 v124 对照入口；
-- `intentir.lift-knowledge.v48` 默认 `step_limit=0`、CandidateCheck count limit 0 与
+- `intentir.lift-knowledge.v49` 默认 `step_limit=0`、CandidateCheck count limit 0 与
   `max_consecutive_format_errors=0`，由每 branch 3600 秒累计 active Lift wall time及 sandbox/provider
   资源治理；单 provider request 上限 900 秒，timeout 不重复尝试，其他 transient transport failure
   最多三次。普通 model/tool/check 次数只进 telemetry；
@@ -226,17 +226,49 @@ Gate1=0 时主动终止。B4 将完整字节写入与既有 preflight 合并到�
   检查，混入写/check/submit 或超过四个时整批零执行；
 - rollback 使用 host 创建的唯一排他临时文件并原子替换，sandbox 内预置同名 symlink 不能影响被
   保存字节或主机 canary；
-- Replay 仍为每个 formal round 全新的 source-blind writer；`minisweagent.intentir-replay.v6` 默认按
+- Replay 仍为每个 formal round 全新的 source-blind writer；`minisweagent.intentir-replay.v7` 默认按
   1800 秒 wall time治理，check/inspect/model-call 次数不设低次数型 capability cutoff。Replay receipt
   绑定 multi-action 配置、实际 termination status 与 transaction audit；所有
   checkpoint 仍须经过后续正式 ingress/TypeCheck/Gates；
 - B4 的 persistent workspace、input immutability、exact-text patch/direct-submit transaction、history
   compaction、timeout/retry/startup packet 配置，以及相邻 Runner/Replay/Batch/CLI/provider 回归共
-  `213 passed`。尚无 B4 三核的 formal-round、累计 input、wall-time、first-valid、TypeCheck 或
-  Gate1-frontier 证据。
+  `213 passed`。
 
-下一动作是运行 Linear、Flash forward、GroupNorm 的 fresh B4 pilot；若 B4 不满足验收 4，继续 P3
-实现隔离 engine C，而不是将 Task 12 标记完成。
+B4 fresh pilot 已保存在
+`/tmp/intentir-scrc-task12-b4-pilot-20260727-u4rz15`。三核全部连续产生 3 个 TypeCheck-valid 候选，
+没有 submit protocol failure、候选丢失、fresh reviewer 覆盖或 workspace 断裂；Gate1 FAIL 后确由同一
+Lift owner 修改当前完整候选。Linear round 1 首次 TypeCheck 从 v124 约 923 秒降至约 617 秒，且
+round 1→2 的 op-multiset mismatch 从 9 降至 4、predicate/effect 从 1 降至 0；因此 persistent
+owner/transaction 方向成立。但三核最终均为 `NO_CLOSURE`，而且 B4 **不满足验收 4 的性能条件**：
+
+- Linear：Lift physical calls `75`、Replay `63`；三轮 Lift elapsed 约 613/426/113 秒；
+- GroupNorm：Lift physical calls `169`、Replay `70`，总墙钟约 3816 秒；
+- Flash forward：Lift physical calls `158`、Replay `87`，总墙钟约 4165 秒；首轮 Lift 单独使用
+  128 次 provider call、约 777 万 input token 与 2149 秒；
+- 三核都完成 `K=3`，但 Gate1 仍分别报告 op-multiset/dataflow 或
+  op-multiset/dataflow/predicate-effect hard mismatch，未进入 Gate2。
+
+轨迹证明耗时主项不是 bubblewrap、JSON 写入或 checker，而是无状态 relay 下每个工具边界重新发起
+xhigh provider 请求并重传长期上下文。例如 Linear round 1 的 617 秒中约 606 秒在 41 个 provider
+请求；Flash round 1 则把 schema/section discovery 与逐次手工修正扩展成 128 个请求。一个真实
+`previous_response_id` 两请求 canary 虽未报 API 错误，却无法回忆上一请求中的 opaque token；当前
+relay 因而不能被视为 server-side persistent session，也不得作为运行正确性依赖。
+
+B5/engine-C 最小实现由此改为学习 Codex 的 **通用执行面**，而不是新增 artifact authorizer：
+
+- 首轮把 exact Source/feedback mirror 给 LLM；模型至少收到一次后，后续 provider packet 只保留
+  hash/length receipt，原文仍完整保存在 allowlisted workspace 与本地 trajectory；
+- provider packet 仅保留最近 12 组 response/tool interaction，旧组整体变为 deterministic receipt；
+  这是 transport compaction，不总结语义、不修改 owner 的本地历史；
+- `schema_query bundle` 在一次只读 action 中返回 LLM 明示的多个 op/leaf，避免逐项猜 CLI；
+- 每个仍然 fresh、source-blind 的 Replay episode 获得 exact `submit_replay`、exact-text patch+submit，
+  并在首包直接携带既有 packet-query 的精确同义视图；Replay 仍不跨 formal round 续接；
+- 不增加 typed builder、JSON semantic patch、自动 ID/引用/类型、Kernel recipe、Source-derived fixed
+  summary 或任何 auth/composer 层。
+
+下一动作是完成 B5 的边界测试并运行同三核 fresh pilot；只有累计 input、physical calls、
+time-to-first-valid 与 Replay wall time 显著下降且能力不退化，Task 12 才完成。否则继续改通用 agent
+execution engine，不回到 staged reviewer 或增加 J 语义自动化。
 
 ## 非目标
 
@@ -244,3 +276,26 @@ Gate1=0 时主动终止。B4 将完整字节写入与既有 preflight 合并到�
 - 不修改 A/B/C、J/C/pi schema、IntentOp 或 production backend；
 - 不引入 Kernel 名称、模板 artifact、Source-derived fixed repair 或跨 candidate semantic cache；
 - 不以更多 token、更多 reviewer、更多 formal Gate1 round 或跨 session 私有思维传递代替能力提升。
+
+## 归档裁决（2026-07-27）
+
+Task 12 形成了 persistent branch owner、exact-byte transaction、direct submit、fresh Replay workspace
+与完整审计 telemetry 等可复用基础，但没有达到第 168–181 行的能力与性能验收，因此不得标记为
+“完成”或作为 Task 11 的已接受执行引擎：
+
+- B4 虽证明同一 Lift owner 能在 Gate1 FAIL 后继续修改当前完整 artifact，但 Linear、GroupNorm 与
+  Flash forward 均跑满 `K=3` 后 `NO_CLOSURE`，且仍产生 63–169 次 Lift/Replay physical calls；
+- 无状态 relay 下长期 conversation 与逐项 schema/packet query 继续被重复发送，Flash 首轮累计约
+  777 万 input token；这不是 Kernel 语义复杂度本身；
+- Codex C1/C2 因 sandbox/output write contract 错误而反复 resume blocked thread，属于 orchestration
+  failure；C3 只完成一次 Codex Lift first candidate，随后接 MiniSWE Replay，没有执行同一 Codex
+  Lift owner 的 Gate1 continuation；
+- C3 固定 artifact 漏掉 Source 已有的 structured loop、`pi.iterations` 与 `pi.loop_carriers`；后续
+  Codex Replay diagnostic recheck 在 source-blind 条件下没有凭空补 loop，Gate1 正确拒绝；
+- 本任务没有新增 SCRC 证书，Task 11 的严格覆盖保持 **18/28**，已有 18 份证书继续按各自落盘
+  版本有效，不因本 runtime 实验重跑或重标。
+
+后继 Task 13 继承本任务的代码与反例，但重新收紧目标为：MiniSWE 主路径和 Codex 并发加速路径都
+实现同一个单 owner 生命周期、当前状态而非全历史 transport、少量高价值工具循环、source-blind
+Replay compile preflight 与基础设施 fail-fast。它不继承 Task 12 的“实现已可接受”结论，也不改变
+`(J,C,pi)`、TypeCheck、Gate1、Gate2 或 C 绑定数学。
