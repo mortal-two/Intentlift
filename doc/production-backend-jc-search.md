@@ -2,12 +2,14 @@
 
 > 状态：production catalog 已 append-only 扩展为 content-addressed 的 **18 个**闭合 J；2026-07-27。
 > RTX 5090D、H100 与 RVV4 的 all-18 closed-valuation 报告已冻结；它们是横向消费/因果基线，
-> 不冒充 production-shape 主表。下一里程碑是 all-18、all-target、L2-controlled 的符号 valuation
-> 矩阵；历史 closed-12/16 数字只作追溯。
+> 不冒充 production-shape 主表。RTX 5090D 的 all-18 `symbolic-large-v1`、L2-controlled 主表也已
+> 冻结；下一里程碑是以完全相同的 J/valuation/预算/计时合同完成 H100 与 RVV4 横向矩阵。
+> 历史 closed-12/16 数字只作追溯。
 
 本文记录已冻结 18 个 SCRC Gate1/Gate2 闭合 Kernel 的 production backend 实现。当前权威结果、
 证据边界、压缩原始报告与 SHA-256 见
-[18-J production backend 结果](results/production-backend-closed-18/README.md)。原
+[18-J closed-valuation 结果](results/production-backend-closed-18/README.md)与
+[18-J symbolic-large / RTX 5090D 结果](results/production-backend-symbolic-large-18-sm120a/README.md)。原
 [closed-12 报告](results/production-backend-closed-12/production-backend-report.md)和
 [closed-16 smoke](results/production-backend-closed-16/backend-implementation-smoke-2026-07-26.md)
 只保留为历史，不参与当前 aggregate。
@@ -347,10 +349,19 @@ Roofline 机制分解等高开销解释证据可在每个结构类上选 1--2 �
 
 首个按此矩阵落地的高级 CUDA 扩展不是 kernel-name recipe，而是通用的多规约 tiled MLIR
 状态：同一依赖层的独立规约共享一次 feature-tile traversal，依赖规约从 workgroup frontier
-继续遍历；每个 partial 使用可复用 shared-memory tree，epilogue 也消费该 frontier，从而保持
-global row read-once。当前 matcher 在 18-J large profile 上真实准入 7 项，其余 11 项仍以
-`not_applicable` 或精确 rejection 留在矩阵中。该路径已经通过 true-MLIR 生成与 lit 检查；只有
-Target--RefJ 和稳定计时完成后，才能写成性能收益，不能因“候选已生成”预先宣称加速。
+继续遍历；每个 partial 使用 warp shuffle、每 warp 一个 compact shared partial 与每依赖层一个
+barrier 完成 block fold，epilogue 也消费该 frontier，从而保持 global row read-once。当前 matcher
+在 18-J large profile 上真实准入 7 项，其余 11 项仍以 `not_applicable` 或精确 rejection 留在矩阵中。
+7 项均已形成 true post-pass MLIR/cubin 并通过 Target--RefJ；在当前 5090D 搜索中该状态没有成为
+全局 winner，因此作为可复现负结果保留，而不是因“候选已生成”预先宣称加速。
+
+RTX 5090D 的正式 `symbolic-large-v1` 横向回执覆盖 18/18 E2、18/18 E3；17 项有 exact Source
+baseline，`masked_copy` 保持 Target--RefJ-only。E3 的 fixed-structure schedule spine 与 expanded
+states 在同一候选回执、相同 total budget=32 和同一 finalist tournament 中配对：primary E3/E2
+几何平均为 **1.0321x**（7/18 获益），E2/Source 为 **1.0858x**，E3/Source 为 **1.1062x**，
+C-prior/Erase-C 为 **1.0037x**。独立 E2/E3 进程的 diagnostic cross-report ratio 仅为
+**1.0063x**，不作为结构增益。完整摘要与候选回执见
+`doc/results/production-backend-symbolic-large-18-sm120a/`。
 
 ## 7. H100 分支
 
@@ -443,7 +454,7 @@ python tools/export_cuda_benchmark_bundle.py \
 python tools/run_cuda_benchmark_bundle.py \
   --bundle /tmp/masked-copy-roofline.json --out /tmp/masked-copy-roofline-report.json \
   --data-regime cold-data --timing event --cold-iterations 16 \
-  --cache-flush-mib 256 --roofline-calibration
+  --cache-flush-mib 256 --warmup-ms 25 --roofline-calibration
 
 # all-18 symbolic-large CUDA 主口径：分别冻结 equal-budget E2/E3；未匹配与失败仍留在报告。
 python tools/export_cuda_benchmark_bundle.py \
@@ -458,12 +469,12 @@ python tools/run_cuda_benchmark_bundle.py \
   --bundle /tmp/symbolic-large-sm120a-e2.json \
   --out /tmp/symbolic-large-sm120a-e2-report.json \
   --data-regime cold-data --timing event --cold-iterations 16 \
-  --cache-flush-mib 256
+  --cache-flush-mib 256 --warmup-ms 25
 python tools/run_cuda_benchmark_bundle.py \
   --bundle /tmp/symbolic-large-sm120a-e3.json \
   --out /tmp/symbolic-large-sm120a-e3-report.json \
   --data-regime cold-data --timing event --cold-iterations 16 \
-  --cache-flush-mib 256
+  --cache-flush-mib 256 --warmup-ms 25
 python tools/summarize_cuda_benchmark_ablation.py \
   --e2 /tmp/symbolic-large-sm120a-e2-report.json \
   --e3 /tmp/symbolic-large-sm120a-e3-report.json \
@@ -491,12 +502,16 @@ speedup 转写成 RVV 结果。
 inout/post-state、access-local guard、scan/reduction relation、loop scan/carry、runtime value-if、
 multi-output half epilogue、direct identity binding 与 masked square-sum reduction。
 
-当前 closed-valuation 结果已经不是小修小补：RTX 5090D 正式 E3/E2 **1.1302x**，H100 portable E3/E2
-**1.1196x**，RVV4 E3/E2 **1.1817x**；6 个图的 whole-graph/materialized 内部对照为
-**17.1258x**。reduction topology 与 precision/approximation 分别提供 **1.0409x** 和
-**1.0676x** 的 all-corpus 增量，FMA 的 **1.0003x** 负结果保留。local-B 的 **1.0162x** 只作辅助，
-不冒充核心创新。这些数字仍需在 all-18 production valuation 的 L2-controlled 主协议上
-重新验证，不与新矩阵混合 aggregate。
+closed-valuation 结果保留为机制与全量消费基线：RTX 5090D E3/E2 **1.1302x**、H100 portable
+**1.1196x**、RVV4 **1.1817x**；6 个图的 whole-graph/materialized 内部对照为 **17.1258x**。
+reduction topology 与 precision/approximation 分别提供 **1.0409x** 和 **1.0676x** 的 all-corpus
+增量，FMA 的 **1.0003x** 负结果保留。local-B 的 **1.0162x** 只作辅助，不冒充核心创新。
+
+这些旧 valuation 不与新矩阵混合 aggregate。当前 RTX 5090D 的 all-18 `symbolic-large-v1`
+L2-controlled 主协议已完成：同回执 primary E3/E2 **1.0321x**、E3/Source **1.1062x**、
+C-prior/Erase-C **1.0037x**；18/18 都留在主表，通用 tiled-frontier 状态虽在 7 项合法且正确，
+但暂未胜出。H100 与 RVV4 仍需在同一 symbolic valuation、equal budget 和配对规则下重跑，
+在完成前不得沿用 closed-valuation 数字充当 production-shape 主结果。
 
 当前 18 项没有 typed contraction；Flash `do_o_dot` 仍是 FP32 multiply + reduction，所以不存在可诚实
 声称的 TF32 state。但下一步不是停下现有 18 J 等新 contraction：

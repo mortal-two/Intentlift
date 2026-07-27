@@ -1238,11 +1238,20 @@ post-pass MLIR 与 cubin。
 第一项 horizontal lowering 已落地为通用 tiled-frontier multi-reduce concrete state：同一依赖层的
 独立规约共享 feature-tile traversal，依赖层从 workgroup-cached frontier 继续遍历，各 partial
 先在 warp 内 shuffle，再以每 warp 一个 compact shared partial、每依赖层一个 barrier 完成 block fold；
-epilogue 也从 frontier 取值。large profile 上它按 A/ContractView
-真实准入 7/18 项；其余格子 fail closed 保留。该状态已经形成 true post-pass MLIR/cubin，但在新的
-stabilized cold-data E2/E3 回执完成前只算路径覆盖，不提前写成性能结果。
+epilogue 也从 frontier 取值。large profile 上它按 A/ContractView 真实准入 7/18 项；其余格子
+fail closed 保留。7 项均已形成 true post-pass MLIR/cubin 并通过 Target--RefJ，但当前 5090D
+搜索没有一项由该状态胜出；这是提示继续改进 applicability/topology 的负结果，不伪装成收益。
 
-### 20.2 下一个冻结里程碑：18-J 横向 lowering 与评测
+RTX 5090D 的 `symbolic-large-v1` 横向主回执现已冻结：E2/E3 均 18/18 成功，17 项有 exact Source
+baseline，`masked_copy` 为 Target--RefJ-only。E3 在同一候选回执中强制纳入 fixed-structure
+schedule spine，并以相同 total budget=32、同一 fresh finalist tournament 比较 spine best 与
+expanded best，因此 primary E3/E2 为 **1.0321337x**；独立进程 cross-report ratio **1.0062950x**
+仅作诊断。E2/Source 为 **1.0857808x**，E3/Source 为 **1.1061843x**，C-prior/Erase-C 为
+**1.0036794x**，primary winner 为 7/18。完整摘要、候选回执、spec/compiler digest 与 SHA-256
+固化在 `doc/results/production-backend-symbolic-large-18-sm120a/`。该结果替换“等待正式计时”的
+旧状态，但不覆盖 H100/RVV，也不与 closed-valuation aggregate 混算。
+
+### 20.2 当前横向里程碑与下一 target
 
 当前 18 个 J 按 A 结构覆盖四类横向路径：
 
@@ -1250,7 +1259,7 @@ stabilized cold-data E2/E3 回执完成前只算路径覆盖，不提前写成�
 |---|---|---|---|
 | dense/masked elementwise | DYT、GeGLU、SwiGLU、masked copy | tail/vector width、grid 遍历、端到端内存合并 | masked vec2/vec4 与 target-derived grid-stride/vector layout |
 | single reduction + epilogue | Flash preprocess、fused-add RMSNorm、KLDiv、Liger RMSNorm、masked row square-sum、xFormers RMSNorm、xFormers RMSNorm-add | producer 重读、中间物化、单一 reduction topology | producer/reduction/epilogue 单趟 state，subgroup/workgroup/multi-stage 独立搜索 |
-| multiple reductions + epilogue | Flash one-pass LayerNorm、JSD、LayerNorm、Softmax | tiled frontier 已改为 compact warp/shared fold，仍需实测其适用区间并扩展 dtype/表达式覆盖 | subgroup/frontier/multi-stage topology 与 schedule 独立搜索，保留不匹配/拒绝回执 |
+| multiple reductions + epilogue | Flash one-pass LayerNorm、JSD、LayerNorm、Softmax | compact tiled frontier 已正确准入但尚无 winner；shared frontier/traversal 成本仍未打破现有 register/workgroup 路径 | subgroup/frontier/multi-stage topology 与 schedule 独立搜索，扩展 dtype/表达式并保留不匹配/拒绝回执 |
 | scan/effect/contraction/gather | Sparsemax、TVD、PolyNorm | scan/update/control 或 contraction/gather 落到 generic/materialized path | registered prefix/segmented-scan、effect-safe update 与 contraction/gather tiling states |
 
 实施顺序以“同一 compiler mechanism 横向覆盖一类 J”为原则，不以单个 benchmark 得分为目标：
