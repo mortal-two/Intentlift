@@ -1,0 +1,171 @@
+from __future__ import annotations
+
+import copy
+from pathlib import Path
+
+import pytest
+
+from intentir.backend.dev_j_variant import (
+    J_DEV_ALLOWED_CLAIMS,
+    J_DEV_CERTIFICATION_STATUS,
+    JDevEdit,
+    JDevVariant,
+    JDevVariantError,
+    create_j_dev_variant,
+)
+from intentir.backend.materialize import materialize_j
+from intentir.ir.production_snapshot import load_production_snapshot
+from intentir.verify.gate1.model import ImplementationConfig
+
+
+_ROOT = Path(__file__).resolve().parents[2]
+_CATALOG = _ROOT / "corpus" / "production-jc-v1"
+_EVIDENCE = (
+    "Dataset/Liger-Kernel/benchmark/scripts/benchmark_rms_norm.py:"
+    "Llama-3-8B-M2048-H4096",
+)
+
+
+def _base():
+    return load_production_snapshot(_CATALOG, "liger_rms_norm")[0]
+
+
+def _row_symbol_edits() -> tuple[JDevEdit, ...]:
+    return (
+        JDevEdit(
+            "/j/intent/intent_function/inputs/0/shape/0",
+            2,
+            "x1",
+            _EVIDENCE,
+        ),
+        JDevEdit(
+            "/j/intent/intent_function/outputs/0/shape/0",
+            2,
+            "x1",
+            _EVIDENCE,
+        ),
+        JDevEdit(
+            "/j/intent/intent_function/outputs/1/shape/0",
+            2,
+            "x1",
+            _EVIDENCE,
+        ),
+        JDevEdit(
+            "/j/boundary/domains/d0",
+            "(0 <= k0) and (k0 < 2)",
+            "(0 <= k0) and (k0 < x1)",
+            _EVIDENCE,
+        ),
+    )
+
+
+def _variant():
+    return create_j_dev_variant(
+        _base(),
+        source_kernel_id="high_performance:liger_rms_norm",
+        shape_config_id="llama3_8b_m2048_h4096",
+        dtype_config_id="fp32_boundary_fp32_accum",
+        edits=_row_symbol_edits(),
+    )
+
+
+def test_real_rmsnorm_dev_variant_is_detached_canonical_and_materializable() -> None:
+    base = _base()
+    base_j = copy.deepcopy(base.j.to_json())
+    variant = _variant()
+
+    assert base.j.to_json() == base_j
+    assert variant.base_j_digest == base.j_digest
+    assert variant.variant_j_digest != base.j_digest
+    assert variant.j.intent.inputs[0].shape == ["x1", "x0"]
+    assert variant.j.intent.outputs[0].shape == ["x1", "x0"]
+    assert variant.j.intent.outputs[1].shape == ["x1"]
+    assert variant.j.intent.body[16].type["shape"] == ["x1", "x0"]
+    assert variant.j.boundary.domains["d0"] == "(0 <= k0) and (k0 < x1)"
+
+    materialized = materialize_j(
+        variant.j,
+        {"x0": 4096, "x1": 2048},
+        constexpr_bindings={"t5": 1, "t6": False},
+    )
+    assert "tensor<2048x4096xf32>" in materialized.intent_mlir
+
+
+def test_dev_variant_receipt_round_trip_is_explicitly_uncertified() -> None:
+    variant = _variant()
+    payload = variant.to_dict()
+    restored = JDevVariant.from_json(variant.to_json(indent=2))
+
+    assert restored.to_dict() == payload
+    assert payload["certification_status"] == J_DEV_CERTIFICATION_STATUS
+    assert payload["allowed_claims"] == list(J_DEV_ALLOWED_CLAIMS)
+    assert payload["j_unchanged"] is False
+    assert payload["receipt_digest"] == variant.receipt_digest
+    restored.validate_against_base(_base())
+
+
+def test_dev_variant_rejects_stale_old_value_and_half_updated_shape() -> None:
+    base = _base()
+    stale = JDevEdit(
+        "/j/intent/intent_function/inputs/0/shape/0",
+        3,
+        "x1",
+        _EVIDENCE,
+    )
+    with pytest.raises(JDevVariantError, match="expected 3, observed 2"):
+        create_j_dev_variant(
+            base,
+            source_kernel_id="high_performance:liger_rms_norm",
+            shape_config_id="bad",
+            dtype_config_id="fp32",
+            edits=(stale,),
+        )
+
+    with pytest.raises(JDevVariantError, match="self-consistent"):
+        create_j_dev_variant(
+            base,
+            source_kernel_id="high_performance:liger_rms_norm",
+            shape_config_id="half_updated",
+            dtype_config_id="fp32",
+            edits=(_row_symbol_edits()[0],),
+        )
+
+
+def test_dev_variant_rejects_forbidden_identity_edit_and_receipt_tampering() -> None:
+    with pytest.raises(JDevVariantError, match="limited to typed"):
+        JDevEdit("/j/kernel_id", "scrc_k0", "other", _EVIDENCE)
+
+    payload = _variant().to_dict()
+    payload["certification_status"] = "SCRC_CERTIFIED"
+    with pytest.raises(JDevVariantError, match="cannot claim certification"):
+        JDevVariant.from_dict(payload)
+
+    original = _variant()
+    c_payload = original.c.to_json()
+    c_payload["values"]["c0"] = 2048
+    tampered = JDevVariant(
+        base_snapshot_digest=original.base_snapshot_digest,
+        base_j_digest=original.base_j_digest,
+        base_c_digest=original.base_c_digest,
+        base_certification_status=original.base_certification_status,
+        source_kernel_id=original.source_kernel_id,
+        shape_config_id=original.shape_config_id,
+        dtype_config_id=original.dtype_config_id,
+        edits=original.edits,
+        j=original.j,
+        c=ImplementationConfig.from_json(c_payload),
+    )
+    with pytest.raises(JDevVariantError, match="development C payload"):
+        tampered.validate_against_base(_base())
+
+
+def test_dev_variant_rejects_duplicate_paths() -> None:
+    edit = _row_symbol_edits()[0]
+    with pytest.raises(JDevVariantError, match="duplicate edit paths"):
+        create_j_dev_variant(
+            _base(),
+            source_kernel_id="high_performance:liger_rms_norm",
+            shape_config_id="duplicate",
+            dtype_config_id="fp32",
+            edits=(edit, edit),
+        )

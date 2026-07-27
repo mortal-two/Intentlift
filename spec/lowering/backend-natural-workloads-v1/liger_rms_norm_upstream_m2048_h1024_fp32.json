@@ -1,0 +1,49 @@
+{
+  "base_adapter_digest": "a5d9cebb7400fd5aed1d8f0120f0438eb36746993695037195f73882e5e6d45b",
+  "buffer_dtypes": {},
+  "buffer_shapes": {
+    "RSTD_ptr": [
+      2048
+    ],
+    "W_ptr": [
+      1024
+    ],
+    "X_ptr": [
+      2048,
+      1024
+    ],
+    "Y_ptr": [
+      2048,
+      1024
+    ]
+  },
+  "c_values": {
+    "BLOCK_SIZE": 1024
+  },
+  "case_id": "high_performance:liger_rms_norm",
+  "concrete_extents": {
+    "x0": 1024,
+    "x1": 2048
+  },
+  "config_digest": "c31c2c72115283dcda6721038075147d5c20f6c371d609d902eaca0bc6a7a14f",
+  "dtype_config_id": "fp32_boundary_fp32_accum",
+  "grid": [
+    2048
+  ],
+  "grid_contract": [
+    "rows"
+  ],
+  "protocol": "intentir.backend.dev-workload.v1",
+  "scalar_values": {
+    "W_row_stride": 1024,
+    "X_row_stride": 1024,
+    "Y_row_stride": 1024,
+    "n_cols": 1024
+  },
+  "semantic_constexprs": {},
+  "shape_config_id": "upstream_m2048_h1024_fp32_slice",
+  "upstream_evidence": [
+    "Dataset/Liger-Kernel/benchmark/scripts/benchmark_rms_norm.py:41-45,143-145",
+    "FP32 is an explicit backend capability slice inherited from base J; upstream deployment benchmark uses BF16"
+  ]
+}

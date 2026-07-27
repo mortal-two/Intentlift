@@ -42,6 +42,12 @@ from intentir.backend.cuda.search import (
     enumerate_cuda_candidates,
     toolchain_fingerprint,
 )
+from intentir.backend.dev_j_variant import JDevVariant, load_j_dev_variant
+from intentir.backend.dev_workload import (
+    DevWorkloadConfig,
+    load_dev_workload_config,
+    prepare_dev_workload,
+)
 from intentir.backend.materialize import attach_c, materialize_j
 from intentir.backend.measurement_spec import (
     MEASUREMENT_PROTOCOL,
@@ -49,7 +55,7 @@ from intentir.backend.measurement_spec import (
 )
 from intentir.backend.protocol import BackendTarget
 from intentir.backend.workload_cost import derive_j_workload_cost
-from intentir.ir.production_snapshot import load_production_snapshot
+from intentir.ir.production_snapshot import ProductionSnapshot, load_production_snapshot
 from intentir.verify.gate2.scalar import ScalarLoweringRunner
 from intentir.verify.scrc_workload_run import build_workload_jc_suite
 
@@ -79,21 +85,79 @@ def _entry(
     budget: int,
     axes: SearchAxes | None = None,
     workload_profile: str = PRODUCTION_WORKLOAD_PROFILE_CLOSED,
+    j_dev_variant: JDevVariant | None = None,
+    dev_workload: DevWorkloadConfig | None = None,
+    j_dev_path: Path | None = None,
 ) -> dict[str, Any]:
     base_snapshot, path = load_production_snapshot(snapshot_dir, name)
     if base_snapshot.c is None:
         raise ValueError("portable search bundle requires frozen C")
-    prepared = prepare_production_workload(name, profile=workload_profile)
-    snapshot, workload_valuation = profile_production_snapshot(
-        base_snapshot,
-        prepared,
-        workload_profile,
-    )
+    if (j_dev_variant is None) != (dev_workload is None):
+        raise ValueError("J_dev variant and development workload must be paired")
+    j_provenance: dict[str, Any] | None = None
+    if j_dev_variant is not None and dev_workload is not None:
+        j_dev_variant.validate_against_base(base_snapshot)
+        if j_dev_variant.source_kernel_id != dev_workload.case_id:
+            raise ValueError("J_dev and development workload kernel identity mismatch")
+        if j_dev_variant.shape_config_id != dev_workload.shape_config_id:
+            raise ValueError("J_dev and development workload shape config mismatch")
+        if j_dev_variant.dtype_config_id != dev_workload.dtype_config_id:
+            raise ValueError("J_dev and development workload dtype config mismatch")
+        prepared = prepare_dev_workload(dev_workload)
+        snapshot = ProductionSnapshot(j_dev_variant.j, j_dev_variant.c)
+        workload_profile = dev_workload.shape_config_id
+        workload_valuation = {
+            "kind": "manual_dev_j_variant",
+            "profile": workload_profile,
+            "status": "uncertified_backend_dev",
+            "base_snapshot_digest": base_snapshot.snapshot_digest,
+            "base_j_digest": base_snapshot.j_digest,
+            "base_c_digest": base_snapshot.c_digest,
+            "active_snapshot_digest": snapshot.snapshot_digest,
+            "active_j_digest": snapshot.j_digest,
+            "active_c_digest": snapshot.c_digest,
+            "j_unchanged": False,
+            "shape_config_id": dev_workload.shape_config_id,
+            "dtype_config_id": dev_workload.dtype_config_id,
+            "workload_config_digest": dev_workload.config_digest,
+            "baseline_policy": "source_and_refj",
+            "source_unavailable_reason": None,
+            "upstream_evidence": list(dev_workload.upstream_evidence),
+        }
+        j_provenance = {
+            "protocol": j_dev_variant.to_dict()["protocol"],
+            "receipt_digest": j_dev_variant.receipt_digest,
+            "base_snapshot_digest": j_dev_variant.base_snapshot_digest,
+            "base_j_digest": j_dev_variant.base_j_digest,
+            "variant_j_digest": j_dev_variant.variant_j_digest,
+            "variant_c_digest": j_dev_variant.variant_c_digest,
+            "certification_status": j_dev_variant.to_dict()[
+                "certification_status"
+            ],
+            "allowed_claims": list(
+                j_dev_variant.to_dict()["allowed_claims"]
+            ),
+            "j_unchanged": False,
+        }
+        if j_dev_path is not None:
+            path = j_dev_path
+    else:
+        prepared = prepare_production_workload(name, profile=workload_profile)
+        snapshot, workload_valuation = profile_production_snapshot(
+            base_snapshot,
+            prepared,
+            workload_profile,
+        )
     if snapshot.c is None:
         raise AssertionError("workload valuation erased required C")
     suite = build_workload_jc_suite(prepared, snapshot.j, snapshot.c)
     case = suite.cases[0]
     dims = case.refeval.dims_map
+    if dev_workload is not None and dims != dict(dev_workload.concrete_extents):
+        raise ValueError(
+            "development workload extents disagree with J/Source binding: "
+            f"declared {dict(dev_workload.concrete_extents)}, resolved {dims}"
+        )
     constexpr_bindings = constexpr_input_bindings(
         snapshot.j,
         case.refeval.input_binding_map,
@@ -377,11 +441,12 @@ def _entry(
     baseline_policy = str(workload_valuation["baseline_policy"])
     return {
         "kernel": name,
-        "case_id": PRODUCTION_CASE_IDS[name],
+        "case_id": prepared.adapter.case_id,
         "workload_profile": workload_profile,
         "baseline_policy": baseline_policy,
         "snapshot": snapshot.to_dict(),
         "snapshot_path": str(path),
+        "j_provenance": j_provenance,
         "workload_valuation": workload_valuation,
         "materialization": materialized.to_record(),
         "contract_view": contract_view.to_dict(),
@@ -460,6 +525,22 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--search-budget", type=int, default=96)
     parser.add_argument(
+        "--j-dev-variant",
+        type=Path,
+        help=(
+            "uncertified dev-j-variant envelope; requires exactly one kernel "
+            "and --dev-workload-config"
+        ),
+    )
+    parser.add_argument(
+        "--dev-workload-config",
+        type=Path,
+        help=(
+            "digest-pinned natural Source/Harness invocation paired with "
+            "--j-dev-variant"
+        ),
+    )
+    parser.add_argument(
         "--workload-profile",
         choices=(
             PRODUCTION_WORKLOAD_PROFILE_CLOSED,
@@ -495,6 +576,22 @@ def main(argv: list[str] | None = None) -> int:
             if item.arm.value == args.arm
         )
     started = time.time_ns()
+    if (args.j_dev_variant is None) != (args.dev_workload_config is None):
+        raise ValueError(
+            "--j-dev-variant and --dev-workload-config must be supplied together"
+        )
+    if args.j_dev_variant is not None:
+        if len(args.kernels) != 1:
+            raise ValueError("development J export currently requires exactly one kernel")
+        if args.workload_profile != PRODUCTION_WORKLOAD_PROFILE_CLOSED:
+            raise ValueError(
+                "development workload owns its shape; --workload-profile must be closed-v1"
+            )
+        j_dev_variant = load_j_dev_variant(args.j_dev_variant)
+        dev_workload = load_dev_workload_config(args.dev_workload_config)
+    else:
+        j_dev_variant = None
+        dev_workload = None
     if (
         args.workload_profile == PRODUCTION_WORKLOAD_PROFILE_ROOFLINE_LARGE
         and args.kernels != ["masked_copy"]
@@ -511,6 +608,9 @@ def main(argv: list[str] | None = None) -> int:
             args.search_budget,
             axes,
             args.workload_profile,
+            j_dev_variant,
+            dev_workload,
+            args.j_dev_variant,
         )
         entries.append(entry)
         print(
@@ -531,7 +631,11 @@ def main(argv: list[str] | None = None) -> int:
             "binary_format": "elf-cubin",
             "load_policy": "exact-compute-capability",
         },
-        "workload_profile": args.workload_profile,
+        "workload_profile": (
+            next(iter({entry["workload_profile"] for entry in entries}))
+            if len({entry["workload_profile"] for entry in entries}) == 1
+            else "mixed_by_kernel"
+        ),
         "baseline_policy": (
             next(iter(baseline_policies))
             if len(baseline_policies) == 1

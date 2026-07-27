@@ -1,0 +1,46 @@
+{
+  "base_certification_status": "scrc_certified",
+  "base_snapshot_digest": "d4bb8faac7b953e8e540ab6f02350c198160dfba68645b3ed0822aa67307e8a3",
+  "dtype_config_id": "fp32_boundary_fp32_compute",
+  "edits": [
+    {
+      "json_path": "/j/intent/intent_function/inputs/0/shape/0",
+      "kind": "shape",
+      "new_value": "x1",
+      "old_value": 2,
+      "upstream_evidence": [
+        "Dataset/Liger-Kernel/benchmark/scripts/benchmark_dyt.py:25-38,118-126"
+      ]
+    },
+    {
+      "json_path": "/j/intent/intent_function/outputs/0/shape/0",
+      "kind": "shape",
+      "new_value": "x1",
+      "old_value": 2,
+      "upstream_evidence": [
+        "Dataset/Liger-Kernel/benchmark/scripts/benchmark_dyt.py:25-38,118-126"
+      ]
+    },
+    {
+      "json_path": "/j/boundary/domains/d0",
+      "kind": "domain",
+      "new_value": "(0 <= k0) and (k0 < x1)",
+      "old_value": "(0 <= k0) and (k0 < 2)",
+      "upstream_evidence": [
+        "Dataset/Liger-Kernel/benchmark/scripts/benchmark_dyt.py:25-38,118-126"
+      ]
+    },
+    {
+      "json_path": "/c/values/c0",
+      "kind": "c_value",
+      "new_value": 2048,
+      "old_value": 128,
+      "upstream_evidence": [
+        "Dataset/Liger-Kernel/src/liger_kernel/ops/dyt.py:99-105"
+      ]
+    }
+  ],
+  "protocol": "intentir.backend.dev-j-recipe.v1",
+  "shape_config_id": "upstream_bt4096_h4096_fp32_slice",
+  "source_kernel_id": "high_performance:liger_dyt"
+}
