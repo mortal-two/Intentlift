@@ -274,6 +274,11 @@ v2 实验合同把预算单位定义为不同的 canonical post-pass MLIR state�
 round-robin untimed warm-up。只计 prepared launch/graph，不把 allocation、cache eviction 或
 correctness synchronization 放进 timed closure。
 
+E3 bundle 另外显式记录 fixed-structure schedule spine 的 concrete order，并把其 provisional best
+列为 mandatory finalist。primary E3/E2 在同一 E3 candidate receipt 内比较 `spine best` 与
+`expanded best`；独立 E2/E3 进程的 absolute latency 与 cross-report ratio 仍归档，但不再让同一
+cubin 的微秒级时钟漂移冒充结构/数值增益。
+
 运行结果不用于放宽 memory/effect/ABI hard boundary。正确性测试与 performance selection 分离；
 历史 frozen-12 winner 另外与 canonical J 比较；新 controller 已对 observation-changing state 执行通用
 Q/D feasibility 与 direct-edge closure。baseline 是 SCRC 已使用的 exact declarative Triton
@@ -284,7 +289,7 @@ performance cache key 包含 M0 digest、target、candidate、toolchain 和 benc
 
 缓存/工作集与 Roofline 使用独立 machine spec
 `spec/lowering/backend-performance-measurement-v1.json`；当前 canonical JSON content digest（不是文件字节 SHA-256）为
-`aaf6dbbc5c48925cc58d81d66d2d68410e94953bc95350ebdeb29f998d20eae0`，每份 bundle/report 绑定当时 canonical
+`7797827a12b0563084dcc8c838c3b3017b84ae9381c9ad87e6379210b72c4fcf`，每份 bundle/report 绑定当时 canonical
 digest。参考 TileLang/Triton 的 kernel benchmark 口径，正式 CUDA 主数字为：先完成
 code/module/page/frequency warm-up，然后每次单次调用前在 event interval 外驱逐 L2，用 CUDA
 event 计时。当前 runner 将这个 **L2-controlled steady-state** 协议记为 `cold-data`。

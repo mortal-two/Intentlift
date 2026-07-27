@@ -382,6 +382,9 @@ def _one_kernel(
     active_order = (
         with_c_order if active_order_name == "with_c" else without_c_order
     )
+    schedule_spine_order = list(
+        search_orders.get("active_schedule_spine_concrete_order", [])
+    )
 
     initial_ranked = sorted(
         measured_indices,
@@ -390,7 +393,7 @@ def _one_kernel(
     # Always remeasure each ordering's provisional winner.  Otherwise a small
     # finalist_count could accidentally give only one C arm fresh samples.
     mandatory_indices: list[int] = []
-    for order in (with_c_order, without_c_order):
+    for order in (with_c_order, without_c_order, schedule_spine_order):
         arm_indices = [
             measured_index_by_id[candidate_id]
             for candidate_id in order
@@ -456,6 +459,7 @@ def _one_kernel(
 
     with_c_best = best_for_order(with_c_order)
     without_c_best = best_for_order(without_c_order)
+    schedule_spine_best = best_for_order(schedule_spine_order)
     best_record = best_for_order(active_order)
     if best_record is None:
         raise RuntimeError(
@@ -636,6 +640,25 @@ def _one_kernel(
                     else None
                 ),
             },
+            "schedule_spine_ablation": (
+                {
+                    "same_candidate_measurement_receipt": True,
+                    "same_total_search_visit": True,
+                    "schedule_spine_candidate_count": len(schedule_spine_order),
+                    "schedule_spine_best_candidate_id": (
+                        schedule_spine_best["candidate"]["candidate_id"]
+                    ),
+                    "schedule_spine_best_us": schedule_spine_best["latency_us"],
+                    "expanded_best_candidate_id": best_id,
+                    "expanded_best_us": best_record["latency_us"],
+                    "expanded_over_schedule_spine_speedup": (
+                        schedule_spine_best["latency_us"]
+                        / best_record["latency_us"]
+                    ),
+                }
+                if schedule_spine_best is not None
+                else None
+            ),
             "logical_io": {
                 "boundary_io_bytes": logical_io_bytes,
                 "mlir_logical_boundary_gbps": (

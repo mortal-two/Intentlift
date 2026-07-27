@@ -60,6 +60,7 @@
   "search_ablation": {
     "e2": "fixed structural and numeric trace with schedule search",
     "e3": "hard-safe structural/numeric lowering-state expansion with independent schedule search",
+    "e3_e2_primary_pairing": "select fixed-structure schedule-spine best and expanded best from one E3 candidate timing receipt; retain separately launched arm latencies only as a diagnostic cross-report ratio",
     "c_pairing": "C-prior and Erase-C traverse the same candidate universe under equal distinct-state/failure budget",
     "retile_pairing": "retiled and no-retile states use the same J, target lowerer, correctness policy, timer, and data regime",
     "candidate_correctness": "every measured executable candidate must pass Target-RefJ under the frozen Q/D search policy"

@@ -72,6 +72,12 @@ ABLATION_MEASUREMENT = {
         "declared untimed time budget in round-robin order; cold-data timing then "
         "evicts L2 before every measured launch"
     ),
+    "e3_e2_comparison_rule": (
+        "the primary marginal E3/E2 gain selects fixed-structure schedule-spine "
+        "best and expanded best from the same E3 candidate timing receipt; "
+        "separately launched E2/E3 absolute latencies remain a diagnostic "
+        "cross-report ratio"
+    ),
     "aggregation": "median per side with every paired batch retained",
 }
 DEFAULT_ABLATION_SPEC = (

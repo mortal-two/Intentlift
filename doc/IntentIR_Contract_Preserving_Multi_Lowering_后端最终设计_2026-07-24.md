@@ -981,7 +981,7 @@ load motion 等局部收益只作次级证据。G0/G1 是 E3 同一候选回执�
 `spec/lowering/backend-search-ablation-v2.json` 读取 E0--E4、L0/L1、N0--N3 的开关、预算类别、
 concrete-state identity 与计时合同，
 校验 protocol、字段全集和类型，并把 canonical spec digest 写入每份实验报告。当前 v2 spec digest 为
-`37448393b246f7b39a2234fff727495916946fa5e6e2306ed4de80d317cb8573`。runner 不得在代码中重新定义
+`28c2117f35e1360fa4f9b4c85f4af27edf343630d0d5be000eef0b3b4e9c8f9a`。runner 不得在代码中重新定义
 同名实验臂；spec 缺失、未知 arm、重复 arm 或非布尔开关均须 fail closed。这样论文中的 E2/E3、
 C 消融和数值机制消融都与实际执行的 candidate universe 绑定，而不是事后按 winner 改口径。
 
@@ -997,7 +997,7 @@ cache eviction 与 correctness synchronization 位于 timed closure 之外。
 E0--E4 只定义 candidate-space 因果轴，不足以定义一个可复现的高性能 Kernel
 实验。缓存状态与 Roofline 另由 `spec/lowering/backend-performance-measurement-v1.json`
 冻结；当前 canonical JSON content digest（不是文件原始字节 SHA-256）为
-`aaf6dbbc5c48925cc58d81d66d2d68410e94953bc95350ebdeb29f998d20eae0`，bundle/report 必须绑定当时的
+`7797827a12b0563084dcc8c838c3b3017b84ae9381c9ad87e6379210b72c4fcf`，bundle/report 必须绑定当时的
 canonical spec digest。评测参考 TileLang/Triton 的
 kernel benchmark 实践：代码、module、page allocation 与 GPU 频率先 warm-up，性能主数字则用
 CUDA event 计时，并在每次 single-shot 前在 timed interval 之外管理/驱逐 L2。因此必须区分：
@@ -1095,6 +1095,12 @@ E3 的 hard-safe candidate set 必须包含 E2 的全部候选；equal-total-bud
 - 小候选空间 exhaustive/oracle best；
 - 固定 latency map 下 E3/E4 的 full-budget convergence；
 - all-kernel 与 transformation-applicable subset，禁止只挑 winner。
+
+微秒级 Kernel 不得用两个独立进程的 best latency 直接归因于 E3。primary marginal gain 必须在同一
+E3 candidate timing receipt 中，从同一批 fresh finalist 样本分别选择 schedule-spine best 与
+expanded best；独立 E2/E3 报告仍保留 absolute latency、Source 配对和 cross-report ratio，但后者只作
+复现实验漂移诊断。若两侧选择同一 executable，same-receipt 增量自然为 `1.0x`，不能把时钟噪声写成
+lowering-state 收益。
 
 不同结构路径必然经过不同的高层 transformation trace；“同一 code generator”指共享同一 backend
 revision 和 terminal target pipeline，不要求结构分支使用完全相同的高层 rewrite。

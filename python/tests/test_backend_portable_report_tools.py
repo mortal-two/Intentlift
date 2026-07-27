@@ -72,6 +72,7 @@ def _cuda_report(arm: str, latency_us: float) -> dict:
                 "performance": {
                     "mlir_us": latency_us,
                     "source_triton_us": None,
+                    "schedule_spine_ablation": None,
                     "c_ordering_ablation": {
                         "c_prior_over_erase_c_speedup": 1.0
                     },
@@ -92,6 +93,23 @@ def test_cuda_ablation_summary_accepts_target_refj_only_reports():
     assert result["summary"]["geomean_e3_over_e2_speedup"] == 2.0
     assert result["summary"]["geomean_e2_speedup_over_source"] is None
     assert result["per_kernel"][0]["e3_speedup_over_source"] is None
+
+
+def test_cuda_ablation_summary_prefers_same_receipt_schedule_spine_gain():
+    e2 = _cuda_report("E2", 4.0)
+    e3 = _cuda_report("E3", 2.0)
+    e3["kernels"][0]["performance"]["schedule_spine_ablation"] = {
+        "same_candidate_measurement_receipt": True,
+        "schedule_spine_best_us": 3.0,
+        "expanded_best_us": 2.0,
+        "expanded_over_schedule_spine_speedup": 1.5,
+    }
+
+    result = cuda_summary.summarize(e2, e3)
+
+    assert result["summary"]["geomean_e3_over_e2_speedup"] == 1.5
+    assert result["summary"]["geomean_cross_report_e3_over_e2_speedup"] == 2.0
+    assert result["per_kernel"][0]["e3_over_e2_speedup"] == 1.5
 
 
 def test_cuda_ablation_summary_preserves_failed_horizontal_cells():

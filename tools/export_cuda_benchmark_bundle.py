@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -164,6 +165,48 @@ def _entry(
     }:
         raise AssertionError("C changed hard path admission")
 
+    def requested_schedule_spine(
+        spine_state: Any,
+        admitted_candidates: tuple[Any, ...],
+    ) -> list[str]:
+        if axes is None:
+            return []
+        if not axes.search_structural_states:
+            return [item.candidate_id for item in admitted_candidates]
+        schedule_axes = next(
+            item
+            for item in standard_ablation_plan(budget)
+            if item.arm is ExperimentArm.E2_SCHEDULE
+        )
+        schedule_axes = replace(
+            schedule_axes,
+            use_c_prior=axes.use_c_prior,
+        )
+        spine_kind, spine_fast_path = _fixed_path_for_axes(
+            spine_state, schedule_axes
+        )
+        spine_ids = {
+            item.candidate_id
+            for item in enumerate_cuda_candidates(
+                spine_state,
+                axes=schedule_axes,
+                fixed_lowering_path_kind=spine_kind,
+                fixed_fast_path_id=spine_fast_path,
+            )
+        }
+        return [
+            item.candidate_id
+            for item in admitted_candidates
+            if item.candidate_id in spine_ids
+        ]
+
+    seeded_schedule_spine = requested_schedule_spine(
+        state, seeded_candidates
+    )
+    unseeded_schedule_spine = requested_schedule_spine(
+        unseeded_state, unseeded_candidates
+    )
+
     candidates_by_id = {item.candidate_id: item for item in seeded_candidates}
     compiled: dict[str, dict[str, Any]] = {}
 
@@ -296,7 +339,9 @@ def _entry(
         result: list[str] = []
         seen: set[str] = set()
         for requested_id in requested_ids:
-            owner = aliases[requested_id]
+            owner = aliases.get(requested_id)
+            if owner is None:
+                continue
             if owner not in seen:
                 seen.add(owner)
                 result.append(owner)
@@ -304,8 +349,17 @@ def _entry(
 
     with_c_order = concrete_order(with_c_visit["concrete_ids"])
     without_c_order = concrete_order(without_c_visit["concrete_ids"])
+    with_c_schedule_spine_order = concrete_order(seeded_schedule_spine)
+    without_c_schedule_spine_order = concrete_order(
+        unseeded_schedule_spine
+    )
     use_c_prior = axes.use_c_prior if axes is not None else True
     active_order = with_c_order if use_c_prior else without_c_order
+    active_schedule_spine_order = (
+        with_c_schedule_spine_order
+        if use_c_prior
+        else without_c_schedule_spine_order
+    )
     rejected_by_id = {
         candidate_id: outcome["rejection"]
         for candidate_id, outcome in compiled.items()
@@ -346,8 +400,17 @@ def _entry(
             "without_c_attempt_trace": without_c_visit["trace"],
             "with_c_concrete_order": with_c_order,
             "without_c_concrete_order": without_c_order,
+            "with_c_schedule_spine_concrete_order": (
+                with_c_schedule_spine_order
+            ),
+            "without_c_schedule_spine_concrete_order": (
+                without_c_schedule_spine_order
+            ),
             "active_order": "with_c" if use_c_prior else "without_c",
             "active_concrete_order": active_order,
+            "active_schedule_spine_concrete_order": (
+                active_schedule_spine_order
+            ),
             "transported_union_count": len(admitted),
             "candidate_universe_equal": True,
             "contract_view_equal": True,

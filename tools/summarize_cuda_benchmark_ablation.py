@@ -122,6 +122,7 @@ def summarize(e2: Mapping[str, Any], e3: Mapping[str, Any]) -> dict[str, Any]:
     kernel_universe = sorted(set(e2_records) | set(e3_records))
     per_kernel: list[dict[str, Any]] = []
     e3_over_e2: list[float] = []
+    cross_report_e3_over_e2: list[float] = []
     e2_over_source: list[float] = []
     e3_over_source: list[float] = []
     c_speedups: list[float] = []
@@ -192,6 +193,24 @@ def summarize(e2: Mapping[str, Any], e3: Mapping[str, Any]) -> dict[str, Any]:
         )
         if c_gain is not None:
             c_speedups.append(float(c_gain))
+        cross_report_gain = e2_us / e3_us
+        spine_ablation = right["performance"].get("schedule_spine_ablation")
+        same_receipt_gain = None
+        if isinstance(spine_ablation, Mapping):
+            if not spine_ablation.get("same_candidate_measurement_receipt"):
+                raise ValueError(
+                    f"{kernel} schedule-spine comparison is not same-receipt"
+                )
+            same_receipt_gain = float(
+                spine_ablation["expanded_over_schedule_spine_speedup"]
+            )
+            if same_receipt_gain <= 0:
+                raise ValueError(f"{kernel} has a non-positive spine speedup")
+        primary_gain = (
+            same_receipt_gain
+            if same_receipt_gain is not None
+            else cross_report_gain
+        )
         record = {
             "kernel": kernel,
             "case_id": left.get("case_id"),
@@ -211,7 +230,19 @@ def summarize(e2: Mapping[str, Any], e3: Mapping[str, Any]) -> dict[str, Any]:
             "e3_status": e3_status,
             "e2_us": e2_us,
             "e3_us": e3_us,
-            "e3_over_e2_speedup": e2_us / e3_us,
+            "e3_over_e2_speedup": primary_gain,
+            "same_receipt_e3_over_e2_speedup": same_receipt_gain,
+            "cross_report_e3_over_e2_speedup": cross_report_gain,
+            "schedule_spine_best_us_in_e3_receipt": (
+                spine_ablation.get("schedule_spine_best_us")
+                if isinstance(spine_ablation, Mapping)
+                else None
+            ),
+            "expanded_best_us_in_e3_receipt": (
+                spine_ablation.get("expanded_best_us")
+                if isinstance(spine_ablation, Mapping)
+                else None
+            ),
             "e2_speedup_over_source": (
                 e2_source_us / e2_us if e2_source_us is not None else None
             ),
@@ -228,6 +259,7 @@ def summarize(e2: Mapping[str, Any], e3: Mapping[str, Any]) -> dict[str, Any]:
         per_kernel.append(record)
         paired_success_count += 1
         e3_over_e2.append(record["e3_over_e2_speedup"])
+        cross_report_e3_over_e2.append(cross_report_gain)
         if record["e2_speedup_over_source"] is not None:
             e2_over_source.append(record["e2_speedup_over_source"])
             e3_over_source.append(record["e3_speedup_over_source"])
@@ -248,6 +280,13 @@ def summarize(e2: Mapping[str, Any], e3: Mapping[str, Any]) -> dict[str, Any]:
             "failed_or_missing_count": len(kernel_universe) - paired_success_count,
             "source_baseline_kernel_count": len(e2_over_source),
             "geomean_e3_over_e2_speedup": _geomean(e3_over_e2),
+            "geomean_cross_report_e3_over_e2_speedup": _geomean(
+                cross_report_e3_over_e2
+            ),
+            "primary_e3_e2_estimand": (
+                "same-E3-receipt schedule-spine/expanded best when available; "
+                "cross-report ratio only for legacy reports"
+            ),
             "geomean_e2_speedup_over_source": _geomean(e2_over_source),
             "geomean_e3_speedup_over_source": _geomean(e3_over_source),
             "geomean_c_prior_over_erase_c_speedup": _geomean(c_speedups),
