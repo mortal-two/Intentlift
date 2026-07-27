@@ -1435,15 +1435,15 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
         "high_performance:liger_llama4_rope",
         buffers=(
             _buffer(
-                "q_ptr", BufferRole.INOUT, "f16", (1, 4, 2, 32), "q",
+                "q_ptr", BufferRole.INOUT, "f32", (1, 4, 2, 32), "q",
                 shape_contract=("h0", "h1", "h2", 32),
             ),
             _buffer(
-                "k_ptr", BufferRole.INOUT, "f16", (1, 4, 1, 32), "k",
+                "k_ptr", BufferRole.INOUT, "f32", (1, 4, 1, 32), "k",
                 shape_contract=("h0", "h1", "h3", 32),
             ),
             _buffer(
-                "freqs_complex_ptr", BufferRole.INPUT, "f16", (4, 16, 2),
+                "freqs_complex_ptr", BufferRole.INPUT, "f32", (4, 16, 2),
                 shape_contract=("h1", "h4", 2),
             ),
         ),

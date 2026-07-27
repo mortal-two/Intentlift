@@ -389,6 +389,7 @@ def test_rope_family_exposes_only_source_grounded_parametric_identities() -> Non
         "n_k_heads": "h3",
     }
     llama_buffers = {item.formal: item for item in llama.adapter.buffers}
+    assert {item.dtype for item in llama_buffers.values()} == {"f32"}
     assert llama_buffers["q_ptr"].shape_contract == ("h0", "h1", "h2", 32)
     assert llama_buffers["freqs_complex_ptr"].shape_contract == ("h1", "h4", 2)
 
