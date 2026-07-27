@@ -5,11 +5,12 @@ Trellis CLI、自动 session 或 workflow phase。
 
 ## 当前任务
 
-2026-07-24 只有 Task 11 是活动任务。它继承已归档 Task 10 的 v4/v8 协议，以独立 fresh
-lifecycle 对 28 个目标 Kernel 做有界 case-level 并行闭合，并按 registry ordinal 稳定汇总；不会
-恢复或改写已经结束的 Task 03。后端 B0/B1 仍在稳定 J corpus 形成后独立展开。
+2026-07-28 有两条对象所有权互不重叠的活动主线。Task 11/14 负责 fresh SCRC corpus，Task 15
+只读消费已落盘 accepted J/evidence并建设 production backend；Task 15 不调用 provider、不修改
+Lift/Replay/Gate verdict，Task 11/14 也不紧邻实现 target lowering。
 
-- [Task 11：SCRC v4 的 28-Kernel 有界并行全闭合](07-24-scrc-v4-full-closure-11/task.md)（执行中；唯一当前主线）
+- [Task 11：SCRC v4 的 28-Kernel 有界并行全闭合](07-24-scrc-v4-full-closure-11/task.md)（执行中；SCRC 主线）
+- [Task 15：18-J Development Variants 与真实跨目标后端能力闭合](07-28-backend-18j-capability-search-15/task.md)（执行中；backend主线）
 
 ## 本轮已归档任务
 
