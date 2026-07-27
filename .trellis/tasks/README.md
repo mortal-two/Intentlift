@@ -14,7 +14,7 @@ Task 11/14按 registry ordinal有界并行汇总，不恢复或改写已结束 T
 仍在稳定 J corpus形成后独立展开。
 
 - [Task 11：SCRC v4 的 28-Kernel 有界并行全闭合](07-24-scrc-v4-full-closure-11/task.md)（执行中；闭合主线）
-- [Task 14：Source-Grounded Certification Profile 下的 Codex 28-Kernel Fresh SCRC 最终闭合](07-27-codex-parametric-28-closure-14/task.md)（待执行；Task 11 的最终 fresh corpus执行波）
+- [Task 14：Source-Grounded Certification Profile 下的 Codex 28-Kernel Fresh SCRC 最终闭合](07-27-codex-parametric-28-closure-14/task.md)（执行中；Task 11 的最终 fresh corpus执行波）
 
 ## 本轮已归档任务
 

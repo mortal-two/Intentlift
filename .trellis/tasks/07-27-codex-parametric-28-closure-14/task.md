@@ -1,6 +1,6 @@
 # Task 14：Source-Grounded Certification Profile 下的 Codex 28-Kernel Fresh SCRC 最终闭合
 
-> 状态：待执行；本轮只完成最终任务定义，不启动新的 Lift/Replay batch
+> 状态：执行中（2026-07-28）；Wave 1首组按registry ordinal 1--7进行P_cert审查与fresh闭合
 >
 > 类型：Task 11 的最终 fresh corpus执行波；不是 production backend、`J_dev`能力建设、性能搜索、
 > 论文实验或历史证书重判。
