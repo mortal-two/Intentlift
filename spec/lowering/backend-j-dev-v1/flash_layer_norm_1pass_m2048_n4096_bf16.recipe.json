@@ -1,0 +1,325 @@
+{
+  "base_certification_status": "scrc_certified",
+  "base_snapshot_digest": "76ffde5e8eb4e53d0fca5afad8bb1d44ad4ba3f6c9df764dc67b21aa95402480",
+  "dtype_config_id": "bf16_boundary_fp32_accum",
+  "edits": [
+    {
+      "json_path": "/j/intent/intent_function/inputs/0/dtype",
+      "kind": "dtype",
+      "new_value": "bf16",
+      "old_value": "f16",
+      "upstream_evidence": [
+        ".trellis/archive/experiments/2026-07-22-formal-hash-protocol/manifests/real_llm_batch_28.json:230-284"
+      ]
+    },
+    {
+      "json_path": "/j/intent/intent_function/inputs/1/dtype",
+      "kind": "dtype",
+      "new_value": "bf16",
+      "old_value": "f16",
+      "upstream_evidence": [
+        ".trellis/archive/experiments/2026-07-22-formal-hash-protocol/manifests/real_llm_batch_28.json:230-284"
+      ]
+    },
+    {
+      "json_path": "/j/intent/intent_function/inputs/2/dtype",
+      "kind": "dtype",
+      "new_value": "bf16",
+      "old_value": "f16",
+      "upstream_evidence": [
+        ".trellis/archive/experiments/2026-07-22-formal-hash-protocol/manifests/real_llm_batch_28.json:230-284"
+      ]
+    },
+    {
+      "json_path": "/j/intent/intent_function/inputs/3/dtype",
+      "kind": "dtype",
+      "new_value": "bf16",
+      "old_value": "f16",
+      "upstream_evidence": [
+        ".trellis/archive/experiments/2026-07-22-formal-hash-protocol/manifests/real_llm_batch_28.json:230-284"
+      ]
+    },
+    {
+      "json_path": "/j/intent/intent_function/inputs/4/dtype",
+      "kind": "dtype",
+      "new_value": "bf16",
+      "old_value": "f16",
+      "upstream_evidence": [
+        ".trellis/archive/experiments/2026-07-22-formal-hash-protocol/manifests/real_llm_batch_28.json:230-284"
+      ]
+    },
+    {
+      "json_path": "/j/intent/intent_function/inputs/5/dtype",
+      "kind": "dtype",
+      "new_value": "bf16",
+      "old_value": "f16",
+      "upstream_evidence": [
+        ".trellis/archive/experiments/2026-07-22-formal-hash-protocol/manifests/real_llm_batch_28.json:230-284"
+      ]
+    },
+    {
+      "json_path": "/j/intent/intent_function/inputs/6/dtype",
+      "kind": "dtype",
+      "new_value": "bf16",
+      "old_value": "f16",
+      "upstream_evidence": [
+        ".trellis/archive/experiments/2026-07-22-formal-hash-protocol/manifests/real_llm_batch_28.json:230-284"
+      ]
+    },
+    {
+      "json_path": "/j/intent/intent_function/outputs/0/dtype",
+      "kind": "dtype",
+      "new_value": "bf16",
+      "old_value": "f16",
+      "upstream_evidence": [
+        ".trellis/archive/experiments/2026-07-22-formal-hash-protocol/manifests/real_llm_batch_28.json:230-284"
+      ]
+    },
+    {
+      "json_path": "/j/intent/intent_function/outputs/1/dtype",
+      "kind": "dtype",
+      "new_value": "bf16",
+      "old_value": "f16",
+      "upstream_evidence": [
+        ".trellis/archive/experiments/2026-07-22-formal-hash-protocol/manifests/real_llm_batch_28.json:230-284"
+      ]
+    },
+    {
+      "json_path": "/j/intent/intent_function/outputs/2/dtype",
+      "kind": "dtype",
+      "new_value": "bf16",
+      "old_value": "f16",
+      "upstream_evidence": [
+        ".trellis/archive/experiments/2026-07-22-formal-hash-protocol/manifests/real_llm_batch_28.json:230-284"
+      ]
+    },
+    {
+      "json_path": "/j/signature/parameters/0/dtype",
+      "kind": "dtype",
+      "new_value": "bf16",
+      "old_value": "f16",
+      "upstream_evidence": [
+        ".trellis/archive/experiments/2026-07-22-formal-hash-protocol/manifests/real_llm_batch_28.json:230-284"
+      ]
+    },
+    {
+      "json_path": "/j/signature/parameters/1/dtype",
+      "kind": "dtype",
+      "new_value": "bf16",
+      "old_value": "f16",
+      "upstream_evidence": [
+        ".trellis/archive/experiments/2026-07-22-formal-hash-protocol/manifests/real_llm_batch_28.json:230-284"
+      ]
+    },
+    {
+      "json_path": "/j/signature/parameters/2/dtype",
+      "kind": "dtype",
+      "new_value": "bf16",
+      "old_value": "f16",
+      "upstream_evidence": [
+        ".trellis/archive/experiments/2026-07-22-formal-hash-protocol/manifests/real_llm_batch_28.json:230-284"
+      ]
+    },
+    {
+      "json_path": "/j/signature/parameters/3/dtype",
+      "kind": "dtype",
+      "new_value": "bf16",
+      "old_value": "f16",
+      "upstream_evidence": [
+        ".trellis/archive/experiments/2026-07-22-formal-hash-protocol/manifests/real_llm_batch_28.json:230-284"
+      ]
+    },
+    {
+      "json_path": "/j/signature/parameters/4/dtype",
+      "kind": "dtype",
+      "new_value": "bf16",
+      "old_value": "f16",
+      "upstream_evidence": [
+        ".trellis/archive/experiments/2026-07-22-formal-hash-protocol/manifests/real_llm_batch_28.json:230-284"
+      ]
+    },
+    {
+      "json_path": "/j/signature/parameters/5/dtype",
+      "kind": "dtype",
+      "new_value": "bf16",
+      "old_value": "f16",
+      "upstream_evidence": [
+        ".trellis/archive/experiments/2026-07-22-formal-hash-protocol/manifests/real_llm_batch_28.json:230-284"
+      ]
+    },
+    {
+      "json_path": "/j/signature/parameters/6/dtype",
+      "kind": "dtype",
+      "new_value": "bf16",
+      "old_value": "f16",
+      "upstream_evidence": [
+        ".trellis/archive/experiments/2026-07-22-formal-hash-protocol/manifests/real_llm_batch_28.json:230-284"
+      ]
+    },
+    {
+      "json_path": "/j/signature/parameters/7/dtype",
+      "kind": "dtype",
+      "new_value": "bf16",
+      "old_value": "f16",
+      "upstream_evidence": [
+        ".trellis/archive/experiments/2026-07-22-formal-hash-protocol/manifests/real_llm_batch_28.json:230-284"
+      ]
+    },
+    {
+      "json_path": "/j/signature/parameters/8/dtype",
+      "kind": "dtype",
+      "new_value": "bf16",
+      "old_value": "f16",
+      "upstream_evidence": [
+        ".trellis/archive/experiments/2026-07-22-formal-hash-protocol/manifests/real_llm_batch_28.json:230-284"
+      ]
+    },
+    {
+      "json_path": "/j/signature/parameters/9/dtype",
+      "kind": "dtype",
+      "new_value": "bf16",
+      "old_value": "f16",
+      "upstream_evidence": [
+        ".trellis/archive/experiments/2026-07-22-formal-hash-protocol/manifests/real_llm_batch_28.json:230-284"
+      ]
+    },
+    {
+      "json_path": "/j/boundary/realization_authorizations/0/source_dtype",
+      "kind": "dtype",
+      "new_value": "bf16",
+      "old_value": "f16",
+      "upstream_evidence": [
+        ".trellis/archive/experiments/2026-07-22-formal-hash-protocol/manifests/real_llm_batch_28.json:230-284"
+      ]
+    },
+    {
+      "json_path": "/j/boundary/realization_authorizations/1/source_dtype",
+      "kind": "dtype",
+      "new_value": "bf16",
+      "old_value": "f16",
+      "upstream_evidence": [
+        ".trellis/archive/experiments/2026-07-22-formal-hash-protocol/manifests/real_llm_batch_28.json:230-284"
+      ]
+    },
+    {
+      "json_path": "/j/boundary/realization_authorizations/2/source_dtype",
+      "kind": "dtype",
+      "new_value": "bf16",
+      "old_value": "f16",
+      "upstream_evidence": [
+        ".trellis/archive/experiments/2026-07-22-formal-hash-protocol/manifests/real_llm_batch_28.json:230-284"
+      ]
+    },
+    {
+      "json_path": "/j/boundary/realization_authorizations/3/target_dtype",
+      "kind": "dtype",
+      "new_value": "bf16",
+      "old_value": "f16",
+      "upstream_evidence": [
+        ".trellis/archive/experiments/2026-07-22-formal-hash-protocol/manifests/real_llm_batch_28.json:230-284"
+      ]
+    },
+    {
+      "json_path": "/j/boundary/realization_authorizations/5/source_dtype",
+      "kind": "dtype",
+      "new_value": "bf16",
+      "old_value": "f16",
+      "upstream_evidence": [
+        ".trellis/archive/experiments/2026-07-22-formal-hash-protocol/manifests/real_llm_batch_28.json:230-284"
+      ]
+    },
+    {
+      "json_path": "/j/boundary/realization_authorizations/6/source_dtype",
+      "kind": "dtype",
+      "new_value": "bf16",
+      "old_value": "f16",
+      "upstream_evidence": [
+        ".trellis/archive/experiments/2026-07-22-formal-hash-protocol/manifests/real_llm_batch_28.json:230-284"
+      ]
+    },
+    {
+      "json_path": "/j/boundary/realization_authorizations/7/target_dtype",
+      "kind": "dtype",
+      "new_value": "bf16",
+      "old_value": "f16",
+      "upstream_evidence": [
+        ".trellis/archive/experiments/2026-07-22-formal-hash-protocol/manifests/real_llm_batch_28.json:230-284"
+      ]
+    },
+    {
+      "json_path": "/j/boundary/realization_authorizations/8/source_dtype",
+      "kind": "dtype",
+      "new_value": "bf16",
+      "old_value": "f16",
+      "upstream_evidence": [
+        ".trellis/archive/experiments/2026-07-22-formal-hash-protocol/manifests/real_llm_batch_28.json:230-284"
+      ]
+    },
+    {
+      "json_path": "/j/boundary/realization_authorizations/9/source_dtype",
+      "kind": "dtype",
+      "new_value": "bf16",
+      "old_value": "f16",
+      "upstream_evidence": [
+        ".trellis/archive/experiments/2026-07-22-formal-hash-protocol/manifests/real_llm_batch_28.json:230-284"
+      ]
+    },
+    {
+      "json_path": "/j/boundary/realization_authorizations/10/target_dtype",
+      "kind": "dtype",
+      "new_value": "bf16",
+      "old_value": "f16",
+      "upstream_evidence": [
+        ".trellis/archive/experiments/2026-07-22-formal-hash-protocol/manifests/real_llm_batch_28.json:230-284"
+      ]
+    },
+    {
+      "json_path": "/j/intent/intent_function/body/5/attrs/to_dtype",
+      "kind": "dtype",
+      "new_value": "bf16",
+      "old_value": "f16",
+      "upstream_evidence": [
+        ".trellis/archive/experiments/2026-07-22-formal-hash-protocol/manifests/real_llm_batch_28.json:230-284"
+      ]
+    },
+    {
+      "json_path": "/j/intent/intent_function/body/25/attrs/to_dtype",
+      "kind": "dtype",
+      "new_value": "bf16",
+      "old_value": "f16",
+      "upstream_evidence": [
+        ".trellis/archive/experiments/2026-07-22-formal-hash-protocol/manifests/real_llm_batch_28.json:230-284"
+      ]
+    },
+    {
+      "json_path": "/j/intent/intent_function/body/31/attrs/to_dtype",
+      "kind": "dtype",
+      "new_value": "bf16",
+      "old_value": "f16",
+      "upstream_evidence": [
+        ".trellis/archive/experiments/2026-07-22-formal-hash-protocol/manifests/real_llm_batch_28.json:230-284"
+      ]
+    },
+    {
+      "json_path": "/j/intent/intent_function/body/32/attrs/to_dtype",
+      "kind": "dtype",
+      "new_value": "bf16",
+      "old_value": "f16",
+      "upstream_evidence": [
+        ".trellis/archive/experiments/2026-07-22-formal-hash-protocol/manifests/real_llm_batch_28.json:230-284"
+      ]
+    },
+    {
+      "json_path": "/c/values/c0",
+      "kind": "c_value",
+      "new_value": 4096,
+      "old_value": 128,
+      "upstream_evidence": [
+        ".trellis/archive/experiments/2026-07-22-formal-hash-protocol/manifests/real_llm_batch_28.json:271-284"
+      ]
+    }
+  ],
+  "protocol": "intentir.backend.dev-j-recipe.v1",
+  "shape_config_id": "envelope_m2048_n4096_bf16",
+  "source_kernel_id": "high_performance:flash_attn.ops.triton.layer_norm._layer_norm_fwd_1pass_kernel"
+}

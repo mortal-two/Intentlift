@@ -12,6 +12,7 @@ import pytest
 from intentir.backend.cpu.abi import (
     CPUABIValidationError,
     descriptor_for,
+    numpy_dtype,
     ranked_memref_descriptor_type,
     validate_array,
 )
@@ -63,6 +64,17 @@ def test_abi_rejects_read_only_destination() -> None:
             context="output",
             writable=True,
         )
+
+
+def test_bf16_abi_uses_real_two_byte_storage_without_fp32_substitution() -> None:
+    dtype = numpy_dtype("bf16")
+    value = np.asarray([1.0, 1.5, -2.0], dtype=dtype)
+
+    assert dtype.name == "bfloat16"
+    assert dtype.itemsize == 2
+    assert value.view(np.uint16).tolist() == [0x3F80, 0x3FC0, 0xC000]
+    assert validate_array(value, shape=(3,), dtype="bf16", context="input") is value
+    assert descriptor_for(value).aligned == value.ctypes.data
 
 
 def test_active_scalar_path_has_no_source_or_target_backend_dependency() -> None:

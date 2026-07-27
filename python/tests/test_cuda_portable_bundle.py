@@ -37,6 +37,18 @@ def test_portable_array_preserves_rank_zero_and_exact_bytes() -> None:
     assert restored.tobytes() == scalar.tobytes()
 
 
+def test_portable_array_preserves_semantic_bf16_dtype_and_bits() -> None:
+    from intentir.backend.cpu.abi import numpy_dtype
+
+    value = np.asarray([1.0, 1.5, -2.0], dtype=numpy_dtype("bf16"))
+    encoded = encode_array(value)
+    restored = decode_array(encoded)
+
+    assert encoded["dtype"] == "bfloat16"
+    assert restored.dtype.name == "bfloat16"
+    assert restored.tobytes() == value.tobytes()
+
+
 def test_logical_runtime_array_preserves_j_rank_zero_abi() -> None:
     scalar = logical_runtime_array(
         np.asarray([3.25], dtype=np.float32), rank=0, name="scale"

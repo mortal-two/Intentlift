@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from pathlib import Path
 
 import pytest
 
@@ -8,6 +9,7 @@ from intentir.backend.dev_workload import (
     DevWorkloadConfig,
     DevWorkloadError,
     apply_dev_workload_config,
+    load_dev_workload_config,
     prepare_dev_workload,
 )
 from intentir.ir.production_snapshot import content_digest
@@ -15,6 +17,7 @@ from intentir.verify.workload_adapters import TRITON_WORKLOAD_ADAPTERS
 
 
 _CASE_ID = "high_performance:liger_rms_norm"
+_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _config(adapter_digest: str) -> DevWorkloadConfig:
@@ -108,3 +111,23 @@ def test_dev_workload_prepares_the_real_source_with_natural_abi() -> None:
         "X_ptr"
     ] == (2048, 4096)
     assert prepared.request.source.gate_source.function == "scrc_k0"
+
+
+def test_real_flash_layernorm_bf16_envelope_workload_is_digest_pinned() -> None:
+    config = load_dev_workload_config(
+        _ROOT
+        / "spec"
+        / "lowering"
+        / "backend-natural-workloads-v1"
+        / "flash_layer_norm_1pass_m2048_n4096_bf16.json"
+    )
+    prepared = prepare_dev_workload(config)
+    buffers = {item.formal: item for item in prepared.adapter.buffers}
+
+    assert config.dtype_config_id == "bf16_boundary_fp32_accum"
+    assert buffers["X"].dtype == "bf16"
+    assert buffers["X"].shape == (2048, 4096)
+    assert buffers["Mean"].dtype == "f32"
+    assert buffers["Mean"].shape == (2048,)
+    assert prepared.adapter.grid == (2048,)
+    assert dict(prepared.adapter.c_values)["BLOCK_N"] == 4096

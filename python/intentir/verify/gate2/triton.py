@@ -14,6 +14,7 @@ from typing import Any, Mapping
 
 import numpy as np
 
+from intentir.runtime_dtype import torch_tensor_from_numpy, torch_tensor_to_numpy
 from intentir.verify.gate1.compiler import KernelSource
 
 from .model import ExecutionResult
@@ -280,8 +281,11 @@ class PreparedTritonInvocation:
                 self.outputs[argument.output_key or argument.name] = tensor
             else:
                 raw = np.asarray(values[argument.value_key])
-                tensor = torch.as_tensor(
-                    raw, dtype=dtype, device=spec.device
+                tensor = torch_tensor_from_numpy(
+                    torch,
+                    raw,
+                    dtype=dtype,
+                    device=spec.device,
                 )
                 if argument.role is ArgumentRole.INOUT:
                     tensor = tensor.clone()
@@ -300,8 +304,10 @@ class PreparedTritonInvocation:
         return self.launch
 
     def copied_outputs(self) -> dict[str, np.ndarray]:
+        import torch
+
         return {
-            key: tensor.detach().cpu().numpy().copy()
+            key: torch_tensor_to_numpy(torch, tensor)
             for key, tensor in self.outputs.items()
         }
 

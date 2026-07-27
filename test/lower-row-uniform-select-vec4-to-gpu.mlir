@@ -17,6 +17,20 @@
 // CHECK: arith.select
 // CHECK: memref.store %{{.*}}, %{{.*}}[%{{.*}}, %{{.*}}] : memref<2x4xvector<4xf32>>
 // CHECK-NOT: intent.
+
+// Column-varying iota/select control remains scalar within each vector packet.
+// CHECK-LABEL: func.func @masked_rms_norm_f32_vec4(
+// CHECK-SAME: %{{[^,]+}}: memref<2x4xvector<4xf32>>
+// CHECK-SAME: %{{[^,]+}}: memref<4xvector<4xf32>>
+// CHECK-SAME: %{{[^,]+}}: memref<f32>
+// CHECK-SAME: %{{[^,]+}}: memref<i32>
+// CHECK-SAME: %{{[^,]+}}: memref<2x4xvector<4xf32>>
+// CHECK: memref.load %{{.*}}[%{{.*}}, %{{.*}}] : memref<2x4xvector<4xf32>>
+// CHECK: arith.cmpi slt
+// CHECK: arith.select
+// CHECK: memref.load %{{.*}}[%{{.*}}] : memref<4xvector<4xf32>>
+// CHECK: memref.store %{{.*}}, %{{.*}}[%{{.*}}, %{{.*}}] : memref<2x4xvector<4xf32>>
+// CHECK-NOT: intent.
 func.func @layer_norm_uniform_select_vec4(
     %X: tensor<2x16xf32>, %W: tensor<16xf32>, %B: tensor<16xf32>,
     %eps: tensor<f32>, %zero_centered_weight: tensor<i32>)
@@ -53,4 +67,30 @@ func.func @layer_norm_uniform_select_vec4(
   %Y = intent.map_binary %weighted, %B {fn = "add"} :
       (tensor<2x16xf32>, tensor<16xf32>) -> tensor<2x16xf32>
   return %Y, %mean, %rstd : tensor<2x16xf32>, tensor<2xf32>, tensor<2xf32>
+}
+
+func.func @masked_rms_norm_f32_vec4(
+    %X: tensor<2x16xf32>, %W: tensor<16xf32>, %eps: tensor<f32>,
+    %N: tensor<i32>) -> tensor<2x16xf32>
+    attributes {intent.scalar_equalities = array<i64: 3, 16>} {
+  %columns = intent.iota : tensor<16xi32>
+  %valid = intent.map_binary %columns, %N {fn = "lt"}
+    : (tensor<16xi32>, tensor<i32>) -> tensor<16xi1>
+  %zero = arith.constant dense<0.0> : tensor<f32>
+  %masked = intent.select %valid, %X, %zero
+    : (tensor<16xi1>, tensor<2x16xf32>, tensor<f32>) -> tensor<2x16xf32>
+  %x2 = intent.map_binary %masked, %masked {fn = "mul"}
+    : (tensor<2x16xf32>, tensor<2x16xf32>) -> tensor<2x16xf32>
+  %mean = intent.reduce %x2
+    {fn = "mean", axes = [1], assoc = "float_nondeterministic"}
+    : (tensor<2x16xf32>) -> tensor<2x1xf32>
+  %me = intent.map_binary %mean, %eps {fn = "add"}
+    : (tensor<2x1xf32>, tensor<f32>) -> tensor<2x1xf32>
+  %inv = intent.map_unary %me {fn = "rsqrt"}
+    : (tensor<2x1xf32>) -> tensor<2x1xf32>
+  %scaled = intent.map_binary %masked, %inv {fn = "mul"}
+    : (tensor<2x16xf32>, tensor<2x1xf32>) -> tensor<2x16xf32>
+  %Y = intent.map_binary %scaled, %W {fn = "mul"}
+    : (tensor<2x16xf32>, tensor<16xf32>) -> tensor<2x16xf32>
+  return %Y : tensor<2x16xf32>
 }

@@ -88,6 +88,24 @@ Task15 已新增物理分离、不可冒充证书的 `intentir.backend.dev-j-var
 这些是 development/warm 机制数据，尚不是最终 cold-data 主表；它们的作用是校准真实 backend
 mechanism 和 shape applicability，而不是提前冻结论文 aggregate。
 
+首个 mixed-precision slice 已走通：Flash one-pass LayerNorm 的 base J 本来具有显式 FP16↔FP32 cast
+graph；Task15 以 exact-edit `J_dev` 将完整 boundary/signature/authorization/cast carriers 一致替换为
+BF16，并在 manifest 声明的 `rows=128..4096, cols=256..8192, dtype∈{FP16,BF16}` envelope 内选取
+`M=2048,N=4096`。这不是 fresh SCRC certificate，也不把 archived concrete FP16 specialization写成
+BF16实测。
+
+该 slice 暴露并补齐了三项通用能力：
+
+- `value_if`/region interface-safe canonical re-elaboration；
+- `ml_dtypes.bfloat16` 的真实16-bit Host/RefDev/Source/target/portable transport，不再以FP32数组代替BF16；
+- C++ row-reduction 对无tail、in-bounds iota/select DAG 的 BF16 vec4 packet I/O；语义表达仍逐lane执行。
+
+RTX 5090D development event run中，BF16 `J_dev -> materialize -> C++ MLIR -> cubin` 形成20个可执行
+候选，19个通过 Target--RefDev，Source--RefDev通过；另一个 generic materialized graph因 host block-arg
+pointer transport缺口 fail closed并单独记账。vec4后的当前赢家约 `69.53 us`，Source约 `65.99 us`，
+仍慢约5.4%；expanded/schedule-only约`1.0023x`。因此它证明mixed-precision与packetization能力真实，
+但不被挑选成“大E3/E2”正例；剩余结构收益应在Softmax/RMSNorm/scan等适用图上横向寻找。
+
 ## 第一性原理约束
 
 1. core lowerer 只读取 J、可选 C 与 target capability；禁止读取 Source、Replay、pi、kernel name、
@@ -276,7 +294,7 @@ task/docs checkpoint
   -> dev-j-variant + 首批 natural config（已完成）
   -> direct !llvm.ptr multi-stage graph transport（已完成）
   -> requested/actual launch schedule receipt（已完成）
-  -> real 5090 natural-shape mechanism calibration（执行中）
+  -> real 5090 natural-shape + BF16 mechanism calibration（执行中）
   -> horizontal CUDA states
   -> RVV VL/retile/multicore
   -> C-Fixed + unified arms

@@ -20,6 +20,10 @@ certified ProductionSnapshot(base J, optional C)
 
 ## Receipt 必需字段
 
+`*.recipe.json` 只是带 authoritative base snapshot digest 与 exact edits 的作者化输入；下列字段属于
+`tools/create_backend_j_dev_variant.py` 生成并存入 `corpus/backend-j-dev-v1/` 的 variant receipt，不要求
+在 recipe 中重复。consumer 只信生成的 receipt，并对 base 重放 recipe edits。
+
 ```text
 protocol = intentir.backend.dev-j-variant.v1
 base_snapshot_digest
@@ -52,7 +56,8 @@ dtype 变体必须升级协议，不能用 v1 绕过。
 
 1. 核对 authoritative base snapshot/J/C digest；
 2. 对 base 深拷贝逐项核对 old value，再应用 edit；
-3. 删除 body 派生 `type` 并由 canonical `elaborate_j` 重建；半更新 shape/dtype 必须在 compiler 前失败；
+3. 递归删除普通 op 的派生 `type` 并由 canonical `elaborate_j` 重建；`value_if` result type 与 loop
+   carry type 是 region interface，必须保留或由 recipe 显式修改；半更新 shape/dtype 必须在 compiler 前失败；
 4. canonicalize C 并计算 variant digests；
 5. consumer 必须对 authoritative base 重新执行全部 edits，验证 payload 等于 replay 结果；
 6. paired dev-workload 必须匹配 kernel/shape/dtype config id，并 digest-pin real Source adapter；
@@ -64,6 +69,12 @@ J_dev 可以证明当前 compiler 能消费该 typed workload、候选在记录�
 继承 base 的 Gate1/Gate2，不进入 SCRC closure count，也不能写 `SCRC_CERTIFIED`。若该变体要成为完整
 SCRC→backend 论文证据，前端必须产生新的 accepted J digest并重新执行 Lift/TypeCheck/Replay/Gate1/Gate2。
 
-当前首批 recipe 只扩展 accepted FP32 J 的自然 shape，明确标记为 FP32 capability slice；上游 BF16
-部署 dtype 需要显式 cast/A graph 与 Source ABI 一致的新版 J_dev protocol 或 fresh accepted J，不能仅改
-Harness tensor dtype。
+当前首批 recipe 包含两类：accepted FP32 J 的自然 shape capability slice；以及 Flash one-pass
+LayerNorm 的 BF16 envelope slice。后者复用 base J 已显式存在的 half↔FP32 cast graph，只把全部相关
+boundary/signature/cast authorization/type carrier 从 FP16 一致替换为 BF16，并明确区分“上游声明的
+BF16 dtype envelope”与 archived concrete FP16 specialization。若 base J 没有这类显式 cast/A graph，
+仍必须升级协议或 fresh Lift，不能只改 Harness tensor dtype。
+
+BF16 host transport 使用 `ml_dtypes.bfloat16` 保存真实 16-bit storage/rounding，并以 raw bits 在
+NumPy↔Torch、CPU memref ABI 与 portable bundle 之间转换；RefDev、Source 与 target 输出保持 BF16 dtype，
+不再用 FP32 数组冒充 BF16。目标计算仍全部来自 MLIR/C++/target compiler。

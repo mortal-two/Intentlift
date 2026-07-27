@@ -12,6 +12,7 @@ from typing import Any, Iterable, Mapping
 
 import numpy as np
 
+from intentir.runtime_dtype import torch_tensor_from_numpy, torch_tensor_to_numpy
 from intentir.backend.materialize import MaterializedJ
 from intentir.backend.search_and_close import (
     ExecutionDomain,
@@ -191,11 +192,13 @@ class CudaOpaqueExecution:
                     rank=len(tensor.shape),
                     name=logical_name,
                 )
-                inputs[logical_name] = torch.as_tensor(
+                inputs[logical_name] = torch_tensor_from_numpy(
+                    torch,
                     raw,
                     dtype=_torch_dtype(torch, tensor.dtype),
                     device="cuda",
-                ).clone()
+                    clone=True,
+                )
             outputs = execute_cuda_artifact(
                 executable,
                 self.materialized.intent_mlir,
@@ -203,11 +206,9 @@ class CudaOpaqueExecution:
             )
             logical_outputs = tuple(item.name for item in self.j.intent.outputs)
             copied = {
-                case.output_binding_map[logical_name]: outputs[f"out{index}"]
-                .detach()
-                .cpu()
-                .numpy()
-                .copy()
+                case.output_binding_map[logical_name]: torch_tensor_to_numpy(
+                    torch, outputs[f"out{index}"]
+                )
                 for index, logical_name in enumerate(logical_outputs)
             }
             return ExecutionResult(

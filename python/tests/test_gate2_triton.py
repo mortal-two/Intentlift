@@ -11,6 +11,7 @@ from intentir.verify.gate2 import (
     TritonRunner,
 )
 from intentir.verify.gate2.triton import _launch_by_name
+from intentir.runtime_dtype import torch_tensor_from_numpy, torch_tensor_to_numpy
 
 
 class _FakeKernel:
@@ -129,6 +130,24 @@ def test_none_argument_is_closed_and_name_keyed() -> None:
     )
     assert kernel.kwargs is not None
     assert kernel.kwargs["optional"] is None
+
+
+def test_bf16_numpy_torch_transport_preserves_exact_bits_on_cpu() -> None:
+    torch = pytest.importorskip("torch")
+    from intentir.backend.cpu.abi import numpy_dtype
+
+    value = np.asarray([1.0, 1.5, -2.0], dtype=numpy_dtype("bf16"))
+    tensor = torch_tensor_from_numpy(
+        torch,
+        value,
+        dtype=torch.bfloat16,
+        device="cpu",
+    )
+    restored = torch_tensor_to_numpy(torch, tensor)
+
+    assert tensor.dtype is torch.bfloat16
+    assert restored.dtype.name == "bfloat16"
+    assert restored.tobytes() == value.tobytes()
 
 
 def _cuda_available() -> bool:

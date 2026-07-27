@@ -1,0 +1,62 @@
+{
+  "base_adapter_digest": "fbbfaffb598717161b176881ba2484714def0b2e220f57a48984fd2cf7b69a07",
+  "buffer_dtypes": {
+    "B": "bf16",
+    "B1": "bf16",
+    "RESIDUAL": "bf16",
+    "RESIDUAL_OUT": "bf16",
+    "W": "bf16",
+    "W1": "bf16",
+    "X": "bf16",
+    "X1": "bf16",
+    "Y": "bf16",
+    "Y1": "bf16"
+  },
+  "buffer_shapes": {
+    "B": [4096],
+    "B1": [4096],
+    "DROPOUT_MASK": [2048, 4096],
+    "DROPOUT_MASK1": [2048, 4096],
+    "Mean": [2048],
+    "RESIDUAL": [2048, 4096],
+    "RESIDUAL_OUT": [2048, 4096],
+    "ROWSCALE": [2048],
+    "Rstd": [2048],
+    "SEEDS": [2048],
+    "W": [4096],
+    "W1": [4096],
+    "X": [2048, 4096],
+    "X1": [2048, 4096],
+    "Y": [2048, 4096],
+    "Y1": [2048, 4096]
+  },
+  "c_values": {
+    "BLOCK_N": 4096
+  },
+  "case_id": "high_performance:flash_attn.ops.triton.layer_norm._layer_norm_fwd_1pass_kernel",
+  "concrete_extents": {
+    "x0": 2048,
+    "x1": 4096
+  },
+  "config_digest": "8d24216a691d04f3c1c28de4f3ed79e4d0da12b48bf27056da26577c0d1bdb4b",
+  "dtype_config_id": "bf16_boundary_fp32_accum",
+  "grid": [2048],
+  "grid_contract": ["M"],
+  "protocol": "intentir.backend.dev-workload.v1",
+  "scalar_values": {
+    "M": 2048,
+    "N": 4096,
+    "stride_res_out_row": 4096,
+    "stride_res_row": 4096,
+    "stride_x1_row": 4096,
+    "stride_x_row": 4096,
+    "stride_y1_row": 4096,
+    "stride_y_row": 4096
+  },
+  "semantic_constexprs": {},
+  "shape_config_id": "envelope_m2048_n4096_bf16",
+  "upstream_evidence": [
+    ".trellis/archive/experiments/2026-07-22-formal-hash-protocol/manifests/real_llm_batch_28.json:230-284",
+    "BF16 is in the declared dtype envelope; the archived concrete specialization remains FP16 and is not claimed as a BF16 measurement"
+  ]
+}

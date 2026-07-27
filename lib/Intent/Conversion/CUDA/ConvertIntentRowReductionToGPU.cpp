@@ -1937,13 +1937,14 @@ struct RowReductionLowering {
 
     // Contiguous vector gate (register-tile path only): vector<4xf32> for
     // native f32 graphs, vector<4xf16/bf16> for mixed-precision storage.
-    // Column-indexed control stays on the scalar path, but a select whose
-    // condition is a proven rank-0 scalar is lane-invariant and therefore safe
-    // after vector loads.  Every Row/Col ABI value and RowOut must share the
-    // selected storage type; arithmetic still proceeds through scalar emitAt.
+    // Vectorization changes only the packetization of in-bounds Row/Col loads
+    // and RowOut stores.  Iota/comparison/select DAGs still execute lane by lane
+    // through emitAt using the exact scalar column represented by each packet
+    // lane, so column-varying control is not a reason to suppress packet I/O.
+    // The no-tail/no-inactive-thread guards above are the memory-safety proof.
+    // Every Row/Col ABI value and RowOut must share the selected storage type.
     if (requestedVectorWidth != 1 && sched.kind == KRegister &&
         !hasInactiveFeatureThreads && !hasFeatureTail && numGroups == 0) {
-      bool hasColumnIndexedControl = false;
       bool allVectorABIValuesF32 = true;
       for (unsigned index = 0; index < argRoles.size(); ++index)
         if ((argRoles[index] == Role::Row || argRoles[index] == Role::Col) &&
@@ -1953,20 +1954,11 @@ struct RowReductionLowering {
         if (outRoles[index] == ResultRole::RowOut &&
             cast<RankedTensorType>(fty.getResult(index)).getElementType() != f32)
           allVectorABIValuesF32 = false;
-      for (Operation &op : fn.getBody().front().without_terminator()) {
-        if (isa<IotaOp>(&op)) {
-          hasColumnIndexedControl = true;
-          continue;
-        }
-        if (auto select = dyn_cast<SelectOp>(&op))
-          hasColumnIndexedControl |= !isStaticUniform(select.getCond());
-      }
-      if (!hasColumnIndexedControl && allVectorABIValuesF32 && (K % 4 == 0)) {
+      if (allVectorABIValuesF32 && (K % 4 == 0)) {
         useVec4 = true;
         numVecTiles = K / 4;
         sched.vectorWidth = 4; // M6: record the vectorized load/store plan
-      } else if (!hasColumnIndexedControl && (K % 4 == 0) &&
-                 (halfSoftmax || explicitHalfStorage) &&
+      } else if ((K % 4 == 0) && (halfSoftmax || explicitHalfStorage) &&
                  llvm::none_of(inplaceArg,
                                [](int64_t arg) { return arg >= 0; })) {
         Type candidate;

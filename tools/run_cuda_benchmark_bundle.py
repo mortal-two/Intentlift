@@ -13,6 +13,7 @@ from typing import Any, Mapping
 
 import numpy as np
 
+from intentir.runtime_dtype import torch_tensor_from_numpy, torch_tensor_to_numpy
 from intentir.backend.cuda.benchmark import (
     ExtractedGraphLaunch,
     ExtractedSingleLaunch,
@@ -199,8 +200,10 @@ def _measure_cuda_roofs(
 def _actual_outputs(
     output_keys: list[str], outputs: list[Any]
 ) -> dict[str, np.ndarray]:
+    import torch
+
     return {
-        key: tensor.detach().cpu().numpy().copy()
+        key: torch_tensor_to_numpy(torch, tensor)
         for key, tensor in zip(output_keys, outputs, strict=True)
     }
 
@@ -255,12 +258,14 @@ def _one_kernel(
             raise ValueError(f"bundled runtime input {name!r} is absent from J")
         logical = j_inputs[name]
         inputs.append(
-            torch.as_tensor(
+            torch_tensor_from_numpy(
+                torch,
                 logical_runtime_array(
                     values[entry["input_bindings"][name]],
                     rank=len(logical.shape),
                     name=name,
                 ),
+                dtype=_torch_dtype(torch, logical.dtype),
                 device="cuda",
             )
         )
@@ -321,81 +326,92 @@ def _one_kernel(
         str, tuple[Mapping[str, Any], PortableExtractedLaunch, Any]
     ] = {}
     for candidate in entry["candidates"]:
-        extracted = portable_launch_from_dict(candidate["launch"])
-        if (
-            extracted.source_mlir_sha256
-            != entry["materialization"]["intent_mlir_sha256"]
-        ):
-            raise ValueError("candidate launch does not belong to bundled M0")
-        if isinstance(extracted, ExtractedSingleLaunch):
-            prepared = PreparedSingleLaunch.from_extracted(extracted)
-            thunk = prepared.thunk(tensors)
-            candidate_outputs = outputs
-        elif isinstance(extracted, ExtractedGraphLaunch):
-            prepared = PreparedGraphLaunch.from_extracted(extracted, inputs)
-            thunk = prepared.thunk()
-            candidate_outputs = list(prepared.outputs.values())
-            if len(candidate_outputs) != len(entry["output_keys"]):
-                raise ValueError(
-                    "prepared graph output count differs from bundled J results"
+        try:
+            extracted = portable_launch_from_dict(candidate["launch"])
+            if (
+                extracted.source_mlir_sha256
+                != entry["materialization"]["intent_mlir_sha256"]
+            ):
+                raise ValueError("candidate launch does not belong to bundled M0")
+            if isinstance(extracted, ExtractedSingleLaunch):
+                prepared = PreparedSingleLaunch.from_extracted(extracted)
+                thunk = prepared.thunk(tensors)
+                candidate_outputs = outputs
+            elif isinstance(extracted, ExtractedGraphLaunch):
+                prepared = PreparedGraphLaunch.from_extracted(extracted, inputs)
+                thunk = prepared.thunk()
+                candidate_outputs = list(prepared.outputs.values())
+                if len(candidate_outputs) != len(entry["output_keys"]):
+                    raise ValueError(
+                        "prepared graph output count differs from bundled J results"
+                    )
+            else:
+                raise TypeError("unsupported portable CUDA launch receipt")
+            thunk()
+            torch.cuda.synchronize()
+            agreement = _compare(
+                name="mlir-cubin",
+                actual=_actual_outputs(entry["output_keys"], candidate_outputs),
+                reference=reference,
+                snapshot=snapshot,
+                entry=entry,
+                values=values,
+            )
+            if not agreement.passed:
+                candidate_records.append(
+                    {
+                        "candidate": candidate["candidate"],
+                        "status": "incorrect",
+                        "correctness": agreement.to_json(),
+                        "concrete_state": candidate.get("concrete_state"),
+                        "lowering": candidate.get("lowering"),
+                    }
                 )
-        else:
-            raise TypeError("unsupported portable CUDA launch receipt")
-        thunk()
-        torch.cuda.synchronize()
-        agreement = _compare(
-            name="mlir-cubin",
-            actual=_actual_outputs(entry["output_keys"], candidate_outputs),
-            reference=reference,
-            snapshot=snapshot,
-            entry=entry,
-            values=values,
-        )
-        if not agreement.passed:
+                continue
+            cold_warmup_rounds = (
+                _warmup_thunks(torch, (thunk,), warmup_ms=warmup_ms)
+                if data_regime == "cold-data"
+                else 0
+            )
+            latency = measure(thunk)
             candidate_records.append(
                 {
                     "candidate": candidate["candidate"],
-                    "status": "incorrect",
+                    "status": "measured",
+                    "latency_us": latency,
                     "correctness": agreement.to_json(),
+                    "concrete_state": candidate.get("concrete_state"),
+                    "lowering": candidate.get("lowering"),
+                    "launch": extracted.record.to_dict(),
+                    "executable_sha256": extracted.executable_sha256,
+                    "binary_size_bytes": extracted.binary_size_bytes,
+                    "cubin_sha256": (
+                        extracted.cubin_sha256
+                        if isinstance(extracted, ExtractedSingleLaunch)
+                        else None
+                    ),
+                    "cubin_size_bytes": (
+                        len(extracted.cubin)
+                        if isinstance(extracted, ExtractedSingleLaunch)
+                        else None
+                    ),
+                    "logical_boundary_gbps": logical_io_bytes / latency / 1_000.0,
+                    "achieved_gflops": floating_point_ops / latency / 1_000.0,
+                    "cold_pre_measure_warmup_rounds": cold_warmup_rounds,
+                }
+            )
+            candidate_id = candidate["candidate"]["candidate_id"]
+            candidate_artifacts[candidate_id] = (candidate, extracted, thunk)
+        except Exception as exc:
+            candidate_records.append(
+                {
+                    "candidate": candidate["candidate"],
+                    "status": "runtime_or_transport_failed",
+                    "error": f"{type(exc).__name__}: {exc}",
                     "concrete_state": candidate.get("concrete_state"),
                     "lowering": candidate.get("lowering"),
                 }
             )
-            continue
-        cold_warmup_rounds = (
-            _warmup_thunks(torch, (thunk,), warmup_ms=warmup_ms)
-            if data_regime == "cold-data"
-            else 0
-        )
-        latency = measure(thunk)
-        candidate_records.append(
-            {
-                "candidate": candidate["candidate"],
-                "status": "measured",
-                "latency_us": latency,
-                "correctness": agreement.to_json(),
-                "concrete_state": candidate.get("concrete_state"),
-                "lowering": candidate.get("lowering"),
-                "launch": extracted.record.to_dict(),
-                "executable_sha256": extracted.executable_sha256,
-                "binary_size_bytes": extracted.binary_size_bytes,
-                "cubin_sha256": (
-                    extracted.cubin_sha256
-                    if isinstance(extracted, ExtractedSingleLaunch)
-                    else None
-                ),
-                "cubin_size_bytes": (
-                    len(extracted.cubin)
-                    if isinstance(extracted, ExtractedSingleLaunch)
-                    else None
-                ),
-                "logical_boundary_gbps": logical_io_bytes / latency / 1_000.0,
-                "achieved_gflops": floating_point_ops / latency / 1_000.0,
-                "cold_pre_measure_warmup_rounds": cold_warmup_rounds,
-            }
-        )
-        candidate_id = candidate["candidate"]["candidate_id"]
-        candidate_artifacts[candidate_id] = (candidate, extracted, thunk)
     measured_indices = [
         index
         for index, record in enumerate(candidate_records)

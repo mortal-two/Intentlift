@@ -9,6 +9,7 @@ from typing import Any, Mapping
 
 import numpy as np
 
+from intentir.runtime_dtype import portable_numpy_dtype, portable_numpy_dtype_name
 from intentir.verify.gate2.triton import (
     ArgumentRole,
     TritonArgument,
@@ -57,10 +58,12 @@ def encode_array(value: Any) -> dict[str, Any]:
     dense = array if array.flags.c_contiguous else np.ascontiguousarray(array)
     if dense.dtype.hasobject:
         raise ValueError("portable array cannot contain Python objects")
+    if not dense.dtype.isnative:
+        raise ValueError("portable array must use native byte order")
     payload = dense.tobytes(order="C")
     return {
         "protocol": ARRAY_PROTOCOL,
-        "dtype": dense.dtype.str,
+        "dtype": portable_numpy_dtype_name(dense.dtype),
         "shape": list(dense.shape),
         "sha256": hashlib.sha256(payload).hexdigest(),
         "data_base64": base64.b64encode(payload).decode("ascii"),
@@ -73,7 +76,7 @@ def decode_array(value: Mapping[str, Any]) -> np.ndarray:
     payload = base64.b64decode(value["data_base64"], validate=True)
     if hashlib.sha256(payload).hexdigest() != value.get("sha256"):
         raise ValueError("portable array digest mismatch")
-    dtype = np.dtype(value["dtype"])
+    dtype = portable_numpy_dtype(value["dtype"])
     shape = tuple(int(item) for item in value["shape"])
     array = np.frombuffer(payload, dtype=dtype).copy()
     expected = int(np.prod(shape, dtype=np.int64)) if shape else 1

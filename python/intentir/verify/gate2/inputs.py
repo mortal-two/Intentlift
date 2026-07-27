@@ -14,6 +14,8 @@ from typing import Any, Mapping, Sequence
 
 import numpy as np
 
+from intentir.runtime_dtype import is_numpy_bfloat16, numpy_bfloat16_dtype
+
 
 class InputDistribution(str, Enum):
     NORMAL = "normal"
@@ -61,7 +63,7 @@ _DTYPE_ALIASES = {
     "i32": "int32",
     "i64": "int64",
     "f16": "float16",
-    "bf16": "float32",
+    "bf16": "bfloat16",
     "f32": "float32",
     "f64": "float64",
 }
@@ -70,6 +72,8 @@ _DTYPE_ALIASES = {
 def _numpy_dtype(dtype: str) -> np.dtype[Any]:
     key = dtype.removeprefix("torch.").lower()
     key = _DTYPE_ALIASES.get(key, key)
+    if key == "bfloat16":
+        return numpy_bfloat16_dtype()
     try:
         return np.dtype(key)
     except TypeError as exc:
@@ -177,7 +181,7 @@ def generate_tensor_input(
     dtype = _numpy_dtype(spec.dtype)
     shape = tuple(int(extent) for extent in spec.shape)
 
-    if np.issubdtype(dtype, np.floating):
+    if np.issubdtype(dtype, np.floating) or is_numpy_bfloat16(dtype):
         return _floating_values(generator, spec, dtype)
     if spec.distribution in {
         InputDistribution.LARGE_DYNAMIC,

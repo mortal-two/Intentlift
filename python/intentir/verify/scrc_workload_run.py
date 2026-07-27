@@ -12,6 +12,8 @@ from typing import Any, Callable, Mapping
 
 import numpy as np
 
+from intentir.runtime_dtype import numpy_bfloat16_dtype
+
 from intentir.ir.canonical_j import canonicalize_gate1_artifact
 from intentir.verify.candidate_fanout import CandidateFanoutSearchReport
 from intentir.verify.gate1.model import (
@@ -108,9 +110,7 @@ def _numpy_dtype(dtype: str) -> np.dtype[Any]:
     }
     normalized = aliases.get(dtype.removeprefix("torch."), dtype)
     if normalized == "bf16":
-        # NumPy has no portable bfloat16; Gate2's torch leg performs the final
-        # dtype conversion from finite float32 Harness inputs.
-        normalized = "float32"
+        return numpy_bfloat16_dtype()
     try:
         return np.dtype(normalized)
     except TypeError as exc:

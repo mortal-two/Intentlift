@@ -247,10 +247,34 @@ def _reelaborate_derived_types(j_payload: dict[str, Any]) -> SemanticArchive:
         raise JDevVariantError("development J lacks canonical intent_function body") from exc
     if not isinstance(body, list):
         raise JDevVariantError("development J intent body must be a list")
-    for node in body:
-        if not isinstance(node, dict):
-            raise JDevVariantError("development J body node must be an object")
-        node.pop("type", None)
+
+    def strip_derived_types(nodes: list[Any]) -> None:
+        for node in nodes:
+            if not isinstance(node, dict):
+                raise JDevVariantError("development J body node must be an object")
+            opcode = node.get("op")
+            # value_if's result type and loop carry types are required region
+            # interface contracts, not disposable cached inference.  A recipe
+            # that changes either interface must edit those explicit fields.
+            # Ordinary op result types (including ops nested in regions) are
+            # derived and must be rebuilt after a boundary dtype/shape edit.
+            if opcode != "value_if":
+                node.pop("type", None)
+            nested = node.get("body", [])
+            if nested:
+                if not isinstance(nested, list):
+                    raise JDevVariantError("development J nested body must be a list")
+                strip_derived_types(nested)
+            if opcode in {"effect_if", "value_if"}:
+                for arm_name in ("positive", "negative"):
+                    arm = node.get(arm_name)
+                    if not isinstance(arm, dict) or not isinstance(arm.get("body"), list):
+                        raise JDevVariantError(
+                            f"development J {opcode} {arm_name} arm is malformed"
+                        )
+                    strip_derived_types(arm["body"])
+
+    strip_derived_types(body)
     try:
         return elaborate_j(SemanticArchive.from_json(j_payload))
     except (TypeError, ValueError, KeyError) as exc:

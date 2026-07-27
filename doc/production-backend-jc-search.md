@@ -68,6 +68,11 @@ pointer edit，canonical elaborator重建派生类型，consumer 还会对 autho
 真实 Source adapter 的 shape/dtype/scalar/constexpr/C/grid invocation；compiler 仍只接收 materialized
 J，不读取 workload 配置或 Source，也不由 Python 发射 target kernel。
 
+BF16 development workload 不再沿用旧的“NumPy FP32数组、Torch端最后转BF16”近似。统一 runtime dtype
+transport 使用 `ml_dtypes.bfloat16` 保留真实两字节存储与逐cast舍入，NumPy↔Torch以BF16 raw bits
+往返，portable bundle显式编码`bfloat16`而不是有歧义的`<V2`。该机制同时服务RefDev、Source、
+Replay与target observer，不参与target code generation。
+
 这里的 Q/D filter 是已经实现的唯一通用 `SearchAndCloseController`，不是每个 Kernel 的 Python
 emitter 或 validator。core MLIR compiler 不读取 Q；controller 只通过 signature-driven opaque harness
 执行 Source/Replay/RefJ/target，并使用冻结 comparator。`D_search` 对每个具体 post-pass MLIR state 做
@@ -216,6 +221,11 @@ post-pass Linalg op count 与 topology digest 来自真实 MLIR receipt，不是
 B capability 授权的 singleton/rank-0 host-by-value ABI。非 2 次幂 tail
 使用安全 in-bounds 地址 + guarded store，不产生越界，也避免每个 input load 的发散
 `scf.if`。
+
+mixed-precision row reduction 的vec4同样只改变静态in-bounds Row/Col load与RowOut store的packet
+宽度；iota/comparison/select仍按packet内每个真实column逐lane执行。因而在无tail、无inactive lane且
+全部Row/Col/RowOut storage一致时，column-varying mask不再无理由关闭FP16/BF16 vec4；post-pass
+`intent.launch_plan.vector_width`记录实际1或4，不能只相信requested `vector-width=0`。
 
 已消费：DYT、GeGLU、SwiGLU、TVD。TVD 的 optional-label 输入在 constexpr
 `HAS_LABEL=false` 后成为 dead ABI input；MLIR host signature 仍保留该 memref，但 C++

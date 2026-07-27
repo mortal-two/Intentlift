@@ -12,10 +12,15 @@ from intentir.backend.dev_j_variant import (
     JDevVariant,
     JDevVariantError,
     create_j_dev_variant,
+    load_j_dev_variant,
 )
+from intentir.backend.dev_workload import DevWorkloadConfig, prepare_dev_workload
 from intentir.backend.materialize import materialize_j
-from intentir.ir.production_snapshot import load_production_snapshot
+from intentir.ir.production_snapshot import content_digest, load_production_snapshot
 from intentir.verify.gate1.model import ImplementationConfig
+from intentir.verify.gate2.scalar import ScalarLoweringRunner
+from intentir.verify.scrc_workload_run import build_workload_jc_suite
+from intentir.verify.workload_adapters import TRITON_WORKLOAD_ADAPTERS
 
 
 _ROOT = Path(__file__).resolve().parents[2]
@@ -169,3 +174,80 @@ def test_dev_variant_rejects_duplicate_paths() -> None:
             dtype_config_id="fp32",
             edits=(edit, edit),
         )
+
+
+def test_real_flash_layernorm_bf16_variant_reelaborates_control_flow() -> None:
+    base, _path = load_production_snapshot(_CATALOG, "flash_layer_norm_1pass")
+    variant = load_j_dev_variant(
+        _ROOT
+        / "corpus"
+        / "backend-j-dev-v1"
+        / "flash_layer_norm_1pass_m2048_n4096_bf16.json"
+    )
+
+    variant.validate_against_base(base)
+    assert variant.dtype_config_id == "bf16_boundary_fp32_accum"
+    assert variant.c is not None and variant.c.values["c0"] == 4096
+    assert [item.dtype for item in variant.j.intent.inputs[:7]] == ["bf16"] * 7
+    assert [item.dtype for item in variant.j.intent.outputs[:3]] == ["bf16"] * 3
+    assert variant.j.intent.body[21].op == "value_if"
+    assert variant.j.intent.body[21].type == {"dtype": "f32", "shape": ["x1"]}
+    assert variant.j.intent.body[33].type == {"dtype": "bf16", "shape": ["x0", "x1"]}
+
+
+def test_real_flash_layernorm_bf16_refdev_preserves_boundary_dtype() -> None:
+    base, _path = load_production_snapshot(_CATALOG, "flash_layer_norm_1pass")
+    variant = load_j_dev_variant(
+        _ROOT
+        / "corpus"
+        / "backend-j-dev-v1"
+        / "flash_layer_norm_1pass_m2048_n4096_bf16.json"
+    )
+    case_id = variant.source_kernel_id
+    adapter = TRITON_WORKLOAD_ADAPTERS[case_id]
+    half_buffers = {
+        name: "bf16"
+        for name in (
+            "X",
+            "Y",
+            "W",
+            "B",
+            "RESIDUAL",
+            "X1",
+            "W1",
+            "B1",
+            "Y1",
+            "RESIDUAL_OUT",
+        )
+    }
+    prepared = prepare_dev_workload(
+        DevWorkloadConfig(
+            case_id=case_id,
+            shape_config_id="closed_shape_bf16_reference_smoke",
+            dtype_config_id="bf16_boundary_fp32_accum",
+            base_adapter_digest=content_digest(adapter.to_json()),
+            concrete_extents={"x0": 2, "x1": 127},
+            buffer_shapes={},
+            buffer_dtypes=half_buffers,
+            scalar_values={},
+            semantic_constexprs={},
+            c_values={},
+            grid=(2,),
+            grid_contract=("M",),
+            upstream_evidence=("BF16 dtype envelope reference smoke",),
+        )
+    )
+    assert base.c is not None
+    suite = build_workload_jc_suite(prepared, variant.j, base.c)
+    result = ScalarLoweringRunner().run(
+        suite.cases[0].refeval,
+        suite.cases[0].values,
+    )
+
+    assert result.ok, result.error
+    assert result.metadata["path"] == "canonical J -> typed structured CPU reference"
+    assert result.outputs["y"].dtype.name == "bfloat16"
+    assert result.outputs["y1"].dtype.name == "bfloat16"
+    assert result.outputs["residual_out"].dtype.name == "bfloat16"
+    assert result.outputs["mean"].dtype.name == "float32"
+    assert result.outputs["rstd"].dtype.name == "float32"
