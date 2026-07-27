@@ -114,6 +114,10 @@ def test_summary_keeps_all_corpus_and_applicable_subset_separate() -> None:
             structural=True,
         ),
         _record("E3", "k1", 9.0, paths=["cuda.a"]),
+        # A merged input may contain unrelated records; the explicit selected
+        # universe is the report boundary and must filter them out.
+        _record("E2", "k2", 1.0, paths=["cuda.a"]),
+        _record("E3", "k2", 0.1, paths=["cuda.a", "cuda.b"], structural=True),
     ]
 
     summary = summarize_ablation_records(

@@ -320,15 +320,12 @@ def _entry(
         raise RuntimeError(f"canonical J reference failed: {reference.error}")
     source = prepared.request.source.gate_source
     source_code, source_origin = source.read_code()
+    baseline_policy = str(workload_valuation["baseline_policy"])
     return {
         "kernel": name,
         "case_id": PRODUCTION_CASE_IDS[name],
         "workload_profile": workload_profile,
-        "baseline_policy": (
-            "target_refj_only"
-            if workload_profile == PRODUCTION_WORKLOAD_PROFILE_ROOFLINE_LARGE
-            else "source_and_refj"
-        ),
+        "baseline_policy": baseline_policy,
         "snapshot": snapshot.to_dict(),
         "snapshot_path": str(path),
         "workload_valuation": workload_valuation,
@@ -457,6 +454,7 @@ def main(argv: list[str] | None = None) -> int:
             f"{name}: {len(entry['candidates'])} target cubins",
             flush=True,
         )
+    baseline_policies = {str(entry["baseline_policy"]) for entry in entries}
     bundle = {
         "protocol": BUNDLE_PROTOCOL,
         "created_unix_ns": time.time_ns(),
@@ -472,9 +470,9 @@ def main(argv: list[str] | None = None) -> int:
         },
         "workload_profile": args.workload_profile,
         "baseline_policy": (
-            "target_refj_only"
-            if args.workload_profile == PRODUCTION_WORKLOAD_PROFILE_ROOFLINE_LARGE
-            else "source_and_refj"
+            next(iter(baseline_policies))
+            if len(baseline_policies) == 1
+            else "mixed_by_kernel"
         ),
         "ablation_axes": axes.to_dict() if axes is not None else None,
         "experiment_spec_digest": (

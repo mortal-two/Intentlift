@@ -16,7 +16,11 @@ from intentir.backend.cuda.portable_bundle import encode_values
 from intentir.backend.cuda.production_cases import (
     PRODUCTION_CASE_IDS,
     PRODUCTION_WORKLOAD_PROFILE_CLOSED,
+    PRODUCTION_WORKLOAD_PROFILE_ROOFLINE_LARGE,
+    PRODUCTION_WORKLOAD_PROFILE_SYMBOLIC_LARGE,
+    PRODUCTION_WORKLOAD_PROFILE_SYMBOLIC_MEDIUM,
     constexpr_input_bindings,
+    profile_production_snapshot,
     prepare_production_workload,
 )
 from intentir.backend.materialize import attach_c, materialize_j
@@ -64,11 +68,22 @@ def _output_rules(snapshot: Any) -> dict[str, Any]:
     return result
 
 
-def _entry(name: str, snapshot_dir: Path) -> dict[str, Any]:
-    snapshot, path = load_production_snapshot(snapshot_dir, name)
-    if snapshot.c is None:
+def _entry(
+    name: str,
+    snapshot_dir: Path,
+    workload_profile: str = PRODUCTION_WORKLOAD_PROFILE_CLOSED,
+) -> dict[str, Any]:
+    base_snapshot, path = load_production_snapshot(snapshot_dir, name)
+    if base_snapshot.c is None:
         raise ValueError("RVV bundle requires frozen accepted C")
-    prepared = prepare_production_workload(name)
+    prepared = prepare_production_workload(name, profile=workload_profile)
+    snapshot, workload_valuation = profile_production_snapshot(
+        base_snapshot,
+        prepared,
+        workload_profile,
+    )
+    if snapshot.c is None:
+        raise AssertionError("workload valuation erased required C")
     suite = build_workload_jc_suite(prepared, snapshot.j, snapshot.c)
     case = suite.cases[0]
     dims = case.refeval.dims_map
@@ -188,6 +203,11 @@ def _entry(name: str, snapshot_dir: Path) -> dict[str, Any]:
     return {
         "kernel": name,
         "case_id": PRODUCTION_CASE_IDS[name],
+        "workload_profile": workload_profile,
+        "workload_valuation": workload_valuation,
+        # RVV has no Triton Source executable.  The Source-availability field in
+        # workload_valuation is retained for cross-target identity only.
+        "baseline_policy": "target_refj_only",
         "snapshot_path": str(path),
         "snapshot_digest": snapshot.snapshot_digest,
         "j_digest": snapshot.j_digest,
@@ -254,6 +274,16 @@ def _parser() -> argparse.ArgumentParser:
         choices=sorted(PRODUCTION_CASE_IDS),
         default=sorted(PRODUCTION_CASE_IDS),
     )
+    parser.add_argument(
+        "--workload-profile",
+        choices=(
+            PRODUCTION_WORKLOAD_PROFILE_CLOSED,
+            PRODUCTION_WORKLOAD_PROFILE_SYMBOLIC_MEDIUM,
+            PRODUCTION_WORKLOAD_PROFILE_SYMBOLIC_LARGE,
+            PRODUCTION_WORKLOAD_PROFILE_ROOFLINE_LARGE,
+        ),
+        default=PRODUCTION_WORKLOAD_PROFILE_CLOSED,
+    )
     return parser
 
 
@@ -262,9 +292,17 @@ def main(argv: list[str] | None = None) -> int:
     started = time.time_ns()
     entries = []
     failures = []
+    if (
+        args.workload_profile == PRODUCTION_WORKLOAD_PROFILE_ROOFLINE_LARGE
+        and args.kernels != ["masked_copy"]
+    ):
+        raise ValueError(
+            "roofline-large-j-only-v1 currently requires exactly "
+            "--kernels masked_copy"
+        )
     for name in args.kernels:
         try:
-            entry = _entry(name, args.snapshot_dir)
+            entry = _entry(name, args.snapshot_dir, args.workload_profile)
             entries.append(entry)
             print(
                 f"{name}: {len(entry['candidates'])} native RVV objects",
@@ -291,7 +329,7 @@ def main(argv: list[str] | None = None) -> int:
         "experiment_spec_digest": ablation_spec_digest(),
         "measurement_spec_protocol": MEASUREMENT_PROTOCOL,
         "measurement_spec_digest": measurement_spec_digest(),
-        "workload_profile": PRODUCTION_WORKLOAD_PROFILE_CLOSED,
+        "workload_profile": args.workload_profile,
         "baseline_policy": "target_refj_only",
         "correctness_policy": DEFAULT_GATE2_POLICY.to_json(),
         "true_mlir_pipeline": True,

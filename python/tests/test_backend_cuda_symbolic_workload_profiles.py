@@ -21,18 +21,35 @@ SNAPSHOTS = Path("corpus/production-jc-v1")
 
 
 @pytest.mark.parametrize(
-    ("name", "expected_dims", "expected_grid"),
+    ("name", "expected_dims", "expected_grid", "baseline_policy"),
     (
-        ("flash_bwd_preprocess", {"x0": 32}, (2, 32)),
-        ("flash_layer_norm_1pass", {"x0": 128, "x1": 1024}, (128,)),
-        ("jsd", {"x0": 128, "x1": 1024}, (128,)),
-        ("layer_norm", {"x0": 128, "x1": 1024}, (128,)),
-        ("sparsemax", {"x0": 128, "x1": 1024}, (128,)),
-        ("tvd", {"x0": 128, "x1": 1024}, (128,)),
+        ("dyt", {"x0": 1024}, (1, 2), "source_and_refj"),
+        ("flash_bwd_preprocess", {"x0": 32}, (2, 32), "source_and_refj"),
+        (
+            "flash_layer_norm_1pass",
+            {"x0": 128, "x1": 1024},
+            (128,),
+            "source_and_refj",
+        ),
+        ("fused_add_rms_norm", {"x0": 1024}, (2,), "source_and_refj"),
+        ("geglu", {"x0": 1024}, (2,), "source_and_refj"),
+        ("jsd", {"x0": 128, "x1": 1024}, (128,), "source_and_refj"),
+        ("kl_div", {"x0": 1024}, (2,), "source_and_refj"),
+        ("layer_norm", {"x0": 128, "x1": 1024}, (128,), "source_and_refj"),
+        ("liger_rms_norm", {"x0": 1024}, (2,), "source_and_refj"),
+        ("masked_copy", {"x0": 1024 * 1024}, (1024,), "target_refj_only"),
+        ("masked_row_square_sum", {"x0": 1024}, (2,), "source_and_refj"),
+        ("poly_norm", {"x0": 1024}, (2,), "source_and_refj"),
+        ("softmax", {"x0": 1024}, (2,), "source_and_refj"),
+        ("sparsemax", {"x0": 128, "x1": 1024}, (128,), "source_and_refj"),
+        ("swiglu", {"x0": 1024}, (2,), "source_and_refj"),
+        ("tvd", {"x0": 128, "x1": 1024}, (128,), "source_and_refj"),
+        ("xformers_rms_norm", {"x0": 1024}, (2,), "source_and_refj"),
+        ("xformers_rms_norm_add", {"x0": 1024}, (2,), "source_and_refj"),
     ),
 )
 def test_symbolic_medium_profile_revalues_harness_without_changing_j(
-    name, expected_dims, expected_grid
+    name, expected_dims, expected_grid, baseline_policy
 ):
     base, _ = load_production_snapshot(SNAPSHOTS, name)
     prepared = prepare_production_workload(
@@ -48,6 +65,7 @@ def test_symbolic_medium_profile_revalues_harness_without_changing_j(
     assert record["kind"] == "symbolic_extent_valuation"
     assert suite.cases[0].refeval.dims_map == expected_dims
     assert prepared.adapter.grid == expected_grid
+    assert record["baseline_policy"] == baseline_policy
 
 
 @pytest.mark.parametrize(
@@ -124,7 +142,7 @@ def test_flash_preprocess_symbolic_profile_derives_strides_from_literal_layout()
     (
         ("flash_bwd_preprocess", {"x0": 256}, (2, 256)),
         ("layer_norm", {"x0": 2048, "x1": 4096}, (2048,)),
-        ("sparsemax", {"x0": 1024, "x1": 2048}, (1024,)),
+        ("sparsemax", {"x0": 2048, "x1": 4096}, (2048,)),
     ),
 )
 def test_symbolic_large_profile_uses_only_declared_j_dimensions(
@@ -144,11 +162,20 @@ def test_symbolic_large_profile_uses_only_declared_j_dimensions(
     assert prepared.adapter.grid == expected_grid
 
 
-def test_symbolic_profile_rejects_literal_row_softmax():
-    with pytest.raises(ValueError, match="not registered"):
-        prepare_production_workload(
-            "softmax", profile=PRODUCTION_WORKLOAD_PROFILE_SYMBOLIC_MEDIUM
-        )
+def test_symbolic_profile_preserves_literal_row_softmax_while_revaluing_feature():
+    base, _ = load_production_snapshot(SNAPSHOTS, "softmax")
+    prepared = prepare_production_workload(
+        "softmax", profile=PRODUCTION_WORKLOAD_PROFILE_SYMBOLIC_MEDIUM
+    )
+    active, record = profile_production_snapshot(
+        base, prepared, PRODUCTION_WORKLOAD_PROFILE_SYMBOLIC_MEDIUM
+    )
+
+    shapes = {item.formal: item.shape for item in prepared.adapter.buffers}
+    assert shapes == {"Y_ptr": (2, 1024), "X_ptr": (2, 1024)}
+    assert prepared.adapter.grid == (2,)
+    assert active.j_digest == base.j_digest
+    assert record["literal_constraints"] == ["rows=2"]
 
 
 def test_large_reduction_c_prior_orders_exact_cuda_retile_first():

@@ -1111,7 +1111,9 @@ revision 和 terminal target pipeline，不要求结构分支使用完全相同�
 - E0--E4、L0/L1、N0--N3 对全 18 条目执行；不适用的 transformation 记为 `not_matched`，
   不从 all-corpus aggregate 中删除；
 - 每个 J 除 closed valuation 外，还要运行所有已登记且只绑定 J-declared symbols 的
-  medium/large valuation；没有符号轴时记 `literal_shape_only`，不伪造大 shape；
+  medium/large valuation；当前 18/18 都至少有一个可绑定 symbol，但 `rows=2`、Flash 的
+  batch/sequence/head_dim 等 literal 必须原样保留；未来完全没有符号轴的 J 才记
+  `literal_shape_only`，不伪造大 shape；
 - 报告同时给出 all-corpus、structure-applicable subset 与每 Kernel 数字，禁止只保留 winner
   或只报加速的 case；
 - target 缺 Source/Replay、J 缺某符号轴、pass 不匹配、compile failure 与 Q/D failure 都是
@@ -1209,6 +1211,14 @@ production-shape 论文主表：多数原始 closure workload 仅有 KiB 级 bou
 L2-controlled、J-symbolic production valuations，并将 literal-only 格子显式保留。不得把旧的
 closed-valuation aggregate 重命名为新主实验。
 
+横向 valuation intake 已先完成：一个 target-neutral、versioned、fail-closed 的
+`HarnessBindingSpec` 对 18/18 同步绑定 buffer axes、stride/scalar、semantic constexpr、C 与 grid；
+它不进入 compiler path selection。`symbolic-medium-v1` 与 `symbolic-large-v1` 均逐项保持原
+`j_digest` 并通过 `build_workload_jc_suite`，随后两档各 18/18 在 `sm_120a` 真实形成 canonical
+post-pass MLIR 与 cubin。
+其中 `masked_copy` 的 expanded valuation 因 Source 缺 `program_id` 明确标为
+`Target--RefJ-only`。这些是 implementation/coverage smoke，不提前充当正式 latency 表。
+
 ### 20.2 下一个冻结里程碑：18-J 横向 lowering 与评测
 
 当前 18 个 J 按 A 结构覆盖四类横向路径：
@@ -1227,9 +1237,9 @@ closed-valuation aggregate 重命名为新主实验。
 2. **CUDA/5090D 与 H100 共用高层 transformation。** 先完成 tail-safe vector load/store、多 reduction
    单趟累积与 producer/epilogue fusion，再补 scan/effect/contraction 状态；只由 target capability
    选择 NVVM/MMA 终端能力，不分裂出 kernel-name recipe。
-3. **RVV 与 CUDA 同步横向扩展。** 先把 workload-profile/symbolic valuation 接入 RVV portable
-   bundle，再实现 dynamic-VL strip mining、SEW/LMUL 状态、vector reduction/scan 和可审计的
-   multicore state；不把工作停在静态 tile 与 whole-graph fusion。
+3. **RVV 与 CUDA 同步横向扩展。** workload-profile/symbolic valuation 与 per-kernel receipt 已由
+   两个 portable exporter 共用；下一步实现 dynamic-VL strip mining、SEW/LMUL 状态、vector
+   reduction/scan 和可审计的 multicore state，不把工作停在静态 tile 与 whole-graph fusion。
 4. **搜索与 C 做横向收敛。** 每类 transformation 都进入同一 candidate-state universe；C 只重排
    全量状态。主表对 18/18 运行 E2/E3/E4，同时给 all-corpus 与 applicable subset。
 5. **性能验收不代替 correctness。** 所有候选仍先 Target--RefJ；有 Source/Replay 的 target 再完成

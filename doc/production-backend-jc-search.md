@@ -297,20 +297,25 @@ production-shape 主表。`roofline-large-j-only-v1` 是 masked-copy Target--Ref
 
 ### 6.1 当前 symbolic/literal 执行边界
 
-当前 CUDA catalog 已登记 `symbolic-medium-v1` 与 `symbolic-large-v1`，但只对 frozen J
-真实声明的符号 extent 生效：
+目标无关的 workload valuation catalog 已为 **18/18** 登记 `symbolic-medium-v1` 与
+`symbolic-large-v1`，CUDA 与 RVV exporter 共用同一份封闭 `HarnessBindingSpec`。profile 只对
+frozen J 真实声明的符号 extent 生效：
 
 - Flash preprocess：只放大 `heads=x0`；J 仍为 `[1,x0,33,16] -> [1,x0,64]`，因此
   batch/sequence/head_dim/rounded extent 均不变；
-- Flash one-pass LayerNorm、JSD、LayerNorm、Sparsemax、TVD：只绑定各自 J 已声明的
+- Flash one-pass LayerNorm、JSD、LayerNorm、Sparsemax、TVD：绑定各自 J 已声明的
   row/feature symbols；
-- Softmax 与 Liger RMSNorm：当前 J 外层 rows 是 literal `2`，不进入后端 row-scaling profile；
-- 其余格子只在 J 的 exact symbolic carriers 和 Source adapter 能同步绑定时增加 profile，
-  否则记 `literal_shape_only`/`profile_not_declared`。
+- DYT、fused-add RMSNorm、GeGLU、KLDiv、Liger RMSNorm、masked row square-sum、PolyNorm、
+  Softmax、SwiGLU 与两个 xFormers RMSNorm：只放大已声明的 feature symbol，外层 literal
+  `rows=2` 保持不变；
+- `masked_copy` 放大 J 的 `length=x0`，但 accepted Source 没有 `program_id`，所以 expanded
+  valuation 明确为 `Target--RefJ-only`；它仍在 18-J 矩阵中，不能伪造 Source speedup。
 
-profile receipt 必须同时绑定 base/active snapshot digest、不变的 J digest、具体 extent
-valuation 和 C digest。它不证明所有 shape，不修改旧 SCRC 证书，也不阻塞其他
-literal-only J 在 closed valuation 上的后端消费。
+profile receipt 同时绑定 base/active snapshot digest、不变的 J digest、具体 extent valuation、
+C digest、保留的 literal constraints 与 per-kernel baseline policy。18 个 medium 与 18 个 large
+valuation 已逐项通过 `build_workload_jc_suite`，并在 `sm_120a` 完成 canonical true-MLIR
+post-pass/cubin 编译烟测。该烟测证明 profile 可被真实后端消费，不是 performance/correctness 主结果；profile
+本身也不证明所有 shape、不修改旧 SCRC 证书。
 
 ### 6.2 all-18 横向评测矩阵
 
@@ -414,31 +419,44 @@ python tools/run_cuda_benchmark_bundle.py \
   --data-regime cold-data --timing event --cold-iterations 16 \
   --cache-flush-mib 256 --roofline-calibration
 
-# 当前所有已登记 symbolic-large J 的横向 CUDA 主口径；未登记格子
-# 仍在 all-18 coverage matrix 中记 literal_shape_only/profile_not_declared，不被删除。
+# all-18 symbolic-large CUDA 主口径：分别冻结 equal-budget E2/E3；未匹配与失败仍留在报告。
 python tools/export_cuda_benchmark_bundle.py \
   --snapshot-dir corpus/production-jc-v1 \
-  --kernels flash_bwd_preprocess flash_layer_norm_1pass jsd layer_norm sparsemax tvd \
+  --workload-profile symbolic-large-v1 --arm E2 --search-budget 32 \
+  --out /tmp/symbolic-large-sm120a-e2.json
+python tools/export_cuda_benchmark_bundle.py \
+  --snapshot-dir corpus/production-jc-v1 \
   --workload-profile symbolic-large-v1 --arm E3 --search-budget 32 \
-  --out /tmp/symbolic-large-sm120a.json
+  --out /tmp/symbolic-large-sm120a-e3.json
 python tools/run_cuda_benchmark_bundle.py \
-  --bundle /tmp/symbolic-large-sm120a.json \
-  --out /tmp/symbolic-large-sm120a-report.json \
+  --bundle /tmp/symbolic-large-sm120a-e2.json \
+  --out /tmp/symbolic-large-sm120a-e2-report.json \
   --data-regime cold-data --timing event --cold-iterations 16 \
   --cache-flush-mib 256
+python tools/run_cuda_benchmark_bundle.py \
+  --bundle /tmp/symbolic-large-sm120a-e3.json \
+  --out /tmp/symbolic-large-sm120a-e3-report.json \
+  --data-regime cold-data --timing event --cold-iterations 16 \
+  --cache-flush-mib 256
+python tools/summarize_cuda_benchmark_ablation.py \
+  --e2 /tmp/symbolic-large-sm120a-e2-report.json \
+  --e3 /tmp/symbolic-large-sm120a-e3-report.json \
+  --out /tmp/symbolic-large-sm120a-e2-e3.json
 
 # RVV：本地 true-MLIR 编译；当前环境的可用 SSH alias 为 rvv。
 python tools/export_rvv_benchmark_bundle.py \
   --snapshot-dir corpus/production-jc-v1 \
+  --workload-profile symbolic-medium-v1 \
   --out /tmp/rvv-bundle.json
 scp /tmp/rvv-bundle.json tools/run_rvv_benchmark_bundle.py rvv:/tmp/
 ssh rvv python3 /tmp/run_rvv_benchmark_bundle.py \
   --bundle /tmp/rvv-bundle.json --out /tmp/rvv-report.json
 ```
 
-当前 RVV exporter 尚未接入 `--workload-profile`，因此上述 RVV 命令只覆盖 all-18 closed
-valuation。将同一 symbolic valuation/profile receipt 接入 RVV portable bundle 是下一横向实施项；
-完成前不得把 CUDA large-profile 数字转写成 RVV 结果。
+RVV exporter 已接入与 CUDA 相同的 all-18 `--workload-profile` 与 per-kernel valuation receipt；
+RVV 没有 Triton Source executable，所以性能报告仍统一标记 `Target--RefJ-only`。CUDA 与 RVV
+可以共享 `(j_digest, nu, workload_profile)`，但不能跨 target 复用 latency 或把 CUDA Source
+speedup 转写成 RVV 结果。
 
 ## 10. 当前边界
 

@@ -312,7 +312,11 @@ def summarize_ablation_records(
     if not selected or not set(selected) <= set(universe):
         raise ValueError("selected kernels must be a non-empty universe subset")
     records_by_arm = {
-        arm: tuple(item for item in records if item.get("arm") == arm)
+        arm: tuple(
+            item
+            for item in records
+            if item.get("arm") == arm and item.get("kernel") in selected
+        )
         for arm in selected_arms
     }
     pair_specs = (

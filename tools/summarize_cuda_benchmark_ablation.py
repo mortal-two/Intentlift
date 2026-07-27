@@ -58,12 +58,22 @@ def _device_identity(report: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _successful(report: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
-    return {
-        str(item["kernel"]): item
-        for item in report["kernels"]
-        if "performance" in item
-    }
+def _records(report: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
+    result: dict[str, Mapping[str, Any]] = {}
+    for item in report["kernels"]:
+        kernel = str(item["kernel"])
+        if kernel in result:
+            raise ValueError(f"CUDA report contains duplicate kernel {kernel!r}")
+        result[kernel] = item
+    return result
+
+
+def _record_status(record: Mapping[str, Any] | None) -> str:
+    if record is None:
+        return "missing"
+    if "performance" in record:
+        return "success"
+    return str(record.get("status", "failed"))
 
 
 def _geomean(values: list[float]) -> float | None:
@@ -105,24 +115,61 @@ def summarize(e2: Mapping[str, Any], e3: Mapping[str, Any]) -> dict[str, Any]:
     if measurement != _measurement_identity(e3):
         raise ValueError("E2/E3 measurement contracts differ")
 
-    e2_records = _successful(e2)
-    e3_records = _successful(e3)
-    if set(e2_records) != set(e3_records):
-        raise ValueError("E2/E3 successful kernel sets differ")
+    e2_records = _records(e2)
+    e3_records = _records(e3)
+    kernel_universe = sorted(set(e2_records) | set(e3_records))
     per_kernel: list[dict[str, Any]] = []
     e3_over_e2: list[float] = []
     e2_over_source: list[float] = []
     e3_over_source: list[float] = []
     c_speedups: list[float] = []
     structurally_expanded: list[str] = []
-    for kernel in sorted(e2_records):
-        left = e2_records[kernel]
-        right = e3_records[kernel]
-        if left["j_digest"] != right["j_digest"]:
-            raise ValueError(f"{kernel} E2/E3 use different J digests")
-        for key in ("c_digest", "extents", "workload_valuation"):
+    paired_success_count = 0
+    for kernel in kernel_universe:
+        left = e2_records.get(kernel)
+        right = e3_records.get(kernel)
+        e2_status = _record_status(left)
+        e3_status = _record_status(right)
+        if e2_status != "success" or e3_status != "success":
+            identity = left or right or {}
+            per_kernel.append(
+                {
+                    "kernel": kernel,
+                    "case_id": identity.get("case_id"),
+                    "snapshot_digest": identity.get("snapshot_digest"),
+                    "j_digest": identity.get("j_digest"),
+                    "c_digest": identity.get("c_digest"),
+                    "extents": identity.get("extents"),
+                    "workload_valuation": identity.get("workload_valuation"),
+                    "workload_profile": identity.get(
+                        "workload_profile", e2.get("workload_profile")
+                    ),
+                    "baseline_policy": identity.get(
+                        "baseline_policy", e2.get("baseline_policy")
+                    ),
+                    "status": "failed_or_missing",
+                    "e2_status": e2_status,
+                    "e3_status": e3_status,
+                    "e2_error": left.get("error") if left is not None else None,
+                    "e3_error": right.get("error") if right is not None else None,
+                }
+            )
+            continue
+        assert left is not None and right is not None
+        for key in (
+            "case_id",
+            "snapshot_digest",
+            "j_digest",
+            "c_digest",
+            "extents",
+            "workload_valuation",
+            "workload_profile",
+            "baseline_policy",
+        ):
             if left.get(key) != right.get(key):
                 raise ValueError(f"{kernel} E2/E3 differ in {key}")
+        if left.get("j_digest") is None:
+            raise ValueError(f"{kernel} CUDA reports lack J identity")
         e2_us = float(left["performance"]["mlir_us"])
         e3_us = float(right["performance"]["mlir_us"])
         e2_source_value = left["performance"].get("source_triton_us")
@@ -145,7 +192,21 @@ def summarize(e2: Mapping[str, Any], e3: Mapping[str, Any]) -> dict[str, Any]:
             c_speedups.append(float(c_gain))
         record = {
             "kernel": kernel,
+            "case_id": left.get("case_id"),
+            "snapshot_digest": left.get("snapshot_digest"),
             "j_digest": left["j_digest"],
+            "c_digest": left.get("c_digest"),
+            "extents": left.get("extents"),
+            "workload_valuation": left.get("workload_valuation"),
+            "workload_profile": left.get(
+                "workload_profile", e2.get("workload_profile")
+            ),
+            "baseline_policy": left.get(
+                "baseline_policy", e2.get("baseline_policy")
+            ),
+            "status": "paired_success",
+            "e2_status": e2_status,
+            "e3_status": e3_status,
             "e2_us": e2_us,
             "e3_us": e3_us,
             "e3_over_e2_speedup": e2_us / e3_us,
@@ -163,6 +224,7 @@ def summarize(e2: Mapping[str, Any], e3: Mapping[str, Any]) -> dict[str, Any]:
             "c_prior_over_erase_c_speedup": c_gain,
         }
         per_kernel.append(record)
+        paired_success_count += 1
         e3_over_e2.append(record["e3_over_e2_speedup"])
         if record["e2_speedup_over_source"] is not None:
             e2_over_source.append(record["e2_speedup_over_source"])
@@ -170,6 +232,8 @@ def summarize(e2: Mapping[str, Any], e3: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "protocol": SUMMARY_PROTOCOL,
         "target": e2["target"],
+        "workload_profile": e2.get("workload_profile"),
+        "baseline_policy": e2.get("baseline_policy"),
         "device": _device_identity(e2),
         "measurement": measurement,
         "experiment_spec_digest": e2["experiment_spec_digest"],
@@ -177,7 +241,9 @@ def summarize(e2: Mapping[str, Any], e3: Mapping[str, Any]) -> dict[str, Any]:
         "measurement_spec_digest": e2.get("measurement_spec_digest"),
         "bundle_toolchain_digest": e2["bundle_toolchain_digest"],
         "summary": {
-            "kernel_count": len(per_kernel),
+            "kernel_count": len(kernel_universe),
+            "paired_success_count": paired_success_count,
+            "failed_or_missing_count": len(kernel_universe) - paired_success_count,
             "source_baseline_kernel_count": len(e2_over_source),
             "geomean_e3_over_e2_speedup": _geomean(e3_over_e2),
             "geomean_e2_speedup_over_source": _geomean(e2_over_source),

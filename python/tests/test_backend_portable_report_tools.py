@@ -90,6 +90,41 @@ def test_cuda_ablation_summary_accepts_target_refj_only_reports():
     assert result["per_kernel"][0]["e3_speedup_over_source"] is None
 
 
+def test_cuda_ablation_summary_preserves_failed_horizontal_cells():
+    e2 = _cuda_report("E2", 2.0)
+    e3 = _cuda_report("E3", 1.0)
+    e2["kernels"].append(
+        {
+            "kernel": "softmax",
+            "status": "failed",
+            "error": "compile failed",
+            "j_digest": "f" * 64,
+            "workload_profile": "roofline-large-j-only-v1",
+            "baseline_policy": "target_refj_only",
+        }
+    )
+    e3["kernels"].append(
+        {
+            "kernel": "softmax",
+            "status": "failed",
+            "error": "QD failed",
+            "j_digest": "f" * 64,
+            "workload_profile": "roofline-large-j-only-v1",
+            "baseline_policy": "target_refj_only",
+        }
+    )
+
+    result = cuda_summary.summarize(e2, e3)
+
+    assert result["summary"]["kernel_count"] == 2
+    assert result["summary"]["paired_success_count"] == 1
+    assert result["summary"]["failed_or_missing_count"] == 1
+    failed = next(item for item in result["per_kernel"] if item["kernel"] == "softmax")
+    assert failed["status"] == "failed_or_missing"
+    assert failed["e2_error"] == "compile failed"
+    assert failed["e3_error"] == "QD failed"
+
+
 def _rvv_report(kernel: str, *, toolchain: str = "a" * 64) -> dict:
     return {
         "protocol": rvv_merge.REPORT_PROTOCOL,
