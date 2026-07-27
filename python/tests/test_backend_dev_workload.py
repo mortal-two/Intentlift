@@ -169,3 +169,20 @@ def test_real_geglu_natural_workload_is_digest_pinned() -> None:
     assert prepared.adapter.grid == (4096,)
     assert dict(prepared.adapter.semantic_constexprs)["n_cols"] == 4096
     assert dict(prepared.adapter.c_values)["BLOCK_SIZE"] == 4096
+
+
+def test_real_rmsnorm_long_reduction_workload_is_digest_pinned() -> None:
+    config = load_dev_workload_config(
+        _ROOT
+        / "spec"
+        / "lowering"
+        / "backend-natural-workloads-v1"
+        / "liger_rms_norm_sweep_m2048_h16384_fp32.json"
+    )
+    prepared = prepare_dev_workload(config)
+    buffers = {item.formal: item for item in prepared.adapter.buffers}
+
+    assert buffers["X_ptr"].shape == (2048, 16384)
+    assert buffers["W_ptr"].shape == (16384,)
+    assert buffers["RSTD_ptr"].shape == (2048,)
+    assert dict(prepared.adapter.c_values)["BLOCK_SIZE"] == 16384

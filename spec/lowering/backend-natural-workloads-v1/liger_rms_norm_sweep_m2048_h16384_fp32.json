@@ -1,0 +1,49 @@
+{
+  "base_adapter_digest": "a5d9cebb7400fd5aed1d8f0120f0438eb36746993695037195f73882e5e6d45b",
+  "buffer_dtypes": {},
+  "buffer_shapes": {
+    "RSTD_ptr": [
+      2048
+    ],
+    "W_ptr": [
+      16384
+    ],
+    "X_ptr": [
+      2048,
+      16384
+    ],
+    "Y_ptr": [
+      2048,
+      16384
+    ]
+  },
+  "c_values": {
+    "BLOCK_SIZE": 16384
+  },
+  "case_id": "high_performance:liger_rms_norm",
+  "concrete_extents": {
+    "x0": 16384,
+    "x1": 2048
+  },
+  "config_digest": "03a368c45f9ff2dcee30d058e158c7d2334b5f71fdd24d9154c4dfd360297dd8",
+  "dtype_config_id": "fp32_boundary_fp32_accum",
+  "grid": [
+    2048
+  ],
+  "grid_contract": [
+    "rows"
+  ],
+  "protocol": "intentir.backend.dev-workload.v1",
+  "scalar_values": {
+    "W_row_stride": 16384,
+    "X_row_stride": 16384,
+    "Y_row_stride": 16384,
+    "n_cols": 16384
+  },
+  "semantic_constexprs": {},
+  "shape_config_id": "sweep_m2048_h16384_fp32",
+  "upstream_evidence": [
+    "doc/IntentIR_后端能力建设与最终实验协议_2026-07-27.md:216-220",
+    ".trellis/tasks/archive/2026-06/06-26-rms-norm-pk/research/liger-rms_norm-kernel.md:105-137"
+  ]
+}

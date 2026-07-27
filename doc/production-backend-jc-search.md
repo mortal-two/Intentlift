@@ -558,6 +558,13 @@ cubin全部通过 Target--RefDev；GeGLU `M=N=4096,FP32` 为 `131.26/131.31 us`
 read-once state已接近logical roof，不证明硬件DRAM transaction wall；两图含special-function ops，
 runner也明确拒绝memory-wall claim。
 
+长规约不是靠候选名判断。RMSNorm `M=2048,H=16384,FP32` 的 E3 bundle真实运输并执行39个
+single/multi-launch states，全部通过 Target--RefDev；single-stage winner为`176.09 us`，Triton Source
+为`184.60 us`（Source/Target **1.0483x**），而三launch multi-stage最佳`264.65 us`。同回执
+E3/E2仅 **1.0008x**。该负结果准确定位为RowOut multi-stage的partial读取加stage3重读X/W，而不是
+“搜索没找到候选”。完整回执见
+[RMSNorm H=16384 result](results/backend-natural-rmsnorm-h16384-sm120a/README.md)。
+
 Sparsemax当前揭示的是一个必须保留的合同缺口，而不是编译开关缺口：accepted J表达了scan/reduce图，
 但没有“第二输入沿规约轴单调降序”的typed B relation；仅凭参数名`sorted_x`不得授权提前停止读取的
 sorted-prefix lowering。现有J_dev v1也只允许shape/dtype/domain精确编辑，不能偷偷增加该权限。

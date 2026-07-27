@@ -240,6 +240,21 @@ def test_real_geglu_natural_shape_variant_reelaborates_fused_graph() -> None:
     assert variant.c is not None and variant.c.values["c0"] == 4096
 
 
+def test_real_rmsnorm_long_reduction_variant_is_canonical() -> None:
+    base = _base()
+    variant = load_j_dev_variant(
+        _ROOT
+        / "corpus"
+        / "backend-j-dev-v1"
+        / "liger_rms_norm_sweep_m2048_h16384_fp32.json"
+    )
+
+    variant.validate_against_base(base)
+    assert variant.j.intent.inputs[0].shape == ["x1", "x0"]
+    assert variant.j.intent.outputs[1].shape == ["x1"]
+    assert variant.c is not None and variant.c.values["c0"] == 16384
+
+
 def test_real_flash_layernorm_bf16_refdev_preserves_boundary_dtype() -> None:
     base, _path = load_production_snapshot(_CATALOG, "flash_layer_norm_1pass")
     variant = load_j_dev_variant(

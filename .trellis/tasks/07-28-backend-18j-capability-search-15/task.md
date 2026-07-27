@@ -126,6 +126,14 @@ Sparsemax 的 sorted-prefix state 是下一条真正可能减少 global traffic 
 不得把它伪装成 J permission。只有 typed relation 的来源、Harness生成规则与通用 MLIR projection一同
 闭合后，sorted-prefix 才能进入正式候选。
 
+长规约拐点也已用真实 multi-launch state验证，而不是根据设计猜测。Liger RMSNorm
+`M=2048,H=16384,FP32` 的39个cubin/graph states全部通过 Target--RefDev；single-stage actual vec4
+winner为`176.09 us`，Source为`184.60 us`（Source/Target=`1.0483x`）。三launch
+`multi_stage_partial_finalize`最佳为`264.65 us`，慢约50.3%，同回执IntentIR/Schedule-Only仅
+`1.0008x`。根因是当前RowOut多阶段状态先为partial读取X，再在stage3重新读取X/W；single-stage在
+H=16384仍只有16元素/thread且接近logical roof。因而不继续用更多H点重复这一已识别流量瓶颈，下一步
+转向可以真正删除读取/物化的scan关系消费和RVV retile。
+
 ## 第一性原理约束
 
 1. core lowerer 只读取 J、可选 C 与 target capability；禁止读取 Source、Replay、pi、kernel name、
