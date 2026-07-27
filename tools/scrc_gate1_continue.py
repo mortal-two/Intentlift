@@ -62,12 +62,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--effort", default=None)
     parser.add_argument(
         "--lift-backend",
-        choices=("responses", "miniswe"),
+        choices=("responses", "miniswe", "codex"),
         default="miniswe",
     )
     parser.add_argument(
         "--replay-backend",
-        choices=("responses", "miniswe"),
+        choices=("responses", "miniswe", "codex"),
         default="miniswe",
     )
     parser.add_argument("--max-gate1-rounds", type=int, default=6)

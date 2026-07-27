@@ -766,9 +766,9 @@ def test_responses_lift_adapter_forwards_structured_feedback_only_to_relift(
     relifted = adapter.lift(request, feedback)
 
     assert initial.physical_calls == relifted.physical_calls == 2
-    assert initial.metadata["artifact_schema"] == "intentir.scrc.artifact.v7"
-    assert initial.metadata["decode_protocol"] == "intentir.scrc.decode.v11"
-    assert initial.metadata["typecheck_protocol"] == "intentir.scrc.typecheck.v18"
+    assert initial.metadata["artifact_schema"] == "intentir.scrc.artifact.v8"
+    assert initial.metadata["decode_protocol"] == "intentir.scrc.decode.v12"
+    assert initial.metadata["typecheck_protocol"] == "intentir.scrc.typecheck.v20"
     assert contexts[0] is None
     assert contexts[1].failure_kind == "gate1"
     assert contexts[1].diagnostics == feedback.diagnostics
@@ -1267,7 +1267,8 @@ def test_gate1_search_reports_source_free_stage_transitions() -> None:
         ("lift", 1, None, "finished"),
         ("typecheck", 1, None, "started"),
         ("typecheck", 1, None, "pass"),
-        ("gate1", None, 1, "started"),
+        ("replay", None, 1, "started"),
+        ("replay", None, 1, "finished"),
         ("gate1", None, 1, "replay_closed"),
     ]
 

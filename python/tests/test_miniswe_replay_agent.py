@@ -38,6 +38,7 @@ from minisweagent.environments.intentir_replay import (
     IntentIRReplayEnvironment,
     IntentIRReplayWorkspace,
 )
+from minisweagent.exceptions import Submitted
 from minisweagent.run.intentir_replay import (
     intentir_replay_episode_contract_sha256,
     run_intentir_replay,
@@ -464,13 +465,23 @@ def test_episode_contract_digest_binds_exact_files_prompts_and_budgets() -> None
     assert default_config["environment"]["replay_source_inspect_limit"] == 0
     assert default_config["model"]["retry_attempts"] == 3
     assert default_config["model"]["max_tool_calls_per_response"] == 4
+    assert default_config["model"]["enable_replay_patch_tool"] is True
+    assert default_config["model"]["enable_submit_replay_tool"] is True
+    assert default_config["model"]["compact_tool_history"] is True
+    assert default_config["model"]["compact_workspace_mirrors"] is False
+    assert default_config["model"]["compact_response_history_keep_recent"] == 3
+    assert default_config["model"]["use_previous_response_id"] is True
+    assert default_config["model"]["routine_reasoning_effort"] == "low"
+    assert default_config["model"]["routine_timeout_seconds"] == 180
+    assert default_config["model"]["retry_timeouts"] is True
+    assert default_config["model"]["semantic_initial_turns"] == 1
     assert default_config["model"]["model_kwargs"]["parallel_tool_calls"] is True
-    assert MINISWE_REPLAY_BACKEND == "minisweagent.intentir-replay.v6"
+    assert MINISWE_REPLAY_BACKEND == "minisweagent.intentir-replay.v12"
     instance = default_config["agent"]["instance_template"]
-    assert "typed rank and axis structure" in instance
-    assert "algebraically equivalent flattened reduction" in instance
-    assert "obligation ledger" in instance
-    assert "own-source inspect overview" in instance
+    assert "exact_packet_embedded=true" in instance
+    assert "do not query" in instance
+    assert "value-equivalent flattened formula" in instance
+    assert "Construct and direct-submit complete Triton source early" in instance
 
 
 def test_static_ingress_checks_exact_packet_abi_without_compiling() -> None:
@@ -505,6 +516,24 @@ def test_static_ingress_checks_exact_packet_abi_without_compiling() -> None:
         "status",
         "diagnostics",
     }
+
+
+def test_static_ingress_rejects_nonexistent_triton_program_axis() -> None:
+    invalid = VALID_REPLAY.replace(
+        "    v0 = tl.arange(0, c0)",
+        "    pid = tl.program_id(3)\n    v0 = tl.arange(0, c0) + pid * c0",
+    )
+
+    rejected = replay_source_ingress(
+        invalid,
+        artifact=make_reduce_artifact(),
+        frontend=Frontend.TRITON,
+    )
+
+    diagnostic = rejected.to_check_response()["diagnostics"][0]
+    assert diagnostic["rule_code"] == "program_id_axis_range"
+    assert diagnostic["path"] == "<program_id-axis>"
+    assert diagnostic["line"] == 6
 
 
 def test_static_ingress_reports_all_independent_constexpr_annotation_errors() -> None:
@@ -602,12 +631,35 @@ def test_static_error_can_be_repaired_in_one_fresh_multi_turn_episode() -> None:
         workspace.cleanup()
 
     assert result.source_text == VALID_REPLAY
+    first_packet = model.query_inputs[0][1]["content"]
+    assert "intentir.replay-startup-context.v2" in first_packet
+    assert '"exact_packet_embedded":true' in first_packet
+    assert '"packet":' in first_packet
+    assert '"views":' not in first_packet
+    assert "anonymous_source" not in first_packet
     evidence = result.trajectory["info"]["replay_check"]
     assert [item["status"] for item in evidence["results"]] == [
         "fail",
         "pass",
     ]
     assert evidence["evaluations"] == 2
+
+
+def test_replay_exact_no_progress_loop_terminates_as_orchestration_stall() -> None:
+    workspace = _workspace()
+    model = _ScriptedModel(["true", "true", "true"])
+    try:
+        with pytest.raises(Exception) as captured:
+            run_intentir_replay(model=model, workspace=workspace)
+    finally:
+        workspace.cleanup()
+
+    result = captured.value.result
+    assert result.exit_status == "OrchestrationStall"
+    assert result.model_calls == 3
+    stagnation = result.trajectory["info"]["agent_runtime"]["stagnation"]
+    assert stagnation["terminated"] is True
+    assert stagnation["consecutive"] == 3
 
 
 def test_replay_multi_action_write_batch_is_rejected_before_execution() -> None:
@@ -657,16 +709,9 @@ def test_replay_multi_action_runtime_rejects_more_than_four_packet_queries() -> 
     assert policy["rejections"] == 1
 
 
-def test_synthetic_compile_probe_is_advisory_and_never_blocks_submission() -> None:
+def test_construction_compile_rejects_submission_until_exact_bytes_pass() -> None:
     workspace = _workspace()
-    model = _ScriptedModel(
-        [
-            _write_source(VALID_REPLAY),
-            f"{INTENTIR_REPLAY_CHECK} /output/replay.source",
-            f"{INTENTIR_REPLAY_COMPILE_CHECK} /output/replay.source",
-            f"printf '{INTENTIR_REPLAY_SUBMIT}\n'",
-        ]
-    )
+    compile_allowed = False
 
     def passed_ingress(_source: str) -> dict:
         return {
@@ -675,10 +720,10 @@ def test_synthetic_compile_probe_is_advisory_and_never_blocks_submission() -> No
             "diagnostics": [],
         }
 
-    def failed_compile_probe(_source: str) -> dict:
+    def compile_probe(_source: str) -> dict:
         return {
             "protocol": REPLAY_CHECK_PROTOCOL,
-            "status": "fail",
+            "status": "pass" if compile_allowed else "fail",
             "diagnostics": [
                 {
                     "rule_code": "synthetic_frontend_compile_failed",
@@ -686,26 +731,38 @@ def test_synthetic_compile_probe_is_advisory_and_never_blocks_submission() -> No
                     "anonymous_handles": [],
                     "line": 7,
                 }
-            ],
+            ] if not compile_allowed else [],
         }
 
+    environment = IntentIRReplayEnvironment(
+        input_dir=workspace.input_dir,
+        output_dir=workspace.output_dir,
+        scratch_dir=workspace.scratch_dir,
+        replay_checker=passed_ingress,
+        replay_compile_checker=compile_probe,
+    )
     try:
-        result = run_intentir_replay(
-            model=model,
-            workspace=workspace,
-            replay_checker=passed_ingress,
-            replay_compile_checker=failed_compile_probe,
+        rejected = environment.execute(
+            {"tool_name": "submit_replay", "source_text": VALID_REPLAY}
         )
+        assert rejected["returncode"] == 2
+        assert "construction compile rejected" in rejected["output"]
+        compile_allowed = True
+        with pytest.raises(Submitted):
+            environment.execute(
+                {"tool_name": "submit_replay", "source_text": VALID_REPLAY}
+            )
+        info = environment.serialize()["info"]
     finally:
         workspace.cleanup()
 
-    assert result.source_text == VALID_REPLAY
-    info = result.trajectory["info"]
-    assert info["replay_check"]["results"][0]["status"] == "pass"
     compile_evidence = info["replay_compile_check"]
-    assert compile_evidence["authority"] == "advisory_public_synthetic_profile"
-    assert compile_evidence["evaluations"] == 1
-    assert compile_evidence["results"][0]["status"] == "fail"
+    assert "no Gate1" in compile_evidence["authority"]
+    assert compile_evidence["evaluations"] == 2
+    assert [item["status"] for item in compile_evidence["results"]] == [
+        "fail",
+        "pass",
+    ]
 
 
 def test_check_budget_submission_reserve_and_exact_bytes() -> None:
@@ -751,6 +808,67 @@ def test_check_budget_submission_reserve_and_exact_bytes() -> None:
         "explicit",
         "submission",
     ]
+
+
+def test_replay_direct_submit_and_exact_patch_share_submission_preflight() -> None:
+    workspace = _workspace()
+
+    def checker(source: str) -> dict:
+        accepted = source == VALID_REPLAY
+        return {
+            "protocol": REPLAY_CHECK_PROTOCOL,
+            "status": "pass" if accepted else "fail",
+            "diagnostics": (
+                []
+                if accepted
+                else [
+                    {
+                        "rule_code": "constexpr_annotation_required",
+                        "path": "<parameter:c0>",
+                        "anonymous_handles": ["c0"],
+                        "line": 5,
+                    }
+                ]
+            ),
+        }
+
+    environment = IntentIRReplayEnvironment(
+        input_dir=workspace.input_dir,
+        output_dir=workspace.output_dir,
+        scratch_dir=workspace.scratch_dir,
+        replay_checker=checker,
+    )
+    try:
+        rejected = environment.execute(
+            {
+                "tool_name": "submit_replay",
+                "source_text": INVALID_CONSTEXPR_REPLAY,
+            }
+        )
+        assert rejected["returncode"] == 2
+        assert workspace.replay_path.read_text() == INVALID_CONSTEXPR_REPLAY
+        with pytest.raises(Submitted):
+            environment.execute(
+                {
+                    "tool_name": "apply_replay_patch",
+                    "path": "/output/replay.source",
+                    "old_text": "c0):",
+                    "new_text": "c0: tl.constexpr):",
+                    "submit": True,
+                }
+            )
+        evidence = environment.serialize()["info"]["replay_transaction"]
+        final_source = workspace.replay_path.read_text()
+    finally:
+        workspace.cleanup()
+
+    assert final_source == VALID_REPLAY
+    assert evidence["direct_submit_count"] == 1
+    assert evidence["apply_patch_count"] == 1
+    assert evidence["direct_submits"][0]["source_bytes"] == len(
+        INVALID_CONSTEXPR_REPLAY.encode()
+    )
+    assert evidence["apply_patches"][0]["submit_requested"] is True
 
 
 def test_replay_transaction_preserves_only_explicit_exact_bytes() -> None:
@@ -806,8 +924,8 @@ def test_replay_transaction_preserves_only_explicit_exact_bytes() -> None:
     assert evidence == {
         "protocol": REPLAY_TRANSACTION_PROTOCOL,
         "authority": (
-            "exact Replay-LLM-authored bytes only; no source is generated, "
-            "edited, patched, or inferred"
+            "exact Replay-LLM-authored bytes and exact-text replacement only; "
+            "no source is generated or inferred"
         ),
         "commit_count": 1,
         "commits": [
@@ -819,6 +937,10 @@ def test_replay_transaction_preserves_only_explicit_exact_bytes() -> None:
         "rollback_count": 1,
         "fallback_count": 0,
         "fallbacks": [],
+        "apply_patch_count": 0,
+        "apply_patches": [],
+        "direct_submit_count": 0,
+        "direct_submits": [],
     }
 
 
@@ -900,6 +1022,7 @@ def test_writer_uses_fresh_sessions_same_ingress_and_sanitized_receipt(
 
     def model_factory(**kwargs):
         assert kwargs["api_key"] == secret
+        assert len(kwargs["prompt_cache_key"]) <= 64
         model = _ScriptedModel(
             [
                 (

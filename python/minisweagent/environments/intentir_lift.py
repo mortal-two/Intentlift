@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import hashlib
 import os
+import re
 import site
 import stat
 import shutil
@@ -34,9 +35,12 @@ LIFT_TRANSACTION_PROTOCOL = "intentir.lift-transaction.v1"
 MULTI_ACTION_PROTOCOL = "intentir.agent-multi-action.v1"
 APPLY_PATCH_PROTOCOL = "intentir.agent-apply-patch.v1"
 DIRECT_SUBMIT_PROTOCOL = "intentir.agent-direct-submit.v1"
+WRITE_TEXT_PROTOCOL = "intentir.agent-exact-write.v1"
+CHECK_SUBMIT_PROTOCOL = "intentir.agent-check-submit.v1"
 _LIFT_READ_ONLY_CONTEXT_COMMANDS = frozenset(
     {
         "feedback",
+        "feedback-frontier",
         "feedback-category",
         "source",
         "source-find",
@@ -61,6 +65,7 @@ MAX_CANDIDATE_CHECK_FIELD_CHARS = 4096
 MAX_CANDIDATE_CHECK_OBSERVED_ITEMS = 20
 MAX_CANDIDATE_CHECK_RESULT_BYTES = 128 * 1024
 MAX_STARTUP_CONTEXT_BYTES = 64 * 1024
+MAX_LIFT_WORK_FILE_BYTES = 4 * 1024 * 1024
 _SANDBOX_START_MARKER = b"__INTENTIR_LIFT_SANDBOX_STARTED__\n"
 
 
@@ -139,7 +144,9 @@ class IntentIRLiftWorkspace:
         self,
         files: Mapping[str, str | bytes],
         *,
-        mutable_paths: frozenset[str] = frozenset({"feedback.json"}),
+        mutable_paths: frozenset[str] = frozenset(
+            {"feedback.json", "feedback_frontier.json"}
+        ),
     ) -> None:
         """Refresh closed host feedback while preserving one owner's workspace.
 
@@ -330,7 +337,11 @@ class IntentIRLiftEnvironment:
         self._candidate_fallback_audit: list[dict[str, Any]] = []
         self._apply_patch_audit: list[dict[str, Any]] = []
         self._direct_submit_audit: list[dict[str, Any]] = []
+        self._write_text_audit: list[dict[str, Any]] = []
+        self._check_submit_calls = 0
         self._multi_action_rejections = 0
+        self._structured_context_queries: list[str] = []
+        self._structured_schema_queries: list[list[str]] = []
         self._validate_paths()
         self._startup_context, self._startup_context_receipt = (
             self._build_startup_context()
@@ -346,9 +357,16 @@ class IntentIRLiftEnvironment:
         startup_files = (
             "source.py",
             "harness_view.json",
+            "feedback_frontier.json",
             "feedback.json",
             "knowledge/lift_contract.md",
             "knowledge/preflight.md",
+            "knowledge/minimal_example.json",
+        )
+        embedded_files = (
+            "source.py",
+            "harness_view.json",
+            "feedback_frontier.json",
             "knowledge/minimal_example.json",
         )
         for relative in startup_files:
@@ -365,9 +383,13 @@ class IntentIRLiftEnvironment:
                 "sha256": hashlib.sha256(raw).hexdigest(),
             }
             raw_files[relative] = raw.decode("utf-8")
-        embedded = (
-            all(relative in raw_files for relative in receipts)
-            and total_bytes <= MAX_STARTUP_CONTEXT_BYTES
+        embedded_bytes = sum(
+            receipts[relative]["bytes"]
+            for relative in embedded_files
+            if relative in receipts and "bytes" in receipts[relative]
+        )
+        embedded = all(relative in raw_files for relative in embedded_files) and (
+            embedded_bytes <= MAX_STARTUP_CONTEXT_BYTES
         )
         candidate_path = self.config.output_dir / "candidate.json"
         candidate_present = candidate_path.is_file() and not candidate_path.is_symlink()
@@ -376,13 +398,20 @@ class IntentIRLiftEnvironment:
             "exact_inputs_embedded": embedded,
             "candidate_present": candidate_present,
             "files": receipts,
+            "deferred_exact_files": [
+                relative for relative in startup_files if relative not in embedded_files
+            ],
             "authority": (
-                "exact allowlisted bytes only; no Source/Harness/feedback semantic "
-                "interpretation"
+                "exact allowlisted core bytes plus receipts for deferred exact "
+                "knowledge/full-feedback files; the embedded feedback frontier is "
+                "a bounded diagnostic projection with no Source/Harness/feedback "
+                "semantic interpretation"
             ),
         }
         if embedded:
-            payload["exact_text"] = raw_files
+            payload["exact_text"] = {
+                relative: raw_files[relative] for relative in embedded_files
+            }
         else:
             payload["read_command"] = (
                 "python /input/tools/context_query.py bootstrap"
@@ -391,6 +420,7 @@ class IntentIRLiftEnvironment:
             "protocol": payload["protocol"],
             "exact_inputs_embedded": embedded,
             "total_bytes": total_bytes,
+            "embedded_bytes": embedded_bytes,
             "candidate_present": candidate_present,
             "files": receipts,
         }
@@ -429,7 +459,11 @@ class IntentIRLiftEnvironment:
             )
         if all(
             isinstance(action, Mapping)
-            and self._is_batched_read_only_command(action.get("command"))
+            and (
+                self._is_batched_read_only_command(action.get("command"))
+                or action.get("tool_name")
+                in {"inspect_lift_context", "inspect_lift_schema"}
+            )
             for action in actions
         ):
             return None
@@ -438,6 +472,126 @@ class IntentIRLiftEnvironment:
             f"{MULTI_ACTION_PROTOCOL}: multiple calls are allowed only for "
             "independent read-only context_query.py or schema_query.py commands; "
             "no action in this response was executed"
+        )
+
+    @staticmethod
+    def _structured_tool_error(diagnostic: str) -> dict[str, Any]:
+        return {
+            "output": json.dumps(
+                {
+                    "protocol": "intentir.agent-structured-inspection.v1",
+                    "status": "fail",
+                    "diagnostic": diagnostic,
+                },
+                sort_keys=True,
+            )
+            + "\n",
+            "returncode": 2,
+            "exception_info": "",
+        }
+
+    def _execute_lift_context_inspect(
+        self, action: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        allowed = {"tool_name", "tool_call_id", "view", "query", "path", "start", "count", "context", "op"}
+        if not set(action).issubset(allowed):
+            return self._structured_tool_error("unknown context-inspection argument")
+        view = action.get("view")
+        if view not in {
+            "source", "source_outline", "source_find", "harness", "feedback",
+            "candidate", "candidate_find", "candidate_nodes", "candidate_node",
+            "candidate_abi", "candidate_diff", "knowledge",
+        }:
+            return self._structured_tool_error("unsupported context-inspection view")
+
+        def bounded_int(name: str, default: int, lower: int, upper: int) -> int:
+            value = action.get(name, default)
+            if (
+                not isinstance(value, int)
+                or isinstance(value, bool)
+                or not lower <= value <= upper
+            ):
+                raise ValueError(f"{name} must be in [{lower}, {upper}]")
+            return value
+
+        def bounded_text(name: str, *, required: bool = False) -> str | None:
+            value = action.get(name)
+            if value is None and not required:
+                return None
+            if not isinstance(value, str) or (required and not value) or len(value) > 512:
+                raise ValueError(f"{name} must be a bounded string")
+            return value
+
+        try:
+            start = bounded_int("start", 1, 1, 1_000_000)
+            count = bounded_int("count", 40, 1, 160)
+            context = bounded_int("context", 3, 0, 16)
+            query = bounded_text(
+                "query",
+                required=view
+                in {"source_find", "candidate_find", "candidate_node", "knowledge"},
+            )
+            path = bounded_text("path")
+            op = bounded_text("op")
+        except ValueError as exc:
+            return self._structured_tool_error(str(exc))
+
+        command = ["python", "/input/tools/context_query.py"]
+        if view == "source":
+            command += ["source", "--start", str(start), "--lines", str(count)]
+        elif view == "source_outline":
+            command += ["source-outline", "--start", str(start), "--count", str(count)]
+        elif view == "source_find":
+            command += ["source-find", str(query), "--context", str(context)]
+        elif view in {"harness", "feedback", "candidate"}:
+            command.append(view)
+            if path is not None:
+                command += ["--path", path]
+        elif view == "candidate_find":
+            command += ["candidate-find", str(query)]
+        elif view == "candidate_nodes":
+            command += ["candidate-nodes", "--start", str(start), "--count", str(count)]
+            if op is not None:
+                command += ["--op", op]
+        elif view == "candidate_node":
+            command += ["candidate-node", str(query)]
+        elif view == "candidate_abi":
+            command.append("candidate-abi")
+        elif view == "candidate_diff":
+            command.append("candidate-diff")
+        else:
+            command += ["knowledge", str(query), "--context", str(context)]
+        self._structured_context_queries.append(str(view))
+        return self.execute(
+            {"command": " ".join(shlex.quote(item) for item in command)}
+        )
+
+    def _execute_lift_schema_inspect(
+        self, action: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        if set(action) - {"tool_name", "tool_call_id", "items"}:
+            return self._structured_tool_error("unknown schema-inspection argument")
+        items = action.get("items")
+        if (
+            not isinstance(items, list)
+            or not 1 <= len(items) <= 12
+            or any(
+                not isinstance(item, str)
+                or re.fullmatch(
+                    r"(?:top|catalog|op:[A-Za-z0-9_]+|section:[A-Za-z0-9_.]+)",
+                    item,
+                )
+                is None
+                for item in items
+            )
+        ):
+            return self._structured_tool_error(
+                "schema items must be 1..12 closed top/catalog/op:/section: selectors"
+            )
+        self._structured_schema_queries.append(list(items))
+        command = ["python", "/input/tools/schema_query.py", "bundle", *items]
+        return self.execute(
+            {"command": " ".join(shlex.quote(item) for item in command)}
         )
 
     @staticmethod
@@ -718,6 +872,147 @@ class IntentIRLiftEnvironment:
         self._check_submission(output)
         return output
 
+    def _execute_write_text(self, action: Mapping[str, Any]) -> dict[str, Any]:
+        """Write exact LLM-authored bytes to one fixed Lift workspace path."""
+
+        path = action.get("path")
+        content = action.get("content")
+        mode = action.get("mode")
+        submit = action.get("submit") is True
+        allowed = {
+            "/output/candidate.json": (
+                self.config.output_dir / "candidate.json",
+                MAX_CANDIDATE_BYTES,
+            ),
+            "/work/semantic_ledger.md": (
+                self.config.scratch_dir / "semantic_ledger.md",
+                MAX_LIFT_WORK_FILE_BYTES,
+            ),
+            "/work/construction_plan.md": (
+                self.config.scratch_dir / "construction_plan.md",
+                MAX_LIFT_WORK_FILE_BYTES,
+            ),
+            "/work/build.py": (
+                self.config.scratch_dir / "build.py",
+                MAX_LIFT_WORK_FILE_BYTES,
+            ),
+        }
+        if (
+            path not in allowed
+            or not isinstance(content, str)
+            or not content
+            or mode not in {"overwrite", "append"}
+            or (submit and path != "/output/candidate.json")
+        ):
+            result = {
+                "protocol": WRITE_TEXT_PROTOCOL,
+                "status": "fail",
+                "diagnostic": (
+                    "write_text requires one fixed Lift path, non-empty exact "
+                    "content, overwrite|append mode, and submit only for candidate"
+                ),
+            }
+            return {
+                "output": json.dumps(result, sort_keys=True) + "\n",
+                "returncode": 1,
+                "exception_info": "",
+            }
+        target, size_limit = allowed[path]
+        try:
+            before = b""
+            if target.exists() or target.is_symlink():
+                if target.is_symlink() or not target.is_file():
+                    raise ValueError("write target must be a regular file")
+                before = target.read_bytes()
+            if mode == "append" and not before:
+                raise ValueError("append requires an existing non-empty file")
+            authored = content.encode("utf-8")
+            after = authored if mode == "overwrite" else before + authored
+            if not 1 <= len(after) <= size_limit:
+                raise ValueError("written file is outside the allowed size range")
+            descriptor, temporary_name = tempfile.mkstemp(
+                prefix=".exact-write-", dir=target.parent
+            )
+            temporary = Path(temporary_name)
+            try:
+                with os.fdopen(descriptor, "wb") as output:
+                    output.write(after)
+                    output.flush()
+                    os.fsync(output.fileno())
+                os.replace(temporary, target)
+            finally:
+                temporary.unlink(missing_ok=True)
+        except Exception as exc:
+            result = {
+                "protocol": WRITE_TEXT_PROTOCOL,
+                "status": "fail",
+                "diagnostic": f"{type(exc).__name__}: {exc}",
+            }
+            return {
+                "output": json.dumps(result, sort_keys=True) + "\n",
+                "returncode": 1,
+                "exception_info": "",
+            }
+        if path == "/output/candidate.json":
+            self._candidate_check_passed_bytes = None
+        receipt = {
+            "protocol": WRITE_TEXT_PROTOCOL,
+            "status": "pass",
+            "path": path,
+            "mode": mode,
+            "authored_sha256": hashlib.sha256(authored).hexdigest(),
+            "authored_bytes": len(authored),
+            "before_sha256": hashlib.sha256(before).hexdigest(),
+            "after_sha256": hashlib.sha256(after).hexdigest(),
+            "after_bytes": len(after),
+            "submit_requested": submit,
+            "authority": "exact LLM-authored bytes only; no content interpretation",
+        }
+        self._write_text_audit.append(dict(receipt))
+        if submit:
+            output = {
+                "output": (
+                    INTENTIR_LIFT_SUBMIT
+                    + "\n"
+                    + json.dumps(receipt, sort_keys=True)
+                    + "\n"
+                ),
+                "returncode": 0,
+                "exception_info": "",
+            }
+            self._check_submission(output)
+            return output
+        return {
+            "output": json.dumps(receipt, sort_keys=True) + "\n",
+            "returncode": 0,
+            "exception_info": "",
+        }
+
+    def _execute_check_and_submit_candidate(self) -> dict[str, Any]:
+        """Honor one explicit LLM request to check and submit current exact bytes."""
+
+        self._check_submit_calls += 1
+        receipt = {
+            "protocol": CHECK_SUBMIT_PROTOCOL,
+            "status": "requested",
+            "authority": (
+                "explicit delivery action only; existing CandidateCheck runs on "
+                "current exact bytes and no content is edited"
+            ),
+        }
+        output = {
+            "output": (
+                INTENTIR_LIFT_SUBMIT
+                + "\n"
+                + json.dumps(receipt, sort_keys=True)
+                + "\n"
+            ),
+            "returncode": 0,
+            "exception_info": "",
+        }
+        self._check_submission(output)
+        return output
+
     def activate_committed_fallback(self, terminal_status: str) -> str | None:
         """Restore only bytes the LLM explicitly committed as its fallback choice."""
 
@@ -725,6 +1020,7 @@ class IntentIRLiftEnvironment:
             "LimitsExceeded",
             "TimeExceeded",
             "RepeatedFormatError",
+            "OrchestrationStall",
         } or self._candidate_committed_bytes is None:
             return None
         candidate_bytes = self._restore_committed_candidate()
@@ -736,6 +1032,56 @@ class IntentIRLiftEnvironment:
             }
         )
         return candidate_bytes.decode("utf-8")
+
+    def stagnation_state(self) -> dict[str, Any]:
+        """Return only the exact current candidate byte identity."""
+
+        path = self.config.output_dir / "candidate.json"
+        try:
+            if path.is_symlink() or not path.is_file():
+                raise ValueError("candidate absent")
+            raw = path.read_bytes()
+        except (OSError, ValueError):
+            return {"protocol": "intentir.lift-stagnation-state.v1", "candidate": None}
+        return {
+            "protocol": "intentir.lift-stagnation-state.v1",
+            "candidate": {
+                "sha256": hashlib.sha256(raw).hexdigest(),
+                "bytes": len(raw),
+            },
+        }
+
+    def material_progress_state(self) -> dict[str, Any]:
+        """Return exact identities of model-writable artifact and work bytes."""
+
+        files: list[dict[str, Any]] = []
+        for label, root in (
+            ("output", self.config.output_dir),
+            ("work", self.config.scratch_dir),
+        ):
+            for path in sorted(root.rglob("*")):
+                relative = path.relative_to(root).as_posix()
+                if path.is_symlink():
+                    files.append(
+                        {"root": label, "path": relative, "kind": "symlink"}
+                    )
+                    continue
+                if not path.is_file():
+                    continue
+                raw = path.read_bytes()
+                files.append(
+                    {
+                        "root": label,
+                        "path": relative,
+                        "kind": "file",
+                        "bytes": len(raw),
+                        "sha256": hashlib.sha256(raw).hexdigest(),
+                    }
+                )
+        return {
+            "protocol": "intentir.lift-material-progress.v1",
+            "files": files,
+        }
 
     def _execute_candidate_check(
         self,
@@ -1101,6 +1447,38 @@ class IntentIRLiftEnvironment:
             return self._execute_apply_patch(action)
         if action.get("tool_name") == "submit_candidate":
             return self._execute_submit_candidate(action)
+        if action.get("tool_name") == "write_text":
+            return self._execute_write_text(action)
+        if action.get("tool_name") == "save_semantic_ledger":
+            return self._execute_write_text(
+                {
+                    "tool_name": "write_text",
+                    "path": "/work/semantic_ledger.md",
+                    "content": action.get("content"),
+                    "mode": "overwrite",
+                    "submit": False,
+                }
+            )
+        if action.get("tool_name") == "save_construction_plan":
+            return self._execute_write_text(
+                {
+                    "tool_name": "write_text",
+                    "path": "/work/construction_plan.md",
+                    "content": action.get("content"),
+                    "mode": "overwrite",
+                    "submit": False,
+                }
+            )
+        if action.get("tool_name") == "check_and_submit_candidate":
+            return self._execute_check_and_submit_candidate()
+        if action.get("tool_name") == "inspect_lift_context":
+            return self._execute_lift_context_inspect(action)
+        if action.get("tool_name") == "inspect_lift_schema":
+            return self._execute_lift_schema_inspect(action)
+        if action.get("tool_name") == "check_candidate":
+            return self._execute_candidate_check(
+                [INTENTIR_CANDIDATE_CHECK, "/output/candidate.json"]
+            )
         if not isinstance(command, str):
             raise TypeError("Lift shell command must be a string")
         try:
@@ -1498,6 +1876,23 @@ class IntentIRLiftEnvironment:
                     "calls": len(self._direct_submit_audit),
                     "receipts": list(self._direct_submit_audit),
                 },
+                "write_text": {
+                    "protocol": WRITE_TEXT_PROTOCOL,
+                    "authority": (
+                        "exact LLM-authored bytes only; work files are "
+                        "proof-irrelevant and no content is interpreted"
+                    ),
+                    "calls": len(self._write_text_audit),
+                    "receipts": list(self._write_text_audit),
+                },
+                "check_submit": {
+                    "protocol": CHECK_SUBMIT_PROTOCOL,
+                    "authority": (
+                        "explicit LLM delivery request; no candidate content is "
+                        "selected, generated, or edited"
+                    ),
+                    "calls": self._check_submit_calls,
+                },
                 "multi_action_policy": {
                     "protocol": MULTI_ACTION_PROTOCOL,
                     "max_actions": 4,
@@ -1508,6 +1903,17 @@ class IntentIRLiftEnvironment:
                     ),
                     "rejections": self._multi_action_rejections,
                 },
+                "structured_inspection": {
+                    "protocol": "intentir.agent-structured-inspection.v1",
+                    "authority": (
+                        "bounded exact read-only views; no semantic classification, "
+                        "candidate edit, or acceptance authority"
+                    ),
+                    "context_views": list(self._structured_context_queries),
+                    "schema_bundles": [
+                        list(items) for items in self._structured_schema_queries
+                    ],
+                },
             }
         }
 
@@ -1515,6 +1921,7 @@ class IntentIRLiftEnvironment:
 __all__ = [
     "APPLY_PATCH_PROTOCOL",
     "CANDIDATE_CHECK_PROTOCOL",
+    "CHECK_SUBMIT_PROTOCOL",
     "DIRECT_SUBMIT_PROTOCOL",
     "INTENTIR_CANDIDATE_COMMIT",
     "INTENTIR_LIFT_SUBMIT",
@@ -1526,6 +1933,7 @@ __all__ = [
     "INTENTIR_CANDIDATE_ROLLBACK",
     "LIFT_TRANSACTION_PROTOCOL",
     "MULTI_ACTION_PROTOCOL",
+    "WRITE_TEXT_PROTOCOL",
     "IntentIRLiftEnvironment",
     "IntentIRLiftEnvironmentConfig",
     "IntentIRLiftWorkspace",

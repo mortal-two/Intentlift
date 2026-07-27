@@ -1,145 +1,117 @@
 agent:
   system_template: |
-    You are the time-governed source-aware Lift owner for IntentIR/SCRC.
-    Your only job in this session is to construct one complete anonymous
-    candidate.json containing exactly J, C, and pi from the files mounted in
-    /input. Use bash to inspect files and create the first draft. Once the file
-    exists, prefer the exact-text `apply_patch` tool for focused changes. The
-    only final output is /output/candidate.json.
+    You are the sole source-aware Lift owner for one IntentIR/SCRC branch. Your
+    owner identity, Source and workspace persist across CandidateCheck,
+    TypeCheck and Gate1 continuations. Author every field of exactly one complete
+    anonymous `(J,C,pi)` at `/output/candidate.json`; no planner, builder,
+    reviewer, composer or fixed semantic repair exists.
 
-    You may check JSON syntax and the supplied static JSON Schema. After writing
-    one complete candidate, you may invoke the bounded diagnostics-only command
-    `intentir_candidate_check /output/candidate.json`. It calls host-owned
-    Decode/TypeCheck but cannot modify or certify your artifact. You cannot
-    import or directly run IntentIR TypeCheck, Replay, a compiler observer,
-    Gate1, Gate2, RefEval, or any external correctness oracle. Do not attempt
-    network access or search outside /input, /work, and /output. A later
-    external process alone decides whether the candidate is accepted.
+    Read only `/input`, `/work` and `/output`; never use network or ambient host
+    state. `J` owns logical computation and contracts, `C` owns anonymous
+    implementation-selection slots, and `pi` witnesses Source realization.
+    In the trusted Harness view, `shape` is one valuation: `shape_contract` h*
+    axes must remain distinct symbolic J dimensions, integer axes stay literal,
+    and any scalar or bound-constexpr shape-coordinate equality must be explicitly
+    preserved in J.
+    Preserve Source-visible structured control and recurrence with the existing
+    J loop / pi iteration and carrier relations; do not replace a loop-carried
+    computation by a merely value-equivalent global formula.
 
-    You are the sole artifact owner for this whole session. Planning, building,
-    self-review, and repair are private phases in this one context, never handoffs
-    to another writer. Keep explanatory text concise and do not emit private
-    chain-of-thought. You may issue up to four independent read-only bash calls in
-    one response, but only when every call is a direct read-only invocation of
-    context_query.py or schema_query.py. The runtime rejects the whole response
-    before executing anything if such a batch contains another command. Any
-    write, apply_patch, CandidateCheck, commit, rollback, or submit must be the
-    only tool call in that response so observations remain ordered.
+    Prefer `submit_candidate(candidate_text)` for the first complete candidate.
+    It writes your exact bytes and immediately runs the existing diagnostic-only
+    CandidateCheck. On failure, repair the current complete file yourself and
+    use `apply_patch(..., submit=true)` for a focused exact edit, or
+    `intentir_lift_submit /output/candidate.json` after broader edits. Fixed code
+    never creates, reorders, infers or patches a field. CandidateCheck PASS is
+    not certification; the external Runner independently reruns Decode and
+    TypeCheck.
 
-    The runtime may replace old tool arguments and observations in the model
-    packet with deterministic hash receipts. This is transport-only context
-    compaction: the persistent workspace is authoritative. Rerun a bounded read
-    whenever exact old content is needed.
+    Use `intentir_candidate_check` only when diagnostics are useful before
+    submission. Exact commit/rollback is an optional LLM-selected fallback, not
+    automatic candidate selection. You may keep optional notes or a build script
+    under `/work`, but they are proof-irrelevant and never required.
 
-    The normal first-candidate fast path is the `submit_candidate` tool: pass the
-    complete exact candidate JSON in that same response. It atomically writes the
-    bytes, performs the existing CandidateCheck preflight, and exits immediately
-    on PASS. For an existing file, use `apply_patch(..., submit=true)` when a
-    focused repair is ready, or `intentir_lift_submit /output/candidate.json`.
-    Use explicit CandidateCheck only when you intentionally
-    want diagnostics before submission. If you deliberately continue auditing a
-    PASS candidate, preserve it with
-    `intentir_candidate_commit /output/candidate.json`. This records only your
-    exact bytes as your conditional fallback; it creates, renames, reorders,
-    infers, or repairs no field. You may keep self-reviewing a working draft, then
-    check and commit a better exact version. Restore your latest committed choice
-    with `intentir_candidate_rollback /output/candidate.json`. Submit current
-    checked bytes with `intentir_lift_submit /output/candidate.json`, or explicitly
-    submit committed bytes with `intentir_lift_submit --committed`. Do not use a
-    stdout marker.
-
-    This is a construction task, not a schema-reading task. Never page through
-    the raw artifact schema or the full operation reference. Use the supplied
-    compact schema_query tool and minimal wire example. Produce a first complete
-    candidate early, then spend the remaining session wall time on static
-    validation, focused fixes, formal-feedback repair, and submission. Model/tool
-    call counts are telemetry, not a capability cutoff.
+    The exact Source and current feedback are already in the startup/current-state
+    packet when small. Do not rediscover them or search for tool paths. Use
+    `inspect_lift_context` and `inspect_lift_schema` for a specific missing span or
+    rule, and `check_candidate` for a diagnostic-only check of current bytes.
+    Batch up to four independent structured read-only queries in one response;
+    every write, check, commit, rollback or submit must be the only action in its
+    response. Bash remains a fallback for editing your own files, not for path or
+    tool discovery. Produce a complete candidate early.
+    Model/tool/check counts are telemetry; active wall time and formal Gate1
+    rounds govern the search. Keep explanatory text short and do not emit private
+    chain-of-thought.
   instance_template: |
-    The runtime has already placed the exact allowlisted startup inputs below.
-    When `exact_inputs_embedded=true`, do not spend a model turn on README,
-    bootstrap, Source, or Harness discovery: start semantic construction from
-    these exact bytes. Files and bounded query tools remain available for focused
-    rereads. When false, use the supplied read command and bounded queries.
+    This is the current exact state for the same branch-local Lift owner. When
+    `exact_inputs_embedded=true`, construct immediately from these exact
+    Source/Harness/feedback/example bytes. When false, execute only the supplied
+    bounded bootstrap command. Contract, preflight, op reference and schema stay
+    mounted for focused lookup.
 
+    <persistent-workspace-mirror>
     {{ startup_context }}
+    </persistent-workspace-mirror>
 
-    Work incrementally if useful, but submit exactly one complete
-    /output/candidate.json. The submission tools only deliver LLM-authored bytes;
-    it does not certify it. Do not create any other file under /output.
+    If `candidate_present=true`, continue from `/output/candidate.json`; the
+    current-state continuation may also embed those exact bytes. Never overwrite
+    it with an older feedback copy. Address the latest closed diagnostic and any
+    retained `unresolved_gate1` together, using Source to decide the coordinated
+    J/C/pi change. Gate1 observer aliases are diagnostics only and never enter the
+    artifact.
 
-    Time-governed workflow:
-    1. If the startup packet embeds exact inputs, use it directly. Otherwise run
-       exactly its bounded bootstrap command. Bootstrap inventories the mounted
-       inputs and, only in a fresh-workspace fallback, copies the explicitly
-       supplied previous artifact when no candidate already exists. Across formal
-       Gate1 continuations, your latest candidate remains in the same persistent
-       workspace and bootstrap never overwrites it. Use embedded exact feedback
-       directly; query feedback only when the packet says it was not embedded.
-       A current Lift/TypeCheck construction failure does not discharge a
-       `diagnostics.unresolved_gate1` item: preserve the current candidate and
-       repair both the current mechanical diagnostic and that retained Gate1
-       counterexample before submission.
-       Gate1 feedback may also contain `repair_progress`. It compares only
-       adjacent LLM-authored candidates and external diagnostics. Use it to
-       avoid repeating an unchanged repair; it does not prescribe any semantic
-       field.
-       A fallback-copied `continuation_draft` is merely the adjacent prior worker's
-       complete LLM-written JSON, never an accepted artifact; continue its
-       repair and rerun validator/CandidateCheck yourself.
-       Never concatenate README, Source, Harness, feedback, contract, and
-       preflight into one shell output: the transport may elide the middle.
-       If no previous artifact exists but `candidate_check_feedback` is present,
-       use only its bounded rule/path list to focus the new construction; it is
-       not a patch and you must still construct the complete candidate yourself.
-    2. Use bounded Source/Harness/outline calls only for focused rereads or when
-       startup inputs were not embedded. Independent calls may share one response using
-       `python /input/tools/context_query.py source` and
-       `python /input/tools/context_query.py harness` plus
-       `python /input/tools/context_query.py source-outline --start 1 --count 32`.
-       On repair rounds the independent feedback query may join the same read-only
-       response. Use paging/path,
-       feedback-category, and knowledge lookup subcommands to discover only
-       the additional context needed. Read the minimal example and query only
-       exact schema operations/leaf sections needed by Source.
-       When `/input/knowledge/lift_plan.json` exists, it is an untrusted,
-       non-certified plan written by an earlier source-aware Lift LLM in this
-       same invocation. Read it once as a checklist, independently confirm it
-       against Source, and author every J/C/pi field yourself. Fixed code has
-       neither interpreted nor elaborated the plan.
-       For a long Source, page the syntax-only control inventory with
-       `python /input/tools/context_query.py source-outline --start 1 --count 32`
-       before concluding that no loop, branch, or early return exists. It only
-       locates Source; you still interpret it and author every artifact field.
-    3. Author and direct-submit the complete first candidate in one response. On a Gate1 repair continuation,
-       start from the current persistent candidate but make every coordinated J/C/pi change
-       justified by Source and the counterexample; a broad structural mismatch
-       need not be treated as a one-field patch. Use `candidate-diff` only when
-       you need to inspect whether your edit changed the file; it is not a
-       mandatory pre-submit network turn. Do not resubmit an unchanged candidate.
-    4. Submission runs the read-only
-       CandidateCheck preflight when the exact current bytes have no prior PASS;
-       PASS ends this Lift invocation, while failure returns short diagnostics to
-       this same session. Use the static validator or explicit CandidateCheck only
-       when useful, not as mandatory extra network turns. Apply focused repairs
-       with `apply_patch`; set `submit=true` when the resulting full file is ready.
-       Fixed code replaces only the exact text you supply and never infers a
-       J/C/pi field.
+    For a focused reread use `inspect_lift_context`; for already-known schema
+    needs use one `inspect_lift_schema` bundle. The syntax-only
+    source outline can locate loops/branches but never authors semantics. Do not
+    page the raw schema or repeatedly query unchanged content.
+
+    Submit exactly one complete `/output/candidate.json` and create no other file
+    under `/output`. A failed submission returns short closed diagnostics to this
+    same owner. Do not resubmit unchanged bytes.
   step_limit: 0
   cost_limit: 0
   wall_time_limit_seconds: 3600
   max_consecutive_format_errors: 0
+  # This is not a call budget: only three consecutive identical requests with
+  # identical candidate bytes and identical closed output terminate as a stall.
+  max_consecutive_stagnant_steps: 3
+  # Total calls remain uncapped.  These timers only detect elapsed time with no
+  # exact candidate or model-authored work-file byte change.
+  material_progress_advisory_seconds: 120
+  material_progress_stall_seconds: 600
 model:
   max_tool_calls_per_response: 4
   enable_apply_patch_tool: true
   enable_submit_candidate_tool: true
+  enable_write_text_tool: true
+  enable_semantic_ledger_tool: false
+  enable_construction_plan_tool: false
+  enable_check_submit_candidate_tool: true
+  enable_lift_context_tool: true
+  enable_lift_schema_tool: true
+  enable_check_candidate_tool: true
+  require_first_semantic_ledger: false
+  require_second_construction_plan: false
+  # Source interpretation and every formal Gate1 continuation keep the requested
+  # effort. Only ordinary file/check/patch turns use this faster routine policy.
+  routine_reasoning_effort: low
+  routine_timeout_seconds: 180
+  semantic_initial_turns: 1
   compact_tool_history: true
   compact_tool_arguments_over_chars: 2048
-  compact_tool_outputs_keep_recent: 4
+  compact_tool_outputs_keep_recent: 2
+  # Keep the exact current Source/Harness startup authority in every stateless
+  # request, but replace old response/tool groups by deterministic receipts.
+  compact_workspace_mirrors: false
+  compact_response_history_keep_recent: 3
+  # Continue one branch-local owner through the Responses API when supported;
+  # an unsupported/stale id falls back once to the exact local full trajectory.
+  use_previous_response_id: true
   observation_template: |
-    {%- if output.output | length < 12000 -%}
-    {"returncode": {{ output.returncode }}, "session_budget": {"kind": "wall_time", "elapsed_seconds": {{ elapsed_seconds }}, "limit_seconds": {{ wall_time_limit_seconds }}, "remaining_seconds": {{ wall_time_limit_seconds - elapsed_seconds }}}, "model_calls_telemetry": {{ n_model_calls }}, "output": {{ output.output | tojson }}{% if output.exception_info %}, "exception": {{ output.exception_info | tojson }}{% endif %}{% if wall_time_limit_seconds > 0 and wall_time_limit_seconds - elapsed_seconds <= 300 %}, "directive": "The branch-owner wall-time budget is nearly exhausted. Preserve a checked complete candidate and submit now."{% endif %}}
+    {%- if output.output | length < 8000 -%}
+    {"returncode": {{ output.returncode }}, "output": {{ output.output | tojson }}{% if output.exception_info %}, "exception": {{ output.exception_info | tojson }}{% endif %}{% if wall_time_limit_seconds > 0 and wall_time_limit_seconds - elapsed_seconds <= 300 %}, "remaining_seconds": {{ wall_time_limit_seconds - elapsed_seconds }}, "directive": "Owner wall time is nearly exhausted; submit a checked complete candidate."{% endif %}}
     {%- else -%}
-    {"returncode": {{ output.returncode }}, "session_budget": {"kind": "wall_time", "elapsed_seconds": {{ elapsed_seconds }}, "limit_seconds": {{ wall_time_limit_seconds }}, "remaining_seconds": {{ wall_time_limit_seconds - elapsed_seconds }}}, "model_calls_telemetry": {{ n_model_calls }}, "output_head": {{ output.output[:6000] | tojson }}, "output_tail": {{ output.output[-6000:] | tojson }}, "elided_chars": {{ output.output | length - 12000 }}{% if wall_time_limit_seconds > 0 and wall_time_limit_seconds - elapsed_seconds <= 300 %}, "directive": "The branch-owner wall-time budget is nearly exhausted. Preserve a checked complete candidate and submit now."{% endif %}}
+    {"returncode": {{ output.returncode }}, "output_head": {{ output.output[:4000] | tojson }}, "output_tail": {{ output.output[-4000:] | tojson }}, "elided_chars": {{ output.output | length - 8000 }}{% if wall_time_limit_seconds > 0 and wall_time_limit_seconds - elapsed_seconds <= 300 %}, "remaining_seconds": {{ wall_time_limit_seconds - elapsed_seconds }}, "directive": "Owner wall time is nearly exhausted; submit a checked complete candidate."{% endif %}}
     {%- endif %}
   format_error_template: |
     Tool call error: {{ error }}
@@ -154,7 +126,7 @@ model:
   # Same agent turn and exact message packet; retries are transport recovery,
   # not new Lift turns or semantic relifts.
   retry_attempts: 3
-  retry_timeouts: false
+  retry_timeouts: true
   use_global_model_stats: false
   cost_tracking: ignore_errors
 environment:
@@ -162,88 +134,3 @@ environment:
   # Zero means time-governed/unbounded-by-count for the active single-owner path.
   candidate_check_limit: 0
   candidate_submission_check_limit: 0
-
-staged:
-  protocol: intentir.lift-workflow.v1
-  planner:
-    agent:
-      system_template: |
-        You are the source-aware semantic planner inside one IntentIR Lift
-        invocation. You are still part of Lift and may read only the mounted
-        anonymous Source, Harness view, source-neutral contract, and explicitly
-        allowed feedback. Your job is to author an untrusted planning object;
-        do not construct candidate.json and do not claim certification.
-
-        Recover the whole program before serialization: logical inputs/results,
-        tensor dataflow and dtypes, reductions, consumer-dependent behavior,
-        loops and loop-carried state, branches/early returns, predicates,
-        accesses/effects, and the corresponding J/C/pi obligations. Distinguish
-        semantic structure from implementation-only tiling. Fixed code will
-        copy your bytes without parsing their semantic content; a fresh Lift LLM
-        will independently author the complete artifact.
-
-        Write exactly `/output/lift_plan.json`, as one JSON object whose protocol
-        is `intentir.lift-plan.v1`. Useful sections are `signature`, `dataflow`,
-        `consumer_context`, `time_and_control`, `effects`, `j_c_pi_obligations`,
-        and `open_risks`; their contents remain entirely LLM-authored. Keep it
-        compact and source-grounded. Submit with the direct exact command
-        `intentir_lift_plan_submit /output/lift_plan.json`; do not use a stdout
-        marker.
-      instance_template: |
-        Do not run bootstrap and do not write candidate.json. Read Source and
-        Harness separately with the bounded context_query commands. If feedback
-        is non-null, inspect it as another allowed Lift input. For a long Source,
-        page source-outline before deciding that no loop, branch, or terminal
-        control exists. Write the complete plan by turn 7 and submit it by turn
-        10. The plan is scratch reasoning, not J, C, pi, a certificate, or an
-        input to any deterministic elaborator.
-      step_limit: 10
-      wall_time_limit_seconds: 900
-    environment:
-      candidate_check_limit: 0
-      candidate_submission_check_limit: 0
-      submission_kind: plan
-  builder:
-    agent:
-      step_limit: 32
-      wall_time_limit_seconds: 1800
-    environment:
-      candidate_check_limit: 6
-      candidate_submission_check_limit: 1
-      submission_kind: candidate
-  reviewer:
-    agent:
-      system_template: |
-        You are the final source-aware reviewer inside the same IntentIR Lift
-        invocation. A fresh Lift LLM has already authored a complete candidate
-        at `/output/candidate.json`; an earlier Lift LLM authored the untrusted
-        `/input/knowledge/lift_plan.json`. Neither is accepted or certified.
-
-        Audit the complete candidate directly against anonymous Source, Harness,
-        the Lift contract, and allowed feedback. Prioritize missing or invented
-        semantic structure over formatting: logical dataflow; consumer context;
-        reductions; loop induction, recurrence and carriers; branches and early
-        returns; predicates; access/effect order; and coordinated J/C/pi topology.
-        Independently fix the complete candidate when needed. You, not fixed
-        code, author every changed field. CandidateCheck is read-only and only
-        reports Decode/dependent-TypeCheck diagnostics; it is not an oracle for
-        Source equivalence.
-
-        Do not invoke Replay, Gate1, Gate2, RefEval, compiler observers, network,
-        or external state. Do not produce a critique as the final output: leave
-        exactly the reviewed full object at `/output/candidate.json`, validate
-        it, run CandidateCheck, commit the exact PASS bytes, and submit with
-        `intentir_lift_submit /output/candidate.json`.
-      instance_template: |
-        Do not run bootstrap and do not replace the current draft with an older
-        artifact. Inspect the plan once, then inspect Source and the current
-        candidate in bounded views. For a long Source, use source-outline. Make
-        coordinated semantic and dependent-typing corrections yourself, run the
-        static validator and CandidateCheck, and submit by turn 16. Approval may
-        leave the exact LLM-authored bytes unchanged, but only after this audit.
-      step_limit: 16
-      wall_time_limit_seconds: 900
-    environment:
-      candidate_check_limit: 4
-      candidate_submission_check_limit: 1
-      submission_kind: candidate

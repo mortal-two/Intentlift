@@ -1,6 +1,6 @@
 # IntentIR 当前派生规范
 
-> 状态：2026-07-25 当前派生规范。
+> 状态：2026-07-27 当前派生规范。
 
 `.trellis/spec` 只把四份 SCRC 设计与第五份 production backend 设计投影为 schema、API、runner、
 lowering 和测试要求，不形成另一套设计。上位文档按作用域组合，不构成一条让旧 SCRC 文档覆盖
@@ -19,46 +19,37 @@ lowering 和测试要求，不形成另一套设计。上位文档按作用域�
 若派生规范与上位设计冲突，应修订派生规范；不得通过增加 interface artifact、hash gate、
 epoch、commitment、额外认证 Gate 或兼容旁路来调和冲突。
 
-自 2026-07-24 的 fresh run 起，CandidateCheck、C `subject_ref/axis_ref` attachment、numeric-cast
-dependent typing 与 result-relation compatibility 已由 `artifact.v2 / decode.v2 / typecheck.v3 /
-candidate-check.v1` 同步激活；随后 total graph typing 与显式 non-trailing broadcast 合同将
-TypeCheck 升为 `typecheck.v4`。v5 继承 v4 的 rank-0 closed signature、total typing 与显式
-broadcast 合同，并新增已知 `reduce`/binary `contraction` 的 canonical fail-early 以及 absent
-`opaque(mode=value,dtype=none)` 的语义引用拒绝。v6 再加入 J-only
-functional logical-domain closure：只对可识别的矩形 direct access/padding profile 检查
-index/predicate/domain/typed extent 一致性，不从 Source/C/π/hidden input 补造，也不把 general logical
-predicate 因 consumer 未实现而判为非法。当前 fresh-run 的 `typecheck.v7` 又对 rank-0 logical input
-执行 output/boundary/shape liveness，并允许显式 `logical_ref=null` 的 rank-0 representation scalar
-只作为 π carrier；该 null form 仅限 runtime scalar，bound constexpr 必须属于 J logical semantics，
-纯 schedule constexpr 归 C，否则 Harness invalid。v7 还只在无 guard、完整零起点矩形 direct
-access/domain、bound 与 typed extent 同轴匹配，且 masked axis 可证明被 `reduce(mean)` 消去而 J 无
-valid-count contract 时返回 `padded_mean_count_unproven`；guard/cross-axis/unknown-op 是 consumer
-unsupported，不是 J illegal。上述规则都不按 Source 名称/位置判断、不自动解绑/改图，也不推广成
-一般 tensor liveness 或 mean blanket ban。fixed code 不翻译别名、补齐 attrs、生成 dummy carrier
-或修复 artifact。当前 wire/decode 已因 closed `pi.iterations` 物理 induction-basis relation 升为
-`artifact.v3 / decode.v3`；`tile_extent/reduction_tile_extent` 保留 role 只触发 relation 缺失的机械
-totality，显式 relation 的合法性不依赖 role，loop axis 可写 `0` 或对应 `x*`。Source 中被 Lift 整体
-遗漏的 physical region，以及 custom/misclassified role 下完全遗漏的 relation，仍由 Gate1 检出。
-`artifact.v1/v2` 只按
-原 wire 保留历史读取能力并禁止该新字段；新 Lift response 必须使用 v3，新规则不得用于静默重判
-既有 receipt 或历史证书，DYT/SwiGLU 也不因协议升级被重跑或冒充 fresh v3 evidence。
+当前 fresh-run 栈为 `artifact.v8 / decode.v12 / typecheck.v20 / candidate-check.v1`。它继承 rank-0
+closed signature、Layer-A total typing、显式 broadcast、canonical reduce/contraction、absent carrier
+拒绝、functional-domain closure、rank-0 liveness、padded-mean necessary condition 与 closed
+`pi.iterations`，并验证 Lift 已作者化的 value/dimension、consumer-extension、access-guard、typed
+control/inout/output-binding 关系。fixed code只诊断，不翻译别名、补齐 attrs、生成 handle/relation、
+改图或修复 artifact；历史 wire/receipt 继续按自身版本读取，不静默升级或重判。当前 Agent execution
+receipt 为 `intentir.lift-knowledge.v56 / minisweagent.intentir-replay.v12 / openai.codex-cli.intentir-replay.v6`；
+artifact.v8 的 `physical_iterations/physical_loop_carriers` 只表达 J reduce/contraction 外的物理时间，
+feedback frontier 与 Replay local-axis 合同只改 agent 消费，不改变接受集合。Harness adapter v5 另把 concrete
+shape valuation 与 Harness-only `h*` shape identity 分开，并可显式声明 valuation-matched semantic
+constexpr ↔ `h*`；最终 `x*`/equality 仍由 Lift 完整作者化。
+Codex Replay v6 通过隔离 file mailbox提供匿名 C、J boundary与完整 π 的逐字 focused view；该 view
+不生成 realization，不遗漏 physical-time relation，也没有Gate或认证权限。
 
-当前 Gate1 observer profile 是 `triton-ttir-3.6-gate1-v6`；它保留 v5 对已建模 op 与 public-entry
-reachable、static、structured、acyclic `tt.call` 的 interprocedural comparison rules，并新增 typed single-block、
-encodingless `tt.scan` observation。operation/effect classification 是全局 closed profile；unknown op、
-malformed generic/body line、multi-block CFG/structured region 与未支持 control/region fail closed。
-历史 v5 evidence 不由 v6 重判，也不声称 v5→v6 acceptance 单调；该 profile 只是当前 compiler
+当前 Gate1 observer profile 是 `triton-ttir-3.6-gate1-v11`；它保留既有对已建模 op 与 public-entry
+reachable、static、structured、acyclic `tt.call` 的 interprocedural comparison rules，并包含 typed
+single-block、encodingless `tt.scan`、closed structured `scf.if` 与 exact terminal binary fork observation。
+operation/effect classification 是全局 closed profile；unknown op、malformed generic/body line、超出
+closed profile 的 multi-block CFG/structured region 与未支持 control/region fail closed。历史
+v5–v10 evidence 不由 v11 重判；该 profile 只是当前 compiler
 contract，不是形式完备性证明。同 case fan-out 协议是
-`intentir.scrc.candidate-fanout.v3`，在 pre-Gate2 wave barrier 后按固定
-`(branch_id, formal_round)` 选择 winner，wall-clock 到达次序不参与选择。
+`intentir.scrc.candidate-fanout.v4`：首个被观察到的完整 Gate1 closure 成为 winner，sibling
+cooperative stop并保存 receipt；hidden Gate2 尚未生成，因此调度次序不进入认证谓词。
 outer batch protocol 是 `intentir.scrc.batch.v3`；其 `observer_unsupported` 只表示 Source observer
 能力缺口，不是候选非法或 `NO_CLOSURE`，历史 batch v2 report 不重判。
 
-当前 scalar RefEval 是 `j_scalar_cpu_mlir_v10`，shared functional-boundary receipt 是
-`intentir.j-functional-boundary.v3`。主 SCRC runner 选定 Gate2 winner 后，才为当前 invocation 调用
+当前 scalar RefEval 是 `j_scalar_cpu_mlir_v16`，shared functional-boundary receipt 是
+`intentir.j-functional-boundary.v15`。主 SCRC runner 选定 Gate2 winner 后，才为当前 invocation 调用
 RefEval-only 入口；projection library 不选择 winner。该入口用 J 自身
 rank-0 logical `i1`/integer values 和完整 closed dimensions 逐 access 证明 predicate 对完整 logical
-domain 恒真；不改 J、不读 Source/C/π、不进入 Lift feedback。v3 projection 内的 invocation-local
+domain 恒真；不改 J、不读 Source/C/π、不进入 Lift feedback。invocation-local
 proof subreceipt 不保存 raw value/value digest；这是 audit-data minimization，不是
 confidentiality/privacy proof。
 production projection 仍是 value-free `ProjectFunctionalBoundary(J)`。CPU-only

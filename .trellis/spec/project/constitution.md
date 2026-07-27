@@ -44,6 +44,9 @@ Replay = W_f(J,pi,MaskC(C);U_f)
 - 将 Lift 本来获准读取、且在固定大小阈值内的 exact Source/Harness/closed feedback 与 source-neutral
   contract/preflight/example 原文直接搬入 user packet；超限只能给 receipt/path，不得由 fixed code
   生成语义摘要；
+- 对 exact Gate1 diff 作版本化、确定性的 bounded frontier 投影：只保留 closed category count 与有限
+  原始 witness，完整 diff 继续原样落盘并可按需读取；不得解释 mismatch、排序候选、建议语义或产生
+  corrected patch；
 - 将 LLM 在一个 action 中给出的完整 candidate text 原样落盘并调用既有 preflight，或在 LLM 明示
   exact old/new text 后立即 preflight；不得由 runtime 生成、选择或修复字段；
 - 按外部比较政策 Q 从 B 的封闭类别构造确定性、对称的 Gate2 comparator；
@@ -69,7 +72,8 @@ Replay = W_f(J,pi,MaskC(C);U_f)
 ## 实验与系统改进
 
 实验期间规则、prompt、模型配置、TypeCheck、observer profile 和比较政策 Q 保持不变，只修改
-候选 artifact。Gate1 失败的 diff 只反馈给同一 branch 的持久 source-aware Lift owner；owner 继续修改
+候选 artifact。Gate1 失败的 bounded frontier 与 exact diff 只反馈给同一 branch 的持久 source-aware
+Lift owner；owner 继续修改
 自己刚提交的完整 artifact，relift 必须产生完整新三元组，
 随后生成全新的盲 Replay。三轮仍未闭合则报告 `NO_CLOSURE`。
 

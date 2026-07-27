@@ -36,7 +36,8 @@ Top-level JSON:
 
 Atomic ops (each is one JSON object in a "body" list):
   map_binary : elementwise, numpy-broadcasting. fn in
-               {add,sub,mul,div,max,min,pow,atan2,gt,ge,lt,le,eq,ne}.
+               {add,sub,mul,div,max,min,pow,cmp,atan2,gt,ge,lt,le,eq,ne,
+                logical_and,logical_or,logical_xor,isclose}.
                Operand dtype promotion follows the closed IntentIR numeric
                lattice and the result type must be declared consistently;
                this op-internal promotion is distinct from an explicit source
@@ -46,9 +47,10 @@ Atomic ops (each is one JSON object in a "body" list):
                 feeds select; count_nonzero = sum(cast(x!=0, i64)).)
      {"op":"map_binary","result":R,"operands":[A,B],"attrs":{"fn":F}}
   map_unary  : elementwise. fn in
-               {exp,log,log2,sqrt,rsqrt,neg,recip,abs,tanh,sigmoid,
-                cos,sin,tan,exp2,atan,erf,isnan,logical_not}.
-               (isnan produces an i1 tensor -> feeds select; logical_not is i1->i1.)
+               {identity,exp,log,log2,sqrt,rsqrt,neg,recip,abs,tanh,sigmoid,
+                cos,sin,tan,exp2,atan,erf,isnan,isinf,isfinite,logical_not}.
+               (isnan/isinf/isfinite produce i1 tensors -> feed select;
+                logical_not is i1->i1. identity returns its operand unchanged.)
      {"op":"map_unary","result":R,"operands":[A],"attrs":{"fn":F}}
   reduce     : along axes. The declared result shape chooses either KEEPDIMS
                (reduced dims become size 1, for broadcast consumers) or

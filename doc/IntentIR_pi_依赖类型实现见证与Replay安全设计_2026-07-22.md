@@ -354,7 +354,7 @@ direct routed use 满足，不要求额外的 identity assignment。若同一 ha
 
 相同原则适用于 structured operator realization。对 canonical binary contraction，在 rank-2、单一
 contracted label、floating tile/dtype/accumulation 均由 public `tl.dot` 支持时，一个锚定该 node 的
-`realize` instance 由当前 `U_f v6`（继承 v5 的 direct-contraction 合同）映射为一个 direct `tl.dot`；不得以 outer-product multiply +
+`realize` instance 由当前 `U_f v11`（继承 v5 的 direct-contraction 合同）映射为一个 direct `tl.dot`；不得以 outer-product multiply +
 `tl.sum` 扩成未声明 stages。若 Source 确有多个 compiler-visible decomposition stage，Lift 应把
 它们完整声明为同一 node 上的多个有序 instances；若不满足 direct `tl.dot` support 条件，`U_f`
 不能强迫该 spelling。这里没有新增 J op、π mechanism 或 Source-specific rule。
@@ -387,7 +387,7 @@ tile_ordinal: lower=0, upper=ceil_div(Trip(J.loop),Tile), step=1
 
 两者可以实现同一 logical loop，却在 compiler observer 中具有不同 induction topology。旧 π 没有该
 区分时，Replay 选择任一写法都不是“消费 artifact”，而是在猜 Source。`artifact.v3` 因此引入、当前
-`artifact.v5` 继续要求：
+`artifact.v8` 继续要求：
 
 ```text
 pi.iterations[*] = {
@@ -423,11 +423,41 @@ region 若被 Lift 整体遗漏，也不存在可供 fixed checker 量化的 han
 
 后续落地的 wire 仍遵守这条版本纪律：artifact.v4 增加 J-owned
 `value_dimension_relations`、`boundary.consumer_extensions` 等 typed relations，artifact.v5 增加
-J-owned `boundary.access_guard_relations`；当前 decode 为 v6。它们没有进入 π，也没有让 π 获得
+J-owned `boundary.access_guard_relations`，v6/v7 增加 typed control；当前 decode 为 v12。它们没有进入 π，也没有让 π 获得
 value/dimension、consumer context 或 access-control 语义。旧 v1-v4 wire/receipt 仍按原字段集合读取，
 不由当前 parser 附加空数组、刷新或追认。
 
-### 4.3.2 Consumer context 与 access guard 仍属于 J
+### 4.3.2 J 外物理 tile-loop 与时间 carrier
+
+J 中的 structured `loop` 表示逻辑 recurrence；但 reduce/contraction 也可能在 Source 中由一个或多个
+物理 tile loop实现。把后者伪装成 J loop会改变 `[[J]]`，完全省略又让 Replay 猜测 Source。
+`artifact.v8` 因此增加：
+
+```text
+pi.physical_iterations[*] = {
+  region,
+  body_instance,       // semantic_ref = existing J reduce/contraction
+  tile_instance,       // semantic_ref = attached required positive-int C slot
+  induction_basis: extent_step | rounded_extent_step | tile_ordinal,
+  direction: forward | reverse
+}
+
+pi.physical_loop_carriers[*] = {
+  region, init, state, next, result
+}
+```
+
+`body_instance` 与 `tile_instance` 必须在 relation region 或祖先可见，且 C slot 指向同一 J node/axis。
+carrier 五元组只保存 typed temporal topology；不得携带 init/update 公式、bound、value 或 frontend API。
+一个 region 至多一条 physical iteration，不能与 structured `pi.iterations` 重叠。TypeCheck 验证 closed
+引用、类型、作用域、basis/direction vocabulary 和必要 totality；它不从 Source 推导 relation，也不证明
+Source 的真实方向/loop 数量。遗漏或错误仍由 source-blind Replay 后的 Gate1 检出。
+
+logical J axis ordinal 与 frontend active tile 的 tensor-rank axis 不同。Replay 必须由 J node、C attachment
+与 π realization 得到物理 tile rank；若 logical axis 被实现成一维 lane tile，`tl.sum/max/min/dot` 使用
+tile-local axis 0，而不是机械照抄 J 原轴号。该消费规则不生成新的 relation。
+
+### 4.3.3 Consumer context 与 access guard 仍属于 J
 
 artifact.v4 的 `value_dimension_relations` 由 Lift 显式声明 integral rank-0 logical value 与 symbolic
 dimension 的 `eq`；`consumer_extensions` 由 Lift 显式声明某个 predicate-bearing load 到某个
@@ -543,6 +573,10 @@ sharing(source,consumers)
 placement
 representation refinements
 schedule_refs
+iterations
+loop_carriers
+physical_iterations
+physical_loop_carriers
 ```
 
 “generic”仍表示封闭的 typed constructors 与 opaque J/C refs，不能接受任意 formula、自由文本或
@@ -785,19 +819,26 @@ Replay LLM 应遵守以下过程合同：
 5. 按 routes 和 operand slots 连接 producer/consumer；
 6. 按 sharing 复用 producer，不得擅自复制或折叠；
 7. 按 order 保留必要偏序；
-8. 按 `iterations` 保留每个已声明 physical loop region 的 induction basis；
-9. 按 representation refinements 保留 source materialization/placement；
-10. 遇到 J semantic ref 时从 J 查询当前语义 label；
-11. 使用固定公共 frontend 知识 `U_f` 选择合法 API spelling；
-12. 输出完整、参数化、source-blind frontend source；
-13. 不从 π 猜出后覆盖 J，也不从 compiler diff 修补。
+8. 按 `iterations` 保留 structured J loop 的物理 induction basis；
+9. 按 `physical_iterations/physical_loop_carriers` 保留 J reduce/contraction 外的物理 tile time；
+10. 按 representation refinements 保留 source materialization/placement；
+11. 遇到 J semantic ref 时从 J 查询当前语义 label；
+12. 使用固定公共 frontend 知识 `U_f` 选择合法 API spelling；
+13. 输出完整、参数化、source-blind frontend source；
+14. 不从 π 猜出后覆盖 J，也不从 compiler diff 修补。
 
 当前 fresh receipt 组合为 `intentir.scrc.replay-input.v1`、Triton
-`public_frontend_context_v7` 与 `intentir.lift-knowledge.v17`；旧 receipt 保持其原 verdict，不能由
+`public_frontend_context_v11`、`intentir.lift-knowledge.v56`、MiniSWE Replay v12 与 Codex Replay v6；旧 receipt 保持其原 verdict，不能由
 当前 Replay consumer 或 Lift knowledge 静默升级。
 
-当前新 Lift wire/decode 为 `intentir.scrc.artifact.v5 / intentir.scrc.decode.v6`；v3 历史上把上述
-`pi.iterations` 变为 required closed field，v4/v5 再增加前述 J-owned typed relations。v1-v4 历史
+Codex Replay v6 的隔离 focused view 必须逐字包含匿名 C slots、J boundary access/effect 与完整 π，
+包括 ordinary/physical iteration 和 carrier relations。它只能减少 packet 检索噪声，不能排序关系、
+推导 schedule、生成 source 或访问 Source/Harness/Gate；因此不改变 Replay 的 source-blind LLM-first
+所有权。
+
+当前新 Lift wire/decode 为 `intentir.scrc.artifact.v8 / intentir.scrc.decode.v12`；v3 历史上把上述
+`pi.iterations` 变为 required closed field，v4-v7 再增加前述 J-owned typed relations/control，v8
+增加 physical-only time。v1-v7 历史
 artifact 保持原始序列化、digest 与字段集合，禁止静默附加空数组、重标或刷新证书。
 
 固定代码仍只做：
@@ -846,7 +887,7 @@ frontend cache spelling。`triton-ttir-3.6-gate1-v8` 进一步把 closed
 type、volatility 与其他 attributes 仍是 hard evidence。这一决策不在 π 中新增假装的 frontend API
 mechanism，也不把 cache hint 当作 J 语义。
 
-当前 active `triton-ttir-3.6-gate1-v8` 保留既有对已建模 op 与 public-entry reachable、静态已知、
+当前 active `triton-ttir-3.6-gate1-v11` 保留既有对已建模 op 与 public-entry reachable、静态已知、
 structured 且无环 `tt.call` graph 的 interprocedural comparison rules；formal-to-actual、helper return SSA、
 op/def-use、effect 与已支持 region 都是 hard evidence，π 仍不保存 helper 名或 frontend call API。
 
@@ -854,7 +895,11 @@ v6 只新增 typed、single-block、encodingless `tt.scan` observer：ranked ten
 ordered combine args、唯一 typed return、recurrence/region topology 都被观察。它同时使用全局 closed
 operation/effect classification；unknown op 不能因位于 root/`scf.for`/combiner 而默认 pure。
 malformed generic/body line、动态/未知 callee、递归 cycle、call signature/return 不一致、reachable
-arbitrary multi-block CFG/region 或未支持 control/region 均 fail closed；Source 侧缺口由 batch v3 报
+v9–v11 进一步把 closed value/effect-only structured `scf.if` 与 exact operand-free terminal binary
+`cf.cond_br` 纳入 observation；predicate、arm role、member/dataflow、effect order、terminator 与 parent
+context 都是 hard evidence，而 physical block printing order不是。arbitrary 或超出 closed profile 的
+multi-block CFG/region、带 block argument/额外 block、跨 arm SSA、嵌套未支持 control 均 fail closed；
+Source 侧缺口由 batch v3 报
 `observer_unsupported`，不能伪装成 π 缺字段、Gate1 hard mismatch 或有界 `NO_CLOSURE`。历史 v5
 evidence 保持原解释；这不声称 v5→v6 acceptance 单调。上述只是当前 compiler observer 的实现
 合同，不是 call graph/TTIR observer
@@ -1187,7 +1232,7 @@ authorization；这只合并 proof-irrelevant 文件动作，外部 TypeCheck �
 numeric-cast、result-relation compatibility 与当前 v4/v5 typed relations 的检查均已随版本化
 TypeCheck 落地并写入 fresh receipt；旧 artifact/证书保持历史解释，不由新规则静默重判。
 
-活动 fresh-run 使用 `typecheck.v18`。v18 完整继承 v14、v15-v17 typed-control 合同及下述 v7
+活动 fresh-run 使用 `typecheck.v20`。v20 完整继承 v18/v19、v14-v17 typed-control 合同及下述 v7
 前序合同，并检查 authored
 value/dimension、consumer extension 与 access guard 的 dependent closure；它仍只拒绝和诊断，不补造
 artifact。历史 v7 完整继承 v6；v6 继承 v5，v5 继承 v4 的 rank-0 closed signature、
@@ -1274,7 +1319,9 @@ store coordinates 与 load coordinates 的 permutation 完全一致并由同 pre
 special literal 也由 shared materializer 直接消费。π route/instance/order 不能提供 factor、digit、perm、
 fill 或常量语义，不能让不完整关系通过；这些能力不改变 π 的 dependent typing 或 Gate1 witness 含义。
 
-当前 Lift knowledge v48 继承 v42，要求 `fill_value` 保留 Source load 的实际 `other`；MiniSWE Replay v6 继承 v4，要求
+当前 Lift knowledge v56 继承 v55-v42，要求 `fill_value` 保留 Source load 的实际 `other`，并要求
+adapter 明示的 bound-constexpr/shape-coordinate equality 仍由 Lift 绑定 `x*` 或作者化 `t*=x*`；
+MiniSWE Replay v12 / Codex Replay v6 继承既有 typed-rank 合同，要求
 writer 按 J typed rank/axis 保留必要的 reshape/expand-dimension stage。π route 可以约束已有 instance
 flow，却不能把一个 fill 换成“等价”neutral value，也不能授权 Replay 折叠 shaped reduction；两项仍由
 各自 LLM 完整作者化，fixed checker 只拒绝和诊断。

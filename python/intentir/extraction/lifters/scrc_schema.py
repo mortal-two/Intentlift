@@ -24,6 +24,7 @@ from intentir.verify.gate1.model import (
 )
 from intentir.verify.gate1.pi import (
     ITERATION_BASES,
+    PHYSICAL_ITERATION_DIRECTIONS,
     REALIZATION_MECHANISMS,
     REPRESENTATION_REFINEMENTS,
     render_realization_mechanism_grammar,
@@ -736,6 +737,61 @@ def _pi_schema() -> dict[str, Any]:
             "ordinary pi DAG edges."
         ),
     )
+    physical_iteration = _closed_object(
+        {
+            "region": {"type": "string", "pattern": "^r[0-9]+$"},
+            "body_instance": {
+                "type": "string",
+                "pattern": "^i[0-9]+$",
+                "description": (
+                    "Instance anchored to the existing J reduce/contraction "
+                    "realized by this physical-only loop region."
+                ),
+            },
+            "tile_instance": {
+                "type": "string",
+                "pattern": "^i[0-9]+$",
+                "description": (
+                    "Instance anchored to the required positive integer C tile "
+                    "attached to the same J node and axis."
+                ),
+            },
+            "induction_basis": {
+                "type": "string",
+                "enum": list(ITERATION_BASES),
+            },
+            "direction": {
+                "type": "string",
+                "enum": list(PHYSICAL_ITERATION_DIRECTIONS),
+            },
+        },
+        (
+            "region",
+            "body_instance",
+            "tile_instance",
+            "induction_basis",
+            "direction",
+        ),
+        description=(
+            "A physical iteration shell for an existing logical reduce or "
+            "contraction. It adds no J loop, bound formula, numeric value, "
+            "operator, source text, or frontend API."
+        ),
+    )
+    physical_loop_carrier = _closed_object(
+        {
+            "region": {"type": "string", "pattern": "^r[0-9]+$"},
+            "init": {"type": "string", "pattern": "^i[0-9]+$"},
+            "state": {"type": "string", "pattern": "^i[0-9]+$"},
+            "next": {"type": "string", "pattern": "^i[0-9]+$"},
+            "result": {"type": "string", "pattern": "^i[0-9]+$"},
+        },
+        ("region", "init", "state", "next", "result"),
+        description=(
+            "One typed physical carrier in a physical_iterations region. "
+            "Temporal edges carry no initialization/update formula or frontend spelling."
+        ),
+    )
     return _closed_object(
         {
             "regions": _array(region),
@@ -746,6 +802,8 @@ def _pi_schema() -> dict[str, Any]:
             "refinements": _array(refinement),
             "iterations": _array(iteration),
             "loop_carriers": _array(loop_carrier),
+            "physical_iterations": _array(physical_iteration),
+            "physical_loop_carriers": _array(physical_loop_carrier),
         },
         (
             "regions",
@@ -756,6 +814,8 @@ def _pi_schema() -> dict[str, Any]:
             "refinements",
             "iterations",
             "loop_carriers",
+            "physical_iterations",
+            "physical_loop_carriers",
         ),
         description=(
             render_realization_witness_wire_grammar()

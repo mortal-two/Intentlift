@@ -36,6 +36,8 @@ ITERATION_BASES: tuple[str, ...] = (
     "rounded_extent_step",
 )
 
+PHYSICAL_ITERATION_DIRECTIONS: tuple[str, ...] = ("forward", "reverse")
+
 REPRESENTATION_REFINEMENTS: tuple[str, ...] = (
     "identity_materialization",
     "signed_widen",
@@ -157,7 +159,17 @@ def render_realization_witness_wire_grammar() -> str:
         "Its global temporal denotation is state[0]=init, "
         "state[k+1]=next[k], result=state[T], including T=0. The temporal "
         "next-to-state edge and loop-exit result edge are not ordinary DAG "
-        "routes and never carry an expression or frontend spelling."
+        "routes and never carry an expression or frontend spelling. Each "
+        "physical_iterations entry has exactly region, body_instance, "
+        "tile_instance, induction_basis, and direction. body_instance anchors "
+        "an existing J reduce/contraction; tile_instance anchors one required "
+        "positive C tile attached to that same J node and reduced/contracted "
+        "axis. forward uses the corresponding zero-origin basis order; reverse "
+        "visits that same closed basis in descending order. It never adds a J "
+        "loop or carries bounds/formulas. Each physical_loop_carriers entry has "
+        "exactly region, init, state, next, and result, with the same temporal "
+        "denotation as loop_carriers, but its region is indexed by one "
+        "physical_iterations relation rather than a structured J loop."
     )
 
 
@@ -256,12 +268,17 @@ class RealizationWitness:
     refinements: list[dict[str, JsonValue]] = field(default_factory=list)
     iterations: list[dict[str, JsonValue]] = field(default_factory=list)
     loop_carriers: list[dict[str, JsonValue]] = field(default_factory=list)
+    physical_iterations: list[dict[str, JsonValue]] = field(default_factory=list)
+    physical_loop_carriers: list[dict[str, JsonValue]] = field(default_factory=list)
 
     PLACEMENTS: ClassVar[frozenset[str]] = frozenset(
         {"root", "program", "loop", "branch"}
     )
     MECHANISMS: ClassVar[frozenset[str]] = frozenset(REALIZATION_MECHANISMS)
     ITERATION_BASES: ClassVar[frozenset[str]] = frozenset(ITERATION_BASES)
+    PHYSICAL_ITERATION_DIRECTIONS: ClassVar[frozenset[str]] = frozenset(
+        PHYSICAL_ITERATION_DIRECTIONS
+    )
 
     def __post_init__(self) -> None:
         checked_regions: list[dict[str, JsonValue]] = []
@@ -396,6 +413,74 @@ class RealizationWitness:
                 }
             )
 
+        checked_physical_iterations: list[dict[str, JsonValue]] = []
+        physical_iteration_regions: set[str] = set()
+        for index, raw in enumerate(self.physical_iterations):
+            path = f"pi.physical_iterations[{index}]"
+            item = _record(
+                raw,
+                path=path,
+                required=frozenset(
+                    {
+                        "region",
+                        "body_instance",
+                        "tile_instance",
+                        "induction_basis",
+                        "direction",
+                    }
+                ),
+            )
+            region = _name(item["region"], f"{path}.region")
+            if region not in known_regions:
+                raise RealizationWitnessError(
+                    "pi physical iteration relation names an unknown region"
+                )
+            if region in physical_iteration_regions:
+                raise RealizationWitnessError(
+                    "pi physical iteration regions may have at most one relation"
+                )
+            if region in iteration_regions:
+                raise RealizationWitnessError(
+                    "one pi region cannot carry both structured and physical-only "
+                    "iteration relations"
+                )
+            physical_iteration_regions.add(region)
+            body_instance = _declared_instance_ref(
+                item["body_instance"],
+                path=f"{path}.body_instance",
+                known_instances=known_instances,
+            )
+            tile_instance = _declared_instance_ref(
+                item["tile_instance"],
+                path=f"{path}.tile_instance",
+                known_instances=known_instances,
+            )
+            if body_instance == tile_instance:
+                raise RealizationWitnessError(
+                    "pi physical iteration body and tile instances must be distinct"
+                )
+            induction_basis = _name(
+                item["induction_basis"], f"{path}.induction_basis"
+            )
+            if induction_basis not in self.ITERATION_BASES:
+                raise RealizationWitnessError(
+                    f"unsupported pi physical induction basis {induction_basis!r}"
+                )
+            direction = _name(item["direction"], f"{path}.direction")
+            if direction not in self.PHYSICAL_ITERATION_DIRECTIONS:
+                raise RealizationWitnessError(
+                    f"unsupported pi physical iteration direction {direction!r}"
+                )
+            checked_physical_iterations.append(
+                {
+                    "region": region,
+                    "body_instance": body_instance,
+                    "tile_instance": tile_instance,
+                    "induction_basis": induction_basis,
+                    "direction": direction,
+                }
+            )
+
         checked_loop_carriers: list[dict[str, JsonValue]] = []
         carrier_states: set[str] = set()
         carrier_results: set[str] = set()
@@ -447,6 +532,48 @@ class RealizationWitness:
             carrier_states.add(refs["state"])
             carrier_results.add(refs["result"])
             checked_loop_carriers.append({"region": region, **refs})
+
+        checked_physical_loop_carriers: list[dict[str, JsonValue]] = []
+        for index, raw in enumerate(self.physical_loop_carriers):
+            path = f"pi.physical_loop_carriers[{index}]"
+            item = _record(
+                raw,
+                path=path,
+                required=frozenset({"region", "init", "state", "next", "result"}),
+            )
+            region = _name(item["region"], f"{path}.region")
+            if region not in physical_iteration_regions:
+                raise RealizationWitnessError(
+                    "pi physical loop carrier requires one declared physical "
+                    "iteration region"
+                )
+            refs = {
+                key: _declared_instance_ref(
+                    item[key],
+                    path=f"{path}.{key}",
+                    known_instances=known_instances,
+                )
+                for key in ("init", "state", "next", "result")
+            }
+            if refs["init"] in {refs["state"], refs["next"], refs["result"]}:
+                raise RealizationWitnessError(
+                    "pi physical loop carrier init must be a distinct instance"
+                )
+            if refs["result"] in {refs["state"], refs["next"]}:
+                raise RealizationWitnessError(
+                    "pi physical loop carrier result must be a distinct instance"
+                )
+            if refs["state"] in carrier_states:
+                raise RealizationWitnessError(
+                    "pi physical loop carrier state slots must be globally unique"
+                )
+            if refs["result"] in carrier_results:
+                raise RealizationWitnessError(
+                    "pi physical loop carrier result slots must be globally unique"
+                )
+            carrier_states.add(refs["state"])
+            carrier_results.add(refs["result"])
+            checked_physical_loop_carriers.append({"region": region, **refs})
 
         checked_routes: list[dict[str, JsonValue]] = []
         for index, raw in enumerate(self.routes):
@@ -578,6 +705,8 @@ class RealizationWitness:
         self.refinements = checked_refinements
         self.iterations = checked_iterations
         self.loop_carriers = checked_loop_carriers
+        self.physical_iterations = checked_physical_iterations
+        self.physical_loop_carriers = checked_physical_loop_carriers
 
     @classmethod
     def from_json(cls, value: Any) -> "RealizationWitness":
@@ -604,6 +733,8 @@ class RealizationWitness:
                     "refinements",
                     "iterations",
                     "loop_carriers",
+                    "physical_iterations",
+                    "physical_loop_carriers",
                 }
             ),
         )
@@ -616,6 +747,8 @@ class RealizationWitness:
             "refinements",
             "iterations",
             "loop_carriers",
+            "physical_iterations",
+            "physical_loop_carriers",
         ):
             if key in data and not isinstance(data[key], list):
                 raise RealizationWitnessError(f"pi.{key} must be an array")
@@ -628,6 +761,10 @@ class RealizationWitness:
             refinements=copy.deepcopy(data["refinements"]),
             iterations=copy.deepcopy(data.get("iterations", [])),
             loop_carriers=copy.deepcopy(data.get("loop_carriers", [])),
+            physical_iterations=copy.deepcopy(data.get("physical_iterations", [])),
+            physical_loop_carriers=copy.deepcopy(
+                data.get("physical_loop_carriers", [])
+            ),
         )
 
     def to_json(
@@ -635,6 +772,7 @@ class RealizationWitness:
         *,
         include_iterations: bool = True,
         include_loop_carriers: bool = True,
+        include_physical_time: bool = True,
     ) -> dict[str, Any]:
         result = {
             "regions": copy.deepcopy(self.regions),
@@ -648,6 +786,11 @@ class RealizationWitness:
             result["iterations"] = copy.deepcopy(self.iterations)
         if include_loop_carriers:
             result["loop_carriers"] = copy.deepcopy(self.loop_carriers)
+        if include_physical_time:
+            result["physical_iterations"] = copy.deepcopy(self.physical_iterations)
+            result["physical_loop_carriers"] = copy.deepcopy(
+                self.physical_loop_carriers
+            )
         return result
 
 
@@ -656,6 +799,7 @@ __all__ = [
     "RealizationWitnessError",
     "REALIZATION_MECHANISMS",
     "ITERATION_BASES",
+    "PHYSICAL_ITERATION_DIRECTIONS",
     "REPRESENTATION_REFINEMENTS",
     "render_realization_mechanism_grammar",
     "render_realization_witness_wire_grammar",

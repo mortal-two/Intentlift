@@ -22,5 +22,17 @@ class UserInterruption(InterruptAgentFlow):
     """Raised when the user interrupts the agent."""
 
 
+class MiniSWERequestCancelled(RuntimeError):
+    """Abort one in-flight agent request after another candidate has won."""
+
+    def __init__(self, winner_branch_id: int) -> None:
+        if not isinstance(winner_branch_id, int) or winner_branch_id < 1:
+            raise ValueError("winner_branch_id must be positive")
+        self.winner_branch_id = winner_branch_id
+        super().__init__(
+            f"candidate superseded by Gate1 winner branch {winner_branch_id}"
+        )
+
+
 class FormatError(InterruptAgentFlow):
     """Raised when the LM's output is not in the expected format."""

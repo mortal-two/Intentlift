@@ -554,9 +554,174 @@ def _tiled_loop_artifact(*, basis: str = "extent_step") -> Gate1Artifact:
                     }
                 ],
                 "loop_carriers": [],
+                "physical_iterations": [],
+                "physical_loop_carriers": [],
             },
         }
     )
+
+
+def _physical_reduce_artifact(
+    *,
+    basis: str = "extent_step",
+    direction: str = "forward",
+    with_carrier: bool = False,
+) -> Gate1Artifact:
+    """One ordinary logical reduce with an explicitly authored physical loop."""
+
+    artifact = make_reduce_artifact()
+    artifact.c.slots[0].subject_ref = "n1"
+    artifact.c.slots[0].axis_ref = 1
+    artifact.c.slots[0].required = True
+    artifact.pi.regions.extend(
+        [
+            {"id": "r1", "parent": "r0", "placement": "program"},
+            {"id": "r2", "parent": "r1", "placement": "loop"},
+        ]
+    )
+    artifact.pi.instances.append(
+        {
+            "id": "i4",
+            "semantic_ref": "c0",
+            "region": "r1",
+            "mechanism": "realize",
+        }
+    )
+    artifact.pi.physical_iterations = [
+        {
+            "region": "r2",
+            "body_instance": "i2",
+            "tile_instance": "i4",
+            "induction_basis": basis,
+            "direction": direction,
+        }
+    ]
+    if with_carrier:
+        artifact.pi.instances.extend(
+            [
+                {
+                    "id": "i5",
+                    "semantic_ref": "t1",
+                    "region": "r1",
+                    "mechanism": "realize",
+                },
+                {
+                    "id": "i6",
+                    "semantic_ref": "t1",
+                    "region": "r2",
+                    "mechanism": "realize",
+                },
+                {
+                    "id": "i7",
+                    "semantic_ref": "t1",
+                    "region": "r2",
+                    "mechanism": "realize",
+                },
+                {
+                    "id": "i8",
+                    "semantic_ref": "t1",
+                    "region": "r1",
+                    "mechanism": "realize",
+                },
+                {
+                    "id": "i9",
+                    "semantic_ref": "a1",
+                    "region": "r2",
+                    "mechanism": "transfer_direct",
+                },
+            ]
+        )
+        artifact.pi.routes.extend(
+            [
+                {"source": "i5", "target": "i6", "slots": [0]},
+                {"source": "i6", "target": "i7", "slots": [0]},
+                {"source": "i6", "target": "i9", "slots": [0]},
+            ]
+        )
+        artifact.pi.physical_loop_carriers = [
+            {
+                "region": "r2",
+                "init": "i5",
+                "state": "i6",
+                "next": "i7",
+                "result": "i8",
+            }
+        ]
+    return Gate1Artifact.from_json(artifact.to_json())
+
+
+@pytest.mark.parametrize(
+    ("basis", "direction"),
+    [
+        ("extent_step", "forward"),
+        ("rounded_extent_step", "forward"),
+        ("tile_ordinal", "reverse"),
+    ],
+)
+def test_physical_reduce_iteration_is_typed_and_round_trips(
+    basis: str,
+    direction: str,
+) -> None:
+    artifact = _physical_reduce_artifact(basis=basis, direction=direction)
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert report.passed, [item.to_json() for item in report.diagnostics]
+    assert Gate1Artifact.from_json(artifact.to_json()) == artifact
+    assert artifact.j.intent.body[1].op == "reduce"
+    assert all(item.op != "loop" for item in artifact.j.intent.body)
+
+
+def test_physical_reduce_carrier_is_typed_without_adding_j_semantics() -> None:
+    artifact = _physical_reduce_artifact(with_carrier=True)
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert report.passed, [item.to_json() for item in report.diagnostics]
+    assert artifact.pi.physical_loop_carriers[0]["state"] == "i6"
+    assert all(item.op != "loop" for item in artifact.j.intent.body)
+
+
+def test_physical_iteration_rejects_wrong_body_or_tile_dependency() -> None:
+    wrong_body = _physical_reduce_artifact()
+    wrong_body.pi.physical_iterations[0]["body_instance"] = "i1"
+    wrong_tile = _physical_reduce_artifact()
+    wrong_tile.c.slots[0].axis_ref = 0
+
+    assert TypeCheckErrorCode.PHYSICAL_ITERATION_INVALID in {
+        item.code for item in type_check(
+            wrong_body.j, wrong_body.c, wrong_body.pi
+        ).diagnostics
+    }
+    assert TypeCheckErrorCode.PHYSICAL_ITERATION_INVALID in {
+        item.code for item in type_check(
+            wrong_tile.j, wrong_tile.c, wrong_tile.pi
+        ).diagnostics
+    }
+
+
+def test_physical_time_is_explicit_not_inferred_from_a_c_tile() -> None:
+    artifact = _physical_reduce_artifact()
+    artifact.pi.physical_iterations = []
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert TypeCheckErrorCode.PHYSICAL_ITERATION_INVALID not in {
+        item.code for item in report.diagnostics
+    }
+
+
+def test_artifact_v8_requires_and_v7_rejects_physical_time_fields() -> None:
+    payload = _physical_reduce_artifact().to_json()
+    missing = copy.deepcopy(payload)
+    del missing["pi"]["physical_iterations"]
+    with pytest.raises(SchemaError, match="missing required field: physical_iterations"):
+        Gate1Artifact.from_json(missing)
+
+    legacy = copy.deepcopy(payload)
+    legacy["schema"] = "intentir.scrc.artifact.v7"
+    with pytest.raises(SchemaError, match="v1-v7 do not contain pi physical time"):
+        Gate1Artifact.from_json(legacy)
 
 
 def test_closed_loop_state_round_trips_as_typed_intentir() -> None:
@@ -963,6 +1128,8 @@ def test_scope_state_effect_and_storage_ids_are_opaque_in_writer_payload() -> No
                     "refinements": [],
                     "iterations": [],
                     "loop_carriers": [],
+                    "physical_iterations": [],
+                    "physical_loop_carriers": [],
                 },
         }
     )

@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import threading
 
+import litellm
 import pytest
 
 from direct_fixtures import make_copy_artifact, make_reduce_artifact
@@ -49,9 +50,11 @@ from minisweagent.config.intentir_context_query import (
     _candidate_nodes,
     _feedback,
     _feedback_category,
+    _feedback_frontier,
     _source_find,
     _source_outline,
 )
+from minisweagent.agents.default import DefaultAgent
 from minisweagent.environments.intentir_lift import (
     APPLY_PATCH_PROTOCOL,
     CANDIDATE_CHECK_PROTOCOL,
@@ -59,8 +62,6 @@ from minisweagent.environments.intentir_lift import (
     INTENTIR_CANDIDATE_COMMIT,
     INTENTIR_CANDIDATE_CHECK,
     INTENTIR_CANDIDATE_ROLLBACK,
-    INTENTIR_LIFT_PLAN_PROTOCOL,
-    INTENTIR_LIFT_PLAN_SUBMIT,
     INTENTIR_LIFT_SUBMIT,
     INTENTIR_LIFT_SUBMIT_COMMAND,
     LIFT_TRANSACTION_PROTOCOL,
@@ -81,7 +82,6 @@ from minisweagent.run.intentir_lift import (
     create_intentir_lift_model,
     load_intentir_lift_config,
     run_intentir_lift,
-    run_intentir_staged_lift,
 )
 
 
@@ -196,7 +196,7 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     files = _real_lift_input_files()
 
     assert CANDIDATE_CHECK_PROTOCOL == SCRC_CANDIDATE_CHECK_PROTOCOL
-    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v48"
+    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v56"
     assert "knowledge/minimal_example.json" in files
     assert "knowledge/intent_ops.md" in files
     assert "tools/schema_query.py" in files
@@ -317,6 +317,13 @@ def test_context_bootstrap_keeps_feedback_visible_and_copies_previous(
         "previous_artifact": previous,
     }
     (input_root / "feedback.json").write_text(json.dumps(feedback))
+    frontier = {
+        "protocol": "intentir.lift-feedback-frontier.v1",
+        "authority": "diagnostic-only",
+        "failure_kind": "gate1",
+        "categories": [],
+    }
+    (input_root / "feedback_frontier.json").write_text(json.dumps(frontier))
     (input_root / "source.py").write_text("def source():\n    pass\n")
     (input_root / "harness_view.json").write_text("{}\n")
 
@@ -614,6 +621,13 @@ def test_context_query_reads_exact_feedback_and_candidate_paths_without_editing(
         "pi": {"instances": [{"id": "i0", "semantic_ref": "v0"}]},
     }
     (input_root / "feedback.json").write_text(json.dumps(feedback))
+    frontier = {
+        "protocol": "intentir.lift-feedback-frontier.v1",
+        "authority": "diagnostic-only",
+        "failure_kind": "gate1",
+        "categories": [],
+    }
+    (input_root / "feedback_frontier.json").write_text(json.dumps(frontier))
     candidate_path = output_root / "candidate.json"
     candidate_path.write_text(json.dumps(candidate))
     before = candidate_path.read_bytes()
@@ -623,6 +637,9 @@ def test_context_query_reads_exact_feedback_and_candidate_paths_without_editing(
         "diagnostic": "missing scf.for",
         "round": 2,
     }
+
+    _feedback_frontier(input_root)
+    assert json.loads(capsys.readouterr().out) == frontier
 
     _candidate(output_root, "j.scopes.0")
     assert json.loads(capsys.readouterr().out)["scope_id"] == "q0"
@@ -815,24 +832,10 @@ def test_compact_schema_queries_work_in_real_bubblewrap() -> None:
         result = environment.execute(
             {
                 "command": (
-                    "python /input/tools/schema_query.py "
-                    "/input/schema/artifact.schema.json top; "
-                    "python /input/tools/schema_query.py "
-                    "/input/schema/artifact.schema.json catalog; "
-                    "python /input/tools/schema_query.py "
-                    "/input/schema/artifact.schema.json op map_binary; "
-                    "python /input/tools/schema_query.py "
-                    "/input/schema/artifact.schema.json op effect_if; "
-                    "python /input/tools/schema_query.py "
-                    "/input/schema/artifact.schema.json op value_if; "
-                    "python /input/tools/schema_query.py "
-                    "/input/schema/artifact.schema.json section parameter; "
-                    "python /input/tools/schema_query.py "
-                    "/input/schema/artifact.schema.json section access; "
-                    "python /input/tools/schema_query.py "
-                    "/input/schema/artifact.schema.json section output_mapping; "
-                    "python /input/tools/schema_query.py "
-                    "/input/schema/artifact.schema.json section pi_instance"
+                    "python /input/tools/schema_query.py bundle top catalog "
+                    "op:map_binary op:effect_if op:value_if "
+                    "section:parameter section:access section:output_mapping "
+                    "section:pi_instance"
                 )
             }
         )
@@ -865,7 +868,7 @@ def test_compact_schema_queries_work_in_real_bubblewrap() -> None:
     assert "fill_value is legal only on a load" in output
     assert "leave output_mappings empty" in output
     assert '"semantic_ref"' in output
-    assert len(output.splitlines()) < 450
+    assert len(output.splitlines()) < 470
     assert loop_carrier_result["returncode"] == 0
     assert '"loop_instance"' in loop_carrier_result["output"]
     assert '"state"' in loop_carrier_result["output"]
@@ -974,14 +977,10 @@ def test_intentir_observation_exposes_wall_time_budget_and_call_telemetry() -> N
     )[0]
     rendered = json.loads(observation["output"])
 
-    assert rendered["session_budget"] == {
-        "kind": "wall_time",
-        "elapsed_seconds": 3300,
-        "limit_seconds": 3600,
-        "remaining_seconds": 300,
-    }
-    assert rendered["model_calls_telemetry"] == 60
-    assert rendered["directive"].startswith("The branch-owner wall-time")
+    assert rendered["remaining_seconds"] == 300
+    assert rendered["directive"].startswith("Owner wall time")
+    assert "session_budget" not in rendered
+    assert "model_calls_telemetry" not in rendered
 
 
 def test_small_allowlisted_inputs_are_embedded_exactly_in_startup_packet() -> None:
@@ -1001,14 +1000,22 @@ def test_small_allowlisted_inputs_are_embedded_exactly_in_startup_packet() -> No
         assert startup["exact_text"]["harness_view.json"] == files[
             "harness_view.json"
         ]
+        assert startup["exact_text"]["feedback_frontier.json"] == files[
+            "feedback_frontier.json"
+        ]
+        assert "feedback.json" not in startup["exact_text"]
         assert startup["exact_text"]["knowledge/minimal_example.json"] == files[
             "knowledge/minimal_example.json"
         ]
-        assert startup["exact_text"]["knowledge/lift_contract.md"] == files[
-            "knowledge/lift_contract.md"
+        assert "knowledge/lift_contract.md" not in startup["exact_text"]
+        assert startup["deferred_exact_files"] == [
+            "feedback.json",
+            "knowledge/lift_contract.md",
+            "knowledge/preflight.md",
         ]
         receipt = environment.serialize()["info"]["startup_context"]
         assert receipt["exact_inputs_embedded"] is True
+        assert receipt["embedded_bytes"] < receipt["total_bytes"]
         assert "exact_text" not in receipt
     finally:
         workspace.cleanup()
@@ -1033,6 +1040,113 @@ def test_real_default_agent_and_bubblewrap_deliver_one_candidate() -> None:
     assert result.model_calls == 2
     assert len(model.query_inputs) == 2
     assert len(model.query_inputs[0]) == 2
+
+
+def test_lift_exact_no_progress_loop_terminates_as_orchestration_stall() -> None:
+    workspace = _workspace()
+    model = _ScriptedModel(["true", "true", "true"])
+    try:
+        with pytest.raises(IntentIRLiftRunError) as captured:
+            run_intentir_lift(model=model, workspace=workspace)
+    finally:
+        workspace.cleanup()
+
+    result = captured.value.result
+    assert result.exit_status == "OrchestrationStall"
+    assert result.model_calls == 3
+    stagnation = result.trajectory["info"]["agent_runtime"]["stagnation"]
+    assert stagnation["terminated"] is True
+    assert stagnation["consecutive"] == 3
+    assert stagnation["authority"].startswith("exact consecutive")
+
+
+def test_material_progress_timer_is_time_based_and_resets_on_authored_bytes() -> None:
+    workspace = _workspace()
+    environment = IntentIRLiftEnvironment(
+        input_dir=workspace.input_dir,
+        output_dir=workspace.output_dir,
+        scratch_dir=workspace.scratch_dir,
+    )
+    agent = DefaultAgent(
+        _ScriptedModel([]),
+        environment,
+        system_template="system",
+        instance_template="instance",
+        step_limit=0,
+        cost_limit=0,
+        material_progress_advisory_seconds=10,
+        material_progress_stall_seconds=20,
+    )
+    try:
+        agent._material_progress_started -= 11
+        agent._observe_material_progress()
+        assert agent.messages[-1]["role"] == "user"
+        advisory = json.loads(agent.messages[-1]["content"])
+        assert advisory["status"] == "construction_due"
+        assert "no semantic field" in advisory["authority"]
+
+        (workspace.scratch_dir / "semantic_ledger.md").write_text("owner bytes\n")
+        agent._observe_material_progress()
+        assert agent._material_progress_events == 1
+        assert agent._material_progress_advisory_sent is False
+
+        # There is no total-call/observation cutoff while exact authored bytes
+        # continue to change.
+        for index in range(20):
+            (workspace.scratch_dir / "semantic_ledger.md").write_text(
+                f"owner bytes {index}\n"
+            )
+            agent._observe_material_progress()
+        assert agent._material_progress_terminated is False
+
+        agent._material_progress_started -= 21
+        agent._observe_material_progress()
+        assert agent.messages[-1]["role"] == "exit"
+        assert agent.messages[-1]["extra"]["reason"] == "material_progress_timeout"
+        runtime = agent.serialize()["info"]["agent_runtime"]["material_progress"]
+        assert runtime["terminated"] is True
+        assert runtime["byte_state_changes"] == 21
+        assert "no semantic judgement" in runtime["authority"]
+    finally:
+        workspace.cleanup()
+
+
+def test_structured_lift_inspection_avoids_path_discovery_and_is_read_only() -> None:
+    workspace = IntentIRLiftWorkspace.create(_real_lift_input_files())
+    workspace.candidate_path.write_text('{"j":{},"c":{},"pi":{}}\n')
+    environment = IntentIRLiftEnvironment(
+        input_dir=workspace.input_dir,
+        output_dir=workspace.output_dir,
+        scratch_dir=workspace.scratch_dir,
+        candidate_checker=lambda _text: {
+            "protocol": CANDIDATE_CHECK_PROTOCOL,
+            "status": "pass",
+            "diagnostics": [],
+        },
+    )
+    before = workspace.candidate_path.read_bytes()
+    try:
+        source = environment.execute(
+            {"tool_name": "inspect_lift_context", "view": "source", "count": 8}
+        )
+        schema = environment.execute(
+            {
+                "tool_name": "inspect_lift_schema",
+                "items": ["op:reduce", "section:pi_iteration"],
+            }
+        )
+        checked = environment.execute({"tool_name": "check_candidate"})
+        audit = environment.serialize()["info"]["structured_inspection"]
+    finally:
+        workspace.cleanup()
+
+    assert source["returncode"] == schema["returncode"] == checked["returncode"] == 0
+    assert "def scrc_k0" in source["output"]
+    assert "=== op:reduce ===" in schema["output"]
+    assert before == b'{"j":{},"c":{},"pi":{}}\n'
+    assert audit["context_views"] == ["source"]
+    assert audit["schema_bundles"] == [["op:reduce", "section:pi_iteration"]]
+    assert "no semantic classification" in audit["authority"]
 
 
 def test_lift_continuation_reuses_prior_context_without_exit_records() -> None:
@@ -1123,74 +1237,6 @@ def test_lift_multi_action_runtime_rejects_more_than_four_read_queries() -> None
 
     assert diagnostic is not None and "at most four" in diagnostic
     assert policy["rejections"] == 1
-
-
-def test_staged_lift_uses_three_fresh_llm_contexts_and_opaque_plan() -> None:
-    workspace = _workspace()
-    plan = json.dumps(
-        {
-            "protocol": INTENTIR_LIFT_PLAN_PROTOCOL,
-            "time_and_control": ["LLM-authored loop obligation"],
-        }
-    )
-    candidate = '{"j": {}, "c": {}, "pi": {}}'
-    model = _ScriptedModel(
-        [
-            f"printf '%s\\n' '{plan}' > /output/lift_plan.json",
-            f"printf '{INTENTIR_LIFT_PLAN_SUBMIT}\\n'",
-            (
-                "test -f /input/knowledge/lift_plan.json && "
-                f"printf '%s\\n' '{candidate}' > /output/candidate.json"
-            ),
-            f"printf '{INTENTIR_LIFT_SUBMIT}\\n'",
-            (
-                "python -c 'import json; "
-                "p=json.load(open(\"/input/knowledge/lift_plan.json\")); "
-                "assert p[\"protocol\"]==\"intentir.lift-plan.v1\"; "
-                "json.load(open(\"/output/candidate.json\"))'"
-            ),
-            f"printf '{INTENTIR_LIFT_SUBMIT}\\n'",
-        ]
-    )
-    checked: list[str] = []
-
-    def checker(candidate_text: str) -> dict:
-        checked.append(candidate_text)
-        return {
-            "protocol": CANDIDATE_CHECK_PROTOCOL,
-            "status": "pass",
-            "diagnostics": [],
-        }
-
-    try:
-        result = run_intentir_staged_lift(
-            model=model,
-            workspace=workspace,
-            candidate_checker=checker,
-        )
-        transported = (
-            workspace.input_dir / "knowledge" / "lift_plan.json"
-        ).read_text()
-    finally:
-        workspace.cleanup()
-
-    assert transported == plan + "\n"
-    assert json.loads(result.candidate_text or "") == json.loads(candidate)
-    assert result.exit_status == "Submitted"
-    assert result.model_calls == 6
-    assert checked == [candidate + "\n", candidate + "\n"]
-    assert set(result.stage_metrics) == {"planner", "builder", "reviewer"}
-    assert [result.stage_metrics[name]["model_calls"] for name in (
-        "planner", "builder", "reviewer"
-    )] == [2, 2, 2]
-    assert [len(model.query_inputs[index]) for index in (0, 2, 4)] == [2, 2, 2]
-    workflow = result.trajectory["info"]["lift_workflow"]
-    assert workflow["protocol"] == "intentir.lift-workflow.v1"
-    assert len(workflow["plan_sha256"]) == 64
-    assert {
-        message.get("extra", {}).get("intentir_lift_stage")
-        for message in result.trajectory["messages"]
-    } == {"planner", "builder", "reviewer"}
 
 
 def test_apply_patch_is_exact_atomic_and_invalidates_prior_check() -> None:
@@ -1288,6 +1334,110 @@ def test_direct_submit_writes_exact_llm_bytes_and_preflights_same_action() -> No
         ).hexdigest()
     finally:
         workspace.cleanup()
+
+
+def test_exact_write_text_builds_work_files_and_can_submit_candidate() -> None:
+    workspace = _workspace()
+    candidate_text = '{"value":"incremental"}\n'
+
+    def checker(observed: str) -> dict:
+        assert observed == candidate_text
+        return {
+            "protocol": CANDIDATE_CHECK_PROTOCOL,
+            "status": "pass",
+            "diagnostics": [],
+        }
+
+    environment = IntentIRLiftEnvironment(
+        input_dir=workspace.input_dir,
+        output_dir=workspace.output_dir,
+        scratch_dir=workspace.scratch_dir,
+        candidate_checker=checker,
+    )
+    try:
+        first = environment.execute(
+            {
+                "tool_name": "save_semantic_ledger",
+                "content": "owner-authored\n",
+            }
+        )
+        planned = environment.execute(
+            {
+                "tool_name": "save_construction_plan",
+                "content": "owner-authored construction checklist\n",
+            }
+        )
+        second = environment.execute(
+            {
+                "tool_name": "write_text",
+                "path": "/work/semantic_ledger.md",
+                "content": "continued\n",
+                "mode": "append",
+            }
+        )
+        assert first["returncode"] == planned["returncode"] == second["returncode"] == 0
+        assert (workspace.scratch_dir / "semantic_ledger.md").read_text() == (
+            "owner-authored\ncontinued\n"
+        )
+        assert (workspace.scratch_dir / "construction_plan.md").read_text() == (
+            "owner-authored construction checklist\n"
+        )
+        with pytest.raises(Submitted):
+            environment.execute(
+                {
+                    "tool_name": "write_text",
+                    "path": "/output/candidate.json",
+                    "content": candidate_text,
+                    "mode": "overwrite",
+                    "submit": True,
+                }
+            )
+        rejected = environment.execute(
+            {
+                "tool_name": "write_text",
+                "path": "/work/forbidden.py",
+                "content": "forbidden",
+                "mode": "overwrite",
+            }
+        )
+        audit = environment.serialize()["info"]["write_text"]
+    finally:
+        workspace.cleanup()
+
+    assert rejected["returncode"] == 1
+    assert audit["calls"] == 4
+    assert audit["receipts"][-1]["submit_requested"] is True
+    assert "no content is interpreted" in audit["authority"]
+
+
+def test_explicit_check_and_submit_uses_current_exact_candidate() -> None:
+    workspace = _workspace()
+    candidate_text = '{"value":"current"}\n'
+    workspace.candidate_path.write_text(candidate_text)
+
+    def checker(observed: str) -> dict:
+        assert observed == candidate_text
+        return {
+            "protocol": CANDIDATE_CHECK_PROTOCOL,
+            "status": "pass",
+            "diagnostics": [],
+        }
+
+    environment = IntentIRLiftEnvironment(
+        input_dir=workspace.input_dir,
+        output_dir=workspace.output_dir,
+        scratch_dir=workspace.scratch_dir,
+        candidate_checker=checker,
+    )
+    try:
+        with pytest.raises(Submitted):
+            environment.execute({"tool_name": "check_and_submit_candidate"})
+        info = environment.serialize()["info"]
+    finally:
+        workspace.cleanup()
+
+    assert info["check_submit"]["calls"] == 1
+    assert info["candidate_check"]["submission"]["evaluations"] == 1
 
 
 def test_exact_patch_can_request_preflight_and_submit_in_same_action() -> None:
@@ -1919,7 +2069,7 @@ def test_five_candidate_workspaces_are_concurrently_isolated() -> None:
     assert all(not root.exists() for root, _value in outcomes)
 
 
-def test_persistent_workspace_refreshes_only_feedback_and_retains_candidate() -> None:
+def test_persistent_workspace_refreshes_only_feedback_views_and_retains_candidate() -> None:
     files = _real_lift_input_files()
     workspace = IntentIRLiftWorkspace.create(files)
     retained = b'{"schema":"owned","j":{},"c":{},"pi":{}}\n'
@@ -1929,12 +2079,21 @@ def test_persistent_workspace_refreshes_only_feedback_and_retains_candidate() ->
         refreshed["feedback.json"] = json.dumps(
             {"failure_kind": "gate1", "diagnostics": {"kind": "closed"}}
         )
+        refreshed["feedback_frontier.json"] = json.dumps(
+            {
+                "protocol": "intentir.lift-feedback-frontier.v1",
+                "failure_kind": "gate1",
+            }
+        )
         workspace.refresh_inputs(refreshed)
 
         assert workspace.candidate_path.read_bytes() == retained
         assert json.loads((workspace.input_dir / "feedback.json").read_text())[
             "failure_kind"
         ] == "gate1"
+        assert json.loads(
+            (workspace.input_dir / "feedback_frontier.json").read_text()
+        )["failure_kind"] == "gate1"
 
         changed_source = dict(refreshed)
         changed_source["source.py"] += "\n# drift\n"
@@ -1984,6 +2143,33 @@ def test_litellm_model_has_one_explicit_attempt(monkeypatch) -> None:
     assert model.transport_retries == 0
 
 
+def test_litellm_model_cancels_before_another_transport_attempt(monkeypatch) -> None:
+    calls = 0
+
+    def forbidden(**kwargs):
+        nonlocal calls
+        del kwargs
+        calls += 1
+        raise AssertionError("cancelled branch must not call the provider")
+
+    monkeypatch.setattr("litellm.responses", forbidden)
+    model = LitellmResponseModel(
+        model_name="openai/test",
+        retry_attempts=3,
+        cost_tracking="ignore_errors",
+    )
+    model.set_cancel_requested(lambda: 3)
+
+    from minisweagent.exceptions import MiniSWERequestCancelled
+
+    with pytest.raises(MiniSWERequestCancelled) as captured:
+        model.query([])
+
+    assert captured.value.winner_branch_id == 3
+    assert calls == 0
+    assert model.physical_provider_calls == 0
+
+
 def test_litellm_model_retries_one_agent_turn_without_changing_messages(
     monkeypatch,
 ) -> None:
@@ -2015,6 +2201,163 @@ def test_litellm_model_retries_one_agent_turn_without_changing_messages(
     ]
     assert model.physical_provider_calls == 3
     assert model.transport_retries == 2
+
+
+def test_response_model_continues_from_latest_provider_response_id(monkeypatch) -> None:
+    calls: list[tuple[list[dict], dict]] = []
+
+    def capture(packet, **kwargs):
+        calls.append((copy.deepcopy(packet), dict(kwargs)))
+        return {"object": "response", "id": "response-2", "output": []}
+
+    model = LitellmResponseModel(
+        model_name="openai/test",
+        use_previous_response_id=True,
+        retry_attempts=1,
+        cost_tracking="ignore_errors",
+    )
+    monkeypatch.setattr(model, "_query", capture)
+    monkeypatch.setattr(model, "_calculate_cost", lambda _response: {"cost": 0.0})
+    monkeypatch.setattr(model, "_parse_actions", lambda _response: [])
+    tail = {
+        "type": "function_call_output",
+        "call_id": "call-1",
+        "output": "bounded observation",
+    }
+    messages = [
+        {"role": "system", "content": "persistent owner"},
+        {"role": "user", "content": "exact source and harness"},
+        {
+            "object": "response",
+            "id": "response-1",
+            "output": [
+                {
+                    "type": "function_call",
+                    "call_id": "call-1",
+                    "name": "bash",
+                    "arguments": '{"command":"true"}',
+                }
+            ],
+        },
+        tail,
+    ]
+
+    result = model.query(messages)
+
+    assert result["id"] == "response-2"
+    assert calls == [
+        (
+            [tail],
+            {
+                "response_count": 1,
+                "semantic_turn": False,
+                "previous_response_id": "response-1",
+            },
+        )
+    ]
+    continuation = model.response_continuation_telemetry
+    assert continuation["requests"] == 1
+    assert continuation["fallbacks"] == 0
+    assert continuation["continuation_input_items"] == 1
+    assert continuation["stateless_input_items"] == 0
+
+
+def test_response_model_falls_back_once_when_continuation_is_unsupported(
+    monkeypatch,
+) -> None:
+    calls: list[tuple[list[dict], dict]] = []
+
+    def capture(packet, **kwargs):
+        calls.append((copy.deepcopy(packet), dict(kwargs)))
+        if kwargs.get("previous_response_id"):
+            raise litellm.exceptions.BadRequestError(
+                "relay rejected this continuation packet",
+                model="test",
+                llm_provider="test",
+            )
+        return {"object": "response", "id": "response-fallback", "output": []}
+
+    model = LitellmResponseModel(
+        model_name="openai/test",
+        use_previous_response_id=True,
+        retry_attempts=3,
+        cost_tracking="ignore_errors",
+    )
+    monkeypatch.setattr(model, "_query", capture)
+    monkeypatch.setattr(model, "_calculate_cost", lambda _response: {"cost": 0.0})
+    monkeypatch.setattr(model, "_parse_actions", lambda _response: [])
+    messages = [
+        {"role": "system", "content": "persistent owner"},
+        {"role": "user", "content": "exact source"},
+        {"object": "response", "id": "response-1", "output": []},
+        {"role": "user", "content": "latest closed feedback"},
+    ]
+
+    result = model.query(messages)
+
+    assert result["id"] == "response-fallback"
+    assert len(calls) == 2
+    assert calls[0][0] == [{"role": "user", "content": "latest closed feedback"}]
+    assert calls[0][1]["previous_response_id"] == "response-1"
+    assert "previous_response_id" not in calls[1][1]
+    assert calls[1][0][0] == {"role": "system", "content": "persistent owner"}
+    assert model.physical_provider_calls == 2
+    assert model.transport_retries == 0
+    continuation = model.response_continuation_telemetry
+    assert continuation["requests"] == 1
+    assert continuation["fallbacks"] == 1
+    assert continuation["disabled"] is True
+    attempts = model.serialize()["info"]["agent_runtime"]["provider_attempts"]
+    assert [item["status"] for item in attempts] == ["error", "success"]
+    assert attempts[0]["continuation"] is True
+    assert attempts[1]["fallback"] is True
+
+
+def test_response_model_uses_xhigh_for_semantic_turn_and_high_for_routine_tools(
+    monkeypatch,
+) -> None:
+    packets: list[dict] = []
+
+    def capture(**kwargs):
+        packets.append(kwargs)
+        return {"output": []}
+
+    monkeypatch.setattr("litellm.responses", capture)
+    model = LitellmResponseModel(
+        model_name="openai/test",
+        enable_apply_patch_tool=True,
+        enable_write_text_tool=True,
+        enable_semantic_ledger_tool=True,
+        enable_construction_plan_tool=True,
+        require_first_semantic_ledger=True,
+        require_second_construction_plan=True,
+        routine_reasoning_effort="high",
+        routine_timeout_seconds=15,
+        model_kwargs={"reasoning_effort": "xhigh", "timeout": 60},
+        cost_tracking="ignore_errors",
+    )
+
+    model._query([], response_count=0, semantic_turn=True)
+    model._query([], response_count=1, semantic_turn=True)
+    model._query([], response_count=2, semantic_turn=False)
+
+    assert packets[0]["reasoning_effort"] == "xhigh"
+    assert [tool["name"] for tool in packets[0]["tools"]] == [
+        "save_semantic_ledger"
+    ]
+    assert packets[1]["reasoning_effort"] == "xhigh"
+    assert [tool["name"] for tool in packets[1]["tools"]] == [
+        "save_construction_plan"
+    ]
+    assert packets[2]["reasoning_effort"] == "high"
+    assert packets[0]["timeout"] == 60
+    assert packets[1]["timeout"] == 60
+    assert packets[2]["timeout"] == 15
+    assert [tool["name"] for tool in packets[2]["tools"]] == [
+        "bash",
+        "apply_patch",
+        "write_text",
+    ]
 
 
 def test_non_string_shell_action_is_a_model_format_error() -> None:
@@ -2141,6 +2484,237 @@ def test_parser_accepts_complete_direct_submission_only_when_enabled() -> None:
     ]
 
 
+def test_parser_accepts_exact_write_text_only_when_enabled() -> None:
+    call = {
+        "type": "function_call",
+        "name": "write_text",
+        "call_id": "call-write-text",
+        "arguments": json.dumps(
+            {
+                "path": "/work/build.py",
+                "content": "model-authored",
+                "mode": "append",
+            }
+        ),
+    }
+
+    with pytest.raises(FormatError):
+        parse_toolcall_actions_response(
+            [call], format_error_template="{{ error }}"
+        )
+    assert parse_toolcall_actions_response(
+        [call],
+        format_error_template="{{ error }}",
+        enable_write_text_tool=True,
+    ) == [
+        {
+            "tool_name": "write_text",
+            "path": "/work/build.py",
+            "content": "model-authored",
+            "mode": "append",
+            "submit": False,
+            "tool_call_id": "call-write-text",
+        }
+    ]
+
+
+def test_parser_accepts_codex_style_large_work_file_write() -> None:
+    content = "x" * 20000
+    call = {
+        "type": "function_call",
+        "name": "write_text",
+        "call_id": "call-large-build",
+        "arguments": json.dumps(
+            {
+                "path": "/work/build.py",
+                "content": content,
+                "mode": "overwrite",
+            }
+        ),
+    }
+
+    actions = parse_toolcall_actions_response(
+        [call],
+        format_error_template="{{ error }}",
+        enable_write_text_tool=True,
+    )
+    assert actions[0]["content"] == content
+
+
+def test_parser_accepts_bounded_semantic_ledger_only_when_enabled() -> None:
+    call = {
+        "type": "function_call",
+        "name": "save_semantic_ledger",
+        "call_id": "call-ledger",
+        "arguments": json.dumps({"content": "source-grounded working notes"}),
+    }
+
+    with pytest.raises(FormatError):
+        parse_toolcall_actions_response(
+            [call], format_error_template="{{ error }}"
+        )
+    assert parse_toolcall_actions_response(
+        [call],
+        format_error_template="{{ error }}",
+        enable_semantic_ledger_tool=True,
+    ) == [
+        {
+            "tool_name": "save_semantic_ledger",
+            "content": "source-grounded working notes",
+            "tool_call_id": "call-ledger",
+        }
+    ]
+
+
+def test_parser_accepts_bounded_construction_plan_only_when_enabled() -> None:
+    call = {
+        "type": "function_call",
+        "name": "save_construction_plan",
+        "call_id": "call-construction-plan",
+        "arguments": json.dumps({"content": "model-authored J/C/pi checklist"}),
+    }
+
+    with pytest.raises(FormatError):
+        parse_toolcall_actions_response(
+            [call], format_error_template="{{ error }}"
+        )
+    assert parse_toolcall_actions_response(
+        [call],
+        format_error_template="{{ error }}",
+        enable_construction_plan_tool=True,
+    ) == [
+        {
+            "tool_name": "save_construction_plan",
+            "content": "model-authored J/C/pi checklist",
+            "tool_call_id": "call-construction-plan",
+        }
+    ]
+
+
+def test_parser_accepts_explicit_check_and_submit_only_when_enabled() -> None:
+    call = {
+        "type": "function_call",
+        "name": "check_and_submit_candidate",
+        "call_id": "call-check-submit",
+        "arguments": "{}",
+    }
+
+    with pytest.raises(FormatError):
+        parse_toolcall_actions_response(
+            [call], format_error_template="{{ error }}"
+        )
+    assert parse_toolcall_actions_response(
+        [call],
+        format_error_template="{{ error }}",
+        enable_check_submit_candidate_tool=True,
+    ) == [
+        {
+            "tool_name": "check_and_submit_candidate",
+            "tool_call_id": "call-check-submit",
+        }
+    ]
+
+
+def test_parser_accepts_closed_structured_lift_tools_only_when_enabled() -> None:
+    calls = [
+        {
+            "type": "function_call",
+            "name": "inspect_lift_context",
+            "call_id": "call-context",
+            "arguments": json.dumps(
+                {"view": "source_outline", "start": 1, "count": 32}
+            ),
+        },
+        {
+            "type": "function_call",
+            "name": "inspect_lift_schema",
+            "call_id": "call-schema",
+            "arguments": json.dumps({"items": ["op:reduce", "section:pi_iteration"]}),
+        },
+        {
+            "type": "function_call",
+            "name": "check_candidate",
+            "call_id": "call-check",
+            "arguments": "{}",
+        },
+    ]
+    with pytest.raises(FormatError):
+        parse_toolcall_actions_response(
+            calls[:1], format_error_template="{{ error }}"
+        )
+
+    assert parse_toolcall_actions_response(
+        calls,
+        format_error_template="{{ error }}",
+        max_tool_calls=3,
+        enable_lift_context_tool=True,
+        enable_lift_schema_tool=True,
+        enable_check_candidate_tool=True,
+    ) == [
+        {
+            "tool_name": "inspect_lift_context",
+            "view": "source_outline",
+            "start": 1,
+            "count": 32,
+            "tool_call_id": "call-context",
+        },
+        {
+            "tool_name": "inspect_lift_schema",
+            "items": ["op:reduce", "section:pi_iteration"],
+            "tool_call_id": "call-schema",
+        },
+        {"tool_name": "check_candidate", "tool_call_id": "call-check"},
+    ]
+
+
+def test_parser_accepts_replay_exact_patch_and_direct_submit_only_when_enabled() -> None:
+    patch_call = {
+        "type": "function_call",
+        "name": "apply_replay_patch",
+        "call_id": "call-replay-patch",
+        "arguments": json.dumps(
+            {
+                "path": "/output/replay.source",
+                "old_text": "old",
+                "new_text": "new",
+                "submit": True,
+            }
+        ),
+    }
+    submit_call = {
+        "type": "function_call",
+        "name": "submit_replay",
+        "call_id": "call-replay-submit",
+        "arguments": json.dumps({"source_text": "complete replay"}),
+    }
+
+    with pytest.raises(FormatError):
+        parse_toolcall_actions_response(
+            [patch_call], format_error_template="{{ error }}"
+        )
+    assert parse_toolcall_actions_response(
+        [patch_call, submit_call],
+        format_error_template="{{ error }}",
+        max_tool_calls=2,
+        enable_replay_patch_tool=True,
+        enable_submit_replay_tool=True,
+    ) == [
+        {
+            "tool_name": "apply_replay_patch",
+            "path": "/output/replay.source",
+            "old_text": "old",
+            "new_text": "new",
+            "submit": True,
+            "tool_call_id": "call-replay-patch",
+        },
+        {
+            "tool_name": "submit_replay",
+            "source_text": "complete replay",
+            "tool_call_id": "call-replay-submit",
+        },
+    ]
+
+
 def test_response_model_compacts_transport_history_without_mutating_trajectory() -> None:
     model = LitellmResponseModel(
         model_name="openai/test",
@@ -2187,6 +2761,176 @@ def test_response_model_compacts_transport_history_without_mutating_trajectory()
     assert model.history_compaction["chars"] > 0
 
 
+def test_response_model_keeps_an_append_only_provider_prefix_when_compaction_is_off() -> None:
+    model = LitellmResponseModel(
+        model_name="openai/test",
+        compact_tool_history=False,
+        compact_workspace_mirrors=False,
+        compact_response_history_keep_recent=0,
+        cost_tracking="ignore_errors",
+    )
+    messages = [
+        {"role": "system", "content": "stable-system"},
+        {"role": "user", "content": "stable-task"},
+        {
+            "object": "response",
+            "output": [
+                {
+                    "type": "function_call",
+                    "call_id": "call-0",
+                    "name": "bash",
+                    "arguments": json.dumps({"command": "true"}),
+                }
+            ],
+        },
+        {
+            "type": "function_call_output",
+            "call_id": "call-0",
+            "output": "first-observation",
+        },
+    ]
+    before = model._prepare_messages_for_api(messages)
+    extended = [
+        *messages,
+        {
+            "object": "response",
+            "output": [
+                {
+                    "type": "function_call",
+                    "call_id": "call-1",
+                    "name": "bash",
+                    "arguments": json.dumps({"command": "false"}),
+                }
+            ],
+        },
+        {
+            "type": "function_call_output",
+            "call_id": "call-1",
+            "output": "second-observation",
+        },
+    ]
+    after = model._prepare_messages_for_api(extended)
+
+    assert after[: len(before)] == before
+    assert model.prompt_cache_telemetry["policy"] == "stable-append-only-prefix"
+
+
+def test_response_model_compacts_workspace_mirror_and_old_response_groups() -> None:
+    model = LitellmResponseModel(
+        model_name="openai/test",
+        compact_tool_history=True,
+        compact_workspace_mirrors=True,
+        compact_response_history_keep_recent=1,
+        cost_tracking="ignore_errors",
+    )
+    exact_source = "semantic source bytes " * 1000
+    messages: list[dict] = [
+        {"role": "system", "content": "system"},
+        {
+            "role": "user",
+            "content": (
+                "instructions\n<persistent-workspace-mirror>"
+                + exact_source
+                + "</persistent-workspace-mirror>"
+            ),
+        },
+    ]
+    for index in range(3):
+        messages.extend(
+            [
+                {
+                    "object": "response",
+                    "id": f"response-{index}",
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "name": "bash",
+                            "call_id": f"call-{index}",
+                            "arguments": json.dumps(
+                                {"command": f"read-only-{index}"}
+                            ),
+                        }
+                    ],
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": f"call-{index}",
+                    "output": f"observation-{index}",
+                },
+            ]
+        )
+    original = copy.deepcopy(messages)
+
+    prepared = model._prepare_messages_for_api(messages)
+    packet = json.dumps(prepared)
+
+    assert exact_source not in packet
+    assert "intentir.agent-workspace-mirror.v1" in packet
+    assert "intentir.agent-response-history.v2" in packet
+    assert "call-0" not in packet
+    assert "call-1" not in packet
+    assert "call-2" in packet
+    assert "observation-2" in packet
+    assert messages == original
+    assert model.history_compaction["workspace_mirror_blocks"] == 1
+    assert model.history_compaction["workspace_mirror_chars"] > 0
+    assert model.history_compaction["response_history_packets"] == 1
+    assert model.history_compaction["response_history_items"] == 4
+    assert model.history_compaction["response_history_chars"] > 0
+
+    chain = model._response_history_chain_sha256
+    identities = list(model._response_history_chain_identities)
+    model._prepare_messages_for_api(messages)
+    assert model._response_history_chain_sha256 == chain
+    assert model._response_history_chain_identities == identities
+
+
+def test_response_model_keeps_exact_source_and_only_latest_lift_continuation() -> None:
+    model = LitellmResponseModel(
+        model_name="openai/test",
+        compact_tool_history=True,
+        compact_workspace_mirrors=False,
+        compact_response_history_keep_recent=3,
+        cost_tracking="ignore_errors",
+    )
+    exact_source = "def current_kernel():\n    return 7\n"
+    old_continuation = (
+        '{"protocol":"intentir.lift-owner-continuation.v1","round":1}'
+        "\nold-gate1-feedback"
+    )
+    latest_candidate = '{"schema":"current","j":{},"c":{},"pi":{}}'
+    latest_continuation = (
+        '{"protocol":"intentir.lift-owner-continuation.v1","round":2}'
+        + "\nlatest-gate1-feedback\n"
+        + latest_candidate
+    )
+    messages = [
+        {"role": "system", "content": "single owner"},
+        {
+            "role": "user",
+            "content": (
+                "<persistent-workspace-mirror>"
+                + exact_source
+                + "</persistent-workspace-mirror>"
+            ),
+        },
+        {"role": "user", "content": old_continuation},
+        {"object": "response", "output": []},
+        {"role": "user", "content": latest_continuation},
+    ]
+    original = copy.deepcopy(messages)
+
+    prepared = model._prepare_messages_for_api(messages)
+    packet = json.dumps(prepared, ensure_ascii=False)
+    contents = [message.get("content") for message in prepared]
+
+    assert exact_source in contents[1]
+    assert latest_continuation in contents[-1]
+    assert "old-gate1-feedback" not in packet
+    assert "intentir.lift-continuation-history.v1" in packet
+    assert messages == original
+
+
 def test_model_serialization_redacts_provider_key() -> None:
     model = create_intentir_lift_model(
         model_name="test",
@@ -2199,12 +2943,27 @@ def test_model_serialization_redacts_provider_key() -> None:
     assert "not-for-evidence" not in serialized
     assert "<redacted>" in serialized
     assert model.config.retry_attempts == 3
-    assert model.config.retry_timeouts is False
+    assert model.config.retry_timeouts is True
     assert model.config.use_global_model_stats is False
     assert model.config.max_tool_calls_per_response == 4
     assert model.config.enable_apply_patch_tool is True
     assert model.config.enable_submit_candidate_tool is True
+    assert model.config.enable_write_text_tool is True
+    assert model.config.enable_semantic_ledger_tool is False
+    assert model.config.enable_construction_plan_tool is False
+    assert model.config.enable_check_submit_candidate_tool is True
+    assert model.config.enable_lift_context_tool is True
+    assert model.config.enable_lift_schema_tool is True
+    assert model.config.enable_check_candidate_tool is True
+    assert model.config.require_first_semantic_ledger is False
+    assert model.config.require_second_construction_plan is False
+    assert model.config.routine_reasoning_effort == "low"
+    assert model.config.routine_timeout_seconds == 180
+    assert model.config.semantic_initial_turns == 1
     assert model.config.compact_tool_history is True
+    assert model.config.compact_workspace_mirrors is False
+    assert model.config.compact_response_history_keep_recent == 3
+    assert model.config.use_previous_response_id is True
     assert model.config.model_kwargs["num_retries"] == 0
 
 
@@ -2268,6 +3027,7 @@ def test_existing_litellm_responses_model_sends_the_expected_cpa_packet() -> Non
             api_key="local-test-key",
             reasoning_effort="xhigh",
             timeout_seconds=5,
+            prompt_cache_key="intentir-test-owner",
         )
         global_calls_before = GLOBAL_MODEL_STATS.n_calls
         message = model.query(
@@ -2282,7 +3042,10 @@ def test_existing_litellm_responses_model_sends_the_expected_cpa_packet() -> Non
         server.server_close()
 
     assert message["extra"]["actions"] == [
-        {"command": "true", "tool_call_id": "call-local"}
+        {
+            "command": "true",
+            "tool_call_id": "call-local",
+        }
     ]
     assert len(requests) == 1
     request = requests[0]
@@ -2291,9 +3054,38 @@ def test_existing_litellm_responses_model_sends_the_expected_cpa_packet() -> Non
     assert request["body"]["model"] == "test"
     assert request["body"]["reasoning"] == {"effort": "xhigh"}
     assert request["body"]["parallel_tool_calls"] is True
-    assert request["body"]["tools"][0]["name"] == "bash"
-    assert request["body"]["tools"][1]["name"] == "apply_patch"
-    assert request["body"]["tools"][2]["name"] == "submit_candidate"
+    assert request["body"]["prompt_cache_key"] == "intentir-test-owner"
+    assert [tool["name"] for tool in request["body"]["tools"]] == [
+        "bash",
+        "apply_patch",
+        "submit_candidate",
+        "write_text",
+        "check_and_submit_candidate",
+        "inspect_lift_context",
+        "inspect_lift_schema",
+        "check_candidate",
+    ]
+    assert [
+        tool["name"]
+        for tool in model._response_tools(response_count=2)
+    ] == [
+        "bash",
+        "apply_patch",
+        "submit_candidate",
+        "write_text",
+        "check_and_submit_candidate",
+        "inspect_lift_context",
+        "inspect_lift_schema",
+        "check_candidate",
+    ]
+    cache = model.serialize()["info"]["agent_runtime"]["prompt_cache"]
+    assert cache == {
+        "policy": "history-transforming",
+        "key_present": True,
+        "input_tokens": 2,
+        "cached_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+    }
     assert GLOBAL_MODEL_STATS.n_calls == global_calls_before
 
 
@@ -2362,7 +3154,7 @@ def test_authoritative_candidate_check_uses_source_free_versioned_context() -> N
     prepared = prepare_scrc_lift(request.source.text)
     context = scrc_candidate_check_context(prepared)
     assert context.expected_parameters == ("p0", "p1", "p2")
-    assert context.typecheck_protocol == "intentir.scrc.typecheck.v18"
+    assert context.typecheck_protocol == "intentir.scrc.typecheck.v20"
     assert "source_copy" not in repr(context)
     assert not hasattr(context, "user_input")
     assert not hasattr(context, "harness_binding")
@@ -2881,10 +3673,13 @@ def test_decode_ignores_json_object_key_order_for_domain_map() -> None:
 def test_adapter_keeps_one_owner_context_and_workspace(monkeypatch) -> None:
     artifact = make_copy_artifact()
     captured: list[tuple[Path, dict]] = []
+    created_models: list[object] = []
 
     def fake_model(**kwargs):
         assert kwargs["reasoning_effort"] == "xhigh"
-        return object()
+        model = object()
+        created_models.append(model)
+        return model
 
     def fake_run(
         *,
@@ -2946,15 +3741,64 @@ def test_adapter_keeps_one_owner_context_and_workspace(monkeypatch) -> None:
     first = adapter.lift(request, None)
     feedback = LiftFeedback(
         FeedbackKind.GATE1,
-        {"observer_diff": {"category": "dataflow"}},
+        {
+            "status": "no_closure",
+            "observer_diff": {
+                "primary_difference_category": "dataflow",
+                "hard_passes": {
+                    "interface": False,
+                    "dataflow": False,
+                },
+                "categories": [
+                    {
+                        "category": "dataflow",
+                        "difference_count": 200,
+                        "examples": [
+                            {"kind": "missing", "item": ["edge", "a", "b", "operand[0]"]}
+                        ],
+                        "node_witnesses": [{"node": f"n{index}"} for index in range(100)],
+                        "local_frontier": {
+                            "protocol": "intentir.gate1-local-frontier.v1",
+                            "difference_count": 12,
+                            "examples": [{"kind": "missing", "profile": {"inputs": []}}],
+                        },
+                    },
+                    {
+                        "category": "interface",
+                        "difference_count": 2,
+                        "examples": [
+                            {"kind": "missing", "item": ["argument", 6, "inout"]},
+                            {"kind": "unexpected", "item": ["argument", 6, "output"]},
+                        ],
+                    },
+                ],
+            },
+        },
         1,
         artifact,
     )
-    continuation_header = json.loads(
-        adapter._continuation_message(feedback, 2).splitlines()[0]
+    continuation_message = adapter._continuation_message(feedback, 2)
+    continuation_header = json.loads(continuation_message.splitlines()[0])
+    assert continuation_header["exact_feedback_embedded"] is False
+    assert continuation_header["feedback_frontier_embedded"] is True
+    assert continuation_header["exact_candidate_embedded"] is True
+    assert continuation_header["closed_feedback_receipt"]["bytes"] > 0
+    assert continuation_header["current_candidate_receipt"]["bytes"] > 0
+    state_text = continuation_message.split(
+        "<persistent-workspace-mirror>\n", 1
+    )[1].split("\n</persistent-workspace-mirror>", 1)[0]
+    current_state = json.loads(state_text)
+    assert json.loads(current_state["candidate_text"]) == artifact.to_json()
+    assert current_state["closed_feedback"] is None
+    assert [
+        item["category"] for item in current_state["feedback_frontier"]["categories"]
+    ] == ["interface", "dataflow"]
+    assert "node_witnesses" not in json.dumps(
+        current_state["feedback_frontier"], sort_keys=True
     )
-    assert continuation_header["exact_feedback_embedded"] is True
-    assert continuation_header["closed_feedback"] == feedback.diagnostics
+    assert len(
+        json.dumps(current_state["feedback_frontier"], sort_keys=True)
+    ) < len(json.dumps(feedback.diagnostics, sort_keys=True))
     second = adapter.lift(request, feedback)
 
     assert first.artifact.to_json() == second.artifact.to_json()
@@ -2966,9 +3810,9 @@ def test_adapter_keeps_one_owner_context_and_workspace(monkeypatch) -> None:
     ]
     assert second.metadata["continued_from_messages"] > 0
     assert second.metadata["session_model_turns"] == 6
-    assert first.metadata["artifact_schema"] == "intentir.scrc.artifact.v7"
-    assert first.metadata["decode_protocol"] == "intentir.scrc.decode.v11"
-    assert first.metadata["typecheck_protocol"] == "intentir.scrc.typecheck.v18"
+    assert first.metadata["artifact_schema"] == "intentir.scrc.artifact.v8"
+    assert first.metadata["decode_protocol"] == "intentir.scrc.decode.v12"
+    assert first.metadata["typecheck_protocol"] == "intentir.scrc.typecheck.v20"
     assert first.metadata["candidate_check"] == {}
     assert first.metadata["physical_provider_calls"] == 3
     assert first.metadata["transport_retries"] == 0
@@ -2976,6 +3820,7 @@ def test_adapter_keeps_one_owner_context_and_workspace(monkeypatch) -> None:
     assert second.metadata["fresh_workspace"] is False
     assert first.metadata["persistent_workspace"] is True
     assert captured[0][0] == captured[1][0]
+    assert len(created_models) == 1
     assert captured[0][1] is None
     assert captured[1][1]["failure_kind"] == "gate1"
     assert captured[1][1]["previous_artifact"] == artifact.to_json()

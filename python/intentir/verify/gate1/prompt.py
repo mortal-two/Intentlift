@@ -20,7 +20,7 @@ from .pi import (
 REPLAY_PACKET_SCHEMA = "intentir.scrc.replay-input.v1"
 PUBLIC_FRONTEND_CONTEXT = {
     "triton": {
-        "context_policy": "public_frontend_context_v10",
+        "context_policy": "public_frontend_context_v11",
         "retrieval_scope": "public Triton documentation and public examples",
         "tool_access": ["public_document_lookup"],
         "compile_entry_contract": (
@@ -90,6 +90,21 @@ PUBLIC_FRONTEND_CONTEXT = {
             "ceil_div(the declared J trip extent, that C tile) multiplied by "
             "that C tile as the upper bound. Do not use the current tensor shape, "
             "a launch value, or an invented rounding formula."
+            " Every pi.physical_iterations entry is mandatory realization "
+            "topology for a Source-visible physical loop around an existing J "
+            "reduce or contraction; it never creates a semantic J loop. Resolve "
+            "body_instance to that J node and tile_instance to the required "
+            "positive C slot attached to the same reduced/contracted axis. The "
+            "axis attachment determines the logical extent, and induction_basis "
+            "has the same extent_step, rounded_extent_step, or tile_ordinal "
+            "denotation as pi.iterations. direction=forward visits that closed "
+            "basis in ascending order; direction=reverse visits exactly the same "
+            "basis points in descending order. Never infer the extent or direction "
+            "from Source names, current shapes, C values, grid conventions, or "
+            "frontend APIs. Every pi.physical_loop_carriers entry preserves the "
+            "declared init/state/next/result temporal stages for its physical "
+            "iteration region; do not collapse the loop-carried accumulator into "
+            "one stateless reduction or invent an update formula absent from J."
             " Every J effect_if is mandatory effect control. Emit one real "
             "runtime `if` with explicit positive and negative arms, preserve "
             "predicate polarity, lexical arm scope, nested operation/effect order, "
@@ -181,7 +196,7 @@ PUBLIC_FRONTEND_CONTEXT = {
 # u_f object; changing that basis requires an explicit future policy version.
 PUBLIC_FRONTEND_CONTEXT_ACTIVE_POLICY = MappingProxyType(
     {
-        "triton": "public_frontend_context_v10",
+        "triton": "public_frontend_context_v11",
         "cute": "public_frontend_context_v1",
         "tilelang": "public_frontend_context_v1",
         "cuda": "public_frontend_context_v1",
@@ -205,6 +220,9 @@ PUBLIC_FRONTEND_CONTEXT_DIGEST_HISTORY = MappingProxyType(
                 ),
                 "public_frontend_context_v10": (
                     "56d496604506f8e5dafa823cdae8f46e67e0f3e88f87fa5bf576d0334ed95d46"
+                ),
+                "public_frontend_context_v11": (
+                    "b59f1ae42359ba97e26964ad6bde4450d2b7414ab2e210d709917952fa2c6c90"
                 ),
             }
         ),
@@ -272,6 +290,14 @@ PUBLIC_FRONTEND_CONTEXT_RECEIPT_HISTORY = MappingProxyType(
                         "receipt_hash_basis": "full_u_f",
                         "context_sha256": (
                             "1e3143be1a4e0e4e293b63bd0a4a8cfd264abcd557c09b50b3d611fd2e8a993e"
+                        ),
+                    }
+                ),
+                "public_frontend_context_v11": MappingProxyType(
+                    {
+                        "receipt_hash_basis": "full_u_f",
+                        "context_sha256": (
+                            "8975154a14504466c714b581bd3a8dacadfb89fc7141542e3a6a476b54800ecd"
                         ),
                     }
                 ),
@@ -357,6 +383,8 @@ _REPLAY_COMPONENT_KEYS = {
             "refinements",
             "iterations",
             "loop_carriers",
+            "physical_iterations",
+            "physical_loop_carriers",
         }
     ),
 }
@@ -818,7 +846,8 @@ def _instructions(*, frontend: Frontend, masked: bool) -> str:
         f"{frontend.value} public-frontend kernel module. You never see "
         "the source implementation. Consume J, pure C and pi directly; pi is topology, "
         "not semantic authority. Treat every pi instance, route, order edge, sharing "
-        "relation, iteration relation, representation refinement and region placement as required "
+        "relation, structured or physical iteration relation, physical carrier, "
+        "representation refinement and region placement as required "
         "realization topology. In every pi order item, the instance named by "
         "before must execute before the instance named by after, including across "
         "regions and observable effects. Resolve each refinement auth_ref only through the "
@@ -860,6 +889,11 @@ def _instructions(*, frontend: Frontend, masked: bool) -> str:
         "C slot; use lower 0, step equal to that C tile, and upper exactly "
         "ceil_div(trip extent, C tile) * C tile. Do not infer a bound from current "
         "shapes/values or invent another rounding formula. "
+        "For every pi.physical_iterations relation, keep J's reduce/contraction "
+        "logical while materializing the explicit physical loop from its C-attached "
+        "reduced/contracted axis, induction_basis, and direction. Preserve every "
+        "pi.physical_loop_carriers init/state/next/result temporal stage; neither "
+        "relation authorizes a new semantic operator or formula. "
         + frontend_realization_clause
         + "Do not output "
         "analysis, patches, placeholders, helper prose or markdown. Use only public "

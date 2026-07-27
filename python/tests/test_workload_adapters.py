@@ -11,6 +11,7 @@ from intentir.verify.workload_adapters import (
     BufferInitializer,
     BufferRole,
     NoneBinding,
+    ScalarBinding,
     TRITON_WORKLOAD_ADAPTERS,
     TritonWorkloadAdapter,
     prepare_triton_workload,
@@ -20,6 +21,7 @@ from intentir.verify.workload_manifest import build_workload_manifest
 
 _FLASH_FWD = "high_performance:flash_attn.flash_attn_triton._fwd_kernel"
 _FLASH_BWD = "high_performance:flash_attn.flash_attn_triton._bwd_kernel"
+_LINEAR = "high_performance:flash_attn.ops.triton.linear.kernel_fwd"
 _FUSED_ADD_RMS = "high_performance:liger_fused_add_rms_norm"
 _SPARSEMAX = "high_performance:liger_sparsemax"
 _FLASH_BWD_ONE_COL = (
@@ -127,6 +129,267 @@ def test_buffer_initializer_is_closed_and_output_only_rejects_it() -> None:
             (8,),
             initializer=BufferInitializer.ZEROS,
         )
+
+
+def test_shape_contract_separates_parametric_axes_from_current_valuation() -> None:
+    buffer = BufferBinding(
+        "X",
+        BufferRole.INPUT,
+        "f32",
+        (2, 127),
+        shape_contract=("h0", "h1"),
+    )
+
+    assert buffer.shape == (2, 127)
+    assert buffer.shape_contract == ("h0", "h1")
+    with pytest.raises(ValueError, match="rank differs"):
+        BufferBinding(
+            "X",
+            BufferRole.INPUT,
+            "f32",
+            (2, 127),
+            shape_contract=("h0",),
+        )
+    with pytest.raises(ValueError, match="static buffer shape contract"):
+        BufferBinding(
+            "X",
+            BufferRole.INPUT,
+            "f32",
+            (2, 127),
+            shape_contract=(3, "h0"),
+        )
+    with pytest.raises(ValueError, match="anonymous h"):
+        BufferBinding(
+            "X",
+            BufferRole.INPUT,
+            "f32",
+            (2, 127),
+            shape_contract=("rows", "cols"),
+        )
+
+    scalar = ScalarBinding("N", "i32", 127, shape_coordinate="h1")
+    assert scalar.shape_coordinate == "h1"
+    with pytest.raises(ValueError, match="integer valuation"):
+        ScalarBinding("N", "f32", 127.0, shape_coordinate="h1")
+    with pytest.raises(ValueError, match="integer dtype"):
+        ScalarBinding("N", "f32", 127, shape_coordinate="h1")
+
+
+def test_explicit_grid_shape_coordinate_is_checked_without_parsing_grid_prose() -> None:
+    common = {
+        "case_id": "high_performance:test",
+        "buffers": (
+            BufferBinding(
+                "Y",
+                BufferRole.OUTPUT,
+                "f32",
+                (2,),
+                "y",
+                shape_contract=("h0",),
+            ),
+        ),
+        "scalars": (),
+        "semantic_constexprs": (),
+        "c_values": (),
+        "grid": (2,),
+        "grid_contract": ("human_rows_label",),
+        "seed": 1,
+    }
+    prose_only = TritonWorkloadAdapter(**common)
+    assert prose_only.grid_shape_coordinates == ()
+
+    explicit = TritonWorkloadAdapter(
+        **common, grid_shape_coordinates=("h0",)
+    )
+    assert explicit.grid_shape_coordinates == ("h0",)
+
+    with pytest.raises(ValueError, match="explicit shape-coordinate valuation"):
+        TritonWorkloadAdapter(
+            **{**common, "grid": (3,)},
+            grid_shape_coordinates=("h0",),
+        )
+
+
+def test_rowwise_and_capacity_adapters_expose_anonymous_shape_coordinates() -> None:
+    dyt = prepare_triton_workload(
+        TRITON_WORKLOAD_ADAPTERS["high_performance:liger_dyt"]
+    )
+    softmax = prepare_triton_workload(
+        TRITON_WORKLOAD_ADAPTERS["high_performance:liger_softmax"]
+    )
+    preprocess = prepare_triton_workload(
+        TRITON_WORKLOAD_ADAPTERS[
+            "high_performance:flash_attn.flash_attn_triton."
+            "_bwd_preprocess_do_o_dot"
+        ]
+    )
+
+    assert dyt.compiler_view.bound_constexpr_shape_coordinates == {"N": "h1"}
+    assert dyt.compiler_view.to_json()[
+        "bound_constexpr_shape_coordinates"
+    ] == {"N": "h1"}
+    assert softmax.compiler_view.shape_coordinates == {"h0": 2, "h1": 127}
+    assert softmax.compiler_view.grid_shape_coordinates == ("h0",)
+    softmax_buffers = {
+        item.formal: item for item in softmax.adapter.buffers
+    }
+    assert softmax_buffers["X_ptr"].shape_contract == ("h0", "h1")
+    softmax_scalars = {
+        item.formal: item for item in softmax.adapter.scalars
+    }
+    assert softmax_scalars["n_cols"].shape_coordinate == "h1"
+    assert softmax.adapter.to_json()["buffers"][0]["shape"] == [2, 127]
+    assert softmax.adapter.to_json()["buffers"][0]["shape_contract"] == [
+        "h0",
+        "h1",
+    ]
+
+    assert preprocess.compiler_view.shape_coordinates == {
+        "h0": 1,
+        "h1": 2,
+        "h2": 33,
+        "h3": 16,
+        "h4": 64,
+    }
+    assert preprocess.compiler_view.grid_shape_coordinates == ()
+    preprocess_scalars = {
+        item.formal: item for item in preprocess.adapter.scalars
+    }
+    assert {
+        name: preprocess_scalars[name].shape_coordinate
+        for name in ("nheads", "seqlen_q", "seqlen_q_rounded", "headdim")
+    } == {
+        "nheads": "h1",
+        "seqlen_q": "h2",
+        "seqlen_q_rounded": "h4",
+        "headdim": "h3",
+    }
+
+    flash_fwd = prepare_triton_workload(TRITON_WORKLOAD_ADAPTERS[_FLASH_FWD])
+    flash_buffers = {item.formal: item for item in flash_fwd.adapter.buffers}
+    assert flash_buffers["TMP"].role is BufferRole.INOUT
+
+
+def test_runtime_attention_and_matrix_extents_are_parametric_not_valuations() -> None:
+    flash_fwd = prepare_triton_workload(TRITON_WORKLOAD_ADAPTERS[_FLASH_FWD])
+    flash_bwd = prepare_triton_workload(TRITON_WORKLOAD_ADAPTERS[_FLASH_BWD])
+    one_col = prepare_triton_workload(
+        TRITON_WORKLOAD_ADAPTERS[_FLASH_BWD_ONE_COL]
+    )
+    linear = prepare_triton_workload(TRITON_WORKLOAD_ADAPTERS[_LINEAR])
+    group_norm = prepare_triton_workload(TRITON_WORKLOAD_ADAPTERS[_GROUP_NORM])
+    layer_norm = prepare_triton_workload(
+        TRITON_WORKLOAD_ADAPTERS[_FLASH_LAYER_NORM]
+    )
+
+    expected_flash = {
+        "h0": 1,      # batch
+        "h1": 128,    # active query sequence
+        "h2": 1,      # heads
+        "h3": 64,     # head dimension
+        "h4": 128,    # active key sequence
+        "h5": 128,    # rounded query capacity
+    }
+    assert flash_fwd.compiler_view.shape_coordinates == expected_flash
+    assert flash_bwd.compiler_view.shape_coordinates == expected_flash
+    for prepared in (flash_fwd, flash_bwd):
+        scalars = {item.formal: item for item in prepared.adapter.scalars}
+        assert {
+            name: scalars[name].shape_coordinate
+            for name in (
+                "nheads",
+                "seqlen_q",
+                "seqlen_k",
+                "seqlen_q_rounded",
+                "headdim",
+            )
+        } == {
+            "nheads": "h2",
+            "seqlen_q": "h1",
+            "seqlen_k": "h4",
+            "seqlen_q_rounded": "h5",
+            "headdim": "h3",
+        }
+    # Equal current values never collapse distinct Source-grounded identities.
+    assert len({"h1", "h4", "h5"}) == 3
+
+    assert one_col.compiler_view.shape_coordinates == {
+        "h0": 128,
+        "h1": 64,
+        "h2": 64,
+    }
+    assert linear.compiler_view.shape_coordinates == {
+        "h0": 32,
+        "h1": 32,
+        "h2": 32,
+    }
+    assert group_norm.compiler_view.shape_coordinates == {
+        "h0": 2,
+        "h1": 2,
+        "h2": 32,
+        "h3": 4,
+    }
+    assert group_norm.compiler_view.grid_shape_coordinates == ("h0", "h1")
+    assert layer_norm.compiler_view.shape_coordinates == {"h0": 2, "h1": 127}
+    assert layer_norm.compiler_view.grid_shape_coordinates == ("h0",)
+
+
+def test_rope_family_exposes_only_source_grounded_parametric_identities() -> None:
+    qwen = prepare_triton_workload(TRITON_WORKLOAD_ADAPTERS[_QWEN2VL_MROPE])
+    rope = prepare_triton_workload(TRITON_WORKLOAD_ADAPTERS[_ROPE])
+    llama = prepare_triton_workload(TRITON_WORKLOAD_ADAPTERS[_LLAMA4_ROPE])
+
+    assert qwen.compiler_view.shape_coordinates == {
+        "h0": 1,
+        "h1": 4,
+        "h2": 2,
+        "h3": 16,
+        "h4": 1,
+    }
+    assert qwen.compiler_view.bound_constexpr_shape_coordinates == {
+        "bs": "h0",
+        "n_qh": "h2",
+        "n_kh": "h4",
+        "hd": "h3",
+    }
+    assert {item.formal: item.shape_coordinate for item in qwen.adapter.scalars}[
+        "sl"
+    ] == "h1"
+
+    assert rope.compiler_view.shape_coordinates == {
+        "h0": 1,
+        "h1": 4,
+        "h2": 2,
+        "h3": 16,
+        "h4": 1,
+        "h5": 1,
+    }
+    assert rope.compiler_view.bound_constexpr_shape_coordinates == {
+        "bs": "h0",
+        "cos_bs": "h5",
+        "n_qh": "h2",
+        "n_kh": "h4",
+        "hd": "h3",
+    }
+    # Equal current values do not collapse tensor batch and broadcast batch.
+    assert rope.compiler_view.shape_coordinates["h0"] == 1
+    assert rope.compiler_view.shape_coordinates["h5"] == 1
+
+    assert llama.compiler_view.shape_coordinates == {
+        "h0": 1,
+        "h1": 4,
+        "h2": 2,
+        "h3": 1,
+        "h4": 16,
+    }
+    assert llama.compiler_view.bound_constexpr_shape_coordinates == {
+        "head_dim_half": "h4",
+        "n_q_heads": "h2",
+        "n_k_heads": "h3",
+    }
+    llama_buffers = {item.formal: item for item in llama.adapter.buffers}
+    assert llama_buffers["q_ptr"].shape_contract == ("h0", "h1", "h2", 32)
+    assert llama_buffers["freqs_complex_ptr"].shape_contract == ("h1", "h4", 2)
 
 
 def test_none_binding_and_vararg_arity_are_closed_adapter_facts() -> None:
@@ -250,7 +513,7 @@ def test_complex_flash_adapter_is_exact_fixed_source_projection(
     if case_id == _FLASH_FWD:
         assert roles["Out"] is BufferRole.OUTPUT
         assert roles["Lse"] is BufferRole.OUTPUT
-        assert roles["TMP"] is BufferRole.OUTPUT
+        assert roles["TMP"] is BufferRole.INOUT
     else:
         assert roles["DQ"] is BufferRole.INOUT
         assert roles["DK"] is BufferRole.OUTPUT

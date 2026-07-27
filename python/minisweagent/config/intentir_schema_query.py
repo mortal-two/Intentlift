@@ -5,11 +5,14 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
 
 _OP_HEADING = re.compile(r"^  ([a-z][a-z0-9_]*)\s*:")
+_DEFAULT_SCHEMA = "/input/schema/artifact.schema.json"
+_COMMANDS = {"top", "catalog", "op", "section", "bundle"}
 
 
 def _load_json(path: str) -> dict[str, Any]:
@@ -139,6 +142,8 @@ def _sections(schema: dict[str, Any]) -> dict[str, dict[str, Any]]:
         "pi_sharing": _array_item(pi["sharing"]),
         "pi_iteration": _array_item(pi["iterations"]),
         "pi_loop_carrier": _array_item(pi["loop_carriers"]),
+        "pi_physical_iteration": _array_item(pi["physical_iterations"]),
+        "pi_physical_loop_carrier": _array_item(pi["physical_loop_carriers"]),
         "pi_refinement": _array_item(pi["refinements"]),
     }
 
@@ -148,6 +153,27 @@ def _section(schema: dict[str, Any], name: str) -> None:
     if name not in sections:
         raise KeyError(f"unknown section: {name}; choose {sorted(sections)}")
     print(json.dumps(sections[name], indent=2, sort_keys=True))
+
+
+def _bundle(schema: dict[str, Any], reference: str, items: list[str]) -> None:
+    """Render several independent source-neutral lookups in one tool action."""
+
+    for index, item in enumerate(items):
+        if index:
+            print()
+        print(f"=== {item} ===")
+        if item == "top":
+            _top(schema)
+        elif item == "catalog":
+            _catalog(reference)
+        elif item.startswith("op:") and len(item) > 3:
+            _op(schema, reference, item[3:])
+        elif item.startswith("section:") and len(item) > 8:
+            _section(schema, item[8:])
+        else:
+            raise ValueError(
+                "bundle items must be top, catalog, op:NAME, or section:NAME"
+            )
 
 
 def main() -> int:
@@ -165,7 +191,12 @@ def main() -> int:
     op_parser.add_argument("name")
     section_parser = subparsers.add_parser("section")
     section_parser.add_argument("name")
-    args = parser.parse_args()
+    bundle_parser = subparsers.add_parser("bundle")
+    bundle_parser.add_argument("items", nargs="+")
+    argv = sys.argv[1:]
+    if argv and argv[0] in _COMMANDS:
+        argv = [_DEFAULT_SCHEMA, *argv]
+    args = parser.parse_args(argv)
     schema = _load_json(args.schema)
     if args.command == "top":
         _top(schema)
@@ -173,8 +204,10 @@ def main() -> int:
         _catalog(_load_text(args.ops_reference))
     elif args.command == "op":
         _op(schema, _load_text(args.ops_reference), args.name)
-    else:
+    elif args.command == "section":
         _section(schema, args.name)
+    else:
+        _bundle(schema, _load_text(args.ops_reference), args.items)
     return 0
 
 

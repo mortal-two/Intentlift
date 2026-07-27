@@ -251,9 +251,33 @@ def test_valid_dependent_witness_passes_before_replay() -> None:
     artifact = make_reduce_artifact()
     report = type_check(artifact.j, artifact.c, artifact.pi)
     assert report.passed
-    assert report.protocol == TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v18"
+    assert report.protocol == TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v20"
     assert report.diagnostics == ()
     assert set(build_normal_rewriter_view(artifact)) == {"j", "c", "pi", "u_f"}
+
+
+def test_typecheck_v19_closes_map_function_vocabulary() -> None:
+    identity = make_copy_artifact()
+    assert type_check(identity.j, identity.c, identity.pi).passed
+
+    identity.j.intent.body[0].attrs = {"fn": "not_a_closed_unary"}
+    unary = type_check(identity.j, identity.c, identity.pi)
+    assert not unary.passed
+    assert any(
+        item.code is TypeCheckErrorCode.KNOWN_OP_CONTRACT_INVALID
+        and item.path.endswith("body[0].attrs.fn")
+        for item in unary.diagnostics
+    )
+
+    binary = make_reduce_artifact()
+    binary.j.intent.body[0].attrs = {"fn": "not_a_closed_binary"}
+    report = type_check(binary.j, binary.c, binary.pi)
+    assert not report.passed
+    assert any(
+        item.code is TypeCheckErrorCode.KNOWN_OP_CONTRACT_INVALID
+        and item.path.endswith("body[0].attrs.fn")
+        for item in report.diagnostics
+    )
 
 
 def test_typecheck_accepts_static_tile_dependent_shape() -> None:
@@ -587,7 +611,7 @@ def test_typecheck_v7_does_not_count_a_dead_node_as_output_liveness() -> None:
                 "op": "map_unary",
                 "result": "v0",
                 "operands": ["t1"],
-                "attrs": {"fn": "identity"},
+                "attrs": {"fn": "neg"},
             }
         )
     )
@@ -737,7 +761,7 @@ def _computed_store_guard_artifact(*, guard_before_access: bool):
         "op": "map_unary",
         "result": "t1",
         "operands": ["t0"],
-        "attrs": {"fn": "identity"},
+        "attrs": {"fn": "neg"},
         "type": {"dtype": "f32", "shape": ["x0"]},
     }
     guard = {
@@ -1767,7 +1791,7 @@ def test_authoritative_typecheck_accepts_strict_integer_widen(
     report = type_check(artifact.j, artifact.c, artifact.pi)
 
     assert report.passed, report.to_json()
-    assert report.protocol == "intentir.scrc.typecheck.v18"
+    assert report.protocol == "intentir.scrc.typecheck.v20"
 
 
 @pytest.mark.parametrize(

@@ -216,6 +216,8 @@ def _effect_if_payload() -> dict:
         "refinements": [],
         "iterations": [],
         "loop_carriers": [],
+        "physical_iterations": [],
+        "physical_loop_carriers": [],
     }
     return payload
 
@@ -243,9 +245,9 @@ def test_v6_effect_if_schema_decode_round_trip_and_digest() -> None:
 
     artifact = Gate1Artifact.from_json(payload)
     assert artifact.to_json() == payload
-    assert Gate1Artifact.SCHEMA == "intentir.scrc.artifact.v7"
-    assert SCRC_DECODE_PROTOCOL == "intentir.scrc.decode.v11"
-    assert TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v18"
+    assert Gate1Artifact.SCHEMA == "intentir.scrc.artifact.v8"
+    assert SCRC_DECODE_PROTOCOL == "intentir.scrc.decode.v12"
+    assert TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v20"
     decoded = decode_scrc_lift_artifact(json.dumps(payload), _request())
     decoded_json = decoded.to_json()
     assert Gate1Artifact.from_json(decoded_json).to_json() == decoded_json
@@ -645,11 +647,15 @@ def test_multiple_sequential_effect_if_regions_are_typed() -> None:
 def test_v1_through_v5_cannot_claim_v6_control_or_rounded_basis() -> None:
     conditional = _effect_if_payload()
     conditional["schema"] = "intentir.scrc.artifact.v5"
+    del conditional["pi"]["physical_iterations"]
+    del conditional["pi"]["physical_loop_carriers"]
     with pytest.raises(SchemaError, match="v1-v5 do not contain J effect_if"):
         Gate1Artifact.from_json(conditional)
 
     rounded = _tiled_loop_artifact(basis="rounded_extent_step").to_json()
     rounded["schema"] = "intentir.scrc.artifact.v5"
+    del rounded["pi"]["physical_iterations"]
+    del rounded["pi"]["physical_loop_carriers"]
     with pytest.raises(SchemaError, match="v1-v5 do not contain rounded"):
         Gate1Artifact.from_json(rounded)
 

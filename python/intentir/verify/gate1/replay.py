@@ -37,7 +37,9 @@ from .prompt import (
 from .tilelang_codegen import extract_tilelang_module
 
 
-MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v6"
+MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v12"
+MINISWE_REPLAY_TURN_TIMEOUT_SECONDS = 300.0
+MINISWE_REPLAY_XHIGH_TURN_TIMEOUT_SECONDS = 900.0
 RESPONSES_REPLAY_BACKEND = "openai.responses.intentir-replay.v1"
 STATIC_REPLAY_BACKEND = "intentir.static-replay-test.v1"
 REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v3"
@@ -307,6 +309,48 @@ def _expression_is_runtime(
         _expression_is_runtime(child, dependencies)
         for child in ast.iter_child_nodes(expression)
     )
+
+
+def _check_triton_program_id_axes(code: str, function_name: str) -> None:
+    """Reject Replay code that cannot name a real Triton launch-grid axis."""
+
+    tree = ast.parse(code, mode="exec")
+    function = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == function_name
+    )
+    for node in ast.walk(function):
+        if not isinstance(node, ast.Call):
+            continue
+        called = (
+            node.func.attr
+            if isinstance(node.func, ast.Attribute)
+            else node.func.id
+            if isinstance(node.func, ast.Name)
+            else ""
+        )
+        if called != "program_id":
+            continue
+        keyword_axes = [item.value for item in node.keywords if item.arg == "axis"]
+        axis = (
+            node.args[0]
+            if len(node.args) == 1 and not keyword_axes
+            else keyword_axes[0]
+            if not node.args and len(keyword_axes) == 1
+            else None
+        )
+        value = axis.value if isinstance(axis, ast.Constant) else None
+        if (
+            not isinstance(value, int)
+            or isinstance(value, bool)
+            or value not in {0, 1, 2}
+        ):
+            raise _ReplayABIViolation(
+                "program_id_axis_range",
+                path="<program_id-axis>",
+                line=node.lineno,
+            )
 
 
 def _runtime_if_nodes(
@@ -869,6 +913,7 @@ def replay_source_ingress(
                     for item in abi_violations
                 ),
             )
+        _check_triton_program_id_axes(code, function_name)
         _check_triton_typed_control_contract(code, packet, function_name)
         _check_triton_rounded_iteration_contract(code, packet, function_name)
     except Exception as exc:
@@ -1156,31 +1201,26 @@ CompileCase/grid, Gate diff/TTIR, previous Replay, sibling trajectory, or
 network is available. Generate the entire source yourself. Fixed code only
 checks and rejects; it never generates, patches, or certifies source.
 
-Issue `intentir_packet_query overview`, `abi 0 48`, `graph 0 12`, and
-`realization` as four independent reads in the first model response; then follow
-the paged `obligations` commands. The obligation ledger
-joins already-authored facts around each instance; use `obligation HANDLE` for
-one i* or semantic anchor. Resolved `routes`/`order` and raw paged `edges` are
-available to cross-check a named relation without redundantly paging all three.
-These views expose only complete packet facts in bounded pages and never add an edge.
+Use the exact packet supplied in the startup message or read `packet.json`
+directly. Do not spend a first turn requesting overlapping overview, ABI, graph,
+realization and obligation projections. `intentir_packet_query` remains a
+focused fallback for one named omitted path or handle when a packet exceeds the
+transport embedding bound. Its views expose only authored packet facts and
+never add an edge.
 
-After writing a complete first source, run
-`intentir_replay_inspect /output/replay.source overview`, then page its
-`statements START COUNT` view or use `find NAME`. Compare its loop/if, call,
-and define-use inventory with the packet yourself. The tool reports only your
-own syntax and never declares a semantic mismatch or recommends a repair.
-Use `section PATH`
-only for one named omitted field; never concatenate inputs because the transport
-may elide its middle.
+After writing a complete first source, use `intentir_replay_inspect` only when a
+focused own-source inventory would resolve uncertainty. The tool reports only
+your syntax and never declares a semantic mismatch or recommends a repair.
 
 After mandatory ReplayCheck, run
-`intentir_replay_compile_check /output/replay.source` for an advisory compile
+`intentir_replay_compile_check /output/replay.source` for a construction compile
 against one public synthetic profile: every pointer has one element,
 dtype-declared scalar and constexpr representatives are bool=true, integer=16,
 float=1.0, and the grid is (1,1,1). C values are never read; constexpr C slots
-use the same public type representatives. This probe can expose frontend
-type/shape errors but never blocks submission or has Gate authority. Formal
-Gate1 recompiles the exact submitted bytes at c0.
+use the same public type representatives. This probe must pass before the exact
+Replay bytes leave the authoring episode, but it is not a semantic membership
+oracle and has no Gate or certification authority. Formal Gate1 recompiles the
+exact submitted bytes at c0.
 
 Before ReplayCheck, inspect packet control mechanically: every J `effect_if`
 must remain one runtime `if` with explicit polarity-preserving arms (including
@@ -1190,6 +1230,21 @@ local; and every pi `rounded_extent_step` must use its declared J trip extent
 and matching C tile as `range(0, ceil_div(extent,tile)*tile, tile)`. `effect_if`,
 `value_if`, and select are hard-distinct. Never substitute select/predicated
 unconditional execution, current-shape guesses, or a second rounding formula.
+
+Every `pi.physical_iterations` item is an authored physical loop around an
+already-logical J reduce/contraction. Resolve its extent only through the
+C-attached reduced/contracted axis, preserve its induction basis and forward or
+reverse order, and preserve any `pi.physical_loop_carriers` temporal stages.
+These relations never create a J loop or authorize a guessed bound/update.
+
+A logical J axis ordinal is not automatically a Triton tensor-rank index. Build
+the active physical tile from the C slot attached to that J node and logical
+axis. If that tile is represented by one local Triton lane dimension, emit the
+tile-local reduction/contraction axis (normally 0), not the original logical
+tensor axis number. Never copy a J axis ordinal into `tl.sum`, `tl.max`,
+`tl.min`, or `tl.dot` without first deriving the physical tile rank from the
+authored J+C+pi packet. This is realization consumption, not a new semantic
+relation or permission.
 
 A J.signature constexpr p* with no logical_ref is only the callable carrier for
 the fixed Harness JIT specialization. Keep it in the exact constexpr ABI, but
@@ -1202,26 +1257,30 @@ different and may be used only through its packet-declared pi realization.
 
 Write exactly `/output/replay.source`. You may run the bounded, diagnostic-only
 `intentir_replay_inspect /output/replay.source overview`, `statements START COUNT`,
-or `find NAME` views over your own current bytes; twelve calls are available and
-none enters submission or Gate authority. Run exactly
-`intentir_replay_check /output/replay.source` for the mandatory bounded ingress
-check, then exactly
-`intentir_replay_compile_check /output/replay.source` for advisory synthetic
-frontend-compile diagnostics. ReplayCheck's seven ordinary evaluations share
-one budget; submission has one reserved evaluation when exact current bytes
-have no prior ingress PASS. The compile probe has four advisory evaluations and
-is never consulted by submission. Results contain only a closed
+or `find NAME` views over your own current bytes; none enters submission or Gate
+authority. Run
+`intentir_replay_check /output/replay.source` for diagnostic ingress, then
+`intentir_replay_compile_check /output/replay.source` for the public synthetic
+construction-compile profile. Calls are audited telemetry and governed by the
+Replay episode's active wall time; submission independently rechecks changed
+exact bytes with both checks. Results contain only a closed
 protocol/status/rule/path plus anonymous handles or line number. No Source,
 Harness value, actual C value, Gate1 observer, or execution oracle is run. The
 compile profile is the public fixed synthetic profile in README.md. Neither
-check has acceptance authority. After exact bytes pass ReplayCheck, preserve the
-LLM owner's fallback choice with
+check has Gate, semantic-membership, or certification authority. After exact
+bytes pass both construction checks, preserve the LLM owner's fallback choice with
 `intentir_replay_commit /output/replay.source`; restore only those bytes with
 `intentir_replay_rollback /output/replay.source`. Submit directly with
 `intentir_replay_submit /output/replay.source` or
 `intentir_replay_submit --committed`; no stdout marker is used. The writer
 independently reruns the same
 compiler-free ingress callable after submission, and formal Gate1 compiles c0.
+
+In the isolated Codex workspace, invoke the equivalent closed callbacks as
+`python .agents/intentir_agent_tool.py replay_realization_view`, `replay_check`,
+or `replay_compile_check`; these callbacks take no path argument and never expose
+Source, Harness values, or Gate evidence. Read this file for usage instead of
+probing the fixed client with an unrecognized tool name.
 """
     return (
         {
@@ -1361,6 +1420,9 @@ class MiniSWEReplayWriter:
     worker_config: Mapping[str, Any] = field(default_factory=dict)
     model_timeout_seconds: float | None = None
     compile_checker: ReplayCompileChecker | None = None
+    stop_requested: Callable[[], int | None] | None = field(
+        default=None, repr=False
+    )
     _records: list[ReplayGeneration | ReplayAttempt] = field(
         default_factory=list, init=False, repr=False
     )
@@ -1380,11 +1442,17 @@ class MiniSWEReplayWriter:
         effective_effort = self.effort or provider.reasoning_effort
         timeout = self.model_timeout_seconds
         if timeout is None:
-            timeout = (
+            provider_timeout = (
                 XHIGH_RESPONSES_TIMEOUT_SECONDS
                 if effective_effort.casefold() == "xhigh"
                 else DEFAULT_RESPONSES_TIMEOUT_SECONDS
             )
+            turn_timeout = (
+                MINISWE_REPLAY_XHIGH_TURN_TIMEOUT_SECONDS
+                if effective_effort.casefold() == "xhigh"
+                else MINISWE_REPLAY_TURN_TIMEOUT_SECONDS
+            )
+            timeout = min(provider_timeout, turn_timeout)
         files, packet, instructions = _replay_input_files(
             artifact,
             frontend=self.frontend,
@@ -1473,7 +1541,13 @@ class MiniSWEReplayWriter:
                 api_key=provider.api_key,
                 reasoning_effort=effective_effort,
                 timeout_seconds=timeout,
+                prompt_cache_key=(
+                    "intentir-replay-" + packet_digest[:48]
+                ),
             )
+            set_cancel_requested = getattr(model, "set_cancel_requested", None)
+            if callable(set_cancel_requested):
+                set_cancel_requested(self.stop_requested)
             result = run_intentir_replay(
                 model=model,
                 workspace=workspace,

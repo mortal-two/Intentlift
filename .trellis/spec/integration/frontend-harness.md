@@ -51,16 +51,17 @@ Harness 只原子刷新 closed feedback，不复制、重排或覆盖当前 cand
 提交 candidate，同一 branch 的持久 owner 可以在下一真实 user continuation 中接收最后一次实际 source-free evaluation 的至多 20 条
 `rule_code/path`；不得包含 observed value、patch、hidden/sibling 信息。Source 仅作为该 owner 原有
 source-aware conversation 的上下文保留。Harness 不应用摘要修补 artifact，submission `PASS` 也不能
-替代正式 Runner 的 `typecheck.v18`。
+替代正式 Runner 的 `typecheck.v20`。
 
 generic exact-text patch 不是 Harness semantic construction：LLM 必须同时提供唯一 old/new 字符串，
 runtime 只原子替换并使旧 PASS 失效；Harness 不解析字段、不推荐修改、不生成 corrected artifact。
 旧 tool 回包的 deterministic hash receipt 只用于 model transport compaction，完整文件与审计记录仍
 留在 owner workspace/trajectory 中。
 
-Harness 可以把 Lift 已获准读取且总量不超过 64 KiB 的 exact Source/compiler-view/closed feedback raw
-text 直接放入初始或 continuation user packet；超限时只能给逐文件 receipt 与读取命令。该搬运不得
-生成 semantic outline、摘要、binding 或 artifact 字段，也不得把额外 hidden state 混入 packet。
+Harness 可以把 Lift 已获准读取的 exact Source/compiler view 和 deterministic bounded
+`feedback_frontier` 放入初始/continuation packet；完整 closed feedback 只给 bytes/hash/path 与命名
+category/path 查询。frontier 只投影 checker 已有类别、计数与代表 witness，不解释 Source、推荐字段、
+生成 binding 或应用 patch，也不得把额外 hidden state 混入 packet。
 
 Harness runtime 可以接收 LLM 在一个 action 中给出的完整 exact candidate text，或 LLM 明示的唯一
 old/new text 与 `submit=true`，原样写入后调用既有 submission preflight。该事务不赋予 Harness
@@ -156,14 +157,14 @@ C valuation 和任何可变 Harness 状态不得跨 case 或 branch 共享。资
 都由 LLM 完整生成 `(J,C,pi)`；固定代码只做 closed Decode/Elaborate、dependent checking、拒绝与
 diagnostics，绝不从 Source、Gate、其他 branch 或历史 evidence 推断、合成或自动补写 artifact。
 
-Harness 不能因此升级为 `HarnessAgent`：它不选择 operator、修 J/π 或组合候选。fan-out 的
-pre-Gate2 wave barrier 完成后，由受信任 runner 只依据 TypeCheck/Gate1 evidence，按固定
-lexicographic `(branch_id, formal_round)` 顺序选择一个 winner，再由 Harness 为该 winner 生成隐藏
-Gate2 输入，并在独立 `G2` semaphore 下只执行一次 Gate2；wall-clock 完成先后不参与选择，其余
-branch 不读取这些输入，Gate2 失败也不 fallback 到 sibling。若没有 winner，只有全部 `B` 个 branch
-都带完整 evidence 终止为 `NO_CLOSURE` 时，case aggregate 才能报告 `NO_CLOSURE_(B,K)`；只要混有
-infrastructure-failed、superseded 或 incomplete branch，aggregate 必须是 `infrastructure_failed`，并
-保留全部 branch statuses 与 evidence 指针。
+Harness 不能因此升级为 `HarnessAgent`：它不选择 operator、修 J/π 或组合候选。fan-out v4 由受信任
+runner 只依据已完成 TypeCheck/Gate1 evidence，原子选择第一个被 coordinator 观察到的完整
+Gate1-closed winner；sibling cooperative stop并保存 `SUPERSEDED` receipt。随后 Harness 才为 winner
+生成隐藏 Gate2 输入，并在独立 `G2` semaphore 下只执行一次 Gate2；选择过程不能读取这些输入，
+Gate2 失败也不 fallback 到 sibling。完成次序是 proof-irrelevant 调度，必须与 selection rule、winner
+branch/formal round 和 stop receipts 一起审计；它不改变被选 artifact 的认证谓词。若没有 winner，
+只有全部 `B` 个 branch 都带完整 evidence 终止为 `NO_CLOSURE` 时，case aggregate 才能报告
+`NO_CLOSURE_(B,K)`；infrastructure-failed 或 incomplete branch 必须保留并使 aggregate fail closed。
 
 对已经落盘的 parent attempt，Harness 还可运行独立的
 `intentir.scrc.gate1-diagnostic-recheck.v1`：先确认 artifact 位于 parent evidence 内并保持其
@@ -217,7 +218,7 @@ marker/reference、缺失或无 marker 的 arity 均 fail closed；expander 不�
 
 若被移除的 decorator 带有改变调用初态的机械 `pre_hook`（例如把一个 `inout` buffer 清零），fixed-C
 Harness 必须用 closed、通用的 adapter initializer 显式保留该调用事实；不能按 Kernel 名称在 runner
-中补行为。当前 `intentir.scrc.triton-workload-adapter.v3` 只允许 `random|zeros` 输入初始化，纯 output
+中补行为。当前 `intentir.scrc.triton-workload-adapter.v5` 只允许 `random|zeros` 输入初始化，纯 output
 没有 initializer；另可声明真实 runtime `None` 与上述 bounded vararg arity。`None` 必须贯穿 compile、
 Source/Replay launch 与 Gate2 为真正的 absent carrier，在 J.signature 中只能是
 `opaque(mode=value,dtype=none)`，无 logical_ref/J tensor/node/effect/π instance，绝不能换成 dummy
@@ -227,13 +228,15 @@ refinement carrier；sandbox CandidateCheck 复用同一个 source-free checker�
 不能分别重采样。
 由于 `none -> opaque(dtype=none)` 与 canonical contraction/stage-multiplicity 是新增的模型
 可见构造合同；v14 加入 generic functional logical-domain closure 与上述有界诊断反馈合同。fresh
-MiniSWE Lift knowledge 当前使用 `intentir.lift-knowledge.v15`，再加入 runtime scalar 的
+MiniSWE/Codex Lift knowledge 当前使用 `intentir.lift-knowledge.v56`（继承 v15），后者加入 runtime scalar 的
 logical-data/representation-only source-use 分类：只有显式 rank-0、`mode=value`、public dtype、
 `logical_ref=null` 的 scalar 可不创建 J input并只供 π realization 使用；Harness 不按参数名/位置
 替 Lift 分类；该 null form 只允许 runtime scalar。`bound_constexpr_values` 必须表示逻辑语义 constexpr：
 logical data/predicate/result 绑定 rank-0 J input，integral extent-only 绑定 `x*`。纯 schedule constexpr
 进入 C；representation-only bound constexpr 不得留成 π-only carrier，无法归入 J/C 时 Harness
-invalid。v15 同时要求：若 Source 明示 masked sum 后再除 logical count，保持
+invalid。v56 另允许 adapter 对 integral semantic constexpr 显式声明 valuation-matched
+`bound_constexpr_shape_coordinates`；Lift 必须直接绑定对应 `x*`，或自行作者化 rank-0 `t*=x*`，Harness
+只拒绝遗漏/不一致，不按名称、相等数值或 grid 推导 relation。v15 同时要求：若 Source 明示 masked sum 后再除 logical count，保持
 `reduce(sum) + explicit div` 两阶段；当前 boundary 不能用中性 fill 为 padded `mean` 补出 denominator。
 TypeCheck 只在无 guard、完整零起点矩形 direct access/domain、同轴 bound/typed extent 闭合且 masked
 axis 被 mean 消去时拒绝；guard/cross-axis/unknown-op 是 consumer unsupported。旧 v11/v12/v13/v14 receipt 不被
@@ -247,6 +250,20 @@ Source 投影不能因当前 `c0` 恰好让某个 grid axis 的 extent 为 1，�
 argument 附带 `input`、`output`、`inout`、`value` 等机械调用模式；这些模式只来自实际 Harness
 buffer role，用于检查 J logical signature 是否覆盖真实调用 ABI，不表示 operator 语义，也不能
 进入 Replay packet。adapter 不能拥有 per-kernel Replay、Python semantic oracle 或第二份 J。
+
+adapter v5 继承 v4，把 source/launcher 已经给出的 shape identity 暴露为匿名 Harness-only contract：tensor
+的 `shape` 是本次 concrete valuation，逐轴 `shape_contract` 的正整数是静态轴，`h*` 是跨 tensor
+共享的 logical extent identity；runtime scalar 的 `shape_coordinate=h*` 或 semantic constexpr 的
+explicit `bound_constexpr_shape_coordinates` 声明 value/extent equality，
+`grid_shape_coordinates` 只记录 launcher realization。Lift 必须把每个 `h*` 显式、双射地映射为 J 的
+declared `x*`，logical-data scalar/constexpr 还须作者化 rank-0 `t*` 与
+`value_dimension_relations(eq)`；固定
+checker只拒绝遗漏、literal specialization、coordinate 合并或 valuation 冲突，不生成 J shape/relation。
+`h*`、grid 与 valuation 都不进入 J/C/π/Replay/production，也不从不同 coordinate 猜 derived formula。
+当前 RoPE/MRoPE adapter只提升 Source ABI 与 tensor axes 唯一确定的 batch、sequence、head-count、
+head-dim identity；相等 valuation 的 tensor batch 与 broadcast batch使用不同 `h*`。Llama4 的
+`full_head_dim=2*head_dim_half`、SplitK 的产品/derived capacity/variant family在当前 closed relation
+vocabulary中保持 selected-variant literal，不能伪造独立 `h*` 或从 grid/string contract反推公式。
 
 scalar/constexpr 的归属按以下机械边界处理：
 
@@ -262,7 +279,9 @@ scalar/constexpr 的归属按以下机械边界处理：
 后果，它就是 schedule constexpr/C；否则必须有 J logical denotation。两者都不满足时 manifest/Harness
 invalid，不能借 π-only `logical_ref=null` 形态延后决定。
 
-当前 `intentir.scrc.triton-workload-adapter.v3` 在现行 28 项 registry 上声明全部 28 项 Harness 配置视图：
+当前 `intentir.scrc.triton-workload-adapter.v5` 继承 v4 shape identity，并新增显式
+bound-constexpr/shape-coordinate relation 与真实 store-then-load scratch `inout` role；它在现行 28 项
+registry 上声明全部 28 项 Harness 配置视图：
 原六项 DYT、SwiGLU、Softmax、RMSNorm、attention row reduction、linear contraction；full
 FlashAttention forward/backward、fused-add RMSNorm、Sparsemax、one-column-block backward；以及
 Qwen2-VL MRoPE、GroupNorm、JSD、CrossEntropy、GEGLU、PolyNorm、Llama4 RoPE、FlashAttention

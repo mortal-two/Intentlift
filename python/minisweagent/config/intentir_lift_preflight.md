@@ -12,6 +12,21 @@ the artifact schema or external TypeCheck.
 3. A symbolic `x*` is a signature/type handle. It may occur in shapes and
    logical index/domain expressions, but it is not an SSA operand or a scope
    capture/value.
+   In `harness_compiler_view`, tensor `shape` is only the current valuation.
+   If `shape_contract` exists, keep each integer entry as that J literal and
+   map each anonymous `h*` entry to one symbolic J `x*`; repeated `h*` entries
+   share one `x*`, while distinct `h*` entries never collapse merely because
+   their current values are equal. `h*` is Harness-only and never enters J/C/pi.
+   A scalar `shape_coordinate:h*` or a
+   `bound_constexpr_shape_coordinates` entry is a trusted equality to that tensor axis.
+   Preserve it either by binding an extent/domain-only scalar directly to the
+   mapped `x*`, or—when the scalar also carries logical data—by binding one
+   rank-0 `t*` and authoring its `value_dimension_relations` equality to that
+   `x*`. The checker never creates either representation. Do not infer any
+   coordinate from concrete values, grid, C, names, or positions. Keep a
+   capacity coordinate distinct from active length; author Source-visible pad
+   semantics and non-negative affine constraints, never a C-dependent roundup
+   equation in J.
 4. Every `J.signature.logical_ref` names only a declared J input/output `t*`
    or symbolic dimension `x*`, never a `p*` or body/local `v*`. A scalar or semantic
    constexpr used as logical data gets a dtype-matching rank-0 J input with
@@ -81,6 +96,10 @@ the artifact schema or external TypeCheck.
    `access_guard_relation`. An
    unconditional access omits both fields (or leaves both null); never attach a
    redundant fill to it. Consumers reject rather than normalize an orphan fill.
+   A direct logical-input load may use `node_ref: null` when no J operation
+   produces that input; its matching effect uses the same null. Although
+   `map_unary(fn=identity)` is a closed logical operator, do not invent it solely
+   as an access anchor when Source has no identity stage.
    For a predicate-bearing Source load, `fill_value` records that access's
    actual authored `other` value or Layer-A value reference. Do not replace it
    with a downstream neutral element, a value that makes a later subtraction
@@ -243,7 +262,9 @@ the artifact schema or external TypeCheck.
 16. A C slot may optionally attach its prior to one declared J `n*`, `d*`,
    `a*`, `q*`, or `b*` using `subject_ref`. Add `axis_ref` only with a subject
    and only when that subject declares the referenced non-negative logical axis
-   or `x*`; do not guess either attachment.
+   or `x*`; for a canonical contraction this may be the declaration-ordered
+   contracted-label ordinal or its matching symbolic extent. Do not guess either
+   attachment.
 17. C otherwise contains only the exact trusted scheduling slots and values
    from `harness_view.json`. It contains no operator, predicate, formula,
    strategy, source/API name, or semantic constant.
@@ -262,6 +283,12 @@ the artifact schema or external TypeCheck.
 21. Pi contains anonymous realization relations only. It contains no dtype,
    shape, operator, formula, predicate, source fragment, frontend API, C value,
    or executable text.
+   A Source-visible physical tiled loop around an ordinary J reduce/contraction
+   uses `physical_iterations`, not a synthetic J loop: bind the existing body n*,
+   the same-node/same-axis required positive C tile, the authored induction basis,
+   and forward/reverse direction. When compiler-visible accumulator stages exist,
+   author `physical_loop_carriers` in that region. These are temporal topology,
+   never an initialization/update formula, and fixed code never creates them.
 22. Run the supplied static schema validator and then
    `intentir_candidate_check /output/candidate.json`. CandidateCheck is bounded
    diagnostics only; you must make every edit, and the external Runner still

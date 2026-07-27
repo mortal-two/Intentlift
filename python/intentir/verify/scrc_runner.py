@@ -1638,7 +1638,7 @@ class SCRCGateRunner:
             formal_rounds += 1
             _notify_progress(
                 progress_callback,
-                "gate1",
+                "replay",
                 None,
                 formal_rounds,
                 "started",
@@ -1650,6 +1650,21 @@ class SCRCGateRunner:
                 )
             gate1_adapters.append(gate1_adapter)
             gate1 = gate1_adapter.run(artifact, request)
+            normal_arms_for_progress = (
+                gate1.normal_candidates
+                if gate1.normal_candidates
+                else (gate1.normal,)
+            )
+            replay_was_generated = any(
+                arm.generation is not None for arm in normal_arms_for_progress
+            )
+            _notify_progress(
+                progress_callback,
+                "replay",
+                None,
+                formal_rounds,
+                "finished" if replay_was_generated else "not_run",
+            )
             _notify_progress(
                 progress_callback,
                 "gate1",
@@ -1659,11 +1674,7 @@ class SCRCGateRunner:
             )
             replay_normal_calls += gate1.normal_calls
             replay_masked_calls += gate1.masked_j_calls
-            normal_arms = (
-                gate1.normal_candidates
-                if gate1.normal_candidates
-                else (gate1.normal,)
-            )
+            normal_arms = normal_arms_for_progress
             for arm in (*normal_arms, gate1.masked_j):
                 if arm is None:
                     continue

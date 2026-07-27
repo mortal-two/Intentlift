@@ -20,6 +20,7 @@ from intentir.verify.gate1.model import (
     ParameterMode,
 )
 from intentir.extraction.lifters.miniswe import MiniSWELiftAdapter
+from intentir.extraction.lifters.codex_cli import CodexCLILiftAdapter
 from intentir.extraction.lifters.scrc import ResponsesSCRCLiftAdapter
 from intentir.extraction.providers.provider import ProviderConfig
 from intentir.verify.adapters import (
@@ -41,6 +42,7 @@ from intentir.verify.gate1.replay import (
     ReplayGeneration,
     ResponsesReplayWriter,
 )
+from intentir.verify.gate1.codex_replay import CodexCLIReplayWriter
 from intentir.verify.gate2.model import Gate2Status
 from intentir.verify.gate2.orchestrate import (
     Gate2Case,
@@ -73,7 +75,9 @@ from intentir.verify.workload_adapters import (
 )
 
 
-RecordedLiftAdapter = ResponsesSCRCLiftAdapter | MiniSWELiftAdapter
+RecordedLiftAdapter = (
+    ResponsesSCRCLiftAdapter | MiniSWELiftAdapter | CodexCLILiftAdapter
+)
 GATE1_DIAGNOSTIC_RECHECK_PROTOCOL = (
     "intentir.scrc.gate1-diagnostic-recheck.v1"
 )
@@ -108,13 +112,22 @@ def _new_replay_writer(
     *,
     provider: ProviderConfig,
     effort: str | None,
+    stop_requested: Callable[[], int | None] | None = None,
 ) -> RecordedReplayWriter:
     """Create one writer for exactly one formal Gate1 round."""
 
     if replay_backend == "responses":
         return ResponsesReplayWriter(provider=provider, effort=effort)
+    writer_kwargs: dict[str, Any] = {
+        "provider": provider,
+        "effort": effort,
+    }
+    if stop_requested is not None:
+        writer_kwargs["stop_requested"] = stop_requested
     if replay_backend == "miniswe":
-        return MiniSWEReplayWriter(provider=provider, effort=effort)
+        return MiniSWEReplayWriter(**writer_kwargs)
+    if replay_backend == "codex":
+        return CodexCLIReplayWriter(**writer_kwargs)
     raise ValueError(f"unknown Replay backend: {replay_backend!r}")
 
 
@@ -646,6 +659,7 @@ def _build_workload_runtime(
     lift_workflow: str = "single",
     replay_backend: str = "responses",
     replay_width: int = 1,
+    stop_requested: Callable[[], int | None] | None = None,
 ) -> tuple[
     SCRCGateRunner,
     RecordedLiftAdapter,
@@ -655,15 +669,17 @@ def _build_workload_runtime(
         raise TypeError("replay_width must be an integer")
     if not 1 <= replay_width <= 4:
         raise ValueError("replay_width must be in [1, 4]")
-    if lift_workflow not in {"single", "staged"}:
-        raise ValueError("lift_workflow must be 'single' or 'staged'")
+    if lift_workflow != "single":
+        raise ValueError(
+            "lift_workflow must be 'single'; staged multi-writer Lift was retired"
+        )
     lift_class: type[RecordedLiftAdapter]
     if lift_backend == "responses":
-        if lift_workflow != "single":
-            raise ValueError("staged Lift workflow requires the miniswe backend")
         lift_class = ResponsesSCRCLiftAdapter
     elif lift_backend == "miniswe":
         lift_class = MiniSWELiftAdapter
+    elif lift_backend == "codex":
+        lift_class = CodexCLILiftAdapter
     else:
         raise ValueError(f"unknown Lift backend: {lift_backend!r}")
     lift_kwargs: dict[str, Any] = {
@@ -672,8 +688,9 @@ def _build_workload_runtime(
         "effort": effort,
         "source_symbol": prepared.entry.symbol,
     }
-    if lift_backend == "miniswe":
+    if lift_backend in {"miniswe", "codex"}:
         lift_kwargs["workflow"] = lift_workflow
+        lift_kwargs["stop_requested"] = stop_requested
     lift = lift_class(
         **lift_kwargs,
     )
@@ -686,6 +703,7 @@ def _build_workload_runtime(
                 replay_backend,
                 provider=provider,
                 effort=effort,
+                stop_requested=stop_requested,
             )
             for _ in range(replay_width)
         )
@@ -745,6 +763,7 @@ def search_prepared_workload_gate1(
         lift_workflow=lift_workflow,
         replay_backend=replay_backend,
         replay_width=replay_width,
+        stop_requested=stop_requested,
     )
     request = prepared.request
     if max_gate1_rounds is not None:
@@ -754,9 +773,9 @@ def search_prepared_workload_gate1(
             request,
             max_pre_replay_rejections=max_pre_replay_rejections,
         )
-    elif lift_backend != "miniswe" or lift_workflow != "single":
-        # Legacy one-shot/staged writers do not expose a cumulative owner-time
-        # terminal signal, so retain their historical safety override.
+    elif lift_backend not in {"miniswe", "codex"}:
+        # Legacy one-shot writers do not expose a cumulative owner-time terminal
+        # signal, so retain their historical safety override.
         request = replace(request, max_pre_replay_rejections=3)
     try:
         report = runner.search_gate1(
