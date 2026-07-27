@@ -1972,7 +1972,7 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
             _buffer("Out_splitK1", BufferRole.INPUT, "f32", (1, 1, 1, 2, 16)),
             _buffer("LSE_splitK0", BufferRole.INPUT, "f32", (1, 1, 1, 2)),
             _buffer("LSE_splitK1", BufferRole.INPUT, "f32", (1, 1, 1, 2)),
-            _buffer("Out", BufferRole.OUTPUT, "f32", (1, 2, 1, 1, 16), "out"),
+            _buffer("Out", BufferRole.OUTPUT, "f32", (1, 1, 1, 2, 16), "out"),
             _buffer("LSE", BufferRole.OUTPUT, "f32", (1, 1, 1, 2), "lse"),
         ),
         scalars=tuple(
@@ -2040,9 +2040,9 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
             ),
             _buffer("DLSE_splitK0", BufferRole.OUTPUT, "f32", (1, 1, 1, 2), "dlse0"),
             _buffer("DLSE_splitK1", BufferRole.OUTPUT, "f32", (1, 1, 1, 2), "dlse1"),
-            _buffer("Out", BufferRole.INPUT, "f32", (1, 2, 1, 1, 16)),
+            _buffer("Out", BufferRole.INPUT, "f32", (1, 1, 1, 2, 16)),
             _buffer("LSE", BufferRole.INPUT, "f32", (1, 1, 1, 2)),
-            _buffer("DOut", BufferRole.INPUT, "f32", (1, 2, 1, 1, 16)),
+            _buffer("DOut", BufferRole.INPUT, "f32", (1, 1, 1, 2, 16)),
             _buffer("DLSE", BufferRole.INPUT, "f32", (1, 1, 1, 2)),
         ),
         scalars=tuple(

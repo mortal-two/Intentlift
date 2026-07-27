@@ -957,6 +957,22 @@ def test_splitk_forward_uses_real_none_and_non_degenerate_split_grid() -> None:
     )
 
 
+def test_splitk_varargs_merged_buffers_follow_source_bghmk_axis_order() -> None:
+    reduce_buffers = {
+        item.formal: item
+        for item in TRITON_WORKLOAD_ADAPTERS[_XFORMERS_SPLITK_REDUCE].buffers
+    }
+    backward_buffers = {
+        item.formal: item
+        for item in TRITON_WORKLOAD_ADAPTERS[_XFORMERS_SPLITK_REDUCE_BWD].buffers
+    }
+
+    # Source contract: merged attention tensors are [B, G, H, M, K].
+    assert reduce_buffers["Out"].shape == (1, 1, 1, 2, 16)
+    assert backward_buffers["Out"].shape == (1, 1, 1, 2, 16)
+    assert backward_buffers["DOut"].shape == (1, 1, 1, 2, 16)
+
+
 @pytest.mark.parametrize("adapter", TRITON_WORKLOAD_ADAPTERS.values())
 def test_real_adapter_source_reaches_triton_frontend(adapter) -> None:
     torch = pytest.importorskip("torch")
