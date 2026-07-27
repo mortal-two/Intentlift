@@ -1,158 +1,370 @@
-# Task 14：Codex Agent 的 28-Kernel Fresh 参数化 SCRC 全闭合
+# Task 14：Source-Grounded Certification Profile 下的 Codex 28-Kernel Fresh SCRC 最终闭合
 
-> 状态：待执行（Task 13 工程提交后启动）
+> 状态：待执行；本轮只完成最终任务定义，不启动新的 Lift/Replay batch
 >
-> 类型：Task 11 的 fresh corpus 执行波；不是 production backend、性能搜索、论文实验或历史证书重判。
+> 类型：Task 11 的最终 fresh corpus执行波；不是 production backend、`J_dev`能力建设、性能搜索、
+> 论文实验或历史证书重判。
 >
-> 历史基线：18/28 只说明旧版本各自曾取得证书；本任务对当前 28 项全部 fresh 运行，不把旧证书
-> 当作当前参数化/runtime 版本的替代品。
+> 历史基线：18/28只说明旧版本各自曾取得证书；本任务对active registry的28个direct symbols全部
+> fresh运行，不用旧证书替代当前参数化/runtime版本。
 
-## 目标
+## 0. 本任务的权威输入与边界
 
-使用 Task 13 收口后的 Codex single-owner agent runtime，为 active registry 的 28 个真实 Kernel
-重新形成各自独立的：
+本任务继续服从四份SCRC权威文档及当前`.trellis/spec`。另吸收后端工作树的输入/输出、dtype和
+config审计结论：
 
 ```text
-Source + anonymous Harness/compiler view
+/home/kingdom/phdworks/TianchenIR-backend-certified-j-search/
+  doc/IntentIR_后端能力建设与最终实验协议_2026-07-27.md
+backend commit = 46e1288dabfcca46d783de87fbcfaf4ca49ded95
+document sha256 = f9dd1ff1ea4879f664de3fa5c3b86e5ed9c558c511197255e32344a3fbbf9fda
+```
+
+该后端文档只提醒前端先核对被认证程序、Harness ABI与concrete specialization；它不能覆盖SCRC数学，
+也不能要求J迎合某个target/backend recipe。后端的capability/paper config、Target--Ref receipt、
+MLIR search和`intentir.backend.dev-j-variant.v1`均不进入本任务。
+
+当前没有仍在运行的旧闭合进程。最近的Codex Replay v6 fixed-artifact DYT recheck已经终止为
+`diagnostic_only NO_CLOSURE`：mailbox、完整π view与same-episode compile repair正常，Gate1仍剩
+`arith.addi/tt.addptr`及address dataflow不一致；它不进入Gate2、不改变历史18/28。
+
+## 1. 第一性原理目标
+
+为active registry的28个真实direct kernel各自建立一个source-grounded primary certification
+specialization，并使用Task13完成的Codex single-owner runtime fresh形成：
+
+```text
+Source snapshot + selected compile-time program variant
+  + reviewed anonymous Harness/compiler view P_cert
   -> complete LLM-authored (J,C,pi)
   -> fresh source-blind Replay
   -> Gate1 closure
-  -> direct three-leg Gate2
-  -> current-version SCRC certificate and immutable evidence
+  -> Source--Replay / Source--J / Replay--J Gate2
+  -> current-version SCRC certificate + immutable evidence
 ```
 
-旧 artifact、Replay、Gate verdict 与 digest 保持不可变，仅作历史对照。每个当前证书必须来自当前
-Source、adapter、Lift knowledge、Replay backend、observer、RefEval 与 Harness valuation 的 fresh
-lifecycle。
+旧artifact、Replay、Gate verdict与digest保持原样，仅作历史对照。Task14不只是“再跑一次旧adapter”：
+若输入/输出role、dtype、shape identity、selected variant或observable outputs不对，必须先修正Source/Harness
+边界，再fresh Lift；不能让LLM为错误Harness闭合，也不能在Gate后偷偷改ABI。
 
-## 当前执行栈
+## 2. 每个case的P_cert：Harness sidecar，不是第四个artifact
 
+每个case进入Lift前必须有一份可审计的`P_cert`记录。它可以由registry、adapter、source slice与
+upstream test/wrapper provenance组合产生，但只属于Harness/task sidecar：
+
+```text
+case_id / registry ordinal / direct symbol
+source location + source snapshot digest + upstream provenance
+selected compile-time variant and active/inactive flags
+ordered callable ABI
+  - buffer/value/None parameter
+  - input/output/inout mode
+  - concrete boundary dtype and rank
+  - concrete capture valuation
+  - shape_contract h* / runtime-scalar equality / constexpr equality
+observable outputs, inout pre/post state, auxiliary statistics and scratch effects
+runtime scalars / semantic constexprs / C slots / grid realization
+external Q policy lineage（J result relation仍由Lift独立作者化）
+review status and factual evidence pointers
+```
+
+`P_cert`不进入`(J,C,π)`、Replay packet、Gate predicate或production backend，不选择Intent op、不推导
+relation，也不生成J。Lift LLM仍完整作者化J/C/π；fixed code只可检查P_cert与Source ABI、当前valuation
+和LLM输出是否一致并fail closed。
+
+`P_cert`尤其不得预填J `consumer_extensions`、access/control/result relation，或π
+`iterations/loop_carriers/physical_iterations/physical_loop_carriers/routes/order`；这些仍由Lift从Source
+完整作者化并由Gate1检验。TMP等scratch的input/output/inout与可观察读写属于ABI/effect审查，但其
+realization topology不属于P_cert。backend `ContractView` consumed/missing facts、Target--Ref correctness、
+target object与performance receipts也只属于backend evidence，不是P_cert或SCRC predicate。
+
+### 2.1 事实所有权
+
+| 事实 | Task14中的所有者/处理 |
+|---|---|
+| boundary tensor/scalar dtype、显式cast、reference op dtype | J/A；本次certificate为concrete specialization |
+| literal shape、symbolic axes、layout、observable ABI、input/output/inout | J/A+B，由Source/P_cert约束 |
+| concrete tensor values、symbol valuation、runtime stride/grid | Harness valuation，必须满足J |
+| schedule tile/threads/vector/pipeline | C或后端；不改变J合法空间 |
+| target内部FMA/TF32/approx/accumulator choice | 后端/Q；不是Task14输入dtype |
+
+Harness不得把`f32` J改成BF16，也不得把FP32 internal accumulator误写成boundary FP32要求。当前J没有
+type variable，所以每种额外boundary dtype都是另一份Source specialization与fresh certificate，不是同一J的
+Harness valuation。
+
+### 2.2 capture valuation、参数化J与natural workload分账
+
+- `capture seed`可以小，但必须source-grounded、非退化并真正执行selected variant的关键路径；
+- tensor `shape`只是本次valuation；Source/launcher唯一确定的logical identity由Harness-only `h*`表达，
+  最终`x*`/value-dimension equality仍由Lift作者化；
+- 一个parametric J说明其logical shape identity，不把本次Gate2自动推广为所有natural/paper shapes的
+  动态测试证书；
+- backend capability/natural/paper config若没有对应fresh accepted J，只能是独立`J_dev`/backend
+  evidence，不计入Task14；
+- 每个direct symbol先确定一个primary certification specialization。额外dtype/compile-time variant可以
+  独立认证，但不改变28项主分母。
+
+每个P_cert还必须列出逐coordinate shape ledger：
+
+```text
+h* / current valuation
+grounded tensor axes
+grounded runtime scalar or semantic constexpr equality（若存在）
+grid-only realization（若存在）
+expected Lift obligation = dimension-only | rank-0 value eq | selected literal
+current closed relation support = supported | unexpressible
+```
+
+该ledger不为Lift分配`x*`或生成relation，只把“哪些extent确有Source依据、哪些必须保持literal”从
+主观判断变成逐case可审计输入。完成时必须逐项核对J作者化结果。
+
+## 3. P0：28项输入/输出、dtype、variant与shape审查
+
+P0按case并行执行；一个case的P_cert一旦READY即可进入closure queue，不要求等28项形成全局barrier。
+每项必须对照actual direct Source、selected upstream wrapper/test与adapter，而不是只看当前JSON数值。
+
+### 3.1 审查结果分类
+
+```text
+PROFILE_READY
+ADAPTER_ABI_FIX_REQUIRED
+SOURCE_VARIANT_AMBIGUOUS
+SHAPE_RELATION_UNEXPRESSIBLE
+UPSTREAM_PROVENANCE_MISSING
+```
+
+非`PROFILE_READY`不得启动正式Lift。修复只能保留Source-grounded事实：不得按Kernel名称生成J、增加
+Replay模板、从backend headline config反推语义，或把相等valuation合并成同一extent。
+
+### 3.2 已知必须重点复核的case（不是预判其一定错误）
+
+| case/family | P0必须核对 |
+|---|---|
+| Flash full backward / one-col backward | Q/K/V/DO与DQ/DK/DV destination的真实wrapper dtype；DQ是inout还是output；FP32 accumulator与boundary grad carrier不能混淆 |
+| Flash forward/backward Bias | `BIAS_TYPE` selected variant下Bias是否active、其dtype/shape/role是否可观察 |
+| Flash one-pass LayerNorm | inactive ROWSCALE/SEEDS/mask carriers、Mean/Rstd FP32与main output dtype |
+| GroupNorm | Y/Mean/RSTD carrier、W/B axis、groups/channels-per-group与tensor shape identity |
+| CrossEntropy | X early-return/clear导致的inout事实；loss、optional weight、I64 label及关闭的z-loss/accuracy/token outputs |
+| JSD/TVD | `HAS_LABEL=false`时I64 label ABI carrier是否inactive且无假语义 |
+| RoPE/MRoPE | q/k真实inout；cos/sin broadcast batch、head counts、full/half head dimension；不得伪造乘积关系 |
+| xFormers RMSNorm/RMSNorm-add | FP32 capture是否作为primary specialization有上游依据；X inout与Y same-dtype output |
+| SplitK forward/reduce/backward | Q/K/V、FP32 partial Out/LSE、final Out caller dtype、split outputs及vararg/None ABI；selected variant/product/capacity保持literal时给出依据 |
+
+### 3.3 参数化允许与禁止
+
+允许要求fresh Lift作者化：
+
+- row-wise rows/cols；
+- Flash/Linear/GroupNorm中由tensor shape、runtime scalar或显式bound constexpr唯一绑定的batch、
+  sequence、head、head-dim、rounded capacity；
+- Qwen2VL MRoPE、Liger RoPE中唯一对应tensor axes的batch/sequence/head/head-dim；
+- Llama4 RoPE中的batch/sequence/head-count/head-dim-half。
+
+禁止擅自提升：
+
+- Llama4 `full_head_dim=2*head_dim_half`在当前closed relation vocabulary中没有乘积关系时保持
+  selected-variant literal；
+- SplitK产品、vararg、derived capacity、split count与compile-time family保持selected variant，直到
+  Gate与production共同消费的closed relation存在；
+- inactive/dummy ABI carrier、static coefficient axis、stride/layout metadata不得因数值类似logical
+  extent而提升；
+- grid prose、当前valuation或backend natural config不得自动生成`h*`/`x*`。
+
+若Lift把P_cert已声明的source-grounded `h*`固化成concrete literal，candidate在正式Replay前拒绝；
+fixed code不得替Lift修成`x*`。
+
+## 4. 当前执行栈
+
+- frontend commit起点：`460aaed1c6af0b267a4a9da9ca497aea6e66ad40`；
 - artifact/decode/typecheck：`artifact.v8 / decode.v12 / typecheck.v20`；
 - Lift：`intentir.lift-knowledge.v56`；
 - Replay：`openai.codex-cli.intentir-replay.v6`；
-- Harness：Triton workload adapter v5，区分 concrete valuation 与 Harness-only `h*` identity；
-- Gate1：当前 observer profile 与 candidate-fanout v4 first-observed winner；
-- Gate2：Source–Replay、Source–J、Replay–J 三条直接比较，具体阈值只来自外部 Q。
+- Harness：Triton workload adapter v5；
+- Gate1 observer：`triton-ttir-3.6-gate1-v11`；outer batch：`intentir.scrc.batch.v3`；
+  candidate fan-out：v4 `first_observed_gate1_closure_cooperative_stop`；
+- Gate2：三条直接比较，threshold只来自外部Q。
 
-协议升级后不得追认旧 verdict。任何后续通用能力修复都只对受影响 case 建立新的 fresh evidence。
+实现升级后只fresh rerun受影响case，不重判旧receipt。Task14期间每次通用能力提交都必须在后续
+evidence中记录commit/protocol；不能让一个长期脏工作区承载多个不可区分的实验版本。
 
-## 不可改变的数学与信息边界
+## 5. 不可改变的Agent生命周期与信息边界
 
-1. 每个 branch 只有一个 source-aware Codex Lift owner，贯穿该 branch 的所有 formal Gate1 relift；
-   feedback 只回到这个 owner，且每轮重新提交完整 `(J,C,pi)`。
-2. 每个 formal round 创建全新的 source-blind Replay episode。Replay 只见
-   `J + pi + MaskC(C) + U_f`，不见 Source、Harness value、Gate diff、旧 Replay、sibling 或其他 case。
-3. LLM 完整作者化 artifact 与 Replay。固定代码只搬运 exact bytes、执行 closed checks、拒绝、诊断、
-   隔离、调度和记录 receipt；不得补 relation、猜 axis、修 J 或生成 Kernel recipe。
-4. Harness `h*` 不进入 artifact，也不自动生成 J `x*`。Lift 必须显式作者化 logical dimension，必要时
-   作者化 rank-0 value/dimension equality；固定代码只检查 source-grounded contract 是否满足。
-5. π 在 SCRC 后停止；本任务不实现 production backend，也不让 backend 读取 Source/π。
-6. compile-time variant 是不同程序/证书。本任务只认证 adapter 选定 variant，不从相等 valuation
-   猜测产品、capacity、rounded extent 或未声明 variant family。
+1. 每branch只有一个source-aware Codex Lift owner，贯穿该branch全部formal Gate1 relift；closed
+   feedback只回到这个owner，每轮重新提交完整`(J,C,π)`。
+2. 每个formal round创建全新的source-blind Replay episode。Replay只见
+   `J + π + MaskC(C) + U_f`，不见Source、P_cert/Harness value、Gate diff、旧Replay、sibling或其他case。
+3. LLM完整作者化artifact与Replay。工具只提供exact current bytes、lossless J/π view、closed checker、
+   exact submit/receipt；不得补relation、猜axis、修J或生成Kernel recipe。
+4. Gate1 diff只进入产生它的Lift owner；绝不进入Replay或sibling。不同branch/case不共享candidate、
+   notes、best parent或semantic cache。
+5. compile-time variant是不同程序/证书；一次branch不跨variant。
+6. π在SCRC后停止；Task14不实现backend，也不让backend读取Source/π。
 
-## Agent 与预算
+Codex为主路径；MiniSWE只在隔离provider/runtime问题时做同合同交叉核验。MiniSWE若承担正式branch，
+必须在branch创建前被选为该branch backend，并遵守同一persistent Lift owner、fresh Replay与formal K；
+它不能在一次Codex branch中途接管thread/candidate/feedback，诊断交叉核验也不能混入该branch预算或
+verdict。provider transient retry属于
+transport：只有transport确认可resume时才在同thread/workspace上有界重试并留下receipt，不计formal
+K；无法安全resume时归为infrastructure failure。first-winner cancellation绝不能被误当transient error。
 
-Codex 是主执行路径；MiniSWE 只用于隔离 runtime/provider 问题时的同合同交叉核验，不形成不同
-artifact 或不同 Gate。
+## 6. 并行、branch与预算
 
-- 主模型：Terra high；Sol high/xhigh 只作为明确记录的独立 branch/backend 对照；
-- 同一 Kernel 默认 `B=3`，三个 branch 独立，不共享 J、feedback、notes 或 Replay；
-- formal Gate1 上限默认 `K=5`。它是上限而非目标；首个 Gate1 closure 立即成为 winner，sibling
-  cooperative stop；
-- agent 内部 tool/model step 不设“三次”能力上限，由 active wall-time、transport safety 和 exact
-  stagnation 管理；
-- 若同一 branch 的 artifact digest、Replay digest 与 closed Gate1 frontier 连续不变，只能归类为
-  orchestration/semantic stagnation，不能靠无限 K 掩盖；
-- 外层按多个语义族并行，满足 `W*B<=G`。不得因一个慢 case 让其他 case 空闲等待。
+- 主模型：Terra high；Sol high/xhigh仅作明确记录的独立对照；
+- 同case默认`B=3`，三个branch彼此隔离；formal Gate1上限默认`K=5`，首个Gate1 closure立即成为
+  winner并cooperative stop siblings；
+- agent内部tool/model steps没有“三次”capability上限，由active wall-time、transport safety与exact
+  stagnation管理；
+- 第一执行波建议`W=4,B=3,G=12`；provider/host稳定后提升到`W=6,B=3,G=18`。`G2`按GPU资源单独
+  限制，不让Gate2阻塞其他case的Lift/Replay；
+- readiness queue混合多个语义族；一个慢case、P0待修case或provider错误不能让其他READY case空闲；
+- report按registry ordinal稳定汇总，与完成顺序无关。
 
-TypeCheck、CandidateCheck、ReplayCheck 和 synthetic compile 只记录构造阶段，不作为能力进展指标。
-能力指标只有 Gate1 frontier、Gate1 closure、Gate2 三边和最终 SCRC verdict。
+winner必须按fan-out v4定义为host首先原子观察到、且完整Gate1-closed evidence已经落盘的branch；
+同一临界区只登记一个winner receipt。sibling看到winner token后停止后续Lift/Replay，保存
+`SUPERSEDED + winner_branch_id`，已经消耗的调用与bytes/hash不丢弃。wall-clock完成顺序本身没有
+认证含义。
 
-## 参数化执行政策
+`K=5`是上限而非必须跑满。只有全部B个branch带完整`NO_CLOSURE` evidence耗尽其声明K，case才能
+报告`NO_CLOSURE_(B,K)`；infrastructure/observer/profile invalid不能伪装成NO_CLOSURE。
 
-### 可以直接要求 fresh 参数化的部分
+TypeCheck、CandidateCheck、ReplayCheck和synthetic compile只定位构造阶段，不作为能力指标。能力
+进展只看Gate1 frontier/closure、Gate2三边与最终SCRC verdict。
 
-- row-wise rows/cols；
-- Flash/Linear/GroupNorm 中由 tensor shape、runtime scalar 或显式 bound constexpr 唯一绑定的 batch、
-  sequence、head、head-dim、rounded capacity；
-- Qwen2VL MRoPE、Liger RoPE 中唯一对应 tensor axes 的 batch/sequence/head/head-dim；
-- Llama4 RoPE 中 batch/sequence/head-count/head-dim-half。
+## 7. 横向执行与真实问题解决
 
-### 不得擅自提升的部分
+### Wave 0：P_cert与runtime acceptance并行
 
-- Llama4 `full_head_dim = 2 * head_dim_half` 在当前 closed relation vocabulary 没有乘积关系时保持
-  selected-variant literal；
-- SplitK 的产品、vararg、derived capacity、split count 与 compile-time family 保持 adapter 选定
-  variant，直到出现 production 与 Gate 都共同消费的 closed relation；
-- inactive/dummy ABI carrier、static polynomial coefficient axis 与 stride/layout metadata不因数值类似
-  logical extent而提升。
+1. 对28项横向生成/复核P_cert，READY case持续进入queue；
+2. 一个历史简单case fresh形成真正参数化的Gate1/Gate2；
+3. 一个Flash/Linear复杂case验证`consumer_extensions`、control、
+   `physical_iterations/physical_loop_carriers`、TMP inout与完整π消费；
+4. marker、路径、mailbox、provider或工具发现失败只算orchestration/infrastructure，不记语义失败。
 
-若 Lift 把已声明 `h*` 的 source-grounded identity 固化成 concrete literal，candidate 必须在进入正式
-Replay前被拒绝；fixed code不得替 Lift 自动修成 `x*`。
+### Wave 1：28项第一遍fresh覆盖
 
-## 横向执行流程
+- 每项保存P_cert、完整branch/round/evidence；
+- Gate1 PASS后固定exact artifact/Replay再进入Gate2；
+- Gate1-closed但Gate2未过的候选单独保存，不丢弃、不自动relift；
+- 多个语义族持续并行，不能围绕一个高分J长期碰运气。
 
-### Wave 0：runtime acceptance
+### Wave 2：按所有权修通用能力并fresh rerun受影响case
 
-1. 一个历史简单闭合 case fresh 跑通参数化 Gate1/Gate2；
-2. 一个 Flash/Linear 复杂 case验证 `physical_iterations/physical_loop_carriers`、TMP inout、完整 π
-   realization view 与 fresh Replay；
-3. 只接受真实 Gate frontier，不把 provider、marker、路径、mailbox 或工具发现失败记成语义失败。
-
-### Wave 1：28 项第一遍横向覆盖
-
-- 按 registry ordinal 与语义族分波并发；
-- 每项保存完整 branch/round/evidence，首个 winner 后立即停止 sibling；
-- Gate1 PASS 后固定 artifact 与 Replay再进入 Gate2；
-- Gate2-only consumer/Q 缺口不触发 relift。
-
-### Wave 2：通用能力修复与受影响 case fresh rerun
-
-失败按下列互斥主因聚类：
+失败必须先归入一个主类：
 
 ```text
+P_cert / adapter / Source projection invalid
 Lift artifact construction
-J/B semantic omission
-pi realization/time/control omission
-Replay packet consumption
+J/B semantic or result-relation omission
+pi realization / consumer-context / time / control omission
+Replay packet consumption or source generation
 Gate1 observer unsupported
-Gate2 RefEval/Q/consumer gap
-provider/runtime infrastructure
+Gate2 RefEval / Q / frontend consumer gap
+provider / sandbox / runtime infrastructure
 ```
 
-只修通用能力，不加入 case/source symbol 专用 prompt、模板 J、hard-coded Replay 或跨 case semantic
-cache。修复后只 fresh rerun 确受影响的 case，同时继续横向推进其他类别。
+Gate1 category本身不自动证明责任层；必须沿Source、J/B、π、Replay四份现有证据逐层定位：
 
-### Wave 3：最终证书与消融
+| Gate1 frontier | 首先核对 | 可能责任；需证据后才能确定 |
+|---|---|---|
+| interface | P_cert callable ABI、J signature、Replay signature | profile/adapter；Lift J；Replay ABI消费 |
+| op_multiset / reduction | J logical A ops/reduce/contraction是否覆盖Source，再看Replay | Lift J；π physical realization；Replay consumer |
+| dataflow | J operands/results/access、π routes/sharing/carriers、Replay SSA/address graph | Lift J/B；Lift π；Replay consumer |
+| predicate_effect | J domain/predicate/access/effect/control、π order、Replay branches/load/store | Lift J/B；Lift π；Replay consumer |
+| schedule-only / realization | π iteration/placement/order与Replay物理结构 | Lift π；Replay consumer |
+| observer unsupported | observer closed profile与Source/Replay feature | 固定observer能力，不是candidate NO_CLOSURE |
 
-- 形成当前版本 28/28 `SCRC_CERTIFIED` corpus；
-- 对 winner 运行既有 Masked-J / necessity 消融；
-- 汇总 formal rounds、Gate1 frontier演化、Gate2 三边误差、wall-time、model/tool telemetry 与失败分类；
-- 不把 TypeCheck pass rate 写成 semantic capability。
+混合diff可以记录多个secondary categories，但每次通用修复必须给出“最早缺失事实”的artifact path、
+Gate witness与责任层；fixed code不得根据分数或类别名称自动修改J/π/Replay。
 
-## Gate1 / Gate2 复用规则
+修复原则：
 
-- Gate1 FAIL：只回到同一 branch-local Lift owner做完整 relift，下一轮使用 fresh Replay；
-- Gate1 PASS、Gate2 FAIL：先判断 exact J 与 Replay 是否正确；若只是通用 RefEval/Q/frontend consumer
-  缺口，修 consumer 后零模型复用 exact Gate1-closed artifact/Replay做 Gate2-only recheck；
-- 只有 J/B relation 本身错误才启动新的完整 Lift；
-- 任何 hidden Gate2输入或结果都不得回流 Lift、Replay或 sibling selection。
+- P_cert/adapter错误：修Source-grounded Harness事实后fresh Lift，旧attempt保持原样；
+- pre-Replay construction错误：同一Lift owner使用closed diagnostics修自己完整artifact，不消耗formal K；
+- J/B或π错误：Gate1 closed diff回同一Lift owner，完整relift，下一轮fresh Replay；
+- Replay消费错误：不得把Gate1 diff或Source泄给Replay。先用fixed-artifact diagnostic recheck定位并修
+  generic source-blind consumer，再对受影响case作fresh formal run；
+- observer unsupported：扩展固定observer并记录新版本，不把候选记成NO_CLOSURE；
+- Gate2 consumer/Q缺口：若exact J与Replay正确，零模型复用Gate1-closed bytes做Gate2-only recheck；
+- J result relation本身错误（例如浮点路径无依据声明exact）：必须fresh Lift，不能靠Q容忍错误J；
+- 只修通用能力，不加入case/source-symbol专用prompt、模板J、hard-coded Replay或跨case cache。
 
-## 完成条件
+Task14不会在第一遍`NO_CLOSURE`后结束；它持续横向聚类、实现通用能力并fresh rerun，直到28项闭合，
+或出现经权威设计审查确认的表达边界。后者保持Task活跃并明确列出需要的closed relation/consumer，
+不得以“模型不行”或更多token代替分析。
 
-1. active registry 28 项均有当前版本、fresh、case-local 的 accepted `(J,C,pi)`、Replay、Gate1 与
-   三边 Gate2 evidence；
-2. 每个应参数化的 logical extent 都由 J 作者化为 `x*`/合法 equality，而不是 concrete Harness
-   valuation；明确保留的 selected-variant literal 有 source-grounded解释；
-3. 28 项均为 `SCRC_CERTIFIED`，历史 18/28 只保留为旧版本对照；
-4. evidence/report按 registry ordinal稳定汇总，first-winner、sibling stop、formal K、fresh Replay 与
-   provider/runtime receipts完整；
-5. 代码、spec、Task11状态与最终 corpus事实一致，测试通过，工作区干净。
+### Wave 3：最终证书、necessity与汇总
 
-## 非目标
+- 形成当前版本28/28`SCRC_CERTIFIED` corpus；
+- 对winner运行既有Masked-J/necessity消融；
+- 汇总P_cert、formal rounds、Gate1 frontier演化、Gate2三边误差、wall-time、model/tool telemetry与失败
+  修复谱系；
+- 不报告TypeCheck pass rate作为semantic capability。
 
-- 不实现或评估 production backend搜索；
-- 不从 Forge/旧 artifact复制当前证书或实验结果；
-- 不增加 FMA/TF32/reassociation 等静态 permission 字段来替代执行域闭合；
-- 不恢复 planner/builder/reviewer 多作者流水线；
-- 不用 TypeCheck、更多 token、更多 K 或特化 prompt冒充 Gate1/Gate2闭合能力。
+## 8. Gate1 / Gate2判断树
+
+```text
+P_cert READY?
+  no  -> fix Source/Harness contract; no Lift
+  yes -> Lift complete (J,C,pi)
+           |
+       construction valid?
+           no -> same owner repairs; not a formal Gate1 round
+           yes -> fresh Replay -> Gate1
+                    |
+          Gate1 FAIL/UNSUPPORTED
+             |- J/B or pi wrong -> same Lift owner relift
+             |- Replay wrong    -> generic Replay fix, then fresh run
+             |- observer gap    -> observer capability/version fix
+             `- profile mismatch-> invalidate P_cert and fresh restart
+                    |
+          Gate1 PASS -> preserve exact artifact + Replay -> Gate2
+                    |
+          Gate2 FAIL
+             |- J/result relation wrong -> new fresh Lift
+             |- Harness/profile invalid -> repair P_cert, fresh restart
+             `- RefEval/Q/consumer gap  -> zero-model Gate2-only recheck
+```
+
+任何hidden Gate2 input/result不得回流Lift、Replay或winner selection。Gate2失败后不fallback到另一个
+sibling；若问题不是J，不能浪费token重做已经闭合的Gate1。
+
+## 9. Evidence与进度报告
+
+每个case至少保存：
+
+```text
+P_cert review + source/adapter/profile digests
+branch id / owner session id / model / effort / commit / protocol versions
+每轮完整 artifact digest、Replay digest、Gate1 frontier与receipt
+first-winner / sibling stop / retry / infrastructure receipts
+Gate2三条直接边、Q policy、result relation与误差
+masked-J / necessity结果
+最终状态与通用能力修复谱系
+```
+
+live进度必须至少报告：P0 review、Lift、Replay、Gate1、Gate2当前阶段，当前已certified数量、
+Gate1-closed但待Gate2数量、各未闭合主因与活跃W/B/K；不能用TypeCheck PASS制造进度感。
+
+## 10. 完成条件
+
+1. active high-performance registry准确为17 Liger + 6 FlashAttention + 5 xFormers direct symbols；两个
+   `scrc_canary`不进入28分母；
+2. 28项P_cert全部reviewed，每项primary input/output/inout、boundary dtype、selected variant、observable
+   outputs、逐coordinate shape ledger与upstream/source provenance可追溯；
+3. 28项都有当前版本fresh、case-local accepted`(J,C,π)`、fresh Replay、Gate1与三边Gate2 evidence；
+4. 每个应参数化logical extent由J作者化为`x*`/合法equality；selected-variant literal有依据，不把
+   capture valuation冒充natural/paper shape证书；
+5. 28项均为`SCRC_CERTIFIED`；历史18/28、diagnostic recheck和任何`J_dev`只保留为独立对照；
+6. evidence按registry ordinal稳定汇总，first-winner、sibling stop、formal K、fresh Replay、provider/
+   runtime receipts及失败修复谱系完整；
+7. 代码、四权威文档、spec、Task11状态与最终corpus事实一致，测试通过，提交后工作区干净。
+
+## 11. 非目标
+
+- 不实现/评估production backend search、C-Fixed/Schedule-Only/IntentIR三臂或target性能；
+- 不在Task14创建/认证backend `J_dev`；capability/natural/paper config没有fresh accepted J时不计SCRC；
+- 不要求一个J覆盖FP16/BF16/FP32；当前dtype是concrete specialization；
+- 不从Forge、backend catalog或旧artifact复制当前证书；
+- 不增加FMA/TF32/reassociation permission字段替代执行域闭合；
+- 不恢复planner/builder/reviewer多作者流水线；
+- 不用TypeCheck、更多token、更多K、best-parent碰运气或Kernel特化prompt冒充Gate1/Gate2能力。

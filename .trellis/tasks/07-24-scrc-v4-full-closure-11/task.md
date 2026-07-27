@@ -6,8 +6,8 @@
 > 恢复执行。
 >
 > 活动性：Task 01–10 与未通过性能验收的 Task 12 已物理归档；Task 11 闭合主线保持活跃。Task 13
-> 收口 MiniSWE/Codex Agent runtime 后归档；Task 14 使用该 runtime fresh 重闭合当前 28 项，但不终止、
-> 替代或归档本任务。
+> 收口 MiniSWE/Codex Agent runtime 后归档；Task 14 先审查每项source-grounded certification profile，
+> 再使用该runtime fresh重闭合当前28项，但不终止、替代或归档本任务。
 
 ## 目标
 

@@ -7,13 +7,14 @@ Trellis CLI、自动 session 或 workflow phase。
 
 Task 11 继续作为 28-Kernel 闭合主线；历史严格覆盖为18/28。Task 12保留失败反例后归档，Task 13
 完成轻量 single-owner MiniSWE、同合同 Codex主力路径、adapter v5 shape identity与artifact.v8
-physical-time工程能力后归档。Task 14 使用该干净工程基线，对全部28项做当前版本fresh参数化
-Lift/Replay/Gate1/Gate2，而不是只补历史剩余10项；旧18份证书保持不可变但不替代新corpus。
+physical-time工程能力后归档。Task 14 使用该干净工程基线，先逐case审查source-grounded `P_cert`
+（真实input/output/inout、concrete dtype、selected variant与shape identity），再对全部28项做当前版本
+fresh Lift/Replay/Gate1/Gate2，而不是只补历史剩余10项；旧18份证书保持不可变但不替代新corpus。
 Task 11/14按 registry ordinal有界并行汇总，不恢复或改写已结束 Task03。production backend B0/B1
 仍在稳定 J corpus形成后独立展开。
 
 - [Task 11：SCRC v4 的 28-Kernel 有界并行全闭合](07-24-scrc-v4-full-closure-11/task.md)（执行中；闭合主线）
-- [Task 14：Codex Agent 的 28-Kernel Fresh 参数化 SCRC 全闭合](07-27-codex-parametric-28-closure-14/task.md)（待执行；Task 11 的当前 fresh corpus 执行波）
+- [Task 14：Source-Grounded Certification Profile 下的 Codex 28-Kernel Fresh SCRC 最终闭合](07-27-codex-parametric-28-closure-14/task.md)（待执行；Task 11 的最终 fresh corpus执行波）
 
 ## 本轮已归档任务
 
