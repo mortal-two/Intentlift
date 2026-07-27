@@ -257,8 +257,9 @@ state-space expansion 与 local-B，不能相互替代。shuffle/topology、host
 
 v2 实验合同把预算单位定义为不同的 canonical post-pass MLIR state；重复 state 保留在 audit log，
 不消耗候选预算。finalist 使用 fresh round-robin、正反交替 traversal 并排除初次排序样本。最终性能
-确认使用四组等数量 Source/target paired batches，交替执行顺序并丢弃一个 untimed warmup pair；只
-计 prepared launch/graph，不把 allocation 或 correctness synchronization 放进 timed closure。
+确认使用四组等数量 Source/target paired batches并交替执行顺序；确认前两侧按相同声明时长做
+round-robin untimed warm-up。只计 prepared launch/graph，不把 allocation、cache eviction 或
+correctness synchronization 放进 timed closure。
 
 运行结果不用于放宽 memory/effect/ABI hard boundary。正确性测试与 performance selection 分离；
 历史 frozen-12 winner 另外与 canonical J 比较；新 controller 已对 observation-changing state 执行通用
@@ -270,7 +271,7 @@ performance cache key 包含 M0 digest、target、candidate、toolchain 和 benc
 
 缓存/工作集与 Roofline 使用独立 machine spec
 `spec/lowering/backend-performance-measurement-v1.json`；当前 canonical JSON content digest（不是文件字节 SHA-256）为
-`4894fa1e5cb77b6b1c13e21d5f967da58de5b04140373cc8255f749636fd57f8`，每份 bundle/report 绑定当时 canonical
+`aaf6dbbc5c48925cc58d81d66d2d68410e94953bc95350ebdeb29f998d20eae0`，每份 bundle/report 绑定当时 canonical
 digest。参考 TileLang/Triton 的 kernel benchmark 口径，正式 CUDA 主数字为：先完成
 code/module/page/frequency warm-up，然后每次单次调用前在 event interval 外驱逐 L2，用 CUDA
 event 计时。当前 runner 将这个 **L2-controlled steady-state** 协议记为 `cold-data`。
@@ -325,6 +326,13 @@ post-pass/cubin 编译烟测。该烟测证明 profile 可被真实后端消费�
 主报告同时给出 all-corpus、applicable subset 和 per-kernel p50/speedup。只有 Nsight/CUPTI、
 Roofline 机制分解等高开销解释证据可在每个结构类上选 1--2 个 valuation；这不能
 替代全 18 主表或消融。
+
+首个按此矩阵落地的高级 CUDA 扩展不是 kernel-name recipe，而是通用的多规约 tiled MLIR
+状态：同一依赖层的独立规约共享一次 feature-tile traversal，依赖规约从 workgroup frontier
+继续遍历；每个 partial 使用可复用 shared-memory tree，epilogue 也消费该 frontier，从而保持
+global row read-once。当前 matcher 在 18-J large profile 上真实准入 7 项，其余 11 项仍以
+`not_applicable` 或精确 rejection 留在矩阵中。该路径已经通过 true-MLIR 生成与 lit 检查；只有
+Target--RefJ 和稳定计时完成后，才能写成性能收益，不能因“候选已生成”预先宣称加速。
 
 ## 7. H100 分支
 

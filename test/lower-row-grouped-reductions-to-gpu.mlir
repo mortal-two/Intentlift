@@ -1,4 +1,5 @@
 // RUN: intent-opt -convert-intent-row-reduction-to-gpu=block-threads=64 %s | FileCheck %s
+// RUN: intent-opt '-convert-intent-row-reduction-to-gpu=block-threads=4 tile-cols=2' %s | FileCheck %s --check-prefix=TILED
 
 // Two independent f32 reductions share one publication barrier. Each reduction
 // has its own compact [numWarps] dynamic-shared slot, so neither a second
@@ -17,6 +18,15 @@
 // CHECK: memref.store
 // CHECK: gpu.terminator
 // CHECK-NOT: intent.
+// TILED-LABEL: func.func @independent_pair(
+// TILED-SAME: intent.backend.reduction_topology = "tiled_shared_multi_reduce"
+// TILED-SAME: intent.backend.transformation_trace = ["cuda.row_reduction.read_once.v1", "cuda.reduction.tiled_shared_multi_reduce.v1"]
+// TILED: gpu.launch
+// TILED: scf.for %{{.*}} iter_args(%{{.*}}, %{{.*}}) -> (f32, f32) {
+// TILED: memref.store %{{.*}} : memref<128xf32, #gpu.address_space<workgroup>>
+// TILED-NOT: gpu.all_reduce
+// TILED: gpu.terminator
+// TILED-NOT: intent.
 func.func @independent_pair(%X: tensor<2x128xf32>)
     -> (tensor<2x128xf32>, tensor<2x1xf32>, tensor<2x1xf32>) {
   %sum = intent.reduce %X {fn = "sum", axes = [1], assoc = "float_nondeterministic"}

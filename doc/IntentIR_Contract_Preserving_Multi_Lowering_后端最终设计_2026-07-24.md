@@ -981,27 +981,29 @@ load motion 等局部收益只作次级证据。G0/G1 是 E3 同一候选回执�
 `spec/lowering/backend-search-ablation-v2.json` 读取 E0--E4、L0/L1、N0--N3 的开关、预算类别、
 concrete-state identity 与计时合同，
 校验 protocol、字段全集和类型，并把 canonical spec digest 写入每份实验报告。当前 v2 spec digest 为
-`bc661eb71a81b1a97bb96a01643ae354dfb8fab03984eeb336b5de20775fd9c9`。runner 不得在代码中重新定义
+`2286153af9c3f484f6efee2ecfb89c29c69e9e60f7d2c88baff4eff30de76c12`。runner 不得在代码中重新定义
 同名实验臂；spec 缺失、未知 arm、重复 arm 或非布尔开关均须 fail closed。这样论文中的 E2/E3、
 C 消融和数值机制消融都与实际执行的 candidate universe 绑定，而不是事后按 winner 改口径。
 
 v2 中一个预算单位是一个不同的 canonical post-pass MLIR state；相同 MLIR digest 的重复编译仍留在
 audit log，但不消耗预算。无法形成 state 的不同 exact candidate compile failure 消耗一个预算单位。
 finalist 不混用初次排序样本，而按正反交替 traversal 做 fresh round-robin remeasurement；最终 Source
-对比使用等数量、顺序交替的 Source/target paired batches，丢弃一个 untimed warmup pair。计时只覆盖
-prepared launch/graph，allocation 与 correctness synchronization 位于 timed closure 之外。
+对比使用等数量、顺序交替的 Source/target paired batches。正式确认前，Source 与 target prepared
+thunk 按相同声明时长做 round-robin untimed warm-up；计时只覆盖 prepared launch/graph，allocation、
+cache eviction 与 correctness synchronization 位于 timed closure 之外。
 
 ### 18.1 TileLang-aligned 主评测、缓存状态与 Roofline
 
 E0--E4 只定义 candidate-space 因果轴，不足以定义一个可复现的高性能 Kernel
 实验。缓存状态与 Roofline 另由 `spec/lowering/backend-performance-measurement-v1.json`
 冻结；当前 canonical JSON content digest（不是文件原始字节 SHA-256）为
-`4894fa1e5cb77b6b1c13e21d5f967da58de5b04140373cc8255f749636fd57f8`，bundle/report 必须绑定当时的
+`aaf6dbbc5c48925cc58d81d66d2d68410e94953bc95350ebdeb29f998d20eae0`，bundle/report 必须绑定当时的
 canonical spec digest。评测参考 TileLang/Triton 的
 kernel benchmark 实践：代码、module、page allocation 与 GPU 频率先 warm-up，性能主数字则用
 CUDA event 计时，并在每次 single-shot 前在 timed interval 之外管理/驱逐 L2。因此必须区分：
 
-- `warm-up`：所有正式计时的必要准备，不是一个性能结果组；
+- `warm-up`：所有正式计时的必要准备，不是一个性能结果组；每个候选排序前单独稳定，最终
+  Source/target 用相同时间预算 round-robin 稳定，并把实际轮数写入 receipt；
 - `warm-cache`：同一 address 反复 graph/launch 的调试或 deployment-specific 结果，不进入主表 aggregate；
 - `L2-controlled steady state`：预热后、每次计时前驱逐 L2、驱逐本身不计时；这是 CUDA
   Kernel 主表的 publication estimand；当前 runner 为保持 protocol 兼容仍将其记为 `cold-data`；
@@ -1219,6 +1221,12 @@ post-pass MLIR 与 cubin。
 其中 `masked_copy` 的 expanded valuation 因 Source 缺 `program_id` 明确标为
 `Target--RefJ-only`。这些是 implementation/coverage smoke，不提前充当正式 latency 表。
 
+第一项 horizontal lowering 已落地为通用 `tiled_shared_multi_reduce` concrete state：同一依赖层的
+独立规约共享 feature-tile traversal，依赖层从 workgroup-cached frontier 继续遍历，各 partial
+经过可复用 shared-memory tree，epilogue 也从 frontier 取值。large profile 上它按 A/ContractView
+真实准入 7/18 项；其余格子 fail closed 保留。该状态已经形成 true post-pass MLIR/cubin，但在新的
+stabilized cold-data E2/E3 回执完成前只算路径覆盖，不提前写成性能结果。
+
 ### 20.2 下一个冻结里程碑：18-J 横向 lowering 与评测
 
 当前 18 个 J 按 A 结构覆盖四类横向路径：
@@ -1227,7 +1235,7 @@ post-pass MLIR 与 cubin。
 |---|---|---|---|
 | dense/masked elementwise | DYT、GeGLU、SwiGLU、masked copy | tail/vector width、grid 遍历、端到端内存合并 | masked vec2/vec4 与 target-derived grid-stride/vector layout |
 | single reduction + epilogue | Flash preprocess、fused-add RMSNorm、KLDiv、Liger RMSNorm、masked row square-sum、xFormers RMSNorm、xFormers RMSNorm-add | producer 重读、中间物化、单一 reduction topology | producer/reduction/epilogue 单趟 state，subgroup/workgroup/multi-stage 独立搜索 |
-| multiple reductions + epilogue | Flash one-pass LayerNorm、JSD、LayerNorm、Softmax | 多个 reduce 重复读 row，大 N 下 tiled path 只处理单 reduce | 同一 row pass 中的多 accumulator/reduction state，每个 state 再独立 retile |
+| multiple reductions + epilogue | Flash one-pass LayerNorm、JSD、LayerNorm、Softmax | 通用 multi-reduce tiled/shared state 已有，仍需减少 shared tree/barrier 开销并扩展 dtype/表达式覆盖 | subgroup/shared/multi-stage topology 与 schedule 独立搜索，保留不匹配/拒绝回执 |
 | scan/effect/contraction/gather | Sparsemax、TVD、PolyNorm | scan/update/control 或 contraction/gather 落到 generic/materialized path | registered prefix/segmented-scan、effect-safe update 与 contraction/gather tiling states |
 
 实施顺序以“同一 compiler mechanism 横向覆盖一类 J”为原则，不以单个 benchmark 得分为目标：

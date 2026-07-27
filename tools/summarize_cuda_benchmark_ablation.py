@@ -38,6 +38,8 @@ def _measurement_identity(report: Mapping[str, Any]) -> dict[str, Any]:
         "effective_timing",
         "graph_repetitions",
         "warmup_ms",
+        "cold_candidate_warmup_ms",
+        "cold_candidate_warmup_scope",
         "repeat_ms",
         "measurement_rounds",
         "cold_iterations_per_round",

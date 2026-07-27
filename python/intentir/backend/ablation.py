@@ -63,7 +63,9 @@ ABLATION_MEASUREMENT = {
         "equal-count fresh Source and target batches in alternating pair order"
     ),
     "warmup_rule": (
-        "one untimed Source-target pair is discarded before confirmation"
+        "before confirmation, Source and target prepared thunks receive the same "
+        "declared untimed time budget in round-robin order; cold-data timing then "
+        "evicts L2 before every measured launch"
     ),
     "aggregation": "median per side with every paired batch retained",
 }

@@ -1,5 +1,6 @@
 // RUN: intent-opt -convert-intent-row-reduction-to-gpu=block-threads=64 %s | FileCheck %s
 // RUN: intent-opt '-convert-intent-row-reduction-to-gpu=block-threads=64 fuse-fma=true' %s | FileCheck %s --check-prefix=FMA
+// RUN: intent-opt '-convert-intent-row-reduction-to-gpu=block-threads=4 tile-cols=2' %s | FileCheck %s --check-prefix=TILED
 
 // Centered LayerNorm has two dependent row reductions: variance consumes the
 // mean.  At production warp counts each dependency level must still use the
@@ -20,6 +21,20 @@
 // CHECK: memref.store
 // CHECK: gpu.terminator
 // CHECK-NOT: intent.
+// TILED-LABEL: func.func @dependent_centered_variance(
+// TILED-SAME: intent.backend.reduction_topology = "tiled_shared_multi_reduce"
+// TILED-SAME: intent.backend.transformation_trace = ["cuda.row_reduction.read_once.v1", "cuda.reduction.tiled_shared_multi_reduce.v1"]
+// First dependency level caches the row while accumulating the mean.
+// TILED: scf.for %{{.*}} iter_args(%{{.*}}) -> (f32) {
+// TILED: memref.store %{{.*}} : memref<128xf32, #gpu.address_space<workgroup>>
+// TILED: arith.divf
+// The dependent variance traverses the shared frontier, not global X.
+// TILED: scf.for %{{.*}} iter_args(%{{.*}}) -> (f32) {
+// TILED: memref.load %{{.*}} : memref<128xf32, #gpu.address_space<workgroup>>
+// TILED: math.rsqrt
+// TILED-NOT: gpu.all_reduce
+// TILED: gpu.terminator
+// TILED-NOT: intent.
 func.func @dependent_centered_variance(
     %X: tensor<2x128xf32>, %B: tensor<128xf32>, %eps: tensor<f32>)
     -> (tensor<2x128xf32>, tensor<2x1xf32>, tensor<2x1xf32>) {

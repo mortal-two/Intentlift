@@ -14,6 +14,7 @@
     "cross_regime_rule": "warm, streaming, and cold-data are separate estimands and must never be pooled",
     "cross_target_rule": "RTX 5090D, H100, and RVV are reported independently before any cross-target narrative",
     "publication_primary_regime": "cold-data denotes post-warmup, L2-controlled single-shot timing; process/module/JIT cold start is excluded",
+    "pre_measurement_stabilization_rule": "before any cold-data timed samples, execute every compared prepared thunk outside the timed interval for the same declared time budget in round-robin order; this stabilizes code, pages, context, and device P-state but does not define the timed data-cache state",
     "full_corpus_rule": "every frozen production-catalog J remains an explicit matrix row for every target and experiment arm; not_matched, literal_shape_only, unavailable baseline, compile failure, and Q/D failure are retained rather than omitted",
     "valuation_identity_rule": "every result binds the unchanged j_digest plus the exact J-declared symbolic extent valuation and workload profile; a backend profile may not replace a J literal with a symbol"
   },
@@ -35,6 +36,7 @@
     },
     "cold-data": {
       "definition": "evict target data cache before every single-shot measured invocation",
+      "stabilization_rule": "perform declared untimed code/P-state warmup before candidate ranking and again round-robin across the final Source/target pair before confirmation",
       "minimum_eviction_rule": "eviction working set must be strictly larger than detected LLC/L2",
       "preparation_rule": "eviction and synchronization are outside the timed interval",
       "cuda_timer": "single-shot CUDA events",

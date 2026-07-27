@@ -99,6 +99,36 @@ def _measure_cold_data_us(
     return float(statistics.median(samples))
 
 
+def _warmup_thunks(
+    torch: Any,
+    thunks: tuple[Any, ...],
+    *,
+    warmup_ms: int,
+) -> int:
+    """Stabilize kernel code and GPU clocks without adding timed samples.
+
+    Cold-data measurements still evict L2 immediately before every timed launch.
+    This controls process/JIT/P-state history, not the measured data-cache state.
+    Multiple thunks are traversed round-robin so paired arms receive an equal
+    number of untimed launches.
+    """
+
+    if warmup_ms <= 0 or not thunks:
+        return 0
+    deadline = time.perf_counter() + warmup_ms / 1000.0
+    rounds = 0
+    while True:
+        for thunk in thunks:
+            thunk()
+        rounds += 1
+        if rounds % 32 == 0:
+            torch.cuda.synchronize()
+            if time.perf_counter() >= deadline:
+                break
+    torch.cuda.synchronize()
+    return rounds
+
+
 def _measure_cuda_roofs(
     torch: Any,
     *,
@@ -305,6 +335,11 @@ def _one_kernel(
                 }
             )
             continue
+        cold_warmup_rounds = (
+            _warmup_thunks(torch, (thunk,), warmup_ms=warmup_ms)
+            if data_regime == "cold-data"
+            else 0
+        )
         latency = measure(thunk)
         candidate_records.append(
             {
@@ -319,6 +354,7 @@ def _one_kernel(
                 "cubin_size_bytes": len(extracted.cubin),
                 "logical_boundary_gbps": logical_io_bytes / latency / 1_000.0,
                 "achieved_gflops": floating_point_ops / latency / 1_000.0,
+                "cold_pre_measure_warmup_rounds": cold_warmup_rounds,
             }
         )
         candidate_id = candidate["candidate"]["candidate_id"]
@@ -428,6 +464,7 @@ def _one_kernel(
     source_samples: list[float] = []
     mlir_samples: list[float] = []
     paired_batches: list[dict[str, Any]] = []
+    confirmation_warmup_rounds = 0
     if baseline_policy == "source_and_refj":
         source_record = entry["source_triton"]
         source_program = KernelSource.from_code(
@@ -452,10 +489,11 @@ def _one_kernel(
             if not source_agreement.passed:
                 raise RuntimeError("source Triton baseline differs from canonical J")
             source_thunk = source.thunk()
-            # One untimed warmup pair before alternating, paired confirmation.
-            source_thunk()
-            winner_thunk()
-            torch.cuda.synchronize()
+            confirmation_warmup_rounds = _warmup_thunks(
+                torch,
+                (source_thunk, winner_thunk),
+                warmup_ms=warmup_ms,
+            )
             for pair_index in range(confirmation_batches):
                 if pair_index % 2 == 0:
                     order = ("source", "target")
@@ -481,8 +519,11 @@ def _one_kernel(
         # The J-only large-shape profile extends the backend stress domain beyond
         # the accepted Source's one-block execution contract.  Reconfirm only the
         # already Target--RefJ-correct fixed winner and emit no Source claim.
-        winner_thunk()
-        torch.cuda.synchronize()
+        confirmation_warmup_rounds = _warmup_thunks(
+            torch,
+            (winner_thunk,),
+            warmup_ms=warmup_ms,
+        )
         for batch_index in range(confirmation_batches):
             target_us = measure(winner_thunk)
             mlir_samples.append(target_us)
@@ -648,6 +689,11 @@ def _one_kernel(
                 ),
                 "paired_batches": paired_batches,
                 "warmup_pair_discarded": source_latency is not None,
+                "pre_confirmation_warmup_ms": warmup_ms,
+                "pre_confirmation_warmup_rounds": confirmation_warmup_rounds,
+                "warmup_method": (
+                    "untimed-round-robin-before-L2-evicted-samples"
+                ),
             },
         },
     }
@@ -839,6 +885,14 @@ def main(argv: list[str] | None = None) -> int:
             ),
             "graph_repetitions": args.graph_repetitions,
             "warmup_ms": args.warmup_ms,
+            "cold_candidate_warmup_ms": (
+                args.warmup_ms if args.data_regime == "cold-data" else None
+            ),
+            "cold_candidate_warmup_scope": (
+                "untimed code/P-state stabilization before L2-evicted samples"
+                if args.data_regime == "cold-data"
+                else None
+            ),
             "repeat_ms": args.repeat_ms,
             "measurement_rounds": args.measurement_rounds,
             "cold_iterations_per_round": (

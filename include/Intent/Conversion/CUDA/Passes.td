@@ -44,12 +44,12 @@ def ConvertIntentRowReductionToGPU
     Option<"tileCols", "tile-cols", "unsigned", "32",
            "Max f32 columns held in registers per thread (register budget). "
            "When N/T exceeds this, the per-thread feature strip is split into "
-           "num_tiles tiles of <= tile-cols each: each reduce becomes an "
-           "scf.for over tiles accumulating a per-thread partial with ONE "
-           "gpu.all_reduce AFTER the loop, and the row is cached in a "
-           "workgroup (dynamic shared) buffer so the normalize epilogue does "
-           "not re-read it from HBM. num_tiles==1 (N/T <= tile-cols) keeps the "
-           "M1 register-tile path byte-identical.">,
+           "num_tiles tiles of <= tile-cols each. Independent reductions share "
+           "one scf.for over the tiles; dependent reductions start a new pass "
+           "over the same workgroup-cached row frontier. A reusable shared tree "
+           "combines each per-thread partial, and the epilogue also reads the "
+           "frontier cache instead of re-reading it from HBM. num_tiles==1 "
+           "(N/T <= tile-cols) keeps the register-tile path byte-identical.">,
     Option<"vectorWidth", "vector-width", "unsigned", "0",
            "Register-path contiguous memory width: 0 = structurally selected "
            "auto, 1 = force scalar coalesced loads/stores, 4 = require legal "

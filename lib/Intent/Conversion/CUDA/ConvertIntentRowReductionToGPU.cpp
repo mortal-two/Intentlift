@@ -359,7 +359,8 @@ static void attachConcreteStateReceipt(func::FuncOp lowered, int64_t threads,
                                        int64_t rowsPerBlock = 1,
                                        unsigned approximateDivCount = 0,
                                        unsigned hostValueCaptureCount = 0,
-                                       unsigned epilogueLoadMotionCount = 0) {
+                                       unsigned epilogueLoadMotionCount = 0,
+                                       StringRef topologyOverride = {}) {
   MLIRContext *ctx = lowered.getContext();
   unsigned fmaCount = 0;
   unsigned shuffleCount = 0;
@@ -378,6 +379,8 @@ static void attachConcreteStateReceipt(func::FuncOp lowered, int64_t threads,
                              : "workgroup_hierarchical";
   else if (allReduceCount != 0)
     topology = "gpu_all_reduce";
+  if (!topologyOverride.empty())
+    topology = topologyOverride;
 
   SmallVector<Attribute> trace{
       StringAttr::get(ctx, "cuda.row_reduction.read_once.v1"),
@@ -1808,12 +1811,14 @@ struct RowReductionLowering {
     if ((halfSoftmax || explicitHalfStorage) &&
         (numTiles > 1 || !scans.empty()))
       return failure();
-    // Multi-tile (tiled + smem-cached) path scope: exactly one per-row reduce,
-    // no cross-row/atomic fold, outputs are RowOut/PerRowOut only. The general
-    // tiled multi-reduce case is out of M5 scope (its kernels are small-N /
-    // single-tile). The single-tile path is unrestricted (M1/M2/M5a).
+    // Multi-tile (tiled + smem-cached) path scope: one or more per-row reduces,
+    // no cross-row/atomic fold, outputs are RowOut/PerRowOut only. Independent
+    // reductions in a dependency level share one feature-tile pass; a dependent
+    // reduction starts a new pass over the already cached row frontier.  Thus
+    // the implementation retains read-once global traffic without guessing a
+    // benchmark-specific normalization shape.
     if (numTiles > 1) {
-      if (reduces.size() != 1 || !crossReduces.empty())
+      if (reduces.empty() || !crossReduces.empty())
         return failure();
       // ColSeg's per-(group,col) gather is only wired in the single-tile epilogue
       // (group_norm's hidden-per-group is small -> single tile). The tiled +
@@ -2563,12 +2568,23 @@ struct RowReductionLowering {
       return false;
     if (auto castOp = dyn_cast<CastOp>(d))
       return isRowVarying(castOp.getInput());
+    if (auto expand = dyn_cast<tensor::ExpandShapeOp>(d))
+      return isRowVarying(expand.getSrc());
     if (auto transpose = dyn_cast<TransposeOp>(d))
       return isRowVarying(transpose.getInput());
     if (auto mu = dyn_cast<MapUnaryOp>(d))
       return isRowVarying(mu.getInput());
     if (auto mb = dyn_cast<MapBinaryOp>(d))
       return isRowVarying(mb.getLhs()) || isRowVarying(mb.getRhs());
+    if (auto contraction = dyn_cast<ContractionOp>(d))
+      return isCoordinatePreservingContraction(contraction) &&
+             (isRowVarying(contraction.getA()) ||
+              isRowVarying(contraction.getB()));
+    if (auto gather = dyn_cast<GatherOp>(d))
+      return isRowVarying(gather.getIndex());
+    if (auto select = dyn_cast<SelectOp>(d))
+      return isRowVarying(select.getCond()) ||
+             isRowVarying(select.getX()) || isRowVarying(select.getY());
     return false; // a reduce result is per-row uniform, not row-varying
   }
 
@@ -2592,6 +2608,10 @@ struct RowReductionLowering {
       markFrontier(castOp.getInput(), fset);
       return;
     }
+    if (auto expand = dyn_cast<tensor::ExpandShapeOp>(d)) {
+      markFrontier(expand.getSrc(), fset);
+      return;
+    }
     if (auto transpose = dyn_cast<TransposeOp>(d)) {
       markFrontier(transpose.getInput(), fset);
       return;
@@ -2607,6 +2627,27 @@ struct RowReductionLowering {
         return;
       }
       markFrontier(l ? mb.getLhs() : mb.getRhs(), fset);
+      return;
+    }
+    if (auto contraction = dyn_cast<ContractionOp>(d)) {
+      bool lhs = isRowVarying(contraction.getA());
+      bool rhs = isRowVarying(contraction.getB());
+      if (lhs && rhs) {
+        fset.insert(v);
+        return;
+      }
+      markFrontier(lhs ? contraction.getA() : contraction.getB(), fset);
+      return;
+    }
+    if (isa<GatherOp>(d)) {
+      fset.insert(v);
+      return;
+    }
+    if (isa<SelectOp>(d)) {
+      // A select can combine a row-varying predicate and two row-varying arms.
+      // Cache its already-evaluated result as one frontier instead of expanding
+      // three independent shared buffers.
+      fset.insert(v);
       return;
     }
     fset.insert(v); // defensive: an unexpected row-varying producer
@@ -2640,22 +2681,84 @@ struct RowReductionLowering {
         res = uniform.lookup(v); // scalar already loaded once at launch top
     } else {
       Operation *d = v.getDefiningOp();
-      if (auto mu = dyn_cast<MapUnaryOp>(d)) {
-        if (MapUnaryOp squareRoot = reciprocalSqrtOperand(mu))
-          res = emitScalarUnary(
-              b, loc, "rsqrt",
-              emitAtCol(b, loc, squareRoot.getInput(), col, bx, cur,
-                        fromSmem));
-        else
-          res = emitScalarUnary(b, loc, mu.getFn(),
-                                emitAtCol(b, loc, mu.getInput(), col, bx, cur,
-                                          fromSmem));
-      } else if (auto mb = dyn_cast<MapBinaryOp>(d))
-        res = emitScalarBinary(
-            b, loc, mb.getFn(),
-            emitAtCol(b, loc, mb.getLhs(), col, bx, cur, fromSmem),
-            emitAtCol(b, loc, mb.getRhs(), col, bx, cur, fromSmem));
-      else if (auto transpose = dyn_cast<TransposeOp>(d))
+      if (auto constant = dyn_cast<arith::ConstantOp>(d)) {
+        res = emitSplatScalarConstant(b, loc, constant);
+      } else if (auto castOp = dyn_cast<CastOp>(d)) {
+        Type dst = cast<RankedTensorType>(castOp.getResult().getType())
+                       .getElementType();
+        Value input =
+            emitAtCol(b, loc, castOp.getInput(), col, bx, cur, fromSmem);
+        if (input)
+          res = emitRowScalarCast(b, loc, dst, input);
+      } else if (auto expand = dyn_cast<tensor::ExpandShapeOp>(d)) {
+        res = emitAtCol(b, loc, expand.getSrc(), col, bx, cur, fromSmem);
+      } else if (auto mu = dyn_cast<MapUnaryOp>(d)) {
+        Value input;
+        StringRef unaryFn = mu.getFn();
+        if (MapUnaryOp squareRoot = reciprocalSqrtOperand(mu)) {
+          unaryFn = "rsqrt";
+          input = emitAtCol(b, loc, squareRoot.getInput(), col, bx, cur,
+                            fromSmem);
+        } else {
+          input = emitAtCol(b, loc, mu.getInput(), col, bx, cur, fromSmem);
+        }
+        if (input)
+          res = emitScalarUnary(b, loc, unaryFn, input);
+      } else if (auto mb = dyn_cast<MapBinaryOp>(d)) {
+        Value lhs =
+            emitAtCol(b, loc, mb.getLhs(), col, bx, cur, fromSmem);
+        Value rhs =
+            emitAtCol(b, loc, mb.getRhs(), col, bx, cur, fromSmem);
+        if (lhs && rhs && isCmpFn(mb.getFn()))
+          res = isa<IntegerType>(lhs.getType())
+                    ? emitScalarCmpI(b, loc, mb.getFn(), lhs, rhs)
+                    : emitScalarCmp(b, loc, mb.getFn(), lhs, rhs);
+        else if (lhs && rhs)
+          res = emitScalarBinary(b, loc, mb.getFn(), lhs, rhs);
+      } else if (auto contraction = dyn_cast<ContractionOp>(d)) {
+        if (isCoordinatePreservingContraction(contraction)) {
+          Value lhs = emitAtCol(b, loc, contraction.getA(), col, bx, cur,
+                                fromSmem);
+          Value rhs = emitAtCol(b, loc, contraction.getB(), col, bx, cur,
+                                fromSmem);
+          Type dst = cast<RankedTensorType>(contraction.getResult().getType())
+                         .getElementType();
+          if (lhs && rhs && lhs.getType() != dst)
+            lhs = emitRowScalarCast(b, loc, dst, lhs);
+          if (lhs && rhs && rhs.getType() != dst)
+            rhs = emitRowScalarCast(b, loc, dst, rhs);
+          if (lhs && rhs)
+            res = isa<FloatType>(dst)
+                      ? Value(b.create<arith::MulFOp>(loc, lhs, rhs))
+                      : Value(b.create<arith::MulIOp>(loc, lhs, rhs));
+        }
+      } else if (auto gather = dyn_cast<GatherOp>(d)) {
+        auto dataArg = dyn_cast<BlockArgument>(gather.getData());
+        if (dataArg &&
+            argRoles[dataArg.getArgNumber()] == Role::ParamVector &&
+            gather.getMode() == "take" && gather.getAxis() == 0) {
+          Value index = emitAtCol(b, loc, gather.getIndex(), col, bx, cur,
+                                  fromSmem);
+          if (index)
+            index = emitSafeGatherIndex(b, loc, gather, index);
+          if (index)
+            res = b.create<memref::LoadOp>(
+                loc, argMemref[gather.getData()], ValueRange{index});
+        }
+      } else if (auto select = dyn_cast<SelectOp>(d)) {
+        Value cond =
+            emitAtCol(b, loc, select.getCond(), col, bx, cur, fromSmem);
+        Value x = emitAtCol(b, loc, select.getX(), col, bx, cur, fromSmem);
+        Value y = emitAtCol(b, loc, select.getY(), col, bx, cur, fromSmem);
+        if (cond && x && y)
+          res = b.create<arith::SelectOp>(loc, cond, x, y);
+      } else if (auto iota = dyn_cast<IotaOp>(d)) {
+        auto role = iotaRoles.find(iota.getResult());
+        auto type = cast<RankedTensorType>(iota.getResult().getType());
+        if (role != iotaRoles.end() && role->second == IotaRole::Column &&
+            type.getRank() == 1)
+          res = b.create<arith::IndexCastOp>(loc, type.getElementType(), col);
+      } else if (auto transpose = dyn_cast<TransposeOp>(d))
         res = emitAtCol(b, loc, transpose.getInput(), col, bx, cur, fromSmem);
       else
         res = nullptr;
@@ -2751,6 +2854,9 @@ struct RowReductionLowering {
       Value arg = srcBlock.getArgument(i);
       if (argRoles[i] == Role::Scalar)
         uniform[arg] = b.create<memref::LoadOp>(loc, argMemref[arg], ValueRange{});
+      else if (argRoles[i] == Role::RowInt || argRoles[i] == Role::PerRow)
+        uniform[arg] =
+            b.create<memref::LoadOp>(loc, argMemref[arg], ValueRange{bx});
     }
     hoistUniforms(b, loc);
 
@@ -2767,61 +2873,120 @@ struct RowReductionLowering {
     Value cNT = b.create<arith::ConstantIndexOp>(loc, numTiles);
     Value cKptT = b.create<arith::ConstantIndexOp>(loc, Kpt * T);
 
-    // The single per-row reduce, tiled: one scf.for over feature tiles building
-    // a per-thread partial (iter_arg), the frontier row cached to smem on the
-    // way, then ONE gpu.all_reduce AFTER the loop.
-    ReduceOp red = reduces[0];
-    ReduceInfo info = *reduceInfoFor(red.getFn());
-    Value ident =
-        b.create<arith::ConstantOp>(loc, b.getF32FloatAttr(info.ident));
-    auto forOp = b.create<scf::ForOp>(
-        loc, c0i, cNT, c1, ValueRange{ident},
-        [&](OpBuilder &nb, Location nl, Value kt, ValueRange iter) {
-          Value ktOff = nb.create<arith::MulIOp>(nl, kt, cKptT);
-          Value acc = iter[0];
-          for (int64_t k = 0; k < Kpt; ++k) {
-            Value col = nb.create<arith::AddIOp>(nl, baseCol[k], ktOff);
-            DenseMap<Value, Value> cur;
-            // cache each frontier (computed from the fresh Row loads) to smem
-            for (Value F : frontiers) {
-              Value fv = emitAtCol(nb, nl, F, col, bx, cur, /*fromSmem=*/false);
-              nb.create<memref::StoreOp>(nl, fv, frontierBuf[F],
-                                         ValueRange{col});
-            }
-            // reduce input reuses the same fresh loads (read-once of X per col)
-            Value rin =
-                emitAtCol(nb, nl, red.getInput(), col, bx, cur, false);
-            acc = combineScalar(nb, nl, info.op, acc, rin);
-          }
-          nb.create<scf::YieldOp>(nl, acc);
-        });
-    // Block reduction: a power-of-two shared-memory tree over `scratch[tx]`
-    // (fully unrolled; T static). scratch[0] holds the block result, broadcast
-    // by every thread re-loading it.
-    b.create<memref::StoreOp>(loc, forOp.getResult(0), scratch, ValueRange{tx});
-    b.create<gpu::BarrierOp>(loc);
-    for (int64_t stride = T / 2; stride >= 1; stride >>= 1) {
-      Value cStride = b.create<arith::ConstantIndexOp>(loc, stride);
-      Value active =
-          b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ult, tx, cStride);
-      auto ifOp = b.create<scf::IfOp>(loc, active, /*withElseRegion=*/false);
-      {
-        OpBuilder::InsertionGuard g(b);
-        b.setInsertionPointToStart(ifOp.thenBlock());
-        Value a = b.create<memref::LoadOp>(loc, scratch, ValueRange{tx});
-        Value other = b.create<arith::AddIOp>(loc, tx, cStride);
-        Value bb = b.create<memref::LoadOp>(loc, scratch, ValueRange{other});
-        Value c = combineScalar(b, loc, info.op, a, bb);
-        b.create<memref::StoreOp>(loc, c, scratch, ValueRange{tx});
-      }
+    // Reduce one per-thread partial through the reusable power-of-two shared
+    // tree.  The final barrier at every level also makes the row frontier cache
+    // visible before a dependent reduction or the epilogue reads it.
+    auto reduceBlockPartial = [&](Value partial,
+                                  const ReduceInfo &info) -> Value {
+      b.create<memref::StoreOp>(loc, partial, scratch, ValueRange{tx});
       b.create<gpu::BarrierOp>(loc);
+      for (int64_t stride = T / 2; stride >= 1; stride >>= 1) {
+        Value cStride = b.create<arith::ConstantIndexOp>(loc, stride);
+        Value active = b.create<arith::CmpIOp>(
+            loc, arith::CmpIPredicate::ult, tx, cStride);
+        auto ifOp =
+            b.create<scf::IfOp>(loc, active, /*withElseRegion=*/false);
+        {
+          OpBuilder::InsertionGuard g(b);
+          b.setInsertionPointToStart(ifOp.thenBlock());
+          Value a = b.create<memref::LoadOp>(loc, scratch, ValueRange{tx});
+          Value other = b.create<arith::AddIOp>(loc, tx, cStride);
+          Value bb =
+              b.create<memref::LoadOp>(loc, scratch, ValueRange{other});
+          Value combined = combineScalar(b, loc, info.op, a, bb);
+          b.create<memref::StoreOp>(loc, combined, scratch, ValueRange{tx});
+        }
+        b.create<gpu::BarrierOp>(loc);
+      }
+      Value c0r = b.create<arith::ConstantIndexOp>(loc, 0);
+      Value scalar =
+          b.create<memref::LoadOp>(loc, scratch, ValueRange{c0r});
+      return info.isMean ? finalizeMean(b, loc, scalar, nF) : scalar;
+    };
+
+    // Partition reductions by data dependency, exactly as the register path
+    // does.  Every independent group shares one tiled feature traversal and one
+    // per-column expression memo table.  The first group computes and stores the
+    // frontier from global inputs; later groups consume that workgroup cache, so
+    // a dependent mean/variance chain still reads every global row only once.
+    bool tiledEmissionFailed = false;
+    bool populateFrontier = true;
+    size_t groupStart = 0;
+    while (groupStart < reduces.size()) {
+      size_t groupEnd = groupStart + 1;
+      while (groupEnd < reduces.size()) {
+        bool dependent = false;
+        for (size_t prior = groupStart; prior < groupEnd; ++prior)
+          dependent |= dependsOn(reduces[groupEnd].getInput(),
+                                 reduces[prior].getResult());
+        if (dependent)
+          break;
+        ++groupEnd;
+      }
+
+      SmallVector<Value> identities;
+      identities.reserve(groupEnd - groupStart);
+      for (size_t index = groupStart; index < groupEnd; ++index) {
+        ReduceInfo info = *reduceInfoFor(reduces[index].getFn());
+        identities.push_back(b.create<arith::ConstantOp>(
+            loc, b.getF32FloatAttr(info.ident)));
+      }
+      auto forOp = b.create<scf::ForOp>(
+          loc, c0i, cNT, c1, identities,
+          [&](OpBuilder &nb, Location nl, Value kt, ValueRange iter) {
+            Value ktOff = nb.create<arith::MulIOp>(nl, kt, cKptT);
+            SmallVector<Value> accumulators(iter.begin(), iter.end());
+            for (int64_t k = 0; k < Kpt; ++k) {
+              Value col = nb.create<arith::AddIOp>(nl, baseCol[k], ktOff);
+              DenseMap<Value, Value> cur;
+              if (populateFrontier) {
+                for (Value frontier : frontiers) {
+                  Value value = emitAtCol(nb, nl, frontier, col, bx, cur,
+                                          /*fromSmem=*/false);
+                  if (!value) {
+                    tiledEmissionFailed = true;
+                    value = nb.create<arith::ConstantOp>(
+                        nl, nb.getF32FloatAttr(0.0));
+                  }
+                  nb.create<memref::StoreOp>(nl, value, frontierBuf[frontier],
+                                             ValueRange{col});
+                }
+              }
+              for (size_t index = groupStart; index < groupEnd; ++index) {
+                ReduceOp red = reduces[index];
+                ReduceInfo info = *reduceInfoFor(red.getFn());
+                Value input = emitAtCol(nb, nl, red.getInput(), col, bx, cur,
+                                        /*fromSmem=*/!populateFrontier);
+                if (!input) {
+                  tiledEmissionFailed = true;
+                  input = nb.create<arith::ConstantOp>(
+                      nl, nb.getF32FloatAttr(info.ident));
+                }
+                size_t localIndex = index - groupStart;
+                accumulators[localIndex] =
+                    combineScalar(nb, nl, info.op,
+                                  accumulators[localIndex], input);
+              }
+            }
+            nb.create<scf::YieldOp>(nl, accumulators);
+          });
+      if (tiledEmissionFailed) {
+        gpuFn.erase();
+        fn.setName(name);
+        return failure();
+      }
+
+      for (size_t index = groupStart; index < groupEnd; ++index) {
+        ReduceOp red = reduces[index];
+        ReduceInfo info = *reduceInfoFor(red.getFn());
+        Value scalar =
+            reduceBlockPartial(forOp.getResult(index - groupStart), info);
+        uniform[red.getResult()] = scalar;
+        hoistUniforms(b, loc);
+      }
+      populateFrontier = false;
+      groupStart = groupEnd;
     }
-    Value c0r = b.create<arith::ConstantIndexOp>(loc, 0);
-    Value scalar = b.create<memref::LoadOp>(loc, scratch, ValueRange{c0r});
-    if (info.isMean)
-      scalar = finalizeMean(b, loc, scalar, nF);
-    uniform[red.getResult()] = scalar;
-    hoistUniforms(b, loc); // rstd = rsqrt(mean+eps), etc. become available
 
     // Barrier between the cache pass and the normalize epilogue. Each thread
     // reads back only its OWN cached columns (col = tx + ...), so this is a
@@ -2844,6 +3009,10 @@ struct RowReductionLowering {
         if (outRoles[j] != ResultRole::PerRowOut)
           continue;
         Value s = emitAtCol(b, loc, outputVals[j], c0i, bx, cur, /*fromSmem=*/true);
+        if (!s) {
+          tiledEmissionFailed = true;
+          s = b.create<arith::ConstantOp>(loc, b.getF32FloatAttr(0.0));
+        }
         b.create<memref::StoreOp>(loc, s, outMems[j], ValueRange{bx});
       }
     }
@@ -2869,6 +3038,11 @@ struct RowReductionLowering {
                   continue;
                 Value o = emitAtCol(nb, nl, outputVals[j], col, bx, cur,
                                     /*fromSmem=*/true);
+                if (!o) {
+                  tiledEmissionFailed = true;
+                  o = nb.create<arith::ConstantOp>(
+                      nl, nb.getF32FloatAttr(0.0));
+                }
                 nb.create<memref::StoreOp>(nl, o, outMems[j],
                                            ValueRange{bx, col});
               }
@@ -2877,13 +3051,22 @@ struct RowReductionLowering {
           });
     }
 
+    if (tiledEmissionFailed) {
+      gpuFn.erase();
+      fn.setName(name);
+      return failure();
+    }
+
     b.create<gpu::TerminatorOp>(loc);
     b.setInsertionPointAfter(launch);
     b.create<func::ReturnOp>(loc);
 
     attachConcreteStateReceipt(gpuFn, T, predicatedValueIfCount,
                                foldedConstexprSelectCount, 1,
-                               emittedApproximateDivCount);
+                               emittedApproximateDivCount, 0, 0,
+                               reduces.size() > 1
+                                   ? "tiled_shared_multi_reduce"
+                                   : "tiled_shared");
     fn.erase();
     return success();
   }

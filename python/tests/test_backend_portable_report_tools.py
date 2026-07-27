@@ -50,6 +50,10 @@ def _cuda_report(arm: str, latency_us: float) -> dict:
             "effective_timing": "cuda-event-single-shot",
             "graph_repetitions": 1,
             "warmup_ms": 25,
+            "cold_candidate_warmup_ms": 25,
+            "cold_candidate_warmup_scope": (
+                "untimed code/P-state stabilization before L2-evicted samples"
+            ),
             "repeat_ms": 100,
             "measurement_rounds": 3,
             "cold_iterations_per_round": 16,
@@ -123,6 +127,15 @@ def test_cuda_ablation_summary_preserves_failed_horizontal_cells():
     assert failed["status"] == "failed_or_missing"
     assert failed["e2_error"] == "compile failed"
     assert failed["e3_error"] == "QD failed"
+
+
+def test_cuda_ablation_summary_rejects_different_stabilization_protocols():
+    e2 = _cuda_report("E2", 2.0)
+    e3 = _cuda_report("E3", 1.0)
+    e3["measurement"]["cold_candidate_warmup_ms"] = 0
+
+    with pytest.raises(ValueError, match="measurement contracts differ"):
+        cuda_summary.summarize(e2, e3)
 
 
 def _rvv_report(kernel: str, *, toolchain: str = "a" * 64) -> dict:
