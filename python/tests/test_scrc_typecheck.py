@@ -251,7 +251,7 @@ def test_valid_dependent_witness_passes_before_replay() -> None:
     artifact = make_reduce_artifact()
     report = type_check(artifact.j, artifact.c, artifact.pi)
     assert report.passed
-    assert report.protocol == TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v21"
+    assert report.protocol == TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v22"
     assert report.diagnostics == ()
     assert set(build_normal_rewriter_view(artifact)) == {"j", "c", "pi", "u_f"}
 
@@ -1387,6 +1387,29 @@ def test_contraction_contract_accepts_canonical_typed_binary_einsum() -> None:
     assert report.passed, report.to_json()
 
 
+@pytest.mark.parametrize("mode", [ParameterMode.INPUT, ParameterMode.OUTPUT])
+def test_signature_overlap_requires_explicit_inout(mode: ParameterMode) -> None:
+    artifact = _contraction_artifact()
+    artifact.j.intent.inputs.append(Tensor("t1", "f32", [2, 4]))
+    artifact.j.signature.parameters[1].mode = mode
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert not report.passed
+    assert report.diagnostics[0].code is TypeCheckErrorCode.J_ELABORATION_FAILED
+    assert "overlap must be authored as inout" in report.diagnostics[0].detail
+
+
+def test_signature_overlap_accepts_explicit_inout() -> None:
+    artifact = _contraction_artifact()
+    artifact.j.intent.inputs.append(Tensor("t1", "f32", [2, 4]))
+    artifact.j.signature.parameters[1].mode = ParameterMode.INOUT
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert report.passed, report.to_json()
+
+
 @pytest.mark.parametrize(
     ("lhs_shape", "rhs_shape", "result_shape", "subscripts"),
     [
@@ -1791,7 +1814,7 @@ def test_authoritative_typecheck_accepts_strict_integer_widen(
     report = type_check(artifact.j, artifact.c, artifact.pi)
 
     assert report.passed, report.to_json()
-    assert report.protocol == "intentir.scrc.typecheck.v21"
+    assert report.protocol == "intentir.scrc.typecheck.v22"
 
 
 @pytest.mark.parametrize(

@@ -1,7 +1,8 @@
 # Task 14：Source-Grounded Certification Profile 下的 Codex 28-Kernel Fresh SCRC 最终闭合
 
-> 状态：执行中（2026-07-28）；前三组已横向 fresh 覆盖，当前 10/28 `SCRC_CERTIFIED`，下一步以
-> current clean stack 重跑 CrossEntropy 并推进 ordinal 22--28
+> 状态：执行中（2026-07-28）；四组已横向 fresh 覆盖，当前 12/28 已取得可用闭合 evidence
+>（11 个原运行直接认证，另 1 个复用 exact Gate1-closed artifact/Replay 经零模型 Gate2-only
+> capability recheck 认证）；下一步修复通用 Replay 消费后按 7 核组复跑未闭合项
 >
 > 类型：Task 11 的最终 fresh corpus执行波；不是 production backend、`J_dev`能力建设、性能搜索、
 > 论文实验或历史证书重判。
@@ -25,11 +26,13 @@ document sha256 = f9dd1ff1ea4879f664de3fa5c3b86e5ed9c558c511197255e32344a3fbbf9f
 也不能要求J迎合某个target/backend recipe。后端的capability/paper config、Target--Ref receipt、
 MLIR search和`intentir.backend.dev-j-variant.v1`均不进入本任务。
 
-当前没有仍在运行的闭合进程。最近的 Terra-high Wave 3 已结束：PolyNorm 在 branch 1/formal round 4
-形成当前证书；Llama4 RoPE、TVD、Linear 为完整 `NO_CLOSURE`；三个 Flash case 混有
-`persistent Lift immutable input changed` infrastructure failure，因为运行期间共享 knowledge 文件正被
-通用能力修改。该类结果不算语义失败，后续所有 formal run 只从 clean committed stack 启动，运行中
-不再修改其 immutable input。
+当前没有仍在运行的闭合进程。Terra-high Wave 4 已结束：Flash backward preprocess 直接认证；
+Flash one-pass LayerNorm 的 Gate1-closed exact artifact 在修复 J-only RefJ mask/broadcast consumer 后
+由零模型 Gate2-only recheck 认证；xFormers RMSNorm、SplitK forward/reduce 未闭合；RMSNorm-add 暴露
+纯 output 被错误同时声明为 J input；SplitK backward 混有 Codex Replay wall-time infrastructure。
+CrossEntropy v9 canary 证明 `terminal_controls` 已被 Replay 正确消费，剩余失败是 arm 内 op/dataflow
+生成错误，不再误判为 terminal relation 缺失。所有 formal run 继续只从 clean committed stack 启动，
+运行中不修改 immutable input。
 
 ## 1. 第一性原理目标
 
@@ -179,9 +182,9 @@ fixed code不得替Lift修成`x*`。
 ## 4. 当前执行栈
 
 - frontend commit起点：`460aaed1c6af0b267a4a9da9ca497aea6e66ad40`；
-- artifact/decode/typecheck：`artifact.v9 / decode.v13 / typecheck.v21`；
+- artifact/decode/typecheck：`artifact.v9 / decode.v13 / typecheck.v22`；
 - Lift：`intentir.lift-knowledge.v57`；
-- Replay：Codex `openai.codex-cli.intentir-replay.v7`，MiniSWE `minisweagent.intentir-replay.v13`；
+- Replay：Codex `openai.codex-cli.intentir-replay.v8`，MiniSWE `minisweagent.intentir-replay.v13`；
 - Replay packet/check：`replay-input.v1 / public_frontend_context_v12 / replay-check.v4`；
 - Harness：Triton workload adapter v5；
 - Gate1 observer：`triton-ttir-3.6-gate1-v11`；outer batch：`intentir.scrc.batch.v3`；
@@ -196,13 +199,27 @@ fixed code不得替Lift修成`x*`。
   JSD 未闭合。
 - Wave 3（ordinal 15--21）：PolyNorm certified；Llama4 RoPE、TVD、Linear 未闭合；Flash forward、
   one-col backward、full backward 的本次 aggregate 被上述 immutable-input infrastructure 污染。
-- 当前 fresh 总计 `10/28`。TypeCheck PASS 不计进度；只有 Gate1 winner 与 Gate2 三边都通过才计入。
+- Wave 4（ordinal 22--28）：Flash backward preprocess 直接 certified；Flash one-pass LayerNorm 由同一
+  Gate1-closed J/Replay 的零模型 Gate2-only recheck certified；xFormers RMSNorm、SplitK forward/reduce
+  未闭合；RMSNorm-add 的 J signature overlap 由 typecheck.v22 fail closed；SplitK backward 混有
+  Replay wall-time infrastructure。
+- 当前可用闭合总计 `12/28`：11 个原运行直接认证，1 个 exact-artifact capability recheck 认证。
+  TypeCheck PASS 不计进度；只有 Gate1 已闭合且当前 Gate2 三边通过才计入。
 
-CrossEntropy 的重复前沿已定位为一个通用表达缺口：J 已作者化 early-return `effect_if`，旧 π 无法区分
-terminal arm 与 lexical continuation。current `artifact.v9` 只新增 closed
+CrossEntropy 曾暴露一个通用表达缺口：J 已作者化 early-return `effect_if`，旧 π 无法区分 terminal
+arm 与 lexical continuation。current `artifact.v9` 只新增 closed
 `pi.terminal_controls{terminal_instance,continuation_instance}`；relation 只能连接同一 J `effect_if` 的
 sibling arm-scope instances，不复制 predicate/polarity/return/Source/API，且 production 不读 π。这是
 source-neutral terminal CFG topology，不是 CrossEntropy hint 或 deterministic composer。
+
+v9 canary 已确认该 relation 从 packet、prompt、ReplayCheck 到生成代码完整消费；当前 terminal_fork
+差异来自 Replay 对两个 arm 内 J op/effect/dataflow 的遗漏或改写。因此后续增强目标是 source-free
+Replay obligation consumption，不再扩张 terminal relation，也不把 Gate1/Source 反馈泄给 Replay。
+
+Codex Replay v8 增加 `intentir.scrc.replay-workspace-view.v1`：同一 fresh session 先读取一次紧凑、
+lossless 的匿名 ABI/J graph/J boundary/MaskC/U_f 与 per-instance π obligation ledger，不再先全文 dump
+packet 再重复读取完整 π focused view。ledger 只重排当前 packet 已声明的 route/order/sharing/time/
+refinement/terminal facts，不生成 op、predicate、地址公式或 schedule。
 
 实现升级后只fresh rerun受影响case，不重判旧receipt。Task14期间每次通用能力提交都必须在后续
 evidence中记录commit/protocol；不能让一个长期脏工作区承载多个不可区分的实验版本。

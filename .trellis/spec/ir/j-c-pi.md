@@ -12,6 +12,11 @@ J 拥有 logical values/state relation、domain、predicate、fill、logical ind
 result relation 以及 logical signature。signature 中的 input、output、runtime scalar、destination、
 dtype、rank、shape、alias/inout/effect 都有 J-owned opaque handle。
 
+对绑定同一个 logical tensor handle 的 signature parameter，`mode=input` 要求该 tensor 只在 J
+inputs 中声明，`mode=output` 要求只在 J outputs 中声明；同一 handle 同时出现在 inputs/outputs
+时必须显式写 `mode=inout`。Decode/TypeCheck 不得把 input/output 自动升级为 inout，也不得让
+Harness 或 Gate2 为错误 overlap 伪造输入值。
+
 当前 fresh-run wire 是 `intentir.scrc.artifact.v9`，固定 Decode 是
 `intentir.scrc.decode.v13`。Lift LLM 必须一次性显式写出完整 `(J,C,π)`，包括当前版本要求的空数组；
 固定代码不从 Source、Harness valuation、C、π、Replay 或 Gate 结果补造 artifact 字段。`artifact.v4`
@@ -459,8 +464,10 @@ wire/decode 窄升为 `artifact.v3 / decode.v3`；v4 随后增加 closed dimensi
 `value_dimension_relations`、`consumer_extensions` 和 typed loop-carrier wire，v5 再增加
 `access_guard_relations`，v6/v7 增加 typed control，v8 增加 physical-only time，v9 增加
 terminal-control topology。当前 active 合同为
-`artifact.v9 / decode.v13 / typecheck.v21 / candidate-check.v1`；v21 增加 terminal-control 的
-sibling/finality checks，并继承 v20 对上述 relations 的 source-free dependent checks，尤其验证 authored guard 的支配、类型、唯一 axes authority、显式
+`artifact.v9 / decode.v13 / typecheck.v22 / candidate-check.v1`；v22 增加 signature mode 与 J
+input/output boundary partition 的 exact dependent check：input-only、output-only 与显式 inout overlap
+不得混写。v22 继承 v21 的 terminal-control sibling/finality checks，以及 v20 对上述 relations 的
+source-free dependent checks，尤其验证 authored guard 的支配、类型、唯一 axes authority、显式
 select、精确 inout/pre-state 与 loop/non-loop observable merge。`candidate-check.v1` 的 closed envelope
 本来就
 允许 diagnostics 数组，因此诊断聚合不改变其 acceptance path 或 protocol：同一严格 checker 已经

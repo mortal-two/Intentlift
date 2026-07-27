@@ -392,7 +392,9 @@ TypeCheck 还检查 closed comparison class 与 output dtype、A 依赖图和 B 
 见最终执行流程第 6.1 节。v1 中 `RequiresTolerance=true` 即拒绝显式或默认 `exact`，没有自由文本
 或“更强合同”例外；阈值仍完全由外部 Q 决定。该 reassociation fact 只约束 SCRC comparison class，
 不是 production backend permission。
-当前 `typecheck.v21` 继承 v20；v20 又继承 v18 将 `log2` 纳入同一 closed transcendental 集的规则。
+当前 `typecheck.v22` 继承 v21；v21 继承 v20，v20 又继承 v18 将 `log2` 纳入同一 closed
+transcendental 集的规则。v22 只新增 signature mode 与 J input/output/inout partition 的 exact
+dependent check，不替 Lift 改写 mode。
 floating `log2` output 仍须由 Lift 显式选择 `tolerance`，fixed checker 不代选 relation 或阈值。
 v19-v21 的后续 dependent π、physical-time 与 terminal-control 检查也不改变该 comparison-class 合同。
 
@@ -454,7 +456,7 @@ dependent checking 夸写成 Source topology 的形式证明。
 
 首版不需要让 TypeCheck 成为 SMT 或完整图证明器。最小可行实现只需 fail closed 地完成上述局部检查。
 
-当前合并协议为 `artifact.v9 / decode.v13 / typecheck.v21 / candidate-check.v1 / replay-check.v4`；
+当前合并协议为 `artifact.v9 / decode.v13 / typecheck.v22 / candidate-check.v1 / replay-check.v4`；
 Replay packet envelope 仍是 `replay-input.v1`，Triton context 为 `public_frontend_context_v12`，
 Lift knowledge 为 v57，MiniSWE Replay backend 为 v13，Codex Replay backend 为 v7。v40 为 source-aware Lift worker 增加只读、分页的 Source control-flow
 outline（function/loop/if/return 的行号与嵌套深度）；v41 只把 shared dialect/lowering 已支持的
@@ -536,8 +538,9 @@ artifact 语义，不增加 acceptance path，正式 Runner 仍独立执行 Deco
 扩充 TypeCheck judgement 必须提升 `v_TC`，CandidateCheck 与正式 Runner 必须记录并使用同一版本；
 新版本不静默重判历史证书。
 
-当前 fresh-run 取 `v_TC = typecheck.v21`。v21 完整继承 v20/v18/v19、v14-v17 typed-control 合同及下述 v7
-前序合同，并增加上述 v9 terminal-control dependent checks；v20 已增加上述 v4/v5
+当前 fresh-run 取 `v_TC = typecheck.v22`。v22 增加 signature mode 与 J boundary partition 的 exact
+dependent check，并完整继承 v21；v21 继承 v20/v18/v19、v14-v17 typed-control 合同及下述 v7
+前序合同，并包含上述 v9 terminal-control dependent checks；v20 已增加上述 v4/v5
 relation 的 source-free dependent checks；仍不赋予 fixed core artifact 构造权。历史 v7 完整继承 v6；
 v6 继承 v5，v5 继承 v4 的 rank-0 closed signature、
 Layer-A graph total typing 与显式 non-trailing NumPy broadcast 合同：closed elaboration 只物化唯一确定的

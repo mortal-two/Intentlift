@@ -1916,6 +1916,109 @@ def test_scalar_e_j_erases_mask_through_exact_terminal_transpose() -> None:
     assert not predicate_dominated_pointwise_load(artifact.j, "a0")
 
 
+def test_scalar_e_j_erases_mask_through_closed_pointwise_broadcast() -> None:
+    artifact = make_copy_artifact()
+    artifact.j.intent = IntentFunction.from_json(
+        {
+            "name": "scrc_j0",
+            "inputs": [
+                {"name": "t0", "dtype": "f32", "shape": ["x1"]},
+                {"name": "t2", "dtype": "f32", "shape": ["x0", "x1"]},
+            ],
+            "outputs": [
+                {"name": "t1", "dtype": "f32", "shape": ["x0", "x1"]}
+            ],
+            "body": [
+                {
+                    "id": "n0",
+                    "op": "map_unary",
+                    "result": "v0",
+                    "operands": ["t0"],
+                    "attrs": {"fn": "abs"},
+                    "type": {"dtype": "f32", "shape": ["x1"]},
+                },
+                {
+                    "id": "n1",
+                    "op": "map_binary",
+                    "result": "t1",
+                    "operands": ["t2", "v0"],
+                    "attrs": {"fn": "mul"},
+                    "type": {"dtype": "f32", "shape": ["x0", "x1"]},
+                },
+            ],
+        }
+    )
+    artifact.j.node_ids = {"n0": "body[0]", "n1": "body[1]"}
+    artifact.j.signature = LogicalSignature(
+        [
+            SignatureParameter(
+                "p0", ParameterKind.POINTER, ParameterMode.INPUT,
+                "f32", 1, logical_ref="t0",
+            ),
+            SignatureParameter(
+                "p1", ParameterKind.POINTER, ParameterMode.OUTPUT,
+                "f32", 2, logical_ref="t1",
+            ),
+            SignatureParameter(
+                "p2", ParameterKind.POINTER, ParameterMode.INPUT,
+                "f32", 2, logical_ref="t2",
+            ),
+            SignatureParameter(
+                "p3", ParameterKind.SCALAR, ParameterMode.VALUE,
+                "i32", logical_ref="x0",
+            ),
+            SignatureParameter(
+                "p4", ParameterKind.SCALAR, ParameterMode.VALUE,
+                "i32", logical_ref="x1",
+            ),
+        ]
+    )
+    artifact.j.boundary = Boundary(
+        domains={
+            "d0": "0 <= i0 and i0 < x0",
+            "d1": "0 <= i1 and i1 < x1",
+        },
+        accesses=[
+            BoundaryAccess(
+                "a0", AccessKind.LOAD, "t0", node_ref="n0",
+                predicate="i1 < x1", index_expression="[i1]",
+            ),
+            BoundaryAccess(
+                "a1", AccessKind.LOAD, "t2", node_ref="n1",
+                predicate="i1 < x1", fill_value=0.0,
+                index_expression="[i0, i1]",
+            ),
+            BoundaryAccess(
+                "a2", AccessKind.STORE, "t1", node_ref="n1",
+                predicate="i1 < x1", index_expression="[i0, i1]",
+            ),
+        ],
+        effects=[
+            EffectSpec(EffectKind.READ, "t0", "n0", "e0", "a0"),
+            EffectSpec(EffectKind.READ, "t2", "n1", "e1", "a1"),
+            EffectSpec(EffectKind.WRITE, "t1", "n1", "e2", "a2"),
+        ],
+    )
+
+    assert predicate_dominated_pointwise_load(artifact.j, "a0")
+    projection = project_functional_boundary(artifact.j)
+    assert "predicate_dominated_load:a0:i1 < x1" in projection.consumed
+
+    first = np.array([-1.0, 2.0, -3.0], dtype=np.float32)
+    second = np.arange(6, dtype=np.float32).reshape(2, 3)
+    result = ScalarLoweringRunner().run(
+        ScalarLoweringSpec.create(
+            artifact.j,
+            dims={"x0": 2, "x1": 3},
+            input_bindings={"t0": "input0", "t2": "input1"},
+            output_bindings={"t1": "output"},
+        ),
+        {"input0": first, "input1": second},
+    )
+    assert result.ok, result.error
+    np.testing.assert_allclose(result.outputs["output"], second * np.abs(first))
+
+
 def _make_node_less_input_load_artifact():
     artifact = _make_masked_identity_artifact()
     operation = make_copy_artifact().j.intent.body[0]

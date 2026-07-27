@@ -3550,20 +3550,38 @@ def _validate_logical_signature(archive: SemanticArchive) -> None:
                         f"rank {len(tensor.shape)!r}",
                     )
                 )
-            if parameter.mode is ParameterMode.INPUT and ref not in input_refs:
-                issues.append(
-                    _SchemaIssue(
-                        f"{base}.mode",
-                        "input signature parameter must bind a J input",
+            if parameter.mode is ParameterMode.INPUT:
+                if ref not in input_refs:
+                    issues.append(
+                        _SchemaIssue(
+                            f"{base}.mode",
+                            "input signature parameter must bind a J input",
+                        )
                     )
-                )
-            if parameter.mode is ParameterMode.OUTPUT and ref not in output_refs:
-                issues.append(
-                    _SchemaIssue(
-                        f"{base}.mode",
-                        "output signature parameter must bind a J output",
+                elif ref in output_refs:
+                    issues.append(
+                        _SchemaIssue(
+                            f"{base}.mode",
+                            "a logical tensor declared in both J inputs and J "
+                            "outputs must use signature mode=inout, never input",
+                        )
                     )
-                )
+            if parameter.mode is ParameterMode.OUTPUT:
+                if ref not in output_refs:
+                    issues.append(
+                        _SchemaIssue(
+                            f"{base}.mode",
+                            "output signature parameter must bind a J output",
+                        )
+                    )
+                elif ref in input_refs:
+                    issues.append(
+                        _SchemaIssue(
+                            f"{base}.mode",
+                            "a logical tensor declared in both J inputs and J "
+                            "outputs must use signature mode=inout, never output",
+                        )
+                    )
             if parameter.mode is ParameterMode.INOUT and not (
                 ref in input_refs and ref in output_refs
             ):

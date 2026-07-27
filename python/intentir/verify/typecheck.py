@@ -47,7 +47,7 @@ from intentir.verify.gate1.model import (
 from intentir.verify.gate1.pi import RealizationWitness
 
 
-TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v21"
+TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v22"
 GLOBAL_SAFE_REFINEMENTS = frozenset({"identity_materialization"})
 
 _MAP_UNARY_FNS = frozenset(
@@ -4278,6 +4278,39 @@ def _check_loop_carriers(
                 )
 
 
+def _check_signature_mode_partition(
+    j: SemanticArchive,
+) -> tuple[TypeCheckDiagnostic, ...]:
+    """Require the authored ABI mode to match J's logical boundary partition."""
+
+    input_refs = {tensor.name for tensor in j.intent.inputs}
+    output_refs = {tensor.name for tensor in j.intent.outputs}
+    diagnostics: list[TypeCheckDiagnostic] = []
+    for index, parameter in enumerate(j.signature.parameters):
+        ref = parameter.logical_ref
+        if ref is None:
+            continue
+        membership = (ref in input_refs, ref in output_refs)
+        expected = {
+            ParameterMode.INPUT: (True, False),
+            ParameterMode.OUTPUT: (False, True),
+            ParameterMode.INOUT: (True, True),
+        }.get(parameter.mode)
+        if expected is None or membership == expected:
+            continue
+        diagnostics.append(
+            TypeCheckDiagnostic(
+                TypeCheckErrorCode.J_ELABORATION_FAILED,
+                f"j.signature.parameters[{index}].mode",
+                "signature mode must exactly match the logical tensor boundary "
+                "partition: input binds input-only, output binds output-only, "
+                "and an input/output overlap must be authored as inout",
+                ref,
+            )
+        )
+    return tuple(diagnostics)
+
+
 def type_check(
     j: SemanticArchive,
     c: ImplementationConfig,
@@ -4291,6 +4324,10 @@ def type_check(
         raise TypeError("type_check requires canonical ImplementationConfig C")
     if not isinstance(pi, RealizationWitness):
         raise TypeError("type_check requires parsed RealizationWitness pi")
+
+    signature_diagnostics = _check_signature_mode_partition(j)
+    if signature_diagnostics:
+        return TypeCheckReport(TypeCheckStatus.FAIL, signature_diagnostics)
 
     known_op_diagnostics = _check_known_operation_contracts(j)
     if known_op_diagnostics:

@@ -674,8 +674,13 @@ def _masked_load_axis_provenance(
     *,
     access: Any,
     nodes: Mapping[str, IntentOp],
-) -> tuple[set[str], dict[str, tuple[int, ...]]] | None:
-    """Track one masked value through pointwise ops and exact transposes."""
+) -> tuple[set[str], dict[str, tuple[int | None, ...]]] | None:
+    """Track masked axes through pointwise broadcast and exact transposes.
+
+    Each result-axis entry names the originating masked-load tensor axis.
+    ``None`` marks an axis introduced by a closed pointwise broadcast; its
+    coordinate remains governed by the ordinary functional boundary proof.
+    """
 
     value_types = j_elaboration(j).value_type_by_name
     tensor_type = value_types.get(access.tensor)
@@ -686,7 +691,7 @@ def _masked_load_axis_provenance(
     if not start_results:
         return None
     identity = tuple(range(len(tensor_type.shape)))
-    provenance: dict[str, tuple[int, ...]] = {}
+    provenance: dict[str, tuple[int | None, ...]] = {}
     for result in start_results:
         result_type = value_types.get(result)
         if result_type is None or result_type.shape != tensor_type.shape:
@@ -695,6 +700,10 @@ def _masked_load_axis_provenance(
 
     canonical_refs = tuple(j.node_ids)
     if any(node_ref not in nodes for node_ref in canonical_refs):
+        return None
+    try:
+        broadcast_axes = _broadcast_axes(j)
+    except (NotImplementedError, ValueError):
         return None
     reachable_refs = {access.node_ref}
     changed = True
@@ -705,7 +714,9 @@ def _masked_load_axis_provenance(
                 continue
             operation = nodes[node_ref]
             reachable_operands = [
-                operand for operand in operation.operands if operand in provenance
+                operand
+                for operand in _operation_dependencies(operation)
+                if operand in provenance
             ]
             if not reachable_operands:
                 continue
@@ -714,29 +725,45 @@ def _masked_load_axis_provenance(
                 return None
 
             if operation.op in _PREDICATE_DOMINATED_POINTWISE_OPS:
-                permutations = {provenance[item] for item in reachable_operands}
-                if len(permutations) != 1:
-                    return None
-                output_permutation = next(iter(permutations))
-                first_operand_type = value_types.get(reachable_operands[0])
-                if first_operand_type is None:
-                    return None
-                pointwise_shape = first_operand_type.shape
-                for operand in reachable_operands:
-                    operand_type = value_types.get(operand)
-                    if (
-                        operand_type is None
-                        or operand_type.shape != pointwise_shape
-                    ):
-                        return None
                 for result in results:
                     result_type = value_types.get(result)
-                    if (
-                        result_type is None
-                        or result_type.shape != pointwise_shape
-                    ):
+                    if result_type is None:
                         return None
-                    provenance[result] = output_permutation
+                    expanded: list[tuple[int | None, ...]] = []
+                    for operand in reachable_operands:
+                        operand_type = value_types.get(operand)
+                        if operand_type is None:
+                            return None
+                        declared_axes = broadcast_axes.get(result, {}).get(
+                            operand
+                        )
+                        positions = (
+                            _axis_broadcast_positions(
+                                operand_type.shape,
+                                result_type.shape,
+                                declared_axes,
+                            )
+                            if declared_axes is not None
+                            else _numpy_broadcast_positions(
+                                operand_type.shape,
+                                result_type.shape,
+                            )
+                        )
+                        source_provenance = provenance[operand]
+                        if (
+                            positions is None
+                            or len(source_provenance) != len(operand_type.shape)
+                        ):
+                            return None
+                        projected: list[int | None] = [None] * len(
+                            result_type.shape
+                        )
+                        for source_axis, target_axis in enumerate(positions):
+                            projected[target_axis] = source_provenance[source_axis]
+                        expanded.append(tuple(projected))
+                    if len(set(expanded)) != 1:
+                        return None
+                    provenance[result] = expanded[0]
             elif operation.op == "transpose":
                 if len(operation.operands) != 1 or len(reachable_operands) != 1:
                     return None
@@ -863,12 +890,19 @@ def predicate_dominated_pointwise_load(
         permutation = provenance.get(mapping.value)
         if parsed_store is None or permutation is None:
             return False
-        if len(parsed_load.index.components) != len(permutation):
+        if len(parsed_store.index.components) != len(permutation):
             return False
-        expected_store_coordinates = tuple(
-            parsed_load.index.components[item] for item in permutation
-        )
-        if parsed_store.index.components != expected_store_coordinates:
+        originating_axes = [item for item in permutation if item is not None]
+        if sorted(originating_axes) != list(
+            range(len(parsed_load.index.components))
+        ):
+            return False
+        if any(
+            parsed_store.index.components[target_axis]
+            != parsed_load.index.components[source_axis]
+            for target_axis, source_axis in enumerate(permutation)
+            if source_axis is not None
+        ):
             return False
         matched_store_ids.add(store.access_id)
 

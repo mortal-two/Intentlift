@@ -1200,7 +1200,7 @@ def test_candidate_check_uses_v6_v15_and_reports_missing_consumer_relation() -> 
     )
 
     assert SCRC_DECODE_PROTOCOL == "intentir.scrc.decode.v13"
-    assert TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v21"
+    assert TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v22"
     assert result["status"] == "fail"
     assert any(
         item["rule_code"] == "consumer_extension_missing"

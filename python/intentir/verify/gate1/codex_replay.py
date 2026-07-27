@@ -36,7 +36,7 @@ from .replay import (
 )
 
 
-CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v7"
+CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v8"
 
 _INITIAL_PROMPT = """You are the sole writer for one fresh source-blind IntentIR Replay episode.
 The outer runtime exposes only this isolated /workspace. input/ is immutable;
@@ -44,14 +44,19 @@ work/, output/, and tmp/ are writable. There is no Source, source slice,
 Harness/compiler view, actual C value, Gate result, earlier Replay, sibling
 trajectory, or network tool. Do not search for any of them.
 
-Read the exact input/packet.json first as J, then pi, then anonymous MaskC(C),
-then run `python .agents/intentir_agent_tool.py replay_realization_view`. That
-tool returns only a lossless focused copy of anonymous C slots, authored J
-boundary accesses/effects, and the complete authored pi object, including loop,
-carrier, physical-iteration, terminal-control, order, and sharing relations. It does not derive a
-schedule or see Gate evidence. Preserve every authored effect and realization
-ordering relation; never replace pi topology with a guessed source recipe. Use
-REPLAY_CONTRACT.md only for a focused unclear rule.
+Start with exactly one call to
+`python .agents/intentir_agent_tool.py replay_workspace_view`. Do not first dump
+the whole input/packet.json: the tool is a lossless, compact projection of this
+packet's complete anonymous ABI, J graph and boundary, MaskC(C), U_f, and a
+per-instance pi obligation ledger joining authored routes, order, sharing,
+temporal roles, refinements, and terminal control. It does not derive a
+schedule or see Gate evidence. Use each J graph row and pi obligation row as a
+construction checklist. Read a named field from input/packet.json only when the
+workspace view points to an exact field that remains unclear; never re-dump the
+whole packet or redundantly reconstruct routes/order already joined by the
+ledger. Preserve every authored effect and realization ordering relation;
+never replace pi topology with a guessed source recipe. Use REPLAY_CONTRACT.md
+only for a focused unclear rule.
 Author the entire Replay as
 exactly output/replay.source and no other output file. You may keep
 proof-irrelevant notes or helper scripts under work/. You own every semantic
@@ -126,6 +131,101 @@ def _replay_realization_view(packet: Mapping[str, Any]) -> dict[str, Any]:
         "authority": (
             "lossless source-isolated packet projection only; no schedule, code, "
             "repair, Source, Harness value, or Gate evidence"
+        ),
+    }
+
+
+def _replay_workspace_view(packet: Mapping[str, Any]) -> dict[str, Any]:
+    """Return one compact, lossless current-protocol Replay construction view.
+
+    The view reorganizes only this packet's authored J/C/pi/U_f facts.  It joins
+    pi edges around declared instances to avoid repeated model-side paging, but
+    never invents an edge, operation, value, or realization choice.
+    """
+
+    c = packet.get("c")
+    j = packet.get("j")
+    pi = packet.get("pi")
+    u_f = packet.get("u_f")
+    if not all(isinstance(item, Mapping) for item in (c, j, pi, u_f)):
+        raise ValueError("Replay packet lacks closed J/C/pi/U_f objects")
+    intent = j.get("intent")
+    signature = j.get("signature")
+    boundary = j.get("boundary")
+    if not all(
+        isinstance(item, Mapping) for item in (intent, signature, boundary)
+    ):
+        raise ValueError("Replay packet lacks a closed J interface/intent/boundary")
+    function = intent.get("intent_function")
+    if not isinstance(function, Mapping):
+        raise ValueError("Replay packet lacks a closed J intent function")
+
+    from minisweagent.environments.intentir_replay import (
+        _packet_graph,
+        _packet_obligations,
+    )
+
+    graph: list[Any] = []
+    start = 0
+    while True:
+        page = _packet_graph(packet, start, 48)
+        graph.extend(page["items"])
+        next_start = page["next_start"]
+        if next_start is None:
+            break
+        start = next_start
+
+    obligation_items: list[Any] = []
+    obligation_columns: list[str] | None = None
+    obligation_total = 0
+    start = 0
+    while True:
+        page = _packet_obligations(packet, start, 48)
+        obligation_columns = list(page["columns"])
+        obligation_total = int(page["total"])
+        obligation_items.extend(page["items"])
+        next_start = page["next_start"]
+        if next_start is None:
+            break
+        start = next_start
+
+    return {
+        "protocol": "intentir.scrc.replay-workspace-view.v1",
+        "status": "pass",
+        "abi": {
+            "u_f": dict(u_f),
+            "signature": dict(signature),
+            "intent_io": {
+                key: function[key]
+                for key in ("name", "inputs", "outputs", "returns")
+                if key in function
+            },
+            "mask_c": dict(c),
+        },
+        "j": {
+            "kernel_id": j.get("kernel_id"),
+            "node_ids": j.get("node_ids"),
+            "graph": graph,
+            "boundary": dict(boundary),
+            "scopes": j.get("scopes"),
+            "storage": j.get("storage"),
+            "dimension_constraints": j.get("dimension_constraints"),
+            "value_dimension_relations": j.get("value_dimension_relations"),
+        },
+        "pi": {
+            "regions": pi.get("regions"),
+            "terminal_controls": pi.get("terminal_controls"),
+            "obligations": {
+                "protocol": "intentir.replay-instance-obligations.v2",
+                "total": obligation_total,
+                "columns": obligation_columns or [],
+                "items": obligation_items,
+            },
+        },
+        "authority": (
+            "lossless source-isolated packet projection only; joins authored "
+            "facts but derives no schedule, code, repair, Source, Harness value, "
+            "or Gate evidence"
         ),
     }
 
@@ -261,9 +361,13 @@ class CodexCLIReplayWriter:
         def replay_realization_view_tool() -> Mapping[str, Any]:
             return _replay_realization_view(packet)
 
+        def replay_workspace_view_tool() -> Mapping[str, Any]:
+            return _replay_workspace_view(packet)
+
         bridge = CodexCLIToolBridge(
             workspace.scratch_dir / CODEX_CLI_TOOL_BRIDGE_ROOT_NAME,
             {
+                "replay_workspace_view": replay_workspace_view_tool,
                 "replay_realization_view": replay_realization_view_tool,
                 "replay_check": replay_check_tool,
                 "replay_compile_check": replay_compile_tool,

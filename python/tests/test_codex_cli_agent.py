@@ -25,6 +25,7 @@ from intentir.verify.gate1.codex_replay import (
     CODEX_CLI_REPLAY_BACKEND,
     CodexCLIReplayWriter,
     _replay_realization_view,
+    _replay_workspace_view,
 )
 from intentir.verify.gate1.replay import ReplayIngressResult
 from intentir.verify.scrc_runner import (
@@ -307,6 +308,29 @@ def test_codex_replay_realization_view_is_lossless_and_source_isolated() -> None
     assert not ({"source", "harness", "gate1", "gate2"} & set(view))
 
 
+def test_codex_replay_workspace_view_joins_authored_facts_without_source() -> None:
+    artifact = make_copy_artifact()
+    packet = {
+        "c": artifact.c.to_json(),
+        "j": artifact.j.to_json(),
+        "pi": artifact.pi.to_json(),
+        "u_f": {"frontend": "triton", "replay_function": "scrc_k0"},
+    }
+
+    view = _replay_workspace_view(packet)
+
+    assert view["abi"]["signature"] == packet["j"]["signature"]
+    assert view["abi"]["mask_c"] == packet["c"]
+    assert view["j"]["boundary"] == packet["j"]["boundary"]
+    assert len(view["j"]["graph"]) == 1
+    assert view["pi"]["terminal_controls"] == packet["pi"]["terminal_controls"]
+    obligations = view["pi"]["obligations"]
+    assert obligations["total"] == len(packet["pi"]["instances"])
+    assert len(obligations["items"]) == obligations["total"]
+    assert view["status"] == "pass"
+    assert not ({"source", "harness", "gate1", "gate2"} & set(view))
+
+
 def test_codex_cli_turn_parses_jsonl_and_resumes_same_thread(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -472,7 +496,7 @@ def scrc_k0(p0, p1, p2, c0: tl.constexpr):
             self.calls += 1
             self.thread_id = f"fresh-replay-{self.identity}"
             if self.calls == 1:
-                assert "replay_realization_view" in prompt
+                assert "replay_workspace_view" in prompt
                 payload = valid_replay.replace("scrc_k0", "wrong_entry")
             else:
                 check = json.loads(

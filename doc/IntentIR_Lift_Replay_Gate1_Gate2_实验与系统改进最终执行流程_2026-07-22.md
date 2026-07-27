@@ -594,8 +594,9 @@ Gate round 的定义。
 权威错误列表有界展开、不改变接受集合时，`candidate-check.v1` 无需升版。任何新规则都只对带新
 version receipt 的 fresh run 生效，不得静默重判历史 artifact。
 
-当前 fresh-run 版本为 `typecheck.v21`。v21 完整继承 v20、v18、v19、v14-v17 typed-control 合同及下述 v7
-前序合同，并增加 v9 terminal-control dependent checks；v20 已增加当前 v4/v5 typed
+当前 fresh-run 版本为 `typecheck.v22`。v22 增加 signature mode 与 J input/output/inout boundary
+partition 的 exact dependent check，并完整继承 v21；v21 继承 v20、v18、v19、v14-v17
+typed-control 合同及下述 v7 前序合同，并包含 v9 terminal-control dependent checks；v20 已增加当前 v4/v5 typed
 relations 的 source-free dependent checking：value/dimension 与 consumer provenance/identity 必须
 闭合；access guard 必须满足支配、i1、唯一 axes authority，以及 guarded-store 的显式 select、精确
 inout/pre-state 和 observable merge。checker 仍不构造任何 artifact fact。历史 v7 完整继承 v6；
@@ -670,7 +671,7 @@ vocabulary。v42 只明确 predicate-bearing Source load 的 `fill_value` 必须
 与 same-predicate store 不会改写它。没有新增 kernel 专用提示。Lift LLM 仍必须阅读对应 Source
 区间、做语义分类并完整作者化 `(J,C,π)`。
 
-MiniSWE Replay backend v13（Codex Replay v7）继承 MiniSWE v12-v4 / Codex v6-v3 的 source-blind typed
+MiniSWE Replay backend v13（Codex Replay v8）继承 MiniSWE v12-v4 / Codex v7-v3 的 source-blind typed
 rank/axis fidelity 合同，并采用同样的
 time-governed single-writer transaction runtime：writer 必须按 J
 value type 与 local reduction axis 显式实现必要的 public reshape/expand-dimension stage，不得把
@@ -819,7 +820,7 @@ Replay 不得：
 `U_f` 必须是版本化、source-neutral 的公共前端知识，不能按当前 Kernel、operator 或失败样本选择。
 当前版本组合是 `intentir.scrc.replay-input.v1`、Triton
 `public_frontend_context_v12`、source-aware MiniSWE/Codex
-`intentir.lift-knowledge.v57`、source-blind MiniSWE Replay v13 与 Codex Replay v7；fresh evidence必须保存实际 receipt，
+`intentir.lift-knowledge.v57`、source-blind MiniSWE Replay v13 与 Codex Replay v8；fresh evidence必须保存实际 receipt，
 旧版本 run 不能被新组合追认。
 runner 可以保存实际 request/output 和 compiler metadata 供追溯，但这些内容不能回流 Replay packet；
 不需要为此增加 hash、commitment 或签名门。
@@ -1000,7 +1001,7 @@ Source/当前 J 的 writer。Runner 更新 branch-local feedback view 并追加�
 ### 10.1.1 固定 artifact 的 diagnostic recheck
 
 `intentir.scrc.gate1-diagnostic-recheck.v1` 可以对 parent evidence 中一份已落盘 artifact 做独立只读
-诊断：保持 artifact bytes/digest 不变，以当前 canonical Decode、`typecheck.v21`、一个 fresh normal
+诊断：保持 artifact bytes/digest 不变，以当前 canonical Decode、`typecheck.v22`、一个 fresh normal
 Replay 与 Gate1 写入单独的原子 `recheck-NNN` 目录。该路径不调用 Lift、不运行 masked-J 或 Gate2、
 不参加 candidate/winner 选择，并显式记录 `diagnostic_only=true`、`enters_gate2=false`、
 `changes_prior_verdict=false`。它只能判断当前固定 consumer/context 如何消费旧 artifact，不能把

@@ -854,10 +854,12 @@ Replay LLM 应遵守以下过程合同：
 15. 不从 π 猜出后覆盖 J，也不从 compiler diff 修补。
 
 当前 fresh receipt 组合为 `intentir.scrc.replay-input.v1`、Triton
-`public_frontend_context_v12`、`intentir.lift-knowledge.v57`、MiniSWE Replay v13 与 Codex Replay v7；旧 receipt 保持其原 verdict，不能由
+`public_frontend_context_v12`、`intentir.lift-knowledge.v57`、MiniSWE Replay v13 与 Codex Replay v8；旧 receipt 保持其原 verdict，不能由
 当前 Replay consumer 或 Lift knowledge 静默升级。
 
-Codex Replay v7 的隔离 focused view 必须逐字包含匿名 C slots、J boundary access/effect 与完整 π，
+Codex Replay v8 的隔离 `replay-workspace-view.v1` 必须包含完整匿名 ABI/J graph/J boundary、MaskC、
+U_f，以及从同一 π 无损 join 的 per-instance obligation ledger；它不能生成或省略 relation。v7 的
+全文 packet 加完整 π focused view 只保留为历史路径，
 包括 ordinary/physical iteration 和 carrier relations。它只能减少 packet 检索噪声，不能排序关系、
 推导 schedule、生成 source 或访问 Source/Harness/Gate；因此不改变 Replay 的 source-blind LLM-first
 所有权。
@@ -1258,8 +1260,9 @@ authorization；这只合并 proof-irrelevant 文件动作，外部 TypeCheck �
 numeric-cast、result-relation compatibility 与当前 v4/v5 typed relations 的检查均已随版本化
 TypeCheck 落地并写入 fresh receipt；旧 artifact/证书保持历史解释，不由新规则静默重判。
 
-活动 fresh-run 使用 `typecheck.v21`。v21 完整继承 v20/v18/v19、v14-v17 typed-control 合同及下述 v7
-前序合同，新增 terminal-control sibling/finality dependent checks；v20 已检查 authored
+活动 fresh-run 使用 `typecheck.v22`。v22 增加 signature mode 与 J boundary partition 的 exact
+dependent check，并完整继承 v21；v21 继承 v20/v18/v19、v14-v17 typed-control 合同及下述 v7
+前序合同，包含 terminal-control sibling/finality dependent checks；v20 已检查 authored
 value/dimension、consumer extension 与 access guard 的 dependent closure；它仍只拒绝和诊断，不补造
 artifact。历史 v7 完整继承 v6；v6 继承 v5，v5 继承 v4 的 rank-0 closed signature、
 Layer-A value typing total 与严格 NumPy broadcast compatibility；只有 J 中显式存在的 non-trailing broadcast relation
@@ -1347,7 +1350,7 @@ fill 或常量语义，不能让不完整关系通过；这些能力不改变 π
 
 当前 Lift knowledge v57 继承 v56-v42，要求 `fill_value` 保留 Source load 的实际 `other`，并要求
 adapter 明示的 bound-constexpr/shape-coordinate equality 仍由 Lift 绑定 `x*` 或作者化 `t*=x*`；
-MiniSWE Replay v13 / Codex Replay v7 继承既有 typed-rank 合同，要求
+MiniSWE Replay v13 / Codex Replay v8 继承既有 typed-rank 合同，要求
 writer 按 J typed rank/axis 保留必要的 reshape/expand-dimension stage。π route 可以约束已有 instance
 flow，却不能把一个 fill 换成“等价”neutral value，也不能授权 Replay 折叠 shaped reduction；两项仍由
 各自 LLM 完整作者化，fixed checker 只拒绝和诊断。
