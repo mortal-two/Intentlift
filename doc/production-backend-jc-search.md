@@ -141,6 +141,14 @@ order 消耗相同 distinct-state/failure budget，运输两者实际访问 stat
 digest 去重；target runner 在同一批 correctness/timing 样本中分别选择两条 order 的 best。报告中的
 `c_prior_over_erase_c_speedup` 因而是真实 target-side 配对，不是 requested-order 的代理指标。
 
+CUDA search bundle v3 不再假设候选只有一次 launch。单 kernel state 仍使用紧凑的
+`extracted-launch.v1`；compiler-emitted graph state 则运输共享的 lowered host MLIR、全部冻结 cubin、
+launch 数与 intermediate-buffer receipt。目标端复用同一个 `orchestrate.prepare_program` 从 host MLIR
+恢复顺序、临时 buffer、常量和 ABI pointer flow，prepared graph 的 allocation/synchronization 仍在
+timed interval 外。真实 5090D smoke 已让同一 GeGLU candidate union 同时执行 12 个 single-launch
+state 与一个 10-kernel/10-launch materialized state并通过 Target--RefJ；这为 reduction
+partial/finalize 等多阶段 MLIR state进入正式 E3 搜索消除了 transport 限制，不是 Python kernel 发射。
+
 ## 4. J 驱动的大粒度机制与 local-B 次级消融
 
 ### 4.1 首要机制：切断 materialization、dispatch 与规约瓶颈
@@ -366,9 +374,9 @@ C-prior/Erase-C 为 **1.0037x**。独立 E2/E3 进程的 diagnostic cross-report
 ## 7. H100 分支
 
 H100 机器不安装/调用 IntentIR compiler。`export_cuda_benchmark_bundle.py` 在本地分别用
-`INTENT_GPU_CHIP=sm_90a --arm E2|E3` 生成 cubin、launch plan、输入、canonical-J reference 和 exact
-Source baseline；`run_cuda_benchmark_bundle.py` 在 `ssh h100` 只加载 cubin并做 CUDA Driver
-launch、correctness 和 paired timing。
+`INTENT_GPU_CHIP=sm_90a --arm E2|E3` 生成 cubin/compiled launch graph、输入、canonical-J reference
+和 exact Source baseline；`run_cuda_benchmark_bundle.py` 在 `ssh h100` 只加载冻结 cubin并按 lowered
+host MLIR 做 CUDA Driver launch、correctness 和 paired timing。
 
 all-18、equal-budget=32 的 portable 结果为：E2/E3 都 18/18 执行成功，E3/E2 几何平均
 **1.1196x**，E3/Source **1.0539x**，15/18 E3 达到或超过 Source，15/18 的 E3/E2 超过 1%。

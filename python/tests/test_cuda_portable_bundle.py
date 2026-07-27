@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import hashlib
+
 import numpy as np
 import pytest
 
 from intentir.backend.cuda.benchmark import (
+    ExtractedGraphKernel,
+    ExtractedGraphLaunch,
+    ExtractedGraphLaunchRecord,
     ExtractedSingleLaunch,
     PreparedLaunchRecord,
+    portable_launch_from_dict,
 )
 from intentir.backend.cuda.portable_bundle import (
     cuda_compute_capability_for_chip,
@@ -44,6 +50,32 @@ def test_extracted_launch_json_roundtrip_is_content_exact() -> None:
 
     assert restored == launch
     assert restored.cubin_sha256 == launch.cubin_sha256
+    assert portable_launch_from_dict(launch.to_dict()) == launch
+
+
+def test_extracted_graph_launch_json_roundtrip_is_content_exact() -> None:
+    source = "module { func.func @main() }\n"
+    graph = ExtractedGraphLaunch(
+        kernels=(
+            ExtractedGraphKernel(b"\x7fELFfirst", "first", "binary0"),
+            ExtractedGraphKernel(b"\x7fELFsecond", "second", "binary1"),
+        ),
+        source_mlir=source,
+        binary_mlir="module { gpu.launch_func @binary0::@first }\n",
+        record=ExtractedGraphLaunchRecord(
+            kernel_count=2,
+            launch_count=3,
+            intermediate_buffer_count=1,
+        ),
+        source_mlir_sha256=hashlib.sha256(source.encode("utf-8")).hexdigest(),
+    )
+
+    restored = ExtractedGraphLaunch.from_dict(graph.to_dict())
+
+    assert restored == graph
+    assert restored.executable_sha256 == graph.executable_sha256
+    assert restored.binary_size_bytes == len(b"\x7fELFfirst\x7fELFsecond")
+    assert portable_launch_from_dict(graph.to_dict()) == graph
 
 
 def test_triton_execution_spec_roundtrip_keeps_complete_abi() -> None:

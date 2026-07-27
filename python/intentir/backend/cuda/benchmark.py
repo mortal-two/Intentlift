@@ -16,6 +16,7 @@ import tempfile
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
+from intentir.backend.cuda import compile as backend_compile
 from intentir.backend.cuda import orchestrate
 from intentir.backend.cuda.launch import load_module
 from intentir.backend.cuda.pipeline import LoweredProgram
@@ -23,6 +24,9 @@ from intentir.backend.cuda.selection import read_intent_module
 
 
 EXTRACTED_LAUNCH_PROTOCOL = "intentir.backend.cuda.extracted-launch.v1"
+EXTRACTED_GRAPH_LAUNCH_PROTOCOL = (
+    "intentir.backend.cuda.extracted-graph-launch.v1"
+)
 
 
 @dataclass(frozen=True)
@@ -78,6 +82,14 @@ class ExtractedSingleLaunch:
     def cubin_sha256(self) -> str:
         return hashlib.sha256(self.cubin).hexdigest()
 
+    @property
+    def executable_sha256(self) -> str:
+        return self.cubin_sha256
+
+    @property
+    def binary_size_bytes(self) -> int:
+        return len(self.cubin)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "protocol": EXTRACTED_LAUNCH_PROTOCOL,
@@ -105,6 +117,155 @@ class ExtractedSingleLaunch:
         )
         if value.get("cubin_sha256") != result.cubin_sha256:
             raise ValueError("extracted launch cubin digest mismatch")
+        return result
+
+
+@dataclass(frozen=True)
+class ExtractedGraphKernel:
+    """One cubin identity in a portable compiler-emitted launch graph."""
+
+    cubin: bytes
+    kernel_name: str
+    binary_name: str
+
+    def __post_init__(self) -> None:
+        if not self.cubin.startswith(b"\x7fELF"):
+            raise ValueError("extracted graph kernel cubin is not ELF")
+        if not self.kernel_name or not self.binary_name:
+            raise ValueError("extracted graph kernel requires compiler symbols")
+
+    @property
+    def cubin_sha256(self) -> str:
+        return hashlib.sha256(self.cubin).hexdigest()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kernel_name": self.kernel_name,
+            "binary_name": self.binary_name,
+            "cubin_sha256": self.cubin_sha256,
+            "cubin_base64": base64.b64encode(self.cubin).decode("ascii"),
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "ExtractedGraphKernel":
+        result = cls(
+            cubin=base64.b64decode(value["cubin_base64"], validate=True),
+            kernel_name=str(value["kernel_name"]),
+            binary_name=str(value["binary_name"]),
+        )
+        if value.get("cubin_sha256") != result.cubin_sha256:
+            raise ValueError("extracted graph kernel cubin digest mismatch")
+        return result
+
+
+@dataclass(frozen=True)
+class ExtractedGraphLaunchRecord:
+    kernel_count: int
+    launch_count: int
+    intermediate_buffer_count: int
+
+    def __post_init__(self) -> None:
+        if self.kernel_count <= 0 or self.launch_count <= 0:
+            raise ValueError("extracted graph launch counts must be positive")
+        if self.intermediate_buffer_count < 0:
+            raise ValueError("intermediate buffer count cannot be negative")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kind": "compiler-emitted-graph",
+            "kernel_count": self.kernel_count,
+            "launch_count": self.launch_count,
+            "intermediate_buffer_count": self.intermediate_buffer_count,
+        }
+
+    @classmethod
+    def from_dict(
+        cls, value: Mapping[str, Any]
+    ) -> "ExtractedGraphLaunchRecord":
+        if value.get("kind") != "compiler-emitted-graph":
+            raise ValueError("unsupported extracted graph launch record")
+        return cls(
+            kernel_count=int(value["kernel_count"]),
+            launch_count=int(value["launch_count"]),
+            intermediate_buffer_count=int(value["intermediate_buffer_count"]),
+        )
+
+
+@dataclass(frozen=True)
+class ExtractedGraphLaunch:
+    """Portable cubins plus the compiler host graph that launches them.
+
+    The host MLIR is not executable Python emission.  It is the lowered MLIR
+    receipt that already drives ``orchestrate.prepare_program`` locally: launch
+    order, temporary buffers, constants, and ABI pointer flow are recovered from
+    it on the target machine while every target kernel remains a frozen cubin.
+    """
+
+    kernels: tuple[ExtractedGraphKernel, ...]
+    source_mlir: str
+    binary_mlir: str
+    record: ExtractedGraphLaunchRecord
+    source_mlir_sha256: str
+
+    def __post_init__(self) -> None:
+        if not self.kernels:
+            raise ValueError("extracted graph launch requires at least one cubin")
+        if len(self.kernels) != self.record.kernel_count:
+            raise ValueError("extracted graph kernel count mismatch")
+        if len({item.binary_name for item in self.kernels}) != len(self.kernels):
+            raise ValueError("extracted graph binary symbols must be unique")
+        if hashlib.sha256(self.source_mlir.encode("utf-8")).hexdigest() != (
+            self.source_mlir_sha256
+        ):
+            raise ValueError("extracted graph source MLIR digest mismatch")
+        if not self.binary_mlir:
+            raise ValueError("extracted graph launch requires lowered host MLIR")
+
+    @property
+    def binary_mlir_sha256(self) -> str:
+        return hashlib.sha256(self.binary_mlir.encode("utf-8")).hexdigest()
+
+    @property
+    def executable_sha256(self) -> str:
+        payload = "\n".join(
+            f"{item.binary_name}:{item.kernel_name}:{item.cubin_sha256}"
+            for item in self.kernels
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    @property
+    def binary_size_bytes(self) -> int:
+        return sum(len(item.cubin) for item in self.kernels)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "protocol": EXTRACTED_GRAPH_LAUNCH_PROTOCOL,
+            "source_mlir": self.source_mlir,
+            "source_mlir_sha256": self.source_mlir_sha256,
+            "binary_mlir": self.binary_mlir,
+            "binary_mlir_sha256": self.binary_mlir_sha256,
+            "executable_sha256": self.executable_sha256,
+            "kernels": [item.to_dict() for item in self.kernels],
+            "launch": self.record.to_dict(),
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "ExtractedGraphLaunch":
+        if value.get("protocol") != EXTRACTED_GRAPH_LAUNCH_PROTOCOL:
+            raise ValueError("unsupported extracted graph launch protocol")
+        result = cls(
+            kernels=tuple(
+                ExtractedGraphKernel.from_dict(item) for item in value["kernels"]
+            ),
+            source_mlir=str(value["source_mlir"]),
+            binary_mlir=str(value["binary_mlir"]),
+            record=ExtractedGraphLaunchRecord.from_dict(value["launch"]),
+            source_mlir_sha256=str(value["source_mlir_sha256"]),
+        )
+        if value.get("binary_mlir_sha256") != result.binary_mlir_sha256:
+            raise ValueError("extracted graph host MLIR digest mismatch")
+        if value.get("executable_sha256") != result.executable_sha256:
+            raise ValueError("extracted graph executable digest mismatch")
         return result
 
 
@@ -227,6 +388,94 @@ def extract_single_launch(
     )
 
 
+def extract_graph_launch(
+    program: LoweredProgram,
+    intent_module: str,
+) -> ExtractedGraphLaunch:
+    """Freeze an arbitrary compiler-emitted CUDA launch graph for transport."""
+
+    source = read_intent_module(intent_module)
+    source_digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
+    if source_digest != program.source_mlir_sha256:
+        raise ValueError("graph launch extraction source differs from compiled MLIR")
+    binary_modules = {item.binary_mlir for item in program.kernels}
+    if len(binary_modules) != 1:
+        raise ValueError("compiled graph kernels do not share one host MLIR module")
+    binary_mlir = next(iter(binary_modules))
+    _name, host = orchestrate._host_func_text(binary_mlir)
+    sites = orchestrate._parse_launches(host)
+    if not sites:
+        raise ValueError("compiled graph contains no launch sites")
+    compiled_symbols = {
+        (item.binary_name, item.kernel_name) for item in program.kernels
+    }
+    launched_symbols = {
+        (item.binary_module, item.func_symbol) for item in sites
+    }
+    if launched_symbols != compiled_symbols:
+        missing = sorted(launched_symbols - compiled_symbols)
+        unused = sorted(compiled_symbols - launched_symbols)
+        raise ValueError(
+            "compiled graph launch/cubin symbols disagree: "
+            f"missing={missing}, unused={unused}"
+        )
+    intent_inputs = orchestrate._parse_intent_signature(source)
+    intent_results = orchestrate._parse_intent_results(source)
+    intent_inplace = orchestrate._parse_intent_inplace(source, len(intent_results))
+    parsed_host = orchestrate._parse_host_module(
+        binary_mlir,
+        intent_inputs,
+        intent_results,
+        intent_inplace,
+    )
+    intermediate_count = len(parsed_host.loose_buffers)
+    return ExtractedGraphLaunch(
+        kernels=tuple(
+            ExtractedGraphKernel(
+                cubin=item.cubin,
+                kernel_name=item.kernel_name,
+                binary_name=item.binary_name,
+            )
+            for item in program.kernels
+        ),
+        source_mlir=source,
+        binary_mlir=binary_mlir,
+        record=ExtractedGraphLaunchRecord(
+            kernel_count=len(program.kernels),
+            launch_count=len(sites),
+            intermediate_buffer_count=intermediate_count,
+        ),
+        source_mlir_sha256=source_digest,
+    )
+
+
+PortableExtractedLaunch = ExtractedSingleLaunch | ExtractedGraphLaunch
+
+
+def extract_portable_launch(
+    program: LoweredProgram,
+    intent_module: str,
+) -> PortableExtractedLaunch:
+    """Choose the compact single-launch receipt or the general graph receipt."""
+
+    if len(program.kernels) == 1:
+        _name, host = orchestrate._host_func_text(program.kernels[0].binary_mlir)
+        if len(orchestrate._parse_launches(host)) == 1:
+            return extract_single_launch(program, intent_module)
+    return extract_graph_launch(program, intent_module)
+
+
+def portable_launch_from_dict(
+    value: Mapping[str, Any],
+) -> PortableExtractedLaunch:
+    protocol = value.get("protocol")
+    if protocol == EXTRACTED_LAUNCH_PROTOCOL:
+        return ExtractedSingleLaunch.from_dict(value)
+    if protocol == EXTRACTED_GRAPH_LAUNCH_PROTOCOL:
+        return ExtractedGraphLaunch.from_dict(value)
+    raise ValueError(f"unsupported portable CUDA launch protocol {protocol!r}")
+
+
 class PreparedSingleLaunch:
     """Bind one persisted cubin to its compiler-emitted launch plan."""
 
@@ -286,6 +535,57 @@ class PreparedGraphLaunch:
         source_digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
         if source_digest != program.source_mlir_sha256:
             raise ValueError("prepared graph source differs from compiled MLIR")
+        self._bind(
+            source=source,
+            source_digest=source_digest,
+            kernels=program.kernels,
+            input_tensors=input_tensors,
+        )
+
+    @classmethod
+    def from_extracted(
+        cls,
+        extracted: ExtractedGraphLaunch,
+        input_tensors: Sequence[Any],
+    ) -> "PreparedGraphLaunch":
+        instance = cls.__new__(cls)
+        kernels = tuple(
+            backend_compile.CompiledKernel(
+                cubin=item.cubin,
+                kernel_name=item.kernel_name,
+                binary_name=item.binary_name,
+                binary_mlir=extracted.binary_mlir,
+            )
+            for item in extracted.kernels
+        )
+        instance._bind(
+            source=extracted.source_mlir,
+            source_digest=extracted.source_mlir_sha256,
+            kernels=kernels,
+            input_tensors=input_tensors,
+        )
+        if instance.record.launch_count != extracted.record.launch_count:
+            raise ValueError("prepared graph launch count differs from receipt")
+        if instance.record.kernel_count != extracted.record.kernel_count:
+            raise ValueError("prepared graph kernel count differs from receipt")
+        if (
+            instance.record.intermediate_buffer_count
+            != extracted.record.intermediate_buffer_count
+        ):
+            raise ValueError("prepared graph intermediate-buffer count differs from receipt")
+        instance.extracted = extracted
+        return instance
+
+    def _bind(
+        self,
+        *,
+        source: str,
+        source_digest: str,
+        kernels: Sequence[backend_compile.CompiledKernel],
+        input_tensors: Sequence[Any],
+    ) -> None:
+        if hashlib.sha256(source.encode("utf-8")).hexdigest() != source_digest:
+            raise ValueError("prepared graph source digest mismatch")
         signature = orchestrate._parse_intent_signature(source)
         bound = tuple(input_tensors)
         if len(bound) != len(signature):
@@ -305,7 +605,7 @@ class PreparedGraphLaunch:
             prepared = orchestrate.prepare_program(
                 path,
                 values,
-                compile_all=lambda _path: list(program.kernels),
+                compile_all=lambda _path: list(kernels),
             )
         self._prepared = prepared
         self.record = prepared.record
@@ -351,12 +651,20 @@ def do_bench_cudagraph_us(thunk, *, repetitions: int = 100) -> float:
 
 
 __all__ = [
+    "EXTRACTED_GRAPH_LAUNCH_PROTOCOL",
     "EXTRACTED_LAUNCH_PROTOCOL",
+    "ExtractedGraphKernel",
+    "ExtractedGraphLaunch",
+    "ExtractedGraphLaunchRecord",
     "ExtractedSingleLaunch",
+    "PortableExtractedLaunch",
     "PreparedLaunchRecord",
     "PreparedGraphLaunch",
     "PreparedSingleLaunch",
     "do_bench_cudagraph_us",
     "do_bench_us",
+    "extract_graph_launch",
+    "extract_portable_launch",
     "extract_single_launch",
+    "portable_launch_from_dict",
 ]

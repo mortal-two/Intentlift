@@ -18,7 +18,7 @@ from intentir.backend.ablation import (
     ablation_spec_digest,
     standard_ablation_plan,
 )
-from intentir.backend.cuda.benchmark import extract_single_launch
+from intentir.backend.cuda.benchmark import extract_portable_launch
 from intentir.backend.cuda.portable_bundle import (
     cuda_compute_capability_for_chip,
     encode_triton_spec,
@@ -54,7 +54,7 @@ from intentir.verify.gate2.scalar import ScalarLoweringRunner
 from intentir.verify.scrc_workload_run import build_workload_jc_suite
 
 
-BUNDLE_PROTOCOL = "intentir.production.cuda-search-bundle.v2"
+BUNDLE_PROTOCOL = "intentir.production.cuda-search-bundle.v3"
 
 
 def _shape(shape: list[int | str], dims: dict[str, int]) -> list[int]:
@@ -220,7 +220,7 @@ def _entry(
             concrete_state = candidate.concrete_state(program)
             if concrete_state.mlir_digest is None:
                 raise RuntimeError("CUDA candidate formed no canonical MLIR digest")
-            extracted = extract_single_launch(program, materialized.intent_mlir)
+            extracted = extract_portable_launch(program, materialized.intent_mlir)
             result = {
                 "status": "compiled_state",
                 "candidate_id": candidate.candidate_id,

@@ -1324,6 +1324,13 @@ library 扩到 contraction/完整 Attention 等新 A 图，而不是新增 famil
 rows-per-block 进入 topology digest 和 actual-state evidence。candidate budget 按不同 MLIR digest 消耗，
 重复 state 只作为 search evidence 保留。
 
+portable CUDA search bundle 已升级为 graph-capable v3：单 launch 继续使用紧凑 cubin+ABI plan；
+多阶段 state 则冻结 lowered host MLIR、全部 cubin、launch/intermediate-buffer receipt，并在目标端复用
+既有 orchestrator 预绑定临时 buffer与 launch sequence。真实 5090D smoke 已在同一候选集合执行并
+验证 10-kernel/10-launch materialized graph。因而 partial-reduce/finalize、scan 或其他多阶段结构可以
+进入与单 kernel state相同的 Q/D、Target--RefJ、计时与 finalist selection，不需要 Python target
+kernel emitter，也不另建发射抽象。
+
 - elementwise producer/reduction fusion；
 - 在 hard boundary 足够时启用 producer/reduction/epilogue fusion、materialization/copy elimination；
 - 把 RVV whole-graph fusion 从 schedule flag 分离为显式 structural transformation trace；

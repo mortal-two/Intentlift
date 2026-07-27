@@ -14,10 +14,14 @@ from typing import Any, Mapping
 import numpy as np
 
 from intentir.backend.cuda.benchmark import (
+    ExtractedGraphLaunch,
     ExtractedSingleLaunch,
+    PortableExtractedLaunch,
+    PreparedGraphLaunch,
     PreparedSingleLaunch,
     do_bench_cudagraph_us,
     do_bench_us,
+    portable_launch_from_dict,
 )
 from intentir.backend.cuda.portable_bundle import (
     cuda_compute_capability_for_chip,
@@ -36,7 +40,10 @@ from intentir.verify.gate2.triton import PreparedTritonInvocation
 
 
 REPORT_PROTOCOL = "intentir.production.cuda-remote-performance.v3"
-BUNDLE_PROTOCOL = "intentir.production.cuda-search-bundle.v2"
+BUNDLE_PROTOCOL = "intentir.production.cuda-search-bundle.v3"
+SUPPORTED_BUNDLE_PROTOCOLS = frozenset(
+    {BUNDLE_PROTOCOL, "intentir.production.cuda-search-bundle.v2"}
+)
 
 
 def _torch_dtype(torch: Any, dtype: str) -> Any:
@@ -303,22 +310,34 @@ def _one_kernel(
 
     candidate_records: list[dict[str, Any]] = []
     candidate_artifacts: dict[
-        str, tuple[Mapping[str, Any], ExtractedSingleLaunch, Any]
+        str, tuple[Mapping[str, Any], PortableExtractedLaunch, Any]
     ] = {}
     for candidate in entry["candidates"]:
-        extracted = ExtractedSingleLaunch.from_dict(candidate["launch"])
+        extracted = portable_launch_from_dict(candidate["launch"])
         if (
             extracted.source_mlir_sha256
             != entry["materialization"]["intent_mlir_sha256"]
         ):
             raise ValueError("candidate launch does not belong to bundled M0")
-        prepared = PreparedSingleLaunch.from_extracted(extracted)
-        thunk = prepared.thunk(tensors)
+        if isinstance(extracted, ExtractedSingleLaunch):
+            prepared = PreparedSingleLaunch.from_extracted(extracted)
+            thunk = prepared.thunk(tensors)
+            candidate_outputs = outputs
+        elif isinstance(extracted, ExtractedGraphLaunch):
+            prepared = PreparedGraphLaunch.from_extracted(extracted, inputs)
+            thunk = prepared.thunk()
+            candidate_outputs = list(prepared.outputs.values())
+            if len(candidate_outputs) != len(entry["output_keys"]):
+                raise ValueError(
+                    "prepared graph output count differs from bundled J results"
+                )
+        else:
+            raise TypeError("unsupported portable CUDA launch receipt")
         thunk()
         torch.cuda.synchronize()
         agreement = _compare(
             name="mlir-cubin",
-            actual=_actual_outputs(entry["output_keys"], outputs),
+            actual=_actual_outputs(entry["output_keys"], candidate_outputs),
             reference=reference,
             snapshot=snapshot,
             entry=entry,
@@ -350,8 +369,18 @@ def _one_kernel(
                 "concrete_state": candidate.get("concrete_state"),
                 "lowering": candidate.get("lowering"),
                 "launch": extracted.record.to_dict(),
-                "cubin_sha256": extracted.cubin_sha256,
-                "cubin_size_bytes": len(extracted.cubin),
+                "executable_sha256": extracted.executable_sha256,
+                "binary_size_bytes": extracted.binary_size_bytes,
+                "cubin_sha256": (
+                    extracted.cubin_sha256
+                    if isinstance(extracted, ExtractedSingleLaunch)
+                    else None
+                ),
+                "cubin_size_bytes": (
+                    len(extracted.cubin)
+                    if isinstance(extracted, ExtractedSingleLaunch)
+                    else None
+                ),
                 "logical_boundary_gbps": logical_io_bytes / latency / 1_000.0,
                 "achieved_gflops": floating_point_ops / latency / 1_000.0,
                 "cold_pre_measure_warmup_rounds": cold_warmup_rounds,
@@ -578,8 +607,18 @@ def _one_kernel(
             "concrete_state": winner.get("concrete_state"),
             "lowering": winner.get("lowering"),
             "launch": extracted.record.to_dict(),
-            "cubin_sha256": extracted.cubin_sha256,
-            "cubin_size_bytes": len(extracted.cubin),
+            "executable_sha256": extracted.executable_sha256,
+            "binary_size_bytes": extracted.binary_size_bytes,
+            "cubin_sha256": (
+                extracted.cubin_sha256
+                if isinstance(extracted, ExtractedSingleLaunch)
+                else None
+            ),
+            "cubin_size_bytes": (
+                len(extracted.cubin)
+                if isinstance(extracted, ExtractedSingleLaunch)
+                else None
+            ),
         },
         "correctness": {
             "source_j": (
@@ -767,7 +806,7 @@ def main(argv: list[str] | None = None) -> int:
     import torch
 
     bundle = json.loads(args.bundle.read_text(encoding="utf-8"))
-    if bundle.get("protocol") != BUNDLE_PROTOCOL:
+    if bundle.get("protocol") not in SUPPORTED_BUNDLE_PROTOCOLS:
         raise ValueError("unsupported CUDA benchmark bundle")
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is unavailable")
