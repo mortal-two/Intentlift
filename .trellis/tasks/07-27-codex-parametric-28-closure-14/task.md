@@ -1,6 +1,7 @@
 # Task 14：Source-Grounded Certification Profile 下的 Codex 28-Kernel Fresh SCRC 最终闭合
 
-> 状态：执行中（2026-07-28）；Wave 1首组按registry ordinal 1--7进行P_cert审查与fresh闭合
+> 状态：执行中（2026-07-28）；前三组已横向 fresh 覆盖，当前 10/28 `SCRC_CERTIFIED`，下一步以
+> current clean stack 重跑 CrossEntropy 并推进 ordinal 22--28
 >
 > 类型：Task 11 的最终 fresh corpus执行波；不是 production backend、`J_dev`能力建设、性能搜索、
 > 论文实验或历史证书重判。
@@ -24,9 +25,11 @@ document sha256 = f9dd1ff1ea4879f664de3fa5c3b86e5ed9c558c511197255e32344a3fbbf9f
 也不能要求J迎合某个target/backend recipe。后端的capability/paper config、Target--Ref receipt、
 MLIR search和`intentir.backend.dev-j-variant.v1`均不进入本任务。
 
-当前没有仍在运行的旧闭合进程。最近的Codex Replay v6 fixed-artifact DYT recheck已经终止为
-`diagnostic_only NO_CLOSURE`：mailbox、完整π view与same-episode compile repair正常，Gate1仍剩
-`arith.addi/tt.addptr`及address dataflow不一致；它不进入Gate2、不改变历史18/28。
+当前没有仍在运行的闭合进程。最近的 Terra-high Wave 3 已结束：PolyNorm 在 branch 1/formal round 4
+形成当前证书；Llama4 RoPE、TVD、Linear 为完整 `NO_CLOSURE`；三个 Flash case 混有
+`persistent Lift immutable input changed` infrastructure failure，因为运行期间共享 knowledge 文件正被
+通用能力修改。该类结果不算语义失败，后续所有 formal run 只从 clean committed stack 启动，运行中
+不再修改其 immutable input。
 
 ## 1. 第一性原理目标
 
@@ -73,7 +76,7 @@ relation，也不生成J。Lift LLM仍完整作者化J/C/π；fixed code只可�
 和LLM输出是否一致并fail closed。
 
 `P_cert`尤其不得预填J `consumer_extensions`、access/control/result relation，或π
-`iterations/loop_carriers/physical_iterations/physical_loop_carriers/routes/order`；这些仍由Lift从Source
+`iterations/loop_carriers/physical_iterations/physical_loop_carriers/terminal_controls/routes/order`；这些仍由Lift从Source
 完整作者化并由Gate1检验。TMP等scratch的input/output/inout与可观察读写属于ABI/effect审查，但其
 realization topology不属于P_cert。backend `ContractView` consumed/missing facts、Target--Ref correctness、
 target object与performance receipts也只属于backend evidence，不是P_cert或SCRC predicate。
@@ -176,13 +179,30 @@ fixed code不得替Lift修成`x*`。
 ## 4. 当前执行栈
 
 - frontend commit起点：`460aaed1c6af0b267a4a9da9ca497aea6e66ad40`；
-- artifact/decode/typecheck：`artifact.v8 / decode.v12 / typecheck.v20`；
-- Lift：`intentir.lift-knowledge.v56`；
-- Replay：`openai.codex-cli.intentir-replay.v6`；
+- artifact/decode/typecheck：`artifact.v9 / decode.v13 / typecheck.v21`；
+- Lift：`intentir.lift-knowledge.v57`；
+- Replay：Codex `openai.codex-cli.intentir-replay.v7`，MiniSWE `minisweagent.intentir-replay.v13`；
+- Replay packet/check：`replay-input.v1 / public_frontend_context_v12 / replay-check.v4`；
 - Harness：Triton workload adapter v5；
 - Gate1 observer：`triton-ttir-3.6-gate1-v11`；outer batch：`intentir.scrc.batch.v3`；
   candidate fan-out：v4 `first_observed_gate1_closure_cooperative_stop`；
 - Gate2：三条直接比较，threshold只来自外部Q。
+
+### 4.1 当前 fresh closure 账本
+
+- Wave 1（ordinal 1--7）：SwiGLU、RMSNorm、Fused Add RMSNorm、GeGLU、LayerNorm certified；
+  CrossEntropy、RoPE 未闭合。
+- Wave 2（ordinal 8--14）：Softmax、KLDiv、DYT、Sparsemax certified；GroupNorm、Qwen2VL MRoPE、
+  JSD 未闭合。
+- Wave 3（ordinal 15--21）：PolyNorm certified；Llama4 RoPE、TVD、Linear 未闭合；Flash forward、
+  one-col backward、full backward 的本次 aggregate 被上述 immutable-input infrastructure 污染。
+- 当前 fresh 总计 `10/28`。TypeCheck PASS 不计进度；只有 Gate1 winner 与 Gate2 三边都通过才计入。
+
+CrossEntropy 的重复前沿已定位为一个通用表达缺口：J 已作者化 early-return `effect_if`，旧 π 无法区分
+terminal arm 与 lexical continuation。current `artifact.v9` 只新增 closed
+`pi.terminal_controls{terminal_instance,continuation_instance}`；relation 只能连接同一 J `effect_if` 的
+sibling arm-scope instances，不复制 predicate/polarity/return/Source/API，且 production 不读 π。这是
+source-neutral terminal CFG topology，不是 CrossEntropy hint 或 deterministic composer。
 
 实现升级后只fresh rerun受影响case，不重判旧receipt。Task14期间每次通用能力提交都必须在后续
 evidence中记录commit/protocol；不能让一个长期脏工作区承载多个不可区分的实验版本。

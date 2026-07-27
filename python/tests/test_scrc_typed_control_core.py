@@ -218,6 +218,7 @@ def _effect_if_payload() -> dict:
         "loop_carriers": [],
         "physical_iterations": [],
         "physical_loop_carriers": [],
+        "terminal_controls": [],
     }
     return payload
 
@@ -238,16 +239,16 @@ def _request() -> SCRCLiftRequest:
     )
 
 
-def test_v6_effect_if_schema_decode_round_trip_and_digest() -> None:
+def test_v9_effect_if_schema_decode_round_trip_and_digest() -> None:
     payload = _effect_if_payload()
     validator = Draft202012Validator(scrc_lift_core_json_schema())
     assert not list(validator.iter_errors(payload))
 
     artifact = Gate1Artifact.from_json(payload)
     assert artifact.to_json() == payload
-    assert Gate1Artifact.SCHEMA == "intentir.scrc.artifact.v8"
-    assert SCRC_DECODE_PROTOCOL == "intentir.scrc.decode.v12"
-    assert TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v20"
+    assert Gate1Artifact.SCHEMA == "intentir.scrc.artifact.v9"
+    assert SCRC_DECODE_PROTOCOL == "intentir.scrc.decode.v13"
+    assert TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v21"
     decoded = decode_scrc_lift_artifact(json.dumps(payload), _request())
     decoded_json = decoded.to_json()
     assert Gate1Artifact.from_json(decoded_json).to_json() == decoded_json
@@ -301,6 +302,73 @@ def test_effect_if_typecheck_and_candidate_check_share_acceptance() -> None:
         SCRCCandidateCheckContext(expected_parameters=("p0", "p1", "p2")),
     )
     assert checked["status"] == "pass", checked
+
+
+def test_v9_terminal_control_is_closed_and_v8_remains_readable() -> None:
+    payload = _effect_if_payload()
+    payload["pi"]["terminal_controls"] = [
+        {"terminal_instance": "i1", "continuation_instance": "i0"}
+    ]
+    artifact = Gate1Artifact.from_json(payload)
+    assert artifact.to_json()["pi"]["terminal_controls"] == [
+        {"terminal_instance": "i1", "continuation_instance": "i0"}
+    ]
+    assert type_check(artifact.j, artifact.c, artifact.pi).passed
+
+    legacy = _effect_if_payload()
+    legacy["schema"] = "intentir.scrc.artifact.v8"
+    del legacy["pi"]["terminal_controls"]
+    assert Gate1Artifact.from_json(legacy).wire_schema == (
+        "intentir.scrc.artifact.v8"
+    )
+    legacy["pi"]["terminal_controls"] = []
+    with pytest.raises(SchemaError, match="v1-v8 do not contain pi terminal_controls"):
+        Gate1Artifact.from_json(legacy)
+
+
+def test_terminal_control_typecheck_requires_sibling_final_effect_if() -> None:
+    unrelated = _effect_if_payload()
+    unrelated["pi"]["instances"].append(
+        {
+            "id": "i2",
+            "semantic_ref": "p0",
+            "region": "r0",
+            "mechanism": "realize",
+        }
+    )
+    unrelated["pi"]["terminal_controls"] = [
+        {"terminal_instance": "i1", "continuation_instance": "i2"}
+    ]
+    artifact = Gate1Artifact.from_json(unrelated)
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+    assert any(
+        item.code is TypeCheckErrorCode.EFFECT_CONDITIONAL_INVALID
+        and "sibling arms" in item.detail
+        for item in report.diagnostics
+    )
+
+    non_final = _effect_if_payload()
+    non_final["pi"]["terminal_controls"] = [
+        {"terminal_instance": "i1", "continuation_instance": "i0"}
+    ]
+    non_final["j"]["intent"]["intent_function"]["body"].append(
+        {
+            "id": "n3",
+            "op": "const",
+            "result": "v2",
+            "attrs": {"value": 0.0},
+            "type": {"dtype": "f32", "shape": []},
+        }
+    )
+    non_final["j"]["node_ids"]["n3"] = "body[1]"
+    non_final["j"]["scopes"][0]["definitions"].append("v2")
+    artifact = Gate1Artifact.from_json(non_final)
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+    assert any(
+        item.code is TypeCheckErrorCode.EFFECT_CONDITIONAL_INVALID
+        and "final operation" in item.detail
+        for item in report.diagnostics
+    )
 
 
 def test_functional_boundary_resolves_effect_if_arm_node_paths() -> None:
@@ -439,6 +507,48 @@ def scrc_k0(p0, p1, p2, c0: tl.constexpr):
     assert missing_negative_result.to_check_response()["diagnostics"][0][
         "rule_code"
     ] == "effect_if_explicit_negative_arm"
+
+
+def test_terminal_effect_if_replay_check_requires_return_and_continuation() -> None:
+    payload = _effect_if_payload()
+    payload["pi"]["terminal_controls"] = [
+        {"terminal_instance": "i1", "continuation_instance": "i0"}
+    ]
+    artifact = Gate1Artifact.from_json(payload)
+    accepted = """import triton
+import triton.language as tl
+
+@triton.jit
+def scrc_k0(p0, p1, p2, c0: tl.constexpr):
+    if not p2:
+        return
+    value = tl.load(p0)
+    tl.store(p1, value)
+"""
+    wrong_polarity = accepted.replace("if not p2:", "if p2:")
+    missing_return = accepted.replace("        return\n", "        pass\n")
+    with_else = accepted.replace(
+        "        return\n",
+        "        return\n    else:\n        pass\n",
+    )
+    missing_continuation = accepted.replace(
+        "    value = tl.load(p0)\n    tl.store(p1, value)\n", ""
+    )
+
+    assert replay_source_ingress(
+        accepted, artifact=artifact, frontend=Frontend.TRITON
+    ).status == "pass"
+    expected_codes = {
+        wrong_polarity: "terminal_effect_if_polarity",
+        missing_return: "terminal_effect_if_bare_return",
+        with_else: "terminal_effect_if_forbids_else",
+        missing_continuation: "terminal_effect_if_continuation",
+    }
+    for source, code in expected_codes.items():
+        result = replay_source_ingress(
+            source, artifact=artifact, frontend=Frontend.TRITON
+        )
+        assert result.to_check_response()["diagnostics"][0]["rule_code"] == code
 
 
 def test_effect_if_replay_check_does_not_guess_control_kind_from_arm_shape() -> None:
@@ -649,6 +759,7 @@ def test_v1_through_v5_cannot_claim_v6_control_or_rounded_basis() -> None:
     conditional["schema"] = "intentir.scrc.artifact.v5"
     del conditional["pi"]["physical_iterations"]
     del conditional["pi"]["physical_loop_carriers"]
+    del conditional["pi"]["terminal_controls"]
     with pytest.raises(SchemaError, match="v1-v5 do not contain J effect_if"):
         Gate1Artifact.from_json(conditional)
 
@@ -656,6 +767,7 @@ def test_v1_through_v5_cannot_claim_v6_control_or_rounded_basis() -> None:
     rounded["schema"] = "intentir.scrc.artifact.v5"
     del rounded["pi"]["physical_iterations"]
     del rounded["pi"]["physical_loop_carriers"]
+    del rounded["pi"]["terminal_controls"]
     with pytest.raises(SchemaError, match="v1-v5 do not contain rounded"):
         Gate1Artifact.from_json(rounded)
 

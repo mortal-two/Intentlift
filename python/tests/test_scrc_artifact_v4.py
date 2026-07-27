@@ -54,6 +54,7 @@ def _codes(artifact: Gate1Artifact) -> set[TypeCheckErrorCode]:
 def _legacy_payload(version: int) -> dict:
     payload = make_copy_artifact().to_json()
     payload["schema"] = f"intentir.scrc.artifact.v{version}"
+    payload["pi"].pop("terminal_controls")
     payload["pi"].pop("physical_iterations")
     payload["pi"].pop("physical_loop_carriers")
     if version < 5:
@@ -68,9 +69,9 @@ def _legacy_payload(version: int) -> dict:
     return payload
 
 
-def test_artifact_v8_requires_all_current_arrays_and_round_trips_them() -> None:
+def test_artifact_v9_requires_all_current_arrays_and_round_trips_them() -> None:
     payload = make_copy_artifact().to_json()
-    assert payload["schema"] == "intentir.scrc.artifact.v8"
+    assert payload["schema"] == "intentir.scrc.artifact.v9"
     assert payload["j"]["boundary"]["consumer_extensions"] == []
     assert payload["j"]["boundary"]["access_guard_relations"] == []
     assert payload["j"]["dimension_constraints"] == []
@@ -78,6 +79,7 @@ def test_artifact_v8_requires_all_current_arrays_and_round_trips_them() -> None:
     assert payload["pi"]["loop_carriers"] == []
     assert payload["pi"]["physical_iterations"] == []
     assert payload["pi"]["physical_loop_carriers"] == []
+    assert payload["pi"]["terminal_controls"] == []
     assert Gate1Artifact.from_json(payload).to_json() == payload
 
     missing_consumer = copy.deepcopy(payload)
@@ -1197,8 +1199,8 @@ def test_candidate_check_uses_v6_v15_and_reports_missing_consumer_relation() -> 
         json.dumps(artifact.to_json(), sort_keys=True), context
     )
 
-    assert SCRC_DECODE_PROTOCOL == "intentir.scrc.decode.v12"
-    assert TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v20"
+    assert SCRC_DECODE_PROTOCOL == "intentir.scrc.decode.v13"
+    assert TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v21"
     assert result["status"] == "fail"
     assert any(
         item["rule_code"] == "consumer_extension_missing"

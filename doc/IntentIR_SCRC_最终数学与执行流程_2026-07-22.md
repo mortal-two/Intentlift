@@ -287,6 +287,7 @@ C 不能显式声明：
 - placement；
 - materialization；
 - physical loop induction-basis relation；
+- effect-control 中 terminal arm 与 lexical continuation arm 的角色关系；
 - 受约束 representation refinement；
 - C slot use-site。
 
@@ -359,6 +360,12 @@ Replay 已正确实现 J，或所有 admissible C 都保持 J 行为。
 `[0,ceil_div(Trip,Tile))` 的 unit-step ordinal；wire 不携带公式、concrete value、Source/API 或
 operator。它只区分同一 J loop/C tile 下不同的 Source realization，不向 J 或 C 增加语义。
 
+对 J 已显式作者化的 `effect_if`，π 还可用 closed
+`{terminal_instance,continuation_instance}` 关系区分“当前 invocation 在该臂终止”与“另一臂承载
+lexical continuation”。两项只能引用同一 `effect_if` 的两个 sibling arm-scope `realize` instance；
+relation 不复制 predicate/polarity，不包含 return、value、formula、Source spelling 或 frontend API。
+因此 control semantics 仍在 J，π 只补足 Source-realization 的 terminal CFG topology。
+
 ---
 
 # 4. TypeCheck 的准确职责
@@ -385,9 +392,9 @@ TypeCheck 还检查 closed comparison class 与 output dtype、A 依赖图和 B 
 见最终执行流程第 6.1 节。v1 中 `RequiresTolerance=true` 即拒绝显式或默认 `exact`，没有自由文本
 或“更强合同”例外；阈值仍完全由外部 Q 决定。该 reassociation fact 只约束 SCRC comparison class，
 不是 production backend permission。
-当前 `typecheck.v20` 继承 v18 将 `log2` 纳入同一 closed transcendental 集的规则；floating `log2`
-output 仍须由 Lift 显式选择 `tolerance`，fixed checker 不代选 relation 或阈值。v19/v20 的后续
-dependent π 与 physical-time 检查也不改变该 comparison-class 合同。
+当前 `typecheck.v21` 继承 v20；v20 又继承 v18 将 `log2` 纳入同一 closed transcendental 集的规则。
+floating `log2` output 仍须由 Lift 显式选择 `tolerance`，fixed checker 不代选 relation 或阈值。
+v19-v21 的后续 dependent π、physical-time 与 terminal-control 检查也不改变该 comparison-class 合同。
 
 v14 还检查 v4/v5 authored relations。`value_dimension_relations` 只允许 integral rank-0 J input 与
 declared symbolic dimension 的 `eq`；`consumer_extensions` 必须闭合 predicate-bearing load 到
@@ -423,6 +430,8 @@ transformation permission，也不改变 `Reach_t(J)`。
 - `physical_iterations` 只以已有 J reduce/contraction 与同 node/axis 的 required positive-integer C slot
   声明物理 tile time，basis/direction 属于 closed vocabulary；
 - `physical_loop_carriers` 只保存对应 region 内 typed `init/state/next/result` 时间拓扑，不含公式/value；
+- `terminal_controls` 只连接同一 J `effect_if` 的两个 sibling arm instance，且该 `effect_if` 在当前
+  lexical parent 中为 final；terminal/continuation role 不携带 predicate、polarity 或 return 语义；
 - observable instance 锚定 J；
 - 不新增 operator、predicate、fill、effect 或 semantic constant；
 - sensitive representation refinement 有 J/B 授权；
@@ -445,9 +454,9 @@ dependent checking 夸写成 Source topology 的形式证明。
 
 首版不需要让 TypeCheck 成为 SMT 或完整图证明器。最小可行实现只需 fail closed 地完成上述局部检查。
 
-当前合并协议为 `artifact.v8 / decode.v12 / typecheck.v20 / candidate-check.v1 / replay-check.v3`；
-Replay packet envelope 仍是 `replay-input.v1`，Triton context 为 `public_frontend_context_v11`，
-Lift knowledge 为 v56，MiniSWE Replay backend 为 v12，Codex Replay backend 为 v6。v40 为 source-aware Lift worker 增加只读、分页的 Source control-flow
+当前合并协议为 `artifact.v9 / decode.v13 / typecheck.v21 / candidate-check.v1 / replay-check.v4`；
+Replay packet envelope 仍是 `replay-input.v1`，Triton context 为 `public_frontend_context_v12`，
+Lift knowledge 为 v57，MiniSWE Replay backend 为 v13，Codex Replay backend 为 v7。v40 为 source-aware Lift worker 增加只读、分页的 Source control-flow
 outline（function/loop/if/return 的行号与嵌套深度）；v41 只把 shared dialect/lowering 已支持的
 `log2` 补入通用 `map_unary` vocabulary；v42 只要求 access `fill_value` 保留 Source 该 load 的实际
 `other`，不允许用 downstream-neutral 等价值替换。Replay v4 只要求 source-blind writer 保留 J typed
@@ -455,7 +464,8 @@ rank/axis 与必要 compiler-visible reshape，不把 shaped reduction 压成 fl
 都不分类/补造 artifact 语义，也不生成 Replay；仍由 Lift 与 Replay LLM 分别完整作者化输出。
 v3 历史上引入 `pi.iterations`；v4 引入 J-owned `value_dimension_relations`、
 `consumer_extensions` 等 typed relations；v5 引入 J-owned `access_guard_relations`；v6/v7 分别引入
-typed `effect_if/value_if`；v8 增加 π-owned `physical_iterations/physical_loop_carriers`。每个当前字段都由
+typed `effect_if/value_if`；v8 增加 π-owned `physical_iterations/physical_loop_carriers`；v9 增加
+π-owned `terminal_controls`，只为 J 已存在的 `effect_if` 指定 terminal/continuation arm topology。每个当前字段都由
 Lift LLM 作为完整 `(J,C,π)` 的一部分显式作者，Decode/TypeCheck/CandidateCheck 只解析、检查、拒绝
 和诊断，不补造 relation 或 artifact。v1-v7 保持各自 wire bytes/digest 与字段集合，不得静默升级、
 刷新或追认。SCRC 后 π 停止，
@@ -526,8 +536,8 @@ artifact 语义，不增加 acceptance path，正式 Runner 仍独立执行 Deco
 扩充 TypeCheck judgement 必须提升 `v_TC`，CandidateCheck 与正式 Runner 必须记录并使用同一版本；
 新版本不静默重判历史证书。
 
-当前 fresh-run 取 `v_TC = typecheck.v20`。v20 完整继承 v18/v19、v14-v17 typed-control 合同及下述 v7
-前序合同，并增加上述 v4/v5
+当前 fresh-run 取 `v_TC = typecheck.v21`。v21 完整继承 v20/v18/v19、v14-v17 typed-control 合同及下述 v7
+前序合同，并增加上述 v9 terminal-control dependent checks；v20 已增加上述 v4/v5
 relation 的 source-free dependent checks；仍不赋予 fixed core artifact 构造权。历史 v7 完整继承 v6；
 v6 继承 v5，v5 继承 v4 的 rank-0 closed signature、
 Layer-A graph total typing 与显式 non-trailing NumPy broadcast 合同：closed elaboration 只物化唯一确定的
@@ -558,7 +568,7 @@ active graph 的 shape/index/mask/arithmetic/boolean/result，才可保留
 value 只留在 \(\rho_H^{\mathrm{static}}\)，不写入 J/C/π。Lift 必须自己作者化完整 active Layer-A graph，
 不生成 dummy/identity dataflow、inactive op 或 runtime `effect_if/value_if`。fixed code 只校验已作者化的
 wire/type 形式，不代替 Lift 分类，不根据值选图、补图、清空 `logical_ref` 或伪造 liveness；Replay 保留 exact constexpr ABI，source-blind
-ReplayCheck.v3 拒绝 kernel body 对这种 carrier 的任何读取。Gate1 由 Harness 绑定本次值，RefEval 与
+ReplayCheck.v4 拒绝 kernel body 对这种 carrier 的任何读取，并检查 authored terminal CFG。Gate1 由 Harness 绑定本次值，RefEval 与
 production backend 均不消费该值。
 只影响 implementation selection 的 constexpr 必须进入 C。representation-only bound constexpr
 不能伪装成 π-only realization carrier；上述 static specialization carrier 也不得进入 π topology。

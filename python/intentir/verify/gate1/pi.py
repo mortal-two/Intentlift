@@ -170,6 +170,10 @@ def render_realization_witness_wire_grammar() -> str:
         "exactly region, init, state, next, and result, with the same temporal "
         "denotation as loop_carriers, but its region is indexed by one "
         "physical_iterations relation rather than a structured J loop."
+        " terminal_controls has exactly terminal_instance and continuation_instance: "
+        "distinct realize instances on sibling J effect_if arm scopes. It names "
+        "which arm terminates and which continues; it carries no predicate, "
+        "polarity, return, Source spelling, or API."
     )
 
 
@@ -270,6 +274,7 @@ class RealizationWitness:
     loop_carriers: list[dict[str, JsonValue]] = field(default_factory=list)
     physical_iterations: list[dict[str, JsonValue]] = field(default_factory=list)
     physical_loop_carriers: list[dict[str, JsonValue]] = field(default_factory=list)
+    terminal_controls: list[dict[str, JsonValue]] = field(default_factory=list)
 
     PLACEMENTS: ClassVar[frozenset[str]] = frozenset(
         {"root", "program", "loop", "branch"}
@@ -356,6 +361,49 @@ class RealizationWitness:
         if len(instance_ids) != len(set(instance_ids)):
             raise RealizationWitnessError("pi instance ids must be unique")
         known_instances = set(instance_ids)
+
+        checked_terminal_controls: list[dict[str, JsonValue]] = []
+        terminal_control_instances: set[str] = set()
+        for index, raw in enumerate(self.terminal_controls):
+            path = f"pi.terminal_controls[{index}]"
+            item = _record(
+                raw,
+                path=path,
+                required=frozenset(
+                    {"terminal_instance", "continuation_instance"}
+                ),
+            )
+            terminal_instance = _declared_instance_ref(
+                item["terminal_instance"],
+                path=f"{path}.terminal_instance",
+                known_instances=known_instances,
+            )
+            continuation_instance = _declared_instance_ref(
+                item["continuation_instance"],
+                path=f"{path}.continuation_instance",
+                known_instances=known_instances,
+            )
+            if terminal_instance == continuation_instance:
+                raise RealizationWitnessError(
+                    "pi terminal control requires distinct terminal and "
+                    "continuation instances"
+                )
+            if (
+                terminal_instance in terminal_control_instances
+                or continuation_instance in terminal_control_instances
+            ):
+                raise RealizationWitnessError(
+                    "pi terminal control arm instances must be globally unique"
+                )
+            terminal_control_instances.update(
+                {terminal_instance, continuation_instance}
+            )
+            checked_terminal_controls.append(
+                {
+                    "terminal_instance": terminal_instance,
+                    "continuation_instance": continuation_instance,
+                }
+            )
 
         checked_iterations: list[dict[str, JsonValue]] = []
         iteration_regions: set[str] = set()
@@ -707,6 +755,7 @@ class RealizationWitness:
         self.loop_carriers = checked_loop_carriers
         self.physical_iterations = checked_physical_iterations
         self.physical_loop_carriers = checked_physical_loop_carriers
+        self.terminal_controls = checked_terminal_controls
 
     @classmethod
     def from_json(cls, value: Any) -> "RealizationWitness":
@@ -735,6 +784,7 @@ class RealizationWitness:
                     "loop_carriers",
                     "physical_iterations",
                     "physical_loop_carriers",
+                    "terminal_controls",
                 }
             ),
         )
@@ -749,6 +799,7 @@ class RealizationWitness:
             "loop_carriers",
             "physical_iterations",
             "physical_loop_carriers",
+            "terminal_controls",
         ):
             if key in data and not isinstance(data[key], list):
                 raise RealizationWitnessError(f"pi.{key} must be an array")
@@ -765,6 +816,7 @@ class RealizationWitness:
             physical_loop_carriers=copy.deepcopy(
                 data.get("physical_loop_carriers", [])
             ),
+            terminal_controls=copy.deepcopy(data.get("terminal_controls", [])),
         )
 
     def to_json(
@@ -773,6 +825,7 @@ class RealizationWitness:
         include_iterations: bool = True,
         include_loop_carriers: bool = True,
         include_physical_time: bool = True,
+        include_terminal_controls: bool = True,
     ) -> dict[str, Any]:
         result = {
             "regions": copy.deepcopy(self.regions),
@@ -791,6 +844,8 @@ class RealizationWitness:
             result["physical_loop_carriers"] = copy.deepcopy(
                 self.physical_loop_carriers
             )
+        if include_terminal_controls:
+            result["terminal_controls"] = copy.deepcopy(self.terminal_controls)
         return result
 
 

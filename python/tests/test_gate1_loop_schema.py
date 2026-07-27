@@ -556,6 +556,7 @@ def _tiled_loop_artifact(*, basis: str = "extent_step") -> Gate1Artifact:
                 "loop_carriers": [],
                 "physical_iterations": [],
                 "physical_loop_carriers": [],
+                "terminal_controls": [],
             },
         }
     )
@@ -1130,6 +1131,7 @@ def test_scope_state_effect_and_storage_ids_are_opaque_in_writer_payload() -> No
                     "loop_carriers": [],
                     "physical_iterations": [],
                     "physical_loop_carriers": [],
+                    "terminal_controls": [],
                 },
         }
     )

@@ -792,6 +792,26 @@ def _pi_schema() -> dict[str, Any]:
             "Temporal edges carry no initialization/update formula or frontend spelling."
         ),
     )
+    terminal_control = _closed_object(
+        {
+            "terminal_instance": {
+                "type": "string",
+                "pattern": "^i[0-9]+$",
+            },
+            "continuation_instance": {
+                "type": "string",
+                "pattern": "^i[0-9]+$",
+            },
+        },
+        ("terminal_instance", "continuation_instance"),
+        description=(
+            "One source-neutral terminal-control topology relation. The two "
+            "instances must anchor distinct sibling effect_if arm scopes; the "
+            "terminal arm ends the current kernel invocation and the continuation "
+            "arm carries the remaining lexical computation. No predicate, "
+            "polarity, return value, source spelling, or frontend API is present."
+        ),
+    )
     return _closed_object(
         {
             "regions": _array(region),
@@ -804,6 +824,7 @@ def _pi_schema() -> dict[str, Any]:
             "loop_carriers": _array(loop_carrier),
             "physical_iterations": _array(physical_iteration),
             "physical_loop_carriers": _array(physical_loop_carrier),
+            "terminal_controls": _array(terminal_control),
         },
         (
             "regions",
@@ -816,6 +837,7 @@ def _pi_schema() -> dict[str, Any]:
             "loop_carriers",
             "physical_iterations",
             "physical_loop_carriers",
+            "terminal_controls",
         ),
         description=(
             render_realization_witness_wire_grammar()

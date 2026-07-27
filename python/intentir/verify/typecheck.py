@@ -47,7 +47,7 @@ from intentir.verify.gate1.model import (
 from intentir.verify.gate1.pi import RealizationWitness
 
 
-TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v20"
+TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v21"
 GLOBAL_SAFE_REFINEMENTS = frozenset({"identity_materialization"})
 
 _MAP_UNARY_FNS = frozenset(
@@ -2229,19 +2229,43 @@ def _check_effect_conditionals(
     """Check authored binary effect regions without constructing control.
 
     ``effect_if`` owns predicate polarity and lexical arms in Layer A.  The
-    bound ``branch_region`` scopes own effect membership, while pi only anchors
-    each scope in an existing ``placement=branch`` region.  This routine never
-    inserts an arm, selects a polarity, copies the predicate into pi, or rewrites
-    the conditional to an SSA ``select``.
+    bound ``branch_region`` scopes own effect membership, while pi anchors each
+    scope in an existing ``placement=branch`` region and may relate the two arm
+    instances as terminal versus continuation topology.  This routine never
+    inserts an arm, copies a predicate/polarity into pi, or rewrites the
+    conditional to an SSA ``select``.
     """
 
     intent = j.intent.to_json()["intent_function"]
-    conditionals = [
-        (path, operation)
-        for path, operation in _walk_operations(intent.get("body", []))
-        if operation.get("op") == "effect_if"
-    ]
+    conditionals: list[tuple[str, Mapping[str, Any], bool]] = []
+
+    def collect_conditionals(body: Any, prefix: str) -> None:
+        if not isinstance(body, list):
+            return
+        for index, operation in enumerate(body):
+            if not isinstance(operation, Mapping):
+                continue
+            path = f"{prefix}[{index}]"
+            if operation.get("op") == "effect_if":
+                conditionals.append((path, operation, index == len(body) - 1))
+            collect_conditionals(operation.get("body"), f"{path}.body")
+            for polarity in ("positive", "negative"):
+                arm = operation.get(polarity)
+                if isinstance(arm, Mapping):
+                    collect_conditionals(
+                        arm.get("body"), f"{path}.{polarity}.body"
+                    )
+
+    collect_conditionals(intent.get("body", []), "body")
     if not conditionals:
+        if pi.terminal_controls:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.EFFECT_CONDITIONAL_INVALID,
+                    "pi.terminal_controls",
+                    "terminal control requires an authored J effect_if",
+                )
+            )
         return
 
     value_types = j_elaboration(j).value_type_by_name
@@ -2378,7 +2402,7 @@ def _check_effect_conditionals(
 
     arm_records: list[tuple[str, str, str]] = []
     controlled_accesses: set[str] = set()
-    for path, operation in conditionals:
+    for path, operation, _is_final in conditionals:
         base = f"j.intent.intent_function.{path}"
         predicate = operation.get("predicate")
         predicate_type = (
@@ -2460,6 +2484,7 @@ def _check_effect_conditionals(
         if region.get("placement") == "branch"
     }
     scope_anchor_regions: dict[str, str] = {}
+    scope_anchor_instances: dict[str, str] = {}
     for path, polarity, scope_id in arm_records:
         matches = [
             instance
@@ -2502,6 +2527,7 @@ def _check_effect_conditionals(
                 )
             )
         scope_anchor_regions[scope_id] = region_ref
+        scope_anchor_instances[scope_id] = str(matches[0]["id"])
 
     def region_is_within(region_ref: str, ancestor_ref: str) -> bool:
         current: str | None = region_ref
@@ -2554,7 +2580,10 @@ def _check_effect_conditionals(
                 )
             )
 
-    for path, operation in conditionals:
+    terminal_pairs: dict[
+        frozenset[str], tuple[str, bool, dict[str, str]]
+    ] = {}
+    for path, operation, is_final in conditionals:
         arm_values = {
             polarity: operation.get(polarity)
             for polarity in ("positive", "negative")
@@ -2581,6 +2610,68 @@ def _check_effect_conditionals(
                     f"j.intent.intent_function.{path}",
                     "positive/negative pi branch regions must be distinct "
                     "siblings with one common parent",
+                )
+            )
+
+        arm_instances = {
+            polarity: scope_anchor_instances.get(str(scope_ids[polarity]))
+            for polarity in ("positive", "negative")
+        }
+        if all(isinstance(value, str) for value in arm_instances.values()):
+            pair = frozenset(str(value) for value in arm_instances.values())
+            terminal_pairs[pair] = (
+                path,
+                is_final,
+                {key: str(value) for key, value in arm_instances.items()},
+            )
+
+    terminal_paths: set[str] = set()
+    for index, relation in enumerate(pi.terminal_controls):
+        base = f"pi.terminal_controls[{index}]"
+        terminal_instance = str(relation["terminal_instance"])
+        continuation_instance = str(relation["continuation_instance"])
+        record = terminal_pairs.get(
+            frozenset({terminal_instance, continuation_instance})
+        )
+        if record is None:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.EFFECT_CONDITIONAL_INVALID,
+                    base,
+                    "terminal and continuation instances must anchor the two "
+                    "sibling arms of one J effect_if",
+                    terminal_instance,
+                )
+            )
+            continue
+        path, is_final, arm_instances = record
+        if path in terminal_paths:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.EFFECT_CONDITIONAL_INVALID,
+                    base,
+                    "one J effect_if may have at most one terminal-control relation",
+                    terminal_instance,
+                )
+            )
+        terminal_paths.add(path)
+        if not is_final:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.EFFECT_CONDITIONAL_INVALID,
+                    base,
+                    "terminal effect_if must be the final operation in its lexical "
+                    "parent; the continuation belongs only to its sibling arm",
+                    terminal_instance,
+                )
+            )
+        if terminal_instance not in set(arm_instances.values()):
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.EFFECT_CONDITIONAL_INVALID,
+                    f"{base}.terminal_instance",
+                    "terminal instance is not an effect_if arm anchor",
+                    terminal_instance,
                 )
             )
 

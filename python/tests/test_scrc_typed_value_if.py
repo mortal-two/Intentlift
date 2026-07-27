@@ -134,9 +134,9 @@ def _value_if_payload() -> dict:
 
 def test_value_if_v7_schema_decode_round_trip_and_digest() -> None:
     payload = _value_if_payload()
-    assert Gate1Artifact.SCHEMA == "intentir.scrc.artifact.v8"
-    assert SCRC_DECODE_PROTOCOL == "intentir.scrc.decode.v12"
-    assert TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v20"
+    assert Gate1Artifact.SCHEMA == "intentir.scrc.artifact.v9"
+    assert SCRC_DECODE_PROTOCOL == "intentir.scrc.decode.v13"
+    assert TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v21"
     Draft202012Validator(scrc_lift_core_json_schema()).validate(payload)
     artifact = decode_scrc_lift_artifact(json.dumps(payload), _request())
     assert artifact.to_json() == payload
@@ -413,6 +413,7 @@ def scrc_k0(p0, p1, p2, c0: tl.constexpr):
 def test_v6_effect_if_replay_contract_remains_compatible() -> None:
     payload = _effect_if_payload()
     payload["schema"] = "intentir.scrc.artifact.v6"
+    del payload["pi"]["terminal_controls"]
     del payload["pi"]["physical_iterations"]
     del payload["pi"]["physical_loop_carriers"]
     artifact = Gate1Artifact.from_json(payload)
@@ -693,6 +694,7 @@ def test_v1_through_v6_reject_value_if_but_v6_keeps_typed_effect_control() -> No
 
     v6_value = copy.deepcopy(payload)
     v6_value["schema"] = "intentir.scrc.artifact.v6"
+    del v6_value["pi"]["terminal_controls"]
     del v6_value["pi"]["physical_iterations"]
     del v6_value["pi"]["physical_loop_carriers"]
     with pytest.raises(SchemaError, match="v1-v6 do not contain J value_if"):
@@ -700,12 +702,14 @@ def test_v1_through_v6_reject_value_if_but_v6_keeps_typed_effect_control() -> No
 
     v6 = _effect_if_payload()
     v6["schema"] = "intentir.scrc.artifact.v6"
+    del v6["pi"]["terminal_controls"]
     del v6["pi"]["physical_iterations"]
     del v6["pi"]["physical_loop_carriers"]
     assert Gate1Artifact.from_json(v6).to_json() == v6
 
     rounded_v6 = _tiled_loop_artifact(basis="rounded_extent_step").to_json()
     rounded_v6["schema"] = "intentir.scrc.artifact.v6"
+    del rounded_v6["pi"]["terminal_controls"]
     del rounded_v6["pi"]["physical_iterations"]
     del rounded_v6["pi"]["physical_loop_carriers"]
     assert Gate1Artifact.from_json(rounded_v6).to_json() == rounded_v6

@@ -99,7 +99,8 @@ C 可以表达 tile、vector width、warp、pipeline、prefetch、buffer 等纯�
 TypeCheck(J,C,π)
 ```
 
-π 可以表达 instance、region、route、operand slot、order、sharing、placement、materialization 和受约束 representation relation，但不能拥有独立语义。
+π 可以表达 instance、region、route、operand slot、order、sharing、placement、materialization、
+physical time、terminal/continuation arm topology 和受约束 representation relation，但不能拥有独立语义。
 
 如果 π 表达整数宽度、numeric cast、reassociation、accumulation dtype 或其他可能改变结果关系的事实，TypeCheck 必须确认该事实已经由 J/B 授权，或者属于系统已经规定的合法 representation refinement。
 
@@ -391,6 +392,9 @@ select、不升级 inout、不选择 polarity/axes，也不修 candidate。
   J node/axis 的 required positive-integer C slot；
 - `physical_loop_carriers` 是否只在对应 physical iteration region 中声明 typed
   `init/state/next/result` temporal topology，而没有初始化/update/bound 或 frontend formula；
+- `terminal_controls` 是否只连接同一 authored J `effect_if` 的两个 sibling arm-scope `realize`
+  instances，该 control 是否为 lexical parent 的 final operation，且 relation 没有复制
+  predicate/polarity/return/Source/API；
 - route slot 是否与被引用 J carrier 相容；
 - 是否出现未由 J/B 授权的 observable stage；
 - 是否新增 operator、predicate、fill、formula、effect 或 semantic constant；
@@ -412,13 +416,20 @@ canonical ordinal `0` 与该 loop 显式声明的 `trip.axis=x*`——都合法�
 custom role 并把 relation 完全遗漏，fixed checker 没有可枚举的 missing-totality trigger；该 topology
 遗漏仍只能由 Gate1 检出，不能夸写成 TypeCheck 已证明完整。
 
-`artifact.v8` 另把“J 中只有 reduce/contraction、Source 却用物理 tile loop实现它”的时间结构放回
+`artifact.v8` 把“J 中只有 reduce/contraction、Source 却用物理 tile loop实现它”的时间结构放回
 π，而不是伪造 J structured loop。`physical_iterations` 的 body instance 必须锚定已有 J
 reduce/contraction，tile instance 必须锚定同 node/axis 的 required positive-integer C slot；
 `rounded_extent_step` 只表示由 authored rounded extent 与 tile 构成的物理遍历基底，`direction` 只取
 `forward|reverse`。`physical_loop_carriers` 仅保存 typed `init/state/next/result` 时间拓扑。它们不含
 bound、公式、operator、initial/update value 或 Source API。TypeCheck 只能证明引用、类型、作用域与
 closed vocabulary；Source 是否确有该 loop、方向和 carrier topology 仍由 fresh Replay/Gate1 检验。
+
+`artifact.v9` 再只增加 π-owned terminal-control topology。J `effect_if` 继续拥有 predicate、显式
+positive/negative arms 及其 value/effect；Lift 可以用
+`{terminal_instance,continuation_instance}` 引用同一 `effect_if` 的两个 sibling arm instances，声明
+一臂终止当前 invocation、另一臂承载 lexical continuation。TypeCheck 只检查 sibling/finality 与
+closed refs；不从空臂、effect 或名字推导 role，也不生成 control。无该 relation 的 `effect_if` 仍是
+普通显式 `if/else`。π 不包含 predicate、polarity、return 或 frontend API，production 不消费它。
 
 artifact schema 必须 closed-world：未知字段、未知 relation 和自由文本扩展均 fail closed。若
 `SemDecl` 只计直接创建的显式逻辑语义声明，则 TypeCheck 支撑的是：
@@ -583,8 +594,8 @@ Gate round 的定义。
 权威错误列表有界展开、不改变接受集合时，`candidate-check.v1` 无需升版。任何新规则都只对带新
 version receipt 的 fresh run 生效，不得静默重判历史 artifact。
 
-当前 fresh-run 版本为 `typecheck.v20`。v20 完整继承 v18、v19、v14-v17 typed-control 合同及下述 v7
-前序合同，并增加当前 v4/v5 typed
+当前 fresh-run 版本为 `typecheck.v21`。v21 完整继承 v20、v18、v19、v14-v17 typed-control 合同及下述 v7
+前序合同，并增加 v9 terminal-control dependent checks；v20 已增加当前 v4/v5 typed
 relations 的 source-free dependent checking：value/dimension 与 consumer provenance/identity 必须
 闭合；access guard 必须满足支配、i1、唯一 axes authority，以及 guarded-store 的显式 select、精确
 inout/pre-state 和 observable merge。checker 仍不构造任何 artifact fact。历史 v7 完整继承 v6；
@@ -627,9 +638,9 @@ runtime scalar 若只服务 representation/address realization，Lift 应声明
 `kind=scalar,mode=value,rank=0,logical_ref=null`，不创建 J input；该 p* carrier 只可进入 π，不可回流
 J output/boundary/shape semantics。fixed decoder 只接受这一显式分类，TypeCheck 只验证；两者都不按
 Source 名称/位置判断，也不自动解绑、删除或重编号 J。对应通用 Lift/preflight 合同升为
-`intentir.lift-knowledge.v15`，并由当前 v56 继承。
+`intentir.lift-knowledge.v15`，并由当前 v57 继承。
 
-当前 MiniSWE/Codex Lift knowledge v56 继承 v55/v54/v53/v52/v51/v50/v49/v48/v47/v46/v45/v44/v43/v42；v48 只增加 exact-text direct-submit 与
+当前 MiniSWE/Codex Lift knowledge v57 继承 v56/v55/v54/v53/v52/v51/v50/v49/v48/v47/v46/v45/v44/v43/v42；v48 只增加 exact-text direct-submit 与
 patch-and-submit transaction，消除完整 bytes 已作者化后的纯 submit 路由回合。v47 已把已授权且较小
 的 exact startup/closed feedback bytes 前置到 user packet。v46 已增加 branch-local 持久 workspace、
 deterministic transport compaction、LLM-authored exact-text patch、direct-submit fast path 与独立
@@ -647,6 +658,8 @@ feedback frontier，并要求 Replay 先由 J+C+π 的 active physical tile rank
 valuation 相等的 semantic constexpr ↔ Harness `h*` 关系暴露为 closed
 `bound_constexpr_shape_coordinates`；Lift 必须直接把 extent-only carrier 绑定到对应 `x*`，或自行写
 rank-0 `t*=x*`。Harness 只检查这两种 authored 结果，不从名称、数值、grid 或 Source 补 relation。
+v57 只加入 artifact.v9 的 source-neutral terminal-control 作者合同：role 必须由 Lift 以 sibling arm
+instance relation 显式声明，fixed code 不从臂内容补造。
 这些 runtime/prompt 版本都不让 fixed code生成或修复 artifact，也不改变 TypeCheck/Gate 接受集合。
 v40 的只读 `source-outline` 对长 Source 分页显示
 function/loop/if/return 的语法位置与嵌套深度。这只是 source-aware worker 的可发现性工具：不判定
@@ -657,7 +670,7 @@ vocabulary。v42 只明确 predicate-bearing Source load 的 `fill_value` 必须
 与 same-predicate store 不会改写它。没有新增 kernel 专用提示。Lift LLM 仍必须阅读对应 Source
 区间、做语义分类并完整作者化 `(J,C,π)`。
 
-MiniSWE Replay backend v12（Codex Replay v6）继承 MiniSWE v11-v4 / Codex v3 的 source-blind typed
+MiniSWE Replay backend v13（Codex Replay v7）继承 MiniSWE v12-v4 / Codex v6-v3 的 source-blind typed
 rank/axis fidelity 合同，并采用同样的
 time-governed single-writer transaction runtime：writer 必须按 J
 value type 与 local reduction axis 显式实现必要的 public reshape/expand-dimension stage，不得把
@@ -677,7 +690,7 @@ dimension，由 Lift 用 t* 及 `value_dimension_relations` 显式连接。纯 s
 Lift 自己作者化完整 active graph，不把 inactive branch、dummy identity 或 concrete value写入 J/C/π。
 fixed Decode/CandidateCheck 只检查 wire/type 形式，不代替 Lift 做 Source-semantic 分类，不生成
 relation、不折叠 Source、不选图。Replay 保留 exact constexpr ABI 并直接实现 active J；source-blind
-ReplayCheck.v3 会拒绝 body 对该 carrier 的读取，不需要也看不到 selector value。Gate2 RefEval 与
+ReplayCheck.v4 会拒绝 body 对该 carrier 的读取，并验证 authored terminal-control CFG；不需要也看不到 selector value。Gate2 RefEval 与
 production 不消费该值。只影响 layout/tile/stage 等
 implementation selection 的 constexpr 必须在 Harness 分类为 C slot，而不能作为 bound constexpr
 留在 π-only 形态；static specialization carrier 也不得进入 π topology。
@@ -789,7 +802,8 @@ J + π + MaskC(C) + U_f
 Replay 必须：
 
 1. 从 J 读取 operator、predicate、fill、index、effect 和 result semantics；
-2. 从 π 读取 instance multiplicity、route、slot、order、sharing、placement 和 representation；
+2. 从 π 读取 instance multiplicity、route、slot、order、sharing、placement、physical time、
+   terminal-control topology 和 representation；
 3. 从 `MaskC(C)` 读取匿名 slot schema，不读取 concrete values；
 4. 根据 `U_f` 选择合法的 frontend API spelling；
 5. 输出完整、参数化、source-blind 的 frontend source。
@@ -804,16 +818,17 @@ Replay 不得：
 
 `U_f` 必须是版本化、source-neutral 的公共前端知识，不能按当前 Kernel、operator 或失败样本选择。
 当前版本组合是 `intentir.scrc.replay-input.v1`、Triton
-`public_frontend_context_v11`、source-aware MiniSWE/Codex
-`intentir.lift-knowledge.v56`、source-blind MiniSWE Replay v12 与 Codex Replay v6；fresh evidence必须保存实际 receipt，
+`public_frontend_context_v12`、source-aware MiniSWE/Codex
+`intentir.lift-knowledge.v57`、source-blind MiniSWE Replay v13 与 Codex Replay v7；fresh evidence必须保存实际 receipt，
 旧版本 run 不能被新组合追认。
 runner 可以保存实际 request/output 和 compiler metadata 供追溯，但这些内容不能回流 Replay packet；
 不需要为此增加 hash、commitment 或签名门。
 
-当前新 Lift response 使用 `intentir.scrc.artifact.v8`，固定 decode 使用
-`intentir.scrc.decode.v12`。v3 历史上引入 required closed `pi.iterations`；v4 引入
+当前新 Lift response 使用 `intentir.scrc.artifact.v9`，固定 decode 使用
+`intentir.scrc.decode.v13`。v3 历史上引入 required closed `pi.iterations`；v4 引入
 `value_dimension_relations`、`consumer_extensions` 等 typed relations；v5 引入
-`access_guard_relations`；v6/v7 引入 typed control；v8 引入上述 π-owned physical-only time relations。
+`access_guard_relations`；v6/v7 引入 typed control；v8 引入上述 π-owned physical-only time relations；
+v9 引入 π-owned terminal-control topology。
 每次 fresh response 必须完整作者当前 wire，fixed code 不构造新增字段。`artifact.v1-v7` 保持各自
 wire bytes/digest 与字段集合，不静默升级、刷新或追认。
 
@@ -985,7 +1000,7 @@ Source/当前 J 的 writer。Runner 更新 branch-local feedback view 并追加�
 ### 10.1.1 固定 artifact 的 diagnostic recheck
 
 `intentir.scrc.gate1-diagnostic-recheck.v1` 可以对 parent evidence 中一份已落盘 artifact 做独立只读
-诊断：保持 artifact bytes/digest 不变，以当前 canonical Decode、`typecheck.v20`、一个 fresh normal
+诊断：保持 artifact bytes/digest 不变，以当前 canonical Decode、`typecheck.v21`、一个 fresh normal
 Replay 与 Gate1 写入单独的原子 `recheck-NNN` 目录。该路径不调用 Lift、不运行 masked-J 或 Gate2、
 不参加 candidate/winner 选择，并显式记录 `diagnostic_only=true`、`enters_gate2=false`、
 `changes_prior_verdict=false`。它只能判断当前固定 consumer/context 如何消费旧 artifact，不能把
@@ -1274,7 +1289,7 @@ carrier、arity 1 和非退化 split grid；ordinal 27/28 使用 arity 2，展�
 参数。`None` 在 J.signature 中只能是 `opaque(mode=value,dtype=none)`，无 logical_ref/J
 tensor/node/effect/π instance，不得换成 dummy pointer 或 scalar；加入 canonical contraction 与
 direct/decomposed stage multiplicity 合同后，当前 MiniSWE/Codex Lift knowledge 已由后续通用能力升级到
-`intentir.lift-knowledge.v56`。v49/v50 在不改变 artifact/判定的前提下加入 persistent-workspace exact mirror
+`intentir.lift-knowledge.v57`。v49/v50 在不改变 artifact/判定的前提下加入 persistent-workspace exact mirror
 transport compaction、最近 response-group 窗口、source-neutral schema bundle、单一持久 Lift owner，
 以及 Replay v8 的
 exact-source direct submit/exact-text patch+preflight；这些机制只搬运 LLM authored bytes 或既有

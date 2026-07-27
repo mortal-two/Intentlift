@@ -12,12 +12,13 @@ J 拥有 logical values/state relation、domain、predicate、fill、logical ind
 result relation 以及 logical signature。signature 中的 input、output、runtime scalar、destination、
 dtype、rank、shape、alias/inout/effect 都有 J-owned opaque handle。
 
-当前 fresh-run wire 是 `intentir.scrc.artifact.v8`，固定 Decode 是
-`intentir.scrc.decode.v12`。Lift LLM 必须一次性显式写出完整 `(J,C,π)`，包括当前版本要求的空数组；
+当前 fresh-run wire 是 `intentir.scrc.artifact.v9`，固定 Decode 是
+`intentir.scrc.decode.v13`。Lift LLM 必须一次性显式写出完整 `(J,C,π)`，包括当前版本要求的空数组；
 固定代码不从 Source、Harness valuation、C、π、Replay 或 Gate 结果补造 artifact 字段。`artifact.v4`
 引入 J-owned `value_dimension_relations` 与 `boundary.consumer_extensions`；`artifact.v5` 再引入
 J-owned `boundary.access_guard_relations`；v6/v7 增加 typed control，v8 增加 π-owned physical-only
-time relations。旧 v1-v7 wire 仍按各自字段集合读取，不通过附加空数组或新 relation 静默升级。
+time relations，v9 增加 π-owned terminal-control topology。旧 v1-v8 wire 仍按各自字段集合读取，
+不通过附加空数组或新 relation 静默升级。
 
 `opaque(mode=value,dtype=none)` 是一个精确的缺席 ABI carrier：它只证明调用位置必须原样接收
 `None`，没有 logical denotation。Lift 必须显式生成这个 signature handle，并且不得把它作为 π
@@ -201,7 +202,7 @@ C 只包含在不改变 J denotation 时可替换的匿名 slot、binding kind�
 valuation 与必要的 source-neutral selection metadata。C 不得包含 operator、predicate、formula、
 logical shape、result semantics、source topology、frontend API 或 per-kernel executable policy。
 
-`artifact.v2` 引入、当前 `artifact.v8` 保留的 slot 字段为
+`artifact.v2` 引入、当前 `artifact.v9` 保留的 slot 字段为
 `name/kind/role/value_type/required`，其中 `role` 必填，并增加两个可选 attachment：
 
 ```text
@@ -318,7 +319,7 @@ extent_step:  for k in [0, Trip(J.loop)) step Tile(C.slot)
 tile_ordinal: for q in [0, ceil_div(Trip(J.loop), Tile(C.slot))) step 1
 ```
 
-因此 `artifact.v3` 引入、当前 `artifact.v8` 继续要求 π 包含 closed `iterations` 数组。每项只有：
+因此 `artifact.v3` 引入、当前 `artifact.v9` 继续要求 π 包含 closed `iterations` 数组。每项只有：
 
 ```text
 {region, loop_instance, tile_instance, induction_basis}
@@ -359,6 +360,21 @@ body/tile 必须分别锚定已有 J node 与同 node/axis 的 required positive
 typed temporal topology。字段不含 bound/formula/value/API，不在 J 中创建 loop。TypeCheck 只验证
 closed reference/type/scope/totality；Source 的真实方向、数量与完整性仍由 Gate1 判断。Replay 必须由
 J+C+π 得到 active physical tile rank，不能把 logical axis ordinal 直接当 frontend tensor-rank axis。
+
+### Terminal control topology
+
+J `effect_if` 拥有 predicate、positive/negative arm 及臂内 value/effect。若 Source realization 的一臂
+终止当前 invocation、另一臂承载 lexical continuation，Lift 可在 `pi.terminal_controls` 显式写：
+
+```json
+{"terminal_instance": "i1", "continuation_instance": "i0"}
+```
+
+两个 handle 必须是同一个 `effect_if` 的 sibling arm-scope `realize` instances；该 `effect_if` 必须是
+lexical parent 的 final operation，所有后续工作位于 continuation arm。relation 只声明 roles，不包含
+predicate、polarity、return/value/formula、Source 或 frontend API。无 relation 的 `effect_if` 是普通
+显式双臂 control。TypeCheck 不从空臂、effect 或名称推导 relation；Replay 只按 authored relation
+materialize terminal CFG；production backend 不读取 π。
 
 ## Authorization 与 parametricity
 
@@ -441,9 +457,10 @@ contraction fail-early、functional logical-domain closure、rank-0 logical-inpu
 representation-only scalar 合同也保持原有版本化历史。物理迭代基底 relation 曾使 fresh-run
 wire/decode 窄升为 `artifact.v3 / decode.v3`；v4 随后增加 closed dimension relations、
 `value_dimension_relations`、`consumer_extensions` 和 typed loop-carrier wire，v5 再增加
-`access_guard_relations`，v6/v7 增加 typed control，v8 增加 physical-only time。当前 active 合同为
-`artifact.v8 / decode.v12 / typecheck.v20 / candidate-check.v1`；v20 对上述当前 relations 执行
-source-free dependent checks，尤其验证 authored guard 的支配、类型、唯一 axes authority、显式
+`access_guard_relations`，v6/v7 增加 typed control，v8 增加 physical-only time，v9 增加
+terminal-control topology。当前 active 合同为
+`artifact.v9 / decode.v13 / typecheck.v21 / candidate-check.v1`；v21 增加 terminal-control 的
+sibling/finality checks，并继承 v20 对上述 relations 的 source-free dependent checks，尤其验证 authored guard 的支配、类型、唯一 axes authority、显式
 select、精确 inout/pre-state 与 loop/non-loop observable merge。`candidate-check.v1` 的 closed envelope
 本来就
 允许 diagnostics 数组，因此诊断聚合不改变其 acceptance path 或 protocol：同一严格 checker 已经
@@ -453,4 +470,4 @@ select、精确 inout/pre-state 与 loop/non-loop observable merge。`candidate-
 另执行 source-identifier privacy、receipt/provenance，并在提交后重新运行该 core。receipt 必须记录
 这些版本；`artifact.v1`、`artifact.v2` 仍按各自旧 wire 读取且不得携带 `pi.iterations`，其中 v1
 也不能携带 v2 引入的 C attachment；v1-v3 禁止 v4 字段，v1-v4 禁止 v5 access guard。旧
-receipt/证书不由新 wire 静默重写、追认或刷新；v8 physical-only 字段同样不附加到旧 wire。
+receipt/证书不由新 wire 静默重写、追认或刷新；v8/v9 的新增字段同样不附加到旧 wire。

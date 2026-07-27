@@ -55,6 +55,11 @@ agent:
     reduce/contraction logical in J while requiring its explicit physical loop;
     resolve only its C-attached axis, induction basis and direction, and preserve
     every physical_loop_carriers temporal stage without inventing an update.
+    An ordinary J effect_if remains an explicit runtime if/else. If one
+    pi.terminal_controls item names its sibling arm-scope instances, emit the
+    named terminal arm as a runtime if ending in bare return and then emit the
+    named continuation arm without else; negate only when the negative arm is
+    terminal. Never infer or copy its predicate, polarity, operations, or effects.
     Emit an explicit public reshape or
     expand-dimension step when it is required to realize an authored operand
     shape or local reduction axis; do not replace it with a merely

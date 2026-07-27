@@ -218,6 +218,11 @@ the artifact schema or external TypeCheck.
    the `effect_if`. Multiple sequential early returns become nested typed
    controls in the continuing arm. Never flatten this into unconditional
    effects, a select, or a parent continuation shared by both outcomes.
+   For each such early return, author one `pi.terminal_controls` item whose
+   `terminal_instance` and `continuation_instance` name the already-authored
+   `realize` instances for those two sibling arm scopes. Do not copy the
+   predicate/polarity or add a return op, value, formula, Source spelling, or
+   frontend API to pi. An ordinary two-arm conditional has no such relation.
 13. A Source `scf.if` that yields one value is one Layer-A `value_if`, not a
    `select` or `effect_if`. Author its visible scalar-`i1` predicate, one result
    with a closed type, and explicit positive/negative

@@ -68,11 +68,17 @@ def test_direct_pi_artifact_roundtrip_and_legacy_interface_break() -> None:
         Gate1Artifact.from_json(legacy)
 
 
-def test_artifact_v8_preserves_v7_through_v1_legacy_contracts() -> None:
+def test_artifact_v9_preserves_v8_through_v1_legacy_contracts() -> None:
     current = make_reduce_artifact().to_json()
-    assert current["schema"] == "intentir.scrc.artifact.v8"
+    assert current["schema"] == "intentir.scrc.artifact.v9"
 
-    legacy_v7 = copy.deepcopy(current)
+    legacy_v8 = copy.deepcopy(current)
+    legacy_v8["schema"] = "intentir.scrc.artifact.v8"
+    del legacy_v8["pi"]["terminal_controls"]
+    parsed_v8 = Gate1Artifact.from_json(legacy_v8)
+    assert parsed_v8.to_json() == legacy_v8
+
+    legacy_v7 = copy.deepcopy(legacy_v8)
     legacy_v7["schema"] = "intentir.scrc.artifact.v7"
     del legacy_v7["pi"]["physical_iterations"]
     del legacy_v7["pi"]["physical_loop_carriers"]
@@ -176,6 +182,7 @@ def test_every_artifact_wire_version_requires_explicit_pi_refinements(
 ) -> None:
     payload = make_reduce_artifact().to_json()
     payload["schema"] = wire_schema
+    del payload["pi"]["terminal_controls"]
     del payload["pi"]["physical_iterations"]
     del payload["pi"]["physical_loop_carriers"]
     if wire_schema in {
@@ -730,6 +737,17 @@ def _historical_triton_v6_payload() -> dict[str, object]:
     u_f["context_policy"] = "public_frontend_context_v6"
     contract = u_f["compile_entry_contract"]
     contract = contract.replace(
+        " When pi.terminal_controls relates the two authored arm instances of "
+        "that effect_if, emit the terminal arm as the sole body of a runtime "
+        "`if` followed by a bare return, then emit the continuation arm after "
+        "the `if` without an `else`. Use the authored predicate unchanged when "
+        "the positive arm is terminal and its logical negation when the negative "
+        "arm is terminal. Resolve both roles only through the typed pi relation; "
+        "never infer termination from empty arms, effects, values, names, or "
+        "frontend conventions.",
+        "",
+    )
+    contract = contract.replace(
         " Every pi.physical_iterations entry is mandatory realization "
         "topology for a Source-visible physical loop around an existing J "
         "reduce or contraction; it never creates a semantic J loop. Resolve "
@@ -812,13 +830,13 @@ def test_public_frontend_context_history_is_read_only_and_exact() -> None:
         PUBLIC_FRONTEND_CONTEXT["triton"]
     )
 
-    assert current_digest == history["public_frontend_context_v11"]
+    assert current_digest == history["public_frontend_context_v12"]
     current_receipt_digest = PUBLIC_FRONTEND_CONTEXT_RECEIPT_HISTORY[
         "triton"
-    ]["public_frontend_context_v11"]["context_sha256"]
+    ]["public_frontend_context_v12"]["context_sha256"]
     current_receipt = audit_public_frontend_context_receipt(
         frontend="triton",
-        context_policy="public_frontend_context_v11",
+        context_policy="public_frontend_context_v12",
         context_sha256=current_receipt_digest,
     )
     assert current_receipt["status"] == "current"
@@ -916,7 +934,7 @@ def test_historical_packet_has_read_only_audit_but_cannot_be_fresh_replay() -> N
         audit_replay_packet_digest(payload, expected_digest="0" * 64)
     assert build_rewriter_packet(make_reduce_artifact()).u_f[
         "context_policy"
-    ] == "public_frontend_context_v11"
+    ] == "public_frontend_context_v12"
 
 
 def test_real_v6_u_f_uses_the_historical_full_u_f_receipt_basis() -> None:
@@ -944,7 +962,7 @@ def test_real_v6_u_f_uses_the_historical_full_u_f_receipt_basis() -> None:
     [
         (
             Frontend.TRITON,
-            "8975154a14504466c714b581bd3a8dacadfb89fc7141542e3a6a476b54800ecd",
+            "12b6972a0d9ef800ccde574d970132c2aa66ac5e1dfbdd8dc39ce8d367e1c3a2",
         ),
         (
             Frontend.CUTE,
@@ -1039,9 +1057,9 @@ def test_replay_contract_accepts_an_explicit_strict_integer_widen() -> None:
 
     report = type_check(artifact.j, artifact.c, artifact.pi)
     assert report.passed
-    assert report.protocol == "intentir.scrc.typecheck.v20"
+    assert report.protocol == "intentir.scrc.typecheck.v21"
     assert build_rewriter_packet(artifact).u_f["context_policy"] == (
-        "public_frontend_context_v11"
+        "public_frontend_context_v12"
     )
 
 
@@ -1060,7 +1078,7 @@ def test_typecheck_rejects_non_widening_or_untyped_signed_widen(
 
     report = type_check(artifact.j, artifact.c, artifact.pi)
     assert not report.passed
-    assert report.protocol == "intentir.scrc.typecheck.v20"
+    assert report.protocol == "intentir.scrc.typecheck.v21"
     assert "refinement_auth_invalid_widen" in {
         item.code.value for item in report.diagnostics
     }
@@ -1073,7 +1091,7 @@ def test_triton_u_f_preserves_constexpr_and_projects_coordinate_roles() -> None:
     context = payload["u_f"]
     contract = context["compile_entry_contract"]
 
-    assert context["context_policy"] == "public_frontend_context_v11"
+    assert context["context_policy"] == "public_frontend_context_v12"
     assert "pass a c* handle directly to tl.arange" in contract
     assert "never copy it to a local first" in contract
     assert "satisfied by the parameter binding" in contract
@@ -1100,6 +1118,8 @@ def test_triton_u_f_preserves_constexpr_and_projects_coordinate_roles() -> None:
     assert "canonical binary J contraction" in contract
     assert "one pi realize instance" in contract
     assert "maps to one direct tl.dot realization" in contract
+    assert "pi.terminal_controls relates the two authored arm instances" in contract
+    assert "continuation arm after the `if` without an `else`" in contract
     assert "Do not replace that single stage" in contract
     assert "broadcasted outer-product multiplication plus tl.sum" in contract
     assert "does not apply to outer products" in contract
@@ -1334,6 +1354,7 @@ def test_lift_schema_requires_direct_pi_and_no_embedded_c_channel() -> None:
         "loop_carriers",
         "physical_iterations",
         "physical_loop_carriers",
+        "terminal_controls",
     }
     assert "consumer_extensions" in (
         properties["j"]["properties"]["boundary"]["required"]

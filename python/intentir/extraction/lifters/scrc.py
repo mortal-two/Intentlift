@@ -30,7 +30,7 @@ from .scrc_schema import scrc_lift_core_text_format
 
 
 SCRC_RELIFT_PROTOCOL = "llm_direct_pi_structured_source_aware_relift_v2"
-SCRC_DECODE_PROTOCOL = "intentir.scrc.decode.v12"
+SCRC_DECODE_PROTOCOL = "intentir.scrc.decode.v13"
 CANDIDATE_CHECK_PROTOCOL = "intentir.scrc.candidate-check.v1"
 _CANDIDATE_DIAGNOSTIC_LIMIT = 20
 _CANDIDATE_DIAGNOSTIC_TEXT_LIMIT = 2048
@@ -1029,6 +1029,9 @@ has no result/yield; arm-local SSA never escapes. scope.effects plus matching
 EffectSpec/access_ref is sole membership and cannot overlap access_guard. Pi
 only realizes each arm scope in sibling placement=branch regions; it never
 copies predicate/polarity or turns the branch into select.
+Source early return: final `effect_if`; later work in its continuation arm; one
+pi.terminal_controls pair over arm `realize` instances. It names only
+terminal/continuation, never predicate/polarity/return/Source/API.
 
 A value-yielding Source `scf.if` is one Layer-A `value_if`, never `select`:
 author a visible scalar-i1 predicate, one result/type, and two explicit

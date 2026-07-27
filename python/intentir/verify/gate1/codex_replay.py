@@ -36,7 +36,7 @@ from .replay import (
 )
 
 
-CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v6"
+CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v7"
 
 _INITIAL_PROMPT = """You are the sole writer for one fresh source-blind IntentIR Replay episode.
 The outer runtime exposes only this isolated /workspace. input/ is immutable;
@@ -48,7 +48,7 @@ Read the exact input/packet.json first as J, then pi, then anonymous MaskC(C),
 then run `python .agents/intentir_agent_tool.py replay_realization_view`. That
 tool returns only a lossless focused copy of anonymous C slots, authored J
 boundary accesses/effects, and the complete authored pi object, including loop,
-carrier, physical-iteration, order, and sharing relations. It does not derive a
+carrier, physical-iteration, terminal-control, order, and sharing relations. It does not derive a
 schedule or see Gate evidence. Preserve every authored effect and realization
 ordering relation; never replace pi topology with a guessed source recipe. Use
 REPLAY_CONTRACT.md only for a focused unclear rule.

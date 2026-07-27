@@ -37,12 +37,12 @@ from .prompt import (
 from .tilelang_codegen import extract_tilelang_module
 
 
-MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v12"
+MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v13"
 MINISWE_REPLAY_TURN_TIMEOUT_SECONDS = 300.0
 MINISWE_REPLAY_XHIGH_TURN_TIMEOUT_SECONDS = 900.0
 RESPONSES_REPLAY_BACKEND = "openai.responses.intentir-replay.v1"
 STATIC_REPLAY_BACKEND = "intentir.static-replay-test.v1"
-REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v3"
+REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v4"
 _ANONYMOUS_HANDLE = re.compile(r"^[pc][0-9]+$")
 
 
@@ -251,12 +251,36 @@ class _TypedControlContract:
     kind: str
     positive_nonempty: bool
     negative_nonempty: bool
+    terminal_polarity: str | None = None
 
 
 def _packet_typed_controls(packet: Mapping[str, Any]) -> list[_TypedControlContract]:
     """Return explicitly typed J controls in lexical preorder."""
 
     result: list[_TypedControlContract] = []
+    pi = packet.get("pi")
+    instances = (
+        {
+            str(item.get("id")): str(item.get("semantic_ref"))
+            for item in pi.get("instances", [])
+            if isinstance(item, Mapping)
+        }
+        if isinstance(pi, Mapping)
+        else {}
+    )
+    terminal_scopes = (
+        {
+            instances.get(str(item.get("terminal_instance"))): instances.get(
+                str(item.get("continuation_instance"))
+            )
+            for item in pi.get("terminal_controls", [])
+            if isinstance(item, Mapping)
+            and instances.get(str(item.get("terminal_instance"))) is not None
+            and instances.get(str(item.get("continuation_instance"))) is not None
+        }
+        if isinstance(pi, Mapping)
+        else {}
+    )
 
     def visit(body: Any) -> None:
         if not isinstance(body, list):
@@ -267,18 +291,44 @@ def _packet_typed_controls(packet: Mapping[str, Any]) -> list[_TypedControlContr
             positive = operation.get("positive")
             negative = operation.get("negative")
             kind = operation.get("op")
-            if kind in {"effect_if", "value_if"}:
+            if (
+                kind in {"effect_if", "value_if"}
+                and isinstance(positive, Mapping)
+                and isinstance(negative, Mapping)
+            ):
                 positive_body = positive.get("body", [])
                 negative_body = negative.get("body", [])
+                terminal_polarity = next(
+                    (
+                        polarity
+                        for polarity, arm in (
+                            ("positive", positive),
+                            ("negative", negative),
+                        )
+                        if arm.get("scope_id") in terminal_scopes
+                        and terminal_scopes[arm.get("scope_id")]
+                        == (
+                            negative.get("scope_id")
+                            if polarity == "positive"
+                            else positive.get("scope_id")
+                        )
+                    ),
+                    None,
+                )
                 result.append(
                     _TypedControlContract(
                         kind=str(kind),
                         positive_nonempty=bool(positive_body),
                         negative_nonempty=bool(negative_body),
+                        terminal_polarity=terminal_polarity,
                     )
                 )
-                visit(positive_body)
-                visit(negative_body)
+                if terminal_polarity == "negative":
+                    visit(negative_body)
+                    visit(positive_body)
+                else:
+                    visit(positive_body)
+                    visit(negative_body)
             visit(operation.get("body"))
 
     intent = packet.get("j", {}).get("intent", {})
@@ -353,19 +403,25 @@ def _check_triton_program_id_axes(code: str, function_name: str) -> None:
             )
 
 
+@dataclass(frozen=True)
+class _RuntimeIfSite:
+    node: ast.If
+    following: tuple[ast.stmt, ...]
+
+
 def _runtime_if_nodes(
     function: ast.FunctionDef,
     *,
     runtime_parameters: set[str],
     constexpr_parameters: set[str],
-) -> list[ast.If]:
+) -> list[_RuntimeIfSite]:
     """Collect runtime ``if`` nodes while excluding closed constexpr control."""
 
     initial = {
         **{name: True for name in runtime_parameters},
         **{name: False for name in constexpr_parameters},
     }
-    result: list[ast.If] = []
+    result: list[_RuntimeIfSite] = []
 
     def bind_target(target: ast.AST, value: bool, env: dict[str, bool]) -> None:
         if isinstance(target, ast.Name):
@@ -375,7 +431,7 @@ def _runtime_if_nodes(
                 bind_target(item, value, env)
 
     def visit(statements: list[ast.stmt], env: dict[str, bool]) -> None:
-        for statement in statements:
+        for index, statement in enumerate(statements):
             if isinstance(statement, (ast.Assign, ast.AnnAssign)):
                 value = statement.value
                 dependency = (
@@ -393,7 +449,9 @@ def _runtime_if_nodes(
                 continue
             if isinstance(statement, ast.If):
                 if _expression_is_runtime(statement.test, env):
-                    result.append(statement)
+                    result.append(
+                        _RuntimeIfSite(statement, tuple(statements[index + 1 :]))
+                    )
                 visit(statement.body, dict(env))
                 visit(statement.orelse, dict(env))
                 continue
@@ -407,6 +465,10 @@ def _runtime_if_nodes(
 
 def _arm_is_explicitly_empty(statements: list[ast.stmt]) -> bool:
     return bool(statements) and all(isinstance(item, ast.Pass) for item in statements)
+
+
+def _statements_are_nonempty(statements: list[ast.stmt] | tuple[ast.stmt, ...]) -> bool:
+    return any(not isinstance(item, ast.Pass) for item in statements)
 
 
 def _final_simple_assignment_target(statements: list[ast.stmt]) -> str | None:
@@ -471,11 +533,67 @@ def _check_triton_typed_control_contract(
         raise _ReplayABIViolation(
             rule_code,
             path="<typed-control>",
-            line=(actual[0].lineno if actual else function.lineno),
+            line=(actual[0].node.lineno if actual else function.lineno),
         )
-    for index, (node, contract) in enumerate(
+    for index, (site, contract) in enumerate(
         zip(actual, expected, strict=True)
     ):
+        node = site.node
+        if contract.kind == "effect_if" and contract.terminal_polarity is not None:
+            if node.orelse:
+                raise _ReplayABIViolation(
+                    "terminal_effect_if_forbids_else",
+                    path=f"<effect_if:{index}>",
+                    line=node.lineno,
+                )
+            if (
+                not node.body
+                or not isinstance(node.body[-1], ast.Return)
+                or node.body[-1].value is not None
+            ):
+                raise _ReplayABIViolation(
+                    "terminal_effect_if_bare_return",
+                    path=f"<effect_if:{index}>",
+                    line=node.lineno,
+                )
+            negated = isinstance(node.test, ast.UnaryOp) and isinstance(
+                node.test.op, ast.Not
+            )
+            if negated != (contract.terminal_polarity == "negative"):
+                raise _ReplayABIViolation(
+                    "terminal_effect_if_polarity",
+                    path=f"<effect_if:{index}>",
+                    line=node.lineno,
+                )
+            terminal_nonempty = (
+                contract.positive_nonempty
+                if contract.terminal_polarity == "positive"
+                else contract.negative_nonempty
+            )
+            continuation_nonempty = (
+                contract.negative_nonempty
+                if contract.terminal_polarity == "positive"
+                else contract.positive_nonempty
+            )
+            if _statements_are_nonempty(node.body[:-1]) != terminal_nonempty:
+                raise _ReplayABIViolation(
+                    "terminal_effect_if_terminal_arm",
+                    path=f"<effect_if:{index}>",
+                    line=node.lineno,
+                )
+            if _statements_are_nonempty(site.following) != continuation_nonempty:
+                raise _ReplayABIViolation(
+                    "terminal_effect_if_continuation",
+                    path=f"<effect_if:{index}>",
+                    line=node.lineno,
+                )
+            if any(isinstance(item, ast.Return) for item in site.following):
+                raise _ReplayABIViolation(
+                    "terminal_effect_if_continuation_return",
+                    path=f"<effect_if:{index}>",
+                    line=node.lineno,
+                )
+            continue
         if not node.orelse:
             raise _ReplayABIViolation(
                 f"{contract.kind}_explicit_negative_arm",
@@ -1224,7 +1342,9 @@ exact submitted bytes at c0.
 
 Before ReplayCheck, inspect packet control mechanically: every J `effect_if`
 must remain one runtime `if` with explicit polarity-preserving arms (including
-an explicit empty arm); every J `value_if` must remain a distinct runtime `if`
+an explicit empty arm), except that a matching pi `terminal_controls` relation
+requires the named terminal arm to end in a bare return and the named
+continuation arm to follow without an else; every J `value_if` must remain a distinct runtime `if`
 whose explicit arms finally assign their yielded values to one common merge
 local; and every pi `rounded_extent_step` must use its declared J trip extent
 and matching C tile as `range(0, ceil_div(extent,tile)*tile, tile)`. `effect_if`,
