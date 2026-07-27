@@ -1635,15 +1635,15 @@ class SCRCGateRunner:
                 )
                 return superseded("before_replay") or stopped
 
-            formal_rounds += 1
+            next_formal_round = formal_rounds + 1
             _notify_progress(
                 progress_callback,
                 "replay",
                 None,
-                formal_rounds,
+                next_formal_round,
                 "started",
             )
-            gate1_adapter = self.dependencies.gate1_factory(formal_rounds)
+            gate1_adapter = self.dependencies.gate1_factory(next_formal_round)
             if any(gate1_adapter is previous for previous in gate1_adapters):
                 raise SCRCInfrastructureError(
                     "gate1_factory reused an attempt adapter; Replay must be fresh"
@@ -1658,6 +1658,40 @@ class SCRCGateRunner:
             replay_was_generated = any(
                 arm.generation is not None for arm in normal_arms_for_progress
             )
+            replay_generation_failed = (
+                not replay_was_generated
+                and any(
+                    (arm.diagnostic or "").startswith("generation failed:")
+                    for arm in normal_arms_for_progress
+                )
+            )
+            if replay_generation_failed:
+                _notify_progress(
+                    progress_callback,
+                    "replay",
+                    None,
+                    next_formal_round,
+                    "not_run",
+                )
+                _notify_progress(
+                    progress_callback,
+                    "gate1",
+                    None,
+                    next_formal_round,
+                    "infrastructure_failed",
+                )
+                raise SCRCInfrastructureError(
+                    "Gate1 Replay generation failed before a formal comparison; "
+                    "formal K was not consumed",
+                    evidence={
+                        "attempted_formal_round": next_formal_round,
+                        "formal_gate1_rounds_consumed": formal_rounds,
+                        "artifact": artifact.to_json(),
+                        "typecheck": report.to_json(),
+                        "gate1": gate1.to_json(),
+                    },
+                )
+            formal_rounds = next_formal_round
             _notify_progress(
                 progress_callback,
                 "replay",

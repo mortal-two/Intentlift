@@ -1375,6 +1375,43 @@ def test_source_compile_failure_is_not_reported_as_no_closure() -> None:
     assert raised.value.evidence["artifact"]["schema"]
 
 
+def test_replay_generation_failure_is_infrastructure_and_does_not_consume_k() -> None:
+    source_compile = CompileResult(True, ttir="module {}")
+    generation_failed = Gate1ExecutionResult(
+        Gate1Status.NO_CLOSURE,
+        "trace-only",
+        source_compile,
+        None,
+        Gate1ArmEvidence(
+            "normal",
+            None,
+            None,
+            None,
+            None,
+            "generation failed: TimeoutError: Replay owner wall-time exhausted",
+            2,
+        ),
+        None,
+        1,
+        0,
+    )
+    lift = _Lift([make_reduce_artifact(), make_reduce_artifact()])
+    factory = _Gate1Factory([generation_failed, _gate1_result(closed=True)])
+    gate2 = _Gate2()
+
+    with pytest.raises(
+        SCRCInfrastructureError,
+        match="Replay generation failed before a formal comparison",
+    ) as raised:
+        _runner(lift, factory, gate2).run(_request())
+
+    assert raised.value.evidence["attempted_formal_round"] == 1
+    assert raised.value.evidence["formal_gate1_rounds_consumed"] == 0
+    assert lift.feedbacks == [None]
+    assert factory.rounds == [1]
+    assert gate2.calls == 0
+
+
 def test_gate1_factory_cannot_reuse_one_replay_session_across_rounds() -> None:
     shared = _Gate1Adapter(_gate1_result(closed=False))
     runner = _runner(
