@@ -969,9 +969,23 @@ def _elementwise_thread_hint(state: BackendSearchState) -> int | None:
         )
         if not isinstance(rows, int) or not isinstance(columns, int):
             return None
-        # Keep roughly 64K logical threads in flight across independent rows,
-        # while never assigning more lanes than the row can use.  This maps
-        # 128x1024 to 512 threads and 2048x4096 to 64 threads on the same target.
+        # A tiny outer row domain cannot occupy the GPU even when one block uses
+        # many threads.  The registered C++ lowering already switches from a
+        # per-row register tile to a flat grid-stride state when N/T > 32.  Rank
+        # the largest power-of-two T that still crosses that transition first:
+        # for rows=2,N=4096 this is T=64, exposing many independent blocks
+        # instead of only two 1024-thread blocks.  This is a target-aware Retile
+        # prior over an unchanged candidate universe, not an admission rule.
+        if rows < 64 and columns > 32 * 32:
+            transition_threads = 1 << math.floor(
+                math.log2((columns - 1) // 32)
+            )
+            return max(32, min(1024, transition_threads))
+
+        # Otherwise keep roughly 64K logical threads in flight across
+        # independent rows, while never assigning more lanes than the row can
+        # use.  This maps 128x1024 to 512 threads and 2048x4096 to 64 threads on
+        # the same target.
         desired = math.ceil(65536 / max(1, rows))
         desired = max(64, min(1024, desired))
         desired = 1 << max(6, round(math.log2(desired)))

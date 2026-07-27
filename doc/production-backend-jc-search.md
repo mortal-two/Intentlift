@@ -128,6 +128,12 @@ budget，只切换 `Attach_C/Erase_C`。当前 role-aware scorer 完整消费 C 
 相对 Erase-C 的 best-latency 几何平均优势为 **1.0195x**；更大 budget 下两者趋于收敛。因此 C 的
 贡献是有限预算收敛速度，而不是 `ReachHard`、Q/D feasibility 或 correctness。
 
+production valuation 还要求 Retile(C,target) 理解实际 lowering transition：当外层 row 很少且
+`N/T>32` 时，elementwise C++ path 会从每 row 一个 register-tile block 切换为全域 grid-stride。
+排序器因此优先选择仍能跨过该 transition 的最大二次幂线程数（例如 `rows=2,N=4096` 的 `T=64`），
+而不是机械照抄 C 或把 1024 threads 排在前面。该规则只改变 C score/order，candidate ID、集合、
+ContractView 与 post-pass MLIR admission 均不变。
+
 portable exporter 现在不会只编译 with-C prefix 再把未执行的 Erase-C ID 写进报告。它分别沿两条
 order 消耗相同 distinct-state/failure budget，运输两者实际访问 state 的并集，以 post-pass MLIR
 digest 去重；target runner 在同一批 correctness/timing 样本中分别选择两条 order 的 best。报告中的

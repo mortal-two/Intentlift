@@ -229,6 +229,29 @@ def test_dense_transcendental_j_retiles_same_c_to_more_cuda_threads():
     assert workgroup_plain[0].schedule["block_threads"] == 1024
 
 
+def test_tiny_row_elementwise_c_retile_targets_grid_stride_transition():
+    base, _ = load_production_snapshot(SNAPSHOTS, "dyt")
+    prepared = prepare_production_workload(
+        "dyt", profile=PRODUCTION_WORKLOAD_PROFILE_SYMBOLIC_LARGE
+    )
+    active, _ = profile_production_snapshot(
+        base, prepared, PRODUCTION_WORKLOAD_PROFILE_SYMBOLIC_LARGE
+    )
+    case = build_workload_jc_suite(prepared, active.j, active.c).cases[0]
+    materialized = materialize_j(active.j, case.refeval.dims_map)
+    state = attach_c(materialized, active.c, BackendTarget("cuda", "sm_120a"))
+    candidates = enumerate_cuda_candidates(state)
+    elementwise_base = [
+        item
+        for item in candidates
+        if item.lowering_path_kind == "elementwise"
+        and not item.b_transformations
+        and item.schedule.get("tanh_approximation") == "stable-ex2"
+    ]
+
+    assert elementwise_base[0].schedule["block_threads"] == 64
+
+
 @pytest.mark.parametrize(
     ("profile", "expected_threads"),
     (

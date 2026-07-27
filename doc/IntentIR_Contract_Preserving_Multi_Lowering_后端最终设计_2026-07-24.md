@@ -1065,6 +1065,11 @@ correctness/timing receipt 上分别求两条 order 的 best；C gain 定义为
 `Erase-C best latency / C-prior best latency`。这样 C 只改变有限预算下的访问顺序，候选宇宙、hard
 admission、Q/D、实际 executable 和 profiler 均相同。
 
+`Retile(C,target)` 的 score 必须建模已注册 lowering 的 schedule transition，而不是只算参数数值距离。
+例如 tiny-row elementwise 在 `N/T>32` 时进入 flat grid-stride state；C 排序应优先仍跨过该边界的最大
+合法线程数，使 target 获得足够 block-level parallelism。该逻辑仍只排序既有 candidate，不进入
+transformation admission，也不改变 J/C、candidate ID 或 concrete-state universe。
+
 报告指标至少包括：
 
 - absolute latency/throughput；
