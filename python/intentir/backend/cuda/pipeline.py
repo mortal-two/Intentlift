@@ -45,6 +45,8 @@ class MLIRTransformationReceipt:
     barrier_count: int
     all_reduce_count: int
     block_threads: int
+    grid_blocks: int
+    grid_stride_loop_count: int
     rows_per_block: int
     predicated_value_if_count: int
     folded_constexpr_select_count: int
@@ -85,6 +87,8 @@ class MLIRTransformationReceipt:
             "barrier_count": self.barrier_count,
             "all_reduce_count": self.all_reduce_count,
             "block_threads": self.block_threads,
+            "grid_blocks": self.grid_blocks,
+            "grid_stride_loop_count": self.grid_stride_loop_count,
             "rows_per_block": self.rows_per_block,
             "predicated_value_if_count": self.predicated_value_if_count,
             "folded_constexpr_select_count": self.folded_constexpr_select_count,
@@ -142,6 +146,14 @@ def _transformation_receipt(mlir: str) -> MLIRTransformationReceipt | None:
     rows_per_block = integer_attr("intent.backend.rows_per_block")
     if rows_per_block is None:
         rows_per_block = 1
+    grid_blocks = integer_attr("intent.backend.grid_blocks")
+    if grid_blocks is None:
+        grid_blocks = 0
+    grid_stride_loop_count = integer_attr(
+        "intent.backend.grid_stride_loop_count"
+    )
+    if grid_stride_loop_count is None:
+        grid_stride_loop_count = 0
     approximate_div_count = integer_attr(
         "intent.backend.approximate_div_count"
     )
@@ -160,6 +172,8 @@ def _transformation_receipt(mlir: str) -> MLIRTransformationReceipt | None:
     if (
         not trace
         or rows_per_block <= 0
+        or grid_blocks < 0
+        or grid_stride_loop_count not in {0, 1}
         or any(value is None or value < 0 for value in counts.values())
     ):
         raise ValueError("C++ concrete-state receipt has invalid trace/counts")
@@ -174,6 +188,8 @@ def _transformation_receipt(mlir: str) -> MLIRTransformationReceipt | None:
         barrier_count=int(counts["barrier_count"]),
         all_reduce_count=int(counts["all_reduce_count"]),
         block_threads=int(counts["block_threads"]),
+        grid_blocks=grid_blocks,
+        grid_stride_loop_count=grid_stride_loop_count,
         rows_per_block=rows_per_block,
         predicated_value_if_count=int(counts["predicated_value_if_count"]),
         folded_constexpr_select_count=int(

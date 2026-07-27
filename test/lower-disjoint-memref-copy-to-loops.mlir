@@ -16,3 +16,21 @@ func.func @copy_to_subview(%output: memref<2x8xf32>) {
   memref.dealloc %source : memref<2x4xf32>
   return
 }
+
+// A bufferized tensor identity/copy has no local allocation: both source and
+// destination are ABI arguments with dynamic strided layouts.  It must still
+// become self-contained loops rather than the external memrefCopy runtime.
+// CHECK-LABEL: func.func @copy_between_arguments(
+// CHECK-NOT: memref.copy
+// CHECK: memref.dim
+// CHECK: scf.for
+// CHECK: memref.load
+// CHECK: memref.store
+func.func @copy_between_arguments(
+    %source: memref<?xf32, strided<[?], offset: ?>>,
+    %target: memref<?xf32, strided<[?], offset: ?>>) {
+  memref.copy %source, %target
+    : memref<?xf32, strided<[?], offset: ?>>
+      to memref<?xf32, strided<[?], offset: ?>>
+  return
+}

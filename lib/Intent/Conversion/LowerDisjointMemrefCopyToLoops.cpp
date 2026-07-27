@@ -31,10 +31,14 @@ struct LowerDisjointMemrefCopyToLoopsPass
     for (memref::CopyOp copy : copies) {
       auto sourceType = dyn_cast<MemRefType>(copy.getSource().getType());
       auto targetType = dyn_cast<MemRefType>(copy.getTarget().getType());
+      // memref.copy defines overlapping source/destination locations as
+      // undefined.  Consequently every valid ranked copy is already disjoint;
+      // requiring the source SSA value to be defined directly by memref.alloc
+      // was unnecessarily stricter than the operation contract and left ABI
+      // argument copies as an external `memrefCopy` runtime dependency.
       if (!sourceType || !targetType ||
           sourceType.getShape() != targetType.getShape() ||
-          sourceType.getElementType() != targetType.getElementType() ||
-          !copy.getSource().getDefiningOp<memref::AllocOp>())
+          sourceType.getElementType() != targetType.getElementType())
         continue;
 
       OpBuilder builder(copy);

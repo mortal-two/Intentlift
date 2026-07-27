@@ -1,7 +1,9 @@
 # Accepted J+C production backend：真实 MLIR lowering、B 合同与 C 搜索
 
-> 状态：production catalog 已 append-only 扩展为 content-addressed 的 **18 个**闭合 J；2026-07-26。
-> RTX 5090D、H100 与 RVV4 的 all-18 报告已经重新执行并冻结；历史 closed-12/16 数字只作追溯。
+> 状态：production catalog 已 append-only 扩展为 content-addressed 的 **18 个**闭合 J；2026-07-27。
+> RTX 5090D、H100 与 RVV4 的 all-18 closed-valuation 报告已冻结；它们是横向消费/因果基线，
+> 不冒充 production-shape 主表。下一里程碑是 all-18、all-target、L2-controlled 的符号 valuation
+> 矩阵；历史 closed-12/16 数字只作追溯。
 
 本文记录已冻结 18 个 SCRC Gate1/Gate2 闭合 Kernel 的 production backend 实现。当前权威结果、
 证据边界、压缩原始报告与 SHA-256 见
@@ -125,6 +127,11 @@ budget，只切换 `Attach_C/Erase_C`。当前 role-aware scorer 完整消费 C 
 计算距离，不生成 candidate 或改变 admission。RTX 5090D all-18、budget=8 的配对报告中，with-C
 相对 Erase-C 的 best-latency 几何平均优势为 **1.0195x**；更大 budget 下两者趋于收敛。因此 C 的
 贡献是有限预算收敛速度，而不是 `ReachHard`、Q/D feasibility 或 correctness。
+
+portable exporter 现在不会只编译 with-C prefix 再把未执行的 Erase-C ID 写进报告。它分别沿两条
+order 消耗相同 distinct-state/failure budget，运输两者实际访问 state 的并集，以 post-pass MLIR
+digest 去重；target runner 在同一批 correctness/timing 样本中分别选择两条 order 的 best。报告中的
+`c_prior_over_erase_c_speedup` 因而是真实 target-side 配对，不是 requested-order 的代理指标。
 
 ## 4. J 驱动的大粒度机制与 local-B 次级消融
 
@@ -261,6 +268,59 @@ workload adapter/source slice，而不是新写的替代 kernel。
 performance cache key 包含 M0 digest、target、candidate、toolchain 和 benchmark workload，
 但不包含 C digest；同一 candidate 在 Attach_C/Erase_C 两臂可安全共享测量。
 
+缓存/工作集与 Roofline 使用独立 machine spec
+`spec/lowering/backend-performance-measurement-v1.json`；当前 canonical JSON content digest（不是文件字节 SHA-256）为
+`4894fa1e5cb77b6b1c13e21d5f967da58de5b04140373cc8255f749636fd57f8`，每份 bundle/report 绑定当时 canonical
+digest。参考 TileLang/Triton 的 kernel benchmark 口径，正式 CUDA 主数字为：先完成
+code/module/page/frequency warm-up，然后每次单次调用前在 event interval 外驱逐 L2，用 CUDA
+event 计时。当前 runner 将这个 **L2-controlled steady-state** 协议记为 `cold-data`。
+
+warm、streaming 与 cold-data 仍是不同 estimand，禁止混合 aggregate：
+
+- warm：persistent address 的 warm-cache prepared launch/graph，只作调试或 deployment-specific 附录；
+- streaming：轮转互不相交的 exact-invocation replicas，实际 working set 必须严格超过 LLC，只作压力敏感性；
+- cold-data：每次 single-shot 前用严格超过 LLC/L2 的 target working set 驱逐，驱逐与同步不计时；这是主表口径。
+
+J workload-cost receipt 给出 boundary logical bytes、audited FLOP、special-function/comparison/control
+独立计数和算术强度。GPU 在目标端实测 sustained D2D copy 与 TF32-disabled FP32 ceiling；H100 还能用
+Nsight Compute 12.8 读取真实 DRAM/L2 counters。logical bytes 永远不冒充 hardware transaction。
+如果实际 latency 小于 `0.95x` logical DRAM Roofline lower bound，说明 cache reuse 或
+traffic/ceiling 模型不匹配，runner 会记 `cache_reuse_or_roof_model_mismatch` 并禁止
+memory-wall claim。大于 `2x` 同样不再称为 roof-approaching；大于 `10x` 是明确的
+`latency_or_unmodeled_work_dominated`。带未建模 special-function ops 或不完整 J cost 的点也
+不单独支持 memory-wall claim。
+
+closed-18 原始 case 的 boundary 只有约 1--8 KiB，主要用于闭合与小延迟性能，不是
+production-shape 主表。`roofline-large-j-only-v1` 是 masked-copy Target--RefJ 压力工具，不因
+尺寸大就升格为 Source 性能证据。正式放大只允许绑定 frozen J 中已声明的符号轴，
+不从 kernel 名猜 shape scaling。
+
+### 6.1 当前 symbolic/literal 执行边界
+
+当前 CUDA catalog 已登记 `symbolic-medium-v1` 与 `symbolic-large-v1`，但只对 frozen J
+真实声明的符号 extent 生效：
+
+- Flash preprocess：只放大 `heads=x0`；J 仍为 `[1,x0,33,16] -> [1,x0,64]`，因此
+  batch/sequence/head_dim/rounded extent 均不变；
+- Flash one-pass LayerNorm、JSD、LayerNorm、Sparsemax、TVD：只绑定各自 J 已声明的
+  row/feature symbols；
+- Softmax 与 Liger RMSNorm：当前 J 外层 rows 是 literal `2`，不进入后端 row-scaling profile；
+- 其余格子只在 J 的 exact symbolic carriers 和 Source adapter 能同步绑定时增加 profile，
+  否则记 `literal_shape_only`/`profile_not_declared`。
+
+profile receipt 必须同时绑定 base/active snapshot digest、不变的 J digest、具体 extent
+valuation 和 C digest。它不证明所有 shape，不修改旧 SCRC 证书，也不阻塞其他
+literal-only J 在 closed valuation 上的后端消费。
+
+### 6.2 all-18 横向评测矩阵
+
+主性能与 correctness 覆盖是 **18 个 J x 每个 target x 每个已登记 legal valuation**，
+不是仅对少数代表 Kernel 运行。E2/E3/E4、L0/L1、N0--N3 在 18/18 上执行；
+`not_matched`、`literal_shape_only`、target 缺 Source/Replay、compile/QD failure 都保留在矩阵中。
+主报告同时给出 all-corpus、applicable subset 和 per-kernel p50/speedup。只有 Nsight/CUPTI、
+Roofline 机制分解等高开销解释证据可在每个结构类上选 1--2 个 valuation；这不能
+替代全 18 主表或消融。
+
 ## 7. H100 分支
 
 H100 机器不安装/调用 IntentIR compiler。`export_cuda_benchmark_bundle.py` 在本地分别用
@@ -282,6 +342,7 @@ RVV 后端不生成 C/Python kernel。它从与 CUDA 相同的 deterministic Int
 ```text
 registered ConvertIntentToLinalg + ExpandRsqrtForLibm
   -> materialized/fused upstream Linalg structural arm
+  -> registered TileLinalgByIteratorKind(parallel_tile, reduction_tile)
   -> one-shot-bufferize + buffer-results-to-out-params
   -> registered ForwardBufferResultsToOutParams
   -> registered LowerDisjointMemrefCopyToLoops
@@ -299,6 +360,13 @@ RVV winner 不强制“必须含向量指令”：标量、vectorized、O2/O3 st
 形成并按实测选择，receipt 同时保留 RVV 指令数与 topology digest。当前没有 RVV Source/Replay
 `D_cert`，因此 1.1817x 只解释为同一 J、同一 target 下从 materialized E2 到 expanded/fused E3 的
 内部因果增量，不能解释为超越 Source 或正式端到端 backend closure。
+
+retile 不再是 report 中的虚拟参数：C++ pass 通过 upstream TilingInterface/SCF tiler 对 parallel 与
+reduction iterator 使用独立 extent，并在 module receipt 记录实际 tiled Linalg op/loop 数。搜索使用
+固定、C-independent 的 52-state 请求宇宙；C 只重排相同 concrete native-object universe。
+`LowerDisjointMemrefCopyToLoops` 也已按 `memref.copy` 的非重叠有效程序合同覆盖等形 ranked ABI 参数
+copy，避免合法 `masked_copy` state 残留外部 `memrefCopy` 符号；所有 11 个不同 native object 已在
+RVV 实机通过 Target--RefJ，而不是只通过本地链接。
 
 ## 9. 复现
 
@@ -336,14 +404,41 @@ INTENT_GPU_CHIP=sm_90a python tools/export_cuda_benchmark_bundle.py \
   --snapshot-dir corpus/production-jc-v1 \
   --out /tmp/sm90a-e3.json --arm E3 --search-budget 32
 
-# RVV：本地 true-MLIR 编译；bundle 再传到 ssh rvv4 执行。
+# J-only 128 MiB masked-copy 压力工具：仅 Target--RefJ，不报 Source speedup。
+python tools/export_cuda_benchmark_bundle.py \
+  --snapshot-dir corpus/production-jc-v1 --kernels masked_copy \
+  --workload-profile roofline-large-j-only-v1 --arm E3 --search-budget 6 \
+  --out /tmp/masked-copy-roofline.json
+python tools/run_cuda_benchmark_bundle.py \
+  --bundle /tmp/masked-copy-roofline.json --out /tmp/masked-copy-roofline-report.json \
+  --data-regime cold-data --timing event --cold-iterations 16 \
+  --cache-flush-mib 256 --roofline-calibration
+
+# 当前所有已登记 symbolic-large J 的横向 CUDA 主口径；未登记格子
+# 仍在 all-18 coverage matrix 中记 literal_shape_only/profile_not_declared，不被删除。
+python tools/export_cuda_benchmark_bundle.py \
+  --snapshot-dir corpus/production-jc-v1 \
+  --kernels flash_bwd_preprocess flash_layer_norm_1pass jsd layer_norm sparsemax tvd \
+  --workload-profile symbolic-large-v1 --arm E3 --search-budget 32 \
+  --out /tmp/symbolic-large-sm120a.json
+python tools/run_cuda_benchmark_bundle.py \
+  --bundle /tmp/symbolic-large-sm120a.json \
+  --out /tmp/symbolic-large-sm120a-report.json \
+  --data-regime cold-data --timing event --cold-iterations 16 \
+  --cache-flush-mib 256
+
+# RVV：本地 true-MLIR 编译；当前环境的可用 SSH alias 为 rvv。
 python tools/export_rvv_benchmark_bundle.py \
   --snapshot-dir corpus/production-jc-v1 \
   --out /tmp/rvv-bundle.json
-scp /tmp/rvv-bundle.json tools/run_rvv_benchmark_bundle.py rvv4:/tmp/
-ssh rvv4 python3 /tmp/run_rvv_benchmark_bundle.py \
+scp /tmp/rvv-bundle.json tools/run_rvv_benchmark_bundle.py rvv:/tmp/
+ssh rvv python3 /tmp/run_rvv_benchmark_bundle.py \
   --bundle /tmp/rvv-bundle.json --out /tmp/rvv-report.json
 ```
+
+当前 RVV exporter 尚未接入 `--workload-profile`，因此上述 RVV 命令只覆盖 all-18 closed
+valuation。将同一 symbolic valuation/profile receipt 接入 RVV portable bundle 是下一横向实施项；
+完成前不得把 CUDA large-profile 数字转写成 RVV 结果。
 
 ## 10. 当前边界
 
@@ -352,14 +447,23 @@ ssh rvv4 python3 /tmp/run_rvv_benchmark_bundle.py \
 inout/post-state、access-local guard、scan/reduction relation、loop scan/carry、runtime value-if、
 multi-output half epilogue、direct identity binding 与 masked square-sum reduction。
 
-当前主结果已经不是小修小补：RTX 5090D 正式 E3/E2 **1.1302x**，H100 portable E3/E2
+当前 closed-valuation 结果已经不是小修小补：RTX 5090D 正式 E3/E2 **1.1302x**，H100 portable E3/E2
 **1.1196x**，RVV4 E3/E2 **1.1817x**；6 个图的 whole-graph/materialized 内部对照为
 **17.1258x**。reduction topology 与 precision/approximation 分别提供 **1.0409x** 和
 **1.0676x** 的 all-corpus 增量，FMA 的 **1.0003x** 负结果保留。local-B 的 **1.0162x** 只作辅助，
-不冒充核心创新。
+不冒充核心创新。这些数字仍需在 all-18 production valuation 的 L2-controlled 主协议上
+重新验证，不与新矩阵混合 aggregate。
 
 当前 18 项没有 typed contraction；Flash `do_o_dot` 仍是 FP32 multiply + reduction，所以不存在可诚实
-声称的 TF32 state。下一步真正有价值的扩展是：当新闭合 J 出现 `tl.dot`/matmul/完整 Attention A 图时，
-复用同一 transformation/QD framework 加入 MMA、IEEE/TF32 accumulator 和更大 stage decomposition；
-不是为现有 kernel 增加名字驱动 recipe。H100 缺 Replay，RVV 缺 Source/Replay，二者的 formal
-`D_cert` 仍是明确证据边界。
+声称的 TF32 state。但下一步不是停下现有 18 J 等新 contraction：
+
+| 横向工作 | CUDA 5090D/H100 | RVV4 | 覆盖/验收 |
+|---|---|---|---|
+| tail-safe contiguous vector state | vec2/vec4 masked load/store，消除非 4 整除 scalar fallback | dynamic VL + SEW/LMUL | 18/18 match receipt；elementwise/reduction applicable subset |
+| producer + one/multiple reduction + epilogue | 单趟多 accumulator，subgroup/workgroup/multi-stage 独立 retile | vector partial/fold + reduction tile | 11 个 reduction J 主要覆盖，其余记 not_matched |
+| scan/effect/gather/contraction | prefix/segmented scan、effect-safe update、PolyNorm contraction/gather tiling | vector scan、multicore state、layout-aware tiling | Sparsemax/TVD/PolyNorm，通用 matcher 不读 case name |
+| portable production valuations | all-18 closed + 所有 legal symbolic profiles | 接入同一 profile/valuation receipt | 每 target 全 18 matrix，literal-only 不删除 |
+
+新 `tl.dot`/matmul/完整 Attention J 到来后，再复用同一 transformation/QD framework 加入
+MMA、IEEE/TF32 accumulator 和更大 stage decomposition；不为现有或新 kernel 增加名字驱动
+recipe。H100 缺 Replay，RVV 缺 Source/Replay，二者的 formal `D_cert` 仍是明确证据边界。

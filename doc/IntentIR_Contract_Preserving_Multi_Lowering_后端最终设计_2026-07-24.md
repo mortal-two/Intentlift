@@ -1,6 +1,6 @@
 # IntentIR J-Grounded、Q/D-Certified Lowering-State Search：后端最终设计
 
-> 状态：第五份权威设计（2026-07-24；2026-07-26 closed-18 intake、execution-domain search 与公平计时修订）
+> 状态：第五份权威设计（2026-07-24；2026-07-27 closed-18 横向消费、execution-domain search、TileLang-aligned 评测口径与 Roofline 修订）
 >
 > 文件名为保持既有链接稳定而不变。本文不再把 `implementation family` 作为 compiler object、
 > registry key 或 emitter 概念；旧材料中的 `multi-lowering` 统一按本文定义解释为
@@ -140,6 +140,28 @@ J  --Emit_v-->  M0 --rho1--> M1 --rho2--> ... --rhok--> Mk
 
 候选 MLIR、schedule assignment、cost record 与 lowering trace 都是 production 内部状态或审计
 记录，不是新的 Lift artifact，也不进入 Replay 或 SCRC 证书。
+
+### 2.4 符号 extent valuation 不是新 J
+
+当 J 显式声明符号 extent `x*` 时，production invocation 可以提供一个具体 valuation
+`nu` 来 materialize 该执行实例。严格写法是 `M0 = Emit_v(J; nu)`；在当前 `c0` 已唯一
+确定 `nu` 时，正文继续简写为 `Emit_v(J)`。相同 `(J,v,nu)` 必须得到相同 `M0`。
+
+该 valuation 只能绑定 J 已经声明的符号维，因此：
+
+- J digest 与 denotation 不变，但 invocation/materialized-MLIR digest 必须绑定 `nu`；
+- `nu` 不是 C；C 仍只是 schedule prior，与 logical shape valuation 正交；
+- workload profile 可以同步更新 Source harness 的 shape/stride/grid 与 C valuation，但不得
+  创造 J 中没有的符号维；
+- J literal 不可由 backend profile 改写；把 literal 变成符号维会修改 J digest，必须由
+  frontend 产生新 artifact 并重走 Lift/TypeCheck/Gate1/Gate2；
+- 评测必须报告 exact `j_digest + nu + workload_profile`，不得把一个符号轴上的放大
+  写成所有 shape 的泛化证明。
+
+例如，当前 Flash preprocess J 的载体为 `[1,x0,33,16] -> [1,x0,64]`；只有
+`heads=x0` 可重新 valuation，`batch=1`/`sequence=33`/`head_dim=16`/`rounded=64` 都是
+literal。当前 Softmax 和 Liger RMSNorm 的外层 rows 同样是 literal `2`；后端必须保留
+这个边界，而不是为了跑大规模实验自行参数化。
 
 ## 3. J=A+B 在后端中的身份
 
@@ -307,13 +329,13 @@ sigma_target in SearchState
 
 ## 5. Deterministic J materialization
 
-对 schema/materializer 版本 v：
+对 schema/materializer 版本 v 与 J-declared extent valuation `nu`：
 
 \[
-M_0=\operatorname{Emit}_v(J).
+M_0=\operatorname{Emit}_v(J;\nu).
 \]
 
-同一 J 与同一 v 必须得到同一 canonical Intent MLIR。`Emit_v`：
+同一 J、同一 v 与同一 `nu` 必须得到同一 canonical Intent MLIR。`Emit_v`：
 
 - 不读取 Source、π、Gate 或 Q；
 - 不调用 LLM；
@@ -969,6 +991,78 @@ finalist 不混用初次排序样本，而按正反交替 traversal 做 fresh ro
 对比使用等数量、顺序交替的 Source/target paired batches，丢弃一个 untimed warmup pair。计时只覆盖
 prepared launch/graph，allocation 与 correctness synchronization 位于 timed closure 之外。
 
+### 18.1 TileLang-aligned 主评测、缓存状态与 Roofline
+
+E0--E4 只定义 candidate-space 因果轴，不足以定义一个可复现的高性能 Kernel
+实验。缓存状态与 Roofline 另由 `spec/lowering/backend-performance-measurement-v1.json`
+冻结；当前 canonical JSON content digest（不是文件原始字节 SHA-256）为
+`4894fa1e5cb77b6b1c13e21d5f967da58de5b04140373cc8255f749636fd57f8`，bundle/report 必须绑定当时的
+canonical spec digest。评测参考 TileLang/Triton 的
+kernel benchmark 实践：代码、module、page allocation 与 GPU 频率先 warm-up，性能主数字则用
+CUDA event 计时，并在每次 single-shot 前在 timed interval 之外管理/驱逐 L2。因此必须区分：
+
+- `warm-up`：所有正式计时的必要准备，不是一个性能结果组；
+- `warm-cache`：同一 address 反复 graph/launch 的调试或 deployment-specific 结果，不进入主表 aggregate；
+- `L2-controlled steady state`：预热后、每次计时前驱逐 L2、驱逐本身不计时；这是 CUDA
+  Kernel 主表的 publication estimand；当前 runner 为保持 protocol 兼容仍将其记为 `cold-data`；
+- `streaming`：轮转互不相交 replica 的压力/敏感性实验，只在 target 真实实现时放入附录。
+
+机器 spec 仍分别记录三种数据状态，以便审计：
+
+```text
+warm:
+  同一 prepared address 上重复执行；CUDA 可用 graph/event，报告 steady-state latency
+
+streaming:
+  轮转同一 certified invocation 的互不相交 replicas；实际触及 working set 必须严格大于 LLC
+
+cold-data:
+  每次 single-shot 前用严格大于 LLC/L2 的 target-side working set 驱逐；
+  eviction、allocation、binding 与 synchronization 不进入 timed interval
+```
+
+`cold-data` 只描述数据缓存状态，不包含进程启动、module load、JIT 或首次 page allocation。
+warm-cache graph per-invocation latency 与 L2-controlled single-shot event latency 是不同 estimand，禁止
+放进同一个几何平均。当前 RVV runner 实现三种 regime；CUDA 实现 warm-cache 与严格
+L2 eviction 的 `cold-data`。CUDA 不把无法真实转到大于 L2 的小 tensor 假写成
+streaming。正式主表报告 p50/中位 latency 与全部 paired batch；warm-cache、raw distribution、
+streaming/cold 敏感性与 compile time 可置于附录或 artifact，不为每个单元格子重复堆叠。
+
+对 materialized J 定义逻辑算术强度：
+
+\[
+I_J=\frac{\operatorname{FLOP}(J)}
+{\operatorname{BoundaryInputBytes}(J)+\operatorname{BoundaryOutputBytes}(J)}.
+\]
+
+分子只计算 J typed graph 中可审计的 floating operations；transcendental、comparison、conversion、
+select 与 dynamic control 单独记数，不使用任意“等效 FLOP”权重。分母是 certified boundary 的逻辑
+最小流量，不是 DRAM transaction。target 端另实测 sustained copy bandwidth 与 TF32-disabled FP32
+compute ceiling；有权限时再把 H100 的 DRAM/L2 counters 作为独立事实加入，不能用 logical bytes
+冒充 hardware traffic。
+
+低算术强度只决定 asymptotic Roofline 在 bandwidth 一侧，不能单独证明当前运行已撞到 memory wall。
+当实测 latency 快于校准的 logical DRAM Roofline lower bound（容差后仍小于 `0.95x`）时，
+这只能说明 cache reuse 或 logical-traffic/ceiling 不匹配，必须禁止 DRAM memory-wall claim。
+当 latency 超过 lower bound `2x` 时，不再称为 roof-approaching；超过 `10x` 时还必须显式
+写 `latency_or_unmodeled_work_dominated`。只有 J cost complete、不含未建模 SFU、低算术强度且
+latency 位于 `[0.95,2.0]x` logical lower bound 内时，logical Roofline 才能单独支撑 memory-wall
+claim。当前 closed-18 的正式 closure case
+边界数据只有约 1--8 KiB，所以它们首先是 correctness/small-latency workload；不能因 Softmax、Norm
+或 copy 的名字就写成 DRAM-bound。memory-wall 机制实验使用同一个符号 J 的独立大实例：首个冻结
+profile 将 `masked_copy` 的 `x0` 实例化为 16,777,216，Source 的 N/grid、RefJ 与 target 同步绑定，
+形成 128 MiB boundary。它不改变 J 或 compiler path，但把 D 扩展到同时超过 RTX 5090D 96 MiB L2
+与 H100 50 MiB L2 的实际 workload。只有该类 large-shape/硬件-counter 证据才可支撑 bandwidth claim。
+
+### 18.2 C 的同宇宙、同预算 target-side 配对
+
+C-prior 与 Erase-C 不能只在 exporter 中各打印一份 requested order，而只编译/测量其中一份。portable
+bundle 必须访问两条 order，分别按“不同 post-pass MLIR state 或 exact failure”消耗相同预算，运输
+二者 concrete-state union，并用 MLIR digest 折叠重复 state。target runner 在同一次 candidate
+correctness/timing receipt 上分别求两条 order 的 best；C gain 定义为
+`Erase-C best latency / C-prior best latency`。这样 C 只改变有限预算下的访问顺序，候选宇宙、hard
+admission、Q/D、实际 executable 和 profiler 均相同。
+
 报告指标至少包括：
 
 - absolute latency/throughput；
@@ -994,6 +1088,38 @@ E3 的 hard-safe candidate set 必须包含 E2 的全部候选；所有性能比
 
 不同结构路径必然经过不同的高层 transformation trace；“同一 code generator”指共享同一 backend
 revision 和 terminal target pipeline，不要求结构分支使用完全相同的高层 rewrite。
+
+### 18.3 closed-18 横向矩阵，不以代表 Kernel 代替全量实验
+
+主实验的基本单位不是“选几个算子讲故事”，而是一个显式 coverage cell：
+
+```text
+(frozen j_digest,
+ target,
+ exact J-declared extent valuation nu,
+ workload profile,
+ experiment arm,
+ compiler/toolchain digest,
+ Q/D protocol)
+```
+
+当前主矩阵必须从 `corpus/production-jc-v1` 的 **18/18** 条目出发，并在 RTX 5090D、H100
+与 RVV4 上横向扩展。对每个 target：
+
+- 18/18 都要 materialize、compile 并给出 Target--RefJ correctness 或精确的 fail-closed 状态；
+- CUDA/H100 在 Source 可执行时，18/18 都进入 Source--RefJ 与 Source--Target 主性能表；
+- E0--E4、L0/L1、N0--N3 对全 18 条目执行；不适用的 transformation 记为 `not_matched`，
+  不从 all-corpus aggregate 中删除；
+- 每个 J 除 closed valuation 外，还要运行所有已登记且只绑定 J-declared symbols 的
+  medium/large valuation；没有符号轴时记 `literal_shape_only`，不伪造大 shape；
+- 报告同时给出 all-corpus、structure-applicable subset 与每 Kernel 数字，禁止只保留 winner
+  或只报加速的 case；
+- target 缺 Source/Replay、J 缺某符号轴、pass 不匹配、compile failure 与 Q/D failure 都是
+  矩阵内的显式状态，不是被静默跳过的空格。
+
+只有开销极高、用于解释机制而非建立性能事实的证据，例如 Nsight/CUPTI 详细 counters、
+Roofline 分解和单变量 instruction-level 剖析，可以在每类结构上选 1--2 个代表 valuation。
+这只是降低“解释证据”成本，不缩小 18-J 主性能、correctness、E2/E3 或 C 消融的横向覆盖。
 
 ## 19. 版本与演进规则
 
@@ -1077,6 +1203,44 @@ closure；RVV4 的真实 MLIR materialized/fused 搜索 18/18 Target–RefJ corr
 同 J/target 的内部因果证据。完整压缩报告与 SHA-256 固化在
 `doc/results/production-backend-closed-18/`。
 
+上述数字首先是 **closed valuation 上的全量消费与因果基线**。它们不等于已完成
+production-shape 论文主表：多数原始 closure workload 仅有 KiB 级 boundary，warm-cache 小延迟
+不能用来主张 DRAM wall。新的 horizontal matrix 必须按第 18.1--18.3 节重新运行
+L2-controlled、J-symbolic production valuations，并将 literal-only 格子显式保留。不得把旧的
+closed-valuation aggregate 重命名为新主实验。
+
+### 20.2 下一个冻结里程碑：18-J 横向 lowering 与评测
+
+当前 18 个 J 按 A 结构覆盖四类横向路径：
+
+| 结构类 | frozen J | 当前共性瓶颈 | 下一批真实 MLIR state |
+|---|---|---|---|
+| dense/masked elementwise | DYT、GeGLU、SwiGLU、masked copy | tail/vector width、grid 遍历、端到端内存合并 | masked vec2/vec4 与 target-derived grid-stride/vector layout |
+| single reduction + epilogue | Flash preprocess、fused-add RMSNorm、KLDiv、Liger RMSNorm、masked row square-sum、xFormers RMSNorm、xFormers RMSNorm-add | producer 重读、中间物化、单一 reduction topology | producer/reduction/epilogue 单趟 state，subgroup/workgroup/multi-stage 独立搜索 |
+| multiple reductions + epilogue | Flash one-pass LayerNorm、JSD、LayerNorm、Softmax | 多个 reduce 重复读 row，大 N 下 tiled path 只处理单 reduce | 同一 row pass 中的多 accumulator/reduction state，每个 state 再独立 retile |
+| scan/effect/contraction/gather | Sparsemax、TVD、PolyNorm | scan/update/control 或 contraction/gather 落到 generic/materialized path | registered prefix/segmented-scan、effect-safe update 与 contraction/gather tiling states |
+
+实施顺序以“同一 compiler mechanism 横向覆盖一类 J”为原则，不以单个 benchmark 得分为目标：
+
+1. **全量 coverage receipt 先行。** 任何新 pass 提交都要对 18/18 运行 structural match、hard
+   admission、post-pass digest 与 correctness；`not_matched` 也是可审计结果。
+2. **CUDA/5090D 与 H100 共用高层 transformation。** 先完成 tail-safe vector load/store、多 reduction
+   单趟累积与 producer/epilogue fusion，再补 scan/effect/contraction 状态；只由 target capability
+   选择 NVVM/MMA 终端能力，不分裂出 kernel-name recipe。
+3. **RVV 与 CUDA 同步横向扩展。** 先把 workload-profile/symbolic valuation 接入 RVV portable
+   bundle，再实现 dynamic-VL strip mining、SEW/LMUL 状态、vector reduction/scan 和可审计的
+   multicore state；不把工作停在静态 tile 与 whole-graph fusion。
+4. **搜索与 C 做横向收敛。** 每类 transformation 都进入同一 candidate-state universe；C 只重排
+   全量状态。主表对 18/18 运行 E2/E3/E4，同时给 all-corpus 与 applicable subset。
+5. **性能验收不代替 correctness。** 所有候选仍先 Target--RefJ；有 Source/Replay 的 target 再完成
+   held-out direct edges。主 latency 用 L2-controlled event protocol，Nsight/Roofline 只解释每类机制，
+   不代替全 18 表。
+
+禁止为了某一 Kernel 的数字在 Python 中增加 target emission、按 case name 切换 compiler pass、
+改写 frozen J literal 或只运行一个适用子集后声称全量提升。当前仅有一个 J 命中的结构
+也可以实现，但 matcher、pass contract、negative test 与 receipt 必须仍然 source-neutral，并在
+18-J matrix 中呈现其他 17 项的 `not_matched`。
+
 ### 阶段 B0：IntentOp/ABC ownership 对齐
 
 **当前状态：核心入口已落地，继续以增量方式补齐 consumer。**
@@ -1138,13 +1302,16 @@ rows-per-block 进入 topology digest 和 actual-state evidence。candidate budg
 
 ### 阶段 B4：实验与消融
 
-**当前状态：E2/E3、E3/E4、L0/L1、N0--N3 与 G0/G1 已按 v2 spec 在 18-J corpus 上执行并归档。**
+**当前状态：closed valuation 上的 E2/E3、E3/E4、L0/L1、N0--N3 与 G0/G1 已按
+v2 spec 在 18-J corpus 上执行并归档；第 18.1--18.3 节的全 target、L2-controlled、
+production-valuation 横向矩阵是下一个未完成里程碑。**
 
 - E2/E3 正式 CUDA 主实验报告 search cost/time-to-best、all-corpus、applicable subset 与三边 closure；
 - G0/G1 从同一候选回执报告 materialization/dispatch elimination，不以 winner 名称反推适用性；
 - E3/E4 证明 C 的低预算 ordering 作用；L0/L1 隔离 local-B；N0--N3 隔离数值机制；
 - H100/RVV 严格标明缺失的 Replay/Source 边，不把 Target–RefJ correctness 冒充 formal closure；
-- 后续新 J 继续复用同一 machine spec、receipt schema 与 all-corpus/not-matched 口径。
+- 当前 18 J 与后续新 J 均复用同一 machine spec、receipt schema 与 all-corpus/not-matched
+  口径；主表不因机制解释只取代表点而收缩。
 
 ## 21. 最终系统表述
 

@@ -1,11 +1,10 @@
 //===- ConvertIntentElementwiseToGPU.cpp - elementwise -> gpu.launch ------===//
 //
 // Lowers a PURE-elementwise intent func (a straight-line map_unary/map_binary
-// graph with NO reduce) to ONE read-once, block-cooperative `gpu.launch`: one
-// block per row, the feature dim split over the block's threads, each thread
-// caching its columns once in SSA registers (NOT a memref.alloca), per-row
-// uniform scalars hoisted once, and a multi-output epilogue writing each result
-// from the register tile. There is NO `gpu.all_reduce` — nothing is reduced.
+// graph with NO reduce) to ONE block-cooperative `gpu.launch`. Small rows use a
+// read-once per-thread SSA register tile; large tensors switch to a bounded-size
+// flat grid-stride loop so compiler IR does not grow with the element count.
+// There is NO `gpu.all_reduce` — nothing is reduced.
 //
 // This is the sibling of `convert-intent-row-reduction-to-gpu`: that pass owns
 // the funcs with >=1 reduce; this pass owns the pure-map funcs. The two match()
@@ -85,6 +84,8 @@ static Value emitSplatScalarConstant(OpBuilder &b, Location loc,
 }
 
 static void attachElementwiseStateReceipt(func::FuncOp lowered, int64_t threads,
+                                          int64_t gridBlocks,
+                                          bool gridStrideFlat,
                                           StringRef approximationMode,
                                           bool oneDimensionalResults,
                                           unsigned hostValueCaptureCount) {
@@ -94,6 +95,9 @@ static void attachElementwiseStateReceipt(func::FuncOp lowered, int64_t threads,
   if (oneDimensionalResults)
     trace.push_back(
         StringAttr::get(context, "cuda.elementwise.rank1.output.v1"));
+  if (gridStrideFlat)
+    trace.push_back(
+        StringAttr::get(context, "cuda.elementwise.flat_grid_stride.v1"));
   if (approximationMode == "native_tanh")
     trace.push_back(
         StringAttr::get(context, "cuda.numeric.tanh_native_ptx.f32.v1"));
@@ -118,6 +122,10 @@ static void attachElementwiseStateReceipt(func::FuncOp lowered, int64_t threads,
   lowered->setAttr("intent.backend.all_reduce_count", IntegerAttr::get(i64, 0));
   lowered->setAttr("intent.backend.block_threads",
                    IntegerAttr::get(i64, threads));
+  lowered->setAttr("intent.backend.grid_blocks",
+                   IntegerAttr::get(i64, gridBlocks));
+  lowered->setAttr("intent.backend.grid_stride_loop_count",
+                   IntegerAttr::get(i64, gridStrideFlat ? 1 : 0));
   lowered->setAttr("intent.backend.predicated_value_if_count",
                    IntegerAttr::get(i64, 0));
   lowered->setAttr("intent.backend.folded_constexpr_select_count",
@@ -154,6 +162,7 @@ struct ElementwiseLowering {
   int64_t M = 0, N = 0, T = 0, K = 0, gridBlocks = 0;
   bool oneDimensionalResults = false;
   bool flattenContiguous = false;
+  bool gridStrideFlat = false;
   bool tailMasked = false;
   // Contiguous vectorization (N3/N4): prefer float4 when K is divisible by 4,
   // otherwise use float2 when K is divisible by 2. Every Row arg/result must
@@ -418,6 +427,26 @@ struct ElementwiseLowering {
     tailMasked = N % T != 0;
     K = (N + T - 1) / T;
     gridBlocks = M;
+
+    // Keep the read-once register tile for the small rows it was designed for,
+    // but never materialize O(N/T) copies of the map DAG in compiler IR.  A
+    // flat grid-stride loop emits one scalar body and covers the complete M*N
+    // domain with coalesced lanes.  In-place states remain on the historical
+    // full-register path because that path's read-before-write proof is stronger;
+    // reject an excessively large in-place tile instead of weakening it.
+    constexpr int64_t maxUnrolledValuesPerThread = 32;
+    if (K > maxUnrolledValuesPerThread) {
+      for (int64_t alias : inplaceArg)
+        if (alias >= 0)
+          return failure();
+      gridStrideFlat = true;
+      tailMasked = false;
+      K = 1;
+      vectorWidth = 1;
+      numVectorTiles = 0;
+      gridBlocks = flatGridBlocks(M * N, T);
+      return success();
+    }
 
     // Vector gate: K a multiple of 4 (preferred) or 2, every Row arg + every
     // result view fully
@@ -739,9 +768,20 @@ struct ElementwiseLowering {
     //    args still index cols[k]/once, so they need no retype.
     cols.clear();
     cols.resize(K);
+    Value logicalRow = bx;
+    scf::ForOp gridStrideLoop;
     Type vectorTy = VectorType::get({vectorWidth}, storageType);
     SmallVector<Value> vecIdx; // vector tile index tx+vt*T (reused by store)
-    if (vectorWidth > 1) {
+    if (gridStrideFlat) {
+      Value flatIndex;
+      gridStrideLoop = emitGridStride(b, loc, bx, tx, T, gridBlocks, M * N,
+                                      flatIndex);
+      Value cN = b.create<arith::ConstantIndexOp>(loc, N);
+      cols[0] = b.create<arith::RemUIOp>(loc, flatIndex, cN);
+      logicalRow = M == 1
+                       ? b.create<arith::ConstantIndexOp>(loc, 0).getResult()
+                       : b.create<arith::DivUIOp>(loc, flatIndex, cN).getResult();
+    } else if (vectorWidth > 1) {
       vecIdx.resize(numVectorTiles);
       Value cWidth = b.create<arith::ConstantIndexOp>(loc, vectorWidth);
       Value flatBlockBase;
@@ -790,10 +830,10 @@ struct ElementwiseLowering {
       if (argRoles[i] == Role::Row) {
         // Broadcast Row (div>1): one source row shared by `div` consecutive
         // blocks -> source row index = bx / div (rope cos: token = bx/n_head).
-        Value ridx = bx;
+        Value ridx = logicalRow;
         if (argRowDiv[i] != 1) {
           Value d = b.create<arith::ConstantIndexOp>(loc, argRowDiv[i]);
-          ridx = b.create<arith::DivUIOp>(loc, bx, d);
+          ridx = b.create<arith::DivUIOp>(loc, logicalRow, d);
         }
         SmallVector<Value> vals(K);
         if (vectorWidth > 1) {
@@ -856,7 +896,7 @@ struct ElementwiseLowering {
                                       ValueRange{vecIdx[vt]});
           else
             b.create<memref::StoreOp>(loc, vec, outMems[j],
-                                      ValueRange{bx, vecIdx[vt]});
+                                      ValueRange{logicalRow, vecIdx[vt]});
         }
       } else {
         for (int64_t k = 0; k < K; ++k) {
@@ -868,7 +908,7 @@ struct ElementwiseLowering {
                                         ValueRange{cols[k]});
             else
               b.create<memref::StoreOp>(loc, out, outMems[j],
-                                        ValueRange{bx, cols[k]});
+                                        ValueRange{logicalRow, cols[k]});
             continue;
           }
           auto guarded = b.create<scf::IfOp>(
@@ -882,17 +922,19 @@ struct ElementwiseLowering {
                 loc, out, outMems[j], ValueRange{cols[k]});
           else
             thenBuilder.create<memref::StoreOp>(
-                loc, out, outMems[j], ValueRange{bx, cols[k]});
+                loc, out, outMems[j], ValueRange{logicalRow, cols[k]});
         }
       }
     }
 
+    if (gridStrideLoop)
+      b.setInsertionPointAfter(gridStrideLoop);
     b.create<gpu::TerminatorOp>(loc);
     b.setInsertionPointAfter(launch);
     b.create<func::ReturnOp>(loc);
 
     attachElementwiseStateReceipt(
-        gpuFn, T,
+        gpuFn, T, gridBlocks, gridStrideFlat,
         containsTanh
             ? (requestTanhApproximation == "native-ptx" ? "native_tanh"
                                                          : "stable_tanh")

@@ -1,6 +1,7 @@
 add_mlir_library(MLIRIntentConversionCommon
   ConvertIntentToLinalg.cpp
   ExpandRsqrtForLibm.cpp
+  TileLinalgByIteratorKind.cpp
   ForwardBufferResultsToOutParams.cpp
   LowerDisjointMemrefCopyToLoops.cpp
 
@@ -23,6 +24,8 @@ add_mlir_library(MLIRIntentConversionCommon
   MLIRMathTransforms
   MLIRMemRefDialect
   MLIRSCFDialect
+  MLIRSCFTransforms
+  MLIRTilingInterface
 )
 
 add_subdirectory(CUDA)

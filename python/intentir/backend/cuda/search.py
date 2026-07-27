@@ -828,6 +828,14 @@ _CUDA_ORDERING_PRIOR_ROLES = frozenset(
     }
 )
 
+# CUDA row reductions balance parallelism against per-thread register/dependency
+# pressure around a small strip of logical columns.  C describes the logical
+# reduction tile, so Retile(C,target) maps it to threads through this strip size
+# rather than treating a Source BLOCK_SIZE as either CUDA threads or one exact
+# compiler tile.  All neighboring thread counts remain in the same universe and
+# are still measured; this constant affects bounded-search order only.
+_CUDA_ROW_PREFERRED_ELEMENTS_PER_THREAD = 8
+
 
 def _numeric_priors(state: BackendSearchState) -> tuple[CPrior, ...]:
     """Return only positive scalar C hints that can rank existing schedules.
@@ -850,6 +858,9 @@ def _numeric_priors(state: BackendSearchState) -> tuple[CPrior, ...]:
 def _c_score(
     schedule: Mapping[str, int | bool | str],
     priors: tuple[CPrior, ...],
+    *,
+    row_elements_per_thread: int = _CUDA_ROW_PREFERRED_ELEMENTS_PER_THREAD,
+    elementwise_thread_hint: int | None = None,
 ) -> float:
     if not priors:
         return 0.0
@@ -865,11 +876,29 @@ def _c_score(
 
     distances: list[float] = []
     for prior in priors:
+        row_threads = positive_values(("block_threads",))
+        is_row_schedule = bool(row_threads and "tile_cols" in schedule)
+        is_elementwise_schedule = bool(
+            row_threads and "flatten_contiguous" in schedule
+        )
         if prior.role == "execution_warps":
             values = positive_values(("num_warps",))
             if not values:
                 threads = positive_values(("block_threads",))
                 values = tuple(value / 32.0 for value in threads)
+        elif prior.role in {
+            "reduction_tile_extent",
+            "tile_extent",
+            "constexpr",
+        } and is_row_schedule:
+            # A Source reduction tile describes logical row coverage, not a CUDA
+            # thread count.  Retile it through the target's preferred logical
+            # strip per thread.  For example a 4096-column row maps first to 512
+            # threads, while 1024 and 128 columns map to 128 and 32 threads.
+            values = tuple(
+                thread_count * row_elements_per_thread
+                for thread_count in row_threads
+            )
         elif prior.role == "reduction_tile_extent":
             values = positive_values(
                 ("tile_cols", "tile_rows", "tile_width", "block_threads")
@@ -883,7 +912,13 @@ def _c_score(
             )
         if not values:
             continue
-        value = float(prior.value)
+        value = float(
+            elementwise_thread_hint
+            if is_elementwise_schedule
+            and elementwise_thread_hint is not None
+            and prior.role in {"tile_extent", "constexpr"}
+            else prior.value
+        )
         distances.append(min(abs(math.log2(candidate / value)) for candidate in values))
     if not distances:
         return float("inf")
@@ -891,6 +926,58 @@ def _c_score(
     # discarded all but the easiest-to-match value and produced large zero-score
     # ties, especially when tile and reduction hints coexisted.
     return statistics.fmean(distances)
+
+
+def _row_elements_per_thread(state: BackendSearchState) -> int:
+    """Map J compute density to a CUDA row-retile ordering prior.
+
+    Dense per-element transcendental maps benefit from exposing more lanes to
+    hide special-function latency.  Per-row normalization functions such as one
+    rsqrt do not trigger this rule.  This is source/name independent and never
+    changes hard admission or the candidate universe.
+    """
+
+    payload = state.base.j.to_json()["intent"]["intent_function"]["body"]
+
+    def contains_dense_transcendental(value: Any) -> bool:
+        if isinstance(value, Mapping):
+            if (
+                value.get("op") == "map_unary"
+                and value.get("attrs", {}).get("fn")
+                in {"exp", "log", "sigmoid", "tanh"}
+                and len(value.get("type", {}).get("shape", [])) >= 2
+            ):
+                return True
+            return any(contains_dense_transcendental(item) for item in value.values())
+        if isinstance(value, list):
+            return any(contains_dense_transcendental(item) for item in value)
+        return False
+
+    return 4 if contains_dense_transcendental(payload) else 8
+
+
+def _elementwise_thread_hint(state: BackendSearchState) -> int | None:
+    """Retile a logical row packet to enough CUDA threads for target occupancy."""
+
+    extents = state.base.extents
+    for output in state.base.j.intent.outputs:
+        if len(output.shape) != 2:
+            continue
+        rows, columns = (
+            extents[item] if isinstance(item, str) else item
+            for item in output.shape
+        )
+        if not isinstance(rows, int) or not isinstance(columns, int):
+            return None
+        # Keep roughly 64K logical threads in flight across independent rows,
+        # while never assigning more lanes than the row can use.  This maps
+        # 128x1024 to 512 threads and 2048x4096 to 64 threads on the same target.
+        desired = math.ceil(65536 / max(1, rows))
+        desired = max(64, min(1024, desired))
+        desired = 1 << max(6, round(math.log2(desired)))
+        row_cap = 1 << max(5, math.ceil(math.log2(max(1, columns))))
+        return min(desired, row_cap, 1024)
+    return None
 
 
 def enumerate_cuda_candidates(
@@ -940,6 +1027,8 @@ def enumerate_cuda_candidates(
         if axes is None or axes.use_c_prior
         else ()
     )
+    row_elements_per_thread = _row_elements_per_thread(state)
+    elementwise_thread_hint = _elementwise_thread_hint(state)
     specialized: list[CudaSearchCandidate] = []
 
     elementwise_schedule_bases = [
@@ -986,7 +1075,11 @@ def enumerate_cuda_candidates(
                 ELEMENTWISE_FAST_PATH_ID,
                 schedule.pass_argument,
                 values,
-                _c_score(values, priors),
+                _c_score(
+                    values,
+                    priors,
+                    elementwise_thread_hint=elementwise_thread_hint,
+                ),
                 tuple(transformations),
                 tuple(requirements),
                 (
@@ -1074,7 +1167,11 @@ def enumerate_cuda_candidates(
                 ROW_FAST_PATH_ID,
                 schedule.pass_argument,
                 values,
-                _c_score(values, priors),
+                _c_score(
+                    values,
+                    priors,
+                    row_elements_per_thread=row_elements_per_thread,
+                ),
                 tuple(transformations),
                 tuple(requirements),
                 (

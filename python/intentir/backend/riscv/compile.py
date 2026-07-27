@@ -33,6 +33,33 @@ MATTR = os.environ.get("INTENT_RISCV_MATTR", "+v,+zfh")
 RVV_B_FUSION = "riscv.b.readonly_whole_graph_fusion.v1"
 
 
+def _sha_file(path: os.PathLike[str] | str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def toolchain_fingerprint() -> str:
+    files = {
+        "intent_opt": str(INTENT_OPT),
+        "mlir_opt": str(MLIR_OPT),
+        "mlir_translate": str(MLIR_TRANSLATE),
+        "opt": str(OPT),
+        "llc": str(LLC),
+    }
+    return content_digest(
+        {
+            "target": {"triple": TRIPLE, "mattr": MATTR},
+            "files": {
+                name: {"path": path, "sha256": _sha_file(path)}
+                for name, path in files.items()
+            },
+        }
+    )
+
+
 def _run_text(command: list[str], *, stdin: str) -> str:
     process = subprocess.run(
         command,
@@ -111,6 +138,8 @@ class RiscvSchedule:
     opt_level: int
     vectorize: bool
     vector_bits: int = 128
+    parallel_tile: int = 0
+    reduction_tile: int = 0
 
     def __post_init__(self) -> None:
         if self.opt_level not in {2, 3}:
@@ -119,12 +148,24 @@ class RiscvSchedule:
             raise TypeError("vectorize must be bool")
         if self.vector_bits not in {0, 128}:
             raise ValueError("RVV vector_bits must be 0 or native VLEN=128")
+        for name, value in (
+            ("parallel_tile", self.parallel_tile),
+            ("reduction_tile", self.reduction_tile),
+        ):
+            if type(value) is not int:
+                raise TypeError(f"RVV {name} must be int")
+            if value < 0 or value > 1024:
+                raise ValueError(f"RVV {name} must be in [0, 1024]")
+            if value and value & (value - 1):
+                raise ValueError(f"RVV {name} must be zero or a power of two")
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "opt_level": self.opt_level,
             "vectorize": self.vectorize,
             "vector_bits": self.vector_bits,
+            "parallel_tile": self.parallel_tile,
+            "reduction_tile": self.reduction_tile,
         }
 
 
@@ -153,6 +194,12 @@ class RiscvTransformationReceipt:
     structured_after_sha256: str
     linalg_ops_before: int
     linalg_ops_after: int
+    parallel_tile_requested: int = 0
+    reduction_tile_requested: int = 0
+    parallel_tile_applied: int = 0
+    reduction_tile_applied: int = 0
+    linalg_tiled_ops: int = 0
+    generated_tile_loops: int = 0
 
     @property
     def topology_digest(self) -> str:
@@ -164,6 +211,12 @@ class RiscvTransformationReceipt:
             "structured_after_sha256": self.structured_after_sha256,
             "linalg_ops_before": self.linalg_ops_before,
             "linalg_ops_after": self.linalg_ops_after,
+            "parallel_tile_requested": self.parallel_tile_requested,
+            "reduction_tile_requested": self.reduction_tile_requested,
+            "parallel_tile_applied": self.parallel_tile_applied,
+            "reduction_tile_applied": self.reduction_tile_applied,
+            "linalg_tiled_ops": self.linalg_tiled_ops,
+            "generated_tile_loops": self.generated_tile_loops,
         }
 
 
@@ -214,6 +267,14 @@ def _function_symbol(intent_mlir: str) -> str:
     return match.group(1)
 
 
+def _module_i64_attr(mlir: str, name: str, *, default: int = 0) -> int:
+    match = re.search(
+        rf"\b{re.escape(name)}\s*=\s*([0-9]+)\s*:\s*i64\b",
+        mlir,
+    )
+    return int(match.group(1)) if match is not None else default
+
+
 def _lower_to_llvm_ir(
     state: BackendSearchState,
     candidate: RiscvLoweringCandidate,
@@ -230,12 +291,41 @@ def _lower_to_llvm_ir(
         )
     else:
         structured = linalg
+    schedule = candidate.schedule
+    if schedule.parallel_tile or schedule.reduction_tile:
+        structured = _run_text(
+            [
+                INTENT_OPT,
+                (
+                    "-tile-linalg-by-iterator-kind="
+                    f"parallel-tile={schedule.parallel_tile} "
+                    f"reduction-tile={schedule.reduction_tile}"
+                ),
+                "-canonicalize",
+                "-cse",
+            ],
+            stdin=structured,
+        )
     receipt = RiscvTransformationReceipt(
         linalg_before_sha256=hashlib.sha256(linalg.encode()).hexdigest(),
         structured_after_sha256=hashlib.sha256(structured.encode()).hexdigest(),
         linalg_ops_before=len(re.findall(r"\blinalg\.[A-Za-z0-9_]+", linalg)),
         linalg_ops_after=len(
             re.findall(r"\blinalg\.[A-Za-z0-9_]+", structured)
+        ),
+        parallel_tile_requested=schedule.parallel_tile,
+        reduction_tile_requested=schedule.reduction_tile,
+        parallel_tile_applied=_module_i64_attr(
+            structured, "intent.schedule.parallel_tile"
+        ),
+        reduction_tile_applied=_module_i64_attr(
+            structured, "intent.schedule.reduction_tile"
+        ),
+        linalg_tiled_ops=_module_i64_attr(
+            structured, "intent.schedule.linalg_tiled_op_count"
+        ),
+        generated_tile_loops=_module_i64_attr(
+            structured, "intent.schedule.generated_loop_count"
         ),
     )
     front = [
@@ -370,4 +460,5 @@ __all__ = [
     "RiscvTransformationState",
     "TRIPLE",
     "compile_riscv_object",
+    "toolchain_fingerprint",
 ]

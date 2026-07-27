@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 import intentir.backend.riscv.compile as rvv
+import intentir.backend.riscv.search as rvv_search
 from intentir.backend.contract_capabilities import B_CAP_READONLY_INPUTS
 from intentir.backend.cuda.production_cases import (
     constexpr_input_bindings,
@@ -44,6 +45,20 @@ def test_rvv_transformation_and_schedule_are_separate_search_axes() -> None:
         B_CAP_READONLY_INPUTS,
     )
     assert materialized.candidate_id != fused.candidate_id
+
+
+def test_rvv_retile_schedule_is_a_content_addressed_axis() -> None:
+    untiled = _candidate(False)
+    tiled = rvv.RiscvLoweringCandidate(
+        rvv.RiscvTransformationState(False),
+        rvv.RiscvSchedule(3, True, 128, parallel_tile=4, reduction_tile=8),
+    )
+
+    assert tiled.schedule.parallel_tile == 4
+    assert tiled.schedule.reduction_tile == 8
+    assert tiled.candidate_id != untiled.candidate_id
+    with pytest.raises(ValueError, match="power of two"):
+        rvv.RiscvSchedule(3, True, 128, parallel_tile=3)
 
 
 def test_rvv_fusion_fails_before_lowering_without_b_capability(monkeypatch) -> None:
@@ -170,3 +185,44 @@ def test_unused_abi_inputs_do_not_suppress_readonly_graph_fusion() -> None:
 
     assert not snapshot.j.boundary.aliases
     assert B_CAP_READONLY_INPUTS in view.capabilities
+
+
+def test_rvv_c_reorders_but_does_not_change_retile_universe() -> None:
+    snapshot, _path = load_production_snapshot(
+        _ROOT / "corpus" / "production-jc-v1",
+        "softmax",
+    )
+    assert snapshot.c is not None
+    prepared = prepare_production_workload("softmax")
+    case = build_workload_jc_suite(prepared, snapshot.j, snapshot.c).cases[0]
+    constexpr = constexpr_input_bindings(
+        snapshot.j,
+        case.refeval.input_binding_map,
+        case.values,
+    )
+    materialized = materialize_j(
+        snapshot.j,
+        case.refeval.dims_map,
+        constexpr_bindings=constexpr,
+    )
+    target = BackendTarget("riscv", "rv64gcv_zfh", ("vlen128",))
+    with_c = rvv_search.plan_riscv_search(
+        attach_c(materialized, snapshot.c, target)
+    )
+    erased = rvv_search.plan_riscv_search(attach_c(materialized, None, target))
+
+    assert with_c.universe_digest == erased.universe_digest
+    assert {item.candidate_id for item in with_c.universe} == {
+        item.candidate_id for item in erased.universe
+    }
+    assert with_c.c_prior_order != with_c.erase_c_order
+    assert erased.c_prior_order == erased.erase_c_order
+    by_id = {item.candidate_id: item for item in with_c.universe}
+    frozen = by_id[with_c.frozen_c_candidate_id]
+    assert not frozen.transformation.fuse_elementwise
+    assert frozen.schedule.parallel_tile == 128
+    assert frozen.schedule.reduction_tile == 0
+    record = with_c.to_record()
+    assert record["same_universe_for_erase_c_and_c_prior"] is True
+    assert record["c_controls_admission"] is False
+    assert record["candidate_universe_count"] == 52

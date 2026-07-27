@@ -82,6 +82,18 @@ def test_c_schedule_score_consumes_roles_without_changing_states() -> None:
     assert cuda_search._c_score({"num_warps": 2}, warps) == 1.0
     assert cuda_search._c_score({"block_threads": 1024}, constexpr) == 0.0
     assert cuda_search._c_score({"block_threads": 512}, constexpr) == 1.0
+    assert cuda_search._c_score(
+        {"block_threads": 512, "tile_cols": 32},
+        (CPrior("reduction", "reduction_tile_extent", 4096, "n1", "k1"),),
+    ) == 0.0
+    assert cuda_search._c_score(
+        {"block_threads": 128, "tile_cols": 32},
+        (CPrior("reduction", "reduction_tile_extent", 4096, "n1", "k1"),),
+    ) == 2.0
+    assert cuda_search._c_score(
+        {"block_threads": 512, "tile_cols": 32},
+        (CPrior("tile", "tile_extent", 4096, "n1", "k1"),),
+    ) == 0.0
     assert cuda_search._c_score({"tile_cols": 32}, mixed) == 0.5
     assert cuda_search._c_score({"tile_rows": 16}, mixed) == 0.5
     assert cuda_search._c_score({"unrelated": 16}, mixed) == float("inf")

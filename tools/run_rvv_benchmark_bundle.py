@@ -27,7 +27,7 @@ from typing import Any, Mapping
 
 
 BUNDLE_PROTOCOL = "intentir.production.rvv-search-bundle.v2"
-REPORT_PROTOCOL = "intentir.production.rvv-remote-performance.v2"
+REPORT_PROTOCOL = "intentir.production.rvv-remote-performance.v3"
 
 
 class KernelFailure(RuntimeError):
@@ -64,6 +64,46 @@ def _dtype_size(dtype: str) -> int:
         "f32": 4,
         "f64": 8,
     }[key]
+
+
+def _cache_size_bytes(text: str) -> int:
+    value = text.strip().upper()
+    multiplier = 1
+    if value.endswith("K"):
+        multiplier = 1024
+        value = value[:-1]
+    elif value.endswith("M"):
+        multiplier = 1024 * 1024
+        value = value[:-1]
+    return int(value) * multiplier
+
+
+def _cpu_cache_record() -> dict[str, Any]:
+    caches = []
+    root = Path("/sys/devices/system/cpu/cpu0/cache")
+    for index in sorted(root.glob("index*")):
+        try:
+            cache_type = (index / "type").read_text().strip()
+            level = int((index / "level").read_text().strip())
+            size_bytes = _cache_size_bytes((index / "size").read_text())
+            line_bytes = int((index / "coherency_line_size").read_text().strip())
+        except (OSError, ValueError):
+            continue
+        caches.append(
+            {
+                "level": level,
+                "type": cache_type,
+                "size_bytes": size_bytes,
+                "coherency_line_bytes": line_bytes,
+            }
+        )
+    data_caches = [
+        item for item in caches if item["type"] in {"Data", "Unified"}
+    ]
+    last_level_bytes = max(
+        (item["size_bytes"] for item in data_caches), default=0
+    )
+    return {"levels": caches, "last_level_data_cache_bytes": last_level_bytes}
 
 
 def _encoded_values(record: Mapping[str, Any]) -> list[Any]:
@@ -138,10 +178,9 @@ def _descriptor_type(rank: int) -> type[ctypes.Structure]:
     )
 
 
-def _descriptor(buffer: Any, shape: list[int]) -> ctypes.Structure:
+def _descriptor_from_address(address: int, shape: list[int]) -> ctypes.Structure:
     descriptor_type = _descriptor_type(len(shape))
     result = descriptor_type()
-    address = ctypes.addressof(buffer)
     result.allocated = address
     result.aligned = address
     result.offset = 0
@@ -155,6 +194,10 @@ def _descriptor(buffer: Any, shape: list[int]) -> ctypes.Structure:
             result.sizes[index] = int(extent)
             result.strides[index] = int(strides[index])
     return result
+
+
+def _descriptor(buffer: Any, shape: list[int]) -> ctypes.Structure:
+    return _descriptor_from_address(ctypes.addressof(buffer), shape)
 
 
 def _close(
@@ -221,56 +264,178 @@ def _link_object(directory: Path, candidate: Mapping[str, Any]) -> Path:
     return library_path
 
 
+class _ArgumentRotation:
+    def __init__(self, argument_sets: list[list[Any]]):
+        if not argument_sets:
+            raise ValueError("argument rotation requires at least one replica")
+        self.argument_sets = argument_sets
+        self.cursor = 0
+
+    def next(self) -> list[Any]:
+        result = self.argument_sets[self.cursor]
+        self.cursor = (self.cursor + 1) % len(self.argument_sets)
+        return result
+
+
+def _logical_io_bytes(entry: Mapping[str, Any]) -> dict[str, int]:
+    input_bytes = sum(
+        len(_decode_payload(entry["values"][entry["input_bindings"][name]]))
+        for name in entry["input_order"]
+    )
+    output_bytes = sum(
+        _numel(spec["shape"]) * _dtype_size(spec["dtype"])
+        for spec in entry["output_specs"]
+    )
+    return {
+        "boundary_input_bytes": input_bytes,
+        "boundary_output_bytes": output_bytes,
+        "boundary_io_bytes": input_bytes + output_bytes,
+    }
+
+
+def _argument_replicas(
+    entry: Mapping[str, Any], replicas: int
+) -> tuple[list[list[Any]], list[Any], list[list[Any]]]:
+    if replicas <= 0:
+        raise ValueError("replicas must be positive")
+    all_buffers: list[Any] = []
+    output_buffers: list[list[Any]] = []
+    argument_sets: list[list[Any]] = []
+    for _ in range(replicas):
+        descriptors = []
+        replica_outputs = []
+        for name in entry["input_order"]:
+            value_record = entry["values"][entry["input_bindings"][name]]
+            payload = _decode_payload(value_record)
+            buffer = ctypes.create_string_buffer(payload, len(payload))
+            all_buffers.append(buffer)
+            descriptors.append(
+                _descriptor(buffer, [int(item) for item in value_record["shape"]])
+            )
+        for spec in entry["output_specs"]:
+            size = _numel(spec["shape"]) * _dtype_size(spec["dtype"])
+            buffer = ctypes.create_string_buffer(size)
+            all_buffers.append(buffer)
+            replica_outputs.append(buffer)
+            descriptors.append(_descriptor(buffer, list(spec["shape"])))
+        output_buffers.append(replica_outputs)
+        argument_sets.append([ctypes.byref(item) for item in descriptors])
+        # byref objects keep descriptors alive, and all_buffers keeps payloads
+        # alive.  Retain the descriptor list explicitly for PyPy/CPython parity.
+        all_buffers.extend(descriptors)
+    return argument_sets, all_buffers, output_buffers
+
+
+def _evict(eviction_buffer: Any, fill: int) -> float:
+    started = time.perf_counter_ns()
+    ctypes.memset(
+        ctypes.addressof(eviction_buffer),
+        fill & 0xFF,
+        ctypes.sizeof(eviction_buffer),
+    )
+    return (time.perf_counter_ns() - started) / 1_000.0
+
+
 def _measure(
     function: Any,
-    arguments: list[Any],
+    rotation: _ArgumentRotation,
     *,
+    regime: str,
+    eviction_buffer: Any | None,
     warmup: int,
     iterations: int,
     batches: int,
-) -> tuple[float, list[float]]:
+) -> tuple[float, list[float], float]:
     for _ in range(warmup):
-        function(*arguments)
+        if regime == "cold-data":
+            assert eviction_buffer is not None
+            _evict(eviction_buffer, rotation.cursor)
+        function(*rotation.next())
     samples = []
+    prep_samples = []
     for _ in range(batches):
+        if regime == "cold-data":
+            call_samples = []
+            for iteration in range(iterations):
+                assert eviction_buffer is not None
+                prep_samples.append(_evict(eviction_buffer, iteration))
+                started = time.perf_counter_ns()
+                function(*rotation.next())
+                call_samples.append((time.perf_counter_ns() - started) / 1_000.0)
+            samples.append(float(statistics.median(call_samples)))
+            continue
         started = time.perf_counter_ns()
         for _ in range(iterations):
-            function(*arguments)
+            function(*rotation.next())
         elapsed = time.perf_counter_ns() - started
         samples.append(elapsed / iterations / 1_000.0)
-    return float(statistics.median(samples)), samples
+    prep_us = float(statistics.median(prep_samples)) if prep_samples else 0.0
+    return float(statistics.median(samples)), samples, prep_us
 
 
 def _one_kernel(
     entry: Mapping[str, Any],
     *,
+    regime: str,
+    working_set_bytes: int,
+    max_replicas: int,
+    search_budget: int,
+    last_level_cache_bytes: int,
     warmup: int,
     iterations: int,
     batches: int,
 ) -> dict[str, Any]:
-    input_buffers = []
-    descriptors = []
-    for name in entry["input_order"]:
-        value_record = entry["values"][entry["input_bindings"][name]]
-        payload = _decode_payload(value_record)
-        buffer = ctypes.create_string_buffer(payload, len(payload))
-        input_buffers.append(buffer)
-        descriptors.append(
-            _descriptor(buffer, [int(item) for item in value_record["shape"]])
+    logical_io = _logical_io_bytes(entry)
+    io_bytes = logical_io["boundary_io_bytes"]
+    if io_bytes <= 0:
+        raise ValueError("RVV benchmark has no logical boundary traffic")
+    workload_cost = entry.get("workload_cost")
+    if (
+        workload_cost is not None
+        and int(workload_cost["boundary_io_bytes"]) != io_bytes
+    ):
+        raise ValueError("runner logical bytes disagree with J workload-cost receipt")
+    required_replicas = (
+        max(2, math.ceil(working_set_bytes / io_bytes))
+        if regime == "streaming"
+        else 1
+    )
+    if required_replicas > max_replicas:
+        raise ValueError(
+            f"streaming regime needs {required_replicas} replicas, exceeding "
+            f"--max-replicas={max_replicas}"
         )
-    output_buffers = []
-    for spec in entry["output_specs"]:
-        size = _numel(spec["shape"]) * _dtype_size(spec["dtype"])
-        buffer = ctypes.create_string_buffer(size)
-        output_buffers.append(buffer)
-        descriptors.append(_descriptor(buffer, list(spec["shape"])))
-    arguments = [ctypes.byref(item) for item in descriptors]
+    argument_sets, buffer_keepalive, output_buffer_sets = _argument_replicas(
+        entry, required_replicas
+    )
+    output_buffers = output_buffer_sets[0]
+    descriptors = [item._obj for item in argument_sets[0]]
+    eviction_buffer = (
+        ctypes.create_string_buffer(working_set_bytes)
+        if regime == "cold-data"
+        else None
+    )
+
+    candidate_by_id = {
+        item["candidate"]["candidate_id"]: item for item in entry["candidates"]
+    }
+    concrete_plan = entry.get("concrete_search_plan", {})
+    requested_order = concrete_plan.get(
+        "c_prior_order", entry.get("candidate_order", tuple(candidate_by_id))
+    )
+    ordered_ids = []
+    seen_ids = set()
+    for candidate_id in (*requested_order, *candidate_by_id):
+        if candidate_id in candidate_by_id and candidate_id not in seen_ids:
+            seen_ids.add(candidate_id)
+            ordered_ids.append(candidate_id)
 
     records = []
-    candidate_artifacts: dict[str, tuple[Any, Any]] = {}
+    candidate_artifacts: dict[str, tuple[Any, Any, _ArgumentRotation]] = {}
     with tempfile.TemporaryDirectory(prefix="intentir-rvv-") as temporary:
         directory = Path(temporary)
-        for candidate in entry["candidates"]:
+        for candidate_id in ordered_ids:
+            candidate = candidate_by_id[candidate_id]
             try:
                 library_path = _link_object(directory, candidate)
                 library = ctypes.CDLL(str(library_path))
@@ -280,7 +445,7 @@ def _one_kernel(
                     ctypes.POINTER(type(item)) for item in descriptors
                 ]
                 function.restype = None
-                function(*arguments)
+                function(*argument_sets[0])
                 correctness = []
                 passed = True
                 for spec, buffer in zip(
@@ -314,21 +479,24 @@ def _one_kernel(
                         }
                     )
                     continue
-                latency, samples = _measure(
+                rotation = _ArgumentRotation(argument_sets)
+                latency, samples, prep_us = _measure(
                     function,
-                    arguments,
+                    rotation,
+                    regime=regime,
+                    eviction_buffer=eviction_buffer,
                     warmup=warmup,
                     iterations=iterations,
                     batches=1,
                 )
-                candidate_id = candidate["candidate"]["candidate_id"]
-                candidate_artifacts[candidate_id] = (library, function)
+                candidate_artifacts[candidate_id] = (library, function, rotation)
                 records.append(
                     {
                         "candidate": candidate["candidate"],
                         "status": "measured",
                         "latency_us": latency,
                         "initial_ranking_samples_us": samples,
+                        "initial_data_prep_us_per_call": prep_us,
                         "correctness": correctness,
                     }
                 )
@@ -354,22 +522,41 @@ def _one_kernel(
         for item in round_order:
             candidate_id = item["candidate"]["candidate_id"]
             function = candidate_artifacts[candidate_id][1]
-            latency, samples = _measure(
+            rotation = candidate_artifacts[candidate_id][2]
+            latency, samples, prep_us = _measure(
                 function,
-                arguments,
+                rotation,
+                regime=regime,
+                eviction_buffer=eviction_buffer,
                 warmup=0,
                 iterations=iterations,
                 batches=1,
             )
             assert len(samples) == 1
             fresh_samples[candidate_id].append(latency)
+            item.setdefault("data_prep_samples_us", []).append(prep_us)
     for item in measured:
         candidate_id = item["candidate"]["candidate_id"]
         samples = fresh_samples[candidate_id]
         item["latency_us"] = float(statistics.median(samples))
         item["selection_samples_us"] = samples
         item["selection_protocol"] = "fresh-alternating-round-robin.v1"
+        item["logical_boundary_gbps"] = io_bytes / item["latency_us"] / 1_000.0
     schedule_only_ids = set(entry["schedule_only_candidate_ids"])
+    measured_by_id = {
+        item["candidate"]["candidate_id"]: item for item in measured
+    }
+
+    def best(candidate_ids: list[str]) -> dict[str, Any]:
+        available = [
+            measured_by_id[candidate_id]
+            for candidate_id in candidate_ids
+            if candidate_id in measured_by_id
+        ]
+        if not available:
+            raise KernelFailure("ablation arm has no correct RVV candidate", records)
+        return min(available, key=lambda item: item["latency_us"])
+
     e2 = min(
         (
             item
@@ -379,6 +566,50 @@ def _one_kernel(
         key=lambda item: item["latency_us"],
     )
     e3 = min(measured, key=lambda item: item["latency_us"])
+    materialized_ids = [
+        item["candidate"]["candidate_id"]
+        for item in measured
+        if item["candidate"]["candidate_id"] in schedule_only_ids
+    ]
+    no_retile_ids = [
+        candidate_id
+        for candidate_id in materialized_ids
+        if int(measured_by_id[candidate_id]["candidate"]["schedule"].get(
+            "parallel_tile", 0
+        ))
+        == 0
+        and int(measured_by_id[candidate_id]["candidate"]["schedule"].get(
+            "reduction_tile", 0
+        ))
+        == 0
+    ]
+    no_retile = best(no_retile_ids)
+    erase_order = [
+        candidate_id
+        for candidate_id in concrete_plan.get("erase_c_order", materialized_ids)
+        if candidate_id in schedule_only_ids
+    ]
+    c_prior_order = [
+        candidate_id
+        for candidate_id in concrete_plan.get("c_prior_order", materialized_ids)
+        if candidate_id in schedule_only_ids
+    ]
+    erase_budget_ids = erase_order[:search_budget]
+    c_prior_budget_ids = c_prior_order[:search_budget]
+    erase_budget_winner = best(erase_budget_ids)
+    c_prior_budget_winner = best(c_prior_budget_ids)
+    frozen_id = concrete_plan.get("frozen_c_candidate_id")
+    if frozen_id not in measured_by_id:
+        raise KernelFailure(
+            "frozen-C projection has no correct executable candidate", records
+        )
+    frozen_c = measured_by_id[frozen_id]
+    achieved_working_set_bytes = required_replicas * io_bytes
+    floating_point_ops = (
+        int(workload_cost["floating_point_ops"])
+        if workload_cost is not None
+        else 0
+    )
     return {
         "kernel": entry["kernel"],
         "case_id": entry["case_id"],
@@ -396,6 +627,94 @@ def _one_kernel(
             "b_transformation_wins": bool(
                 e3["candidate"]["transformation"]["b_transformations"]
             ),
+            "no_retile_schedule_us": no_retile["latency_us"],
+            "retile_schedule_us": e2["latency_us"],
+            "retile_over_no_retile_speedup": (
+                no_retile["latency_us"] / e2["latency_us"]
+            ),
+            "frozen_c_us": frozen_c["latency_us"],
+            "retile_over_frozen_c_speedup": (
+                frozen_c["latency_us"] / e2["latency_us"]
+            ),
+            "full_search_over_frozen_c_speedup": (
+                frozen_c["latency_us"] / e3["latency_us"]
+            ),
+            "search_budget": search_budget,
+            "search_budget_unit": "distinct_native_object_sha256",
+            "erase_c_budget_us": erase_budget_winner["latency_us"],
+            "c_prior_budget_us": c_prior_budget_winner["latency_us"],
+            "c_prior_over_erase_c_speedup": (
+                erase_budget_winner["latency_us"]
+                / c_prior_budget_winner["latency_us"]
+            ),
+            "no_retile_winner_candidate_id": no_retile["candidate"][
+                "candidate_id"
+            ],
+            "retile_winner_candidate_id": e2["candidate"]["candidate_id"],
+            "frozen_c_candidate_id": frozen_id,
+            "erase_c_budget_winner_candidate_id": erase_budget_winner[
+                "candidate"
+            ]["candidate_id"],
+            "c_prior_budget_winner_candidate_id": c_prior_budget_winner[
+                "candidate"
+            ]["candidate_id"],
+            "logical_io": {
+                **logical_io,
+                "e2_logical_boundary_gbps": (
+                    io_bytes / e2["latency_us"] / 1_000.0
+                ),
+                "e3_logical_boundary_gbps": (
+                    io_bytes / e3["latency_us"] / 1_000.0
+                ),
+                "traffic_definition": (
+                    "sum of certified boundary input and output payload bytes; "
+                    "not measured DRAM transactions"
+                ),
+            },
+            "roofline_point": {
+                "j_workload_cost": workload_cost,
+                "arithmetic_intensity_flop_per_byte": (
+                    floating_point_ops / io_bytes
+                ),
+                "e2_achieved_gflops": (
+                    floating_point_ops / e2["latency_us"] / 1_000.0
+                ),
+                "e3_achieved_gflops": (
+                    floating_point_ops / e3["latency_us"] / 1_000.0
+                ),
+                "hardware_counter_traffic": None,
+                "interpretation": "J-derived logical/minimum-traffic point",
+            },
+            "cache_regime": {
+                "name": regime,
+                "buffer_policy": (
+                    "rotating-certified-invocation-replicas"
+                    if regime == "streaming"
+                    else "eviction-before-each-single-shot"
+                    if regime == "cold-data"
+                    else "persistent-single-address"
+                ),
+                "replicas": required_replicas,
+                "requested_working_set_bytes": working_set_bytes,
+                "achieved_working_set_bytes": achieved_working_set_bytes,
+                "eviction_bytes": (
+                    working_set_bytes if regime == "cold-data" else 0
+                ),
+                "data_prep_in_timed_region": False,
+                "streaming_target_achieved": (
+                    achieved_working_set_bytes >= working_set_bytes
+                    if regime == "streaming"
+                    else None
+                ),
+                "last_level_cache_bytes": last_level_cache_bytes,
+                "working_set_exceeds_last_level_cache": (
+                    achieved_working_set_bytes > last_level_cache_bytes
+                    if regime == "streaming" and last_level_cache_bytes
+                    else working_set_bytes > last_level_cache_bytes
+                    if regime == "cold-data" and last_level_cache_bytes
+                    else None
+                ),
+            },
             "timing": "pinned-process perf_counter_ns via ctypes C ABI",
             "comparison_protocol": "fresh-alternating-round-robin.v1",
             "warmup": warmup,
@@ -411,18 +730,48 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--kernels", nargs="*")
     parser.add_argument("--cpu", type=int, default=0)
+    parser.add_argument(
+        "--regime",
+        choices=("warm", "streaming", "cold-data"),
+        default="warm",
+    )
+    parser.add_argument("--working-set-mib", type=int, default=128)
+    parser.add_argument("--max-replicas", type=int, default=262144)
+    parser.add_argument("--search-budget", type=int, default=12)
     parser.add_argument("--warmup", type=int, default=50)
     parser.add_argument("--iterations", type=int, default=1000)
+    parser.add_argument("--cold-iterations", type=int, default=16)
     parser.add_argument("--batches", type=int, default=7)
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    if min(args.warmup, args.iterations, args.batches) <= 0:
-        raise ValueError("warmup, iterations, and batches must be positive")
+    if min(
+        args.warmup,
+        args.iterations,
+        args.cold_iterations,
+        args.batches,
+        args.working_set_mib,
+        args.max_replicas,
+        args.search_budget,
+    ) <= 0:
+        raise ValueError("all measurement counts and budgets must be positive")
     os.sched_setaffinity(0, {args.cpu})
-    bundle = json.loads(args.bundle.read_text(encoding="utf-8"))
+    cache_record = _cpu_cache_record()
+    working_set_bytes = args.working_set_mib * 1024 * 1024
+    last_level_cache_bytes = cache_record["last_level_data_cache_bytes"]
+    if (
+        args.regime != "warm"
+        and last_level_cache_bytes
+        and working_set_bytes <= last_level_cache_bytes
+    ):
+        raise ValueError(
+            f"{args.regime} working set ({working_set_bytes} bytes) must exceed "
+            f"detected last-level cache ({last_level_cache_bytes} bytes)"
+        )
+    bundle_bytes = args.bundle.read_bytes()
+    bundle = json.loads(bundle_bytes)
     if bundle.get("protocol") != BUNDLE_PROTOCOL:
         raise ValueError("unsupported RVV benchmark bundle")
     selected = set(args.kernels or [])
@@ -434,12 +783,20 @@ def main(argv: list[str] | None = None) -> int:
     started = time.time_ns()
     kernels = []
     failures = []
+    measured_iterations = (
+        args.cold_iterations if args.regime == "cold-data" else args.iterations
+    )
     for entry in entries:
         try:
             record = _one_kernel(
                 entry,
+                regime=args.regime,
+                working_set_bytes=working_set_bytes,
+                max_replicas=args.max_replicas,
+                search_budget=args.search_budget,
+                last_level_cache_bytes=last_level_cache_bytes,
                 warmup=args.warmup,
-                iterations=args.iterations,
+                iterations=measured_iterations,
                 batches=args.batches,
             )
             kernels.append(record)
@@ -447,7 +804,9 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 f"{entry['kernel']}: E2={performance['e2_schedule_only_us']:.4f} "
                 f"us E3={performance['e3_contract_guided_us']:.4f} us "
-                f"speedup={performance['e3_over_e2_speedup']:.3f}x",
+                f"structural={performance['e3_over_e2_speedup']:.3f}x "
+                f"retile={performance['retile_over_no_retile_speedup']:.3f}x "
+                f"C={performance['c_prior_over_erase_c_speedup']:.3f}x",
                 flush=True,
             )
         except Exception as error:
@@ -463,9 +822,32 @@ def main(argv: list[str] | None = None) -> int:
                 flush=True,
             )
     speedups = [item["performance"]["e3_over_e2_speedup"] for item in kernels]
+    retile_speedups = [
+        item["performance"]["retile_over_no_retile_speedup"] for item in kernels
+    ]
+    c_speedups = [
+        item["performance"]["c_prior_over_erase_c_speedup"] for item in kernels
+    ]
+
+    def geomean(values: list[float]) -> float | None:
+        return (
+            math.exp(sum(math.log(item) for item in values) / len(values))
+            if values
+            else None
+        )
+
     report = {
         "protocol": REPORT_PROTOCOL,
         "bundle_protocol": bundle["protocol"],
+        "bundle_sha256": hashlib.sha256(bundle_bytes).hexdigest(),
+        "bundle_toolchain_digest": bundle["toolchain_digest"],
+        "target": bundle["target"],
+        "workload_profile": bundle.get("workload_profile", "closed-v1"),
+        "baseline_policy": bundle.get("baseline_policy", "target_refj_only"),
+        "experiment_spec_protocol": bundle.get("experiment_spec_protocol"),
+        "experiment_spec_digest": bundle.get("experiment_spec_digest"),
+        "measurement_spec_protocol": bundle.get("measurement_spec_protocol"),
+        "measurement_spec_digest": bundle.get("measurement_spec_digest"),
         "created_unix_ns": time.time_ns(),
         "elapsed_seconds": (time.time_ns() - started) / 1_000_000_000.0,
         "device": {
@@ -474,16 +856,39 @@ def main(argv: list[str] | None = None) -> int:
             "python": platform.python_version(),
             "cpu_affinity": sorted(os.sched_getaffinity(0)),
             "vlen_bits": 128,
+            "cache": cache_record,
+        },
+        "measurement": {
+            "data_regime": args.regime,
+            "effective_timing": (
+                "monotonic-clock-single-shot"
+                if args.regime == "cold-data"
+                else "monotonic-clock-batch"
+            ),
+            "timer": "perf_counter_ns",
+            "correctness_policy": bundle.get("correctness_policy"),
+            "working_set_bytes": working_set_bytes,
+            "warmup_iterations": args.warmup,
+            "iterations_per_batch": measured_iterations,
+            "measurement_batches": args.batches,
+            "detected_last_level_data_cache_bytes": last_level_cache_bytes,
+            "cache_eviction_in_timed_region": False,
+            "regime": args.regime,
+            "working_set_mib": args.working_set_mib,
+            "warmup": args.warmup,
+            "iterations": measured_iterations,
+            "batches": args.batches,
+            "search_budget": args.search_budget,
         },
         "summary": {
             "requested": len(entries),
             "successful": len(kernels),
             "failed": len(failures),
-            "geomean_e3_over_e2_speedup": (
-                math.exp(sum(math.log(item) for item in speedups) / len(speedups))
-                if speedups
-                else None
+            "geomean_e3_over_e2_speedup": geomean(speedups),
+            "geomean_retile_over_no_retile_speedup": geomean(
+                retile_speedups
             ),
+            "geomean_c_prior_over_erase_c_speedup": geomean(c_speedups),
             "b_transformation_winner_count": sum(
                 item["performance"]["b_transformation_wins"]
                 for item in kernels

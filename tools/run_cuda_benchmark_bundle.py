@@ -25,13 +25,17 @@ from intentir.backend.cuda.portable_bundle import (
     decode_values,
 )
 from intentir.ir.production_snapshot import ProductionSnapshot
+from intentir.backend.roofline import (
+    RooflineCeilings,
+    evaluate_logical_roofline,
+)
 from intentir.verify.gate1.compiler import KernelSource
 from intentir.verify.gate2.compare import compare_outputs
 from intentir.verify.gate2.policy import DEFAULT_GATE2_POLICY
 from intentir.verify.gate2.triton import PreparedTritonInvocation
 
 
-REPORT_PROTOCOL = "intentir.production.cuda-remote-performance.v2"
+REPORT_PROTOCOL = "intentir.production.cuda-remote-performance.v3"
 BUNDLE_PROTOCOL = "intentir.production.cuda-search-bundle.v2"
 
 
@@ -63,7 +67,95 @@ def _device_record(torch: Any) -> dict[str, Any]:
         "device_name": properties.name,
         "compute_capability": [properties.major, properties.minor],
         "total_memory_bytes": properties.total_memory,
+        "l2_cache_bytes": int(getattr(properties, "L2_cache_size", 0)),
     }
+
+
+def _measure_cold_data_us(
+    torch: Any,
+    thunk: Any,
+    *,
+    eviction: Any,
+    iterations: int,
+) -> float:
+    """Measure single launches after a target-side L2 eviction.
+
+    The eviction and synchronization are deliberately outside the CUDA-event
+    interval.  This is a cold-*data* protocol, not process cold-start and not a
+    claim about compulsory instruction-cache misses.
+    """
+
+    samples: list[float] = []
+    for _ in range(iterations):
+        eviction.add_(1.0)
+        torch.cuda.synchronize()
+        start = torch.cuda.Event(enable_timing=True)
+        stop = torch.cuda.Event(enable_timing=True)
+        start.record()
+        thunk()
+        stop.record()
+        stop.synchronize()
+        samples.append(float(start.elapsed_time(stop)) * 1000.0)
+    return float(statistics.median(samples))
+
+
+def _measure_cuda_roofs(
+    torch: Any,
+    *,
+    memory_mib: int,
+    matrix_extent: int,
+) -> RooflineCeilings:
+    if memory_mib <= 0 or matrix_extent <= 0:
+        raise ValueError("Roofline calibration sizes must be positive")
+    elements = memory_mib * 1024 * 1024 // 4
+    source = torch.empty(elements, dtype=torch.float32, device="cuda").uniform_()
+    destination = torch.empty_like(source)
+    memory_samples = [
+        do_bench_us(
+            lambda: destination.copy_(source),
+            warmup_ms=50,
+            repeat_ms=200,
+        )
+        for _ in range(3)
+    ]
+    memory_us = float(statistics.median(memory_samples))
+    memory_gbps = 2 * source.numel() * source.element_size() / memory_us / 1_000.0
+
+    previous_tf32 = torch.backends.cuda.matmul.allow_tf32
+    torch.backends.cuda.matmul.allow_tf32 = False
+    try:
+        left = torch.randn(
+            (matrix_extent, matrix_extent), dtype=torch.float32, device="cuda"
+        )
+        right = torch.randn_like(left)
+        output = torch.empty_like(left)
+        compute_samples = [
+            do_bench_us(
+                lambda: torch.mm(left, right, out=output),
+                warmup_ms=50,
+                repeat_ms=200,
+            )
+            for _ in range(3)
+        ]
+    finally:
+        torch.backends.cuda.matmul.allow_tf32 = previous_tf32
+    compute_us = float(statistics.median(compute_samples))
+    fp32_gflops = 2 * matrix_extent**3 / compute_us / 1_000.0
+    torch.cuda.synchronize()
+    return RooflineCeilings(
+        memory_gbps=memory_gbps,
+        fp32_gflops=fp32_gflops,
+        provenance={
+            "kind": "target-side-sustained-microbenchmark",
+            "memory_method": "device-to-device-fp32-copy-read-plus-write",
+            "memory_mib_per_tensor": memory_mib,
+            "memory_samples_us": memory_samples,
+            "compute_method": "torch.mm-fp32-tf32-disabled",
+            "matrix_extent": matrix_extent,
+            "compute_samples_us": compute_samples,
+            "allocation_in_timed_region": False,
+        },
+    )
 
 
 def _actual_outputs(
@@ -108,6 +200,10 @@ def _one_kernel(
     finalist_count: int,
     finalist_remeasurements: int,
     confirmation_batches: int,
+    roofline_ceilings: RooflineCeilings | None,
+    data_regime: str,
+    cold_iterations: int,
+    cache_eviction: Any | None,
 ) -> dict[str, Any]:
     import torch
 
@@ -132,11 +228,34 @@ def _one_kernel(
         for item in entry["output_specs"]
     ]
     tensors = [*inputs, *outputs]
+    workload_cost = entry.get("workload_cost")
+    logical_io_bytes = sum(item.numel() * item.element_size() for item in tensors)
+    if (
+        workload_cost is not None
+        and int(workload_cost["boundary_io_bytes"]) != logical_io_bytes
+    ):
+        raise ValueError("CUDA tensors disagree with J workload-cost receipt")
+    floating_point_ops = (
+        int(workload_cost["floating_point_ops"])
+        if workload_cost is not None
+        else 0
+    )
 
     def measure(thunk) -> float:
         samples = []
         for _ in range(measurement_rounds):
-            if timing == "graph":
+            if data_regime == "cold-data":
+                if cache_eviction is None:
+                    raise AssertionError("cold-data regime requires cache eviction")
+                samples.append(
+                    _measure_cold_data_us(
+                        torch,
+                        thunk,
+                        eviction=cache_eviction,
+                        iterations=cold_iterations,
+                    )
+                )
+            elif timing == "graph":
                 samples.append(
                     do_bench_cudagraph_us(
                         thunk, repetitions=graph_repetitions
@@ -181,6 +300,8 @@ def _one_kernel(
                     "candidate": candidate["candidate"],
                     "status": "incorrect",
                     "correctness": agreement.to_json(),
+                    "concrete_state": candidate.get("concrete_state"),
+                    "lowering": candidate.get("lowering"),
                 }
             )
             continue
@@ -191,9 +312,13 @@ def _one_kernel(
                 "status": "measured",
                 "latency_us": latency,
                 "correctness": agreement.to_json(),
+                "concrete_state": candidate.get("concrete_state"),
+                "lowering": candidate.get("lowering"),
                 "launch": extracted.record.to_dict(),
                 "cubin_sha256": extracted.cubin_sha256,
                 "cubin_size_bytes": len(extracted.cubin),
+                "logical_boundary_gbps": logical_io_bytes / latency / 1_000.0,
+                "achieved_gflops": floating_point_ops / latency / 1_000.0,
             }
         )
         candidate_id = candidate["candidate"]["candidate_id"]
@@ -203,10 +328,54 @@ def _one_kernel(
         for index, record in enumerate(candidate_records)
         if record["status"] == "measured"
     ]
-    ranked_indices = sorted(
+    measured_index_by_id = {
+        candidate_records[index]["candidate"]["candidate_id"]: index
+        for index in measured_indices
+    }
+    search_orders = entry["search_orders"]
+    default_order = list(measured_index_by_id)
+    with_c_order = list(
+        search_orders.get("with_c_concrete_order", default_order)
+    )
+    without_c_order = list(
+        search_orders.get("without_c_concrete_order", default_order)
+    )
+    active_order_name = str(search_orders.get("active_order", "with_c"))
+    if active_order_name not in {"with_c", "without_c"}:
+        raise ValueError(f"unknown active CUDA search order {active_order_name!r}")
+    active_order = (
+        with_c_order if active_order_name == "with_c" else without_c_order
+    )
+
+    initial_ranked = sorted(
         measured_indices,
         key=lambda item: candidate_records[item]["latency_us"],
-    )[:finalist_count]
+    )
+    # Always remeasure each ordering's provisional winner.  Otherwise a small
+    # finalist_count could accidentally give only one C arm fresh samples.
+    mandatory_indices: list[int] = []
+    for order in (with_c_order, without_c_order):
+        arm_indices = [
+            measured_index_by_id[candidate_id]
+            for candidate_id in order
+            if candidate_id in measured_index_by_id
+        ]
+        if arm_indices:
+            mandatory_indices.append(
+                min(
+                    arm_indices,
+                    key=lambda item: candidate_records[item]["latency_us"],
+                )
+            )
+    ranked_indices = []
+    for index in [*mandatory_indices, *initial_ranked]:
+        if index not in ranked_indices:
+            ranked_indices.append(index)
+        if (
+            len(ranked_indices) >= finalist_count
+            and all(item in ranked_indices for item in mandatory_indices)
+        ):
+            break
     finalist_samples: dict[int, list[float]] = {
         index: [] for index in ranked_indices
     }
@@ -232,69 +401,117 @@ def _one_kernel(
         record["finalist_batch_us"] = samples
     if not measured_indices:
         raise RuntimeError("no correct bundled MLIR candidate")
-    best_record = min(
-        (candidate_records[index] for index in measured_indices),
-        key=lambda item: item["latency_us"],
-    )
+
+    def best_for_order(order: list[str]) -> dict[str, Any] | None:
+        records = [
+            candidate_records[measured_index_by_id[candidate_id]]
+            for candidate_id in order
+            if candidate_id in measured_index_by_id
+        ]
+        return min(records, key=lambda item: item["latency_us"]) if records else None
+
+    with_c_best = best_for_order(with_c_order)
+    without_c_best = best_for_order(without_c_order)
+    best_record = best_for_order(active_order)
+    if best_record is None:
+        raise RuntimeError(
+            f"active CUDA search order {active_order_name!r} has no correct candidate"
+        )
     best_id = best_record["candidate"]["candidate_id"]
     winner, extracted, winner_thunk = candidate_artifacts[best_id]
 
-    source_record = entry["source_triton"]
-    source_program = KernelSource.from_code(
-        source_record["code"],
-        source_record["function"],
-        trusted=True,
-    )
-    source_spec = decode_triton_spec(source_record["execution_spec"])
-    with PreparedTritonInvocation(
-        source_program, source_spec, values
-    ) as source:
-        source.launch()
-        torch.cuda.synchronize()
-        source_agreement = _compare(
-            name="source-triton",
-            actual=source.copied_outputs(),
-            reference=reference,
-            snapshot=snapshot,
-            entry=entry,
-            values=values,
+    baseline_policy = str(entry.get("baseline_policy", "source_and_refj"))
+    if baseline_policy not in {"source_and_refj", "target_refj_only"}:
+        raise ValueError(f"unknown CUDA baseline policy {baseline_policy!r}")
+    source_agreement = None
+    source_latency: float | None = None
+    source_samples: list[float] = []
+    mlir_samples: list[float] = []
+    paired_batches: list[dict[str, Any]] = []
+    if baseline_policy == "source_and_refj":
+        source_record = entry["source_triton"]
+        source_program = KernelSource.from_code(
+            source_record["code"],
+            source_record["function"],
+            trusted=True,
         )
-        if not source_agreement.passed:
-            raise RuntimeError("source Triton baseline differs from canonical J")
-        source_thunk = source.thunk()
-        # One untimed warmup pair before alternating, paired confirmation.
-        source_thunk()
+        source_spec = decode_triton_spec(source_record["execution_spec"])
+        with PreparedTritonInvocation(
+            source_program, source_spec, values
+        ) as source:
+            source.launch()
+            torch.cuda.synchronize()
+            source_agreement = _compare(
+                name="source-triton",
+                actual=source.copied_outputs(),
+                reference=reference,
+                snapshot=snapshot,
+                entry=entry,
+                values=values,
+            )
+            if not source_agreement.passed:
+                raise RuntimeError("source Triton baseline differs from canonical J")
+            source_thunk = source.thunk()
+            # One untimed warmup pair before alternating, paired confirmation.
+            source_thunk()
+            winner_thunk()
+            torch.cuda.synchronize()
+            for pair_index in range(confirmation_batches):
+                if pair_index % 2 == 0:
+                    order = ("source", "target")
+                    source_us = measure(source_thunk)
+                    target_us = measure(winner_thunk)
+                else:
+                    order = ("target", "source")
+                    target_us = measure(winner_thunk)
+                    source_us = measure(source_thunk)
+                source_samples.append(source_us)
+                mlir_samples.append(target_us)
+                paired_batches.append(
+                    {
+                        "pair_index": pair_index,
+                        "order": list(order),
+                        "source_us": source_us,
+                        "target_us": target_us,
+                        "speedup_source_over_target": source_us / target_us,
+                    }
+                )
+            source_latency = float(statistics.median(source_samples))
+    else:
+        # The J-only large-shape profile extends the backend stress domain beyond
+        # the accepted Source's one-block execution contract.  Reconfirm only the
+        # already Target--RefJ-correct fixed winner and emit no Source claim.
         winner_thunk()
         torch.cuda.synchronize()
-        source_samples: list[float] = []
-        mlir_samples: list[float] = []
-        paired_batches: list[dict[str, Any]] = []
-        for pair_index in range(confirmation_batches):
-            if pair_index % 2 == 0:
-                order = ("source", "target")
-                source_us = measure(source_thunk)
-                target_us = measure(winner_thunk)
-            else:
-                order = ("target", "source")
-                target_us = measure(winner_thunk)
-                source_us = measure(source_thunk)
-            source_samples.append(source_us)
+        for batch_index in range(confirmation_batches):
+            target_us = measure(winner_thunk)
             mlir_samples.append(target_us)
             paired_batches.append(
                 {
-                    "pair_index": pair_index,
-                    "order": list(order),
-                    "source_us": source_us,
+                    "batch_index": batch_index,
+                    "order": ["target"],
                     "target_us": target_us,
-                    "speedup_source_over_target": source_us / target_us,
                 }
             )
-        source_latency = float(statistics.median(source_samples))
 
     mlir_latency = float(statistics.median(mlir_samples))
+    roofline_evaluations = None
+    if workload_cost is not None and roofline_ceilings is not None:
+        roofline_evaluations = {
+            "mlir": evaluate_logical_roofline(
+                workload_cost, mlir_latency, roofline_ceilings
+            )
+        }
+        if source_latency is not None:
+            roofline_evaluations["source"] = evaluate_logical_roofline(
+                workload_cost, source_latency, roofline_ceilings
+            )
     return {
         "kernel": entry["kernel"],
         "case_id": entry["case_id"],
+        "workload_profile": entry.get("workload_profile", "closed-v1"),
+        "baseline_policy": baseline_policy,
+        "workload_valuation": entry.get("workload_valuation"),
         "snapshot_digest": snapshot.snapshot_digest,
         "j_digest": snapshot.j_digest,
         "c_digest": snapshot.c_digest,
@@ -305,35 +522,132 @@ def _one_kernel(
         "candidates": candidate_records,
         "winner": {
             "candidate": winner["candidate"],
+            "concrete_state": winner.get("concrete_state"),
+            "lowering": winner.get("lowering"),
             "launch": extracted.record.to_dict(),
             "cubin_sha256": extracted.cubin_sha256,
             "cubin_size_bytes": len(extracted.cubin),
         },
         "correctness": {
-            "source_j": source_agreement.to_json(),
+            "source_j": (
+                source_agreement.to_json()
+                if source_agreement is not None
+                else None
+            ),
+            "target_refj_measured_candidate_count": len(measured_indices),
+            "formal_source_replay_closure_claimed": False,
             "policy": DEFAULT_GATE2_POLICY.policy_id,
         },
         "performance": {
             "mlir_us": mlir_latency,
             "source_triton_us": source_latency,
-            "mlir_over_triton": mlir_latency / source_latency,
-            "speedup_over_triton": source_latency / mlir_latency,
-            "meets_or_beats_triton": mlir_latency <= source_latency,
-            "timing": timing,
+            "mlir_over_triton": (
+                mlir_latency / source_latency
+                if source_latency is not None
+                else None
+            ),
+            "speedup_over_triton": (
+                source_latency / mlir_latency
+                if source_latency is not None
+                else None
+            ),
+            "meets_or_beats_triton": (
+                mlir_latency <= source_latency
+                if source_latency is not None
+                else None
+            ),
+            "c_ordering_ablation": {
+                "budget": search_orders.get("budget"),
+                "budget_unit": search_orders.get("budget_unit"),
+                "same_transported_candidate_union": True,
+                "active_order": active_order_name,
+                "with_c_best_candidate_id": (
+                    with_c_best["candidate"]["candidate_id"]
+                    if with_c_best is not None
+                    else None
+                ),
+                "without_c_best_candidate_id": (
+                    without_c_best["candidate"]["candidate_id"]
+                    if without_c_best is not None
+                    else None
+                ),
+                "with_c_best_us": (
+                    with_c_best["latency_us"]
+                    if with_c_best is not None
+                    else None
+                ),
+                "without_c_best_us": (
+                    without_c_best["latency_us"]
+                    if without_c_best is not None
+                    else None
+                ),
+                "c_prior_over_erase_c_speedup": (
+                    without_c_best["latency_us"] / with_c_best["latency_us"]
+                    if with_c_best is not None and without_c_best is not None
+                    else None
+                ),
+            },
+            "logical_io": {
+                "boundary_io_bytes": logical_io_bytes,
+                "mlir_logical_boundary_gbps": (
+                    logical_io_bytes / mlir_latency / 1_000.0
+                ),
+                "source_logical_boundary_gbps": (
+                    logical_io_bytes / source_latency / 1_000.0
+                    if source_latency is not None
+                    else None
+                ),
+                "traffic_definition": (
+                    "sum of certified boundary input and output payload bytes; "
+                    "not measured DRAM transactions"
+                ),
+            },
+            "roofline_point": {
+                "j_workload_cost": workload_cost,
+                "arithmetic_intensity_flop_per_byte": (
+                    floating_point_ops / logical_io_bytes
+                ),
+                "mlir_achieved_gflops": (
+                    floating_point_ops / mlir_latency / 1_000.0
+                ),
+                "source_achieved_gflops": (
+                    floating_point_ops / source_latency / 1_000.0
+                    if source_latency is not None
+                    else None
+                ),
+                "hardware_counter_traffic": None,
+                "interpretation": "J-derived logical/minimum-traffic point",
+                "evaluations": roofline_evaluations,
+            },
+            "data_regime": data_regime,
+            "timing": (
+                "cuda-event-single-shot"
+                if data_regime == "cold-data"
+                else timing
+            ),
+            "requested_warm_timing": timing,
             "graph_repetitions": graph_repetitions,
             "warmup_ms": warmup_ms,
             "repeat_ms": repeat_ms,
             "measurement_rounds": measurement_rounds,
+            "cold_iterations_per_round": (
+                cold_iterations if data_regime == "cold-data" else None
+            ),
+            "cache_eviction_in_timed_region": False,
             "selection_confirmation": {
                 "mlir_batch_us": mlir_samples,
                 "source_batch_us": source_samples,
                 "batch_aggregation": "median",
                 "samples_per_batch": measurement_rounds,
-                "finalist_count": min(finalist_count, len(measured_indices)),
+                "finalist_count": len(ranked_indices),
                 "finalist_remeasurements": finalist_remeasurements,
-                "comparison_protocol": "paired-alternating.v1",
+                "comparison_protocol": (
+                    "paired-alternating.v1"
+                    if source_latency is not None
+                    else "target-only-fresh-batches.v1"
+                ),
                 "paired_batches": paired_batches,
-                "warmup_pair_discarded": True,
+                "warmup_pair_discarded": source_latency is not None,
             },
         },
     }
@@ -347,6 +661,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--timing", choices=("graph", "event"), default="graph"
     )
+    parser.add_argument(
+        "--data-regime", choices=("warm", "cold-data"), default="warm"
+    )
+    parser.add_argument("--cold-iterations", type=int, default=9)
+    parser.add_argument("--cache-flush-mib", type=int, default=256)
     parser.add_argument("--graph-repetitions", type=int, default=200)
     parser.add_argument("--warmup-ms", type=int, default=50)
     parser.add_argument("--repeat-ms", type=int, default=200)
@@ -354,6 +673,9 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--finalist-count", type=int, default=8)
     parser.add_argument("--finalist-remeasurements", type=int, default=3)
     parser.add_argument("--confirmation-batches", type=int, default=4)
+    parser.add_argument("--roofline-calibration", action="store_true")
+    parser.add_argument("--roofline-memory-mib", type=int, default=256)
+    parser.add_argument("--roofline-matrix-extent", type=int, default=4096)
     parser.add_argument("--fail-fast", action="store_true")
     return parser
 
@@ -375,6 +697,19 @@ def main(argv: list[str] | None = None) -> int:
         raise ValueError("finalist-remeasurements cannot be negative")
     if args.confirmation_batches <= 0:
         raise ValueError("confirmation-batches must be positive")
+    if args.cold_iterations <= 0:
+        raise ValueError("cold-iterations must be positive")
+    if args.cache_flush_mib <= 0:
+        raise ValueError("cache-flush-mib must be positive")
+    roofline_ceilings = (
+        _measure_cuda_roofs(
+            torch,
+            memory_mib=args.roofline_memory_mib,
+            matrix_extent=args.roofline_matrix_extent,
+        )
+        if args.roofline_calibration
+        else None
+    )
     capability = torch.cuda.get_device_capability()
     target = bundle["target"]["chip"]
     expected_capability = cuda_compute_capability_for_chip(target)
@@ -390,6 +725,28 @@ def main(argv: list[str] | None = None) -> int:
             f"{target} bundle requires compute capability "
             f"{expected_capability}, got {capability}"
         )
+    device_properties = torch.cuda.get_device_properties(
+        torch.cuda.current_device()
+    )
+    l2_cache_bytes = int(getattr(device_properties, "L2_cache_size", 0))
+    cache_flush_bytes = args.cache_flush_mib * 1024 * 1024
+    if args.data_regime == "cold-data" and (
+        l2_cache_bytes <= 0 or cache_flush_bytes <= l2_cache_bytes
+    ):
+        raise ValueError(
+            "cold-data cache-flush working set must exceed the detected L2: "
+            f"flush={cache_flush_bytes}, l2={l2_cache_bytes}"
+        )
+    cache_eviction = None
+    if args.data_regime == "cold-data":
+        cache_eviction = torch.empty(
+            cache_flush_bytes // 4,
+            dtype=torch.float32,
+            device="cuda",
+        ).uniform_()
+        # Initialize the eviction kernel/runtime before any measured candidate.
+        cache_eviction.add_(1.0)
+        torch.cuda.synchronize()
     selected = set(args.kernels or [])
     entries = [
         item
@@ -410,15 +767,26 @@ def main(argv: list[str] | None = None) -> int:
                 finalist_count=args.finalist_count,
                 finalist_remeasurements=args.finalist_remeasurements,
                 confirmation_batches=args.confirmation_batches,
+                roofline_ceilings=roofline_ceilings,
+                data_regime=args.data_regime,
+                cold_iterations=args.cold_iterations,
+                cache_eviction=cache_eviction,
             )
             records.append(record)
             perf = record["performance"]
-            print(
-                f"{entry['kernel']}: {perf['mlir_us']:.4f} us vs "
-                f"{perf['source_triton_us']:.4f} us "
-                f"({perf['mlir_over_triton']:.3f}x)",
-                flush=True,
-            )
+            if perf["source_triton_us"] is None:
+                print(
+                    f"{entry['kernel']}: {perf['mlir_us']:.4f} us "
+                    "(Target--RefJ-only; no Source claim)",
+                    flush=True,
+                )
+            else:
+                print(
+                    f"{entry['kernel']}: {perf['mlir_us']:.4f} us vs "
+                    f"{perf['source_triton_us']:.4f} us "
+                    f"({perf['mlir_over_triton']:.3f}x)",
+                    flush=True,
+                )
         except Exception as exc:
             records.append(
                 {
@@ -434,12 +802,61 @@ def main(argv: list[str] | None = None) -> int:
             if args.fail_fast:
                 break
     successful = [item for item in records if "performance" in item]
+    c_ordering_speedups = [
+        item["performance"]["c_ordering_ablation"][
+            "c_prior_over_erase_c_speedup"
+        ]
+        for item in successful
+        if item["performance"]["c_ordering_ablation"][
+            "c_prior_over_erase_c_speedup"
+        ]
+        is not None
+    ]
     report = {
         "protocol": REPORT_PROTOCOL,
         "bundle_protocol": bundle["protocol"],
         "bundle_toolchain_digest": bundle["toolchain_digest"],
         "target": bundle["target"],
+        "workload_profile": bundle.get("workload_profile", "closed-v1"),
+        "baseline_policy": bundle.get("baseline_policy", "source_and_refj"),
+        "ablation_axes": bundle.get("ablation_axes"),
+        "experiment_spec_digest": bundle.get("experiment_spec_digest"),
+        "measurement_spec_protocol": bundle.get("measurement_spec_protocol"),
+        "measurement_spec_digest": bundle.get("measurement_spec_digest"),
         "device": _device_record(torch),
+        "roofline_ceilings": (
+            roofline_ceilings.to_record()
+            if roofline_ceilings is not None
+            else None
+        ),
+        "measurement": {
+            "data_regime": args.data_regime,
+            "requested_warm_timing": args.timing,
+            "effective_timing": (
+                "cuda-event-single-shot"
+                if args.data_regime == "cold-data"
+                else args.timing
+            ),
+            "graph_repetitions": args.graph_repetitions,
+            "warmup_ms": args.warmup_ms,
+            "repeat_ms": args.repeat_ms,
+            "measurement_rounds": args.measurement_rounds,
+            "cold_iterations_per_round": (
+                args.cold_iterations
+                if args.data_regime == "cold-data"
+                else None
+            ),
+            "cache_flush_bytes": (
+                cache_flush_bytes if args.data_regime == "cold-data" else None
+            ),
+            "detected_l2_cache_bytes": l2_cache_bytes,
+            "cache_eviction_in_timed_region": False,
+            "cold_scope": (
+                "data-cache state only; process/module/JIT cold start excluded"
+                if args.data_regime == "cold-data"
+                else None
+            ),
+        },
         "created_unix_ns": time.time_ns(),
         "elapsed_seconds": (time.time_ns() - started) / 1_000_000_000.0,
         "summary": {
@@ -447,8 +864,21 @@ def main(argv: list[str] | None = None) -> int:
             "successful": len(successful),
             "failed": len(records) - len(successful),
             "meets_or_beats_triton": sum(
-                item["performance"]["meets_or_beats_triton"]
+                item["performance"]["meets_or_beats_triton"] is True
                 for item in successful
+            ),
+            "source_baseline_count": sum(
+                item["performance"]["source_triton_us"] is not None
+                for item in successful
+            ),
+            "geomean_c_prior_over_erase_c_speedup": (
+                float(
+                    np.exp(
+                        np.mean(np.log(np.asarray(c_ordering_speedups)))
+                    )
+                )
+                if c_ordering_speedups
+                else None
             ),
         },
         "kernels": records,

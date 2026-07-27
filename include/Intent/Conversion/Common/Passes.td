@@ -35,6 +35,30 @@ def ExpandRsqrtForLibm : Pass<"expand-rsqrt-for-libm", "::mlir::ModuleOp"> {
   ];
 }
 
+def TileLinalgByIteratorKind : Pass<
+    "tile-linalg-by-iterator-kind", "::mlir::ModuleOp"> {
+  let summary = "Tile Linalg operations with independent parallel/reduction extents.";
+  let description = [{
+    Applies the upstream TilingInterface/SCF tiler to tensor-semantics Linalg
+    operations. Parallel and reduction iterators receive independent static
+    tile extents; zero leaves that iterator kind untiled. The pass is target
+    neutral and records only actual tiled operations/loops. RVV uses it for
+    real retile search, but no target or C semantics are embedded here.
+  }];
+  let dependentDialects = [
+    "::mlir::arith::ArithDialect",
+    "::mlir::linalg::LinalgDialect",
+    "::mlir::scf::SCFDialect",
+    "::mlir::tensor::TensorDialect",
+  ];
+  let options = [
+    Option<"parallelTile", "parallel-tile", "unsigned", "0",
+           "Tile extent for every parallel iterator (zero disables)">,
+    Option<"reductionTile", "reduction-tile", "unsigned", "0",
+           "Tile extent for every reduction iterator (zero disables)">,
+  ];
+}
+
 def ForwardBufferResultsToOutParams : Pass<
     "forward-buffer-results-to-out-params", "::mlir::ModuleOp"> {
   let summary = "Forward bufferized tensor results into explicit out params.";
@@ -53,11 +77,13 @@ def LowerDisjointMemrefCopyToLoops : Pass<
     "lower-disjoint-memref-copy-to-loops", "::mlir::ModuleOp"> {
   let summary = "Lower provably disjoint memref.copy operations to SCF loops.";
   let description = [{
-    Expands memref.copy when its source is a fresh memref.alloc and source and
-    destination have equal ranked shapes and element types.  Fresh allocation
-    proves disjointness without an alias oracle, so the generated direct loop
-    preserves copy semantics and removes the external memrefCopy runtime from
-    standalone CPU/RVV objects.
+    Expands ranked memref.copy operations whose source and destination have
+    equal shapes and element types.  The memref.copy contract makes overlapping
+    source/destination locations undefined, so a valid operation already
+    provides the disjointness needed by the generated direct loop.  Layouts may
+    differ because memref.load/store preserve each operand's addressing.  This
+    removes the external memrefCopy runtime from standalone CPU/RVV objects,
+    including copies between function ABI arguments.
   }];
   let dependentDialects = [
     "::mlir::arith::ArithDialect",

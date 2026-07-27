@@ -1,0 +1,88 @@
+{
+  "protocol": "intentir.backend.performance-measurement.v1",
+  "scope": "cache-state, Roofline, and cross-target performance evidence for a fixed J/lowering-state search",
+  "identity_rule": {
+    "required_equal_fields": [
+      "j_digest",
+      "target",
+      "compiler_toolchain_digest",
+      "ablation_arm_candidate_contract",
+      "data_regime",
+      "timer",
+      "correctness_policy"
+    ],
+    "cross_regime_rule": "warm, streaming, and cold-data are separate estimands and must never be pooled",
+    "cross_target_rule": "RTX 5090D, H100, and RVV are reported independently before any cross-target narrative",
+    "publication_primary_regime": "cold-data denotes post-warmup, L2-controlled single-shot timing; process/module/JIT cold start is excluded",
+    "full_corpus_rule": "every frozen production-catalog J remains an explicit matrix row for every target and experiment arm; not_matched, literal_shape_only, unavailable baseline, compile failure, and Q/D failure are retained rather than omitted",
+    "valuation_identity_rule": "every result binds the unchanged j_digest plus the exact J-declared symbolic extent valuation and workload profile; a backend profile may not replace a J literal with a symbol"
+  },
+  "data_regimes": {
+    "warm": {
+      "definition": "persistent tensor addresses and repeated prepared launches after code/data warmup",
+      "cuda_timers": ["cuda-graph-per-invocation", "cuda-event"],
+      "rvv_timer": "steady-state monotonic-clock batch",
+      "claim": "warm-cache steady-state latency only",
+      "publication_role": "debugging or deployment-specific appendix; not the primary all-kernel aggregate"
+    },
+    "streaming": {
+      "definition": "rotate disjoint replicas of the exact certified invocation",
+      "minimum_working_set_rule": "working set must be strictly larger than detected last-level data cache",
+      "preparation_rule": "allocation, replication, and pointer binding are outside the timed interval",
+      "current_formal_targets": ["rvv"],
+      "claim": "address-rotating cache-pressure latency; not a DRAM-transaction measurement",
+      "publication_role": "cache-pressure sensitivity appendix"
+    },
+    "cold-data": {
+      "definition": "evict target data cache before every single-shot measured invocation",
+      "minimum_eviction_rule": "eviction working set must be strictly larger than detected LLC/L2",
+      "preparation_rule": "eviction and synchronization are outside the timed interval",
+      "cuda_timer": "single-shot CUDA events",
+      "rvv_timer": "single-shot monotonic clock",
+      "claim": "post-warmup L2/LLC-controlled data-cache state; process/module/JIT cold start is excluded",
+      "publication_role": "primary kernel-latency aggregate"
+    }
+  },
+  "roofline": {
+    "workload_numerator": "floating-point operations derived deterministically from the materialized J",
+    "workload_denominator": "certified boundary input plus output payload bytes",
+    "logical_traffic_rule": "logical boundary bytes are a minimum traffic model, not measured DRAM transactions",
+    "memory_ceiling": "target-side sustained copy benchmark counting one read plus one write",
+    "fp32_ceiling": "target-side FP32 matrix multiplication with TF32 disabled",
+    "hardware_counter_rule": "when available, measured DRAM/L2 counters are reported separately from logical traffic",
+    "memory_wall_claim_rule": "a low arithmetic intensity is insufficient; the complete J cost must contain no unmodeled special-function throughput, observed latency must be between 0.95x and 2.0x of the logical Roofline lower bound, and large-shape/cache evidence must exclude fixed-latency domination",
+    "faster_than_roof_rule": "latency below 0.95x of the calibrated logical Roofline lower bound indicates cache reuse or a traffic/ceiling mismatch and forbids a DRAM memory-wall claim",
+    "roof_distance_rule": "latency above 2.0x of the logical Roofline lower bound is not roof-approaching and forbids a memory-wall claim",
+    "tiny_workload_rule": "if observed latency exceeds the logical Roofline lower bound by more than 10x, classify as latency_or_unmodeled_work_dominated and forbid a memory-wall claim"
+  },
+  "search_ablation": {
+    "e2": "fixed structural and numeric trace with schedule search",
+    "e3": "hard-safe structural/numeric lowering-state expansion with independent schedule search",
+    "c_pairing": "C-prior and Erase-C traverse the same candidate universe under equal distinct-state/failure budget",
+    "retile_pairing": "retiled and no-retile states use the same J, target lowerer, correctness policy, timer, and data regime",
+    "candidate_correctness": "every measured executable candidate must pass Target-RefJ under the frozen Q/D search policy"
+  },
+  "reporting": {
+    "required": [
+      "absolute latency",
+      "logical boundary GB/s",
+      "J-derived arithmetic intensity",
+      "target-side calibrated ceilings",
+      "asymptotic Roofline bottleneck",
+      "observed operational regime",
+      "cache hierarchy and data regime",
+      "unchanged J digest plus exact symbolic extent valuation and workload profile",
+      "candidate/arm budget identity",
+      "all-kernel and applicable-subset aggregates",
+      "an explicit status for every production-catalog J in every requested target/arm/profile matrix"
+    ],
+    "forbidden": [
+      "calling a named low-intensity operator memory-bound without measured-scale evidence",
+      "mixing warm CUDA-graph latency with cold single-shot latency in one aggregate",
+      "using warm-cache latency as the primary all-kernel publication aggregate",
+      "treating logical boundary bytes as hardware DRAM transactions",
+      "using TF32 as an explanation for a J with no typed contraction",
+      "reporting only accelerated or transformation-matched kernels while omitting the remaining production catalog"
+    ]
+  }
+}
