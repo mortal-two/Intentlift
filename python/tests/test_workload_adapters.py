@@ -840,10 +840,23 @@ def test_wave4_liger_adapters_match_exact_source_abi(
 
 def test_wave4_output_roles_and_safe_kl_branch_are_explicit() -> None:
     rope = {item.formal: item for item in TRITON_WORKLOAD_ADAPTERS[_ROPE].buffers}
+    rope_scalars = {
+        item.formal: item for item in TRITON_WORKLOAD_ADAPTERS[_ROPE].scalars
+    }
     kl_div = TRITON_WORKLOAD_ADAPTERS[_KL_DIV]
     tvd = {item.formal: item for item in TRITON_WORKLOAD_ADAPTERS[_TVD].buffers}
 
     assert rope["q_ptr"].role is rope["k_ptr"].role is BufferRole.INOUT
+    assert {item.dtype for item in rope.values()} == {"f32"}
+    assert {
+        rope_scalars[name].dtype
+        for name in (
+            "q_row_stride",
+            "k_row_stride",
+            "cos_row_stride",
+            "sin_row_stride",
+        )
+    } == {"i32"}
     assert dict(kl_div.semantic_constexprs)["log_target"] is True
     assert tvd["loss_ptr"].shape == tvd["grads_ptr"].shape == (2, 64)
     assert tvd["label_ptr"].role is BufferRole.INPUT

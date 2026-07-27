@@ -1586,27 +1586,27 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
         "high_performance:liger_rope",
         buffers=(
             _buffer(
-                "q_ptr", BufferRole.INOUT, "f16", (1, 4, 2, 16), "q",
+                "q_ptr", BufferRole.INOUT, "f32", (1, 4, 2, 16), "q",
                 shape_contract=("h0", "h1", "h2", "h3"),
             ),
             _buffer(
-                "k_ptr", BufferRole.INOUT, "f16", (1, 4, 1, 16), "k",
+                "k_ptr", BufferRole.INOUT, "f32", (1, 4, 1, 16), "k",
                 shape_contract=("h0", "h1", "h4", "h3"),
             ),
             _buffer(
-                "cos", BufferRole.INPUT, "f16", (1, 4, 16),
+                "cos", BufferRole.INPUT, "f32", (1, 4, 16),
                 shape_contract=("h5", "h1", "h3"),
             ),
             _buffer(
-                "sin", BufferRole.INPUT, "f16", (1, 4, 16),
+                "sin", BufferRole.INPUT, "f32", (1, 4, 16),
                 shape_contract=("h5", "h1", "h3"),
             ),
         ),
         scalars=(
-            _scalar("q_row_stride", "i64", 32),
-            _scalar("k_row_stride", "i64", 16),
-            _scalar("cos_row_stride", "i64", 16),
-            _scalar("sin_row_stride", "i64", 16),
+            _scalar("q_row_stride", "i32", 32),
+            _scalar("k_row_stride", "i32", 16),
+            _scalar("cos_row_stride", "i32", 16),
+            _scalar("sin_row_stride", "i32", 16),
             _scalar("sl", "i32", 4, shape_coordinate="h1"),
         ),
         semantic_constexprs=(
