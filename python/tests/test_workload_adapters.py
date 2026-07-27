@@ -352,6 +352,7 @@ def test_rope_family_exposes_only_source_grounded_parametric_identities() -> Non
         "n_kh": "h4",
         "hd": "h3",
     }
+    assert {item.dtype for item in qwen.adapter.buffers} == {"f32"}
     assert {item.formal: item.shape_coordinate for item in qwen.adapter.scalars}[
         "sl"
     ] == "h1"

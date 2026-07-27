@@ -1168,19 +1168,19 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
         "high_performance:liger_qwen2vl_mrope",
         buffers=(
             _buffer(
-                "q_ptr", BufferRole.INOUT, "f16", (1, 4, 2, 16), "q",
+                "q_ptr", BufferRole.INOUT, "f32", (1, 4, 2, 16), "q",
                 shape_contract=("h0", "h1", "h2", "h3"),
             ),
             _buffer(
-                "k_ptr", BufferRole.INOUT, "f16", (1, 4, 1, 16), "k",
+                "k_ptr", BufferRole.INOUT, "f32", (1, 4, 1, 16), "k",
                 shape_contract=("h0", "h1", "h4", "h3"),
             ),
             _buffer(
-                "cos", BufferRole.INPUT, "f16", (3, 1, 4, 16),
+                "cos", BufferRole.INPUT, "f32", (3, 1, 4, 16),
                 shape_contract=(3, "h0", "h1", "h3"),
             ),
             _buffer(
-                "sin", BufferRole.INPUT, "f16", (3, 1, 4, 16),
+                "sin", BufferRole.INPUT, "f32", (3, 1, 4, 16),
                 shape_contract=(3, "h0", "h1", "h3"),
             ),
         ),
