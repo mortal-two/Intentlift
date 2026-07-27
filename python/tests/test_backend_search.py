@@ -200,6 +200,22 @@ def test_row_schedule_names_multi_row_warp_mapping() -> None:
         RowSchedule(64, 32, rows_per_block=2)
 
 
+def test_row_schedule_names_multi_stage_reduction_mapping() -> None:
+    multi_stage = RowSchedule(
+        256,
+        32,
+        vector_width=1,
+        reduction_parts=16,
+    )
+
+    assert "reduction-parts=16" in multi_stage.pass_argument
+    assert multi_stage.to_dict()["reduction_parts"] == 16
+    with pytest.raises(ValueError, match="power of two"):
+        RowSchedule(256, 32, reduction_parts=3)
+    with pytest.raises(ValueError, match="cannot also assign"):
+        RowSchedule(32, 32, rows_per_block=2, reduction_parts=2)
+
+
 def test_sparsemax_contract_view_reuses_guard_projection_and_scan_relation() -> None:
     corpus = Path(__file__).parents[2] / "corpus" / "production-jc-v1"
     snapshot, _path = load_production_snapshot(corpus, "sparsemax")
@@ -283,6 +299,11 @@ def test_ablation_axes_expand_concrete_reduction_and_fma_states() -> None:
     )
     assert any(
         item.schedule.get("rows_per_block", 1) > 1
+        for item in n1
+        if item.lowering_path_kind == "row_reduction"
+    )
+    assert any(
+        item.schedule.get("reduction_parts", 1) > 1
         for item in n1
         if item.lowering_path_kind == "row_reduction"
     )

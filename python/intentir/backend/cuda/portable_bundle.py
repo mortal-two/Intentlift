@@ -19,6 +19,27 @@ from intentir.verify.gate2.triton import (
 ARRAY_PROTOCOL = "intentir.transport.ndarray.v1"
 
 
+def logical_runtime_array(
+    value: Any, *, rank: int, name: str
+) -> np.ndarray:
+    """Return a contiguous logical input without changing its declared rank.
+
+    NumPy's ``ascontiguousarray`` promotes a zero-dimensional value to shape
+    ``(1,)``.  That is not a harmless storage detail for the materialized MLIR
+    ABI: ``tensor<T>`` and ``tensor<1xT>`` have different descriptors.  Keep the
+    rank supplied by J while still normalizing non-scalar inputs.
+    """
+
+    if rank < 0:
+        raise ValueError("logical input rank cannot be negative")
+    raw = np.asarray(value)
+    if rank:
+        return np.ascontiguousarray(raw)
+    if raw.size != 1:
+        raise ValueError(f"rank-0 logical input {name!r} has {raw.size} values")
+    return raw.reshape(())
+
+
 def cuda_compute_capability_for_chip(chip: str) -> tuple[int, int]:
     """Decode the exact compute capability named by an NVVM cubin target."""
 
@@ -122,4 +143,5 @@ __all__ = [
     "encode_array",
     "encode_triton_spec",
     "encode_values",
+    "logical_runtime_array",
 ]

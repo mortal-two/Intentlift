@@ -48,6 +48,8 @@ class MLIRTransformationReceipt:
     grid_blocks: int
     grid_stride_loop_count: int
     rows_per_block: int
+    stage_count: int
+    reduction_parts: int
     predicated_value_if_count: int
     folded_constexpr_select_count: int
     host_value_capture_count: int
@@ -62,6 +64,7 @@ class MLIRTransformationReceipt:
             "gpu_all_reduce",
             "subgroup_feature",
             "subgroup_rows",
+            "multi_stage_partial_finalize",
         }
 
     @property
@@ -71,6 +74,8 @@ class MLIRTransformationReceipt:
                 "lowering_path_kind": self.lowering_path_kind,
                 "reduction_topology": self.reduction_topology,
                 "rows_per_block": self.rows_per_block,
+                "stage_count": self.stage_count,
+                "reduction_parts": self.reduction_parts,
                 "transformation_trace": list(self.transformation_trace),
                 "approximation_mode": self.approximation_mode,
             }
@@ -90,6 +95,8 @@ class MLIRTransformationReceipt:
             "grid_blocks": self.grid_blocks,
             "grid_stride_loop_count": self.grid_stride_loop_count,
             "rows_per_block": self.rows_per_block,
+            "stage_count": self.stage_count,
+            "reduction_parts": self.reduction_parts,
             "predicated_value_if_count": self.predicated_value_if_count,
             "folded_constexpr_select_count": self.folded_constexpr_select_count,
             "host_value_capture_count": self.host_value_capture_count,
@@ -146,6 +153,12 @@ def _transformation_receipt(mlir: str) -> MLIRTransformationReceipt | None:
     rows_per_block = integer_attr("intent.backend.rows_per_block")
     if rows_per_block is None:
         rows_per_block = 1
+    stage_count = integer_attr("intent.backend.stage_count")
+    if stage_count is None:
+        stage_count = 1
+    reduction_parts = integer_attr("intent.backend.reduction_parts")
+    if reduction_parts is None:
+        reduction_parts = 1
     grid_blocks = integer_attr("intent.backend.grid_blocks")
     if grid_blocks is None:
         grid_blocks = 0
@@ -172,6 +185,8 @@ def _transformation_receipt(mlir: str) -> MLIRTransformationReceipt | None:
     if (
         not trace
         or rows_per_block <= 0
+        or stage_count <= 0
+        or reduction_parts <= 0
         or grid_blocks < 0
         or grid_stride_loop_count not in {0, 1}
         or any(value is None or value < 0 for value in counts.values())
@@ -191,6 +206,8 @@ def _transformation_receipt(mlir: str) -> MLIRTransformationReceipt | None:
         grid_blocks=grid_blocks,
         grid_stride_loop_count=grid_stride_loop_count,
         rows_per_block=rows_per_block,
+        stage_count=stage_count,
+        reduction_parts=reduction_parts,
         predicated_value_if_count=int(counts["predicated_value_if_count"]),
         folded_constexpr_select_count=int(
             counts["folded_constexpr_select_count"]

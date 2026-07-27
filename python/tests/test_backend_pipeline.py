@@ -101,6 +101,8 @@ def test_cpp_authored_concrete_state_receipt_is_decoded_without_name_rules() -> 
           intent.backend.barrier_count = 2 : i64,
           intent.backend.block_threads = 64 : i64,
           intent.backend.rows_per_block = 2 : i64,
+          intent.backend.stage_count = 3 : i64,
+          intent.backend.reduction_parts = 16 : i64,
           intent.backend.fma_count = 4 : i64,
           intent.backend.approximate_div_count = 1 : i64,
           intent.backend.folded_constexpr_select_count = 0 : i64,
@@ -125,10 +127,13 @@ def test_cpp_authored_concrete_state_receipt_is_decoded_without_name_rules() -> 
     assert receipt.folded_constexpr_select_count == 0
     assert receipt.rows_per_block == 2
     assert receipt.to_dict()["rows_per_block"] == 2
+    assert receipt.stage_count == 3
+    assert receipt.reduction_parts == 16
     assert receipt.observation_changing
     assert receipt.reduction_topology == "workgroup_hierarchical"
     assert len(receipt.topology_digest) == 64
     assert replace(receipt, rows_per_block=1).topology_digest != receipt.topology_digest
+    assert replace(receipt, reduction_parts=8).topology_digest != receipt.topology_digest
 
 
 def test_generic_pipeline_uses_the_real_generic_compiler_entrypoint(

@@ -27,6 +27,7 @@ from intentir.backend.cuda.portable_bundle import (
     cuda_compute_capability_for_chip,
     decode_triton_spec,
     decode_values,
+    logical_runtime_array,
 )
 from intentir.ir.production_snapshot import ProductionSnapshot
 from intentir.backend.roofline import (
@@ -247,15 +248,22 @@ def _one_kernel(
     snapshot = ProductionSnapshot.from_dict(entry["snapshot"])
     values = decode_values(entry["values"])
     reference = decode_values(entry["reference_outputs"])
-    inputs = [
-        torch.as_tensor(
-            np.ascontiguousarray(
-                values[entry["input_bindings"][name]]
-            ),
-            device="cuda",
+    j_inputs = {item.name: item for item in snapshot.j.intent.inputs}
+    inputs = []
+    for name in entry["input_order"]:
+        if name not in j_inputs:
+            raise ValueError(f"bundled runtime input {name!r} is absent from J")
+        logical = j_inputs[name]
+        inputs.append(
+            torch.as_tensor(
+                logical_runtime_array(
+                    values[entry["input_bindings"][name]],
+                    rank=len(logical.shape),
+                    name=name,
+                ),
+                device="cuda",
+            )
         )
-        for name in entry["input_order"]
-    ]
     outputs = [
         torch.empty(
             tuple(item["shape"]),

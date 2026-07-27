@@ -27,6 +27,7 @@ from intentir.verify.scrc_workload_run import build_workload_jc_suite
 from intentir.verify.workload_adapters import PreparedTritonWorkload
 
 from .pipeline import LoweredProgram, execute_cuda_artifact
+from .portable_bundle import logical_runtime_array
 
 
 def build_seeded_execution_domain(
@@ -84,14 +85,9 @@ def _torch_dtype(torch: Any, dtype: str) -> Any:
 
 
 def _logical_runtime_array(value: Any, *, rank: int, name: str) -> np.ndarray:
-    raw = np.asarray(value)
-    if rank:
-        return np.ascontiguousarray(raw)
-    if raw.size != 1:
-        raise ValueError(f"rank-0 logical input {name!r} has {raw.size} values")
-    # np.ascontiguousarray promotes a zero-dimensional array to shape (1,),
-    # which violates the materialized tensor ABI.  Preserve logical rank.
-    return raw.reshape(())
+    """Compatibility alias for the shared portable-runtime ABI normalizer."""
+
+    return logical_runtime_array(value, rank=rank, name=name)
 
 
 class CudaOpaqueExecution:

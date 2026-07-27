@@ -19,6 +19,7 @@ from intentir.backend.cuda.portable_bundle import (
     decode_triton_spec,
     encode_array,
     encode_triton_spec,
+    logical_runtime_array,
 )
 from intentir.verify.gate2.triton import (
     ArgumentRole,
@@ -34,6 +35,23 @@ def test_portable_array_preserves_rank_zero_and_exact_bytes() -> None:
     assert restored.shape == ()
     assert restored.dtype == scalar.dtype
     assert restored.tobytes() == scalar.tobytes()
+
+
+def test_logical_runtime_array_preserves_j_rank_zero_abi() -> None:
+    scalar = logical_runtime_array(
+        np.asarray([3.25], dtype=np.float32), rank=0, name="scale"
+    )
+
+    assert scalar.shape == ()
+    assert scalar.dtype == np.float32
+    assert float(scalar) == pytest.approx(3.25)
+
+
+def test_logical_runtime_array_rejects_non_scalar_rank_zero_value() -> None:
+    with pytest.raises(ValueError, match="rank-0 logical input"):
+        logical_runtime_array(
+            np.asarray([1, 2], dtype=np.int32), rank=0, name="extent"
+        )
 
 
 def test_extracted_launch_json_roundtrip_is_content_exact() -> None:

@@ -79,6 +79,27 @@ def test_selector_uses_the_cpp_structural_probe_without_verdicts(
     assert "P5" not in record
 
 
+def test_selector_accepts_a_complete_compiler_emitted_launch_graph(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        backend_compile,
+        "_run",
+        lambda _command, stdin=None: (
+            "module { gpu.launch blocks(%c1, %c1, %c1) "
+            "threads(%c1, %c1, %c1) {} "
+            "gpu.launch blocks(%c1, %c1, %c1) "
+            "threads(%c1, %c1, %c1) {} }"
+        ),
+    )
+
+    result = select_variant(_SOURCE, target=LoweringTarget(chip="sm_120a"))
+
+    assert result.pipeline_kind == "specialized"
+    assert result.attempts[-1].gpu_launch_count == 2
+    assert result.attempts[-1].direct_hit
+
+
 def test_selector_falls_back_when_no_pass_consumes_the_graph(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -139,3 +160,30 @@ def test_real_row_reduction_pass_is_selected_structurally() -> None:
     assert result.fast_path_id == fast_path_id
     assert result.attempts[0].residual_ops == ()
     assert result.attempts[0].gpu_launch_count == 1
+
+
+@pytest.mark.skipif(
+    not Path(backend_compile.INTENT_OPT).exists(), reason="intent-opt not built"
+)
+def test_real_multistage_row_reduction_graph_is_selected_structurally() -> None:
+    source = (
+        Path(__file__).resolve().parents[2]
+        / "test"
+        / "lower-row-multistage-to-gpu.mlir"
+    )
+    fast_path_id = "cuda.row_reduction.normalization_loss.read_once.v1"
+
+    result = select_variant(
+        source,
+        only_fast_path=fast_path_id,
+        pass_overrides={
+            fast_path_id: (
+                "-convert-intent-row-reduction-to-gpu=block-threads=128 "
+                "vector-width=1 reduction-parts=4"
+            )
+        },
+    )
+
+    assert result.pipeline_kind == "specialized"
+    assert result.attempts[0].residual_ops == ()
+    assert result.attempts[0].gpu_launch_count == 5

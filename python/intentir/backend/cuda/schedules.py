@@ -33,6 +33,7 @@ class RowSchedule:
     defer_epilogue_col_loads: bool = True
     promote_rank0_scalars: bool = True
     rows_per_block: int = 1
+    reduction_parts: int = 1
 
     def __post_init__(self) -> None:
         if type(self.block_threads) is not int or self.block_threads not in _BLOCK_THREADS:
@@ -69,6 +70,23 @@ class RowSchedule:
             raise ValueError(
                 "multi-row schedule requires 32 logical threads per row"
             )
+        if (
+            type(self.reduction_parts) is not int
+            or self.reduction_parts < 1
+            or self.reduction_parts > 128
+            or self.reduction_parts & (self.reduction_parts - 1)
+        ):
+            raise ValueError(
+                "row schedule reduction_parts must be a power of two in [1, 128]"
+            )
+        if self.reduction_parts > 1 and self.rows_per_block != 1:
+            raise ValueError(
+                "multi-stage reduction cannot also assign multiple rows per block"
+            )
+        if self.reduction_parts > 1 and self.vector_width == 4:
+            raise ValueError(
+                "multi-stage reduction currently requires scalar feature loads"
+            )
 
     @property
     def num_warps(self) -> int:
@@ -87,7 +105,8 @@ class RowSchedule:
             "predicate-pure-value-if=true "
             "defer-epilogue-col-loads="
             f"{'true' if self.defer_epilogue_col_loads else 'false'} "
-            f"rows-per-block={self.rows_per_block}"
+            f"rows-per-block={self.rows_per_block} "
+            f"reduction-parts={self.reduction_parts}"
         )
 
     def to_dict(self) -> dict[str, int | bool]:
@@ -101,6 +120,7 @@ class RowSchedule:
             "promote_rank0_scalars": self.promote_rank0_scalars,
             "defer_epilogue_col_loads": self.defer_epilogue_col_loads,
             "rows_per_block": self.rows_per_block,
+            "reduction_parts": self.reduction_parts,
         }
 
 

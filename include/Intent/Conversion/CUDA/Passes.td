@@ -96,6 +96,12 @@ def ConvertIntentRowReductionToGPU
            "one-warp-per-row register path (32 logical lanes per row, no "
            "block-wide collective or shared scratch). Unsupported graphs remain "
            "unmatched rather than falling back under this candidate identity.">,
+    Option<"reductionParts", "reduction-parts", "unsigned", "1",
+           "Independent blocks assigned to one logical row for a true multi-stage "
+           "single-reduction lowering. Values 2--128 (powers of two) emit partial, "
+           "finalize, and—when a full-row result exists—epilogue launches sharing "
+           "compiler-managed global scratch. 1 preserves the single-launch paths. "
+           "Unsupported graphs fail closed; no atomic or Python-emitted fallback.">,
   ];
 }
 

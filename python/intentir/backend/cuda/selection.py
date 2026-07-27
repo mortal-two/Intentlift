@@ -3,8 +3,9 @@
 This module is deliberately independent of every verification pipeline.  Its
 input is already-accepted Intent dialect MLIR; selection probes the registered
 C++ conversion passes and chooses a specialized path only when one pass
-consumes the complete graph into exactly one ``gpu.launch``.  Otherwise the
-generic Intent -> Linalg -> CUDA path remains the mandatory fallback.
+consumes the complete graph into one or more compiler-emitted ``gpu.launch``
+operations. Otherwise the generic Intent -> Linalg -> CUDA path remains the
+mandatory fallback.
 """
 
 from __future__ import annotations
@@ -500,7 +501,7 @@ def select_variant(
             continue
         residuals = residual_intent_ops(probe)
         launch_count = gpu_launch_count(probe)
-        direct_hit = not residuals and launch_count == 1
+        direct_hit = not residuals and launch_count >= 1
         probe_digest = hashlib.sha256(probe.encode("utf-8")).hexdigest()
         attempt = ProbeAttempt(
             fast_path_id=descriptor.fast_path_id,
@@ -512,7 +513,7 @@ def select_variant(
             gpu_launch_count=launch_count,
             probe_output_sha256=probe_digest,
             reason=(
-                "single-launch whole-graph structural match"
+                "compiler-launch-graph whole-graph structural match"
                 if direct_hit
                 else "specialized pass did not consume the complete graph"
             ),

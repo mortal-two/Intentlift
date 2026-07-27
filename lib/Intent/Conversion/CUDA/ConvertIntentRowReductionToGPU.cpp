@@ -360,7 +360,9 @@ static void attachConcreteStateReceipt(func::FuncOp lowered, int64_t threads,
                                        unsigned approximateDivCount = 0,
                                        unsigned hostValueCaptureCount = 0,
                                        unsigned epilogueLoadMotionCount = 0,
-                                       StringRef topologyOverride = {}) {
+                                       StringRef topologyOverride = {},
+                                       int64_t stageCount = 1,
+                                       int64_t reductionParts = 1) {
   MLIRContext *ctx = lowered.getContext();
   unsigned fmaCount = 0;
   unsigned shuffleCount = 0;
@@ -425,6 +427,10 @@ static void attachConcreteStateReceipt(func::FuncOp lowered, int64_t threads,
                                     threads * rowsPerBlock));
   lowered->setAttr("intent.backend.rows_per_block",
                    IntegerAttr::get(IntegerType::get(ctx, 64), rowsPerBlock));
+  lowered->setAttr("intent.backend.stage_count",
+                   IntegerAttr::get(IntegerType::get(ctx, 64), stageCount));
+  lowered->setAttr("intent.backend.reduction_parts",
+                   IntegerAttr::get(IntegerType::get(ctx, 64), reductionParts));
   lowered->setAttr(
       "intent.backend.predicated_value_if_count",
       IntegerAttr::get(IntegerType::get(ctx, 64), predicatedValueIfCount));
@@ -843,6 +849,7 @@ struct RowReductionLowering {
   bool promoteRank0ScalarInputs;
   bool enableSortedPrefix;
   unsigned requestedRowsPerBlock;
+  unsigned requestedReductionParts;
   unsigned predicatedValueIfCount;
   unsigned foldedConstexprSelectCount;
   unsigned emittedApproximateDivCount = 0;
@@ -916,10 +923,11 @@ struct RowReductionLowering {
   DenseMap<Value, IotaRole> iotaRoles;
 
   // M6: the first-class Schedule this lowering emits. Populated by match();
-  // `kind` carries the three-way fork decision (0=register-tile, 1=tiled-smem,
-  // 2=scan) so rewrite() dispatches on the Schedule, not on ad-hoc predicates.
+  // `kind` carries the four-way fork decision (0=register-tile, 1=tiled-smem,
+  // 2=scan, 3=multi-stage partial/finalize/epilogue) so rewrite() dispatches on
+  // the Schedule, not on ad-hoc predicates.
   // Each rewrite path fills `smemBytes` and attaches the structured launch plan.
-  enum RowKind { KRegister = 0, KTiled = 1, KScan = 2 };
+  enum RowKind { KRegister = 0, KTiled = 1, KScan = 2, KMultiStage = 3 };
   Schedule sched;
 
   RowReductionLowering(func::FuncOp fn, unsigned bt, unsigned tc,
@@ -928,7 +936,7 @@ struct RowReductionLowering {
                        bool promoteScalars, bool enablePrefix,
                        unsigned predicatedValueIfs,
                        unsigned foldedConstexprSelects,
-                       unsigned rowsPerBlock)
+                       unsigned rowsPerBlock, unsigned reductionParts)
       : fn(fn), blockThreads(bt), tileColsMax(tc),
         requestedVectorWidth(vw),
         enableFmaFusion(fuseFma),
@@ -937,6 +945,7 @@ struct RowReductionLowering {
         promoteRank0ScalarInputs(promoteScalars),
         enableSortedPrefix(enablePrefix),
         requestedRowsPerBlock(rowsPerBlock),
+        requestedReductionParts(reductionParts),
         predicatedValueIfCount(predicatedValueIfs),
         foldedConstexprSelectCount(foldedConstexprSelects) {}
 
@@ -1179,6 +1188,10 @@ struct RowReductionLowering {
   LogicalResult match() {
     if (requestedRowsPerBlock != 1 && requestedRowsPerBlock != 2 &&
         requestedRowsPerBlock != 4 && requestedRowsPerBlock != 8)
+      return failure();
+    if (requestedReductionParts == 0 || requestedReductionParts > 128 ||
+        (requestedReductionParts & (requestedReductionParts - 1)) != 0 ||
+        (requestedReductionParts > 1 && requestedRowsPerBlock != 1))
       return failure();
     if (requestedVectorWidth != 0 && requestedVectorWidth != 1 &&
         requestedVectorWidth != 4)
@@ -1809,7 +1822,7 @@ struct RowReductionLowering {
     // frontier buffers in the source element type and therefore must not claim
     // half-softmax support.
     if ((halfSoftmax || explicitHalfStorage) &&
-        (numTiles > 1 || !scans.empty()))
+        (numTiles > 1 || !scans.empty() || requestedReductionParts > 1))
       return failure();
     // Multi-tile (tiled + smem-cached) path scope: one or more per-row reduces,
     // no cross-row/atomic fold, outputs are RowOut/PerRowOut only. Independent
@@ -1817,7 +1830,7 @@ struct RowReductionLowering {
     // reduction starts a new pass over the already cached row frontier.  Thus
     // the implementation retains read-once global traffic without guessing a
     // benchmark-specific normalization shape.
-    if (numTiles > 1) {
+    if (numTiles > 1 && requestedReductionParts == 1) {
       if (reduces.empty() || !crossReduces.empty())
         return failure();
       // ColSeg's per-(group,col) gather is only wired in the single-tile epilogue
@@ -1840,7 +1853,8 @@ struct RowReductionLowering {
     // cross-thread exclusive scan + the manual shared reduction tree), and no
     // cross-row/atomic fold (the row-local cumsum is the whole game).
     if (!scans.empty()) {
-      if (numTiles != 1 || !crossReduces.empty() || numGroups != 0)
+      if (numTiles != 1 || !crossReduces.empty() || numGroups != 0 ||
+          requestedReductionParts != 1)
         return failure();
       if ((T & (T - 1)) != 0)
         return failure();
@@ -1851,10 +1865,30 @@ struct RowReductionLowering {
         if (rr != ResultRole::RowOut)
           return failure();
     }
-    if (numTiles > 1 || !scans.empty())
+    if ((numTiles > 1 && requestedReductionParts == 1) || !scans.empty())
       for (Role role : argRoles)
         if (role == Role::PerRow)
           return failure(); // per-row value inputs are wired in register mode
+
+    // Multi-stage path: one source-neutral row reduction is split across P
+    // independent blocks, finalized in a second launch, and—when needed—fed to
+    // a flat full-row epilogue launch.  This first implementation deliberately
+    // excludes dependent/multiple reductions, scans, cross-row atomics, grouped
+    // indexing, half storage, and compact vector outputs.  Every excluded graph
+    // remains on an existing lowering state rather than being approximated.
+    if (requestedReductionParts > 1) {
+      if (reduces.size() != 1 || !crossReduces.empty() || !scans.empty() ||
+          groupedBatch != 0 || numGroups != 0 || storageType != f32 ||
+          T < 32 || T > 1024 || (T & (T - 1)) != 0 ||
+          N < T * static_cast<int64_t>(requestedReductionParts))
+        return failure();
+      for (ResultRole role : outRoles)
+        if (role != ResultRole::RowOut && role != ResultRole::PerRowOut)
+          return failure();
+      for (unsigned index = 0; index < outRoles.size(); ++index)
+        if (cast<RankedTensorType>(fty.getResult(index)).getElementType() != f32)
+          return failure();
+    }
 
     // M6: fold the launch geometry + fork decision into the first-class
     // Schedule. grid = one block per row (M), block = T threads over the feature
@@ -1866,13 +1900,20 @@ struct RowReductionLowering {
     sched.perThreadTile = Kpt;
     sched.splitFactor = numTiles;
     sched.gridStyle = GridStyle::OneBlockPerRow;
-    if (!scans.empty())
+    if (requestedReductionParts > 1) {
+      sched.kind = KMultiStage;
+      sched.gridX = M * static_cast<int64_t>(requestedReductionParts);
+      sched.perThreadTile =
+          (N + T * static_cast<int64_t>(requestedReductionParts) - 1) /
+          (T * static_cast<int64_t>(requestedReductionParts));
+      sched.splitFactor = requestedReductionParts;
+    } else if (!scans.empty())
       sched.kind = KScan;
     else if (numTiles > 1)
       sched.kind = KTiled;
     else
       sched.kind = KRegister;
-    if (sched.kind != KRegister &&
+    if ((sched.kind == KTiled || sched.kind == KScan) &&
         std::any_of(inplaceArg.begin(), inplaceArg.end(),
                     [](int64_t arg) { return arg >= 0; }))
       return failure();
@@ -1887,7 +1928,8 @@ struct RowReductionLowering {
       if (T != 32 || M % requestedRowsPerBlock != 0 ||
           sched.kind != KRegister || !scans.empty() ||
           !crossReduces.empty() || groupedBatch != 0 || numGroups != 0 ||
-          flatSingletonRank4 || hasUnsupportedOutput || hasInplaceOutput)
+          flatSingletonRank4 || hasUnsupportedOutput || hasInplaceOutput ||
+          requestedReductionParts != 1)
         return failure();
       sched.gridX = M / requestedRowsPerBlock;
       sched.blockX = T * requestedRowsPerBlock;
@@ -2765,6 +2807,291 @@ struct RowReductionLowering {
     }
     cur[v] = res;
     return res;
+  }
+
+  void resetDynamicEmissionState() {
+    uniform.clear();
+    rowVals.clear();
+    colVals.clear();
+    scanVals.clear();
+    pointVals.clear();
+    cols.clear();
+    frontierBuf.clear();
+    groupVal = nullptr;
+    rowIndex = nullptr;
+  }
+
+  LogicalResult bindUniformInputs(OpBuilder &b, Location loc, Value row,
+                                  Block &srcBlock,
+                                  const DenseMap<Value, Value> &launchScalars) {
+    for (unsigned i = 0; i < argRoles.size(); ++i) {
+      Value arg = srcBlock.getArgument(i);
+      if (argRoles[i] == Role::Scalar) {
+        auto equality = scalarEqualities.find(i);
+        if (equality != scalarEqualities.end()) {
+          auto tensorTy =
+              cast<RankedTensorType>(fn.getFunctionType().getInput(i));
+          auto integerTy = cast<IntegerType>(tensorTy.getElementType());
+          uniform[arg] = b.create<arith::ConstantOp>(
+              loc, b.getIntegerAttr(integerTy, equality->second));
+        } else if (promoteRank0ScalarInputs) {
+          uniform[arg] = launchScalars.lookup(arg);
+          if (!uniform[arg]) {
+            fn.emitError("rank-0 scalar was not promoted to launch ABI");
+            return failure();
+          }
+        } else {
+          uniform[arg] = b.create<memref::LoadOp>(
+              loc, argMemref[arg], ValueRange{});
+        }
+      } else if (argRoles[i] == Role::RowInt ||
+                 argRoles[i] == Role::PerRow) {
+        uniform[arg] =
+            b.create<memref::LoadOp>(loc, argMemref[arg], ValueRange{row});
+      }
+    }
+    hoistUniforms(b, loc);
+    return success();
+  }
+
+  /// Split one independent row reduction over multiple CTAs, finalize its
+  /// partials in a second launch, then evaluate full-row outputs in a flat third
+  /// launch.  The compiler-emitted host graph owns both scratch buffers and the
+  /// launch order; the portable runner transports that graph unchanged.
+  LogicalResult rewriteMultiStage() {
+    MLIRContext *ctx = fn.getContext();
+    Location loc = fn.getLoc();
+    OpBuilder b(ctx);
+    Block &srcBlock = fn.getBody().front();
+    ReduceOp reduction = reduces.front();
+    ReduceInfo info = *reduceInfoFor(reduction.getFn());
+    int64_t parts = static_cast<int64_t>(requestedReductionParts);
+
+    SmallVector<Type> inputTypes;
+    for (unsigned i = 0; i < argRoles.size(); ++i)
+      inputTypes.push_back(memrefOf(i));
+    for (unsigned index = 0; index < outRoles.size(); ++index) {
+      if (inplaceArg[index] >= 0)
+        continue;
+      if (outRoles[index] == ResultRole::RowOut)
+        inputTypes.push_back(MemRefType::get({M, N}, f32));
+      else
+        inputTypes.push_back(MemRefType::get({M}, f32));
+    }
+
+    auto newType = FunctionType::get(ctx, inputTypes, {});
+    std::string name = fn.getName().str();
+    fn.setName(name + "_intent_src");
+    b.setInsertionPoint(fn);
+    auto gpuFn = b.create<func::FuncOp>(loc, name, newType);
+    Block *entry = gpuFn.addEntryBlock();
+    b.setInsertionPointToStart(entry);
+
+    argMemref.clear();
+    for (unsigned i = 0; i < argRoles.size(); ++i)
+      argMemref[srcBlock.getArgument(i)] = entry->getArgument(i);
+    SmallVector<Value> outputMemrefs;
+    unsigned freshOutput = argRoles.size();
+    for (unsigned index = 0; index < outRoles.size(); ++index) {
+      if (inplaceArg[index] >= 0)
+        outputMemrefs.push_back(entry->getArgument(inplaceArg[index]));
+      else
+        outputMemrefs.push_back(entry->getArgument(freshOutput++));
+    }
+
+    DenseMap<Value, Value> launchScalars;
+    for (unsigned i = 0; i < argRoles.size(); ++i) {
+      if (!promoteRank0ScalarInputs || argRoles[i] != Role::Scalar ||
+          scalarEqualities.contains(i))
+        continue;
+      Value sourceArg = srcBlock.getArgument(i);
+      launchScalars[sourceArg] = b.create<memref::LoadOp>(
+          loc, argMemref[sourceArg], ValueRange{});
+    }
+
+    auto partialType = MemRefType::get({M, parts}, f32);
+    auto statisticType = MemRefType::get({M}, f32);
+    Value partials = b.create<memref::AllocOp>(loc, partialType);
+    Value statistics = b.create<memref::AllocOp>(loc, statisticType);
+
+    sched.smemBytes = 0;
+    attachLaunchPlan(gpuFn, sched);
+    if (Attribute equalities = fn->getAttr("intent.scalar_equalities"))
+      gpuFn->setAttr("intent.scalar_equalities", equalities);
+
+    Value hostOne = b.create<arith::ConstantIndexOp>(loc, 1);
+    Value hostThreads = b.create<arith::ConstantIndexOp>(loc, T);
+    Value hostPartialGrid =
+        b.create<arith::ConstantIndexOp>(loc, M * parts);
+
+    // Stage 1: block (row, part) walks a disjoint strided subset of the row and
+    // publishes exactly one monoid partial.
+    {
+      auto launch = b.create<gpu::LaunchOp>(loc, hostPartialGrid, hostOne,
+                                            hostOne, hostThreads, hostOne,
+                                            hostOne);
+      OpBuilder stage = OpBuilder::atBlockBegin(&launch.getBody().front());
+      Value block = launch.getBlockIds().x;
+      Value thread = launch.getThreadIds().x;
+      Value cParts = stage.create<arith::ConstantIndexOp>(loc, parts);
+      Value row = stage.create<arith::DivUIOp>(loc, block, cParts);
+      Value part = stage.create<arith::RemUIOp>(loc, block, cParts);
+      Value cThreads = stage.create<arith::ConstantIndexOp>(loc, T);
+      Value partBase = stage.create<arith::MulIOp>(loc, part, cThreads);
+      Value begin = stage.create<arith::AddIOp>(loc, partBase, thread);
+      Value stride = stage.create<arith::ConstantIndexOp>(loc, parts * T);
+      Value upper = stage.create<arith::ConstantIndexOp>(loc, N);
+      Value identity = stage.create<arith::ConstantOp>(
+          loc, stage.getF32FloatAttr(info.ident));
+
+      resetDynamicEmissionState();
+      rowIndex = row;
+      if (failed(bindUniformInputs(stage, loc, row, srcBlock, launchScalars)))
+        return failure();
+      auto loop = stage.create<scf::ForOp>(loc, begin, upper, stride,
+                                           ValueRange{identity});
+      OpBuilder body = OpBuilder::atBlockBegin(loop.getBody());
+      DenseMap<Value, Value> current;
+      Value term = emitAtCol(body, loc, reduction.getInput(),
+                             loop.getInductionVar(), row, current,
+                             /*fromSmem=*/false);
+      if (!term)
+        return failure();
+      Value next = combineScalar(body, loc, info.op,
+                                 loop.getRegionIterArg(0), term);
+      body.create<scf::YieldOp>(loc, next);
+      auto blockReduce = stage.create<gpu::AllReduceOp>(
+          loc, loop.getResult(0),
+          gpu::AllReduceOperationAttr::get(ctx, info.op),
+          /*uniform=*/UnitAttr::get(ctx));
+      Value zero = stage.create<arith::ConstantIndexOp>(loc, 0);
+      Value lead = stage.create<arith::CmpIOp>(
+          loc, arith::CmpIPredicate::eq, thread, zero);
+      auto store = stage.create<scf::IfOp>(loc, lead, false);
+      OpBuilder thenBuilder = store.getThenBodyBuilder();
+      thenBuilder.create<memref::StoreOp>(
+          loc, blockReduce.getResult(), partials, ValueRange{row, part});
+      stage.create<gpu::TerminatorOp>(loc);
+    }
+
+    Value hostRows = b.create<arith::ConstantIndexOp>(loc, M);
+
+    // Stage 2: one block per row folds P partials, stores the statistic for the
+    // epilogue, and materializes every per-row result exactly once.
+    {
+      auto launch = b.create<gpu::LaunchOp>(loc, hostRows, hostOne, hostOne,
+                                            hostThreads, hostOne, hostOne);
+      OpBuilder stage = OpBuilder::atBlockBegin(&launch.getBody().front());
+      Value row = launch.getBlockIds().x;
+      Value thread = launch.getThreadIds().x;
+      Value cParts = stage.create<arith::ConstantIndexOp>(loc, parts);
+      Value cThreads = stage.create<arith::ConstantIndexOp>(loc, T);
+      Value identity = stage.create<arith::ConstantOp>(
+          loc, stage.getF32FloatAttr(info.ident));
+      auto loop = stage.create<scf::ForOp>(loc, thread, cParts, cThreads,
+                                           ValueRange{identity});
+      OpBuilder body = OpBuilder::atBlockBegin(loop.getBody());
+      Value partial = body.create<memref::LoadOp>(
+          loc, partials, ValueRange{row, loop.getInductionVar()});
+      Value next = combineScalar(body, loc, info.op,
+                                 loop.getRegionIterArg(0), partial);
+      body.create<scf::YieldOp>(loc, next);
+      auto blockReduce = stage.create<gpu::AllReduceOp>(
+          loc, loop.getResult(0),
+          gpu::AllReduceOperationAttr::get(ctx, info.op),
+          /*uniform=*/UnitAttr::get(ctx));
+      Value zero = stage.create<arith::ConstantIndexOp>(loc, 0);
+      Value lead = stage.create<arith::CmpIOp>(
+          loc, arith::CmpIPredicate::eq, thread, zero);
+      auto finalize = stage.create<scf::IfOp>(loc, lead, false);
+      OpBuilder thenBuilder = finalize.getThenBodyBuilder();
+      Value value = blockReduce.getResult();
+      if (info.isMean) {
+        Value divisor = thenBuilder.create<arith::ConstantOp>(
+            loc, thenBuilder.getF32FloatAttr(static_cast<double>(N)));
+        value = finalizeMean(thenBuilder, loc, value, divisor);
+      }
+      thenBuilder.create<memref::StoreOp>(loc, value, statistics,
+                                          ValueRange{row});
+      resetDynamicEmissionState();
+      rowIndex = row;
+      if (failed(bindUniformInputs(thenBuilder, loc, row, srcBlock,
+                                   launchScalars)))
+        return failure();
+      uniform[reduction.getResult()] = value;
+      hoistUniforms(thenBuilder, loc);
+      DenseMap<Value, Value> current;
+      for (unsigned index = 0; index < outRoles.size(); ++index) {
+        if (outRoles[index] != ResultRole::PerRowOut)
+          continue;
+        Value output = emitAtCol(thenBuilder, loc, outputVals[index], zero, row,
+                                 current, /*fromSmem=*/false);
+        if (!output)
+          return failure();
+        thenBuilder.create<memref::StoreOp>(
+            loc, output, outputMemrefs[index], ValueRange{row});
+      }
+      stage.create<gpu::TerminatorOp>(loc);
+    }
+
+    bool hasRowOutput = llvm::is_contained(outRoles, ResultRole::RowOut);
+    int64_t stageCount = 2;
+    if (hasRowOutput) {
+      ++stageCount;
+      int64_t totalElements = M * N;
+      int64_t epilogueBlocks = (totalElements + T - 1) / T;
+      Value hostEpilogueGrid =
+          b.create<arith::ConstantIndexOp>(loc, epilogueBlocks);
+      auto launch = b.create<gpu::LaunchOp>(loc, hostEpilogueGrid, hostOne,
+                                            hostOne, hostThreads, hostOne,
+                                            hostOne);
+      OpBuilder stage = OpBuilder::atBlockBegin(&launch.getBody().front());
+      Value block = launch.getBlockIds().x;
+      Value thread = launch.getThreadIds().x;
+      Value cThreads = stage.create<arith::ConstantIndexOp>(loc, T);
+      Value linearBase = stage.create<arith::MulIOp>(loc, block, cThreads);
+      Value linear = stage.create<arith::AddIOp>(loc, linearBase, thread);
+      Value total = stage.create<arith::ConstantIndexOp>(loc, totalElements);
+      Value active = stage.create<arith::CmpIOp>(
+          loc, arith::CmpIPredicate::ult, linear, total);
+      auto guarded = stage.create<scf::IfOp>(loc, active, false);
+      OpBuilder thenBuilder = guarded.getThenBodyBuilder();
+      Value cN = thenBuilder.create<arith::ConstantIndexOp>(loc, N);
+      Value row = thenBuilder.create<arith::DivUIOp>(loc, linear, cN);
+      Value column = thenBuilder.create<arith::RemUIOp>(loc, linear, cN);
+      resetDynamicEmissionState();
+      rowIndex = row;
+      if (failed(bindUniformInputs(thenBuilder, loc, row, srcBlock,
+                                   launchScalars)))
+        return failure();
+      uniform[reduction.getResult()] = thenBuilder.create<memref::LoadOp>(
+          loc, statistics, ValueRange{row});
+      hoistUniforms(thenBuilder, loc);
+      DenseMap<Value, Value> current;
+      for (unsigned index = 0; index < outRoles.size(); ++index) {
+        if (outRoles[index] != ResultRole::RowOut)
+          continue;
+        Value output = emitAtCol(thenBuilder, loc, outputVals[index], column,
+                                 row, current, /*fromSmem=*/false);
+        if (!output)
+          return failure();
+        thenBuilder.create<memref::StoreOp>(
+            loc, output, outputMemrefs[index], ValueRange{row, column});
+      }
+      stage.create<gpu::TerminatorOp>(loc);
+    }
+
+    b.create<func::ReturnOp>(loc);
+    attachConcreteStateReceipt(
+        gpuFn, T, predicatedValueIfCount, foldedConstexprSelectCount,
+        /*rowsPerBlock=*/1, emittedApproximateDivCount,
+        static_cast<unsigned>(launchScalars.size()),
+        /*epilogueLoadMotionCount=*/0, "multi_stage_partial_finalize",
+        stageCount, parts);
+    gpuFn->setAttr("intent.backend.grid_blocks",
+                   b.getI64IntegerAttr(M * parts));
+    fn.erase();
+    return success();
   }
 
   LogicalResult rewriteTiled() {
@@ -4326,6 +4653,8 @@ struct RowReductionLowering {
 
   LogicalResult rewrite() {
     // Dispatch on the Schedule's fork decision (set in match()).
+    if (sched.kind == KMultiStage)
+      return rewriteMultiStage();
     if (sched.kind == KScan) {
       if (auto args = sortedSparsemaxArgIndices())
         return rewriteSortedSparsemax(args->first, args->second);
@@ -5255,7 +5584,8 @@ struct ConvertIntentRowReductionToGPUPass
                                  deferEpilogueColLoads,
                                  promoteRank0Scalars,
                                  enableSortedPrefix, predicatedValueIfs,
-                                 foldedConstexprSelects, rowsPerBlock);
+                                 foldedConstexprSelects, rowsPerBlock,
+                                 reductionParts);
       if (succeeded(probe.match()))
         targets.push_back(
             {fn, predicatedValueIfs, foldedConstexprSelects});
@@ -5267,7 +5597,8 @@ struct ConvertIntentRowReductionToGPUPass
                                promoteRank0Scalars,
                                enableSortedPrefix,
                                target.predicatedValueIfs,
-                               target.foldedConstexprSelects, rowsPerBlock);
+                               target.foldedConstexprSelects, rowsPerBlock,
+                               reductionParts);
       if (failed(low.match()) || failed(low.rewrite())) {
         target.fn.emitError("row-reduction lowering failed after match");
         return signalPassFailure();

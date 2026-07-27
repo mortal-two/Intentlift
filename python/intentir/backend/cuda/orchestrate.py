@@ -558,8 +558,8 @@ class _HostModule:
     aligned_ptr_blockargs: dict[str, int]     # aligned-ptr block-arg ssa -> input index
     destination_aligned_ptrs: list[str]       # destination-passing result ptrs
     destination_result_indices: list[int]     # declared result index per destination
-    malloc_buffers: dict[str, "_Buffer"]      # aligned-ptr ssa (inttoptr result) -> buffer
-    loose_buffers: dict[str, "_LooseBuffer"]  # inttoptr ssa -> loose intermediate buffer
+    malloc_buffers: dict[str, "_Buffer"]      # normalized aligned-ptr ssa -> buffer
+    loose_buffers: dict[str, "_LooseBuffer"]  # normalized ptr ssa -> intermediate buffer
     launches: list[_LaunchSite]
     return_aligned_ptrs: list[str]            # aligned-ptr ssa per result, in order
     body_text: str = field(default="", repr=False)
@@ -577,15 +577,19 @@ class _Buffer:
 @dataclass
 class _LooseBuffer:
     """A malloc'd intermediate buffer passed to kernels as the raw aligned
-    ``llvm.inttoptr`` pointer, never packed into a memref-descriptor struct.
+    pointer, never packed into a memref-descriptor struct.
 
     Such buffers carry no struct shape in the host IR, only an element count
     (from the ``getelementptr`` that computes the malloc byte size). We allocate
     a flat 1-D tensor of ``n_elems`` of ``elem`` dtype — enough storage for the
     kernel's bare-ptr writes; torch's allocator is >=256-byte aligned, which
     satisfies the 64-byte alignment the host computes for the kernel pointer.
+
+    ``aligned_ssa`` is either the legacy ``llvm.inttoptr`` result or, with
+    opaque-pointer LLVM lowering, the direct ``malloc !llvm.ptr`` result.
     """
-    aligned_ssa: str        # the inttoptr result (the kernel-arg pointer)
+
+    aligned_ssa: str        # normalized kernel-arg pointer identity
     malloc_ssa: str         # the llvm.call @malloc result
     n_elems: int            # element count (from getelementptr %null[N])
     elem: str               # element type (from the same getelementptr)
@@ -685,23 +689,39 @@ def _map_input_aligned_ptrs(ptr_blockargs: list[str]) -> dict[str, int]:
 
 
 def _parse_constants(func_text: str) -> dict[str, tuple[str, str]]:
-    """ssa -> (raw_value, mlir_type) for every ``llvm.mlir.constant``."""
+    """ssa -> (raw_value, result_type) for every ``llvm.mlir.constant``.
+
+    LLVM dialect printing changed from ``constant(4 : index) : i64`` to forms
+    such as ``constant(true) : i1`` for already-typed attributes.  Parse the
+    operation structurally enough to accept both without coupling runtime ABI
+    handling to one MLIR printer version.
+    """
+
     consts: dict[str, tuple[str, str]] = {}
     for m in re.finditer(
-        r"(%\w+)\s*=\s*llvm\.mlir\.constant\(([^:)]+?)\s*:\s*[^)]+\)\s*:\s*(\S+)",
+        r"(%\w+)\s*=\s*llvm\.mlir\.constant\(([^)]*)\)\s*:\s*(\S+)",
         func_text,
     ):
-        consts[m.group(1)] = (m.group(2).strip(), m.group(3).strip())
+        body = m.group(2).strip()
+        # The optional inner type is an attribute type, while the trailing type
+        # is the actual SSA result type consumed by grid/launch/prelude code.
+        raw = body.rsplit(":", 1)[0].strip() if ":" in body else body
+        if raw == "true":
+            raw = "1"
+        elif raw == "false":
+            raw = "0"
+        consts[m.group(1)] = (raw, m.group(3).strip())
     return consts
 
 
 def _parse_malloc_buffers(func_text: str) -> dict[str, _Buffer]:
-    """Identify each malloc'd buffer by its aligned-pointer ``inttoptr`` result.
+    """Identify each struct-packed malloc buffer by its aligned-pointer SSA.
 
     A buffer descriptor is built by a chain of ``insertvalue``s into an
-    ``llvm.struct``. The aligned pointer (struct field [1]) is the
-    ``llvm.inttoptr`` result; the sizes are inserted at ``[3, i]``. We group
-    insertvalues by their struct-SSA lineage to recover each buffer's shape.
+    ``llvm.struct``. The aligned pointer (struct field [1]) can be either a
+    legacy ``llvm.inttoptr`` result or a direct opaque-pointer ``malloc`` result;
+    the sizes are inserted at ``[3, i]``. We group insertvalues by their
+    struct-SSA lineage to recover each buffer's shape.
     """
     # Map each undef-struct lineage: chase insertvalue dst<-src to a root undef.
     # value_inserted[ssa_result] = (src_ssa, inserted_ssa, position)
@@ -749,16 +769,14 @@ def _parse_malloc_buffers(func_text: str) -> dict[str, _Buffer]:
     allocation_info = _parse_loose_buffers(func_text)
 
     buffers: dict[str, _Buffer] = {}
-    # Only roots that descend from an undef AND whose aligned ptr is an inttoptr
-    # (a malloc buffer) are buffers; the input descriptors are not rebuilt here.
-    inttoptr_results = set(
-        re.findall(r"(%\w+)\s*=\s*llvm\.inttoptr", func_text)
-    )
+    # Only roots that descend from an undef AND whose aligned ptr resolves to a
+    # malloc allocation are buffers; input descriptors are not rebuilt here.
+    allocation_ptrs = set(allocation_info)
     for r, d in by_root.items():
         if r not in undefs:
             continue
         aligned = d["aligned"]
-        if aligned is None or aligned not in inttoptr_results:
+        if aligned is None or aligned not in allocation_ptrs:
             continue
         sizes: list[int] = []
         if d["sizes"]:
@@ -783,16 +801,21 @@ def _parse_loose_buffers(func_text: str) -> dict[str, _LooseBuffer]:
     """Identify malloc'd *intermediate* buffers passed as loose aligned pointers.
 
     Unlike the returned output (which is packed into an ``insertvalue`` struct),
-    intermediate buffers between kernels are handed to ``gpu.launch_func`` as the
-    bare ``llvm.inttoptr`` aligned pointer straight off ``malloc``. Each such
-    buffer is recovered as::
+    intermediate buffers between kernels are handed to ``gpu.launch_func`` as a
+    bare pointer. Legacy lowering emits an alignment chain ending in
+    ``llvm.inttoptr``; opaque-pointer lowering can pass the malloc result directly::
 
         %m = llvm.call @malloc(%s)          # %s = byte size
         ... %a = ptrtoint %m ; alignment arithmetic ...
         %p = llvm.inttoptr %q : i64 to !llvm.ptr   # the kernel-arg pointer
 
-    Returns ``{inttoptr_ssa -> _LooseBuffer}`` keyed by the pointer the kernel
-    actually receives.
+    or::
+
+        %p = llvm.call @malloc(%s) : (i64) -> !llvm.ptr
+        gpu.launch_func ... args(%p : !llvm.ptr, ...)
+
+    Returns ``{pointer_ssa -> _LooseBuffer}`` keyed by the normalized pointer the
+    kernel actually receives.
 
     Size is taken by *tracing the malloc's size operand*, NOT by source-order
     proximity to a getelementptr: the size geps are CSE-shared across mallocs
@@ -800,8 +823,9 @@ def _parse_loose_buffers(func_text: str) -> dict[str, _LooseBuffer]:
     preceding gep is unreliable and can mis-size. We chase
     ``malloc(%s)`` -> ``%s = add %p, 64`` -> ``%p = ptrtoint %g``
     -> ``%g = getelementptr %null[N] ..., <elem>`` to read N and elem per buffer.
-    The malloc->inttoptr pairing, by contrast, *is* source-order safe: the
-    alignment chain is emitted fresh per malloc.
+    Legacy malloc->inttoptr pairing is recovered by SSA def-use, not by source
+    order. This matters when several allocations coexist or a direct opaque
+    malloc precedes an unrelated inttoptr.
     """
     # defs[ssa] = the verbatim RHS of its single defining op (SSA is unique).
     defs: dict[str, str] = {}
@@ -846,26 +870,40 @@ def _parse_loose_buffers(func_text: str) -> dict[str, _LooseBuffer]:
             break
         return None
 
-    # Mallocs and inttoptrs in source order.
+    # Mallocs and inttoptrs.  Match aliases to allocations through their SSA
+    # dependencies; source-order pairing silently aliases distinct allocations.
     mallocs = [(m.start(), m.group(1), m.group(2))
                for m in re.finditer(
                    r"(%\w+)\s*=\s*llvm\.call\s+@malloc\((%\w+)\)", func_text)]
-    inttoptrs = [(m.start(), m.group(1))
+    inttoptrs = [m.group(1)
                  for m in re.finditer(r"(%\w+)\s*=\s*llvm\.inttoptr", func_text)]
+
+    def _depends_on(ssa: str, allocation_ssa: str, seen: set[str]) -> bool:
+        if ssa == allocation_ssa:
+            return True
+        if ssa in seen or ssa not in defs:
+            return False
+        seen.add(ssa)
+        return any(
+            _depends_on(operand, allocation_ssa, seen)
+            for operand in re.findall(r"%\w+", defs[ssa])
+        )
 
     loose: dict[str, _LooseBuffer] = {}
     for _pos, malloc_ssa, size_ssa in mallocs:
-        # pair with the first inttoptr that appears after this malloc in source.
-        aligned = None
-        for ipos, issa in inttoptrs:
-            if ipos > _pos:
-                aligned = issa
-                break
-        if aligned is None:
+        aliases = [
+            issa
+            for issa in inttoptrs
+            if _depends_on(issa, malloc_ssa, set())
+        ]
+        if len(aliases) > 1:
             raise NotImplementedError(
-                f"orchestrate: malloc {malloc_ssa} has no following llvm.inttoptr "
-                "(cannot recover its aligned device pointer)"
+                f"orchestrate: malloc {malloc_ssa} has multiple dependent "
+                f"llvm.inttoptr aliases {aliases}; aligned pointer is ambiguous"
             )
+        # New opaque-pointer lowering needs no ptr->int->ptr alignment roundtrip;
+        # the malloc result is already the exact !llvm.ptr launch operand.
+        aligned = aliases[0] if aliases else malloc_ssa
         info = _trace_size(size_ssa)
         if info is None:
             raise NotImplementedError(
@@ -997,12 +1035,16 @@ def _parse_const_globals(binary_mlir: str, func_text: str) -> dict[str, _ConstGl
     """Resolve scalar and dense-splat globals plus zero-offset GEP aliases."""
 
     def parse_value(text: str, elem: str) -> int | float:
+        if elem == "i1" and text in {"true", "false"}:
+            return int(text == "true")
         return _parse_f32(text) if elem.startswith("f") else int(text, 0)
 
     globals_: dict[str, _ConstGlobal] = {}
     for match in re.finditer(
         r"llvm\.mlir\.global\s+[^@]*@(\w+)\(\s*"
-        r"([-+0-9.eExXa-fA-F]+)\s*:\s*([fi]\d+)\s*\)",
+        r"(true|false|[-+0-9.eExXa-fA-F]+)"
+        r"(?:\s*:\s*[fi]\d+)?\s*\)\s*"
+        r"(?:\{[^}\n]*\}\s*)?:\s*([fi]\d+)",
         binary_mlir,
     ):
         name, raw, elem = match.group(1), match.group(2), match.group(3)
@@ -1281,6 +1323,22 @@ def _execute_host_scalar_prelude(
                 value = lhs == rhs_value
             else:
                 value = lhs != rhs_value
+            cache[ssa] = value
+            return value
+
+        select = re.match(
+            r"llvm\.select\s+(%\w+),\s*(%\w+),\s*(%\w+)\s*:",
+            rhs,
+        )
+        if select:
+            condition = evaluate(select.group(1))
+            true_value = evaluate(select.group(2))
+            false_value = evaluate(select.group(3))
+            if condition.numel() != 1:
+                raise NotImplementedError(
+                    "orchestrate: scalar prelude select condition is not rank-0"
+                )
+            value = torch.where(condition.to(dtype=torch.bool), true_value, false_value)
             cache[ssa] = value
             return value
         raise NotImplementedError(

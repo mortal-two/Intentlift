@@ -1128,6 +1128,18 @@ def enumerate_cuda_candidates(
             RowSchedule(32, 32, rows_per_block=rows)
             for rows in (2, 4, 8)
         )
+        row_schedule_bases.extend(
+            RowSchedule(
+                threads,
+                32,
+                vector_width=1,
+                promote_rank0_scalars=False,
+                defer_epilogue_col_loads=False,
+                reduction_parts=parts,
+            )
+            for threads in (128, 256)
+            for parts in (2, 4, 8, 16, 32)
+        )
     if axes is not None and not axes.search_reduction_topology:
         # E2/N0 freezes the concrete collective topology to the canonical
         # multi-warp hierarchy while still tuning its schedule parameters.
@@ -1157,7 +1169,11 @@ def enumerate_cuda_candidates(
         for approximate_div in approximate_div_modes
         for promote in (True, False)
         for defer in (True, False)
+        if schedule.reduction_parts == 1
     ]
+    row_schedules.extend(
+        schedule for schedule in row_schedule_bases if schedule.reduction_parts > 1
+    )
     for schedule in row_schedules:
         values = schedule.to_dict()
         transformations: list[str] = []
@@ -1191,7 +1207,9 @@ def enumerate_cuda_candidates(
                 (
                     "cuda.row_reduction.read_once.v1",
                     (
-                        "cuda.reduction.subgroup_rows.v1"
+                        "cuda.reduction.multi_stage_partial_finalize.v1"
+                        if schedule.reduction_parts > 1
+                        else "cuda.reduction.subgroup_rows.v1"
                         if schedule.rows_per_block > 1
                         else "cuda.reduction.subgroup_shuffle.v1"
                         if schedule.block_threads == 32
@@ -1376,7 +1394,9 @@ def enumerate_cuda_candidates(
         local = "local" if item.b_transformations else "base"
         if item.lowering_path_kind == "row_reduction":
             topology = (
-                "subgroup_rows"
+                "multi_stage"
+                if int(item.schedule.get("reduction_parts", 1)) > 1
+                else "subgroup_rows"
                 if int(item.schedule.get("rows_per_block", 1)) > 1
                 else "subgroup"
                 if int(item.schedule.get("block_threads", 64)) == 32
@@ -1404,6 +1424,7 @@ def enumerate_cuda_candidates(
         "row_reduction.workgroup.plain.base",
         "padded_row_reduction.serial-row.base",
         "padded_row_reduction.subgroup-feature.base",
+        "row_reduction.multi_stage.plain.base",
         "elementwise.native-ptx.base",
         "row_reduction.subgroup_rows.plain.base",
         "row_reduction.subgroup.plain.base",
