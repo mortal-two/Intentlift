@@ -981,7 +981,7 @@ load motion 等局部收益只作次级证据。G0/G1 是 E3 同一候选回执�
 `spec/lowering/backend-search-ablation-v2.json` 读取 E0--E4、L0/L1、N0--N3 的开关、预算类别、
 concrete-state identity 与计时合同，
 校验 protocol、字段全集和类型，并把 canonical spec digest 写入每份实验报告。当前 v2 spec digest 为
-`2286153af9c3f484f6efee2ecfb89c29c69e9e60f7d2c88baff4eff30de76c12`。runner 不得在代码中重新定义
+`37448393b246f7b39a2234fff727495916946fa5e6e2306ed4de80d317cb8573`。runner 不得在代码中重新定义
 同名实验臂；spec 缺失、未知 arm、重复 arm 或非布尔开关均须 fail closed。这样论文中的 E2/E3、
 C 消融和数值机制消融都与实际执行的 candidate universe 绑定，而不是事后按 winner 改口径。
 
@@ -1080,8 +1080,11 @@ admission、Q/D、实际 executable 和 profiler 均相同。
 - pass/library 的跨 Kernel、跨 frontend、跨 target 复用。
 
 E2/E3 必须共享同一 J、target、compiler revision、terminal code generator、Q/D policy 与 profiler。
-E3 的 hard-safe candidate set 必须包含 E2 的全部候选；所有性能比较只在通过相同 `D_search` filter
-的候选间进行，最终 winner 使用相同 `D_cert` protocol。报告同时给出：
+E3 的 hard-safe candidate set 必须包含 E2 的全部候选；equal-total-budget 访问顺序先走与 E2 相同、
+同样由 C 排序的 fixed-structure schedule spine，再用剩余预算访问结构/数值扩展状态。这样
+`E3 vs E2` 不会混入“扩大搜索后反而忘记固定路径强 schedule”的伪回退，同时仍把额外路径的编译、
+失败和测量计入同一总预算。所有性能比较只在通过相同 `D_search` filter 的候选间进行，最终 winner
+使用相同 `D_cert` protocol。报告同时给出：
 
 - equal-total-budget 的 anytime/time-to-best 曲线；
 - 小候选空间 exhaustive/oracle best；
@@ -1221,9 +1224,10 @@ post-pass MLIR 与 cubin。
 其中 `masked_copy` 的 expanded valuation 因 Source 缺 `program_id` 明确标为
 `Target--RefJ-only`。这些是 implementation/coverage smoke，不提前充当正式 latency 表。
 
-第一项 horizontal lowering 已落地为通用 `tiled_shared_multi_reduce` concrete state：同一依赖层的
+第一项 horizontal lowering 已落地为通用 tiled-frontier multi-reduce concrete state：同一依赖层的
 独立规约共享 feature-tile traversal，依赖层从 workgroup-cached frontier 继续遍历，各 partial
-经过可复用 shared-memory tree，epilogue 也从 frontier 取值。large profile 上它按 A/ContractView
+先在 warp 内 shuffle，再以每 warp 一个 compact shared partial、每依赖层一个 barrier 完成 block fold；
+epilogue 也从 frontier 取值。large profile 上它按 A/ContractView
 真实准入 7/18 项；其余格子 fail closed 保留。该状态已经形成 true post-pass MLIR/cubin，但在新的
 stabilized cold-data E2/E3 回执完成前只算路径覆盖，不提前写成性能结果。
 
@@ -1235,7 +1239,7 @@ stabilized cold-data E2/E3 回执完成前只算路径覆盖，不提前写成�
 |---|---|---|---|
 | dense/masked elementwise | DYT、GeGLU、SwiGLU、masked copy | tail/vector width、grid 遍历、端到端内存合并 | masked vec2/vec4 与 target-derived grid-stride/vector layout |
 | single reduction + epilogue | Flash preprocess、fused-add RMSNorm、KLDiv、Liger RMSNorm、masked row square-sum、xFormers RMSNorm、xFormers RMSNorm-add | producer 重读、中间物化、单一 reduction topology | producer/reduction/epilogue 单趟 state，subgroup/workgroup/multi-stage 独立搜索 |
-| multiple reductions + epilogue | Flash one-pass LayerNorm、JSD、LayerNorm、Softmax | 通用 multi-reduce tiled/shared state 已有，仍需减少 shared tree/barrier 开销并扩展 dtype/表达式覆盖 | subgroup/shared/multi-stage topology 与 schedule 独立搜索，保留不匹配/拒绝回执 |
+| multiple reductions + epilogue | Flash one-pass LayerNorm、JSD、LayerNorm、Softmax | tiled frontier 已改为 compact warp/shared fold，仍需实测其适用区间并扩展 dtype/表达式覆盖 | subgroup/frontier/multi-stage topology 与 schedule 独立搜索，保留不匹配/拒绝回执 |
 | scan/effect/contraction/gather | Sparsemax、TVD、PolyNorm | scan/update/control 或 contraction/gather 落到 generic/materialized path | registered prefix/segmented-scan、effect-safe update 与 contraction/gather tiling states |
 
 实施顺序以“同一 compiler mechanism 横向覆盖一类 J”为原则，不以单个 benchmark 得分为目标：

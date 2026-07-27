@@ -44,6 +44,11 @@ ABLATION_CANDIDATE_IDENTITY = {
         "one distinct exact candidate that fails before state formation consumes "
         "one budget unit"
     ),
+    "expanded_arm_nesting_rule": (
+        "an expanded arm visits the fixed-structure schedule spine in the same "
+        "C-conditioned order before spending its remaining equal total budget "
+        "on other concrete lowering states"
+    ),
     "abstraction_rule": (
         "no implementation-family object, family id, or named emitter participates "
         "in generation, legality, or selection"

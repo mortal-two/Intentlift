@@ -1,5 +1,6 @@
 // RUN: intent-opt -convert-intent-row-reduction-to-gpu=block-threads=64 %s | FileCheck %s
 // RUN: intent-opt '-convert-intent-row-reduction-to-gpu=block-threads=4 tile-cols=2' %s | FileCheck %s --check-prefix=TILED
+// RUN: intent-opt '-convert-intent-row-reduction-to-gpu=block-threads=64 tile-cols=1' %s | FileCheck %s --check-prefix=WARP-TILED
 
 // Two independent f32 reductions share one publication barrier. Each reduction
 // has its own compact [numWarps] dynamic-shared slot, so neither a second
@@ -27,6 +28,17 @@
 // TILED-NOT: gpu.all_reduce
 // TILED: gpu.terminator
 // TILED-NOT: intent.
+// WARP-TILED-LABEL: func.func @independent_pair(
+// WARP-TILED-SAME: intent.backend.barrier_count = 1
+// WARP-TILED-SAME: intent.backend.reduction_topology = "tiled_frontier_warp_multi_reduce"
+// WARP-TILED-SAME: intent.backend.shuffle_count = 20
+// WARP-TILED-SAME: intent.backend.transformation_trace = ["cuda.row_reduction.read_once.v1", "cuda.reduction.tiled_frontier_warp_multi_reduce.v1"]
+// WARP-TILED: memref.view {{.*}} to memref<2xf32, #gpu.address_space<workgroup>>
+// WARP-TILED: gpu.shuffle
+// WARP-TILED-COUNT-1: gpu.barrier
+// WARP-TILED-NOT: gpu.all_reduce
+// WARP-TILED: gpu.terminator
+// WARP-TILED-NOT: intent.
 func.func @independent_pair(%X: tensor<2x128xf32>)
     -> (tensor<2x128xf32>, tensor<2x1xf32>, tensor<2x1xf32>) {
   %sum = intent.reduce %X {fn = "sum", axes = [1], assoc = "float_nondeterministic"}

@@ -438,11 +438,19 @@ def _one_kernel(
     if not measured_indices:
         raise RuntimeError("no correct bundled MLIR candidate")
 
+    freshly_remeasured = {
+        index for index, samples in finalist_samples.items() if samples
+    }
+
     def best_for_order(order: list[str]) -> dict[str, Any] | None:
         records = [
             candidate_records[measured_index_by_id[candidate_id]]
             for candidate_id in order
             if candidate_id in measured_index_by_id
+            and (
+                not freshly_remeasured
+                or measured_index_by_id[candidate_id] in freshly_remeasured
+            )
         ]
         return min(records, key=lambda item: item["latency_us"]) if records else None
 
@@ -682,6 +690,11 @@ def _one_kernel(
                 "samples_per_batch": measurement_rounds,
                 "finalist_count": len(ranked_indices),
                 "finalist_remeasurements": finalist_remeasurements,
+                "winner_selection_scope": (
+                    "freshly-remeasured-finalists"
+                    if freshly_remeasured
+                    else "initial-ranking-samples"
+                ),
                 "comparison_protocol": (
                     "paired-alternating.v1"
                     if source_latency is not None

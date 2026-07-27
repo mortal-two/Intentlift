@@ -2810,14 +2810,22 @@ struct RowReductionLowering {
     Value cM = b.create<arith::ConstantIndexOp>(loc, M);
     Value cT = b.create<arith::ConstantIndexOp>(loc, T);
     Value c1 = b.create<arith::ConstantIndexOp>(loc, 1);
-    // Dynamic shared memory: one [N] f32 row cache per frontier, plus a [T] f32
-    // scratch for the block reduction tree. We do NOT use gpu.all_reduce here:
-    // its lowering emits a *separate static* `.shared` buffer that ptxas packs
-    // INSIDE our (demoted) dynamic-shared cache region, clobbering it. Keeping
-    // the only `.shared` symbol the single dynamic buffer (the G1-proven config)
-    // sidesteps that overlap entirely.
+    // Dynamic shared memory: one [N] f32 row cache per frontier.  Production
+    // thread geometries additionally use one compact [numWarps] slot per
+    // reduction; sub-warp test geometries retain the old [T] tree scratch.
+    // We do NOT use gpu.all_reduce here: its lowering emits a separate static
+    // `.shared` buffer that ptxas may pack inside our demoted dynamic-shared
+    // cache region, clobbering it.
+    bool useTiledWarpHierarchy = T >= 32 && (T % 32) == 0;
+    int64_t tiledNumWarps = useTiledWarpHierarchy ? T / 32 : 0;
     int64_t cacheBytes = (int64_t)N * (int64_t)frontiers.size() * 4;
-    int64_t shBytes = cacheBytes + (int64_t)T * 4;
+    int64_t reductionScratchBytes =
+        useTiledWarpHierarchy
+            ? (tiledNumWarps > 1
+                   ? static_cast<int64_t>(reduces.size()) * tiledNumWarps * 4
+                   : 0)
+            : T * 4;
+    int64_t shBytes = cacheBytes + reductionScratchBytes;
     sched.smemBytes = shBytes; // M6: record the tiled path's dynamic-shared plan
     attachLaunchPlan(gpuFn, sched);
     Value shBytesV =
@@ -2832,8 +2840,8 @@ struct RowReductionLowering {
     rowIndex = bx;
 
     // Carve the dynamic shared region into one memref<Nxf32, workgroup> per
-    // frontier at byte offset f*N*4, then a memref<Txf32, workgroup> reduction
-    // scratch right after the caches.
+    // frontier at byte offset f*N*4, then compact reduction scratch right after
+    // the caches.
     auto rawTy = MemRefType::get({ShapedType::kDynamic}, b.getI8Type(), nullptr,
                                  wgSpace);
     Value raw = b.create<gpu::DynamicSharedMemoryOp>(loc, rawTy);
@@ -2843,10 +2851,27 @@ struct RowReductionLowering {
       Value buf = b.create<memref::ViewOp>(loc, bufTy, raw, off, ValueRange{});
       frontierBuf[frontiers[f]] = buf;
     }
-    auto scratchTy = MemRefType::get({T}, f32, nullptr, wgSpace);
-    Value scratchOff = b.create<arith::ConstantIndexOp>(loc, cacheBytes);
-    Value scratch =
-        b.create<memref::ViewOp>(loc, scratchTy, raw, scratchOff, ValueRange{});
+    Value treeScratch;
+    SmallVector<Value> warpScratch;
+    if (useTiledWarpHierarchy) {
+      if (tiledNumWarps > 1) {
+        auto scratchTy =
+            MemRefType::get({tiledNumWarps}, f32, nullptr, wgSpace);
+        int64_t scratchSlotBytes = tiledNumWarps * 4;
+        for (size_t index = 0; index < reduces.size(); ++index) {
+          Value offset = b.create<arith::ConstantIndexOp>(
+              loc, cacheBytes +
+                       static_cast<int64_t>(index) * scratchSlotBytes);
+          warpScratch.push_back(b.create<memref::ViewOp>(
+              loc, scratchTy, raw, offset, ValueRange{}));
+        }
+      }
+    } else {
+      auto scratchTy = MemRefType::get({T}, f32, nullptr, wgSpace);
+      Value scratchOff = b.create<arith::ConstantIndexOp>(loc, cacheBytes);
+      treeScratch = b.create<memref::ViewOp>(loc, scratchTy, raw, scratchOff,
+                                            ValueRange{});
+    }
 
     // Scalar args -> uniform (loaded once). NO upfront register tile (the strip
     // is too large for registers — that is why we tile + cache).
@@ -2878,7 +2903,7 @@ struct RowReductionLowering {
     // visible before a dependent reduction or the epilogue reads it.
     auto reduceBlockPartial = [&](Value partial,
                                   const ReduceInfo &info) -> Value {
-      b.create<memref::StoreOp>(loc, partial, scratch, ValueRange{tx});
+      b.create<memref::StoreOp>(loc, partial, treeScratch, ValueRange{tx});
       b.create<gpu::BarrierOp>(loc);
       for (int64_t stride = T / 2; stride >= 1; stride >>= 1) {
         Value cStride = b.create<arith::ConstantIndexOp>(loc, stride);
@@ -2889,18 +2914,20 @@ struct RowReductionLowering {
         {
           OpBuilder::InsertionGuard g(b);
           b.setInsertionPointToStart(ifOp.thenBlock());
-          Value a = b.create<memref::LoadOp>(loc, scratch, ValueRange{tx});
+          Value a =
+              b.create<memref::LoadOp>(loc, treeScratch, ValueRange{tx});
           Value other = b.create<arith::AddIOp>(loc, tx, cStride);
           Value bb =
-              b.create<memref::LoadOp>(loc, scratch, ValueRange{other});
+              b.create<memref::LoadOp>(loc, treeScratch, ValueRange{other});
           Value combined = combineScalar(b, loc, info.op, a, bb);
-          b.create<memref::StoreOp>(loc, combined, scratch, ValueRange{tx});
+          b.create<memref::StoreOp>(loc, combined, treeScratch,
+                                    ValueRange{tx});
         }
         b.create<gpu::BarrierOp>(loc);
       }
       Value c0r = b.create<arith::ConstantIndexOp>(loc, 0);
       Value scalar =
-          b.create<memref::LoadOp>(loc, scratch, ValueRange{c0r});
+          b.create<memref::LoadOp>(loc, treeScratch, ValueRange{c0r});
       return info.isMean ? finalizeMean(b, loc, scalar, nF) : scalar;
     };
 
@@ -2911,6 +2938,22 @@ struct RowReductionLowering {
     // a dependent mean/variance chain still reads every global row only once.
     bool tiledEmissionFailed = false;
     bool populateFrontier = true;
+    Value tiledLane;
+    Value tiledWarpId;
+    Value tiledLaneZero;
+    if (useTiledWarpHierarchy) {
+      Value txI32 =
+          b.create<arith::IndexCastOp>(loc, b.getI32Type(), tx);
+      tiledLane = b.create<arith::AndIOp>(
+          loc, txI32, b.create<arith::ConstantIntOp>(loc, 31, 32));
+      if (tiledNumWarps > 1) {
+        tiledWarpId = b.create<arith::DivUIOp>(
+            loc, tx, b.create<arith::ConstantIndexOp>(loc, 32));
+        tiledLaneZero = b.create<arith::CmpIOp>(
+            loc, arith::CmpIPredicate::eq, tiledLane,
+            b.create<arith::ConstantIntOp>(loc, 0, 32));
+      }
+    }
     size_t groupStart = 0;
     while (groupStart < reduces.size()) {
       size_t groupEnd = groupStart + 1;
@@ -2976,23 +3019,92 @@ struct RowReductionLowering {
         return failure();
       }
 
-      for (size_t index = groupStart; index < groupEnd; ++index) {
-        ReduceOp red = reduces[index];
-        ReduceInfo info = *reduceInfoFor(red.getFn());
-        Value scalar =
-            reduceBlockPartial(forOp.getResult(index - groupStart), info);
-        uniform[red.getResult()] = scalar;
-        hoistUniforms(b, loc);
+      if (useTiledWarpHierarchy) {
+        // Fold each per-thread partial in registers.  Independent reductions
+        // publish disjoint warp totals before one group barrier; every warp then
+        // redundantly folds the compact partial vector, yielding a block scalar
+        // in every lane without a second barrier.
+        SmallVector<Value> warpPartials;
+        warpPartials.reserve(groupEnd - groupStart);
+        for (size_t index = groupStart; index < groupEnd; ++index) {
+          ReduceInfo info = *reduceInfoFor(reduces[index].getFn());
+          Value warpPartial = forOp.getResult(index - groupStart);
+          for (int32_t delta = 1; delta < 32; delta <<= 1) {
+            Value other = b.create<gpu::ShuffleOp>(
+                                loc, warpPartial, delta, 32,
+                                gpu::ShuffleMode::XOR)
+                              .getShuffleResult();
+            warpPartial =
+                combineScalar(b, loc, info.op, warpPartial, other);
+          }
+          if (tiledNumWarps > 1) {
+            auto publish = b.create<scf::IfOp>(
+                loc, tiledLaneZero, /*withElseRegion=*/false);
+            OpBuilder::InsertionGuard guard(b);
+            b.setInsertionPointToStart(publish.thenBlock());
+            b.create<memref::StoreOp>(loc, warpPartial, warpScratch[index],
+                                      ValueRange{tiledWarpId});
+          }
+          warpPartials.push_back(warpPartial);
+        }
+        // This is also the frontier-cache visibility fence for a dependent
+        // reduction group and the post-reduction epilogue.
+        b.create<gpu::BarrierOp>(loc);
+        for (size_t index = groupStart; index < groupEnd; ++index) {
+          ReduceOp red = reduces[index];
+          ReduceInfo info = *reduceInfoFor(red.getFn());
+          Value scalar = warpPartials[index - groupStart];
+          if (tiledNumWarps > 1) {
+            Value activeLane = b.create<arith::CmpIOp>(
+                loc, arith::CmpIPredicate::slt, tiledLane,
+                b.create<arith::ConstantIntOp>(loc, tiledNumWarps, 32));
+            auto loadWarp = b.create<scf::IfOp>(
+                loc, TypeRange{f32}, activeLane, /*withElseRegion=*/true);
+            {
+              OpBuilder::InsertionGuard guard(b);
+              b.setInsertionPointToStart(loadWarp.thenBlock());
+              Value laneIndex = b.create<arith::IndexCastOp>(
+                  loc, b.getIndexType(), tiledLane);
+              Value partial = b.create<memref::LoadOp>(
+                  loc, warpScratch[index], ValueRange{laneIndex});
+              b.create<scf::YieldOp>(loc, partial);
+              b.setInsertionPointToStart(loadWarp.elseBlock());
+              Value identity = b.create<arith::ConstantOp>(
+                  loc, b.getF32FloatAttr(info.ident));
+              b.create<scf::YieldOp>(loc, identity);
+            }
+            scalar = loadWarp.getResult(0);
+            for (int32_t delta = 1; delta < 32; delta <<= 1) {
+              Value other = b.create<gpu::ShuffleOp>(
+                                  loc, scalar, delta, 32,
+                                  gpu::ShuffleMode::XOR)
+                                .getShuffleResult();
+              scalar = combineScalar(b, loc, info.op, scalar, other);
+            }
+          }
+          if (info.isMean)
+            scalar = finalizeMean(b, loc, scalar, nF);
+          uniform[red.getResult()] = scalar;
+          hoistUniforms(b, loc);
+        }
+      } else {
+        for (size_t index = groupStart; index < groupEnd; ++index) {
+          ReduceOp red = reduces[index];
+          ReduceInfo info = *reduceInfoFor(red.getFn());
+          Value scalar =
+              reduceBlockPartial(forOp.getResult(index - groupStart), info);
+          uniform[red.getResult()] = scalar;
+          hoistUniforms(b, loc);
+        }
       }
       populateFrontier = false;
       groupStart = groupEnd;
     }
 
-    // Barrier between the cache pass and the normalize epilogue. Each thread
-    // reads back only its OWN cached columns (col = tx + ...), so this is a
-    // safety fence (the all_reduce already synced the block); it also documents
-    // the cache->use boundary and keeps in-place X writes after all X reads.
-    b.create<gpu::BarrierOp>(loc);
+    // The final reduction-group barrier above is the cache->epilogue fence.  It
+    // guarantees that every input/frontier read finishes before an in-place row
+    // output can overwrite its aliased input, so no additional full-block fence
+    // is required here.
 
     // PerRowOut (e.g. a stat) is a per-row uniform written once by thread 0.
     bool anyLead = false;
@@ -3061,12 +3173,16 @@ struct RowReductionLowering {
     b.setInsertionPointAfter(launch);
     b.create<func::ReturnOp>(loc);
 
+    StringRef tiledTopology =
+        useTiledWarpHierarchy
+            ? (reduces.size() > 1 ? "tiled_frontier_warp_multi_reduce"
+                                  : "tiled_frontier_warp")
+            : (reduces.size() > 1 ? "tiled_shared_multi_reduce"
+                                  : "tiled_shared");
     attachConcreteStateReceipt(gpuFn, T, predicatedValueIfCount,
                                foldedConstexprSelectCount, 1,
                                emittedApproximateDivCount, 0, 0,
-                               reduces.size() > 1
-                                   ? "tiled_shared_multi_reduce"
-                                   : "tiled_shared");
+                               tiledTopology);
     fn.erase();
     return success();
   }

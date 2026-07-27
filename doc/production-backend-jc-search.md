@@ -115,11 +115,11 @@ buffers、测试通过或空数组猜 no-alias。
 `BaseIR(S_C)` 始终是同一 M0，且 `Erase_C(S_C) == M0`。C 不进入 pass legality，也不
 改变 candidate ID、performance-cache identity 或 candidate universe。
 
-当前候选枚举在 `elementwise/row_reduction/padded_row_reduction` 等 registered lowering path
-之间 round-robin，再用 C 的 tile/thread prior 排同一路径种类内的 schedule。这些名字只作为
-`lowering_path_kind` 与 pass receipt，不是可发射的 compiler family 或 semantic object。round-robin
-只避免有限预算下某种 matcher 候选被饿死；C
-仍不决定哪条 path 合法。
+expanded arm 的候选枚举先访问与 E2 相同的 fixed-structure schedule spine，再把剩余总预算用于
+`elementwise/row_reduction/padded_row_reduction` 等其他 registered lowering state 的 round-robin。
+C 的 tile/thread prior 只排序每条路径内部的 schedule；这些名字只作为 `lowering_path_kind` 与 pass
+receipt，不是可发射的 compiler family 或 semantic object。这个嵌套顺序避免 E3 因路径变多而忘记
+E2 强候选，round-robin 则避免剩余预算只落到一种 matcher；C 仍不决定哪条 path 合法。
 
 正式消融固定 J=A+B、ContractView、target、compiler、workload、candidate universe 和
 budget，只切换 `Attach_C/Erase_C`。当前 role-aware scorer 完整消费 C 的
@@ -216,6 +216,12 @@ reduction topology 与 FP32 FMA 已进入 production lowering-state search。C++
 才可计时，固定 winner 再走 `D_cert` 三条 direct edges。现有 `reduce.assoc`、value-dimension equality、
 predicate/output/alias projection 继续参与 hard admission 或 codegen，而不是数值权限开关。
 
+大于 register budget 的 tiled state 不再使用 `[T]` shared tree 与 `log2(T)` 次整块 barrier：生产
+geometry 先在 warp 内 shuffle，只发布每 warp 一个 partial，并对同一依赖层的多个 reduce 共用一次
+barrier；后续依赖层与 epilogue 继续消费 workgroup frontier。sub-warp 测试 geometry 保留旧 tree
+作为保守 fallback。二者都由同一 A DAG matcher 生成，receipt 分别写
+`tiled_frontier_warp(_multi_reduce)` 或 `tiled_shared(_multi_reduce)`。
+
 已消费：Liger RMSNorm、fused-add RMSNorm、LayerNorm、Softmax、JSD、PolyNorm、
 xFormers RMSNorm、xFormers RMSNorm-add、KLDiv、Sparsemax、Flash one-pass LayerNorm 与
 masked row square-sum。KLDiv 的
@@ -256,7 +262,8 @@ state-space expansion 与 local-B，不能相互替代。shuffle/topology、host
 8. 固定 winner 在独立 `D_cert` 上 direct target–Source/Replay/RefJ closure。
 
 v2 实验合同把预算单位定义为不同的 canonical post-pass MLIR state；重复 state 保留在 audit log，
-不消耗候选预算。finalist 使用 fresh round-robin、正反交替 traversal 并排除初次排序样本。最终性能
+不消耗候选预算。finalist 使用 fresh round-robin、正反交替 traversal 并排除初次排序样本；winner
+只能从这些 fresh-remeasured finalist 中选择，不能让只含初始噪声的非 finalist 反超。最终性能
 确认使用四组等数量 Source/target paired batches并交替执行顺序；确认前两侧按相同声明时长做
 round-robin untimed warm-up。只计 prepared launch/graph，不把 allocation、cache eviction 或
 correctness synchronization 放进 timed closure。

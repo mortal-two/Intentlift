@@ -306,6 +306,29 @@ def test_ablation_axes_expand_concrete_reduction_and_fma_states() -> None:
     assert "family" not in record
 
 
+def test_expanded_search_preserves_fixed_structure_schedule_spine() -> None:
+    state, _without_c = _states()
+    arms = {item.arm: item for item in standard_ablation_plan(32)}
+    canonical = canonical_cuda_candidate(state)
+    assert canonical.fast_path_id is not None
+    e2 = enumerate_cuda_candidates(
+        state,
+        axes=arms[ExperimentArm.E2_SCHEDULE],
+        fixed_fast_path_id=canonical.fast_path_id,
+    )
+    e3 = enumerate_cuda_candidates(
+        state,
+        axes=arms[ExperimentArm.E3_STATE_SEARCH],
+    )
+
+    assert [item.candidate_id for item in e3[: len(e2)]] == [
+        item.candidate_id for item in e2
+    ]
+    assert {item.candidate_id for item in e2} < {
+        item.candidate_id for item in e3
+    }
+
+
 def test_registry_paths_are_enumerated_without_kernel_allowlists() -> None:
     state, _without_c = _states()
     candidates = enumerate_cuda_candidates(state)

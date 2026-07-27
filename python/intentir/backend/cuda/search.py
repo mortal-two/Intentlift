@@ -1355,8 +1355,9 @@ def enumerate_cuda_candidates(
         )
 
     # A C tile/thread prior has no authority to rank one lowering path above
-    # another. Keep path discovery fair under finite budget and use C only to
-    # order schedules inside each registered path kind.
+    # another. Use C only to order schedules inside each registered path kind;
+    # expanded arms later prepend the fixed-structure schedule spine before
+    # round-robin path discovery so E3 cannot forget E2 under a finite budget.
     def search_lane(item: CudaSearchCandidate) -> str:
         local = "local" if item.b_transformations else "base"
         if item.lowering_path_kind == "row_reduction":
@@ -1445,7 +1446,40 @@ def enumerate_cuda_candidates(
         if fixed_lowering_path_kind == "generic":
             return (generic,)
         return tuple(specialized)
-    return (generic, *specialized)
+    expanded = (generic, *specialized)
+    if axes is None or not axes.search_structural_states:
+        return expanded
+
+    # E3/N/L arms expand the concrete state space; they must not lose the E2
+    # fixed-structure schedule search merely because new path lanes consume the
+    # same finite budget first.  Build the spine through this exact enumerator
+    # with structural/numeric/local expansion disabled, then append every other
+    # state in the normal path-fair order.  This is a nested concrete-state
+    # search, not a family object and not a kernel-name allowlist.
+    canonical = canonical_cuda_candidate(state)
+    schedule_axes = replace(
+        axes,
+        search_structural_states=False,
+        enable_local_b_transformations=False,
+        search_reduction_topology=False,
+        search_fma=False,
+        search_precision=False,
+        search_approximation=False,
+    )
+    schedule_spine = enumerate_cuda_candidates(
+        state,
+        enable_b_transformations=False,
+        axes=schedule_axes,
+        fixed_lowering_path_kind=(
+            "generic" if canonical.generic else canonical.lowering_path_kind
+        ),
+        fixed_fast_path_id=(None if canonical.generic else canonical.fast_path_id),
+    )
+    spine_ids = {item.candidate_id for item in schedule_spine}
+    return (
+        *schedule_spine,
+        *(item for item in expanded if item.candidate_id not in spine_ids),
+    )
 
 
 def admit_cuda_candidate_paths(

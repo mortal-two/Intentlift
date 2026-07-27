@@ -46,9 +46,10 @@ def ConvertIntentRowReductionToGPU
            "When N/T exceeds this, the per-thread feature strip is split into "
            "num_tiles tiles of <= tile-cols each. Independent reductions share "
            "one scf.for over the tiles; dependent reductions start a new pass "
-           "over the same workgroup-cached row frontier. A reusable shared tree "
-           "combines each per-thread partial, and the epilogue also reads the "
-           "frontier cache instead of re-reading it from HBM. num_tiles==1 "
+           "over the same workgroup-cached row frontier. Warp shuffles plus "
+           "compact per-warp shared partials combine production geometries with "
+           "one barrier per dependency level; the epilogue reads the frontier "
+           "cache instead of re-reading it from HBM. num_tiles==1 "
            "(N/T <= tile-cols) keeps the register-tile path byte-identical.">,
     Option<"vectorWidth", "vector-width", "unsigned", "0",
            "Register-path contiguous memory width: 0 = structurally selected "
