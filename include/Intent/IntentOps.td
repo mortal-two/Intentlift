@@ -65,7 +65,7 @@ def Intent_MapUnaryOp : Intent_Op<"map_unary"> {
   let description = [{
     Elementwise unary op over one ranked tensor. `fn` selects the pointwise
     operation. Most fns are shape- AND element-type-preserving
-    (exp/log/log2/neg/abs/sqrt/rsqrt/recip/tanh/sigmoid/cos/sin/tan/exp2/erf), the same
+    (identity/exp/log/log2/neg/abs/sqrt/rsqrt/recip/tanh/sigmoid/cos/sin/tan/exp2/erf), the same
     class the transcendental peephole turns into NVVM approx intrinsics.
     Predicate fns (`isnan`) instead produce an `i1`-typed result tensor (the
     boolean condition for `intent.select`, mirroring the `map_binary` comparison

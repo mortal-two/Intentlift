@@ -30,6 +30,8 @@ namespace intent {
 inline mlir::Value emitScalarUnary(mlir::OpBuilder &b, mlir::Location loc,
                                    llvm::StringRef fn, mlir::Value x) {
   using namespace mlir;
+  if (fn == "identity")
+    return x;
   if (fn == "exp")
     return b.create<math::ExpOp>(loc, x);
   if (fn == "log")
