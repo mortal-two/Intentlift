@@ -131,3 +131,41 @@ def test_real_flash_layernorm_bf16_envelope_workload_is_digest_pinned() -> None:
     assert buffers["Mean"].shape == (2048,)
     assert prepared.adapter.grid == (2048,)
     assert dict(prepared.adapter.c_values)["BLOCK_N"] == 4096
+
+
+def test_real_softmax_natural_workload_is_digest_pinned() -> None:
+    config = load_dev_workload_config(
+        _ROOT
+        / "spec"
+        / "lowering"
+        / "backend-natural-workloads-v1"
+        / "liger_softmax_upstream_m4096_n4096_fp32.json"
+    )
+    prepared = prepare_dev_workload(config)
+    buffers = {item.formal: item for item in prepared.adapter.buffers}
+
+    assert config.dtype_config_id == "fp32_boundary_fp32_accum"
+    assert buffers["X_ptr"].dtype == "f32"
+    assert buffers["X_ptr"].shape == (4096, 4096)
+    assert buffers["Y_ptr"].shape == (4096, 4096)
+    assert prepared.adapter.grid == (4096,)
+    assert dict(prepared.adapter.c_values)["BLOCK_SIZE"] == 4096
+
+
+def test_real_geglu_natural_workload_is_digest_pinned() -> None:
+    config = load_dev_workload_config(
+        _ROOT
+        / "spec"
+        / "lowering"
+        / "backend-natural-workloads-v1"
+        / "liger_geglu_upstream_m4096_n4096_fp32.json"
+    )
+    prepared = prepare_dev_workload(config)
+    buffers = {item.formal: item for item in prepared.adapter.buffers}
+
+    assert buffers["a"].shape == (4096, 4096)
+    assert buffers["b"].shape == (4096, 4096)
+    assert buffers["c"].shape == (4096, 4096)
+    assert prepared.adapter.grid == (4096,)
+    assert dict(prepared.adapter.semantic_constexprs)["n_cols"] == 4096
+    assert dict(prepared.adapter.c_values)["BLOCK_SIZE"] == 4096

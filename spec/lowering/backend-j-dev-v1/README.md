@@ -69,7 +69,8 @@ J_dev 可以证明当前 compiler 能消费该 typed workload、候选在记录�
 继承 base 的 Gate1/Gate2，不进入 SCRC closure count，也不能写 `SCRC_CERTIFIED`。若该变体要成为完整
 SCRC→backend 论文证据，前端必须产生新的 accepted J digest并重新执行 Lift/TypeCheck/Replay/Gate1/Gate2。
 
-当前首批 recipe 包含两类：accepted FP32 J 的自然 shape capability slice；以及 Flash one-pass
+当前首批 recipe 包含两类：accepted FP32 J 的自然 shape capability slice（RMSNorm、DYT、Softmax、
+GeGLU）；以及 Flash one-pass
 LayerNorm 的 BF16 envelope slice。后者复用 base J 已显式存在的 half↔FP32 cast graph，只把全部相关
 boundary/signature/cast authorization/type carrier 从 FP16 一致替换为 BF16，并明确区分“上游声明的
 BF16 dtype envelope”与 archived concrete FP16 specialization。若 base J 没有这类显式 cast/A graph，

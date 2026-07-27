@@ -195,6 +195,51 @@ def test_real_flash_layernorm_bf16_variant_reelaborates_control_flow() -> None:
     assert variant.j.intent.body[33].type == {"dtype": "bf16", "shape": ["x0", "x1"]}
 
 
+def test_real_softmax_natural_shape_variant_reelaborates_reductions() -> None:
+    base, _path = load_production_snapshot(_CATALOG, "softmax")
+    variant = load_j_dev_variant(
+        _ROOT
+        / "corpus"
+        / "backend-j-dev-v1"
+        / "liger_softmax_upstream_m4096_n4096_fp32.json"
+    )
+
+    variant.validate_against_base(base)
+    assert variant.shape_config_id == "upstream_m4096_n4096_fp32"
+    assert variant.j.intent.inputs[0].shape == [4096, "x0"]
+    assert variant.j.intent.outputs[0].shape == [4096, "x0"]
+    assert variant.j.intent.body[0].type == {"dtype": "f32", "shape": [4096, 1]}
+    assert variant.j.intent.body[4].type == {
+        "dtype": "f32",
+        "shape": [4096, "x0"],
+    }
+    assert variant.j.boundary.domains["d0"] == "(0 <= k1) and (k1 < 4096)"
+    assert variant.c is not None and variant.c.values["c0"] == 4096
+
+
+def test_real_geglu_natural_shape_variant_reelaborates_fused_graph() -> None:
+    base, _path = load_production_snapshot(_CATALOG, "geglu")
+    variant = load_j_dev_variant(
+        _ROOT
+        / "corpus"
+        / "backend-j-dev-v1"
+        / "liger_geglu_upstream_m4096_n4096_fp32.json"
+    )
+
+    variant.validate_against_base(base)
+    assert [item.shape for item in variant.j.intent.inputs] == [
+        [4096, "x0"],
+        [4096, "x0"],
+    ]
+    assert variant.j.intent.outputs[0].shape == [4096, "x0"]
+    assert variant.j.intent.body[13].type == {
+        "dtype": "f32",
+        "shape": [4096, "x0"],
+    }
+    assert variant.j.boundary.domains["d0"] == "(0 <= k0) and (k0 < 4096)"
+    assert variant.c is not None and variant.c.values["c0"] == 4096
+
+
 def test_real_flash_layernorm_bf16_refdev_preserves_boundary_dtype() -> None:
     base, _path = load_production_snapshot(_CATALOG, "flash_layer_norm_1pass")
     variant = load_j_dev_variant(

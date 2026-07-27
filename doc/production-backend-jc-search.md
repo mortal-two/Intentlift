@@ -548,6 +548,23 @@ RMSNorm `M=2048,H=1024` 的同回执 E3/E2 为 **1.0531x**、Source/Target 为 *
 E3/E2 为 **1.0024x**、Source/Target 为 **1.0275x**。这三项当前是 warm 机制校准，最终主表仍需
 cold-data、上游 BF16/FP16 dtype 与全 planned matrix。
 
+新增的 upstream-facing natural PK shape 把结论横向扩到 Softmax 与 GeGLU。Softmax
+`M=N=4096,FP32` 的 target/Source 为 `88.91/90.86 us`（Source/Target **1.0218x**），13个真实
+cubin全部通过 Target--RefDev；GeGLU `M=N=4096,FP32` 为 `131.26/131.31 us`
+（Source/Target **1.0004x**），13个stable-ex2状态通过，而12个native-ptx tanh状态被Q/D淘汰。
+两项同回执 E3/E2 和 C-prior/Erase-C 都是 **1.0000x**。详情及原始报告见
+[Softmax natural result](results/backend-natural-softmax-sm120a/README.md)与
+[GeGLU natural result](results/backend-natural-geglu-sm120a/README.md)。这证明自然大shape下成熟
+read-once state已接近logical roof，不证明硬件DRAM transaction wall；两图含special-function ops，
+runner也明确拒绝memory-wall claim。
+
+Sparsemax当前揭示的是一个必须保留的合同缺口，而不是编译开关缺口：accepted J表达了scan/reduce图，
+但没有“第二输入沿规约轴单调降序”的typed B relation；仅凭参数名`sorted_x`不得授权提前停止读取的
+sorted-prefix lowering。现有J_dev v1也只允许shape/dtype/domain精确编辑，不能偷偷增加该权限。
+`intent_host_preprocessing_in_kernel_timing=false`应属于benchmark measurement receipt，不属于compiler
+legality。后端在 relation/projection/Harness生成规则闭合前继续返回`missing_contract`；这不会阻止
+不依赖该前提的generic scan执行。
+
 当前 planned 输入没有 typed contraction；Flash `do_o_dot` 仍是 FP32 multiply + reduction，所以不存在可诚实
 声称的 TF32 state。但下一步不等待新 contraction 才完善既有后端：
 

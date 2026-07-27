@@ -106,6 +106,26 @@ pointer transport缺口 fail closed并单独记账。vec4后的当前赢家约 `
 仍慢约5.4%；expanded/schedule-only约`1.0023x`。因此它证明mixed-precision与packetization能力真实，
 但不被挑选成“大E3/E2”正例；剩余结构收益应在Softmax/RMSNorm/scan等适用图上横向寻找。
 
+自然 workload 横向校准已继续覆盖 reduction 与 elementwise 两类完整 J 图：
+
+| case | config | Target / Source | Source / Target | IntentIR / Schedule-Only | Q/D与机制结论 |
+|---|---|---:|---:|---:|---|
+| Liger Softmax | `M=4096,N=4096,FP32` | `88.91 / 90.86 us` | `1.0218x` | `1.0000x` | 13/13 cubin通过；256-thread hierarchical + actual vec4；逻辑roof approaching |
+| Liger GeGLU | `M=4096,N=4096,FP32` | `131.26 / 131.31 us` | `1.0004x` | `1.0000x` | 13个stable-ex2通过；12个native-ptx状态被统一Q/D拒绝 |
+
+两项都使用仓库现有 upstream-facing PK shape，且每项有独立 J_dev/workload/target report digest。它们
+说明成熟大 shape 下 read-once state 已接近逻辑带宽上限：generic materialization 的十倍级内部差距不
+等于对成熟 Source 的十倍提升，额外 lowering state 也不应被预写为必胜。Roofline 只读取 J-derived
+logical boundary bytes；因 special-function throughput 未建模，两项均明确
+`supports_memory_wall_claim=false`，不能冒充 hardware-counter DRAM wall证据。
+
+Sparsemax 的 sorted-prefix state 是下一条真正可能减少 global traffic 的高杠杆路径，但当前 accepted J
+只有 scan/reduce图与名为 `sorted_x` 的输入，没有闭合的“该输入沿规约轴单调降序”关系；dev-j-v1也
+刻意不允许新增 B relation。当前 selection 因缺 `intent_sorted_descending` fail closed是正确行为。
+`intent_host_preprocessing_in_kernel_timing=false` 属于 measurement receipt而非数值/内存合法性合同，后续
+不得把它伪装成 J permission。只有 typed relation 的来源、Harness生成规则与通用 MLIR projection一同
+闭合后，sorted-prefix 才能进入正式候选。
+
 ## 第一性原理约束
 
 1. core lowerer 只读取 J、可选 C 与 target capability；禁止读取 Source、Replay、pi、kernel name、
@@ -294,8 +314,8 @@ task/docs checkpoint
   -> dev-j-variant + 首批 natural config（已完成）
   -> direct !llvm.ptr multi-stage graph transport（已完成）
   -> requested/actual launch schedule receipt（已完成）
-  -> real 5090 natural-shape + BF16 mechanism calibration（执行中）
-  -> horizontal CUDA states
+  -> real 5090 natural-shape + BF16 mechanism calibration（reduction/elementwise/mixed precision已落首轮）
+  -> horizontal CUDA states（长规约与scan合同消费执行中）
   -> RVV VL/retile/multicore
   -> C-Fixed + unified arms
   -> H100/RVV/5090 planned-18 high-performance evidence（certified/provisional分账）

@@ -1,0 +1,46 @@
+{
+  "base_certification_status": "scrc_certified",
+  "base_snapshot_digest": "2828eba9e064e190d5acd058aabb0cbe49e12ac62b78a67174d353680b1dbb06",
+  "dtype_config_id": "fp32_boundary_fp32_accum",
+  "edits": [
+    {
+      "json_path": "/j/intent/intent_function/inputs/0/shape/0",
+      "kind": "shape",
+      "new_value": 4096,
+      "old_value": 2,
+      "upstream_evidence": [
+        "python/tests/test_row_reduction_pk.py:94-120"
+      ]
+    },
+    {
+      "json_path": "/j/intent/intent_function/outputs/0/shape/0",
+      "kind": "shape",
+      "new_value": 4096,
+      "old_value": 2,
+      "upstream_evidence": [
+        "python/tests/test_row_reduction_pk.py:94-120"
+      ]
+    },
+    {
+      "json_path": "/j/boundary/domains/d0",
+      "kind": "domain",
+      "new_value": "(0 <= k1) and (k1 < 4096)",
+      "old_value": "(0 <= k1) and (k1 < 2)",
+      "upstream_evidence": [
+        "python/tests/test_row_reduction_pk.py:94-120"
+      ]
+    },
+    {
+      "json_path": "/c/values/c0",
+      "kind": "c_value",
+      "new_value": 4096,
+      "old_value": 128,
+      "upstream_evidence": [
+        "python/tests/test_row_reduction_pk.py:94-120"
+      ]
+    }
+  ],
+  "protocol": "intentir.backend.dev-j-recipe.v1",
+  "shape_config_id": "upstream_m4096_n4096_fp32",
+  "source_kernel_id": "high_performance:liger_softmax"
+}
