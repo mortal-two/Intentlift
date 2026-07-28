@@ -41,8 +41,11 @@ from intentir.backend.cuda.qd import (
 )
 from intentir.backend.cuda.production_cases import (
     PRODUCTION_CASE_IDS,
+    PRODUCTION_WORKLOAD_PROFILE_CLOSED,
+    PRODUCTION_WORKLOAD_PROFILE_NATURAL_HEADLINE,
     constexpr_input_bindings,
     prepare_production_workload,
+    profile_production_snapshot,
 )
 from intentir.backend.materialize import attach_c, materialize_j
 from intentir.backend.protocol import BackendTarget
@@ -159,13 +162,22 @@ def _one_kernel(
     qd_cert_seeds: tuple[int, ...] = (),
     replay_program: KernelSource | None = None,
     require_backend_closure: bool = False,
+    workload_profile: str = PRODUCTION_WORKLOAD_PROFILE_CLOSED,
 ) -> dict[str, Any]:
     import torch
 
-    snapshot, snapshot_path = load_production_snapshot(snapshot_dir, name)
+    base_snapshot, snapshot_path = load_production_snapshot(snapshot_dir, name)
+    prepared_workload = prepare_production_workload(
+        name,
+        profile=workload_profile,
+    )
+    snapshot, workload_valuation = profile_production_snapshot(
+        base_snapshot,
+        prepared_workload,
+        workload_profile,
+    )
     if snapshot.c is None and (axes is None or axes.baseline_kind is None):
         raise ValueError("performance search requires the optional frozen C prior")
-    prepared_workload = prepare_production_workload(name)
     suite = build_workload_jc_suite(prepared_workload, snapshot.j, snapshot.c)
     case = suite.cases[0]
     dims = case.refeval.dims_map
@@ -358,6 +370,8 @@ def _one_kernel(
         return {
             "kernel": name,
             "case_id": CASE_IDS[name],
+            "workload_profile": workload_profile,
+            "workload_valuation": workload_valuation,
             "snapshot": {
                 "path": str(snapshot_path),
                 "snapshot_digest": snapshot.snapshot_digest,
@@ -555,7 +569,7 @@ def _one_kernel(
         state,
         benchmark=benchmark,
         benchmark_key=(
-            f"{name}:accepted-shape:{sorted(dims.items())}:"
+            f"{name}:profile={workload_profile}:shape={sorted(dims.items())}:"
             f"timing={timing}:graph-repetitions={graph_repetitions}"
             f":measurement-rounds={measurement_rounds}"
         ),
@@ -719,6 +733,14 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--cache", type=Path)
     parser.add_argument("--search-budget", type=int, default=96)
+    parser.add_argument(
+        "--workload-profile",
+        choices=(
+            PRODUCTION_WORKLOAD_PROFILE_CLOSED,
+            PRODUCTION_WORKLOAD_PROFILE_NATURAL_HEADLINE,
+        ),
+        default=PRODUCTION_WORKLOAD_PROFILE_CLOSED,
+    )
     parser.add_argument("--warmup-ms", type=int, default=50)
     parser.add_argument("--repeat-ms", type=int, default=200)
     parser.add_argument(
@@ -772,6 +794,7 @@ def main(argv: list[str] | None = None) -> int:
                 search_prior=args.search_prior,
                 b_search_mode=args.b_search_mode,
                 cache=cache,
+                workload_profile=args.workload_profile,
             )
             records.append(record)
             perf = record["performance"]
@@ -803,6 +826,7 @@ def main(argv: list[str] | None = None) -> int:
             "mlir_opt": str(backend_compile.MLIR_OPT),
             "cuda_bin": backend_compile.CUDA_BIN,
         },
+        "workload_profile": args.workload_profile,
         "summary": {
             "requested": len(args.kernels),
             "successful": len(successful),

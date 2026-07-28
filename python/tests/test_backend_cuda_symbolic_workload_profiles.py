@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from intentir.backend.cuda.production_cases import (
+    PRODUCTION_WORKLOAD_PROFILE_NATURAL_HEADLINE,
     PRODUCTION_WORKLOAD_PROFILE_SYMBOLIC_LARGE,
     PRODUCTION_WORKLOAD_PROFILE_SYMBOLIC_MEDIUM,
     constexpr_input_bindings,
@@ -18,6 +19,7 @@ from intentir.verify.scrc_workload_run import build_workload_jc_suite
 
 
 SNAPSHOTS = Path("corpus/production-jc-v1")
+FRESH_SNAPSHOTS = Path("corpus/production-jc-v2")
 
 
 @pytest.mark.parametrize(
@@ -319,3 +321,80 @@ def test_tvd_functional_loop_cost_scales_linearly_with_symbolic_tensor_domain():
     ) * element_ratio
     assert large.select_ops == medium.select_ops * element_ratio
     assert large.arithmetic_intensity_flop_per_byte < 2.0
+
+
+@pytest.mark.parametrize(
+    ("name", "formal", "shape", "grid"),
+    (
+        ("swiglu", "a_ptr", (16384, 11008), (16384,)),
+        ("liger_rms_norm", "X_ptr", (2048, 4096), (2048,)),
+        ("fused_add_rms_norm", "X_ptr", (2048, 4096), (2048,)),
+        ("geglu", "a", (32768, 11008), (32768,)),
+        ("layer_norm", "X_ptr", (4096, 4096), (4096,)),
+        ("softmax", "X_ptr", (2048, 4096), (2048,)),
+        ("dyt", "X", (4096, 4096), (1, 4096)),
+        ("sparsemax", "x_ptr", (2048, 4096), (2048,)),
+        ("kl_div", "y_ptr", (4096, 4096), (4096,)),
+        ("poly_norm", "X_ptr", (2048, 4096), (2048,)),
+        (
+            "flash_bwd_preprocess",
+            "Out",
+            (4, 16, 8192, 128),
+            (256, 64),
+        ),
+        ("flash_layer_norm_1pass", "X", (4096, 4096), (4096,)),
+        ("xformers_rms_norm_add", "x_ptr", (4096, 12288), (4096,)),
+        (
+            "splitk_reduce_varargs",
+            "Out_splitK0",
+            (1, 1, 16, 1, 256),
+            (1, 16, 1),
+        ),
+    ),
+)
+def test_fresh14_natural_headline_revalues_declared_symbols_only(
+    name, formal, shape, grid
+):
+    base, _ = load_production_snapshot(FRESH_SNAPSHOTS, name)
+    prepared = prepare_production_workload(
+        name,
+        profile=PRODUCTION_WORKLOAD_PROFILE_NATURAL_HEADLINE,
+    )
+    active, receipt = profile_production_snapshot(
+        base,
+        prepared,
+        PRODUCTION_WORKLOAD_PROFILE_NATURAL_HEADLINE,
+    )
+    shapes = {item.formal: item.shape for item in prepared.adapter.buffers}
+
+    assert shapes[formal] == shape
+    assert prepared.adapter.grid == grid
+    assert active.j_digest == base.j_digest
+    assert receipt["j_unchanged"] is True
+    assert receipt["profile"] == PRODUCTION_WORKLOAD_PROFILE_NATURAL_HEADLINE
+
+
+def test_natural_flash_and_splitk_contiguous_stride_products_are_revalued():
+    flash = prepare_production_workload(
+        "flash_bwd_preprocess",
+        profile=PRODUCTION_WORKLOAD_PROFILE_NATURAL_HEADLINE,
+    ).adapter
+    flash_scalars = {item.formal: item.value for item in flash.scalars}
+    assert flash_scalars["stride_ob"] == 16 * 8192 * 128
+    assert flash_scalars["stride_oh"] == 8192 * 128
+    assert flash_scalars["stride_om"] == 128
+    assert flash_scalars["seqlen_q"] == 8192
+    assert flash_scalars["headdim"] == 128
+
+    splitk = prepare_production_workload(
+        "splitk_reduce_varargs",
+        profile=PRODUCTION_WORKLOAD_PROFILE_NATURAL_HEADLINE,
+    ).adapter
+    splitk_scalars = {item.formal: item.value for item in splitk.scalars}
+    splitk_constexprs = dict(splitk.semantic_constexprs)
+    assert splitk_scalars["stride_osk_z0"] == 16 * 1 * 256
+    assert splitk_scalars["stride_osk_h0"] == 256
+    assert splitk_scalars["stride_lsek_z0"] == 16
+    assert splitk_constexprs["head_dim"] == 256
+    assert splitk_constexprs["H"] == 16
+    assert splitk.vararg_arity == 2

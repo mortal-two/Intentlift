@@ -52,6 +52,7 @@ PRODUCTION_CASE_IDS: dict[str, str] = {
 }
 
 PRODUCTION_WORKLOAD_PROFILE_CLOSED = "closed-v1"
+PRODUCTION_WORKLOAD_PROFILE_NATURAL_HEADLINE = "natural-headline-v1"
 PRODUCTION_WORKLOAD_PROFILE_ROOFLINE_LARGE = "roofline-large-j-only-v1"
 PRODUCTION_WORKLOAD_PROFILE_SYMBOLIC_MEDIUM = "symbolic-medium-v1"
 PRODUCTION_WORKLOAD_PROFILE_SYMBOLIC_LARGE = "symbolic-large-v1"
@@ -60,6 +61,11 @@ _ROW = "row"
 _FEATURE = "feature"
 _HEADS = "heads"
 _LENGTH = "length"
+_BATCH = "batch"
+_GROUPS = "groups"
+_SEQUENCE = "sequence"
+_PADDED_SEQUENCE = "padded_sequence"
+_HEAD_DIM = "head_dim"
 
 _PROFILE_EXTENTS: dict[str, dict[str, int]] = {
     PRODUCTION_WORKLOAD_PROFILE_SYMBOLIC_MEDIUM: {
@@ -79,6 +85,39 @@ _PROFILE_EXTENTS: dict[str, dict[str, int]] = {
     },
 }
 
+# One source-grounded/model-grounded headline valuation per Fresh14 J.  These
+# are not artificial size tiers: the exact shapes are the named configurations
+# in doc/IntentIR_后端能力建设与最终实验协议_2026-07-27.md.  SplitK keeps the
+# accepted vararg arity at two while using the decode-shaped tensor axes.
+_NATURAL_HEADLINE_EXTENTS: dict[str, dict[str, int]] = {
+    "swiglu": {_ROW: 16384, _FEATURE: 11008},
+    "liger_rms_norm": {_ROW: 2048, _FEATURE: 4096},
+    "fused_add_rms_norm": {_ROW: 2048, _FEATURE: 4096},
+    "geglu": {_ROW: 32768, _FEATURE: 11008},
+    "layer_norm": {_ROW: 4096, _FEATURE: 4096},
+    "softmax": {_ROW: 2048, _FEATURE: 4096},
+    "dyt": {_ROW: 4096, _FEATURE: 4096},
+    "sparsemax": {_ROW: 2048, _FEATURE: 4096},
+    "kl_div": {_ROW: 4096, _FEATURE: 4096},
+    "poly_norm": {_ROW: 2048, _FEATURE: 4096},
+    "flash_bwd_preprocess": {
+        _BATCH: 4,
+        _HEADS: 16,
+        _SEQUENCE: 8192,
+        _PADDED_SEQUENCE: 8192,
+        _HEAD_DIM: 128,
+    },
+    "flash_layer_norm_1pass": {_ROW: 4096, _FEATURE: 4096},
+    "xformers_rms_norm_add": {_ROW: 4096, _FEATURE: 12288},
+    "splitk_reduce_varargs": {
+        _BATCH: 1,
+        _GROUPS: 1,
+        _HEADS: 16,
+        _ROW: 1,
+        _HEAD_DIM: 256,
+    },
+}
+
 
 @dataclass(frozen=True)
 class ValueBinding:
@@ -87,6 +126,7 @@ class ValueBinding:
     formal: str
     role: str
     multiplier: int = 1
+    factors: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -105,6 +145,7 @@ class GridBinding:
     op: Literal["preserve", "extent", "ceil_div_extent_c"]
     role: str | None = None
     c_formal: str | None = None
+    factors: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -444,6 +485,304 @@ _HARNESS_BINDINGS: dict[str, HarnessBindingSpec] = {
 }
 
 
+_NATURAL_HARNESS_BINDINGS: dict[str, HarnessBindingSpec] = {
+    "swiglu": HarnessBindingSpec(
+        buffer_axes=tuple(
+            (name, _axes(_ROW, _FEATURE))
+            for name in ("a_ptr", "b_ptr", "c_ptr")
+        ),
+        scalars=(ValueBinding("stride", _FEATURE),),
+        semantic_constexprs=(ValueBinding("n_cols", _FEATURE),),
+        c_values=(CBinding("BLOCK_SIZE", _FEATURE, "next_power_of_two"),),
+        grid=(GridBinding("extent", _ROW),),
+    ),
+    "liger_rms_norm": HarnessBindingSpec(
+        buffer_axes=(
+            ("Y_ptr", _axes(_ROW, _FEATURE)),
+            ("X_ptr", _axes(_ROW, _FEATURE)),
+            ("W_ptr", _axes(_FEATURE)),
+            ("RSTD_ptr", _axes(_ROW)),
+        ),
+        scalars=tuple(
+            ValueBinding(name, _FEATURE)
+            for name in (
+                "Y_row_stride",
+                "X_row_stride",
+                "W_row_stride",
+                "n_cols",
+            )
+        ),
+        c_values=(CBinding("BLOCK_SIZE", _FEATURE, "next_power_of_two"),),
+        grid=(GridBinding("extent", _ROW),),
+    ),
+    "fused_add_rms_norm": HarnessBindingSpec(
+        buffer_axes=(
+            ("Y_ptr", _axes(_ROW, _FEATURE)),
+            ("S_ptr", _axes(_ROW, _FEATURE)),
+            ("X_ptr", _axes(_ROW, _FEATURE)),
+            ("R_ptr", _axes(_ROW, _FEATURE)),
+            ("W_ptr", _axes(_FEATURE)),
+            ("RSTD_ptr", _axes(_ROW)),
+        ),
+        scalars=tuple(
+            ValueBinding(name, _FEATURE)
+            for name in (
+                "Y_row_stride",
+                "S_row_stride",
+                "X_row_stride",
+                "R_row_stride",
+                "W_row_stride",
+                "n_cols",
+            )
+        ),
+        c_values=(CBinding("BLOCK_SIZE", _FEATURE, "next_power_of_two"),),
+        grid=(GridBinding("extent", _ROW),),
+    ),
+    "geglu": HarnessBindingSpec(
+        buffer_axes=tuple(
+            (name, _axes(_ROW, _FEATURE)) for name in ("a", "b", "c")
+        ),
+        scalars=(ValueBinding("stride", _FEATURE),),
+        semantic_constexprs=(ValueBinding("n_cols", _FEATURE),),
+        c_values=(CBinding("BLOCK_SIZE", _FEATURE, "next_power_of_two"),),
+        grid=(GridBinding("extent", _ROW),),
+    ),
+    "layer_norm": HarnessBindingSpec(
+        buffer_axes=(
+            ("Y_ptr", _axes(_ROW, _FEATURE)),
+            ("X_ptr", _axes(_ROW, _FEATURE)),
+            ("W_ptr", _axes(_FEATURE)),
+            ("B_ptr", _axes(_FEATURE)),
+            ("Mean_ptr", _axes(_ROW)),
+            ("RSTD_ptr", _axes(_ROW)),
+        ),
+        scalars=tuple(
+            ValueBinding(name, _FEATURE)
+            for name in (
+                "Y_row_stride",
+                "X_row_stride",
+                "W_row_stride",
+                "B_row_stride",
+                "n_cols",
+            )
+        ),
+        c_values=(CBinding("BLOCK_SIZE", _FEATURE, "next_power_of_two"),),
+        grid=(GridBinding("extent", _ROW),),
+    ),
+    "softmax": HarnessBindingSpec(
+        buffer_axes=(
+            ("Y_ptr", _axes(_ROW, _FEATURE)),
+            ("X_ptr", _axes(_ROW, _FEATURE)),
+        ),
+        scalars=tuple(
+            ValueBinding(name, _FEATURE)
+            for name in ("Y_row_stride", "X_row_stride", "n_cols")
+        ),
+        c_values=(CBinding("BLOCK_SIZE", _FEATURE, "next_power_of_two"),),
+        grid=(GridBinding("extent", _ROW),),
+    ),
+    "dyt": HarnessBindingSpec(
+        buffer_axes=(
+            ("X", _axes(_ROW, _FEATURE)),
+            ("Y", _axes(_ROW, _FEATURE)),
+            ("Alpha", _axes(None)),
+            ("Gamma", _axes(_FEATURE)),
+            ("Beta", _axes(_FEATURE)),
+        ),
+        semantic_constexprs=(ValueBinding("N", _FEATURE),),
+        c_values=(CBinding("BLOCK_N", _FEATURE, "next_power_of_two"),),
+        grid=(
+            GridBinding("ceil_div_extent_c", _FEATURE, "BLOCK_N"),
+            GridBinding("extent", _ROW),
+        ),
+        literal_constraints=("Alpha.elements=1",),
+    ),
+    "sparsemax": HarnessBindingSpec(
+        buffer_axes=tuple(
+            (name, _axes(_ROW, _FEATURE))
+            for name in ("x_ptr", "sorted_x_ptr", "o_ptr")
+        ),
+        scalars=tuple(
+            ValueBinding(name, _FEATURE)
+            for name in (
+                "x_stride_row",
+                "sorted_x_stride_row",
+                "o_stride_row",
+                "n_cols",
+            )
+        ),
+        c_values=(CBinding("BLOCK_SIZE", _FEATURE, "next_power_of_two"),),
+        grid=(GridBinding("extent", _ROW),),
+    ),
+    "kl_div": HarnessBindingSpec(
+        buffer_axes=(
+            ("y_ptr", _axes(_ROW, _FEATURE)),
+            ("gt_ptr", _axes(_ROW, _FEATURE)),
+            ("loss_ptr", _axes(_ROW)),
+        ),
+        scalars=tuple(
+            ValueBinding(name, _FEATURE)
+            for name in ("y_stride", "gt_stride", "n_cols")
+        ),
+        c_values=(CBinding("BLOCK_SIZE", _FEATURE, "next_power_of_two"),),
+        grid=(GridBinding("extent", _ROW),),
+    ),
+    "poly_norm": HarnessBindingSpec(
+        buffer_axes=(
+            ("Y_ptr", _axes(_ROW, _FEATURE)),
+            ("X_ptr", _axes(_ROW, _FEATURE)),
+            ("W_ptr", _axes(None)),
+            ("B_ptr", _axes(None)),
+            ("RSTD_ptr", _axes(_ROW, None)),
+        ),
+        scalars=tuple(
+            ValueBinding(name, _FEATURE)
+            for name in ("Y_row_stride", "X_row_stride", "n_cols")
+        ),
+        c_values=(CBinding("BLOCK_SIZE", _FEATURE, "next_power_of_two"),),
+        grid=(GridBinding("extent", _ROW),),
+        literal_constraints=("polynomial_terms=3",),
+    ),
+    "flash_bwd_preprocess": HarnessBindingSpec(
+        buffer_axes=(
+            ("Out", _axes(_BATCH, _HEADS, _SEQUENCE, _HEAD_DIM)),
+            ("DO", _axes(_BATCH, _HEADS, _SEQUENCE, _HEAD_DIM)),
+            ("Delta", _axes(_BATCH, _HEADS, _PADDED_SEQUENCE)),
+        ),
+        scalars=(
+            ValueBinding(
+                "stride_ob", _HEADS, factors=(_SEQUENCE, _HEAD_DIM)
+            ),
+            ValueBinding("stride_oh", _SEQUENCE, factors=(_HEAD_DIM,)),
+            ValueBinding("stride_om", _HEAD_DIM),
+            ValueBinding(
+                "stride_dob", _HEADS, factors=(_SEQUENCE, _HEAD_DIM)
+            ),
+            ValueBinding("stride_doh", _SEQUENCE, factors=(_HEAD_DIM,)),
+            ValueBinding("stride_dom", _HEAD_DIM),
+            ValueBinding("nheads", _HEADS),
+            ValueBinding("seqlen_q", _SEQUENCE),
+            ValueBinding("seqlen_q_rounded", _PADDED_SEQUENCE),
+            ValueBinding("headdim", _HEAD_DIM),
+        ),
+        c_values=(
+            CBinding("BLOCK_HEADDIM", _HEAD_DIM, "next_power_of_two"),
+        ),
+        grid=(
+            GridBinding("ceil_div_extent_c", _SEQUENCE, "BLOCK_M"),
+            GridBinding("extent", _BATCH, factors=(_HEADS,)),
+        ),
+    ),
+    "flash_layer_norm_1pass": HarnessBindingSpec(
+        buffer_axes=(
+            ("X", _axes(_ROW, _FEATURE)),
+            ("Y", _axes(_ROW, _FEATURE)),
+            ("W", _axes(_FEATURE)),
+            ("B", _axes(_FEATURE)),
+            ("RESIDUAL", _axes(_ROW, _FEATURE)),
+            ("X1", _axes(_ROW, _FEATURE)),
+            ("W1", _axes(_FEATURE)),
+            ("B1", _axes(_FEATURE)),
+            ("Y1", _axes(_ROW, _FEATURE)),
+            ("RESIDUAL_OUT", _axes(_ROW, _FEATURE)),
+            ("ROWSCALE", _axes(_ROW)),
+            ("SEEDS", _axes(_ROW)),
+            ("DROPOUT_MASK", _axes(_ROW, _FEATURE)),
+            ("DROPOUT_MASK1", _axes(_ROW, _FEATURE)),
+            ("Mean", _axes(_ROW)),
+            ("Rstd", _axes(_ROW)),
+        ),
+        scalars=tuple(
+            ValueBinding(name, _FEATURE)
+            for name in (
+                "stride_x_row",
+                "stride_y_row",
+                "stride_res_row",
+                "stride_res_out_row",
+                "stride_x1_row",
+                "stride_y1_row",
+                "N",
+            )
+        )
+        + (ValueBinding("M", _ROW),),
+        c_values=(CBinding("BLOCK_N", _FEATURE, "next_power_of_two"),),
+        grid=(GridBinding("extent", _ROW),),
+    ),
+    "xformers_rms_norm_add": HarnessBindingSpec(
+        buffer_axes=(
+            ("x_ptr", _axes(_ROW, _FEATURE)),
+            ("y_ptr", _axes(_ROW, _FEATURE)),
+            ("h1_ptr", _axes(_ROW, _FEATURE)),
+            ("w_ptr", _axes(_FEATURE)),
+        ),
+        scalars=(ValueBinding("stride", _FEATURE),),
+        semantic_constexprs=(ValueBinding("N_COLS", _FEATURE),),
+        c_values=(CBinding("BLOCK_SIZE", _FEATURE, "next_power_of_two"),),
+        grid=(GridBinding("extent", _ROW),),
+    ),
+    "splitk_reduce_varargs": HarnessBindingSpec(
+        buffer_axes=(
+            *(
+                (name, _axes(_BATCH, _GROUPS, _HEADS, _ROW, _HEAD_DIM))
+                for name in ("Out_splitK0", "Out_splitK1", "Out")
+            ),
+            *(
+                (name, _axes(_BATCH, _GROUPS, _HEADS, _ROW))
+                for name in ("LSE_splitK0", "LSE_splitK1", "LSE")
+            ),
+        ),
+        scalars=(
+            *(
+                ValueBinding(
+                    name,
+                    _GROUPS,
+                    factors=(_HEADS, _ROW, _HEAD_DIM),
+                )
+                for name in ("stride_osk_z0", "stride_osk_z1", "stride_oz")
+            ),
+            *(
+                ValueBinding(name, _HEADS, factors=(_ROW, _HEAD_DIM))
+                for name in ("stride_osk_g0", "stride_osk_g1", "stride_og")
+            ),
+            *(
+                ValueBinding(name, _ROW, factors=(_HEAD_DIM,))
+                for name in ("stride_osk_h0", "stride_osk_h1", "stride_oh")
+            ),
+            *(
+                ValueBinding(name, _HEAD_DIM)
+                for name in ("stride_osk_m0", "stride_osk_m1", "stride_om")
+            ),
+            *(
+                ValueBinding(name, _GROUPS, factors=(_HEADS, _ROW))
+                for name in ("stride_lsek_z0", "stride_lsek_z1", "stride_lse_z")
+            ),
+            *(
+                ValueBinding(name, _HEADS, factors=(_ROW,))
+                for name in ("stride_lsek_g0", "stride_lsek_g1", "stride_lse_g")
+            ),
+            *(
+                ValueBinding(name, _ROW)
+                for name in ("stride_lsek_h0", "stride_lsek_h1", "stride_lse_h")
+            ),
+        ),
+        semantic_constexprs=(
+            ValueBinding("head_dim", _HEAD_DIM),
+            ValueBinding("H", _HEADS),
+            ValueBinding("G", _GROUPS),
+        ),
+        c_values=(
+            CBinding("head_dim_pow_2", _HEAD_DIM, "next_power_of_two"),
+        ),
+        grid=(
+            GridBinding("extent", _ROW),
+            GridBinding("extent", _BATCH, factors=(_GROUPS, _HEADS)),
+            GridBinding("preserve"),
+        ),
+        literal_constraints=("vararg_arity=2", "WRITE_LSE=true"),
+    ),
+}
+
+
 def _extent(extents: dict[str, int], role: str | None) -> int:
     if role is None or role not in extents:
         raise ValueError(f"workload profile has no positive extent for role {role!r}")
@@ -462,6 +801,13 @@ def _binding_spec(name: str, profile: str) -> HarnessBindingSpec:
         raise KeyError(f"unknown production case {name!r}")
     if profile == PRODUCTION_WORKLOAD_PROFILE_CLOSED:
         return _HARNESS_BINDINGS[name]
+    if profile == PRODUCTION_WORKLOAD_PROFILE_NATURAL_HEADLINE:
+        spec = _NATURAL_HARNESS_BINDINGS.get(name)
+        if spec is None:
+            raise ValueError(
+                f"workload profile {profile!r} is not registered for {name!r}"
+            )
+        return spec
     if profile == PRODUCTION_WORKLOAD_PROFILE_ROOFLINE_LARGE and name != "masked_copy":
         raise ValueError(f"workload profile {profile!r} is not registered for {name!r}")
     if profile not in _PROFILE_EXTENTS:
@@ -470,6 +816,31 @@ def _binding_spec(name: str, profile: str) -> HarnessBindingSpec:
     if spec is None:
         raise ValueError(f"workload profile {profile!r} is not registered for {name!r}")
     return spec
+
+
+def _profile_extents(name: str, profile: str) -> dict[str, int]:
+    if profile == PRODUCTION_WORKLOAD_PROFILE_NATURAL_HEADLINE:
+        try:
+            return _NATURAL_HEADLINE_EXTENTS[name]
+        except KeyError as error:
+            raise ValueError(
+                f"workload profile {profile!r} is not registered for {name!r}"
+            ) from error
+    try:
+        return _PROFILE_EXTENTS[profile]
+    except KeyError as error:
+        raise ValueError(f"unknown production workload profile {profile!r}") from error
+
+
+def _extent_product(
+    extents: dict[str, int],
+    role: str | None,
+    factors: tuple[str, ...],
+) -> int:
+    value = _extent(extents, role)
+    for factor in factors:
+        value *= _extent(extents, factor)
+    return value
 
 
 def case_name_for_id(case_id: str) -> str:
@@ -492,7 +863,7 @@ def workload_profile_metadata(name: str, profile: str) -> dict[str, Any]:
             "baseline_policy": "source_and_refj",
             "source_unavailable_reason": None,
         }
-    extents = _PROFILE_EXTENTS[profile]
+    extents = _profile_extents(name, profile)
     roles = sorted(
         {
             role
@@ -524,7 +895,7 @@ def apply_workload_profile(
         raise ValueError(f"workload adapter case_id does not match {name!r}")
     if profile == PRODUCTION_WORKLOAD_PROFILE_CLOSED:
         return adapter
-    extents = _PROFILE_EXTENTS[profile]
+    extents = _profile_extents(name, profile)
 
     buffer_axes = dict(spec.buffer_axes)
     actual_buffers = {item.formal for item in adapter.buffers}
@@ -554,7 +925,10 @@ def apply_workload_profile(
                 f"{sorted(unknown)}"
             )
         updates = {
-            binding.formal: _extent(extents, binding.role) * binding.multiplier
+            binding.formal: (
+                _extent_product(extents, binding.role, binding.factors)
+                * binding.multiplier
+            )
             for binding in bindings
         }
         return tuple(
@@ -576,7 +950,8 @@ def apply_workload_profile(
         )
     for binding in spec.semantic_constexprs:
         constexpr_values[binding.formal] = (
-            _extent(extents, binding.role) * binding.multiplier
+            _extent_product(extents, binding.role, binding.factors)
+            * binding.multiplier
         )
     semantic_constexprs = tuple(
         (key, constexpr_values[key]) for key, _value in adapter.semantic_constexprs
@@ -604,13 +979,15 @@ def apply_workload_profile(
         if binding.op == "preserve":
             value = int(original)
         elif binding.op == "extent":
-            value = _extent(extents, binding.role)
+            value = _extent_product(extents, binding.role, binding.factors)
         elif binding.op == "ceil_div_extent_c":
             if binding.c_formal is None or binding.c_formal not in c_values:
                 raise ValueError(
                     f"grid binding for {name!r} has no C slot {binding.c_formal!r}"
                 )
-            numerator = _extent(extents, binding.role)
+            numerator = _extent_product(
+                extents, binding.role, binding.factors
+            )
             denominator = int(c_values[binding.c_formal])
             if denominator <= 0:
                 raise ValueError("grid divisor must be positive")
@@ -635,6 +1012,7 @@ def apply_workload_profile(
 __all__ = [
     "PRODUCTION_CASE_IDS",
     "PRODUCTION_WORKLOAD_PROFILE_CLOSED",
+    "PRODUCTION_WORKLOAD_PROFILE_NATURAL_HEADLINE",
     "PRODUCTION_WORKLOAD_PROFILE_ROOFLINE_LARGE",
     "PRODUCTION_WORKLOAD_PROFILE_SYMBOLIC_LARGE",
     "PRODUCTION_WORKLOAD_PROFILE_SYMBOLIC_MEDIUM",

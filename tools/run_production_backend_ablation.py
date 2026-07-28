@@ -18,7 +18,11 @@ from intentir.backend.ablation import (
     standard_ablation_plan,
 )
 from intentir.backend.ablation_report import summarize_ablation_records
-from intentir.backend.cuda.production_cases import PRODUCTION_CASE_IDS
+from intentir.backend.cuda.production_cases import (
+    PRODUCTION_CASE_IDS,
+    PRODUCTION_WORKLOAD_PROFILE_CLOSED,
+    PRODUCTION_WORKLOAD_PROFILE_NATURAL_HEADLINE,
+)
 from intentir.backend.cuda.search import PerformanceCache
 from intentir.verify.gate1.compiler import KernelSource
 from benchmark_production_cuda import _device_record, _one_kernel
@@ -86,6 +90,14 @@ def _parser() -> argparse.ArgumentParser:
         default=[item.value for item in _ARMS],
     )
     parser.add_argument("--candidate-budget", type=int, default=96)
+    parser.add_argument(
+        "--workload-profile",
+        choices=(
+            PRODUCTION_WORKLOAD_PROFILE_CLOSED,
+            PRODUCTION_WORKLOAD_PROFILE_NATURAL_HEADLINE,
+        ),
+        default=PRODUCTION_WORKLOAD_PROFILE_CLOSED,
+    )
     parser.add_argument("--fixed-path-map", type=Path)
     parser.add_argument("--replay-manifest", type=Path)
     parser.add_argument("--qd-search-seeds", type=_seeds, default=(2001, 2003))
@@ -153,10 +165,19 @@ def main(argv: list[str] | None = None) -> int:
                         if not axes.search_structural_states and name in fixed_paths
                         else None
                     ),
-                    qd_search_seeds=args.qd_search_seeds,
-                    qd_cert_seeds=args.qd_cert_seeds,
+                    qd_search_seeds=(
+                        ()
+                        if arm is ExperimentArm.E0_SOURCE
+                        else args.qd_search_seeds
+                    ),
+                    qd_cert_seeds=(
+                        ()
+                        if arm is ExperimentArm.E0_SOURCE
+                        else args.qd_cert_seeds
+                    ),
                     replay_program=_replay_program(replay_manifest, name),
                     require_backend_closure=args.require_backend_closure,
+                    workload_profile=args.workload_profile,
                 )
                 records.append({"arm": arm.value, **record})
                 performance = record["performance"]
@@ -195,6 +216,7 @@ def main(argv: list[str] | None = None) -> int:
         "target_chip": backend_compile.CHIP,
         "experiment_spec_digest": ablation_spec_digest(),
         "candidate_budget": args.candidate_budget,
+        "workload_profile": args.workload_profile,
         "kernel_universe": sorted(PRODUCTION_CASE_IDS),
         "selected_kernels": sorted(args.kernels),
         "selection_scope": (
