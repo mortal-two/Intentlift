@@ -1,11 +1,21 @@
 import importlib.util
+import base64
 import ctypes
 import json
 import struct
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
+
+from intentir.verify.gate1.model import ResultRelationKind
+from intentir.verify.gate2.compare import close_q
+from intentir.verify.gate2.policy import (
+    ComparisonPolicy,
+    ComparisonPolicyError,
+    NumericTolerance,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -32,6 +42,87 @@ rvv_runner = _load_tool(
     "intentir_rvv_target_runner_tool",
     "tools/run_rvv_benchmark_bundle.py",
 )
+rvv_externalize = _load_tool(
+    "intentir_rvv_externalize_payloads_tool",
+    "tools/externalize_rvv_bundle_payloads.py",
+)
+cuda_runner = _load_tool(
+    "intentir_cuda_target_runner_tool",
+    "tools/run_cuda_benchmark_bundle.py",
+)
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "kind", "tolerance"),
+    [
+        (
+            np.array([1.0, -2.0, np.inf], dtype=np.float32),
+            np.array([1.0 + 1.0e-6, -2.0, np.inf], dtype=np.float32),
+            ResultRelationKind.TOLERANCE,
+            NumericTolerance(1.0e-5, 1.0e-6),
+        ),
+        (
+            np.array([np.nan, 2.0], dtype=np.float32),
+            np.array([np.nan, 2.0], dtype=np.float32),
+            ResultRelationKind.TOLERANCE,
+            NumericTolerance(0.0, 0.0, equal_nan=False),
+        ),
+        (
+            np.array([np.nan, 2.0], dtype=np.float32),
+            np.array([np.nan, 2.0], dtype=np.float32),
+            ResultRelationKind.TOLERANCE,
+            NumericTolerance(0.0, 0.0, equal_nan=True),
+        ),
+        (
+            np.array([1.0, np.inf], dtype=np.float32),
+            np.array([1.0, -np.inf], dtype=np.float32),
+            ResultRelationKind.TOLERANCE,
+            NumericTolerance(0.0, 0.0),
+        ),
+    ],
+)
+def test_cuda_gpu_q_predicate_matches_canonical_close_q(
+    left, right, kind, tolerance
+):
+    torch = pytest.importorskip("torch")
+    policy = ComparisonPolicy.create("test.gpu-q.v1", (("f32", tolerance),))
+    rule = policy.rule_for(kind, "f32")
+
+    observed, _ = cuda_runner._gpu_close_q_output(
+        torch,
+        torch.from_numpy(left),
+        torch.from_numpy(right),
+        rule,
+    )
+
+    assert observed is close_q(left, right, rule)
+
+
+def test_cuda_gpu_q_exact_integer_reports_max_error():
+    torch = pytest.importorskip("torch")
+    policy = ComparisonPolicy.create("test.gpu-q.v1", ())
+    rule = policy.rule_for(ResultRelationKind.EXACT, "i32")
+
+    passed, max_abs_error = cuda_runner._gpu_close_q_output(
+        torch,
+        torch.tensor([1, 5], dtype=torch.int32),
+        torch.tensor([1, 2], dtype=torch.int32),
+        rule,
+    )
+
+    assert passed is False
+    assert max_abs_error == 3.0
+
+
+def test_gate2_q_from_json_rejects_protocol_substitution():
+    with pytest.raises(ComparisonPolicyError, match="unsupported Gate2 Q protocol"):
+        ComparisonPolicy.from_json(
+            {
+                "protocol": "intentir.scrc.gate2-q.v999",
+                "policy_id": "test.q.v1",
+                "tolerances": {},
+            }
+        )
 
 
 def _cuda_report(arm: str, latency_us: float) -> dict:
@@ -241,6 +332,84 @@ def _rvv_report(kernel: str) -> dict:
     }
 
 
+def test_rvv_native_sidecar_attaches_independent_baseline(tmp_path):
+    path = tmp_path / "native.json"
+    record = {
+        "protocol": rvv_runner.NATIVE_BASELINE_PROTOCOL,
+        "symbol": "intentir_native_baseline",
+        "source": "void intentir_native_baseline(void) {}",
+        "implementation": "independent-test",
+    }
+    path.write_text(
+        json.dumps(
+            {
+                "protocol": rvv_runner.NATIVE_BASELINE_SIDECAR_PROTOCOL,
+                "baselines": {"dyt": record},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    sidecar = rvv_runner._load_native_baseline_sidecar(path)
+    entries = rvv_runner._attach_native_baselines(
+        [{"kernel": "dyt", "baseline_policy": "target_refj_only"}],
+        sidecar,
+    )
+
+    assert entries[0]["native_baseline"] == record
+    assert entries[0]["baseline_policy"] == "native_rvv_and_refj"
+
+
+def test_rvv_native_sidecar_rejects_missing_kernel_baseline():
+    with pytest.raises(RuntimeError, match="lacks an independent Native"):
+        rvv_runner._attach_native_baselines(
+            [{"kernel": "dyt", "baseline_policy": "target_refj_only"}],
+            {},
+        )
+
+
+def test_rvv_external_payload_preserves_bytes_and_logical_size(tmp_path: Path):
+    payload = struct.pack("<4f", 1.0, 2.0, 3.0, 4.0)
+    encoded = {
+        "protocol": "intentir.transport.ndarray.v1",
+        "dtype": "f32",
+        "shape": [4],
+        "data_base64": base64.b64encode(payload).decode("ascii"),
+    }
+    bundle = {
+        "protocol": rvv_externalize.BUNDLE_PROTOCOL,
+        "kernels": [
+            {
+                "kernel": "dyt",
+                "input_order": ["input"],
+                "input_bindings": {"input": "x"},
+                "output_specs": [{"name": "output", "dtype": "f32", "shape": [4]}],
+                "values": {"x": encoded},
+                "reference_outputs": {"y": encoded},
+            }
+        ],
+    }
+
+    compact = rvv_externalize.externalize(
+        bundle, output_root=tmp_path, relative_root=Path("arrays")
+    )
+    entry = compact["kernels"][0]
+    record = entry["values"]["x"]
+
+    assert "data_base64" not in record
+    assert rvv_runner._decode_payload(record, tmp_path) == payload
+    assert rvv_runner._logical_io_bytes(entry, tmp_path) == {
+        "boundary_input_bytes": 16,
+        "boundary_output_bytes": 16,
+        "boundary_io_bytes": 32,
+    }
+
+
+def test_rvv_external_payload_rejects_path_escape(tmp_path: Path):
+    with pytest.raises(ValueError, match="stay below"):
+        rvv_runner._decode_payload({"data_file": "../outside.bin"}, tmp_path)
+
+
 def test_rvv_merge_preserves_shared_configuration(tmp_path):
     left = tmp_path / "left.json"
     right = tmp_path / "right.json"
@@ -281,7 +450,7 @@ def test_rvv_bounded_candidate_union_makes_budget_executable() -> None:
         "candidates": [
             candidate("no-retile", 0, 0, b=False),
             candidate("c-fixed", 2, 8, b=False),
-            candidate("fused", 64, 32, b=True),
+            candidate("fused", 2, 8, b=True),
             candidate("erase-only", 8, 8, b=False),
         ],
         "schedule_only_candidate_ids": ["no-retile", "c-fixed", "erase-only"],
@@ -308,20 +477,20 @@ def test_rvv_bounded_candidate_union_makes_budget_executable() -> None:
         },
     }
 
-    orders = rvv_runner._bounded_candidate_orders(entry, 2)
+    orders = rvv_runner._bounded_candidate_orders(entry, 2, thread_count=1)
 
-    assert orders["active_e3"] == ["c-fixed", "no-retile"]
+    assert orders["active_e3"] == ["c-fixed", "fused"]
     assert orders["active_e2"] == ["c-fixed", "no-retile"]
     assert orders["erase_e3"] == ["no-retile", "erase-only"]
     assert orders["no_retile"] == ["no-retile"]
     assert orders["c_fixed"] == ["c-fixed"]
     assert orders["e2_evaluation"] == ["c-fixed", "no-retile"]
-    assert orders["e3_evaluation"] == ["c-fixed", "no-retile"]
+    assert orders["e3_evaluation"] == ["c-fixed", "fused"]
     assert orders["schedule_only_retiled"] == ["c-fixed"]
-    assert orders["timed"] == ["c-fixed", "no-retile", "erase-only"]
+    assert orders["timed"] == ["c-fixed", "no-retile", "fused", "erase-only"]
 
     oracle = rvv_runner._bounded_candidate_orders(
-        entry, 2, measure_c_oracle=True
+        entry, 2, thread_count=1, measure_c_oracle=True
     )
     assert oracle["timed"] == [
         "no-retile",

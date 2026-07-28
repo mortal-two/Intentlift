@@ -222,13 +222,19 @@ def test_b_conditioned_search_is_a_strict_extension_of_schedule_only() -> None:
 
 def test_padded_row_schedule_names_concrete_reduction_topology() -> None:
     serial = PaddedRowSchedule(64, False, True, "serial-row")
-    subgroup = PaddedRowSchedule(128, False, True, "subgroup-feature")
+    subgroup = PaddedRowSchedule(128, False, True, "subgroup-feature", 4, 8)
 
     assert "reduction-topology=serial-row" in serial.pass_argument
     assert "reduction-topology=subgroup-feature" in subgroup.pass_argument
+    assert "rows-per-subgroup=4" in subgroup.pass_argument
+    assert "lanes-per-row=8" in subgroup.pass_argument
     assert subgroup.to_dict()["reduction_topology"] == "subgroup-feature"
+    assert subgroup.to_dict()["rows_per_subgroup"] == 4
+    assert subgroup.to_dict()["lanes_per_row"] == 8
     with pytest.raises(ValueError, match="reduction_topology"):
         PaddedRowSchedule(64, False, True, "invented")
+    with pytest.raises(ValueError, match="rows_per_subgroup"):
+        PaddedRowSchedule(64, False, True, "serial-row", 2)
 
 
 def test_elementwise_schedule_names_tanh_evaluation_state() -> None:

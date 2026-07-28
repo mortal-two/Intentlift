@@ -215,6 +215,25 @@ def test_fresh_splitk_j_is_consumed_by_one_cpp_gpu_launch() -> None:
 @pytest.mark.skipif(
     not Path(backend_compile.INTENT_OPT).exists(), reason="intent-opt not built"
 )
+def test_fresh_splitk_j_is_portable_to_h100_block_lowering() -> None:
+    fast_path_id = "cuda.splitk.reduce-varargs.v1"
+
+    result = select_variant(
+        _fresh_mlir("splitk_reduce_varargs"),
+        target=LoweringTarget(chip="sm_90a"),
+        only_fast_path=fast_path_id,
+    )
+
+    assert result.pipeline_kind == "specialized"
+    assert result.fast_path_id == fast_path_id
+    assert result.attempts[0].target_match is True
+    assert result.attempts[0].residual_ops == ()
+    assert result.attempts[0].gpu_launch_count == 1
+
+
+@pytest.mark.skipif(
+    not Path(backend_compile.INTENT_OPT).exists(), reason="intent-opt not built"
+)
 def test_fresh_splitk_path_rejects_an_unconsumed_side_graph() -> None:
     source = _fresh_mlir("splitk_reduce_varargs").replace(
         "    return ",

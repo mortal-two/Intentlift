@@ -213,9 +213,55 @@ def test_rvv_c_reorders_but_does_not_change_retile_universe() -> None:
     by_id = {item.candidate_id: item for item in with_c.universe}
     c_fixed = by_id[with_c.c_fixed_candidate_id]
     assert not c_fixed.transformation.fuse_producers
+    assert c_fixed.schedule.thread_count == 1
     assert c_fixed.schedule.parallel_tile == 2
     assert c_fixed.schedule.reduction_tile == 8
     assert with_c.schedule_only_c_prior_order[0] == c_fixed.candidate_id
+    c_schedule_t1 = [
+        item
+        for item in with_c.schedule_only_c_prior_order
+        if by_id[item].schedule.thread_count == 1
+    ]
+    c_anchor_schedules = [
+        by_id[item].schedule
+        for item in c_schedule_t1[1:3]
+    ]
+    assert [item.vectorize for item in c_anchor_schedules] == [True, False]
+    assert all(item.opt_level == 3 for item in c_anchor_schedules)
+    assert all(item.parallel_tile == 0 for item in c_anchor_schedules)
+    assert all(item.reduction_tile == 0 for item in c_anchor_schedules)
+    c_order_t1 = [
+        item
+        for item in with_c.c_prior_order
+        if by_id[item].schedule.thread_count == 1
+    ]
+    first_two = [by_id[item] for item in c_order_t1[:2]]
+    assert first_two[0].schedule == first_two[1].schedule
+    assert [item.transformation.fuse_producers for item in first_two] == [
+        False,
+        True,
+    ]
+    c_anchor_pairs = [
+        by_id[item] for item in c_order_t1[2:6]
+    ]
+    assert [item.schedule.vectorize for item in c_anchor_pairs] == [
+        True,
+        True,
+        False,
+        False,
+    ]
+    assert [item.transformation.fuse_producers for item in c_anchor_pairs] == [
+        False,
+        True,
+        False,
+        True,
+    ]
+    erase_first_two = [by_id[item] for item in with_c.erase_c_order[:2]]
+    assert erase_first_two[0].schedule == erase_first_two[1].schedule
+    assert [item.transformation.fuse_producers for item in erase_first_two] == [
+        False,
+        True,
+    ]
     assert with_c.c_projection["raw_c_value_used_as_target_tile"] is False
     assert with_c.c_projection["projected_priors"][0][
         "schedule_dimension"
@@ -224,4 +270,4 @@ def test_rvv_c_reorders_but_does_not_change_retile_universe() -> None:
     record = with_c.to_record()
     assert record["same_universe_for_erase_c_and_c_prior"] is True
     assert record["c_controls_admission"] is False
-    assert record["candidate_universe_count"] == 52
+    assert record["candidate_universe_count"] == 104

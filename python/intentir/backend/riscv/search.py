@@ -21,7 +21,7 @@ from intentir.backend.riscv.compile import (
 )
 
 
-RVV_SEARCH_PLAN_PROTOCOL = "intentir.backend.riscv.search-plan.v2"
+RVV_SEARCH_PLAN_PROTOCOL = "intentir.backend.riscv.search-plan.v4"
 RVV_C_PROJECTION_PROTOCOL = "intentir.backend.riscv.c-projection.v1"
 
 _PARALLEL_TILES = (1, 2, 4, 8, 16, 32, 64, 128)
@@ -31,19 +31,21 @@ _JOINT_TILES = ((1, 4), (2, 8), (4, 16), (8, 32), (16, 64), (32, 128))
 
 def _schedule_universe() -> tuple[RiscvSchedule, ...]:
     schedules = [
-        RiscvSchedule(opt, vectorize, 128, 0, 0)
+        RiscvSchedule(opt, vectorize, 128, 0, 0, thread_count)
+        for thread_count in (1, 16)
         for opt in (2, 3)
         for vectorize in (False, True)
     ]
     schedules.extend(
-        RiscvSchedule(3, True, 128, parallel, reduction)
+        RiscvSchedule(3, True, 128, parallel, reduction, thread_count)
+        for thread_count in (1, 16)
         for parallel, reduction in (
             *((value, 0) for value in _PARALLEL_TILES),
             *((0, value) for value in _REDUCTION_TILES),
             *_JOINT_TILES,
         )
     )
-    unique: dict[tuple[int, bool, int, int, int], RiscvSchedule] = {}
+    unique: dict[tuple[int, bool, int, int, int, int], RiscvSchedule] = {}
     for item in schedules:
         key = (
             item.opt_level,
@@ -51,6 +53,7 @@ def _schedule_universe() -> tuple[RiscvSchedule, ...]:
             item.vector_bits,
             item.parallel_tile,
             item.reduction_tile,
+            item.thread_count,
         )
         unique.setdefault(key, item)
     return tuple(unique[key] for key in sorted(unique))
@@ -276,7 +279,93 @@ def _erase_schedule_key(schedule: RiscvSchedule) -> tuple[Any, ...]:
         schedule.reduction_tile,
         not schedule.vectorize,
         -schedule.opt_level,
+        schedule.thread_count,
     )
+
+
+def _c_ranked_with_robust_anchors(
+    candidates: tuple[RiscvLoweringCandidate, ...],
+    priors: tuple[_ProjectedCPrior, ...],
+) -> tuple[RiscvLoweringCandidate, ...]:
+    """Rank by C while retaining early target-independent anchor schedules.
+
+    C is a discardable search prior rather than an oracle for a different
+    target.  The first state therefore remains the strongest projected-C
+    candidate (the C-Fixed arm), but a finite search budget must also see the
+    two robust untiled O3 anchors before spending all visits around that
+    projection.  This preserves the candidate universe and lets C accelerate
+    discovery without making a stale cross-target tile actively harmful.
+    """
+
+    if not priors:
+        return tuple(sorted(candidates, key=lambda item: _erase_schedule_key(item.schedule)))
+
+    ranked_groups: list[tuple[RiscvLoweringCandidate, ...]] = []
+    for thread_count in sorted({item.schedule.thread_count for item in candidates}):
+        group = tuple(
+            item for item in candidates if item.schedule.thread_count == thread_count
+        )
+        ranked = tuple(
+            sorted(
+                group,
+                key=lambda item: (
+                    _c_score(item.schedule, priors),
+                    _erase_schedule_key(item.schedule),
+                ),
+            )
+        )
+        first = ranked[0]
+        anchors: list[RiscvLoweringCandidate] = []
+        for vectorize in (True, False):
+            anchor = next(
+                item
+                for item in group
+                if item.schedule.opt_level == 3
+                and item.schedule.vectorize is vectorize
+                and item.schedule.parallel_tile == 0
+                and item.schedule.reduction_tile == 0
+            )
+            if anchor != first:
+                anchors.append(anchor)
+        promoted = {first.candidate_id, *(item.candidate_id for item in anchors)}
+        ranked_groups.append(
+            (
+                first,
+                *anchors,
+                *(item for item in ranked if item.candidate_id not in promoted),
+            )
+        )
+    return tuple(
+        group[index]
+        for index in range(max(len(group) for group in ranked_groups))
+        for group in ranked_groups
+        if index < len(group)
+    )
+
+
+def _interleave_lowering_paths(
+    canonical: tuple[RiscvLoweringCandidate, ...],
+    expanded: tuple[RiscvLoweringCandidate, ...],
+) -> tuple[RiscvLoweringCandidate, ...]:
+    """Give each ranked schedule one canonical and one structural visit.
+
+    A state+schedule budget must actually reach both concrete MLIR paths.  The
+    previous concatenation spent every practical budget on the canonical path,
+    making E3 observationally identical to E2 even when a faster fused state
+    existed.  Pairing preserves each arm's schedule order and equal total visit
+    budget while preventing path starvation.
+    """
+
+    if not expanded:
+        return canonical
+    if len(canonical) != len(expanded):
+        raise AssertionError("RVV lowering paths expose different schedule universes")
+    result: list[RiscvLoweringCandidate] = []
+    for base, alternative in zip(canonical, expanded, strict=True):
+        if base.schedule != alternative.schedule:
+            raise AssertionError("RVV lowering paths use different schedule ordering")
+        result.extend((base, alternative))
+    return tuple(result)
 
 
 @dataclass(frozen=True)
@@ -343,33 +432,17 @@ def plan_riscv_search(
     schedule_erase = tuple(
         sorted(materialized, key=lambda item: _erase_schedule_key(item.schedule))
     )
-    schedule_c = tuple(
-        sorted(
-            materialized,
-            key=lambda item: (
-                _c_score(item.schedule, projected_priors),
-                _erase_schedule_key(item.schedule),
-            ),
-        )
-    )
+    schedule_c = _c_ranked_with_robust_anchors(materialized, projected_priors)
     expanded_erase = tuple(
         sorted(expanded, key=lambda item: _erase_schedule_key(item.schedule))
     )
-    expanded_c = tuple(
-        sorted(
-            expanded,
-            key=lambda item: (
-                _c_score(item.schedule, projected_priors),
-                _erase_schedule_key(item.schedule),
-            ),
-        )
-    )
-    # The expanded arm is nested: it traverses the exact fixed-structure
-    # schedule spine before spending its remaining equal total budget on other
-    # concrete paths. C-Fixed is the first target-projected schedule on that
-    # canonical materialized path and is exactly one candidate.
-    erase_order = (*schedule_erase, *expanded_erase)
-    c_order = (*schedule_c, *expanded_c)
+    expanded_c = _c_ranked_with_robust_anchors(expanded, projected_priors)
+    # E2 retains the complete canonical schedule order. E3 has the same total
+    # visit budget but interleaves canonical and structurally expanded MLIR for
+    # each ranked schedule, so a finite budget cannot starve the new path.
+    # C-Fixed remains exactly the first target-projected canonical candidate.
+    erase_order = _interleave_lowering_paths(schedule_erase, expanded_erase)
+    c_order = _interleave_lowering_paths(schedule_c, expanded_c)
     c_fixed = schedule_c[0]
     return RiscvSearchPlan(
         universe=universe,

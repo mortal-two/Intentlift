@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from intentir.backend.contract_capabilities import B_CAP_READONLY_INPUTS
@@ -111,6 +111,7 @@ class RiscvSchedule:
     vector_bits: int = 128
     parallel_tile: int = 0
     reduction_tile: int = 0
+    thread_count: int = 1
 
     def __post_init__(self) -> None:
         if self.opt_level not in {2, 3}:
@@ -119,6 +120,8 @@ class RiscvSchedule:
             raise TypeError("vectorize must be bool")
         if self.vector_bits not in {0, 128}:
             raise ValueError("RVV vector_bits must be 0 or native VLEN=128")
+        if self.thread_count not in {1, 16}:
+            raise ValueError("RVV thread_count must be 1 or 16")
         for name, value in (
             ("parallel_tile", self.parallel_tile),
             ("reduction_tile", self.reduction_tile),
@@ -137,6 +140,7 @@ class RiscvSchedule:
             "vector_bits": self.vector_bits,
             "parallel_tile": self.parallel_tile,
             "reduction_tile": self.reduction_tile,
+            "thread_count": self.thread_count,
         }
 
 
@@ -152,7 +156,8 @@ class RiscvLoweringCandidate:
         return (
             f"rvv.{path}.o{schedule.opt_level}."
             f"vec{int(schedule.vectorize)}.vlen{schedule.vector_bits}."
-            f"pt{schedule.parallel_tile}.rt{schedule.reduction_tile}"
+            f"pt{schedule.parallel_tile}.rt{schedule.reduction_tile}."
+            f"thr{schedule.thread_count}"
         )
 
     def _content(self) -> dict[str, Any]:
@@ -178,6 +183,7 @@ class RiscvTransformationRecord:
     fused_producers: int = 0
     fusion_outer_parallel_only_ops: int = 0
     fusion_multi_use_rejections: int = 0
+    openmp_parallel_ops: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -192,6 +198,7 @@ class RiscvTransformationRecord:
             "fused_producers": self.fused_producers,
             "fusion_outer_parallel_only_ops": self.fusion_outer_parallel_only_ops,
             "fusion_multi_use_rejections": self.fusion_multi_use_rejections,
+            "openmp_parallel_ops": self.openmp_parallel_ops,
         }
 
 
@@ -319,10 +326,15 @@ def _lower_to_llvm_ir(
             structured, "intent.schedule.fusion_multi_use_rejection_count"
         ),
     )
+    parallel_runtime = schedule.thread_count > 1
     front = [
         "--one-shot-bufferize=bufferize-function-boundaries",
         "--buffer-results-to-out-params",
-        "--convert-linalg-to-loops",
+        (
+            "--convert-linalg-to-parallel-loops"
+            if parallel_runtime
+            else "--convert-linalg-to-loops"
+        ),
         "--canonicalize",
         "--cse",
     ]
@@ -339,10 +351,26 @@ def _lower_to_llvm_ir(
         [MLIR_OPT, "--buffer-deallocation-pipeline", "--canonicalize", "--cse"],
         stdin=forwarded,
     )
-    lowered = _run_text(
+    parallelized = (
+        _run_text(
+            [MLIR_OPT, "--convert-scf-to-openmp", "--canonicalize", "--cse"],
+            stdin=cleaned,
+        )
+        if parallel_runtime
+        else cleaned
+    )
+    record = replace(
+        record,
+        openmp_parallel_ops=len(re.findall(r"\bomp\.parallel\b", parallelized)),
+    )
+    terminal_pipeline = [
+        MLIR_OPT,
+        "--llvm-request-c-wrappers",
+    ]
+    if parallel_runtime:
+        terminal_pipeline.append("--convert-openmp-to-llvm")
+    terminal_pipeline.extend(
         [
-            MLIR_OPT,
-            "--llvm-request-c-wrappers",
             "--expand-strided-metadata",
             "--lower-affine",
             "--convert-scf-to-cf",
@@ -353,8 +381,11 @@ def _lower_to_llvm_ir(
             "--convert-cf-to-llvm",
             "--convert-func-to-llvm",
             "--reconcile-unrealized-casts",
-        ],
-        stdin=cleaned,
+        ]
+    )
+    lowered = _run_text(
+        terminal_pipeline,
+        stdin=parallelized,
     )
     if re.search(
         r"^\s*(?:%[^=]+\s*=\s*)?(?:intent|linalg)\.",

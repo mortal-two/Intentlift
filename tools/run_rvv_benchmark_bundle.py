@@ -25,9 +25,13 @@ from pathlib import Path
 from typing import Any, Mapping
 
 
-BUNDLE_PROTOCOL = "intentir.production.rvv-search-bundle.v3"
-REPORT_PROTOCOL = "intentir.production.rvv-remote-performance.v5"
+BUNDLE_PROTOCOL = "intentir.production.rvv-search-bundle.v4"
+REPORT_PROTOCOL = "intentir.production.rvv-remote-performance.v6"
 NATIVE_COMPARATOR_PROTOCOL = "intentir.backend.native-output-comparator.v1"
+NATIVE_BASELINE_PROTOCOL = "intentir.backend.riscv.native-baseline.v1"
+NATIVE_BASELINE_SIDECAR_PROTOCOL = (
+    "intentir.backend.riscv.native-baseline-sidecar.v1"
+)
 
 _NATIVE_COMPARATOR_SOURCE = r"""
 #include <math.h>
@@ -196,8 +200,32 @@ class KernelFailure(RuntimeError):
         self.diagnostics = diagnostics
 
 
-def _decode_payload(record: Mapping[str, Any]) -> bytes:
+def _payload_path(record: Mapping[str, Any], payload_root: Path) -> Path:
+    relative = Path(str(record["data_file"]))
+    if relative.is_absolute() or ".." in relative.parts:
+        raise ValueError("RVV array payload path must stay below the bundle directory")
+    path = payload_root / relative
+    if not path.is_file():
+        raise ValueError(f"RVV array payload is unavailable: {path}")
+    return path
+
+
+def _decode_payload(record: Mapping[str, Any], payload_root: Path) -> bytes:
+    embedded = "data_base64" in record
+    external = "data_file" in record
+    if embedded == external:
+        raise ValueError("RVV array payload must use exactly one transport")
+    if external:
+        return _payload_path(record, payload_root).read_bytes()
     return base64.b64decode(record["data_base64"], validate=True)
+
+
+def _payload_size(record: Mapping[str, Any], payload_root: Path) -> int:
+    if "data_file" in record:
+        if "data_base64" in record:
+            raise ValueError("RVV array payload mixes embedded and file transport")
+        return _payload_path(record, payload_root).stat().st_size
+    return len(_decode_payload(record, payload_root))
 
 
 def _numel(shape: list[int]) -> int:
@@ -401,6 +429,7 @@ def _link_object(directory: Path, candidate: Mapping[str, Any]) -> Path:
             "clang",
             "-shared",
             "-march=rv64gcv_zfh",
+            "-fopenmp",
             str(object_path),
             "-lm",
             "-o",
@@ -413,6 +442,94 @@ def _link_object(directory: Path, candidate: Mapping[str, Any]) -> Path:
     if process.returncode != 0:
         raise RuntimeError(f"target link failed: {process.stderr}")
     return library_path
+
+
+def _validated_native_baseline(record: Any) -> Mapping[str, Any]:
+    if not isinstance(record, Mapping):
+        raise RuntimeError("RVV entry lacks an independent Native baseline")
+    if record.get("protocol") != NATIVE_BASELINE_PROTOCOL:
+        raise RuntimeError("unsupported Native RVV baseline protocol")
+    source_text = record.get("source")
+    symbol = record.get("symbol")
+    if not isinstance(source_text, str) or not source_text.strip():
+        raise RuntimeError("Native RVV baseline source is empty")
+    if not isinstance(symbol, str) or not symbol:
+        raise RuntimeError("Native RVV baseline symbol is empty")
+    return record
+
+
+def _load_native_baseline_sidecar(path: Path) -> dict[str, Mapping[str, Any]]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("protocol") != NATIVE_BASELINE_SIDECAR_PROTOCOL:
+        raise ValueError("unsupported Native RVV baseline sidecar")
+    raw_baselines = payload.get("baselines")
+    if not isinstance(raw_baselines, Mapping):
+        raise ValueError("Native RVV baseline sidecar lacks a baseline map")
+    result: dict[str, Mapping[str, Any]] = {}
+    for kernel, record in raw_baselines.items():
+        if not isinstance(kernel, str) or not kernel:
+            raise ValueError("Native RVV baseline sidecar has an invalid kernel name")
+        result[kernel] = _validated_native_baseline(record)
+    return result
+
+
+def _attach_native_baselines(
+    entries: list[Mapping[str, Any]],
+    sidecar: Mapping[str, Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    result = []
+    for raw_entry in entries:
+        entry = dict(raw_entry)
+        kernel = entry.get("kernel")
+        if kernel in sidecar:
+            entry["native_baseline"] = sidecar[kernel]
+            entry["baseline_policy"] = "native_rvv_and_refj"
+        _validated_native_baseline(entry.get("native_baseline"))
+        result.append(entry)
+    return result
+
+
+def _compile_native_baseline(
+    directory: Path, entry: Mapping[str, Any]
+) -> tuple[Any, Any, dict[str, Any]]:
+    record = _validated_native_baseline(entry.get("native_baseline"))
+    source_text = record["source"]
+    symbol = record["symbol"]
+    source = directory / "native_rvv_baseline.c"
+    library_path = directory / "native_rvv_baseline.so"
+    source.write_text(source_text, encoding="utf-8")
+    compiler = shutil.which("clang") or shutil.which("cc")
+    if compiler is None:
+        raise RuntimeError("Native RVV baseline requires target clang or cc")
+    command = [
+        compiler,
+        "-shared",
+        "-O3",
+        "-fPIC",
+        "-march=rv64gcv_zfh",
+        "-fopenmp",
+        "-fno-fast-math",
+        "-ffp-contract=off",
+        str(source),
+        "-lm",
+        "-o",
+        str(library_path),
+    ]
+    started = time.perf_counter_ns()
+    process = subprocess.run(command, capture_output=True, text=True, check=False)
+    if process.returncode != 0:
+        raise RuntimeError(f"Native RVV baseline compilation failed: {process.stderr}")
+    library = ctypes.CDLL(str(library_path))
+    function = getattr(library, symbol)
+    return library, function, {
+        "protocol": NATIVE_BASELINE_PROTOCOL,
+        "implementation": record.get("implementation"),
+        "symbol": symbol,
+        "compiler": compiler,
+        "compile_ms": (time.perf_counter_ns() - started) / 1_000_000.0,
+        "flags": command[1:-3],
+        "shares_intentir_candidate_or_object": False,
+    }
 
 
 class _ArgumentRotation:
@@ -428,9 +545,13 @@ class _ArgumentRotation:
         return result
 
 
-def _logical_io_bytes(entry: Mapping[str, Any]) -> dict[str, int]:
+def _logical_io_bytes(
+    entry: Mapping[str, Any], payload_root: Path
+) -> dict[str, int]:
     input_bytes = sum(
-        len(_decode_payload(entry["values"][entry["input_bindings"][name]]))
+        _payload_size(
+            entry["values"][entry["input_bindings"][name]], payload_root
+        )
         for name in entry["input_order"]
     )
     output_bytes = sum(
@@ -445,7 +566,7 @@ def _logical_io_bytes(entry: Mapping[str, Any]) -> dict[str, int]:
 
 
 def _argument_replicas(
-    entry: Mapping[str, Any], replicas: int
+    entry: Mapping[str, Any], replicas: int, payload_root: Path
 ) -> tuple[list[list[Any]], list[Any], list[list[Any]]]:
     if replicas <= 0:
         raise ValueError("replicas must be positive")
@@ -457,7 +578,7 @@ def _argument_replicas(
         replica_outputs = []
         for name in entry["input_order"]:
             value_record = entry["values"][entry["input_bindings"][name]]
-            payload = _decode_payload(value_record)
+            payload = _decode_payload(value_record, payload_root)
             buffer = ctypes.create_string_buffer(payload, len(payload))
             all_buffers.append(buffer)
             descriptors.append(
@@ -525,22 +646,35 @@ def _measure(
 
 
 def _bounded_candidate_orders(
-    entry: Mapping[str, Any], search_budget: int, *, measure_c_oracle: bool = False
+    entry: Mapping[str, Any],
+    search_budget: int,
+    *,
+    thread_count: int,
+    measure_c_oracle: bool = False,
 ) -> dict[str, list[str]]:
     """Select the exact bounded timing union before any candidate executes.
 
     C-Fixed owns exactly one target-projected state. Schedule-Only and IntentIR
-    receive the same caller-supplied total budget; the IntentIR order starts with
-    the complete fixed-structure schedule spine. The independent C table compares
-    C/Erase-C prefixes over the same IntentIR universe. Only this exact union is
-    executed unless ``measure_c_oracle`` requests the complete latency map.
+    receive the same caller-supplied total budget. IntentIR interleaves each
+    ranked schedule across concrete lowering paths, so finite budgets exercise
+    structural freedom instead of starving it behind the full E2 spine. The
+    independent C table compares C/Erase-C prefixes over the same universe.
     """
 
     if search_budget <= 0:
         raise ValueError("RVV search budget must be positive")
     candidate_by_id = {
-        item["candidate"]["candidate_id"]: item for item in entry["candidates"]
+        item["candidate"]["candidate_id"]: item
+        for item in entry["candidates"]
+        if int(
+            item["candidate"]
+            .get("requested_schedule", item["candidate"]["schedule"])
+            .get("thread_count", 1)
+        )
+        == thread_count
     }
+    if not candidate_by_id:
+        raise ValueError(f"RVV bundle has no candidates for {thread_count} threads")
     available = set(candidate_by_id)
     plan = entry.get("concrete_search_plan", {})
 
@@ -572,16 +706,40 @@ def _bounded_candidate_orders(
         ].get("lowering_path_kind")
         if actual_path != canonical_path:
             raise ValueError("RVV Schedule-Only escaped the canonical lowering path")
-    if c_order[: len(c_schedule_order)] != c_schedule_order:
-        raise ValueError("RVV IntentIR C order does not start with the E2 spine")
-    if erase_order[: len(erase_schedule_order)] != erase_schedule_order:
-        raise ValueError("RVV IntentIR Erase-C order does not start with the E2 spine")
+
+    def schedule_key(candidate_id: str) -> tuple[tuple[str, Any], ...]:
+        candidate = candidate_by_id[candidate_id]["candidate"]
+        schedule = candidate.get("requested_schedule", candidate["schedule"])
+        return tuple(sorted(schedule.items()))
+
+    def interleave_paths(
+        schedule_order: list[str], full_order: list[str]
+    ) -> list[str]:
+        canonical_ids = set(schedule_order)
+        alternatives: dict[tuple[tuple[str, Any], ...], list[str]] = {}
+        for candidate_id in full_order:
+            if candidate_id in canonical_ids:
+                continue
+            alternatives.setdefault(schedule_key(candidate_id), []).append(candidate_id)
+        result: list[str] = []
+        for candidate_id in schedule_order:
+            result.append(candidate_id)
+            result.extend(alternatives.pop(schedule_key(candidate_id), ()))
+        for candidate_id in full_order:
+            if candidate_id not in result:
+                result.append(candidate_id)
+        return result
+
+    c_order = interleave_paths(c_schedule_order, c_order)
+    erase_order = interleave_paths(erase_schedule_order, erase_order)
+    if [item for item in c_order if item in set(c_schedule_order)] != c_schedule_order:
+        raise ValueError("RVV IntentIR C order changed the E2 schedule ranking")
+    if [item for item in erase_order if item in set(erase_schedule_order)] != erase_schedule_order:
+        raise ValueError("RVV IntentIR Erase-C order changed the E2 schedule ranking")
     active_e2 = c_schedule_order[:search_budget]
     active_e3 = c_order[:search_budget]
     erase_e3 = erase_order[:search_budget]
-    c_fixed_id = plan.get("c_fixed_candidate_id")
-    if c_fixed_id not in available:
-        raise ValueError("RVV bundle lacks the concrete C-Fixed candidate")
+    c_fixed_id = c_schedule_order[0]
     no_retile = [
         candidate_id
         for candidate_id in c_schedule_order
@@ -607,10 +765,6 @@ def _bounded_candidate_orders(
     e3_evaluation = unique(active_e3)
     if not set(e2_evaluation).issubset(set(c_order)):
         raise AssertionError("RVV E2 candidates escaped the IntentIR universe")
-    if search_budget >= len(c_schedule_order) and not set(
-        c_schedule_order
-    ).issubset(set(e3_evaluation)):
-        raise AssertionError("RVV IntentIR budget omitted the complete E2 spine")
     # This arm isolates schedule retile: do not mix B/structural states into it.
     schedule_only_retiled = [
         candidate_id
@@ -654,6 +808,7 @@ def _bounded_candidate_orders(
 def _one_kernel(
     entry: Mapping[str, Any],
     *,
+    payload_root: Path,
     regime: str,
     working_set_bytes: int,
     max_replicas: int,
@@ -662,9 +817,10 @@ def _one_kernel(
     warmup: int,
     iterations: int,
     batches: int,
+    thread_count: int,
     measure_c_oracle: bool,
 ) -> dict[str, Any]:
-    logical_io = _logical_io_bytes(entry)
+    logical_io = _logical_io_bytes(entry, payload_root)
     io_bytes = logical_io["boundary_io_bytes"]
     if io_bytes <= 0:
         raise ValueError("RVV benchmark has no logical boundary traffic")
@@ -685,7 +841,7 @@ def _one_kernel(
             f"--max-replicas={max_replicas}"
         )
     argument_sets, buffer_keepalive, output_buffer_sets = _argument_replicas(
-        entry, required_replicas
+        entry, required_replicas, payload_root
     )
     output_buffers = output_buffer_sets[0]
     descriptors = [item._obj for item in argument_sets[0]]
@@ -696,7 +852,14 @@ def _one_kernel(
     )
 
     candidate_by_id = {
-        item["candidate"]["candidate_id"]: item for item in entry["candidates"]
+        item["candidate"]["candidate_id"]: item
+        for item in entry["candidates"]
+        if int(
+            item["candidate"]
+            .get("requested_schedule", item["candidate"]["schedule"])
+            .get("thread_count", 1)
+        )
+        == thread_count
     }
     concrete_plan = entry.get("concrete_search_plan", {})
     requested_order = concrete_plan.get(
@@ -709,7 +872,10 @@ def _one_kernel(
             seen_ids.add(candidate_id)
             ordered_ids.append(candidate_id)
     bounded_orders = _bounded_candidate_orders(
-        entry, search_budget, measure_c_oracle=measure_c_oracle
+        entry,
+        search_budget,
+        thread_count=thread_count,
+        measure_c_oracle=measure_c_oracle,
     )
     timed_ids = set(bounded_orders["timed"])
 
@@ -719,7 +885,7 @@ def _one_kernel(
         reference_record = entry["reference_outputs"][
             entry["output_bindings"][output_name]
         ]
-        payload = _decode_payload(reference_record)
+        payload = _decode_payload(reference_record, payload_root)
         element_count = _numel([int(item) for item in spec["shape"]])
         byte_count = element_count * _dtype_size(spec["dtype"])
         if len(payload) != byte_count:
@@ -735,10 +901,50 @@ def _one_kernel(
 
     records = []
     candidate_artifacts: dict[str, tuple[Any, Any, _ArgumentRotation]] = {}
+    native_library: Any | None = None
+    native_function: Any | None = None
+    native_rotation: _ArgumentRotation | None = None
+    native_compile_record: dict[str, Any] | None = None
+    native_correctness: list[dict[str, Any]] = []
     with tempfile.TemporaryDirectory(prefix="intentir-rvv-") as temporary:
         directory = Path(temporary)
         comparator = _NativeComparator(directory)
         comparator_record = comparator.record
+        native_library, native_function, native_compile_record = (
+            _compile_native_baseline(directory, entry)
+        )
+        native_function.argtypes = [
+            ctypes.POINTER(type(item)) for item in descriptors
+        ]
+        native_function.restype = None
+        native_function(*argument_sets[0])
+        native_passed = True
+        for spec, buffer in zip(entry["output_specs"], output_buffers, strict=True):
+            output_name = spec["name"]
+            expected, element_count, byte_count, dtype = expected_outputs[output_name]
+            agrees, max_error = comparator.close(
+                buffer,
+                expected,
+                byte_count=byte_count,
+                element_count=element_count,
+                dtype=dtype,
+                rule=entry["output_rules"][output_name],
+            )
+            native_correctness.append(
+                {
+                    "output": output_name,
+                    "passed": agrees,
+                    "max_abs_error": max_error,
+                    "comparator_protocol": NATIVE_COMPARATOR_PROTOCOL,
+                }
+            )
+            native_passed = native_passed and agrees
+        if not native_passed:
+            raise KernelFailure(
+                "independent Native RVV baseline differs from canonical J",
+                [{"native_baseline_correctness": native_correctness}],
+            )
+        native_rotation = _ArgumentRotation(argument_sets)
         for candidate_id in ordered_ids:
             candidate = candidate_by_id[candidate_id]
             if candidate_id not in timed_ids:
@@ -890,9 +1096,61 @@ def _one_kernel(
     c_prior_budget_ids = bounded_orders["active_e3"]
     erase_budget_winner = best(erase_budget_ids)
     c_prior_budget_winner = best(c_prior_budget_ids)
-    c_fixed_id = concrete_plan.get("c_fixed_candidate_id")
+    c_fixed_id = bounded_orders["c_fixed"][0]
     if c_fixed_id != c_fixed["candidate"]["candidate_id"]:
         raise KernelFailure("C-Fixed candidate selection changed", records)
+
+    assert native_function is not None
+    assert native_rotation is not None
+    native_samples: list[float] = []
+    intentir_native_pair_samples: list[float] = []
+    e3_function = candidate_artifacts[e3["candidate"]["candidate_id"]][1]
+    e3_rotation = candidate_artifacts[e3["candidate"]["candidate_id"]][2]
+    for round_index in range(batches):
+        if round_index % 2 == 0:
+            native_us, _, _ = _measure(
+                native_function,
+                native_rotation,
+                regime=regime,
+                eviction_buffer=eviction_buffer,
+                warmup=0,
+                iterations=iterations,
+                batches=1,
+            )
+            intentir_us, _, _ = _measure(
+                e3_function,
+                e3_rotation,
+                regime=regime,
+                eviction_buffer=eviction_buffer,
+                warmup=0,
+                iterations=iterations,
+                batches=1,
+            )
+        else:
+            intentir_us, _, _ = _measure(
+                e3_function,
+                e3_rotation,
+                regime=regime,
+                eviction_buffer=eviction_buffer,
+                warmup=0,
+                iterations=iterations,
+                batches=1,
+            )
+            native_us, _, _ = _measure(
+                native_function,
+                native_rotation,
+                regime=regime,
+                eviction_buffer=eviction_buffer,
+                warmup=0,
+                iterations=iterations,
+                batches=1,
+            )
+        native_samples.append(native_us)
+        intentir_native_pair_samples.append(intentir_us)
+    native_latency = float(statistics.median(native_samples))
+    intentir_native_pair_latency = float(
+        statistics.median(intentir_native_pair_samples)
+    )
 
     oracle_complete = measure_c_oracle and not any(
         item["status"] == "not_visited_due_budget" for item in records
@@ -930,16 +1188,31 @@ def _one_kernel(
         "workload_profile": entry.get("workload_profile"),
         "workload_valuation": entry.get("workload_valuation"),
         "baseline_policy": entry.get("baseline_policy"),
+        "workload_signature": {
+            "inputs": entry.get("input_specs"),
+            "outputs": entry["output_specs"],
+            "extents": entry["extents"],
+        },
         "contract_view": entry["contract_view"],
         "extents": entry["extents"],
         "candidates": records,
         "winner": e3["candidate"],
+        "native_baseline": {
+            **(native_compile_record or {}),
+            "correctness": native_correctness,
+            "selection_samples_us": native_samples,
+            "intentir_paired_samples_us": intentir_native_pair_samples,
+            "comparison_protocol": "paired-alternating.v1",
+        },
         "performance": {
             "c_fixed_us": c_fixed["latency_us"],
             "schedule_only_us": e2["latency_us"],
             "intentir_us": e3["latency_us"],
             "g_schedule": c_fixed["latency_us"] / e2["latency_us"],
             "g_lowering": e2["latency_us"] / e3["latency_us"],
+            "native_rvv_us": native_latency,
+            "intentir_paired_with_native_us": intentir_native_pair_latency,
+            "g_native": native_latency / intentir_native_pair_latency,
             "c_fixed_candidate_id": c_fixed_id,
             "schedule_only_winner_candidate_id": e2["candidate"]["candidate_id"],
             "intentir_winner_candidate_id": e3["candidate"]["candidate_id"],
@@ -1116,9 +1389,15 @@ def _one_kernel(
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bundle", type=Path, required=True)
+    parser.add_argument(
+        "--native-baseline-sidecar",
+        type=Path,
+        help="small independent Native RVV source map for pre-v4 experiment bundles",
+    )
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--kernels", nargs="*")
     parser.add_argument("--cpu", type=int, default=0)
+    parser.add_argument("--threads", type=int, choices=(1, 16), default=1)
     parser.add_argument(
         "--regime",
         choices=("warm", "streaming", "cold-data"),
@@ -1132,7 +1411,7 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "execute the complete concrete object universe so C/no-C can report "
-            "candidates-to-95%-of-final-best"
+            "candidates-to-95%%-of-final-best"
         ),
     )
     parser.add_argument("--warmup", type=int, default=50)
@@ -1154,7 +1433,16 @@ def main(argv: list[str] | None = None) -> int:
         args.search_budget,
     ) <= 0:
         raise ValueError("all measurement counts and budgets must be positive")
-    os.sched_setaffinity(0, {args.cpu})
+    affinity = set(range(args.cpu, args.cpu + args.threads))
+    available_cpus = os.sched_getaffinity(0)
+    if not affinity.issubset(available_cpus):
+        raise ValueError(
+            f"requested CPU range {sorted(affinity)} is outside available affinity"
+        )
+    os.sched_setaffinity(0, affinity)
+    os.environ["OMP_NUM_THREADS"] = str(args.threads)
+    os.environ["OMP_DYNAMIC"] = "FALSE"
+    os.environ["OMP_PROC_BIND"] = "CLOSE"
     cache_record = _cpu_cache_record()
     working_set_bytes = args.working_set_mib * 1024 * 1024
     last_level_cache_bytes = cache_record["last_level_data_cache_bytes"]
@@ -1176,6 +1464,15 @@ def main(argv: list[str] | None = None) -> int:
         for item in bundle["kernels"]
         if not selected or item["kernel"] in selected
     ]
+    sidecar = (
+        _load_native_baseline_sidecar(args.native_baseline_sidecar)
+        if args.native_baseline_sidecar is not None
+        else {}
+    )
+    entries = _attach_native_baselines(entries, sidecar)
+    effective_baseline_policy = (
+        "native_rvv_and_refj" if entries else bundle.get("baseline_policy")
+    )
     started = time.time_ns()
     kernels = []
     failures = []
@@ -1186,6 +1483,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             record = _one_kernel(
                 entry,
+                payload_root=args.bundle.resolve().parent,
                 regime=args.regime,
                 working_set_bytes=working_set_bytes,
                 max_replicas=args.max_replicas,
@@ -1194,6 +1492,7 @@ def main(argv: list[str] | None = None) -> int:
                 warmup=args.warmup,
                 iterations=measured_iterations,
                 batches=args.batches,
+                thread_count=args.threads,
                 measure_c_oracle=args.measure_c_oracle,
             )
             kernels.append(record)
@@ -1204,6 +1503,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"IntentIR={performance['intentir_us']:.4f} us "
                 f"G_schedule={performance['g_schedule']:.3f}x "
                 f"G_lowering={performance['g_lowering']:.3f}x "
+                f"G_native={performance['g_native']:.3f}x "
                 "C="
                 f"{record['c_prior_efficiency']['best_at_budget_c_over_erase_c_speedup']:.3f}x",
                 flush=True,
@@ -1222,6 +1522,7 @@ def main(argv: list[str] | None = None) -> int:
             )
     schedule_speedups = [item["performance"]["g_schedule"] for item in kernels]
     lowering_speedups = [item["performance"]["g_lowering"] for item in kernels]
+    native_speedups = [item["performance"]["g_native"] for item in kernels]
     c_speedups = [
         item["c_prior_efficiency"]["best_at_budget_c_over_erase_c_speedup"]
         for item in kernels
@@ -1259,7 +1560,7 @@ def main(argv: list[str] | None = None) -> int:
         "bundle_protocol": bundle["protocol"],
         "target": bundle["target"],
         "workload_profile": bundle.get("workload_profile", "closed-v1"),
-        "baseline_policy": bundle.get("baseline_policy", "target_refj_only"),
+        "baseline_policy": effective_baseline_policy,
         "experiment_spec_protocol": bundle.get("experiment_spec_protocol"),
         "measurement_spec_protocol": bundle.get("measurement_spec_protocol"),
         "created_unix_ns": time.time_ns(),
@@ -1269,6 +1570,10 @@ def main(argv: list[str] | None = None) -> int:
             "machine": platform.machine(),
             "python": platform.python_version(),
             "cpu_affinity": sorted(os.sched_getaffinity(0)),
+            "thread_count": args.threads,
+            "parallel_runtime": (
+                "OpenMP" if args.threads > 1 else "serial MLIR loops"
+            ),
             "vlen_bits": 128,
             "cache": cache_record,
         },
@@ -1294,6 +1599,7 @@ def main(argv: list[str] | None = None) -> int:
             "batches": args.batches,
             "search_budget": args.search_budget,
             "measure_c_oracle": args.measure_c_oracle,
+            "thread_count": args.threads,
         },
         "summary": {
             "requested": len(entries),
@@ -1301,6 +1607,7 @@ def main(argv: list[str] | None = None) -> int:
             "failed": len(failures),
             "geomean_g_schedule": geomean(schedule_speedups),
             "geomean_g_lowering": geomean(lowering_speedups),
+            "geomean_g_native": geomean(native_speedups),
         },
         "c_prior_efficiency_summary": {
             "geomean_best_at_budget_c_over_erase_c_speedup": geomean(

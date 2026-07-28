@@ -209,7 +209,7 @@ DEFAULT_PASSES: tuple[PassDescriptor, ...] = (
     PassDescriptor(
         fast_path_id="cuda.splitk.reduce-varargs.v1",
         pass_argument="-convert-intent-splitk-reduce-varargs-to-gpu",
-        supported_chips=("sm_120a",),
+        supported_chips=_PORTABLE_BLOCK_CUDA_CHIPS,
         description="xFormers split-K varargs reduction",
         scf_to_cf=True,
     ),
@@ -276,7 +276,7 @@ DEFAULT_PASSES: tuple[PassDescriptor, ...] = (
     PassDescriptor(
         fast_path_id="cuda.row_scan.sparsemax.sorted_prefix.v1",
         pass_argument="-convert-intent-row-reduction-to-gpu=block-threads=256",
-        supported_chips=("sm_120a",),
+        supported_chips=_PORTABLE_BLOCK_CUDA_CHIPS,
         description="sorted-prefix Sparsemax row scan",
         scf_to_cf=True,
         required_markers=(

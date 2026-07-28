@@ -15,9 +15,11 @@ from intentir.backend.cuda.portable_bundle import encode_values
 from intentir.backend.cuda.production_cases import (
     PRODUCTION_CASE_IDS,
     PRODUCTION_WORKLOAD_PROFILE_CLOSED,
+    PRODUCTION_WORKLOAD_PROFILE_NATURAL_HEADLINE,
     PRODUCTION_WORKLOAD_PROFILE_ROOFLINE_LARGE,
     PRODUCTION_WORKLOAD_PROFILE_SYMBOLIC_LARGE,
     PRODUCTION_WORKLOAD_PROFILE_SYMBOLIC_MEDIUM,
+    comparison_policy_for_workload,
     constexpr_input_bindings,
     profile_production_snapshot,
     prepare_production_workload,
@@ -29,6 +31,7 @@ from intentir.backend.measurement_spec import (
 from intentir.backend.protocol import BackendTarget
 from intentir.backend.riscv.compile import compile_riscv_object
 from intentir.backend.riscv.contract import derive_riscv_contract_view
+from intentir.backend.riscv.native_baselines import native_rvv_baseline_record
 from intentir.backend.riscv.search import plan_riscv_search
 from intentir.backend.workload_cost import derive_j_workload_cost
 from intentir.ir.production_snapshot import load_production_snapshot
@@ -38,7 +41,7 @@ from intentir.verify.gate2.scalar import ScalarLoweringRunner
 from intentir.verify.scrc_workload_run import build_workload_jc_suite
 
 
-BUNDLE_PROTOCOL = "intentir.production.rvv-search-bundle.v3"
+BUNDLE_PROTOCOL = "intentir.production.rvv-search-bundle.v4"
 TARGET = BackendTarget("riscv", "rv64gcv_zfh", ("vlen128",))
 
 
@@ -46,14 +49,14 @@ def _shape(shape: list[int | str], dims: dict[str, int]) -> list[int]:
     return [int(dims[item]) if isinstance(item, str) else int(item) for item in shape]
 
 
-def _output_rules(snapshot: Any) -> dict[str, Any]:
+def _output_rules(snapshot: Any, comparison_policy: Any) -> dict[str, Any]:
     relations = {
         item.output: item.kind for item in snapshot.j.boundary.result_relations
     }
     result = {}
     for output in snapshot.j.intent.outputs:
         kind = relations.get(output.name, ResultRelationKind.EXACT)
-        rule = DEFAULT_GATE2_POLICY.rule_for(kind, output.dtype)
+        rule = comparison_policy.rule_for(kind, output.dtype)
         result[output.name] = {
             "comparison_class": kind.value,
             "dtype": rule.dtype,
@@ -75,6 +78,7 @@ def _entry(
     if base_snapshot.c is None:
         raise ValueError("RVV bundle requires accepted C")
     prepared = prepare_production_workload(name, profile=workload_profile)
+    comparison_policy = comparison_policy_for_workload(name, workload_profile)
     snapshot, workload_valuation = profile_production_snapshot(
         base_snapshot,
         prepared,
@@ -83,6 +87,7 @@ def _entry(
     if snapshot.c is None:
         raise AssertionError("workload valuation erased required C")
     suite = build_workload_jc_suite(prepared, snapshot.j, snapshot.c)
+    comparison_policy.validate_j(snapshot.j)
     case = suite.cases[0]
     dims = case.refeval.dims_map
     constexpr_bindings = constexpr_input_bindings(
@@ -118,9 +123,23 @@ def _entry(
                 }
             )
             continue
+        compiled_record = compiled.to_record()
+        if not compiled_record["schedule_realization"]["requested_equals_actual"]:
+            rejected.append(
+                {
+                    "candidate_id": candidate.candidate_id,
+                    "candidate": candidate.to_dict(),
+                    "reason": (
+                        "requested RVV schedule was not realized by MLIR: "
+                        f"requested={compiled_record['requested_schedule']} "
+                        f"actual={compiled_record['schedule']}"
+                    ),
+                }
+            )
+            continue
         candidates.append(
             {
-                "candidate": compiled.to_record(),
+                "candidate": compiled_record,
                 "compile_ms": (
                     time.perf_counter_ns() - started
                 )
@@ -200,9 +219,11 @@ def _entry(
         "case_id": PRODUCTION_CASE_IDS[name],
         "workload_profile": workload_profile,
         "workload_valuation": workload_valuation,
-        # RVV has no Triton Source executable.  The Source-availability field in
-        # workload_valuation still describes the actual benchmark inputs.
-        "baseline_policy": "target_refj_only",
+        "comparison_policy": comparison_policy.to_json(),
+        # RVV has no Triton Source executable.  Use a separately authored native
+        # implementation that shares inputs/ABI but no IntentIR lowering state.
+        "baseline_policy": "native_rvv_and_refj",
+        "native_baseline": native_rvv_baseline_record(name),
         "snapshot_path": str(path),
         "materialization": materialized.to_record(),
         "contract_view": contract.to_dict(),
@@ -227,8 +248,7 @@ def _entry(
             }
             for item in snapshot.j.intent.outputs
         ],
-        "output_rules": _output_rules(snapshot),
-        "comparison_policy": DEFAULT_GATE2_POLICY.to_json(),
+        "output_rules": _output_rules(snapshot, comparison_policy),
         "values": encode_values(case.values),
         "reference_outputs": encode_values(reference.outputs),
         "search_plan": search_plan.to_record(),
@@ -273,6 +293,7 @@ def _parser() -> argparse.ArgumentParser:
         "--workload-profile",
         choices=(
             PRODUCTION_WORKLOAD_PROFILE_CLOSED,
+            PRODUCTION_WORKLOAD_PROFILE_NATURAL_HEADLINE,
             PRODUCTION_WORKLOAD_PROFILE_SYMBOLIC_MEDIUM,
             PRODUCTION_WORKLOAD_PROFILE_SYMBOLIC_LARGE,
             PRODUCTION_WORKLOAD_PROFILE_ROOFLINE_LARGE,

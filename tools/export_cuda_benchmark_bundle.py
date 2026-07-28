@@ -25,9 +25,11 @@ from intentir.backend.cuda.portable_bundle import (
 from intentir.backend.cuda.production_cases import (
     PRODUCTION_CASE_IDS,
     PRODUCTION_WORKLOAD_PROFILE_CLOSED,
+    PRODUCTION_WORKLOAD_PROFILE_NATURAL_HEADLINE,
     PRODUCTION_WORKLOAD_PROFILE_ROOFLINE_LARGE,
     PRODUCTION_WORKLOAD_PROFILE_SYMBOLIC_LARGE,
     PRODUCTION_WORKLOAD_PROFILE_SYMBOLIC_MEDIUM,
+    comparison_policy_for_workload,
     constexpr_input_bindings,
     profile_production_snapshot,
     prepare_production_workload,
@@ -43,6 +45,7 @@ from intentir.backend.materialize import attach_c, materialize_j
 from intentir.backend.measurement_spec import (
     MEASUREMENT_PROTOCOL,
 )
+from intentir.backend.portable_workload import encode_workload_recipe
 from intentir.backend.protocol import BackendTarget
 from intentir.backend.workload_cost import derive_j_workload_cost
 from intentir.ir.production_snapshot import load_production_snapshot
@@ -76,11 +79,13 @@ def _entry(
     axes: SearchAxes | None = None,
     workload_profile: str = PRODUCTION_WORKLOAD_PROFILE_CLOSED,
     measure_c_oracle: bool = False,
+    rebuild_values_on_target: bool = False,
 ) -> dict[str, Any]:
     base_snapshot, path = load_production_snapshot(snapshot_dir, name)
     if base_snapshot.c is None:
         raise ValueError("portable search bundle requires accepted C")
     prepared = prepare_production_workload(name, profile=workload_profile)
+    comparison_policy = comparison_policy_for_workload(name, workload_profile)
     snapshot, workload_valuation = profile_production_snapshot(
         base_snapshot,
         prepared,
@@ -89,6 +94,7 @@ def _entry(
     if snapshot.c is None:
         raise AssertionError("workload valuation erased required C")
     suite = build_workload_jc_suite(prepared, snapshot.j, snapshot.c)
+    comparison_policy.validate_j(snapshot.j)
     case = suite.cases[0]
     dims = case.refeval.dims_map
     constexpr_bindings = constexpr_input_bindings(
@@ -375,9 +381,12 @@ def _entry(
         if use_c_prior
         else without_c_schedule_spine_order
     )
-    if not with_c_order:
+    if not with_c_order or not with_c_schedule_spine_order:
         raise RuntimeError(f"{name} has no concrete target projection of C")
-    c_fixed_candidate = candidates_by_id[with_c_order[0]]
+    # C-Fixed and E2 share the canonical structural path.  E3's C-ranked order
+    # may legitimately begin with an expanded topology, so selecting its first
+    # state here would silently turn C-Fixed into an IntentIR arm.
+    c_fixed_candidate = candidates_by_id[with_c_schedule_spine_order[0]]
     canonical_projection = canonical_cuda_candidate(state)
     projection_kind = (
         "generic"
@@ -418,9 +427,23 @@ def _entry(
     if not admitted:
         raise RuntimeError(f"{name} has no portable executable candidate")
 
-    reference = ScalarLoweringRunner().run(case.refeval, case.values)
-    if not reference.ok:
-        raise RuntimeError(f"canonical J reference failed: {reference.error}")
+    workload_payload: dict[str, Any]
+    if rebuild_values_on_target:
+        rebuilt_recipe = encode_workload_recipe(
+            prepared.adapter,
+            prepared.source_to_opaque,
+            case.triton.arguments,
+            case.values,
+        )
+        workload_payload = {"workload_recipe": rebuilt_recipe}
+    else:
+        reference = ScalarLoweringRunner().run(case.refeval, case.values)
+        if not reference.ok:
+            raise RuntimeError(f"canonical J reference failed: {reference.error}")
+        workload_payload = {
+            "values": encode_values(case.values),
+            "reference_outputs": encode_values(reference.outputs),
+        }
     source = prepared.request.source.gate_source
     source_code, source_origin = source.read_code()
     baseline_policy = str(workload_valuation["baseline_policy"])
@@ -433,6 +456,7 @@ def _entry(
         "c": snapshot.c.to_json() if snapshot.c is not None else None,
         "snapshot_path": str(path),
         "workload_valuation": workload_valuation,
+        "comparison_policy": comparison_policy.to_json(),
         "materialization": materialized.to_record(),
         "contract_view": contract_view.to_dict(),
         "workload_cost": workload_cost.to_record(),
@@ -482,6 +506,15 @@ def _entry(
         },
         "extents": dims,
         "input_order": list(materialized.runtime_input_names),
+        "input_specs": [
+            {
+                "name": item.name,
+                "dtype": item.dtype,
+                "shape": _shape(item.shape, dims),
+                "runtime": item.name in materialized.runtime_input_names,
+            }
+            for item in snapshot.j.intent.inputs
+        ],
         "output_specs": [
             {
                 "name": item.name,
@@ -493,8 +526,7 @@ def _entry(
         "input_bindings": case.refeval.input_binding_map,
         "output_bindings": case.refeval.output_binding_map,
         "output_keys": list(case.output_keys),
-        "values": encode_values(case.values),
-        "reference_outputs": encode_values(reference.outputs),
+        **workload_payload,
         "source_triton": {
             "function": source.function,
             "code": source_code,
@@ -522,6 +554,7 @@ def _parser() -> argparse.ArgumentParser:
         "--workload-profile",
         choices=(
             PRODUCTION_WORKLOAD_PROFILE_CLOSED,
+            PRODUCTION_WORKLOAD_PROFILE_NATURAL_HEADLINE,
             PRODUCTION_WORKLOAD_PROFILE_SYMBOLIC_MEDIUM,
             PRODUCTION_WORKLOAD_PROFILE_SYMBOLIC_LARGE,
             PRODUCTION_WORKLOAD_PROFILE_ROOFLINE_LARGE,
@@ -546,8 +579,17 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "transport the complete expanded concrete-state universe so the "
-            "target can compute candidates-to-95%-of-final-best; search-arm "
+            "target can compute candidates-to-95%%-of-final-best; search-arm "
             "budgets remain unchanged"
+        ),
+    )
+    parser.add_argument(
+        "--rebuild-values-on-target",
+        action="store_true",
+        help=(
+            "transport the closed workload initializer/seed recipe and rebuild "
+            "values plus canonical RefJ on the target instead of embedding "
+            "large tensor payloads"
         ),
     )
     return parser
@@ -580,6 +622,7 @@ def main(argv: list[str] | None = None) -> int:
             axes,
             args.workload_profile,
             args.measure_c_oracle,
+            args.rebuild_values_on_target,
         )
         entries.append(entry)
         print(

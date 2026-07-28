@@ -3,6 +3,9 @@
 // RUN: intent-opt -convert-intent-padded-row-reduction-to-gpu='block-threads=64 vectorize-full-features=false promote-rank0-scalars=true' %s | FileCheck %s --check-prefix=STATIC
 // RUN: intent-opt -convert-intent-padded-row-reduction-to-gpu='block-threads=64 vectorize-full-features=false promote-rank0-scalars=true' %s | FileCheck %s --check-prefix=NATURAL
 // RUN: intent-opt -convert-intent-padded-row-reduction-to-gpu='block-threads=256 reduction-topology=subgroup-feature' %s | FileCheck %s --check-prefix=NATURAL-SUBGROUP
+// RUN: intent-opt -convert-intent-padded-row-reduction-to-gpu='block-threads=256 reduction-topology=subgroup-feature rows-per-subgroup=4' %s | FileCheck %s --check-prefix=NATURAL-MULTIROW
+// RUN: intent-opt -convert-intent-padded-row-reduction-to-gpu='block-threads=128 reduction-topology=subgroup-feature lanes-per-row=4' %s | FileCheck %s --check-prefix=NATURAL-SUBWARP
+// RUN: intent-opt -convert-intent-padded-row-reduction-to-gpu='block-threads=128 reduction-topology=subgroup-feature lanes-per-row=16 vectorize-full-features=true' %s | FileCheck %s --check-prefix=NATURAL-PACKET
 
 // The matcher is source/name neutral and consumes the exact structural form
 // emitted from the closed FlashAttention preprocess J.
@@ -115,6 +118,27 @@ func.func @static_bounds(
 // NATURAL-SUBGROUP: gpu.shuffle
 // NATURAL-SUBGROUP: memref.store
 // NATURAL-SUBGROUP-NOT: intent.
+// NATURAL-MULTIROW-LABEL: func.func @natural_batch(
+// NATURAL-MULTIROW-SAME: intent.backend.rows_per_block = 32 : i64
+// NATURAL-MULTIROW: arith.constant 16384 : index
+// NATURAL-MULTIROW: gpu.launch
+// NATURAL-MULTIROW-COUNT-4: memref.store
+// NATURAL-MULTIROW-NOT: intent.
+// NATURAL-SUBWARP-LABEL: func.func @natural_batch(
+// NATURAL-SUBWARP-SAME: intent.backend.rows_per_block = 32 : i64
+// NATURAL-SUBWARP-SAME: intent.backend.subgroup_width = 4 : i64
+// NATURAL-SUBWARP: arith.constant 16384 : index
+// NATURAL-SUBWARP: gpu.launch
+// NATURAL-SUBWARP: gpu.shuffle
+// NATURAL-SUBWARP: memref.store
+// NATURAL-SUBWARP-NOT: intent.
+// NATURAL-PACKET-LABEL: func.func @natural_batch(
+// NATURAL-PACKET-SAME: intent.backend.vector_width = 8 : i64
+// NATURAL-PACKET-SAME: "cuda.memory.packetized_feature_load.v1"
+// NATURAL-PACKET: vector.load
+// NATURAL-PACKET: gpu.shuffle
+// NATURAL-PACKET: memref.store
+// NATURAL-PACKET-NOT: intent.
 func.func @natural_batch(
     %a: tensor<4x16x8192x128xf16>,
     %b: tensor<4x16x8192x128xf16>) -> tensor<4x16x8192xf32> {

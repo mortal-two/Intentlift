@@ -1253,8 +1253,30 @@ def enumerate_cuda_candidates(
     # (including natural head dimensions 64/128/256) and remains the hard gate.
     if axes is None or axes.search_reduction_topology:
         padded_schedule_bases.extend(
-            PaddedRowSchedule(threads, False, True, "subgroup-feature")
+            PaddedRowSchedule(
+                threads,
+                vectorize,
+                True,
+                "subgroup-feature",
+                1,
+                lanes_per_row,
+            )
             for threads in (64, 128, 256, 512, 1024)
+            for vectorize in (False, True)
+            for lanes_per_row in (32,)
+        )
+        padded_schedule_bases.extend(
+            PaddedRowSchedule(
+                threads,
+                vectorize,
+                True,
+                "subgroup-feature",
+                1,
+                lanes_per_row,
+            )
+            for threads in (128, 256)
+            for vectorize in (False, True)
+            for lanes_per_row in (4, 8, 16)
         )
     for schedule in (
         replace(base, promote_rank0_scalars=promote)
@@ -1291,6 +1313,11 @@ def enumerate_cuda_candidates(
                         "cuda.reduction.padded_subgroup_feature.v1"
                         if schedule.reduction_topology == "subgroup-feature"
                         else "cuda.reduction.padded_serial_row.v1"
+                    ),
+                    *(
+                        ("cuda.reduction.padded_subgroup_multirow.v1",)
+                        if schedule.rows_per_subgroup > 1
+                        else ()
                     ),
                     *transformations,
                 ),

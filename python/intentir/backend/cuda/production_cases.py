@@ -34,6 +34,11 @@ from intentir.verify.workload_adapters import (
     prepare_triton_source_workload,
     prepare_triton_workload,
 )
+from intentir.verify.gate2.policy import (
+    ComparisonPolicy,
+    DEFAULT_GATE2_POLICY,
+    NumericTolerance,
+)
 
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
@@ -80,6 +85,35 @@ _CERTIFIED_CANARY_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
         seed=19,
     ),
 }
+
+# Q is an external workload policy, not a permission encoded in J.  Natural
+# headline runs use the same f32 thresholds as the corresponding upstream test
+# suites; all other dtype rules remain the project defaults.  Closed SCRC
+# valuations keep DEFAULT_GATE2_POLICY byte-for-byte.
+_NATURAL_F32_Q: dict[str, NumericTolerance] = {
+    "layer_norm": NumericTolerance(1.0e-5, 1.0e-5),
+    "poly_norm": NumericTolerance(1.0e-6, 1.0e-4),
+    "flash_layer_norm_1pass": NumericTolerance(1.0e-3, 1.0e-4),
+}
+
+
+def comparison_policy_for_workload(
+    name: str,
+    profile: str,
+) -> ComparisonPolicy:
+    tolerance = (
+        _NATURAL_F32_Q.get(name)
+        if profile == PRODUCTION_WORKLOAD_PROFILE_NATURAL_HEADLINE
+        else None
+    )
+    if tolerance is None:
+        return DEFAULT_GATE2_POLICY
+    rules = dict(DEFAULT_GATE2_POLICY.tolerances)
+    rules["f32"] = tolerance
+    return ComparisonPolicy.create(
+        f"intentir.gate2.source-{name.replace('_', '-')}.v1",
+        rules.items(),
+    )
 
 
 def _apply_workload_profile(
@@ -219,6 +253,7 @@ __all__ = [
     "PRODUCTION_WORKLOAD_PROFILE_SYMBOLIC_LARGE",
     "PRODUCTION_WORKLOAD_PROFILE_SYMBOLIC_MEDIUM",
     "workload_profile_metadata",
+    "comparison_policy_for_workload",
     "constexpr_input_bindings",
     "profile_production_snapshot",
     "prepare_production_workload",

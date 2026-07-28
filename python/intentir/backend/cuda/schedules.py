@@ -186,6 +186,8 @@ class PaddedRowSchedule:
     vectorize_full_features: bool = True
     promote_rank0_scalars: bool = True
     reduction_topology: str = "serial-row"
+    rows_per_subgroup: int = 1
+    lanes_per_row: int = 32
 
     def __post_init__(self) -> None:
         if type(self.block_threads) is not int or self.block_threads not in _BLOCK_THREADS:
@@ -205,6 +207,19 @@ class PaddedRowSchedule:
                 "padded-row reduction_topology must be serial-row or "
                 "subgroup-feature"
             )
+        if type(self.rows_per_subgroup) is not int or self.rows_per_subgroup not in {
+            1,
+            2,
+            4,
+            8,
+        }:
+            raise ValueError("padded-row rows_per_subgroup must be 1, 2, 4, or 8")
+        if self.reduction_topology == "serial-row" and self.rows_per_subgroup != 1:
+            raise ValueError("serial-row requires rows_per_subgroup=1")
+        if self.lanes_per_row not in {4, 8, 16, 32}:
+            raise ValueError("padded-row lanes_per_row must be 4, 8, 16, or 32")
+        if self.reduction_topology == "serial-row" and self.lanes_per_row != 32:
+            raise ValueError("serial-row requires lanes_per_row=32")
 
     @property
     def pass_argument(self) -> str:
@@ -216,7 +231,9 @@ class PaddedRowSchedule:
             "promote-rank0-scalars="
             f"{'true' if self.promote_rank0_scalars else 'false'} "
             "reduction-topology="
-            f"{self.reduction_topology}"
+            f"{self.reduction_topology} "
+            f"rows-per-subgroup={self.rows_per_subgroup} "
+            f"lanes-per-row={self.lanes_per_row}"
         )
 
     def to_dict(self) -> dict[str, int | bool]:
@@ -226,6 +243,8 @@ class PaddedRowSchedule:
             "vectorize_full_features": self.vectorize_full_features,
             "promote_rank0_scalars": self.promote_rank0_scalars,
             "reduction_topology": self.reduction_topology,
+            "rows_per_subgroup": self.rows_per_subgroup,
+            "lanes_per_row": self.lanes_per_row,
         }
 
 

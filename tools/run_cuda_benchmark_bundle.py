@@ -30,14 +30,21 @@ from intentir.backend.cuda.portable_bundle import (
     decode_values,
     logical_runtime_array,
 )
-from intentir.verify.gate1.model import SemanticArchive
+from intentir.backend.portable_workload import decode_workload_recipe
+from intentir.verify.gate1.model import (
+    ResultRelationKind,
+    ResultRelationSpec,
+    SemanticArchive,
+)
 from intentir.backend.roofline import (
     RooflineCeilings,
     evaluate_logical_roofline,
 )
 from intentir.verify.gate1.compiler import KernelSource
-from intentir.verify.gate2.compare import compare_outputs
-from intentir.verify.gate2.policy import DEFAULT_GATE2_POLICY
+from intentir.verify.gate2.compare import compare_outputs, validate_j_inputs
+from intentir.verify.gate2.model import OutputAgreement, PairwiseAgreement
+from intentir.verify.gate2.policy import ComparisonPolicy, DEFAULT_GATE2_POLICY
+from intentir.verify.gate2.scalar import ScalarLoweringRunner, ScalarLoweringSpec
 from intentir.verify.gate2.triton import PreparedTritonInvocation
 
 
@@ -46,6 +53,14 @@ BUNDLE_PROTOCOL = "intentir.production.cuda-search-bundle.v3"
 SUPPORTED_BUNDLE_PROTOCOLS = frozenset(
     {BUNDLE_PROTOCOL, "intentir.production.cuda-search-bundle.v2"}
 )
+
+
+class KernelFailure(RuntimeError):
+    """One kernel failed after producing useful candidate diagnostics."""
+
+    def __init__(self, message: str, diagnostics: Mapping[str, Any]):
+        super().__init__(message)
+        self.diagnostics = dict(diagnostics)
 
 
 def _torch_dtype(torch: Any, dtype: str) -> Any:
@@ -198,6 +213,181 @@ def _actual_outputs(
     }
 
 
+_GPU_Q_CHUNK_ELEMENTS = 1 << 25
+
+
+def _gpu_close_q_output(
+    torch: Any,
+    lhs: Any,
+    rhs: Any,
+    rule: Any,
+) -> tuple[bool, float]:
+    """Apply the exact Gate2 ``Close_Q`` relation without copying tensors.
+
+    The implementation deliberately mirrors ``compare.close_q`` and
+    ``compare._max_abs_error``.  Chunking bounds temporary storage for natural
+    LLM tensors; only boolean/error scalars cross back to the host.
+    """
+
+    lhs_flat = lhs.reshape(-1)
+    rhs_flat = rhs.reshape(-1)
+    exact_domain = lhs.dtype in {
+        torch.bool,
+        torch.int8,
+        torch.int16,
+        torch.int32,
+        torch.int64,
+        torch.uint8,
+    }
+    passed = True
+    max_abs_error = 0.0
+    for begin in range(0, lhs_flat.numel(), _GPU_Q_CHUNK_ELEMENTS):
+        end = min(begin + _GPU_Q_CHUNK_ELEMENTS, lhs_flat.numel())
+        left = lhs_flat[begin:end]
+        right = rhs_flat[begin:end]
+        if exact_domain:
+            if not torch.equal(left, right):
+                passed = False
+            if left.numel():
+                error = (
+                    left.to(dtype=torch.int64) - right.to(dtype=torch.int64)
+                ).abs().max()
+                max_abs_error = max(max_abs_error, float(error.item()))
+            continue
+
+        lhs_nan = torch.isnan(left)
+        rhs_nan = torch.isnan(right)
+        if not torch.equal(lhs_nan, rhs_nan):
+            return False, float("inf")
+        has_nan = bool(torch.any(lhs_nan).item())
+        if rule.exact:
+            if not torch.equal(left, right):
+                passed = False
+        elif has_nan and not rule.tolerance.equal_nan:
+            passed = False
+
+        non_nan = ~(lhs_nan | rhs_nan)
+        lhs_inf = torch.isinf(left) & non_nan
+        rhs_inf = torch.isinf(right) & non_nan
+        if not torch.equal(lhs_inf, rhs_inf):
+            passed = False
+        elif bool(torch.any(lhs_inf).item()) and not torch.equal(
+            left[lhs_inf], right[rhs_inf]
+        ):
+            passed = False
+
+        finite = torch.isfinite(left) & torch.isfinite(right)
+        if not bool(torch.any(finite).item()):
+            continue
+        left_finite = left[finite].to(dtype=torch.float64)
+        right_finite = right[finite].to(dtype=torch.float64)
+        error = torch.abs(left_finite - right_finite)
+        max_abs_error = max(max_abs_error, float(torch.max(error).item()))
+        if not rule.exact:
+            scale = torch.maximum(torch.abs(left_finite), torch.abs(right_finite))
+            bound = rule.tolerance.atol + rule.tolerance.rtol * scale
+            if not bool(torch.all(error <= bound).item()):
+                passed = False
+    return passed, max_abs_error
+
+
+def _compare_cuda_outputs(
+    torch: Any,
+    *,
+    name: str,
+    actual: Mapping[str, Any],
+    reference: Mapping[str, Any],
+    j: SemanticArchive,
+    entry: Mapping[str, Any],
+    policy: ComparisonPolicy,
+) -> PairwiseAgreement:
+    """Compare candidate outputs to canonical J on the target GPU."""
+
+    expected_outputs = {item.name for item in j.intent.outputs}
+    if set(entry["output_bindings"]) != expected_outputs:
+        raise ValueError("Gate2 output bindings differ from canonical J outputs")
+    explicit = {item.output: item for item in j.boundary.result_relations}
+    observations: list[OutputAgreement] = []
+    for output in j.intent.outputs:
+        runtime_key = entry["output_bindings"][output.name]
+        relation = explicit.get(
+            output.name,
+            ResultRelationSpec(output.name, ResultRelationKind.EXACT),
+        )
+        rule = policy.rule_for(relation.kind, output.dtype)
+        tolerance = rule.tolerance
+        if runtime_key not in actual or runtime_key not in reference:
+            observations.append(
+                OutputAgreement(
+                    runtime_key,
+                    False,
+                    None,
+                    "output missing from CUDA candidate or canonical J reference",
+                    relation.kind.value,
+                    True,
+                    policy.policy_id,
+                    float(tolerance.rtol) if tolerance is not None else None,
+                    float(tolerance.atol) if tolerance is not None else None,
+                    tolerance.equal_nan if tolerance is not None else None,
+                )
+            )
+            continue
+        lhs = actual[runtime_key]
+        rhs = reference[runtime_key]
+        expected_dtype = _torch_dtype(torch, output.dtype)
+        if lhs.dtype != expected_dtype or rhs.dtype != expected_dtype:
+            observations.append(
+                OutputAgreement(
+                    runtime_key,
+                    False,
+                    None,
+                    "output dtype differs from canonical J",
+                    relation.kind.value,
+                    True,
+                    policy.policy_id,
+                    float(tolerance.rtol) if tolerance is not None else None,
+                    float(tolerance.atol) if tolerance is not None else None,
+                    tolerance.equal_nan if tolerance is not None else None,
+                )
+            )
+            continue
+        if tuple(lhs.shape) != tuple(rhs.shape):
+            observations.append(
+                OutputAgreement(
+                    runtime_key,
+                    False,
+                    None,
+                    f"shape mismatch: {tuple(lhs.shape)} != {tuple(rhs.shape)}",
+                    relation.kind.value,
+                    True,
+                    policy.policy_id,
+                )
+            )
+            continue
+        passed, max_abs_error = _gpu_close_q_output(torch, lhs, rhs, rule)
+        observations.append(
+            OutputAgreement(
+                runtime_key,
+                passed,
+                max_abs_error,
+                "",
+                relation.kind.value,
+                True,
+                policy.policy_id,
+                float(tolerance.rtol) if tolerance is not None else None,
+                float(tolerance.atol) if tolerance is not None else None,
+                tolerance.equal_nan if tolerance is not None else None,
+            )
+        )
+    return PairwiseAgreement(
+        name,
+        "canonical-J-reference",
+        all(item.passed for item in observations),
+        tuple(observations),
+        policy.policy_id,
+    )
+
+
 def _compare(
     *,
     name: str,
@@ -206,6 +396,7 @@ def _compare(
     j: SemanticArchive,
     entry: Mapping[str, Any],
     values: Mapping[str, np.ndarray],
+    policy: ComparisonPolicy,
 ):
     return compare_outputs(
         name,
@@ -216,7 +407,7 @@ def _compare(
         input_bindings=entry["input_bindings"],
         output_bindings=entry["output_bindings"],
         inputs=values,
-        policy=DEFAULT_GATE2_POLICY,
+        policy=policy,
     )
 
 
@@ -239,8 +430,36 @@ def _one_kernel(
     import torch
 
     j = SemanticArchive.from_json(entry["j"])
-    values = decode_values(entry["values"])
-    reference = decode_values(entry["reference_outputs"])
+    policy = ComparisonPolicy.from_json(
+        entry.get("comparison_policy", DEFAULT_GATE2_POLICY.to_json())
+    )
+    policy.validate_j(j)
+    if "workload_recipe" in entry:
+        if "values" in entry or "reference_outputs" in entry:
+            raise ValueError("CUDA bundle mixes rebuilt and embedded workloads")
+        values = decode_workload_recipe(entry["workload_recipe"])
+        reference_result = ScalarLoweringRunner().run(
+            ScalarLoweringSpec.create(
+                j,
+                dims={name: int(extent) for name, extent in entry["extents"].items()},
+                input_bindings=entry["input_bindings"],
+                output_bindings=entry["output_bindings"],
+            ),
+            values,
+        )
+        if not reference_result.ok:
+            raise RuntimeError(
+                f"target-side canonical J reference failed: {reference_result.error}"
+            )
+        reference = dict(reference_result.outputs)
+    else:
+        values = decode_values(entry["values"])
+        reference = decode_values(entry["reference_outputs"])
+    validate_j_inputs(
+        j,
+        input_bindings=entry["input_bindings"],
+        values=values,
+    )
     j_inputs = {item.name: item for item in j.intent.inputs}
     inputs = []
     for name in entry["input_order"]:
@@ -267,6 +486,17 @@ def _one_kernel(
         )
         for item in entry["output_specs"]
     ]
+    reference_cuda = {
+        key: torch_tensor_from_numpy(
+            torch,
+            reference[key],
+            dtype=_torch_dtype(torch, spec["dtype"]),
+            device="cuda",
+        )
+        for key, spec in zip(
+            entry["output_keys"], entry["output_specs"], strict=True
+        )
+    }
     tensors = [*inputs, *outputs]
     workload_cost = entry.get("workload_cost")
     logical_io_bytes = sum(item.numel() * item.element_size() for item in tensors)
@@ -313,7 +543,7 @@ def _one_kernel(
 
     candidate_records: list[dict[str, Any]] = []
     candidate_artifacts: dict[
-        str, tuple[Mapping[str, Any], PortableExtractedLaunch, Any]
+        str, tuple[Mapping[str, Any], PortableExtractedLaunch, Any, list[Any]]
     ] = {}
     for candidate in entry["candidates"]:
         try:
@@ -334,13 +564,17 @@ def _one_kernel(
                 raise TypeError("unsupported portable CUDA launch record")
             thunk()
             torch.cuda.synchronize()
-            agreement = _compare(
+            cuda_actual = dict(
+                zip(entry["output_keys"], candidate_outputs, strict=True)
+            )
+            agreement = _compare_cuda_outputs(
+                torch,
                 name="mlir-cubin",
-                actual=_actual_outputs(entry["output_keys"], candidate_outputs),
-                reference=reference,
+                actual=cuda_actual,
+                reference=reference_cuda,
                 j=j,
                 entry=entry,
-                values=values,
+                policy=policy,
             )
             if not agreement.passed:
                 candidate_records.append(
@@ -380,7 +614,12 @@ def _one_kernel(
                 }
             )
             candidate_id = candidate["candidate"]["candidate_id"]
-            candidate_artifacts[candidate_id] = (candidate, extracted, thunk)
+            candidate_artifacts[candidate_id] = (
+                candidate,
+                extracted,
+                thunk,
+                candidate_outputs,
+            )
         except Exception as exc:
             candidate_records.append(
                 {
@@ -463,15 +702,17 @@ def _one_kernel(
                 )
             )
     ranked_indices = []
-    ranking_source = (
-        [*mandatory_indices, *initial_ranked]
-        if not c_oracle_complete
-        else [*mandatory_indices, *measured_indices]
-    )
+    # The complete C oracle needs one latency for every transported candidate,
+    # but it must not turn every candidate into a main-performance finalist.
+    # Rank the complete initial map, then freshly remeasure only the requested
+    # top set plus each formal arm's provisional winner.  Otherwise a large
+    # oracle universe changes the confirmation protocol and introduces minutes
+    # of target drift into Source/IntentIR paired timing.
+    ranking_source = [*mandatory_indices, *initial_ranked]
     for index in ranking_source:
         if index not in ranked_indices:
             ranked_indices.append(index)
-        if not c_oracle_complete and (
+        if (
             len(ranked_indices) >= finalist_count
             and all(item in ranked_indices for item in mandatory_indices)
         ):
@@ -500,7 +741,10 @@ def _one_kernel(
         record["latency_us"] = float(statistics.median(samples))
         record["finalist_batch_us"] = samples
     if not measured_indices:
-        raise RuntimeError("no correct bundled MLIR candidate")
+        raise KernelFailure(
+            "no correct bundled MLIR candidate",
+            {"candidates": candidate_records},
+        )
 
     freshly_remeasured = {
         index for index, samples in finalist_samples.items() if samples
@@ -535,7 +779,27 @@ def _one_kernel(
             f"active CUDA search order {active_order_name!r} has no correct candidate"
         )
     best_id = best_record["candidate"]["candidate_id"]
-    winner, extracted, winner_thunk = candidate_artifacts[best_id]
+    winner, extracted, winner_thunk, winner_outputs = candidate_artifacts[best_id]
+    winner_thunk()
+    torch.cuda.synchronize()
+    winner_agreement = _compare(
+        name="mlir-cubin-final-winner",
+        actual=_actual_outputs(entry["output_keys"], winner_outputs),
+        reference=reference,
+        j=j,
+        entry=entry,
+        values=values,
+        policy=policy,
+    )
+    if not winner_agreement.passed:
+        raise KernelFailure(
+            "selected CUDA winner differs from canonical J under CPU Q",
+            {
+                "candidates": candidate_records,
+                "winner_correctness": winner_agreement.to_json(),
+            },
+        )
+    best_record["correctness"] = winner_agreement.to_json()
 
     def candidates_to_95pct(order: list[str]) -> int | None:
         if c_oracle_best is None:
@@ -587,9 +851,16 @@ def _one_kernel(
                 j=j,
                 entry=entry,
                 values=values,
+                policy=policy,
             )
             if not source_agreement.passed:
-                raise RuntimeError("source Triton baseline differs from canonical J")
+                raise KernelFailure(
+                    "source Triton baseline differs from canonical J",
+                    {
+                        "candidates": candidate_records,
+                        "source_correctness": source_agreement.to_json(),
+                    },
+                )
             source_thunk = source.thunk()
             confirmation_warmup_rounds = _warmup_thunks(
                 torch,
@@ -656,6 +927,11 @@ def _one_kernel(
         "baseline_policy": baseline_policy,
         "workload_valuation": entry.get("workload_valuation"),
         "extents": entry["extents"],
+        "workload_signature": {
+            "inputs": entry.get("input_specs"),
+            "outputs": entry["output_specs"],
+            "extents": entry["extents"],
+        },
         "contract_view": entry["contract_view"],
         "search_orders": entry["search_orders"],
         "candidate_count": len(entry["candidates"]),
@@ -680,9 +956,33 @@ def _one_kernel(
             ),
             "target_refj_measured_candidate_count": len(measured_indices),
             "formal_source_replay_closure_claimed": False,
-            "policy": DEFAULT_GATE2_POLICY.policy_id,
+            "policy": policy.policy_id,
         },
         "performance": {
+            "c_fixed_us": (
+                c_fixed_same_run["latency_us"]
+                if c_fixed_same_run is not None
+                else None
+            ),
+            "schedule_only_us": (
+                schedule_spine_best["latency_us"]
+                if schedule_spine_best is not None
+                else None
+            ),
+            "intentir_us": best_record["latency_us"],
+            "g_schedule": (
+                c_fixed_same_run["latency_us"]
+                / schedule_spine_best["latency_us"]
+                if c_fixed_same_run is not None
+                and schedule_spine_best is not None
+                else None
+            ),
+            "g_lowering": (
+                schedule_spine_best["latency_us"]
+                / best_record["latency_us"]
+                if schedule_spine_best is not None
+                else None
+            ),
             "mlir_us": mlir_latency,
             "source_triton_us": source_latency,
             "mlir_over_triton": (
@@ -772,15 +1072,17 @@ def _one_kernel(
                     "same_run_measurement": True,
                     "c_fixed_candidate_id": c_fixed_candidate_id,
                     "c_fixed_us": c_fixed_same_run["latency_us"],
-                    "schedule_only_best_candidate_id": best_id,
-                    "schedule_only_best_us": best_record["latency_us"],
+                    "schedule_only_best_candidate_id": (
+                        schedule_spine_best["candidate"]["candidate_id"]
+                    ),
+                    "schedule_only_best_us": schedule_spine_best["latency_us"],
                     "schedule_over_c_fixed_speedup": (
                         c_fixed_same_run["latency_us"]
-                        / best_record["latency_us"]
+                        / schedule_spine_best["latency_us"]
                     ),
                 }
                 if c_fixed_same_run is not None
-                and schedule_spine_order == active_order
+                and schedule_spine_best is not None
                 else None
             ),
             "logical_io": {
@@ -994,13 +1296,14 @@ def main(argv: list[str] | None = None) -> int:
                     flush=True,
                 )
         except Exception as exc:
-            records.append(
-                {
-                    "kernel": entry["kernel"],
-                    "status": "failed",
-                    "error": f"{type(exc).__name__}: {exc}",
-                }
-            )
+            failure = {
+                "kernel": entry["kernel"],
+                "status": "failed",
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+            if isinstance(exc, KernelFailure):
+                failure["diagnostics"] = exc.diagnostics
+            records.append(failure)
             print(
                 f"{entry['kernel']}: FAILED: {type(exc).__name__}: {exc}",
                 flush=True,

@@ -150,6 +150,15 @@ def ConvertIntentPaddedRowReductionToGPU
            "shuffle reduction over contiguous feature lanes. The latter is an "
            "observation-changing compiler state and must pass the backend Q/D "
            "gate before performance selection.">,
+    Option<"rowsPerSubgroup", "rows-per-subgroup", "unsigned", "1",
+           "Number of independent output rows accumulated by each subgroup in "
+           "the subgroup-feature topology. Legal values are 1, 2, 4, or 8; "
+           "serial-row requires 1. This changes launch granularity and exposes "
+           "row-level ILP without changing an individual reduction tree.">,
+    Option<"lanesPerRow", "lanes-per-row", "unsigned", "32",
+           "Power-of-two subgroup width used by subgroup-feature reduction. "
+           "Legal values are 4, 8, 16, or 32 and must divide a hardware warp. "
+           "Narrow subgroups let one warp reduce several independent rows.">,
   ];
 }
 

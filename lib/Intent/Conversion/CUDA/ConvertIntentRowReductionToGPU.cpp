@@ -1060,8 +1060,12 @@ struct RowReductionLowering {
 
   /// Prove a rank-1 coordinate's logical axis from its terminal einsum label.
   /// Pointwise scalar transforms may sit between the iota and that
-  /// contraction.  This disambiguates equal B/G/N extents in grouped graphs.
+  /// contraction.  A right-aligned map/select broadcast into [M,N] is an
+  /// equally strong proof of the trailing column axis.  This disambiguates
+  /// equal M/N and B/G/N extents without relying on a kernel name.
   bool isProvablyCoordinate(Value value, IotaRole role) {
+    if (role == IotaRole::Column && isTrailingColumnBroadcast(value, M, N))
+      return true;
     if (value.use_empty())
       return false;
     for (Operation *user : value.getUsers()) {

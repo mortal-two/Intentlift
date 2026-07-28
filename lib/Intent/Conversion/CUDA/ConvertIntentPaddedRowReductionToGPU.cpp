@@ -1,7 +1,7 @@
 //===- ConvertIntentPaddedRowReductionToGPU.cpp ---------------------------===//
 //
 // Structural single-launch lowering for a masked short row dot followed by
-// zero padding.  This family is intentionally keyed only by typed MLIR graph
+// zero padding.  This path is intentionally keyed only by typed MLIR graph
 // shape/dataflow; function names and frontend/source identities are absent.
 //
 //===----------------------------------------------------------------------===//
@@ -36,8 +36,11 @@ using namespace intent;
 
 namespace {
 
-static void attachPaddedRowStateReceipt(func::FuncOp lowered, int64_t threads,
+static void annotatePaddedRowState(func::FuncOp lowered, int64_t threads,
                                         StringRef topology,
+                                        int64_t rowsPerBlock,
+                                        int64_t subgroupWidth,
+                                        int64_t vectorWidth,
                                         unsigned hostValueCaptureCount) {
   MLIRContext *context = lowered.getContext();
   unsigned shuffleCount = 0;
@@ -54,6 +57,9 @@ static void attachPaddedRowStateReceipt(func::FuncOp lowered, int64_t threads,
   if (hostValueCaptureCount != 0)
     trace.push_back(
         StringAttr::get(context, "cuda.b.rank0_host_value_capture.v1"));
+  if (vectorWidth > 1)
+    trace.push_back(StringAttr::get(
+        context, "cuda.memory.packetized_feature_load.v1"));
   auto i64 = IntegerType::get(context, 64);
   lowered->setAttr("intent.backend.lowering_path_kind",
                    StringAttr::get(context, "padded_row_reduction"));
@@ -71,6 +77,12 @@ static void attachPaddedRowStateReceipt(func::FuncOp lowered, int64_t threads,
                    IntegerAttr::get(i64, allReduceCount));
   lowered->setAttr("intent.backend.block_threads",
                    IntegerAttr::get(i64, threads));
+  lowered->setAttr("intent.backend.rows_per_block",
+                   IntegerAttr::get(i64, rowsPerBlock));
+  lowered->setAttr("intent.backend.subgroup_width",
+                   IntegerAttr::get(i64, subgroupWidth));
+  lowered->setAttr("intent.backend.vector_width",
+                   IntegerAttr::get(i64, vectorWidth));
   lowered->setAttr("intent.backend.predicated_value_if_count",
                    IntegerAttr::get(i64, 0));
   lowered->setAttr("intent.backend.folded_constexpr_select_count",
@@ -135,6 +147,8 @@ struct PaddedRowDotLowering {
   bool requestedVectorizeFullFeatures;
   bool requestedPromoteRank0Scalars;
   std::string requestedReductionTopology;
+  unsigned requestedRowsPerSubgroup;
+  unsigned requestedLanesPerRow;
 
   int64_t rows = 0;
   int64_t batch = 0;
@@ -144,6 +158,7 @@ struct PaddedRowDotLowering {
   int64_t threads = 0;
   int64_t blocksPerRow = 0;
   int64_t subgroupsPerBlock = 0;
+  int64_t outputRowsPerBlock = 0;
   Type storageType;
   unsigned validRowsArgument = 0;
   unsigned validFeaturesArgument = 0;
@@ -159,11 +174,15 @@ struct PaddedRowDotLowering {
                                 unsigned requestedThreads,
                                 bool requestedVectorizeFullFeatures,
                                 bool requestedPromoteRank0Scalars,
-                                StringRef requestedReductionTopology)
+                                StringRef requestedReductionTopology,
+                                unsigned requestedRowsPerSubgroup,
+                                unsigned requestedLanesPerRow)
       : function(function), requestedThreads(requestedThreads),
         requestedVectorizeFullFeatures(requestedVectorizeFullFeatures),
         requestedPromoteRank0Scalars(requestedPromoteRank0Scalars),
-        requestedReductionTopology(requestedReductionTopology.str()) {}
+        requestedReductionTopology(requestedReductionTopology.str()),
+        requestedRowsPerSubgroup(requestedRowsPerSubgroup),
+        requestedLanesPerRow(requestedLanesPerRow) {}
 
   bool matchBound(Value value, int64_t extent, unsigned &argument) {
     value = stripUnitExpansion(value);
@@ -330,16 +349,33 @@ struct PaddedRowDotLowering {
     if (threads < 32 || threads > 1024 || threads % 32 != 0)
       return failure();
     if (requestedReductionTopology == "serial-row") {
+      if (requestedRowsPerSubgroup != 1 || requestedLanesPerRow != 32)
+        return failure();
+      outputRowsPerBlock = threads;
       blocksPerRow = (paddedRows + threads - 1) / threads;
     } else if (requestedReductionTopology == "subgroup-feature") {
       if (featureWidth < 2 || featureWidth > 1024)
         return failure();
+      if (requestedRowsPerSubgroup == 0 || requestedRowsPerSubgroup > 8 ||
+          (requestedRowsPerSubgroup & (requestedRowsPerSubgroup - 1)) != 0)
+        return failure();
+      if (requestedLanesPerRow < 4 || requestedLanesPerRow > 32 ||
+          (requestedLanesPerRow & (requestedLanesPerRow - 1)) != 0 ||
+          32 % requestedLanesPerRow != 0)
+        return failure();
+      if (requestedVectorizeFullFeatures) {
+        int64_t packetWidth = isa<Float32Type>(storageType) ? 4 : 8;
+        if (!staticBounds ||
+            featureWidth % (requestedLanesPerRow * packetWidth) != 0)
+          return failure();
+      }
       // Use complete hardware warps even when the logical feature strip is
       // shorter.  PTX sub-warp shuffle masks are fragile for multiple logical
       // groups in one warp; inactive feature lanes contribute zero instead.
-      subgroupsPerBlock = threads / 32;
+      subgroupsPerBlock = threads / requestedLanesPerRow;
+      outputRowsPerBlock = subgroupsPerBlock * requestedRowsPerSubgroup;
       blocksPerRow =
-          (paddedRows + subgroupsPerBlock - 1) / subgroupsPerBlock;
+          (paddedRows + outputRowsPerBlock - 1) / outputRowsPerBlock;
     } else {
       return failure();
     }
@@ -390,9 +426,10 @@ struct PaddedRowDotLowering {
     Value c0 = builder.create<arith::ConstantIndexOp>(location, 0);
     Value cBlocksPerRow = builder.create<arith::ConstantIndexOp>(
         location, blocksPerRow);
-    Value cSubgroupsPerBlock = builder.create<arith::ConstantIndexOp>(
-        location, subgroupsPerBlock);
-    Value cSubgroupWidth = builder.create<arith::ConstantIndexOp>(location, 32);
+    Value cOutputRowsPerBlock = builder.create<arith::ConstantIndexOp>(
+        location, outputRowsPerBlock);
+    Value cSubgroupWidth = builder.create<arith::ConstantIndexOp>(
+        location, requestedLanesPerRow);
     Value cFeatureWidth = builder.create<arith::ConstantIndexOp>(
         location, featureWidth);
     Value cPhysicalRows = builder.create<arith::ConstantIndexOp>(
@@ -414,114 +451,187 @@ struct PaddedRowDotLowering {
     Value lane = builder.create<arith::RemUIOp>(location, threadId,
                                                  cSubgroupWidth);
     Value subgroupBase = builder.create<arith::MulIOp>(
-        location, rowBlock, cSubgroupsPerBlock);
-    Value paddedRow = builder.create<arith::AddIOp>(
+        location, rowBlock, cOutputRowsPerBlock);
+    Value subgroupBaseRow = builder.create<arith::AddIOp>(
         location, subgroupBase, subgroup);
     Value zero = builder.create<arith::ConstantFloatOp>(
         location, APFloat(0.0f), builder.getF32Type());
 
-    Value outputActive = builder.create<arith::CmpIOp>(
-        location, arith::CmpIPredicate::ult, paddedRow, cPaddedRows);
-    auto outputIf = builder.create<scf::IfOp>(
-        location, outputActive, /*withElseRegion=*/false);
-    builder.setInsertionPointToStart(outputIf.thenBlock());
-    Value validRows;
-    Value validFeatures;
-    if (staticBounds) {
-      validRows = builder.create<arith::ConstantIndexOp>(location, physicalRows);
-      validFeatures =
-          builder.create<arith::ConstantIndexOp>(location, featureWidth);
-    } else if (!requestedPromoteRank0Scalars) {
-      validRowsRaw = builder.create<memref::LoadOp>(
-          location, entry->getArgument(validRowsArgument), ValueRange{});
-      validFeaturesRaw = builder.create<memref::LoadOp>(
-          location, entry->getArgument(validFeaturesArgument), ValueRange{});
-    }
-    if (!staticBounds) {
-      validRows = builder.create<arith::IndexCastOp>(
-          location, builder.getIndexType(), validRowsRaw);
-      validFeatures = builder.create<arith::IndexCastOp>(
-          location, builder.getIndexType(), validFeaturesRaw);
-    }
-    Value inPhysicalRows = builder.create<arith::CmpIOp>(
-        location, arith::CmpIPredicate::ult, paddedRow, cPhysicalRows);
-    Value inValidRows = builder.create<arith::CmpIOp>(
-        location, arith::CmpIPredicate::slt, paddedRow, validRows);
-    Value rowActive = builder.create<arith::AndIOp>(
-        location, inPhysicalRows, inValidRows);
-    auto emitScalarProduct = [&](OpBuilder &nested, Value column) -> Value {
-      SmallVector<Value> indices{batchId, row, paddedRow, column};
-      Value left = nested.create<memref::LoadOp>(
-          location, entry->getArgument(0), indices);
-      Value right = nested.create<memref::LoadOp>(
-          location, entry->getArgument(1), indices);
-      if (storageType != builder.getF32Type()) {
-        left = nested.create<arith::ExtFOp>(location,
-                                            builder.getF32Type(), left);
-        right = nested.create<arith::ExtFOp>(location,
-                                             builder.getF32Type(), right);
+    // Each hardware warp owns several independent output rows.  The rows keep
+    // separate accumulator/shuffle chains, reducing grid and launch overhead
+    // while exposing row-level ILP.  The arithmetic tree of each row is exactly
+    // the one-row subgroup tree below.
+    for (unsigned rowSlot = 0; rowSlot < requestedRowsPerSubgroup; ++rowSlot) {
+      Value paddedRow = subgroupBaseRow;
+      if (rowSlot != 0) {
+        Value cRowOffset = builder.create<arith::ConstantIndexOp>(
+            location, rowSlot * subgroupsPerBlock);
+        paddedRow = builder.create<arith::AddIOp>(location, subgroupBaseRow,
+                                                  cRowOffset);
       }
-      return nested.create<arith::MulFOp>(location, left, right);
-    };
+      Value outputActive = builder.create<arith::CmpIOp>(
+          location, arith::CmpIPredicate::ult, paddedRow, cPaddedRows);
+      auto outputIf = builder.create<scf::IfOp>(
+          location, outputActive, /*withElseRegion=*/false);
+      builder.setInsertionPointToStart(outputIf.thenBlock());
+      Value validRows;
+      Value validFeatures;
+      if (staticBounds) {
+        validRows =
+            builder.create<arith::ConstantIndexOp>(location, physicalRows);
+        validFeatures =
+            builder.create<arith::ConstantIndexOp>(location, featureWidth);
+      } else if (!requestedPromoteRank0Scalars) {
+        validRowsRaw = builder.create<memref::LoadOp>(
+            location, entry->getArgument(validRowsArgument), ValueRange{});
+        validFeaturesRaw = builder.create<memref::LoadOp>(
+            location, entry->getArgument(validFeaturesArgument), ValueRange{});
+      }
+      if (!staticBounds) {
+        validRows = builder.create<arith::IndexCastOp>(
+            location, builder.getIndexType(), validRowsRaw);
+        validFeatures = builder.create<arith::IndexCastOp>(
+            location, builder.getIndexType(), validFeaturesRaw);
+      }
+      Value inPhysicalRows = builder.create<arith::CmpIOp>(
+          location, arith::CmpIPredicate::ult, paddedRow, cPhysicalRows);
+      Value inValidRows = builder.create<arith::CmpIOp>(
+          location, arith::CmpIPredicate::slt, paddedRow, validRows);
+      Value rowActive = builder.create<arith::AndIOp>(
+          location, inPhysicalRows, inValidRows);
+      auto emitScalarProduct = [&](OpBuilder &nested, Value column) -> Value {
+        SmallVector<Value> indices{batchId, row, paddedRow, column};
+        Value left = nested.create<memref::LoadOp>(
+            location, entry->getArgument(0), indices);
+        Value right = nested.create<memref::LoadOp>(
+            location, entry->getArgument(1), indices);
+        if (storageType != builder.getF32Type()) {
+          left = nested.create<arith::ExtFOp>(location,
+                                              builder.getF32Type(), left);
+          right = nested.create<arith::ExtFOp>(location,
+                                               builder.getF32Type(), right);
+        }
+        return nested.create<arith::MulFOp>(location, left, right);
+      };
+      int64_t packetWidth = isa<Float32Type>(storageType) ? 4 : 8;
+      auto emitPacketProduct = [&](OpBuilder &nested, Value column) -> Value {
+        auto vectorType = VectorType::get({packetWidth}, storageType);
+        SmallVector<Value> indices{batchId, row, paddedRow, column};
+        Value leftVector = nested.create<vector::LoadOp>(
+            location, vectorType, entry->getArgument(0), indices);
+        Value rightVector = nested.create<vector::LoadOp>(
+            location, vectorType, entry->getArgument(1), indices);
+        Value sum = nested.create<arith::ConstantFloatOp>(
+            location, APFloat(0.0f), nested.getF32Type());
+        for (int64_t element = 0; element < packetWidth; ++element) {
+          Value left = nested.create<vector::ExtractOp>(
+              location, leftVector, ArrayRef<int64_t>{element});
+          Value right = nested.create<vector::ExtractOp>(
+              location, rightVector, ArrayRef<int64_t>{element});
+          if (storageType != nested.getF32Type()) {
+            left = nested.create<arith::ExtFOp>(location, nested.getF32Type(),
+                                                left);
+            right = nested.create<arith::ExtFOp>(location, nested.getF32Type(),
+                                                 right);
+          }
+          Value product =
+              nested.create<arith::MulFOp>(location, left, right);
+          sum = nested.create<arith::AddFOp>(location, sum, product);
+        }
+        return sum;
+      };
 
-    // One hardware warp owns one output row.  Each lane accumulates a static
-    // strided feature strip (lane, lane+32, ...), then the warp shuffle tree
-    // combines those partials.  This retains the D<=32 path while extending the
-    // same topology to natural attention head dimensions such as 64/128/256.
-    Value accumulator = zero;
-    for (int64_t base = 0; base < featureWidth; base += 32) {
-      Value cBase = builder.create<arith::ConstantIndexOp>(location, base);
-      Value column = builder.create<arith::AddIOp>(location, lane, cBase);
-      Value inStaticFeatures = builder.create<arith::CmpIOp>(
-          location, arith::CmpIPredicate::ult, column, cFeatureWidth);
-      Value inValidFeatures = builder.create<arith::CmpIOp>(
-          location, arith::CmpIPredicate::slt, column, validFeatures);
-      Value featureActive = builder.create<arith::AndIOp>(
-          location, inStaticFeatures, inValidFeatures);
-      Value termActive = builder.create<arith::AndIOp>(
-          location, rowActive, featureActive);
-      auto termIf = builder.create<scf::IfOp>(
-          location, TypeRange{builder.getF32Type()}, termActive,
-          /*withElseRegion=*/true);
-      {
-        OpBuilder::InsertionGuard guard(builder);
-        builder.setInsertionPointToStart(termIf.thenBlock());
-        builder.create<scf::YieldOp>(
-            location, emitScalarProduct(builder, column));
+      Value accumulator = zero;
+      if (requestedVectorizeFullFeatures) {
+        Value cPacketWidth = builder.create<arith::ConstantIndexOp>(
+            location, packetWidth);
+        Value lanePacket = builder.create<arith::MulIOp>(
+            location, lane, cPacketWidth);
+        for (int64_t base = 0; base < featureWidth;
+             base += requestedLanesPerRow * packetWidth) {
+          Value cBase = builder.create<arith::ConstantIndexOp>(location, base);
+          Value column =
+              builder.create<arith::AddIOp>(location, lanePacket, cBase);
+          auto termIf = builder.create<scf::IfOp>(
+              location, TypeRange{builder.getF32Type()}, rowActive,
+              /*withElseRegion=*/true);
+          {
+            OpBuilder::InsertionGuard guard(builder);
+            builder.setInsertionPointToStart(termIf.thenBlock());
+            builder.create<scf::YieldOp>(
+                location, emitPacketProduct(builder, column));
+          }
+          {
+            OpBuilder::InsertionGuard guard(builder);
+            builder.setInsertionPointToStart(termIf.elseBlock());
+            builder.create<scf::YieldOp>(location, zero);
+          }
+          builder.setInsertionPointAfter(termIf);
+          accumulator = builder.create<arith::AddFOp>(
+              location, accumulator, termIf.getResult(0));
+        }
+      } else {
+        for (int64_t base = 0; base < featureWidth;
+             base += requestedLanesPerRow) {
+          Value cBase = builder.create<arith::ConstantIndexOp>(location, base);
+          Value column = builder.create<arith::AddIOp>(location, lane, cBase);
+          Value inStaticFeatures = builder.create<arith::CmpIOp>(
+              location, arith::CmpIPredicate::ult, column, cFeatureWidth);
+          Value inValidFeatures = builder.create<arith::CmpIOp>(
+              location, arith::CmpIPredicate::slt, column, validFeatures);
+          Value featureActive = builder.create<arith::AndIOp>(
+              location, inStaticFeatures, inValidFeatures);
+          Value termActive = builder.create<arith::AndIOp>(
+              location, rowActive, featureActive);
+          auto termIf = builder.create<scf::IfOp>(
+              location, TypeRange{builder.getF32Type()}, termActive,
+              /*withElseRegion=*/true);
+          {
+            OpBuilder::InsertionGuard guard(builder);
+            builder.setInsertionPointToStart(termIf.thenBlock());
+            builder.create<scf::YieldOp>(
+                location, emitScalarProduct(builder, column));
+          }
+          {
+            OpBuilder::InsertionGuard guard(builder);
+            builder.setInsertionPointToStart(termIf.elseBlock());
+            builder.create<scf::YieldOp>(location, zero);
+          }
+          builder.setInsertionPointAfter(termIf);
+          accumulator = builder.create<arith::AddFOp>(
+              location, accumulator, termIf.getResult(0));
+        }
       }
-      {
-        OpBuilder::InsertionGuard guard(builder);
-        builder.setInsertionPointToStart(termIf.elseBlock());
-        builder.create<scf::YieldOp>(location, zero);
+      for (int64_t delta = 1; delta < requestedLanesPerRow; delta <<= 1) {
+        Value other = builder
+                          .create<gpu::ShuffleOp>(location, accumulator, delta,
+                                                  32,
+                                                  gpu::ShuffleMode::XOR)
+                          .getShuffleResult();
+        accumulator = builder.create<arith::AddFOp>(
+            location, accumulator, other);
       }
-      builder.setInsertionPointAfter(termIf);
-      accumulator = builder.create<arith::AddFOp>(
-          location, accumulator, termIf.getResult(0));
+      Value laneZero = builder.create<arith::CmpIOp>(
+          location, arith::CmpIPredicate::eq, lane, c0);
+      auto storeIf = builder.create<scf::IfOp>(location, laneZero,
+                                               /*withElseRegion=*/false);
+      builder.setInsertionPointToStart(storeIf.thenBlock());
+      Value outputValue = builder.create<arith::SelectOp>(
+          location, rowActive, accumulator, zero);
+      builder.create<memref::StoreOp>(
+          location, outputValue, entry->getArgument(outputArgument),
+          ValueRange{batchId, row, paddedRow});
+      builder.setInsertionPointAfter(outputIf);
     }
-    for (int64_t delta = 1; delta < 32; delta <<= 1) {
-      Value other = builder.create<gpu::ShuffleOp>(
-                              location, accumulator, delta, 32,
-                              gpu::ShuffleMode::XOR)
-                        .getShuffleResult();
-      accumulator = builder.create<arith::AddFOp>(
-          location, accumulator, other);
-    }
-    Value laneZero = builder.create<arith::CmpIOp>(
-        location, arith::CmpIPredicate::eq, lane, c0);
-    auto storeIf = builder.create<scf::IfOp>(location, laneZero,
-                                             /*withElseRegion=*/false);
-    builder.setInsertionPointToStart(storeIf.thenBlock());
-    Value outputValue = builder.create<arith::SelectOp>(
-        location, rowActive, accumulator, zero);
-    builder.create<memref::StoreOp>(
-        location, outputValue, entry->getArgument(outputArgument),
-        ValueRange{batchId, row, paddedRow});
-    builder.setInsertionPointAfter(outputIf);
     builder.create<gpu::TerminatorOp>(location);
     builder.setInsertionPointAfter(launch);
     builder.create<func::ReturnOp>(location);
-    attachPaddedRowStateReceipt(
-        lowered, threads, "subgroup_feature",
+    annotatePaddedRowState(
+        lowered, threads, "subgroup_feature", outputRowsPerBlock,
+        requestedLanesPerRow,
+        requestedVectorizeFullFeatures
+            ? (isa<Float32Type>(storageType) ? 4 : 8)
+            : 1,
         !staticBounds && requestedPromoteRank0Scalars ? 2 : 0);
     function.erase();
     return success();
@@ -752,7 +862,13 @@ struct PaddedRowDotLowering {
     builder.create<gpu::TerminatorOp>(location);
     builder.setInsertionPointAfter(launch);
     builder.create<func::ReturnOp>(location);
-    attachPaddedRowStateReceipt(lowered, threads, "serial_row",
+    int64_t serialVectorWidth =
+        requestedVectorizeFullFeatures &&
+                featureWidth % (isa<Float32Type>(storageType) ? 4 : 8) == 0
+            ? (isa<Float32Type>(storageType) ? 4 : 8)
+            : 1;
+    annotatePaddedRowState(lowered, threads, "serial_row",
+                                outputRowsPerBlock, 32, serialVectorWidth,
                                 !staticBounds && requestedPromoteRank0Scalars
                                     ? 2
                                     : 0);
@@ -773,14 +889,16 @@ struct ConvertIntentPaddedRowReductionToGPUPass
     for (func::FuncOp function : module.getOps<func::FuncOp>()) {
       PaddedRowDotLowering probe(function, blockThreads,
                                  vectorizeFullFeatures,
-                                 promoteRank0Scalars, reductionTopology);
+                                 promoteRank0Scalars, reductionTopology,
+                                 rowsPerSubgroup, lanesPerRow);
       if (succeeded(probe.match()))
         targets.push_back(function);
     }
     for (func::FuncOp function : targets) {
       PaddedRowDotLowering lowering(function, blockThreads,
                                     vectorizeFullFeatures,
-                                    promoteRank0Scalars, reductionTopology);
+                                    promoteRank0Scalars, reductionTopology,
+                                    rowsPerSubgroup, lanesPerRow);
       if (failed(lowering.match()) || failed(lowering.rewrite())) {
         function.emitError("padded row reduction lowering failed after match");
         return signalPassFailure();
