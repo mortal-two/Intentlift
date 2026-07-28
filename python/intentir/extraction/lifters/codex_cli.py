@@ -35,8 +35,8 @@ from .scrc import (
 )
 
 
-CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v2"
-CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v57"
+CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v3"
+CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v58"
 CODEX_CLI_TURN_TIMEOUT_SECONDS = 900.0
 
 _INITIAL_PROMPT = """You are the sole source-aware IntentIR Lift owner for this branch.
@@ -88,19 +88,8 @@ diagnostic-only and has no certification authority.
 """
 
 
-def _atomic_write_json(path: Path, value: Mapping[str, Any] | None) -> None:
-    encoded = (
-        json.dumps(
-            value,
-            indent=2,
-            sort_keys=True,
-            ensure_ascii=False,
-            allow_nan=False,
-        )
-        + "\n"
-        if value is not None
-        else "null\n"
-    ).encode("utf-8")
+def _atomic_write_text(path: Path, text: str) -> None:
+    encoded = text.encode("utf-8")
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f".{path.name}-", dir=path.parent
     )
@@ -113,6 +102,22 @@ def _atomic_write_json(path: Path, value: Mapping[str, Any] | None) -> None:
         os.replace(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def _atomic_write_json(path: Path, value: Mapping[str, Any] | None) -> None:
+    text = (
+        json.dumps(
+            value,
+            indent=2,
+            sort_keys=True,
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+        + "\n"
+        if value is not None
+        else "null\n"
+    )
+    _atomic_write_text(path, text)
 
 
 def _aggregate_usage(turns: list[CodexCLITurn]) -> dict[str, int]:
@@ -252,7 +257,54 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
         fresh_owner = self._codex_session is None
         call_turns: list[CodexCLITurn] = []
         check_results: list[dict[str, Any]] = []
+        timeout_events: list[dict[str, Any]] = []
         candidate_text: str | None = None
+        last_checked_good: str | None = None
+        timed_out_calls = 0
+        timed_out_elapsed_ms = 0.0
+
+        def check_current_candidate(*, trigger: str) -> dict[str, Any]:
+            nonlocal candidate_text, last_checked_good
+            try:
+                candidate_text = workspace.read_candidate()
+            except Exception as exc:
+                candidate_text = None
+                check = self._candidate_missing_check(
+                    f"{type(exc).__name__}: {exc}"
+                )
+            else:
+                check = check_scrc_lift_candidate(
+                    candidate_text,
+                    candidate_check_context,
+                )
+            check_results.append(
+                {
+                    "trigger": trigger,
+                    "status": check["status"],
+                    "diagnostics": [
+                        dict(item) for item in check["diagnostics"]
+                    ],
+                    "candidate_sha256": (
+                        hashlib.sha256(candidate_text.encode()).hexdigest()
+                        if candidate_text is not None
+                        else None
+                    ),
+                }
+            )
+            if (
+                trigger == "agent_tool"
+                and check["status"] == "pass"
+                and candidate_text is not None
+            ):
+                # Exact LLM-authored bytes only.  This is a transactional
+                # checkpoint for this one Lift invocation, never a previous
+                # formal-round parent and never a synthesized artifact.
+                last_checked_good = candidate_text
+            return check
+
+        def candidate_check_tool() -> Mapping[str, Any]:
+            return check_current_candidate(trigger="agent_tool")
+
         bridge = CodexCLIToolBridge(
             workspace.scratch_dir / CODEX_CLI_TOOL_BRIDGE_ROOT_NAME,
             {
@@ -265,11 +317,7 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                         )
                     ),
                 },
-                "candidate_check": lambda: (
-                    check_scrc_lift_candidate(
-                        workspace.read_candidate(), candidate_check_context
-                    )
-                )
+                "candidate_check": candidate_check_tool,
             },
         )
         try:
@@ -342,36 +390,71 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                     ) from exc
                 except CodexCLIError as exc:
                     if "wall-time limit" in str(exc):
-                        self._session_active_elapsed_ms += turn_timeout * 1000.0
-                        raise self._terminal_time_error(round_index) from exc
+                        elapsed = turn_timeout * 1000.0
+                        self._session_active_elapsed_ms += elapsed
+                        self._session_model_turns += 1
+                        self._session_physical_provider_calls += 1
+                        timed_out_calls += 1
+                        timed_out_elapsed_ms += elapsed
+                        timeout_event = {
+                            "turn_timeout_seconds": turn_timeout,
+                            "thread_id": getattr(
+                                self._codex_session, "thread_id", None
+                            ),
+                            "recovery": None,
+                        }
+                        timeout_events.append(timeout_event)
+
+                        check = check_current_candidate(
+                            trigger="host_timeout_recheck"
+                        )
+                        if (
+                            check["status"] == "pass"
+                            and candidate_text is not None
+                        ):
+                            timeout_event["recovery"] = "current_exact_candidate"
+                            break
+                        if last_checked_good is not None:
+                            _atomic_write_text(
+                                workspace.candidate_path, last_checked_good
+                            )
+                            check = check_current_candidate(
+                                trigger="host_timeout_checkpoint_restore"
+                            )
+                            if (
+                                check["status"] == "pass"
+                                and candidate_text is not None
+                            ):
+                                timeout_event["recovery"] = (
+                                    "same_invocation_checked_checkpoint"
+                                )
+                                break
+
+                        remaining_after_timeout = self._remaining_seconds()
+                        if remaining_after_timeout <= 0:
+                            timeout_event["recovery"] = "owner_time_exhausted"
+                            raise self._terminal_time_error(round_index) from exc
+                        if getattr(self._codex_session, "thread_id", None) is None:
+                            timeout_event["recovery"] = "no_resumable_thread"
+                            raise CodexCLIError(
+                                "initial Codex Lift turn timed out without a "
+                                "resumable thread or checked candidate"
+                            ) from exc
+                        _atomic_write_json(
+                            workspace.input_dir / "candidate_check.json",
+                            check,
+                        )
+                        timeout_event["recovery"] = "same_thread_continuation"
+                        prompt = _CANDIDATE_CHECK_CONTINUATION_PROMPT
+                        selected_effort = self.repair_effort or effective_effort
+                        continue
                     raise
                 call_turns.append(turn)
                 self._session_active_elapsed_ms += turn.elapsed_ms
                 self._session_model_turns += 1
                 self._session_physical_provider_calls += turn.model_segments
 
-                try:
-                    candidate_text = workspace.read_candidate()
-                except Exception as exc:
-                    check = self._candidate_missing_check(
-                        f"{type(exc).__name__}: {exc}"
-                    )
-                else:
-                    check = check_scrc_lift_candidate(
-                        candidate_text,
-                        candidate_check_context,
-                    )
-                check_results.append(
-                    {
-                        "status": check["status"],
-                        "diagnostics": [dict(item) for item in check["diagnostics"]],
-                        "candidate_sha256": (
-                            hashlib.sha256(candidate_text.encode()).hexdigest()
-                            if candidate_text is not None
-                            else None
-                        ),
-                    }
-                )
+                check = check_current_candidate(trigger="host_post_turn")
                 if check["status"] == "pass" and candidate_text is not None:
                     break
                 _atomic_write_json(
@@ -393,6 +476,7 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                 "fresh_session": fresh_owner,
                 "turns": [turn.to_evidence() for turn in call_turns],
                 "candidate_check": list(check_results),
+                "timeout_events": list(timeout_events),
                 "tool_bridge": bridge.evidence,
             }
             self._records.append(
@@ -425,6 +509,7 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
             "thread_id": self._codex_session.thread_id,
             "turns": [turn.to_evidence() for turn in call_turns],
             "candidate_check": list(check_results),
+            "timeout_events": list(timeout_events),
             "tool_bridge": bridge.evidence,
             "isolation": {
                 "outer": "bubblewrap-host-fs-v1",
@@ -435,8 +520,12 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
             },
         }
         raw_trajectory = _trajectory_bytes(trajectory)
-        elapsed_ms = sum(turn.elapsed_ms for turn in call_turns)
-        physical_calls = sum(turn.model_segments for turn in call_turns)
+        elapsed_ms = (
+            sum(turn.elapsed_ms for turn in call_turns) + timed_out_elapsed_ms
+        )
+        physical_calls = (
+            sum(turn.model_segments for turn in call_turns) + timed_out_calls
+        )
         provenance = SCRCProvenance(
             model=provider.model,
             prompt_sha256=prepared.prompt_sha256,
@@ -447,7 +536,7 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
             raw_response_sha256=hashlib.sha256(raw_trajectory).hexdigest(),
             response_text=candidate_text,
             raw_response=raw_trajectory,
-            attempts=len(call_turns),
+            attempts=len(call_turns) + timed_out_calls,
             elapsed_ms=elapsed_ms,
             backend=CODEX_CLI_LIFT_BACKEND,
             termination_status="CandidateCheckPass",
@@ -469,12 +558,13 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
             "persistent_workspace": True,
             "owner_session_id": self._session_id,
             "thread_id": self._codex_session.thread_id,
-            "cli_turns": len(call_turns),
+            "cli_turns": len(call_turns) + timed_out_calls,
             "model_segments_lower_bound": physical_calls,
             "tool_actions": sum(turn.tool_actions for turn in call_turns),
             "elapsed_ms": elapsed_ms,
             "usage": usage,
             "candidate_check": list(check_results),
+            "timeout_events": list(timeout_events),
             "tool_bridge": bridge.evidence,
             "trajectory": trajectory,
         }

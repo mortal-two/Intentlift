@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+from pathlib import Path
+import tempfile
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping
 
@@ -11,6 +14,7 @@ from intentir.extraction.providers.codex_cli import (
     CODEX_CLI_AGENT_RUNTIME,
     CODEX_CLI_TOOL_BRIDGE_ROOT_NAME,
     CodexCLICancelled,
+    CodexCLIError,
     CodexCLISession,
     CodexCLIToolBridge,
     CodexCLITurn,
@@ -36,7 +40,7 @@ from .replay import (
 )
 
 
-CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v8"
+CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v9"
 
 _INITIAL_PROMPT = """You are the sole writer for one fresh source-blind IntentIR Replay episode.
 The outer runtime exposes only this isolated /workspace. input/ is immutable;
@@ -49,7 +53,11 @@ Start with exactly one call to
 the whole input/packet.json: the tool is a lossless, compact projection of this
 packet's complete anonymous ABI, J graph and boundary, MaskC(C), U_f, and a
 per-instance pi obligation ledger joining authored routes, order, sharing,
-temporal roles, refinements, and terminal control. It does not derive a
+temporal roles, refinements, and terminal control. Its reduction-obligation
+rows colocate the exact authored operand/result types, semantic axes, local
+reduction boundary and C/pi attachments; use those rows to preserve rank and
+necessary public reshape/expand stages instead of flattening a typed operand.
+It does not derive a
 schedule or see Gate evidence. Use each J graph row and pi obligation row as a
 construction checklist. Read a named field from input/packet.json only when the
 workspace view points to an exact field that remains unclear; never re-dump the
@@ -78,6 +86,21 @@ repair the complete source yourself. The diagnostic is rejection-only and has
 no Gate or certification authority. End only after the current complete
 output/replay.source passes both replay_check and replay_compile_check.
 """
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}-", dir=path.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as output:
+            output.write(text.encode("utf-8"))
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _aggregate_usage(turns: list[CodexCLITurn]) -> dict[str, int]:
@@ -189,8 +212,9 @@ def _replay_workspace_view(packet: Mapping[str, Any]) -> dict[str, Any]:
             break
         start = next_start
 
+    reductions = _replay_reduction_obligations(packet)
     return {
-        "protocol": "intentir.scrc.replay-workspace-view.v1",
+        "protocol": "intentir.scrc.replay-workspace-view.v2",
         "status": "pass",
         "abi": {
             "u_f": dict(u_f),
@@ -211,6 +235,7 @@ def _replay_workspace_view(packet: Mapping[str, Any]) -> dict[str, Any]:
             "storage": j.get("storage"),
             "dimension_constraints": j.get("dimension_constraints"),
             "value_dimension_relations": j.get("value_dimension_relations"),
+            "reduction_obligations": reductions,
         },
         "pi": {
             "regions": pi.get("regions"),
@@ -228,6 +253,129 @@ def _replay_workspace_view(packet: Mapping[str, Any]) -> dict[str, Any]:
             "or Gate evidence"
         ),
     }
+
+
+def _replay_reduction_obligations(
+    packet: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """Colocate only already-authored J/C/pi reduction facts.
+
+    This is a lossless lookup/join for model attention.  It does not select a
+    physical rank, tile, reshape, loop, or frontend spelling.
+    """
+
+    j = packet.get("j")
+    c = packet.get("c")
+    pi = packet.get("pi")
+    if not isinstance(j, Mapping) or not isinstance(c, Mapping) or not isinstance(
+        pi, Mapping
+    ):
+        return []
+    intent = j.get("intent")
+    function = intent.get("intent_function") if isinstance(intent, Mapping) else None
+    boundary = j.get("boundary")
+    if not isinstance(function, Mapping) or not isinstance(boundary, Mapping):
+        return []
+    node_ids = j.get("node_ids")
+    path_to_node = (
+        {str(path): str(node) for node, path in node_ids.items()}
+        if isinstance(node_ids, Mapping)
+        else {}
+    )
+    boundary_rows = boundary.get("reductions")
+    reduction_by_ref: dict[str, list[Mapping[str, Any]]] = {}
+    if isinstance(boundary_rows, list):
+        for item in boundary_rows:
+            if isinstance(item, Mapping) and isinstance(item.get("node_ref"), str):
+                reduction_by_ref.setdefault(str(item["node_ref"]), []).append(item)
+    slots = c.get("slots")
+    instances = pi.get("instances")
+    slot_rows = slots if isinstance(slots, list) else []
+    instance_rows = instances if isinstance(instances, list) else []
+
+    value_types: dict[str, Any] = {}
+    for collection in ("inputs", "outputs"):
+        tensors = function.get(collection)
+        if not isinstance(tensors, list):
+            continue
+        for tensor in tensors:
+            if isinstance(tensor, Mapping) and isinstance(tensor.get("name"), str):
+                value_types[str(tensor["name"])] = {
+                    key: tensor.get(key) for key in ("dtype", "shape")
+                }
+
+    result: list[dict[str, Any]] = []
+
+    def visit(body: Any, prefix: str, local_types: dict[str, Any]) -> None:
+        if not isinstance(body, list):
+            return
+        for index, operation in enumerate(body):
+            if not isinstance(operation, Mapping):
+                continue
+            path = f"{prefix}[{index}]"
+            node_ref = (
+                str(operation["id"])
+                if isinstance(operation.get("id"), str)
+                else path_to_node.get(path)
+            )
+            operands = [
+                str(item)
+                for item in operation.get("operands", [])
+                if isinstance(item, str)
+            ]
+            if operation.get("op") == "reduce":
+                result.append(
+                    {
+                        "node_ref": node_ref,
+                        "operands": operands,
+                        "operand_types": [local_types.get(item) for item in operands],
+                        "semantic_axes": (
+                            operation.get("attrs", {}).get("axes")
+                            if isinstance(operation.get("attrs"), Mapping)
+                            else None
+                        ),
+                        "result": operation.get("result"),
+                        "result_type": operation.get("type"),
+                        "boundary": [
+                            dict(item)
+                            for item in reduction_by_ref.get(str(node_ref), [])
+                        ],
+                        "c_slots": [
+                            dict(item)
+                            for item in slot_rows
+                            if isinstance(item, Mapping)
+                            and item.get("subject_ref") == node_ref
+                        ],
+                        "pi_instances": [
+                            dict(item)
+                            for item in instance_rows
+                            if isinstance(item, Mapping)
+                            and item.get("semantic_ref") == node_ref
+                        ],
+                    }
+                )
+            produced = operation.get("result")
+            produced_names = (
+                [produced]
+                if isinstance(produced, str)
+                else [item for item in produced if isinstance(item, str)]
+                if isinstance(produced, list)
+                else []
+            )
+            for name in produced_names:
+                local_types[name] = operation.get("type")
+            visit(operation.get("body"), f"{path}.body", dict(local_types))
+            for polarity in ("positive", "negative"):
+                arm = operation.get(polarity)
+                if isinstance(arm, Mapping):
+                    visit(
+                        arm.get("body"),
+                        f"{path}.{polarity}.body",
+                        dict(local_types),
+                    )
+
+    visit(function.get("body"), "body", value_types)
+    return result
 
 
 @dataclass
@@ -306,12 +454,15 @@ class CodexCLIReplayWriter:
         turns: list[CodexCLITurn] = []
         checks: list[dict[str, Any]] = []
         compile_checks: list[dict[str, Any]] = []
+        timeout_events: list[dict[str, Any]] = []
         source_text = ""
         formal_ingress = None
         formal_compile = None
+        last_checked_good: str | None = None
         prompt = _INITIAL_PROMPT
         selected_effort = effective_effort
         active_elapsed_ms = 0.0
+        timed_out_calls = 0
         thread_id: str | None = None
         session: Any | None = None
 
@@ -328,7 +479,7 @@ class CodexCLIReplayWriter:
         def replay_check_tool() -> Mapping[str, Any]:
             try:
                 return ingress_current().to_check_response()
-            except Exception as exc:
+            except Exception:
                 return {
                     "protocol": REPLAY_CHECK_PROTOCOL,
                     "status": "fail",
@@ -336,15 +487,22 @@ class CodexCLIReplayWriter:
                         {
                             "rule_code": "replay_unavailable",
                             "path": "<replay>",
-                            "observed_refs_or_types": [
-                                f"{type(exc).__name__}: {exc}"[:2048]
-                            ],
+                            "anonymous_handles": [],
+                            "line": None,
                         }
                     ],
                 }
 
         def replay_compile_tool() -> Mapping[str, Any]:
-            ingress = ingress_current()
+            nonlocal last_checked_good
+            current = workspace.read_replay()
+            ingress = replay_source_ingress(
+                current,
+                artifact=artifact,
+                frontend=self.frontend,
+                function_name=function_name,
+                packet=packet,
+            )
             if ingress.status != "pass" or ingress.code is None:
                 return ingress.to_check_response()
             checked = (
@@ -354,9 +512,16 @@ class CodexCLIReplayWriter:
                     ingress.code,
                     artifact,
                     function_name,
+                    packet=packet,
                 )
             )
-            return checked.to_check_response()
+            response = checked.to_check_response()
+            if checked.status == "pass":
+                # The checkpoint is the exact Replay-LLM-authored text that
+                # passed both source-blind construction checks in this fresh
+                # episode.  Fixed code may restore only these bytes.
+                last_checked_good = current
+            return response
 
         def replay_realization_view_tool() -> Mapping[str, Any]:
             return _replay_realization_view(packet)
@@ -373,6 +538,83 @@ class CodexCLIReplayWriter:
                 "replay_compile_check": replay_compile_tool,
             },
         )
+
+        def evaluate_current(*, trigger: str) -> tuple[bool, Mapping[str, Any]]:
+            nonlocal source_text, formal_ingress, formal_compile
+            try:
+                source_text = workspace.read_replay()
+            except Exception:
+                source_text = ""
+                formal_ingress = None
+                formal_compile = None
+                check: Mapping[str, Any] = {
+                    "protocol": REPLAY_CHECK_PROTOCOL,
+                    "status": "fail",
+                    "diagnostics": [
+                        {
+                            "rule_code": "replay_unavailable",
+                            "path": "<replay>",
+                            "anonymous_handles": [],
+                            "line": None,
+                        }
+                    ],
+                }
+            else:
+                formal_ingress = replay_source_ingress(
+                    source_text,
+                    artifact=artifact,
+                    frontend=self.frontend,
+                    function_name=function_name,
+                    packet=packet,
+                )
+                check = formal_ingress.to_check_response()
+            checks.append(
+                {
+                    "trigger": trigger,
+                    "status": check["status"],
+                    "diagnostics": [dict(item) for item in check["diagnostics"]],
+                    "source_sha256": (
+                        hashlib.sha256(source_text.encode()).hexdigest()
+                        if source_text
+                        else None
+                    ),
+                }
+            )
+            if (
+                formal_ingress is None
+                or formal_ingress.status != "pass"
+                or formal_ingress.code is None
+            ):
+                return False, check
+            formal_compile = (
+                self.compile_checker(
+                    formal_ingress.code,
+                    artifact,
+                    function_name,
+                )
+                if self.compile_checker is not None
+                else source_blind_replay_compile_check(
+                    formal_ingress.code,
+                    artifact,
+                    function_name,
+                    packet=packet,
+                )
+            )
+            compile_check = formal_compile.to_check_response()
+            compile_checks.append(
+                {
+                    "trigger": trigger,
+                    "status": compile_check["status"],
+                    "diagnostics": [
+                        dict(item) for item in compile_check["diagnostics"]
+                    ],
+                    "source_sha256": hashlib.sha256(
+                        source_text.encode()
+                    ).hexdigest(),
+                }
+            )
+            return formal_compile.status == "pass", compile_check
+
         try:
             bridge.start()
             session = self.session_factory(
@@ -391,88 +633,81 @@ class CodexCLIReplayWriter:
                 )
                 if remaining <= 0:
                     raise RuntimeError("Replay owner episode wall-time exhausted")
-                turn = session.run(
-                    prompt,
-                    timeout_seconds=min(remaining, turn_limit),
-                    effort=selected_effort,
-                    stop_requested=self.stop_requested,
-                )
+                turn_timeout = min(remaining, turn_limit)
+                try:
+                    turn = session.run(
+                        prompt,
+                        timeout_seconds=turn_timeout,
+                        effort=selected_effort,
+                        stop_requested=self.stop_requested,
+                    )
+                except CodexCLIError as exc:
+                    if "wall-time limit" not in str(exc):
+                        raise
+                    elapsed = turn_timeout * 1000.0
+                    active_elapsed_ms += elapsed
+                    timed_out_calls += 1
+                    thread_id = getattr(session, "thread_id", None)
+                    timeout_event = {
+                        "turn_timeout_seconds": turn_timeout,
+                        "thread_id": thread_id,
+                        "recovery": None,
+                    }
+                    timeout_events.append(timeout_event)
+                    passed, check = evaluate_current(
+                        trigger="host_timeout_recheck"
+                    )
+                    if passed:
+                        timeout_event["recovery"] = "current_exact_replay"
+                        break
+                    if last_checked_good is not None:
+                        _atomic_write_text(
+                            workspace.replay_path, last_checked_good
+                        )
+                        passed, check = evaluate_current(
+                            trigger="host_timeout_checkpoint_restore"
+                        )
+                        if passed:
+                            timeout_event["recovery"] = (
+                                "same_episode_checked_checkpoint"
+                            )
+                            break
+                    remaining_after_timeout = (
+                        self.session_wall_time_limit_seconds
+                        - active_elapsed_ms / 1000.0
+                    )
+                    if remaining_after_timeout <= 0:
+                        timeout_event["recovery"] = "episode_time_exhausted"
+                        raise RuntimeError(
+                            "Replay owner episode wall-time exhausted"
+                        ) from exc
+                    if thread_id is None:
+                        timeout_event["recovery"] = "no_resumable_thread"
+                        raise CodexCLIError(
+                            "initial Codex Replay turn timed out without a "
+                            "resumable thread or checked Replay"
+                        ) from exc
+                    (workspace.scratch_dir / "host_replay_check.json").write_text(
+                        json.dumps(
+                            check,
+                            indent=2,
+                            sort_keys=True,
+                            ensure_ascii=False,
+                            allow_nan=False,
+                        )
+                        + "\n",
+                        encoding="utf-8",
+                    )
+                    timeout_event["recovery"] = "same_thread_continuation"
+                    prompt = _REPAIR_PROMPT
+                    selected_effort = self.repair_effort or effective_effort
+                    continue
                 turns.append(turn)
                 thread_id = turn.thread_id
                 active_elapsed_ms += turn.elapsed_ms
-                try:
-                    source_text = workspace.read_replay()
-                except Exception as exc:
-                    check = {
-                        "protocol": REPLAY_CHECK_PROTOCOL,
-                        "status": "fail",
-                        "diagnostics": [
-                            {
-                                "rule_code": "replay_unavailable",
-                                "path": "<replay>",
-                                "observed_refs_or_types": [
-                                    f"{type(exc).__name__}: {exc}"[:2048]
-                                ],
-                            }
-                        ],
-                    }
-                    formal_ingress = None
-                else:
-                    formal_ingress = replay_source_ingress(
-                        source_text,
-                        artifact=artifact,
-                        frontend=self.frontend,
-                        function_name=function_name,
-                        packet=packet,
-                    )
-                    check = formal_ingress.to_check_response()
-                checks.append(
-                    {
-                        "status": check["status"],
-                        "diagnostics": [
-                            dict(item) for item in check["diagnostics"]
-                        ],
-                        "source_sha256": (
-                            hashlib.sha256(source_text.encode()).hexdigest()
-                            if source_text
-                            else None
-                        ),
-                    }
-                )
-                if (
-                    formal_ingress is not None
-                    and formal_ingress.status == "pass"
-                    and formal_ingress.code is not None
-                ):
-                    formal_compile = (
-                        self.compile_checker(
-                            formal_ingress.code,
-                            artifact,
-                            function_name,
-                        )
-                        if self.compile_checker is not None
-                        else source_blind_replay_compile_check(
-                            formal_ingress.code,
-                            artifact,
-                            function_name,
-                        )
-                    )
-                    compile_check = formal_compile.to_check_response()
-                    compile_checks.append(
-                        {
-                            "status": compile_check["status"],
-                            "diagnostics": [
-                                dict(item)
-                                for item in compile_check["diagnostics"]
-                            ],
-                            "source_sha256": hashlib.sha256(
-                                source_text.encode()
-                            ).hexdigest(),
-                        }
-                    )
-                    if formal_compile.status == "pass":
-                        break
-                    check = compile_check
+                passed, check = evaluate_current(trigger="host_post_turn")
+                if passed:
+                    break
                 (workspace.scratch_dir / "host_replay_check.json").write_text(
                     json.dumps(
                         check,
@@ -498,6 +733,7 @@ class CodexCLIReplayWriter:
                 "turns": [turn.to_evidence() for turn in turns],
                 "replay_check": checks,
                 "replay_compile_check": compile_checks,
+                "timeout_events": timeout_events,
                 "tool_bridge": bridge.evidence,
                 "formal_ingress_recheck": True,
                 "isolation": {
@@ -515,10 +751,10 @@ class CodexCLIReplayWriter:
                     "backend_protocol": CODEX_CLI_REPLAY_BACKEND,
                     "fresh_session": True,
                     "thread_id": thread_id,
-                    "cli_turns": len(turns),
+                    "cli_turns": len(turns) + timed_out_calls,
                     "model_segments_lower_bound": sum(
                         turn.model_segments for turn in turns
-                    ),
+                    ) + timed_out_calls,
                     "tool_actions": sum(turn.tool_actions for turn in turns),
                     "packet_digest": packet_digest,
                     "formal_ingress_protocol": REPLAY_CHECK_PROTOCOL,
@@ -542,8 +778,10 @@ class CodexCLIReplayWriter:
                 raw_response_sha256=hashlib.sha256(raw_trajectory).hexdigest(),
                 response_text=source_text,
                 raw_response=raw_trajectory,
-                attempts=len(turns),
-                physical_provider_calls=sum(turn.model_segments for turn in turns),
+                attempts=len(turns) + timed_out_calls,
+                physical_provider_calls=(
+                    sum(turn.model_segments for turn in turns) + timed_out_calls
+                ),
                 transport_retries=0,
                 elapsed_ms=active_elapsed_ms,
                 trajectory=trajectory,
@@ -565,6 +803,7 @@ class CodexCLIReplayWriter:
                 "turns": [turn.to_evidence() for turn in turns],
                 "replay_check": checks,
                 "replay_compile_check": compile_checks,
+                "timeout_events": timeout_events,
                 "tool_bridge": bridge.evidence,
                 "failure_class": type(exc).__name__,
                 **(
@@ -594,14 +833,14 @@ class CodexCLIReplayWriter:
                 ),
                 raw_response_sha256=hashlib.sha256(raw_trajectory).hexdigest(),
                 raw_response=raw_trajectory,
-                attempts=len(turns),
+                attempts=len(turns) + timed_out_calls,
                 elapsed_ms=active_elapsed_ms,
                 trajectory=trajectory,
                 backend_protocol=CODEX_CLI_REPLAY_BACKEND,
                 episode_contract_sha256=episode_contract_sha256,
                 physical_provider_calls=sum(
                     turn.model_segments for turn in turns
-                ) + cancelled_calls,
+                ) + cancelled_calls + timed_out_calls,
                 transport_retries=0,
             )
             self._records.append(attempt)

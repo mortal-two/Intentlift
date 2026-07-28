@@ -476,7 +476,7 @@ def test_episode_contract_digest_binds_exact_files_prompts_and_budgets() -> None
     assert default_config["model"]["retry_timeouts"] is True
     assert default_config["model"]["semantic_initial_turns"] == 1
     assert default_config["model"]["model_kwargs"]["parallel_tool_calls"] is True
-    assert MINISWE_REPLAY_BACKEND == "minisweagent.intentir-replay.v13"
+    assert MINISWE_REPLAY_BACKEND == "minisweagent.intentir-replay.v14"
     instance = default_config["agent"]["instance_template"]
     assert "exact_packet_embedded=true" in instance
     assert "do not query" in instance
@@ -558,6 +558,80 @@ def test_static_ingress_reports_all_independent_constexpr_annotation_errors() ->
     assert [
         item["path"] for item in rejected.to_check_response()["diagnostics"]
     ] == ["<parameter:p0>", "<parameter:c0>"]
+
+
+def test_static_ingress_preserves_but_forbids_reading_true_absent_carrier() -> None:
+    payload = make_reduce_artifact().to_json()
+    payload["j"]["signature"]["parameters"].append(
+        {
+            "name": "p3",
+            "kind": "opaque",
+            "mode": "value",
+            "dtype": "none",
+        }
+    )
+    artifact = Gate1Artifact.from_json(payload)
+    prefix = VALID_REPLAY.replace(
+        "def scrc_k0(p0, p1, p2, c0: tl.constexpr):",
+        "def scrc_k0(p0, p1, p2, p3, c0: tl.constexpr):",
+    )
+
+    accepted = replay_source_ingress(
+        prefix,
+        artifact=artifact,
+        frontend=Frontend.TRITON,
+    )
+    rejected = replay_source_ingress(
+        prefix.replace(
+            "    v0 = tl.arange(0, c0)",
+            "    absent = p3\n    v0 = tl.arange(0, c0)",
+        ),
+        artifact=artifact,
+        frontend=Frontend.TRITON,
+    )
+
+    assert accepted.status == "pass"
+    assert rejected.to_check_response()["diagnostics"] == [
+        {
+            "rule_code": "absent_carrier_use_forbidden",
+            "path": "<parameter:p3>",
+            "anonymous_handles": ["p3"],
+            "line": 6,
+        }
+    ]
+
+
+def test_synthetic_compile_rejects_compiled_transfer_occurrence_collapse() -> None:
+    unmasked_ttir = """
+module {
+  tt.func public @scrc_k0(%p0: !tt.ptr<f32>, %p1: !tt.ptr<f32>, %p2: i32) attributes {noinline = false} {
+    %value = tt.load %p0 : !tt.ptr<f32>
+    tt.store %p1, %value : !tt.ptr<f32>
+    tt.return
+  }
+}
+"""
+
+    class PassingCompiler:
+        def compile(self, _source, _case):
+            return CompileResult(True, ttir=unmasked_ttir)
+
+    payload = make_reduce_artifact().to_json()
+    for instance in payload["pi"]["instances"]:
+        if instance["semantic_ref"] in {"a0", "a1"}:
+            instance["mechanism"] = "transfer_direct"
+    artifact = Gate1Artifact.from_json(payload)
+    result = source_blind_replay_compile_check(
+        VALID_REPLAY,
+        artifact,
+        "scrc_k0",
+        compiler=PassingCompiler(),  # type: ignore[arg-type]
+    )
+
+    assert result.status == "fail"
+    diagnostic = result.to_check_response()["diagnostics"][0]
+    assert diagnostic["rule_code"] == "compiled_transfer_direct_count"
+    assert "expected=0, actual=1" in diagnostic["path"]
 
 
 def test_replay_sandbox_has_empty_root_fixed_entrypoints_and_no_network(

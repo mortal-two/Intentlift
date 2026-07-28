@@ -186,9 +186,9 @@ fixed code不得替Lift修成`x*`。
 
 - frontend commit起点：`460aaed1c6af0b267a4a9da9ca497aea6e66ad40`；
 - artifact/decode/typecheck：`artifact.v9 / decode.v13 / typecheck.v22`；
-- Lift：`intentir.lift-knowledge.v57`；
-- Replay：Codex `openai.codex-cli.intentir-replay.v8`，MiniSWE `minisweagent.intentir-replay.v13`；
-- Replay packet/check：`replay-input.v1 / public_frontend_context_v12 / replay-check.v4`；
+- Lift：Codex `openai.codex-cli.intentir-lift.v3 / intentir.lift-knowledge.v58`；
+- Replay：Codex `openai.codex-cli.intentir-replay.v9`，MiniSWE `minisweagent.intentir-replay.v14`；
+- Replay packet/check：`replay-input.v1 / public_frontend_context_v12 / replay-check.v5`；
 - Harness：Triton workload adapter v5；
 - Gate1 observer：`triton-ttir-3.6-gate1-v11`；outer batch：`intentir.scrc.batch.v3`；
   candidate fan-out：v4 `first_observed_gate1_closure_cooperative_stop`；
@@ -232,6 +232,16 @@ Codex Replay v8 增加 `intentir.scrc.replay-workspace-view.v1`：同一 fresh s
 lossless 的匿名 ABI/J graph/J boundary/MaskC/U_f 与 per-instance π obligation ledger，不再先全文 dump
 packet 再重复读取完整 π focused view。ledger 只重排当前 packet 已声明的 route/order/sharing/time/
 refinement/terminal facts，不生成 op、predicate、地址公式或 schedule。
+
+本轮 Codex Replay v9 将该 view 升级为 v2，只把 J 中已经作者化的 reduction operand/result type、
+semantic axes、对应 boundary reduction、C attachment 与 π instance 无损并置成 reduction obligation；
+它不选择 physical rank、tile、reshape、loop 或 frontend spelling。`replay-check.v5` 在公共 synthetic
+compile 后只按 π 已作者化的 `transfer_direct` occurrence 核对 compiled load/store multiplicity，防止
+Replay 源码中的重复 transfer 被 compiler CSE 静默折叠；检查仍不读取 Source、Harness value 或 Gate1。
+Codex Lift v3 与 Replay v9 对单次 provider turn wall-time 只做同 thread/session 续跑，并且只可恢复
+本次 invocation/episode 内由同一 LLM 写出且已经通过对应 closed check 的 exact bytes；固定代码不
+合并、修复或跨正式轮次选择 candidate。MiniSWE v14 共享同一 replay-check.v5 合同，但当前 28 项
+fresh closure 仍以 Codex 为主执行路径。
 
 实现升级后只fresh rerun受影响case，不重判旧receipt。Task14期间每次通用能力提交都必须在后续
 evidence中记录commit/protocol；不能让一个长期脏工作区承载多个不可区分的实验版本。

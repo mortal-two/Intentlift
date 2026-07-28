@@ -35,14 +35,15 @@ from .prompt import (
     replay_packet_digest,
 )
 from .tilelang_codegen import extract_tilelang_module
+from .ttir import TTIRParseError, parse_ttir
 
 
-MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v13"
+MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v14"
 MINISWE_REPLAY_TURN_TIMEOUT_SECONDS = 300.0
 MINISWE_REPLAY_XHIGH_TURN_TIMEOUT_SECONDS = 900.0
 RESPONSES_REPLAY_BACKEND = "openai.responses.intentir-replay.v1"
 STATIC_REPLAY_BACKEND = "intentir.static-replay-test.v1"
-REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v4"
+REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v5"
 _ANONYMOUS_HANDLE = re.compile(r"^[pc][0-9]+$")
 
 
@@ -195,6 +196,19 @@ def _check_triton_exact_abi(
         if item.get("kind") == "constexpr"
         and item.get("logical_ref") is None
     }
+    absent_carriers = {
+        str(item["name"])
+        for item in j_parameters
+        if item.get("kind") == "opaque"
+        and str(item.get("dtype", "")).casefold() == "none"
+    }
+    forbidden_carriers = {
+        **{
+            name: "specialization_carrier_use_forbidden"
+            for name in specialization_carriers
+        },
+        **{name: "absent_carrier_use_forbidden" for name in absent_carriers},
+    }
     expected_constexpr = j_constexpr | {str(item["name"]) for item in c_slots}
     violations: list[_ReplayABIViolation] = []
     for argument in function.args.args:
@@ -228,7 +242,7 @@ def _check_triton_exact_abi(
             if (
                 isinstance(node, ast.Name)
                 and isinstance(node.ctx, ast.Load)
-                and node.id in specialization_carriers
+                and node.id in forbidden_carriers
             ):
                 first_carrier_load.setdefault(node.id, node)
     for name, node in sorted(
@@ -237,7 +251,7 @@ def _check_triton_exact_abi(
     ):
         violations.append(
             _ReplayABIViolation(
-                "specialization_carrier_use_forbidden",
+                forbidden_carriers[name],
                 path=f"<parameter:{name}>",
                 handles=(name,),
                 line=node.lineno,
@@ -1139,12 +1153,56 @@ def _source_blind_compile_failure(result: CompileResult) -> ReplayIngressResult:
     )
 
 
+def _packet_transfer_direct_counts(
+    packet: Mapping[str, Any],
+) -> tuple[dict[str, int], tuple[str, ...]]:
+    """Count only pi-authored direct boundary transfer occurrences.
+
+    This is a source-blind lookup over exact packet declarations.  It neither
+    creates a missing transfer nor decides how Replay should retain one.
+    """
+
+    j = packet.get("j")
+    pi = packet.get("pi")
+    boundary = j.get("boundary") if isinstance(j, Mapping) else None
+    accesses = boundary.get("accesses") if isinstance(boundary, Mapping) else None
+    instances = pi.get("instances") if isinstance(pi, Mapping) else None
+    if not isinstance(accesses, list) or not isinstance(instances, list):
+        return {}, ()
+    access_by_id = {
+        str(item.get("access_id")): item
+        for item in accesses
+        if isinstance(item, Mapping) and isinstance(item.get("access_id"), str)
+    }
+    counts: dict[str, int] = {}
+    refs: list[str] = []
+    for instance in instances:
+        if not isinstance(instance, Mapping) or instance.get(
+            "mechanism"
+        ) != "transfer_direct":
+            continue
+        semantic_ref = instance.get("semantic_ref")
+        access = access_by_id.get(str(semantic_ref))
+        if access is None:
+            continue
+        kind = access.get("kind")
+        if kind not in {"load", "store"}:
+            continue
+        operation = f"tt.{kind}"
+        if access.get("predicate") is not None:
+            operation += ".masked"
+        counts[operation] = counts.get(operation, 0) + 1
+        refs.append(str(semantic_ref))
+    return counts, tuple(dict.fromkeys(refs))
+
+
 def source_blind_replay_compile_check(
     code: str,
     artifact: Gate1Artifact,
     function_name: str,
     *,
     compiler: TritonCompiler | None = None,
+    packet: Mapping[str, Any] | None = None,
 ) -> ReplayIngressResult:
     """Compile Replay against the public synthetic profile, without an oracle.
 
@@ -1166,6 +1224,49 @@ def source_blind_replay_compile_check(
         )
     if not result.ok:
         return _source_blind_compile_failure(result)
+    expected_transfers, transfer_refs = _packet_transfer_direct_counts(
+        packet if packet is not None else artifact.rewriter_view(masked=False)
+    )
+    if expected_transfers and result.ttir is not None:
+        try:
+            fingerprint = parse_ttir(result.ttir)
+        except TTIRParseError:
+            return ReplayIngressResult(
+                "fail",
+                diagnostics=(
+                    {
+                        "rule_code": "synthetic_replay_observer_failed",
+                        "path": "<synthetic-frontend-compile>",
+                        "anonymous_handles": [],
+                        "line": None,
+                    },
+                ),
+            )
+        actual_ops = dict(fingerprint.op_multiset)
+        for operation in (
+            "tt.load",
+            "tt.load.masked",
+            "tt.store",
+            "tt.store.masked",
+        ):
+            expected = expected_transfers.get(operation, 0)
+            actual = actual_ops.get(operation, 0)
+            if expected == actual:
+                continue
+            return ReplayIngressResult(
+                "fail",
+                diagnostics=(
+                    {
+                        "rule_code": "compiled_transfer_direct_count",
+                        "path": (
+                            "<synthetic-frontend-compile> "
+                            f"{operation}: expected={expected}, actual={actual}"
+                        ),
+                        "anonymous_handles": list(transfer_refs[:32]),
+                        "line": None,
+                    },
+                ),
+            )
     return ReplayIngressResult(
         "pass",
         code=code,
@@ -1372,6 +1473,19 @@ never read it or create a dummy use, Python branch, runtime conditional, or
 inactive graph. The packet deliberately omits its concrete value; emit the
 complete active J graph already authored by Lift. A null-ref runtime scalar is
 different and may be used only through its packet-declared pi realization.
+
+A J.signature `opaque` parameter with dtype `none` is a true absent runtime
+carrier. Preserve its exact ABI position but never load, index, branch on,
+assemble, route, or otherwise read it. It has no J logical value and no pi
+instance. Public-dtype opaque carriers are different and remain governed by
+their authored pi topology.
+
+Distinct pi `transfer_direct` instances are distinct compiler-visible transfer
+occurrences, including repeated instances anchored to the same boundary access.
+The source-blind construction compile compares the compiled load/store
+multiplicity with those authored instances. If ordinary CSE would collapse a
+required occurrence, retain the LLM-authored transfer with a public closed
+eviction-policy spelling; the observer erases that spelling but not the event.
 """
     tool = """# Replay tool contract
 
@@ -1647,6 +1761,7 @@ class MiniSWEReplayWriter:
                     artifact,
                     function_name,
                     compiler=probe_compiler,
+                    packet=packet,
                 )
             )
             return compile_result.to_check_response()

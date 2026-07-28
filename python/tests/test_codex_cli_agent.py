@@ -323,6 +323,8 @@ def test_codex_replay_workspace_view_joins_authored_facts_without_source() -> No
     assert view["abi"]["mask_c"] == packet["c"]
     assert view["j"]["boundary"] == packet["j"]["boundary"]
     assert len(view["j"]["graph"]) == 1
+    assert view["protocol"] == "intentir.scrc.replay-workspace-view.v2"
+    assert view["j"]["reduction_obligations"] == []
     assert view["pi"]["terminal_controls"] == packet["pi"]["terminal_controls"]
     obligations = view["pi"]["obligations"]
     assert obligations["total"] == len(packet["pi"]["instances"])
@@ -659,3 +661,107 @@ def test_codex_lift_keeps_one_thread_and_repairs_from_host_check() -> None:
     adapter.close()
     assert session.closed
     assert not workspace_root.exists()
+
+
+def test_codex_lift_accepts_exact_candidate_written_before_turn_timeout() -> None:
+    artifact = make_copy_artifact()
+    candidate_text = json.dumps(artifact.to_json())
+
+    class FakeSession:
+        def __init__(self, **kwargs):
+            self.output_dir = kwargs["output_dir"]
+            self.thread_id = None
+            self.closed = False
+
+        def run(self, _prompt, **_kwargs):
+            self.thread_id = "timed-out-lift-thread"
+            (self.output_dir / "candidate.json").write_text(
+                candidate_text
+            )
+            raise CodexCLIError("Codex turn exceeded its wall-time limit")
+
+        def close(self):
+            self.closed = True
+
+    adapter = CodexCLILiftAdapter(
+        provider=ProviderConfig(
+            "test",
+            "http://provider.invalid/v1",
+            "provider-secret",
+            "test-model",
+            reasoning_effort="high",
+        ),
+        session_factory=FakeSession,
+        model_timeout_seconds=1,
+        session_wall_time_limit_seconds=10,
+    )
+    result = adapter.lift(_adapter_request(), None)
+
+    assert result.artifact.j.kernel_id == artifact.j.kernel_id
+    assert (
+        adapter.records[-1].extraction.provenance.response_text
+        == candidate_text
+    )
+    assert result.physical_calls == 1
+    assert result.metadata["cli_turns"] == 1
+    assert result.metadata["timeout_events"] == [
+        {
+            "turn_timeout_seconds": 1,
+            "thread_id": "timed-out-lift-thread",
+            "recovery": "current_exact_candidate",
+        }
+    ]
+    adapter.close()
+
+
+def test_codex_replay_accepts_exact_source_written_before_turn_timeout() -> None:
+    valid_replay = """import triton
+import triton.language as tl
+
+@triton.jit
+def scrc_k0(p0, p1, p2, c0: tl.constexpr):
+    v0 = tl.arange(0, c0)
+    v1 = tl.load(p0 + v0, mask=v0 < p2, other=0.0)
+    tl.store(p1 + v0, v1, mask=v0 < p2)
+"""
+
+    class FakeSession:
+        def __init__(self, **kwargs):
+            self.output_dir = kwargs["output_dir"]
+            self.thread_id = None
+
+        def run(self, _prompt, **_kwargs):
+            self.thread_id = "timed-out-replay-thread"
+            (self.output_dir / "replay.source").write_text(valid_replay)
+            raise CodexCLIError("Codex turn exceeded its wall-time limit")
+
+        def close(self):
+            return None
+
+    writer = CodexCLIReplayWriter(
+        provider=ProviderConfig(
+            "test",
+            "http://provider.invalid/v1",
+            "provider-secret",
+            "test-model",
+            reasoning_effort="high",
+        ),
+        session_factory=FakeSession,
+        compile_checker=lambda code, _artifact, function_name: ReplayIngressResult(
+            "pass", code=code, entry_function_name=function_name
+        ),
+        model_timeout_seconds=1,
+        session_wall_time_limit_seconds=10,
+    )
+    generation = writer.generate(make_copy_artifact())
+
+    assert generation.code == valid_replay
+    assert generation.attempts == 1
+    assert generation.physical_provider_calls == 1
+    assert generation.trajectory["timeout_events"] == [
+        {
+            "turn_timeout_seconds": 1,
+            "thread_id": "timed-out-replay-thread",
+            "recovery": "current_exact_replay",
+        }
+    ]
