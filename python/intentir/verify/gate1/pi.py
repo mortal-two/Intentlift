@@ -38,6 +38,8 @@ ITERATION_BASES: tuple[str, ...] = (
 
 PHYSICAL_ITERATION_DIRECTIONS: tuple[str, ...] = ("forward", "reverse")
 
+ROUTE_EXTENT_ROUNDINGS: tuple[str, ...] = ("floor", "ceil")
+
 REPRESENTATION_REFINEMENTS: tuple[str, ...] = (
     "identity_materialization",
     "reduction_linearization",
@@ -146,7 +148,10 @@ def render_realization_witness_wire_grammar() -> str:
         "region: a loop-region instance stays lexically inside its loop even when "
         "its operands are loop invariant, and a parent-region instance stays "
         "outside. Replay never hoists, sinks, clones, or folds a stage across a "
-        "region boundary. Each iterations "
+        "region boundary. route_extent_transforms qualifies one existing route slot: "
+        "a required positive-integer C extent reaches its attached J domain as "
+        "floor_div/ceil_div by a literal divisor greater than one. It is "
+        "representation-only and creates no J fact or Source/API spelling. Each iterations "
         "entry relates one loop region to one instance anchored by its J loop "
         "and one instance anchored by the matching C tile slot. Its closed "
         "induction_basis records only whether the physical induction variable "
@@ -283,6 +288,7 @@ class RealizationWitness:
     regions: list[dict[str, JsonValue]] = field(default_factory=list)
     instances: list[dict[str, JsonValue]] = field(default_factory=list)
     routes: list[dict[str, JsonValue]] = field(default_factory=list)
+    route_extent_transforms: list[dict[str, JsonValue]] = field(default_factory=list)
     order: list[dict[str, JsonValue]] = field(default_factory=list)
     sharing: list[dict[str, JsonValue]] = field(default_factory=list)
     refinements: list[dict[str, JsonValue]] = field(default_factory=list)
@@ -299,6 +305,9 @@ class RealizationWitness:
     ITERATION_BASES: ClassVar[frozenset[str]] = frozenset(ITERATION_BASES)
     PHYSICAL_ITERATION_DIRECTIONS: ClassVar[frozenset[str]] = frozenset(
         PHYSICAL_ITERATION_DIRECTIONS
+    )
+    ROUTE_EXTENT_ROUNDINGS: ClassVar[frozenset[str]] = frozenset(
+        ROUTE_EXTENT_ROUNDINGS
     )
 
     def __post_init__(self) -> None:
@@ -676,6 +685,71 @@ class RealizationWitness:
         if len(route_keys) != len(set(route_keys)):
             raise RealizationWitnessError("pi routes must be unique")
 
+        checked_route_extent_transforms: list[dict[str, JsonValue]] = []
+        transformed_route_slots: set[tuple[str, str, int]] = set()
+        for index, raw in enumerate(self.route_extent_transforms):
+            path = f"pi.route_extent_transforms[{index}]"
+            item = _record(
+                raw,
+                path=path,
+                required=frozenset(
+                    {"source", "target", "slot", "divisor", "rounding"}
+                ),
+            )
+            source = _declared_instance_ref(
+                item["source"],
+                path=f"{path}.source",
+                known_instances=known_instances,
+            )
+            target = _declared_instance_ref(
+                item["target"],
+                path=f"{path}.target",
+                known_instances=known_instances,
+            )
+            slot = item["slot"]
+            if isinstance(slot, bool) or not isinstance(slot, int) or slot < 0:
+                raise RealizationWitnessError(
+                    f"{path}.slot must be a non-negative integer"
+                )
+            divisor = item["divisor"]
+            if (
+                isinstance(divisor, bool)
+                or not isinstance(divisor, int)
+                or divisor <= 1
+            ):
+                raise RealizationWitnessError(
+                    f"{path}.divisor must be an integer greater than one"
+                )
+            rounding = _name(item["rounding"], f"{path}.rounding")
+            if rounding not in self.ROUTE_EXTENT_ROUNDINGS:
+                raise RealizationWitnessError(
+                    f"unsupported pi route extent rounding {rounding!r}"
+                )
+            route_slot = (source, target, slot)
+            if not any(
+                route["source"] == source
+                and route["target"] == target
+                and slot in route["slots"]
+                for route in checked_routes
+            ):
+                raise RealizationWitnessError(
+                    f"{path} must qualify one slot of an existing pi route"
+                )
+            if route_slot in transformed_route_slots:
+                raise RealizationWitnessError(
+                    "pi route extent transforms must be unique per route slot"
+                )
+            transformed_route_slots.add(route_slot)
+            checked_route_extent_transforms.append(
+                {
+                    "source": source,
+                    "target": target,
+                    "slot": slot,
+                    "divisor": divisor,
+                    "rounding": rounding,
+                }
+            )
+
         checked_order: list[dict[str, JsonValue]] = []
         for index, raw in enumerate(self.order):
             item = _record(
@@ -764,6 +838,7 @@ class RealizationWitness:
         self.regions = checked_regions
         self.instances = checked_instances
         self.routes = checked_routes
+        self.route_extent_transforms = checked_route_extent_transforms
         self.order = checked_order
         self.sharing = checked_sharing
         self.refinements = checked_refinements
@@ -793,6 +868,7 @@ class RealizationWitness:
                     "regions",
                     "instances",
                     "routes",
+                    "route_extent_transforms",
                     "order",
                     "sharing",
                     "refinements",
@@ -808,6 +884,7 @@ class RealizationWitness:
             "regions",
             "instances",
             "routes",
+            "route_extent_transforms",
             "order",
             "sharing",
             "refinements",
@@ -823,6 +900,9 @@ class RealizationWitness:
             regions=copy.deepcopy(data["regions"]),
             instances=copy.deepcopy(data["instances"]),
             routes=copy.deepcopy(data["routes"]),
+            route_extent_transforms=copy.deepcopy(
+                data.get("route_extent_transforms", [])
+            ),
             order=copy.deepcopy(data["order"]),
             sharing=copy.deepcopy(data["sharing"]),
             refinements=copy.deepcopy(data["refinements"]),
@@ -842,6 +922,7 @@ class RealizationWitness:
         include_loop_carriers: bool = True,
         include_physical_time: bool = True,
         include_terminal_controls: bool = True,
+        include_route_extent_transforms: bool = True,
     ) -> dict[str, Any]:
         result = {
             "regions": copy.deepcopy(self.regions),
@@ -851,6 +932,10 @@ class RealizationWitness:
             "sharing": copy.deepcopy(self.sharing),
             "refinements": copy.deepcopy(self.refinements),
         }
+        if include_route_extent_transforms:
+            result["route_extent_transforms"] = copy.deepcopy(
+                self.route_extent_transforms
+            )
         if include_iterations:
             result["iterations"] = copy.deepcopy(self.iterations)
         if include_loop_carriers:
@@ -871,6 +956,7 @@ __all__ = [
     "REALIZATION_MECHANISMS",
     "ITERATION_BASES",
     "PHYSICAL_ITERATION_DIRECTIONS",
+    "ROUTE_EXTENT_ROUNDINGS",
     "REPRESENTATION_REFINEMENTS",
     "render_realization_mechanism_grammar",
     "render_realization_witness_wire_grammar",

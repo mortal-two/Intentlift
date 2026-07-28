@@ -483,6 +483,7 @@ _REPLAY_COMPONENT_KEYS = {
             "regions",
             "instances",
             "routes",
+            "route_extent_transforms",
             "order",
             "sharing",
             "refinements",
@@ -764,6 +765,7 @@ def _validate_source_isolated_payload(
             forbidden = sorted(set(value) & _FORBIDDEN_KEYS)
             if "source" in value and not (
                 path.startswith("$.pi.routes[")
+                or path.startswith("$.pi.route_extent_transforms[")
                 or path.startswith("$.pi.sharing[")
             ):
                 forbidden.append("source")
@@ -952,7 +954,8 @@ def _instructions(*, frontend: Frontend, masked: bool) -> str:
         f"{frontend.value} public-frontend kernel module. You never see "
         "the source implementation. Consume J, pure C and pi directly; pi is topology, "
         "not semantic authority. Treat every pi instance, route, order edge, sharing "
-        "relation, structured or physical iteration relation, physical carrier, "
+        "relation, route extent transform, structured or physical iteration "
+        "relation, physical carrier, "
         "representation refinement and region placement as required "
         "realization topology. Region placement is exact lexical scope: emit each "
         "compiler-visible instance in its declared region, keep a loop-region "
@@ -1009,6 +1012,11 @@ def _instructions(*, frontend: Frontend, masked: bool) -> str:
         "C slot; use lower 0, step equal to that C tile, and upper exactly "
         "ceil_div(trip extent, C tile) * C tile. Do not infer a bound from current "
         "shapes/values or invent another rounding formula. "
+        "For every pi.route_extent_transforms item, resolve source to its anonymous "
+        "required positive-integer C slot and apply the declared floor/ceil division "
+        "by the literal divisor only at the named existing route target slot. This "
+        "is a representation extent partition: do not turn it into J shape/domain/"
+        "predicate semantics, apply it to another C use, or infer another transform. "
         "For every pi.physical_iterations relation, keep J's operation or boundary "
         "traversal logical while materializing the explicit physical loop from its "
         "same-subject C-attached axis, induction_basis, and direction. Preserve every "

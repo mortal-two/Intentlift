@@ -298,8 +298,13 @@ the artifact schema or external TypeCheck.
    (`auth_ref=null`) with exactly one slot-0 route into that reduce instance.
    Keep the logical axes in J; pi carries neither an axis/API nor Source text.
 21. Pi contains anonymous realization relations only. It contains no dtype,
-   shape, operator, formula, predicate, source fragment, frontend API, C value,
-   or executable text.
+   logical shape, arbitrary operator/formula, predicate, source fragment,
+   frontend API, concrete C value, or executable text. The sole closed extent
+   exception is `route_extent_transforms`: one required positive-integer C slot,
+   explicitly attached to the target J domain/axis, may be floor/ceil divided by
+   one literal divisor greater than one at one exact existing route slot. Author
+   it only when Source states that representation partition; it does not create
+   or change J shape/domain/predicate semantics and does not affect sibling uses.
    A Source-visible physical tiled loop around an ordinary J reduce/contraction or
    boundary access/domain traversal uses `physical_iterations`, not a synthetic J
    loop: bind the existing body instance, the same-subject/same-axis required

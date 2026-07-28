@@ -30,7 +30,7 @@ from .scrc_schema import scrc_lift_core_text_format
 
 
 SCRC_RELIFT_PROTOCOL = "llm_direct_pi_structured_source_aware_relift_v2"
-SCRC_DECODE_PROTOCOL = "intentir.scrc.decode.v14"
+SCRC_DECODE_PROTOCOL = "intentir.scrc.decode.v15"
 CANDIDATE_CHECK_PROTOCOL = "intentir.scrc.candidate-check.v1"
 _CANDIDATE_DIAGNOSTIC_LIMIT = 20
 _CANDIDATE_DIAGNOSTIC_TEXT_LIMIT = 2048
@@ -1032,12 +1032,8 @@ copies predicate/polarity or turns the branch into select.
 Source early return: final `effect_if`; later work in its continuation arm; one
 pi.terminal_controls pair over arm `realize` instances. It names only
 terminal/continuation, never predicate/polarity/return/Source/API.
-For every selected reachable helper, preserve the Source statement order of
-loads/stores/atomics in the owning scope.effects and pi transfer/order topology.
-Independent J node declaration order does not imply effect order. For every
-Source loop, inspect all names bound before and written inside the loop; decide
-the complete compiler-visible carrier set and author its frontend tuple order.
-The syntax-only Source outline is a checklist and never makes that decision.
+Preserve selected-helper literal memory order in scope.effects/pi; node order is
+not effect order. Outline loop-preexisting writes are only a carrier checklist.
 
 A value-yielding Source `scf.if` is one Layer-A `value_if`, never `select`:
 author a visible scalar-i1 predicate, one result/type, and two explicit
@@ -1074,10 +1070,9 @@ reduction/loop/contraction/domain/index/x* axis; never infer it from role, names
 pi, or hardware axes. Global priors may omit both. A C attachment never names
 a p* parameter, source/local, or J-body v*.
 
-Pi is non-semantic, non-executable topology: anonymous regions, J/C-anchored
-instances, slotted routes, order, sharing, placement, closed mechanisms, and
-the typed relations below. It contains no operator, predicate, value, dtype,
-shape, frontend API, Source text/name, prose, or rule identity.
+Pi is non-semantic, non-executable anonymous topology. Except for the closed
+route-extent divisor/rounding below, it contains no operator/value and never a
+predicate, dtype, logical shape, frontend API, Source spelling, prose, or rule ID.
 
 For a tiled physical realization of a structured J `loop`, author exactly one
 pi.iterations relation: loop_instance anchors that loop and tile_instance a
@@ -1089,14 +1084,14 @@ dependent anchors match; reserved tile roles only expose a wholly missing
 relation to TypeCheck. The tag has no formula/value/API and never denotes an
 untiled loop.
 
-For a Source physical tiled loop around a J fact, use pi.physical_iterations.
-body anchors non-loop reduce/contraction or boundary access/domain with a closed
-axis; tile anchors required positive-int C on the same subject/axis. Structured J
-loops use pi.iterations. Author basis/direction from Source; add no J loop/bound.
-Use physical_loop_carriers only for visible state; J owns init/update. Within one
-region, declaration order is the shared init/state/next/result tuple ordinal copied
-from the Source loop argument/yield/result order; never sort by dtype/ref/mechanism.
-This is tuple order, not event order (`pi.order`). Fixed code only validates/rejects.
+For a physical tiled loop around an existing non-loop J reduce/contraction/access/
+domain, author physical_iterations with its same-subject/axis positive-int C tile
+and Source basis/direction; structured J loops use iterations. Add physical carriers
+only for visible state, in Source tuple order. `pi.order` alone orders events.
+
+For a Source C-extent partition at one existing route slot, author exact
+source/target/slot, divisor>1, floor/ceil, and target-domain/axis attachment.
+It changes only that representation use, never J or sibling routes.
 
 Pi preserves every compiler-visible source realization event not denoted by J
 or pure C. Emit multiple instances with the same semantic_ref when one declared

@@ -32,7 +32,7 @@ INTENTIR_REPLAY_OBLIGATION_AUDIT = "intentir_replay_obligation_audit"
 INTENTIR_PACKET_QUERY = "intentir_packet_query"
 REPLAY_STARTUP_PACKET_EMBED_LIMIT_BYTES = 64 * 1024
 INTENTIR_REPLAY_INSPECT = "intentir_replay_inspect"
-REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v10"
+REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v11"
 REPLAY_TRANSACTION_PROTOCOL = "intentir.replay-transaction.v1"
 REPLAY_APPLY_PATCH_PROTOCOL = "intentir.replay-exact-text-patch.v1"
 REPLAY_DIRECT_SUBMIT_PROTOCOL = "intentir.replay-direct-submit.v1"
@@ -501,6 +501,7 @@ def _packet_requirements(packet: Mapping[str, Any]) -> dict[str, Any]:
     topology_limit = 24
 
     relation_names = (
+        "route_extent_transforms",
         "iterations",
         "loop_carriers",
         "physical_iterations",
@@ -510,6 +511,7 @@ def _packet_requirements(packet: Mapping[str, Any]) -> dict[str, Any]:
     relation_views: dict[str, Any] = {}
     referenced_instances: set[str] = set()
     relation_instance_fields = {
+        "route_extent_transforms": ("source", "target"),
         "iterations": ("loop_instance", "tile_instance"),
         "loop_carriers": ("loop_instance", "init", "state", "next", "result"),
         "physical_iterations": ("body_instance", "tile_instance"),
@@ -829,6 +831,9 @@ def _packet_critical_facts(packet: Mapping[str, Any]) -> dict[str, Any]:
     physical_iterations = pi.get("physical_iterations", [])
     if not isinstance(physical_iterations, list):
         raise TypeError("packet pi physical_iterations must be an array")
+    route_extent_transforms = pi.get("route_extent_transforms", [])
+    if not isinstance(route_extent_transforms, list):
+        raise TypeError("packet pi route_extent_transforms must be an array")
     instances_value = pi.get("instances", [])
     regions_value = pi.get("regions", [])
     order_value = pi.get("order", [])
@@ -933,11 +938,12 @@ def _packet_critical_facts(packet: Mapping[str, Any]) -> dict[str, Any]:
             }
         )
     return {
-        "protocol": "intentir.replay-critical-facts.v3",
+        "protocol": "intentir.replay-critical-facts.v4",
         "semantic_dimension_carriers": dimension_carriers,
         "typed_ieee_special_constants": special_constants,
         "broadcast_obligations": broadcast_obligations,
         "physical_iterations": physical_iterations,
+        "route_extent_transforms": route_extent_transforms,
         "reduction_linearizations": reduction_linearizations,
         "lexical_regions": lexical_regions,
         "cross_region_order": cross_region_order,
@@ -961,16 +967,21 @@ def _replay_obligation_audit_view(
     broadcast_obligations = facts["broadcast_obligations"]
     lexical_regions = facts["lexical_regions"]
     cross_region_order = facts["cross_region_order"]
+    route_extent_transforms = facts["route_extent_transforms"]
     return {
-        "protocol": "intentir.replay-obligation-audit.v2",
+        "protocol": "intentir.replay-obligation-audit.v3",
         "status": "pass",
         "source_sha256": hashlib.sha256(source_text.encode("utf-8")).hexdigest(),
         "audit_required": bool(
-            broadcast_obligations or lexical_regions or cross_region_order
+            broadcast_obligations
+            or lexical_regions
+            or cross_region_order
+            or route_extent_transforms
         ),
         "broadcast_obligations": broadcast_obligations,
         "lexical_regions": lexical_regions,
         "cross_region_order": cross_region_order,
+        "route_extent_transforms": route_extent_transforms,
         "source_nonempty_lines": [
             {
                 "line": line_number,

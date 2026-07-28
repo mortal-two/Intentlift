@@ -1258,6 +1258,7 @@ _CONTROL_PI_FIELDS = (
     "physical_loop_carriers",
     "terminal_controls",
     "routes",
+    "route_extent_transforms",
     "order",
     "sharing",
 )

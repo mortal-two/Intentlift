@@ -1,5 +1,5 @@
 {
-  "schema": "intentir.scrc.artifact.v9",
+  "schema": "intentir.scrc.artifact.v10",
   "j": {
     "kernel_id": "scrc_k0",
     "intent": {
@@ -238,6 +238,7 @@
     "loop_carriers": [],
     "physical_iterations": [],
     "physical_loop_carriers": [],
-    "terminal_controls": []
+    "terminal_controls": [],
+    "route_extent_transforms": []
   }
 }

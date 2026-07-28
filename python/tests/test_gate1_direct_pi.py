@@ -68,11 +68,17 @@ def test_direct_pi_artifact_roundtrip_and_legacy_interface_break() -> None:
         Gate1Artifact.from_json(legacy)
 
 
-def test_artifact_v9_preserves_v8_through_v1_legacy_contracts() -> None:
+def test_artifact_v10_preserves_v9_through_v1_legacy_contracts() -> None:
     current = make_reduce_artifact().to_json()
-    assert current["schema"] == "intentir.scrc.artifact.v9"
+    assert current["schema"] == "intentir.scrc.artifact.v10"
 
-    legacy_v8 = copy.deepcopy(current)
+    legacy_v9 = copy.deepcopy(current)
+    legacy_v9["schema"] = "intentir.scrc.artifact.v9"
+    del legacy_v9["pi"]["route_extent_transforms"]
+    parsed_v9 = Gate1Artifact.from_json(legacy_v9)
+    assert parsed_v9.to_json() == legacy_v9
+
+    legacy_v8 = copy.deepcopy(legacy_v9)
     legacy_v8["schema"] = "intentir.scrc.artifact.v8"
     del legacy_v8["pi"]["terminal_controls"]
     parsed_v8 = Gate1Artifact.from_json(legacy_v8)
@@ -183,6 +189,7 @@ def test_every_artifact_wire_version_requires_explicit_pi_refinements(
     payload = make_reduce_artifact().to_json()
     payload["schema"] = wire_schema
     del payload["pi"]["terminal_controls"]
+    del payload["pi"]["route_extent_transforms"]
     del payload["pi"]["physical_iterations"]
     del payload["pi"]["physical_loop_carriers"]
     if wire_schema in {
@@ -1107,7 +1114,7 @@ def test_replay_contract_accepts_an_explicit_strict_integer_widen() -> None:
 
     report = type_check(artifact.j, artifact.c, artifact.pi)
     assert report.passed
-    assert report.protocol == "intentir.scrc.typecheck.v26"
+    assert report.protocol == "intentir.scrc.typecheck.v27"
     assert build_rewriter_packet(artifact).u_f["context_policy"] == (
         "public_frontend_context_v17"
     )
@@ -1128,7 +1135,7 @@ def test_typecheck_rejects_non_widening_or_untyped_signed_widen(
 
     report = type_check(artifact.j, artifact.c, artifact.pi)
     assert not report.passed
-    assert report.protocol == "intentir.scrc.typecheck.v26"
+    assert report.protocol == "intentir.scrc.typecheck.v27"
     assert "refinement_auth_invalid_widen" in {
         item.code.value for item in report.diagnostics
     }
@@ -1427,6 +1434,7 @@ def test_lift_schema_requires_direct_pi_and_no_embedded_c_channel() -> None:
         "physical_iterations",
         "physical_loop_carriers",
         "terminal_controls",
+        "route_extent_transforms",
     }
     assert "consumer_extensions" in (
         properties["j"]["properties"]["boundary"]["required"]

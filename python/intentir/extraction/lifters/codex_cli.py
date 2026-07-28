@@ -43,7 +43,7 @@ from .scrc import (
 
 
 CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v11"
-CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v67"
+CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v68"
 CODEX_CLI_TURN_TIMEOUT_SECONDS = 900.0
 
 _EAGER_DIRECT_FEEDBACK_CATEGORIES = frozenset(

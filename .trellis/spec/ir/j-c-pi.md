@@ -17,12 +17,13 @@ inputs 中声明，`mode=output` 要求只在 J outputs 中声明；同一 handl
 时必须显式写 `mode=inout`。Decode/TypeCheck 不得把 input/output 自动升级为 inout，也不得让
 Harness 或 Gate2 为错误 overlap 伪造输入值。
 
-当前 fresh-run wire 是 `intentir.scrc.artifact.v9`，固定 Decode 是
-`intentir.scrc.decode.v14`。Lift LLM 必须一次性显式写出完整 `(J,C,π)`，包括当前版本要求的空数组；
+当前 fresh-run wire 是 `intentir.scrc.artifact.v10`，固定 Decode 是
+`intentir.scrc.decode.v15`。Lift LLM 必须一次性显式写出完整 `(J,C,π)`，包括当前版本要求的空数组；
 固定代码不从 Source、Harness valuation、C、π、Replay 或 Gate 结果补造 artifact 字段。`artifact.v4`
 引入 J-owned `value_dimension_relations` 与 `boundary.consumer_extensions`；`artifact.v5` 再引入
 J-owned `boundary.access_guard_relations`；v6/v7 增加 typed control，v8 增加 π-owned physical-only
-time relations，v9 增加 π-owned terminal-control topology。旧 v1-v8 wire 仍按各自字段集合读取，
+time relations，v9 增加 π-owned terminal-control topology，v10 增加下述 closed
+route-local extent transform。旧 v1-v9 wire 仍按各自字段集合读取，
 不通过附加空数组或新 relation 静默升级。
 
 `opaque(mode=value,dtype=none)` 是一个精确的缺席 ABI carrier：它只证明调用位置必须原样接收
@@ -207,7 +208,7 @@ C 只包含在不改变 J denotation 时可替换的匿名 slot、binding kind�
 valuation 与必要的 source-neutral selection metadata。C 不得包含 operator、predicate、formula、
 logical shape、result semantics、source topology、frontend API 或 per-kernel executable policy。
 
-`artifact.v2` 引入、当前 `artifact.v9` 保留的 slot 字段为
+`artifact.v2` 引入、当前 `artifact.v10` 保留的 slot 字段为
 `name/kind/role/value_type/required`，其中 `role` 必填，并增加两个可选 attachment：
 
 ```text
@@ -265,7 +266,7 @@ mu : Instances -> Ids(J) union Ids(C)
 不存在 `Ids(interface)`。需要接口信息时读取 `InterfaceView(J)`，但该投影不增加命名空间、
 不序列化成独立 artifact，也不作为 Replay 的额外输入。
 
-π 禁止携带：
+除下述 v10 closed route-local extent divisor/rounding 外，π 禁止携带：
 
 - operator/function/reducer、predicate/fill/index formula 或 semantic constant；
 - logical shape、result relation、destination/conflict semantics；
@@ -313,6 +314,35 @@ routed use 满足，不要求为了“显式 materialize”增加恒等赋值。
 合同可以要求直接 use 以保留编译期类型。若同一 handle 有多个 instance，它们仍必须对应不同的
 routed use-site/stage，不能据此全部折叠。
 
+### Route-local physical extent transform
+
+`artifact.v10` 允许 Lift 对一条已经存在的 π route 的一个 target-local slot 显式声明：
+
+```text
+route_extent_transforms = {
+  source, target, slot,
+  divisor: integer > 1,
+  rounding: floor | ceil
+}
+```
+
+其 dependent contract 是：`source` instance 锚定 required positive-integer C slot；`target`
+instance 是该 C slot 经 `subject_ref/axis_ref` 明确 attachment 的 J domain `realize`；
+`(source,target,slot)` 已存在于 `pi.routes`。唯一 denotation 是该 target-local representation
+extent use 等于 `floor_div(C[source],divisor)` 或 `ceil_div(C[source],divisor)`；同一 route slot
+最多一条 relation。
+
+这不是把 arbitrary formula 放回 π：operation 是二值 closed enum，divisor 是大于一的 literal，且
+relation 不能脱离已有 C instance、J domain attachment 与 route 独立存在。J 仍独立拥有 active
+logical domain、shape、predicate 与 half/split 语义；C 仍保存 Source/Replay 共同绑定的 raw physical
+extent。例如 Source 接收 `pad_hd=16`，J 可声明 `k < ceil_div(head_dim,2)`，relation 只声明某条
+physical domain route 使用 `c_pad_hd // 2`。不得把 C 改存 8、从 valuation 猜 `/2`、让 Replay
+从 J 反推 transform，或把 transform 传播到 sibling C uses。
+
+Replay 读取 MaskC 的匿名 slot 与 authored relation，并在 named route use 消费；ReplayCheck 只检查
+closed spelling 是否存在，最终 target-local topology 仍由 Gate1 observer 裁决。SCRC 后 production
+projection 在 π 前停止，只消费 J+C，因此该 relation 不是 backend permission，也不改变 `Impl(J)`。
+
 π 不能补足 J 中缺失的 semantic recurrence。若 Source 的 compiler-visible value dataflow 是
 loop-carried recurrence，J 必须用现有 structured `loop` 完整声明 trip/scan、carry/init、body update
 以及对应 next/yield/result；contraction 的 canonical subscripts 与 result-axis orientation 必须和
@@ -330,7 +360,7 @@ extent_step:  for k in [0, Trip(J.loop)) step Tile(C.slot)
 tile_ordinal: for q in [0, ceil_div(Trip(J.loop), Tile(C.slot))) step 1
 ```
 
-因此 `artifact.v3` 引入、当前 `artifact.v9` 继续要求 π 包含 closed `iterations` 数组。每项只有：
+因此 `artifact.v3` 引入、当前 `artifact.v10` 继续要求 π 包含 closed `iterations` 数组。每项只有：
 
 ```text
 {region, loop_instance, tile_instance, induction_basis}
@@ -473,7 +503,9 @@ TypeCheck(J,C,pi) -> FreshLogicalSemDecl(C,pi | J) = empty
 
 上述 C attachment、numeric-cast、result-relation compatibility、rank-0 closed signature、Layer-A total
 typing 与显式 non-trailing broadcast 合同已由早期 TypeCheck 版本逐步建立。当前
-`decode.v14/typecheck.v26` 只把 J 直接写出的 `x* == 1` 或 `1 == x*` 当作该 symbolic extent 的
+`decode.v15/typecheck.v27` 只新增 route extent transform 的 existing-route、required positive-int C、
+matching J-domain attachment/axis 与 realize-anchor dependent checks；它不生成 relation、divisor 或
+attachment。v26 只把 J 直接写出的 `x* == 1` 或 `1 == x*` 当作该 symbolic extent 的
 singleton 证据，供同一 J 已显式声明的 broadcast axes 做 shape alignment；缺少 direct equality、
 等于非 1、或同时直接等于 1 与其他整数都 fail closed。它不做 affine/SMT/transitive inference，
 不从 Harness valuation、C、π、Source 或 target shape 猜 singleton，也不补 broadcast relation。
@@ -483,8 +515,9 @@ representation-only scalar 合同也保持原有版本化历史。物理迭代�
 wire/decode 窄升为 `artifact.v3 / decode.v3`；v4 随后增加 closed dimension relations、
 `value_dimension_relations`、`consumer_extensions` 和 typed loop-carrier wire，v5 再增加
 `access_guard_relations`，v6/v7 增加 typed control，v8 增加 physical-only time，v9 增加
-terminal-control topology。当前 active 合同为
-`artifact.v9 / decode.v14 / typecheck.v26 / candidate-check.v1`；v26 继承 v25，并新增上述 direct
+terminal-control topology，v10 增加上述 closed route-local extent transform。当前 active 合同为
+`artifact.v10 / decode.v15 / typecheck.v27 / candidate-check.v1`；v27 新增上述 route extent
+dependent check。v26 继承 v25，并新增上述 direct
 singleton equality 的 source-free broadcast dependent check。v25 继承 v24，并新增
 `reduction_linearization` 的 closed topology check：该 global-safe refinement 不带 authorization，
 只能修饰一个 `realize` instance，且必须经唯一 slot-0 route 进入一个 J `reduce` 的 `realize`
@@ -506,4 +539,4 @@ select、精确 inout/pre-state 与 loop/non-loop observable merge。`candidate-
 另执行 source-identifier privacy、receipt/provenance，并在提交后重新运行该 core。receipt 必须记录
 这些版本；`artifact.v1`、`artifact.v2` 仍按各自旧 wire 读取且不得携带 `pi.iterations`，其中 v1
 也不能携带 v2 引入的 C attachment；v1-v3 禁止 v4 字段，v1-v4 禁止 v5 access guard。旧
-receipt/证书不由新 wire 静默重写、追认或刷新；v8/v9 的新增字段同样不附加到旧 wire。
+receipt/证书不由新 wire 静默重写、追认或刷新；v8/v9/v10 的新增字段同样不附加到旧 wire。

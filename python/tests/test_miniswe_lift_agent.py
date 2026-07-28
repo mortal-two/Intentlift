@@ -198,7 +198,7 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     files = _real_lift_input_files()
 
     assert CANDIDATE_CHECK_PROTOCOL == SCRC_CANDIDATE_CHECK_PROTOCOL
-    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v63"
+    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v64"
     assert "knowledge/minimal_example.json" in files
     assert "knowledge/intent_ops.md" in files
     assert "tools/schema_query.py" in files
@@ -290,6 +290,8 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     assert "local tile axis after program/grid axes" in preflight
     assert "declaration order is the exact carrier-tuple ordinal" in preflight
     assert "never sort carriers by dtype" in preflight
+    assert "`route_extent_transforms`" in preflight
+    assert "does not affect sibling uses" in preflight
 
 
 def test_context_bootstrap_keeps_feedback_visible_and_copies_previous(
@@ -749,6 +751,7 @@ def test_candidate_control_query_joins_authored_multi_output_effect_and_pi_time(
             "physical_iterations": [],
             "physical_loop_carriers": [],
             "terminal_controls": [],
+            "route_extent_transforms": [],
             "routes": [],
             "order": [{"before": "i1", "after": "i2"}],
             "sharing": [],
@@ -1138,6 +1141,15 @@ def test_compact_schema_queries_work_in_real_bubblewrap() -> None:
                 )
             }
         )
+        route_extent_result = environment.execute(
+            {
+                "command": (
+                    "python /input/tools/schema_query.py "
+                    "/input/schema/artifact.schema.json "
+                    "section pi_route_extent_transform"
+                )
+            }
+        )
     finally:
         workspace.cleanup()
 
@@ -1163,6 +1175,10 @@ def test_compact_schema_queries_work_in_real_bubblewrap() -> None:
     assert '"loop_instance"' in loop_carrier_result["output"]
     assert '"state"' in loop_carrier_result["output"]
     assert len(loop_carrier_result["output"].splitlines()) < 80
+    assert route_extent_result["returncode"] == 0
+    assert '"divisor"' in route_extent_result["output"]
+    assert '"rounding"' in route_extent_result["output"]
+    assert len(route_extent_result["output"].splitlines()) < 90
 
 
 def test_minimal_example_passes_static_schema_and_canonical_parser() -> None:
@@ -3511,7 +3527,7 @@ def test_authoritative_candidate_check_uses_source_free_versioned_context() -> N
     prepared = prepare_scrc_lift(request.source.text)
     context = scrc_candidate_check_context(prepared)
     assert context.expected_parameters == ("p0", "p1", "p2")
-    assert context.typecheck_protocol == "intentir.scrc.typecheck.v26"
+    assert context.typecheck_protocol == "intentir.scrc.typecheck.v27"
     assert "source_copy" not in repr(context)
     assert not hasattr(context, "user_input")
     assert not hasattr(context, "harness_binding")
@@ -4247,9 +4263,9 @@ def test_adapter_keeps_one_owner_context_and_workspace(monkeypatch) -> None:
     ]
     assert second.metadata["continued_from_messages"] > 0
     assert second.metadata["session_model_turns"] == 6
-    assert first.metadata["artifact_schema"] == "intentir.scrc.artifact.v9"
-    assert first.metadata["decode_protocol"] == "intentir.scrc.decode.v14"
-    assert first.metadata["typecheck_protocol"] == "intentir.scrc.typecheck.v26"
+    assert first.metadata["artifact_schema"] == "intentir.scrc.artifact.v10"
+    assert first.metadata["decode_protocol"] == "intentir.scrc.decode.v15"
+    assert first.metadata["typecheck_protocol"] == "intentir.scrc.typecheck.v27"
     assert first.metadata["candidate_check"] == {}
     assert first.metadata["physical_provider_calls"] == 3
     assert first.metadata["transport_retries"] == 0

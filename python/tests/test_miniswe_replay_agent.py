@@ -64,6 +64,46 @@ INVALID_CONSTEXPR_REPLAY = VALID_REPLAY.replace(
 )
 
 
+def _route_extent_artifact(*, rounding: str = "floor") -> Gate1Artifact:
+    payload = make_reduce_artifact().to_json()
+    payload["c"]["slots"][0]["subject_ref"] = "d1"
+    payload["c"]["slots"][0]["axis_ref"] = "x1"
+    payload["pi"]["instances"].extend(
+        [
+            {
+                "id": "i4",
+                "semantic_ref": "c0",
+                "region": "r0",
+                "mechanism": "realize",
+            },
+            {
+                "id": "i5",
+                "semantic_ref": "d1",
+                "region": "r0",
+                "mechanism": "realize",
+            },
+        ]
+    )
+    payload["pi"]["routes"].append(
+        {"source": "i4", "target": "i5", "slots": [0]}
+    )
+    payload["pi"]["route_extent_transforms"] = [
+        {
+            "source": "i4",
+            "target": "i5",
+            "slot": 0,
+            "divisor": 2,
+            "rounding": rounding,
+        }
+    ]
+    return Gate1Artifact.from_json(payload)
+
+
+ROUTE_EXTENT_REPLAY = VALID_REPLAY.replace(
+    "tl.arange(0, c0)", "tl.arange(0, c0 // 2)"
+)
+
+
 class _ScriptedModel:
     def __init__(
         self, commands: list[str | list[str]], *, secret: str = ""
@@ -506,7 +546,7 @@ def test_episode_contract_digest_binds_exact_files_prompts_and_budgets() -> None
     assert default_config["model"]["retry_timeouts"] is True
     assert default_config["model"]["semantic_initial_turns"] == 1
     assert default_config["model"]["model_kwargs"]["parallel_tool_calls"] is True
-    assert MINISWE_REPLAY_BACKEND == "minisweagent.intentir-replay.v28"
+    assert MINISWE_REPLAY_BACKEND == "minisweagent.intentir-replay.v29"
     instance = default_config["agent"]["instance_template"]
     assert "exact immutable source-blind startup transport" in instance
     assert "exact_packet_embedded=true" in instance
@@ -553,6 +593,69 @@ def test_static_ingress_checks_exact_packet_abi_without_compiling() -> None:
         "status",
         "diagnostics",
     }
+
+
+def test_static_ingress_requires_authored_route_extent_partition_spelling() -> None:
+    floor_artifact = _route_extent_artifact()
+    accepted = replay_source_ingress(
+        ROUTE_EXTENT_REPLAY,
+        artifact=floor_artifact,
+        frontend=Frontend.TRITON,
+    )
+    rejected = replay_source_ingress(
+        VALID_REPLAY,
+        artifact=floor_artifact,
+        frontend=Frontend.TRITON,
+    )
+
+    assert accepted.status == "pass", accepted.to_json()
+    assert rejected.status == "fail"
+    assert rejected.diagnostics[0]["rule_code"] == (
+        "route_extent_transform_contract"
+    )
+    assert rejected.diagnostics[0]["path"] == "pi.route_extent_transforms[0]"
+
+    ceil_artifact = _route_extent_artifact(rounding="ceil")
+    ceil_source = VALID_REPLAY.replace(
+        "tl.arange(0, c0)", "tl.arange(0, tl.cdiv(c0, 2))"
+    )
+    assert replay_source_ingress(
+        ceil_source,
+        artifact=ceil_artifact,
+        frontend=Frontend.TRITON,
+    ).status == "pass"
+
+    packet = ceil_artifact.rewriter_view(masked=False)
+    facts = _packet_critical_facts(packet)
+    assert facts["route_extent_transforms"] == [
+        {
+            "source": "i4",
+            "target": "i5",
+            "slot": 0,
+            "divisor": 2,
+            "rounding": "ceil",
+        }
+    ]
+    audit = _replay_obligation_audit_view(packet, ceil_source)
+    assert audit["audit_required"] is True
+    assert audit["route_extent_transforms"] == facts["route_extent_transforms"]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (("divisor", 1), ("divisor", 0), ("rounding", "nearest")),
+)
+def test_packet_route_extent_contract_fails_closed_on_invalid_closed_values(
+    field: str, value: object
+) -> None:
+    packet = _route_extent_artifact().rewriter_view(masked=False)
+    packet["pi"]["route_extent_transforms"][0][field] = value
+
+    with pytest.raises(replay_module._ReplayABIViolation) as error:
+        replay_module._packet_route_extent_contracts(packet)
+
+    assert error.value.rule_code == "route_extent_transform_contract"
+    assert error.value.path == "pi.route_extent_transforms[0]"
 
 
 def test_static_ingress_rejects_nonexistent_triton_program_axis() -> None:
@@ -1165,7 +1268,7 @@ def test_critical_facts_project_reduction_linearization_without_source() -> None
 
     facts = _packet_critical_facts(artifact.rewriter_view(masked=False))
 
-    assert facts["protocol"] == "intentir.replay-critical-facts.v3"
+    assert facts["protocol"] == "intentir.replay-critical-facts.v4"
     assert facts["reduction_linearizations"] == [
         {
             "instance": "i1",
@@ -1187,7 +1290,7 @@ def test_critical_facts_colocate_explicit_broadcast_obligation() -> None:
 
     facts = _packet_critical_facts(packet)
 
-    assert facts["protocol"] == "intentir.replay-critical-facts.v3"
+    assert facts["protocol"] == "intentir.replay-critical-facts.v4"
     assert facts["broadcast_obligations"] == [
         {
             "node_ref": "n0",
@@ -1217,7 +1320,7 @@ def test_critical_facts_colocate_explicit_broadcast_obligation() -> None:
     ]
 
     audit = _replay_obligation_audit_view(packet, VALID_REPLAY)
-    assert audit["protocol"] == "intentir.replay-obligation-audit.v2"
+    assert audit["protocol"] == "intentir.replay-obligation-audit.v3"
     assert audit["audit_required"] is True
     assert audit["broadcast_obligations"] == facts["broadcast_obligations"]
 
@@ -1294,7 +1397,7 @@ def test_obligation_audit_colocates_exact_ledger_and_current_source() -> None:
         artifact.rewriter_view(masked=False), VALID_REPLAY
     )
 
-    assert view["protocol"] == "intentir.replay-obligation-audit.v2"
+    assert view["protocol"] == "intentir.replay-obligation-audit.v3"
     assert view["status"] == "pass"
     assert view["audit_required"] is True
     assert view["lexical_regions"][0]["id"] == "r1"
@@ -1490,7 +1593,7 @@ def test_static_error_can_be_repaired_in_one_fresh_multi_turn_episode() -> None:
     assert '"exact_packet_embedded":true' in first_packet
     assert '"packet_bytes":' in first_packet
     assert '"bootstrap_command":null' in first_packet
-    assert "intentir.replay-critical-facts.v3" in first_packet
+    assert "intentir.replay-critical-facts.v4" in first_packet
     assert '"logical_ref":"x1"' in first_packet
     assert '"packet":' in first_packet
     assert "anonymous_source" not in first_packet

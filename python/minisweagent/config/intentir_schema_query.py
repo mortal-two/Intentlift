@@ -138,12 +138,16 @@ def _sections(schema: dict[str, Any]) -> dict[str, dict[str, Any]]:
         "pi_region": _array_item(pi["regions"]),
         "pi_instance": _array_item(pi["instances"]),
         "pi_route": _array_item(pi["routes"]),
+        "pi_route_extent_transform": _array_item(
+            pi["route_extent_transforms"]
+        ),
         "pi_order": _array_item(pi["order"]),
         "pi_sharing": _array_item(pi["sharing"]),
         "pi_iteration": _array_item(pi["iterations"]),
         "pi_loop_carrier": _array_item(pi["loop_carriers"]),
         "pi_physical_iteration": _array_item(pi["physical_iterations"]),
         "pi_physical_loop_carrier": _array_item(pi["physical_loop_carriers"]),
+        "pi_terminal_control": _array_item(pi["terminal_controls"]),
         "pi_refinement": _array_item(pi["refinements"]),
     }
 

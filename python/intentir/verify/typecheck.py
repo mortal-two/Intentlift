@@ -48,7 +48,7 @@ from intentir.verify.gate1.model import (
 from intentir.verify.gate1.pi import RealizationWitness
 
 
-TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v26"
+TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v27"
 GLOBAL_SAFE_REFINEMENTS = frozenset(
     {"identity_materialization", "reduction_linearization"}
 )
@@ -113,6 +113,7 @@ class TypeCheckErrorCode(str, Enum):
     ROUTE_CYCLE = "route_cycle"
     ROUTE_SLOT_OUT_OF_RANGE = "route_slot_out_of_range"
     ROUTE_TYPE_MISMATCH = "route_type_mismatch"
+    ROUTE_EXTENT_TRANSFORM_INVALID = "route_extent_transform_invalid"
     TRANSFER_ADDRESS_ROUTE_MISSING = "transfer_address_route_missing"
     INVALID_SHARING = "invalid_sharing"
     ITERATION_WITNESS_INVALID = "iteration_witness_invalid"
@@ -3331,6 +3332,88 @@ def _check_physical_iteration_witness(
             )
 
 
+def _check_route_extent_transforms(
+    j: SemanticArchive,
+    c: ImplementationConfig,
+    pi: RealizationWitness,
+    node_operations: Mapping[str, Mapping[str, Any]],
+    instance_anchors: Mapping[str, _Anchor],
+    diagnostics: list[TypeCheckDiagnostic],
+) -> None:
+    """Check closed C-extent partitions on existing realization route slots."""
+
+    instances = {str(item["id"]): item for item in pi.instances}
+    slots = {slot.name: slot for slot in c.slots}
+    integer_types = {"int", "integer", "i32", "i64", "u32", "u64"}
+
+    for index, relation in enumerate(pi.route_extent_transforms):
+        base = f"pi.route_extent_transforms[{index}]"
+        source_id = str(relation["source"])
+        target_id = str(relation["target"])
+        source_instance = instances.get(source_id)
+        target_instance = instances.get(target_id)
+        source_anchor = instance_anchors.get(source_id)
+        target_anchor = instance_anchors.get(target_id)
+        source_ref = (
+            str(source_instance.get("semantic_ref"))
+            if source_instance is not None
+            else ""
+        )
+        target_ref = (
+            str(target_instance.get("semantic_ref"))
+            if target_instance is not None
+            else ""
+        )
+        c_slot = slots.get(source_ref)
+        c_value = c.values.get(source_ref)
+        source_valid = (
+            source_instance is not None
+            and source_instance.get("mechanism") == "realize"
+            and source_anchor is not None
+            and source_anchor.owner == "c"
+            and source_anchor.kind == "slot"
+            and c_slot is not None
+            and c_slot.required
+            and c_slot.value_type.casefold() in integer_types
+            and isinstance(c_value, int)
+            and not isinstance(c_value, bool)
+            and c_value > 0
+        )
+        if not source_valid:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.ROUTE_EXTENT_TRANSFORM_INVALID,
+                    f"{base}.source",
+                    "route extent transform source must be one realize instance "
+                    "anchored to a required positive-integer C slot",
+                    source_id,
+                )
+            )
+
+        allowed_axes = _axis_refs_v1(j, target_ref, node_operations)
+        target_valid = (
+            target_instance is not None
+            and target_instance.get("mechanism") == "realize"
+            and target_anchor is not None
+            and target_anchor.owner == "j"
+            and target_anchor.kind == "domain"
+            and c_slot is not None
+            and c_slot.subject_ref == target_ref
+            and c_slot.axis_ref is not None
+            and c_slot.axis_ref in allowed_axes
+        )
+        if not target_valid:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.ROUTE_EXTENT_TRANSFORM_INVALID,
+                    f"{base}.target",
+                    "route extent transform target must be one realize instance "
+                    "anchored to the J domain and axis attached by its source C slot",
+                    target_id,
+                )
+            )
+
+
 def _check_physical_loop_carriers(
     pi: RealizationWitness,
     node_operations: Mapping[str, Mapping[str, Any]],
@@ -4681,6 +4764,9 @@ def type_check(
 
     _check_iteration_witness(j, c, pi, node_operations, diagnostics)
     _check_physical_iteration_witness(j, c, pi, node_operations, diagnostics)
+    _check_route_extent_transforms(
+        j, c, pi, node_operations, instance_anchors, diagnostics
+    )
     _check_loop_carriers(
         pi,
         node_operations,
