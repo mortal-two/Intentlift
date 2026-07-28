@@ -881,14 +881,16 @@ artifact 保持原始序列化、digest 与字段集合，禁止静默附加空�
 
 固定代码不把 π 解码成源码，不建立 deterministic composer。
 
-`replay-check.v8` 可以在公共、source-blind synthetic compile 后核对 π 已作者化的
+`replay-check.v9` 可以在公共、source-blind synthetic compile 后核对 π 已作者化的
 `transfer_direct` occurrence 与 compiled load/store multiplicity；它只拒绝 compiler 已经折叠的
 作者化 event，不补 transfer、不决定保留它的源码写法。它同时将 structured J loop 数与
 `pi.physical_iterations` 数之和作为已作者化的 compiled `scf.for` 必要 occurrence；
 `pi.iterations` 只 realize 其 J loop，不重复计数；每个 compiled loop 的 block-argument arity 还必须
-等于 induction 加该 loop/region 已作者化的 logical/physical carrier 数。v8 还只在
-J.signature 的 pointer/tensor carrier kind 与 π address routes 对每个 address access 完全闭合时，
-传播 pointer-producing address stage 并核对 compiled `tt.addptr` occurrence；无法闭合时不猜 final
+等于 induction 加该 loop/region 已作者化的 logical/physical carrier 数。v9 还只在
+J.signature 的 pointer/tensor carrier kind 与 π address routes 对每个 transfer 完全闭合时，
+传播 pointer-producing address stage 并核对 compiled `tt.addptr` occurrence；独立 integer
+base/lane contribution 不计作 pointer stage，未覆盖的 transfer 或未绑定 transfer 的额外 pointer
+stage都会使该窄检查停用，无法闭合时不猜 final
 address。该检查不补 loop、bound、carrier、update、address formula 或 schedule，也不
 具有 Gate 或认证权威。单次 Replay turn
 超时只允许在同一 fresh episode/thread 继续，或恢复该 episode 内 Replay LLM 已写出且通过 closed

@@ -456,19 +456,21 @@ dependent checking 夸写成 Source topology 的形式证明。
 
 首版不需要让 TypeCheck 成为 SMT 或完整图证明器。最小可行实现只需 fail closed 地完成上述局部检查。
 
-当前合并协议为 `artifact.v9 / decode.v13 / typecheck.v22 / candidate-check.v1 / replay-check.v8`；
+当前合并协议为 `artifact.v9 / decode.v13 / typecheck.v22 / candidate-check.v1 / replay-check.v9`；
 Replay packet envelope 仍是 `replay-input.v1`，Triton context 为 `public_frontend_context_v12`，
-Codex Lift knowledge 为 v59，MiniSWE Replay backend 为 v17，Codex Replay backend 为 v13。v40 为 source-aware Lift worker 增加只读、分页的 Source control-flow
+Codex Lift knowledge 为 v59，MiniSWE Replay backend 为 v18，Codex Replay backend 为 v14。v40 为 source-aware Lift worker 增加只读、分页的 Source control-flow
 outline（function/loop/if/return 的行号与嵌套深度）；v41 只把 shared dialect/lowering 已支持的
 `log2` 补入通用 `map_unary` vocabulary；v42 只要求 access `fill_value` 保留 Source 该 load 的实际
 `other`，不允许用 downstream-neutral 等价值替换。Replay v4 只要求 source-blind writer 保留 J typed
 rank/axis 与必要 compiler-visible reshape，不把 shaped reduction 压成 flattened reduction。这些版本
 都不分类/补造 artifact 语义，也不生成 Replay；仍由 Lift 与 Replay LLM 分别完整作者化输出。
-Replay workspace view v2 只把 packet 中已有的 typed reduction facts 无损并置；replay-check.v8 在
+Replay workspace view v2 只把 packet 中已有的 typed reduction facts 无损并置；replay-check.v9 在
 公共 source-blind synthetic compile 后核对 π 已声明 `transfer_direct` occurrence 的 compiled
 load/store multiplicity，并核对 structured J loop 加 `pi.physical_iterations` 已声明的 compiled
 `scf.for` occurrence，并核对对应 authored logical/physical carrier 的 block-argument arity；只在
-signature carrier kind 与 π address routes 完全闭合时核对 `tt.addptr` occurrence。它不重复
+signature carrier kind 与 π address routes 完全闭合时核对 `tt.addptr` occurrence；独立 integer
+address contribution 可使用自身 semantic ref，但 pointer-producing stage 必须与 transfer refs
+精确闭合。它不重复
 计算 `pi.iterations`，也不选择 loop bound、carrier、update、address formula、reshape、tile 或 spelling，不读取
 Source/Harness value/Gate，不改变最终 SCRC 接受谓词。Codex Lift v5 只要求 LLM reconcile
 syntax-only Source control-flow outline，固定代码仍不分类或补 artifact。单次 provider turn wall-time 后只允许同 invocation/episode 的 exact checked

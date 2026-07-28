@@ -476,7 +476,7 @@ def test_episode_contract_digest_binds_exact_files_prompts_and_budgets() -> None
     assert default_config["model"]["retry_timeouts"] is True
     assert default_config["model"]["semantic_initial_turns"] == 1
     assert default_config["model"]["model_kwargs"]["parallel_tool_calls"] is True
-    assert MINISWE_REPLAY_BACKEND == "minisweagent.intentir-replay.v17"
+    assert MINISWE_REPLAY_BACKEND == "minisweagent.intentir-replay.v18"
     instance = default_config["agent"]["instance_template"]
     assert "exact_packet_embedded=true" in instance
     assert "do not query" in instance
@@ -844,6 +844,45 @@ def test_address_count_check_skips_incomplete_memory_topology() -> None:
             "region": "r0",
             "mechanism": "transfer_direct",
         }
+    )
+
+    assert replay_module._packet_required_compiled_address_operations(
+        artifact.rewriter_view(masked=False)
+    ) == (None, ())
+
+
+def test_address_count_check_allows_authored_integer_base_contribution() -> None:
+    artifact = _address_count_replay_artifact(pointer_enters_base=False)
+    artifact.pi.instances[2]["semantic_ref"] = "d0"
+
+    assert replay_module._packet_required_compiled_address_operations(
+        artifact.rewriter_view(masked=False)
+    ) == (1, ("a0",))
+
+
+def test_address_count_check_skips_unmatched_pointer_address_stage() -> None:
+    artifact = _address_count_replay_artifact(pointer_enters_base=False)
+    artifact.pi.instances.extend(
+        [
+            {
+                "id": "i5",
+                "semantic_ref": "p0",
+                "region": "r0",
+                "mechanism": "address_base",
+            },
+            {
+                "id": "i6",
+                "semantic_ref": "p0",
+                "region": "r0",
+                "mechanism": "address_lane",
+            },
+        ]
+    )
+    artifact.pi.routes.extend(
+        [
+            {"source": "i0", "target": "i5", "slots": [0]},
+            {"source": "i5", "target": "i6", "slots": [0]},
+        ]
     )
 
     assert replay_module._packet_required_compiled_address_operations(
