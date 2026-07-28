@@ -12,6 +12,7 @@ from intentir.verify.gate1.tilelang import (
     compare_tilelang_fingerprints,
     fingerprint_tilelang,
     normalize_tilelang_tir_ops,
+    normalize_tilelang_tir_structure,
 )
 from intentir.verify.gate1.tilelang_codegen import (
     UnsafeTileLangReplayCodeError,
@@ -110,6 +111,100 @@ def test_tilelang_observer_combines_tir_topology_and_ptx_semantics() -> None:
     )
     assert not comparison.hard_passes["tir_structure"]
     assert not comparison.hard_passes["tir_topology"]
+
+
+def test_tilelang_observer_normalizes_serial_and_parallel_loop_spellings() -> None:
+    source = fingerprint_tilelang(_REPLAY, _PTX, interface={"arity": 2})
+    replay = fingerprint_tilelang(
+        _REPLAY.replace("T.Parallel", "T.serial"),
+        _PTX,
+        interface={"arity": 2},
+    )
+
+    comparison = compare_tilelang_fingerprints(source, replay)
+
+    assert comparison.hard_pass
+    assert comparison.primary_difference_category is None
+
+    changed_bound = fingerprint_tilelang(
+        _REPLAY.replace("T.Parallel(N)", "T.serial(N - 1)"),
+        _PTX,
+        interface={"arity": 2},
+    )
+    assert not compare_tilelang_fingerprints(
+        source, changed_bound
+    ).hard_passes["tir_structure"]
+
+
+@pytest.mark.parametrize(
+    "iterator",
+    (
+        "T.parallel",
+        "T.serial",
+        "T.vectorized",
+        "T.unroll",
+        "T.pipelined",
+        "T.thread_binding",
+    ),
+)
+def test_tilelang_observer_normalizes_only_public_t_schedule_iterators(
+    iterator: str,
+) -> None:
+    source = fingerprint_tilelang(_REPLAY, _PTX, interface={"arity": 2})
+    replay = fingerprint_tilelang(
+        _REPLAY.replace("T.Parallel", iterator),
+        _PTX,
+        interface={"arity": 2},
+    )
+
+    assert compare_tilelang_fingerprints(source, replay).hard_pass
+
+    non_t_iterator = fingerprint_tilelang(
+        _REPLAY.replace("T.Parallel", f"helper.{iterator.rsplit('.', 1)[-1]}"),
+        _PTX,
+        interface={"arity": 2},
+    )
+    assert not compare_tilelang_fingerprints(
+        source, non_t_iterator
+    ).hard_passes["tir_structure"]
+
+
+@pytest.mark.parametrize(
+    "statement",
+    (
+        "p1[v1] = p0[v1] + 1",
+        "p1[(v1 + 1) % N] = p0[v1]",
+        "p0[v1] = p1[v1]",
+    ),
+)
+def test_tilelang_schedule_normalization_keeps_body_indices_and_effects_hard(
+    statement: str,
+) -> None:
+    source = fingerprint_tilelang(_REPLAY, _PTX, interface={"arity": 2})
+    changed = fingerprint_tilelang(
+        _REPLAY.replace("p1[v1] = p0[v1]", statement),
+        _PTX,
+        interface={"arity": 2},
+    )
+
+    assert not compare_tilelang_fingerprints(
+        source, changed
+    ).hard_passes["tir_structure"]
+
+
+def test_tilelang_alpha_normalization_respects_function_scope_shadowing() -> None:
+    source = _REPLAY.replace(
+        "for v1 in T.Parallel(N):\n            p1[v1] = p0[v1]",
+        "for N in T.Parallel(4):\n            p1[N] = p0[N]",
+    )
+    renamed = _REPLAY.replace(
+        "for v1 in T.Parallel(N):\n            p1[v1] = p0[v1]",
+        "for local_index in T.Parallel(4):\n            p1[local_index] = p0[local_index]",
+    )
+
+    assert normalize_tilelang_tir_structure(source) == normalize_tilelang_tir_structure(
+        renamed
+    )
 
 
 def test_tilelang_structural_tir_retains_bounds_beyond_operation_names() -> None:

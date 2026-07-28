@@ -248,9 +248,11 @@ def test_batch_cli_frontend_tiers_select_registered_native_cases(capsys) -> None
         ["--list", "--tier", "frontend.cuda", "--json"]
     ) == 0
     cuda = json.loads(capsys.readouterr().out)
-    assert [entry["case_id"] for entry in cuda["entries"]] == [
-        "cuda:tilelang_add2d"
-    ]
+    cuda_ids = [entry["case_id"] for entry in cuda["entries"]]
+    assert len(cuda_ids) == 30
+    assert cuda_ids == sorted(cuda_ids)
+    assert "cuda:tilelang_add2d" in cuda_ids
+    assert "cuda:tilelang_gemm" not in cuda_ids
 
 
 def test_batch_cli_rejects_duplicate_or_mixed_explicit_case_selection(
@@ -715,6 +717,92 @@ def test_batch_cli_runs_tilelang_through_the_same_candidate_search(
     assert payload["cases"][0]["classification"] == "scrc_certified"
     assert payload["cases"][0]["ordinal"] > 28
     assert seen == [("tilelang:add2d", 2, 5)]
+
+
+def test_batch_cli_reuses_one_native_registry_projection_for_prepare(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    import intentir.verify.workload_registry as registry_module
+
+    _install_live_batch_fakes(
+        monkeypatch,
+        search=lambda *_a, **_k: _closed_search(),
+        complete=lambda *_a, **_k: _certified_execution(),
+    )
+    adapter = SimpleNamespace(
+        frontend="tilelang",
+        protocol="intentir.scrc.frontend-dataset-harness.v1",
+    )
+    projected = {"tilelang:add2d": adapter}
+    projection_calls = 0
+    prepare_views = []
+
+    def project_once(*, dataset_root=None):
+        nonlocal projection_calls
+        assert dataset_root == "/dataset-root"
+        projection_calls += 1
+        return projected
+
+    def prepare(case_id, **kwargs):
+        assert case_id == "tilelang:add2d"
+        assert kwargs["dataset_root"] == "/dataset-root"
+        prepare_views.append(kwargs["workloads"])
+        return SimpleNamespace(
+            case_id=case_id,
+            source_location=f"module://{case_id}",
+        )
+
+    monkeypatch.setattr(scrc_batch, "registered_scrc_workloads", project_once)
+    monkeypatch.setattr(registry_module, "prepare_registered_scrc_workload", prepare)
+
+    result = scrc_batch.main(
+        [
+            "--run",
+            "--case",
+            "tilelang:add2d",
+            "--dataset-root",
+            "/dataset-root",
+            "--run-root",
+            str(tmp_path / "runs"),
+            "--no-progress",
+            "--json",
+        ]
+    )
+
+    assert result == 0
+    capsys.readouterr()
+    assert projection_calls == 1
+    assert prepare_views == [projected]
+
+
+def test_batch_cli_triton_only_live_run_does_not_project_native_registry(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    entries = _install_live_batch_fakes(
+        monkeypatch,
+        search=lambda *_a, **_k: _closed_search(),
+        complete=lambda *_a, **_k: _certified_execution(),
+    )
+
+    def reject_projection(**_kwargs):
+        raise AssertionError("Triton-only selection must not project native Dataset")
+
+    monkeypatch.setattr(scrc_batch, "registered_scrc_workloads", reject_projection)
+
+    result = scrc_batch.main(
+        [
+            "--run",
+            "--case",
+            entries[0].case_id,
+            "--run-root",
+            str(tmp_path / "runs"),
+            "--no-progress",
+            "--json",
+        ]
+    )
+
+    assert result == 0
+    capsys.readouterr()
 
 
 def test_batch_cli_runs_multiple_cases_concurrently_and_aggregates_by_ordinal(

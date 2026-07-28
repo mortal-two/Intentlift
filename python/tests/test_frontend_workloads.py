@@ -17,6 +17,7 @@ from intentir.verify.frontend_workloads import (
     FRONTEND_DATASET_HARNESSES,
     build_frontend_dataset_gate2_suite,
     prepare_frontend_dataset_workload,
+    project_frontend_dataset_harnesses,
 )
 from intentir.verify.gate1.cuda_compiler import CudaCompileCase, CudaKernelSource
 from intentir.verify.gate1.model import (
@@ -358,6 +359,82 @@ def test_frontend_neutral_registry_and_runtime_dispatch_native_cases() -> None:
         assert isinstance(runner.dependencies.gate2, NativeGate2ExecutionAdapter)
         assert len(writers) == 1
         assert writers[0].writers == gate1.runner.writers
+
+
+def test_dataset_harness_projection_is_wide_but_fail_closed_for_opaque_abi() -> None:
+    projection = project_frontend_dataset_harnesses()
+
+    assert sum(item.frontend == "tilelang" for item in projection.harnesses.values()) == 26
+    assert sum(item.frontend == "cuda" for item in projection.harnesses.values()) == 30
+    assert set(item.case_id for item in projection.diagnostics) == {
+        "tilelang:gemm",
+        "tilelang:matmul_bias_relu2d",
+        "tilelang:matmul_fused_epilogue2d",
+        "tilelang:matmul_relu2d",
+        "tilelang:mlp2d",
+        "cuda:tilelang_gemm",
+        "cuda:tilelang_matmul_bias_relu2d",
+        "cuda:tilelang_matmul_fused_epilogue2d",
+        "cuda:tilelang_matmul_relu2d",
+        "cuda:tilelang_mlp2d",
+    }
+    projected_canary = projection.harnesses["tilelang:add2d"]
+    # Even the legacy canary IDs go through the corpus-wide projection policy;
+    # they are not replaced by the hand-authored finite smoke fixtures below.
+    assert projected_canary.dimensions == (("M", 16),)
+    assert projected_canary.factory_kwargs == (("n", 16), ("threads", 128))
+    assert projected_canary.seed != FRONTEND_DATASET_HARNESSES["tilelang:add2d"].seed
+    assert projected_canary.source_sha256 == FRONTEND_DATASET_HARNESSES[
+        "tilelang:add2d"
+    ].source_sha256
+    assert len(projected_canary.descriptor_sha256) == 64
+    encoded = json.dumps(projection.to_json(), sort_keys=True)
+    assert "intent_seed" not in encoded
+    assert "source.py" not in encoded
+    assert "/home/" not in encoded
+
+
+def test_projected_dataset_harnesses_prepare_every_nonopaque_case() -> None:
+    projection = project_frontend_dataset_harnesses()
+
+    prepared = {
+        case_id: prepare_frontend_dataset_workload(harness)
+        for case_id, harness in projection.harnesses.items()
+    }
+
+    assert len(prepared) == 56
+    assert prepared["tilelang:add_bias2d"].compiler_view.parameter_order == (
+        "inp_handle",
+        "bias_handle",
+        "out_handle",
+    )
+    assert prepared["cuda:naive_gemm"].compiler_view.grid_shape_coordinates == (
+        None,
+        None,
+        None,
+    )
+
+
+def test_dataset_shape_coordinates_remain_injective_when_values_coincide() -> None:
+    prepared = prepare_frontend_dataset_workload(
+        project_frontend_dataset_harnesses().harnesses["cuda:naive_gemm"]
+    )
+    request = prepare_scrc_lift(
+        prepared.source_slice.code,
+        compiler_view=prepared.compiler_view,
+        source_symbol=prepared.source_slice.function,
+        frontend="cuda",
+    )
+
+    assert request.anonymous_compiler_view is not None
+    view = request.anonymous_compiler_view
+    assert view["shape_coordinates"] == {"h0": 4, "h1": 4, "h2": 4}
+    assert [item["shape_contract"] for item in view["arguments"][:3]] == [
+        ["h0", "h1"],
+        ["h1", "h2"],
+        ["h0", "h2"],
+    ]
+    assert all(name not in json.dumps(view, sort_keys=True) for name in ("A", "B", "M", "N", "K"))
 
 
 @pytest.mark.skipif(

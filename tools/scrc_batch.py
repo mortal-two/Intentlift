@@ -11,7 +11,7 @@ from queue import Empty, Queue
 import sys
 from threading import BoundedSemaphore, Lock, Thread
 from time import monotonic
-from typing import Any, Callable, TextIO
+from typing import Any, Callable, Mapping, TextIO
 
 ROOT = Path(__file__).resolve().parents[1]
 PYTHON_ROOT = ROOT / "python"
@@ -71,11 +71,20 @@ _PROGRESS_STAGES = frozenset(
 _FRONTEND_TIERS = frozenset({"frontend", "frontend.tilelang", "frontend.cuda"})
 
 
-def _registered_frontend_entries(manifest) -> tuple[SCRCWorkloadEntry, ...]:
+def _registered_frontend_entries(
+    manifest,
+    *,
+    dataset_root: str | Path | None = None,
+    workloads: Mapping[str, Any] | None = None,
+) -> tuple[SCRCWorkloadEntry, ...]:
     """Project non-Triton Harnesses into the batch scheduler, not a new manifest."""
 
     manifest_ids = set(manifest.by_id)
-    adapters = registered_scrc_workloads()
+    adapters = (
+        workloads
+        if workloads is not None
+        else registered_scrc_workloads(dataset_root=dataset_root)
+    )
     native = [
         (case_id, adapter)
         for case_id, adapter in adapters.items()
@@ -113,12 +122,25 @@ def _registered_frontend_entries(manifest) -> tuple[SCRCWorkloadEntry, ...]:
     return tuple(entries)
 
 
-def _select_entries(manifest, *, cases, tier) -> tuple[SCRCWorkloadEntry, ...]:
+def _select_entries(
+    manifest,
+    *,
+    cases,
+    tier,
+    dataset_root: str | Path | None = None,
+    workloads: Mapping[str, Any] | None = None,
+) -> tuple[SCRCWorkloadEntry, ...]:
     if cases is None and tier not in _FRONTEND_TIERS:
         return manifest.select(tier=tier)
-    frontend_entries = _registered_frontend_entries(manifest)
     if cases is not None:
-        by_id = {entry.case_id: entry for entry in (*manifest.entries, *frontend_entries)}
+        by_id = dict(manifest.by_id)
+        if any(case_id not in by_id for case_id in cases):
+            frontend_entries = _registered_frontend_entries(
+                manifest,
+                dataset_root=dataset_root,
+                workloads=workloads,
+            )
+            by_id.update({entry.case_id: entry for entry in frontend_entries})
         selected: list[SCRCWorkloadEntry] = []
         for case_id in cases:
             entry = by_id.get(case_id)
@@ -127,6 +149,11 @@ def _select_entries(manifest, *, cases, tier) -> tuple[SCRCWorkloadEntry, ...]:
             selected.append(entry)
         return tuple(sorted(selected, key=lambda entry: entry.ordinal))
     assert tier in _FRONTEND_TIERS
+    frontend_entries = _registered_frontend_entries(
+        manifest,
+        dataset_root=dataset_root,
+        workloads=workloads,
+    )
     selected = tuple(
         entry
         for entry in frontend_entries
@@ -721,11 +748,25 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
+    preprojected_workloads = None
+    needs_native_registry = args.tier in _FRONTEND_TIERS or (
+        args.case is not None
+        and any(case_id not in manifest.by_id for case_id in args.case)
+    )
     try:
+        if needs_native_registry:
+            # One immutable projection is shared by selection and every case
+            # preparation in this batch invocation.  Explicit Triton-only runs
+            # never touch the external Dataset registry.
+            preprojected_workloads = registered_scrc_workloads(
+                dataset_root=args.dataset_root
+            )
         entries = _select_entries(
             manifest,
             cases=args.case,
             tier=args.tier,
+            dataset_root=args.dataset_root,
+            workloads=preprojected_workloads,
         )
     except (KeyError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
@@ -802,7 +843,6 @@ def main(argv: list[str] | None = None) -> int:
         from intentir.verify.scrc_runner import MainStatus, SCRCRunReport
         from intentir.verify.workload_registry import (
             prepare_registered_scrc_workload,
-            registered_scrc_workloads,
         )
 
         provider = get_provider(args.provider, args.provider_config)
@@ -1290,19 +1330,11 @@ def main(argv: list[str] | None = None) -> int:
             result = None
             progress.case_started(entry.case_id, entry.ordinal)
             try:
-                adapter = registered_scrc_workloads().get(entry.case_id)
-                if adapter is None:
-                    result = BatchCaseResult(
-                        entry.case_id,
-                        entry.ordinal,
-                        BatchClassification.HARNESS_INVALID,
-                        entry.representative_tier,
-                        diagnostic="no real SCRC Harness adapter is registered",
-                    )
-                    return result
                 try:
                     prepared = prepare_registered_scrc_workload(
-                        entry.case_id, dataset_root=args.dataset_root
+                        entry.case_id,
+                        dataset_root=args.dataset_root,
+                        workloads=preprojected_workloads,
                     )
                 except Exception as exc:
                     result = BatchCaseResult(

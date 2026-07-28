@@ -244,7 +244,16 @@ def load_frontend_dataset(
         if dataset_root is not None
         else default_frontend_dataset_root()
     )
-    root = base / "TianchenIR-MultiFrontend"
+    root = (
+        base
+        if base.name == "TianchenIR-MultiFrontend"
+        or (
+            (base / "manifest.json").is_file()
+            and (base / "tilelang").is_dir()
+            and (base / "cuda").is_dir()
+        )
+        else base / "TianchenIR-MultiFrontend"
+    )
     kernels = tuple([*_tilelang_kernels(root), *_cuda_kernels(root)])
     return FrontendDatasetCatalog(root, kernels)
 

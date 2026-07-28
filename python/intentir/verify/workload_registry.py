@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Mapping
 
 from intentir.verify.frontend_workloads import (
-    FRONTEND_DATASET_HARNESSES,
     FrontendDatasetHarness,
+    FrontendDatasetHarnessDiagnostic,
+    FrontendDatasetHarnessProjection,
     PreparedFrontendDatasetWorkload,
     prepare_frontend_dataset_workload,
+    project_frontend_dataset_harnesses,
 )
 from intentir.verify.workload_adapters import (
     TRITON_WORKLOAD_ADAPTERS,
@@ -24,20 +27,51 @@ PreparedRegisteredWorkload = (
 )
 
 
-def registered_scrc_workloads() -> dict[str, RegisteredHarness]:
-    overlap = set(TRITON_WORKLOAD_ADAPTERS) & set(FRONTEND_DATASET_HARNESSES)
+def frontend_dataset_harness_projection(
+    *,
+    dataset_root: str | Path | None = None,
+    strict: bool = False,
+) -> FrontendDatasetHarnessProjection:
+    try:
+        return project_frontend_dataset_harnesses(dataset_root)
+    except (OSError, ValueError) as exc:
+        if strict:
+            raise
+        reason = f"{type(exc).__name__}: {exc}"
+        if len(reason) > 2048:
+            reason = reason[:2045] + "..."
+        return FrontendDatasetHarnessProjection(
+            {},
+            (
+                FrontendDatasetHarnessDiagnostic(
+                    "dataset:TianchenIR-MultiFrontend",
+                    "native",
+                    "case_unavailable",
+                    reason,
+                ),
+            ),
+        )
+
+
+def registered_scrc_workloads(
+    *, dataset_root: str | Path | None = None
+) -> dict[str, RegisteredHarness]:
+    native = frontend_dataset_harness_projection(dataset_root=dataset_root).harnesses
+    overlap = set(TRITON_WORKLOAD_ADAPTERS) & set(native)
     if overlap:
         raise RuntimeError(
             "SCRC workload registries contain duplicate case ids: "
             + ", ".join(sorted(overlap))
         )
-    return {**TRITON_WORKLOAD_ADAPTERS, **FRONTEND_DATASET_HARNESSES}
+    return {**TRITON_WORKLOAD_ADAPTERS, **native}
 
 
 def registered_scrc_case_ids(
-    *, frontend: str | None = None
+    *,
+    frontend: str | None = None,
+    dataset_root: str | Path | None = None,
 ) -> tuple[str, ...]:
-    rows = registered_scrc_workloads()
+    rows = registered_scrc_workloads(dataset_root=dataset_root)
     if frontend is not None:
         if frontend not in {"triton", "tilelang", "cuda"}:
             raise ValueError(f"unsupported registered workload frontend {frontend!r}")
@@ -53,8 +87,17 @@ def prepare_registered_scrc_workload(
     case_id: str,
     *,
     dataset_root: str | Path | None = None,
+    workloads: Mapping[str, RegisteredHarness] | None = None,
 ) -> PreparedRegisteredWorkload:
-    adapter = registered_scrc_workloads().get(case_id)
+    if workloads is not None:
+        adapter: RegisteredHarness | None = workloads.get(case_id)
+    else:
+        adapter = TRITON_WORKLOAD_ADAPTERS.get(case_id)
+        if adapter is None:
+            adapter = frontend_dataset_harness_projection(
+                dataset_root=dataset_root,
+                strict=True,
+            ).harnesses.get(case_id)
     if adapter is None:
         raise ValueError(f"case {case_id!r} has no registered SCRC Harness")
     if isinstance(adapter, TritonWorkloadAdapter):
@@ -69,6 +112,7 @@ def prepare_registered_scrc_workload(
 __all__ = [
     "PreparedRegisteredWorkload",
     "RegisteredHarness",
+    "frontend_dataset_harness_projection",
     "prepare_registered_scrc_workload",
     "registered_scrc_case_ids",
     "registered_scrc_workloads",

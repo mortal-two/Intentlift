@@ -15,6 +15,7 @@ if str(PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(PYTHON_ROOT))
 
 from intentir.extraction.providers.provider import get_provider
+from intentir.verify.scrc_runner import MainStatus
 from intentir.verify.scrc_workload_run import (
     WorkloadExecutionError,
     classify_scrc_report,
@@ -25,10 +26,10 @@ from intentir.verify.scrc_workload_run import (
     save_workload_execution,
 )
 from intentir.verify.workload_registry import (
+    frontend_dataset_harness_projection,
     prepare_registered_scrc_workload,
-    registered_scrc_case_ids,
-    registered_scrc_workloads,
 )
+from intentir.verify.workload_adapters import TRITON_WORKLOAD_ADAPTERS
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -51,12 +52,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--effort", default=None)
     parser.add_argument(
         "--lift-backend",
-        choices=("responses", "miniswe"),
+        choices=("responses", "miniswe", "codex"),
         default="miniswe",
     )
     parser.add_argument(
         "--replay-backend",
-        choices=("responses", "miniswe"),
+        choices=("responses", "miniswe", "codex"),
         default="miniswe",
     )
     parser.add_argument(
@@ -89,22 +90,44 @@ def _emit(payload: dict[str, object], *, json_mode: bool) -> None:
         print(f"{key}: {value}")
 
 
-def _listed_cases() -> dict[str, object]:
-    rows = registered_scrc_workloads()
+def _listed_cases(dataset_root: str | None = None) -> dict[str, object]:
+    try:
+        projection = frontend_dataset_harness_projection(dataset_root=dataset_root)
+    except (OSError, ValueError) as exc:
+        projection = None
+        unavailable = [
+            {
+                "case_id": "dataset:TianchenIR-MultiFrontend",
+                "frontend": "native",
+                "status": "case_unavailable",
+                "reason": f"{type(exc).__name__}: {exc}",
+            }
+        ]
+    else:
+        unavailable = [item.to_json() for item in projection.diagnostics]
+    rows = {
+        **TRITON_WORKLOAD_ADAPTERS,
+        **(dict(projection.harnesses) if projection is not None else {}),
+    }
     cases = [
         {
             "case_id": case_id,
             "frontend": getattr(rows[case_id], "frontend", "triton"),
         }
-        for case_id in registered_scrc_case_ids()
+        for case_id in sorted(rows)
     ]
-    return {"count": len(cases), "cases": cases}
+    return {
+        "count": len(cases),
+        "cases": cases,
+        "native_unavailable_count": len(unavailable),
+        "native_unavailable": unavailable,
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(sys.argv[1:] if argv is None else argv)
     if args.list:
-        _emit(_listed_cases(), json_mode=args.json)
+        _emit(_listed_cases(args.dataset_root), json_mode=args.json)
         return 0
 
     assert args.case is not None
@@ -175,7 +198,7 @@ def main(argv: list[str] | None = None) -> int:
         "replay_backend": args.replay_backend,
     }
     _emit(payload, json_mode=args.json)
-    return 0 if execution.report.main_status.value == "scrc_certified" else 1
+    return 0 if execution.report.main_status is MainStatus.SCRC_CERTIFIED else 1
 
 
 if __name__ == "__main__":

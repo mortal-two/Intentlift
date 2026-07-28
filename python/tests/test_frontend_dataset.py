@@ -56,3 +56,13 @@ def test_external_multifrontend_dataset_retains_reference_kernel_corpus() -> Non
         assert item.path.with_suffix(".ptx").is_file()
         assert item.path.with_suffix(".json").is_file()
         assert all(Path(path).is_dir() for path in resolve_cuda_include_dirs(item))
+
+
+def test_dataset_loader_accepts_parent_or_direct_corpus_root() -> None:
+    parent_form = load_frontend_dataset()
+    direct_form = load_frontend_dataset(parent_form.root)
+
+    assert direct_form.root == parent_form.root
+    assert tuple(item.case_id for item in direct_form.kernels) == tuple(
+        item.case_id for item in parent_form.kernels
+    )

@@ -80,8 +80,11 @@ test and not a source-text similarity metric.
 
 TileLang uses one authoritative view and one linked diagnostic view:
 
-- the hard public TIR structure, alpha-normalized while retaining buffer shapes,
-  loop bounds, indices, operators, calls and control nesting; and
+- the hard public TIR semantic structure, alpha-normalized while retaining
+  buffer shapes, loop bounds, indices, operators, calls and control nesting;
+  `serial`/`parallel`/`vectorized`/`unroll` iterator spellings normalize to one
+  loop form only when the bound and body remain identical, because those
+  spellings are realization schedule rather than mathematical structure; and
 - the same normalized PTX fingerprint used by native CUDA, retained for audit
   and a hard schema/ABI/target safety envelope, while exact instruction,
   multiplicity, memory, collective, control and coordinate topology is
@@ -90,8 +93,10 @@ TileLang uses one authoritative view and one linked diagnostic view:
 TileLang closure is therefore decided at its TIR compiler boundary. PTX can
 explain a downstream lowering difference but cannot force two structurally equal
 TIR programs to reproduce backend unrolling, address spelling or instruction
-selection. The structural AST replaces the former shallow operation-name list
-as the decisive evidence, so relaxing PTX does not weaken loop/index/dataflow
+selection. The v3 structural AST replaces the former shallow operation-name
+list as the decisive evidence. It preserves loop count, nesting, bounds,
+indices, dataflow, operators and effects while erasing only iterator schedule
+spelling, so relaxing PTX does not weaken mathematical loop/index/dataflow
 coverage.
 
 ## Replay safety and compiler isolation

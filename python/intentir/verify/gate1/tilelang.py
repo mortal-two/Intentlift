@@ -17,8 +17,20 @@ from .ptx import (
 )
 
 
-TILELANG_FINGERPRINT_SCHEMA = "tilelang-tir-structural-ptx-diagnostic-v2"
+TILELANG_FINGERPRINT_SCHEMA = "tilelang-tir-semantic-structure-ptx-diagnostic-v3"
 _T_OP_RE = re.compile(r"\bT\.([A-Za-z_][A-Za-z0-9_]*)")
+_SCHEDULE_ITERATORS = {
+    "parallel",
+    "serial",
+    "vectorized",
+    "unroll",
+    "pipelined",
+    "thread_binding",
+}
+_SCHEDULE_ITERATOR_PATHS = {f"t.{name}" for name in _SCHEDULE_ITERATORS}
+_ZERO_ARG_SCALAR_TYPES = re.compile(
+    r"\bT\.(?:bool|float16|float32|float64|int8|int16|int32|int64|uint8|uint16|uint32|uint64)\(\s*\)"
+)
 
 
 class TileLangObservationError(ValueError):
@@ -39,9 +51,33 @@ def normalize_tilelang_tir_ops(tir: str) -> tuple[str, ...]:
     operations: list[str] = []
     for raw in tir.splitlines():
         line = raw.split("#", 1)[0]
-        operations.extend(f"T.{match}" for match in _T_OP_RE.findall(line))
+        for match in _T_OP_RE.findall(line):
+            # Loop spelling and zero-argument scalar declarations are
+            # realization/compiler plumbing.  The AST structure below retains
+            # their bounds and uses, while the topology inventory records one
+            # frontend-neutral loop for every actual Python/TIR ``for``.
+            if match.lower() in _SCHEDULE_ITERATORS:
+                continue
+            if match in {
+                "bool",
+                "float16",
+                "float32",
+                "float64",
+                "int8",
+                "int16",
+                "int32",
+                "int64",
+                "uint8",
+                "uint16",
+                "uint32",
+                "uint64",
+            } and _ZERO_ARG_SCALAR_TYPES.search(line):
+                continue
+            operations.append(f"T.{match}")
         stripped = line.strip()
-        if stripped.startswith("if "):
+        if stripped.startswith("for "):
+            operations.append("control.for")
+        elif stripped.startswith("if "):
             operations.append("control.if")
         elif stripped.startswith("else:"):
             operations.append("control.else")
@@ -65,12 +101,13 @@ class _TIRAlphaNormalizer(ast.NodeTransformer):
     """Remove authored identifiers while retaining TIR data/control structure."""
 
     def __init__(self) -> None:
-        self.names: dict[str, str] = {}
+        self.scopes: list[dict[str, str]] = [{}]
         self.next_parameter = 0
         self.next_local = 0
 
     def _bind(self, name: str, *, parameter: bool = False) -> str:
-        existing = self.names.get(name)
+        scope = self.scopes[-1]
+        existing = scope.get(name)
         if existing is not None:
             return existing
         if parameter:
@@ -79,15 +116,26 @@ class _TIRAlphaNormalizer(ast.NodeTransformer):
         else:
             replacement = f"v{self.next_local}"
             self.next_local += 1
-        self.names[name] = replacement
+        scope[name] = replacement
         return replacement
+
+    def _lookup(self, name: str) -> str | None:
+        for scope in reversed(self.scopes):
+            replacement = scope.get(name)
+            if replacement is not None:
+                return replacement
+        return None
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
         node.name = "tir_entry"
-        node.args = self.visit(node.args)  # type: ignore[assignment]
         node.decorator_list = [self.visit(item) for item in node.decorator_list]
         node.returns = self.visit(node.returns) if node.returns is not None else None
-        node.body = [self.visit(item) for item in node.body]
+        self.scopes.append({})
+        try:
+            node.args = self.visit(node.args)  # type: ignore[assignment]
+            node.body = [self.visit(item) for item in node.body]
+        finally:
+            self.scopes.pop()
         node.type_comment = None
         return node
 
@@ -104,8 +152,10 @@ class _TIRAlphaNormalizer(ast.NodeTransformer):
             return node
         if isinstance(node.ctx, (ast.Store, ast.Del)):
             node.id = self._bind(node.id)
-        elif node.id in self.names:
-            node.id = self.names[node.id]
+        else:
+            replacement = self._lookup(node.id)
+            if replacement is not None:
+                node.id = replacement
         return node
 
     def visit_Call(self, node: ast.Call) -> ast.AST:
@@ -128,6 +178,22 @@ class _TIRAlphaNormalizer(ast.NodeTransformer):
         return node
 
 
+class _TIRSemanticNormalizer(_TIRAlphaNormalizer):
+    """Erase only loop-schedule spellings, retaining bounds and loop bodies."""
+
+    def visit_For(self, node: ast.For) -> ast.AST:
+        node = self.generic_visit(node)  # type: ignore[assignment]
+        iterator = node.iter
+        if isinstance(iterator, ast.Call):
+            path = _call_path(iterator.func)
+            if (
+                path is not None
+                and path.lower() in _SCHEDULE_ITERATOR_PATHS
+            ):
+                iterator.func = ast.Name(id="range", ctx=ast.Load())
+        return node
+
+
 def normalize_tilelang_tir_structure(tir: str) -> str:
     """Build an identifier-free structural AST for the public TIR program.
 
@@ -143,7 +209,7 @@ def normalize_tilelang_tir_structure(tir: str) -> str:
         tree = ast.parse(tir)
     except SyntaxError as exc:
         raise TileLangObservationError(f"TileLang TIR is not parseable: {exc}") from exc
-    normalized = _TIRAlphaNormalizer().visit(tree)
+    normalized = _TIRSemanticNormalizer().visit(tree)
     ast.fix_missing_locations(normalized)
     return ast.dump(normalized, annotate_fields=True, include_attributes=False)
 
