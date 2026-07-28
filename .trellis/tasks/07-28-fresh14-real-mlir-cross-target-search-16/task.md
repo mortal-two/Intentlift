@@ -1,6 +1,6 @@
 # Task 16：Fresh-14 J 的真实 MLIR 跨目标搜索与 Source/Native Baseline 性能闭合
 
-> 状态：任务已建立，尚未启动实现与实跑
+> 状态：执行中（Phase A：Fresh-14 已 14/14 接入 typed J→Intent MLIR；跨目标 binary/QD/performance 继续推进）
 >
 > 类型：production backend 能力建设、真实 lowering-state search、跨目标性能与消融实验
 >

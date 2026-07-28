@@ -1635,12 +1635,26 @@ class Boundary(StrictJSONMixin):
     def __post_init__(self) -> None:
         if not isinstance(self.domains, dict):
             raise SchemaError("Boundary.domains must be an object")
-        self.domains = {
+        normalized_domains = {
             _string(key, "Boundary.domains key"): _string(
                 value, f"Boundary.domains.{key}"
             )
             for key, value in self.domains.items()
         }
+        # As with node_ids, JSON object order cannot encode declaration
+        # semantics.  Domain handles are already explicit, so retain every
+        # authored key/expression pair and canonicalize only their map order.
+        self.domains = dict(
+            sorted(
+                normalized_domains.items(),
+                key=lambda item: (
+                    int(match.group(1))
+                    if (match := re.fullmatch(r"d([0-9]+)", item[0]))
+                    else math.inf,
+                    item[0],
+                ),
+            )
+        )
         self.accesses = [
             item if isinstance(item, BoundaryAccess) else BoundaryAccess.from_json(item)
             for item in self.accesses
@@ -3162,6 +3176,18 @@ class SemanticArchive(StrictJSONMixin):
                 raise SchemaError(
                     f"SemanticArchive.node_ids.{node_id} path is out of range"
                 )
+        # JSON object member order is not semantic.  Canonicalize the node map
+        # by the authored body-path traversal before any declaration-order
+        # checks or opaque projections consume it.  This preserves every LLM-
+        # authored id/path pair and merely removes serializer-dependent key
+        # ordering (for example n0,n1,n10,...,n2 from sort_keys=True).
+        path_order = {path: index for index, path in enumerate(by_path)}
+        self.node_ids = dict(
+            sorted(
+                self.node_ids.items(),
+                key=lambda item: path_order[item[1]],
+            )
+        )
         if not isinstance(self.boundary, Boundary):
             self.boundary = Boundary.from_json(self.boundary)
         if not isinstance(self.signature, LogicalSignature):
@@ -3252,9 +3278,9 @@ class SignatureParameter(StrictJSONMixin):
 
     ``name`` is a canonical J handle, never a source parameter spelling.
     ``logical_ref`` links the handle to a J tensor/value/dimension when one
-    exists.  Runtime plumbing that has no denotational value (for example a
-    public DSL opaque object) may omit the link, but it still lives in the J
-    signature namespace rather than a fourth interface namespace.
+    exists. Runtime representation plumbing and Harness-owned compile-time
+    specialization carriers may omit the link; neither becomes an operand of
+    Layer A or a fourth production interface.
     """
 
     name: str
@@ -3320,18 +3346,17 @@ class SignatureParameter(StrictJSONMixin):
                     )
                 )
             if self.logical_ref is None and not (
-                self.kind is ParameterKind.SCALAR
-                and self.mode is ParameterMode.VALUE
+                self.mode is ParameterMode.VALUE
                 and self.rank == 0
                 and self.alias_of is None
             ):
                 issues.append(
                     _SchemaIssue(
                         "SignatureParameter.logical_ref",
-                        "a scalar without J logical_ref is legal only as an "
-                        "explicit rank-0, mode=value, non-alias "
-                        "representation-only ABI carrier; logical data must "
-                        "bind J and implementation-selection values belong to C",
+                        "a scalar/constexpr without J logical_ref must be an "
+                        "explicit rank-0, mode=value, non-alias carrier; a "
+                        "constexpr carrier is bound only by the fixed Harness "
+                        "specialization and never becomes Layer-A data",
                     )
                 )
         if issues:
@@ -3504,20 +3529,38 @@ def _validate_logical_signature(archive: SemanticArchive) -> None:
                         f"rank {len(tensor.shape)!r}",
                     )
                 )
-            if parameter.mode is ParameterMode.INPUT and ref not in input_refs:
-                issues.append(
-                    _SchemaIssue(
-                        f"{base}.mode",
-                        "input signature parameter must bind a J input",
+            if parameter.mode is ParameterMode.INPUT:
+                if ref not in input_refs:
+                    issues.append(
+                        _SchemaIssue(
+                            f"{base}.mode",
+                            "input signature parameter must bind a J input",
+                        )
                     )
-                )
-            if parameter.mode is ParameterMode.OUTPUT and ref not in output_refs:
-                issues.append(
-                    _SchemaIssue(
-                        f"{base}.mode",
-                        "output signature parameter must bind a J output",
+                elif ref in output_refs:
+                    issues.append(
+                        _SchemaIssue(
+                            f"{base}.mode",
+                            "a logical tensor declared in both J inputs and J "
+                            "outputs must use signature mode=inout, never input",
+                        )
                     )
-                )
+            if parameter.mode is ParameterMode.OUTPUT:
+                if ref not in output_refs:
+                    issues.append(
+                        _SchemaIssue(
+                            f"{base}.mode",
+                            "output signature parameter must bind a J output",
+                        )
+                    )
+                elif ref in input_refs:
+                    issues.append(
+                        _SchemaIssue(
+                            f"{base}.mode",
+                            "a logical tensor declared in both J inputs and J "
+                            "outputs must use signature mode=inout, never output",
+                        )
+                    )
             if parameter.mode is ParameterMode.INOUT and not (
                 ref in input_refs and ref in output_refs
             ):
@@ -3959,6 +4002,9 @@ class ProvenanceRecord(StrictJSONMixin):
 class Gate1Artifact(StrictJSONMixin):
     """The complete proof-relevant Lift result: exactly ``(J, C, pi)``."""
 
+    # The backend keeps emitting its established v7 wire format.  Fresh
+    # frontend closures may arrive as v8/v9, so those schemas are accepted and
+    # preserved on decode without silently upgrading locally-created artifacts.
     SCHEMA: ClassVar[str] = "intentir.scrc.artifact.v7"
     LEGACY_SCHEMAS: ClassVar[frozenset[str]] = frozenset(
         {
@@ -3968,6 +4014,8 @@ class Gate1Artifact(StrictJSONMixin):
             "intentir.scrc.artifact.v4",
             "intentir.scrc.artifact.v5",
             "intentir.scrc.artifact.v6",
+            "intentir.scrc.artifact.v8",
+            "intentir.scrc.artifact.v9",
         }
     )
 
@@ -4040,7 +4088,9 @@ class Gate1Artifact(StrictJSONMixin):
             "intentir.scrc.artifact.v4",
             "intentir.scrc.artifact.v5",
             "intentir.scrc.artifact.v6",
-            self.SCHEMA,
+            "intentir.scrc.artifact.v7",
+            "intentir.scrc.artifact.v8",
+            "intentir.scrc.artifact.v9",
         } and any(
             item.masked_contribution is not None
             for item in self.j.boundary.reductions
@@ -4095,9 +4145,32 @@ class Gate1Artifact(StrictJSONMixin):
             for top in self.j.intent.body
             for op in _walk_intent_ops(top)
         )
-        if self.wire_schema != self.SCHEMA and has_value_if:
+        if self.wire_schema in {
+            "intentir.scrc.artifact.v1",
+            "intentir.scrc.artifact.v2",
+            "intentir.scrc.artifact.v3",
+            "intentir.scrc.artifact.v4",
+            "intentir.scrc.artifact.v5",
+            "intentir.scrc.artifact.v6",
+        } and has_value_if:
             raise SchemaError(
                 "Gate1 artifact v1-v6 do not contain J value_if regions"
+            )
+        if self.wire_schema not in {
+            "intentir.scrc.artifact.v8",
+            "intentir.scrc.artifact.v9",
+        } and (
+            self.pi.physical_iterations or self.pi.physical_loop_carriers
+        ):
+            raise SchemaError(
+                "Gate1 artifact v1-v7 do not contain pi physical time relations"
+            )
+        if (
+            self.wire_schema != "intentir.scrc.artifact.v9"
+            and self.pi.terminal_controls
+        ):
+            raise SchemaError(
+                "Gate1 artifact v1-v8 do not contain pi terminal_controls"
             )
 
         node_refs = set(self.j.node_ids) | set(self.j.node_ids.values())
@@ -4160,7 +4233,9 @@ class Gate1Artifact(StrictJSONMixin):
             "intentir.scrc.artifact.v4",
             "intentir.scrc.artifact.v5",
             "intentir.scrc.artifact.v6",
-            cls.SCHEMA,
+            "intentir.scrc.artifact.v7",
+            "intentir.scrc.artifact.v8",
+            "intentir.scrc.artifact.v9",
         } and (
             pi_value is not None and "iterations" not in pi_value
         ):
@@ -4178,7 +4253,9 @@ class Gate1Artifact(StrictJSONMixin):
             "intentir.scrc.artifact.v4",
             "intentir.scrc.artifact.v5",
             "intentir.scrc.artifact.v6",
-            cls.SCHEMA,
+            "intentir.scrc.artifact.v7",
+            "intentir.scrc.artifact.v8",
+            "intentir.scrc.artifact.v9",
         }:
             if j_value is not None and "dimension_constraints" not in j_value:
                 raise SchemaError(
@@ -4225,9 +4302,40 @@ class Gate1Artifact(StrictJSONMixin):
                     "Gate1 artifact v1-v3 do not contain J consumer_extensions"
                 )
         if schema in {
+            "intentir.scrc.artifact.v8",
+            "intentir.scrc.artifact.v9",
+        }:
+            if pi_value is not None and "physical_iterations" not in pi_value:
+                raise SchemaError(
+                    "Gate1Artifact.pi is missing required field: physical_iterations"
+                )
+            if pi_value is not None and "physical_loop_carriers" not in pi_value:
+                raise SchemaError(
+                    "Gate1Artifact.pi is missing required field: "
+                    "physical_loop_carriers"
+                )
+        elif pi_value is not None and (
+            "physical_iterations" in pi_value
+            or "physical_loop_carriers" in pi_value
+        ):
+            raise SchemaError(
+                "Gate1 artifact v1-v7 do not contain pi physical time relations"
+            )
+        if schema == "intentir.scrc.artifact.v9":
+            if pi_value is not None and "terminal_controls" not in pi_value:
+                raise SchemaError(
+                    "Gate1Artifact.pi is missing required field: terminal_controls"
+                )
+        elif pi_value is not None and "terminal_controls" in pi_value:
+            raise SchemaError(
+                "Gate1 artifact v1-v8 do not contain pi terminal_controls"
+            )
+        if schema in {
             "intentir.scrc.artifact.v5",
             "intentir.scrc.artifact.v6",
-            cls.SCHEMA,
+            "intentir.scrc.artifact.v7",
+            "intentir.scrc.artifact.v8",
+            "intentir.scrc.artifact.v9",
         }:
             if (
                 boundary_value is not None
@@ -4283,15 +4391,27 @@ class Gate1Artifact(StrictJSONMixin):
                     "intentir.scrc.artifact.v4",
                     "intentir.scrc.artifact.v5",
                     "intentir.scrc.artifact.v6",
-                    self.SCHEMA,
+                    "intentir.scrc.artifact.v7",
+                    "intentir.scrc.artifact.v8",
+                    "intentir.scrc.artifact.v9",
                 },
                 include_loop_carriers=self.wire_schema
                 in {
                     "intentir.scrc.artifact.v4",
                     "intentir.scrc.artifact.v5",
                     "intentir.scrc.artifact.v6",
-                    self.SCHEMA,
+                    "intentir.scrc.artifact.v7",
+                    "intentir.scrc.artifact.v8",
+                    "intentir.scrc.artifact.v9",
                 },
+                include_physical_time=self.wire_schema
+                in {
+                    "intentir.scrc.artifact.v8",
+                    "intentir.scrc.artifact.v9",
+                },
+                include_terminal_controls=(
+                    self.wire_schema == "intentir.scrc.artifact.v9"
+                ),
             ),
         }
 

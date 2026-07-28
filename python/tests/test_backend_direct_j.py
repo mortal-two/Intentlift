@@ -8,6 +8,7 @@ import pytest
 import intentir.backend.cuda.program as cuda_program
 from direct_fixtures import make_copy_artifact, make_reduce_artifact
 from intentir.ir.canonical_j import canonicalize_gate1_artifact
+from intentir.ir.contract_ir import project_contract_ir
 from intentir.ir.model import IntentReturn
 from intentir.backend.protocol import (
     BackendProtocolError,
@@ -213,7 +214,7 @@ def test_cuda_materializer_consumes_mapping_only_canonical_output(
     assert "intent.map_unary" in lowered.intent_mlir
 
 
-def test_cuda_and_refeval_consume_the_same_explicit_boundary_projection(
+def test_cuda_and_refeval_consume_the_same_canonical_j_contract(
     monkeypatch,
 ) -> None:
     artifact = make_copy_artifact()
@@ -244,11 +245,14 @@ def test_cuda_and_refeval_consume_the_same_explicit_boundary_projection(
 
     assert reference.ok, reference.error
     assert lowered.boundary_consumption["supported"] is True
-    assert lowered.boundary_consumption["boundary_projection"] == (
-        reference.metadata["boundary_projection"]
+    projection = lowered.boundary_consumption["boundary_projection"]
+    assert projection["protocol"] == (
+        "intentir.typed-contract-materialization-projection.v1"
     )
-    assert "access:a0" in lowered.boundary_consumption["consumed"]
-    assert "effect:e1" in lowered.boundary_consumption["consumed"]
+    assert projection["contract_ir"] == project_contract_ir(request.j).to_json()
+    assert reference.metadata["boundary_projection"]["predicated_access_count"] == 0
+    assert "access:a0:typed" in lowered.boundary_consumption["consumed"]
+    assert "effect:e1:write" in lowered.boundary_consumption["consumed"]
 
 
 @pytest.mark.parametrize(
@@ -257,13 +261,13 @@ def test_cuda_and_refeval_consume_the_same_explicit_boundary_projection(
         (
             _make_masked_pointwise_artifact,
             {"x0": 8},
-            "logical_domain_mask_erasure_v1",
+            "typed_contract_ir_logical_graph",
             "intent.map_unary",
         ),
         (
             _make_masked_sum_artifact,
             {"x0": 2, "x1": 4},
-            "logical_domain_reduction_padding_v3",
+            "typed_contract_ir_logical_graph",
             "intent.reduce",
         ),
     ],
@@ -291,6 +295,8 @@ def test_cuda_projects_supported_mask_profiles_before_codegen(
     projection = lowered.boundary_consumption["boundary_projection"]
     assert lowered.boundary_consumption["supported"] is True
     assert projection["profile"] == profile
+    assert projection["predicated_access_count"] > 0
+    assert projection["contract_ir_digest"]
     assert operation in lowered.intent_mlir
 
 

@@ -13,7 +13,6 @@ from intentir.backend.materialize import (
 )
 from intentir.backend.protocol import BackendTarget
 from intentir.backend.cuda.production_cases import (
-    PRODUCTION_CASE_IDS,
     constexpr_input_bindings,
     prepare_production_workload,
 )
@@ -24,11 +23,47 @@ from intentir.verify.scrc_workload_run import build_workload_jc_suite
 
 
 _ROOT = Path(__file__).resolve().parents[2]
+_V1_CASE_NAMES = (
+    "dyt",
+    "flash_bwd_preprocess",
+    "flash_layer_norm_1pass",
+    "fused_add_rms_norm",
+    "geglu",
+    "jsd",
+    "kl_div",
+    "layer_norm",
+    "liger_rms_norm",
+    "masked_copy",
+    "masked_row_square_sum",
+    "poly_norm",
+    "softmax",
+    "sparsemax",
+    "swiglu",
+    "tvd",
+    "xformers_rms_norm",
+    "xformers_rms_norm_add",
+)
+_FRESH14_CASE_NAMES = (
+    "swiglu",
+    "liger_rms_norm",
+    "fused_add_rms_norm",
+    "geglu",
+    "layer_norm",
+    "softmax",
+    "dyt",
+    "sparsemax",
+    "kl_div",
+    "poly_norm",
+    "flash_bwd_preprocess",
+    "flash_layer_norm_1pass",
+    "xformers_rms_norm_add",
+    "splitk_reduce_varargs",
+)
 
 
-def _materialize_closed_case(name: str):
+def _materialize_closed_case(name: str, catalog: str = "production-jc-v1"):
     snapshot, _path = load_production_snapshot(
-        _ROOT / "corpus" / "production-jc-v1", name
+        _ROOT / "corpus" / catalog, name
     )
     assert snapshot.c is not None
     prepared = prepare_production_workload(name)
@@ -45,12 +80,30 @@ def _materialize_closed_case(name: str):
     )
 
 
-@pytest.mark.parametrize("name", sorted(PRODUCTION_CASE_IDS))
+@pytest.mark.parametrize("name", _V1_CASE_NAMES)
 def test_every_frozen_closed_j_materializes_from_the_shared_catalog(name: str) -> None:
     snapshot, _case, materialized = _materialize_closed_case(name)
 
     assert materialized.j_digest == snapshot.j_digest
     assert "\nmodule {\n" in materialized.intent_mlir
+
+
+@pytest.mark.parametrize("name", _FRESH14_CASE_NAMES)
+def test_every_fresh14_j_materializes_to_real_mlir(name: str) -> None:
+    snapshot, _case, materialized = _materialize_closed_case(
+        name, "production-jc-v2"
+    )
+
+    assert materialized.j_digest == snapshot.j_digest
+    assert materialized.materializer_version == "intentir.production.materializer.v2"
+    assert "\nmodule {\n" in materialized.intent_mlir
+    projection = materialized.boundary_projection.to_json()
+    logical_projection = projection.get("logical_projection", projection)
+    assert (
+        logical_projection["protocol"]
+        == "intentir.typed-contract-materialization-projection.v1"
+    )
+    assert logical_projection["contract_ir_digest"]
 
 
 def test_masked_copy_materializes_direct_binding_as_real_identity_mlir() -> None:

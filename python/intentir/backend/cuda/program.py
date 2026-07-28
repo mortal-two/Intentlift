@@ -19,9 +19,9 @@ from intentir.ir.dense_predicate_materialization import (
     BoundaryMaterializationProjection,
 )
 from intentir.ir.canonical_j import elaborate_j, j_elaboration
-from intentir.ir.functional_boundary import (
-    FunctionalBoundaryProjection,
-    project_functional_boundary,
+from intentir.ir.contract_materialization import (
+    ContractMaterializationProjection,
+    project_contract_materialization,
 )
 from intentir.ir.model import IntentOp
 from intentir.ir.value_dimension import validate_value_dimension_instantiation
@@ -86,16 +86,16 @@ def _nodes(j: SemanticArchive) -> dict[str, IntentOp]:
     return result
 
 
-def _functional_projection(
+def _contract_projection(
     j: SemanticArchive,
-) -> FunctionalBoundaryProjection:
+) -> ContractMaterializationProjection:
     """Derive CUDA's ephemeral Layer-B view from the one accepted J."""
 
     try:
-        return project_functional_boundary(j)
+        return project_contract_materialization(j)
     except (TypeError, ValueError, NotImplementedError) as exc:
         raise CudaJLoweringError(
-            "functional boundary projection failed: "
+            "typed contract projection failed: "
             f"{type(exc).__name__}: {exc}"
         ) from exc
 
@@ -113,7 +113,7 @@ def analyze_j_for_cuda(
     unsupported: list[str] = []
     consumed: list[str] = []
     projection: (
-        FunctionalBoundaryProjection | BoundaryMaterializationProjection | None
+        ContractMaterializationProjection | BoundaryMaterializationProjection | None
     ) = (
         materialization.boundary_projection
         if materialization is not None
@@ -121,11 +121,12 @@ def analyze_j_for_cuda(
     )
     if projection is None:
         try:
-            projection = _functional_projection(j)
+            projection = _contract_projection(j)
         except CudaJLoweringError as exc:
             unsupported.append(str(exc))
     if projection is not None:
         consumed.extend(projection.consumed)
+        unsupported.extend(projection.unsupported_lowering)
     projected_consumed = set(projection.consumed) if projection is not None else set()
     if j.boundary.access_guard_relations:
         guards_consumed = all(
@@ -146,6 +147,10 @@ def analyze_j_for_cuda(
             unsupported.append("access_guard_materialization_not_implemented")
     if j.boundary.aliases:
         unsupported.append("alias_relation")
+    consumed.extend(
+        f"effect:{item.effect_id or index}:{item.kind.value}"
+        for index, item in enumerate(j.boundary.effects)
+    )
     for item in j.storage:
         storage_ref = f"storage:{item.storage_id}"
         if item.mutability.value != "mutable":
@@ -259,8 +264,8 @@ def analyze_j_for_cuda(
             "prod": {1, "ONE"},
             "any": {False, "false"},
             "all": {True, "true"},
-            "max": {"NEG_INF"},
-            "min": {"POS_INF"},
+            "max": {"NEG_INF", "-inf", float("-inf")},
+            "min": {"POS_INF", "inf", "+inf", float("inf")},
         }.get(fn)
         if neutral is None or declared not in neutral:
             unsupported.append(f"non_neutral_reduction_boundary:{item.node_ref}")

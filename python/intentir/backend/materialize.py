@@ -8,16 +8,19 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from intentir.backend.protocol import BackendTarget
-from intentir.frontend.canonical_j import materialize_j_function
+from intentir.frontend.canonical_j import (
+    LOGICAL_FULL_AXIS_STEP_MATERIALIZATION,
+    materialize_j_function,
+)
 from intentir.frontend.emit_mlir import emit_module
 from intentir.ir.canonical_j import elaborate_j
 from intentir.ir.dense_predicate_materialization import (
     BoundaryMaterializationProjection,
     materialize_dense_load_predicates,
 )
-from intentir.ir.functional_boundary import (
-    FunctionalBoundaryProjection,
-    project_functional_boundary,
+from intentir.ir.contract_materialization import (
+    ContractMaterializationProjection,
+    project_contract_materialization,
 )
 from intentir.ir.model import IntentFunction, IntentOp
 from intentir.ir.production_snapshot import content_digest
@@ -29,7 +32,7 @@ from intentir.verify.gate1.model import (
 )
 
 
-MATERIALIZER_VERSION = "intentir.production.materializer.v1"
+MATERIALIZER_VERSION = "intentir.production.materializer.v2"
 ATTACH_C_VERSION = "intentir.production.attach-c.v1"
 
 
@@ -45,7 +48,7 @@ class MaterializedJ:
     intent_mlir: str
     concrete_extents: tuple[tuple[str, int], ...]
     boundary_projection: (
-        FunctionalBoundaryProjection | BoundaryMaterializationProjection
+        ContractMaterializationProjection | BoundaryMaterializationProjection
     )
     form: str
     consumed_structures: tuple[str, ...]
@@ -315,20 +318,21 @@ def materialize_j(
     scalar_bindings = dict(constexpr_bindings or {})
     try:
         logical = materialize_j_function(canonical, extents)
-        try:
-            projection: (
-                FunctionalBoundaryProjection | BoundaryMaterializationProjection
-            ) = project_functional_boundary(canonical)
-            function = logical.function
-        except (TypeError, ValueError, NotImplementedError) as original_error:
-            predicated = materialize_dense_load_predicates(
-                canonical,
-                logical.function,
-            )
-            if predicated is None:
-                raise original_error
+        predicated = materialize_dense_load_predicates(
+            canonical,
+            logical.function,
+        )
+        if predicated is not None:
             projection = predicated.projection
             function = predicated.function
+        else:
+            projection = project_contract_materialization(
+                canonical,
+                consume_loop_storage=(
+                    logical.form == LOGICAL_FULL_AXIS_STEP_MATERIALIZATION
+                ),
+            )
+            function = logical.function
         function, consumed_control = _specialize_constexpr_inputs(
             canonical,
             function,

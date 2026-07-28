@@ -71,7 +71,7 @@ def derive_riscv_contract_view(
     projection = state.base.boundary_projection
     consumed = list(projection.consumed)
     projected_consumed = set(projection.consumed)
-    unsupported: list[str] = []
+    unsupported: list[str] = list(projection.unsupported_lowering)
     if j.boundary.aliases:
         unsupported.append("alias_relation")
     if j.boundary.updates:

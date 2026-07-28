@@ -29,16 +29,12 @@ from typing import Any, Mapping, Sequence
 from intentir.frontend.emit_mlir import BroadcastAxes
 from intentir.ir.canonical_j import (
     ContractExpr,
-    ContractSort,
     elaborate_j,
     j_elaboration,
-    parse_contract_expr,
 )
-from intentir.ir.functional_boundary import (
-    FunctionalBoundaryProjection,
-    PredicateProjection,
-    project_functional_boundary,
-    project_predicate_text,
+from intentir.ir.contract_materialization import (
+    ContractMaterializationProjection,
+    project_contract_materialization,
 )
 from intentir.ir.model import IntentFunction, IntentOp
 from intentir.ir.production_snapshot import content_digest
@@ -53,6 +49,13 @@ BOUNDARY_MATERIALIZATION_PROTOCOL = "intentir.j-boundary-materialization.v1"
 
 class DensePredicateMaterializationError(ValueError):
     pass
+
+
+@dataclass(frozen=True)
+class DensePredicateProjection:
+    guards: frozenset[str]
+    lower_axes: frozenset[str]
+    upper_bounds: tuple[tuple[str, int | str], ...]
 
 
 @dataclass(frozen=True)
@@ -90,12 +93,13 @@ class PredicateMaterializationReceipt:
 class BoundaryMaterializationProjection:
     """Original-boundary receipt plus the projection of its rewritten view."""
 
-    logical_projection: FunctionalBoundaryProjection
+    logical_projection: ContractMaterializationProjection
     original_boundary_digest: str
     predicate_materializations: tuple[PredicateMaterializationReceipt, ...]
     synthetic_broadcast_axes: tuple[
         tuple[str, tuple[tuple[str, tuple[int, ...]], ...]], ...
     ] = ()
+    materialized_access_guards: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.predicate_materializations:
@@ -120,6 +124,10 @@ class BoundaryMaterializationProjection:
         return ()
 
     @property
+    def unsupported_lowering(self) -> tuple[str, ...]:
+        return self.logical_projection.unsupported_lowering
+
+    @property
     def proven_index_bounds(self) -> frozenset[str]:
         return self.logical_projection.proven_index_bounds
 
@@ -129,7 +137,15 @@ class BoundaryMaterializationProjection:
             f"predicate_materialization:{item.access_id}:{item.predicate_digest}"
             for item in self.predicate_materializations
         )
-        return tuple(sorted({*self.logical_projection.consumed, *extra}))
+        return tuple(
+            sorted(
+                {
+                    *self.logical_projection.consumed,
+                    *extra,
+                    *self.materialized_access_guards,
+                }
+            )
+        )
 
     @property
     def predicated_access_count(self) -> int:
@@ -168,6 +184,7 @@ class BoundaryMaterializationProjection:
                 ]
                 for output, operands in self.synthetic_broadcast_axes
             ],
+            "materialized_access_guards": list(self.materialized_access_guards),
             "consumed": list(self.consumed),
         }
 
@@ -215,14 +232,9 @@ def _flatten_and(expression: ContractExpr) -> tuple[ContractExpr, ...]:
 
 
 def _positive_guards(
-    predicate_text: str,
+    expression: ContractExpr,
     logical_guards: frozenset[str],
 ) -> tuple[str, ...]:
-    expression = parse_contract_expr(
-        predicate_text,
-        expected=ContractSort.BOOLEAN,
-        context="dense predicate materialization",
-    )
     result: list[str] = []
     for term in _flatten_and(expression):
         if term.op == "ref" and term.value in logical_guards:
@@ -239,6 +251,72 @@ def _positive_guards(
                 "dense predicate materialization does not implement negated guards"
             )
     return tuple(sorted(set(result)))
+
+
+def _reference(expression: ContractExpr) -> str | None:
+    if expression.op == "ref" and isinstance(expression.value, str):
+        return expression.value
+    return None
+
+
+def _bound_value(expression: ContractExpr) -> int | str | None:
+    if expression.op == "int" and isinstance(expression.value, int):
+        return expression.value
+    return _reference(expression)
+
+
+def _project_typed_predicate(
+    expression: ContractExpr,
+    logical_guards: frozenset[str],
+) -> DensePredicateProjection:
+    """Extract the registered dense-mask subset from the canonical typed AST."""
+
+    lower: set[str] = set()
+    guards: set[str] = set()
+    upper: dict[str, int | str] = {}
+    for term in _flatten_and(expression):
+        guard = _reference(term)
+        if guard is None and term.op == "not" and len(term.args) == 1:
+            guard = _reference(term.args[0])
+        if guard in logical_guards:
+            guards.add(guard)
+            continue
+        left, right = term.args if len(term.args) == 2 else (None, None)
+        lower_axis: str | None = None
+        if term.op == "le" and left is not None and right is not None:
+            if left.op == "int" and left.value == 0:
+                lower_axis = _reference(right)
+        elif term.op == "ge" and left is not None and right is not None:
+            if right.op == "int" and right.value == 0:
+                lower_axis = _reference(left)
+        if lower_axis is not None:
+            lower.add(lower_axis)
+            continue
+        upper_axis: str | None = None
+        extent: int | str | None = None
+        if term.op == "lt" and left is not None and right is not None:
+            upper_axis = _reference(left)
+            extent = _bound_value(right)
+        if upper_axis is None or extent is None:
+            raise NotImplementedError(
+                "dense predicate materialization supports only logical-domain "
+                "bounds and explicit scalar guards"
+            )
+        previous = upper.get(upper_axis)
+        if previous is not None and previous != extent:
+            raise DensePredicateMaterializationError(
+                f"predicate axis {upper_axis!r} has conflicting extents"
+            )
+        upper[upper_axis] = extent
+    if not upper and not guards:
+        raise NotImplementedError(
+            "dense predicate materialization requires an upper bound or J guard"
+        )
+    return DensePredicateProjection(
+        frozenset(guards),
+        frozenset(lower),
+        tuple(sorted(upper.items())),
+    )
 
 
 def _guard_dominates_output(
@@ -333,15 +411,19 @@ def materialize_dense_load_predicates(
         item.name: item for item in [*j.intent.inputs, *j.intent.outputs]
     }
 
-    candidates: list[tuple[Any, PredicateProjection, tuple[str, ...]]] = []
+    candidates: list[tuple[Any, DensePredicateProjection, tuple[str, ...]]] = []
     for access in j.boundary.accesses:
         if access.predicate is None:
             continue
-        projected = project_predicate_text(
-            access.predicate,
-            logical_guards=logical_guards,
+        structured_predicate = parsed_accesses[access.access_id].predicate
+        if structured_predicate is None:  # pragma: no cover - canonical J owns this
+            raise DensePredicateMaterializationError(
+                f"access {access.access_id!r} lost its canonical predicate"
+            )
+        projected = _project_typed_predicate(
+            structured_predicate, logical_guards
         )
-        substituted = PredicateProjection(
+        substituted = DensePredicateProjection(
             projected.guards,
             projected.lower_axes,
             tuple(
@@ -364,7 +446,7 @@ def materialize_dense_load_predicates(
             raise NotImplementedError(
                 "dense predicate materialization never rewrites predicated stores"
             )
-        guards = _positive_guards(access.predicate, logical_guards)
+        guards = _positive_guards(structured_predicate, logical_guards)
         if set(guards) != set(substituted.guards):
             raise NotImplementedError(
                 "dense predicate materialization requires positive scalar guards"
@@ -418,7 +500,6 @@ def materialize_dense_load_predicates(
         const_cache[key] = name
         return name
 
-    validation_accesses: dict[str, tuple[str, Any]] = {}
     for access, predicate, guards in candidates:
         if access.node_ref is None:
             raise NotImplementedError(
@@ -492,35 +573,6 @@ def materialize_dense_load_predicates(
                 )
             fill = 0
             guard_dominated = True
-
-        # Validate every other Layer-B collection with the mature functional
-        # projector.  Its invocation-local archive replaces only the portion
-        # now represented by generated Layer-A operations: runtime/guard terms
-        # become the exact full logical-domain upper bounds, and the proven
-        # guard-dominated arbitrary value is represented by the same zero used
-        # below.  Consumer-extension algebra and access provenance therefore
-        # remain checked instead of being discarded with the predicate.
-        validation_upper = []
-        residual_axes = {axis for axis, _bound in residual_upper}
-        for axis_ref, bound in predicate.upper_bounds:
-            position = coordinate_axis[axis_ref]
-            validation_bound = (
-                tensor.shape[position] if axis_ref in residual_axes else bound
-            )
-            validation_upper.append(f"{axis_ref} < {validation_bound}")
-        if not validation_upper:
-            validation_upper.extend(
-                f"{axis_ref} < {tensor.shape[position]}"
-                for axis_ref, position in coordinate_axis.items()
-            )
-        if not validation_upper:
-            raise NotImplementedError(
-                "guard-only scalar predicate has no dense logical access axis"
-            )
-        validation_accesses[access.access_id] = (
-            " and ".join(f"({item})" for item in validation_upper),
-            fill,
-        )
 
         mask_key = (access.predicate, _shape_tuple(tensor.shape))
         cached = mask_cache.get(mask_key)
@@ -673,19 +725,24 @@ def materialize_dense_load_predicates(
         )
     transformed.body = [*prefix, *transformed.body]
 
-    payload = copy.deepcopy(j.to_json())
-    for access in payload["boundary"]["accesses"]:
-        replacement = validation_accesses.get(access["access_id"])
-        if replacement is not None:
-            access["predicate"] = replacement[0]
-            access["fill_value"] = replacement[1]
-    validation_archive = elaborate_j(SemanticArchive.from_json(payload))
-    logical_projection = project_functional_boundary(validation_archive)
+    logical_projection = project_contract_materialization(j)
+    materialized_accesses = {item.access_id for item in receipts}
+    materialized_guards = tuple(
+        sorted(
+            "access_guard:"
+            f"{relation.access_ref}:{relation.value_ref}:"
+            f"{','.join(str(axis) for axis in relation.axes)}:"
+            f"{relation.polarity.value}"
+            for relation in j.boundary.access_guard_relations
+            if relation.access_ref in materialized_accesses
+        )
+    )
     projection = BoundaryMaterializationProjection(
         logical_projection=logical_projection,
         original_boundary_digest=content_digest(j.boundary.to_json()),
         predicate_materializations=tuple(receipts),
         synthetic_broadcast_axes=_serialize_broadcasts(broadcasts),
+        materialized_access_guards=materialized_guards,
     )
     return DensePredicateFunctionMaterialization(transformed, projection)
 
@@ -694,6 +751,7 @@ __all__ = [
     "BOUNDARY_MATERIALIZATION_PROTOCOL",
     "DENSE_PREDICATE_MATERIALIZATION_PROTOCOL",
     "BoundaryMaterializationProjection",
+    "DensePredicateProjection",
     "DensePredicateFunctionMaterialization",
     "DensePredicateMaterializationError",
     "PredicateMaterializationReceipt",

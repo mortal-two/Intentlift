@@ -35,6 +35,10 @@ PRODUCTION_CASE_IDS: dict[str, str] = {
     "poly_norm": "high_performance:liger_poly_norm",
     "softmax": "high_performance:liger_softmax",
     "sparsemax": "high_performance:liger_sparsemax",
+    "splitk_reduce_varargs": (
+        "high_performance:xformers.ops.fmha._triton.splitk_kernels."
+        "_splitK_reduce_varargs"
+    ),
     "swiglu": "high_performance:liger_swiglu",
     "tvd": "high_performance:liger_tvd",
     "xformers_rms_norm": (
@@ -365,6 +369,26 @@ _HARNESS_BINDINGS: dict[str, HarnessBindingSpec] = {
         ),
         c_values=(CBinding("BLOCK_SIZE", _FEATURE, "next_power_of_two"),),
         grid=(GridBinding("extent", _ROW),),
+    ),
+    "splitk_reduce_varargs": HarnessBindingSpec(
+        buffer_axes=(
+            ("Out_splitK0", _axes(None, None, None, None, None)),
+            ("Out_splitK1", _axes(None, None, None, None, None)),
+            ("LSE_splitK0", _axes(None, None, None, None)),
+            ("LSE_splitK1", _axes(None, None, None, None)),
+            ("Out", _axes(None, None, None, None, None)),
+            ("LSE", _axes(None, None, None, None)),
+        ),
+        grid=_preserve_grid(3),
+        literal_constraints=(
+            "batch=1",
+            "groups=1",
+            "heads=1",
+            "M=2",
+            "head_dim=16",
+            "vararg_arity=2",
+            "WRITE_LSE=true",
+        ),
     ),
     "swiglu": HarnessBindingSpec(
         buffer_axes=tuple(

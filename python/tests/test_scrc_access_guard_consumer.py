@@ -8,6 +8,7 @@ import pytest
 
 import intentir.backend.cuda.program as cuda_program
 from intentir.backend.protocol import LoweringRequest
+from intentir.ir.contract_materialization import project_contract_materialization
 from intentir.ir.functional_boundary import (
     FUNCTIONAL_BOUNDARY_PROTOCOL,
     project_functional_boundary,
@@ -323,7 +324,7 @@ def test_cuda_consumes_shared_access_guard_projection() -> None:
 
 def test_cuda_fails_closed_when_access_guard_receipt_is_missing(monkeypatch) -> None:
     j = _guarded_select_j()
-    projection = project_functional_boundary(j)
+    projection = project_contract_materialization(j)
     incomplete = replace(
         projection,
         consumed=tuple(
@@ -334,7 +335,7 @@ def test_cuda_fails_closed_when_access_guard_receipt_is_missing(monkeypatch) -> 
     )
     monkeypatch.setattr(
         cuda_program,
-        "_functional_projection",
+        "_contract_projection",
         lambda unused_j: incomplete,
     )
     analysis = cuda_program.analyze_j_for_cuda(j)
