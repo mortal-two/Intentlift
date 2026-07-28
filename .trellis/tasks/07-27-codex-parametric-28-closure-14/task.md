@@ -1,8 +1,8 @@
 # Task 14：Source-Grounded Certification Profile 下的 Codex 28-Kernel Fresh SCRC 最终闭合
 
-> 状态：执行中（2026-07-28）；四组已横向 fresh 覆盖，当前 12/28 已取得可用闭合 evidence
->（11 个原运行直接认证，另 1 个复用 exact Gate1-closed artifact/Replay 经零模型 Gate2-only
-> capability recheck 认证）；下一步修复通用 Replay 消费后按 7 核组复跑未闭合项
+> 状态：执行中（2026-07-28）；五组已横向 fresh 覆盖，当前 13/28 已取得可用闭合 evidence
+>（11 个原运行直接认证，另 2 个复用各自 exact Gate1-closed artifact/Replay 经零模型 Gate2-only
+> capability recheck 认证）；下一步修复通用 Replay 消费并按 7 核组继续复跑未闭合项
 >
 > 类型：Task 11 的最终 fresh corpus执行波；不是 production backend、`J_dev`能力建设、性能搜索、
 > 论文实验或历史证书重判。
@@ -26,10 +26,11 @@ document sha256 = f9dd1ff1ea4879f664de3fa5c3b86e5ed9c558c511197255e32344a3fbbf9f
 也不能要求J迎合某个target/backend recipe。后端的capability/paper config、Target--Ref receipt、
 MLIR search和`intentir.backend.dev-j-variant.v1`均不进入本任务。
 
-当前没有仍在运行的闭合进程。Terra-high Wave 4 已结束：Flash backward preprocess 直接认证；
-Flash one-pass LayerNorm 的 Gate1-closed exact artifact 在修复 J-only RefJ mask/broadcast consumer 后
-由零模型 Gate2-only recheck 认证；xFormers RMSNorm、SplitK forward/reduce 未闭合；RMSNorm-add 暴露
-纯 output 被错误同时声明为 J input；SplitK backward 混有 Codex Replay wall-time infrastructure。
+当前没有仍在运行的闭合进程。Terra-high Wave 5 已结束：xFormers RMSNorm-add 在 formal round 3
+Gate1 closed；其 exact artifact 的 Source--Replay 两个输出误差均为 0。修复 J-only RefJ 对 inout
+post-state return binding 与 first-consumer pointwise broadcast 的消费后，零模型 Gate2-only recheck
+认证。xFormers RMSNorm、SplitK reduce/backward 未闭合；CrossEntropy 与 SplitK forward 各混有一个
+Replay-before-Gate1 infrastructure branch；Flash forward 未闭合。
 CrossEntropy v9 canary 证明 `terminal_controls` 已被 Replay 正确消费，剩余失败是 arm 内 op/dataflow
 生成错误，不再误判为 terminal relation 缺失。所有 formal run 继续只从 clean committed stack 启动，
 运行中不修改 immutable input。
@@ -190,6 +191,7 @@ fixed code不得替Lift修成`x*`。
 - Gate1 observer：`triton-ttir-3.6-gate1-v11`；outer batch：`intentir.scrc.batch.v3`；
   candidate fan-out：v4 `first_observed_gate1_closure_cooperative_stop`；
 - Gate2：三条直接比较，threshold只来自外部Q。
+- Gate2 RefEval：`j_scalar_cpu_mlir_v17 / intentir.j-functional-boundary.v16`。
 
 ### 4.1 当前 fresh closure 账本
 
@@ -203,7 +205,10 @@ fixed code不得替Lift修成`x*`。
   Gate1-closed J/Replay 的零模型 Gate2-only recheck certified；xFormers RMSNorm、SplitK forward/reduce
   未闭合；RMSNorm-add 的 J signature overlap 由 typecheck.v22 fail closed；SplitK backward 混有
   Replay wall-time infrastructure。
-- 当前可用闭合总计 `12/28`：11 个原运行直接认证，1 个 exact-artifact capability recheck 认证。
+- Wave 5（ordinal 5/19/24--28）：RMSNorm-add Gate1 closed，并由同一 exact artifact/Replay 的零模型
+  Gate2-only recheck certified；RMSNorm、Flash forward、SplitK reduce/backward 未闭合；CrossEntropy
+  与 SplitK forward 各有一个 Replay infrastructure branch、其余 branch 未闭合。
+- 当前可用闭合总计 `13/28`：11 个原运行直接认证，2 个 exact-artifact capability recheck 认证。
   TypeCheck PASS 不计进度；只有 Gate1 已闭合且当前 Gate2 三边通过才计入。
 
 CrossEntropy 曾暴露一个通用表达缺口：J 已作者化 early-return `effect_if`，旧 π 无法区分 terminal

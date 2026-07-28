@@ -299,8 +299,8 @@ constexpr 只能在纯 selector 情形使用这一 Harness specialization 形式
 只影响 layout/tile/stage 等 implementation
 selection 的 constexpr 应由 Harness 分类为 C slot；static specialization carrier 不得进入 π topology。
 
-Gate2 scalar RefEval 当前使用 `j_scalar_cpu_mlir_v16`，shared functional projection 使用
-`intentir.j-functional-boundary.v15`。它们完整继承 v14/v13、v12/v11、v10/v3 的唯一 node-less logical-input load 与严格
+Gate2 scalar RefEval 当前使用 `j_scalar_cpu_mlir_v17`，shared functional projection 使用
+`intentir.j-functional-boundary.v16`。它们完整继承 v14/v13、v12/v11、v10/v3 的唯一 node-less logical-input load 与严格
 J-only 通用 padded functional graph 消费：每个 predicated direct access 的完整 logical domain、
 每个 logical reduction 的唯一中性 outside-domain contract，以及 pointwise operand 的 closed
 broadcast relation 必须同时闭合；于是多 input/output、max+sum 等多 reduction 与普通 pointwise DAG
@@ -351,7 +351,7 @@ v14/v13 只在可由 J 证明 outside-domain value 不可观察时允许 predica
 唯一给出；两者同时出现必须一致。shared J→Intent MLIR 入口与 structured reference v5 消费同一个 deterministic
 `JElaboration.output_bindings`，不要求 LLM 重复序列化同一事实，也不新建第二份 J。
 
-`j_scalar_cpu_mlir_v16` / `intentir.j-functional-boundary.v15` 的 product-domain mixed-radix bijection、
+`j_scalar_cpu_mlir_v17` / `intentir.j-functional-boundary.v16` 的 product-domain mixed-radix bijection、
 精确 axis-permutation transpose mask provenance、`log2` 与 IEEE special literal 均是共享 J consumer 能力。
 它们要求完整 factor/digit/stride、精确 authored permutation 与同 predicate，不能由 C slot、C value
 或 schedule role 补证；不满足时仍 fail closed。因而 C 既不获得新语义所有权，也不成为该 proof 的

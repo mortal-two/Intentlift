@@ -45,8 +45,8 @@ cooperative stop并保存 receipt；hidden Gate2 尚未生成，因此调度次�
 outer batch protocol 是 `intentir.scrc.batch.v3`；其 `observer_unsupported` 只表示 Source observer
 能力缺口，不是候选非法或 `NO_CLOSURE`，历史 batch v2 report 不重判。
 
-当前 scalar RefEval 是 `j_scalar_cpu_mlir_v16`，shared functional-boundary receipt 是
-`intentir.j-functional-boundary.v15`。主 SCRC runner 选定 Gate2 winner 后，才为当前 invocation 调用
+当前 scalar RefEval 是 `j_scalar_cpu_mlir_v17`，shared functional-boundary receipt 是
+`intentir.j-functional-boundary.v16`。主 SCRC runner 选定 Gate2 winner 后，才为当前 invocation 调用
 RefEval-only 入口；projection library 不选择 winner。该入口用 J 自身
 rank-0 logical `i1`/integer values 和完整 closed dimensions 逐 access 证明 predicate 对完整 logical
 domain 恒真；不改 J、不读 Source/C/π、不进入 Lift feedback。invocation-local

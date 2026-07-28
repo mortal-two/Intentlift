@@ -1198,7 +1198,7 @@ def test_scalar_e_j_consumes_general_masked_softmax_graph() -> None:
     expected /= np.sum(expected, axis=1, keepdims=True)
     assert result.ok, result.error
     np.testing.assert_allclose(result.outputs["output"], expected, rtol=1e-6)
-    assert result.metadata["protocol"] == "j_scalar_cpu_mlir_v16"
+    assert result.metadata["protocol"] == "j_scalar_cpu_mlir_v17"
     assert (
         result.metadata["boundary_profile"]
         == "logical_domain_reduction_padding_v2"
@@ -1418,7 +1418,7 @@ def test_refeval_runtime_proves_rank_zero_logical_bound_tautology(limit: int) ->
     assert result.ok, result.error
     np.testing.assert_array_equal(result.outputs["output"], value)
     projection = result.metadata["boundary_projection"]
-    assert projection["protocol"] == "intentir.j-functional-boundary.v15"
+    assert projection["protocol"] == "intentir.j-functional-boundary.v16"
     assert FUNCTIONAL_BOUNDARY_PROTOCOL == projection["protocol"]
     assert result.metadata["boundary_profile"] == (
         "logical_domain_runtime_mask_erasure_v1"
@@ -1787,7 +1787,7 @@ def test_scalar_e_j_erases_tail_mask_for_general_pointwise_j() -> None:
 
     assert result.ok, result.error
     assert result.metadata["protocol"] == SCALAR_LOWERING_PROTOCOL
-    assert SCALAR_LOWERING_PROTOCOL == "j_scalar_cpu_mlir_v16"
+    assert SCALAR_LOWERING_PROTOCOL == "j_scalar_cpu_mlir_v17"
     np.testing.assert_allclose(result.outputs["output"], np.tanh(value))
 
 
@@ -2017,6 +2017,30 @@ def test_scalar_e_j_erases_mask_through_closed_pointwise_broadcast() -> None:
     )
     assert result.ok, result.error
     np.testing.assert_allclose(result.outputs["output"], second * np.abs(first))
+
+    # The predicate-bearing load may itself enter the first pointwise consumer
+    # through a closed trailing broadcast; it need not pass through a same-rank
+    # unary node before that broadcast becomes visible.
+    broadcast = artifact.j.intent.body[1]
+    broadcast.operands = ["t2", "t0"]
+    artifact.j.intent.body = [broadcast]
+    artifact.j.node_ids = {"n1": "body[0]"}
+    artifact.j.boundary.accesses[0].node_ref = "n1"
+    artifact.j.boundary.effects[0].node_ref = "n1"
+    assert predicate_dominated_pointwise_load(artifact.j, "a0")
+    direct_projection = project_functional_boundary(artifact.j)
+    assert "predicate_dominated_load:a0:i1 < x1" in direct_projection.consumed
+    direct = ScalarLoweringRunner().run(
+        ScalarLoweringSpec.create(
+            artifact.j,
+            dims={"x0": 2, "x1": 3},
+            input_bindings={"t0": "input0", "t2": "input1"},
+            output_bindings={"t1": "output"},
+        ),
+        {"input0": first, "input1": second},
+    )
+    assert direct.ok, direct.error
+    np.testing.assert_allclose(direct.outputs["output"], second * first)
 
 
 def _make_node_less_input_load_artifact():
@@ -2717,6 +2741,71 @@ def test_scalar_e_j_dense_inout_consumes_prestate_and_returns_poststate() -> Non
         "boundary_projection"
     ]["consumed"]
 
+    canonical_returns = list(artifact.j.intent.returns)
+    artifact.j.intent.returns = []
+    mapping_only = ScalarLoweringRunner().run(
+        ScalarLoweringSpec.create(
+            artifact.j,
+            dims={"x0": 8},
+            input_bindings={"t0": "prestate", "t1": "delta"},
+            output_bindings={"t0": "poststate", "t2": "derived"},
+        ),
+        {"prestate": prestate, "delta": delta},
+    )
+    assert mapping_only.ok, mapping_only.error
+    np.testing.assert_array_equal(mapping_only.outputs["poststate"], prestate + delta)
+    np.testing.assert_array_equal(mapping_only.outputs["derived"], -(prestate + delta))
+    artifact.j.intent.returns = canonical_returns
+
+    # The J return is the authoritative Layer-A output binding.  A redundant
+    # Layer-B output_mapping may restate it, but is not required to recover the
+    # already-authored post-state SSA edge.
+    artifact.j.boundary.output_mappings = []
+    return_only = ScalarLoweringRunner().run(
+        ScalarLoweringSpec.create(
+            artifact.j,
+            dims={"x0": 8},
+            input_bindings={"t0": "prestate", "t1": "delta"},
+            output_bindings={"t0": "poststate", "t2": "derived"},
+        ),
+        {"prestate": prestate, "delta": delta},
+    )
+    assert return_only.ok, return_only.error
+    np.testing.assert_array_equal(return_only.outputs["poststate"], prestate + delta)
+    np.testing.assert_array_equal(return_only.outputs["derived"], -(prestate + delta))
+    assert "inout_poststate_reload:a3:t0:v0" in return_only.metadata[
+        "boundary_projection"
+    ]["consumed"]
+
+    for access in artifact.j.boundary.accesses:
+        access.predicate = "i0 < x0"
+    artifact.j.boundary.accesses[0].fill_value = 0.0
+    artifact.j.boundary.accesses[2].fill_value = 0.0
+    artifact.j.boundary.domains = {"d0": "(0 <= i0) and (i0 < x0)"}
+    masked_poststate = ScalarLoweringRunner().run(
+        ScalarLoweringSpec.create(
+            artifact.j,
+            dims={"x0": 8},
+            input_bindings={"t0": "prestate", "t1": "delta"},
+            output_bindings={"t0": "poststate", "t2": "derived"},
+        ),
+        {"prestate": prestate, "delta": delta},
+    )
+    assert masked_poststate.ok, masked_poststate.error
+    np.testing.assert_array_equal(
+        masked_poststate.outputs["poststate"], prestate + delta
+    )
+    np.testing.assert_array_equal(
+        masked_poststate.outputs["derived"], -(prestate + delta)
+    )
+    consumed = set(masked_poststate.metadata["boundary_projection"]["consumed"])
+    assert "inout_poststate_reload:a3:t0:v0" in consumed
+    assert "predicate_dominated_load:a3:i0 < x0" in consumed
+
+    for access in artifact.j.boundary.accesses:
+        access.predicate = None
+        access.fill_value = None
+    artifact.j.boundary.domains = {}
     artifact.j.boundary.effects[2], artifact.j.boundary.effects[3] = (
         artifact.j.boundary.effects[3],
         artifact.j.boundary.effects[2],

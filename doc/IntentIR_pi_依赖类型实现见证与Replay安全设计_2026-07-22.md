@@ -1303,8 +1303,8 @@ mean、guard、cross-axis/general predicate、domain/extent 不闭合、mask 位
 checker 不读取 Source/C/π且不自动变换图；Source 的显式 sum/div 必须由 Lift 原样写成
 `reduce(sum)` 与 explicit division。
 
-Gate2 scalar consumer 当前独立标为 `j_scalar_cpu_mlir_v16`，共享
-`intentir.j-functional-boundary.v15`：它们继承 v14/v13、v12/v11 与 v10/v3；v10 已继承 v9 的 node-less input load，并按 J 自身的完整
+Gate2 scalar consumer 当前独立标为 `j_scalar_cpu_mlir_v17`，共享
+`intentir.j-functional-boundary.v16`：它们继承 v14/v13、v12/v11 与 v10/v3；v10 已继承 v9 的 node-less input load，并按 J 自身的完整
 logical domains、逐 access predicate/fill、逐 reduction 中性 `masked_contribution` 与 closed broadcast
 relation 消费通用 padded pointwise/multi-reduce DAG。它不从 π route 推导 operator、padding 公式或
 logical input。
@@ -1336,17 +1336,23 @@ v12/v11 只扩展 J 已显式闭合的 logical inout：同一 typed `t*` 同时�
 补 alias；`alias_of`/`boundary.aliases` 继续 unsupported。RefEval 分别消费 input/output binding，不
 据 Harness 地址相等猜测语义。
 
-v13/v12 的 post-state reload proof 还要求唯一 inout output mapping、同 index/predicate 的唯一 store、
+v17/v16 的 post-state reload proof 接受 J `returns` 或 `output_mapping` 唯一给出的 canonical output
+binding；二者同时存在时必须完全一致。它还要求同 index/predicate 的唯一 store、
 后继 load 对 post-state SSA 的依赖以及 boundary/scoped store-before-load effect order。v14/v13 的
 missing-fill proof 只接受全 downstream pointwise 且所有 observable store 被同 predicate 支配的情形；
 reduce/scan/loop/transpose/pad 或不同 predicate 一律 unsupported。两种 proof 都只读 J 并形成 receipt，
 π 不携带、不授权也不修补这些关系。
 
-`j_scalar_cpu_mlir_v16` / `intentir.j-functional-boundary.v15` 进一步只消费 J 已写出的完整 product-domain
+`j_scalar_cpu_mlir_v17` / `intentir.j-functional-boundary.v16` 进一步只消费 J 已写出的完整 product-domain
 mixed-radix bijection，以及 pointwise provenance 后精确 `transpose` 的 axis permutation；后者还要求
 store coordinates 与 load coordinates 的 permutation 完全一致并由同 predicate 支配。`log2` 与 IEEE
 special literal 也由 shared materializer 直接消费。π route/instance/order 不能提供 factor、digit、perm、
 fill 或常量语义，不能让不完整关系通过；这些能力不改变 π 的 dependent typing 或 Gate1 witness 含义。
+
+v17/v16 同时允许 predicate-bearing load 在第一个 pointwise consumer 处按 J typed shape 做标准 trailing
+或显式 axis broadcast；插入轴只记录为无来源轴，原 load 轴仍须逐轴映射到同 predicate observable
+store。该规则只消费 J 的类型、SSA producer、access/effect 与 output binding，不从 Source、Harness、C
+或 π 推断 fill、broadcast 或 post-state。
 
 当前 Lift knowledge v57 继承 v56-v42，要求 `fill_value` 保留 Source load 的实际 `other`，并要求
 adapter 明示的 bound-constexpr/shape-coordinate equality 仍由 Lift 绑定 `x*` 或作者化 `t*=x*`；
