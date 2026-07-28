@@ -241,6 +241,63 @@ class SCRCWorkloadEntry:
         *,
         dataset_root: str | Path | None = None,
     ) -> SourceResolution:
+        if self.suite == "multifrontend_dataset":
+            # Native frontends are catalogued by case identity rather than an
+            # importable Python module. Resolve through the same external
+            # catalog used by live Harness preparation so list/dry-run/live
+            # cannot silently name different Source programs.
+            from intentir.verify.frontend_dataset import load_frontend_dataset
+
+            try:
+                catalog = load_frontend_dataset(dataset_root)
+                validation = catalog.validate()
+            except (OSError, ValueError) as exc:
+                return SourceResolution(
+                    SourceResolutionStatus.CASE_UNAVAILABLE,
+                    self.source_module,
+                    self.symbol,
+                    diagnostic=(
+                        "multi-frontend Dataset cannot be loaded: "
+                        f"{type(exc).__name__}: {exc}"
+                    ),
+                )
+            if not validation.passed:
+                return SourceResolution(
+                    SourceResolutionStatus.MANIFEST_INVALID,
+                    self.source_module,
+                    self.symbol,
+                    diagnostic="; ".join(validation.errors),
+                )
+            kernel = catalog.by_id.get(self.case_id)
+            if kernel is None:
+                return SourceResolution(
+                    SourceResolutionStatus.CASE_UNAVAILABLE,
+                    self.source_module,
+                    self.symbol,
+                    diagnostic=(
+                        "multi-frontend Dataset has no catalog entry for "
+                        f"{self.case_id!r}"
+                    ),
+                )
+            if kernel.frontend != self.frontend:
+                return SourceResolution(
+                    SourceResolutionStatus.MANIFEST_INVALID,
+                    self.source_module,
+                    self.symbol,
+                    kernel.path,
+                    diagnostic=(
+                        "registered workload frontend differs from the "
+                        "multi-frontend Dataset catalog"
+                    ),
+                    location=kernel.location,
+                )
+            return SourceResolution(
+                SourceResolutionStatus.RESOLVED,
+                self.source_module,
+                kernel.symbol,
+                kernel.path,
+                location=kernel.location,
+            )
         root = (
             Path(dataset_root).expanduser().resolve()
             if dataset_root is not None

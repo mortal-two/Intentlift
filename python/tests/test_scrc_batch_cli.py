@@ -234,6 +234,19 @@ def test_batch_cli_lists_frontend_cases_from_the_neutral_registry(capsys) -> Non
     assert payload["entries"][0]["ordinal"] > 28
 
 
+def test_batch_cli_dry_runs_frontend_case_through_dataset_identity(capsys) -> None:
+    assert scrc_batch.main(
+        ["--dry-run", "--case", "tilelang:add2d", "--json"]
+    ) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status_counts"] == {"ready": 1}
+    case = payload["cases"][0]
+    assert case["case_id"] == "tilelang:add2d"
+    assert case["source_file"].endswith("/tilelang/ops/add2d.py")
+    assert case["details"]["symbol"] == "make_add2d_prim_func"
+
+
 def test_batch_cli_frontend_tiers_select_registered_native_cases(capsys) -> None:
     assert scrc_batch.main(
         ["--list", "--tier", "frontend", "--json"]

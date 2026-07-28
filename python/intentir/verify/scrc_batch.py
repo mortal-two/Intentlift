@@ -287,7 +287,7 @@ def dry_run_executor(
             source_file=source.location or None,
             details={
                 "source_module": entry.source_module,
-                "symbol": entry.symbol,
+                "symbol": source.symbol,
                 "frontend": entry.frontend,
                 "observer_profile": entry.observer_profile,
                 "q_policy": entry.q_policy,
