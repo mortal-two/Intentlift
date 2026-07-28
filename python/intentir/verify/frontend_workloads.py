@@ -63,10 +63,10 @@ from intentir.verify.scrc_runner import (
 )
 
 
-FRONTEND_DATASET_HARNESS_PROTOCOL = "intentir.scrc.frontend-dataset-harness.v2"
+FRONTEND_DATASET_HARNESS_PROTOCOL = "intentir.scrc.frontend-dataset-harness.v3"
 FRONTEND_DATASET_SOURCE_PROTOCOL = "intentir.scrc.frontend-source-projection.v1"
 FRONTEND_DATASET_PROJECTION_PROTOCOL = (
-    "intentir.scrc.frontend-dataset-harness-projection.v2"
+    "intentir.scrc.frontend-dataset-harness-projection.v3"
 )
 _DEFAULT_DATASET_DIMENSION = 4
 _DEFAULT_DATASET_BLOCK_1D = (16, 1, 1)
@@ -1217,6 +1217,15 @@ def prepare_frontend_dataset_workload(
             f"expected {adapter.source_sha256}, got {actual_sha256}"
         )
     dimensions = adapter.dimension_map
+    source_schedule = {
+        f"launch_block_{axis}": extent
+        for axis, extent in zip(("x", "y", "z"), adapter.block, strict=True)
+        if extent != 1
+    }
+    opaque_schedule = {
+        f"c{index}": value
+        for index, value in enumerate(source_schedule.values())
+    }
     if adapter.frontend == "tilelang":
         metadata_kernel = _generated_companion(kernel, catalog.kernels)
         projection = _materialize_tilelang_projection(
@@ -1239,7 +1248,7 @@ def prepare_frontend_dataset_workload(
             tuple(item.frontend_parameter() for item in parameters),
             adapter.grid,
             adapter.block,
-            {},
+            opaque_schedule,
         )
         metadata = metadata_kernel.metadata
     else:
@@ -1264,7 +1273,7 @@ def prepare_frontend_dataset_workload(
             tuple(item.frontend_parameter() for item in parameters),
             adapter.grid,
             adapter.block,
-            {},
+            opaque_schedule,
             adapter.cuda_arch,
             include_dirs=resolve_cuda_include_dirs(kernel),
         )
@@ -1286,7 +1295,8 @@ def prepare_frontend_dataset_workload(
         raise ValueError("Dataset Harness grid contract differs from metadata")
     shape_coordinates = _shape_coordinate_mapping(parameters)
     compiler_view = SCRCCompilerView(
-        schedule_values={},
+        schedule_values=source_schedule,
+        compiler_slots=tuple(source_schedule),
         arguments=tuple(
             item.compiler_argument(shape_coordinates) for item in parameters
         ),
@@ -1318,7 +1328,7 @@ def prepare_frontend_dataset_workload(
     request = SCRCRunRequest(
         SourceProgram(projection.code, gate_source),
         HarnessBindingInstance.create(
-            {},
+            opaque_schedule,
             gate1_case=gate_case,
             gate2_context={
                 "test_mode": "finite",

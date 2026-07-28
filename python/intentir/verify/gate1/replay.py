@@ -52,7 +52,7 @@ from .tilelang_compiler import (
 from .ttir import TTIRParseError, parse_ttir
 
 
-MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v23"
+MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v28"
 MINISWE_REPLAY_TURN_TIMEOUT_SECONDS = 300.0
 MINISWE_REPLAY_XHIGH_TURN_TIMEOUT_SECONDS = 900.0
 RESPONSES_REPLAY_BACKEND = "openai.responses.intentir-replay.v1"
@@ -1231,8 +1231,9 @@ def _packet_required_compiled_iteration_arities(
     """Return compiler-visible loop block arities authored by J and pi.
 
     A structured J ``loop`` denotes one logical loop.  A
-    ``pi.physical_iterations`` row denotes one additional physical loop around
-    an otherwise ordinary reduce/contraction.  ``pi.iterations`` realizes its
+    ``pi.physical_iterations`` or ``pi.unit_iterations`` row denotes one
+    additional physical loop around an otherwise ordinary J subject.
+    ``pi.iterations`` realizes its
     existing J loop and therefore is not counted a second time.  The induction
     variable contributes one block argument; only explicitly authored
     ``pi.loop_carriers`` or ``pi.physical_loop_carriers`` add carrier arguments.
@@ -1276,7 +1277,10 @@ def _packet_required_compiled_iteration_arities(
             for item in loop_carriers
         )
         arities.append(1 + carrier_count)
-    for item in pi.get("physical_iterations", []):
+    for item in [
+        *pi.get("physical_iterations", []),
+        *pi.get("unit_iterations", []),
+    ]:
         if not isinstance(item, Mapping):
             continue
         region = item.get("region")

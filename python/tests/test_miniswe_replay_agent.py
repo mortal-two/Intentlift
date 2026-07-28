@@ -504,7 +504,7 @@ def test_episode_contract_digest_binds_exact_files_prompts_and_budgets() -> None
     assert default_config["model"]["retry_timeouts"] is True
     assert default_config["model"]["semantic_initial_turns"] == 1
     assert default_config["model"]["model_kwargs"]["parallel_tool_calls"] is True
-    assert MINISWE_REPLAY_BACKEND == "minisweagent.intentir-replay.v23"
+    assert MINISWE_REPLAY_BACKEND == "minisweagent.intentir-replay.v28"
     instance = default_config["agent"]["instance_template"]
     assert "exact immutable source-blind startup transport" in instance
     assert "exact_packet_embedded=true" in instance
@@ -1063,7 +1063,7 @@ def test_critical_facts_project_reduction_linearization_without_source() -> None
 
     facts = _packet_critical_facts(artifact.rewriter_view(masked=False))
 
-    assert facts["protocol"] == "intentir.replay-critical-facts.v1"
+    assert facts["protocol"] == "intentir.replay-critical-facts.v2"
     assert facts["reduction_linearizations"] == [
         {
             "instance": "i1",
@@ -1185,7 +1185,7 @@ def test_static_error_can_be_repaired_in_one_fresh_multi_turn_episode() -> None:
     assert '"exact_packet_embedded":true' in first_packet
     assert '"packet_bytes":' in first_packet
     assert '"bootstrap_command":null' in first_packet
-    assert "intentir.replay-critical-facts.v1" in first_packet
+    assert "intentir.replay-critical-facts.v2" in first_packet
     assert '"logical_ref":"x1"' in first_packet
     assert '"packet":' in first_packet
     assert "anonymous_source" not in first_packet

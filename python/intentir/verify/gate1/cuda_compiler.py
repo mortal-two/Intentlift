@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass, field
 import glob
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import shutil
@@ -63,8 +64,19 @@ class CudaCompileCase:
                 raise ValueError(f"CUDA {label} must contain three positive dimensions")
             object.__setattr__(self, label, dims)
         schedule = dict(self.schedule)
-        if any(not isinstance(key, str) or not key for key in schedule):
-            raise ValueError("CUDA schedule keys must be non-empty strings")
+        if any(
+            not isinstance(key, str)
+            or not key.isidentifier()
+            or "__" in key
+            for key in schedule
+        ):
+            raise ValueError("CUDA schedule keys must be safe identifiers")
+        if any(
+            not isinstance(value, (bool, int, float, str))
+            or (isinstance(value, float) and not math.isfinite(value))
+            for value in schedule.values()
+        ):
+            raise TypeError("CUDA schedule values must be finite JSON scalars")
         allowed = (
             "--fmad=",
             "--ftz=",
@@ -190,6 +202,16 @@ def _normalize_arch(raw: str) -> str:
     return f"sm_{digits}"
 
 
+def _schedule_define(name: str, value: int | float | bool | str) -> str:
+    if isinstance(value, bool):
+        literal = "1" if value else "0"
+    elif isinstance(value, (int, float)):
+        literal = repr(value)
+    else:
+        literal = json.dumps(value, ensure_ascii=True)
+    return f"-D{name}={literal}"
+
+
 def find_nvcc() -> str | None:
     direct = shutil.which("nvcc")
     if direct:
@@ -267,6 +289,10 @@ class CudaCompiler:
                 "-O3",
                 "-lineinfo",
                 f"-arch={case.arch}",
+                *(
+                    _schedule_define(name, value)
+                    for name, value in sorted(case.schedule.items())
+                ),
                 *case.compiler_options,
                 *(
                     item

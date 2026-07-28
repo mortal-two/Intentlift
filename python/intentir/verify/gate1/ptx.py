@@ -18,7 +18,7 @@ import re
 from typing import Any, Mapping
 
 
-PTX_FINGERPRINT_SCHEMA = "cuda-ptx-semantic-effects-v2"
+PTX_FINGERPRINT_SCHEMA = "cuda-ptx-semantic-effects-v3"
 
 
 class PTXObservationError(ValueError):
@@ -490,6 +490,37 @@ def _semantic_value_opcodes(
     return tuple(sorted(opcodes.items()))
 
 
+def _semantic_collectives(instructions: tuple[str, ...]) -> tuple[str, ...]:
+    """Project collective effects without freezing one legal PTX algorithm."""
+
+    result: list[str] = []
+    for item in instructions:
+        opcode = _opcode(item)
+        if opcode.startswith("shfl."):
+            result.append("shuffle")
+        elif opcode.startswith("vote."):
+            result.append("vote")
+        elif opcode.startswith("match."):
+            result.append("match")
+        elif opcode.startswith("bar.warp."):
+            result.append("barrier.warp")
+        elif opcode.startswith(("bar.", "barrier.")):
+            result.append("barrier.cta")
+        elif opcode.startswith("mbarrier."):
+            result.append("barrier.memory")
+        elif opcode.startswith("cp.async"):
+            result.append("async_copy")
+        elif opcode.startswith("fence."):
+            result.append("fence")
+        elif opcode.startswith("wgmma."):
+            result.append("wgmma")
+        elif opcode.startswith("mma."):
+            result.append("mma")
+        elif opcode.startswith("elect."):
+            result.append("elect")
+    return tuple(sorted(result))
+
+
 @dataclass(frozen=True)
 class PTXFingerprint:
     schema_version: str
@@ -568,10 +599,7 @@ def fingerprint_ptx(
     memory = _category(instructions, ("ld.", "st.", "atom.", "red.", "suld.", "sust."))
     semantic_value_opcodes = _semantic_value_opcodes(instructions)
     semantic_memory_effects = _semantic_memory_effects(instructions)
-    collectives = _category(
-        instructions,
-        ("bar.", "barrier.", "mbarrier.", "cp.async", "fence.", "shfl.", "vote.", "match.", "mma.", "wgmma.", "elect."),
-    )
+    collectives = _semantic_collectives(instructions)
     control = tuple(
         item
         for item in instructions

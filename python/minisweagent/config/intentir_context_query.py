@@ -1016,6 +1016,7 @@ _CONTROL_PI_FIELDS = (
     "iterations",
     "loop_carriers",
     "physical_iterations",
+    "unit_iterations",
     "physical_loop_carriers",
     "terminal_controls",
     "routes",

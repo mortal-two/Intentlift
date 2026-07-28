@@ -68,11 +68,17 @@ def test_direct_pi_artifact_roundtrip_and_legacy_interface_break() -> None:
         Gate1Artifact.from_json(legacy)
 
 
-def test_artifact_v9_preserves_v8_through_v1_legacy_contracts() -> None:
+def test_artifact_v10_preserves_v9_through_v1_legacy_contracts() -> None:
     current = make_reduce_artifact().to_json()
-    assert current["schema"] == "intentir.scrc.artifact.v9"
+    assert current["schema"] == "intentir.scrc.artifact.v10"
 
-    legacy_v8 = copy.deepcopy(current)
+    legacy_v9 = copy.deepcopy(current)
+    legacy_v9["schema"] = "intentir.scrc.artifact.v9"
+    del legacy_v9["pi"]["unit_iterations"]
+    parsed_v9 = Gate1Artifact.from_json(legacy_v9)
+    assert parsed_v9.to_json() == legacy_v9
+
+    legacy_v8 = copy.deepcopy(legacy_v9)
     legacy_v8["schema"] = "intentir.scrc.artifact.v8"
     del legacy_v8["pi"]["terminal_controls"]
     parsed_v8 = Gate1Artifact.from_json(legacy_v8)
@@ -182,6 +188,7 @@ def test_every_artifact_wire_version_requires_explicit_pi_refinements(
 ) -> None:
     payload = make_reduce_artifact().to_json()
     payload["schema"] = wire_schema
+    del payload["pi"]["unit_iterations"]
     del payload["pi"]["terminal_controls"]
     del payload["pi"]["physical_iterations"]
     del payload["pi"]["physical_loop_carriers"]
@@ -741,6 +748,15 @@ def _historical_triton_v6_payload() -> dict[str, object]:
     u_f["context_policy"] = "public_frontend_context_v6"
     contract = u_f["compile_entry_contract"]
     contract = contract.replace(
+        " Every pi.unit_iterations entry is mandatory physical topology over "
+        "one already-authored non-loop J subject and axis. Materialize exactly "
+        "the logical points [0, extent) with unit step, or the same points in "
+        "descending order for direction=reverse. It has no C tile and never "
+        "authorizes a new semantic J loop, rounded bound, launch-derived bound, "
+        "formula, or operator.",
+        "",
+    )
+    contract = contract.replace(
         " A reduction_linearization refinement is the exact source-neutral "
         "full-axis materialization immediately before its uniquely routed J "
         "reduce. For Triton, emit `tl.reshape(value, (value.numel,), "
@@ -855,13 +871,13 @@ def test_public_frontend_context_history_is_read_only_and_exact() -> None:
         PUBLIC_FRONTEND_CONTEXT["triton"]
     )
 
-    assert current_digest == history["public_frontend_context_v14"]
+    assert current_digest == history["public_frontend_context_v15"]
     current_receipt_digest = PUBLIC_FRONTEND_CONTEXT_RECEIPT_HISTORY[
         "triton"
-    ]["public_frontend_context_v14"]["context_sha256"]
+    ]["public_frontend_context_v15"]["context_sha256"]
     current_receipt = audit_public_frontend_context_receipt(
         frontend="triton",
-        context_policy="public_frontend_context_v14",
+        context_policy="public_frontend_context_v15",
         context_sha256=current_receipt_digest,
     )
     assert current_receipt["status"] == "current"
@@ -959,7 +975,7 @@ def test_historical_packet_has_read_only_audit_but_cannot_be_fresh_replay() -> N
         audit_replay_packet_digest(payload, expected_digest="0" * 64)
     assert build_rewriter_packet(make_reduce_artifact()).u_f[
         "context_policy"
-    ] == "public_frontend_context_v14"
+    ] == "public_frontend_context_v15"
 
 
 def test_real_v6_u_f_uses_the_historical_full_u_f_receipt_basis() -> None:
@@ -987,7 +1003,7 @@ def test_real_v6_u_f_uses_the_historical_full_u_f_receipt_basis() -> None:
     [
         (
             Frontend.TRITON,
-            "60cd010e25be5a4089629ac56f3f6d27bc4e20765bb410472604301059f45014",
+            "c7706c0d986a883cb30f703f67238885d9395b5fb9fa0251c443989edfce4b7e",
         ),
         (
             Frontend.CUTE,
@@ -995,11 +1011,11 @@ def test_real_v6_u_f_uses_the_historical_full_u_f_receipt_basis() -> None:
         ),
         (
             Frontend.TILELANG,
-            "b54d1d1e65f5ad35a39b47aa43b7bee9eb68e4067c82d32e1b7739bc99c2660e",
+            "b600cb80e9c1496252b024b3a2257332a74a64ac77dc1c75ca70b7c8f5ea7140",
         ),
         (
             Frontend.CUDA,
-            "83d5c95bd2c9bc28329e42987c4eb9628395990a5b2bb8c4d07aad81fb13a530",
+            "1d5bee977f82a852fbde57428bb4b4bdca784c837ede9ae91a5f18d8b75e8e65",
         ),
     ],
 )
@@ -1082,9 +1098,9 @@ def test_replay_contract_accepts_an_explicit_strict_integer_widen() -> None:
 
     report = type_check(artifact.j, artifact.c, artifact.pi)
     assert report.passed
-    assert report.protocol == "intentir.scrc.typecheck.v25"
+    assert report.protocol == "intentir.scrc.typecheck.v26"
     assert build_rewriter_packet(artifact).u_f["context_policy"] == (
-        "public_frontend_context_v14"
+        "public_frontend_context_v15"
     )
 
 
@@ -1103,7 +1119,7 @@ def test_typecheck_rejects_non_widening_or_untyped_signed_widen(
 
     report = type_check(artifact.j, artifact.c, artifact.pi)
     assert not report.passed
-    assert report.protocol == "intentir.scrc.typecheck.v25"
+    assert report.protocol == "intentir.scrc.typecheck.v26"
     assert "refinement_auth_invalid_widen" in {
         item.code.value for item in report.diagnostics
     }
@@ -1116,7 +1132,7 @@ def test_triton_u_f_preserves_constexpr_and_projects_coordinate_roles() -> None:
     context = payload["u_f"]
     contract = context["compile_entry_contract"]
 
-    assert context["context_policy"] == "public_frontend_context_v14"
+    assert context["context_policy"] == "public_frontend_context_v15"
     assert "pass a c* handle directly to tl.arange" in contract
     assert "never copy it to a local first" in contract
     assert "satisfied by the parameter binding" in contract
@@ -1379,8 +1395,9 @@ def test_lift_schema_requires_direct_pi_and_no_embedded_c_channel() -> None:
         "refinements",
         "iterations",
         "loop_carriers",
-        "physical_iterations",
-        "physical_loop_carriers",
+            "physical_iterations",
+            "unit_iterations",
+            "physical_loop_carriers",
         "terminal_controls",
     }
     assert "consumer_extensions" in (

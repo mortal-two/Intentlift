@@ -20,7 +20,7 @@ from .pi import (
 REPLAY_PACKET_SCHEMA = "intentir.scrc.replay-input.v1"
 PUBLIC_FRONTEND_CONTEXT = {
     "triton": {
-        "context_policy": "public_frontend_context_v14",
+        "context_policy": "public_frontend_context_v15",
         "retrieval_scope": "public Triton documentation and public examples",
         "tool_access": ["public_document_lookup"],
         "compile_entry_contract": (
@@ -106,6 +106,12 @@ PUBLIC_FRONTEND_CONTEXT = {
             "declared init/state/next/result temporal stages for its physical "
             "iteration region; do not collapse the loop-carried accumulator into "
             "one stateless reduction or invent an update formula absent from J."
+            " Every pi.unit_iterations entry is mandatory physical topology over "
+            "one already-authored non-loop J subject and axis. Materialize exactly "
+            "the logical points [0, extent) with unit step, or the same points in "
+            "descending order for direction=reverse. It has no C tile and never "
+            "authorizes a new semantic J loop, rounded bound, launch-derived bound, "
+            "formula, or operator."
             " Every J effect_if is mandatory effect control. Emit one real "
             "runtime `if` with explicit positive and negative arms, preserve "
             "predicate polarity, lexical arm scope, nested operation/effect order, "
@@ -187,7 +193,7 @@ PUBLIC_FRONTEND_CONTEXT = {
         ),
     },
     "tilelang": {
-        "context_policy": "public_frontend_context_v1",
+        "context_policy": "public_frontend_context_v6",
         "retrieval_scope": "public TileLang documentation and public examples",
         "tool_access": ["public_document_lookup"],
         "compile_entry_contract": (
@@ -196,11 +202,33 @@ PUBLIC_FRONTEND_CONTEXT = {
             "`scrc_k0`. Express tensor ABI through public `T.Tensor` annotations, "
             "device launch through `T.Kernel`, and realization topology through "
             "public TileLang operations. C values are compile-time schedule "
-            "constants, never additional logical runtime parameters."
+            "constants, never additional logical runtime parameters. Bind each "
+            "distinct J x* once with one uppercase `T.dynamic` module binding and "
+            "reuse it in every `T.Tensor` shape; repeated `T.dynamic` calls for one "
+            "x* create false ABI parameters. A program-region domain path entering "
+            "address_base is a `T.Kernel` program coordinate; a domain path entering "
+            "address_lane is participant-parallel and uses `T.Parallel`, not a "
+            "serial loop. `pi.unit_iterations` alone authorizes `T.serial`. A J "
+            "reduce fed by a lane-realized reduced domain uses the matching public "
+            "`T.reduce_*` collective; never sequentialize the whole axis per lane. "
+            "Preserve pi transfers as exact load/store or `T.copy` occurrences and "
+            "preserve distinct node realizations as typed locals in authored order. "
+            "A single-consumer transfer may stay inline only when pi order/region "
+            "does not place it before an enclosing coordinate or control stage. A "
+            "transfer ordered before the lane coordinate becomes one typed scalar "
+            "before `T.Parallel`; a transfer inside that lane may remain inline. "
+            "J.storage is the sole allocation authority: when it is empty, represent "
+            "per-lane stages as annotated scalar locals and never emit `T.alloc_*`; "
+            "use an allocation or `T.copy` destination only for authored storage. "
+            "TIR structure is the hard frontend evidence; PTX details below its ABI "
+            "envelope are diagnostic only. A MaskC compiler slot whose role is "
+            "`launch_block_x|y|z` is an injected module-global schedule handle: use "
+            "that c* directly for the corresponding `T.Kernel` thread extent, never "
+            "turn it into a runtime parameter or guess its hidden value."
         ),
     },
     "cuda": {
-        "context_policy": "public_frontend_context_v1",
+        "context_policy": "public_frontend_context_v3",
         "retrieval_scope": "public CUDA C++ programming documentation and examples",
         "tool_access": ["public_document_lookup"],
         "compile_entry_contract": (
@@ -209,7 +237,21 @@ PUBLIC_FRONTEND_CONTEXT = {
             "runtime parameters follow J.signature; C values are compiled "
             "schedule constants and are not runtime parameters. Use only public "
             "CUDA language constructs and intrinsics. Do not emit host code, "
-            "launch syntax, file I/O, inline PTX, build directives, or `main`."
+            "launch syntax, file I/O, inline PTX, build directives, or `main`. "
+            "A program-region domain path entering address_base maps to `blockIdx`; "
+            "a domain path entering address_lane maps to `threadIdx`, with distinct "
+            "axes assigned in declaration order and degenerate coordinates retained. "
+            "Only `pi.unit_iterations` authorizes a serial unit-step `for` loop. A J "
+            "reduce fed by a lane-realized reduced domain must remain a participant "
+            "collective using public CUDA intrinsics; never load or unroll the whole "
+            "logical axis independently in every thread. J alone supplies reducer "
+            "semantics; pi supplies coordinate, route, order, and synchronization "
+            "topology. Preserve every distinct transfer and realization stage. Each "
+            "J boundary access predicate is exact: an absent predicate is an "
+            "unconditional access and never authorizes a lane-leader guard. A MaskC "
+            "compiler slot with role `launch_block_x|y|z` is injected as a compile-"
+            "time macro; use its c* identifier directly for launch bounds or "
+            "participant width, never as a runtime parameter or guessed literal."
         ),
     },
 }
@@ -219,10 +261,10 @@ PUBLIC_FRONTEND_CONTEXT = {
 # u_f object; changing that basis requires an explicit future policy version.
 PUBLIC_FRONTEND_CONTEXT_ACTIVE_POLICY = MappingProxyType(
     {
-        "triton": "public_frontend_context_v14",
+        "triton": "public_frontend_context_v15",
         "cute": "public_frontend_context_v1",
-        "tilelang": "public_frontend_context_v1",
-        "cuda": "public_frontend_context_v1",
+        "tilelang": "public_frontend_context_v6",
+        "cuda": "public_frontend_context_v3",
     }
 )
 PUBLIC_FRONTEND_CONTEXT_DIGEST_HISTORY = MappingProxyType(
@@ -256,6 +298,9 @@ PUBLIC_FRONTEND_CONTEXT_DIGEST_HISTORY = MappingProxyType(
                 "public_frontend_context_v14": (
                     "d7b785bb9439c247d7dba481362969c5031de931ab368452192ad79296ec2c0f"
                 ),
+                "public_frontend_context_v15": (
+                    "0fa2e4823267dcec5601c4f805ac91301a411efbb7479e5cc9c48b208a8d7510"
+                ),
             }
         ),
         "cute": MappingProxyType(
@@ -269,14 +314,35 @@ PUBLIC_FRONTEND_CONTEXT_DIGEST_HISTORY = MappingProxyType(
             {
                 "public_frontend_context_v1": (
                     "41d26224d6682b12f7761e6a4c6f61f3f9e29d5ad5bd4b3b473bdfdacbcf91f5"
-                )
+                ),
+                "public_frontend_context_v2": (
+                    "ce254dc4037d8e03c1a68dd5f30c685c4cb1357be606101ef125ab437d6efb0d"
+                ),
+                "public_frontend_context_v3": (
+                    "30d10e99d874733b4c98ceecbb476b2689c1be64bd6eac3ad61229d228e6b45c"
+                ),
+                "public_frontend_context_v4": (
+                    "33f518d4726cd1bc64f94b4237eb19beae0ec6471b2c6ce39ee170895836a6ec"
+                ),
+                "public_frontend_context_v5": (
+                    "d66e36be25876ecc20558944d6ccb7816b7fb5cf043fcd95d0b1ea87468ec7a0"
+                ),
+                "public_frontend_context_v6": (
+                    "49ced776ce21868ef00a94a2576d5f9b0649413ff315c78ec3e44b543d87d2b5"
+                ),
             }
         ),
         "cuda": MappingProxyType(
             {
                 "public_frontend_context_v1": (
                     "97d17ef646dacef8b198afd70d09221a6c59aed6816e89ee19559aff3a22f1b3"
-                )
+                ),
+                "public_frontend_context_v2": (
+                    "aa417c35c5da0c4ad083cbe869c3a46a3b0c245fa7fece54bc7d5043424f7d64"
+                ),
+                "public_frontend_context_v3": (
+                    "e3f8509cdeb8e61b4ec6285cff73abc3b5c90697d1ad1728950dadde1d211bd2"
+                ),
             }
         ),
     }
@@ -357,6 +423,14 @@ PUBLIC_FRONTEND_CONTEXT_RECEIPT_HISTORY = MappingProxyType(
                         ),
                     }
                 ),
+                "public_frontend_context_v15": MappingProxyType(
+                    {
+                        "receipt_hash_basis": "full_u_f",
+                        "context_sha256": (
+                            "c7706c0d986a883cb30f703f67238885d9395b5fb9fa0251c443989edfce4b7e"
+                        ),
+                    }
+                ),
             }
         ),
         "cute": MappingProxyType(
@@ -368,7 +442,7 @@ PUBLIC_FRONTEND_CONTEXT_RECEIPT_HISTORY = MappingProxyType(
                             "13c3f240eb4bd19bfbbc6982e3058ebb4ecc37c139a1e483cff0cff6a811bb37"
                         ),
                     }
-                )
+                ),
             }
         ),
         "tilelang": MappingProxyType(
@@ -380,7 +454,47 @@ PUBLIC_FRONTEND_CONTEXT_RECEIPT_HISTORY = MappingProxyType(
                             "b54d1d1e65f5ad35a39b47aa43b7bee9eb68e4067c82d32e1b7739bc99c2660e"
                         ),
                     }
-                )
+                ),
+                "public_frontend_context_v2": MappingProxyType(
+                    {
+                        "receipt_hash_basis": "full_u_f",
+                        "context_sha256": (
+                            "33b3071963137ccb209c436d28ba57f756889dc0b68eadae1764c2d9402dea26"
+                        ),
+                    }
+                ),
+                "public_frontend_context_v3": MappingProxyType(
+                    {
+                        "receipt_hash_basis": "full_u_f",
+                        "context_sha256": (
+                            "13c6794712ea47de5f4636eff36978956ae89def5edac719563b5d3af084a5ec"
+                        ),
+                    }
+                ),
+                "public_frontend_context_v4": MappingProxyType(
+                    {
+                        "receipt_hash_basis": "full_u_f",
+                        "context_sha256": (
+                            "7830f9d36e818af0309fc9dcd259c1571836058e02a3f3931485b3033e7f6e7d"
+                        ),
+                    }
+                ),
+                "public_frontend_context_v5": MappingProxyType(
+                    {
+                        "receipt_hash_basis": "full_u_f",
+                        "context_sha256": (
+                            "8d03114a6f9b0cfe89f9a7cad12e48d429359d32c352737055717730a8be8451"
+                        ),
+                    }
+                ),
+                "public_frontend_context_v6": MappingProxyType(
+                    {
+                        "receipt_hash_basis": "full_u_f",
+                        "context_sha256": (
+                            "b600cb80e9c1496252b024b3a2257332a74a64ac77dc1c75ca70b7c8f5ea7140"
+                        ),
+                    }
+                ),
             }
         ),
         "cuda": MappingProxyType(
@@ -392,7 +506,23 @@ PUBLIC_FRONTEND_CONTEXT_RECEIPT_HISTORY = MappingProxyType(
                             "83d5c95bd2c9bc28329e42987c4eb9628395990a5b2bb8c4d07aad81fb13a530"
                         ),
                     }
-                )
+                ),
+                "public_frontend_context_v2": MappingProxyType(
+                    {
+                        "receipt_hash_basis": "full_u_f",
+                        "context_sha256": (
+                            "a476dece1f8de76225e4352bf2dd63f04962a048f6f3fb6847c1d2cc9e66ed75"
+                        ),
+                    }
+                ),
+                "public_frontend_context_v3": MappingProxyType(
+                    {
+                        "receipt_hash_basis": "full_u_f",
+                        "context_sha256": (
+                            "1d5bee977f82a852fbde57428bb4b4bdca784c837ede9ae91a5f18d8b75e8e65"
+                        ),
+                    }
+                ),
             }
         ),
     }
@@ -440,6 +570,7 @@ _REPLAY_COMPONENT_KEYS = {
             "iterations",
             "loop_carriers",
             "physical_iterations",
+            "unit_iterations",
             "physical_loop_carriers",
             "terminal_controls",
         }
@@ -957,6 +1088,15 @@ def _instructions(*, frontend: Frontend, masked: bool) -> str:
         "same-subject C-attached axis, induction_basis, and direction. Preserve every "
         "pi.physical_loop_carriers init/state/next/result temporal stage; neither "
         "relation authorizes a new semantic operator or formula. "
+        "For every pi.unit_iterations relation, materialize exactly one unit-step "
+        "physical loop over its authored J axis: [0, logical extent) for forward, or "
+        "the same points descending for reverse. It has no C tile and authorizes no "
+        "semantic J loop, formula, rounded bound, launch-derived bound, or operator. "
+        "A participant-parallel domain carrier routed into address_lane is not a "
+        "unit iteration. If a J reduce consumes its reduced axis through that lane "
+        "path, preserve a frontend collective over those participants; never replace "
+        "it with a per-participant serial traversal of the whole axis. Read the "
+        "reducer only from J and the participant topology only from pi. "
         + frontend_realization_clause
         + "Do not output "
         "analysis, patches, placeholders, helper prose or markdown. Use only public "

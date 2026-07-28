@@ -4,6 +4,8 @@ import importlib.util
 
 import pytest
 
+from intentir.verify.gate1._tilelang_worker import _load as load_tilelang_source
+
 from direct_fixtures import make_copy_artifact
 from intentir.verify.gate1.model import Frontend
 from intentir.verify.gate1.cuda_compiler import FrontendParameter
@@ -247,6 +249,25 @@ def test_static_tilelang_writer_validates_frontend_specific_module() -> None:
     generation = writer.generate(make_copy_artifact())
     assert generation.function_name == "scrc_k0"
     assert normalize_tilelang_tir_ops(_TIR).count("T.copy") == 2
+
+
+def test_tilelang_factory_source_consumes_anonymous_schedule_globals(tmp_path) -> None:
+    source = tmp_path / "kernel.py"
+    source.write_text(
+        "def make_kernel(*, bias=0):\n    return c0 + bias\n",
+        encoding="utf-8",
+    )
+    request = {
+        "source": {
+            "kind": "factory_file",
+            "path": str(source),
+            "function": "make_kernel",
+            "factory_kwargs": {"bias": 3},
+        },
+        "case": {"schedule": {"c0": 16}},
+    }
+
+    assert load_tilelang_source(request) == 19
 
 
 @pytest.mark.skipif(

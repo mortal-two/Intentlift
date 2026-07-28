@@ -49,6 +49,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--dataset-root", default=None)
     parser.add_argument("--provider", default=None)
+    parser.add_argument("--provider-config", type=Path, default=None)
     parser.add_argument("--model", default=None)
     parser.add_argument("--effort", default=None)
     parser.add_argument(
@@ -134,7 +135,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         validate_workload_gate1_recheck_parent(parent, prepared, artifact)
-        provider = get_provider(args.provider)
+        provider = get_provider(args.provider, args.provider_config)
         if args.model is not None:
             provider = replace(provider, model=args.model)
         recheck_dir = next_gate1_recheck_dir(args.run_root, args.case)

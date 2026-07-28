@@ -4023,7 +4023,7 @@ class ProvenanceRecord(StrictJSONMixin):
 class Gate1Artifact(StrictJSONMixin):
     """The complete proof-relevant Lift result: exactly ``(J, C, pi)``."""
 
-    SCHEMA: ClassVar[str] = "intentir.scrc.artifact.v9"
+    SCHEMA: ClassVar[str] = "intentir.scrc.artifact.v10"
     LEGACY_SCHEMAS: ClassVar[frozenset[str]] = frozenset(
         {
             "intentir.scrc.artifact.v1",
@@ -4034,6 +4034,7 @@ class Gate1Artifact(StrictJSONMixin):
             "intentir.scrc.artifact.v6",
             "intentir.scrc.artifact.v7",
             "intentir.scrc.artifact.v8",
+            "intentir.scrc.artifact.v9",
         }
     )
 
@@ -4108,6 +4109,7 @@ class Gate1Artifact(StrictJSONMixin):
             "intentir.scrc.artifact.v6",
             "intentir.scrc.artifact.v7",
             "intentir.scrc.artifact.v8",
+            "intentir.scrc.artifact.v9",
             self.SCHEMA,
         } and any(
             item.masked_contribution is not None
@@ -4176,6 +4178,7 @@ class Gate1Artifact(StrictJSONMixin):
             )
         if self.wire_schema not in {
             "intentir.scrc.artifact.v8",
+            "intentir.scrc.artifact.v9",
             self.SCHEMA,
         } and (
             self.pi.physical_iterations or self.pi.physical_loop_carriers
@@ -4183,9 +4186,16 @@ class Gate1Artifact(StrictJSONMixin):
             raise SchemaError(
                 "Gate1 artifact v1-v7 do not contain pi physical time relations"
             )
-        if self.wire_schema != self.SCHEMA and self.pi.terminal_controls:
+        if self.wire_schema not in {
+            "intentir.scrc.artifact.v9",
+            self.SCHEMA,
+        } and self.pi.terminal_controls:
             raise SchemaError(
                 "Gate1 artifact v1-v8 do not contain pi terminal_controls"
+            )
+        if self.wire_schema != self.SCHEMA and self.pi.unit_iterations:
+            raise SchemaError(
+                "Gate1 artifact v1-v9 do not contain pi unit_iterations"
             )
 
         node_refs = set(self.j.node_ids) | set(self.j.node_ids.values())
@@ -4250,6 +4260,7 @@ class Gate1Artifact(StrictJSONMixin):
             "intentir.scrc.artifact.v6",
             "intentir.scrc.artifact.v7",
             "intentir.scrc.artifact.v8",
+            "intentir.scrc.artifact.v9",
             cls.SCHEMA,
         } and (
             pi_value is not None and "iterations" not in pi_value
@@ -4270,6 +4281,7 @@ class Gate1Artifact(StrictJSONMixin):
             "intentir.scrc.artifact.v6",
             "intentir.scrc.artifact.v7",
             "intentir.scrc.artifact.v8",
+            "intentir.scrc.artifact.v9",
             cls.SCHEMA,
         }:
             if j_value is not None and "dimension_constraints" not in j_value:
@@ -4316,7 +4328,11 @@ class Gate1Artifact(StrictJSONMixin):
                 raise SchemaError(
                     "Gate1 artifact v1-v3 do not contain J consumer_extensions"
                 )
-        if schema in {"intentir.scrc.artifact.v8", cls.SCHEMA}:
+        if schema in {
+            "intentir.scrc.artifact.v8",
+            "intentir.scrc.artifact.v9",
+            cls.SCHEMA,
+        }:
             if pi_value is not None and "physical_iterations" not in pi_value:
                 raise SchemaError(
                     "Gate1Artifact.pi is missing required field: physical_iterations"
@@ -4333,7 +4349,7 @@ class Gate1Artifact(StrictJSONMixin):
             raise SchemaError(
                 "Gate1 artifact v1-v7 do not contain pi physical time relations"
             )
-        if schema == cls.SCHEMA:
+        if schema in {"intentir.scrc.artifact.v9", cls.SCHEMA}:
             if pi_value is not None and "terminal_controls" not in pi_value:
                 raise SchemaError(
                     "Gate1Artifact.pi is missing required field: terminal_controls"
@@ -4342,11 +4358,21 @@ class Gate1Artifact(StrictJSONMixin):
             raise SchemaError(
                 "Gate1 artifact v1-v8 do not contain pi terminal_controls"
             )
+        if schema == cls.SCHEMA:
+            if pi_value is not None and "unit_iterations" not in pi_value:
+                raise SchemaError(
+                    "Gate1Artifact.pi is missing required field: unit_iterations"
+                )
+        elif pi_value is not None and "unit_iterations" in pi_value:
+            raise SchemaError(
+                "Gate1 artifact v1-v9 do not contain pi unit_iterations"
+            )
         if schema in {
             "intentir.scrc.artifact.v5",
             "intentir.scrc.artifact.v6",
             "intentir.scrc.artifact.v7",
             "intentir.scrc.artifact.v8",
+            "intentir.scrc.artifact.v9",
             cls.SCHEMA,
         }:
             if (
@@ -4405,6 +4431,7 @@ class Gate1Artifact(StrictJSONMixin):
                     "intentir.scrc.artifact.v6",
                     "intentir.scrc.artifact.v7",
                     "intentir.scrc.artifact.v8",
+                    "intentir.scrc.artifact.v9",
                     self.SCHEMA,
                 },
                 include_loop_carriers=self.wire_schema
@@ -4414,11 +4441,18 @@ class Gate1Artifact(StrictJSONMixin):
                     "intentir.scrc.artifact.v6",
                     "intentir.scrc.artifact.v7",
                     "intentir.scrc.artifact.v8",
+                    "intentir.scrc.artifact.v9",
                     self.SCHEMA,
                 },
                 include_physical_time=self.wire_schema
-                in {"intentir.scrc.artifact.v8", self.SCHEMA},
-                include_terminal_controls=self.wire_schema == self.SCHEMA,
+                in {
+                    "intentir.scrc.artifact.v8",
+                    "intentir.scrc.artifact.v9",
+                    self.SCHEMA,
+                },
+                include_unit_iterations=self.wire_schema == self.SCHEMA,
+                include_terminal_controls=self.wire_schema
+                in {"intentir.scrc.artifact.v9", self.SCHEMA},
             ),
         }
 
@@ -4933,6 +4967,11 @@ def _opaque_pi_json(
         if refinement["auth_ref"] is not None:
             refinement["auth_ref"] = _opaque_reference(
                 refinement["auth_ref"], aliases
+            )
+    for iteration in result["unit_iterations"]:
+        if isinstance(iteration.get("axis_ref"), str):
+            iteration["axis_ref"] = _opaque_reference(
+                iteration["axis_ref"], aliases
             )
     return result
 

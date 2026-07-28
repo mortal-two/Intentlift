@@ -29,6 +29,8 @@ from intentir.verify.gate1.model import (
     ParameterMode,
     ResultRelationKind,
     ResultRelationSpec,
+    ScheduleSlot,
+    ScheduleSlotKind,
     SemanticArchive,
     SignatureParameter,
 )
@@ -106,7 +108,16 @@ def _add_artifact(*, cuda: bool) -> Gate1Artifact:
             ),
             signature=LogicalSignature(parameters),
         ),
-        ImplementationConfig([], {}),
+        ImplementationConfig(
+            [
+                ScheduleSlot(
+                    "c0",
+                    ScheduleSlotKind.COMPILER,
+                    "launch_block_x",
+                )
+            ],
+            {"c0": 16},
+        ),
         RealizationWitness.from_json(
             {
                 "regions": [
@@ -137,6 +148,8 @@ def test_tilelang_dataset_workload_materializes_real_tir_for_lift() -> None:
     assert prepared.request.frontend == "tilelang"
     assert isinstance(prepared.request.source.gate_source, TileLangKernelSource)
     assert isinstance(prepared.request.binding.gate1_case, TileLangCompileCase)
+    assert prepared.request.binding.values == {"c0": 16}
+    assert prepared.request.binding.gate1_case.schedule == {"c0": 16}
     assert prepared.source_slice.source_kind == "materialized_tir"
     assert "T.launch_thread(\"blockIdx.x\", M)" in prepared.source_slice.code
     assert prepared.source_slice.parameters == ("A_handle", "B_handle", "C_handle")
@@ -154,6 +167,9 @@ def test_tilelang_dataset_workload_materializes_real_tir_for_lift() -> None:
     assert request.anonymous_compiler_view is not None
     assert request.anonymous_compiler_view["parameter_order"] == ["p0", "p1", "p2"]
     view = request.anonymous_compiler_view
+    assert view["schedule_values"] == {"c0": 16}
+    assert view["compiler_slots"] == ["c0"]
+    assert view["compiler_roles"] == {"c0": "launch_block_x"}
     source_extent = view["grid_contract"][0]
     assert source_extent.startswith("v")
     assert [item["shape"] for item in view["arguments"]] == [[4, 16]] * 3
@@ -182,6 +198,8 @@ def test_cuda_dataset_workload_preserves_real_generated_source_and_abi() -> None
     assert prepared.request.frontend == "cuda"
     assert isinstance(prepared.request.source.gate_source, CudaKernelSource)
     assert isinstance(prepared.request.binding.gate1_case, CudaCompileCase)
+    assert prepared.request.binding.values == {"c0": 16}
+    assert prepared.request.binding.gate1_case.schedule == {"c0": 16}
     assert "__launch_bounds__(16, 1) main_kernel" in prepared.source_slice.code
     assert prepared.source_slice.parameters == ("A", "B", "C", "M")
     assert prepared.source_to_opaque == {
@@ -197,6 +215,8 @@ def test_cuda_dataset_workload_preserves_real_generated_source_and_abi() -> None
         frontend="cuda",
     )
     assert request.anonymous_compiler_view is not None
+    assert request.anonymous_compiler_view["schedule_values"] == {"c0": 16}
+    assert request.anonymous_compiler_view["compiler_slots"] == ["c0"]
     assert request.anonymous_compiler_view["parameter_order"] == [
         "p0", "p1", "p2", "p3"
     ]
@@ -301,7 +321,7 @@ def test_native_gate2_suite_uses_one_dataset_binding_for_both_frontends() -> Non
         )
 
         assert suite.suite_id == case_id
-        assert suite.c_values == ()
+        assert suite.c_values == (("c0", 16),)
         assert len(suite.cases) == 1
         execution = suite.cases[0].triton
         assert isinstance(execution, NativeExecutionSpec)

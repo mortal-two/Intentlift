@@ -143,6 +143,7 @@ def _sections(schema: dict[str, Any]) -> dict[str, dict[str, Any]]:
         "pi_iteration": _array_item(pi["iterations"]),
         "pi_loop_carrier": _array_item(pi["loop_carriers"]),
         "pi_physical_iteration": _array_item(pi["physical_iterations"]),
+        "pi_unit_iteration": _array_item(pi["unit_iterations"]),
         "pi_physical_loop_carrier": _array_item(pi["physical_loop_carriers"]),
         "pi_refinement": _array_item(pi["refinements"]),
     }

@@ -555,6 +555,7 @@ def _tiled_loop_artifact(*, basis: str = "extent_step") -> Gate1Artifact:
                 ],
                 "loop_carriers": [],
                 "physical_iterations": [],
+                "unit_iterations": [],
                 "physical_loop_carriers": [],
                 "terminal_controls": [],
             },
@@ -658,6 +659,73 @@ def _physical_reduce_artifact(
     return Gate1Artifact.from_json(artifact.to_json())
 
 
+def _unit_reduce_artifact(*, direction: str = "forward") -> Gate1Artifact:
+    """One logical reduce traversed by a physical unit-step loop without C."""
+
+    artifact = _physical_reduce_artifact()
+    artifact.pi.physical_iterations = []
+    artifact.pi.unit_iterations = [
+        {
+            "region": "r2",
+            "body_instance": "i2",
+            "axis_ref": 1,
+            "direction": direction,
+        }
+    ]
+    return Gate1Artifact.from_json(artifact.to_json())
+
+
+@pytest.mark.parametrize("direction", ["forward", "reverse"])
+def test_unit_reduce_iteration_is_typed_and_round_trips(direction: str) -> None:
+    artifact = _unit_reduce_artifact(direction=direction)
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert report.passed, [item.to_json() for item in report.diagnostics]
+    assert Gate1Artifact.from_json(artifact.to_json()) == artifact
+    assert artifact.pi.unit_iterations == [
+        {
+            "region": "r2",
+            "body_instance": "i2",
+            "axis_ref": 1,
+            "direction": direction,
+        }
+    ]
+    assert all(item.op != "loop" for item in artifact.j.intent.body)
+
+
+def test_unit_iteration_rejects_wrong_axis_body_and_region() -> None:
+    wrong_axis = _unit_reduce_artifact()
+    wrong_axis.pi.unit_iterations[0]["axis_ref"] = 0
+    wrong_body = _unit_reduce_artifact()
+    wrong_body.pi.unit_iterations[0]["body_instance"] = "i1"
+    wrong_region = _unit_reduce_artifact()
+    wrong_region.pi.regions[-1]["placement"] = "program"
+
+    for artifact in (wrong_axis, wrong_body, wrong_region):
+        assert TypeCheckErrorCode.UNIT_ITERATION_INVALID in {
+            item.code
+            for item in type_check(artifact.j, artifact.c, artifact.pi).diagnostics
+        }
+
+
+def test_unit_iteration_shares_physical_carrier_protocol_without_c_tile() -> None:
+    artifact = _physical_reduce_artifact(with_carrier=True)
+    artifact.pi.physical_iterations = []
+    artifact.pi.unit_iterations = [
+        {
+            "region": "r2",
+            "body_instance": "i2",
+            "axis_ref": 1,
+            "direction": "forward",
+        }
+    ]
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert report.passed, [item.to_json() for item in report.diagnostics]
+
+
 @pytest.mark.parametrize(
     ("basis", "direction"),
     [
@@ -743,6 +811,22 @@ def test_artifact_v8_requires_and_v7_rejects_physical_time_fields() -> None:
     legacy["schema"] = "intentir.scrc.artifact.v7"
     with pytest.raises(SchemaError, match="v1-v7 do not contain pi physical time"):
         Gate1Artifact.from_json(legacy)
+
+
+def test_artifact_v10_requires_and_v9_rejects_unit_iterations_field() -> None:
+    payload = _unit_reduce_artifact().to_json()
+    missing = copy.deepcopy(payload)
+    del missing["pi"]["unit_iterations"]
+    with pytest.raises(SchemaError, match="missing required field: unit_iterations"):
+        Gate1Artifact.from_json(missing)
+
+    legacy = copy.deepcopy(payload)
+    legacy["schema"] = "intentir.scrc.artifact.v9"
+    with pytest.raises(SchemaError, match="v1-v9 do not contain pi unit_iterations"):
+        Gate1Artifact.from_json(legacy)
+
+    legacy["pi"].pop("unit_iterations")
+    assert Gate1Artifact.from_json(legacy).to_json() == legacy
 
 
 def test_closed_loop_state_round_trips_as_typed_intentir() -> None:
@@ -1150,6 +1234,7 @@ def test_scope_state_effect_and_storage_ids_are_opaque_in_writer_payload() -> No
                     "iterations": [],
                     "loop_carriers": [],
                     "physical_iterations": [],
+                    "unit_iterations": [],
                     "physical_loop_carriers": [],
                     "terminal_controls": [],
                 },

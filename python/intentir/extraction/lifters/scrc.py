@@ -30,7 +30,7 @@ from .scrc_schema import scrc_lift_core_text_format
 
 
 SCRC_RELIFT_PROTOCOL = "llm_direct_pi_structured_source_aware_relift_v2"
-SCRC_DECODE_PROTOCOL = "intentir.scrc.decode.v13"
+SCRC_DECODE_PROTOCOL = "intentir.scrc.decode.v14"
 CANDIDATE_CHECK_PROTOCOL = "intentir.scrc.candidate-check.v1"
 _CANDIDATE_DIAGNOSTIC_LIMIT = 20
 _CANDIDATE_DIAGNOSTIC_TEXT_LIMIT = 2048
@@ -1440,6 +1440,12 @@ axis; tile anchors required positive-int C on the same subject/axis. Structured 
 loops use pi.iterations. Author basis/direction from Source; add no J loop/bound.
 Use physical_loop_carriers only for visible state; J owns init/update. Fixed code
 only validates/rejects.
+
+pi.unit_iterations denotes untiled serial traversal of a non-loop
+J axis: body/axis/direction close [0,J extent) step 1 or reverse, with no
+C/bound/formula/launch/J loop/operator. Parallel coordinates stay domain instances
+routed to address_lane. A J reduce over that path gets reducer from J and
+participants from pi; no collective API in artifacts.
 
 Pi preserves every compiler-visible source realization event not denoted by J
 or pure C. Emit multiple instances with the same semantic_ref when one declared

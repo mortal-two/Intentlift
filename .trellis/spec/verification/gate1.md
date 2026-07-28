@@ -9,9 +9,9 @@ Gate1 只接收已经通过 `TypeCheck(J,C,π)`、由当前三元组生成的全
 conditions。该 Gate1 claim 只针对这个 c0。
 
 当前 fresh-run artifact/decode/typecheck 组合为
-`intentir.scrc.artifact.v9 / intentir.scrc.decode.v13 / intentir.scrc.typecheck.v25`。Lift LLM 是完整
+`intentir.scrc.artifact.v10 / intentir.scrc.decode.v14 / intentir.scrc.typecheck.v26`。Lift LLM 是完整
 artifact 的唯一作者：value/dimension、consumer-extension、access-guard、typed control/inout、
-output binding、physical iteration/carrier 与 terminal-control relation 都必须由模型显式提交。Decode、
+output binding、tiled/unit physical iteration/carrier 与 terminal-control relation 都必须由模型显式提交。Decode、
 CandidateCheck 与 TypeCheck 只能做 closed
 解析、检查、拒绝和诊断，不会补 relation、选择 axes/polarity、插入 `select`、创建 pre-state，或把
 相同 concrete extents 当作 axis identity；v25 继承 v24，并检查作者化
@@ -43,7 +43,7 @@ v5 guarded store 的 merge 已经是 Layer A 中显式 `select`，且精确 inou
 比较的是 Replay 对这些已声明事实的 source realization，不为缺失 relation 建议或生成答案。
 
 当前 `replay-check.v10` 的 synthetic compile 只消费匿名 packet：核对作者化 `transfer_direct`
-occurrence、structured J loop 加 `pi.physical_iterations` 的 loop occurrence、对应 carrier arity；并且
+occurrence、structured J loop 加 `pi.physical_iterations|unit_iterations` 的 loop occurrence、对应 carrier arity；并且
 只在 signature pointer/tensor kind 与 π address routes 完全闭合时核对 pointer-address operation
 occurrence。完整闭包允许独立 integer base/lane contribution，且不要求 address instance 与 transfer
 使用相同 `semantic_ref` spelling；它要求每个 transfer 从匹配 boundary tensor 的 pointer/tensor

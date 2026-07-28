@@ -47,7 +47,7 @@ from intentir.verify.gate1.model import (
 from intentir.verify.gate1.pi import RealizationWitness
 
 
-TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v25"
+TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v26"
 GLOBAL_SAFE_REFINEMENTS = frozenset(
     {"identity_materialization", "reduction_linearization"}
 )
@@ -125,6 +125,7 @@ class TypeCheckErrorCode(str, Enum):
     TILE_SHAPE_INVALID = "tile_shape_invalid"
     LOOP_CARRIER_INVALID = "loop_carrier_invalid"
     PHYSICAL_ITERATION_INVALID = "physical_iteration_invalid"
+    UNIT_ITERATION_INVALID = "unit_iteration_invalid"
     PHYSICAL_LOOP_CARRIER_INVALID = "physical_loop_carrier_invalid"
     OBSERVABLE_REQUIRES_J_ANCHOR = "observable_requires_j_anchor"
     AUTHORIZATION_SUBJECT_UNKNOWN = "authorization_subject_unknown"
@@ -3327,6 +3328,81 @@ def _check_physical_iteration_witness(
             )
 
 
+def _check_unit_iteration_witness(
+    j: SemanticArchive,
+    pi: RealizationWitness,
+    node_operations: Mapping[str, Mapping[str, Any]],
+    diagnostics: list[TypeCheckDiagnostic],
+) -> None:
+    """Check a unit-step physical traversal over one already-authored J axis."""
+
+    regions = {str(item["id"]): item for item in pi.regions}
+    instances = {str(item["id"]): item for item in pi.instances}
+
+    def visible_from(instance_region: str, relation_region: str) -> bool:
+        current: str | None = relation_region
+        while current is not None:
+            if current == instance_region:
+                return True
+            parent = regions.get(current, {}).get("parent")
+            current = str(parent) if parent is not None else None
+        return False
+
+    for index, relation in enumerate(pi.unit_iterations):
+        base = f"pi.unit_iterations[{index}]"
+        region_ref = str(relation["region"])
+        region = regions.get(region_ref)
+        if region is None or region.get("placement") != "loop":
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.UNIT_ITERATION_INVALID,
+                    f"{base}.region",
+                    "unit iteration requires one placement=loop region",
+                    region_ref,
+                )
+            )
+
+        body_instance_ref = str(relation["body_instance"])
+        body_instance = instances.get(body_instance_ref)
+        body_ref = (
+            str(body_instance.get("semantic_ref"))
+            if body_instance is not None
+            else ""
+        )
+        body_operation = node_operations.get(body_ref)
+        allowed_axes = _axis_refs_v1(j, body_ref, node_operations)
+        body_valid = (
+            body_instance is not None
+            and bool(allowed_axes)
+            and not (
+                body_operation is not None and body_operation.get("op") == "loop"
+            )
+            and visible_from(str(body_instance.get("region")), region_ref)
+        )
+        if not body_valid:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.UNIT_ITERATION_INVALID,
+                    f"{base}.body_instance",
+                    "body_instance must visibly anchor one existing non-loop J "
+                    "reduce/contraction, boundary access, or domain with a closed "
+                    "dependent axis; the relation never creates a semantic J loop",
+                    body_instance_ref,
+                )
+            )
+
+        axis_ref = relation["axis_ref"]
+        if not body_valid or axis_ref not in allowed_axes:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.UNIT_ITERATION_INVALID,
+                    f"{base}.axis_ref",
+                    "axis_ref must name one closed J axis of body_instance",
+                    str(axis_ref),
+                )
+            )
+
+
 def _check_physical_loop_carriers(
     pi: RealizationWitness,
     node_operations: Mapping[str, Mapping[str, Any]],
@@ -3339,7 +3415,7 @@ def _check_physical_loop_carriers(
     instances = {str(item["id"]): item for item in pi.instances}
     physical_bodies = {
         str(item["region"]): str(item["body_instance"])
-        for item in pi.physical_iterations
+        for item in [*pi.physical_iterations, *pi.unit_iterations]
     }
     route_edges = {
         (str(item["source"]), str(item["target"])) for item in pi.routes
@@ -3396,8 +3472,8 @@ def _check_physical_loop_carriers(
                 TypeCheckDiagnostic(
                     TypeCheckErrorCode.PHYSICAL_LOOP_CARRIER_INVALID,
                     f"{base}.region",
-                    "physical carrier requires one declared physical_iterations "
-                    "placement=loop region",
+                    "physical carrier requires one declared physical_iterations or "
+                    "unit_iterations placement=loop region",
                     region_ref,
                 )
             )
@@ -4677,6 +4753,7 @@ def type_check(
 
     _check_iteration_witness(j, c, pi, node_operations, diagnostics)
     _check_physical_iteration_witness(j, c, pi, node_operations, diagnostics)
+    _check_unit_iteration_witness(j, pi, node_operations, diagnostics)
     _check_loop_carriers(
         pi,
         node_operations,

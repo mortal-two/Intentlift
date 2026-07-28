@@ -17,7 +17,7 @@ from .ptx import (
 )
 
 
-TILELANG_FINGERPRINT_SCHEMA = "tilelang-tir-semantic-structure-ptx-diagnostic-v3"
+TILELANG_FINGERPRINT_SCHEMA = "tilelang-tir-semantic-structure-ptx-diagnostic-v4"
 _T_OP_RE = re.compile(r"\bT\.([A-Za-z_][A-Za-z0-9_]*)")
 _SCHEDULE_ITERATORS = {
     "parallel",

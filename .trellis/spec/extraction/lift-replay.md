@@ -214,12 +214,12 @@ output/effect/guard、以及 π regions/instances/iterations/carriers/terminal/r
 字段投影，任何缺失仍由 Lift 自己从 Source 作者化，任何冲突仍由 CandidateCheck/TypeCheck
 fail closed。
 
-Codex Lift v10 / knowledge v64 将同一 exact Harness ABI ledger 直接放入首次 owner prompt，并将
+Codex Lift v10 / knowledge v65 将同一 exact Harness ABI ledger 直接放入首次 owner prompt，并将
 后续 closed feedback frontier 与其 primary bounded category 直接放入同一持久 owner continuation；
 `lift_harness_abi`、`lift_candidate_control` 与 `lift_feedback_category` 保留为可选的局部自读，不再是
 提交前的强制串行协议。该 transport 不生成 `logical_ref`、J/C/π 字段或修复。
 
-当前持久 owner 使用 `artifact.v9 / decode.v13 / typecheck.v25 / candidate-check.v1` 实现上述
+当前持久 owner 使用 `artifact.v10 / decode.v14 / typecheck.v26 / candidate-check.v1` 实现上述
 CandidateCheck、C attachment、numeric-cast dependent typing 与 result-relation compatibility。v7
 继承 v6，v6 继承 v5；v5 继承 v4 的
 rank-0 closed signature、Layer-A graph value typing total 与显式 NumPy broadcast 合同；它只消费 Lift
@@ -253,10 +253,14 @@ bound/formula/value/API，也不让 fixed code创建 J loop、选择锚点或推
 `artifact.v9` 再加入 `pi.terminal_controls`，只在 J 已有 `effect_if` 的 sibling arm scopes 上指定
 terminal/continuation topology；不复制 predicate、return、Source 或 frontend spelling。
 
-同一 v9 wire 的 closed refinement vocabulary 现包含 `reduction_linearization`。它只表示 Source 已有的
+`artifact.v10` 加入 `pi.unit_iterations`，表达没有 C tile 的既有非 loop J axis 单位步物理遍历。
+其上下界由 J axis 唯一闭合，forward/reverse 只改变访问顺序；它不携带 bound/formula/launch/API，
+也不能把 participant-parallel coordinate 或 realization loop 升格成 J loop。
+
+同一 v10 wire 的 closed refinement vocabulary 现包含 `reduction_linearization`。它只表示 Source 已有的
 全轴线性化表示阶段：`auth_ref=null`，refined instance 必须是 `realize`，且恰有一条 slot-0 route
 进入一个 J `reduce` 的 `realize` instance。逻辑 axes 和 reducer 仍只在 J；π 不携带 axis、API 或
-Source text。Lift 必须从 Source 显式作者化，TypeCheck v25 只验证 topology，不能因 Gate1 缺
+Source text。Lift 必须从 Source 显式作者化，TypeCheck v26 只验证 topology，不能因 Gate1 缺
 `tt.reshape` 而自动补造。
 
 Lift receipt 分别记录 artifact/decode/typecheck version，以及 CandidateCheck 调用次数与 closed
@@ -331,15 +335,15 @@ ReplayLLM(J,pi,MaskC(C);U_f) -> complete source R_f
 
 当前 packet protocol 为 `intentir.scrc.replay-input.v1`，Triton 公共上下文为
 `public_frontend_context_v14`；source-aware Codex/MiniSWE Lift 的当前 knowledge receipt 分别为
-`intentir.lift-knowledge.v64 / intentir.lift-knowledge.v61`，source-blind MiniSWE/Codex Replay backend 为
-`minisweagent.intentir-replay.v23 / openai.codex-cli.intentir-replay.v19`。这些版本必须随 fresh run 原样记录；旧 packet/context/knowledge
+`intentir.lift-knowledge.v65 / intentir.lift-knowledge.v62`，source-blind MiniSWE/Codex Replay backend 为
+`minisweagent.intentir-replay.v24 / openai.codex-cli.intentir-replay.v20`。这些版本必须随 fresh run 原样记录；旧 packet/context/knowledge
 evidence 不因实现升级而被重判。
 
-Replay v23/v19 对不超过 64 KiB 的匿名 packet 采用一次性 exact startup embedding；当前六个难核实测
+Replay v24/v20 对不超过 64 KiB 的匿名 packet 采用一次性 exact startup embedding；当前六个难核实测
 packet 最大约 47 KiB，因此正常路径不再强制调用 manifest、requirements、ABI、graph、realization 或
-obligations。startup 另带一个由同一 packet 精确投影的 bounded `critical_facts`：只列 semantic
-dimension carrier、IEEE special typed constant、`physical_iterations` 与
-`reduction_linearization + consumer route`，使 Replay 不必在大图中重新
+obligations。startup 另带一个由同一 packet 精确投影的 bounded `critical_facts.v2`：只列 semantic
+dimension carrier、IEEE special typed constant、`physical_iterations|unit_iterations`、每个 transfer
+occurrence 的 route/order 与 `reduction_linearization + consumer route`，使 Replay 不必在大图中重新
 寻找这些易漏的已作者化事实；它不推断、补齐或推荐实现。超过上限时，首次 manifest 自带 bounded authored-requirements：J op/boundary 与 π
 instance mechanism、route/order/time/control 的 exact 重索引，并只为被明确截断的页提供 focused
 query。完整 `/input/packet.json` 仍是 immutable authority；embedding/manifest/query 都不摘要、补齐、
@@ -463,7 +467,7 @@ relift diagnostic view 必须明确区分。
 禁止把 diff 交给 Replay、patch 旧 Replay、只输出 artifact 增量，或跨候选复用 Replay。
 
 协议允许独立的 `intentir.scrc.gate1-diagnostic-recheck.v1` 对一份已落盘 artifact 做只读诊断：
-保持 artifact bytes/digest 不变，执行当前 canonical Decode、`typecheck.v25`、一个 fresh normal Replay
+保持 artifact bytes/digest 不变，执行当前 canonical Decode、`typecheck.v26`、一个 fresh normal Replay
 与 Gate1，并写入独立 `recheck-NNN` evidence。它不调用 Lift、不运行 masked-J 或 Gate2、不参与
 candidate/winner 选择，也不改变 parent run 的 verdict 或 certificate；因此只用于定位固定 consumer/
 observer/context 改动，不能冒充 fresh SCRC rerun。provider 调用前必须把 selected case/current prepared

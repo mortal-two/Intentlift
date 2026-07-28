@@ -274,7 +274,7 @@ def test_bound_constexpr_shape_coordinate_requires_direct_x_or_authored_equality
 
 def test_string_specialization_carrier_is_v7_and_typechecks() -> None:
     payload = _string_specialization_payload()
-    assert Gate1Artifact.SCHEMA == "intentir.scrc.artifact.v9"
+    assert Gate1Artifact.SCHEMA == "intentir.scrc.artifact.v10"
     assert "semantic_bindings" not in payload["j"]
     Draft202012Validator(scrc_lift_core_json_schema()).validate(payload)
 

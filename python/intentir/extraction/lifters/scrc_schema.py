@@ -779,6 +779,41 @@ def _pi_schema() -> dict[str, Any]:
             "bound formula, numeric value, operator, source text, or frontend API."
         ),
     )
+    unit_iteration = _closed_object(
+        {
+            "region": {"type": "string", "pattern": "^r[0-9]+$"},
+            "body_instance": {
+                "type": "string",
+                "pattern": "^i[0-9]+$",
+                "description": (
+                    "Instance anchored to one existing non-loop J "
+                    "reduce/contraction or boundary access/domain traversed by "
+                    "this unit-step physical loop region."
+                ),
+            },
+            "axis_ref": {
+                "oneOf": [
+                    {"type": "integer", "minimum": 0},
+                    {"type": "string", "pattern": "^x[0-9]+$"},
+                ],
+                "description": (
+                    "One closed J axis of body_instance: a non-negative logical "
+                    "axis ordinal or an anonymous J dimension handle."
+                ),
+            },
+            "direction": {
+                "type": "string",
+                "enum": list(PHYSICAL_ITERATION_DIRECTIONS),
+            },
+        },
+        ("region", "body_instance", "axis_ref", "direction"),
+        description=(
+            "A source-neutral unit-step physical traversal over one existing J "
+            "axis. Its closed denotation is [0, logical_extent) with step one, or "
+            "the same points reversed. It adds no J loop, C tile, bound formula, "
+            "numeric value, operator, source text, grid fact, or frontend API."
+        ),
+    )
     physical_loop_carrier = _closed_object(
         {
             "region": {"type": "string", "pattern": "^r[0-9]+$"},
@@ -789,7 +824,8 @@ def _pi_schema() -> dict[str, Any]:
         },
         ("region", "init", "state", "next", "result"),
         description=(
-            "One typed physical carrier in a physical_iterations region. "
+            "One typed physical carrier in a physical_iterations or "
+            "unit_iterations region. "
             "Temporal edges carry no initialization/update formula or frontend spelling."
         ),
     )
@@ -824,6 +860,7 @@ def _pi_schema() -> dict[str, Any]:
             "iterations": _array(iteration),
             "loop_carriers": _array(loop_carrier),
             "physical_iterations": _array(physical_iteration),
+            "unit_iterations": _array(unit_iteration),
             "physical_loop_carriers": _array(physical_loop_carrier),
             "terminal_controls": _array(terminal_control),
         },
@@ -837,6 +874,7 @@ def _pi_schema() -> dict[str, Any]:
             "iterations",
             "loop_carriers",
             "physical_iterations",
+            "unit_iterations",
             "physical_loop_carriers",
             "terminal_controls",
         ),

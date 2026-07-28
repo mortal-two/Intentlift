@@ -503,6 +503,7 @@ def _packet_requirements(packet: Mapping[str, Any]) -> dict[str, Any]:
         "iterations",
         "loop_carriers",
         "physical_iterations",
+        "unit_iterations",
         "physical_loop_carriers",
         "terminal_controls",
     )
@@ -512,6 +513,7 @@ def _packet_requirements(packet: Mapping[str, Any]) -> dict[str, Any]:
         "iterations": ("loop_instance", "tile_instance"),
         "loop_carriers": ("loop_instance", "init", "state", "next", "result"),
         "physical_iterations": ("body_instance", "tile_instance"),
+        "unit_iterations": ("body_instance",),
         "physical_loop_carriers": ("init", "state", "next", "result"),
         "terminal_controls": ("terminal_instance", "continuation_instance"),
     }
@@ -568,7 +570,11 @@ def _packet_requirements(packet: Mapping[str, Any]) -> dict[str, Any]:
         for item in selected_instances
         if isinstance(item.get("region"), str)
     }
-    for name in ("physical_iterations", "physical_loop_carriers"):
+    for name in (
+        "physical_iterations",
+        "unit_iterations",
+        "physical_loop_carriers",
+    ):
         rows = pi.get(name, [])
         for row in rows if isinstance(rows, list) else []:
             if isinstance(row, Mapping) and isinstance(row.get("region"), str):
@@ -662,7 +668,8 @@ def _packet_critical_facts(packet: Mapping[str, Any]) -> dict[str, Any]:
     summarize its graph or recommend a lowering; it merely colocates four
     closed fact classes whose distant cross-references are otherwise easy to
     overlook in a large ABI: semantic dimension carriers, typed IEEE-special
-    constants, physical-iteration relations, and reduction linearizations.
+    constants, physical-iteration relations, transfer occurrences, and reduction
+    linearizations.
     """
 
     j = packet.get("j", {})
@@ -718,6 +725,9 @@ def _packet_critical_facts(packet: Mapping[str, Any]) -> dict[str, Any]:
     physical_iterations = pi.get("physical_iterations", [])
     if not isinstance(physical_iterations, list):
         raise TypeError("packet pi physical_iterations must be an array")
+    unit_iterations = pi.get("unit_iterations", [])
+    if not isinstance(unit_iterations, list):
+        raise TypeError("packet pi unit_iterations must be an array")
     instances = {
         str(item.get("id")): item
         for item in pi.get("instances", [])
@@ -749,11 +759,51 @@ def _packet_critical_facts(packet: Mapping[str, Any]) -> dict[str, Any]:
                 ],
             }
         )
+    transfer_occurrences = []
+    order = pi.get("order", [])
+    if not isinstance(order, list):
+        raise TypeError("packet pi order must be an array")
+    for instance_id, instance in instances.items():
+        mechanism = instance.get("mechanism")
+        if mechanism not in {"transfer_direct", "transfer_async"}:
+            continue
+        transfer_occurrences.append(
+            {
+                "instance": instance_id,
+                "semantic_ref": instance.get("semantic_ref"),
+                "mechanism": mechanism,
+                "region": instance.get("region"),
+                "incoming_routes": [
+                    dict(route)
+                    for route in routes
+                    if isinstance(route, Mapping)
+                    and route.get("target") == instance_id
+                ],
+                "outgoing_routes": [
+                    dict(route)
+                    for route in routes
+                    if isinstance(route, Mapping)
+                    and route.get("source") == instance_id
+                ],
+                "predecessor_order": [
+                    dict(edge)
+                    for edge in order
+                    if isinstance(edge, Mapping) and edge.get("after") == instance_id
+                ],
+                "successor_order": [
+                    dict(edge)
+                    for edge in order
+                    if isinstance(edge, Mapping) and edge.get("before") == instance_id
+                ],
+            }
+        )
     return {
-        "protocol": "intentir.replay-critical-facts.v1",
+        "protocol": "intentir.replay-critical-facts.v2",
         "semantic_dimension_carriers": dimension_carriers,
         "typed_ieee_special_constants": special_constants,
         "physical_iterations": physical_iterations,
+        "unit_iterations": unit_iterations,
+        "transfer_occurrences": transfer_occurrences,
         "reduction_linearizations": reduction_linearizations,
         "authority": (
             "exact source-isolated packet projection only; no Source, Harness "
@@ -1104,6 +1154,7 @@ def _packet_obligation_records(packet: Mapping[str, Any]) -> list[dict[str, Any]
         "iterations",
         "loop_carriers",
         "physical_iterations",
+        "unit_iterations",
         "physical_loop_carriers",
     )
     values: dict[str, list[Any]] = {}
@@ -1219,6 +1270,10 @@ def _packet_obligation_records(packet: Mapping[str, Any]) -> list[dict[str, Any]
         (
             "physical_iterations",
             ("body_instance", "tile_instance"),
+        ),
+        (
+            "unit_iterations",
+            ("body_instance",),
         ),
         (
             "physical_loop_carriers",

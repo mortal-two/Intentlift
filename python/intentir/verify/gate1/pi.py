@@ -76,6 +76,24 @@ def _name(value: Any, path: str) -> str:
     return value
 
 
+def _axis_ref(value: Any, path: str) -> int | str:
+    if isinstance(value, bool):
+        raise RealizationWitnessError(
+            f"{path} must be a non-negative axis ordinal or J dimension handle x*"
+        )
+    if isinstance(value, int):
+        if value < 0:
+            raise RealizationWitnessError(
+                f"{path} must be a non-negative axis ordinal or J dimension handle x*"
+            )
+        return value
+    if isinstance(value, str) and re.fullmatch(r"x[0-9]+", value) is not None:
+        return value
+    raise RealizationWitnessError(
+        f"{path} must be a non-negative axis ordinal or J dimension handle x*"
+    )
+
+
 def _opaque_anchor_ref(value: Any, path: str) -> str:
     result = _name(value, path)
     if re.fullmatch(r"(?:t|n|a|d|e|q|b|s|v|p|c|x)[0-9]+", result) is None:
@@ -171,7 +189,14 @@ def render_realization_witness_wire_grammar() -> str:
         "loop or carries bounds/formulas. Each physical_loop_carriers entry has "
         "exactly region, init, state, next, and result, with the same temporal "
         "denotation as loop_carriers, but its region is indexed by one "
-        "physical_iterations relation rather than a structured J loop."
+        "physical_iterations or unit_iterations relation rather than a structured "
+        "J loop. Each unit_iterations entry has exactly region, body_instance, "
+        "axis_ref, and direction. body_instance has the same existing non-loop J "
+        "subject contract as physical_iterations; axis_ref names one of that "
+        "subject's closed J axes. Its global denotation is lower zero, upper equal "
+        "to that logical J axis extent, and unit step; reverse visits the same "
+        "points in descending order. It has no C tile and carries no bound, value, "
+        "formula, operator, Source spelling, grid fact, or frontend API."
         " terminal_controls has exactly terminal_instance and continuation_instance: "
         "distinct realize instances on sibling J effect_if arm scopes. It names "
         "which arm terminates and which continues; it carries no predicate, "
@@ -279,6 +304,7 @@ class RealizationWitness:
     iterations: list[dict[str, JsonValue]] = field(default_factory=list)
     loop_carriers: list[dict[str, JsonValue]] = field(default_factory=list)
     physical_iterations: list[dict[str, JsonValue]] = field(default_factory=list)
+    unit_iterations: list[dict[str, JsonValue]] = field(default_factory=list)
     physical_loop_carriers: list[dict[str, JsonValue]] = field(default_factory=list)
     terminal_controls: list[dict[str, JsonValue]] = field(default_factory=list)
 
@@ -535,6 +561,51 @@ class RealizationWitness:
                 }
             )
 
+        checked_unit_iterations: list[dict[str, JsonValue]] = []
+        for index, raw in enumerate(self.unit_iterations):
+            path = f"pi.unit_iterations[{index}]"
+            item = _record(
+                raw,
+                path=path,
+                required=frozenset(
+                    {"region", "body_instance", "axis_ref", "direction"}
+                ),
+            )
+            region = _name(item["region"], f"{path}.region")
+            if region not in known_regions:
+                raise RealizationWitnessError(
+                    "pi unit iteration relation names an unknown region"
+                )
+            if region in physical_iteration_regions:
+                raise RealizationWitnessError(
+                    "pi physical-only iteration regions may have at most one relation"
+                )
+            if region in iteration_regions:
+                raise RealizationWitnessError(
+                    "one pi region cannot carry both structured and physical-only "
+                    "iteration relations"
+                )
+            physical_iteration_regions.add(region)
+            body_instance = _declared_instance_ref(
+                item["body_instance"],
+                path=f"{path}.body_instance",
+                known_instances=known_instances,
+            )
+            axis_ref = _axis_ref(item["axis_ref"], f"{path}.axis_ref")
+            direction = _name(item["direction"], f"{path}.direction")
+            if direction not in self.PHYSICAL_ITERATION_DIRECTIONS:
+                raise RealizationWitnessError(
+                    f"unsupported pi unit iteration direction {direction!r}"
+                )
+            checked_unit_iterations.append(
+                {
+                    "region": region,
+                    "body_instance": body_instance,
+                    "axis_ref": axis_ref,
+                    "direction": direction,
+                }
+            )
+
         checked_loop_carriers: list[dict[str, JsonValue]] = []
         carrier_states: set[str] = set()
         carrier_results: set[str] = set()
@@ -760,6 +831,7 @@ class RealizationWitness:
         self.iterations = checked_iterations
         self.loop_carriers = checked_loop_carriers
         self.physical_iterations = checked_physical_iterations
+        self.unit_iterations = checked_unit_iterations
         self.physical_loop_carriers = checked_physical_loop_carriers
         self.terminal_controls = checked_terminal_controls
 
@@ -789,6 +861,7 @@ class RealizationWitness:
                     "iterations",
                     "loop_carriers",
                     "physical_iterations",
+                    "unit_iterations",
                     "physical_loop_carriers",
                     "terminal_controls",
                 }
@@ -804,6 +877,7 @@ class RealizationWitness:
             "iterations",
             "loop_carriers",
             "physical_iterations",
+            "unit_iterations",
             "physical_loop_carriers",
             "terminal_controls",
         ):
@@ -819,6 +893,7 @@ class RealizationWitness:
             iterations=copy.deepcopy(data.get("iterations", [])),
             loop_carriers=copy.deepcopy(data.get("loop_carriers", [])),
             physical_iterations=copy.deepcopy(data.get("physical_iterations", [])),
+            unit_iterations=copy.deepcopy(data.get("unit_iterations", [])),
             physical_loop_carriers=copy.deepcopy(
                 data.get("physical_loop_carriers", [])
             ),
@@ -831,6 +906,7 @@ class RealizationWitness:
         include_iterations: bool = True,
         include_loop_carriers: bool = True,
         include_physical_time: bool = True,
+        include_unit_iterations: bool = True,
         include_terminal_controls: bool = True,
     ) -> dict[str, Any]:
         result = {
@@ -850,6 +926,8 @@ class RealizationWitness:
             result["physical_loop_carriers"] = copy.deepcopy(
                 self.physical_loop_carriers
             )
+        if include_unit_iterations:
+            result["unit_iterations"] = copy.deepcopy(self.unit_iterations)
         if include_terminal_controls:
             result["terminal_controls"] = copy.deepcopy(self.terminal_controls)
         return result

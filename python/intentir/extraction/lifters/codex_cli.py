@@ -42,7 +42,7 @@ from .scrc import (
 
 
 CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v10"
-CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v64"
+CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v66"
 CODEX_CLI_TURN_TIMEOUT_SECONDS = 900.0
 
 _INITIAL_PROMPT = """You are the sole source-aware IntentIR Lift owner for this branch.

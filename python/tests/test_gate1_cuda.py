@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from threading import Barrier
 
 import pytest
+
+import intentir.verify.gate1.cuda_compiler as cuda_compiler_module
 
 from direct_fixtures import make_copy_artifact
 from intentir.verify.gate1.cuda_codegen import (
@@ -221,6 +224,46 @@ def test_ptx_semantic_projection_keeps_value_operation_hard() -> None:
     assert not comparison.hard_passes["value_operations"]
 
 
+def test_ptx_semantic_collectives_ignore_shuffle_algorithm_spelling_but_keep_count() -> None:
+    source_ptx = """
+.visible .entry kernel(.param .u64 kernel_param_0) {
+  .reg .pred %p<2>;
+  .reg .b32 %r<4>;
+  .reg .b64 %rd<2>;
+  .reg .f32 %f<3>;
+  ld.param.u64 %rd1, [kernel_param_0];
+  ld.global.f32 %f1, [%rd1];
+  mov.b32 %r1, %f1;
+  shfl.sync.bfly.b32 %r2|%p1, %r1, 1, 31, -1;
+  mov.b32 %f2, %r2;
+  add.f32 %f2, %f1, %f2;
+  st.global.f32 [%rd1], %f2;
+  ret;
+}
+"""
+    source = fingerprint_ptx(source_ptx, entry="kernel")
+    alternate = fingerprint_ptx(
+        source_ptx.replace("shfl.sync.bfly.b32", "shfl.sync.down.b32"),
+        entry="kernel",
+    )
+
+    comparison = compare_ptx_fingerprints(source, alternate)
+
+    assert comparison.hard_pass
+    assert source.collectives == alternate.collectives == ("shuffle",)
+    assert not comparison.diagnostic_passes["raw_instruction_topology"]
+
+    missing = fingerprint_ptx(
+        source_ptx.replace(
+            "  shfl.sync.bfly.b32 %r2|%p1, %r1, 1, 31, -1;\n", ""
+        ),
+        entry="kernel",
+    )
+    missing_comparison = compare_ptx_fingerprints(source, missing)
+    assert not missing_comparison.hard_pass
+    assert not missing_comparison.hard_passes["collectives"]
+
+
 _CUDA_REPLAY = """extern "C" __global__ void scrc_k0(const float* p0, float* p1, int p2) {
     int v0 = (int)threadIdx.x;
     if (v0 < p2) p1[v0] = p0[v0];
@@ -295,6 +338,35 @@ def test_cuda_compile_case_records_normalized_include_directories(tmp_path) -> N
     )
     assert case.include_dirs == (str(include.resolve()),)
     assert case.to_payload()["include_dirs"] == [str(include.resolve())]
+
+
+def test_cuda_compiler_injects_anonymous_schedule_defines(monkeypatch) -> None:
+    commands: list[list[str]] = []
+
+    @dataclass
+    class Completed:
+        returncode: int = 0
+        stdout: str = ""
+        stderr: str = ""
+
+    def fake_run(command, **_kwargs):
+        command = [str(item) for item in command]
+        commands.append(command)
+        if "--version" in command:
+            return Completed(stdout="Cuda compilation tools, release test")
+        output = Path(command[command.index("-o") + 1])
+        output.write_text(_ptx("scrc_k0"), encoding="utf-8")
+        return Completed()
+
+    monkeypatch.setattr(cuda_compiler_module.subprocess, "run", fake_run)
+    result = CudaCompiler(nvcc="/test/nvcc").compile(
+        CudaKernelSource.from_code(_CUDA_REPLAY, "scrc_k0"),
+        _case(),
+    )
+
+    assert result.ok, result.diagnostic
+    compile_command = next(command for command in commands if "--ptx" in command)
+    assert "-Dc0=1024" in compile_command
 
 
 @dataclass

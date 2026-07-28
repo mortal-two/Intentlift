@@ -17,12 +17,13 @@ inputs 中声明，`mode=output` 要求只在 J outputs 中声明；同一 handl
 时必须显式写 `mode=inout`。Decode/TypeCheck 不得把 input/output 自动升级为 inout，也不得让
 Harness 或 Gate2 为错误 overlap 伪造输入值。
 
-当前 fresh-run wire 是 `intentir.scrc.artifact.v9`，固定 Decode 是
-`intentir.scrc.decode.v13`。Lift LLM 必须一次性显式写出完整 `(J,C,π)`，包括当前版本要求的空数组；
+当前 fresh-run wire 是 `intentir.scrc.artifact.v10`，固定 Decode 是
+`intentir.scrc.decode.v14`。Lift LLM 必须一次性显式写出完整 `(J,C,π)`，包括当前版本要求的空数组；
 固定代码不从 Source、Harness valuation、C、π、Replay 或 Gate 结果补造 artifact 字段。`artifact.v4`
 引入 J-owned `value_dimension_relations` 与 `boundary.consumer_extensions`；`artifact.v5` 再引入
 J-owned `boundary.access_guard_relations`；v6/v7 增加 typed control，v8 增加 π-owned physical-only
-time relations，v9 增加 π-owned terminal-control topology。旧 v1-v8 wire 仍按各自字段集合读取，
+time relations，v9 增加 π-owned terminal-control topology，v10 增加 π-owned unit physical time。
+旧 v1-v9 wire 仍按各自字段集合读取，
 不通过附加空数组或新 relation 静默升级。
 
 `opaque(mode=value,dtype=none)` 是一个精确的缺席 ABI carrier：它只证明调用位置必须原样接收
@@ -207,7 +208,7 @@ C 只包含在不改变 J denotation 时可替换的匿名 slot、binding kind�
 valuation 与必要的 source-neutral selection metadata。C 不得包含 operator、predicate、formula、
 logical shape、result semantics、source topology、frontend API 或 per-kernel executable policy。
 
-`artifact.v2` 引入、当前 `artifact.v9` 保留的 slot 字段为
+`artifact.v2` 引入、当前 `artifact.v10` 保留的 slot 字段为
 `name/kind/role/value_type/required`，其中 `role` 必填，并增加两个可选 attachment：
 
 ```text
@@ -324,7 +325,7 @@ extent_step:  for k in [0, Trip(J.loop)) step Tile(C.slot)
 tile_ordinal: for q in [0, ceil_div(Trip(J.loop), Tile(C.slot))) step 1
 ```
 
-因此 `artifact.v3` 引入、当前 `artifact.v9` 继续要求 π 包含 closed `iterations` 数组。每项只有：
+因此 `artifact.v3` 引入、当前 `artifact.v10` 继续要求 π 包含 closed `iterations` 数组。每项只有：
 
 ```text
 {region, loop_instance, tile_instance, induction_basis}
@@ -368,6 +369,19 @@ topology。字段不含 bound/formula/value/API，不在 J 中创建 loop。Type
 reference/type/scope/axis/totality，不选择锚点或推导 traversal；Source 的真实方向、数量与完整性仍由
 Gate1 判断。Replay 必须由 J+C+π 得到 active physical tile rank，不能把 logical axis ordinal 直接当
 frontend tensor-rank axis。
+
+`artifact.v10` 对没有 implementation-selected tile、但 Source 显式逐点遍历既有非 loop J axis 的
+物理时间使用：
+
+```text
+unit_iterations = {region, body_instance, axis_ref, direction: forward | reverse}
+```
+
+其 closed denotation 是 `[0, logical J axis extent)`、步长一；reverse 访问同一组点的逆序。
+`body_instance` 与 `axis_ref` 必须解析到一个已有非 loop J reduce/contraction、boundary access 或
+domain 的 closed axis。它没有 C tile、数值或公式 bound、launch fact、Source/API，也不创建 J loop
+或 operator；同一 region 可用 `physical_loop_carriers` 保存可见 temporal state。并行 participant
+coordinate 仍由 program/lane realization routes 表达，不得误写成 unit iteration。
 
 ### Terminal control topology
 
@@ -465,9 +479,11 @@ contraction fail-early、functional logical-domain closure、rank-0 logical-inpu
 representation-only scalar 合同也保持原有版本化历史。物理迭代基底 relation 曾使 fresh-run
 wire/decode 窄升为 `artifact.v3 / decode.v3`；v4 随后增加 closed dimension relations、
 `value_dimension_relations`、`consumer_extensions` 和 typed loop-carrier wire，v5 再增加
-`access_guard_relations`，v6/v7 增加 typed control，v8 增加 physical-only time，v9 增加
-terminal-control topology。当前 active 合同为
-`artifact.v9 / decode.v13 / typecheck.v25 / candidate-check.v1`；v25 继承 v24，并新增
+`access_guard_relations`，v6/v7 增加 typed control，v8 增加 tiled physical-only time，v9 增加
+terminal-control topology，v10 增加 unit physical-only time。当前 active 合同为
+`artifact.v10 / decode.v14 / typecheck.v26 / candidate-check.v1`；v26 在 v25 上增加
+`unit_iterations` 的 closed region/body/axis checks，并允许同一 physical carrier protocol 被 tiled
+或 unit physical time 使用。v25 继承 v24，并新增
 `reduction_linearization` 的 closed topology check：该 global-safe refinement 不带 authorization，
 只能修饰一个 `realize` instance，且必须经唯一 slot-0 route 进入一个 J `reduce` 的 `realize`
 instance。它不生成 reshape 或 reduction。v24 继承 v23，并新增两条 closed
