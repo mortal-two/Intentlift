@@ -1489,14 +1489,31 @@ def enumerate_cuda_candidates(
             return f"elementwise.{approximation}.{local}"
         if item.lowering_path_kind == "padded_row_reduction":
             topology = str(item.schedule.get("reduction_topology", "serial-row"))
-            return f"{item.lowering_path_kind}.{topology}.{local}"
+            packet = (
+                "packet"
+                if item.schedule.get("vectorize_full_features") is True
+                else "scalar"
+            )
+            lanes = int(item.schedule.get("lanes_per_row", 32))
+            return (
+                f"{item.lowering_path_kind}.{topology}.{packet}."
+                f"lanes{lanes}.{local}"
+            )
         return item.lowering_path_kind
 
     known_lane_order = (
         "elementwise.stable-ex2.base",
         "row_reduction.workgroup.plain.base",
-        "padded_row_reduction.serial-row.base",
-        "padded_row_reduction.subgroup-feature.base",
+        "padded_row_reduction.serial-row.scalar.lanes32.base",
+        "padded_row_reduction.serial-row.packet.lanes32.base",
+        "padded_row_reduction.subgroup-feature.scalar.lanes32.base",
+        "padded_row_reduction.subgroup-feature.packet.lanes16.base",
+        "padded_row_reduction.subgroup-feature.packet.lanes8.base",
+        "padded_row_reduction.subgroup-feature.packet.lanes4.base",
+        "padded_row_reduction.subgroup-feature.packet.lanes32.base",
+        "padded_row_reduction.subgroup-feature.scalar.lanes16.base",
+        "padded_row_reduction.subgroup-feature.scalar.lanes8.base",
+        "padded_row_reduction.subgroup-feature.scalar.lanes4.base",
         "row_reduction.multi_stage.plain.base",
         "elementwise.native-ptx.base",
         "row_reduction.subgroup_rows.plain.base",
@@ -1516,8 +1533,16 @@ def enumerate_cuda_candidates(
         "row_reduction.workgroup.approximate_div.local",
         "row_reduction.subgroup_rows.approximate_div.local",
         "row_reduction.subgroup.approximate_div.local",
-        "padded_row_reduction.serial-row.local",
-        "padded_row_reduction.subgroup-feature.local",
+        "padded_row_reduction.serial-row.scalar.lanes32.local",
+        "padded_row_reduction.serial-row.packet.lanes32.local",
+        "padded_row_reduction.subgroup-feature.scalar.lanes32.local",
+        "padded_row_reduction.subgroup-feature.packet.lanes16.local",
+        "padded_row_reduction.subgroup-feature.packet.lanes8.local",
+        "padded_row_reduction.subgroup-feature.packet.lanes4.local",
+        "padded_row_reduction.subgroup-feature.packet.lanes32.local",
+        "padded_row_reduction.subgroup-feature.scalar.lanes16.local",
+        "padded_row_reduction.subgroup-feature.scalar.lanes8.local",
+        "padded_row_reduction.subgroup-feature.scalar.lanes4.local",
     )
     lanes = {search_lane(item) for item in specialized}
     path_order = (

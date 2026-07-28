@@ -403,6 +403,28 @@ def test_expanded_search_preserves_fixed_structure_schedule_spine() -> None:
     )
 
 
+def test_expanded_search_visits_packetized_padded_states_within_first_lanes() -> None:
+    state, _without_c = _states()
+    arms = {item.arm: item for item in standard_ablation_plan(32)}
+    expanded = [
+        item
+        for item in enumerate_cuda_candidates(
+            state,
+            axes=arms[ExperimentArm.E3_STATE_SEARCH],
+        )
+        if item.search_partition == SEARCH_PARTITION_EXPANDED
+    ][:16]
+
+    observed = {
+        int(item.schedule.get("lanes_per_row", 0))
+        for item in expanded
+        if item.lowering_path_kind == "padded_row_reduction"
+        and item.schedule.get("reduction_topology") == "subgroup-feature"
+        and item.schedule.get("vectorize_full_features") is True
+    }
+    assert {8, 16} <= observed
+
+
 def test_registry_paths_are_enumerated_without_kernel_allowlists() -> None:
     state, _without_c = _states()
     candidates = enumerate_cuda_candidates(state)
