@@ -108,7 +108,43 @@ def test_tilelang_observer_combines_tir_topology_and_ptx_semantics() -> None:
         source,
         fingerprint_tilelang(different_tir, _PTX, interface={"arity": 2}),
     )
+    assert not comparison.hard_passes["tir_structure"]
     assert not comparison.hard_passes["tir_topology"]
+
+
+def test_tilelang_structural_tir_retains_bounds_beyond_operation_names() -> None:
+    source = fingerprint_tilelang(_TIR, _PTX, interface={"arity": 2})
+    changed_bound = fingerprint_tilelang(
+        _TIR.replace("threads=32", "threads=16"),
+        _PTX,
+        interface={"arity": 2},
+    )
+
+    comparison = compare_tilelang_fingerprints(source, changed_bound)
+
+    assert comparison.hard_passes["tir_topology"]
+    assert comparison.hard_passes["tir_operations"]
+    assert not comparison.hard_passes["tir_structure"]
+    assert not comparison.hard_pass
+
+
+def test_tilelang_ptx_topology_is_diagnostic_below_equal_tir() -> None:
+    source = fingerprint_tilelang(_TIR, _PTX, interface={"arity": 2})
+    changed_ptx = fingerprint_tilelang(
+        _TIR,
+        _PTX.replace("ld.global.f32", "ld.global.ca.f32"),
+        interface={"arity": 2},
+    )
+
+    comparison = compare_tilelang_fingerprints(source, changed_ptx)
+
+    assert comparison.hard_pass
+    assert comparison.primary_difference_category is None
+    assert not comparison.diagnostic_passes["ptx.instruction_topology"]
+    assert any(
+        item.category == "ptx.instruction_topology"
+        for item in comparison.differences
+    )
 
 
 def test_static_tilelang_writer_validates_frontend_specific_module() -> None:

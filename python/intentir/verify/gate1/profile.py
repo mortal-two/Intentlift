@@ -60,11 +60,11 @@ CUDA_OBSERVER_PROFILE = ObserverProfile(
 
 TILELANG_OBSERVER_PROFILE = ObserverProfile(
     Frontend.TILELANG,
-    "tilelang_tir_ptx_topology",
+    "tilelang_tir_structural",
     TILELANG_FINGERPRINT_SCHEMA,
-    "tir+ptx",
+    "tir",
     TILELANG_FINGERPRINT_SCHEMA,
-    "strong_structural",
+    "strong_structural_with_ptx_diagnostic",
 )
 
 _PROFILES = {

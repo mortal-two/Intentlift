@@ -24,7 +24,7 @@ The active registry contains four audited public frontends:
 |---|---|---|
 | Triton | Python/Triton | normalized TTIR |
 | CuTe | Python/CuTe DSL | normalized MLIR plus PTX topology |
-| TileLang | Python/TileLang | normalized TIR operation topology plus normalized PTX |
+| TileLang | Python/TileLang | alpha-normalized structural TIR; normalized PTX diagnostic |
 | CUDA | standalone CUDA C++ | normalized PTX semantic topology |
 
 Source and Replay are always compiled with the same frontend compiler case,
@@ -69,16 +69,21 @@ backend-support test and not a source-text similarity metric.
 
 ## TileLang semantic fingerprint
 
-TileLang uses two linked views:
+TileLang uses one authoritative view and one linked diagnostic view:
 
-- the public TIR/TileLang operation sequence (`T.Kernel`, loop forms, copy,
-  allocation, reduction, GEMM and other public operations), with identifiers
-  removed; and
-- the same normalized PTX fingerprint used by native CUDA.
+- the hard public TIR structure, alpha-normalized while retaining buffer shapes,
+  loop bounds, indices, operators, calls and control nesting; and
+- the same normalized PTX fingerprint used by native CUDA, retained for audit
+  and a hard schema/ABI/target safety envelope, while exact instruction,
+  multiplicity, memory, collective, control and coordinate topology is
+  diagnostic rather than a TileLang closure veto.
 
-TIR prevents target code alone from erasing a frontend realization difference;
-PTX prevents a shallow list of TileLang API calls from accepting a different
-memory/control implementation. Both views are hard Gate1 evidence.
+TileLang closure is therefore decided at its TIR compiler boundary. PTX can
+explain a downstream lowering difference but cannot force two structurally equal
+TIR programs to reproduce backend unrolling, address spelling or instruction
+selection. The structural AST replaces the former shallow operation-name list
+as the decisive evidence, so relaxing PTX does not weaken loop/index/dataflow
+coverage.
 
 ## Replay safety and compiler isolation
 
