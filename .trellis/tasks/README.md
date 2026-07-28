@@ -5,12 +5,17 @@ Trellis CLI、自动 session 或 workflow phase。
 
 ## 当前任务
 
-2026-07-28 有两条对象所有权互不重叠的活动主线。Task 11/14 负责 fresh SCRC corpus，Task 15
-只读消费已落盘 accepted J/evidence并建设 production backend；Task 15 不调用 provider、不修改
-Lift/Replay/Gate verdict，Task 11/14 也不紧邻实现 target lowering。
+2026-07-28 有两条对象所有权互不重叠的活动主线。Task 11/14 负责 fresh SCRC corpus；Task 16
+以当前 fresh 14 J 为首批正式输入，建设真实 MLIR 跨目标搜索并完成 Source baseline、统一三臂和
+C-prior 实验。Task 16 不调用 provider、不修改 Lift/Replay/Gate verdict。
 
 - [Task 11：SCRC v4 的 28-Kernel 有界并行全闭合](07-24-scrc-v4-full-closure-11/task.md)（执行中；SCRC 主线）
-- [Task 15：18-J Development Variants 与真实跨目标后端能力闭合](07-28-backend-18j-capability-search-15/task.md)（执行中；backend主线）
+- [Task 16：Fresh-14 J 的真实 MLIR 跨目标搜索与 Source Baseline 性能闭合](07-28-fresh14-real-mlir-cross-target-search-16/task.md)（已建立；backend主线）
+
+Task 15 已完成阶段性 checkpoint 并冻结为历史执行记录；其中 legacy 16-high-performance + 2-canary
+与 J_dev 结果继续用于 compiler regression，但不再决定 fresh 正式分母：
+
+- [Task 15：16-Certified + 2-Provisional J Development 与真实跨目标后端能力闭合](07-28-backend-18j-capability-search-15/task.md)（阶段性冻结）
 
 ## 本轮已归档任务
 
