@@ -47,8 +47,10 @@ from intentir.verify.gate1.model import (
 from intentir.verify.gate1.pi import RealizationWitness
 
 
-TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v23"
-GLOBAL_SAFE_REFINEMENTS = frozenset({"identity_materialization"})
+TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v25"
+GLOBAL_SAFE_REFINEMENTS = frozenset(
+    {"identity_materialization", "reduction_linearization"}
+)
 
 _MAP_UNARY_FNS = frozenset(
     {
@@ -110,6 +112,7 @@ class TypeCheckErrorCode(str, Enum):
     ROUTE_CYCLE = "route_cycle"
     ROUTE_SLOT_OUT_OF_RANGE = "route_slot_out_of_range"
     ROUTE_TYPE_MISMATCH = "route_type_mismatch"
+    TRANSFER_ADDRESS_ROUTE_MISSING = "transfer_address_route_missing"
     INVALID_SHARING = "invalid_sharing"
     ITERATION_WITNESS_INVALID = "iteration_witness_invalid"
     ITERATION_WITNESS_MISSING = "iteration_witness_missing"
@@ -134,6 +137,7 @@ class TypeCheckErrorCode(str, Enum):
     REFINEMENT_AUTH_SUBJECT_MISMATCH = "refinement_auth_subject_mismatch"
     REFINEMENT_AUTH_TYPE_MISMATCH = "refinement_auth_type_mismatch"
     REFINEMENT_AUTH_INVALID_WIDEN = "refinement_auth_invalid_widen"
+    REFINEMENT_TOPOLOGY_INVALID = "refinement_topology_invalid"
     GLOBAL_SAFE_AUTH_FORBIDDEN = "global_safe_auth_forbidden"
 
 
@@ -470,7 +474,7 @@ def _check_known_operation_contracts(
     ):
         op_name = operation.get("op")
         if op_name not in {
-            "map_unary", "map_binary", "reduce", "contraction", "tile"
+            "const", "map_unary", "map_binary", "reduce", "contraction", "tile"
         }:
             continue
         base = f"j.intent.intent_function.{operation_path}"
@@ -478,6 +482,32 @@ def _check_known_operation_contracts(
         ref = ref_value if isinstance(ref_value, str) else operation_path
         attrs_value = operation.get("attrs")
         attrs = attrs_value if isinstance(attrs_value, Mapping) else {}
+
+        if op_name == "const":
+            value = attrs.get("value")
+            dtype_value = attrs.get("dtype")
+            operation_type = operation.get("type")
+            result_dtype = (
+                operation_type.get("dtype")
+                if isinstance(operation_type, Mapping)
+                else None
+            )
+            dtype = dtype_value if isinstance(dtype_value, str) else result_dtype
+            if isinstance(value, str) and (
+                value not in {"-inf", "inf", "nan"}
+                or not isinstance(dtype, str)
+                or not _floating_dtype(dtype)
+            ):
+                diagnostics.append(
+                    TypeCheckDiagnostic(
+                        TypeCheckErrorCode.KNOWN_OP_CONTRACT_INVALID,
+                        f"{base}.attrs.value",
+                        "const string values are closed floating literals only: "
+                        "'-inf', 'inf', or 'nan' with a floating dtype",
+                        ref,
+                    )
+                )
+            continue
 
         if op_name in {"map_unary", "map_binary"}:
             expected_fns = (
@@ -3203,7 +3233,7 @@ def _check_physical_iteration_witness(
     node_operations: Mapping[str, Mapping[str, Any]],
     diagnostics: list[TypeCheckDiagnostic],
 ) -> None:
-    """Check source-neutral physical time around an existing reduce/contraction."""
+    """Check source-neutral physical time around an existing J subject/axis."""
 
     regions = {str(item["id"]): item for item in pi.regions}
     instances = {str(item["id"]): item for item in pi.instances}
@@ -3240,10 +3270,13 @@ def _check_physical_iteration_witness(
             else ""
         )
         body_operation = node_operations.get(body_ref)
+        allowed_axes = _axis_refs_v1(j, body_ref, node_operations)
         body_valid = (
             body_instance is not None
-            and body_operation is not None
-            and body_operation.get("op") in {"reduce", "contraction"}
+            and bool(allowed_axes)
+            and not (
+                body_operation is not None and body_operation.get("op") == "loop"
+            )
             and visible_from(str(body_instance.get("region")), region_ref)
         )
         if not body_valid:
@@ -3251,8 +3284,9 @@ def _check_physical_iteration_witness(
                 TypeCheckDiagnostic(
                     TypeCheckErrorCode.PHYSICAL_ITERATION_INVALID,
                     f"{base}.body_instance",
-                    "body_instance must visibly anchor one existing J reduce or "
-                    "contraction; the relation never creates a J loop",
+                    "body_instance must visibly anchor one existing non-loop J "
+                    "reduce/contraction, boundary access, or domain with a closed "
+                    "dependent axis; the relation never creates a semantic J loop",
                     body_instance_ref,
                 )
             )
@@ -3266,9 +3300,7 @@ def _check_physical_iteration_witness(
         )
         slot = slots.get(tile_ref)
         value = c.values.get(tile_ref)
-        allowed_axes = (
-            _axis_refs_v1(j, body_ref, node_operations) if body_valid else frozenset()
-        )
+        allowed_axes = allowed_axes if body_valid else frozenset()
         tile_valid = (
             tile_instance is not None
             and visible_from(str(tile_instance.get("region")), region_ref)
@@ -4365,6 +4397,76 @@ def _check_signature_mode_partition(
     return tuple(diagnostics)
 
 
+def _check_transfer_address_routes(
+    j: SemanticArchive,
+    pi: RealizationWitness,
+    diagnostics: list[TypeCheckDiagnostic],
+) -> None:
+    """Require every direct/async access transfer to consume its tensor carrier.
+
+    This is a dependent reference check, not address synthesis.  It does not
+    choose address stages or their arithmetic; it only rejects a transfer whose
+    authored route graph is disconnected from every signature carrier bound to
+    that exact boundary tensor.
+    """
+
+    access_by_id = {item.access_id: item for item in j.boundary.accesses}
+    pointer_parameters_by_tensor: dict[str, set[str]] = {}
+    for parameter in j.signature.parameters:
+        if (
+            parameter.kind in {ParameterKind.POINTER, ParameterKind.TENSOR}
+            and isinstance(parameter.logical_ref, str)
+        ):
+            pointer_parameters_by_tensor.setdefault(
+                parameter.logical_ref, set()
+            ).add(parameter.name)
+
+    instances = {str(item["id"]): item for item in pi.instances}
+    adjacency: dict[str, set[str]] = {instance_id: set() for instance_id in instances}
+    for route in pi.routes:
+        adjacency.setdefault(str(route["source"]), set()).add(str(route["target"]))
+
+    def reaches(source: str, target: str) -> bool:
+        pending = [source]
+        visited: set[str] = set()
+        while pending:
+            current = pending.pop()
+            if current == target:
+                return True
+            if current in visited:
+                continue
+            visited.add(current)
+            pending.extend(adjacency.get(current, ()))
+        return False
+
+    for index, item in enumerate(pi.instances):
+        if item["mechanism"] not in {"transfer_direct", "transfer_async"}:
+            continue
+        access = access_by_id.get(str(item["semantic_ref"]))
+        if access is None:
+            continue
+        carrier_names = pointer_parameters_by_tensor.get(access.tensor, set())
+        carrier_instances = {
+            instance_id
+            for instance_id, instance in instances.items()
+            if str(instance["semantic_ref"]) in carrier_names
+        }
+        target = str(item["id"])
+        if carrier_instances and any(
+            reaches(source, target) for source in carrier_instances
+        ):
+            continue
+        diagnostics.append(
+            TypeCheckDiagnostic(
+                TypeCheckErrorCode.TRANSFER_ADDRESS_ROUTE_MISSING,
+                f"pi.instances[{index}]",
+                "direct/async boundary transfer requires an authored route path "
+                "from a pointer/tensor signature carrier bound to the same J tensor",
+                target,
+            )
+        )
+
+
 def type_check(
     j: SemanticArchive,
     c: ImplementationConfig,
@@ -4600,6 +4702,8 @@ def type_check(
                 "combined realization dependency graph must be acyclic",
             )
         )
+
+    _check_transfer_address_routes(j, pi, diagnostics)
 
     for route_index, route in enumerate(pi.routes):
         source_id = str(route["source"])
@@ -4853,11 +4957,48 @@ def type_check(
                     TypeCheckDiagnostic(
                         TypeCheckErrorCode.GLOBAL_SAFE_AUTH_FORBIDDEN,
                         f"pi.refinements[{index}].auth_ref",
-                        "global-safe identity materialization must not cite a "
+                        "global-safe representation materialization must not cite a "
                         "candidate-defined authorization",
                         str(auth_ref),
                     )
                 )
+            if kind == "reduction_linearization":
+                outgoing = [
+                    route
+                    for route in pi.routes
+                    if str(route["source"]) == instance_id
+                ]
+                valid_route = False
+                if (
+                    refined_instance is not None
+                    and refined_instance.get("mechanism") == "realize"
+                    and len(outgoing) == 1
+                    and list(outgoing[0]["slots"]) == [0]
+                ):
+                    target = instances.get(str(outgoing[0]["target"]))
+                    target_ref = (
+                        str(target["semantic_ref"])
+                        if target is not None
+                        else ""
+                    )
+                    target_operation = node_operations.get(target_ref)
+                    valid_route = (
+                        target is not None
+                        and target.get("mechanism") == "realize"
+                        and target_operation is not None
+                        and target_operation.get("op") == "reduce"
+                    )
+                if not valid_route:
+                    diagnostics.append(
+                        TypeCheckDiagnostic(
+                            TypeCheckErrorCode.REFINEMENT_TOPOLOGY_INVALID,
+                            f"pi.refinements[{index}]",
+                            "reduction_linearization requires one refined realize "
+                            "stage with exactly one slot-0 route into one realize "
+                            "instance anchored to a J reduce",
+                            instance_id,
+                        )
+                    )
             continue
         if auth_ref is None:
             diagnostics.append(

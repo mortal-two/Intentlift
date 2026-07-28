@@ -547,7 +547,8 @@ production backend 仍只消费 J+C，并在 `Impl(J)` 内自行选择合法 low
 Source basis。因而这次扩展没有污染 C，也没有把 SCRC fidelity constraint 变成 production strategy。
 
 `artifact.v8` 将同一所有权原则推广到 **J 中没有 structured loop、但 Source 用物理 tile loop
-realize 一个既有 reduce/contraction** 的情形。C 仍只给出 attached tile；π 另行作者化：
+realize 一个既有 J reduce/contraction 或 boundary access/domain traversal** 的情形。C 仍只给出
+attached tile；π 另行作者化：
 
 ```text
 physical_iterations = {
@@ -559,10 +560,11 @@ physical_iterations = {
 physical_loop_carriers = {region, init, state, next, result}
 ```
 
-`body_instance` 只能锚定 J 已有的 reduce/contraction；`tile_instance` 只能锚定同一 J node/axis 上的
-required positive-integer C slot。carrier 只声明 init/state/next/result 的 typed temporal topology，不能
-携带初始化或更新公式。该 relation 不在 J 中制造 loop，也不向 C 增加 basis、direction、bound 或
-permission。TypeCheck 只能检查 closed vocabulary、引用、可见性、axis attachment、类型与 carrier
+`body_instance` 可以锚定 J 已有的 reduce/contraction，或同 subject/axis 的 boundary access/domain；
+`tile_instance` 只能锚定同一 subject/axis 上的 required positive-integer C slot。后一种只表达 output
+epilogue 或 transfer traversal 的 physical time。carrier 只声明 init/state/next/result 的 typed temporal
+topology，不能携带初始化或更新公式。该 relation 不在 J 中制造 loop，也不向 C 增加 basis、direction、
+bound 或 permission。TypeCheck 只能检查 closed vocabulary、引用、可见性、axis attachment、类型与 carrier
 拓扑；它不读取 Source，因而不能证明 direction 的事实真实性或发现一条完全未作者化的 Source loop。
 这些真实性/完整性义务仍由 fresh Replay 消费和 Gate1 observer comparison承担。SCRC 后 π 停止，
 production backend 不读取上述字段。

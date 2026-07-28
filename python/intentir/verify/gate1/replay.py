@@ -38,12 +38,12 @@ from .tilelang_codegen import extract_tilelang_module
 from .ttir import TTIRParseError, parse_ttir
 
 
-MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v21"
+MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v23"
 MINISWE_REPLAY_TURN_TIMEOUT_SECONDS = 300.0
 MINISWE_REPLAY_XHIGH_TURN_TIMEOUT_SECONDS = 900.0
 RESPONSES_REPLAY_BACKEND = "openai.responses.intentir-replay.v1"
 STATIC_REPLAY_BACKEND = "intentir.static-replay-test.v1"
-REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v9"
+REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v10"
 _ANONYMOUS_HANDLE = re.compile(r"^[pc][0-9]+$")
 
 
@@ -1258,6 +1258,28 @@ def _packet_required_compiled_iteration_arities(
     return tuple(sorted(arities))
 
 
+def _packet_required_compiled_reduction_linearizations(
+    packet: Mapping[str, Any],
+) -> tuple[int, tuple[str, ...]]:
+    """Return authored full-axis materializations required before reductions.
+
+    This is an exact source-blind projection of pi refinements.  It neither
+    recognizes a Source API nor creates a missing representation stage.
+    """
+
+    pi = packet.get("pi")
+    if not isinstance(pi, Mapping):
+        return 0, ()
+    refs = tuple(
+        str(item.get("instance"))
+        for item in pi.get("refinements", [])
+        if isinstance(item, Mapping)
+        and item.get("kind") == "reduction_linearization"
+        and isinstance(item.get("instance"), str)
+    )
+    return len(refs), refs
+
+
 def _packet_required_compiled_address_operations(
     packet: Mapping[str, Any],
 ) -> tuple[int | None, tuple[str, ...]]:
@@ -1337,6 +1359,7 @@ def _packet_required_compiled_address_operations(
         for instance_id, item in instances.items()
         if item.get("semantic_ref") in pointer_parameters
     }
+    pointer_roots = set(pointer_outputs)
     changed = True
     while changed:
         changed = False
@@ -1346,25 +1369,41 @@ def _packet_required_compiled_address_operations(
                 changed = True
 
     pointer_address_ids = address_ids & pointer_outputs
-    address_refs = {
-        str(instances[instance_id].get("semantic_ref"))
-        for instance_id in address_ids
-        if isinstance(instances[instance_id].get("semantic_ref"), str)
-    }
-    pointer_address_refs = {
-        str(instances[instance_id].get("semantic_ref"))
-        for instance_id in pointer_address_ids
-        if isinstance(instances[instance_id].get("semantic_ref"), str)
-    }
     transfer_refs = {
         str(item.get("semantic_ref"))
         for item in memory_instances
         if isinstance(item.get("semantic_ref"), str)
     }
-    if (
-        not transfer_refs
-        or not transfer_refs <= address_refs
-        or pointer_address_refs != transfer_refs
+    transfer_ids = {
+        str(item.get("id"))
+        for item in memory_instances
+        if isinstance(item.get("id"), str)
+    }
+    outgoing: dict[str, set[str]] = {instance_id: set() for instance_id in instances}
+    for target, sources in incoming.items():
+        for source in sources:
+            outgoing.setdefault(source, set()).add(target)
+
+    def reaches_any(source: str, targets: set[str]) -> bool:
+        pending = [source]
+        visited: set[str] = set()
+        while pending:
+            current = pending.pop()
+            if current in targets:
+                return True
+            if current in visited:
+                continue
+            visited.add(current)
+            pending.extend(outgoing.get(current, ()))
+        return False
+
+    if not transfer_refs or not transfer_ids:
+        return None, ()
+    if any(not reaches_any(source, transfer_ids) for source in pointer_address_ids):
+        return None, ()
+    if any(
+        not any(reaches_any(source, {target}) for source in pointer_roots)
+        for target in transfer_ids
     ):
         return None, ()
     return len(pointer_address_ids), tuple(sorted(transfer_refs))
@@ -1407,12 +1446,16 @@ def source_blind_replay_compile_check(
     expected_iteration_arities = _packet_required_compiled_iteration_arities(
         selected_packet
     )
+    expected_reduction_linearizations, linearization_refs = (
+        _packet_required_compiled_reduction_linearizations(selected_packet)
+    )
     expected_address_operations, address_refs = (
         _packet_required_compiled_address_operations(selected_packet)
     )
     if (
         expected_transfers
         or expected_iteration_arities
+        or expected_reduction_linearizations
         or expected_address_operations is not None
     ) and result.ttir is not None:
         try:
@@ -1430,6 +1473,34 @@ def source_blind_replay_compile_check(
                 ),
             )
         actual_ops = dict(fingerprint.op_multiset)
+        linearized_reduce_producers = {
+            producer
+            for producer, consumer, role in fingerprint.dataflow_edges
+            if producer.startswith("tt.reshape[")
+            and consumer.startswith("tt.reduce[")
+            and role == "operand[0]"
+        }
+        actual_reduction_linearizations = min(
+            len(linearized_reduce_producers),
+            sum(reduction.axis == 0 for reduction in fingerprint.reductions),
+        )
+        if actual_reduction_linearizations < expected_reduction_linearizations:
+            return ReplayIngressResult(
+                "fail",
+                diagnostics=(
+                    {
+                        "rule_code": "compiled_reduction_linearization_count",
+                        "path": (
+                            "<synthetic-frontend-compile> "
+                            "tt.reshape->tt.reduce(axis=0): expected-at-least="
+                            f"{expected_reduction_linearizations}, "
+                            f"actual={actual_reduction_linearizations}"
+                        ),
+                        "anonymous_handles": list(linearization_refs[:32]),
+                        "line": None,
+                    },
+                ),
+            )
         if expected_address_operations is not None:
             actual_address_operations = actual_ops.get("tt.addptr", 0)
             if expected_address_operations != actual_address_operations:
@@ -1696,9 +1767,10 @@ and matching C tile as `range(0, ceil_div(extent,tile)*tile, tile)`. `effect_if`
 unconditional execution, current-shape guesses, or a second rounding formula.
 
 Every `pi.physical_iterations` item is an authored physical loop around an
-already-logical J reduce/contraction. Resolve its extent only through the
-C-attached reduced/contracted axis, preserve its induction basis and forward or
-reverse order, and preserve any `pi.physical_loop_carriers` temporal stages.
+already-logical non-loop J reduce/contraction or boundary access/domain. Resolve
+its extent only through the same-subject C-attached closed axis, preserve its
+induction basis and forward or reverse order, and preserve any
+`pi.physical_loop_carriers` temporal stages.
 These relations never create a J loop or authorize a guessed bound/update.
 The source-blind construction compile rejects a compiled `scf.for` multiplicity
 different from the number of structured J loops plus authored
@@ -1723,6 +1795,13 @@ never read it or create a dummy use, Python branch, runtime conditional, or
 inactive graph. The packet deliberately omits its concrete value; emit the
 complete active J graph already authored by Lift. A null-ref runtime scalar is
 different and may be used only through its packet-declared pi realization.
+
+A J.signature constexpr p* with logical_ref=x* is the callable carrier of that
+exact semantic dimension. Use it directly wherever the authored pi lane or
+physical-iteration realization requires x*. Never replace it with a literal
+current shape or an arbitrary unit extent. A J const string `"-inf"`, `"inf"`,
+or `"nan"` is an exact typed IEEE special; materialize it at the declared dtype
+without a finite approximation or an undeclared wider-float round trip.
 
 A J.signature `opaque` parameter with dtype `none` is a true absent runtime
 carrier. Preserve its exact ABI position but never load, index, branch on,

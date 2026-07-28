@@ -1041,24 +1041,25 @@ Both yields exactly match the result type and only that result escapes. Arm
 scopes and pi branch regions are distinct siblings. Fixed code never fills,
 derives from select, or rewrites this structure.
 
-Preserve every compiler-visible sensitive representation event in the Source,
-including explicit or mandatory implicit integer widening, numeric cast,
-accumulation dtype, reassociation, and native/privatized update choice. J owns
-one typed realization_authorization for the logical carrier; pi attaches the
-corresponding refinement and auth_ref to the exact realization instance. Use
-distinct instances/refinements for distinct source stages. These events are
-not whole-tensor operators, but omitting them changes Gate1 realization
-closure; do not assume TypeCheck can infer an undeclared cast from source code.
-Conversely, never propagate one conversion to sibling parameters, strides, or
-instances merely because they share a dtype or appear in the same address
-expression. A signed/unsigned widen states explicit source_dtype and a strictly
-wider target_dtype of the same signedness; equal-width or missing dtype pairs do
-not denote a widening refinement.
+Preserve every compiler-visible sensitive representation event in Source. J owns
+its typed realization_authorization; pi attaches the matching refinement and
+auth_ref to the exact instance. Use distinct instances/refinements for distinct
+source stages; fixed code cannot infer an undeclared cast; never propagate one
+conversion to sibling parameters, strides, or instances. Signed/unsigned widen
+states explicit same-signedness source_dtype and a strictly wider target_dtype;
+equal-width or missing dtype pairs are not widening.
 
 For each J `reduce` or inclusive `scan`, boundary.reductions.tile_axis is the
 Source frontend's local tile axis after program/grid axes select the program instance. It
 is not the whole-tensor logical axis number from reduce.attrs.axes. Preserve the
 observed local axis; do not copy a logical rank axis or add program axes to it.
+For a Source reduction with omitted frontend axis and a compiler-visible flatten,
+keep logical axes in J; add a distinct pi `realize` refined as
+`reduction_linearization` (`auth_ref=null`) with one slot-0 route to the reduce
+instance. Never use it for an explicit axis or put frontend text/API in pi.
+
+J `const` is exact: finite JSON number, or only `"-inf"`/`"inf"`/`"nan"`
+with floating dtype. Never approximate it or move it to C/pi.
 
 C owns scheduling slots/values only: no operator, predicate, Source topology,
 API, policy, or strategy. An optional source-neutral attachment names one
@@ -1082,17 +1083,12 @@ dependent anchors match; reserved tile roles only expose a wholly missing
 relation to TypeCheck. The tag has no formula/value/API and never denotes an
 untiled loop.
 
-For a Source-visible physical tiled loop implementing an otherwise ordinary J
-`reduce` or canonical `contraction`, keep that logical op in J and author one
-pi.physical_iterations relation. body_instance anchors that node; tile_instance
-anchors a required positive-integer C slot attached to the same reduced or
-contracted axis. Author the Source basis and forward/reverse direction; never
-derive them from family or valuation. This relation has no bound formula and
-does not create a J loop. If it has compiler-visible accumulator stages, author
-declaration-ordered pi.physical_loop_carriers init/state/next/result in the same
-region. These preserve time only; J still owns initialization/update semantics.
-Fixed code validates or rejects and never creates either relation from C or a
-Gate diff.
+For a Source physical tiled loop around a J fact, use pi.physical_iterations.
+body anchors non-loop reduce/contraction or boundary access/domain with a closed
+axis; tile anchors required positive-int C on the same subject/axis. Structured J
+loops use pi.iterations. Author basis/direction from Source; add no J loop/bound.
+Use physical_loop_carriers only for visible state; J owns init/update. Fixed code
+only validates/rejects.
 
 Pi preserves every compiler-visible source realization event not denoted by J
 or pure C. Emit multiple instances with the same semantic_ref when one declared
@@ -1121,7 +1117,9 @@ merges them, and only then applies the pointer carrier once, route the integer/
 domain/C paths through address_base to address_lane while the pointer p* bypasses
 address_base and enters address_lane or the final address stage. Do not choose
 between these encodings from a base-to-lane edge alone. A lone address_lane is
-legal only when Source has no separable program-uniform contribution.
+legal only when Source has no separable program-uniform contribution. Every
+transfer_direct/async must be route-reachable from a p* pointer/tensor carrier
+bound to that access's J tensor.
 Preserve source event multiplicity, def-use routes, partial order, regions, and
 one-producer sharing exactly; do not use duplicate instances as an undocumented
 code. Logical operators, predicates, fills, constants, index formulas, shapes,

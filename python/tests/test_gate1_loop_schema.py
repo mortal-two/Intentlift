@@ -630,6 +630,12 @@ def _physical_reduce_artifact(
                     "region": "r2",
                     "mechanism": "transfer_direct",
                 },
+                {
+                    "id": "i10",
+                    "semantic_ref": "p1",
+                    "region": "r1",
+                    "mechanism": "realize",
+                },
             ]
         )
         artifact.pi.routes.extend(
@@ -637,6 +643,7 @@ def _physical_reduce_artifact(
                 {"source": "i5", "target": "i6", "slots": [0]},
                 {"source": "i6", "target": "i7", "slots": [0]},
                 {"source": "i6", "target": "i9", "slots": [0]},
+                {"source": "i10", "target": "i9", "slots": [1]},
             ]
         )
         artifact.pi.physical_loop_carriers = [
@@ -670,6 +677,19 @@ def test_physical_reduce_iteration_is_typed_and_round_trips(
     assert report.passed, [item.to_json() for item in report.diagnostics]
     assert Gate1Artifact.from_json(artifact.to_json()) == artifact
     assert artifact.j.intent.body[1].op == "reduce"
+    assert all(item.op != "loop" for item in artifact.j.intent.body)
+
+
+def test_physical_access_traversal_is_typed_without_adding_j_loop() -> None:
+    artifact = _physical_reduce_artifact()
+    artifact.c.slots[0].subject_ref = "a0"
+    artifact.c.slots[0].axis_ref = 1
+    artifact.pi.physical_iterations[0]["body_instance"] = "i0"
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert report.passed, [item.to_json() for item in report.diagnostics]
+    assert artifact.pi.physical_iterations[0]["body_instance"] == "i0"
     assert all(item.op != "loop" for item in artifact.j.intent.body)
 
 

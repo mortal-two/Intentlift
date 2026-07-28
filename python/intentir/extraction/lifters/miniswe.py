@@ -37,8 +37,8 @@ from .scrc_schema import scrc_lift_core_json_schema
 from .prompt import SCHEMA as INTENTIR_OPERATION_REFERENCE
 
 
-MINISWE_LIFT_BACKEND = "minisweagent.intentir-lift.v1"
-MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v59"
+MINISWE_LIFT_BACKEND = "minisweagent.intentir-lift.v3"
+MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v61"
 MINISWE_LIFT_TURN_TIMEOUT_SECONDS = 300.0
 MINISWE_LIFT_XHIGH_TURN_TIMEOUT_SECONDS = 900.0
 MAX_RELIFT_CHECK_FEEDBACK_ITEMS = 20
@@ -435,8 +435,9 @@ continuations for the same Source; Replay remains a separate fresh process.
 - `knowledge/minimal_example.json`: source-neutral wire/ownership example for one
   integral rank-0 scalar explicitly equated to a logical dimension by a J-owned
   value_dimension_relations entry, explicit sum-then-div stages, one exact cast
-  refinement, and a local reduction axis; replace every case-specific semantic,
-  handle, shape, value, topology, and multiplicity.
+  refinement, a local reduction axis, and explicit signature-carrier routes to
+  both transfers; replace every case-specific semantic, handle, shape, value,
+  topology, and multiplicity.
 - `tools/validate_candidate.py`: syntax/static-schema validator only.
 - `intentir_candidate_check /output/candidate.json`: read-only
   Decode/TypeCheck diagnostics for the complete candidate; calls are audited

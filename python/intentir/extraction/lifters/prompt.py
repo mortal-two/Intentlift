@@ -65,8 +65,10 @@ Atomic ops (each is one JSON object in a "body" list):
                runtime value, C tile size, program id, block base or lane
                decomposition into Layer A.
      {"op":"iota","result":R,"attrs":{"n":<int-or-symbol>,"dtype":"i32"|"i64"}}
-  const      : a literal value, splat over an optional shape (default scalar []).
-     {"op":"const","result":R,"attrs":{"value":<number>,"dtype":"f32","shape":[]}}
+  const      : a typed literal value, splat over an optional shape (default scalar []).
+               Finite values are JSON numbers. IEEE floating specials use only the
+               closed strings "-inf", "inf", or "nan" with a floating dtype.
+     {"op":"const","result":R,"attrs":{"value":<number-or-special>,"dtype":"f32","shape":[]}}
   contraction: binary einsum. attrs.subscripts is the canonical explicit
                "lhs,rhs->out" label string (no ellipsis); exactly two operands.
                Repeated input labels are allowed when their typed extents agree;

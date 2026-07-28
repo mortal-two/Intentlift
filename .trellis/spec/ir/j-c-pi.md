@@ -350,7 +350,7 @@ production 仍只消费 J+C，自行确定性 materialize/search `Impl(J)`，不
 
 ### J 外物理 tile time
 
-`artifact.v8` 对已有 J reduce/contraction 外的 Source physical loop 使用：
+`artifact.v8` 对 structured J loop 外、但 realization 已有 J 事实的 Source physical loop 使用：
 
 ```text
 physical_iterations = {
@@ -361,10 +361,13 @@ physical_iterations = {
 physical_loop_carriers = {region, init, state, next, result}
 ```
 
-body/tile 必须分别锚定已有 J node 与同 node/axis 的 required positive-integer C slot；carrier 只保存
-typed temporal topology。字段不含 bound/formula/value/API，不在 J 中创建 loop。TypeCheck 只验证
-closed reference/type/scope/totality；Source 的真实方向、数量与完整性仍由 Gate1 判断。Replay 必须由
-J+C+π 得到 active physical tile rank，不能把 logical axis ordinal 直接当 frontend tensor-rank axis。
+body 可以锚定具有 closed axis 的 J reduce/contraction，也可以锚定 boundary access/domain；tile 必须
+锚定同一 subject/axis 的 required positive-integer C slot。后一种形态表达 output epilogue 或 transfer
+traversal 的物理时间，不把 realization loop 伪装成 Layer-A recurrence。carrier 只保存 typed temporal
+topology。字段不含 bound/formula/value/API，不在 J 中创建 loop。TypeCheck 只验证 closed
+reference/type/scope/axis/totality，不选择锚点或推导 traversal；Source 的真实方向、数量与完整性仍由
+Gate1 判断。Replay 必须由 J+C+π 得到 active physical tile rank，不能把 logical axis ordinal 直接当
+frontend tensor-rank axis。
 
 ### Terminal control topology
 
@@ -464,9 +467,15 @@ wire/decode 窄升为 `artifact.v3 / decode.v3`；v4 随后增加 closed dimensi
 `value_dimension_relations`、`consumer_extensions` 和 typed loop-carrier wire，v5 再增加
 `access_guard_relations`，v6/v7 增加 typed control，v8 增加 physical-only time，v9 增加
 terminal-control topology。当前 active 合同为
-`artifact.v9 / decode.v13 / typecheck.v23 / candidate-check.v1`；v23 在 v22 上新增 canonical
-output binding 的完整 dtype/shape exact dependent check，禁止用相同 concrete valuation 或相同元素
-数掩盖 axis permutation。v22 增加 signature mode 与 J
+`artifact.v9 / decode.v13 / typecheck.v25 / candidate-check.v1`；v25 继承 v24，并新增
+`reduction_linearization` 的 closed topology check：该 global-safe refinement 不带 authorization，
+只能修饰一个 `realize` instance，且必须经唯一 slot-0 route 进入一个 J `reduce` 的 `realize`
+instance。它不生成 reshape 或 reduction。v24 继承 v23，并新增两条 closed
+dependent check：floating typed `const` 若使用 JSON string，只允许 `inf|-inf|nan` 且 dtype 必须是
+floating；每个 `transfer_direct|transfer_async` 必须由匹配其 boundary access tensor 的
+pointer/tensor signature carrier 经 π routes 可达。它们只拒绝缺失/非法作者事实，不生成 constant、
+address formula、instance 或 route。v23 在 v22 上新增 canonical output binding 的完整 dtype/shape
+exact dependent check，禁止用相同 concrete valuation 或相同元素数掩盖 axis permutation。v22 增加 signature mode 与 J
 input/output boundary partition 的 exact dependent check：input-only、output-only 与显式 inout overlap
 不得混写。v22 继承 v21 的 terminal-control sibling/finality checks，以及 v20 对上述 relations 的
 source-free dependent checks，尤其验证 authored guard 的支配、类型、唯一 axes authority、显式

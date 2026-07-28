@@ -40,6 +40,7 @@ PHYSICAL_ITERATION_DIRECTIONS: tuple[str, ...] = ("forward", "reverse")
 
 REPRESENTATION_REFINEMENTS: tuple[str, ...] = (
     "identity_materialization",
+    "reduction_linearization",
     "signed_widen",
     "unsigned_widen",
     "numeric_cast",
@@ -162,9 +163,10 @@ def render_realization_witness_wire_grammar() -> str:
         "routes and never carry an expression or frontend spelling. Each "
         "physical_iterations entry has exactly region, body_instance, "
         "tile_instance, induction_basis, and direction. body_instance anchors "
-        "an existing J reduce/contraction; tile_instance anchors one required "
-        "positive C tile attached to that same J node and reduced/contracted "
-        "axis. forward uses the corresponding zero-origin basis order; reverse "
+        "an existing non-loop J reduce/contraction or boundary access/domain with "
+        "a closed dependent axis; tile_instance anchors one required positive C "
+        "tile attached to that same semantic subject and axis. forward uses the "
+        "corresponding zero-origin basis order; reverse "
         "visits that same closed basis in descending order. It never adds a J "
         "loop or carries bounds/formulas. Each physical_loop_carriers entry has "
         "exactly region, init, state, next, and result, with the same temporal "
@@ -173,7 +175,11 @@ def render_realization_witness_wire_grammar() -> str:
         " terminal_controls has exactly terminal_instance and continuation_instance: "
         "distinct realize instances on sibling J effect_if arm scopes. It names "
         "which arm terminates and which continues; it carries no predicate, "
-        "polarity, return, Source spelling, or API."
+        "polarity, return, Source spelling, or API. Each reduction_linearization "
+        "refinement has null auth_ref and refines one realize instance whose sole "
+        "slot-0 route enters a J reduce realize instance. It denotes full-axis "
+        "linearization before that consumer without carrying an axis, operator, "
+        "value, or frontend API."
     )
 
 

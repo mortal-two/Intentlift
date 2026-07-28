@@ -430,14 +430,15 @@ value/dimension、consumer context 或 access-control 语义。旧 v1-v4 wire/re
 
 ### 4.3.2 J 外物理 tile-loop 与时间 carrier
 
-J 中的 structured `loop` 表示逻辑 recurrence；但 reduce/contraction 也可能在 Source 中由一个或多个
-物理 tile loop实现。把后者伪装成 J loop会改变 `[[J]]`，完全省略又让 Replay 猜测 Source。
+J 中的 structured `loop` 表示逻辑 recurrence；但已有 J reduce/contraction，或 boundary
+access/domain 对应的 epilogue/transfer traversal，也可能在 Source 中由一个或多个物理 tile loop
+实现。把后者伪装成 J loop会改变 `[[J]]`，完全省略又让 Replay 猜测 Source。
 `artifact.v8` 因此增加：
 
 ```text
 pi.physical_iterations[*] = {
   region,
-  body_instance,       // semantic_ref = existing J reduce/contraction
+  body_instance,       // semantic_ref = existing J reduce/contraction or boundary access/domain
   tile_instance,       // semantic_ref = attached required positive-int C slot
   induction_basis: extent_step | rounded_extent_step | tile_ordinal,
   direction: forward | reverse
@@ -448,7 +449,9 @@ pi.physical_loop_carriers[*] = {
 }
 ```
 
-`body_instance` 与 `tile_instance` 必须在 relation region 或祖先可见，且 C slot 指向同一 J node/axis。
+`body_instance` 与 `tile_instance` 必须在 relation region 或祖先可见。body 锚定 reduce/contraction 时，
+C slot 指向同一 J node/axis；body 锚定 boundary access/domain 时，C slot 指向同一 subject/axis。后一种
+只表达 output epilogue 或 transfer traversal 的物理时间，不产生新的 logical recurrence。
 carrier 五元组只保存 typed temporal topology；不得携带 init/update 公式、bound、value 或 frontend API。
 一个 region 至多一条 physical iteration，不能与 structured `pi.iterations` 重叠。TypeCheck 验证 closed
 引用、类型、作用域、basis/direction vocabulary 和必要 totality；它不从 Source 推导 relation，也不证明
@@ -844,20 +847,25 @@ Replay LLM 应遵守以下过程合同：
 6. 按 sharing 复用 producer，不得擅自复制或折叠；
 7. 按 order 保留必要偏序；
 8. 按 `iterations` 保留 structured J loop 的物理 induction basis；
-9. 按 `physical_iterations/physical_loop_carriers` 保留 J reduce/contraction 外的物理 tile time；
+9. 按 `physical_iterations/physical_loop_carriers` 保留 structured J loop 外、由已有
+   reduce/contraction 或 boundary access/domain 锚定的物理 tile time；
 10. 按 `terminal_controls` 将已作者化 `effect_if` 的 terminal arm 与 lexical continuation
     materialize 为 terminal CFG，不从臂内容猜 role；
-11. 按 representation refinements 保留 source materialization/placement；
+11. 按 representation refinements 保留 source materialization/placement；其中
+    `reduction_linearization` 精确保留经唯一 slot-0 route 进入 J reduce 的全轴线性化；
 12. 遇到 J semantic ref 时从 J 查询当前语义 label；
 13. 使用固定公共 frontend 知识 `U_f` 选择合法 API spelling；
 14. 输出完整、参数化、source-blind frontend source；
 15. 不从 π 猜出后覆盖 J，也不从 compiler diff 修补。
 
 当前 fresh receipt 组合为 `intentir.scrc.replay-input.v1`、Triton
-`public_frontend_context_v12`、Codex/MiniSWE Lift `intentir.lift-knowledge.v62/v59`、MiniSWE Replay v21 与 Codex Replay v17；旧 receipt 保持其原 verdict，不能由
+`public_frontend_context_v14`、Codex/MiniSWE Lift `intentir.lift-knowledge.v64/v61`、MiniSWE Replay v23 与 Codex Replay v19；旧 receipt 保持其原 verdict，不能由
 当前 Replay consumer 或 Lift knowledge 静默升级。
 
-v21/v17 对正常大小匿名 packet 只做一次 exact startup embedding；超限时 manifest 才将 J 中已声明
+v23/v19 对正常大小匿名 packet 只做一次 exact startup embedding，并将 semantic dimension carrier、
+IEEE special typed constant、physical iteration 与 `reduction_linearization + consumer route` 作一次
+bounded exact `critical_facts` 重索引；超限时
+manifest 才将 J 中已声明
 的 op/boundary 与 π 中已声明的 instance mechanism、time/control/terminal obligation 重新索引为
 有界清单。它不新增 relation，不从 Source/Gate 取值，也不选择 realization、schedule、frontend
 spelling 或 repair，因此只增强 Replay owner 对现有 π/J 的消费可靠性，不改变 π 的证明地位或
@@ -887,17 +895,21 @@ artifact 保持原始序列化、digest 与字段集合，禁止静默附加空�
 
 固定代码不把 π 解码成源码，不建立 deterministic composer。
 
-`replay-check.v9` 可以在公共、source-blind synthetic compile 后核对 π 已作者化的
+`replay-check.v10` 可以在公共、source-blind synthetic compile 后核对 π 已作者化的
 `transfer_direct` occurrence 与 compiled load/store multiplicity；它只拒绝 compiler 已经折叠的
 作者化 event，不补 transfer、不决定保留它的源码写法。它同时将 structured J loop 数与
 `pi.physical_iterations` 数之和作为已作者化的 compiled `scf.for` 必要 occurrence；
 `pi.iterations` 只 realize 其 J loop，不重复计数；每个 compiled loop 的 block-argument arity 还必须
 等于 induction 加该 loop/region 已作者化的 logical/physical carrier 数。v9 还只在
 J.signature 的 pointer/tensor carrier kind 与 π address routes 对每个 transfer 完全闭合时，
-传播 pointer-producing address stage 并核对 compiled `tt.addptr` occurrence；独立 integer
-base/lane contribution 不计作 pointer stage，未覆盖的 transfer 或未绑定 transfer 的额外 pointer
-stage都会使该窄检查停用，无法闭合时不猜 final
-address。该检查不补 loop、bound、carrier、update、address formula 或 schedule，也不
+沿 route 传播 pointer reachability 并核对 compiled `tt.addptr` occurrence；独立 integer
+base/lane contribution 不计作 pointer stage，address instance 与 transfer 不必使用相同 semantic-ref
+spelling，但每个 transfer 必须从绑定同一 boundary tensor 的 pointer/tensor signature carrier 可达，
+每个 pointer-producing address stage 也必须流向至少一个 transfer。v10 另要求 compiled
+distinct `tt.reshape -> tt.reduce(axis=0)` dataflow 数不少于 π 已作者化
+`reduction_linearization` 数；额外 reshape 仍由正式 Gate1 精确
+比较，避免 non-authoritative preflight 越权。无法闭合时不猜 final address。
+该检查不补 loop、bound、carrier、update、address formula 或 schedule，也不
 具有 Gate 或认证权威。单次 Replay turn
 超时只允许在同一 fresh episode/thread 继续，或恢复该 episode 内 Replay LLM 已写出且通过 closed
 check 的 exact bytes；禁止跨 episode 继承 Replay。
@@ -1283,8 +1295,13 @@ authorization；这只合并 proof-irrelevant 文件动作，外部 TypeCheck �
 numeric-cast、result-relation compatibility 与当前 v4/v5 typed relations 的检查均已随版本化
 TypeCheck 落地并写入 fresh receipt；旧 artifact/证书保持历史解释，不由新规则静默重判。
 
-活动 fresh-run 使用 `typecheck.v23`。v23 增加 canonical output binding 的完整 dtype/shape exact
-dependent check；v22 增加 signature mode 与 J boundary partition 的 exact
+活动 fresh-run 使用 `typecheck.v25`。v25 继承 v24，并新增 `reduction_linearization` 的 closed
+dependent topology check：refinement 必须 `auth_ref=null`，修饰一个 `realize` instance，且只经
+一条 slot-0 route 进入一个 J reduce `realize` instance；checker 不生成该 relation 或 reshape。
+v24 继承 v23，并新增两条 closed dependent check：floating
+typed const 的 JSON string 只允许 `inf|-inf|nan`；每个 transfer 必须有从匹配 boundary tensor 的
+pointer/tensor signature carrier 到达它的 authored route。它不生成 constant、instance、route 或
+address formula。v23 增加 canonical output binding 的完整 dtype/shape exact dependent check；v22 增加 signature mode 与 J boundary partition 的 exact
 dependent check，并完整继承 v21；v21 继承 v20/v18/v19、v14-v17 typed-control 合同及下述 v7
 前序合同，包含 terminal-control sibling/finality dependent checks；v20 已检查 authored
 value/dimension、consumer extension 与 access guard 的 dependent closure；它仍只拒绝和诊断，不补造

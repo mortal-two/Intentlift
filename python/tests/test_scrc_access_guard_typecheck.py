@@ -96,6 +96,17 @@ def _guarded_carry_payload() -> dict:
 
     payload["pi"]["instances"][2]["semantic_ref"] = "t1"
     payload["pi"]["instances"][4]["semantic_ref"] = "v5"
+    payload["pi"]["instances"].append(
+        {
+            "id": "i7",
+            "semantic_ref": "p1",
+            "region": "r1",
+            "mechanism": "realize",
+        }
+    )
+    payload["pi"]["routes"].append(
+        {"source": "i7", "target": "i6", "slots": [0]}
+    )
     return payload
 
 
@@ -188,7 +199,7 @@ def test_access_guard_typecheck_accepts_generic_rank_projection_and_load_fill() 
     report = type_check(artifact.j, artifact.c, artifact.pi)
 
     assert report.passed, report.to_json()
-    assert report.protocol == TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v23"
+    assert report.protocol == TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v25"
 
 
 @pytest.mark.parametrize(

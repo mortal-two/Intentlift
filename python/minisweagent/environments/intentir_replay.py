@@ -31,7 +31,7 @@ INTENTIR_REPLAY_COMPILE_CHECK = "intentir_replay_compile_check"
 INTENTIR_PACKET_QUERY = "intentir_packet_query"
 REPLAY_STARTUP_PACKET_EMBED_LIMIT_BYTES = 64 * 1024
 INTENTIR_REPLAY_INSPECT = "intentir_replay_inspect"
-REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v9"
+REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v10"
 REPLAY_TRANSACTION_PROTOCOL = "intentir.replay-transaction.v1"
 REPLAY_APPLY_PATCH_PROTOCOL = "intentir.replay-exact-text-patch.v1"
 REPLAY_DIRECT_SUBMIT_PROTOCOL = "intentir.replay-direct-submit.v1"
@@ -648,6 +648,113 @@ def _packet_requirements(packet: Mapping[str, Any]) -> dict[str, Any]:
         },
         "referenced_instances": selected_instances,
         "referenced_regions": selected_regions,
+        "authority": (
+            "exact source-isolated packet projection only; no Source, Harness "
+            "value, Gate evidence, inference, generation, repair, or schedule"
+        ),
+    }
+
+
+def _packet_critical_facts(packet: Mapping[str, Any]) -> dict[str, Any]:
+    """Return a tiny exact index of easy-to-miss authored packet facts.
+
+    The normal startup already transports the whole packet.  This index does not
+    summarize its graph or recommend a lowering; it merely colocates four
+    closed fact classes whose distant cross-references are otherwise easy to
+    overlook in a large ABI: semantic dimension carriers, typed IEEE-special
+    constants, physical-iteration relations, and reduction linearizations.
+    """
+
+    j = packet.get("j", {})
+    pi = packet.get("pi", {})
+    if not isinstance(j, Mapping) or not isinstance(pi, Mapping):
+        raise TypeError("packet J/pi must be objects")
+    signature = j.get("signature", {})
+    parameters = (
+        signature.get("parameters", [])
+        if isinstance(signature, Mapping)
+        else []
+    )
+    if not isinstance(parameters, list):
+        raise TypeError("packet J signature parameters must be an array")
+    dimension_carriers = [
+        {
+            key: parameter.get(key)
+            for key in ("name", "kind", "dtype", "logical_ref")
+        }
+        for parameter in parameters
+        if isinstance(parameter, Mapping)
+        and isinstance(parameter.get("logical_ref"), str)
+        and str(parameter["logical_ref"]).startswith("x")
+    ]
+
+    intent = j.get("intent", {})
+    function = (
+        intent.get("intent_function", {})
+        if isinstance(intent, Mapping)
+        else {}
+    )
+    operations = _packet_graph_ops(
+        function.get("body", []) if isinstance(function, Mapping) else [],
+        "j.intent.intent_function.body",
+    )
+    special_constants = []
+    for operation in operations:
+        attrs = operation.get("attrs")
+        if operation.get("op") != "const" or not isinstance(attrs, Mapping):
+            continue
+        if attrs.get("value") not in {"-inf", "inf", "nan"}:
+            continue
+        special_constants.append(
+            {
+                "path": operation.get("path"),
+                "id": operation.get("id"),
+                "value": attrs.get("value"),
+                "dtype": attrs.get("dtype"),
+                "shape": attrs.get("shape", []),
+            }
+        )
+
+    physical_iterations = pi.get("physical_iterations", [])
+    if not isinstance(physical_iterations, list):
+        raise TypeError("packet pi physical_iterations must be an array")
+    instances = {
+        str(item.get("id")): item
+        for item in pi.get("instances", [])
+        if isinstance(item, Mapping) and isinstance(item.get("id"), str)
+    }
+    routes = pi.get("routes", [])
+    refinements = pi.get("refinements", [])
+    if not isinstance(routes, list) or not isinstance(refinements, list):
+        raise TypeError("packet pi routes/refinements must be arrays")
+    reduction_linearizations = []
+    for refinement in refinements:
+        if not isinstance(refinement, Mapping) or refinement.get(
+            "kind"
+        ) != "reduction_linearization":
+            continue
+        instance_id = str(refinement.get("instance"))
+        instance = instances.get(instance_id, {})
+        reduction_linearizations.append(
+            {
+                "instance": instance_id,
+                "semantic_ref": instance.get("semantic_ref"),
+                "mechanism": instance.get("mechanism"),
+                "region": instance.get("region"),
+                "consumer_routes": [
+                    dict(route)
+                    for route in routes
+                    if isinstance(route, Mapping)
+                    and route.get("source") == instance_id
+                ],
+            }
+        )
+    return {
+        "protocol": "intentir.replay-critical-facts.v1",
+        "semantic_dimension_carriers": dimension_carriers,
+        "typed_ieee_special_constants": special_constants,
+        "physical_iterations": physical_iterations,
+        "reduction_linearizations": reduction_linearizations,
         "authority": (
             "exact source-isolated packet projection only; no Source, Harness "
             "value, Gate evidence, inference, generation, repair, or schedule"

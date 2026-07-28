@@ -200,19 +200,35 @@
         "semantic_ref": "a1",
         "region": "r0",
         "mechanism": "transfer_direct"
+      },
+      {
+        "id": "i5",
+        "semantic_ref": "p0",
+        "region": "r0",
+        "mechanism": "realize"
+      },
+      {
+        "id": "i6",
+        "semantic_ref": "p1",
+        "region": "r0",
+        "mechanism": "realize"
       }
     ],
     "routes": [
+      {"source": "i5", "target": "i0", "slots": [0]},
       {"source": "i0", "target": "i1", "slots": [0]},
       {"source": "i1", "target": "i3", "slots": [0]},
       {"source": "i2", "target": "i3", "slots": [1]},
-      {"source": "i3", "target": "i4", "slots": [0]}
+      {"source": "i3", "target": "i4", "slots": [0]},
+      {"source": "i6", "target": "i4", "slots": [0]}
     ],
     "order": [
       {"before": "i0", "after": "i1"},
       {"before": "i1", "after": "i3"},
       {"before": "i2", "after": "i3"},
-      {"before": "i3", "after": "i4"}
+      {"before": "i3", "after": "i4"},
+      {"before": "i5", "after": "i0"},
+      {"before": "i6", "after": "i4"}
     ],
     "sharing": [],
     "refinements": [
