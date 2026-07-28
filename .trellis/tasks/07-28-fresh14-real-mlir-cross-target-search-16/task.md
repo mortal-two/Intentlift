@@ -345,6 +345,24 @@ Internal: C-Fixed / Schedule-Only / IntentIR
 另输出 C-prior 小表。所有 aggregate 同时报告 fresh-14 全体、结构适用子集和 per-kernel；主结论不能
 只选择 winner。
 
+### 当前执行 checkpoint（2026-07-28）
+
+- fresh-14 已 14/14 由 typed ContractIR materializer 形成真实 Intent MLIR；production materializer
+  不再以旧 functional-boundary matcher 作为 membership gate；
+- SplitK fresh J 的真实图不是 legacy packed `concat + reduce`，而是两个 partial Out/LSE 的静态展开
+  stable weighted merge。新增 C++ SSA matcher 直接识别该代数并要求所有函数体 op 都可从两个结果反向
+  到达；不读取 kernel 名、Source 路径或 receipt；
+- 该图已由 `Intent -> GPU -> NVVM -> PTX -> cubin` 形成单一真实 CUDA kernel，runtime ABI 为四个输入
+  加两个输出指针；D=16 的非满 warp 尾部有显式界限保护；结果已与原始 Triton Source 对齐；
+- 同一 concrete lowering path 已形成 `rows_per_block={1,2,4,8}` 四个真实编译状态，对应
+  `block_threads={32,64,128,256}`，每个状态带 post-pass topology/trace receipt，并已进入普通搜索；
+- 5090D 当前 workload 的 bring-up 计时为：Source 约 4.07 us，C-Fixed/default rows=4 约 4.86 us，
+  Schedule-Only 当前最优 rows=8 约 3.35 us；即初步 `G_schedule≈1.45`、`G_source≈1.21`。这些数值尚未
+  经过正式 paired batches，不进入最终 aggregate；
+- generic 19-launch materialized 图约 50.8 us，而单 launch 约 3.35 us，只用于验证 whole-graph
+  materialization/dispatch 瓶颈确被消除，不作为正式 `G_lowering`。当前这个 cell 的 IntentIR winner 仍是
+  Schedule-Only spine，故其正式 `G_lowering` 预期接近 1；需要由其他真实结构状态补足该因果指标。
+
 ## 10. 总体验收
 
 1. fresh 14 J 全部由同一普通 backend 消费，无 Python target emission；

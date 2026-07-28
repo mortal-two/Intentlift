@@ -21,13 +21,16 @@
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 
 #include <array>
+#include <cmath>
 #include <limits>
 
 namespace intent {
@@ -73,6 +76,496 @@ static int64_t elementCount(RankedTensorType type) {
     count *= dim;
   return count;
 }
+
+static bool isFloatSplat(Value value, double expected, double tolerance = 0.0) {
+  auto constant = value.getDefiningOp<arith::ConstantOp>();
+  auto dense = constant ? dyn_cast<DenseElementsAttr>(constant.getValue())
+                        : DenseElementsAttr();
+  if (!dense || !dense.isSplat() ||
+      !isa<FloatType>(dense.getElementType()))
+    return false;
+  APFloat actual = dense.getSplatValue<APFloat>();
+  if (std::isinf(expected))
+    return actual.isInfinity() && actual.isNegative() == std::signbit(expected);
+  return std::abs(actual.convertToDouble() - expected) <= tolerance;
+}
+
+static void collectAssociativeLeaves(Value value, StringRef fn,
+                                     SmallVectorImpl<Value> &leaves) {
+  auto binary = value.getDefiningOp<MapBinaryOp>();
+  if (!binary || binary.getFn() != fn) {
+    leaves.push_back(value);
+    return;
+  }
+  collectAssociativeLeaves(binary.getLhs(), fn, leaves);
+  collectAssociativeLeaves(binary.getRhs(), fn, leaves);
+}
+
+static bool hasExactlyValues(ArrayRef<Value> values,
+                             ArrayRef<Value> expected) {
+  if (values.size() != expected.size())
+    return false;
+  llvm::DenseSet<Value> unique;
+  for (Value value : values)
+    if (!unique.insert(value).second)
+      return false;
+  return llvm::all_of(expected,
+                      [&](Value value) { return unique.contains(value); });
+}
+
+static bool isTrailingUnitExpansion(Value value, Value source) {
+  auto expand = value.getDefiningOp<tensor::ExpandShapeOp>();
+  auto sourceType = dyn_cast<RankedTensorType>(source.getType());
+  auto resultType = dyn_cast<RankedTensorType>(value.getType());
+  if (!expand || expand.getSrc() != source || !sourceType || !resultType ||
+      !sourceType.hasStaticShape() || !resultType.hasStaticShape() ||
+      resultType.getRank() != sourceType.getRank() + 1 ||
+      resultType.getElementType() != sourceType.getElementType() ||
+      resultType.getShape().back() != 1)
+    return false;
+  return resultType.getShape().drop_back() == sourceType.getShape();
+}
+
+static bool allBodyOperationsReachResults(func::FuncOp fn,
+                                          func::ReturnOp ret) {
+  Block &entry = fn.getBody().front();
+  llvm::DenseSet<Operation *> reachable;
+  SmallVector<Value> worklist(ret.getOperands().begin(), ret.getOperands().end());
+  while (!worklist.empty()) {
+    Value value = worklist.pop_back_val();
+    Operation *definition = value.getDefiningOp();
+    if (!definition || definition->getBlock() != &entry ||
+        !reachable.insert(definition).second)
+      continue;
+    llvm::append_range(worklist, definition->getOperands());
+  }
+  return reachable.size() ==
+         static_cast<size_t>(
+             std::distance(entry.without_terminator().begin(),
+                           entry.without_terminator().end()));
+}
+
+static void attachSplitKReceipt(func::FuncOp lowered, StringRef path,
+                                StringRef topology, int64_t blockThreads,
+                                int64_t rowsPerBlock, int64_t splitCount,
+                                int64_t gridBlocks,
+                                ArrayRef<StringRef> trace) {
+  MLIRContext *ctx = lowered.getContext();
+  auto i64 = IntegerType::get(ctx, 64);
+  auto integer = [&](int64_t value) { return IntegerAttr::get(i64, value); };
+  lowered->setAttr("intent.backend.lowering_path_kind",
+                   StringAttr::get(ctx, path));
+  lowered->setAttr("intent.backend.reduction_topology",
+                   StringAttr::get(ctx, topology));
+  SmallVector<Attribute> traceAttrs;
+  llvm::transform(trace, std::back_inserter(traceAttrs),
+                  [&](StringRef item) -> Attribute {
+                    return StringAttr::get(ctx, item);
+                  });
+  lowered->setAttr("intent.backend.transformation_trace",
+                   ArrayAttr::get(ctx, traceAttrs));
+  lowered->setAttr("intent.backend.approximation_mode",
+                   StringAttr::get(ctx, "source_exp2_log2"));
+  lowered->setAttr("intent.backend.fma_count", integer(0));
+  lowered->setAttr("intent.backend.approximate_div_count", integer(0));
+  lowered->setAttr("intent.backend.shuffle_count", integer(0));
+  lowered->setAttr("intent.backend.barrier_count", integer(0));
+  lowered->setAttr("intent.backend.all_reduce_count", integer(0));
+  lowered->setAttr("intent.backend.block_threads", integer(blockThreads));
+  lowered->setAttr("intent.backend.grid_blocks", integer(gridBlocks));
+  lowered->setAttr("intent.backend.grid_stride_loop_count", integer(0));
+  lowered->setAttr("intent.backend.rows_per_block", integer(rowsPerBlock));
+  lowered->setAttr("intent.backend.stage_count", integer(1));
+  lowered->setAttr("intent.backend.reduction_parts", integer(splitCount));
+  lowered->setAttr("intent.backend.predicated_value_if_count", integer(0));
+  lowered->setAttr("intent.backend.folded_constexpr_select_count", integer(0));
+  lowered->setAttr("intent.backend.host_value_capture_count", integer(0));
+  lowered->setAttr("intent.backend.epilogue_load_motion_count", integer(0));
+}
+
+/// Match the source-neutral, unrolled weighted-merge graph emitted from a typed
+/// J whose vararg arity is statically known.  The split axis is represented by
+/// K independent Out/LSE operands rather than by a packed tensor dimension:
+///
+///   max_lse = max(-inf, lse[0], ..., lse[K-1])
+///   w[i] = exp2((lse[i] - max_lse) * log2(e))
+///   out = sum(out[i] * w[i]) / sum(w[i])
+///   lse = max_lse + log2(sum(w[i])) / log2(e)
+///
+/// The matcher follows SSA dependencies and checks whole-graph reachability. It
+/// does not inspect function names, source paths, receipts, or benchmark IDs.
+struct UnrolledSplitKVarargsMatch {
+  func::FuncOp fn;
+  int64_t splitCount = 0;
+  int64_t B = 0;
+  int64_t G = 0;
+  int64_t H = 0;
+  int64_t M = 0;
+  int64_t D = 0;
+
+  explicit UnrolledSplitKVarargsMatch(func::FuncOp fn) : fn(fn) {}
+
+  LogicalResult match() {
+    auto type = fn.getFunctionType();
+    if (!fn.getBody().hasOneBlock() || type.getNumResults() != 2 ||
+        type.getNumInputs() < 4 || type.getNumInputs() % 2 != 0)
+      return failure();
+    splitCount = type.getNumInputs() / 2;
+    Block &entry = fn.getBody().front();
+
+    SmallVector<RankedTensorType> outTypes;
+    SmallVector<RankedTensorType> lseTypes;
+    outTypes.reserve(splitCount);
+    lseTypes.reserve(splitCount);
+    for (int64_t split = 0; split < splitCount; ++split) {
+      auto outType = dyn_cast<RankedTensorType>(type.getInput(split));
+      auto lseType =
+          dyn_cast<RankedTensorType>(type.getInput(splitCount + split));
+      if (!outType || !lseType || !outType.hasStaticShape() ||
+          !lseType.hasStaticShape() || outType.getRank() != 5 ||
+          lseType.getRank() != 4 ||
+          !isa<Float32Type>(outType.getElementType()) ||
+          !isa<Float32Type>(lseType.getElementType()))
+        return failure();
+      if (split != 0 &&
+          (outType != outTypes.front() || lseType != lseTypes.front()))
+        return failure();
+      outTypes.push_back(outType);
+      lseTypes.push_back(lseType);
+    }
+
+    B = outTypes.front().getDimSize(0);
+    G = outTypes.front().getDimSize(1);
+    H = outTypes.front().getDimSize(2);
+    M = outTypes.front().getDimSize(3);
+    D = outTypes.front().getDimSize(4);
+    if (B <= 0 || G <= 0 || H <= 0 || M <= 0 || D <= 0 ||
+        lseTypes.front().getShape() !=
+            ArrayRef<int64_t>({B, G, H, M}) ||
+        type.getResult(0) != outTypes.front() ||
+        type.getResult(1) != lseTypes.front())
+      return failure();
+
+    auto ret = dyn_cast<func::ReturnOp>(entry.getTerminator());
+    if (!ret || ret.getNumOperands() != 2)
+      return failure();
+    auto outSelect = ret.getOperand(0).getDefiningOp<SelectOp>();
+    auto lseSelect = ret.getOperand(1).getDefiningOp<SelectOp>();
+    if (!outSelect || !lseSelect)
+      return failure();
+
+    auto quotient = outSelect.getY().getDefiningOp<MapBinaryOp>();
+    if (!quotient || quotient.getFn() != "div" ||
+        !isFloatSplat(outSelect.getX(), 0.0))
+      return failure();
+    Value numerator = quotient.getLhs();
+    auto denominatorExpand =
+        quotient.getRhs().getDefiningOp<tensor::ExpandShapeOp>();
+    if (!denominatorExpand)
+      return failure();
+    Value denominator = denominatorExpand.getSrc();
+    if (!isTrailingUnitExpansion(denominatorExpand.getResult(), denominator))
+      return failure();
+
+    Value condition = lseSelect.getCond();
+    if (!isTrailingUnitExpansion(outSelect.getCond(), condition))
+      return failure();
+    auto allMasked = condition.getDefiningOp<MapBinaryOp>();
+    if (!allMasked || allMasked.getFn() != "eq")
+      return failure();
+    Value lseMax;
+    Value negativeInfinity;
+    if (isFloatSplat(allMasked.getRhs(),
+                     -std::numeric_limits<double>::infinity())) {
+      lseMax = allMasked.getLhs();
+      negativeInfinity = allMasked.getRhs();
+    } else if (isFloatSplat(allMasked.getLhs(),
+                            -std::numeric_limits<double>::infinity())) {
+      lseMax = allMasked.getRhs();
+      negativeInfinity = allMasked.getLhs();
+    } else {
+      return failure();
+    }
+    if (lseSelect.getX() != lseMax)
+      return failure();
+
+    SmallVector<Value> maxLeaves;
+    collectAssociativeLeaves(lseMax, "max", maxLeaves);
+    SmallVector<Value> expectedMaxLeaves{negativeInfinity};
+    for (int64_t split = 0; split < splitCount; ++split)
+      expectedMaxLeaves.push_back(entry.getArgument(splitCount + split));
+    if (!hasExactlyValues(maxLeaves, expectedMaxLeaves))
+      return failure();
+
+    SmallVector<Value> weightLeaves;
+    collectAssociativeLeaves(denominator, "add", weightLeaves);
+    if (weightLeaves.size() != static_cast<size_t>(splitCount))
+      return failure();
+    SmallVector<Value> weights(splitCount);
+    Value log2e;
+    for (Value weightValue : weightLeaves) {
+      auto weight = weightValue.getDefiningOp<MapUnaryOp>();
+      auto scale = weight ? weight.getInput().getDefiningOp<MapBinaryOp>()
+                          : MapBinaryOp();
+      if (!weight || weight.getFn() != "exp2" || !scale ||
+          scale.getFn() != "mul")
+        return failure();
+      Value shiftValue;
+      Value scaleValue;
+      if (isFloatSplat(scale.getLhs(), 1.44269504, 1.0e-6)) {
+        scaleValue = scale.getLhs();
+        shiftValue = scale.getRhs();
+      } else if (isFloatSplat(scale.getRhs(), 1.44269504, 1.0e-6)) {
+        scaleValue = scale.getRhs();
+        shiftValue = scale.getLhs();
+      } else {
+        return failure();
+      }
+      if (log2e && log2e != scaleValue)
+        return failure();
+      log2e = scaleValue;
+      auto shift = shiftValue.getDefiningOp<MapBinaryOp>();
+      auto lseArgument = shift ? dyn_cast<BlockArgument>(shift.getLhs())
+                               : BlockArgument();
+      if (!shift || shift.getFn() != "sub" || shift.getRhs() != lseMax ||
+          !lseArgument || lseArgument.getOwner() != &entry ||
+          lseArgument.getArgNumber() < static_cast<unsigned>(splitCount) ||
+          lseArgument.getArgNumber() >=
+              static_cast<unsigned>(2 * splitCount))
+        return failure();
+      unsigned split = lseArgument.getArgNumber() - splitCount;
+      if (weights[split])
+        return failure();
+      weights[split] = weightValue;
+    }
+    if (!llvm::all_of(weights, [](Value value) { return bool(value); }))
+      return failure();
+
+    SmallVector<Value> numeratorLeaves;
+    collectAssociativeLeaves(numerator, "add", numeratorLeaves);
+    if (numeratorLeaves.size() != static_cast<size_t>(splitCount))
+      return failure();
+    SmallVector<bool> seenOut(splitCount, false);
+    for (Value leaf : numeratorLeaves) {
+      auto contraction = leaf.getDefiningOp<ContractionOp>();
+      auto outArgument = contraction
+                             ? dyn_cast<BlockArgument>(contraction.getA())
+                             : BlockArgument();
+      if (!contraction ||
+          contraction.getSubscripts() != "abcde,abcd->abcde" ||
+          !outArgument || outArgument.getOwner() != &entry ||
+          outArgument.getArgNumber() >= static_cast<unsigned>(splitCount))
+        return failure();
+      unsigned split = outArgument.getArgNumber();
+      if (seenOut[split] || contraction.getB() != weights[split])
+        return failure();
+      seenOut[split] = true;
+    }
+    if (!llvm::all_of(seenOut, [](bool value) { return value; }))
+      return failure();
+
+    auto lseAdd = lseSelect.getY().getDefiningOp<MapBinaryOp>();
+    if (!lseAdd || lseAdd.getFn() != "add")
+      return failure();
+    Value logarithm = lseAdd.getLhs() == lseMax   ? lseAdd.getRhs()
+                      : lseAdd.getRhs() == lseMax ? lseAdd.getLhs()
+                                                   : Value();
+    auto toNaturalLog = logarithm.getDefiningOp<MapBinaryOp>();
+    auto log2 = toNaturalLog
+                    ? toNaturalLog.getLhs().getDefiningOp<MapUnaryOp>()
+                    : MapUnaryOp();
+    if (!toNaturalLog || toNaturalLog.getFn() != "div" ||
+        toNaturalLog.getRhs() != log2e || !log2 || log2.getFn() != "log2" ||
+        log2.getInput() != denominator)
+      return failure();
+
+    return success(allBodyOperationsReachResults(fn, ret));
+  }
+
+  LogicalResult rewrite(int64_t rowsPerBlock) {
+    if (rowsPerBlock != 1 && rowsPerBlock != 2 && rowsPerBlock != 4 &&
+        rowsPerBlock != 8)
+      return fn.emitError("rows-per-block must be one of 1, 2, 4 or 8");
+
+    MLIRContext *ctx = fn.getContext();
+    Location loc = fn.getLoc();
+    OpBuilder builder(ctx);
+    Type f32 = builder.getF32Type();
+    SmallVector<Type> abiTypes;
+    auto oldType = fn.getFunctionType();
+    for (Type input : oldType.getInputs()) {
+      auto tensorType = cast<RankedTensorType>(input);
+      abiTypes.push_back(MemRefType::get({elementCount(tensorType)}, f32));
+    }
+    for (Type result : oldType.getResults()) {
+      auto tensorType = cast<RankedTensorType>(result);
+      abiTypes.push_back(MemRefType::get({elementCount(tensorType)}, f32));
+    }
+    auto newType = FunctionType::get(ctx, abiTypes, {});
+
+    std::string name = fn.getName().str();
+    fn.setName(name + "_intent_src");
+    builder.setInsertionPoint(fn);
+    auto gpuFn = builder.create<func::FuncOp>(loc, name, newType);
+    gpuFn->setAttr("intentir.fast_path",
+                   builder.getStringAttr("cuda.splitk.unrolled-merge.v2"));
+    gpuFn->setAttr("intentir.runtime_abi_args",
+                   builder.getI64IntegerAttr(2 * splitCount + 2));
+    attachSplitKReceipt(
+        gpuFn, "splitk_weighted_merge", "unrolled_vararg_merge",
+        rowsPerBlock * 32, rowsPerBlock, splitCount,
+        ((M + rowsPerBlock - 1) / rowsPerBlock) * B * G * H,
+        {"cuda.splitk.unrolled_weighted_merge.v2",
+         "cuda.materialization.whole_graph_elimination.v1"});
+    Block *entry = gpuFn.addEntryBlock();
+    builder.setInsertionPointToStart(entry);
+
+    Value gridX = builder.create<arith::ConstantIndexOp>(
+        loc, (M + rowsPerBlock - 1) / rowsPerBlock);
+    Value gridY = builder.create<arith::ConstantIndexOp>(loc, B * G * H);
+    Value blockX = builder.create<arith::ConstantIndexOp>(
+        loc, rowsPerBlock * 32);
+    Value c1 = builder.create<arith::ConstantIndexOp>(loc, 1);
+    auto launch = builder.create<gpu::LaunchOp>(loc, gridX, gridY, c1, blockX,
+                                                 c1, c1);
+    builder.setInsertionPointToStart(&launch.getBody().front());
+
+    Value bx = launch.getBlockIds().x;
+    Value by = launch.getBlockIds().y;
+    Value tx = launch.getThreadIds().x;
+    Value c0 = builder.create<arith::ConstantIndexOp>(loc, 0);
+    for (unsigned index = 0; index < entry->getNumArguments(); ++index)
+      (void)builder.create<memref::DimOp>(loc, entry->getArgument(index), c0);
+
+    Value c32 = builder.create<arith::ConstantIndexOp>(loc, 32);
+    Value cRows =
+        builder.create<arith::ConstantIndexOp>(loc, rowsPerBlock);
+    Value cG = builder.create<arith::ConstantIndexOp>(loc, G);
+    Value cH = builder.create<arith::ConstantIndexOp>(loc, H);
+    Value cGH = builder.create<arith::ConstantIndexOp>(loc, G * H);
+    Value cM = builder.create<arith::ConstantIndexOp>(loc, M);
+    Value cD = builder.create<arith::ConstantIndexOp>(loc, D);
+    Value warp = builder.create<arith::DivUIOp>(loc, tx, c32);
+    Value lane = builder.create<arith::RemUIOp>(loc, tx, c32);
+    Value rowBase = builder.create<arith::MulIOp>(loc, bx, cRows);
+    Value m = builder.create<arith::AddIOp>(loc, rowBase, warp);
+    Value z = builder.create<arith::DivUIOp>(loc, by, cGH);
+    Value groupHead = builder.create<arith::RemUIOp>(loc, by, cGH);
+    Value g = builder.create<arith::DivUIOp>(loc, groupHead, cH);
+    Value h = builder.create<arith::RemUIOp>(loc, groupHead, cH);
+    Value rowValid = builder.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::ult, m, cM);
+
+    builder.create<scf::IfOp>(
+        loc, rowValid, [&](OpBuilder &b, Location bodyLoc) {
+          auto rowOffset = [&](OpBuilder &offsetBuilder,
+                               Location offsetLoc) -> Value {
+            Value offset = offsetBuilder.create<arith::MulIOp>(offsetLoc, z, cG);
+            offset = offsetBuilder.create<arith::AddIOp>(offsetLoc, offset, g);
+            offset = offsetBuilder.create<arith::MulIOp>(offsetLoc, offset, cH);
+            offset = offsetBuilder.create<arith::AddIOp>(offsetLoc, offset, h);
+            offset = offsetBuilder.create<arith::MulIOp>(offsetLoc, offset, cM);
+            return offsetBuilder.create<arith::AddIOp>(offsetLoc, offset, m);
+          };
+
+          Value row = rowOffset(b, bodyLoc);
+          Value negativeInfinity = b.create<arith::ConstantOp>(
+              bodyLoc, b.getF32FloatAttr(
+                           -std::numeric_limits<float>::infinity()));
+          Value zero =
+              b.create<arith::ConstantOp>(bodyLoc, b.getF32FloatAttr(0.0));
+          Value log2e = b.create<arith::ConstantOp>(
+              bodyLoc, b.getF32FloatAttr(1.44269504));
+
+          SmallVector<Value> lseValues(splitCount);
+          Value lseMaxValue = negativeInfinity;
+          for (int64_t split = 0; split < splitCount; ++split) {
+            lseValues[split] = b.create<memref::LoadOp>(
+                bodyLoc, entry->getArgument(splitCount + split),
+                ValueRange{row});
+            lseMaxValue = b.create<arith::MaxNumFOp>(
+                bodyLoc, lseMaxValue, lseValues[split]);
+          }
+
+          SmallVector<Value> weights(splitCount);
+          Value sumexp = zero;
+          for (int64_t split = 0; split < splitCount; ++split) {
+            Value shifted = b.create<arith::SubFOp>(
+                bodyLoc, lseValues[split], lseMaxValue);
+            Value shiftedBase2 =
+                b.create<arith::MulFOp>(bodyLoc, shifted, log2e);
+            weights[split] =
+                b.create<math::Exp2Op>(bodyLoc, shiftedBase2);
+            sumexp =
+                b.create<arith::AddFOp>(bodyLoc, sumexp, weights[split]);
+          }
+
+          int64_t dIterations = (D + 31) / 32;
+          for (int64_t iteration = 0; iteration < dIterations; ++iteration) {
+            Value delta = b.create<arith::ConstantIndexOp>(bodyLoc,
+                                                            iteration * 32);
+            Value d = b.create<arith::AddIOp>(bodyLoc, lane, delta);
+            Value dValid = b.create<arith::CmpIOp>(
+                bodyLoc, arith::CmpIPredicate::ult, d, cD);
+            b.create<scf::IfOp>(
+                bodyLoc, dValid, [&](OpBuilder &db, Location dLoc) {
+                  Value outputOffset =
+                      db.create<arith::MulIOp>(dLoc, row, cD);
+                  outputOffset =
+                      db.create<arith::AddIOp>(dLoc, outputOffset, d);
+                  Value numerator = zero;
+                  for (int64_t split = 0; split < splitCount; ++split) {
+                    Value partial = db.create<memref::LoadOp>(
+                        dLoc, entry->getArgument(split),
+                        ValueRange{outputOffset});
+                    Value weighted = db.create<arith::MulFOp>(
+                        dLoc, partial, weights[split]);
+                    numerator = db.create<arith::AddFOp>(dLoc, numerator,
+                                                         weighted);
+                  }
+                  Value quotient =
+                      db.create<arith::DivFOp>(dLoc, numerator, sumexp);
+                  Value allMasked = db.create<arith::CmpFOp>(
+                      dLoc, arith::CmpFPredicate::OEQ, lseMaxValue,
+                      negativeInfinity);
+                  Value result = db.create<arith::SelectOp>(
+                      dLoc, allMasked, zero, quotient);
+                  db.create<memref::StoreOp>(
+                      dLoc, result, entry->getArgument(2 * splitCount),
+                      ValueRange{outputOffset});
+                  db.create<scf::YieldOp>(dLoc);
+                });
+          }
+
+          Value laneZero = b.create<arith::CmpIOp>(
+              bodyLoc, arith::CmpIPredicate::eq, lane, c0);
+          b.create<scf::IfOp>(
+              bodyLoc, laneZero, [&](OpBuilder &lb, Location lseLoc) {
+                Value logSum = lb.create<math::Log2Op>(lseLoc, sumexp);
+                Value naturalLog =
+                    lb.create<arith::DivFOp>(lseLoc, logSum, log2e);
+                Value lseValue = lb.create<arith::AddFOp>(
+                    lseLoc, lseMaxValue, naturalLog);
+                Value allMasked = lb.create<arith::CmpFOp>(
+                    lseLoc, arith::CmpFPredicate::OEQ, lseMaxValue,
+                    negativeInfinity);
+                lseValue = lb.create<arith::SelectOp>(
+                    lseLoc, allMasked, negativeInfinity, lseValue);
+                lb.create<memref::StoreOp>(
+                    lseLoc, lseValue,
+                    entry->getArgument(2 * splitCount + 1), ValueRange{row});
+                lb.create<scf::YieldOp>(lseLoc);
+              });
+          b.create<scf::YieldOp>(bodyLoc);
+        });
+
+    builder.create<gpu::TerminatorOp>(loc);
+    builder.setInsertionPointAfter(launch);
+    builder.create<func::ReturnOp>(loc);
+    fn.erase();
+    return success();
+  }
+};
 
 struct SplitKVarargsMatch {
   func::FuncOp fn;
@@ -431,16 +924,29 @@ struct ConvertIntentSplitKReduceVarargsToGPUPass
 
   void runOnOperation() override {
     ModuleOp module = getOperation();
-    SmallVector<func::FuncOp> targets;
+    SmallVector<std::pair<func::FuncOp, bool>> targets;
     for (func::FuncOp fn : module.getOps<func::FuncOp>()) {
+      UnrolledSplitKVarargsMatch unrolled(fn);
+      if (succeeded(unrolled.match())) {
+        targets.emplace_back(fn, true);
+        continue;
+      }
       SplitKVarargsMatch probe(fn);
       if (succeeded(probe.match()))
-        targets.push_back(fn);
+        targets.emplace_back(fn, false);
     }
-    for (func::FuncOp fn : targets) {
-      SplitKVarargsMatch lowering(fn);
-      if (failed(lowering.match()) ||
-          failed(lowering.rewrite(rowsPerBlock))) {
+    for (auto [fn, isUnrolled] : targets) {
+      LogicalResult result = failure();
+      if (isUnrolled) {
+        UnrolledSplitKVarargsMatch lowering(fn);
+        if (succeeded(lowering.match()))
+          result = lowering.rewrite(rowsPerBlock);
+      } else {
+        SplitKVarargsMatch lowering(fn);
+        if (succeeded(lowering.match()))
+          result = lowering.rewrite(rowsPerBlock);
+      }
+      if (failed(result)) {
         fn.emitError("split-K varargs lowering failed after structural match");
         return signalPassFailure();
       }

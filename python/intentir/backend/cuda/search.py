@@ -63,6 +63,7 @@ B_TRANSFORM_EPILOGUE_LOAD_MOTION = (
 B_TRANSFORM_RANK0_HOST_CAPTURE = "cuda.b.rank0_host_value_capture.v1"
 B_TRANSFORM_UNIFORM_HOST_CAPTURE = "cuda.b.uniform_host_value_capture.v1"
 LINALG_FUSED_FAST_PATH_ID = "cuda.linalg.elementwise-fused.v1"
+SPLITK_VARARGS_FAST_PATH_ID = "cuda.splitk.reduce-varargs.v1"
 
 
 Benchmark = Callable[[LoweredProgram, "CudaSearchCandidate"], float]
@@ -80,6 +81,7 @@ def _lowering_path_kind_for_fast_path(fast_path_id: str) -> str:
         PADDED_ROW_FAST_PATH_ID: "padded_row_reduction",
         ROW_FAST_PATH_ID: "row_reduction",
         "cuda.row_scan.sparsemax.sorted_prefix.v1": "row_scan",
+        SPLITK_VARARGS_FAST_PATH_ID: "splitk_weighted_merge",
     }
     # Unknown registered paths keep their exact compiler identity.  This avoids
     # inventing a semantic "family" or a kernel-name recipe merely to group
@@ -1317,6 +1319,47 @@ def enumerate_cuda_candidates(
             )
         )
 
+    # The typed unrolled SplitK graph has one concrete whole-graph compiler path
+    # and a genuine launch-schedule axis: the number of output rows assigned to
+    # each warp block.  Keep the pass default (rows=4) byte-identical to E1 so
+    # the fixed-state spine is nested, and enumerate the remaining legal C++
+    # options as ordinary schedule states.  The compiler probe still decides
+    # whether the current J has the required weighted-merge SSA topology.
+    for rows_per_block in (4, 1, 2, 8):
+        pass_argument = (
+            "-convert-intent-splitk-reduce-varargs-to-gpu"
+            if rows_per_block == 4
+            else (
+                "-convert-intent-splitk-reduce-varargs-to-gpu="
+                f"rows-per-block={rows_per_block}"
+            )
+        )
+        values = {
+            "rows_per_block": rows_per_block,
+            "block_threads": rows_per_block * 32,
+        }
+        specialized.append(
+            CudaSearchCandidate(
+                _candidate_id(
+                    "splitk_weighted_merge",
+                    SPLITK_VARARGS_FAST_PATH_ID,
+                    pass_argument,
+                ),
+                "splitk_weighted_merge",
+                SPLITK_VARARGS_FAST_PATH_ID,
+                pass_argument,
+                values,
+                _c_score(values, priors),
+                requested_trace=(
+                    "cuda.splitk.unrolled_weighted_merge.v2",
+                    "cuda.materialization.whole_graph_elimination.v1",
+                ),
+                requested_observation_class=(
+                    ObservationClass.OBSERVATION_CHANGING
+                ),
+            )
+        )
+
     output_rank = max(
         (len(item.shape) for item in state.base.j.intent.outputs),
         default=1,
@@ -1356,6 +1399,7 @@ def enumerate_cuda_candidates(
         ELEMENTWISE_FAST_PATH_ID,
         PADDED_ROW_FAST_PATH_ID,
         ROW_FAST_PATH_ID,
+        SPLITK_VARARGS_FAST_PATH_ID,
     }
     for descriptor in DEFAULT_PASSES:
         if descriptor.fast_path_id in scheduled_ids:

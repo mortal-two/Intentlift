@@ -16,6 +16,10 @@ from intentir.backend.cuda.search import (
     derive_default_fast_path_id,
     enumerate_cuda_candidates,
 )
+from intentir.backend.cuda.production_cases import (
+    constexpr_input_bindings,
+    prepare_production_workload,
+)
 from intentir.backend.cuda.schedules import (
     ElementwiseSchedule,
     PaddedRowSchedule,
@@ -27,6 +31,7 @@ from intentir.backend.protocol import BackendTarget
 from intentir.ir.canonical_j import canonicalize_gate1_artifact
 from intentir.ir.production_snapshot import load_production_snapshot
 from intentir.verify.gate1.model import AliasKind, AliasSpec
+from intentir.verify.scrc_workload_run import build_workload_jc_suite
 
 
 def _states():
@@ -38,6 +43,31 @@ def _states():
     return (
         attach_c(base, artifact.c, target),
         attach_c(base, None, target),
+    )
+
+
+def _fresh_splitk_state():
+    root = Path(__file__).parents[2]
+    snapshot, _path = load_production_snapshot(
+        root / "corpus" / "production-jc-v2",
+        "splitk_reduce_varargs",
+    )
+    prepared = prepare_production_workload("splitk_reduce_varargs")
+    case = build_workload_jc_suite(prepared, snapshot.j, snapshot.c).cases[0]
+    constexpr = constexpr_input_bindings(
+        snapshot.j,
+        case.refeval.input_binding_map,
+        case.values,
+    )
+    base = materialize_j(
+        snapshot.j,
+        case.refeval.dims_map,
+        constexpr_bindings=constexpr,
+    )
+    return attach_c(
+        base,
+        snapshot.c,
+        BackendTarget("cuda", "sm_120a"),
     )
 
 
@@ -64,6 +94,34 @@ def test_c_changes_only_candidate_order() -> None:
     assert any("fuse-fma=false" in argument for argument in row_arguments)
     assert any("fuse-fma=true" in argument for argument in row_arguments)
     assert any("approximate-div=true" in argument for argument in row_arguments)
+
+
+def test_fresh_splitk_search_enumerates_real_rows_per_block_schedules() -> None:
+    state = _fresh_splitk_state()
+    canonical = canonical_cuda_candidate(state)
+    candidates = [
+        item
+        for item in enumerate_cuda_candidates(state)
+        if item.fast_path_id == "cuda.splitk.reduce-varargs.v1"
+    ]
+
+    assert canonical.lowering_path_kind == "splitk_weighted_merge"
+    assert canonical.pass_argument == (
+        "-convert-intent-splitk-reduce-varargs-to-gpu"
+    )
+    assert {item.schedule["rows_per_block"] for item in candidates} == {
+        1,
+        2,
+        4,
+        8,
+    }
+    assert canonical.candidate_id in {item.candidate_id for item in candidates}
+    assert {item.schedule["block_threads"] for item in candidates} == {
+        32,
+        64,
+        128,
+        256,
+    }
 
 
 def test_c_schedule_score_consumes_roles_without_changing_states() -> None:

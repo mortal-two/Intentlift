@@ -6,11 +6,18 @@ from pathlib import Path
 import pytest
 
 import intentir.backend.cuda.compile as backend_compile
+from intentir.backend.cuda.production_cases import (
+    constexpr_input_bindings,
+    prepare_production_workload,
+)
 from intentir.backend.cuda.selection import (
     DEFAULT_PASSES,
     LoweringTarget,
     select_variant,
 )
+from intentir.backend.materialize import materialize_j
+from intentir.ir.production_snapshot import load_production_snapshot
+from intentir.verify.scrc_workload_run import build_workload_jc_suite
 
 
 _SOURCE = """
@@ -25,6 +32,26 @@ module {
 
 def _pass_name(argument: str) -> str:
     return re.match(r"^-([^=]+)", argument).group(1)  # type: ignore[union-attr]
+
+
+def _fresh_splitk_mlir() -> str:
+    root = Path(__file__).resolve().parents[2]
+    snapshot, _path = load_production_snapshot(
+        root / "corpus" / "production-jc-v2",
+        "splitk_reduce_varargs",
+    )
+    prepared = prepare_production_workload("splitk_reduce_varargs")
+    case = build_workload_jc_suite(prepared, snapshot.j, snapshot.c).cases[0]
+    constexpr = constexpr_input_bindings(
+        snapshot.j,
+        case.refeval.input_binding_map,
+        case.values,
+    )
+    return materialize_j(
+        snapshot.j,
+        case.refeval.dims_map,
+        constexpr_bindings=constexpr,
+    ).intent_mlir
 
 
 def test_registry_covers_every_registered_direct_gpu_pass() -> None:
@@ -160,6 +187,45 @@ def test_real_row_reduction_pass_is_selected_structurally() -> None:
     assert result.fast_path_id == fast_path_id
     assert result.attempts[0].residual_ops == ()
     assert result.attempts[0].gpu_launch_count == 1
+
+
+@pytest.mark.skipif(
+    not Path(backend_compile.INTENT_OPT).exists(), reason="intent-opt not built"
+)
+def test_fresh_splitk_j_is_consumed_by_one_cpp_gpu_launch() -> None:
+    fast_path_id = "cuda.splitk.reduce-varargs.v1"
+
+    result = select_variant(
+        _fresh_splitk_mlir(),
+        only_fast_path=fast_path_id,
+    )
+
+    assert result.pipeline_kind == "specialized"
+    assert result.fast_path_id == fast_path_id
+    assert result.attempts[0].residual_ops == ()
+    assert result.attempts[0].gpu_launch_count == 1
+
+
+@pytest.mark.skipif(
+    not Path(backend_compile.INTENT_OPT).exists(), reason="intent-opt not built"
+)
+def test_fresh_splitk_path_rejects_an_unconsumed_side_graph() -> None:
+    source = _fresh_splitk_mlir().replace(
+        "    return ",
+        "    %unconsumed = arith.constant dense<1.0> : tensor<f32>\n"
+        "    return ",
+        1,
+    )
+
+    result = select_variant(
+        source,
+        only_fast_path="cuda.splitk.reduce-varargs.v1",
+    )
+
+    assert result.pipeline_kind == "generic"
+    assert result.attempts[0].direct_hit is False
+    assert result.attempts[0].gpu_launch_count == 0
+    assert result.attempts[0].residual_ops
 
 
 @pytest.mark.skipif(
