@@ -476,7 +476,7 @@ def test_episode_contract_digest_binds_exact_files_prompts_and_budgets() -> None
     assert default_config["model"]["retry_timeouts"] is True
     assert default_config["model"]["semantic_initial_turns"] == 1
     assert default_config["model"]["model_kwargs"]["parallel_tool_calls"] is True
-    assert MINISWE_REPLAY_BACKEND == "minisweagent.intentir-replay.v16"
+    assert MINISWE_REPLAY_BACKEND == "minisweagent.intentir-replay.v17"
     instance = default_config["agent"]["instance_template"]
     assert "exact_packet_embedded=true" in instance
     assert "do not query" in instance
@@ -709,6 +709,146 @@ def _physical_reduce_replay_artifact(
             }
         ]
     return Gate1Artifact.from_json(artifact.to_json())
+
+
+def _address_count_replay_artifact(*, pointer_enters_base: bool) -> Gate1Artifact:
+    artifact = make_reduce_artifact()
+    artifact.j.boundary.accesses[0].predicate = None
+    artifact.j.boundary.accesses[0].fill_value = None
+    artifact.pi.regions = [
+        {"id": "r0", "parent": None, "placement": "root"}
+    ]
+    artifact.pi.instances = [
+        {
+            "id": "i0",
+            "semantic_ref": "p0",
+            "region": "r0",
+            "mechanism": "realize",
+        },
+        {
+            "id": "i1",
+            "semantic_ref": "d0",
+            "region": "r0",
+            "mechanism": "realize",
+        },
+        {
+            "id": "i2",
+            "semantic_ref": "a0",
+            "region": "r0",
+            "mechanism": "address_base",
+        },
+        {
+            "id": "i3",
+            "semantic_ref": "a0",
+            "region": "r0",
+            "mechanism": "address_lane",
+        },
+        {
+            "id": "i4",
+            "semantic_ref": "a0",
+            "region": "r0",
+            "mechanism": "transfer_direct",
+        },
+    ]
+    artifact.pi.routes = [
+        {"source": "i1", "target": "i2", "slots": [0]},
+        {
+            "source": "i0",
+            "target": "i2" if pointer_enters_base else "i3",
+            "slots": [1],
+        },
+        {"source": "i2", "target": "i3", "slots": [0]},
+        {"source": "i3", "target": "i4", "slots": [0]},
+    ]
+    artifact.pi.order = []
+    artifact.pi.sharing = []
+    artifact.pi.refinements = []
+    artifact.pi.iterations = []
+    artifact.pi.loop_carriers = []
+    artifact.pi.physical_iterations = []
+    artifact.pi.physical_loop_carriers = []
+    artifact.pi.terminal_controls = []
+    return artifact
+
+
+def _address_count_ttir(count: int) -> str:
+    operations = ["    %zero = arith.constant 0 : i32"]
+    current = "%p0"
+    for index in range(count):
+        result = f"%address{index}"
+        operations.append(
+            f"    {result} = tt.addptr {current}, %zero : !tt.ptr<f32>, i32"
+        )
+        current = result
+    operations.extend(
+        [
+            f"    %value = tt.load {current} : !tt.ptr<f32>",
+            "    tt.return",
+        ]
+    )
+    body = "\n".join(operations)
+    return f"""
+module {{
+  tt.func public @scrc_k0(%p0: !tt.ptr<f32>, %p1: !tt.ptr<f32>, %p2: i32) attributes {{noinline = false}} {{
+{body}
+  }}
+}}
+"""
+
+
+@pytest.mark.parametrize(
+    ("pointer_enters_base", "compiled_count", "expected_status"),
+    (
+        (True, 1, "fail"),
+        (True, 2, "pass"),
+        (False, 1, "pass"),
+        (False, 2, "fail"),
+    ),
+)
+def test_synthetic_compile_checks_pi_authored_pointer_address_count(
+    pointer_enters_base: bool,
+    compiled_count: int,
+    expected_status: str,
+) -> None:
+    artifact = _address_count_replay_artifact(
+        pointer_enters_base=pointer_enters_base
+    )
+
+    class PassingCompiler:
+        def compile(self, _source, _case):
+            return CompileResult(True, ttir=_address_count_ttir(compiled_count))
+
+    result = source_blind_replay_compile_check(
+        VALID_REPLAY,
+        artifact,
+        "scrc_k0",
+        compiler=PassingCompiler(),  # type: ignore[arg-type]
+    )
+
+    assert result.status == expected_status
+    if expected_status == "fail":
+        diagnostic = result.to_check_response()["diagnostics"][0]
+        assert diagnostic["rule_code"] == "compiled_address_operation_count"
+        expected_count = 2 if pointer_enters_base else 1
+        assert f"expected={expected_count}, actual={compiled_count}" in diagnostic[
+            "path"
+        ]
+
+
+def test_address_count_check_skips_incomplete_memory_topology() -> None:
+    artifact = _address_count_replay_artifact(pointer_enters_base=False)
+    artifact.pi.instances.append(
+        {
+            "id": "i5",
+            "semantic_ref": "a1",
+            "region": "r0",
+            "mechanism": "transfer_direct",
+        }
+    )
+
+    assert replay_module._packet_required_compiled_address_operations(
+        artifact.rewriter_view(masked=False)
+    ) == (None, ())
 
 
 def test_synthetic_compile_rejects_missing_authored_physical_iteration() -> None:
