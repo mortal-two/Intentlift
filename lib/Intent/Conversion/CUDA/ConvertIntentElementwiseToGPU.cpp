@@ -392,24 +392,31 @@ struct ElementwiseLowering {
     if (requestTanhApproximation == "native-ptx" && !containsTanh)
       return failure();
 
-    // A flattened schedule is admitted only for a fully contiguous Row-only
-    // graph. It deliberately rejects Col/scalar parameters, broadcast rows,
-    // strided views and indexed/select bodies rather than inventing a mixed
-    // linear/row mapping. Each thread owns exactly one vec4 packet.
+    // A flattened schedule is admitted for fully contiguous Row values plus
+    // ordinary Col/Scalar broadcasts.  The flat packet address is used for Row
+    // loads/stores, while `flat_index % N` recovers the logical column for Col
+    // operands.  Broadcast rows, strided views and indexed/select bodies remain
+    // fail-closed. Each thread owns exactly one vec2/vec4 packet.
     if (requestFlattenContiguous) {
       T = blockThreads ? (int64_t)blockThreads : 256;
       int64_t flatWidth = static_cast<int64_t>(requestFlatVectorWidth);
       bool eligible = T >= 32 && T % 32 == 0 &&
                       (flatWidth == 2 || flatWidth == 4);
-      for (unsigned i = 0; i < argRoles.size(); ++i)
-        eligible &= argRoles[i] == Role::Row && argRowDiv[i] == 1 &&
-                    argStrides[i].isDefault(N);
+      for (unsigned i = 0; i < argRoles.size(); ++i) {
+        if (argRoles[i] == Role::Row)
+          eligible &= argRowDiv[i] == 1 && argStrides[i].isDefault(N);
+        else
+          eligible &= argRoles[i] == Role::Col ||
+                      argRoles[i] == Role::Scalar ||
+                      argRoles[i] == Role::Unused;
+      }
       for (Strides strides : resStrides)
         eligible &= strides.isDefault(N);
       for (Operation &op : body.without_terminator())
         eligible &= !isa<IotaOp, SelectOp>(&op);
       int64_t totalElements = M * N;
-      eligible &= totalElements % (T * flatWidth) == 0;
+      eligible &= N % flatWidth == 0 &&
+                  totalElements % (T * flatWidth) == 0;
       if (!eligible)
         return failure();
       flattenContiguous = true;
@@ -784,6 +791,10 @@ struct ElementwiseLowering {
     } else if (vectorWidth > 1) {
       vecIdx.resize(numVectorTiles);
       Value cWidth = b.create<arith::ConstantIndexOp>(loc, vectorWidth);
+      Value cLogicalColumns =
+          flattenContiguous
+              ? b.create<arith::ConstantIndexOp>(loc, N).getResult()
+              : Value();
       Value flatBlockBase;
       if (flattenContiguous) {
         Value flatBlockThreads =
@@ -801,8 +812,13 @@ struct ElementwiseLowering {
         Value base = b.create<arith::MulIOp>(loc, vecIdx[vt], cWidth);
         for (int64_t j = 0; j < vectorWidth; ++j) {
           Value cj = b.create<arith::ConstantIndexOp>(loc, j);
+          Value absoluteColumn = b.create<arith::AddIOp>(loc, base, cj);
           cols[vt * vectorWidth + j] =
-              b.create<arith::AddIOp>(loc, base, cj);
+              flattenContiguous
+                  ? b.create<arith::RemUIOp>(loc, absoluteColumn,
+                                             cLogicalColumns)
+                        .getResult()
+                  : absoluteColumn;
         }
       }
     } else {

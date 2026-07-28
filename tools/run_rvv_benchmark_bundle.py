@@ -805,6 +805,47 @@ def _bounded_candidate_orders(
     }
 
 
+def _finalist_candidate_ids(
+    measured: list[dict[str, Any]],
+    arm_orders: list[list[str]],
+    finalist_count: int,
+) -> list[str]:
+    """Choose fresh-measurement finalists without dropping an experiment arm."""
+
+    if finalist_count <= 0:
+        raise ValueError("RVV finalist count must be positive")
+    measured_by_id = {
+        item["candidate"]["candidate_id"]: item for item in measured
+    }
+    mandatory: list[str] = []
+    for order in arm_orders:
+        available = [
+            measured_by_id[candidate_id]
+            for candidate_id in order
+            if candidate_id in measured_by_id
+        ]
+        if not available:
+            continue
+        candidate_id = min(
+            available, key=lambda item: item["latency_us"]
+        )["candidate"]["candidate_id"]
+        if candidate_id not in mandatory:
+            mandatory.append(candidate_id)
+    ranked = [
+        item["candidate"]["candidate_id"]
+        for item in sorted(measured, key=lambda item: item["latency_us"])
+    ]
+    result: list[str] = []
+    for candidate_id in (*mandatory, *ranked):
+        if candidate_id not in result:
+            result.append(candidate_id)
+        if len(result) >= finalist_count and all(
+            item in result for item in mandatory
+        ):
+            break
+    return result
+
+
 def _one_kernel(
     entry: Mapping[str, Any],
     *,
@@ -817,6 +858,7 @@ def _one_kernel(
     warmup: int,
     iterations: int,
     batches: int,
+    finalist_count: int,
     thread_count: int,
     measure_c_oracle: bool,
 ) -> dict[str, Any]:
@@ -1032,14 +1074,37 @@ def _one_kernel(
     measured = [item for item in records if item["status"] == "measured"]
     if not measured:
         raise KernelFailure("no correct RVV candidate", records)
-    # Exclude the sequential initial ranking sample.  Every correct state gets
-    # the same number of fresh batches in alternating round-robin order, so a
-    # fused state cannot win merely because it was measured earlier or later.
+    # Exclude the sequential initial ranking sample from the formal winners.
+    # Freshly remeasure each experiment arm's provisional winner plus the top
+    # global states in alternating round-robin order.  This keeps expensive
+    # natural workloads from spending formal batches on every losing state,
+    # while no arm can disappear merely because its provisional winner was not
+    # globally top-k.
+    finalist_ids = _finalist_candidate_ids(
+        measured,
+        [
+            bounded_orders["e2_evaluation"],
+            bounded_orders["e3_evaluation"],
+            bounded_orders["c_fixed"],
+            bounded_orders["active_e3"],
+            bounded_orders["erase_e3"],
+            bounded_orders["no_retile"],
+            bounded_orders["schedule_only_retiled"],
+        ],
+        finalist_count,
+    )
+    finalist_set = set(finalist_ids)
+    finalists = [
+        item
+        for candidate_id in finalist_ids
+        for item in measured
+        if item["candidate"]["candidate_id"] == candidate_id
+    ]
     fresh_samples: dict[str, list[float]] = {
-        item["candidate"]["candidate_id"]: [] for item in measured
+        candidate_id: [] for candidate_id in finalist_ids
     }
     for round_index in range(batches):
-        round_order = measured if round_index % 2 == 0 else list(reversed(measured))
+        round_order = finalists if round_index % 2 == 0 else list(reversed(finalists))
         for item in round_order:
             candidate_id = item["candidate"]["candidate_id"]
             function = candidate_artifacts[candidate_id][1]
@@ -1056,7 +1121,7 @@ def _one_kernel(
             assert len(samples) == 1
             fresh_samples[candidate_id].append(latency)
             item.setdefault("data_prep_samples_us", []).append(prep_us)
-    for item in measured:
+    for item in finalists:
         candidate_id = item["candidate"]["candidate_id"]
         samples = fresh_samples[candidate_id]
         item["latency_us"] = float(statistics.median(samples))
@@ -1071,7 +1136,7 @@ def _one_kernel(
         available = [
             measured_by_id[candidate_id]
             for candidate_id in candidate_ids
-            if candidate_id in measured_by_id
+            if candidate_id in measured_by_id and candidate_id in finalist_set
         ]
         if not available:
             raise KernelFailure("ablation arm has no correct RVV candidate", records)
@@ -1081,7 +1146,7 @@ def _one_kernel(
         available = [
             measured_by_id[candidate_id]
             for candidate_id in candidate_ids
-            if candidate_id in measured_by_id
+            if candidate_id in measured_by_id and candidate_id in finalist_set
         ]
         return min(available, key=lambda item: item["latency_us"]) if available else None
 
@@ -1418,6 +1483,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--iterations", type=int, default=1000)
     parser.add_argument("--cold-iterations", type=int, default=16)
     parser.add_argument("--batches", type=int, default=7)
+    parser.add_argument("--finalist-count", type=int, default=5)
     return parser
 
 
@@ -1431,6 +1497,7 @@ def main(argv: list[str] | None = None) -> int:
         args.working_set_mib,
         args.max_replicas,
         args.search_budget,
+        args.finalist_count,
     ) <= 0:
         raise ValueError("all measurement counts and budgets must be positive")
     affinity = set(range(args.cpu, args.cpu + args.threads))
@@ -1492,6 +1559,7 @@ def main(argv: list[str] | None = None) -> int:
                 warmup=args.warmup,
                 iterations=measured_iterations,
                 batches=args.batches,
+                finalist_count=args.finalist_count,
                 thread_count=args.threads,
                 measure_c_oracle=args.measure_c_oracle,
             )
@@ -1597,6 +1665,7 @@ def main(argv: list[str] | None = None) -> int:
             "warmup": args.warmup,
             "iterations": measured_iterations,
             "batches": args.batches,
+            "finalist_count": args.finalist_count,
             "search_budget": args.search_budget,
             "measure_c_oracle": args.measure_c_oracle,
             "thread_count": args.threads,

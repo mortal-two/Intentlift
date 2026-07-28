@@ -500,6 +500,25 @@ def test_rvv_bounded_candidate_union_makes_budget_executable() -> None:
     ]
 
 
+def test_rvv_finalists_include_each_arm_winner_and_global_best() -> None:
+    measured = [
+        {"candidate": {"candidate_id": "cf"}, "latency_us": 8.0},
+        {"candidate": {"candidate_id": "e2"}, "latency_us": 5.0},
+        {"candidate": {"candidate_id": "e3"}, "latency_us": 3.0},
+        {"candidate": {"candidate_id": "erase"}, "latency_us": 4.0},
+        {"candidate": {"candidate_id": "other"}, "latency_us": 2.0},
+    ]
+
+    finalists = rvv_runner._finalist_candidate_ids(
+        measured,
+        [["cf"], ["cf", "e2"], ["cf", "e2", "e3"], ["erase"]],
+        5,
+    )
+
+    assert {"cf", "e2", "e3", "erase"} <= set(finalists)
+    assert "other" in finalists
+
+
 def test_rvv_native_comparator_applies_declared_tolerance_to_all_values(
     tmp_path: Path,
 ) -> None:
