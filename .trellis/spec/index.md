@@ -19,21 +19,23 @@ lowering 和测试要求，不形成另一套设计。上位文档按作用域�
 若派生规范与上位设计冲突，应修订派生规范；不得通过增加 interface artifact、hash gate、
 epoch、commitment、额外认证 Gate 或兼容旁路来调和冲突。
 
-当前 fresh-run 栈为 `artifact.v9 / decode.v13 / typecheck.v22 / candidate-check.v1 / replay-check.v8`。它继承 rank-0
+当前 fresh-run 栈为 `artifact.v9 / decode.v13 / typecheck.v22 / candidate-check.v1 / replay-check.v9`。它继承 rank-0
 closed signature、Layer-A total typing、显式 broadcast、canonical reduce/contraction、absent carrier
 拒绝、functional-domain closure、rank-0 liveness、padded-mean necessary condition 与 closed
 `pi.iterations`，并验证 Lift 已作者化的 value/dimension、consumer-extension、access-guard、typed
 control/inout/output-binding/terminal-control 关系。fixed code只诊断，不翻译别名、补齐 attrs、生成 handle/relation、
 改图或修复 artifact；历史 wire/receipt 继续按自身版本读取，不静默升级或重判。当前 Agent execution
-receipt 为 `intentir.lift-knowledge.v59 / minisweagent.intentir-replay.v17 / openai.codex-cli.intentir-replay.v13`；
+receipt 为 `intentir.lift-knowledge.v59 / minisweagent.intentir-replay.v18 / openai.codex-cli.intentir-replay.v14`；
 artifact.v9 的 `physical_iterations/physical_loop_carriers` 只表达 J reduce/contraction 外的物理时间，
 feedback frontier 与 Replay local-axis 合同只改 agent 消费，不改变接受集合。Harness adapter v5 另把 concrete
 shape valuation 与 Harness-only `h*` shape identity 分开，并可显式声明 valuation-matched semantic
 constexpr ↔ `h*`；最终 `x*`/equality 仍由 Lift 完整作者化。
-Codex Replay v13 通过隔离 file mailbox提供匿名 C、J boundary与完整 π 的 lossless workspace view；该 view
+Codex Replay v14 通过隔离 file mailbox提供匿名 C、J boundary与完整 π 的 lossless workspace view；该 view
 不生成 realization，不遗漏 physical-time/terminal/address relation，也没有Gate或认证权限。
-`replay-check.v8` 只在 J.signature carrier kind 与 π address routes 能完全决定时，核对 compiled
-pointer-address operation occurrence；无法闭合的 topology 不猜，不读取 Source，也不生成地址公式。
+`replay-check.v9` 只在 J.signature carrier kind 与 π address routes 能完全决定时，核对 compiled
+pointer-address operation occurrence；独立的 integer base/lane contribution 不被误当 pointer stage，
+但每个 transfer 必须有同 ref 的 pointer-producing stage，且不能存在未绑定 transfer 的额外 pointer
+stage。无法闭合的 topology 不猜，不读取 Source，也不生成地址公式。
 
 当前 Gate1 observer profile 是 `triton-ttir-3.6-gate1-v11`；它保留既有对已建模 op 与 public-entry
 reachable、static、structured、acyclic `tt.call` 的 interprocedural comparison rules，并包含 typed

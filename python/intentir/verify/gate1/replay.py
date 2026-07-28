@@ -52,12 +52,12 @@ from .tilelang_compiler import (
 from .ttir import TTIRParseError, parse_ttir
 
 
-MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v17"
+MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v18"
 MINISWE_REPLAY_TURN_TIMEOUT_SECONDS = 300.0
 MINISWE_REPLAY_XHIGH_TURN_TIMEOUT_SECONDS = 900.0
 RESPONSES_REPLAY_BACKEND = "openai.responses.intentir-replay.v1"
 STATIC_REPLAY_BACKEND = "intentir.static-replay-test.v1"
-REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v8"
+REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v9"
 _ANONYMOUS_HANDLE = re.compile(r"^[pc][0-9]+$")
 
 
@@ -1391,12 +1391,12 @@ def _packet_required_compiled_address_operations(
         if isinstance(item.get("semantic_ref"), str)
     }
     if (
-        not address_refs
-        or address_refs != transfer_refs
-        or not address_refs <= pointer_address_refs
+        not transfer_refs
+        or not transfer_refs <= address_refs
+        or pointer_address_refs != transfer_refs
     ):
         return None, ()
-    return len(pointer_address_ids), tuple(sorted(address_refs))
+    return len(pointer_address_ids), tuple(sorted(transfer_refs))
 
 
 def source_blind_replay_compile_check(

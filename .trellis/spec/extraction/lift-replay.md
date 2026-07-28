@@ -303,10 +303,10 @@ ReplayLLM(J,pi,MaskC(C);U_f) -> complete source R_f
 当前 packet protocol 为 `intentir.scrc.replay-input.v1`，Triton 公共上下文为
 `public_frontend_context_v12`；source-aware Codex Lift 的当前 knowledge receipt 为
 `intentir.lift-knowledge.v59`，source-blind MiniSWE/Codex Replay backend 为
-`minisweagent.intentir-replay.v17 / openai.codex-cli.intentir-replay.v13`。这些版本必须随 fresh run 原样记录；旧 packet/context/knowledge
+`minisweagent.intentir-replay.v18 / openai.codex-cli.intentir-replay.v14`。这些版本必须随 fresh run 原样记录；旧 packet/context/knowledge
 evidence 不因实现升级而被重判。
 
-Codex Replay v13 的 workspace view 只是 source-isolated packet 的 lossless 投影：匿名 C slots、
+Codex Replay v14 的 workspace view 只是 source-isolated packet 的 lossless 投影：匿名 C slots、
 J graph/boundary 与完整 π obligation ledger 必须原样可见，尤其不能遗漏 `loop_carriers`、
 `physical_iterations`、`physical_loop_carriers`、`terminal_controls` 或 address routes。投影不推导或推荐 schedule/code；Replay LLM
 仍完整作者化 source，host只对其 exact bytes做ReplayCheck和public synthetic compile。
@@ -326,10 +326,12 @@ Lift、MiniSWE Replay 或 Codex CLI provider turn 中的 sibling 可被终止并
 伪装成 transient retry，也不丢弃已经完成的 winner evidence。这些版本都不改变 artifact、packet、
 TypeCheck、ReplayCheck、Gate1 或 Gate2 接受集合。
 
-`replay-check.v8` 在既有 transfer occurrence、iteration count 与 carrier arity guard 之外，只按
+`replay-check.v9` 在既有 transfer occurrence、iteration count 与 carrier arity guard 之外，只按
 J.signature 中已声明的 pointer/tensor carrier kind 和 π 已作者化的 address routes 传播
-pointer-producing stage，并核对 synthetic TTIR 的 `tt.addptr` occurrence。只有每个 address access 都
-得到闭合 pointer stage 时才启用；否则不猜 final address。它不读取 Source/Gate，不构造 offset、
+pointer-producing stage，并核对 synthetic TTIR 的 `tt.addptr` occurrence。每个 transfer 必须有同
+semantic ref 的 pointer-producing stage，且所有 pointer-producing address stage 都必须绑定某个
+transfer；独立 integer base/lane contribution 可以具有自身 semantic ref，并不因此令闭包失效。
+无法满足该闭包时不猜 final address。它不读取 Source/Gate，不构造 offset、
 program id、lane、dtype/cast 或 frontend spelling，也不具有 Gate/认证权威。
 
 v55 的 continuation 默认读取 deterministic bounded `feedback_frontier`：interface、reduction、
