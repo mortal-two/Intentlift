@@ -20,7 +20,7 @@ from .pi import (
 REPLAY_PACKET_SCHEMA = "intentir.scrc.replay-input.v1"
 PUBLIC_FRONTEND_CONTEXT = {
     "triton": {
-        "context_policy": "public_frontend_context_v15",
+        "context_policy": "public_frontend_context_v16",
         "retrieval_scope": "public Triton documentation and public examples",
         "tool_access": ["public_document_lookup"],
         "compile_entry_contract": (
@@ -41,6 +41,11 @@ PUBLIC_FRONTEND_CONTEXT = {
             "Each J.boundary access is closed: when predicate is absent, emit an "
             "unconditional load or store; never synthesize a defensive or "
             "redundant mask from a domain, grid extent, C slot, or safety guess. "
+            "Every J.signature p* is one already-existing callable ABI carrier. "
+            "All pi instances anchored to the same p* scope or route uses of that "
+            "single carrier; they never create another external value or program "
+            "coordinate. Duplicate p* instances therefore never authorize duplicate "
+            "carrier reads or tl.program_id calls. "
             "Region placement='program' alone never authorizes "
             "tl.program_id. A domain-anchored realize stage in a program region "
             "whose scalar dependency path enters address_base is a program "
@@ -261,7 +266,7 @@ PUBLIC_FRONTEND_CONTEXT = {
 # u_f object; changing that basis requires an explicit future policy version.
 PUBLIC_FRONTEND_CONTEXT_ACTIVE_POLICY = MappingProxyType(
     {
-        "triton": "public_frontend_context_v15",
+        "triton": "public_frontend_context_v16",
         "cute": "public_frontend_context_v1",
         "tilelang": "public_frontend_context_v6",
         "cuda": "public_frontend_context_v3",
@@ -300,6 +305,9 @@ PUBLIC_FRONTEND_CONTEXT_DIGEST_HISTORY = MappingProxyType(
                 ),
                 "public_frontend_context_v15": (
                     "0fa2e4823267dcec5601c4f805ac91301a411efbb7479e5cc9c48b208a8d7510"
+                ),
+                "public_frontend_context_v16": (
+                    "67845810703e1c0906950e4008d975fdab0167d17a8106ced006f0fdf627d402"
                 ),
             }
         ),
@@ -345,6 +353,22 @@ PUBLIC_FRONTEND_CONTEXT_DIGEST_HISTORY = MappingProxyType(
                 ),
             }
         ),
+    }
+)
+_PUBLIC_FRONTEND_CONTEXT_DIGEST_ALIASES = MappingProxyType(
+    {
+        "triton": MappingProxyType(
+            {
+                # Two private branches independently introduced v15.  Keep both
+                # exact payloads auditable after the combined v16 supersedes them.
+                "public_frontend_context_v15": frozenset(
+                    {
+                        "0fa2e4823267dcec5601c4f805ac91301a411efbb7479e5cc9c48b208a8d7510",
+                        "7d68b5a2f77f614c952966c1b94a8eac052f6ebcad77412cd7db6af9ffbed8e6",
+                    }
+                )
+            }
+        )
     }
 )
 PUBLIC_FRONTEND_CONTEXT_RECEIPT_HISTORY = MappingProxyType(
@@ -428,6 +452,18 @@ PUBLIC_FRONTEND_CONTEXT_RECEIPT_HISTORY = MappingProxyType(
                         "receipt_hash_basis": "full_u_f",
                         "context_sha256": (
                             "c7706c0d986a883cb30f703f67238885d9395b5fb9fa0251c443989edfce4b7e"
+                        ),
+                        "accepted_context_sha256": (
+                            "c7706c0d986a883cb30f703f67238885d9395b5fb9fa0251c443989edfce4b7e",
+                            "bd3175a91b8dfc0de729b5a7ba7c6dbb15ceab6238cc573f5c5c4c98632053f4",
+                        ),
+                    }
+                ),
+                "public_frontend_context_v16": MappingProxyType(
+                    {
+                        "receipt_hash_basis": "full_u_f",
+                        "context_sha256": (
+                            "31f39b26af2782660286f7f8de87e40114cfdc45c0082c7a40ab31a7d69abce4"
                         ),
                     }
                 ),
@@ -638,7 +674,10 @@ def audit_public_frontend_context_receipt(
             f"{context_policy!r}"
         )
     expected = str(policy["context_sha256"])
-    if context_sha256 != expected:
+    accepted = policy.get("accepted_context_sha256", (expected,))
+    if not isinstance(accepted, (tuple, frozenset)):
+        accepted = (expected,)
+    if context_sha256 not in accepted:
         raise SchemaError(
             "public frontend context receipt digest does not match its declared "
             f"policy {context_policy!r}"
@@ -671,7 +710,9 @@ def audit_public_frontend_context_payload(
             "public frontend context payload has unknown context_policy "
             f"{context_policy!r}"
         )
-    if public_context_sha256 != history[context_policy]:
+    aliases = _PUBLIC_FRONTEND_CONTEXT_DIGEST_ALIASES.get(frontend.value, {})
+    accepted = aliases.get(context_policy, frozenset({history[context_policy]}))
+    if public_context_sha256 not in accepted:
         raise SchemaError(
             "public frontend context payload digest does not match its declared "
             f"policy {context_policy!r}"
@@ -1036,7 +1077,11 @@ def _instructions(*, frontend: Frontend, masked: bool) -> str:
         "not semantic authority. Treat every pi instance, route, order edge, sharing "
         "relation, structured or physical iteration relation, physical carrier, "
         "representation refinement and region placement as required "
-        "realization topology. In every pi order item, the instance named by "
+        "realization topology. Region placement is exact lexical scope: emit each "
+        "compiler-visible instance in its declared region, keep a loop-region "
+        "instance lexically inside that loop even when it is induction-invariant, "
+        "and never hoist, sink, clone, or fold it across a region boundary. In "
+        "every pi order item, the instance named by "
         "before must execute before the instance named by after, including across "
         "regions and observable effects. Resolve each refinement auth_ref only through the "
         "matching J realization_authorization, materialize it at the refined "

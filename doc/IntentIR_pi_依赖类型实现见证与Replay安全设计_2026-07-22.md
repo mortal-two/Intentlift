@@ -859,10 +859,10 @@ Replay LLM 应遵守以下过程合同：
 15. 不从 π 猜出后覆盖 J，也不从 compiler diff 修补。
 
 当前 fresh receipt 组合为 `intentir.scrc.replay-input.v1`、Triton
-`public_frontend_context_v14`、Codex/MiniSWE Lift `intentir.lift-knowledge.v64/v61`、MiniSWE Replay v23 与 Codex Replay v19；旧 receipt 保持其原 verdict，不能由
+`public_frontend_context_v15`、Codex/MiniSWE Lift `intentir.lift-knowledge.v65/v61`、MiniSWE Replay v26 与 Codex Replay v22；旧 receipt 保持其原 verdict，不能由
 当前 Replay consumer 或 Lift knowledge 静默升级。
 
-v23/v19 对正常大小匿名 packet 只做一次 exact startup embedding，并将 semantic dimension carrier、
+v26/v22 对正常大小匿名 packet 只做一次 exact startup embedding，并将 semantic dimension carrier、
 IEEE special typed constant、physical iteration 与 `reduction_linearization + consumer route` 作一次
 bounded exact `critical_facts` 重索引；超限时
 manifest 才将 J 中已声明
@@ -870,6 +870,11 @@ manifest 才将 J 中已声明
 有界清单。它不新增 relation，不从 Source/Gate 取值，也不选择 realization、schedule、frontend
 spelling 或 repair，因此只增强 Replay owner 对现有 π/J 的消费可靠性，不改变 π 的证明地位或
 Replay 的 LLM-first 作者权。
+v26/v22 同时明确 ABI-carrier multiplicity：一个 `J.signature p*` 始终是一个既有 callable
+carrier，同一 `p*` 的多个 π instance 只声明多处 placement/use，不产生第二个值或
+`tl.program_id`。source-blind construction compile 可按 program-region distinct J domain 经作者化
+route 到 `address_base` 的数量拒绝多余 program-coordinate occurrence；它不生成 instance、coordinate
+或 axis，也没有 Gate/认证权限。
 
 Codex Replay v13 的隔离 `replay-workspace-view.v2` 必须包含完整匿名 ABI/J graph/J boundary、MaskC、
 U_f，以及从同一 π 无损 join 的 per-instance obligation ledger；reduction obligation 只能并置 J 已
@@ -1344,8 +1349,8 @@ mean、guard、cross-axis/general predicate、domain/extent 不闭合、mask 位
 checker 不读取 Source/C/π且不自动变换图；Source 的显式 sum/div 必须由 Lift 原样写成
 `reduce(sum)` 与 explicit division。
 
-Gate2 scalar consumer 当前独立标为 `j_scalar_cpu_mlir_v19`，共享
-`intentir.j-functional-boundary.v18`：它们继承 v14/v13、v12/v11 与 v10/v3；v10 已继承 v9 的 node-less input load，并按 J 自身的完整
+Gate2 scalar consumer 当前独立标为 `j_scalar_cpu_mlir_v20`，共享
+`intentir.j-functional-boundary.v19`：它们继承 v14/v13、v12/v11 与 v10/v3；v10 已继承 v9 的 node-less input load，并按 J 自身的完整
 logical domains、逐 access predicate/fill、逐 reduction 中性 `masked_contribution` 与 closed broadcast
 relation 消费通用 padded pointwise/multi-reduce DAG。它不从 π route 推导 operator、padding 公式或
 logical input。
@@ -1384,7 +1389,7 @@ missing-fill proof 只接受全 downstream pointwise 且所有 observable store 
 reduce/scan/loop/transpose/pad 或不同 predicate 一律 unsupported。两种 proof 都只读 J 并形成 receipt，
 π 不携带、不授权也不修补这些关系。
 
-`j_scalar_cpu_mlir_v19` / `intentir.j-functional-boundary.v18` 完整继承 v17/v16，只消费 J 已写出的完整 product-domain
+`j_scalar_cpu_mlir_v20` / `intentir.j-functional-boundary.v19` 完整继承 v17/v16，只消费 J 已写出的完整 product-domain
 mixed-radix bijection，以及 pointwise provenance 后精确 `transpose` 的 axis permutation；后者还要求
 store coordinates 与 load coordinates 的 permutation 完全一致并由同 predicate 支配。`log2` 与 IEEE
 special literal 也由 shared materializer 直接消费。π route/instance/order 不能提供 factor、digit、perm、
@@ -1407,6 +1412,14 @@ context domain 解释成输出数值轴或地址公式；production 若不选择
 反向取得 recipe。logical inout 上多个 store→reload stage 则仅由 J 自身 producer/dataflow、相同
 coordinates/predicate、effect order 与最终 output binding 闭合，π 不补这些关系。
 
+v20/v19/v8 的 edge-scoped padding 与 conditional full-store receipt 同样不增加 π 权力：前者只沿 J
+中 access 已绑定的 operand edge，并要求 bounded gather 的 `index_bounds`；后者只联结 J
+`effect_if` 中实际执行的 branch-local producer 与 Layer-B access/effect destination。π 不提供
+predicate、arm value、output pre-state 或 store destination，不能把未定义路径变成已定义输出。
+dynamic iota/div 的 invocation interval、bounded-gather index-shape→domain-axis 唯一绑定，以及
+node-less load/node-bound reload 的 edge ownership也都只由 J/B 与当前 closed input决定；π 不提供
+divisor、shape equality、consumer extension 或 access ownership。
+
 当前 Lift knowledge v57 继承 v56-v42，要求 `fill_value` 保留 Source load 的实际 `other`，并要求
 adapter 明示的 bound-constexpr/shape-coordinate equality 仍由 Lift 绑定 `x*` 或作者化 `t*=x*`；
 MiniSWE Replay v13 / Codex Replay v8 继承既有 typed-rank 合同，要求
@@ -1415,7 +1428,7 @@ flow，却不能把一个 fill 换成“等价”neutral value，也不能授权
 各自 LLM 完整作者化，fixed checker 只拒绝和诊断。
 
 canonical output binding 可以由 `returns` 或 `output_mapping` 唯一给出，同时存在时必须一致；共享
-J→Intent MLIR 入口与 structured reference v5 消费 deterministic elaboration 后的同一 binding。该 elaboration 是 J 的私有
+J→Intent MLIR 入口与 structured reference v9 消费 deterministic elaboration 后的同一 binding。该 elaboration 是 J 的私有
 symbol-table view，不是另一个 artifact，也不使 π 获得 destination 语义。
 该 authored 规则由 `intentir.lift-knowledge.v21` 明示；至少一个 binding 仍由 Lift 选择，fixed code
 不会从 π route、store effect、Source 或 Harness 地址补造 destination value。

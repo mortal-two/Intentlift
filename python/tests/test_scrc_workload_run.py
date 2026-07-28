@@ -114,12 +114,15 @@ def test_request_evidence_records_independent_lift_and_replay_backends(
     provider = ProviderConfig(
         "provider", "https://provider.invalid/v1", "key", "model"
     )
+    replay_provider = replace(provider, model="replay-model")
 
     initialize_workload_evidence(
         run_dir,
         prepared,
         provider=provider,
         effort="high",
+        replay_provider=replay_provider,
+        replay_effort="medium",
         run_masked_j=True,
         lift_backend="responses",
         replay_backend="miniswe",
@@ -128,6 +131,11 @@ def test_request_evidence_records_independent_lift_and_replay_backends(
     request = json.loads((run_dir / "request.json").read_text())
     assert request["lift_backend"] == "responses"
     assert request["replay_backend"] == "miniswe"
+    assert request["model"] == "model"
+    assert request["reasoning_effort"] == "high"
+    assert request["replay_provider"] == "provider"
+    assert request["replay_model"] == "replay-model"
+    assert request["replay_reasoning_effort"] == "medium"
 
 
 def _write_recheck_parent_lineage(
@@ -350,6 +358,7 @@ def test_replay_backend_is_independent_and_new_per_formal_round(
     provider = ProviderConfig(
         "test-provider", "https://provider.invalid/v1", "key", "model"
     )
+    replay_provider = replace(provider, model="replay-model")
     created: list[object] = []
 
     class FakeMiniReplayWriter:
@@ -372,6 +381,8 @@ def test_replay_backend_is_independent_and_new_per_formal_round(
         prepared,
         provider=provider,
         effort="xhigh",
+        replay_provider=replay_provider,
+        replay_effort="medium",
         lift_backend="responses",
         replay_backend="miniswe",
     )
@@ -382,7 +393,8 @@ def test_replay_backend_is_independent_and_new_per_formal_round(
     assert first is not second
     assert writers == created
     assert len({id(writer) for writer in writers}) == 2
-    assert all(writer.provider is provider for writer in writers)
+    assert all(writer.provider is replay_provider for writer in writers)
+    assert all(writer.effort == "medium" for writer in writers)
     with pytest.raises(ValueError, match="unknown Replay backend"):
         workload_run._new_replay_writer(
             "lift-backend-name-is-not-replay",

@@ -28,6 +28,7 @@ INTENTIR_REPLAY_COMMIT = "intentir_replay_commit"
 INTENTIR_REPLAY_ROLLBACK = "intentir_replay_rollback"
 INTENTIR_REPLAY_CHECK = "intentir_replay_check"
 INTENTIR_REPLAY_COMPILE_CHECK = "intentir_replay_compile_check"
+INTENTIR_REPLAY_OBLIGATION_AUDIT = "intentir_replay_obligation_audit"
 INTENTIR_PACKET_QUERY = "intentir_packet_query"
 REPLAY_STARTUP_PACKET_EMBED_LIMIT_BYTES = 64 * 1024
 INTENTIR_REPLAY_INSPECT = "intentir_replay_inspect"
@@ -665,11 +666,12 @@ def _packet_critical_facts(packet: Mapping[str, Any]) -> dict[str, Any]:
     """Return a tiny exact index of easy-to-miss authored packet facts.
 
     The normal startup already transports the whole packet.  This index does not
-    summarize its graph or recommend a lowering; it merely colocates four
+    summarize its graph or recommend a lowering; it merely colocates eight
     closed fact classes whose distant cross-references are otherwise easy to
     overlook in a large ABI: semantic dimension carriers, typed IEEE-special
-    constants, physical-iteration relations, transfer occurrences, and reduction
-    linearizations.
+    constants, physical- and unit-iteration relations, transfer occurrences,
+    reduction linearizations, exact lexical-region membership, and cross-region
+    order.
     """
 
     j = packet.get("j", {})
@@ -728,11 +730,83 @@ def _packet_critical_facts(packet: Mapping[str, Any]) -> dict[str, Any]:
     unit_iterations = pi.get("unit_iterations", [])
     if not isinstance(unit_iterations, list):
         raise TypeError("packet pi unit_iterations must be an array")
+    instances_value = pi.get("instances", [])
+    regions_value = pi.get("regions", [])
+    order_value = pi.get("order", [])
+    if not isinstance(instances_value, list) or not isinstance(regions_value, list):
+        raise TypeError("packet pi instances/regions must be arrays")
+    if not isinstance(order_value, list):
+        raise TypeError("packet pi order must be an array")
     instances = {
         str(item.get("id")): item
-        for item in pi.get("instances", [])
+        for item in instances_value
         if isinstance(item, Mapping) and isinstance(item.get("id"), str)
     }
+    regions = {
+        str(item.get("id")): item
+        for item in regions_value
+        if isinstance(item, Mapping) and isinstance(item.get("id"), str)
+    }
+
+    def instance_scope(instance_id: str) -> dict[str, Any]:
+        instance = instances[instance_id]
+        region_id = str(instance.get("region"))
+        region = regions.get(region_id, {})
+        return {
+            "id": instance_id,
+            "semantic_ref": instance.get("semantic_ref"),
+            "mechanism": instance.get("mechanism"),
+            "region": region_id,
+            "placement": region.get("placement"),
+        }
+
+    lexical_regions = []
+    lexical_region_ids: set[str] = set()
+    for raw_region in regions_value:
+        if not isinstance(raw_region, Mapping) or raw_region.get("placement") not in {
+            "loop",
+            "branch",
+        }:
+            continue
+        region_id = str(raw_region.get("id"))
+        lexical_region_ids.add(region_id)
+        lexical_regions.append(
+            {
+                "id": region_id,
+                "parent": raw_region.get("parent"),
+                "placement": raw_region.get("placement"),
+                "instances": [
+                    instance_scope(str(item.get("id")))
+                    for item in instances_value
+                    if isinstance(item, Mapping)
+                    and isinstance(item.get("id"), str)
+                    and str(item.get("region")) == region_id
+                ],
+            }
+        )
+
+    cross_region_order = []
+    for item in order_value:
+        if not isinstance(item, Mapping):
+            continue
+        before_id = item.get("before")
+        after_id = item.get("after")
+        if not isinstance(before_id, str) or not isinstance(after_id, str):
+            continue
+        if before_id not in instances or after_id not in instances:
+            continue
+        before_region = str(instances[before_id].get("region"))
+        after_region = str(instances[after_id].get("region"))
+        if before_region == after_region or not (
+            {before_region, after_region} & lexical_region_ids
+        ):
+            continue
+        cross_region_order.append(
+            {
+                "before": instance_scope(before_id),
+                "after": instance_scope(after_id),
+            }
+        )
     routes = pi.get("routes", [])
     refinements = pi.get("refinements", [])
     if not isinstance(routes, list) or not isinstance(refinements, list):
@@ -805,9 +879,47 @@ def _packet_critical_facts(packet: Mapping[str, Any]) -> dict[str, Any]:
         "unit_iterations": unit_iterations,
         "transfer_occurrences": transfer_occurrences,
         "reduction_linearizations": reduction_linearizations,
+        "lexical_regions": lexical_regions,
+        "cross_region_order": cross_region_order,
         "authority": (
             "exact source-isolated packet projection only; no Source, Harness "
             "value, Gate evidence, inference, generation, repair, or schedule"
+        ),
+    }
+
+
+def _replay_obligation_audit_view(
+    packet: Mapping[str, Any], source_text: str
+) -> dict[str, Any]:
+    """Colocate exact authored scope/order obligations with the owner's bytes.
+
+    This is a proof-irrelevant attention aid.  It neither maps a source statement
+    to a pi instance nor judges whether Replay satisfies an obligation.
+    """
+
+    facts = _packet_critical_facts(packet)
+    lexical_regions = facts["lexical_regions"]
+    cross_region_order = facts["cross_region_order"]
+    return {
+        "protocol": "intentir.replay-obligation-audit.v1",
+        "status": "pass",
+        "source_sha256": hashlib.sha256(source_text.encode("utf-8")).hexdigest(),
+        "audit_required": bool(lexical_regions or cross_region_order),
+        "lexical_regions": lexical_regions,
+        "cross_region_order": cross_region_order,
+        "source_nonempty_lines": [
+            {
+                "line": line_number,
+                "indent": len(line) - len(line.lstrip()),
+                "text": line.strip(),
+            }
+            for line_number, line in enumerate(source_text.splitlines(), start=1)
+            if line.strip()
+        ],
+        "authority": (
+            "exact current Replay bytes plus exact source-isolated pi projection; "
+            "no Source, Gate evidence, inference, mapping, diagnosis, repair, or "
+            "acceptance decision"
         ),
     }
 
@@ -2104,6 +2216,8 @@ class IntentIRReplayEnvironment:
         self._compile_passed_bytes: bytes | None = None
         self._source_inspect_calls = 0
         self._source_inspect_audit: list[str] = []
+        self._obligation_audited_source_digests: set[str] = set()
+        self._obligation_audit_log: list[dict[str, Any]] = []
         self._passed_bytes: bytes | None = None
         self._committed_bytes: bytes | None = None
         self._commit_audit: list[dict[str, Any]] = []
@@ -2858,14 +2972,25 @@ class IntentIRReplayEnvironment:
             except Exception:
                 result = _closed_failure("replay_compile_check_read_failed")
             else:
-                evaluated = True
-                self._compile_check_evaluations += 1
-                try:
-                    result = self._replay_compile_checker(source_text)
-                except Exception:
-                    result = _closed_failure(
-                        "replay_compile_check_internal_failure"
-                    )
+                source_digest = hashlib.sha256(source_bytes).hexdigest()
+                facts = _packet_critical_facts(self._read_closed_packet())
+                audit_required = bool(
+                    facts["lexical_regions"] or facts["cross_region_order"]
+                )
+                if (
+                    audit_required
+                    and source_digest not in self._obligation_audited_source_digests
+                ):
+                    result = _closed_failure("replay_obligation_audit_required")
+                else:
+                    evaluated = True
+                    self._compile_check_evaluations += 1
+                    try:
+                        result = self._replay_compile_checker(source_text)
+                    except Exception:
+                        result = _closed_failure(
+                            "replay_compile_check_internal_failure"
+                        )
         result = self._validate_check_result(result)
         diagnostics = result["diagnostics"]
         self._compile_check_audit.append(
@@ -2889,20 +3014,67 @@ class IntentIRReplayEnvironment:
             "exception_info": "",
         }
 
+    def _read_closed_packet(self) -> Mapping[str, Any]:
+        packet = json.loads(
+            (self.config.input_dir / "packet.json").read_text(encoding="utf-8")
+        )
+        if not isinstance(packet, Mapping) or set(packet) != {
+            "j",
+            "c",
+            "pi",
+            "u_f",
+        }:
+            raise ValueError("Replay packet has an invalid closed root")
+        return packet
+
+    def _execute_replay_obligation_audit(
+        self, arguments: list[str]
+    ) -> dict[str, Any]:
+        try:
+            if arguments != [
+                INTENTIR_REPLAY_OBLIGATION_AUDIT,
+                "/output/replay.source",
+            ]:
+                raise ValueError(
+                    "usage: intentir_replay_obligation_audit "
+                    "/output/replay.source"
+                )
+            source_bytes, source_text = self._read_check_target(arguments[1])
+            value = _replay_obligation_audit_view(
+                self._read_closed_packet(), source_text
+            )
+            rendered = json.dumps(
+                value, indent=2, sort_keys=True, ensure_ascii=False
+            )
+            if len(rendered.encode("utf-8")) > MAX_PACKET_QUERY_OUTPUT_BYTES:
+                raise ValueError("obligation audit result exceeds the closed bound")
+        except Exception as exc:
+            return {
+                "output": (
+                    "Replay obligation audit rejected: "
+                    f"{type(exc).__name__}: {exc}\n"
+                ),
+                "returncode": 1,
+                "exception_info": "",
+            }
+        source_digest = hashlib.sha256(source_bytes).hexdigest()
+        self._obligation_audited_source_digests.add(source_digest)
+        self._obligation_audit_log.append(
+            {
+                "source_sha256": source_digest,
+                "lexical_region_count": len(value["lexical_regions"]),
+                "cross_region_order_count": len(value["cross_region_order"]),
+            }
+        )
+        return {
+            "output": rendered + "\n",
+            "returncode": 0,
+            "exception_info": "",
+        }
+
     def _execute_packet_query(self, arguments: list[str]) -> dict[str, Any]:
         try:
-            packet = json.loads(
-                (self.config.input_dir / "packet.json").read_text(
-                    encoding="utf-8"
-                )
-            )
-            if not isinstance(packet, Mapping) or set(packet) != {
-                "j",
-                "c",
-                "pi",
-                "u_f",
-            }:
-                raise ValueError("Replay packet has an invalid closed root")
+            packet = self._read_closed_packet()
             value = _query_packet(packet, arguments)
             rendered = json.dumps(
                 value, indent=2, sort_keys=True, ensure_ascii=False
@@ -3012,6 +3184,11 @@ class IntentIRReplayEnvironment:
             return self._execute_packet_query(check_arguments)
         if check_arguments and check_arguments[0] == INTENTIR_REPLAY_INSPECT:
             return self._execute_replay_inspect(check_arguments)
+        if (
+            check_arguments
+            and check_arguments[0] == INTENTIR_REPLAY_OBLIGATION_AUDIT
+        ):
+            return self._execute_replay_obligation_audit(check_arguments)
         if check_arguments and check_arguments[0] == INTENTIR_REPLAY_CHECK:
             return self._execute_replay_check(check_arguments)
         if check_arguments and check_arguments[0] == INTENTIR_REPLAY_COMMIT:
@@ -3318,6 +3495,7 @@ __all__ = [
     "INTENTIR_REPLAY_CHECK",
     "INTENTIR_REPLAY_COMPILE_CHECK",
     "INTENTIR_REPLAY_INSPECT",
+    "INTENTIR_REPLAY_OBLIGATION_AUDIT",
     "INTENTIR_REPLAY_ROLLBACK",
     "INTENTIR_REPLAY_SUBMIT",
     "INTENTIR_REPLAY_SUBMIT_COMMAND",

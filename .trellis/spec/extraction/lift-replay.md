@@ -214,8 +214,11 @@ output/effect/guard、以及 π regions/instances/iterations/carriers/terminal/r
 字段投影，任何缺失仍由 Lift 自己从 Source 作者化，任何冲突仍由 CandidateCheck/TypeCheck
 fail closed。
 
-Codex Lift v10 / knowledge v65 将同一 exact Harness ABI ledger 直接放入首次 owner prompt，并将
-后续 closed feedback frontier 与其 primary bounded category 直接放入同一持久 owner continuation；
+Codex Lift v12 / knowledge v67 将同一 exact Harness ABI ledger 直接放入首次 owner prompt，并将
+后续 closed feedback frontier 中已有的 interface、reduction、predicate/effect 与 op-multiset 直接
+类别一次并列展开到同一持久 owner continuation；recursive dataflow 保持按一个命名类别分页。
+representation-only op 差异只要求 owner 对照 Source 重新审查已有 π refinement grammar，fixed code
+不选择 refinement、不写 π，也不把 compiler op 复制成 J semantics；
 `lift_harness_abi`、`lift_candidate_control` 与 `lift_feedback_category` 保留为可选的局部自读，不再是
 提交前的强制串行协议。该 transport 不生成 `logical_ref`、J/C/π 字段或修复。
 
@@ -334,21 +337,35 @@ ReplayLLM(J,pi,MaskC(C);U_f) -> complete source R_f
 ```
 
 当前 packet protocol 为 `intentir.scrc.replay-input.v1`，Triton 公共上下文为
-`public_frontend_context_v14`；source-aware Codex/MiniSWE Lift 的当前 knowledge receipt 分别为
-`intentir.lift-knowledge.v65 / intentir.lift-knowledge.v62`，source-blind MiniSWE/Codex Replay backend 为
-`minisweagent.intentir-replay.v24 / openai.codex-cli.intentir-replay.v20`。这些版本必须随 fresh run 原样记录；旧 packet/context/knowledge
+`public_frontend_context_v16`；source-aware Codex/MiniSWE Lift 的当前 knowledge receipt 分别为
+`intentir.lift-knowledge.v67 / intentir.lift-knowledge.v64`，source-blind MiniSWE/Codex Replay backend 为
+`minisweagent.intentir-replay.v29 / openai.codex-cli.intentir-replay.v25`。这些版本必须随 fresh run 原样记录；旧 packet/context/knowledge
 evidence 不因实现升级而被重判。
 
-Replay v24/v20 对不超过 64 KiB 的匿名 packet 采用一次性 exact startup embedding；当前六个难核实测
+Replay v29/v25 进一步明确消费 π region 的原有闭合含义：region 是 compiler-visible instance 的
+精确词法 realization scope，不是优化提示或 consumer membership。声明在 loop region 的 instance
+即使只依赖 loop-invariant operands，也必须在该 loop 内 materialize；Replay 不得把它 hoist 到父
+region，也不得跨 region sink、clone 或 fold。该规则只消费 Lift 已作者化 placement，不从 Source、
+Gate diff 或常见优化推导新的 instance；ReplayCheck 不据此猜 op↔instance 映射，最终一致性仍由正式
+Gate1 observer 判定。
+
+Replay v29/v25 对不超过 64 KiB 的匿名 packet 采用一次性 exact startup embedding；当前难核实测
 packet 最大约 47 KiB，因此正常路径不再强制调用 manifest、requirements、ABI、graph、realization 或
 obligations。startup 另带一个由同一 packet 精确投影的 bounded `critical_facts.v2`：只列 semantic
 dimension carrier、IEEE special typed constant、`physical_iterations|unit_iterations`、每个 transfer
-occurrence 的 route/order 与 `reduction_linearization + consumer route`，使 Replay 不必在大图中重新
+occurrence 的 route/order、`reduction_linearization + consumer route`、按 loop/branch region 分组的
+instance membership 与跨 region order，使 Replay 不必在大图中重新
 寻找这些易漏的已作者化事实；它不推断、补齐或推荐实现。超过上限时，首次 manifest 自带 bounded authored-requirements：J op/boundary 与 π
 instance mechanism、route/order/time/control 的 exact 重索引，并只为被明确截断的页提供 focused
 query。完整 `/input/packet.json` 仍是 immutable authority；embedding/manifest/query 都不摘要、补齐、
 推断或推荐 schedule/code。Replay LLM仍完整作者化 source，host只对 exact bytes 做 ReplayCheck 和
 public synthetic compile。旧 v20/v16 的强制 requirements 查询 receipt 保持原 verdict。
+
+当 `critical_facts.v2` 含 lexical region 或 cross-region order 时，Replay v29/v25 在 construction
+compile 前要求同一 owner 对当前 exact source bytes 调用一次 `replay-obligation-audit.v1`。返回值只把
+上述 π ledger 与该 owner 自己源码的带行号非空行并置；它不建立 `source statement ↔ i*` 映射，不判断
+满足与否，也不建议或执行修复。owner 修改任一 byte 后必须重新审阅新 digest。该事务约束只保证模型
+在提交前实际看到约束和当前代码，既不是 Replay 输入 artifact，也不进入 TypeCheck/Gate1 membership。
 
 v50/v8 只升级 proof-irrelevant Agent execution transport：活动 staged writer 被移除，MiniSWE 使用
 一个持久 Lift owner 和每轮一个 exact Replay packet；首轮 exact allowlisted workspace mirror 在
@@ -377,6 +394,11 @@ boundary tensor 的 pointer/tensor signature carrier 可达，并要求每个 po
 最终流向至少一个 transfer。独立 integer base/lane contribution 可以具有自身 semantic ref，并不因此令闭包失效。
 无法满足该闭包时不猜 final address。它不读取 Source/Gate，不构造 offset、
 program id、lane、dtype/cast 或 frontend spelling，也不具有 Gate/认证权威。
+v26/v22 还把 J.signature 的每个 `p*` 固定解释为一个已存在的 callable ABI carrier：同一 `p*` 的
+多个 π instance 只定位或路由该 carrier 的多处 use，不生成新值或 program coordinate。source-blind
+construction compile 从位于 program region、沿作者化 route 到达 `address_base` 的 distinct J domain
+精确投影合法 program-coordinate 数，并拒绝额外 compiled `tt.get_program_id` occurrence；该检查不
+分配 axis、不生成 coordinate，也没有 Gate 或认证权限。
 
 v55 的 continuation 默认读取 deterministic bounded `feedback_frontier`：interface、reduction、
 predicate/effect、op 与 dataflow 只保留计数、少量 direct examples/local frontier/effect-order witness；
@@ -403,6 +425,8 @@ tag 的意义，不指定某个前端 API。
 中另有一个表示 compiler-visible program/grid coordinate 的独立 `realize` instance 与 routes 时，
 Replay 才能生成对应 stage；不得按常见 kernel 模板从 placement、grid 惯例或 C 猜出额外 grid
 offset、整数乘加或 affine address。
+J.signature `p*` 同样不会因位于 program region 或拥有多个 π instance 而变成 program coordinate；
+所有同名 instance 共享该唯一 ABI carrier。只有下述 distinct J-domain relation 可以授权 coordinate。
 
 现有关系的机械解释是：锚定 J domain、位于 program region 且 scalar dependency path 进入
 `address_base` 的 `realize` stage 是 program coordinate；进入 `address_lane` 的 domain/C path 是

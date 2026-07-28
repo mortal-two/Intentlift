@@ -480,6 +480,7 @@ def test_batch_cli_fans_out_one_case_and_runs_gate2_only_for_winner(
         "gate2": 0,
         "saved_search": 0,
         "initialized_efforts": [],
+        "initialized_replay_configs": [],
     }
 
     class SearchReport:
@@ -494,12 +495,15 @@ def test_batch_cli_fans_out_one_case_and_runs_gate2_only_for_winner(
 
     def fake_search(
         _prepared, *, provider, effort, run_masked_j, lift_backend,
-        lift_workflow, replay_backend, replay_width, max_gate1_rounds,
+        lift_workflow, replay_provider, replay_effort, replay_backend,
+        replay_width, max_gate1_rounds,
         max_pre_replay_rejections,
         stop_requested=None, progress_callback=None,
     ):
         assert provider is not None
         assert effort == "xhigh"
+        assert replay_provider.model == "test-replay-model"
+        assert replay_effort == "medium"
         assert run_masked_j
         assert lift_backend == "responses"
         assert lift_workflow == "single"
@@ -533,6 +537,8 @@ def test_batch_cli_fans_out_one_case_and_runs_gate2_only_for_winner(
         *,
         provider,
         effort,
+        replay_provider,
+        replay_effort,
         run_masked_j,
         lift_backend,
         lift_workflow,
@@ -541,6 +547,8 @@ def test_batch_cli_fans_out_one_case_and_runs_gate2_only_for_winner(
     ):
         assert run_dir.is_dir()
         assert provider.name == "test-provider"
+        assert replay_provider.model == "test-replay-model"
+        assert replay_effort == "medium"
         assert run_masked_j
         assert lift_backend == "responses"
         assert lift_workflow == "single"
@@ -553,6 +561,9 @@ def test_batch_cli_fans_out_one_case_and_runs_gate2_only_for_winner(
             "first_observed_gate1_closure_cooperative_stop.v4"
         )
         calls["initialized_efforts"].append(effort)
+        calls["initialized_replay_configs"].append(
+            (replay_provider.model, replay_effort)
+        )
 
     def fake_next_fanout_dir(root, _case_id):
         path = Path(root) / "liger_dyt" / "fanout-001"
@@ -590,6 +601,10 @@ def test_batch_cli_fans_out_one_case_and_runs_gate2_only_for_winner(
             "5",
             "--effort",
             "xhigh",
+            "--replay-model",
+            "test-replay-model",
+            "--replay-effort",
+            "medium",
             "--replay-backend",
             "miniswe",
             "--replay-width",
@@ -634,6 +649,9 @@ def test_batch_cli_fans_out_one_case_and_runs_gate2_only_for_winner(
         "gate2": 1,
         "saved_search": 4,
         "initialized_efforts": ["xhigh"] * 5,
+        "initialized_replay_configs": [
+            ("test-replay-model", "medium")
+        ] * 5,
     }
 
 

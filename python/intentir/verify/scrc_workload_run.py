@@ -713,6 +713,8 @@ def _build_workload_runtime(
     *,
     provider: ProviderConfig,
     effort: str | None = None,
+    replay_provider: ProviderConfig | None = None,
+    replay_effort: str | None = None,
     run_masked_j: bool = True,
     lift_backend: str = "responses",
     lift_workflow: str = "single",
@@ -756,6 +758,8 @@ def _build_workload_runtime(
     lift = lift_class(
         **lift_kwargs,
     )
+    effective_replay_provider = replay_provider or provider
+    effective_replay_effort = effort if replay_effort is None else replay_effort
     writers: list[RecordedReplayEvidenceWriter] = []
     compiler = _new_frontend_compiler(frontend)
 
@@ -763,8 +767,8 @@ def _build_workload_runtime(
         round_writers = tuple(
             _new_replay_writer(
                 replay_backend,
-                provider=provider,
-                effort=effort,
+                provider=effective_replay_provider,
+                effort=effective_replay_effort,
                 frontend=frontend,
                 stop_requested=stop_requested,
             )
@@ -827,6 +831,8 @@ def search_prepared_workload_gate1(
     provider: ProviderConfig,
     initial_feedback: LiftFeedback | None = None,
     effort: str | None = None,
+    replay_provider: ProviderConfig | None = None,
+    replay_effort: str | None = None,
     run_masked_j: bool = True,
     lift_backend: str = "responses",
     lift_workflow: str = "single",
@@ -844,6 +850,8 @@ def search_prepared_workload_gate1(
         prepared,
         provider=provider,
         effort=effort,
+        replay_provider=replay_provider,
+        replay_effort=replay_effort,
         run_masked_j=run_masked_j,
         lift_backend=lift_backend,
         lift_workflow=lift_workflow,
@@ -900,6 +908,8 @@ def execute_prepared_workload(
     *,
     provider: ProviderConfig,
     effort: str | None = None,
+    replay_provider: ProviderConfig | None = None,
+    replay_effort: str | None = None,
     run_masked_j: bool = True,
     lift_backend: str = "responses",
     lift_workflow: str = "single",
@@ -912,6 +922,8 @@ def execute_prepared_workload(
         prepared,
         provider=provider,
         effort=effort,
+        replay_provider=replay_provider,
+        replay_effort=replay_effort,
         run_masked_j=run_masked_j,
         lift_backend=lift_backend,
         lift_workflow=lift_workflow,
@@ -1156,12 +1168,16 @@ def initialize_workload_evidence(
     *,
     provider: ProviderConfig,
     effort: str | None,
+    replay_provider: ProviderConfig | None = None,
+    replay_effort: str | None = None,
     run_masked_j: bool,
     lift_backend: str = "responses",
     lift_workflow: str = "single",
     replay_backend: str = "responses",
     search_metadata: Mapping[str, Any] | None = None,
 ) -> None:
+    effective_replay_provider = replay_provider or provider
+    effective_replay_effort = effort if replay_effort is None else replay_effort
     (run_dir / "source.py").write_text(
         prepared.source_slice.code, encoding="utf-8"
     )
@@ -1178,6 +1194,11 @@ def initialize_workload_evidence(
         "provider": provider.name,
         "model": provider.model,
         "reasoning_effort": effort or provider.reasoning_effort,
+        "replay_provider": effective_replay_provider.name,
+        "replay_model": effective_replay_provider.model,
+        "replay_reasoning_effort": (
+            effective_replay_effort or effective_replay_provider.reasoning_effort
+        ),
         "lift_backend": lift_backend,
         "lift_workflow": lift_workflow,
         "replay_backend": replay_backend,

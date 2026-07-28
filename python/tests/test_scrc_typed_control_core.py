@@ -5,10 +5,12 @@ from __future__ import annotations
 import copy
 import json
 
+import numpy as np
 import pytest
 from jsonschema import Draft202012Validator
 
 from direct_fixtures import make_reduce_artifact
+from intentir.backend.cpu.structured_reference import execute_structured_reference
 from intentir.extraction.lifters.scrc import (
     SCRC_DECODE_PROTOCOL,
     SCRCCandidateCheckContext,
@@ -406,6 +408,52 @@ def test_functional_boundary_resolves_effect_if_arm_node_paths() -> None:
 
     assert "access:a0" in projection.consumed
     assert "access:a1" in projection.consumed
+
+
+def test_functional_boundary_executes_authored_effect_if_full_store() -> None:
+    artifact = Gate1Artifact.from_json(_effect_if_payload())
+    projection = project_functional_boundary(artifact.j)
+
+    assert [
+        item.to_json() for item in projection.conditional_effect_stores
+    ] == [
+        {
+            "proof": "authored_effect_if_full_store",
+            "access_id": "a1",
+            "node_ref": "n2",
+            "output": "t2",
+            "value_ref": "v1",
+        }
+    ]
+    value = np.asarray([[1, 2, 3], [4, 5, 6]], dtype=np.float32)
+    result = execute_structured_reference(
+        artifact.j,
+        {"x0": 2, "x1": 3},
+        [value, np.asarray(True)],
+        broadcast_axes=projection.emitter_broadcast_axes(),
+        conditional_effect_stores=projection.conditional_effect_stores,
+    )
+
+    np.testing.assert_array_equal(
+        result.outputs["t2"],
+        np.asarray([14, 77], dtype=np.float32),
+    )
+    assert result.metadata["conditional_effect_store_count"] == 1
+
+
+def test_structured_reference_rejects_unproduced_conditional_output() -> None:
+    artifact = Gate1Artifact.from_json(_effect_if_payload())
+    projection = project_functional_boundary(artifact.j)
+    value = np.asarray([[1, 2, 3], [4, 5, 6]], dtype=np.float32)
+
+    with pytest.raises(ValueError, match="did not produce output 't2'"):
+        execute_structured_reference(
+            artifact.j,
+            {"x0": 2, "x1": 3},
+            [value, np.asarray(False)],
+            broadcast_axes=projection.emitter_broadcast_axes(),
+            conditional_effect_stores=projection.conditional_effect_stores,
+        )
 
 
 def test_effect_if_normal_and_masked_views_preserve_binary_structure() -> None:

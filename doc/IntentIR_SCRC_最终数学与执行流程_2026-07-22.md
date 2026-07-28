@@ -466,8 +466,8 @@ dependent checking 夸写成 Source topology 的形式证明。
 首版不需要让 TypeCheck 成为 SMT 或完整图证明器。最小可行实现只需 fail closed 地完成上述局部检查。
 
 当前合并协议为 `artifact.v9 / decode.v13 / typecheck.v25 / candidate-check.v1 / replay-check.v10`；
-Replay packet envelope 仍是 `replay-input.v1`，Triton context 为 `public_frontend_context_v14`，
-Codex/MiniSWE Lift knowledge 为 v64/v61，MiniSWE Replay backend 为 v23，Codex Replay backend 为 v19。
+Replay packet envelope 仍是 `replay-input.v1`，Triton context 为 `public_frontend_context_v15`，
+Codex/MiniSWE Lift knowledge 为 v65/v61，MiniSWE Replay backend 为 v26，Codex Replay backend 为 v22。
 v40 为 source-aware Lift worker 增加只读、分页的 Source control-flow
 outline（function/loop/if/return 的行号与嵌套深度）；v41 只把 shared dialect/lowering 已支持的
 `log2` 补入通用 `map_unary` vocabulary；v42 只要求 access `fill_value` 保留 Source 该 load 的实际
@@ -487,6 +487,11 @@ pointer-producing stage 必须流向某个 transfer；并要求 compiled distinc
 Source/Harness value/Gate，不改变最终 SCRC 接受谓词。Codex Lift v5 只要求 LLM reconcile
 syntax-only Source control-flow outline，固定代码仍不分类或补 artifact。单次 provider turn wall-time 后只允许同 invocation/episode 的 exact checked
 bytes 或 resumable same thread 继续；禁止跨 formal round/Replay episode 继承候选。
+Replay v26/v22 进一步固定：J.signature 的一个 `p*` 是一个既有 callable ABI carrier，同一 `p*` 的
+多个 π instance 只定位或路由多处 use，不能产生新 carrier 或 `program_id`。source-blind construction
+compile 只从 program region 中沿作者化 route 到达 `address_base` 的 distinct J domain 投影合法
+`tt.get_program_id` occurrence 数并拒绝多余 occurrence；它不生成 coordinate、不选择 axis，也不参与
+Gate/认证。
 v3 历史上引入 `pi.iterations`；v4 引入 J-owned `value_dimension_relations`、
 `consumer_extensions` 等 typed relations；v5 引入 J-owned `access_guard_relations`；v6/v7 分别引入
 typed `effect_if/value_if`；v8 增加 π-owned `physical_iterations/physical_loop_carriers`；v9 增加
@@ -610,8 +615,8 @@ consumer topology 由 functional consumer 明确 unsupported。该判定只读 J
 将 mean 自动改写；若 Source 是 masked sum 后显式除法，Lift 必须完整生成
 `reduce(sum) + explicit div`。
 
-Scalar RefEval 当前能力版本为 `j_scalar_cpu_mlir_v19`，shared projection 为
-`intentir.j-functional-boundary.v18`。它们完整继承 v14/v13、v12/v11 与 v10/v3；v10 已继承 v9，v9 已继承 v8 的唯一 node-less
+Scalar RefEval 当前能力版本为 `j_scalar_cpu_mlir_v20`，shared projection 为
+`intentir.j-functional-boundary.v19`。它们完整继承 v14/v13、v12/v11 与 v10/v3；v10 已继承 v9，v9 已继承 v8 的唯一 node-less
 logical-input load，并把 padded reduction 从 single input/output/sum 特例改为 J-only 的通用闭合：
 每个 predicated direct access 必须
 覆盖自身完整 logical domain，仍携带 masked axis 的 access 使用同一 predicate；每个 logical reduce
@@ -659,7 +664,7 @@ order 必须同时成立。v14/v13 只在 missing-fill load 的所有 downstream
 outside-domain value 不可观察；reduction/scan/loop/transpose/pad、不同 predicate 与未知 effect 继续
 fail closed。两者都不读 Source/C/π/Harness，也不修改 J。
 
-当前 `j_scalar_cpu_mlir_v19` / `intentir.j-functional-boundary.v18` 完整继承 v17/v16，并继续只扩展 deterministic
+当前 `j_scalar_cpu_mlir_v20` / `intentir.j-functional-boundary.v19` 完整继承 v17/v16，并继续只扩展 deterministic
 consumer：显式 product domain 只有在 access coordinates 构成完整、唯一、逐 factor 的 mixed-radix
 bijection 时才投影为 logical tensor axes；missing-fill provenance 只有在 shape-preserving pointwise
 链后接精确 `transpose`，且 store coordinates 等于 load coordinates 的 authored permutation、predicate
@@ -682,8 +687,20 @@ access/program formula。Gate2 Triton Source/Replay 两条 leg 共享
 `triton_static_dot_transpose_v1`，只把已移除的静态 `trans_a/trans_b` 等价归一成 `tl.trans` 并记录
 receipt，不按 kernel 名改写。
 
+v20/v19/v8 只修正已有 J/B 的确定性消费。predicated load 的 padding provenance 现在绑定到其
+`(node_ref,operand)` edge；同 tensor 上另一个 J `gather` 只有在匹配 `index_bounds` 已作者化时才作为
+独立点访问。`effect_if` arm 内的单结果 full store 则由现有 access/effect destination 形成临时
+`authored_effect_if_full_store` receipt，并仅在该 arm 实际执行时更新 output state。它不把
+`effect_if` 改成 value control，不补另一 arm 的值或 pre-state；未定义输出继续 fail closed，故不
+改变 J、B、π 所有权或 SCRC 谓词。
+其 invocation input proof 还可在 current closed dimensions 上解释 `iota(n=x*)`，并仅对 divisor
+interval 不含零的 signed integer `div` 按 toward-zero 语义传播区间；每步仍检查 finite-width
+overflow。动态 gather 的 index shape 必须唯一绑定 logical domain axes。node-less padded load 只有
+已有 consumer extension 才可与同 tensor 的显式 reload 共存，后者在自己的 operand edge 上覆盖
+前者 provenance；这仍是 J/B consumer closure，不是从 Harness valuation 发明 shape identity。
+
 函数 `returns` 或 boundary `output_mapping` 任一均可唯一声明 canonical output binding，同时出现必须
-一致。shared J→Intent MLIR 入口及 structured reference v5 消费 deterministic `JElaboration.output_bindings`，所以 Gate2 与
+一致。shared J→Intent MLIR 入口及 structured reference v9 消费 deterministic `JElaboration.output_bindings`，所以 Gate2 与
 production materialization 使用同一个 J-owned destination；不要求 Lift 复制相同字段，也不从物理
 地址反推结果绑定。
 Lift/schema/preflight 同步为 `intentir.lift-knowledge.v21`；它仅取消同一 binding 的冗余双写，仍由

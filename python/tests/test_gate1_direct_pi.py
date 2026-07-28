@@ -757,6 +757,14 @@ def _historical_triton_v6_payload() -> dict[str, object]:
         "",
     )
     contract = contract.replace(
+        "Every J.signature p* is one already-existing callable ABI carrier. "
+        "All pi instances anchored to the same p* scope or route uses of that "
+        "single carrier; they never create another external value or program "
+        "coordinate. Duplicate p* instances therefore never authorize duplicate "
+        "carrier reads or tl.program_id calls. ",
+        "",
+    )
+    contract = contract.replace(
         " A reduction_linearization refinement is the exact source-neutral "
         "full-axis materialization immediately before its uniquely routed J "
         "reduce. For Triton, emit `tl.reshape(value, (value.numel,), "
@@ -871,13 +879,13 @@ def test_public_frontend_context_history_is_read_only_and_exact() -> None:
         PUBLIC_FRONTEND_CONTEXT["triton"]
     )
 
-    assert current_digest == history["public_frontend_context_v15"]
+    assert current_digest == history["public_frontend_context_v16"]
     current_receipt_digest = PUBLIC_FRONTEND_CONTEXT_RECEIPT_HISTORY[
         "triton"
-    ]["public_frontend_context_v15"]["context_sha256"]
+    ]["public_frontend_context_v16"]["context_sha256"]
     current_receipt = audit_public_frontend_context_receipt(
         frontend="triton",
-        context_policy="public_frontend_context_v15",
+        context_policy="public_frontend_context_v16",
         context_sha256=current_receipt_digest,
     )
     assert current_receipt["status"] == "current"
@@ -909,6 +917,24 @@ def test_public_frontend_context_history_is_read_only_and_exact() -> None:
         context_policy="public_frontend_context_v6",
         public_context_sha256=history["public_frontend_context_v6"],
     )["status"] == "historical"
+    for digest in (
+        "0fa2e4823267dcec5601c4f805ac91301a411efbb7479e5cc9c48b208a8d7510",
+        "7d68b5a2f77f614c952966c1b94a8eac052f6ebcad77412cd7db6af9ffbed8e6",
+    ):
+        assert audit_public_frontend_context_payload(
+            frontend="triton",
+            context_policy="public_frontend_context_v15",
+            public_context_sha256=digest,
+        )["status"] == "historical"
+    for digest in (
+        "c7706c0d986a883cb30f703f67238885d9395b5fb9fa0251c443989edfce4b7e",
+        "bd3175a91b8dfc0de729b5a7ba7c6dbb15ceab6238cc573f5c5c4c98632053f4",
+    ):
+        assert audit_public_frontend_context_receipt(
+            frontend="triton",
+            context_policy="public_frontend_context_v15",
+            context_sha256=digest,
+        )["status"] == "historical"
     with pytest.raises(TypeError):
         history["public_frontend_context_v7"] = "mutated"  # type: ignore[index]
     with pytest.raises(TypeError):
@@ -975,7 +1001,7 @@ def test_historical_packet_has_read_only_audit_but_cannot_be_fresh_replay() -> N
         audit_replay_packet_digest(payload, expected_digest="0" * 64)
     assert build_rewriter_packet(make_reduce_artifact()).u_f[
         "context_policy"
-    ] == "public_frontend_context_v15"
+    ] == "public_frontend_context_v16"
 
 
 def test_real_v6_u_f_uses_the_historical_full_u_f_receipt_basis() -> None:
@@ -1003,7 +1029,7 @@ def test_real_v6_u_f_uses_the_historical_full_u_f_receipt_basis() -> None:
     [
         (
             Frontend.TRITON,
-            "c7706c0d986a883cb30f703f67238885d9395b5fb9fa0251c443989edfce4b7e",
+            "31f39b26af2782660286f7f8de87e40114cfdc45c0082c7a40ab31a7d69abce4",
         ),
         (
             Frontend.CUTE,
@@ -1100,7 +1126,7 @@ def test_replay_contract_accepts_an_explicit_strict_integer_widen() -> None:
     assert report.passed
     assert report.protocol == "intentir.scrc.typecheck.v26"
     assert build_rewriter_packet(artifact).u_f["context_policy"] == (
-        "public_frontend_context_v15"
+        "public_frontend_context_v16"
     )
 
 
@@ -1132,7 +1158,7 @@ def test_triton_u_f_preserves_constexpr_and_projects_coordinate_roles() -> None:
     context = payload["u_f"]
     contract = context["compile_entry_contract"]
 
-    assert context["context_policy"] == "public_frontend_context_v15"
+    assert context["context_policy"] == "public_frontend_context_v16"
     assert "pass a c* handle directly to tl.arange" in contract
     assert "never copy it to a local first" in contract
     assert "satisfied by the parameter binding" in contract
@@ -1142,6 +1168,12 @@ def test_triton_u_f_preserves_constexpr_and_projects_coordinate_roles() -> None:
     assert "not the whole-tensor logical ordinal" in contract
     assert "when predicate is absent" in contract
     assert "never synthesize a defensive or redundant mask" in contract
+    assert (
+        "Every J.signature p* is one already-existing callable ABI carrier" in contract
+    )
+    assert (
+        "Duplicate p* instances therefore never authorize duplicate" in contract
+    )
     assert "placement='program' alone never authorizes tl.program_id" in contract
     assert "path enters address_base" in contract
     assert "path enters address_lane" in contract
@@ -1199,6 +1231,15 @@ def test_every_frontend_receives_the_same_closed_iteration_denotation(
     assert "step equal to the matching C tile" in instructions
     assert "tile_ordinal means lower zero" in instructions
     assert "ceil_div of that J trip extent by that matching C tile" in instructions
+
+
+def test_replay_prompt_preserves_exact_lexical_pi_region_scope() -> None:
+    instructions, _ = build_normal_rewriter_prompt(make_reduce_artifact())
+
+    assert "Region placement is exact lexical scope" in instructions
+    assert "loop-region instance lexically inside that loop" in instructions
+    assert "never hoist, sink, clone, or fold it across a region boundary" in instructions
+    assert "An instance region is exact lexical realization scope" in instructions
 
 
 

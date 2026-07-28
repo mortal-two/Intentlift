@@ -1,7 +1,7 @@
 # Task 14：Source-Grounded Certification Profile 下的 Codex 28-Kernel Fresh SCRC 最终闭合
 
-> 状态：执行中（2026-07-28）；六组已横向 fresh 覆盖，当前 17/28 已取得可用闭合 evidence
->（14 个原运行直接认证，另 3 个复用各自 exact Gate1-closed artifact/Replay 经零模型 Gate2-only
+> 状态：执行中（2026-07-28）；六组已横向 fresh 覆盖，当前 20/28 已取得可用闭合 evidence
+>（15 个原运行直接认证，另 5 个复用各自 exact Gate1-closed artifact/Replay 经零模型 Gate2-only
 > capability recheck 认证）；下一步按 Gate1 frontier 修复通用 Lift/Replay 消费并继续复跑未闭合项
 >
 > 类型：Task 11 的最终 fresh corpus执行波；不是 production backend、`J_dev`能力建设、性能搜索、
@@ -188,14 +188,14 @@ fixed code不得替Lift修成`x*`。
 
 - frontend commit起点：`460aaed1c6af0b267a4a9da9ca497aea6e66ad40`；
 - artifact/decode/typecheck：`artifact.v9 / decode.v13 / typecheck.v25`；
-- Lift：Codex `openai.codex-cli.intentir-lift.v10 / intentir.lift-knowledge.v64`，MiniSWE `minisweagent.intentir-lift.v3 / intentir.lift-knowledge.v61`；
-- Replay：Codex `openai.codex-cli.intentir-replay.v19`，MiniSWE `minisweagent.intentir-replay.v23`；
-- Replay packet/check：`replay-input.v1 / public_frontend_context_v14 / replay-check.v10`；
+- Lift：Codex `openai.codex-cli.intentir-lift.v11 / intentir.lift-knowledge.v65`，MiniSWE `minisweagent.intentir-lift.v3 / intentir.lift-knowledge.v61`；
+- Replay：Codex `openai.codex-cli.intentir-replay.v22`，MiniSWE `minisweagent.intentir-replay.v26`；
+- Replay packet/check：`replay-input.v1 / public_frontend_context_v15 / replay-check.v10`；
 - Harness：Triton workload adapter v5；
 - Gate1 observer：`triton-ttir-3.6-gate1-v11`；outer batch：`intentir.scrc.batch.v3`；
   candidate fan-out：v4 `first_observed_gate1_closure_cooperative_stop`；
 - Gate2：三条直接比较，threshold只来自外部Q。
-- Gate2 RefEval：`j_scalar_cpu_mlir_v19 / intentir.j-functional-boundary.v18`。
+- Gate2 RefEval：`j_scalar_cpu_mlir_v20 / intentir.j-functional-boundary.v19`。
 
 ### 4.1 当前 fresh closure 账本
 
@@ -269,7 +269,50 @@ fixed code不得替Lift修成`x*`。
   route；TypeCheck v25 验证、U_f v14消费、ReplayCheck v10只做 source-blind
   `tt.reshape -> tt.reduce(axis=0)` dataflow 下界检查。
   这不是 GroupNorm/SplitK recipe，也不让 fixed code从 Gate1补 relation。
-- 当前可用闭合总计 `17/28`：14 个原运行直接认证，3 个 exact-artifact capability recheck 认证。
+- Wave 18（commit `e379e10f`，GroupNorm/SplitK backward，Codex Sol xhigh，`B=3,K=3`）中，
+  SplitK backward 在 branch 2 formal round 2 fresh Gate1 closure 后直接通过三边 Gate2，正式
+  certified。GroupNorm 三个 branch 共 9 轮仍为 dataflow NO_CLOSURE；新增 linearization relation 已令
+  `tt.reshape`、op multiset 与 predicate/effect 闭合，最佳 62 条差异进一步压缩为一个 realization
+  placement：π 已把 `n11` address-base instance 放入第二 loop region，Replay 却把对应乘法 hoist 到
+  parent，导致整个 region fingerprint 连锁变化。Replay v25/v21 因此把已有“region 是精确词法 scope”
+  合同显式化，并以 source-blind `critical_facts.v2` 精确重索引 loop/branch instance membership 与
+  cross-region order；construction compile 前同一 Replay owner 还必须把这张 ledger 与当前 exact
+  编号源码并置自审，任何 byte 修改都使审阅失效。工具不读取 Gate、不建立 instance↔statement 映射、
+  不生成 stage 或修复 code。
+- Wave 18 四核批中，CrossEntropy branch 1 formal round 3 已 Gate1 closure；旧 Gate2 先后暴露
+  intermediate gather interval、条件 branch full-store 与同 tensor 多 access padding provenance 三个
+  deterministic consumer缺口。integer-range 现可在外部 index interval 已闭合时保守传播 gather
+  result；functional-boundary v19 将 padding 绑定到 `(node_ref,operand)` edge，并只对匹配
+  `index_bounds` 的独立 gather 点访问豁免另一 padded stream；structured reference v9 只执行 J/B 已
+  作者化的 `effect_if` arm full store。精确 artifact/Replay 的零模型 Gate2-only recheck 已三边通过：
+  `/tmp/intentir-task14-wave31-final-consumer-rechecks-20260728/liger_cross_entropy/gate2-recheck-001`。
+- Wave 25 对 Wave18 GroupNorm 最佳 J 做两个独立 Codex Sol-xhigh fixed-artifact Replay；一个仍
+  NO_CLOSURE，另一个在 `critical_facts.v2 + replay-obligation-audit.v1` 下 fresh `replay_closed`，证明
+  exact lexical region/self-audit 能修掉既有 address-base hoist，但高 effort并非单调保证。该闭合 Replay
+  的 Gate2 又暴露并修复通用 consumer 缺口：dynamic `iota(x*)` 与 nonzero signed `div` 的保守 integer
+  interval、node-less padded reduction load 与后续 node-bound reload 的 edge ownership、以及匹配
+  `index_bounds` 的动态 gather consumer-footprint。零模型三边 Gate2最终通过：
+  `/tmp/intentir-task14-wave31-final-consumer-rechecks-20260728/liger_group_norm/gate2-recheck-001`。
+- Wave 32（commit `11354e56`，六核 Codex Sol-xhigh，`B=3,K=3`）中，SplitK backward 与
+  GroupNorm 都由 branch 3 在 formal round 3 fresh Gate1 closure 后直接三边 certified。SplitK 的
+  relift 轨迹先把两个 `tt.reshape` 误作者化为 `identity_materialization`，第 3 轮由同一 Lift owner
+  自行改成已有 π `reduction_linearization` 后才闭合；fixed code没有从 Gate diff补 relation。
+  CrossEntropy branch 2 同样在 round 3 Gate1 closure，Source--Replay 的 `x/loss` 误差均为 0；旧
+  structured RefEval只接受 equal-rank `along_axis` gather，不能消费 J 已闭合的
+  `data=[x0,x1], index/result=[x0], axis=1` compressed form，原 batch 因而保持 Gate2 failed。structured
+  reference v9 与既有 JSON/Intent MLIR emitter 合同对齐，只在 index rank=data rank-1 且 shape精确
+  等于全部非轴 extent 时机械 expand/squeeze；复用同一 artifact/Replay、`model_calls=0` 的 Gate2-only
+  recheck 已 certified：
+  `/tmp/intentir-task14-wave33-crossentropy-compressed-gather-recheck-20260729/liger_cross_entropy/gate2-recheck-001`。
+  RoPE 与 one-col backward 各有两个 branch完整耗尽 3 轮 NO_CLOSURE、一个 Replay infrastructure；
+  full backward 三个 branch最终均为 Replay-before-Gate1 infrastructure，故三者都不能记完整
+  `NO_CLOSURE_(B,K)`。18 路同时 xhigh 使首次 Lift约 9--26 分钟，后续改为两核、每核 3B 聚焦调度。
+- Codex Lift v11 / knowledge v65 将 closed frontier 已有的 interface、reduction、predicate/effect 与
+  op-multiset direct categories 一次并列展开，recursive dataflow 保持按需分页。它只改善同一 owner
+  对已有 Gate1 evidence 与 π grammar 的注意力；不选择 refinement、不改 J/C/π，也不把 compiler op
+  当成 J semantics。针对性回归 `143 passed`。
+- 当前可用闭合总计 `20/28`：Wave32 将 GroupNorm 从 exact-artifact capability evidence 升级为 fresh
+  直接认证后，现为 16 个原运行直接认证、4 个 exact-artifact capability recheck 认证。
   TypeCheck PASS 不计进度；只有 Gate1 已闭合且当前 Gate2 三边通过才计入。
 
 对Wave12六核的Source/J/π/Replay横向审查得到以下责任边界：Linear缺K-loop/physical-carrier

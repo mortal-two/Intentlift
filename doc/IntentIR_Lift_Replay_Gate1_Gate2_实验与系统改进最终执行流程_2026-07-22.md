@@ -717,8 +717,8 @@ production 不消费该值。只影响 layout/tile/stage 等
 implementation selection 的 constexpr 必须在 Harness 分类为 C slot，而不能作为 bound constexpr
 留在 π-only 形态；static specialization carrier 也不得进入 π topology。
 
-当前 RefEval 消费版本为 `j_scalar_cpu_mlir_v19`，shared functional projection 为
-`intentir.j-functional-boundary.v18`。它们完整继承 v14/v13、v12/v11 与 v10/v3；v10 已继承 v9，v9 已继承 v8 对唯一 node-less
+当前 RefEval 消费版本为 `j_scalar_cpu_mlir_v20`，shared functional projection 为
+`intentir.j-functional-boundary.v19`。它们完整继承 v14/v13、v12/v11 与 v10/v3；v10 已继承 v9，v9 已继承 v8 对唯一 node-less
 logical-input load 的通用消费，并移除旧 single-input/single-output/single-sum padded topology 限制。
 对 predicated direct access，J 必须
 自行声明每个 axis 的完整零起点 logical domain与显式 load fill，仍携带 masked axis 的 access 使用
@@ -770,7 +770,7 @@ v13/v12 仅消费 J 已明确证明的 inout post-state reload：唯一 output m
 擦除 physical outside-domain value；任何 reduction、scan、loop、transpose、pad、不同 predicate 或
 未匹配 effect 都拒绝。两项都只产生 consumer receipt，不生成 artifact field，不进入 Lift feedback。
 
-当前 `j_scalar_cpu_mlir_v19` / `intentir.j-functional-boundary.v18` 完整继承 v17/v16 在上述 v14/v13 上增加的两项共享、
+当前 `j_scalar_cpu_mlir_v20` / `intentir.j-functional-boundary.v19` 完整继承 v17/v16 在上述 v14/v13 上增加的两项共享、
 J-only 的确定性消费能力。第一，若 domain upper bound 是 J 显式写出的正整数/`x*` 乘积，access 的
 每个非 direct coordinate 必须恰好是该乘积的一位 mixed-radix digit，且所有 factor 各出现一次、
 stride 为精确 suffix，才形成 `complete_mixed_radix_bijection` receipt；不做交换律猜测、不补缺位、
@@ -796,12 +796,23 @@ Layer-A 数值执行、不生成 program/address formula。Gate2 Triton Source/R
 `triton_static_dot_transpose_v1`，只将静态 `trans_a/trans_b` 归一为等价 `tl.trans`，并记录 rewrite
 count 与 normalized digest；这不是 Harness 或 kernel 特化。
 
+v20/v19/v8 再修复两个 J/B consumer 缺口而不进入 Lift feedback：masked-load provenance 只沿其
+已绑定的 `(node_ref,operand)` edge传播；同 tensor 的独立 gather 必须已有匹配 `index_bounds`，才不
+受另一 padded stream 的 predicate 约束。对 `effect_if` arm 内的 full logical store，projection只把
+已有 branch-local producer 与 access/effect output destination 联结为临时 receipt，structured
+RefEval 仅执行被选 arm 的写回；不补 select、另一 arm 值或 output pre-state。因而这类
+Gate1-closed J 可零模型 Gate2-only recheck，J 缺值的路径仍必须 fresh Lift或显式拒绝。
+Gate2 input proof 对 dynamic `iota(x*)` 和 divisor interval 不含零的 signed integer `div` 仅做
+overflow-checked 区间传播；动态 gather index shape 还必须唯一绑定 closed domain axes。node-less
+padded load 与后续显式 reload 只有在既有 consumer extension 闭合时共存，并按 operand edge 隔离
+provenance。以上诊断都留在 deterministic Gate2 consumer，不回送 source-aware Lift。
+
 函数 `returns` 与 boundary `output_mapping` 是同一 canonical output binding 的两种 authored 入口，
 不再要求 LLM 重复写两份；若同时存在必须一致。shared J→Intent MLIR materializer 从唯一
 `JElaboration.output_bindings` 读取该绑定，因此 Gate2 reference 与后续 production lowering 使用同一
 J-owned destination，不从 Source/Harness/π 猜测。
 对应 Lift/schema/preflight 为 `intentir.lift-knowledge.v21`：模型仍完整生成 binding，只是不再为同一
-destination 强制同时复制 `returns` 与 `output_mapping`；Decode/TypeCheck、structured reference v5 与
+destination 强制同时复制 `returns` 与 `output_mapping`；Decode/TypeCheck、structured reference v9 与
 shared materializer 都消费唯一 canonical binding。
 后续 `intentir.lift-knowledge.v22` 只补齐已有 grammar 的通用 completeness 提示：`reduce` 与 inclusive
 `scan` 均需自己的 `boundary.reductions` local-axis algebra；predicate-bearing load 到
@@ -855,10 +866,14 @@ Replay 不得：
 
 `U_f` 必须是版本化、source-neutral 的公共前端知识，不能按当前 Kernel、operator 或失败样本选择。
 当前版本组合是 `intentir.scrc.replay-input.v1`、Triton
-`public_frontend_context_v14`、source-aware Codex/MiniSWE Lift `intentir.lift-knowledge.v64/v61`、
-source-blind MiniSWE Replay v23 与 Codex Replay v19、
+`public_frontend_context_v15`、source-aware Codex/MiniSWE Lift `intentir.lift-knowledge.v65/v61`、
+source-blind MiniSWE Replay v26 与 Codex Replay v22、
 `replay-check.v10`；fresh evidence必须保存实际 receipt，
 旧版本 run 不能被新组合追认。
+同一 `J.signature p*` 的多个 π instance 只能共享该唯一 callable ABI carrier，不能因
+`placement=program` 或 instance multiplicity 生成额外 `tl.program_id`。construction compile 可从
+program-region distinct J domain 到 `address_base` 的作者化 route 投影合法 coordinate occurrence 数并
+拒绝多余 occurrence；它只做 source-blind rejection，不生成实现，也不改变 Gate1 membership。
 runner 可以保存实际 request/output 和 compiler metadata 供追溯，但这些内容不能回流 Replay packet；
 不需要为此增加 hash、commitment 或签名门。
 
@@ -1330,7 +1345,7 @@ carrier、arity 1 和非退化 split grid；ordinal 27/28 使用 arity 2，展�
 参数。`None` 在 J.signature 中只能是 `opaque(mode=value,dtype=none)`，无 logical_ref/J
 tensor/node/effect/π instance，不得换成 dummy pointer 或 scalar；加入 canonical contraction 与
 direct/decomposed stage multiplicity 合同后，Codex/MiniSWE Lift knowledge 当前为
-`intentir.lift-knowledge.v64/v61`。Codex CLI agent runtime v3 在不接受任何未通过候选、也不补写 artifact 的前提下，从被 wall-time 中断的 JSONL 中恢复已经发出的唯一 `thread.started`，使同一 Lift owner 能在剩余 branch 时间内继续；v49/v50 在不改变 artifact/判定的前提下加入 persistent-workspace exact mirror
+`intentir.lift-knowledge.v65/v61`。Codex CLI agent runtime v3 在不接受任何未通过候选、也不补写 artifact 的前提下，从被 wall-time 中断的 JSONL 中恢复已经发出的唯一 `thread.started`，使同一 Lift owner 能在剩余 branch 时间内继续；v49/v50 在不改变 artifact/判定的前提下加入 persistent-workspace exact mirror
 transport compaction、最近 response-group 窗口、source-neutral schema bundle、单一持久 Lift owner，
 以及 Replay v8 的
 exact-source direct submit/exact-text patch+preflight；这些机制只搬运 LLM authored bytes 或既有

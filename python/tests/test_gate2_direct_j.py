@@ -601,6 +601,151 @@ def _make_masked_sum_reduction_artifact():
     return artifact
 
 
+def test_masked_padding_provenance_is_scoped_to_its_load_edge() -> None:
+    artifact = _make_masked_sum_reduction_artifact()
+    artifact.j.boundary.accesses[0].node_ref = None
+    artifact.j.boundary.effects[0].node_ref = None
+    payload = artifact.j.intent.to_json()["intent_function"]
+    payload["body"] = [
+        {
+            "id": "n2",
+            "op": "const",
+            "result": "v2",
+            "attrs": {"value": 0, "dtype": "i64", "shape": []},
+            "type": {"dtype": "i64", "shape": []},
+        },
+        {
+            "id": "n3",
+            "op": "gather",
+            "result": "v3",
+            "operands": ["t0", "v2"],
+            "attrs": {"axis": 1, "mode": "take"},
+            "type": {"dtype": "f32", "shape": ["x0"]},
+        },
+        *payload["body"],
+    ]
+    artifact.j.intent = IntentFunction.from_json(payload)
+    artifact.j.node_ids = {
+        "n2": "body[0]",
+        "n3": "body[1]",
+        "n0": "body[2]",
+        "n1": "body[3]",
+    }
+    artifact.j.boundary.accesses.append(
+        BoundaryAccess(
+            "a2",
+            AccessKind.LOAD,
+            "t0",
+            node_ref="n3",
+            index_expression="[i0, i1]",
+        )
+    )
+    artifact.j.boundary.effects.append(
+        EffectSpec(EffectKind.READ, "t0", "n3", "e2", "a2")
+    )
+    artifact.j.boundary.index_bounds.append(
+        IndexBoundsSpec("n3", "t0", "v2", 1)
+    )
+
+    projection = project_functional_boundary(artifact.j)
+
+    assert projection.consumer_extensions[0].access_ref == "a0"
+    assert "index_bounds:n3" in projection.consumed
+
+
+def test_index_bounded_gather_projects_dynamic_consumer_footprint() -> None:
+    function = IntentFunction.from_json(
+        {
+            "name": "bounded_gather",
+            "inputs": [
+                {"name": "t0", "dtype": "f32", "shape": ["x1"]},
+                {"name": "t1", "dtype": "i32", "shape": []},
+            ],
+            "outputs": [
+                {"name": "t2", "dtype": "f32", "shape": ["x0"]},
+            ],
+            "body": [
+                {
+                    "id": "n0",
+                    "op": "iota",
+                    "result": "v0",
+                    "attrs": {"n": "x0", "dtype": "i32"},
+                    "type": {"dtype": "i32", "shape": ["x0"]},
+                },
+                {
+                    "id": "n1",
+                    "op": "map_binary",
+                    "result": "v1",
+                    "operands": ["v0", "t1"],
+                    "attrs": {"fn": "mul"},
+                    "type": {"dtype": "i32", "shape": ["x0"]},
+                },
+                {
+                    "id": "n2",
+                    "op": "gather",
+                    "result": "t2",
+                    "operands": ["t0", "v1"],
+                    "attrs": {"axis": 0, "mode": "take"},
+                    "type": {"dtype": "f32", "shape": ["x0"]},
+                },
+            ],
+        }
+    )
+    archive = SemanticArchive(
+        kernel_id="bounded_gather",
+        intent=function,
+        node_ids={f"n{index}": f"body[{index}]" for index in range(3)},
+        boundary=Boundary(
+            domains={"d0": "0 <= k0 and k0 < x0"},
+            accesses=[
+                BoundaryAccess(
+                    "a0", AccessKind.LOAD, "t0", predicate="k0 < x0",
+                    node_ref="n2", index_expression="[(k0 * t1)]",
+                ),
+                BoundaryAccess(
+                    "a1", AccessKind.STORE, "t2", predicate="k0 < x0",
+                    node_ref="n2", index_expression="[k0]",
+                ),
+            ],
+            effects=[
+                EffectSpec(EffectKind.READ, "t0", "n2", "e0", "a0"),
+                EffectSpec(EffectKind.WRITE, "t2", "n2", "e1", "a1"),
+            ],
+            index_bounds=[IndexBoundsSpec("n2", "t0", "v1", 0)],
+        ),
+        signature=LogicalSignature(
+            [
+                SignatureParameter(
+                    "p0", ParameterKind.POINTER, ParameterMode.INPUT,
+                    "f32", 1, logical_ref="t0",
+                ),
+                SignatureParameter(
+                    "p1", ParameterKind.SCALAR, ParameterMode.VALUE,
+                    "i32", 0, logical_ref="t1",
+                ),
+                SignatureParameter(
+                    "p2", ParameterKind.POINTER, ParameterMode.OUTPUT,
+                    "f32", 1, logical_ref="t2",
+                ),
+            ]
+        ),
+    )
+
+    projection = project_functional_boundary(archive)
+
+    assert [item.to_json() for item in projection.index_bounded_gathers] == [
+        {
+            "proof": "index_bounded_gather",
+            "access_id": "a0",
+            "node_ref": "n2",
+            "tensor": "t0",
+            "axis": 0,
+            "index_ref": "v1",
+            "consumer_axes": ["k0"],
+        }
+    ]
+
+
 def _make_shared_access_sum_max_artifact():
     artifact = _make_masked_sum_reduction_artifact()
     payload = artifact.j.intent.to_json()["intent_function"]
@@ -1218,7 +1363,7 @@ def test_scalar_e_j_consumes_general_masked_softmax_graph() -> None:
     expected /= np.sum(expected, axis=1, keepdims=True)
     assert result.ok, result.error
     np.testing.assert_allclose(result.outputs["output"], expected, rtol=1e-6)
-    assert result.metadata["protocol"] == "j_scalar_cpu_mlir_v19"
+    assert result.metadata["protocol"] == "j_scalar_cpu_mlir_v20"
     assert (
         result.metadata["boundary_profile"]
         == "logical_domain_reduction_padding_v2"
@@ -1438,7 +1583,7 @@ def test_refeval_runtime_proves_rank_zero_logical_bound_tautology(limit: int) ->
     assert result.ok, result.error
     np.testing.assert_array_equal(result.outputs["output"], value)
     projection = result.metadata["boundary_projection"]
-    assert projection["protocol"] == "intentir.j-functional-boundary.v18"
+    assert projection["protocol"] == "intentir.j-functional-boundary.v19"
     assert FUNCTIONAL_BOUNDARY_PROTOCOL == projection["protocol"]
     assert result.metadata["boundary_profile"] == (
         "logical_domain_runtime_mask_erasure_v1"
@@ -1807,7 +1952,7 @@ def test_scalar_e_j_erases_tail_mask_for_general_pointwise_j() -> None:
 
     assert result.ok, result.error
     assert result.metadata["protocol"] == SCALAR_LOWERING_PROTOCOL
-    assert SCALAR_LOWERING_PROTOCOL == "j_scalar_cpu_mlir_v19"
+    assert SCALAR_LOWERING_PROTOCOL == "j_scalar_cpu_mlir_v20"
     np.testing.assert_allclose(result.outputs["output"], np.tanh(value))
 
 

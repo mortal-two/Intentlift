@@ -50,7 +50,7 @@ from intentir.verify.gate1.model import (
 from .model import ExecutionResult
 
 
-SCALAR_LOWERING_PROTOCOL = "j_scalar_cpu_mlir_v19"
+SCALAR_LOWERING_PROTOCOL = "j_scalar_cpu_mlir_v20"
 
 
 def _digest(value: Mapping[str, Any]) -> str:
@@ -1213,6 +1213,9 @@ class ScalarLoweringRunner:
                     inputs,
                     broadcast_axes=broadcast_axes,
                     access_guard_relations=guarded_loads,
+                    conditional_effect_stores=(
+                        projection.conditional_effect_stores
+                    ),
                 )
                 if structured
                 else execute_on_cpu_outputs(

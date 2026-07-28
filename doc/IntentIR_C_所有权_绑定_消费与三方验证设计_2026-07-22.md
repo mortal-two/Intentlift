@@ -299,8 +299,8 @@ constexpr 只能在纯 selector 情形使用这一 Harness specialization 形式
 只影响 layout/tile/stage 等 implementation
 selection 的 constexpr 应由 Harness 分类为 C slot；static specialization carrier 不得进入 π topology。
 
-Gate2 scalar RefEval 当前使用 `j_scalar_cpu_mlir_v19`，shared functional projection 使用
-`intentir.j-functional-boundary.v18`。它们完整继承 v14/v13、v12/v11、v10/v3 的唯一 node-less logical-input load 与严格
+Gate2 scalar RefEval 当前使用 `j_scalar_cpu_mlir_v20`，shared functional projection 使用
+`intentir.j-functional-boundary.v19`。它们完整继承 v14/v13、v12/v11、v10/v3 的唯一 node-less logical-input load 与严格
 J-only 通用 padded functional graph 消费：每个 predicated direct access 的完整 logical domain、
 每个 logical reduction 的唯一中性 outside-domain contract，以及 pointwise operand 的 closed
 broadcast relation 必须同时闭合；于是多 input/output、max+sum 等多 reduction 与普通 pointwise DAG
@@ -348,10 +348,10 @@ v14/v13 只在可由 J 证明 outside-domain value 不可观察时允许 predica
 绑定 pointwise node，所有依赖路径只能经过 `map_unary/map_binary/select/cast`，所有可观察 destination
 都由完全相同 predicate 的 store 支配；reduce/scan/loop/transpose/pad、不同 predicate 或未匹配 effect
 仍 fail closed。canonical output destination 可由 function `returns` 或 boundary `output_mapping` 任一
-唯一给出；两者同时出现必须一致。shared J→Intent MLIR 入口与 structured reference v5 消费同一个 deterministic
+唯一给出；两者同时出现必须一致。shared J→Intent MLIR 入口与 structured reference v9 消费同一个 deterministic
 `JElaboration.output_bindings`，不要求 LLM 重复序列化同一事实，也不新建第二份 J。
 
-`j_scalar_cpu_mlir_v19` / `intentir.j-functional-boundary.v18` 完整继承 v17/v16 的 product-domain mixed-radix bijection、
+`j_scalar_cpu_mlir_v20` / `intentir.j-functional-boundary.v19` 完整继承 v17/v16 的 product-domain mixed-radix bijection、
 精确 axis-permutation transpose mask provenance、`log2` 与 IEEE special literal 均是共享 J consumer 能力。
 它们要求完整 factor/digit/stride、精确 authored permutation 与同 predicate，不能由 C slot、C value
 或 schedule role 补证；不满足时仍 fail closed。因而 C 既不获得新语义所有权，也不成为该 proof 的
@@ -366,6 +366,13 @@ pointwise consumer 时，missing-fill provenance 才从该 consumer 开始传播
 consumer、非 pointwise consumer、不同 predicate、未闭合 broadcast/effect/output 均继续 fail
 closed。consumer 只解析 J 已有 dataflow，不补 `node_ref`、不修改 artifact，也不读取 Source、C、π
 或 Harness。
+v20/v19/v8 的 edge-scoped padding 与 conditional effect full-store 也完全不读取 C：前者只接受 J
+中匹配 `index_bounds` 的独立 gather edge，后者只消费 J `effect_if` arm producer 和 Layer-B
+access/effect destination。C slot/value 不得提供 predicate、branch value、output pre-state或补造
+未执行 arm 的结果。
+dynamic iota/div range 与 bounded-gather footprint同样不能从 C tile 推导：`x*`、runtime integer
+carrier、`index_bounds`、consumer extension 与 access edge必须已在 J/B 闭合；C 不提供 divisor
+nonzero proof、dimension identity或 node-less/node-bound load ownership。
 当前 Lift knowledge v56 继承 v55-v42 对 `fill_value` 的要求：它是 Source 对应 load 的实际 `other`，
 不是由 C tile/role 或 downstream neutral value 重写的量；MiniSWE Replay v12 / Codex Replay v6 继承既有 typed rank/reshape fidelity
 同样不读取 C value 来选择 shape。v56 的 bound-constexpr/shape-coordinate binding 仍是 J-owned

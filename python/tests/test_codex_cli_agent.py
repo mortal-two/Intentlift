@@ -696,6 +696,11 @@ def scrc_k0(p0, p1, p2, c0: tl.constexpr):
             if self.calls == 1:
                 assert '"exact_packet_embedded":true' in prompt
                 assert '"packet":{"c":' in prompt
+                assert (
+                    "Every J.signature p* is one already-existing callable ABI carrier"
+                    in prompt
+                )
+                assert "duplicate p* instances never authorize" in prompt
                 payload = valid_replay.replace("scrc_k0", "wrong_entry")
             else:
                 check = json.loads(
@@ -848,6 +853,9 @@ def test_codex_lift_keeps_one_thread_and_repairs_from_host_check(
                 assert "same workspace and thread" in prompt
                 assert "<source-aware-startup>" in prompt
                 assert '"feedback_frontier":' in prompt
+                assert '"direct_category_views":{"op_multiset":' in prompt
+                assert '"item":"tt.reshape"' in prompt
+                assert '"deferred_categories":["dataflow"]' in prompt
                 assert "lift_feedback_category CATEGORY" in prompt
                 payload = artifact.to_json()
             (self.output_dir / "candidate.json").write_text(json.dumps(payload))
@@ -895,6 +903,18 @@ def test_codex_lift_keeps_one_thread_and_repairs_from_host_check(
         {
             "observer_diff": {
                 "categories": [
+                    {
+                        "category": "op_multiset",
+                        "difference_count": 1,
+                        "examples": [
+                            {
+                                "kind": "missing",
+                                "item": "tt.reshape",
+                                "expected_count": 1,
+                                "actual_count": 0,
+                            }
+                        ],
+                    },
                     {
                         "category": "dataflow",
                         "difference_count": 1,

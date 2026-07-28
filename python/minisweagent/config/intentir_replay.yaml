@@ -54,10 +54,19 @@ agent:
     queries expose exact authored facts and never infer a realization. Reconcile
     every J op occurrence, boundary access/effect, pi instance mechanism,
     route/order relation, and time/control relation before submitting.
+    Treat `critical_facts.lexical_regions` as the exact region-by-region
+    construction ledger and `critical_facts.cross_region_order` as the exact
+    ordering checklist. They only reindex the same pi and add no lowering fact.
 
     Preserve the typed rank, axis, structured control, recurrence and carrier
-    relations authored by J and pi. A pi physical_iterations relation keeps the
-    reduce/contraction logical in J while requiring its explicit physical loop;
+    relations authored by J and pi. Every J.signature p* is one already-existing
+    callable ABI carrier. Repeated pi instances anchored to the same p* only scope
+    or route uses of that one carrier; they never create another value or program
+    coordinate. Placement=`program` does not turn p* into `tl.program_id`, and
+    duplicate p* instances never authorize duplicate carrier reads or coordinates.
+    Only a distinct typed J-domain realization authorized by the public frontend
+    contract may create a program coordinate. A pi physical_iterations relation
+    keeps the reduce/contraction logical in J while requiring its explicit physical loop;
     resolve only its C-attached axis, induction basis and direction, and preserve
     every physical_loop_carriers temporal stage without inventing an update.
     An ordinary J effect_if remains an explicit runtime if/else. If one
@@ -74,6 +83,11 @@ agent:
 
     Construct and direct-submit complete Triton source early. If preflight fails,
     keep editing the same `/output/replay.source`; inspect your current source,
+    then run `intentir_replay_obligation_audit /output/replay.source` whenever the
+    exact critical ledger contains lexical regions or cross-region order. Compare
+    that ledger against your numbered current bytes yourself. Any later source edit
+    requires another audit of the new exact bytes. The audit diagnoses nothing and
+    supplies no mapping or repair.
     call ReplayCheck and the public synthetic construction compile check. Apply
     focused exact changes and resubmit. Submission reruns both checks for changed
     bytes. Their PASS only closes Replay construction; it is not Gate1, semantic

@@ -131,6 +131,18 @@ def _binary_interval(
             left.upper * right.upper,
         )
         return IntegerInterval(min(products), max(products))
+    if fn == "div" and not (right.lower <= 0 <= right.upper):
+        def trunc_div(numerator: int, denominator: int) -> int:
+            quotient = abs(numerator) // abs(denominator)
+            return -quotient if (numerator < 0) != (denominator < 0) else quotient
+
+        quotients = (
+            trunc_div(left.lower, right.lower),
+            trunc_div(left.lower, right.upper),
+            trunc_div(left.upper, right.lower),
+            trunc_div(left.upper, right.upper),
+        )
+        return IntegerInterval(min(quotients), max(quotients))
     if fn == "min":
         return IntegerInterval(min(left.lower, right.lower), min(left.upper, right.upper))
     if fn == "max":
@@ -142,6 +154,7 @@ def infer_integer_value_intervals(
     j: Any,
     *,
     logical_inputs: Mapping[str, Any] | None = None,
+    dimension_extents: Mapping[str, int] | None = None,
 ) -> dict[str, IntegerInterval]:
     """Infer sound element-value intervals for the supported closed J subgraph."""
 
@@ -181,6 +194,8 @@ def infer_integer_value_intervals(
                     interval = IntegerInterval(min(values), max(values))
             elif operation.op == "iota":
                 extent = operation.attrs.get("n")
+                if isinstance(extent, str):
+                    extent = dict(dimension_extents or {}).get(extent)
                 if type(extent) is int and extent > 0:
                     interval = IntegerInterval(0, extent - 1)
             elif operation.op == "map_unary" and len(operation.operands) == 1:
@@ -202,6 +217,31 @@ def infer_integer_value_intervals(
                         min(positive.lower, negative.lower),
                         max(positive.upper, negative.upper),
                     )
+            elif operation.op == "gather" and len(operation.operands) == 2:
+                data_ref, indices_ref = operation.operands
+                data_interval = intervals.get(data_ref)
+                index_interval = intervals.get(indices_ref)
+                data_type = value_types.get(data_ref)
+                axis = operation.attrs.get("axis")
+                if (
+                    data_interval is not None
+                    and index_interval is not None
+                    and data_type is not None
+                    and type(axis) is int
+                    and 0 <= axis < len(data_type.shape)
+                ):
+                    extent: Any = data_type.shape[axis]
+                    if isinstance(extent, str):
+                        extent = dict(dimension_extents or {}).get(extent)
+                    if (
+                        type(extent) is int
+                        and extent > 0
+                        and index_interval.contained_in(0, extent - 1)
+                    ):
+                        # A proven in-bounds gather can only select values from
+                        # its data carrier.  The full data interval is a sound
+                        # (possibly conservative) interval for its result.
+                        interval = data_interval
             elif operation.op in preserving_ops and operation.operands:
                 operands = [intervals.get(name) for name in operation.operands]
                 if all(item is not None for item in operands):
@@ -244,6 +284,7 @@ def proves_index_bounds(
     interval = infer_integer_value_intervals(
         canonical,
         logical_inputs=logical_inputs,
+        dimension_extents=dimension_extents,
     ).get(relation.indices)
     return interval is not None and interval.contained_in(0, extent - 1)
 

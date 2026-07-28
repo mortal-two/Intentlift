@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from intentir.verify.gate1.model import SemanticArchive
 
 
-STRUCTURED_CPU_REFERENCE_PROTOCOL = "intentir.j-structured-cpu-reference.v7"
+STRUCTURED_CPU_REFERENCE_PROTOCOL = "intentir.j-structured-cpu-reference.v9"
 
 
 class StructuredReferenceUnsupportedError(CPUBackendUnsupportedError):
@@ -127,6 +127,16 @@ def _walk_ops(body: Sequence[IntentOp]) -> tuple[IntentOp, ...]:
             result.extend(_walk_ops(op.positive.body))
             result.extend(_walk_ops(op.negative.body))
     return tuple(result)
+
+
+def _result_names(operation: IntentOp) -> tuple[str, ...]:
+    if isinstance(operation.result, str):
+        return (operation.result,)
+    if isinstance(operation.result, list):
+        return tuple(
+            item for item in operation.result if isinstance(item, str)
+        )
+    return ()
 
 
 def _element_class(dtype: str) -> str | None:
@@ -242,6 +252,7 @@ class _Evaluator:
         dims: Mapping[str, int],
         broadcast_axes: Mapping[str, Mapping[str, Sequence[int]]],
         access_guard_relations: Sequence[Any] = (),
+        conditional_effect_stores: Sequence[Any] = (),
     ) -> None:
         self.j = j
         self.dims = dict(dims)
@@ -276,6 +287,40 @@ class _Evaluator:
                     "structured guarded-load receipts duplicate one operand edge"
                 )
             self.access_guard_loads[key] = relation
+        nodes = {
+            operation.node_id: operation
+            for operation in _walk_ops(j.intent.body)
+            if operation.node_id is not None
+        }
+        output_names = {tensor.name for tensor in j.intent.outputs}
+        self.conditional_effect_stores: dict[str, list[Any]] = {}
+        seen_accesses: set[str] = set()
+        for relation in conditional_effect_stores:
+            access_id = getattr(relation, "access_id", None)
+            node_ref = getattr(relation, "node_ref", None)
+            output = getattr(relation, "output", None)
+            value_ref = getattr(relation, "value_ref", None)
+            operation = nodes.get(node_ref)
+            if (
+                not isinstance(access_id, str)
+                or not isinstance(node_ref, str)
+                or not isinstance(output, str)
+                or not isinstance(value_ref, str)
+                or operation is None
+                or value_ref not in _result_names(operation)
+                or output not in output_names
+            ):
+                raise ValueError(
+                    "structured conditional-store receipt is not mechanically closed"
+                )
+            if access_id in seen_accesses:
+                raise ValueError(
+                    "structured conditional-store receipts duplicate one access"
+                )
+            seen_accesses.add(access_id)
+            self.conditional_effect_stores.setdefault(node_ref, []).append(relation)
+        self.effect_output_state: dict[str, np.ndarray] = {}
+        self.executed_conditional_effect_store_count = 0
         self.operation_count = 0
         self.scan_count = 0
         self.loop_count = 0
@@ -283,6 +328,31 @@ class _Evaluator:
         self.value_if_count = 0
         self.logical_loop_steps = 0
         self.zero_trip_loops = 0
+
+    def _record_conditional_effect_stores(
+        self,
+        operation: IntentOp,
+        env: Mapping[str, np.ndarray],
+    ) -> None:
+        if operation.node_id is None:
+            return
+        for relation in self.conditional_effect_stores.get(operation.node_id, ()):
+            try:
+                value = env[relation.value_ref]
+            except KeyError as exc:
+                raise ValueError(
+                    "structured conditional store producer is unavailable"
+                ) from exc
+            declared = self._declared_type(relation.output)
+            self.effect_output_state[relation.output] = np.array(
+                self._validate_value(
+                    value,
+                    name=relation.output,
+                    declared=declared,
+                ),
+                copy=True,
+            )
+            self.executed_conditional_effect_store_count += 1
 
     def _declared_type(
         self,
@@ -551,9 +621,30 @@ class _Evaluator:
             raise ValueError("structured gather result dtype differs from data")
         mode = op.attrs.get("mode")
         if mode == "along_axis":
+            if index.ndim == data.ndim - 1:
+                if index.ndim == 0:
+                    raise StructuredReferenceUnsupportedError(
+                        "structured compressed along_axis gather does not yet "
+                        "support a rank-0 index/result"
+                    )
+                non_axis_shape = (*data.shape[:axis], *data.shape[axis + 1 :])
+                if index.shape != non_axis_shape:
+                    raise ValueError(
+                        "structured compressed along_axis gather index must "
+                        "match every non-axis data extent"
+                    )
+                if expected_shape != index.shape:
+                    raise ValueError(
+                        "structured compressed along_axis gather result must be "
+                        "shaped like index"
+                    )
+                expanded = np.expand_dims(index, axis=axis)
+                gathered = np.take_along_axis(data, expanded, axis=axis)
+                return np.squeeze(gathered, axis=axis)
             if index.ndim != data.ndim:
                 raise ValueError(
-                    "structured along_axis gather index rank must equal data rank"
+                    "structured along_axis gather index rank must equal data rank "
+                    "or data rank minus one"
                 )
             if any(
                 index.shape[dimension] > data.shape[dimension]
@@ -1115,6 +1206,7 @@ class _Evaluator:
                     name=name,
                     declared=self._declared_type(name, op),
                 )
+                self._record_conditional_effect_stores(op, result)
                 continue
             if op.op == "loop":
                 if not allow_loop:
@@ -1122,6 +1214,7 @@ class _Evaluator:
                         "structured reference does not implement nested loops"
                     )
                 result.update(self._loop(op, result))
+                self._record_conditional_effect_stores(op, result)
                 continue
             name = self._result_name(op)
             value = self._ordinary(op, result)
@@ -1130,6 +1223,7 @@ class _Evaluator:
                 name=name,
                 declared=self._declared_type(name, op),
             )
+            self._record_conditional_effect_stores(op, result)
         return result
 
 
@@ -1140,6 +1234,7 @@ def execute_structured_reference(
     *,
     broadcast_axes: Mapping[str, Mapping[str, Sequence[int]]] | None = None,
     access_guard_relations: Sequence[Any] = (),
+    conditional_effect_stores: Sequence[Any] = (),
 ) -> CPUExecutionResult:
     """Execute the restricted typed denotation of one canonical J.
 
@@ -1197,6 +1292,7 @@ def execute_structured_reference(
         checked_dims,
         broadcast_axes or {},
         guarded_loads,
+        conditional_effect_stores,
     )
     env = evaluator.sequence(j.intent.body, checked_inputs, allow_loop=True)
     output_values = {
@@ -1205,6 +1301,16 @@ def execute_structured_reference(
     }
     outputs: dict[str, np.ndarray] = {}
     for tensor in j.intent.outputs:
+        if tensor.name in evaluator.effect_output_state:
+            outputs[tensor.name] = evaluator._validate_value(
+                evaluator.effect_output_state[tensor.name],
+                name=tensor.name,
+                declared=(
+                    tensor.dtype,
+                    _resolved_shape(tensor.shape, checked_dims),
+                ),
+            )
+            continue
         value_ref = output_values[tensor.name]
         if value_ref not in env:
             raise ValueError(
@@ -1233,6 +1339,9 @@ def execute_structured_reference(
             "zero_trip_loop_count": evaluator.zero_trip_loops,
             "access_guard_load_materialization_count": len(
                 evaluator.access_guard_loads
+            ),
+            "conditional_effect_store_count": (
+                evaluator.executed_conditional_effect_store_count
             ),
             "input_count": len(checked_inputs),
             "output_count": len(outputs),
