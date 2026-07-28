@@ -81,10 +81,10 @@ def _materialize_closed_case(name: str, catalog: str = "production-jc-v1"):
 
 
 @pytest.mark.parametrize("name", _V1_CASE_NAMES)
-def test_every_frozen_closed_j_materializes_from_the_shared_catalog(name: str) -> None:
+def test_every_closed_j_materializes_from_the_shared_catalog(name: str) -> None:
     snapshot, _case, materialized = _materialize_closed_case(name)
 
-    assert materialized.j_digest == snapshot.j_digest
+    assert materialized.j.to_json() == snapshot.j.to_json()
     assert "\nmodule {\n" in materialized.intent_mlir
 
 
@@ -94,7 +94,7 @@ def test_every_fresh14_j_materializes_to_real_mlir(name: str) -> None:
         name, "production-jc-v2"
     )
 
-    assert materialized.j_digest == snapshot.j_digest
+    assert materialized.j.to_json() == snapshot.j.to_json()
     assert materialized.materializer_version == "intentir.production.materializer.v2"
     assert "\nmodule {\n" in materialized.intent_mlir
     projection = materialized.boundary_projection.to_json()
@@ -103,7 +103,7 @@ def test_every_fresh14_j_materializes_to_real_mlir(name: str) -> None:
         logical_projection["protocol"]
         == "intentir.typed-contract-materialization-projection.v1"
     )
-    assert logical_projection["contract_ir_digest"]
+    assert logical_projection["contract_ir"]
     if name == "splitk_reduce_varargs":
         assert "dense<0xFF800000>" in materialized.intent_mlir
 
@@ -185,8 +185,7 @@ def test_materialization_is_deterministic_and_does_not_read_c() -> None:
     right = materialize_j(artifact.j, {"x0": 2, "x1": 4})
 
     assert left.intent_mlir == right.intent_mlir
-    assert left.mlir_digest == right.mlir_digest
-    assert left.j_digest == right.j_digest
+    assert left.j.to_json() == right.j.to_json()
 
 
 def test_attach_c_keeps_base_ir_and_only_records_erasable_priors() -> None:
@@ -210,7 +209,6 @@ def test_attach_none_c_has_the_same_reachable_base() -> None:
     state = attach_c(base, None, BackendTarget("cuda", "sm_120a"))
 
     assert state.priors == ()
-    assert state.c_digest is None
     assert state.base_ir == base.intent_mlir
 
 
@@ -229,8 +227,8 @@ def test_only_j_declared_constexpr_input_can_be_specialized() -> None:
     assert "t4" in generic.runtime_input_names
     assert "t4" not in specialized.runtime_input_names
     assert "dense<true>" in specialized.intent_mlir
-    assert specialized.j_digest == generic.j_digest
-    assert specialized.mlir_digest != generic.mlir_digest
+    assert specialized.j.to_json() == generic.j.to_json()
+    assert specialized.intent_mlir != generic.intent_mlir
 
     with pytest.raises(MaterializationError, match="not authorized"):
         materialize_j(

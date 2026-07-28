@@ -7,7 +7,6 @@ same deterministic Intent MLIR M0 consumed by the CUDA backend.
 
 from __future__ import annotations
 
-import hashlib
 import os
 import re
 import subprocess
@@ -22,7 +21,6 @@ from intentir.backend.toolchain.tools import (
     MLIR_OPT,
     MLIR_TRANSLATE,
 )
-from intentir.ir.production_snapshot import content_digest
 
 
 OPT = os.environ.get("LLVM_OPT", str(LLVM_BIN / "opt"))
@@ -31,33 +29,6 @@ TRIPLE = os.environ.get("INTENT_RISCV_TRIPLE", "riscv64-unknown-linux-gnu")
 MATTR = os.environ.get("INTENT_RISCV_MATTR", "+v,+zfh")
 
 RVV_B_FUSION = "riscv.b.readonly_producer_consumer_fusion.v2"
-
-
-def _sha_file(path: os.PathLike[str] | str) -> str:
-    digest = hashlib.sha256()
-    with open(path, "rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def toolchain_fingerprint() -> str:
-    files = {
-        "intent_opt": str(INTENT_OPT),
-        "mlir_opt": str(MLIR_OPT),
-        "mlir_translate": str(MLIR_TRANSLATE),
-        "opt": str(OPT),
-        "llc": str(LLC),
-    }
-    return content_digest(
-        {
-            "target": {"triple": TRIPLE, "mattr": MATTR},
-            "files": {
-                name: {"path": path, "sha256": _sha_file(path)}
-                for name, path in files.items()
-            },
-        }
-    )
 
 
 def _run_text(command: list[str], *, stdin: str) -> str:
@@ -176,7 +147,13 @@ class RiscvLoweringCandidate:
 
     @property
     def candidate_id(self) -> str:
-        return "rvv.state-request." + content_digest(self._content())[:16]
+        schedule = self.schedule
+        path = self.transformation.lowering_path_kind
+        return (
+            f"rvv.{path}.o{schedule.opt_level}."
+            f"vec{int(schedule.vectorize)}.vlen{schedule.vector_bits}."
+            f"pt{schedule.parallel_tile}.rt{schedule.reduction_tile}"
+        )
 
     def _content(self) -> dict[str, Any]:
         return {
@@ -189,9 +166,7 @@ class RiscvLoweringCandidate:
 
 
 @dataclass(frozen=True)
-class RiscvTransformationReceipt:
-    linalg_before_sha256: str
-    structured_after_sha256: str
+class RiscvTransformationRecord:
     linalg_ops_before: int
     linalg_ops_after: int
     parallel_tile_requested: int = 0
@@ -203,34 +178,9 @@ class RiscvTransformationReceipt:
     fused_producers: int = 0
     fusion_outer_parallel_only_ops: int = 0
     fusion_multi_use_rejections: int = 0
-    pre_schedule_structured_sha256: str = ""
-
-    @property
-    def topology_digest(self) -> str:
-        # This digest identifies the realized lowering path after erasing tile,
-        # vectorization and optimization parameters.  The concrete post-pass
-        # state remains identified separately by structured_after_sha256 and
-        # the final object SHA-256.
-        return content_digest(
-            {
-                "linalg_before_sha256": self.linalg_before_sha256,
-                "pre_schedule_structured_sha256": (
-                    self.pre_schedule_structured_sha256
-                    or self.linalg_before_sha256
-                ),
-                "tile_and_fuse_realized": self.fused_producers > 0,
-                "fused_producers": self.fused_producers,
-                "fusion_outer_parallel_only_ops": (
-                    self.fusion_outer_parallel_only_ops
-                ),
-                "fusion_multi_use_rejections": self.fusion_multi_use_rejections,
-            }
-        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "linalg_before_sha256": self.linalg_before_sha256,
-            "structured_after_sha256": self.structured_after_sha256,
             "linalg_ops_before": self.linalg_ops_before,
             "linalg_ops_after": self.linalg_ops_after,
             "parallel_tile_requested": self.parallel_tile_requested,
@@ -242,11 +192,6 @@ class RiscvTransformationReceipt:
             "fused_producers": self.fused_producers,
             "fusion_outer_parallel_only_ops": self.fusion_outer_parallel_only_ops,
             "fusion_multi_use_rejections": self.fusion_multi_use_rejections,
-            "pre_schedule_structured_sha256": (
-                self.pre_schedule_structured_sha256
-                or self.linalg_before_sha256
-            ),
-            "topology_digest_semantics": "lowering_path_after_erasing_schedule",
         }
 
 
@@ -255,12 +200,8 @@ class RiscvCompiledObject:
     candidate: RiscvLoweringCandidate
     symbol: str
     object_bytes: bytes
-    source_mlir_sha256: str
-    lowered_mlir_sha256: str
-    llvm_ir_sha256: str
-    assembly_sha256: str
     rvv_instruction_count: int
-    transformation_receipt: RiscvTransformationReceipt
+    transformation_record: RiscvTransformationRecord
 
     @property
     def c_interface_symbol(self) -> str:
@@ -270,8 +211,8 @@ class RiscvCompiledObject:
         requested_schedule = self.candidate.schedule.to_dict()
         actual_schedule = {
             **requested_schedule,
-            "parallel_tile": self.transformation_receipt.parallel_tile_applied,
-            "reduction_tile": self.transformation_receipt.reduction_tile_applied,
+            "parallel_tile": self.transformation_record.parallel_tile_applied,
+            "reduction_tile": self.transformation_record.reduction_tile_applied,
         }
         return {
             "candidate_id": self.candidate.candidate_id,
@@ -283,23 +224,17 @@ class RiscvCompiledObject:
             "requested_schedule": requested_schedule,
             "schedule_realization": {
                 "parallel_tile_applied": (
-                    self.transformation_receipt.parallel_tile_applied
+                    self.transformation_record.parallel_tile_applied
                 ),
                 "reduction_tile_applied": (
-                    self.transformation_receipt.reduction_tile_applied
+                    self.transformation_record.reduction_tile_applied
                 ),
                 "requested_equals_actual": requested_schedule == actual_schedule,
             },
-            "transformation_receipt": self.transformation_receipt.to_dict(),
-            "topology_digest": self.transformation_receipt.topology_digest,
+            "transformation_record": self.transformation_record.to_dict(),
             "symbol": self.symbol,
             "c_interface_symbol": self.c_interface_symbol,
             "object_size_bytes": len(self.object_bytes),
-            "object_sha256": hashlib.sha256(self.object_bytes).hexdigest(),
-            "source_mlir_sha256": self.source_mlir_sha256,
-            "lowered_mlir_sha256": self.lowered_mlir_sha256,
-            "llvm_ir_sha256": self.llvm_ir_sha256,
-            "assembly_sha256": self.assembly_sha256,
             "rvv_instruction_count": self.rvv_instruction_count,
             "true_mlir_pipeline": True,
             "python_target_kernel_emission": False,
@@ -324,7 +259,7 @@ def _module_i64_attr(mlir: str, name: str, *, default: int = 0) -> int:
 def _lower_to_llvm_ir(
     state: BackendSearchState,
     candidate: RiscvLoweringCandidate,
-) -> tuple[str, str, RiscvTransformationReceipt]:
+) -> tuple[str, str, RiscvTransformationRecord]:
     source = state.base.intent_mlir
     linalg = _run_text(
         [INTENT_OPT, "-convert-intent-to-linalg", "-expand-rsqrt-for-libm"],
@@ -355,9 +290,7 @@ def _lower_to_llvm_ir(
             ],
             stdin=structured,
         )
-    receipt = RiscvTransformationReceipt(
-        linalg_before_sha256=hashlib.sha256(linalg.encode()).hexdigest(),
-        structured_after_sha256=hashlib.sha256(structured.encode()).hexdigest(),
+    record = RiscvTransformationRecord(
         linalg_ops_before=len(re.findall(r"\blinalg\.[A-Za-z0-9_]+", linalg)),
         linalg_ops_after=len(
             re.findall(r"\blinalg\.[A-Za-z0-9_]+", structured)
@@ -385,9 +318,6 @@ def _lower_to_llvm_ir(
         fusion_multi_use_rejections=_module_i64_attr(
             structured, "intent.schedule.fusion_multi_use_rejection_count"
         ),
-        pre_schedule_structured_sha256=hashlib.sha256(
-            pre_schedule_structured.encode()
-        ).hexdigest(),
     )
     front = [
         "--one-shot-bufferize=bufferize-function-boundaries",
@@ -436,7 +366,7 @@ def _lower_to_llvm_ir(
         [MLIR_TRANSLATE, "--mlir-to-llvmir"],
         stdin=lowered,
     )
-    return lowered, llvm_ir, receipt
+    return lowered, llvm_ir, record
 
 
 def compile_riscv_object(
@@ -459,7 +389,7 @@ def compile_riscv_object(
             "RVV candidate lacks required B capabilities: "
             + ", ".join(sorted(missing))
         )
-    lowered, raw_llvm_ir, transformation_receipt = _lower_to_llvm_ir(
+    lowered, raw_llvm_ir, transformation_record = _lower_to_llvm_ir(
         state, candidate
     )
     schedule = candidate.schedule
@@ -502,12 +432,8 @@ def compile_riscv_object(
         candidate=candidate,
         symbol=_function_symbol(state.base.intent_mlir),
         object_bytes=object_bytes,
-        source_mlir_sha256=state.base.mlir_digest,
-        lowered_mlir_sha256=hashlib.sha256(lowered.encode()).hexdigest(),
-        llvm_ir_sha256=hashlib.sha256(optimized.encode()).hexdigest(),
-        assembly_sha256=hashlib.sha256(assembly.encode()).hexdigest(),
         rvv_instruction_count=rvv_instruction_count,
-        transformation_receipt=transformation_receipt,
+        transformation_record=transformation_record,
     )
 
 
@@ -517,9 +443,8 @@ __all__ = [
     "RiscvCompiledObject",
     "RiscvLoweringCandidate",
     "RiscvSchedule",
-    "RiscvTransformationReceipt",
+    "RiscvTransformationRecord",
     "RiscvTransformationState",
     "TRIPLE",
     "compile_riscv_object",
-    "toolchain_fingerprint",
 ]

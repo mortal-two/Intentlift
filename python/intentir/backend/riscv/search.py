@@ -19,7 +19,6 @@ from intentir.backend.riscv.compile import (
     RiscvSchedule,
     RiscvTransformationState,
 )
-from intentir.ir.production_snapshot import content_digest
 
 
 RVV_SEARCH_PLAN_PROTOCOL = "intentir.backend.riscv.search-plan.v2"
@@ -44,9 +43,16 @@ def _schedule_universe() -> tuple[RiscvSchedule, ...]:
             *_JOINT_TILES,
         )
     )
-    # Candidate IDs are content-addressed, but preserve one deterministic
-    # spelling in case schedule grids are edited later.
-    unique = {content_digest(item.to_dict()): item for item in schedules}
+    unique: dict[tuple[int, bool, int, int, int], RiscvSchedule] = {}
+    for item in schedules:
+        key = (
+            item.opt_level,
+            item.vectorize,
+            item.vector_bits,
+            item.parallel_tile,
+            item.reduction_tile,
+        )
+        unique.setdefault(key, item)
     return tuple(unique[key] for key in sorted(unique))
 
 
@@ -286,14 +292,9 @@ class RiscvSearchPlan:
     ignored_c_priors: tuple[dict[str, Any], ...]
     c_projection: Mapping[str, Any]
 
-    @property
-    def universe_digest(self) -> str:
-        return content_digest(sorted(item.candidate_id for item in self.universe))
-
     def to_record(self) -> dict[str, Any]:
         return {
             "protocol": RVV_SEARCH_PLAN_PROTOCOL,
-            "candidate_universe_digest": self.universe_digest,
             "candidate_universe_count": len(self.universe),
             "schedule_only_erase_c_order": list(
                 self.schedule_only_erase_c_order

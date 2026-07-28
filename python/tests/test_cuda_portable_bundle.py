@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import hashlib
-
 import numpy as np
 import pytest
 
@@ -73,13 +71,12 @@ def test_extracted_launch_json_roundtrip_is_content_exact() -> None:
         binary_name="binary",
         plan=(("ptr", 0), ("i32", 7), ("f32", 0.5)),
         record=PreparedLaunchRecord((2, 1, 1), (128, 1, 1), 0, 3, 1),
-        source_mlir_sha256="a" * 64,
     )
 
     restored = ExtractedSingleLaunch.from_dict(launch.to_dict())
 
     assert restored == launch
-    assert restored.cubin_sha256 == launch.cubin_sha256
+    assert restored.cubin == launch.cubin
     assert portable_launch_from_dict(launch.to_dict()) == launch
 
 
@@ -97,13 +94,13 @@ def test_extracted_graph_launch_json_roundtrip_is_content_exact() -> None:
             launch_count=3,
             intermediate_buffer_count=1,
         ),
-        source_mlir_sha256=hashlib.sha256(source.encode("utf-8")).hexdigest(),
     )
 
     restored = ExtractedGraphLaunch.from_dict(graph.to_dict())
 
     assert restored == graph
-    assert restored.executable_sha256 == graph.executable_sha256
+    assert restored.kernels == graph.kernels
+    assert restored.source_mlir == graph.source_mlir
     assert restored.binary_size_bytes == len(b"\x7fELFfirst\x7fELFsecond")
     assert portable_launch_from_dict(graph.to_dict()) == graph
 

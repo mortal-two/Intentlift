@@ -7,13 +7,13 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 
-def _target_identity(report: Mapping[str, Any]) -> tuple[Any, ...]:
+def _target_configuration(report: Mapping[str, Any]) -> tuple[Any, ...]:
     target = report.get("target")
     if isinstance(target, Mapping):
         return ("target", json.dumps(target, sort_keys=True))
     device = report.get("device", {})
     if not isinstance(device, Mapping):
-        raise ValueError("performance report has no target/device identity")
+        raise ValueError("performance report has no target/device configuration")
     return (
         "device",
         device.get("target_chip"),
@@ -27,10 +27,10 @@ def _target_identity(report: Mapping[str, Any]) -> tuple[Any, ...]:
 def load_disjoint_kernel_reports(
     paths: Sequence[Path],
 ) -> tuple[list[dict[str, Any]], dict[str, Mapping[str, Any]]]:
-    """Load same-target receipts whose kernel sets must be disjoint.
+    """Load same-target reports whose kernel sets must be disjoint.
 
     This is deliberately not a synthetic raw-report merger: each original
-    receipt keeps its own toolchain and creation metadata. Consumers receive a
+    report keeps its own toolchain and creation metadata. Consumers receive a
     unified kernel view while retaining the source reports separately.
     """
 
@@ -42,7 +42,7 @@ def load_disjoint_kernel_reports(
     protocols = {report.get("protocol") for report in reports}
     if len(protocols) != 1:
         raise ValueError("incremental reports use different protocols")
-    targets = {_target_identity(report) for report in reports}
+    targets = {_target_configuration(report) for report in reports}
     if len(targets) != 1:
         raise ValueError("incremental reports target different devices")
     kernels: dict[str, Mapping[str, Any]] = {}

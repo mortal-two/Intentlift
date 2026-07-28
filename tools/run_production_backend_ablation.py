@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import sys
 import time
@@ -14,7 +13,6 @@ from typing import Any, Mapping
 import intentir.backend.cuda.compile as backend_compile
 from intentir.backend.ablation import (
     ExperimentArm,
-    ablation_spec_digest,
     standard_ablation_plan,
 )
 from intentir.backend.ablation_report import summarize_ablation_records
@@ -23,7 +21,6 @@ from intentir.backend.cuda.production_cases import (
     PRODUCTION_WORKLOAD_PROFILE_CLOSED,
     PRODUCTION_WORKLOAD_PROFILE_NATURAL_HEADLINE,
 )
-from intentir.backend.cuda.search import PerformanceCache
 from intentir.verify.gate1.compiler import KernelSource
 from benchmark_production_cuda import _device_record, _one_kernel
 
@@ -57,17 +54,13 @@ def _replay_program(
     raw = manifest.get(name)
     if raw is None:
         return None
-    if not isinstance(raw, Mapping) or set(raw) != {"path", "sha256", "function"}:
+    if not isinstance(raw, Mapping) or not {"path", "function"}.issubset(raw):
         raise ValueError(
-            f"Replay manifest entry {name!r} requires path, sha256, function"
+            f"Replay manifest entry {name!r} requires path and function"
         )
     path = Path(str(raw["path"]))
-    payload = path.read_bytes()
-    digest = hashlib.sha256(payload).hexdigest()
-    if digest != raw["sha256"]:
-        raise ValueError(f"Replay manifest digest mismatch for {name}")
     return KernelSource.from_replay(
-        payload.decode("utf-8"),
+        path.read_text(encoding="utf-8"),
         str(raw["function"]),
     )
 
@@ -76,7 +69,6 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--snapshot-dir", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
-    parser.add_argument("--cache", type=Path)
     parser.add_argument(
         "--kernels",
         nargs="*",
@@ -135,7 +127,6 @@ def main(argv: list[str] | None = None) -> int:
                 + ", ".join(missing)
             )
 
-    cache = PerformanceCache(args.cache)
     records: list[dict[str, Any]] = []
     started = time.time_ns()
     stop = False
@@ -158,7 +149,6 @@ def main(argv: list[str] | None = None) -> int:
                         if axes.enable_local_b_transformations
                         else "schedule-only"
                     ),
-                    cache=cache,
                     axes=axes,
                     fixed_lowering_path_kind=(
                         str(fixed_paths[name])
@@ -214,7 +204,6 @@ def main(argv: list[str] | None = None) -> int:
         "elapsed_seconds": (time.time_ns() - started) / 1_000_000_000.0,
         "device": _device_record(torch),
         "target_chip": backend_compile.CHIP,
-        "experiment_spec_digest": ablation_spec_digest(),
         "candidate_budget": args.candidate_budget,
         "workload_profile": args.workload_profile,
         "kernel_universe": sorted(PRODUCTION_CASE_IDS),
@@ -226,11 +215,6 @@ def main(argv: list[str] | None = None) -> int:
         ),
         "replay_manifest": {
             "path": str(args.replay_manifest) if args.replay_manifest else None,
-            "sha256": (
-                hashlib.sha256(args.replay_manifest.read_bytes()).hexdigest()
-                if args.replay_manifest is not None
-                else None
-            ),
             "indexed_kernels": sorted(replay_manifest),
             "missing_selected_kernels": sorted(
                 set(args.kernels) - set(replay_manifest)

@@ -4,7 +4,7 @@ from .compile import (
     RiscvCompiledObject,
     RiscvLoweringCandidate,
     RiscvSchedule,
-    RiscvTransformationReceipt,
+    RiscvTransformationRecord,
     RiscvTransformationState,
     compile_riscv_object,
 )
@@ -20,7 +20,7 @@ __all__ = [
     "RiscvContractView",
     "RiscvLoweringCandidate",
     "RiscvSchedule",
-    "RiscvTransformationReceipt",
+    "RiscvTransformationRecord",
     "RiscvTransformationState",
     "compile_riscv_object",
     "derive_riscv_contract_view",

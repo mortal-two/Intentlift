@@ -1,9 +1,9 @@
 """Target-neutral execution-domain search filtering and winner closure.
 
 The core compiler never sees Source, Replay, Q, or test inputs.  This module is
-the single outer controller that applies the already-frozen Gate2 comparison
-policy to opaque executable runners.  It does not emit target code and it does
-not add numeric permissions to J.
+the single outer controller that applies the fixed Gate2 comparison policy to
+opaque executable runners.  It does not emit target code or add numeric
+permissions to J.
 """
 
 from __future__ import annotations
@@ -14,7 +14,6 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Mapping
 
-from intentir.ir.production_snapshot import content_digest
 from intentir.verify.gate1.model import SemanticArchive
 from intentir.verify.gate2.compare import compare_outputs
 from intentir.verify.gate2.model import ExecutionResult, PairwiseAgreement
@@ -22,7 +21,6 @@ from intentir.verify.gate2.orchestrate import (
     Gate2Case,
     Gate2Suite,
     clone_gate2_values,
-    gate2_input_digest,
 )
 from intentir.verify.gate2.policy import ComparisonPolicy
 from intentir.verify.gate2.scalar import ScalarLoweringSpec
@@ -51,18 +49,18 @@ class ConcreteLoweringState:
     transformation_trace: tuple[str, ...]
     schedule: Mapping[str, bool | int | float | str]
     observation_class: ObservationClass
-    mlir_digest: str | None = None
-    topology_digest: str | None = None
-    executable_digest: str | None = None
     compiler_record: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        for label, value in (
-            ("state_id", self.state_id),
-            ("lowering_path_kind", self.lowering_path_kind),
+        if not isinstance(self.state_id, str) or not self.state_id:
+            raise BackendClosureError("state_id must be non-empty")
+        if (
+            not isinstance(self.lowering_path_kind, str)
+            or _STATE_ID.fullmatch(self.lowering_path_kind) is None
         ):
-            if not isinstance(value, str) or _STATE_ID.fullmatch(value) is None:
-                raise BackendClosureError(f"{label} must be a stable identifier")
+            raise BackendClosureError(
+                "lowering_path_kind must be a stable identifier"
+            )
         trace = tuple(self.transformation_trace)
         if not trace or any(
             not isinstance(item, str) or _STATE_ID.fullmatch(item) is None
@@ -78,13 +76,6 @@ class ConcreteLoweringState:
                 "observation_class",
                 ObservationClass(self.observation_class),
             )
-        for name, digest in (
-            ("mlir_digest", self.mlir_digest),
-            ("topology_digest", self.topology_digest),
-            ("executable_digest", self.executable_digest),
-        ):
-            if digest is not None and re.fullmatch(r"[0-9a-f]{64}", digest) is None:
-                raise BackendClosureError(f"{name} must be SHA-256 when present")
         for name, value in self.schedule.items():
             if not isinstance(name, str) or not name:
                 raise BackendClosureError("schedule keys must be non-empty strings")
@@ -100,9 +91,6 @@ class ConcreteLoweringState:
             "transformation_trace": list(self.transformation_trace),
             "schedule": dict(self.schedule),
             "observation_class": self.observation_class.value,
-            "mlir_digest": self.mlir_digest,
-            "topology_digest": self.topology_digest,
-            "executable_digest": self.executable_digest,
             "compiler_record": dict(self.compiler_record),
         }
 
@@ -149,10 +137,6 @@ class ExecutionDomainCase:
         )
 
     @property
-    def input_digest(self) -> str:
-        return gate2_input_digest(self.values)
-
-    @property
     def input_binding_map(self) -> dict[str, str]:
         return dict(self.input_bindings)
 
@@ -160,10 +144,9 @@ class ExecutionDomainCase:
     def output_binding_map(self) -> dict[str, str]:
         return dict(self.output_bindings)
 
-    def identity_record(self) -> dict[str, Any]:
+    def to_record(self) -> dict[str, Any]:
         return {
             "case_id": self.case_id,
-            "input_digest": self.input_digest,
             "input_bindings": dict(self.input_bindings),
             "output_bindings": dict(self.output_bindings),
         }
@@ -181,11 +164,8 @@ class ExecutionDomain:
         if not cases:
             raise BackendClosureError("execution domain requires at least one case")
         ids = [item.case_id for item in cases]
-        digests = [item.input_digest for item in cases]
         if len(ids) != len(set(ids)):
             raise BackendClosureError("execution domain has duplicate case_id values")
-        if len(digests) != len(set(digests)):
-            raise BackendClosureError("execution domain repeats an exact input")
         object.__setattr__(self, "cases", cases)
 
     @classmethod
@@ -197,25 +177,11 @@ class ExecutionDomain:
             tuple(ExecutionDomainCase.from_gate2_case(case) for case in suite.cases),
         )
 
-    @property
-    def digest(self) -> str:
-        return content_digest(
-            {
-                "domain_id": self.domain_id,
-                "cases": [item.identity_record() for item in self.cases],
-            }
-        )
-
-    @property
-    def input_digests(self) -> frozenset[str]:
-        return frozenset(item.input_digest for item in self.cases)
-
     def to_dict(self) -> dict[str, Any]:
         return {
             "domain_id": self.domain_id,
-            "digest": self.digest,
             "case_count": len(self.cases),
-            "cases": [item.identity_record() for item in self.cases],
+            "cases": [item.to_record() for item in self.cases],
         }
 
 
@@ -263,7 +229,6 @@ class DirectEdgeEvidence:
 class CandidateQDResult:
     state: ConcreteLoweringState
     domain_id: str
-    domain_digest: str
     edges: tuple[DirectEdgeEvidence, ...]
 
     @property
@@ -274,15 +239,13 @@ class CandidateQDResult:
         return {
             "state": self.state.to_dict(),
             "domain_id": self.domain_id,
-            "domain_digest": self.domain_digest,
             "passed": self.passed,
             "edges": [item.to_dict() for item in self.edges],
         }
 
 
 @dataclass(frozen=True)
-class BackendClosureReceipt:
-    j_digest: str
+class BackendClosureResult:
     target: Mapping[str, Any]
     q: Mapping[str, Any]
     d_search: Mapping[str, Any]
@@ -306,7 +269,6 @@ class BackendClosureReceipt:
     def _content(self) -> dict[str, Any]:
         return {
             "protocol": self.protocol,
-            "j_digest": self.j_digest,
             "target": dict(self.target),
             "q": dict(self.q),
             "d_search": dict(self.d_search),
@@ -319,12 +281,8 @@ class BackendClosureReceipt:
             "passed": self.passed,
         }
 
-    @property
-    def receipt_digest(self) -> str:
-        return content_digest(self._content())
-
     def to_dict(self) -> dict[str, Any]:
-        return {**self._content(), "receipt_digest": self.receipt_digest}
+        return self._content()
 
 
 class SearchAndCloseController:
@@ -343,25 +301,26 @@ class SearchAndCloseController:
         if not isinstance(j, SemanticArchive):
             raise BackendClosureError("SearchAndClose requires canonical J")
         if not isinstance(policy, ComparisonPolicy):
-            raise BackendClosureError("SearchAndClose requires frozen Q")
+            raise BackendClosureError("SearchAndClose requires fixed Q")
         if not isinstance(d_search, ExecutionDomain) or not isinstance(
             d_cert, ExecutionDomain
         ):
             raise BackendClosureError("SearchAndClose requires D_search and D_cert")
-        if d_search.input_digests & d_cert.input_digests:
+        search_case_ids = {item.case_id for item in d_search.cases}
+        cert_case_ids = {item.case_id for item in d_cert.cases}
+        if search_case_ids & cert_case_ids:
             raise BackendClosureError(
-                "D_search and D_cert must contain disjoint exact inputs"
+                "D_search and D_cert must use disjoint case ids"
             )
         policy.validate_j(j)
-        j_digest = content_digest(j.to_json())
+        canonical_j = j.to_json()
         for domain in (d_search, d_cert):
             for case in domain.cases:
-                if content_digest(case.j.to_json()) != j_digest:
+                if case.j.to_json() != canonical_j:
                     raise BackendClosureError(
-                        "all Q/D cases must reference the same frozen J"
+                        "all Q/D cases must reference the same J"
                     )
         self.j = j
-        self.j_digest = j_digest
         self.target = dict(target)
         self.policy = policy
         self.d_search = d_search
@@ -371,8 +330,7 @@ class SearchAndCloseController:
 
     @property
     def q_record(self) -> dict[str, Any]:
-        policy = self.policy.to_json()
-        return {"policy": policy, "digest": content_digest(policy)}
+        return {"policy": self.policy.to_json()}
 
     @staticmethod
     def _execute(
@@ -498,7 +456,6 @@ class SearchAndCloseController:
         result = CandidateQDResult(
             state,
             self.d_search.domain_id,
-            self.d_search.digest,
             tuple(edges),
         )
         self._search_results[state.state_id] = result
@@ -508,7 +465,7 @@ class SearchAndCloseController:
         self,
         executable: Any,
         state: ConcreteLoweringState,
-    ) -> BackendClosureReceipt:
+    ) -> BackendClosureResult:
         """Certify one already-fixed winner by three independent direct edges."""
 
         search = self._search_results.get(state.state_id)
@@ -541,8 +498,7 @@ class SearchAndCloseController:
                     )
                 )
 
-        return BackendClosureReceipt(
-            j_digest=self.j_digest,
+        return BackendClosureResult(
             target=self.target,
             q=self.q_record,
             d_search=self.d_search.to_dict(),
@@ -557,7 +513,7 @@ __all__ = [
     "BACKEND_CLOSURE_PROTOCOL",
     "SEARCH_AND_CLOSE_PROTOCOL",
     "BackendClosureError",
-    "BackendClosureReceipt",
+    "BackendClosureResult",
     "CandidateQDResult",
     "ConcreteLoweringState",
     "DirectEdgeEvidence",

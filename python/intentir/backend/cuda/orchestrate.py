@@ -227,9 +227,9 @@ def _set_dynamic_shared_memory(func, shared: int) -> bool:
 
 
 # --------------------------------------------------------------------------- #
-# Cached (Triton-style) launcher (R-FLASH-1).                                  #
+# Prepared (Triton-style) launcher (R-FLASH-1).                                #
 # --------------------------------------------------------------------------- #
-class CachedLauncher:
+class PreparedLauncher:
     """Pre-marshalled kernel launcher: builds the ctypes argument array ONCE and
     updates only the pointer/scalar slots in place per call, then invokes
     ``cuLaunchKernel`` directly with NO per-call Python arg rebuild and NO
@@ -239,7 +239,8 @@ class CachedLauncher:
     array, and blocks on ``torch.cuda.synchronize()`` every call -- fine for
     correctness harnesses but it inflates sub-30us kernels (the small-shape flash
     gap in R4). Triton's launcher caches its arg buffer and does not sync per
-    call; this mirrors that so flash-fwd reaches parity at ALL shapes, not just
+    call; this mirrors that prepared launch closure so flash-fwd reaches parity
+    at ALL shapes, not just
     the GPU-bound large ones.
 
     ``plan`` is the same launch-arg plan the flash kernels already build:
@@ -294,14 +295,14 @@ class CachedLauncher:
                 }
                 if scalar_kind not in cells:
                     raise RuntimeError(
-                        f"CachedLauncher: unsupported input scalar {kind!r}"
+                        f"PreparedLauncher: unsupported input scalar {kind!r}"
                     )
                 self._input_scalar_slots.append(
                     (len(self._cells), int(entry[1]), scalar_kind)
                 )
                 self._cells.append(cells[scalar_kind](0))
             else:
-                raise RuntimeError(f"CachedLauncher: unhandled plan entry {entry!r}")
+                raise RuntimeError(f"PreparedLauncher: unhandled plan entry {entry!r}")
         # Build the pointer array ONCE; the cells' addresses are stable.
         self._arg_ptrs = (ctypes.c_void_p * len(self._cells))()
         for i, cv in enumerate(self._cells):
@@ -315,7 +316,7 @@ class CachedLauncher:
             value = inputs[in_i]
             if not hasattr(value, "numel") or int(value.numel()) != 1:
                 raise ValueError(
-                    "CachedLauncher: dynamic scalar input must contain one value"
+                    "PreparedLauncher: dynamic scalar input must contain one value"
                 )
             if kind in {"f16", "bf16"}:
                 import torch
@@ -323,7 +324,7 @@ class CachedLauncher:
                 expected = torch.float16 if kind == "f16" else torch.bfloat16
                 if value.dtype != expected:
                     raise ValueError(
-                        f"CachedLauncher: input {in_i} must have dtype {expected}"
+                        f"PreparedLauncher: input {in_i} must have dtype {expected}"
                     )
                 scalar = int(value.reshape(()).view(torch.uint16).item())
             else:
@@ -352,7 +353,7 @@ class CachedLauncher:
 
 @dataclass(frozen=True)
 class PreparedGraphRecord:
-    """Allocation-free timed-launch provenance for one compiled CUDA graph."""
+    """Allocation-free timed-launch counts for one compiled CUDA graph."""
 
     launch_count: int
     kernel_count: int
@@ -369,7 +370,7 @@ class PreparedGraphRecord:
 
 
 class PreparedGraphProgram:
-    """Persistent tensors plus cached no-sync launchers for a whole MLIR graph."""
+    """Persistent tensors plus prepared no-sync launchers for a whole MLIR graph."""
 
     def __init__(self, sites, outputs, record: PreparedGraphRecord):
         self._sites = tuple(sites)
@@ -721,9 +722,9 @@ def _parse_malloc_buffers(func_text: str) -> dict[str, _Buffer]:
     ``llvm.struct``. The aligned pointer (struct field [1]) can be either a
     legacy ``llvm.inttoptr`` result or a direct opaque-pointer ``malloc`` result;
     the sizes are inserted at ``[3, i]``. We group insertvalues by their
-    struct-SSA lineage to recover each buffer's shape.
+    struct-SSA chain to recover each buffer's shape.
     """
-    # Map each undef-struct lineage: chase insertvalue dst<-src to a root undef.
+    # Map each undef-struct chain: chase insertvalue dst<-src to a root undef.
     # value_inserted[ssa_result] = (src_ssa, inserted_ssa, position)
     inserts: list[tuple[str, str, str, str]] = []  # (result, src, inserted, pos)
     for m in re.finditer(
@@ -1723,7 +1724,7 @@ def run_program(
                     f"orchestrate: unhandled launch-arg type {ty!r} (operand {op.ssa})"
                 )
 
-        launcher = CachedLauncher(func, grid, block, plan, shared=shared)
+        launcher = PreparedLauncher(func, grid, block, plan, shared=shared)
         launcher.bind_input_scalars(launch_tensors)
         prepared_sites.append((launcher, tuple(launch_tensors)))
 

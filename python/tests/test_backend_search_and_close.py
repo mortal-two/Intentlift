@@ -45,9 +45,6 @@ def _state() -> ConcreteLoweringState:
         ),
         {"block_threads": 128},
         ObservationClass.OBSERVATION_CHANGING,
-        mlir_digest="1" * 64,
-        topology_digest="2" * 64,
-        executable_digest="3" * 64,
     )
 
 
@@ -85,29 +82,31 @@ def test_search_filter_then_three_direct_certification_edges() -> None:
     state = _state()
 
     filtered = controller.filter_candidate({"bias": 0.0}, state)
-    receipt = controller.close_winner({"bias": 0.0}, state)
+    result = controller.close_winner({"bias": 0.0}, state)
 
     assert filtered.passed
     assert {item.edge for item in filtered.edges} == {"target_ref_j"}
-    assert receipt.passed
-    assert {item.edge for item in receipt.certification_edges} == {
+    assert result.passed
+    assert {item.edge for item in result.certification_edges} == {
         "target_source",
         "target_replay",
         "target_ref_j",
     }
-    assert len(receipt.receipt_digest) == 64
-    assert receipt.d_search["digest"] != receipt.d_cert["digest"]
+    assert result.d_search["domain_id"] == "search"
+    assert result.d_cert["domain_id"] == "cert"
+    assert result.d_search["cases"][0]["case_id"] == "search-1"
+    assert result.d_cert["cases"][0]["case_id"] == "cert-1"
 
 
-def test_final_receipt_does_not_infer_target_source_by_tolerance_transitivity() -> None:
+def test_final_result_does_not_infer_target_source_by_tolerance_transitivity() -> None:
     controller = _controller(source_bias=1.0e-3)
     state = _state()
     assert controller.filter_candidate({"bias": 0.0}, state).passed
 
-    receipt = controller.close_winner({"bias": 0.0}, state)
+    result = controller.close_winner({"bias": 0.0}, state)
 
-    assert not receipt.passed
-    edges = {item.edge: item for item in receipt.certification_edges}
+    assert not result.passed
+    edges = {item.edge: item for item in result.certification_edges}
     assert edges["target_ref_j"].passed
     assert edges["target_replay"].passed
     assert not edges["target_source"].passed

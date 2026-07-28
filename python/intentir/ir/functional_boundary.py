@@ -10,8 +10,6 @@ tensors of ``IntentFunction`` without silently dropping semantics.
 from __future__ import annotations
 
 from dataclasses import dataclass
-import hashlib
-import json
 from numbers import Integral
 import re
 from typing import Any, Mapping, Sequence
@@ -53,17 +51,10 @@ class PredicateProjection:
 
 
 @dataclass(frozen=True)
-class RuntimePredicateProofReceipt:
-    """Source-free receipt for one invocation-local tautology proof.
-
-    The receipt deliberately contains no runtime value or value digest.  The
-    enclosing Gate2 case already binds the execution to its hidden input
-    digest; this record says only which J-owned predicate was proved over
-    which J-owned closed axes for that invocation.
-    """
+class RuntimePredicateProofRecord:
+    """One invocation-local tautology proof over J-owned inputs and axes."""
 
     access_id: str
-    predicate_digest: str
     logical_input_refs: tuple[str, ...]
     domain_axes: tuple[str, ...]
 
@@ -72,7 +63,6 @@ class RuntimePredicateProofReceipt:
             "protocol": RUNTIME_PREDICATE_PROOF_PROTOCOL,
             "proof": "closed_domain_tautology",
             "access_id": self.access_id,
-            "predicate_digest": self.predicate_digest,
             "logical_input_refs": list(self.logical_input_refs),
             "domain_axes": list(self.domain_axes),
         }
@@ -252,10 +242,9 @@ class FunctionalBoundaryProjection:
     ]
     proven_index_bounds: frozenset[str]
     consumed: tuple[str, ...]
-    boundary_digest: str
     predicated_access_count: int
     erased_fill_count: int
-    runtime_predicate_proofs: tuple[RuntimePredicateProofReceipt, ...] = ()
+    runtime_predicate_proofs: tuple[RuntimePredicateProofRecord, ...] = ()
     consumer_extensions: tuple[ConsumerOutsideProjection, ...] = ()
     value_dimension_relations: tuple[tuple[str, str], ...] = ()
     constant_gathers: tuple[ConstantGatherProjection, ...] = ()
@@ -305,11 +294,10 @@ class FunctionalBoundaryProjection:
             ],
             "proven_index_bounds": sorted(self.proven_index_bounds),
             "consumed": list(self.consumed),
-            "boundary_digest": self.boundary_digest,
             "predicated_access_count": self.predicated_access_count,
             "erased_fill_count": self.erased_fill_count,
             "runtime_predicate_proofs": [
-                receipt.to_json() for receipt in self.runtime_predicate_proofs
+                record.to_json() for record in self.runtime_predicate_proofs
             ],
             "consumer_extensions": [
                 relation.to_json() for relation in self.consumer_extensions
@@ -393,18 +381,6 @@ def project_predicate_text(
         ),
         logical_guards=logical_guards,
     )
-
-
-def _digest(value: Mapping[str, Any]) -> str:
-    return hashlib.sha256(
-        json.dumps(
-            value,
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=False,
-            allow_nan=False,
-        ).encode()
-    ).hexdigest()
 
 
 def _result_names(op: IntentOp) -> tuple[str, ...]:
@@ -1635,7 +1611,7 @@ def _runtime_predicate_tautology(
     logical_input_types: Mapping[str, str],
     logical_inputs: Mapping[str, Any] | None,
     logical_dimensions: Mapping[str, int] | None,
-) -> tuple[PredicateProjection, RuntimePredicateProofReceipt] | None:
+) -> tuple[PredicateProjection, RuntimePredicateProofRecord] | None:
     """Prove a narrow predicate true at every point of one closed access domain.
 
     This is an invocation-local RefEval capability proof, never a J legality
@@ -1738,13 +1714,12 @@ def _runtime_predicate_tautology(
         frozenset(lower_axes),
         tuple(sorted(effective_upper.items())),
     )
-    receipt = RuntimePredicateProofReceipt(
+    record = RuntimePredicateProofRecord(
         access_id=access_id,
-        predicate_digest=_digest({"predicate": expression.to_text()}),
         logical_input_refs=tuple(sorted(logical_refs)),
         domain_axes=tuple(sorted(effective_upper)),
     )
-    return canonical, receipt
+    return canonical, record
 
 
 def _full_domains(j: Any) -> dict[str, int | str]:
@@ -3750,7 +3725,7 @@ def _project_functional_boundary(
         for item in j.intent.inputs
         if item.name in logical_scalar_inputs
     }
-    runtime_predicate_proofs: list[RuntimePredicateProofReceipt] = []
+    runtime_predicate_proofs: list[RuntimePredicateProofRecord] = []
     declared_dimensions = {
         dimension
         for tensor in tensors.values()
@@ -3865,11 +3840,11 @@ def _project_functional_boundary(
                     logical_dimensions=runtime_logical_dimensions,
                 )
                 if runtime_proof is not None:
-                    predicate, receipt = runtime_proof
+                    predicate, record = runtime_proof
                     predicate = _substitute_value_dimension_bounds(
                         predicate, dict(_value_dimension_pairs(j))
                     )
-                    runtime_predicate_proofs.append(receipt)
+                    runtime_predicate_proofs.append(record)
                     runtime_predicate_proved = True
             if predicate.guards:
                 raise NotImplementedError(
@@ -4277,19 +4252,6 @@ def _project_functional_boundary(
         ),
         proven_index_bounds=proven_bounds,
         consumed=tuple(sorted(consumed)),
-        boundary_digest=_digest(
-            {
-                "boundary": boundary.to_json(),
-                "value_dimension_relations": [
-                    {
-                        "value_ref": value_ref,
-                        "dimension_ref": dimension_ref,
-                        "relation": "eq",
-                    }
-                    for value_ref, dimension_ref in value_dimension_pairs
-                ],
-            }
-        ),
         predicated_access_count=sum(
             item.predicate is not None for item in boundary.accesses
         ),
@@ -4372,7 +4334,7 @@ __all__ = [
     "FunctionalBoundaryProjection",
     "ConsumerOutsideProjection",
     "PredicateProjection",
-    "RuntimePredicateProofReceipt",
+    "RuntimePredicateProofRecord",
     "functional_boundary_closure_issues",
     "functional_consumer_extension_requirements",
     "functional_reduction_padding_issues",

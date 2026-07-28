@@ -20,7 +20,6 @@ _MAX_MEMORY_WALL_LATENCY_RATIO = 2.0
 class RooflineCeilings:
     memory_gbps: float
     fp32_gflops: float
-    provenance: Mapping[str, Any]
 
     def __post_init__(self) -> None:
         if self.memory_gbps <= 0 or self.fp32_gflops <= 0:
@@ -35,7 +34,6 @@ class RooflineCeilings:
             "memory_gbps": self.memory_gbps,
             "fp32_gflops": self.fp32_gflops,
             "ridge_point_flop_per_byte": self.ridge_point_flop_per_byte,
-            "provenance": dict(self.provenance),
         }
 
 

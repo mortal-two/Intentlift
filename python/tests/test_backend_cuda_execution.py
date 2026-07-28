@@ -254,9 +254,9 @@ def test_direct_elementwise_preserves_rank1_abi_and_tail_mask() -> None:
     )["out0"]
 
     assert program.selection.pipeline_kind == "specialized"
-    assert program.transformation_receipt is not None
+    assert program.transformation_record is not None
     assert "cuda.elementwise.rank1.output.v1" in (
-        program.transformation_receipt.transformation_trace
+        program.transformation_record.transformation_trace
     )
     assert output.shape == x.shape
     torch.testing.assert_close(output, x, rtol=0.0, atol=0.0)

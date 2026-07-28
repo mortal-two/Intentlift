@@ -10,7 +10,6 @@ from intentir.backend.cuda.search import (
     B_CAP_RANK0_HOST_CAPTURE,
     B_TRANSFORM_RANK0_HOST_CAPTURE,
     CudaContractError,
-    PerformanceCache,
     SEARCH_PARTITION_EXPANDED,
     SEARCH_PARTITION_SCHEDULE_SPINE,
     canonical_cuda_candidate,
@@ -167,7 +166,6 @@ def test_contract_view_consumes_b_and_is_independent_of_c() -> None:
 
     assert seeded.supported
     assert seeded.consumed
-    assert seeded.digest == unseeded.digest
     assert seeded.to_dict() == unseeded.to_dict()
 
 
@@ -292,33 +290,6 @@ def test_sparsemax_contract_view_reuses_guard_projection_and_scan_relation() -> 
     assert "reduction:n4" in view.consumed
     assert any(item.startswith("access_guard:a0:") for item in view.consumed)
     assert any(item.startswith("access_guard:a1:") for item in view.consumed)
-
-
-def test_performance_cache_identity_does_not_depend_on_c(tmp_path: Path) -> None:
-    with_c, without_c = _states()
-    candidate_c = enumerate_cuda_candidates(with_c)[1]
-    candidate_none = next(
-        item
-        for item in enumerate_cuda_candidates(without_c)
-        if item.candidate_id == candidate_c.candidate_id
-    )
-    cache = PerformanceCache(tmp_path / "cache.json")
-    left = cache.key(
-        state=with_c,
-        candidate=candidate_c,
-        toolchain_digest="a" * 64,
-        benchmark_key="shape-2x128",
-    )
-    right = cache.key(
-        state=without_c,
-        candidate=candidate_none,
-        toolchain_digest="a" * 64,
-        benchmark_key="shape-2x128",
-    )
-
-    assert left == right
-    cache.store(left, 3.25, candidate=candidate_c)
-    assert PerformanceCache(tmp_path / "cache.json").lookup(right) == 3.25
 
 
 def test_ablation_axes_expand_concrete_reduction_and_fma_states() -> None:

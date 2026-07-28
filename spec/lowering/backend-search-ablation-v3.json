@@ -10,14 +10,13 @@
       "target_replay",
       "target_ref_j"
     ],
-    "domain_rule": "D_search and D_cert have disjoint exact input digests",
+    "domain_rule": "D_search and D_cert use disjoint explicitly named cases",
     "comparison_rule": "every edge is direct; tolerance transitivity is forbidden",
     "c_role": "candidate ordering only"
   },
-  "candidate_identity": {
+  "candidate_space": {
     "search_object": "concrete post-pass MLIR state plus schedule assignment and transformation trace",
-    "deduplication_key": "canonical post-pass MLIR digest",
-    "duplicate_rule": "duplicate MLIR attempts remain in the audit log and do not consume candidate budget",
+    "budget_unit": "one explicitly enumerated candidate",
     "failed_attempt_rule": "one distinct exact candidate that fails before state formation consumes one budget unit",
     "expanded_arm_nesting_rule": "an expanded arm visits the fixed-structure schedule spine in the same C-conditioned order before spending its remaining equal total budget on other concrete lowering states",
     "c_fixed_rule": "the canonical structural path plus one deterministic target projection of C forms exactly one candidate and performs no search",
@@ -38,10 +37,10 @@
     "finalist_rule": "fresh round-robin remeasurement with alternating traversal; initial ranking samples are excluded",
     "confirmation_rule": "equal-count fresh matched-baseline and target batches in alternating pair order",
     "warmup_rule": "before confirmation, Source and target prepared thunks receive the same declared untimed time budget in round-robin order; cold-data timing then evicts L2 before every measured launch",
-    "e3_e2_comparison_rule": "the primary marginal E3/E2 gain selects fixed-structure schedule-spine best and expanded best from the same E3 candidate timing receipt; separately launched E2/E3 absolute latencies remain a diagnostic cross-report ratio",
+    "e3_e2_comparison_rule": "the primary marginal E3/E2 gain selects fixed-structure schedule-spine best and expanded best from the same E3 candidate timing run; separately launched E2/E3 absolute latencies remain a diagnostic cross-report ratio",
     "aggregation": "median per side with every paired batch retained"
   },
-  "budget_rule": "C-Fixed receives exactly one deterministic target projection of C; all search arms receive the same caller-supplied total budget over distinct post-pass MLIR states and distinct failed exact candidates",
+  "budget_rule": "C-Fixed receives exactly one deterministic target projection of C; all search arms receive the same caller-supplied total budget over explicitly enumerated candidates, including candidates that fail compilation",
   "arms": [
     {
       "arm": "E0",

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
@@ -279,20 +277,10 @@ def analyze_j_for_cuda(
     else:
         consumed.extend(f"output:{name}" for name in observable_values)
     consumed.extend(f"scope:{item.scope_id}" for item in j.scopes)
-    boundary_digest = (
-        projection.boundary_digest
-        if projection is not None
-        else hashlib.sha256(
-            json.dumps(
-                j.boundary.to_json(), sort_keys=True, separators=(",", ":")
-            ).encode()
-        ).hexdigest()
-    )
     return {
         "supported": not unsupported,
         "consumed": sorted(set(consumed)),
         "unsupported": sorted(set(unsupported)),
-        "boundary_sha256": boundary_digest,
         "boundary_projection": (
             projection.to_json() if projection is not None else None
         ),
@@ -312,13 +300,6 @@ class CudaJLowering:
     def __post_init__(self) -> None:
         if not self.boundary_consumption.get("supported", False):
             raise CudaJLoweringError("CUDA lowering left Layer-B relations unsupported")
-        digest = hashlib.sha256(self.intent_mlir.encode()).hexdigest()
-        if self.artifact.source_mlir_sha256 != digest:
-            raise CudaJLoweringError("compiled CUDA artifact differs from emitted MLIR")
-
-    @property
-    def mlir_sha256(self) -> str:
-        return hashlib.sha256(self.intent_mlir.encode()).hexdigest()
 
     @property
     def concrete_extents_map(self) -> dict[str, int]:
@@ -331,8 +312,6 @@ class CudaJLowering:
         comparisons: Sequence[ComparisonEvidence],
     ) -> BackendConformanceRecord:
         return BackendConformanceRecord(
-            j_digest=self.request.j_digest,
-            c_digest=self.request.c_digest,
             target=self.request.target,
             variant=self.request.variant,
             boundary_consumption=dict(self.boundary_consumption),
@@ -342,12 +321,9 @@ class CudaJLowering:
 
     def to_record(self) -> dict[str, Any]:
         return {
-            "j_digest": self.request.j_digest,
-            "c_digest": self.request.c_digest,
             "target": self.request.target.to_dict(),
             "variant": self.request.variant,
             "concrete_extents": self.concrete_extents_map,
-            "mlir_sha256": self.mlir_sha256,
             "materializer_version": self.materializer_version,
             "materialization_form": self.materialization_form,
             "boundary_consumption": dict(self.boundary_consumption),

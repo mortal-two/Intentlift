@@ -76,7 +76,7 @@ production projection 仍是 value-free `ProjectFunctionalBoundary(J)`。CPU-onl
 - [Gate1](verification/gate1.md)
 - [Gate2](verification/gate2.md)
 - [RefEval 与 J-Grounded、Q/D-Certified Lowering-State Search](lowering/contract.md)
-- [Backend search ablation v1 machine spec](../../spec/lowering/backend-search-ablation-v1.json)
+- [Backend search ablation v3 machine spec](../../spec/lowering/backend-search-ablation-v3.json)
 - [旧实现退役与首步重构](migration/legacy-removal.md)
 
 历史 spec 已迁至 [`.trellis/archive/spec`](../archive/spec/2026-07-21-pre-llm-first/README.md)，

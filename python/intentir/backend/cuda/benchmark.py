@@ -10,7 +10,6 @@ baseline.
 from __future__ import annotations
 
 import base64
-import hashlib
 import re
 import tempfile
 from dataclasses import dataclass
@@ -66,7 +65,6 @@ class ExtractedSingleLaunch:
     binary_name: str
     plan: tuple[tuple[Any, ...], ...]
     record: PreparedLaunchRecord
-    source_mlir_sha256: str
 
     def __post_init__(self) -> None:
         if not self.cubin.startswith(b"\x7fELF"):
@@ -75,17 +73,6 @@ class ExtractedSingleLaunch:
             raise ValueError("extracted launch requires compiler symbols")
         if len(self.plan) != self.record.argument_count:
             raise ValueError("extracted launch plan length mismatch")
-        if len(self.source_mlir_sha256) != 64:
-            raise ValueError("extracted launch source digest is invalid")
-
-    @property
-    def cubin_sha256(self) -> str:
-        return hashlib.sha256(self.cubin).hexdigest()
-
-    @property
-    def executable_sha256(self) -> str:
-        return self.cubin_sha256
-
     @property
     def binary_size_bytes(self) -> int:
         return len(self.cubin)
@@ -95,8 +82,6 @@ class ExtractedSingleLaunch:
             "protocol": EXTRACTED_LAUNCH_PROTOCOL,
             "kernel_name": self.kernel_name,
             "binary_name": self.binary_name,
-            "source_mlir_sha256": self.source_mlir_sha256,
-            "cubin_sha256": self.cubin_sha256,
             "cubin_base64": base64.b64encode(self.cubin).decode("ascii"),
             "plan": [list(item) for item in self.plan],
             "launch": self.record.to_dict(),
@@ -113,10 +98,7 @@ class ExtractedSingleLaunch:
             binary_name=str(value["binary_name"]),
             plan=tuple(tuple(item) for item in value["plan"]),
             record=PreparedLaunchRecord.from_dict(value["launch"]),
-            source_mlir_sha256=str(value["source_mlir_sha256"]),
         )
-        if value.get("cubin_sha256") != result.cubin_sha256:
-            raise ValueError("extracted launch cubin digest mismatch")
         return result
 
 
@@ -134,15 +116,10 @@ class ExtractedGraphKernel:
         if not self.kernel_name or not self.binary_name:
             raise ValueError("extracted graph kernel requires compiler symbols")
 
-    @property
-    def cubin_sha256(self) -> str:
-        return hashlib.sha256(self.cubin).hexdigest()
-
     def to_dict(self) -> dict[str, Any]:
         return {
             "kernel_name": self.kernel_name,
             "binary_name": self.binary_name,
-            "cubin_sha256": self.cubin_sha256,
             "cubin_base64": base64.b64encode(self.cubin).decode("ascii"),
         }
 
@@ -153,8 +130,6 @@ class ExtractedGraphKernel:
             kernel_name=str(value["kernel_name"]),
             binary_name=str(value["binary_name"]),
         )
-        if value.get("cubin_sha256") != result.cubin_sha256:
-            raise ValueError("extracted graph kernel cubin digest mismatch")
         return result
 
 
@@ -196,7 +171,7 @@ class ExtractedGraphLaunch:
     """Portable cubins plus the compiler host graph that launches them.
 
     The host MLIR is not executable Python emission.  It is the lowered MLIR
-    receipt that already drives ``orchestrate.prepare_program`` locally: launch
+    record that already drives ``orchestrate.prepare_program`` locally: launch
     order, temporary buffers, constants, and ABI pointer flow are recovered from
     it on the target machine while every target kernel remains a frozen cubin.
     """
@@ -205,7 +180,6 @@ class ExtractedGraphLaunch:
     source_mlir: str
     binary_mlir: str
     record: ExtractedGraphLaunchRecord
-    source_mlir_sha256: str
 
     def __post_init__(self) -> None:
         if not self.kernels:
@@ -214,24 +188,8 @@ class ExtractedGraphLaunch:
             raise ValueError("extracted graph kernel count mismatch")
         if len({item.binary_name for item in self.kernels}) != len(self.kernels):
             raise ValueError("extracted graph binary symbols must be unique")
-        if hashlib.sha256(self.source_mlir.encode("utf-8")).hexdigest() != (
-            self.source_mlir_sha256
-        ):
-            raise ValueError("extracted graph source MLIR digest mismatch")
         if not self.binary_mlir:
             raise ValueError("extracted graph launch requires lowered host MLIR")
-
-    @property
-    def binary_mlir_sha256(self) -> str:
-        return hashlib.sha256(self.binary_mlir.encode("utf-8")).hexdigest()
-
-    @property
-    def executable_sha256(self) -> str:
-        payload = "\n".join(
-            f"{item.binary_name}:{item.kernel_name}:{item.cubin_sha256}"
-            for item in self.kernels
-        )
-        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     @property
     def binary_size_bytes(self) -> int:
@@ -241,10 +199,7 @@ class ExtractedGraphLaunch:
         return {
             "protocol": EXTRACTED_GRAPH_LAUNCH_PROTOCOL,
             "source_mlir": self.source_mlir,
-            "source_mlir_sha256": self.source_mlir_sha256,
             "binary_mlir": self.binary_mlir,
-            "binary_mlir_sha256": self.binary_mlir_sha256,
-            "executable_sha256": self.executable_sha256,
             "kernels": [item.to_dict() for item in self.kernels],
             "launch": self.record.to_dict(),
         }
@@ -260,12 +215,7 @@ class ExtractedGraphLaunch:
             source_mlir=str(value["source_mlir"]),
             binary_mlir=str(value["binary_mlir"]),
             record=ExtractedGraphLaunchRecord.from_dict(value["launch"]),
-            source_mlir_sha256=str(value["source_mlir_sha256"]),
         )
-        if value.get("binary_mlir_sha256") != result.binary_mlir_sha256:
-            raise ValueError("extracted graph host MLIR digest mismatch")
-        if value.get("executable_sha256") != result.executable_sha256:
-            raise ValueError("extracted graph executable digest mismatch")
         return result
 
 
@@ -278,9 +228,6 @@ def extract_single_launch(
     if len(program.kernels) != 1:
         raise ValueError("prepared benchmark requires exactly one compiled kernel")
     source = read_intent_module(intent_module)
-    source_digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
-    if source_digest != program.source_mlir_sha256:
-        raise ValueError("launch extraction source differs from compiled MLIR")
     inputs = orchestrate._parse_intent_signature(source)
     results = orchestrate._parse_intent_results(source)
     inplace = orchestrate._parse_intent_inplace(source, len(results))
@@ -384,7 +331,6 @@ def extract_single_launch(
         binary_name=kernel.binary_name,
         plan=tuple(plan),
         record=record,
-        source_mlir_sha256=source_digest,
     )
 
 
@@ -392,12 +338,9 @@ def extract_graph_launch(
     program: LoweredProgram,
     intent_module: str,
 ) -> ExtractedGraphLaunch:
-    """Freeze an arbitrary compiler-emitted CUDA launch graph for transport."""
+    """Extract an arbitrary compiler-emitted CUDA launch graph for transport."""
 
     source = read_intent_module(intent_module)
-    source_digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
-    if source_digest != program.source_mlir_sha256:
-        raise ValueError("graph launch extraction source differs from compiled MLIR")
     binary_modules = {item.binary_mlir for item in program.kernels}
     if len(binary_modules) != 1:
         raise ValueError("compiled graph kernels do not share one host MLIR module")
@@ -445,7 +388,6 @@ def extract_graph_launch(
             launch_count=len(sites),
             intermediate_buffer_count=intermediate_count,
         ),
-        source_mlir_sha256=source_digest,
     )
 
 
@@ -456,7 +398,7 @@ def extract_portable_launch(
     program: LoweredProgram,
     intent_module: str,
 ) -> PortableExtractedLaunch:
-    """Choose the compact single-launch receipt or the general graph receipt."""
+    """Choose the compact single-launch record or the general graph record."""
 
     if len(program.kernels) == 1:
         _name, host = orchestrate._host_func_text(program.kernels[0].binary_mlir)
@@ -494,7 +436,7 @@ class PreparedSingleLaunch:
         function = load_module(extracted.cubin).function(extracted.kernel_name)
         shared = extracted.record.dynamic_smem_bytes
         orchestrate._set_dynamic_shared_memory(function, shared)
-        self._launcher = orchestrate.CachedLauncher(
+        self._launcher = orchestrate.PreparedLauncher(
             function,
             extracted.record.grid,
             extracted.record.block,
@@ -532,12 +474,8 @@ class PreparedGraphLaunch:
         input_tensors: Sequence[Any],
     ):
         source = read_intent_module(intent_module)
-        source_digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
-        if source_digest != program.source_mlir_sha256:
-            raise ValueError("prepared graph source differs from compiled MLIR")
         self._bind(
             source=source,
-            source_digest=source_digest,
             kernels=program.kernels,
             input_tensors=input_tensors,
         )
@@ -560,19 +498,18 @@ class PreparedGraphLaunch:
         )
         instance._bind(
             source=extracted.source_mlir,
-            source_digest=extracted.source_mlir_sha256,
             kernels=kernels,
             input_tensors=input_tensors,
         )
         if instance.record.launch_count != extracted.record.launch_count:
-            raise ValueError("prepared graph launch count differs from receipt")
+            raise ValueError("prepared graph launch count differs from record")
         if instance.record.kernel_count != extracted.record.kernel_count:
-            raise ValueError("prepared graph kernel count differs from receipt")
+            raise ValueError("prepared graph kernel count differs from record")
         if (
             instance.record.intermediate_buffer_count
             != extracted.record.intermediate_buffer_count
         ):
-            raise ValueError("prepared graph intermediate-buffer count differs from receipt")
+            raise ValueError("prepared graph intermediate-buffer count differs from record")
         instance.extracted = extracted
         return instance
 
@@ -580,12 +517,9 @@ class PreparedGraphLaunch:
         self,
         *,
         source: str,
-        source_digest: str,
         kernels: Sequence[backend_compile.CompiledKernel],
         input_tensors: Sequence[Any],
     ) -> None:
-        if hashlib.sha256(source.encode("utf-8")).hexdigest() != source_digest:
-            raise ValueError("prepared graph source digest mismatch")
         signature = orchestrate._parse_intent_signature(source)
         bound = tuple(input_tensors)
         if len(bound) != len(signature):

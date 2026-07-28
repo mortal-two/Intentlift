@@ -11,7 +11,6 @@ from __future__ import annotations
 import argparse
 import base64
 import ctypes
-import hashlib
 import json
 import math
 import os
@@ -198,10 +197,7 @@ class KernelFailure(RuntimeError):
 
 
 def _decode_payload(record: Mapping[str, Any]) -> bytes:
-    payload = base64.b64decode(record["data_base64"], validate=True)
-    if hashlib.sha256(payload).hexdigest() != record["sha256"]:
-        raise ValueError("portable array digest mismatch")
-    return payload
+    return base64.b64decode(record["data_base64"], validate=True)
 
 
 def _numel(shape: list[int]) -> int:
@@ -353,11 +349,8 @@ class _NativeComparator:
             ]
             function.restype = ctypes.c_int
             self.close_functions[dtype] = function
-        self.receipt = {
+        self.record = {
             "protocol": NATIVE_COMPARATOR_PROTOCOL,
-            "source_sha256": hashlib.sha256(
-                _NATIVE_COMPARATOR_SOURCE.encode("utf-8")
-            ).hexdigest(),
             "compiler": f"{Path(compiler).name} -O3 -shared -fPIC",
             "compares_all_output_elements": True,
             "python_elementwise_comparison": False,
@@ -402,9 +395,6 @@ def _link_object(directory: Path, candidate: Mapping[str, Any]) -> Path:
     object_path = directory / f"{candidate_id}.o"
     library_path = directory / f"{candidate_id}.so"
     object_bytes = base64.b64decode(candidate["object_base64"], validate=True)
-    expected = candidate["candidate"]["object_sha256"]
-    if hashlib.sha256(object_bytes).hexdigest() != expected:
-        raise ValueError("RVV object digest mismatch")
     object_path.write_bytes(object_bytes)
     process = subprocess.run(
         [
@@ -551,19 +541,6 @@ def _bounded_candidate_orders(
     candidate_by_id = {
         item["candidate"]["candidate_id"]: item for item in entry["candidates"]
     }
-    object_owner: dict[str, str] = {}
-    for candidate_id, item in candidate_by_id.items():
-        object_sha256 = item["candidate"].get("object_sha256")
-        if not isinstance(object_sha256, str) or len(object_sha256) != 64:
-            raise ValueError(
-                f"RVV candidate {candidate_id!r} has no canonical object SHA-256"
-            )
-        previous = object_owner.setdefault(object_sha256, candidate_id)
-        if previous != candidate_id:
-            raise ValueError(
-                "RVV bundle must deduplicate native objects before budgeting: "
-                f"{candidate_id!r} duplicates {previous!r}"
-            )
     available = set(candidate_by_id)
     plan = entry.get("concrete_search_plan", {})
 
@@ -582,11 +559,6 @@ def _bounded_candidate_orders(
     erase_schedule_order = ordered(plan.get("schedule_only_erase_c_order", ()))
     if not c_schedule_order or not erase_schedule_order:
         raise ValueError("RVV bundle lacks explicit Schedule-Only search orders")
-    actual_universe_digest = hashlib.sha256(
-        json.dumps(sorted(available), separators=(",", ":")).encode()
-    ).hexdigest()
-    if plan.get("candidate_universe_digest") != actual_universe_digest:
-        raise ValueError("RVV concrete candidate-universe digest drifted")
     if set(c_order) != available or set(erase_order) != available:
         raise ValueError("RVV C/Erase-C orders do not cover the same full universe")
     if set(c_schedule_order) != set(erase_schedule_order):
@@ -701,7 +673,7 @@ def _one_kernel(
         workload_cost is not None
         and int(workload_cost["boundary_io_bytes"]) != io_bytes
     ):
-        raise ValueError("runner logical bytes disagree with J workload-cost receipt")
+        raise ValueError("runner logical bytes disagree with J workload-cost record")
     required_replicas = (
         max(2, math.ceil(working_set_bytes / io_bytes))
         if regime == "streaming"
@@ -766,7 +738,7 @@ def _one_kernel(
     with tempfile.TemporaryDirectory(prefix="intentir-rvv-") as temporary:
         directory = Path(temporary)
         comparator = _NativeComparator(directory)
-        comparator_receipt = comparator.receipt
+        comparator_record = comparator.record
         for candidate_id in ordered_ids:
             candidate = candidate_by_id[candidate_id]
             if candidate_id not in timed_ids:
@@ -920,7 +892,7 @@ def _one_kernel(
     c_prior_budget_winner = best(c_prior_budget_ids)
     c_fixed_id = concrete_plan.get("c_fixed_candidate_id")
     if c_fixed_id != c_fixed["candidate"]["candidate_id"]:
-        raise KernelFailure("C-Fixed candidate identity drifted", records)
+        raise KernelFailure("C-Fixed candidate selection changed", records)
 
     oracle_complete = measure_c_oracle and not any(
         item["status"] == "not_visited_due_budget" for item in records
@@ -957,11 +929,7 @@ def _one_kernel(
         "case_id": entry["case_id"],
         "workload_profile": entry.get("workload_profile"),
         "workload_valuation": entry.get("workload_valuation"),
-        "j_provenance": entry.get("j_provenance"),
         "baseline_policy": entry.get("baseline_policy"),
-        "snapshot_digest": entry["snapshot_digest"],
-        "j_digest": entry["j_digest"],
-        "c_digest": entry["c_digest"],
         "contract_view": entry["contract_view"],
         "extents": entry["extents"],
         "candidates": records,
@@ -978,7 +946,7 @@ def _one_kernel(
         },
         "c_prior_efficiency": {
             "candidate_budget": search_budget,
-            "budget_unit": "distinct_native_object_sha256",
+            "budget_unit": "admitted_candidate",
             "c_prior_best_us": c_prior_budget_winner["latency_us"],
             "erase_c_best_us": erase_budget_winner["latency_us"],
             "best_at_budget_c_over_erase_c_speedup": (
@@ -1044,7 +1012,7 @@ def _one_kernel(
         },
         "search_execution": {
             "candidate_budget": search_budget,
-            "budget_unit": "distinct_native_object_sha256",
+            "budget_unit": "admitted_candidate",
             "candidate_correctness_pass_count": len(
                 [
                     item
@@ -1076,7 +1044,7 @@ def _one_kernel(
             ],
             "c_fixed_candidate_ids": bounded_orders["c_fixed"],
             "timed_candidate_ids": bounded_orders["timed"],
-            "correctness_comparator": comparator_receipt,
+            "correctness_comparator": comparator_record,
         },
         "measurement_analysis": {
             "logical_io": {
@@ -1199,8 +1167,7 @@ def main(argv: list[str] | None = None) -> int:
             f"{args.regime} working set ({working_set_bytes} bytes) must exceed "
             f"detected last-level cache ({last_level_cache_bytes} bytes)"
         )
-    bundle_bytes = args.bundle.read_bytes()
-    bundle = json.loads(bundle_bytes)
+    bundle = json.loads(args.bundle.read_text(encoding="utf-8"))
     if bundle.get("protocol") != BUNDLE_PROTOCOL:
         raise ValueError("unsupported RVV benchmark bundle")
     selected = set(args.kernels or [])
@@ -1290,15 +1257,11 @@ def main(argv: list[str] | None = None) -> int:
     report = {
         "protocol": REPORT_PROTOCOL,
         "bundle_protocol": bundle["protocol"],
-        "bundle_sha256": hashlib.sha256(bundle_bytes).hexdigest(),
-        "bundle_toolchain_digest": bundle["toolchain_digest"],
         "target": bundle["target"],
         "workload_profile": bundle.get("workload_profile", "closed-v1"),
         "baseline_policy": bundle.get("baseline_policy", "target_refj_only"),
         "experiment_spec_protocol": bundle.get("experiment_spec_protocol"),
-        "experiment_spec_digest": bundle.get("experiment_spec_digest"),
         "measurement_spec_protocol": bundle.get("measurement_spec_protocol"),
-        "measurement_spec_digest": bundle.get("measurement_spec_digest"),
         "created_unix_ns": time.time_ns(),
         "elapsed_seconds": (time.time_ns() - started) / 1_000_000_000.0,
         "device": {

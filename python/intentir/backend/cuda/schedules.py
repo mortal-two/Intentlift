@@ -1,7 +1,7 @@
 """Structural Layer-C schedules for direct CUDA lowering passes.
 
 The resolver consumes accepted Intent dialect MLIR plus accepted Layer-C data.
-It has no dependency on paper receipts or Gate verdicts.  All policies are
+It has no dependency on paper evidence or Gate verdicts.  All policies are
 function-name independent and return explicit pass arguments that must still
 pass the C++ whole-graph probe in :mod:`intentir.backend.cuda.selection`.
 """

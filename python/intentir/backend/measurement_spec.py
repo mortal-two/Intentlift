@@ -6,9 +6,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-from intentir.ir.production_snapshot import content_digest
-
-
 MEASUREMENT_PROTOCOL = "intentir.backend.performance-measurement.v1"
 DEFAULT_MEASUREMENT_SPEC = (
     Path(__file__).resolve().parents[3]
@@ -24,7 +21,7 @@ def load_measurement_spec(path: Path | None = None) -> dict[str, Any]:
     expected_root = {
         "protocol",
         "scope",
-        "identity_rule",
+        "comparison_rule",
         "data_regimes",
         "roofline",
         "search_ablation",
@@ -53,13 +50,8 @@ def load_measurement_spec(path: Path | None = None) -> dict[str, Any]:
     return value
 
 
-def measurement_spec_digest(path: Path | None = None) -> str:
-    return content_digest(load_measurement_spec(path))
-
-
 __all__ = [
     "DEFAULT_MEASUREMENT_SPEC",
     "MEASUREMENT_PROTOCOL",
     "load_measurement_spec",
-    "measurement_spec_digest",
 ]

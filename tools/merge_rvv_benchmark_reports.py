@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import math
 import statistics
@@ -34,40 +33,29 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     payloads = []
-    provenance = []
     for path in args.reports:
-        encoded = path.read_bytes()
-        payload = json.loads(encoded)
+        payload = json.loads(path.read_text(encoding="utf-8"))
         if payload.get("protocol") != REPORT_PROTOCOL:
             raise ValueError(f"unsupported RVV report protocol in {path}")
         payloads.append(payload)
-        provenance.append(
-            {
-                "path": str(path),
-                "sha256": hashlib.sha256(encoded).hexdigest(),
-            }
-        )
     first = payloads[0]
     measurement = first["measurement"]
-    device_identity = {
+    device_config = {
         key: first["device"].get(key)
         for key in ("machine", "vlen_bits", "cache")
     }
-    report_identity_keys = (
+    report_config_keys = (
         "bundle_protocol",
-        "bundle_toolchain_digest",
         "target",
         "workload_profile",
         "baseline_policy",
         "experiment_spec_protocol",
-        "experiment_spec_digest",
         "measurement_spec_protocol",
-        "measurement_spec_digest",
     )
     records: dict[str, dict[str, Any]] = {}
-    kernel_identities: dict[str, dict[str, Any]] = {}
+    kernel_configs: dict[str, dict[str, Any]] = {}
     for payload in payloads:
-        for key in report_identity_keys:
+        for key in report_config_keys:
             if payload.get(key) != first.get(key):
                 raise ValueError(f"RVV reports differ in {key}")
         if payload["measurement"] != measurement:
@@ -76,25 +64,21 @@ def main(argv: list[str] | None = None) -> int:
             key: payload["device"].get(key)
             for key in ("machine", "vlen_bits", "cache")
         }
-        if current_device != device_identity:
+        if current_device != device_config:
             raise ValueError("RVV reports were produced on incompatible devices")
         for record in payload["kernels"]:
             name = record["kernel"]
-            identity = {
+            config = {
                 key: record.get(key)
                 for key in (
                     "case_id",
-                    "snapshot_digest",
-                    "j_digest",
-                    "c_digest",
                     "extents",
                     "workload_valuation",
-                    "j_provenance",
                 )
             }
-            if name in kernel_identities and kernel_identities[name] != identity:
-                raise ValueError(f"duplicate RVV kernel {name} has different identity")
-            kernel_identities[name] = identity
+            if name in kernel_configs and kernel_configs[name] != config:
+                raise ValueError(f"duplicate RVV kernel {name} has different configuration")
+            kernel_configs[name] = config
             previous = records.get(name)
             if previous is not None and "performance" in previous:
                 if "performance" in record:
@@ -139,21 +123,17 @@ def main(argv: list[str] | None = None) -> int:
     report = {
         "protocol": REPORT_PROTOCOL,
         "bundle_protocol": first["bundle_protocol"],
-        "bundle_toolchain_digest": first["bundle_toolchain_digest"],
         "target": first["target"],
         "workload_profile": first.get("workload_profile"),
         "baseline_policy": first.get("baseline_policy"),
         "experiment_spec_protocol": first.get("experiment_spec_protocol"),
-        "experiment_spec_digest": first.get("experiment_spec_digest"),
         "measurement_spec_protocol": first.get("measurement_spec_protocol"),
-        "measurement_spec_digest": first.get("measurement_spec_digest"),
         "created_unix_ns": time.time_ns(),
         "elapsed_seconds": sum(
             float(item.get("elapsed_seconds", 0.0)) for item in payloads
         ),
         "device": payloads[-1]["device"],
         "measurement": measurement,
-        "merge_provenance": provenance,
         "summary": {
             "requested": len(kernels),
             "successful": len(successful),

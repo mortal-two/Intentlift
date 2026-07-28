@@ -310,34 +310,34 @@ def _paired_gain(
     }
 
 
-def _same_receipt_effect(
+def _same_run_effect(
     records_by_arm: Mapping[str, Sequence[Mapping[str, Any]]],
     *,
     arm: str,
-    receipt_field: str,
+    measurement_field: str,
     gain_field: str,
     applicability: str,
 ) -> dict[str, Any]:
-    """Summarize a causal contrast from one search/timing receipt.
+    """Summarize a causal contrast from one search/timing run.
 
     Cross-arm records remain useful diagnostics, but they are not the primary
     attribution because separate launches can drift thermally.  This helper
-    only accepts the explicit same-receipt marker emitted by CUDA search.
+    only accepts the explicit same-run marker emitted by CUDA search.
     """
 
     rows: list[dict[str, Any]] = []
     for record in records_by_arm.get(arm, ()):
         performance = _performance(record)
-        receipt = (
-            performance.get(receipt_field)
+        measurement = (
+            performance.get(measurement_field)
             if isinstance(performance, Mapping)
             else None
         )
-        if not isinstance(receipt, Mapping):
+        if not isinstance(measurement, Mapping):
             continue
-        if receipt.get("same_candidate_measurement_receipt") is not True:
+        if measurement.get("same_run_measurement") is not True:
             continue
-        gain = _finite_positive(receipt.get(gain_field))
+        gain = _finite_positive(measurement.get(gain_field))
         if gain is None:
             continue
         rows.append(
@@ -345,21 +345,21 @@ def _same_receipt_effect(
                 "kernel": str(record["kernel"]),
                 "gain": gain,
                 "applicable": mechanism_applicability(record)[applicability],
-                "receipt": dict(receipt),
+                "measurement": dict(measurement),
             }
         )
     applicable = [item for item in rows if item["applicable"]]
     return {
         "arm": arm,
-        "receipt_field": receipt_field,
+        "measurement_field": measurement_field,
         "gain_field": gain_field,
         "applicability_mechanism": applicability,
-        "same_receipt_all_corpus": {
+        "same_run_all_corpus": {
             "count": len(rows),
             "geomean_gain": _geomean(item["gain"] for item in rows),
             "wins": sum(item["gain"] > 1.0 for item in rows),
         },
-        "same_receipt_applicable_subset": {
+        "same_run_applicable_subset": {
             "count": len(applicable),
             "kernels": [item["kernel"] for item in applicable],
             "geomean_gain": _geomean(item["gain"] for item in applicable),
@@ -420,26 +420,26 @@ def summarize_ablation_records(
             for left, right, mechanism in pair_specs
             if left in records_by_arm and right in records_by_arm
         ],
-        "same_receipt_effects": [
-            _same_receipt_effect(
+        "same_run_effects": [
+            _same_run_effect(
                 records_by_arm,
                 arm="E2",
-                receipt_field="c_fixed_schedule_ablation",
+                measurement_field="c_fixed_schedule_ablation",
                 gain_field="schedule_over_c_fixed_speedup",
                 applicability="schedule",
             ),
-            _same_receipt_effect(
+            _same_run_effect(
                 records_by_arm,
                 arm="E3",
-                receipt_field="schedule_spine_ablation",
+                measurement_field="schedule_spine_ablation",
                 gain_field="expanded_over_schedule_spine_speedup",
                 applicability="expanded_state",
             ),
         ],
         "claim_boundary": (
             "all-corpus aggregates retain failures/not-matched kernels; "
-            "applicable-subset gains require an admitted post-pass compiler receipt; "
-            "primary schedule/lowering gains require same-receipt measurements"
+            "applicable-subset gains require an admitted post-pass compiler record; "
+            "primary schedule/lowering gains require same-run measurements"
         ),
     }
 

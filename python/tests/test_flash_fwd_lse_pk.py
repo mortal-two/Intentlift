@@ -25,7 +25,7 @@ import pytest
 from intentir.backend.cuda.compile import (CUDA_BIN, INTENT_OPT, MLIR_OPT, _run,
                                        lower_memref_module_to_kernels)
 from intentir.backend.cuda.launch import load_module
-from intentir.backend.cuda.orchestrate import (CachedLauncher, _host_func_text,
+from intentir.backend.cuda.orchestrate import (PreparedLauncher, _host_func_text,
                                            _map_input_aligned_ptrs,
                                            _parse_constants, _parse_launches,
                                            _parse_signature_blockargs,
@@ -91,7 +91,7 @@ class _FlashLseKernel:
                 self.plan.append(("scale",))
             else:
                 raise RuntimeError(f"flash-lse: unhandled launch-arg {op.ty}")
-        self._cached = CachedLauncher(self.func, self.grid, self.block,
+        self._cached = PreparedLauncher(self.func, self.grid, self.block,
                                       self.plan, shared=self.shared)
 
     def run(self, q, k, v, scale, o, lse):

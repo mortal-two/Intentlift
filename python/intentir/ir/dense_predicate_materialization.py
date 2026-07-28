@@ -16,7 +16,7 @@ The transformation is deliberately narrow and fail-closed:
   guard;
 * stores are never widened or rewritten here.
 
-No Source, kernel name, Gate receipt, C, target, or runtime value enters this
+No Source, kernel name, Gate evidence, C, target, or runtime value enters this
 analysis.  The returned function is ephemeral compiler state, not another J.
 """
 
@@ -37,7 +37,6 @@ from intentir.ir.contract_materialization import (
     project_contract_materialization,
 )
 from intentir.ir.model import IntentFunction, IntentOp
-from intentir.ir.production_snapshot import content_digest
 from intentir.verify.gate1.model import SemanticArchive
 
 
@@ -59,11 +58,10 @@ class DensePredicateProjection:
 
 
 @dataclass(frozen=True)
-class PredicateMaterializationReceipt:
+class PredicateMaterializationRecord:
     access_id: str
     node_ref: str
     tensor: str
-    predicate_digest: str
     authored_fill: bool
     guard_dominated_fill: bool
     guards: tuple[str, ...]
@@ -77,7 +75,6 @@ class PredicateMaterializationReceipt:
             "access_id": self.access_id,
             "node_ref": self.node_ref,
             "tensor": self.tensor,
-            "predicate_digest": self.predicate_digest,
             "authored_fill": self.authored_fill,
             "guard_dominated_fill": self.guard_dominated_fill,
             "guards": list(self.guards),
@@ -91,11 +88,10 @@ class PredicateMaterializationReceipt:
 
 @dataclass(frozen=True)
 class BoundaryMaterializationProjection:
-    """Original-boundary receipt plus the projection of its rewritten view."""
+    """Projection of one rewritten boundary view."""
 
     logical_projection: ContractMaterializationProjection
-    original_boundary_digest: str
-    predicate_materializations: tuple[PredicateMaterializationReceipt, ...]
+    predicate_materializations: tuple[PredicateMaterializationRecord, ...]
     synthetic_broadcast_axes: tuple[
         tuple[str, tuple[tuple[str, tuple[int, ...]], ...]], ...
     ] = ()
@@ -104,7 +100,7 @@ class BoundaryMaterializationProjection:
     def __post_init__(self) -> None:
         if not self.predicate_materializations:
             raise DensePredicateMaterializationError(
-                "boundary materialization requires at least one predicate receipt"
+                "boundary materialization requires at least one predicate record"
             )
         if self.logical_projection.runtime_predicate_proofs:
             raise DensePredicateMaterializationError(
@@ -114,10 +110,6 @@ class BoundaryMaterializationProjection:
     @property
     def profile(self) -> str:
         return "functional_dense_with_materialized_predicates"
-
-    @property
-    def boundary_digest(self) -> str:
-        return self.original_boundary_digest
 
     @property
     def runtime_predicate_proofs(self) -> tuple[Any, ...]:
@@ -134,7 +126,7 @@ class BoundaryMaterializationProjection:
     @property
     def consumed(self) -> tuple[str, ...]:
         extra = (
-            f"predicate_materialization:{item.access_id}:{item.predicate_digest}"
+            f"predicate_materialization:{item.access_id}"
             for item in self.predicate_materializations
         )
         return tuple(
@@ -172,7 +164,6 @@ class BoundaryMaterializationProjection:
         return {
             "protocol": BOUNDARY_MATERIALIZATION_PROTOCOL,
             "profile": self.profile,
-            "original_boundary_digest": self.original_boundary_digest,
             "logical_projection": self.logical_projection.to_json(),
             "predicate_materializations": [
                 item.to_json() for item in self.predicate_materializations
@@ -469,7 +460,7 @@ def materialize_dense_load_predicates(
 
     prefix: list[IntentOp] = []
     broadcasts: dict[str, dict[str, tuple[int, ...]]] = {}
-    receipts: list[PredicateMaterializationReceipt] = []
+    records: list[PredicateMaterializationRecord] = []
     mask_cache: dict[
         tuple[str, tuple[int | str, ...]],
         tuple[str, tuple[int | str, ...], tuple[str, ...]],
@@ -707,14 +698,11 @@ def materialize_dense_load_predicates(
         for position in operand_positions:
             consumer.operands[position] = selected
 
-        receipts.append(
-            PredicateMaterializationReceipt(
+        records.append(
+            PredicateMaterializationRecord(
                 access_id=access.access_id,
                 node_ref=access.node_ref,
                 tensor=access.tensor,
-                predicate_digest=content_digest(
-                    {"predicate": access.predicate}
-                ),
                 authored_fill=access.fill_value is not None,
                 guard_dominated_fill=guard_dominated,
                 guards=guards,
@@ -726,7 +714,7 @@ def materialize_dense_load_predicates(
     transformed.body = [*prefix, *transformed.body]
 
     logical_projection = project_contract_materialization(j)
-    materialized_accesses = {item.access_id for item in receipts}
+    materialized_accesses = {item.access_id for item in records}
     materialized_guards = tuple(
         sorted(
             "access_guard:"
@@ -739,8 +727,7 @@ def materialize_dense_load_predicates(
     )
     projection = BoundaryMaterializationProjection(
         logical_projection=logical_projection,
-        original_boundary_digest=content_digest(j.boundary.to_json()),
-        predicate_materializations=tuple(receipts),
+        predicate_materializations=tuple(records),
         synthetic_broadcast_axes=_serialize_broadcasts(broadcasts),
         materialized_access_guards=materialized_guards,
     )
@@ -754,6 +741,6 @@ __all__ = [
     "DensePredicateProjection",
     "DensePredicateFunctionMaterialization",
     "DensePredicateMaterializationError",
-    "PredicateMaterializationReceipt",
+    "PredicateMaterializationRecord",
     "materialize_dense_load_predicates",
 ]

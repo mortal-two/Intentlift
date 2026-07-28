@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import hashlib
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -10,7 +8,7 @@ import intentir.backend.cuda.compile as backend_compile
 import intentir.backend.cuda.pipeline as backend_pipeline
 from intentir.backend.cuda.pipeline import (
     LoweredProgram,
-    _transformation_receipt,
+    _transformation_record,
     execute_cuda_artifact,
     lower_to_cuda,
 )
@@ -32,19 +30,15 @@ def _kernel(*, cubin: bytes = b"\x7fELFfake") -> backend_compile.CompiledKernel:
 
 
 def _selection(kind: str) -> VariantSelection:
-    source_digest = hashlib.sha256(_SOURCE.encode("utf-8")).hexdigest()
     if kind == "generic":
         return VariantSelection(
             pipeline_kind="generic",
             target=LoweringTarget(),
-            input_sha256=source_digest,
             fast_path_id=None,
             pass_argument=None,
             scf_to_cf=False,
-            probe_output_sha256=None,
             attempts=(),
         )
-    specialized_digest = hashlib.sha256(_SPECIALIZED.encode("utf-8")).hexdigest()
     attempt = ProbeAttempt(
         fast_path_id="cuda.test.v1",
         pass_argument="-convert-intent-test-to-gpu",
@@ -52,16 +46,13 @@ def _selection(kind: str) -> VariantSelection:
         status="selected",
         direct_hit=True,
         gpu_launch_count=1,
-        probe_output_sha256=specialized_digest,
     )
     return VariantSelection(
         pipeline_kind="specialized",
         target=LoweringTarget(),
-        input_sha256=source_digest,
         fast_path_id="cuda.test.v1",
         pass_argument="-convert-intent-test-to-gpu",
         scf_to_cf=True,
-        probe_output_sha256=specialized_digest,
         attempts=(attempt,),
     )
 
@@ -89,12 +80,11 @@ def test_specialized_pipeline_replays_the_exact_probe_before_codegen(
 
     assert result.selection.pipeline_kind == "specialized"
     assert observed == {"module": _SPECIALIZED, "scf_to_cf": True}
-    assert result.specialized_mlir_sha256 == selection.probe_output_sha256
     assert result.to_record()["kernels"][0]["cubin_is_elf"] is True
 
 
-def test_cpp_authored_concrete_state_receipt_is_decoded_without_name_rules() -> None:
-    receipt = _transformation_receipt(
+def test_cpp_authored_concrete_state_record_is_decoded_without_name_rules() -> None:
+    record = _transformation_record(
         """
         func.func @opaque() attributes {
           intent.backend.all_reduce_count = 0 : i64,
@@ -124,18 +114,18 @@ def test_cpp_authored_concrete_state_receipt_is_decoded_without_name_rules() -> 
         """
     )
 
-    assert receipt is not None
-    assert receipt.fma_count == 4
-    assert receipt.approximate_div_count == 1
-    assert receipt.predicated_value_if_count == 0
-    assert receipt.folded_constexpr_select_count == 0
-    assert receipt.rows_per_block == 2
-    assert receipt.to_dict()["rows_per_block"] == 2
-    assert receipt.stage_count == 3
-    assert receipt.reduction_parts == 16
-    assert receipt.observation_changing
-    assert receipt.reduction_topology == "workgroup_hierarchical"
-    assert [item.to_dict() for item in receipt.launch_plans] == [
+    assert record is not None
+    assert record.fma_count == 4
+    assert record.approximate_div_count == 1
+    assert record.predicated_value_if_count == 0
+    assert record.folded_constexpr_select_count == 0
+    assert record.rows_per_block == 2
+    assert record.to_dict()["rows_per_block"] == 2
+    assert record.stage_count == 3
+    assert record.reduction_parts == 16
+    assert record.observation_changing
+    assert record.reduction_topology == "workgroup_hierarchical"
+    assert [item.to_dict() for item in record.launch_plans] == [
         {
             "grid": [7, 1, 1],
             "block": [64, 1, 1],
@@ -146,9 +136,6 @@ def test_cpp_authored_concrete_state_receipt_is_decoded_without_name_rules() -> 
             "split_factor": 1,
         }
     ]
-    assert len(receipt.topology_digest) == 64
-    assert replace(receipt, rows_per_block=1).topology_digest != receipt.topology_digest
-    assert replace(receipt, reduction_parts=8).topology_digest != receipt.topology_digest
 
 
 def test_generic_pipeline_uses_the_real_generic_compiler_entrypoint(
@@ -213,7 +200,6 @@ def test_lowered_program_rejects_non_elf_device_artifacts() -> None:
         LoweredProgram(
             selection=selection,
             kernels=(_kernel(cubin=b"not-elf"),),
-            source_mlir_sha256=selection.input_sha256,
         )
 
 
@@ -225,7 +211,6 @@ def test_execute_artifact_reuses_persisted_kernels_without_compiling(
     program = LoweredProgram(
         selection=selection,
         kernels=(kernel,),
-        source_mlir_sha256=selection.input_sha256,
     )
     observed: dict[str, object] = {}
 
@@ -252,37 +237,6 @@ def test_execute_artifact_reuses_persisted_kernels_without_compiling(
         "kernels": [kernel],
         "aliases": {"out0": "x"},
     }
-
-
-def test_execute_artifact_rejects_a_different_source_before_launch() -> None:
-    selection = _selection("generic")
-    program = LoweredProgram(
-        selection=selection,
-        kernels=(_kernel(),),
-        source_mlir_sha256=selection.input_sha256,
-    )
-
-    with pytest.raises(ValueError, match="differs from the compiled"):
-        execute_cuda_artifact(
-            program,
-            "module { func.func @different() { return } }\n",
-            {},
-        )
-
-
-def test_specialized_pipeline_fails_if_replay_differs_from_probe(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    selection = _selection("specialized")
-    monkeypatch.setattr(backend_pipeline, "select_variant", lambda *a, **k: selection)
-    monkeypatch.setattr(
-        backend_compile,
-        "_run",
-        lambda command, stdin=None: _SPECIALIZED + "// changed\n",
-    )
-
-    with pytest.raises(RuntimeError, match="changed between selection"):
-        lower_to_cuda(_SOURCE)
 
 
 @pytest.mark.skipif(

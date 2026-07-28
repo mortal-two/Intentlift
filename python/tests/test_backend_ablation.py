@@ -7,7 +7,6 @@ import pytest
 
 from intentir.backend.ablation import (
     ExperimentArm,
-    ablation_spec_digest,
     assert_fair_pair,
     load_ablation_spec,
     standard_ablation_plan,
@@ -18,7 +17,7 @@ def _arms(budget: int = 24):
     return {item.arm: item for item in standard_ablation_plan(budget)}
 
 
-def test_standard_plan_freezes_equal_search_budgets() -> None:
+def test_standard_plan_uses_equal_search_budgets() -> None:
     arms = _arms(17)
 
     assert arms[ExperimentArm.E0_SOURCE].candidate_budget == 0
@@ -40,15 +39,14 @@ def test_standard_plan_freezes_equal_search_budgets() -> None:
 def test_machine_spec_is_the_consumed_qd_experiment_contract() -> None:
     spec = load_ablation_spec()
 
-    assert len(ablation_spec_digest()) == 64
     assert spec["correctness"]["search_domain_edge"] == "target_ref_j"
     assert spec["correctness"]["certification_domain_edges"] == [
         "target_source",
         "target_replay",
         "target_ref_j",
     ]
-    assert spec["candidate_identity"]["deduplication_key"] == (
-        "canonical post-pass MLIR digest"
+    assert spec["candidate_space"]["budget_unit"] == (
+        "one explicitly enumerated candidate"
     )
     assert spec["measurement"]["confirmation_rule"].startswith(
         "equal-count fresh matched-baseline and target"

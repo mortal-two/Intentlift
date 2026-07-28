@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import copy
-import hashlib
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -23,7 +22,6 @@ from intentir.ir.contract_materialization import (
     project_contract_materialization,
 )
 from intentir.ir.model import IntentFunction, IntentOp
-from intentir.ir.production_snapshot import content_digest
 from intentir.ir.value_dimension import resolve_value_dimension_equalities
 from intentir.verify.gate1.model import (
     ImplementationConfig,
@@ -60,16 +58,8 @@ class MaterializedJ:
             raise MaterializationError("materialization produced empty Intent MLIR")
         if self.boundary_projection.runtime_predicate_proofs:
             raise MaterializationError(
-                "production materialization cannot consume runtime proof receipts"
+                "production materialization cannot consume runtime proof records"
             )
-
-    @property
-    def j_digest(self) -> str:
-        return content_digest(self.j.to_json())
-
-    @property
-    def mlir_digest(self) -> str:
-        return hashlib.sha256(self.intent_mlir.encode("utf-8")).hexdigest()
 
     @property
     def extents(self) -> dict[str, int]:
@@ -86,8 +76,6 @@ class MaterializedJ:
         return {
             "materializer_version": self.materializer_version,
             "materialization_form": self.form,
-            "j_digest": self.j_digest,
-            "intent_mlir_sha256": self.mlir_digest,
             "concrete_extents": self.extents,
             "constexpr_bindings": dict(self.constexpr_bindings),
             "runtime_input_names": list(self.runtime_input_names),
@@ -121,7 +109,6 @@ class BackendSearchState:
     base: MaterializedJ
     target: BackendTarget
     priors: tuple[CPrior, ...]
-    c_digest: str | None
     ignored_slots: tuple[tuple[str, str], ...]
     attach_version: str = ATTACH_C_VERSION
 
@@ -135,9 +122,7 @@ class BackendSearchState:
     def to_record(self) -> dict[str, Any]:
         return {
             "attach_version": self.attach_version,
-            "base_intent_mlir_sha256": self.base.mlir_digest,
             "target": self.target.to_dict(),
-            "c_digest": self.c_digest,
             "priors": [item.to_record() for item in self.priors],
             "ignored_slots": [
                 {"slot": slot, "reason": reason}
@@ -381,7 +366,7 @@ def attach_c(
     if not isinstance(target, BackendTarget):
         raise MaterializationError("Attach_C requires BackendTarget")
     if c is None:
-        return BackendSearchState(base, target, (), None, ())
+        return BackendSearchState(base, target, (), ())
     if not isinstance(c, ImplementationConfig):
         raise MaterializationError("Attach_C requires canonical C")
     priors: list[CPrior] = []
@@ -407,7 +392,6 @@ def attach_c(
         base=base,
         target=target,
         priors=tuple(priors),
-        c_digest=content_digest(c.to_json()),
         ignored_slots=tuple(ignored),
     )
     if state.erase_c() != base.intent_mlir:

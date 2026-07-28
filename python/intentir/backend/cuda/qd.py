@@ -216,7 +216,6 @@ class CudaOpaqueExecution:
                 True,
                 copied,
                 metadata={
-                    "executable_digest": executable.executable_digest,
                     "true_mlir_pipeline": True,
                     "python_target_kernel_emission": False,
                 },

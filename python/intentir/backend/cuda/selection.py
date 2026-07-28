@@ -10,7 +10,6 @@ mandatory fallback.
 
 from __future__ import annotations
 
-import hashlib
 import os
 import re
 from dataclasses import dataclass, field
@@ -125,7 +124,6 @@ class ProbeAttempt:
     direct_hit: bool
     residual_ops: tuple[str, ...] = ()
     gpu_launch_count: int = 0
-    probe_output_sha256: str | None = None
     reason: str = ""
 
     def to_dict(self) -> dict[str, object]:
@@ -137,7 +135,6 @@ class ProbeAttempt:
             "direct_hit": self.direct_hit,
             "residual_ops": list(self.residual_ops),
             "gpu_launch_count": self.gpu_launch_count,
-            "probe_output_sha256": self.probe_output_sha256,
             "reason": self.reason,
         }
 
@@ -146,11 +143,9 @@ class ProbeAttempt:
 class VariantSelection:
     pipeline_kind: str
     target: LoweringTarget
-    input_sha256: str
     fast_path_id: str | None
     pass_argument: str | None
     scf_to_cf: bool
-    probe_output_sha256: str | None
     attempts: tuple[ProbeAttempt, ...]
     generic_fallback: bool = True
 
@@ -160,8 +155,6 @@ class VariantSelection:
         if self.pipeline_kind == "specialized":
             if not self.fast_path_id or not self.pass_argument:
                 raise ValueError("specialized selection requires an id and pass")
-            if not self.probe_output_sha256:
-                raise ValueError("specialized selection requires a probe hash")
         elif self.fast_path_id is not None or self.pass_argument is not None:
             raise ValueError("generic selection cannot carry a specialized pass")
 
@@ -169,11 +162,9 @@ class VariantSelection:
         return {
             "pipeline_kind": self.pipeline_kind,
             "target": self.target.to_dict(),
-            "input_sha256": self.input_sha256,
             "fast_path_id": self.fast_path_id,
             "pass_argument": self.pass_argument,
             "scf_to_cf": self.scf_to_cf,
-            "probe_output_sha256": self.probe_output_sha256,
             "attempts": [attempt.to_dict() for attempt in self.attempts],
             "generic_fallback": self.generic_fallback,
         }
@@ -420,7 +411,7 @@ def select_variant(
 ) -> VariantSelection:
     """Select a CUDA lowering variant by target capability and C++ probe.
 
-    No receipt, verifier result, provider response, dataset identity, function
+    No verifier result, provider response, dataset tag, function
     name, or source path is accepted by this API.  ``pass_overrides`` is the
     explicit schedule/tuning seam; every override is still required to pass the
     same whole-graph structural probe before it can be selected.
@@ -428,16 +419,13 @@ def select_variant(
 
     text = read_intent_module(intent_module)
     selected_target = target or LoweringTarget()
-    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
     if not allow_specialized:
         return VariantSelection(
             pipeline_kind="generic",
             target=selected_target,
-            input_sha256=digest,
             fast_path_id=None,
             pass_argument=None,
             scf_to_cf=False,
-            probe_output_sha256=None,
             attempts=(),
         )
 
@@ -502,7 +490,6 @@ def select_variant(
         residuals = residual_intent_ops(probe)
         launch_count = gpu_launch_count(probe)
         direct_hit = not residuals and launch_count >= 1
-        probe_digest = hashlib.sha256(probe.encode("utf-8")).hexdigest()
         attempt = ProbeAttempt(
             fast_path_id=descriptor.fast_path_id,
             pass_argument=pass_argument,
@@ -511,7 +498,6 @@ def select_variant(
             direct_hit=direct_hit,
             residual_ops=residuals,
             gpu_launch_count=launch_count,
-            probe_output_sha256=probe_digest,
             reason=(
                 "compiler-launch-graph whole-graph structural match"
                 if direct_hit
@@ -523,22 +509,18 @@ def select_variant(
             return VariantSelection(
                 pipeline_kind="specialized",
                 target=selected_target,
-                input_sha256=digest,
                 fast_path_id=descriptor.fast_path_id,
                 pass_argument=pass_argument,
                 scf_to_cf=descriptor.scf_to_cf,
-                probe_output_sha256=probe_digest,
                 attempts=tuple(attempts),
             )
 
     return VariantSelection(
         pipeline_kind="generic",
         target=selected_target,
-        input_sha256=digest,
         fast_path_id=None,
         pass_argument=None,
         scf_to_cf=False,
-        probe_output_sha256=None,
         attempts=tuple(attempts),
     )
 

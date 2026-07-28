@@ -20,7 +20,6 @@ from typing import Any, Sequence
 from intentir.ir.canonical_j import ContractExpr, elaborate_j, j_elaboration
 from intentir.ir.contract_ir import CanonicalContractIR, project_contract_ir
 from intentir.ir.model import IntentOp
-from intentir.ir.production_snapshot import content_digest
 from intentir.verify.gate1.model import SemanticArchive
 
 
@@ -117,7 +116,6 @@ class ContractMaterializationProjection:
     ]
     proven_index_bounds: frozenset[str]
     consumed: tuple[str, ...]
-    boundary_digest: str
     predicated_access_count: int
     access_guard_relations: tuple[ContractAccessGuardProjection, ...]
     unsupported_lowering: tuple[str, ...]
@@ -138,7 +136,6 @@ class ContractMaterializationProjection:
             "protocol": CONTRACT_MATERIALIZATION_PROTOCOL,
             "profile": self.profile,
             "contract_ir": self.contract_ir.to_json(),
-            "contract_ir_digest": self.contract_ir.digest,
             "broadcast_axes": [
                 [
                     result,
@@ -148,7 +145,6 @@ class ContractMaterializationProjection:
             ],
             "proven_index_bounds": sorted(self.proven_index_bounds),
             "consumed": list(self.consumed),
-            "boundary_digest": self.boundary_digest,
             "predicated_access_count": self.predicated_access_count,
             "erased_fill_count": self.erased_fill_count,
             "runtime_predicate_proofs": [],
@@ -240,7 +236,7 @@ def project_contract_materialization(
 
     broadcasts: dict[str, dict[str, tuple[int, ...]]] = {}
     unsupported: set[str] = set()
-    consumed: set[str] = {f"contract_ir:{contract_ir.digest}"}
+    consumed: set[str] = {"contract_ir:typed"}
     consumed.update(
         f"domain:{domain.domain_id}:typed" for domain in contract_ir.domains
     )
@@ -473,7 +469,6 @@ def project_contract_materialization(
         broadcast_axes=serialized_broadcasts,
         proven_index_bounds=proven_bounds,
         consumed=tuple(sorted(consumed)),
-        boundary_digest=content_digest(canonical.boundary.to_json()),
         predicated_access_count=sum(
             access.predicate is not None for access in contract_ir.accesses
         ),

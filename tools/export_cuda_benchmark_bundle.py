@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import time
 from dataclasses import replace
@@ -15,7 +14,6 @@ import intentir.backend.cuda.compile as backend_compile
 from intentir.backend.ablation import (
     ExperimentArm,
     SearchAxes,
-    ablation_spec_digest,
     standard_ablation_plan,
 )
 from intentir.backend.cuda.benchmark import extract_portable_launch
@@ -40,18 +38,10 @@ from intentir.backend.cuda.search import (
     compile_cuda_candidate,
     derive_cuda_contract_view,
     enumerate_cuda_candidates,
-    toolchain_fingerprint,
-)
-from intentir.backend.dev_j_variant import JDevVariant, load_j_dev_variant
-from intentir.backend.dev_bundle import prepare_dev_bundle_input
-from intentir.backend.dev_workload import (
-    DevWorkloadConfig,
-    load_dev_workload_config,
 )
 from intentir.backend.materialize import attach_c, materialize_j
 from intentir.backend.measurement_spec import (
     MEASUREMENT_PROTOCOL,
-    measurement_spec_digest,
 )
 from intentir.backend.protocol import BackendTarget
 from intentir.backend.workload_cost import derive_j_workload_cost
@@ -85,50 +75,22 @@ def _entry(
     budget: int,
     axes: SearchAxes | None = None,
     workload_profile: str = PRODUCTION_WORKLOAD_PROFILE_CLOSED,
-    j_dev_variant: JDevVariant | None = None,
-    dev_workload: DevWorkloadConfig | None = None,
-    j_dev_path: Path | None = None,
     measure_c_oracle: bool = False,
 ) -> dict[str, Any]:
     base_snapshot, path = load_production_snapshot(snapshot_dir, name)
     if base_snapshot.c is None:
-        raise ValueError("portable search bundle requires frozen C")
-    if (j_dev_variant is None) != (dev_workload is None):
-        raise ValueError("J_dev variant and development workload must be paired")
-    j_provenance: Mapping[str, Any] | None = None
-    if j_dev_variant is not None and dev_workload is not None:
-        dev_input = prepare_dev_bundle_input(
-            base_snapshot,
-            path,
-            j_dev_variant,
-            dev_workload,
-            variant_path=j_dev_path,
-            baseline_policy="source_and_refj",
-            source_unavailable_reason=None,
-        )
-        prepared = dev_input.prepared
-        snapshot = dev_input.snapshot
-        workload_profile = dev_input.workload_profile
-        workload_valuation = dev_input.workload_valuation
-        j_provenance = dev_input.j_provenance
-        path = dev_input.snapshot_path
-    else:
-        prepared = prepare_production_workload(name, profile=workload_profile)
-        snapshot, workload_valuation = profile_production_snapshot(
-            base_snapshot,
-            prepared,
-            workload_profile,
-        )
+        raise ValueError("portable search bundle requires accepted C")
+    prepared = prepare_production_workload(name, profile=workload_profile)
+    snapshot, workload_valuation = profile_production_snapshot(
+        base_snapshot,
+        prepared,
+        workload_profile,
+    )
     if snapshot.c is None:
         raise AssertionError("workload valuation erased required C")
     suite = build_workload_jc_suite(prepared, snapshot.j, snapshot.c)
     case = suite.cases[0]
     dims = case.refeval.dims_map
-    if dev_workload is not None and dims != dict(dev_workload.concrete_extents):
-        raise ValueError(
-            "development workload extents disagree with J/Source binding: "
-            f"declared {dict(dev_workload.concrete_extents)}, resolved {dims}"
-        )
     constexpr_bindings = constexpr_input_bindings(
         snapshot.j,
         case.refeval.input_binding_map,
@@ -152,7 +114,7 @@ def _entry(
         BackendTarget("cuda", backend_compile.CHIP),
     )
     unseeded_contract = derive_cuda_contract_view(unseeded_state)
-    if contract_view.digest != unseeded_contract.digest:
+    if contract_view.to_dict() != unseeded_contract.to_dict():
         raise AssertionError("ContractView changed when C was erased")
     seeded_kind, seeded_fast_path = _fixed_path_for_axes(state, axes)
     unseeded_kind, unseeded_fast_path = _fixed_path_for_axes(
@@ -246,20 +208,17 @@ def _entry(
     compiled: dict[str, dict[str, Any]] = {}
 
     def compile_once(candidate: Any) -> dict[str, Any]:
-        cached = compiled.get(candidate.candidate_id)
-        if cached is not None:
-            return cached
+        existing = compiled.get(candidate.candidate_id)
+        if existing is not None:
+            return existing
         started = time.perf_counter_ns()
         try:
             program = compile_cuda_candidate(state, candidate)
             concrete_state = candidate.concrete_state(program)
-            if concrete_state.mlir_digest is None:
-                raise RuntimeError("CUDA candidate formed no canonical MLIR digest")
             extracted = extract_portable_launch(program, materialized.intent_mlir)
             result = {
                 "status": "compiled_state",
                 "candidate_id": candidate.candidate_id,
-                "mlir_digest": concrete_state.mlir_digest,
                 "admitted": {
                     "candidate": candidate.to_dict(),
                     "compile_ms": (
@@ -289,7 +248,6 @@ def _entry(
     visit_budget = axes.candidate_budget if axes is not None else budget
 
     def visit_order(ordered: tuple[Any, ...]) -> dict[str, Any]:
-        seen_states: dict[str, str] = {}
         trace: list[dict[str, Any]] = []
         concrete_ids: list[str] = []
         budget_consumed = 0
@@ -307,27 +265,12 @@ def _entry(
                     }
                 )
                 continue
-            digest = str(outcome["mlir_digest"])
-            duplicate_of = seen_states.get(digest)
-            if duplicate_of is not None:
-                trace.append(
-                    {
-                        "candidate_id": candidate.candidate_id,
-                        "status": "duplicate_state",
-                        "mlir_digest": digest,
-                        "duplicate_of": duplicate_of,
-                        "budget_consumed": False,
-                    }
-                )
-                continue
-            seen_states[digest] = candidate.candidate_id
             budget_consumed += 1
             concrete_ids.append(candidate.candidate_id)
             trace.append(
                 {
                     "candidate_id": candidate.candidate_id,
                     "status": "admitted_state",
-                    "mlir_digest": digest,
                     "budget_consumed": True,
                 }
             )
@@ -379,49 +322,36 @@ def _entry(
             if outcome["status"] == "compiled_state":
                 oracle_concrete_ids.append(candidate.candidate_id)
 
-    # The portable bundle carries the union of both equal-budget visits.  A
-    # concrete MLIR state is compiled/transported once even when two requested
-    # candidates or both orderings reach it.
+    # The portable bundle carries the candidate-id union of both equal-budget
+    # visits. Each explicitly enumerated candidate consumes one budget slot.
     selected_ids = [
         *with_c_visit["concrete_ids"],
         *without_c_visit["concrete_ids"],
         *oracle_concrete_ids,
     ]
-    aliases: dict[str, str] = {}
-    state_owner: dict[str, str] = {}
     admitted: list[dict[str, Any]] = []
-    duplicate_candidates: list[dict[str, Any]] = []
+    selected_seen: set[str] = set()
     for candidate_id in selected_ids:
+        if candidate_id in selected_seen:
+            continue
+        selected_seen.add(candidate_id)
         outcome = compiled[candidate_id]
-        digest = str(outcome["mlir_digest"])
-        owner = state_owner.get(digest)
-        if owner is None:
-            state_owner[digest] = candidate_id
-            aliases[candidate_id] = candidate_id
+        if outcome["status"] == "compiled_state":
             admitted.append(outcome["admitted"])
-        else:
-            aliases[candidate_id] = owner
-            duplicate_candidates.append(
-                {
-                    "candidate_id": candidate_id,
-                    "candidate": candidates_by_id[candidate_id].to_dict(),
-                    "status": "duplicate_state_across_search_orders",
-                    "mlir_digest": digest,
-                    "duplicate_of": owner,
-                    "budget_consumed": False,
-                }
-            )
+
+    admitted_ids = {
+        item["candidate"]["candidate_id"] for item in admitted
+    }
 
     def concrete_order(requested_ids: list[str]) -> list[str]:
         result: list[str] = []
         seen: set[str] = set()
         for requested_id in requested_ids:
-            owner = aliases.get(requested_id)
-            if owner is None:
+            if requested_id not in admitted_ids:
                 continue
-            if owner not in seen:
-                seen.add(owner)
-                result.append(owner)
+            if requested_id not in seen:
+                seen.add(requested_id)
+                result.append(requested_id)
         return result
 
     with_c_order = concrete_order(with_c_visit["concrete_ids"])
@@ -484,7 +414,7 @@ def _entry(
         for candidate_id, outcome in compiled.items()
         if outcome["status"] == "compile_or_transport_failed"
     }
-    rejected = [*rejected_by_id.values(), *duplicate_candidates]
+    rejected = list(rejected_by_id.values())
     if not admitted:
         raise RuntimeError(f"{name} has no portable executable candidate")
 
@@ -499,9 +429,9 @@ def _entry(
         "case_id": prepared.adapter.case_id,
         "workload_profile": workload_profile,
         "baseline_policy": baseline_policy,
-        "snapshot": snapshot.to_dict(),
+        "j": snapshot.j.to_json(),
+        "c": snapshot.c.to_json() if snapshot.c is not None else None,
         "snapshot_path": str(path),
-        "j_provenance": j_provenance,
         "workload_valuation": workload_valuation,
         "materialization": materialized.to_record(),
         "contract_view": contract_view.to_dict(),
@@ -513,7 +443,7 @@ def _entry(
         },
         "search_orders": {
             "budget": visit_budget,
-            "budget_unit": "distinct post-pass MLIR state or exact failure",
+            "budget_unit": "admitted candidate or compile failure",
             "with_c_budget_consumed": with_c_visit["budget_consumed"],
             "without_c_budget_consumed": without_c_visit["budget_consumed"],
             "with_c_attempt_trace": with_c_visit["trace"],
@@ -568,9 +498,6 @@ def _entry(
         "source_triton": {
             "function": source.function,
             "code": source_code,
-            "code_sha256": hashlib.sha256(
-                source_code.encode("utf-8")
-            ).hexdigest(),
             "origin_at_export": source_origin,
             "execution_spec": encode_triton_spec(case.triton),
         },
@@ -592,22 +519,6 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--search-budget", type=int, default=96)
     parser.add_argument(
-        "--j-dev-variant",
-        type=Path,
-        help=(
-            "uncertified dev-j-variant envelope; requires exactly one kernel "
-            "and --dev-workload-config"
-        ),
-    )
-    parser.add_argument(
-        "--dev-workload-config",
-        type=Path,
-        help=(
-            "digest-pinned natural Source/Harness invocation paired with "
-            "--j-dev-variant"
-        ),
-    )
-    parser.add_argument(
         "--workload-profile",
         choices=(
             PRODUCTION_WORKLOAD_PROFILE_CLOSED,
@@ -626,7 +537,7 @@ def _parser() -> argparse.ArgumentParser:
             not in {ExperimentArm.E0_SOURCE, ExperimentArm.E1_CANONICAL}
         ],
         help=(
-            "freeze one machine-specified search arm; omitted preserves the "
+            "select one machine-specified search arm; omitted preserves the "
             "full production candidate universe"
         ),
     )
@@ -652,22 +563,6 @@ def main(argv: list[str] | None = None) -> int:
             if item.arm.value == args.arm
         )
     started = time.time_ns()
-    if (args.j_dev_variant is None) != (args.dev_workload_config is None):
-        raise ValueError(
-            "--j-dev-variant and --dev-workload-config must be supplied together"
-        )
-    if args.j_dev_variant is not None:
-        if len(args.kernels) != 1:
-            raise ValueError("development J export currently requires exactly one kernel")
-        if args.workload_profile != PRODUCTION_WORKLOAD_PROFILE_CLOSED:
-            raise ValueError(
-                "development workload owns its shape; --workload-profile must be closed-v1"
-            )
-        j_dev_variant = load_j_dev_variant(args.j_dev_variant)
-        dev_workload = load_dev_workload_config(args.dev_workload_config)
-    else:
-        j_dev_variant = None
-        dev_workload = None
     if (
         args.workload_profile == PRODUCTION_WORKLOAD_PROFILE_ROOFLINE_LARGE
         and args.kernels != ["masked_copy"]
@@ -684,9 +579,6 @@ def main(argv: list[str] | None = None) -> int:
             args.search_budget,
             axes,
             args.workload_profile,
-            j_dev_variant,
-            dev_workload,
-            args.j_dev_variant,
             args.measure_c_oracle,
         )
         entries.append(entry)
@@ -719,12 +611,7 @@ def main(argv: list[str] | None = None) -> int:
             else "mixed_by_kernel"
         ),
         "ablation_axes": axes.to_dict() if axes is not None else None,
-        "experiment_spec_digest": (
-            ablation_spec_digest() if axes is not None else None
-        ),
         "measurement_spec_protocol": MEASUREMENT_PROTOCOL,
-        "measurement_spec_digest": measurement_spec_digest(),
-        "toolchain_digest": toolchain_fingerprint(),
         "toolchain": {
             "intent_opt": str(backend_compile.INTENT_OPT),
             "mlir_opt": str(backend_compile.MLIR_OPT),

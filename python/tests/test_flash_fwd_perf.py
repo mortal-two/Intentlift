@@ -21,7 +21,7 @@ by content hash, and load the kernel from there -- the reference stays pristine.
 (Same local-copy trick as test_flash_bwd_perf.py::_load_triton_bwd.)
 
 HONEST MEASURED RESULT (5090D, this committed test, R-FLASH-1 CACHED LAUNCHER):
-with the ``CachedLauncher`` (pre-marshalled arg array, updated in place, no per-call
+with the ``PreparedLauncher`` (pre-marshalled arg array, updated in place, no per-call
 Python rebuild, no per-call synchronize -- Triton-style) the small-shape gap is GONE:
 mine/triton is ~1.00x @128, ~0.72x @256, ~0.77x @512, ~0.75x @1024 -- parity at the
 launch-bound small shape and a modest BEAT at the GPU-bound larger ones. This is the
@@ -192,7 +192,7 @@ def test_flash_fwd_perf(sq, sk, d):
     print(f"  SDPA    {t_sdpa*1e3:7.1f}us  -> mine/SDPA   = {t_mine/t_sdpa:.2f}x "
           f"(library flash; informational)")
 
-    # R-FLASH-1 PARITY GATE (5090D): with the CachedLauncher the per-call launch
+    # R-FLASH-1 PARITY GATE (5090D): with the PreparedLauncher the per-call launch
     # overhead is gone and mine/triton is ~1.00x @128 and ~0.72-0.77x @>=256 (a
     # modest BEAT). The PRD parity bar (mine <= triton * 1.1) now holds at ALL
     # benched shapes, so it is asserted at every shape (not just sq>=512). A little

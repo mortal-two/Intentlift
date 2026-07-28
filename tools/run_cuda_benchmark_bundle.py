@@ -30,7 +30,7 @@ from intentir.backend.cuda.portable_bundle import (
     decode_values,
     logical_runtime_array,
 )
-from intentir.ir.production_snapshot import ProductionSnapshot
+from intentir.verify.gate1.model import SemanticArchive
 from intentir.backend.roofline import (
     RooflineCeilings,
     evaluate_logical_roofline,
@@ -184,16 +184,6 @@ def _measure_cuda_roofs(
     return RooflineCeilings(
         memory_gbps=memory_gbps,
         fp32_gflops=fp32_gflops,
-        provenance={
-            "kind": "target-side-sustained-microbenchmark",
-            "memory_method": "device-to-device-fp32-copy-read-plus-write",
-            "memory_mib_per_tensor": memory_mib,
-            "memory_samples_us": memory_samples,
-            "compute_method": "torch.mm-fp32-tf32-disabled",
-            "matrix_extent": matrix_extent,
-            "compute_samples_us": compute_samples,
-            "allocation_in_timed_region": False,
-        },
     )
 
 
@@ -213,7 +203,7 @@ def _compare(
     name: str,
     actual: Mapping[str, np.ndarray],
     reference: Mapping[str, np.ndarray],
-    snapshot: ProductionSnapshot,
+    j: SemanticArchive,
     entry: Mapping[str, Any],
     values: Mapping[str, np.ndarray],
 ):
@@ -222,7 +212,7 @@ def _compare(
         actual,
         "canonical-J-reference",
         reference,
-        j=snapshot.j,
+        j=j,
         input_bindings=entry["input_bindings"],
         output_bindings=entry["output_bindings"],
         inputs=values,
@@ -248,10 +238,10 @@ def _one_kernel(
 ) -> dict[str, Any]:
     import torch
 
-    snapshot = ProductionSnapshot.from_dict(entry["snapshot"])
+    j = SemanticArchive.from_json(entry["j"])
     values = decode_values(entry["values"])
     reference = decode_values(entry["reference_outputs"])
-    j_inputs = {item.name: item for item in snapshot.j.intent.inputs}
+    j_inputs = {item.name: item for item in j.intent.inputs}
     inputs = []
     for name in entry["input_order"]:
         if name not in j_inputs:
@@ -284,7 +274,7 @@ def _one_kernel(
         workload_cost is not None
         and int(workload_cost["boundary_io_bytes"]) != logical_io_bytes
     ):
-        raise ValueError("CUDA tensors disagree with J workload-cost receipt")
+        raise ValueError("CUDA tensors disagree with J workload-cost record")
     floating_point_ops = (
         int(workload_cost["floating_point_ops"])
         if workload_cost is not None
@@ -328,11 +318,6 @@ def _one_kernel(
     for candidate in entry["candidates"]:
         try:
             extracted = portable_launch_from_dict(candidate["launch"])
-            if (
-                extracted.source_mlir_sha256
-                != entry["materialization"]["intent_mlir_sha256"]
-            ):
-                raise ValueError("candidate launch does not belong to bundled M0")
             if isinstance(extracted, ExtractedSingleLaunch):
                 prepared = PreparedSingleLaunch.from_extracted(extracted)
                 thunk = prepared.thunk(tensors)
@@ -346,14 +331,14 @@ def _one_kernel(
                         "prepared graph output count differs from bundled J results"
                     )
             else:
-                raise TypeError("unsupported portable CUDA launch receipt")
+                raise TypeError("unsupported portable CUDA launch record")
             thunk()
             torch.cuda.synchronize()
             agreement = _compare(
                 name="mlir-cubin",
                 actual=_actual_outputs(entry["output_keys"], candidate_outputs),
                 reference=reference,
-                snapshot=snapshot,
+                j=j,
                 entry=entry,
                 values=values,
             )
@@ -383,13 +368,7 @@ def _one_kernel(
                     "concrete_state": candidate.get("concrete_state"),
                     "lowering": candidate.get("lowering"),
                     "launch": extracted.record.to_dict(),
-                    "executable_sha256": extracted.executable_sha256,
                     "binary_size_bytes": extracted.binary_size_bytes,
-                    "cubin_sha256": (
-                        extracted.cubin_sha256
-                        if isinstance(extracted, ExtractedSingleLaunch)
-                        else None
-                    ),
                     "cubin_size_bytes": (
                         len(extracted.cubin)
                         if isinstance(extracted, ExtractedSingleLaunch)
@@ -545,7 +524,7 @@ def _one_kernel(
         best_for_order(with_c_full_order) if c_oracle_complete else None
     )
     schedule_spine_best = best_for_order(schedule_spine_order)
-    c_fixed_same_receipt = (
+    c_fixed_same_run = (
         best_for_order([c_fixed_candidate_id])
         if c_fixed_candidate_id is not None
         else None
@@ -605,7 +584,7 @@ def _one_kernel(
                 name="source-triton",
                 actual=source.copied_outputs(),
                 reference=reference,
-                snapshot=snapshot,
+                j=j,
                 entry=entry,
                 values=values,
             )
@@ -676,9 +655,6 @@ def _one_kernel(
         "workload_profile": entry.get("workload_profile", "closed-v1"),
         "baseline_policy": baseline_policy,
         "workload_valuation": entry.get("workload_valuation"),
-        "snapshot_digest": snapshot.snapshot_digest,
-        "j_digest": snapshot.j_digest,
-        "c_digest": snapshot.c_digest,
         "extents": entry["extents"],
         "contract_view": entry["contract_view"],
         "search_orders": entry["search_orders"],
@@ -689,13 +665,7 @@ def _one_kernel(
             "concrete_state": winner.get("concrete_state"),
             "lowering": winner.get("lowering"),
             "launch": extracted.record.to_dict(),
-            "executable_sha256": extracted.executable_sha256,
             "binary_size_bytes": extracted.binary_size_bytes,
-            "cubin_sha256": (
-                extracted.cubin_sha256
-                if isinstance(extracted, ExtractedSingleLaunch)
-                else None
-            ),
             "cubin_size_bytes": (
                 len(extracted.cubin)
                 if isinstance(extracted, ExtractedSingleLaunch)
@@ -780,7 +750,7 @@ def _one_kernel(
             },
             "schedule_spine_ablation": (
                 {
-                    "same_candidate_measurement_receipt": True,
+                    "same_run_measurement": True,
                     "same_total_search_visit": True,
                     "schedule_spine_candidate_count": len(schedule_spine_order),
                     "schedule_spine_best_candidate_id": (
@@ -799,17 +769,17 @@ def _one_kernel(
             ),
             "c_fixed_schedule_ablation": (
                 {
-                    "same_candidate_measurement_receipt": True,
+                    "same_run_measurement": True,
                     "c_fixed_candidate_id": c_fixed_candidate_id,
-                    "c_fixed_us": c_fixed_same_receipt["latency_us"],
+                    "c_fixed_us": c_fixed_same_run["latency_us"],
                     "schedule_only_best_candidate_id": best_id,
                     "schedule_only_best_us": best_record["latency_us"],
                     "schedule_over_c_fixed_speedup": (
-                        c_fixed_same_receipt["latency_us"]
+                        c_fixed_same_run["latency_us"]
                         / best_record["latency_us"]
                     ),
                 }
-                if c_fixed_same_receipt is not None
+                if c_fixed_same_run is not None
                 and schedule_spine_order == active_order
                 else None
             ),
@@ -1051,14 +1021,11 @@ def main(argv: list[str] | None = None) -> int:
     report = {
         "protocol": REPORT_PROTOCOL,
         "bundle_protocol": bundle["protocol"],
-        "bundle_toolchain_digest": bundle["toolchain_digest"],
         "target": bundle["target"],
         "workload_profile": bundle.get("workload_profile", "closed-v1"),
         "baseline_policy": bundle.get("baseline_policy", "source_and_refj"),
         "ablation_axes": bundle.get("ablation_axes"),
-        "experiment_spec_digest": bundle.get("experiment_spec_digest"),
         "measurement_spec_protocol": bundle.get("measurement_spec_protocol"),
-        "measurement_spec_digest": bundle.get("measurement_spec_digest"),
         "device": _device_record(torch),
         "roofline_ceilings": (
             roofline_ceilings.to_record()

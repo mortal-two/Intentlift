@@ -420,7 +420,6 @@ def test_gate2_checks_all_three_pairwise_edges(monkeypatch) -> None:
     assert result.source_j is not None and result.source_j.passed
     assert result.replay_j is not None and result.replay_j.passed
     assert j_elaboration(spec.j).value_type_by_name["t1"].dtype == "f32"
-    assert result.reference.metadata["boundary_digest"]
     report = result.to_json()
     assert report["source_replay"]["passed"]
     assert report["source_j"]["passed"]
@@ -1339,15 +1338,15 @@ def test_refeval_runtime_proves_rank_zero_logical_bound_tautology(limit: int) ->
         "logical_domain_runtime_mask_erasure_v1"
     )
     assert result.metadata["runtime_predicate_proof_count"] == 2
-    receipts = projection["runtime_predicate_proofs"]
-    assert [item["access_id"] for item in receipts] == ["a0", "a1"]
+    records = projection["runtime_predicate_proofs"]
+    assert [item["access_id"] for item in records] == ["a0", "a1"]
     assert all(
         item["protocol"] == RUNTIME_PREDICATE_PROOF_PROTOCOL
         and item["proof"] == "closed_domain_tautology"
         and item["logical_input_refs"] == ["limit"]
         and item["domain_axes"] == ["i0"]
         and "value" not in item
-        for item in receipts
+        for item in records
     )
 
 
@@ -1399,12 +1398,12 @@ def test_refeval_runtime_guard_polarity_is_proved_not_erased(
 
     assert result.ok is accepted
     if accepted:
-        receipts = result.metadata["boundary_projection"][
+        records = result.metadata["boundary_projection"][
             "runtime_predicate_proofs"
         ]
         assert all(
             item["logical_input_refs"] == ["flag", "limit"]
-            for item in receipts
+            for item in records
         )
     else:
         assert result.unsupported
@@ -1551,7 +1550,7 @@ def test_refeval_runtime_rejects_predicate_axis_outside_direct_access() -> None:
     assert "cross-axis logical access predicates" in (result.error or "")
 
 
-def test_runtime_predicate_receipt_does_not_disclose_hidden_value() -> None:
+def test_runtime_predicate_record_does_not_disclose_hidden_value() -> None:
     artifact = _make_runtime_logical_mask_artifact()
     spec = _runtime_logical_mask_spec(artifact)
     hidden_value = 13
@@ -1564,18 +1563,18 @@ def test_runtime_predicate_receipt_does_not_disclose_hidden_value() -> None:
     )
 
     assert result.ok, result.error
-    receipts = result.metadata["boundary_projection"][
+    records = result.metadata["boundary_projection"][
         "runtime_predicate_proofs"
     ]
-    assert receipts
-    assert all("value" not in receipt for receipt in receipts)
+    assert records
+    assert all("value" not in record for record in records)
     assert all(
-        hidden_value not in receipt.values()
-        for receipt in receipts
+        hidden_value not in record.values()
+        for record in records
     )
 
 
-def test_runtime_predicate_receipt_and_compile_identity_are_value_independent() -> None:
+def test_runtime_predicate_structure_is_value_independent() -> None:
     artifact = _make_runtime_logical_mask_artifact()
     spec = _runtime_logical_mask_spec(artifact)
     runner = ScalarLoweringRunner()
@@ -1593,9 +1592,6 @@ def test_runtime_predicate_receipt_and_compile_identity_are_value_independent() 
     assert all(result.ok for result in results)
     assert results[0].metadata["scalar_spec_digest"] == results[1].metadata[
         "scalar_spec_digest"
-    ]
-    assert results[0].metadata["boundary_digest"] == results[1].metadata[
-        "boundary_digest"
     ]
     assert results[0].metadata["boundary_projection"][
         "runtime_predicate_proofs"

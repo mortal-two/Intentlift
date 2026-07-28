@@ -82,7 +82,7 @@ def test_symbolic_medium_profile_revalues_harness_without_changing_j(
     )
     suite = build_workload_jc_suite(prepared, active.j, active.c)
 
-    assert active.j_digest == base.j_digest
+    assert active.j.to_json() == base.j.to_json()
     assert record["j_unchanged"] is True
     assert record["kind"] == "symbolic_extent_valuation"
     assert suite.cases[0].refeval.dims_map == expected_dims
@@ -179,7 +179,7 @@ def test_symbolic_large_profile_uses_only_declared_j_dimensions(
     )
     suite = build_workload_jc_suite(prepared, active.j, active.c)
 
-    assert active.j_digest == base.j_digest
+    assert active.j.to_json() == base.j.to_json()
     assert suite.cases[0].refeval.dims_map == expected_dims
     assert prepared.adapter.grid == expected_grid
 
@@ -196,7 +196,7 @@ def test_symbolic_profile_preserves_literal_row_softmax_while_revaluing_feature(
     shapes = {item.formal: item.shape for item in prepared.adapter.buffers}
     assert shapes == {"Y_ptr": (2, 1024), "X_ptr": (2, 1024)}
     assert prepared.adapter.grid == (2,)
-    assert active.j_digest == base.j_digest
+    assert active.j.to_json() == base.j.to_json()
     assert record["literal_constraints"] == ["rows=2"]
 
 
@@ -380,7 +380,7 @@ def test_fresh14_natural_headline_revalues_declared_symbols_only(
         name,
         profile=PRODUCTION_WORKLOAD_PROFILE_NATURAL_HEADLINE,
     )
-    active, receipt = profile_production_snapshot(
+    active, record = profile_production_snapshot(
         base,
         prepared,
         PRODUCTION_WORKLOAD_PROFILE_NATURAL_HEADLINE,
@@ -389,9 +389,9 @@ def test_fresh14_natural_headline_revalues_declared_symbols_only(
 
     assert shapes[formal] == shape
     assert prepared.adapter.grid == grid
-    assert active.j_digest == base.j_digest
-    assert receipt["j_unchanged"] is True
-    assert receipt["profile"] == PRODUCTION_WORKLOAD_PROFILE_NATURAL_HEADLINE
+    assert active.j.to_json() == base.j.to_json()
+    assert record["j_unchanged"] is True
+    assert record["profile"] == PRODUCTION_WORKLOAD_PROFILE_NATURAL_HEADLINE
 
 
 def test_natural_flash_and_splitk_contiguous_stride_products_are_revalued():

@@ -31,7 +31,7 @@
 | **nonzero** | [2048,2048] | 44 | 114 | 63 | **0.70** | WIN (M2) |
 | nonzero | [4096,4096] | 188 | 554 | 275 | **0.68** | WIN (M2) |
 
-**Flash (kernel-only vs bare Triton flash-attn):** fwd 0.91×@128, 0.73×@256, 0.77×@512, 0.73×@1024 — **BEATS Triton at every shape** (M4 `CachedLauncher`). bwd-atomic 1.61×@512, 1.64×@1024.
+**Flash (kernel-only vs bare Triton flash-attn):** fwd 0.91×@128, 0.73×@256, 0.77×@512, 0.73×@1024 — **BEATS Triton at every shape** (M4 `PreparedLauncher`). bwd-atomic 1.61×@512, 1.64×@1024.
 **Autotuner (M5):** matmul [512³] 7.57→4.64µs (1.70→**1.04×**), argmax 25.9→10.3µs (2.34→**0.93×**) — real config changes, per-(op,shape) cache.
 
 ## What changed vs the M0 baseline (every naive loss erased)
@@ -44,7 +44,7 @@
 | argmax | 2.45× | **0.93× WIN** | M1 coalesced interleaved scan + M5-autotuned T |
 | triu | 1.95× | **0.74× WIN** | M1 read-guard (halve input traffic) |
 | masked_select/nonzero | 2.9–7.8× | **0.63–1.12×** | M2 CUB DeviceSelect block-cooperative compaction |
-| flash fwd | 1.19–2.23× | **0.71–0.91× BEAT** | M4 CachedLauncher (killed per-call launch overhead) |
+| flash fwd | 1.19–2.23× | **0.71–0.91× BEAT** | M4 PreparedLauncher (killed per-call launch overhead) |
 | sort (large non-pow2) | 1.7–1.9× | **0.68–0.95× WIN** | M7a segmented radix (cost-model hybrid) |
 
 ## Honest walls (evidence, not labels)

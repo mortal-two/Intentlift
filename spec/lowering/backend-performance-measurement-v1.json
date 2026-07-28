@@ -1,12 +1,15 @@
 {
   "protocol": "intentir.backend.performance-measurement.v1",
-  "scope": "cache-state, Roofline, and cross-target performance evidence for a fixed J/lowering-state search",
-  "identity_rule": {
+  "scope": "cache-state, Roofline, and cross-target performance evidence for one J lowering search",
+  "comparison_rule": {
     "required_equal_fields": [
-      "j_digest",
+      "operator",
+      "shape",
+      "dtype",
+      "layout",
+      "output_relation",
       "target",
-      "compiler_toolchain_digest",
-      "ablation_arm_candidate_contract",
+      "ablation_arm_and_candidate_budget",
       "data_regime",
       "timer",
       "correctness_policy"
@@ -15,8 +18,8 @@
     "cross_target_rule": "RTX 5090D, H100, and RVV are reported independently before any cross-target narrative",
     "publication_primary_regime": "cold-data denotes post-warmup, L2-controlled single-shot timing; process/module/JIT cold start is excluded",
     "pre_measurement_stabilization_rule": "before any cold-data timed samples, execute every compared prepared thunk outside the timed interval for the same declared time budget in round-robin order; this stabilizes code, pages, context, and device P-state but does not define the timed data-cache state",
-    "full_corpus_rule": "every frozen production-catalog J remains an explicit matrix row for every target and experiment arm; not_matched, literal_shape_only, unavailable baseline, compile failure, and Q/D failure are retained rather than omitted",
-    "valuation_identity_rule": "every result binds the unchanged j_digest plus the exact J-declared symbolic extent valuation and workload profile; a backend profile may not replace a J literal with a symbol"
+    "full_corpus_rule": "every accepted production-catalog J remains an explicit matrix row for every target and experiment arm; not_matched, literal_shape_only, unavailable baseline, compile failure, and Q/D failure are retained rather than omitted",
+    "valuation_rule": "every result reports the actual J-declared symbolic extent valuation and workload profile; a backend profile may not replace a J literal with a symbol"
   },
   "data_regimes": {
     "warm": {
@@ -60,10 +63,10 @@
   "search_ablation": {
     "e2": "fixed structural and numeric trace with schedule search",
     "e3": "hard-safe structural/numeric lowering-state expansion with independent schedule search",
-    "e3_e2_primary_pairing": "select fixed-structure schedule-spine best and expanded best from one E3 candidate timing receipt; retain separately launched arm latencies only as a diagnostic cross-report ratio",
-    "c_pairing": "C-prior and Erase-C traverse the same candidate universe under equal distinct-state/failure budget",
+    "e3_e2_primary_pairing": "select fixed-structure schedule-spine best and expanded best from one E3 candidate timing run; retain separately launched arm latencies only as a diagnostic cross-report ratio",
+    "c_pairing": "C-prior and Erase-C traverse the same candidate universe under the same enumerated-candidate budget",
     "retile_pairing": "retiled and no-retile states use the same J, target lowerer, correctness policy, timer, and data regime",
-    "candidate_correctness": "every measured executable candidate must pass Target-RefJ under the frozen Q/D search policy"
+    "candidate_correctness": "every measured executable candidate must pass Target-RefJ under the declared Q/D search policy"
   },
   "reporting": {
     "required": [
@@ -74,8 +77,8 @@
       "asymptotic Roofline bottleneck",
       "observed operational regime",
       "cache hierarchy and data regime",
-      "unchanged J digest plus exact symbolic extent valuation and workload profile",
-      "candidate/arm budget identity",
+      "exact symbolic extent valuation and workload profile",
+      "candidate/arm budget definition",
       "all-kernel and applicable-subset aggregates",
       "an explicit status for every production-catalog J in every requested target/arm/profile matrix"
     ],

@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import math
 import statistics
@@ -32,7 +31,7 @@ def _arm(report: Mapping[str, Any]) -> str:
     return str(axes["arm"])
 
 
-def _measurement_identity(report: Mapping[str, Any]) -> dict[str, Any]:
+def _measurement_config(report: Mapping[str, Any]) -> dict[str, Any]:
     measurement = report.get("measurement")
     if not isinstance(measurement, Mapping):
         raise ValueError("CUDA report lacks measurement metadata")
@@ -53,7 +52,7 @@ def _measurement_identity(report: Mapping[str, Any]) -> dict[str, Any]:
     return {key: measurement.get(key) for key in keys}
 
 
-def _device_identity(report: Mapping[str, Any]) -> dict[str, Any]:
+def _device_config(report: Mapping[str, Any]) -> dict[str, Any]:
     device = report["device"]
     return {
         "device_name": device["device_name"],
@@ -89,14 +88,19 @@ def _geomean(values: list[float]) -> float | None:
     return math.exp(sum(math.log(item) for item in values) / len(values))
 
 
-def _topology_digests(record: Mapping[str, Any]) -> set[str]:
-    result: set[str] = set()
+def _structural_paths(record: Mapping[str, Any]) -> set[tuple[str, tuple[str, ...]]]:
+    result: set[tuple[str, tuple[str, ...]]] = set()
     for candidate in record.get("candidates", []):
         if candidate.get("status") != "measured":
             continue
         state = candidate.get("concrete_state")
-        if isinstance(state, Mapping) and state.get("topology_digest"):
-            result.add(str(state["topology_digest"]))
+        if isinstance(state, Mapping):
+            result.add(
+                (
+                    str(state.get("lowering_path_kind", "unknown")),
+                    tuple(str(item) for item in state.get("transformation_trace", ())),
+                )
+            )
     return result
 
 
@@ -112,19 +116,16 @@ def summarize(
     reports = (e2, e3) if c_fixed is None else (c_fixed, e2, e3)
     for key in (
         "target",
-        "bundle_toolchain_digest",
-        "experiment_spec_digest",
         "measurement_spec_protocol",
-        "measurement_spec_digest",
         "workload_profile",
         "baseline_policy",
     ):
         if any(report.get(key) != e2.get(key) for report in reports):
             raise ValueError(f"CF/E2/E3 differ in {key}")
-    if any(_device_identity(report) != _device_identity(e2) for report in reports):
+    if any(_device_config(report) != _device_config(e2) for report in reports):
         raise ValueError("CF/E2/E3 were not measured on the same CUDA device")
-    measurement = _measurement_identity(e2)
-    if any(_measurement_identity(report) != measurement for report in reports):
+    measurement = _measurement_config(e2)
+    if any(_measurement_config(report) != measurement for report in reports):
         raise ValueError("CF/E2/E3 measurement contracts differ")
 
     cf_records = _records(c_fixed) if c_fixed is not None else {}
@@ -154,20 +155,17 @@ def summarize(
             or e3_status != "success"
             or (c_fixed is not None and cf_status != "success")
         ):
-            identity = fixed or left or right or {}
+            available = fixed or left or right or {}
             per_kernel.append(
                 {
                     "kernel": kernel,
-                    "case_id": identity.get("case_id"),
-                    "snapshot_digest": identity.get("snapshot_digest"),
-                    "j_digest": identity.get("j_digest"),
-                    "c_digest": identity.get("c_digest"),
-                    "extents": identity.get("extents"),
-                    "workload_valuation": identity.get("workload_valuation"),
-                    "workload_profile": identity.get(
+                    "case_id": available.get("case_id"),
+                    "extents": available.get("extents"),
+                    "workload_valuation": available.get("workload_valuation"),
+                    "workload_profile": available.get(
                         "workload_profile", e2.get("workload_profile")
                     ),
-                    "baseline_policy": identity.get(
+                    "baseline_policy": available.get(
                         "baseline_policy", e2.get("baseline_policy")
                     ),
                     "status": "failed_or_missing",
@@ -190,9 +188,6 @@ def summarize(
         comparable = (left, right) if fixed is None else (fixed, left, right)
         for key in (
             "case_id",
-            "snapshot_digest",
-            "j_digest",
-            "c_digest",
             "extents",
             "workload_valuation",
             "workload_profile",
@@ -200,8 +195,6 @@ def summarize(
         ):
             if any(item.get(key) != left.get(key) for item in comparable):
                 raise ValueError(f"{kernel} CF/E2/E3 differ in {key}")
-        if left.get("j_digest") is None:
-            raise ValueError(f"{kernel} CUDA reports lack J identity")
         schedule_only_us = float(left["performance"]["mlir_us"])
         intentir_us = float(right["performance"]["mlir_us"])
         c_fixed_us = (
@@ -212,15 +205,13 @@ def summarize(
         c_fixed_schedule_ablation = left["performance"].get(
             "c_fixed_schedule_ablation"
         )
-        same_receipt_schedule_gain = None
+        same_run_schedule_gain = None
         if isinstance(c_fixed_schedule_ablation, Mapping):
-            if not c_fixed_schedule_ablation.get(
-                "same_candidate_measurement_receipt"
-            ):
+            if not c_fixed_schedule_ablation.get("same_run_measurement"):
                 raise ValueError(
-                    f"{kernel} C-Fixed/Schedule-Only comparison is not same-receipt"
+                    f"{kernel} C-Fixed/Schedule-Only comparison is not same-run"
                 )
-            same_receipt_schedule_gain = float(
+            same_run_schedule_gain = float(
                 c_fixed_schedule_ablation["schedule_over_c_fixed_speedup"]
             )
             if fixed is not None:
@@ -229,7 +220,7 @@ def summarize(
                     "c_fixed_candidate_id"
                 ):
                     raise ValueError(
-                        f"{kernel} standalone and same-receipt C-Fixed identities differ"
+                        f"{kernel} standalone and same-run C-Fixed selections differ"
                     )
         schedule_source_value = left["performance"].get("source_triton_us")
         intentir_source_value = right["performance"].get("source_triton_us")
@@ -240,7 +231,7 @@ def summarize(
             if intentir_source_value is not None
             else None
         )
-        structural = bool(_topology_digests(right) - _topology_digests(left))
+        structural = bool(_structural_paths(right) - _structural_paths(left))
         if structural:
             structurally_expanded.append(kernel)
         c_ordering = right["performance"]["c_ordering_ablation"]
@@ -258,28 +249,25 @@ def summarize(
             erase_c_candidates_to_95pct.append(int(erase_to_95))
         cross_report_gain = schedule_only_us / intentir_us
         spine_ablation = right["performance"].get("schedule_spine_ablation")
-        same_receipt_gain = None
+        same_run_gain = None
         if isinstance(spine_ablation, Mapping):
-            if not spine_ablation.get("same_candidate_measurement_receipt"):
+            if not spine_ablation.get("same_run_measurement"):
                 raise ValueError(
-                    f"{kernel} schedule-spine comparison is not same-receipt"
+                    f"{kernel} schedule-spine comparison is not same-run"
                 )
-            same_receipt_gain = float(
+            same_run_gain = float(
                 spine_ablation["expanded_over_schedule_spine_speedup"]
             )
-            if same_receipt_gain <= 0:
+            if same_run_gain <= 0:
                 raise ValueError(f"{kernel} has a non-positive spine speedup")
         primary_gain = (
-            same_receipt_gain
-            if same_receipt_gain is not None
+            same_run_gain
+            if same_run_gain is not None
             else cross_report_gain
         )
         record = {
             "kernel": kernel,
             "case_id": left.get("case_id"),
-            "snapshot_digest": left.get("snapshot_digest"),
-            "j_digest": left["j_digest"],
-            "c_digest": left.get("c_digest"),
             "extents": left.get("extents"),
             "workload_valuation": left.get("workload_valuation"),
             "workload_profile": left.get(
@@ -296,8 +284,8 @@ def summarize(
             "schedule_only_us": schedule_only_us,
             "intentir_us": intentir_us,
             "g_schedule": (
-                same_receipt_schedule_gain
-                if same_receipt_schedule_gain is not None
+                same_run_schedule_gain
+                if same_run_schedule_gain is not None
                 else c_fixed_us / schedule_only_us
                 if c_fixed_us is not None
                 else None
@@ -321,27 +309,27 @@ def summarize(
             },
             "supplementary_diagnostics": {
                 "formal_role": "not_a_main_experiment_arm",
-                "same_receipt_g_lowering": same_receipt_gain,
+                "same_run_g_lowering": same_run_gain,
                 "cross_report_g_lowering": cross_report_gain,
-                "same_receipt_g_schedule": same_receipt_schedule_gain,
+                "same_run_g_schedule": same_run_schedule_gain,
                 "cross_report_g_schedule": (
                     c_fixed_us / schedule_only_us
                     if c_fixed_us is not None
                     else None
                 ),
-                "schedule_spine_best_us_in_intentir_receipt": (
+                "schedule_spine_best_us_in_intentir_run": (
                     spine_ablation.get("schedule_spine_best_us")
                     if isinstance(spine_ablation, Mapping)
                     else None
                 ),
-                "expanded_best_us_in_intentir_receipt": (
+                "expanded_best_us_in_intentir_run": (
                     spine_ablation.get("expanded_best_us")
                     if isinstance(spine_ablation, Mapping)
                     else None
                 ),
                 "structural_state_expansion_observed": structural,
-                "schedule_only_topology_count": len(_topology_digests(left)),
-                "intentir_topology_count": len(_topology_digests(right)),
+                "schedule_only_structural_path_count": len(_structural_paths(left)),
+                "intentir_structural_path_count": len(_structural_paths(right)),
             },
         }
         per_kernel.append(record)
@@ -361,12 +349,9 @@ def summarize(
         "target": e2["target"],
         "workload_profile": e2.get("workload_profile"),
         "baseline_policy": e2.get("baseline_policy"),
-        "device": _device_identity(e2),
+        "device": _device_config(e2),
         "measurement": measurement,
-        "experiment_spec_digest": e2["experiment_spec_digest"],
         "measurement_spec_protocol": e2.get("measurement_spec_protocol"),
-        "measurement_spec_digest": e2.get("measurement_spec_digest"),
-        "bundle_toolchain_digest": e2["bundle_toolchain_digest"],
         "summary": {
             "formal_three_arm": c_fixed is not None,
             "kernel_count": len(kernel_universe),
@@ -434,7 +419,7 @@ def main(argv: list[str] | None = None) -> int:
     encoded = json.dumps(result, indent=2, sort_keys=True) + "\n"
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(encoded, encoding="utf-8")
-    print(f"wrote {args.out} sha256={hashlib.sha256(encoded.encode()).hexdigest()}")
+    print(f"wrote {args.out}")
     return 0
 
 

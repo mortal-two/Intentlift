@@ -268,12 +268,12 @@ class _Evaluator:
                 or not isinstance(tensor, str)
             ):
                 raise ValueError(
-                    "structured guarded-load receipt is not mechanically closed"
+                    "structured guarded-load record is not mechanically closed"
                 )
             key = (node_ref, operand_index)
             if key in self.access_guard_loads:
                 raise ValueError(
-                    "structured guarded-load receipts duplicate one operand edge"
+                    "structured guarded-load records duplicate one operand edge"
                 )
             self.access_guard_loads[key] = relation
         self.operation_count = 0
@@ -347,7 +347,7 @@ class _Evaluator:
         if materialization is not None:
             if name != materialization.tensor:
                 raise ValueError(
-                    "structured guarded-load receipt names a different operand"
+                    "structured guarded-load record names a different operand"
                 )
             try:
                 condition = np.asarray(env[materialization.value_ref])

@@ -101,9 +101,15 @@ def test_selector_uses_the_cpp_structural_probe_without_verdicts(
     assert result.attempts[-1].direct_hit is True
     assert calls[0][1] == _SOURCE
     record = result.to_dict()
-    assert "receipt" not in record
-    assert "verdict" not in record
-    assert "P5" not in record
+    assert set(record) == {
+        "pipeline_kind",
+        "target",
+        "fast_path_id",
+        "pass_argument",
+        "scf_to_cf",
+        "attempts",
+        "generic_fallback",
+    }
 
 
 def test_selector_accepts_a_complete_compiler_emitted_launch_graph(

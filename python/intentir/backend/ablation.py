@@ -1,4 +1,4 @@
-"""Frozen backend experiment arms for causal performance attribution."""
+"""Backend experiment arms for causal performance attribution."""
 
 from __future__ import annotations
 
@@ -8,15 +8,12 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from intentir.ir.production_snapshot import content_digest
-
-
 ABLATION_PROTOCOL = "intentir.backend.ablation-plan.v3"
 ABLATION_SCOPE = "J-grounded Q/D-certified concrete lowering-state search"
 ABLATION_BUDGET_RULE = (
     "C-Fixed receives exactly one deterministic target projection of C; all "
-    "search arms receive the same caller-supplied total budget over distinct "
-    "post-pass MLIR states and distinct failed exact candidates"
+    "search arms receive the same caller-supplied total budget over explicitly "
+    "enumerated candidates, including candidates that fail compilation"
 )
 ABLATION_CORRECTNESS = {
     "immutable_semantic_input": "J=A+B",
@@ -27,20 +24,16 @@ ABLATION_CORRECTNESS = {
         "target_replay",
         "target_ref_j",
     ],
-    "domain_rule": "D_search and D_cert have disjoint exact input digests",
+    "domain_rule": "D_search and D_cert use disjoint explicitly named cases",
     "comparison_rule": "every edge is direct; tolerance transitivity is forbidden",
     "c_role": "candidate ordering only",
 }
-ABLATION_CANDIDATE_IDENTITY = {
+ABLATION_CANDIDATE_SPACE = {
     "search_object": (
         "concrete post-pass MLIR state plus schedule assignment and "
         "transformation trace"
     ),
-    "deduplication_key": "canonical post-pass MLIR digest",
-    "duplicate_rule": (
-        "duplicate MLIR attempts remain in the audit log and do not consume "
-        "candidate budget"
-    ),
+    "budget_unit": "one explicitly enumerated candidate",
     "failed_attempt_rule": (
         "one distinct exact candidate that fails before state formation consumes "
         "one budget unit"
@@ -91,7 +84,7 @@ ABLATION_MEASUREMENT = {
     ),
     "e3_e2_comparison_rule": (
         "the primary marginal E3/E2 gain selects fixed-structure schedule-spine "
-        "best and expanded best from the same E3 candidate timing receipt; "
+        "best and expanded best from the same E3 candidate timing run; "
         "separately launched E2/E3 absolute latencies remain a diagnostic "
         "cross-report ratio"
     ),
@@ -224,7 +217,7 @@ def load_ablation_spec(path: Path | None = None) -> dict[str, Any]:
         "protocol",
         "scope",
         "correctness",
-        "candidate_identity",
+        "candidate_space",
         "measurement",
         "budget_rule",
         "arms",
@@ -236,8 +229,8 @@ def load_ablation_spec(path: Path | None = None) -> dict[str, Any]:
         raise ValueError("backend ablation spec changed the equal-budget rule")
     if value["correctness"] != ABLATION_CORRECTNESS:
         raise ValueError("backend ablation spec differs from the Q/D implementation")
-    if value["candidate_identity"] != ABLATION_CANDIDATE_IDENTITY:
-        raise ValueError("backend ablation spec differs from state deduplication")
+    if value["candidate_space"] != ABLATION_CANDIDATE_SPACE:
+        raise ValueError("backend ablation spec differs from candidate enumeration")
     if value["measurement"] != ABLATION_MEASUREMENT:
         raise ValueError("backend ablation spec differs from measurement protocol")
     records = value.get("arms")
@@ -250,10 +243,6 @@ def load_ablation_spec(path: Path | None = None) -> dict[str, Any]:
     if observed != expected or len(records) != len(expected):
         raise ValueError("backend ablation spec arms are incomplete or duplicated")
     return value
-
-
-def ablation_spec_digest(path: Path | None = None) -> str:
-    return content_digest(load_ablation_spec(path))
 
 
 def standard_ablation_plan(
@@ -326,14 +315,13 @@ def assert_fair_pair(left: SearchAxes, right: SearchAxes, *, varying: str) -> No
 __all__ = [
     "ABLATION_BUDGET_RULE",
     "ABLATION_CORRECTNESS",
-    "ABLATION_CANDIDATE_IDENTITY",
+    "ABLATION_CANDIDATE_SPACE",
     "ABLATION_MEASUREMENT",
     "ABLATION_PROTOCOL",
     "ABLATION_SCOPE",
     "DEFAULT_ABLATION_SPEC",
     "ExperimentArm",
     "SearchAxes",
-    "ablation_spec_digest",
     "assert_fair_pair",
     "load_ablation_spec",
     "standard_ablation_plan",

@@ -21,7 +21,6 @@ class VariantManifestError(ValueError):
     """Raised when a multi-variant CUDA bundle is structurally invalid."""
 
 
-_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _ROLES = frozenset({"conservative_fallback", "specialized"})
 
 
@@ -92,83 +91,6 @@ class InvocationSlot:
     def from_dict(cls, value: Mapping[str, Any]) -> "InvocationSlot":
         _strict_keys(value, required={"name"}, context="invocation slot")
         return cls(value["name"])
-
-
-@dataclass(frozen=True)
-class ArtifactProvenance:
-    intent_mlir_paths: tuple[str, ...]
-    binary_paths: tuple[str, ...]
-    binary_modules: tuple[str, ...]
-    entry_points: tuple[str, ...]
-    target: str
-    compiler_pipeline: str
-    binary_sha256: tuple[str | None, ...] = ()
-
-    def __post_init__(self) -> None:
-        for field_name in ("intent_mlir_paths", "binary_paths", "binary_modules", "entry_points"):
-            values = tuple(
-                _identifier(item, field_name=field_name)
-                for item in getattr(self, field_name)
-            )
-            if not values:
-                raise VariantManifestError(f"{field_name} must not be empty")
-            object.__setattr__(self, field_name, values)
-        object.__setattr__(self, "target", _identifier(self.target, field_name="target"))
-        object.__setattr__(
-            self,
-            "compiler_pipeline",
-            _identifier(self.compiler_pipeline, field_name="compiler_pipeline"),
-        )
-        kernel_count = len(self.binary_paths)
-        if len(self.binary_modules) != kernel_count or len(self.entry_points) != kernel_count:
-            raise VariantManifestError(
-                "binary_paths, binary_modules, and entry_points must have equal length"
-            )
-        hashes = self.binary_sha256 or (None,) * kernel_count
-        if len(hashes) != kernel_count:
-            raise VariantManifestError("binary_sha256 length must match binary_paths")
-        for digest in hashes:
-            if digest is not None and not _SHA256.fullmatch(digest):
-                raise VariantManifestError(
-                    "binary_sha256 entries must be null or 64 lowercase hex digits"
-                )
-        object.__setattr__(self, "binary_sha256", tuple(hashes))
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "intent_mlir_paths": list(self.intent_mlir_paths),
-            "binary_paths": list(self.binary_paths),
-            "binary_modules": list(self.binary_modules),
-            "entry_points": list(self.entry_points),
-            "target": self.target,
-            "compiler_pipeline": self.compiler_pipeline,
-            "binary_sha256": list(self.binary_sha256),
-        }
-
-    @classmethod
-    def from_dict(cls, value: Mapping[str, Any]) -> "ArtifactProvenance":
-        _strict_keys(
-            value,
-            required={
-                "intent_mlir_paths",
-                "binary_paths",
-                "binary_modules",
-                "entry_points",
-                "target",
-                "compiler_pipeline",
-                "binary_sha256",
-            },
-            context="artifact provenance",
-        )
-        return cls(
-            intent_mlir_paths=tuple(value["intent_mlir_paths"]),
-            binary_paths=tuple(value["binary_paths"]),
-            binary_modules=tuple(value["binary_modules"]),
-            entry_points=tuple(value["entry_points"]),
-            target=value["target"],
-            compiler_pipeline=value["compiler_pipeline"],
-            binary_sha256=tuple(value["binary_sha256"]),
-        )
 
 
 @dataclass(frozen=True)
@@ -295,7 +217,6 @@ class VariantRecord:
     variant_id: str
     role: str
     schedule: Mapping[str, bool | int | float | str]
-    artifact: ArtifactProvenance
     launch_plan: ExecutableLaunchPlan
     runtime_contract: RuntimeContract | None
     compile_assumptions: tuple[str, ...]
@@ -332,19 +253,11 @@ class VariantRecord:
                     self.fallback_variant_id, field_name="fallback_variant_id"
                 ),
             )
-        artifact_pairs = set(zip(self.artifact.binary_modules, self.artifact.entry_points))
-        for step in self.launch_plan.steps:
-            if (step.binary_module, step.entry_point) not in artifact_pairs:
-                raise VariantManifestError(
-                    f"launch step {step.step_id!r} does not resolve to a compiled artifact"
-                )
-
     def to_dict(self) -> dict[str, Any]:
         return {
             "variant_id": self.variant_id,
             "role": self.role,
             "schedule": dict(self.schedule),
-            "artifact": self.artifact.to_dict(),
             "launch_plan": self.launch_plan.to_dict(),
             "runtime_contract": (
                 self.runtime_contract.to_dict()
@@ -363,7 +276,6 @@ class VariantRecord:
                 "variant_id",
                 "role",
                 "schedule",
-                "artifact",
                 "launch_plan",
                 "runtime_contract",
                 "compile_assumptions",
@@ -376,7 +288,6 @@ class VariantRecord:
             variant_id=value["variant_id"],
             role=value["role"],
             schedule=value["schedule"],
-            artifact=ArtifactProvenance.from_dict(value["artifact"]),
             launch_plan=ExecutableLaunchPlan.from_dict(value["launch_plan"]),
             runtime_contract=(
                 RuntimeContract.from_dict(runtime_contract)
@@ -543,7 +454,6 @@ class VariantManifest:
 
 
 __all__ = [
-    "ArtifactProvenance",
     "DeviceLaunchStep",
     "ExecutableLaunchPlan",
     "InvocationSlot",

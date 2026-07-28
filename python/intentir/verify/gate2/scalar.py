@@ -839,10 +839,10 @@ def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
                     )
 
 
-def _validate_complete_boundary(j: SemanticArchive) -> str:
-    """Compatibility wrapper over the shared J boundary projection."""
+def _validate_complete_boundary(j: SemanticArchive):
+    """Validate and return the shared typed boundary projection."""
 
-    return project_functional_boundary(j).boundary_digest
+    return project_functional_boundary(j)
 
 
 def scalar_index_bounds(j: SemanticArchive) -> frozenset[str]:
@@ -1044,7 +1044,6 @@ class ScalarLoweringRunner:
                 inputs_by_ref,
                 spec.dims_map,
             )
-            boundary_digest = projection.boundary_digest
             validate_index_bounds_inputs(spec.j, inputs_by_ref)
             broadcast_axes = projection.emitter_broadcast_axes()
             guarded_loads = tuple(
@@ -1092,7 +1091,6 @@ class ScalarLoweringRunner:
                     ),
                     "function": spec.j.intent.name,
                     "j_digest": spec.j_digest,
-                    "boundary_digest": boundary_digest,
                     "scalar_spec_digest": spec.spec_digest,
                     "boundary_profile": projection.profile,
                     "boundary_projection": projection.to_json(),

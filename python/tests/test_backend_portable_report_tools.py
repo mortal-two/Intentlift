@@ -1,6 +1,5 @@
 import importlib.util
 import ctypes
-import hashlib
 import json
 import struct
 import sys
@@ -40,10 +39,7 @@ def _cuda_report(arm: str, latency_us: float) -> dict:
         "protocol": cuda_summary.REPORT_PROTOCOL,
         "ablation_axes": {"arm": arm},
         "target": {"backend": "cuda", "chip": "sm_120a", "features": []},
-        "bundle_toolchain_digest": "a" * 64,
-        "experiment_spec_digest": "b" * 64,
         "measurement_spec_protocol": "intentir.backend.performance-measurement.v1",
-        "measurement_spec_digest": "c" * 64,
         "workload_profile": "roofline-large-j-only-v1",
         "baseline_policy": "target_refj_only",
         "device": {
@@ -71,8 +67,6 @@ def _cuda_report(arm: str, latency_us: float) -> dict:
         "kernels": [
             {
                 "kernel": "masked_copy",
-                "j_digest": "d" * 64,
-                "c_digest": "e" * 64,
                 "extents": {"x0": 16},
                 "workload_valuation": {"j_unchanged": True},
                 "candidates": [],
@@ -125,12 +119,12 @@ def test_cuda_ablation_summary_reports_formal_three_arm_gains():
     assert result["per_kernel"][0]["g_lowering"] == 2.0
 
 
-def test_cuda_ablation_summary_prefers_same_receipt_schedule_gain():
+def test_cuda_ablation_summary_prefers_same_run_schedule_gain():
     c_fixed = _cuda_report("CF", 8.0)
     schedule = _cuda_report("E2", 4.0)
     intentir = _cuda_report("E3", 2.0)
     schedule["kernels"][0]["performance"]["c_fixed_schedule_ablation"] = {
-        "same_candidate_measurement_receipt": True,
+        "same_run_measurement": True,
         "c_fixed_candidate_id": "c-fixed-state",
         "c_fixed_us": 10.0,
         "schedule_only_best_us": 4.0,
@@ -145,11 +139,11 @@ def test_cuda_ablation_summary_prefers_same_receipt_schedule_gain():
     ] == 2.0
 
 
-def test_cuda_ablation_summary_prefers_same_receipt_schedule_spine_gain():
+def test_cuda_ablation_summary_prefers_same_run_schedule_spine_gain():
     e2 = _cuda_report("E2", 4.0)
     e3 = _cuda_report("E3", 2.0)
     e3["kernels"][0]["performance"]["schedule_spine_ablation"] = {
-        "same_candidate_measurement_receipt": True,
+        "same_run_measurement": True,
         "schedule_spine_best_us": 3.0,
         "expanded_best_us": 2.0,
         "expanded_over_schedule_spine_speedup": 1.5,
@@ -172,7 +166,6 @@ def test_cuda_ablation_summary_preserves_failed_horizontal_cells():
             "kernel": "softmax",
             "status": "failed",
             "error": "compile failed",
-            "j_digest": "f" * 64,
             "workload_profile": "roofline-large-j-only-v1",
             "baseline_policy": "target_refj_only",
         }
@@ -182,7 +175,6 @@ def test_cuda_ablation_summary_preserves_failed_horizontal_cells():
             "kernel": "softmax",
             "status": "failed",
             "error": "QD failed",
-            "j_digest": "f" * 64,
             "workload_profile": "roofline-large-j-only-v1",
             "baseline_policy": "target_refj_only",
         }
@@ -208,11 +200,10 @@ def test_cuda_ablation_summary_rejects_different_stabilization_protocols():
         cuda_summary.summarize(e2, e3)
 
 
-def _rvv_report(kernel: str, *, toolchain: str = "a" * 64) -> dict:
+def _rvv_report(kernel: str) -> dict:
     return {
         "protocol": rvv_merge.REPORT_PROTOCOL,
         "bundle_protocol": "intentir.production.rvv-search-bundle.v3",
-        "bundle_toolchain_digest": toolchain,
         "target": {
             "backend": "riscv",
             "chip": "rv64gcv_zfh",
@@ -221,9 +212,7 @@ def _rvv_report(kernel: str, *, toolchain: str = "a" * 64) -> dict:
         "workload_profile": "closed-v1",
         "baseline_policy": "target_refj_only",
         "experiment_spec_protocol": "intentir.backend.ablation-plan.v3",
-        "experiment_spec_digest": "b" * 64,
         "measurement_spec_protocol": "intentir.backend.performance-measurement.v1",
-        "measurement_spec_digest": "c" * 64,
         "device": {"machine": "riscv64", "vlen_bits": 128, "cache": {}},
         "measurement": {
             "data_regime": "cold-data",
@@ -234,9 +223,6 @@ def _rvv_report(kernel: str, *, toolchain: str = "a" * 64) -> dict:
             {
                 "kernel": kernel,
                 "case_id": f"case:{kernel}",
-                "snapshot_digest": kernel * 4,
-                "j_digest": kernel * 4,
-                "c_digest": kernel * 4,
                 "extents": {"x0": 1},
                 "performance": {
                     "g_schedule": 1.2,
@@ -255,7 +241,7 @@ def _rvv_report(kernel: str, *, toolchain: str = "a" * 64) -> dict:
     }
 
 
-def test_rvv_merge_preserves_report_identity(tmp_path):
+def test_rvv_merge_preserves_shared_configuration(tmp_path):
     left = tmp_path / "left.json"
     right = tmp_path / "right.json"
     out = tmp_path / "merged.json"
@@ -264,23 +250,13 @@ def test_rvv_merge_preserves_report_identity(tmp_path):
 
     assert rvv_merge.main([str(left), str(right), "--out", str(out)]) == 0
     merged = json.loads(out.read_text(encoding="utf-8"))
-    assert merged["bundle_toolchain_digest"] == "a" * 64
     assert merged["workload_profile"] == "closed-v1"
+    assert merged["target"] == {
+        "backend": "riscv",
+        "chip": "rv64gcv_zfh",
+        "features": ["vlen128"],
+    }
     assert merged["summary"]["successful"] == 2
-
-
-def test_rvv_merge_rejects_different_toolchains(tmp_path):
-    left = tmp_path / "left.json"
-    right = tmp_path / "right.json"
-    out = tmp_path / "merged.json"
-    left.write_text(json.dumps(_rvv_report("left")), encoding="utf-8")
-    right.write_text(
-        json.dumps(_rvv_report("right", toolchain="f" * 64)),
-        encoding="utf-8",
-    )
-
-    with pytest.raises(ValueError, match="bundle_toolchain_digest"):
-        rvv_merge.main([str(left), str(right), "--out", str(out)])
 
 
 def test_rvv_bounded_candidate_union_makes_budget_executable() -> None:
@@ -288,7 +264,6 @@ def test_rvv_bounded_candidate_union_makes_budget_executable() -> None:
         return {
             "candidate": {
                 "candidate_id": candidate_id,
-                "object_sha256": candidate_id.encode().hex().ljust(64, "0"),
                 "schedule": {
                     "parallel_tile": parallel,
                     "reduction_tile": reduction,
@@ -329,12 +304,6 @@ def test_rvv_bounded_candidate_union_makes_budget_executable() -> None:
             ],
             "erase_c_order": ["no-retile", "erase-only", "c-fixed", "fused"],
             "c_fixed_candidate_id": "c-fixed",
-            "candidate_universe_digest": hashlib.sha256(
-                json.dumps(
-                    sorted(["no-retile", "c-fixed", "fused", "erase-only"]),
-                    separators=(",", ":"),
-                ).encode()
-            ).hexdigest(),
             "canonical_lowering_path": "materialized",
         },
     }
@@ -362,39 +331,7 @@ def test_rvv_bounded_candidate_union_makes_budget_executable() -> None:
     ]
 
 
-def test_rvv_bounded_candidate_union_rejects_duplicate_native_objects() -> None:
-    candidate = {
-        "schedule": {"parallel_tile": 0, "reduction_tile": 0},
-        "transformation": {
-            "lowering_path_kind": "materialized",
-            "b_transformations": [],
-        },
-        "object_sha256": "a" * 64,
-    }
-    entry = {
-        "candidates": [
-            {"candidate": {**candidate, "candidate_id": "left"}},
-            {"candidate": {**candidate, "candidate_id": "right"}},
-        ],
-        "schedule_only_candidate_ids": ["left", "right"],
-        "concrete_search_plan": {
-            "schedule_only_c_prior_order": ["left", "right"],
-            "schedule_only_erase_c_order": ["left", "right"],
-            "c_prior_order": ["left", "right"],
-            "erase_c_order": ["left", "right"],
-            "c_fixed_candidate_id": "left",
-            "candidate_universe_digest": hashlib.sha256(
-                json.dumps(["left", "right"], separators=(",", ":")).encode()
-            ).hexdigest(),
-            "canonical_lowering_path": "materialized",
-        },
-    }
-
-    with pytest.raises(ValueError, match="deduplicate native objects"):
-        rvv_runner._bounded_candidate_orders(entry, 1)
-
-
-def test_rvv_native_comparator_applies_frozen_tolerance_to_all_values(
+def test_rvv_native_comparator_applies_declared_tolerance_to_all_values(
     tmp_path: Path,
 ) -> None:
     comparator = rvv_runner._NativeComparator(tmp_path)

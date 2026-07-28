@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Lower, execute, search, and benchmark frozen production J+C snapshots.
+"""Lower, execute, search, and benchmark accepted production J+C inputs.
 
 The measured implementation is always a cubin emitted from the snapshot's
 materialized Intent MLIR through a registered C++ MLIR pass.  Python owns only
@@ -11,7 +11,6 @@ adapter already used by SCRC, not a newly authored substitute kernel.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import platform
 import statistics
@@ -31,7 +30,6 @@ from intentir.backend.cuda.benchmark import (
 )
 from intentir.backend.cuda.pipeline import lower_to_cuda
 from intentir.backend.cuda.search import (
-    PerformanceCache,
     canonical_cuda_candidate,
     search_cuda,
 )
@@ -139,10 +137,6 @@ def _tensor_outputs(
     ]
 
 
-def _sha256(payload: bytes) -> str:
-    return hashlib.sha256(payload).hexdigest()
-
-
 def _one_kernel(
     *,
     name: str,
@@ -155,7 +149,6 @@ def _one_kernel(
     measurement_rounds: int,
     search_prior: str,
     b_search_mode: str,
-    cache: PerformanceCache,
     axes: SearchAxes | None = None,
     fixed_lowering_path_kind: str | None = None,
     qd_search_seeds: tuple[int, ...] = (),
@@ -177,7 +170,7 @@ def _one_kernel(
         workload_profile,
     )
     if snapshot.c is None and (axes is None or axes.baseline_kind is None):
-        raise ValueError("performance search requires the optional frozen C prior")
+        raise ValueError("performance search requires the optional C prior")
     suite = build_workload_jc_suite(prepared_workload, snapshot.j, snapshot.c)
     case = suite.cases[0]
     dims = case.refeval.dims_map
@@ -295,7 +288,7 @@ def _one_kernel(
             # Keep the standalone Source diagnostic at the same outer-batch
             # count as paired target confirmation.  Formal Source/IntentIR
             # ratios still come from the target arm's paired-alternating
-            # receipt below; E0 is an absolute Source diagnostic only.
+            # same-run record below; E0 is an absolute Source diagnostic only.
             samples = [measure(source.thunk()) for _ in range(4)]
         return source_j, float(statistics.median(samples)), samples
 
@@ -374,9 +367,6 @@ def _one_kernel(
             "workload_valuation": workload_valuation,
             "snapshot": {
                 "path": str(snapshot_path),
-                "snapshot_digest": snapshot.snapshot_digest,
-                "j_digest": snapshot.j_digest,
-                "c_digest": snapshot.c_digest,
             },
             "extents": dims,
             "materialization": materialized.to_record(),
@@ -488,7 +478,7 @@ def _one_kernel(
         if require_backend_closure and (closure is None or not closure.passed):
             raise RuntimeError(
                 "canonical target lacks formal backend closure: "
-                + (closure_error or "no closure receipt")
+                + (closure_error or "no closure result")
             )
         (
             source_j,
@@ -515,7 +505,6 @@ def _one_kernel(
                 "candidate": candidate.to_dict(),
                 "lowering": program.to_record(),
                 "launch": prepared.record.to_dict(),
-                "cubin_sha256": _sha256(kernel.cubin),
                 "cubin_size_bytes": len(kernel.cubin),
             },
             "correctness": {
@@ -577,7 +566,6 @@ def _one_kernel(
         include_generic=(
             axes.search_structural_states if axes is not None else True
         ),
-        cache=cache,
         enable_b_transformations=(
             axes.enable_local_b_transformations
             if axes is not None
@@ -666,7 +654,6 @@ def _one_kernel(
         {
             "kernel_name": item.kernel_name,
             "binary_name": item.binary_name,
-            "sha256": _sha256(item.cubin),
             "size_bytes": len(item.cubin),
         }
         for item in winner.kernels
@@ -678,7 +665,6 @@ def _one_kernel(
             "candidate": search.winner.to_dict(),
             "lowering": winner.to_record(),
             "launch": mlir_prepared.record.to_dict(),
-            "cubin_sha256": _sha256(kernel.cubin),
             "cubin_size_bytes": len(kernel.cubin),
             "cubins": cubin_records,
         },
@@ -708,7 +694,7 @@ def _one_kernel(
                 "warmup_pair_discarded": True,
                 "paired_batches": paired_batches,
             },
-            # These are copied from the same search receipt.  They are the
+            # These are copied from the same search run.  They are the
             # primary internal attribution fields; separately launched arm
             # latencies remain useful drift diagnostics only.
             "schedule_spine_ablation": search_record[
@@ -731,7 +717,6 @@ def _parser() -> argparse.ArgumentParser:
         default=sorted(CASE_IDS),
     )
     parser.add_argument("--out", type=Path, required=True)
-    parser.add_argument("--cache", type=Path)
     parser.add_argument("--search-budget", type=int, default=96)
     parser.add_argument(
         "--workload-profile",
@@ -777,7 +762,6 @@ def main(argv: list[str] | None = None) -> int:
         raise ValueError("measurement-rounds must be positive")
     if args.graph_repetitions <= 0:
         raise ValueError("graph-repetitions must be positive")
-    cache = PerformanceCache(args.cache)
     records: list[dict[str, Any]] = []
     started = time.time_ns()
     for name in args.kernels:
@@ -793,7 +777,6 @@ def main(argv: list[str] | None = None) -> int:
                 measurement_rounds=args.measurement_rounds,
                 search_prior=args.search_prior,
                 b_search_mode=args.b_search_mode,
-                cache=cache,
                 workload_profile=args.workload_profile,
             )
             records.append(record)

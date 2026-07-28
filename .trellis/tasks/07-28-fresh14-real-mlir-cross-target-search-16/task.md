@@ -29,8 +29,16 @@
 2. **C 不绑定 target schedule**：Schedule-Only 相对 C-Fixed 的收益；
 3. **J 打开普通调参之外的实现自由度**：IntentIR 相对 Schedule-Only 的收益。
 
-`C` 只改变有限预算下的候选顺序，不改变合法搜索空间和大预算性能上限。J、C、Source、Replay、
-Gate receipt 的内部 provenance 由实现过程保持正确，但不单独成为阶段、表格或论文贡献。
+`C` 只改变有限预算下的候选顺序，不改变合法搜索空间和大预算性能上限。
+
+本任务彻底排除 hash/digest/freeze/receipt 身份管理：不对输入、执行域、J/C、MLIR、binary/object、
+toolchain、实验配置或报告重新计算哈希，不用哈希做候选 ID、缓存键、去重、准入、正确性或验收，
+也不产出任何 digest 指标。已有 accepted artifact 历史格式中自带的字段由 loader 忽略即可；后端实验
+只关心 typed J 内容、真实 transformation state、Q/D 输出比较、target code、launch 配置和 latency。
+不得以“完整性”“冻结”“证据”名义恢复这些工作。旧 API、工具、性能结果缓存、基于内容身份的去重与
+对应测试直接删除，不保留 dormant compatibility flag、隐藏入口或“默认不启用”的备用实现。唯一允许的
+重复使用是：候选已经显式编译后，在同一次 benchmark 中持有该 executable 与 prepared launch closure；
+这不是内容身份缓存，也不跨搜索复用测量结果。
 
 ## 2. 首批正式输入：fresh Task14-14
 
@@ -145,7 +153,7 @@ G_source   = latency(GPU Source) / latency(GPU IntentIR)
 G_native   = latency(Native RVV) / latency(RVV IntentIR)
 ```
 
-`G_schedule` 与 `G_lowering` 优先从同一 target timing receipt 计算，跨进程独立报告比值只作漂移诊断。
+`G_schedule` 与 `G_lowering` 必须在同一次 target timing 中直接计算，跨进程独立比值只作漂移诊断。
 
 ### 4.4 C-prior 搜索效率
 
@@ -217,14 +225,14 @@ profile 修改数据流、partial layout 或适用域。
 - target native approximation；
 - 未来 typed contraction 到位后的 IEEE/TF32/MMA states。
 
-这些不是单独主图开关。每个 candidate 都必须在冻结的 Q/D 上先 correctness 后 timing；不能从 tolerance
+这些不是单独主图开关。每个 candidate 都必须在固定的 Q/D 上先 correctness 后 timing；不能从 tolerance
 反向修改 J，也不能为得到正收益放宽 Q。
 
 ## 6. 三个 target 同步推进
 
 ### RTX 5090D 与 H100
 
-- 共用同一高层 matcher、transformation identity 与 workload config；
+- 共用同一高层 matcher、可直接读取的 transformation structure 与 workload config；
 - 分别搜索 target schedule、warp/block/shared-memory/pipeline 与 capability；
 - 两台 GPU 都运行 Source、CF、Schedule-Only、IntentIR；
 - H100 不是只复跑 5090 winner，必须重新搜索；
@@ -268,7 +276,8 @@ kernel 使用相同数量的 shape。各实验臂和所有 baseline 对同一 ce
 - timed region 只包含 prepared launch 或完整 prepared multi-launch graph；
 - CUDA 使用 event；RVV 使用 monotonic clock、固定 affinity/thread count；
 - GPU Source、RVV Native、CF/E2/E3 使用相同 warm-up、cache policy、采样数和 profiler；
-- 报告每个 cell 的 median、完整样本、dtype、shape、target 与 binary/object digest；
+- 报告每个 cell 的 median、完整样本、dtype、shape、target、直接可读的 transformation/schedule 与
+  launch/code-size 信息；不报告或计算任何 digest；
 - Roofline/counters/cache sensitivity 只用于解释瓶颈，不替代主 latency。
 
 ## 8. 执行方式：横向能力而非纵向打补丁
@@ -311,7 +320,7 @@ kernel 使用相同数量的 shape。各实验臂和所有 baseline 对同一 ce
 ### Phase B：高杠杆 lowering-state expansion
 
 - 横向实现第5节的 elementwise、reduction/fusion、scan、SplitK、numeric states；
-- 每个 state 有真实 post-pass MLIR digest、binary/object digest 和 actual launch plan；
+- 每个 state 有可直接检查的真实 post-pass MLIR、target binary/object 和 actual launch plan；
 - Schedule-Only path 与 IntentIR 的 schedule spine 完全一致；
 - IntentIR 至少对结构适用子集形成擦除 schedule 后仍不同的真实 MLIR states。
 
@@ -351,11 +360,11 @@ Internal: C-Fixed / Schedule-Only / IntentIR
   不再以旧 functional-boundary matcher 作为 membership gate；
 - SplitK fresh J 的真实图不是 legacy packed `concat + reduce`，而是两个 partial Out/LSE 的静态展开
   stable weighted merge。新增 C++ SSA matcher 直接识别该代数并要求所有函数体 op 都可从两个结果反向
-  到达；不读取 kernel 名、Source 路径或 receipt；
+  到达；不读取 kernel 名、Source 路径或历史记录；
 - 该图已由 `Intent -> GPU -> NVVM -> PTX -> cubin` 形成单一真实 CUDA kernel，runtime ABI 为四个输入
   加两个输出指针；D=16 的非满 warp 尾部有显式界限保护；结果已与原始 Triton Source 对齐；
 - 同一 concrete lowering path 已形成 `rows_per_block={1,2,4,8}` 四个真实编译状态，对应
-  `block_threads={32,64,128,256}`，每个状态带 post-pass topology/trace receipt，并已进入普通搜索；
+  `block_threads={32,64,128,256}`，每个状态带直接可读的 post-pass topology/trace，并已进入普通搜索；
 - 5090D 当前 workload 的 bring-up 计时为：Source 约 4.07 us，C-Fixed/default rows=4 约 4.86 us，
   Schedule-Only 当前最优 rows=8 约 3.35 us；即初步 `G_schedule≈1.45`、`G_source≈1.21`。这些数值尚未
   经过正式 paired batches，不进入最终 aggregate；
@@ -376,15 +385,15 @@ Internal: C-Fixed / Schedule-Only / IntentIR
   pointwise 图有真实 vectorized states；九项普通/scan/padded row 图覆盖 subgroup、workgroup 或
   subgroup-feature；PolyNorm 覆盖共享输入多规约；SplitK 覆盖 unrolled weighted merge。这里仅说明
   backend capability 与 target compilation，不替代后续 14 项 Q/D、Source paired timing 与跨 target 结果。
-- CF/E2/E3 已改为在同一 search receipt 中强制重新测量 C-Fixed、Schedule-Only spine 与 expanded
+- CF/E2/E3 已改为在同一次 search 中强制重新测量 C-Fixed、Schedule-Only spine 与 expanded
   finalist；`G_schedule`/`G_lowering` 不再由三个独立进程的首轮 winner latency 拼接。自然 workload
-  的 headline valuation 已覆盖 fresh-14 14/14，并保持 accepted J digest 不变。
+  的 headline valuation 已覆盖 fresh-14 14/14，并且不改写 accepted J 内容。
 - Flash preprocess 的 padded-row lowering 已从小 shape 的 serial 特例扩展为任意正 batch、head-dim
   `<=1024` 的 batch grid + subgroup feature strip。自然 `[4,16,8192,128]` 上，512-thread/16-warp 的
-  expanded topology 初测约 160.5 us，Schedule-Only spine 约 279.6 us，同 receipt
+  expanded topology 初测约 160.5 us，Schedule-Only spine 约 279.6 us，同次测量
   `G_lowering≈1.74`；paired Source 约 160.8 us。该结果已经是不同 MLIR topology 的真实收益，但仍是
   measurement-round=1 的 bring-up 数字。
-- Softmax 自然 `[2048,4096]` 上，C-Fixed 到 512-thread row-reduction schedule 的同 receipt
+- Softmax 自然 `[2048,4096]` 上，C-Fixed 到 512-thread row-reduction schedule 的同次测量
   `G_schedule≈1.55`，后端约 12.1 us、paired Source 约 17--18 us；这验证了 C 可重投影/retile 的主线。
   RMSNorm 与 DYT 的自然大 shape 则分别表现为约 1.08x Source gain 和主要 schedule gain，expanded
   numeric state 在内存受限形状上没有被虚构成大收益。
@@ -392,7 +401,7 @@ Internal: C-Fixed / Schedule-Only / IntentIR
   旧 workload 将两者独立随机生成，使执行域不再代表实际调用，并让 Q/D 正确拒绝排序相关优化。
   Harness v4 现用通用 `sort_descending_last_axis` 派生关系从同一 `x` 构造 `sorted_x`，四腿共享同一值；
   该关系不修改 J、也不伪造 compiler permission。自然 `[2048,4096]` 已重新 3/3 通过 CF/E2/E3：
-  Schedule-Only 约 17.3 us，expanded reciprocal state 约 16.2 us，同 receipt `G_lowering≈1.07`，paired
+  Schedule-Only 约 17.3 us，expanded reciprocal state 约 16.2 us，同次测量 `G_lowering≈1.07`，paired
   Source 约 15.5 us。J 尚无 typed descending relation，因此 sorted-prefix early-stop 仍 fail closed；
   当前数字只属于通用 scan + Q/D numeric search，不冒充 contract-proven sorted specialization。
 - Fresh xFormers RMSNorm-add 与 SplitK 的 Q/D intake 已接到同一 typed RefEval：前者消费 J returns
@@ -414,13 +423,13 @@ Internal: C-Fixed / Schedule-Only / IntentIR
 7. C/no-C 使用同一候选全集与 latency map；
 8. 新收益来自真实 MLIR dataflow/topology/numeric-state变化，不是报告开关或弱 baseline；
 9. 结果包含 fresh-14 全量与 per-kernel，不只报告加速项；
-10. 全量 Python/MLIR regression 通过，文档、实验配置与代码提交保持一致，工作区干净。
+10. 全量 Python/MLIR regression 通过，实验路径不计算/校验/输出 hash 或 digest，工作区干净。
 
 ## 11. 非目标
 
 - 不修改 frontend Lift/Replay/Gate verdict；
 - 不为后端性能制作新的 SCRC Gate；
-- 不把 artifact/digest/使用域管理写成研究阶段；
+- 不做 artifact freeze、digest/hash、receipt 身份或使用域账本管理；
 - 不创建 implementation-family object、family registry 或 per-kernel emitter；
 - 不把 legacy v1/canary/J_dev 混入 fresh-14 正式 aggregate；
 - 不以一次 benchmark 数字代替完整后端能力。

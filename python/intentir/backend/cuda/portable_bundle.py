@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import base64
-import hashlib
 import re
 from typing import Any, Mapping
 
@@ -65,7 +64,6 @@ def encode_array(value: Any) -> dict[str, Any]:
         "protocol": ARRAY_PROTOCOL,
         "dtype": portable_numpy_dtype_name(dense.dtype),
         "shape": list(dense.shape),
-        "sha256": hashlib.sha256(payload).hexdigest(),
         "data_base64": base64.b64encode(payload).decode("ascii"),
     }
 
@@ -74,8 +72,6 @@ def decode_array(value: Mapping[str, Any]) -> np.ndarray:
     if value.get("protocol") != ARRAY_PROTOCOL:
         raise ValueError("unsupported portable array protocol")
     payload = base64.b64decode(value["data_base64"], validate=True)
-    if hashlib.sha256(payload).hexdigest() != value.get("sha256"):
-        raise ValueError("portable array digest mismatch")
     dtype = portable_numpy_dtype(value["dtype"])
     shape = tuple(int(item) for item in value["shape"])
     array = np.frombuffer(payload, dtype=dtype).copy()

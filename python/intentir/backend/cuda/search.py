@@ -8,14 +8,10 @@ and compiled to cubins; measurements are never used as a correctness oracle.
 
 from __future__ import annotations
 
-import hashlib
-import json
 import math
-import os
 import statistics
 import time
 from dataclasses import dataclass, replace
-from pathlib import Path
 from typing import Any, Callable, Mapping
 
 import intentir.backend.cuda.compile as backend_compile
@@ -41,20 +37,18 @@ from intentir.backend.materialize import BackendSearchState, CPrior
 from intentir.backend.ablation import SearchAxes
 from intentir.backend.search_and_close import (
     BackendClosureError,
-    BackendClosureReceipt,
+    BackendClosureResult,
     CandidateQDResult,
     ConcreteLoweringState,
     ObservationClass,
     SearchAndCloseController,
 )
-from intentir.ir.production_snapshot import content_digest
 
 from .program import analyze_j_for_cuda
 from .selection import DEFAULT_PASSES, LoweringTarget, select_variant
 
 
 SEARCH_PROTOCOL = "intentir.backend.cuda.measured-search.v4"
-CACHE_PROTOCOL = "intentir.backend.cuda.performance-cache.v2"
 CONTRACT_VIEW_VERSION = "intentir.backend.cuda.contract-view.v2"
 
 B_TRANSFORM_EPILOGUE_LOAD_MOTION = (
@@ -126,12 +120,10 @@ class CudaContractView:
     a second semantic object and never own or rewrite any part of J.
     """
 
-    j_digest: str
     target: Mapping[str, Any]
     consumed: tuple[str, ...]
     unsupported: tuple[str, ...]
     capabilities: tuple[str, ...]
-    boundary_sha256: str
     boundary_projection: Mapping[str, Any] | None
     version: str = CONTRACT_VIEW_VERSION
 
@@ -139,31 +131,14 @@ class CudaContractView:
     def supported(self) -> bool:
         return not self.unsupported
 
-    @property
-    def digest(self) -> str:
-        return content_digest(
-            {
-                "version": self.version,
-                "j_digest": self.j_digest,
-                "target": dict(self.target),
-                "consumed": list(self.consumed),
-                "unsupported": list(self.unsupported),
-                "capabilities": list(self.capabilities),
-                "boundary_sha256": self.boundary_sha256,
-            }
-        )
-
     def to_dict(self) -> dict[str, Any]:
         return {
             "version": self.version,
-            "digest": self.digest,
-            "j_digest": self.j_digest,
             "target": dict(self.target),
             "supported": self.supported,
             "consumed": list(self.consumed),
             "unsupported": list(self.unsupported),
             "capabilities": list(self.capabilities),
-            "boundary_sha256": self.boundary_sha256,
             "boundary_projection": (
                 dict(self.boundary_projection)
                 if self.boundary_projection is not None
@@ -182,12 +157,10 @@ def derive_cuda_contract_view(state: BackendSearchState) -> CudaContractView:
         materialization=state.base,
     )
     view = CudaContractView(
-        j_digest=state.base.j_digest,
         target=state.target.to_dict(),
         consumed=tuple(analysis["consumed"]),
         unsupported=tuple(analysis["unsupported"]),
         capabilities=derive_search_capabilities(state.base),
-        boundary_sha256=analysis["boundary_sha256"],
         boundary_projection=analysis["boundary_projection"],
     )
     if not view.supported:
@@ -196,40 +169,6 @@ def derive_cuda_contract_view(state: BackendSearchState) -> CudaContractView:
             + ", ".join(view.unsupported)
         )
     return view
-
-
-def _canonical_json(value: Mapping[str, Any]) -> str:
-    return json.dumps(
-        value,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-        allow_nan=False,
-    )
-
-
-def _sha_file(path: str | os.PathLike[str]) -> str:
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def toolchain_fingerprint() -> str:
-    files = {
-        "intent_opt": str(backend_compile.INTENT_OPT),
-        "mlir_opt": str(backend_compile.MLIR_OPT),
-        "ptxas": str(Path(backend_compile.CUDA_BIN) / "ptxas"),
-    }
-    payload = {
-        "chip": backend_compile.CHIP,
-        "files": {
-            name: {"path": path, "sha256": _sha_file(path)}
-            for name, path in files.items()
-        },
-    }
-    return content_digest(payload)
 
 
 @dataclass(frozen=True)
@@ -278,44 +217,27 @@ class CudaSearchCandidate:
         }
 
     def concrete_state(self, program: LoweredProgram) -> ConcreteLoweringState:
-        receipt = program.transformation_receipt
+        record = program.transformation_record
         trace = (
-            receipt.transformation_trace
-            if receipt is not None
+            record.transformation_trace
+            if record is not None
             else self.requested_trace
         )
         if not trace:
             trace = (f"cuda.{self.lowering_path_kind}.v1",)
-        topology_digest = (
-            receipt.topology_digest
-            if receipt is not None
-            else content_digest(
-                {
-                    "lowering_path_kind": self.lowering_path_kind,
-                    "transformation_trace": list(trace),
-                }
-            )
-        )
         observation_class = (
             ObservationClass.OBSERVATION_CHANGING
-            if receipt is not None and receipt.observation_changing
+            if record is not None and record.observation_changing
             else self.requested_observation_class
         )
-        mlir_digest = program.concrete_mlir_sha256
-        state_id = "cuda.state." + content_digest(
-            {
-                "mlir_digest": mlir_digest,
-                "executable_digest": program.executable_digest,
-            }
-        )[:20]
         actual_schedule = dict(self.schedule)
-        if receipt is not None and receipt.launch_plans:
+        if record is not None and record.launch_plans:
             # The candidate records the requested pass options.  The concrete
             # state records what C++ actually emitted: in particular row
             # vector-width=0 is an auto request that may become native vec4.
             # Keeping these two layers distinct prevents an auto-vectorized
             # winner from being reported as a scalar implementation.
-            primary = receipt.launch_plans[0]
+            primary = record.launch_plans[0]
             actual_schedule.update(
                 {
                     "block_threads": primary.block[0],
@@ -325,22 +247,19 @@ class CudaSearchCandidate:
                     "vector_width": primary.vector_width,
                     "actual_pipeline_depth": primary.pipeline_depth,
                     "actual_split_factor": primary.split_factor,
-                    "actual_launch_plan_count": len(receipt.launch_plans),
+                    "actual_launch_plan_count": len(record.launch_plans),
                 }
             )
         return ConcreteLoweringState(
-            state_id=state_id,
+            state_id=self.candidate_id,
             lowering_path_kind=(
-                receipt.lowering_path_kind
-                if receipt is not None
+                record.lowering_path_kind
+                if record is not None
                 else self.lowering_path_kind
             ),
             transformation_trace=tuple(trace),
             schedule=actual_schedule,
             observation_class=observation_class,
-            mlir_digest=mlir_digest,
-            topology_digest=topology_digest,
-            executable_digest=program.executable_digest,
             compiler_record=program.to_record(),
         )
 
@@ -352,7 +271,6 @@ class SearchAttempt:
     reason: str
     compile_ms: float | None = None
     latency_us: float | None = None
-    cache_hit: bool = False
     lowering_record: Mapping[str, Any] | None = None
     concrete_state: ConcreteLoweringState | None = None
     qd_search: CandidateQDResult | None = None
@@ -365,7 +283,6 @@ class SearchAttempt:
             "reason": self.reason,
             "compile_ms": self.compile_ms,
             "latency_us": self.latency_us,
-            "cache_hit": self.cache_hit,
             "lowering": (
                 dict(self.lowering_record)
                 if self.lowering_record is not None
@@ -393,7 +310,6 @@ class CudaSearchResult:
     winner: CudaSearchCandidate | None
     winner_program: LoweredProgram | None
     winner_latency_us: float | None
-    toolchain_digest: str
     benchmark_key: str | None
     elapsed_ms: float
     time_to_best_ms: float | None
@@ -401,7 +317,7 @@ class CudaSearchResult:
     finalist_remeasurements: int
     b_transformations_enabled: bool
     winner_state: ConcreteLoweringState | None = None
-    backend_closure: BackendClosureReceipt | None = None
+    backend_closure: BackendClosureResult | None = None
     backend_closure_error: str | None = None
     ablation_axes: SearchAxes | None = None
     fixed_lowering_path_kind: str | None = None
@@ -421,8 +337,7 @@ class CudaSearchResult:
         curve: list[dict[str, Any]] = []
         consumed_budget = 0
         for attempt_index, attempt in enumerate(self.attempts, start=1):
-            if attempt.status != "duplicate_state":
-                consumed_budget += 1
+            consumed_budget += 1
             improved = (
                 attempt.latency_us is not None
                 and (
@@ -463,41 +378,41 @@ class CudaSearchResult:
             if item.concrete_state is not None
             and item.status in {"compiled", "measured", "benchmark_failed"}
         )
-        actual_receipts = tuple(
-            receipt
+        actual_records = tuple(
+            record
             for item in admitted
-            for receipt in (
+            for record in (
                 (
                     item.concrete_state.compiler_record.get(
-                        "transformation_receipt"
+                        "transformation_record"
                     )
                     if item.concrete_state is not None
                     else None
                 ),
             )
-            if isinstance(receipt, Mapping)
+            if isinstance(record, Mapping)
         )
         reduction_topologies = sorted(
             {
-                str(receipt["reduction_topology"])
-                for receipt in actual_receipts
-                if receipt.get("reduction_topology") not in {None, "none"}
+                str(record["reduction_topology"])
+                for record in actual_records
+                if record.get("reduction_topology") not in {None, "none"}
             }
         )
         rows_per_block_values = sorted(
             {
-                int(receipt.get("rows_per_block", 1))
-                for receipt in actual_receipts
+                int(record.get("rows_per_block", 1))
+                for record in actual_records
             }
         )
         actual_fma_counts = [
-            int(receipt.get("fma_count", 0)) for receipt in actual_receipts
+            int(record.get("fma_count", 0)) for record in actual_records
         ]
         approximation_modes = sorted(
             {
-                str(receipt.get("approximation_mode"))
-                for receipt in actual_receipts
-                if receipt.get("approximation_mode") not in {None, "none"}
+                str(record.get("approximation_mode"))
+                for record in actual_records
+                if record.get("approximation_mode") not in {None, "none"}
             }
         )
         status_counts = {
@@ -507,7 +422,6 @@ class CudaSearchResult:
                 "measured",
                 "rejected",
                 "compile_failed",
-                "duplicate_state",
                 "qd_rejected",
                 "missing_qd",
                 "benchmark_failed",
@@ -583,7 +497,7 @@ class CudaSearchResult:
             assert spine_best.latency_us is not None
             assert fresh_global_best.latency_us is not None
             schedule_spine_ablation = {
-                "same_candidate_measurement_receipt": True,
+                "same_run_measurement": True,
                 "same_total_search_visit": True,
                 "schedule_spine_candidate_count": (
                     self.schedule_spine_candidate_count
@@ -644,7 +558,7 @@ class CudaSearchResult:
                 assert c_fixed_attempt.latency_us is not None
                 assert fresh_global_best.latency_us is not None
                 c_fixed_schedule_ablation = {
-                    "same_candidate_measurement_receipt": True,
+                    "same_run_measurement": True,
                     "same_total_search_visit": True,
                     "c_fixed_candidate_id": self.c_fixed_candidate_id,
                     "c_fixed_us": c_fixed_attempt.latency_us,
@@ -669,7 +583,6 @@ class CudaSearchResult:
             "materialization": self.state.base.to_record(),
             "attach_c": self.state.to_record(),
             "contract_view": self.contract_view.to_dict(),
-            "toolchain_digest": self.toolchain_digest,
             "benchmark_key": self.benchmark_key,
             "attempts": [item.to_dict() for item in self.attempts],
             "hard_admission": [dict(item) for item in self.hard_admission],
@@ -744,20 +657,17 @@ class CudaSearchResult:
                 "admitted_pipeline_ids": admitted_pipeline_ids,
                 "materialized_kernel_counts": materialized_kernel_counts,
                 "whole_graph_kernel_counts": whole_graph_kernel_counts,
-                "concrete_post_pass_mlir_states": len(
-                    {
-                        item.concrete_state.mlir_digest
-                        for item in admitted
-                        if item.concrete_state is not None
-                        and item.concrete_state.mlir_digest is not None
-                    }
+                "concrete_post_pass_mlir_states": sum(
+                    item.concrete_state is not None for item in admitted
                 ),
                 "concrete_topology_states": len(
                     {
-                        item.concrete_state.topology_digest
+                        (
+                            item.concrete_state.lowering_path_kind,
+                            tuple(item.concrete_state.transformation_trace),
+                        )
                         for item in admitted
                         if item.concrete_state is not None
-                        and item.concrete_state.topology_digest is not None
                     }
                 ),
                 "reduction_topologies": reduction_topologies,
@@ -813,9 +723,6 @@ class CudaSearchResult:
                 "candidate_universe": self.candidate_universe_count,
                 "candidate_budget": self.candidate_budget,
                 "budget_consumed": self.budget_consumed,
-                "duplicate_compiles_outside_budget": status_counts[
-                    "duplicate_state"
-                ],
                 "hard_paths_probed": len(self.hard_admission),
                 "hard_paths_admitted": sum(
                     item.get("admitted") is True for item in self.hard_admission
@@ -837,7 +744,6 @@ class CudaSearchResult:
                 "compile_failed": sum(
                     item.status == "compile_failed" for item in self.attempts
                 ),
-                "duplicate_state": status_counts["duplicate_state"],
                 "qd_rejected": status_counts["qd_rejected"],
                 "missing_qd": status_counts["missing_qd"],
                 "benchmark_failed": status_counts["benchmark_failed"],
@@ -861,92 +767,14 @@ class CudaSearchResult:
         }
 
 
-class PerformanceCache:
-    def __init__(self, path: str | os.PathLike[str] | None = None):
-        self.path = Path(path) if path is not None else (
-            Path.home() / ".cache" / "intentir" / "cuda-search-v1.json"
-        )
-        self._records: dict[str, dict[str, Any]] = {}
-        if self.path.is_file():
-            try:
-                payload = json.loads(self.path.read_text(encoding="utf-8"))
-                if payload.get("protocol") == CACHE_PROTOCOL:
-                    self._records = dict(payload.get("records", {}))
-            except (OSError, ValueError, TypeError):
-                self._records = {}
-
-    @staticmethod
-    def key(
-        *,
-        state: BackendSearchState,
-        candidate: CudaSearchCandidate,
-        toolchain_digest: str,
-        benchmark_key: str,
-    ) -> str:
-        return content_digest(
-            {
-                "m0_sha256": state.base.mlir_digest,
-                "target": state.target.to_dict(),
-                "candidate": {
-                    "candidate_id": candidate.candidate_id,
-                    "lowering_path_kind": candidate.lowering_path_kind,
-                    "fast_path_id": candidate.fast_path_id,
-                    "pass_argument": candidate.pass_argument,
-                    "schedule": dict(candidate.schedule),
-                    "compiler_pipeline": candidate.compiler_pipeline,
-                },
-                "toolchain_digest": toolchain_digest,
-                "benchmark_key": benchmark_key,
-            }
-        )
-
-    def lookup(self, key: str) -> float | None:
-        record = self._records.get(key)
-        value = record.get("latency_us") if isinstance(record, dict) else None
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            return float(value)
-        return None
-
-    def store(
-        self,
-        key: str,
-        latency_us: float,
-        *,
-        candidate: CudaSearchCandidate,
-    ) -> None:
-        if not math.isfinite(latency_us) or latency_us <= 0:
-            raise ValueError("performance cache latency must be finite and positive")
-        self._records[key] = {
-            "latency_us": latency_us,
-            "candidate_id": candidate.candidate_id,
-            "recorded_unix_ns": time.time_ns(),
-        }
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "protocol": CACHE_PROTOCOL,
-            "records": self._records,
-        }
-        temporary = self.path.with_suffix(self.path.suffix + ".tmp")
-        temporary.write_text(
-            json.dumps(payload, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-        temporary.replace(self.path)
-
-
 def _candidate_id(
     lowering_path_kind: str,
     fast_path_id: str | None,
     pass_argument: str | None,
 ) -> str:
-    suffix = content_digest(
-        {
-            "lowering_path_kind": lowering_path_kind,
-            "fast_path_id": fast_path_id,
-            "pass_argument": pass_argument,
-        }
-    )[:12]
-    return f"{lowering_path_kind}.{suffix}"
+    compiler_path = fast_path_id or "generic"
+    options = pass_argument or "default"
+    return f"{lowering_path_kind}:{compiler_path}:{options}"
 
 
 def canonical_cuda_candidate(state: BackendSearchState) -> CudaSearchCandidate:
@@ -1320,7 +1148,7 @@ def enumerate_cuda_candidates(
             for parts in (2, 4, 8, 16, 32)
         )
     if axes is not None and not axes.search_reduction_topology:
-        # E2/N0 freezes the concrete collective topology to the canonical
+        # E2/N0 keeps the concrete collective topology on the canonical
         # multi-warp hierarchy while still tuning its schedule parameters.
         row_schedule_bases = [
             item for item in row_schedule_bases if item.block_threads > 32
@@ -1880,7 +1708,6 @@ def search_cuda(
     benchmark_key: str | None = None,
     budget: int = 96,
     include_generic: bool = True,
-    cache: PerformanceCache | None = None,
     finalist_count: int = 16,
     finalist_remeasurements: int = 2,
     enable_b_transformations: bool = True,
@@ -1907,8 +1734,6 @@ def search_cuda(
     if require_backend_closure and qd_controller is None:
         raise ValueError("formal backend closure requires SearchAndClose")
     started = time.perf_counter_ns()
-    toolchain = toolchain_fingerprint()
-    performance_cache = cache or PerformanceCache()
     contract_view = derive_cuda_contract_view(state)
     if (
         axes is not None
@@ -1958,11 +1783,7 @@ def search_cuda(
         state,
         tuple(candidate_universe),
     )
-    # Budget counts distinct executable compiler states (plus failed exact
-    # candidates), not repeated schedule spellings that C++ lowers to identical
-    # post-pass MLIR.  Duplicate detection necessarily happens after the cheap
-    # structural/compiler probe; such duplicates remain in the receipt but no
-    # longer starve later topology paths under a finite tuning budget.
+    # Budget counts the explicit, directly readable candidate list.
     candidates = list(admitted_candidates)
     c_fixed_candidate_id = (
         candidates[0].candidate_id if candidates else None
@@ -1982,9 +1803,7 @@ def search_cuda(
     winner_latency: float | None = None
     time_to_best: float | None = None
     measured_programs: dict[str, LoweredProgram] = {}
-    cache_keys: dict[str, str] = {}
     concrete_states: dict[str, ConcreteLoweringState] = {}
-    seen_mlir_states: dict[str, str] = {}
     budget_consumed = 0
 
     for candidate in candidates:
@@ -2003,7 +1822,7 @@ def search_cuda(
                 )
             )
             continue
-        except Exception as error:  # compiler diagnostics belong in the receipt
+        except Exception as error:  # compiler diagnostics belong in the attempt
             budget_consumed += 1
             attempts.append(
                 SearchAttempt(
@@ -2015,21 +1834,6 @@ def search_cuda(
             continue
         compile_ms = (time.perf_counter_ns() - compile_started) / 1_000_000.0
         concrete_state = candidate.concrete_state(program)
-        duplicate_of = seen_mlir_states.get(concrete_state.mlir_digest or "")
-        if duplicate_of is not None:
-            attempts.append(
-                SearchAttempt(
-                    candidate,
-                    "duplicate_state",
-                    "concrete post-pass MLIR duplicates " + duplicate_of,
-                    compile_ms=compile_ms,
-                    lowering_record=program.to_record(),
-                    concrete_state=concrete_state,
-                )
-            )
-            continue
-        if concrete_state.mlir_digest is not None:
-            seen_mlir_states[concrete_state.mlir_digest] = candidate.candidate_id
         budget_consumed += 1
         concrete_states[candidate.candidate_id] = concrete_state
 
@@ -2070,7 +1874,6 @@ def search_cuda(
                 continue
 
         latency: float | None = None
-        cache_hit = False
         status = "compiled"
         reason = (
             "complete Layer-B audit, C++ whole-graph admission, and cubin "
@@ -2078,34 +1881,23 @@ def search_cuda(
         )
         if benchmark is not None:
             assert benchmark_key is not None
-            key = performance_cache.key(
-                state=state,
-                candidate=candidate,
-                toolchain_digest=toolchain,
-                benchmark_key=benchmark_key,
-            )
-            cache_keys[candidate.candidate_id] = key
-            latency = performance_cache.lookup(key)
-            cache_hit = latency is not None
-            if latency is None:
-                try:
-                    latency = float(benchmark(program, candidate))
-                    if not math.isfinite(latency) or latency <= 0:
-                        raise ValueError("benchmark returned a non-positive latency")
-                except Exception as error:
-                    attempts.append(
-                        SearchAttempt(
-                            candidate,
-                            "benchmark_failed",
-                            f"{type(error).__name__}: {error}",
-                            compile_ms=compile_ms,
-                            lowering_record=program.to_record(),
-                            concrete_state=concrete_state,
-                            qd_search=qd_search,
-                        )
+            try:
+                latency = float(benchmark(program, candidate))
+                if not math.isfinite(latency) or latency <= 0:
+                    raise ValueError("benchmark returned a non-positive latency")
+            except Exception as error:
+                attempts.append(
+                    SearchAttempt(
+                        candidate,
+                        "benchmark_failed",
+                        f"{type(error).__name__}: {error}",
+                        compile_ms=compile_ms,
+                        lowering_record=program.to_record(),
+                        concrete_state=concrete_state,
+                        qd_search=qd_search,
                     )
-                    continue
-                performance_cache.store(key, latency, candidate=candidate)
+                )
+                continue
             status = "measured"
             reason = "performance-only selection over admitted candidate"
             measured_programs[candidate.candidate_id] = program
@@ -2117,7 +1909,6 @@ def search_cuda(
                 reason,
                 compile_ms=compile_ms,
                 latency_us=latency,
-                cache_hit=cache_hit,
                 lowering_record=program.to_record(),
                 concrete_state=concrete_state,
                 qd_search=qd_search,
@@ -2233,13 +2024,7 @@ def search_cuda(
                     f"finalist median of {len(samples)} fresh round-robin "
                     "measurements"
                 ),
-                cache_hit=False,
                 finalist_samples_us=tuple(samples),
-            )
-            performance_cache.store(
-                cache_keys[candidate.candidate_id],
-                robust_latency,
-                candidate=candidate,
             )
 
         freshly_remeasured = [
@@ -2263,7 +2048,7 @@ def search_cuda(
         if winner is not None
         else None
     )
-    backend_closure: BackendClosureReceipt | None = None
+    backend_closure: BackendClosureResult | None = None
     backend_closure_error: str | None = None
     if (
         qd_controller is not None
@@ -2300,7 +2085,6 @@ def search_cuda(
         winner=winner,
         winner_program=winner_program,
         winner_latency_us=winner_latency,
-        toolchain_digest=toolchain,
         benchmark_key=benchmark_key,
         elapsed_ms=elapsed,
         time_to_best_ms=time_to_best,
@@ -2332,7 +2116,6 @@ __all__ = [
     "B_TRANSFORM_EPILOGUE_LOAD_MOTION",
     "B_TRANSFORM_RANK0_HOST_CAPTURE",
     "B_TRANSFORM_UNIFORM_HOST_CAPTURE",
-    "CACHE_PROTOCOL",
     "CONTRACT_VIEW_VERSION",
     "LINALG_FUSED_FAST_PATH_ID",
     "SEARCH_PROTOCOL",
@@ -2340,7 +2123,6 @@ __all__ = [
     "CudaContractView",
     "CudaSearchCandidate",
     "CudaSearchResult",
-    "PerformanceCache",
     "SEARCH_PARTITION_EXPANDED",
     "SEARCH_PARTITION_SCHEDULE_SPINE",
     "SEARCH_PARTITION_UNPARTITIONED",
@@ -2353,5 +2135,4 @@ __all__ = [
     "derive_default_fast_path_id",
     "derive_default_lowering_path_kind",
     "search_cuda",
-    "toolchain_fingerprint",
 ]

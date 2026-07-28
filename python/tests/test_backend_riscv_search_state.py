@@ -47,7 +47,7 @@ def test_rvv_transformation_and_schedule_are_separate_search_axes() -> None:
     assert materialized.candidate_id != fused.candidate_id
 
 
-def test_rvv_retile_schedule_is_a_content_addressed_axis() -> None:
+def test_rvv_retile_schedule_is_an_explicit_search_axis() -> None:
     untiled = _candidate(False)
     tiled = rvv.RiscvLoweringCandidate(
         rvv.RiscvTransformationState(False),
@@ -77,24 +77,18 @@ def test_rvv_fusion_fails_before_lowering_without_b_capability(monkeypatch) -> N
     assert not called
 
 
-def test_rvv_record_exposes_real_mlir_topology_receipt(monkeypatch) -> None:
+def test_rvv_record_exposes_real_mlir_topology(monkeypatch) -> None:
     state = SimpleNamespace(
         target=SimpleNamespace(family="riscv"),
         base=SimpleNamespace(
             intent_mlir="module { func.func @kernel() { return } }",
-            mlir_digest="1" * 64,
         ),
     )
-    receipt = rvv.RiscvTransformationReceipt(
-        "2" * 64,
-        "3" * 64,
-        7,
-        3,
-    )
+    transformation = rvv.RiscvTransformationRecord(7, 3)
     monkeypatch.setattr(
         rvv,
         "_lower_to_llvm_ir",
-        lambda state, candidate: ("lowered", "raw llvm", receipt),
+        lambda state, candidate: ("lowered", "raw llvm", transformation),
     )
     monkeypatch.setattr(
         rvv,
@@ -111,41 +105,10 @@ def test_rvv_record_exposes_real_mlir_topology_receipt(monkeypatch) -> None:
     record = compiled.to_record()
 
     assert record["lowering_path_kind"] == "producer_consumer_fused"
-    assert record["transformation_receipt"]["linalg_ops_before"] == 7
-    assert record["transformation_receipt"]["linalg_ops_after"] == 3
+    assert record["transformation_record"]["linalg_ops_before"] == 7
+    assert record["transformation_record"]["linalg_ops_after"] == 3
     assert record["true_mlir_pipeline"] is True
     assert record["python_target_kernel_emission"] is False
-
-
-def test_rvv_topology_digest_erases_schedule_but_preserves_realized_path() -> None:
-    common = {
-        "linalg_before_sha256": "1" * 64,
-        "structured_after_sha256": "2" * 64,
-        "linalg_ops_before": 4,
-        "linalg_ops_after": 5,
-        "pre_schedule_structured_sha256": "3" * 64,
-    }
-    left = rvv.RiscvTransformationReceipt(
-        **common,
-        parallel_tile_requested=1,
-        parallel_tile_applied=1,
-        fused_producers=2,
-    )
-    retiled = rvv.RiscvTransformationReceipt(
-        **common,
-        parallel_tile_requested=64,
-        parallel_tile_applied=64,
-        fused_producers=2,
-    )
-    materialized = rvv.RiscvTransformationReceipt(
-        **common,
-        parallel_tile_requested=1,
-        parallel_tile_applied=1,
-        fused_producers=0,
-    )
-
-    assert left.topology_digest == retiled.topology_digest
-    assert left.topology_digest != materialized.topology_digest
 
 
 def test_rvv_contract_consumes_only_materialized_typed_access_guards() -> None:
@@ -242,7 +205,6 @@ def test_rvv_c_reorders_but_does_not_change_retile_universe() -> None:
     )
     erased = rvv_search.plan_riscv_search(attach_c(materialized, None, target))
 
-    assert with_c.universe_digest == erased.universe_digest
     assert {item.candidate_id for item in with_c.universe} == {
         item.candidate_id for item in erased.universe
     }

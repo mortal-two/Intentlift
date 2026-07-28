@@ -13,7 +13,6 @@ and may report an explicit unsupported capability without changing J.
 
 from __future__ import annotations
 
-import hashlib
 import json
 from dataclasses import dataclass
 from typing import Any, Mapping
@@ -123,12 +122,6 @@ class CanonicalContractIR:
         if not isinstance(value, dict):  # pragma: no cover - constructor owns it
             raise AssertionError("canonical contract payload is not an object")
         return value
-
-    @property
-    def digest(self) -> str:
-        return hashlib.sha256(
-            _canonical_json(self.to_json()).encode("utf-8")
-        ).hexdigest()
 
     def to_json(self) -> dict[str, Any]:
         return {

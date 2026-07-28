@@ -26,7 +26,7 @@ def _report(path: Path, kernel: str, *, chip: str = "sm_120a") -> Path:
     return path
 
 
-def test_incremental_report_view_preserves_disjoint_kernel_receipts(
+def test_incremental_report_view_preserves_disjoint_kernel_records(
     tmp_path: Path,
 ) -> None:
     reports, kernels = load_disjoint_kernel_reports(
@@ -40,7 +40,7 @@ def test_incremental_report_view_preserves_disjoint_kernel_receipts(
     assert set(kernels) == {"base", "new"}
 
 
-def test_incremental_report_view_rejects_duplicate_or_cross_target_receipts(
+def test_incremental_report_view_rejects_duplicate_or_cross_target_records(
     tmp_path: Path,
 ) -> None:
     first = _report(tmp_path / "first.json", "same")

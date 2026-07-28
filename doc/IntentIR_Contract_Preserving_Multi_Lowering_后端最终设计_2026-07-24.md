@@ -1,7 +1,7 @@
 # IntentIR J-Grounded、Q/D-Certified Lowering-State Search：后端最终设计
 
 > 状态：第五份权威设计（2026-07-24；2026-07-28 更新为 fresh Task14-14 首批正式输入、legacy
-> 16-high-performance + 2-canary 回归与 J_dev 分账，并加入 actual-schedule/multi-stage 实施状态）
+> 14 个 fresh accepted J 首批矩阵，并加入 actual-schedule/multi-stage 实施状态）
 >
 > 文件名为保持既有链接稳定而不变。本文不再把 `implementation family` 作为 compiler object、
 > registry key 或 emitter 概念；旧材料中的 `multi-lowering` 统一按本文定义解释为
@@ -14,8 +14,8 @@
 > [SCRC 最终数学与执行流程](IntentIR_SCRC_最终数学与执行流程_2026-07-22.md)。
 >
 > 范围：本文只定义 SCRC 之后的 production backend 与 backend executable closure。它不修改
-> Lift、Replay、TypeCheck、Gate1、Gate2 或 π 的协议；backend executable closure 使用同一冻结
-> Q/D，但属于独立 backend receipt，不增加 SCRC Gate，也不修改已接受 J。
+> Lift、Replay、TypeCheck、Gate1、Gate2 或 π 的协议；backend executable closure 使用预先声明且
+> 在实验中保持不变的 Q/D，返回普通运行结果，不增加 SCRC Gate，也不修改已接受 J。
 
 ## 1. 最终判断
 
@@ -24,7 +24,7 @@ IntentIR 的 production backend 不是把 J 当作一段等待唯一 lower 的�
 确定性编码为 Intent MLIR，再搜索由通用 compiler transformations 产生的具体 lowering states。
 
 本文的 correctness claim 与 SCRC 保持同一边界：observer-relative、实际 `c0`、预先声明的有限
-测试集合 T 或分布 D、以及冻结比较政策 Q。对于 reduction tree、FMA/contraction、内部精度或
+测试集合 T 或分布 D、以及预先声明的比较政策 Q。对于 reduction tree、FMA/contraction、内部精度或
 approximate math 等可能改变浮点观察值的候选，不要求先向 J 增加一套跨执行域的静态 permission；
 候选必须通过统一 Q/D 执行闭合后才可进入性能选择。shape、dtype、ABI、domain、bounds、alias、
 effect、update 与 observable state 等 hard semantics 仍由 J 和静态 compiler verifier fail closed，
@@ -59,7 +59,7 @@ generic Q/D candidate filter + performance measurement
 held-out Q/D final-winner closure
           |
           v
-target executable + backend closure receipt
+target executable + backend closure result
 ```
 
 核心作用可简写为：
@@ -73,7 +73,7 @@ C\text{ 提高搜索效率。}
 }
 \]
 
-这句话只描述各对象对后端的作用，不重新定义其所有权。A 与 B 共同组成唯一 J；Q/D 是预先冻结
+这句话只描述各对象对后端的作用，不重新定义其所有权。A 与 B 共同组成唯一 J；Q/D 是预先声明
 的外部观察与执行域；C 始终是可忽略、可替换的 implementation-selection prior。Q/D 不进入 J，
 搜索也不产生 `optimized_J` 或 numeric-permission sidecar。
 
@@ -87,7 +87,7 @@ C\text{ 提高搜索效率。}
 CoreLower_t(J,C,target,compiler_state) -> target executable
 
 SearchAndClose_t(J,C,target,Q,D_search,D_cert,opaque_oracles)
-  -> target executable + backend closure receipt
+  -> target executable + backend closure result
 ```
 
 `CoreLower_t` 只对 SCRC-accepted artifact 工作，不读取 Gate verdict、Q/D 或任何 Source realization。
@@ -98,8 +98,8 @@ SearchAndClose_t(J,C,target,Q,D_search,D_cert,opaque_oracles)
 - π；
 - Gate1 diff；
 - Gate2 hidden input/output；
-- Source compiler fingerprint；
-- kernel name、source path 或 provider identity；
+- Source compiler metadata；
+- kernel name、source path 或 provider label；
 - per-kernel RuleCard、历史 candidate 或旧实验结果。
 
 允许进入 core lowerer 的只有：
@@ -111,7 +111,7 @@ SearchAndClose_t(J,C,target,Q,D_search,D_cert,opaque_oracles)
 
 `SearchAndClose_t` 是一个跨所有 Kernel、所有 concrete MLIR states 共用的 compiler/autotuning
 controller。它可以通过 opaque harness 执行 Source、Replay、`RefEval(J)` 与 target executable，并
-调用冻结的 Q；但不得读取 Source/Replay 文本、π、kernel 名或历史结果来生成 transformation、修改
+调用固定的 Q；但不得读取 Source/Replay 文本、π、kernel 名或历史结果来生成 transformation、修改
 候选或选择 tolerance。workload adapter 只做 signature-driven 输入绑定与执行，不成为 per-kernel
 lowering recipe。
 
@@ -150,13 +150,13 @@ J  --Emit_v-->  M0 --rho1--> M1 --rho2--> ... --rhok--> Mk
 
 该 valuation 只能绑定 J 已经声明的符号维，因此：
 
-- J digest 与 denotation 不变，但 invocation/materialized-MLIR digest 必须绑定 `nu`；
+- J 内容与 denotation 不变，materializer 直接消费 `J` 与 `nu`；
 - `nu` 不是 C；C 仍只是 schedule prior，与 logical shape valuation 正交；
 - workload profile 可以同步更新 Source harness 的 shape/stride/grid 与 C valuation，但不得
   创造 J 中没有的符号维；
-- J literal 不可由 backend profile 改写；把 literal 变成符号维会修改 J digest，必须由
+- J literal 不可由 backend profile 改写；把 literal 变成符号维会修改 J 内容，必须由
   frontend 产生新 artifact 并重走 Lift/TypeCheck/Gate1/Gate2；
-- 评测必须报告 exact `j_digest + nu + workload_profile`，不得把一个符号轴上的放大
+- 评测必须直接报告 J 所声明的 shape/dtype、具体 `nu` 与 `workload_profile`，不得把一个符号轴上的放大
   写成所有 shape 的泛化证明。
 
 例如，当前 Flash preprocess J 的载体为 `[1,x0,33,16] -> [1,x0,64]`；只有
@@ -164,7 +164,7 @@ J  --Emit_v-->  M0 --rho1--> M1 --rho2--> ... --rhok--> Mk
 literal。当前 Softmax 和 Liger RMSNorm 的外层 rows 同样是 literal `2`；后端必须保留
 这个边界，而不是为了跑大规模实验自行参数化。
 
-## 3. J=A+B 在后端中的身份
+## 3. J=A+B 在后端中的作用
 
 ## 3.1 Layer A：typed structured value/state program
 
@@ -326,7 +326,7 @@ sigma_target in SearchState
 - retune Agent；
 - source-to-target schedule translation artifact。
 
-搜索与 lineage 可以写入普通 backend receipt，但不进入 SCRC。
+搜索只输出普通候选、运行与性能记录，不建立 lineage 或额外 artifact，也不进入 SCRC。
 
 ## 5. Deterministic J materialization
 
@@ -344,7 +344,7 @@ M_0=\operatorname{Emit}_v(J;\nu).
 - 完整编码 A；
 - 将 backend-relevant B 投影为 dataflow、attrs、effects、verifier facts 或内部 analysis；
 - 对无法完整消费、但会影响 target denotation、safety 或 ABI 的 J/B relation fail closed；
-- 识别 `realization_authorizations` 的 SCRC-only 身份，不把它当 target permission，也不因其存在
+- 识别 `realization_authorizations` 的 SCRC-only 职责，不把它当 target permission，也不因其存在
   自动拒绝 J。
 
 `Emit_v(J)` 严格不读取 C。materialization 完成后，backend 才可以通过独立入口执行：
@@ -439,10 +439,10 @@ p = (rho_1, ..., rho_k)
 M_p = rho_k(...rho_1(M0))
 ```
 
-同一结构可以由不同 trace 到达；搜索器应通过 canonical IR digest 去重。实验和审计可以从结果 IR
-派生擦除数值 schedule 参数后的 `topology_digest`，但它只用于去重、分组和展示，不成为 semantic
-object、registry key、legality input 或 emitter selector。禁止按当前 kernel 名称、源码路径、
-provider、历史 benchmark 或手写 `family_id` 选择隐藏 recipe。
+同一结构可以由不同 trace 到达；搜索器按显式枚举顺序逐候选编译和测量，不计算 canonical IR digest，
+也不因两个候选偶然生成相同文本而建立内容身份或折叠预算。实验按实际 transformation trace、post-pass
+结构字段、schedule 与 launch plan 直接解释结果。禁止按当前 kernel 名称、源码路径、provider、历史
+benchmark 或手写 `family_id` 选择隐藏 recipe。
 
 ## 8. B-conditioned pass contracts
 
@@ -453,7 +453,7 @@ provider、历史 benchmark 或手写 `family_id` 选择隐藏 recipe。
 \]
 
 `ContractView/Γ` 是由唯一 J、target capability 与版本化 compiler contracts 确定得到的 ephemeral、
-non-serialized compiler analysis。它没有独立语义所有权，不成为 backend 输入或 receipt truth，不
+non-serialized compiler analysis。它没有独立语义所有权，不成为 backend 输入或持久化 truth，不
 进入 SCRC，也不能反向改写 J。
 
 定义静态 hard-safety judgement：
@@ -561,7 +561,7 @@ Q/D policy 或最终 `Feasible` 集合的定义。
 - profiling-guided autotuning。
 
 搜索器可以是确定性的，也可以是启发式的。正确性不依赖候选顺序，而依赖所有生成 transition 都
-保持 `HardImpl_t(J)`，且被选择的 executable 通过冻结 Q/D final closure。
+保持 `HardImpl_t(J)`，且被选择的 executable 通过固定 Q/D final closure。
 
 ## 10. Structural lowering-path expansion 与 schedule tuning
 
@@ -618,8 +618,8 @@ filter。Q/D 通过证明的是当前声明执行域内的候选可接受性，�
 等价定理。
 
 形式上可把已登记变换按实验目的记为 `R_sched`、`R_local` 与 `R_struct`。这三个集合都是同一个
-transformation registry 的标签；candidate identity 始终来自具体 MLIR state、trace 与 schedule，
-而不是来自预先声明的实现族。
+transformation registry 的标签；候选由本次枚举中的具体 MLIR state、trace 与 schedule 直接描述，
+而不是由内容身份或预先声明的实现族定义。
 
 ## 11. Numeric correctness boundary
 
@@ -633,7 +633,7 @@ B hard/result boundary:
   domain、predicate、effect、update、output ABI 与 exact/tolerance comparison class
 
 Q:
-  预先冻结的具体 comparator policy
+  预先声明且所有实验臂固定不变的 comparator policy
 
 D_search / D_cert:
   候选过滤域与最终 winner 的独立认证域
@@ -678,9 +678,9 @@ and Close_Q(Target, RefEval(J))
 下一候选必须使用预先声明的独立 certification protocol。
 
 这不是“每个 Kernel 一套认证”。系统只有一个 signature-driven evaluator：所有 Kernel 共用同一
-compile/execute/compare 状态机、同一 Q protocol 和同一 receipt schema。可以对所有候选统一执行，
-也可以让 `exact-preserving` transformation 只做静态检查和最终 winner closure；只有最终 executable
-获得正式 backend closure receipt，其余状态只是 search log。
+compile/execute/compare 状态机和同一 Q protocol。可以对所有候选统一执行，
+也可以让 `exact-preserving` transformation 只做静态检查和最终 winner closure；最终 executable
+返回 closure result，其余状态只保留本次搜索所需的直接运行记录。
 
 这里的“只读无别名”也必须有完整性依据。若当前 artifact version 只列出已知 alias relation，却没有
 规定“关系缺失即 no-alias”或显式声明 relation set complete，则 `boundary.aliases=[]`、
@@ -702,7 +702,7 @@ field、schema completeness rule 与推导版本；无法证明 completeness 时
 后四类都必须标记为 `observation-changing` 并经 Q/D，而不能借 `float_nondeterministic`、Source
 惯例或 target 默认值静态宣称全域等价。若未来项目目标改成脱离 D/Q 的静态 deployment theorem，
 可以另行设计版本化 numeric relations；这不是当前 backend 路线，也不阻塞当前 certified J 与
-provisional J_dev 的执行域搜索。
+后续 accepted J 的执行域搜索。
 
 现有 `exact|tolerance` 仍有约束力：`exact` 输出不能由 controller 私自改成 tolerance；`tolerance`
 只选择既定 Q class，具体阈值继续由外部 Q 独占。缺少有效 Q、空 D、非法 comparator 或未覆盖的
@@ -864,7 +864,7 @@ M^*_{b,C}=\arg\min_{M\in\operatorname{Measured}_{t,b,Q,D_{search}}(J;C)}
 \Gamma_{J,t}\vdash\rho(M):\operatorname{HardImpl}_t(J);
 \]
 
-3. target lowerer 保持 hard boundary 且 final winner 通过冻结 Q/D：
+3. target lowerer 保持 hard boundary 且 final winner 通过固定 Q/D：
 
 \[
 \operatorname{HardSafe}(\operatorname{Lower}_t(M),J)
@@ -882,8 +882,8 @@ M\in\operatorname{ReachHard}_t(J)
 \]
 
 该命题的 TCB 至少包括：`Emit_v` 及其 B projection、hard verifier、target-capability query、实际
-transformation、target lowerer、Q implementation、D protocol、opaque execution harness 与 final
-receipt writer。它明确是 execution-domain closure，不冒充跨 D 的 compiler-pass 等价证明。
+transformation、target lowerer、Q implementation、D protocol 与 opaque execution harness。它明确是
+execution-domain closure，不冒充跨 D 的 compiler-pass 等价证明。
 
 ## 17. Backend conformance 的位置
 
@@ -903,17 +903,17 @@ final winner:
 
 - 是一个由所有 Kernel 复用的 backend evaluator，不是 per-kernel mechanism；
 - 是数值 observation-changing candidate 的执行域 feasibility oracle；
-- 只给最终 winner 产生正式 backend closure receipt；
-- 不修改 SCRC verdict、J digest 或 Gate2 receipt；
+- 只给最终 winner 返回 backend closure result；
+- 不修改 SCRC verdict、J 内容或 Gate2 结果；
 - 不授权 memory/effect/ABI 错误，也不允许 backend 调整 Q。
 
 它不是 SCRC 的第四条 Gate2 边，也不声称 candidate 在 D 之外 contract-proven。CI、release preflight、
 debug 和 regression 可以复用同一机制，但不能用更弱的 smoke set 冒充正式 `D_cert`。
 
-final receipt 至少绑定：J/C digest、target 与 compiler/toolchain version、实际 `c0`、Q/protocol、
-D 定义和 realized challenge digest、完整 MLIR transformation trace、schedule、lowered object/binary
-digest、所有 observable outputs 的三条 direct-edge verdict，以及独立 performance record。receipt
-缺任一 correctness leg 时不得发布为 Q/D-closed executable。
+final result 直接包含：target、实际 J/C 内容、`c0`、Q/protocol、D 中的具名 case、完整 MLIR
+transformation trace、schedule、launch/code-size、所有 observable outputs 的三条 direct-edge verdict，
+以及独立 performance record。它不计算、校验或输出 J/C、case、MLIR、toolchain、object 或 binary 的
+hash/digest。缺任一 correctness leg 时不得发布为 Q/D-closed executable。
 
 ## 18. 实验与消融设计
 
@@ -964,28 +964,24 @@ E0/E1、L0/L1、N0--N3 与 materialized/fused、reduction-tree、FMA/approximati
 诊断，但不得变成主实验臂。它们必须复用 E3 的同一 controller、hard verifier、Q/D、target pipeline
 与总预算；不匹配记 `not_matched`，不得从 all-corpus aggregate 删除。特别地，producer/reduction/
 epilogue 的 read-once frontier、materialization elimination 和真正 whole-graph path 都只是 IntentIR
-候选；只有 actual post-pass receipt 证明相应 producer 被融合或中间物化被删除时，才可使用该机制
+候选；只有 actual post-pass structure record 表明相应 producer 被融合或中间物化被删除时，才可使用该机制
 标签。requested pass 开关本身不是证据。
 
-机器实现从 `spec/lowering/backend-search-ablation-v3.json` 读取完整合同并 fail closed 校验。当前
-canonical spec digest 为
-`6ac5f2b4f2a26a282aa61cda3e48e9bee7469946300e9bbba0322f227ae4250b`。一个预算单位是一个不同的
-canonical post-pass MLIR state；重复 state 留在 audit log 但不消耗预算，无法形成 state 的不同 exact
-candidate failure 消耗一个预算单位。finalist 不混用初次排序样本，而按正反交替 traversal 做 fresh
+机器实现从 `spec/lowering/backend-search-ablation-v3.json` 读取实验轴。一个预算单位是一个显式枚举
+候选；即使两个候选偶然产生相同代码也不做基于内容的去重，无法形成 executable 的候选同样消耗一个
+预算单位。finalist 不混用初次排序样本，而按正反交替 traversal 做 fresh
 round-robin remeasurement；matched external baseline 与 target 使用一致的准备、cache 与计时规则。
 
 ### 18.1 TileLang-aligned 主评测、缓存状态与 Roofline
 
 E0--E4 只定义 candidate-space 因果轴，不足以定义一个可复现的高性能 Kernel
-实验。缓存状态与 Roofline 另由 `spec/lowering/backend-performance-measurement-v1.json`
-冻结；当前 canonical JSON content digest（不是文件原始字节 SHA-256）为
-`7797827a12b0563084dcc8c838c3b3017b84ae9381c9ad87e6379210b72c4fcf`，bundle/report 必须绑定当时的
-canonical spec digest。评测参考 TileLang/Triton 的
+实验。缓存状态与 Roofline 由 `spec/lowering/backend-performance-measurement-v1.json` 直接描述；
+runner 和 report 记录实际采用的协议字段，不计算或绑定 spec digest。评测参考 TileLang/Triton 的
 kernel benchmark 实践：代码、module、page allocation 与 GPU 频率先 warm-up，性能主数字则用
 CUDA event 计时，并在每次 single-shot 前在 timed interval 之外管理/驱逐 L2。因此必须区分：
 
 - `warm-up`：所有正式计时的必要准备，不是一个性能结果组；每个候选排序前单独稳定，最终
-  Source/target 用相同时间预算 round-robin 稳定，并把实际轮数写入 receipt；
+  Source/target 用相同时间预算 round-robin 稳定，并把实际轮数写入测量记录；
 - `warm-cache`：同一 address 反复 graph/launch 的调试或 deployment-specific 结果，不进入主表 aggregate；
 - `L2-controlled steady state`：预热后、每次计时前驱逐 L2、驱逐本身不计时；这是 CUDA
   Kernel 主表的 publication estimand；当前 runner 为保持 protocol 兼容仍将其记为 `cold-data`；
@@ -1033,7 +1029,7 @@ compute ceiling；有权限时再把 H100 的 DRAM/L2 counters 作为独立事�
 latency 位于 `[0.95,2.0]x` logical lower bound 内时，logical Roofline 才能单独支撑 memory-wall
 claim。当前 16-certified + 2-canary regression 的 closed-valuation case
 边界数据只有约 1--8 KiB，所以它们首先是 correctness/small-latency workload；不能因 Softmax、Norm
-或 copy 的名字就写成 DRAM-bound。memory-wall 机制实验使用同一个符号 J 的独立大实例：首个冻结
+或 copy 的名字就写成 DRAM-bound。memory-wall 机制实验使用同一个符号 J 的独立大实例：首个登记
 profile 将 `masked_copy` 的 `x0` 实例化为 16,777,216，Source 的 N/grid、RefJ 与 target 同步绑定，
 形成 128 MiB boundary。它不改变 J 或 compiler path，但把 D 扩展到同时超过 RTX 5090D 96 MiB L2
 与 H100 50 MiB L2 的实际 workload。只有该类 large-shape/硬件-counter 证据才可支撑 bandwidth claim。
@@ -1041,9 +1037,9 @@ profile 将 `masked_copy` 的 `x0` 实例化为 16,777,216，Source 的 N/grid�
 ### 18.2 C 的同宇宙、同预算 target-side 配对
 
 C-prior 与 Erase-C 不能只在 exporter 中各打印一份 requested order，而只编译/测量其中一份。portable
-bundle 必须访问两条 order，分别按“不同 post-pass MLIR state 或 exact failure”消耗相同预算，运输
-二者 concrete-state union，并用 MLIR digest 折叠重复 state。target runner 在同一次 candidate
-correctness/timing receipt 上分别求两条 order 的 best；C gain 定义为
+bundle 必须访问两条 order，按显式枚举候选消耗相同预算，并运输二者候选 union；不按 MLIR、object
+或 binary 内容折叠。target runner 在同一次 candidate correctness/timing run 上分别求两条 order 的
+best；C gain 定义为
 `Erase-C best latency / C-prior best latency`。这样 C 只改变有限预算下的访问顺序，候选宇宙、hard
 admission、Q/D、实际 executable 和 profiler 均相同。
 
@@ -1079,9 +1075,9 @@ E3 的 hard-safe candidate set 必须包含 E2 的全部候选；equal-total-bud
 - all-kernel 与 transformation-applicable subset，禁止只挑 winner。
 
 微秒级 Kernel 不得用两个独立进程的 best latency 直接归因于 E3。primary marginal gain 必须在同一
-E3 candidate timing receipt 中，从同一批 fresh finalist 样本分别选择 schedule-spine best 与
+E3 candidate timing run 中，从同一批 fresh finalist 样本分别选择 schedule-spine best 与
 expanded best；独立 E2/E3 报告仍保留 absolute latency、Source 配对和 cross-report ratio，但后者只作
-复现实验漂移诊断。若两侧选择同一 executable，same-receipt 增量自然为 `1.0x`，不能把时钟噪声写成
+复现实验漂移诊断。若两侧选择同一 executable，同次测量增量自然为 `1.0x`，不能把时钟噪声写成
 lowering-state 收益。
 
 不同结构路径必然经过不同的高层 transformation trace；“同一 code generator”指共享同一 backend
@@ -1092,12 +1088,12 @@ revision 和 terminal target pipeline，不要求结构分支使用完全相同�
 主实验的基本单位不是“选几个算子讲故事”，而是一个显式 coverage cell：
 
 ```text
-(frozen j_digest,
- target,
+(J-declared operator/shape/dtype/layout,
+ target/device,
  exact J-declared extent valuation nu,
  workload profile,
  experiment arm,
- compiler/toolchain digest,
+ compiler/toolchain configuration,
  Q/D protocol)
 ```
 
@@ -1106,7 +1102,7 @@ revision 和 terminal target pipeline，不要求结构分支使用完全相同�
 ```text
 14 fresh Task14 certified high-performance J（首批正式 aggregate）
 + legacy production-jc-v1（16 high-performance + 2 canary，只作回归）
-+ provisional J_dev（能力开发，独立分账）
++ 其他历史/开发输入（仅作独立 regression）
 ```
 
 对每个 target：
@@ -1119,8 +1115,8 @@ revision 和 terminal target pipeline，不要求结构分支使用完全相同�
   `not_matched`，不从 all-corpus aggregate 中删除；
 - 每个 J 除 closed valuation 外，还要运行所有已登记且只绑定 J-declared symbols 的
   valuation；fresh Task14 J 已符号化的 rows/cols 及 Flash 逻辑轴可以绑定新 valuation，而仍为 literal
-  的 shape/dtype/selected variant 只能通过显式、uncertified、带 lineage 的 J_dev 修改；完全没有符号轴的 J 才记
-  `literal_shape_only`，不伪造大 shape；
+  的 shape/dtype/selected variant 不由 backend 改写；完全没有符号轴的 J 记为 `literal_shape_only`，
+  不伪造大 shape；
 - 报告同时给出 all-corpus、structure-applicable subset 与每 Kernel 数字，禁止只保留 winner
   或只报加速的 case；
 - target 缺 Source/Replay、J 缺某符号轴、pass 不匹配、compile failure 与 Q/D failure 都是
@@ -1143,7 +1139,7 @@ Roofline 分解和单变量 instruction-level 剖析，可以在每类结构上�
 - 修改 A denotation、B relation 或 materializer interpretation 时，必须升级对应 schema/materializer/
   evaluator 版本；
 - 旧 artifact 不被静默解释成新语义；
-- 不使用 hash、所谓冻结门或 kernel allowlist 决定合法性。
+- backend 不实现或保留 hash/digest/freeze/receipt 身份能力，也不使用 kernel allowlist 决定合法性。
 
 ## 20. 实现阶段
 
@@ -1158,9 +1154,9 @@ Gate1 artifact/Replay、以零模型 Gate2-only capability recheck 认证。它�
 的首批正式分母。`corpus/production-jc-v1` 的 18 个 entry 仍由 **16 个历史 high-performance + 2 个
 canary** 组成，只保留作 legacy regression，不能与 fresh-14 混合统计。
 
-三个 capability recheck（Flash one-pass LayerNorm、xFormers RMSNorm-add、SplitK reduce）都是正式
-`scrc_certified` evidence；`changes_parent_verdict=false` 表示 append-only、不改写 parent report，不表示
-证据无效。backend intake 必须绑定 recheck receipt 与 exact Gate1 artifact/Replay digest。
+三个 capability recheck（Flash one-pass LayerNorm、xFormers RMSNorm-add、SplitK reduce）与其余 fresh
+accepted J 一样由普通 loader 直接读取。后端不复制、冻结或交叉核验 Gate receipt/digest；它只消费
+accepted J/C 内容，并在自己的 Q/D、compile 与性能路径中产生直接运行结果。
 
 当前 fresh 14 个 high-performance 输入都没有 typed rank-2/3 contraction；名称含 `do_o_dot` 的 Flash preprocess 仍是 FP32
 elementwise multiply + row sum。因此这批的首要数值搜索轴是 reduction tree、FP32 FMA、fusion 与
@@ -1175,10 +1171,9 @@ legacy v1 high-performance regression = 16
 legacy compiler/correctness canary = 2
 ```
 
-不得把历史 12/16-kernel 性能数字、16+2 canary 或 provisional 结果重标为 fresh-14 结果。
-正式导入只复制 exact accepted artifact、C、Source、Replay 与 closure receipt 并交叉核验 digest；后续新
-closure 继续使用同一 append-only intake 工具，同名不同 digest 必须 fail closed，未冻结 `/tmp` 路径
-不能成为长期 truth。
+不得把历史 12/16-kernel 性能数字、16+2 canary 或开发结果重标为 fresh-14 结果。正式后端直接读取
+选定的 fresh catalog entry；报告矩阵只按 kernel、J 声明的 shape/dtype、valuation、target 与实验臂组织，
+不建立 append-only intake、content-addressed catalog 或 artifact identity gate。
 
 当前 implementation regression 基线仍可让 catalog 的 18 个 entry（16 high-performance + 2 canary）
 deterministic materialize，并由真实 C++/MLIR path 形成 cubin；这证明后端消费覆盖，不证明 18 个
@@ -1197,13 +1192,9 @@ production-shape 论文主表：多数原始 closure workload 仅有 KiB 级 bou
 L2-controlled、J-symbolic production valuations，并将 literal-only 格子显式保留。不得把旧的
 closed-valuation aggregate 重命名为新主实验。
 
-历史横向 valuation 已由 target-neutral、versioned、fail-closed 的 `HarnessBindingSpec` 对 catalog
-18-entry regression matrix 绑定 buffer axes、stride/scalar、semantic constexpr、C 与 grid；它不进入
-compiler path selection。该结果仍按 16 certified + 2 canary 解释。对 J 中 literal shape/dtype 的自然
-工作负载，Task15 新增 `intentir.backend.dev-j-variant.v1` 与
-`intentir.backend.dev-workload.v1`：accepted snapshot 保持不变，variant 记录 exact edits、base replay、
-新 digest 与 `uncertified_backend_dev`，随后仍走普通 `materialize_j -> MLIR -> target`，不由 Python
-发射 kernel。
+历史横向 valuation 的 `HarnessBindingSpec` 仍可作为 legacy regression 输入，但不进入 compiler path
+selection，也不进入 fresh-14 aggregate。后端不再维护 J_dev、dev-workload 或 digest-pinned lineage；
+literal shape/dtype 不由后端修改，fresh 实验只使用 accepted J 已声明的 literal/symbolic 使用域。
 
 第一项 horizontal lowering 已落地为通用 tiled-frontier multi-reduce concrete state：同一依赖层的
 独立规约共享 feature-tile traversal，依赖层从 workgroup-cached frontier 继续遍历，各 partial
@@ -1213,47 +1204,44 @@ fail closed 保留。7 项均已形成 true post-pass MLIR/cubin 并通过 Targe
 搜索没有一项由该状态胜出；这是提示继续改进 applicability/topology 的负结果，不伪装成收益。
 
 `doc/results/production-backend-symbolic-large-18-sm120a/` 同样是 16 certified + 2 canary 的历史
-regression，不是 18-certified 主表。其同回执 Schedule-Only/expanded、C/no-C 与 Source 数字可以用于
-检查 runner 和搜索因果口径，但发布 aggregate 必须重新按 16-certified、provisional J_dev、canary
-三类分账，并以自然 shape/dtype 重跑。
+regression，不是 fresh-14 主表。其同次测量 Schedule-Only/expanded、C/no-C 与 Source 数字只能用于
+检查 runner 和搜索因果口径；正式 aggregate 必须以 fresh-14 的自然 shape/dtype 重跑。
 
 首批自然 FP32 development slices 已在 RTX 5090D 跑通真实 Source、RefDev、MLIR/cubin 与全部计时
-候选 Q/D：RMSNorm `M=2048,H=1024` 的同回执 IntentIR/Schedule-Only 为 `1.0531x`、Source/Target
+候选 Q/D：RMSNorm `M=2048,H=1024` 的同次测量 IntentIR/Schedule-Only 为 `1.0531x`、Source/Target
 为 `1.0491x`；`H=4096` 分别为 `1.0000x` 与 `1.0174x`，multi-stage 因额外重读落败；DYT
 `BT=4096,H=4096` 分别为 `1.0024x` 与 `1.0275x`，约 128 MiB 工作集已接近带宽。它们当前是 warm
 机制校准，不是最终 cold-data/BF16 主表；尤其旧小输入的 1.57x 不得外推。
 
-RVV 机器三臂与 C 小表现已由同一个 native-object timing receipt 执行：C-Fixed 是 canonical
+RVV 机器三臂与 C 小表现已由同一次 native-object timing run 执行：C-Fixed 是 canonical
 materialized path 上 target 对 C 的唯一投影；Schedule-Only 搜完整固定路径 schedule spine；IntentIR
 在相同总预算内先访问该 spine，再访问 producer-consumer structural expansion。runner 显式验证
-C/no-C full order 的 candidate-universe digest、map 与 budget 相同，并可选择测完整 latency map 计算
-candidates-to-95%。2026-07-28 的 Softmax `M=N=4096, FP32` warm 开发回执中，修复后的真实 MLIR
-producer-consumer path 相对同回执 Schedule-Only 为约 `1.11x`；C/no-C 最终 best 相同，达到 95% best
+C/no-C 访问同一显式候选序列与 budget，并可选择测完整 latency map 计算 candidates-to-95%。
+2026-07-28 的 Softmax `M=N=4096, FP32` warm 开发运行中，修复后的真实 MLIR producer-consumer path
+相对同次测量 Schedule-Only 为约 `1.11x`；C/no-C 最终 best 相同，达到 95% best
 分别需要 26/35 个候选。该数字仅是协议与路径校准，不进入最终 single/16-thread、外部 baseline 主图。
 
 ### 20.2 当前横向里程碑与下一 target
 
-当前 legacy 16-high-performance + 2-canary regression entry 按 A 结构覆盖四类横向路径；下一任务应
-先将 fresh Task14-14 content-addressed intake 后，再据其 A 结构生成正式矩阵，不能用 legacy J、J_dev
-或 canary 代替：
+当前 fresh Task14-14 已由普通 loader 直接进入 typed J→MLIR 路径；下一步据其 A 结构生成正式矩阵，
+不能用 legacy J 或 canary 代替：
 
-| 结构类 | frozen J | 当前共性瓶颈 | 下一批真实 MLIR state |
+| 结构类 | accepted J | 当前共性瓶颈 | 下一批真实 MLIR state |
 |---|---|---|---|
 | dense/masked elementwise | DYT、GeGLU、SwiGLU、masked copy | tail/vector width、grid 遍历、端到端内存合并 | masked vec2/vec4 与 target-derived grid-stride/vector layout |
 | single reduction + epilogue | Flash preprocess、fused-add RMSNorm、KLDiv、Liger RMSNorm、masked row square-sum、xFormers RMSNorm、xFormers RMSNorm-add | producer 重读、中间物化、单一 reduction topology | producer/reduction/epilogue 单趟 state，subgroup/workgroup/multi-stage 独立搜索 |
-| multiple reductions + epilogue | Flash one-pass LayerNorm、JSD、LayerNorm、Softmax | compact tiled frontier 已正确准入但尚无 winner；shared frontier/traversal 成本仍未打破现有 register/workgroup 路径 | subgroup/frontier/multi-stage topology 与 schedule 独立搜索，扩展 dtype/表达式并保留不匹配/拒绝回执 |
+| multiple reductions + epilogue | Flash one-pass LayerNorm、LayerNorm、Softmax | compact tiled frontier 已正确准入但尚无 winner；shared frontier/traversal 成本仍未打破现有 register/workgroup 路径 | subgroup/frontier/multi-stage topology 与 schedule 独立搜索，扩展 dtype/表达式并保留直接 rejection reason |
 | scan/effect/contraction/gather | Sparsemax、TVD、PolyNorm | scan/update/control 或 contraction/gather 落到 generic/materialized path | registered prefix/segmented-scan、effect-safe update 与 contraction/gather tiling states |
 
 实施顺序以“同一 compiler mechanism 横向覆盖一类 J”为原则，不以单个 benchmark 得分为目标：
 
-1. **全量 coverage receipt 先行。** 任何新 pass 提交都要对当前全部 certified/provisional/canary
-   分账运行 structural match、hard
-   admission、post-pass digest 与 correctness；`not_matched` 也是可审计结果。
+1. **横向 compiler mechanism 先行。** 每个新 pass 都对 fresh-14 运行 structural match、hard admission、
+   compile 与 correctness；`not_matched` 作为普通矩阵状态保留，不额外建设 coverage receipt。
 2. **CUDA/5090D 与 H100 共用高层 transformation。** 先完成 tail-safe vector load/store、多 reduction
    单趟累积与 producer/epilogue fusion，再补 scan/effect/contraction 状态；只由 target capability
    选择 NVVM/MMA 终端能力，不分裂出 kernel-name recipe。
-3. **RVV 与 CUDA 同步横向扩展。** workload-profile/symbolic valuation 与 per-kernel receipt 已由
-   两个 portable exporter 共用；下一步实现 dynamic-VL strip mining、SEW/LMUL 状态、vector
+3. **RVV 与 CUDA 同步横向扩展。** 两个 target 共用 workload-profile/symbolic valuation；下一步实现
+   dynamic-VL strip mining、SEW/LMUL 状态、vector
    reduction/scan 和可审计的 multicore state，不把工作停在静态 tile 与 producer-consumer fusion。
 4. **搜索与 C 做横向收敛。** 每类 transformation 都进入同一 candidate-state universe；C 只重排
    全量状态。主表对 fresh 14 个 high-performance 输入运行 CF/E2/E3，并用 E4 形成独立 C 小表；
@@ -1263,8 +1251,8 @@ producer-consumer path 相对同回执 Schedule-Only 为约 `1.11x`；C/no-C 最
    不代替全 fresh-14 表。
 
 禁止为了某一 Kernel 的数字在 Python 中增加 target emission、按 case name 切换 compiler pass、
-改写 frozen J literal 或只运行一个适用子集后声称全量提升。当前仅有一个 J 命中的结构
-也可以实现，但 matcher、pass contract、negative test 与 receipt 必须仍然 source-neutral，并在
+改写 accepted J literal 或只运行一个适用子集后声称全量提升。当前仅有一个 J 命中的结构
+也可以实现，但 matcher、pass contract 与 negative test 必须仍然 source-neutral，并在
 完整矩阵中呈现其他输入的 `not_matched`。
 
 ### 阶段 B0：IntentOp/ABC ownership 对齐
@@ -1280,9 +1268,8 @@ producer-consumer path 相对同回执 Schedule-Only 为约 `1.11x`；C/no-C 最
 ### 阶段 B1：后端合同入口
 
 **当前状态：已实现。** `materialize_j`、`ContractView`、`Attach_C/Erase_C`、统一
-`SearchAndCloseController`、content-addressed 16-certified + 2-canary regression catalog 与 fail-closed rejection 已进入
-J-search 分支；旧 artifact 在缺少某个高级 consumer 前提时保留 generic/conservative path，不被静默
-升级。
+`SearchAndCloseController` 与 fail-closed rejection 已进入 J-search 分支；fresh-14 由普通 loader 直接
+消费，旧 artifact 在缺少高级 consumer 前提时保留 generic/conservative path，不被静默升级。
 
 - 固化 `Emit_v(J)`；
 - 实现独立 `Attach_C(M0,C,t)` 与 `Erase_C` invariant；
@@ -1291,27 +1278,27 @@ J-search 分支；旧 artifact 在缺少某个高级 consumer 前提时保留 ge
   或 fail closed；
 - 扩展现有 generic compiler transformation registration/admission API，只以 typed A pattern、
   B precondition、current state 与 target capability 为 key；不另建 family registry；
-- 建立唯一 `SearchAndClose_t`：signature-driven harness、冻结 Q、`D_search/D_cert`、candidate cache、
-  direct-edge comparator 与 backend closure receipt；不按 kernel 名注册数值机制。
+- 建立唯一 `SearchAndClose_t`：signature-driven harness、固定 Q、`D_search/D_cert` 与 direct-edge
+  comparator；候选逐个显式编译/测量，不保留 candidate performance cache 或 backend closure receipt。
 
 ### 阶段 B2：第一批 lowering-path expansion
 
 **当前状态：第一批已实现并完成 16-certified + 2-canary regression；自然 workload 的正式全 target
 矩阵仍在推进。** CUDA row/elementwise/padded/generic-Linalg lowering 与 RVV materialized/
-producer-consumer paths 均由真实 post-pass MLIR receipt 驱动。RVV fusion 从 terminal consumer 反向
-遍历 producer，multi-use producer 停在 read-once frontier，避免把 `exp` 或 reduction 重复计算；receipt
-记录 fused producer、multi-use rejection、requested/actual schedule 与擦除 schedule 后的 path digest。
+producer-consumer paths 均由真实 post-pass MLIR 结构驱动。RVV fusion 从 terminal consumer 反向
+遍历 producer，multi-use producer 停在 read-once frontier，避免把 `exp` 或 reduction 重复计算；普通
+transformation record 直接记录 fused producer、multi-use rejection 与 requested/actual schedule。
 下一步是横向扩展到 scan、dynamic-VL/multicore、contraction/完整 Attention，而不是新增 family 抽象
 或继续堆无关局部 pass。
 
-当前 CUDA 已登记并在 receipt 中区分：padded-row `serial_row/subgroup_feature`、row reduction
+当前 CUDA 已登记并在 transformation record 中区分：padded-row `serial_row/subgroup_feature`、row reduction
 `gpu_all_reduce/workgroup_hierarchical/subgroup_rows`（含 `rows_per_block`）、FP32 FMA count，以及 DYT
 `stable_tanh/native_tanh`。这些字段来自实际 C++ post-pass MLIR，不从 requested toggle 推断；2/4/8
-rows-per-block 进入 topology digest 和 actual-state evidence。candidate budget 按不同 MLIR digest 消耗，
-重复 state 只作为 search evidence 保留。
+rows-per-block 直接进入 actual-state structure。candidate budget 按显式枚举候选消耗，不计算 MLIR 或
+topology digest，也不按内容去重。
 
 portable CUDA search bundle 已升级为 graph-capable v3：单 launch 继续使用紧凑 cubin+ABI plan；
-多阶段 state 则冻结 lowered host MLIR、全部 cubin、launch/intermediate-buffer receipt，并在目标端复用
+多阶段 state 直接携带 lowered host MLIR、全部 cubin 与 launch/intermediate-buffer record，并在目标端复用
 既有 orchestrator 预绑定临时 buffer与 launch sequence。真实 5090D smoke 已在同一候选集合执行并
 验证 10-kernel/10-launch materialized graph。因而 partial-reduce/finalize、scan 或其他多阶段结构可以
 进入与单 kernel state相同的 Q/D、Target--RefJ、计时与 finalist selection，不需要 Python target
@@ -1320,12 +1307,12 @@ kernel emitter，也不另建发射抽象。
 - elementwise producer/reduction fusion；
 - 在 hard boundary 足够时启用 producer/reduction/epilogue fusion、materialization/copy elimination；
 - 把 RVV producer-consumer fusion 从 schedule flag 分离为显式 structural transformation trace，并以
-  actual fusion/materialization receipt 决定标签；
+  actual fusion/materialization structure 决定标签；
 - 注册 sequential/subgroup/workgroup/hierarchical reduction states、FP32 FMA 与 target-supported
   precision states；保持 hard boundary 后以 `observation-changing` 标记进入 Q/D filter，不新增 J 字段；
 - schedule candidate 与 C-prior ordering；
-- lowering trace、hard facts used、topology/IR digest、static/Q rejection reason、closure 与 performance
-  receipt。
+- lowering trace、hard facts used、actual structure、static/Q rejection reason、closure result 与
+  performance samples。
 
 ### 阶段 B3：算法结构与跨 target
 
@@ -1343,11 +1330,11 @@ kernel emitter，也不另建发射抽象。
 仍未完成。**
 
 - 正式内部主实验只报告 C-Fixed、Schedule-Only、IntentIR 与 `G_schedule/G_lowering`；
-- materialization/producer fusion 从同一候选回执作补充机制解释，不以 requested 名称反推适用性；
+- materialization/producer fusion 从同次候选测量作补充机制解释，不以 requested 名称反推适用性；
 - C/no-C 小表只报告 best-at-budget 与 candidates-to-95%；L0/L1、N0--N3 仅作补充机制诊断；
 - H100/RVV 严格标明缺失的 Replay/Source 边，不把 Target–RefJ correctness 冒充 formal closure；
-- 当前 16 accepted high-performance J、两个 provisional J_dev 与后续新 J 均复用同一 machine spec、receipt schema 与 all-corpus/not-matched
-  口径；主表不因机制解释只取代表点而收缩。
+- fresh-14 与后续 accepted J 均复用同一 machine spec 与 all-corpus/not-matched 口径；主表不因机制
+  解释只取代表点而收缩。
 
 ## 21. 最终系统表述
 
@@ -1355,4 +1342,4 @@ kernel emitter，也不另建发射抽象。
 
 中文：
 
-> **IntentIR 以 SCRC 已接受的 J 作为 lowering-state search 的不变、可执行 reference。纯 core lowerer 只消费 J、可选 C 与 target capability，发射具体 MLIR state 和 target executable；系统不存在 implementation-family object 或 per-kernel recipe。静态 verifier 固守 memory、effect、ABI 等 hard J boundary；唯一通用 search-and-closure controller 再在预先冻结的 Q 与声明的搜索/隐藏认证域上，裁决可能改变观察值的 reduction、FMA 与精度状态，并只在通过者中选择性能。C 只改变搜索顺序，不改变 correctness；搜索与闭合均不修改 J，也不声称 Q/D 之外的 contract proof。**
+> **IntentIR 以 SCRC 已接受的 J 作为 lowering-state search 的不变、可执行 reference。纯 core lowerer 只消费 J、可选 C 与 target capability，发射具体 MLIR state 和 target executable；系统不存在 implementation-family object 或 per-kernel recipe。静态 verifier 固守 memory、effect、ABI 等 hard J boundary；唯一通用 search-and-closure controller 再用固定 Q 与声明的搜索/隐藏认证域，裁决可能改变观察值的 reduction、FMA 与精度状态，并只在通过者中选择性能。C 只改变搜索顺序，不改变 correctness；搜索与闭合均不修改 J，也不声称 Q/D 之外的 contract proof。**

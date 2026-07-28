@@ -9,7 +9,6 @@ returns executable cubins plus a neutral lowering record.
 
 from __future__ import annotations
 
-import hashlib
 import os
 import re
 import tempfile
@@ -33,11 +32,10 @@ from intentir.backend.cuda.selection import (
 from intentir.backend.cuda.schedules import ScheduleDecision
 from intentir.frontend import emit_module
 from intentir.ir.model import IntentFunction
-from intentir.ir.production_snapshot import content_digest
 
 
 @dataclass(frozen=True)
-class MLIRTransformationReceipt:
+class MLIRTransformationRecord:
     """Facts attached by the C++ pass to the concrete post-pass MLIR state."""
 
     lowering_path_kind: str
@@ -72,21 +70,6 @@ class MLIRTransformationReceipt:
             "multi_stage_partial_finalize",
         }
 
-    @property
-    def topology_digest(self) -> str:
-        return content_digest(
-            {
-                "lowering_path_kind": self.lowering_path_kind,
-                "reduction_topology": self.reduction_topology,
-                "rows_per_block": self.rows_per_block,
-                "stage_count": self.stage_count,
-                "reduction_parts": self.reduction_parts,
-                "transformation_trace": list(self.transformation_trace),
-                "approximation_mode": self.approximation_mode,
-                "launch_plans": [item.to_dict() for item in self.launch_plans],
-            }
-        )
-
     def to_dict(self) -> dict[str, object]:
         return {
             "lowering_path_kind": self.lowering_path_kind,
@@ -110,12 +93,11 @@ class MLIRTransformationReceipt:
             "approximation_mode": self.approximation_mode,
             "launch_plans": [item.to_dict() for item in self.launch_plans],
             "observation_changing": self.observation_changing,
-            "topology_digest": self.topology_digest,
         }
 
 
-def _transformation_receipt(mlir: str) -> MLIRTransformationReceipt | None:
-    """Decode only C++-authored receipt attrs; never infer from function names."""
+def _transformation_record(mlir: str) -> MLIRTransformationRecord | None:
+    """Decode C++-authored structural attrs; never infer from function names."""
 
     def string_attr(name: str) -> str | None:
         match = re.search(
@@ -143,7 +125,7 @@ def _transformation_receipt(mlir: str) -> MLIRTransformationReceipt | None:
     if path is None and topology is None and trace_match is None:
         return None
     if path is None or topology is None or trace_match is None:
-        raise ValueError("C++ concrete-state receipt is incomplete")
+        raise ValueError("C++ concrete-state record is incomplete")
     trace = tuple(re.findall(r'\"([^\"]+)\"', trace_match.group(1)))
     counts = {
         name: integer_attr(f"intent.backend.{name}")
@@ -198,9 +180,9 @@ def _transformation_receipt(mlir: str) -> MLIRTransformationReceipt | None:
         or grid_stride_loop_count not in {0, 1}
         or any(value is None or value < 0 for value in counts.values())
     ):
-        raise ValueError("C++ concrete-state receipt has invalid trace/counts")
+        raise ValueError("C++ concrete-state record has invalid trace/counts")
     assert all(value is not None for value in counts.values())
-    return MLIRTransformationReceipt(
+    return MLIRTransformationRecord(
         lowering_path_kind=path,
         reduction_topology=topology,
         transformation_trace=trace,
@@ -232,11 +214,8 @@ class LoweredProgram:
 
     selection: VariantSelection
     kernels: tuple[backend_compile.CompiledKernel, ...]
-    source_mlir_sha256: str
-    specialized_mlir_sha256: str | None = None
-    transformation_receipt: MLIRTransformationReceipt | None = None
+    transformation_record: MLIRTransformationRecord | None = None
     pipeline_id: str = "cuda.pipeline.direct.v1"
-    pipeline_mlir_sha256: str | None = None
 
     def __post_init__(self) -> None:
         if not self.kernels:
@@ -252,70 +231,31 @@ class LoweredProgram:
                     f"compiled kernel {kernel.kernel_name!r} retains Intent ops: "
                     f"{list(residuals)}"
                 )
-        if self.selection.input_sha256 != self.source_mlir_sha256:
-            raise ValueError("selection and compiled source hashes disagree")
-        if self.selection.pipeline_kind == "specialized":
-            if self.specialized_mlir_sha256 != self.selection.probe_output_sha256:
-                raise ValueError(
-                    "compiled specialized MLIR differs from its structural probe"
-                )
-        elif self.specialized_mlir_sha256 is not None:
-            raise ValueError("generic lowering cannot carry specialized MLIR")
         if (
-            self.transformation_receipt is not None
+            self.transformation_record is not None
             and self.selection.pipeline_kind != "specialized"
         ):
-            raise ValueError("generic lowering cannot carry a transformation receipt")
+            raise ValueError("generic lowering cannot carry a transformation record")
         if not self.pipeline_id:
             raise ValueError("lowering pipeline_id must be non-empty")
-        if (
-            self.pipeline_mlir_sha256 is not None
-            and re.fullmatch(r"[0-9a-f]{64}", self.pipeline_mlir_sha256) is None
-        ):
-            raise ValueError("pipeline MLIR digest must be SHA-256")
-
-    @property
-    def executable_digest(self) -> str:
-        return content_digest(
-            [hashlib.sha256(kernel.cubin).hexdigest() for kernel in self.kernels]
-        )
-
-    @property
-    def concrete_mlir_sha256(self) -> str:
-        """Digest the real compiler state used for duplicate-state rejection."""
-
-        return (
-            self.specialized_mlir_sha256
-            or self.pipeline_mlir_sha256
-            or self.source_mlir_sha256
-        )
-
     def to_record(self) -> dict[str, object]:
-        """Return JSON-safe compiler provenance without embedding binary bytes."""
+        """Return the structural compilation result without embedding binary bytes."""
 
         return {
             "selection": self.selection.to_dict(),
-            "source_mlir_sha256": self.source_mlir_sha256,
-            "specialized_mlir_sha256": self.specialized_mlir_sha256,
             "pipeline_id": self.pipeline_id,
-            "pipeline_mlir_sha256": self.pipeline_mlir_sha256,
-            "transformation_receipt": (
-                self.transformation_receipt.to_dict()
-                if self.transformation_receipt is not None
+            "transformation_record": (
+                self.transformation_record.to_dict()
+                if self.transformation_record is not None
                 else None
             ),
-            "executable_digest": self.executable_digest,
             "kernel_count": len(self.kernels),
             "kernels": [
                 {
                     "binary_name": kernel.binary_name,
                     "kernel_name": kernel.kernel_name,
                     "cubin_size_bytes": len(kernel.cubin),
-                    "cubin_sha256": hashlib.sha256(kernel.cubin).hexdigest(),
                     "cubin_is_elf": kernel.cubin.startswith(b"\x7fELF"),
-                    "binary_mlir_sha256": hashlib.sha256(
-                        kernel.binary_mlir.encode("utf-8")
-                    ).hexdigest(),
                 }
                 for kernel in self.kernels
             ],
@@ -342,17 +282,6 @@ def _compile_generic(
         return tuple(backend_compile.compile_all_kernels(source_path))
 
 
-def _pipeline_mlir_digest(
-    kernels: tuple[backend_compile.CompiledKernel, ...],
-) -> str:
-    return content_digest(
-        [
-            hashlib.sha256(kernel.binary_mlir.encode("utf-8")).hexdigest()
-            for kernel in kernels
-        ]
-    )
-
-
 def lower_to_cuda(
     intent_module: str | os.PathLike[str],
     *,
@@ -372,7 +301,6 @@ def lower_to_cuda(
     """
 
     source = read_intent_module(intent_module)
-    source_digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
     selected_target = target or LoweringTarget()
     if selected_target.chip != backend_compile.CHIP:
         raise ValueError(
@@ -400,28 +328,18 @@ def lower_to_cuda(
         only_fast_path=only_fast_path,
         allow_specialized=allow_specialized,
     )
-    if selection.input_sha256 != source_digest:
-        raise RuntimeError("selector did not probe the exact lowering input")
     if require_specialized and selection.pipeline_kind != "specialized":
         raise ValueError(
             "required specialized candidate failed whole-graph admission"
         )
 
-    specialized_digest: str | None = None
-    transformation_receipt: MLIRTransformationReceipt | None = None
+    transformation_record: MLIRTransformationRecord | None = None
     if selection.pipeline_kind == "specialized":
         assert selection.pass_argument is not None
         specialized = backend_compile._run(
             [backend_compile.INTENT_OPT, selection.pass_argument], stdin=source
         )
-        specialized_digest = hashlib.sha256(
-            specialized.encode("utf-8")
-        ).hexdigest()
-        transformation_receipt = _transformation_receipt(specialized)
-        if specialized_digest != selection.probe_output_sha256:
-            raise RuntimeError(
-                "specialized pass output changed between selection and compilation"
-            )
+        transformation_record = _transformation_record(specialized)
         kernels = tuple(
             backend_compile.lower_memref_module_to_kernels(
                 specialized, scf_to_cf=selection.scf_to_cf
@@ -433,15 +351,12 @@ def lower_to_cuda(
     return LoweredProgram(
         selection=selection,
         kernels=kernels,
-        source_mlir_sha256=source_digest,
-        specialized_mlir_sha256=specialized_digest,
-        transformation_receipt=transformation_receipt,
+        transformation_record=transformation_record,
         pipeline_id=(
             "cuda.pipeline.direct-specialized.v1"
             if selection.pipeline_kind == "specialized"
             else "cuda.pipeline.linalg-materialized.v1"
         ),
-        pipeline_mlir_sha256=_pipeline_mlir_digest(kernels),
     )
 
 
@@ -460,7 +375,6 @@ def lower_to_cuda_fused(
     """
 
     source = read_intent_module(intent_module)
-    source_digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
     selected_target = target or LoweringTarget()
     if selected_target.chip != backend_compile.CHIP:
         raise ValueError(
@@ -492,9 +406,7 @@ def lower_to_cuda_fused(
     return LoweredProgram(
         selection=selection,
         kernels=kernels,
-        source_mlir_sha256=source_digest,
         pipeline_id="cuda.pipeline.linalg-elementwise-fused.v1",
-        pipeline_mlir_sha256=_pipeline_mlir_digest(kernels),
     )
 
 
@@ -543,20 +455,13 @@ def execute_cuda_artifact(
     """Execute already-compiled cubins without invoking the compiler again.
 
     ``intent_module`` supplies the logical ABI used by the host orchestrator.
-    Its hash must match the source compiled into ``program``.  The compiler
-    callback passed to
+    The compiler callback passed to
     :func:`intentir.backend.cuda.orchestrate.run_program` returns only the
     persisted kernels, so execution cannot silently rebuild or substitute a
     different binary.
     """
 
     source = read_intent_module(intent_module)
-    source_digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
-    if source_digest != program.source_mlir_sha256:
-        raise ValueError(
-            "execution Intent module differs from the compiled artifact source"
-        )
-
     path = _existing_path(intent_module)
     if path is not None:
         return backend_orchestrate.run_program(
@@ -582,7 +487,7 @@ def execute_cuda_artifact(
 
 __all__ = [
     "LoweredProgram",
-    "MLIRTransformationReceipt",
+    "MLIRTransformationRecord",
     "execute_cuda_artifact",
     "lower_function_to_cuda",
     "lower_to_cuda",

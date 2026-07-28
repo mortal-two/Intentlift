@@ -81,7 +81,7 @@ class RowReductionKernel:
             # therefore supplies pointer arguments only; it intentionally
             # bypasses the compiled host stub that performs rank-0 capture.
             # Production search exercises both capture states through
-            # execute_cuda_artifact, while this harness freezes the compatible
+            # execute_cuda_artifact, while this harness retains the compatible
             # device-load state explicitly instead of depending on a pass
             # default it cannot execute.
             pass_options += " promote-rank0-scalars=false"

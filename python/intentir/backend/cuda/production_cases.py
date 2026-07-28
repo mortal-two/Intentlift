@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 from typing import Any, Mapping
@@ -83,14 +82,6 @@ _CERTIFIED_CANARY_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
 }
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def _apply_workload_profile(
     name: str,
     adapter: TritonWorkloadAdapter,
@@ -112,10 +103,6 @@ def profile_production_snapshot(
         return snapshot, {
             "kind": "accepted_snapshot",
             **metadata,
-            "base_snapshot_digest": snapshot.snapshot_digest,
-            "base_j_digest": snapshot.j_digest,
-            "active_snapshot_digest": snapshot.snapshot_digest,
-            "active_j_digest": snapshot.j_digest,
             "j_unchanged": True,
         }
     if snapshot.c is None:
@@ -131,17 +118,11 @@ def profile_production_snapshot(
         c_payload["values"][opaque_name] = value
     profiled_c = ImplementationConfig.from_json(c_payload)
     active = ProductionSnapshot(j=snapshot.j, c=profiled_c)
-    if active.j_digest != snapshot.j_digest:
+    if active.j.to_json() != snapshot.j.to_json():
         raise AssertionError("workload profile modified accepted J")
     return active, {
         "kind": "symbolic_extent_valuation",
         **metadata,
-        "base_snapshot_digest": snapshot.snapshot_digest,
-        "base_j_digest": snapshot.j_digest,
-        "base_c_digest": snapshot.c_digest,
-        "active_snapshot_digest": active.snapshot_digest,
-        "active_j_digest": active.j_digest,
-        "active_c_digest": active.c_digest,
         "j_unchanged": True,
     }
 
@@ -164,20 +145,17 @@ def prepare_production_workload(
         raise KeyError(f"production case {name!r} has no Source adapter")
     payload = json.loads(_SOURCE_MANIFEST.read_text(encoding="utf-8"))
     record = payload.get(name)
-    if not isinstance(record, dict) or set(record) != {
+    if not isinstance(record, dict) or not {
         "case_id",
         "path",
-        "sha256",
         "symbol",
-    }:
+    }.issubset(record):
         raise ValueError(f"certified Source manifest entry {name!r} is invalid")
     if record["case_id"] != case_id:
         raise ValueError("certified Source manifest case_id mismatch")
     source_path = (_REPOSITORY_ROOT / record["path"]).resolve()
     if _REPOSITORY_ROOT not in source_path.parents:
         raise ValueError("certified Source path escapes the repository")
-    if _sha256(source_path) != record["sha256"]:
-        raise ValueError("certified Source digest mismatch")
     profiled_adapter = _apply_workload_profile(name, adapter, profile)
     return prepare_triton_source_workload(
         profiled_adapter,
