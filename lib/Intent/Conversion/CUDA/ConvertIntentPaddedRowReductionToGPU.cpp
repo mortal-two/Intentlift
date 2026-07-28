@@ -146,6 +146,7 @@ struct PaddedRowDotLowering {
   Type storageType;
   unsigned validRowsArgument = 0;
   unsigned validFeaturesArgument = 0;
+  bool staticBounds = false;
 
   PadOp pad;
   ReduceOp reduce;
@@ -188,9 +189,11 @@ struct PaddedRowDotLowering {
 
   LogicalResult match() {
     auto type = function.getFunctionType();
-    if (type.getNumInputs() != 4 || type.getNumResults() != 1 ||
+    if ((type.getNumInputs() != 2 && type.getNumInputs() != 4) ||
+        type.getNumResults() != 1 ||
         !function.getBody().hasOneBlock())
       return failure();
+    staticBounds = type.getNumInputs() == 2;
     auto returned = dyn_cast<func::ReturnOp>(
         function.getBody().front().getTerminator());
     if (!returned || returned.getNumOperands() != 1)
@@ -209,21 +212,32 @@ struct PaddedRowDotLowering {
     auto reducedType = dyn_cast<RankedTensorType>(reduce.getResult().getType());
     auto leftCast = product.getLhs().getDefiningOp<CastOp>();
     auto rightCast = product.getRhs().getDefiningOp<CastOp>();
-    leftSelect = leftCast ? leftCast.getInput().getDefiningOp<SelectOp>()
-                          : SelectOp();
-    rightSelect = rightCast ? rightCast.getInput().getDefiningOp<SelectOp>()
-                            : SelectOp();
     if (!outputType || !reducedType || !outputType.hasStaticShape() ||
         !reducedType.hasStaticShape() || outputType.getRank() != 3 ||
-        reducedType.getRank() != 3 || !isa<Float32Type>(outputType.getElementType()) ||
+        reducedType.getRank() != 3 ||
+        !isa<Float32Type>(outputType.getElementType()) ||
         !isa<Float32Type>(reducedType.getElementType()) || !leftCast ||
-        !rightCast || !leftSelect || !rightSelect)
+        !rightCast)
       return failure();
 
-    auto leftInput = dyn_cast<BlockArgument>(leftSelect.getX());
-    auto rightInput = dyn_cast<BlockArgument>(rightSelect.getX());
-    if (!leftInput || !rightInput || leftInput.getArgNumber() == rightInput.getArgNumber() ||
-        !isZeroSplat(leftSelect.getY()) || !isZeroSplat(rightSelect.getY()))
+    BlockArgument leftInput;
+    BlockArgument rightInput;
+    if (staticBounds) {
+      leftInput = dyn_cast<BlockArgument>(leftCast.getInput());
+      rightInput = dyn_cast<BlockArgument>(rightCast.getInput());
+    } else {
+      leftSelect = leftCast.getInput().getDefiningOp<SelectOp>();
+      rightSelect = rightCast.getInput().getDefiningOp<SelectOp>();
+      leftInput = leftSelect ? dyn_cast<BlockArgument>(leftSelect.getX())
+                             : BlockArgument();
+      rightInput = rightSelect ? dyn_cast<BlockArgument>(rightSelect.getX())
+                               : BlockArgument();
+      if (!leftSelect || !rightSelect || !isZeroSplat(leftSelect.getY()) ||
+          !isZeroSplat(rightSelect.getY()))
+        return failure();
+    }
+    if (!leftInput || !rightInput ||
+        leftInput.getArgNumber() == rightInput.getArgNumber())
       return failure();
     auto leftType = dyn_cast<RankedTensorType>(leftInput.getType());
     auto rightType = dyn_cast<RankedTensorType>(rightInput.getType());
@@ -259,35 +273,37 @@ struct PaddedRowDotLowering {
         !pad.getValue().isZero())
       return failure();
 
-    Value leftCondition = stripUnitExpansion(leftSelect.getCond());
-    Value rightCondition = stripUnitExpansion(rightSelect.getCond());
-    if (!leftCondition || !rightCondition || leftCondition != rightCondition)
-      return failure();
-    auto conjunction = leftCondition.getDefiningOp<MapBinaryOp>();
-    if (!conjunction || conjunction.getFn() != "logical_and")
-      return failure();
-    unsigned firstArgument = 0;
-    unsigned secondArgument = 0;
-    bool firstRows = matchBound(conjunction.getLhs(), physicalRows,
-                                firstArgument);
-    bool firstFeatures = matchBound(conjunction.getLhs(), featureWidth,
-                                    firstArgument);
-    bool secondRows = matchBound(conjunction.getRhs(), physicalRows,
-                                 secondArgument);
-    bool secondFeatures = matchBound(conjunction.getRhs(), featureWidth,
-                                     secondArgument);
-    if (firstRows && secondFeatures) {
-      validRowsArgument = firstArgument;
-      validFeaturesArgument = secondArgument;
-    } else if (firstFeatures && secondRows) {
-      validFeaturesArgument = firstArgument;
-      validRowsArgument = secondArgument;
-    } else {
-      return failure();
+    if (!staticBounds) {
+      Value leftCondition = stripUnitExpansion(leftSelect.getCond());
+      Value rightCondition = stripUnitExpansion(rightSelect.getCond());
+      if (!leftCondition || !rightCondition || leftCondition != rightCondition)
+        return failure();
+      auto conjunction = leftCondition.getDefiningOp<MapBinaryOp>();
+      if (!conjunction || conjunction.getFn() != "logical_and")
+        return failure();
+      unsigned firstArgument = 0;
+      unsigned secondArgument = 0;
+      bool firstRows = matchBound(conjunction.getLhs(), physicalRows,
+                                  firstArgument);
+      bool firstFeatures = matchBound(conjunction.getLhs(), featureWidth,
+                                      firstArgument);
+      bool secondRows = matchBound(conjunction.getRhs(), physicalRows,
+                                   secondArgument);
+      bool secondFeatures = matchBound(conjunction.getRhs(), featureWidth,
+                                       secondArgument);
+      if (firstRows && secondFeatures) {
+        validRowsArgument = firstArgument;
+        validFeaturesArgument = secondArgument;
+      } else if (firstFeatures && secondRows) {
+        validFeaturesArgument = firstArgument;
+        validRowsArgument = secondArgument;
+      } else {
+        return failure();
+      }
+      if (validRowsArgument < 2 || validFeaturesArgument < 2 ||
+          validRowsArgument == validFeaturesArgument)
+        return failure();
     }
-    if (validRowsArgument < 2 || validFeaturesArgument < 2 ||
-        validRowsArgument == validFeaturesArgument)
-      return failure();
 
     llvm::DenseSet<Operation *> reachable;
     std::function<void(Value)> visit = [&](Value value) {
@@ -342,6 +358,7 @@ struct PaddedRowDotLowering {
     auto output = cast<RankedTensorType>(originalType.getResult(0));
     inputs.push_back(MemRefType::get(output.getShape(),
                                      output.getElementType()));
+    unsigned outputArgument = originalType.getNumInputs();
 
     std::string name = function.getName().str();
     function.setName(name + "_intent_src");
@@ -357,7 +374,7 @@ struct PaddedRowDotLowering {
     Value one = builder.create<arith::ConstantIndexOp>(location, 1);
     Value validRowsRaw;
     Value validFeaturesRaw;
-    if (requestedPromoteRank0Scalars) {
+    if (!staticBounds && requestedPromoteRank0Scalars) {
       validRowsRaw = builder.create<memref::LoadOp>(
           location, entry->getArgument(validRowsArgument), ValueRange{});
       validFeaturesRaw = builder.create<memref::LoadOp>(
@@ -400,16 +417,24 @@ struct PaddedRowDotLowering {
     auto outputIf = builder.create<scf::IfOp>(
         location, outputActive, /*withElseRegion=*/false);
     builder.setInsertionPointToStart(outputIf.thenBlock());
-    if (!requestedPromoteRank0Scalars) {
+    Value validRows;
+    Value validFeatures;
+    if (staticBounds) {
+      validRows = builder.create<arith::ConstantIndexOp>(location, physicalRows);
+      validFeatures =
+          builder.create<arith::ConstantIndexOp>(location, featureWidth);
+    } else if (!requestedPromoteRank0Scalars) {
       validRowsRaw = builder.create<memref::LoadOp>(
           location, entry->getArgument(validRowsArgument), ValueRange{});
       validFeaturesRaw = builder.create<memref::LoadOp>(
           location, entry->getArgument(validFeaturesArgument), ValueRange{});
     }
-    Value validRows = builder.create<arith::IndexCastOp>(
-        location, builder.getIndexType(), validRowsRaw);
-    Value validFeatures = builder.create<arith::IndexCastOp>(
-        location, builder.getIndexType(), validFeaturesRaw);
+    if (!staticBounds) {
+      validRows = builder.create<arith::IndexCastOp>(
+          location, builder.getIndexType(), validRowsRaw);
+      validFeatures = builder.create<arith::IndexCastOp>(
+          location, builder.getIndexType(), validFeaturesRaw);
+    }
     Value inPhysicalRows = builder.create<arith::CmpIOp>(
         location, arith::CmpIPredicate::ult, paddedRow, cPhysicalRows);
     Value inValidRows = builder.create<arith::CmpIOp>(
@@ -470,7 +495,7 @@ struct PaddedRowDotLowering {
     Value outputValue = builder.create<arith::SelectOp>(
         location, rowActive, accumulator, zero);
     builder.create<memref::StoreOp>(
-        location, outputValue, entry->getArgument(4),
+        location, outputValue, entry->getArgument(outputArgument),
         ValueRange{c0, row, paddedRow});
     builder.setInsertionPointAfter(outputIf);
     builder.create<gpu::TerminatorOp>(location);
@@ -478,7 +503,7 @@ struct PaddedRowDotLowering {
     builder.create<func::ReturnOp>(location);
     attachPaddedRowStateReceipt(
         lowered, threads, "subgroup_feature",
-        requestedPromoteRank0Scalars ? 2 : 0);
+        !staticBounds && requestedPromoteRank0Scalars ? 2 : 0);
     function.erase();
     return success();
   }
@@ -499,6 +524,7 @@ struct PaddedRowDotLowering {
     auto output = cast<RankedTensorType>(originalType.getResult(0));
     inputs.push_back(MemRefType::get(output.getShape(),
                                      output.getElementType()));
+    unsigned outputArgument = originalType.getNumInputs();
 
     std::string name = function.getName().str();
     function.setName(name + "_intent_src");
@@ -518,7 +544,7 @@ struct PaddedRowDotLowering {
     // scalar-by-value ABI used by the source frontend.
     Value validRowsRaw;
     Value validFeaturesRaw;
-    if (requestedPromoteRank0Scalars) {
+    if (!staticBounds && requestedPromoteRank0Scalars) {
       validRowsRaw = builder.create<memref::LoadOp>(
           location, entry->getArgument(validRowsArgument), ValueRange{});
       validFeaturesRaw = builder.create<memref::LoadOp>(
@@ -557,16 +583,24 @@ struct PaddedRowDotLowering {
     auto outputIf = builder.create<scf::IfOp>(
         location, outputActive, /*withElseRegion=*/false);
     builder.setInsertionPointToStart(outputIf.thenBlock());
-    if (!requestedPromoteRank0Scalars) {
+    Value validRows;
+    Value validFeatures;
+    if (staticBounds) {
+      validRows = builder.create<arith::ConstantIndexOp>(location, physicalRows);
+      validFeatures =
+          builder.create<arith::ConstantIndexOp>(location, featureWidth);
+    } else if (!requestedPromoteRank0Scalars) {
       validRowsRaw = builder.create<memref::LoadOp>(
           location, entry->getArgument(validRowsArgument), ValueRange{});
       validFeaturesRaw = builder.create<memref::LoadOp>(
           location, entry->getArgument(validFeaturesArgument), ValueRange{});
     }
-    Value validRows = builder.create<arith::IndexCastOp>(
-        location, builder.getIndexType(), validRowsRaw);
-    Value validFeatures = builder.create<arith::IndexCastOp>(
-        location, builder.getIndexType(), validFeaturesRaw);
+    if (!staticBounds) {
+      validRows = builder.create<arith::IndexCastOp>(
+          location, builder.getIndexType(), validRowsRaw);
+      validFeatures = builder.create<arith::IndexCastOp>(
+          location, builder.getIndexType(), validFeaturesRaw);
+    }
     Value inPhysicalRows = builder.create<arith::CmpIOp>(
         location, arith::CmpIPredicate::ult, paddedRow, cPhysicalRows);
     Value inValidRows = builder.create<arith::CmpIOp>(
@@ -686,7 +720,7 @@ struct PaddedRowDotLowering {
     }
     builder.setInsertionPointAfter(valueIf);
     builder.create<memref::StoreOp>(
-        location, valueIf.getResult(0), entry->getArgument(4),
+        location, valueIf.getResult(0), entry->getArgument(outputArgument),
         ValueRange{c0, row, paddedRow});
     builder.setInsertionPointAfter(outputIf);
 
@@ -694,7 +728,9 @@ struct PaddedRowDotLowering {
     builder.setInsertionPointAfter(launch);
     builder.create<func::ReturnOp>(location);
     attachPaddedRowStateReceipt(lowered, threads, "serial_row",
-                                requestedPromoteRank0Scalars ? 2 : 0);
+                                !staticBounds && requestedPromoteRank0Scalars
+                                    ? 2
+                                    : 0);
     function.erase();
     return success();
   }

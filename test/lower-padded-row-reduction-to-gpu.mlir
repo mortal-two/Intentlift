@@ -1,5 +1,6 @@
 // RUN: intent-opt -convert-intent-padded-row-reduction-to-gpu='block-threads=64 vectorize-full-features=false promote-rank0-scalars=true' %s | FileCheck %s --check-prefix=HOST
 // RUN: intent-opt -convert-intent-padded-row-reduction-to-gpu='block-threads=64 vectorize-full-features=false promote-rank0-scalars=false' %s | FileCheck %s --check-prefix=DEVICE
+// RUN: intent-opt -convert-intent-padded-row-reduction-to-gpu='block-threads=64 vectorize-full-features=false promote-rank0-scalars=true' %s | FileCheck %s --check-prefix=STATIC
 
 // The matcher is source/name neutral and consumes the exact structural form
 // emitted from the closed FlashAttention preprocess J.
@@ -12,6 +13,7 @@
 // HOST: gpu.launch
 // HOST: memref.store
 // HOST-NOT: intent.
+// HOST-LABEL: func.func @static_bounds(
 
 // DEVICE-LABEL: func.func @anonymous(
 // DEVICE-SAME: intent.backend.host_value_capture_count = 0 : i64
@@ -19,6 +21,7 @@
 // DEVICE: memref.load
 // DEVICE: memref.store
 // DEVICE-NOT: intent.
+// DEVICE-LABEL: func.func @static_bounds(
 func.func @anonymous(
     %a: tensor<1x2x33x16xf16>,
     %b: tensor<1x2x33x16xf16>,
@@ -50,6 +53,38 @@ func.func @anonymous(
   %af = intent.cast %masked_a {to_dtype = "f32"}
     : (tensor<1x2x33x16xf16>) -> tensor<1x2x33x16xf32>
   %bf = intent.cast %masked_b {to_dtype = "f32"}
+    : (tensor<1x2x33x16xf16>) -> tensor<1x2x33x16xf32>
+  %product = intent.map_binary %af, %bf {fn = "mul"}
+    : (tensor<1x2x33x16xf32>, tensor<1x2x33x16xf32>)
+      -> tensor<1x2x33x16xf32>
+  %sum = intent.reduce %product
+    {fn = "sum", axes = [3], assoc = "float_nondeterministic"}
+    : (tensor<1x2x33x16xf32>) -> tensor<1x2x33xf32>
+  %out = intent.pad %sum
+    {lo = [0, 0, 0], hi = [0, 0, 31], value = 0.0 : f64}
+    : (tensor<1x2x33xf32>) -> tensor<1x2x64xf32>
+  return %out : tensor<1x2x64xf32>
+}
+
+// The Fresh14 typed J has already resolved both runtime bounds, so its graph has
+// direct casts instead of mask/select nodes.  The same lowering must consume it,
+// preserve the three-pointer ABI, and materialize the zero-padded tail.
+// STATIC-LABEL: func.func @static_bounds(
+// STATIC-SAME: %{{[^:]+}}: memref<1x2x33x16xf16>
+// STATIC-SAME: %{{[^:]+}}: memref<1x2x33x16xf16>
+// STATIC-SAME: %{{[^:]+}}: memref<1x2x64xf32>
+// STATIC-SAME: intent.backend.host_value_capture_count = 0 : i64
+// STATIC: gpu.launch
+// STATIC: arith.constant 33 : index
+// STATIC: arith.constant 16 : index
+// STATIC: memref.store
+// STATIC-NOT: intent.
+func.func @static_bounds(
+    %a: tensor<1x2x33x16xf16>,
+    %b: tensor<1x2x33x16xf16>) -> tensor<1x2x64xf32> {
+  %af = intent.cast %a {to_dtype = "f32"}
+    : (tensor<1x2x33x16xf16>) -> tensor<1x2x33x16xf32>
+  %bf = intent.cast %b {to_dtype = "f32"}
     : (tensor<1x2x33x16xf16>) -> tensor<1x2x33x16xf32>
   %product = intent.map_binary %af, %bf {fn = "mul"}
     : (tensor<1x2x33x16xf32>, tensor<1x2x33x16xf32>)

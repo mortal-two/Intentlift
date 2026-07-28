@@ -248,6 +248,23 @@ def test_fresh_poly_norm_singleton_broadcast_uses_row_reduction_path() -> None:
 @pytest.mark.skipif(
     not Path(backend_compile.INTENT_OPT).exists(), reason="intent-opt not built"
 )
+def test_fresh_flash_preprocess_static_bounds_use_padded_row_path() -> None:
+    fast_path_id = "cuda.padded_row_reduction.masked_short_dot.v1"
+
+    result = select_variant(
+        _fresh_mlir("flash_bwd_preprocess"),
+        only_fast_path=fast_path_id,
+    )
+
+    assert result.pipeline_kind == "specialized"
+    assert result.fast_path_id == fast_path_id
+    assert result.attempts[0].residual_ops == ()
+    assert result.attempts[0].gpu_launch_count == 1
+
+
+@pytest.mark.skipif(
+    not Path(backend_compile.INTENT_OPT).exists(), reason="intent-opt not built"
+)
 def test_real_multistage_row_reduction_graph_is_selected_structurally() -> None:
     source = (
         Path(__file__).resolve().parents[2]

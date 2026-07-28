@@ -367,6 +367,15 @@ Internal: C-Fixed / Schedule-Only / IntentIR
   C++ pass 已完整消费三个共享输入的 reduction、row epilogue 与 compact `[M,3]` 输出，形成一个 cubin；
   结果已与原始 Source 对齐。预算 8 的首轮已实际编译 subgroup/workgroup、FMA 与 native-div 请求等 5 个
   状态；当前 closed workload 初测 Source 约 4.34 us，最佳 plain subgroup 约 3.41 us，仍待正式 paired/QD。
+- Fresh Flash preprocess 已复用既有 `PaddedRowDotLowering`：同一 source-neutral matcher 现在同时接受
+  runtime-bound mask/select 图和 J 已静态解析边界后的 direct-cast 图；后者以三指针 ABI 形成一个 cubin，
+  在同一 launch 中完成 f16->f32、乘积、规约和 `[33]->[64]` 零填充。输出及 padding tail 已与 Source
+  对齐；serial-row、subgroup-feature、vector packet 与线程数均进入普通搜索。当前 closed workload 初测
+  Source 约 4.21 us，后端候选约 4.13 us，主要结论是能力/结构闭合而非该小 shape 的大幅加速。
+- 横向 budget-8 编译审计现已使 fresh-14 **14/14** 至少有一个 C++/MLIR 高级状态形成 cubin：三项
+  pointwise 图有真实 vectorized states；九项普通/scan/padded row 图覆盖 subgroup、workgroup 或
+  subgroup-feature；PolyNorm 覆盖共享输入多规约；SplitK 覆盖 unrolled weighted merge。这里仅说明
+  backend capability 与 target compilation，不替代后续 14 项 Q/D、Source paired timing 与跨 target 结果。
 
 ## 10. 总体验收
 
