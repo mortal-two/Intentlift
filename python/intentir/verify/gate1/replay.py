@@ -49,12 +49,15 @@ from .tilelang_compiler import (
     TileLangCompiler,
     TileLangKernelSource,
 )
+from .ttir import TTIRParseError, parse_ttir
 
 
-MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v4"
+MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v16"
+MINISWE_REPLAY_TURN_TIMEOUT_SECONDS = 300.0
+MINISWE_REPLAY_XHIGH_TURN_TIMEOUT_SECONDS = 900.0
 RESPONSES_REPLAY_BACKEND = "openai.responses.intentir-replay.v1"
 STATIC_REPLAY_BACKEND = "intentir.static-replay-test.v1"
-REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v3"
+REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v7"
 _ANONYMOUS_HANDLE = re.compile(r"^[pc][0-9]+$")
 
 
@@ -207,6 +210,19 @@ def _check_triton_exact_abi(
         if item.get("kind") == "constexpr"
         and item.get("logical_ref") is None
     }
+    absent_carriers = {
+        str(item["name"])
+        for item in j_parameters
+        if item.get("kind") == "opaque"
+        and str(item.get("dtype", "")).casefold() == "none"
+    }
+    forbidden_carriers = {
+        **{
+            name: "specialization_carrier_use_forbidden"
+            for name in specialization_carriers
+        },
+        **{name: "absent_carrier_use_forbidden" for name in absent_carriers},
+    }
     expected_constexpr = j_constexpr | {str(item["name"]) for item in c_slots}
     violations: list[_ReplayABIViolation] = []
     for argument in function.args.args:
@@ -240,7 +256,7 @@ def _check_triton_exact_abi(
             if (
                 isinstance(node, ast.Name)
                 and isinstance(node.ctx, ast.Load)
-                and node.id in specialization_carriers
+                and node.id in forbidden_carriers
             ):
                 first_carrier_load.setdefault(node.id, node)
     for name, node in sorted(
@@ -249,7 +265,7 @@ def _check_triton_exact_abi(
     ):
         violations.append(
             _ReplayABIViolation(
-                "specialization_carrier_use_forbidden",
+                forbidden_carriers[name],
                 path=f"<parameter:{name}>",
                 handles=(name,),
                 line=node.lineno,
@@ -263,12 +279,36 @@ class _TypedControlContract:
     kind: str
     positive_nonempty: bool
     negative_nonempty: bool
+    terminal_polarity: str | None = None
 
 
 def _packet_typed_controls(packet: Mapping[str, Any]) -> list[_TypedControlContract]:
     """Return explicitly typed J controls in lexical preorder."""
 
     result: list[_TypedControlContract] = []
+    pi = packet.get("pi")
+    instances = (
+        {
+            str(item.get("id")): str(item.get("semantic_ref"))
+            for item in pi.get("instances", [])
+            if isinstance(item, Mapping)
+        }
+        if isinstance(pi, Mapping)
+        else {}
+    )
+    terminal_scopes = (
+        {
+            instances.get(str(item.get("terminal_instance"))): instances.get(
+                str(item.get("continuation_instance"))
+            )
+            for item in pi.get("terminal_controls", [])
+            if isinstance(item, Mapping)
+            and instances.get(str(item.get("terminal_instance"))) is not None
+            and instances.get(str(item.get("continuation_instance"))) is not None
+        }
+        if isinstance(pi, Mapping)
+        else {}
+    )
 
     def visit(body: Any) -> None:
         if not isinstance(body, list):
@@ -279,18 +319,44 @@ def _packet_typed_controls(packet: Mapping[str, Any]) -> list[_TypedControlContr
             positive = operation.get("positive")
             negative = operation.get("negative")
             kind = operation.get("op")
-            if kind in {"effect_if", "value_if"}:
+            if (
+                kind in {"effect_if", "value_if"}
+                and isinstance(positive, Mapping)
+                and isinstance(negative, Mapping)
+            ):
                 positive_body = positive.get("body", [])
                 negative_body = negative.get("body", [])
+                terminal_polarity = next(
+                    (
+                        polarity
+                        for polarity, arm in (
+                            ("positive", positive),
+                            ("negative", negative),
+                        )
+                        if arm.get("scope_id") in terminal_scopes
+                        and terminal_scopes[arm.get("scope_id")]
+                        == (
+                            negative.get("scope_id")
+                            if polarity == "positive"
+                            else positive.get("scope_id")
+                        )
+                    ),
+                    None,
+                )
                 result.append(
                     _TypedControlContract(
                         kind=str(kind),
                         positive_nonempty=bool(positive_body),
                         negative_nonempty=bool(negative_body),
+                        terminal_polarity=terminal_polarity,
                     )
                 )
-                visit(positive_body)
-                visit(negative_body)
+                if terminal_polarity == "negative":
+                    visit(negative_body)
+                    visit(positive_body)
+                else:
+                    visit(positive_body)
+                    visit(negative_body)
             visit(operation.get("body"))
 
     intent = packet.get("j", {}).get("intent", {})
@@ -323,19 +389,67 @@ def _expression_is_runtime(
     )
 
 
+def _check_triton_program_id_axes(code: str, function_name: str) -> None:
+    """Reject Replay code that cannot name a real Triton launch-grid axis."""
+
+    tree = ast.parse(code, mode="exec")
+    function = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == function_name
+    )
+    for node in ast.walk(function):
+        if not isinstance(node, ast.Call):
+            continue
+        called = (
+            node.func.attr
+            if isinstance(node.func, ast.Attribute)
+            else node.func.id
+            if isinstance(node.func, ast.Name)
+            else ""
+        )
+        if called != "program_id":
+            continue
+        keyword_axes = [item.value for item in node.keywords if item.arg == "axis"]
+        axis = (
+            node.args[0]
+            if len(node.args) == 1 and not keyword_axes
+            else keyword_axes[0]
+            if not node.args and len(keyword_axes) == 1
+            else None
+        )
+        value = axis.value if isinstance(axis, ast.Constant) else None
+        if (
+            not isinstance(value, int)
+            or isinstance(value, bool)
+            or value not in {0, 1, 2}
+        ):
+            raise _ReplayABIViolation(
+                "program_id_axis_range",
+                path="<program_id-axis>",
+                line=node.lineno,
+            )
+
+
+@dataclass(frozen=True)
+class _RuntimeIfSite:
+    node: ast.If
+    following: tuple[ast.stmt, ...]
+
+
 def _runtime_if_nodes(
     function: ast.FunctionDef,
     *,
     runtime_parameters: set[str],
     constexpr_parameters: set[str],
-) -> list[ast.If]:
+) -> list[_RuntimeIfSite]:
     """Collect runtime ``if`` nodes while excluding closed constexpr control."""
 
     initial = {
         **{name: True for name in runtime_parameters},
         **{name: False for name in constexpr_parameters},
     }
-    result: list[ast.If] = []
+    result: list[_RuntimeIfSite] = []
 
     def bind_target(target: ast.AST, value: bool, env: dict[str, bool]) -> None:
         if isinstance(target, ast.Name):
@@ -345,7 +459,7 @@ def _runtime_if_nodes(
                 bind_target(item, value, env)
 
     def visit(statements: list[ast.stmt], env: dict[str, bool]) -> None:
-        for statement in statements:
+        for index, statement in enumerate(statements):
             if isinstance(statement, (ast.Assign, ast.AnnAssign)):
                 value = statement.value
                 dependency = (
@@ -363,7 +477,9 @@ def _runtime_if_nodes(
                 continue
             if isinstance(statement, ast.If):
                 if _expression_is_runtime(statement.test, env):
-                    result.append(statement)
+                    result.append(
+                        _RuntimeIfSite(statement, tuple(statements[index + 1 :]))
+                    )
                 visit(statement.body, dict(env))
                 visit(statement.orelse, dict(env))
                 continue
@@ -377,6 +493,10 @@ def _runtime_if_nodes(
 
 def _arm_is_explicitly_empty(statements: list[ast.stmt]) -> bool:
     return bool(statements) and all(isinstance(item, ast.Pass) for item in statements)
+
+
+def _statements_are_nonempty(statements: list[ast.stmt] | tuple[ast.stmt, ...]) -> bool:
+    return any(not isinstance(item, ast.Pass) for item in statements)
 
 
 def _final_simple_assignment_target(statements: list[ast.stmt]) -> str | None:
@@ -441,11 +561,67 @@ def _check_triton_typed_control_contract(
         raise _ReplayABIViolation(
             rule_code,
             path="<typed-control>",
-            line=(actual[0].lineno if actual else function.lineno),
+            line=(actual[0].node.lineno if actual else function.lineno),
         )
-    for index, (node, contract) in enumerate(
+    for index, (site, contract) in enumerate(
         zip(actual, expected, strict=True)
     ):
+        node = site.node
+        if contract.kind == "effect_if" and contract.terminal_polarity is not None:
+            if node.orelse:
+                raise _ReplayABIViolation(
+                    "terminal_effect_if_forbids_else",
+                    path=f"<effect_if:{index}>",
+                    line=node.lineno,
+                )
+            if (
+                not node.body
+                or not isinstance(node.body[-1], ast.Return)
+                or node.body[-1].value is not None
+            ):
+                raise _ReplayABIViolation(
+                    "terminal_effect_if_bare_return",
+                    path=f"<effect_if:{index}>",
+                    line=node.lineno,
+                )
+            negated = isinstance(node.test, ast.UnaryOp) and isinstance(
+                node.test.op, ast.Not
+            )
+            if negated != (contract.terminal_polarity == "negative"):
+                raise _ReplayABIViolation(
+                    "terminal_effect_if_polarity",
+                    path=f"<effect_if:{index}>",
+                    line=node.lineno,
+                )
+            terminal_nonempty = (
+                contract.positive_nonempty
+                if contract.terminal_polarity == "positive"
+                else contract.negative_nonempty
+            )
+            continuation_nonempty = (
+                contract.negative_nonempty
+                if contract.terminal_polarity == "positive"
+                else contract.positive_nonempty
+            )
+            if _statements_are_nonempty(node.body[:-1]) != terminal_nonempty:
+                raise _ReplayABIViolation(
+                    "terminal_effect_if_terminal_arm",
+                    path=f"<effect_if:{index}>",
+                    line=node.lineno,
+                )
+            if _statements_are_nonempty(site.following) != continuation_nonempty:
+                raise _ReplayABIViolation(
+                    "terminal_effect_if_continuation",
+                    path=f"<effect_if:{index}>",
+                    line=node.lineno,
+                )
+            if any(isinstance(item, ast.Return) for item in site.following):
+                raise _ReplayABIViolation(
+                    "terminal_effect_if_continuation_return",
+                    path=f"<effect_if:{index}>",
+                    line=node.lineno,
+                )
+            continue
         if not node.orelse:
             raise _ReplayABIViolation(
                 f"{contract.kind}_explicit_negative_arm",
@@ -898,6 +1074,7 @@ def replay_source_ingress(
                         for item in abi_violations
                     ),
                 )
+            _check_triton_program_id_axes(code, function_name)
             _check_triton_typed_control_contract(code, packet, function_name)
             _check_triton_rounded_iteration_contract(code, packet, function_name)
     except Exception as exc:
@@ -1005,6 +1182,111 @@ def _source_blind_compile_failure(result: Any) -> ReplayIngressResult:
     )
 
 
+def _packet_transfer_direct_counts(
+    packet: Mapping[str, Any],
+) -> tuple[dict[str, int], tuple[str, ...]]:
+    """Count only pi-authored direct boundary transfer occurrences.
+
+    This is a source-blind lookup over exact packet declarations.  It neither
+    creates a missing transfer nor decides how Replay should retain one.
+    """
+
+    j = packet.get("j")
+    pi = packet.get("pi")
+    boundary = j.get("boundary") if isinstance(j, Mapping) else None
+    accesses = boundary.get("accesses") if isinstance(boundary, Mapping) else None
+    instances = pi.get("instances") if isinstance(pi, Mapping) else None
+    if not isinstance(accesses, list) or not isinstance(instances, list):
+        return {}, ()
+    access_by_id = {
+        str(item.get("access_id")): item
+        for item in accesses
+        if isinstance(item, Mapping) and isinstance(item.get("access_id"), str)
+    }
+    counts: dict[str, int] = {}
+    refs: list[str] = []
+    for instance in instances:
+        if not isinstance(instance, Mapping) or instance.get(
+            "mechanism"
+        ) != "transfer_direct":
+            continue
+        semantic_ref = instance.get("semantic_ref")
+        access = access_by_id.get(str(semantic_ref))
+        if access is None:
+            continue
+        kind = access.get("kind")
+        if kind not in {"load", "store"}:
+            continue
+        operation = f"tt.{kind}"
+        if access.get("predicate") is not None:
+            operation += ".masked"
+        counts[operation] = counts.get(operation, 0) + 1
+        refs.append(str(semantic_ref))
+    return counts, tuple(dict.fromkeys(refs))
+
+
+def _packet_required_compiled_iteration_arities(
+    packet: Mapping[str, Any],
+) -> tuple[int, ...]:
+    """Return compiler-visible loop block arities authored by J and pi.
+
+    A structured J ``loop`` denotes one logical loop.  A
+    ``pi.physical_iterations`` row denotes one additional physical loop around
+    an otherwise ordinary reduce/contraction.  ``pi.iterations`` realizes its
+    existing J loop and therefore is not counted a second time.  The induction
+    variable contributes one block argument; only explicitly authored
+    ``pi.loop_carriers`` or ``pi.physical_loop_carriers`` add carrier arguments.
+    No missing loop, bound, carrier, or schedule is inferred here.
+    """
+
+    operations = _packet_intent_ops_by_path(packet)
+    node_ids = packet.get("j", {}).get("node_ids", {})
+    path_to_node = (
+        {
+            str(path).removeprefix("intent_function."): str(node)
+            for node, path in node_ids.items()
+        }
+        if isinstance(node_ids, Mapping)
+        else {}
+    )
+    pi = packet.get("pi")
+    if not isinstance(pi, Mapping):
+        pi = {}
+    instances = {
+        str(item.get("id")): str(item.get("semantic_ref"))
+        for item in pi.get("instances", [])
+        if isinstance(item, Mapping)
+    }
+    loop_carriers = [
+        item for item in pi.get("loop_carriers", []) if isinstance(item, Mapping)
+    ]
+    physical_carriers = [
+        item
+        for item in pi.get("physical_loop_carriers", [])
+        if isinstance(item, Mapping)
+    ]
+
+    arities: list[int] = []
+    for path, operation in operations.items():
+        if operation.get("op") != "loop":
+            continue
+        node_ref = path_to_node.get(path)
+        carrier_count = sum(
+            instances.get(str(item.get("loop_instance"))) == node_ref
+            for item in loop_carriers
+        )
+        arities.append(1 + carrier_count)
+    for item in pi.get("physical_iterations", []):
+        if not isinstance(item, Mapping):
+            continue
+        region = item.get("region")
+        carrier_count = sum(
+            carrier.get("region") == region for carrier in physical_carriers
+        )
+        arities.append(1 + carrier_count)
+    return tuple(sorted(arities))
+
+
 def source_blind_replay_compile_check(
     code: str,
     artifact: Gate1Artifact,
@@ -1012,6 +1294,7 @@ def source_blind_replay_compile_check(
     *,
     frontend: Frontend | str = Frontend.TRITON,
     compiler: Any | None = None,
+    packet: Mapping[str, Any] | None = None,
 ) -> ReplayIngressResult:
     """Compile Replay against the public synthetic profile, without an oracle.
 
@@ -1067,6 +1350,96 @@ def source_blind_replay_compile_check(
         )
     if not result.ok:
         return _source_blind_compile_failure(result)
+    selected_packet = (
+        packet if packet is not None else artifact.rewriter_view(masked=False)
+    )
+    expected_transfers, transfer_refs = _packet_transfer_direct_counts(
+        selected_packet
+    )
+    expected_iteration_arities = _packet_required_compiled_iteration_arities(
+        selected_packet
+    )
+    if (
+        selected_frontend is Frontend.TRITON
+        and (expected_transfers or expected_iteration_arities)
+        and result.ttir is not None
+    ):
+        try:
+            fingerprint = parse_ttir(result.ttir)
+        except TTIRParseError:
+            return ReplayIngressResult(
+                "fail",
+                diagnostics=(
+                    {
+                        "rule_code": "synthetic_replay_observer_failed",
+                        "path": "<synthetic-frontend-compile>",
+                        "anonymous_handles": [],
+                        "line": None,
+                    },
+                ),
+            )
+        actual_ops = dict(fingerprint.op_multiset)
+        if expected_iteration_arities:
+            actual_iteration_arities = tuple(
+                sorted(loop.block_argument_count for loop in fingerprint.loops)
+            )
+            if len(expected_iteration_arities) != len(actual_iteration_arities):
+                return ReplayIngressResult(
+                    "fail",
+                    diagnostics=(
+                        {
+                            "rule_code": "compiled_iteration_count",
+                            "path": (
+                                "<synthetic-frontend-compile> scf.for: "
+                                f"expected={len(expected_iteration_arities)}, "
+                                f"actual={len(actual_iteration_arities)}"
+                            ),
+                            "anonymous_handles": [],
+                            "line": None,
+                        },
+                    ),
+                )
+            if expected_iteration_arities != actual_iteration_arities:
+                return ReplayIngressResult(
+                    "fail",
+                    diagnostics=(
+                        {
+                            "rule_code": "compiled_iteration_carrier_arity",
+                            "path": (
+                                "<synthetic-frontend-compile> scf.for "
+                                f"block-arguments: expected="
+                                f"{list(expected_iteration_arities)}, actual="
+                                f"{list(actual_iteration_arities)}"
+                            ),
+                            "anonymous_handles": [],
+                            "line": None,
+                        },
+                    ),
+                )
+        for operation in (
+            "tt.load",
+            "tt.load.masked",
+            "tt.store",
+            "tt.store.masked",
+        ):
+            expected = expected_transfers.get(operation, 0)
+            actual = actual_ops.get(operation, 0)
+            if expected == actual:
+                continue
+            return ReplayIngressResult(
+                "fail",
+                diagnostics=(
+                    {
+                        "rule_code": "compiled_transfer_direct_count",
+                        "path": (
+                            "<synthetic-frontend-compile> "
+                            f"{operation}: expected={expected}, actual={actual}"
+                        ),
+                        "anonymous_handles": list(transfer_refs[:32]),
+                        "line": None,
+                    },
+                ),
+            )
     return ReplayIngressResult(
         "pass",
         code=code,
@@ -1220,39 +1593,59 @@ CompileCase/grid, Gate diff/TTIR, previous Replay, sibling trajectory, or
 network is available. Generate the entire source yourself. Fixed code only
 checks and rejects; it never generates, patches, or certifies source.
 
-Start with `intentir_packet_query overview`; then follow its exact `abi`,
-`graph`, `realization`, and paged `obligations` commands. The obligation ledger
-joins already-authored facts around each instance; use `obligation HANDLE` for
-one i* or semantic anchor. Resolved `routes`/`order` and raw paged `edges` are
-available to cross-check a named relation without redundantly paging all three.
-These views expose only complete packet facts in bounded pages and never add an edge.
+Use the exact packet supplied in the startup message or read `packet.json`
+directly. Do not spend a first turn requesting overlapping overview, ABI, graph,
+realization and obligation projections. `intentir_packet_query` remains a
+focused fallback for one named omitted path or handle when a packet exceeds the
+transport embedding bound. Its views expose only authored packet facts and
+never add an edge.
 
-After writing a complete first source, run
-`intentir_replay_inspect /output/replay.source overview`, then page its
-`statements START COUNT` view or use `find NAME`. Compare its loop/if, call,
-and define-use inventory with the packet yourself. The tool reports only your
-own syntax and never declares a semantic mismatch or recommends a repair.
-Use `section PATH`
-only for one named omitted field; never concatenate inputs because the transport
-may elide its middle.
+After writing a complete first source, use `intentir_replay_inspect` only when a
+focused own-source inventory would resolve uncertainty. The tool reports only
+your syntax and never declares a semantic mismatch or recommends a repair.
 
 After mandatory ReplayCheck, run
-`intentir_replay_compile_check /output/replay.source` for an advisory compile
+`intentir_replay_compile_check /output/replay.source` for a construction compile
 against one public synthetic profile: every pointer has one element,
 dtype-declared scalar and constexpr representatives are bool=true, integer=16,
 float=1.0, and the grid is (1,1,1). C values are never read; constexpr C slots
-use the same public type representatives. This probe can expose frontend
-type/shape errors but never blocks submission or has Gate authority. Formal
-Gate1 recompiles the exact submitted bytes at c0.
+use the same public type representatives. This probe must pass before the exact
+Replay bytes leave the authoring episode, but it is not a semantic membership
+oracle and has no Gate or certification authority. Formal Gate1 recompiles the
+exact submitted bytes at c0.
 
 Before ReplayCheck, inspect packet control mechanically: every J `effect_if`
 must remain one runtime `if` with explicit polarity-preserving arms (including
-an explicit empty arm); every J `value_if` must remain a distinct runtime `if`
+an explicit empty arm), except that a matching pi `terminal_controls` relation
+requires the named terminal arm to end in a bare return and the named
+continuation arm to follow without an else; every J `value_if` must remain a distinct runtime `if`
 whose explicit arms finally assign their yielded values to one common merge
 local; and every pi `rounded_extent_step` must use its declared J trip extent
 and matching C tile as `range(0, ceil_div(extent,tile)*tile, tile)`. `effect_if`,
 `value_if`, and select are hard-distinct. Never substitute select/predicated
 unconditional execution, current-shape guesses, or a second rounding formula.
+
+Every `pi.physical_iterations` item is an authored physical loop around an
+already-logical J reduce/contraction. Resolve its extent only through the
+C-attached reduced/contracted axis, preserve its induction basis and forward or
+reverse order, and preserve any `pi.physical_loop_carriers` temporal stages.
+These relations never create a J loop or authorize a guessed bound/update.
+The source-blind construction compile rejects a compiled `scf.for` multiplicity
+different from the number of structured J loops plus authored
+`pi.physical_iterations`; `pi.iterations` realizes its existing J loop and is
+not an additional loop. It also requires each loop's compiled block-argument
+arity to match its induction variable plus only the corresponding authored
+`pi.loop_carriers` or `pi.physical_loop_carriers`. This check never supplies a
+loop, bound, carrier, or update.
+
+A logical J axis ordinal is not automatically a Triton tensor-rank index. Build
+the active physical tile from the C slot attached to that J node and logical
+axis. If that tile is represented by one local Triton lane dimension, emit the
+tile-local reduction/contraction axis (normally 0), not the original logical
+tensor axis number. Never copy a J axis ordinal into `tl.sum`, `tl.max`,
+`tl.min`, or `tl.dot` without first deriving the physical tile rank from the
+authored J+C+pi packet. This is realization consumption, not a new semantic
+relation or permission.
 
 A J.signature constexpr p* with no logical_ref is only the callable carrier for
 the fixed Harness JIT specialization. Keep it in the exact constexpr ABI, but
@@ -1260,26 +1653,48 @@ never read it or create a dummy use, Python branch, runtime conditional, or
 inactive graph. The packet deliberately omits its concrete value; emit the
 complete active J graph already authored by Lift. A null-ref runtime scalar is
 different and may be used only through its packet-declared pi realization.
+
+A J.signature `opaque` parameter with dtype `none` is a true absent runtime
+carrier. Preserve its exact ABI position but never load, index, branch on,
+assemble, route, or otherwise read it. It has no J logical value and no pi
+instance. Public-dtype opaque carriers are different and remain governed by
+their authored pi topology.
+
+Distinct pi `transfer_direct` instances are distinct compiler-visible transfer
+occurrences, including repeated instances anchored to the same boundary access.
+The source-blind construction compile compares the compiled load/store
+multiplicity with those authored instances. If ordinary CSE would collapse a
+required occurrence, retain the LLM-authored transfer with a public closed
+eviction-policy spelling; the observer erases that spelling but not the event.
 """
     tool = """# Replay tool contract
 
 Write exactly `/output/replay.source`. You may run the bounded, diagnostic-only
 `intentir_replay_inspect /output/replay.source overview`, `statements START COUNT`,
-or `find NAME` views over your own current bytes; twelve calls are available and
-none enters submission or Gate authority. Run exactly
-`intentir_replay_check /output/replay.source` for the mandatory bounded ingress
-check, then exactly
-`intentir_replay_compile_check /output/replay.source` for advisory synthetic
-frontend-compile diagnostics. ReplayCheck's seven ordinary evaluations share
-one budget; submission has one reserved evaluation when exact current bytes
-have no prior ingress PASS. The compile probe has four advisory evaluations and
-is never consulted by submission. Results contain only a closed
+or `find NAME` views over your own current bytes; none enters submission or Gate
+authority. Run
+`intentir_replay_check /output/replay.source` for diagnostic ingress, then
+`intentir_replay_compile_check /output/replay.source` for the public synthetic
+construction-compile profile. Calls are audited telemetry and governed by the
+Replay episode's active wall time; submission independently rechecks changed
+exact bytes with both checks. Results contain only a closed
 protocol/status/rule/path plus anonymous handles or line number. No Source,
 Harness value, actual C value, Gate1 observer, or execution oracle is run. The
 compile profile is the public fixed synthetic profile in README.md. Neither
-check has acceptance authority. Submit with a separate
-`printf 'INTENTIR_REPLAY_SUBMIT\\n'`. The writer independently reruns the same
+check has Gate, semantic-membership, or certification authority. After exact
+bytes pass both construction checks, preserve the LLM owner's fallback choice with
+`intentir_replay_commit /output/replay.source`; restore only those bytes with
+`intentir_replay_rollback /output/replay.source`. Submit directly with
+`intentir_replay_submit /output/replay.source` or
+`intentir_replay_submit --committed`; no stdout marker is used. The writer
+independently reruns the same
 compiler-free ingress callable after submission, and formal Gate1 compiles c0.
+
+In the isolated Codex workspace, invoke the equivalent closed callbacks as
+`python .agents/intentir_agent_tool.py replay_realization_view`, `replay_check`,
+or `replay_compile_check`; these callbacks take no path argument and never expose
+Source, Harness values, or Gate evidence. Read this file for usage instead of
+probing the fixed client with an unrecognized tool name.
 """
     return (
         {
@@ -1419,6 +1834,9 @@ class MiniSWEReplayWriter:
     worker_config: Mapping[str, Any] = field(default_factory=dict)
     model_timeout_seconds: float | None = None
     compile_checker: ReplayCompileChecker | None = None
+    stop_requested: Callable[[], int | None] | None = field(
+        default=None, repr=False
+    )
     _records: list[ReplayGeneration | ReplayAttempt] = field(
         default_factory=list, init=False, repr=False
     )
@@ -1442,11 +1860,17 @@ class MiniSWEReplayWriter:
         effective_effort = self.effort or provider.reasoning_effort
         timeout = self.model_timeout_seconds
         if timeout is None:
-            timeout = (
+            provider_timeout = (
                 XHIGH_RESPONSES_TIMEOUT_SECONDS
                 if effective_effort.casefold() == "xhigh"
                 else DEFAULT_RESPONSES_TIMEOUT_SECONDS
             )
+            turn_timeout = (
+                MINISWE_REPLAY_XHIGH_TURN_TIMEOUT_SECONDS
+                if effective_effort.casefold() == "xhigh"
+                else MINISWE_REPLAY_TURN_TIMEOUT_SECONDS
+            )
+            timeout = min(provider_timeout, turn_timeout)
         files, packet, instructions = _replay_input_files(
             artifact,
             frontend=self.frontend,
@@ -1502,6 +1926,12 @@ class MiniSWEReplayWriter:
                 packet=packet,
             )
 
+        if self.frontend is Frontend.TRITON:
+            probe_compiler: Any = TritonCompiler(timeout=120.0)
+        elif self.frontend is Frontend.CUDA:
+            probe_compiler = CudaCompiler(timeout=120.0)
+        else:
+            probe_compiler = TileLangCompiler(timeout=120.0)
         compile_checker = self.compile_checker
 
         def compile_check(source_text: str) -> dict[str, Any]:
@@ -1520,6 +1950,8 @@ class MiniSWEReplayWriter:
                     artifact,
                     function_name,
                     frontend=self.frontend,
+                    compiler=probe_compiler,
+                    packet=packet,
                 )
             )
             return compile_result.to_check_response()
@@ -1534,7 +1966,13 @@ class MiniSWEReplayWriter:
                 api_key=provider.api_key,
                 reasoning_effort=effective_effort,
                 timeout_seconds=timeout,
+                prompt_cache_key=(
+                    "intentir-replay-" + packet_digest[:48]
+                ),
             )
+            set_cancel_requested = getattr(model, "set_cancel_requested", None)
+            if callable(set_cancel_requested):
+                set_cancel_requested(self.stop_requested)
             result = run_intentir_replay(
                 model=model,
                 workspace=workspace,
@@ -1671,6 +2109,10 @@ class MiniSWEReplayWriter:
             info.get("replay_compile_check", {})
             if isinstance(info, Mapping) else {}
         )
+        replay_transaction = (
+            info.get("replay_transaction", {})
+            if isinstance(info, Mapping) else {}
+        )
         context_receipt = _context_receipt({}, packet["u_f"])
         context_receipt.update(
             {
@@ -1679,6 +2121,7 @@ class MiniSWEReplayWriter:
                 "model_calls": result.model_calls,
                 "physical_provider_calls": result.physical_provider_calls,
                 "transport_retries": result.transport_retries,
+                "termination_status": result.exit_status,
                 "packet_digest": packet_digest,
                 "replay_check": (
                     dict(replay_check)
@@ -1688,6 +2131,11 @@ class MiniSWEReplayWriter:
                 "replay_compile_check": (
                     dict(replay_compile_check)
                     if isinstance(replay_compile_check, Mapping)
+                    else {}
+                ),
+                "replay_transaction": (
+                    dict(replay_transaction)
+                    if isinstance(replay_transaction, Mapping)
                     else {}
                 ),
                 "formal_ingress_recheck": True,

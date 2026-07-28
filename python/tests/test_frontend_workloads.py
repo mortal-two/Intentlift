@@ -157,8 +157,10 @@ def test_tilelang_dataset_workload_materializes_real_tir_for_lift() -> None:
     assert source_extent.startswith("v")
     assert [item["shape"] for item in view["arguments"]] == [[4, 16]] * 3
     assert [item["shape_contract"] for item in view["arguments"]] == [
-        [source_extent, 16]
+        ["h0", 16]
     ] * 3
+    assert view["shape_coordinates"] == {"h0": 4}
+    assert view["grid_shape_coordinates"] == ["h0", None, None]
     assert "M" not in json.dumps(view, sort_keys=True)
 
 
@@ -201,7 +203,16 @@ def test_cuda_dataset_workload_preserves_real_generated_source_and_abi() -> None
     assert [
         item["shape_contract"]
         for item in request.anonymous_compiler_view["arguments"][:3]
-    ] == [["p3", 16]] * 3
+    ] == [["h0", 16]] * 3
+    assert request.anonymous_compiler_view["arguments"][3][
+        "shape_coordinate"
+    ] == "h0"
+    assert request.anonymous_compiler_view["shape_coordinates"] == {"h0": 4}
+    assert request.anonymous_compiler_view["grid_shape_coordinates"] == [
+        "h0",
+        None,
+        None,
+    ]
 
 
 def test_dataset_shape_contract_blocks_dynamic_to_static_specialization() -> None:
@@ -249,6 +260,7 @@ def test_static_source_shape_contract_cannot_be_generalized_by_current_value() -
             replace(argument, shape_contract=(4, 16))
             for argument in prepared.compiler_view.arguments
         ),
+        grid_shape_coordinates=(None, None, None),
     )
     request = prepare_scrc_lift(
         prepared.source_slice.code,

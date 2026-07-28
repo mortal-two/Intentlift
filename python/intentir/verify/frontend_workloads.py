@@ -213,7 +213,10 @@ class DatasetRuntimeParameter:
     def frontend_parameter(self) -> FrontendParameter:
         return FrontendParameter(self.kind, self.dtype, self.rank, self.mode)
 
-    def compiler_argument(self) -> SCRCCompilerArgument:
+    def compiler_argument(
+        self,
+        shape_coordinates: Mapping[str, str],
+    ) -> SCRCCompilerArgument:
         if self.kind == "pointer":
             return SCRCCompilerArgument(
                 self.source_name,
@@ -221,7 +224,12 @@ class DatasetRuntimeParameter:
                 self.dtype,
                 self.shape,
                 mode=self.mode,
-                shape_contract=self.shape_contract,
+                shape_contract=tuple(
+                    shape_coordinates[extent]
+                    if isinstance(extent, str)
+                    else extent
+                    for extent in self.shape_contract
+                ),
             )
         if self.kind == "scalar":
             return SCRCCompilerArgument(
@@ -230,6 +238,7 @@ class DatasetRuntimeParameter:
                 self.dtype,
                 value=self.value,
                 mode="value",
+                shape_coordinate=shape_coordinates.get(self.semantic_name),
             )
         return SCRCCompilerArgument(
             self.source_name, "opaque", self.dtype, mode="value"
@@ -445,6 +454,39 @@ def _metadata_parameters(
     return tuple(result)
 
 
+def _shape_coordinate_mapping(
+    parameters: tuple[DatasetRuntimeParameter, ...],
+) -> dict[str, str]:
+    """Assign source-grounded shape identities without exposing source names.
+
+    Coordinates follow first tensor-declaration order and are independent of
+    their current valuations.  Equal source symbols share one coordinate;
+    distinct symbols remain distinct even when their finite values coincide.
+    """
+
+    coordinates: dict[str, str] = {}
+    for parameter in parameters:
+        if parameter.kind != "pointer":
+            continue
+        for extent in parameter.shape_contract:
+            if isinstance(extent, str) and extent not in coordinates:
+                coordinates[extent] = f"h{len(coordinates)}"
+    return coordinates
+
+
+def _grid_shape_coordinates(
+    grid_contract: tuple[str, str, str],
+    shape_coordinates: Mapping[str, str],
+) -> tuple[str | None, str | None, str | None]:
+    """Bind only axes that are exactly one authored shape coordinate.
+
+    Matching by concrete extent would conflate distinct symbolic dimensions;
+    compound launch expressions therefore remain unbound expressions.
+    """
+
+    return tuple(shape_coordinates.get(expression) for expression in grid_contract)  # type: ignore[return-value]
+
+
 def _materialize_tilelang_projection(
     kernel: FrontendDatasetKernel,
     factory_kwargs: Mapping[str, bool | int | float | str],
@@ -583,11 +625,18 @@ def prepare_frontend_dataset_workload(
         )
     if discovered_contract != adapter.grid_contract:
         raise ValueError("Dataset Harness grid contract differs from metadata")
+    shape_coordinates = _shape_coordinate_mapping(parameters)
     compiler_view = SCRCCompilerView(
         schedule_values={},
-        arguments=tuple(item.compiler_argument() for item in parameters),
+        arguments=tuple(
+            item.compiler_argument(shape_coordinates) for item in parameters
+        ),
         grid=adapter.grid,
         grid_contract=adapter.grid_contract,
+        grid_shape_coordinates=_grid_shape_coordinates(
+            adapter.grid_contract,
+            shape_coordinates,
+        ),
         parameter_order=tuple(item.source_name for item in parameters),
     )
     _anonymous, _binding, mapping = anonymize_source(

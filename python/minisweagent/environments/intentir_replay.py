@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 import os
 import shlex
@@ -22,11 +23,18 @@ from minisweagent.exceptions import Submitted
 
 
 INTENTIR_REPLAY_SUBMIT = "INTENTIR_REPLAY_SUBMIT"
+INTENTIR_REPLAY_SUBMIT_COMMAND = "intentir_replay_submit"
+INTENTIR_REPLAY_COMMIT = "intentir_replay_commit"
+INTENTIR_REPLAY_ROLLBACK = "intentir_replay_rollback"
 INTENTIR_REPLAY_CHECK = "intentir_replay_check"
 INTENTIR_REPLAY_COMPILE_CHECK = "intentir_replay_compile_check"
 INTENTIR_PACKET_QUERY = "intentir_packet_query"
 INTENTIR_REPLAY_INSPECT = "intentir_replay_inspect"
-REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v3"
+REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v7"
+REPLAY_TRANSACTION_PROTOCOL = "intentir.replay-transaction.v1"
+REPLAY_APPLY_PATCH_PROTOCOL = "intentir.replay-exact-text-patch.v1"
+REPLAY_DIRECT_SUBMIT_PROTOCOL = "intentir.replay-direct-submit.v1"
+MULTI_ACTION_PROTOCOL = "intentir.agent-multi-action.v1"
 REPLAY_INPUT_FILES = frozenset(
     {"README.md", "packet.json", "REPLAY_CONTRACT.md", "TOOL.md"}
 )
@@ -782,6 +790,8 @@ def _packet_obligation_records(packet: Mapping[str, Any]) -> list[dict[str, Any]
         "refinements",
         "iterations",
         "loop_carriers",
+        "physical_iterations",
+        "physical_loop_carriers",
     )
     values: dict[str, list[Any]] = {}
     for name in list_names:
@@ -892,6 +902,14 @@ def _packet_obligation_records(packet: Mapping[str, Any]) -> list[dict[str, Any]
         (
             "loop_carriers",
             ("loop_instance", "init", "state", "next", "result"),
+        ),
+        (
+            "physical_iterations",
+            ("body_instance", "tile_instance"),
+        ),
+        (
+            "physical_loop_carriers",
+            ("init", "state", "next", "result"),
         ),
     ):
         for index, relation in enumerate(values[relation_name]):
@@ -1675,10 +1693,10 @@ class IntentIRReplayEnvironmentConfig(BaseModel):
     scratch_dir: Path
     tmp_dir: Path | None = None
     timeout: int = 60
-    replay_check_limit: int = 7
-    replay_submission_check_limit: int = 1
-    replay_compile_check_limit: int = 7
-    replay_source_inspect_limit: int = 12
+    replay_check_limit: int = 0
+    replay_submission_check_limit: int = 0
+    replay_compile_check_limit: int = 0
+    replay_source_inspect_limit: int = 0
 
 
 class IntentIRReplayEnvironment:
@@ -1713,11 +1731,401 @@ class IntentIRReplayEnvironment:
         self._compile_check_calls = 0
         self._compile_check_evaluations = 0
         self._compile_check_audit: list[dict[str, Any]] = []
+        self._compile_passed_bytes: bytes | None = None
         self._source_inspect_calls = 0
         self._source_inspect_audit: list[str] = []
         self._passed_bytes: bytes | None = None
+        self._committed_bytes: bytes | None = None
+        self._commit_audit: list[dict[str, Any]] = []
+        self._rollback_count = 0
+        self._fallback_audit: list[dict[str, Any]] = []
+        self._apply_patch_audit: list[dict[str, Any]] = []
+        self._direct_submit_audit: list[dict[str, Any]] = []
+        self._multi_action_rejections = 0
         self._validate_paths()
         self._probe()
+
+    def validate_actions(self, actions: list[dict[str, Any]]) -> str | None:
+        """Permit a batch only when every call is a source-blind packet query."""
+
+        if len(actions) <= 1:
+            return None
+        if len(actions) > 4:
+            self._multi_action_rejections += 1
+            return (
+                f"{MULTI_ACTION_PROTOCOL}: at most four independent source-blind "
+                "packet queries are allowed; no action in this response was executed"
+            )
+        allowed = True
+        for action in actions:
+            if not isinstance(action, Mapping):
+                allowed = False
+                break
+            command = action.get("command")
+            if not isinstance(command, str):
+                allowed = False
+                break
+            try:
+                arguments = shlex.split(command)
+            except ValueError:
+                allowed = False
+                break
+            if not arguments or arguments[0] != INTENTIR_PACKET_QUERY:
+                allowed = False
+                break
+        if allowed:
+            return None
+        self._multi_action_rejections += 1
+        return (
+            f"{MULTI_ACTION_PROTOCOL}: multiple Replay calls are allowed only "
+            "for independent intentir_packet_query actions; no action in this "
+            "response was executed"
+        )
+
+    @staticmethod
+    def _transaction_output(
+        *,
+        action: str,
+        status: str,
+        source_bytes: bytes | None = None,
+        diagnostic: str | None = None,
+    ) -> dict[str, Any]:
+        value: dict[str, Any] = {
+            "protocol": REPLAY_TRANSACTION_PROTOCOL,
+            "action": action,
+            "status": status,
+        }
+        if source_bytes is not None:
+            value["source_sha256"] = hashlib.sha256(source_bytes).hexdigest()
+            value["source_bytes"] = len(source_bytes)
+        if diagnostic is not None:
+            value["diagnostic"] = diagnostic
+        return {
+            "output": json.dumps(value, sort_keys=True) + "\n",
+            "returncode": 0 if status == "pass" else 1,
+            "exception_info": "",
+        }
+
+    def _restore_committed_source(self) -> bytes:
+        committed = self._committed_bytes
+        if committed is None:
+            raise ValueError("no Replay source has been explicitly committed")
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=".replay-restore-",
+            dir=self.config.output_dir,
+        )
+        temporary = Path(temporary_name)
+        try:
+            with os.fdopen(descriptor, "wb") as output:
+                output.write(committed)
+                output.flush()
+                os.fsync(output.fileno())
+            os.replace(temporary, self.config.output_dir / "replay.source")
+        finally:
+            temporary.unlink(missing_ok=True)
+        self._passed_bytes = committed
+        return committed
+
+    def _execute_replay_commit(self, arguments: list[str]) -> dict[str, Any]:
+        if arguments != [INTENTIR_REPLAY_COMMIT, "/output/replay.source"]:
+            return self._transaction_output(
+                action="commit",
+                status="fail",
+                diagnostic="usage: intentir_replay_commit /output/replay.source",
+            )
+        try:
+            source_bytes, _source_text = self._read_check_target(
+                "/output/replay.source"
+            )
+        except Exception as exc:
+            return self._transaction_output(
+                action="commit",
+                status="fail",
+                diagnostic=f"Replay read failed: {type(exc).__name__}: {exc}",
+            )
+        if source_bytes != self._passed_bytes:
+            return self._transaction_output(
+                action="commit",
+                status="fail",
+                source_bytes=source_bytes,
+                diagnostic=(
+                    "the exact current bytes do not have ReplayCheck PASS; "
+                    "check this complete source first"
+                ),
+            )
+        if (
+            self._replay_compile_checker is not None
+            and source_bytes != self._compile_passed_bytes
+        ):
+            return self._transaction_output(
+                action="commit",
+                status="fail",
+                source_bytes=source_bytes,
+                diagnostic=(
+                    "the exact current bytes do not have construction compile "
+                    "PASS; compile-check this complete source first"
+                ),
+            )
+        self._committed_bytes = source_bytes
+        self._commit_audit.append(
+            {
+                "sha256": hashlib.sha256(source_bytes).hexdigest(),
+                "bytes": len(source_bytes),
+            }
+        )
+        return self._transaction_output(
+            action="commit", status="pass", source_bytes=source_bytes
+        )
+
+    def _execute_replay_rollback(self, arguments: list[str]) -> dict[str, Any]:
+        if arguments != [INTENTIR_REPLAY_ROLLBACK, "/output/replay.source"]:
+            return self._transaction_output(
+                action="rollback",
+                status="fail",
+                diagnostic="usage: intentir_replay_rollback /output/replay.source",
+            )
+        try:
+            source_bytes = self._restore_committed_source()
+        except Exception as exc:
+            return self._transaction_output(
+                action="rollback",
+                status="fail",
+                diagnostic=f"rollback unavailable: {type(exc).__name__}: {exc}",
+            )
+        self._rollback_count += 1
+        return self._transaction_output(
+            action="rollback", status="pass", source_bytes=source_bytes
+        )
+
+    def _execute_replay_patch(self, action: Mapping[str, Any]) -> dict[str, Any]:
+        """Apply one exact Replay-LLM-authored text replacement atomically."""
+
+        path = action.get("path")
+        old_text = action.get("old_text")
+        new_text = action.get("new_text")
+        if (
+            path != "/output/replay.source"
+            or not isinstance(old_text, str)
+            or not old_text
+            or not isinstance(new_text, str)
+        ):
+            result = {
+                "protocol": REPLAY_APPLY_PATCH_PROTOCOL,
+                "status": "fail",
+                "diagnostic": (
+                    "apply_replay_patch requires /output/replay.source, one "
+                    "non-empty old_text string, and one new_text string"
+                ),
+            }
+            return {
+                "output": json.dumps(result, sort_keys=True) + "\n",
+                "returncode": 1,
+                "exception_info": "",
+            }
+        source_path = self.config.output_dir / "replay.source"
+        try:
+            if source_path.is_symlink() or not source_path.is_file():
+                raise ValueError("replay.source must already be a regular file")
+            before = source_path.read_bytes()
+            if not 1 <= len(before) <= MAX_REPLAY_BYTES:
+                raise ValueError("Replay source size is outside the allowed range")
+            before_text = before.decode("utf-8")
+            occurrences = before_text.count(old_text)
+            if occurrences != 1:
+                raise ValueError(
+                    f"old_text must occur exactly once; observed {occurrences}"
+                )
+            after = before_text.replace(old_text, new_text, 1).encode("utf-8")
+            if not 1 <= len(after) <= MAX_REPLAY_BYTES:
+                raise ValueError("patched Replay source is outside the allowed range")
+            descriptor, temporary_name = tempfile.mkstemp(
+                prefix=".replay-patch-", dir=self.config.output_dir
+            )
+            temporary = Path(temporary_name)
+            try:
+                with os.fdopen(descriptor, "wb") as output:
+                    output.write(after)
+                    output.flush()
+                    os.fsync(output.fileno())
+                os.replace(temporary, source_path)
+            finally:
+                temporary.unlink(missing_ok=True)
+        except Exception as exc:
+            result = {
+                "protocol": REPLAY_APPLY_PATCH_PROTOCOL,
+                "status": "fail",
+                "diagnostic": f"{type(exc).__name__}: {exc}",
+            }
+            return {
+                "output": json.dumps(result, sort_keys=True) + "\n",
+                "returncode": 1,
+                "exception_info": "",
+            }
+        self._passed_bytes = None
+        receipt = {
+            "protocol": REPLAY_APPLY_PATCH_PROTOCOL,
+            "status": "pass",
+            "path": path,
+            "before_sha256": hashlib.sha256(before).hexdigest(),
+            "after_sha256": hashlib.sha256(after).hexdigest(),
+            "before_bytes": len(before),
+            "after_bytes": len(after),
+            "submit_requested": action.get("submit") is True,
+            "authority": "exact Replay-LLM-authored text replacement only",
+        }
+        self._apply_patch_audit.append(dict(receipt))
+        if action.get("submit") is True:
+            output = {
+                "output": (
+                    INTENTIR_REPLAY_SUBMIT
+                    + "\n"
+                    + json.dumps(receipt, sort_keys=True)
+                    + "\n"
+                ),
+                "returncode": 0,
+                "exception_info": "",
+            }
+            self._check_submission(output)
+            return output
+        return {
+            "output": json.dumps(receipt, sort_keys=True) + "\n",
+            "returncode": 0,
+            "exception_info": "",
+        }
+
+    def _execute_submit_replay(self, action: Mapping[str, Any]) -> dict[str, Any]:
+        """Write and submit complete exact source bytes supplied by the Replay LLM."""
+
+        source_text = action.get("source_text")
+        if not isinstance(source_text, str) or not source_text:
+            result = {
+                "protocol": REPLAY_DIRECT_SUBMIT_PROTOCOL,
+                "status": "fail",
+                "diagnostic": "submit_replay requires non-empty source_text",
+            }
+            return {
+                "output": json.dumps(result, sort_keys=True) + "\n",
+                "returncode": 1,
+                "exception_info": "",
+            }
+        source_bytes = source_text.encode("utf-8")
+        if not 1 <= len(source_bytes) <= MAX_REPLAY_BYTES:
+            result = {
+                "protocol": REPLAY_DIRECT_SUBMIT_PROTOCOL,
+                "status": "fail",
+                "diagnostic": "source_text size is outside the allowed range",
+            }
+            return {
+                "output": json.dumps(result, sort_keys=True) + "\n",
+                "returncode": 1,
+                "exception_info": "",
+            }
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=".replay-direct-submit-", dir=self.config.output_dir
+        )
+        temporary = Path(temporary_name)
+        try:
+            with os.fdopen(descriptor, "wb") as output:
+                output.write(source_bytes)
+                output.flush()
+                os.fsync(output.fileno())
+            os.replace(temporary, self.config.output_dir / "replay.source")
+        finally:
+            temporary.unlink(missing_ok=True)
+        self._passed_bytes = None
+        receipt = {
+            "protocol": REPLAY_DIRECT_SUBMIT_PROTOCOL,
+            "status": "written",
+            "source_sha256": hashlib.sha256(source_bytes).hexdigest(),
+            "source_bytes": len(source_bytes),
+            "authority": (
+                "exact Replay-LLM-authored bytes; no source parsing, generation, "
+                "or repair"
+            ),
+        }
+        self._direct_submit_audit.append(dict(receipt))
+        output = {
+            "output": (
+                INTENTIR_REPLAY_SUBMIT
+                + "\n"
+                + json.dumps(receipt, sort_keys=True)
+                + "\n"
+            ),
+            "returncode": 0,
+            "exception_info": "",
+        }
+        self._check_submission(output)
+        return output
+
+    def activate_committed_fallback(self, terminal_status: str) -> str | None:
+        """Restore only source bytes explicitly committed by this Replay LLM."""
+
+        if terminal_status not in {
+            "LimitsExceeded",
+            "TimeExceeded",
+            "RepeatedFormatError",
+            "OrchestrationStall",
+        } or self._committed_bytes is None:
+            return None
+        source_bytes = self._restore_committed_source()
+        self._fallback_audit.append(
+            {
+                "terminal_status": terminal_status,
+                "sha256": hashlib.sha256(source_bytes).hexdigest(),
+                "bytes": len(source_bytes),
+            }
+        )
+        return source_bytes.decode("utf-8")
+
+    def stagnation_state(self) -> dict[str, Any]:
+        """Return only the exact current Replay-source byte identity."""
+
+        path = self.config.output_dir / "replay.source"
+        try:
+            if path.is_symlink() or not path.is_file():
+                raise ValueError("Replay source absent")
+            raw = path.read_bytes()
+        except (OSError, ValueError):
+            return {"protocol": "intentir.replay-stagnation-state.v1", "source": None}
+        return {
+            "protocol": "intentir.replay-stagnation-state.v1",
+            "source": {
+                "sha256": hashlib.sha256(raw).hexdigest(),
+                "bytes": len(raw),
+            },
+        }
+
+    def material_progress_state(self) -> dict[str, Any]:
+        """Return exact identities of model-writable Replay and work bytes."""
+
+        files: list[dict[str, Any]] = []
+        for label, root in (
+            ("output", self.config.output_dir),
+            ("work", self.config.scratch_dir),
+        ):
+            for path in sorted(root.rglob("*")):
+                relative = path.relative_to(root).as_posix()
+                if path.is_symlink():
+                    files.append(
+                        {"root": label, "path": relative, "kind": "symlink"}
+                    )
+                    continue
+                if not path.is_file():
+                    continue
+                raw = path.read_bytes()
+                files.append(
+                    {
+                        "root": label,
+                        "path": relative,
+                        "kind": "file",
+                        "bytes": len(raw),
+                        "sha256": hashlib.sha256(raw).hexdigest(),
+                    }
+                )
+        return {
+            "protocol": "intentir.replay-material-progress.v1",
+            "files": files,
+        }
 
     def _validate_paths(self) -> None:
         if self.config.tmp_dir is None:
@@ -2000,7 +2408,10 @@ class IntentIRReplayEnvironment:
             except Exception:
                 result = _closed_failure("replay_check_read_failed")
             else:
-                if self._shared_evaluations < self.config.replay_check_limit:
+                if (
+                    self.config.replay_check_limit == 0
+                    or self._shared_evaluations < self.config.replay_check_limit
+                ):
                     self._shared_evaluations += 1
                     budget_pool = "shared"
                 elif (
@@ -2049,15 +2460,16 @@ class IntentIRReplayEnvironment:
         self,
         arguments: list[str],
     ) -> dict[str, Any]:
-        """Run an advisory public-profile compile probe.
+        """Run the source-blind public-profile construction compile probe.
 
-        Unlike ReplayCheck, this result never records passed bytes and is never
-        consulted by submission.  It therefore cannot become an acceptance or
-        membership oracle.
+        This only establishes that the Replay LLM's exact bytes are compilable
+        enough to leave its authoring episode. It has no Gate1, semantic
+        membership, or certification authority.
         """
 
         self._compile_check_calls += 1
         evaluated = False
+        source_bytes: bytes | None = None
         if len(arguments) != 2 or arguments[1] not in {
             "/work/replay.source", "/output/replay.source"
         }:
@@ -2065,13 +2477,14 @@ class IntentIRReplayEnvironment:
         elif self._replay_compile_checker is None:
             result = _closed_failure("replay_compile_check_unavailable")
         elif (
-            self._compile_check_evaluations
+            self.config.replay_compile_check_limit != 0
+            and self._compile_check_evaluations
             >= self.config.replay_compile_check_limit
         ):
             result = _closed_failure("compile_check_budget_exhausted")
         else:
             try:
-                _source_bytes, source_text = self._read_check_target(arguments[1])
+                source_bytes, source_text = self._read_check_target(arguments[1])
             except Exception:
                 result = _closed_failure("replay_compile_check_read_failed")
             else:
@@ -2096,6 +2509,10 @@ class IntentIRReplayEnvironment:
                 ],
             }
         )
+        if result["status"] == "pass" and evaluated and source_bytes is not None:
+            self._compile_passed_bytes = source_bytes
+        elif evaluated and source_bytes == self._compile_passed_bytes:
+            self._compile_passed_bytes = None
         return {
             "output": json.dumps(result, sort_keys=True) + "\n",
             "returncode": 0 if result["status"] == "pass" else 1,
@@ -2139,7 +2556,11 @@ class IntentIRReplayEnvironment:
         mode = arguments[2] if len(arguments) > 2 else "invalid"
         self._source_inspect_audit.append(mode)
         try:
-            if self._source_inspect_calls > self.config.replay_source_inspect_limit:
+            if (
+                self.config.replay_source_inspect_limit != 0
+                and self._source_inspect_calls
+                > self.config.replay_source_inspect_limit
+            ):
                 raise ValueError("Replay source inspect budget exhausted")
             if len(arguments) < 3 or arguments[1] not in {
                 "/work/replay.source",
@@ -2207,6 +2628,10 @@ class IntentIRReplayEnvironment:
         if cwd not in {"", "/work"}:
             raise ValueError("IntentIR Replay cwd is fixed at /work")
         command = action.get("command", "")
+        if action.get("tool_name") == "apply_replay_patch":
+            return self._execute_replay_patch(action)
+        if action.get("tool_name") == "submit_replay":
+            return self._execute_submit_replay(action)
         if not isinstance(command, str):
             raise TypeError("Replay shell command must be a string")
         try:
@@ -2219,6 +2644,42 @@ class IntentIRReplayEnvironment:
             return self._execute_replay_inspect(check_arguments)
         if check_arguments and check_arguments[0] == INTENTIR_REPLAY_CHECK:
             return self._execute_replay_check(check_arguments)
+        if check_arguments and check_arguments[0] == INTENTIR_REPLAY_COMMIT:
+            return self._execute_replay_commit(check_arguments)
+        if check_arguments and check_arguments[0] == INTENTIR_REPLAY_ROLLBACK:
+            return self._execute_replay_rollback(check_arguments)
+        if check_arguments and check_arguments[0] == INTENTIR_REPLAY_SUBMIT_COMMAND:
+            if check_arguments == [INTENTIR_REPLAY_SUBMIT_COMMAND, "--committed"]:
+                try:
+                    self._restore_committed_source()
+                except Exception as exc:
+                    return self._transaction_output(
+                        action="submit",
+                        status="fail",
+                        diagnostic=(
+                            "committed submission unavailable: "
+                            f"{type(exc).__name__}: {exc}"
+                        ),
+                    )
+            elif check_arguments != [
+                INTENTIR_REPLAY_SUBMIT_COMMAND,
+                "/output/replay.source",
+            ]:
+                return self._transaction_output(
+                    action="submit",
+                    status="fail",
+                    diagnostic=(
+                        "usage: intentir_replay_submit /output/replay.source | "
+                        "intentir_replay_submit --committed"
+                    ),
+                )
+            output = {
+                "output": INTENTIR_REPLAY_SUBMIT + "\n",
+                "returncode": 0,
+                "exception_info": "",
+            }
+            self._check_submission(output)
+            return output
         if (
             check_arguments
             and check_arguments[0] == INTENTIR_REPLAY_COMPILE_CHECK
@@ -2339,6 +2800,21 @@ class IntentIRReplayEnvironment:
                     "Edit it and submit again.\n" + str(preflight["output"])
                 )
                 return
+        if (
+            self._replay_compile_checker is not None
+            and source_bytes != self._compile_passed_bytes
+        ):
+            compile_preflight = self._execute_replay_compile_check(
+                [INTENTIR_REPLAY_COMPILE_CHECK, "/output/replay.source"]
+            )
+            if compile_preflight["returncode"] != 0:
+                output["returncode"] = 2
+                output["output"] += (
+                    "\nSubmission construction compile rejected the current "
+                    "Replay source. Edit it and submit again.\n"
+                    + str(compile_preflight["output"])
+                )
+                return
         try:
             final_source = workspace.read_replay()
         except Exception as exc:
@@ -2395,9 +2871,12 @@ class IntentIRReplayEnvironment:
                     "calls": self._check_calls,
                     "evaluations": self._check_evaluations,
                     "limit": (
-                        self.config.replay_check_limit
+                        0
+                        if self.config.replay_check_limit == 0
+                        else self.config.replay_check_limit
                         + self.config.replay_submission_check_limit
                     ),
+                    "time_governed": self.config.replay_check_limit == 0,
                     "explicit": {
                         "calls": self._calls_by_trigger["explicit"],
                         "evaluations": self._evaluations_by_trigger["explicit"],
@@ -2418,7 +2897,10 @@ class IntentIRReplayEnvironment:
                 },
                 "replay_compile_check": {
                     "protocol": REPLAY_CHECK_PROTOCOL,
-                    "authority": "advisory_public_synthetic_profile",
+                    "authority": (
+                        "source_blind_construction_preflight_only; no Gate1, "
+                        "membership, or certification authority"
+                    ),
                     "calls": self._compile_check_calls,
                     "evaluations": self._compile_check_evaluations,
                     "limit": self.config.replay_compile_check_limit,
@@ -2431,17 +2913,49 @@ class IntentIRReplayEnvironment:
                     "limit": self.config.replay_source_inspect_limit,
                     "modes": list(self._source_inspect_audit),
                 },
+                "replay_transaction": {
+                    "protocol": REPLAY_TRANSACTION_PROTOCOL,
+                    "authority": (
+                        "exact Replay-LLM-authored bytes and exact-text replacement "
+                        "only; no source is generated or inferred"
+                    ),
+                    "commit_count": len(self._commit_audit),
+                    "commits": list(self._commit_audit),
+                    "rollback_count": self._rollback_count,
+                    "fallback_count": len(self._fallback_audit),
+                    "fallbacks": list(self._fallback_audit),
+                    "apply_patch_count": len(self._apply_patch_audit),
+                    "apply_patches": list(self._apply_patch_audit),
+                    "direct_submit_count": len(self._direct_submit_audit),
+                    "direct_submits": list(self._direct_submit_audit),
+                },
+                "multi_action_policy": {
+                    "protocol": MULTI_ACTION_PROTOCOL,
+                    "max_actions": 4,
+                    "authority": "whole-response fail-before-execute",
+                    "allowed": (
+                        "independent source-blind intentir_packet_query actions"
+                    ),
+                    "rejections": self._multi_action_rejections,
+                },
             }
         }
 
 
 __all__ = [
     "INTENTIR_PACKET_QUERY",
+    "INTENTIR_REPLAY_COMMIT",
     "INTENTIR_REPLAY_CHECK",
     "INTENTIR_REPLAY_COMPILE_CHECK",
     "INTENTIR_REPLAY_INSPECT",
+    "INTENTIR_REPLAY_ROLLBACK",
     "INTENTIR_REPLAY_SUBMIT",
+    "INTENTIR_REPLAY_SUBMIT_COMMAND",
+    "MULTI_ACTION_PROTOCOL",
     "REPLAY_CHECK_PROTOCOL",
+    "REPLAY_APPLY_PATCH_PROTOCOL",
+    "REPLAY_DIRECT_SUBMIT_PROTOCOL",
+    "REPLAY_TRANSACTION_PROTOCOL",
     "REPLAY_INPUT_FILES",
     "IntentIRReplayEnvironment",
     "IntentIRReplayEnvironmentConfig",

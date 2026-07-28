@@ -6,13 +6,14 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from enum import Enum
+from threading import Lock
 from typing import Any, Callable, Mapping
 
 from .workload_manifest import SCRCWorkloadEntry
 
 
-CANDIDATE_FANOUT_PROTOCOL = "intentir.scrc.candidate-fanout.v3"
-CANDIDATE_SELECTION_RULE = "wave_barrier_branch_id_formal_round.v3"
+CANDIDATE_FANOUT_PROTOCOL = "intentir.scrc.candidate-fanout.v4"
+CANDIDATE_SELECTION_RULE = "first_observed_gate1_closure_cooperative_stop.v4"
 
 
 class CandidateBranchStatus(str, Enum):
@@ -122,18 +123,13 @@ class CandidateFanoutSearchReport:
             raise ValueError("fan-out report winner differs from selected branch")
         elif self.winner.formal_round != self.winner_formal_round:
             raise ValueError("fan-out report winner formal round differs")
-        else:
-            expected = min(
-                closed,
-                key=lambda item: item.selection_coordinate,
-            )
-            if (
-                expected.branch_id,
-                expected.formal_round,
-            ) != (self.winner_branch_id, self.winner_formal_round):
-                raise ValueError(
-                    "fan-out report winner violates deterministic selection rule"
-                )
+        elif any(
+            item.status is CandidateBranchStatus.GATE1_CLOSED_NOT_SELECTED
+            and item.details.get("winner_branch_id")
+            not in {None, self.winner_branch_id}
+            for item in closed
+        ):
+            raise ValueError("fan-out branch records another first-closure winner")
 
     @property
     def winner(self) -> CandidateBranchOutcome | None:
@@ -171,13 +167,14 @@ class CandidateFanoutSearchReport:
         }
 
 
+CandidateStopRequested = Callable[[], int | None]
 CandidateBranchExecutor = Callable[
-    [SCRCWorkloadEntry, int], CandidateBranchOutcome
+    [SCRCWorkloadEntry, int, CandidateStopRequested], CandidateBranchOutcome
 ]
 
 
 class ConcurrentCandidateFanoutRunner:
-    """Run one pre-Gate2 wave, then select deterministically after its barrier."""
+    """Select the first Gate1 closure and stop sibling searches cooperatively."""
 
     def run(
         self,
@@ -189,12 +186,27 @@ class ConcurrentCandidateFanoutRunner:
         if not isinstance(candidates, int) or not 1 <= candidates <= 32:
             raise ValueError("candidates must be an integer in [1, 32]")
         completed: dict[int, CandidateBranchOutcome] = {}
+        winner_lock = Lock()
+        winner_branch_id: int | None = None
+
+        def stop_requested() -> int | None:
+            with winner_lock:
+                return winner_branch_id
+
+        def observe_first_closure(outcome: CandidateBranchOutcome) -> None:
+            nonlocal winner_branch_id
+            if outcome.status is not CandidateBranchStatus.GATE1_CLOSED:
+                return
+            with winner_lock:
+                if winner_branch_id is None:
+                    winner_branch_id = outcome.branch_id
+
         with ThreadPoolExecutor(
             max_workers=candidates,
             thread_name_prefix="scrc-candidate",
         ) as pool:
             future_to_branch = {
-                pool.submit(executor, entry, branch_id): branch_id
+                pool.submit(executor, entry, branch_id, stop_requested): branch_id
                 for branch_id in range(1, candidates + 1)
             }
             for future in as_completed(future_to_branch):
@@ -229,22 +241,15 @@ class ConcurrentCandidateFanoutRunner:
                         diagnostic=f"{type(exc).__name__}: {exc}",
                     )
                 completed[branch_id] = outcome
+                observe_first_closure(outcome)
 
-        # Leaving the executor context is the wave barrier: every branch has
-        # either returned an outcome or been isolated as an infrastructure
-        # failure.  Winner selection must not observe wall-clock completion
-        # order and hidden Gate2 work cannot be injected into this runner.
-        closed = [
-            outcome
-            for outcome in completed.values()
-            if outcome.status is CandidateBranchStatus.GATE1_CLOSED
-        ]
+        # Siblings observe ``winner_branch_id`` at the closed stage boundaries in
+        # SCRCGateRunner and return SUPERSEDED instead of consuming later formal
+        # rounds. We still collect those stop receipts before publishing a
+        # complete fan-out report; receipt collection is not a search barrier.
         winner = (
-            min(
-                closed,
-                key=lambda outcome: outcome.selection_coordinate,
-            )
-            if closed
+            completed[winner_branch_id]
+            if winner_branch_id is not None
             else None
         )
         if winner is not None:

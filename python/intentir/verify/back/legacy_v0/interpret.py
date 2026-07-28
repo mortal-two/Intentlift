@@ -42,6 +42,7 @@ except Exception:  # pragma: no cover - scipy usually present
     _erf = np.vectorize(_math.erf)
 
 _UNARY = {
+    "identity": lambda x: x,
     "exp": np.exp, "log": np.log, "log2": np.log2, "sqrt": np.sqrt,
     "rsqrt": lambda x: np.reciprocal(np.sqrt(x)), "neg": np.negative,
     "recip": np.reciprocal, "abs": np.abs, "tanh": np.tanh,

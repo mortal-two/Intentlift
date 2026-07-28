@@ -73,9 +73,208 @@ def _anonymous_view(value: str = "none") -> dict:
     )
 
 
+def _copy_anonymous_view(
+    *,
+    x_contract: tuple[int | str, ...] | None = ("h0",),
+    y_contract: tuple[int | str, ...] | None = ("h0",),
+    scalar_coordinate: str | None = "h0",
+) -> dict:
+    view = scrc.SCRCCompilerView(
+        schedule_values={"BLOCK": 1024},
+        arguments=(
+            scrc.SCRCCompilerArgument(
+                "X",
+                "tensor",
+                "f32",
+                (8,),
+                mode="input",
+                shape_contract=x_contract,
+            ),
+            scrc.SCRCCompilerArgument(
+                "Y",
+                "tensor",
+                "f32",
+                (8,),
+                mode="output",
+                shape_contract=y_contract,
+            ),
+            scrc.SCRCCompilerArgument(
+                "N",
+                "scalar",
+                "i32",
+                value=8,
+                mode="value",
+                shape_coordinate=scalar_coordinate,
+            ),
+        ),
+        parameter_order=("X", "Y", "N", "BLOCK"),
+        constexpr_parameters=("BLOCK",),
+    )
+    return scrc._anonymous_compiler_view(
+        view,
+        {"X": "p0", "Y": "p1", "N": "p2", "BLOCK": "c0"},
+    )
+
+
+def _constexpr_copy_anonymous_view() -> dict:
+    view = scrc.SCRCCompilerView(
+        schedule_values={"BLOCK": 1024},
+        bound_constexpr_values={"N": 8},
+        bound_constexpr_shape_coordinates={"N": "h0"},
+        arguments=(
+            scrc.SCRCCompilerArgument(
+                "X", "tensor", "f32", (8,), mode="input",
+                shape_contract=("h0",),
+            ),
+            scrc.SCRCCompilerArgument(
+                "Y", "tensor", "f32", (8,), mode="output",
+                shape_contract=("h0",),
+            ),
+        ),
+        parameter_order=("X", "Y", "N", "BLOCK"),
+        constexpr_parameters=("N", "BLOCK"),
+    )
+    return scrc._anonymous_compiler_view(
+        view,
+        {"X": "p0", "Y": "p1", "N": "p2", "BLOCK": "c0"},
+    )
+
+
+def test_compiler_shape_coordinate_requires_integer_dtype_and_explicit_grid_binding() -> None:
+    with pytest.raises(ValueError, match="integer dtype"):
+        scrc.SCRCCompilerArgument(
+            "N", "scalar", "f32", value=8, shape_coordinate="h0"
+        )
+    with pytest.raises(ValueError, match="concrete compiler grid"):
+        scrc.SCRCCompilerView(
+            schedule_values={}, grid=(), grid_contract=("rows",)
+        )
+
+    argument = scrc.SCRCCompilerArgument(
+        "X",
+        "tensor",
+        "f32",
+        (2,),
+        mode="input",
+        shape_contract=("h0",),
+    )
+    prose_only = scrc.SCRCCompilerView(
+        schedule_values={},
+        arguments=(argument,),
+        grid=(2,),
+        grid_contract=("human_rows_label",),
+    )
+    assert prose_only.grid_shape_coordinates == ()
+    with pytest.raises(ValueError, match="grid extent differs"):
+        scrc.SCRCCompilerView(
+            schedule_values={},
+            arguments=(argument,),
+            grid=(3,),
+            grid_contract=("human_rows_label",),
+            grid_shape_coordinates=("h0",),
+        )
+
+    with pytest.raises(ValueError, match="requires a bound value"):
+        scrc.SCRCCompilerView(
+            schedule_values={},
+            bound_constexpr_shape_coordinates={"N": "h0"},
+            arguments=(argument,),
+        )
+    with pytest.raises(ValueError, match="valuations differ"):
+        scrc.SCRCCompilerView(
+            schedule_values={},
+            bound_constexpr_values={"N": 3},
+            bound_constexpr_shape_coordinates={"N": "h0"},
+            arguments=(argument,),
+            parameter_order=("X", "N"),
+            constexpr_parameters=("N",),
+        )
+
+
+def test_shape_coordinate_contract_rejects_literal_specialization_and_collapse() -> None:
+    artifact = make_copy_artifact()
+    scrc._validate_compiler_view(artifact, _copy_anonymous_view())
+
+    specialized = artifact.to_json()
+    specialized["j"]["intent"]["intent_function"]["inputs"][0]["shape"] = [8]
+    with pytest.raises(ValueError, match="specialized source-grounded"):
+        scrc._validate_compiler_view(
+            Gate1Artifact.from_json(specialized), _copy_anonymous_view()
+        )
+
+    with pytest.raises(ValueError, match="collapsed distinct"):
+        scrc._validate_compiler_view(
+            artifact,
+            _copy_anonymous_view(y_contract=("h1",)),
+        )
+
+    with pytest.raises(ValueError, match="Harness-declared static shape"):
+        scrc._validate_compiler_view(
+            artifact,
+            _copy_anonymous_view(
+                x_contract=(8,),
+                y_contract=(8,),
+                scalar_coordinate=None,
+            ),
+        )
+
+
+def test_scalar_shape_coordinate_allows_direct_x_or_authored_value_equality() -> None:
+    direct = make_copy_artifact()
+    scrc._validate_compiler_view(direct, _copy_anonymous_view())
+
+    related = direct.to_json()
+    related["j"]["intent"]["intent_function"]["inputs"].append(
+        {"name": "t2", "dtype": "i32", "shape": []}
+    )
+    related["j"]["signature"]["parameters"][2]["logical_ref"] = "t2"
+    related["j"]["signature"]["parameters"][2]["rank"] = 0
+    related["j"]["value_dimension_relations"] = [
+        {"value_ref": "t2", "dimension_ref": "x0", "relation": "eq"}
+    ]
+    scrc._validate_compiler_view(
+        Gate1Artifact.from_json(related), _copy_anonymous_view()
+    )
+
+    missing_relation = copy.deepcopy(related)
+    missing_relation["j"]["value_dimension_relations"] = []
+    with pytest.raises(ValueError, match="scalar-to-shape-coordinate equality"):
+        scrc._validate_compiler_view(
+            Gate1Artifact.from_json(missing_relation), _copy_anonymous_view()
+        )
+
+
+def test_bound_constexpr_shape_coordinate_requires_direct_x_or_authored_equality() -> None:
+    direct_payload = make_copy_artifact().to_json()
+    direct_payload["j"]["signature"]["parameters"][2]["kind"] = "constexpr"
+    direct = Gate1Artifact.from_json(direct_payload)
+    view = _constexpr_copy_anonymous_view()
+
+    assert view["bound_constexpr_shape_coordinates"] == {"p2": "h0"}
+    scrc._validate_compiler_view(direct, view)
+
+    related = direct.to_json()
+    related["j"]["intent"]["intent_function"]["inputs"].append(
+        {"name": "t2", "dtype": "i32", "shape": []}
+    )
+    related["j"]["signature"]["parameters"][2]["logical_ref"] = "t2"
+    related["j"]["signature"]["parameters"][2]["rank"] = 0
+    related["j"]["value_dimension_relations"] = [
+        {"value_ref": "t2", "dimension_ref": "x0", "relation": "eq"}
+    ]
+    scrc._validate_compiler_view(Gate1Artifact.from_json(related), view)
+
+    related["j"]["value_dimension_relations"] = []
+    with pytest.raises(
+        ValueError,
+        match="bound-constexpr-to-shape-coordinate equality",
+    ):
+        scrc._validate_compiler_view(Gate1Artifact.from_json(related), view)
+
+
 def test_string_specialization_carrier_is_v7_and_typechecks() -> None:
     payload = _string_specialization_payload()
-    assert Gate1Artifact.SCHEMA == "intentir.scrc.artifact.v7"
+    assert Gate1Artifact.SCHEMA == "intentir.scrc.artifact.v9"
     assert "semantic_bindings" not in payload["j"]
     Draft202012Validator(scrc_lift_core_json_schema()).validate(payload)
 

@@ -46,6 +46,8 @@ class LitellmModelConfig(BaseModel):
     """Regex to extract multimodal content. Empty string disables multimodal processing."""
     retry_attempts: int = 1
     """Physical provider attempts per agent turn. IntentIR keeps this at one."""
+    retry_timeouts: bool = True
+    """Whether a provider request timeout may consume another transport attempt."""
     use_global_model_stats: bool = True
     """Whether this model participates in upstream process-global budgets."""
 
@@ -83,9 +85,12 @@ class LitellmModel:
         return set_cache_control(prepared, mode=self.config.set_cache_control)
 
     def query(self, messages: list[dict[str, str]], **kwargs) -> dict:
+        abort_exceptions = list(self.abort_exceptions)
+        if not self.config.retry_timeouts:
+            abort_exceptions.append(litellm.exceptions.Timeout)
         for attempt in retry(
             logger=logger,
-            abort_exceptions=self.abort_exceptions,
+            abort_exceptions=abort_exceptions,
             max_attempts=self.config.retry_attempts,
         ):
             with attempt:

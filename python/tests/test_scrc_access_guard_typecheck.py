@@ -188,7 +188,7 @@ def test_access_guard_typecheck_accepts_generic_rank_projection_and_load_fill() 
     report = type_check(artifact.j, artifact.c, artifact.pi)
 
     assert report.passed, report.to_json()
-    assert report.protocol == TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v18"
+    assert report.protocol == TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v22"
 
 
 @pytest.mark.parametrize(
@@ -407,15 +407,8 @@ def test_guarded_carry_negative_polarity_reverses_inactive_branch() -> None:
 def test_guarded_store_target_requires_an_authored_inout_signature() -> None:
     payload = _guarded_carry_payload()
     payload["j"]["signature"]["parameters"][1]["mode"] = "output"
-    artifact = Gate1Artifact.from_json(payload)
-
-    report = type_check(artifact.j, artifact.c, artifact.pi)
-
-    assert any(
-        item.code is TypeCheckErrorCode.ACCESS_GUARD_RELATION_INVALID
-        and "exactly one mode=inout parameter" in item.detail
-        for item in report.diagnostics
-    ), report.to_json()
+    with pytest.raises(SchemaError, match="must use signature mode=inout"):
+        Gate1Artifact.from_json(payload)
 
     mismatched = _guarded_carry_payload()
     target_input = mismatched["j"]["intent"]["intent_function"]["inputs"][1]

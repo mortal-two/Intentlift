@@ -74,7 +74,7 @@ LogicalResult IotaOp::verify() {
 LogicalResult MapUnaryOp::verify() {
   // Element-type-preserving fns: result type == input type.
   static constexpr llvm::StringRef kFns[] = {
-      "exp", "log", "log2", "neg", "abs", "sqrt", "rsqrt", "recip",
+      "identity", "exp", "log", "log2", "neg", "abs", "sqrt", "rsqrt", "recip",
       "tanh", "sigmoid", "cos", "sin", "tan",  "exp2", "erf", "atan",
       // logical_not is i1->i1, still element-type-preserving.
       "logical_not"};

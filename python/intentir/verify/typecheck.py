@@ -47,9 +47,24 @@ from intentir.verify.gate1.model import (
 from intentir.verify.gate1.pi import RealizationWitness
 
 
-TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v18"
+TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v22"
 GLOBAL_SAFE_REFINEMENTS = frozenset({"identity_materialization"})
 
+_MAP_UNARY_FNS = frozenset(
+    {
+        "identity", "exp", "log", "log2", "neg", "abs", "sqrt", "rsqrt", "recip",
+        "tanh", "sigmoid", "cos", "sin", "tan", "exp2", "erf", "atan",
+        "logical_not", "isnan", "isinf", "isfinite",
+    }
+)
+_MAP_BINARY_FNS = frozenset(
+    {
+        "add", "sub", "mul", "div", "max", "min", "pow", "cmp", "atan2",
+        "gt", "ge", "lt", "le", "eq", "ne", "logical_and", "logical_or",
+        "logical_xor", "isclose",
+    }
+)
+_MAP_ATTRS = frozenset({"fn"})
 _REDUCE_FNS = frozenset({"sum", "mean", "max", "min", "prod", "any", "all"})
 _REDUCE_ASSOCIATIVITY = frozenset(
     {"associative", "float_nondeterministic"}
@@ -105,6 +120,8 @@ class TypeCheckErrorCode(str, Enum):
     PAD_SHAPE_CONSTRAINT_MISSING = "pad_shape_constraint_missing"
     TILE_SHAPE_INVALID = "tile_shape_invalid"
     LOOP_CARRIER_INVALID = "loop_carrier_invalid"
+    PHYSICAL_ITERATION_INVALID = "physical_iteration_invalid"
+    PHYSICAL_LOOP_CARRIER_INVALID = "physical_loop_carrier_invalid"
     OBSERVABLE_REQUIRES_J_ANCHOR = "observable_requires_j_anchor"
     AUTHORIZATION_SUBJECT_UNKNOWN = "authorization_subject_unknown"
     ABSENT_CARRIER_SEMANTIC_USE_FORBIDDEN = (
@@ -451,13 +468,44 @@ def _check_known_operation_contracts(
         intent.get("body", [])
     ):
         op_name = operation.get("op")
-        if op_name not in {"reduce", "contraction", "tile"}:
+        if op_name not in {
+            "map_unary", "map_binary", "reduce", "contraction", "tile"
+        }:
             continue
         base = f"j.intent.intent_function.{operation_path}"
         ref_value = operation.get("id")
         ref = ref_value if isinstance(ref_value, str) else operation_path
         attrs_value = operation.get("attrs")
         attrs = attrs_value if isinstance(attrs_value, Mapping) else {}
+
+        if op_name in {"map_unary", "map_binary"}:
+            expected_fns = (
+                _MAP_UNARY_FNS if op_name == "map_unary" else _MAP_BINARY_FNS
+            )
+            for key in sorted(set(attrs) - _MAP_ATTRS):
+                diagnostics.append(
+                    TypeCheckDiagnostic(
+                        TypeCheckErrorCode.KNOWN_OP_CONTRACT_INVALID,
+                        f"{base}.attrs.{key}",
+                        f"{op_name} attrs contain unsupported key {key!r}",
+                        ref,
+                    )
+                )
+            fn = attrs.get("fn")
+            if (
+                set(attrs) != _MAP_ATTRS
+                or not isinstance(fn, str)
+                or fn not in expected_fns
+            ):
+                diagnostics.append(
+                    TypeCheckDiagnostic(
+                        TypeCheckErrorCode.KNOWN_OP_CONTRACT_INVALID,
+                        f"{base}.attrs.fn",
+                        f"{op_name} requires exactly one closed fn; got {fn!r}",
+                        ref,
+                    )
+                )
+            continue
 
         if op_name == "tile":
             for key in sorted(set(attrs) - _TILE_ATTRS):
@@ -1556,6 +1604,34 @@ def _axis_refs_v1(
             if isinstance(axis, str) and axis in dimensions:
                 result.add(axis)
             return frozenset(result)
+        if operation.get("op") == "contraction":
+            attrs = operation.get("attrs")
+            subscripts = attrs.get("subscripts") if isinstance(attrs, Mapping) else None
+            operands = operation.get("operands")
+            if not isinstance(subscripts, str) or not isinstance(operands, list):
+                return frozenset()
+            try:
+                input_text, output_text = subscripts.split("->", 1)
+                input_terms = input_text.split(",")
+            except ValueError:
+                return frozenset()
+            if len(input_terms) != len(operands):
+                return frozenset()
+            contracted: list[str] = []
+            for term in input_terms:
+                for label in term:
+                    if label not in output_text and label not in contracted:
+                        contracted.append(label)
+            result: set[int | str] = set(range(len(contracted)))
+            value_types = j_elaboration(j).value_type_by_name
+            for term, operand in zip(input_terms, operands, strict=True):
+                value_type = value_types.get(operand) if isinstance(operand, str) else None
+                if value_type is None or len(term) != len(value_type.shape):
+                    continue
+                for label, extent in zip(term, value_type.shape, strict=True):
+                    if label in contracted and isinstance(extent, str) and extent in dimensions:
+                        result.add(extent)
+            return frozenset(result)
         return frozenset()
 
     elaboration = j_elaboration(j)
@@ -2153,19 +2229,43 @@ def _check_effect_conditionals(
     """Check authored binary effect regions without constructing control.
 
     ``effect_if`` owns predicate polarity and lexical arms in Layer A.  The
-    bound ``branch_region`` scopes own effect membership, while pi only anchors
-    each scope in an existing ``placement=branch`` region.  This routine never
-    inserts an arm, selects a polarity, copies the predicate into pi, or rewrites
-    the conditional to an SSA ``select``.
+    bound ``branch_region`` scopes own effect membership, while pi anchors each
+    scope in an existing ``placement=branch`` region and may relate the two arm
+    instances as terminal versus continuation topology.  This routine never
+    inserts an arm, copies a predicate/polarity into pi, or rewrites the
+    conditional to an SSA ``select``.
     """
 
     intent = j.intent.to_json()["intent_function"]
-    conditionals = [
-        (path, operation)
-        for path, operation in _walk_operations(intent.get("body", []))
-        if operation.get("op") == "effect_if"
-    ]
+    conditionals: list[tuple[str, Mapping[str, Any], bool]] = []
+
+    def collect_conditionals(body: Any, prefix: str) -> None:
+        if not isinstance(body, list):
+            return
+        for index, operation in enumerate(body):
+            if not isinstance(operation, Mapping):
+                continue
+            path = f"{prefix}[{index}]"
+            if operation.get("op") == "effect_if":
+                conditionals.append((path, operation, index == len(body) - 1))
+            collect_conditionals(operation.get("body"), f"{path}.body")
+            for polarity in ("positive", "negative"):
+                arm = operation.get(polarity)
+                if isinstance(arm, Mapping):
+                    collect_conditionals(
+                        arm.get("body"), f"{path}.{polarity}.body"
+                    )
+
+    collect_conditionals(intent.get("body", []), "body")
     if not conditionals:
+        if pi.terminal_controls:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.EFFECT_CONDITIONAL_INVALID,
+                    "pi.terminal_controls",
+                    "terminal control requires an authored J effect_if",
+                )
+            )
         return
 
     value_types = j_elaboration(j).value_type_by_name
@@ -2302,7 +2402,7 @@ def _check_effect_conditionals(
 
     arm_records: list[tuple[str, str, str]] = []
     controlled_accesses: set[str] = set()
-    for path, operation in conditionals:
+    for path, operation, _is_final in conditionals:
         base = f"j.intent.intent_function.{path}"
         predicate = operation.get("predicate")
         predicate_type = (
@@ -2384,6 +2484,7 @@ def _check_effect_conditionals(
         if region.get("placement") == "branch"
     }
     scope_anchor_regions: dict[str, str] = {}
+    scope_anchor_instances: dict[str, str] = {}
     for path, polarity, scope_id in arm_records:
         matches = [
             instance
@@ -2426,6 +2527,7 @@ def _check_effect_conditionals(
                 )
             )
         scope_anchor_regions[scope_id] = region_ref
+        scope_anchor_instances[scope_id] = str(matches[0]["id"])
 
     def region_is_within(region_ref: str, ancestor_ref: str) -> bool:
         current: str | None = region_ref
@@ -2478,7 +2580,10 @@ def _check_effect_conditionals(
                 )
             )
 
-    for path, operation in conditionals:
+    terminal_pairs: dict[
+        frozenset[str], tuple[str, bool, dict[str, str]]
+    ] = {}
+    for path, operation, is_final in conditionals:
         arm_values = {
             polarity: operation.get(polarity)
             for polarity in ("positive", "negative")
@@ -2505,6 +2610,68 @@ def _check_effect_conditionals(
                     f"j.intent.intent_function.{path}",
                     "positive/negative pi branch regions must be distinct "
                     "siblings with one common parent",
+                )
+            )
+
+        arm_instances = {
+            polarity: scope_anchor_instances.get(str(scope_ids[polarity]))
+            for polarity in ("positive", "negative")
+        }
+        if all(isinstance(value, str) for value in arm_instances.values()):
+            pair = frozenset(str(value) for value in arm_instances.values())
+            terminal_pairs[pair] = (
+                path,
+                is_final,
+                {key: str(value) for key, value in arm_instances.items()},
+            )
+
+    terminal_paths: set[str] = set()
+    for index, relation in enumerate(pi.terminal_controls):
+        base = f"pi.terminal_controls[{index}]"
+        terminal_instance = str(relation["terminal_instance"])
+        continuation_instance = str(relation["continuation_instance"])
+        record = terminal_pairs.get(
+            frozenset({terminal_instance, continuation_instance})
+        )
+        if record is None:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.EFFECT_CONDITIONAL_INVALID,
+                    base,
+                    "terminal and continuation instances must anchor the two "
+                    "sibling arms of one J effect_if",
+                    terminal_instance,
+                )
+            )
+            continue
+        path, is_final, arm_instances = record
+        if path in terminal_paths:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.EFFECT_CONDITIONAL_INVALID,
+                    base,
+                    "one J effect_if may have at most one terminal-control relation",
+                    terminal_instance,
+                )
+            )
+        terminal_paths.add(path)
+        if not is_final:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.EFFECT_CONDITIONAL_INVALID,
+                    base,
+                    "terminal effect_if must be the final operation in its lexical "
+                    "parent; the continuation belongs only to its sibling arm",
+                    terminal_instance,
+                )
+            )
+        if terminal_instance not in set(arm_instances.values()):
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.EFFECT_CONDITIONAL_INVALID,
+                    f"{base}.terminal_instance",
+                    "terminal instance is not an effect_if arm anchor",
+                    terminal_instance,
                 )
             )
 
@@ -2972,7 +3139,345 @@ def _check_iteration_witness(
                 "induction-basis relation",
                 f"{loop_ref}:{tile_ref}",
             )
+            )
+
+
+def _check_physical_iteration_witness(
+    j: SemanticArchive,
+    c: ImplementationConfig,
+    pi: RealizationWitness,
+    node_operations: Mapping[str, Mapping[str, Any]],
+    diagnostics: list[TypeCheckDiagnostic],
+) -> None:
+    """Check source-neutral physical time around an existing reduce/contraction."""
+
+    regions = {str(item["id"]): item for item in pi.regions}
+    instances = {str(item["id"]): item for item in pi.instances}
+    slots = {slot.name: slot for slot in c.slots}
+
+    def visible_from(instance_region: str, relation_region: str) -> bool:
+        current: str | None = relation_region
+        while current is not None:
+            if current == instance_region:
+                return True
+            parent = regions.get(current, {}).get("parent")
+            current = str(parent) if parent is not None else None
+        return False
+
+    for index, relation in enumerate(pi.physical_iterations):
+        base = f"pi.physical_iterations[{index}]"
+        region_ref = str(relation["region"])
+        region = regions.get(region_ref)
+        if region is None or region.get("placement") != "loop":
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.PHYSICAL_ITERATION_INVALID,
+                    f"{base}.region",
+                    "physical iteration requires one placement=loop region",
+                    region_ref,
+                )
+            )
+
+        body_instance_ref = str(relation["body_instance"])
+        body_instance = instances.get(body_instance_ref)
+        body_ref = (
+            str(body_instance.get("semantic_ref"))
+            if body_instance is not None
+            else ""
         )
+        body_operation = node_operations.get(body_ref)
+        body_valid = (
+            body_instance is not None
+            and body_operation is not None
+            and body_operation.get("op") in {"reduce", "contraction"}
+            and visible_from(str(body_instance.get("region")), region_ref)
+        )
+        if not body_valid:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.PHYSICAL_ITERATION_INVALID,
+                    f"{base}.body_instance",
+                    "body_instance must visibly anchor one existing J reduce or "
+                    "contraction; the relation never creates a J loop",
+                    body_instance_ref,
+                )
+            )
+
+        tile_instance_ref = str(relation["tile_instance"])
+        tile_instance = instances.get(tile_instance_ref)
+        tile_ref = (
+            str(tile_instance.get("semantic_ref"))
+            if tile_instance is not None
+            else ""
+        )
+        slot = slots.get(tile_ref)
+        value = c.values.get(tile_ref)
+        allowed_axes = (
+            _axis_refs_v1(j, body_ref, node_operations) if body_valid else frozenset()
+        )
+        tile_valid = (
+            tile_instance is not None
+            and visible_from(str(tile_instance.get("region")), region_ref)
+            and slot is not None
+            and slot.subject_ref == body_ref
+            and slot.axis_ref in allowed_axes
+            and slot.required
+            and slot.value_type.casefold()
+            in {"int", "integer", "i32", "i64", "u32", "u64"}
+            and isinstance(value, int)
+            and not isinstance(value, bool)
+            and value > 0
+        )
+        if not tile_valid:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.PHYSICAL_ITERATION_INVALID,
+                    f"{base}.tile_instance",
+                    "tile_instance must visibly anchor one required positive-integer "
+                    "C slot explicitly attached to the same J node and one of its "
+                    "closed reduced/contracted axes",
+                    tile_instance_ref,
+                )
+            )
+
+
+def _check_physical_loop_carriers(
+    pi: RealizationWitness,
+    node_operations: Mapping[str, Mapping[str, Any]],
+    instance_anchors: Mapping[str, _Anchor],
+    diagnostics: list[TypeCheckDiagnostic],
+) -> None:
+    """Check physical-only temporal carriers without inventing update semantics."""
+
+    regions = {str(item["id"]): item for item in pi.regions}
+    instances = {str(item["id"]): item for item in pi.instances}
+    physical_bodies = {
+        str(item["region"]): str(item["body_instance"])
+        for item in pi.physical_iterations
+    }
+    route_edges = {
+        (str(item["source"]), str(item["target"])) for item in pi.routes
+    }
+    observable_mechanisms = {
+        "transfer_direct",
+        "transfer_async",
+        "update_atomic",
+        "update_privatized",
+        "synchronize",
+    }
+    outgoing: dict[str, set[str]] = {instance_id: set() for instance_id in instances}
+    for source, target in route_edges:
+        outgoing.setdefault(source, set()).add(target)
+
+    def ancestor_regions(region_ref: str) -> tuple[str, ...]:
+        result: list[str] = []
+        parent = regions.get(region_ref, {}).get("parent")
+        while parent is not None:
+            parent_ref = str(parent)
+            result.append(parent_ref)
+            parent = regions.get(parent_ref, {}).get("parent")
+        return tuple(result)
+
+    def reaches_observable_consumer(state_instance: str) -> bool:
+        pending = list(outgoing.get(state_instance, ()))
+        visited: set[str] = set()
+        while pending:
+            current = pending.pop()
+            if current in visited:
+                continue
+            visited.add(current)
+            instance = instances.get(current)
+            if (
+                instance is not None
+                and instance.get("mechanism") in observable_mechanisms
+            ):
+                return True
+            pending.extend(outgoing.get(current, ()))
+        return False
+
+    allowed_kinds = {"signature", "tensor", "value", "node", "access"}
+    for index, relation in enumerate(pi.physical_loop_carriers):
+        base = f"pi.physical_loop_carriers[{index}]"
+        region_ref = str(relation["region"])
+        region = regions.get(region_ref)
+        ancestors = ancestor_regions(region_ref)
+        if (
+            region is None
+            or region.get("placement") != "loop"
+            or region_ref not in physical_bodies
+        ):
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.PHYSICAL_LOOP_CARRIER_INVALID,
+                    f"{base}.region",
+                    "physical carrier requires one declared physical_iterations "
+                    "placement=loop region",
+                    region_ref,
+                )
+            )
+
+        role_ids = {
+            role: str(relation[role])
+            for role in ("init", "state", "next", "result")
+        }
+        role_instances = {role: instances.get(ref) for role, ref in role_ids.items()}
+        role_regions = {
+            role: (
+                str(instance.get("region")) if instance is not None else ""
+            )
+            for role, instance in role_instances.items()
+        }
+        direct_parent = (
+            str(region.get("parent"))
+            if region is not None and region.get("parent") is not None
+            else ""
+        )
+        if role_regions["init"] not in ancestors:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.PHYSICAL_LOOP_CARRIER_INVALID,
+                    f"{base}.init",
+                    "physical carrier init must be visible from a strict ancestor",
+                    role_ids["init"],
+                )
+            )
+        if (
+            role_regions["state"] != region_ref
+            or role_regions["next"] != region_ref
+        ):
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.PHYSICAL_LOOP_CARRIER_INVALID,
+                    f"{base}.state",
+                    "physical carrier state and next must be in the exact loop region",
+                    f"{role_ids['state']}:{role_ids['next']}",
+                )
+            )
+        if not direct_parent or role_regions["result"] != direct_parent:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.PHYSICAL_LOOP_CARRIER_INVALID,
+                    f"{base}.result",
+                    "physical carrier result must be in the loop region's direct parent",
+                    role_ids["result"],
+                )
+            )
+
+        typed_keys: list[tuple[str, int, str]] = []
+        for role, instance_id in role_ids.items():
+            anchor = instance_anchors.get(instance_id)
+            if (
+                anchor is None
+                or anchor.owner != "j"
+                or anchor.kind not in allowed_kinds
+                or anchor.value_type is None
+                or anchor.carrier_class not in {"pointer", "value"}
+            ):
+                diagnostics.append(
+                    TypeCheckDiagnostic(
+                        TypeCheckErrorCode.PHYSICAL_LOOP_CARRIER_INVALID,
+                        f"{base}.{role}",
+                        "physical carrier roles must anchor typed J carriers; C, "
+                        "domain, scope, effect and absent carriers are forbidden",
+                        instance_id,
+                    )
+                )
+                continue
+            instance = role_instances[role]
+            semantic_ref = (
+                str(instance.get("semantic_ref")) if instance is not None else ""
+            )
+            if anchor.kind == "node":
+                operation = node_operations.get(semantic_ref)
+                if operation is None or len(
+                    _operation_results(operation.get("result"))
+                ) != 1:
+                    diagnostics.append(
+                        TypeCheckDiagnostic(
+                            TypeCheckErrorCode.PHYSICAL_LOOP_CARRIER_INVALID,
+                            f"{base}.{role}",
+                            "physical node-carrier roles require one unambiguous "
+                            "typed result",
+                            instance_id,
+                        )
+                    )
+                    continue
+            typed_keys.append(
+                (
+                    anchor.value_type.dtype.casefold(),
+                    anchor.value_type.rank,
+                    str(anchor.carrier_class),
+                )
+            )
+        if typed_keys and len(set(typed_keys)) != 1:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.PHYSICAL_LOOP_CARRIER_INVALID,
+                    base,
+                    "physical init/state/next/result dtype, rank, and carrier "
+                    "class must match",
+                    role_ids["state"],
+                )
+            )
+        body_instance_id = physical_bodies.get(region_ref)
+        body_anchor = (
+            instance_anchors.get(body_instance_id)
+            if body_instance_id is not None
+            else None
+        )
+        body_key = (
+            (
+                body_anchor.value_type.dtype.casefold(),
+                body_anchor.value_type.rank,
+                str(body_anchor.carrier_class),
+            )
+            if body_anchor is not None
+            and body_anchor.value_type is not None
+            and body_anchor.carrier_class in {"pointer", "value"}
+            else None
+        )
+        if typed_keys and body_key is not None and any(
+            key != body_key for key in typed_keys
+        ):
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.PHYSICAL_LOOP_CARRIER_INVALID,
+                    base,
+                    "physical carrier dtype, rank, and class must match the "
+                    "indexed reduce/contraction result",
+                    role_ids["state"],
+                )
+            )
+        if (role_ids["init"], role_ids["state"]) not in route_edges:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.PHYSICAL_LOOP_CARRIER_INVALID,
+                    f"{base}.init",
+                    "ordinary pi routes must contain physical init -> state",
+                    role_ids["init"],
+                )
+            )
+        if role_ids["state"] != role_ids["next"] and (
+            role_ids["state"], role_ids["next"]
+        ) not in route_edges:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.PHYSICAL_LOOP_CARRIER_INVALID,
+                    f"{base}.next",
+                    "ordinary pi routes must contain physical state -> next; "
+                    "state==next is the only route-free update",
+                    role_ids["next"],
+                )
+            )
+        if not reaches_observable_consumer(role_ids["state"]):
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.PHYSICAL_LOOP_CARRIER_INVALID,
+                    f"{base}.state",
+                    "physical state must reach an observable realization consumer",
+                    role_ids["state"],
+                )
+            )
 
 
 _CONSUMER_EXTENSION_OPS = frozenset(
@@ -3773,6 +4278,39 @@ def _check_loop_carriers(
                 )
 
 
+def _check_signature_mode_partition(
+    j: SemanticArchive,
+) -> tuple[TypeCheckDiagnostic, ...]:
+    """Require the authored ABI mode to match J's logical boundary partition."""
+
+    input_refs = {tensor.name for tensor in j.intent.inputs}
+    output_refs = {tensor.name for tensor in j.intent.outputs}
+    diagnostics: list[TypeCheckDiagnostic] = []
+    for index, parameter in enumerate(j.signature.parameters):
+        ref = parameter.logical_ref
+        if ref is None:
+            continue
+        membership = (ref in input_refs, ref in output_refs)
+        expected = {
+            ParameterMode.INPUT: (True, False),
+            ParameterMode.OUTPUT: (False, True),
+            ParameterMode.INOUT: (True, True),
+        }.get(parameter.mode)
+        if expected is None or membership == expected:
+            continue
+        diagnostics.append(
+            TypeCheckDiagnostic(
+                TypeCheckErrorCode.J_ELABORATION_FAILED,
+                f"j.signature.parameters[{index}].mode",
+                "signature mode must exactly match the logical tensor boundary "
+                "partition: input binds input-only, output binds output-only, "
+                "and an input/output overlap must be authored as inout",
+                ref,
+            )
+        )
+    return tuple(diagnostics)
+
+
 def type_check(
     j: SemanticArchive,
     c: ImplementationConfig,
@@ -3786,6 +4324,10 @@ def type_check(
         raise TypeError("type_check requires canonical ImplementationConfig C")
     if not isinstance(pi, RealizationWitness):
         raise TypeError("type_check requires parsed RealizationWitness pi")
+
+    signature_diagnostics = _check_signature_mode_partition(j)
+    if signature_diagnostics:
+        return TypeCheckReport(TypeCheckStatus.FAIL, signature_diagnostics)
 
     known_op_diagnostics = _check_known_operation_contracts(j)
     if known_op_diagnostics:
@@ -3977,12 +4519,16 @@ def type_check(
         instance_anchors[str(item["id"])] = anchor
 
     _check_iteration_witness(j, c, pi, node_operations, diagnostics)
+    _check_physical_iteration_witness(j, c, pi, node_operations, diagnostics)
     _check_loop_carriers(
         pi,
         node_operations,
         anchors,
         instance_anchors,
         diagnostics,
+    )
+    _check_physical_loop_carriers(
+        pi, node_operations, instance_anchors, diagnostics
     )
 
     route_edges = {

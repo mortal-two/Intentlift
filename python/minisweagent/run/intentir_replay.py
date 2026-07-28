@@ -52,6 +52,7 @@ _OVERRIDE_BOUNDS = {
     ("environment", "replay_compile_check_limit"): (0, 16),
     ("environment", "replay_source_inspect_limit"): (0, 32),
 }
+_MAX_REPLAY_STARTUP_CONTEXT_BYTES = 64 * 1024
 
 
 @dataclass(frozen=True)
@@ -99,6 +100,7 @@ def create_intentir_replay_model(
     api_key: str,
     reasoning_effort: str,
     timeout_seconds: float,
+    prompt_cache_key: str | None = None,
 ) -> LitellmResponseModel:
     config = load_intentir_replay_config()["model"]
     model_kwargs = {
@@ -108,6 +110,8 @@ def create_intentir_replay_model(
         "reasoning_effort": reasoning_effort,
         "timeout": timeout_seconds,
     }
+    if prompt_cache_key:
+        model_kwargs["prompt_cache_key"] = prompt_cache_key
     qualified_name = model_name if "/" in model_name else f"openai/{model_name}"
     return LitellmResponseModel(
         model_name=qualified_name,
@@ -220,6 +224,14 @@ def intentir_replay_episode_contract_sha256(
                 "replay_source_inspect_limit"
             ),
             "transport_attempts_per_turn": model.get("retry_attempts"),
+            "max_tool_calls_per_response": model.get(
+                "max_tool_calls_per_response"
+            ),
+            "parallel_tool_calls": (
+                model.get("model_kwargs", {}).get("parallel_tool_calls")
+                if isinstance(model.get("model_kwargs"), Mapping)
+                else None
+            ),
         },
     }
     hasher = hashlib.sha256()
@@ -245,6 +257,51 @@ def intentir_replay_episode_contract_sha256(
         payload = content if isinstance(content, bytes) else content.encode("utf-8")
         frame(name.encode("utf-8"), payload)
     return hasher.hexdigest()
+
+
+def _replay_startup_context(workspace: IntentIRReplayWorkspace) -> str:
+    """Embed one exact source-blind packet, not several overlapping projections."""
+
+    packet_bytes = (workspace.input_dir / "packet.json").read_bytes()
+    packet = json.loads(packet_bytes)
+    if not isinstance(packet, Mapping):
+        raise TypeError("Replay packet root must be an object")
+    exact = {
+        "protocol": "intentir.replay-startup-context.v2",
+        "authority": (
+            "exact immutable source-blind packet bytes parsed as JSON; no Source, "
+            "Gate feedback, actual C values, inference, or Replay generation"
+        ),
+        "packet_sha256": hashlib.sha256(packet_bytes).hexdigest(),
+        "exact_packet_embedded": True,
+        "packet": packet,
+    }
+    encoded = json.dumps(
+        exact,
+        sort_keys=True,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    if len(encoded) > _MAX_REPLAY_STARTUP_CONTEXT_BYTES:
+        exact = {
+            "protocol": "intentir.replay-startup-context.v2",
+            "authority": (
+                "transport receipt only; query exact fields from the immutable "
+                "source-blind packet in-session"
+            ),
+            "packet_sha256": hashlib.sha256(packet_bytes).hexdigest(),
+            "packet_bytes": len(packet_bytes),
+            "exact_packet_embedded": False,
+            "bootstrap_command": "intentir_packet_query overview",
+        }
+    return json.dumps(
+        exact,
+        sort_keys=True,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+    )
 
 
 def run_intentir_replay(
@@ -277,12 +334,12 @@ def run_intentir_replay(
     started = time.monotonic()
     caught: Exception | None = None
     try:
-        terminal = agent.run()
+        terminal = agent.run(
+            replay_startup_context=_replay_startup_context(workspace)
+        )
     except Exception as exc:
         caught = exc
         terminal = {"exit_status": type(exc).__name__, "submission": ""}
-    elapsed_ms = (time.monotonic() - started) * 1000.0
-    trajectory = agent.save(None)
     exit_status = str(terminal.get("exit_status", ""))
     source_text: str | None = None
     if exit_status == "Submitted":
@@ -291,6 +348,21 @@ def run_intentir_replay(
         except Exception as exc:
             caught = exc
             exit_status = "InvalidSubmission"
+    elif caught is None:
+        activate_fallback = getattr(
+            environment, "activate_committed_fallback", None
+        )
+        if callable(activate_fallback):
+            try:
+                source_text = activate_fallback(exit_status)
+            except Exception as exc:
+                caught = exc
+                exit_status = "InvalidSubmission"
+            else:
+                if source_text is not None:
+                    exit_status = "SubmittedCheckpoint"
+    elapsed_ms = (time.monotonic() - started) * 1000.0
+    trajectory = agent.save(None)
     result = IntentIRReplayRunResult(
         source_text=source_text,
         trajectory=trajectory,
@@ -308,7 +380,7 @@ def run_intentir_replay(
             result=result,
             cause=caught,
         ) from caught
-    if exit_status != "Submitted" or source_text is None:
+    if exit_status not in {"Submitted", "SubmittedCheckpoint"} or source_text is None:
         raise IntentIRReplayRunError(
             f"IntentIR Replay worker terminated without source: {exit_status}",
             result=result,

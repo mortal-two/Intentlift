@@ -62,6 +62,7 @@ _PROGRESS_STAGES = frozenset(
         "candidate_search",
         "lift",
         "typecheck",
+        "replay",
         "gate1",
         "gate2_wait",
         "gate2",
@@ -528,25 +529,30 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--provider", default=None)
     parser.add_argument("--provider-config", type=Path, default=None)
+    parser.add_argument(
+        "--model",
+        default=None,
+        help=(
+            "optional model override on the selected provider endpoint; the "
+            "actual model is preserved in evidence"
+        ),
+    )
     parser.add_argument("--effort", default=None)
     parser.add_argument(
         "--lift-backend",
-        choices=("responses", "miniswe"),
+        choices=("responses", "miniswe", "codex"),
         default="responses",
         help="candidate Lift implementation; independent from Replay backend",
     )
     parser.add_argument(
         "--lift-workflow",
-        choices=("single", "staged"),
+        choices=("single",),
         default="single",
-        help=(
-            "MiniSWE Lift context workflow: one long worker or bounded "
-            "LLM planner/builder/reviewer stages"
-        ),
+        help="one persistent source-aware Lift owner per candidate branch",
     )
     parser.add_argument(
         "--replay-backend",
-        choices=("responses", "miniswe"),
+        choices=("responses", "miniswe", "codex"),
         default="responses",
         help="source-blind Replay implementation; independent from Lift backend",
     )
@@ -594,8 +600,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--pre-replay-rejections",
         type=int,
-        default=3,
-        help="bounded rejected Lift workers before a branch stops",
+        default=None,
+        help=(
+            "optional pre-Replay rejection cap; default 0 (owner-time governed) "
+            "for persistent MiniSWE/Codex Lift and 3 for legacy writers"
+        ),
     )
     parser.add_argument("--skip-masked-j", action="store_true")
     parser.add_argument(
@@ -624,6 +633,13 @@ def _emit(value: dict, *, output: Path | None, json_mode: bool) -> None:
 def main(argv: list[str] | None = None) -> int:
     argument_vector = list(sys.argv[1:] if argv is None else argv)
     args = _parser().parse_args(argument_vector)
+    if args.pre_replay_rejections is None:
+        args.pre_replay_rejections = (
+            0
+            if args.lift_backend in {"miniswe", "codex"}
+            and args.lift_workflow == "single"
+            else 3
+        )
     concurrency_options = (
         "--candidates",
         "--case-workers",
@@ -790,6 +806,11 @@ def main(argv: list[str] | None = None) -> int:
         )
 
         provider = get_provider(args.provider, args.provider_config)
+        if args.model is not None:
+            if not isinstance(args.model, str) or not args.model.strip():
+                print("--model must be a non-empty model name", file=sys.stderr)
+                return 2
+            provider = replace(provider, model=args.model.strip())
         run_root = args.run_root.expanduser().resolve()
         gate2_slots = BoundedSemaphore(args.gate2_workers)
         scheduling = {
@@ -1094,7 +1115,7 @@ def main(argv: list[str] | None = None) -> int:
                     },
                 )
 
-            def candidate_executor(candidate_entry, branch_id):
+            def candidate_executor(candidate_entry, branch_id, stop_requested):
                 branch_dir = branch_dirs[branch_id]
                 evidence_path = (
                     "run-root://" + branch_dir.relative_to(run_root).as_posix()
@@ -1118,6 +1139,7 @@ def main(argv: list[str] | None = None) -> int:
                         max_pre_replay_rejections=(
                             args.pre_replay_rejections
                         ),
+                        stop_requested=stop_requested,
                         progress_callback=callback,
                     )
                 except Exception as exc:

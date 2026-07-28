@@ -665,6 +665,53 @@ def test_unparseable_lift_is_recorded_without_entering_typecheck_or_replay() -> 
     assert factory.rounds == [1]
 
 
+def test_zero_pre_replay_cap_delegates_to_owner_resource_signal() -> None:
+    lift = _Lift(
+        [
+            CandidateLiftError({"diagnostic": "working draft incomplete"}),
+            make_reduce_artifact(),
+        ]
+    )
+    factory = _Gate1Factory([_gate1_result(closed=True)])
+
+    report = _runner(lift, factory, _Gate2()).run(
+        _request(max_pre_replay_rejections=0)
+    )
+
+    assert report.main_status is MainStatus.SCRC_CERTIFIED
+    assert report.call_budget.lift_calls == 2
+    assert report.call_budget.formal_gate1_rounds == 1
+    assert factory.rounds == [1]
+
+
+def test_terminal_owner_resource_signal_stops_without_replay() -> None:
+    lift = _Lift(
+        [
+            CandidateLiftError(
+                {
+                    "diagnostic": "branch-local Lift owner wall-time exhausted",
+                    "failure_class": "lift_owner_time_exhausted",
+                },
+                physical_calls=0,
+                terminal=True,
+            )
+        ]
+    )
+    factory = _Gate1Factory([])
+
+    report = _runner(lift, factory, _Gate2()).search_gate1(
+        _request(max_pre_replay_rejections=0)
+    )
+
+    assert report.status is Gate1SearchStatus.NO_CLOSURE
+    assert report.call_budget.lift_calls == 1
+    assert report.call_budget.lift_physical_calls == 0
+    assert report.call_budget.formal_gate1_rounds == 0
+    assert report.stop_reason == "lift_owner_time_exhausted"
+    assert report.stop_observed_at == "after_lift"
+    assert factory.rounds == []
+
+
 def test_intermediate_lift_failure_retains_unresolved_gate1_feedback() -> None:
     artifact = make_reduce_artifact()
     lift = _Lift(
@@ -719,9 +766,9 @@ def test_responses_lift_adapter_forwards_structured_feedback_only_to_relift(
     relifted = adapter.lift(request, feedback)
 
     assert initial.physical_calls == relifted.physical_calls == 2
-    assert initial.metadata["artifact_schema"] == "intentir.scrc.artifact.v7"
-    assert initial.metadata["decode_protocol"] == "intentir.scrc.decode.v11"
-    assert initial.metadata["typecheck_protocol"] == "intentir.scrc.typecheck.v18"
+    assert initial.metadata["artifact_schema"] == "intentir.scrc.artifact.v9"
+    assert initial.metadata["decode_protocol"] == "intentir.scrc.decode.v13"
+    assert initial.metadata["typecheck_protocol"] == "intentir.scrc.typecheck.v22"
     assert contexts[0] is None
     assert contexts[1].failure_kind == "gate1"
     assert contexts[1].diagnostics == feedback.diagnostics
@@ -790,7 +837,7 @@ def test_each_gate1_retry_uses_a_fresh_factory_and_only_lift_gets_diff() -> None
     assert gate2.calls == 1
 
 
-def test_gate1_search_retains_best_failed_parent_without_accepting_by_score() -> None:
+def test_gate1_search_returns_latest_failed_candidate_to_persistent_owner() -> None:
     artifacts = [make_reduce_artifact() for _ in range(3)]
     lift = _Lift(artifacts)
     factory = _Gate1Factory(
@@ -809,21 +856,21 @@ def test_gate1_search_retains_best_failed_parent_without_accepting_by_score() ->
     assert first.feedback is not None and first.feedback.formal_round == 1
     assert second.feedback is not None and second.feedback.formal_round == 2
     assert lift.feedbacks[1] is first.feedback
-    retained = lift.feedbacks[2]
-    assert retained is not None and retained is not first.feedback
-    assert retained.previous_artifact is first.artifact
-    assert retained.previous_artifact is not second.artifact
-    trial = retained.diagnostics["last_search_trial"]
-    assert trial["outcome"] == "regressed"
-    assert trial["trial_repair_progress"]["artifact_changed"] is False
-    assert trial["trial_repair_progress"]["component_changed"] == {
+    latest = lift.feedbacks[2]
+    assert latest is second.feedback
+    assert latest is not None
+    assert latest.previous_artifact is second.artifact
+    progress = latest.diagnostics["repair_progress"]
+    assert progress["rank_relation"] == "regressed"
+    assert progress["artifact_changed"] is False
+    assert progress["component_changed"] == {
         "j": False,
         "c": False,
         "pi": False,
     }
 
 
-def test_gate1_search_advances_parent_only_when_failed_rank_improves() -> None:
+def test_gate1_search_always_advances_to_the_owner_latest_candidate() -> None:
     artifacts = [make_reduce_artifact() for _ in range(3)]
     lift = _Lift(artifacts)
     factory = _Gate1Factory(
@@ -844,7 +891,7 @@ def test_gate1_search_advances_parent_only_when_failed_rank_improves() -> None:
     assert lift.feedbacks[2].previous_artifact is second.artifact
 
 
-def test_gate1_search_retains_ranked_seed_when_first_new_candidate_regresses() -> None:
+def test_gate1_search_replaces_ranked_seed_with_owner_latest_candidate() -> None:
     previous = make_reduce_artifact()
     seed = LiftFeedback(
         FeedbackKind.GATE1,
@@ -872,11 +919,11 @@ def test_gate1_search_retains_ranked_seed_when_first_new_candidate_regresses() -
 
     assert search.closed
     assert lift.feedbacks[0] is seed
-    retained = lift.feedbacks[1]
-    assert retained is not None and retained is not seed
-    assert retained.previous_artifact is previous
-    assert retained.diagnostics["last_search_trial"]["outcome"] == "regressed"
-    progress = retained.diagnostics["last_search_trial"]["trial_repair_progress"]
+    latest = lift.feedbacks[1]
+    assert latest is not None and latest is not seed
+    assert latest.previous_artifact is search.attempts[0].artifact
+    assert latest.previous_artifact is not previous
+    progress = latest.diagnostics["repair_progress"]
     assert progress["protocol"] == "intentir.gate1-relift-progress.v1"
     assert isinstance(progress["artifact_changed"], bool)
     assert search.attempts[0].feedback is not seed
@@ -1220,7 +1267,8 @@ def test_gate1_search_reports_source_free_stage_transitions() -> None:
         ("lift", 1, None, "finished"),
         ("typecheck", 1, None, "started"),
         ("typecheck", 1, None, "pass"),
-        ("gate1", None, 1, "started"),
+        ("replay", None, 1, "started"),
+        ("replay", None, 1, "finished"),
         ("gate1", None, 1, "replay_closed"),
     ]
 
@@ -1325,6 +1373,43 @@ def test_source_compile_failure_is_not_reported_as_no_closure() -> None:
     assert raised.value.evidence["formal_round"] == 1
     assert raised.value.evidence["gate1"]["status"] == "compile_failed"
     assert raised.value.evidence["artifact"]["schema"]
+
+
+def test_replay_generation_failure_is_infrastructure_and_does_not_consume_k() -> None:
+    source_compile = CompileResult(True, ttir="module {}")
+    generation_failed = Gate1ExecutionResult(
+        Gate1Status.NO_CLOSURE,
+        "trace-only",
+        source_compile,
+        None,
+        Gate1ArmEvidence(
+            "normal",
+            None,
+            None,
+            None,
+            None,
+            "generation failed: TimeoutError: Replay owner wall-time exhausted",
+            2,
+        ),
+        None,
+        1,
+        0,
+    )
+    lift = _Lift([make_reduce_artifact(), make_reduce_artifact()])
+    factory = _Gate1Factory([generation_failed, _gate1_result(closed=True)])
+    gate2 = _Gate2()
+
+    with pytest.raises(
+        SCRCInfrastructureError,
+        match="Replay generation failed before a formal comparison",
+    ) as raised:
+        _runner(lift, factory, gate2).run(_request())
+
+    assert raised.value.evidence["attempted_formal_round"] == 1
+    assert raised.value.evidence["formal_gate1_rounds_consumed"] == 0
+    assert lift.feedbacks == [None]
+    assert factory.rounds == [1]
+    assert gate2.calls == 0
 
 
 def test_gate1_factory_cannot_reuse_one_replay_session_across_rounds() -> None:

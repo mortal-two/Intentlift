@@ -30,7 +30,7 @@ from .scrc_schema import scrc_lift_core_text_format
 
 
 SCRC_RELIFT_PROTOCOL = "llm_direct_pi_structured_source_aware_relift_v2"
-SCRC_DECODE_PROTOCOL = "intentir.scrc.decode.v11"
+SCRC_DECODE_PROTOCOL = "intentir.scrc.decode.v13"
 CANDIDATE_CHECK_PROTOCOL = "intentir.scrc.candidate-check.v1"
 _CANDIDATE_DIAGNOSTIC_LIMIT = 20
 _CANDIDATE_DIAGNOSTIC_TEXT_LIMIT = 2048
@@ -215,6 +215,7 @@ class SCRCCompilerArgument:
     value: bool | int | float | None = None
     mode: str | None = None
     shape_contract: tuple[int | str, ...] | None = None
+    shape_coordinate: str | None = None
 
     def __post_init__(self) -> None:
         if not self.name.isidentifier():
@@ -228,25 +229,54 @@ class SCRCCompilerArgument:
         shape = tuple(int(dim) for dim in self.shape)
         if any(dim < 0 for dim in shape):
             raise ValueError("compiler argument dimensions must be non-negative")
-        shape_contract: tuple[int | str, ...] | None = None
-        if self.shape_contract is not None:
-            normalized_contract: list[int | str] = []
-            for extent in self.shape_contract:
-                if isinstance(extent, bool):
-                    raise TypeError("compiler shape contract cannot contain booleans")
-                if isinstance(extent, int):
-                    if extent < 0:
-                        raise ValueError(
-                            "compiler shape contract dimensions must be non-negative"
-                        )
-                    normalized_contract.append(extent)
-                    continue
-                if not isinstance(extent, str) or not extent.isidentifier():
-                    raise ValueError(
-                        "compiler shape contract extents must be integers or identifiers"
+        shape_contract = (
+            tuple(self.shape_contract)
+            if self.shape_contract is not None
+            else None
+        )
+        if self.kind != "tensor" and shape_contract is not None:
+            raise ValueError("only tensor compiler arguments have a shape contract")
+        if shape_contract is not None:
+            if len(shape_contract) != len(shape):
+                raise ValueError(
+                    "compiler argument shape contract rank differs from valuation"
+                )
+            for axis, (contract, extent) in enumerate(
+                zip(shape_contract, shape, strict=True)
+            ):
+                if isinstance(contract, bool) or not isinstance(contract, (int, str)):
+                    raise TypeError(
+                        "shape contract entries must be positive integers or h* coordinates"
                     )
-                normalized_contract.append(extent)
-            shape_contract = tuple(normalized_contract)
+                if isinstance(contract, int):
+                    if contract <= 0 or contract != extent:
+                        raise ValueError(
+                            "static shape contract extent differs from its valuation"
+                        )
+                elif not re.fullmatch(r"h[0-9]+", contract):
+                    raise ValueError(
+                        f"shape contract axis {axis} must use an anonymous h* coordinate"
+                    )
+        shape_coordinate = self.shape_coordinate
+        if shape_coordinate is not None:
+            if self.kind != "scalar":
+                raise ValueError(
+                    "only scalar compiler arguments bind a shape coordinate"
+                )
+            if not re.fullmatch(r"h[0-9]+", shape_coordinate):
+                raise ValueError(
+                    "scalar shape-coordinate binding must use an anonymous h* coordinate"
+                )
+            if isinstance(self.value, bool) or not isinstance(self.value, int):
+                raise ValueError(
+                    "scalar shape-coordinate binding requires an integer valuation"
+                )
+            if self.dtype.casefold() != "index" and re.fullmatch(
+                r"[iu][0-9]+", self.dtype.casefold()
+            ) is None:
+                raise ValueError(
+                    "scalar shape-coordinate binding requires an integer dtype"
+                )
         if self.kind == "tensor" and self.value is not None:
             raise ValueError("tensor compiler argument forbids scalar value")
         if self.kind == "scalar" and (shape or self.value is None):
@@ -281,6 +311,7 @@ class SCRCCompilerArgument:
                 )
         object.__setattr__(self, "shape", shape)
         object.__setattr__(self, "shape_contract", shape_contract)
+        object.__setattr__(self, "shape_coordinate", shape_coordinate)
 
     def to_json(self) -> dict[str, Any]:
         result: dict[str, Any] = {
@@ -294,6 +325,8 @@ class SCRCCompilerArgument:
                 result["shape_contract"] = list(self.shape_contract)
         elif self.kind == "scalar":
             result["value"] = self.value
+            if self.shape_coordinate is not None:
+                result["shape_coordinate"] = self.shape_coordinate
         if self.mode is not None:
             result["mode"] = self.mode
         return result
@@ -307,17 +340,24 @@ class SCRCCompilerView:
     bound_constexpr_values: Mapping[str, bool | int | float | str] = field(
         default_factory=dict
     )
+    bound_constexpr_shape_coordinates: Mapping[str, str] = field(
+        default_factory=dict
+    )
     compiler_slots: tuple[str, ...] = ()
     aliases: tuple[AliasSpec, ...] = ()
     arguments: tuple[SCRCCompilerArgument, ...] = ()
     grid: tuple[int, ...] = ()
     grid_contract: tuple[str, ...] = ()
+    grid_shape_coordinates: tuple[str | None, ...] = ()
     parameter_order: tuple[str, ...] = ()
     constexpr_parameters: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         values = dict(self.schedule_values)
         bound_constexpr_values = dict(self.bound_constexpr_values)
+        bound_constexpr_shape_coordinates = dict(
+            self.bound_constexpr_shape_coordinates
+        )
         for collection, label in (
             (values, "schedule"),
             (bound_constexpr_values, "bound constexpr"),
@@ -345,6 +385,11 @@ class SCRCCompilerView:
         object.__setattr__(
             self, "bound_constexpr_values", bound_constexpr_values
         )
+        object.__setattr__(
+            self,
+            "bound_constexpr_shape_coordinates",
+            bound_constexpr_shape_coordinates,
+        )
         object.__setattr__(self, "compiler_slots", slots)
         object.__setattr__(
             self,
@@ -365,14 +410,90 @@ class SCRCCompilerView:
         )
         if len({item.name for item in self.arguments}) != len(self.arguments):
             raise ValueError("compiler arguments must have unique names")
+        shape_coordinates: dict[str, int] = {}
+        coordinate_order: list[str] = []
+        for argument in self.arguments:
+            if argument.shape_contract is None:
+                continue
+            for contract, extent in zip(
+                argument.shape_contract, argument.shape, strict=True
+            ):
+                if not isinstance(contract, str):
+                    continue
+                if contract not in shape_coordinates:
+                    shape_coordinates[contract] = extent
+                    coordinate_order.append(contract)
+                elif shape_coordinates[contract] != extent:
+                    raise ValueError(
+                        f"shape coordinate {contract!r} has inconsistent valuations"
+                    )
+        expected_coordinates = [
+            f"h{index}" for index in range(len(coordinate_order))
+        ]
+        if coordinate_order != expected_coordinates:
+            raise ValueError(
+                "shape coordinates must use gap-free first-declaration order h0,h1,..."
+            )
+        for argument in self.arguments:
+            coordinate = argument.shape_coordinate
+            if coordinate is None:
+                continue
+            if coordinate not in shape_coordinates:
+                raise ValueError(
+                    "scalar shape-coordinate binding names an undeclared coordinate"
+                )
+            if argument.value != shape_coordinates[coordinate]:
+                raise ValueError(
+                    "scalar and tensor shape-coordinate valuations differ"
+                )
+        for name, coordinate in bound_constexpr_shape_coordinates.items():
+            if not isinstance(name, str) or not name.isidentifier():
+                raise ValueError(
+                    "bound constexpr shape-coordinate names must be identifiers"
+                )
+            if name not in bound_constexpr_values:
+                raise ValueError(
+                    "bound constexpr shape-coordinate binding requires a bound value"
+                )
+            if not isinstance(coordinate, str) or coordinate not in shape_coordinates:
+                raise ValueError(
+                    "bound constexpr shape-coordinate binding names an undeclared coordinate"
+                )
+            value = bound_constexpr_values[name]
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value != shape_coordinates[coordinate]
+            ):
+                raise ValueError(
+                    "bound constexpr and tensor shape-coordinate valuations differ"
+                )
         grid = tuple(int(dim) for dim in self.grid)
         if grid and (len(grid) > 3 or any(dim <= 0 for dim in grid)):
             raise ValueError("compiler grid must have one to three positive dimensions")
         grid_contract = tuple(self.grid_contract)
         if any(not isinstance(item, str) or not item for item in grid_contract):
             raise ValueError("grid contract must contain non-empty expressions")
+        if not grid and grid_contract:
+            raise ValueError("grid contract requires a concrete compiler grid")
         if grid and grid_contract and len(grid) != len(grid_contract):
             raise ValueError("concrete grid and grid contract ranks differ")
+        grid_shape_coordinates = tuple(self.grid_shape_coordinates)
+        if grid_shape_coordinates and len(grid_shape_coordinates) != len(grid):
+            raise ValueError(
+                "grid shape-coordinate bindings and concrete grid ranks differ"
+            )
+        for axis, coordinate in enumerate(grid_shape_coordinates):
+            if coordinate is None:
+                continue
+            if not isinstance(coordinate, str) or coordinate not in shape_coordinates:
+                raise ValueError(
+                    "grid shape-coordinate binding must name a declared h* coordinate"
+                )
+            if grid[axis] != shape_coordinates[coordinate]:
+                raise ValueError(
+                    "grid extent differs from its shape-coordinate valuation"
+                )
         parameter_order = tuple(self.parameter_order)
         constexpr_parameters = tuple(self.constexpr_parameters)
         for names, label in (
@@ -392,6 +513,10 @@ class SCRCCompilerView:
             raise ValueError("parameter order must cover runtime and constexpr inputs")
         object.__setattr__(self, "grid", grid)
         object.__setattr__(self, "grid_contract", grid_contract)
+        object.__setattr__(
+            self, "grid_shape_coordinates", grid_shape_coordinates
+        )
+        object.__setattr__(self, "_shape_coordinates", shape_coordinates)
         object.__setattr__(self, "parameter_order", parameter_order)
         object.__setattr__(
             self, "constexpr_parameters", constexpr_parameters
@@ -409,14 +534,25 @@ class SCRCCompilerView:
         return {
             "schedule_values": dict(self.schedule_values),
             "bound_constexpr_values": dict(self.bound_constexpr_values),
+            "bound_constexpr_shape_coordinates": dict(
+                self.bound_constexpr_shape_coordinates
+            ),
             "compiler_slots": list(self.compiler_slots),
             "aliases": [item.to_json() for item in self.aliases],
             "arguments": [item.to_json() for item in self.arguments],
+            "shape_coordinates": dict(self.shape_coordinates),
             "grid": list(self.grid),
             "grid_contract": list(self.grid_contract),
+            "grid_shape_coordinates": list(self.grid_shape_coordinates),
             "parameter_order": list(self.parameter_order),
             "constexpr_parameters": list(self.constexpr_parameters),
         }
+
+    @property
+    def shape_coordinates(self) -> Mapping[str, int]:
+        """Current valuations for source-grounded anonymous shape coordinates."""
+
+        return dict(getattr(self, "_shape_coordinates", {}))
 
 
 @dataclass(frozen=True)
@@ -1029,24 +1165,6 @@ def _anonymous_compiler_view(
             next_c += 1
         mapping[name] = f"c{next_c}"
         used.add(mapping[name])
-    next_s = 0
-    for argument in view.arguments:
-        for extent in argument.shape_contract or ():
-            if not isinstance(extent, str) or extent in mapping:
-                continue
-            while f"s{next_s}" in used:
-                next_s += 1
-            mapping[extent] = f"s{next_s}"
-            used.add(mapping[extent])
-
-    def anonymous_argument(argument: SCRCCompilerArgument) -> dict[str, Any]:
-        result = {**argument.to_json(), "name": mapping[argument.name]}
-        if argument.shape_contract is not None:
-            result["shape_contract"] = [
-                mapping[extent] if isinstance(extent, str) else extent
-                for extent in argument.shape_contract
-            ]
-        return result
 
     return {
         "schedule_values": {
@@ -1055,6 +1173,10 @@ def _anonymous_compiler_view(
         "bound_constexpr_values": {
             mapping[name]: value
             for name, value in view.bound_constexpr_values.items()
+        },
+        "bound_constexpr_shape_coordinates": {
+            mapping[name]: coordinate
+            for name, coordinate in view.bound_constexpr_shape_coordinates.items()
         },
         "compiler_slots": [mapping[name] for name in view.compiler_slots],
         "compiler_roles": {
@@ -1069,13 +1191,15 @@ def _anonymous_compiler_view(
             for item in view.aliases
         ],
         "arguments": [
-            anonymous_argument(item)
+            {**item.to_json(), "name": mapping[item.name]}
             for item in view.arguments
         ],
+        "shape_coordinates": dict(view.shape_coordinates),
         "grid": list(view.grid),
         "grid_contract": [
             _replace_names(item, mapping) for item in view.grid_contract
         ],
+        "grid_shape_coordinates": list(view.grid_shape_coordinates),
         "parameter_order": [mapping[name] for name in view.parameter_order],
         "constexpr_parameters": [
             mapping[name] for name in view.constexpr_parameters
@@ -1085,12 +1209,10 @@ def _anonymous_compiler_view(
 
 def build_scrc_lift_instructions() -> str:
     return f"""You are the source-aware Lift LLM for IntentIR.
-Return one complete JSON object matching the supplied schema. You directly
-produce anonymous J=A+B, independent pure C, and the realization witness pi.
-There is no downstream composer and no rule catalog.
-The supplied Responses schema is authoritative for the closed envelope, field
-names, enums, optional fields, operation grammar, and structural descriptions.
-Do not duplicate, rename, or extend it with convenience fields.
+Return one complete JSON object: anonymous J=A+B, independent pure C, and pi.
+There is no downstream composer or rule catalog. The supplied Responses schema
+is authoritative for fields, enums, optionality, grammar, and structure; never
+duplicate, rename, or extend it.
 
 Use gap-free declaration-order names: kernel scrc_k0; tensors t*; J nodes n*;
 values v*; dimensions x*; domains d*; accesses a*; effects e*; scopes q*;
@@ -1109,58 +1231,50 @@ positions stay private. C values/compiler_slots equal the anonymous inputs and
 each compiler slot uses compiler_roles exactly. Never rename c* to p* or infer
 strategy names from roles.
 
-bound_constexpr_values are Harness-owned, non-C JIT bindings. constexprness
-alone never makes one a graph selector. Classify across all Source uses:
-logical data/predicate/result -> compatible rank-0 t*; integral extent-only ->
-x*. A no-logical_ref carrier is legal only when every semantic use is
-exclusively compile-time control and the selected active graph has no use of
-the value in shape, index, mask, arithmetic, boolean dataflow, or result. Any
-such use requires t*/x* even when constant-folded. A pure selector keeps
-kind=constexpr, mode=value, rank=0 and dtype; its value
-stays only in Harness. Author the complete active graph without dummy dataflow,
-inactive operations, or runtime control. Lift owns classification; fixed code
-checks only the authored wire/type contract and never selects or repairs the
-graph. String constexpr is pure-selector-only or unsupported.
+For every tensor, `shape` is only the current Harness binding and is never
+permission to specialize J. In `shape_contract`, an
+integer stays a static J literal and each source-grounded h* becomes a symbolic
+x*: equal h* coordinates share x*, distinct h* remain distinct even when their
+values coincide. Choose one x* for each h* and use it in every affected J tensor shape.
+h* is Harness-only. An integral `shape_coordinate:h*` scalar or explicitly bound
+semantic constexpr
+binds directly to that x* when extent/index/domain-only; if it also carries
+logical data, bind one rank-0 t* and author the t*=x*
+value_dimension_relations equality. Fixed code checks but never creates either
+form. Never infer h* from values, shape, grid, C, names, or coincident numbers.
+Capacity and active-length coordinates remain distinct: preserve Source padding,
+domains, and required non-negative affine constraints, but do not invent a
+C-dependent roundup equation. Grid/C/pi may realize rounding, not J ownership.
 
-Every J.signature logical_ref names only a declared J input/output t* handle,
-a symbolic dimension x*; it never names a p* parameter, source/local, or J-body
-v* SSA value. An absent logical_ref on a constexpr denotes only the fixed
-Harness specialization carrier above, not Layer-A data.
-When a runtime scalar or bound semantic constexpr is logical data used in an
-arithmetic/boolean operator or result, declare one dtype-matching rank-0 J input
-tensor and bind its p* to t*. If it also controls an active-domain predicate,
-reuse that same t* in the predicate and arithmetic dataflow; never split one
-Source value across t*, x*, or null. If Source also requires value(t*)=x*, author
-{{value_ref:t*, dimension_ref:x*, relation:eq}} in J.value_dimension_relations.
-Each physical p* has exactly one logical_ref and still binds only t*; the relation
-connects it to x*. Author it only from exact Source identity, never a coincident
-Harness value, dtype, position, or observed shape. Capacity x* and active-length
-t* stay unrelated unless Source says otherwise; an extent-only scalar binds x*
-directly. Always emit the complete array, including []. Lift authors it; fixed
-code and Replay never add or repair it from pi, C, or runtime evidence.
-Never bind a value parameter to an output merely to satisfy handle existence;
-dtype/rank/mode must agree, and inout binds one tensor declared in both inputs
-and outputs.
-Conversely, a runtime scalar used only for representation/address realization
-is not logical data: declare it as a rank-0 scalar, mode value, with public
-dtype and no logical_ref or J input tensor; pi may reference its p* carrier.
-Classify this only from the Source use, never from parameter spelling or
-position. Every rank-0 tensor that you do bind through logical_ref must reach an
-observable J output dependency or an explicit J-owned boundary/shape semantic
-relation. TypeCheck rejects a dead logical input and never auto-unbinds it.
-Every trusted compiler-view argument with kind `none` is an absent runtime
-carrier: declare that p* exactly once as kind `opaque`, mode `value`, dtype
-`none`, with null rank/alias_of/logical_ref. It contributes no J tensor, node,
-access, effect, or pi instance; never replace it with a pointer or scalar.
+bound_constexpr_values are Harness-owned, non-C JIT bindings; constexprness alone
+never makes one a graph selector. Across all Source uses, logical
+data/predicate/result becomes one dtype-compatible rank-0 t*, while integral
+extent-only becomes x*. A null logical_ref is allowed only when every semantic
+use is exclusively compile-time control and the active graph has no shape,
+index, mask, arithmetic, boolean, or result use. Such a pure selector stays a
+constexpr value carrier: its value stays only in Harness; author only its selected
+complete graph. fixed code checks only the authored wire/type contract and never
+selects or repairs the graph. String constexpr is pure-selector-only or unsupported.
 
-A runtime scalar p* value is only the current Harness binding, never permission
-to specialize J. Map an extent-only scalar to x* and use it in every affected J
-tensor shape. Tensor `shape` is also only a valuation. In `shape_contract`, an
-integer is Source-static and each anonymous token maps bijectively to one authored
-x*, sharing repeats even when concrete values coincide. A p* token binds its
-carrier to that x* directly or by a Source-required rank-0 t* equality. Contract
-tokens never enter J; fixed code only checks. Symbolic dimensions are not SSA
-values: never list x* in portable scope definitions/captures or storage.
+A J.signature logical_ref names only a declared t* input/output or x*, never p*,
+a Source/local name, or body v*. Runtime or constexpr logical data binds one
+rank-0 t*. If it also controls an active predicate, reuse that same t* in the
+predicate and arithmetic dataflow; never split one Source value across t*, x*,
+or null. The equality value(t*)=x* is explicit. Author it only from exact Source
+identity, never a valuation, dtype, position, or shape coincidence; an extent-only
+scalar binds x* directly.
+Emit the complete J.value_dimension_relations array, including []; fixed code and
+Replay never add or repair it. Symbolic x* are signature/type handles, not SSA
+values; never list x* in portable scope definitions/captures or storage members.
+
+Each physical p* has exactly one logical_ref. Dtype/rank/mode must agree; inout binds one tensor
+declared as both input and output, and value parameters never bind outputs merely
+to satisfy existence. A representation/address-only runtime scalar is rank-0
+mode=value with public dtype and null logical_ref; pi may reference that p*.
+Classify only from Source use. Any bound rank-0 t* must reach an observable output
+or explicit J boundary/shape semantic. A compiler-view kind=`none` argument is
+exactly one opaque mode=value dtype=`none` p* with null rank/alias/logical_ref and
+contributes no J tensor, node, access, effect, or pi instance.
 
 For every observable output, J.boundary.result_relations declares only the
 closed semantic comparison class; it never declares numeric thresholds. Use
@@ -1176,7 +1290,9 @@ or null is invalid. Only `one_of_updates` carries one non-empty
 
 Every J.boundary access must have exactly one matching effect. The effect's
 kind, target, node_ref (including null), and access_ref must agree exactly with
-the access; never attach an otherwise matching access to a different node.
+the access; never attach an otherwise matching access to a different node. A
+direct logical-input load may use node_ref=null with the matching null effect;
+do not invent map_unary(identity) solely to create an access anchor.
 
 index_expression uses the closed ContractExpr syntax. For a direct dense
 projection, k0 and [k0] are equivalent one-axis surface forms, while k1,k0 and
@@ -1196,6 +1312,13 @@ element, a value chosen to cancel a later operation, or another observationally
 equivalent fill. If Source omits other, omit fill_value. Consumer-specific
 outside identities and same-predicate masked stores are separate facts and do
 not rewrite the Source load fill.
+Trace every predicate-bearing load through closed pointwise/cast/transpose/pad
+dataflow to each sum/max/min reduce or inclusive scan that consumes its masked
+axis. For every distinct (consumer_ref, operand_index, access_ref), author one
+boundary.consumer_extensions relation with that consumer's Source-local tile
+axis and typed two-sided outside identity. A load fill or reduction identity is
+not this per-consumer relation; one access may require several relations for
+different downstream consumers. Author only Source-established outside values.
 A computed Layer-A i1 access guard gets exactly one
 boundary.access_guard_relations item with increasing target-broadcast axes and
 closed polarity; do not copy it into the predicate or boundary.broadcasts. A
@@ -1256,6 +1379,9 @@ has no result/yield; arm-local SSA never escapes. scope.effects plus matching
 EffectSpec/access_ref is sole membership and cannot overlap access_guard. Pi
 only realizes each arm scope in sibling placement=branch regions; it never
 copies predicate/polarity or turns the branch into select.
+Source early return: final `effect_if`; later work in its continuation arm; one
+pi.terminal_controls pair over arm `realize` instances. It names only
+terminal/continuation, never predicate/polarity/return/Source/API.
 
 A value-yielding Source `scf.if` is one Layer-A `value_if`, never `select`:
 author a visible scalar-i1 predicate, one result/type, and two explicit
@@ -1284,37 +1410,39 @@ Source frontend's local tile axis after program/grid axes select the program ins
 is not the whole-tensor logical axis number from reduce.attrs.axes. Preserve the
 observed local axis; do not copy a logical rank axis or add program axes to it.
 
-C contains scheduling slots/values only. It must not contain operators,
-predicates, source topology, APIs, policy, or a strategy field.
-When one C prior has a source-neutral J attachment, write optional subject_ref
-explicitly as one declared n*/d*/a*/q*/b* handle. Write axis_ref only when the
-closed subject contract exposes that logical axis: a reduction input axis, loop
-trip axis, canonical domain/index axis, or declared x* dimension. Do not infer
-an attachment from role, source names, pi, or physical thread/lane axes. Global
-priors may omit both fields; missing local attachment is safer than guessing.
+C owns scheduling slots/values only: no operator, predicate, Source topology,
+API, policy, or strategy. An optional source-neutral attachment names one
+declared n*/d*/a*/q*/b* subject_ref. Add axis_ref only for the subject's exact
+reduction/loop/contraction/domain/index/x* axis; never infer it from role, names,
+pi, or hardware axes. Global priors may omit both. A C attachment never names
+a p* parameter, source/local, or J-body v*.
 
-Pi is not semantics and is not executable. It may record only anonymous
-regions, instances referring to J/C handles, routes with operand slots, partial
-order, sharing, placement, and the closed source-neutral mechanism tags in the
-schema. Never put an operator, combiner, predicate, value, dtype, shape,
-frontend API, source identifier, source fragment, prose, or rule identity in pi.
+Pi is non-semantic, non-executable topology: anonymous regions, J/C-anchored
+instances, slotted routes, order, sharing, placement, closed mechanisms, and
+the typed relations below. It contains no operator, predicate, value, dtype,
+shape, frontend API, Source text/name, prose, or rule identity.
 
-For every physical loop region that realizes a structured J `loop` through a
-matching C tile slot, emit exactly one pi.iterations relation. The loop_instance
-must anchor that J loop and the tile_instance must anchor that C slot. Use
-`extent_step` when the physical induction space is zero-to-logical-extent with
-the C tile as its step; `rounded_extent_step` uses the same lower/step but upper
-ceil_div(trip,tile)*tile. Use `tile_ordinal` for zero-based unit-step tile
-ordinals with ceiling-divided trip count. Preserve the
-source realization distinction even when the induction variable is unused.
-An explicit relation may use any role when its C slot is required,
-positive-integer, and attached to the same loop/trip axis; axis ordinal 0 and
-that loop's declared trip.axis x* are equivalent. The reserved roles
-tile_extent and reduction_tile_extent only make a wholly missing relation
-mechanically detectable. A custom or misclassified role does not invalidate
-an explicit relation, but complete omission remains detectable only by Gate1.
-This closed tag never contains a bound expression, numeric value, operator,
-source spelling, or frontend API; do not encode untiled loops or invent a tile.
+For a tiled physical realization of a structured J `loop`, author exactly one
+pi.iterations relation: loop_instance anchors that loop and tile_instance a
+required positive-integer C slot on its trip axis. `extent_step` is zero to trip
+by tile; `rounded_extent_step` uses the same lower/step and upper
+ceil_div(trip,tile)*tile; `tile_ordinal` is zero-based unit-step tile ordinals.
+Preserve the Source basis even if unused. Any C role is valid when the explicit
+dependent anchors match; reserved tile roles only expose a wholly missing
+relation to TypeCheck. The tag has no formula/value/API and never denotes an
+untiled loop.
+
+For a Source-visible physical tiled loop implementing an otherwise ordinary J
+`reduce` or canonical `contraction`, keep that logical op in J and author one
+pi.physical_iterations relation. body_instance anchors that node; tile_instance
+anchors a required positive-integer C slot attached to the same reduced or
+contracted axis. Author the Source basis and forward/reverse direction; never
+derive them from family or valuation. This relation has no bound formula and
+does not create a J loop. If it has compiler-visible accumulator stages, author
+declaration-ordered pi.physical_loop_carriers init/state/next/result in the same
+region. These preserve time only; J still owns initialization/update semantics.
+Fixed code validates or rejects and never creates either relation from C or a
+Gate diff.
 
 Pi preserves every compiler-visible source realization event not denoted by J
 or pure C. Emit multiple instances with the same semantic_ref when one declared
@@ -1349,9 +1477,8 @@ one-producer sharing exactly; do not use duplicate instances as an undocumented
 code. Logical operators, predicates, fills, constants, index formulas, shapes,
 and effects remain exclusively in J.
 
-The selected entry/ABI and Python locals are alpha-renamed. Public CUDA
-helper/type/API tokens may remain; treat them as opaque syntax and never copy
-them into J, C, or pi. Do not recover original names.
+Source identifiers are alpha-renamed. Remaining CUDA API/type tokens are opaque;
+never copy them into J/C/pi or recover names.
 Output JSON only.
 """
 
@@ -2074,6 +2201,9 @@ def _validate_compiler_view(
             return canonical in {"bf16", "f16", "f32", "f64", "float", "double"}
         return isinstance(value, str) and canonical in {"str", "string"}
 
+    bound_constexpr_shape_coordinates = anonymous_view.get(
+        "bound_constexpr_shape_coordinates", {}
+    )
     for name, value in anonymous_view["bound_constexpr_values"].items():
         parameter = signature.get(name)
         if parameter is None:
@@ -2095,8 +2225,6 @@ def _validate_compiler_view(
     }
     dimensions: dict[str, int] = {}
     logical_values: dict[str, Any] = {}
-    contract_dimensions: dict[str, str] = {}
-    dimension_contracts: dict[str, str] = {}
 
     def bind_dimension(name: str, value: Any) -> None:
         if isinstance(value, bool) or not isinstance(value, int):
@@ -2105,55 +2233,54 @@ def _validate_compiler_view(
         if previous != value:
             raise ValueError(f"J symbolic extent {name!r} is inconsistent")
 
+    coordinate_to_dimension: dict[str, str] = {}
+    dimension_to_coordinate: dict[str, str] = {}
     def bind_shape(
         declared: list[int | str],
         actual: list[Any],
         contract: list[int | str] | None,
+        *,
+        parameter_name: str,
     ) -> None:
         if len(declared) != len(actual):
             raise ValueError("J tensor rank differs from trusted compiler view")
         if contract is not None and len(contract) != len(actual):
             raise ValueError(
-                "trusted Source shape contract rank differs from compiler valuation"
+                "trusted shape contract rank differs from its concrete valuation"
             )
-        for axis, (expected, extent) in enumerate(
-            zip(declared, actual, strict=True)
+        contracts = contract if contract is not None else [None] * len(actual)
+        for axis, (expected, extent, coordinate) in enumerate(
+            zip(declared, actual, contracts, strict=True)
         ):
             if isinstance(extent, bool) or not isinstance(extent, int):
                 raise ValueError("trusted tensor extent must be an integer")
-            contract_extent = contract[axis] if contract is not None else None
-            if isinstance(contract_extent, int):
-                if extent != contract_extent:
-                    raise ValueError(
-                        "trusted concrete tensor extent differs from its "
-                        "source-static shape contract"
-                    )
-                if expected != contract_extent:
-                    raise ValueError(
-                        "Lift changed a source-static tensor extent"
-                    )
-            elif isinstance(contract_extent, str):
+            if isinstance(coordinate, str):
                 if not isinstance(expected, str):
                     raise ValueError(
-                        "Lift specialized source-symbolic tensor extent "
-                        f"{contract_extent!r} to {expected!r}; author one x* dimension"
+                        "Lift specialized source-grounded shape coordinate "
+                        f"{coordinate!r} at {parameter_name}[{axis}] to a literal"
                     )
-                prior_dimension = contract_dimensions.setdefault(
-                    contract_extent, expected
+                previous_dimension = coordinate_to_dimension.setdefault(
+                    coordinate, expected
                 )
-                if prior_dimension != expected:
+                if previous_dimension != expected:
                     raise ValueError(
-                        "Lift split one source-symbolic tensor extent across "
+                        "Lift mapped one source-grounded shape coordinate to "
                         "multiple J dimensions"
                     )
-                prior_contract = dimension_contracts.setdefault(
-                    expected, contract_extent
+                previous_coordinate = dimension_to_coordinate.setdefault(
+                    expected, coordinate
                 )
-                if prior_contract != contract_extent:
+                if previous_coordinate != coordinate:
                     raise ValueError(
-                        "Lift merged distinct source-symbolic tensor extents "
+                        "Lift collapsed distinct source-grounded shape coordinates "
                         "into one J dimension"
                     )
+            elif isinstance(coordinate, int) and expected != coordinate:
+                raise ValueError(
+                    "Lift parameterized a Harness-declared static shape extent "
+                    f"at {parameter_name}[{axis}]"
+                )
             if isinstance(expected, int):
                 if expected != extent:
                     raise ValueError(
@@ -2190,6 +2317,7 @@ def _validate_compiler_view(
                 j_tensors[parameter.logical_ref].shape,
                 argument["shape"],
                 argument.get("shape_contract"),
+                parameter_name=argument["name"],
             )
         if (
             argument["kind"] == "scalar"
@@ -2207,25 +2335,6 @@ def _validate_compiler_view(
         expected_mode = argument.get("mode")
         if expected_mode is not None and parameter.mode.value != expected_mode:
             raise ValueError("Lift changed a trusted compiler argument mode")
-    value_dimension_pairs = {
-        (item.value_ref, item.dimension_ref)
-        for item in artifact.j.value_dimension_relations
-    }
-    for contract_name, dimension_ref in contract_dimensions.items():
-        parameter = signature.get(contract_name)
-        if parameter is None:
-            continue
-        if parameter.logical_ref == dimension_ref:
-            continue
-        if (
-            parameter.logical_ref in j_tensors
-            and (parameter.logical_ref, dimension_ref) in value_dimension_pairs
-        ):
-            continue
-        raise ValueError(
-            "Lift did not bind the Source shape carrier "
-            f"{contract_name!r} to its authored J dimension {dimension_ref!r}"
-        )
     for name, value in anonymous_view["bound_constexpr_values"].items():
         parameter = signature.get(name)
         if (
@@ -2241,6 +2350,71 @@ def _validate_compiler_view(
             and not j_tensors[parameter.logical_ref].shape
         ):
             logical_values[parameter.logical_ref] = value
+        coordinate = bound_constexpr_shape_coordinates.get(name)
+        if coordinate is None:
+            continue
+        dimension = coordinate_to_dimension.get(coordinate)
+        if dimension is None:
+            raise ValueError(
+                "Lift omitted a bound-constexpr source-grounded shape coordinate"
+            )
+        if parameter is not None and parameter.logical_ref == dimension:
+            continue
+        logical_ref = parameter.logical_ref if parameter is not None else None
+        if (
+            isinstance(logical_ref, str)
+            and logical_ref in j_tensors
+            and not j_tensors[logical_ref].shape
+            and any(
+                relation.value_ref == logical_ref
+                and relation.dimension_ref == dimension
+                and relation.relation == "eq"
+                for relation in artifact.j.value_dimension_relations
+            )
+        ):
+            continue
+        raise ValueError(
+            "Lift did not preserve the Harness bound-constexpr-to-shape-coordinate equality"
+        )
+
+    expected_shape_coordinates = set(
+        anonymous_view.get("shape_coordinates", {})
+    )
+    if set(coordinate_to_dimension) != expected_shape_coordinates:
+        missing = sorted(expected_shape_coordinates - set(coordinate_to_dimension))
+        raise ValueError(
+            "Lift omitted source-grounded shape coordinate(s) from J tensor shapes: "
+            + ", ".join(missing)
+        )
+
+    for argument in anonymous_view["arguments"]:
+        coordinate = argument.get("shape_coordinate")
+        if not isinstance(coordinate, str):
+            continue
+        dimension = coordinate_to_dimension.get(coordinate)
+        if dimension is None:
+            raise ValueError(
+                "Lift omitted a scalar-bound source-grounded shape coordinate"
+            )
+        parameter = signature[argument["name"]]
+        if parameter.logical_ref == dimension:
+            continue
+        logical_ref = parameter.logical_ref
+        if (
+            isinstance(logical_ref, str)
+            and logical_ref in j_tensors
+            and not j_tensors[logical_ref].shape
+            and any(
+                relation.value_ref == logical_ref
+                and relation.dimension_ref == dimension
+                and relation.relation == "eq"
+                for relation in artifact.j.value_dimension_relations
+            )
+        ):
+            continue
+        raise ValueError(
+            "Lift did not preserve the Harness scalar-to-shape-coordinate equality"
+        )
 
     try:
         validate_dimension_instantiation(artifact.j, dimensions)

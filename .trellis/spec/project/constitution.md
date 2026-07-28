@@ -35,8 +35,20 @@ Replay = W_f(J,pi,MaskC(C);U_f)
 - closed schema、引用、类型、授权和隔离检查；
 - `MaskC(C)`、`InterfaceView(J)` 等确定性投影；
 - build、bind、run、observe、compare 和结构化诊断；
-- 将正式 Runner 的同一 source-free parser/Decode/anonymous-view/TypeCheck callable core 以有界、
-  只读、非认证的 CandidateCheck 暴露给 source-aware Lift；Runner 另做 privacy/provenance 并重跑 core；
+- 将正式 Runner 的同一 source-free parser/Decode/anonymous-view/TypeCheck callable core 以时间治理、
+  只读、非认证的 CandidateCheck 暴露给持久 source-aware Lift owner；Runner 另做 privacy/provenance
+  并重跑 core；
+- 在同一 owner 的受限 workspace 中保存文件、原子刷新 closed feedback、对 LLM 明示的唯一 old/new
+  字符串执行 exact-text replacement，以及用 hash/长度 receipt 压缩旧 tool transport；这些机制不得
+  解析、选择、补写或推荐任何 J/C/π 语义；
+- 将 Lift 本来获准读取、且在固定大小阈值内的 exact Source/Harness/closed feedback 与 source-neutral
+  contract/preflight/example 原文直接搬入 user packet；超限只能给 receipt/path，不得由 fixed code
+  生成语义摘要；
+- 对 exact Gate1 diff 作版本化、确定性的 bounded frontier 投影：只保留 closed category count 与有限
+  原始 witness，完整 diff 继续原样落盘并可按需读取；不得解释 mismatch、排序候选、建议语义或产生
+  corrected patch；
+- 将 LLM 在一个 action 中给出的完整 candidate text 原样落盘并调用既有 preflight，或在 LLM 明示
+  exact old/new text 后立即 preflight；不得由 runtime 生成、选择或修复字段；
 - 按外部比较政策 Q 从 B 的封闭类别构造确定性、对称的 Gate2 comparator；
 - 对不支持或不合法的输入 fail closed。
 
@@ -60,7 +72,9 @@ Replay = W_f(J,pi,MaskC(C);U_f)
 ## 实验与系统改进
 
 实验期间规则、prompt、模型配置、TypeCheck、observer profile 和比较政策 Q 保持不变，只修改
-候选 artifact。Gate1 失败的 diff 只反馈给 source-aware Lift；relift 必须产生完整新三元组，
+候选 artifact。Gate1 失败的 bounded frontier 与 exact diff 只反馈给同一 branch 的持久 source-aware
+Lift owner；owner 继续修改
+自己刚提交的完整 artifact，relift 必须产生完整新三元组，
 随后生成全新的盲 Replay。三轮仍未闭合则报告 `NO_CLOSURE`。
 
 Gate2 失败结束本次实验。此后才允许根据跨样本失败修改系统，再从新的实验开始运行。

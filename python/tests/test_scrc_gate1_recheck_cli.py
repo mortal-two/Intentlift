@@ -117,6 +117,8 @@ def test_cli_rechecks_one_fixed_artifact_in_new_diagnostic_evidence(
             str(tmp_path / "rechecks"),
             "--provider",
             "test-provider",
+            "--model",
+            "test-model-override",
             "--effort",
             "xhigh",
             "--replay-backend",
@@ -135,6 +137,7 @@ def test_cli_rechecks_one_fixed_artifact_in_new_diagnostic_evidence(
     assert payload["artifact_digest"] == "artifact-digest"
     assert payload["replay_backend"] == "miniswe"
     assert calls["case"] == case_id
+    assert calls["recheck"][2]["provider"].model == "test-model-override"
     assert calls["validated"][0] == parent.resolve()
     assert calls["recheck"][2]["effort"] == "xhigh"
     assert calls["recheck"][2]["replay_backend"] == "miniswe"

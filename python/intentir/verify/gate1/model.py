@@ -3550,20 +3550,38 @@ def _validate_logical_signature(archive: SemanticArchive) -> None:
                         f"rank {len(tensor.shape)!r}",
                     )
                 )
-            if parameter.mode is ParameterMode.INPUT and ref not in input_refs:
-                issues.append(
-                    _SchemaIssue(
-                        f"{base}.mode",
-                        "input signature parameter must bind a J input",
+            if parameter.mode is ParameterMode.INPUT:
+                if ref not in input_refs:
+                    issues.append(
+                        _SchemaIssue(
+                            f"{base}.mode",
+                            "input signature parameter must bind a J input",
+                        )
                     )
-                )
-            if parameter.mode is ParameterMode.OUTPUT and ref not in output_refs:
-                issues.append(
-                    _SchemaIssue(
-                        f"{base}.mode",
-                        "output signature parameter must bind a J output",
+                elif ref in output_refs:
+                    issues.append(
+                        _SchemaIssue(
+                            f"{base}.mode",
+                            "a logical tensor declared in both J inputs and J "
+                            "outputs must use signature mode=inout, never input",
+                        )
                     )
-                )
+            if parameter.mode is ParameterMode.OUTPUT:
+                if ref not in output_refs:
+                    issues.append(
+                        _SchemaIssue(
+                            f"{base}.mode",
+                            "output signature parameter must bind a J output",
+                        )
+                    )
+                elif ref in input_refs:
+                    issues.append(
+                        _SchemaIssue(
+                            f"{base}.mode",
+                            "a logical tensor declared in both J inputs and J "
+                            "outputs must use signature mode=inout, never output",
+                        )
+                    )
             if parameter.mode is ParameterMode.INOUT and not (
                 ref in input_refs and ref in output_refs
             ):
@@ -4005,7 +4023,7 @@ class ProvenanceRecord(StrictJSONMixin):
 class Gate1Artifact(StrictJSONMixin):
     """The complete proof-relevant Lift result: exactly ``(J, C, pi)``."""
 
-    SCHEMA: ClassVar[str] = "intentir.scrc.artifact.v7"
+    SCHEMA: ClassVar[str] = "intentir.scrc.artifact.v9"
     LEGACY_SCHEMAS: ClassVar[frozenset[str]] = frozenset(
         {
             "intentir.scrc.artifact.v1",
@@ -4014,6 +4032,8 @@ class Gate1Artifact(StrictJSONMixin):
             "intentir.scrc.artifact.v4",
             "intentir.scrc.artifact.v5",
             "intentir.scrc.artifact.v6",
+            "intentir.scrc.artifact.v7",
+            "intentir.scrc.artifact.v8",
         }
     )
 
@@ -4086,6 +4106,8 @@ class Gate1Artifact(StrictJSONMixin):
             "intentir.scrc.artifact.v4",
             "intentir.scrc.artifact.v5",
             "intentir.scrc.artifact.v6",
+            "intentir.scrc.artifact.v7",
+            "intentir.scrc.artifact.v8",
             self.SCHEMA,
         } and any(
             item.masked_contribution is not None
@@ -4141,9 +4163,29 @@ class Gate1Artifact(StrictJSONMixin):
             for top in self.j.intent.body
             for op in _walk_intent_ops(top)
         )
-        if self.wire_schema != self.SCHEMA and has_value_if:
+        if self.wire_schema in {
+            "intentir.scrc.artifact.v1",
+            "intentir.scrc.artifact.v2",
+            "intentir.scrc.artifact.v3",
+            "intentir.scrc.artifact.v4",
+            "intentir.scrc.artifact.v5",
+            "intentir.scrc.artifact.v6",
+        } and has_value_if:
             raise SchemaError(
                 "Gate1 artifact v1-v6 do not contain J value_if regions"
+            )
+        if self.wire_schema not in {
+            "intentir.scrc.artifact.v8",
+            self.SCHEMA,
+        } and (
+            self.pi.physical_iterations or self.pi.physical_loop_carriers
+        ):
+            raise SchemaError(
+                "Gate1 artifact v1-v7 do not contain pi physical time relations"
+            )
+        if self.wire_schema != self.SCHEMA and self.pi.terminal_controls:
+            raise SchemaError(
+                "Gate1 artifact v1-v8 do not contain pi terminal_controls"
             )
 
         node_refs = set(self.j.node_ids) | set(self.j.node_ids.values())
@@ -4206,6 +4248,8 @@ class Gate1Artifact(StrictJSONMixin):
             "intentir.scrc.artifact.v4",
             "intentir.scrc.artifact.v5",
             "intentir.scrc.artifact.v6",
+            "intentir.scrc.artifact.v7",
+            "intentir.scrc.artifact.v8",
             cls.SCHEMA,
         } and (
             pi_value is not None and "iterations" not in pi_value
@@ -4224,6 +4268,8 @@ class Gate1Artifact(StrictJSONMixin):
             "intentir.scrc.artifact.v4",
             "intentir.scrc.artifact.v5",
             "intentir.scrc.artifact.v6",
+            "intentir.scrc.artifact.v7",
+            "intentir.scrc.artifact.v8",
             cls.SCHEMA,
         }:
             if j_value is not None and "dimension_constraints" not in j_value:
@@ -4270,9 +4316,37 @@ class Gate1Artifact(StrictJSONMixin):
                 raise SchemaError(
                     "Gate1 artifact v1-v3 do not contain J consumer_extensions"
                 )
+        if schema in {"intentir.scrc.artifact.v8", cls.SCHEMA}:
+            if pi_value is not None and "physical_iterations" not in pi_value:
+                raise SchemaError(
+                    "Gate1Artifact.pi is missing required field: physical_iterations"
+                )
+            if pi_value is not None and "physical_loop_carriers" not in pi_value:
+                raise SchemaError(
+                    "Gate1Artifact.pi is missing required field: "
+                    "physical_loop_carriers"
+                )
+        elif pi_value is not None and (
+            "physical_iterations" in pi_value
+            or "physical_loop_carriers" in pi_value
+        ):
+            raise SchemaError(
+                "Gate1 artifact v1-v7 do not contain pi physical time relations"
+            )
+        if schema == cls.SCHEMA:
+            if pi_value is not None and "terminal_controls" not in pi_value:
+                raise SchemaError(
+                    "Gate1Artifact.pi is missing required field: terminal_controls"
+                )
+        elif pi_value is not None and "terminal_controls" in pi_value:
+            raise SchemaError(
+                "Gate1 artifact v1-v8 do not contain pi terminal_controls"
+            )
         if schema in {
             "intentir.scrc.artifact.v5",
             "intentir.scrc.artifact.v6",
+            "intentir.scrc.artifact.v7",
+            "intentir.scrc.artifact.v8",
             cls.SCHEMA,
         }:
             if (
@@ -4329,6 +4403,8 @@ class Gate1Artifact(StrictJSONMixin):
                     "intentir.scrc.artifact.v4",
                     "intentir.scrc.artifact.v5",
                     "intentir.scrc.artifact.v6",
+                    "intentir.scrc.artifact.v7",
+                    "intentir.scrc.artifact.v8",
                     self.SCHEMA,
                 },
                 include_loop_carriers=self.wire_schema
@@ -4336,8 +4412,13 @@ class Gate1Artifact(StrictJSONMixin):
                     "intentir.scrc.artifact.v4",
                     "intentir.scrc.artifact.v5",
                     "intentir.scrc.artifact.v6",
+                    "intentir.scrc.artifact.v7",
+                    "intentir.scrc.artifact.v8",
                     self.SCHEMA,
                 },
+                include_physical_time=self.wire_schema
+                in {"intentir.scrc.artifact.v8", self.SCHEMA},
+                include_terminal_controls=self.wire_schema == self.SCHEMA,
             ),
         }
 

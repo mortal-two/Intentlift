@@ -5,17 +5,24 @@ Trellis CLI、自动 session 或 workflow phase。
 
 ## 当前任务
 
-2026-07-24 只有 Task 11 是活动任务。它继承已归档 Task 10 的 v4/v8 协议，以独立 fresh
-lifecycle 对 28 个目标 Kernel 做有界 case-level 并行闭合，并按 registry ordinal 稳定汇总；不会
-恢复或改写已经结束的 Task 03。后端 B0/B1 仍在稳定 J corpus 形成后独立展开。
+Task 11 继续作为 28-Kernel 闭合主线；历史严格覆盖为18/28。Task 12保留失败反例后归档，Task 13
+完成轻量 single-owner MiniSWE、同合同 Codex主力路径、adapter v5 shape identity与artifact.v8
+physical-time工程能力后归档。Task 14 使用该干净工程基线，先逐case审查source-grounded `P_cert`
+（真实input/output/inout、concrete dtype、selected variant与shape identity），再对全部28项做当前版本
+fresh Lift/Replay/Gate1/Gate2，而不是只补历史剩余10项；旧18份证书保持不可变但不替代新corpus。
+Task 11/14按 registry ordinal有界并行汇总，不恢复或改写已结束 Task03。production backend B0/B1
+仍在稳定 J corpus形成后独立展开。
 
-- [Task 11：SCRC v4 的 28-Kernel 有界并行全闭合](07-24-scrc-v4-full-closure-11/task.md)（执行中；唯一当前主线）
+- [Task 11：SCRC v4 的 28-Kernel 有界并行全闭合](07-24-scrc-v4-full-closure-11/task.md)（执行中；闭合主线）
+- [Task 14：Source-Grounded Certification Profile 下的 Codex 28-Kernel Fresh SCRC 最终闭合](07-27-codex-parametric-28-closure-14/task.md)（执行中；Task 11 的最终 fresh corpus执行波）
 
 ## 本轮已归档任务
 
-Task 01–10 均已结束并迁入 `archive/2026-07/`。其中任务正文与 evidence 是历史记录，不再作为
+Task 01–10、Task 12 与 Task 13 均已结束并迁入 `archive/2026-07/`。其中任务正文与 evidence 是历史记录，不再作为
 当前执行状态或后继调度的权威来源。
 
+- [Task 13：Lightweight Single-Owner MiniSWE / Codex Agent Runtime（工程完成）](archive/2026-07/07-27-lightweight-miniswe-codex-runtime-13/task.md)
+- [Task 12：Persistent Single-Owner Transactional Agent Runtime（验收未通过）](archive/2026-07/07-26-single-owner-agent-runtime-12/task.md)
 - [Task 10：J Semantic Readiness 与 SCRC vNext 横向闭合](archive/2026-07/07-24-j-readiness-scrc-vnext-10/task.md)
 - [Task 09：退役 RefEval 重复 Layer-B 解释器](archive/2026-07/07-23-retire-duplicate-boundary-interpreter-09/task.md)
 - [Task 08：唯一 J 的可执行 CUDA ABI 与 Backend Conformance 闭环](archive/2026-07/07-23-executable-j-cuda-backend-08/task.md)

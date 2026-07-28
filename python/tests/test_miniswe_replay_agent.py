@@ -24,16 +24,21 @@ from intentir.verify.gate1.replay import (
 from minisweagent.environments.intentir_replay import (
     INTENTIR_PACKET_QUERY,
     INTENTIR_REPLAY_CHECK,
+    INTENTIR_REPLAY_COMMIT,
     INTENTIR_REPLAY_COMPILE_CHECK,
     INTENTIR_REPLAY_INSPECT,
+    INTENTIR_REPLAY_ROLLBACK,
     INTENTIR_REPLAY_SUBMIT,
+    INTENTIR_REPLAY_SUBMIT_COMMAND,
     REPLAY_CHECK_PROTOCOL,
     REPLAY_INPUT_FILES,
     REPLAY_SANDBOX_HOSTNAME,
     REPLAY_TOOL_APPLETS,
+    REPLAY_TRANSACTION_PROTOCOL,
     IntentIRReplayEnvironment,
     IntentIRReplayWorkspace,
 )
+from minisweagent.exceptions import Submitted
 from minisweagent.run.intentir_replay import (
     intentir_replay_episode_contract_sha256,
     run_intentir_replay,
@@ -57,7 +62,9 @@ INVALID_CONSTEXPR_REPLAY = VALID_REPLAY.replace(
 
 
 class _ScriptedModel:
-    def __init__(self, commands: list[str], *, secret: str = "") -> None:
+    def __init__(
+        self, commands: list[str | list[str]], *, secret: str = ""
+    ) -> None:
         self.commands = list(commands)
         self.secret = secret
         self.query_inputs: list[list[dict]] = []
@@ -65,11 +72,13 @@ class _ScriptedModel:
     def query(self, messages, **kwargs):
         del kwargs
         self.query_inputs.append(list(messages))
+        command = self.commands.pop(0)
+        commands = [command] if isinstance(command, str) else command
         return {
             "role": "assistant",
             "content": "",
             "extra": {
-                "actions": [{"command": self.commands.pop(0)}],
+                "actions": [{"command": item} for item in commands],
                 "cost": 0.0,
             },
         }
@@ -345,7 +354,7 @@ def test_own_replay_source_inspect_is_syntax_only_and_diagnostic() -> None:
         "diagnostic_syntax_only_own_replay_source"
     )
     assert inspect_audit["calls"] == 4
-    assert inspect_audit["limit"] == 12
+    assert inspect_audit["limit"] == 0
 
 
 def test_synthetic_compile_profile_never_reads_c0_or_harness_values() -> None:
@@ -451,16 +460,28 @@ def test_episode_contract_digest_binds_exact_files_prompts_and_budgets() -> None
     assert len(digest) == 64
     assert len({digest, changed_budget, changed_tool, changed_prompt}) == 4
     assert default_config["agent"].get("output_path") is None
-    assert default_config["agent"]["step_limit"] == 40
-    assert default_config["environment"]["replay_compile_check_limit"] == 7
-    assert default_config["environment"]["replay_source_inspect_limit"] == 12
+    assert default_config["agent"]["step_limit"] == 0
+    assert default_config["environment"]["replay_compile_check_limit"] == 0
+    assert default_config["environment"]["replay_source_inspect_limit"] == 0
     assert default_config["model"]["retry_attempts"] == 3
-    assert MINISWE_REPLAY_BACKEND == "minisweagent.intentir-replay.v4"
+    assert default_config["model"]["max_tool_calls_per_response"] == 4
+    assert default_config["model"]["enable_replay_patch_tool"] is True
+    assert default_config["model"]["enable_submit_replay_tool"] is True
+    assert default_config["model"]["compact_tool_history"] is True
+    assert default_config["model"]["compact_workspace_mirrors"] is False
+    assert default_config["model"]["compact_response_history_keep_recent"] == 3
+    assert default_config["model"]["use_previous_response_id"] is True
+    assert default_config["model"]["routine_reasoning_effort"] == "low"
+    assert default_config["model"]["routine_timeout_seconds"] == 180
+    assert default_config["model"]["retry_timeouts"] is True
+    assert default_config["model"]["semantic_initial_turns"] == 1
+    assert default_config["model"]["model_kwargs"]["parallel_tool_calls"] is True
+    assert MINISWE_REPLAY_BACKEND == "minisweagent.intentir-replay.v16"
     instance = default_config["agent"]["instance_template"]
-    assert "typed rank and axis structure" in instance
-    assert "algebraically equivalent flattened reduction" in instance
-    assert "obligation ledger" in instance
-    assert "own-source inspect overview" in instance
+    assert "exact_packet_embedded=true" in instance
+    assert "do not query" in instance
+    assert "value-equivalent flattened formula" in instance
+    assert "Construct and direct-submit complete Triton source early" in instance
 
 
 def test_static_ingress_checks_exact_packet_abi_without_compiling() -> None:
@@ -497,6 +518,24 @@ def test_static_ingress_checks_exact_packet_abi_without_compiling() -> None:
     }
 
 
+def test_static_ingress_rejects_nonexistent_triton_program_axis() -> None:
+    invalid = VALID_REPLAY.replace(
+        "    v0 = tl.arange(0, c0)",
+        "    pid = tl.program_id(3)\n    v0 = tl.arange(0, c0) + pid * c0",
+    )
+
+    rejected = replay_source_ingress(
+        invalid,
+        artifact=make_reduce_artifact(),
+        frontend=Frontend.TRITON,
+    )
+
+    diagnostic = rejected.to_check_response()["diagnostics"][0]
+    assert diagnostic["rule_code"] == "program_id_axis_range"
+    assert diagnostic["path"] == "<program_id-axis>"
+    assert diagnostic["line"] == 6
+
+
 def test_static_ingress_reports_all_independent_constexpr_annotation_errors() -> None:
     artifact = make_reduce_artifact()
     two_errors = INVALID_CONSTEXPR_REPLAY.replace(
@@ -519,6 +558,216 @@ def test_static_ingress_reports_all_independent_constexpr_annotation_errors() ->
     assert [
         item["path"] for item in rejected.to_check_response()["diagnostics"]
     ] == ["<parameter:p0>", "<parameter:c0>"]
+
+
+def test_static_ingress_preserves_but_forbids_reading_true_absent_carrier() -> None:
+    payload = make_reduce_artifact().to_json()
+    payload["j"]["signature"]["parameters"].append(
+        {
+            "name": "p3",
+            "kind": "opaque",
+            "mode": "value",
+            "dtype": "none",
+        }
+    )
+    artifact = Gate1Artifact.from_json(payload)
+    prefix = VALID_REPLAY.replace(
+        "def scrc_k0(p0, p1, p2, c0: tl.constexpr):",
+        "def scrc_k0(p0, p1, p2, p3, c0: tl.constexpr):",
+    )
+
+    accepted = replay_source_ingress(
+        prefix,
+        artifact=artifact,
+        frontend=Frontend.TRITON,
+    )
+    rejected = replay_source_ingress(
+        prefix.replace(
+            "    v0 = tl.arange(0, c0)",
+            "    absent = p3\n    v0 = tl.arange(0, c0)",
+        ),
+        artifact=artifact,
+        frontend=Frontend.TRITON,
+    )
+
+    assert accepted.status == "pass"
+    assert rejected.to_check_response()["diagnostics"] == [
+        {
+            "rule_code": "absent_carrier_use_forbidden",
+            "path": "<parameter:p3>",
+            "anonymous_handles": ["p3"],
+            "line": 6,
+        }
+    ]
+
+
+def test_synthetic_compile_rejects_compiled_transfer_occurrence_collapse() -> None:
+    unmasked_ttir = """
+module {
+  tt.func public @scrc_k0(%p0: !tt.ptr<f32>, %p1: !tt.ptr<f32>, %p2: i32) attributes {noinline = false} {
+    %value = tt.load %p0 : !tt.ptr<f32>
+    tt.store %p1, %value : !tt.ptr<f32>
+    tt.return
+  }
+}
+"""
+
+    class PassingCompiler:
+        def compile(self, _source, _case):
+            return CompileResult(True, ttir=unmasked_ttir)
+
+    payload = make_reduce_artifact().to_json()
+    for instance in payload["pi"]["instances"]:
+        if instance["semantic_ref"] in {"a0", "a1"}:
+            instance["mechanism"] = "transfer_direct"
+    artifact = Gate1Artifact.from_json(payload)
+    result = source_blind_replay_compile_check(
+        VALID_REPLAY,
+        artifact,
+        "scrc_k0",
+        compiler=PassingCompiler(),  # type: ignore[arg-type]
+    )
+
+    assert result.status == "fail"
+    diagnostic = result.to_check_response()["diagnostics"][0]
+    assert diagnostic["rule_code"] == "compiled_transfer_direct_count"
+    assert "expected=0, actual=1" in diagnostic["path"]
+
+
+def _physical_reduce_replay_artifact(
+    *, with_carrier: bool = False
+) -> Gate1Artifact:
+    artifact = make_reduce_artifact()
+    artifact.c.slots[0].subject_ref = "n1"
+    artifact.c.slots[0].axis_ref = 1
+    artifact.c.slots[0].required = True
+    artifact.pi.regions.extend(
+        [
+            {"id": "r1", "parent": "r0", "placement": "program"},
+            {"id": "r2", "parent": "r1", "placement": "loop"},
+        ]
+    )
+    artifact.pi.instances.append(
+        {
+            "id": "i4",
+            "semantic_ref": "c0",
+            "region": "r1",
+            "mechanism": "realize",
+        }
+    )
+    artifact.pi.physical_iterations = [
+        {
+            "region": "r2",
+            "body_instance": "i2",
+            "tile_instance": "i4",
+            "induction_basis": "extent_step",
+            "direction": "forward",
+        }
+    ]
+    if with_carrier:
+        artifact.pi.instances.extend(
+            [
+                {
+                    "id": "i5",
+                    "semantic_ref": "t1",
+                    "region": "r1",
+                    "mechanism": "realize",
+                },
+                {
+                    "id": "i6",
+                    "semantic_ref": "t1",
+                    "region": "r2",
+                    "mechanism": "realize",
+                },
+                {
+                    "id": "i7",
+                    "semantic_ref": "t1",
+                    "region": "r2",
+                    "mechanism": "realize",
+                },
+                {
+                    "id": "i8",
+                    "semantic_ref": "t1",
+                    "region": "r1",
+                    "mechanism": "realize",
+                },
+            ]
+        )
+        artifact.pi.routes.extend(
+            [
+                {"source": "i5", "target": "i6", "slots": [0]},
+                {"source": "i6", "target": "i7", "slots": [0]},
+            ]
+        )
+        artifact.pi.physical_loop_carriers = [
+            {
+                "region": "r2",
+                "init": "i5",
+                "state": "i6",
+                "next": "i7",
+                "result": "i8",
+            }
+        ]
+    return Gate1Artifact.from_json(artifact.to_json())
+
+
+def test_synthetic_compile_rejects_missing_authored_physical_iteration() -> None:
+    artifact = _physical_reduce_replay_artifact()
+    loopless_ttir = """
+module {
+  tt.func public @scrc_k0(%p0: !tt.ptr<f32>, %p1: !tt.ptr<f32>, %p2: i32) attributes {noinline = false} {
+    tt.return
+  }
+}
+"""
+
+    class PassingCompiler:
+        def compile(self, _source, _case):
+            return CompileResult(True, ttir=loopless_ttir)
+
+    result = source_blind_replay_compile_check(
+        VALID_REPLAY,
+        artifact,
+        "scrc_k0",
+        compiler=PassingCompiler(),  # type: ignore[arg-type]
+    )
+
+    assert result.status == "fail"
+    diagnostic = result.to_check_response()["diagnostics"][0]
+    assert diagnostic["rule_code"] == "compiled_iteration_count"
+    assert "expected=1, actual=0" in diagnostic["path"]
+
+
+def test_synthetic_compile_rejects_omitted_authored_physical_carrier() -> None:
+    artifact = _physical_reduce_replay_artifact(with_carrier=True)
+    carrierless_loop_ttir = """
+module {
+  tt.func public @scrc_k0(%p0: !tt.ptr<f32>, %p1: !tt.ptr<f32>, %p2: i32) attributes {noinline = false} {
+    %c0 = arith.constant 0 : i32
+    %c1 = arith.constant 1 : i32
+    scf.for %iv = %c0 to %p2 step %c1 : i32 {
+      scf.yield
+    }
+    tt.return
+  }
+}
+"""
+
+    class PassingCompiler:
+        def compile(self, _source, _case):
+            return CompileResult(True, ttir=carrierless_loop_ttir)
+
+    result = source_blind_replay_compile_check(
+        VALID_REPLAY,
+        artifact,
+        "scrc_k0",
+        compiler=PassingCompiler(),  # type: ignore[arg-type]
+    )
+
+    assert result.status == "fail"
+    diagnostic = result.to_check_response()["diagnostics"][0]
+    assert diagnostic["rule_code"] == "compiled_iteration_carrier_arity"
+    assert "expected=[2], actual=[1]" in diagnostic["path"]
 
 
 def test_replay_sandbox_has_empty_root_fixed_entrypoints_and_no_network(
@@ -576,7 +825,7 @@ def test_static_error_can_be_repaired_in_one_fresh_multi_turn_episode() -> None:
             f"{INTENTIR_REPLAY_CHECK} /output/replay.source",
             _write_source(VALID_REPLAY),
             f"{INTENTIR_REPLAY_CHECK} /output/replay.source",
-            f"printf '{INTENTIR_REPLAY_SUBMIT}\\n'",
+            f"{INTENTIR_REPLAY_SUBMIT_COMMAND} /output/replay.source",
         ]
     )
     try:
@@ -592,6 +841,12 @@ def test_static_error_can_be_repaired_in_one_fresh_multi_turn_episode() -> None:
         workspace.cleanup()
 
     assert result.source_text == VALID_REPLAY
+    first_packet = model.query_inputs[0][1]["content"]
+    assert "intentir.replay-startup-context.v2" in first_packet
+    assert '"exact_packet_embedded":true' in first_packet
+    assert '"packet":' in first_packet
+    assert '"views":' not in first_packet
+    assert "anonymous_source" not in first_packet
     evidence = result.trajectory["info"]["replay_check"]
     assert [item["status"] for item in evidence["results"]] == [
         "fail",
@@ -600,16 +855,73 @@ def test_static_error_can_be_repaired_in_one_fresh_multi_turn_episode() -> None:
     assert evidence["evaluations"] == 2
 
 
-def test_synthetic_compile_probe_is_advisory_and_never_blocks_submission() -> None:
+def test_replay_exact_no_progress_loop_terminates_as_orchestration_stall() -> None:
+    workspace = _workspace()
+    model = _ScriptedModel(["true", "true", "true"])
+    try:
+        with pytest.raises(Exception) as captured:
+            run_intentir_replay(model=model, workspace=workspace)
+    finally:
+        workspace.cleanup()
+
+    result = captured.value.result
+    assert result.exit_status == "OrchestrationStall"
+    assert result.model_calls == 3
+    stagnation = result.trajectory["info"]["agent_runtime"]["stagnation"]
+    assert stagnation["terminated"] is True
+    assert stagnation["consecutive"] == 3
+
+
+def test_replay_multi_action_write_batch_is_rejected_before_execution() -> None:
     workspace = _workspace()
     model = _ScriptedModel(
         [
+            [
+                "printf forbidden > /output/extra",
+                "printf forbidden > /output/replay.source",
+            ],
             _write_source(VALID_REPLAY),
-            f"{INTENTIR_REPLAY_CHECK} /output/replay.source",
-            f"{INTENTIR_REPLAY_COMPILE_CHECK} /output/replay.source",
-            f"printf '{INTENTIR_REPLAY_SUBMIT}\n'",
+            f"{INTENTIR_REPLAY_SUBMIT_COMMAND} /output/replay.source",
         ]
     )
+    try:
+        result = run_intentir_replay(model=model, workspace=workspace)
+    finally:
+        workspace.cleanup()
+
+    assert result.source_text == VALID_REPLAY
+    policy = result.trajectory["info"]["multi_action_policy"]
+    assert policy["rejections"] == 1
+    assert "no action in this response was executed" in json.dumps(
+        result.trajectory["messages"]
+    )
+
+
+def test_replay_multi_action_runtime_rejects_more_than_four_packet_queries() -> None:
+    workspace = _workspace()
+    environment = IntentIRReplayEnvironment(
+        input_dir=workspace.input_dir,
+        output_dir=workspace.output_dir,
+        scratch_dir=workspace.scratch_dir,
+    )
+    try:
+        diagnostic = environment.validate_actions(
+            [
+                {"command": f"{INTENTIR_PACKET_QUERY} overview"}
+                for _index in range(5)
+            ]
+        )
+        policy = environment.serialize()["info"]["multi_action_policy"]
+    finally:
+        workspace.cleanup()
+
+    assert diagnostic is not None and "at most four" in diagnostic
+    assert policy["rejections"] == 1
+
+
+def test_construction_compile_rejects_submission_until_exact_bytes_pass() -> None:
+    workspace = _workspace()
+    compile_allowed = False
 
     def passed_ingress(_source: str) -> dict:
         return {
@@ -618,10 +930,10 @@ def test_synthetic_compile_probe_is_advisory_and_never_blocks_submission() -> No
             "diagnostics": [],
         }
 
-    def failed_compile_probe(_source: str) -> dict:
+    def compile_probe(_source: str) -> dict:
         return {
             "protocol": REPLAY_CHECK_PROTOCOL,
-            "status": "fail",
+            "status": "pass" if compile_allowed else "fail",
             "diagnostics": [
                 {
                     "rule_code": "synthetic_frontend_compile_failed",
@@ -629,26 +941,38 @@ def test_synthetic_compile_probe_is_advisory_and_never_blocks_submission() -> No
                     "anonymous_handles": [],
                     "line": 7,
                 }
-            ],
+            ] if not compile_allowed else [],
         }
 
+    environment = IntentIRReplayEnvironment(
+        input_dir=workspace.input_dir,
+        output_dir=workspace.output_dir,
+        scratch_dir=workspace.scratch_dir,
+        replay_checker=passed_ingress,
+        replay_compile_checker=compile_probe,
+    )
     try:
-        result = run_intentir_replay(
-            model=model,
-            workspace=workspace,
-            replay_checker=passed_ingress,
-            replay_compile_checker=failed_compile_probe,
+        rejected = environment.execute(
+            {"tool_name": "submit_replay", "source_text": VALID_REPLAY}
         )
+        assert rejected["returncode"] == 2
+        assert "construction compile rejected" in rejected["output"]
+        compile_allowed = True
+        with pytest.raises(Submitted):
+            environment.execute(
+                {"tool_name": "submit_replay", "source_text": VALID_REPLAY}
+            )
+        info = environment.serialize()["info"]
     finally:
         workspace.cleanup()
 
-    assert result.source_text == VALID_REPLAY
-    info = result.trajectory["info"]
-    assert info["replay_check"]["results"][0]["status"] == "pass"
     compile_evidence = info["replay_compile_check"]
-    assert compile_evidence["authority"] == "advisory_public_synthetic_profile"
-    assert compile_evidence["evaluations"] == 1
-    assert compile_evidence["results"][0]["status"] == "fail"
+    assert "no Gate1" in compile_evidence["authority"]
+    assert compile_evidence["evaluations"] == 2
+    assert [item["status"] for item in compile_evidence["results"]] == [
+        "fail",
+        "pass",
+    ]
 
 
 def test_check_budget_submission_reserve_and_exact_bytes() -> None:
@@ -696,6 +1020,176 @@ def test_check_budget_submission_reserve_and_exact_bytes() -> None:
     ]
 
 
+def test_replay_direct_submit_and_exact_patch_share_submission_preflight() -> None:
+    workspace = _workspace()
+
+    def checker(source: str) -> dict:
+        accepted = source == VALID_REPLAY
+        return {
+            "protocol": REPLAY_CHECK_PROTOCOL,
+            "status": "pass" if accepted else "fail",
+            "diagnostics": (
+                []
+                if accepted
+                else [
+                    {
+                        "rule_code": "constexpr_annotation_required",
+                        "path": "<parameter:c0>",
+                        "anonymous_handles": ["c0"],
+                        "line": 5,
+                    }
+                ]
+            ),
+        }
+
+    environment = IntentIRReplayEnvironment(
+        input_dir=workspace.input_dir,
+        output_dir=workspace.output_dir,
+        scratch_dir=workspace.scratch_dir,
+        replay_checker=checker,
+    )
+    try:
+        rejected = environment.execute(
+            {
+                "tool_name": "submit_replay",
+                "source_text": INVALID_CONSTEXPR_REPLAY,
+            }
+        )
+        assert rejected["returncode"] == 2
+        assert workspace.replay_path.read_text() == INVALID_CONSTEXPR_REPLAY
+        with pytest.raises(Submitted):
+            environment.execute(
+                {
+                    "tool_name": "apply_replay_patch",
+                    "path": "/output/replay.source",
+                    "old_text": "c0):",
+                    "new_text": "c0: tl.constexpr):",
+                    "submit": True,
+                }
+            )
+        evidence = environment.serialize()["info"]["replay_transaction"]
+        final_source = workspace.replay_path.read_text()
+    finally:
+        workspace.cleanup()
+
+    assert final_source == VALID_REPLAY
+    assert evidence["direct_submit_count"] == 1
+    assert evidence["apply_patch_count"] == 1
+    assert evidence["direct_submits"][0]["source_bytes"] == len(
+        INVALID_CONSTEXPR_REPLAY.encode()
+    )
+    assert evidence["apply_patches"][0]["submit_requested"] is True
+
+
+def test_replay_transaction_preserves_only_explicit_exact_bytes() -> None:
+    workspace = _workspace()
+    committed = VALID_REPLAY.encode("utf-8")
+    changed = (VALID_REPLAY + "\n").encode("utf-8")
+    workspace.replay_path.write_bytes(committed)
+
+    def checker(_source: str) -> dict:
+        return {
+            "protocol": REPLAY_CHECK_PROTOCOL,
+            "status": "pass",
+            "diagnostics": [],
+        }
+
+    environment = IntentIRReplayEnvironment(
+        input_dir=workspace.input_dir,
+        output_dir=workspace.output_dir,
+        scratch_dir=workspace.scratch_dir,
+        replay_checker=checker,
+    )
+    canary = workspace.scratch_dir / "rollback-canary"
+    canary.write_bytes(b"must-stay-unchanged")
+    (workspace.scratch_dir / ".replay-rollback.tmp").symlink_to(canary)
+    try:
+        checked = environment.execute(
+            {"command": f"{INTENTIR_REPLAY_CHECK} /output/replay.source"}
+        )
+        committed_result = environment.execute(
+            {"command": f"{INTENTIR_REPLAY_COMMIT} /output/replay.source"}
+        )
+        workspace.replay_path.write_bytes(changed)
+        mismatched_commit = environment.execute(
+            {"command": f"{INTENTIR_REPLAY_COMMIT} /output/replay.source"}
+        )
+        rolled_back = environment.execute(
+            {"command": f"{INTENTIR_REPLAY_ROLLBACK} /output/replay.source"}
+        )
+        evidence = environment.serialize()["info"]["replay_transaction"]
+        restored = workspace.replay_path.read_bytes()
+        canary_bytes = canary.read_bytes()
+    finally:
+        workspace.cleanup()
+
+    assert checked["returncode"] == committed_result["returncode"] == 0
+    assert mismatched_commit["returncode"] == 1
+    assert "exact current bytes" in json.loads(mismatched_commit["output"])[
+        "diagnostic"
+    ]
+    assert rolled_back["returncode"] == 0
+    assert restored == committed
+    assert canary_bytes == b"must-stay-unchanged"
+    assert evidence == {
+        "protocol": REPLAY_TRANSACTION_PROTOCOL,
+        "authority": (
+            "exact Replay-LLM-authored bytes and exact-text replacement only; "
+            "no source is generated or inferred"
+        ),
+        "commit_count": 1,
+        "commits": [
+            {
+                "sha256": hashlib.sha256(committed).hexdigest(),
+                "bytes": len(committed),
+            }
+        ],
+        "rollback_count": 1,
+        "fallback_count": 0,
+        "fallbacks": [],
+        "apply_patch_count": 0,
+        "apply_patches": [],
+        "direct_submit_count": 0,
+        "direct_submits": [],
+    }
+
+
+def test_step_limit_returns_explicitly_committed_replay_checkpoint() -> None:
+    workspace = _workspace()
+    model = _ScriptedModel(
+        [
+            _write_source(VALID_REPLAY),
+            f"{INTENTIR_REPLAY_CHECK} /output/replay.source",
+            f"{INTENTIR_REPLAY_COMMIT} /output/replay.source",
+        ]
+    )
+
+    def checker(_source: str) -> dict:
+        return {
+            "protocol": REPLAY_CHECK_PROTOCOL,
+            "status": "pass",
+            "diagnostics": [],
+        }
+
+    try:
+        result = run_intentir_replay(
+            model=model,
+            workspace=workspace,
+            replay_checker=checker,
+            config_overrides={"agent": {"step_limit": 3}},
+        )
+    finally:
+        workspace.cleanup()
+
+    assert result.source_text == VALID_REPLAY
+    assert result.exit_status == "SubmittedCheckpoint"
+    assert result.model_calls == 3
+    transaction = result.trajectory["info"]["replay_transaction"]
+    assert transaction["commit_count"] == 1
+    assert transaction["fallback_count"] == 1
+    assert transaction["fallbacks"][0]["terminal_status"] == "LimitsExceeded"
+
+
 def test_submission_rejects_any_additional_output_file() -> None:
     workspace = _workspace()
     environment = IntentIRReplayEnvironment(
@@ -738,6 +1232,7 @@ def test_writer_uses_fresh_sessions_same_ingress_and_sanitized_receipt(
 
     def model_factory(**kwargs):
         assert kwargs["api_key"] == secret
+        assert len(kwargs["prompt_cache_key"]) <= 64
         model = _ScriptedModel(
             [
                 (

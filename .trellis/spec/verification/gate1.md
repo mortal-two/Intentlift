@@ -9,9 +9,10 @@ Gate1 只接收已经通过 `TypeCheck(J,C,π)`、由当前三元组生成的全
 conditions。该 Gate1 claim 只针对这个 c0。
 
 当前 fresh-run artifact/decode/typecheck 组合为
-`intentir.scrc.artifact.v5 / intentir.scrc.decode.v6 / intentir.scrc.typecheck.v14`。Lift LLM 是完整
-artifact 的唯一作者：v4 的 `value_dimension_relations`、`consumer_extensions` 与 v5 的
-`access_guard_relations` 都必须由模型显式提交。Decode、CandidateCheck 与 TypeCheck 只能做 closed
+`intentir.scrc.artifact.v8 / intentir.scrc.decode.v12 / intentir.scrc.typecheck.v20`。Lift LLM 是完整
+artifact 的唯一作者：value/dimension、consumer-extension、access-guard、typed control/inout、
+output binding，以及 physical iteration/carrier relation 都必须由模型显式提交。Decode、
+CandidateCheck 与 TypeCheck 只能做 closed
 解析、检查、拒绝和诊断，不会补 relation、选择 axes/polarity、插入 `select`、创建 pre-state，或把
 output 改成 inout。CandidateCheck 的 PASS 也不是 Gate1 前置证书；外部 Runner 仍对同一完整 bytes
 重跑权威 TypeCheck。
@@ -28,7 +29,10 @@ Gate1 回答 Replay 是否重建了 Source 对 J 的 realization。它不执行�
 结果，也不通过 composer/RuleCard 构造 Replay。
 
 Replay normal view 必须保留当前 J-owned typed relations；它从 J 读取 value/dimension equality、
-consumer-specific outside-domain contract 与 access guard，从 π 读取 realization topology。特别地，
+consumer-specific outside-domain contract 与 access guard，从 π 读取 realization topology，以及 J
+reduce/contraction 之外已声明的 physical iteration/carrier。logical J axis ordinal 不是 Triton tile
+tensor 的 rank-local reduction axis；Replay 必须从 J/C/π 共同确定 active physical tile，并对一维 tile
+使用 local axis 0，不能机械复制 logical axis。特别地，
 v5 guarded store 的 merge 已经是 Layer A 中显式 `select`，且精确 inout/pre-state、polarity 与 axes 已
 通过 TypeCheck；Replay 不得把 relation 解读成允许它自行发明 branch、merge 或 mutation。Gate1
 比较的是 Replay 对这些已声明事实的 source realization，不为缺失 relation 建议或生成答案。
@@ -43,7 +47,7 @@ J/C/π 拥有的 target cache-policy presentation hint，不改变 J denotation�
 predicate/fill、address/dataflow 或 transfer topology。未知值、load/store 方向不合法的值、eviction
 以及其他 memory attributes 仍参与 hard comparison。
 
-当前 active profile 是 `triton-ttir-3.6-gate1-v6`。v6 保留 v5 对已建模 op 与 interprocedural
+当前 active profile 是 `triton-ttir-3.6-gate1-v11`。v11 保留既有对已建模 op 与 interprocedural
 observation 的 comparison rules：从 public entry 可达、callee 静态已知且 call graph 无环的
 structured `tt.call` 仍按
 formal-to-actual 与 helper return 展开，op/def-use、effect 与已支持 region 继续参与 hard comparison；
@@ -62,7 +66,13 @@ function root 或 `scf.for` 内也不能默认 pure。畸形 quoted-generic、�
 多 block scan/reduce 与未支持 control/region 一律 fail closed。Source 侧能力缺口仍由 batch v3 报
 `observer_unsupported`；历史 v5 evidence 保持原 profile/verdict，不由 v6 追认。上述范围只是当前
 compiler contract 与测试边界，不是 observer 或 TTIR 语义完备性的形式证明，也不声称 v5→v6
-acceptance 单调。
+acceptance 单调。后续窄升在同一 closed 原则下增加 function metadata、value/effect-only structured
+`scf.if` 与 exact operand-free terminal binary `cf.cond_br` profile；terminal fork 的 predicate、true/false
+角色、arm member/dataflow、effect order、terminator 与 structured/interprocedural parent context 都是 hard
+evidence，physical block printing order 只是 presentation。任何带 block argument、额外 block、非 void
+function、arm 间 SSA 越界、嵌套未支持 control 或超出该 exact profile 的 CFG 仍 fail closed。v11 另把
+closed cache modifier 与 eviction spelling 一并视为不由 J/C/π 拥有的 frontend presentation noise；
+transfer instance 的数量、route、数据流与 effect order 仍不可消除。
 
 ## Observer 能力
 
@@ -80,7 +90,9 @@ observation 时，outer batch v3 使用 `observer_unsupported`：它只标记 So
 
 ## 失败与 relift
 
-Gate1 失败产生结构化 diff，只返回 source-aware Lift：
+Gate1 失败产生完整结构化 diff，只返回产生它的 source-aware Lift owner。runtime 可以同时提供该 diff
+的 deterministic bounded frontier：它只按 closed category priority 保留计数和有限原始 witness，不
+生成解释、修复或推荐；完整 diff 仍按 exact bytes 落盘并可由 owner 按需读取：
 
 ```text
 Source + previous complete (J,C,pi) + accumulated Gate1 diff
@@ -90,10 +102,12 @@ Source + previous complete (J,C,pi) + accumulated Gate1 diff
   -> Gate1
 ```
 
-diff 不进入 Replay。禁止 patch 旧 Replay、复用旧 Replay 或只修改 artifact 的局部字段。当前
-同一 Source/c0 启动 `B=5` 个独立 branch，每 branch 最多 `K=3` 个正式候选；diff 只返回产生它的
-branch。并行 wave 结束后，仅根据 TypeCheck/Gate1 evidence 按固定 branch/round 顺序选择一个
-Gate1-closed winner；未选 closed branch 不进入 Gate2。
+diff/frontier 不进入 Replay。禁止 patch 旧 Replay、复用旧 Replay 或把局部 patch 当成新的 proof
+artifact；owner 可以用 exact-text patch 编辑自己的 working file，但每轮必须提交完整新三元组。当前
+同一 Source/c0 可启动 `1<=B<=5` 个独立 branch，并显式声明正有限 `K`（CLI为`1<=K<=12`，
+Task14默认5）；每 branch最多 `K` 个正式候选，feedback只返回
+产生它的 branch。首个被观察到并已完整落盘的 Gate1 closure 原子成为 winner，sibling cooperative
+stop 并保存 receipt；该调度不读取 hidden Gate2，只有 winner 进入 Gate2。
 
 若 Gate1 已闭合而失败只发生在 Gate2 的 J reference consumer，保留这份精确 artifact 与 Replay；
 修复通用 RefEval 能力后走 Gate2-only exact-artifact recheck，不重新 Lift 或重新 Gate1。该复查的

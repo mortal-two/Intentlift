@@ -20,7 +20,7 @@ from .pi import (
 REPLAY_PACKET_SCHEMA = "intentir.scrc.replay-input.v1"
 PUBLIC_FRONTEND_CONTEXT = {
     "triton": {
-        "context_policy": "public_frontend_context_v10",
+        "context_policy": "public_frontend_context_v12",
         "retrieval_scope": "public Triton documentation and public examples",
         "tool_access": ["public_document_lookup"],
         "compile_entry_contract": (
@@ -90,12 +90,35 @@ PUBLIC_FRONTEND_CONTEXT = {
             "ceil_div(the declared J trip extent, that C tile) multiplied by "
             "that C tile as the upper bound. Do not use the current tensor shape, "
             "a launch value, or an invented rounding formula."
+            " Every pi.physical_iterations entry is mandatory realization "
+            "topology for a Source-visible physical loop around an existing J "
+            "reduce or contraction; it never creates a semantic J loop. Resolve "
+            "body_instance to that J node and tile_instance to the required "
+            "positive C slot attached to the same reduced/contracted axis. The "
+            "axis attachment determines the logical extent, and induction_basis "
+            "has the same extent_step, rounded_extent_step, or tile_ordinal "
+            "denotation as pi.iterations. direction=forward visits that closed "
+            "basis in ascending order; direction=reverse visits exactly the same "
+            "basis points in descending order. Never infer the extent or direction "
+            "from Source names, current shapes, C values, grid conventions, or "
+            "frontend APIs. Every pi.physical_loop_carriers entry preserves the "
+            "declared init/state/next/result temporal stages for its physical "
+            "iteration region; do not collapse the loop-carried accumulator into "
+            "one stateless reduction or invent an update formula absent from J."
             " Every J effect_if is mandatory effect control. Emit one real "
             "runtime `if` with explicit positive and negative arms, preserve "
             "predicate polarity, lexical arm scope, nested operation/effect order, "
             "and an explicitly empty arm. Never replace effect_if with tl.where, "
             "a value select, predicated unconditional effects, or compile-time "
             "control. Read the predicate and both arms only from J."
+            " When pi.terminal_controls relates the two authored arm instances of "
+            "that effect_if, emit the terminal arm as the sole body of a runtime "
+            "`if` followed by a bare return, then emit the continuation arm after "
+            "the `if` without an `else`. Use the authored predicate unchanged when "
+            "the positive arm is terminal and its logical negation when the negative "
+            "arm is terminal. Resolve both roles only through the typed pi relation; "
+            "never infer termination from empty arms, effects, values, names, or "
+            "frontend conventions."
             " Every J value_if is mandatory pure value control. Emit one real "
             "runtime `if` with explicit positive and negative arms in authored "
             "polarity and lexical order. Each arm may compute pure local "
@@ -181,7 +204,7 @@ PUBLIC_FRONTEND_CONTEXT = {
 # u_f object; changing that basis requires an explicit future policy version.
 PUBLIC_FRONTEND_CONTEXT_ACTIVE_POLICY = MappingProxyType(
     {
-        "triton": "public_frontend_context_v10",
+        "triton": "public_frontend_context_v12",
         "cute": "public_frontend_context_v1",
         "tilelang": "public_frontend_context_v1",
         "cuda": "public_frontend_context_v1",
@@ -205,6 +228,12 @@ PUBLIC_FRONTEND_CONTEXT_DIGEST_HISTORY = MappingProxyType(
                 ),
                 "public_frontend_context_v10": (
                     "56d496604506f8e5dafa823cdae8f46e67e0f3e88f87fa5bf576d0334ed95d46"
+                ),
+                "public_frontend_context_v11": (
+                    "b59f1ae42359ba97e26964ad6bde4450d2b7414ab2e210d709917952fa2c6c90"
+                ),
+                "public_frontend_context_v12": (
+                    "15829eaa0e9e844ab6362c51adb7ec8cd2aa5045c6cd8c6ad8a2093276101ba9"
                 ),
             }
         ),
@@ -272,6 +301,22 @@ PUBLIC_FRONTEND_CONTEXT_RECEIPT_HISTORY = MappingProxyType(
                         "receipt_hash_basis": "full_u_f",
                         "context_sha256": (
                             "1e3143be1a4e0e4e293b63bd0a4a8cfd264abcd557c09b50b3d611fd2e8a993e"
+                        ),
+                    }
+                ),
+                "public_frontend_context_v11": MappingProxyType(
+                    {
+                        "receipt_hash_basis": "full_u_f",
+                        "context_sha256": (
+                            "8975154a14504466c714b581bd3a8dacadfb89fc7141542e3a6a476b54800ecd"
+                        ),
+                    }
+                ),
+                "public_frontend_context_v12": MappingProxyType(
+                    {
+                        "receipt_hash_basis": "full_u_f",
+                        "context_sha256": (
+                            "12b6972a0d9ef800ccde574d970132c2aa66ac5e1dfbdd8dc39ce8d367e1c3a2"
                         ),
                     }
                 ),
@@ -357,6 +402,9 @@ _REPLAY_COMPONENT_KEYS = {
             "refinements",
             "iterations",
             "loop_carriers",
+            "physical_iterations",
+            "physical_loop_carriers",
+            "terminal_controls",
         }
     ),
 }
@@ -818,7 +866,8 @@ def _instructions(*, frontend: Frontend, masked: bool) -> str:
         f"{frontend.value} public-frontend kernel module. You never see "
         "the source implementation. Consume J, pure C and pi directly; pi is topology, "
         "not semantic authority. Treat every pi instance, route, order edge, sharing "
-        "relation, iteration relation, representation refinement and region placement as required "
+        "relation, structured or physical iteration relation, physical carrier, "
+        "representation refinement and region placement as required "
         "realization topology. In every pi order item, the instance named by "
         "before must execute before the instance named by after, including across "
         "regions and observable effects. Resolve each refinement auth_ref only through the "
@@ -845,10 +894,16 @@ def _instructions(*, frontend: Frontend, masked: bool) -> str:
         "access with no predicate is unconditional: "
         "never derive a redundant mask from domains, grid extents, C, or defensive "
         "safety. "
-        "Treat each J effect_if as effect control, not a value expression: emit "
-        "one real runtime if with explicit positive and negative arms in the "
+        "Treat each J effect_if as effect control, not a value expression. Ordinarily "
+        "emit one real runtime if with explicit positive and negative arms in the "
         "authored polarity, keep every arm-local operation/effect in authored "
-        "order, and spell an authored empty arm explicitly. Never lower effect_if "
+        "order, and spell an authored empty arm explicitly. If and only if one "
+        "pi.terminal_controls item names the two realize instances anchored to that "
+        "effect_if's sibling arm scopes, emit the named terminal arm as one runtime "
+        "if ending in a bare return and emit the named continuation arm immediately "
+        "after it without an else; negate the condition exactly when the negative "
+        "arm is terminal. The relation supplies only arm topology: never guess, copy, "
+        "or change the J predicate, polarity, arm operations, or effects. Never lower effect_if "
         "to tl.where/select or execute either arm unconditionally under a mask. "
         "Treat each J value_if as pure value control, distinct from effect_if and "
         "select: emit one real runtime if with explicit polarity-preserving arms; "
@@ -860,6 +915,11 @@ def _instructions(*, frontend: Frontend, masked: bool) -> str:
         "C slot; use lower 0, step equal to that C tile, and upper exactly "
         "ceil_div(trip extent, C tile) * C tile. Do not infer a bound from current "
         "shapes/values or invent another rounding formula. "
+        "For every pi.physical_iterations relation, keep J's reduce/contraction "
+        "logical while materializing the explicit physical loop from its C-attached "
+        "reduced/contracted axis, induction_basis, and direction. Preserve every "
+        "pi.physical_loop_carriers init/state/next/result temporal stage; neither "
+        "relation authorizes a new semantic operator or formula. "
         + frontend_realization_clause
         + "Do not output "
         "analysis, patches, placeholders, helper prose or markdown. Use only public "

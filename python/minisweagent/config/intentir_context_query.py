@@ -37,6 +37,19 @@ def _feedback_without_candidate(input_root: Path) -> dict[str, Any] | None:
     }
 
 
+def _feedback_frontier(input_root: Path) -> None:
+    """Print the host-authored bounded projection without reading the candidate."""
+
+    path = input_root / "feedback_frontier.json"
+    if not path.is_file():
+        _emit_json(None)
+        return
+    value = _load_json(path)
+    if value is not None and not isinstance(value, dict):
+        raise TypeError("feedback_frontier.json must be null or an object")
+    _emit_json(value)
+
+
 def _previous_candidate(input_root: Path) -> dict[str, Any] | None:
     value = _load_json(input_root / "feedback.json")
     if not isinstance(value, dict):
@@ -57,6 +70,15 @@ def _write_previous(input_root: Path, output_root: Path) -> bool:
         return False
     output_root.mkdir(parents=True, exist_ok=True)
     target = output_root / "candidate.json"
+    if target.is_symlink():
+        raise ValueError("existing candidate.json must not be a symlink")
+    if target.exists():
+        if not target.is_file():
+            raise ValueError("existing candidate.json must be a regular file")
+        current = _load_json(target)
+        if not isinstance(current, dict):
+            raise TypeError("existing candidate.json must contain one object")
+        return False
     target.write_text(
         json.dumps(
             candidate,
@@ -119,20 +141,31 @@ def _emit_json(value: Any) -> None:
 
 def _bootstrap(input_root: Path, output_root: Path) -> None:
     feedback = _feedback_without_candidate(input_root)
+    candidate_already_present = (output_root / "candidate.json").is_file()
     copied = _write_previous(input_root, output_root)
     files = {}
-    for relative in ("source.py", "harness_view.json", "feedback.json"):
+    for relative in (
+        "source.py",
+        "harness_view.json",
+        "feedback_frontier.json",
+        "feedback.json",
+    ):
         path = input_root / relative
+        if not path.is_file():
+            files[relative] = {"missing": True}
+            continue
         files[relative] = {
             "bytes": path.stat().st_size,
             "read_command": {
                 "source.py": f"{QUERY_COMMAND} source --start 1 --lines 160",
                 "harness_view.json": f"{QUERY_COMMAND} harness",
+                "feedback_frontier.json": f"{QUERY_COMMAND} feedback-frontier",
                 "feedback.json": f"{QUERY_COMMAND} feedback",
             }[relative],
         }
     overview = {
         "candidate_copied_to_output": copied,
+        "candidate_already_present": candidate_already_present,
         "files": files,
         "feedback_kind": (
             feedback.get("failure_kind")
@@ -152,7 +185,7 @@ def _bootstrap(input_root: Path, output_root: Path) -> None:
             else []
         ),
         "next": [
-            f"Run `{QUERY_COMMAND} feedback` before repairing a prior candidate.",
+            f"Run `{QUERY_COMMAND} feedback-frontier` before repairing a prior candidate.",
             f"Use `{QUERY_COMMAND} feedback --path diagnostics.KEY` for one exact diagnostic section.",
             "Read Source and Harness separately so neither can be transport-elided.",
             f"Use `{QUERY_COMMAND} source-find TEXT --context 3` for literal Source lookup.",
@@ -1134,6 +1167,7 @@ def main() -> int:
     subparsers.add_parser("bootstrap")
     feedback = subparsers.add_parser("feedback")
     feedback.add_argument("--path")
+    subparsers.add_parser("feedback-frontier")
     category = subparsers.add_parser("feedback-category")
     category.add_argument("name")
     source = subparsers.add_parser("source")
@@ -1169,6 +1203,8 @@ def main() -> int:
         _bootstrap(args.input_root, args.output_root)
     elif args.command == "feedback":
         _feedback(args.input_root, args.path)
+    elif args.command == "feedback-frontier":
+        _feedback_frontier(args.input_root)
     elif args.command == "feedback-category":
         _feedback_category(args.input_root, args.name)
     elif args.command == "source":

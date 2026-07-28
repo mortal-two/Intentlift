@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import json
 from pathlib import Path
 import sys
@@ -48,10 +49,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--dataset-root", default=None)
     parser.add_argument("--provider", default=None)
+    parser.add_argument("--model", default=None)
     parser.add_argument("--effort", default=None)
     parser.add_argument(
         "--replay-backend",
-        choices=("responses", "miniswe"),
+        choices=("responses", "miniswe", "codex"),
         default="responses",
     )
     parser.add_argument(
@@ -133,6 +135,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         validate_workload_gate1_recheck_parent(parent, prepared, artifact)
         provider = get_provider(args.provider)
+        if args.model is not None:
+            provider = replace(provider, model=args.model)
         recheck_dir = next_gate1_recheck_dir(args.run_root, args.case)
         initialize_workload_gate1_recheck_evidence(
             recheck_dir,

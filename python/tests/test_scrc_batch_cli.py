@@ -92,17 +92,18 @@ def test_batch_cli_has_independent_replay_backend_switch() -> None:
             "--list",
             "--lift-backend",
             "miniswe",
-            "--lift-workflow",
-            "staged",
             "--replay-backend",
             "miniswe",
+            "--model",
+            "gpt-5.6-terra",
         ]
     )
     defaults = scrc_batch._parser().parse_args(["--list"])
 
     assert selected.lift_backend == "miniswe"
-    assert selected.lift_workflow == "staged"
+    assert selected.lift_workflow == "single"
     assert selected.replay_backend == "miniswe"
+    assert selected.model == "gpt-5.6-terra"
     assert defaults.lift_workflow == "single"
     assert defaults.replay_backend == "responses"
 
@@ -504,7 +505,7 @@ def test_batch_cli_fans_out_one_case_and_runs_gate2_only_for_winner(
         assert replay_width == 2
         assert max_gate1_rounds == 6
         assert max_pre_replay_rejections == 8
-        assert stop_requested is None
+        assert callable(stop_requested)
         assert progress_callback is not None
         barrier.wait()
         with counter_lock:
@@ -544,10 +545,10 @@ def test_batch_cli_fans_out_one_case_and_runs_gate2_only_for_winner(
         assert replay_backend == "miniswe"
         assert search_metadata["candidate_count"] == 5
         assert search_metadata["protocol"] == (
-            "intentir.scrc.candidate-fanout.v3"
+            "intentir.scrc.candidate-fanout.v4"
         )
         assert search_metadata["selection_rule"] == (
-            "wave_barrier_branch_id_formal_round.v3"
+            "first_observed_gate1_closure_cooperative_stop.v4"
         )
         calls["initialized_efforts"].append(effort)
 
@@ -619,7 +620,7 @@ def test_batch_cli_fans_out_one_case_and_runs_gate2_only_for_winner(
     result_payload = payload["cases"][0]
     details = result_payload["details"]
     assert details["candidate_count"] == 5
-    assert details["winner_branch_id"] == 1
+    assert details["winner_branch_id"] in range(1, 6)
     assert details["winner_formal_round"] == 1
     assert details["candidate_status_counts"] == {
         "gate1_closed": 1,
@@ -750,6 +751,8 @@ def test_batch_cli_runs_multiple_cases_concurrently_and_aggregates_by_ordinal(
         [
             "--run",
             *explicit_cases,
+            "--lift-backend",
+            "miniswe",
             "--case-workers",
             "2",
             "--candidates",
@@ -776,7 +779,7 @@ def test_batch_cli_runs_multiple_cases_concurrently_and_aggregates_by_ordinal(
         "max_branch_workers": 4,
         "gate2_workers": 2,
         "gate1_rounds": 3,
-        "pre_replay_rejections": 3,
+        "pre_replay_rejections": 0,
     }
     assert [case["ordinal"] for case in payload["cases"]] == sorted(
         entry.ordinal for entry in selected_entries

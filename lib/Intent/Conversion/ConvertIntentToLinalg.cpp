@@ -182,6 +182,8 @@ static bool isToI1UnaryFn(StringRef fn) {
 /// Emit the scalar op for one `map_unary` fn over a scalar operand.
 /// Returns nullptr for fns that have no scalar form here yet.
 static Value emitScalarUnary(OpBuilder &b, Location loc, StringRef fn, Value x) {
+  if (fn == "identity")
+    return x;
   if (fn == "exp")
     return b.create<math::ExpOp>(loc, x);
   if (fn == "log")
@@ -251,7 +253,7 @@ static Value emitScalarUnary(OpBuilder &b, Location loc, StringRef fn, Value x) 
 
 /// True iff `emitScalarUnary` can lower `fn` (the guard for MapUnaryLowering).
 static bool hasScalarUnary(StringRef fn) {
-  return fn == "exp" || fn == "log" || fn == "log2" || fn == "abs" ||
+  return fn == "identity" || fn == "exp" || fn == "log" || fn == "log2" || fn == "abs" ||
          fn == "sqrt" ||
          fn == "rsqrt" || fn == "neg" || fn == "recip" || fn == "tanh" ||
          fn == "cos" || fn == "sin" || fn == "tan" || fn == "exp2" ||

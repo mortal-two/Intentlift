@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -30,6 +29,7 @@ class IntentIRLiftRunResult:
     physical_provider_calls: int | None = None
     transport_retries: int = 0
     stage_metrics: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    continued_from_messages: int = 0
 
     def __post_init__(self) -> None:
         if self.physical_provider_calls is None:
@@ -78,6 +78,7 @@ def create_intentir_lift_model(
     api_key: str,
     reasoning_effort: str,
     timeout_seconds: float,
+    prompt_cache_key: str | None = None,
 ) -> LitellmResponseModel:
     """Configure the existing Responses model for an OpenAI-compatible CPA."""
 
@@ -89,6 +90,8 @@ def create_intentir_lift_model(
         "reasoning_effort": reasoning_effort,
         "timeout": timeout_seconds,
     }
+    if prompt_cache_key:
+        model_kwargs["prompt_cache_key"] = prompt_cache_key
     qualified_name = model_name if "/" in model_name else f"openai/{model_name}"
     return LitellmResponseModel(
         model_name=qualified_name,
@@ -103,8 +106,9 @@ def _run_agent_stage(
     environment: Environment,
     agent_config: Mapping[str, Any],
     output_reader: Callable[[], str],
+    initial_messages: list[dict[str, Any]] | None = None,
 ) -> _IntentIRLiftStageResult:
-    """Run one fresh LLM context and read only its declared opaque output."""
+    """Run one fresh or branch-continuation context and read its opaque output."""
 
     physical_before = getattr(model, "physical_provider_calls", None)
     retries_before = getattr(model, "transport_retries", None)
@@ -112,12 +116,14 @@ def _run_agent_stage(
     started = time.monotonic()
     caught: Exception | None = None
     try:
-        terminal = agent.run()
+        terminal = (
+            agent.run()
+            if initial_messages is None
+            else agent.run_from_messages(initial_messages)
+        )
     except Exception as exc:
         caught = exc
         terminal = {"exit_status": type(exc).__name__, "submission": ""}
-    elapsed_ms = (time.monotonic() - started) * 1000.0
-    trajectory = agent.save(None)
     exit_status = str(terminal.get("exit_status", ""))
     output_text: str | None = None
     if exit_status == "Submitted":
@@ -126,6 +132,21 @@ def _run_agent_stage(
         except Exception as exc:
             caught = exc
             exit_status = "InvalidSubmission"
+    elif caught is None:
+        activate_fallback = getattr(
+            environment, "activate_committed_fallback", None
+        )
+        if callable(activate_fallback):
+            try:
+                output_text = activate_fallback(exit_status)
+            except Exception as exc:
+                caught = exc
+                exit_status = "InvalidSubmission"
+            else:
+                if output_text is not None:
+                    exit_status = "SubmittedCheckpoint"
+    elapsed_ms = (time.monotonic() - started) * 1000.0
+    trajectory = agent.save(None)
     physical_after = getattr(model, "physical_provider_calls", None)
     retries_after = getattr(model, "transport_retries", None)
     physical_calls = (
@@ -156,6 +177,8 @@ def _run_agent_stage(
 
 def _public_result(
     stage: _IntentIRLiftStageResult,
+    *,
+    continued_from_messages: int = 0,
 ) -> IntentIRLiftRunResult:
     return IntentIRLiftRunResult(
         candidate_text=stage.output_text,
@@ -165,82 +188,7 @@ def _public_result(
         elapsed_ms=stage.elapsed_ms,
         physical_provider_calls=stage.physical_provider_calls,
         transport_retries=stage.transport_retries,
-    )
-
-
-def _tag_stage_message(message: Any, stage_name: str) -> Any:
-    if not isinstance(message, Mapping):
-        return message
-    tagged = dict(message)
-    extra = tagged.get("extra")
-    tagged["extra"] = {
-        **(dict(extra) if isinstance(extra, Mapping) else {}),
-        "intentir_lift_stage": stage_name,
-    }
-    return tagged
-
-
-def _aggregate_staged_result(
-    stages: Mapping[str, _IntentIRLiftStageResult],
-    *,
-    plan_sha256: str | None,
-) -> IntentIRLiftRunResult:
-    ordered = list(stages.items())
-    last = ordered[-1][1]
-    messages: list[Any] = []
-    stage_metrics: dict[str, dict[str, Any]] = {}
-    stage_info: dict[str, Any] = {}
-    for stage_name, stage in ordered:
-        raw_messages = stage.trajectory.get("messages", ())
-        if isinstance(raw_messages, list):
-            messages.extend(
-                _tag_stage_message(message, stage_name)
-                for message in raw_messages
-            )
-        info = stage.trajectory.get("info")
-        stage_info[stage_name] = dict(info) if isinstance(info, Mapping) else {}
-        stage_metrics[stage_name] = {
-            "exit_status": stage.exit_status,
-            "model_calls": stage.model_calls,
-            "physical_provider_calls": stage.physical_provider_calls,
-            "transport_retries": stage.transport_retries,
-            "elapsed_ms": stage.elapsed_ms,
-        }
-    final_info = last.trajectory.get("info")
-    aggregate_info = dict(final_info) if isinstance(final_info, Mapping) else {}
-    aggregate_info["model_stats"] = {
-        **(
-            dict(aggregate_info.get("model_stats", {}))
-            if isinstance(aggregate_info.get("model_stats"), Mapping)
-            else {}
-        ),
-        "api_calls": sum(stage.model_calls for _name, stage in ordered),
-    }
-    aggregate_info["exit_status"] = last.exit_status
-    aggregate_info["lift_workflow"] = {
-        "protocol": "intentir.lift-workflow.v1",
-        "plan_sha256": plan_sha256,
-        "stages": stage_metrics,
-        "stage_info": stage_info,
-    }
-    trajectory = {
-        "trajectory_format": "intentir-mini-swe-staged-1.0",
-        "messages": messages,
-        "info": aggregate_info,
-    }
-    return IntentIRLiftRunResult(
-        candidate_text=last.output_text,
-        trajectory=trajectory,
-        exit_status=last.exit_status,
-        model_calls=sum(stage.model_calls for _name, stage in ordered),
-        elapsed_ms=sum(stage.elapsed_ms for _name, stage in ordered),
-        physical_provider_calls=sum(
-            stage.physical_provider_calls for _name, stage in ordered
-        ),
-        transport_retries=sum(
-            stage.transport_retries for _name, stage in ordered
-        ),
-        stage_metrics=stage_metrics,
+        continued_from_messages=continued_from_messages,
     )
 
 
@@ -251,8 +199,10 @@ def run_intentir_lift(
     config_overrides: Mapping[str, Any] | None = None,
     environment: Environment | None = None,
     candidate_checker: Callable[[str], Mapping[str, Any]] | None = None,
+    continuation_history: list[dict[str, Any]] | None = None,
+    continuation_message: str | None = None,
 ) -> IntentIRLiftRunResult:
-    """Run a fresh DefaultAgent and return its sole candidate plus trajectory."""
+    """Run a fresh or branch-continuation agent and return one full candidate."""
 
     config = recursive_merge(
         load_intentir_lift_config(), dict(config_overrides or {})
@@ -268,13 +218,31 @@ def run_intentir_lift(
         candidate_checker=candidate_checker,
         **config.get("environment", {}),
     )
+    if (continuation_history is None) != (continuation_message is None):
+        raise ValueError(
+            "continuation_history and continuation_message must be supplied together"
+        )
+    initial_messages = None
+    if continuation_history is not None and continuation_message is not None:
+        initial_messages = [
+            *continuation_history,
+            model.format_message(role="user", content=continuation_message),
+        ]
     stage = _run_agent_stage(
         model=model,
         environment=environment,
         agent_config=config["agent"],
         output_reader=workspace.read_candidate,
+        initial_messages=initial_messages,
     )
-    result = _public_result(stage)
+    result = _public_result(
+        stage,
+        continued_from_messages=(
+            len(continuation_history)
+            if continuation_history is not None
+            else 0
+        ),
+    )
     if stage.caught is not None:
         raise IntentIRLiftRunError(
             "IntentIR Lift worker failed: "
@@ -282,120 +250,10 @@ def run_intentir_lift(
             result=result,
             cause=stage.caught,
         ) from stage.caught
-    if stage.exit_status != "Submitted" or stage.output_text is None:
+    if stage.exit_status not in {"Submitted", "SubmittedCheckpoint"} or stage.output_text is None:
         raise IntentIRLiftRunError(
             "IntentIR Lift worker terminated without a candidate: "
             f"{stage.exit_status}",
-            result=result,
-        )
-    return result
-
-
-def run_intentir_staged_lift(
-    *,
-    model: Model,
-    workspace: IntentIRLiftWorkspace,
-    config_overrides: Mapping[str, Any] | None = None,
-    candidate_checker: Callable[[str], Mapping[str, Any]] | None = None,
-) -> IntentIRLiftRunResult:
-    """Run three source-aware LLM stages; fixed code only transports exact bytes."""
-
-    config = recursive_merge(
-        load_intentir_lift_config(), dict(config_overrides or {})
-    )
-    staged = config.get("staged")
-    if (
-        not isinstance(staged, Mapping)
-        or staged.get("protocol") != "intentir.lift-workflow.v1"
-    ):
-        raise ValueError("missing closed staged Lift workflow configuration")
-    completed: dict[str, _IntentIRLiftStageResult] = {}
-    plan_sha256: str | None = None
-
-    def stage_config(name: str) -> dict[str, Any]:
-        specific = staged.get(name)
-        if not isinstance(specific, Mapping):
-            raise ValueError(f"missing staged Lift configuration for {name!r}")
-        return recursive_merge(
-            {"agent": config["agent"], "environment": config["environment"]},
-            dict(specific),
-        )
-
-    def run_stage(
-        name: str,
-        *,
-        checker: Callable[[str], Mapping[str, Any]] | None,
-        reader: Callable[[], str],
-    ) -> _IntentIRLiftStageResult:
-        selected = stage_config(name)
-        environment = IntentIRLiftEnvironment(
-            input_dir=workspace.input_dir,
-            output_dir=workspace.output_dir,
-            scratch_dir=workspace.scratch_dir,
-            candidate_checker=checker,
-            **selected["environment"],
-        )
-        result = _run_agent_stage(
-            model=model,
-            environment=environment,
-            agent_config=selected["agent"],
-            output_reader=reader,
-        )
-        completed[name] = result
-        return result
-
-    planner = run_stage(
-        "planner", checker=None, reader=workspace.read_lift_plan
-    )
-    if planner.caught is not None or planner.output_text is None:
-        result = _aggregate_staged_result(
-            completed, plan_sha256=plan_sha256
-        )
-        raise IntentIRLiftRunError(
-            "IntentIR staged Lift planner failed: "
-            f"{planner.exit_status}",
-            result=result,
-            cause=planner.caught,
-        ) from planner.caught
-    plan_bytes = planner.output_text.encode("utf-8")
-    plan_sha256 = hashlib.sha256(plan_bytes).hexdigest()
-    plan_input = workspace.input_dir / "knowledge" / "lift_plan.json"
-    if plan_input.exists():
-        raise ValueError("staged Lift plan input path already exists")
-    plan_input.parent.mkdir(parents=True, exist_ok=True)
-    plan_input.write_bytes(plan_bytes)
-    workspace.reset_writable()
-
-    builder = run_stage(
-        "builder", checker=candidate_checker, reader=workspace.read_candidate
-    )
-    if builder.caught is not None or builder.output_text is None:
-        result = _aggregate_staged_result(
-            completed, plan_sha256=plan_sha256
-        )
-        raise IntentIRLiftRunError(
-            "IntentIR staged Lift builder failed: "
-            f"{builder.exit_status}",
-            result=result,
-            cause=builder.caught,
-        ) from builder.caught
-    workspace.reset_writable(preserve_candidate=True)
-
-    reviewer = run_stage(
-        "reviewer", checker=candidate_checker, reader=workspace.read_candidate
-    )
-    result = _aggregate_staged_result(completed, plan_sha256=plan_sha256)
-    if reviewer.caught is not None:
-        raise IntentIRLiftRunError(
-            "IntentIR staged Lift reviewer failed: "
-            f"{type(reviewer.caught).__name__}: {reviewer.caught}",
-            result=result,
-            cause=reviewer.caught,
-        ) from reviewer.caught
-    if reviewer.exit_status != "Submitted" or reviewer.output_text is None:
-        raise IntentIRLiftRunError(
-            "IntentIR staged Lift reviewer terminated without a candidate: "
-            f"{reviewer.exit_status}",
             result=result,
         )
     return result
@@ -407,5 +265,4 @@ __all__ = [
     "IntentIRLiftRunResult",
     "load_intentir_lift_config",
     "run_intentir_lift",
-    "run_intentir_staged_lift",
 ]

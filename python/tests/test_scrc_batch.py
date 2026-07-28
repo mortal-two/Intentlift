@@ -188,7 +188,7 @@ def test_batch_scheduling_metadata_is_closed_validated_and_json_safe() -> None:
         "max_branch_workers": 6,
         "gate2_workers": 1,
         "gate1_rounds": 3,
-        "pre_replay_rejections": 3,
+        "pre_replay_rejections": 0,
     }
     expected = dict(scheduling)
     report = ConcurrentSCRCBatchRunner(case_workers=2).run(

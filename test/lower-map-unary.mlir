@@ -24,6 +24,18 @@ func.func @un(%a: tensor<8x8xf32>) -> tensor<8x8xf32> {
 
 // -----
 
+// map_unary{identity} remains an explicitly authored J node while its scalar
+// denotation yields the input unchanged.
+// CHECK-LABEL: func.func @uid
+// CHECK: linalg.generic
+// CHECK: linalg.yield %{{.*}} : f32
+func.func @uid(%a: tensor<8xf32>) -> tensor<8xf32> {
+  %r = intent.map_unary %a {fn = "identity"} : (tensor<8xf32>) -> tensor<8xf32>
+  return %r : tensor<8xf32>
+}
+
+// -----
+
 // Target-neutral lowering preserves math.rsqrt so production GPU consumers can
 // still select the native target implementation.
 // CHECK-LABEL: func.func @ursqrt

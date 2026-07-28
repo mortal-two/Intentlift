@@ -32,7 +32,7 @@ from intentir.ir.value_dimension import (
 )
 
 
-FUNCTIONAL_BOUNDARY_PROTOCOL = "intentir.j-functional-boundary.v15"
+FUNCTIONAL_BOUNDARY_PROTOCOL = "intentir.j-functional-boundary.v17"
 RUNTIME_PREDICATE_PROOF_PROTOCOL = (
     "intentir.j-functional-runtime-predicate-tautology.v1"
 )
@@ -583,16 +583,22 @@ def explicit_inout_poststate_reload_value(
     if len(bindings) != 1:
         return None
 
+    returns = [item for item in j.intent.returns if item.output == tensor]
     mappings = [
         item for item in j.boundary.output_mappings if item.output == tensor
     ]
-    if len(mappings) != 1:
+    if (
+        len(returns) > 1
+        or len(mappings) > 1
+        or (not returns and not mappings)
+    ):
         return None
-    mapping = mappings[0]
-    poststate = mapping.value
-    returns = [item for item in j.intent.returns if item.output == tensor]
-    if returns and (
-        len(returns) != 1 or returns[0].value != poststate
+    mapping = mappings[0] if mappings else None
+    poststate = returns[0].value if returns else mapping.value
+    if (
+        returns
+        and mapping is not None
+        and mapping.value != poststate
     ):
         return None
 
@@ -608,7 +614,11 @@ def explicit_inout_poststate_reload_value(
     if len(producer_refs) != 1:
         return None
     producer_ref = producer_refs[0]
-    if mapping.node_ref is not None and mapping.node_ref != producer_ref:
+    if (
+        mapping is not None
+        and mapping.node_ref is not None
+        and mapping.node_ref != producer_ref
+    ):
         return None
 
     stores = [
@@ -669,34 +679,117 @@ _PREDICATE_DOMINATED_POINTWISE_OPS = frozenset(
 )
 
 
+def _predicate_dominated_load_start(
+    j: Any,
+    *,
+    access: Any,
+    nodes: Mapping[str, IntentOp],
+) -> tuple[str, IntentOp, str] | None:
+    """Resolve the unique first J consumer of one predicate-bearing load.
+
+    A node-bound access already names that consumer.  A node-less access is the
+    canonical whole-tensor form and is usable only when it is the sole load of
+    its logical input and that input has exactly one direct canonical consumer.
+    This is a J-only reference resolution: it neither invents a consumer edge
+    nor consults Source, C, pi, Replay, or Harness.
+    """
+
+    if access.node_ref is not None:
+        start = nodes.get(access.node_ref)
+        if start is None:
+            return None
+        dependencies = _operation_dependencies(start)
+        if access.tensor in dependencies:
+            return access.node_ref, start, access.tensor
+        poststate = explicit_inout_poststate_reload_value(j, access.access_id)
+        if poststate is not None and poststate in dependencies:
+            return access.node_ref, start, poststate
+        return None
+
+    matching_loads = [
+        item
+        for item in j.boundary.accesses
+        if item.kind.value == "load" and item.tensor == access.tensor
+    ]
+    if (
+        len(matching_loads) != 1
+        or matching_loads[0].access_id != access.access_id
+    ):
+        return None
+    consumers = [
+        (node_ref, nodes[node_ref])
+        for node_ref in j.node_ids
+        if node_ref in nodes
+        and access.tensor in _operation_dependencies(nodes[node_ref])
+    ]
+    if len(consumers) != 1:
+        return None
+    node_ref, start = consumers[0]
+    return node_ref, start, access.tensor
+
+
 def _masked_load_axis_provenance(
     j: Any,
     *,
     access: Any,
     nodes: Mapping[str, IntentOp],
-) -> tuple[set[str], dict[str, tuple[int, ...]]] | None:
-    """Track one masked value through pointwise ops and exact transposes."""
+) -> tuple[set[str], dict[str, tuple[int | None, ...]]] | None:
+    """Track masked axes through pointwise broadcast and exact transposes.
+
+    Each result-axis entry names the originating masked-load tensor axis.
+    ``None`` marks an axis introduced by a closed pointwise broadcast; its
+    coordinate remains governed by the ordinary functional boundary proof.
+    """
 
     value_types = j_elaboration(j).value_type_by_name
     tensor_type = value_types.get(access.tensor)
-    start = nodes.get(access.node_ref)
-    if tensor_type is None or start is None:
+    resolved_start = _predicate_dominated_load_start(
+        j,
+        access=access,
+        nodes=nodes,
+    )
+    if tensor_type is None or resolved_start is None:
+        return None
+    start_ref, start, source_ref = resolved_start
+    try:
+        broadcast_axes = _broadcast_axes(j)
+    except (NotImplementedError, ValueError):
+        return None
+    source_type = value_types.get(source_ref)
+    if source_type != tensor_type:
         return None
     start_results = _result_names(start)
     if not start_results:
         return None
-    identity = tuple(range(len(tensor_type.shape)))
-    provenance: dict[str, tuple[int, ...]] = {}
+    provenance: dict[str, tuple[int | None, ...]] = {}
     for result in start_results:
         result_type = value_types.get(result)
-        if result_type is None or result_type.shape != tensor_type.shape:
+        if result_type is None:
             return None
-        provenance[result] = identity
+        declared_axes = broadcast_axes.get(result, {}).get(source_ref)
+        positions = (
+            _axis_broadcast_positions(
+                source_type.shape,
+                result_type.shape,
+                declared_axes,
+            )
+            if declared_axes is not None
+            else _numpy_broadcast_positions(
+                source_type.shape,
+                result_type.shape,
+            )
+        )
+        if positions is None:
+            return None
+        projected: list[int | None] = [None] * len(result_type.shape)
+        for source_axis, target_axis in enumerate(positions):
+            projected[target_axis] = source_axis
+        provenance[result] = tuple(projected)
 
     canonical_refs = tuple(j.node_ids)
     if any(node_ref not in nodes for node_ref in canonical_refs):
         return None
-    reachable_refs = {access.node_ref}
+    reachable_refs = {start_ref}
     changed = True
     while changed:
         changed = False
@@ -705,7 +798,9 @@ def _masked_load_axis_provenance(
                 continue
             operation = nodes[node_ref]
             reachable_operands = [
-                operand for operand in operation.operands if operand in provenance
+                operand
+                for operand in _operation_dependencies(operation)
+                if operand in provenance
             ]
             if not reachable_operands:
                 continue
@@ -714,29 +809,45 @@ def _masked_load_axis_provenance(
                 return None
 
             if operation.op in _PREDICATE_DOMINATED_POINTWISE_OPS:
-                permutations = {provenance[item] for item in reachable_operands}
-                if len(permutations) != 1:
-                    return None
-                output_permutation = next(iter(permutations))
-                first_operand_type = value_types.get(reachable_operands[0])
-                if first_operand_type is None:
-                    return None
-                pointwise_shape = first_operand_type.shape
-                for operand in reachable_operands:
-                    operand_type = value_types.get(operand)
-                    if (
-                        operand_type is None
-                        or operand_type.shape != pointwise_shape
-                    ):
-                        return None
                 for result in results:
                     result_type = value_types.get(result)
-                    if (
-                        result_type is None
-                        or result_type.shape != pointwise_shape
-                    ):
+                    if result_type is None:
                         return None
-                    provenance[result] = output_permutation
+                    expanded: list[tuple[int | None, ...]] = []
+                    for operand in reachable_operands:
+                        operand_type = value_types.get(operand)
+                        if operand_type is None:
+                            return None
+                        declared_axes = broadcast_axes.get(result, {}).get(
+                            operand
+                        )
+                        positions = (
+                            _axis_broadcast_positions(
+                                operand_type.shape,
+                                result_type.shape,
+                                declared_axes,
+                            )
+                            if declared_axes is not None
+                            else _numpy_broadcast_positions(
+                                operand_type.shape,
+                                result_type.shape,
+                            )
+                        )
+                        source_provenance = provenance[operand]
+                        if (
+                            positions is None
+                            or len(source_provenance) != len(operand_type.shape)
+                        ):
+                            return None
+                        projected: list[int | None] = [None] * len(
+                            result_type.shape
+                        )
+                        for source_axis, target_axis in enumerate(positions):
+                            projected[target_axis] = source_provenance[source_axis]
+                        expanded.append(tuple(projected))
+                    if len(set(expanded)) != 1:
+                        return None
+                    provenance[result] = expanded[0]
             elif operation.op == "transpose":
                 if len(operation.operands) != 1 or len(reachable_operands) != 1:
                     return None
@@ -797,16 +908,18 @@ def predicate_dominated_pointwise_load(
         or access.kind.value != "load"
         or access.predicate is None
         or access.fill_value is not None
-        or access.node_ref is None
     ):
         return False
 
     nodes = _node_table(j)
-    start = nodes.get(access.node_ref)
+    resolved_start = _predicate_dominated_load_start(
+        j,
+        access=access,
+        nodes=nodes,
+    )
     if (
-        start is None
-        or start.op not in _PREDICATE_DOMINATED_POINTWISE_OPS
-        or access.tensor not in _operation_dependencies(start)
+        resolved_start is None
+        or resolved_start[1].op not in _PREDICATE_DOMINATED_POINTWISE_OPS
     ):
         return False
     provenance_result = _masked_load_axis_provenance(
@@ -863,12 +976,19 @@ def predicate_dominated_pointwise_load(
         permutation = provenance.get(mapping.value)
         if parsed_store is None or permutation is None:
             return False
-        if len(parsed_load.index.components) != len(permutation):
+        if len(parsed_store.index.components) != len(permutation):
             return False
-        expected_store_coordinates = tuple(
-            parsed_load.index.components[item] for item in permutation
-        )
-        if parsed_store.index.components != expected_store_coordinates:
+        originating_axes = [item for item in permutation if item is not None]
+        if sorted(originating_axes) != list(
+            range(len(parsed_load.index.components))
+        ):
+            return False
+        if any(
+            parsed_store.index.components[target_axis]
+            != parsed_load.index.components[source_axis]
+            for target_axis, source_axis in enumerate(permutation)
+            if source_axis is not None
+        ):
             return False
         matched_store_ids.add(store.access_id)
 

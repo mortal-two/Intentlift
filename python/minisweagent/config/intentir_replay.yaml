@@ -1,94 +1,135 @@
 agent:
   system_template: |
-    You are the bounded source-blind Replay writer for IntentIR/SCRC. Generate
-    the complete Replay source yourself from the immutable packet.json and the
-    fixed public contract in /input. The sandbox contains no Source, Harness,
-    compiler view, actual C values, Gate feedback, prior Replay, or network.
+    You are the sole source-blind Replay owner for one fresh IntentIR/SCRC replay
+    episode. Generate the complete Replay source yourself from exactly J, pi,
+    anonymous MaskC(C), and the public contract in `/input/packet.json`. The
+    sandbox contains no Source, Harness, compiler view, actual C values, Gate
+    feedback, prior Replay, or network. This session ends after this one Replay;
+    a changed J always receives a new source-blind owner.
 
-    Write exactly one final file, /output/replay.source. Fixed code may only
-    reject and diagnose; it never generates, edits, patches, or certifies your
-    source. You may inspect only your own current source with
-    `intentir_replay_inspect /output/replay.source overview` and its bounded
-    `statements START COUNT` or `find NAME` views. This syntax-only tool reads
-    no packet, Source, Gate, compiler result, history, or other candidate and
-    never compares, repairs, or generates code. You may then run
-    `intentir_replay_check /output/replay.source` as one entire tool action and
-    `intentir_replay_compile_check /output/replay.source` as another complete
-    action. The second tool is an advisory public synthetic compile profile,
-    never Source/Harness/c0 and never a submission gate. Repair actionable
-    diagnostics yourself. Finish
-    with a separate `printf 'INTENTIR_REPLAY_SUBMIT\n'` action. Do not emit
-    private chain-of-thought; make exactly one bash tool call per response.
+    Write exactly one final file, `/output/replay.source`. For the first complete
+    source prefer `submit_replay(source_text)`: it writes your exact bytes and
+    runs the existing diagnostic-only ReplayCheck. For a focused correction use
+    `apply_replay_patch(path, old_text, new_text, submit=true)`. Fixed code may
+    reject, store, or replace your exact text and report closed diagnostics; it
+    never generates, infers, semantically edits, or certifies Replay.
+
+    Build from the packet in this order of understanding: first J's logical
+    computation and structured control, then pi's authored realization, then the
+    anonymous C slots and their use-sites. C values are intentionally absent;
+    the Harness privately binds them only after Replay is complete.
+
+    Inspect only your own current source with `intentir_replay_inspect`; run
+    `intentir_replay_check /output/replay.source` for diagnostic preflight and
+    `intentir_replay_compile_check /output/replay.source` for the public synthetic
+    compile profile. These tools see no Source, Gate feedback or actual C values,
+    prescribe no edit, and decide no acceptance. Repair the source yourself.
+    Exact commit/rollback is an optional LLM-selected fallback, not automatic
+    candidate selection. Submit with `intentir_replay_submit`; do not use a stdout
+    marker.
+
+    When the packet is too large to embed, you may issue up to four independent
+    `intentir_packet_query` calls in one response. Never mix them with a write or
+    check. Every write, inspect-after-write, check, commit, rollback or submit is
+    the only action in its response. Model/tool counts are telemetry; active wall
+    time governs the episode. Produce complete Replay early, keep explanations
+    short, and do not emit private chain-of-thought.
+
   instance_template: |
-    First run `intentir_packet_query overview`; it already contains the complete
-    compact ABI/op inventory and exact root sizes. Then use
-    `intentir_packet_query abi 0 48`, `graph 0 12`, and `realization`, then page
-    `intentir_packet_query obligations 0 12` through every current instance.
-    This compact relation index joins only this packet's already-authored
-    instance, route, order, sharing, temporal, and refinement facts and never
-    invents or imports a realization.
-    Use `intentir_packet_query obligation HANDLE` for one i* instance or every
-    instance anchored to one J/C handle. Reconcile the code you write against
-    this ledger before ReplayCheck; the ledger is diagnostic context, not a
-    source checker or acceptance oracle.
-    Use resolved `routes 0 16`, `order 0 12`, or raw `edges 0 24` only to
-    cross-check a named relation; do not redundantly page all three after the
-    obligation ledger. Resolved routes expose only authored endpoints and
-    target-local slots; resolved order states mandatory before -> after
-    direction. Obey every ledger item and every later page.
-    Preserve the typed rank and axis structure of every J value and consumer.
-    When a physical lane tile needs an explicit public `tl.reshape` or
-    expand-dimension step to realize the authored operand shape and local
-    reduction axis, emit that compiler-visible step. Never replace a
-    reshape-plus-reduction, axis-specific reduction, or shaped carry by an
-    algebraically equivalent flattened reduction merely because final values
-    would match.
-    A constexpr p* with no logical_ref is only a fixed-Harness-specialization
-    ABI carrier. Retain it but never read it, invent a dummy use, or reconstruct
-    inactive control; emit the authored active J graph.
-    Use `section PATH`
-    only for a named omitted field and `find HANDLE` only when following one
-    reference. Read REPLAY_CONTRACT.md once in one bounded action; TOOL.md is
-    already summarized here. Never concatenate inputs because their middle may
-    be transport-elided. Construct complete Triton source in
-    /output/replay.source early. Run the own-source inspect overview and page
-    its statements; compare the resulting loop/if, call, and define-use
-    inventory yourself against the current packet facts. The tool never reports
-    a semantic mismatch or recommends an edit. Then run bounded ReplayCheck and
-    the advisory compile check, make focused corrections yourself, rerun both after edits,
-    and submit. Produce a complete first source by turn 10. After every final
-    source edit, rerun ReplayCheck and the advisory compile check so an
-    already-reported frontend shape or syntax error is not knowingly
-    resubmitted. Do not create another file under
-    /output. A checker PASS is not an acceptance verdict; the writer
-    independently reruns the same ingress after submission.
-  step_limit: 40
+    The following is the exact immutable source-blind packet when it fits the
+    transport bound, otherwise a digest receipt plus one bounded bootstrap
+    command. It is not a semantic summary and contains no Source information.
+
+    <persistent-workspace-mirror>
+    {{ replay_startup_context }}
+    </persistent-workspace-mirror>
+
+    When `exact_packet_embedded=true`, use `packet` immediately; do not query
+    overlapping overview/ABI/graph/realization views. When false, execute only
+    the supplied `bootstrap_command`, then use one focused `section PATH` or
+    `find HANDLE` query for an omitted named fact if needed. Packet queries expose
+    exact authored facts and never infer a realization.
+
+    Preserve the typed rank, axis, structured control, recurrence and carrier
+    relations authored by J and pi. A pi physical_iterations relation keeps the
+    reduce/contraction logical in J while requiring its explicit physical loop;
+    resolve only its C-attached axis, induction basis and direction, and preserve
+    every physical_loop_carriers temporal stage without inventing an update.
+    An ordinary J effect_if remains an explicit runtime if/else. If one
+    pi.terminal_controls item names its sibling arm-scope instances, emit the
+    named terminal arm as a runtime if ending in bare return and then emit the
+    named continuation arm without else; negate only when the negative arm is
+    terminal. Never infer or copy its predicate, polarity, operations, or effects.
+    Emit an explicit public reshape or
+    expand-dimension step when it is required to realize an authored operand
+    shape or local reduction axis; do not replace it with a merely
+    value-equivalent flattened formula. A constexpr p* without `logical_ref` is
+    only a fixed-Harness-specialization ABI carrier: retain it, but do not invent
+    a dummy logical use or reconstruct an inactive variant.
+
+    Construct and direct-submit complete Triton source early. If preflight fails,
+    keep editing the same `/output/replay.source`; inspect your current source,
+    call ReplayCheck and the public synthetic construction compile check. Apply
+    focused exact changes and resubmit. Submission reruns both checks for changed
+    bytes. Their PASS only closes Replay construction; it is not Gate1, semantic
+    membership, or certification. The external writer independently repeats
+    ingress after submission. Create no other file under `/output`.
+
+  step_limit: 0
   cost_limit: 0
   wall_time_limit_seconds: 1800
-  max_consecutive_format_errors: 2
+  max_consecutive_format_errors: 0
+  # This is not a call budget: only three consecutive identical requests with
+  # identical Replay bytes and identical closed output terminate as a stall.
+  max_consecutive_stagnant_steps: 3
+  # Total calls remain uncapped.  These timers only detect elapsed time with no
+  # exact Replay/work-file byte change.
+  material_progress_advisory_seconds: 120
+  material_progress_stall_seconds: 600
+
 model:
+  max_tool_calls_per_response: 4
+  enable_replay_patch_tool: true
+  enable_submit_replay_tool: true
+  compact_tool_history: true
+  compact_tool_arguments_over_chars: 2048
+  compact_tool_outputs_keep_recent: 2
+  # The exact packet stays in the initial user message on every stateless API
+  # call. Only stale response/tool groups become deterministic transport receipts.
+  compact_workspace_mirrors: false
+  compact_response_history_keep_recent: 3
+  use_previous_response_id: true
+  # Initial J/pi/MaskC interpretation keeps the requested effort. Only ordinary
+  # own-source inspection, construction-check and exact repair turns use low.
+  routine_reasoning_effort: low
+  routine_timeout_seconds: 180
+  semantic_initial_turns: 1
   observation_template: |
-    {%- if output.output | length < 12000 -%}
-    {"returncode": {{ output.returncode }}, "turn_budget": {"used": {{ n_model_calls }}, "limit": {{ step_limit }}, "remaining": {{ step_limit - n_model_calls }}}, "output": {{ output.output | tojson }}{% if output.exception_info %}, "exception": {{ output.exception_info | tojson }}{% endif %}{% if step_limit > 0 and step_limit - n_model_calls <= 10 %}, "directive": "Stop browsing. Finish the complete source, rerun ReplayCheck and the advisory compile check after the final edit, repair actionable diagnostics, and submit now."{% endif %}}
+    {%- if output.output | length < 8000 -%}
+    {"returncode": {{ output.returncode }}, "output": {{ output.output | tojson }}{% if output.exception_info %}, "exception": {{ output.exception_info | tojson }}{% endif %}{% if wall_time_limit_seconds > 0 and wall_time_limit_seconds - elapsed_seconds <= 180 %}, "remaining_seconds": {{ wall_time_limit_seconds - elapsed_seconds }}, "directive": "Replay wall time is nearly exhausted; submit a checked complete source."{% endif %}}
     {%- else -%}
-    {"returncode": {{ output.returncode }}, "turn_budget": {"used": {{ n_model_calls }}, "limit": {{ step_limit }}, "remaining": {{ step_limit - n_model_calls }}}, "output_head": {{ output.output[:6000] | tojson }}, "output_tail": {{ output.output[-6000:] | tojson }}, "elided_chars": {{ output.output | length - 12000 }}{% if step_limit > 0 and step_limit - n_model_calls <= 10 %}, "directive": "Stop browsing. Finish the complete source, rerun ReplayCheck and the advisory compile check after the final edit, repair actionable diagnostics, and submit now."{% endif %}}
+    {"returncode": {{ output.returncode }}, "output_head": {{ output.output[:4000] | tojson }}, "output_tail": {{ output.output[-4000:] | tojson }}, "elided_chars": {{ output.output | length - 8000 }}{% if wall_time_limit_seconds > 0 and wall_time_limit_seconds - elapsed_seconds <= 180 %}, "remaining_seconds": {{ wall_time_limit_seconds - elapsed_seconds }}, "directive": "Replay wall time is nearly exhausted; submit a checked complete source."{% endif %}}
     {%- endif %}
   format_error_template: |
     Tool call error: {{ error }}
-    Use the bash tool for the next bounded action. To submit, call bash with:
-    printf 'INTENTIR_REPLAY_SUBMIT\n'
+    Use one to four bash calls for the next bounded action. Multiple calls must
+    be independent and read-only; use exactly one call for every write, inspect
+    after write, check, commit, rollback, or direct submit.
   model_kwargs:
     drop_params: true
     num_retries: 0
     max_retries: 0
-    parallel_tool_calls: false
+    parallel_tool_calls: true
   # Same source-blind episode and exact message packet; no new semantic input.
   retry_attempts: 3
+  retry_timeouts: true
   use_global_model_stats: false
   cost_tracking: ignore_errors
+
 environment:
   timeout: 60
-  replay_check_limit: 7
-  replay_submission_check_limit: 1
-  replay_compile_check_limit: 7
-  replay_source_inspect_limit: 12
+  # Zero means time-governed/unbounded-by-count; every call remains audited.
+  replay_check_limit: 0
+  replay_submission_check_limit: 0
+  replay_compile_check_limit: 0
+  replay_source_inspect_limit: 0

@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+import re
 from typing import Any, Iterable, Mapping
 
 from intentir.extraction.lifters.scrc import (
@@ -39,7 +40,7 @@ from intentir.verify.workload_manifest import (
 )
 
 
-TRITON_WORKLOAD_ADAPTER_PROTOCOL = "intentir.scrc.triton-workload-adapter.v3"
+TRITON_WORKLOAD_ADAPTER_PROTOCOL = "intentir.scrc.triton-workload-adapter.v5"
 
 
 class BufferRole(str, Enum):
@@ -61,6 +62,7 @@ class BufferBinding:
     shape: tuple[int, ...]
     output_key: str | None = None
     initializer: BufferInitializer | None = None
+    shape_contract: tuple[int | str, ...] | None = None
 
     def __post_init__(self) -> None:
         if not self.formal.isidentifier():
@@ -73,6 +75,31 @@ class BufferBinding:
         if not shape or any(dim <= 0 for dim in shape):
             raise ValueError("real workload buffers require positive dimensions")
         object.__setattr__(self, "shape", shape)
+        shape_contract = (
+            tuple(self.shape_contract)
+            if self.shape_contract is not None
+            else None
+        )
+        if shape_contract is not None:
+            if len(shape_contract) != len(shape):
+                raise ValueError(
+                    "buffer shape contract rank differs from concrete valuation"
+                )
+            for contract, extent in zip(shape_contract, shape, strict=True):
+                if isinstance(contract, bool) or not isinstance(contract, (int, str)):
+                    raise TypeError(
+                        "buffer shape contract entries must be integers or h* coordinates"
+                    )
+                if isinstance(contract, int):
+                    if contract <= 0 or contract != extent:
+                        raise ValueError(
+                            "static buffer shape contract differs from concrete valuation"
+                        )
+                elif not contract.startswith("h") or not contract[1:].isdigit():
+                    raise ValueError(
+                        "buffer shape contract coordinates must use anonymous h* handles"
+                    )
+        object.__setattr__(self, "shape_contract", shape_contract)
         if self.role is BufferRole.INPUT and self.output_key is not None:
             raise ValueError("input-only buffer cannot declare an output key")
         if self.role is not BufferRole.INPUT and self.output_key is None:
@@ -93,6 +120,7 @@ class ScalarBinding:
     formal: str
     dtype: str
     value: bool | int | float
+    shape_coordinate: str | None = None
 
     def __post_init__(self) -> None:
         if not self.formal.isidentifier():
@@ -101,6 +129,25 @@ class ScalarBinding:
             raise ValueError("scalar dtype must be non-empty")
         if not isinstance(self.value, (bool, int, float)):
             raise TypeError("runtime scalar value must be bool/int/float")
+        if self.shape_coordinate is not None:
+            if (
+                not isinstance(self.shape_coordinate, str)
+                or not self.shape_coordinate.startswith("h")
+                or not self.shape_coordinate[1:].isdigit()
+            ):
+                raise ValueError(
+                    "scalar shape-coordinate binding must use an anonymous h* handle"
+                )
+            if isinstance(self.value, bool) or not isinstance(self.value, int):
+                raise ValueError(
+                    "scalar shape-coordinate binding requires an integer valuation"
+                )
+            if self.dtype.casefold() != "index" and re.fullmatch(
+                r"[iu][0-9]+", self.dtype.casefold()
+            ) is None:
+                raise ValueError(
+                    "scalar shape-coordinate binding requires an integer dtype"
+                )
 
 
 @dataclass(frozen=True)
@@ -152,6 +199,8 @@ class TritonWorkloadAdapter:
     seed: int
     none_arguments: tuple[NoneBinding, ...] = ()
     vararg_arity: int | None = None
+    grid_shape_coordinates: tuple[str | None, ...] = ()
+    semantic_constexpr_shape_coordinates: tuple[tuple[str, str], ...] = ()
     protocol: str = TRITON_WORKLOAD_ADAPTER_PROTOCOL
 
     def __post_init__(self) -> None:
@@ -193,6 +242,98 @@ class TritonWorkloadAdapter:
         if len(contracts) != len(grid) or any(not item for item in contracts):
             raise ValueError("grid contract must describe every launch dimension")
         object.__setattr__(self, "grid_contract", contracts)
+        grid_shape_coordinates = tuple(self.grid_shape_coordinates)
+        if grid_shape_coordinates and len(grid_shape_coordinates) != len(grid):
+            raise ValueError(
+                "grid shape-coordinate bindings must describe every launch dimension"
+            )
+        if any(
+            item is not None
+            and (
+                not isinstance(item, str)
+                or not item.startswith("h")
+                or not item[1:].isdigit()
+            )
+            for item in grid_shape_coordinates
+        ):
+            raise ValueError(
+                "grid shape-coordinate bindings must use h* handles or null"
+            )
+        object.__setattr__(
+            self, "grid_shape_coordinates", grid_shape_coordinates
+        )
+        shape_coordinates: dict[str, int] = {}
+        coordinate_order: list[str] = []
+        for buffer in buffers:
+            if buffer.shape_contract is None:
+                continue
+            for contract, extent in zip(
+                buffer.shape_contract, buffer.shape, strict=True
+            ):
+                if not isinstance(contract, str):
+                    continue
+                if contract not in shape_coordinates:
+                    shape_coordinates[contract] = extent
+                    coordinate_order.append(contract)
+                elif shape_coordinates[contract] != extent:
+                    raise ValueError(
+                        "adapter shape coordinate has inconsistent valuations"
+                    )
+        if coordinate_order != [f"h{index}" for index in range(len(coordinate_order))]:
+            raise ValueError(
+                "adapter shape coordinates must use gap-free first-declaration order"
+            )
+        for axis, coordinate in enumerate(grid_shape_coordinates):
+            if coordinate is None:
+                continue
+            if coordinate not in shape_coordinates:
+                raise ValueError(
+                    "grid shape-coordinate binding names an undeclared coordinate"
+                )
+            if grid[axis] != shape_coordinates[coordinate]:
+                raise ValueError(
+                    "grid extent differs from its explicit shape-coordinate valuation"
+                )
+        for scalar in scalars:
+            coordinate = scalar.shape_coordinate
+            if coordinate is None:
+                continue
+            if coordinate not in shape_coordinates:
+                raise ValueError(
+                    "scalar shape-coordinate binding names an undeclared coordinate"
+                )
+            if scalar.value != shape_coordinates[coordinate]:
+                raise ValueError(
+                    "scalar and tensor shape-coordinate valuations differ"
+                )
+        semantic_constexpr_shape_coordinates = _pairs(
+            self.semantic_constexpr_shape_coordinates,
+            label="semantic constexpr shape-coordinate",
+        )
+        semantic_values = dict(semantics)
+        for name, coordinate in semantic_constexpr_shape_coordinates:
+            if name not in semantic_values:
+                raise ValueError(
+                    "semantic constexpr shape-coordinate binding requires a semantic constexpr"
+                )
+            if not isinstance(coordinate, str) or coordinate not in shape_coordinates:
+                raise ValueError(
+                    "semantic constexpr shape-coordinate binding names an undeclared coordinate"
+                )
+            value = semantic_values[name]
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value != shape_coordinates[coordinate]
+            ):
+                raise ValueError(
+                    "semantic constexpr and tensor shape-coordinate valuations differ"
+                )
+        object.__setattr__(
+            self,
+            "semantic_constexpr_shape_coordinates",
+            semantic_constexpr_shape_coordinates,
+        )
         if not isinstance(self.seed, int) or self.seed < 0:
             raise ValueError("adapter seed must be a non-negative integer")
         if self.vararg_arity is not None and (
@@ -221,6 +362,7 @@ class TritonWorkloadAdapter:
                 item.dtype,
                 item.shape,
                 mode=item.role.value,
+                shape_contract=item.shape_contract,
             )
             for item in self.buffers
         }
@@ -232,6 +374,7 @@ class TritonWorkloadAdapter:
                     item.dtype,
                     value=item.value,
                     mode="value",
+                    shape_coordinate=item.shape_coordinate,
                 )
                 for item in self.scalars
             }
@@ -263,9 +406,13 @@ class TritonWorkloadAdapter:
         return SCRCCompilerView(
             schedule_values=c_values,
             bound_constexpr_values=semantics,
+            bound_constexpr_shape_coordinates=dict(
+                self.semantic_constexpr_shape_coordinates
+            ),
             arguments=tuple(runtime[name] for name in expected_runtime),
             grid=self.grid,
             grid_contract=self.grid_contract,
+            grid_shape_coordinates=self.grid_shape_coordinates,
             parameter_order=parameter_order,
             constexpr_parameters=constexpr_parameters,
         )
@@ -280,6 +427,11 @@ class TritonWorkloadAdapter:
                     "role": item.role.value,
                     "dtype": item.dtype,
                     "shape": list(item.shape),
+                    "shape_contract": (
+                        list(item.shape_contract)
+                        if item.shape_contract is not None
+                        else None
+                    ),
                     "output_key": item.output_key,
                     "initializer": (
                         item.initializer.value
@@ -294,6 +446,7 @@ class TritonWorkloadAdapter:
                     "formal": item.formal,
                     "dtype": item.dtype,
                     "value": item.value,
+                    "shape_coordinate": item.shape_coordinate,
                 }
                 for item in self.scalars
             ],
@@ -302,9 +455,13 @@ class TritonWorkloadAdapter:
                 for item in self.none_arguments
             ],
             "semantic_constexprs": dict(self.semantic_constexprs),
+            "semantic_constexpr_shape_coordinates": dict(
+                self.semantic_constexpr_shape_coordinates
+            ),
             "c_values": dict(self.c_values),
             "grid": list(self.grid),
             "grid_contract": list(self.grid_contract),
+            "grid_shape_coordinates": list(self.grid_shape_coordinates),
             "seed": self.seed,
             "vararg_arity": self.vararg_arity,
         }
@@ -430,48 +587,80 @@ def _buffer(
     shape: tuple[int, ...],
     output_key: str | None = None,
     initializer: BufferInitializer | None = None,
+    shape_contract: tuple[int | str, ...] | None = None,
 ) -> BufferBinding:
     return BufferBinding(
-        formal, role, dtype, shape, output_key, initializer
+        formal, role, dtype, shape, output_key, initializer, shape_contract
     )
 
 
-def _scalar(formal: str, dtype: str, value: Any) -> ScalarBinding:
-    return ScalarBinding(formal, dtype, value)
+def _scalar(
+    formal: str,
+    dtype: str,
+    value: Any,
+    *,
+    shape_coordinate: str | None = None,
+) -> ScalarBinding:
+    return ScalarBinding(formal, dtype, value, shape_coordinate)
 
 
 TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
     "high_performance:liger_dyt": TritonWorkloadAdapter(
         "high_performance:liger_dyt",
         buffers=(
-            _buffer("X", BufferRole.INPUT, "f32", (2, 127)),
-            _buffer("Y", BufferRole.OUTPUT, "f32", (2, 127), "y"),
+            _buffer(
+                "X", BufferRole.INPUT, "f32", (2, 127),
+                shape_contract=("h0", "h1"),
+            ),
+            _buffer(
+                "Y", BufferRole.OUTPUT, "f32", (2, 127), "y",
+                shape_contract=("h0", "h1"),
+            ),
             _buffer("Alpha", BufferRole.INPUT, "f32", (1,)),
-            _buffer("Gamma", BufferRole.INPUT, "f32", (127,)),
-            _buffer("Beta", BufferRole.INPUT, "f32", (127,)),
+            _buffer(
+                "Gamma", BufferRole.INPUT, "f32", (127,),
+                shape_contract=("h1",),
+            ),
+            _buffer(
+                "Beta", BufferRole.INPUT, "f32", (127,),
+                shape_contract=("h1",),
+            ),
         ),
         scalars=(),
         semantic_constexprs=(("HAVE_BETA", True), ("N", 127)),
+        semantic_constexpr_shape_coordinates=(("N", "h1"),),
         c_values=(("BLOCK_N", 128),),
         grid=(1, 2),
         grid_contract=("ceil_div(N,BLOCK_N)", "rows"),
+        grid_shape_coordinates=(None, "h0"),
         seed=101,
     ),
     "high_performance:liger_swiglu": TritonWorkloadAdapter(
         "high_performance:liger_swiglu",
         buffers=(
-            _buffer("a_ptr", BufferRole.INPUT, "f32", (2, 127)),
-            _buffer("b_ptr", BufferRole.INPUT, "f32", (2, 127)),
-            _buffer("c_ptr", BufferRole.OUTPUT, "f32", (2, 127), "c"),
+            _buffer(
+                "a_ptr", BufferRole.INPUT, "f32", (2, 127),
+                shape_contract=("h0", "h1"),
+            ),
+            _buffer(
+                "b_ptr", BufferRole.INPUT, "f32", (2, 127),
+                shape_contract=("h0", "h1"),
+            ),
+            _buffer(
+                "c_ptr", BufferRole.OUTPUT, "f32", (2, 127), "c",
+                shape_contract=("h0", "h1"),
+            ),
         ),
         scalars=(
             _scalar("stride", "i64", 127),
             _scalar("gate_multiplier", "f32", 1.0),
         ),
         semantic_constexprs=(("n_cols", 127),),
+        semantic_constexpr_shape_coordinates=(("n_cols", "h1"),),
         c_values=(("BLOCK_SIZE", 128),),
         grid=(2,),
         grid_contract=("rows",),
+        grid_shape_coordinates=("h0",),
         seed=103,
     ),
     (
@@ -483,9 +672,18 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
             "_bwd_preprocess_do_o_dot"
         ),
         buffers=(
-            _buffer("Out", BufferRole.INPUT, "f16", (1, 2, 33, 16)),
-            _buffer("DO", BufferRole.INPUT, "f16", (1, 2, 33, 16)),
-            _buffer("Delta", BufferRole.OUTPUT, "f32", (1, 2, 64), "delta"),
+            _buffer(
+                "Out", BufferRole.INPUT, "f16", (1, 2, 33, 16),
+                shape_contract=("h0", "h1", "h2", "h3"),
+            ),
+            _buffer(
+                "DO", BufferRole.INPUT, "f16", (1, 2, 33, 16),
+                shape_contract=("h0", "h1", "h2", "h3"),
+            ),
+            _buffer(
+                "Delta", BufferRole.OUTPUT, "f32", (1, 2, 64), "delta",
+                shape_contract=("h0", "h1", "h4"),
+            ),
         ),
         scalars=(
             _scalar("stride_ob", "i64", 1056),
@@ -494,10 +692,12 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
             _scalar("stride_dob", "i64", 1056),
             _scalar("stride_doh", "i64", 528),
             _scalar("stride_dom", "i64", 16),
-            _scalar("nheads", "i32", 2),
-            _scalar("seqlen_q", "i32", 33),
-            _scalar("seqlen_q_rounded", "i32", 64),
-            _scalar("headdim", "i32", 16),
+            _scalar("nheads", "i32", 2, shape_coordinate="h1"),
+            _scalar("seqlen_q", "i32", 33, shape_coordinate="h2"),
+            _scalar(
+                "seqlen_q_rounded", "i32", 64, shape_coordinate="h4"
+            ),
+            _scalar("headdim", "i32", 16, shape_coordinate="h3"),
         ),
         semantic_constexprs=(),
         c_values=(("BLOCK_M", 32), ("BLOCK_HEADDIM", 16)),
@@ -508,34 +708,53 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
     "high_performance:liger_softmax": TritonWorkloadAdapter(
         "high_performance:liger_softmax",
         buffers=(
-            _buffer("Y_ptr", BufferRole.OUTPUT, "f32", (2, 127), "y"),
-            _buffer("X_ptr", BufferRole.INPUT, "f32", (2, 127)),
+            _buffer(
+                "Y_ptr", BufferRole.OUTPUT, "f32", (2, 127), "y",
+                shape_contract=("h0", "h1"),
+            ),
+            _buffer(
+                "X_ptr", BufferRole.INPUT, "f32", (2, 127),
+                shape_contract=("h0", "h1"),
+            ),
         ),
         scalars=(
             _scalar("Y_row_stride", "i64", 127),
             _scalar("X_row_stride", "i64", 127),
-            _scalar("n_cols", "i32", 127),
+            _scalar("n_cols", "i32", 127, shape_coordinate="h1"),
         ),
         semantic_constexprs=(),
         c_values=(("BLOCK_SIZE", 128),),
         grid=(2,),
         grid_contract=("rows",),
+        grid_shape_coordinates=("h0",),
         seed=109,
     ),
     "high_performance:liger_rms_norm": TritonWorkloadAdapter(
         "high_performance:liger_rms_norm",
         buffers=(
-            _buffer("Y_ptr", BufferRole.OUTPUT, "f32", (2, 127), "y"),
-            _buffer("X_ptr", BufferRole.INPUT, "f32", (2, 127)),
-            _buffer("W_ptr", BufferRole.INPUT, "f32", (127,)),
-            _buffer("RSTD_ptr", BufferRole.OUTPUT, "f32", (2,), "rstd"),
+            _buffer(
+                "Y_ptr", BufferRole.OUTPUT, "f32", (2, 127), "y",
+                shape_contract=("h0", "h1"),
+            ),
+            _buffer(
+                "X_ptr", BufferRole.INPUT, "f32", (2, 127),
+                shape_contract=("h0", "h1"),
+            ),
+            _buffer(
+                "W_ptr", BufferRole.INPUT, "f32", (127,),
+                shape_contract=("h1",),
+            ),
+            _buffer(
+                "RSTD_ptr", BufferRole.OUTPUT, "f32", (2,), "rstd",
+                shape_contract=("h0",),
+            ),
         ),
         scalars=(
             _scalar("Y_row_stride", "i64", 127),
             _scalar("X_row_stride", "i64", 127),
             _scalar("W_row_stride", "i64", 127),
             _scalar("RSTD_row_stride", "i64", 1),
-            _scalar("n_cols", "i32", 127),
+            _scalar("n_cols", "i32", 127, shape_coordinate="h1"),
             _scalar("eps", "f32", 1.0e-6),
             _scalar("offset", "f32", 0.0),
         ),
@@ -546,6 +765,7 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
         c_values=(("BLOCK_SIZE", 128),),
         grid=(2,),
         grid_contract=("rows",),
+        grid_shape_coordinates=("h0",),
         seed=113,
     ),
     (
@@ -553,18 +773,31 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
     ): TritonWorkloadAdapter(
         "high_performance:flash_attn.ops.triton.linear.kernel_fwd",
         buffers=(
-            _buffer("C", BufferRole.OUTPUT, "f16", (32, 32), "c"),
             _buffer(
-                "ACT_INPUT", BufferRole.OUTPUT, "f16", (32, 32), "act_input"
+                "C", BufferRole.OUTPUT, "f16", (32, 32), "c",
+                shape_contract=("h0", "h1"),
             ),
-            _buffer("A", BufferRole.INPUT, "f16", (32, 32)),
-            _buffer("B", BufferRole.INPUT, "f16", (32, 32)),
-            _buffer("bias", BufferRole.INPUT, "f16", (32,)),
+            _buffer(
+                "ACT_INPUT", BufferRole.OUTPUT, "f16", (32, 32), "act_input",
+                shape_contract=("h0", "h1"),
+            ),
+            _buffer(
+                "A", BufferRole.INPUT, "f16", (32, 32),
+                shape_contract=("h0", "h2"),
+            ),
+            _buffer(
+                "B", BufferRole.INPUT, "f16", (32, 32),
+                shape_contract=("h2", "h1"),
+            ),
+            _buffer(
+                "bias", BufferRole.INPUT, "f16", (32,),
+                shape_contract=("h1",),
+            ),
         ),
         scalars=(
-            _scalar("M", "i32", 32),
-            _scalar("N", "i32", 32),
-            _scalar("K", "i32", 32),
+            _scalar("M", "i32", 32, shape_coordinate="h0"),
+            _scalar("N", "i32", 32, shape_coordinate="h1"),
+            _scalar("K", "i32", 32, shape_coordinate="h2"),
             _scalar("CACHE_KEY_M", "i32", 32),
             _scalar("CACHE_KEY_N", "i32", 32),
             _scalar("CACHE_KEY_K", "i32", 32),
@@ -598,18 +831,34 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
     ): TritonWorkloadAdapter(
         "high_performance:flash_attn.flash_attn_triton._fwd_kernel",
         buffers=(
-            _buffer("Q", BufferRole.INPUT, "f16", (1, 128, 1, 64)),
-            _buffer("K", BufferRole.INPUT, "f16", (1, 128, 1, 64)),
-            _buffer("V", BufferRole.INPUT, "f16", (1, 128, 1, 64)),
+            _buffer(
+                "Q", BufferRole.INPUT, "f16", (1, 128, 1, 64),
+                shape_contract=("h0", "h1", "h2", "h3"),
+            ),
+            _buffer(
+                "K", BufferRole.INPUT, "f16", (1, 128, 1, 64),
+                shape_contract=("h0", "h4", "h2", "h3"),
+            ),
+            _buffer(
+                "V", BufferRole.INPUT, "f16", (1, 128, 1, 64),
+                shape_contract=("h0", "h4", "h2", "h3"),
+            ),
             # BIAS_TYPE=none makes this ABI carrier intentionally unread.
             _buffer("Bias", BufferRole.INPUT, "f16", (1,)),
             _buffer(
-                "Out", BufferRole.OUTPUT, "f16", (1, 128, 1, 64), "out"
+                "Out", BufferRole.OUTPUT, "f16", (1, 128, 1, 64), "out",
+                shape_contract=("h0", "h1", "h2", "h3"),
             ),
-            _buffer("Lse", BufferRole.OUTPUT, "f32", (1, 1, 128), "lse"),
+            _buffer(
+                "Lse", BufferRole.OUTPUT, "f32", (1, 1, 128), "lse",
+                shape_contract=("h0", "h2", "h5"),
+            ),
             # TMP is explicit source-ABI scratch storage. The captured symbol
-            # writes it, so the fixed invocation must supply writable storage.
-            _buffer("TMP", BufferRole.OUTPUT, "f32", (1, 1, 128), "tmp"),
+            # stores and reloads it, so its compiler-visible access is inout.
+            _buffer(
+                "TMP", BufferRole.INOUT, "f32", (1, 1, 128), "tmp",
+                shape_contract=("h0", "h2", "h5"),
+            ),
         ),
         scalars=(
             _scalar("softmax_scale", "f32", 0.125),
@@ -628,11 +877,13 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
             _scalar("stride_ob", "i64", 8192),
             _scalar("stride_oh", "i64", 64),
             _scalar("stride_om", "i64", 64),
-            _scalar("nheads", "i32", 1),
-            _scalar("seqlen_q", "i32", 128),
-            _scalar("seqlen_k", "i32", 128),
-            _scalar("seqlen_q_rounded", "i32", 128),
-            _scalar("headdim", "i32", 64),
+            _scalar("nheads", "i32", 1, shape_coordinate="h2"),
+            _scalar("seqlen_q", "i32", 128, shape_coordinate="h1"),
+            _scalar("seqlen_k", "i32", 128, shape_coordinate="h4"),
+            _scalar(
+                "seqlen_q_rounded", "i32", 128, shape_coordinate="h5"
+            ),
+            _scalar("headdim", "i32", 64, shape_coordinate="h3"),
             _scalar("CACHE_KEY_SEQLEN_Q", "i32", 4),
             _scalar("CACHE_KEY_SEQLEN_K", "i32", 4),
         ),
@@ -657,12 +908,24 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
     ): TritonWorkloadAdapter(
         "high_performance:flash_attn.flash_attn_triton._bwd_kernel",
         buffers=(
-            _buffer("Q", BufferRole.INPUT, "f16", (1, 128, 1, 64)),
-            _buffer("K", BufferRole.INPUT, "f16", (1, 128, 1, 64)),
-            _buffer("V", BufferRole.INPUT, "f16", (1, 128, 1, 64)),
+            _buffer(
+                "Q", BufferRole.INPUT, "f16", (1, 128, 1, 64),
+                shape_contract=("h0", "h1", "h2", "h3"),
+            ),
+            _buffer(
+                "K", BufferRole.INPUT, "f16", (1, 128, 1, 64),
+                shape_contract=("h0", "h4", "h2", "h3"),
+            ),
+            _buffer(
+                "V", BufferRole.INPUT, "f16", (1, 128, 1, 64),
+                shape_contract=("h0", "h4", "h2", "h3"),
+            ),
             # BIAS_TYPE=none makes this ABI carrier intentionally unread.
             _buffer("Bias", BufferRole.INPUT, "f16", (1,)),
-            _buffer("DO", BufferRole.INPUT, "f16", (1, 128, 1, 64)),
+            _buffer(
+                "DO", BufferRole.INPUT, "f16", (1, 128, 1, 64),
+                shape_contract=("h0", "h1", "h2", "h3"),
+            ),
             _buffer(
                 "DQ",
                 BufferRole.INOUT,
@@ -670,11 +933,24 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
                 (1, 128, 1, 64),
                 "dq",
                 BufferInitializer.ZEROS,
+                shape_contract=("h0", "h1", "h2", "h3"),
             ),
-            _buffer("DK", BufferRole.OUTPUT, "f32", (1, 128, 1, 64), "dk"),
-            _buffer("DV", BufferRole.OUTPUT, "f32", (1, 128, 1, 64), "dv"),
-            _buffer("LSE", BufferRole.INPUT, "f32", (1, 1, 128)),
-            _buffer("D", BufferRole.INPUT, "f32", (1, 1, 128)),
+            _buffer(
+                "DK", BufferRole.OUTPUT, "f32", (1, 128, 1, 64), "dk",
+                shape_contract=("h0", "h4", "h2", "h3"),
+            ),
+            _buffer(
+                "DV", BufferRole.OUTPUT, "f32", (1, 128, 1, 64), "dv",
+                shape_contract=("h0", "h4", "h2", "h3"),
+            ),
+            _buffer(
+                "LSE", BufferRole.INPUT, "f32", (1, 1, 128),
+                shape_contract=("h0", "h2", "h5"),
+            ),
+            _buffer(
+                "D", BufferRole.INPUT, "f32", (1, 1, 128),
+                shape_contract=("h0", "h2", "h5"),
+            ),
         ),
         scalars=(
             _scalar("softmax_scale", "f32", 0.125),
@@ -702,11 +978,13 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
             _scalar("stride_dvb", "i64", 8192),
             _scalar("stride_dvh", "i64", 64),
             _scalar("stride_dvn", "i64", 64),
-            _scalar("nheads", "i32", 1),
-            _scalar("seqlen_q", "i32", 128),
-            _scalar("seqlen_k", "i32", 128),
-            _scalar("seqlen_q_rounded", "i32", 128),
-            _scalar("headdim", "i32", 64),
+            _scalar("nheads", "i32", 1, shape_coordinate="h2"),
+            _scalar("seqlen_q", "i32", 128, shape_coordinate="h1"),
+            _scalar("seqlen_k", "i32", 128, shape_coordinate="h4"),
+            _scalar(
+                "seqlen_q_rounded", "i32", 128, shape_coordinate="h5"
+            ),
+            _scalar("headdim", "i32", 64, shape_coordinate="h3"),
             _scalar("CACHE_KEY_SEQLEN_Q", "i32", 4),
             _scalar("CACHE_KEY_SEQLEN_K", "i32", 4),
         ),
@@ -730,12 +1008,30 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
     "high_performance:liger_fused_add_rms_norm": TritonWorkloadAdapter(
         "high_performance:liger_fused_add_rms_norm",
         buffers=(
-            _buffer("Y_ptr", BufferRole.OUTPUT, "f32", (2, 127), "y"),
-            _buffer("S_ptr", BufferRole.OUTPUT, "f32", (2, 127), "s"),
-            _buffer("X_ptr", BufferRole.INPUT, "f32", (2, 127)),
-            _buffer("R_ptr", BufferRole.INPUT, "f32", (2, 127)),
-            _buffer("W_ptr", BufferRole.INPUT, "f32", (127,)),
-            _buffer("RSTD_ptr", BufferRole.OUTPUT, "f32", (2,), "rstd"),
+            _buffer(
+                "Y_ptr", BufferRole.OUTPUT, "f32", (2, 127), "y",
+                shape_contract=("h0", "h1"),
+            ),
+            _buffer(
+                "S_ptr", BufferRole.OUTPUT, "f32", (2, 127), "s",
+                shape_contract=("h0", "h1"),
+            ),
+            _buffer(
+                "X_ptr", BufferRole.INPUT, "f32", (2, 127),
+                shape_contract=("h0", "h1"),
+            ),
+            _buffer(
+                "R_ptr", BufferRole.INPUT, "f32", (2, 127),
+                shape_contract=("h0", "h1"),
+            ),
+            _buffer(
+                "W_ptr", BufferRole.INPUT, "f32", (127,),
+                shape_contract=("h1",),
+            ),
+            _buffer(
+                "RSTD_ptr", BufferRole.OUTPUT, "f32", (2,), "rstd",
+                shape_contract=("h0",),
+            ),
         ),
         scalars=(
             _scalar("Y_row_stride", "i64", 127),
@@ -744,7 +1040,7 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
             _scalar("R_row_stride", "i64", 127),
             _scalar("W_row_stride", "i64", 127),
             _scalar("RSTD_row_stride", "i64", 1),
-            _scalar("n_cols", "i32", 127),
+            _scalar("n_cols", "i32", 127, shape_coordinate="h1"),
             _scalar("eps", "f32", 1.0e-6),
             _scalar("offset", "f32", 0.0),
         ),
@@ -752,25 +1048,36 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
         c_values=(("BLOCK_SIZE", 128),),
         grid=(2,),
         grid_contract=("rows",),
+        grid_shape_coordinates=("h0",),
         seed=139,
     ),
     "high_performance:liger_sparsemax": TritonWorkloadAdapter(
         "high_performance:liger_sparsemax",
         buffers=(
-            _buffer("x_ptr", BufferRole.INPUT, "f32", (2, 127)),
-            _buffer("sorted_x_ptr", BufferRole.INPUT, "f32", (2, 127)),
-            _buffer("o_ptr", BufferRole.OUTPUT, "f32", (2, 127), "o"),
+            _buffer(
+                "x_ptr", BufferRole.INPUT, "f32", (2, 127),
+                shape_contract=("h0", "h1"),
+            ),
+            _buffer(
+                "sorted_x_ptr", BufferRole.INPUT, "f32", (2, 127),
+                shape_contract=("h0", "h1"),
+            ),
+            _buffer(
+                "o_ptr", BufferRole.OUTPUT, "f32", (2, 127), "o",
+                shape_contract=("h0", "h1"),
+            ),
         ),
         scalars=(
             _scalar("x_stride_row", "i64", 127),
             _scalar("sorted_x_stride_row", "i64", 127),
             _scalar("o_stride_row", "i64", 127),
-            _scalar("n_cols", "i32", 127),
+            _scalar("n_cols", "i32", 127, shape_coordinate="h1"),
         ),
         semantic_constexprs=(),
         c_values=(("BLOCK_SIZE", 128), ("num_warps", 4)),
         grid=(2,),
         grid_contract=("rows",),
+        grid_shape_coordinates=("h0",),
         seed=149,
     ),
     (
@@ -782,11 +1089,23 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
             "_bwd_kernel_one_col_block"
         ),
         buffers=(
-            _buffer("Q", BufferRole.INPUT, "f16", (128, 64)),
-            _buffer("K", BufferRole.INPUT, "f16", (64, 64)),
-            _buffer("V", BufferRole.INPUT, "f16", (64, 64)),
+            _buffer(
+                "Q", BufferRole.INPUT, "f16", (128, 64),
+                shape_contract=("h0", "h1"),
+            ),
+            _buffer(
+                "K", BufferRole.INPUT, "f16", (64, 64),
+                shape_contract=("h2", "h1"),
+            ),
+            _buffer(
+                "V", BufferRole.INPUT, "f16", (64, 64),
+                shape_contract=("h2", "h1"),
+            ),
             _buffer("Bias", BufferRole.INPUT, "f16", (1,)),
-            _buffer("DO", BufferRole.INPUT, "f16", (128, 64)),
+            _buffer(
+                "DO", BufferRole.INPUT, "f16", (128, 64),
+                shape_contract=("h0", "h1"),
+            ),
             _buffer(
                 "DQ",
                 BufferRole.INOUT,
@@ -794,11 +1113,24 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
                 (128, 64),
                 "dq",
                 BufferInitializer.ZEROS,
+                shape_contract=("h0", "h1"),
             ),
-            _buffer("DK", BufferRole.OUTPUT, "f32", (64, 64), "dk"),
-            _buffer("DV", BufferRole.OUTPUT, "f32", (64, 64), "dv"),
-            _buffer("LSE", BufferRole.INPUT, "f32", (128,)),
-            _buffer("D", BufferRole.INPUT, "f32", (128,)),
+            _buffer(
+                "DK", BufferRole.OUTPUT, "f32", (64, 64), "dk",
+                shape_contract=("h2", "h1"),
+            ),
+            _buffer(
+                "DV", BufferRole.OUTPUT, "f32", (64, 64), "dv",
+                shape_contract=("h2", "h1"),
+            ),
+            _buffer(
+                "LSE", BufferRole.INPUT, "f32", (128,),
+                shape_contract=("h0",),
+            ),
+            _buffer(
+                "D", BufferRole.INPUT, "f32", (128,),
+                shape_contract=("h0",),
+            ),
         ),
         scalars=(
             _scalar("start_n", "i32", 0),
@@ -811,9 +1143,9 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
             _scalar("stride_dqm", "i64", 64),
             _scalar("stride_dkn", "i64", 64),
             _scalar("stride_dvn", "i64", 64),
-            _scalar("seqlen_q", "i32", 128),
-            _scalar("seqlen_k", "i32", 64),
-            _scalar("headdim", "i32", 64),
+            _scalar("seqlen_q", "i32", 128, shape_coordinate="h0"),
+            _scalar("seqlen_k", "i32", 64, shape_coordinate="h2"),
+            _scalar("headdim", "i32", 64, shape_coordinate="h1"),
         ),
         semantic_constexprs=(
             ("BIAS_TYPE", "none"),
@@ -836,15 +1168,23 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
         "high_performance:liger_qwen2vl_mrope",
         buffers=(
             _buffer(
-                "q_ptr", BufferRole.INOUT, "f16", (1, 4, 2, 16), "q"
+                "q_ptr", BufferRole.INOUT, "f32", (1, 4, 2, 16), "q",
+                shape_contract=("h0", "h1", "h2", "h3"),
             ),
             _buffer(
-                "k_ptr", BufferRole.INOUT, "f16", (1, 4, 1, 16), "k"
+                "k_ptr", BufferRole.INOUT, "f32", (1, 4, 1, 16), "k",
+                shape_contract=("h0", "h1", "h4", "h3"),
             ),
-            _buffer("cos", BufferRole.INPUT, "f16", (3, 1, 4, 16)),
-            _buffer("sin", BufferRole.INPUT, "f16", (3, 1, 4, 16)),
+            _buffer(
+                "cos", BufferRole.INPUT, "f32", (3, 1, 4, 16),
+                shape_contract=(3, "h0", "h1", "h3"),
+            ),
+            _buffer(
+                "sin", BufferRole.INPUT, "f32", (3, 1, 4, 16),
+                shape_contract=(3, "h0", "h1", "h3"),
+            ),
         ),
-        scalars=(_scalar("sl", "i32", 4),),
+        scalars=(_scalar("sl", "i32", 4, shape_coordinate="h1"),),
         semantic_constexprs=(
             ("bs", 1),
             ("n_qh", 2),
@@ -853,6 +1193,12 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
             ("mrope_section_t", 3),
             ("mrope_section_h", 3),
             ("BACKWARD_PASS", False),
+        ),
+        semantic_constexpr_shape_coordinates=(
+            ("bs", "h0"),
+            ("n_qh", "h2"),
+            ("n_kh", "h4"),
+            ("hd", "h3"),
         ),
         c_values=(
             ("pad_n_qh", 2),
@@ -867,12 +1213,30 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
     "high_performance:liger_group_norm": TritonWorkloadAdapter(
         "high_performance:liger_group_norm",
         buffers=(
-            _buffer("Y_ptr", BufferRole.OUTPUT, "f32", (2, 2, 32), "y"),
-            _buffer("X_ptr", BufferRole.INPUT, "f32", (2, 2, 32)),
-            _buffer("Mean_ptr", BufferRole.OUTPUT, "f32", (2, 2), "mean"),
-            _buffer("RSTD_ptr", BufferRole.OUTPUT, "f32", (2, 2), "rstd"),
-            _buffer("W_ptr", BufferRole.INPUT, "f32", (4,)),
-            _buffer("B_ptr", BufferRole.INPUT, "f32", (4,)),
+            _buffer(
+                "Y_ptr", BufferRole.OUTPUT, "f32", (2, 2, 32), "y",
+                shape_contract=("h0", "h1", "h2"),
+            ),
+            _buffer(
+                "X_ptr", BufferRole.INPUT, "f32", (2, 2, 32),
+                shape_contract=("h0", "h1", "h2"),
+            ),
+            _buffer(
+                "Mean_ptr", BufferRole.OUTPUT, "f32", (2, 2), "mean",
+                shape_contract=("h0", "h1"),
+            ),
+            _buffer(
+                "RSTD_ptr", BufferRole.OUTPUT, "f32", (2, 2), "rstd",
+                shape_contract=("h0", "h1"),
+            ),
+            _buffer(
+                "W_ptr", BufferRole.INPUT, "f32", (4,),
+                shape_contract=("h3",),
+            ),
+            _buffer(
+                "B_ptr", BufferRole.INPUT, "f32", (4,),
+                shape_contract=("h3",),
+            ),
         ),
         scalars=(
             _scalar("Y_row_stride", "i64", 64),
@@ -883,7 +1247,7 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
             _scalar("Mean_col_stride", "i64", 1),
             _scalar("RSTD_row_stride", "i64", 2),
             _scalar("RSTD_col_stride", "i64", 1),
-            _scalar("hidden_size", "i32", 32),
+            _scalar("hidden_size", "i32", 32, shape_coordinate="h2"),
             _scalar("channels_per_group", "i32", 2),
             _scalar("eps", "f32", 1.0e-6),
         ),
@@ -891,17 +1255,33 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
         c_values=(("BLOCK_SIZE", 32),),
         grid=(2, 2),
         grid_contract=("batch", "groups"),
+        grid_shape_coordinates=("h0", "h1"),
         seed=163,
     ),
     "high_performance:liger_jsd": TritonWorkloadAdapter(
         "high_performance:liger_jsd",
         buffers=(
-            _buffer("X_ptr", BufferRole.INPUT, "f32", (2, 64)),
-            _buffer("Y_ptr", BufferRole.INPUT, "f32", (2, 64)),
-            _buffer("loss_ptr", BufferRole.OUTPUT, "f32", (2, 64), "loss"),
-            _buffer("dX_ptr", BufferRole.OUTPUT, "f32", (2, 64), "dx"),
+            _buffer(
+                "X_ptr", BufferRole.INPUT, "f32", (2, 64),
+                shape_contract=("h0", "h1"),
+            ),
+            _buffer(
+                "Y_ptr", BufferRole.INPUT, "f32", (2, 64),
+                shape_contract=("h0", "h1"),
+            ),
+            _buffer(
+                "loss_ptr", BufferRole.OUTPUT, "f32", (2, 64), "loss",
+                shape_contract=("h0", "h1"),
+            ),
+            _buffer(
+                "dX_ptr", BufferRole.OUTPUT, "f32", (2, 64), "dx",
+                shape_contract=("h0", "h1"),
+            ),
             # HAS_LABEL=false makes this required ABI carrier unread.
-            _buffer("label_ptr", BufferRole.INPUT, "i64", (2,)),
+            _buffer(
+                "label_ptr", BufferRole.INPUT, "i64", (2,),
+                shape_contract=("h0",),
+            ),
         ),
         scalars=(
             _scalar("X_stride", "i64", 64),
@@ -909,7 +1289,7 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
             _scalar("loss_stride", "i64", 64),
             _scalar("dX_stride", "i64", 64),
             _scalar("n_non_ignore", "i32", 2),
-            _scalar("n_cols", "i32", 64),
+            _scalar("n_cols", "i32", 64, shape_coordinate="h1"),
         ),
         semantic_constexprs=(
             ("beta", 0.5),
@@ -919,6 +1299,7 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
         c_values=(("BLOCK_SIZE", 64),),
         grid=(2,),
         grid_contract=("rows",),
+        grid_shape_coordinates=("h0",),
         seed=167,
     ),
     "high_performance:liger_cross_entropy": TritonWorkloadAdapter(
@@ -926,23 +1307,42 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
         buffers=(
             # The runtime ignore-index early-return clears this buffer even
             # when HAS_GRADIENTS=false, so its Source effect contract is inout.
-            _buffer("X_ptr", BufferRole.INOUT, "f32", (2, 64), "x"),
+            _buffer(
+                "X_ptr", BufferRole.INOUT, "f32", (2, 64), "x",
+                shape_contract=("h0", "h1"),
+            ),
             _buffer(
                 "Y_ptr",
                 BufferRole.INPUT,
                 "i64",
                 (2,),
                 initializer=BufferInitializer.ZEROS,
+                shape_contract=("h0",),
             ),
             # HAS_WEIGHT=false makes this required ABI carrier unread.
-            _buffer("weight_ptr", BufferRole.INPUT, "f32", (64,)),
-            _buffer("loss_ptr", BufferRole.OUTPUT, "f32", (2,), "loss"),
+            _buffer(
+                "weight_ptr", BufferRole.INPUT, "f32", (64,),
+                shape_contract=("h1",),
+            ),
+            _buffer(
+                "loss_ptr", BufferRole.OUTPUT, "f32", (2,), "loss",
+                shape_contract=("h0",),
+            ),
             # The three RETURN_* flags below are false, so these ABI carriers
             # are deliberately inputs rather than observable uninitialized
             # outputs.
-            _buffer("z_loss_ptr", BufferRole.INPUT, "f32", (2,)),
-            _buffer("token_accuracy_ptr", BufferRole.INPUT, "f32", (2,)),
-            _buffer("predicted_tokens_ptr", BufferRole.INPUT, "i64", (2,)),
+            _buffer(
+                "z_loss_ptr", BufferRole.INPUT, "f32", (2,),
+                shape_contract=("h0",),
+            ),
+            _buffer(
+                "token_accuracy_ptr", BufferRole.INPUT, "f32", (2,),
+                shape_contract=("h0",),
+            ),
+            _buffer(
+                "predicted_tokens_ptr", BufferRole.INPUT, "i64", (2,),
+                shape_contract=("h0",),
+            ),
         ),
         scalars=(
             _scalar("X_stride", "i64", 64),
@@ -950,7 +1350,7 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
             _scalar("loss_stride", "i64", 1),
             _scalar("token_accuracy_stride", "i64", 0),
             _scalar("predicted_tokens_stride", "i64", 0),
-            _scalar("n_cols", "i32", 64),
+            _scalar("n_cols", "i32", 64, shape_coordinate="h1"),
             _scalar("n_non_ignore", "f32", 2.0),
             _scalar("sum_non_ignore_weight", "f32", 2.0),
             _scalar("weight_sum", "f32", 0.0),
@@ -971,51 +1371,80 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
         c_values=(("BLOCK_SIZE", 64),),
         grid=(2,),
         grid_contract=("rows",),
+        grid_shape_coordinates=("h0",),
         seed=173,
     ),
     "high_performance:liger_geglu": TritonWorkloadAdapter(
         "high_performance:liger_geglu",
         buffers=(
-            _buffer("a", BufferRole.INPUT, "f32", (2, 127)),
-            _buffer("b", BufferRole.INPUT, "f32", (2, 127)),
-            _buffer("c", BufferRole.OUTPUT, "f32", (2, 127), "c"),
+            _buffer(
+                "a", BufferRole.INPUT, "f32", (2, 127),
+                shape_contract=("h0", "h1"),
+            ),
+            _buffer(
+                "b", BufferRole.INPUT, "f32", (2, 127),
+                shape_contract=("h0", "h1"),
+            ),
+            _buffer(
+                "c", BufferRole.OUTPUT, "f32", (2, 127), "c",
+                shape_contract=("h0", "h1"),
+            ),
         ),
         scalars=(_scalar("stride", "i64", 127),),
         semantic_constexprs=(("n_cols", 127),),
+        semantic_constexpr_shape_coordinates=(("n_cols", "h1"),),
         c_values=(("BLOCK_SIZE", 128),),
         grid=(2,),
         grid_contract=("rows",),
+        grid_shape_coordinates=("h0",),
         seed=179,
     ),
     "high_performance:liger_poly_norm": TritonWorkloadAdapter(
         "high_performance:liger_poly_norm",
         buffers=(
-            _buffer("Y_ptr", BufferRole.OUTPUT, "f32", (2, 127), "y"),
-            _buffer("X_ptr", BufferRole.INPUT, "f32", (2, 127)),
+            _buffer(
+                "Y_ptr", BufferRole.OUTPUT, "f32", (2, 127), "y",
+                shape_contract=("h0", "h1"),
+            ),
+            _buffer(
+                "X_ptr", BufferRole.INPUT, "f32", (2, 127),
+                shape_contract=("h0", "h1"),
+            ),
             _buffer("W_ptr", BufferRole.INPUT, "f32", (3,)),
             _buffer("B_ptr", BufferRole.INPUT, "f32", (1,)),
-            _buffer("RSTD_ptr", BufferRole.OUTPUT, "f32", (2, 3), "rstd"),
+            _buffer(
+                "RSTD_ptr", BufferRole.OUTPUT, "f32", (2, 3), "rstd",
+                shape_contract=("h0", 3),
+            ),
         ),
         scalars=(
             _scalar("Y_row_stride", "i64", 127),
             _scalar("X_row_stride", "i64", 127),
             _scalar("RSTD_row_stride", "i64", 3),
-            _scalar("n_cols", "i32", 127),
+            _scalar("n_cols", "i32", 127, shape_coordinate="h1"),
             _scalar("eps", "f32", 1.0e-6),
         ),
         semantic_constexprs=(),
         c_values=(("BLOCK_SIZE", 128),),
         grid=(2,),
         grid_contract=("rows",),
+        grid_shape_coordinates=("h0",),
         seed=181,
     ),
     "high_performance:liger_llama4_rope": TritonWorkloadAdapter(
         "high_performance:liger_llama4_rope",
         buffers=(
-            _buffer("q_ptr", BufferRole.INOUT, "f16", (1, 4, 2, 32), "q"),
-            _buffer("k_ptr", BufferRole.INOUT, "f16", (1, 4, 1, 32), "k"),
             _buffer(
-                "freqs_complex_ptr", BufferRole.INPUT, "f16", (4, 16, 2)
+                "q_ptr", BufferRole.INOUT, "f32", (1, 4, 2, 32), "q",
+                shape_contract=("h0", "h1", "h2", 32),
+            ),
+            _buffer(
+                "k_ptr", BufferRole.INOUT, "f32", (1, 4, 1, 32), "k",
+                shape_contract=("h0", "h1", "h3", 32),
+            ),
+            _buffer(
+                "freqs_complex_ptr", BufferRole.INPUT, "f32", (4, 16, 2),
+                shape_contract=("h1", "h4", 2),
             ),
         ),
         scalars=(
@@ -1024,14 +1453,19 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
             _scalar("q_head_stride", "i64", 32),
             _scalar("k_head_stride", "i64", 32),
             _scalar("freqs_row_stride", "i64", 32),
-            _scalar("seq_len", "i32", 4),
-            _scalar("batch_size", "i32", 1),
+            _scalar("seq_len", "i32", 4, shape_coordinate="h1"),
+            _scalar("batch_size", "i32", 1, shape_coordinate="h0"),
             _scalar("imag_sign", "f32", 1.0),
         ),
         semantic_constexprs=(
             ("head_dim_half", 16),
             ("n_q_heads", 2),
             ("n_k_heads", 1),
+        ),
+        semantic_constexpr_shape_coordinates=(
+            ("head_dim_half", "h4"),
+            ("n_q_heads", "h2"),
+            ("n_k_heads", "h3"),
         ),
         c_values=(("BLOCK_SIZE", 16),),
         grid=(4, 2),
@@ -1047,29 +1481,75 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
             "_layer_norm_fwd_1pass_kernel"
         ),
         buffers=(
-            _buffer("X", BufferRole.INPUT, "f16", (2, 127)),
-            _buffer("Y", BufferRole.OUTPUT, "f16", (2, 127), "y"),
-            _buffer("W", BufferRole.INPUT, "f16", (127,)),
-            _buffer("B", BufferRole.INPUT, "f16", (127,)),
-            _buffer("RESIDUAL", BufferRole.INPUT, "f16", (2, 127)),
-            _buffer("X1", BufferRole.INPUT, "f16", (2, 127)),
-            _buffer("W1", BufferRole.INPUT, "f16", (127,)),
-            _buffer("B1", BufferRole.INPUT, "f16", (127,)),
-            _buffer("Y1", BufferRole.OUTPUT, "f16", (2, 127), "y1"),
+            _buffer(
+                "X", BufferRole.INPUT, "f16", (2, 127),
+                shape_contract=("h0", "h1"),
+            ),
+            _buffer(
+                "Y", BufferRole.OUTPUT, "f16", (2, 127), "y",
+                shape_contract=("h0", "h1"),
+            ),
+            _buffer(
+                "W", BufferRole.INPUT, "f16", (127,),
+                shape_contract=("h1",),
+            ),
+            _buffer(
+                "B", BufferRole.INPUT, "f16", (127,),
+                shape_contract=("h1",),
+            ),
+            _buffer(
+                "RESIDUAL", BufferRole.INPUT, "f16", (2, 127),
+                shape_contract=("h0", "h1"),
+            ),
+            _buffer(
+                "X1", BufferRole.INPUT, "f16", (2, 127),
+                shape_contract=("h0", "h1"),
+            ),
+            _buffer(
+                "W1", BufferRole.INPUT, "f16", (127,),
+                shape_contract=("h1",),
+            ),
+            _buffer(
+                "B1", BufferRole.INPUT, "f16", (127,),
+                shape_contract=("h1",),
+            ),
+            _buffer(
+                "Y1", BufferRole.OUTPUT, "f16", (2, 127), "y1",
+                shape_contract=("h0", "h1"),
+            ),
             _buffer(
                 "RESIDUAL_OUT",
                 BufferRole.OUTPUT,
                 "f16",
                 (2, 127),
                 "residual_out",
+                shape_contract=("h0", "h1"),
             ),
             # The fixed flags make these four required ABI carriers unread.
-            _buffer("ROWSCALE", BufferRole.INPUT, "f32", (2,)),
-            _buffer("SEEDS", BufferRole.INPUT, "i64", (2,)),
-            _buffer("DROPOUT_MASK", BufferRole.INPUT, "i1", (2, 127)),
-            _buffer("DROPOUT_MASK1", BufferRole.INPUT, "i1", (2, 127)),
-            _buffer("Mean", BufferRole.OUTPUT, "f32", (2,), "mean"),
-            _buffer("Rstd", BufferRole.OUTPUT, "f32", (2,), "rstd"),
+            _buffer(
+                "ROWSCALE", BufferRole.INPUT, "f32", (2,),
+                shape_contract=("h0",),
+            ),
+            _buffer(
+                "SEEDS", BufferRole.INPUT, "i64", (2,),
+                shape_contract=("h0",),
+            ),
+            _buffer(
+                "DROPOUT_MASK", BufferRole.INPUT, "i1", (2, 127),
+                shape_contract=("h0", "h1"),
+            ),
+            _buffer(
+                "DROPOUT_MASK1", BufferRole.INPUT, "i1", (2, 127),
+                shape_contract=("h0", "h1"),
+            ),
+            _buffer(
+                "Mean", BufferRole.OUTPUT, "f32", (2,), "mean",
+                shape_contract=("h0",),
+            ),
+            _buffer(
+                "Rstd", BufferRole.OUTPUT, "f32", (2,), "rstd",
+                shape_contract=("h0",),
+            ),
         ),
         scalars=(
             _scalar("stride_x_row", "i64", 127),
@@ -1078,8 +1558,8 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
             _scalar("stride_res_out_row", "i64", 127),
             _scalar("stride_x1_row", "i64", 127),
             _scalar("stride_y1_row", "i64", 127),
-            _scalar("M", "i32", 2),
-            _scalar("N", "i32", 127),
+            _scalar("M", "i32", 2, shape_coordinate="h0"),
+            _scalar("N", "i32", 127, shape_coordinate="h1"),
             _scalar("eps", "f32", 1.0e-6),
             _scalar("dropout_p", "f32", 0.0),
             _scalar("zero_centered_weight", "i1", False),
@@ -1099,22 +1579,35 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
         c_values=(("BLOCK_N", 128),),
         grid=(2,),
         grid_contract=("M",),
+        grid_shape_coordinates=("h0",),
         seed=193,
     ),
     "high_performance:liger_rope": TritonWorkloadAdapter(
         "high_performance:liger_rope",
         buffers=(
-            _buffer("q_ptr", BufferRole.INOUT, "f16", (1, 4, 2, 16), "q"),
-            _buffer("k_ptr", BufferRole.INOUT, "f16", (1, 4, 1, 16), "k"),
-            _buffer("cos", BufferRole.INPUT, "f16", (1, 4, 16)),
-            _buffer("sin", BufferRole.INPUT, "f16", (1, 4, 16)),
+            _buffer(
+                "q_ptr", BufferRole.INOUT, "f32", (1, 4, 2, 16), "q",
+                shape_contract=("h0", "h1", "h2", "h3"),
+            ),
+            _buffer(
+                "k_ptr", BufferRole.INOUT, "f32", (1, 4, 1, 16), "k",
+                shape_contract=("h0", "h1", "h4", "h3"),
+            ),
+            _buffer(
+                "cos", BufferRole.INPUT, "f32", (1, 4, 16),
+                shape_contract=("h5", "h1", "h3"),
+            ),
+            _buffer(
+                "sin", BufferRole.INPUT, "f32", (1, 4, 16),
+                shape_contract=("h5", "h1", "h3"),
+            ),
         ),
         scalars=(
-            _scalar("q_row_stride", "i64", 32),
-            _scalar("k_row_stride", "i64", 16),
-            _scalar("cos_row_stride", "i64", 16),
-            _scalar("sin_row_stride", "i64", 16),
-            _scalar("sl", "i32", 4),
+            _scalar("q_row_stride", "i32", 32),
+            _scalar("k_row_stride", "i32", 16),
+            _scalar("cos_row_stride", "i32", 16),
+            _scalar("sin_row_stride", "i32", 16),
+            _scalar("sl", "i32", 4, shape_coordinate="h1"),
         ),
         semantic_constexprs=(
             ("bs", 1),
@@ -1123,6 +1616,13 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
             ("n_kh", 1),
             ("hd", 16),
             ("BACKWARD_PASS", False),
+        ),
+        semantic_constexpr_shape_coordinates=(
+            ("bs", "h0"),
+            ("cos_bs", "h5"),
+            ("n_qh", "h2"),
+            ("n_kh", "h4"),
+            ("hd", "h3"),
         ),
         c_values=(
             ("pad_n_qh", 2),
@@ -1137,12 +1637,30 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
     "high_performance:liger_layer_norm": TritonWorkloadAdapter(
         "high_performance:liger_layer_norm",
         buffers=(
-            _buffer("Y_ptr", BufferRole.OUTPUT, "f32", (2, 127), "y"),
-            _buffer("X_ptr", BufferRole.INPUT, "f32", (2, 127)),
-            _buffer("W_ptr", BufferRole.INPUT, "f32", (127,)),
-            _buffer("B_ptr", BufferRole.INPUT, "f32", (127,)),
-            _buffer("Mean_ptr", BufferRole.OUTPUT, "f32", (2,), "mean"),
-            _buffer("RSTD_ptr", BufferRole.OUTPUT, "f32", (2,), "rstd"),
+            _buffer(
+                "Y_ptr", BufferRole.OUTPUT, "f32", (2, 127), "y",
+                shape_contract=("h0", "h1"),
+            ),
+            _buffer(
+                "X_ptr", BufferRole.INPUT, "f32", (2, 127),
+                shape_contract=("h0", "h1"),
+            ),
+            _buffer(
+                "W_ptr", BufferRole.INPUT, "f32", (127,),
+                shape_contract=("h1",),
+            ),
+            _buffer(
+                "B_ptr", BufferRole.INPUT, "f32", (127,),
+                shape_contract=("h1",),
+            ),
+            _buffer(
+                "Mean_ptr", BufferRole.OUTPUT, "f32", (2,), "mean",
+                shape_contract=("h0",),
+            ),
+            _buffer(
+                "RSTD_ptr", BufferRole.OUTPUT, "f32", (2,), "rstd",
+                shape_contract=("h0",),
+            ),
         ),
         scalars=(
             _scalar("Y_row_stride", "i64", 127),
@@ -1151,27 +1669,37 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
             _scalar("B_row_stride", "i64", 127),
             _scalar("Mean_row_stride", "i64", 1),
             _scalar("RSTD_row_stride", "i64", 1),
-            _scalar("n_cols", "i32", 127),
+            _scalar("n_cols", "i32", 127, shape_coordinate="h1"),
             _scalar("eps", "f32", 1.0e-6),
         ),
         semantic_constexprs=(),
         c_values=(("BLOCK_SIZE", 128),),
         grid=(2,),
         grid_contract=("rows",),
+        grid_shape_coordinates=("h0",),
         seed=199,
     ),
     "high_performance:liger_kl_div": TritonWorkloadAdapter(
         "high_performance:liger_kl_div",
         buffers=(
-            _buffer("y_ptr", BufferRole.INPUT, "f32", (2, 64)),
-            _buffer("gt_ptr", BufferRole.INPUT, "f32", (2, 64)),
-            _buffer("loss_ptr", BufferRole.OUTPUT, "f32", (2,), "loss"),
+            _buffer(
+                "y_ptr", BufferRole.INPUT, "f32", (2, 64),
+                shape_contract=("h0", "h1"),
+            ),
+            _buffer(
+                "gt_ptr", BufferRole.INPUT, "f32", (2, 64),
+                shape_contract=("h0", "h1"),
+            ),
+            _buffer(
+                "loss_ptr", BufferRole.OUTPUT, "f32", (2,), "loss",
+                shape_contract=("h0",),
+            ),
         ),
         scalars=(
             _scalar("y_stride", "i64", 64),
             _scalar("gt_stride", "i64", 64),
             _scalar("loss_stride", "i64", 1),
-            _scalar("n_cols", "i32", 64),
+            _scalar("n_cols", "i32", 64, shape_coordinate="h1"),
             _scalar("eps", "f32", 1.0e-6),
         ),
         semantic_constexprs=(
@@ -1181,24 +1709,40 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
         c_values=(("BLOCK_SIZE", 64),),
         grid=(2,),
         grid_contract=("rows",),
+        grid_shape_coordinates=("h0",),
         seed=211,
     ),
     "high_performance:liger_tvd": TritonWorkloadAdapter(
         "high_performance:liger_tvd",
         buffers=(
-            _buffer("p_ptr", BufferRole.INPUT, "f32", (2, 64)),
-            _buffer("q_ptr", BufferRole.INPUT, "f32", (2, 64)),
-            _buffer("loss_ptr", BufferRole.OUTPUT, "f32", (2, 64), "loss"),
-            _buffer("grads_ptr", BufferRole.OUTPUT, "f32", (2, 64), "grads"),
+            _buffer(
+                "p_ptr", BufferRole.INPUT, "f32", (2, 64),
+                shape_contract=("h0", "h1"),
+            ),
+            _buffer(
+                "q_ptr", BufferRole.INPUT, "f32", (2, 64),
+                shape_contract=("h0", "h1"),
+            ),
+            _buffer(
+                "loss_ptr", BufferRole.OUTPUT, "f32", (2, 64), "loss",
+                shape_contract=("h0", "h1"),
+            ),
+            _buffer(
+                "grads_ptr", BufferRole.OUTPUT, "f32", (2, 64), "grads",
+                shape_contract=("h0", "h1"),
+            ),
             # HAS_LABEL=false makes this required ABI carrier unread.
-            _buffer("label_ptr", BufferRole.INPUT, "i64", (2,)),
+            _buffer(
+                "label_ptr", BufferRole.INPUT, "i64", (2,),
+                shape_contract=("h0",),
+            ),
         ),
         scalars=(
             _scalar("p_stride", "i64", 64),
             _scalar("q_stride", "i64", 64),
             _scalar("loss_stride", "i64", 64),
             _scalar("grads_stride", "i64", 64),
-            _scalar("n_cols", "i32", 64),
+            _scalar("n_cols", "i32", 64, shape_coordinate="h1"),
             _scalar("scale", "f32", 1.0),
         ),
         semantic_constexprs=(
@@ -1209,6 +1753,7 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
         c_values=(("BLOCK_SIZE", 64),),
         grid=(2,),
         grid_contract=("rows",),
+        grid_shape_coordinates=("h0",),
         seed=223,
     ),
     (
@@ -1220,9 +1765,18 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
             "_rms_norm_kernel"
         ),
         buffers=(
-            _buffer("x_ptr", BufferRole.INPUT, "f32", (2, 127)),
-            _buffer("h1_ptr", BufferRole.OUTPUT, "f32", (2, 127), "h1"),
-            _buffer("w_ptr", BufferRole.INPUT, "f32", (127,)),
+            _buffer(
+                "x_ptr", BufferRole.INPUT, "f32", (2, 127),
+                shape_contract=("h0", "h1"),
+            ),
+            _buffer(
+                "h1_ptr", BufferRole.OUTPUT, "f32", (2, 127), "h1",
+                shape_contract=("h0", "h1"),
+            ),
+            _buffer(
+                "w_ptr", BufferRole.INPUT, "f32", (127,),
+                shape_contract=("h1",),
+            ),
         ),
         scalars=(
             _scalar("eps", "f32", 1.0e-6),
@@ -1232,9 +1786,11 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
             ("N_COLS", 127),
             ("INCLUDE_WEIGHT", True),
         ),
+        semantic_constexpr_shape_coordinates=(("N_COLS", "h1"),),
         c_values=(("BLOCK_SIZE", 128),),
         grid=(2,),
         grid_contract=("rows",),
+        grid_shape_coordinates=("h0",),
         seed=227,
     ),
     (
@@ -1246,10 +1802,22 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
             "_rms_norm_add_kernel"
         ),
         buffers=(
-            _buffer("x_ptr", BufferRole.INOUT, "f32", (2, 127), "x"),
-            _buffer("y_ptr", BufferRole.INPUT, "f32", (2, 127)),
-            _buffer("h1_ptr", BufferRole.OUTPUT, "f32", (2, 127), "h1"),
-            _buffer("w_ptr", BufferRole.INPUT, "f32", (127,)),
+            _buffer(
+                "x_ptr", BufferRole.INOUT, "f32", (2, 127), "x",
+                shape_contract=("h0", "h1"),
+            ),
+            _buffer(
+                "y_ptr", BufferRole.INPUT, "f32", (2, 127),
+                shape_contract=("h0", "h1"),
+            ),
+            _buffer(
+                "h1_ptr", BufferRole.OUTPUT, "f32", (2, 127), "h1",
+                shape_contract=("h0", "h1"),
+            ),
+            _buffer(
+                "w_ptr", BufferRole.INPUT, "f32", (127,),
+                shape_contract=("h1",),
+            ),
         ),
         scalars=(
             _scalar("eps", "f32", 1.0e-6),
@@ -1259,9 +1827,11 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
             ("N_COLS", 127),
             ("INCLUDE_WEIGHT", True),
         ),
+        semantic_constexpr_shape_coordinates=(("N_COLS", "h1"),),
         c_values=(("BLOCK_SIZE", 128),),
         grid=(2,),
         grid_contract=("rows",),
+        grid_shape_coordinates=("h0",),
         seed=229,
     ),
     (
@@ -1402,7 +1972,7 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
             _buffer("Out_splitK1", BufferRole.INPUT, "f32", (1, 1, 1, 2, 16)),
             _buffer("LSE_splitK0", BufferRole.INPUT, "f32", (1, 1, 1, 2)),
             _buffer("LSE_splitK1", BufferRole.INPUT, "f32", (1, 1, 1, 2)),
-            _buffer("Out", BufferRole.OUTPUT, "f32", (1, 2, 1, 1, 16), "out"),
+            _buffer("Out", BufferRole.OUTPUT, "f32", (1, 1, 1, 2, 16), "out"),
             _buffer("LSE", BufferRole.OUTPUT, "f32", (1, 1, 1, 2), "lse"),
         ),
         scalars=tuple(
@@ -1470,9 +2040,9 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
             ),
             _buffer("DLSE_splitK0", BufferRole.OUTPUT, "f32", (1, 1, 1, 2), "dlse0"),
             _buffer("DLSE_splitK1", BufferRole.OUTPUT, "f32", (1, 1, 1, 2), "dlse1"),
-            _buffer("Out", BufferRole.INPUT, "f32", (1, 2, 1, 1, 16)),
+            _buffer("Out", BufferRole.INPUT, "f32", (1, 1, 1, 2, 16)),
             _buffer("LSE", BufferRole.INPUT, "f32", (1, 1, 1, 2)),
-            _buffer("DOut", BufferRole.INPUT, "f32", (1, 2, 1, 1, 16)),
+            _buffer("DOut", BufferRole.INPUT, "f32", (1, 1, 1, 2, 16)),
             _buffer("DLSE", BufferRole.INPUT, "f32", (1, 1, 1, 2)),
         ),
         scalars=tuple(

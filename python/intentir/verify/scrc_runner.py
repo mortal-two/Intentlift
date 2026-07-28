@@ -26,7 +26,10 @@ from .typecheck import TypeCheckReport, TypeCheckStatus, type_check
 
 
 MAX_GATE1_ROUNDS = 3
-MAX_PRE_REPLAY_REJECTIONS = 3
+# Zero means that pre-Replay construction is governed by the Lift owner's
+# terminal resource signal rather than a semantic-attempt count.  A positive
+# value remains available as an explicit legacy/diagnostic override.
+MAX_PRE_REPLAY_REJECTIONS = 0
 UNRESOLVED_GATE1_DIAGNOSTIC = "unresolved_gate1"
 UNRESOLVED_GATE2_DIAGNOSTIC = "unresolved_gate2"
 MAX_GATE1_FEEDBACK_EXAMPLES_PER_CATEGORY = 8
@@ -838,18 +841,22 @@ class SCRCInfrastructureError(RuntimeError):
 
 
 class CandidateLiftError(RuntimeError):
-    """One model output was not a complete parseable artifact; relift is allowed."""
+    """One model output was not a complete artifact, or its owner is exhausted."""
 
     def __init__(
         self,
         diagnostics: Mapping[str, Any],
         *,
         physical_calls: int = 1,
+        terminal: bool = False,
     ) -> None:
         self.diagnostics = dict(diagnostics)
-        if not isinstance(physical_calls, int) or physical_calls < 1:
-            raise ValueError("Lift physical_calls must be positive")
+        if not isinstance(physical_calls, int) or physical_calls < 0:
+            raise ValueError("Lift physical_calls must be non-negative")
+        if not isinstance(terminal, bool):
+            raise TypeError("CandidateLiftError.terminal must be boolean")
         self.physical_calls = physical_calls
+        self.terminal = terminal
         super().__init__(str(self.diagnostics.get("diagnostic", "Lift rejected")))
 
 
@@ -961,7 +968,12 @@ class LiftCallResult:
 
 @dataclass(frozen=True)
 class SCRCRunRequest:
-    """Source and one real Harness binding instance (the same c0)."""
+    """Source and one real Harness binding instance (the same c0).
+
+    ``max_pre_replay_rejections == 0`` delegates termination to the branch-local
+    Lift owner's time/resource budget.  Only ``max_gate1_rounds`` bounds formal,
+    TypeCheck-valid candidates that enter a fresh Replay/Gate1 round.
+    """
 
     source: SourceProgram
     binding: HarnessBindingInstance
@@ -1260,51 +1272,6 @@ class SCRCGateRunner:
         }
 
     @staticmethod
-    def _best_parent_with_last_trial(
-        best: LiftFeedback,
-        trial: LiftFeedback,
-    ) -> LiftFeedback:
-        """Keep the best parent while retaining why the latest trial was rejected."""
-
-        best_rank = best.selection_rank
-        trial_rank = trial.selection_rank
-        outcome = (
-            "not_comparable"
-            if best_rank is None or trial_rank is None
-            else "tied"
-            if trial_rank == best_rank
-            else "regressed"
-        )
-        diagnostics = dict(best.diagnostics)
-        trial_observer = trial.diagnostics.get("observer_diff")
-        diagnostics["last_search_trial"] = {
-            "protocol": GATE1_REPAIR_PROGRESS_PROTOCOL,
-            "selected_parent_formal_round": best.formal_round,
-            "trial_formal_round": trial.formal_round,
-            "outcome": outcome,
-            "trial_category_counts": _observer_category_counts(trial.diagnostics),
-            "trial_primary_difference_category": (
-                trial_observer.get("primary_difference_category")
-                if isinstance(trial_observer, Mapping)
-                else None
-            ),
-            "trial_repair_progress": trial.diagnostics.get("repair_progress"),
-            "diagnostic": (
-                "The latest trial was not selected as the next parent. The "
-                "copied previous_artifact remains the best failed candidate; "
-                "do not repeat the rejected trial's unchanged or regressing "
-                "path pattern."
-            ),
-        }
-        return LiftFeedback(
-            FeedbackKind.GATE1,
-            diagnostics,
-            best.formal_round,
-            best.previous_artifact,
-            best.selection_rank,
-        )
-
-    @staticmethod
     def _failed_gate1_rank(
         result: Gate1ExecutionResult,
     ) -> tuple[int | float, ...] | None:
@@ -1456,15 +1423,6 @@ class SCRCGateRunner:
             initial_feedback.previous_artifact
             if initial_feedback is not None else None
         )
-        best_failed_feedback: LiftFeedback | None = None
-        best_failed_rank: tuple[int | float, ...] | None = None
-        if (
-            initial_feedback is not None
-            and initial_feedback.kind is FeedbackKind.GATE1
-            and initial_feedback.selection_rank is not None
-        ):
-            best_failed_feedback = initial_feedback
-            best_failed_rank = initial_feedback.selection_rank
         lift_calls = 0
         lift_physical_calls = 0
         typecheck_calls = 0
@@ -1473,6 +1431,8 @@ class SCRCGateRunner:
         replay_normal_calls = 0
         replay_masked_calls = 0
         replay_physical_calls = 0
+        terminal_stop_reason: str | None = None
+        terminal_stop_observed_at: str | None = None
         gate1_adapters: list[Gate1AttemptAdapter] = []
         pending_initial_artifact = (
             initial_feedback.previous_artifact
@@ -1538,7 +1498,8 @@ class SCRCGateRunner:
                     lift_result = self.dependencies.lift.lift(request, feedback)
                 except CandidateLiftError as exc:
                     lift_physical_calls += exc.physical_calls
-                    pre_replay_rejections += 1
+                    if not exc.terminal:
+                        pre_replay_rejections += 1
                     _notify_progress(
                         progress_callback,
                         "lift",
@@ -1563,7 +1524,20 @@ class SCRCGateRunner:
                     stopped = superseded("after_lift")
                     if stopped is not None:
                         return stopped
-                    if pre_replay_rejections >= request.max_pre_replay_rejections:
+                    if exc.terminal or (
+                        request.max_pre_replay_rejections > 0
+                        and pre_replay_rejections
+                        >= request.max_pre_replay_rejections
+                    ):
+                        terminal_stop_reason = (
+                            str(exc.diagnostics.get("failure_class"))
+                            if exc.terminal
+                            and isinstance(
+                                exc.diagnostics.get("failure_class"), str
+                            )
+                            else "pre_replay_rejection_cap"
+                        )
+                        terminal_stop_observed_at = "after_lift"
                         break
                     continue
                 if not isinstance(lift_result, LiftCallResult):
@@ -1637,7 +1611,13 @@ class SCRCGateRunner:
                 stopped = superseded("after_typecheck")
                 if stopped is not None:
                     return stopped
-                if pre_replay_rejections >= request.max_pre_replay_rejections:
+                if (
+                    request.max_pre_replay_rejections > 0
+                    and pre_replay_rejections
+                    >= request.max_pre_replay_rejections
+                ):
+                    terminal_stop_reason = "pre_replay_rejection_cap"
+                    terminal_stop_observed_at = "after_typecheck"
                     break
                 continue
 
@@ -1655,21 +1635,70 @@ class SCRCGateRunner:
                 )
                 return superseded("before_replay") or stopped
 
-            formal_rounds += 1
+            next_formal_round = formal_rounds + 1
             _notify_progress(
                 progress_callback,
-                "gate1",
+                "replay",
                 None,
-                formal_rounds,
+                next_formal_round,
                 "started",
             )
-            gate1_adapter = self.dependencies.gate1_factory(formal_rounds)
+            gate1_adapter = self.dependencies.gate1_factory(next_formal_round)
             if any(gate1_adapter is previous for previous in gate1_adapters):
                 raise SCRCInfrastructureError(
                     "gate1_factory reused an attempt adapter; Replay must be fresh"
                 )
             gate1_adapters.append(gate1_adapter)
             gate1 = gate1_adapter.run(artifact, request)
+            normal_arms_for_progress = (
+                gate1.normal_candidates
+                if gate1.normal_candidates
+                else (gate1.normal,)
+            )
+            replay_was_generated = any(
+                arm.generation is not None for arm in normal_arms_for_progress
+            )
+            replay_generation_failed = (
+                not replay_was_generated
+                and any(
+                    (arm.diagnostic or "").startswith("generation failed:")
+                    for arm in normal_arms_for_progress
+                )
+            )
+            if replay_generation_failed:
+                _notify_progress(
+                    progress_callback,
+                    "replay",
+                    None,
+                    next_formal_round,
+                    "not_run",
+                )
+                _notify_progress(
+                    progress_callback,
+                    "gate1",
+                    None,
+                    next_formal_round,
+                    "infrastructure_failed",
+                )
+                raise SCRCInfrastructureError(
+                    "Gate1 Replay generation failed before a formal comparison; "
+                    "formal K was not consumed",
+                    evidence={
+                        "attempted_formal_round": next_formal_round,
+                        "formal_gate1_rounds_consumed": formal_rounds,
+                        "artifact": artifact.to_json(),
+                        "typecheck": report.to_json(),
+                        "gate1": gate1.to_json(),
+                    },
+                )
+            formal_rounds = next_formal_round
+            _notify_progress(
+                progress_callback,
+                "replay",
+                None,
+                formal_rounds,
+                "finished" if replay_was_generated else "not_run",
+            )
             _notify_progress(
                 progress_callback,
                 "gate1",
@@ -1679,11 +1708,7 @@ class SCRCGateRunner:
             )
             replay_normal_calls += gate1.normal_calls
             replay_masked_calls += gate1.masked_j_calls
-            normal_arms = (
-                gate1.normal_candidates
-                if gate1.normal_candidates
-                else (gate1.normal,)
-            )
+            normal_arms = normal_arms_for_progress
             for arm in (*normal_arms, gate1.masked_j):
                 if arm is None:
                     continue
@@ -1754,30 +1779,12 @@ class SCRCGateRunner:
                         lift_metadata=lift_metadata,
                     )
                 )
-                candidate_rank = self._failed_gate1_rank(gate1)
-                if candidate_rank is None:
-                    # Compile/generation failures have no comparable observer
-                    # rank.  Repair that exact latest artifact and diagnostic.
-                    feedback = candidate_feedback
-                    last_artifact = artifact
-                else:
-                    if (
-                        best_failed_rank is None
-                        or candidate_rank > best_failed_rank
-                    ):
-                        best_failed_rank = candidate_rank
-                        best_failed_feedback = candidate_feedback
-                    assert best_failed_feedback is not None
-                    feedback = (
-                        best_failed_feedback
-                        if best_failed_feedback is candidate_feedback
-                        else self._best_parent_with_last_trial(
-                            best_failed_feedback,
-                            candidate_feedback,
-                        )
-                    )
-                    assert feedback.previous_artifact is not None
-                    last_artifact = feedback.previous_artifact
+                # The same branch-local Lift owner continues from the exact
+                # candidate it just authored. Comparator rank remains diagnostic
+                # evidence only; fixed code never substitutes an older "best"
+                # parent behind the owner's conversation.
+                feedback = candidate_feedback
+                last_artifact = artifact
                 stopped = superseded("after_gate1")
                 if stopped is not None:
                     return stopped
@@ -1822,6 +1829,8 @@ class SCRCGateRunner:
             accepted_attempt=None,
             j_necessity_status=None,
             call_budget=budget(),
+            stop_reason=terminal_stop_reason,
+            stop_observed_at=terminal_stop_observed_at,
         )
 
     @staticmethod
