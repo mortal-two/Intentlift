@@ -68,6 +68,7 @@ from intentir.verify.scrc_runner import (
 )
 from intentir.verify.typecheck import TypeCheckReport, type_check
 from intentir.verify.workload_adapters import (
+    BufferInputTransform,
     BufferBinding,
     BufferInitializer,
     BufferRole,
@@ -133,6 +134,33 @@ def _input_value(
     if dtype.kind in {"i", "u"}:
         return rng.integers(-3, 4, size=buffer.shape).astype(dtype)
     return rng.normal(0.0, 0.25, size=buffer.shape).astype(dtype)
+
+
+def _input_values(
+    rng: np.random.Generator,
+    buffers: tuple[BufferBinding, ...],
+) -> dict[str, np.ndarray]:
+    """Instantiate base inputs, then apply explicit Harness input relations."""
+
+    result = {
+        item.formal: _input_value(rng, item)
+        for item in buffers
+        if item.role in {BufferRole.INPUT, BufferRole.INOUT}
+        and item.source_formal is None
+    }
+    for item in buffers:
+        if item.source_formal is None:
+            continue
+        source = result.get(item.source_formal)
+        if source is None:
+            raise ValueError("derived Harness input source has no runtime value")
+        if item.input_transform is BufferInputTransform.SORT_DESCENDING_LAST_AXIS:
+            result[item.formal] = np.ascontiguousarray(
+                np.flip(np.sort(source, axis=-1), axis=-1)
+            )
+            continue
+        raise ValueError(f"unsupported Harness input transform {item.input_transform!r}")
+    return result
 
 
 def _bind_shape(
@@ -221,6 +249,7 @@ def build_workload_jc_suite(
     j_inputs = {item.name: item for item in j.intent.inputs}
     j_outputs = {item.name: item for item in j.intent.outputs}
     rng = np.random.default_rng(adapter.seed)
+    runtime_input_values = _input_values(rng, adapter.buffers)
     values: dict[str, Any] = {}
     dimensions: dict[str, int] = {}
     input_bindings: dict[str, str] = {}
@@ -321,7 +350,7 @@ def build_workload_jc_suite(
             if logical_ref not in j_inputs or parameter.mode is ParameterMode.OUTPUT:
                 raise ValueError("Harness input buffer is not a J input")
             key = f"input_{parameter.name}"
-            values[key] = _input_value(rng, buffer)
+            values[key] = runtime_input_values[buffer.formal]
             if input_bindings.setdefault(logical_ref, key) != key:
                 raise ValueError("multiple Harness inputs bind one J tensor")
             arguments.append(
@@ -352,7 +381,7 @@ def build_workload_jc_suite(
                 raise ValueError("Harness inout buffer must anchor J input and output")
             input_key = f"input_{parameter.name}"
             output_key = buffer.output_key or f"output_{parameter.name}"
-            values[input_key] = _input_value(rng, buffer)
+            values[input_key] = runtime_input_values[buffer.formal]
             input_bindings[logical_ref] = input_key
             output_bindings[logical_ref] = output_key
             arguments.append(

@@ -203,8 +203,13 @@ marker/reference、缺失或无 marker 的 arity 均 fail closed；expander 不�
 
 若被移除的 decorator 带有改变调用初态的机械 `pre_hook`（例如把一个 `inout` buffer 清零），fixed-C
 Harness 必须用 closed、通用的 adapter initializer 显式保留该调用事实；不能按 Kernel 名称在 runner
-中补行为。当前 `intentir.scrc.triton-workload-adapter.v3` 只允许 `random|zeros` 输入初始化，纯 output
-没有 initializer；另可声明真实 runtime `None` 与上述 bounded vararg arity。`None` 必须贯穿 compile、
+中补行为。`intentir.scrc.triton-workload-adapter.v4` 允许
+`random|standard_normal|zeros` 基础输入，以及 shape/dtype 相同的另一可读输入经 closed
+`sort_descending_last_axis` 形成派生输入；派生链、隐式 source、同时声明 initializer 与 transform、
+或 output 派生均 fail closed。该关系只定义一次 Harness invocation 的输入分布，Source、Replay、RefEval
+与 production target 必须共享同一组具体值；它不修改 J，也不向 compiler 授予超出 J 的 transformation
+permission。纯 output 没有 initializer；另可声明真实 runtime `None` 与上述 bounded vararg arity。
+`None` 必须贯穿 compile、
 Source/Replay launch 与 Gate2 为真正的 absent carrier，在 J.signature 中只能是
 `opaque(mode=value,dtype=none)`，无 logical_ref/J tensor/node/effect/π instance，绝不能换成 dummy
 pointer 或 scalar。TypeCheck 还必须分别拒绝它成为 π instance anchor、authorization subject 或

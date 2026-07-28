@@ -39,7 +39,7 @@ from intentir.verify.workload_manifest import (
 )
 
 
-TRITON_WORKLOAD_ADAPTER_PROTOCOL = "intentir.scrc.triton-workload-adapter.v3"
+TRITON_WORKLOAD_ADAPTER_PROTOCOL = "intentir.scrc.triton-workload-adapter.v4"
 
 
 class BufferRole(str, Enum):
@@ -54,6 +54,12 @@ class BufferInitializer(str, Enum):
     STANDARD_NORMAL = "standard_normal"
 
 
+class BufferInputTransform(str, Enum):
+    """Closed, Harness-only relations between runtime input buffers."""
+
+    SORT_DESCENDING_LAST_AXIS = "sort_descending_last_axis"
+
+
 @dataclass(frozen=True)
 class BufferBinding:
     formal: str
@@ -62,6 +68,8 @@ class BufferBinding:
     shape: tuple[int, ...]
     output_key: str | None = None
     initializer: BufferInitializer | None = None
+    source_formal: str | None = None
+    input_transform: BufferInputTransform | None = None
 
     def __post_init__(self) -> None:
         if not self.formal.isidentifier():
@@ -78,7 +86,26 @@ class BufferBinding:
             raise ValueError("input-only buffer cannot declare an output key")
         if self.role is not BufferRole.INPUT and self.output_key is None:
             object.__setattr__(self, "output_key", self.formal.casefold())
-        if self.role is BufferRole.OUTPUT:
+        if (self.source_formal is None) != (self.input_transform is None):
+            raise ValueError(
+                "derived input requires both source_formal and input_transform"
+            )
+        if self.input_transform is not None and not isinstance(
+            self.input_transform, BufferInputTransform
+        ):
+            object.__setattr__(
+                self,
+                "input_transform",
+                BufferInputTransform(self.input_transform),
+            )
+        if self.source_formal is not None:
+            if self.role is not BufferRole.INPUT:
+                raise ValueError("only input buffers may derive from another input")
+            if not self.source_formal.isidentifier() or self.source_formal == self.formal:
+                raise ValueError("derived input source must be a distinct buffer formal")
+            if self.initializer is not None:
+                raise ValueError("derived input cannot also declare an initializer")
+        elif self.role is BufferRole.OUTPUT:
             if self.initializer is not None:
                 raise ValueError("output-only buffer cannot declare an initializer")
         elif self.initializer is None:
@@ -189,6 +216,17 @@ class TritonWorkloadAdapter:
         ] + [name for name, _ in c_values]
         if len(names) != len(set(names)):
             raise ValueError("adapter formals must be globally unique")
+        buffer_by_formal = {item.formal: item for item in buffers}
+        for item in buffers:
+            if item.source_formal is None:
+                continue
+            source = buffer_by_formal.get(item.source_formal)
+            if source is None or source.role is BufferRole.OUTPUT:
+                raise ValueError("derived input source must be a readable buffer")
+            if source.source_formal is not None:
+                raise ValueError("derived input chains are not supported")
+            if source.dtype != item.dtype or source.shape != item.shape:
+                raise ValueError("derived input must match source dtype and shape")
         grid = tuple(int(dim) for dim in self.grid)
         if not 1 <= len(grid) <= 3 or any(dim <= 0 for dim in grid):
             raise ValueError("adapter grid must contain positive dimensions")
@@ -288,6 +326,12 @@ class TritonWorkloadAdapter:
                     "initializer": (
                         item.initializer.value
                         if item.initializer is not None
+                        else None
+                    ),
+                    "source_formal": item.source_formal,
+                    "input_transform": (
+                        item.input_transform.value
+                        if item.input_transform is not None
                         else None
                     ),
                 }
@@ -485,9 +529,18 @@ def _buffer(
     shape: tuple[int, ...],
     output_key: str | None = None,
     initializer: BufferInitializer | None = None,
+    source_formal: str | None = None,
+    input_transform: BufferInputTransform | None = None,
 ) -> BufferBinding:
     return BufferBinding(
-        formal, role, dtype, shape, output_key, initializer
+        formal,
+        role,
+        dtype,
+        shape,
+        output_key,
+        initializer,
+        source_formal,
+        input_transform,
     )
 
 
@@ -813,7 +866,14 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
         "high_performance:liger_sparsemax",
         buffers=(
             _buffer("x_ptr", BufferRole.INPUT, "f32", (2, 127)),
-            _buffer("sorted_x_ptr", BufferRole.INPUT, "f32", (2, 127)),
+            _buffer(
+                "sorted_x_ptr",
+                BufferRole.INPUT,
+                "f32",
+                (2, 127),
+                source_formal="x_ptr",
+                input_transform=BufferInputTransform.SORT_DESCENDING_LAST_AXIS,
+            ),
             _buffer("o_ptr", BufferRole.OUTPUT, "f32", (2, 127), "o"),
         ),
         scalars=(
@@ -1585,6 +1645,7 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
 
 __all__ = [
     "BufferBinding",
+    "BufferInputTransform",
     "BufferInitializer",
     "BufferRole",
     "NoneBinding",

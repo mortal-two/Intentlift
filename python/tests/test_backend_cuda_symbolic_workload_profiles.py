@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from intentir.backend.cuda.production_cases import (
@@ -20,6 +21,25 @@ from intentir.verify.scrc_workload_run import build_workload_jc_suite
 
 SNAPSHOTS = Path("corpus/production-jc-v1")
 FRESH_SNAPSHOTS = Path("corpus/production-jc-v2")
+
+
+def test_sparsemax_natural_workload_derives_sorted_input_from_x() -> None:
+    base, _ = load_production_snapshot(FRESH_SNAPSHOTS, "sparsemax")
+    prepared = prepare_production_workload(
+        "sparsemax", profile=PRODUCTION_WORKLOAD_PROFILE_NATURAL_HEADLINE
+    )
+    active, _ = profile_production_snapshot(
+        base, prepared, PRODUCTION_WORKLOAD_PROFILE_NATURAL_HEADLINE
+    )
+    case = build_workload_jc_suite(prepared, active.j, active.c).cases[0]
+    x_key = f"input_{prepared.source_to_opaque['x_ptr']}"
+    sorted_key = f"input_{prepared.source_to_opaque['sorted_x_ptr']}"
+    x = case.values[x_key]
+    sorted_x = case.values[sorted_key]
+
+    expected = np.flip(np.sort(x, axis=-1), axis=-1)
+    assert sorted_x.flags.c_contiguous
+    assert np.array_equal(sorted_x, expected)
 
 
 @pytest.mark.parametrize(

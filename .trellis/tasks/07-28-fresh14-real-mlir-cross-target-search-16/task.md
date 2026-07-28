@@ -1,6 +1,6 @@
 # Task 16：Fresh-14 J 的真实 MLIR 跨目标搜索与 Source/Native Baseline 性能闭合
 
-> 状态：执行中（Phase A：Fresh-14 已 14/14 接入 typed J→Intent MLIR；跨目标 binary/QD/performance 继续推进）
+> 状态：执行中（Fresh-14 已 14/14 接入 typed J→Intent MLIR；5090D 的真实 Q/D、搜索与高杠杆 lowering 正在横向推进）
 >
 > 类型：production backend 能力建设、真实 lowering-state search、跨目标性能与消融实验
 >
@@ -376,6 +376,25 @@ Internal: C-Fixed / Schedule-Only / IntentIR
   pointwise 图有真实 vectorized states；九项普通/scan/padded row 图覆盖 subgroup、workgroup 或
   subgroup-feature；PolyNorm 覆盖共享输入多规约；SplitK 覆盖 unrolled weighted merge。这里仅说明
   backend capability 与 target compilation，不替代后续 14 项 Q/D、Source paired timing 与跨 target 结果。
+- CF/E2/E3 已改为在同一 search receipt 中强制重新测量 C-Fixed、Schedule-Only spine 与 expanded
+  finalist；`G_schedule`/`G_lowering` 不再由三个独立进程的首轮 winner latency 拼接。自然 workload
+  的 headline valuation 已覆盖 fresh-14 14/14，并保持 accepted J digest 不变。
+- Flash preprocess 的 padded-row lowering 已从小 shape 的 serial 特例扩展为任意正 batch、head-dim
+  `<=1024` 的 batch grid + subgroup feature strip。自然 `[4,16,8192,128]` 上，512-thread/16-warp 的
+  expanded topology 初测约 160.5 us，Schedule-Only spine 约 279.6 us，同 receipt
+  `G_lowering≈1.74`；paired Source 约 160.8 us。该结果已经是不同 MLIR topology 的真实收益，但仍是
+  measurement-round=1 的 bring-up 数字。
+- Softmax 自然 `[2048,4096]` 上，C-Fixed 到 512-thread row-reduction schedule 的同 receipt
+  `G_schedule≈1.55`，后端约 12.1 us、paired Source 约 17--18 us；这验证了 C 可重投影/retile 的主线。
+  RMSNorm 与 DYT 的自然大 shape 则分别表现为约 1.08x Source gain 和主要 schedule gain，expanded
+  numeric state 在内存受限形状上没有被虚构成大收益。
+- Sparsemax 的真实 Source ABI 接收 `x` 与上游已排序的 `sorted_x`，sort 明确位于 timed kernel 之外。
+  旧 workload 将两者独立随机生成，使执行域不再代表实际调用，并让 Q/D 正确拒绝排序相关优化。
+  Harness v4 现用通用 `sort_descending_last_axis` 派生关系从同一 `x` 构造 `sorted_x`，四腿共享同一值；
+  该关系不修改 J、也不伪造 compiler permission。自然 `[2048,4096]` 已重新 3/3 通过 CF/E2/E3：
+  Schedule-Only 约 17.3 us，expanded reciprocal state 约 16.2 us，同 receipt `G_lowering≈1.07`，paired
+  Source 约 15.5 us。J 尚无 typed descending relation，因此 sorted-prefix early-stop 仍 fail closed；
+  当前数字只属于通用 scan + Q/D numeric search，不冒充 contract-proven sorted specialization。
 
 ## 10. 总体验收
 

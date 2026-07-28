@@ -8,6 +8,7 @@ from intentir.verify.triton_source_slice import (
 )
 from intentir.verify.workload_adapters import (
     BufferBinding,
+    BufferInputTransform,
     BufferInitializer,
     BufferRole,
     NoneBinding,
@@ -126,6 +127,46 @@ def test_buffer_initializer_is_closed_and_output_only_rejects_it() -> None:
             "f32",
             (8,),
             initializer=BufferInitializer.ZEROS,
+        )
+
+
+def test_derived_input_relation_is_closed_and_adapter_validates_its_source() -> None:
+    derived = BufferBinding(
+        "sorted_x",
+        BufferRole.INPUT,
+        "f32",
+        (2, 8),
+        source_formal="x",
+        input_transform=BufferInputTransform.SORT_DESCENDING_LAST_AXIS,
+    )
+
+    assert derived.initializer is None
+    assert derived.source_formal == "x"
+    assert (
+        derived.input_transform
+        is BufferInputTransform.SORT_DESCENDING_LAST_AXIS
+    )
+    with pytest.raises(ValueError, match="both source_formal"):
+        BufferBinding(
+            "bad",
+            BufferRole.INPUT,
+            "f32",
+            (2, 8),
+            source_formal="x",
+        )
+    with pytest.raises(ValueError, match="source must be a readable buffer"):
+        TritonWorkloadAdapter(
+            "high_performance:test",
+            buffers=(
+                derived,
+                BufferBinding("y", BufferRole.OUTPUT, "f32", (2, 8), "y"),
+            ),
+            scalars=(),
+            semantic_constexprs=(),
+            c_values=(),
+            grid=(1,),
+            grid_contract=("1",),
+            seed=1,
         )
 
 
