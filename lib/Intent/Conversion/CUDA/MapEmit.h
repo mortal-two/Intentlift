@@ -96,6 +96,8 @@ inline mlir::Value emitScalarUnary(mlir::OpBuilder &b, mlir::Location loc,
     // 2^x directly on the `ex2.approx.ftz.f` hardware op (no log2(e) prescale,
     // unlike exp) via the math.exp2 peephole.
     return b.create<math::Exp2Op>(loc, x);
+  if (fn == "log2")
+    return b.create<math::Log2Op>(loc, x);
   if (fn == "atan")
     return b.create<math::AtanOp>(loc, x);
   if (fn == "erf")

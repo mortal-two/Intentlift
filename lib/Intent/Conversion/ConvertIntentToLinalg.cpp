@@ -190,6 +190,8 @@ static Value emitScalarUnary(OpBuilder &b, Location loc, StringRef fn, Value x) 
     return b.create<math::ExpOp>(loc, x);
   if (fn == "log")
     return b.create<math::LogOp>(loc, x);
+  if (fn == "log2")
+    return b.create<math::Log2Op>(loc, x);
   if (fn == "abs")
     return b.create<math::AbsFOp>(loc, x);
   if (fn == "sqrt")
@@ -253,10 +255,11 @@ static Value emitScalarUnary(OpBuilder &b, Location loc, StringRef fn, Value x) 
 
 /// True iff `emitScalarUnary` can lower `fn` (the guard for MapUnaryLowering).
 static bool hasScalarUnary(StringRef fn) {
-  return fn == "identity" || fn == "exp" || fn == "log" || fn == "abs" || fn == "sqrt" ||
-         fn == "rsqrt" || fn == "neg" || fn == "recip" || fn == "tanh" ||
-         fn == "cos" || fn == "sin" || fn == "tan" || fn == "exp2" ||
-         fn == "atan" || fn == "erf" || fn == "sigmoid" || isToI1UnaryFn(fn);
+  return fn == "identity" || fn == "exp" || fn == "log" || fn == "log2" ||
+         fn == "abs" || fn == "sqrt" || fn == "rsqrt" || fn == "neg" ||
+         fn == "recip" || fn == "tanh" || fn == "cos" || fn == "sin" ||
+         fn == "tan" || fn == "exp2" || fn == "atan" || fn == "erf" ||
+         fn == "sigmoid" || isToI1UnaryFn(fn);
 }
 
 struct MapUnaryLowering : OpRewritePattern<MapUnaryOp> {

@@ -104,6 +104,8 @@ def test_every_fresh14_j_materializes_to_real_mlir(name: str) -> None:
         == "intentir.typed-contract-materialization-projection.v1"
     )
     assert logical_projection["contract_ir_digest"]
+    if name == "splitk_reduce_varargs":
+        assert "dense<0xFF800000>" in materialized.intent_mlir
 
 
 def test_masked_copy_materializes_direct_binding_as_real_identity_mlir() -> None:

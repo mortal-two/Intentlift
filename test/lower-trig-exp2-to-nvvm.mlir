@@ -35,6 +35,17 @@ func.func @e2(%x: f32) -> f32 {
 
 // -----
 
+// log2 is the native lg2 approximation with no change-of-base multiply.
+// CHECK-LABEL: func.func @l2
+// CHECK: llvm.call_intrinsic "llvm.nvvm.lg2.approx.f"
+// CHECK-NOT: math.log2
+func.func @l2(%x: f32) -> f32 {
+  %r = math.log2 %x : f32
+  return %r : f32
+}
+
+// -----
+
 // Non-f32 is left alone (the approx PTX ops are f32-only).
 // CHECK-LABEL: func.func @cd
 // CHECK: math.cos

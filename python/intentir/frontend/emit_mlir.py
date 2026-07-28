@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 import ast
+import math
 import operator
 import re
 
@@ -1066,6 +1067,41 @@ def _mlir_f(v) -> str:
     return s
 
 
+def _mlir_dense_float(v, dtype: str) -> str:
+    """Format one dense floating literal, including IEEE non-finite values."""
+
+    value = float(v)
+    if math.isfinite(value):
+        return _mlir_f(value)
+    normalized = dtype.removeprefix("torch.").lower()
+    encodings = {
+        "f16": ("0x7C00", "0xFC00", "0x7E00"),
+        "float16": ("0x7C00", "0xFC00", "0x7E00"),
+        "bf16": ("0x7F80", "0xFF80", "0x7FC0"),
+        "bfloat16": ("0x7F80", "0xFF80", "0x7FC0"),
+        "f32": ("0x7F800000", "0xFF800000", "0x7FC00000"),
+        "float32": ("0x7F800000", "0xFF800000", "0x7FC00000"),
+        "f64": (
+            "0x7FF0000000000000",
+            "0xFFF0000000000000",
+            "0x7FF8000000000000",
+        ),
+        "float64": (
+            "0x7FF0000000000000",
+            "0xFFF0000000000000",
+            "0x7FF8000000000000",
+        ),
+    }
+    if normalized not in encodings:
+        raise ValueError(
+            f"emit_mlir: non-finite dense literal has unsupported dtype {dtype!r}"
+        )
+    positive_inf, negative_inf, quiet_nan = encodings[normalized]
+    if math.isnan(value):
+        return quiet_nan
+    return negative_inf if value < 0 else positive_inf
+
+
 def _infer_body(
     body: list[IntentOp],
     env: dict[str, list[int]],
@@ -1753,9 +1789,11 @@ class _Printer:
                 else:
                     dense = f"dense<{int(val)}>"
             elif isinstance(val, (list, tuple)):
-                dense = "dense<[" + ", ".join(_mlir_f(v) for v in val) + "]>"
+                dense = "dense<[" + ", ".join(
+                    _mlir_dense_float(v, dt) for v in val
+                ) + "]>"
             else:
-                dense = f"dense<{_mlir_f(val)}>"
+                dense = f"dense<{_mlir_dense_float(val, dt)}>"
             self.lines.append(
                 f'{indent}{r} = arith.constant {dense} : {self._ttn(op.result, env)}')
         else:

@@ -267,6 +267,23 @@ struct LogToLg2Approx : OpRewritePattern<math::LogOp> {
   }
 };
 
+/// `math.log2 %x : f32` is already in the native PTX logarithm base.
+struct Log2ToLg2Approx : OpRewritePattern<math::Log2Op> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(math::Log2Op op,
+                                PatternRewriter &rewriter) const override {
+    auto f32 = dyn_cast<Float32Type>(op.getOperand().getType());
+    if (!f32)
+      return rewriter.notifyMatchFailure(op, "operand is not scalar f32");
+    auto lg2 = rewriter.create<LLVM::CallIntrinsicOp>(
+        op.getLoc(), f32, rewriter.getStringAttr("llvm.nvvm.lg2.approx.f"),
+        ValueRange{op.getOperand()});
+    rewriter.replaceOp(op, lg2.getResults());
+    return success();
+  }
+};
+
 /// `math.log %x : f64` -> a self-contained range-reduced f64 polynomial.
 ///
 /// Standalone ptxas cannot resolve the stock `__nv_log` libdevice call.  Unlike
@@ -1069,6 +1086,7 @@ struct LowerGpuMathToNVVM
     RewritePatternSet patterns(&getContext());
     patterns.add<PromoteHalfUnaryMath<math::ExpOp>,
                  PromoteHalfUnaryMath<math::LogOp>,
+                 PromoteHalfUnaryMath<math::Log2Op>,
                  PromoteHalfUnaryMath<math::AbsFOp>,
                  PromoteHalfUnaryMath<math::SqrtOp>,
                  PromoteHalfUnaryMath<math::RsqrtOp>,
@@ -1086,6 +1104,7 @@ struct LowerGpuMathToNVVM
     patterns.add<MarkedDivToNVVMApprox>(&getContext());
     patterns.add<SigmoidReciprocalToNVVMApprox>(&getContext());
     patterns.add<LogToLg2Approx>(&getContext());
+    patterns.add<Log2ToLg2Approx>(&getContext());
     patterns.add<LogF64Polynomial>(&getContext());
     patterns.add<Exp2ToEx2Approx>(&getContext());
     patterns.add<TanhToEx2Approx>(&getContext());
