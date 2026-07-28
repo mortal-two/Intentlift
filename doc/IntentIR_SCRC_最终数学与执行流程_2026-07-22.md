@@ -392,7 +392,10 @@ TypeCheck 还检查 closed comparison class 与 output dtype、A 依赖图和 B 
 见最终执行流程第 6.1 节。v1 中 `RequiresTolerance=true` 即拒绝显式或默认 `exact`，没有自由文本
 或“更强合同”例外；阈值仍完全由外部 Q 决定。该 reassociation fact 只约束 SCRC comparison class，
 不是 production backend permission。
-当前 `typecheck.v25` 继承 v24，并把 `reduction_linearization` 限定为一个 `realize` stage 经唯一
+当前 `typecheck.v26` 继承 v25，只把 J direct `x* == 1`/`1 == x*` 作为 symbolic singleton
+证据来消费同一 J 的显式 broadcast axes；缺失、非 1 或冲突 direct equality 拒绝。它不做
+SMT/transitive inference，也不从 Harness valuation、C、π、Source 或 target shape补事实。
+v25 继承 v24，并把 `reduction_linearization` 限定为一个 `realize` stage 经唯一
 slot-0 route 进入一个 J reduce `realize` stage；它不创建 relation/reshape。v24 继承 v23，并新增
 两条 closed dependent check：floating typed const 的 JSON
 string 只允许 `inf|-inf|nan`；每个 transfer 必须从绑定同一 boundary tensor 的 pointer/tensor
@@ -465,7 +468,7 @@ dependent checking 夸写成 Source topology 的形式证明。
 
 首版不需要让 TypeCheck 成为 SMT 或完整图证明器。最小可行实现只需 fail closed 地完成上述局部检查。
 
-当前合并协议为 `artifact.v9 / decode.v13 / typecheck.v25 / candidate-check.v1 / replay-check.v10`；
+当前合并协议为 `artifact.v9 / decode.v14 / typecheck.v26 / candidate-check.v1 / replay-check.v10`；
 Replay packet envelope 仍是 `replay-input.v1`，Triton context 为 `public_frontend_context_v15`，
 Codex/MiniSWE Lift knowledge 为 v65/v61，MiniSWE Replay backend 为 v26，Codex Replay backend 为 v22。
 v40 为 source-aware Lift worker 增加只读、分页的 Source control-flow
@@ -566,7 +569,8 @@ artifact 语义，不增加 acceptance path，正式 Runner 仍独立执行 Deco
 扩充 TypeCheck judgement 必须提升 `v_TC`，CandidateCheck 与正式 Runner 必须记录并使用同一版本；
 新版本不静默重判历史证书。
 
-当前 fresh-run 取 `v_TC = typecheck.v25`。v25 增加上述 reduction-linearization topology check；v24 增加上述 special-constant 与 transfer pointer-route
+当前 fresh-run 取 `v_TC = typecheck.v26`。v26 增加上述 direct singleton broadcast dependent check；
+v25 增加上述 reduction-linearization topology check；v24 增加上述 special-constant 与 transfer pointer-route
 closed checks，并完整继承 v23；v23 增加 canonical output binding 的完整 dtype/shape equality；v22 增加 signature mode 与 J boundary partition 的 exact
 dependent check，并完整继承 v21；v21 继承 v20/v18/v19、v14-v17 typed-control 合同及下述 v7
 前序合同，并包含上述 v9 terminal-control dependent checks；v20 已增加上述 v4/v5

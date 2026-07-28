@@ -241,6 +241,66 @@ def test_select_explicit_nontrailing_condition_broadcast_closes() -> None:
     }
 
 
+def _parametric_singleton_broadcast_j(
+    constraints: list[str],
+) -> SemanticArchive:
+    j = make_copy_artifact().j
+    j.intent.inputs[0].shape = ["x0", "x1"]
+    j.intent.inputs.append(Tensor("t2", "f32", ["x5", "x1"]))
+    j.intent.outputs[0].shape = ["x0", "x1"]
+    j.intent.body = [
+        IntentOp.from_json(
+            {
+                "id": "n0",
+                "op": "map_binary",
+                "result": "t1",
+                "operands": ["t0", "t2"],
+                "attrs": {"fn": "add"},
+                "type": {"dtype": "f32", "shape": ["x0", "x1"]},
+            }
+        )
+    ]
+    j.node_ids = {"n0": "body[0]"}
+    j.dimension_constraints = constraints
+    j.boundary.domains = {}
+    j.boundary.accesses = []
+    j.boundary.effects = []
+    j.boundary.broadcasts = [BroadcastSpec("n0", "t2", [0])]
+    j.boundary.output_mappings = []
+    return j
+
+
+@pytest.mark.parametrize("constraint", ["x5 == 1", "1 == x5"])
+def test_explicit_broadcast_consumes_direct_parametric_singleton_equality(
+    constraint: str,
+) -> None:
+    accepted = elaborate_j(
+        _parametric_singleton_broadcast_j(
+            ["0 < x0", "0 < x1", constraint]
+        )
+    )
+
+    assert accepted.intent.body[0].type == {
+        "dtype": "f32",
+        "shape": ["x0", "x1"],
+    }
+
+
+@pytest.mark.parametrize(
+    "constraints",
+    [
+        ["0 < x0", "0 < x1"],
+        ["0 < x0", "0 < x1", "x5 == 2"],
+        ["0 < x0", "0 < x1", "x5 == 1", "x5 == 2"],
+    ],
+)
+def test_explicit_broadcast_rejects_unproven_or_conflicting_parametric_singleton(
+    constraints: list[str],
+) -> None:
+    with pytest.raises(CanonicalJError, match="cannot align with consumer shape"):
+        elaborate_j(_parametric_singleton_broadcast_j(constraints))
+
+
 def test_rank_zero_closed_signature_is_materialized() -> None:
     artifact = make_copy_artifact()
     artifact.j.intent.inputs[0].shape = []

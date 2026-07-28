@@ -885,7 +885,7 @@ rank、reshape、tile 或 spelling。它不能生成或省略 relation。v7 的
 推导 schedule、生成 source 或访问 Source/Harness/Gate；因此不改变 Replay 的 source-blind LLM-first
 所有权。
 
-当前新 Lift wire/decode 为 `intentir.scrc.artifact.v9 / intentir.scrc.decode.v13`；v3 历史上把上述
+当前新 Lift wire/decode 为 `intentir.scrc.artifact.v9 / intentir.scrc.decode.v14`；v3 历史上把上述
 `pi.iterations` 变为 required closed field，v4-v7 再增加前述 J-owned typed relations/control，v8
 增加 physical-only time，v9 增加 terminal-control topology。v1-v8 历史
 artifact 保持原始序列化、digest 与字段集合，禁止静默附加空数组、重标或刷新证书。
@@ -1300,7 +1300,10 @@ authorization；这只合并 proof-irrelevant 文件动作，外部 TypeCheck �
 numeric-cast、result-relation compatibility 与当前 v4/v5 typed relations 的检查均已随版本化
 TypeCheck 落地并写入 fresh receipt；旧 artifact/证书保持历史解释，不由新规则静默重判。
 
-活动 fresh-run 使用 `typecheck.v25`。v25 继承 v24，并新增 `reduction_linearization` 的 closed
+活动 fresh-run 使用 `typecheck.v26`。v26 继承 v25，仅允许 J 中 direct `x* == 1` 或 `1 == x*`
+证明一个 symbolic singleton，以消费同一 J 已显式作者化的 broadcast axes；缺失、非 1 或冲突
+direct equality fail closed。checker 不做 SMT/transitive inference，不从 concrete valuation、C、π、
+Source 或 target shape补 singleton/broadcast。v25 继承 v24，并新增 `reduction_linearization` 的 closed
 dependent topology check：refinement 必须 `auth_ref=null`，修饰一个 `realize` instance，且只经
 一条 slot-0 route 进入一个 J reduce `realize` instance；checker 不生成该 relation 或 reshape。
 v24 继承 v23，并新增两条 closed dependent check：floating

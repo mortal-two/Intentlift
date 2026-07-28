@@ -605,7 +605,11 @@ Gate round 的定义。
 权威错误列表有界展开、不改变接受集合时，`candidate-check.v1` 无需升版。任何新规则都只对带新
 version receipt 的 fresh run 生效，不得静默重判历史 artifact。
 
-当前 fresh-run 版本为 `typecheck.v25`。v25 继承 v24，并把 `reduction_linearization` 限定为一个
+当前 fresh-run 版本为 `typecheck.v26`。v26 继承 v25，并只把 J 直接作者化的 `x* == 1` 或
+`1 == x*` 当作该 symbolic extent 的 singleton 证据，供 J 已显式声明的 broadcast axes 做 shape
+alignment；缺失、非 1 或冲突 direct equality 都拒绝。它不做 affine/SMT/transitive inference，
+不从 Harness valuation、C、π、Source 或 consumer target shape 猜 singleton，也不生成 broadcast。
+v25 继承 v24，并把 `reduction_linearization` 限定为一个
 `realize` stage 经唯一 slot-0 route 进入一个 J reduce `realize` stage；checker 不生成 relation 或
 reshape。v24 继承 v23，并新增 closed typed special-constant 与
 transfer-address-route checks：floating const 的 JSON string 只允许 `inf|-inf|nan`；每个 transfer 必须
@@ -878,7 +882,7 @@ runner 可以保存实际 request/output 和 compiler metadata 供追溯，但�
 不需要为此增加 hash、commitment 或签名门。
 
 当前新 Lift response 使用 `intentir.scrc.artifact.v9`，固定 decode 使用
-`intentir.scrc.decode.v13`。v3 历史上引入 required closed `pi.iterations`；v4 引入
+`intentir.scrc.decode.v14`。v3 历史上引入 required closed `pi.iterations`；v4 引入
 `value_dimension_relations`、`consumer_extensions` 等 typed relations；v5 引入
 `access_guard_relations`；v6/v7 引入 typed control；v8 引入上述 π-owned physical-only time relations；
 v9 引入 π-owned terminal-control topology。
@@ -1053,7 +1057,7 @@ Source/当前 J 的 writer。Runner 更新 branch-local feedback view 并追加�
 ### 10.1.1 固定 artifact 的 diagnostic recheck
 
 `intentir.scrc.gate1-diagnostic-recheck.v1` 可以对 parent evidence 中一份已落盘 artifact 做独立只读
-诊断：保持 artifact bytes/digest 不变，以当前 canonical Decode、`typecheck.v25`、一个 fresh normal
+诊断：保持 artifact bytes/digest 不变，以当前 canonical Decode、`typecheck.v26`、一个 fresh normal
 Replay 与 Gate1 写入单独的原子 `recheck-NNN` 目录。该路径不调用 Lift、不运行 masked-J 或 Gate2、
 不参加 candidate/winner 选择，并显式记录 `diagnostic_only=true`、`enters_gate2=false`、
 `changes_prior_verdict=false`。它只能判断当前固定 consumer/context 如何消费旧 artifact，不能把

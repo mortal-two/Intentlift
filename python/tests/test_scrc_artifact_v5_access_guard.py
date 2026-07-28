@@ -80,7 +80,7 @@ def test_v6_preserves_v5_access_guard_round_trip_and_decode_exactness() -> None:
     assert payload["schema"] == "intentir.scrc.artifact.v9"
     parsed = Gate1Artifact.from_json(payload)
     assert parsed.to_json() == payload
-    assert SCRC_DECODE_PROTOCOL == "intentir.scrc.decode.v13"
+    assert SCRC_DECODE_PROTOCOL == "intentir.scrc.decode.v14"
     decoded = decode_scrc_lift_artifact(json.dumps(payload), _request())
     assert decoded.wire_schema == "intentir.scrc.artifact.v9"
     assert decoded.j.boundary.access_guard_relations[0].to_json() == {

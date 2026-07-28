@@ -30,6 +30,7 @@ import ast
 import math
 import operator
 import re
+from typing import AbstractSet
 
 from intentir.ir.model import IntentFunction, IntentOp
 
@@ -191,10 +192,12 @@ def _broadcast_checked(
 
 
 def _broadcast_projection(
-    shape: list[int] | None,
+    shape: list[object] | None,
     axes: Sequence[int],
-    target_shape: Sequence[int] | None = None,
-) -> tuple[list[int] | None, tuple[int, ...]]:
+    target_shape: Sequence[object] | None = None,
+    *,
+    unit_dimensions: AbstractSet[str] = frozenset(),
+) -> tuple[list[object] | None, tuple[int, ...]]:
     """Project one operand onto the consumer rank using Layer-B axes.
 
     A broadcast axis may already exist as a size-one dimension (``[M, 1]``
@@ -255,6 +258,14 @@ def _broadcast_projection(
     axis_set = set(normalized)
     memo: dict[tuple[int, int], tuple[int, ...] | None] = {}
 
+    def is_unit(extent: object) -> bool:
+        return extent == 1 or (
+            isinstance(extent, str) and extent in unit_dimensions
+        )
+
+    def same_extent(left: object, right: object) -> bool:
+        return left == right or (is_unit(left) and is_unit(right))
+
     def align(source_index: int, target_index: int) -> tuple[int, ...] | None:
         key = (source_index, target_index)
         if key in memo:
@@ -268,7 +279,7 @@ def _broadcast_projection(
             # Prefer retaining an already-present singleton at the same target
             # position.  If that cannot complete the alignment, treat this
             # declared broadcast axis as the missing rank dimension.
-            if source_index < len(shape) and shape[source_index] == 1:
+            if source_index < len(shape) and is_unit(shape[source_index]):
                 suffix = align(source_index + 1, target_index + 1)
                 if suffix is not None:
                     memo[key] = suffix
@@ -280,7 +291,7 @@ def _broadcast_projection(
                 return result
         elif (
             source_index < len(shape)
-            and shape[source_index] == target[target_index]
+            and same_extent(shape[source_index], target[target_index])
         ):
             suffix = align(source_index + 1, target_index + 1)
             if suffix is not None:
