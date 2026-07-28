@@ -12,6 +12,7 @@ from typing import Any, Callable, Mapping
 
 from minisweagent.config.intentir_context_query import (
     _candidate_control_value,
+    _feedback_category_value,
     _harness_abi_value,
 )
 
@@ -40,8 +41,8 @@ from .scrc import (
 )
 
 
-CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v6"
-CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v60"
+CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v7"
+CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v61"
 CODEX_CLI_TURN_TIMEOUT_SECONDS = 900.0
 
 _INITIAL_PROMPT = """You are the sole source-aware IntentIR Lift owner for this branch.
@@ -92,6 +93,9 @@ _EXTERNAL_CONTINUATION_PROMPT = """The same branch-local source-aware Lift task 
 First run `python .agents/intentir_agent_tool.py feedback_frontier` and inspect
 the current output/candidate.json. Resolve direct failing interface, reduction,
 and predicate/effect categories before paging recursive dataflow witnesses. Use
+`python .agents/intentir_agent_tool.py lift_feedback_category CATEGORY` for the
+one exact category named by the frontier; do not read the whole recursive
+feedback when that bounded view is sufficient. Use
 the Source control-flow outline again when the frontier names a loop, branch,
 terminal, or carrier difference; reconcile the complete J/C/pi ownership rather
 than only adding routes around the existing flat graph. Use
@@ -256,22 +260,7 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
         }
 
         try:
-            from minisweagent.environments.intentir_lift import (
-                IntentIRLiftWorkspace,
-            )
-        except ImportError as exc:
-            from intentir.verify.scrc_runner import SCRCInfrastructureError
-
-            raise SCRCInfrastructureError(
-                "Codex CLI Lift requires the lift-agent dependencies",
-                evidence={"backend": CODEX_CLI_LIFT_BACKEND},
-            ) from exc
-
-        fresh_workspace = self._session_workspace is None
-        if self._session_workspace is None:
-            self._session_workspace = IntentIRLiftWorkspace.create(files)
-        else:
-            self._session_workspace.refresh_inputs(
+            fresh_workspace = self._create_or_refresh_session_workspace(
                 files,
                 mutable_paths=frozenset(
                     {
@@ -281,6 +270,13 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                     }
                 ),
             )
+        except ImportError as exc:
+            from intentir.verify.scrc_runner import SCRCInfrastructureError
+
+            raise SCRCInfrastructureError(
+                "Codex CLI Lift requires the lift-agent dependencies",
+                evidence={"backend": CODEX_CLI_LIFT_BACKEND},
+            ) from exc
         workspace = self._session_workspace
         fresh_owner = self._codex_session is None
         call_turns: list[CodexCLITurn] = []
@@ -392,6 +388,29 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                 }
             return {"status": "pass", **view}
 
+        def feedback_category_tool(
+            arguments: tuple[str, ...],
+        ) -> Mapping[str, Any]:
+            try:
+                if len(arguments) != 1:
+                    raise ValueError("lift_feedback_category accepts exactly CATEGORY")
+                view = _feedback_category_value(workspace.input_dir, arguments[0])
+            except (KeyError, TypeError, ValueError) as exc:
+                return {
+                    "protocol": "intentir.lift-feedback-category-view.v1",
+                    "status": "fail",
+                    "diagnostic": str(exc),
+                }
+            return {
+                "protocol": "intentir.lift-feedback-category-view.v1",
+                "status": "pass",
+                "category": view,
+                "authority": (
+                    "exact bounded projection of closed external feedback; "
+                    "diagnostic-only, no semantic inference or artifact repair"
+                ),
+            }
+
         bridge = CodexCLIToolBridge(
             workspace.scratch_dir / CODEX_CLI_TOOL_BRIDGE_ROOT_NAME,
             {
@@ -409,6 +428,7 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
             argument_handlers={
                 "lift_harness_abi": harness_abi_tool,
                 "lift_candidate_control": candidate_control_tool,
+                "lift_feedback_category": feedback_category_tool,
             },
         )
         try:

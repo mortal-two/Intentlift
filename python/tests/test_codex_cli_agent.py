@@ -710,7 +710,9 @@ def _adapter_request() -> SCRCRunRequest:
     )
 
 
-def test_codex_lift_keeps_one_thread_and_repairs_from_host_check() -> None:
+def test_codex_lift_keeps_one_thread_and_repairs_from_host_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     artifact = make_copy_artifact()
     invalid = artifact.to_json()
     invalid["j"]["signature"]["parameters"][0]["dtype"] = "f16"
@@ -720,6 +722,7 @@ def test_codex_lift_keeps_one_thread_and_repairs_from_host_check() -> None:
         def __init__(self, **kwargs):
             self.input_dir = kwargs["input_dir"]
             self.output_dir = kwargs["output_dir"]
+            self.scratch_dir = kwargs["scratch_dir"]
             self.thread_id = None
             self.calls = 0
             self.closed = False
@@ -749,6 +752,7 @@ def test_codex_lift_keeps_one_thread_and_repairs_from_host_check() -> None:
                 assert external["failure_kind"] == "gate1"
                 assert "same workspace and thread" in prompt
                 assert "lift_candidate_control overview" in prompt
+                assert "lift_feedback_category CATEGORY" in prompt
                 payload = artifact.to_json()
             (self.output_dir / "candidate.json").write_text(json.dumps(payload))
             return CodexCLITurn(
@@ -776,9 +780,33 @@ def test_codex_lift_keeps_one_thread_and_repairs_from_host_check() -> None:
     )
     request = _adapter_request()
     first = adapter.lift(request, None)
+    from intentir.extraction.lifters import codex_cli as codex_lifter_module
+
+    original_input_files = codex_lifter_module._input_files
+
+    def host_upgraded_input_files(prepared):
+        values = original_input_files(prepared)
+        values["tools/context_query.py"] += "\n# concurrent host upgrade\n"
+        return values
+
+    monkeypatch.setattr(
+        codex_lifter_module,
+        "_input_files",
+        host_upgraded_input_files,
+    )
     feedback = LiftFeedback(
         FeedbackKind.GATE1,
-        {"observer_diff": {"category": "dataflow"}},
+        {
+            "observer_diff": {
+                "categories": [
+                    {
+                        "category": "dataflow",
+                        "difference_count": 1,
+                        "examples": [{"kind": "missing", "item": "scf.for"}],
+                    }
+                ]
+            }
+        },
         1,
         artifact,
     )
@@ -797,6 +825,9 @@ def test_codex_lift_keeps_one_thread_and_repairs_from_host_check() -> None:
     assert second.metadata["cli_turns"] == 1
     assert second.metadata["thread_id"] == "persistent-thread"
     assert second.metadata["session_cli_turns"] == 3
+    assert "concurrent host upgrade" not in (
+        adapter._session_workspace.input_dir / "tools/context_query.py"
+    ).read_text()
     assert len(adapter.records) == 2
     assert adapter.records[0].extraction is not None
     assert "provider-secret" not in json.dumps(

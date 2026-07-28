@@ -226,14 +226,28 @@ def _feedback(input_root: Path, path: str | None = None) -> None:
         _emit_json(reduced)
 
 
-def _feedback_category(input_root: Path, name: str) -> None:
+def _feedback_category_value(input_root: Path, name: str) -> dict[str, Any]:
+    """Return one exact closed Gate1 category as a bounded read-only value."""
+
     value = _feedback_without_candidate(input_root)
     diagnostics = value.get("diagnostics") if isinstance(value, dict) else None
-    observer = (
-        diagnostics.get("observer_diff")
-        if isinstance(diagnostics, dict)
-        else None
-    )
+    observer = diagnostics.get("observer_diff") if isinstance(diagnostics, dict) else None
+    category_root = "diagnostics.observer_diff.categories"
+    if not isinstance(observer, dict) and isinstance(diagnostics, dict):
+        unresolved = diagnostics.get("unresolved_gate1")
+        unresolved_diagnostics = (
+            unresolved.get("diagnostics")
+            if isinstance(unresolved, dict)
+            else None
+        )
+        observer = (
+            unresolved_diagnostics.get("observer_diff")
+            if isinstance(unresolved_diagnostics, dict)
+            else None
+        )
+        category_root = (
+            "diagnostics.unresolved_gate1.diagnostics.observer_diff.categories"
+        )
     categories = observer.get("categories") if isinstance(observer, dict) else None
     if not isinstance(categories, list):
         raise KeyError("feedback contains no observer-diff categories")
@@ -241,10 +255,7 @@ def _feedback_category(input_root: Path, name: str) -> None:
         if isinstance(category, dict) and category.get("category") == name:
             result = dict(category)
             rendered = json.dumps(category, sort_keys=True)
-            category_path = (
-                "diagnostics.observer_diff.categories."
-                f"{category_index}"
-            )
+            category_path = f"{category_root}.{category_index}"
             if name == "dataflow" and isinstance(
                 result.get("effect_order_witnesses"), list
             ):
@@ -285,12 +296,15 @@ def _feedback_category(input_root: Path, name: str) -> None:
                         "bulk node witnesses omitted so causal role/effect "
                         "witnesses remain visible"
                     )
-            _emit_json(result)
-            return
+            return result
     available = [
         item.get("category") for item in categories if isinstance(item, dict)
     ]
     raise KeyError(f"unknown feedback category {name!r}; choose {available}")
+
+
+def _feedback_category(input_root: Path, name: str) -> None:
+    _emit_json(_feedback_category_value(input_root, name))
 
 
 def _source(input_root: Path, start: int, line_count: int) -> None:
@@ -835,6 +849,23 @@ def _node_summary(path: str, node: dict[str, Any]) -> dict[str, Any]:
     for field in ("operands", "result", "results", "type", "attrs"):
         if field in node:
             summary[field] = node[field]
+    if node.get("op") in {"effect_if", "value_if"}:
+        summary["predicate"] = node.get("predicate")
+        summary["arms"] = {
+            arm_name: {
+                "scope_id": arm.get("scope_id"),
+                "body_item_count": len(arm.get("body", []))
+                if isinstance(arm.get("body"), list)
+                else None,
+                **(
+                    {"yield_value": arm.get("yield_value")}
+                    if "yield_value" in arm
+                    else {}
+                ),
+            }
+            for arm_name in ("positive", "negative")
+            if isinstance((arm := node.get(arm_name)), dict)
+        }
     for field in (
         "body",
         "then_body",
@@ -980,6 +1011,8 @@ _CONTROL_BOUNDARY_FIELDS = (
     "result_relations",
 )
 _CONTROL_PI_FIELDS = (
+    "regions",
+    "instances",
     "iterations",
     "loop_carriers",
     "physical_iterations",
@@ -1075,6 +1108,9 @@ def _candidate_control_value(
             "section": section,
             "intent_outputs": function.get("outputs", []),
             "intent_returns": function.get("returns", []),
+            "scope_count": len(j.get("scopes", []))
+            if isinstance(j, dict) and isinstance(j.get("scopes", []), list)
+            else 0,
             "control_reduction_nodes": control_nodes[:20],
             "control_reduction_nodes_omitted": max(0, len(control_nodes) - 20),
             "boundary_counts": {

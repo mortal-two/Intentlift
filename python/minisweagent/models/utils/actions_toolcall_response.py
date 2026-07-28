@@ -194,7 +194,7 @@ INSPECT_LIFT_CONTEXT_TOOL_RESPONSE_API = {
     "type": "function",
     "name": "inspect_lift_context",
     "description": (
-        "Read one bounded exact Source/Harness/feedback/current-candidate or "
+        "Read one bounded exact Source/Harness/feedback-category/current-candidate or "
         "source-neutral knowledge view without guessing filesystem paths. The "
         "tool is read-only and never classifies or repairs J/C/pi."
     ),
@@ -211,6 +211,7 @@ INSPECT_LIFT_CONTEXT_TOOL_RESPONSE_API = {
                     "harness",
                     "harness_abi",
                     "feedback",
+                    "feedback_category",
                     "candidate",
                     "candidate_find",
                     "candidate_nodes",
@@ -526,7 +527,7 @@ def parse_toolcall_actions_response(
                 or not set(args).issubset(allowed)
                 or args.get("view") not in {
                     "source", "source_outline", "source_find", "harness", "harness_abi",
-                    "feedback", "candidate", "candidate_find",
+                    "feedback", "feedback_category", "candidate", "candidate_find",
                     "candidate_nodes", "candidate_node", "candidate_abi", "candidate_control",
                     "candidate_diff", "knowledge",
                 }

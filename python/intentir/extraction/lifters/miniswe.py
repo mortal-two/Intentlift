@@ -38,10 +38,9 @@ from .prompt import SCHEMA as INTENTIR_OPERATION_REFERENCE
 
 
 MINISWE_LIFT_BACKEND = "minisweagent.intentir-lift.v1"
-MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v58"
+MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v59"
 MINISWE_LIFT_TURN_TIMEOUT_SECONDS = 300.0
 MINISWE_LIFT_XHIGH_TURN_TIMEOUT_SECONDS = 900.0
-MAX_CONTINUATION_CANDIDATE_BYTES = 128 * 1024
 MAX_RELIFT_CHECK_FEEDBACK_ITEMS = 20
 MAX_RELIFT_CHECK_FEEDBACK_CHARS = 2048
 MAX_FEEDBACK_FRONTIER_EXAMPLES = 6
@@ -426,6 +425,9 @@ continuations for the same Source; Replay remains a separate fresh process.
   feedback. Read this first; it orders already-labelled hard categories and
   omits bulk recursive witnesses without inferring a cause or repair. Query the
   exact `feedback.json` only for a named unresolved category/path.
+- `inspect_lift_context(view="feedback_category", query="CATEGORY")` (or the
+  matching `context_query.py feedback-category CATEGORY`) returns just that
+  exact bounded category, including local/effect-order witnesses when present.
 - `schema/artifact.schema.json`: closed static JSON envelope for `(J,C,pi)`.
 - `knowledge/lift_contract.md`: semantic ownership and construction rules.
 - `knowledge/intent_ops.md`: global source-neutral IntentIR operation reference.
@@ -496,6 +498,9 @@ On repair rounds, inspect
 `python /input/tools/context_query.py feedback-frontier` before editing the candidate
 already retained in the workspace. Use its `feedback-category`, paged `source`, Harness-path,
 and `knowledge` subcommands for narrower views.
+The continuation message never re-embeds candidate.json: the same owner reads
+the exact retained bytes from `/output/candidate.json`, avoiding duplicate
+10--100 KiB artifact context on every formal relift.
 For a long Source, run
 `python /input/tools/context_query.py source-outline --start 1 --count 32`
 and page it before deciding that no loop, branch, or early return exists. The
@@ -637,6 +642,9 @@ class MiniSWELiftAdapter:
     _session_physical_provider_calls: int = field(default=0, init=False)
     _session_transport_retries: int = field(default=0, init=False)
     _session_workspace: Any = field(default=None, init=False, repr=False)
+    _session_input_snapshot: dict[str, str | bytes] | None = field(
+        default=None, init=False, repr=False
+    )
     _session_model: Any = field(default=None, init=False, repr=False)
     _session_model_identity: tuple[str, str, str] | None = field(
         default=None, init=False, repr=False
@@ -649,10 +657,59 @@ class MiniSWELiftAdapter:
     def close(self) -> None:
         workspace = self._session_workspace
         self._session_workspace = None
+        self._session_input_snapshot = None
         self._session_model = None
         self._session_model_identity = None
         if workspace is not None:
             workspace.cleanup()
+
+    def _create_or_refresh_session_workspace(
+        self,
+        files: Mapping[str, str | bytes],
+        *,
+        mutable_paths: frozenset[str],
+    ) -> bool:
+        """Keep one owner's tool/knowledge snapshot stable across host edits.
+
+        Source and Harness bytes are request-owned and must remain identical.
+        Tool, schema, example, and knowledge bytes are session-owned: a branch
+        continues with the exact snapshot mounted when that owner was created,
+        even if another host task updates the repository concurrently.  Only
+        the explicitly closed feedback files are refreshed.
+        """
+
+        from minisweagent.environments.intentir_lift import IntentIRLiftWorkspace
+
+        incoming = dict(files)
+        if self._session_workspace is None:
+            self._session_input_snapshot = dict(incoming)
+            self._session_workspace = IntentIRLiftWorkspace.create(incoming)
+            return True
+
+        snapshot = self._session_input_snapshot
+        if snapshot is None:
+            raise RuntimeError("persistent Lift workspace lacks its input snapshot")
+        if set(incoming) != set(snapshot):
+            raise ValueError("persistent Lift input file set changed")
+        for relative in ("source.py", "harness_view.json"):
+            if incoming.get(relative) != snapshot.get(relative):
+                raise ValueError(
+                    f"persistent Lift request input changed: {relative}"
+                )
+        if not mutable_paths.issubset(incoming):
+            missing = sorted(mutable_paths - set(incoming))
+            raise ValueError(
+                "persistent Lift mutable input is missing: " + ", ".join(missing)
+            )
+
+        refreshed = dict(snapshot)
+        for relative in mutable_paths:
+            refreshed[relative] = incoming[relative]
+        self._session_workspace.refresh_inputs(
+            refreshed,
+            mutable_paths=mutable_paths,
+        )
+        return False
 
     def __del__(self) -> None:
         try:
@@ -839,10 +896,6 @@ class MiniSWELiftAdapter:
         candidate_bytes = (
             candidate_text.encode("utf-8") if candidate_text is not None else b""
         )
-        embed_candidate = (
-            candidate_text is not None
-            and len(candidate_bytes) <= MAX_CONTINUATION_CANDIDATE_BYTES
-        )
         envelope = {
             "protocol": "intentir.lift-owner-continuation.v1",
             "owner_session": self._session_id,
@@ -853,7 +906,10 @@ class MiniSWELiftAdapter:
             "candidate_path": "/output/candidate.json",
             "exact_feedback_embedded": False,
             "feedback_frontier_embedded": frontier is not None,
-            "exact_candidate_embedded": embed_candidate,
+            # The same owner already has the exact bytes in its persistent
+            # workspace. Re-embedding a 10--100 KiB candidate on every formal
+            # relift duplicates context without adding any information.
+            "exact_candidate_embedded": False,
         }
         envelope["closed_feedback_receipt"] = {
             "bytes": len(diagnostic_bytes),
@@ -870,16 +926,14 @@ class MiniSWELiftAdapter:
         current_state = {
             "feedback_frontier": frontier,
             "closed_feedback": None,
-            "candidate_text": candidate_text if embed_candidate else None,
+            "candidate_text": None,
             "fallback": {
                 "feedback": (
                     "read /input/feedback_frontier.json first; query only a named "
                     "category/path from /input/feedback.json when needed"
                 ),
                 "candidate": (
-                    None
-                    if embed_candidate
-                    else "reread /output/candidate.json from the persistent workspace"
+                    "reread /output/candidate.json from the persistent workspace"
                 ),
             },
         }
@@ -997,9 +1051,6 @@ class MiniSWELiftAdapter:
         )
         candidate_check_context = scrc_candidate_check_context(prepared)
         try:
-            from minisweagent.environments.intentir_lift import (
-                IntentIRLiftWorkspace,
-            )
             from minisweagent.run.intentir_lift import (
                 IntentIRLiftRunError,
                 create_intentir_lift_model,
@@ -1015,11 +1066,20 @@ class MiniSWELiftAdapter:
             ) from exc
 
         input_files = _input_files(prepared)
-        fresh_workspace = self._session_workspace is None
-        if self._session_workspace is None:
-            self._session_workspace = IntentIRLiftWorkspace.create(input_files)
-        else:
-            self._session_workspace.refresh_inputs(input_files)
+        try:
+            fresh_workspace = self._create_or_refresh_session_workspace(
+                input_files,
+                mutable_paths=frozenset(
+                    {"feedback.json", "feedback_frontier.json"}
+                ),
+            )
+        except ImportError as exc:
+            from intentir.verify.scrc_runner import SCRCInfrastructureError
+
+            raise SCRCInfrastructureError(
+                "MiniSWE Lift backend requires the lift-agent workspace dependency",
+                evidence={"backend": MINISWE_LIFT_BACKEND},
+            ) from exc
         workspace = self._session_workspace
         result = None
         try:

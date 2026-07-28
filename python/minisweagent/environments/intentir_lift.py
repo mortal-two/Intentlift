@@ -504,6 +504,7 @@ class IntentIRLiftEnvironment:
         view = action.get("view")
         if view not in {
             "source", "source_outline", "source_find", "harness", "harness_abi", "feedback",
+            "feedback_category",
             "candidate", "candidate_find", "candidate_nodes", "candidate_node",
             "candidate_abi", "candidate_control", "candidate_diff", "knowledge",
         }:
@@ -539,7 +540,10 @@ class IntentIRLiftEnvironment:
             query = bounded_text(
                 "query",
                 required=view
-                in {"source_find", "candidate_find", "candidate_node", "knowledge"},
+                in {
+                    "source_find", "feedback_category", "candidate_find",
+                    "candidate_node", "knowledge",
+                },
             )
             path = bounded_text("path")
             op = bounded_text("op")
@@ -558,6 +562,8 @@ class IntentIRLiftEnvironment:
             command.append(view)
             if path is not None:
                 command += ["--path", path]
+        elif view == "feedback_category":
+            command += ["feedback-category", str(query)]
         elif view == "harness_abi":
             command += [
                 "harness-abi",

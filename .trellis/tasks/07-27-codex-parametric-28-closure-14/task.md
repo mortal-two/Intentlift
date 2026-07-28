@@ -26,16 +26,16 @@ document sha256 = f9dd1ff1ea4879f664de3fa5c3b86e5ed9c558c511197255e32344a3fbbf9f
 也不能要求J迎合某个target/backend recipe。后端的capability/paper config、Target--Ref receipt、
 MLIR search和`intentir.backend.dev-j-variant.v1`均不进入本任务。
 
-当前没有仍在运行的闭合进程。Sol-high Wave 6 已结束：SplitK reduce 在 branch 2 formal round 2
-Gate1 closed；Source--Replay 通过，旧 RefEval 只因两个唯一 node-less predicated logical-input load
-缺少显式 fill 而 unsupported。`j_scalar_cpu_mlir_v19 / intentir.j-functional-boundary.v18` 只从 J
-组合“唯一 whole-input load + 唯一 direct pointwise consumer + 同 predicate observable store”后，原
-artifact/Replay 以 `model_calls=0` 的 exact Gate2-only recheck 认证。CrossEntropy、Flash forward、
-xFormers RMSNorm、SplitK backward 为完整 NO_CLOSURE；Flash full backward 与 SplitK forward 混有
-Replay-before-Gate1 infrastructure branch，不能伪装成完整搜索失败。
-CrossEntropy v9 canary 证明 `terminal_controls` 已被 Replay 正确消费，剩余失败是 arm 内 op/dataflow
-生成错误，不再误判为 terminal relation 缺失。所有 formal run 继续只从 clean committed stack 启动，
-运行中不修改 immutable input。
+当前没有仍在运行的闭合进程。Wave 14 曾从 clean commit `16904c1f` 对剩余 11 项启动 Codex
+Sol-high、`B=3,K=5` fresh run；若干 branch 已进入 1--3 个 formal Gate1 round 并形成 no-closure
+frontier，但运行期间 host 更新了共享 `tools/context_query.py`。旧 runtime 在 continuation 时把仓库
+当前工具字节与 owner 创建时的 immutable workspace 比较，因而使受影响 branch 聚合为
+infrastructure failure。后启动 branch 实际可以使用增强后的只读工具正常继续；把其工具版本元数据
+不整齐误判为数学证书无效并停止整个 batch 是一次过度保守的调度错误。两个 batch 已人工停止，
+已有文件保留 partial frontier/orchestration 证据，不构成完整 `NO_CLOSURE_(B,K)`、不改变
+`17/28`。v7/v61/v59 现把 Source/Harness/schema/knowledge/tools 固定为 branch-owner 创建时的私有
+快照，只原子刷新 closed feedback（Codex 另刷新 CandidateCheck 结果）；同 owner 的 Source/Harness
+若变化仍 fail closed。下一次正式闭合必须从该修复的 clean commit 重启。
 
 ## 1. 第一性原理目标
 
@@ -186,7 +186,7 @@ fixed code不得替Lift修成`x*`。
 
 - frontend commit起点：`460aaed1c6af0b267a4a9da9ca497aea6e66ad40`；
 - artifact/decode/typecheck：`artifact.v9 / decode.v13 / typecheck.v23`；
-- Lift：Codex `openai.codex-cli.intentir-lift.v6 / intentir.lift-knowledge.v60`，MiniSWE `intentir.lift-knowledge.v58`；
+- Lift：Codex `openai.codex-cli.intentir-lift.v7 / intentir.lift-knowledge.v61`，MiniSWE `intentir.lift-knowledge.v59`；
 - Replay：Codex `openai.codex-cli.intentir-replay.v15`，MiniSWE `minisweagent.intentir-replay.v19`；
 - Replay packet/check：`replay-input.v1 / public_frontend_context_v12 / replay-check.v9`；
 - Harness：Triton workload adapter v5；
@@ -243,6 +243,12 @@ fixed code不得替Lift修成`x*`。
   消耗而人工停止，branch 1 正在formal round 3 Replay、branch 2正开始第3次Lift、branch 3正进行
   第2次Lift。该run只记人为cancelled infrastructure/diagnostic evidence，不冒充完整NO_CLOSURE，也无
   新认证。它证明v15查询transport稳定，但单独减小Replay首轮上下文尚未提升closure。
+- Wave 14（commit `16904c1f`，Codex Sol high）对剩余 11 项分成 3+8 两个 batch 启动；RoPE、
+  Qwen2VL MRoPE、Llama4 RoPE、GroupNorm、CrossEntropy、Linear、Flash forward 等部分 branch 已进入
+  formal round，后四个复杂 case 也开始首轮。运行中共享工具文件升级触发旧 persistent-input
+  comparison；部分既有 owner 因此 infrastructure fail，但后启动 owner 使用增强只读工具本可继续。
+  全波因过度保守判断被人工停止，保留 infrastructure/partial-frontier evidence；没有新增认证，也没有任何 case 获得完整
+  `NO_CLOSURE_(B,K)` 结论。
 - 当前可用闭合总计 `17/28`：14 个原运行直接认证，3 个 exact-artifact capability recheck 认证。
   TypeCheck PASS 不计进度；只有 Gate1 已闭合且当前 Gate2 三边通过才计入。
 
@@ -254,10 +260,12 @@ predicate/physical-loop realization；CrossEntropy的`terminal_controls`已闭�
 本身都已存在；当前未发现真实“两个runtime分支各产多个value并在join后共同消费”的case，因此不
 预先扩multi-result `value_if`或conditional post-state schema。
 
-Codex Lift v6 / knowledge v60 与MiniSWE knowledge v58新增等合同的只读authoring views：
+Codex Lift v7 / knowledge v61 与MiniSWE knowledge v59提供等合同的只读authoring views：
 `harness-abi`仅并置Harness已声明的p*/c*、bound non-C constexpr及h*；`candidate-control`仅并置
-当前LLM candidate的control/reduction、multi-output/effect和π time/control/route/order。二者均不
-生成、补齐或推荐字段。CandidateCheck surface diagnostics另显式报告
+当前LLM candidate的control/reduction、multi-output/effect、branch arm，以及π
+regions/instances/time/control/route/order；`feedback-category`只返回frontier已命名的一个closed
+Gate1类别。三者均不生成、补齐或推荐字段。MiniSWE continuation 不再重复嵌入已保存在同一
+workspace的完整candidate；Codex/MiniSWE owner均固定消费创建时的私有输入快照。CandidateCheck surface diagnostics另显式报告
 `construction_semantic_constexpr_in_c`，但仍只拒绝错误candidate；完整语义分类和修订继续由同一
 source-aware Lift owner完成。
 

@@ -90,9 +90,10 @@ Lift 可以由仓库内的 mini-swe agent 实现。一个 branch 只拥有一个
 ```
 
 活动运行时只允许这一 `single-owner` workflow；旧 planner/builder/reviewer staged 路径只保留历史
-evidence，不得从 CLI 或配置重新启用。MiniSWE 是日常闭合主路径；Codex CLI 可以作为大批量并发或
-独立交叉验证的同合同执行面。两者必须共享同一 artifact/schema/checker/privacy/Gate 合同；选择执行
-引擎不改变 Lift、Replay 或证书谓词。
+evidence，不得从 CLI 或配置重新启用。MiniSWE 与 Codex CLI 是同合同的两个执行面，正式 branch
+必须在创建前选择其一，不能中途交接 owner/candidate/feedback。当前 Task14 批量闭合以 Codex 为
+主路径，MiniSWE 用于共享工具链核验与备用执行；后续任务可以按吞吐重新选择。两者必须共享同一
+artifact/schema/checker/privacy/Gate 合同；选择执行引擎不改变 Lift、Replay 或证书谓词。
 
 该 session 内可以多次调用模型，按需读取匿名 Source、最小 Harness compiler view、闭合 JSON
 Schema、source-neutral Lift 合同与短检查表，在私有草稿目录中修改 candidate，并运行 JSON
@@ -153,11 +154,16 @@ fresh Replay/Gate1 后才消耗本次显式声明的正式 `K`。submission `PAS
 TypeCheck。
 
 MiniSWE 的无状态 provider transport 可以把旧 response/tool 大字段替换成可重读 exact bytes 的
-hash/length receipt，同时保留当前完整 candidate、最新 closed feedback、完整本地 trajectory 与
+hash/length receipt；正式 continuation 不再重复嵌入同一 workspace 中已经存在的完整 candidate，
+owner 按路径读取 exact bytes，同时保留最新 closed feedback、完整本地 trajectory 与
 persistent workspace。Codex 可以通过隔离的 allowlisted host bridge 调用同一
 CandidateCheck/ReplayCheck/public synthetic compile；bridge 只返回闭合结果，不得写
 artifact/source。两条路径均保持 configured reasoning effort，不把 repair/continuation 从 `xhigh`
 自动降级。
+
+每个持久 Lift owner 在创建时固定自己的 Source/Harness/schema/knowledge/tool 私有输入快照；后续
+invocation 只刷新该 branch 的 closed feedback（Codex 另刷新 CandidateCheck 结果）。仓库中并行发生的
+工具升级不得替换或使既有 owner 失效；同一 owner 的 Source/Harness bytes 真正变化则仍 fail closed。
 
 默认 exact stagnation detector 只在连续三步的工具请求（忽略 provider 分配的 call id）、当前
 candidate/Replay bytes digest 和完整 closed output 三者全部相同时终止为
@@ -198,10 +204,11 @@ Replay 或 production；production 只消费最终已作者化的 `x*`。不同 
 rounded capacity）保持独立，除非 Source-aware Lift 在现有 J/B vocabulary 中另行作者化其语义关系；
 Harness 不按数值猜 `ceil_div`、容量或有效域公式。
 
-持久 Lift owner 还可使用两个等合同的只读投影：`harness-abi` 将匿名 Harness view 中已经声明的
+持久 Lift owner 还可使用三个等合同的只读投影：`harness-abi` 将匿名 Harness view 中已经声明的
 `p*/c*` 顺序、bound non-C constexpr membership、compiler role 与 `h*` shape-coordinate ledger
-并置；`candidate-control` 只分页当前 LLM 已写出的 J control/reduction nodes、boundary
-output/effect/guard、以及 π iterations/carriers/terminal/routes/order。它们是 attention/transport
+并置；`candidate-control` 只分页当前 LLM 已写出的 J control/reduction nodes、branch arms、boundary
+output/effect/guard、以及 π regions/instances/iterations/carriers/terminal/routes/order；
+`feedback-category` 只投影 closed frontier 已命名的一个 Gate1 类别。它们是 attention/transport
 工具，不是第三份 IR：不选择 `logical_ref`、`x*`、operator、predicate、effect、output mapping 或
 π relation，也不读取 Source/Gate/Replay。MiniSWE 的 `context_query.py` 与 Codex bridge 提供同一
 字段投影，任何缺失仍由 Lift 自己从 Source 作者化，任何冲突仍由 CandidateCheck/TypeCheck
@@ -311,7 +318,7 @@ ReplayLLM(J,pi,MaskC(C);U_f) -> complete source R_f
 
 当前 packet protocol 为 `intentir.scrc.replay-input.v1`，Triton 公共上下文为
 `public_frontend_context_v12`；source-aware Codex/MiniSWE Lift 的当前 knowledge receipt 分别为
-`intentir.lift-knowledge.v60 / intentir.lift-knowledge.v58`，source-blind MiniSWE/Codex Replay backend 为
+`intentir.lift-knowledge.v61 / intentir.lift-knowledge.v59`，source-blind MiniSWE/Codex Replay backend 为
 `minisweagent.intentir-replay.v19 / openai.codex-cli.intentir-replay.v15`。这些版本必须随 fresh run 原样记录；旧 packet/context/knowledge
 evidence 不因实现升级而被重判。
 
@@ -440,7 +447,7 @@ relift diagnostic view 必须明确区分。
 禁止把 diff 交给 Replay、patch 旧 Replay、只输出 artifact 增量，或跨候选复用 Replay。
 
 协议允许独立的 `intentir.scrc.gate1-diagnostic-recheck.v1` 对一份已落盘 artifact 做只读诊断：
-保持 artifact bytes/digest 不变，执行当前 canonical Decode、`typecheck.v20`、一个 fresh normal Replay
+保持 artifact bytes/digest 不变，执行当前 canonical Decode、`typecheck.v23`、一个 fresh normal Replay
 与 Gate1，并写入独立 `recheck-NNN` evidence。它不调用 Lift、不运行 masked-J 或 Gate2、不参与
 candidate/winner 选择，也不改变 parent run 的 verdict 或 certificate；因此只用于定位固定 consumer/
 observer/context 改动，不能冒充 fresh SCRC rerun。provider 调用前必须把 selected case/current prepared
@@ -461,4 +468,4 @@ branch 记录为 `GATE1_CLOSED_NOT_SELECTED`；被取消的 branch 记录为 `SU
 Gate2 失败不得 fallback 到 sibling。该调度依赖 proof-irrelevant 的完成次序，所以 report 必须记录
 selection rule、winner branch/formal round 和各 sibling stop receipt；它不能读取 Gate2 输入/结果，
 不改变 winner 自身的 TypeCheck/Gate1/Gate2 认证谓词。没有 winner 时，仍只有所有 branch 完整耗尽
-并各自为 `NO_CLOSURE` 才能报告 `NO_CLOSURE_(B,3)`；infrastructure-incomplete branch 必须单独报告。
+并各自为 `NO_CLOSURE` 才能报告 `NO_CLOSURE_(B,K)`；infrastructure-incomplete branch 必须单独报告。
