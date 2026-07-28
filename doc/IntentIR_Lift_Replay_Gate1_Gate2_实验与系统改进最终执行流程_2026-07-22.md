@@ -870,10 +870,14 @@ Replay 不得：
 
 `U_f` 必须是版本化、source-neutral 的公共前端知识，不能按当前 Kernel、operator 或失败样本选择。
 当前版本组合是 `intentir.scrc.replay-input.v1`、Triton
-`public_frontend_context_v15`、source-aware Codex/MiniSWE Lift `intentir.lift-knowledge.v65/v61`、
-source-blind MiniSWE Replay v26 与 Codex Replay v22、
+`public_frontend_context_v16`、source-aware Codex/MiniSWE Lift `intentir.lift-knowledge.v65/v61`、
+source-blind MiniSWE Replay v27 与 Codex Replay v23、
 `replay-check.v10`；fresh evidence必须保存实际 receipt，
 旧版本 run 不能被新组合追认。
+v27/v23 继承 v26/v22，并把每条 J-authored `boundary.broadcasts` 与 operand closed type、matching
+boundary access、named consumer/operand ordinal 作 exact source-blind 重索引；存在该 obligation 时，
+owner 必须用 `replay-obligation-audit.v2` 将 ledger 与自己的当前编号源码并置自审。工具不建立
+relation-to-statement 映射、不选择 rank-lift spelling/次数、不生成或修复 Replay，也不读取 Source/Gate。
 同一 `J.signature p*` 的多个 π instance 只能共享该唯一 callable ABI carrier，不能因
 `placement=program` 或 instance multiplicity 生成额外 `tl.program_id`。construction compile 可从
 program-region distinct J domain 到 `address_base` 的作者化 route 投影合法 coordinate occurrence 数并

@@ -859,18 +859,21 @@ Replay LLM 应遵守以下过程合同：
 15. 不从 π 猜出后覆盖 J，也不从 compiler diff 修补。
 
 当前 fresh receipt 组合为 `intentir.scrc.replay-input.v1`、Triton
-`public_frontend_context_v15`、Codex/MiniSWE Lift `intentir.lift-knowledge.v65/v61`、MiniSWE Replay v26 与 Codex Replay v22；旧 receipt 保持其原 verdict，不能由
+`public_frontend_context_v16`、Codex/MiniSWE Lift `intentir.lift-knowledge.v65/v61`、MiniSWE Replay v27 与 Codex Replay v23；旧 receipt 保持其原 verdict，不能由
 当前 Replay consumer 或 Lift knowledge 静默升级。
 
-v26/v22 对正常大小匿名 packet 只做一次 exact startup embedding，并将 semantic dimension carrier、
+v27/v23 继承 v26/v22：对正常大小匿名 packet 只做一次 exact startup embedding，并将 semantic dimension carrier、
 IEEE special typed constant、physical iteration 与 `reduction_linearization + consumer route` 作一次
-bounded exact `critical_facts` 重索引；超限时
+bounded exact `critical_facts` 重索引；v27/v23 另把 J-authored broadcast 与 operand closed type、matching
+access、named consumer/ordinal 无损并置，并要求有该 obligation 的 owner 对当前源码运行
+`replay-obligation-audit.v2`。它不建立 relation-to-statement 映射、不选择 rank-lift spelling/次数，
+也不生成或修复 Replay。超限时
 manifest 才将 J 中已声明
 的 op/boundary 与 π 中已声明的 instance mechanism、time/control/terminal obligation 重新索引为
 有界清单。它不新增 relation，不从 Source/Gate 取值，也不选择 realization、schedule、frontend
 spelling 或 repair，因此只增强 Replay owner 对现有 π/J 的消费可靠性，不改变 π 的证明地位或
 Replay 的 LLM-first 作者权。
-v26/v22 同时明确 ABI-carrier multiplicity：一个 `J.signature p*` 始终是一个既有 callable
+v26/v22 已明确 ABI-carrier multiplicity：一个 `J.signature p*` 始终是一个既有 callable
 carrier，同一 `p*` 的多个 π instance 只声明多处 placement/use，不产生第二个值或
 `tl.program_id`。source-blind construction compile 可按 program-region distinct J domain 经作者化
 route 到 `address_base` 的数量拒绝多余 program-coordinate occurrence；它不生成 instance、coordinate

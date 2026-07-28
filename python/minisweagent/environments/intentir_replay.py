@@ -597,6 +597,7 @@ def _packet_requirements(packet: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(effects, list):
         raise TypeError("packet J boundary effects must be an array")
     effect_limit = 16
+    broadcast_obligations = _packet_broadcast_obligations(j, operations)
     return {
         "protocol": "intentir.replay-authored-requirements.v1",
         "meaning": (
@@ -634,6 +635,10 @@ def _packet_requirements(packet: Mapping[str, Any]) -> dict[str, Any]:
                 else None
             ),
         },
+        "boundary_broadcasts": {
+            "total": len(broadcast_obligations),
+            "items": broadcast_obligations,
+        },
         "pi_time_and_control": relation_views,
         "pi_instance_mechanisms": {
             "columns": ["id", "semantic_ref", "mechanism", "region"],
@@ -656,15 +661,117 @@ def _packet_requirements(packet: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _packet_broadcast_obligations(
+    j: Mapping[str, Any],
+    operations: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Colocate exact authored broadcast, operand-type, access and consumer facts."""
+
+    intent = j.get("intent", {})
+    function = (
+        intent.get("intent_function", {})
+        if isinstance(intent, Mapping)
+        else {}
+    )
+    boundary = j.get("boundary", {})
+    if not isinstance(function, Mapping) or not isinstance(boundary, Mapping):
+        raise TypeError("packet J intent/boundary must be objects")
+    broadcasts = boundary.get("broadcasts", [])
+    accesses = boundary.get("accesses", [])
+    if not isinstance(broadcasts, list) or not isinstance(accesses, list):
+        raise TypeError("packet J boundary broadcasts/accesses must be arrays")
+
+    node_ids = j.get("node_ids", {})
+    path_to_node = (
+        {str(path): str(node) for node, path in node_ids.items()}
+        if isinstance(node_ids, Mapping)
+        else {}
+    )
+    consumers: dict[str, dict[str, Any]] = {}
+    value_types: dict[str, Any] = {}
+    for collection in ("inputs", "outputs"):
+        tensors = function.get(collection, [])
+        if not isinstance(tensors, list):
+            raise TypeError(f"packet J intent {collection} must be an array")
+        for tensor in tensors:
+            if isinstance(tensor, Mapping) and isinstance(tensor.get("name"), str):
+                value_types[str(tensor["name"])] = {
+                    key: tensor.get(key) for key in ("dtype", "shape")
+                }
+
+    for operation in operations:
+        path = operation.get("path")
+        node_ref = operation.get("id")
+        if not isinstance(node_ref, str) and isinstance(path, str):
+            node_ref = path_to_node.get(path)
+        if isinstance(node_ref, str):
+            consumers[node_ref] = {
+                "path": path,
+                "node_ref": node_ref,
+                "op": operation.get("op"),
+                "operands": operation.get("operands"),
+                "type": operation.get("type"),
+            }
+        produced = operation.get("result")
+        produced_type = operation.get("type")
+        if isinstance(produced, str):
+            value_types[produced] = produced_type
+        elif isinstance(produced, list):
+            if isinstance(produced_type, list) and len(produced_type) == len(produced):
+                for name, item_type in zip(produced, produced_type, strict=True):
+                    if isinstance(name, str):
+                        value_types[name] = item_type
+            else:
+                for name in produced:
+                    if isinstance(name, str):
+                        value_types[name] = produced_type
+
+    result: list[dict[str, Any]] = []
+    for relation in broadcasts:
+        if not isinstance(relation, Mapping):
+            continue
+        node_ref = relation.get("node_ref")
+        operand = relation.get("operand")
+        consumer = consumers.get(str(node_ref)) if isinstance(node_ref, str) else None
+        consumer_operands = (
+            consumer.get("operands") if isinstance(consumer, Mapping) else []
+        )
+        operand_indices = [
+            index
+            for index, item in enumerate(
+                consumer_operands if isinstance(consumer_operands, list) else []
+            )
+            if item == operand
+        ]
+        result.append(
+            {
+                "node_ref": node_ref,
+                "operand": operand,
+                "axes": relation.get("axes"),
+                "operand_type": value_types.get(str(operand)),
+                "operand_accesses": [
+                    dict(access)
+                    for access in accesses
+                    if isinstance(access, Mapping)
+                    and access.get("tensor") == operand
+                ],
+                "consumer": consumer,
+                "operand_indices": operand_indices,
+            }
+        )
+    return result
+
+
 def _packet_critical_facts(packet: Mapping[str, Any]) -> dict[str, Any]:
     """Return a tiny exact index of easy-to-miss authored packet facts.
 
     The normal startup already transports the whole packet.  This index does not
-    summarize its graph or recommend a lowering; it merely colocates six
+    summarize its graph or recommend a lowering; it merely colocates seven
     closed fact classes whose distant cross-references are otherwise easy to
     overlook in a large ABI: semantic dimension carriers, typed IEEE-special
     constants, physical-iteration relations, reduction linearizations, exact
-    lexical-region membership, and cross-region order.
+    lexical-region membership, cross-region order, and explicit broadcast
+    obligations.
     """
 
     j = packet.get("j", {})
@@ -716,6 +823,8 @@ def _packet_critical_facts(packet: Mapping[str, Any]) -> dict[str, Any]:
                 "shape": attrs.get("shape", []),
             }
         )
+
+    broadcast_obligations = _packet_broadcast_obligations(j, operations)
 
     physical_iterations = pi.get("physical_iterations", [])
     if not isinstance(physical_iterations, list):
@@ -824,9 +933,10 @@ def _packet_critical_facts(packet: Mapping[str, Any]) -> dict[str, Any]:
             }
         )
     return {
-        "protocol": "intentir.replay-critical-facts.v2",
+        "protocol": "intentir.replay-critical-facts.v3",
         "semantic_dimension_carriers": dimension_carriers,
         "typed_ieee_special_constants": special_constants,
+        "broadcast_obligations": broadcast_obligations,
         "physical_iterations": physical_iterations,
         "reduction_linearizations": reduction_linearizations,
         "lexical_regions": lexical_regions,
@@ -848,13 +958,17 @@ def _replay_obligation_audit_view(
     """
 
     facts = _packet_critical_facts(packet)
+    broadcast_obligations = facts["broadcast_obligations"]
     lexical_regions = facts["lexical_regions"]
     cross_region_order = facts["cross_region_order"]
     return {
-        "protocol": "intentir.replay-obligation-audit.v1",
+        "protocol": "intentir.replay-obligation-audit.v2",
         "status": "pass",
         "source_sha256": hashlib.sha256(source_text.encode("utf-8")).hexdigest(),
-        "audit_required": bool(lexical_regions or cross_region_order),
+        "audit_required": bool(
+            broadcast_obligations or lexical_regions or cross_region_order
+        ),
+        "broadcast_obligations": broadcast_obligations,
         "lexical_regions": lexical_regions,
         "cross_region_order": cross_region_order,
         "source_nonempty_lines": [
@@ -2920,7 +3034,9 @@ class IntentIRReplayEnvironment:
                 source_digest = hashlib.sha256(source_bytes).hexdigest()
                 facts = _packet_critical_facts(self._read_closed_packet())
                 audit_required = bool(
-                    facts["lexical_regions"] or facts["cross_region_order"]
+                    facts["broadcast_obligations"]
+                    or facts["lexical_regions"]
+                    or facts["cross_region_order"]
                 )
                 if (
                     audit_required
@@ -3007,6 +3123,9 @@ class IntentIRReplayEnvironment:
         self._obligation_audit_log.append(
             {
                 "source_sha256": source_digest,
+                "broadcast_obligation_count": len(
+                    value["broadcast_obligations"]
+                ),
                 "lexical_region_count": len(value["lexical_regions"]),
                 "cross_region_order_count": len(value["cross_region_order"]),
             }

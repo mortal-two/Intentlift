@@ -506,11 +506,13 @@ def test_episode_contract_digest_binds_exact_files_prompts_and_budgets() -> None
     assert default_config["model"]["retry_timeouts"] is True
     assert default_config["model"]["semantic_initial_turns"] == 1
     assert default_config["model"]["model_kwargs"]["parallel_tool_calls"] is True
-    assert MINISWE_REPLAY_BACKEND == "minisweagent.intentir-replay.v26"
+    assert MINISWE_REPLAY_BACKEND == "minisweagent.intentir-replay.v27"
     instance = default_config["agent"]["instance_template"]
     assert "exact immutable source-blind startup transport" in instance
     assert "exact_packet_embedded=true" in instance
     assert "value-equivalent flattened formula" in instance
+    assert "critical_facts.broadcast_obligations" in instance
+    assert "Never pre-expand an access index or load shape" in instance
     assert "Every J.signature p* is one already-existing" in instance
     assert "duplicate p* instances never authorize duplicate" in instance
     assert "Construct and direct-submit complete Triton source early" in instance
@@ -1160,7 +1162,7 @@ def test_critical_facts_project_reduction_linearization_without_source() -> None
 
     facts = _packet_critical_facts(artifact.rewriter_view(masked=False))
 
-    assert facts["protocol"] == "intentir.replay-critical-facts.v2"
+    assert facts["protocol"] == "intentir.replay-critical-facts.v3"
     assert facts["reduction_linearizations"] == [
         {
             "instance": "i1",
@@ -1172,6 +1174,49 @@ def test_critical_facts_project_reduction_linearization_without_source() -> None
             ],
         }
     ]
+
+
+def test_critical_facts_colocate_explicit_broadcast_obligation() -> None:
+    packet = make_reduce_artifact().rewriter_view(masked=False)
+    packet["j"]["boundary"]["broadcasts"] = [
+        {"node_ref": "n0", "operand": "t0", "axes": [1]}
+    ]
+
+    facts = _packet_critical_facts(packet)
+
+    assert facts["protocol"] == "intentir.replay-critical-facts.v3"
+    assert facts["broadcast_obligations"] == [
+        {
+            "node_ref": "n0",
+            "operand": "t0",
+            "axes": [1],
+            "operand_type": {"dtype": "f32", "shape": ["x0", "x1"]},
+            "operand_accesses": [
+                {
+                    "access_id": "a0",
+                    "kind": "load",
+                    "tensor": "t0",
+                    "predicate": "v3 < x1",
+                    "fill_value": 0,
+                    "node_ref": "n0",
+                    "index_expression": "[v2, v3]",
+                }
+            ],
+            "consumer": {
+                "path": "j.intent.intent_function.body.0",
+                "node_ref": "n0",
+                "op": "map_binary",
+                "operands": ["t0", "t0"],
+                "type": None,
+            },
+            "operand_indices": [0, 1],
+        }
+    ]
+
+    audit = _replay_obligation_audit_view(packet, VALID_REPLAY)
+    assert audit["protocol"] == "intentir.replay-obligation-audit.v2"
+    assert audit["audit_required"] is True
+    assert audit["broadcast_obligations"] == facts["broadcast_obligations"]
 
 
 def test_critical_facts_project_lexical_regions_and_cross_region_order() -> None:
@@ -1246,7 +1291,7 @@ def test_obligation_audit_colocates_exact_ledger_and_current_source() -> None:
         artifact.rewriter_view(masked=False), VALID_REPLAY
     )
 
-    assert view["protocol"] == "intentir.replay-obligation-audit.v1"
+    assert view["protocol"] == "intentir.replay-obligation-audit.v2"
     assert view["status"] == "pass"
     assert view["audit_required"] is True
     assert view["lexical_regions"][0]["id"] == "r1"
@@ -1442,7 +1487,7 @@ def test_static_error_can_be_repaired_in_one_fresh_multi_turn_episode() -> None:
     assert '"exact_packet_embedded":true' in first_packet
     assert '"packet_bytes":' in first_packet
     assert '"bootstrap_command":null' in first_packet
-    assert "intentir.replay-critical-facts.v2" in first_packet
+    assert "intentir.replay-critical-facts.v3" in first_packet
     assert '"logical_ref":"x1"' in first_packet
     assert '"packet":' in first_packet
     assert "anonymous_source" not in first_packet

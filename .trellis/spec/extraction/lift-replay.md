@@ -333,33 +333,35 @@ ReplayLLM(J,pi,MaskC(C);U_f) -> complete source R_f
 ```
 
 当前 packet protocol 为 `intentir.scrc.replay-input.v1`，Triton 公共上下文为
-`public_frontend_context_v15`；source-aware Codex/MiniSWE Lift 的当前 knowledge receipt 分别为
+`public_frontend_context_v16`；source-aware Codex/MiniSWE Lift 的当前 knowledge receipt 分别为
 `intentir.lift-knowledge.v65 / intentir.lift-knowledge.v61`，source-blind MiniSWE/Codex Replay backend 为
-`minisweagent.intentir-replay.v26 / openai.codex-cli.intentir-replay.v22`。这些版本必须随 fresh run 原样记录；旧 packet/context/knowledge
+`minisweagent.intentir-replay.v27 / openai.codex-cli.intentir-replay.v23`。这些版本必须随 fresh run 原样记录；旧 packet/context/knowledge
 evidence 不因实现升级而被重判。
 
-Replay v26/v22 进一步明确消费 π region 的原有闭合含义：region 是 compiler-visible instance 的
+Replay v27/v23 继承 v26/v22 对 π region 的原有闭合含义：region 是 compiler-visible instance 的
 精确词法 realization scope，不是优化提示或 consumer membership。声明在 loop region 的 instance
 即使只依赖 loop-invariant operands，也必须在该 loop 内 materialize；Replay 不得把它 hoist 到父
 region，也不得跨 region sink、clone 或 fold。该规则只消费 Lift 已作者化 placement，不从 Source、
 Gate diff 或常见优化推导新的 instance；ReplayCheck 不据此猜 op↔instance 映射，最终一致性仍由正式
 Gate1 observer 判定。
 
-Replay v26/v22 对不超过 64 KiB 的匿名 packet 采用一次性 exact startup embedding；当前六个难核实测
+Replay v27/v23 对不超过 64 KiB 的匿名 packet 采用一次性 exact startup embedding；当前六个难核实测
 packet 最大约 47 KiB，因此正常路径不再强制调用 manifest、requirements、ABI、graph、realization 或
-obligations。startup 另带一个由同一 packet 精确投影的 bounded `critical_facts.v2`：只列 semantic
+obligations。startup 另带一个由同一 packet 精确投影的 bounded `critical_facts.v3`：只列 semantic
 dimension carrier、IEEE special typed constant、`physical_iterations`、
 `reduction_linearization + consumer route`、按 loop/branch region 分组的 instance membership 与
-跨 region order，使 Replay 不必在大图中重新
+跨 region order，并把每条 `J.boundary.broadcasts` 与其原 operand type、matching boundary access、
+named consumer/operand ordinal 无损并置，使 Replay 不必在大图中重新
 寻找这些易漏的已作者化事实；它不推断、补齐或推荐实现。超过上限时，首次 manifest 自带 bounded authored-requirements：J op/boundary 与 π
 instance mechanism、route/order/time/control 的 exact 重索引，并只为被明确截断的页提供 focused
 query。完整 `/input/packet.json` 仍是 immutable authority；embedding/manifest/query 都不摘要、补齐、
 推断或推荐 schedule/code。Replay LLM仍完整作者化 source，host只对 exact bytes 做 ReplayCheck 和
 public synthetic compile。旧 v20/v16 的强制 requirements 查询 receipt 保持原 verdict。
 
-当 `critical_facts.v2` 含 lexical region 或 cross-region order 时，Replay v26/v22 在 construction
-compile 前要求同一 owner 对当前 exact source bytes 调用一次 `replay-obligation-audit.v1`。返回值只把
-上述 π ledger 与该 owner 自己源码的带行号非空行并置；它不建立 `source statement ↔ i*` 映射，不判断
+当 `critical_facts.v3` 含 broadcast obligation、lexical region 或 cross-region order 时，Replay
+v27/v23 在 construction compile 前要求同一 owner 对当前 exact source bytes 调用一次
+`replay-obligation-audit.v2`。返回值只把上述 J/π ledger 与该 owner 自己源码的带行号非空行并置；
+它不建立 `source statement ↔ relation/i*` 映射，不判断
 满足与否，也不建议或执行修复。owner 修改任一 byte 后必须重新审阅新 digest。该事务约束只保证模型
 在提交前实际看到约束和当前代码，既不是 Replay 输入 artifact，也不进入 TypeCheck/Gate1 membership。
 

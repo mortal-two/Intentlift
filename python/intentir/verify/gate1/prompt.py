@@ -20,7 +20,7 @@ from .pi import (
 REPLAY_PACKET_SCHEMA = "intentir.scrc.replay-input.v1"
 PUBLIC_FRONTEND_CONTEXT = {
     "triton": {
-        "context_policy": "public_frontend_context_v15",
+        "context_policy": "public_frontend_context_v16",
         "retrieval_scope": "public Triton documentation and public examples",
         "tool_access": ["public_document_lookup"],
         "compile_entry_contract": (
@@ -41,6 +41,12 @@ PUBLIC_FRONTEND_CONTEXT = {
             "Each J.boundary access is closed: when predicate is absent, emit an "
             "unconditional load or store; never synthesize a defensive or "
             "redundant mask from a domain, grid extent, C slot, or safety guess. "
+            "Each J.boundary.broadcasts item is an explicit consumer-local rank "
+            "projection. Preserve the operand's closed J type at its producer and "
+            "boundary access, then materialize exactly the declared axes at the "
+            "named consumer with public explicit rank-lift operations. Never "
+            "pre-expand an access index or load shape, and never rely on implicit "
+            "broadcasting that erases the authored consumer stage. "
             "Every J.signature p* is one already-existing callable ABI carrier. "
             "All pi instances anchored to the same p* scope or route uses of that "
             "single carrier; they never create another external value or program "
@@ -224,7 +230,7 @@ PUBLIC_FRONTEND_CONTEXT = {
 # u_f object; changing that basis requires an explicit future policy version.
 PUBLIC_FRONTEND_CONTEXT_ACTIVE_POLICY = MappingProxyType(
     {
-        "triton": "public_frontend_context_v15",
+        "triton": "public_frontend_context_v16",
         "cute": "public_frontend_context_v1",
         "tilelang": "public_frontend_context_v1",
         "cuda": "public_frontend_context_v1",
@@ -263,6 +269,9 @@ PUBLIC_FRONTEND_CONTEXT_DIGEST_HISTORY = MappingProxyType(
                 ),
                 "public_frontend_context_v15": (
                     "7d68b5a2f77f614c952966c1b94a8eac052f6ebcad77412cd7db6af9ffbed8e6"
+                ),
+                "public_frontend_context_v16": (
+                    "57371c0c62fc68ca1f8f9b45a80144766ddf1416778f05f91b1c9c115173e165"
                 ),
             }
         ),
@@ -370,6 +379,14 @@ PUBLIC_FRONTEND_CONTEXT_RECEIPT_HISTORY = MappingProxyType(
                         "receipt_hash_basis": "full_u_f",
                         "context_sha256": (
                             "bd3175a91b8dfc0de729b5a7ba7c6dbb15ceab6238cc573f5c5c4c98632053f4"
+                        ),
+                    }
+                ),
+                "public_frontend_context_v16": MappingProxyType(
+                    {
+                        "receipt_hash_basis": "full_u_f",
+                        "context_sha256": (
+                            "1dfa8eb068dc1491011dec5163299a6a4f6d4001dddc0411838cbbc9c445370d"
                         ),
                     }
                 ),
@@ -941,7 +958,11 @@ def _instructions(*, frontend: Frontend, masked: bool) -> str:
         "logical operators, predicates, fills, constants, index relations and "
         "effects only from J. Preserve explicit J stages: reduce(sum) followed by "
         "division remains sum then division, never mean or a generated sum-of-ones "
-        "count. Treat every J.value_dimension_relations item as an already "
+        "count. Every J.boundary.broadcasts item applies only at its named consumer: "
+        "keep the operand's closed type at its producer/access and materialize the "
+        "declared axes with explicit public rank-lift operations before that consumer. "
+        "Do not pre-expand the load/index shape or erase the stage through implicit "
+        "broadcasting. Treat every J.value_dimension_relations item as an already "
         "J-certified precondition: relation=eq permits the declared integral "
         "rank-0 value_ref and dimension_ref to denote the same logical extent. "
         "Consume only the declared relation where J shapes, domains, predicates, "

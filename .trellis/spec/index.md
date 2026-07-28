@@ -25,7 +25,7 @@ closed signature、Layer-A total typing、显式 broadcast、canonical reduce/co
 `pi.iterations`，并验证 Lift 已作者化的 value/dimension、consumer-extension、access-guard、typed
 control/inout/output-binding/terminal-control 关系。fixed code只诊断，不翻译别名、补齐 attrs、生成 handle/relation、
 改图或修复 artifact；历史 wire/receipt 继续按自身版本读取，不静默升级或重判。当前 Agent execution
-receipt 为 `intentir.lift-knowledge.v65 / intentir.lift-knowledge.v61 / minisweagent.intentir-replay.v26 / openai.codex-cli.intentir-replay.v22`；
+receipt 为 `intentir.lift-knowledge.v65 / intentir.lift-knowledge.v61 / minisweagent.intentir-replay.v27 / openai.codex-cli.intentir-replay.v23`；
 artifact.v9 的 `physical_iterations/physical_loop_carriers` 表达 structured J loop 外、由已作者化
 reduce/contraction 或 boundary access/domain 锚定的物理时间，
 feedback frontier/category、candidate-control 与 Replay local-axis 合同只改 agent 消费，不改变接受
@@ -33,18 +33,18 @@ feedback frontier/category、candidate-control 与 Replay local-axis 合同只�
 closed feedback，host 仓库并发升级不得改变既有 owner。Harness adapter v5 另把 concrete
 shape valuation 与 Harness-only `h*` shape identity 分开，并可显式声明 valuation-matched semantic
 constexpr ↔ `h*`；最终 `x*`/equality 仍由 Lift 完整作者化。
-Replay v26/v22 对不超过 64 KiB 的完整匿名 J/C/π/U_f 只在首次上下文 exact embedding 一次，并额外
+Replay v27/v23 对不超过 64 KiB 的完整匿名 J/C/π/U_f 只在首次上下文 exact embedding 一次，并额外
 并置一个只重索引 semantic dimension carrier、IEEE special typed constant、physical iteration、
 `reduction_linearization + consumer route`、loop/branch lexical region membership 与 cross-region
-order 的 exact `critical_facts.v2`；超限
+order，以及 authored broadcast 的 operand type/access/named consumer 的 exact `critical_facts.v3`；超限
 packet 才接收一个自带 authored op/boundary、π instance mechanism 与 time/control/terminal 清单的
 compact manifest，并只查询明确遗漏页。Codex Lift v11 / knowledge v65 同样直接嵌入 exact Harness ABI
 与 relift frontier，并一次并列展开非递归 direct hard categories；原有只读工具退为可选局部自读。
 两条路径都不生成 artifact/realization，没有 Gate
 或认证权限。
 
-含 lexical/cross-region critical facts 的 Replay 在 construction compile 前还必须对当前 exact bytes
-完成 `replay-obligation-audit.v1`；该工具只并置 π ledger 与 Replay 自己的编号源码，不映射 instance、
+含 broadcast/lexical/cross-region critical facts 的 Replay 在 construction compile 前还必须对当前 exact bytes
+完成 `replay-obligation-audit.v2`；该工具只并置 J/π ledger 与 Replay 自己的编号源码，不映射 relation/instance、
 不诊断、不修复，也不参与 Gate 接受。
 `replay-check.v10` 还要求 synthetic TTIR 至少包含 π 已作者化 `reduction_linearization` 数量的
 distinct `tt.reshape -> tt.reduce(axis=0)` dataflow，避免无关 reshape 冒充，但不从 reduction/shape

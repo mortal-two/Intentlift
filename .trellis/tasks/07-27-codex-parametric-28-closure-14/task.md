@@ -189,8 +189,8 @@ fixed code不得替Lift修成`x*`。
 - frontend commit起点：`460aaed1c6af0b267a4a9da9ca497aea6e66ad40`；
 - artifact/decode/typecheck：`artifact.v9 / decode.v14 / typecheck.v26`；
 - Lift：Codex `openai.codex-cli.intentir-lift.v11 / intentir.lift-knowledge.v65`，MiniSWE `minisweagent.intentir-lift.v3 / intentir.lift-knowledge.v61`；
-- Replay：Codex `openai.codex-cli.intentir-replay.v22`，MiniSWE `minisweagent.intentir-replay.v26`；
-- Replay packet/check：`replay-input.v1 / public_frontend_context_v15 / replay-check.v10`；
+- Replay：Codex `openai.codex-cli.intentir-replay.v23`，MiniSWE `minisweagent.intentir-replay.v27`；
+- Replay packet/check：`replay-input.v1 / public_frontend_context_v16 / replay-check.v10`；
 - Harness：Triton workload adapter v5；
 - Gate1 observer：`triton-ttir-3.6-gate1-v11`；outer batch：`intentir.scrc.batch.v3`；
   candidate fan-out：v4 `first_observed_gate1_closure_cooperative_stop`；
@@ -319,6 +319,10 @@ fixed code不得替Lift修成`x*`。
   该 wave 启动后主工作区发生过工具修改，全部结果只用于定位，修复后必须从 clean commit fresh
   重跑。由此新增的通用 `decode.v14/typecheck.v26` 只消费 J direct `x* == 1`/`1 == x*` 作为显式
   broadcast 的 singleton 证据；不从 valuation/Source/Gate 猜事实，也不构造 broadcast。
+  Replay v27/v23 与 context v16 又把 authored broadcast 的 operand closed type、matching access、named
+  consumer/operand ordinal 加入 exact `critical_facts.v3`，并在存在该 obligation 时要求
+  `replay-obligation-audit.v2` 对 owner 当前编号源码自审。该工具不映射 relation 到 statement、不选择
+  `expand_dims` 次数或代码、不读取 Source/Gate；完整 Replay 仍由 source-blind LLM 作者化。
 - Codex Lift v11 / knowledge v65 将 closed frontier 已有的 interface、reduction、predicate/effect 与
   op-multiset direct categories 一次并列展开，recursive dataflow 保持按需分页。它只改善同一 owner
   对已有 Gate1 evidence 与 π grammar 的注意力；不选择 refinement、不改 J/C/π，也不把 compiler op
