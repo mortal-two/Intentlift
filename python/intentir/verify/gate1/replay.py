@@ -38,12 +38,12 @@ from .tilelang_codegen import extract_tilelang_module
 from .ttir import TTIRParseError, parse_ttir
 
 
-MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v14"
+MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v15"
 MINISWE_REPLAY_TURN_TIMEOUT_SECONDS = 300.0
 MINISWE_REPLAY_XHIGH_TURN_TIMEOUT_SECONDS = 900.0
 RESPONSES_REPLAY_BACKEND = "openai.responses.intentir-replay.v1"
 STATIC_REPLAY_BACKEND = "intentir.static-replay-test.v1"
-REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v5"
+REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v6"
 _ANONYMOUS_HANDLE = re.compile(r"^[pc][0-9]+$")
 
 
@@ -1196,6 +1196,30 @@ def _packet_transfer_direct_counts(
     return counts, tuple(dict.fromkeys(refs))
 
 
+def _packet_required_compiled_iteration_count(packet: Mapping[str, Any]) -> int:
+    """Count compiler-visible loops already authored by J or physical pi time.
+
+    A structured J ``loop`` denotes one logical loop.  A
+    ``pi.physical_iterations`` row denotes one additional physical loop around
+    an otherwise ordinary reduce/contraction.  ``pi.iterations`` realizes its
+    existing J loop and therefore is not counted a second time.  No missing
+    loop, bound, carrier, or schedule is inferred here.
+    """
+
+    structured = sum(
+        operation.get("op") == "loop"
+        for operation in _packet_intent_ops_by_path(packet).values()
+    )
+    pi = packet.get("pi")
+    physical_rows = pi.get("physical_iterations") if isinstance(pi, Mapping) else None
+    physical = (
+        sum(isinstance(item, Mapping) for item in physical_rows)
+        if isinstance(physical_rows, list)
+        else 0
+    )
+    return structured + physical
+
+
 def source_blind_replay_compile_check(
     code: str,
     artifact: Gate1Artifact,
@@ -1224,10 +1248,14 @@ def source_blind_replay_compile_check(
         )
     if not result.ok:
         return _source_blind_compile_failure(result)
-    expected_transfers, transfer_refs = _packet_transfer_direct_counts(
+    selected_packet = (
         packet if packet is not None else artifact.rewriter_view(masked=False)
     )
-    if expected_transfers and result.ttir is not None:
+    expected_transfers, transfer_refs = _packet_transfer_direct_counts(
+        selected_packet
+    )
+    expected_iterations = _packet_required_compiled_iteration_count(selected_packet)
+    if (expected_transfers or expected_iterations) and result.ttir is not None:
         try:
             fingerprint = parse_ttir(result.ttir)
         except TTIRParseError:
@@ -1243,6 +1271,24 @@ def source_blind_replay_compile_check(
                 ),
             )
         actual_ops = dict(fingerprint.op_multiset)
+        if expected_iterations:
+            actual_iterations = actual_ops.get("scf.for", 0)
+            if expected_iterations != actual_iterations:
+                return ReplayIngressResult(
+                    "fail",
+                    diagnostics=(
+                        {
+                            "rule_code": "compiled_iteration_count",
+                            "path": (
+                                "<synthetic-frontend-compile> scf.for: "
+                                f"expected={expected_iterations}, "
+                                f"actual={actual_iterations}"
+                            ),
+                            "anonymous_handles": [],
+                            "line": None,
+                        },
+                    ),
+                )
         for operation in (
             "tt.load",
             "tt.load.masked",
@@ -1457,6 +1503,10 @@ already-logical J reduce/contraction. Resolve its extent only through the
 C-attached reduced/contracted axis, preserve its induction basis and forward or
 reverse order, and preserve any `pi.physical_loop_carriers` temporal stages.
 These relations never create a J loop or authorize a guessed bound/update.
+The source-blind construction compile rejects a compiled `scf.for` multiplicity
+different from the number of structured J loops plus authored
+`pi.physical_iterations`; `pi.iterations` realizes its existing J loop and is
+not an additional loop. This check never supplies a loop or its bounds.
 
 A logical J axis ordinal is not automatically a Triton tensor-rank index. Build
 the active physical tile from the C slot attached to that J node and logical

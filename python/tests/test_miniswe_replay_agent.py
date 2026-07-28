@@ -476,7 +476,7 @@ def test_episode_contract_digest_binds_exact_files_prompts_and_budgets() -> None
     assert default_config["model"]["retry_timeouts"] is True
     assert default_config["model"]["semantic_initial_turns"] == 1
     assert default_config["model"]["model_kwargs"]["parallel_tool_calls"] is True
-    assert MINISWE_REPLAY_BACKEND == "minisweagent.intentir-replay.v14"
+    assert MINISWE_REPLAY_BACKEND == "minisweagent.intentir-replay.v15"
     instance = default_config["agent"]["instance_template"]
     assert "exact_packet_embedded=true" in instance
     assert "do not query" in instance
@@ -632,6 +632,60 @@ module {
     diagnostic = result.to_check_response()["diagnostics"][0]
     assert diagnostic["rule_code"] == "compiled_transfer_direct_count"
     assert "expected=0, actual=1" in diagnostic["path"]
+
+
+def test_synthetic_compile_rejects_missing_authored_physical_iteration() -> None:
+    artifact = make_reduce_artifact()
+    artifact.c.slots[0].subject_ref = "n1"
+    artifact.c.slots[0].axis_ref = 1
+    artifact.c.slots[0].required = True
+    artifact.pi.regions.extend(
+        [
+            {"id": "r1", "parent": "r0", "placement": "program"},
+            {"id": "r2", "parent": "r1", "placement": "loop"},
+        ]
+    )
+    artifact.pi.instances.append(
+        {
+            "id": "i4",
+            "semantic_ref": "c0",
+            "region": "r1",
+            "mechanism": "realize",
+        }
+    )
+    artifact.pi.physical_iterations = [
+        {
+            "region": "r2",
+            "body_instance": "i2",
+            "tile_instance": "i4",
+            "induction_basis": "extent_step",
+            "direction": "forward",
+        }
+    ]
+    artifact = Gate1Artifact.from_json(artifact.to_json())
+    loopless_ttir = """
+module {
+  tt.func public @scrc_k0(%p0: !tt.ptr<f32>, %p1: !tt.ptr<f32>, %p2: i32) attributes {noinline = false} {
+    tt.return
+  }
+}
+"""
+
+    class PassingCompiler:
+        def compile(self, _source, _case):
+            return CompileResult(True, ttir=loopless_ttir)
+
+    result = source_blind_replay_compile_check(
+        VALID_REPLAY,
+        artifact,
+        "scrc_k0",
+        compiler=PassingCompiler(),  # type: ignore[arg-type]
+    )
+
+    assert result.status == "fail"
+    diagnostic = result.to_check_response()["diagnostics"][0]
+    assert diagnostic["rule_code"] == "compiled_iteration_count"
+    assert "expected=1, actual=0" in diagnostic["path"]
 
 
 def test_replay_sandbox_has_empty_root_fixed_entrypoints_and_no_network(

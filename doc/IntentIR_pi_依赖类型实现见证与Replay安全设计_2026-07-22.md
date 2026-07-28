@@ -854,10 +854,10 @@ Replay LLM 应遵守以下过程合同：
 15. 不从 π 猜出后覆盖 J，也不从 compiler diff 修补。
 
 当前 fresh receipt 组合为 `intentir.scrc.replay-input.v1`、Triton
-`public_frontend_context_v12`、Codex `intentir.lift-knowledge.v58`、MiniSWE Replay v14 与 Codex Replay v9；旧 receipt 保持其原 verdict，不能由
+`public_frontend_context_v12`、Codex `intentir.lift-knowledge.v58`、MiniSWE Replay v15 与 Codex Replay v10；旧 receipt 保持其原 verdict，不能由
 当前 Replay consumer 或 Lift knowledge 静默升级。
 
-Codex Replay v9 的隔离 `replay-workspace-view.v2` 必须包含完整匿名 ABI/J graph/J boundary、MaskC、
+Codex Replay v10 的隔离 `replay-workspace-view.v2` 必须包含完整匿名 ABI/J graph/J boundary、MaskC、
 U_f，以及从同一 π 无损 join 的 per-instance obligation ledger；reduction obligation 只能并置 J 已
 作者化的 operand/result type、axis、boundary reduction、C attachment 与 π instance，不能选择 physical
 rank、reshape、tile 或 spelling。它不能生成或省略 relation。v7 的
@@ -881,9 +881,12 @@ artifact 保持原始序列化、digest 与字段集合，禁止静默附加空�
 
 固定代码不把 π 解码成源码，不建立 deterministic composer。
 
-`replay-check.v5` 可以在公共、source-blind synthetic compile 后核对 π 已作者化的
+`replay-check.v6` 可以在公共、source-blind synthetic compile 后核对 π 已作者化的
 `transfer_direct` occurrence 与 compiled load/store multiplicity；它只拒绝 compiler 已经折叠的
-作者化 event，不补 transfer、不决定保留它的源码写法，也不具有 Gate 或认证权威。单次 Replay turn
+作者化 event，不补 transfer、不决定保留它的源码写法。它同时将 structured J loop 数与
+`pi.physical_iterations` 数之和作为已作者化的 compiled `scf.for` 必要 occurrence；
+`pi.iterations` 只 realize 其 J loop，不重复计数。该检查不补 loop、bound、carrier 或 schedule，也不
+具有 Gate 或认证权威。单次 Replay turn
 超时只允许在同一 fresh episode/thread 继续，或恢复该 episode 内 Replay LLM 已写出且通过 closed
 check 的 exact bytes；禁止跨 episode 继承 Replay。
 

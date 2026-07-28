@@ -827,8 +827,8 @@ Replay 不得：
 `U_f` 必须是版本化、source-neutral 的公共前端知识，不能按当前 Kernel、operator 或失败样本选择。
 当前版本组合是 `intentir.scrc.replay-input.v1`、Triton
 `public_frontend_context_v12`、source-aware Codex Lift `intentir.lift-knowledge.v58`（MiniSWE Lift
-保持 v57）、source-blind MiniSWE Replay v14 与 Codex Replay v9、
-`replay-check.v5`；fresh evidence必须保存实际 receipt，
+保持 v57）、source-blind MiniSWE Replay v15 与 Codex Replay v10、
+`replay-check.v6`；fresh evidence必须保存实际 receipt，
 旧版本 run 不能被新组合追认。
 runner 可以保存实际 request/output 和 compiler metadata 供追溯，但这些内容不能回流 Replay packet；
 不需要为此增加 hash、commitment 或签名门。
@@ -1316,13 +1316,14 @@ v5 进一步加入 valuation-matched semantic constexpr equality、真实 scratc
 batch仍使用不同 `h*`。Llama4 的 `2*head_dim_half` 与 SplitK product/derived capacity/variant family
 在当前 relation vocabulary 中保持 selected-variant literal，不从 grid/prose或数值相等猜公式。
 
-当前 Codex Lift v3 / Replay v9 对单次 turn wall-time 不再直接丢弃当前成果：host 只重新检查同一
+当前 Codex Lift v3 / Replay v10 对单次 turn wall-time 不再直接丢弃当前成果：host 只重新检查同一
 invocation/episode 的 exact current bytes；若它们已通过 closed check则接收，否则只可恢复同一 LLM
 本轮已检查通过的 exact checkpoint，或在 provider 返回 resumable thread 时继续同一 thread。这里没有
 跨 formal round 的 best-parent、语义合并或 fixed repair。Replay workspace view v2 只无损并置 typed
-reduction obligations；`replay-check.v5` 只在 source-blind synthetic compile 后核对作者化
-`transfer_direct` occurrence 的 compiled multiplicity，防止 CSE 抹去 π event，不替 Replay 生成
-eviction policy、reshape 或其他源码。
+reduction obligations；`replay-check.v6` 在 source-blind synthetic compile 后核对作者化
+`transfer_direct` occurrence 的 compiled multiplicity，并核对 structured J loops 加
+`pi.physical_iterations` 所要求的 `scf.for` 数。它防止 CSE 抹去 π event 或 Replay 遗漏已声明物理
+时间，但不替 Replay 生成 eviction policy、loop/bound、reshape 或其他源码。
 
 v51/Replay v9 进一步只加入 proof-irrelevant execution guard：连续相同工具请求、相同当前
 candidate/Replay digest 与相同 closed output 达三次才终止无进展 episode；同时 live progress 先记录

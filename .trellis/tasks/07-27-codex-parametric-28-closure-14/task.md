@@ -187,8 +187,8 @@ fixed code不得替Lift修成`x*`。
 - frontend commit起点：`460aaed1c6af0b267a4a9da9ca497aea6e66ad40`；
 - artifact/decode/typecheck：`artifact.v9 / decode.v13 / typecheck.v22`；
 - Lift：Codex `openai.codex-cli.intentir-lift.v3 / intentir.lift-knowledge.v58`；
-- Replay：Codex `openai.codex-cli.intentir-replay.v9`，MiniSWE `minisweagent.intentir-replay.v14`；
-- Replay packet/check：`replay-input.v1 / public_frontend_context_v12 / replay-check.v5`；
+- Replay：Codex `openai.codex-cli.intentir-replay.v10`，MiniSWE `minisweagent.intentir-replay.v15`；
+- Replay packet/check：`replay-input.v1 / public_frontend_context_v12 / replay-check.v6`；
 - Harness：Triton workload adapter v5；
 - Gate1 observer：`triton-ttir-3.6-gate1-v11`；outer batch：`intentir.scrc.batch.v3`；
   candidate fan-out：v4 `first_observed_gate1_closure_cooperative_stop`；
@@ -215,7 +215,9 @@ fixed code不得替Lift修成`x*`。
   Gate2-only recheck certified。CrossEntropy、Flash forward、xFormers RMSNorm、SplitK backward
   为 NO_CLOSURE；Flash full backward与SplitK forward因至少一个 Replay-before-Gate1
   infrastructure branch 聚合为 infrastructure_failed。
-- 当前可用闭合总计 `14/28`：11 个原运行直接认证，3 个 exact-artifact capability recheck 认证。
+- Wave 7（剩余14项，commit `d40e37ef`，Codex Sol high）进行中：JSD 在 branch 3 formal round 1
+  fresh Gate1 closure 后通过三边 Gate2，直接 certified；其余项继续执行，不提前写终态。
+- 当前可用闭合总计 `15/28`：12 个原运行直接认证，3 个 exact-artifact capability recheck 认证。
   TypeCheck PASS 不计进度；只有 Gate1 已闭合且当前 Gate2 三边通过才计入。
 
 CrossEntropy 曾暴露一个通用表达缺口：J 已作者化 early-return `effect_if`，旧 π 无法区分 terminal
@@ -235,12 +237,14 @@ refinement/terminal facts，不生成 op、predicate、地址公式或 schedule�
 
 本轮 Codex Replay v9 将该 view 升级为 v2，只把 J 中已经作者化的 reduction operand/result type、
 semantic axes、对应 boundary reduction、C attachment 与 π instance 无损并置成 reduction obligation；
-它不选择 physical rank、tile、reshape、loop 或 frontend spelling。`replay-check.v5` 在公共 synthetic
-compile 后只按 π 已作者化的 `transfer_direct` occurrence 核对 compiled load/store multiplicity，防止
-Replay 源码中的重复 transfer 被 compiler CSE 静默折叠；检查仍不读取 Source、Harness value 或 Gate1。
-Codex Lift v3 与 Replay v9 对单次 provider turn wall-time 只做同 thread/session 续跑，并且只可恢复
+它不选择 physical rank、tile、reshape、loop 或 frontend spelling。`replay-check.v6` 在公共 synthetic
+compile 后按 π 已作者化的 `transfer_direct` occurrence 核对 compiled load/store multiplicity，并按
+structured J loops 加 `pi.physical_iterations` 核对 compiled `scf.for` multiplicity；`pi.iterations`只
+realize 已存在的 J loop，不重复计数。两项检查分别防止 CSE 折叠 transfer 和 Replay 遗漏已声明的
+物理时间；仍不读取 Source、Harness value 或 Gate1，也不补 loop/bound/transfer。
+Codex Lift v3 与 Replay v10 对单次 provider turn wall-time 只做同 thread/session 续跑，并且只可恢复
 本次 invocation/episode 内由同一 LLM 写出且已经通过对应 closed check 的 exact bytes；固定代码不
-合并、修复或跨正式轮次选择 candidate。MiniSWE v14 共享同一 replay-check.v5 合同，但当前 28 项
+合并、修复或跨正式轮次选择 candidate。MiniSWE v15 共享同一 replay-check.v6 合同，但当前 28 项
 fresh closure 仍以 Codex 为主执行路径。
 
 实现升级后只fresh rerun受影响case，不重判旧receipt。Task14期间每次通用能力提交都必须在后续
