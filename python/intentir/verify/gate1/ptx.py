@@ -39,6 +39,11 @@ _REGISTER_DECL_RE = re.compile(
     r"\.reg\s+(?P<type>\.[A-Za-z][A-Za-z0-9]*)\s+"
     r"(?P<base>%[A-Za-z_][A-Za-z0-9_.$]*)(?:<(?P<count>[0-9]+)>)?\s*;"
 )
+_INLINE_REGISTER_DECL_RE = re.compile(
+    r"^(?P<prefix>\s*\.reg\s+(?P<type>\.[A-Za-z][A-Za-z0-9]*)\s+)"
+    r"(?P<base>[A-Za-z_$][A-Za-z0-9_.$]*)"
+    r"(?:<(?P<count>[0-9]+)>)?(?P<suffix>\s*;\s*)$"
+)
 _OPCODE_RE = re.compile(
     r"^(?:(?P<predicate>@!?%[A-Za-z_][A-Za-z0-9_.$]*)\s+)?"
     r"(?P<opcode>[A-Za-z][A-Za-z0-9_.]*)\s*(?P<operands>.*);$"
@@ -86,6 +91,88 @@ def _strip_comments(ptx: str) -> str:
     return "\n".join(line.split("//", 1)[0] for line in ptx.splitlines())
 
 
+def _normalize_scoped_registers(body: str) -> str:
+    """Give inline-PTX local registers ordinary alpha-normalizable names.
+
+    CUDA inline assembly may emit scoped declarations such as ``.reg .pred p``
+    and then use ``p`` rather than a percent-prefixed PTX register.  The same
+    spelling may be redeclared in many independent brace scopes.  Rewrite each
+    declaration and its scoped uses to a unique virtual register before the
+    normal PTX canonicalizer runs.  Standalone braces are treated as scopes only
+    at statement boundaries, so multiline tuple operands remain untouched.
+    """
+
+    scopes: list[dict[str, str]] = [{}]
+    scope_index = 0
+    pending = ""
+    output: list[str] = []
+
+    def replace_scoped_names(line: str) -> str:
+        names: dict[str, str] = {}
+        for scope in scopes:
+            names.update(scope)
+        for source, target in sorted(names.items(), key=lambda item: -len(item[0])):
+            line = re.sub(
+                rf"(?<![A-Za-z0-9_.$%]){re.escape(source)}(?![A-Za-z0-9_.$])",
+                target,
+                line,
+            )
+        return line
+
+    for raw in body.splitlines():
+        line = raw.strip()
+        if line == "{" and not pending:
+            scopes.append({})
+            output.append(raw)
+            continue
+        if line == "}" and not pending:
+            if len(scopes) == 1:
+                raise PTXObservationError("unmatched PTX local scope brace")
+            scopes.pop()
+            output.append(raw)
+            continue
+
+        declaration = _INLINE_REGISTER_DECL_RE.fullmatch(raw) if not pending else None
+        if declaration is not None:
+            base = declaration.group("base")
+            count = int(declaration.group("count") or 1)
+            synthetic = f"%__inline{scope_index}_{base}"
+            scope_index += 1
+            scopes[-1][base] = synthetic
+            if count > 1:
+                for index in range(count):
+                    scopes[-1][f"{base}{index}"] = f"{synthetic}{index}"
+            extent = f"<{count}>" if declaration.group("count") else ""
+            output.append(
+                declaration.group("prefix")
+                + synthetic
+                + extent
+                + declaration.group("suffix")
+            )
+            continue
+
+        rewritten = replace_scoped_names(raw)
+        output.append(rewritten)
+        stripped = rewritten.strip()
+        if not stripped:
+            continue
+        if not pending and (
+            stripped.endswith(":")
+            or stripped.startswith((".loc", ".file", ".pragma", ".reg"))
+            or (
+                stripped.startswith((".shared", ".local"))
+                and stripped.endswith(";")
+            )
+        ):
+            continue
+        pending = (pending + " " + stripped).strip()
+        while ";" in pending:
+            _statement, pending = pending.split(";", 1)
+            pending = pending.strip()
+
+    return "\n".join(output)
+
+
 def _entry_region(ptx: str, entry: str | None) -> tuple[str, str, str]:
     matches = list(_ENTRY_RE.finditer(ptx))
     if entry is not None:
@@ -127,6 +214,13 @@ def _statements(body: str) -> list[str]:
     for line in lines:
         if not line:
             continue
+        # NVCC can preserve an inline-assembly scope as standalone structural
+        # braces inside the entry body.  They are not PTX instructions.  Only
+        # discard them at a statement boundary: braces occurring while an
+        # instruction is being accumulated may be an operand tuple such as
+        # ``{%r1, %r2}`` and remain proof-relevant syntax.
+        if line in {"{", "}"} and not current:
+            continue
         if line.endswith(":"):
             if current:
                 raise PTXObservationError("label occurs inside PTX instruction")
@@ -157,6 +251,7 @@ def _canonical_instructions(
     *,
     parameters: Mapping[str, str],
 ) -> tuple[str, ...]:
+    body = _normalize_scoped_registers(body)
     register_types = _register_types(body)
     registers: dict[str, str] = {}
     type_counts: Counter[str] = Counter()
@@ -240,6 +335,8 @@ def _canonical_instructions(
         operands = re.sub(r"\s*,\s*", ",", operands)
         operands = re.sub(r"\[\s*", "[", operands)
         operands = re.sub(r"\s*\]", "]", operands)
+        operands = re.sub(r"\{\s*", "{", operands)
+        operands = re.sub(r"\s*\}", "}", operands)
         output.append(f"{predicate + ' ' if predicate else ''}{opcode}{(' ' + operands) if operands else ''};")
     if not output:
         raise PTXObservationError("PTX entry instruction sequence is empty")

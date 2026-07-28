@@ -21,7 +21,11 @@ from intentir.verify.gate1.cuda_compiler import (
 from intentir.verify.gate1.model import Frontend, Gate1Status
 from intentir.verify.gate1.native_orchestrate import CudaGate1Runner
 from intentir.verify.gate1.orchestrate import Gate1Config
-from intentir.verify.gate1.ptx import compare_ptx_fingerprints, fingerprint_ptx
+from intentir.verify.gate1.ptx import (
+    PTXObservationError,
+    compare_ptx_fingerprints,
+    fingerprint_ptx,
+)
 from intentir.verify.gate1.replay import StaticReplayWriter
 
 
@@ -68,6 +72,78 @@ def test_ptx_fingerprint_alpha_normalizes_entry_registers_labels_and_debug() -> 
     )
     assert source.digest == replay.digest
     assert compare_ptx_fingerprints(source, replay).hard_pass
+
+
+def test_ptx_fingerprint_ignores_inline_assembly_scope_braces() -> None:
+    ptx = """
+.visible .entry kernel() {
+  .reg .b32 %r<2>;
+  {
+    .reg .pred p;
+    setp.ne.b32 p, %r1, 0;
+    @p mov.b32 %r1, 1;
+  }
+  ret;
+}
+"""
+    fingerprint = fingerprint_ptx(
+        ptx,
+        entry="kernel",
+    )
+    renamed = fingerprint_ptx(
+        ptx.replace(".pred p", ".pred local_pred")
+        .replace("p, %r1", "local_pred, %r1")
+        .replace("@p ", "@local_pred "),
+        entry="kernel",
+    )
+
+    assert any(item.startswith("setp.ne.b32 ") for item in fingerprint.instructions)
+    assert not any(item.startswith("{ ") for item in fingerprint.instructions)
+    assert fingerprint.digest == renamed.digest
+
+
+def test_ptx_fingerprint_preserves_braces_inside_operand_tuple() -> None:
+    compact = fingerprint_ptx(
+        """
+.visible .entry kernel() {
+  .reg .b32 %r<3>;
+  .reg .b64 %rd;
+  mov.b64 {%r1, %r2}, %rd;
+  ret;
+}
+""",
+        entry="kernel",
+    )
+    multiline = fingerprint_ptx(
+        """
+.visible .entry kernel() {
+  .reg .b32 %r<3>;
+  .reg .b64 %rd;
+  mov.b64
+  {
+    %r1,
+    %r2
+  },
+  %rd;
+  ret;
+}
+""",
+        entry="kernel",
+    )
+
+    assert compact.digest == multiline.digest
+    assert any("{%" in item for item in compact.instructions)
+
+
+def test_ptx_fingerprint_rejects_unmatched_entry_body_brace() -> None:
+    with pytest.raises(PTXObservationError, match="unterminated PTX \\{\\} region"):
+        fingerprint_ptx(
+            """
+.visible .entry kernel() {
+  ret;
+""",
+            entry="kernel",
+        )
 
 
 def test_ptx_fingerprint_keeps_memory_space_predicate_and_barrier_semantic() -> None:
