@@ -696,8 +696,8 @@ production 不消费该值。只影响 layout/tile/stage 等
 implementation selection 的 constexpr 必须在 Harness 分类为 C slot，而不能作为 bound constexpr
 留在 π-only 形态；static specialization carrier 也不得进入 π topology。
 
-当前 RefEval 消费版本为 `j_scalar_cpu_mlir_v17`，shared functional projection 为
-`intentir.j-functional-boundary.v16`。它们完整继承 v14/v13、v12/v11 与 v10/v3；v10 已继承 v9，v9 已继承 v8 对唯一 node-less
+当前 RefEval 消费版本为 `j_scalar_cpu_mlir_v18`，shared functional projection 为
+`intentir.j-functional-boundary.v17`。它们完整继承 v14/v13、v12/v11 与 v10/v3；v10 已继承 v9，v9 已继承 v8 对唯一 node-less
 logical-input load 的通用消费，并移除旧 single-input/single-output/single-sum padded topology 限制。
 对 predicated direct access，J 必须
 自行声明每个 axis 的完整零起点 logical domain与显式 load fill，仍携带 masked axis 的 access 使用
@@ -749,7 +749,7 @@ v13/v12 仅消费 J 已明确证明的 inout post-state reload：唯一 output m
 擦除 physical outside-domain value；任何 reduction、scan、loop、transpose、pad、不同 predicate 或
 未匹配 effect 都拒绝。两项都只产生 consumer receipt，不生成 artifact field，不进入 Lift feedback。
 
-当前 `j_scalar_cpu_mlir_v17` / `intentir.j-functional-boundary.v16` 在上述 v14/v13 上增加两项共享、
+当前 `j_scalar_cpu_mlir_v18` / `intentir.j-functional-boundary.v17` 完整继承 v17/v16 在上述 v14/v13 上增加的两项共享、
 J-only 的确定性消费能力。第一，若 domain upper bound 是 J 显式写出的正整数/`x*` 乘积，access 的
 每个非 direct coordinate 必须恰好是该乘积的一位 mixed-radix digit，且所有 factor 各出现一次、
 stride 为精确 suffix，才形成 `complete_mixed_radix_bijection` receipt；不做交换律猜测、不补缺位、
@@ -759,6 +759,13 @@ predicate 仍须完全相同；任一 shape change、坐标不一致或未知 op
 同时支持 J 已作者化的 `map_unary(log2)`，并把 JSON-safe `inf/-inf/nan` sentinel 按声明 dtype 编成
 MLIR IEEE bit literal。这些都不新增 J/B 字段、不读取 Source/C/π/Harness、不改变 TypeCheck 接受集，
 也不是按 kernel 名称选择 recipe。
+
+v18/v17 进一步允许上述 missing-fill proof 与既有 node-less whole-input load 组合，但只在该 tensor
+只有一个 load、canonical J 又只有一个直接 pointwise consumer 时成立。consumer 从这条唯一、
+已作者化的 J operand edge 开始做同 predicate/broadcast/observable-store 证明；它不把推断出的
+consumer 写回 artifact。任何歧义、reduce/scan/loop/未知首 consumer 或后续未闭合路径仍显式
+unsupported。该能力只修复 fixed Gate2/production projection 对完整 J 的消费，不新增 Lift 字段，
+也不允许把 Gate2 结果反馈给 Lift。
 
 函数 `returns` 与 boundary `output_mapping` 是同一 canonical output binding 的两种 authored 入口，
 不再要求 LLM 重复写两份；若同时存在必须一致。shared J→Intent MLIR materializer 从唯一

@@ -177,9 +177,9 @@ seed，未知 op 会停止 TypeCheck 的窄传播；value-free projector 对 gua
 provenance 进入未知 op 均显式 consumer-unsupported。v11 继承 v10 的上述 invocation-local、可证明全真的
 guard/runtime-bound 例外；fixed code 不补写 count、domain、predicate 或 reduction contract。
 
-当前 shared projection receipt 为 `intentir.j-functional-boundary.v16`，scalar RefEval 为
-`j_scalar_cpu_mlir_v17`，closed structured reference 为
-`intentir.j-structured-cpu-reference.v5`。v17/v16 完整继承既有唯一 node-less logical-input load、
+当前 shared projection receipt 为 `intentir.j-functional-boundary.v17`，scalar RefEval 为
+`j_scalar_cpu_mlir_v18`，closed structured reference 为
+`intentir.j-structured-cpu-reference.v5`。v18/v17 完整继承既有唯一 node-less logical-input load、
 通用 multi-reduction padding closure、当前 Gate2 invocation 的 runtime predicate tautology proof、
 v4/v5 relations、direct-store partition、closed typed contraction、product-domain mixed-radix、精确
 transpose 与 pointwise broadcast consumer。logical inout 的 post-state reload 由 J `returns` 或
@@ -192,6 +192,9 @@ protocol、access id、J predicate digest、logical input refs 与 domain axes�
 value digest；这是 audit-data minimization，不是 confidentiality/privacy proof。旧 v8/v9 Gate2
 receipt、functional-boundary v1/v2 与
 `logical_domain_reduction_padding_v1/v2` 记录保持历史解释，不由 v11/v9 追认或重判。
+v18/v17 还允许唯一 node-less predicated whole-input load 从 canonical J 中唯一的直接 pointwise
+consumer 开始 missing-fill provenance；同 tensor 多 load、零个/多个 direct consumer、非 pointwise
+consumer 或任一后续路径不闭合都拒绝。该解析结果只存在于 projection invocation，不写回 J。
 
 修复上述 RefEval capability 后，可以对 parent 中 `replay_closed` 的精确 artifact/Replay 做零模型调用
 Gate2-only recheck；它写独立 evidence 且 `changes_parent_verdict=false`。这只证明当前 reference

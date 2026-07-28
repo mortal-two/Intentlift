@@ -586,8 +586,8 @@ consumer topology 由 functional consumer 明确 unsupported。该判定只读 J
 将 mean 自动改写；若 Source 是 masked sum 后显式除法，Lift 必须完整生成
 `reduce(sum) + explicit div`。
 
-Scalar RefEval 当前能力版本为 `j_scalar_cpu_mlir_v17`，shared projection 为
-`intentir.j-functional-boundary.v16`。它们完整继承 v14/v13、v12/v11 与 v10/v3；v10 已继承 v9，v9 已继承 v8 的唯一 node-less
+Scalar RefEval 当前能力版本为 `j_scalar_cpu_mlir_v18`，shared projection 为
+`intentir.j-functional-boundary.v17`。它们完整继承 v14/v13、v12/v11 与 v10/v3；v10 已继承 v9，v9 已继承 v8 的唯一 node-less
 logical-input load，并把 padded reduction 从 single input/output/sum 特例改为 J-only 的通用闭合：
 每个 predicated direct access 必须
 覆盖自身完整 logical domain，仍携带 masked axis 的 access 使用同一 predicate；每个 logical reduce
@@ -635,13 +635,19 @@ order 必须同时成立。v14/v13 只在 missing-fill load 的所有 downstream
 outside-domain value 不可观察；reduction/scan/loop/transpose/pad、不同 predicate 与未知 effect 继续
 fail closed。两者都不读 Source/C/π/Harness，也不修改 J。
 
-当前 `j_scalar_cpu_mlir_v17` / `intentir.j-functional-boundary.v16` 继续只扩展 deterministic
+当前 `j_scalar_cpu_mlir_v18` / `intentir.j-functional-boundary.v17` 完整继承 v17/v16，并继续只扩展 deterministic
 consumer：显式 product domain 只有在 access coordinates 构成完整、唯一、逐 factor 的 mixed-radix
 bijection 时才投影为 logical tensor axes；missing-fill provenance 只有在 shape-preserving pointwise
 链后接精确 `transpose`，且 store coordinates 等于 load coordinates 的 authored permutation、predicate
 完全一致时才允许穿过 transpose。它还消费 J 已写出的 `map_unary(log2)` 与 JSON-safe IEEE special
 constant。所有 proof 都只读 J、产生 receipt；不做一般代数化简、不新增字段、不改变 TypeCheck、
 不按 kernel 名称分支，失败仍显式 unsupported。
+
+v18/v17 再允许唯一 node-less whole-input load 与 missing-fill pointwise proof 组合：同 tensor 必须只有
+该 load，canonical J 必须只有一个直接 pointwise consumer，之后仍逐路径验证 typed broadcast、同
+predicate observable store、effect 与 output binding。该确定性分析只解析 J 已有 edge，不回填
+artifact；歧义、非 pointwise consumer 或任一未闭合路径继续拒绝，因此不改变 Lift codomain、
+TypeCheck 或 SCRC 认证公式。
 
 函数 `returns` 或 boundary `output_mapping` 任一均可唯一声明 canonical output binding，同时出现必须
 一致。shared J→Intent MLIR 入口及 structured reference v5 消费 deterministic `JElaboration.output_bindings`，所以 Gate2 与

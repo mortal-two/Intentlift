@@ -1198,7 +1198,7 @@ def test_scalar_e_j_consumes_general_masked_softmax_graph() -> None:
     expected /= np.sum(expected, axis=1, keepdims=True)
     assert result.ok, result.error
     np.testing.assert_allclose(result.outputs["output"], expected, rtol=1e-6)
-    assert result.metadata["protocol"] == "j_scalar_cpu_mlir_v17"
+    assert result.metadata["protocol"] == "j_scalar_cpu_mlir_v18"
     assert (
         result.metadata["boundary_profile"]
         == "logical_domain_reduction_padding_v2"
@@ -1418,7 +1418,7 @@ def test_refeval_runtime_proves_rank_zero_logical_bound_tautology(limit: int) ->
     assert result.ok, result.error
     np.testing.assert_array_equal(result.outputs["output"], value)
     projection = result.metadata["boundary_projection"]
-    assert projection["protocol"] == "intentir.j-functional-boundary.v16"
+    assert projection["protocol"] == "intentir.j-functional-boundary.v17"
     assert FUNCTIONAL_BOUNDARY_PROTOCOL == projection["protocol"]
     assert result.metadata["boundary_profile"] == (
         "logical_domain_runtime_mask_erasure_v1"
@@ -1787,7 +1787,7 @@ def test_scalar_e_j_erases_tail_mask_for_general_pointwise_j() -> None:
 
     assert result.ok, result.error
     assert result.metadata["protocol"] == SCALAR_LOWERING_PROTOCOL
-    assert SCALAR_LOWERING_PROTOCOL == "j_scalar_cpu_mlir_v17"
+    assert SCALAR_LOWERING_PROTOCOL == "j_scalar_cpu_mlir_v18"
     np.testing.assert_allclose(result.outputs["output"], np.tanh(value))
 
 
@@ -2041,6 +2041,45 @@ def test_scalar_e_j_erases_mask_through_closed_pointwise_broadcast() -> None:
     )
     assert direct.ok, direct.error
     np.testing.assert_allclose(direct.outputs["output"], second * first)
+
+    # A canonical whole-input load may omit node_ref.  Its consumer is still
+    # closed when the same tensor has one load and one direct J consumer; the
+    # consumer must be recovered from J dataflow, not filled in by RefEval.
+    artifact.j.boundary.accesses[0].node_ref = None
+    artifact.j.boundary.effects[0].node_ref = None
+    assert predicate_dominated_pointwise_load(artifact.j, "a0")
+    node_less_projection = project_functional_boundary(artifact.j)
+    assert (
+        "predicate_dominated_load:a0:i1 < x1"
+        in node_less_projection.consumed
+    )
+    node_less = ScalarLoweringRunner().run(
+        ScalarLoweringSpec.create(
+            artifact.j,
+            dims={"x0": 2, "x1": 3},
+            input_bindings={"t0": "input0", "t2": "input1"},
+            output_bindings={"t1": "output"},
+        ),
+        {"input0": first, "input1": second},
+    )
+    assert node_less.ok, node_less.error
+    np.testing.assert_allclose(node_less.outputs["output"], second * first)
+
+    artifact.j.boundary.accesses.insert(
+        1,
+        BoundaryAccess(
+            "a3",
+            AccessKind.LOAD,
+            "t0",
+            predicate="i1 < x1",
+            index_expression="[i1]",
+        ),
+    )
+    artifact.j.boundary.effects.insert(
+        1,
+        EffectSpec(EffectKind.READ, "t0", effect_id="e3", access_ref="a3"),
+    )
+    assert not predicate_dominated_pointwise_load(artifact.j, "a0")
 
 
 def _make_node_less_input_load_artifact():

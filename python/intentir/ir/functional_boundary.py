@@ -32,7 +32,7 @@ from intentir.ir.value_dimension import (
 )
 
 
-FUNCTIONAL_BOUNDARY_PROTOCOL = "intentir.j-functional-boundary.v16"
+FUNCTIONAL_BOUNDARY_PROTOCOL = "intentir.j-functional-boundary.v17"
 RUNTIME_PREDICATE_PROOF_PROTOCOL = (
     "intentir.j-functional-runtime-predicate-tautology.v1"
 )
@@ -679,6 +679,55 @@ _PREDICATE_DOMINATED_POINTWISE_OPS = frozenset(
 )
 
 
+def _predicate_dominated_load_start(
+    j: Any,
+    *,
+    access: Any,
+    nodes: Mapping[str, IntentOp],
+) -> tuple[str, IntentOp, str] | None:
+    """Resolve the unique first J consumer of one predicate-bearing load.
+
+    A node-bound access already names that consumer.  A node-less access is the
+    canonical whole-tensor form and is usable only when it is the sole load of
+    its logical input and that input has exactly one direct canonical consumer.
+    This is a J-only reference resolution: it neither invents a consumer edge
+    nor consults Source, C, pi, Replay, or Harness.
+    """
+
+    if access.node_ref is not None:
+        start = nodes.get(access.node_ref)
+        if start is None:
+            return None
+        dependencies = _operation_dependencies(start)
+        if access.tensor in dependencies:
+            return access.node_ref, start, access.tensor
+        poststate = explicit_inout_poststate_reload_value(j, access.access_id)
+        if poststate is not None and poststate in dependencies:
+            return access.node_ref, start, poststate
+        return None
+
+    matching_loads = [
+        item
+        for item in j.boundary.accesses
+        if item.kind.value == "load" and item.tensor == access.tensor
+    ]
+    if (
+        len(matching_loads) != 1
+        or matching_loads[0].access_id != access.access_id
+    ):
+        return None
+    consumers = [
+        (node_ref, nodes[node_ref])
+        for node_ref in j.node_ids
+        if node_ref in nodes
+        and access.tensor in _operation_dependencies(nodes[node_ref])
+    ]
+    if len(consumers) != 1:
+        return None
+    node_ref, start = consumers[0]
+    return node_ref, start, access.tensor
+
+
 def _masked_load_axis_provenance(
     j: Any,
     *,
@@ -694,23 +743,19 @@ def _masked_load_axis_provenance(
 
     value_types = j_elaboration(j).value_type_by_name
     tensor_type = value_types.get(access.tensor)
-    start = nodes.get(access.node_ref)
-    if tensor_type is None or start is None:
+    resolved_start = _predicate_dominated_load_start(
+        j,
+        access=access,
+        nodes=nodes,
+    )
+    if tensor_type is None or resolved_start is None:
         return None
+    start_ref, start, source_ref = resolved_start
     try:
         broadcast_axes = _broadcast_axes(j)
     except (NotImplementedError, ValueError):
         return None
-    start_dependencies = _operation_dependencies(start)
-    poststate = explicit_inout_poststate_reload_value(j, access.access_id)
-    source_ref = (
-        access.tensor
-        if access.tensor in start_dependencies
-        else poststate
-        if poststate in start_dependencies
-        else None
-    )
-    source_type = value_types.get(source_ref) if source_ref is not None else None
+    source_type = value_types.get(source_ref)
     if source_type != tensor_type:
         return None
     start_results = _result_names(start)
@@ -744,7 +789,7 @@ def _masked_load_axis_provenance(
     canonical_refs = tuple(j.node_ids)
     if any(node_ref not in nodes for node_ref in canonical_refs):
         return None
-    reachable_refs = {access.node_ref}
+    reachable_refs = {start_ref}
     changed = True
     while changed:
         changed = False
@@ -863,23 +908,18 @@ def predicate_dominated_pointwise_load(
         or access.kind.value != "load"
         or access.predicate is None
         or access.fill_value is not None
-        or access.node_ref is None
     ):
         return False
 
     nodes = _node_table(j)
-    start = nodes.get(access.node_ref)
-    start_dependencies = (
-        _operation_dependencies(start) if start is not None else ()
+    resolved_start = _predicate_dominated_load_start(
+        j,
+        access=access,
+        nodes=nodes,
     )
-    poststate = explicit_inout_poststate_reload_value(j, access_id)
     if (
-        start is None
-        or start.op not in _PREDICATE_DOMINATED_POINTWISE_OPS
-        or (
-            access.tensor not in start_dependencies
-            and poststate not in start_dependencies
-        )
+        resolved_start is None
+        or resolved_start[1].op not in _PREDICATE_DOMINATED_POINTWISE_OPS
     ):
         return False
     provenance_result = _masked_load_axis_provenance(

@@ -1303,8 +1303,8 @@ mean、guard、cross-axis/general predicate、domain/extent 不闭合、mask 位
 checker 不读取 Source/C/π且不自动变换图；Source 的显式 sum/div 必须由 Lift 原样写成
 `reduce(sum)` 与 explicit division。
 
-Gate2 scalar consumer 当前独立标为 `j_scalar_cpu_mlir_v17`，共享
-`intentir.j-functional-boundary.v16`：它们继承 v14/v13、v12/v11 与 v10/v3；v10 已继承 v9 的 node-less input load，并按 J 自身的完整
+Gate2 scalar consumer 当前独立标为 `j_scalar_cpu_mlir_v18`，共享
+`intentir.j-functional-boundary.v17`：它们继承 v14/v13、v12/v11 与 v10/v3；v10 已继承 v9 的 node-less input load，并按 J 自身的完整
 logical domains、逐 access predicate/fill、逐 reduction 中性 `masked_contribution` 与 closed broadcast
 relation 消费通用 padded pointwise/multi-reduce DAG。它不从 π route 推导 operator、padding 公式或
 logical input。
@@ -1343,7 +1343,7 @@ missing-fill proof 只接受全 downstream pointwise 且所有 observable store 
 reduce/scan/loop/transpose/pad 或不同 predicate 一律 unsupported。两种 proof 都只读 J 并形成 receipt，
 π 不携带、不授权也不修补这些关系。
 
-`j_scalar_cpu_mlir_v17` / `intentir.j-functional-boundary.v16` 进一步只消费 J 已写出的完整 product-domain
+`j_scalar_cpu_mlir_v18` / `intentir.j-functional-boundary.v17` 完整继承 v17/v16，只消费 J 已写出的完整 product-domain
 mixed-radix bijection，以及 pointwise provenance 后精确 `transpose` 的 axis permutation；后者还要求
 store coordinates 与 load coordinates 的 permutation 完全一致并由同 predicate 支配。`log2` 与 IEEE
 special literal 也由 shared materializer 直接消费。π route/instance/order 不能提供 factor、digit、perm、
@@ -1353,6 +1353,12 @@ v17/v16 同时允许 predicate-bearing load 在第一个 pointwise consumer 处�
 或显式 axis broadcast；插入轴只记录为无来源轴，原 load 轴仍须逐轴映射到同 predicate observable
 store。该规则只消费 J 的类型、SSA producer、access/effect 与 output binding，不从 Source、Harness、C
 或 π 推断 fill、broadcast 或 post-state。
+
+v18/v17 只增加一个组合律：唯一 node-less predicate-bearing logical-input load 若在 canonical J 中
+恰有一个直接 pointwise consumer，可把该已有 operand edge作为 missing-fill provenance 的起点。
+consumer 不生成或回填 `node_ref`；同 tensor 多 load、零个/多个 direct consumer、非 pointwise 首
+consumer 或任一后续可观察路径不闭合都拒绝。π 不参与唯一性判定，也不能用 route/order 替代 J
+dataflow。
 
 当前 Lift knowledge v57 继承 v56-v42，要求 `fill_value` 保留 Source load 的实际 `other`，并要求
 adapter 明示的 bound-constexpr/shape-coordinate equality 仍由 Lift 绑定 `x*` 或作者化 `t*=x*`；
