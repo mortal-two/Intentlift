@@ -108,6 +108,30 @@ def test_every_fresh14_j_materializes_to_real_mlir(name: str) -> None:
         assert "dense<0xFF800000>" in materialized.intent_mlir
 
 
+@pytest.mark.parametrize(
+    "name", ("xformers_rms_norm_add", "splitk_reduce_varargs")
+)
+def test_fresh14_stateful_and_masked_graphs_execute_in_shared_refeval(
+    name: str,
+) -> None:
+    _snapshot, case, _materialized = _materialize_closed_case(
+        name, "production-jc-v2"
+    )
+
+    result = ScalarLoweringRunner().run(case.refeval, case.values)
+
+    assert result.ok, result.error
+    consumed = set(result.metadata["boundary_projection"]["consumed"])
+    if name == "xformers_rms_norm_add":
+        assert any(item.startswith("inout_poststate_reload:") for item in consumed)
+    else:
+        assert {
+            item.split(":", 2)[1]
+            for item in consumed
+            if item.startswith("predicate_dominated_load:")
+        } == {"a2", "a3"}
+
+
 def test_masked_copy_materializes_direct_binding_as_real_identity_mlir() -> None:
     _snapshot, _case, materialized = _materialize_closed_case("masked_copy")
 

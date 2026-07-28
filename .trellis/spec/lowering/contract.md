@@ -183,11 +183,12 @@ seed，未知 op 会停止 TypeCheck 的窄传播；value-free projector 对 gua
 provenance 进入未知 op 均显式 consumer-unsupported。当前实现保留上述 invocation-local、可证明全真的
 guard/runtime-bound 例外；fixed code 不补写 count、domain、predicate 或 reduction contract。
 
-当前 shared projection receipt 为 `intentir.j-functional-boundary.v14`，scalar RefEval 为
-`j_scalar_cpu_mlir_v15`，closed structured reference 为
+当前 shared projection receipt 为 `intentir.j-functional-boundary.v15`，scalar RefEval 为
+`j_scalar_cpu_mlir_v16`，closed structured reference 为
 `intentir.j-structured-cpu-reference.v7`。这些 active receipt version 覆盖唯一 node-less logical-input
 load、通用 multi-reduction padding closure、当前 Gate2 invocation 的 runtime predicate tautology proof、
-上述 typed relations、direct-store partition 与 closed typed contraction consumer。runtime
+上述 typed relations、direct-store partition、returns-authoritative inout reload、唯一 node-less
+masked pointwise load 与闭合 broadcast-axis provenance、以及 closed typed contraction consumer。runtime
 predicate 对应的 invocation-local proof subreceipt 仍只含
 protocol、access id、J predicate digest、logical input refs 与 domain axes，不含 raw runtime value 或
 value digest；这是 audit-data minimization，不是 confidentiality/privacy proof。旧 v8/v9 Gate2

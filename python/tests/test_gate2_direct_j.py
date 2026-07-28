@@ -1113,7 +1113,7 @@ def test_scalar_e_j_consumes_general_masked_softmax_graph() -> None:
     expected /= np.sum(expected, axis=1, keepdims=True)
     assert result.ok, result.error
     np.testing.assert_allclose(result.outputs["output"], expected, rtol=1e-6)
-    assert result.metadata["protocol"] == "j_scalar_cpu_mlir_v15"
+    assert result.metadata["protocol"] == "j_scalar_cpu_mlir_v16"
     assert (
         result.metadata["boundary_profile"]
         == "logical_domain_reduction_padding_v2"
@@ -1333,7 +1333,7 @@ def test_refeval_runtime_proves_rank_zero_logical_bound_tautology(limit: int) ->
     assert result.ok, result.error
     np.testing.assert_array_equal(result.outputs["output"], value)
     projection = result.metadata["boundary_projection"]
-    assert projection["protocol"] == "intentir.j-functional-boundary.v14"
+    assert projection["protocol"] == "intentir.j-functional-boundary.v15"
     assert FUNCTIONAL_BOUNDARY_PROTOCOL == projection["protocol"]
     assert result.metadata["boundary_profile"] == (
         "logical_domain_runtime_mask_erasure_v1"
@@ -1702,7 +1702,7 @@ def test_scalar_e_j_erases_tail_mask_for_general_pointwise_j() -> None:
 
     assert result.ok, result.error
     assert result.metadata["protocol"] == SCALAR_LOWERING_PROTOCOL
-    assert SCALAR_LOWERING_PROTOCOL == "j_scalar_cpu_mlir_v15"
+    assert SCALAR_LOWERING_PROTOCOL == "j_scalar_cpu_mlir_v16"
     np.testing.assert_allclose(result.outputs["output"], np.tanh(value))
 
 
@@ -1787,6 +1787,29 @@ def test_scalar_e_j_consumes_node_less_input_load_in_nonidentity_graph() -> None
 
     assert result.ok, result.error
     np.testing.assert_allclose(result.outputs["output"], np.tanh(value))
+
+
+def test_scalar_e_j_proves_unique_node_less_masked_input_without_fill() -> None:
+    artifact = _make_node_less_input_load_artifact()
+    artifact.j.boundary.accesses[0].fill_value = None
+    value = np.arange(8, dtype=np.float32)
+
+    assert predicate_dominated_pointwise_load(artifact.j, "a0")
+    result = ScalarLoweringRunner().run(
+        ScalarLoweringSpec.create(
+            artifact.j,
+            dims={"x0": 8},
+            input_bindings={"t0": "input"},
+            output_bindings={"t1": "output"},
+        ),
+        {"input": value},
+    )
+
+    assert result.ok, result.error
+    np.testing.assert_allclose(result.outputs["output"], np.tanh(value))
+    assert "predicate_dominated_load:a0:i0 < x0" in result.metadata[
+        "boundary_projection"
+    ]["consumed"]
 
 
 def test_scalar_e_j_rejects_ambiguous_node_less_input_load() -> None:
@@ -2453,6 +2476,26 @@ def test_scalar_e_j_dense_inout_consumes_prestate_and_returns_poststate() -> Non
     assert "inout_poststate_reload:a3:t0:v0" in result.metadata[
         "boundary_projection"
     ]["consumed"]
+
+    artifact.j.boundary.output_mappings = [
+        OutputMapping("t2", "v1", "n1"),
+    ]
+    return_only = ScalarLoweringRunner().run(
+        ScalarLoweringSpec.create(
+            artifact.j,
+            dims={"x0": 8},
+            input_bindings={"t0": "prestate", "t1": "delta"},
+            output_bindings={"t0": "poststate", "t2": "derived"},
+        ),
+        {"prestate": prestate, "delta": delta},
+    )
+    assert return_only.ok, return_only.error
+    np.testing.assert_array_equal(
+        return_only.outputs["poststate"], prestate + delta
+    )
+    np.testing.assert_array_equal(
+        return_only.outputs["derived"], -(prestate + delta)
+    )
 
     artifact.j.boundary.effects[2], artifact.j.boundary.effects[3] = (
         artifact.j.boundary.effects[3],

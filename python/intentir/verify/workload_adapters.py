@@ -39,7 +39,10 @@ from intentir.verify.workload_manifest import (
 )
 
 
-TRITON_WORKLOAD_ADAPTER_PROTOCOL = "intentir.scrc.triton-workload-adapter.v4"
+TRITON_WORKLOAD_ADAPTER_PROTOCOL = "intentir.scrc.triton-workload-adapter.v3"
+TRITON_WORKLOAD_ADAPTER_DERIVED_INPUT_PROTOCOL = (
+    "intentir.scrc.triton-workload-adapter.v4"
+)
 
 
 class BufferRole(str, Enum):
@@ -227,6 +230,10 @@ class TritonWorkloadAdapter:
                 raise ValueError("derived input chains are not supported")
             if source.dtype != item.dtype or source.shape != item.shape:
                 raise ValueError("derived input must match source dtype and shape")
+        if any(item.source_formal is not None for item in buffers) and (
+            self.protocol != TRITON_WORKLOAD_ADAPTER_DERIVED_INPUT_PROTOCOL
+        ):
+            raise ValueError("derived inputs require workload adapter protocol v4")
         grid = tuple(int(dim) for dim in self.grid)
         if not 1 <= len(grid) <= 3 or any(dim <= 0 for dim in grid):
             raise ValueError("adapter grid must contain positive dimensions")
@@ -328,11 +335,14 @@ class TritonWorkloadAdapter:
                         if item.initializer is not None
                         else None
                     ),
-                    "source_formal": item.source_formal,
-                    "input_transform": (
-                        item.input_transform.value
-                        if item.input_transform is not None
-                        else None
+                    **(
+                        {
+                            "source_formal": item.source_formal,
+                            "input_transform": item.input_transform.value,
+                        }
+                        if item.source_formal is not None
+                        and item.input_transform is not None
+                        else {}
                     ),
                 }
                 for item in self.buffers
@@ -887,6 +897,7 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
         grid=(2,),
         grid_contract=("rows",),
         seed=149,
+        protocol=TRITON_WORKLOAD_ADAPTER_DERIVED_INPUT_PROTOCOL,
     ),
     (
         "high_performance:flash_attn.flash_attn_triton."
@@ -1651,6 +1662,7 @@ __all__ = [
     "NoneBinding",
     "PreparedTritonWorkload",
     "TRITON_WORKLOAD_ADAPTER_PROTOCOL",
+    "TRITON_WORKLOAD_ADAPTER_DERIVED_INPUT_PROTOCOL",
     "TRITON_WORKLOAD_ADAPTERS",
     "ScalarBinding",
     "TritonWorkloadAdapter",

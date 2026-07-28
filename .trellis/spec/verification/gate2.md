@@ -118,11 +118,13 @@ post-SCRC backend 可以复用记录的 Q protocol 与 D 定义，但不得读�
 
 ## 当前 RefEval 的标量与 logical-domain 支持边界
 
-当前固定 scalar RefEval protocol 为 `j_scalar_cpu_mlir_v15`，shared functional projection receipt 为
-`intentir.j-functional-boundary.v14`，structured reference 为
+当前固定 scalar RefEval protocol 为 `j_scalar_cpu_mlir_v16`，shared functional projection receipt 为
+`intentir.j-functional-boundary.v15`，structured reference 为
 `intentir.j-structured-cpu-reference.v7`。这些 active consumer 继续支持 source-neutral
 multi-reduction、invocation-local predicate proof、当前 typed relations、direct-store partition，
-并为 common scalar lowering 尚不能消去的 typed contraction 提供闭合 J-only reference。
+并消费唯一 node-less masked pointwise input、returns-only inout post-state 与闭合 broadcast axis
+provenance；无法唯一证明时仍返回 unsupported。它继续为 common scalar lowering 尚不能消去的 typed
+contraction 提供闭合 J-only reference。
 旧 RefEval/projection 的 `REFERENCE_UNSUPPORTED`、receipt 和 Gate2 verdict 保持原解释，不由新
 consumer 追认、覆盖或静默刷新。
 

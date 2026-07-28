@@ -54,8 +54,8 @@ contract，不是形式完备性证明。同 case fan-out 协议是
 outer batch protocol 是 `intentir.scrc.batch.v3`；其 `observer_unsupported` 只表示 Source observer
 能力缺口，不是候选非法或 `NO_CLOSURE`，历史 batch v2 report 不重判。
 
-当前实现中的 scalar RefEval 是 `j_scalar_cpu_mlir_v15`，shared functional-boundary receipt 是
-`intentir.j-functional-boundary.v14`，closed structured reference 是
+当前实现中的 scalar RefEval 是 `j_scalar_cpu_mlir_v16`，shared functional-boundary receipt 是
+`intentir.j-functional-boundary.v15`，closed structured reference 是
 `intentir.j-structured-cpu-reference.v7`。主 SCRC runner 选定 Gate2 winner 后，才为当前 invocation 调用
 RefEval-only 入口；projection library 不选择 winner。该入口用 J 自身
 rank-0 logical `i1`/integer values 和完整 closed dimensions 逐 access 证明 predicate 对完整 logical

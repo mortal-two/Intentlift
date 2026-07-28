@@ -395,6 +395,13 @@ Internal: C-Fixed / Schedule-Only / IntentIR
   Schedule-Only 约 17.3 us，expanded reciprocal state 约 16.2 us，同 receipt `G_lowering≈1.07`，paired
   Source 约 15.5 us。J 尚无 typed descending relation，因此 sorted-prefix early-stop 仍 fail closed；
   当前数字只属于通用 scan + Q/D numeric search，不冒充 contract-proven sorted specialization。
+- Fresh xFormers RMSNorm-add 与 SplitK 的 Q/D intake 已接到同一 typed RefEval：前者消费 J returns
+  中的 inout post-state，后者从唯一 node-less masked load 恢复 pointwise consumer，并用 J broadcast
+  axes 验证坐标；两者均没有新增 J 字段或放宽 Q。closed SplitK 已实际完成 CF/E2/E3 搜索（约
+  0.97/0.93/0.93 us 的 bring-up 值）。
+- Fresh SplitK 的自然 `[B,G,H,M,D]` 上游布局与当前 J 的 `p34=H -> x1`、`p35=G -> x2` 轴声明不一致；
+  `H!=G` 时 shared workload builder 正确拒绝，而不是用交换 constexpr 或改 shape 掩盖。该 cell 暂不
+  计入自然 headline；需要前端重新提供 source-grounded 轴对应后，才可形成新的 accepted J。
 
 ## 10. 总体验收
 
