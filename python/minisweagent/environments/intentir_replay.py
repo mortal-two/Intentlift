@@ -32,7 +32,7 @@ INTENTIR_REPLAY_OBLIGATION_AUDIT = "intentir_replay_obligation_audit"
 INTENTIR_PACKET_QUERY = "intentir_packet_query"
 REPLAY_STARTUP_PACKET_EMBED_LIMIT_BYTES = 64 * 1024
 INTENTIR_REPLAY_INSPECT = "intentir_replay_inspect"
-REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v13"
+REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v14"
 REPLAY_TRANSACTION_PROTOCOL = "intentir.replay-transaction.v1"
 REPLAY_APPLY_PATCH_PROTOCOL = "intentir.replay-exact-text-patch.v1"
 REPLAY_DIRECT_SUBMIT_PROTOCOL = "intentir.replay-direct-submit.v1"
@@ -772,12 +772,12 @@ def _packet_critical_facts(packet: Mapping[str, Any]) -> dict[str, Any]:
     """Return a tiny exact index of easy-to-miss authored packet facts.
 
     The normal startup already transports the whole packet.  This index does not
-    summarize its graph or recommend a lowering; it merely colocates nine
+    summarize its graph or recommend a lowering; it merely colocates ten
     closed fact classes whose distant cross-references are otherwise easy to
     overlook in a large ABI: semantic dimension carriers, typed IEEE-special
     constants, explicit broadcast obligations, physical- and unit-iteration
-    relations, transfer occurrences, reduction linearizations, exact lexical-
-    region membership, and cross-region order.
+    relations, transfer occurrences, identity materializations, reduction
+    linearizations, exact lexical-region membership, and cross-region order.
     """
 
     j = packet.get("j", {})
@@ -979,14 +979,64 @@ def _packet_critical_facts(packet: Mapping[str, Any]) -> dict[str, Any]:
                 ],
             }
         )
+    transfer_ids = {
+        str(item["instance"])
+        for item in transfer_occurrences
+    }
+    identity_materializations = []
+    for refinement in refinements:
+        if not isinstance(refinement, Mapping) or refinement.get(
+            "kind"
+        ) != "identity_materialization":
+            continue
+        instance_id = str(refinement.get("instance"))
+        instance = instances.get(instance_id, {})
+        adjacent_transfers = sorted(
+            {
+                str(route.get("source"))
+                for route in routes
+                if isinstance(route, Mapping)
+                and route.get("target") == instance_id
+                and str(route.get("source")) in transfer_ids
+            }
+            | {
+                str(route.get("target"))
+                for route in routes
+                if isinstance(route, Mapping)
+                and route.get("source") == instance_id
+                and str(route.get("target")) in transfer_ids
+            }
+        )
+        identity_materializations.append(
+            {
+                "instance": instance_id,
+                "semantic_ref": instance.get("semantic_ref"),
+                "mechanism": instance.get("mechanism"),
+                "region": instance.get("region"),
+                "incoming_routes": [
+                    dict(route)
+                    for route in routes
+                    if isinstance(route, Mapping)
+                    and route.get("target") == instance_id
+                ],
+                "outgoing_routes": [
+                    dict(route)
+                    for route in routes
+                    if isinstance(route, Mapping)
+                    and route.get("source") == instance_id
+                ],
+                "adjacent_transfer_instances": adjacent_transfers,
+            }
+        )
     return {
-        "protocol": "intentir.replay-critical-facts.v3",
+        "protocol": "intentir.replay-critical-facts.v4",
         "semantic_dimension_carriers": dimension_carriers,
         "typed_ieee_special_constants": special_constants,
         "broadcast_obligations": broadcast_obligations,
         "physical_iterations": physical_iterations,
         "unit_iterations": unit_iterations,
         "transfer_occurrences": transfer_occurrences,
+        "identity_materializations": identity_materializations,
         "reduction_linearizations": reduction_linearizations,
         "lexical_regions": lexical_regions,
         "cross_region_order": cross_region_order,
@@ -1008,16 +1058,21 @@ def _replay_obligation_audit_view(
 
     facts = _packet_critical_facts(packet)
     broadcast_obligations = facts["broadcast_obligations"]
+    identity_materializations = facts["identity_materializations"]
     lexical_regions = facts["lexical_regions"]
     cross_region_order = facts["cross_region_order"]
     return {
-        "protocol": "intentir.replay-obligation-audit.v2",
+        "protocol": "intentir.replay-obligation-audit.v3",
         "status": "pass",
         "source_sha256": hashlib.sha256(source_text.encode("utf-8")).hexdigest(),
         "audit_required": bool(
-            broadcast_obligations or lexical_regions or cross_region_order
+            broadcast_obligations
+            or identity_materializations
+            or lexical_regions
+            or cross_region_order
         ),
         "broadcast_obligations": broadcast_obligations,
+        "identity_materializations": identity_materializations,
         "lexical_regions": lexical_regions,
         "cross_region_order": cross_region_order,
         "source_nonempty_lines": [
@@ -3089,6 +3144,7 @@ class IntentIRReplayEnvironment:
                 facts = _packet_critical_facts(self._read_closed_packet())
                 audit_required = bool(
                     facts["broadcast_obligations"]
+                    or facts["identity_materializations"]
                     or facts["lexical_regions"]
                     or facts["cross_region_order"]
                 )
@@ -3179,6 +3235,9 @@ class IntentIRReplayEnvironment:
                 "source_sha256": source_digest,
                 "broadcast_obligation_count": len(
                     value["broadcast_obligations"]
+                ),
+                "identity_materialization_count": len(
+                    value["identity_materializations"]
                 ),
                 "lexical_region_count": len(value["lexical_regions"]),
                 "cross_region_order_count": len(value["cross_region_order"]),

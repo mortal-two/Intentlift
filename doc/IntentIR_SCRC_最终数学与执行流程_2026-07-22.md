@@ -468,16 +468,18 @@ dependent checking 夸写成 Source topology 的形式证明。
 
 首版不需要让 TypeCheck 成为 SMT 或完整图证明器。最小可行实现只需 fail closed 地完成上述局部检查。
 
-当前合并协议为 `artifact.v10 / decode.v14 / typecheck.v26 / candidate-check.v1 / replay-check.v13`；
+当前合并协议为 `artifact.v10 / decode.v14 / typecheck.v26 / candidate-check.v1 / replay-check.v14`；
 Replay packet envelope 仍是 `replay-input.v1`，Triton context 为 `public_frontend_context_v17`，
-Codex/MiniSWE Lift knowledge 为 v67/v64，MiniSWE Replay backend 为 v33，Codex Replay backend 为 v29。
+TileLang/CUDA context 为 `public_frontend_context_v8/v4`，Codex/MiniSWE Lift knowledge 为
+v68/v65，MiniSWE Replay backend 为 v34，Codex Replay backend 为 v30。
 v40 为 source-aware Lift worker 增加只读、分页的 Source control-flow
 outline（function/loop/if/return 的行号与嵌套深度）；v41 只把 shared dialect/lowering 已支持的
 `log2` 补入通用 `map_unary` vocabulary；v42 只要求 access `fill_value` 保留 Source 该 load 的实际
 `other`，不允许用 downstream-neutral 等价值替换。Replay v4 只要求 source-blind writer 保留 J typed
 rank/axis 与必要 compiler-visible reshape，不把 shaped reduction 压成 flattened reduction。这些版本
 都不分类/补造 artifact 语义，也不生成 Replay；仍由 Lift 与 Replay LLM 分别完整作者化输出。
-Replay workspace view v2 只把 packet 中已有的 typed reduction facts 无损并置；replay-check.v13 在
+Replay critical facts v4 只把 packet 中已有的 typed reduction、identity-materialization/transfer
+等事实无损并置；replay-check.v14 在
 公共 source-blind synthetic compile 后核对 π 已声明 `transfer_direct` occurrence 的 compiled
 load/store multiplicity，并核对 structured J loop 加 `pi.physical_iterations|unit_iterations` 已声明的 compiled
 `scf.for` occurrence，并核对对应 authored logical/physical carrier 的 block-argument arity；只在
@@ -490,7 +492,7 @@ pointer-producing stage 必须流向某个 transfer；并要求 compiled distinc
 Source/Harness value/Gate，不改变最终 SCRC 接受谓词。Codex Lift v5 只要求 LLM reconcile
 syntax-only Source control-flow outline，固定代码仍不分类或补 artifact。单次 provider turn wall-time 后只允许同 invocation/episode 的 exact checked
 bytes 或 resumable same thread 继续；禁止跨 formal round/Replay episode 继承候选。
-Replay v33/v29 把每条 J-authored broadcast 的 operand closed type、matching access、
+Replay v34/v30 把每条 J-authored broadcast 的 operand closed type、matching access、
 named consumer/ordinal 作 exact source-blind 重索引；存在该 obligation 时，owner 必须把 ledger 与
 自己的当前编号源码并置自审。工具不建立 relation-to-statement 映射、不选择 rank-lift spelling/次数、
 不生成或修复 Replay，也不读取 Source/Gate。v26/v22 已固定：J.signature 的一个 `p*` 是一个既有 callable ABI carrier，同一 `p*` 的

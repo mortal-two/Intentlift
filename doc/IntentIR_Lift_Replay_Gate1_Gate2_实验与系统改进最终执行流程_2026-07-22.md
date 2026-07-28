@@ -870,13 +870,13 @@ Replay 不得：
 
 `U_f` 必须是版本化、source-neutral 的公共前端知识，不能按当前 Kernel、operator 或失败样本选择。
 当前版本组合是 `intentir.scrc.replay-input.v1`、Triton
-`public_frontend_context_v17`、source-aware Codex/MiniSWE Lift `intentir.lift-knowledge.v67/v64`、
-source-blind MiniSWE Replay v33 与 Codex Replay v29、
-`replay-check.v13`；fresh evidence必须保存实际 receipt，
+`public_frontend_context_v17`、TileLang/CUDA `public_frontend_context_v8/v4`、source-aware
+Codex/MiniSWE Lift `intentir.lift-knowledge.v68/v65`、source-blind MiniSWE Replay v34 与 Codex Replay v30、
+`replay-check.v14`；fresh evidence必须保存实际 receipt，
 旧版本 run 不能被新组合追认。
-v33/v29 把每条 J-authored `boundary.broadcasts` 与 operand closed type、matching
+v34/v30 把每条 J-authored `boundary.broadcasts` 与 operand closed type、matching
 boundary access、named consumer/operand ordinal 作 exact source-blind 重索引；存在该 obligation 时，
-owner 必须用 `replay-obligation-audit.v2` 将 ledger 与自己的当前编号源码并置自审。工具不建立
+owner 必须用 `replay-obligation-audit.v3` 将 ledger 与自己的当前编号源码并置自审。工具不建立
 relation-to-statement 映射、不选择 rank-lift spelling/次数、不生成或修复 Replay，也不读取 Source/Gate。
 同一 `J.signature p*` 的多个 π instance 只能共享该唯一 callable ABI carrier，不能因
 `placement=program` 或 instance multiplicity 生成额外 `tl.program_id`。construction compile 可从
@@ -1353,7 +1353,7 @@ carrier、arity 1 和非退化 split grid；ordinal 27/28 使用 arity 2，展�
 参数。`None` 在 J.signature 中只能是 `opaque(mode=value,dtype=none)`，无 logical_ref/J
 tensor/node/effect/π instance，不得换成 dummy pointer 或 scalar；加入 canonical contraction 与
 direct/decomposed stage multiplicity 合同后，Codex/MiniSWE Lift knowledge 当前为
-`intentir.lift-knowledge.v67/v64`。Codex CLI agent runtime v3 在不接受任何未通过候选、也不补写 artifact 的前提下，从被 wall-time 中断的 JSONL 中恢复已经发出的唯一 `thread.started`，使同一 Lift owner 能在剩余 branch 时间内继续；v49/v50 在不改变 artifact/判定的前提下加入 persistent-workspace exact mirror
+`intentir.lift-knowledge.v68/v65`。Codex CLI agent runtime v3 在不接受任何未通过候选、也不补写 artifact 的前提下，从被 wall-time 中断的 JSONL 中恢复已经发出的唯一 `thread.started`，使同一 Lift owner 能在剩余 branch 时间内继续；v49/v50 在不改变 artifact/判定的前提下加入 persistent-workspace exact mirror
 transport compaction、最近 response-group 窗口、source-neutral schema bundle、单一持久 Lift owner，
 以及 Replay v8 的
 exact-source direct submit/exact-text patch+preflight；这些机制只搬运 LLM authored bytes 或既有
@@ -1376,7 +1376,7 @@ JSONL 中已经完整发出的唯一 `thread.started` 恢复同一 thread identi
 invocation/episode 的 exact current bytes，若它们已通过 closed check则接收，否则只可恢复同一 LLM
 本轮已检查通过的 exact checkpoint，或继续这个已建立的同一 thread。这里没有
 跨 formal round 的 best-parent、语义合并或 fixed repair。Replay workspace view v2 只无损并置 typed
-reduction obligations；`replay-check.v13` 在 source-blind synthetic compile 后核对作者化
+reduction obligations；`replay-check.v14` 在 source-blind synthetic compile 后核对作者化
 `transfer_direct` occurrence 的 compiled multiplicity，并核对 structured J loops 加
 `pi.physical_iterations|unit_iterations` 所要求的 `scf.for` 数及对应 logical/physical carrier block arity，并要求
 distinct `tt.reshape -> tt.reduce(axis=0)` dataflow 数不少于已作者化

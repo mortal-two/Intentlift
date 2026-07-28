@@ -52,12 +52,12 @@ from .tilelang_compiler import (
 from .ttir import TTIRParseError, parse_ttir
 
 
-MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v33"
+MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v34"
 MINISWE_REPLAY_TURN_TIMEOUT_SECONDS = 300.0
 MINISWE_REPLAY_XHIGH_TURN_TIMEOUT_SECONDS = 900.0
 RESPONSES_REPLAY_BACKEND = "openai.responses.intentir-replay.v1"
 STATIC_REPLAY_BACKEND = "intentir.static-replay-test.v1"
-REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v13"
+REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v14"
 _ANONYMOUS_HANDLE = re.compile(r"^[pc][0-9]+$")
 
 
@@ -313,6 +313,42 @@ def _check_tilelang_exact_abi(
             line=function.lineno,
         )
     return ()
+
+
+def _check_cuda_external_launch_slots(
+    code: str,
+    packet: Mapping[str, Any],
+) -> tuple[_ReplayABIViolation, ...]:
+    """Keep CUDA launch-block C slots in the external Harness binding."""
+
+    launch_slots = {
+        str(item.get("name"))
+        for item in packet["c"]["slots"]
+        if isinstance(item, Mapping)
+        and str(item.get("role"))
+        in {"launch_block_x", "launch_block_y", "launch_block_z"}
+    }
+    if not launch_slots:
+        return ()
+    token = re.compile(
+        r"//[^\n]*|/\*.*?\*/|\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'",
+        re.DOTALL,
+    )
+    inspected = token.sub(lambda match: "\n" * match.group(0).count("\n"), code)
+    violations = []
+    for name in sorted(launch_slots):
+        match = re.search(rf"\b{re.escape(name)}\b", inspected)
+        if match is None:
+            continue
+        violations.append(
+            _ReplayABIViolation(
+                "cuda_launch_slot_kernel_use_forbidden",
+                path=f"<schedule:{name}>",
+                handles=(name,),
+                line=inspected.count("\n", 0, match.start()) + 1,
+            )
+        )
+    return tuple(violations)
 
 
 def _check_tilelang_schedule_roles(
@@ -1198,6 +1234,16 @@ def replay_source_ingress(
         elif selected_frontend is Frontend.TILELANG:
             _check_tilelang_exact_abi(code, packet, function_name)
             _check_tilelang_schedule_roles(code, packet, function_name)
+        elif selected_frontend is Frontend.CUDA:
+            violations = _check_cuda_external_launch_slots(code, packet)
+            if violations:
+                return ReplayIngressResult(
+                    "fail",
+                    diagnostics=tuple(
+                        _closed_ingress_diagnostic(item)
+                        for item in violations
+                    ),
+                )
     except Exception as exc:
         return ReplayIngressResult(
             "fail", diagnostics=(_closed_ingress_diagnostic(exc),)

@@ -204,7 +204,7 @@ PUBLIC_FRONTEND_CONTEXT = {
         ),
     },
     "tilelang": {
-        "context_policy": "public_frontend_context_v7",
+        "context_policy": "public_frontend_context_v8",
         "retrieval_scope": "public TileLang documentation and public examples",
         "tool_access": ["public_document_lookup"],
         "compile_entry_contract": (
@@ -228,15 +228,23 @@ PUBLIC_FRONTEND_CONTEXT = {
             "load/value chain whose instances share one lane region and have no "
             "intervening pi order, control, or storage boundary stays inline in its "
             "consumer; do not add an annotated scalar merely to name an instance. "
+            "Use a typed scalar local when authored fan-out, region/order/control "
+            "placement, or occurrence lifetime requires a separate stage. "
             "A single-consumer transfer may stay inline only when pi order/region "
             "does not place it before an enclosing coordinate or control stage. A "
             "transfer ordered before the lane coordinate becomes one typed scalar "
             "before `T.Parallel`; a transfer inside that lane may remain inline. "
-            "J.storage is the sole allocation authority: when it is empty, never "
-            "emit `T.alloc_*`. Use a typed scalar local only when authored fan-out, "
-            "region/order/control placement, or occurrence lifetime requires a "
-            "separate materialization; use an allocation or `T.copy` destination "
-            "only for authored storage. "
+            "J.storage owns semantic alias/destination/state lifetime only; never "
+            "invent it for an implementation fragment. When J.storage is empty, an "
+            "ordinary scalar stage stays a typed local. Separately, a pi `realize` "
+            "refined by `identity_materialization` and routed next to a shaped "
+            "`transfer_direct|transfer_async` is the sole authority for a "
+            "representation-only participant fragment: emit one `T.alloc_fragment` "
+            "for that stage and map every directly adjacent authored transfer to a "
+            "distinct `T.copy` in exact route/order, using the J access/consumer "
+            "slice for shape and dtype. Never replace that topology with an explicit "
+            "`T.Parallel` load/store loop, and never use this rule for a scalar "
+            "identity stage or absent identity refinement. "
             "TIR structure is the hard frontend evidence; PTX details below its ABI "
             "envelope are diagnostic only. A MaskC compiler slot whose role is "
             "`launch_block_x|y|z` is an injected module-global schedule handle: use "
@@ -245,14 +253,19 @@ PUBLIC_FRONTEND_CONTEXT = {
         ),
     },
     "cuda": {
-        "context_policy": "public_frontend_context_v3",
+        "context_policy": "public_frontend_context_v4",
         "retrieval_scope": "public CUDA C++ programming documentation and examples",
         "tool_access": ["public_document_lookup"],
         "compile_entry_contract": (
             "Return one standalone CUDA C++ translation unit containing exactly "
             "one `extern \"C\" __global__` kernel named `scrc_k0`. Its positional "
-            "runtime parameters follow J.signature; C values are compiled "
-            "schedule constants and are not runtime parameters. Use only public "
+            "runtime parameters follow J.signature; C values are schedule bindings "
+            "and are not runtime parameters. A MaskC slot with role "
+            "`launch_block_x|y|z` is bound by the external Harness launch: never "
+            "reference its c* identifier in the kernel body or substitute it for "
+            "`blockDim.x|y|z`. Consume that slot through the shared launch binding, "
+            "and use public `blockDim` when the authored coordinate topology needs "
+            "the participant extent. Use only public "
             "CUDA language constructs and intrinsics. Do not emit host code, "
             "launch syntax, file I/O, inline PTX, build directives, or `main`. "
             "A program-region domain path entering address_base maps to `blockIdx`; "
@@ -267,8 +280,8 @@ PUBLIC_FRONTEND_CONTEXT = {
             "J boundary access predicate is exact: an absent predicate is an "
             "unconditional access and never authorizes a lane-leader guard. A MaskC "
             "compiler slot with role `launch_block_x|y|z` is injected as a compile-"
-            "time macro; use its c* identifier directly for launch bounds or "
-            "participant width, never as a runtime parameter or guessed literal."
+            "time schedule binding; it remains outside the runtime ABI and kernel "
+            "body, never a macro use, runtime parameter, or guessed literal."
         ),
     },
 }
@@ -280,8 +293,8 @@ PUBLIC_FRONTEND_CONTEXT_ACTIVE_POLICY = MappingProxyType(
     {
         "triton": "public_frontend_context_v17",
         "cute": "public_frontend_context_v1",
-        "tilelang": "public_frontend_context_v7",
-        "cuda": "public_frontend_context_v3",
+        "tilelang": "public_frontend_context_v8",
+        "cuda": "public_frontend_context_v4",
     }
 )
 PUBLIC_FRONTEND_CONTEXT_DIGEST_HISTORY = MappingProxyType(
@@ -356,6 +369,9 @@ PUBLIC_FRONTEND_CONTEXT_DIGEST_HISTORY = MappingProxyType(
                 "public_frontend_context_v7": (
                     "16179cf42842ef22c2b88379ff5c15b87588def613b98c204e6e319dab22c649"
                 ),
+                "public_frontend_context_v8": (
+                    "f182cfe01f53cb47977b2b0c561049045b17a47138b40b8ff9a28b6e24d429cb"
+                ),
             }
         ),
         "cuda": MappingProxyType(
@@ -368,6 +384,9 @@ PUBLIC_FRONTEND_CONTEXT_DIGEST_HISTORY = MappingProxyType(
                 ),
                 "public_frontend_context_v3": (
                     "e3f8509cdeb8e61b4ec6285cff73abc3b5c90697d1ad1728950dadde1d211bd2"
+                ),
+                "public_frontend_context_v4": (
+                    "169da196002d8ccbf04050c9bfcd5e9e602bcffa73786ad7b733e8a353fceb9f"
                 ),
             }
         ),
@@ -575,6 +594,14 @@ PUBLIC_FRONTEND_CONTEXT_RECEIPT_HISTORY = MappingProxyType(
                         ),
                     }
                 ),
+                "public_frontend_context_v8": MappingProxyType(
+                    {
+                        "receipt_hash_basis": "full_u_f",
+                        "context_sha256": (
+                            "3a6b2c9ba6a61e7bd220e68875b6702db6ae36b27212206965e2d6247cde38ce"
+                        ),
+                    }
+                ),
             }
         ),
         "cuda": MappingProxyType(
@@ -600,6 +627,14 @@ PUBLIC_FRONTEND_CONTEXT_RECEIPT_HISTORY = MappingProxyType(
                         "receipt_hash_basis": "full_u_f",
                         "context_sha256": (
                             "1d5bee977f82a852fbde57428bb4b4bdca784c837ede9ae91a5f18d8b75e8e65"
+                        ),
+                    }
+                ),
+                "public_frontend_context_v4": MappingProxyType(
+                    {
+                        "receipt_hash_basis": "full_u_f",
+                        "context_sha256": (
+                            "729b22b514f3d999f4d58aff577cda463fcdd7e7ddb97912b44e44c1334cec2a"
                         ),
                     }
                 ),

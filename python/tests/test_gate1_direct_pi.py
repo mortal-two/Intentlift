@@ -1064,11 +1064,11 @@ def test_real_v6_u_f_uses_the_historical_full_u_f_receipt_basis() -> None:
         ),
         (
             Frontend.TILELANG,
-            "05d51bf804161026ef10d1c541d871dfbe8f43424604a03bf8caf42bacae866c",
+            "3a6b2c9ba6a61e7bd220e68875b6702db6ae36b27212206965e2d6247cde38ce",
         ),
         (
             Frontend.CUDA,
-            "1d5bee977f82a852fbde57428bb4b4bdca784c837ede9ae91a5f18d8b75e8e65",
+            "729b22b514f3d999f4d58aff577cda463fcdd7e7ddb97912b44e44c1334cec2a",
         ),
     ],
 )
@@ -1254,11 +1254,28 @@ def test_tilelang_u_f_materializes_only_authored_expression_boundaries() -> None
     )["u_f"]
     contract = context["compile_entry_contract"]
 
-    assert context["context_policy"] == "public_frontend_context_v7"
+    assert context["context_policy"] == "public_frontend_context_v8"
     assert "pure single-consumer load/value chain" in contract
     assert "do not add an annotated scalar merely to name an instance" in contract
     assert "fan-out, region/order/control placement" in contract
-    assert "when it is empty, never emit `T.alloc_*`" in contract
+    assert "J.storage owns semantic alias/destination/state lifetime only" in contract
+    assert "refined by `identity_materialization`" in contract
+    assert "emit one `T.alloc_fragment`" in contract
+    assert "distinct `T.copy` in exact route/order" in contract
+    assert "Never replace that topology with an explicit" in contract
+
+
+def test_cuda_u_f_keeps_launch_slots_in_the_external_harness_binding() -> None:
+    context = build_normal_rewriter_view(
+        make_reduce_artifact(), frontend=Frontend.CUDA
+    )["u_f"]
+    contract = context["compile_entry_contract"]
+
+    assert context["context_policy"] == "public_frontend_context_v4"
+    assert "bound by the external Harness launch" in contract
+    assert "never reference its c* identifier in the kernel body" in contract
+    assert "use public `blockDim`" in contract
+    assert "never a macro use" in contract
 
 
 @pytest.mark.parametrize("frontend", list(Frontend))
@@ -1328,7 +1345,7 @@ def test_lift_instruction_assigns_only_comparison_class_not_thresholds() -> None
     normalized = " ".join(instructions.split())
 
     assert "supplied Responses schema is authoritative" in normalized
-    assert len(instructions) < 18_500
+    assert len(instructions) < 19_200
     assert "Floating transcendentals" in normalized
     assert "must use `tolerance`" in normalized
     assert "external Gate2 policy Q supplies all atol" in normalized

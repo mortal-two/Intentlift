@@ -153,6 +153,30 @@ def test_tilelang_ingress_binds_launch_slots_only_to_kernel_threads() -> None:
     )
 
 
+def test_cuda_ingress_keeps_launch_slots_in_external_harness_binding() -> None:
+    artifact = _launch_slot_artifact()
+    wrong_kernel_use = CUDA_REPLAY.replace("blockDim.x", "c0")
+
+    assert replay_source_ingress(
+        CUDA_REPLAY + "// c0 remains an external launch receipt\n",
+        artifact=artifact,
+        frontend=Frontend.CUDA,
+    ).status == "pass"
+    result = replay_source_ingress(
+        wrong_kernel_use,
+        artifact=artifact,
+        frontend=Frontend.CUDA,
+    )
+
+    assert result.status == "fail"
+    assert result.to_check_response()["diagnostics"][0] == {
+        "rule_code": "cuda_launch_slot_kernel_use_forbidden",
+        "path": "<schedule:c0>",
+        "anonymous_handles": ["c0"],
+        "line": 5,
+    }
+
+
 @pytest.mark.parametrize(
     ("frontend", "source", "source_type", "case_type"),
     (

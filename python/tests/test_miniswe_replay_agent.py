@@ -506,12 +506,13 @@ def test_episode_contract_digest_binds_exact_files_prompts_and_budgets() -> None
     assert default_config["model"]["retry_timeouts"] is True
     assert default_config["model"]["semantic_initial_turns"] == 1
     assert default_config["model"]["model_kwargs"]["parallel_tool_calls"] is True
-    assert MINISWE_REPLAY_BACKEND == "minisweagent.intentir-replay.v33"
+    assert MINISWE_REPLAY_BACKEND == "minisweagent.intentir-replay.v34"
     instance = default_config["agent"]["instance_template"]
     assert "exact immutable source-blind startup transport" in instance
     assert "exact_packet_embedded=true" in instance
     assert "value-equivalent flattened formula" in instance
     assert "critical_facts.broadcast_obligations" in instance
+    assert "critical_facts.identity_materializations" in instance
     assert "Never pre-expand an access index or load shape" in instance
     assert "Every J.signature p* is one already-existing" in instance
     assert "duplicate p* instances never authorize duplicate" in instance
@@ -1162,7 +1163,7 @@ def test_critical_facts_project_reduction_linearization_without_source() -> None
 
     facts = _packet_critical_facts(artifact.rewriter_view(masked=False))
 
-    assert facts["protocol"] == "intentir.replay-critical-facts.v3"
+    assert facts["protocol"] == "intentir.replay-critical-facts.v4"
     assert facts["reduction_linearizations"] == [
         {
             "instance": "i1",
@@ -1176,6 +1177,56 @@ def test_critical_facts_project_reduction_linearization_without_source() -> None
     ]
 
 
+def test_critical_facts_project_identity_materialization_transfer_neighbors() -> None:
+    artifact = make_reduce_artifact()
+    artifact.pi.instances[0]["mechanism"] = "transfer_direct"
+    artifact.pi.instances.append(
+        {
+            "id": "i4",
+            "semantic_ref": "a0",
+            "region": "r0",
+            "mechanism": "realize",
+        }
+    )
+    artifact.pi.routes[0] = {"source": "i0", "target": "i4", "slots": [0]}
+    artifact.pi.routes.append(
+        {"source": "i4", "target": "i1", "slots": [0, 1]}
+    )
+    artifact.pi.refinements = [
+        {
+            "instance": "i4",
+            "kind": "identity_materialization",
+            "auth_ref": None,
+        }
+    ]
+    packet = artifact.rewriter_view(masked=False)
+
+    facts = _packet_critical_facts(packet)
+
+    assert facts["protocol"] == "intentir.replay-critical-facts.v4"
+    assert facts["identity_materializations"] == [
+        {
+            "instance": "i4",
+            "semantic_ref": "a0",
+            "mechanism": "realize",
+            "region": "r0",
+            "incoming_routes": [
+                {"source": "i0", "target": "i4", "slots": [0]}
+            ],
+            "outgoing_routes": [
+                {"source": "i4", "target": "i1", "slots": [0, 1]}
+            ],
+            "adjacent_transfer_instances": ["i0"],
+        }
+    ]
+    audit = _replay_obligation_audit_view(packet, VALID_REPLAY)
+    assert audit["protocol"] == "intentir.replay-obligation-audit.v3"
+    assert audit["audit_required"] is True
+    assert audit["identity_materializations"] == facts[
+        "identity_materializations"
+    ]
+
+
 def test_critical_facts_colocate_explicit_broadcast_obligation() -> None:
     packet = make_reduce_artifact().rewriter_view(masked=False)
     packet["j"]["boundary"]["broadcasts"] = [
@@ -1184,7 +1235,7 @@ def test_critical_facts_colocate_explicit_broadcast_obligation() -> None:
 
     facts = _packet_critical_facts(packet)
 
-    assert facts["protocol"] == "intentir.replay-critical-facts.v3"
+    assert facts["protocol"] == "intentir.replay-critical-facts.v4"
     assert facts["broadcast_obligations"] == [
         {
             "node_ref": "n0",
@@ -1214,7 +1265,7 @@ def test_critical_facts_colocate_explicit_broadcast_obligation() -> None:
     ]
 
     audit = _replay_obligation_audit_view(packet, VALID_REPLAY)
-    assert audit["protocol"] == "intentir.replay-obligation-audit.v2"
+    assert audit["protocol"] == "intentir.replay-obligation-audit.v3"
     assert audit["audit_required"] is True
     assert audit["broadcast_obligations"] == facts["broadcast_obligations"]
 
@@ -1291,7 +1342,7 @@ def test_obligation_audit_colocates_exact_ledger_and_current_source() -> None:
         artifact.rewriter_view(masked=False), VALID_REPLAY
     )
 
-    assert view["protocol"] == "intentir.replay-obligation-audit.v2"
+    assert view["protocol"] == "intentir.replay-obligation-audit.v3"
     assert view["status"] == "pass"
     assert view["audit_required"] is True
     assert view["lexical_regions"][0]["id"] == "r1"
@@ -1487,7 +1538,7 @@ def test_static_error_can_be_repaired_in_one_fresh_multi_turn_episode() -> None:
     assert '"exact_packet_embedded":true' in first_packet
     assert '"packet_bytes":' in first_packet
     assert '"bootstrap_command":null' in first_packet
-    assert "intentir.replay-critical-facts.v3" in first_packet
+    assert "intentir.replay-critical-facts.v4" in first_packet
     assert '"logical_ref":"x1"' in first_packet
     assert '"packet":' in first_packet
     assert "anonymous_source" not in first_packet

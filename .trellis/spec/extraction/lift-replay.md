@@ -337,34 +337,36 @@ ReplayLLM(J,pi,MaskC(C);U_f) -> complete source R_f
 ```
 
 当前 packet protocol 为 `intentir.scrc.replay-input.v1`，Triton 公共上下文为
-`public_frontend_context_v17`；source-aware Codex/MiniSWE Lift 的当前 knowledge receipt 分别为
-`intentir.lift-knowledge.v67 / intentir.lift-knowledge.v64`，source-blind MiniSWE/Codex Replay backend 为
-`minisweagent.intentir-replay.v33 / openai.codex-cli.intentir-replay.v29`。这些版本必须随 fresh run 原样记录；旧 packet/context/knowledge
+`public_frontend_context_v17`，TileLang/CUDA 公共上下文为
+`public_frontend_context_v8/v4`；source-aware Codex/MiniSWE Lift 的当前 knowledge receipt 分别为
+`intentir.lift-knowledge.v68 / intentir.lift-knowledge.v65`，source-blind MiniSWE/Codex Replay backend 为
+`minisweagent.intentir-replay.v34 / openai.codex-cli.intentir-replay.v30`。这些版本必须随 fresh run 原样记录；旧 packet/context/knowledge
 evidence 不因实现升级而被重判。
 
-Replay v33/v29 进一步明确消费 π region 的原有闭合含义：region 是 compiler-visible instance 的
+Replay v34/v30 进一步明确消费 π region 的原有闭合含义：region 是 compiler-visible instance 的
 精确词法 realization scope，不是优化提示或 consumer membership。声明在 loop region 的 instance
 即使只依赖 loop-invariant operands，也必须在该 loop 内 materialize；Replay 不得把它 hoist 到父
 region，也不得跨 region sink、clone 或 fold。该规则只消费 Lift 已作者化 placement，不从 Source、
 Gate diff 或常见优化推导新的 instance；ReplayCheck 不据此猜 op↔instance 映射，最终一致性仍由正式
 Gate1 observer 判定。
 
-Replay v33/v29 对不超过 64 KiB 的匿名 packet 采用一次性 exact startup embedding；当前难核实测
+Replay v34/v30 对不超过 64 KiB 的匿名 packet 采用一次性 exact startup embedding；当前难核实测
 packet 最大约 47 KiB，因此正常路径不再强制调用 manifest、requirements、ABI、graph、realization 或
-obligations。startup 另带一个由同一 packet 精确投影的 bounded `critical_facts.v3`：只列 semantic
+obligations。startup 另带一个由同一 packet 精确投影的 bounded `critical_facts.v4`：只列 semantic
 dimension carrier、IEEE special typed constant、`physical_iterations|unit_iterations`、每个 transfer
 occurrence 的 route/order、`reduction_linearization + consumer route`、按 loop/branch region 分组的
 instance membership 与跨 region order，并把每条 `J.boundary.broadcasts` 与其原 operand type、
-matching boundary access、named consumer/operand ordinal 无损并置，使 Replay 不必在大图中重新
+matching boundary access、named consumer/operand ordinal，以及每个
+`identity_materialization` 与相邻 transfer 无损并置，使 Replay 不必在大图中重新
 寻找这些易漏的已作者化事实；它不推断、补齐或推荐实现。超过上限时，首次 manifest 自带 bounded authored-requirements：J op/boundary 与 π
 instance mechanism、route/order/time/control 的 exact 重索引，并只为被明确截断的页提供 focused
 query。完整 `/input/packet.json` 仍是 immutable authority；embedding/manifest/query 都不摘要、补齐、
 推断或推荐 schedule/code。Replay LLM仍完整作者化 source，host只对 exact bytes 做 ReplayCheck 和
 public synthetic compile。旧 v20/v16 的强制 requirements 查询 receipt 保持原 verdict。
 
-当 `critical_facts.v3` 含 broadcast obligation、lexical region 或 cross-region order 时，Replay
-v33/v29 在 construction compile 前要求同一 owner 对当前 exact source bytes 调用一次
-`replay-obligation-audit.v2`。返回值只把上述 J/π ledger 与该 owner 自己源码的带行号非空行并置；
+当 `critical_facts.v4` 含 broadcast obligation、identity materialization、lexical region 或 cross-region order 时，Replay
+v34/v30 在 construction compile 前要求同一 owner 对当前 exact source bytes 调用一次
+`replay-obligation-audit.v3`。返回值只把上述 J/π ledger 与该 owner 自己源码的带行号非空行并置；
 它不建立 `source statement ↔ relation/i*` 映射，不判断
 满足与否，也不建议或执行修复。owner 修改任一 byte 后必须重新审阅新 digest。该事务约束只保证模型
 在提交前实际看到约束和当前代码，既不是 Replay 输入 artifact，也不进入 TypeCheck/Gate1 membership。
@@ -384,7 +386,7 @@ Lift、MiniSWE Replay 或 Codex CLI provider turn 中的 sibling 可被终止并
 伪装成 transient retry，也不丢弃已经完成的 winner evidence。这些版本都不改变 artifact、packet、
 TypeCheck、ReplayCheck、Gate1 或 Gate2 接受集合。
 
-`replay-check.v13` 在 v9 的 transfer、iteration、carrier 与 pointer-address guard 之外，按 π 中
+`replay-check.v14` 在 v9 的 transfer、iteration、carrier 与 pointer-address guard 之外，按 π 中
 `reduction_linearization` 的作者化数量要求 synthetic TTIR 至少出现相同数量的 distinct
 `tt.reshape -> tt.reduce(axis=0)` dataflow；额外
 表示 stage 留给正式 Gate1 精确比较，避免这个非认证 probe 误当 membership oracle。它不从 J reduce、

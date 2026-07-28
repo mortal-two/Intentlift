@@ -860,14 +860,15 @@ Replay LLM 应遵守以下过程合同：
 16. 不从 π 猜出后覆盖 J，也不从 compiler diff 修补。
 
 当前 fresh receipt 组合为 `intentir.scrc.replay-input.v1`、Triton
-`public_frontend_context_v17`、Codex/MiniSWE Lift `intentir.lift-knowledge.v67/v64`、MiniSWE Replay v33 与 Codex Replay v29；旧 receipt 保持其原 verdict，不能由
+`public_frontend_context_v17`、TileLang `public_frontend_context_v8`、CUDA
+`public_frontend_context_v4`、Codex/MiniSWE Lift `intentir.lift-knowledge.v68/v65`、MiniSWE Replay v34 与 Codex Replay v30；旧 receipt 保持其原 verdict，不能由
 当前 Replay consumer 或 Lift knowledge 静默升级。
 
-v33/v29 对正常大小匿名 packet 只做一次 exact startup embedding，并将 semantic dimension carrier、
+v34/v30 对正常大小匿名 packet 只做一次 exact startup embedding，并将 semantic dimension carrier、
 IEEE special typed constant、physical/unit iteration、transfer route/order 与
-`reduction_linearization + consumer route` 作一次 bounded exact `critical_facts.v3` 重索引；它还把 J-authored broadcast 与 operand closed type、matching
-access、named consumer/ordinal 无损并置，并要求有该 obligation 的 owner 对当前源码运行
-`replay-obligation-audit.v2`。它不建立 relation-to-statement 映射、不选择 rank-lift spelling/次数，
+`reduction_linearization + consumer route` 作一次 bounded exact `critical_facts.v4` 重索引；它还把 J-authored broadcast 与 operand closed type、matching
+access、named consumer/ordinal，以及 identity materialization 与相邻 transfer 无损并置，并要求有该 obligation 的 owner 对当前源码运行
+`replay-obligation-audit.v3`。它不建立 relation-to-statement 映射、不选择 rank-lift spelling/次数，
 也不生成或修复 Replay。超限时
 manifest 才将 J 中已声明
 的 op/boundary 与 π 中已声明的 instance mechanism、time/control/terminal obligation 重新索引为
@@ -904,7 +905,7 @@ artifact 保持原始序列化、digest 与字段集合，禁止静默附加空�
 
 固定代码不把 π 解码成源码，不建立 deterministic composer。
 
-`replay-check.v13` 可以在公共、source-blind synthetic compile 后核对 π 已作者化的
+`replay-check.v14` 可以在公共、source-blind synthetic compile 后核对 π 已作者化的
 `transfer_direct` occurrence 与 compiled load/store multiplicity；它只拒绝 compiler 已经折叠的
 作者化 event，不补 transfer、不决定保留它的源码写法。它同时将 structured J loop 数与
 `pi.physical_iterations|unit_iterations` 数之和作为已作者化的 compiled `scf.for` 必要 occurrence；

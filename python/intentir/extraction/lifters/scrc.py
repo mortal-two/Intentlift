@@ -1400,6 +1400,11 @@ conversion to sibling parameters, strides, or instances. Signed/unsigned widen
 states explicit same-signedness source_dtype and a strictly wider target_dtype;
 equal-width or missing dtype pairs are not widening.
 
+An implementation-only local materialization is not J.storage. Author it as a
+distinct pi `realize` refined by `identity_materialization` (`auth_ref=null`),
+with each Source movement a distinct ordered transfer into or out of it. Pi has
+no buffer details; Replay derives the participant slice from J and U_f.
+
 For each J `reduce` or inclusive `scan`, boundary.reductions.tile_axis is the
 Source frontend's local tile axis after program/grid axes select the program instance. It
 is not the whole-tensor logical axis number from reduce.attrs.axes. Preserve the
@@ -1418,6 +1423,9 @@ declared n*/d*/a*/q*/b* subject_ref. Add axis_ref only for the subject's exact
 reduction/loop/contraction/domain/index/x* axis; never infer it from role, names,
 pi, or hardware axes. Global priors may omit both. A C attachment never names
 a p* parameter, source/local, or J-body v*.
+In native CUDA, `launch_block_x|y|z` is an external Harness binding: `blockDim`
+creates no c* instance/route. Domain-anchored coordinates map through U_f to
+`blockIdx`/`threadIdx`/`blockDim` under that binding.
 
 Pi is non-semantic, non-executable topology: anonymous regions, J/C-anchored
 instances, slotted routes, order, sharing, placement, closed mechanisms, and

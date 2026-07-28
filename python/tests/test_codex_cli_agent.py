@@ -467,7 +467,7 @@ def test_codex_replay_bounded_queries_partition_exact_packet_without_source() ->
     assert startup["exact_packet_embedded"] is True
     assert startup["packet"] == packet
     assert startup["critical_facts"]["protocol"] == (
-        "intentir.replay-critical-facts.v3"
+        "intentir.replay-critical-facts.v4"
     )
     assert startup["critical_facts"]["broadcast_obligations"][0][
         "node_ref"
@@ -715,6 +715,7 @@ def scrc_k0(p0, p1, p2, c0: tl.constexpr):
                 )
                 assert "duplicate p* instances never authorize" in prompt
                 assert "critical_facts.broadcast_obligations" in prompt
+                assert "critical_facts.identity_materializations" in prompt
                 assert "Never pre-expand an access index or load shape" in prompt
                 payload = valid_replay.replace("scrc_k0", "wrong_entry")
             else:
@@ -753,7 +754,7 @@ def scrc_k0(p0, p1, p2, c0: tl.constexpr):
     second = writer.generate(make_copy_artifact())
 
     assert first.backend_protocol == second.backend_protocol == CODEX_CLI_REPLAY_BACKEND
-    assert CODEX_CLI_REPLAY_BACKEND == "openai.codex-cli.intentir-replay.v29"
+    assert CODEX_CLI_REPLAY_BACKEND == "openai.codex-cli.intentir-replay.v30"
     assert first.response_id == "fresh-replay-1"
     assert second.response_id == "fresh-replay-2"
     assert first.attempts == second.attempts == 3
