@@ -696,6 +696,11 @@ def scrc_k0(p0, p1, p2, c0: tl.constexpr):
             if self.calls == 1:
                 assert '"exact_packet_embedded":true' in prompt
                 assert '"packet":{"c":' in prompt
+                assert (
+                    "Every J.signature p* is one already-existing callable ABI carrier"
+                    in prompt
+                )
+                assert "duplicate p* instances never authorize" in prompt
                 payload = valid_replay.replace("scrc_k0", "wrong_entry")
             else:
                 check = json.loads(

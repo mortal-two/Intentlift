@@ -741,6 +741,14 @@ def _historical_triton_v6_payload() -> dict[str, object]:
     u_f["context_policy"] = "public_frontend_context_v6"
     contract = u_f["compile_entry_contract"]
     contract = contract.replace(
+        "Every J.signature p* is one already-existing callable ABI carrier. "
+        "All pi instances anchored to the same p* scope or route uses of that "
+        "single carrier; they never create another external value or program "
+        "coordinate. Duplicate p* instances therefore never authorize duplicate "
+        "carrier reads or tl.program_id calls. ",
+        "",
+    )
+    contract = contract.replace(
         " A reduction_linearization refinement is the exact source-neutral "
         "full-axis materialization immediately before its uniquely routed J "
         "reduce. For Triton, emit `tl.reshape(value, (value.numel,), "
@@ -855,13 +863,13 @@ def test_public_frontend_context_history_is_read_only_and_exact() -> None:
         PUBLIC_FRONTEND_CONTEXT["triton"]
     )
 
-    assert current_digest == history["public_frontend_context_v14"]
+    assert current_digest == history["public_frontend_context_v15"]
     current_receipt_digest = PUBLIC_FRONTEND_CONTEXT_RECEIPT_HISTORY[
         "triton"
-    ]["public_frontend_context_v14"]["context_sha256"]
+    ]["public_frontend_context_v15"]["context_sha256"]
     current_receipt = audit_public_frontend_context_receipt(
         frontend="triton",
-        context_policy="public_frontend_context_v14",
+        context_policy="public_frontend_context_v15",
         context_sha256=current_receipt_digest,
     )
     assert current_receipt["status"] == "current"
@@ -959,7 +967,7 @@ def test_historical_packet_has_read_only_audit_but_cannot_be_fresh_replay() -> N
         audit_replay_packet_digest(payload, expected_digest="0" * 64)
     assert build_rewriter_packet(make_reduce_artifact()).u_f[
         "context_policy"
-    ] == "public_frontend_context_v14"
+    ] == "public_frontend_context_v15"
 
 
 def test_real_v6_u_f_uses_the_historical_full_u_f_receipt_basis() -> None:
@@ -987,7 +995,7 @@ def test_real_v6_u_f_uses_the_historical_full_u_f_receipt_basis() -> None:
     [
         (
             Frontend.TRITON,
-            "60cd010e25be5a4089629ac56f3f6d27bc4e20765bb410472604301059f45014",
+            "bd3175a91b8dfc0de729b5a7ba7c6dbb15ceab6238cc573f5c5c4c98632053f4",
         ),
         (
             Frontend.CUTE,
@@ -1084,7 +1092,7 @@ def test_replay_contract_accepts_an_explicit_strict_integer_widen() -> None:
     assert report.passed
     assert report.protocol == "intentir.scrc.typecheck.v25"
     assert build_rewriter_packet(artifact).u_f["context_policy"] == (
-        "public_frontend_context_v14"
+        "public_frontend_context_v15"
     )
 
 
@@ -1116,7 +1124,7 @@ def test_triton_u_f_preserves_constexpr_and_projects_coordinate_roles() -> None:
     context = payload["u_f"]
     contract = context["compile_entry_contract"]
 
-    assert context["context_policy"] == "public_frontend_context_v14"
+    assert context["context_policy"] == "public_frontend_context_v15"
     assert "pass a c* handle directly to tl.arange" in contract
     assert "never copy it to a local first" in contract
     assert "satisfied by the parameter binding" in contract
@@ -1126,6 +1134,12 @@ def test_triton_u_f_preserves_constexpr_and_projects_coordinate_roles() -> None:
     assert "not the whole-tensor logical ordinal" in contract
     assert "when predicate is absent" in contract
     assert "never synthesize a defensive or redundant mask" in contract
+    assert (
+        "Every J.signature p* is one already-existing callable ABI carrier" in contract
+    )
+    assert (
+        "Duplicate p* instances therefore never authorize duplicate" in contract
+    )
     assert "placement='program' alone never authorizes tl.program_id" in contract
     assert "path enters address_base" in contract
     assert "path enters address_lane" in contract

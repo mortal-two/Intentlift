@@ -40,7 +40,7 @@ from .replay import (
 )
 
 
-CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v21"
+CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v22"
 
 _INITIAL_PROMPT = """You are the sole writer for one fresh source-blind IntentIR Replay episode.
 The outer runtime exposes only this isolated /workspace. input/ is immutable;
@@ -65,6 +65,13 @@ versus atomic realization), and every authored route/order/time/control relation
 Use `critical_facts.lexical_regions` as the exact region-by-region construction
 ledger and `critical_facts.cross_region_order` as the exact ordering checklist;
 both only reindex the same pi and add no realization decision.
+Every J.signature p* is one already-existing callable ABI carrier. Repeated pi
+instances anchored to that same p* only scope or route uses of that one carrier;
+they never create another value or program coordinate. Placement=`program` does
+not turn p* into `tl.program_id`, and duplicate p* instances never authorize
+duplicate carrier reads or coordinates. Only a distinct typed J-domain
+realization authorized by the public frontend contract may create a program
+coordinate.
 This is a consumption checklist, not permission to add a missing operator or
 edge. Use `section PATH`, `obligation HANDLE`, or `find HANDLE` only for one
 named omitted fact. Preserve every authored effect and realization ordering

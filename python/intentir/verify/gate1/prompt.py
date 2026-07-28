@@ -20,7 +20,7 @@ from .pi import (
 REPLAY_PACKET_SCHEMA = "intentir.scrc.replay-input.v1"
 PUBLIC_FRONTEND_CONTEXT = {
     "triton": {
-        "context_policy": "public_frontend_context_v14",
+        "context_policy": "public_frontend_context_v15",
         "retrieval_scope": "public Triton documentation and public examples",
         "tool_access": ["public_document_lookup"],
         "compile_entry_contract": (
@@ -41,6 +41,11 @@ PUBLIC_FRONTEND_CONTEXT = {
             "Each J.boundary access is closed: when predicate is absent, emit an "
             "unconditional load or store; never synthesize a defensive or "
             "redundant mask from a domain, grid extent, C slot, or safety guess. "
+            "Every J.signature p* is one already-existing callable ABI carrier. "
+            "All pi instances anchored to the same p* scope or route uses of that "
+            "single carrier; they never create another external value or program "
+            "coordinate. Duplicate p* instances therefore never authorize duplicate "
+            "carrier reads or tl.program_id calls. "
             "Region placement='program' alone never authorizes "
             "tl.program_id. A domain-anchored realize stage in a program region "
             "whose scalar dependency path enters address_base is a program "
@@ -219,7 +224,7 @@ PUBLIC_FRONTEND_CONTEXT = {
 # u_f object; changing that basis requires an explicit future policy version.
 PUBLIC_FRONTEND_CONTEXT_ACTIVE_POLICY = MappingProxyType(
     {
-        "triton": "public_frontend_context_v14",
+        "triton": "public_frontend_context_v15",
         "cute": "public_frontend_context_v1",
         "tilelang": "public_frontend_context_v1",
         "cuda": "public_frontend_context_v1",
@@ -255,6 +260,9 @@ PUBLIC_FRONTEND_CONTEXT_DIGEST_HISTORY = MappingProxyType(
                 ),
                 "public_frontend_context_v14": (
                     "d7b785bb9439c247d7dba481362969c5031de931ab368452192ad79296ec2c0f"
+                ),
+                "public_frontend_context_v15": (
+                    "7d68b5a2f77f614c952966c1b94a8eac052f6ebcad77412cd7db6af9ffbed8e6"
                 ),
             }
         ),
@@ -354,6 +362,14 @@ PUBLIC_FRONTEND_CONTEXT_RECEIPT_HISTORY = MappingProxyType(
                         "receipt_hash_basis": "full_u_f",
                         "context_sha256": (
                             "60cd010e25be5a4089629ac56f3f6d27bc4e20765bb410472604301059f45014"
+                        ),
+                    }
+                ),
+                "public_frontend_context_v15": MappingProxyType(
+                    {
+                        "receipt_hash_basis": "full_u_f",
+                        "context_sha256": (
+                            "bd3175a91b8dfc0de729b5a7ba7c6dbb15ceab6238cc573f5c5c4c98632053f4"
                         ),
                     }
                 ),

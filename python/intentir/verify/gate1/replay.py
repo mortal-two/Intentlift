@@ -38,7 +38,7 @@ from .tilelang_codegen import extract_tilelang_module
 from .ttir import TTIRParseError, parse_ttir
 
 
-MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v25"
+MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v26"
 MINISWE_REPLAY_TURN_TIMEOUT_SECONDS = 300.0
 MINISWE_REPLAY_XHIGH_TURN_TIMEOUT_SECONDS = 900.0
 RESPONSES_REPLAY_BACKEND = "openai.responses.intentir-replay.v1"
@@ -1409,6 +1409,92 @@ def _packet_required_compiled_address_operations(
     return len(pointer_address_ids), tuple(sorted(transfer_refs))
 
 
+def _packet_required_compiled_program_ids(
+    packet: Mapping[str, Any],
+) -> tuple[int | None, tuple[str, ...]]:
+    """Project the exact number of packet-authorized program coordinates.
+
+    A program-region placement is only lexical scope.  Under the public Triton
+    contract, a ``tl.program_id`` exists only for a distinct J boundary domain
+    whose program-region realization reaches an authored ``address_base``
+    stage.  Repeated pi instances of the same domain share that coordinate, and
+    signature ``p*`` instances always share their already-existing callable ABI
+    carrier.  This projection rejects extra compiled coordinates but never
+    invents a coordinate or chooses an axis for Replay.
+    """
+
+    j = packet.get("j")
+    pi = packet.get("pi")
+    if not isinstance(j, Mapping) or not isinstance(pi, Mapping):
+        return None, ()
+    boundary = j.get("boundary")
+    domains_value = (
+        boundary.get("domains") if isinstance(boundary, Mapping) else None
+    )
+    regions_value = pi.get("regions")
+    instances_value = pi.get("instances")
+    routes_value = pi.get("routes")
+    if not isinstance(domains_value, Mapping):
+        return None, ()
+    if not all(
+        isinstance(value, list)
+        for value in (regions_value, instances_value, routes_value)
+    ):
+        return None, ()
+
+    domain_refs = {str(name) for name in domains_value}
+    program_regions = {
+        str(item.get("id"))
+        for item in regions_value
+        if isinstance(item, Mapping)
+        and item.get("placement") == "program"
+        and isinstance(item.get("id"), str)
+    }
+    instances = {
+        str(item.get("id")): item
+        for item in instances_value
+        if isinstance(item, Mapping) and isinstance(item.get("id"), str)
+    }
+    address_base_ids = {
+        instance_id
+        for instance_id, item in instances.items()
+        if item.get("mechanism") == "address_base"
+    }
+    outgoing: dict[str, set[str]] = {
+        instance_id: set() for instance_id in instances
+    }
+    for route in routes_value:
+        if not isinstance(route, Mapping):
+            continue
+        source = route.get("source")
+        target = route.get("target")
+        if isinstance(source, str) and isinstance(target, str):
+            outgoing.setdefault(source, set()).add(target)
+
+    def reaches_address_base(source: str) -> bool:
+        pending = [source]
+        visited: set[str] = set()
+        while pending:
+            current = pending.pop()
+            if current in address_base_ids:
+                return True
+            if current in visited:
+                continue
+            visited.add(current)
+            pending.extend(outgoing.get(current, ()))
+        return False
+
+    authorized = {
+        str(item.get("semantic_ref"))
+        for instance_id, item in instances.items()
+        if item.get("mechanism") == "realize"
+        and item.get("region") in program_regions
+        and item.get("semantic_ref") in domain_refs
+        and reaches_address_base(instance_id)
+    }
+    return len(authorized), tuple(sorted(authorized))
+
+
 def source_blind_replay_compile_check(
     code: str,
     artifact: Gate1Artifact,
@@ -1452,11 +1538,15 @@ def source_blind_replay_compile_check(
     expected_address_operations, address_refs = (
         _packet_required_compiled_address_operations(selected_packet)
     )
+    expected_program_ids, program_domain_refs = (
+        _packet_required_compiled_program_ids(selected_packet)
+    )
     if (
         expected_transfers
         or expected_iteration_arities
         or expected_reduction_linearizations
         or expected_address_operations is not None
+        or expected_program_ids is not None
     ) and result.ttir is not None:
         try:
             fingerprint = parse_ttir(result.ttir)
@@ -1473,6 +1563,24 @@ def source_blind_replay_compile_check(
                 ),
             )
         actual_ops = dict(fingerprint.op_multiset)
+        if expected_program_ids is not None:
+            actual_program_ids = actual_ops.get("tt.get_program_id", 0)
+            if expected_program_ids != actual_program_ids:
+                return ReplayIngressResult(
+                    "fail",
+                    diagnostics=(
+                        {
+                            "rule_code": "compiled_program_id_count",
+                            "path": (
+                                "<synthetic-frontend-compile> tt.get_program_id: "
+                                f"expected={expected_program_ids}, "
+                                f"actual={actual_program_ids}"
+                            ),
+                            "anonymous_handles": list(program_domain_refs[:32]),
+                            "line": None,
+                        },
+                    ),
+                )
         linearized_reduce_producers = {
             producer
             for producer, consumer, role in fingerprint.dataflow_edges
@@ -1782,6 +1890,13 @@ loop-region instance inside that exact loop even when all of its operands are
 available outside and ordinary code motion would be semantically safe. Never
 hoist, sink, clone, or fold an authored instance across a region boundary; Gate1
 observes compiler-visible region membership.
+A J.signature p* is one already-existing callable ABI carrier. Any number of pi
+instances anchored to that same p* scope or route uses of that one carrier; they
+never create another external value or a program coordinate. In particular,
+placement=`program` does not turn p* into `tl.program_id`, and duplicate p*
+instances do not authorize duplicate reads or coordinates. Only the distinct
+typed J-domain realization authorized by the public frontend contract can create
+a program coordinate.
 The source-blind construction compile rejects a compiled `scf.for` multiplicity
 different from the number of structured J loops plus authored
 `pi.physical_iterations`; `pi.iterations` realizes its existing J loop and is

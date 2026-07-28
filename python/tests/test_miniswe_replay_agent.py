@@ -506,11 +506,13 @@ def test_episode_contract_digest_binds_exact_files_prompts_and_budgets() -> None
     assert default_config["model"]["retry_timeouts"] is True
     assert default_config["model"]["semantic_initial_turns"] == 1
     assert default_config["model"]["model_kwargs"]["parallel_tool_calls"] is True
-    assert MINISWE_REPLAY_BACKEND == "minisweagent.intentir-replay.v25"
+    assert MINISWE_REPLAY_BACKEND == "minisweagent.intentir-replay.v26"
     instance = default_config["agent"]["instance_template"]
     assert "exact immutable source-blind startup transport" in instance
     assert "exact_packet_embedded=true" in instance
     assert "value-equivalent flattened formula" in instance
+    assert "Every J.signature p* is one already-existing" in instance
+    assert "duplicate p* instances never authorize duplicate" in instance
     assert "Construct and direct-submit complete Triton source early" in instance
 
 
@@ -860,6 +862,99 @@ def test_synthetic_compile_checks_pi_authored_pointer_address_count(
         diagnostic = result.to_check_response()["diagnostics"][0]
         assert diagnostic["rule_code"] == "compiled_address_operation_count"
         expected_count = 2 if pointer_enters_base else 1
+        assert f"expected={expected_count}, actual={compiled_count}" in diagnostic[
+            "path"
+        ]
+
+
+def _program_id_count_ttir(count: int) -> str:
+    operations = [
+        f"    %pid{index} = tt.get_program_id x : i32" for index in range(count)
+    ]
+    operations.append("    tt.return")
+    body = "\n".join(operations)
+    return f"""\
+module {{
+  tt.func public @scrc_k0(%p0: i32) attributes {{noinline = false}} {{
+{body}
+  }}
+}}
+"""
+
+
+def _program_id_packet(*, domain_authorized: bool) -> dict:
+    semantic_ref = "d0" if domain_authorized else "p0"
+    return {
+        "j": {
+            "boundary": {
+                "domains": {"d0": "(0 <= k0) and (k0 < x0)"},
+                "accesses": [],
+            }
+        },
+        "pi": {
+            "regions": [
+                {"id": "r0", "parent": None, "placement": "root"},
+                {"id": "r1", "parent": "r0", "placement": "program"},
+            ],
+            "instances": [
+                {
+                    "id": "i0",
+                    "semantic_ref": semantic_ref,
+                    "region": "r1",
+                    "mechanism": "realize",
+                },
+                {
+                    "id": "i1",
+                    "semantic_ref": semantic_ref,
+                    "region": "r1",
+                    "mechanism": "realize",
+                },
+                {
+                    "id": "i2",
+                    "semantic_ref": "a0",
+                    "region": "r1",
+                    "mechanism": "address_base",
+                },
+            ],
+            "routes": [
+                {"source": "i0", "target": "i1", "slots": [0]},
+                {"source": "i1", "target": "i2", "slots": [0]},
+            ],
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    ("domain_authorized", "compiled_count", "expected_status"),
+    (
+        (True, 1, "pass"),
+        (True, 2, "fail"),
+        (False, 0, "pass"),
+        (False, 2, "fail"),
+    ),
+)
+def test_synthetic_compile_rejects_program_ids_created_from_duplicate_abi_carriers(
+    domain_authorized: bool,
+    compiled_count: int,
+    expected_status: str,
+) -> None:
+    class PassingCompiler:
+        def compile(self, _source, _case):
+            return CompileResult(True, ttir=_program_id_count_ttir(compiled_count))
+
+    result = source_blind_replay_compile_check(
+        VALID_REPLAY,
+        make_reduce_artifact(),
+        "scrc_k0",
+        compiler=PassingCompiler(),  # type: ignore[arg-type]
+        packet=_program_id_packet(domain_authorized=domain_authorized),
+    )
+
+    assert result.status == expected_status
+    if expected_status == "fail":
+        diagnostic = result.to_check_response()["diagnostics"][0]
+        assert diagnostic["rule_code"] == "compiled_program_id_count"
+        expected_count = 1 if domain_authorized else 0
         assert f"expected={expected_count}, actual={compiled_count}" in diagnostic[
             "path"
         ]

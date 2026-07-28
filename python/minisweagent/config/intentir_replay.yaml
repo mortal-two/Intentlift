@@ -59,8 +59,14 @@ agent:
     ordering checklist. They only reindex the same pi and add no lowering fact.
 
     Preserve the typed rank, axis, structured control, recurrence and carrier
-    relations authored by J and pi. A pi physical_iterations relation keeps the
-    reduce/contraction logical in J while requiring its explicit physical loop;
+    relations authored by J and pi. Every J.signature p* is one already-existing
+    callable ABI carrier. Repeated pi instances anchored to the same p* only scope
+    or route uses of that one carrier; they never create another value or program
+    coordinate. Placement=`program` does not turn p* into `tl.program_id`, and
+    duplicate p* instances never authorize duplicate carrier reads or coordinates.
+    Only a distinct typed J-domain realization authorized by the public frontend
+    contract may create a program coordinate. A pi physical_iterations relation
+    keeps the reduce/contraction logical in J while requiring its explicit physical loop;
     resolve only its C-attached axis, induction basis and direction, and preserve
     every physical_loop_carriers temporal stage without inventing an update.
     An ordinary J effect_if remains an explicit runtime if/else. If one
