@@ -362,6 +362,11 @@ Internal: C-Fixed / Schedule-Only / IntentIR
 - generic 19-launch materialized 图约 50.8 us，而单 launch 约 3.35 us，只用于验证 whole-graph
   materialization/dispatch 瓶颈确被消除，不作为正式 `G_lowering`。当前这个 cell 的 IntentIR winner 仍是
   Schedule-Only spine，故其正式 `G_lowering` 预期接近 1；需要由其他真实结构状态补足该因果指标。
+- Fresh PolyNorm 的 `tensor<1xf32>` typed singleton broadcast 已由通用 row-reduction evaluator 作为
+  uniform scalar 消费，同时保留一般 ParamVector 只能经已验证 gather 访问的 fail-closed 规则。由此同一
+  C++ pass 已完整消费三个共享输入的 reduction、row epilogue 与 compact `[M,3]` 输出，形成一个 cubin；
+  结果已与原始 Source 对齐。预算 8 的首轮已实际编译 subgroup/workgroup、FMA 与 native-div 请求等 5 个
+  状态；当前 closed workload 初测 Source 约 4.34 us，最佳 plain subgroup 约 3.41 us，仍待正式 paired/QD。
 
 ## 10. 总体验收
 

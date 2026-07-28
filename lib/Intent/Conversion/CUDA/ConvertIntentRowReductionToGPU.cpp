@@ -2022,6 +2022,20 @@ struct RowReductionLowering {
   SmallVector<Value> cols;                       // K column indices (tx + k*T)
   DenseMap<Value, Value> frontierBuf;            // cached row value -> smem memref
 
+  /// A rank-1, length-one tensor is a typed singleton broadcast, not a general
+  /// parameter vector.  Keep the ParamVector role so take(axis=0) legality and
+  /// ABI shape remain unchanged, but allow direct map/contraction consumers to
+  /// treat its sole element as a per-launch uniform scalar.
+  bool isSingletonParamVector(unsigned argument) {
+    if (argument >= argRoles.size() ||
+        argRoles[argument] != Role::ParamVector)
+      return false;
+    auto type = dyn_cast<RankedTensorType>(
+        fn.getFunctionType().getInput(argument));
+    return type && type.hasStaticShape() && type.getRank() == 1 &&
+           type.getDimSize(0) == 1;
+  }
+
   /// Evaluate an original value for the thread's k-th column (fully unrolled).
   /// Row inputs resolve to the once-loaded register value; uniforms to their
   /// hoisted per-row scalar; Col inputs (W) are loaded at col[k].
@@ -2068,8 +2082,13 @@ struct RowReductionLowering {
         return remember(
             b.create<memref::LoadOp>(loc, argMemref[v], ValueRange{ch}));
       }
-      if (role == Role::ParamVector)
-        return nullptr; // addressed only by a validated intent.gather
+      if (role == Role::ParamVector) {
+        if (!isSingletonParamVector(barg.getArgNumber()))
+          return nullptr; // addressed only by a validated intent.gather
+        Value zero = b.create<arith::ConstantIndexOp>(loc, 0);
+        return remember(
+            b.create<memref::LoadOp>(loc, argMemref[v], ValueRange{zero}));
+      }
       return remember(
           b.create<memref::LoadOp>(loc, argMemref[v], ValueRange{})); // scalar
     }
@@ -2200,6 +2219,8 @@ struct RowReductionLowering {
         return nullptr;
       if (type.getRank() == 0)
         return emitAt(b, loc, operand, 0);
+      if (type.getRank() == 1 && type.getDimSize(0) == 1)
+        return emitAt(b, loc, operand, 0);
       if (type.getRank() == 1 && type.getDimSize(0) == width)
         return emitPerRowVectorAt(b, loc, operand, column, width);
       if (type.getRank() == 1 && type.getDimSize(0) == M)
@@ -2322,7 +2343,8 @@ struct RowReductionLowering {
     if (uniform.count(v))
       return true;
     if (auto barg = dyn_cast<BlockArgument>(v))
-      return argRoles[barg.getArgNumber()] == Role::Scalar;
+      return argRoles[barg.getArgNumber()] == Role::Scalar ||
+             isSingletonParamVector(barg.getArgNumber());
     return false;
   }
 
@@ -2836,6 +2858,10 @@ struct RowReductionLowering {
           uniform[arg] = b.create<memref::LoadOp>(
               loc, argMemref[arg], ValueRange{});
         }
+      } else if (isSingletonParamVector(i)) {
+        Value zero = b.create<arith::ConstantIndexOp>(loc, 0);
+        uniform[arg] =
+            b.create<memref::LoadOp>(loc, argMemref[arg], ValueRange{zero});
       } else if (argRoles[i] == Role::RowInt ||
                  argRoles[i] == Role::PerRow) {
         uniform[arg] =
@@ -4981,6 +5007,10 @@ struct RowReductionLowering {
                 loc, argMemref[arg], ValueRange{});
           }
         }
+      } else if (isSingletonParamVector(i)) {
+        Value zero = b.create<arith::ConstantIndexOp>(loc, 0);
+        uniform[arg] =
+            b.create<memref::LoadOp>(loc, argMemref[arg], ValueRange{zero});
       } else if (argRoles[i] == Role::RowInt) {
         // Y[bx] is uniform across the block's threads: load once per block.
         uniform[arg] =

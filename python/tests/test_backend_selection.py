@@ -34,13 +34,13 @@ def _pass_name(argument: str) -> str:
     return re.match(r"^-([^=]+)", argument).group(1)  # type: ignore[union-attr]
 
 
-def _fresh_splitk_mlir() -> str:
+def _fresh_mlir(name: str) -> str:
     root = Path(__file__).resolve().parents[2]
     snapshot, _path = load_production_snapshot(
         root / "corpus" / "production-jc-v2",
-        "splitk_reduce_varargs",
+        name,
     )
-    prepared = prepare_production_workload("splitk_reduce_varargs")
+    prepared = prepare_production_workload(name)
     case = build_workload_jc_suite(prepared, snapshot.j, snapshot.c).cases[0]
     constexpr = constexpr_input_bindings(
         snapshot.j,
@@ -196,7 +196,7 @@ def test_fresh_splitk_j_is_consumed_by_one_cpp_gpu_launch() -> None:
     fast_path_id = "cuda.splitk.reduce-varargs.v1"
 
     result = select_variant(
-        _fresh_splitk_mlir(),
+        _fresh_mlir("splitk_reduce_varargs"),
         only_fast_path=fast_path_id,
     )
 
@@ -210,7 +210,7 @@ def test_fresh_splitk_j_is_consumed_by_one_cpp_gpu_launch() -> None:
     not Path(backend_compile.INTENT_OPT).exists(), reason="intent-opt not built"
 )
 def test_fresh_splitk_path_rejects_an_unconsumed_side_graph() -> None:
-    source = _fresh_splitk_mlir().replace(
+    source = _fresh_mlir("splitk_reduce_varargs").replace(
         "    return ",
         "    %unconsumed = arith.constant dense<1.0> : tensor<f32>\n"
         "    return ",
@@ -226,6 +226,23 @@ def test_fresh_splitk_path_rejects_an_unconsumed_side_graph() -> None:
     assert result.attempts[0].direct_hit is False
     assert result.attempts[0].gpu_launch_count == 0
     assert result.attempts[0].residual_ops
+
+
+@pytest.mark.skipif(
+    not Path(backend_compile.INTENT_OPT).exists(), reason="intent-opt not built"
+)
+def test_fresh_poly_norm_singleton_broadcast_uses_row_reduction_path() -> None:
+    fast_path_id = "cuda.row_reduction.normalization_loss.read_once.v1"
+
+    result = select_variant(
+        _fresh_mlir("poly_norm"),
+        only_fast_path=fast_path_id,
+    )
+
+    assert result.pipeline_kind == "specialized"
+    assert result.fast_path_id == fast_path_id
+    assert result.attempts[0].residual_ops == ()
+    assert result.attempts[0].gpu_launch_count == 1
 
 
 @pytest.mark.skipif(
