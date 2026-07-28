@@ -200,6 +200,18 @@ def test_access_guard_typecheck_accepts_generic_rank_projection_and_load_fill() 
 
     assert report.passed, report.to_json()
     assert report.protocol == TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v26"
+def test_access_guard_accepts_direct_parametric_singleton_projection() -> None:
+    payload = _guarded_payload()
+    function = payload["j"]["intent"]["intent_function"]
+    function["inputs"][-1]["shape"] = ["x5", "x1"]
+    payload["j"]["signature"]["parameters"][-1]["rank"] = 2
+    payload["j"]["dimension_constraints"].append("x5 == 1")
+    payload["j"]["boundary"]["access_guard_relations"][0]["axes"] = [0]
+    artifact = Gate1Artifact.from_json(payload)
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert report.passed, report.to_json()
 
 
 @pytest.mark.parametrize(

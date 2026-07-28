@@ -378,6 +378,9 @@ def test_codex_replay_workspace_view_joins_authored_facts_without_source() -> No
         "pi": artifact.pi.to_json(),
         "u_f": {"frontend": "triton", "replay_function": "scrc_k0"},
     }
+    packet["j"]["boundary"]["broadcasts"] = [
+        {"node_ref": "n0", "operand": "t0", "axes": [0]}
+    ]
 
     view = _replay_workspace_view(packet)
 
@@ -403,6 +406,9 @@ def test_codex_replay_bounded_queries_partition_exact_packet_without_source() ->
         "pi": artifact.pi.to_json(),
         "u_f": {"frontend": "triton", "replay_function": "scrc_k0"},
     }
+    packet["j"]["boundary"]["broadcasts"] = [
+        {"node_ref": "n0", "operand": "t0", "axes": [0]}
+    ]
 
     manifest = _replay_manifest_view(packet)
     abi = _replay_packet_query(packet, ("abi", "0", "48"))
@@ -431,6 +437,7 @@ def test_codex_replay_bounded_queries_partition_exact_packet_without_source() ->
         "n0",
         expected_op,
     ]
+    assert requirements["view"]["boundary_broadcasts"]["total"] == 1
     assert requirements["view"]["pi_instance_mechanisms"]["total"] == len(
         packet["pi"]["instances"]
     )
@@ -459,6 +466,12 @@ def test_codex_replay_bounded_queries_partition_exact_packet_without_source() ->
     startup = _replay_startup_context(packet)
     assert startup["exact_packet_embedded"] is True
     assert startup["packet"] == packet
+    assert startup["critical_facts"]["protocol"] == (
+        "intentir.replay-critical-facts.v3"
+    )
+    assert startup["critical_facts"]["broadcast_obligations"][0][
+        "node_ref"
+    ] == "n0"
     assert "manifest" not in startup
 
 
@@ -701,6 +714,8 @@ def scrc_k0(p0, p1, p2, c0: tl.constexpr):
                     in prompt
                 )
                 assert "duplicate p* instances never authorize" in prompt
+                assert "critical_facts.broadcast_obligations" in prompt
+                assert "Never pre-expand an access index or load shape" in prompt
                 payload = valid_replay.replace("scrc_k0", "wrong_entry")
             else:
                 check = json.loads(
@@ -738,6 +753,7 @@ def scrc_k0(p0, p1, p2, c0: tl.constexpr):
     second = writer.generate(make_copy_artifact())
 
     assert first.backend_protocol == second.backend_protocol == CODEX_CLI_REPLAY_BACKEND
+    assert CODEX_CLI_REPLAY_BACKEND == "openai.codex-cli.intentir-replay.v29"
     assert first.response_id == "fresh-replay-1"
     assert second.response_id == "fresh-replay-2"
     assert first.attempts == second.attempts == 3

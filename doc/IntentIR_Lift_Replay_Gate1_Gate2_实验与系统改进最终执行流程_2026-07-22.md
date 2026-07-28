@@ -605,7 +605,11 @@ Gate round 的定义。
 权威错误列表有界展开、不改变接受集合时，`candidate-check.v1` 无需升版。任何新规则都只对带新
 version receipt 的 fresh run 生效，不得静默重判历史 artifact。
 
-当前 fresh-run 版本为 `typecheck.v25`。v25 继承 v24，并把 `reduction_linearization` 限定为一个
+当前 fresh-run 版本为 `typecheck.v26`。v26 继承 v25，并只把 J 直接作者化的 `x* == 1` 或
+`1 == x*` 当作该 symbolic extent 的 singleton 证据，供 J 已显式声明的 broadcast axes 做 shape
+alignment；缺失、非 1 或冲突 direct equality 都拒绝。它不做 affine/SMT/transitive inference，
+不从 Harness valuation、C、π、Source 或 consumer target shape 猜 singleton，也不生成 broadcast。
+v25 继承 v24，并把 `reduction_linearization` 限定为一个
 `realize` stage 经唯一 slot-0 route 进入一个 J reduce `realize` stage；checker 不生成 relation 或
 reshape。v24 继承 v23，并新增 closed typed special-constant 与
 transfer-address-route checks：floating const 的 JSON string 只允许 `inf|-inf|nan`；每个 transfer 必须
@@ -866,10 +870,14 @@ Replay 不得：
 
 `U_f` 必须是版本化、source-neutral 的公共前端知识，不能按当前 Kernel、operator 或失败样本选择。
 当前版本组合是 `intentir.scrc.replay-input.v1`、Triton
-`public_frontend_context_v15`、source-aware Codex/MiniSWE Lift `intentir.lift-knowledge.v65/v61`、
-source-blind MiniSWE Replay v26 与 Codex Replay v22、
-`replay-check.v10`；fresh evidence必须保存实际 receipt，
+`public_frontend_context_v17`、source-aware Codex/MiniSWE Lift `intentir.lift-knowledge.v67/v64`、
+source-blind MiniSWE Replay v33 与 Codex Replay v29、
+`replay-check.v13`；fresh evidence必须保存实际 receipt，
 旧版本 run 不能被新组合追认。
+v33/v29 把每条 J-authored `boundary.broadcasts` 与 operand closed type、matching
+boundary access、named consumer/operand ordinal 作 exact source-blind 重索引；存在该 obligation 时，
+owner 必须用 `replay-obligation-audit.v2` 将 ledger 与自己的当前编号源码并置自审。工具不建立
+relation-to-statement 映射、不选择 rank-lift spelling/次数、不生成或修复 Replay，也不读取 Source/Gate。
 同一 `J.signature p*` 的多个 π instance 只能共享该唯一 callable ABI carrier，不能因
 `placement=program` 或 instance multiplicity 生成额外 `tl.program_id`。construction compile 可从
 program-region distinct J domain 到 `address_base` 的作者化 route 投影合法 coordinate occurrence 数并
@@ -877,12 +885,12 @@ program-region distinct J domain 到 `address_base` 的作者化 route 投影合
 runner 可以保存实际 request/output 和 compiler metadata 供追溯，但这些内容不能回流 Replay packet；
 不需要为此增加 hash、commitment 或签名门。
 
-当前新 Lift response 使用 `intentir.scrc.artifact.v9`，固定 decode 使用
-`intentir.scrc.decode.v13`。v3 历史上引入 required closed `pi.iterations`；v4 引入
+当前新 Lift response 使用 `intentir.scrc.artifact.v10`，固定 decode 使用
+`intentir.scrc.decode.v14`。v3 历史上引入 required closed `pi.iterations`；v4 引入
 `value_dimension_relations`、`consumer_extensions` 等 typed relations；v5 引入
 `access_guard_relations`；v6/v7 引入 typed control；v8 引入上述 π-owned physical-only time relations；
-v9 引入 π-owned terminal-control topology。
-每次 fresh response 必须完整作者当前 wire，fixed code 不构造新增字段。`artifact.v1-v7` 保持各自
+v9 引入 π-owned terminal-control topology，v10 引入 π-owned unit physical time。
+每次 fresh response 必须完整作者当前 wire，fixed code 不构造新增字段。`artifact.v1-v9` 保持各自
 wire bytes/digest 与字段集合，不静默升级、刷新或追认。
 
 当前 `replay-input.v1` 不包含任何 pad-discharge derived hint。若 J 只有 symbolic input
@@ -1053,7 +1061,7 @@ Source/当前 J 的 writer。Runner 更新 branch-local feedback view 并追加�
 ### 10.1.1 固定 artifact 的 diagnostic recheck
 
 `intentir.scrc.gate1-diagnostic-recheck.v1` 可以对 parent evidence 中一份已落盘 artifact 做独立只读
-诊断：保持 artifact bytes/digest 不变，以当前 canonical Decode、`typecheck.v25`、一个 fresh normal
+诊断：保持 artifact bytes/digest 不变，以当前 canonical Decode、`typecheck.v26`、一个 fresh normal
 Replay 与 Gate1 写入单独的原子 `recheck-NNN` 目录。该路径不调用 Lift、不运行 masked-J 或 Gate2、
 不参加 candidate/winner 选择，并显式记录 `diagnostic_only=true`、`enters_gate2=false`、
 `changes_prior_verdict=false`。它只能判断当前固定 consumer/context 如何消费旧 artifact，不能把
@@ -1345,7 +1353,7 @@ carrier、arity 1 和非退化 split grid；ordinal 27/28 使用 arity 2，展�
 参数。`None` 在 J.signature 中只能是 `opaque(mode=value,dtype=none)`，无 logical_ref/J
 tensor/node/effect/π instance，不得换成 dummy pointer 或 scalar；加入 canonical contraction 与
 direct/decomposed stage multiplicity 合同后，Codex/MiniSWE Lift knowledge 当前为
-`intentir.lift-knowledge.v65/v61`。Codex CLI agent runtime v3 在不接受任何未通过候选、也不补写 artifact 的前提下，从被 wall-time 中断的 JSONL 中恢复已经发出的唯一 `thread.started`，使同一 Lift owner 能在剩余 branch 时间内继续；v49/v50 在不改变 artifact/判定的前提下加入 persistent-workspace exact mirror
+`intentir.lift-knowledge.v67/v64`。Codex CLI agent runtime v3 在不接受任何未通过候选、也不补写 artifact 的前提下，从被 wall-time 中断的 JSONL 中恢复已经发出的唯一 `thread.started`，使同一 Lift owner 能在剩余 branch 时间内继续；v49/v50 在不改变 artifact/判定的前提下加入 persistent-workspace exact mirror
 transport compaction、最近 response-group 窗口、source-neutral schema bundle、单一持久 Lift owner，
 以及 Replay v8 的
 exact-source direct submit/exact-text patch+preflight；这些机制只搬运 LLM authored bytes 或既有
@@ -1368,9 +1376,9 @@ JSONL 中已经完整发出的唯一 `thread.started` 恢复同一 thread identi
 invocation/episode 的 exact current bytes，若它们已通过 closed check则接收，否则只可恢复同一 LLM
 本轮已检查通过的 exact checkpoint，或继续这个已建立的同一 thread。这里没有
 跨 formal round 的 best-parent、语义合并或 fixed repair。Replay workspace view v2 只无损并置 typed
-reduction obligations；`replay-check.v10` 在 source-blind synthetic compile 后核对作者化
+reduction obligations；`replay-check.v13` 在 source-blind synthetic compile 后核对作者化
 `transfer_direct` occurrence 的 compiled multiplicity，并核对 structured J loops 加
-`pi.physical_iterations` 所要求的 `scf.for` 数及对应 logical/physical carrier block arity，并要求
+`pi.physical_iterations|unit_iterations` 所要求的 `scf.for` 数及对应 logical/physical carrier block arity，并要求
 distinct `tt.reshape -> tt.reduce(axis=0)` dataflow 数不少于已作者化
 `reduction_linearization` 数；同时只在
 signature carrier kind 与 π address routes 完全闭合时核对 compiled `tt.addptr` 数；独立 integer

@@ -392,7 +392,10 @@ TypeCheck 还检查 closed comparison class 与 output dtype、A 依赖图和 B 
 见最终执行流程第 6.1 节。v1 中 `RequiresTolerance=true` 即拒绝显式或默认 `exact`，没有自由文本
 或“更强合同”例外；阈值仍完全由外部 Q 决定。该 reassociation fact 只约束 SCRC comparison class，
 不是 production backend permission。
-当前 `typecheck.v25` 继承 v24，并把 `reduction_linearization` 限定为一个 `realize` stage 经唯一
+当前 `typecheck.v26` 继承 v25，只把 J direct `x* == 1`/`1 == x*` 作为 symbolic singleton
+证据来消费同一 J 的显式 broadcast axes；缺失、非 1 或冲突 direct equality 拒绝。它不做
+SMT/transitive inference，也不从 Harness valuation、C、π、Source 或 target shape补事实。
+v25 继承 v24，并把 `reduction_linearization` 限定为一个 `realize` stage 经唯一
 slot-0 route 进入一个 J reduce `realize` stage；它不创建 relation/reshape。v24 继承 v23，并新增
 两条 closed dependent check：floating typed const 的 JSON
 string 只允许 `inf|-inf|nan`；每个 transfer 必须从绑定同一 boundary tensor 的 pointer/tensor
@@ -465,18 +468,18 @@ dependent checking 夸写成 Source topology 的形式证明。
 
 首版不需要让 TypeCheck 成为 SMT 或完整图证明器。最小可行实现只需 fail closed 地完成上述局部检查。
 
-当前合并协议为 `artifact.v9 / decode.v13 / typecheck.v25 / candidate-check.v1 / replay-check.v10`；
-Replay packet envelope 仍是 `replay-input.v1`，Triton context 为 `public_frontend_context_v15`，
-Codex/MiniSWE Lift knowledge 为 v65/v61，MiniSWE Replay backend 为 v26，Codex Replay backend 为 v22。
+当前合并协议为 `artifact.v10 / decode.v14 / typecheck.v26 / candidate-check.v1 / replay-check.v13`；
+Replay packet envelope 仍是 `replay-input.v1`，Triton context 为 `public_frontend_context_v17`，
+Codex/MiniSWE Lift knowledge 为 v67/v64，MiniSWE Replay backend 为 v33，Codex Replay backend 为 v29。
 v40 为 source-aware Lift worker 增加只读、分页的 Source control-flow
 outline（function/loop/if/return 的行号与嵌套深度）；v41 只把 shared dialect/lowering 已支持的
 `log2` 补入通用 `map_unary` vocabulary；v42 只要求 access `fill_value` 保留 Source 该 load 的实际
 `other`，不允许用 downstream-neutral 等价值替换。Replay v4 只要求 source-blind writer 保留 J typed
 rank/axis 与必要 compiler-visible reshape，不把 shaped reduction 压成 flattened reduction。这些版本
 都不分类/补造 artifact 语义，也不生成 Replay；仍由 Lift 与 Replay LLM 分别完整作者化输出。
-Replay workspace view v2 只把 packet 中已有的 typed reduction facts 无损并置；replay-check.v10 在
+Replay workspace view v2 只把 packet 中已有的 typed reduction facts 无损并置；replay-check.v13 在
 公共 source-blind synthetic compile 后核对 π 已声明 `transfer_direct` occurrence 的 compiled
-load/store multiplicity，并核对 structured J loop 加 `pi.physical_iterations` 已声明的 compiled
+load/store multiplicity，并核对 structured J loop 加 `pi.physical_iterations|unit_iterations` 已声明的 compiled
 `scf.for` occurrence，并核对对应 authored logical/physical carrier 的 block-argument arity；只在
 signature carrier kind 与 π address routes 完全闭合时核对 `tt.addptr` occurrence；独立 integer
 address contribution 可使用自身 semantic ref，address 与 transfer 也不必复用同一 ref spelling，但
@@ -487,7 +490,10 @@ pointer-producing stage 必须流向某个 transfer；并要求 compiled distinc
 Source/Harness value/Gate，不改变最终 SCRC 接受谓词。Codex Lift v5 只要求 LLM reconcile
 syntax-only Source control-flow outline，固定代码仍不分类或补 artifact。单次 provider turn wall-time 后只允许同 invocation/episode 的 exact checked
 bytes 或 resumable same thread 继续；禁止跨 formal round/Replay episode 继承候选。
-Replay v26/v22 进一步固定：J.signature 的一个 `p*` 是一个既有 callable ABI carrier，同一 `p*` 的
+Replay v33/v29 把每条 J-authored broadcast 的 operand closed type、matching access、
+named consumer/ordinal 作 exact source-blind 重索引；存在该 obligation 时，owner 必须把 ledger 与
+自己的当前编号源码并置自审。工具不建立 relation-to-statement 映射、不选择 rank-lift spelling/次数、
+不生成或修复 Replay，也不读取 Source/Gate。v26/v22 已固定：J.signature 的一个 `p*` 是一个既有 callable ABI carrier，同一 `p*` 的
 多个 π instance 只定位或路由多处 use，不能产生新 carrier 或 `program_id`。source-blind construction
 compile 只从 program region 中沿作者化 route 到达 `address_base` 的 distinct J domain 投影合法
 `tt.get_program_id` occurrence 数并拒绝多余 occurrence；它不生成 coordinate、不选择 axis，也不参与
@@ -495,9 +501,10 @@ Gate/认证。
 v3 历史上引入 `pi.iterations`；v4 引入 J-owned `value_dimension_relations`、
 `consumer_extensions` 等 typed relations；v5 引入 J-owned `access_guard_relations`；v6/v7 分别引入
 typed `effect_if/value_if`；v8 增加 π-owned `physical_iterations/physical_loop_carriers`；v9 增加
-π-owned `terminal_controls`，只为 J 已存在的 `effect_if` 指定 terminal/continuation arm topology。每个当前字段都由
+π-owned `terminal_controls`，只为 J 已存在的 `effect_if` 指定 terminal/continuation arm topology；
+v10 增加 π-owned `unit_iterations`。每个当前字段都由
 Lift LLM 作为完整 `(J,C,π)` 的一部分显式作者，Decode/TypeCheck/CandidateCheck 只解析、检查、拒绝
-和诊断，不补造 relation 或 artifact。v1-v7 保持各自 wire bytes/digest 与字段集合，不得静默升级、
+和诊断，不补造 relation 或 artifact。v1-v9 保持各自 wire bytes/digest 与字段集合，不得静默升级、
 刷新或追认。SCRC 后 π 停止，
 production backend 仍只消费 J+C；iteration witness 不进入 `Impl(J)` search。
 
@@ -566,7 +573,8 @@ artifact 语义，不增加 acceptance path，正式 Runner 仍独立执行 Deco
 扩充 TypeCheck judgement 必须提升 `v_TC`，CandidateCheck 与正式 Runner 必须记录并使用同一版本；
 新版本不静默重判历史证书。
 
-当前 fresh-run 取 `v_TC = typecheck.v25`。v25 增加上述 reduction-linearization topology check；v24 增加上述 special-constant 与 transfer pointer-route
+当前 fresh-run 取 `v_TC = typecheck.v26`。v26 增加上述 direct singleton broadcast dependent check；
+v25 增加上述 reduction-linearization topology check；v24 增加上述 special-constant 与 transfer pointer-route
 closed checks，并完整继承 v23；v23 增加 canonical output binding 的完整 dtype/shape equality；v22 增加 signature mode 与 J boundary partition 的 exact
 dependent check，并完整继承 v21；v21 继承 v20/v18/v19、v14-v17 typed-control 合同及下述 v7
 前序合同，并包含上述 v9 terminal-control dependent checks；v20 已增加上述 v4/v5

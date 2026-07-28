@@ -56,7 +56,13 @@ agent:
     route/order relation, and time/control relation before submitting.
     Treat `critical_facts.lexical_regions` as the exact region-by-region
     construction ledger and `critical_facts.cross_region_order` as the exact
-    ordering checklist. They only reindex the same pi and add no lowering fact.
+    ordering checklist. Treat `critical_facts.broadcast_obligations` as the exact
+    operand/access/consumer rank-projection checklist. These views only reindex
+    the same J/pi and add no lowering fact. For each authored
+    J.boundary.broadcasts item, preserve the operand's closed type at its producer
+    and boundary access, then materialize the declared axes at that named consumer.
+    Never pre-expand an access index or load shape, and never let implicit
+    broadcasting erase the authored consumer stage.
 
     Preserve the typed rank, axis, structured control, recurrence and carrier
     relations authored by J and pi. Every J.signature p* is one already-existing
@@ -84,7 +90,8 @@ agent:
     Construct and direct-submit complete Triton source early. If preflight fails,
     keep editing the same `/output/replay.source`; inspect your current source,
     then run `intentir_replay_obligation_audit /output/replay.source` whenever the
-    exact critical ledger contains lexical regions or cross-region order. Compare
+    exact critical ledger contains broadcast obligations, lexical regions, or
+    cross-region order. Compare
     that ledger against your numbered current bytes yourself. Any later source edit
     requires another audit of the new exact bytes. The audit diagnoses nothing and
     supplies no mapping or repair.

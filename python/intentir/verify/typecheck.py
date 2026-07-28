@@ -16,6 +16,7 @@ from typing import Any, Iterable, Mapping
 from intentir.ir.canonical_j import (
     CanonicalValueType,
     canonicalize_semantic_archive,
+    direct_unit_dimension_refs,
     j_elaboration,
 )
 from intentir.ir.dim_expr import (
@@ -1376,6 +1377,9 @@ def _check_access_guard_relations(
                     list(guard_type.shape),
                     axes,
                     list(target_type.shape),
+                    unit_dimensions=direct_unit_dimension_refs(
+                        j.dimension_constraints
+                    ),
                 )
             except (NotImplementedError, ValueError) as exc:
                 reject(

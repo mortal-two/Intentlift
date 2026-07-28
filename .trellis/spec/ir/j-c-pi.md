@@ -480,7 +480,12 @@ TypeCheck(J,C,pi) -> FreshLogicalSemDecl(C,pi | J) = empty
 线索，也不证明 J 或 realization 的行为正确。
 
 上述 C attachment、numeric-cast、result-relation compatibility、rank-0 closed signature、Layer-A total
-typing 与显式 non-trailing broadcast 合同已由早期 TypeCheck 版本逐步建立；canonical reduce/
+typing 与显式 non-trailing broadcast 合同已由早期 TypeCheck 版本逐步建立。当前
+`decode.v14/typecheck.v26` 只把 J 直接写出的 `x* == 1` 或 `1 == x*` 当作该 symbolic extent 的
+singleton 证据，供同一 J 已显式声明的 broadcast axes 做 shape alignment；缺少 direct equality、
+等于非 1、或同时直接等于 1 与其他整数都 fail closed。它不做 affine/SMT/transitive inference，
+不从 Harness valuation、C、π、Source 或 target shape 猜 singleton，也不补 broadcast relation。
+canonical reduce/
 contraction fail-early、functional logical-domain closure、rank-0 logical-input liveness 与
 representation-only scalar 合同也保持原有版本化历史。物理迭代基底 relation 曾使 fresh-run
 wire/decode 窄升为 `artifact.v3 / decode.v3`；v4 随后增加 closed dimension relations、
@@ -489,7 +494,8 @@ wire/decode 窄升为 `artifact.v3 / decode.v3`；v4 随后增加 closed dimensi
 terminal-control topology，v10 增加 unit physical-only time。当前 active 合同为
 `artifact.v10 / decode.v14 / typecheck.v26 / candidate-check.v1`；v26 在 v25 上增加
 `unit_iterations` 的 closed region/body/axis checks，并允许同一 physical carrier protocol 被 tiled
-或 unit physical time 使用。v25 继承 v24，并新增
+或 unit physical time 使用；同一 v26 还新增上述 direct singleton equality 的 source-free
+broadcast dependent check。v25 继承 v24，并新增
 `reduction_linearization` 的 closed topology check：该 global-safe refinement 不带 authorization，
 只能修饰一个 `realize` instance，且必须经唯一 slot-0 route 进入一个 J `reduce` 的 `realize`
 instance。它不生成 reshape 或 reduction。v24 继承 v23，并新增两条 closed

@@ -849,28 +849,32 @@ Replay LLM 应遵守以下过程合同：
 8. 按 `iterations` 保留 structured J loop 的物理 induction basis；
 9. 按 `physical_iterations/physical_loop_carriers` 保留 structured J loop 外、由已有
    reduce/contraction 或 boundary access/domain 锚定的物理 tile time；
-10. 按 `terminal_controls` 将已作者化 `effect_if` 的 terminal arm 与 lexical continuation
+10. 按 `unit_iterations` 保留没有 C tile 的既有非 loop J axis 单位步物理遍历；
+11. 按 `terminal_controls` 将已作者化 `effect_if` 的 terminal arm 与 lexical continuation
     materialize 为 terminal CFG，不从臂内容猜 role；
-11. 按 representation refinements 保留 source materialization/placement；其中
+12. 按 representation refinements 保留 source materialization/placement；其中
     `reduction_linearization` 精确保留经唯一 slot-0 route 进入 J reduce 的全轴线性化；
-12. 遇到 J semantic ref 时从 J 查询当前语义 label；
-13. 使用固定公共 frontend 知识 `U_f` 选择合法 API spelling；
-14. 输出完整、参数化、source-blind frontend source；
-15. 不从 π 猜出后覆盖 J，也不从 compiler diff 修补。
+13. 遇到 J semantic ref 时从 J 查询当前语义 label；
+14. 使用固定公共 frontend 知识 `U_f` 选择合法 API spelling；
+15. 输出完整、参数化、source-blind frontend source；
+16. 不从 π 猜出后覆盖 J，也不从 compiler diff 修补。
 
 当前 fresh receipt 组合为 `intentir.scrc.replay-input.v1`、Triton
-`public_frontend_context_v15`、Codex/MiniSWE Lift `intentir.lift-knowledge.v65/v61`、MiniSWE Replay v26 与 Codex Replay v22；旧 receipt 保持其原 verdict，不能由
+`public_frontend_context_v17`、Codex/MiniSWE Lift `intentir.lift-knowledge.v67/v64`、MiniSWE Replay v33 与 Codex Replay v29；旧 receipt 保持其原 verdict，不能由
 当前 Replay consumer 或 Lift knowledge 静默升级。
 
-v26/v22 对正常大小匿名 packet 只做一次 exact startup embedding，并将 semantic dimension carrier、
-IEEE special typed constant、physical iteration 与 `reduction_linearization + consumer route` 作一次
-bounded exact `critical_facts` 重索引；超限时
+v33/v29 对正常大小匿名 packet 只做一次 exact startup embedding，并将 semantic dimension carrier、
+IEEE special typed constant、physical/unit iteration、transfer route/order 与
+`reduction_linearization + consumer route` 作一次 bounded exact `critical_facts.v3` 重索引；它还把 J-authored broadcast 与 operand closed type、matching
+access、named consumer/ordinal 无损并置，并要求有该 obligation 的 owner 对当前源码运行
+`replay-obligation-audit.v2`。它不建立 relation-to-statement 映射、不选择 rank-lift spelling/次数，
+也不生成或修复 Replay。超限时
 manifest 才将 J 中已声明
 的 op/boundary 与 π 中已声明的 instance mechanism、time/control/terminal obligation 重新索引为
 有界清单。它不新增 relation，不从 Source/Gate 取值，也不选择 realization、schedule、frontend
 spelling 或 repair，因此只增强 Replay owner 对现有 π/J 的消费可靠性，不改变 π 的证明地位或
 Replay 的 LLM-first 作者权。
-v26/v22 同时明确 ABI-carrier multiplicity：一个 `J.signature p*` 始终是一个既有 callable
+v26/v22 已明确 ABI-carrier multiplicity：一个 `J.signature p*` 始终是一个既有 callable
 carrier，同一 `p*` 的多个 π instance 只声明多处 placement/use，不产生第二个值或
 `tl.program_id`。source-blind construction compile 可按 program-region distinct J domain 经作者化
 route 到 `address_base` 的数量拒绝多余 program-coordinate occurrence；它不生成 instance、coordinate
@@ -885,9 +889,9 @@ rank、reshape、tile 或 spelling。它不能生成或省略 relation。v7 的
 推导 schedule、生成 source 或访问 Source/Harness/Gate；因此不改变 Replay 的 source-blind LLM-first
 所有权。
 
-当前新 Lift wire/decode 为 `intentir.scrc.artifact.v9 / intentir.scrc.decode.v13`；v3 历史上把上述
+当前新 Lift wire/decode 为 `intentir.scrc.artifact.v10 / intentir.scrc.decode.v14`；v3 历史上把上述
 `pi.iterations` 变为 required closed field，v4-v7 再增加前述 J-owned typed relations/control，v8
-增加 physical-only time，v9 增加 terminal-control topology。v1-v8 历史
+增加 physical-only time，v9 增加 terminal-control topology，v10 增加 unit physical time。v1-v9 历史
 artifact 保持原始序列化、digest 与字段集合，禁止静默附加空数组、重标或刷新证书。
 
 固定代码仍只做：
@@ -900,10 +904,10 @@ artifact 保持原始序列化、digest 与字段集合，禁止静默附加空�
 
 固定代码不把 π 解码成源码，不建立 deterministic composer。
 
-`replay-check.v10` 可以在公共、source-blind synthetic compile 后核对 π 已作者化的
+`replay-check.v13` 可以在公共、source-blind synthetic compile 后核对 π 已作者化的
 `transfer_direct` occurrence 与 compiled load/store multiplicity；它只拒绝 compiler 已经折叠的
 作者化 event，不补 transfer、不决定保留它的源码写法。它同时将 structured J loop 数与
-`pi.physical_iterations` 数之和作为已作者化的 compiled `scf.for` 必要 occurrence；
+`pi.physical_iterations|unit_iterations` 数之和作为已作者化的 compiled `scf.for` 必要 occurrence；
 `pi.iterations` 只 realize 其 J loop，不重复计数；每个 compiled loop 的 block-argument arity 还必须
 等于 induction 加该 loop/region 已作者化的 logical/physical carrier 数。v9 还只在
 J.signature 的 pointer/tensor carrier kind 与 π address routes 对每个 transfer 完全闭合时，
@@ -1300,7 +1304,10 @@ authorization；这只合并 proof-irrelevant 文件动作，外部 TypeCheck �
 numeric-cast、result-relation compatibility 与当前 v4/v5 typed relations 的检查均已随版本化
 TypeCheck 落地并写入 fresh receipt；旧 artifact/证书保持历史解释，不由新规则静默重判。
 
-活动 fresh-run 使用 `typecheck.v25`。v25 继承 v24，并新增 `reduction_linearization` 的 closed
+活动 fresh-run 使用 `typecheck.v26`。v26 继承 v25，仅允许 J 中 direct `x* == 1` 或 `1 == x*`
+证明一个 symbolic singleton，以消费同一 J 已显式作者化的 broadcast axes；缺失、非 1 或冲突
+direct equality fail closed。checker 不做 SMT/transitive inference，不从 concrete valuation、C、π、
+Source 或 target shape补 singleton/broadcast。v25 继承 v24，并新增 `reduction_linearization` 的 closed
 dependent topology check：refinement 必须 `auth_ref=null`，修饰一个 `realize` instance，且只经
 一条 slot-0 route 进入一个 J reduce `realize` instance；checker 不生成该 relation 或 reshape。
 v24 继承 v23，并新增两条 closed dependent check：floating

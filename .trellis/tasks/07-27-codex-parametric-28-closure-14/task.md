@@ -187,10 +187,10 @@ fixed code不得替Lift修成`x*`。
 ## 4. 当前执行栈
 
 - frontend commit起点：`460aaed1c6af0b267a4a9da9ca497aea6e66ad40`；
-- artifact/decode/typecheck：`artifact.v9 / decode.v13 / typecheck.v25`；
+- artifact/decode/typecheck：`artifact.v9 / decode.v14 / typecheck.v26`；
 - Lift：Codex `openai.codex-cli.intentir-lift.v11 / intentir.lift-knowledge.v65`，MiniSWE `minisweagent.intentir-lift.v3 / intentir.lift-knowledge.v61`；
-- Replay：Codex `openai.codex-cli.intentir-replay.v22`，MiniSWE `minisweagent.intentir-replay.v26`；
-- Replay packet/check：`replay-input.v1 / public_frontend_context_v15 / replay-check.v10`；
+- Replay：Codex `openai.codex-cli.intentir-replay.v23`，MiniSWE `minisweagent.intentir-replay.v27`；
+- Replay packet/check：`replay-input.v1 / public_frontend_context_v16 / replay-check.v10`；
 - Harness：Triton workload adapter v5；
 - Gate1 observer：`triton-ttir-3.6-gate1-v11`；outer batch：`intentir.scrc.batch.v3`；
   candidate fan-out：v4 `first_observed_gate1_closure_cooperative_stop`；
@@ -307,6 +307,22 @@ fixed code不得替Lift修成`x*`。
   RoPE 与 one-col backward 各有两个 branch完整耗尽 3 轮 NO_CLOSURE、一个 Replay infrastructure；
   full backward 三个 branch最终均为 Replay-before-Gate1 infrastructure，故三者都不能记完整
   `NO_CLOSURE_(B,K)`。18 路同时 xhigh 使首次 Lift约 9--26 分钟，后续改为两核、每核 3B 聚焦调度。
+- Wave 35（起点 commit `544c358d`）聚焦 one-col backward 与 Liger RoPE。one-col 使用 Codex
+  Sol-xhigh、`B=3,K=3`，三个 branch 均耗尽三轮而未闭合；最佳最终分支的 interface/reduction/
+  predicate-effect 已通过，只剩 4 条 op-multiset 与 286 条 dataflow 差异。另一个分支的 J 已明确
+  `t6/t7: rank-1` 及两条显式 broadcast，fresh Replay 却直接载入 `tensor<128x1>`，遗漏两个
+  `expand_dims`，说明当前主要是 Replay 对 authored shape/broadcast obligation 的消费缺口。
+  RoPE 使用 Lift Sol-max、Replay Sol-xhigh；branch 3 三轮仍为
+  `op_multiset=3/dataflow=283/predicate-effect=14`，Replay 仍以 16-wide arange 实现 Source 的 8-wide
+  half-dimension。branch 1 被运行中短暂 Python import 回归污染，branch 2 在 Replay owner wall-time
+  前失败，所以 aggregate 只记 infrastructure/diagnostic evidence，不记完整 NO_CLOSURE 或认证。
+  该 wave 启动后主工作区发生过工具修改，全部结果只用于定位，修复后必须从 clean commit fresh
+  重跑。由此新增的通用 `decode.v14/typecheck.v26` 只消费 J direct `x* == 1`/`1 == x*` 作为显式
+  broadcast 的 singleton 证据；不从 valuation/Source/Gate 猜事实，也不构造 broadcast。
+  Replay v27/v23 与 context v16 又把 authored broadcast 的 operand closed type、matching access、named
+  consumer/operand ordinal 加入 exact `critical_facts.v3`，并在存在该 obligation 时要求
+  `replay-obligation-audit.v2` 对 owner 当前编号源码自审。该工具不映射 relation 到 statement、不选择
+  `expand_dims` 次数或代码、不读取 Source/Gate；完整 Replay 仍由 source-blind LLM 作者化。
 - Codex Lift v11 / knowledge v65 将 closed frontier 已有的 interface、reduction、predicate/effect 与
   op-multiset direct categories 一次并列展开，recursive dataflow 保持按需分页。它只改善同一 owner
   对已有 Gate1 evidence 与 π grammar 的注意力；不选择 refinement、不改 J/C/π，也不把 compiler op

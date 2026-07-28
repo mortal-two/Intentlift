@@ -20,7 +20,7 @@ from .pi import (
 REPLAY_PACKET_SCHEMA = "intentir.scrc.replay-input.v1"
 PUBLIC_FRONTEND_CONTEXT = {
     "triton": {
-        "context_policy": "public_frontend_context_v16",
+        "context_policy": "public_frontend_context_v17",
         "retrieval_scope": "public Triton documentation and public examples",
         "tool_access": ["public_document_lookup"],
         "compile_entry_contract": (
@@ -41,6 +41,12 @@ PUBLIC_FRONTEND_CONTEXT = {
             "Each J.boundary access is closed: when predicate is absent, emit an "
             "unconditional load or store; never synthesize a defensive or "
             "redundant mask from a domain, grid extent, C slot, or safety guess. "
+            "Each J.boundary.broadcasts item is an explicit consumer-local rank "
+            "projection. Preserve the operand's closed J type at its producer and "
+            "boundary access, then materialize exactly the declared axes at the "
+            "named consumer with public explicit rank-lift operations. Never "
+            "pre-expand an access index or load shape, and never rely on implicit "
+            "broadcasting that erases the authored consumer stage. "
             "Every J.signature p* is one already-existing callable ABI carrier. "
             "All pi instances anchored to the same p* scope or route uses of that "
             "single carrier; they never create another external value or program "
@@ -272,7 +278,7 @@ PUBLIC_FRONTEND_CONTEXT = {
 # u_f object; changing that basis requires an explicit future policy version.
 PUBLIC_FRONTEND_CONTEXT_ACTIVE_POLICY = MappingProxyType(
     {
-        "triton": "public_frontend_context_v16",
+        "triton": "public_frontend_context_v17",
         "cute": "public_frontend_context_v1",
         "tilelang": "public_frontend_context_v7",
         "cuda": "public_frontend_context_v3",
@@ -314,6 +320,9 @@ PUBLIC_FRONTEND_CONTEXT_DIGEST_HISTORY = MappingProxyType(
                 ),
                 "public_frontend_context_v16": (
                     "67845810703e1c0906950e4008d975fdab0167d17a8106ced006f0fdf627d402"
+                ),
+                "public_frontend_context_v17": (
+                    "7648ad570af5d5b94de6f6baac6beec2f7493b54afc57c57bf259d6a0e222e21"
                 ),
             }
         ),
@@ -368,14 +377,20 @@ _PUBLIC_FRONTEND_CONTEXT_DIGEST_ALIASES = MappingProxyType(
     {
         "triton": MappingProxyType(
             {
-                # Two private branches independently introduced v15.  Keep both
-                # exact payloads auditable after the combined v16 supersedes them.
+                # Private branches independently introduced v15 and later v16.
+                # Keep every exact payload auditable after the combined successor.
                 "public_frontend_context_v15": frozenset(
                     {
                         "0fa2e4823267dcec5601c4f805ac91301a411efbb7479e5cc9c48b208a8d7510",
                         "7d68b5a2f77f614c952966c1b94a8eac052f6ebcad77412cd7db6af9ffbed8e6",
                     }
-                )
+                ),
+                "public_frontend_context_v16": frozenset(
+                    {
+                        "67845810703e1c0906950e4008d975fdab0167d17a8106ced006f0fdf627d402",
+                        "57371c0c62fc68ca1f8f9b45a80144766ddf1416778f05f91b1c9c115173e165",
+                    }
+                ),
             }
         )
     }
@@ -473,6 +488,18 @@ PUBLIC_FRONTEND_CONTEXT_RECEIPT_HISTORY = MappingProxyType(
                         "receipt_hash_basis": "full_u_f",
                         "context_sha256": (
                             "31f39b26af2782660286f7f8de87e40114cfdc45c0082c7a40ab31a7d69abce4"
+                        ),
+                        "accepted_context_sha256": (
+                            "31f39b26af2782660286f7f8de87e40114cfdc45c0082c7a40ab31a7d69abce4",
+                            "1dfa8eb068dc1491011dec5163299a6a4f6d4001dddc0411838cbbc9c445370d",
+                        ),
+                    }
+                ),
+                "public_frontend_context_v17": MappingProxyType(
+                    {
+                        "receipt_hash_basis": "full_u_f",
+                        "context_sha256": (
+                            "2cea108cfa97dc4cc4fff87fa65e36e30cd75fb5bf8d38e7588ce1446d62ac2a"
                         ),
                     }
                 ),
@@ -1114,7 +1141,11 @@ def _instructions(*, frontend: Frontend, masked: bool) -> str:
         "logical operators, predicates, fills, constants, index relations and "
         "effects only from J. Preserve explicit J stages: reduce(sum) followed by "
         "division remains sum then division, never mean or a generated sum-of-ones "
-        "count. Treat every J.value_dimension_relations item as an already "
+        "count. Every J.boundary.broadcasts item applies only at its named consumer: "
+        "keep the operand's closed type at its producer/access and materialize the "
+        "declared axes with explicit public rank-lift operations before that consumer. "
+        "Do not pre-expand the load/index shape or erase the stage through implicit "
+        "broadcasting. Treat every J.value_dimension_relations item as an already "
         "J-certified precondition: relation=eq permits the declared integral "
         "rank-0 value_ref and dimension_ref to denote the same logical extent. "
         "Consume only the declared relation where J shapes, domains, predicates, "
