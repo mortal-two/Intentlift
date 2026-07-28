@@ -25,13 +25,16 @@ closed signature、Layer-A total typing、显式 broadcast、canonical reduce/co
 `pi.iterations`，并验证 Lift 已作者化的 value/dimension、consumer-extension、access-guard、typed
 control/inout/output-binding/terminal-control 关系。fixed code只诊断，不翻译别名、补齐 attrs、生成 handle/relation、
 改图或修复 artifact；历史 wire/receipt 继续按自身版本读取，不静默升级或重判。当前 Agent execution
-receipt 为 `intentir.lift-knowledge.v59 / minisweagent.intentir-replay.v18 / openai.codex-cli.intentir-replay.v14`；
+receipt 为 `intentir.lift-knowledge.v59 / minisweagent.intentir-replay.v19 / openai.codex-cli.intentir-replay.v15`；
 artifact.v9 的 `physical_iterations/physical_loop_carriers` 只表达 J reduce/contraction 外的物理时间，
 feedback frontier 与 Replay local-axis 合同只改 agent 消费，不改变接受集合。Harness adapter v5 另把 concrete
 shape valuation 与 Harness-only `h*` shape identity 分开，并可显式声明 valuation-matched semantic
 constexpr ↔ `h*`；最终 `x*`/equality 仍由 Lift 完整作者化。
-Codex Replay v14 通过隔离 file mailbox提供匿名 C、J boundary与完整 π 的 lossless workspace view；该 view
-不生成 realization，不遗漏 physical-time/terminal/address relation，也没有Gate或认证权限。
+MiniSWE Replay v19 的首轮消息只携带 immutable packet 的digest/size receipt；完整匿名 J/C/π/U_f
+仍位于隔离workspace，并由bounded、read-only packet query按需原样投影。Codex Replay v15通过隔离
+file mailbox先返回compact manifest，再以有界参数查询返回ABI、J graph、boundary与π realization
+obligation页；不再把完整packet压成一个巨大tool response。两条路径都不生成realization，不遗漏
+physical-time/terminal/address relation，也没有Gate或认证权限。
 `replay-check.v9` 只在 J.signature carrier kind 与 π address routes 能完全决定时，核对 compiled
 pointer-address operation occurrence；独立的 integer base/lane contribution 不被误当 pointer stage，
 但每个 transfer 必须有同 ref 的 pointer-producing stage，且不能存在未绑定 transfer 的额外 pointer

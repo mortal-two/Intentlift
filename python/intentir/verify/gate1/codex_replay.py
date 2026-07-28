@@ -40,7 +40,7 @@ from .replay import (
 )
 
 
-CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v14"
+CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v15"
 
 _INITIAL_PROMPT = """You are the sole writer for one fresh source-blind IntentIR Replay episode.
 The outer runtime exposes only this isolated /workspace. input/ is immutable;
@@ -49,26 +49,28 @@ Harness/compiler view, actual C value, Gate result, earlier Replay, sibling
 trajectory, or network tool. Do not search for any of them.
 
 Start with exactly one call to
-`python .agents/intentir_agent_tool.py replay_workspace_view`. Do not first dump
-the whole input/packet.json: the tool is a lossless, compact projection of this
-packet's complete anonymous ABI, J graph and boundary, MaskC(C), U_f, and a
-per-instance pi obligation ledger joining authored routes, order, sharing,
-temporal roles, refinements, and terminal control. Its reduction-obligation
-rows colocate the exact authored operand/result types, semantic axes, local
-reduction boundary and C/pi attachments; use those rows to preserve rank and
-necessary public reshape/expand stages instead of flattening a typed operand.
-It does not derive a
-schedule or see Gate evidence. Use each J graph row and pi obligation row as a
-construction checklist. Read a named field from input/packet.json only when the
-workspace view points to an exact field that remains unclear; never re-dump the
-whole packet or redundantly reconstruct routes/order already joined by the
-ledger. Preserve every authored effect and realization ordering relation;
-never replace pi topology with a guessed source recipe. Use REPLAY_CONTRACT.md
-only for a focused unclear rule.
+`python .agents/intentir_agent_tool.py replay_manifest_view`. Do not first dump
+the whole input/packet.json. The manifest is a bounded exact projection that
+gives section sizes, ABI/op counts and an exact bounded query plan. Follow that
+plan with `python .agents/intentir_agent_tool.py replay_packet_query ...`; up to
+four independent read-only queries may be issued together. Page graph and
+obligation rows only when `next_start` is non-null. The legacy
+`replay_workspace_view` is not exposed because it retransmits the whole packet
+in one attention block. Packet-query results contain only exact anonymous ABI,
+J graph/boundary, MaskC(C), U_f, and authored pi obligations; they do not derive
+a schedule or see Gate evidence. Use each J graph row and pi obligation row as a
+construction checklist. Use `section PATH`, `obligation HANDLE`, or
+`find HANDLE` only for a named fact omitted by a bounded view; never re-dump
+the whole packet or reconstruct routes/order. Preserve every authored effect and
+realization ordering relation; never replace pi topology with a guessed source
+recipe. Use REPLAY_CONTRACT.md only for a focused unclear rule.
 Author the entire Replay as
 exactly output/replay.source and no other output file. You may keep
-proof-irrelevant notes or helper scripts under work/. You own every semantic
-choice in the Replay. Run
+proof-irrelevant notes or helper scripts under work/. You own the source
+spelling and low-level realization of facts already authored by J and pi; you
+do not invent semantic operators, dataflow edges, predicates, effects, result
+relations, or physical routes. If a required fact is absent from the packet,
+keep the replay fail-closed rather than guessing it. Run
 `python .agents/intentir_agent_tool.py replay_check` on your complete source,
 repair it until PASS, then run
 `python .agents/intentir_agent_tool.py replay_compile_check` for the public
@@ -157,6 +159,62 @@ def _replay_realization_view(packet: Mapping[str, Any]) -> dict[str, Any]:
         "authority": (
             "lossless source-isolated packet projection only; no schedule, code, "
             "repair, Source, Harness value, or Gate evidence"
+        ),
+    }
+
+
+def _replay_manifest_view(packet: Mapping[str, Any]) -> dict[str, Any]:
+    """Return a small exact index before the agent requests focused views."""
+
+    from minisweagent.environments.intentir_replay import _packet_overview
+
+    overview = _packet_overview(packet)
+    return {
+        "protocol": "intentir.scrc.replay-manifest-view.v1",
+        "status": "pass",
+        "entry": overview.get("entry"),
+        "frontend": overview.get("frontend"),
+        "j_parameter_total": overview.get("j_parameter_total"),
+        "operation_count": overview.get("operation_count"),
+        "boundary_counts": overview.get("boundary_counts"),
+        "pi_counts": overview.get("pi_counts"),
+        "root_sections": overview.get("root_sections"),
+        "operations_preview": overview.get("operations", []),
+        "operations_omitted": overview.get("operations_omitted", 0),
+        "query_plan": [
+            "python .agents/intentir_agent_tool.py replay_packet_query abi 0 48",
+            "python .agents/intentir_agent_tool.py replay_packet_query graph 0 12",
+            "python .agents/intentir_agent_tool.py replay_packet_query realization",
+            "python .agents/intentir_agent_tool.py replay_packet_query obligations 0 12",
+        ],
+        "authority": (
+            "exact source-isolated packet index only; no Source, Harness value, "
+            "Gate evidence, inference, repair, or schedule"
+        ),
+    }
+
+
+def _replay_packet_query(
+    packet: Mapping[str, Any], arguments: tuple[str, ...]
+) -> dict[str, Any]:
+    """Run the existing bounded packet projection with a closed argument list."""
+
+    from minisweagent.environments.intentir_replay import (
+        INTENTIR_PACKET_QUERY,
+        _query_packet,
+    )
+
+    if not arguments:
+        raise ValueError("replay_packet_query needs a query kind")
+    result = _query_packet(packet, [INTENTIR_PACKET_QUERY, *arguments])
+    return {
+        "protocol": "intentir.scrc.replay-packet-query.v1",
+        "status": "pass",
+        "query": list(arguments),
+        "view": result,
+        "authority": (
+            "exact bounded source-isolated packet projection only; no Source, "
+            "Harness value, Gate evidence, inference, repair, or schedule"
         ),
     }
 
@@ -526,19 +584,23 @@ class CodexCLIReplayWriter:
                 last_checked_good = current
             return response
 
-        def replay_realization_view_tool() -> Mapping[str, Any]:
-            return _replay_realization_view(packet)
+        def replay_manifest_view_tool() -> Mapping[str, Any]:
+            return _replay_manifest_view(packet)
 
-        def replay_workspace_view_tool() -> Mapping[str, Any]:
-            return _replay_workspace_view(packet)
+        def replay_packet_query_tool(
+            arguments: tuple[str, ...]
+        ) -> Mapping[str, Any]:
+            return _replay_packet_query(packet, arguments)
 
         bridge = CodexCLIToolBridge(
             workspace.scratch_dir / CODEX_CLI_TOOL_BRIDGE_ROOT_NAME,
             {
-                "replay_workspace_view": replay_workspace_view_tool,
-                "replay_realization_view": replay_realization_view_tool,
+                "replay_manifest_view": replay_manifest_view_tool,
                 "replay_check": replay_check_tool,
                 "replay_compile_check": replay_compile_tool,
+            },
+            argument_handlers={
+                "replay_packet_query": replay_packet_query_tool,
             },
         )
 

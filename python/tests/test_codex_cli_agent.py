@@ -24,6 +24,8 @@ from intentir.extraction.providers.provider import ProviderConfig
 from intentir.verify.gate1.codex_replay import (
     CODEX_CLI_REPLAY_BACKEND,
     CodexCLIReplayWriter,
+    _replay_manifest_view,
+    _replay_packet_query,
     _replay_realization_view,
     _replay_workspace_view,
 )
@@ -224,7 +226,7 @@ def test_codex_tool_client_help_is_local_and_does_not_create_a_request(
         session.close()
 
     assert completed.returncode == 0, completed.stderr
-    assert completed.stdout.strip() == "usage: intentir_agent_tool.py TOOL"
+    assert completed.stdout.strip() == "usage: intentir_agent_tool.py TOOL [ARG ...]"
     assert not (work_dir / CODEX_CLI_TOOL_BRIDGE_ROOT_NAME).exists()
 
 
@@ -283,7 +285,66 @@ def test_codex_tool_bridge_returns_closed_host_diagnostic_without_writing(
     assert evidence["calls"] == 1
     assert evidence["transport"] == "isolated_workspace_file_mailbox"
     assert evidence["receipts"][0]["tool"] == "candidate_check"
+    assert evidence["receipts"][0]["argument_count"] == 0
     assert not (work_dir / CODEX_CLI_TOOL_BRIDGE_ROOT_NAME).exists()
+
+
+def test_codex_tool_bridge_passes_bounded_arguments_only_to_argument_handler(
+    tmp_path: Path,
+) -> None:
+    input_dir, output_dir, work_dir, tmp_dir = _workspace_dirs(tmp_path)
+    observed: list[tuple[str, ...]] = []
+
+    def packet_query(arguments: tuple[str, ...]) -> dict:
+        observed.append(arguments)
+        return {
+            "protocol": "intentir.test-query.v1",
+            "status": "pass",
+            "arguments": list(arguments),
+        }
+
+    session = CodexCLISession(
+        provider=ProviderConfig(
+            "test", "http://provider.invalid/v1", "provider-secret", "test-model"
+        ),
+        input_dir=input_dir,
+        output_dir=output_dir,
+        scratch_dir=work_dir,
+        tmp_dir=tmp_dir,
+        model="test-model",
+        effort="high",
+    )
+    bridge = CodexCLIToolBridge(
+        work_dir / CODEX_CLI_TOOL_BRIDGE_ROOT_NAME,
+        {},
+        argument_handlers={"packet_query": packet_query},
+    )
+    try:
+        bridge.start()
+        completed = subprocess.run(
+            [
+                *session._sandbox_prefix(),
+                "/usr/bin/python3",
+                "/workspace/.agents/intentir_agent_tool.py",
+                "packet_query",
+                "graph",
+                "0",
+                "12",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        evidence = bridge.evidence
+    finally:
+        bridge.close()
+        session.close()
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout)["arguments"] == ["graph", "0", "12"]
+    assert observed == [("graph", "0", "12")]
+    assert evidence["receipts"][0]["argument_count"] == 3
+    assert len(evidence["receipts"][0]["arguments_sha256"]) == 64
 
 
 def test_codex_replay_realization_view_is_lossless_and_source_isolated() -> None:
@@ -331,6 +392,44 @@ def test_codex_replay_workspace_view_joins_authored_facts_without_source() -> No
     assert len(obligations["items"]) == obligations["total"]
     assert view["status"] == "pass"
     assert not ({"source", "harness", "gate1", "gate2"} & set(view))
+
+
+def test_codex_replay_bounded_queries_partition_exact_packet_without_source() -> None:
+    artifact = make_copy_artifact()
+    packet = {
+        "c": artifact.c.to_json(),
+        "j": artifact.j.to_json(),
+        "pi": artifact.pi.to_json(),
+        "u_f": {"frontend": "triton", "replay_function": "scrc_k0"},
+    }
+
+    manifest = _replay_manifest_view(packet)
+    abi = _replay_packet_query(packet, ("abi", "0", "48"))
+    graph = _replay_packet_query(packet, ("graph", "0", "12"))
+    boundary = _replay_packet_query(packet, ("section", "j.boundary"))
+    realization = _replay_packet_query(packet, ("realization",))
+    obligations = _replay_packet_query(packet, ("obligations", "0", "12"))
+
+    assert manifest["query_plan"] == [
+        "python .agents/intentir_agent_tool.py replay_packet_query abi 0 48",
+        "python .agents/intentir_agent_tool.py replay_packet_query graph 0 12",
+        "python .agents/intentir_agent_tool.py replay_packet_query realization",
+        "python .agents/intentir_agent_tool.py replay_packet_query obligations 0 12",
+    ]
+    assert manifest["operation_count"] == 1
+    assert len(json.dumps(manifest)) < len(json.dumps(_replay_workspace_view(packet)))
+    assert abi["view"]["intent_io"]["name"] == "scrc_j0"
+    expected_op = artifact.j.to_json()["intent"]["intent_function"]["body"][0][
+        "op"
+    ]
+    assert graph["view"]["items"][0]["op"] == expected_op
+    assert boundary["view"] == packet["j"]["boundary"]
+    assert realization["view"]["topology"]["terminal_controls"] == packet["pi"][
+        "terminal_controls"
+    ]
+    assert obligations["view"]["total"] == len(packet["pi"]["instances"])
+    for view in (manifest, abi, graph, boundary, realization, obligations):
+        assert not ({"source", "harness", "gate1", "gate2"} & set(view))
 
 
 def test_codex_cli_turn_parses_jsonl_and_resumes_same_thread(
@@ -540,7 +639,7 @@ def scrc_k0(p0, p1, p2, c0: tl.constexpr):
             self.calls += 1
             self.thread_id = f"fresh-replay-{self.identity}"
             if self.calls == 1:
-                assert "replay_workspace_view" in prompt
+                assert "replay_manifest_view" in prompt
                 payload = valid_replay.replace("scrc_k0", "wrong_entry")
             else:
                 check = json.loads(

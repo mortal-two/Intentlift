@@ -28,27 +28,29 @@ agent:
     candidate selection. Submit with `intentir_replay_submit`; do not use a stdout
     marker.
 
-    When the packet is too large to embed, you may issue up to four independent
-    `intentir_packet_query` calls in one response. Never mix them with a write or
-    check. Every write, inspect-after-write, check, commit, rollback or submit is
-    the only action in its response. Model/tool counts are telemetry; active wall
-    time governs the episode. Produce complete Replay early, keep explanations
-    short, and do not emit private chain-of-thought.
+    The initial message carries only a transport receipt. Issue the supplied
+    `intentir_packet_query overview` first, then use up to four independent focused
+    packet queries in one response when their results do not depend on each other.
+    Never mix packet queries with a write or check. Every write,
+    inspect-after-write, check, commit, rollback or submit is the only action in its
+    response. Model/tool counts are telemetry; active wall time governs the
+    episode. Produce complete Replay early, keep explanations short, and do not
+    emit private chain-of-thought.
 
   instance_template: |
-    The following is the exact immutable source-blind packet when it fits the
-    transport bound, otherwise a digest receipt plus one bounded bootstrap
-    command. It is not a semantic summary and contains no Source information.
+    The following is a compact receipt for the exact immutable source-blind packet
+    mounted at `/input/packet.json`. It is not a semantic summary and contains no
+    Source information.
 
     <persistent-workspace-mirror>
     {{ replay_startup_context }}
     </persistent-workspace-mirror>
 
-    When `exact_packet_embedded=true`, use `packet` immediately; do not query
-    overlapping overview/ABI/graph/realization views. When false, execute only
-    the supplied `bootstrap_command`, then use one focused `section PATH` or
-    `find HANDLE` query for an omitted named fact if needed. Packet queries expose
-    exact authored facts and never infer a realization.
+    Execute the supplied `bootstrap_command`. Then consume the exact ABI, graph,
+    boundary and realization obligations through the focused commands returned by
+    that overview; page only when `next_start` is non-null. Use `section PATH` or
+    `find HANDLE` only for one omitted named fact. Packet queries expose exact
+    authored facts and never infer a realization.
 
     Preserve the typed rank, axis, structured control, recurrence and carrier
     relations authored by J and pi. A pi physical_iterations relation keeps the
@@ -94,8 +96,9 @@ model:
   compact_tool_history: true
   compact_tool_arguments_over_chars: 2048
   compact_tool_outputs_keep_recent: 2
-  # The exact packet stays in the initial user message on every stateless API
-  # call. Only stale response/tool groups become deterministic transport receipts.
+  # The initial user message contains only a small packet receipt. Exact authored
+  # facts stay in the immutable workspace and enter context only through bounded
+  # read-only query results selected by the Replay owner.
   compact_workspace_mirrors: false
   compact_response_history_keep_recent: 3
   use_previous_response_id: true

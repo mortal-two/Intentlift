@@ -38,7 +38,7 @@ from .tilelang_codegen import extract_tilelang_module
 from .ttir import TTIRParseError, parse_ttir
 
 
-MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v18"
+MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v19"
 MINISWE_REPLAY_TURN_TIMEOUT_SECONDS = 300.0
 MINISWE_REPLAY_XHIGH_TURN_TIMEOUT_SECONDS = 900.0
 RESPONSES_REPLAY_BACKEND = "openai.responses.intentir-replay.v1"

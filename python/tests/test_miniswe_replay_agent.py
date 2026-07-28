@@ -476,10 +476,10 @@ def test_episode_contract_digest_binds_exact_files_prompts_and_budgets() -> None
     assert default_config["model"]["retry_timeouts"] is True
     assert default_config["model"]["semantic_initial_turns"] == 1
     assert default_config["model"]["model_kwargs"]["parallel_tool_calls"] is True
-    assert MINISWE_REPLAY_BACKEND == "minisweagent.intentir-replay.v18"
+    assert MINISWE_REPLAY_BACKEND == "minisweagent.intentir-replay.v19"
     instance = default_config["agent"]["instance_template"]
-    assert "exact_packet_embedded=true" in instance
-    assert "do not query" in instance
+    assert "compact receipt" in instance
+    assert "bootstrap_command" in instance
     assert "value-equivalent flattened formula" in instance
     assert "Construct and direct-submit complete Triton source early" in instance
 
@@ -1021,10 +1021,11 @@ def test_static_error_can_be_repaired_in_one_fresh_multi_turn_episode() -> None:
 
     assert result.source_text == VALID_REPLAY
     first_packet = model.query_inputs[0][1]["content"]
-    assert "intentir.replay-startup-context.v2" in first_packet
-    assert '"exact_packet_embedded":true' in first_packet
-    assert '"packet":' in first_packet
-    assert '"views":' not in first_packet
+    assert "intentir.replay-startup-context.v3" in first_packet
+    assert '"exact_packet_embedded":false' in first_packet
+    assert '"packet_bytes":' in first_packet
+    assert '"bootstrap_command":"intentir_packet_query overview"' in first_packet
+    assert '"packet":' not in first_packet
     assert "anonymous_source" not in first_packet
     evidence = result.trajectory["info"]["replay_check"]
     assert [item["status"] for item in evidence["results"]] == [
