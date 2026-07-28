@@ -1,6 +1,6 @@
 # IntentIR 当前派生规范
 
-> 状态：2026-07-28 当前派生规范。
+> 状态：2026-07-29 当前派生规范。
 
 `.trellis/spec` 只把四份 SCRC 设计与第五份 production backend 设计投影为 schema、API、runner、
 lowering 和测试要求，不形成另一套设计。上位文档按作用域组合，不构成一条让旧 SCRC 文档覆盖
@@ -25,7 +25,7 @@ closed signature、Layer-A total typing、显式 broadcast、canonical reduce/co
 `pi.iterations`，并验证 Lift 已作者化的 value/dimension、consumer-extension、access-guard、typed
 control/inout/output-binding/terminal-control 关系。fixed code只诊断，不翻译别名、补齐 attrs、生成 handle/relation、
 改图或修复 artifact；历史 wire/receipt 继续按自身版本读取，不静默升级或重判。当前 Agent execution
-receipt 为 `intentir.lift-knowledge.v65 / intentir.lift-knowledge.v61 / minisweagent.intentir-replay.v25 / openai.codex-cli.intentir-replay.v21`；
+receipt 为 `intentir.lift-knowledge.v65 / intentir.lift-knowledge.v61 / minisweagent.intentir-replay.v26 / openai.codex-cli.intentir-replay.v22`；
 artifact.v9 的 `physical_iterations/physical_loop_carriers` 表达 structured J loop 外、由已作者化
 reduce/contraction 或 boundary access/domain 锚定的物理时间，
 feedback frontier/category、candidate-control 与 Replay local-axis 合同只改 agent 消费，不改变接受
@@ -33,7 +33,7 @@ feedback frontier/category、candidate-control 与 Replay local-axis 合同只�
 closed feedback，host 仓库并发升级不得改变既有 owner。Harness adapter v5 另把 concrete
 shape valuation 与 Harness-only `h*` shape identity 分开，并可显式声明 valuation-matched semantic
 constexpr ↔ `h*`；最终 `x*`/equality 仍由 Lift 完整作者化。
-Replay v25/v21 对不超过 64 KiB 的完整匿名 J/C/π/U_f 只在首次上下文 exact embedding 一次，并额外
+Replay v26/v22 对不超过 64 KiB 的完整匿名 J/C/π/U_f 只在首次上下文 exact embedding 一次，并额外
 并置一个只重索引 semantic dimension carrier、IEEE special typed constant、physical iteration、
 `reduction_linearization + consumer route`、loop/branch lexical region membership 与 cross-region
 order 的 exact `critical_facts.v2`；超限
@@ -53,6 +53,9 @@ address routes 能完全决定时，沿作者化 route
 传播 pointer reachability，并核对 compiled pointer-address operation occurrence；独立的 integer
 base/lane contribution 不被误当 pointer stage，address instance 的 `semantic_ref` spelling 不必等于
 transfer ref，但每个 transfer 必须从匹配 boundary tensor 的 pointer/tensor signature carrier 可达，
+并按位于 program region、沿作者化 route 到达 `address_base` 的 distinct J domain 数量核对
+compiled `tt.get_program_id` occurrence；同一 `p*` 的多个 π instance 始终共享一个既有 ABI carrier，
+placement 本身不产生 program coordinate。
 且每个 pointer-producing address stage 必须流向至少一个 transfer。无法闭合的 topology 不猜，不读取
 Source，也不生成地址公式。`typecheck.v25` 继承 v24 的 pointer route 与 floating typed constant
 检查，并把 `reduction_linearization` 限定为一个 `realize` stage 经唯一 slot-0 route 进入一个 J

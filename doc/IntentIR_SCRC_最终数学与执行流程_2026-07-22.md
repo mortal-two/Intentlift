@@ -466,8 +466,8 @@ dependent checking 夸写成 Source topology 的形式证明。
 首版不需要让 TypeCheck 成为 SMT 或完整图证明器。最小可行实现只需 fail closed 地完成上述局部检查。
 
 当前合并协议为 `artifact.v9 / decode.v13 / typecheck.v25 / candidate-check.v1 / replay-check.v10`；
-Replay packet envelope 仍是 `replay-input.v1`，Triton context 为 `public_frontend_context_v14`，
-Codex/MiniSWE Lift knowledge 为 v64/v61，MiniSWE Replay backend 为 v23，Codex Replay backend 为 v19。
+Replay packet envelope 仍是 `replay-input.v1`，Triton context 为 `public_frontend_context_v15`，
+Codex/MiniSWE Lift knowledge 为 v65/v61，MiniSWE Replay backend 为 v26，Codex Replay backend 为 v22。
 v40 为 source-aware Lift worker 增加只读、分页的 Source control-flow
 outline（function/loop/if/return 的行号与嵌套深度）；v41 只把 shared dialect/lowering 已支持的
 `log2` 补入通用 `map_unary` vocabulary；v42 只要求 access `fill_value` 保留 Source 该 load 的实际
@@ -487,6 +487,11 @@ pointer-producing stage 必须流向某个 transfer；并要求 compiled distinc
 Source/Harness value/Gate，不改变最终 SCRC 接受谓词。Codex Lift v5 只要求 LLM reconcile
 syntax-only Source control-flow outline，固定代码仍不分类或补 artifact。单次 provider turn wall-time 后只允许同 invocation/episode 的 exact checked
 bytes 或 resumable same thread 继续；禁止跨 formal round/Replay episode 继承候选。
+Replay v26/v22 进一步固定：J.signature 的一个 `p*` 是一个既有 callable ABI carrier，同一 `p*` 的
+多个 π instance 只定位或路由多处 use，不能产生新 carrier 或 `program_id`。source-blind construction
+compile 只从 program region 中沿作者化 route 到达 `address_base` 的 distinct J domain 投影合法
+`tt.get_program_id` occurrence 数并拒绝多余 occurrence；它不生成 coordinate、不选择 axis，也不参与
+Gate/认证。
 v3 历史上引入 `pi.iterations`；v4 引入 J-owned `value_dimension_relations`、
 `consumer_extensions` 等 typed relations；v5 引入 J-owned `access_guard_relations`；v6/v7 分别引入
 typed `effect_if/value_if`；v8 增加 π-owned `physical_iterations/physical_loop_carriers`；v9 增加

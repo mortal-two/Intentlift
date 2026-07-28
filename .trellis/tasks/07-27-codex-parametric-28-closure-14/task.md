@@ -189,8 +189,8 @@ fixed code不得替Lift修成`x*`。
 - frontend commit起点：`460aaed1c6af0b267a4a9da9ca497aea6e66ad40`；
 - artifact/decode/typecheck：`artifact.v9 / decode.v13 / typecheck.v25`；
 - Lift：Codex `openai.codex-cli.intentir-lift.v11 / intentir.lift-knowledge.v65`，MiniSWE `minisweagent.intentir-lift.v3 / intentir.lift-knowledge.v61`；
-- Replay：Codex `openai.codex-cli.intentir-replay.v21`，MiniSWE `minisweagent.intentir-replay.v25`；
-- Replay packet/check：`replay-input.v1 / public_frontend_context_v14 / replay-check.v10`；
+- Replay：Codex `openai.codex-cli.intentir-replay.v22`，MiniSWE `minisweagent.intentir-replay.v26`；
+- Replay packet/check：`replay-input.v1 / public_frontend_context_v15 / replay-check.v10`；
 - Harness：Triton workload adapter v5；
 - Gate1 observer：`triton-ttir-3.6-gate1-v11`；outer batch：`intentir.scrc.batch.v3`；
   candidate fan-out：v4 `first_observed_gate1_closure_cooperative_stop`；
