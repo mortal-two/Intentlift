@@ -38,12 +38,12 @@ from .tilelang_codegen import extract_tilelang_module
 from .ttir import TTIRParseError, parse_ttir
 
 
-MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v15"
+MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v16"
 MINISWE_REPLAY_TURN_TIMEOUT_SECONDS = 300.0
 MINISWE_REPLAY_XHIGH_TURN_TIMEOUT_SECONDS = 900.0
 RESPONSES_REPLAY_BACKEND = "openai.responses.intentir-replay.v1"
 STATIC_REPLAY_BACKEND = "intentir.static-replay-test.v1"
-REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v6"
+REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v7"
 _ANONYMOUS_HANDLE = re.compile(r"^[pc][0-9]+$")
 
 
@@ -1196,28 +1196,66 @@ def _packet_transfer_direct_counts(
     return counts, tuple(dict.fromkeys(refs))
 
 
-def _packet_required_compiled_iteration_count(packet: Mapping[str, Any]) -> int:
-    """Count compiler-visible loops already authored by J or physical pi time.
+def _packet_required_compiled_iteration_arities(
+    packet: Mapping[str, Any],
+) -> tuple[int, ...]:
+    """Return compiler-visible loop block arities authored by J and pi.
 
     A structured J ``loop`` denotes one logical loop.  A
     ``pi.physical_iterations`` row denotes one additional physical loop around
     an otherwise ordinary reduce/contraction.  ``pi.iterations`` realizes its
-    existing J loop and therefore is not counted a second time.  No missing
-    loop, bound, carrier, or schedule is inferred here.
+    existing J loop and therefore is not counted a second time.  The induction
+    variable contributes one block argument; only explicitly authored
+    ``pi.loop_carriers`` or ``pi.physical_loop_carriers`` add carrier arguments.
+    No missing loop, bound, carrier, or schedule is inferred here.
     """
 
-    structured = sum(
-        operation.get("op") == "loop"
-        for operation in _packet_intent_ops_by_path(packet).values()
+    operations = _packet_intent_ops_by_path(packet)
+    node_ids = packet.get("j", {}).get("node_ids", {})
+    path_to_node = (
+        {
+            str(path).removeprefix("intent_function."): str(node)
+            for node, path in node_ids.items()
+        }
+        if isinstance(node_ids, Mapping)
+        else {}
     )
     pi = packet.get("pi")
-    physical_rows = pi.get("physical_iterations") if isinstance(pi, Mapping) else None
-    physical = (
-        sum(isinstance(item, Mapping) for item in physical_rows)
-        if isinstance(physical_rows, list)
-        else 0
-    )
-    return structured + physical
+    if not isinstance(pi, Mapping):
+        pi = {}
+    instances = {
+        str(item.get("id")): str(item.get("semantic_ref"))
+        for item in pi.get("instances", [])
+        if isinstance(item, Mapping)
+    }
+    loop_carriers = [
+        item for item in pi.get("loop_carriers", []) if isinstance(item, Mapping)
+    ]
+    physical_carriers = [
+        item
+        for item in pi.get("physical_loop_carriers", [])
+        if isinstance(item, Mapping)
+    ]
+
+    arities: list[int] = []
+    for path, operation in operations.items():
+        if operation.get("op") != "loop":
+            continue
+        node_ref = path_to_node.get(path)
+        carrier_count = sum(
+            instances.get(str(item.get("loop_instance"))) == node_ref
+            for item in loop_carriers
+        )
+        arities.append(1 + carrier_count)
+    for item in pi.get("physical_iterations", []):
+        if not isinstance(item, Mapping):
+            continue
+        region = item.get("region")
+        carrier_count = sum(
+            carrier.get("region") == region for carrier in physical_carriers
+        )
+        arities.append(1 + carrier_count)
+    return tuple(sorted(arities))
 
 
 def source_blind_replay_compile_check(
@@ -1254,8 +1292,10 @@ def source_blind_replay_compile_check(
     expected_transfers, transfer_refs = _packet_transfer_direct_counts(
         selected_packet
     )
-    expected_iterations = _packet_required_compiled_iteration_count(selected_packet)
-    if (expected_transfers or expected_iterations) and result.ttir is not None:
+    expected_iteration_arities = _packet_required_compiled_iteration_arities(
+        selected_packet
+    )
+    if (expected_transfers or expected_iteration_arities) and result.ttir is not None:
         try:
             fingerprint = parse_ttir(result.ttir)
         except TTIRParseError:
@@ -1271,9 +1311,11 @@ def source_blind_replay_compile_check(
                 ),
             )
         actual_ops = dict(fingerprint.op_multiset)
-        if expected_iterations:
-            actual_iterations = actual_ops.get("scf.for", 0)
-            if expected_iterations != actual_iterations:
+        if expected_iteration_arities:
+            actual_iteration_arities = tuple(
+                sorted(loop.block_argument_count for loop in fingerprint.loops)
+            )
+            if len(expected_iteration_arities) != len(actual_iteration_arities):
                 return ReplayIngressResult(
                     "fail",
                     diagnostics=(
@@ -1281,8 +1323,25 @@ def source_blind_replay_compile_check(
                             "rule_code": "compiled_iteration_count",
                             "path": (
                                 "<synthetic-frontend-compile> scf.for: "
-                                f"expected={expected_iterations}, "
-                                f"actual={actual_iterations}"
+                                f"expected={len(expected_iteration_arities)}, "
+                                f"actual={len(actual_iteration_arities)}"
+                            ),
+                            "anonymous_handles": [],
+                            "line": None,
+                        },
+                    ),
+                )
+            if expected_iteration_arities != actual_iteration_arities:
+                return ReplayIngressResult(
+                    "fail",
+                    diagnostics=(
+                        {
+                            "rule_code": "compiled_iteration_carrier_arity",
+                            "path": (
+                                "<synthetic-frontend-compile> scf.for "
+                                f"block-arguments: expected="
+                                f"{list(expected_iteration_arities)}, actual="
+                                f"{list(actual_iteration_arities)}"
                             ),
                             "anonymous_handles": [],
                             "line": None,
@@ -1506,7 +1565,10 @@ These relations never create a J loop or authorize a guessed bound/update.
 The source-blind construction compile rejects a compiled `scf.for` multiplicity
 different from the number of structured J loops plus authored
 `pi.physical_iterations`; `pi.iterations` realizes its existing J loop and is
-not an additional loop. This check never supplies a loop or its bounds.
+not an additional loop. It also requires each loop's compiled block-argument
+arity to match its induction variable plus only the corresponding authored
+`pi.loop_carriers` or `pi.physical_loop_carriers`. This check never supplies a
+loop, bound, carrier, or update.
 
 A logical J axis ordinal is not automatically a Triton tensor-rank index. Build
 the active physical tile from the C slot attached to that J node and logical

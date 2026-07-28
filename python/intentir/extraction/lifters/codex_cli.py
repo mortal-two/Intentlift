@@ -35,8 +35,8 @@ from .scrc import (
 )
 
 
-CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v3"
-CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v58"
+CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v4"
+CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v59"
 CODEX_CLI_TURN_TIMEOUT_SECONDS = 900.0
 
 _INITIAL_PROMPT = """You are the sole source-aware IntentIR Lift owner for this branch.
@@ -53,6 +53,13 @@ distinct/repeated symbolic J dimension as declared, preserve scalar and bound
 constexpr shape-coordinate equality in authored J, and keep integer contract axes
 literal. Trace predicated loads to every sum/max/min consumer and author each
 required per-consumer outside-domain relation; fills are not a substitute.
+Before CandidateCheck, reconcile every loop, if, and return in the syntax-only
+Source control-flow outline with the complete candidate. Decide from Source and
+the selected specialization whether each item belongs to logical J control,
+pi-owned physical time/control, C-owned compile-time choice, or has no
+compiler-visible event. Do not treat a loop region, a large route set, or syntax
+alone as evidence that the corresponding control/time obligation was authored;
+and do not invent an obligation merely because it appears in the outline.
 After each meaningful complete edit run:
 
 python .agents/intentir_agent_tool.py candidate_check
@@ -69,6 +76,9 @@ _EXTERNAL_CONTINUATION_PROMPT = """The same branch-local source-aware Lift task 
 First run `python .agents/intentir_agent_tool.py feedback_frontier` and inspect
 the current output/candidate.json. Resolve direct failing interface, reduction,
 and predicate/effect categories before paging recursive dataflow witnesses. Use
+the Source control-flow outline again when the frontier names a loop, branch,
+terminal, or carrier difference; reconcile the complete J/C/pi ownership rather
+than only adding routes around the existing flat graph. Use
 the bounded exact category/path query only when the frontier names an unresolved
 section. Repair the complete model-authored (J,C,pi) against the closed external
 feedback and Source, rerun

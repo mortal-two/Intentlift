@@ -476,7 +476,7 @@ def test_episode_contract_digest_binds_exact_files_prompts_and_budgets() -> None
     assert default_config["model"]["retry_timeouts"] is True
     assert default_config["model"]["semantic_initial_turns"] == 1
     assert default_config["model"]["model_kwargs"]["parallel_tool_calls"] is True
-    assert MINISWE_REPLAY_BACKEND == "minisweagent.intentir-replay.v15"
+    assert MINISWE_REPLAY_BACKEND == "minisweagent.intentir-replay.v16"
     instance = default_config["agent"]["instance_template"]
     assert "exact_packet_embedded=true" in instance
     assert "do not query" in instance
@@ -634,7 +634,9 @@ module {
     assert "expected=0, actual=1" in diagnostic["path"]
 
 
-def test_synthetic_compile_rejects_missing_authored_physical_iteration() -> None:
+def _physical_reduce_replay_artifact(
+    *, with_carrier: bool = False
+) -> Gate1Artifact:
     artifact = make_reduce_artifact()
     artifact.c.slots[0].subject_ref = "n1"
     artifact.c.slots[0].axis_ref = 1
@@ -662,7 +664,55 @@ def test_synthetic_compile_rejects_missing_authored_physical_iteration() -> None
             "direction": "forward",
         }
     ]
-    artifact = Gate1Artifact.from_json(artifact.to_json())
+    if with_carrier:
+        artifact.pi.instances.extend(
+            [
+                {
+                    "id": "i5",
+                    "semantic_ref": "t1",
+                    "region": "r1",
+                    "mechanism": "realize",
+                },
+                {
+                    "id": "i6",
+                    "semantic_ref": "t1",
+                    "region": "r2",
+                    "mechanism": "realize",
+                },
+                {
+                    "id": "i7",
+                    "semantic_ref": "t1",
+                    "region": "r2",
+                    "mechanism": "realize",
+                },
+                {
+                    "id": "i8",
+                    "semantic_ref": "t1",
+                    "region": "r1",
+                    "mechanism": "realize",
+                },
+            ]
+        )
+        artifact.pi.routes.extend(
+            [
+                {"source": "i5", "target": "i6", "slots": [0]},
+                {"source": "i6", "target": "i7", "slots": [0]},
+            ]
+        )
+        artifact.pi.physical_loop_carriers = [
+            {
+                "region": "r2",
+                "init": "i5",
+                "state": "i6",
+                "next": "i7",
+                "result": "i8",
+            }
+        ]
+    return Gate1Artifact.from_json(artifact.to_json())
+
+
+def test_synthetic_compile_rejects_missing_authored_physical_iteration() -> None:
+    artifact = _physical_reduce_replay_artifact()
     loopless_ttir = """
 module {
   tt.func public @scrc_k0(%p0: !tt.ptr<f32>, %p1: !tt.ptr<f32>, %p2: i32) attributes {noinline = false} {
@@ -686,6 +736,38 @@ module {
     diagnostic = result.to_check_response()["diagnostics"][0]
     assert diagnostic["rule_code"] == "compiled_iteration_count"
     assert "expected=1, actual=0" in diagnostic["path"]
+
+
+def test_synthetic_compile_rejects_omitted_authored_physical_carrier() -> None:
+    artifact = _physical_reduce_replay_artifact(with_carrier=True)
+    carrierless_loop_ttir = """
+module {
+  tt.func public @scrc_k0(%p0: !tt.ptr<f32>, %p1: !tt.ptr<f32>, %p2: i32) attributes {noinline = false} {
+    %c0 = arith.constant 0 : i32
+    %c1 = arith.constant 1 : i32
+    scf.for %iv = %c0 to %p2 step %c1 : i32 {
+      scf.yield
+    }
+    tt.return
+  }
+}
+"""
+
+    class PassingCompiler:
+        def compile(self, _source, _case):
+            return CompileResult(True, ttir=carrierless_loop_ttir)
+
+    result = source_blind_replay_compile_check(
+        VALID_REPLAY,
+        artifact,
+        "scrc_k0",
+        compiler=PassingCompiler(),  # type: ignore[arg-type]
+    )
+
+    assert result.status == "fail"
+    diagnostic = result.to_check_response()["diagnostics"][0]
+    assert diagnostic["rule_code"] == "compiled_iteration_carrier_arity"
+    assert "expected=[2], actual=[1]" in diagnostic["path"]
 
 
 def test_replay_sandbox_has_empty_root_fixed_entrypoints_and_no_network(
