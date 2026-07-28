@@ -25,12 +25,14 @@ from .provider import ProviderConfig
 
 
 CODEX_CLI_AGENT_RUNTIME = "intentir.codex-cli.agent-runtime.v3"
-CODEX_CLI_TOOL_BRIDGE_PROTOCOL = "intentir.codex-cli.tool-bridge.v2"
+CODEX_CLI_TOOL_BRIDGE_PROTOCOL = "intentir.codex-cli.tool-bridge.v3"
 CODEX_CLI_TOOL_BRIDGE_ROOT_NAME = "intentir-agent-tools"
 MAX_CODEX_STDOUT_BYTES = 32 * 1024 * 1024
 MAX_CODEX_STDERR_BYTES = 1024 * 1024
 MAX_CODEX_TOOL_REQUEST_BYTES = 4096
 MAX_CODEX_TOOL_RESPONSE_BYTES = 1024 * 1024
+MAX_CODEX_TOOL_ARGUMENTS = 4
+MAX_CODEX_TOOL_ARGUMENT_CHARS = 256
 _CODEX_HOME_PREFIX = "intentir-codex-home-"
 _CODEX_TOOL_ROOT_PREFIX = "intentir-codex-tools-"
 
@@ -72,7 +74,7 @@ import secrets
 import sys
 import time
 
-PROTOCOL = "intentir.codex-cli.tool-bridge.v2"
+PROTOCOL = "intentir.codex-cli.tool-bridge.v3"
 ROOT = Path("/workspace/work/intentir-agent-tools")
 REQUESTS = ROOT / "requests"
 RESPONSES = ROOT / "responses"
@@ -80,13 +82,21 @@ LIMIT = 1024 * 1024
 TIMEOUT = 120.0
 
 if len(sys.argv) == 2 and sys.argv[1] in {"-h", "--help"}:
-    print("usage: intentir_agent_tool.py TOOL")
+    print("usage: intentir_agent_tool.py TOOL [ARG ...]")
     raise SystemExit(0)
-if len(sys.argv) != 2 or not sys.argv[1] or len(sys.argv[1]) > 64:
-    raise SystemExit("usage: intentir_agent_tool.py TOOL")
+if len(sys.argv) < 2 or len(sys.argv) > 2 + 4 or not sys.argv[1] or len(sys.argv[1]) > 64:
+    raise SystemExit("usage: intentir_agent_tool.py TOOL [ARG ...]")
+arguments = sys.argv[2:]
+if any(not item or len(item) > 256 for item in arguments):
+    raise SystemExit("IntentIR tool arguments are empty or too long")
 request_id = secrets.token_hex(16)
 request = json.dumps(
-    {"protocol": PROTOCOL, "request_id": request_id, "tool": sys.argv[1]},
+    {
+        "protocol": PROTOCOL,
+        "request_id": request_id,
+        "tool": sys.argv[1],
+        "arguments": arguments,
+    },
     sort_keys=True,
 ).encode() + b"\\n"
 temporary = REQUESTS / ("." + request_id + ".tmp")
@@ -130,6 +140,9 @@ class CodexCLIToolBridge:
 
     root_path: Path
     handlers: Mapping[str, Callable[[], Mapping[str, Any]]]
+    argument_handlers: Mapping[
+        str, Callable[[tuple[str, ...]], Mapping[str, Any]]
+    ] = field(default_factory=dict)
     _thread: threading.Thread | None = field(default=None, init=False, repr=False)
     _stop: threading.Event = field(default_factory=threading.Event, init=False, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
@@ -143,7 +156,10 @@ class CodexCLIToolBridge:
         if not parent.is_dir() or parent.is_symlink():
             raise ValueError("Codex tool bridge parent must be a real directory")
         normalized = dict(self.handlers)
-        if not normalized or any(
+        normalized_arguments = dict(self.argument_handlers)
+        if not normalized and not normalized_arguments:
+            raise ValueError("Codex tool bridge needs at least one closed handler")
+        if any(
             not isinstance(name, str)
             or not name
             or len(name) > 64
@@ -151,7 +167,18 @@ class CodexCLIToolBridge:
             for name, handler in normalized.items()
         ):
             raise ValueError("Codex tool bridge needs closed named handlers")
+        if any(
+            not isinstance(name, str)
+            or not name
+            or len(name) > 64
+            or not callable(handler)
+            for name, handler in normalized_arguments.items()
+        ):
+            raise ValueError("Codex tool bridge needs closed argument handlers")
+        if set(normalized) & set(normalized_arguments):
+            raise ValueError("Codex tool bridge tool names must be unique")
         self.handlers = normalized
+        self.argument_handlers = normalized_arguments
 
     def start(self) -> None:
         if self._thread is not None:
@@ -222,6 +249,7 @@ class CodexCLIToolBridge:
     def _serve_one(self, request_path: Path, request_id: str) -> None:
         started = time.monotonic()
         tool = "<invalid>"
+        arguments: tuple[str, ...] = ()
         try:
             if re.fullmatch(r"[0-9a-f]{32}", request_id) is None:
                 raise ValueError("request id is invalid")
@@ -236,10 +264,28 @@ class CodexCLIToolBridge:
             if request.get("request_id") != request_id:
                 raise ValueError("request id mismatch")
             tool_value = request.get("tool")
-            if not isinstance(tool_value, str) or tool_value not in self.handlers:
+            if not isinstance(tool_value, str) or tool_value not in (
+                set(self.handlers) | set(self.argument_handlers)
+            ):
                 raise ValueError("requested tool is not allowlisted")
             tool = tool_value
-            result = self.handlers[tool]()
+            raw_arguments = request.get("arguments", [])
+            if not isinstance(raw_arguments, list) or len(raw_arguments) > MAX_CODEX_TOOL_ARGUMENTS:
+                raise ValueError("tool arguments exceed the closed limit")
+            if any(
+                not isinstance(item, str)
+                or not item
+                or len(item) > MAX_CODEX_TOOL_ARGUMENT_CHARS
+                for item in raw_arguments
+            ):
+                raise ValueError("tool arguments must be bounded non-empty strings")
+            arguments = tuple(raw_arguments)
+            if tool in self.argument_handlers:
+                result = self.argument_handlers[tool](arguments)
+            elif arguments:
+                raise ValueError("this tool does not accept arguments")
+            else:
+                result = self.handlers[tool]()
             if not isinstance(result, Mapping):
                 raise TypeError("tool handler result must be an object")
             result_value = dict(result)
@@ -297,6 +343,14 @@ class CodexCLIToolBridge:
         self._write_response(request_id, encoded)
         receipt = {
             "tool": tool,
+            "argument_count": len(arguments),
+            "arguments_sha256": hashlib.sha256(
+                json.dumps(
+                    list(arguments),
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest(),
             "status": result_value.get("status"),
             "elapsed_ms": (time.monotonic() - started) * 1000.0,
             "result_sha256": hashlib.sha256(encoded).hexdigest(),

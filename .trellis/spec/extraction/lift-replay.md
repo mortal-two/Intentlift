@@ -303,13 +303,21 @@ ReplayLLM(J,pi,MaskC(C);U_f) -> complete source R_f
 当前 packet protocol 为 `intentir.scrc.replay-input.v1`，Triton 公共上下文为
 `public_frontend_context_v12`；source-aware Codex Lift 的当前 knowledge receipt 为
 `intentir.lift-knowledge.v59`，source-blind MiniSWE/Codex Replay backend 为
-`minisweagent.intentir-replay.v18 / openai.codex-cli.intentir-replay.v14`。这些版本必须随 fresh run 原样记录；旧 packet/context/knowledge
+`minisweagent.intentir-replay.v19 / openai.codex-cli.intentir-replay.v15`。这些版本必须随 fresh run 原样记录；旧 packet/context/knowledge
 evidence 不因实现升级而被重判。
 
-Codex Replay v14 的 workspace view 只是 source-isolated packet 的 lossless 投影：匿名 C slots、
-J graph/boundary 与完整 π obligation ledger 必须原样可见，尤其不能遗漏 `loop_carriers`、
-`physical_iterations`、`physical_loop_carriers`、`terminal_controls` 或 address routes。投影不推导或推荐 schedule/code；Replay LLM
-仍完整作者化 source，host只对其 exact bytes做ReplayCheck和public synthetic compile。
+MiniSWE Replay v19 不再把小于固定阈值的完整packet重复放入每个stateless model request；首轮只给
+digest、byte size、root section与`intentir_packet_query overview`的transport receipt。完整匿名packet
+仍是`/input/packet.json`的immutable authority，Replay owner通过bounded ABI/graph/realization/
+obligation/section/find查询读取exact authored facts。receipt和query都不摘要、补齐或推断语义。
+
+Codex Replay v15 不再把完整packet重排成单个workspace response。隔离file mailbox先给compact
+manifest，再通过最多四个有界参数化`replay_packet_query`动作按需返回ABI、J graph、boundary和
+π realization obligation页；legacy full workspace view不参与新episode的正常构造。匿名 C slots、
+J graph/boundary与完整π obligation仍必须原样可见，尤其不能遗漏`loop_carriers`、
+`physical_iterations`、`physical_loop_carriers`、`terminal_controls`或address routes。查询参数只
+选择既有packet字段，不能写入、补齐或推断关系。投影不推导或推荐schedule/code；Replay LLM仍
+完整作者化source，host只对其exact bytes做ReplayCheck和public synthetic compile。
 
 v50/v8 只升级 proof-irrelevant Agent execution transport：活动 staged writer 被移除，MiniSWE 使用
 一个持久 Lift owner 和每轮一个 exact Replay packet；首轮 exact allowlisted workspace mirror 在

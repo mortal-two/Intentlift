@@ -187,7 +187,7 @@ fixed code不得替Lift修成`x*`。
 - frontend commit起点：`460aaed1c6af0b267a4a9da9ca497aea6e66ad40`；
 - artifact/decode/typecheck：`artifact.v9 / decode.v13 / typecheck.v23`；
 - Lift：Codex `openai.codex-cli.intentir-lift.v5 / intentir.lift-knowledge.v59`；
-- Replay：Codex `openai.codex-cli.intentir-replay.v14`，MiniSWE `minisweagent.intentir-replay.v18`；
+- Replay：Codex `openai.codex-cli.intentir-replay.v15`，MiniSWE `minisweagent.intentir-replay.v19`；
 - Replay packet/check：`replay-input.v1 / public_frontend_context_v12 / replay-check.v9`；
 - Harness：Triton workload adapter v5；
 - Gate1 observer：`triton-ttir-3.6-gate1-v11`；outer batch：`intentir.scrc.batch.v3`；
@@ -229,6 +229,15 @@ fixed code不得替Lift修成`x*`。
   Source–Replay 三个输出误差均为 0；随后 RefEval 正确发现闭合 J 将 `[x0,x1,x2]` loop results
   直接映射到 `[x0,x2,x5]` 的 LSE/TMP，属于真实 axis-permutation J 错误。typecheck.v23 现以前置
   `output_binding_type_mismatch` 拒绝，旧 J 不认证，必须 fresh relift 显式 transpose/output mapping。
+- Wave 11（commit `29216507`，Codex Sol high）：Flash forward 三个branch均完整耗尽`K=5`为
+  NO_CLOSURE。fresh J 已显式作者化旧artifact缺失的transpose/output mapping；其中一个branch又在
+  J中把softmax scale重复应用两次，Replay只是忠实消费错误J，Gate1正确拒绝。另两个branch仍停在
+  op/dataflow topology，不得弱化Gate或写Flash recipe。
+- Wave 12（commit `29216507`，Codex Sol high）：Linear、RoPE、Qwen2VL MRoPE、Llama4 RoPE均完整
+  `B=3,K=5`为NO_CLOSURE；共同frontier为`op_multiset + dataflow`，部分还含
+  `predicate_effect`。Replay receipt均为fresh/current且多数public compile成功，故不能归因于Terra、
+  TypeCheck或提交协议。GroupNorm与CrossEntropy在相同frontier证据饱和后人为停止未终局branch；
+  它们只记cancelled infrastructure，不伪装成NO_CLOSURE。该wave没有新增认证。
 - 当前可用闭合总计 `17/28`：14 个原运行直接认证，3 个 exact-artifact capability recheck 认证。
   TypeCheck PASS 不计进度；只有 Gate1 已闭合且当前 Gate2 三边通过才计入。
 
@@ -266,9 +275,14 @@ CLI 已经发出的唯一 `thread.started` JSONL 事件恢复原 thread identity
 或合成未完成输出。对单次 provider turn wall-time 仍只做同 thread/session 续跑，并且只可恢复
 本次 invocation/episode 内由同一 LLM 写出且已经通过对应 closed check 的 exact bytes；固定代码不
 合并、修复或跨正式轮次选择 candidate。Lift v5 另要求 LLM 在提交前逐项 reconcile syntax-only
-Source control-flow outline，但分类与完整 J/C/π 仍由 LLM 作者化。MiniSWE v18 共享同一
-replay-check.v9 合同，但当前 28 项
-fresh closure 仍以 Codex 为主执行路径。
+Source control-flow outline，但分类与完整 J/C/π 仍由 LLM 作者化。
+
+Replay v15/v19只改变proof-irrelevant agent消费界面：MiniSWE首轮从完整packet注入改为约500字符的
+digest/size receipt，再由现有bounded `intentir_packet_query`按需读取exact authored facts；Codex
+file mailbox升级为支持最多四个有界字符串参数的v3 bridge，先给约3KB manifest，再用同一query
+语法分页读取ABI/graph/realization/obligation。Flash样本中Codex首轮最大单个view从约32KB降至
+9KB以内，首轮四类事实合计约22.6KB。两者都不摘要或生成J/π，不接收Source/Gate，不自动修Replay；
+完整Replay仍由source-blind owner作者化并经同一ReplayCheck/public compile fail closed。
 
 Gate2 Triton Source/Replay runner 共享 source-neutral `triton_static_dot_transpose_v1`：只对静态 boolean
 `trans_a/trans_b` 做与 Gate1 相同的 AST 等价归一，并记录 rewrite count/digest；不按 kernel 名改写，
@@ -301,7 +315,8 @@ K；无法安全resume时归为infrastructure failure。first-winner cancellatio
 
 ## 6. 并行、branch与预算
 
-- 主模型：Terra high；Sol high/xhigh仅作明确记录的独立对照；
+- 主闭合模型：Sol high；Sol xhigh只在high稳定暴露模型作者能力不足时明确升级。Terra high只作为
+  独立速度/模型能力对照，不占用主闭合branch，也不能用其失败覆盖Sol证据；
 - 同case默认`B=3`，三个branch彼此隔离；formal Gate1上限默认`K=5`，首个Gate1 closure立即成为
   winner并cooperative stop siblings；
 - agent内部tool/model steps没有“三次”capability上限，由active wall-time、transport safety与exact
