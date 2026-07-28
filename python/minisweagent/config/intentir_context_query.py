@@ -188,9 +188,11 @@ def _bootstrap(input_root: Path, output_root: Path) -> None:
             f"Run `{QUERY_COMMAND} feedback-frontier` before repairing a prior candidate.",
             f"Use `{QUERY_COMMAND} feedback --path diagnostics.KEY` for one exact diagnostic section.",
             "Read Source and Harness separately so neither can be transport-elided.",
+            f"Use `{QUERY_COMMAND} harness-abi` for the exact compact p*/c*/shape-coordinate ledger.",
             f"Use `{QUERY_COMMAND} source-find TEXT --context 3` for literal Source lookup.",
             f"Use `{QUERY_COMMAND} source-outline --start 1 --count 32` to locate syntax-level control before paging a long Source.",
             f"After drafting, run `{QUERY_COMMAND} candidate-abi` for a read-only ABI diff.",
+            f"Run `{QUERY_COMMAND} candidate-control` to audit authored control, time, effects, and outputs before CandidateCheck.",
             f"Inspect a draft with `{QUERY_COMMAND} candidate --path j.PATH` or `candidate-find HANDLE`.",
             f"Page an authored graph with `{QUERY_COMMAND} candidate-nodes --start 1 --count 40`.",
             "When Gate1 reports dataflow, run `python /input/tools/context_query.py feedback-category dataflow`; it preserves effect-order witnesses even when bulk node witnesses are paged out.",
@@ -502,6 +504,134 @@ def _harness(input_root: Path, path: str | None) -> None:
                 "query": f"{QUERY_COMMAND} harness --path KEY[.SUBKEY]",
             }
         )
+
+
+def _harness_abi_value(
+    input_root: Path, start: int = 1, count: int = 24
+) -> dict[str, Any]:
+    """Project the exact Harness-owned J/C classification into one small ledger.
+
+    The anonymous compiler view already decides which public handles are p* and
+    c*, which constexprs are bound non-C carriers, and which shape coordinates
+    are parametric.  This helper only joins those existing fields by handle.  It
+    never chooses a logical_ref, creates a dimension, or classifies Source use.
+    """
+
+    if start < 1 or count < 1 or count > 80:
+        raise ValueError("harness-abi start/count must be positive and count <= 80")
+    view = _load_json(input_root / "harness_view.json")
+    if not isinstance(view, dict):
+        raise TypeError("harness_view.json must be an object")
+    parameter_order = view.get("parameter_order", [])
+    arguments = view.get("arguments", [])
+    bound_values = view.get("bound_constexpr_values", {})
+    schedule_values = view.get("schedule_values", {})
+    compiler_slots = view.get("compiler_slots", [])
+    compiler_roles = view.get("compiler_roles", {})
+    if not isinstance(parameter_order, list) or not all(
+        isinstance(item, str) for item in parameter_order
+    ):
+        raise TypeError("Harness parameter_order must be an array of strings")
+    if not isinstance(arguments, list):
+        raise TypeError("Harness arguments must be an array")
+    if not isinstance(bound_values, dict) or not isinstance(schedule_values, dict):
+        raise TypeError("Harness constexpr value maps must be objects")
+    if not isinstance(compiler_slots, list) or not isinstance(compiler_roles, dict):
+        raise TypeError("Harness compiler slot declarations are malformed")
+    arguments_by_name = {
+        item.get("name"): item
+        for item in arguments
+        if isinstance(item, dict) and isinstance(item.get("name"), str)
+    }
+    entries: list[dict[str, Any]] = []
+    argument_fields = (
+        "kind",
+        "mode",
+        "dtype",
+        "shape",
+        "shape_contract",
+        "shape_coordinate",
+        "value",
+    )
+    for name in parameter_order:
+        entry: dict[str, Any] = {
+            "name": name,
+            "artifact_owner": "J.signature" if name.startswith("p") else "C",
+        }
+        argument = arguments_by_name.get(name)
+        if argument is not None:
+            entry["classification"] = (
+                "runtime_or_representation_parameter"
+                if name.startswith("p")
+                else "pure_c_argument"
+            )
+            entry["declared"] = {
+                field: argument[field]
+                for field in argument_fields
+                if field in argument
+            }
+        elif name in bound_values:
+            entry.update(
+                {
+                    "classification": "bound_non_c_constexpr_carrier",
+                    "bound_valuation": bound_values[name],
+                }
+            )
+        elif name in schedule_values:
+            entry.update(
+                {
+                    "classification": "pure_c_constexpr_slot",
+                    "c_value": schedule_values[name],
+                }
+            )
+        elif name in compiler_slots:
+            entry.update(
+                {
+                    "classification": "compiler_option_c_slot",
+                    "compiler_role": compiler_roles.get(name),
+                }
+            )
+        else:
+            entry["classification"] = "unresolved_in_exact_harness_view"
+        entries.append(entry)
+    selected = entries[start - 1 : start - 1 + count]
+    next_start = start + len(selected)
+    return {
+        "protocol": "intentir.lift-harness-abi-view.v1",
+        "parameters": selected,
+        "parameter_start": start,
+        "parameter_total": len(entries),
+        "parameter_next_command": (
+            f"{QUERY_COMMAND} harness-abi --start {next_start} --count {count}"
+            if next_start <= len(entries)
+            else None
+        ),
+        "bound_non_c_constexprs": list(bound_values),
+        "pure_c_constexprs": list(schedule_values),
+        "compiler_c_slots": list(compiler_slots),
+        "shape_coordinates": view.get("shape_coordinates", {}),
+        "bound_constexpr_shape_coordinates": view.get(
+            "bound_constexpr_shape_coordinates", {}
+        ),
+        "grid_shape_coordinates": view.get("grid_shape_coordinates", []),
+        "aliases": view.get("aliases", []),
+        "agent_owned_not_inferred": [
+            "p* logical_ref and t*/x* ownership",
+            "logical operators, control, accesses, effects, and outputs",
+            "all pi instances, routes, order, and time/control relations",
+        ],
+        "authority": (
+            "Exact read-only projection of harness_view.json. p*/c* ownership, "
+            "bound-non-C membership, and shape-coordinate identities were already "
+            "declared by the Harness; no Source meaning or artifact field was inferred."
+        ),
+    }
+
+
+def _harness_abi(
+    input_root: Path, start: int = 1, count: int = 24
+) -> None:
+    _emit_json(_harness_abi_value(input_root, start, count))
 
 
 def _candidate(output_root: Path, path: str | None) -> None:
@@ -829,6 +959,203 @@ def _candidate_node(output_root: Path, node_id: str) -> None:
         )
 
 
+_CONTROL_NODE_OPS = frozenset(
+    {
+        "loop",
+        "effect_if",
+        "value_if",
+        "reduce",
+        "scan",
+        "contraction",
+    }
+)
+_CONTROL_BOUNDARY_FIELDS = (
+    "accesses",
+    "effects",
+    "output_mappings",
+    "reductions",
+    "updates",
+    "consumer_extensions",
+    "access_guard_relations",
+    "result_relations",
+)
+_CONTROL_PI_FIELDS = (
+    "iterations",
+    "loop_carriers",
+    "physical_iterations",
+    "physical_loop_carriers",
+    "terminal_controls",
+    "routes",
+    "order",
+    "sharing",
+)
+
+
+def _candidate_control_records(
+    candidate: dict[str, Any], section: str
+) -> list[dict[str, Any]]:
+    j = candidate.get("j")
+    boundary = j.get("boundary") if isinstance(j, dict) else None
+    pi = candidate.get("pi")
+    records: list[dict[str, Any]] = []
+    if section == "boundary":
+        owner = boundary if isinstance(boundary, dict) else {}
+        fields = _CONTROL_BOUNDARY_FIELDS
+        prefix = "j.boundary"
+    elif section == "pi":
+        owner = pi if isinstance(pi, dict) else {}
+        fields = _CONTROL_PI_FIELDS
+        prefix = "pi"
+    else:
+        raise ValueError("candidate-control section must be overview, outputs, boundary, or pi")
+    for field in fields:
+        value = owner.get(field, [])
+        if isinstance(value, list):
+            records.extend(
+                {"path": f"{prefix}.{field}.{index}", "value": item}
+                for index, item in enumerate(value)
+            )
+        elif isinstance(value, dict):
+            records.extend(
+                {"path": f"{prefix}.{field}.{key}", "value": item}
+                for key, item in value.items()
+            )
+        elif value is not None:
+            records.append({"path": f"{prefix}.{field}", "value": value})
+    return records
+
+
+def _candidate_control_value(
+    output_root: Path,
+    section: str = "overview",
+    start: int = 1,
+    count: int = 20,
+) -> dict[str, Any]:
+    """Expose authored control/time/effect/output facts without repairing them."""
+
+    if start < 1 or count < 1 or count > 80:
+        raise ValueError("candidate-control start/count must be positive and count <= 80")
+    candidate_path = output_root / "candidate.json"
+    if not candidate_path.is_file():
+        return {
+            "protocol": "intentir.lift-candidate-control-view.v1",
+            "candidate_found": False,
+            "authority": "read-only; no artifact field was inferred or edited",
+        }
+    candidate = _load_json(candidate_path)
+    if not isinstance(candidate, dict):
+        raise TypeError("candidate.json must contain one root object")
+    j = candidate.get("j")
+    intent = j.get("intent") if isinstance(j, dict) else None
+    function = (
+        intent.get("intent_function") if isinstance(intent, dict) else None
+    )
+    boundary = j.get("boundary") if isinstance(j, dict) else None
+    pi = candidate.get("pi")
+    if not isinstance(function, dict):
+        function = {}
+    if not isinstance(boundary, dict):
+        boundary = {}
+    if not isinstance(pi, dict):
+        pi = {}
+    authority = (
+        "Read-only projection of the current LLM-authored candidate. Counts and "
+        "pages preserve authored multiplicity/order; no missing control, effect, "
+        "output, carrier, route, or relation was inferred or repaired."
+    )
+    if section == "overview":
+        control_nodes = [
+            _node_summary(path, node)
+            for path, node in _iter_candidate_nodes(candidate)
+            if node.get("op") in _CONTROL_NODE_OPS
+        ]
+        return {
+            "protocol": "intentir.lift-candidate-control-view.v1",
+            "candidate_found": True,
+            "section": section,
+            "intent_outputs": function.get("outputs", []),
+            "intent_returns": function.get("returns", []),
+            "control_reduction_nodes": control_nodes[:20],
+            "control_reduction_nodes_omitted": max(0, len(control_nodes) - 20),
+            "boundary_counts": {
+                field: len(boundary.get(field, []))
+                if isinstance(boundary.get(field, []), (list, dict))
+                else 0
+                for field in _CONTROL_BOUNDARY_FIELDS
+            },
+            "pi_counts": {
+                field: len(pi.get(field, []))
+                if isinstance(pi.get(field, []), (list, dict))
+                else 0
+                for field in _CONTROL_PI_FIELDS
+            },
+            "next_queries": [
+                f"{QUERY_COMMAND} candidate-control --section outputs",
+                f"{QUERY_COMMAND} candidate-control --section boundary --start 1 --count 20",
+                f"{QUERY_COMMAND} candidate-control --section pi --start 1 --count 20",
+            ],
+            "authority": authority,
+        }
+    if section == "outputs":
+        output_names = {
+            item.get("name")
+            for item in function.get("outputs", [])
+            if isinstance(item, dict) and isinstance(item.get("name"), str)
+        }
+        effects = boundary.get("effects", [])
+        write_effects = [
+            item
+            for item in effects
+            if isinstance(item, dict)
+            and (
+                item.get("target") in output_names
+                or item.get("kind") in {"write", "update"}
+            )
+        ] if isinstance(effects, list) else []
+        return {
+            "protocol": "intentir.lift-candidate-control-view.v1",
+            "candidate_found": True,
+            "section": section,
+            "intent_outputs": function.get("outputs", []),
+            "intent_returns": function.get("returns", []),
+            "output_mappings": boundary.get("output_mappings", []),
+            "write_or_update_effects": write_effects,
+            "access_guard_relations": boundary.get("access_guard_relations", []),
+            "pi_order": pi.get("order", []),
+            "authority": authority,
+        }
+    records = _candidate_control_records(candidate, section)
+    selected: list[dict[str, Any]] = []
+    for record in records[start - 1 : start - 1 + count]:
+        trial = selected + [record]
+        if len(json.dumps(trial, sort_keys=True, ensure_ascii=False)) > MAX_OUTPUT_CHARS - 1_500:
+            break
+        selected = trial
+    next_start = start + len(selected)
+    return {
+        "protocol": "intentir.lift-candidate-control-view.v1",
+        "candidate_found": True,
+        "section": section,
+        "start": start,
+        "returned": len(selected),
+        "total": len(records),
+        "items": selected,
+        "next_command": (
+            f"{QUERY_COMMAND} candidate-control --section {section} "
+            f"--start {next_start} --count {count}"
+            if next_start <= len(records)
+            else None
+        ),
+        "authority": authority,
+    }
+
+
+def _candidate_control(
+    output_root: Path, section: str, start: int, count: int
+) -> None:
+    _emit_json(_candidate_control_value(output_root, section, start, count))
+
+
 def _candidate_abi(input_root: Path, output_root: Path) -> None:
     """Compare one draft with the Harness-owned mechanical ABI, read-only.
 
@@ -929,9 +1256,17 @@ def _candidate_abi(input_root: Path, output_root: Path) -> None:
         actual = actual_parameters.get(name)
         if actual is None:
             issue(
-                "parameter_missing",
+                (
+                    "bound_non_c_constexpr_missing_from_j"
+                    if name in bound_constexprs
+                    else "parameter_missing"
+                ),
                 f"j.signature.parameters[{name}]",
-                "one declaration in Harness order",
+                (
+                    "bound non-C constexpr carrier in J.signature"
+                    if name in bound_constexprs
+                    else "one declaration in Harness order"
+                ),
                 None,
             )
             continue
@@ -1181,6 +1516,9 @@ def main() -> int:
     source_outline.add_argument("--count", type=int, default=32)
     harness = subparsers.add_parser("harness")
     harness.add_argument("--path")
+    harness_abi = subparsers.add_parser("harness-abi")
+    harness_abi.add_argument("--start", type=int, default=1)
+    harness_abi.add_argument("--count", type=int, default=24)
     candidate = subparsers.add_parser("candidate")
     candidate.add_argument("--path")
     candidate_find = subparsers.add_parser("candidate-find")
@@ -1193,6 +1531,12 @@ def main() -> int:
     candidate_node = subparsers.add_parser("candidate-node")
     candidate_node.add_argument("node_id")
     subparsers.add_parser("candidate-abi")
+    candidate_control = subparsers.add_parser("candidate-control")
+    candidate_control.add_argument(
+        "--section", choices=("overview", "outputs", "boundary", "pi"), default="overview"
+    )
+    candidate_control.add_argument("--start", type=int, default=1)
+    candidate_control.add_argument("--count", type=int, default=20)
     knowledge = subparsers.add_parser("knowledge")
     knowledge.add_argument("query")
     knowledge.add_argument("--context", type=int, default=3)
@@ -1215,6 +1559,8 @@ def main() -> int:
         _source_outline(args.input_root, args.start, args.count)
     elif args.command == "harness":
         _harness(args.input_root, args.path)
+    elif args.command == "harness-abi":
+        _harness_abi(args.input_root, args.start, args.count)
     elif args.command == "candidate":
         _candidate(args.output_root, args.path)
     elif args.command == "candidate-find":
@@ -1227,6 +1573,10 @@ def main() -> int:
         _candidate_node(args.output_root, args.node_id)
     elif args.command == "candidate-abi":
         _candidate_abi(args.input_root, args.output_root)
+    elif args.command == "candidate-control":
+        _candidate_control(
+            args.output_root, args.section, args.start, args.count
+        )
     elif args.command == "knowledge":
         _knowledge(args.input_root, args.query, args.context)
     elif not _write_previous(args.input_root, args.output_root):

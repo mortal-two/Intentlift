@@ -25,7 +25,7 @@ closed signature、Layer-A total typing、显式 broadcast、canonical reduce/co
 `pi.iterations`，并验证 Lift 已作者化的 value/dimension、consumer-extension、access-guard、typed
 control/inout/output-binding/terminal-control 关系。fixed code只诊断，不翻译别名、补齐 attrs、生成 handle/relation、
 改图或修复 artifact；历史 wire/receipt 继续按自身版本读取，不静默升级或重判。当前 Agent execution
-receipt 为 `intentir.lift-knowledge.v59 / minisweagent.intentir-replay.v19 / openai.codex-cli.intentir-replay.v15`；
+receipt 为 `intentir.lift-knowledge.v60 / intentir.lift-knowledge.v58 / minisweagent.intentir-replay.v19 / openai.codex-cli.intentir-replay.v15`；
 artifact.v9 的 `physical_iterations/physical_loop_carriers` 只表达 J reduce/contraction 外的物理时间，
 feedback frontier 与 Replay local-axis 合同只改 agent 消费，不改变接受集合。Harness adapter v5 另把 concrete
 shape valuation 与 Harness-only `h*` shape identity 分开，并可显式声明 valuation-matched semantic

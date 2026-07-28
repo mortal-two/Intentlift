@@ -46,12 +46,14 @@ _LIFT_READ_ONLY_CONTEXT_COMMANDS = frozenset(
         "source-find",
         "source-outline",
         "harness",
+        "harness-abi",
         "candidate",
         "candidate-find",
         "candidate-diff",
         "candidate-nodes",
         "candidate-node",
         "candidate-abi",
+        "candidate-control",
         "knowledge",
     }
 )
@@ -493,14 +495,17 @@ class IntentIRLiftEnvironment:
     def _execute_lift_context_inspect(
         self, action: Mapping[str, Any]
     ) -> dict[str, Any]:
-        allowed = {"tool_name", "tool_call_id", "view", "query", "path", "start", "count", "context", "op"}
+        allowed = {
+            "tool_name", "tool_call_id", "view", "query", "path", "start",
+            "count", "context", "op", "section",
+        }
         if not set(action).issubset(allowed):
             return self._structured_tool_error("unknown context-inspection argument")
         view = action.get("view")
         if view not in {
-            "source", "source_outline", "source_find", "harness", "feedback",
+            "source", "source_outline", "source_find", "harness", "harness_abi", "feedback",
             "candidate", "candidate_find", "candidate_nodes", "candidate_node",
-            "candidate_abi", "candidate_diff", "knowledge",
+            "candidate_abi", "candidate_control", "candidate_diff", "knowledge",
         }:
             return self._structured_tool_error("unsupported context-inspection view")
 
@@ -524,7 +529,12 @@ class IntentIRLiftEnvironment:
 
         try:
             start = bounded_int("start", 1, 1, 1_000_000)
-            count = bounded_int("count", 40, 1, 160)
+            count = bounded_int(
+                "count",
+                24 if view == "harness_abi" else 20 if view == "candidate_control" else 40,
+                1,
+                80 if view in {"harness_abi", "candidate_control"} else 160,
+            )
             context = bounded_int("context", 3, 0, 16)
             query = bounded_text(
                 "query",
@@ -533,6 +543,7 @@ class IntentIRLiftEnvironment:
             )
             path = bounded_text("path")
             op = bounded_text("op")
+            section = bounded_text("section")
         except ValueError as exc:
             return self._structured_tool_error(str(exc))
 
@@ -547,6 +558,14 @@ class IntentIRLiftEnvironment:
             command.append(view)
             if path is not None:
                 command += ["--path", path]
+        elif view == "harness_abi":
+            command += [
+                "harness-abi",
+                "--start",
+                str(start),
+                "--count",
+                str(count),
+            ]
         elif view == "candidate_find":
             command += ["candidate-find", str(query)]
         elif view == "candidate_nodes":
@@ -557,6 +576,20 @@ class IntentIRLiftEnvironment:
             command += ["candidate-node", str(query)]
         elif view == "candidate_abi":
             command.append("candidate-abi")
+        elif view == "candidate_control":
+            if section not in {None, "overview", "outputs", "boundary", "pi"}:
+                return self._structured_tool_error(
+                    "candidate_control section must be overview, outputs, boundary, or pi"
+                )
+            command += [
+                "candidate-control",
+                "--section",
+                section or "overview",
+                "--start",
+                str(start),
+                "--count",
+                str(count),
+            ]
         elif view == "candidate_diff":
             command.append("candidate-diff")
         else:

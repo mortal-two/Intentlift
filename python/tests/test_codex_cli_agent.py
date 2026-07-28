@@ -731,6 +731,8 @@ def test_codex_lift_keeps_one_thread_and_repairs_from_host_check() -> None:
             self.calls += 1
             self.thread_id = "persistent-thread"
             if self.calls == 1:
+                assert "lift_harness_abi" in prompt
+                assert "lift_candidate_control overview" in prompt
                 payload = invalid
             elif self.calls == 2:
                 check = json.loads(
@@ -738,6 +740,7 @@ def test_codex_lift_keeps_one_thread_and_repairs_from_host_check() -> None:
                 )
                 assert check["status"] == "fail"
                 assert "CandidateCheck rejected" in prompt
+                assert "lift_candidate_control overview" in prompt
                 payload = artifact.to_json()
             else:
                 external = json.loads(
@@ -745,6 +748,7 @@ def test_codex_lift_keeps_one_thread_and_repairs_from_host_check() -> None:
                 )
                 assert external["failure_kind"] == "gate1"
                 assert "same workspace and thread" in prompt
+                assert "lift_candidate_control overview" in prompt
                 payload = artifact.to_json()
             (self.output_dir / "candidate.json").write_text(json.dumps(payload))
             return CodexCLITurn(

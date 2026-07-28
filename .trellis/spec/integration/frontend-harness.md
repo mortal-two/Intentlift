@@ -228,7 +228,7 @@ refinement carrier；sandbox CandidateCheck 复用同一个 source-free checker�
 不能分别重采样。
 由于 `none -> opaque(dtype=none)` 与 canonical contraction/stage-multiplicity 是新增的模型
 可见构造合同；v14 加入 generic functional logical-domain closure 与上述有界诊断反馈合同。fresh
-Codex Lift knowledge 当前使用 `intentir.lift-knowledge.v59`（MiniSWE Lift 保持 v57），后者加入 runtime scalar 的
+Codex/MiniSWE Lift knowledge 当前使用 `intentir.lift-knowledge.v60/v58`，后者加入 runtime scalar 的
 logical-data/representation-only source-use 分类：只有显式 rank-0、`mode=value`、public dtype、
 `logical_ref=null` 的 scalar 可不创建 J input并只供 π realization 使用；Harness 不按参数名/位置
 替 Lift 分类；该 null form 只允许 runtime scalar。`bound_constexpr_values` 必须表示逻辑语义 constexpr：

@@ -10,6 +10,11 @@ import tempfile
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping
 
+from minisweagent.config.intentir_context_query import (
+    _candidate_control_value,
+    _harness_abi_value,
+)
+
 from intentir.extraction.providers.codex_cli import (
     CODEX_CLI_AGENT_RUNTIME,
     CODEX_CLI_TOOL_BRIDGE_ROOT_NAME,
@@ -35,8 +40,8 @@ from .scrc import (
 )
 
 
-CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v5"
-CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v59"
+CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v6"
+CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v60"
 CODEX_CLI_TURN_TIMEOUT_SECONDS = 900.0
 
 _INITIAL_PROMPT = """You are the sole source-aware IntentIR Lift owner for this branch.
@@ -48,6 +53,11 @@ The startup files already contain the exact Source, Harness view, feedback,
 minimal example and focused lookup tools. Read only what you need. Author every
 field of one complete output/candidate.json containing exactly J, C, and pi. You
 may keep proof-irrelevant notes or a model-authored build script under work/.
+Start with the compact exact ABI ledger rather than repeatedly paging the full
+Harness:
+
+python .agents/intentir_agent_tool.py lift_harness_abi
+
 Treat Harness `shape` as one valuation: map every `shape_contract` h* to a
 distinct/repeated symbolic J dimension as declared, preserve scalar and bound
 constexpr shape-coordinate equality in authored J, and keep integer contract axes
@@ -61,6 +71,12 @@ compiler-visible event. Do not treat a loop region, a large route set, or syntax
 alone as evidence that the corresponding control/time obligation was authored;
 and do not invent an obligation merely because it appears in the outline.
 After each meaningful complete edit run:
+
+python .agents/intentir_agent_tool.py lift_candidate_control overview 1 20
+
+Use `outputs`, `boundary`, or `pi` in place of `overview` only when that compact
+view names a relevant obligation. These tools only project exact Harness facts
+or your current authored candidate; they never infer or edit J/C/pi. Then run:
 
 python .agents/intentir_agent_tool.py candidate_check
 
@@ -82,6 +98,7 @@ than only adding routes around the existing flat graph. Use
 the bounded exact category/path query only when the frontier names an unresolved
 section. Repair the complete model-authored (J,C,pi) against the closed external
 feedback and Source, rerun
+`python .agents/intentir_agent_tool.py lift_candidate_control overview 1 20`, then
 `python .agents/intentir_agent_tool.py candidate_check`, and end only after it
 passes for the complete current output/candidate.json. This is not a new writer
 and not a patch-only artifact. The host alone will rerun CandidateCheck and the
@@ -92,6 +109,7 @@ _CANDIDATE_CHECK_CONTINUATION_PROMPT = """The host CandidateCheck rejected the c
 Read input/candidate_check.json, then repair output/candidate.json yourself in
 this same thread. Make coordinated J/C/pi changes when required; do not merely
 silence the first path. Rerun
+`python .agents/intentir_agent_tool.py lift_candidate_control overview 1 20`, then
 `python .agents/intentir_agent_tool.py candidate_check` and end only after the
 complete candidate passes. CandidateCheck is
 diagnostic-only and has no certification authority.
@@ -315,6 +333,65 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
         def candidate_check_tool() -> Mapping[str, Any]:
             return check_current_candidate(trigger="agent_tool")
 
+        def harness_abi_tool(arguments: tuple[str, ...]) -> Mapping[str, Any]:
+            try:
+                if len(arguments) > 2:
+                    raise ValueError("lift_harness_abi accepts [START [COUNT]]")
+                start = int(arguments[0]) if arguments else 1
+                count = int(arguments[1]) if len(arguments) >= 2 else 24
+                view = _harness_abi_value(workspace.input_dir, start, count)
+                if view.get("parameter_next_command") is not None:
+                    next_start = start + len(view["parameters"])
+                    view["parameter_next_command"] = (
+                        "python .agents/intentir_agent_tool.py "
+                        f"lift_harness_abi {next_start} {count}"
+                    )
+            except (TypeError, ValueError) as exc:
+                return {
+                    "protocol": "intentir.lift-harness-abi-view.v1",
+                    "status": "fail",
+                    "diagnostic": str(exc),
+                }
+            return {"status": "pass", **view}
+
+        def candidate_control_tool(
+            arguments: tuple[str, ...],
+        ) -> Mapping[str, Any]:
+            try:
+                if len(arguments) > 3:
+                    raise ValueError(
+                        "lift_candidate_control accepts SECTION [START [COUNT]]"
+                    )
+                section = arguments[0] if arguments else "overview"
+                if section not in {"overview", "outputs", "boundary", "pi"}:
+                    raise ValueError(
+                        "SECTION must be overview, outputs, boundary, or pi"
+                    )
+                start = int(arguments[1]) if len(arguments) >= 2 else 1
+                count = int(arguments[2]) if len(arguments) >= 3 else 20
+                view = _candidate_control_value(
+                    workspace.output_dir, section, start, count
+                )
+                if section == "overview" and view.get("candidate_found"):
+                    view["next_queries"] = [
+                        "python .agents/intentir_agent_tool.py "
+                        f"lift_candidate_control {name} 1 20"
+                        for name in ("outputs", "boundary", "pi")
+                    ]
+                elif view.get("next_command") is not None:
+                    next_start = start + int(view.get("returned", 0))
+                    view["next_command"] = (
+                        "python .agents/intentir_agent_tool.py "
+                        f"lift_candidate_control {section} {next_start} {count}"
+                    )
+            except (TypeError, ValueError) as exc:
+                return {
+                    "protocol": "intentir.lift-candidate-control-view.v1",
+                    "status": "fail",
+                    "diagnostic": str(exc),
+                }
+            return {"status": "pass", **view}
+
         bridge = CodexCLIToolBridge(
             workspace.scratch_dir / CODEX_CLI_TOOL_BRIDGE_ROOT_NAME,
             {
@@ -328,6 +405,10 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                     ),
                 },
                 "candidate_check": candidate_check_tool,
+            },
+            argument_handlers={
+                "lift_harness_abi": harness_abi_tool,
+                "lift_candidate_control": candidate_control_tool,
             },
         )
         try:

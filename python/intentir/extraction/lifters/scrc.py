@@ -1646,6 +1646,28 @@ def _candidate_surface_diagnostics(
                 view.get("schedule_values"),
                 c.get("values"),
             )
+        if isinstance(c, Mapping):
+            raw_slots = c.get("slots")
+            slots_by_name = (
+                {
+                    item.get("name"): item
+                    for item in raw_slots
+                    if isinstance(item, Mapping)
+                    and isinstance(item.get("name"), str)
+                }
+                if isinstance(raw_slots, list)
+                else {}
+            )
+            bound_non_c = view.get("bound_constexpr_values")
+            if isinstance(bound_non_c, Mapping):
+                for name in bound_non_c:
+                    if name in slots_by_name:
+                        mismatch(
+                            "construction_semantic_constexpr_in_c",
+                            f"c.slots[{name}]",
+                            "bound non-C constexpr carrier in J.signature only",
+                            slots_by_name[name],
+                        )
         actual_aliases = boundary.get("aliases") if isinstance(boundary, Mapping) else None
         if actual_aliases != view.get("aliases"):
             mismatch(
@@ -1739,6 +1761,14 @@ def _validate_compiler_view(
 ) -> None:
     if anonymous_view is None:
         return
+    bound_constexprs = set(anonymous_view["bound_constexpr_values"])
+    slots = {item.name: item for item in artifact.c.slots}
+    misplaced_bound_constexprs = sorted(bound_constexprs & set(slots))
+    if misplaced_bound_constexprs:
+        raise ValueError(
+            "Lift moved bound non-C constexpr carrier(s) into pure C: "
+            + ", ".join(misplaced_bound_constexprs)
+        )
     if anonymous_view["parameter_order"]:
         expected_p = [
             name for name in anonymous_view["parameter_order"]
@@ -1763,7 +1793,6 @@ def _validate_compiler_view(
     ]
     if actual_compiler_slots != anonymous_view["compiler_slots"]:
         raise ValueError("Lift changed trusted compiler slots")
-    slots = {item.name: item for item in artifact.c.slots}
     for name, role in anonymous_view["compiler_roles"].items():
         slot = slots.get(name)
         if (
@@ -1784,13 +1813,12 @@ def _validate_compiler_view(
     }
     if actual_constexprs != expected_constexprs:
         raise ValueError("Lift changed constexpr parameter positions")
-    bound_constexprs = set(anonymous_view["bound_constexpr_values"])
-    slots = {item.name: item for item in artifact.c.slots}
     for name in expected_constexprs:
         slot = slots.get(name)
         if name in bound_constexprs:
-            if slot is not None:
-                raise ValueError("Lift moved a bound constexpr into pure C")
+            # A misplaced bound carrier was rejected above before the generic
+            # handle-order mismatch so CandidateCheck can report the real cause.
+            assert slot is None
         elif slot is None or slot.kind is not ScheduleSlotKind.CONSTEXPR:
             raise ValueError("Lift omitted a pure-C constexpr slot")
     signature = {item.name: item for item in artifact.j.signature.parameters}

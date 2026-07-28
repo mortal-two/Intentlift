@@ -1,7 +1,7 @@
 # Task 14：Source-Grounded Certification Profile 下的 Codex 28-Kernel Fresh SCRC 最终闭合
 
-> 状态：执行中（2026-07-28）；六组已横向 fresh 覆盖，当前 14/28 已取得可用闭合 evidence
->（11 个原运行直接认证，另 3 个复用各自 exact Gate1-closed artifact/Replay 经零模型 Gate2-only
+> 状态：执行中（2026-07-28）；六组已横向 fresh 覆盖，当前 17/28 已取得可用闭合 evidence
+>（14 个原运行直接认证，另 3 个复用各自 exact Gate1-closed artifact/Replay 经零模型 Gate2-only
 > capability recheck 认证）；下一步按 Gate1 frontier 修复通用 Lift/Replay 消费并继续复跑未闭合项
 >
 > 类型：Task 11 的最终 fresh corpus执行波；不是 production backend、`J_dev`能力建设、性能搜索、
@@ -186,7 +186,7 @@ fixed code不得替Lift修成`x*`。
 
 - frontend commit起点：`460aaed1c6af0b267a4a9da9ca497aea6e66ad40`；
 - artifact/decode/typecheck：`artifact.v9 / decode.v13 / typecheck.v23`；
-- Lift：Codex `openai.codex-cli.intentir-lift.v5 / intentir.lift-knowledge.v59`；
+- Lift：Codex `openai.codex-cli.intentir-lift.v6 / intentir.lift-knowledge.v60`，MiniSWE `intentir.lift-knowledge.v58`；
 - Replay：Codex `openai.codex-cli.intentir-replay.v15`，MiniSWE `minisweagent.intentir-replay.v19`；
 - Replay packet/check：`replay-input.v1 / public_frontend_context_v12 / replay-check.v9`；
 - Harness：Triton workload adapter v5；
@@ -238,8 +238,28 @@ fixed code不得替Lift修成`x*`。
   `predicate_effect`。Replay receipt均为fresh/current且多数public compile成功，故不能归因于Terra、
   TypeCheck或提交协议。GroupNorm与CrossEntropy在相同frontier证据饱和后人为停止未终局branch；
   它们只记cancelled infrastructure，不伪装成NO_CLOSURE。该wave没有新增认证。
+- Wave 13（commit `e9aa4299`，Codex Sol high）只对 Linear 做 bounded-Replay-query pilot。三个branch均
+  已至少一次进入Gate1且前两轮仍为`op_multiset + dataflow` no-closure；约1503秒时为避免继续串行
+  消耗而人工停止，branch 1 正在formal round 3 Replay、branch 2正开始第3次Lift、branch 3正进行
+  第2次Lift。该run只记人为cancelled infrastructure/diagnostic evidence，不冒充完整NO_CLOSURE，也无
+  新认证。它证明v15查询transport稳定，但单独减小Replay首轮上下文尚未提升closure。
 - 当前可用闭合总计 `17/28`：14 个原运行直接认证，3 个 exact-artifact capability recheck 认证。
   TypeCheck PASS 不计进度；只有 Gate1 已闭合且当前 Gate2 三边通过才计入。
+
+对Wave12六核的Source/J/π/Replay横向审查得到以下责任边界：Linear缺K-loop/physical-carrier
+realization作者化；Liger RoPE缺旋转分解与分支内effect拓扑；Qwen2VL MRoPE缺共享位置组合到q/k
+双输出的route/effect；Llama4 RoPE缺bounds control下q/k sibling stores；GroupNorm缺cast/address/
+predicate/physical-loop realization；CrossEntropy的`terminal_controls`已闭合，剩余是continuation arm
+内部reduction/argmax carrier/masked effects。函数多输出、任意多J loop carrier与terminal relation
+本身都已存在；当前未发现真实“两个runtime分支各产多个value并在join后共同消费”的case，因此不
+预先扩multi-result `value_if`或conditional post-state schema。
+
+Codex Lift v6 / knowledge v60 与MiniSWE knowledge v58新增等合同的只读authoring views：
+`harness-abi`仅并置Harness已声明的p*/c*、bound non-C constexpr及h*；`candidate-control`仅并置
+当前LLM candidate的control/reduction、multi-output/effect和π time/control/route/order。二者均不
+生成、补齐或推荐字段。CandidateCheck surface diagnostics另显式报告
+`construction_semantic_constexpr_in_c`，但仍只拒绝错误candidate；完整语义分类和修订继续由同一
+source-aware Lift owner完成。
 
 CrossEntropy 曾暴露一个通用表达缺口：J 已作者化 early-return `effect_if`，旧 π 无法区分 terminal
 arm 与 lexical continuation。current `artifact.v9` 只新增 closed

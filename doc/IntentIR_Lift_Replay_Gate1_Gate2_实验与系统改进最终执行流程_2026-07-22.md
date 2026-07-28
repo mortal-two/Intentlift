@@ -557,6 +557,13 @@ frontier 与 effect-order witness；不判断根因、不推荐字段、不修�
 LLM 可按一个命名 category/path 精确读取。persistent continuation 默认嵌入 frontier 与当前 candidate，
 不再把数万字节递归 node witnesses 重送进主注意力窗口。
 
+为降低复杂 kernel 在机械引用、C 分类和 J/π 拓扑之间来回翻页的注意力成本，owner 可调用两个
+只读、非语义投影：`harness-abi` 只并置匿名 Harness 已声明的 p*/c*、bound non-C constexpr、
+compiler role 与 h* shape-coordinate；`candidate-control` 只并置当前 LLM 已作者化的 control/
+reduction nodes、multi-output/effect mapping、access guards，以及 π 的 loop/carrier/terminal/
+route/order。投影不生成、补齐或建议任何 J/C/π 字段，不读 Source/Gate/Replay；MiniSWE 和 Codex
+提供同一字段视图，CandidateCheck/TypeCheck 仍是唯一机械门禁。
+
 `intentir.scrc.triton-workload-adapter.v5` 继承 v4 对 source-grounded shape identity 与本次可执行
 valuation。匿名 Harness view 对 tensor 同时给出 concrete `shape` 与逐轴 `shape_contract`：正整数表示
 真正静态轴，`h*` 表示跨 tensor 共享的匿名 logical extent；runtime scalar 可用
@@ -642,7 +649,7 @@ J output/boundary/shape semantics。fixed decoder 只接受这一显式分类，
 Source 名称/位置判断，也不自动解绑、删除或重编号 J。对应通用 Lift/preflight 合同升为
 `intentir.lift-knowledge.v15`，并由当前 v57 继承。
 
-当前 MiniSWE/Codex Lift knowledge v57 继承 v56/v55/v54/v53/v52/v51/v50/v49/v48/v47/v46/v45/v44/v43/v42；v48 只增加 exact-text direct-submit 与
+当前 MiniSWE Lift knowledge v58、Codex Lift knowledge v60 继承此前版本；v48 只增加 exact-text direct-submit 与
 patch-and-submit transaction，消除完整 bytes 已作者化后的纯 submit 路由回合。v47 已把已授权且较小
 的 exact startup/closed feedback bytes 前置到 user packet。v46 已增加 branch-local 持久 workspace、
 deterministic transport compaction、LLM-authored exact-text patch、direct-submit fast path 与独立
@@ -835,8 +842,8 @@ Replay 不得：
 
 `U_f` 必须是版本化、source-neutral 的公共前端知识，不能按当前 Kernel、operator 或失败样本选择。
 当前版本组合是 `intentir.scrc.replay-input.v1`、Triton
-`public_frontend_context_v12`、source-aware Codex Lift `intentir.lift-knowledge.v59`（MiniSWE Lift
-保持 v57）、source-blind MiniSWE Replay v18 与 Codex Replay v14、
+`public_frontend_context_v12`、source-aware Codex/MiniSWE Lift `intentir.lift-knowledge.v60/v58`、
+source-blind MiniSWE Replay v19 与 Codex Replay v15、
 `replay-check.v9`；fresh evidence必须保存实际 receipt，
 旧版本 run 不能被新组合追认。
 runner 可以保存实际 request/output 和 compiler metadata 供追溯，但这些内容不能回流 Replay packet；
@@ -1306,8 +1313,8 @@ default 则保持不变。它不调用外部 `unroll_varargs`、`exec` 或 monke
 carrier、arity 1 和非退化 split grid；ordinal 27/28 使用 arity 2，展开后 ABI 分别为 38/51
 参数。`None` 在 J.signature 中只能是 `opaque(mode=value,dtype=none)`，无 logical_ref/J
 tensor/node/effect/π instance，不得换成 dummy pointer 或 scalar；加入 canonical contraction 与
-direct/decomposed stage multiplicity 合同后，Codex Lift knowledge 已由后续通用能力升级到
-`intentir.lift-knowledge.v59`，MiniSWE Lift 保持 v57。Codex CLI agent runtime v3 在不接受任何未通过候选、也不补写 artifact 的前提下，从被 wall-time 中断的 JSONL 中恢复已经发出的唯一 `thread.started`，使同一 Lift owner 能在剩余 branch 时间内继续；v49/v50 在不改变 artifact/判定的前提下加入 persistent-workspace exact mirror
+direct/decomposed stage multiplicity 合同后，Codex/MiniSWE Lift knowledge 当前为
+`intentir.lift-knowledge.v60/v58`。Codex CLI agent runtime v3 在不接受任何未通过候选、也不补写 artifact 的前提下，从被 wall-time 中断的 JSONL 中恢复已经发出的唯一 `thread.started`，使同一 Lift owner 能在剩余 branch 时间内继续；v49/v50 在不改变 artifact/判定的前提下加入 persistent-workspace exact mirror
 transport compaction、最近 response-group 窗口、source-neutral schema bundle、单一持久 Lift owner，
 以及 Replay v8 的
 exact-source direct submit/exact-text patch+preflight；这些机制只搬运 LLM authored bytes 或既有

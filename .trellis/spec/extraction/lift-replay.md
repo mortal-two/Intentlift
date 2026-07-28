@@ -198,6 +198,15 @@ Replay 或 production；production 只消费最终已作者化的 `x*`。不同 
 rounded capacity）保持独立，除非 Source-aware Lift 在现有 J/B vocabulary 中另行作者化其语义关系；
 Harness 不按数值猜 `ceil_div`、容量或有效域公式。
 
+持久 Lift owner 还可使用两个等合同的只读投影：`harness-abi` 将匿名 Harness view 中已经声明的
+`p*/c*` 顺序、bound non-C constexpr membership、compiler role 与 `h*` shape-coordinate ledger
+并置；`candidate-control` 只分页当前 LLM 已写出的 J control/reduction nodes、boundary
+output/effect/guard、以及 π iterations/carriers/terminal/routes/order。它们是 attention/transport
+工具，不是第三份 IR：不选择 `logical_ref`、`x*`、operator、predicate、effect、output mapping 或
+π relation，也不读取 Source/Gate/Replay。MiniSWE 的 `context_query.py` 与 Codex bridge 提供同一
+字段投影，任何缺失仍由 Lift 自己从 Source 作者化，任何冲突仍由 CandidateCheck/TypeCheck
+fail closed。
+
 当前持久 owner 使用 `artifact.v9 / decode.v13 / typecheck.v23 / candidate-check.v1` 实现上述
 CandidateCheck、C attachment、numeric-cast dependent typing 与 result-relation compatibility。v7
 继承 v6，v6 继承 v5；v5 继承 v4 的
@@ -301,8 +310,8 @@ ReplayLLM(J,pi,MaskC(C);U_f) -> complete source R_f
 ```
 
 当前 packet protocol 为 `intentir.scrc.replay-input.v1`，Triton 公共上下文为
-`public_frontend_context_v12`；source-aware Codex Lift 的当前 knowledge receipt 为
-`intentir.lift-knowledge.v59`，source-blind MiniSWE/Codex Replay backend 为
+`public_frontend_context_v12`；source-aware Codex/MiniSWE Lift 的当前 knowledge receipt 分别为
+`intentir.lift-knowledge.v60 / intentir.lift-knowledge.v58`，source-blind MiniSWE/Codex Replay backend 为
 `minisweagent.intentir-replay.v19 / openai.codex-cli.intentir-replay.v15`。这些版本必须随 fresh run 原样记录；旧 packet/context/knowledge
 evidence 不因实现升级而被重判。
 

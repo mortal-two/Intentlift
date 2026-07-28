@@ -38,7 +38,7 @@ from .prompt import SCHEMA as INTENTIR_OPERATION_REFERENCE
 
 
 MINISWE_LIFT_BACKEND = "minisweagent.intentir-lift.v1"
-MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v57"
+MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v58"
 MINISWE_LIFT_TURN_TIMEOUT_SECONDS = 300.0
 MINISWE_LIFT_XHIGH_TURN_TIMEOUT_SECONDS = 900.0
 MAX_CONTINUATION_CANDIDATE_BYTES = 128 * 1024
@@ -464,8 +464,12 @@ continuations for the same Source; Replay remains a separate fresh process.
   relations are known instead of spending one provider turn per leaf.
 - `tools/context_query.py`: bounded lookup for bootstrap, exact external
   feedback, paged Source, Harness JSON paths, and focused contract/preflight
-  matches. Its `candidate-abi` command compares the current draft with only
+  matches. Its `harness-abi` command joins the already-authoritative p*/c*,
+  bound-non-C constexpr, and shape-coordinate declarations into one compact
+  ledger. Its `candidate-abi` command compares the current draft with only
   Harness-authored mechanical ABI facts and never proposes semantic fields.
+  Its paged `candidate-control` views project only the current LLM-authored
+  control/reduction nodes, output/effect facts, and pi time/control topology.
   Its syntax-only `source-outline`, literal `source-find` search, and paged `candidate-nodes`/single
   `candidate-node` views expose only Source and J content already visible to
   this worker; they never parse semantics, construct fields, or edit the draft.
@@ -486,7 +490,7 @@ and should be queried only for relevant rules. This inventory call is optional:
 Then inspect Source, Harness, and the syntax-only outline with independent calls
 that may share one model response:
 `python /input/tools/context_query.py source` and
-`python /input/tools/context_query.py harness`, plus
+`python /input/tools/context_query.py harness-abi`, plus
 `python /input/tools/context_query.py source-outline --start 1 --count 32`.
 On repair rounds, inspect
 `python /input/tools/context_query.py feedback-frontier` before editing the candidate
@@ -510,9 +514,15 @@ observer-hash fallout and lists bounded immediate producer/consumer profile
 differences; it is diagnostic-only, cannot accept a candidate, and does not
 prescribe any J/C/pi field.
 After writing or editing a complete draft, inspect the bounded public-ABI diff
-without paging the whole Harness again:
+and the authored control/effect/output ledger without paging the whole artifact:
 
 `python /input/tools/context_query.py candidate-abi`
+
+`python /input/tools/context_query.py candidate-control`
+
+For multi-output/effect cases follow with `candidate-control --section outputs`;
+for loop, carrier, terminal-control, route, or order obligations page the `pi`
+section. These are read-only views of exact LLM-authored fields, never a composer.
 
 Do not page through the raw schema. Use the example plus compact queries such as:
 
