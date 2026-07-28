@@ -47,11 +47,12 @@ Harness-private 近似规则。
 当前 single-owner Lift 默认按每 branch 3600 秒累计 active wall time 治理；model turns、tool calls 与
 CandidateCheck evaluations 不设低次数型 capability cutoff，全部按 `explicit`/`submission` trigger
 记录为 telemetry。owner conversation 与受限 workspace 均在同一 branch/Gate1 continuation 中保留；
-Harness 只原子刷新 closed feedback，不复制、重排或覆盖当前 candidate。若一次 active episode 没有
+Harness 在 owner 创建时固定 Source/Harness/schema/knowledge/tool 私有快照，续轮只原子刷新 closed
+feedback，不复制、重排或覆盖当前 candidate，也不因 host 仓库并发升级而替换既有工具。若一次 active episode 没有
 提交 candidate，同一 branch 的持久 owner 可以在下一真实 user continuation 中接收最后一次实际 source-free evaluation 的至多 20 条
 `rule_code/path`；不得包含 observed value、patch、hidden/sibling 信息。Source 仅作为该 owner 原有
 source-aware conversation 的上下文保留。Harness 不应用摘要修补 artifact，submission `PASS` 也不能
-替代正式 Runner 的 `typecheck.v20`。
+替代正式 Runner 的 `typecheck.v23`。
 
 generic exact-text patch 不是 Harness semantic construction：LLM 必须同时提供唯一 old/new 字符串，
 runtime 只原子替换并使旧 PASS 失效；Harness 不解析字段、不推荐修改、不生成 corrected artifact。
@@ -228,7 +229,7 @@ refinement carrier；sandbox CandidateCheck 复用同一个 source-free checker�
 不能分别重采样。
 由于 `none -> opaque(dtype=none)` 与 canonical contraction/stage-multiplicity 是新增的模型
 可见构造合同；v14 加入 generic functional logical-domain closure 与上述有界诊断反馈合同。fresh
-Codex Lift knowledge 当前使用 `intentir.lift-knowledge.v59`（MiniSWE Lift 保持 v57），后者加入 runtime scalar 的
+Codex/MiniSWE Lift knowledge 当前使用 `intentir.lift-knowledge.v62/v59`，后者加入 runtime scalar 的
 logical-data/representation-only source-use 分类：只有显式 rank-0、`mode=value`、public dtype、
 `logical_ref=null` 的 scalar 可不创建 J input并只供 π realization 使用；Harness 不按参数名/位置
 替 Lift 分类；该 null form 只允许 runtime scalar。`bound_constexpr_values` 必须表示逻辑语义 constexpr：

@@ -29,6 +29,7 @@ INTENTIR_REPLAY_ROLLBACK = "intentir_replay_rollback"
 INTENTIR_REPLAY_CHECK = "intentir_replay_check"
 INTENTIR_REPLAY_COMPILE_CHECK = "intentir_replay_compile_check"
 INTENTIR_PACKET_QUERY = "intentir_packet_query"
+REPLAY_STARTUP_PACKET_EMBED_LIMIT_BYTES = 64 * 1024
 INTENTIR_REPLAY_INSPECT = "intentir_replay_inspect"
 REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v9"
 REPLAY_TRANSACTION_PROTOCOL = "intentir.replay-transaction.v1"
@@ -445,6 +446,211 @@ def _packet_realization(packet: Mapping[str, Any]) -> Any:
             f"{INTENTIR_PACKET_QUERY} edges 0 24"
             if any(pi.get(key) for key in edge_keys)
             else None
+        ),
+    }
+
+
+def _packet_requirements(packet: Mapping[str, Any]) -> dict[str, Any]:
+    """Return a bounded exact checklist over authored Replay obligations.
+
+    This view deliberately does not translate an Intent op or pi relation into
+    frontend source.  It only makes compiler-visible occurrences hard to lose in
+    a long packet: every op remains visible in declaration order, while the
+    already-authored control/time relations are colocated with their exact
+    instance and region records.
+    """
+
+    j = packet.get("j", {})
+    pi = packet.get("pi", {})
+    if not isinstance(j, Mapping) or not isinstance(pi, Mapping):
+        raise TypeError("packet J/pi must be objects")
+    intent = j.get("intent", {})
+    function = (
+        intent.get("intent_function", {})
+        if isinstance(intent, Mapping)
+        else {}
+    )
+    boundary = j.get("boundary", {})
+    if not isinstance(function, Mapping) or not isinstance(boundary, Mapping):
+        raise TypeError("packet J intent/boundary must be objects")
+    operations = _packet_graph_ops(
+        function.get("body", []), "j.intent.intent_function.body"
+    )
+    operation_counts = Counter(
+        str(item.get("op"))
+        for item in operations
+        if isinstance(item.get("op"), str)
+    )
+    sequence_limit = 64
+    sequence = [
+        [item.get("path"), item.get("id"), item.get("op")]
+        for item in operations[:sequence_limit]
+    ]
+    topology_ops = {
+        "contraction",
+        "effect_if",
+        "fma",
+        "loop",
+        "reduce",
+        "value_if",
+    }
+    topology_rows = [
+        item for item in operations if item.get("op") in topology_ops
+    ]
+    topology_limit = 24
+
+    relation_names = (
+        "iterations",
+        "loop_carriers",
+        "physical_iterations",
+        "physical_loop_carriers",
+        "terminal_controls",
+    )
+    relation_views: dict[str, Any] = {}
+    referenced_instances: set[str] = set()
+    relation_instance_fields = {
+        "iterations": ("loop_instance", "tile_instance"),
+        "loop_carriers": ("loop_instance", "init", "state", "next", "result"),
+        "physical_iterations": ("body_instance", "tile_instance"),
+        "physical_loop_carriers": ("init", "state", "next", "result"),
+        "terminal_controls": ("terminal_instance", "continuation_instance"),
+    }
+    relation_limit = 12
+    for name in relation_names:
+        rows = pi.get(name, [])
+        if not isinstance(rows, list):
+            raise TypeError(f"packet pi {name} must be an array")
+        relation_views[name] = {
+            "total": len(rows),
+            "items": rows[:relation_limit],
+            "omitted": max(0, len(rows) - relation_limit),
+            "omitted_query": (
+                f"{INTENTIR_PACKET_QUERY} section pi.{name}"
+                if len(rows) > relation_limit
+                else None
+            ),
+        }
+        for row in rows:
+            if not isinstance(row, Mapping):
+                continue
+            for field_name in relation_instance_fields[name]:
+                value = row.get(field_name)
+                if isinstance(value, str):
+                    referenced_instances.add(value)
+
+    instances = pi.get("instances", [])
+    regions = pi.get("regions", [])
+    if not isinstance(instances, list) or not isinstance(regions, list):
+        raise TypeError("packet pi instances/regions must be arrays")
+    mechanism_counts = Counter(
+        str(item.get("mechanism"))
+        for item in instances
+        if isinstance(item, Mapping) and isinstance(item.get("mechanism"), str)
+    )
+    instance_limit = 48
+    instance_mechanisms = [
+        [
+            item.get("id"),
+            item.get("semantic_ref"),
+            item.get("mechanism"),
+            item.get("region"),
+        ]
+        for item in instances[:instance_limit]
+        if isinstance(item, Mapping)
+    ]
+    selected_instances = [
+        dict(item)
+        for item in instances
+        if isinstance(item, Mapping) and item.get("id") in referenced_instances
+    ]
+    referenced_regions = {
+        str(item.get("region"))
+        for item in selected_instances
+        if isinstance(item.get("region"), str)
+    }
+    for name in ("physical_iterations", "physical_loop_carriers"):
+        rows = pi.get(name, [])
+        for row in rows if isinstance(rows, list) else []:
+            if isinstance(row, Mapping) and isinstance(row.get("region"), str):
+                referenced_regions.add(str(row["region"]))
+    region_index = {
+        str(item.get("id")): item
+        for item in regions
+        if isinstance(item, Mapping) and isinstance(item.get("id"), str)
+    }
+    pending_regions = list(referenced_regions)
+    while pending_regions:
+        region_id = pending_regions.pop()
+        region = region_index.get(region_id)
+        parent = region.get("parent") if isinstance(region, Mapping) else None
+        if isinstance(parent, str) and parent not in referenced_regions:
+            referenced_regions.add(parent)
+            pending_regions.append(parent)
+    selected_regions = [
+        dict(item)
+        for item in regions
+        if isinstance(item, Mapping) and item.get("id") in referenced_regions
+    ]
+
+    effects = boundary.get("effects", [])
+    if not isinstance(effects, list):
+        raise TypeError("packet J boundary effects must be an array")
+    effect_limit = 16
+    return {
+        "protocol": "intentir.replay-authored-requirements.v1",
+        "meaning": (
+            "A bounded declaration-order reindex of exact packet facts. It does "
+            "not infer an operator, edge, schedule, frontend spelling, source "
+            "statement, or repair. Every omitted row remains available through "
+            "the named graph/section/obligation query."
+        ),
+        "operations": {
+            "total": len(operations),
+            "counts": dict(sorted(operation_counts.items())),
+            "sequence_columns": ["path", "id", "op"],
+            "sequence": sequence,
+            "sequence_omitted": max(0, len(operations) - sequence_limit),
+            "sequence_next": (
+                f"{INTENTIR_PACKET_QUERY} graph {sequence_limit} 48"
+                if len(operations) > sequence_limit
+                else None
+            ),
+            "topology_rows": topology_rows[:topology_limit],
+            "topology_rows_omitted": max(0, len(topology_rows) - topology_limit),
+            "topology_rows_omitted_queries": [
+                f"{INTENTIR_PACKET_QUERY} section {item['path']}"
+                for item in topology_rows[topology_limit : topology_limit + 8]
+                if isinstance(item.get("path"), str)
+            ],
+        },
+        "boundary_effects": {
+            "total": len(effects),
+            "items": effects[:effect_limit],
+            "omitted": max(0, len(effects) - effect_limit),
+            "omitted_query": (
+                f"{INTENTIR_PACKET_QUERY} section j.boundary.effects"
+                if len(effects) > effect_limit
+                else None
+            ),
+        },
+        "pi_time_and_control": relation_views,
+        "pi_instance_mechanisms": {
+            "columns": ["id", "semantic_ref", "mechanism", "region"],
+            "total": len(instances),
+            "counts": dict(sorted(mechanism_counts.items())),
+            "items": instance_mechanisms,
+            "omitted": max(0, len(instances) - instance_limit),
+            "omitted_query": (
+                f"{INTENTIR_PACKET_QUERY} obligations {instance_limit} 48"
+                if len(instances) > instance_limit
+                else None
+            ),
+        },
+        "referenced_instances": selected_instances,
+        "referenced_regions": selected_regions,
+        "authority": (
+            "exact source-isolated packet projection only; no Source, Harness "
+            "value, Gate evidence, inference, generation, repair, or schedule"
         ),
     }
 
@@ -1163,6 +1369,8 @@ def _query_packet(packet: Mapping[str, Any], arguments: list[str]) -> Any:
         return _packet_graph(packet, int(arguments[2]), int(arguments[3]))
     if arguments == [INTENTIR_PACKET_QUERY, "realization"]:
         return _packet_realization(packet)
+    if arguments == [INTENTIR_PACKET_QUERY, "requirements"]:
+        return _packet_requirements(packet)
     if len(arguments) == 4 and arguments[:2] == [
         INTENTIR_PACKET_QUERY,
         "edges",
@@ -1218,7 +1426,7 @@ def _query_packet(packet: Mapping[str, Any], arguments: list[str]) -> Any:
         return _packet_find(packet, arguments[2])
     raise ValueError(
         "usage: intentir_packet_query overview | abi START COUNT | graph START COUNT | "
-        "realization | routes START COUNT | order START COUNT | obligations START COUNT | "
+        "requirements | realization | routes START COUNT | order START COUNT | obligations START COUNT | "
         "obligation HANDLE | edges START COUNT | section PATH | find HANDLE"
     )
 

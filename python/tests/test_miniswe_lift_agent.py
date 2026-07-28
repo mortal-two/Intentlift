@@ -48,9 +48,11 @@ from minisweagent.config.intentir_context_query import (
     _candidate_find,
     _candidate_node,
     _candidate_nodes,
+    _candidate_control,
     _feedback,
     _feedback_category,
     _feedback_frontier,
+    _harness_abi,
     _source_find,
     _source_outline,
 )
@@ -196,7 +198,7 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     files = _real_lift_input_files()
 
     assert CANDIDATE_CHECK_PROTOCOL == SCRC_CANDIDATE_CHECK_PROTOCOL
-    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v57"
+    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v59"
     assert "knowledge/minimal_example.json" in files
     assert "knowledge/intent_ops.md" in files
     assert "tools/schema_query.py" in files
@@ -211,6 +213,8 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     assert "source-find" in files["README.md"]
     assert "source-outline" in files["README.md"]
     assert "candidate-nodes" in files["README.md"]
+    assert "harness-abi" in files["README.md"]
+    assert "candidate-control" in files["README.md"]
     assert "read-only discovery" in files["README.md"]
     assert "integral rank-0 scalar explicitly equated" in files["README.md"]
     assert "J-owned" in files["README.md"]
@@ -466,6 +470,36 @@ def test_dataflow_feedback_keeps_effect_order_when_node_witnesses_are_large(
     assert "bulk node witnesses omitted" in result["bounded_view"]
 
 
+def test_feedback_category_reads_preserved_unresolved_gate1_without_full_feedback(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    input_root = tmp_path / "input"
+    input_root.mkdir()
+    category = {
+        "category": "predicate_effect",
+        "difference_count": 1,
+        "examples": [{"kind": "missing", "item": ["effect", "control.scf.if"]}],
+    }
+    (input_root / "feedback.json").write_text(
+        json.dumps(
+            {
+                "diagnostics": {
+                    "unresolved_gate1": {
+                        "diagnostics": {
+                            "observer_diff": {"categories": [category]}
+                        }
+                    }
+                }
+            }
+        )
+    )
+
+    _feedback_category(input_root, "predicate_effect")
+
+    assert json.loads(capsys.readouterr().out) == category
+
+
 def test_candidate_abi_query_reports_only_public_mechanical_differences(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -584,6 +618,217 @@ def test_candidate_abi_query_reports_only_public_mechanical_differences(
         "j.signature.parameters[p1].dtype",
         "c.values",
     }
+
+    candidate["j"]["signature"]["parameters"][1]["dtype"] = "i64"
+    candidate["c"]["values"]["c0"] = 128
+    candidate["j"]["signature"]["parameters"] = [
+        item
+        for item in candidate["j"]["signature"]["parameters"]
+        if item["name"] != "p3"
+    ]
+    candidate_path.write_text(json.dumps(candidate))
+    _candidate_abi(input_root, output_root)
+
+    report = json.loads(capsys.readouterr().out)
+    assert "bound_non_c_constexpr_missing_from_j" in {
+        item["code"] for item in report["issues"]
+    }
+
+
+def test_harness_abi_query_exposes_exact_non_c_and_parametric_classification(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    input_root = tmp_path / "input"
+    input_root.mkdir()
+    harness = {
+        "parameter_order": ["p0", "p1", "c0", "c1"],
+        "arguments": [
+            {
+                "name": "p0",
+                "kind": "tensor",
+                "mode": "input",
+                "dtype": "f16",
+                "shape": [2, 127],
+                "shape_contract": ["h0", "h1"],
+            }
+        ],
+        "bound_constexpr_values": {"p1": 127},
+        "bound_constexpr_shape_coordinates": {"p1": "h1"},
+        "schedule_values": {"c0": 128},
+        "compiler_slots": ["c1"],
+        "compiler_roles": {"c1": "num_warps"},
+        "shape_coordinates": {"h0": 2, "h1": 127},
+        "grid_shape_coordinates": ["h0"],
+        "aliases": [],
+    }
+    (input_root / "harness_view.json").write_text(json.dumps(harness))
+
+    _harness_abi(input_root)
+
+    report = json.loads(capsys.readouterr().out)
+    assert report["protocol"] == "intentir.lift-harness-abi-view.v1"
+    assert [item["classification"] for item in report["parameters"]] == [
+        "runtime_or_representation_parameter",
+        "bound_non_c_constexpr_carrier",
+        "pure_c_constexpr_slot",
+        "compiler_option_c_slot",
+    ]
+    assert report["parameters"][0]["declared"]["shape_contract"] == ["h0", "h1"]
+    assert report["bound_non_c_constexprs"] == ["p1"]
+    assert report["pure_c_constexprs"] == ["c0"]
+    assert "no Source meaning" in report["authority"]
+
+    _harness_abi(input_root, 1, 2)
+    first_page = json.loads(capsys.readouterr().out)
+    assert first_page["parameter_total"] == 4
+    assert len(first_page["parameters"]) == 2
+    assert first_page["parameter_next_command"].endswith(
+        "harness-abi --start 3 --count 2"
+    )
+
+
+def test_candidate_control_query_joins_authored_multi_output_effect_and_pi_time(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    output_root = tmp_path / "output"
+    output_root.mkdir()
+    candidate = {
+        "j": {
+            "intent": {
+                "intent_function": {
+                    "outputs": [
+                        {"name": "t2", "dtype": "f32", "shape": ["x0"]},
+                        {"name": "t3", "dtype": "f32", "shape": ["x0"]},
+                    ],
+                    "returns": [
+                        {"output": "t2", "value": "v2"},
+                        {"output": "t3", "value": "v3"},
+                    ],
+                    "body": [
+                        {
+                            "id": "n0",
+                            "op": "loop",
+                            "results": ["v2", "v3"],
+                            "body": [],
+                        }
+                    ],
+                }
+            },
+            "boundary": {
+                "accesses": [],
+                "effects": [
+                    {"effect_id": "e0", "kind": "write", "target": "t2"},
+                    {"effect_id": "e1", "kind": "write", "target": "t3"},
+                ],
+                "output_mappings": [
+                    {"output": "t2", "value": "v2"},
+                    {"output": "t3", "value": "v3"},
+                ],
+                "reductions": [],
+                "updates": [],
+                "consumer_extensions": [],
+                "access_guard_relations": [],
+                "result_relations": [],
+            },
+        },
+        "c": {"slots": [], "values": {}},
+        "pi": {
+            "iterations": [{"region": "r0", "loop_instance": "i0"}],
+            "loop_carriers": [
+                {
+                    "region": "r0",
+                    "loop_instance": "i0",
+                    "init": "i1",
+                    "state": "i2",
+                    "next": "i3",
+                    "result": "i4",
+                }
+            ],
+            "physical_iterations": [],
+            "physical_loop_carriers": [],
+            "terminal_controls": [],
+            "routes": [],
+            "order": [{"before": "i1", "after": "i2"}],
+            "sharing": [],
+        },
+    }
+    candidate_path = output_root / "candidate.json"
+    candidate_path.write_text(json.dumps(candidate))
+    before = candidate_path.read_bytes()
+
+    _candidate_control(output_root, "overview", 1, 20)
+    overview = json.loads(capsys.readouterr().out)
+    assert overview["control_reduction_nodes"][0]["op"] == "loop"
+    assert overview["boundary_counts"]["output_mappings"] == 2
+    assert overview["pi_counts"]["loop_carriers"] == 1
+
+    _candidate_control(output_root, "outputs", 1, 20)
+    outputs = json.loads(capsys.readouterr().out)
+    assert len(outputs["intent_outputs"]) == 2
+    assert len(outputs["write_or_update_effects"]) == 2
+
+    _candidate_control(output_root, "pi", 1, 2)
+    pi_page = json.loads(capsys.readouterr().out)
+    assert pi_page["total"] == 3
+    assert [item["path"] for item in pi_page["items"]] == [
+        "pi.iterations.0",
+        "pi.loop_carriers.0",
+    ]
+    assert candidate_path.read_bytes() == before
+
+
+def test_candidate_control_exposes_authored_branch_arms_and_pi_regions(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    output_root = tmp_path / "output"
+    output_root.mkdir()
+    candidate = {
+        "j": {
+            "intent": {
+                "intent_function": {
+                    "outputs": [],
+                    "returns": [],
+                    "body": [
+                        {
+                            "id": "n0",
+                            "op": "effect_if",
+                            "predicate": "t0",
+                            "positive": {"scope_id": "q0", "body": []},
+                            "negative": {
+                                "scope_id": "q1",
+                                "body": [{"id": "n1", "op": "const"}],
+                            },
+                        }
+                    ],
+                }
+            },
+            "scopes": [{"scope_id": "q0"}, {"scope_id": "q1"}],
+            "boundary": {},
+        },
+        "c": {},
+        "pi": {
+            "regions": [{"id": "r0", "placement": "branch"}],
+            "instances": [{"id": "i0", "region": "r0", "mechanism": "realize"}],
+        },
+    }
+    (output_root / "candidate.json").write_text(json.dumps(candidate))
+
+    _candidate_control(output_root, "overview", 1, 20)
+    overview = json.loads(capsys.readouterr().out)
+    branch = overview["control_reduction_nodes"][0]
+    assert branch["predicate"] == "t0"
+    assert branch["arms"]["positive"] == {"scope_id": "q0", "body_item_count": 0}
+    assert branch["arms"]["negative"]["body_item_count"] == 1
+    assert overview["scope_count"] == 2
+    assert overview["pi_counts"]["regions"] == 1
+    assert overview["pi_counts"]["instances"] == 1
+
+    _candidate_control(output_root, "pi", 1, 20)
+    pi_view = json.loads(capsys.readouterr().out)
+    assert [item["path"] for item in pi_view["items"]] == [
+        "pi.regions.0",
+        "pi.instances.0",
+    ]
 
 
 def test_context_query_reads_exact_feedback_and_candidate_paths_without_editing(
@@ -800,9 +1045,11 @@ def test_context_discovery_queries_work_in_real_bubblewrap() -> None:
                     "--context 1; "
                     "python /input/tools/context_query.py source-outline "
                     "--start 1 --count 32; "
+                    "python /input/tools/context_query.py harness-abi; "
                     "python /input/tools/context_query.py candidate-nodes "
                     "--start 1 --count 2; "
-                    "python /input/tools/context_query.py candidate-node n0"
+                    "python /input/tools/context_query.py candidate-node n0; "
+                    "python /input/tools/context_query.py candidate-control"
                 )
             }
         )
@@ -817,6 +1064,8 @@ def test_context_discovery_queries_work_in_real_bubblewrap() -> None:
     assert result["output"].count(
         '"protocol": "intentir.lift-candidate-node-query.v1"'
     ) == 2
+    assert '"protocol": "intentir.lift-harness-abi-view.v1"' in result["output"]
+    assert '"protocol": "intentir.lift-candidate-control-view.v1"' in result["output"]
     assert '"id": "n0"' in result["output"]
     assert after == before
 
@@ -1112,7 +1361,23 @@ def test_material_progress_timer_is_time_based_and_resets_on_authored_bytes() ->
 
 
 def test_structured_lift_inspection_avoids_path_discovery_and_is_read_only() -> None:
-    workspace = IntentIRLiftWorkspace.create(_real_lift_input_files())
+    files = _real_lift_input_files()
+    files["feedback.json"] = json.dumps(
+        {
+            "diagnostics": {
+                "observer_diff": {
+                    "categories": [
+                        {
+                            "category": "op_multiset",
+                            "difference_count": 1,
+                            "examples": [{"kind": "missing", "item": "scf.for"}],
+                        }
+                    ]
+                }
+            }
+        }
+    )
+    workspace = IntentIRLiftWorkspace.create(files)
     workspace.candidate_path.write_text('{"j":{},"c":{},"pi":{}}\n')
     environment = IntentIRLiftEnvironment(
         input_dir=workspace.input_dir,
@@ -1129,6 +1394,25 @@ def test_structured_lift_inspection_avoids_path_discovery_and_is_read_only() -> 
         source = environment.execute(
             {"tool_name": "inspect_lift_context", "view": "source", "count": 8}
         )
+        harness_abi = environment.execute(
+            {"tool_name": "inspect_lift_context", "view": "harness_abi"}
+        )
+        candidate_control = environment.execute(
+            {
+                "tool_name": "inspect_lift_context",
+                "view": "candidate_control",
+                "section": "overview",
+                "start": 1,
+                "count": 20,
+            }
+        )
+        feedback_category = environment.execute(
+            {
+                "tool_name": "inspect_lift_context",
+                "view": "feedback_category",
+                "query": "op_multiset",
+            }
+        )
         schema = environment.execute(
             {
                 "tool_name": "inspect_lift_schema",
@@ -1140,11 +1424,22 @@ def test_structured_lift_inspection_avoids_path_discovery_and_is_read_only() -> 
     finally:
         workspace.cleanup()
 
-    assert source["returncode"] == schema["returncode"] == checked["returncode"] == 0
+    assert (
+        source["returncode"]
+        == harness_abi["returncode"]
+        == candidate_control["returncode"]
+        == feedback_category["returncode"]
+        == schema["returncode"]
+        == checked["returncode"]
+        == 0
+    )
     assert "def scrc_k0" in source["output"]
     assert "=== op:reduce ===" in schema["output"]
     assert before == b'{"j":{},"c":{},"pi":{}}\n'
-    assert audit["context_views"] == ["source"]
+    assert '"category": "op_multiset"' in feedback_category["output"]
+    assert audit["context_views"] == [
+        "source", "harness_abi", "candidate_control", "feedback_category"
+    ]
     assert audit["schema_bundles"] == [["op:reduce", "section:pi_iteration"]]
     assert "no semantic classification" in audit["authority"]
 
@@ -2627,6 +2922,19 @@ def test_parser_accepts_closed_structured_lift_tools_only_when_enabled() -> None
         },
         {
             "type": "function_call",
+            "name": "inspect_lift_context",
+            "call_id": "call-control",
+            "arguments": json.dumps(
+                {
+                    "view": "candidate_control",
+                    "section": "pi",
+                    "start": 1,
+                    "count": 20,
+                }
+            ),
+        },
+        {
+            "type": "function_call",
             "name": "inspect_lift_schema",
             "call_id": "call-schema",
             "arguments": json.dumps({"items": ["op:reduce", "section:pi_iteration"]}),
@@ -2646,7 +2954,7 @@ def test_parser_accepts_closed_structured_lift_tools_only_when_enabled() -> None
     assert parse_toolcall_actions_response(
         calls,
         format_error_template="{{ error }}",
-        max_tool_calls=3,
+        max_tool_calls=4,
         enable_lift_context_tool=True,
         enable_lift_schema_tool=True,
         enable_check_candidate_tool=True,
@@ -2657,6 +2965,14 @@ def test_parser_accepts_closed_structured_lift_tools_only_when_enabled() -> None
             "start": 1,
             "count": 32,
             "tool_call_id": "call-context",
+        },
+        {
+            "tool_name": "inspect_lift_context",
+            "view": "candidate_control",
+            "section": "pi",
+            "start": 1,
+            "count": 20,
+            "tool_call_id": "call-control",
         },
         {
             "tool_name": "inspect_lift_schema",
@@ -3476,6 +3792,69 @@ def test_candidate_check_rejects_semantics_on_absent_none_carrier() -> None:
     ]
 
 
+def test_candidate_check_explicitly_rejects_bound_non_c_constexpr_in_c() -> None:
+    candidate = make_copy_artifact().to_json()
+    candidate["j"]["signature"]["parameters"][2].update(
+        {"kind": "constexpr", "rank": 0}
+    )
+    candidate["c"]["slots"].insert(
+        0,
+        {
+            "name": "p2",
+            "kind": "constexpr",
+            "role": "selector",
+            "value_type": "int",
+            "required": True,
+        },
+    )
+    candidate["c"]["values"]["p2"] = 128
+    context = SCRCCandidateCheckContext(
+        ("p0", "p1", "p2"),
+        anonymous_compiler_view={
+            "parameter_order": ["p0", "p1", "p2", "c0"],
+            "arguments": [
+                {
+                    "name": "p0",
+                    "kind": "tensor",
+                    "dtype": "f32",
+                    "shape": [128],
+                    "mode": "input",
+                },
+                {
+                    "name": "p1",
+                    "kind": "tensor",
+                    "dtype": "f32",
+                    "shape": [128],
+                    "mode": "output",
+                },
+            ],
+            "bound_constexpr_values": {"p2": 128},
+            "bound_constexpr_shape_coordinates": {},
+            "schedule_values": {"c0": 1024},
+            "compiler_slots": [],
+            "compiler_roles": {},
+            "aliases": [],
+            "constexpr_parameters": ["p2", "c0"],
+            "shape_coordinates": {},
+        },
+    )
+
+    rejected = check_scrc_lift_candidate(json.dumps(candidate), context)
+
+    assert rejected["status"] == "fail"
+    diagnostics = {
+        (item["rule_code"], item["path"]): item
+        for item in rejected["diagnostics"]
+    }
+    assert (
+        "construction_semantic_constexpr_in_c",
+        "c.slots[p2]",
+    ) in diagnostics
+    assert "bound non-C constexpr carrier" in diagnostics[
+        ("construction_semantic_constexpr_in_c", "c.slots[p2]")
+    ]["observed_refs_or_types"][0]
+
+
 def test_candidate_check_aggregates_independent_signature_decode_errors() -> None:
     context = scrc_candidate_check_context(
         prepare_scrc_lift(_adapter_request().source.text)
@@ -3739,6 +4118,20 @@ def test_adapter_keeps_one_owner_context_and_workspace(monkeypatch) -> None:
     )
     request = _adapter_request()
     first = adapter.lift(request, None)
+    from intentir.extraction.lifters import miniswe as miniswe_lifter_module
+
+    original_input_files = miniswe_lifter_module._input_files
+
+    def host_upgraded_input_files(prepared):
+        values = original_input_files(prepared)
+        values["tools/context_query.py"] += "\n# concurrent host upgrade\n"
+        return values
+
+    monkeypatch.setattr(
+        miniswe_lifter_module,
+        "_input_files",
+        host_upgraded_input_files,
+    )
     feedback = LiftFeedback(
         FeedbackKind.GATE1,
         {
@@ -3781,14 +4174,17 @@ def test_adapter_keeps_one_owner_context_and_workspace(monkeypatch) -> None:
     continuation_header = json.loads(continuation_message.splitlines()[0])
     assert continuation_header["exact_feedback_embedded"] is False
     assert continuation_header["feedback_frontier_embedded"] is True
-    assert continuation_header["exact_candidate_embedded"] is True
+    assert continuation_header["exact_candidate_embedded"] is False
     assert continuation_header["closed_feedback_receipt"]["bytes"] > 0
     assert continuation_header["current_candidate_receipt"]["bytes"] > 0
     state_text = continuation_message.split(
         "<persistent-workspace-mirror>\n", 1
     )[1].split("\n</persistent-workspace-mirror>", 1)[0]
     current_state = json.loads(state_text)
-    assert json.loads(current_state["candidate_text"]) == artifact.to_json()
+    assert current_state["candidate_text"] is None
+    assert current_state["fallback"]["candidate"].startswith(
+        "reread /output/candidate.json"
+    )
     assert current_state["closed_feedback"] is None
     assert [
         item["category"] for item in current_state["feedback_frontier"]["categories"]
@@ -3819,6 +4215,9 @@ def test_adapter_keeps_one_owner_context_and_workspace(monkeypatch) -> None:
     assert first.metadata["fresh_workspace"] is True
     assert second.metadata["fresh_workspace"] is False
     assert first.metadata["persistent_workspace"] is True
+    assert "concurrent host upgrade" not in (
+        adapter._session_workspace.input_dir / "tools/context_query.py"
+    ).read_text()
     assert captured[0][0] == captured[1][0]
     assert len(created_models) == 1
     assert captured[0][1] is None

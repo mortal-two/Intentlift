@@ -27,6 +27,7 @@ from intentir.verify.gate1.codex_replay import (
     _replay_manifest_view,
     _replay_packet_query,
     _replay_realization_view,
+    _replay_startup_context,
     _replay_workspace_view,
 )
 from intentir.verify.gate1.replay import ReplayIngressResult
@@ -405,6 +406,7 @@ def test_codex_replay_bounded_queries_partition_exact_packet_without_source() ->
 
     manifest = _replay_manifest_view(packet)
     abi = _replay_packet_query(packet, ("abi", "0", "48"))
+    requirements = _replay_packet_query(packet, ("requirements",))
     graph = _replay_packet_query(packet, ("graph", "0", "12"))
     boundary = _replay_packet_query(packet, ("section", "j.boundary"))
     realization = _replay_packet_query(packet, ("realization",))
@@ -416,20 +418,73 @@ def test_codex_replay_bounded_queries_partition_exact_packet_without_source() ->
         "python .agents/intentir_agent_tool.py replay_packet_query realization",
         "python .agents/intentir_agent_tool.py replay_packet_query obligations 0 12",
     ]
+    assert manifest["authored_requirements"] == requirements["view"]
     assert manifest["operation_count"] == 1
-    assert len(json.dumps(manifest)) < len(json.dumps(_replay_workspace_view(packet)))
+    assert len(json.dumps(manifest)) < 16_384
     assert abi["view"]["intent_io"]["name"] == "scrc_j0"
     expected_op = artifact.j.to_json()["intent"]["intent_function"]["body"][0][
         "op"
     ]
     assert graph["view"]["items"][0]["op"] == expected_op
+    assert requirements["view"]["operations"]["counts"] == {expected_op: 1}
+    assert requirements["view"]["operations"]["sequence"][0][1:] == [
+        "n0",
+        expected_op,
+    ]
+    assert requirements["view"]["pi_instance_mechanisms"]["total"] == len(
+        packet["pi"]["instances"]
+    )
+    assert requirements["view"]["pi_time_and_control"]["terminal_controls"] == {
+        "total": 0,
+        "items": [],
+        "omitted": 0,
+        "omitted_query": None,
+    }
     assert boundary["view"] == packet["j"]["boundary"]
     assert realization["view"]["topology"]["terminal_controls"] == packet["pi"][
         "terminal_controls"
     ]
     assert obligations["view"]["total"] == len(packet["pi"]["instances"])
-    for view in (manifest, abi, graph, boundary, realization, obligations):
+    for view in (
+        manifest,
+        abi,
+        requirements,
+        graph,
+        boundary,
+        realization,
+        obligations,
+    ):
         assert not ({"source", "harness", "gate1", "gate2"} & set(view))
+
+    startup = _replay_startup_context(packet)
+    assert startup["exact_packet_embedded"] is True
+    assert startup["packet"] == packet
+    assert "manifest" not in startup
+
+
+def test_codex_replay_oversized_startup_embeds_one_manifest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifact = make_copy_artifact()
+    packet = {
+        "c": artifact.c.to_json(),
+        "j": artifact.j.to_json(),
+        "pi": artifact.pi.to_json(),
+        "u_f": {"frontend": "triton", "replay_function": "scrc_k0"},
+    }
+    monkeypatch.setattr(
+        "minisweagent.environments.intentir_replay."
+        "REPLAY_STARTUP_PACKET_EMBED_LIMIT_BYTES",
+        1,
+    )
+
+    startup = _replay_startup_context(packet)
+
+    assert startup["exact_packet_embedded"] is False
+    assert "packet" not in startup
+    assert startup["manifest"]["authored_requirements"]["operations"][
+        "total"
+    ] == 1
 
 
 def test_codex_cli_turn_parses_jsonl_and_resumes_same_thread(
@@ -639,7 +694,8 @@ def scrc_k0(p0, p1, p2, c0: tl.constexpr):
             self.calls += 1
             self.thread_id = f"fresh-replay-{self.identity}"
             if self.calls == 1:
-                assert "replay_manifest_view" in prompt
+                assert '"exact_packet_embedded":true' in prompt
+                assert '"packet":{"c":' in prompt
                 payload = valid_replay.replace("scrc_k0", "wrong_entry")
             else:
                 check = json.loads(
@@ -749,7 +805,9 @@ def test_codex_lift_forwards_native_frontend_to_shared_preparation(
     assert observed["frontend"] == frontend
 
 
-def test_codex_lift_keeps_one_thread_and_repairs_from_host_check() -> None:
+def test_codex_lift_keeps_one_thread_and_repairs_from_host_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     artifact = make_copy_artifact()
     invalid = artifact.to_json()
     invalid["j"]["signature"]["parameters"][0]["dtype"] = "f16"
@@ -759,6 +817,7 @@ def test_codex_lift_keeps_one_thread_and_repairs_from_host_check() -> None:
         def __init__(self, **kwargs):
             self.input_dir = kwargs["input_dir"]
             self.output_dir = kwargs["output_dir"]
+            self.scratch_dir = kwargs["scratch_dir"]
             self.thread_id = None
             self.calls = 0
             self.closed = False
@@ -770,6 +829,8 @@ def test_codex_lift_keeps_one_thread_and_repairs_from_host_check() -> None:
             self.calls += 1
             self.thread_id = "persistent-thread"
             if self.calls == 1:
+                assert "<source-aware-startup>" in prompt
+                assert '"harness_abi":' in prompt
                 payload = invalid
             elif self.calls == 2:
                 check = json.loads(
@@ -777,6 +838,7 @@ def test_codex_lift_keeps_one_thread_and_repairs_from_host_check() -> None:
                 )
                 assert check["status"] == "fail"
                 assert "CandidateCheck rejected" in prompt
+                assert "candidate_check" in prompt
                 payload = artifact.to_json()
             else:
                 external = json.loads(
@@ -784,6 +846,9 @@ def test_codex_lift_keeps_one_thread_and_repairs_from_host_check() -> None:
                 )
                 assert external["failure_kind"] == "gate1"
                 assert "same workspace and thread" in prompt
+                assert "<source-aware-startup>" in prompt
+                assert '"feedback_frontier":' in prompt
+                assert "lift_feedback_category CATEGORY" in prompt
                 payload = artifact.to_json()
             (self.output_dir / "candidate.json").write_text(json.dumps(payload))
             return CodexCLITurn(
@@ -811,9 +876,33 @@ def test_codex_lift_keeps_one_thread_and_repairs_from_host_check() -> None:
     )
     request = _adapter_request()
     first = adapter.lift(request, None)
+    from intentir.extraction.lifters import codex_cli as codex_lifter_module
+
+    original_input_files = codex_lifter_module._input_files
+
+    def host_upgraded_input_files(prepared):
+        values = original_input_files(prepared)
+        values["tools/context_query.py"] += "\n# concurrent host upgrade\n"
+        return values
+
+    monkeypatch.setattr(
+        codex_lifter_module,
+        "_input_files",
+        host_upgraded_input_files,
+    )
     feedback = LiftFeedback(
         FeedbackKind.GATE1,
-        {"observer_diff": {"category": "dataflow"}},
+        {
+            "observer_diff": {
+                "categories": [
+                    {
+                        "category": "dataflow",
+                        "difference_count": 1,
+                        "examples": [{"kind": "missing", "item": "scf.for"}],
+                    }
+                ]
+            }
+        },
         1,
         artifact,
     )
@@ -832,6 +921,9 @@ def test_codex_lift_keeps_one_thread_and_repairs_from_host_check() -> None:
     assert second.metadata["cli_turns"] == 1
     assert second.metadata["thread_id"] == "persistent-thread"
     assert second.metadata["session_cli_turns"] == 3
+    assert "concurrent host upgrade" not in (
+        adapter._session_workspace.input_dir / "tools/context_query.py"
+    ).read_text()
     assert len(adapter.records) == 2
     assert adapter.records[0].extraction is not None
     assert "provider-secret" not in json.dumps(

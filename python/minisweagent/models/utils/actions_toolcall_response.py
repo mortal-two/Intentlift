@@ -194,7 +194,7 @@ INSPECT_LIFT_CONTEXT_TOOL_RESPONSE_API = {
     "type": "function",
     "name": "inspect_lift_context",
     "description": (
-        "Read one bounded exact Source/Harness/feedback/current-candidate or "
+        "Read one bounded exact Source/Harness/feedback-category/current-candidate or "
         "source-neutral knowledge view without guessing filesystem paths. The "
         "tool is read-only and never classifies or repairs J/C/pi."
     ),
@@ -209,12 +209,15 @@ INSPECT_LIFT_CONTEXT_TOOL_RESPONSE_API = {
                     "source_outline",
                     "source_find",
                     "harness",
+                    "harness_abi",
                     "feedback",
+                    "feedback_category",
                     "candidate",
                     "candidate_find",
                     "candidate_nodes",
                     "candidate_node",
                     "candidate_abi",
+                    "candidate_control",
                     "candidate_diff",
                     "knowledge",
                 ],
@@ -225,6 +228,10 @@ INSPECT_LIFT_CONTEXT_TOOL_RESPONSE_API = {
             "count": {"type": "integer", "minimum": 1, "maximum": 160},
             "context": {"type": "integer", "minimum": 0, "maximum": 16},
             "op": {"type": "string", "maxLength": 64},
+            "section": {
+                "type": "string",
+                "enum": ["overview", "outputs", "boundary", "pi"],
+            },
         },
         "required": ["view"],
     },
@@ -512,19 +519,21 @@ def parse_toolcall_actions_response(
             if not isinstance(args, dict) or args:
                 error_msg += "check_and_submit_candidate takes no arguments."
         elif tool_name == "inspect_lift_context" and enable_lift_context_tool:
-            allowed = {"view", "query", "path", "start", "count", "context", "op"}
+            allowed = {
+                "view", "query", "path", "start", "count", "context", "op", "section"
+            }
             if (
                 not isinstance(args, dict)
                 or not set(args).issubset(allowed)
                 or args.get("view") not in {
-                    "source", "source_outline", "source_find", "harness",
-                    "feedback", "candidate", "candidate_find",
-                    "candidate_nodes", "candidate_node", "candidate_abi",
+                    "source", "source_outline", "source_find", "harness", "harness_abi",
+                    "feedback", "feedback_category", "candidate", "candidate_find",
+                    "candidate_nodes", "candidate_node", "candidate_abi", "candidate_control",
                     "candidate_diff", "knowledge",
                 }
                 or any(
                     key in args and not isinstance(args[key], str)
-                    for key in ("query", "path", "op")
+                    for key in ("query", "path", "op", "section")
                 )
                 or any(
                     key in args

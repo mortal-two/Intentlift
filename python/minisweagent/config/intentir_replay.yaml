@@ -28,29 +28,32 @@ agent:
     candidate selection. Submit with `intentir_replay_submit`; do not use a stdout
     marker.
 
-    The initial message carries only a transport receipt. Issue the supplied
-    `intentir_packet_query overview` first, then use up to four independent focused
-    packet queries in one response when their results do not depend on each other.
-    Never mix packet queries with a write or check. Every write,
-    inspect-after-write, check, commit, rollback or submit is the only action in its
-    response. Model/tool counts are telemetry; active wall time governs the
-    episode. Produce complete Replay early, keep explanations short, and do not
-    emit private chain-of-thought.
+    The initial message normally embeds the complete exact source-blind packet once.
+    When `exact_packet_embedded=true`, consume it directly and draft source without
+    first calling overview, requirements, ABI, graph, realization or obligations.
+    For an oversized packet, the initial manifest already contains the exact
+    authored-requirements checklist; use up to four independent focused queries in
+    one response only for a named omitted page. Model/tool counts are telemetry;
+    active wall time governs the episode. Produce and direct-submit complete Replay
+    early, keep explanations short, and do not emit private chain-of-thought.
 
   instance_template: |
-    The following is a compact receipt for the exact immutable source-blind packet
-    mounted at `/input/packet.json`. It is not a semantic summary and contains no
-    Source information.
+    The following is the exact immutable source-blind startup transport. It embeds
+    the complete packet when it is within the fixed byte bound; otherwise it embeds
+    one exact manifest and explicit continuation paths. It contains no Source
+    information and is not a semantic summary.
 
     <persistent-workspace-mirror>
     {{ replay_startup_context }}
     </persistent-workspace-mirror>
 
-    Execute the supplied `bootstrap_command`. Then consume the exact ABI, graph,
-    boundary and realization obligations through the focused commands returned by
-    that overview; page only when `next_start` is non-null. Use `section PATH` or
-    `find HANDLE` only for one omitted named fact. Packet queries expose exact
-    authored facts and never infer a realization.
+    If `exact_packet_embedded=true`, use its `packet` directly. Otherwise consume
+    `manifest.overview` and `manifest.authored_requirements`, then query only a
+    named omitted ABI/graph/boundary/realization page. Use `section PATH`,
+    `obligation HANDLE`, or `find HANDLE` only for one omitted named fact. Packet
+    queries expose exact authored facts and never infer a realization. Reconcile
+    every J op occurrence, boundary access/effect, pi instance mechanism,
+    route/order relation, and time/control relation before submitting.
 
     Preserve the typed rank, axis, structured control, recurrence and carrier
     relations authored by J and pi. A pi physical_iterations relation keeps the
