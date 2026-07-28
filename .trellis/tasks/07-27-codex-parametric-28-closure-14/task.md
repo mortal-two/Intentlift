@@ -186,8 +186,8 @@ fixed code不得替Lift修成`x*`。
 
 - frontend commit起点：`460aaed1c6af0b267a4a9da9ca497aea6e66ad40`；
 - artifact/decode/typecheck：`artifact.v9 / decode.v13 / typecheck.v22`；
-- Lift：Codex `openai.codex-cli.intentir-lift.v4 / intentir.lift-knowledge.v59`；
-- Replay：Codex `openai.codex-cli.intentir-replay.v11`，MiniSWE `minisweagent.intentir-replay.v16`；
+- Lift：Codex `openai.codex-cli.intentir-lift.v5 / intentir.lift-knowledge.v59`；
+- Replay：Codex `openai.codex-cli.intentir-replay.v12`，MiniSWE `minisweagent.intentir-replay.v16`；
 - Replay packet/check：`replay-input.v1 / public_frontend_context_v12 / replay-check.v7`；
 - Harness：Triton workload adapter v5；
 - Gate1 observer：`triton-ttir-3.6-gate1-v11`；outer batch：`intentir.scrc.batch.v3`；
@@ -216,8 +216,10 @@ fixed code不得替Lift修成`x*`。
   为 NO_CLOSURE；Flash full backward与SplitK forward因至少一个 Replay-before-Gate1
   infrastructure branch 聚合为 infrastructure_failed。
 - Wave 7（剩余14项，commit `d40e37ef`，Codex Sol high）进行中：JSD 在 branch 3 formal round 1、
-  TVD 在 branch 2 formal round 2 fresh Gate1 closure 后通过三边 Gate2，均直接 certified；其余项继续
-  执行，不提前写终态。
+  TVD 在 branch 2 formal round 2 fresh Gate1 closure 后通过三边 Gate2，均直接 certified；RoPE 与
+  GroupNorm、Linear 已完整耗尽 `B=3,K=5` 为 NO_CLOSURE。Qwen2VL MRoPE 的一个 Lift branch、Llama4 RoPE
+  的一个 Replay branch 在旧 Codex runtime v2 首轮 wall-time 后因 thread id 未保存而成为
+  infrastructure failure，不能据此归为语义失败；其余项继续执行，不提前写终态。
 - 当前可用闭合总计 `16/28`：13 个原运行直接认证，3 个 exact-artifact capability recheck 认证。
   TypeCheck PASS 不计进度；只有 Gate1 已闭合且当前 Gate2 三边通过才计入。
 
@@ -244,9 +246,12 @@ structured J loops 加 `pi.physical_iterations` 核对 compiled `scf.for` multip
 `pi.loop_carriers/physical_loop_carriers` 核对 block-argument arity；`pi.iterations`只 realize 已存在的
 J loop，不重复计数。检查防止 CSE 折叠 transfer、Replay 遗漏已声明物理时间或 carrier；仍不读取
 Source、Harness value 或 Gate1，也不补 loop/bound/carrier/transfer。
-Codex Lift v4 与 Replay v11 对单次 provider turn wall-time 只做同 thread/session 续跑，并且只可恢复
+Codex Lift v5 与 Replay v12 使用 Codex agent runtime v3：若首轮被 wall-time 中断，runtime 只从
+CLI 已经发出的唯一 `thread.started` JSONL 事件恢复原 thread identity，再由同一个 owner/episode、
+同一个 workspace 和 closed diagnostics 继续；不会接受未通过检查的 candidate/Replay，也不会恢复
+或合成未完成输出。对单次 provider turn wall-time 仍只做同 thread/session 续跑，并且只可恢复
 本次 invocation/episode 内由同一 LLM 写出且已经通过对应 closed check 的 exact bytes；固定代码不
-合并、修复或跨正式轮次选择 candidate。Lift v4 另要求 LLM 在提交前逐项 reconcile syntax-only
+合并、修复或跨正式轮次选择 candidate。Lift v5 另要求 LLM 在提交前逐项 reconcile syntax-only
 Source control-flow outline，但分类与完整 J/C/π 仍由 LLM 作者化。MiniSWE v16 共享同一
 replay-check.v7 合同，但当前 28 项
 fresh closure 仍以 Codex 为主执行路径。

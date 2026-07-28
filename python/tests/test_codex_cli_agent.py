@@ -417,6 +417,48 @@ def test_codex_cli_cancels_inflight_turn_for_first_gate1_winner(
     assert len(captured.value.stdout_sha256) == 64
 
 
+def test_codex_cli_recovers_thread_identity_from_timed_out_initial_turn(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    input_dir, output_dir, work_dir, tmp_dir = _workspace_dirs(tmp_path)
+    process = _RunningProcess()
+
+    def fake_popen(_command, *, stdin, stdout, stderr, env):
+        del stdin, stderr, env
+        stdout.write(
+            b'{"type":"thread.started","thread_id":"thread-timeout"}\n'
+            b'{"type":"turn.started"}\n'
+            b'{"type":"item.started"'
+        )
+        stdout.flush()
+        return process
+
+    monkeypatch.setattr("subprocess.Popen", fake_popen)
+    session = CodexCLISession(
+        provider=ProviderConfig(
+            "test", "http://provider.invalid/v1", "provider-secret", "test-model"
+        ),
+        input_dir=input_dir,
+        output_dir=output_dir,
+        scratch_dir=work_dir,
+        tmp_dir=tmp_dir,
+        model="test-model",
+        effort="high",
+    )
+    try:
+        with pytest.raises(CodexCLIError, match="wall-time limit"):
+            session.run("first", timeout_seconds=1e-9)
+        resumed = session._command("continue", effort="high", resumed=True)
+    finally:
+        session.close()
+
+    assert process.killed
+    assert session.thread_id == "thread-timeout"
+    assert "resume" in resumed
+    assert "thread-timeout" in resumed
+
+
 def test_codex_cli_fails_closed_if_secret_reaches_event_stream(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

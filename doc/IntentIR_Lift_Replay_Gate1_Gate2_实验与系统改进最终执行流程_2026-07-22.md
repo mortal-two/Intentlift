@@ -1298,7 +1298,7 @@ carrier、arity 1 和非退化 split grid；ordinal 27/28 使用 arity 2，展�
 参数。`None` 在 J.signature 中只能是 `opaque(mode=value,dtype=none)`，无 logical_ref/J
 tensor/node/effect/π instance，不得换成 dummy pointer 或 scalar；加入 canonical contraction 与
 direct/decomposed stage multiplicity 合同后，Codex Lift knowledge 已由后续通用能力升级到
-`intentir.lift-knowledge.v59`，MiniSWE Lift 保持 v57。v49/v50 在不改变 artifact/判定的前提下加入 persistent-workspace exact mirror
+`intentir.lift-knowledge.v59`，MiniSWE Lift 保持 v57。Codex CLI agent runtime v3 在不接受任何未通过候选、也不补写 artifact 的前提下，从被 wall-time 中断的 JSONL 中恢复已经发出的唯一 `thread.started`，使同一 Lift owner 能在剩余 branch 时间内继续；v49/v50 在不改变 artifact/判定的前提下加入 persistent-workspace exact mirror
 transport compaction、最近 response-group 窗口、source-neutral schema bundle、单一持久 Lift owner，
 以及 Replay v8 的
 exact-source direct submit/exact-text patch+preflight；这些机制只搬运 LLM authored bytes 或既有
@@ -1316,15 +1316,16 @@ v5 进一步加入 valuation-matched semantic constexpr equality、真实 scratc
 batch仍使用不同 `h*`。Llama4 的 `2*head_dim_half` 与 SplitK product/derived capacity/variant family
 在当前 relation vocabulary 中保持 selected-variant literal，不从 grid/prose或数值相等猜公式。
 
-当前 Codex Lift v4 / Replay v11 对单次 turn wall-time 不再直接丢弃当前成果：host 只重新检查同一
-invocation/episode 的 exact current bytes；若它们已通过 closed check则接收，否则只可恢复同一 LLM
-本轮已检查通过的 exact checkpoint，或在 provider 返回 resumable thread 时继续同一 thread。这里没有
+当前 Codex Lift v5 / Replay v12 对单次 turn wall-time 不再直接丢弃当前成果：runtime v3 可从被中断
+JSONL 中已经完整发出的唯一 `thread.started` 恢复同一 thread identity；host 只重新检查同一
+invocation/episode 的 exact current bytes，若它们已通过 closed check则接收，否则只可恢复同一 LLM
+本轮已检查通过的 exact checkpoint，或继续这个已建立的同一 thread。这里没有
 跨 formal round 的 best-parent、语义合并或 fixed repair。Replay workspace view v2 只无损并置 typed
 reduction obligations；`replay-check.v7` 在 source-blind synthetic compile 后核对作者化
 `transfer_direct` occurrence 的 compiled multiplicity，并核对 structured J loops 加
 `pi.physical_iterations` 所要求的 `scf.for` 数及对应 logical/physical carrier block arity。它防止
 CSE 抹去 π event 或 Replay 遗漏已声明物理时间/carrier，但不替 Replay 生成 eviction policy、
-loop/bound/update、reshape 或其他源码。Lift v4 只要求 LLM 对 syntax-only Source control-flow outline
+loop/bound/update、reshape 或其他源码。Lift v5 只要求 LLM 对 syntax-only Source control-flow outline
 逐项作所有权 reconciliation；固定代码不据此分类或补造 artifact。
 
 v51/Replay v9 进一步只加入 proof-irrelevant execution guard：连续相同工具请求、相同当前

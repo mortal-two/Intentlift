@@ -40,7 +40,7 @@ from .replay import (
 )
 
 
-CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v11"
+CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v12"
 
 _INITIAL_PROMPT = """You are the sole writer for one fresh source-blind IntentIR Replay episode.
 The outer runtime exposes only this isolated /workspace. input/ is immutable;

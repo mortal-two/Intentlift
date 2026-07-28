@@ -24,7 +24,7 @@ from typing import Any, Callable, Mapping
 from .provider import ProviderConfig
 
 
-CODEX_CLI_AGENT_RUNTIME = "intentir.codex-cli.agent-runtime.v2"
+CODEX_CLI_AGENT_RUNTIME = "intentir.codex-cli.agent-runtime.v3"
 CODEX_CLI_TOOL_BRIDGE_PROTOCOL = "intentir.codex-cli.tool-bridge.v2"
 CODEX_CLI_TOOL_BRIDGE_ROOT_NAME = "intentir-agent-tools"
 MAX_CODEX_STDOUT_BYTES = 32 * 1024 * 1024
@@ -656,6 +656,45 @@ class CodexCLISession:
             raise CodexCLIError("Codex produced no JSONL events")
         return tuple(events)
 
+    def _recover_partial_thread_identity(self, raw: bytes) -> str | None:
+        """Remember a unique ``thread.started`` from an interrupted JSONL stream.
+
+        A Codex turn can be killed by the outer wall-time limit after the CLI has
+        created and persisted its thread but before it emits ``turn.completed``.
+        Only the already-emitted thread identity is recovered here; partial turns,
+        usage, model text, and workspace artifacts remain unaccepted until their
+        independent host checks pass.
+        """
+
+        thread_ids: set[str] = set()
+        for line in raw.splitlines():
+            if not line.strip():
+                continue
+            try:
+                event = json.loads(line)
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                # The process may have been killed halfway through its final JSONL
+                # record.  Earlier complete records are still authoritative.
+                continue
+            if (
+                isinstance(event, Mapping)
+                and event.get("type") == "thread.started"
+                and isinstance(event.get("thread_id"), str)
+                and event["thread_id"]
+            ):
+                thread_ids.add(event["thread_id"])
+        if not thread_ids:
+            return None
+        if len(thread_ids) != 1:
+            raise CodexCLIError(
+                "interrupted Codex turn has conflicting thread identities"
+            )
+        thread_id = next(iter(thread_ids))
+        if self._thread_id is not None and thread_id != self._thread_id:
+            raise CodexCLIError("interrupted Codex turn belongs to a different thread")
+        self._thread_id = thread_id
+        return thread_id
+
     def run(
         self,
         prompt: str,
@@ -733,6 +772,8 @@ class CodexCLISession:
                 stderr_sha256=hashlib.sha256(raw_stderr).hexdigest(),
             )
         if limit_error is not None:
+            if limit_error == "Codex turn exceeded its wall-time limit":
+                self._recover_partial_thread_identity(raw_stdout)
             raise CodexCLIError(limit_error)
         if returncode != 0:
             raise CodexCLIError(f"Codex CLI exited with status {returncode}")
