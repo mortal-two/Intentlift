@@ -1,4 +1,4 @@
-# Task 16：Fresh-14 J 的真实 MLIR 跨目标搜索与 Source Baseline 性能闭合
+# Task 16：Fresh-14 J 的真实 MLIR 跨目标搜索与 Source/Native Baseline 性能闭合
 
 > 状态：任务已建立，尚未启动实现与实跑
 >
@@ -20,12 +20,12 @@
   -> 每个 state 独立搜索 target schedule
   -> Q/D correctness 筛选
   -> CUDA 5090D / H100 / RVV target code
-  -> 与原始 Source kernel 及最强适用 baseline 比较性能
+  -> GPU 与原始 Source kernel、RVV 与独立 Native RVV baseline 比较性能
 ```
 
 任务必须证明三件事：
 
-1. **生成代码有竞争力**：IntentIR 与原始 Source kernel、Best Applicable 在相同 workload 下比较；
+1. **生成代码有竞争力**：GPU 与原始 Source kernel 比较；RVV 与独立 Native RVV baseline 比较；
 2. **C 不绑定 target schedule**：Schedule-Only 相对 C-Fixed 的收益；
 3. **J 打开普通调参之外的实现自由度**：IntentIR 相对 Schedule-Only 的收益。
 
@@ -75,7 +75,6 @@ Source kernel
 C-Fixed
 Schedule-Only
 IntentIR
-Best Applicable（存在严格匹配实现时）
 ```
 
 其中：
@@ -84,20 +83,22 @@ Best Applicable（存在严格匹配实现时）
 - Source 与三个后端臂使用同一 shape、dtype、layout、observable outputs、输入数据分布、cache policy、
   profiler、timed boundary 与 target；
 - Source 和 IntentIR 最终 winner 使用交替顺序、等数量的 paired measurement batches；
-- Source 已经是最强适用实现时，外部 panel 合并为 `Source / Best`；
-- `Best Applicable` 必须是语义、shape、dtype、layout、输出关系和计时边界均严格匹配的外部实现，
-  不能用不匹配库结果、理论 roof 或 RefJ latency 代替。
+- GPU 正式外部 baseline 只有 Source，不再加入其他库实现。
 
-RVV 上仍保留 Source 视角：
+原始 Triton Source 通常不能在 RVV 上执行，因此 RVV 使用独立 native baseline：
 
 ```text
-Triton-CPU（原始 Source 的 CPU execution path）
-Best Native RVV
+Native RVV
 IntentIR
 ```
 
-任务应真实接通 Triton-CPU；在接通前必须写 `unavailable`，不能以 CUDA Source、RefJ 或 scalar Python
-代替。Best Native RVV 只覆盖确有严格匹配实现的子集。
+Native RVV baseline 按以下顺序建立：
+
+1. 优先复用语义、shape、dtype、layout 和 timed boundary 严格匹配的 ggml/llama.cpp 等实现；
+2. 没有匹配实现时，编写独立 RVV intrinsic kernel；
+3. baseline 不能复用 IntentIR 的候选生成、winner 或 target object，避免自我比较；
+4. Triton-CPU 只在确有可执行路径的少量 kernel 上作为补充结果，不设为 fresh-14 全量要求；
+5. scalar Python、RefJ latency 或 CUDA Source 不能替代 Native RVV baseline。
 
 ## 4. 正式实验臂
 
@@ -140,8 +141,8 @@ IntentIR 的候选集合必须包含完整 Schedule-Only spine，再在相同总
 ```text
 G_schedule = latency(C-Fixed) / latency(Schedule-Only)
 G_lowering = latency(Schedule-Only) / latency(IntentIR)
-G_source   = latency(Source) / latency(IntentIR)
-G_best     = latency(Best Applicable) / latency(IntentIR)
+G_source   = latency(GPU Source) / latency(GPU IntentIR)
+G_native   = latency(Native RVV) / latency(RVV IntentIR)
 ```
 
 `G_schedule` 与 `G_lowering` 优先从同一 target timing receipt 计算，跨进程独立报告比值只作漂移诊断。
@@ -235,7 +236,7 @@ profile 修改数据流、partial layout 或适用域。
 - 实现 dynamic VL strip-mining、SEW/LMUL、vector reduction/scan 与 tail；
 - 实现真实 single-thread 与 16-thread execution，并固定 affinity/thread count；
 - 同样运行 CF、Schedule-Only、IntentIR 和 C/no-C；
-- 外部比较接通 Triton-CPU，并在匹配子集加入 native RVV baseline。
+- 为 fresh-14 建立独立 Native RVV baseline；Triton-CPU 仅作可用子集的补充。
 
 ## 7. Workload 与计时
 
@@ -266,7 +267,7 @@ kernel 使用相同数量的 shape。各实验臂和所有 baseline 对同一 ce
 - correctness 位于 timed region 外且先执行；
 - timed region 只包含 prepared launch 或完整 prepared multi-launch graph；
 - CUDA 使用 event；RVV 使用 monotonic clock、固定 affinity/thread count；
-- Source/Best/CF/E2/E3 使用相同 warm-up、cache policy、采样数和 profiler；
+- GPU Source、RVV Native、CF/E2/E3 使用相同 warm-up、cache policy、采样数和 profiler；
 - 报告每个 cell 的 median、完整样本、dtype、shape、target 与 binary/object digest；
 - Roofline/counters/cache sensitivity 只用于解释瓶颈，不替代主 latency。
 
@@ -280,7 +281,7 @@ kernel 使用相同数量的 shape。各实验臂和所有 baseline 对同一 ce
   -> 实现一个 source-neutral MLIR mechanism
   -> 回归全部14项的 match/admission/compile/QD
   -> 在5090/H100/RVV重新搜索
-  -> 与Source和外部baseline比较
+  -> GPU与Source、RVV与Native baseline比较
 ```
 
 禁止：
@@ -302,7 +303,7 @@ kernel 使用相同数量的 shape。各实验臂和所有 baseline 对同一 ce
 - 14 个都形成 typed Intent MLIR；
 - 在三个 target 上 compile/run，缺失能力直接修后端；
 - GPU 14 项原始 Source kernel baseline 接通；
-- RVV Triton-CPU Source path 开始接通，不用替代 latency。
+- RVV Native baseline 开始接通，优先复用严格匹配实现，否则使用独立 intrinsic kernel。
 
 验收：14/14 有真实 MLIR、target binary/object、Target--RefJ correctness 和明确性能 cell；失败项不得因
 不适用被删除。
@@ -322,7 +323,7 @@ occupancy瓶颈，继续修改通用 compiler mechanism。
 - 5090D、H100、RVV 分别搜索，不复用另一 target winner；
 - 对全部14项运行 CF/E2/E3 与 C/no-C；
 - GPU 与 Source paired timing；
-- RVV single/16-thread 与 Triton-CPU/native baseline；
+- RVV single/16-thread 与独立 Native RVV baseline；
 - 持续以 profile 修正 search space 和 codegen，不把首轮数字当最终结果。
 
 ### Phase D：正式实验输出
@@ -330,14 +331,14 @@ occupancy瓶颈，继续修改通用 compiler mechanism。
 GPU Figure panels：
 
 ```text
-External: Source / Best Applicable / IntentIR
+External: Source / IntentIR
 Internal: C-Fixed / Schedule-Only / IntentIR
 ```
 
 RVV Figure panels：
 
 ```text
-External: Triton-CPU / Best Native RVV / IntentIR
+External: Native RVV / IntentIR
 Internal: C-Fixed / Schedule-Only / IntentIR
 ```
 
@@ -349,9 +350,9 @@ Internal: C-Fixed / Schedule-Only / IntentIR
 1. fresh 14 J 全部由同一普通 backend 消费，无 Python target emission；
 2. 14 项在 5090D/H100/RVV 均有 compile/correctness/performance 结果或准确的后端阻断；
 3. GPU 原始 Source kernel baseline 覆盖全部可执行 headline cells；
-4. RVV 接通 Triton-CPU，匹配子集接通 Best Native RVV；
+4. RVV fresh-14 接通严格匹配、独立实现的 Native RVV baseline；
 5. CF/E2/E3 使用同一 workload、target、compiler、Q/D、profiler与可比较预算；
-6. `G_schedule`、`G_lowering`、`G_source` 和可用时的 `G_best` 可由机器报告直接计算；
+6. `G_schedule`、`G_lowering`、`G_source` 和 `G_native` 可由机器报告直接计算；
 7. C/no-C 使用同一候选全集与 latency map；
 8. 新收益来自真实 MLIR dataflow/topology/numeric-state变化，不是报告开关或弱 baseline；
 9. 结果包含 fresh-14 全量与 per-kernel，不只报告加速项；

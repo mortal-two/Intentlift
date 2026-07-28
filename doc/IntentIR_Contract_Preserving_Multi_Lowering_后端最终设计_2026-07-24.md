@@ -920,12 +920,14 @@ digest、所有 observable outputs 的三条 direct-edge verdict，以及独立 
 最终论文把外部竞争力与内部因果归因分开。外部 panel 固定为：
 
 ```text
-GPU: Source / Best Applicable / IntentIR
-RVV: Triton-CPU / Best Native RVV / IntentIR
+GPU: Source / IntentIR
+RVV: Native RVV / IntentIR
 ```
 
-所有外部 baseline 必须严格匹配 operator、shape、dtype、layout、output relation、timed boundary、
-cache policy、device 与 profiler；Source 已是 strongest applicable 时合并为 `Source / Best`。
+GPU baseline 固定为被 Lift 的原始 Source kernel。RVV 通常没有可执行的 Triton Source，故优先复用
+严格匹配的 ggml/llama.cpp 等 native 实现，不存在时编写独立 RVV intrinsic kernel；Triton-CPU 只在
+真实可执行子集作为补充。所有 baseline 必须严格匹配 operator、shape、dtype、layout、output relation、
+timed boundary、cache policy、device 与 profiler，并与 IntentIR 搜索实现独立。
 
 内部归因在所有 target 上只保留三臂。这里的“固定路径”由 canonical transformation trace 和真实
 post-pass MLIR 决定，不由 `family_id`、named emitter 或 kernel 名决定：
@@ -970,7 +972,7 @@ canonical spec digest 为
 `6ac5f2b4f2a26a282aa61cda3e48e9bee7469946300e9bbba0322f227ae4250b`。一个预算单位是一个不同的
 canonical post-pass MLIR state；重复 state 留在 audit log 但不消耗预算，无法形成 state 的不同 exact
 candidate failure 消耗一个预算单位。finalist 不混用初次排序样本，而按正反交替 traversal 做 fresh
-round-robin remeasurement；Source/Best/target 使用一致的准备、cache 与计时规则。
+round-robin remeasurement；matched external baseline 与 target 使用一致的准备、cache 与计时规则。
 
 ### 18.1 TileLang-aligned 主评测、缓存状态与 Roofline
 

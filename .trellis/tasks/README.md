@@ -10,7 +10,7 @@ Trellis CLI、自动 session 或 workflow phase。
 C-prior 实验。Task 16 不调用 provider、不修改 Lift/Replay/Gate verdict。
 
 - [Task 11：SCRC v4 的 28-Kernel 有界并行全闭合](07-24-scrc-v4-full-closure-11/task.md)（执行中；SCRC 主线）
-- [Task 16：Fresh-14 J 的真实 MLIR 跨目标搜索与 Source Baseline 性能闭合](07-28-fresh14-real-mlir-cross-target-search-16/task.md)（已建立；backend主线）
+- [Task 16：Fresh-14 J 的真实 MLIR 跨目标搜索与 Source/Native Baseline 性能闭合](07-28-fresh14-real-mlir-cross-target-search-16/task.md)（已建立；backend主线）
 
 Task 15 已完成阶段性 checkpoint 并冻结为历史执行记录；其中 legacy 16-high-performance + 2-canary
 与 J_dev 结果继续用于 compiler regression，但不再决定 fresh 正式分母：

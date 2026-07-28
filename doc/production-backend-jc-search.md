@@ -552,8 +552,10 @@ ssh rvv python3 /tmp/run_rvv_benchmark_bundle.py \
 ```
 
 RVV exporter 已接入与 CUDA 相同的 18-entry regression `--workload-profile` 与 per-kernel valuation receipt；
-当前 RVV bundle 仍没有 Triton-CPU/Best Native RVV executable，因此内部结果必须标记
-`Target--RefJ-only`，外部 panel 保持明确未完成，不能用 CUDA Source 或 RefJ latency代替。CUDA 与 RVV
+当前 RVV bundle 仍没有 fresh-14 独立 Native RVV executable baseline，因此内部结果必须标记
+`Target--RefJ-only`，外部 panel 保持明确未完成，不能用 CUDA Source、RefJ latency 或不存在的
+Triton-CPU path 代替。Native baseline 优先复用严格匹配的 ggml/llama.cpp 实现，否则独立编写 RVV
+intrinsic kernel。CUDA 与 RVV
 可以共享 `(j_digest, nu, workload_profile)`，但不能跨 target 复用 latency 或把 CUDA Source
 speedup 转写成 RVV 结果。
 

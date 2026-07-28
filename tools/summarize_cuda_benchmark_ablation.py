@@ -308,10 +308,6 @@ def summarize(
                     "status": "measured" if source_us is not None else "unavailable",
                     "latency_us": source_us,
                 },
-                "best_applicable": {
-                    "status": "not_supplied",
-                    "latency_us": None,
-                },
                 "intentir_latency_us": intentir_us,
                 "intentir_speedup_over_source": (
                     source_us / intentir_us if source_us is not None else None

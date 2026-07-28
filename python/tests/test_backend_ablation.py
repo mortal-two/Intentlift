@@ -51,8 +51,16 @@ def test_machine_spec_is_the_consumed_qd_experiment_contract() -> None:
         "canonical post-pass MLIR digest"
     )
     assert spec["measurement"]["confirmation_rule"].startswith(
-        "equal-count fresh Source and target"
+        "equal-count fresh matched-baseline and target"
     )
+    assert spec["measurement"]["formal_panels"]["cuda_external"] == [
+        "Source",
+        "IntentIR",
+    ]
+    assert spec["measurement"]["formal_panels"]["rvv_external"] == [
+        "Native RVV",
+        "IntentIR",
+    ]
     assert spec["measurement"]["formal_panels"]["internal_attribution"] == [
         "C-Fixed",
         "Schedule-Only",

@@ -25,8 +25,8 @@
   },
   "measurement": {
     "formal_panels": {
-      "cuda_external": ["Source", "Best Applicable", "IntentIR"],
-      "rvv_external": ["Triton-CPU", "Best Native RVV", "IntentIR"],
+      "cuda_external": ["Source", "IntentIR"],
+      "rvv_external": ["Native RVV", "IntentIR"],
       "internal_attribution": ["C-Fixed", "Schedule-Only", "IntentIR"],
       "c_prior_table": [
         "best performance at fixed budget",
@@ -36,7 +36,7 @@
     "external_match_rule": "operator, shape, dtype, layout, output relation, timed boundary, cache policy, device and profiler must match exactly",
     "timed_scope": "prepared launch or prepared graph only; allocation and correctness synchronization are outside the timed closure",
     "finalist_rule": "fresh round-robin remeasurement with alternating traversal; initial ranking samples are excluded",
-    "confirmation_rule": "equal-count fresh Source and target batches in alternating pair order",
+    "confirmation_rule": "equal-count fresh matched-baseline and target batches in alternating pair order",
     "warmup_rule": "before confirmation, Source and target prepared thunks receive the same declared untimed time budget in round-robin order; cold-data timing then evicts L2 before every measured launch",
     "e3_e2_comparison_rule": "the primary marginal E3/E2 gain selects fixed-structure schedule-spine best and expanded best from the same E3 candidate timing receipt; separately launched E2/E3 absolute latencies remain a diagnostic cross-report ratio",
     "aggregation": "median per side with every paired batch retained"

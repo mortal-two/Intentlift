@@ -61,8 +61,8 @@ ABLATION_CANDIDATE_IDENTITY = {
 }
 ABLATION_MEASUREMENT = {
     "formal_panels": {
-        "cuda_external": ["Source", "Best Applicable", "IntentIR"],
-        "rvv_external": ["Triton-CPU", "Best Native RVV", "IntentIR"],
+        "cuda_external": ["Source", "IntentIR"],
+        "rvv_external": ["Native RVV", "IntentIR"],
         "internal_attribution": ["C-Fixed", "Schedule-Only", "IntentIR"],
         "c_prior_table": [
             "best performance at fixed budget",
@@ -82,7 +82,7 @@ ABLATION_MEASUREMENT = {
         "ranking samples are excluded"
     ),
     "confirmation_rule": (
-        "equal-count fresh Source and target batches in alternating pair order"
+        "equal-count fresh matched-baseline and target batches in alternating pair order"
     ),
     "warmup_rule": (
         "before confirmation, Source and target prepared thunks receive the same "

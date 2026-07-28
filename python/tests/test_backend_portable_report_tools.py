@@ -103,6 +103,9 @@ def test_cuda_ablation_summary_accepts_target_refj_only_reports():
     assert result["per_kernel"][0]["external_competitiveness"][
         "intentir_speedup_over_source"
     ] is None
+    assert "best_applicable" not in result["per_kernel"][0][
+        "external_competitiveness"
+    ]
 
 
 def test_cuda_ablation_summary_reports_formal_three_arm_gains():

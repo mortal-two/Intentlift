@@ -308,7 +308,7 @@ IntentIR:
 - 三臂共享exact config、dtype、target、compiler、Q/D、profiler；
 - C-Fixed exact one candidate且schedule来自可审计C projection；
 - Schedule-Only与IntentIR的canonical path identity相同；IntentIR包含Schedule-Only spine；
-- external panel使用Source/Best Applicable/IntentIR；RVV缺baseline时不得伪造；
+- external panel 的当前正式口径由 Task16 取代：GPU 使用 Source/IntentIR，RVV 使用独立 Native RVV/IntentIR；
 - canary、synthetic profile、component/composed graph不混合aggregate。
 
 ## Phase F：性能推进与证据冻结
@@ -319,7 +319,7 @@ IntentIR:
 2. 18项natural/capability config correctness；
 3. C-Fixed/Schedule-Only/IntentIR；
 4. C/no-C bounded-search；
-5. Source/Best external comparison；
+5. GPU Source 与 RVV Native baseline external comparison；
 6. 仅对需要解释的机制做counters/Roofline/cache敏感性，不膨胀主图。
 
 每轮性能分析从瓶颈出发：global traffic、dispatch、parallelism、reduction dependency、occupancy、register/
@@ -336,7 +336,7 @@ shared pressure、vector utilization、RVV VL/multicore。优化必须落到通�
 3. 18项在5090/H100/RVV形成横向compile/correctness矩阵；
 4. CUDA/RVV均具有真实schedule与structural lowering search；
 5. C-Fixed/Schedule-Only/IntentIR与C-prior消融机器可执行；
-6. Source/Best与IntentIR在相同op/shape/dtype/layout/timing边界比较；
+6. GPU Source、RVV Native baseline与IntentIR在相同op/shape/dtype/layout/timing边界比较；
 7. 报告同时给all-corpus、applicable subset与per-kernel结果，不只选加速项；
 8. 所有发布winner有binary/object digest与correctness receipt；
 9. docs/spec/result SHA与compiler commit冻结；
