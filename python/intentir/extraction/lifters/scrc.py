@@ -1087,8 +1087,10 @@ For a Source physical tiled loop around a J fact, use pi.physical_iterations.
 body anchors non-loop reduce/contraction or boundary access/domain with a closed
 axis; tile anchors required positive-int C on the same subject/axis. Structured J
 loops use pi.iterations. Author basis/direction from Source; add no J loop/bound.
-Use physical_loop_carriers only for visible state; J owns init/update. Fixed code
-only validates/rejects.
+Use physical_loop_carriers only for visible state; J owns init/update. Within one
+region, declaration order is the shared init/state/next/result tuple ordinal copied
+from the Source loop argument/yield/result order; never sort by dtype/ref/mechanism.
+This is tuple order, not event order (`pi.order`). Fixed code only validates/rejects.
 
 Pi preserves every compiler-visible source realization event not denoted by J
 or pure C. Emit multiple instances with the same semantic_ref when one declared

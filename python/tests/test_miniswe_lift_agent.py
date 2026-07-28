@@ -198,7 +198,7 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     files = _real_lift_input_files()
 
     assert CANDIDATE_CHECK_PROTOCOL == SCRC_CANDIDATE_CHECK_PROTOCOL
-    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v61"
+    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v62"
     assert "knowledge/minimal_example.json" in files
     assert "knowledge/intent_ops.md" in files
     assert "tools/schema_query.py" in files
@@ -288,6 +288,8 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     assert "never copy it to sibling parameters" in preflight
     assert "strictly increasing width" in preflight
     assert "local tile axis after program/grid axes" in preflight
+    assert "declaration order is the exact carrier-tuple ordinal" in preflight
+    assert "never sort carriers by dtype" in preflight
 
 
 def test_context_bootstrap_keeps_feedback_visible_and_copies_previous(

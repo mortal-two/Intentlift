@@ -469,8 +469,8 @@ dependent checking 夸写成 Source topology 的形式证明。
 首版不需要让 TypeCheck 成为 SMT 或完整图证明器。最小可行实现只需 fail closed 地完成上述局部检查。
 
 当前合并协议为 `artifact.v9 / decode.v14 / typecheck.v26 / candidate-check.v1 / replay-check.v10`；
-Replay packet envelope 仍是 `replay-input.v1`，Triton context 为 `public_frontend_context_v16`，
-Codex/MiniSWE Lift knowledge 为 v65/v61，MiniSWE Replay backend 为 v27，Codex Replay backend 为 v23。
+Replay packet envelope 仍是 `replay-input.v1`，Triton context 为 `public_frontend_context_v17`，
+Codex/MiniSWE Lift knowledge 为 v66/v62，MiniSWE Replay backend 为 v28，Codex Replay backend 为 v24。
 v40 为 source-aware Lift worker 增加只读、分页的 Source control-flow
 outline（function/loop/if/return 的行号与嵌套深度）；v41 只把 shared dialect/lowering 已支持的
 `log2` 补入通用 `map_unary` vocabulary；v42 只要求 access `fill_value` 保留 Source 该 load 的实际
@@ -490,7 +490,10 @@ pointer-producing stage 必须流向某个 transfer；并要求 compiled distinc
 Source/Harness value/Gate，不改变最终 SCRC 接受谓词。Codex Lift v5 只要求 LLM reconcile
 syntax-only Source control-flow outline，固定代码仍不分类或补 artifact。单次 provider turn wall-time 后只允许同 invocation/episode 的 exact checked
 bytes 或 resumable same thread 继续；禁止跨 formal round/Replay episode 继承候选。
-Replay v27/v23 继承 v26/v22，并把每条 J-authored broadcast 的 operand closed type、matching access、
+Replay v28/v24 与 Lift knowledge v66/v62 明确同一 physical region 中 carrier relation 的 declaration
+order 是跨 init/state/next/result 共享的 tuple ordinal；Lift 完整作者化，Replay 原样消费，fixed code
+不按 dtype/ref/mechanism 重排。它不表示 event execution order，后者仍由 `pi.order` 拥有。
+v28/v24 继承 v27/v23；v27/v23 继承 v26/v22，并把每条 J-authored broadcast 的 operand closed type、matching access、
 named consumer/ordinal 作 exact source-blind 重索引；存在该 obligation 时，owner 必须把 ledger 与
 自己的当前编号源码并置自审。工具不建立 relation-to-statement 映射、不选择 rank-lift spelling/次数、
 不生成或修复 Replay，也不读取 Source/Gate。v26/v22 已固定：J.signature 的一个 `p*` 是一个既有 callable ABI carrier，同一 `p*` 的

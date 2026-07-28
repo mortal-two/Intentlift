@@ -333,19 +333,22 @@ ReplayLLM(J,pi,MaskC(C);U_f) -> complete source R_f
 ```
 
 当前 packet protocol 为 `intentir.scrc.replay-input.v1`，Triton 公共上下文为
-`public_frontend_context_v16`；source-aware Codex/MiniSWE Lift 的当前 knowledge receipt 分别为
-`intentir.lift-knowledge.v65 / intentir.lift-knowledge.v61`，source-blind MiniSWE/Codex Replay backend 为
-`minisweagent.intentir-replay.v27 / openai.codex-cli.intentir-replay.v23`。这些版本必须随 fresh run 原样记录；旧 packet/context/knowledge
+`public_frontend_context_v17`；source-aware Codex/MiniSWE Lift 的当前 knowledge receipt 分别为
+`intentir.lift-knowledge.v66 / intentir.lift-knowledge.v62`，source-blind MiniSWE/Codex Replay backend 为
+`minisweagent.intentir-replay.v28 / openai.codex-cli.intentir-replay.v24`。这些版本必须随 fresh run 原样记录；旧 packet/context/knowledge
 evidence 不因实现升级而被重判。
 
-Replay v27/v23 继承 v26/v22 对 π region 的原有闭合含义：region 是 compiler-visible instance 的
+Replay v28/v24 与 Lift knowledge v66/v62 只把现有 ordered relation 的含义显式化：同一 region 的
+`physical_loop_carriers` declaration order 是 init/state/next/result 共用的 carrier-tuple ordinal，Lift
+从 Source frontend loop tuple作者化，Replay原样消费；不得按 dtype/ref/mechanism排序。它不是 event
+execution order，后者仍只由 `pi.order` 声明。Replay v28/v24 继承 v27/v23；v27/v23 又继承 v26/v22 对 π region 的原有闭合含义：region 是 compiler-visible instance 的
 精确词法 realization scope，不是优化提示或 consumer membership。声明在 loop region 的 instance
 即使只依赖 loop-invariant operands，也必须在该 loop 内 materialize；Replay 不得把它 hoist 到父
 region，也不得跨 region sink、clone 或 fold。该规则只消费 Lift 已作者化 placement，不从 Source、
 Gate diff 或常见优化推导新的 instance；ReplayCheck 不据此猜 op↔instance 映射，最终一致性仍由正式
 Gate1 observer 判定。
 
-Replay v27/v23 对不超过 64 KiB 的匿名 packet 采用一次性 exact startup embedding；当前六个难核实测
+Replay v28/v24 继承 v27/v23 对不超过 64 KiB 的匿名 packet 一次性 exact startup embedding；当前六个难核实测
 packet 最大约 47 KiB，因此正常路径不再强制调用 manifest、requirements、ABI、graph、realization 或
 obligations。startup 另带一个由同一 packet 精确投影的 bounded `critical_facts.v3`：只列 semantic
 dimension carrier、IEEE special typed constant、`physical_iterations`、

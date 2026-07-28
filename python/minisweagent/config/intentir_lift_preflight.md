@@ -303,6 +303,11 @@ the artifact schema or external TypeCheck.
    When compiler-visible accumulator stages exist,
    author `physical_loop_carriers` in that region. These are temporal topology,
    never an initialization/update formula, and fixed code never creates them.
+   For every region, declaration order is the exact carrier-tuple ordinal shared
+   by init/state/next/result. Author that order from the Source frontend loop's
+   iter-argument/yield/result tuple; never sort carriers by dtype, semantic ref,
+   mechanism, or convenience. This tuple order is not execution order; use
+   `pi.order` for compiler-visible event ordering.
 22. Run the supplied static schema validator and then
    `intentir_candidate_check /output/candidate.json`. CandidateCheck is bounded
    diagnostics only; you must make every edit, and the external Runner still

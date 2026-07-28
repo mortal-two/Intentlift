@@ -859,10 +859,13 @@ Replay LLM 应遵守以下过程合同：
 15. 不从 π 猜出后覆盖 J，也不从 compiler diff 修补。
 
 当前 fresh receipt 组合为 `intentir.scrc.replay-input.v1`、Triton
-`public_frontend_context_v16`、Codex/MiniSWE Lift `intentir.lift-knowledge.v65/v61`、MiniSWE Replay v27 与 Codex Replay v23；旧 receipt 保持其原 verdict，不能由
+`public_frontend_context_v17`、Codex/MiniSWE Lift `intentir.lift-knowledge.v66/v62`、MiniSWE Replay v28 与 Codex Replay v24；旧 receipt 保持其原 verdict，不能由
 当前 Replay consumer 或 Lift knowledge 静默升级。
 
-v27/v23 继承 v26/v22：对正常大小匿名 packet 只做一次 exact startup embedding，并将 semantic dimension carrier、
+v28/v24 与 Lift knowledge v66/v62 明确已有 ordered wire 的 tuple denotation：同一 region 中
+`physical_loop_carriers` 的 declaration order 是 init/state/next/result 共享的 carrier-tuple ordinal；
+Lift 从 Source frontend loop tuple 作者化，Replay 不按 dtype/ref/mechanism 重排。该 slot order 不表示
+event execution order，也不替代 `pi.order`。v28/v24 继承 v27/v23；v27/v23 继承 v26/v22：对正常大小匿名 packet 只做一次 exact startup embedding，并将 semantic dimension carrier、
 IEEE special typed constant、physical iteration 与 `reduction_linearization + consumer route` 作一次
 bounded exact `critical_facts` 重索引；v27/v23 另把 J-authored broadcast 与 operand closed type、matching
 access、named consumer/ordinal 无损并置，并要求有该 obligation 的 owner 对当前源码运行

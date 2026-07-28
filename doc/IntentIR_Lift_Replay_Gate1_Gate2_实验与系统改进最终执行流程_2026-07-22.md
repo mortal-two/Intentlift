@@ -870,11 +870,14 @@ Replay 不得：
 
 `U_f` 必须是版本化、source-neutral 的公共前端知识，不能按当前 Kernel、operator 或失败样本选择。
 当前版本组合是 `intentir.scrc.replay-input.v1`、Triton
-`public_frontend_context_v16`、source-aware Codex/MiniSWE Lift `intentir.lift-knowledge.v65/v61`、
-source-blind MiniSWE Replay v27 与 Codex Replay v23、
+`public_frontend_context_v17`、source-aware Codex/MiniSWE Lift `intentir.lift-knowledge.v66/v62`、
+source-blind MiniSWE Replay v28 与 Codex Replay v24、
 `replay-check.v10`；fresh evidence必须保存实际 receipt，
 旧版本 run 不能被新组合追认。
-v27/v23 继承 v26/v22，并把每条 J-authored `boundary.broadcasts` 与 operand closed type、matching
+v28/v24 只明确现有 ordered carrier relation：同一 region 的 `physical_loop_carriers` declaration
+order 是 init/state/next/result 共享的 carrier-tuple ordinal；Lift 从 Source frontend loop tuple 完整
+作者化，Replay 不按 dtype/ref/mechanism 重排。它不是 event execution order，后者仍只由
+`pi.order` 拥有。v28/v24 继承 v27/v23；v27/v23 继承 v26/v22，并把每条 J-authored `boundary.broadcasts` 与 operand closed type、matching
 boundary access、named consumer/operand ordinal 作 exact source-blind 重索引；存在该 obligation 时，
 owner 必须用 `replay-obligation-audit.v2` 将 ledger 与自己的当前编号源码并置自审。工具不建立
 relation-to-statement 映射、不选择 rank-lift spelling/次数、不生成或修复 Replay，也不读取 Source/Gate。
@@ -1353,7 +1356,7 @@ carrier、arity 1 和非退化 split grid；ordinal 27/28 使用 arity 2，展�
 参数。`None` 在 J.signature 中只能是 `opaque(mode=value,dtype=none)`，无 logical_ref/J
 tensor/node/effect/π instance，不得换成 dummy pointer 或 scalar；加入 canonical contraction 与
 direct/decomposed stage multiplicity 合同后，Codex/MiniSWE Lift knowledge 当前为
-`intentir.lift-knowledge.v65/v61`。Codex CLI agent runtime v3 在不接受任何未通过候选、也不补写 artifact 的前提下，从被 wall-time 中断的 JSONL 中恢复已经发出的唯一 `thread.started`，使同一 Lift owner 能在剩余 branch 时间内继续；v49/v50 在不改变 artifact/判定的前提下加入 persistent-workspace exact mirror
+`intentir.lift-knowledge.v66/v62`。Codex CLI agent runtime v3 在不接受任何未通过候选、也不补写 artifact 的前提下，从被 wall-time 中断的 JSONL 中恢复已经发出的唯一 `thread.started`，使同一 Lift owner 能在剩余 branch 时间内继续；v49/v50 在不改变 artifact/判定的前提下加入 persistent-workspace exact mirror
 transport compaction、最近 response-group 窗口、source-neutral schema bundle、单一持久 Lift owner，
 以及 Replay v8 的
 exact-source direct submit/exact-text patch+preflight；这些机制只搬运 LLM authored bytes 或既有

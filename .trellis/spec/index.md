@@ -25,7 +25,7 @@ closed signature、Layer-A total typing、显式 broadcast、canonical reduce/co
 `pi.iterations`，并验证 Lift 已作者化的 value/dimension、consumer-extension、access-guard、typed
 control/inout/output-binding/terminal-control 关系。fixed code只诊断，不翻译别名、补齐 attrs、生成 handle/relation、
 改图或修复 artifact；历史 wire/receipt 继续按自身版本读取，不静默升级或重判。当前 Agent execution
-receipt 为 `intentir.lift-knowledge.v65 / intentir.lift-knowledge.v61 / minisweagent.intentir-replay.v27 / openai.codex-cli.intentir-replay.v23`；
+receipt 为 `intentir.lift-knowledge.v66 / intentir.lift-knowledge.v62 / minisweagent.intentir-replay.v28 / openai.codex-cli.intentir-replay.v24`；
 artifact.v9 的 `physical_iterations/physical_loop_carriers` 表达 structured J loop 外、由已作者化
 reduce/contraction 或 boundary access/domain 锚定的物理时间，
 feedback frontier/category、candidate-control 与 Replay local-axis 合同只改 agent 消费，不改变接受
@@ -33,7 +33,11 @@ feedback frontier/category、candidate-control 与 Replay local-axis 合同只�
 closed feedback，host 仓库并发升级不得改变既有 owner。Harness adapter v5 另把 concrete
 shape valuation 与 Harness-only `h*` shape identity 分开，并可显式声明 valuation-matched semantic
 constexpr ↔ `h*`；最终 `x*`/equality 仍由 Lift 完整作者化。
-Replay v27/v23 对不超过 64 KiB 的完整匿名 J/C/π/U_f 只在首次上下文 exact embedding 一次，并额外
+Replay v28/v24 明确同一 region 中 `physical_loop_carriers` declaration order 是跨
+init/state/next/result 共享的 carrier-tuple ordinal；Lift knowledge v66/v62 必须从 Source frontend
+loop 的 argument/yield/result tuple 作者化该顺序，Replay 不按 dtype/ref/mechanism 重排。该 tuple slot
+顺序不是 event execution order，后者仍只由 `pi.order` 拥有。v28/v24 继承 v27/v23；v27/v23 对不超过
+64 KiB 的完整匿名 J/C/π/U_f 只在首次上下文 exact embedding 一次，并额外
 并置一个只重索引 semantic dimension carrier、IEEE special typed constant、physical iteration、
 `reduction_linearization + consumer route`、loop/branch lexical region membership 与 cross-region
 order，以及 authored broadcast 的 operand type/access/named consumer 的 exact `critical_facts.v3`；超限

@@ -20,7 +20,7 @@ from .pi import (
 REPLAY_PACKET_SCHEMA = "intentir.scrc.replay-input.v1"
 PUBLIC_FRONTEND_CONTEXT = {
     "triton": {
-        "context_policy": "public_frontend_context_v16",
+        "context_policy": "public_frontend_context_v17",
         "retrieval_scope": "public Triton documentation and public examples",
         "tool_access": ["public_document_lookup"],
         "compile_entry_contract": (
@@ -116,7 +116,12 @@ PUBLIC_FRONTEND_CONTEXT = {
             "frontend APIs. Every pi.physical_loop_carriers entry preserves the "
             "declared init/state/next/result temporal stages for its physical "
             "iteration region; do not collapse the loop-carried accumulator into "
-            "one stateless reduction or invent an update formula absent from J."
+            "one stateless reduction or invent an update formula absent from J. "
+            "Within each region, physical_loop_carriers declaration order is the "
+            "exact common carrier-tuple ordinal across init/state/next/result; "
+            "preserve it in frontend loop arguments, yields, and results, and never "
+            "sort by dtype, semantic ref, or mechanism. This tuple order is not "
+            "event execution order; pi.order remains its only authority."
             " Every J effect_if is mandatory effect control. Emit one real "
             "runtime `if` with explicit positive and negative arms, preserve "
             "predicate polarity, lexical arm scope, nested operation/effect order, "
@@ -230,7 +235,7 @@ PUBLIC_FRONTEND_CONTEXT = {
 # u_f object; changing that basis requires an explicit future policy version.
 PUBLIC_FRONTEND_CONTEXT_ACTIVE_POLICY = MappingProxyType(
     {
-        "triton": "public_frontend_context_v16",
+        "triton": "public_frontend_context_v17",
         "cute": "public_frontend_context_v1",
         "tilelang": "public_frontend_context_v1",
         "cuda": "public_frontend_context_v1",
@@ -272,6 +277,9 @@ PUBLIC_FRONTEND_CONTEXT_DIGEST_HISTORY = MappingProxyType(
                 ),
                 "public_frontend_context_v16": (
                     "57371c0c62fc68ca1f8f9b45a80144766ddf1416778f05f91b1c9c115173e165"
+                ),
+                "public_frontend_context_v17": (
+                    "3fee7a74829f128e68c118c3afe48873be032d72ee9511b48591fdeaeb79c7e9"
                 ),
             }
         ),
@@ -387,6 +395,14 @@ PUBLIC_FRONTEND_CONTEXT_RECEIPT_HISTORY = MappingProxyType(
                         "receipt_hash_basis": "full_u_f",
                         "context_sha256": (
                             "1dfa8eb068dc1491011dec5163299a6a4f6d4001dddc0411838cbbc9c445370d"
+                        ),
+                    }
+                ),
+                "public_frontend_context_v17": MappingProxyType(
+                    {
+                        "receipt_hash_basis": "full_u_f",
+                        "context_sha256": (
+                            "3bf7183af25f7517685cfcea9ebbdc69176093d89e660d5ef062a241167f588a"
                         ),
                     }
                 ),
@@ -997,7 +1013,9 @@ def _instructions(*, frontend: Frontend, masked: bool) -> str:
         "traversal logical while materializing the explicit physical loop from its "
         "same-subject C-attached axis, induction_basis, and direction. Preserve every "
         "pi.physical_loop_carriers init/state/next/result temporal stage; neither "
-        "relation authorizes a new semantic operator or formula. "
+        "relation authorizes a new semantic operator or formula. Preserve same-region "
+        "physical_loop_carriers declaration order as the shared carrier-tuple ordinal "
+        "across init/state/next/result; do not sort it or treat it as event order. "
         + frontend_realization_clause
         + "Do not output "
         "analysis, patches, placeholders, helper prose or markdown. Use only public "

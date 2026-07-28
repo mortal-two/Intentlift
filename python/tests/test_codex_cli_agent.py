@@ -753,7 +753,7 @@ def scrc_k0(p0, p1, p2, c0: tl.constexpr):
     second = writer.generate(make_copy_artifact())
 
     assert first.backend_protocol == second.backend_protocol == CODEX_CLI_REPLAY_BACKEND
-    assert CODEX_CLI_REPLAY_BACKEND == "openai.codex-cli.intentir-replay.v23"
+    assert CODEX_CLI_REPLAY_BACKEND == "openai.codex-cli.intentir-replay.v24"
     assert first.response_id == "fresh-replay-1"
     assert second.response_id == "fresh-replay-2"
     assert first.attempts == second.attempts == 3

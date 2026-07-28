@@ -506,13 +506,16 @@ def test_episode_contract_digest_binds_exact_files_prompts_and_budgets() -> None
     assert default_config["model"]["retry_timeouts"] is True
     assert default_config["model"]["semantic_initial_turns"] == 1
     assert default_config["model"]["model_kwargs"]["parallel_tool_calls"] is True
-    assert MINISWE_REPLAY_BACKEND == "minisweagent.intentir-replay.v27"
+    assert MINISWE_REPLAY_BACKEND == "minisweagent.intentir-replay.v28"
     instance = default_config["agent"]["instance_template"]
     assert "exact immutable source-blind startup transport" in instance
     assert "exact_packet_embedded=true" in instance
     assert "value-equivalent flattened formula" in instance
     assert "critical_facts.broadcast_obligations" in instance
     assert "Never pre-expand an access index or load shape" in instance
+    normalized_instance = " ".join(instance.split())
+    assert "exact shared init/state/next/result carrier-tuple ordinal" in normalized_instance
+    assert "never sort carriers by dtype" in normalized_instance
     assert "Every J.signature p* is one already-existing" in instance
     assert "duplicate p* instances never authorize duplicate" in instance
     assert "Construct and direct-submit complete Triton source early" in instance

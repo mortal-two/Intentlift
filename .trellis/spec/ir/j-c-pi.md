@@ -375,6 +375,12 @@ reference/type/scope/axis/totality，不选择锚点或推导 traversal；Source
 Gate1 判断。Replay 必须由 J+C+π 得到 active physical tile rank，不能把 logical axis ordinal 直接当
 frontend tensor-rank axis。
 
+同一 `region` 的 `physical_loop_carriers` 按数组 declaration order 定义唯一 carrier-tuple ordinal；
+该 ordinal 同时用于 init/state/next/result 的对应 slot。Lift 必须按 Source frontend loop 的
+argument/yield/result tuple作者化，Replay 原样保持，不得按 dtype、semantic ref 或 mechanism 重排。
+这只是 tuple slot identity，不是 event execution order；后者仍只由显式 `pi.order` 拥有。fixed code
+不替旧 artifact 重排，错误顺序由 Gate1 暴露后 fresh relift。
+
 ### Terminal control topology
 
 J `effect_if` 拥有 predicate、positive/negative arm 及臂内 value/effect。若 Source realization 的一臂

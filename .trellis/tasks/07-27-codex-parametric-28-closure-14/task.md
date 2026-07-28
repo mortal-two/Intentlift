@@ -188,9 +188,9 @@ fixed code不得替Lift修成`x*`。
 
 - frontend commit起点：`460aaed1c6af0b267a4a9da9ca497aea6e66ad40`；
 - artifact/decode/typecheck：`artifact.v9 / decode.v14 / typecheck.v26`；
-- Lift：Codex `openai.codex-cli.intentir-lift.v11 / intentir.lift-knowledge.v65`，MiniSWE `minisweagent.intentir-lift.v3 / intentir.lift-knowledge.v61`；
-- Replay：Codex `openai.codex-cli.intentir-replay.v23`，MiniSWE `minisweagent.intentir-replay.v27`；
-- Replay packet/check：`replay-input.v1 / public_frontend_context_v16 / replay-check.v10`；
+- Lift：Codex `openai.codex-cli.intentir-lift.v11 / intentir.lift-knowledge.v66`，MiniSWE `minisweagent.intentir-lift.v3 / intentir.lift-knowledge.v62`；
+- Replay：Codex `openai.codex-cli.intentir-replay.v24`，MiniSWE `minisweagent.intentir-replay.v28`；
+- Replay packet/check：`replay-input.v1 / public_frontend_context_v17 / replay-check.v10`；
 - Harness：Triton workload adapter v5；
 - Gate1 observer：`triton-ttir-3.6-gate1-v11`；outer batch：`intentir.scrc.batch.v3`；
   candidate fan-out：v4 `first_observed_gate1_closure_cooperative_stop`；
@@ -323,6 +323,12 @@ fixed code不得替Lift修成`x*`。
   consumer/operand ordinal 加入 exact `critical_facts.v3`，并在存在该 obligation 时要求
   `replay-obligation-audit.v2` 对 owner 当前编号源码自审。该工具不映射 relation 到 statement、不选择
   `expand_dims` 次数或代码、不读取 Source/Gate；完整 Replay 仍由 source-blind LLM 作者化。
+  三次 fixed-artifact v23 xhigh recheck 均消除了旧 `128x1` load、缺失 expand_dims 与全部
+  predicate/effect 差异；最佳分支 interface/op/reduction/predicate-effect 全过，只剩 dataflow 226。
+  non-recursive frontier 把它压缩为同一 physical loop 的 5 个 carrier tuple置换：旧 J/π 把两个
+  accumulator relation排在三个 pointer relation之前，Source恰好相反，而 Replay忠实消费旧顺序。
+  因此 v66/v62 与 Replay v28/v24 只明确现有数组 declaration order 是 shared carrier-tuple ordinal；
+  fixed code不重排旧 artifact，后续必须 fresh relift。
 - Codex Lift v11 / knowledge v65 将 closed frontier 已有的 interface、reduction、predicate/effect 与
   op-multiset direct categories 一次并列展开，recursive dataflow 保持按需分页。它只改善同一 owner
   对已有 Gate1 evidence 与 π grammar 的注意力；不选择 refinement、不改 J/C/π，也不把 compiler op
