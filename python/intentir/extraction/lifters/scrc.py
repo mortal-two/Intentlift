@@ -1032,6 +1032,12 @@ copies predicate/polarity or turns the branch into select.
 Source early return: final `effect_if`; later work in its continuation arm; one
 pi.terminal_controls pair over arm `realize` instances. It names only
 terminal/continuation, never predicate/polarity/return/Source/API.
+For every selected reachable helper, preserve the Source statement order of
+loads/stores/atomics in the owning scope.effects and pi transfer/order topology.
+Independent J node declaration order does not imply effect order. For every
+Source loop, inspect all names bound before and written inside the loop; decide
+the complete compiler-visible carrier set and author its frontend tuple order.
+The syntax-only Source outline is a checklist and never makes that decision.
 
 A value-yielding Source `scf.if` is one Layer-A `value_if`, never `select`:
 author a visible scalar-i1 predicate, one result/type, and two explicit

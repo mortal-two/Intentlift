@@ -186,10 +186,12 @@ J/C/π，也不进入 correctness predicate。
 
 若 `source.py + harness_view.json + feedback.json + lift_contract.md + preflight.md + minimal_example.json`
 总量不超过 64 KiB，初始 user packet 直接携带六者的 exact raw text；否则只携带逐文件
-bytes/hash/read command。Gate1 continuation 的 closed
-diagnostics 采用相同 64 KiB 规则。该 prefetch 只搬运 Lift 原本获准读取的输入，不生成 outline、
-摘要、operator、binding、π 或修改建议；目的是让首个高 effort 回合直接做语义工作，而不是决定
-下一条读取命令。
+bytes/hash/read command。Gate1 continuation 的 closed diagnostics 采用相同 64 KiB 规则。fresh Codex
+owner 还直接获得 compact `source-outline.v2`：它只列出 AST 已有的 control 位置、descendant-return
+presence、literal memory-call 顺序，以及“loop 前已有 lexical binding 且 loop 内被写”的名称；这些
+只是导航/checklist，不把名称分类成 carrier，不决定 effect 或 frontend tuple order。该 prefetch 不生成
+semantic outline、摘要、operator、binding、π 或修改建议；目的是让首个高 effort 回合直接做语义
+工作，而不是决定下一条读取命令。
 
 `intentir.scrc.triton-workload-adapter.v5` 把 tensor shape 的**参数恒等关系**与本次 concrete
 valuation 分开：`shape` 仍是本次可执行值；`shape_contract` 每个轴只能是正整数或匿名 Harness-only
@@ -204,9 +206,10 @@ Replay 或 production；production 只消费最终已作者化的 `x*`。不同 
 rounded capacity）保持独立，除非 Source-aware Lift 在现有 J/B vocabulary 中另行作者化其语义关系；
 Harness 不按数值猜 `ceil_div`、容量或有效域公式。
 
-持久 Lift owner 还可使用三个等合同的只读投影：`harness-abi` 将匿名 Harness view 中已经声明的
+持久 Lift owner 还可使用四个等合同的只读投影：`harness-abi` 将匿名 Harness view 中已经声明的
 `p*/c*` 顺序、bound non-C constexpr membership、compiler role 与 `h*` shape-coordinate ledger
-并置；`candidate-control` 只分页当前 LLM 已写出的 J control/reduction nodes、branch arms、boundary
+并置；`source-outline` 只分页上述 syntax-only navigation facts；`candidate-control` 只分页当前 LLM
+已写出的 J control/reduction nodes、branch arms、boundary
 output/effect/guard、以及 π regions/instances/iterations/carriers/terminal/routes/order；
 `feedback-category` 只投影 closed frontier 已命名的一个 Gate1 类别。它们是 attention/transport
 工具，不是第三份 IR：不选择 `logical_ref`、`x*`、operator、predicate、effect、output mapping 或
@@ -214,13 +217,15 @@ output/effect/guard、以及 π regions/instances/iterations/carriers/terminal/r
 字段投影，任何缺失仍由 Lift 自己从 Source 作者化，任何冲突仍由 CandidateCheck/TypeCheck
 fail closed。
 
-Codex Lift v11 / knowledge v65 将同一 exact Harness ABI ledger 直接放入首次 owner prompt，并将
+Codex Lift v11 / knowledge v67 将同一 exact Harness ABI ledger 与 syntax-only
+`source-outline.v2` 直接放入首次 owner prompt，并将
 后续 closed feedback frontier 中已有的 interface、reduction、predicate/effect 与 op-multiset 直接
 类别一次并列展开到同一持久 owner continuation；recursive dataflow 保持按一个命名类别分页。
 representation-only op 差异只要求 owner 对照 Source 重新审查已有 π refinement grammar，fixed code
 不选择 refinement、不写 π，也不把 compiler op 复制成 J semantics；
 `lift_harness_abi`、`lift_candidate_control` 与 `lift_feedback_category` 保留为可选的局部自读，不再是
-提交前的强制串行协议。该 transport 不生成 `logical_ref`、J/C/π 字段或修复。
+提交前的强制串行协议。MiniSWE knowledge v63 暴露同一 outline/checklist 合同。该 transport 不生成
+`logical_ref`、J/C/π 字段或修复。
 
 当前持久 owner 使用 `artifact.v9 / decode.v14 / typecheck.v26 / candidate-check.v1` 实现上述
 CandidateCheck、C attachment、numeric-cast dependent typing 与 result-relation compatibility。v7

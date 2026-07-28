@@ -227,6 +227,10 @@ the artifact schema or external TypeCheck.
    `realize` instances for those two sibling arm scopes. Do not copy the
    predicate/polarity or add a return op, value, formula, Source spelling, or
    frontend API to pi. An ordinary two-arm conditional has no such relation.
+   Follow every selected reachable helper body when authoring an arm. Preserve
+   its literal load/store/atomic statement order in that scope's `effects` and
+   in pi transfer/order topology. Independent J node declaration order is not
+   effect order, and a helper call does not authorize reordering sibling writes.
 13. A Source `scf.if` that yields one value is one Layer-A `value_if`, not a
    `select` or `effect_if`. Author its visible scalar-`i1` predicate, one result
    with a closed type, and explicit positive/negative
@@ -303,6 +307,9 @@ the artifact schema or external TypeCheck.
    When compiler-visible accumulator stages exist,
    author `physical_loop_carriers` in that region. These are temporal topology,
    never an initialization/update formula, and fixed code never creates them.
+   The syntax-only Source outline lists names that were lexically bound before a
+   loop and written inside it. Treat every listed name as a required inspection
+   point, not an inferred carrier; decide the complete carrier set from Source.
    For every region, declaration order is the exact carrier-tuple ordinal shared
    by init/state/next/result. Author that order from the Source frontend loop's
    iter-argument/yield/result tuple; never sort carriers by dtype, semantic ref,

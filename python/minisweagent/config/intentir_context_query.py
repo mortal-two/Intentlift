@@ -384,8 +384,15 @@ def _source_find(input_root: Path, query: str, context: int) -> None:
         print("\n[more matches omitted; use a narrower literal query]")
 
 
-def _source_outline(input_root: Path, start: int, count: int) -> None:
-    """Page syntax-only Source control locations without semantic extraction."""
+def _source_outline_value(input_root: Path, start: int, count: int) -> dict[str, Any]:
+    """Return syntax-only control, write, and memory-call navigation facts.
+
+    The extra records deliberately stop before semantic classification.  A name
+    written in a loop after an earlier lexical binding is only a Source
+    navigation fact: Lift still decides whether it is a compiler-visible loop
+    carrier and authors every J/C/pi relation.  Likewise, memory-call order is
+    literal AST order, not an inferred J effect or pi order.
+    """
 
     if start < 1 or count < 1 or count > 48:
         raise ValueError("source-outline start must be positive and count in [1, 48]")
@@ -394,23 +401,177 @@ def _source_outline(input_root: Path, start: int, count: int) -> None:
     tree = ast.parse(source, filename="source.py")
     items: list[dict[str, Any]] = []
 
+    def bound_names(node: ast.AST) -> list[tuple[str, int, int]]:
+        found: dict[str, tuple[int, int]] = {}
+
+        class BoundNameVisitor(ast.NodeVisitor):
+            def visit_Name(self, item: ast.Name) -> None:
+                if isinstance(item.ctx, ast.Store):
+                    found.setdefault(
+                        item.id,
+                        (getattr(item, "lineno", 0), getattr(item, "col_offset", 0)),
+                    )
+
+            def visit_FunctionDef(self, item: ast.FunctionDef) -> None:
+                return
+
+            def visit_AsyncFunctionDef(self, item: ast.AsyncFunctionDef) -> None:
+                return
+
+            def visit_ClassDef(self, item: ast.ClassDef) -> None:
+                return
+
+            def visit_Lambda(self, item: ast.Lambda) -> None:
+                return
+
+        BoundNameVisitor().visit(node)
+        return [
+            (name, line, column)
+            for name, (line, column) in sorted(
+                found.items(), key=lambda item: (item[1][0], item[1][1], item[0])
+            )
+        ]
+
+    def function_bindings_before(
+        function: ast.FunctionDef | ast.AsyncFunctionDef,
+        control: ast.AST,
+    ) -> dict[str, tuple[int, int]]:
+        bindings: dict[str, tuple[int, int]] = {}
+        arguments = [
+            *function.args.posonlyargs,
+            *function.args.args,
+            *function.args.kwonlyargs,
+        ]
+        if function.args.vararg is not None:
+            arguments.append(function.args.vararg)
+        if function.args.kwarg is not None:
+            arguments.append(function.args.kwarg)
+        for argument in arguments:
+            bindings.setdefault(
+                argument.arg,
+                (
+                    getattr(argument, "lineno", function.lineno),
+                    getattr(argument, "col_offset", function.col_offset),
+                ),
+            )
+        control_line = getattr(control, "lineno", 0)
+        # A loop can be nested below an if/with/try rather than appearing as a
+        # direct function-body statement.  Use literal source order for the
+        # checklist and filter every discovered binding by its own location;
+        # otherwise walking the enclosing statement can accidentally count a
+        # write from inside the loop as a pre-existing definition.
+        for statement in function.body:
+            for name, line, column in bound_names(statement):
+                if line < control_line:
+                    bindings.setdefault(name, (line, column))
+        return bindings
+
+    def target_names(node: ast.AST) -> set[str]:
+        return {name for name, _line, _column in bound_names(node)}
+
+    def contains_return(node: ast.AST) -> bool:
+        found = False
+
+        class ReturnVisitor(ast.NodeVisitor):
+            def visit_Return(self, item: ast.Return) -> None:
+                nonlocal found
+                found = True
+
+            def visit_FunctionDef(self, item: ast.FunctionDef) -> None:
+                return
+
+            def visit_AsyncFunctionDef(self, item: ast.AsyncFunctionDef) -> None:
+                return
+
+            def visit_ClassDef(self, item: ast.ClassDef) -> None:
+                return
+
+            def visit_Lambda(self, item: ast.Lambda) -> None:
+                return
+
+        for child in getattr(node, "body", []):
+            ReturnVisitor().visit(child)
+        for child in getattr(node, "orelse", []):
+            ReturnVisitor().visit(child)
+        return found
+
+    def ordered_memory_calls(node: ast.AST) -> list[list[int | str]]:
+        calls: list[tuple[int, int, str]] = []
+        memory_names = {
+            "load",
+            "store",
+            "atomic_add",
+            "atomic_and",
+            "atomic_cas",
+            "atomic_max",
+            "atomic_min",
+            "atomic_or",
+            "atomic_xchg",
+            "atomic_xor",
+        }
+
+        class MemoryCallVisitor(ast.NodeVisitor):
+            def visit_Call(self, item: ast.Call) -> None:
+                function = item.func
+                leaf = (
+                    function.attr
+                    if isinstance(function, ast.Attribute)
+                    else function.id
+                    if isinstance(function, ast.Name)
+                    else None
+                )
+                if leaf in memory_names:
+                    calls.append(
+                        (
+                            getattr(item, "lineno", 0),
+                            getattr(item, "col_offset", 0),
+                            ast.unparse(function)[:80],
+                        )
+                    )
+                self.generic_visit(item)
+
+            def visit_FunctionDef(self, item: ast.FunctionDef) -> None:
+                return
+
+            def visit_AsyncFunctionDef(self, item: ast.AsyncFunctionDef) -> None:
+                return
+
+            def visit_ClassDef(self, item: ast.ClassDef) -> None:
+                return
+
+            def visit_Lambda(self, item: ast.Lambda) -> None:
+                return
+
+        for child in getattr(node, "body", []):
+            MemoryCallVisitor().visit(child)
+        for child in getattr(node, "orelse", []):
+            MemoryCallVisitor().visit(child)
+        return [[line, call] for line, _column, call in sorted(calls)]
+
     class OutlineVisitor(ast.NodeVisitor):
         depth = 0
+        functions: list[ast.FunctionDef | ast.AsyncFunctionDef] = []
 
-        def record(self, node: ast.AST, kind: str) -> None:
+        def record(
+            self,
+            node: ast.AST,
+            kind: str,
+            extra: dict[str, Any] | None = None,
+        ) -> None:
             line = getattr(node, "lineno", None)
             if not isinstance(line, int):
                 return
             header = lines[line - 1].strip() if line <= len(lines) else ""
-            items.append(
-                {
-                    "kind": kind,
-                    "line": line,
-                    "end_line": getattr(node, "end_lineno", line),
-                    "depth": self.depth,
-                    "header": header[:200],
-                }
-            )
+            record = {
+                "kind": kind,
+                "line": line,
+                "end_line": getattr(node, "end_lineno", line),
+                "depth": self.depth,
+                "header": header[:200],
+            }
+            if extra:
+                record.update(extra)
+            items.append(record)
 
         def nested(self, node: ast.AST, kind: str) -> None:
             self.record(node, kind)
@@ -419,22 +580,97 @@ def _source_outline(input_root: Path, start: int, count: int) -> None:
             self.depth -= 1
 
         def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-            self.nested(node, "function")
+            self.record(
+                node,
+                "function",
+                {"ordered_memory_calls": ordered_memory_calls(node)},
+            )
+            self.functions.append(node)
+            self.depth += 1
+            self.generic_visit(node)
+            self.depth -= 1
+            self.functions.pop()
 
         def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-            self.nested(node, "async_function")
+            self.record(
+                node,
+                "async_function",
+                {"ordered_memory_calls": ordered_memory_calls(node)},
+            )
+            self.functions.append(node)
+            self.depth += 1
+            self.generic_visit(node)
+            self.depth -= 1
+            self.functions.pop()
+
+        def loop_extra(self, node: ast.For | ast.AsyncFor | ast.While) -> dict[str, Any]:
+            function = self.functions[-1] if self.functions else None
+            prior = (
+                function_bindings_before(function, node)
+                if function is not None
+                else {}
+            )
+            body_writes: dict[str, tuple[int, int]] = {}
+            for child in node.body:
+                for name, line, column in bound_names(child):
+                    body_writes.setdefault(name, (line, column))
+            induction_names = (
+                target_names(node.target)
+                if isinstance(node, (ast.For, ast.AsyncFor))
+                else set()
+            )
+            carried = [
+                {
+                    "name": name,
+                    "definition_line": definition[0],
+                    "first_loop_write_line": body_writes[name][0],
+                }
+                for name, definition in sorted(
+                    prior.items(), key=lambda item: (item[1][0], item[1][1], item[0])
+                )
+                if name in body_writes and name not in induction_names
+            ]
+            return {
+                "loop_target_names": sorted(induction_names),
+                "lexically_preexisting_writes": carried,
+                "contains_return": contains_return(node),
+            }
 
         def visit_For(self, node: ast.For) -> None:
-            self.nested(node, "for")
+            self.record(node, "for", self.loop_extra(node))
+            self.depth += 1
+            self.generic_visit(node)
+            self.depth -= 1
 
         def visit_AsyncFor(self, node: ast.AsyncFor) -> None:
-            self.nested(node, "async_for")
+            self.record(node, "async_for", self.loop_extra(node))
+            self.depth += 1
+            self.generic_visit(node)
+            self.depth -= 1
 
         def visit_While(self, node: ast.While) -> None:
-            self.nested(node, "while")
+            self.record(node, "while", self.loop_extra(node))
+            self.depth += 1
+            self.generic_visit(node)
+            self.depth -= 1
 
         def visit_If(self, node: ast.If) -> None:
-            self.nested(node, "if")
+            has_return = contains_return(node)
+            self.record(
+                node,
+                "if",
+                {
+                    "contains_return": has_return,
+                    **(
+                        {"ordered_memory_calls": ordered_memory_calls(node)}
+                        if has_return
+                        else {}
+                    ),
+                },
+            )
+            self.depth += 1
+            self.generic_visit(node)
+            self.depth -= 1
 
         def visit_Try(self, node: ast.Try) -> None:
             self.nested(node, "try")
@@ -460,28 +696,31 @@ def _source_outline(input_root: Path, start: int, count: int) -> None:
     OutlineVisitor().visit(tree)
     page = items[start - 1 : start - 1 + count]
     next_start = start + len(page) if start - 1 + len(page) < len(items) else None
-    _emit_json(
-        {
-            "protocol": "intentir.lift-source-outline.v1",
-            "authority": (
-                "syntax-only Source navigation; Lift still interprets every "
-                "item and authors all J/C/pi fields"
-            ),
-            "total": len(items),
-            "start": start,
-            "items": [
-                {"ordinal": start + index, **item}
-                for index, item in enumerate(page)
-            ],
-            "next_start": next_start,
-            "next_command": (
-                f"{QUERY_COMMAND} source-outline --start {next_start} "
-                f"--count {count}"
-                if next_start is not None
-                else None
-            ),
-        }
-    )
+    return {
+        "protocol": "intentir.lift-source-outline.v2",
+        "authority": (
+            "syntax-only Source navigation; names, return presence, and memory-call "
+            "order are literal AST facts, not carrier/effect classification or "
+            "frontend tuple order; Lift still authors all J/C/pi fields"
+        ),
+        "total": len(items),
+        "start": start,
+        "items": [
+            {"ordinal": start + index, **item}
+            for index, item in enumerate(page)
+        ],
+        "next_start": next_start,
+        "next_command": (
+            f"{QUERY_COMMAND} source-outline --start {next_start} "
+            f"--count {count}"
+            if next_start is not None
+            else None
+        ),
+    }
+
+
+def _source_outline(input_root: Path, start: int, count: int) -> None:
+    _emit_json(_source_outline_value(input_root, start, count))
 
 
 def _resolve_json_path(value: Any, path: str | None) -> Any:

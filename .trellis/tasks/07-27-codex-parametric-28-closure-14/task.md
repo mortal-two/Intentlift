@@ -333,6 +333,15 @@ fixed code不得替Lift修成`x*`。
   op-multiset direct categories 一次并列展开，recursive dataflow 保持按需分页。它只改善同一 owner
   对已有 Gate1 evidence 与 π grammar 的注意力；不选择 refinement、不改 J/C/π，也不把 compiler op
   当成 J semantics。针对性回归 `143 passed`。
+- Wave 37（起点 commit `ff136192`，one-col backward，Codex Sol-xhigh，`B=3,K=3`）三个 branch
+  均完整耗尽三轮 NO_CLOSURE，无 infrastructure failure。branch 3 最终 interface/op-multiset/
+  reduction/predicate-effect 全过，只剩 20 条 dataflow 差异；Source helper 的 terminal true arm 按
+  `DV -> DK` 写入，而 authored arm `scope.effects` 与 π transfer topology 按 `DK -> DV`，Replay 忠实
+  消费该顺序。它是 fresh Lift authorship frontier，不是 fixed-artifact Replay 可修的问题。首轮 xhigh
+  Lift约 10--15 分钟，persistent relift约 2.8 分钟，说明 owner continuation 有效但首稿 attention
+  仍昂贵。`source-outline.v2` 因此只新增 syntax-only loop-preexisting-write 与 reachable-helper literal
+  memory-order checklist；fixed code不分类carrier/effect、不选择顺序、不写J/C/π。该单一稳定 frontier
+  允许下一次 fresh Lift 升至 Sol-max，Replay继续fresh/source-blind Sol-xhigh。
 - 当前可用闭合总计 `20/28`：Wave32 将 GroupNorm 从 exact-artifact capability evidence 升级为 fresh
   直接认证后，现为 16 个原运行直接认证、4 个 exact-artifact capability recheck 认证。
   TypeCheck PASS 不计进度；只有 Gate1 已闭合且当前 Gate2 三边通过才计入。

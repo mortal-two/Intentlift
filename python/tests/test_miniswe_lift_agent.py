@@ -198,7 +198,7 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     files = _real_lift_input_files()
 
     assert CANDIDATE_CHECK_PROTOCOL == SCRC_CANDIDATE_CHECK_PROTOCOL
-    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v62"
+    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v63"
     assert "knowledge/minimal_example.json" in files
     assert "knowledge/intent_ops.md" in files
     assert "tools/schema_query.py" in files
@@ -997,12 +997,25 @@ def test_context_query_searches_source_and_pages_authored_nodes_without_editing(
 
     _source_outline(input_root, 1, 32)
     outline = json.loads(capsys.readouterr().out)
-    assert outline["protocol"] == "intentir.lift-source-outline.v1"
+    assert outline["protocol"] == "intentir.lift-source-outline.v2"
     assert "syntax-only Source navigation" in outline["authority"]
     assert [
         (item["kind"], item["line"], item["depth"])
         for item in outline["items"]
     ] == [("function", 1, 0), ("for", 3, 1)]
+    assert outline["items"][0]["ordered_memory_calls"] == [
+        [2, "load"],
+        [5, "store"],
+    ]
+    assert outline["items"][1]["loop_target_names"] == ["offset"]
+    assert outline["items"][1]["lexically_preexisting_writes"] == [
+        {
+            "name": "value",
+            "definition_line": 2,
+            "first_loop_write_line": 4,
+        }
+    ]
+    assert outline["items"][1]["contains_return"] is False
 
     _candidate_nodes(output_root, 1, 2)
     page = json.loads(capsys.readouterr().out)
@@ -1020,6 +1033,32 @@ def test_context_query_searches_source_and_pages_authored_nodes_without_editing(
     assert node["path"].endswith("body.1.body.0")
     assert node["node"]["operands"] == ["v0", "t1"]
     assert candidate_path.read_bytes() == before
+
+
+def test_source_outline_nested_loop_does_not_self_author_a_preexisting_write(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    input_root = tmp_path / "input"
+    input_root.mkdir()
+    (input_root / "source.py").write_text(
+        "def kernel(flag):\n"
+        "    state = 0\n"
+        "    if flag:\n"
+        "        for lane in range(4):\n"
+        "            state = state + lane\n"
+        "            local = lane\n"
+    )
+
+    _source_outline(input_root, 1, 32)
+    outline = json.loads(capsys.readouterr().out)
+    loop = next(item for item in outline["items"] if item["kind"] == "for")
+    assert loop["lexically_preexisting_writes"] == [
+        {
+            "name": "state",
+            "definition_line": 2,
+            "first_loop_write_line": 5,
+        }
+    ]
 
 
 def test_context_discovery_queries_work_in_real_bubblewrap() -> None:
@@ -1062,7 +1101,7 @@ def test_context_discovery_queries_work_in_real_bubblewrap() -> None:
     assert result["returncode"] == 0, result
     assert "--- source.py:" in result["output"]
     assert ">" in result["output"] and " < " in result["output"]
-    assert '"protocol": "intentir.lift-source-outline.v1"' in result["output"]
+    assert '"protocol": "intentir.lift-source-outline.v2"' in result["output"]
     assert result["output"].count(
         '"protocol": "intentir.lift-candidate-node-query.v1"'
     ) == 2
