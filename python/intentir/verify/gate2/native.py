@@ -259,7 +259,12 @@ class CudaRunner:
                     pass
 
 
-def _load_tilelang_prim_func(program: TileLangKernelSource, temporary: Path) -> tuple[Any, str | None]:
+def _load_tilelang_prim_func(
+    program: TileLangKernelSource,
+    temporary: Path,
+    *,
+    schedule: Mapping[str, int | float | bool | str] | None = None,
+) -> tuple[Any, str | None]:
     if program.kind == "factory_file":
         assert program.path is not None
         path = Path(program.path).resolve()
@@ -272,6 +277,7 @@ def _load_tilelang_prim_func(program: TileLangKernelSource, temporary: Path) -> 
     if module_spec is None or module_spec.loader is None:
         raise ImportError(f"cannot load TileLang module {path}")
     module = importlib.util.module_from_spec(module_spec)
+    module.__dict__.update(dict(schedule or {}))
     sys.modules[module_name] = module
     try:
         module_spec.loader.exec_module(module)
@@ -302,7 +308,12 @@ class TileLangRunner:
             if not torch.cuda.is_available():
                 raise RuntimeError("CUDA is unavailable")
             with tempfile.TemporaryDirectory(prefix=f"intentir-tilelang-gate2-{leg}-") as raw:
-                prim_func, module_name = _load_tilelang_prim_func(program, Path(raw))
+                schedule = dict(getattr(spec.compile_case, "schedule", {}) or {})
+                prim_func, module_name = _load_tilelang_prim_func(
+                    program,
+                    Path(raw),
+                    schedule=schedule,
+                )
                 target = str(getattr(spec.compile_case, "target", "cuda"))
                 kernel = tilelang.compile(prim_func, target=target)
                 arguments, outputs = _prepare_torch_arguments(spec, values)

@@ -6,7 +6,7 @@ import pytest
 
 from direct_fixtures import make_copy_artifact
 from intentir.verify.gate1.cuda_compiler import CudaCompileCase, CudaKernelSource
-from intentir.verify.gate1.model import Frontend
+from intentir.verify.gate1.model import Frontend, Gate1Artifact
 from intentir.verify.gate1.replay import (
     replay_source_ingress,
     source_blind_replay_compile_check,
@@ -57,6 +57,15 @@ def scrc_k0(
 '''
 
 
+def _launch_slot_artifact() -> Gate1Artifact:
+    payload = make_copy_artifact().to_json()
+    payload["c"]["slots"][0].update(
+        kind="compiler",
+        role="launch_block_x",
+    )
+    return Gate1Artifact.from_json(payload)
+
+
 @pytest.mark.parametrize(
     ("frontend", "source"),
     (
@@ -95,6 +104,55 @@ def test_tilelang_ingress_returns_actionable_source_blind_schedule_rule() -> Non
             "line": 3,
         }
     ]
+
+
+def test_tilelang_ingress_keeps_compiler_slots_out_of_runtime_abi() -> None:
+    with_runtime_c = TILELANG_REPLAY.replace(
+        "    p2: T.int32,\n",
+        "    p2: T.int32,\n    c0: T.int32,\n",
+    )
+
+    result = replay_source_ingress(
+        with_runtime_c,
+        artifact=make_copy_artifact(),
+        frontend=Frontend.TILELANG,
+    )
+
+    assert result.status == "fail"
+    assert result.to_check_response()["diagnostics"][0]["rule_code"] == (
+        "abi_parameter_count"
+    )
+
+
+def test_tilelang_ingress_binds_launch_slots_only_to_kernel_threads() -> None:
+    artifact = _launch_slot_artifact()
+    valid = TILELANG_REPLAY.replace("threads=32", "threads=c0")
+    tuple_valid = valid.replace("threads=c0", "threads=(c0, 1, 1)")
+    wrong_grid = TILELANG_REPLAY.replace(
+        "T.Kernel(1, threads=32)", "T.Kernel(c0, threads=32)"
+    )
+    wrong_thread = TILELANG_REPLAY
+
+    assert replay_source_ingress(
+        valid, artifact=artifact, frontend=Frontend.TILELANG
+    ).status == "pass"
+    assert replay_source_ingress(
+        tuple_valid, artifact=artifact, frontend=Frontend.TILELANG
+    ).status == "pass"
+    grid_result = replay_source_ingress(
+        wrong_grid, artifact=artifact, frontend=Frontend.TILELANG
+    )
+    thread_result = replay_source_ingress(
+        wrong_thread, artifact=artifact, frontend=Frontend.TILELANG
+    )
+    assert grid_result.to_check_response()["diagnostics"][0]["rule_code"] == (
+        "tilelang_launch_slot_grid_forbidden"
+    )
+    assert thread_result.to_check_response()["diagnostics"][0]["rule_code"] == (
+        "tilelang_launch_slot_thread_binding"
+    )
+
+
 @pytest.mark.parametrize(
     ("frontend", "source", "source_type", "case_type"),
     (
@@ -144,3 +202,4 @@ def test_native_synthetic_compile_probe_is_frontend_dispatched(
         "pointer",
         "scalar",
     ]
+    assert compiler.compiled_case.schedule == {"c0": 1}

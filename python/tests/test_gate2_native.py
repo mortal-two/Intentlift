@@ -33,7 +33,7 @@ _TILELANG = """import tilelang.language as T
 
 @T.prim_func
 def scrc_k0(p0: T.Tensor((32,), "float32"), p1: T.Tensor((32,), "float32")):
-    with T.Kernel(1, threads=32) as (v0,):
+    with T.Kernel(1, threads=c0) as (v0,):
         for v1 in T.Parallel(32):
             p1[v1] = p0[v1] + T.float32(1.0)
 """
@@ -98,6 +98,7 @@ def test_tilelang_native_runner_executes_public_primfunc() -> None:
             FrontendParameter("pointer", "f32", 1, "output"),
         ),
         block=(32, 1, 1),
+        schedule={"c0": 32},
     )
     spec = NativeExecutionSpec(
         (
@@ -118,4 +119,3 @@ def test_tilelang_native_runner_executes_public_primfunc() -> None:
     np.testing.assert_array_equal(
         result.outputs["y"], np.arange(32, dtype=np.float32) + 1
     )
-

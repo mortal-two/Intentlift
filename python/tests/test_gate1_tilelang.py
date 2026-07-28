@@ -281,9 +281,12 @@ def test_tilelang_real_compile_emits_tir_and_ptx_without_launching() -> None:
             FrontendParameter("pointer", "f32", 1, "output"),
         ),
         block=(32, 1, 1),
+        schedule={"c0": 32},
     )
     compiled = TileLangCompiler(timeout=300).compile(
-        TileLangKernelSource.from_replay(_REPLAY, "scrc_k0"),
+        TileLangKernelSource.from_replay(
+            _REPLAY.replace("threads=32", "threads=c0"), "scrc_k0"
+        ),
         case,
     )
     assert compiled.ok, compiled.diagnostic

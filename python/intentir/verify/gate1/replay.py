@@ -52,12 +52,12 @@ from .tilelang_compiler import (
 from .ttir import TTIRParseError, parse_ttir
 
 
-MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v29"
+MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v32"
 MINISWE_REPLAY_TURN_TIMEOUT_SECONDS = 300.0
 MINISWE_REPLAY_XHIGH_TURN_TIMEOUT_SECONDS = 900.0
 RESPONSES_REPLAY_BACKEND = "openai.responses.intentir-replay.v1"
 STATIC_REPLAY_BACKEND = "intentir.static-replay-test.v1"
-REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v10"
+REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v13"
 _ANONYMOUS_HANDLE = re.compile(r"^[pc][0-9]+$")
 
 
@@ -272,6 +272,124 @@ def _check_triton_exact_abi(
             )
         )
     return tuple(violations[:20])
+
+
+def _check_tilelang_exact_abi(
+    code: str,
+    packet: Mapping[str, Any],
+    function_name: str,
+) -> tuple[_ReplayABIViolation, ...]:
+    """Keep native runtime ABI limited to J; C is an injected schedule global."""
+
+    tree = ast.parse(code, mode="exec")
+    function = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == function_name
+    )
+    expected_names = [
+        str(item["name"])
+        for item in packet["j"]["signature"]["parameters"]
+    ]
+    actual_names = [item.arg for item in function.args.args]
+    if len(actual_names) != len(expected_names):
+        raise _ReplayABIViolation(
+            "abi_parameter_count",
+            path="<entry-signature>",
+            handles=tuple(
+                dict.fromkeys(
+                    item
+                    for item in [*expected_names, *actual_names]
+                    if _ANONYMOUS_HANDLE.fullmatch(item)
+                )
+            )[:32],
+            line=function.lineno,
+        )
+    if actual_names != expected_names:
+        raise _ReplayABIViolation(
+            "abi_parameter_order",
+            path="<entry-signature>",
+            handles=tuple(dict.fromkeys([*expected_names, *actual_names]))[:32],
+            line=function.lineno,
+        )
+    return ()
+
+
+def _check_tilelang_schedule_roles(
+    code: str,
+    packet: Mapping[str, Any],
+    function_name: str,
+) -> tuple[_ReplayABIViolation, ...]:
+    """Bind launch_block_{x,y,z} C slots only to T.Kernel thread extents."""
+
+    axes = {"launch_block_x": 0, "launch_block_y": 1, "launch_block_z": 2}
+    launch_slots = {
+        axes[str(item.get("role"))]: str(item.get("name"))
+        for item in packet["c"]["slots"]
+        if isinstance(item, Mapping) and str(item.get("role")) in axes
+    }
+    if not launch_slots:
+        return ()
+    tree = ast.parse(code, mode="exec")
+    function = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == function_name
+    )
+    kernel_calls = [
+        node
+        for node in ast.walk(function)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "T"
+        and node.func.attr == "Kernel"
+    ]
+    handles = tuple(launch_slots[index] for index in sorted(launch_slots))
+    if len(kernel_calls) != 1:
+        raise _ReplayABIViolation(
+            "tilelang_kernel_count",
+            path="<T.Kernel>",
+            handles=handles,
+            line=function.lineno,
+        )
+    call = kernel_calls[0]
+    used_in_grid = {
+        node.id
+        for argument in call.args
+        for node in ast.walk(argument)
+        if isinstance(node, ast.Name) and node.id in handles
+    }
+    if used_in_grid:
+        raise _ReplayABIViolation(
+            "tilelang_launch_slot_grid_forbidden",
+            path="<T.Kernel:grid>",
+            handles=tuple(sorted(used_in_grid)),
+            line=call.lineno,
+        )
+    thread_values = [item.value for item in call.keywords if item.arg == "threads"]
+    if len(thread_values) != 1:
+        raise _ReplayABIViolation(
+            "tilelang_launch_slot_thread_binding",
+            path="<T.Kernel:threads>",
+            handles=handles,
+            line=call.lineno,
+        )
+    threads = thread_values[0]
+    components = list(threads.elts) if isinstance(threads, (ast.List, ast.Tuple)) else [threads]
+    for axis, name in sorted(launch_slots.items()):
+        if (
+            axis >= len(components)
+            or not isinstance(components[axis], ast.Name)
+            or components[axis].id != name
+        ):
+            raise _ReplayABIViolation(
+                "tilelang_launch_slot_thread_binding",
+                path=f"<T.Kernel:threads[{axis}]>",
+                handles=(name,),
+                line=call.lineno,
+            )
+    return ()
 
 
 @dataclass(frozen=True)
@@ -1077,6 +1195,9 @@ def replay_source_ingress(
             _check_triton_program_id_axes(code, function_name)
             _check_triton_typed_control_contract(code, packet, function_name)
             _check_triton_rounded_iteration_contract(code, packet, function_name)
+        elif selected_frontend is Frontend.TILELANG:
+            _check_tilelang_exact_abi(code, packet, function_name)
+            _check_tilelang_schedule_roles(code, packet, function_name)
     except Exception as exc:
         return ReplayIngressResult(
             "fail", diagnostics=(_closed_ingress_diagnostic(exc),)
@@ -1544,6 +1665,11 @@ def source_blind_replay_compile_check(
     """
 
     selected_frontend = Frontend(frontend)
+    selected_packet = (
+        packet
+        if packet is not None
+        else artifact.rewriter_view(masked=False)
+    )
     try:
         if selected_frontend is Frontend.TRITON:
             selected_compiler = compiler or TritonCompiler(timeout=120.0)
@@ -1571,14 +1697,28 @@ def source_blind_replay_compile_check(
                         parameter.mode.value,
                     )
                 )
+            schedule = {
+                str(slot["name"]): (
+                    True
+                    if str(slot.get("value_type", "int")).casefold() == "bool"
+                    else 1.0
+                    if "float" in str(slot.get("value_type", "int")).casefold()
+                    else "scrc"
+                    if str(slot.get("value_type", "int")).casefold()
+                    in {"str", "string"}
+                    else 1
+                )
+                for slot in selected_packet["c"]["slots"]
+                if isinstance(slot, Mapping)
+            }
             if selected_frontend is Frontend.CUDA:
                 selected_compiler = compiler or CudaCompiler(timeout=120.0)
                 source = CudaKernelSource.from_replay(code, function_name)
-                case = CudaCompileCase(tuple(parameters))
+                case = CudaCompileCase(tuple(parameters), schedule=schedule)
             else:
                 selected_compiler = compiler or TileLangCompiler(timeout=120.0)
                 source = TileLangKernelSource.from_replay(code, function_name)
-                case = TileLangCompileCase(tuple(parameters))
+                case = TileLangCompileCase(tuple(parameters), schedule=schedule)
         else:
             raise ValueError(
                 f"synthetic compile probe is unavailable for {selected_frontend.value}"
@@ -1591,9 +1731,6 @@ def source_blind_replay_compile_check(
         )
     if not result.ok:
         return _source_blind_compile_failure(result)
-    selected_packet = (
-        packet if packet is not None else artifact.rewriter_view(masked=False)
-    )
     expected_transfers, transfer_refs = _packet_transfer_direct_counts(
         selected_packet
     )

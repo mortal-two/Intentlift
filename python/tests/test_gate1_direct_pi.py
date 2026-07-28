@@ -1037,7 +1037,7 @@ def test_real_v6_u_f_uses_the_historical_full_u_f_receipt_basis() -> None:
         ),
         (
             Frontend.TILELANG,
-            "b600cb80e9c1496252b024b3a2257332a74a64ac77dc1c75ca70b7c8f5ea7140",
+            "05d51bf804161026ef10d1c541d871dfbe8f43424604a03bf8caf42bacae866c",
         ),
         (
             Frontend.CUDA,
@@ -1216,6 +1216,19 @@ def test_triton_u_f_preserves_constexpr_and_projects_coordinate_roles() -> None:
     assert "logical_ref=null has no logical denotation" in contract
     assert "keep the ABI parameter but do not read it" in contract
     assert_source_isolated_payload(payload)
+
+
+def test_tilelang_u_f_materializes_only_authored_expression_boundaries() -> None:
+    context = build_normal_rewriter_view(
+        make_reduce_artifact(), frontend=Frontend.TILELANG
+    )["u_f"]
+    contract = context["compile_entry_contract"]
+
+    assert context["context_policy"] == "public_frontend_context_v7"
+    assert "pure single-consumer load/value chain" in contract
+    assert "do not add an annotated scalar merely to name an instance" in contract
+    assert "fan-out, region/order/control placement" in contract
+    assert "when it is empty, never emit `T.alloc_*`" in contract
 
 
 @pytest.mark.parametrize("frontend", list(Frontend))

@@ -506,7 +506,7 @@ def test_episode_contract_digest_binds_exact_files_prompts_and_budgets() -> None
     assert default_config["model"]["retry_timeouts"] is True
     assert default_config["model"]["semantic_initial_turns"] == 1
     assert default_config["model"]["model_kwargs"]["parallel_tool_calls"] is True
-    assert MINISWE_REPLAY_BACKEND == "minisweagent.intentir-replay.v29"
+    assert MINISWE_REPLAY_BACKEND == "minisweagent.intentir-replay.v32"
     instance = default_config["agent"]["instance_template"]
     assert "exact immutable source-blind startup transport" in instance
     assert "exact_packet_embedded=true" in instance

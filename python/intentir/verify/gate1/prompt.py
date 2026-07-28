@@ -198,7 +198,7 @@ PUBLIC_FRONTEND_CONTEXT = {
         ),
     },
     "tilelang": {
-        "context_policy": "public_frontend_context_v6",
+        "context_policy": "public_frontend_context_v7",
         "retrieval_scope": "public TileLang documentation and public examples",
         "tool_access": ["public_document_lookup"],
         "compile_entry_contract": (
@@ -217,14 +217,20 @@ PUBLIC_FRONTEND_CONTEXT = {
             "reduce fed by a lane-realized reduced domain uses the matching public "
             "`T.reduce_*` collective; never sequentialize the whole axis per lane. "
             "Preserve pi transfers as exact load/store or `T.copy` occurrences and "
-            "preserve distinct node realizations as typed locals in authored order. "
+            "preserve distinct node realizations as compiler-visible expressions or "
+            "required materializations in authored order. A pure single-consumer "
+            "load/value chain whose instances share one lane region and have no "
+            "intervening pi order, control, or storage boundary stays inline in its "
+            "consumer; do not add an annotated scalar merely to name an instance. "
             "A single-consumer transfer may stay inline only when pi order/region "
             "does not place it before an enclosing coordinate or control stage. A "
             "transfer ordered before the lane coordinate becomes one typed scalar "
             "before `T.Parallel`; a transfer inside that lane may remain inline. "
-            "J.storage is the sole allocation authority: when it is empty, represent "
-            "per-lane stages as annotated scalar locals and never emit `T.alloc_*`; "
-            "use an allocation or `T.copy` destination only for authored storage. "
+            "J.storage is the sole allocation authority: when it is empty, never "
+            "emit `T.alloc_*`. Use a typed scalar local only when authored fan-out, "
+            "region/order/control placement, or occurrence lifetime requires a "
+            "separate materialization; use an allocation or `T.copy` destination "
+            "only for authored storage. "
             "TIR structure is the hard frontend evidence; PTX details below its ABI "
             "envelope are diagnostic only. A MaskC compiler slot whose role is "
             "`launch_block_x|y|z` is an injected module-global schedule handle: use "
@@ -268,7 +274,7 @@ PUBLIC_FRONTEND_CONTEXT_ACTIVE_POLICY = MappingProxyType(
     {
         "triton": "public_frontend_context_v16",
         "cute": "public_frontend_context_v1",
-        "tilelang": "public_frontend_context_v6",
+        "tilelang": "public_frontend_context_v7",
         "cuda": "public_frontend_context_v3",
     }
 )
@@ -337,6 +343,9 @@ PUBLIC_FRONTEND_CONTEXT_DIGEST_HISTORY = MappingProxyType(
                 ),
                 "public_frontend_context_v6": (
                     "49ced776ce21868ef00a94a2576d5f9b0649413ff315c78ec3e44b543d87d2b5"
+                ),
+                "public_frontend_context_v7": (
+                    "16179cf42842ef22c2b88379ff5c15b87588def613b98c204e6e319dab22c649"
                 ),
             }
         ),
@@ -528,6 +537,14 @@ PUBLIC_FRONTEND_CONTEXT_RECEIPT_HISTORY = MappingProxyType(
                         "receipt_hash_basis": "full_u_f",
                         "context_sha256": (
                             "b600cb80e9c1496252b024b3a2257332a74a64ac77dc1c75ca70b7c8f5ea7140"
+                        ),
+                    }
+                ),
+                "public_frontend_context_v7": MappingProxyType(
+                    {
+                        "receipt_hash_basis": "full_u_f",
+                        "context_sha256": (
+                            "05d51bf804161026ef10d1c541d871dfbe8f43424604a03bf8caf42bacae866c"
                         ),
                     }
                 ),
