@@ -280,7 +280,11 @@ def _one_kernel(
             )
             if not source_j.passed:
                 raise RuntimeError("source Triton result differs from canonical J")
-            samples = [measure(source.thunk()) for _ in range(3)]
+            # Keep the standalone Source diagnostic at the same outer-batch
+            # count as paired target confirmation.  Formal Source/IntentIR
+            # ratios still come from the target arm's paired-alternating
+            # receipt below; E0 is an absolute Source diagnostic only.
+            samples = [measure(source.thunk()) for _ in range(4)]
         return source_j, float(statistics.median(samples)), samples
 
     def confirm_target_against_source(
@@ -409,6 +413,8 @@ def _one_kernel(
                     "source_batch_us": source_samples,
                     "batch_aggregation": "median",
                     "samples_per_batch": measurement_rounds,
+                    "batch_count": len(source_samples),
+                    "comparison_protocol": "standalone-source-diagnostic.v1",
                 },
             },
         }
