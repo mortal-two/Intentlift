@@ -15,6 +15,7 @@ from typing import Any, Mapping
 import numpy as np
 
 from intentir.verify.gate1.compiler import KernelSource
+from intentir.verify.triton_compat import normalize_deprecated_triton_dot
 
 from .model import ExecutionResult
 
@@ -118,16 +119,19 @@ def _torch_dtype(torch: Any, dtype: str) -> Any:
         raise ValueError(f"unsupported torch dtype {dtype!r}") from exc
 
 
-def _load_module(source: KernelSource, temporary: Path) -> tuple[ModuleType, str]:
+def _load_module(
+    source: KernelSource, temporary: Path
+) -> tuple[ModuleType, str, dict[str, Any]]:
     code, origin = source.read_code()
-    digest = hashlib.sha256(code.encode("utf-8")).hexdigest()[:16]
+    normalized, frontend_compat = normalize_deprecated_triton_dot(code)
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
     module_name = f"_intentir_gate2_{source.function}_{digest}_{id(source):x}"
-    if source.kind == "module_file":
+    if source.kind == "module_file" and not frontend_compat["rewrite_count"]:
         assert source.path is not None
         path = Path(source.path).resolve()
     else:
         path = temporary / f"{module_name}.py"
-        path.write_text(code, encoding="utf-8")
+        path.write_text(normalized, encoding="utf-8")
     spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:
         raise ImportError(f"cannot load Triton module from {origin}")
@@ -138,7 +142,7 @@ def _load_module(source: KernelSource, temporary: Path) -> tuple[ModuleType, str
     except Exception:
         sys.modules.pop(module_name, None)
         raise
-    return module, module_name
+    return module, module_name, frontend_compat
 
 
 def _launch_by_name(
@@ -207,7 +211,9 @@ class TritonRunner:
             if not torch.cuda.is_available():
                 raise RuntimeError("CUDA is unavailable")
             with tempfile.TemporaryDirectory(prefix=f"intentir-gate2-{leg}-") as tmp:
-                module, module_name = _load_module(program, Path(tmp))
+                module, module_name, frontend_compat = _load_module(
+                    program, Path(tmp)
+                )
                 try:
                     kernel = getattr(module, program.function)
                     launch_args: dict[str, Any] = {}
@@ -260,6 +266,7 @@ class TritonRunner:
                             "binding_protocol": (
                                 "triton_name_keyed_complete_abi_v1"
                             ),
+                            "frontend_compat": frontend_compat,
                         },
                     )
                 finally:

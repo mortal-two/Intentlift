@@ -32,7 +32,7 @@ from intentir.ir.value_dimension import (
 )
 
 
-FUNCTIONAL_BOUNDARY_PROTOCOL = "intentir.j-functional-boundary.v17"
+FUNCTIONAL_BOUNDARY_PROTOCOL = "intentir.j-functional-boundary.v18"
 RUNTIME_PREDICATE_PROOF_PROTOCOL = (
     "intentir.j-functional-runtime-predicate-tautology.v1"
 )
@@ -300,6 +300,7 @@ class FunctionalBoundaryProjection:
     direct_store_partitions: tuple[DirectStorePartitionProjection, ...] = ()
     access_guard_relations: tuple[AccessGuardProjection, ...] = ()
     mixed_radix_accesses: tuple[MixedRadixAccessProjection, ...] = ()
+    context_domains: tuple[tuple[str, int | str], ...] = ()
 
     @property
     def access_axes_map(self) -> dict[str, tuple[str, ...]]:
@@ -374,6 +375,10 @@ class FunctionalBoundaryProjection:
             ],
             "mixed_radix_accesses": [
                 proof.to_json() for proof in self.mixed_radix_accesses
+            ],
+            "context_domains": [
+                {"axis": axis, "extent": extent}
+                for axis, extent in self.context_domains
             ],
         }
 
@@ -544,18 +549,19 @@ def _node_table(j: Any) -> dict[str, IntentOp]:
     return result
 
 
-def explicit_inout_poststate_reload_value(
+def _explicit_inout_poststate_reload(
     j: Any,
     access_id: str,
-) -> str | None:
-    """Return the authored post-state value consumed by one physical reload.
+) -> tuple[str, str] | None:
+    """Return the unique authored store/value consumed by one physical reload.
 
-    A logical inout may be written once and then physically loaded again even
-    though Layer A directly uses the already-authored post-state SSA value.
-    This helper recognizes only that closed profile from J itself: one inout
-    handle, one matching store, identical coordinates/predicate, an explicit
-    output mapping, producer/consumer dataflow, and store-before-load effects.
-    It never invents a state edge or consults Harness, C, pi, or Source.
+    A logical inout may carry several compiler-visible store/reload stages even
+    though Layer A directly connects each already-authored producer SSA value to
+    its consumer.  This helper recognizes only one closed pair at a time: an
+    inout handle, one unique matching producer store, identical coordinates and
+    predicate, direct producer/consumer dataflow, store-before-load effects in
+    one scope, and no intervening write to the same handle.  It never invents a
+    state edge or consults Harness, C, pi, or Source.
     """
 
     j = elaborate_j(j)
@@ -594,47 +600,19 @@ def explicit_inout_poststate_reload_value(
     ):
         return None
     mapping = mappings[0] if mappings else None
-    poststate = returns[0].value if returns else mapping.value
+    final_poststate = returns[0].value if returns else mapping.value
     if (
         returns
         and mapping is not None
-        and mapping.value != poststate
+        and mapping.value != final_poststate
     ):
         return None
 
     nodes = _node_table(j)
     consumer = nodes.get(access.node_ref)
-    if consumer is None or poststate not in _operation_dependencies(consumer):
+    if consumer is None:
         return None
-    producer_refs = [
-        node_ref
-        for node_ref in j.node_ids
-        if poststate in _result_names(nodes[node_ref])
-    ]
-    if len(producer_refs) != 1:
-        return None
-    producer_ref = producer_refs[0]
-    if (
-        mapping is not None
-        and mapping.node_ref is not None
-        and mapping.node_ref != producer_ref
-    ):
-        return None
-
-    stores = [
-        item
-        for item in j.boundary.accesses
-        if item.kind.value == "store" and item.tensor == tensor
-    ]
-    if len(stores) != 1:
-        return None
-    store = stores[0]
-    if (
-        store.node_ref != producer_ref
-        or store.index_expression != access.index_expression
-        or store.predicate != access.predicate
-    ):
-        return None
+    dependencies = _operation_dependencies(consumer)
 
     effects_by_access = {
         item.access_ref: item
@@ -645,33 +623,87 @@ def explicit_inout_poststate_reload_value(
         [item for item in j.boundary.effects if item.access_ref is not None]
     ):
         return None
-    store_effect = effects_by_access.get(store.access_id)
     load_effect = effects_by_access.get(access.access_id)
-    if store_effect is None or load_effect is None:
-        return None
-    effect_order = [item.effect_id for item in j.boundary.effects]
-    if effect_order.index(store_effect.effect_id) >= effect_order.index(
-        load_effect.effect_id
+    if (
+        load_effect is None
+        or load_effect.kind.value != "read"
+        or load_effect.target != tensor
+        or load_effect.node_ref != access.node_ref
     ):
         return None
-    owning_scopes = [
-        scope
-        for scope in j.scopes
-        if store_effect.effect_id in scope.effects
-        or load_effect.effect_id in scope.effects
+    effect_order = [item.effect_id for item in j.boundary.effects]
+    load_index = effect_order.index(load_effect.effect_id)
+    candidates: list[tuple[str, str]] = []
+    stores = [
+        item
+        for item in j.boundary.accesses
+        if item.kind.value == "store"
+        and item.tensor == tensor
+        and item.node_ref is not None
+        and item.index_expression == access.index_expression
+        and item.predicate == access.predicate
     ]
-    if owning_scopes:
-        if len(owning_scopes) != 1:
-            return None
-        scope_effects = owning_scopes[0].effects
+    for store in stores:
+        producer = nodes.get(store.node_ref)
+        store_effect = effects_by_access.get(store.access_id)
         if (
-            store_effect.effect_id not in scope_effects
-            or load_effect.effect_id not in scope_effects
-            or scope_effects.index(store_effect.effect_id)
-            >= scope_effects.index(load_effect.effect_id)
+            producer is None
+            or store_effect is None
+            or store_effect.kind.value != "write"
+            or store_effect.target != tensor
+            or store_effect.node_ref != store.node_ref
         ):
-            return None
-    return poststate
+            continue
+        produced_dependencies = [
+            dependency
+            for dependency in dependencies
+            if dependency in _result_names(producer)
+        ]
+        if len(produced_dependencies) != 1:
+            continue
+        store_index = effect_order.index(store_effect.effect_id)
+        if store_index >= load_index:
+            continue
+        if any(
+            other.access_id != store.access_id
+            and other.kind.value == "store"
+            and other.tensor == tensor
+            and (other_effect := effects_by_access.get(other.access_id)) is not None
+            and store_index < effect_order.index(other_effect.effect_id) < load_index
+            for other in j.boundary.accesses
+        ):
+            continue
+        owning_scopes = [
+            scope
+            for scope in j.scopes
+            if store_effect.effect_id in scope.effects
+            or load_effect.effect_id in scope.effects
+        ]
+        if owning_scopes:
+            if len(owning_scopes) != 1:
+                continue
+            scope_effects = owning_scopes[0].effects
+            if (
+                store_effect.effect_id not in scope_effects
+                or load_effect.effect_id not in scope_effects
+                or scope_effects.index(store_effect.effect_id)
+                >= scope_effects.index(load_effect.effect_id)
+            ):
+                continue
+        candidates.append((store.access_id, produced_dependencies[0]))
+    if len(candidates) != 1:
+        return None
+    return candidates[0]
+
+
+def explicit_inout_poststate_reload_value(
+    j: Any,
+    access_id: str,
+) -> str | None:
+    """Return the authored SSA value consumed by one physical inout reload."""
+
+    pair = _explicit_inout_poststate_reload(j, access_id)
+    return None if pair is None else pair[1]
 
 
 _PREDICATE_DOMINATED_POINTWISE_OPS = frozenset(
@@ -3949,6 +3981,17 @@ def _project_functional_boundary(
                 "functional boundary requires access-bound effects"
             )
         effects_by_access.setdefault(effect.access_ref, []).append(effect)
+    paired_store_values: dict[str, str] = {}
+    for access in boundary.accesses:
+        if access.kind.value != "load":
+            continue
+        pair = _explicit_inout_poststate_reload(j, access.access_id)
+        if pair is None:
+            continue
+        store_access_id, poststate = pair
+        prior = paired_store_values.setdefault(store_access_id, poststate)
+        if prior != poststate:
+            raise ValueError("functional inout store has conflicting reload values")
     access_ids = [item.access_id for item in boundary.accesses]
     if len(access_ids) != len(set(access_ids)):
         raise ValueError("functional boundary has duplicate access ids")
@@ -4203,6 +4246,7 @@ def _project_functional_boundary(
             )
 
         if access.kind.value == "load":
+            poststate: str | None = None
             if access.tensor not in input_names:
                 raise ValueError("functional load is not a J input")
             if (
@@ -4250,20 +4294,35 @@ def _project_functional_boundary(
                     )
                 by_edge[edge] = access.access_id
                 constant_gathers.append(constant_gather)
-            else:
+            elif poststate is None:
                 whole_load_tensors.add(access.tensor)
-            loaded.add(access.tensor)
+            if poststate is None:
+                loaded.add(access.tensor)
             continue
 
         if access.tensor not in output_names:
             raise ValueError("functional store does not target a J output")
-        observable_value = returns.get(access.tensor, access.tensor)
+        final_observable_value = returns.get(access.tensor, access.tensor)
         mapping = mappings.get(access.tensor)
         if mapping is not None:
-            observable_value = mapping.value
+            final_observable_value = mapping.value
+        paired_value = paired_store_values.get(access.access_id)
+        observable_value = (
+            paired_value if paired_value is not None else final_observable_value
+        )
+        mapping_matches_store = (
+            mapping is None
+            or mapping.node_ref is None
+            or nodes.get(mapping.node_ref) is op
+        )
+        is_observable_store = paired_value is None or (
+            paired_value == final_observable_value and mapping_matches_store
+        )
+        if mapping is not None:
             if (
                 mapping.node_ref is not None
                 and nodes.get(mapping.node_ref) is not op
+                and paired_value is None
                 and access.access_id not in projected_guarded_store_accesses
             ):
                 raise ValueError("functional store disagrees with output mapping")
@@ -4299,7 +4358,8 @@ def _project_functional_boundary(
             raise NotImplementedError(
                 "node-less store is supported only for direct identity J"
             )
-        stores_by_output[access.tensor].append(access)
+        if is_observable_store:
+            stores_by_output[access.tensor].append(access)
 
     if set(effects_by_access) != set(access_ids):
         raise ValueError("functional boundary has effect for unknown access")
@@ -4382,10 +4442,12 @@ def _project_functional_boundary(
             concat_store_partitions.append(partition)
         else:
             direct_store_partitions.append(partition)
-    if consumed_domain_axes != set(domains):
-        raise NotImplementedError(
-            "functional boundary has an unconsumed domain axis"
+    context_domains = tuple(
+        sorted(
+            (axis, domains[axis])
+            for axis in set(domains) - consumed_domain_axes
         )
+    )
     concrete_predicates = [item for item in predicates.values() if item is not None]
     if concrete_predicates:
         masked_axes = {
@@ -4482,6 +4544,8 @@ def _project_functional_boundary(
             if boundary.accesses
             else "structured_value_v1"
         )
+    if context_domains:
+        profile = f"context_{profile}"
     value_dimension_pairs = _value_dimension_pairs(j)
     consumed = {
         *(f"domain:{name}" for name in boundary.domains),
@@ -4517,6 +4581,10 @@ def _project_functional_boundary(
         *(
             f"predicate_dominated_load:{access_id}:{predicate}"
             for access_id, predicate in predicate_dominated_loads
+        ),
+        *(
+            f"context_domain:{axis}:{extent}"
+            for axis, extent in context_domains
         ),
     }
     return FunctionalBoundaryProjection(
@@ -4565,6 +4633,7 @@ def _project_functional_boundary(
         direct_store_partitions=tuple(direct_store_partitions),
         access_guard_relations=access_guard_relations,
         mixed_radix_accesses=tuple(mixed_radix_accesses),
+        context_domains=context_domains,
     )
 
 

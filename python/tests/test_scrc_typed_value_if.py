@@ -136,7 +136,7 @@ def test_value_if_v7_schema_decode_round_trip_and_digest() -> None:
     payload = _value_if_payload()
     assert Gate1Artifact.SCHEMA == "intentir.scrc.artifact.v9"
     assert SCRC_DECODE_PROTOCOL == "intentir.scrc.decode.v13"
-    assert TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v22"
+    assert TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v23"
     Draft202012Validator(scrc_lift_core_json_schema()).validate(payload)
     artifact = decode_scrc_lift_artifact(json.dumps(payload), _request())
     assert artifact.to_json() == payload

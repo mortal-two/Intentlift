@@ -21,6 +21,7 @@ from intentir.verify.gate1.model import (
     IndexBoundsSpec,
     ParameterKind,
     ParameterMode,
+    OutputMapping,
     RealizationAuthorization,
     RefinementKind,
     ResultRelationKind,
@@ -251,7 +252,7 @@ def test_valid_dependent_witness_passes_before_replay() -> None:
     artifact = make_reduce_artifact()
     report = type_check(artifact.j, artifact.c, artifact.pi)
     assert report.passed
-    assert report.protocol == TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v22"
+    assert report.protocol == TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v23"
     assert report.diagnostics == ()
     assert set(build_normal_rewriter_view(artifact)) == {"j", "c", "pi", "u_f"}
 
@@ -396,6 +397,37 @@ def test_typecheck_accepts_matching_constant_gather_boundary() -> None:
     report = type_check(artifact.j, artifact.c, artifact.pi)
 
     assert report.passed, report.to_json()
+
+
+def test_typecheck_rejects_output_mapping_shape_permutation() -> None:
+    artifact = make_copy_artifact()
+    artifact.j.intent.inputs[0].shape = ["x0", "x1"]
+    artifact.j.intent.outputs[0].shape = ["x1", "x0"]
+    artifact.j.intent.body[0].result = "v0"
+    artifact.j.signature.parameters[0].rank = 2
+    artifact.j.signature.parameters[1].rank = 2
+    artifact.j.signature.parameters.append(
+        SignatureParameter(
+            "p3", ParameterKind.SCALAR, ParameterMode.VALUE,
+            "i32", logical_ref="x1",
+        )
+    )
+    artifact.j.boundary.output_mappings = [
+        OutputMapping("t1", "v0", "n0")
+    ]
+
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert not report.passed
+    matching = [
+        item
+        for item in report.diagnostics
+        if item.code is TypeCheckErrorCode.OUTPUT_BINDING_TYPE_MISMATCH
+    ]
+    assert len(matching) == 1
+    assert matching[0].path == "j.boundary.output_mappings[0].value"
+    assert "['x1', 'x0']" in matching[0].detail
+    assert "['x0', 'x1']" in matching[0].detail
 
 
 @pytest.mark.parametrize(
@@ -1814,7 +1846,7 @@ def test_authoritative_typecheck_accepts_strict_integer_widen(
     report = type_check(artifact.j, artifact.c, artifact.pi)
 
     assert report.passed, report.to_json()
-    assert report.protocol == "intentir.scrc.typecheck.v22"
+    assert report.protocol == "intentir.scrc.typecheck.v23"
 
 
 @pytest.mark.parametrize(

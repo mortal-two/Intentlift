@@ -47,7 +47,7 @@ from intentir.verify.gate1.model import (
 from intentir.verify.gate1.pi import RealizationWitness
 
 
-TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v22"
+TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v23"
 GLOBAL_SAFE_REFINEMENTS = frozenset({"identity_materialization"})
 
 _MAP_UNARY_FNS = frozenset(
@@ -85,6 +85,7 @@ class TypeCheckStatus(str, Enum):
 class TypeCheckErrorCode(str, Enum):
     J_ELABORATION_FAILED = "j_elaboration_failed"
     J_VALUE_TYPE_INCOMPLETE = "j_value_type_incomplete"
+    OUTPUT_BINDING_TYPE_MISMATCH = "output_binding_type_mismatch"
     KNOWN_OP_CONTRACT_INVALID = "known_op_contract_invalid"
     DUPLICATE_J_REF = "duplicate_j_ref"
     INVALID_C_SLOT = "invalid_c_slot"
@@ -2208,6 +2209,59 @@ def _check_total_j_value_typing(
                     result,
                 )
             )
+
+
+def _check_output_binding_types(
+    j: SemanticArchive,
+    diagnostics: list[TypeCheckDiagnostic],
+) -> None:
+    """Require every canonical output destination to preserve full J type."""
+
+    elaboration = j_elaboration(j)
+    value_types = elaboration.value_type_by_name
+    mapping_positions = {
+        item.output: index
+        for index, item in enumerate(j.boundary.output_mappings)
+    }
+    return_positions = {
+        item.output: index for index, item in enumerate(j.intent.returns)
+    }
+    output_positions = {
+        item.name: index for index, item in enumerate(j.intent.outputs)
+    }
+    outputs = {
+        item.name: CanonicalValueType(item.dtype, tuple(item.shape))
+        for item in j.intent.outputs
+    }
+    for binding in elaboration.output_bindings:
+        expected = outputs[binding.output]
+        actual = value_types.get(binding.value)
+        if actual is None or actual == expected:
+            continue
+        if binding.output in mapping_positions:
+            path = (
+                "j.boundary.output_mappings"
+                f"[{mapping_positions[binding.output]}].value"
+            )
+        elif binding.output in return_positions:
+            path = (
+                "j.intent.intent_function.returns"
+                f"[{return_positions[binding.output]}].value"
+            )
+        else:
+            path = (
+                "j.intent.intent_function.outputs"
+                f"[{output_positions[binding.output]}]"
+            )
+        diagnostics.append(
+            TypeCheckDiagnostic(
+                TypeCheckErrorCode.OUTPUT_BINDING_TYPE_MISMATCH,
+                path,
+                "canonical output binding type differs from its declared "
+                f"output: expected={expected.to_json()}, actual={actual.to_json()}",
+                binding.output,
+            )
+        )
 
 
 _ITERATION_TILE_ROLES = frozenset(
@@ -4358,6 +4412,7 @@ def type_check(
     _check_dimension_and_pad_contracts(j, diagnostics)
     _check_value_dimension_relations(j, diagnostics)
     _check_total_j_value_typing(j, diagnostics)
+    _check_output_binding_types(j, diagnostics)
     _check_rank_zero_logical_input_liveness(j, diagnostics)
     _check_boundary_value_dominance(j, diagnostics)
     _check_access_guard_relations(j, diagnostics)

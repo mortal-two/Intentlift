@@ -594,7 +594,8 @@ Gate round 的定义。
 权威错误列表有界展开、不改变接受集合时，`candidate-check.v1` 无需升版。任何新规则都只对带新
 version receipt 的 fresh run 生效，不得静默重判历史 artifact。
 
-当前 fresh-run 版本为 `typecheck.v22`。v22 增加 signature mode 与 J input/output/inout boundary
+当前 fresh-run 版本为 `typecheck.v23`。v23 增加 canonical output binding 的完整 dtype/shape
+equality，禁止把 concrete singleton 或相同元素数当作 axis identity；v22 增加 signature mode 与 J input/output/inout boundary
 partition 的 exact dependent check，并完整继承 v21；v21 继承 v20、v18、v19、v14-v17
 typed-control 合同及下述 v7 前序合同，并包含 v9 terminal-control dependent checks；v20 已增加当前 v4/v5 typed
 relations 的 source-free dependent checking：value/dimension 与 consumer provenance/identity 必须
@@ -696,8 +697,8 @@ production 不消费该值。只影响 layout/tile/stage 等
 implementation selection 的 constexpr 必须在 Harness 分类为 C slot，而不能作为 bound constexpr
 留在 π-only 形态；static specialization carrier 也不得进入 π topology。
 
-当前 RefEval 消费版本为 `j_scalar_cpu_mlir_v18`，shared functional projection 为
-`intentir.j-functional-boundary.v17`。它们完整继承 v14/v13、v12/v11 与 v10/v3；v10 已继承 v9，v9 已继承 v8 对唯一 node-less
+当前 RefEval 消费版本为 `j_scalar_cpu_mlir_v19`，shared functional projection 为
+`intentir.j-functional-boundary.v18`。它们完整继承 v14/v13、v12/v11 与 v10/v3；v10 已继承 v9，v9 已继承 v8 对唯一 node-less
 logical-input load 的通用消费，并移除旧 single-input/single-output/single-sum padded topology 限制。
 对 predicated direct access，J 必须
 自行声明每个 axis 的完整零起点 logical domain与显式 load fill，仍携带 masked axis 的 access 使用
@@ -749,7 +750,7 @@ v13/v12 仅消费 J 已明确证明的 inout post-state reload：唯一 output m
 擦除 physical outside-domain value；任何 reduction、scan、loop、transpose、pad、不同 predicate 或
 未匹配 effect 都拒绝。两项都只产生 consumer receipt，不生成 artifact field，不进入 Lift feedback。
 
-当前 `j_scalar_cpu_mlir_v18` / `intentir.j-functional-boundary.v17` 完整继承 v17/v16 在上述 v14/v13 上增加的两项共享、
+当前 `j_scalar_cpu_mlir_v19` / `intentir.j-functional-boundary.v18` 完整继承 v17/v16 在上述 v14/v13 上增加的两项共享、
 J-only 的确定性消费能力。第一，若 domain upper bound 是 J 显式写出的正整数/`x*` 乘积，access 的
 每个非 direct coordinate 必须恰好是该乘积的一位 mixed-radix digit，且所有 factor 各出现一次、
 stride 为精确 suffix，才形成 `complete_mixed_radix_bijection` receipt；不做交换律猜测、不补缺位、
@@ -766,6 +767,14 @@ v18/v17 进一步允许上述 missing-fill proof 与既有 node-less whole-input
 consumer 写回 artifact。任何歧义、reduce/scan/loop/未知首 consumer 或后续未闭合路径仍显式
 unsupported。该能力只修复 fixed Gate2/production projection 对完整 J 的消费，不新增 Lift 字段，
 也不允许把 Gate2 结果反馈给 Lift。
+
+v19/v18 还消费同一 logical inout 上多个 closed store→reload stage：每一对都要求唯一 producer
+SSA、相同 coordinates/predicate、同 scope store-before-load effect order 且无 intervening write；
+只有 canonical output binding 对应最终 store 进入输出。未被 logical access/predicate 使用的矩形
+J domain 作为 `context_domain` 原样进入 projection receipt，供 π 锚定 program context，但不参与
+Layer-A 数值执行、不生成 program/address formula。Gate2 Triton Source/Replay runner 同时应用
+`triton_static_dot_transpose_v1`，只将静态 `trans_a/trans_b` 归一为等价 `tl.trans`，并记录 rewrite
+count 与 normalized digest；这不是 Harness 或 kernel 特化。
 
 函数 `returns` 与 boundary `output_mapping` 是同一 canonical output binding 的两种 authored 入口，
 不再要求 LLM 重复写两份；若同时存在必须一致。shared J→Intent MLIR materializer 从唯一
@@ -1009,7 +1018,7 @@ Source/当前 J 的 writer。Runner 更新 branch-local feedback view 并追加�
 ### 10.1.1 固定 artifact 的 diagnostic recheck
 
 `intentir.scrc.gate1-diagnostic-recheck.v1` 可以对 parent evidence 中一份已落盘 artifact 做独立只读
-诊断：保持 artifact bytes/digest 不变，以当前 canonical Decode、`typecheck.v22`、一个 fresh normal
+诊断：保持 artifact bytes/digest 不变，以当前 canonical Decode、`typecheck.v23`、一个 fresh normal
 Replay 与 Gate1 写入单独的原子 `recheck-NNN` 目录。该路径不调用 Lift、不运行 masked-J 或 Gate2、
 不参加 candidate/winner 选择，并显式记录 `diagnostic_only=true`、`enters_gate2=false`、
 `changes_prior_verdict=false`。它只能判断当前固定 consumer/context 如何消费旧 artifact，不能把

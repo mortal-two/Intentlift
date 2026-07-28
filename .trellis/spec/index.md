@@ -19,7 +19,7 @@ lowering 和测试要求，不形成另一套设计。上位文档按作用域�
 若派生规范与上位设计冲突，应修订派生规范；不得通过增加 interface artifact、hash gate、
 epoch、commitment、额外认证 Gate 或兼容旁路来调和冲突。
 
-当前 fresh-run 栈为 `artifact.v9 / decode.v13 / typecheck.v22 / candidate-check.v1 / replay-check.v9`。它继承 rank-0
+当前 fresh-run 栈为 `artifact.v9 / decode.v13 / typecheck.v23 / candidate-check.v1 / replay-check.v9`。它继承 rank-0
 closed signature、Layer-A total typing、显式 broadcast、canonical reduce/contraction、absent carrier
 拒绝、functional-domain closure、rank-0 liveness、padded-mean necessary condition 与 closed
 `pi.iterations`，并验证 Lift 已作者化的 value/dimension、consumer-extension、access-guard、typed
@@ -49,8 +49,8 @@ cooperative stop并保存 receipt；hidden Gate2 尚未生成，因此调度次�
 outer batch protocol 是 `intentir.scrc.batch.v3`；其 `observer_unsupported` 只表示 Source observer
 能力缺口，不是候选非法或 `NO_CLOSURE`，历史 batch v2 report 不重判。
 
-当前 scalar RefEval 是 `j_scalar_cpu_mlir_v18`，shared functional-boundary receipt 是
-`intentir.j-functional-boundary.v17`。主 SCRC runner 选定 Gate2 winner 后，才为当前 invocation 调用
+当前 scalar RefEval 是 `j_scalar_cpu_mlir_v19`，shared functional-boundary receipt 是
+`intentir.j-functional-boundary.v18`。主 SCRC runner 选定 Gate2 winner 后，才为当前 invocation 调用
 RefEval-only 入口；projection library 不选择 winner。该入口用 J 自身
 rank-0 logical `i1`/integer values 和完整 closed dimensions 逐 access 证明 predicate 对完整 logical
 domain 恒真；不改 J、不读 Source/C/π、不进入 Lift feedback。invocation-local
@@ -58,8 +58,13 @@ proof subreceipt 不保存 raw value/value digest；这是 audit-data minimizati
 confidentiality/privacy proof。
 production projection 仍是 value-free `ProjectFunctionalBoundary(J)`。CPU-only
 `expand-rsqrt-for-libm` 位于共享 Intent-to-Linalg 之后，不改变共享/GPU lowering。
-v18/v17 只组合 J 已有的唯一 node-less whole-input load 与唯一 direct pointwise consumer；fixed code
-不补 `node_ref`，任何歧义或非 pointwise 路径都 fail closed。
+v18/v19 还完整消费同一 inout handle 上多个 closed store→reload stage：每一对必须由唯一 producer
+SSA、相同坐标/predicate、同 scope 的 store-before-load effect order 且无中间覆盖共同决定；只有最终
+canonical output binding 对应的 store 是 observable output。J 中未被 logical access/predicate 使用的
+矩形 domain 作为 `context_domain` 保留在 projection receipt 中，供 π 锚定 compiler-visible program
+context；它不参与 Layer-A 数值求值，也不生成 access/program 公式。TypeCheck v23 另要求每个
+canonical output binding 的完整 dtype/shape 与声明输出精确相等。Gate2 Triton 两条执行 leg 共享
+`triton_static_dot_transpose_v1`，只把已移除的静态 `trans_a/trans_b` 等价写法归一成 `tl.trans`。
 
 ## 导航
 
