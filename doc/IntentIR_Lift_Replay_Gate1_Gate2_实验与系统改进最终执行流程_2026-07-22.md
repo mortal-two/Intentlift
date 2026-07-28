@@ -845,8 +845,8 @@ Replay 不得：
 
 `U_f` 必须是版本化、source-neutral 的公共前端知识，不能按当前 Kernel、operator 或失败样本选择。
 当前版本组合是 `intentir.scrc.replay-input.v1`、Triton
-`public_frontend_context_v12`、source-aware Codex/MiniSWE Lift `intentir.lift-knowledge.v61/v59`、
-source-blind MiniSWE Replay v20 与 Codex Replay v16、
+`public_frontend_context_v12`、source-aware Codex/MiniSWE Lift `intentir.lift-knowledge.v62/v59`、
+source-blind MiniSWE Replay v21 与 Codex Replay v17、
 `replay-check.v9`；fresh evidence必须保存实际 receipt，
 旧版本 run 不能被新组合追认。
 runner 可以保存实际 request/output 和 compiler metadata 供追溯，但这些内容不能回流 Replay packet；
@@ -1245,8 +1245,9 @@ TypeCheck(J,C,π) + Gate1 + Gate2
 - Replay prompt；
 - π 消费顺序说明；
 - instance/route/order/sharing 的公共解释。
-- 对匿名 packet 已作者化内容的只读 requirements 投影：只重索引 J op 声明顺序/计数和 π
-  time/control/terminal obligations，不推导语义、lowering、schedule、代码或修复建议。
+- 对正常大小匿名 packet 只做一次 exact startup embedding；超限时才使用自带 requirements 的
+  manifest。requirements 只重索引 J op/boundary 与 π instance mechanism、time/control/terminal
+  obligations，不推导语义、lowering、schedule、代码或修复建议，也不形成强制查询阶段。
 
 不把旧 Replay 代码提供给下一次 Replay。
 
@@ -1319,7 +1320,7 @@ carrier、arity 1 和非退化 split grid；ordinal 27/28 使用 arity 2，展�
 参数。`None` 在 J.signature 中只能是 `opaque(mode=value,dtype=none)`，无 logical_ref/J
 tensor/node/effect/π instance，不得换成 dummy pointer 或 scalar；加入 canonical contraction 与
 direct/decomposed stage multiplicity 合同后，Codex/MiniSWE Lift knowledge 当前为
-`intentir.lift-knowledge.v61/v59`。Codex CLI agent runtime v3 在不接受任何未通过候选、也不补写 artifact 的前提下，从被 wall-time 中断的 JSONL 中恢复已经发出的唯一 `thread.started`，使同一 Lift owner 能在剩余 branch 时间内继续；v49/v50 在不改变 artifact/判定的前提下加入 persistent-workspace exact mirror
+`intentir.lift-knowledge.v62/v59`。Codex CLI agent runtime v3 在不接受任何未通过候选、也不补写 artifact 的前提下，从被 wall-time 中断的 JSONL 中恢复已经发出的唯一 `thread.started`，使同一 Lift owner 能在剩余 branch 时间内继续；v49/v50 在不改变 artifact/判定的前提下加入 persistent-workspace exact mirror
 transport compaction、最近 response-group 窗口、source-neutral schema bundle、单一持久 Lift owner，
 以及 Replay v8 的
 exact-source direct submit/exact-text patch+preflight；这些机制只搬运 LLM authored bytes 或既有

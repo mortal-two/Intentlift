@@ -38,7 +38,7 @@ from .tilelang_codegen import extract_tilelang_module
 from .ttir import TTIRParseError, parse_ttir
 
 
-MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v20"
+MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v21"
 MINISWE_REPLAY_TURN_TIMEOUT_SECONDS = 300.0
 MINISWE_REPLAY_XHIGH_TURN_TIMEOUT_SECONDS = 900.0
 RESPONSES_REPLAY_BACKEND = "openai.responses.intentir-replay.v1"
@@ -1662,14 +1662,13 @@ CompileCase/grid, Gate diff/TTIR, previous Replay, sibling trajectory, or
 network is available. Generate the entire source yourself. Fixed code only
 checks and rejects; it never generates, patches, or certifies source.
 
-The startup message carries only a compact receipt for the exact immutable
-packet. First request `intentir_packet_query overview`, then request
-`intentir_packet_query requirements` exactly once and use its declaration-order
-op/control/time checklist. Follow the returned bounded ABI, graph, realization
-and obligation plan; page only when a returned `next_start` is non-null. Use
-`section PATH`, `obligation HANDLE`, or `find HANDLE` only for a named omitted
-fact. These views expose only authored packet facts and never add an edge or
-lowering decision.
+The startup message embeds the complete exact packet once whenever it is within
+the fixed byte bound. Consume that packet directly and write Replay without a
+mandatory overview/requirements/query sequence. An oversized packet instead
+receives one exact manifest containing the authored-requirements checklist and
+explicit continuation paths; use `section PATH`, `obligation HANDLE`, or
+`find HANDLE` only for a named omitted fact. These views expose only authored
+packet facts and never add an edge or lowering decision.
 
 After writing a complete first source, use `intentir_replay_inspect` only when a
 focused own-source inventory would resolve uncertainty. The tool reports only

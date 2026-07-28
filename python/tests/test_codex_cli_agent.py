@@ -27,6 +27,7 @@ from intentir.verify.gate1.codex_replay import (
     _replay_manifest_view,
     _replay_packet_query,
     _replay_realization_view,
+    _replay_startup_context,
     _replay_workspace_view,
 )
 from intentir.verify.gate1.replay import ReplayIngressResult
@@ -413,13 +414,13 @@ def test_codex_replay_bounded_queries_partition_exact_packet_without_source() ->
 
     assert manifest["query_plan"] == [
         "python .agents/intentir_agent_tool.py replay_packet_query abi 0 48",
-        "python .agents/intentir_agent_tool.py replay_packet_query requirements",
         "python .agents/intentir_agent_tool.py replay_packet_query graph 0 12",
         "python .agents/intentir_agent_tool.py replay_packet_query realization",
         "python .agents/intentir_agent_tool.py replay_packet_query obligations 0 12",
     ]
+    assert manifest["authored_requirements"] == requirements["view"]
     assert manifest["operation_count"] == 1
-    assert len(json.dumps(manifest)) < len(json.dumps(_replay_workspace_view(packet)))
+    assert len(json.dumps(manifest)) < 16_384
     assert abi["view"]["intent_io"]["name"] == "scrc_j0"
     expected_op = artifact.j.to_json()["intent"]["intent_function"]["body"][0][
         "op"
@@ -430,6 +431,9 @@ def test_codex_replay_bounded_queries_partition_exact_packet_without_source() ->
         "n0",
         expected_op,
     ]
+    assert requirements["view"]["pi_instance_mechanisms"]["total"] == len(
+        packet["pi"]["instances"]
+    )
     assert requirements["view"]["pi_time_and_control"]["terminal_controls"] == {
         "total": 0,
         "items": [],
@@ -451,6 +455,36 @@ def test_codex_replay_bounded_queries_partition_exact_packet_without_source() ->
         obligations,
     ):
         assert not ({"source", "harness", "gate1", "gate2"} & set(view))
+
+    startup = _replay_startup_context(packet)
+    assert startup["exact_packet_embedded"] is True
+    assert startup["packet"] == packet
+    assert "manifest" not in startup
+
+
+def test_codex_replay_oversized_startup_embeds_one_manifest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifact = make_copy_artifact()
+    packet = {
+        "c": artifact.c.to_json(),
+        "j": artifact.j.to_json(),
+        "pi": artifact.pi.to_json(),
+        "u_f": {"frontend": "triton", "replay_function": "scrc_k0"},
+    }
+    monkeypatch.setattr(
+        "minisweagent.environments.intentir_replay."
+        "REPLAY_STARTUP_PACKET_EMBED_LIMIT_BYTES",
+        1,
+    )
+
+    startup = _replay_startup_context(packet)
+
+    assert startup["exact_packet_embedded"] is False
+    assert "packet" not in startup
+    assert startup["manifest"]["authored_requirements"]["operations"][
+        "total"
+    ] == 1
 
 
 def test_codex_cli_turn_parses_jsonl_and_resumes_same_thread(
@@ -660,7 +694,8 @@ def scrc_k0(p0, p1, p2, c0: tl.constexpr):
             self.calls += 1
             self.thread_id = f"fresh-replay-{self.identity}"
             if self.calls == 1:
-                assert "replay_manifest_view" in prompt
+                assert '"exact_packet_embedded":true' in prompt
+                assert '"packet":{"c":' in prompt
                 payload = valid_replay.replace("scrc_k0", "wrong_entry")
             else:
                 check = json.loads(
@@ -755,8 +790,8 @@ def test_codex_lift_keeps_one_thread_and_repairs_from_host_check(
             self.calls += 1
             self.thread_id = "persistent-thread"
             if self.calls == 1:
-                assert "lift_harness_abi" in prompt
-                assert "lift_candidate_control overview" in prompt
+                assert "<source-aware-startup>" in prompt
+                assert '"harness_abi":' in prompt
                 payload = invalid
             elif self.calls == 2:
                 check = json.loads(
@@ -764,7 +799,7 @@ def test_codex_lift_keeps_one_thread_and_repairs_from_host_check(
                 )
                 assert check["status"] == "fail"
                 assert "CandidateCheck rejected" in prompt
-                assert "lift_candidate_control overview" in prompt
+                assert "candidate_check" in prompt
                 payload = artifact.to_json()
             else:
                 external = json.loads(
@@ -772,7 +807,8 @@ def test_codex_lift_keeps_one_thread_and_repairs_from_host_check(
                 )
                 assert external["failure_kind"] == "gate1"
                 assert "same workspace and thread" in prompt
-                assert "lift_candidate_control overview" in prompt
+                assert "<source-aware-startup>" in prompt
+                assert '"feedback_frontier":' in prompt
                 assert "lift_feedback_category CATEGORY" in prompt
                 payload = artifact.to_json()
             (self.output_dir / "candidate.json").write_text(json.dumps(payload))

@@ -40,7 +40,7 @@ from .replay import (
 )
 
 
-CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v16"
+CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v17"
 
 _INITIAL_PROMPT = """You are the sole writer for one fresh source-blind IntentIR Replay episode.
 The outer runtime exposes only this isolated /workspace. input/ is immutable;
@@ -48,24 +48,25 @@ work/, output/, and tmp/ are writable. There is no Source, source slice,
 Harness/compiler view, actual C value, Gate result, earlier Replay, sibling
 trajectory, or network tool. Do not search for any of them.
 
-Start with exactly one call to
-`python .agents/intentir_agent_tool.py replay_manifest_view`. Do not first dump
-the whole input/packet.json. The manifest is a bounded exact projection that
-gives section sizes, ABI/op counts and an exact bounded query plan. Immediately
-after it, call `python .agents/intentir_agent_tool.py replay_packet_query requirements`
-once and use its exact op occurrence/control-time checklist before drafting. Follow
-the remaining plan with `python .agents/intentir_agent_tool.py replay_packet_query ...`; up to
-four independent read-only queries may be issued together. Page graph and
-obligation rows only when `next_start` is non-null. The legacy
-`replay_workspace_view` is not exposed because it retransmits the whole packet
-in one attention block. Packet-query results contain only exact anonymous ABI,
+The final `<source-blind-startup>` block contains the exact immutable packet when
+`exact_packet_embedded=true`. In that normal fast path, do not call
+`replay_manifest_view` or `replay_packet_query requirements` before drafting:
+consume the embedded J/C/pi/U_f directly. When the packet exceeds the fixed
+transport bound, the block instead contains one compact manifest with the same
+authored-requirements checklist and focused continuation queries; call only the
+named query needed for an omitted page. Up to four independent read-only focused
+queries may be issued together. Packet views contain only exact anonymous ABI,
 J graph/boundary, MaskC(C), U_f, and authored pi obligations; they do not derive
-a schedule or see Gate evidence. Use each J graph row and pi obligation row as a
-construction checklist. Use `section PATH`, `obligation HANDLE`, or
-`find HANDLE` only for a named fact omitted by a bounded view; never re-dump
-the whole packet or reconstruct routes/order. Preserve every authored effect and
-realization ordering relation; never replace pi topology with a guessed source
-recipe. Use REPLAY_CONTRACT.md only for a focused unclear rule.
+a schedule or see Gate evidence.
+
+Before writing, reconcile every declared J op occurrence (including fma), every
+boundary access/effect, every pi instance mechanism (including transfer_direct
+versus atomic realization), and every authored route/order/time/control relation.
+This is a consumption checklist, not permission to add a missing operator or
+edge. Use `section PATH`, `obligation HANDLE`, or `find HANDLE` only for one
+named omitted fact. Preserve every authored effect and realization ordering
+relation; never replace pi topology with a guessed source recipe. Use
+REPLAY_CONTRACT.md only for a focused unclear rule.
 Author the entire Replay as
 exactly output/replay.source and no other output file. You may keep
 proof-irrelevant notes or helper scripts under work/. You own the source
@@ -166,9 +167,12 @@ def _replay_realization_view(packet: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _replay_manifest_view(packet: Mapping[str, Any]) -> dict[str, Any]:
-    """Return a small exact index before the agent requests focused views."""
+    """Return one exact fallback index for an oversized packet."""
 
-    from minisweagent.environments.intentir_replay import _packet_overview
+    from minisweagent.environments.intentir_replay import (
+        _packet_overview,
+        _packet_requirements,
+    )
 
     overview = _packet_overview(packet)
     return {
@@ -183,9 +187,9 @@ def _replay_manifest_view(packet: Mapping[str, Any]) -> dict[str, Any]:
         "root_sections": overview.get("root_sections"),
         "operations_preview": overview.get("operations", []),
         "operations_omitted": overview.get("operations_omitted", 0),
+        "authored_requirements": _packet_requirements(packet),
         "query_plan": [
             "python .agents/intentir_agent_tool.py replay_packet_query abi 0 48",
-            "python .agents/intentir_agent_tool.py replay_packet_query requirements",
             "python .agents/intentir_agent_tool.py replay_packet_query graph 0 12",
             "python .agents/intentir_agent_tool.py replay_packet_query realization",
             "python .agents/intentir_agent_tool.py replay_packet_query obligations 0 12",
@@ -195,6 +199,39 @@ def _replay_manifest_view(packet: Mapping[str, Any]) -> dict[str, Any]:
             "Gate evidence, inference, repair, or schedule"
         ),
     }
+
+
+def _replay_startup_context(packet: Mapping[str, Any]) -> dict[str, Any]:
+    """Embed one exact normal-size packet, otherwise one exact compact manifest."""
+
+    from minisweagent.environments.intentir_replay import (
+        REPLAY_STARTUP_PACKET_EMBED_LIMIT_BYTES,
+    )
+
+    encoded = json.dumps(
+        packet,
+        sort_keys=True,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    result: dict[str, Any] = {
+        "protocol": "intentir.scrc.replay-startup-view.v1",
+        "packet_bytes": len(encoded),
+        "embed_limit_bytes": REPLAY_STARTUP_PACKET_EMBED_LIMIT_BYTES,
+        "exact_packet_embedded": (
+            len(encoded) <= REPLAY_STARTUP_PACKET_EMBED_LIMIT_BYTES
+        ),
+        "authority": (
+            "exact source-isolated packet transport only; no Source, Harness "
+            "value, Gate evidence, inference, repair, code, or schedule"
+        ),
+    }
+    if result["exact_packet_embedded"]:
+        result["packet"] = packet
+    else:
+        result["manifest"] = _replay_manifest_view(packet)
+    return result
 
 
 def _replay_packet_query(
@@ -523,7 +560,19 @@ class CodexCLIReplayWriter:
         formal_ingress = None
         formal_compile = None
         last_checked_good: str | None = None
-        prompt = _INITIAL_PROMPT
+        startup_context = _replay_startup_context(packet)
+        prompt = (
+            _INITIAL_PROMPT
+            + "\n\n<source-blind-startup>\n"
+            + json.dumps(
+                startup_context,
+                sort_keys=True,
+                ensure_ascii=False,
+                allow_nan=False,
+                separators=(",", ":"),
+            )
+            + "\n</source-blind-startup>\n"
+        )
         selected_effort = effective_effort
         active_elapsed_ms = 0.0
         timed_out_calls = 0

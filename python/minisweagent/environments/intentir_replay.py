@@ -29,6 +29,7 @@ INTENTIR_REPLAY_ROLLBACK = "intentir_replay_rollback"
 INTENTIR_REPLAY_CHECK = "intentir_replay_check"
 INTENTIR_REPLAY_COMPILE_CHECK = "intentir_replay_compile_check"
 INTENTIR_PACKET_QUERY = "intentir_packet_query"
+REPLAY_STARTUP_PACKET_EMBED_LIMIT_BYTES = 64 * 1024
 INTENTIR_REPLAY_INSPECT = "intentir_replay_inspect"
 REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v9"
 REPLAY_TRANSACTION_PROTOCOL = "intentir.replay-transaction.v1"
@@ -541,6 +542,22 @@ def _packet_requirements(packet: Mapping[str, Any]) -> dict[str, Any]:
     regions = pi.get("regions", [])
     if not isinstance(instances, list) or not isinstance(regions, list):
         raise TypeError("packet pi instances/regions must be arrays")
+    mechanism_counts = Counter(
+        str(item.get("mechanism"))
+        for item in instances
+        if isinstance(item, Mapping) and isinstance(item.get("mechanism"), str)
+    )
+    instance_limit = 48
+    instance_mechanisms = [
+        [
+            item.get("id"),
+            item.get("semantic_ref"),
+            item.get("mechanism"),
+            item.get("region"),
+        ]
+        for item in instances[:instance_limit]
+        if isinstance(item, Mapping)
+    ]
     selected_instances = [
         dict(item)
         for item in instances
@@ -617,6 +634,18 @@ def _packet_requirements(packet: Mapping[str, Any]) -> dict[str, Any]:
             ),
         },
         "pi_time_and_control": relation_views,
+        "pi_instance_mechanisms": {
+            "columns": ["id", "semantic_ref", "mechanism", "region"],
+            "total": len(instances),
+            "counts": dict(sorted(mechanism_counts.items())),
+            "items": instance_mechanisms,
+            "omitted": max(0, len(instances) - instance_limit),
+            "omitted_query": (
+                f"{INTENTIR_PACKET_QUERY} obligations {instance_limit} 48"
+                if len(instances) > instance_limit
+                else None
+            ),
+        },
         "referenced_instances": selected_instances,
         "referenced_regions": selected_regions,
         "authority": (

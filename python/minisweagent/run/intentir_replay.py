@@ -25,9 +25,12 @@ from minisweagent.environments.intentir_replay import (
     REPLAY_INPUT_FILES,
     REPLAY_SANDBOX_HOSTNAME,
     REPLAY_SANDBOX_PROTOCOL,
+    REPLAY_STARTUP_PACKET_EMBED_LIMIT_BYTES,
     REPLAY_TOOL_APPLETS,
     IntentIRReplayEnvironment,
     IntentIRReplayWorkspace,
+    _packet_overview,
+    _packet_requirements,
 )
 from minisweagent.models.litellm_response_model import LitellmResponseModel
 from minisweagent.utils.serialize import recursive_merge
@@ -257,33 +260,42 @@ def intentir_replay_episode_contract_sha256(
 
 
 def _replay_startup_context(workspace: IntentIRReplayWorkspace) -> str:
-    """Return a small receipt for the immutable, queryable Replay packet.
-
-    The packet remains the sole source-blind authority under ``/input``.  Keeping
-    its full JSON out of the initial conversation prevents every stateless model
-    turn from retransmitting the same large J/C/pi object.  The agent obtains exact
-    authored fields through the bounded read-only ``intentir_packet_query`` views;
-    no semantic summary or inferred realization is introduced here.
-    """
+    """Embed one exact normal-size packet or one exact oversized-packet index."""
 
     packet_bytes = (workspace.input_dir / "packet.json").read_bytes()
     packet = json.loads(packet_bytes)
     if not isinstance(packet, Mapping):
         raise TypeError("Replay packet root must be an object")
-    exact = {
-        "protocol": "intentir.replay-startup-context.v3",
+    encoded = json.dumps(
+        packet,
+        sort_keys=True,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    embedded = len(encoded) <= REPLAY_STARTUP_PACKET_EMBED_LIMIT_BYTES
+    exact: dict[str, Any] = {
+        "protocol": "intentir.replay-startup-context.v4",
         "authority": (
-            "transport receipt only; exact immutable source-blind J/C/pi/U_f "
-            "facts remain in /input/packet.json and are exposed only by bounded "
-            "read-only queries; no Source, Gate feedback, actual C values, "
-            "inference, or Replay generation"
+            "exact immutable source-blind J/C/pi/U_f transport only; no Source, "
+            "Gate feedback, actual C values, inference, repair, schedule, or "
+            "Replay generation"
         ),
         "packet_sha256": hashlib.sha256(packet_bytes).hexdigest(),
-        "packet_bytes": len(packet_bytes),
+        "packet_bytes": len(encoded),
+        "embed_limit_bytes": REPLAY_STARTUP_PACKET_EMBED_LIMIT_BYTES,
         "root_sections": sorted(str(key) for key in packet),
-        "exact_packet_embedded": False,
-        "bootstrap_command": "intentir_packet_query overview",
+        "exact_packet_embedded": embedded,
     }
+    if embedded:
+        exact["packet"] = packet
+        exact["bootstrap_command"] = None
+    else:
+        exact["manifest"] = {
+            "overview": _packet_overview(packet),
+            "authored_requirements": _packet_requirements(packet),
+        }
+        exact["bootstrap_command"] = None
     return json.dumps(
         exact,
         sort_keys=True,

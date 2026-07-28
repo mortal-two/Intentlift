@@ -41,8 +41,8 @@ from .scrc import (
 )
 
 
-CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v7"
-CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v61"
+CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v8"
+CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v62"
 CODEX_CLI_TURN_TIMEOUT_SECONDS = 900.0
 
 _INITIAL_PROMPT = """You are the sole source-aware IntentIR Lift owner for this branch.
@@ -51,13 +51,12 @@ input/ is immutable; work/, output/, and tmp/ are writable. Never inspect any
 other path and never use network tools.
 
 The startup files already contain the exact Source, Harness view, feedback,
-minimal example and focused lookup tools. Read only what you need. Author every
-field of one complete output/candidate.json containing exactly J, C, and pi. You
-may keep proof-irrelevant notes or a model-authored build script under work/.
-Start with the compact exact ABI ledger rather than repeatedly paging the full
-Harness:
-
-python .agents/intentir_agent_tool.py lift_harness_abi
+minimal example and focused lookup tools. The final `<source-aware-startup>`
+block directly contains the compact exact Harness ABI ledger; consume it without
+a mandatory tool call. Read Source and only the additional files you need. Author
+every field of one complete output/candidate.json containing exactly J, C, and
+pi. You may keep proof-irrelevant notes or a model-authored build script under
+work/.
 
 Treat Harness `shape` as one valuation: map every `shape_contract` h* to a
 distinct/repeated symbolic J dimension as declared, preserve scalar and bound
@@ -71,15 +70,14 @@ pi-owned physical time/control, C-owned compile-time choice, or has no
 compiler-visible event. Do not treat a loop region, a large route set, or syntax
 alone as evidence that the corresponding control/time obligation was authored;
 and do not invent an obligation merely because it appears in the outline.
-After each meaningful complete edit run:
-
-python .agents/intentir_agent_tool.py lift_candidate_control overview 1 20
-
-Use `outputs`, `boundary`, or `pi` in place of `overview` only when that compact
-view names a relevant obligation. These tools only project exact Harness facts
-or your current authored candidate; they never infer or edit J/C/pi. Then run:
+After the first meaningful complete edit run:
 
 python .agents/intentir_agent_tool.py candidate_check
+
+Use `lift_candidate_control overview|outputs|boundary|pi` only when a focused
+self-read of your current candidate would resolve a named uncertainty; it is not
+a mandatory pre-check phase. These tools only project exact Harness facts or
+your current authored candidate; they never infer or edit J/C/pi.
 
 This invokes the same diagnostic-only CandidateCheck used by the host over your
 exact current bytes. It never edits or generates a field. Repair the current
@@ -90,20 +88,18 @@ certification. Do not create any other file under output/.
 """
 
 _EXTERNAL_CONTINUATION_PROMPT = """The same branch-local source-aware Lift task continues in the same workspace and thread.
-First run `python .agents/intentir_agent_tool.py feedback_frontier` and inspect
-the current output/candidate.json. Resolve direct failing interface, reduction,
-and predicate/effect categories before paging recursive dataflow witnesses. Use
-`python .agents/intentir_agent_tool.py lift_feedback_category CATEGORY` for the
-one exact category named by the frontier; do not read the whole recursive
-feedback when that bounded view is sufficient. Use
+The final `<source-aware-startup>` block contains the exact bounded feedback
+frontier and, when available, its primary exact category. Inspect the current
+output/candidate.json and resolve direct failing interface, reduction, and
+predicate/effect categories before paging recursive dataflow witnesses. Use
+`lift_feedback_category CATEGORY` only for one named omitted category. Use
 the Source control-flow outline again when the frontier names a loop, branch,
 terminal, or carrier difference; reconcile the complete J/C/pi ownership rather
 than only adding routes around the existing flat graph. Use
 the bounded exact category/path query only when the frontier names an unresolved
 section. Repair the complete model-authored (J,C,pi) against the closed external
-feedback and Source, rerun
-`python .agents/intentir_agent_tool.py lift_candidate_control overview 1 20`, then
-`python .agents/intentir_agent_tool.py candidate_check`, and end only after it
+feedback and Source, run `python .agents/intentir_agent_tool.py candidate_check`,
+and end only after it
 passes for the complete current output/candidate.json. This is not a new writer
 and not a patch-only artifact. The host alone will rerun CandidateCheck and the
 formal SCRC gates.
@@ -112,12 +108,62 @@ formal SCRC gates.
 _CANDIDATE_CHECK_CONTINUATION_PROMPT = """The host CandidateCheck rejected the current exact candidate bytes.
 Read input/candidate_check.json, then repair output/candidate.json yourself in
 this same thread. Make coordinated J/C/pi changes when required; do not merely
-silence the first path. Rerun
-`python .agents/intentir_agent_tool.py lift_candidate_control overview 1 20`, then
-`python .agents/intentir_agent_tool.py candidate_check` and end only after the
+silence the first path. Rerun `python .agents/intentir_agent_tool.py candidate_check`
+and end only after the
 complete candidate passes. CandidateCheck is
 diagnostic-only and has no certification authority.
 """
+
+
+def _source_aware_startup_context(workspace: Any, *, fresh_owner: bool) -> dict[str, Any]:
+    """Return exact existing ABI or closed-feedback facts without a tool round."""
+
+    if fresh_owner:
+        return {
+            "protocol": "intentir.codex-lift-startup-view.v1",
+            "fresh_owner": True,
+            "harness_abi": _harness_abi_value(workspace.input_dir, 1, 80),
+            "authority": (
+                "exact Harness-owned projection only; no logical_ref, J/C/pi "
+                "field, semantic classification, or repair is generated"
+            ),
+        }
+
+    frontier = json.loads(
+        (workspace.input_dir / "feedback_frontier.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    primary: str | None = None
+    if isinstance(frontier, Mapping):
+        candidate = frontier.get("primary_difference_category")
+        if isinstance(candidate, str):
+            primary = candidate
+        elif isinstance(frontier.get("categories"), list):
+            for item in frontier["categories"]:
+                if isinstance(item, Mapping) and isinstance(
+                    item.get("category"), str
+                ):
+                    primary = str(item["category"])
+                    break
+    primary_view: Any = None
+    if primary is not None:
+        try:
+            primary_view = _feedback_category_value(workspace.input_dir, primary)
+        except (KeyError, TypeError, ValueError):
+            primary_view = None
+    return {
+        "protocol": "intentir.codex-lift-continuation-view.v1",
+        "fresh_owner": False,
+        "feedback_frontier": frontier,
+        "primary_category": primary,
+        "primary_category_view": primary_view,
+        "candidate_path": "/output/candidate.json",
+        "authority": (
+            "exact bounded closed-feedback projection only; no semantic "
+            "inference, artifact field, or repair is generated"
+        ),
+    }
 
 
 def _atomic_write_text(path: Path, text: str) -> None:
@@ -443,8 +489,20 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                     model=provider.model,
                     effort=effective_effort,
                 )
+            startup_context = _source_aware_startup_context(
+                workspace, fresh_owner=fresh_owner
+            )
             prompt = (
-                _INITIAL_PROMPT if fresh_owner else _EXTERNAL_CONTINUATION_PROMPT
+                (_INITIAL_PROMPT if fresh_owner else _EXTERNAL_CONTINUATION_PROMPT)
+                + "\n\n<source-aware-startup>\n"
+                + json.dumps(
+                    startup_context,
+                    sort_keys=True,
+                    ensure_ascii=False,
+                    allow_nan=False,
+                    separators=(",", ":"),
+                )
+                + "\n</source-aware-startup>\n"
             )
             selected_effort = effective_effort
             while True:

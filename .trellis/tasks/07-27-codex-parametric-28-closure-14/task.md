@@ -186,8 +186,8 @@ fixed code不得替Lift修成`x*`。
 
 - frontend commit起点：`460aaed1c6af0b267a4a9da9ca497aea6e66ad40`；
 - artifact/decode/typecheck：`artifact.v9 / decode.v13 / typecheck.v23`；
-- Lift：Codex `openai.codex-cli.intentir-lift.v7 / intentir.lift-knowledge.v61`，MiniSWE `intentir.lift-knowledge.v59`；
-- Replay：Codex `openai.codex-cli.intentir-replay.v16`，MiniSWE `minisweagent.intentir-replay.v20`；
+- Lift：Codex `openai.codex-cli.intentir-lift.v8 / intentir.lift-knowledge.v62`，MiniSWE `intentir.lift-knowledge.v59`；
+- Replay：Codex `openai.codex-cli.intentir-replay.v17`，MiniSWE `minisweagent.intentir-replay.v21`；
 - Replay packet/check：`replay-input.v1 / public_frontend_context_v12 / replay-check.v9`；
 - Harness：Triton workload adapter v5；
 - Gate1 observer：`triton-ttir-3.6-gate1-v11`；outer batch：`intentir.scrc.batch.v3`；
@@ -318,6 +318,13 @@ declaration-order/count、`contraction/effect_if/fma/loop/reduce/value_if`原记
 Source、Harness或Gate，不给frontend spelling、bound、schedule、地址公式、repair suggestion或代码；
 因此解决的是Replay owner遗漏可见packet义务的attention/consumption问题，不是新增FMA permission、
 kernel recipe或deterministic composer。旧v15/v19 run保持原receipt，只fresh rerun使用新版本。
+
+Replay v17/v21撤销该强制查询协议：不超过64 KiB的完整匿名packet只在首次上下文exact embedding
+一次；超限manifest直接携带同一requirements清单，并补齐π instance mechanism计数/顺序，focused
+query只用于明确截断页。当前六个难核packet实测最大约47 KiB，正常路径可直接写完整Replay。
+Codex Lift v8 / knowledge v62同时将exact Harness ABI与closed relift frontier/primary category直接交给
+同一持久owner，原有harness/candidate-control/feedback-category工具均退为可选局部自读。两项修改
+只减少协议/attention负担，不生成J/C/π、Replay代码、schedule或repair，也不改变任何门禁。
 
 Gate2 Triton Source/Replay runner 共享 source-neutral `triton_static_dot_transpose_v1`：只对静态 boolean
 `trans_a/trans_b` 做与 Gate1 相同的 AST 等价归一，并记录 rewrite count/digest；不按 kernel 名改写，

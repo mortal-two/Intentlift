@@ -214,6 +214,11 @@ output/effect/guard、以及 π regions/instances/iterations/carriers/terminal/r
 字段投影，任何缺失仍由 Lift 自己从 Source 作者化，任何冲突仍由 CandidateCheck/TypeCheck
 fail closed。
 
+Codex Lift v8 / knowledge v62 将同一 exact Harness ABI ledger 直接放入首次 owner prompt，并将
+后续 closed feedback frontier 与其 primary bounded category 直接放入同一持久 owner continuation；
+`lift_harness_abi`、`lift_candidate_control` 与 `lift_feedback_category` 保留为可选的局部自读，不再是
+提交前的强制串行协议。该 transport 不生成 `logical_ref`、J/C/π 字段或修复。
+
 当前持久 owner 使用 `artifact.v9 / decode.v13 / typecheck.v23 / candidate-check.v1` 实现上述
 CandidateCheck、C attachment、numeric-cast dependent typing 与 result-relation compatibility。v7
 继承 v6，v6 继承 v5；v5 继承 v4 的
@@ -318,25 +323,17 @@ ReplayLLM(J,pi,MaskC(C);U_f) -> complete source R_f
 
 当前 packet protocol 为 `intentir.scrc.replay-input.v1`，Triton 公共上下文为
 `public_frontend_context_v12`；source-aware Codex/MiniSWE Lift 的当前 knowledge receipt 分别为
-`intentir.lift-knowledge.v61 / intentir.lift-knowledge.v59`，source-blind MiniSWE/Codex Replay backend 为
-`minisweagent.intentir-replay.v20 / openai.codex-cli.intentir-replay.v16`。这些版本必须随 fresh run 原样记录；旧 packet/context/knowledge
+`intentir.lift-knowledge.v62 / intentir.lift-knowledge.v59`，source-blind MiniSWE/Codex Replay backend 为
+`minisweagent.intentir-replay.v21 / openai.codex-cli.intentir-replay.v17`。这些版本必须随 fresh run 原样记录；旧 packet/context/knowledge
 evidence 不因实现升级而被重判。
 
-MiniSWE Replay v20 不再把小于固定阈值的完整packet重复放入每个stateless model request；首轮只给
-digest、byte size、root section与`intentir_packet_query overview`的transport receipt。完整匿名packet
-仍是`/input/packet.json`的immutable authority，Replay owner先读取一次 bounded `requirements`，再通过
-ABI/graph/realization/obligation/section/find查询读取exact authored facts。`requirements`只重索引 J 已有
-op 的声明顺序与计数、拓扑敏感 op、boundary effects，以及 π 已有的 time/control/terminal relation、
-所引用 instance/region；receipt和query都不摘要、补齐或推断语义。
-
-Codex Replay v16 不再把完整packet重排成单个workspace response。隔离file mailbox先给compact
-manifest，再强制读取一次上述 exact authored-requirements checklist，并通过最多四个有界参数化
-`replay_packet_query`动作按需返回ABI、J graph、boundary和
-π realization obligation页；legacy full workspace view不参与新episode的正常构造。匿名 C slots、
-J graph/boundary与完整π obligation仍必须原样可见，尤其不能遗漏`loop_carriers`、
-`physical_iterations`、`physical_loop_carriers`、`terminal_controls`或address routes。查询参数只
-选择既有packet字段，不能写入、补齐或推断关系。投影不推导或推荐schedule/code；Replay LLM仍
-完整作者化source，host只对其exact bytes做ReplayCheck和public synthetic compile。
+Replay v21/v17 对不超过 64 KiB 的匿名 packet 采用一次性 exact startup embedding；当前六个难核实测
+packet 最大约 47 KiB，因此正常路径不再强制调用 manifest、requirements、ABI、graph、realization 或
+obligations。超过上限时，首次 manifest 自带 bounded authored-requirements：J op/boundary 与 π
+instance mechanism、route/order/time/control 的 exact 重索引，并只为被明确截断的页提供 focused
+query。完整 `/input/packet.json` 仍是 immutable authority；embedding/manifest/query 都不摘要、补齐、
+推断或推荐 schedule/code。Replay LLM仍完整作者化 source，host只对 exact bytes 做 ReplayCheck 和
+public synthetic compile。旧 v20/v16 的强制 requirements 查询 receipt 保持原 verdict。
 
 v50/v8 只升级 proof-irrelevant Agent execution transport：活动 staged writer 被移除，MiniSWE 使用
 一个持久 Lift owner 和每轮一个 exact Replay packet；首轮 exact allowlisted workspace mirror 在

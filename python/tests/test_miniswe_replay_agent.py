@@ -232,6 +232,15 @@ def test_packet_query_exposes_bounded_source_blind_views() -> None:
         ["j.intent.intent_function.body.1", "n1", "reduce"],
     ]
     assert requirement_view["operations"]["topology_rows"][0]["id"] == "n1"
+    mechanisms = requirement_view["pi_instance_mechanisms"]
+    assert mechanisms["total"] == len(packet["pi"]["instances"])
+    assert sum(mechanisms["counts"].values()) == mechanisms["total"]
+    assert mechanisms["columns"] == [
+        "id",
+        "semantic_ref",
+        "mechanism",
+        "region",
+    ]
     assert "no Source" in requirement_view["authority"]
     assert realization["returncode"] == 0
     assert '"topology"' in realization["output"]
@@ -494,10 +503,10 @@ def test_episode_contract_digest_binds_exact_files_prompts_and_budgets() -> None
     assert default_config["model"]["retry_timeouts"] is True
     assert default_config["model"]["semantic_initial_turns"] == 1
     assert default_config["model"]["model_kwargs"]["parallel_tool_calls"] is True
-    assert MINISWE_REPLAY_BACKEND == "minisweagent.intentir-replay.v20"
+    assert MINISWE_REPLAY_BACKEND == "minisweagent.intentir-replay.v21"
     instance = default_config["agent"]["instance_template"]
-    assert "compact receipt" in instance
-    assert "bootstrap_command" in instance
+    assert "exact immutable source-blind startup transport" in instance
+    assert "exact_packet_embedded=true" in instance
     assert "value-equivalent flattened formula" in instance
     assert "Construct and direct-submit complete Triton source early" in instance
 
@@ -1039,11 +1048,11 @@ def test_static_error_can_be_repaired_in_one_fresh_multi_turn_episode() -> None:
 
     assert result.source_text == VALID_REPLAY
     first_packet = model.query_inputs[0][1]["content"]
-    assert "intentir.replay-startup-context.v3" in first_packet
-    assert '"exact_packet_embedded":false' in first_packet
+    assert "intentir.replay-startup-context.v4" in first_packet
+    assert '"exact_packet_embedded":true' in first_packet
     assert '"packet_bytes":' in first_packet
-    assert '"bootstrap_command":"intentir_packet_query overview"' in first_packet
-    assert '"packet":' not in first_packet
+    assert '"bootstrap_command":null' in first_packet
+    assert '"packet":' in first_packet
     assert "anonymous_source" not in first_packet
     evidence = result.trajectory["info"]["replay_check"]
     assert [item["status"] for item in evidence["results"]] == [
