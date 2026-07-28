@@ -40,7 +40,7 @@ from .replay import (
 )
 
 
-CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v15"
+CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v16"
 
 _INITIAL_PROMPT = """You are the sole writer for one fresh source-blind IntentIR Replay episode.
 The outer runtime exposes only this isolated /workspace. input/ is immutable;
@@ -51,8 +51,10 @@ trajectory, or network tool. Do not search for any of them.
 Start with exactly one call to
 `python .agents/intentir_agent_tool.py replay_manifest_view`. Do not first dump
 the whole input/packet.json. The manifest is a bounded exact projection that
-gives section sizes, ABI/op counts and an exact bounded query plan. Follow that
-plan with `python .agents/intentir_agent_tool.py replay_packet_query ...`; up to
+gives section sizes, ABI/op counts and an exact bounded query plan. Immediately
+after it, call `python .agents/intentir_agent_tool.py replay_packet_query requirements`
+once and use its exact op occurrence/control-time checklist before drafting. Follow
+the remaining plan with `python .agents/intentir_agent_tool.py replay_packet_query ...`; up to
 four independent read-only queries may be issued together. Page graph and
 obligation rows only when `next_start` is non-null. The legacy
 `replay_workspace_view` is not exposed because it retransmits the whole packet
@@ -183,6 +185,7 @@ def _replay_manifest_view(packet: Mapping[str, Any]) -> dict[str, Any]:
         "operations_omitted": overview.get("operations_omitted", 0),
         "query_plan": [
             "python .agents/intentir_agent_tool.py replay_packet_query abi 0 48",
+            "python .agents/intentir_agent_tool.py replay_packet_query requirements",
             "python .agents/intentir_agent_tool.py replay_packet_query graph 0 12",
             "python .agents/intentir_agent_tool.py replay_packet_query realization",
             "python .agents/intentir_agent_tool.py replay_packet_query obligations 0 12",

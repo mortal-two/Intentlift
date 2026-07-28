@@ -29,8 +29,11 @@ agent:
     marker.
 
     The initial message carries only a transport receipt. Issue the supplied
-    `intentir_packet_query overview` first, then use up to four independent focused
-    packet queries in one response when their results do not depend on each other.
+    `intentir_packet_query overview` first, then issue
+    `intentir_packet_query requirements` exactly once before drafting source. Its
+    op occurrence and control/time checklist only reindexes exact authored packet
+    facts; it never supplies a lowering. Use up to four independent focused packet
+    queries in one response when their results do not depend on each other.
     Never mix packet queries with a write or check. Every write,
     inspect-after-write, check, commit, rollback or submit is the only action in its
     response. Model/tool counts are telemetry; active wall time governs the
@@ -46,7 +49,8 @@ agent:
     {{ replay_startup_context }}
     </persistent-workspace-mirror>
 
-    Execute the supplied `bootstrap_command`. Then consume the exact ABI, graph,
+    Execute the supplied `bootstrap_command`, then the exact `requirements` view.
+    Then consume the exact ABI, graph,
     boundary and realization obligations through the focused commands returned by
     that overview; page only when `next_start` is non-null. Use `section PATH` or
     `find HANDLE` only for one omitted named fact. Packet queries expose exact

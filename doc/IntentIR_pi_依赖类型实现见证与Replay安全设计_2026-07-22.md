@@ -854,8 +854,13 @@ Replay LLM 应遵守以下过程合同：
 15. 不从 π 猜出后覆盖 J，也不从 compiler diff 修补。
 
 当前 fresh receipt 组合为 `intentir.scrc.replay-input.v1`、Triton
-`public_frontend_context_v12`、Codex/MiniSWE Lift `intentir.lift-knowledge.v61/v59`、MiniSWE Replay v19 与 Codex Replay v15；旧 receipt 保持其原 verdict，不能由
+`public_frontend_context_v12`、Codex/MiniSWE Lift `intentir.lift-knowledge.v61/v59`、MiniSWE Replay v20 与 Codex Replay v16；旧 receipt 保持其原 verdict，不能由
 当前 Replay consumer 或 Lift knowledge 静默升级。
+
+v20/v16 可先读取一次匿名 packet 的 exact authored-requirements view，将 J 中已声明的 op 与 π 中
+已声明的 time/control/terminal obligation 重新索引为有界清单；它不新增 relation，不从 Source/Gate
+取值，也不选择 realization、schedule、frontend spelling 或 repair，因此只增强 Replay owner 对现有
+π/J 的消费可靠性，不改变 π 的证明地位或 Replay 的 LLM-first 作者权。
 
 Codex Replay v13 的隔离 `replay-workspace-view.v2` 必须包含完整匿名 ABI/J graph/J boundary、MaskC、
 U_f，以及从同一 π 无损 join 的 per-instance obligation ledger；reduction obligation 只能并置 J 已

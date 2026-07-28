@@ -846,7 +846,7 @@ Replay 不得：
 `U_f` 必须是版本化、source-neutral 的公共前端知识，不能按当前 Kernel、operator 或失败样本选择。
 当前版本组合是 `intentir.scrc.replay-input.v1`、Triton
 `public_frontend_context_v12`、source-aware Codex/MiniSWE Lift `intentir.lift-knowledge.v61/v59`、
-source-blind MiniSWE Replay v19 与 Codex Replay v15、
+source-blind MiniSWE Replay v20 与 Codex Replay v16、
 `replay-check.v9`；fresh evidence必须保存实际 receipt，
 旧版本 run 不能被新组合追认。
 runner 可以保存实际 request/output 和 compiler metadata 供追溯，但这些内容不能回流 Replay packet；
@@ -1245,6 +1245,8 @@ TypeCheck(J,C,π) + Gate1 + Gate2
 - Replay prompt；
 - π 消费顺序说明；
 - instance/route/order/sharing 的公共解释。
+- 对匿名 packet 已作者化内容的只读 requirements 投影：只重索引 J op 声明顺序/计数和 π
+  time/control/terminal obligations，不推导语义、lowering、schedule、代码或修复建议。
 
 不把旧 Replay 代码提供给下一次 Replay。
 

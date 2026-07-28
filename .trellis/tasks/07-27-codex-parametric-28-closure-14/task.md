@@ -187,7 +187,7 @@ fixed code不得替Lift修成`x*`。
 - frontend commit起点：`460aaed1c6af0b267a4a9da9ca497aea6e66ad40`；
 - artifact/decode/typecheck：`artifact.v9 / decode.v13 / typecheck.v23`；
 - Lift：Codex `openai.codex-cli.intentir-lift.v7 / intentir.lift-knowledge.v61`，MiniSWE `intentir.lift-knowledge.v59`；
-- Replay：Codex `openai.codex-cli.intentir-replay.v15`，MiniSWE `minisweagent.intentir-replay.v19`；
+- Replay：Codex `openai.codex-cli.intentir-replay.v16`，MiniSWE `minisweagent.intentir-replay.v20`；
 - Replay packet/check：`replay-input.v1 / public_frontend_context_v12 / replay-check.v9`；
 - Harness：Triton workload adapter v5；
 - Gate1 observer：`triton-ttir-3.6-gate1-v11`；outer batch：`intentir.scrc.batch.v3`；
@@ -311,6 +311,13 @@ file mailbox升级为支持最多四个有界字符串参数的v3 bridge，先�
 语法分页读取ABI/graph/realization/obligation。Flash样本中Codex首轮最大单个view从约32KB降至
 9KB以内，首轮四类事实合计约22.6KB。两者都不摘要或生成J/π，不接收Source/Gate，不自动修Replay；
 完整Replay仍由source-blind owner作者化并经同一ReplayCheck/public compile fail closed。
+
+Replay v16/v20在该边界内再增加唯一一次 exact authored-requirements view：它只重索引J op的
+declaration-order/count、`contraction/effect_if/fma/loop/reduce/value_if`原记录、boundary effects，
+以及π已有的iterations/carriers/physical-time/terminal-controls和所引用instance/region。它不读取
+Source、Harness或Gate，不给frontend spelling、bound、schedule、地址公式、repair suggestion或代码；
+因此解决的是Replay owner遗漏可见packet义务的attention/consumption问题，不是新增FMA permission、
+kernel recipe或deterministic composer。旧v15/v19 run保持原receipt，只fresh rerun使用新版本。
 
 Gate2 Triton Source/Replay runner 共享 source-neutral `triton_static_dot_transpose_v1`：只对静态 boolean
 `trans_a/trans_b` 做与 Gate1 相同的 AST 等价归一，并记录 rewrite count/digest；不按 kernel 名改写，

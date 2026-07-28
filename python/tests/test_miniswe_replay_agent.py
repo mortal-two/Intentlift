@@ -173,6 +173,9 @@ def test_packet_query_exposes_bounded_source_blind_views() -> None:
         graph = environment.execute(
             {"command": f"{INTENTIR_PACKET_QUERY} graph 0 12"}
         )
+        requirements = environment.execute(
+            {"command": f"{INTENTIR_PACKET_QUERY} requirements"}
+        )
         realization = environment.execute(
             {"command": f"{INTENTIR_PACKET_QUERY} realization"}
         )
@@ -215,6 +218,21 @@ def test_packet_query_exposes_bounded_source_blind_views() -> None:
     assert '"intent_io"' in abi["output"]
     assert graph["returncode"] == 0
     assert '"attrs"' in graph["output"]
+    assert requirements["returncode"] == 0
+    requirement_view = json.loads(requirements["output"])
+    assert requirement_view["protocol"] == (
+        "intentir.replay-authored-requirements.v1"
+    )
+    assert requirement_view["operations"]["counts"] == {
+        "map_binary": 1,
+        "reduce": 1,
+    }
+    assert requirement_view["operations"]["sequence"] == [
+        ["j.intent.intent_function.body.0", "n0", "map_binary"],
+        ["j.intent.intent_function.body.1", "n1", "reduce"],
+    ]
+    assert requirement_view["operations"]["topology_rows"][0]["id"] == "n1"
+    assert "no Source" in requirement_view["authority"]
     assert realization["returncode"] == 0
     assert '"topology"' in realization["output"]
     assert edges["returncode"] == 0
@@ -476,7 +494,7 @@ def test_episode_contract_digest_binds_exact_files_prompts_and_budgets() -> None
     assert default_config["model"]["retry_timeouts"] is True
     assert default_config["model"]["semantic_initial_turns"] == 1
     assert default_config["model"]["model_kwargs"]["parallel_tool_calls"] is True
-    assert MINISWE_REPLAY_BACKEND == "minisweagent.intentir-replay.v19"
+    assert MINISWE_REPLAY_BACKEND == "minisweagent.intentir-replay.v20"
     instance = default_config["agent"]["instance_template"]
     assert "compact receipt" in instance
     assert "bootstrap_command" in instance

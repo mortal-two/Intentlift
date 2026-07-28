@@ -405,6 +405,7 @@ def test_codex_replay_bounded_queries_partition_exact_packet_without_source() ->
 
     manifest = _replay_manifest_view(packet)
     abi = _replay_packet_query(packet, ("abi", "0", "48"))
+    requirements = _replay_packet_query(packet, ("requirements",))
     graph = _replay_packet_query(packet, ("graph", "0", "12"))
     boundary = _replay_packet_query(packet, ("section", "j.boundary"))
     realization = _replay_packet_query(packet, ("realization",))
@@ -412,6 +413,7 @@ def test_codex_replay_bounded_queries_partition_exact_packet_without_source() ->
 
     assert manifest["query_plan"] == [
         "python .agents/intentir_agent_tool.py replay_packet_query abi 0 48",
+        "python .agents/intentir_agent_tool.py replay_packet_query requirements",
         "python .agents/intentir_agent_tool.py replay_packet_query graph 0 12",
         "python .agents/intentir_agent_tool.py replay_packet_query realization",
         "python .agents/intentir_agent_tool.py replay_packet_query obligations 0 12",
@@ -423,12 +425,31 @@ def test_codex_replay_bounded_queries_partition_exact_packet_without_source() ->
         "op"
     ]
     assert graph["view"]["items"][0]["op"] == expected_op
+    assert requirements["view"]["operations"]["counts"] == {expected_op: 1}
+    assert requirements["view"]["operations"]["sequence"][0][1:] == [
+        "n0",
+        expected_op,
+    ]
+    assert requirements["view"]["pi_time_and_control"]["terminal_controls"] == {
+        "total": 0,
+        "items": [],
+        "omitted": 0,
+        "omitted_query": None,
+    }
     assert boundary["view"] == packet["j"]["boundary"]
     assert realization["view"]["topology"]["terminal_controls"] == packet["pi"][
         "terminal_controls"
     ]
     assert obligations["view"]["total"] == len(packet["pi"]["instances"])
-    for view in (manifest, abi, graph, boundary, realization, obligations):
+    for view in (
+        manifest,
+        abi,
+        requirements,
+        graph,
+        boundary,
+        realization,
+        obligations,
+    ):
         assert not ({"source", "harness", "gate1", "gate2"} & set(view))
 
 

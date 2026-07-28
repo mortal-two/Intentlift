@@ -38,7 +38,7 @@ from .tilelang_codegen import extract_tilelang_module
 from .ttir import TTIRParseError, parse_ttir
 
 
-MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v19"
+MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v20"
 MINISWE_REPLAY_TURN_TIMEOUT_SECONDS = 300.0
 MINISWE_REPLAY_XHIGH_TURN_TIMEOUT_SECONDS = 900.0
 RESPONSES_REPLAY_BACKEND = "openai.responses.intentir-replay.v1"
@@ -1649,9 +1649,9 @@ This is the complete immutable input allowlist for one fresh Replay episode.
 - `packet.json`: exactly source-isolated J + pi + MaskC(C) + U_f.
 - `REPLAY_CONTRACT.md`: fixed public Replay construction contract.
 - `TOOL.md`: fixed bounded check and submission interface.
-- `intentir_packet_query`: bounded read-only packet inventory, path lookup, and
-  anonymous-handle search plus paged graph/realization/resolved-edge and local
-  instance-obligation views. It exposes only packet.json and never writes
+- `intentir_packet_query`: bounded read-only packet inventory, exact authored
+  requirements checklist, path lookup, and anonymous-handle search plus paged
+  graph/realization/resolved-edge and local instance-obligation views. It exposes only packet.json and never writes
   Replay or infers relations.
 - `intentir_replay_inspect`: bounded syntax-only inventory of the writer's own
   current replay.source. It reads no packet or external evidence, performs no
@@ -1662,12 +1662,14 @@ CompileCase/grid, Gate diff/TTIR, previous Replay, sibling trajectory, or
 network is available. Generate the entire source yourself. Fixed code only
 checks and rejects; it never generates, patches, or certifies source.
 
-Use the exact packet supplied in the startup message or read `packet.json`
-directly. Do not spend a first turn requesting overlapping overview, ABI, graph,
-realization and obligation projections. `intentir_packet_query` remains a
-focused fallback for one named omitted path or handle when a packet exceeds the
-transport embedding bound. Its views expose only authored packet facts and
-never add an edge.
+The startup message carries only a compact receipt for the exact immutable
+packet. First request `intentir_packet_query overview`, then request
+`intentir_packet_query requirements` exactly once and use its declaration-order
+op/control/time checklist. Follow the returned bounded ABI, graph, realization
+and obligation plan; page only when a returned `next_start` is non-null. Use
+`section PATH`, `obligation HANDLE`, or `find HANDLE` only for a named omitted
+fact. These views expose only authored packet facts and never add an edge or
+lowering decision.
 
 After writing a complete first source, use `intentir_replay_inspect` only when a
 focused own-source inventory would resolve uncertainty. The tool reports only
