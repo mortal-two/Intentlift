@@ -137,6 +137,7 @@ struct PaddedRowDotLowering {
   std::string requestedReductionTopology;
 
   int64_t rows = 0;
+  int64_t batch = 0;
   int64_t physicalRows = 0;
   int64_t featureWidth = 0;
   int64_t paddedRows = 0;
@@ -243,7 +244,7 @@ struct PaddedRowDotLowering {
     auto rightType = dyn_cast<RankedTensorType>(rightInput.getType());
     if (!leftType || !rightType || !leftType.hasStaticShape() ||
         leftType != rightType || leftType.getRank() != 4 ||
-        leftType.getDimSize(0) != 1 || leftType.getDimSize(1) <= 0 ||
+        leftType.getDimSize(0) <= 0 || leftType.getDimSize(1) <= 0 ||
         leftType.getDimSize(2) <= 0 || leftType.getDimSize(3) <= 0 ||
         !isa<Float16Type, BFloat16Type, Float32Type>(
             leftType.getElementType()))
@@ -254,15 +255,16 @@ struct PaddedRowDotLowering {
           (leftArgument == 1 && rightArgument == 0)))
       return failure();
 
+    batch = leftType.getDimSize(0);
     rows = leftType.getDimSize(1);
     physicalRows = leftType.getDimSize(2);
     featureWidth = leftType.getDimSize(3);
     paddedRows = outputType.getDimSize(2);
     storageType = leftType.getElementType();
-    if (outputType.getDimSize(0) != 1 || outputType.getDimSize(1) != rows ||
+    if (outputType.getDimSize(0) != batch || outputType.getDimSize(1) != rows ||
         reducedType.getShape() !=
-            ArrayRef<int64_t>({1, rows, physicalRows}) ||
-        paddedRows < physicalRows || featureWidth > 32)
+            ArrayRef<int64_t>({batch, rows, physicalRows}) ||
+        paddedRows < physicalRows)
       return failure();
 
     auto low = integerArray(pad.getLo());
@@ -330,7 +332,7 @@ struct PaddedRowDotLowering {
     if (requestedReductionTopology == "serial-row") {
       blocksPerRow = (paddedRows + threads - 1) / threads;
     } else if (requestedReductionTopology == "subgroup-feature") {
-      if (featureWidth < 2 || featureWidth > 32)
+      if (featureWidth < 2 || featureWidth > 1024)
         return failure();
       // Use complete hardware warps even when the logical feature strip is
       // shorter.  PTX sub-warp shuffle masks are fragile for multiple logical
@@ -369,7 +371,7 @@ struct PaddedRowDotLowering {
     builder.setInsertionPointToStart(entry);
 
     Value grid = builder.create<arith::ConstantIndexOp>(
-        location, rows * blocksPerRow);
+        location, batch * rows * blocksPerRow);
     Value block = builder.create<arith::ConstantIndexOp>(location, threads);
     Value one = builder.create<arith::ConstantIndexOp>(location, 1);
     Value validRowsRaw;
@@ -397,9 +399,15 @@ struct PaddedRowDotLowering {
         location, physicalRows);
     Value cPaddedRows = builder.create<arith::ConstantIndexOp>(
         location, paddedRows);
-    Value row = builder.create<arith::DivUIOp>(location, blockId,
+    Value cRowsPerBatch = builder.create<arith::ConstantIndexOp>(
+        location, rows * blocksPerRow);
+    Value batchId = builder.create<arith::DivUIOp>(location, blockId,
+                                                   cRowsPerBatch);
+    Value batchBlock = builder.create<arith::RemUIOp>(location, blockId,
+                                                      cRowsPerBatch);
+    Value row = builder.create<arith::DivUIOp>(location, batchBlock,
                                                 cBlocksPerRow);
-    Value rowBlock = builder.create<arith::RemUIOp>(location, blockId,
+    Value rowBlock = builder.create<arith::RemUIOp>(location, batchBlock,
                                                      cBlocksPerRow);
     Value subgroup = builder.create<arith::DivUIOp>(
         location, threadId, cSubgroupWidth);
@@ -441,15 +449,8 @@ struct PaddedRowDotLowering {
         location, arith::CmpIPredicate::slt, paddedRow, validRows);
     Value rowActive = builder.create<arith::AndIOp>(
         location, inPhysicalRows, inValidRows);
-    Value inStaticFeatures = builder.create<arith::CmpIOp>(
-        location, arith::CmpIPredicate::ult, lane, cFeatureWidth);
-    Value inValidFeatures = builder.create<arith::CmpIOp>(
-        location, arith::CmpIPredicate::slt, lane, validFeatures);
-    Value featureActive = builder.create<arith::AndIOp>(
-        location, inStaticFeatures, inValidFeatures);
-
-    auto emitScalarProduct = [&](OpBuilder &nested) -> Value {
-      SmallVector<Value> indices{c0, row, paddedRow, lane};
+    auto emitScalarProduct = [&](OpBuilder &nested, Value column) -> Value {
+      SmallVector<Value> indices{batchId, row, paddedRow, column};
       Value left = nested.create<memref::LoadOp>(
           location, entry->getArgument(0), indices);
       Value right = nested.create<memref::LoadOp>(
@@ -463,22 +464,40 @@ struct PaddedRowDotLowering {
       return nested.create<arith::MulFOp>(location, left, right);
     };
 
-    auto termIf = builder.create<scf::IfOp>(
-        location, TypeRange{builder.getF32Type()},
-        builder.create<arith::AndIOp>(location, rowActive, featureActive),
-        /*withElseRegion=*/true);
-    {
-      OpBuilder::InsertionGuard guard(builder);
-      builder.setInsertionPointToStart(termIf.thenBlock());
-      builder.create<scf::YieldOp>(location, emitScalarProduct(builder));
+    // One hardware warp owns one output row.  Each lane accumulates a static
+    // strided feature strip (lane, lane+32, ...), then the warp shuffle tree
+    // combines those partials.  This retains the D<=32 path while extending the
+    // same topology to natural attention head dimensions such as 64/128/256.
+    Value accumulator = zero;
+    for (int64_t base = 0; base < featureWidth; base += 32) {
+      Value cBase = builder.create<arith::ConstantIndexOp>(location, base);
+      Value column = builder.create<arith::AddIOp>(location, lane, cBase);
+      Value inStaticFeatures = builder.create<arith::CmpIOp>(
+          location, arith::CmpIPredicate::ult, column, cFeatureWidth);
+      Value inValidFeatures = builder.create<arith::CmpIOp>(
+          location, arith::CmpIPredicate::slt, column, validFeatures);
+      Value featureActive = builder.create<arith::AndIOp>(
+          location, inStaticFeatures, inValidFeatures);
+      Value termActive = builder.create<arith::AndIOp>(
+          location, rowActive, featureActive);
+      auto termIf = builder.create<scf::IfOp>(
+          location, TypeRange{builder.getF32Type()}, termActive,
+          /*withElseRegion=*/true);
+      {
+        OpBuilder::InsertionGuard guard(builder);
+        builder.setInsertionPointToStart(termIf.thenBlock());
+        builder.create<scf::YieldOp>(
+            location, emitScalarProduct(builder, column));
+      }
+      {
+        OpBuilder::InsertionGuard guard(builder);
+        builder.setInsertionPointToStart(termIf.elseBlock());
+        builder.create<scf::YieldOp>(location, zero);
+      }
+      builder.setInsertionPointAfter(termIf);
+      accumulator = builder.create<arith::AddFOp>(
+          location, accumulator, termIf.getResult(0));
     }
-    {
-      OpBuilder::InsertionGuard guard(builder);
-      builder.setInsertionPointToStart(termIf.elseBlock());
-      builder.create<scf::YieldOp>(location, zero);
-    }
-    builder.setInsertionPointAfter(termIf);
-    Value accumulator = termIf.getResult(0);
     for (int64_t delta = 1; delta < 32; delta <<= 1) {
       Value other = builder.create<gpu::ShuffleOp>(
                               location, accumulator, delta, 32,
@@ -496,7 +515,7 @@ struct PaddedRowDotLowering {
         location, rowActive, accumulator, zero);
     builder.create<memref::StoreOp>(
         location, outputValue, entry->getArgument(outputArgument),
-        ValueRange{c0, row, paddedRow});
+        ValueRange{batchId, row, paddedRow});
     builder.setInsertionPointAfter(outputIf);
     builder.create<gpu::TerminatorOp>(location);
     builder.setInsertionPointAfter(launch);
@@ -535,7 +554,7 @@ struct PaddedRowDotLowering {
     builder.setInsertionPointToStart(entry);
 
     Value grid = builder.create<arith::ConstantIndexOp>(
-        location, rows * blocksPerRow);
+        location, batch * rows * blocksPerRow);
     Value block = builder.create<arith::ConstantIndexOp>(location, threads);
     Value one = builder.create<arith::ConstantIndexOp>(location, 1);
     // Rank-0 invocation scalars are loaded in the host launch stub and captured
@@ -567,9 +586,15 @@ struct PaddedRowDotLowering {
         builder.create<arith::ConstantIndexOp>(location, paddedRows);
     Value cFeatureWidth =
         builder.create<arith::ConstantIndexOp>(location, featureWidth);
-    Value row = builder.create<arith::DivUIOp>(location, blockId,
+    Value cRowsPerBatch = builder.create<arith::ConstantIndexOp>(
+        location, rows * blocksPerRow);
+    Value batchId = builder.create<arith::DivUIOp>(location, blockId,
+                                                   cRowsPerBatch);
+    Value batchBlock = builder.create<arith::RemUIOp>(location, blockId,
+                                                      cRowsPerBatch);
+    Value row = builder.create<arith::DivUIOp>(location, batchBlock,
                                                 cBlocksPerRow);
-    Value rowBlock = builder.create<arith::RemUIOp>(location, blockId,
+    Value rowBlock = builder.create<arith::RemUIOp>(location, batchBlock,
                                                      cBlocksPerRow);
     Value rowBase =
         builder.create<arith::MulIOp>(location, rowBlock, cThreads);
@@ -609,7 +634,7 @@ struct PaddedRowDotLowering {
         location, inPhysicalRows, inValidRows);
 
     auto emitScalarProduct = [&](OpBuilder &nested, Value column) -> Value {
-      SmallVector<Value> indices{c0, row, paddedRow, column};
+      SmallVector<Value> indices{batchId, row, paddedRow, column};
       Value left = nested.create<memref::LoadOp>(
           location, entry->getArgument(0), indices);
       Value right = nested.create<memref::LoadOp>(
@@ -646,7 +671,7 @@ struct PaddedRowDotLowering {
           for (int64_t base = 0; base < featureWidth; base += vectorWidth) {
             Value column = builder.create<arith::ConstantIndexOp>(
                 location, base);
-            SmallVector<Value> indices{c0, row, paddedRow, column};
+            SmallVector<Value> indices{batchId, row, paddedRow, column};
             Value leftVector = builder.create<vector::LoadOp>(
                 location, vectorType, entry->getArgument(0), indices);
             Value rightVector = builder.create<vector::LoadOp>(
@@ -721,7 +746,7 @@ struct PaddedRowDotLowering {
     builder.setInsertionPointAfter(valueIf);
     builder.create<memref::StoreOp>(
         location, valueIf.getResult(0), entry->getArgument(outputArgument),
-        ValueRange{c0, row, paddedRow});
+        ValueRange{batchId, row, paddedRow});
     builder.setInsertionPointAfter(outputIf);
 
     builder.create<gpu::TerminatorOp>(location);

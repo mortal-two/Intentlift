@@ -1421,15 +1421,12 @@ def enumerate_cuda_candidates(
     # The subgroup-feature mapping is a real C++ lowering state: one subgroup
     # owns a padded output row and lanes load contiguous feature elements.  It
     # is only admitted in topology-search arms; E2/N0 remains the fixed
-    # serial-row state.  The C++ probe rejects non-power-of-two feature widths.
+    # serial-row state.  The C++ probe supports a bounded strided feature strip
+    # (including natural head dimensions 64/128/256) and remains the hard gate.
     if axes is None or axes.search_reduction_topology:
         padded_schedule_bases.extend(
-            PaddedRowSchedule(64, False, True, "subgroup-feature")
-            for _ in (0,)
-        )
-        padded_schedule_bases.extend(
-            PaddedRowSchedule(128, False, True, "subgroup-feature")
-            for _ in (0,)
+            PaddedRowSchedule(threads, False, True, "subgroup-feature")
+            for threads in (64, 128, 256, 512, 1024)
         )
     for schedule in (
         replace(base, promote_rank0_scalars=promote)

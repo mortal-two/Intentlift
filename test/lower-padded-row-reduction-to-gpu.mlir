@@ -1,6 +1,8 @@
 // RUN: intent-opt -convert-intent-padded-row-reduction-to-gpu='block-threads=64 vectorize-full-features=false promote-rank0-scalars=true' %s | FileCheck %s --check-prefix=HOST
 // RUN: intent-opt -convert-intent-padded-row-reduction-to-gpu='block-threads=64 vectorize-full-features=false promote-rank0-scalars=false' %s | FileCheck %s --check-prefix=DEVICE
 // RUN: intent-opt -convert-intent-padded-row-reduction-to-gpu='block-threads=64 vectorize-full-features=false promote-rank0-scalars=true' %s | FileCheck %s --check-prefix=STATIC
+// RUN: intent-opt -convert-intent-padded-row-reduction-to-gpu='block-threads=64 vectorize-full-features=false promote-rank0-scalars=true' %s | FileCheck %s --check-prefix=NATURAL
+// RUN: intent-opt -convert-intent-padded-row-reduction-to-gpu='block-threads=256 reduction-topology=subgroup-feature' %s | FileCheck %s --check-prefix=NATURAL-SUBGROUP
 
 // The matcher is source/name neutral and consumes the exact structural form
 // emitted from the closed FlashAttention preprocess J.
@@ -79,6 +81,7 @@ func.func @anonymous(
 // STATIC: arith.constant 16 : index
 // STATIC: memref.store
 // STATIC-NOT: intent.
+// STATIC-LABEL: func.func @natural_batch(
 func.func @static_bounds(
     %a: tensor<1x2x33x16xf16>,
     %b: tensor<1x2x33x16xf16>) -> tensor<1x2x64xf32> {
@@ -96,4 +99,37 @@ func.func @static_bounds(
     {lo = [0, 0, 0], hi = [0, 0, 31], value = 0.0 : f64}
     : (tensor<1x2x33xf32>) -> tensor<1x2x64xf32>
   return %out : tensor<1x2x64xf32>
+}
+
+// NATURAL-LABEL: func.func @natural_batch(
+// NATURAL-SAME: %{{[^:]+}}: memref<4x16x8192x128xf16>
+// NATURAL-SAME: %{{[^:]+}}: memref<4x16x8192x128xf16>
+// NATURAL-SAME: %{{[^:]+}}: memref<4x16x8192xf32>
+// NATURAL: gpu.launch
+// NATURAL: arith.constant 4 : index
+// NATURAL: memref.store
+// NATURAL-NOT: intent.
+// NATURAL-SUBGROUP-LABEL: func.func @natural_batch(
+// NATURAL-SUBGROUP-SAME: intent.backend.reduction_topology = "subgroup_feature"
+// NATURAL-SUBGROUP: gpu.launch
+// NATURAL-SUBGROUP: gpu.shuffle
+// NATURAL-SUBGROUP: memref.store
+// NATURAL-SUBGROUP-NOT: intent.
+func.func @natural_batch(
+    %a: tensor<4x16x8192x128xf16>,
+    %b: tensor<4x16x8192x128xf16>) -> tensor<4x16x8192xf32> {
+  %af = intent.cast %a {to_dtype = "f32"}
+    : (tensor<4x16x8192x128xf16>) -> tensor<4x16x8192x128xf32>
+  %bf = intent.cast %b {to_dtype = "f32"}
+    : (tensor<4x16x8192x128xf16>) -> tensor<4x16x8192x128xf32>
+  %product = intent.map_binary %af, %bf {fn = "mul"}
+    : (tensor<4x16x8192x128xf32>, tensor<4x16x8192x128xf32>)
+      -> tensor<4x16x8192x128xf32>
+  %sum = intent.reduce %product
+    {fn = "sum", axes = [3], assoc = "float_nondeterministic"}
+    : (tensor<4x16x8192x128xf32>) -> tensor<4x16x8192xf32>
+  %out = intent.pad %sum
+    {lo = [0, 0, 0], hi = [0, 0, 0], value = 0.0 : f64}
+    : (tensor<4x16x8192xf32>) -> tensor<4x16x8192xf32>
+  return %out : tensor<4x16x8192xf32>
 }
