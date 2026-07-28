@@ -812,7 +812,7 @@ provenance。以上诊断都留在 deterministic Gate2 consumer，不回送 sour
 `JElaboration.output_bindings` 读取该绑定，因此 Gate2 reference 与后续 production lowering 使用同一
 J-owned destination，不从 Source/Harness/π 猜测。
 对应 Lift/schema/preflight 为 `intentir.lift-knowledge.v21`：模型仍完整生成 binding，只是不再为同一
-destination 强制同时复制 `returns` 与 `output_mapping`；Decode/TypeCheck、structured reference v8 与
+destination 强制同时复制 `returns` 与 `output_mapping`；Decode/TypeCheck、structured reference v9 与
 shared materializer 都消费唯一 canonical binding。
 后续 `intentir.lift-knowledge.v22` 只补齐已有 grammar 的通用 completeness 提示：`reduce` 与 inclusive
 `scan` 均需自己的 `boundary.reductions` local-axis algebra；predicate-bearing load 到
@@ -866,7 +866,7 @@ Replay 不得：
 
 `U_f` 必须是版本化、source-neutral 的公共前端知识，不能按当前 Kernel、operator 或失败样本选择。
 当前版本组合是 `intentir.scrc.replay-input.v1`、Triton
-`public_frontend_context_v14`、source-aware Codex/MiniSWE Lift `intentir.lift-knowledge.v64/v61`、
+`public_frontend_context_v14`、source-aware Codex/MiniSWE Lift `intentir.lift-knowledge.v65/v61`、
 source-blind MiniSWE Replay v23 与 Codex Replay v19、
 `replay-check.v10`；fresh evidence必须保存实际 receipt，
 旧版本 run 不能被新组合追认。
@@ -1341,7 +1341,7 @@ carrier、arity 1 和非退化 split grid；ordinal 27/28 使用 arity 2，展�
 参数。`None` 在 J.signature 中只能是 `opaque(mode=value,dtype=none)`，无 logical_ref/J
 tensor/node/effect/π instance，不得换成 dummy pointer 或 scalar；加入 canonical contraction 与
 direct/decomposed stage multiplicity 合同后，Codex/MiniSWE Lift knowledge 当前为
-`intentir.lift-knowledge.v64/v61`。Codex CLI agent runtime v3 在不接受任何未通过候选、也不补写 artifact 的前提下，从被 wall-time 中断的 JSONL 中恢复已经发出的唯一 `thread.started`，使同一 Lift owner 能在剩余 branch 时间内继续；v49/v50 在不改变 artifact/判定的前提下加入 persistent-workspace exact mirror
+`intentir.lift-knowledge.v65/v61`。Codex CLI agent runtime v3 在不接受任何未通过候选、也不补写 artifact 的前提下，从被 wall-time 中断的 JSONL 中恢复已经发出的唯一 `thread.started`，使同一 Lift owner 能在剩余 branch 时间内继续；v49/v50 在不改变 artifact/判定的前提下加入 persistent-workspace exact mirror
 transport compaction、最近 response-group 窗口、source-neutral schema bundle、单一持久 Lift owner，
 以及 Replay v8 的
 exact-source direct submit/exact-text patch+preflight；这些机制只搬运 LLM authored bytes 或既有

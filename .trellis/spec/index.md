@@ -25,7 +25,7 @@ closed signature、Layer-A total typing、显式 broadcast、canonical reduce/co
 `pi.iterations`，并验证 Lift 已作者化的 value/dimension、consumer-extension、access-guard、typed
 control/inout/output-binding/terminal-control 关系。fixed code只诊断，不翻译别名、补齐 attrs、生成 handle/relation、
 改图或修复 artifact；历史 wire/receipt 继续按自身版本读取，不静默升级或重判。当前 Agent execution
-receipt 为 `intentir.lift-knowledge.v64 / intentir.lift-knowledge.v61 / minisweagent.intentir-replay.v25 / openai.codex-cli.intentir-replay.v21`；
+receipt 为 `intentir.lift-knowledge.v65 / intentir.lift-knowledge.v61 / minisweagent.intentir-replay.v25 / openai.codex-cli.intentir-replay.v21`；
 artifact.v9 的 `physical_iterations/physical_loop_carriers` 表达 structured J loop 外、由已作者化
 reduce/contraction 或 boundary access/domain 锚定的物理时间，
 feedback frontier/category、candidate-control 与 Replay local-axis 合同只改 agent 消费，不改变接受
@@ -38,8 +38,9 @@ Replay v25/v21 对不超过 64 KiB 的完整匿名 J/C/π/U_f 只在首次上下
 `reduction_linearization + consumer route`、loop/branch lexical region membership 与 cross-region
 order 的 exact `critical_facts.v2`；超限
 packet 才接收一个自带 authored op/boundary、π instance mechanism 与 time/control/terminal 清单的
-compact manifest，并只查询明确遗漏页。Codex Lift v10 / knowledge v64 同样直接嵌入 exact Harness ABI
-与 relift frontier，原有只读工具退为可选局部自读。两条路径都不生成 artifact/realization，没有 Gate
+compact manifest，并只查询明确遗漏页。Codex Lift v11 / knowledge v65 同样直接嵌入 exact Harness ABI
+与 relift frontier，并一次并列展开非递归 direct hard categories；原有只读工具退为可选局部自读。
+两条路径都不生成 artifact/realization，没有 Gate
 或认证权限。
 
 含 lexical/cross-region critical facts 的 Replay 在 construction compile 前还必须对当前 exact bytes

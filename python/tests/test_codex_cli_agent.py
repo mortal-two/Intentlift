@@ -809,6 +809,9 @@ def test_codex_lift_keeps_one_thread_and_repairs_from_host_check(
                 assert "same workspace and thread" in prompt
                 assert "<source-aware-startup>" in prompt
                 assert '"feedback_frontier":' in prompt
+                assert '"direct_category_views":{"op_multiset":' in prompt
+                assert '"item":"tt.reshape"' in prompt
+                assert '"deferred_categories":["dataflow"]' in prompt
                 assert "lift_feedback_category CATEGORY" in prompt
                 payload = artifact.to_json()
             (self.output_dir / "candidate.json").write_text(json.dumps(payload))
@@ -856,6 +859,18 @@ def test_codex_lift_keeps_one_thread_and_repairs_from_host_check(
         {
             "observer_diff": {
                 "categories": [
+                    {
+                        "category": "op_multiset",
+                        "difference_count": 1,
+                        "examples": [
+                            {
+                                "kind": "missing",
+                                "item": "tt.reshape",
+                                "expected_count": 1,
+                                "actual_count": 0,
+                            }
+                        ],
+                    },
                     {
                         "category": "dataflow",
                         "difference_count": 1,

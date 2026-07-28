@@ -695,7 +695,7 @@ overflow。动态 gather 的 index shape 必须唯一绑定 logical domain axes�
 前者 provenance；这仍是 J/B consumer closure，不是从 Harness valuation 发明 shape identity。
 
 函数 `returns` 或 boundary `output_mapping` 任一均可唯一声明 canonical output binding，同时出现必须
-一致。shared J→Intent MLIR 入口及 structured reference v8 消费 deterministic `JElaboration.output_bindings`，所以 Gate2 与
+一致。shared J→Intent MLIR 入口及 structured reference v9 消费 deterministic `JElaboration.output_bindings`，所以 Gate2 与
 production materialization 使用同一个 J-owned destination；不要求 Lift 复制相同字段，也不从物理
 地址反推结果绑定。
 Lift/schema/preflight 同步为 `intentir.lift-knowledge.v21`；它仅取消同一 binding 的冗余双写，仍由

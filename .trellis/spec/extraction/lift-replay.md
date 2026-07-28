@@ -214,8 +214,11 @@ output/effect/guard、以及 π regions/instances/iterations/carriers/terminal/r
 字段投影，任何缺失仍由 Lift 自己从 Source 作者化，任何冲突仍由 CandidateCheck/TypeCheck
 fail closed。
 
-Codex Lift v10 / knowledge v64 将同一 exact Harness ABI ledger 直接放入首次 owner prompt，并将
-后续 closed feedback frontier 与其 primary bounded category 直接放入同一持久 owner continuation；
+Codex Lift v11 / knowledge v65 将同一 exact Harness ABI ledger 直接放入首次 owner prompt，并将
+后续 closed feedback frontier 中已有的 interface、reduction、predicate/effect 与 op-multiset 直接
+类别一次并列展开到同一持久 owner continuation；recursive dataflow 保持按一个命名类别分页。
+representation-only op 差异只要求 owner 对照 Source 重新审查已有 π refinement grammar，fixed code
+不选择 refinement、不写 π，也不把 compiler op 复制成 J semantics；
 `lift_harness_abi`、`lift_candidate_control` 与 `lift_feedback_category` 保留为可选的局部自读，不再是
 提交前的强制串行协议。该 transport 不生成 `logical_ref`、J/C/π 字段或修复。
 
@@ -331,7 +334,7 @@ ReplayLLM(J,pi,MaskC(C);U_f) -> complete source R_f
 
 当前 packet protocol 为 `intentir.scrc.replay-input.v1`，Triton 公共上下文为
 `public_frontend_context_v14`；source-aware Codex/MiniSWE Lift 的当前 knowledge receipt 分别为
-`intentir.lift-knowledge.v64 / intentir.lift-knowledge.v61`，source-blind MiniSWE/Codex Replay backend 为
+`intentir.lift-knowledge.v65 / intentir.lift-knowledge.v61`，source-blind MiniSWE/Codex Replay backend 为
 `minisweagent.intentir-replay.v25 / openai.codex-cli.intentir-replay.v21`。这些版本必须随 fresh run 原样记录；旧 packet/context/knowledge
 evidence 不因实现升级而被重判。
 

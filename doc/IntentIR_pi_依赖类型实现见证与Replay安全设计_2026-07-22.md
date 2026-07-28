@@ -859,7 +859,7 @@ Replay LLM 应遵守以下过程合同：
 15. 不从 π 猜出后覆盖 J，也不从 compiler diff 修补。
 
 当前 fresh receipt 组合为 `intentir.scrc.replay-input.v1`、Triton
-`public_frontend_context_v14`、Codex/MiniSWE Lift `intentir.lift-knowledge.v64/v61`、MiniSWE Replay v23 与 Codex Replay v19；旧 receipt 保持其原 verdict，不能由
+`public_frontend_context_v14`、Codex/MiniSWE Lift `intentir.lift-knowledge.v65/v61`、MiniSWE Replay v23 与 Codex Replay v19；旧 receipt 保持其原 verdict，不能由
 当前 Replay consumer 或 Lift knowledge 静默升级。
 
 v23/v19 对正常大小匿名 packet 只做一次 exact startup embedding，并将 semantic dimension carrier、
@@ -1423,7 +1423,7 @@ flow，却不能把一个 fill 换成“等价”neutral value，也不能授权
 各自 LLM 完整作者化，fixed checker 只拒绝和诊断。
 
 canonical output binding 可以由 `returns` 或 `output_mapping` 唯一给出，同时存在时必须一致；共享
-J→Intent MLIR 入口与 structured reference v8 消费 deterministic elaboration 后的同一 binding。该 elaboration 是 J 的私有
+J→Intent MLIR 入口与 structured reference v9 消费 deterministic elaboration 后的同一 binding。该 elaboration 是 J 的私有
 symbol-table view，不是另一个 artifact，也不使 π 获得 destination 语义。
 该 authored 规则由 `intentir.lift-knowledge.v21` 明示；至少一个 binding 仍由 Lift 选择，fixed code
 不会从 π route、store effect、Source 或 Harness 地址补造 destination value。

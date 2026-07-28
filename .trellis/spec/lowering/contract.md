@@ -179,7 +179,7 @@ guard/runtime-bound 例外；fixed code 不补写 count、domain、predicate 或
 
 当前 shared projection receipt 为 `intentir.j-functional-boundary.v19`，scalar RefEval 为
 `j_scalar_cpu_mlir_v20`，closed structured reference 为
-`intentir.j-structured-cpu-reference.v8`。v20/v19 完整继承既有唯一 node-less logical-input load、
+`intentir.j-structured-cpu-reference.v9`。v20/v19 完整继承既有唯一 node-less logical-input load、
 通用 multi-reduction padding closure、当前 Gate2 invocation 的 runtime predicate tautology proof、
 v4/v5 relations、direct-store partition、closed typed contraction、product-domain mixed-radix、精确
 transpose 与 pointwise broadcast consumer。logical inout 的每个 post-state reload 由唯一 producer
@@ -200,13 +200,18 @@ v18/v17 还允许唯一 node-less predicated whole-input load 从 canonical J �
 consumer 开始 missing-fill provenance；同 tensor 多 load、零个/多个 direct consumer、非 pointwise
 consumer 或任一后续路径不闭合都拒绝。该解析结果只存在于 projection invocation，不写回 J。
 
-v20/v19/v8 新增的仍是窄 consumer，而不是新 artifact：predicated-load padding provenance 绑定到
+v20/v19/v9 新增的仍是窄 consumer，而不是新 artifact：predicated-load padding provenance 绑定到
 `(node_ref, operand)` edge，不再污染同一 tensor 的无关 gather/use；只有 J 已有 `gather(data,indices)`
 及匹配 `index_bounds` 时，该点访问才不继承另一条 padded stream 的 predicate。对 `effect_if` arm
 中的 full logical store，projection 仅把既有 branch-local 单结果 producer 与同一 Layer-B
 access/effect destination 联结为 `authored_effect_if_full_store` receipt，structured RefEval 只在实际
 选择并执行该 arm 时更新 output state。它不生成 select、不补另一 arm 的值；未执行路径若既无
 pre-state binding也无 store，继续 fail closed。
+structured reference v9 还与既有 JSON/Intent MLIR gather 合同对齐：当
+`mode=along_axis` 的 index/result rank 恰为 data rank 减一、且 index shape 精确等于 data 的全部
+非 gather-axis extent 时，consumer 只机械插入 unit gather axis，执行同一 `take_along_axis` 后再
+squeeze；bounds 仍来自 J 已有 `index_bounds`。它不从 Source、Harness 或 π 构造 index、axis 或
+shape relation，rank-0 compressed form 与任一非轴 shape 不一致继续 fail closed。
 同一版本的 Gate2 input precondition range analysis 只对 closed integer subgraph 增加两条保守规则：
 `iota(n=x*)` 使用当前 closed dimension，signed integer `div` 仅在 divisor interval 不含零时按
 `arith.divsi` 的 toward-zero 语义传播端点区间；随后 `add/mul/gather` 仍逐 dtype overflow 与

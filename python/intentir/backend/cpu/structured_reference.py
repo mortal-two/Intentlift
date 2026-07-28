@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from intentir.verify.gate1.model import SemanticArchive
 
 
-STRUCTURED_CPU_REFERENCE_PROTOCOL = "intentir.j-structured-cpu-reference.v8"
+STRUCTURED_CPU_REFERENCE_PROTOCOL = "intentir.j-structured-cpu-reference.v9"
 
 
 class StructuredReferenceUnsupportedError(CPUBackendUnsupportedError):
@@ -621,9 +621,30 @@ class _Evaluator:
             raise ValueError("structured gather result dtype differs from data")
         mode = op.attrs.get("mode")
         if mode == "along_axis":
+            if index.ndim == data.ndim - 1:
+                if index.ndim == 0:
+                    raise StructuredReferenceUnsupportedError(
+                        "structured compressed along_axis gather does not yet "
+                        "support a rank-0 index/result"
+                    )
+                non_axis_shape = (*data.shape[:axis], *data.shape[axis + 1 :])
+                if index.shape != non_axis_shape:
+                    raise ValueError(
+                        "structured compressed along_axis gather index must "
+                        "match every non-axis data extent"
+                    )
+                if expected_shape != index.shape:
+                    raise ValueError(
+                        "structured compressed along_axis gather result must be "
+                        "shaped like index"
+                    )
+                expanded = np.expand_dims(index, axis=axis)
+                gathered = np.take_along_axis(data, expanded, axis=axis)
+                return np.squeeze(gathered, axis=axis)
             if index.ndim != data.ndim:
                 raise ValueError(
-                    "structured along_axis gather index rank must equal data rank"
+                    "structured along_axis gather index rank must equal data rank "
+                    "or data rank minus one"
                 )
             if any(
                 index.shape[dimension] > data.shape[dimension]

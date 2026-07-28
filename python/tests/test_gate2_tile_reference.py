@@ -240,3 +240,100 @@ def test_structured_gather_rejects_out_of_bounds_index() -> None:
             {},
             [np.arange(6, dtype=np.float32).reshape(2, 3)],
         )
+
+
+def _compressed_along_axis_gather_archive(
+    *, index_shape: list[int], output_shape: list[int]
+) -> SemanticArchive:
+    body = [
+        {
+            "id": "n0",
+            "op": "tile",
+            "result": "v0",
+            "operands": ["X"],
+            "attrs": {"reps": [1, 1]},
+            "type": {"dtype": "f32", "shape": [2, 3]},
+        },
+        {
+            "id": "n1",
+            "op": "gather",
+            "result": "Y",
+            "operands": ["v0", "I"],
+            "attrs": {"axis": 1, "mode": "along_axis"},
+            "type": {"dtype": "f32", "shape": output_shape},
+        }
+    ]
+    return SemanticArchive(
+        kernel_id="gate2_compressed_gather",
+        intent=IntentFunction.from_json(
+            {
+                "name": "gate2_compressed_gather",
+                "inputs": [
+                    {"name": "X", "dtype": "f32", "shape": [2, 3]},
+                    {"name": "I", "dtype": "i64", "shape": index_shape},
+                ],
+                "outputs": [{"name": "Y", "dtype": "f32", "shape": output_shape}],
+                "body": body,
+            }
+        ),
+        node_ids={"n0": "body[0]", "n1": "body[1]"},
+        boundary=Boundary(index_bounds=[IndexBoundsSpec("n1", "v0", "I", 1)]),
+        signature=LogicalSignature(
+            [
+                SignatureParameter(
+                    "p0",
+                    ParameterKind.POINTER,
+                    ParameterMode.INPUT,
+                    "f32",
+                    2,
+                    logical_ref="X",
+                ),
+                SignatureParameter(
+                    "p1",
+                    ParameterKind.POINTER,
+                    ParameterMode.INPUT,
+                    "i64",
+                    len(index_shape),
+                    logical_ref="I",
+                ),
+                SignatureParameter(
+                    "p2",
+                    ParameterKind.POINTER,
+                    ParameterMode.OUTPUT,
+                    "f32",
+                    len(output_shape),
+                    logical_ref="Y",
+                ),
+            ]
+        ),
+    )
+
+
+def test_structured_gather_executes_compressed_along_axis_index() -> None:
+    archive = _compressed_along_axis_gather_archive(
+        index_shape=[2], output_shape=[2]
+    )
+    data = np.arange(6, dtype=np.float32).reshape(2, 3)
+    index = np.asarray([2, 0], dtype=np.int64)
+
+    result = execute_structured_reference(archive, {}, [data, index])
+
+    np.testing.assert_array_equal(
+        result.outputs["Y"], np.asarray([2.0, 3.0], dtype=np.float32)
+    )
+
+
+def test_structured_gather_rejects_compressed_non_axis_shape_mismatch() -> None:
+    archive = _compressed_along_axis_gather_archive(
+        index_shape=[1], output_shape=[1]
+    )
+
+    with pytest.raises(ValueError, match="match every non-axis data extent"):
+        execute_structured_reference(
+            archive,
+            {},
+            [
+                np.arange(6, dtype=np.float32).reshape(2, 3),
+                np.asarray([1], dtype=np.int64),
+            ],
+        )

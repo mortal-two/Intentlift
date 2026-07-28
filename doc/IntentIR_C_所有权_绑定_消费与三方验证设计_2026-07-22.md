@@ -348,7 +348,7 @@ v14/v13 只在可由 J 证明 outside-domain value 不可观察时允许 predica
 绑定 pointwise node，所有依赖路径只能经过 `map_unary/map_binary/select/cast`，所有可观察 destination
 都由完全相同 predicate 的 store 支配；reduce/scan/loop/transpose/pad、不同 predicate 或未匹配 effect
 仍 fail closed。canonical output destination 可由 function `returns` 或 boundary `output_mapping` 任一
-唯一给出；两者同时出现必须一致。shared J→Intent MLIR 入口与 structured reference v8 消费同一个 deterministic
+唯一给出；两者同时出现必须一致。shared J→Intent MLIR 入口与 structured reference v9 消费同一个 deterministic
 `JElaboration.output_bindings`，不要求 LLM 重复序列化同一事实，也不新建第二份 J。
 
 `j_scalar_cpu_mlir_v20` / `intentir.j-functional-boundary.v19` 完整继承 v17/v16 的 product-domain mixed-radix bijection、

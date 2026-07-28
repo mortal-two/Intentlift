@@ -41,9 +41,13 @@ from .scrc import (
 )
 
 
-CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v10"
-CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v64"
+CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v11"
+CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v65"
 CODEX_CLI_TURN_TIMEOUT_SECONDS = 900.0
+
+_EAGER_DIRECT_FEEDBACK_CATEGORIES = frozenset(
+    {"interface", "reduction", "predicate_effect", "op_multiset"}
+)
 
 _INITIAL_PROMPT = """You are the sole source-aware IntentIR Lift owner for this branch.
 The outer runtime exposes only this isolated workspace. Work only under /workspace:
@@ -89,9 +93,13 @@ certification. Do not create any other file under output/.
 
 _EXTERNAL_CONTINUATION_PROMPT = """The same branch-local source-aware Lift task continues in the same workspace and thread.
 The final `<source-aware-startup>` block contains the exact bounded feedback
-frontier and, when available, its primary exact category. Inspect the current
-output/candidate.json and resolve direct failing interface, reduction, and
-predicate/effect categories before paging recursive dataflow witnesses. Use
+frontier and eagerly expands every available direct interface, reduction,
+predicate/effect, and op-multiset category. Inspect the current
+output/candidate.json and resolve those direct categories together before paging
+recursive dataflow witnesses. A compiler-visible representation-only operation
+in op-multiset feedback is a reason to recheck the existing pi representation
+refinement grammar and Source realization, not permission for fixed code to add
+a field or for you to copy a non-semantic compiler operation into J. Use
 `lift_feedback_category CATEGORY` only for one named omitted category. Use
 the Source control-flow outline again when the frontier names a loop, branch,
 terminal, or carrier difference; reconcile the complete J/C/pi ownership rather
@@ -146,18 +154,34 @@ def _source_aware_startup_context(workspace: Any, *, fresh_owner: bool) -> dict[
                 ):
                     primary = str(item["category"])
                     break
-    primary_view: Any = None
-    if primary is not None:
-        try:
-            primary_view = _feedback_category_value(workspace.input_dir, primary)
-        except (KeyError, TypeError, ValueError):
-            primary_view = None
+    direct_category_views: dict[str, Any] = {}
+    deferred_categories: list[str] = []
+    categories = frontier.get("categories") if isinstance(frontier, Mapping) else None
+    if isinstance(categories, list):
+        for item in categories:
+            if not isinstance(item, Mapping) or not isinstance(
+                item.get("category"), str
+            ):
+                continue
+            name = str(item["category"])
+            if name not in _EAGER_DIRECT_FEEDBACK_CATEGORIES:
+                deferred_categories.append(name)
+                continue
+            try:
+                direct_category_views[name] = _feedback_category_value(
+                    workspace.input_dir, name
+                )
+            except (KeyError, TypeError, ValueError):
+                # The bounded frontier remains authoritative and visible even if
+                # an older feedback envelope cannot serve the focused view.
+                continue
     return {
-        "protocol": "intentir.codex-lift-continuation-view.v1",
+        "protocol": "intentir.codex-lift-continuation-view.v2",
         "fresh_owner": False,
         "feedback_frontier": frontier,
         "primary_category": primary,
-        "primary_category_view": primary_view,
+        "direct_category_views": direct_category_views,
+        "deferred_categories": deferred_categories,
         "candidate_path": "/output/candidate.json",
         "authority": (
             "exact bounded closed-feedback projection only; no semantic "
