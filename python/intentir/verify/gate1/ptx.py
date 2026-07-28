@@ -1,9 +1,11 @@
-"""Strong, alpha-normalized PTX observer shared by CUDA and TileLang Gate1.
+"""Semantic, alpha-normalized PTX observer shared by CUDA and TileLang Gate1.
 
 The observer intentionally ignores presentation details (entry names, virtual
-register spelling, labels, debug directives, compiler banners) while retaining
-the ABI, instruction/dataflow topology, address spaces, predication, memory
-effects, collectives, synchronization and thread/block coordinate usage.
+register spelling, labels, debug directives, compiler banners, cache hints and
+equivalent address-algebra spelling) while retaining the ABI, value-operation
+topology, address spaces, predication, memory effects, collectives,
+synchronization and thread/block coordinate usage. Exact normalized
+instructions remain diagnostic evidence.
 """
 
 from __future__ import annotations
@@ -16,7 +18,7 @@ import re
 from typing import Any, Mapping
 
 
-PTX_FINGERPRINT_SCHEMA = "cuda-ptx-semantic-topology-v1"
+PTX_FINGERPRINT_SCHEMA = "cuda-ptx-semantic-effects-v2"
 
 
 class PTXObservationError(ValueError):
@@ -58,6 +60,7 @@ _SPECIAL_REGISTERS = (
     "%tid",
     "%warpid",
 )
+_CACHE_HINTS = frozenset({"ca", "cg", "cs", "lu", "cv", "nc", "wb", "wt"})
 
 
 def _digest(value: Any) -> str:
@@ -256,6 +259,140 @@ def _category(instructions: tuple[str, ...], prefixes: tuple[str, ...]) -> tuple
     return tuple(item for item in instructions if _opcode(item).startswith(prefixes))
 
 
+def _split_operands(operands: str) -> tuple[str, ...]:
+    result: list[str] = []
+    start = 0
+    stack: list[str] = []
+    pairs = {")": "(", "]": "[", "}": "{"}
+    for index, character in enumerate(operands):
+        if character in "([{":
+            stack.append(character)
+        elif character in pairs:
+            if stack and stack[-1] == pairs[character]:
+                stack.pop()
+        elif character == "," and not stack:
+            result.append(operands[start:index].strip())
+            start = index + 1
+    tail = operands[start:].strip()
+    if tail:
+        result.append(tail)
+    return tuple(result)
+
+
+def _instruction_parts(
+    instruction: str,
+) -> tuple[str, str, tuple[str, ...]] | None:
+    if instruction.endswith(":") or instruction.startswith("."):
+        return None
+    match = _OPCODE_RE.match(instruction)
+    if match is None:
+        return None
+    return (
+        match.group("predicate") or "",
+        match.group("opcode"),
+        _split_operands(match.group("operands")),
+    )
+
+
+def _semantic_memory_opcode(opcode: str) -> str:
+    parts = opcode.split(".")
+    return ".".join(
+        part for index, part in enumerate(parts) if index == 0 or part not in _CACHE_HINTS
+    )
+
+
+def _semantic_memory_effects(
+    instructions: tuple[str, ...],
+) -> tuple[tuple[str, int], ...]:
+    effects: Counter[str] = Counter()
+    for instruction in instructions:
+        parts = _instruction_parts(instruction)
+        if parts is None:
+            continue
+        predicate, opcode, _operands = parts
+        if not opcode.startswith(("ld.", "st.", "atom.", "red.", "suld.", "sust.")):
+            continue
+        polarity = "not_predicated:" if predicate.startswith("@!") else "predicated:" if predicate else ""
+        effects[polarity + _semantic_memory_opcode(opcode)] += 1
+    return tuple(sorted(effects.items()))
+
+
+def _semantic_value_opcodes(
+    instructions: tuple[str, ...],
+) -> tuple[tuple[str, int], ...]:
+    """Retain operations that produce observable stored/control values.
+
+    Loads are leaves of the value graph, so pointer arithmetic feeding their
+    addresses is deliberately excluded.  Integer arithmetic still remains hard
+    whenever it feeds a stored value or a memory predicate.
+    """
+
+    records = [_instruction_parts(item) for item in instructions]
+    definitions: dict[str, int] = {}
+    no_destination = (
+        "st.", "sust.", "red.", "bra", "brx", "ret", "exit", "bar.",
+        "barrier.", "mbarrier.", "fence.", "membar.",
+    )
+    for index, record in enumerate(records):
+        if record is None:
+            continue
+        _predicate, opcode, operands = record
+        if not operands or opcode.startswith(no_destination):
+            continue
+        destination = operands[0]
+        if destination.startswith("["):
+            continue
+        registers = _REGISTER_RE.findall(destination)
+        if len(registers) == 1:
+            definitions[registers[0]] = index
+
+    roots: set[str] = set()
+    for record in records:
+        if record is None:
+            continue
+        predicate, opcode, operands = record
+        roots.update(_REGISTER_RE.findall(predicate))
+        if opcode.startswith(("st.", "sust.")) and operands:
+            roots.update(_REGISTER_RE.findall(operands[-1]))
+        elif opcode.startswith(("atom.", "red.")):
+            for operand in operands:
+                if not operand.startswith("["):
+                    roots.update(_REGISTER_RE.findall(operand))
+        elif opcode.startswith(("bra", "brx")):
+            roots.update(_REGISTER_RE.findall(predicate))
+
+    selected: set[int] = set()
+
+    def select(register: str) -> None:
+        index = definitions.get(register)
+        if index is None or index in selected:
+            return
+        selected.add(index)
+        record = records[index]
+        assert record is not None
+        predicate, opcode, operands = record
+        for dependency in _REGISTER_RE.findall(predicate):
+            select(dependency)
+        # A load's address is not value dataflow. Its space/type/predicate is
+        # already retained by the semantic memory-effect projection.
+        if opcode.startswith(("ld.", "suld.")):
+            return
+        for operand in operands[1:]:
+            for dependency in _REGISTER_RE.findall(operand):
+                select(dependency)
+
+    for root in roots:
+        select(root)
+
+    opcodes: Counter[str] = Counter()
+    for index in sorted(selected):
+        record = records[index]
+        assert record is not None
+        _predicate, opcode, _operands = record
+        opcodes[_semantic_memory_opcode(opcode)] += 1
+    return tuple(sorted(opcodes.items()))
+
+
 @dataclass(frozen=True)
 class PTXFingerprint:
     schema_version: str
@@ -263,6 +400,8 @@ class PTXFingerprint:
     instructions: tuple[str, ...]
     opcode_multiset: tuple[tuple[str, int], ...]
     memory_effects: tuple[str, ...]
+    semantic_value_opcodes: tuple[tuple[str, int], ...]
+    semantic_memory_effects: tuple[tuple[str, int], ...]
     collectives: tuple[str, ...]
     control_flow: tuple[str, ...]
     coordinate_uses: tuple[str, ...]
@@ -277,6 +416,12 @@ class PTXFingerprint:
             "instructions": list(self.instructions),
             "opcode_multiset": [list(item) for item in self.opcode_multiset],
             "memory_effects": list(self.memory_effects),
+            "semantic_value_opcodes": [
+                list(item) for item in self.semantic_value_opcodes
+            ],
+            "semantic_memory_effects": [
+                list(item) for item in self.semantic_memory_effects
+            ],
             "collectives": list(self.collectives),
             "control_flow": list(self.control_flow),
             "coordinate_uses": list(self.coordinate_uses),
@@ -324,6 +469,8 @@ def fingerprint_ptx(
     instructions = _canonical_instructions(body, parameters=param_names)
     opcodes = tuple(_opcode(item) for item in instructions if not item.endswith(":"))
     memory = _category(instructions, ("ld.", "st.", "atom.", "red.", "suld.", "sust."))
+    semantic_value_opcodes = _semantic_value_opcodes(instructions)
+    semantic_memory_effects = _semantic_memory_effects(instructions)
     collectives = _category(
         instructions,
         ("bar.", "barrier.", "mbarrier.", "cp.async", "fence.", "shfl.", "vote.", "match.", "mma.", "wgmma.", "elect."),
@@ -356,6 +503,8 @@ def fingerprint_ptx(
         "interface": full_interface,
         "instructions": instructions,
         "memory": memory,
+        "semantic_value_opcodes": semantic_value_opcodes,
+        "semantic_memory_effects": semantic_memory_effects,
         "collectives": collectives,
         "control": control,
         "coordinates": coordinates,
@@ -367,6 +516,8 @@ def fingerprint_ptx(
         instructions,
         tuple(sorted(Counter(opcodes).items())),
         memory,
+        semantic_value_opcodes,
+        semantic_memory_effects,
         collectives,
         control,
         coordinates,
@@ -396,18 +547,28 @@ class PTXDifference:
 class PTXComparison:
     hard_pass: bool
     hard_passes: Mapping[str, bool]
+    diagnostic_passes: Mapping[str, bool]
     differences: tuple[PTXDifference, ...]
     source_digest: str
     replay_digest: str
 
     @property
     def primary_difference_category(self) -> str | None:
-        return self.differences[0].category if self.differences else None
+        return next(
+            (
+                item.category
+                for item in self.differences
+                if item.category in self.hard_passes
+                and not self.hard_passes[item.category]
+            ),
+            None,
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "hard_pass": self.hard_pass,
             "hard_passes": dict(self.hard_passes),
+            "diagnostic_passes": dict(self.diagnostic_passes),
             "primary_difference_category": self.primary_difference_category,
             "differences": [item.to_dict() for item in self.differences],
             "source_digest": self.source_digest,
@@ -422,15 +583,31 @@ def compare_ptx_fingerprints(
     fields = (
         ("schema", source.schema_version, replay.schema_version),
         ("interface", source.interface, replay.interface),
-        ("instruction_topology", source.instructions, replay.instructions),
-        ("opcode_multiset", source.opcode_multiset, replay.opcode_multiset),
-        ("memory_effects", source.memory_effects, replay.memory_effects),
+        (
+            "value_operations",
+            source.semantic_value_opcodes,
+            replay.semantic_value_opcodes,
+        ),
+        (
+            "memory_effects",
+            source.semantic_memory_effects,
+            replay.semantic_memory_effects,
+        ),
         ("collectives", source.collectives, replay.collectives),
         ("control_flow", source.control_flow, replay.control_flow),
         ("coordinate_uses", source.coordinate_uses, replay.coordinate_uses),
         ("target", source.target_view, replay.target_view),
     )
     passes = {category: expected == actual for category, expected, actual in fields}
+    diagnostic_fields = (
+        ("raw_instruction_topology", source.instructions, replay.instructions),
+        ("raw_opcode_multiset", source.opcode_multiset, replay.opcode_multiset),
+        ("raw_memory_effects", source.memory_effects, replay.memory_effects),
+    )
+    diagnostic_passes = {
+        category: expected == actual
+        for category, expected, actual in diagnostic_fields
+    }
     differences = tuple(
         PTXDifference(
             category,
@@ -438,12 +615,13 @@ def compare_ptx_fingerprints(
             actual,
             f"PTX {category} differs between Source and Replay",
         )
-        for category, expected, actual in fields
+        for category, expected, actual in (*fields, *diagnostic_fields)
         if expected != actual
     )
     return PTXComparison(
         all(passes.values()),
         passes,
+        diagnostic_passes,
         differences,
         source.digest,
         replay.digest,

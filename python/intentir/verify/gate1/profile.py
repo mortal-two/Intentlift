@@ -51,11 +51,11 @@ CUTE_OBSERVER_PROFILE = ObserverProfile(
 
 CUDA_OBSERVER_PROFILE = ObserverProfile(
     Frontend.CUDA,
-    "cuda_ptx_semantic_topology",
+    "cuda_ptx_semantic_effects",
     PTX_FINGERPRINT_SCHEMA,
     "ptx",
     PTX_FINGERPRINT_SCHEMA,
-    "strong_structural",
+    "semantic_effects_with_raw_topology_diagnostic",
 )
 
 TILELANG_OBSERVER_PROFILE = ObserverProfile(

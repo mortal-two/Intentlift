@@ -86,6 +86,65 @@ def test_ptx_fingerprint_keeps_memory_space_predicate_and_barrier_semantic() -> 
     assert not comparison.hard_passes["collectives"]
 
 
+def test_ptx_semantic_projection_relaxes_cache_and_address_spelling() -> None:
+    source = fingerprint_ptx(
+        """
+.visible .entry source(.param .u64 source_param_0) {
+  .reg .b64 %rd<4>;
+  .reg .f32 %f<2>;
+  ld.param.u64 %rd1, [source_param_0];
+  mov.u64 %rd2, %tid.x;
+  or.b64 %rd3, %rd1, %rd2;
+  ld.global.nc.f32 %f1, [%rd3];
+  st.global.f32 [%rd3], %f1;
+  ret;
+}
+""",
+        entry="source",
+    )
+    replay = fingerprint_ptx(
+        """
+.visible .entry replay(.param .u64 replay_param_0) {
+  .reg .b64 %rd<4>;
+  .reg .f32 %f<2>;
+  ld.param.u64 %rd1, [replay_param_0];
+  mov.u64 %rd2, %tid.x;
+  add.s64 %rd3, %rd1, %rd2;
+  ld.global.f32 %f1, [%rd3];
+  st.global.f32 [%rd3], %f1;
+  ret;
+}
+""",
+        entry="replay",
+    )
+
+    comparison = compare_ptx_fingerprints(source, replay)
+
+    assert comparison.hard_pass
+    assert comparison.primary_difference_category is None
+    assert not comparison.diagnostic_passes["raw_instruction_topology"]
+
+
+def test_ptx_semantic_projection_keeps_value_operation_hard() -> None:
+    source_ptx = _ptx("kernel").replace(
+        "    bar.sync 0;",
+        "    st.global.f32 [%rd1], %f1;\n    bar.sync 0;",
+    )
+    source = fingerprint_ptx(source_ptx, entry="kernel")
+    changed = fingerprint_ptx(
+        source_ptx.replace(
+            "st.global.f32 [%rd1], %f1;",
+            "neg.f32 %f2, %f1;\n    st.global.f32 [%rd1], %f2;",
+        ),
+        entry="kernel",
+    )
+
+    comparison = compare_ptx_fingerprints(source, changed)
+
+    assert not comparison.hard_pass
+    assert not comparison.hard_passes["value_operations"]
+
+
 _CUDA_REPLAY = """extern "C" __global__ void scrc_k0(const float* p0, float* p1, int p2) {
     int v0 = (int)threadIdx.x;
     if (v0 < p2) p1[v0] = p0[v0];

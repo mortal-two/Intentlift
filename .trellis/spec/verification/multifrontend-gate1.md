@@ -40,11 +40,12 @@ PTX and builds the following hard views:
 
 1. Positional kernel ABI: PTX parameter types/alignment/extents, plus the
    anonymous `J.signature` kind/dtype/rank/mode projection.
-2. Alpha-normalized instruction/dataflow topology.
-3. Opcode multiset including semantic modifiers (rounding, saturation,
-   approximation, vector width and data type).
-4. Memory effects, retaining load/store/atomic/reduction opcode, address
-   space, width, address expression and instruction predicate.
+2. Value-producing opcode topology traced backward from stores, atomics and
+   memory/control predicates. Integer value arithmetic remains hard; pointer
+   arithmetic used only to form an address does not.
+3. Memory-effect summaries retaining load/store/atomic/reduction kind, address
+   space, width/type, multiplicity and predication while erasing cache/eviction
+   hints and exact virtual-register address expressions.
 5. Collective and synchronization topology: barriers, `mbarrier`, async copy,
    fences, shuffle/vote/match, MMA/WGMMA and election operations.
 6. Control topology: labels, conditional/unconditional branches, calls,
@@ -53,7 +54,8 @@ PTX and builds the following hard views:
    warp, SM and related special registers.
 8. Target profile (for example `sm_120`).
 
-The following presentation-only information is normalized away:
+The following presentation/lowering-choice information is normalized away from
+the verdict but retained in the diagnostic raw topology:
 
 - kernel and ordinary helper names;
 - PTX virtual-register spelling and branch-label spelling;
@@ -61,11 +63,18 @@ The following presentation-only information is normalized away:
 - register declaration order when it only changes alpha names;
 - `.version`, `.address_size` and target banner text (the selected target is
   recorded separately by the compile case).
+- cache and eviction hints such as `.nc`, `.ca` or `.cg`;
+- equivalent pointer-address algebra spelling such as addition versus bitwise
+  composition. Such integer operations are relaxed only when they feed a memory
+  address; the same operations remain hard when they feed an observable value.
 
-The observer must fail closure when memory space, predication, atomic/barrier
-topology, warp/MMA operation, control structure, coordinate use, ABI or target
-changes. This makes PTX a compiler observation of public CUDA semantics, not a
-backend-support test and not a source-text similarity metric.
+The observer must fail closure when value operations, memory kind/space/type/
+predicate/multiplicity, atomic/barrier topology, warp/MMA operation, control
+structure, coordinate use, ABI or target changes. Exact normalized instruction,
+raw opcode and raw memory strings remain evidence but do not force equivalent
+CUDA programs to reproduce cache policy or address-strength reduction. This
+makes PTX a compiler observation of public CUDA semantics, not a backend-support
+test and not a source-text similarity metric.
 
 ## TileLang semantic fingerprint
 

@@ -294,7 +294,8 @@ def compare_tilelang_fingerprints(
         }
     )
     diagnostic_passes = {
-        f"ptx.{key}": value for key, value in ptx.hard_passes.items()
+        f"ptx.{key}": value
+        for key, value in {**ptx.hard_passes, **ptx.diagnostic_passes}.items()
     }
     differences = [
         TileLangDifference(

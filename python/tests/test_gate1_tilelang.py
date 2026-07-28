@@ -140,9 +140,9 @@ def test_tilelang_ptx_topology_is_diagnostic_below_equal_tir() -> None:
 
     assert comparison.hard_pass
     assert comparison.primary_difference_category is None
-    assert not comparison.diagnostic_passes["ptx.instruction_topology"]
+    assert not comparison.diagnostic_passes["ptx.raw_instruction_topology"]
     assert any(
-        item.category == "ptx.instruction_topology"
+        item.category == "ptx.raw_instruction_topology"
         for item in comparison.differences
     )
 
