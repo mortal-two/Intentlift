@@ -66,8 +66,9 @@ Use `critical_facts.lexical_regions` as the exact region-by-region construction
 ledger and `critical_facts.cross_region_order` as the exact ordering checklist;
 use `critical_facts.broadcast_obligations` as the exact operand/access/consumer
 rank-projection checklist; use `critical_facts.identity_materializations` as the
-exact representation-stage/adjacent-transfer checklist. These views only
-reindex the same J/pi and add no
+exact representation-stage/adjacent-transfer checklist; consume every
+`critical_facts.route_extent_transforms` item at its exact existing route slot.
+These views only reindex the same J/pi and add no
 realization decision. For each authored J.boundary.broadcasts item, preserve the
 operand's closed type at its producer and boundary access, then materialize the
 declared axes at that named consumer. Never pre-expand an access index or load
@@ -93,7 +94,9 @@ relations, or physical routes. If a required fact is absent from the packet,
 keep the replay fail-closed rather than guessing it. Run
 `python .agents/intentir_agent_tool.py replay_obligation_audit` after writing a
 complete source whenever the critical ledger contains broadcast obligations,
-identity materializations, lexical regions, or cross-region order. Compare the returned exact ledger with the numbered current
+identity materializations, lexical regions, cross-region order, or route extent
+transforms. Compare the
+returned exact ledger with the numbered current
 bytes yourself; after any edit, audit those new bytes again. The audit neither
 maps instances nor diagnoses or repairs source. Then run
 `python .agents/intentir_agent_tool.py replay_check` on your complete source,

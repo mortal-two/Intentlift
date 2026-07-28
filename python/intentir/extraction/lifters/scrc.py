@@ -30,7 +30,7 @@ from .scrc_schema import scrc_lift_core_text_format
 
 
 SCRC_RELIFT_PROTOCOL = "llm_direct_pi_structured_source_aware_relift_v2"
-SCRC_DECODE_PROTOCOL = "intentir.scrc.decode.v14"
+SCRC_DECODE_PROTOCOL = "intentir.scrc.decode.v15"
 CANDIDATE_CHECK_PROTOCOL = "intentir.scrc.candidate-check.v1"
 _CANDIDATE_DIAGNOSTIC_LIMIT = 20
 _CANDIDATE_DIAGNOSTIC_TEXT_LIMIT = 2048
@@ -1383,6 +1383,8 @@ copies predicate/polarity or turns the branch into select.
 Source early return: final `effect_if`; later work in its continuation arm; one
 pi.terminal_controls pair over arm `realize` instances. It names only
 terminal/continuation, never predicate/polarity/return/Source/API.
+Preserve selected-helper literal memory order in scope.effects/pi; node order is
+not effect order. Outline loop-preexisting writes are only a carrier checklist.
 
 A value-yielding Source `scf.if` is one Layer-A `value_if`, never `select`:
 author a visible scalar-i1 predicate, one result/type, and two explicit
@@ -1427,10 +1429,9 @@ In native CUDA, `launch_block_x|y|z` is an external Harness binding: `blockDim`
 creates no c* instance/route. Domain-anchored coordinates map through U_f to
 `blockIdx`/`threadIdx`/`blockDim` under that binding.
 
-Pi is non-semantic, non-executable topology: anonymous regions, J/C-anchored
-instances, slotted routes, order, sharing, placement, closed mechanisms, and
-the typed relations below. It contains no operator, predicate, value, dtype,
-shape, frontend API, Source text/name, prose, or rule identity.
+Pi is non-semantic, non-executable anonymous topology. Except for the closed
+route-extent divisor/rounding below, it contains no operator/value and never a
+predicate, dtype, logical shape, frontend API, Source spelling, prose, or rule ID.
 
 For a tiled physical realization of a structured J `loop`, author exactly one
 pi.iterations relation: loop_instance anchors that loop and tile_instance a
@@ -1442,12 +1443,14 @@ dependent anchors match; reserved tile roles only expose a wholly missing
 relation to TypeCheck. The tag has no formula/value/API and never denotes an
 untiled loop.
 
-For a Source physical tiled loop around a J fact, use pi.physical_iterations.
-body anchors non-loop reduce/contraction or boundary access/domain with a closed
-axis; tile anchors required positive-int C on the same subject/axis. Structured J
-loops use pi.iterations. Author basis/direction from Source; add no J loop/bound.
-Use physical_loop_carriers only for visible state; J owns init/update. Fixed code
-only validates/rejects.
+For a physical tiled loop around a non-loop J reduce/contraction/access/domain,
+author physical_iterations with its same-subject/axis positive C tile and Source
+basis/direction; structured J loops use iterations. Add carriers only for visible
+state in Source tuple order. `pi.order` alone orders events.
+
+For a Source C-extent partition on an existing route slot, author source/target/slot,
+divisor>1, floor/ceil, and target-domain/axis attachment. It changes only that use,
+never J or sibling routes.
 
 pi.unit_iterations denotes untiled serial traversal of a non-loop
 J axis: body/axis/direction close [0,J extent) step 1 or reverse, with no

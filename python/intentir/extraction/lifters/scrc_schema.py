@@ -637,6 +637,33 @@ def _pi_schema() -> dict[str, Any]:
         },
         ("source", "target", "slots"),
     )
+    route_extent_transform = _closed_object(
+        {
+            "source": {
+                "type": "string",
+                "pattern": "^i[0-9]+$",
+                "description": (
+                    "Instance anchored to one required positive-integer C extent slot."
+                ),
+            },
+            "target": {
+                "type": "string",
+                "pattern": "^i[0-9]+$",
+                "description": (
+                    "Instance anchored to the C-attached J domain realization."
+                ),
+            },
+            "slot": {"type": "integer", "minimum": 0},
+            "divisor": {"type": "integer", "minimum": 2},
+            "rounding": {"type": "string", "enum": ["floor", "ceil"]},
+        },
+        ("source", "target", "slot", "divisor", "rounding"),
+        description=(
+            "A closed representation-only extent partition on one existing pi "
+            "route slot. It does not create J shape/domain/predicate semantics and "
+            "contains no Source spelling or frontend API."
+        ),
+    )
     order = _closed_object(
         {
             "before": {
@@ -854,6 +881,7 @@ def _pi_schema() -> dict[str, Any]:
             "regions": _array(region),
             "instances": _array(instance),
             "routes": _array(route),
+            "route_extent_transforms": _array(route_extent_transform),
             "order": _array(order),
             "sharing": _array(sharing),
             "refinements": _array(refinement),
@@ -868,6 +896,7 @@ def _pi_schema() -> dict[str, Any]:
             "regions",
             "instances",
             "routes",
+            "route_extent_transforms",
             "order",
             "sharing",
             "refinements",
@@ -882,8 +911,9 @@ def _pi_schema() -> dict[str, Any]:
             render_realization_witness_wire_grammar()
             + " "
             + render_realization_mechanism_grammar()
-            + " Preserve route/order/share/region multiplicity. No operator, "
-            "value, predicate, dtype, frontend API, rule identity or source text."
+            + " Preserve route/order/share/region multiplicity. Apart from the "
+            "closed route-extent divisor/rounding, no operator or value; never a "
+            "predicate, dtype, frontend API, rule identity or source text."
         ),
     )
 def _portable_scope_schema() -> dict[str, Any]:

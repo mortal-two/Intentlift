@@ -19,11 +19,12 @@ lowering 和测试要求，不形成另一套设计。上位文档按作用域�
 若派生规范与上位设计冲突，应修订派生规范；不得通过增加 interface artifact、hash gate、
 epoch、commitment、额外认证 Gate 或兼容旁路来调和冲突。
 
-当前 fresh-run 栈为 `artifact.v10 / decode.v14 / typecheck.v26 / candidate-check.v1 / replay-check.v14`。它继承 rank-0
+当前 fresh-run 栈为 `artifact.v10 / decode.v15 / typecheck.v27 / candidate-check.v1 / replay-check.v14`。它继承 rank-0
 closed signature、Layer-A total typing、显式 broadcast、canonical reduce/contraction、absent carrier
 拒绝、functional-domain closure、rank-0 liveness、padded-mean necessary condition 与 closed
 `pi.iterations`，并验证 Lift 已作者化的 value/dimension、consumer-extension、access-guard、typed
-control/inout/output-binding/terminal-control 关系。fixed code只诊断，不翻译别名、补齐 attrs、生成 handle/relation、
+control/inout/output-binding/terminal-control 关系，并检查 v10 authored route-local extent transform 的
+existing-route、C/J attachment 与 closed divisor/rounding。fixed code只诊断，不翻译别名、补齐 attrs、生成 handle/relation、
 改图或修复 artifact；历史 wire/receipt 继续按自身版本读取，不静默升级或重判。当前 Agent execution
 receipt 为 `intentir.lift-knowledge.v68 / intentir.lift-knowledge.v65 / minisweagent.intentir-replay.v34 / openai.codex-cli.intentir-replay.v30`；
 artifact.v10 的 `physical_iterations|unit_iterations/physical_loop_carriers` 表达 structured J loop 外、由已作者化
@@ -37,14 +38,19 @@ Replay v34/v30 对不超过 64 KiB 的完整匿名 J/C/π/U_f 只在首次上下
 并置一个只重索引 semantic dimension carrier、IEEE special typed constant、physical/unit iteration、
 transfer route/order、`reduction_linearization + consumer route`、loop/branch lexical region membership
 与 cross-region order，并无损并置 authored broadcast 的 operand type/access/named consumer/ordinal，
-以及 `identity_materialization` 与相邻 transfer 的 exact `critical_facts.v4`；超限
+以及 `identity_materialization` 与相邻 transfer、route-local extent transform 的 exact
+`critical_facts.v4`；超限
 packet 才接收一个自带 authored op/boundary、π instance mechanism 与 time/control/terminal 清单的
-compact manifest，并只查询明确遗漏页。Codex Lift v12 / knowledge v67 同样直接嵌入 exact Harness ABI
+compact manifest，并只查询明确遗漏页。同一 region 中 `physical_loop_carriers` declaration order 是跨
+init/state/next/result 共享的 carrier-tuple ordinal；Lift 必须从 Source frontend loop 的
+argument/yield/result tuple 作者化该顺序，Replay 不按 dtype/ref/mechanism 重排。该 tuple slot 顺序
+不是 event execution order，后者仍只由 `pi.order` 拥有。Codex Lift v12 / knowledge v68 还直接嵌入
+exact Harness ABI 与 syntax-only `source-outline.v2`
 与 relift frontier，并一次并列展开非递归 direct hard categories；原有只读工具退为可选局部自读。
 两条路径都不生成 artifact/realization，没有 Gate
 或认证权限。
 
-含 broadcast/identity-materialization/lexical/cross-region critical facts 的 Replay 在 construction compile 前还必须对当前 exact bytes
+含 broadcast/identity-materialization/lexical/cross-region/route-extent critical facts 的 Replay 在 construction compile 前还必须对当前 exact bytes
 完成 `replay-obligation-audit.v3`；该工具只并置 J/π ledger 与 Replay 自己的编号源码，不映射 relation/instance、
 不诊断、不修复，也不参与 Gate 接受。
 `replay-check.v14` 还要求 synthetic TTIR 至少包含 π 已作者化 `reduction_linearization` 数量的
@@ -58,11 +64,11 @@ transfer ref，但每个 transfer 必须从匹配 boundary tensor 的 pointer/te
 compiled `tt.get_program_id` occurrence；同一 `p*` 的多个 π instance 始终共享一个既有 ABI carrier，
 placement 本身不产生 program coordinate。
 且每个 pointer-producing address stage 必须流向至少一个 transfer。无法闭合的 topology 不猜，不读取
-Source，也不生成地址公式。`typecheck.v26` 同时增加 unit physical time 的 closed body/axis checks，
-以及 direct `x* == 1`/`1 == x*` 对显式 broadcast shape alignment 的 singleton dependent check；
-后者不做 SMT/transitive inference，也不从 concrete valuation 猜测。v26 继承 v25；v25 继承 v24
-的 pointer route 与 floating typed constant检查，并把 `reduction_linearization` 限定为一个
-`realize` stage 经唯一 slot-0 route 进入一个 J
+Source，也不生成地址公式。`typecheck.v27` 新增 route extent transform 的 closed dependent check，
+并继承 v26 的 unit physical time closed body/axis check，以及 direct `x* == 1`/`1 == x*` 对显式
+broadcast shape alignment 的 singleton dependent check；后者不做 SMT/transitive inference，也不从
+concrete valuation 猜测。v26 继承 v25；v25 继承 v24 的 pointer route 与 floating typed constant
+检查，并把 `reduction_linearization` 限定为一个 `realize` stage 经唯一 slot-0 route 进入一个 J
 `reduce` realize stage；fixed code只检查 Lift 已作者化的事实。
 
 当前 Gate1 observer profile 是 `triton-ttir-3.6-gate1-v11`；它保留既有对已建模 op 与 public-entry

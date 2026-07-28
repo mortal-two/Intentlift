@@ -282,6 +282,7 @@ C 不能显式声明：
 - regions；
 - instances；
 - routes 与 operand slots；
+- 依附既有 route/C attachment/J domain 的 closed route-local physical extent transform；
 - order；
 - sharing / recomputation；
 - placement；
@@ -366,6 +367,13 @@ lexical continuation”。两项只能引用同一 `effect_if` 的两个 sibling
 relation 不复制 predicate/polarity，不包含 return、value、formula、Source spelling 或 frontend API。
 因此 control semantics 仍在 J，π 只补足 Source-realization 的 terminal CFG topology。
 
+`artifact.v10` 还允许一项严格封闭的 `route_extent_transforms` relation：它只能把 required
+positive-integer C slot 在一条已存在 route 的 target-local slot 上按 literal `divisor>1` 作
+`floor|ceil` partition；source 必须锚定该 C slot，target 必须锚定该 slot 通过
+`subject_ref/axis_ref` attached 的 J domain。它不创建 J dimension/domain/predicate/value/operator，
+不修改 C raw valuation，也不传播到 sibling route；Lift 显式作者化，Replay 原样消费，最终
+target-local topology 仍由 Gate1 裁决。SCRC 后 production 不读取 π。
+
 ---
 
 # 4. TypeCheck 的准确职责
@@ -392,7 +400,9 @@ TypeCheck 还检查 closed comparison class 与 output dtype、A 依赖图和 B 
 见最终执行流程第 6.1 节。v1 中 `RequiresTolerance=true` 即拒绝显式或默认 `exact`，没有自由文本
 或“更强合同”例外；阈值仍完全由外部 Q 决定。该 reassociation fact 只约束 SCRC comparison class，
 不是 production backend permission。
-当前 `typecheck.v26` 继承 v25，只把 J direct `x* == 1`/`1 == x*` 作为 symbolic singleton
+当前 `typecheck.v27` 只新增上述 route extent transform 的 existing-route、required positive-int C、
+matching J-domain attachment/axis 与 realize-anchor dependent checks；checker 不生成 relation、
+divisor 或 attachment。v26 继承 v25，只把 J direct `x* == 1`/`1 == x*` 作为 symbolic singleton
 证据来消费同一 J 的显式 broadcast axes；缺失、非 1 或冲突 direct equality 拒绝。它不做
 SMT/transitive inference，也不从 Harness valuation、C、π、Source 或 target shape补事实。
 v25 继承 v24，并把 `reduction_linearization` 限定为一个 `realize` stage 经唯一
@@ -444,6 +454,8 @@ transformation permission，也不改变 `Reach_t(J)`。
 - `physical_loop_carriers` 只保存对应 region 内 typed `init/state/next/result` 时间拓扑，不含公式/value；
 - `terminal_controls` 只连接同一 J `effect_if` 的两个 sibling arm instance，且该 `effect_if` 在当前
   lexical parent 中为 final；terminal/continuation role 不携带 predicate、polarity 或 return 语义；
+- `route_extent_transforms` 只限定一条既有 route slot，并依赖 required positive-int C 与匹配的
+  J-domain attachment/axis；divisor/rounding 属于 closed vocabulary，不形成一般表达式；
 - observable instance 锚定 J；
 - 不新增 operator、predicate、fill、effect 或 semantic constant；
 - sensitive representation refinement 有 J/B 授权；
@@ -468,10 +480,13 @@ dependent checking 夸写成 Source topology 的形式证明。
 
 首版不需要让 TypeCheck 成为 SMT 或完整图证明器。最小可行实现只需 fail closed 地完成上述局部检查。
 
-当前合并协议为 `artifact.v10 / decode.v14 / typecheck.v26 / candidate-check.v1 / replay-check.v14`；
-Replay packet envelope 仍是 `replay-input.v1`，Triton context 为 `public_frontend_context_v17`，
+当前合并协议为 `artifact.v10 / decode.v15 / typecheck.v27 / candidate-check.v1 / replay-check.v14`；
+Replay packet envelope 仍是 `replay-input.v1`，Triton context 为 `public_frontend_context_v18`，
 TileLang/CUDA context 为 `public_frontend_context_v8/v4`，Codex/MiniSWE Lift knowledge 为
 v68/v65，MiniSWE Replay backend 为 v34，Codex Replay backend 为 v30。
+v34/v30 将 authored route extent transforms 纳入 `critical_facts.v4`、
+`replay-obligation-audit.v3` 与 source-blind static ingress；只检查 closed floor/ceil-div spelling，
+不生成 relation/code，也不替代 Gate1。
 v40 为 source-aware Lift worker 增加只读、分页的 Source control-flow
 outline（function/loop/if/return 的行号与嵌套深度）；v41 只把 shared dialect/lowering 已支持的
 `log2` 补入通用 `map_unary` vocabulary；v42 只要求 access `fill_value` 保留 Source 该 load 的实际
@@ -493,6 +508,9 @@ Source/Harness value/Gate，不改变最终 SCRC 接受谓词。Codex Lift v5 �
 syntax-only Source control-flow outline，固定代码仍不分类或补 artifact。单次 provider turn wall-time 后只允许同 invocation/episode 的 exact checked
 bytes 或 resumable same thread 继续；禁止跨 formal round/Replay episode 继承候选。
 Replay v34/v30 把每条 J-authored broadcast 的 operand closed type、matching access、
+并增加上述 route-local extent relation 的显式作者/消费合同。同一 physical region 中 carrier relation 的 declaration
+order 是跨 init/state/next/result 共享的 tuple ordinal；Lift 完整作者化，Replay 原样消费，fixed code
+不按 dtype/ref/mechanism 重排。它不表示 event execution order，后者仍由 `pi.order` 拥有。
 named consumer/ordinal 作 exact source-blind 重索引；存在该 obligation 时，owner 必须把 ledger 与
 自己的当前编号源码并置自审。工具不建立 relation-to-statement 映射、不选择 rank-lift spelling/次数、
 不生成或修复 Replay，也不读取 Source/Gate。v26/v22 已固定：J.signature 的一个 `p*` 是一个既有 callable ABI carrier，同一 `p*` 的
@@ -504,7 +522,8 @@ v3 历史上引入 `pi.iterations`；v4 引入 J-owned `value_dimension_relation
 `consumer_extensions` 等 typed relations；v5 引入 J-owned `access_guard_relations`；v6/v7 分别引入
 typed `effect_if/value_if`；v8 增加 π-owned `physical_iterations/physical_loop_carriers`；v9 增加
 π-owned `terminal_controls`，只为 J 已存在的 `effect_if` 指定 terminal/continuation arm topology；
-v10 增加 π-owned `unit_iterations`。每个当前字段都由
+v10 增加 π-owned `unit_iterations` 与依附既有 C/J/route 的 closed
+`route_extent_transforms`。每个当前字段都由
 Lift LLM 作为完整 `(J,C,π)` 的一部分显式作者，Decode/TypeCheck/CandidateCheck 只解析、检查、拒绝
 和诊断，不补造 relation 或 artifact。v1-v9 保持各自 wire bytes/digest 与字段集合，不得静默升级、
 刷新或追认。SCRC 后 π 停止，
@@ -575,7 +594,8 @@ artifact 语义，不增加 acceptance path，正式 Runner 仍独立执行 Deco
 扩充 TypeCheck judgement 必须提升 `v_TC`，CandidateCheck 与正式 Runner 必须记录并使用同一版本；
 新版本不静默重判历史证书。
 
-当前 fresh-run 取 `v_TC = typecheck.v26`。v26 增加上述 direct singleton broadcast dependent check；
+当前 fresh-run 取 `v_TC = typecheck.v27`。v27 增加上述 route extent transform dependent check；
+v26 增加上述 direct singleton broadcast dependent check；
 v25 增加上述 reduction-linearization topology check；v24 增加上述 special-constant 与 transfer pointer-route
 closed checks，并完整继承 v23；v23 增加 canonical output binding 的完整 dtype/shape equality；v22 增加 signature mode 与 J boundary partition 的 exact
 dependent check，并完整继承 v21；v21 继承 v20/v18/v19、v14-v17 typed-control 合同及下述 v7
@@ -1383,8 +1403,8 @@ time-to-first-closure、logical/physical Lift、normal/masked Replay、transport
 
 - schema、prompt、TypeCheck、observer、Q、compiler 和最大轮数保持不变；
 - 只搜索新的 \((J,C,\pi)\) 候选；
-- 当前 Task 14 闭合批次使用 `B=3`，每 branch 默认最多 `K=5` 个 TypeCheck-valid Gate1 rounds；
-- 只有所有完整 branch 都耗尽本次声明的预算且未闭合，才是 `NO_CLOSURE_(3,5)`；
+- 当前 Task 14 聚焦闭合批次使用 `B=3`，每 branch 最多 `K=3` 个 TypeCheck-valid Gate1 rounds；
+- 只有所有完整 branch 都耗尽本次声明的预算且未闭合，才是 `NO_CLOSURE_(3,3)`；
 - Gate1 diff 只进入同 branch，sibling artifact/Replay/diff 永不共享；
 - 只从 Gate1-closed 候选中按固定 pre-Gate2 规则选择一个 winner；
 - Gate2 失败后本次实验结束，不再 relift。

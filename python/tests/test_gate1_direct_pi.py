@@ -75,6 +75,7 @@ def test_artifact_v10_preserves_v9_through_v1_legacy_contracts() -> None:
     legacy_v9 = copy.deepcopy(current)
     legacy_v9["schema"] = "intentir.scrc.artifact.v9"
     del legacy_v9["pi"]["unit_iterations"]
+    del legacy_v9["pi"]["route_extent_transforms"]
     parsed_v9 = Gate1Artifact.from_json(legacy_v9)
     assert parsed_v9.to_json() == legacy_v9
 
@@ -190,6 +191,7 @@ def test_every_artifact_wire_version_requires_explicit_pi_refinements(
     payload["schema"] = wire_schema
     del payload["pi"]["unit_iterations"]
     del payload["pi"]["terminal_controls"]
+    del payload["pi"]["route_extent_transforms"]
     del payload["pi"]["physical_iterations"]
     del payload["pi"]["physical_loop_carriers"]
     if wire_schema in {
@@ -766,6 +768,14 @@ def _historical_triton_v6_payload() -> dict[str, object]:
         "",
     )
     contract = contract.replace(
+        " Within each region, physical_loop_carriers declaration order is the "
+        "exact common carrier-tuple ordinal across init/state/next/result; "
+        "preserve it in frontend loop arguments, yields, and results, and never "
+        "sort by dtype, semantic ref, or mechanism. This tuple order is not "
+        "event execution order; pi.order remains its only authority.",
+        "",
+    )
+    contract = contract.replace(
         "Every J.signature p* is one already-existing callable ABI carrier. "
         "All pi instances anchored to the same p* scope or route uses of that "
         "single carrier; they never create another external value or program "
@@ -888,13 +898,13 @@ def test_public_frontend_context_history_is_read_only_and_exact() -> None:
         PUBLIC_FRONTEND_CONTEXT["triton"]
     )
 
-    assert current_digest == history["public_frontend_context_v17"]
+    assert current_digest == history["public_frontend_context_v18"]
     current_receipt_digest = PUBLIC_FRONTEND_CONTEXT_RECEIPT_HISTORY[
         "triton"
-    ]["public_frontend_context_v17"]["context_sha256"]
+    ]["public_frontend_context_v18"]["context_sha256"]
     current_receipt = audit_public_frontend_context_receipt(
         frontend="triton",
-        context_policy="public_frontend_context_v17",
+        context_policy="public_frontend_context_v18",
         context_sha256=current_receipt_digest,
     )
     assert current_receipt["status"] == "current"
@@ -1028,7 +1038,7 @@ def test_historical_packet_has_read_only_audit_but_cannot_be_fresh_replay() -> N
         audit_replay_packet_digest(payload, expected_digest="0" * 64)
     assert build_rewriter_packet(make_reduce_artifact()).u_f[
         "context_policy"
-    ] == "public_frontend_context_v17"
+    ] == "public_frontend_context_v18"
 
 
 def test_real_v6_u_f_uses_the_historical_full_u_f_receipt_basis() -> None:
@@ -1056,7 +1066,7 @@ def test_real_v6_u_f_uses_the_historical_full_u_f_receipt_basis() -> None:
     [
         (
             Frontend.TRITON,
-            "2cea108cfa97dc4cc4fff87fa65e36e30cd75fb5bf8d38e7588ce1446d62ac2a",
+            "69f8902436392087b548d3679a9730a2460f3ef2581d07d44e7801c390aea471",
         ),
         (
             Frontend.CUTE,
@@ -1151,9 +1161,9 @@ def test_replay_contract_accepts_an_explicit_strict_integer_widen() -> None:
 
     report = type_check(artifact.j, artifact.c, artifact.pi)
     assert report.passed
-    assert report.protocol == "intentir.scrc.typecheck.v26"
+    assert report.protocol == "intentir.scrc.typecheck.v27"
     assert build_rewriter_packet(artifact).u_f["context_policy"] == (
-        "public_frontend_context_v17"
+        "public_frontend_context_v18"
     )
 
 
@@ -1172,7 +1182,7 @@ def test_typecheck_rejects_non_widening_or_untyped_signed_widen(
 
     report = type_check(artifact.j, artifact.c, artifact.pi)
     assert not report.passed
-    assert report.protocol == "intentir.scrc.typecheck.v26"
+    assert report.protocol == "intentir.scrc.typecheck.v27"
     assert "refinement_auth_invalid_widen" in {
         item.code.value for item in report.diagnostics
     }
@@ -1185,7 +1195,7 @@ def test_triton_u_f_preserves_constexpr_and_projects_coordinate_roles() -> None:
     context = payload["u_f"]
     contract = context["compile_entry_contract"]
 
-    assert context["context_policy"] == "public_frontend_context_v17"
+    assert context["context_policy"] == "public_frontend_context_v18"
     assert "pass a c* handle directly to tl.arange" in contract
     assert "never copy it to a local first" in contract
     assert "satisfied by the parameter binding" in contract
@@ -1231,6 +1241,8 @@ def test_triton_u_f_preserves_constexpr_and_projects_coordinate_roles() -> None:
     assert "unsupported tile/dtype contracts" in contract
     assert "pi chain that explicitly declares multiple" in contract
     assert "Every pi.iterations entry is mandatory" in contract
+    assert "physical_loop_carriers declaration order" in contract
+    assert "never sort by dtype, semantic ref, or mechanism" in contract
     assert "induction_basis=extent_step" in contract
     assert "induction_basis=tile_ordinal" in contract
     assert "never insert or remove the trip-count ceiling division" in contract
@@ -1500,6 +1512,7 @@ def test_lift_schema_requires_direct_pi_and_no_embedded_c_channel() -> None:
             "unit_iterations",
             "physical_loop_carriers",
         "terminal_controls",
+        "route_extent_transforms",
     }
     assert "consumer_extensions" in (
         properties["j"]["properties"]["boundary"]["required"]

@@ -52,7 +52,7 @@ feedback，不复制、重排或覆盖当前 candidate，也不因 host 仓库�
 提交 candidate，同一 branch 的持久 owner 可以在下一真实 user continuation 中接收最后一次实际 source-free evaluation 的至多 20 条
 `rule_code/path`；不得包含 observed value、patch、hidden/sibling 信息。Source 仅作为该 owner 原有
 source-aware conversation 的上下文保留。Harness 不应用摘要修补 artifact，submission `PASS` 也不能
-替代正式 Runner 的 `typecheck.v26`。
+替代正式 Runner 的 `typecheck.v27`。
 
 generic exact-text patch 不是 Harness semantic construction：LLM 必须同时提供唯一 old/new 字符串，
 runtime 只原子替换并使旧 PASS 失效；Harness 不解析字段、不推荐修改、不生成 corrected artifact。
@@ -233,7 +233,9 @@ Codex/MiniSWE Lift knowledge 当前使用 `intentir.lift-knowledge.v68/v65`，�
 IEEE infinity/NaN 保持 closed typed constant，不以最大有限数近似，并允许 `physical_iterations` 在
 同 subject/axis 的 boundary access/domain 上表达 epilogue/transfer traversal；fixed checker 不代选
 constant 或 physical anchor；Source reduction 省略 frontend axis 且存在 compiler-visible flatten 时，
-还要求作者化 closed `reduction_linearization`，而不是让 Replay 从 reduction kind 猜 reshape。既有 runtime scalar 的
+还要求作者化 closed `reduction_linearization`，而不是让 Replay 从 reduction kind 猜 reshape；并要求
+v10 route-local physical extent transform 由 Lift 通过既有 C attachment/J domain/route 显式作者化，
+不能从 concrete valuation、J half-domain 或名字猜 divisor。既有 runtime scalar 的
 logical-data/representation-only source-use 分类：只有显式 rank-0、`mode=value`、public dtype、
 `logical_ref=null` 的 scalar 可不创建 J input并只供 π realization 使用；Harness 不按参数名/位置
 替 Lift 分类；该 null form 只允许 runtime scalar。`bound_constexpr_values` 必须表示逻辑语义 constexpr：

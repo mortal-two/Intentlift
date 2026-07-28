@@ -559,6 +559,7 @@ def _tiled_loop_artifact(*, basis: str = "extent_step") -> Gate1Artifact:
                 "unit_iterations": [],
                 "physical_loop_carriers": [],
                 "terminal_controls": [],
+                "route_extent_transforms": [],
             },
         }
     )
@@ -827,6 +828,7 @@ def test_artifact_v10_requires_and_v9_rejects_unit_iterations_field() -> None:
         Gate1Artifact.from_json(legacy)
 
     legacy["pi"].pop("unit_iterations")
+    legacy["pi"].pop("route_extent_transforms")
     assert Gate1Artifact.from_json(legacy).to_json() == legacy
 
 
@@ -1238,6 +1240,7 @@ def test_scope_state_effect_and_storage_ids_are_opaque_in_writer_payload() -> No
                     "unit_iterations": [],
                     "physical_loop_carriers": [],
                     "terminal_controls": [],
+                    "route_extent_transforms": [],
                 },
         }
     )

@@ -227,6 +227,10 @@ the artifact schema or external TypeCheck.
    `realize` instances for those two sibling arm scopes. Do not copy the
    predicate/polarity or add a return op, value, formula, Source spelling, or
    frontend API to pi. An ordinary two-arm conditional has no such relation.
+   Follow every selected reachable helper body when authoring an arm. Preserve
+   its literal load/store/atomic statement order in that scope's `effects` and
+   in pi transfer/order topology. Independent J node declaration order is not
+   effect order, and a helper call does not authorize reordering sibling writes.
 13. A Source `scf.if` that yields one value is one Layer-A `value_if`, not a
    `select` or `effect_if`. Author its visible scalar-`i1` predicate, one result
    with a closed type, and explicit positive/negative
@@ -294,8 +298,13 @@ the artifact schema or external TypeCheck.
    (`auth_ref=null`) with exactly one slot-0 route into that reduce instance.
    Keep the logical axes in J; pi carries neither an axis/API nor Source text.
 21. Pi contains anonymous realization relations only. It contains no dtype,
-   shape, operator, formula, predicate, source fragment, frontend API, C value,
-   or executable text.
+   logical shape, arbitrary operator/formula, predicate, source fragment,
+   frontend API, concrete C value, or executable text. The sole closed extent
+   exception is `route_extent_transforms`: one required positive-integer C slot,
+   explicitly attached to the target J domain/axis, may be floor/ceil divided by
+   one literal divisor greater than one at one exact existing route slot. Author
+   it only when Source states that representation partition; it does not create
+   or change J shape/domain/predicate semantics and does not affect sibling uses.
    A Source-visible physical tiled loop around an ordinary J reduce/contraction or
    boundary access/domain traversal uses `physical_iterations`, not a synthetic J
    loop: bind the existing body instance, the same-subject/same-axis required
@@ -303,6 +312,14 @@ the artifact schema or external TypeCheck.
    When compiler-visible accumulator stages exist,
    author `physical_loop_carriers` in that region. These are temporal topology,
    never an initialization/update formula, and fixed code never creates them.
+   The syntax-only Source outline lists names that were lexically bound before a
+   loop and written inside it. Treat every listed name as a required inspection
+   point, not an inferred carrier; decide the complete carrier set from Source.
+   For every region, declaration order is the exact carrier-tuple ordinal shared
+   by init/state/next/result. Author that order from the Source frontend loop's
+   iter-argument/yield/result tuple; never sort carriers by dtype, semantic ref,
+   mechanism, or convenience. This tuple order is not execution order; use
+   `pi.order` for compiler-visible event ordering.
 22. Run the supplied static schema validator and then
    `intentir_candidate_check /output/candidate.json`. CandidateCheck is bounded
    diagnostics only; you must make every edit, and the external Runner still

@@ -76,7 +76,10 @@ agent:
     contract may create a program coordinate. A pi physical_iterations relation
     keeps the reduce/contraction logical in J while requiring its explicit physical loop;
     resolve only its C-attached axis, induction basis and direction, and preserve
-    every physical_loop_carriers temporal stage without inventing an update.
+    every physical_loop_carriers temporal stage without inventing an update. Within
+    each region preserve declaration order as the exact shared init/state/next/result
+    carrier-tuple ordinal; never sort carriers by dtype, ref, or mechanism. This is
+    tuple slot order, not a substitute for pi.order event ordering.
     An ordinary J effect_if remains an explicit runtime if/else. If one
     pi.terminal_controls item names its sibling arm-scope instances, emit the
     named terminal arm as a runtime if ending in bare return and then emit the

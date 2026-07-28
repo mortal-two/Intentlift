@@ -56,6 +56,7 @@ def _legacy_payload(version: int) -> dict:
     payload["schema"] = f"intentir.scrc.artifact.v{version}"
     payload["pi"].pop("unit_iterations")
     payload["pi"].pop("terminal_controls")
+    payload["pi"].pop("route_extent_transforms")
     payload["pi"].pop("physical_iterations")
     payload["pi"].pop("physical_loop_carriers")
     if version < 5:
@@ -82,6 +83,7 @@ def test_artifact_v10_requires_all_current_arrays_and_round_trips_them() -> None
     assert payload["pi"]["unit_iterations"] == []
     assert payload["pi"]["physical_loop_carriers"] == []
     assert payload["pi"]["terminal_controls"] == []
+    assert payload["pi"]["route_extent_transforms"] == []
     assert Gate1Artifact.from_json(payload).to_json() == payload
 
     missing_consumer = copy.deepcopy(payload)
@@ -110,12 +112,104 @@ def test_artifact_v10_requires_all_current_arrays_and_round_trips_them() -> None
     with pytest.raises(SchemaError, match="missing required field: loop_carriers"):
         Gate1Artifact.from_json(missing_carriers)
 
+    missing_route_extent = copy.deepcopy(payload)
+    missing_route_extent["pi"].pop("route_extent_transforms")
+    with pytest.raises(
+        SchemaError, match="missing required field: route_extent_transforms"
+    ):
+        Gate1Artifact.from_json(missing_route_extent)
+
     missing_access_guards = copy.deepcopy(payload)
     missing_access_guards["j"]["boundary"].pop("access_guard_relations")
     with pytest.raises(
         SchemaError, match="missing required field: access_guard_relations"
     ):
         Gate1Artifact.from_json(missing_access_guards)
+
+
+def _route_extent_transform_payload() -> dict:
+    payload = make_reduce_artifact().to_json()
+    payload["c"]["slots"][0]["subject_ref"] = "d1"
+    payload["c"]["slots"][0]["axis_ref"] = "x1"
+    payload["pi"]["instances"].extend(
+        [
+            {
+                "id": "i4",
+                "semantic_ref": "c0",
+                "region": "r0",
+                "mechanism": "realize",
+            },
+            {
+                "id": "i5",
+                "semantic_ref": "d1",
+                "region": "r0",
+                "mechanism": "realize",
+            },
+        ]
+    )
+    payload["pi"]["routes"].append(
+        {"source": "i4", "target": "i5", "slots": [0]}
+    )
+    payload["pi"]["route_extent_transforms"] = [
+        {
+            "source": "i4",
+            "target": "i5",
+            "slot": 0,
+            "divisor": 2,
+            "rounding": "floor",
+        }
+    ]
+    return payload
+
+
+def test_route_extent_transform_is_closed_typed_and_representation_only() -> None:
+    payload = _route_extent_transform_payload()
+    relation_schema = scrc_lift_core_json_schema()["properties"]["pi"][
+        "properties"
+    ]["route_extent_transforms"]["items"]
+    Draft202012Validator(relation_schema).validate(
+        payload["pi"]["route_extent_transforms"][0]
+    )
+    artifact = Gate1Artifact.from_json(payload)
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert report.passed, report.to_json()
+    assert artifact.to_json() == payload
+    assert artifact.rewriter_view()["pi"]["route_extent_transforms"] == [
+        {
+            "source": "i4",
+            "target": "i5",
+            "slot": 0,
+            "divisor": 2,
+            "rounding": "floor",
+        }
+    ]
+    assert artifact.j.to_json() == make_reduce_artifact().j.to_json()
+
+
+def test_route_extent_transform_rejects_open_or_unattached_relations() -> None:
+    missing_route = _route_extent_transform_payload()
+    missing_route["pi"]["routes"].pop()
+    with pytest.raises(SchemaError, match="existing pi route"):
+        Gate1Artifact.from_json(missing_route)
+
+    invalid_divisor = _route_extent_transform_payload()
+    invalid_divisor["pi"]["route_extent_transforms"][0]["divisor"] = 1
+    with pytest.raises(SchemaError, match="greater than one"):
+        Gate1Artifact.from_json(invalid_divisor)
+
+    duplicate = _route_extent_transform_payload()
+    duplicate["pi"]["route_extent_transforms"].append(
+        copy.deepcopy(duplicate["pi"]["route_extent_transforms"][0])
+    )
+    with pytest.raises(SchemaError, match="unique per route slot"):
+        Gate1Artifact.from_json(duplicate)
+
+    unattached = _route_extent_transform_payload()
+    unattached["c"]["slots"][0].pop("subject_ref")
+    unattached["c"]["slots"][0].pop("axis_ref")
+    artifact = Gate1Artifact.from_json(unattached)
+    assert TypeCheckErrorCode.ROUTE_EXTENT_TRANSFORM_INVALID in _codes(artifact)
 
 
 @pytest.mark.parametrize("version", [1, 2, 3, 4, 5])
@@ -1201,8 +1295,8 @@ def test_candidate_check_uses_v6_v15_and_reports_missing_consumer_relation() -> 
         json.dumps(artifact.to_json(), sort_keys=True), context
     )
 
-    assert SCRC_DECODE_PROTOCOL == "intentir.scrc.decode.v14"
-    assert TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v26"
+    assert SCRC_DECODE_PROTOCOL == "intentir.scrc.decode.v15"
+    assert TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v27"
     assert result["status"] == "fail"
     assert any(
         item["rule_code"] == "consumer_extension_missing"

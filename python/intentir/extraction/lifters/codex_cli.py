@@ -14,6 +14,7 @@ from minisweagent.config.intentir_context_query import (
     _candidate_control_value,
     _feedback_category_value,
     _harness_abi_value,
+    _source_outline_value,
 )
 
 from intentir.extraction.providers.codex_cli import (
@@ -73,7 +74,12 @@ the selected specialization whether each item belongs to logical J control,
 pi-owned physical time/control, C-owned compile-time choice, or has no
 compiler-visible event. Do not treat a loop region, a large route set, or syntax
 alone as evidence that the corresponding control/time obligation was authored;
-and do not invent an obligation merely because it appears in the outline.
+and do not invent an obligation merely because it appears in the outline. Treat
+each `lexically_preexisting_writes` row only as a checklist: inspect the Source
+and decide every real loop carrier yourself, then author the complete carrier
+set and frontend tuple order. For each selected reachable helper, preserve the
+literal Source statement order of writes in J scope.effects and pi transfer/order
+topology; J node declaration order is not a substitute for effect order.
 After the first meaningful complete edit run:
 
 python .agents/intentir_agent_tool.py candidate_check
@@ -103,7 +109,10 @@ a field or for you to copy a non-semantic compiler operation into J. Use
 `lift_feedback_category CATEGORY` only for one named omitted category. Use
 the Source control-flow outline again when the frontier names a loop, branch,
 terminal, or carrier difference; reconcile the complete J/C/pi ownership rather
-than only adding routes around the existing flat graph. Use
+than only adding routes around the existing flat graph. When an effect-order or
+terminal-fork witness appears, reread the selected reachable helper bodies and
+compare their literal memory-call sequence with each branch scope.effects and pi
+transfer/order edges; do not infer effect order from J node declaration order. Use
 the bounded exact category/path query only when the frontier names an unresolved
 section. Repair the complete model-authored (J,C,pi) against the closed external
 feedback and Source, run `python .agents/intentir_agent_tool.py candidate_check`,
@@ -131,6 +140,7 @@ def _source_aware_startup_context(workspace: Any, *, fresh_owner: bool) -> dict[
             "protocol": "intentir.codex-lift-startup-view.v1",
             "fresh_owner": True,
             "harness_abi": _harness_abi_value(workspace.input_dir, 1, 80),
+            "source_outline": _source_outline_value(workspace.input_dir, 1, 32),
             "authority": (
                 "exact Harness-owned projection only; no logical_ref, J/C/pi "
                 "field, semantic classification, or repair is generated"

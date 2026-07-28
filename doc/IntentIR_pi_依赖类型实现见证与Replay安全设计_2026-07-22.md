@@ -196,8 +196,8 @@ TypeCheck 的合法性取决于第 4.4 节定义的 `RealSig(J)`。π 不能把 
 定义：
 
 ```text
-G_pi = (Regions, Instances, Routes, Order, Sharing, Placement, Representation,
-        ScheduleRefs, IterationTime, TerminalControl)
+G_pi = (Regions, Instances, Routes, RouteExtentTransforms, Order, Sharing,
+        Placement, Representation, ScheduleRefs, IterationTime, TerminalControl)
 ```
 
 并有锚定映射：
@@ -220,9 +220,9 @@ mu : Instances -> Ids(J) union Ids(C)
 SemAtoms(pi) = empty
 ```
 
-π 禁止包含：
+除第 4.3.1 节唯一的 closed route-local extent partition constructor 外，π 禁止包含：
 
-- operator/function/reducer；
+- 任意 operator/function/reducer；
 - predicate/fill/index formula；
 - semantic constant；
 - logical shape/result relation；
@@ -262,6 +262,11 @@ SemAtoms(pi) = empty
 ```
 
 `n2` 究竟是 reduce、dot 或 elementwise，只能从 J 读取。
+
+这里 `SemAtoms(pi)=empty` 的“语义原子”指可新增或覆盖 `[[J]]` 的 logical operator/value/relation。
+`route_extent_transforms` 的 `floor|ceil` 与 `divisor>1` 和 `iterations.induction_basis` 一样，是协议
+固定的 representation constructor：它必须依附既有 required positive-int C、J domain attachment 与
+route slot，不能声明 logical domain/shape/predicate/result，因此不成为第二份 J。
 
 ### 4.2 所有可观察行为必须由 J 授权
 
@@ -377,7 +382,46 @@ update formula、yield 或 transpose/orientation。把 recurrence 压成最终 g
 也不应携带 per-candidate pad-discharge fact。当前 `replay-input.v1` 不提供这种旁路；应由
 下一次 Lift 修正 J，而不是在 Replay consumer 中建立小型 theorem prover。
 
-### 4.3.1 物理迭代基底 relation
+### 4.3.1 Route-local physical extent partition
+
+RoPE 反例给出另一类严格欠定：Harness/Source 绑定 raw physical capacity `pad_hd=16`，J 已独立声明
+active half-domain `k < ceil_div(head_dim,2)`，但 Source realization 的某条 lane-domain route 使用
+`pad_hd // 2`。若把 C 改存 8，Source 与 Replay 不再共享同一 C valuation；若 Replay 从 J 猜 `/2`，
+则 π 没有完整表达 Source realization。
+
+`artifact.v10` 因此增加：
+
+```text
+pi.route_extent_transforms[*] = {
+  source,              // instance anchored to required positive-int C slot
+  target,              // instance anchored to attached J domain realize
+  slot,                // one existing target-local pi route slot
+  divisor: integer > 1,
+  rounding: floor | ceil
+}
+```
+
+dependent typing 必须验证：`(source,target,slot)` 已存在于 `pi.routes`；source C slot 的 concrete
+Harness valuation 是 positive integer；该 slot 的 `subject_ref/axis_ref` 精确 attachment 到 target J
+domain 与 `AxisRefs_v1` 中的轴；source/target 均为 `realize`。同一 route slot 最多一条 transform。
+relation 的全局 denotation仅为该 target-local representation use：
+
+```text
+floor -> floor_div(C[source], divisor)
+ceil  -> ceil_div(C[source], divisor)
+```
+
+它不创建 J dimension/domain/predicate/value/operator，不改变 C 中的 raw value，也不传播到 sibling
+routes。Lift 必须从 Source 显式作者化 relation 与 attachment；Decode、CandidateCheck、TypeCheck、
+Replay 或 Gate 都不能按 valuation、名字或 J half-domain补造。Replay 从 MaskC 的匿名 c* 与该 relation
+作者化 public frontend spelling；ReplayCheck 只拒绝完全未消费的 closed spelling，精确 target-local
+topology 仍由正式 Gate1 裁决。SCRC 后 π 停止，production backend 不读取该 relation。
+
+这不是 general expression language：wire 没有 expression AST、任意 operator、source fragment 或
+frontend API；只存在二值 rounding enum 与大于一的 literal divisor，并且没有既有 C/J/route 就无
+denotation。以后若需要更一般变换，必须另行证明 closed constructor 与所有权，不得扩成自由 formula。
+
+### 4.3.2 物理迭代基底 relation
 
 Linear 反例表明，structured J loop 与 attached C tile 仍不足以唯一决定 Source realization：
 
@@ -388,7 +432,7 @@ tile_ordinal: lower=0, upper=ceil_div(Trip(J.loop),Tile), step=1
 
 两者可以实现同一 logical loop，却在 compiler observer 中具有不同 induction topology。旧 π 没有该
 区分时，Replay 选择任一写法都不是“消费 artifact”，而是在猜 Source。`artifact.v3` 因此引入、当前
-`artifact.v9` 继续要求：
+`artifact.v10` 继续要求：
 
 ```text
 pi.iterations[*] = {
@@ -424,11 +468,11 @@ region 若被 Lift 整体遗漏，也不存在可供 fixed checker 量化的 han
 
 后续落地的 wire 仍遵守这条版本纪律：artifact.v4 增加 J-owned
 `value_dimension_relations`、`boundary.consumer_extensions` 等 typed relations，artifact.v5 增加
-J-owned `boundary.access_guard_relations`，v6/v7 增加 typed control；当前 decode 为 v13。它们没有进入 π，也没有让 π 获得
+J-owned `boundary.access_guard_relations`，v6/v7 增加 typed control；当前 decode 为 v15。它们没有进入 π，也没有让 π 获得
 value/dimension、consumer context 或 access-control 语义。旧 v1-v4 wire/receipt 仍按原字段集合读取，
 不由当前 parser 附加空数组、刷新或追认。
 
-### 4.3.2 J 外物理 tile-loop 与时间 carrier
+### 4.3.3 J 外物理 tile-loop 与时间 carrier
 
 J 中的 structured `loop` 表示逻辑 recurrence；但已有 J reduce/contraction，或 boundary
 access/domain 对应的 epilogue/transfer traversal，也可能在 Source 中由一个或多个物理 tile loop
@@ -461,7 +505,7 @@ logical J axis ordinal 与 frontend active tile 的 tensor-rank axis 不同。Re
 与 π realization 得到物理 tile rank；若 logical axis 被实现成一维 lane tile，`tl.sum/max/min/dot` 使用
 tile-local axis 0，而不是机械照抄 J 原轴号。该消费规则不生成新的 relation。
 
-### 4.3.3 Consumer context 与 access guard 仍属于 J
+### 4.3.4 Consumer context 与 access guard 仍属于 J
 
 artifact.v4 的 `value_dimension_relations` 由 Lift 显式声明 integral rank-0 logical value 与 symbolic
 dimension 的 `eq`；`consumer_extensions` 由 Lift 显式声明某个 predicate-bearing load 到某个
@@ -482,7 +526,7 @@ unsupported。当前 RefEval 可执行 A 中已有 select 的 guarded store，�
 access-local pre-execution materialization 仍 unsupported。production backend 仍只读 J+C，且当前对
 任何 access guard 显式 fail closed；它不得借 π 或 RefEval receipt 补 target materialization。
 
-### 4.3.4 Terminal arm 与 lexical continuation
+### 4.3.5 Terminal arm 与 lexical continuation
 
 J 的 `effect_if` 已拥有 predicate、正负臂、臂内 value/effect 与 lexical scopes；但同一 binary effect
 control 在 Source compiler CFG 中仍可能是普通 `if/else`，也可能一臂终止当前 invocation、另一臂
@@ -594,6 +638,7 @@ softmax_stage
 regions
 instances(ref)
 routes(source,target,operand_slots)
+route_extent_transforms(source,target,slot,divisor,rounding)
 order(before,after)
 sharing(source,consumers)
 placement
@@ -844,26 +889,31 @@ Replay LLM 应遵守以下过程合同：
 3. 按 π regions 建立源码结构；
 4. 为每个 π instance 建立一次 source realization；
 5. 按 routes 和 operand slots 连接 producer/consumer；
-6. 按 sharing 复用 producer，不得擅自复制或折叠；
-7. 按 order 保留必要偏序；
-8. 按 `iterations` 保留 structured J loop 的物理 induction basis；
-9. 按 `physical_iterations/physical_loop_carriers` 保留 structured J loop 外、由已有
+6. 按 `route_extent_transforms` 只在 named route slot 消费 closed C-extent partition；
+7. 按 sharing 复用 producer，不得擅自复制或折叠；
+8. 按 order 保留必要偏序；
+9. 按 `iterations` 保留 structured J loop 的物理 induction basis；
+10. 按 `physical_iterations/physical_loop_carriers` 保留 structured J loop 外、由已有
    reduce/contraction 或 boundary access/domain 锚定的物理 tile time；
-10. 按 `unit_iterations` 保留没有 C tile 的既有非 loop J axis 单位步物理遍历；
-11. 按 `terminal_controls` 将已作者化 `effect_if` 的 terminal arm 与 lexical continuation
+11. 按 `unit_iterations` 保留没有 C tile 的既有非 loop J axis 单位步物理遍历；
+12. 按 `terminal_controls` 将已作者化 `effect_if` 的 terminal arm 与 lexical continuation
     materialize 为 terminal CFG，不从臂内容猜 role；
-12. 按 representation refinements 保留 source materialization/placement；其中
+13. 按 representation refinements 保留 source materialization/placement；其中
     `reduction_linearization` 精确保留经唯一 slot-0 route 进入 J reduce 的全轴线性化；
-13. 遇到 J semantic ref 时从 J 查询当前语义 label；
-14. 使用固定公共 frontend 知识 `U_f` 选择合法 API spelling；
-15. 输出完整、参数化、source-blind frontend source；
-16. 不从 π 猜出后覆盖 J，也不从 compiler diff 修补。
+14. 遇到 J semantic ref 时从 J 查询当前语义 label；
+15. 使用固定公共 frontend 知识 `U_f` 选择合法 API spelling；
+16. 输出完整、参数化、source-blind frontend source；
+17. 不从 π 猜出后覆盖 J，也不从 compiler diff 修补。
 
 当前 fresh receipt 组合为 `intentir.scrc.replay-input.v1`、Triton
-`public_frontend_context_v17`、TileLang `public_frontend_context_v8`、CUDA
+`public_frontend_context_v18`、TileLang `public_frontend_context_v8`、CUDA
 `public_frontend_context_v4`、Codex/MiniSWE Lift `intentir.lift-knowledge.v68/v65`、MiniSWE Replay v34 与 Codex Replay v30；旧 receipt 保持其原 verdict，不能由
 当前 Replay consumer 或 Lift knowledge 静默升级。
 
+v34/v30 将 authored route extent transforms 加入 exact critical ledger、audit 与 static ingress；它不
+生成 relation/code，也不替代 Gate1。同一 region 中 `physical_loop_carriers` 的 declaration order 是
+init/state/next/result 共享的 carrier-tuple ordinal；Lift 从 Source frontend loop tuple 作者化，Replay
+不按 dtype/ref/mechanism 重排。该 slot order 不表示 event execution order，也不替代 `pi.order`。
 v34/v30 对正常大小匿名 packet 只做一次 exact startup embedding，并将 semantic dimension carrier、
 IEEE special typed constant、physical/unit iteration、transfer route/order 与
 `reduction_linearization + consumer route` 作一次 bounded exact `critical_facts.v4` 重索引；它还把 J-authored broadcast 与 operand closed type、matching
@@ -890,9 +940,10 @@ rank、reshape、tile 或 spelling。它不能生成或省略 relation。v7 的
 推导 schedule、生成 source 或访问 Source/Harness/Gate；因此不改变 Replay 的 source-blind LLM-first
 所有权。
 
-当前新 Lift wire/decode 为 `intentir.scrc.artifact.v10 / intentir.scrc.decode.v14`；v3 历史上把上述
+当前新 Lift wire/decode 为 `intentir.scrc.artifact.v10 / intentir.scrc.decode.v15`；v3 历史上把上述
 `pi.iterations` 变为 required closed field，v4-v7 再增加前述 J-owned typed relations/control，v8
-增加 physical-only time，v9 增加 terminal-control topology，v10 增加 unit physical time。v1-v9 历史
+增加 physical-only time，v9 增加 terminal-control topology，v10 增加 unit physical time 与 closed
+route extent transform。v1-v9 历史
 artifact 保持原始序列化、digest 与字段集合，禁止静默附加空数组、重标或刷新证书。
 
 固定代码仍只做：
@@ -943,6 +994,7 @@ feature belongs to
 | operator、reducer、predicate、fill、logical index | J |
 | C slot 与编译时 concrete value | C/Harness binding |
 | instance count、route、slot、order、sharing、placement | π |
+| 一条既有 route slot 上的 closed physical C-extent partition | π，依赖 C attachment 与 J domain |
 | source materialization 与 representation staging | π，受 J/B 约束 |
 | frontend API spelling | 固定 `U_f`，不是 per-kernel 输入 |
 | compiler 偶然 SSA 名/无意义临时差异 | normalize away |
@@ -990,7 +1042,8 @@ Obs_f(Replay_f(J,pi,MaskC(C)),C)
 
 ### 9.1 显式复制泄漏
 
-π 出现 operator、predicate、formula、semantic constant、API、kernel name 等。这是静态非法，
+π 出现任意 operator、predicate/formula、semantic constant、API、kernel name 等（v10 唯一 closed
+route extent constructor 除外）。这是静态非法，
 必须直接拒绝。
 
 ### 9.2 语义权威泄漏
@@ -1214,9 +1267,10 @@ Gate2：semantic soundness
 - declaration-order opaque `r*/i*/J/C` handles；
 - raw handle 与 π graph instance namespace 分离；
 - route operand slots；
+- route-local closed extent transform 与 existing-route linkage；
 - order/region acyclicity；
 - sharing uniqueness；
-- source text/API/formula 不进入 π；
+- source text/API/arbitrary formula 不进入 π；route extent 仅有 closed divisor/rounding；
 - multiple instances 可以锚定同一个 semantic ref；
 - Replay 使用 J/C/pi source-blind packet。
 
@@ -1238,6 +1292,7 @@ Gate2：semantic soundness
 - anchor 是否真的存在于当前 J/C；
 - observable instance 是否由 J node/access/effect 授权；
 - route operand slot 是否与 J carrier 相容；
+- route extent transform 是否锚定 required positive-int C、匹配的 J domain attachment/axis 与既有 slot；
 - representation refinement 是否属于系统封闭 schema，以及 sensitive refinement 是否具有
   J/B authorization 或属于系统安全白名单；
 - observable instance 的 J ownership、route slot/type 与 sharing/order legality。
@@ -1261,10 +1316,11 @@ TypeCheck(J,C,pi)
 
 1. 所有 J/C refs 存在；
 2. route operand slot 与类型合法；
-3. observable instance 锚定 J-owned node/access/effect；
-4. π 不含语义原子、frontend API、source text 或 C value；
-5. sensitive refinement 具有 J/B 显式 authorization，或属于系统安全白名单。
-6. 未知字段、未知 relation 与自由文本扩展 fail closed。
+3. route extent transform 的 source/target/attachment/slot/divisor/rounding 合法；
+4. observable instance 锚定 J-owned node/access/effect；
+5. π 不含逻辑语义原子、frontend API、source text 或 C concrete value；
+6. sensitive refinement 具有 J/B 显式 authorization，或属于系统安全白名单。
+7. 未知字段、未知 relation 与自由文本扩展 fail closed。
 
 这些项目已有聚焦正反例和真实 canary；其余图同态检查继续增强，但不能把尚未检查的性质报告为
 已经由系统机械保证。模型 response 先经 Decode/Elaborate 构造唯一 typed J，使 TypeCheck 不依赖
@@ -1305,7 +1361,9 @@ authorization；这只合并 proof-irrelevant 文件动作，外部 TypeCheck �
 numeric-cast、result-relation compatibility 与当前 v4/v5 typed relations 的检查均已随版本化
 TypeCheck 落地并写入 fresh receipt；旧 artifact/证书保持历史解释，不由新规则静默重判。
 
-活动 fresh-run 使用 `typecheck.v26`。v26 继承 v25，仅允许 J 中 direct `x* == 1` 或 `1 == x*`
+活动 fresh-run 使用 `typecheck.v27`。v27 只新增 route extent transform 的 existing-route、required
+positive-int C、J-domain attachment/axis 与 realize-anchor dependent checks；不从 Source/J/valuation
+生成 relation。v26 继承 v25，仅允许 J 中 direct `x* == 1` 或 `1 == x*`
 证明一个 symbolic singleton，以消费同一 J 已显式作者化的 broadcast axes；缺失、非 1 或冲突
 direct equality fail closed。checker 不做 SMT/transitive inference，不从 concrete valuation、C、π、
 Source 或 target shape补 singleton/broadcast。v25 继承 v24，并新增 `reduction_linearization` 的 closed
@@ -1593,6 +1651,7 @@ masked-J hard close and TypeCheck(J,C,pi) = PASS
 - semantic handle name 注入；
 - undeclared ref/instance/region；
 - route slot 越界或交换；
+- route extent transform 缺 route、错 C/J attachment、重复 slot、非法 divisor/rounding；
 - order/region cycle；
 - J 中不存在的 observable effect；
 - 未授权 atomic/cast/reassociation；

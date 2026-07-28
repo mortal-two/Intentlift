@@ -20,7 +20,7 @@ from .pi import (
 REPLAY_PACKET_SCHEMA = "intentir.scrc.replay-input.v1"
 PUBLIC_FRONTEND_CONTEXT = {
     "triton": {
-        "context_policy": "public_frontend_context_v17",
+        "context_policy": "public_frontend_context_v18",
         "retrieval_scope": "public Triton documentation and public examples",
         "tool_access": ["public_document_lookup"],
         "compile_entry_contract": (
@@ -116,7 +116,12 @@ PUBLIC_FRONTEND_CONTEXT = {
             "frontend APIs. Every pi.physical_loop_carriers entry preserves the "
             "declared init/state/next/result temporal stages for its physical "
             "iteration region; do not collapse the loop-carried accumulator into "
-            "one stateless reduction or invent an update formula absent from J."
+            "one stateless reduction or invent an update formula absent from J. "
+            "Within each region, physical_loop_carriers declaration order is the "
+            "exact common carrier-tuple ordinal across init/state/next/result; "
+            "preserve it in frontend loop arguments, yields, and results, and never "
+            "sort by dtype, semantic ref, or mechanism. This tuple order is not "
+            "event execution order; pi.order remains its only authority."
             " Every pi.unit_iterations entry is mandatory physical topology over "
             "one already-authored non-loop J subject and axis. Materialize exactly "
             "the logical points [0, extent) with unit step, or the same points in "
@@ -291,7 +296,7 @@ PUBLIC_FRONTEND_CONTEXT = {
 # u_f object; changing that basis requires an explicit future policy version.
 PUBLIC_FRONTEND_CONTEXT_ACTIVE_POLICY = MappingProxyType(
     {
-        "triton": "public_frontend_context_v17",
+        "triton": "public_frontend_context_v18",
         "cute": "public_frontend_context_v1",
         "tilelang": "public_frontend_context_v8",
         "cuda": "public_frontend_context_v4",
@@ -336,6 +341,9 @@ PUBLIC_FRONTEND_CONTEXT_DIGEST_HISTORY = MappingProxyType(
                 ),
                 "public_frontend_context_v17": (
                     "7648ad570af5d5b94de6f6baac6beec2f7493b54afc57c57bf259d6a0e222e21"
+                ),
+                "public_frontend_context_v18": (
+                    "81453bfd2ac8c3f0ee58f0e3bf091cdd7235ffc5068ec139c6f2a2b8d07ad2f4"
                 ),
             }
         ),
@@ -408,6 +416,12 @@ _PUBLIC_FRONTEND_CONTEXT_DIGEST_ALIASES = MappingProxyType(
                     {
                         "67845810703e1c0906950e4008d975fdab0167d17a8106ced006f0fdf627d402",
                         "57371c0c62fc68ca1f8f9b45a80144766ddf1416778f05f91b1c9c115173e165",
+                    }
+                ),
+                "public_frontend_context_v17": frozenset(
+                    {
+                        "7648ad570af5d5b94de6f6baac6beec2f7493b54afc57c57bf259d6a0e222e21",
+                        "3fee7a74829f128e68c118c3afe48873be032d72ee9511b48591fdeaeb79c7e9",
                     }
                 ),
             }
@@ -519,6 +533,18 @@ PUBLIC_FRONTEND_CONTEXT_RECEIPT_HISTORY = MappingProxyType(
                         "receipt_hash_basis": "full_u_f",
                         "context_sha256": (
                             "2cea108cfa97dc4cc4fff87fa65e36e30cd75fb5bf8d38e7588ce1446d62ac2a"
+                        ),
+                        "accepted_context_sha256": (
+                            "2cea108cfa97dc4cc4fff87fa65e36e30cd75fb5bf8d38e7588ce1446d62ac2a",
+                            "3bf7183af25f7517685cfcea9ebbdc69176093d89e660d5ef062a241167f588a",
+                        ),
+                    }
+                ),
+                "public_frontend_context_v18": MappingProxyType(
+                    {
+                        "receipt_hash_basis": "full_u_f",
+                        "context_sha256": (
+                            "69f8902436392087b548d3679a9730a2460f3ef2581d07d44e7801c390aea471"
                         ),
                     }
                 ),
@@ -679,6 +705,7 @@ _REPLAY_COMPONENT_KEYS = {
             "regions",
             "instances",
             "routes",
+            "route_extent_transforms",
             "order",
             "sharing",
             "refinements",
@@ -966,6 +993,7 @@ def _validate_source_isolated_payload(
             forbidden = sorted(set(value) & _FORBIDDEN_KEYS)
             if "source" in value and not (
                 path.startswith("$.pi.routes[")
+                or path.startswith("$.pi.route_extent_transforms[")
                 or path.startswith("$.pi.sharing[")
             ):
                 forbidden.append("source")
@@ -1154,7 +1182,8 @@ def _instructions(*, frontend: Frontend, masked: bool) -> str:
         f"{frontend.value} public-frontend kernel module. You never see "
         "the source implementation. Consume J, pure C and pi directly; pi is topology, "
         "not semantic authority. Treat every pi instance, route, order edge, sharing "
-        "relation, structured or physical iteration relation, physical carrier, "
+        "relation, route extent transform, structured or physical iteration "
+        "relation, physical carrier, "
         "representation refinement and region placement as required "
         "realization topology. Region placement is exact lexical scope: emit each "
         "compiler-visible instance in its declared region, keep a loop-region "
@@ -1211,11 +1240,19 @@ def _instructions(*, frontend: Frontend, masked: bool) -> str:
         "C slot; use lower 0, step equal to that C tile, and upper exactly "
         "ceil_div(trip extent, C tile) * C tile. Do not infer a bound from current "
         "shapes/values or invent another rounding formula. "
+        "For every pi.route_extent_transforms item, resolve source to its anonymous "
+        "required positive-integer C slot and apply the declared floor/ceil division "
+        "by the literal divisor only at the named existing route target slot. This "
+        "is a representation extent partition: do not turn it into J shape/domain/"
+        "predicate semantics, apply it to another C use, or infer another transform. "
         "For every pi.physical_iterations relation, keep J's operation or boundary "
         "traversal logical while materializing the explicit physical loop from its "
         "same-subject C-attached axis, induction_basis, and direction. Preserve every "
         "pi.physical_loop_carriers init/state/next/result temporal stage; neither "
         "relation authorizes a new semantic operator or formula. "
+        "Preserve same-region physical_loop_carriers declaration order as the shared "
+        "carrier-tuple ordinal across init/state/next/result; do not sort it or treat "
+        "it as event order. "
         "For every pi.unit_iterations relation, materialize exactly one unit-step "
         "physical loop over its authored J axis: [0, logical extent) for forward, or "
         "the same points descending for reverse. It has no C tile and authorizes no "

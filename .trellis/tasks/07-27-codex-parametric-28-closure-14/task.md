@@ -187,10 +187,10 @@ fixed code不得替Lift修成`x*`。
 ## 4. 当前执行栈
 
 - frontend commit起点：`460aaed1c6af0b267a4a9da9ca497aea6e66ad40`；
-- artifact/decode/typecheck：`artifact.v9 / decode.v14 / typecheck.v26`；
-- Lift：Codex `openai.codex-cli.intentir-lift.v11 / intentir.lift-knowledge.v65`，MiniSWE `minisweagent.intentir-lift.v3 / intentir.lift-knowledge.v61`；
-- Replay：Codex `openai.codex-cli.intentir-replay.v23`，MiniSWE `minisweagent.intentir-replay.v27`；
-- Replay packet/check：`replay-input.v1 / public_frontend_context_v16 / replay-check.v10`；
+- artifact/decode/typecheck：`artifact.v10 / decode.v15 / typecheck.v27`；
+- Lift：Codex `openai.codex-cli.intentir-lift.v11 / intentir.lift-knowledge.v68`，MiniSWE `minisweagent.intentir-lift.v3 / intentir.lift-knowledge.v64`；
+- Replay：Codex `openai.codex-cli.intentir-replay.v25`，MiniSWE `minisweagent.intentir-replay.v29`；
+- Replay packet/check：`replay-input.v1 / public_frontend_context_v17 / replay-check.v11`；
 - Harness：Triton workload adapter v5；
 - Gate1 observer：`triton-ttir-3.6-gate1-v11`；outer batch：`intentir.scrc.batch.v3`；
   candidate fan-out：v4 `first_observed_gate1_closure_cooperative_stop`；
@@ -323,10 +323,33 @@ fixed code不得替Lift修成`x*`。
   consumer/operand ordinal 加入 exact `critical_facts.v3`，并在存在该 obligation 时要求
   `replay-obligation-audit.v2` 对 owner 当前编号源码自审。该工具不映射 relation 到 statement、不选择
   `expand_dims` 次数或代码、不读取 Source/Gate；完整 Replay 仍由 source-blind LLM 作者化。
+  三次 fixed-artifact v23 xhigh recheck 均消除了旧 `128x1` load、缺失 expand_dims 与全部
+  predicate/effect 差异；最佳分支 interface/op/reduction/predicate-effect 全过，只剩 dataflow 226。
+  non-recursive frontier 把它压缩为同一 physical loop 的 5 个 carrier tuple置换：旧 J/π 把两个
+  accumulator relation排在三个 pointer relation之前，Source恰好相反，而 Replay忠实消费旧顺序。
+  因此 v66/v62 与 Replay v28/v24 只明确现有数组 declaration order 是 shared carrier-tuple ordinal；
+  fixed code不重排旧 artifact，后续必须 fresh relift。
 - Codex Lift v11 / knowledge v65 将 closed frontier 已有的 interface、reduction、predicate/effect 与
   op-multiset direct categories 一次并列展开，recursive dataflow 保持按需分页。它只改善同一 owner
   对已有 Gate1 evidence 与 π grammar 的注意力；不选择 refinement、不改 J/C/π，也不把 compiler op
   当成 J semantics。针对性回归 `143 passed`。
+- Wave 37（起点 commit `ff136192`，one-col backward，Codex Sol-xhigh，`B=3,K=3`）三个 branch
+  均完整耗尽三轮 NO_CLOSURE，无 infrastructure failure。branch 3 最终 interface/op-multiset/
+  reduction/predicate-effect 全过，只剩 20 条 dataflow 差异；Source helper 的 terminal true arm 按
+  `DV -> DK` 写入，而 authored arm `scope.effects` 与 π transfer topology 按 `DK -> DV`，Replay 忠实
+  消费该顺序。它是 fresh Lift authorship frontier，不是 fixed-artifact Replay 可修的问题。首轮 xhigh
+  Lift约 10--15 分钟，persistent relift约 2.8 分钟，说明 owner continuation 有效但首稿 attention
+  仍昂贵。`source-outline.v2` 因此只新增 syntax-only loop-preexisting-write 与 reachable-helper literal
+  memory-order checklist；fixed code不分类carrier/effect、不选择顺序、不写J/C/π。该单一稳定 frontier
+  允许下一次 fresh Lift 升至 Sol-max，Replay继续fresh/source-blind Sol-xhigh。
+- RoPE 的 16-wide/8-wide frontier 证明旧 wire 无法同时保持 Source/Harness raw `pad_hd=16` 与某条
+  realization use 的 `pad_hd//2`；把 C 改存 8 会破坏 Source/Replay 同一 valuation，让 Replay 从 J 猜
+  `/2` 又是欠定。`artifact.v10/decode.v15/typecheck.v27` 因此只新增 closed
+  `pi.route_extent_transforms{source,target,slot,divisor>1,rounding=floor|ceil}`：source 是 attached
+  required positive-int C，target 是匹配 J domain realize，且 exact route slot 必须已存在。它不创建
+  J half-domain/shape/predicate、不读取 concrete value、不传播 sibling use；Replay v29/v25 将 relation
+  放入 exact critical/audit/ingress，production仍在π前停止。修复后 RoPE 必须 fresh relift，旧 artifact
+  不得由 fixed code 补 relation，也尚未新增认证。
 - 当前可用闭合总计 `20/28`：Wave32 将 GroupNorm 从 exact-artifact capability evidence 升级为 fresh
   直接认证后，现为 16 个原运行直接认证、4 个 exact-artifact capability recheck 认证。
   TypeCheck PASS 不计进度；只有 Gate1 已闭合且当前 Gate2 三边通过才计入。
@@ -349,7 +372,7 @@ workspace的完整candidate；Codex/MiniSWE owner均固定消费创建时的私�
 source-aware Lift owner完成。
 
 CrossEntropy 曾暴露一个通用表达缺口：J 已作者化 early-return `effect_if`，旧 π 无法区分 terminal
-arm 与 lexical continuation。current `artifact.v9` 只新增 closed
+arm 与 lexical continuation。`artifact.v9` 当时只新增 closed
 `pi.terminal_controls{terminal_instance,continuation_instance}`；relation 只能连接同一 J `effect_if` 的
 sibling arm-scope instances，不复制 predicate/polarity/return/Source/API，且 production 不读 π。这是
 source-neutral terminal CFG topology，不是 CrossEntropy hint 或 deterministic composer。
@@ -443,7 +466,7 @@ K；无法安全resume时归为infrastructure failure。first-winner cancellatio
   已形成稳定、可行动且只剩单一高难语义前沿时才使用 Sol max；max 不替代 schema/consumer 修复，
   也不靠更多思考预算重烧相同 candidate。Terra high只作为独立速度/模型能力对照，不占用主闭合
   branch，也不能用其失败覆盖Sol证据；
-- 同case默认`B=3`，三个branch彼此隔离；formal Gate1上限默认`K=5`，首个Gate1 closure立即成为
+- 同case默认`B=3`，三个branch彼此隔离；当前聚焦闭合的 formal Gate1上限为`K=3`，首个Gate1 closure立即成为
   winner并cooperative stop siblings；
 - agent内部tool/model steps没有“三次”capability上限，由active wall-time、transport safety与exact
   stagnation管理；
@@ -457,7 +480,7 @@ winner必须按fan-out v4定义为host首先原子观察到、且完整Gate1-clo
 `SUPERSEDED + winner_branch_id`，已经消耗的调用与bytes/hash不丢弃。wall-clock完成顺序本身没有
 认证含义。
 
-`K=5`是上限而非必须跑满。只有全部B个branch带完整`NO_CLOSURE` evidence耗尽其声明K，case才能
+`K=3`是当前聚焦运行上限而非必须跑满。只有全部B个branch带完整`NO_CLOSURE` evidence耗尽其声明K，case才能
 报告`NO_CLOSURE_(B,K)`；infrastructure/observer/profile invalid不能伪装成NO_CLOSURE。
 
 TypeCheck、CandidateCheck、ReplayCheck和synthetic compile只定位构造阶段，不作为能力指标。能力

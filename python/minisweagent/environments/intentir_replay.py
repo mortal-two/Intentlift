@@ -501,6 +501,7 @@ def _packet_requirements(packet: Mapping[str, Any]) -> dict[str, Any]:
     topology_limit = 24
 
     relation_names = (
+        "route_extent_transforms",
         "iterations",
         "loop_carriers",
         "physical_iterations",
@@ -511,6 +512,7 @@ def _packet_requirements(packet: Mapping[str, Any]) -> dict[str, Any]:
     relation_views: dict[str, Any] = {}
     referenced_instances: set[str] = set()
     relation_instance_fields = {
+        "route_extent_transforms": ("source", "target"),
         "iterations": ("loop_instance", "tile_instance"),
         "loop_carriers": ("loop_instance", "init", "state", "next", "result"),
         "physical_iterations": ("body_instance", "tile_instance"),
@@ -838,6 +840,9 @@ def _packet_critical_facts(packet: Mapping[str, Any]) -> dict[str, Any]:
     unit_iterations = pi.get("unit_iterations", [])
     if not isinstance(unit_iterations, list):
         raise TypeError("packet pi unit_iterations must be an array")
+    route_extent_transforms = pi.get("route_extent_transforms", [])
+    if not isinstance(route_extent_transforms, list):
+        raise TypeError("packet pi route_extent_transforms must be an array")
     instances_value = pi.get("instances", [])
     regions_value = pi.get("regions", [])
     order_value = pi.get("order", [])
@@ -1037,6 +1042,7 @@ def _packet_critical_facts(packet: Mapping[str, Any]) -> dict[str, Any]:
         "unit_iterations": unit_iterations,
         "transfer_occurrences": transfer_occurrences,
         "identity_materializations": identity_materializations,
+        "route_extent_transforms": route_extent_transforms,
         "reduction_linearizations": reduction_linearizations,
         "lexical_regions": lexical_regions,
         "cross_region_order": cross_region_order,
@@ -1061,6 +1067,7 @@ def _replay_obligation_audit_view(
     identity_materializations = facts["identity_materializations"]
     lexical_regions = facts["lexical_regions"]
     cross_region_order = facts["cross_region_order"]
+    route_extent_transforms = facts["route_extent_transforms"]
     return {
         "protocol": "intentir.replay-obligation-audit.v3",
         "status": "pass",
@@ -1070,11 +1077,13 @@ def _replay_obligation_audit_view(
             or identity_materializations
             or lexical_regions
             or cross_region_order
+            or route_extent_transforms
         ),
         "broadcast_obligations": broadcast_obligations,
         "identity_materializations": identity_materializations,
         "lexical_regions": lexical_regions,
         "cross_region_order": cross_region_order,
+        "route_extent_transforms": route_extent_transforms,
         "source_nonempty_lines": [
             {
                 "line": line_number,

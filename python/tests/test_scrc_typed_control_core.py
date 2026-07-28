@@ -222,6 +222,7 @@ def _effect_if_payload() -> dict:
         "unit_iterations": [],
         "physical_loop_carriers": [],
         "terminal_controls": [],
+        "route_extent_transforms": [],
     }
     return payload
 
@@ -250,8 +251,8 @@ def test_v9_effect_if_schema_decode_round_trip_and_digest() -> None:
     artifact = Gate1Artifact.from_json(payload)
     assert artifact.to_json() == payload
     assert Gate1Artifact.SCHEMA == "intentir.scrc.artifact.v10"
-    assert SCRC_DECODE_PROTOCOL == "intentir.scrc.decode.v14"
-    assert TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v26"
+    assert SCRC_DECODE_PROTOCOL == "intentir.scrc.decode.v15"
+    assert TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v27"
     decoded = decode_scrc_lift_artifact(json.dumps(payload), _request())
     decoded_json = decoded.to_json()
     assert Gate1Artifact.from_json(decoded_json).to_json() == decoded_json
@@ -322,6 +323,7 @@ def test_v9_terminal_control_is_closed_and_v8_remains_readable() -> None:
     legacy["schema"] = "intentir.scrc.artifact.v8"
     del legacy["pi"]["unit_iterations"]
     del legacy["pi"]["terminal_controls"]
+    del legacy["pi"]["route_extent_transforms"]
     assert Gate1Artifact.from_json(legacy).wire_schema == (
         "intentir.scrc.artifact.v8"
     )
@@ -811,6 +813,7 @@ def test_v1_through_v5_cannot_claim_v6_control_or_rounded_basis() -> None:
     del conditional["pi"]["physical_iterations"]
     del conditional["pi"]["physical_loop_carriers"]
     del conditional["pi"]["terminal_controls"]
+    del conditional["pi"]["route_extent_transforms"]
     with pytest.raises(SchemaError, match="v1-v5 do not contain J effect_if"):
         Gate1Artifact.from_json(conditional)
 
@@ -820,6 +823,7 @@ def test_v1_through_v5_cannot_claim_v6_control_or_rounded_basis() -> None:
     del rounded["pi"]["physical_iterations"]
     del rounded["pi"]["physical_loop_carriers"]
     del rounded["pi"]["terminal_controls"]
+    del rounded["pi"]["route_extent_transforms"]
     with pytest.raises(SchemaError, match="v1-v5 do not contain rounded"):
         Gate1Artifact.from_json(rounded)
 

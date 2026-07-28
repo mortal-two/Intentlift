@@ -476,6 +476,10 @@ continuations for the same Source; Replay remains a separate fresh process.
   Its syntax-only `source-outline`, literal `source-find` search, and paged `candidate-nodes`/single
   `candidate-node` views expose only Source and J content already visible to
   this worker; they never parse semantics, construct fields, or edit the draft.
+  `source-outline` also lists literal descendant-return presence, ordered
+  load/store/atomic call sites, and names that were lexically bound before a loop
+  and written inside it. These remain navigation checklists, not inferred
+  effects, carriers, or frontend tuple order.
   Its `feedback --path`, `candidate --path`, and `candidate-find` commands are
   bounded read-only inspection over already-mounted data and the current draft.
   `bootstrap` copies an explicitly supplied previous artifact only when no
@@ -505,7 +509,11 @@ the exact retained bytes from `/output/candidate.json`, avoiding duplicate
 For a long Source, run
 `python /input/tools/context_query.py source-outline --start 1 --count 32`
 and page it before deciding that no loop, branch, or early return exists. The
-outline contains syntax locations only; it never classifies or constructs J.
+outline contains syntax facts only; it never classifies or constructs J. For
+every loop, inspect each `lexically_preexisting_writes` item and decide the
+complete carrier set from Source. For each selected reachable helper, preserve
+its literal memory-call order in authored scope.effects and pi order; never use
+J node declaration order as an effect-order substitute.
 Use `feedback --path diagnostics.KEY` for an exact unresolved Gate1 or
 CandidateCheck section; do not probe category names or parse the full file with
 ad-hoc scripts. Use `candidate --path j.PATH` and `candidate-find HANDLE` to

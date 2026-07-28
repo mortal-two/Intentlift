@@ -1086,6 +1086,140 @@ def _check_triton_rounded_iteration_contract(
         consumed.add(match)
 
 
+def _packet_route_extent_contracts(
+    packet: Mapping[str, Any],
+) -> list[tuple[str, int, str, str]]:
+    """Resolve authored route-extent partitions to anonymous C handles."""
+
+    pi = packet.get("pi")
+    if not isinstance(pi, Mapping):
+        return []
+    instances = {
+        str(item.get("id")): str(item.get("semantic_ref"))
+        for item in pi.get("instances", [])
+        if isinstance(item, Mapping)
+    }
+    result: list[tuple[str, int, str, str]] = []
+    for index, relation in enumerate(pi.get("route_extent_transforms", [])):
+        path = f"pi.route_extent_transforms[{index}]"
+        if not isinstance(relation, Mapping):
+            raise _ReplayABIViolation(
+                "route_extent_transform_contract",
+                path=path,
+            )
+        source = instances.get(str(relation.get("source")))
+        divisor = relation.get("divisor")
+        rounding = relation.get("rounding")
+        if not (
+            isinstance(source, str)
+            and isinstance(divisor, int)
+            and not isinstance(divisor, bool)
+            and divisor > 1
+            and rounding in {"floor", "ceil"}
+        ):
+            raise _ReplayABIViolation(
+                "route_extent_transform_contract",
+                path=path,
+            )
+        result.append((source, divisor, rounding, path))
+    return result
+
+
+def _is_literal_integer(expression: ast.AST, value: int) -> bool:
+    return (
+        isinstance(expression, ast.Constant)
+        and isinstance(expression.value, int)
+        and not isinstance(expression.value, bool)
+        and expression.value == value
+    )
+
+
+def _matches_route_extent_transform(
+    expression: ast.AST,
+    *,
+    source: str,
+    divisor: int,
+    rounding: str,
+) -> bool:
+    if rounding == "floor":
+        return (
+            isinstance(expression, ast.BinOp)
+            and isinstance(expression.op, ast.FloorDiv)
+            and isinstance(expression.left, ast.Name)
+            and expression.left.id == source
+            and _is_literal_integer(expression.right, divisor)
+        )
+    if rounding != "ceil":
+        return False
+    if isinstance(expression, ast.Call) and len(expression.args) == 2:
+        function = expression.func
+        name = (
+            function.attr
+            if isinstance(function, ast.Attribute)
+            else function.id
+            if isinstance(function, ast.Name)
+            else ""
+        )
+        if (
+            name in {"cdiv", "ceil_div"}
+            and isinstance(expression.args[0], ast.Name)
+            and expression.args[0].id == source
+            and _is_literal_integer(expression.args[1], divisor)
+        ):
+            return True
+    if not (
+        isinstance(expression, ast.BinOp)
+        and isinstance(expression.op, ast.FloorDiv)
+        and _is_literal_integer(expression.right, divisor)
+    ):
+        return False
+    numerator = expression.left
+    if isinstance(numerator, ast.BinOp) and isinstance(numerator.op, ast.Add):
+        return (
+            isinstance(numerator.left, ast.Name)
+            and numerator.left.id == source
+            and _is_literal_integer(numerator.right, divisor - 1)
+        ) or (
+            isinstance(numerator.right, ast.Name)
+            and numerator.right.id == source
+            and _is_literal_integer(numerator.left, divisor - 1)
+        )
+    return False
+
+
+def _check_triton_route_extent_contract(
+    code: str,
+    packet: Mapping[str, Any],
+    function_name: str,
+) -> None:
+    expected = _packet_route_extent_contracts(packet)
+    if not expected:
+        return
+    tree = ast.parse(code, mode="exec")
+    function = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == function_name
+    )
+    expressions = [node for node in ast.walk(function) if isinstance(node, ast.expr)]
+    for source, divisor, rounding, path in expected:
+        if not any(
+            _matches_route_extent_transform(
+                expression,
+                source=source,
+                divisor=divisor,
+                rounding=rounding,
+            )
+            for expression in expressions
+        ):
+            raise _ReplayABIViolation(
+                "route_extent_transform_contract",
+                path=path,
+                handles=(source,),
+                line=function.lineno,
+            )
+
+
 def _closed_ingress_diagnostic(exc: Exception) -> dict[str, Any]:
     """Project an exception to bounded source-free rule/path metadata."""
 
@@ -1231,6 +1365,7 @@ def replay_source_ingress(
             _check_triton_program_id_axes(code, function_name)
             _check_triton_typed_control_contract(code, packet, function_name)
             _check_triton_rounded_iteration_contract(code, packet, function_name)
+            _check_triton_route_extent_contract(code, packet, function_name)
         elif selected_frontend is Frontend.TILELANG:
             _check_tilelang_exact_abi(code, packet, function_name)
             _check_tilelang_schedule_roles(code, packet, function_name)
@@ -2108,7 +2243,8 @@ After writing a complete first source, use `intentir_replay_inspect` only when a
 focused own-source inventory would resolve uncertainty. The tool reports only
 your syntax and never declares a semantic mismatch or recommends a repair.
 
-When the startup critical ledger contains lexical regions or cross-region order,
+When the startup critical ledger contains lexical regions, cross-region order,
+or route extent transforms,
 run `intentir_replay_obligation_audit /output/replay.source` on the complete current
 bytes before the construction compile. It only colocates the exact authored ledger
 with numbered lines from your own source. Compare them yourself; the tool maps no
@@ -2133,6 +2269,11 @@ local; and every pi `rounded_extent_step` must use its declared J trip extent
 and matching C tile as `range(0, ceil_div(extent,tile)*tile, tile)`. `effect_if`,
 `value_if`, and select are hard-distinct. Never substitute select/predicated
 unconditional execution, current-shape guesses, or a second rounding formula.
+
+Every `pi.route_extent_transforms` item qualifies exactly one already-authored
+route slot from a required positive-integer C extent. Apply its literal divisor
+and floor/ceil rounding only at that target-local realization use. It is not a J
+shape/domain/predicate relation and does not authorize transforming sibling C uses.
 
 Every `pi.physical_iterations` item is an authored physical loop around an
 already-logical non-loop J reduce/contraction or boundary access/domain. Resolve

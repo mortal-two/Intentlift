@@ -4197,6 +4197,10 @@ class Gate1Artifact(StrictJSONMixin):
             raise SchemaError(
                 "Gate1 artifact v1-v9 do not contain pi unit_iterations"
             )
+        if self.wire_schema != self.SCHEMA and self.pi.route_extent_transforms:
+            raise SchemaError(
+                "Gate1 artifact v1-v9 do not contain pi route_extent_transforms"
+            )
 
         node_refs = set(self.j.node_ids) | set(self.j.node_ids.values())
         boundary_node_refs = {
@@ -4363,9 +4367,18 @@ class Gate1Artifact(StrictJSONMixin):
                 raise SchemaError(
                     "Gate1Artifact.pi is missing required field: unit_iterations"
                 )
-        elif pi_value is not None and "unit_iterations" in pi_value:
+            if pi_value is not None and "route_extent_transforms" not in pi_value:
+                raise SchemaError(
+                    "Gate1Artifact.pi is missing required field: "
+                    "route_extent_transforms"
+                )
+        elif pi_value is not None and (
+            "unit_iterations" in pi_value
+            or "route_extent_transforms" in pi_value
+        ):
             raise SchemaError(
-                "Gate1 artifact v1-v9 do not contain pi unit_iterations"
+                "Gate1 artifact v1-v9 do not contain pi unit_iterations or "
+                "route_extent_transforms"
             )
         if schema in {
             "intentir.scrc.artifact.v5",
@@ -4453,6 +4466,7 @@ class Gate1Artifact(StrictJSONMixin):
                 include_unit_iterations=self.wire_schema == self.SCHEMA,
                 include_terminal_controls=self.wire_schema
                 in {"intentir.scrc.artifact.v9", self.SCHEMA},
+                include_route_extent_transforms=self.wire_schema == self.SCHEMA,
             ),
         }
 

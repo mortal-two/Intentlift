@@ -80,7 +80,7 @@ def test_v6_preserves_v5_access_guard_round_trip_and_decode_exactness() -> None:
     assert payload["schema"] == "intentir.scrc.artifact.v10"
     parsed = Gate1Artifact.from_json(payload)
     assert parsed.to_json() == payload
-    assert SCRC_DECODE_PROTOCOL == "intentir.scrc.decode.v14"
+    assert SCRC_DECODE_PROTOCOL == "intentir.scrc.decode.v15"
     decoded = decode_scrc_lift_artifact(json.dumps(payload), _request())
     assert decoded.wire_schema == "intentir.scrc.artifact.v10"
     assert decoded.j.boundary.access_guard_relations[0].to_json() == {
@@ -96,6 +96,7 @@ def test_v5_access_guard_artifact_remains_field_exact_but_is_legacy_for_lift() -
     payload["schema"] = "intentir.scrc.artifact.v5"
     del payload["pi"]["unit_iterations"]
     del payload["pi"]["terminal_controls"]
+    del payload["pi"]["route_extent_transforms"]
     del payload["pi"]["physical_iterations"]
     del payload["pi"]["physical_loop_carriers"]
     parsed = Gate1Artifact.from_json(payload)
@@ -152,6 +153,7 @@ def test_v4_round_trip_remains_field_exact_and_cannot_claim_v5_relation() -> Non
     payload["schema"] = "intentir.scrc.artifact.v4"
     del payload["pi"]["unit_iterations"]
     del payload["pi"]["terminal_controls"]
+    del payload["pi"]["route_extent_transforms"]
     del payload["pi"]["physical_iterations"]
     del payload["pi"]["physical_loop_carriers"]
     del payload["j"]["boundary"]["access_guard_relations"]

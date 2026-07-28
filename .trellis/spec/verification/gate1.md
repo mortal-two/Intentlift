@@ -9,12 +9,15 @@ Gate1 只接收已经通过 `TypeCheck(J,C,π)`、由当前三元组生成的全
 conditions。该 Gate1 claim 只针对这个 c0。
 
 当前 fresh-run artifact/decode/typecheck 组合为
-`intentir.scrc.artifact.v10 / intentir.scrc.decode.v14 / intentir.scrc.typecheck.v26`。Lift LLM 是完整
+`intentir.scrc.artifact.v10 / intentir.scrc.decode.v15 / intentir.scrc.typecheck.v27`。Lift LLM 是完整
 artifact 的唯一作者：value/dimension、consumer-extension、access-guard、typed control/inout、
-output binding、tiled/unit physical iteration/carrier 与 terminal-control relation 都必须由模型显式提交。Decode、
+output binding、tiled/unit physical iteration/carrier、terminal-control 与 route-local extent transform
+都必须由模型显式提交。Decode、
 CandidateCheck 与 TypeCheck 只能做 closed
 解析、检查、拒绝和诊断，不会补 relation、选择 axes/polarity、插入 `select`、创建 pre-state，或把
-相同 concrete extents 当作 axis identity；v25 继承 v24，并检查作者化
+相同 concrete extents 当作 axis identity；v27 另检查 route extent transform 只能限定一条已存在
+route slot，且 source 是 attached required positive-int C、target 是匹配 J domain realization；它不
+生成 divisor/attachment/relation。其余 v26 合同继承 v25；v25 继承 v24，并检查作者化
 `reduction_linearization` 只能经唯一 slot-0 route 进入一个 J reduce；v24 继承 v23 对 canonical output binding 的完整
 dtype/shape equality，并在 Replay 前拒绝没有从匹配 boundary tensor 的 pointer/tensor signature
 carrier 到达 transfer 的 authored route；浮点 typed constant 的字符串值只允许 closed
@@ -49,7 +52,8 @@ occurrence。完整闭包允许独立 integer base/lane contribution，且不要
 使用相同 `semantic_ref` spelling；它要求每个 transfer 从匹配 boundary tensor 的 pointer/tensor
 signature carrier 经作者化 routes 可达，并要求每个 pointer-producing address stage 最终流向某个
 transfer；并要求 compiled distinct `tt.reshape -> tt.reduce(axis=0)` dataflow 不少于已作者化
-`reduction_linearization` 数量。无法闭合的
+`reduction_linearization` 数量，并拒绝 authored route extent transform 完全缺失 closed
+floor/ceil-div spelling。精确 target-local topology 仍由 Gate1，而不是 ReplayCheck 裁决。无法闭合的
 address topology 不猜。该 check 只拒绝错误 Replay bytes，不生成 source、
 address formula、loop/carrier 或 relation，也没有 Gate1/认证权威。
 

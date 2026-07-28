@@ -288,6 +288,10 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     assert "never copy it to sibling parameters" in preflight
     assert "strictly increasing width" in preflight
     assert "local tile axis after program/grid axes" in preflight
+    assert "declaration order is the exact carrier-tuple ordinal" in preflight
+    assert "never sort carriers by dtype" in preflight
+    assert "`route_extent_transforms`" in preflight
+    assert "does not affect sibling uses" in preflight
 
 
 def test_context_bootstrap_keeps_feedback_visible_and_copies_previous(
@@ -748,6 +752,7 @@ def test_candidate_control_query_joins_authored_multi_output_effect_and_pi_time(
             "unit_iterations": [],
             "physical_loop_carriers": [],
             "terminal_controls": [],
+            "route_extent_transforms": [],
             "routes": [],
             "order": [{"before": "i1", "after": "i2"}],
             "sharing": [],
@@ -996,12 +1001,25 @@ def test_context_query_searches_source_and_pages_authored_nodes_without_editing(
 
     _source_outline(input_root, 1, 32)
     outline = json.loads(capsys.readouterr().out)
-    assert outline["protocol"] == "intentir.lift-source-outline.v1"
+    assert outline["protocol"] == "intentir.lift-source-outline.v2"
     assert "syntax-only Source navigation" in outline["authority"]
     assert [
         (item["kind"], item["line"], item["depth"])
         for item in outline["items"]
     ] == [("function", 1, 0), ("for", 3, 1)]
+    assert outline["items"][0]["ordered_memory_calls"] == [
+        [2, "load"],
+        [5, "store"],
+    ]
+    assert outline["items"][1]["loop_target_names"] == ["offset"]
+    assert outline["items"][1]["lexically_preexisting_writes"] == [
+        {
+            "name": "value",
+            "definition_line": 2,
+            "first_loop_write_line": 4,
+        }
+    ]
+    assert outline["items"][1]["contains_return"] is False
 
     _candidate_nodes(output_root, 1, 2)
     page = json.loads(capsys.readouterr().out)
@@ -1019,6 +1037,32 @@ def test_context_query_searches_source_and_pages_authored_nodes_without_editing(
     assert node["path"].endswith("body.1.body.0")
     assert node["node"]["operands"] == ["v0", "t1"]
     assert candidate_path.read_bytes() == before
+
+
+def test_source_outline_nested_loop_does_not_self_author_a_preexisting_write(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    input_root = tmp_path / "input"
+    input_root.mkdir()
+    (input_root / "source.py").write_text(
+        "def kernel(flag):\n"
+        "    state = 0\n"
+        "    if flag:\n"
+        "        for lane in range(4):\n"
+        "            state = state + lane\n"
+        "            local = lane\n"
+    )
+
+    _source_outline(input_root, 1, 32)
+    outline = json.loads(capsys.readouterr().out)
+    loop = next(item for item in outline["items"] if item["kind"] == "for")
+    assert loop["lexically_preexisting_writes"] == [
+        {
+            "name": "state",
+            "definition_line": 2,
+            "first_loop_write_line": 5,
+        }
+    ]
 
 
 def test_context_discovery_queries_work_in_real_bubblewrap() -> None:
@@ -1061,7 +1105,7 @@ def test_context_discovery_queries_work_in_real_bubblewrap() -> None:
     assert result["returncode"] == 0, result
     assert "--- source.py:" in result["output"]
     assert ">" in result["output"] and " < " in result["output"]
-    assert '"protocol": "intentir.lift-source-outline.v1"' in result["output"]
+    assert '"protocol": "intentir.lift-source-outline.v2"' in result["output"]
     assert result["output"].count(
         '"protocol": "intentir.lift-candidate-node-query.v1"'
     ) == 2
@@ -1098,6 +1142,15 @@ def test_compact_schema_queries_work_in_real_bubblewrap() -> None:
                 )
             }
         )
+        route_extent_result = environment.execute(
+            {
+                "command": (
+                    "python /input/tools/schema_query.py "
+                    "/input/schema/artifact.schema.json "
+                    "section pi_route_extent_transform"
+                )
+            }
+        )
     finally:
         workspace.cleanup()
 
@@ -1123,6 +1176,10 @@ def test_compact_schema_queries_work_in_real_bubblewrap() -> None:
     assert '"loop_instance"' in loop_carrier_result["output"]
     assert '"state"' in loop_carrier_result["output"]
     assert len(loop_carrier_result["output"].splitlines()) < 80
+    assert route_extent_result["returncode"] == 0
+    assert '"divisor"' in route_extent_result["output"]
+    assert '"rounding"' in route_extent_result["output"]
+    assert len(route_extent_result["output"].splitlines()) < 90
 
 
 def test_minimal_example_passes_static_schema_and_canonical_parser() -> None:
@@ -3471,7 +3528,7 @@ def test_authoritative_candidate_check_uses_source_free_versioned_context() -> N
     prepared = prepare_scrc_lift(request.source.text)
     context = scrc_candidate_check_context(prepared)
     assert context.expected_parameters == ("p0", "p1", "p2")
-    assert context.typecheck_protocol == "intentir.scrc.typecheck.v26"
+    assert context.typecheck_protocol == "intentir.scrc.typecheck.v27"
     assert "source_copy" not in repr(context)
     assert not hasattr(context, "user_input")
     assert not hasattr(context, "harness_binding")
@@ -4208,8 +4265,8 @@ def test_adapter_keeps_one_owner_context_and_workspace(monkeypatch) -> None:
     assert second.metadata["continued_from_messages"] > 0
     assert second.metadata["session_model_turns"] == 6
     assert first.metadata["artifact_schema"] == "intentir.scrc.artifact.v10"
-    assert first.metadata["decode_protocol"] == "intentir.scrc.decode.v14"
-    assert first.metadata["typecheck_protocol"] == "intentir.scrc.typecheck.v26"
+    assert first.metadata["decode_protocol"] == "intentir.scrc.decode.v15"
+    assert first.metadata["typecheck_protocol"] == "intentir.scrc.typecheck.v27"
     assert first.metadata["candidate_check"] == {}
     assert first.metadata["physical_provider_calls"] == 3
     assert first.metadata["transport_retries"] == 0
