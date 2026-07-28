@@ -466,6 +466,19 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--effort", default=None)
     parser.add_argument(
+        "--replay-model",
+        default=None,
+        help=(
+            "optional source-blind Replay model override; defaults to the Lift "
+            "model selected by --model"
+        ),
+    )
+    parser.add_argument(
+        "--replay-effort",
+        default=None,
+        help="optional Replay reasoning effort; defaults to --effort",
+    )
+    parser.add_argument(
         "--lift-backend",
         choices=("responses", "miniswe", "codex"),
         default="responses",
@@ -741,6 +754,18 @@ def main(argv: list[str] | None = None) -> int:
                 print("--model must be a non-empty model name", file=sys.stderr)
                 return 2
             provider = replace(provider, model=args.model.strip())
+        replay_provider = provider
+        if args.replay_model is not None:
+            if (
+                not isinstance(args.replay_model, str)
+                or not args.replay_model.strip()
+            ):
+                print("--replay-model must be a non-empty model name", file=sys.stderr)
+                return 2
+            replay_provider = replace(provider, model=args.replay_model.strip())
+        replay_effort = (
+            args.effort if args.replay_effort is None else args.replay_effort
+        )
         run_root = args.run_root.expanduser().resolve()
         gate2_slots = BoundedSemaphore(args.gate2_workers)
         scheduling = {
@@ -876,6 +901,8 @@ def main(argv: list[str] | None = None) -> int:
                 prepared,
                 provider=provider,
                 effort=args.effort,
+                replay_provider=replay_provider,
+                replay_effort=replay_effort,
                 run_masked_j=not args.skip_masked_j,
                 lift_backend=args.lift_backend,
                 lift_workflow=args.lift_workflow,
@@ -887,6 +914,8 @@ def main(argv: list[str] | None = None) -> int:
                     prepared,
                     provider=provider,
                     effort=args.effort,
+                    replay_provider=replay_provider,
+                    replay_effort=replay_effort,
                     run_masked_j=not args.skip_masked_j,
                     lift_backend=args.lift_backend,
                     lift_workflow=args.lift_workflow,
@@ -1032,6 +1061,8 @@ def main(argv: list[str] | None = None) -> int:
                     prepared,
                     provider=provider,
                     effort=args.effort,
+                    replay_provider=replay_provider,
+                    replay_effort=replay_effort,
                     run_masked_j=not args.skip_masked_j,
                     lift_backend=args.lift_backend,
                     lift_workflow=args.lift_workflow,
@@ -1060,6 +1091,8 @@ def main(argv: list[str] | None = None) -> int:
                         prepared,
                         provider=provider,
                         effort=args.effort,
+                        replay_provider=replay_provider,
+                        replay_effort=replay_effort,
                         run_masked_j=not args.skip_masked_j,
                         lift_backend=args.lift_backend,
                         lift_workflow=args.lift_workflow,
