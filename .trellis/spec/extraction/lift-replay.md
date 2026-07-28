@@ -198,7 +198,7 @@ Replay 或 production；production 只消费最终已作者化的 `x*`。不同 
 rounded capacity）保持独立，除非 Source-aware Lift 在现有 J/B vocabulary 中另行作者化其语义关系；
 Harness 不按数值猜 `ceil_div`、容量或有效域公式。
 
-当前持久 owner 使用 `artifact.v9 / decode.v13 / typecheck.v22 / candidate-check.v1` 实现上述
+当前持久 owner 使用 `artifact.v9 / decode.v13 / typecheck.v23 / candidate-check.v1` 实现上述
 CandidateCheck、C attachment、numeric-cast dependent typing 与 result-relation compatibility。v7
 继承 v6，v6 继承 v5；v5 继承 v4 的
 rank-0 closed signature、Layer-A graph value typing total 与显式 NumPy broadcast 合同；它只消费 Lift

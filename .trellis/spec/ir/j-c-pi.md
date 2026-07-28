@@ -464,7 +464,9 @@ wire/decode 窄升为 `artifact.v3 / decode.v3`；v4 随后增加 closed dimensi
 `value_dimension_relations`、`consumer_extensions` 和 typed loop-carrier wire，v5 再增加
 `access_guard_relations`，v6/v7 增加 typed control，v8 增加 physical-only time，v9 增加
 terminal-control topology。当前 active 合同为
-`artifact.v9 / decode.v13 / typecheck.v22 / candidate-check.v1`；v22 增加 signature mode 与 J
+`artifact.v9 / decode.v13 / typecheck.v23 / candidate-check.v1`；v23 在 v22 上新增 canonical
+output binding 的完整 dtype/shape exact dependent check，禁止用相同 concrete valuation 或相同元素
+数掩盖 axis permutation。v22 增加 signature mode 与 J
 input/output boundary partition 的 exact dependent check：input-only、output-only 与显式 inout overlap
 不得混写。v22 继承 v21 的 terminal-control sibling/finality checks，以及 v20 对上述 relations 的
 source-free dependent checks，尤其验证 authored guard 的支配、类型、唯一 axes authority、显式

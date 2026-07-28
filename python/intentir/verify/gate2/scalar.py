@@ -50,7 +50,7 @@ from intentir.verify.gate1.model import (
 from .model import ExecutionResult
 
 
-SCALAR_LOWERING_PROTOCOL = "j_scalar_cpu_mlir_v18"
+SCALAR_LOWERING_PROTOCOL = "j_scalar_cpu_mlir_v19"
 
 
 def _digest(value: Mapping[str, Any]) -> str:

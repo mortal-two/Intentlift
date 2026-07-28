@@ -3154,7 +3154,7 @@ def test_authoritative_candidate_check_uses_source_free_versioned_context() -> N
     prepared = prepare_scrc_lift(request.source.text)
     context = scrc_candidate_check_context(prepared)
     assert context.expected_parameters == ("p0", "p1", "p2")
-    assert context.typecheck_protocol == "intentir.scrc.typecheck.v22"
+    assert context.typecheck_protocol == "intentir.scrc.typecheck.v23"
     assert "source_copy" not in repr(context)
     assert not hasattr(context, "user_input")
     assert not hasattr(context, "harness_binding")
@@ -3812,7 +3812,7 @@ def test_adapter_keeps_one_owner_context_and_workspace(monkeypatch) -> None:
     assert second.metadata["session_model_turns"] == 6
     assert first.metadata["artifact_schema"] == "intentir.scrc.artifact.v9"
     assert first.metadata["decode_protocol"] == "intentir.scrc.decode.v13"
-    assert first.metadata["typecheck_protocol"] == "intentir.scrc.typecheck.v22"
+    assert first.metadata["typecheck_protocol"] == "intentir.scrc.typecheck.v23"
     assert first.metadata["candidate_check"] == {}
     assert first.metadata["physical_provider_calls"] == 3
     assert first.metadata["transport_retries"] == 0

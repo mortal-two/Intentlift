@@ -392,7 +392,9 @@ TypeCheck 还检查 closed comparison class 与 output dtype、A 依赖图和 B 
 见最终执行流程第 6.1 节。v1 中 `RequiresTolerance=true` 即拒绝显式或默认 `exact`，没有自由文本
 或“更强合同”例外；阈值仍完全由外部 Q 决定。该 reassociation fact 只约束 SCRC comparison class，
 不是 production backend permission。
-当前 `typecheck.v22` 继承 v21；v21 继承 v20，v20 又继承 v18 将 `log2` 纳入同一 closed
+当前 `typecheck.v23` 在 v22 上新增 canonical output binding 的完整 dtype/shape exact dependent
+check；相同 concrete extent、相同元素数或当前 singleton axis 都不能代替 J 显式表达 permutation。
+v22 继承 v21；v21 继承 v20，v20 又继承 v18 将 `log2` 纳入同一 closed
 transcendental 集的规则。v22 只新增 signature mode 与 J input/output/inout partition 的 exact
 dependent check，不替 Lift 改写 mode。
 floating `log2` output 仍须由 Lift 显式选择 `tolerance`，fixed checker 不代选 relation 或阈值。
@@ -456,7 +458,7 @@ dependent checking 夸写成 Source topology 的形式证明。
 
 首版不需要让 TypeCheck 成为 SMT 或完整图证明器。最小可行实现只需 fail closed 地完成上述局部检查。
 
-当前合并协议为 `artifact.v9 / decode.v13 / typecheck.v22 / candidate-check.v1 / replay-check.v9`；
+当前合并协议为 `artifact.v9 / decode.v13 / typecheck.v23 / candidate-check.v1 / replay-check.v9`；
 Replay packet envelope 仍是 `replay-input.v1`，Triton context 为 `public_frontend_context_v12`，
 Codex Lift knowledge 为 v59，MiniSWE Replay backend 为 v18，Codex Replay backend 为 v14。v40 为 source-aware Lift worker 增加只读、分页的 Source control-flow
 outline（function/loop/if/return 的行号与嵌套深度）；v41 只把 shared dialect/lowering 已支持的
@@ -549,7 +551,8 @@ artifact 语义，不增加 acceptance path，正式 Runner 仍独立执行 Deco
 扩充 TypeCheck judgement 必须提升 `v_TC`，CandidateCheck 与正式 Runner 必须记录并使用同一版本；
 新版本不静默重判历史证书。
 
-当前 fresh-run 取 `v_TC = typecheck.v22`。v22 增加 signature mode 与 J boundary partition 的 exact
+当前 fresh-run 取 `v_TC = typecheck.v23`。v23 增加 canonical output binding 的完整 dtype/shape
+equality；v22 增加 signature mode 与 J boundary partition 的 exact
 dependent check，并完整继承 v21；v21 继承 v20/v18/v19、v14-v17 typed-control 合同及下述 v7
 前序合同，并包含上述 v9 terminal-control dependent checks；v20 已增加上述 v4/v5
 relation 的 source-free dependent checks；仍不赋予 fixed core artifact 构造权。历史 v7 完整继承 v6；
@@ -597,8 +600,8 @@ consumer topology 由 functional consumer 明确 unsupported。该判定只读 J
 将 mean 自动改写；若 Source 是 masked sum 后显式除法，Lift 必须完整生成
 `reduce(sum) + explicit div`。
 
-Scalar RefEval 当前能力版本为 `j_scalar_cpu_mlir_v18`，shared projection 为
-`intentir.j-functional-boundary.v17`。它们完整继承 v14/v13、v12/v11 与 v10/v3；v10 已继承 v9，v9 已继承 v8 的唯一 node-less
+Scalar RefEval 当前能力版本为 `j_scalar_cpu_mlir_v19`，shared projection 为
+`intentir.j-functional-boundary.v18`。它们完整继承 v14/v13、v12/v11 与 v10/v3；v10 已继承 v9，v9 已继承 v8 的唯一 node-less
 logical-input load，并把 padded reduction 从 single input/output/sum 特例改为 J-only 的通用闭合：
 每个 predicated direct access 必须
 覆盖自身完整 logical domain，仍携带 masked axis 的 access 使用同一 predicate；每个 logical reduce
@@ -646,7 +649,7 @@ order 必须同时成立。v14/v13 只在 missing-fill load 的所有 downstream
 outside-domain value 不可观察；reduction/scan/loop/transpose/pad、不同 predicate 与未知 effect 继续
 fail closed。两者都不读 Source/C/π/Harness，也不修改 J。
 
-当前 `j_scalar_cpu_mlir_v18` / `intentir.j-functional-boundary.v17` 完整继承 v17/v16，并继续只扩展 deterministic
+当前 `j_scalar_cpu_mlir_v19` / `intentir.j-functional-boundary.v18` 完整继承 v17/v16，并继续只扩展 deterministic
 consumer：显式 product domain 只有在 access coordinates 构成完整、唯一、逐 factor 的 mixed-radix
 bijection 时才投影为 logical tensor axes；missing-fill provenance 只有在 shape-preserving pointwise
 链后接精确 `transpose`，且 store coordinates 等于 load coordinates 的 authored permutation、predicate
@@ -659,6 +662,15 @@ v18/v17 再允许唯一 node-less whole-input load 与 missing-fill pointwise pr
 predicate observable store、effect 与 output binding。该确定性分析只解析 J 已有 edge，不回填
 artifact；歧义、非 pointwise consumer 或任一未闭合路径继续拒绝，因此不改变 Lift codomain、
 TypeCheck 或 SCRC 认证公式。
+
+v19/v18 进一步消费同一 logical inout 上多个 closed physical store→reload stage：每一对都必须由
+唯一 producer SSA、相同 coordinates/predicate、同 scope 的 store-before-load effect order 与无
+intervening write 共同决定；只有最终 canonical output binding 对应 store 是 observable output。
+未被 logical access/predicate 使用的矩形 J domain 作为 `context_domain` 保留在 projection receipt
+中，允许 π 锚定 compiler-visible program context，但不参与 Layer-A 数值执行或生成
+access/program formula。Gate2 Triton Source/Replay 两条 leg 共享
+`triton_static_dot_transpose_v1`，只把已移除的静态 `trans_a/trans_b` 等价归一成 `tl.trans` 并记录
+receipt，不按 kernel 名改写。
 
 函数 `returns` 或 boundary `output_mapping` 任一均可唯一声明 canonical output binding，同时出现必须
 一致。shared J→Intent MLIR 入口及 structured reference v5 消费 deterministic `JElaboration.output_bindings`，所以 Gate2 与

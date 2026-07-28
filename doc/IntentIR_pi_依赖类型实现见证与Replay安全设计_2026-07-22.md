@@ -1277,7 +1277,8 @@ authorization；这只合并 proof-irrelevant 文件动作，外部 TypeCheck �
 numeric-cast、result-relation compatibility 与当前 v4/v5 typed relations 的检查均已随版本化
 TypeCheck 落地并写入 fresh receipt；旧 artifact/证书保持历史解释，不由新规则静默重判。
 
-活动 fresh-run 使用 `typecheck.v22`。v22 增加 signature mode 与 J boundary partition 的 exact
+活动 fresh-run 使用 `typecheck.v23`。v23 增加 canonical output binding 的完整 dtype/shape exact
+dependent check；v22 增加 signature mode 与 J boundary partition 的 exact
 dependent check，并完整继承 v21；v21 继承 v20/v18/v19、v14-v17 typed-control 合同及下述 v7
 前序合同，包含 terminal-control sibling/finality dependent checks；v20 已检查 authored
 value/dimension、consumer extension 与 access guard 的 dependent closure；它仍只拒绝和诊断，不补造
@@ -1320,8 +1321,8 @@ mean、guard、cross-axis/general predicate、domain/extent 不闭合、mask 位
 checker 不读取 Source/C/π且不自动变换图；Source 的显式 sum/div 必须由 Lift 原样写成
 `reduce(sum)` 与 explicit division。
 
-Gate2 scalar consumer 当前独立标为 `j_scalar_cpu_mlir_v18`，共享
-`intentir.j-functional-boundary.v17`：它们继承 v14/v13、v12/v11 与 v10/v3；v10 已继承 v9 的 node-less input load，并按 J 自身的完整
+Gate2 scalar consumer 当前独立标为 `j_scalar_cpu_mlir_v19`，共享
+`intentir.j-functional-boundary.v18`：它们继承 v14/v13、v12/v11 与 v10/v3；v10 已继承 v9 的 node-less input load，并按 J 自身的完整
 logical domains、逐 access predicate/fill、逐 reduction 中性 `masked_contribution` 与 closed broadcast
 relation 消费通用 padded pointwise/multi-reduce DAG。它不从 π route 推导 operator、padding 公式或
 logical input。
@@ -1360,7 +1361,7 @@ missing-fill proof 只接受全 downstream pointwise 且所有 observable store 
 reduce/scan/loop/transpose/pad 或不同 predicate 一律 unsupported。两种 proof 都只读 J 并形成 receipt，
 π 不携带、不授权也不修补这些关系。
 
-`j_scalar_cpu_mlir_v18` / `intentir.j-functional-boundary.v17` 完整继承 v17/v16，只消费 J 已写出的完整 product-domain
+`j_scalar_cpu_mlir_v19` / `intentir.j-functional-boundary.v18` 完整继承 v17/v16，只消费 J 已写出的完整 product-domain
 mixed-radix bijection，以及 pointwise provenance 后精确 `transpose` 的 axis permutation；后者还要求
 store coordinates 与 load coordinates 的 permutation 完全一致并由同 predicate 支配。`log2` 与 IEEE
 special literal 也由 shared materializer 直接消费。π route/instance/order 不能提供 factor、digit、perm、
@@ -1376,6 +1377,12 @@ v18/v17 只增加一个组合律：唯一 node-less predicate-bearing logical-in
 consumer 不生成或回填 `node_ref`；同 tensor 多 load、零个/多个 direct consumer、非 pointwise 首
 consumer 或任一后续可观察路径不闭合都拒绝。π 不参与唯一性判定，也不能用 route/order 替代 J
 dataflow。
+
+v19/v18 将不参与 J logical access/predicate 的矩形 domain 显式保留为 `context_domain` receipt；这正
+允许 π 按既有规则用该 J domain 锚定 compiler-visible program axis。RefEval 不读取 π，也不把该
+context domain 解释成输出数值轴或地址公式；production 若不选择该 context mapping，同样不得从 π
+反向取得 recipe。logical inout 上多个 store→reload stage 则仅由 J 自身 producer/dataflow、相同
+coordinates/predicate、effect order 与最终 output binding 闭合，π 不补这些关系。
 
 当前 Lift knowledge v57 继承 v56-v42，要求 `fill_value` 保留 Source load 的实际 `other`，并要求
 adapter 明示的 bound-constexpr/shape-coordinate equality 仍由 Lift 绑定 `x*` 或作者化 `t*=x*`；

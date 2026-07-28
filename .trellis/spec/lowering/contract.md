@@ -177,21 +177,25 @@ seed，未知 op 会停止 TypeCheck 的窄传播；value-free projector 对 gua
 provenance 进入未知 op 均显式 consumer-unsupported。v11 继承 v10 的上述 invocation-local、可证明全真的
 guard/runtime-bound 例外；fixed code 不补写 count、domain、predicate 或 reduction contract。
 
-当前 shared projection receipt 为 `intentir.j-functional-boundary.v17`，scalar RefEval 为
-`j_scalar_cpu_mlir_v18`，closed structured reference 为
+当前 shared projection receipt 为 `intentir.j-functional-boundary.v18`，scalar RefEval 为
+`j_scalar_cpu_mlir_v19`，closed structured reference 为
 `intentir.j-structured-cpu-reference.v5`。v18/v17 完整继承既有唯一 node-less logical-input load、
 通用 multi-reduction padding closure、当前 Gate2 invocation 的 runtime predicate tautology proof、
 v4/v5 relations、direct-store partition、closed typed contraction、product-domain mixed-radix、精确
-transpose 与 pointwise broadcast consumer。logical inout 的 post-state reload 由 J `returns` 或
-`output_mapping` 唯一给出的 canonical binding（二者并存必须一致）、唯一同坐标 store、后继 SSA
-dependency 及 store-before-load effect order共同
-证明；predicate-bearing load 也可在第一个 pointwise consumer 处按 closed typed shape发生 trailing/显式
+transpose 与 pointwise broadcast consumer。logical inout 的每个 post-state reload 由唯一 producer
+SSA、唯一同坐标/predicate store、后继 consumer dependency、同 scope 的 store-before-load effect
+order 与无中间覆盖共同证明；只有与 J `returns`/`output_mapping` canonical binding（二者并存必须
+一致）相同的最后 store 成为 observable output。多个 closed stage 不会被折叠成一个 store，也不会
+让任意中间写冒充最终输出。predicate-bearing load 也可在第一个 pointwise consumer 处按 closed typed shape发生 trailing/显式
 axis broadcast。fixed code不补 output mapping、fill、SSA edge或 broadcast relation。runtime
 predicate 对应的 invocation-local proof subreceipt 仍只含
 protocol、access id、J predicate digest、logical input refs 与 domain axes，不含 raw runtime value 或
 value digest；这是 audit-data minimization，不是 confidentiality/privacy proof。旧 v8/v9 Gate2
 receipt、functional-boundary v1/v2 与
 `logical_domain_reduction_padding_v1/v2` 记录保持历史解释，不由 v11/v9 追认或重判。
+v18/v19 还把未出现在任何 logical access/predicate 中的矩形 J domain 保留为显式
+`context_domains` receipt；这类 domain 可供 π 锚定 compiler-visible program context，但不参与
+Layer-A 数值执行、不变成 access formula，production 也不能从它发明 program/grid mapping。
 v18/v17 还允许唯一 node-less predicated whole-input load 从 canonical J 中唯一的直接 pointwise
 consumer 开始 missing-fill provenance；同 tensor 多 load、零个/多个 direct consumer、非 pointwise
 consumer 或任一后续路径不闭合都拒绝。该解析结果只存在于 projection invocation，不写回 J。

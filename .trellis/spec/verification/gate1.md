@@ -9,11 +9,13 @@ Gate1 只接收已经通过 `TypeCheck(J,C,π)`、由当前三元组生成的全
 conditions。该 Gate1 claim 只针对这个 c0。
 
 当前 fresh-run artifact/decode/typecheck 组合为
-`intentir.scrc.artifact.v9 / intentir.scrc.decode.v13 / intentir.scrc.typecheck.v22`。Lift LLM 是完整
+`intentir.scrc.artifact.v9 / intentir.scrc.decode.v13 / intentir.scrc.typecheck.v23`。Lift LLM 是完整
 artifact 的唯一作者：value/dimension、consumer-extension、access-guard、typed control/inout、
 output binding、physical iteration/carrier 与 terminal-control relation 都必须由模型显式提交。Decode、
 CandidateCheck 与 TypeCheck 只能做 closed
 解析、检查、拒绝和诊断，不会补 relation、选择 axes/polarity、插入 `select`、创建 pre-state，或把
+相同 concrete extents 当作 axis identity；v23 对 canonical output binding 执行完整 dtype/shape
+equality，axis permutation 必须由 J 自己用 typed op 表达。它也不会把
 output 改成 inout。CandidateCheck 的 PASS 也不是 Gate1 前置证书；外部 Runner 仍对同一完整 bytes
 重跑权威 TypeCheck。
 

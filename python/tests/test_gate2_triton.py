@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -10,7 +13,7 @@ from intentir.verify.gate2 import (
     TritonExecutionSpec,
     TritonRunner,
 )
-from intentir.verify.gate2.triton import _launch_by_name
+from intentir.verify.gate2.triton import _launch_by_name, _load_module
 
 
 class _FakeKernel:
@@ -129,6 +132,28 @@ def test_none_argument_is_closed_and_name_keyed() -> None:
     )
     assert kernel.kwargs is not None
     assert kernel.kwargs["optional"] is None
+
+
+def test_gate2_load_normalizes_deprecated_static_dot_transpose(tmp_path) -> None:
+    source = KernelSource.from_code(
+        """import triton.language as tl
+def kernel(a, b):
+    return tl.dot(a, b, trans_a=False, trans_b=True)
+""",
+        "kernel",
+    )
+
+    module, module_name, frontend_compat = _load_module(source, tmp_path)
+    try:
+        normalized = module.__spec__.origin
+        assert normalized is not None
+        text = Path(normalized).read_text(encoding="utf-8")
+        assert "tl.dot(a, tl.trans(b))" in text
+        assert "trans_b" not in text
+        assert frontend_compat["protocol"] == "triton_static_dot_transpose_v1"
+        assert frontend_compat["rewrite_count"] == 1
+    finally:
+        sys.modules.pop(module_name, None)
 
 
 def _cuda_available() -> bool:

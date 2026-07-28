@@ -28,7 +28,7 @@ MLIR search和`intentir.backend.dev-j-variant.v1`均不进入本任务。
 
 当前没有仍在运行的闭合进程。Sol-high Wave 6 已结束：SplitK reduce 在 branch 2 formal round 2
 Gate1 closed；Source--Replay 通过，旧 RefEval 只因两个唯一 node-less predicated logical-input load
-缺少显式 fill 而 unsupported。`j_scalar_cpu_mlir_v18 / intentir.j-functional-boundary.v17` 只从 J
+缺少显式 fill 而 unsupported。`j_scalar_cpu_mlir_v19 / intentir.j-functional-boundary.v18` 只从 J
 组合“唯一 whole-input load + 唯一 direct pointwise consumer + 同 predicate observable store”后，原
 artifact/Replay 以 `model_calls=0` 的 exact Gate2-only recheck 认证。CrossEntropy、Flash forward、
 xFormers RMSNorm、SplitK backward 为完整 NO_CLOSURE；Flash full backward 与 SplitK forward 混有
@@ -185,7 +185,7 @@ fixed code不得替Lift修成`x*`。
 ## 4. 当前执行栈
 
 - frontend commit起点：`460aaed1c6af0b267a4a9da9ca497aea6e66ad40`；
-- artifact/decode/typecheck：`artifact.v9 / decode.v13 / typecheck.v22`；
+- artifact/decode/typecheck：`artifact.v9 / decode.v13 / typecheck.v23`；
 - Lift：Codex `openai.codex-cli.intentir-lift.v5 / intentir.lift-knowledge.v59`；
 - Replay：Codex `openai.codex-cli.intentir-replay.v14`，MiniSWE `minisweagent.intentir-replay.v18`；
 - Replay packet/check：`replay-input.v1 / public_frontend_context_v12 / replay-check.v9`；
@@ -193,7 +193,7 @@ fixed code不得替Lift修成`x*`。
 - Gate1 observer：`triton-ttir-3.6-gate1-v11`；outer batch：`intentir.scrc.batch.v3`；
   candidate fan-out：v4 `first_observed_gate1_closure_cooperative_stop`；
 - Gate2：三条直接比较，threshold只来自外部Q。
-- Gate2 RefEval：`j_scalar_cpu_mlir_v18 / intentir.j-functional-boundary.v17`。
+- Gate2 RefEval：`j_scalar_cpu_mlir_v19 / intentir.j-functional-boundary.v18`。
 
 ### 4.1 当前 fresh closure 账本
 
@@ -205,7 +205,7 @@ fixed code不得替Lift修成`x*`。
   one-col backward、full backward 的本次 aggregate 被上述 immutable-input infrastructure 污染。
 - Wave 4（ordinal 22--28）：Flash backward preprocess 直接 certified；Flash one-pass LayerNorm 由同一
   Gate1-closed J/Replay 的零模型 Gate2-only recheck certified；xFormers RMSNorm、SplitK forward/reduce
-  未闭合；RMSNorm-add 的 J signature overlap 由 typecheck.v22 fail closed；SplitK backward 混有
+  未闭合；RMSNorm-add 的 J signature overlap 由当时的 typecheck.v22 fail closed；SplitK backward 混有
   Replay wall-time infrastructure。
 - Wave 5（ordinal 5/19/24--28）：RMSNorm-add Gate1 closed，并由同一 exact artifact/Replay 的零模型
   Gate2-only recheck certified；RMSNorm、Flash forward、SplitK reduce/backward 未闭合；CrossEntropy
@@ -223,6 +223,12 @@ fixed code不得替Lift修成`x*`。
   infrastructure failure，不能据此归为语义失败；one-col backward、SplitK backward 为
   NO_CLOSURE，full backward、SplitK forward 也各含一个旧 runtime Replay infrastructure branch。
   批次终态为 `3 certified / 6 no_closure / 5 infrastructure_failed`。
+- Wave 8：Flash forward 在 branch 3 formal round 3 fresh Gate1 closure，但初次 Gate2 同时暴露
+  Source `tl.dot(trans_b=True)` 的当前 Triton execution compatibility 缺口与 RefEval 对多阶段 TMP
+  store→reload 的消费缺口。两项通用能力修复后的零模型 exact-artifact recheck 已证明
+  Source–Replay 三个输出误差均为 0；随后 RefEval 正确发现闭合 J 将 `[x0,x1,x2]` loop results
+  直接映射到 `[x0,x2,x5]` 的 LSE/TMP，属于真实 axis-permutation J 错误。typecheck.v23 现以前置
+  `output_binding_type_mismatch` 拒绝，旧 J 不认证，必须 fresh relift 显式 transpose/output mapping。
 - 当前可用闭合总计 `17/28`：14 个原运行直接认证，3 个 exact-artifact capability recheck 认证。
   TypeCheck PASS 不计进度；只有 Gate1 已闭合且当前 Gate2 三边通过才计入。
 
@@ -263,6 +269,12 @@ CLI 已经发出的唯一 `thread.started` JSONL 事件恢复原 thread identity
 Source control-flow outline，但分类与完整 J/C/π 仍由 LLM 作者化。MiniSWE v18 共享同一
 replay-check.v9 合同，但当前 28 项
 fresh closure 仍以 Codex 为主执行路径。
+
+Gate2 Triton Source/Replay runner 共享 source-neutral `triton_static_dot_transpose_v1`：只对静态 boolean
+`trans_a/trans_b` 做与 Gate1 相同的 AST 等价归一，并记录 rewrite count/digest；不按 kernel 名改写，
+不触及 J/π/C。RefEval v19 / functional-boundary v18 消费同一 inout 上多个 closed store→reload
+stage，并把未参与 logical access/predicate 的矩形 J domain保留为 `context_domain` receipt，而不是
+将其错误当作输出数值轴或静默删除。只有最终 canonical output binding 对应 store 可观察。
 
 实现升级后只fresh rerun受影响case，不重判旧receipt。Task14期间每次通用能力提交都必须在后续
 evidence中记录commit/protocol；不能让一个长期脏工作区承载多个不可区分的实验版本。

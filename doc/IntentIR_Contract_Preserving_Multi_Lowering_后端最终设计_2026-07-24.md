@@ -162,6 +162,14 @@ B 补全所有合法实现必须保持的边界事实：
 - closed result-relation class；
 - SCRC/π 所需的 typed realization authorization。
 
+矩形 domain 还有一个可由 J 自身确定的窄子类：若其 axis 不出现在任何 logical access index 或
+predicate 中，它是 `context_domain`，只声明一个 source-grounded execution context（例如两个 logical
+axes 的 flattened program context），不改变 Layer-A 输出函数。production projection 必须保留该
+分类 receipt，但不得把它自动变成 loop、program/grid mapping 或地址公式；backend 只有在自身 pass
+derivation 已证明合法时才可选择消费它。SCRC 的 π 可以用该 J domain 锚定 compiler-visible program
+axis，但 production 仍不读取 π。若 domain axis 参与 access/predicate，它仍是普通 logical domain，
+必须满足完整 extent/predicate closure，不能借 `context_domain` 逃逸。
+
 B 中只保存语义事实，不保存某个 backend transformation 的名字。正确形式是：
 
 ```text
