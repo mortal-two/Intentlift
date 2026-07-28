@@ -281,6 +281,12 @@ producer instance、多个 routed consumers 与 one-producer sharing 表达。�
 producer；只有不同 compiler-visible definition/stage 才能重复同一 semantic ref。反过来，若 Source
 确有多个 stage，也不能为了减少 Replay 工作而把它们折叠成一次。
 
+每个 instance 的 `region` 是精确词法 realization scope，不是优化提示或 consumer membership。
+Lift 按 Source 中 compiler-visible definition 的实际词法位置作者化它；Replay 必须在同一 region
+materialize。尤其，`placement=loop` 的 instance 即使对 induction variable 不变，也不得被 hoist 到
+parent；parent instance 也不得因仅由 loop consumer 使用而 sink 入 loop。跨 region 的 hoist、sink、
+clone 或 fold 都会改变 π 所声明的 realization topology，不能以“值等价”替代。
+
 `region.placement=program` 只说明 instance 位于单个 program 的 region 中，不表示 Source 读取了
 program/grid coordinate。若 Source 的确存在 `program_id`、grid offset 等 compiler-visible stage，
 Lift 必须用一个独立 `realize` instance 及 routes 记录；无需新增 mechanism enum。没有该独立

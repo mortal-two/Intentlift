@@ -27,6 +27,7 @@ from minisweagent.environments.intentir_replay import (
     INTENTIR_REPLAY_COMMIT,
     INTENTIR_REPLAY_COMPILE_CHECK,
     INTENTIR_REPLAY_INSPECT,
+    INTENTIR_REPLAY_OBLIGATION_AUDIT,
     INTENTIR_REPLAY_ROLLBACK,
     INTENTIR_REPLAY_SUBMIT,
     INTENTIR_REPLAY_SUBMIT_COMMAND,
@@ -38,6 +39,7 @@ from minisweagent.environments.intentir_replay import (
     IntentIRReplayEnvironment,
     IntentIRReplayWorkspace,
     _packet_critical_facts,
+    _replay_obligation_audit_view,
 )
 from minisweagent.exceptions import Submitted
 from minisweagent.run.intentir_replay import (
@@ -504,7 +506,7 @@ def test_episode_contract_digest_binds_exact_files_prompts_and_budgets() -> None
     assert default_config["model"]["retry_timeouts"] is True
     assert default_config["model"]["semantic_initial_turns"] == 1
     assert default_config["model"]["model_kwargs"]["parallel_tool_calls"] is True
-    assert MINISWE_REPLAY_BACKEND == "minisweagent.intentir-replay.v23"
+    assert MINISWE_REPLAY_BACKEND == "minisweagent.intentir-replay.v25"
     instance = default_config["agent"]["instance_template"]
     assert "exact immutable source-blind startup transport" in instance
     assert "exact_packet_embedded=true" in instance
@@ -1063,7 +1065,7 @@ def test_critical_facts_project_reduction_linearization_without_source() -> None
 
     facts = _packet_critical_facts(artifact.rewriter_view(masked=False))
 
-    assert facts["protocol"] == "intentir.replay-critical-facts.v1"
+    assert facts["protocol"] == "intentir.replay-critical-facts.v2"
     assert facts["reduction_linearizations"] == [
         {
             "instance": "i1",
@@ -1075,6 +1077,166 @@ def test_critical_facts_project_reduction_linearization_without_source() -> None
             ],
         }
     ]
+
+
+def test_critical_facts_project_lexical_regions_and_cross_region_order() -> None:
+    artifact = make_reduce_artifact()
+    artifact.pi.regions.append(
+        {"id": "r1", "parent": "r0", "placement": "loop"}
+    )
+    artifact.pi.instances[1]["region"] = "r1"
+
+    facts = _packet_critical_facts(artifact.rewriter_view(masked=False))
+
+    assert facts["lexical_regions"] == [
+        {
+            "id": "r1",
+            "parent": "r0",
+            "placement": "loop",
+            "instances": [
+                {
+                    "id": "i1",
+                    "semantic_ref": "n0",
+                    "mechanism": "realize",
+                    "region": "r1",
+                    "placement": "loop",
+                }
+            ],
+        }
+    ]
+    assert facts["cross_region_order"] == [
+        {
+            "before": {
+                "id": "i0",
+                "semantic_ref": "a0",
+                "mechanism": "realize",
+                "region": "r0",
+                "placement": "root",
+            },
+            "after": {
+                "id": "i1",
+                "semantic_ref": "n0",
+                "mechanism": "realize",
+                "region": "r1",
+                "placement": "loop",
+            },
+        },
+        {
+            "before": {
+                "id": "i1",
+                "semantic_ref": "n0",
+                "mechanism": "realize",
+                "region": "r1",
+                "placement": "loop",
+            },
+            "after": {
+                "id": "i2",
+                "semantic_ref": "n1",
+                "mechanism": "realize",
+                "region": "r0",
+                "placement": "root",
+            },
+        },
+    ]
+
+
+def test_obligation_audit_colocates_exact_ledger_and_current_source() -> None:
+    artifact = make_reduce_artifact()
+    artifact.pi.regions.append(
+        {"id": "r1", "parent": "r0", "placement": "loop"}
+    )
+    artifact.pi.instances[1]["region"] = "r1"
+
+    view = _replay_obligation_audit_view(
+        artifact.rewriter_view(masked=False), VALID_REPLAY
+    )
+
+    assert view["protocol"] == "intentir.replay-obligation-audit.v1"
+    assert view["status"] == "pass"
+    assert view["audit_required"] is True
+    assert view["lexical_regions"][0]["id"] == "r1"
+    assert view["cross_region_order"][0]["after"]["id"] == "i1"
+    assert view["source_sha256"] == hashlib.sha256(
+        VALID_REPLAY.encode()
+    ).hexdigest()
+    assert view["source_nonempty_lines"][0] == {
+        "line": 1,
+        "indent": 0,
+        "text": "import triton",
+    }
+
+
+def test_complex_replay_compile_requires_audit_of_current_exact_bytes() -> None:
+    artifact = _physical_reduce_replay_artifact()
+    files, _, _ = _replay_input_files(
+        artifact, frontend=Frontend.TRITON, masked=False
+    )
+    workspace = IntentIRReplayWorkspace.create(files)
+    passing = {
+        "protocol": REPLAY_CHECK_PROTOCOL,
+        "status": "pass",
+        "diagnostics": [],
+    }
+    compile_calls = 0
+
+    def compile_checker(_source: str):
+        nonlocal compile_calls
+        compile_calls += 1
+        return passing
+
+    environment = IntentIRReplayEnvironment(
+        input_dir=workspace.input_dir,
+        output_dir=workspace.output_dir,
+        scratch_dir=workspace.scratch_dir,
+        replay_checker=lambda _source: passing,
+        replay_compile_checker=compile_checker,
+    )
+    try:
+        assert environment.execute({"command": _write_source(VALID_REPLAY)})[
+            "returncode"
+        ] == 0
+        unaudited = environment.execute(
+            {
+                "command": (
+                    f"{INTENTIR_REPLAY_COMPILE_CHECK} /output/replay.source"
+                )
+            }
+        )
+        audited = environment.execute(
+            {
+                "command": (
+                    f"{INTENTIR_REPLAY_OBLIGATION_AUDIT} /output/replay.source"
+                )
+            }
+        )
+        compiled = environment.execute(
+            {
+                "command": (
+                    f"{INTENTIR_REPLAY_COMPILE_CHECK} /output/replay.source"
+                )
+            }
+        )
+        assert environment.execute(
+            {"command": _write_source(VALID_REPLAY + "\n")}
+        )["returncode"] == 0
+        changed = environment.execute(
+            {
+                "command": (
+                    f"{INTENTIR_REPLAY_COMPILE_CHECK} /output/replay.source"
+                )
+            }
+        )
+    finally:
+        workspace.cleanup()
+
+    assert unaudited["returncode"] == 1
+    assert "replay_obligation_audit_required" in unaudited["output"]
+    assert audited["returncode"] == 0
+    assert '"audit_required": true' in audited["output"]
+    assert compiled["returncode"] == 0
+    assert compile_calls == 1
+    assert changed["returncode"] == 1
+    assert "replay_obligation_audit_required" in changed["output"]
 
 
 def test_synthetic_compile_rejects_omitted_authored_physical_carrier() -> None:
@@ -1185,7 +1347,7 @@ def test_static_error_can_be_repaired_in_one_fresh_multi_turn_episode() -> None:
     assert '"exact_packet_embedded":true' in first_packet
     assert '"packet_bytes":' in first_packet
     assert '"bootstrap_command":null' in first_packet
-    assert "intentir.replay-critical-facts.v1" in first_packet
+    assert "intentir.replay-critical-facts.v2" in first_packet
     assert '"logical_ref":"x1"' in first_packet
     assert '"packet":' in first_packet
     assert "anonymous_source" not in first_packet

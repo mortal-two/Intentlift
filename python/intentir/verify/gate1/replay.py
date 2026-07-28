@@ -38,7 +38,7 @@ from .tilelang_codegen import extract_tilelang_module
 from .ttir import TTIRParseError, parse_ttir
 
 
-MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v23"
+MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v25"
 MINISWE_REPLAY_TURN_TIMEOUT_SECONDS = 300.0
 MINISWE_REPLAY_XHIGH_TURN_TIMEOUT_SECONDS = 900.0
 RESPONSES_REPLAY_BACKEND = "openai.responses.intentir-replay.v1"
@@ -1745,7 +1745,12 @@ After writing a complete first source, use `intentir_replay_inspect` only when a
 focused own-source inventory would resolve uncertainty. The tool reports only
 your syntax and never declares a semantic mismatch or recommends a repair.
 
-After mandatory ReplayCheck, run
+When the startup critical ledger contains lexical regions or cross-region order,
+run `intentir_replay_obligation_audit /output/replay.source` on the complete current
+bytes before the construction compile. It only colocates the exact authored ledger
+with numbered lines from your own source. Compare them yourself; the tool maps no
+instance, diagnoses no mismatch, and prescribes no edit. Any later byte change
+requires another audit. After mandatory ReplayCheck, run
 `intentir_replay_compile_check /output/replay.source` for a construction compile
 against one public synthetic profile: every pointer has one element,
 dtype-declared scalar and constexpr representatives are bool=true, integer=16,
@@ -1772,6 +1777,11 @@ its extent only through the same-subject C-attached closed axis, preserve its
 induction basis and forward or reverse order, and preserve any
 `pi.physical_loop_carriers` temporal stages.
 These relations never create a J loop or authorize a guessed bound/update.
+Every pi instance's declared region is exact lexical realization scope. Emit a
+loop-region instance inside that exact loop even when all of its operands are
+available outside and ordinary code motion would be semantically safe. Never
+hoist, sink, clone, or fold an authored instance across a region boundary; Gate1
+observes compiler-visible region membership.
 The source-blind construction compile rejects a compiled `scf.for` multiplicity
 different from the number of structured J loops plus authored
 `pi.physical_iterations`; `pi.iterations` realizes its existing J loop and is
@@ -1822,6 +1832,8 @@ Write exactly `/output/replay.source`. You may run the bounded, diagnostic-only
 `intentir_replay_inspect /output/replay.source overview`, `statements START COUNT`,
 or `find NAME` views over your own current bytes; none enters submission or Gate
 authority. Run
+`intentir_replay_obligation_audit /output/replay.source` when lexical/cross-region
+critical facts exist, then
 `intentir_replay_check /output/replay.source` for diagnostic ingress, then
 `intentir_replay_compile_check /output/replay.source` for the public synthetic
 construction-compile profile. Calls are audited telemetry and governed by the

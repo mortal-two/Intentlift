@@ -40,7 +40,7 @@ from .replay import (
 )
 
 
-CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v19"
+CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v21"
 
 _INITIAL_PROMPT = """You are the sole writer for one fresh source-blind IntentIR Replay episode.
 The outer runtime exposes only this isolated /workspace. input/ is immutable;
@@ -62,6 +62,9 @@ a schedule or see Gate evidence.
 Before writing, reconcile every declared J op occurrence (including fma), every
 boundary access/effect, every pi instance mechanism (including transfer_direct
 versus atomic realization), and every authored route/order/time/control relation.
+Use `critical_facts.lexical_regions` as the exact region-by-region construction
+ledger and `critical_facts.cross_region_order` as the exact ordering checklist;
+both only reindex the same pi and add no realization decision.
 This is a consumption checklist, not permission to add a missing operator or
 edge. Use `section PATH`, `obligation HANDLE`, or `find HANDLE` only for one
 named omitted fact. Preserve every authored effect and realization ordering
@@ -74,6 +77,11 @@ spelling and low-level realization of facts already authored by J and pi; you
 do not invent semantic operators, dataflow edges, predicates, effects, result
 relations, or physical routes. If a required fact is absent from the packet,
 keep the replay fail-closed rather than guessing it. Run
+`python .agents/intentir_agent_tool.py replay_obligation_audit` after writing a
+complete source whenever the critical ledger contains lexical regions or
+cross-region order. Compare the returned exact ledger with the numbered current
+bytes yourself; after any edit, audit those new bytes again. The audit neither
+maps instances nor diagnoses or repairs source. Then run
 `python .agents/intentir_agent_tool.py replay_check` on your complete source,
 repair it until PASS, then run
 `python .agents/intentir_agent_tool.py replay_compile_check` for the public
@@ -557,12 +565,24 @@ class CodexCLIReplayWriter:
         turns: list[CodexCLITurn] = []
         checks: list[dict[str, Any]] = []
         compile_checks: list[dict[str, Any]] = []
+        obligation_audits: list[dict[str, Any]] = []
         timeout_events: list[dict[str, Any]] = []
         source_text = ""
         formal_ingress = None
         formal_compile = None
         last_checked_good: str | None = None
         startup_context = _replay_startup_context(packet)
+        from minisweagent.environments.intentir_replay import (
+            _packet_critical_facts,
+            _replay_obligation_audit_view,
+        )
+
+        critical_facts = _packet_critical_facts(packet)
+        obligation_audit_required = bool(
+            critical_facts["lexical_regions"]
+            or critical_facts["cross_region_order"]
+        )
+        obligation_audited_source_digests: set[str] = set()
         prompt = (
             _INITIAL_PROMPT
             + "\n\n<source-blind-startup>\n"
@@ -611,6 +631,23 @@ class CodexCLIReplayWriter:
         def replay_compile_tool() -> Mapping[str, Any]:
             nonlocal last_checked_good
             current = workspace.read_replay()
+            current_digest = hashlib.sha256(current.encode()).hexdigest()
+            if (
+                obligation_audit_required
+                and current_digest not in obligation_audited_source_digests
+            ):
+                return {
+                    "protocol": REPLAY_CHECK_PROTOCOL,
+                    "status": "fail",
+                    "diagnostics": [
+                        {
+                            "rule_code": "replay_obligation_audit_required",
+                            "path": "<current-replay-bytes>",
+                            "anonymous_handles": [],
+                            "line": None,
+                        }
+                    ],
+                }
             ingress = replay_source_ingress(
                 current,
                 artifact=artifact,
@@ -638,6 +675,20 @@ class CodexCLIReplayWriter:
                 last_checked_good = current
             return response
 
+        def replay_obligation_audit_tool() -> Mapping[str, Any]:
+            current = workspace.read_replay()
+            view = _replay_obligation_audit_view(packet, current)
+            source_digest = str(view["source_sha256"])
+            obligation_audited_source_digests.add(source_digest)
+            obligation_audits.append(
+                {
+                    "source_sha256": source_digest,
+                    "lexical_region_count": len(view["lexical_regions"]),
+                    "cross_region_order_count": len(view["cross_region_order"]),
+                }
+            )
+            return view
+
         def replay_manifest_view_tool() -> Mapping[str, Any]:
             return _replay_manifest_view(packet)
 
@@ -652,6 +703,7 @@ class CodexCLIReplayWriter:
                 "replay_manifest_view": replay_manifest_view_tool,
                 "replay_check": replay_check_tool,
                 "replay_compile_check": replay_compile_tool,
+                "replay_obligation_audit": replay_obligation_audit_tool,
             },
             argument_handlers={
                 "replay_packet_query": replay_packet_query_tool,
@@ -705,6 +757,34 @@ class CodexCLIReplayWriter:
                 or formal_ingress.code is None
             ):
                 return False, check
+            source_digest = hashlib.sha256(source_text.encode()).hexdigest()
+            if (
+                obligation_audit_required
+                and source_digest not in obligation_audited_source_digests
+            ):
+                audit_check: Mapping[str, Any] = {
+                    "protocol": REPLAY_CHECK_PROTOCOL,
+                    "status": "fail",
+                    "diagnostics": [
+                        {
+                            "rule_code": "replay_obligation_audit_required",
+                            "path": "<current-replay-bytes>",
+                            "anonymous_handles": [],
+                            "line": None,
+                        }
+                    ],
+                }
+                compile_checks.append(
+                    {
+                        "trigger": trigger,
+                        "status": "fail",
+                        "diagnostics": [
+                            dict(item) for item in audit_check["diagnostics"]
+                        ],
+                        "source_sha256": source_digest,
+                    }
+                )
+                return False, audit_check
             formal_compile = (
                 self.compile_checker(
                     formal_ingress.code,
@@ -852,6 +932,7 @@ class CodexCLIReplayWriter:
                 "turns": [turn.to_evidence() for turn in turns],
                 "replay_check": checks,
                 "replay_compile_check": compile_checks,
+                "replay_obligation_audits": obligation_audits,
                 "timeout_events": timeout_events,
                 "tool_bridge": bridge.evidence,
                 "formal_ingress_recheck": True,
@@ -922,6 +1003,7 @@ class CodexCLIReplayWriter:
                 "turns": [turn.to_evidence() for turn in turns],
                 "replay_check": checks,
                 "replay_compile_check": compile_checks,
+                "replay_obligation_audits": obligation_audits,
                 "timeout_events": timeout_events,
                 "tool_bridge": bridge.evidence,
                 "failure_class": type(exc).__name__,

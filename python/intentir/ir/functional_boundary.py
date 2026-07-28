@@ -32,7 +32,7 @@ from intentir.ir.value_dimension import (
 )
 
 
-FUNCTIONAL_BOUNDARY_PROTOCOL = "intentir.j-functional-boundary.v18"
+FUNCTIONAL_BOUNDARY_PROTOCOL = "intentir.j-functional-boundary.v19"
 RUNTIME_PREDICATE_PROOF_PROTOCOL = (
     "intentir.j-functional-runtime-predicate-tautology.v1"
 )
@@ -121,6 +121,54 @@ class ConstantGatherProjection:
             "axis": self.axis,
             "index_ref": self.index_ref,
             "coordinate": self.coordinate,
+        }
+
+
+@dataclass(frozen=True)
+class ConditionalEffectStoreProjection:
+    """One full logical output write selected by an authored ``effect_if``.
+
+    Layer A owns the branch and the producer value; Layer B owns the matching
+    access/effect destination.  This ephemeral receipt merely joins those two
+    already-authored facts after the ordinary full-store checks have succeeded.
+    It neither creates a select nor supplies a value for an untaken arm.
+    """
+
+    access_id: str
+    node_ref: str
+    output: str
+    value_ref: str
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "proof": "authored_effect_if_full_store",
+            "access_id": self.access_id,
+            "node_ref": self.node_ref,
+            "output": self.output,
+            "value_ref": self.value_ref,
+        }
+
+
+@dataclass(frozen=True)
+class IndexBoundedGatherProjection:
+    """One dynamic J gather whose data access is closed by ``index_bounds``."""
+
+    access_id: str
+    node_ref: str
+    tensor: str
+    axis: int
+    index_ref: str
+    consumer_axes: tuple[str, ...]
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "proof": "index_bounded_gather",
+            "access_id": self.access_id,
+            "node_ref": self.node_ref,
+            "tensor": self.tensor,
+            "axis": self.axis,
+            "index_ref": self.index_ref,
+            "consumer_axes": list(self.consumer_axes),
         }
 
 
@@ -301,6 +349,8 @@ class FunctionalBoundaryProjection:
     access_guard_relations: tuple[AccessGuardProjection, ...] = ()
     mixed_radix_accesses: tuple[MixedRadixAccessProjection, ...] = ()
     context_domains: tuple[tuple[str, int | str], ...] = ()
+    conditional_effect_stores: tuple[ConditionalEffectStoreProjection, ...] = ()
+    index_bounded_gathers: tuple[IndexBoundedGatherProjection, ...] = ()
 
     @property
     def access_axes_map(self) -> dict[str, tuple[str, ...]]:
@@ -379,6 +429,12 @@ class FunctionalBoundaryProjection:
             "context_domains": [
                 {"axis": axis, "extent": extent}
                 for axis, extent in self.context_domains
+            ],
+            "conditional_effect_stores": [
+                proof.to_json() for proof in self.conditional_effect_stores
+            ],
+            "index_bounded_gathers": [
+                proof.to_json() for proof in self.index_bounded_gathers
             ],
         }
 
@@ -483,6 +539,33 @@ def _walk_ops(body: Sequence[IntentOp]) -> tuple[IntentOp, ...]:
         for _suffix, region_body in _child_regions(op):
             result.extend(_walk_ops(region_body))
     return tuple(result)
+
+
+def _effect_if_arm_node_refs(body: Sequence[IntentOp]) -> frozenset[str]:
+    """Return nodes lexically controlled by at least one authored effect arm."""
+
+    result: set[str] = set()
+
+    def visit(sequence: Sequence[IntentOp], *, inside_effect_arm: bool) -> None:
+        for operation in sequence:
+            if inside_effect_arm and operation.node_id is not None:
+                result.add(operation.node_id)
+            visit(operation.body, inside_effect_arm=inside_effect_arm)
+            if operation.op in {"effect_if", "value_if"}:
+                assert operation.positive is not None
+                assert operation.negative is not None
+                nested_inside = inside_effect_arm or operation.op == "effect_if"
+                visit(
+                    operation.positive.body,
+                    inside_effect_arm=nested_inside,
+                )
+                visit(
+                    operation.negative.body,
+                    inside_effect_arm=nested_inside,
+                )
+
+    visit(body, inside_effect_arm=False)
+    return frozenset(result)
 
 
 def _store_result_reaches_output_through_enclosing_carry(
@@ -2803,6 +2886,33 @@ def _reduction_padding_analysis(
     padding_positions: dict[str, dict[str, frozenset[int]]] = {
         item.name: {} for item in j.intent.inputs
     }
+    operations = _node_table(j)
+    edge_padding: dict[
+        tuple[str, str], dict[str, frozenset[int]]
+    ] = {}
+    explicit_load_edges: set[tuple[str, str]] = set()
+    for access in j.boundary.accesses:
+        if access.kind.value != "load" or access.node_ref is None:
+            continue
+        operation = operations.get(access.node_ref)
+        operand_refs = (
+            {
+                operand
+                for operand in operation.operands
+                if operand == access.tensor
+            }
+            if operation is not None
+            else set()
+        )
+        if not operand_refs and operation is not None and len(
+            operation.operands
+        ) == 1:
+            operand_refs = {operation.operands[0]}
+        if len(operand_refs) == 1:
+            explicit_load_edges.add(
+                (access.node_ref, next(iter(operand_refs)))
+            )
+    seed_issues: list[FunctionalBoundaryClosureIssue] = []
     for access in j.boundary.accesses:
         if access.kind.value != "load":
             continue
@@ -2847,7 +2957,41 @@ def _reduction_padding_analysis(
             if axis in axes
         }
         if masked:
-            by_access = padding_positions.setdefault(access.tensor, {})
+            target = padding_positions.setdefault(access.tensor, {})
+            if access.node_ref is not None:
+                operation = operations.get(access.node_ref)
+                operand_refs = (
+                    {
+                        operand
+                        for operand in operation.operands
+                        if operand == access.tensor
+                    }
+                    if operation is not None
+                    else set()
+                )
+                if not operand_refs and operation is not None and len(
+                    operation.operands
+                ) == 1:
+                    operand_refs = {operation.operands[0]}
+                if len(operand_refs) != 1:
+                    if not predicate_dominated_pointwise_load(
+                        j, access.access_id
+                    ):
+                        seed_issues.append(
+                            FunctionalBoundaryClosureIssue(
+                                "j.boundary.accesses",
+                                "functional projection cannot bind one predicated "
+                                "load to a unique J operand edge",
+                                access.access_id,
+                            )
+                        )
+                        continue
+                else:
+                    target = edge_padding.setdefault(
+                        (access.node_ref, next(iter(operand_refs))),
+                        {},
+                    )
+            by_access = target
             by_access[access.access_id] = frozenset(
                 set(by_access.get(access.access_id, frozenset())) | masked
             )
@@ -2864,12 +3008,9 @@ def _reduction_padding_analysis(
     record_paths(j.intent.body)
     ref_by_path = {path: node_ref for node_ref, path in j.node_ids.items()}
     mean_issues: list[FunctionalBoundaryClosureIssue] = []
-    consumer_issues: list[FunctionalBoundaryClosureIssue] = []
+    consumer_issues: list[FunctionalBoundaryClosureIssue] = list(seed_issues)
     requirements: set[ConsumerExtensionRequirement] = set()
     affected_consumers: set[str] = set()
-
-    def has_padding(value: str) -> bool:
-        return any(padding_positions.get(value, {}).values())
 
     def merge_projected(
         target: dict[str, set[int]],
@@ -2894,6 +3035,21 @@ def _reduction_padding_analysis(
             for access_ref, axes in source.items()
             if axes
         }
+
+    def padding_for_operand(
+        node_ref: str | None,
+        operand: str,
+    ) -> dict[str, frozenset[int]]:
+        merged: dict[str, set[int]] = {}
+        edge_key = (node_ref, operand) if node_ref is not None else None
+        if edge_key not in explicit_load_edges:
+            merge_projected(merged, padding_positions.get(operand, {}))
+        else:
+            # One explicit node-bound physical load owns this consumer edge.
+            # A separate node-less whole-input load may feed other consumers,
+            # but its padding provenance must not leak through this reload.
+            merge_projected(merged, edge_padding.get(edge_key, {}))
+        return freeze(merged)
 
     def padding_events(
         body: Sequence[IntentOp],
@@ -2954,10 +3110,12 @@ def _reduction_padding_analysis(
             # not escape the authored regions.  Access/effect consumption is
             # checked independently through their exact nested node refs.
             continue
-        padded_operands = tuple(
-            operand
+        operand_padding = {
+            operand: padding_for_operand(node_ref, operand)
             for operand in op.operands
-            if has_padding(operand)
+        }
+        padded_operands = tuple(
+            operand for operand in op.operands if operand_padding[operand]
         )
         if not isinstance(op.result, str):
             if padded_operands:
@@ -2994,9 +3152,9 @@ def _reduction_padding_analysis(
                         )
                     )
                 continue
-            padding_positions[op.result] = padding_positions.get(
-                op.operands[0], {}
-            ).copy()
+            padding_positions[op.result] = operand_padding[
+                op.operands[0]
+            ].copy()
             continue
         if op.op in {"map_binary", "select"}:
             projected: dict[str, set[int]] = {}
@@ -3019,7 +3177,7 @@ def _reduction_padding_analysis(
                     )
                 )
                 if positions is None:
-                    if has_padding(operand):
+                    if operand_padding[operand]:
                         consumer_issues.append(
                             FunctionalBoundaryClosureIssue(
                                 f"j.intent.intent_function.{path}.op",
@@ -3032,7 +3190,7 @@ def _reduction_padding_analysis(
                     continue
                 merge_projected(
                     projected,
-                    padding_positions.get(operand, {}),
+                    operand_padding[operand],
                     positions,
                 )
             padding_positions[op.result] = freeze(projected)
@@ -3065,9 +3223,7 @@ def _reduction_padding_analysis(
                     )
                 continue
             perm = tuple(raw_perm)
-            source_padding = padding_positions.get(
-                op.operands[0], {}
-            )
+            source_padding = operand_padding[op.operands[0]]
             if sorted(perm) == list(range(len(perm))):
                 projected: dict[str, set[int]] = {}
                 for access_ref, axes in source_padding.items():
@@ -3136,7 +3292,7 @@ def _reduction_padding_analysis(
                 reduced.clear()
                 break
             reduced.add(axis)
-        source_padding = padding_positions.get(op.operands[0], {})
+        source_padding = operand_padding[op.operands[0]]
         if raw_axes and not reduced:
             if any(source_padding.values()):
                 consumer_issues.append(
@@ -3954,6 +4110,8 @@ def _project_functional_boundary(
         )
 
     nodes = _node_table(j)
+    effect_if_arm_nodes = _effect_if_arm_node_refs(j.intent.body)
+    conditional_effect_stores: list[ConditionalEffectStoreProjection] = []
     tensors = {
         item.name: item for item in [*j.intent.inputs, *j.intent.outputs]
     }
@@ -4016,6 +4174,7 @@ def _project_functional_boundary(
     }
     whole_load_tensors: set[str] = set()
     constant_gathers: list[ConstantGatherProjection] = []
+    index_bounded_gathers: list[IndexBoundedGatherProjection] = []
     mixed_radix_accesses: list[MixedRadixAccessProjection] = []
     constant_gather_edges: dict[str, dict[tuple[str, int], str]] = {}
     logical_scalar_inputs = _logical_scalar_inputs(j)
@@ -4038,7 +4197,9 @@ def _project_functional_boundary(
         for dimension in tensor.shape
         if isinstance(dimension, str)
     }
-    parsed_accesses = j_elaboration(j).access_by_id
+    elaboration = j_elaboration(j)
+    parsed_accesses = elaboration.access_by_id
+    value_types = elaboration.value_type_by_name
     expected_effect = {"load": "read", "store": "write"}
     for access in boundary.accesses:
         if access.kind.value == "update":
@@ -4061,20 +4222,67 @@ def _project_functional_boundary(
             tensor.shape,
         )
         mixed_projection: MixedRadixAccessProjection | None = None
+        bounded_gather_projection: IndexBoundedGatherProjection | None = None
         if coordinates is None:
-            mixed = _mixed_radix_access_projection(
-                access.access_id,
-                parsed_accesses[access.access_id].index,
-                tensor.shape,
-                domain_products,
-            )
-            if mixed is None:
-                raise NotImplementedError(
-                    "functional dense access requires a direct ordered axis "
-                    "vector or a complete product-domain mixed-radix bijection"
+            matching_bounds = [
+                item
+                for item in boundary.index_bounds
+                if op is not None
+                and op.op == "gather"
+                and access.kind.value == "load"
+                and item.node_ref == access.node_ref
+                and item.data == access.tensor
+                and bool(op.operands)
+                and op.operands[0] == access.tensor
+                and len(op.operands) > 1
+                and item.indices == op.operands[1]
+            ]
+            if len(matching_bounds) == 1:
+                bound = matching_bounds[0]
+                index_type = value_types.get(bound.indices)
+                if index_type is None:
+                    raise ValueError(
+                        "functional bounded gather index type is unavailable"
+                    )
+                consumer_axes: list[str] = []
+                for extent in index_type.shape:
+                    candidates = [
+                        axis
+                        for axis, domain_extent in domains.items()
+                        if domain_extent == extent and axis not in consumer_axes
+                    ]
+                    if len(candidates) != 1:
+                        raise NotImplementedError(
+                            "functional bounded gather cannot uniquely bind its "
+                            "index shape to logical domain axes"
+                        )
+                    consumer_axes.append(candidates[0])
+                axes = tuple(consumer_axes)
+                coordinates = tuple(bound.indices for _ in tensor.shape)
+                bounded_gather_projection = IndexBoundedGatherProjection(
+                    access.access_id,
+                    access.node_ref,
+                    access.tensor,
+                    bound.axis,
+                    bound.indices,
+                    axes,
                 )
-            coordinates, axes, mixed_projection = mixed
-            mixed_radix_accesses.append(mixed_projection)
+                index_bounded_gathers.append(bounded_gather_projection)
+            else:
+                mixed = _mixed_radix_access_projection(
+                    access.access_id,
+                    parsed_accesses[access.access_id].index,
+                    tensor.shape,
+                    domain_products,
+                )
+                if mixed is None:
+                    raise NotImplementedError(
+                        "functional dense access requires a direct ordered axis "
+                        "vector, a complete product-domain mixed-radix bijection, "
+                        "or one index-bounded J gather"
+                    )
+                coordinates, axes, mixed_projection = mixed
+                mixed_radix_accesses.append(mixed_projection)
         else:
             axes = tuple(
                 coordinate for coordinate in coordinates
@@ -4100,9 +4308,13 @@ def _project_functional_boundary(
         }
         if mixed_projection is not None:
             consumed_domain_axes.add(mixed_projection.flat_axis)
+        if bounded_gather_projection is not None:
+            consumed_domain_axes.update(axes)
         for dimension, (coordinate, declared_extent) in enumerate(
             zip(coordinates, tensor.shape, strict=True)
         ):
+            if bounded_gather_projection is not None:
+                continue
             if dimension in mixed_tensor_axes:
                 continue
             if isinstance(coordinate, int):
@@ -4213,7 +4425,12 @@ def _project_functional_boundary(
                 and access.fill_value is None
                 and not runtime_predicate_proved
             ):
-                if not predicate_dominated_pointwise_load(j, access.access_id):
+                if (
+                    bounded_gather_projection is None
+                    and not predicate_dominated_pointwise_load(
+                        j, access.access_id
+                    )
+                ):
                     raise NotImplementedError(
                         "functional mask projection requires an explicit "
                         "masked-load fill"
@@ -4262,10 +4479,18 @@ def _project_functional_boundary(
                     (access.access_id, access.tensor, poststate)
                 )
             if op is None:
-                if len(loads_by_tensor[access.tensor]) != 1:
+                has_authored_consumers = any(
+                    relation.access_ref == access.access_id
+                    for relation in boundary.consumer_extensions
+                )
+                if (
+                    len(loads_by_tensor[access.tensor]) != 1
+                    and not has_authored_consumers
+                ):
                     raise ValueError(
                         "functional node-less input load must be the sole load "
-                        "for its J tensor"
+                        "for its J tensor unless consumer_extensions bind its "
+                        "padded reduction consumers"
                     )
                 if (
                     access.tensor not in graph_operands
@@ -4341,7 +4566,33 @@ def _project_functional_boundary(
                         observable_value=observable_value,
                     )
                 ]
-                if len(carry_results) != 1:
+                if len(carry_results) == 1:
+                    pass
+                elif access.node_ref in effect_if_arm_nodes:
+                    produced = _result_names(op)
+                    if len(produced) != 1:
+                        raise ValueError(
+                            "functional conditional store requires one unique "
+                            "branch-local producer result"
+                        )
+                    if (
+                        op.type is None
+                        or op.type.get("dtype") != tensor.dtype
+                        or op.type.get("shape") != tensor.shape
+                    ):
+                        raise ValueError(
+                            "functional conditional store producer type differs "
+                            "from output"
+                        )
+                    conditional_effect_stores.append(
+                        ConditionalEffectStoreProjection(
+                            access_id=access.access_id,
+                            node_ref=access.node_ref,
+                            output=access.tensor,
+                            value_ref=produced[0],
+                        )
+                    )
+                else:
                     raise ValueError(
                         "functional store is not produced by its J node or one "
                         "unique enclosing loop carry"
@@ -4456,6 +4707,29 @@ def _project_functional_boundary(
             for axis, _extent in predicate.upper_bounds
         }
         for access in boundary.accesses:
+            operation = nodes.get(access.node_ref)
+            bounded_gather_data_access = (
+                operation is not None
+                and operation.op == "gather"
+                and bool(operation.operands)
+                and operation.operands[0] == access.tensor
+                and any(
+                    item.node_ref == access.node_ref
+                    and item.data == access.tensor
+                    and len(operation.operands) > 1
+                    and item.indices == operation.operands[1]
+                    for item in boundary.index_bounds
+                )
+            )
+            if (
+                bounded_gather_data_access
+                and predicates.get(access.access_id) is None
+            ):
+                # A bounded gather is one J-authored point selection, not one
+                # pass through the padded stream traversed by other accesses.
+                # Its own index_bounds relation remains mandatory and Gate2
+                # validates that relation against the current hidden inputs.
+                continue
             axes = axis_refs_by_access[access.access_id]
             predicate = predicates[access.access_id]
             upper = dict(predicate.upper_bounds) if predicate is not None else {}
@@ -4634,6 +4908,8 @@ def _project_functional_boundary(
         access_guard_relations=access_guard_relations,
         mixed_radix_accesses=tuple(mixed_radix_accesses),
         context_domains=context_domains,
+        conditional_effect_stores=tuple(conditional_effect_stores),
+        index_bounded_gathers=tuple(index_bounded_gathers),
     )
 
 
@@ -4695,6 +4971,8 @@ __all__ = [
     "ConstantGatherProjection",
     "ConcatStorePartitionProjection",
     "ConcatStoreSliceProjection",
+    "ConditionalEffectStoreProjection",
+    "IndexBoundedGatherProjection",
     "DirectStorePartitionProjection",
     "DirectStoreSliceProjection",
     "FunctionalBoundaryClosureIssue",

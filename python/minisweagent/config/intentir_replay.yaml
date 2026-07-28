@@ -54,6 +54,9 @@ agent:
     queries expose exact authored facts and never infer a realization. Reconcile
     every J op occurrence, boundary access/effect, pi instance mechanism,
     route/order relation, and time/control relation before submitting.
+    Treat `critical_facts.lexical_regions` as the exact region-by-region
+    construction ledger and `critical_facts.cross_region_order` as the exact
+    ordering checklist. They only reindex the same pi and add no lowering fact.
 
     Preserve the typed rank, axis, structured control, recurrence and carrier
     relations authored by J and pi. A pi physical_iterations relation keeps the
@@ -74,6 +77,11 @@ agent:
 
     Construct and direct-submit complete Triton source early. If preflight fails,
     keep editing the same `/output/replay.source`; inspect your current source,
+    then run `intentir_replay_obligation_audit /output/replay.source` whenever the
+    exact critical ledger contains lexical regions or cross-region order. Compare
+    that ledger against your numbered current bytes yourself. Any later source edit
+    requires another audit of the new exact bytes. The audit diagnoses nothing and
+    supplies no mapping or repair.
     call ReplayCheck and the public synthetic construction compile check. Apply
     focused exact changes and resubmit. Submission reruns both checks for changed
     bytes. Their PASS only closes Replay construction; it is not Gate1, semantic

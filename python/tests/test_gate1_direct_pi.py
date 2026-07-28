@@ -1185,6 +1185,15 @@ def test_every_frontend_receives_the_same_closed_iteration_denotation(
     assert "ceil_div of that J trip extent by that matching C tile" in instructions
 
 
+def test_replay_prompt_preserves_exact_lexical_pi_region_scope() -> None:
+    instructions, _ = build_normal_rewriter_prompt(make_reduce_artifact())
+
+    assert "Region placement is exact lexical scope" in instructions
+    assert "loop-region instance lexically inside that loop" in instructions
+    assert "never hoist, sink, clone, or fold it across a region boundary" in instructions
+    assert "An instance region is exact lexical realization scope" in instructions
+
+
 
 
 def test_replay_prompt_distinguishes_pointer_base_from_integer_merge() -> None:
