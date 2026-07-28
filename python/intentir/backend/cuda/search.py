@@ -1163,6 +1163,11 @@ def enumerate_cuda_candidates(
         if axes is None or axes.search_precision
         else (False,)
     )
+    materialize_shared_row_output_modes = (
+        (True, False)
+        if axes is None or axes.search_structural_states
+        else (True,)
+    )
     row_schedules = [
         replace(
             schedule,
@@ -1170,12 +1175,14 @@ def enumerate_cuda_candidates(
             approximate_div=approximate_div,
             promote_rank0_scalars=promote,
             defer_epilogue_col_loads=defer,
+            materialize_shared_row_output=materialize_row_output,
         )
         for schedule in row_schedule_bases
         for fuse_fma in fma_modes
         for approximate_div in approximate_div_modes
         for promote in (True, False)
         for defer in (True, False)
+        for materialize_row_output in materialize_shared_row_output_modes
         if schedule.reduction_parts == 1
     ]
     row_schedules.extend(
@@ -1230,6 +1237,11 @@ def enumerate_cuda_candidates(
                     *(
                         ("cuda.numeric.div_reciprocal_approx.f32.request.v1",)
                         if schedule.approximate_div
+                        else ()
+                    ),
+                    *(
+                        ("cuda.elide.intermediate_row_materialization.v1",)
+                        if not schedule.materialize_shared_row_output
                         else ()
                     ),
                     *transformations,
@@ -1481,6 +1493,8 @@ def enumerate_cuda_candidates(
                 numeric = "fma"
             else:
                 numeric = "plain"
+            if item.schedule.get("materialize_shared_row_output") is False:
+                return f"row_reduction.{topology}.{numeric}.elide.{local}"
             return f"row_reduction.{topology}.{numeric}.{local}"
         if item.lowering_path_kind == "elementwise":
             approximation = str(
@@ -1514,23 +1528,29 @@ def enumerate_cuda_candidates(
         "padded_row_reduction.subgroup-feature.scalar.lanes16.base",
         "padded_row_reduction.subgroup-feature.scalar.lanes8.base",
         "padded_row_reduction.subgroup-feature.scalar.lanes4.base",
+        "row_reduction.workgroup.plain.elide.base",
         "row_reduction.multi_stage.plain.base",
         "elementwise.native-ptx.base",
         "row_reduction.subgroup_rows.plain.base",
         "row_reduction.subgroup.plain.base",
         "row_reduction.workgroup.fma.base",
+        "row_reduction.workgroup.fma.elide.base",
         "row_reduction.subgroup.fma.base",
         "row_reduction.workgroup.approximate_div.base",
+        "row_reduction.workgroup.approximate_div.elide.base",
         "row_reduction.subgroup_rows.approximate_div.base",
         "row_reduction.subgroup.approximate_div.base",
         "elementwise.stable-ex2.local",
         "elementwise.native-ptx.local",
         "row_reduction.workgroup.plain.local",
+        "row_reduction.workgroup.plain.elide.local",
         "row_reduction.subgroup_rows.plain.local",
         "row_reduction.subgroup.plain.local",
         "row_reduction.workgroup.fma.local",
+        "row_reduction.workgroup.fma.elide.local",
         "row_reduction.subgroup.fma.local",
         "row_reduction.workgroup.approximate_div.local",
+        "row_reduction.workgroup.approximate_div.elide.local",
         "row_reduction.subgroup_rows.approximate_div.local",
         "row_reduction.subgroup.approximate_div.local",
         "padded_row_reduction.serial-row.scalar.lanes32.local",

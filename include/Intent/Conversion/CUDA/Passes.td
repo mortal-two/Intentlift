@@ -75,6 +75,14 @@ def ConvertIntentRowReductionToGPU
            "to preload them before the reduction so small register-resident "
            "rows can overlap global-memory latency with the collective. This "
            "is a Layer-C candidate and must independently pass P6.">,
+    Option<"materializeSharedRowOutput", "materialize-shared-row-output", "bool", "true",
+           "When a required full-row output also feeds a single reduction and "
+           "its epilogue, true stores that row before the collective and reloads "
+           "it afterwards to shorten register live ranges. False keeps the same "
+           "pointwise values in SSA across the collective and emits only their "
+           "required final store, eliminating one full-row reload. The false "
+           "state is admitted only when that exact graph is proved; unsupported "
+           "graphs fail closed.">,
     Option<"promoteRank0Scalars", "promote-rank0-scalars", "bool", "true",
            "Load dynamic rank-0 inputs once in the host launch stub and pass "
            "them to the outlined kernel by value. False retains device-side "

@@ -34,6 +34,7 @@ class RowSchedule:
     promote_rank0_scalars: bool = True
     rows_per_block: int = 1
     reduction_parts: int = 1
+    materialize_shared_row_output: bool = True
 
     def __post_init__(self) -> None:
         if type(self.block_threads) is not int or self.block_threads not in _BLOCK_THREADS:
@@ -59,6 +60,10 @@ class RowSchedule:
             raise ValueError("row schedule defer_epilogue_col_loads must be a bool")
         if type(self.promote_rank0_scalars) is not bool:
             raise ValueError("row schedule promote_rank0_scalars must be a bool")
+        if type(self.materialize_shared_row_output) is not bool:
+            raise ValueError(
+                "row schedule materialize_shared_row_output must be a bool"
+            )
         if type(self.rows_per_block) is not int or self.rows_per_block not in {
             1,
             2,
@@ -106,7 +111,9 @@ class RowSchedule:
             "defer-epilogue-col-loads="
             f"{'true' if self.defer_epilogue_col_loads else 'false'} "
             f"rows-per-block={self.rows_per_block} "
-            f"reduction-parts={self.reduction_parts}"
+            f"reduction-parts={self.reduction_parts} "
+            "materialize-shared-row-output="
+            f"{'true' if self.materialize_shared_row_output else 'false'}"
         )
 
     def to_dict(self) -> dict[str, int | bool]:
@@ -121,6 +128,7 @@ class RowSchedule:
             "defer_epilogue_col_loads": self.defer_epilogue_col_loads,
             "rows_per_block": self.rows_per_block,
             "reduction_parts": self.reduction_parts,
+            "materialize_shared_row_output": self.materialize_shared_row_output,
         }
 
 

@@ -360,6 +360,8 @@ static void attachConcreteStateReceipt(func::FuncOp lowered, int64_t threads,
                                        unsigned approximateDivCount = 0,
                                        unsigned hostValueCaptureCount = 0,
                                        unsigned epilogueLoadMotionCount = 0,
+                                       bool materializedSharedRowOutput = false,
+                                       bool elidedSharedRowMaterialization = false,
                                        StringRef topologyOverride = {},
                                        int64_t stageCount = 1,
                                        int64_t reductionParts = 1) {
@@ -404,6 +406,12 @@ static void attachConcreteStateReceipt(func::FuncOp lowered, int64_t threads,
   if (epilogueLoadMotionCount != 0)
     trace.push_back(
         StringAttr::get(ctx, "cuda.b.epilogue_readonly_load_motion.v1"));
+  if (materializedSharedRowOutput)
+    trace.push_back(StringAttr::get(
+        ctx, "cuda.materialize.intermediate_row_output.v1"));
+  if (elidedSharedRowMaterialization)
+    trace.push_back(StringAttr::get(
+        ctx, "cuda.elide.intermediate_row_materialization.v1"));
 
   lowered->setAttr("intent.backend.lowering_path_kind",
                    StringAttr::get(ctx, "row_reduction"));
@@ -846,6 +854,7 @@ struct RowReductionLowering {
   bool enableFmaFusion;
   bool enableApproximateDiv;
   bool deferEpilogueColumnLoads;
+  bool materializeSharedRowOutput;
   bool promoteRank0ScalarInputs;
   bool enableSortedPrefix;
   unsigned requestedRowsPerBlock;
@@ -932,7 +941,7 @@ struct RowReductionLowering {
 
   RowReductionLowering(func::FuncOp fn, unsigned bt, unsigned tc,
                        unsigned vw, bool fuseFma, bool approximateDiv,
-                       bool deferColLoads,
+                       bool deferColLoads, bool materializeRowOutput,
                        bool promoteScalars, bool enablePrefix,
                        unsigned predicatedValueIfs,
                        unsigned foldedConstexprSelects,
@@ -942,6 +951,7 @@ struct RowReductionLowering {
         enableFmaFusion(fuseFma),
         enableApproximateDiv(approximateDiv),
         deferEpilogueColumnLoads(deferColLoads),
+        materializeSharedRowOutput(materializeRowOutput),
         promoteRank0ScalarInputs(promoteScalars),
         enableSortedPrefix(enablePrefix),
         requestedRowsPerBlock(rowsPerBlock),
@@ -3108,7 +3118,10 @@ struct RowReductionLowering {
         gpuFn, T, predicatedValueIfCount, foldedConstexprSelectCount,
         /*rowsPerBlock=*/1, emittedApproximateDivCount,
         static_cast<unsigned>(launchScalars.size()),
-        /*epilogueLoadMotionCount=*/0, "multi_stage_partial_finalize",
+        /*epilogueLoadMotionCount=*/0,
+        /*materializedSharedRowOutput=*/false,
+        /*elidedSharedRowMaterialization=*/false,
+        "multi_stage_partial_finalize",
         stageCount, parts);
     gpuFn->setAttr("intent.backend.grid_blocks",
                    b.getI64IntegerAttr(M * parts));
@@ -3531,6 +3544,8 @@ struct RowReductionLowering {
     attachConcreteStateReceipt(gpuFn, T, predicatedValueIfCount,
                                foldedConstexprSelectCount, 1,
                                emittedApproximateDivCount, 0, 0,
+                               /*materializedSharedRowOutput=*/false,
+                               /*elidedSharedRowMaterialization=*/false,
                                tiledTopology);
     fn.erase();
     return success();
@@ -5035,7 +5050,7 @@ struct RowReductionLowering {
     // loaded above, so overwriting the aliased input cannot affect a later
     // source read. Fail closed for selects, multiple candidates, non-vec4
     // paths, or graphs without a downstream consumer.
-    std::optional<unsigned> stagedRowOutput;
+    std::optional<unsigned> sharedRowOutput;
     if (useVec4 && useCompactSingleRegisterReduction && reduces.size() == 1) {
       SmallVector<unsigned> candidates;
       for (unsigned j = 0; j < outputVals.size(); ++j) {
@@ -5074,8 +5089,17 @@ struct RowReductionLowering {
           candidates.push_back(j);
       }
       if (candidates.size() == 1)
-        stagedRowOutput = candidates.front();
+        sharedRowOutput = candidates.front();
     }
+    if (!materializeSharedRowOutput && !sharedRowOutput) {
+      fn.emitError("requested row materialization elision has no exact shared "
+                   "row-output graph");
+      return failure();
+    }
+    std::optional<unsigned> stagedRowOutput =
+        materializeSharedRowOutput ? sharedRowOutput : std::nullopt;
+    bool elidedSharedRowMaterialization =
+        !materializeSharedRowOutput && sharedRowOutput.has_value();
     if (stagedRowOutput) {
       unsigned j = *stagedRowOutput;
       for (int64_t vt = 0; vt < numVecTiles; ++vt) {
@@ -5581,7 +5605,9 @@ struct RowReductionLowering {
                                requestedRowsPerBlock,
                                emittedApproximateDivCount,
                                launchScalars.size(),
-                               deferredColArgs.size());
+                               deferredColArgs.size(),
+                               stagedRowOutput.has_value(),
+                               elidedSharedRowMaterialization);
     fn.erase();
     return success();
   }
@@ -5608,6 +5634,7 @@ struct ConvertIntentRowReductionToGPUPass
       RowReductionLowering probe(fn, blockThreads, tileCols, vectorWidth,
                                  fuseFma, approximateDiv,
                                  deferEpilogueColLoads,
+                                 materializeSharedRowOutput,
                                  promoteRank0Scalars,
                                  enableSortedPrefix, predicatedValueIfs,
                                  foldedConstexprSelects, rowsPerBlock,
@@ -5620,6 +5647,7 @@ struct ConvertIntentRowReductionToGPUPass
       RowReductionLowering low(target.fn, blockThreads, tileCols, vectorWidth,
                                fuseFma, approximateDiv,
                                deferEpilogueColLoads,
+                               materializeSharedRowOutput,
                                promoteRank0Scalars,
                                enableSortedPrefix,
                                target.predicatedValueIfs,
