@@ -23,10 +23,17 @@ def test_standard_plan_freezes_equal_search_budgets() -> None:
 
     assert arms[ExperimentArm.E0_SOURCE].candidate_budget == 0
     assert arms[ExperimentArm.E1_CANONICAL].candidate_budget == 0
+    assert arms[ExperimentArm.C_FIXED].candidate_budget == 1
+    assert arms[ExperimentArm.C_FIXED].baseline_kind == "c_fixed"
     assert all(
         item.candidate_budget == 17
         for arm, item in arms.items()
-        if arm not in {ExperimentArm.E0_SOURCE, ExperimentArm.E1_CANONICAL}
+        if arm
+        not in {
+            ExperimentArm.E0_SOURCE,
+            ExperimentArm.E1_CANONICAL,
+            ExperimentArm.C_FIXED,
+        }
     )
 
 
@@ -46,6 +53,14 @@ def test_machine_spec_is_the_consumed_qd_experiment_contract() -> None:
     assert spec["measurement"]["confirmation_rule"].startswith(
         "equal-count fresh Source and target"
     )
+    assert spec["measurement"]["formal_panels"]["internal_attribution"] == [
+        "C-Fixed",
+        "Schedule-Only",
+        "IntentIR",
+    ]
+    assert _arms()[ExperimentArm.E3_STATE_SEARCH].to_dict()[
+        "experiment_name"
+    ] == "IntentIR"
     assert {item["arm"] for item in spec["arms"]} == {
         item.value for item in ExperimentArm
     }

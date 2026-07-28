@@ -88,6 +88,7 @@ def _entry(
     j_dev_variant: JDevVariant | None = None,
     dev_workload: DevWorkloadConfig | None = None,
     j_dev_path: Path | None = None,
+    measure_c_oracle: bool = False,
 ) -> dict[str, Any]:
     base_snapshot, path = load_production_snapshot(snapshot_dir, name)
     if base_snapshot.c is None:
@@ -285,13 +286,15 @@ def _entry(
         compiled[candidate.candidate_id] = result
         return result
 
+    visit_budget = axes.candidate_budget if axes is not None else budget
+
     def visit_order(ordered: tuple[Any, ...]) -> dict[str, Any]:
         seen_states: dict[str, str] = {}
         trace: list[dict[str, Any]] = []
         concrete_ids: list[str] = []
         budget_consumed = 0
         for candidate in ordered:
-            if budget_consumed >= budget:
+            if budget_consumed >= visit_budget:
                 break
             outcome = compile_once(candidate)
             if outcome["status"] != "compiled_state":
@@ -335,7 +338,46 @@ def _entry(
         }
 
     with_c_visit = visit_order(seeded_candidates)
-    without_c_visit = visit_order(unseeded_candidates)
+    if axes is not None and axes.arm is ExperimentArm.C_FIXED:
+        without_c_visit = {
+            "budget_consumed": 0,
+            "trace": [],
+            "concrete_ids": [],
+        }
+        if (
+            with_c_visit["budget_consumed"] != 1
+            or len(with_c_visit["concrete_ids"]) != 1
+        ):
+            raise RuntimeError(
+                "C-Fixed must form exactly one concrete target-projected state"
+            )
+    else:
+        without_c_visit = visit_order(unseeded_candidates)
+
+    oracle_trace: list[dict[str, Any]] = []
+    oracle_concrete_ids: list[str] = []
+    if measure_c_oracle:
+        if axes is None or not axes.search_structural_states:
+            raise ValueError(
+                "complete C oracle requires an expanded IntentIR search arm"
+            )
+        for candidate in seeded_candidates:
+            outcome = compile_once(candidate)
+            oracle_trace.append(
+                {
+                    "candidate_id": candidate.candidate_id,
+                    "status": outcome["status"],
+                    "budget_consumed": False,
+                    "oracle_only": (
+                        candidate.candidate_id
+                        not in with_c_visit["concrete_ids"]
+                        and candidate.candidate_id
+                        not in without_c_visit["concrete_ids"]
+                    ),
+                }
+            )
+            if outcome["status"] == "compiled_state":
+                oracle_concrete_ids.append(candidate.candidate_id)
 
     # The portable bundle carries the union of both equal-budget visits.  A
     # concrete MLIR state is compiled/transported once even when two requested
@@ -343,6 +385,7 @@ def _entry(
     selected_ids = [
         *with_c_visit["concrete_ids"],
         *without_c_visit["concrete_ids"],
+        *oracle_concrete_ids,
     ]
     aliases: dict[str, str] = {}
     state_owner: dict[str, str] = {}
@@ -383,6 +426,14 @@ def _entry(
 
     with_c_order = concrete_order(with_c_visit["concrete_ids"])
     without_c_order = concrete_order(without_c_visit["concrete_ids"])
+    with_c_full_order = concrete_order(
+        [item.candidate_id for item in seeded_candidates]
+    )
+    without_c_full_order = concrete_order(
+        [item.candidate_id for item in unseeded_candidates]
+    )
+    if measure_c_oracle and set(with_c_full_order) != set(without_c_full_order):
+        raise AssertionError("CUDA C oracle orders differ in concrete-state universe")
     with_c_schedule_spine_order = concrete_order(seeded_schedule_spine)
     without_c_schedule_spine_order = concrete_order(
         unseeded_schedule_spine
@@ -394,6 +445,40 @@ def _entry(
         if use_c_prior
         else without_c_schedule_spine_order
     )
+    if not with_c_order:
+        raise RuntimeError(f"{name} has no concrete target projection of C")
+    c_fixed_candidate = candidates_by_id[with_c_order[0]]
+    canonical_projection = canonical_cuda_candidate(state)
+    projection_kind = (
+        "generic"
+        if canonical_projection.generic
+        else canonical_projection.lowering_path_kind
+    )
+    projection_fast_path = (
+        None if canonical_projection.generic else canonical_projection.fast_path_id
+    )
+    if c_fixed_candidate.lowering_path_kind != projection_kind:
+        raise AssertionError("C-Fixed target projection escaped the canonical path")
+    c_fixed_projection = {
+        "protocol": "intentir.backend.cuda.c-projection.v1",
+        "selection_rule": (
+            "first concrete state after registered target-aware C distance "
+            "ordering on the canonical lowering path; deterministic schedule "
+            "enumeration order breaks equal-score ties"
+        ),
+        "source_priors": [item.to_record() for item in state.priors],
+        "canonical_lowering_path": {
+            "lowering_path_kind": projection_kind,
+            "fast_path_id": projection_fast_path,
+        },
+        "selected_candidate_id": c_fixed_candidate.candidate_id,
+        "selected_target_schedule": dict(c_fixed_candidate.schedule),
+        "selected_c_order_score": c_fixed_candidate.c_order_score,
+        "raw_c_value_used_as_exact_target_schedule": False,
+        "executed_without_search": bool(
+            axes is not None and axes.arm is ExperimentArm.C_FIXED
+        ),
+    }
     rejected_by_id = {
         candidate_id: outcome["rejection"]
         for candidate_id, outcome in compiled.items()
@@ -427,7 +512,7 @@ def _entry(
             "fast_path_id": seeded_fast_path,
         },
         "search_orders": {
-            "budget": budget,
+            "budget": visit_budget,
             "budget_unit": "distinct post-pass MLIR state or exact failure",
             "with_c_budget_consumed": with_c_visit["budget_consumed"],
             "without_c_budget_consumed": without_c_visit["budget_consumed"],
@@ -435,6 +520,14 @@ def _entry(
             "without_c_attempt_trace": without_c_visit["trace"],
             "with_c_concrete_order": with_c_order,
             "without_c_concrete_order": without_c_order,
+            "c_oracle_transport_complete": measure_c_oracle,
+            "c_oracle_attempt_trace": oracle_trace,
+            "with_c_full_concrete_order": (
+                with_c_full_order if measure_c_oracle else []
+            ),
+            "without_c_full_concrete_order": (
+                without_c_full_order if measure_c_oracle else []
+            ),
             "with_c_schedule_spine_concrete_order": (
                 with_c_schedule_spine_order
             ),
@@ -450,6 +543,10 @@ def _entry(
             "candidate_universe_equal": True,
             "contract_view_equal": True,
             "hard_admission_equal": True,
+            "c_fixed_exactly_one": bool(
+                axes is not None and axes.arm is ExperimentArm.C_FIXED
+            ),
+            "c_fixed_projection": c_fixed_projection,
             "with_c_hard_admission": list(seeded_path_admission),
             "without_c_hard_admission": list(unseeded_path_admission),
         },
@@ -533,6 +630,15 @@ def _parser() -> argparse.ArgumentParser:
             "full production candidate universe"
         ),
     )
+    parser.add_argument(
+        "--measure-c-oracle",
+        action="store_true",
+        help=(
+            "transport the complete expanded concrete-state universe so the "
+            "target can compute candidates-to-95%-of-final-best; search-arm "
+            "budgets remain unchanged"
+        ),
+    )
     return parser
 
 
@@ -581,6 +687,7 @@ def main(argv: list[str] | None = None) -> int:
             j_dev_variant,
             dev_workload,
             args.j_dev_variant,
+            args.measure_c_oracle,
         )
         entries.append(entry)
         print(

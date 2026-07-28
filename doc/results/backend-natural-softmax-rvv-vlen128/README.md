@@ -1,8 +1,9 @@
 # Liger Softmax natural-shape RVV development result（VLEN=128）
 
-> 状态：`uncertified_backend_dev`、Target--RefJ-only、warm development measurement。它证明自然
-> J_dev、真实retile/object search与预算消融可以在RVV执行；低重复数字不进入最终主表，也不声称
-> RVV超越Triton Source。
+> 状态：**历史诊断，不能解释为最终三臂实验。** 该回执是 `uncertified_backend_dev`、
+> Target--RefJ-only、warm development measurement；旧 `frozen-C` 把未经 target role/axis 投影的
+> C 排序结果当控制，旧 fused path 也没有 read-once multi-use protection，因此既不是 v3 C-Fixed，
+> 也不是当前 IntentIR path。它只证明早期自然 J_dev、retile/object search 与预算边界可在 RVV 执行。
 
 ## Exact input 与 compiler receipts
 
@@ -32,6 +33,9 @@ ssh rvv python3 /tmp/run_rvv_benchmark_bundle.py \
 ```
 
 ## Bounded-search outcome
+
+以下数字全部保留为 v4 runner 的历史故障定位资产，不进入 `C-Fixed / Schedule-Only / IntentIR`
+主图或 C prior 小表；当前实现与结果以 v3 bundle/v5 runner 的新回执为准。
 
 runner v4把预算变成真实访问边界，而不是计时后再截断：
 

@@ -429,6 +429,20 @@ def _one_kernel(
     without_c_order = list(
         search_orders.get("without_c_concrete_order", default_order)
     )
+    c_oracle_complete = bool(
+        search_orders.get("c_oracle_transport_complete", False)
+    )
+    with_c_full_order = list(
+        search_orders.get("with_c_full_concrete_order", [])
+    )
+    without_c_full_order = list(
+        search_orders.get("without_c_full_concrete_order", [])
+    )
+    if c_oracle_complete:
+        if not with_c_full_order or set(with_c_full_order) != set(
+            without_c_full_order
+        ):
+            raise ValueError("CUDA C oracle does not cover one identical universe")
     active_order_name = str(search_orders.get("active_order", "with_c"))
     if active_order_name not in {"with_c", "without_c"}:
         raise ValueError(f"unknown active CUDA search order {active_order_name!r}")
@@ -438,6 +452,13 @@ def _one_kernel(
     schedule_spine_order = list(
         search_orders.get("active_schedule_spine_concrete_order", [])
     )
+    c_fixed_projection = search_orders.get("c_fixed_projection", {})
+    c_fixed_candidate_id = (
+        str(c_fixed_projection.get("selected_candidate_id"))
+        if isinstance(c_fixed_projection, Mapping)
+        and c_fixed_projection.get("selected_candidate_id") is not None
+        else None
+    )
 
     initial_ranked = sorted(
         measured_indices,
@@ -446,7 +467,10 @@ def _one_kernel(
     # Always remeasure each ordering's provisional winner.  Otherwise a small
     # finalist_count could accidentally give only one C arm fresh samples.
     mandatory_indices: list[int] = []
-    for order in (with_c_order, without_c_order, schedule_spine_order):
+    mandatory_orders = [with_c_order, without_c_order, schedule_spine_order]
+    if c_fixed_candidate_id is not None:
+        mandatory_orders.append([c_fixed_candidate_id])
+    for order in mandatory_orders:
         arm_indices = [
             measured_index_by_id[candidate_id]
             for candidate_id in order
@@ -460,10 +484,15 @@ def _one_kernel(
                 )
             )
     ranked_indices = []
-    for index in [*mandatory_indices, *initial_ranked]:
+    ranking_source = (
+        [*mandatory_indices, *initial_ranked]
+        if not c_oracle_complete
+        else [*mandatory_indices, *measured_indices]
+    )
+    for index in ranking_source:
         if index not in ranked_indices:
             ranked_indices.append(index)
-        if (
+        if not c_oracle_complete and (
             len(ranked_indices) >= finalist_count
             and all(item in ranked_indices for item in mandatory_indices)
         ):
@@ -512,7 +541,15 @@ def _one_kernel(
 
     with_c_best = best_for_order(with_c_order)
     without_c_best = best_for_order(without_c_order)
+    c_oracle_best = (
+        best_for_order(with_c_full_order) if c_oracle_complete else None
+    )
     schedule_spine_best = best_for_order(schedule_spine_order)
+    c_fixed_same_receipt = (
+        best_for_order([c_fixed_candidate_id])
+        if c_fixed_candidate_id is not None
+        else None
+    )
     best_record = best_for_order(active_order)
     if best_record is None:
         raise RuntimeError(
@@ -520,6 +557,27 @@ def _one_kernel(
         )
     best_id = best_record["candidate"]["candidate_id"]
     winner, extracted, winner_thunk = candidate_artifacts[best_id]
+
+    def candidates_to_95pct(order: list[str]) -> int | None:
+        if c_oracle_best is None:
+            return None
+        threshold_us = float(c_oracle_best["latency_us"]) / 0.95
+        best_so_far = float("inf")
+        for count, candidate_id in enumerate(order, start=1):
+            index = measured_index_by_id.get(candidate_id)
+            if index is not None:
+                best_so_far = min(
+                    best_so_far,
+                    float(candidate_records[index]["latency_us"]),
+                )
+            if best_so_far <= threshold_us:
+                return count
+        return None
+
+    with_c_candidates_to_95pct = candidates_to_95pct(with_c_full_order)
+    without_c_candidates_to_95pct = candidates_to_95pct(
+        without_c_full_order
+    )
 
     baseline_policy = str(entry.get("baseline_policy", "source_and_refj"))
     if baseline_policy not in {"source_and_refj", "target_refj_only"}:
@@ -702,6 +760,23 @@ def _one_kernel(
                     if with_c_best is not None and without_c_best is not None
                     else None
                 ),
+                "oracle_complete": c_oracle_complete,
+                "oracle_best_us": (
+                    c_oracle_best["latency_us"]
+                    if c_oracle_best is not None
+                    else None
+                ),
+                "with_c_candidates_to_95pct_of_final_best": (
+                    with_c_candidates_to_95pct
+                ),
+                "without_c_candidates_to_95pct_of_final_best": (
+                    without_c_candidates_to_95pct
+                ),
+                "unavailable_reason": (
+                    None
+                    if c_oracle_complete
+                    else "complete_latency_map_not_transported"
+                ),
             },
             "schedule_spine_ablation": (
                 {
@@ -720,6 +795,22 @@ def _one_kernel(
                     ),
                 }
                 if schedule_spine_best is not None
+                else None
+            ),
+            "c_fixed_schedule_ablation": (
+                {
+                    "same_candidate_measurement_receipt": True,
+                    "c_fixed_candidate_id": c_fixed_candidate_id,
+                    "c_fixed_us": c_fixed_same_receipt["latency_us"],
+                    "schedule_only_best_candidate_id": best_id,
+                    "schedule_only_best_us": best_record["latency_us"],
+                    "schedule_over_c_fixed_speedup": (
+                        c_fixed_same_receipt["latency_us"]
+                        / best_record["latency_us"]
+                    ),
+                }
+                if c_fixed_same_receipt is not None
+                and schedule_spine_order == active_order
                 else None
             ),
             "logical_io": {

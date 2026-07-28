@@ -1,5 +1,8 @@
 import importlib.util
+import ctypes
+import hashlib
 import json
+import struct
 import sys
 from pathlib import Path
 
@@ -73,6 +76,7 @@ def _cuda_report(arm: str, latency_us: float) -> dict:
                 "extents": {"x0": 16},
                 "workload_valuation": {"j_unchanged": True},
                 "candidates": [],
+                "winner": {"candidate": {"candidate_id": "c-fixed-state"}},
                 "performance": {
                     "mlir_us": latency_us,
                     "source_triton_us": None,
@@ -94,9 +98,48 @@ def test_cuda_ablation_summary_accepts_target_refj_only_reports():
 
     assert result["summary"]["kernel_count"] == 1
     assert result["summary"]["source_baseline_kernel_count"] == 0
-    assert result["summary"]["geomean_e3_over_e2_speedup"] == 2.0
-    assert result["summary"]["geomean_e2_speedup_over_source"] is None
-    assert result["per_kernel"][0]["e3_speedup_over_source"] is None
+    assert result["summary"]["geomean_g_lowering"] == 2.0
+    assert result["summary"]["geomean_intentir_speedup_over_source"] is None
+    assert result["per_kernel"][0]["external_competitiveness"][
+        "intentir_speedup_over_source"
+    ] is None
+
+
+def test_cuda_ablation_summary_reports_formal_three_arm_gains():
+    result = cuda_summary.summarize(
+        _cuda_report("E2", 4.0),
+        _cuda_report("E3", 2.0),
+        _cuda_report("CF", 8.0),
+    )
+
+    assert result["summary"]["formal_three_arm"] is True
+    assert result["summary"]["geomean_g_schedule"] == 2.0
+    assert result["summary"]["geomean_g_lowering"] == 2.0
+    assert result["per_kernel"][0]["c_fixed_us"] == 8.0
+    assert result["per_kernel"][0]["schedule_only_us"] == 4.0
+    assert result["per_kernel"][0]["intentir_us"] == 2.0
+    assert result["per_kernel"][0]["g_schedule"] == 2.0
+    assert result["per_kernel"][0]["g_lowering"] == 2.0
+
+
+def test_cuda_ablation_summary_prefers_same_receipt_schedule_gain():
+    c_fixed = _cuda_report("CF", 8.0)
+    schedule = _cuda_report("E2", 4.0)
+    intentir = _cuda_report("E3", 2.0)
+    schedule["kernels"][0]["performance"]["c_fixed_schedule_ablation"] = {
+        "same_candidate_measurement_receipt": True,
+        "c_fixed_candidate_id": "c-fixed-state",
+        "c_fixed_us": 10.0,
+        "schedule_only_best_us": 4.0,
+        "schedule_over_c_fixed_speedup": 2.5,
+    }
+
+    result = cuda_summary.summarize(schedule, intentir, c_fixed)
+
+    assert result["per_kernel"][0]["g_schedule"] == 2.5
+    assert result["per_kernel"][0]["supplementary_diagnostics"][
+        "cross_report_g_schedule"
+    ] == 2.0
 
 
 def test_cuda_ablation_summary_prefers_same_receipt_schedule_spine_gain():
@@ -111,9 +154,11 @@ def test_cuda_ablation_summary_prefers_same_receipt_schedule_spine_gain():
 
     result = cuda_summary.summarize(e2, e3)
 
-    assert result["summary"]["geomean_e3_over_e2_speedup"] == 1.5
-    assert result["summary"]["geomean_cross_report_e3_over_e2_speedup"] == 2.0
-    assert result["per_kernel"][0]["e3_over_e2_speedup"] == 1.5
+    assert result["summary"]["geomean_g_lowering"] == 1.5
+    assert result["supplementary_diagnostics"][
+        "geomean_cross_report_g_lowering"
+    ] == 2.0
+    assert result["per_kernel"][0]["g_lowering"] == 1.5
 
 
 def test_cuda_ablation_summary_preserves_failed_horizontal_cells():
@@ -147,8 +192,8 @@ def test_cuda_ablation_summary_preserves_failed_horizontal_cells():
     assert result["summary"]["failed_or_missing_count"] == 1
     failed = next(item for item in result["per_kernel"] if item["kernel"] == "softmax")
     assert failed["status"] == "failed_or_missing"
-    assert failed["e2_error"] == "compile failed"
-    assert failed["e3_error"] == "QD failed"
+    assert failed["schedule_only_error"] == "compile failed"
+    assert failed["intentir_error"] == "QD failed"
 
 
 def test_cuda_ablation_summary_rejects_different_stabilization_protocols():
@@ -163,7 +208,7 @@ def test_cuda_ablation_summary_rejects_different_stabilization_protocols():
 def _rvv_report(kernel: str, *, toolchain: str = "a" * 64) -> dict:
     return {
         "protocol": rvv_merge.REPORT_PROTOCOL,
-        "bundle_protocol": "intentir.production.rvv-search-bundle.v2",
+        "bundle_protocol": "intentir.production.rvv-search-bundle.v3",
         "bundle_toolchain_digest": toolchain,
         "target": {
             "backend": "riscv",
@@ -172,7 +217,7 @@ def _rvv_report(kernel: str, *, toolchain: str = "a" * 64) -> dict:
         },
         "workload_profile": "closed-v1",
         "baseline_policy": "target_refj_only",
-        "experiment_spec_protocol": "intentir.backend.ablation-plan.v2",
+        "experiment_spec_protocol": "intentir.backend.ablation-plan.v3",
         "experiment_spec_digest": "b" * 64,
         "measurement_spec_protocol": "intentir.backend.performance-measurement.v1",
         "measurement_spec_digest": "c" * 64,
@@ -191,9 +236,14 @@ def _rvv_report(kernel: str, *, toolchain: str = "a" * 64) -> dict:
                 "c_digest": kernel * 4,
                 "extents": {"x0": 1},
                 "performance": {
-                    "e3_over_e2_speedup": 1.1,
-                    "retiled_over_no_retile_speedup": 1.0,
-                    "c_prior_over_erase_c_speedup": 1.0,
+                    "g_schedule": 1.2,
+                    "g_lowering": 1.1,
+                },
+                "c_prior_efficiency": {
+                    "best_at_budget_c_over_erase_c_speedup": 1.0
+                },
+                "supplementary_diagnostics": {
+                    "formal_role": "not_a_main_experiment_arm",
                     "b_transformation_wins": 0,
                 },
             }
@@ -241,6 +291,9 @@ def test_rvv_bounded_candidate_union_makes_budget_executable() -> None:
                     "reduction_tile": reduction,
                 },
                 "transformation": {
+                    "lowering_path_kind": (
+                        "producer_consumer_fused" if b else "materialized"
+                    ),
                     "b_transformations": ["fuse"] if b else [],
                 },
             }
@@ -249,34 +302,70 @@ def test_rvv_bounded_candidate_union_makes_budget_executable() -> None:
     entry = {
         "candidates": [
             candidate("no-retile", 0, 0, b=False),
-            candidate("frozen", 128, 0, b=False),
+            candidate("c-fixed", 2, 8, b=False),
             candidate("fused", 64, 32, b=True),
             candidate("erase-only", 8, 8, b=False),
         ],
-        "schedule_only_candidate_ids": ["no-retile", "frozen", "erase-only"],
+        "schedule_only_candidate_ids": ["no-retile", "c-fixed", "erase-only"],
         "concrete_search_plan": {
-            "c_prior_order": ["fused", "frozen", "no-retile", "erase-only"],
-            "erase_c_order": ["no-retile", "erase-only", "frozen", "fused"],
-            "frozen_c_candidate_id": "frozen",
+            "schedule_only_c_prior_order": [
+                "c-fixed",
+                "no-retile",
+                "erase-only"
+            ],
+            "schedule_only_erase_c_order": [
+                "no-retile",
+                "erase-only",
+                "c-fixed"
+            ],
+            "c_prior_order": [
+                "c-fixed",
+                "no-retile",
+                "erase-only",
+                "fused"
+            ],
+            "erase_c_order": ["no-retile", "erase-only", "c-fixed", "fused"],
+            "c_fixed_candidate_id": "c-fixed",
+            "candidate_universe_digest": hashlib.sha256(
+                json.dumps(
+                    sorted(["no-retile", "c-fixed", "fused", "erase-only"]),
+                    separators=(",", ":"),
+                ).encode()
+            ).hexdigest(),
+            "canonical_lowering_path": "materialized",
         },
     }
 
     orders = rvv_runner._bounded_candidate_orders(entry, 2)
 
-    assert orders["active_e3"] == ["fused", "frozen"]
-    assert orders["active_e2"] == ["frozen", "no-retile"]
-    assert orders["erase_e2"] == ["no-retile", "erase-only"]
+    assert orders["active_e3"] == ["c-fixed", "no-retile"]
+    assert orders["active_e2"] == ["c-fixed", "no-retile"]
+    assert orders["erase_e3"] == ["no-retile", "erase-only"]
     assert orders["no_retile"] == ["no-retile"]
-    assert orders["e2_evaluation"] == ["frozen", "no-retile"]
-    assert orders["e3_evaluation"] == ["fused", "frozen", "no-retile"]
-    assert orders["schedule_only_retiled"] == ["frozen"]
-    assert orders["timed"] == ["fused", "frozen", "no-retile", "erase-only"]
+    assert orders["c_fixed"] == ["c-fixed"]
+    assert orders["e2_evaluation"] == ["c-fixed", "no-retile"]
+    assert orders["e3_evaluation"] == ["c-fixed", "no-retile"]
+    assert orders["schedule_only_retiled"] == ["c-fixed"]
+    assert orders["timed"] == ["c-fixed", "no-retile", "erase-only"]
+
+    oracle = rvv_runner._bounded_candidate_orders(
+        entry, 2, measure_c_oracle=True
+    )
+    assert oracle["timed"] == [
+        "no-retile",
+        "c-fixed",
+        "fused",
+        "erase-only",
+    ]
 
 
 def test_rvv_bounded_candidate_union_rejects_duplicate_native_objects() -> None:
     candidate = {
         "schedule": {"parallel_tile": 0, "reduction_tile": 0},
-        "transformation": {"b_transformations": []},
+        "transformation": {
+            "lowering_path_kind": "materialized",
+            "b_transformations": [],
+        },
         "object_sha256": "a" * 64,
     }
     entry = {
@@ -286,11 +375,52 @@ def test_rvv_bounded_candidate_union_rejects_duplicate_native_objects() -> None:
         ],
         "schedule_only_candidate_ids": ["left", "right"],
         "concrete_search_plan": {
+            "schedule_only_c_prior_order": ["left", "right"],
+            "schedule_only_erase_c_order": ["left", "right"],
             "c_prior_order": ["left", "right"],
             "erase_c_order": ["left", "right"],
-            "frozen_c_candidate_id": "left",
+            "c_fixed_candidate_id": "left",
+            "candidate_universe_digest": hashlib.sha256(
+                json.dumps(["left", "right"], separators=(",", ":")).encode()
+            ).hexdigest(),
+            "canonical_lowering_path": "materialized",
         },
     }
 
     with pytest.raises(ValueError, match="deduplicate native objects"):
         rvv_runner._bounded_candidate_orders(entry, 1)
+
+
+def test_rvv_native_comparator_applies_frozen_tolerance_to_all_values(
+    tmp_path: Path,
+) -> None:
+    comparator = rvv_runner._NativeComparator(tmp_path)
+    actual = ctypes.create_string_buffer(struct.pack("<2f", 1.0, 2.00001), 8)
+    expected = ctypes.create_string_buffer(struct.pack("<2f", 1.0, 2.0), 8)
+    rule = {
+        "dtype": "f32",
+        "tolerance": {"atol": 1e-4, "rtol": 0.0, "equal_nan": False},
+    }
+
+    passed, maximum = comparator.close(
+        actual,
+        expected,
+        byte_count=8,
+        element_count=2,
+        dtype="f32",
+        rule=rule,
+    )
+    assert passed
+    assert maximum == pytest.approx(1e-5, rel=2e-2)
+
+    rule["tolerance"]["atol"] = 1e-7
+    passed, maximum = comparator.close(
+        actual,
+        expected,
+        byte_count=8,
+        element_count=2,
+        dtype="f32",
+        rule=rule,
+    )
+    assert not passed
+    assert maximum > 1e-7

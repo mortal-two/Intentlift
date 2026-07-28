@@ -7,12 +7,13 @@ import argparse
 import hashlib
 import json
 import math
+import statistics
 import time
 from pathlib import Path
 from typing import Any
 
 
-REPORT_PROTOCOL = "intentir.production.rvv-remote-performance.v4"
+REPORT_PROTOCOL = "intentir.production.rvv-remote-performance.v5"
 
 
 def _geomean(values: list[float]) -> float | None:
@@ -105,16 +106,35 @@ def main(argv: list[str] | None = None) -> int:
     kernels = [records[name] for name in sorted(records)]
     successful = [item for item in kernels if "performance" in item]
     failures = [item for item in kernels if "performance" not in item]
-    structural = [
-        item["performance"]["e3_over_e2_speedup"] for item in successful
+    schedule = [
+        item["performance"]["g_schedule"] for item in successful
     ]
-    retiled = [
-        item["performance"]["retiled_over_no_retile_speedup"]
-        for item in successful
+    lowering = [
+        item["performance"]["g_lowering"] for item in successful
     ]
     c_prior = [
-        item["performance"]["c_prior_over_erase_c_speedup"]
+        item["c_prior_efficiency"]["best_at_budget_c_over_erase_c_speedup"]
         for item in successful
+    ]
+    c_candidates_to_95pct = [
+        item["c_prior_efficiency"][
+            "c_prior_candidates_to_95pct_of_final_best"
+        ]
+        for item in successful
+        if item["c_prior_efficiency"].get(
+            "c_prior_candidates_to_95pct_of_final_best"
+        )
+        is not None
+    ]
+    erase_c_candidates_to_95pct = [
+        item["c_prior_efficiency"][
+            "erase_c_candidates_to_95pct_of_final_best"
+        ]
+        for item in successful
+        if item["c_prior_efficiency"].get(
+            "erase_c_candidates_to_95pct_of_final_best"
+        )
+        is not None
     ]
     report = {
         "protocol": REPORT_PROTOCOL,
@@ -138,12 +158,21 @@ def main(argv: list[str] | None = None) -> int:
             "requested": len(kernels),
             "successful": len(successful),
             "failed": len(failures),
-            "geomean_e3_over_e2_speedup": _geomean(structural),
-            "geomean_retiled_over_no_retile_speedup": _geomean(retiled),
-            "geomean_c_prior_over_erase_c_speedup": _geomean(c_prior),
-            "b_transformation_winner_count": sum(
-                item["performance"]["b_transformation_wins"]
-                for item in successful
+            "geomean_g_schedule": _geomean(schedule),
+            "geomean_g_lowering": _geomean(lowering),
+        },
+        "c_prior_efficiency_summary": {
+            "geomean_best_at_budget_c_over_erase_c_speedup": _geomean(c_prior),
+            "oracle_complete_kernel_count": len(c_candidates_to_95pct),
+            "median_c_prior_candidates_to_95pct_of_final_best": (
+                statistics.median(c_candidates_to_95pct)
+                if c_candidates_to_95pct
+                else None
+            ),
+            "median_erase_c_candidates_to_95pct_of_final_best": (
+                statistics.median(erase_c_candidates_to_95pct)
+                if erase_c_candidates_to_95pct
+                else None
             ),
         },
         "kernels": kernels,

@@ -1,12 +1,12 @@
 # Accepted J+C production backend：真实 MLIR lowering、B 合同与 C 搜索
 
-> 状态（2026-07-28）：production catalog 当前是 **16 个 certified high-performance J + 2 个 canary**；
-> RoPE 与 SplitK 的现有 exact evidence 分别为 `GATE2_FAILED`/`NO_CLOSURE`，只能作为 provisional
-> `J_dev`，不能把 16+2 canary 或 16+2 provisional 写成 18-certified。历史目录中的 all-18 数字按
-> 16-certified + 2-canary development regression 解释，不冒充 production-shape/18-certified 主表。
+> 状态（2026-07-28）：`production-jc-v1` 当前是 **16 个 legacy high-performance J + 2 个 canary**；
+> frontend Task14 已另有 fresh **14/28** 正式 evidence（11 direct + 3 exact-artifact Gate2 recheck），
+> 但尚未 content-addressed intake 到本仓库。v1 与 fresh-14 不得混合统计；历史 all-18 数字只按
+> legacy development regression 解释，不冒充 fresh 主表。
 
-本文记录 16 个 certified high-performance J、2 个 provisional J_dev 规划项以及 2 个独立 canary
-如何进入同一真实 backend framework。历史结果、证据边界与压缩报告见
+本文记录 legacy v1、J_dev 与 canary 如何进入同一真实 backend framework；下一正式任务将以
+fresh Task14-14 另建不可变 catalog，不覆盖 v1。历史结果、证据边界与压缩报告见
 [16-certified + 2-canary closed-valuation regression](results/production-backend-closed-18/README.md)与
 [16-certified + 2-canary symbolic-large / RTX 5090D regression](results/production-backend-symbolic-large-18-sm120a/README.md)。原
 [closed-12 报告](results/production-backend-closed-12/production-backend-report.md)和
@@ -421,8 +421,9 @@ RVV 后端不生成 C/Python kernel。它从与 CUDA 相同的 deterministic Int
 
 ```text
 registered ConvertIntentToLinalg + ExpandRsqrtForLibm
-  -> materialized/fused upstream Linalg structural arm
-  -> registered TileLinalgByIteratorKind(parallel_tile, reduction_tile)
+  -> materialized / producer-consumer upstream Linalg path
+  -> registered TileLinalgByIteratorKind(parallel_tile, reduction_tile,
+                                         terminal-consumer fusion control)
   -> one-shot-bufferize + buffer-results-to-out-params
   -> registered ForwardBufferResultsToOutParams
   -> registered LowerDisjointMemrefCopyToLoops
@@ -431,28 +432,22 @@ registered ConvertIntentToLinalg + ExpandRsqrtForLibm
 ```
 
 `ssh rvv` 实测机器为原生 riscv64、64 核、2.6 GHz、VLEN=128。portable bundle 在本地完成
-MLIR/LLVM 编译，远端只用系统 clang 链接 object，并通过 ctypes C ABI 做 canonical-J
-correctness 和固定 CPU 计时。历史 18-entry 结果为 18/18 Target–RefJ correct，E3/E2 几何平均
-**1.1817x**，15/18 winner 使用 B-admitted whole-graph transformation。代表性增量包括 KLDiv
-1.593x、Flash preprocess 1.458x、PolyNorm 1.430x、Flash one-pass LayerNorm 1.296x。
+MLIR/LLVM 编译，远端只用系统 clang 链接 object；correctness 由目标端固定 C comparator 对全部输出
+执行，Python 只做 ABI 绑定、候选编排与计时。
 
-RVV winner 不强制“必须含向量指令”：标量、vectorized、O2/O3 states 都由同一真实 MLIR pipeline
-形成并按实测选择，receipt 同时保留 RVV 指令数与 topology digest。当前没有 RVV Source/Replay
-`D_cert`，因此 1.1817x 只解释为同一 J、同一 target 下从 materialized E2 到 expanded/fused E3 的
-内部因果增量，不能解释为超越 Source 或正式端到端 backend closure。
+当前 v3 bundle/v5 runner 已按最终口径直接输出 `C-Fixed / Schedule-Only / IntentIR`。C-Fixed 只执行
+canonical materialized path 上 target 对 C 的一个确定性投影；Schedule-Only 搜同一路径；IntentIR
+使用相同总预算，先走完整 schedule spine，再访问额外 structural path。C/no-C runner 会校验两条
+full order 的 candidate-universe digest、concrete map 与预算相同，可选择执行完整 latency map 计算
+candidates-to-95%。requested schedule 与 actual applied schedule 分开记录，native-object duplicate 的
+代表 spelling 优先选择 requested/actual 一致者；path digest 不含 tile/vector/opt 参数。
 
-RVV exporter现与CUDA共用J_dev/workload准备器，能消费物理分离的自然shape variant并保留完整
-lineage；远端仍只链接冻结object。首个Softmax `M=N=4096,FP32` natural bundle编译出48个不同native
-objects，真实tile receipt显示requested/applied一致。runner v4把`search_budget`落实为访问/QD/计时
-边界：C-prior/Erase-C前缀和frozen/no-retile控制取exact并集，未访问object不做事后穷举计时。
-
-VLEN=128的budget=4 warm development run中，10/10访问状态通过Target--RefJ。frozen-C为
-`793.84 ms`，Schedule-Only best为`728.10 ms`，schedule-search/frozen-C=`1.0903x`。非零retiled
-best为`771.88 ms`，相对frozen-C=`1.0285x`，但相对no-retile仅`0.9433x`；whole-graph fused也没有
-超过E2，故E3/E2=`1.0000x`。C-prior前4相对Erase-C前4为`0.7813x`，说明当前C排序在该target/shape上
-失配。该负结果不改变candidate universe或legality，详情见
-[Softmax natural RVV result](results/backend-natural-softmax-rvv-vlen128/README.md)。最终主表仍需增加
-iterations/batches并使用冻结cold-data/streaming协议。
+旧 `backend-natural-softmax-rvv-vlen128` 报告使用 raw-C frozen 与旧贪心 fusion，只是历史诊断，不是
+正式 C-Fixed/IntentIR 数据。修复后的 MLIR 路径从 terminal consumer 反向融合；多消费者 producer
+停在 read-once frontier，避免 Softmax 的 `exp` 被两次计算。Softmax `M=N=4096, FP32` 的完整 35-object
+warm 开发回执全部通过 Target--RefJ：C-Fixed 与 Schedule-Only 均约 `589.43 ms`，IntentIR 约
+`531.05 ms`，同回执 `G_lowering=1.110x`；C/no-C 最终 best 相同，达到 95% best 分别需 26/35 个
+候选。它证明机器协议和真实 structural path 已接通，但仍不是 RVV single/16-thread 外部主图。
 
 retile 不再是 report 中的虚拟参数：C++ pass 通过 upstream TilingInterface/SCF tiler 对 parallel 与
 reduction iterator 使用独立 extent，并在 module receipt 记录实际 tiled Linalg op/loop 数。搜索使用
@@ -467,11 +462,11 @@ RVV 实机通过 Target--RefJ，而不是只通过本地链接。
 export PYTHONPATH=$PWD/python
 export INTENT_OPT=$PWD/build/tools/intent-opt/intent-opt
 
-# RTX 5090D：正式 CUDA E2/E3。arm 由 machine-consumed v2 spec 冻结；
+# RTX 5090D：内部三臂。arm 由 machine-consumed v3 spec 冻结；
 # 缺 opaque Replay 或任一 held-out direct edge 时 fail closed。
 python tools/run_production_backend_ablation.py \
   --snapshot-dir corpus/production-jc-v1 \
-  --out /tmp/cuda-e2-e3.json --arms E2 E3 \
+  --out /tmp/cuda-three-arm.json --arms CF E2 E3 \
   --candidate-budget 32 \
   --replay-manifest corpus/production-replay-v1/manifest.json \
   --require-backend-closure
@@ -489,13 +484,16 @@ python tools/run_production_backend_ablation.py \
   --snapshot-dir corpus/production-jc-v1 \
   --out /tmp/cuda-c-prior.json --arms E3 E4 --candidate-budget 8
 
-# sm90a：本地分别冻结 exact E2/E3 cubin bundle，远端只执行。
+# sm90a：本地分别冻结 exact C-Fixed/Schedule-Only/IntentIR cubin bundle，远端只执行。
+INTENT_GPU_CHIP=sm_90a python tools/export_cuda_benchmark_bundle.py \
+  --snapshot-dir corpus/production-jc-v1 \
+  --out /tmp/sm90a-c-fixed.json --arm CF --search-budget 32
 INTENT_GPU_CHIP=sm_90a python tools/export_cuda_benchmark_bundle.py \
   --snapshot-dir corpus/production-jc-v1 \
   --out /tmp/sm90a-e2.json --arm E2 --search-budget 32
 INTENT_GPU_CHIP=sm_90a python tools/export_cuda_benchmark_bundle.py \
   --snapshot-dir corpus/production-jc-v1 \
-  --out /tmp/sm90a-e3.json --arm E3 --search-budget 32
+  --out /tmp/sm90a-e3.json --arm E3 --search-budget 32 --measure-c-oracle
 
 # J-only 128 MiB masked-copy 压力工具：仅 Target--RefJ，不报 Source speedup。
 python tools/export_cuda_benchmark_bundle.py \
@@ -510,12 +508,22 @@ python tools/run_cuda_benchmark_bundle.py \
 # 历史 16-certified + 2-canary symbolic-large regression；不得作为18-certified主口径。
 python tools/export_cuda_benchmark_bundle.py \
   --snapshot-dir corpus/production-jc-v1 \
+  --workload-profile symbolic-large-v1 --arm CF --search-budget 32 \
+  --out /tmp/symbolic-large-sm120a-c-fixed.json
+python tools/export_cuda_benchmark_bundle.py \
+  --snapshot-dir corpus/production-jc-v1 \
   --workload-profile symbolic-large-v1 --arm E2 --search-budget 32 \
   --out /tmp/symbolic-large-sm120a-e2.json
 python tools/export_cuda_benchmark_bundle.py \
   --snapshot-dir corpus/production-jc-v1 \
   --workload-profile symbolic-large-v1 --arm E3 --search-budget 32 \
+  --measure-c-oracle \
   --out /tmp/symbolic-large-sm120a-e3.json
+python tools/run_cuda_benchmark_bundle.py \
+  --bundle /tmp/symbolic-large-sm120a-c-fixed.json \
+  --out /tmp/symbolic-large-sm120a-c-fixed-report.json \
+  --data-regime cold-data --timing event --cold-iterations 16 \
+  --cache-flush-mib 256 --warmup-ms 25
 python tools/run_cuda_benchmark_bundle.py \
   --bundle /tmp/symbolic-large-sm120a-e2.json \
   --out /tmp/symbolic-large-sm120a-e2-report.json \
@@ -527,9 +535,10 @@ python tools/run_cuda_benchmark_bundle.py \
   --data-regime cold-data --timing event --cold-iterations 16 \
   --cache-flush-mib 256 --warmup-ms 25
 python tools/summarize_cuda_benchmark_ablation.py \
+  --c-fixed /tmp/symbolic-large-sm120a-c-fixed-report.json \
   --e2 /tmp/symbolic-large-sm120a-e2-report.json \
   --e3 /tmp/symbolic-large-sm120a-e3-report.json \
-  --out /tmp/symbolic-large-sm120a-e2-e3.json
+  --out /tmp/symbolic-large-sm120a-three-arm.json
 
 # RVV：本地 true-MLIR 编译；当前环境的可用 SSH alias 为 rvv。
 python tools/export_rvv_benchmark_bundle.py \
@@ -538,20 +547,22 @@ python tools/export_rvv_benchmark_bundle.py \
   --out /tmp/rvv-bundle.json
 scp /tmp/rvv-bundle.json tools/run_rvv_benchmark_bundle.py rvv:/tmp/
 ssh rvv python3 /tmp/run_rvv_benchmark_bundle.py \
-  --bundle /tmp/rvv-bundle.json --out /tmp/rvv-report.json
+  --bundle /tmp/rvv-bundle.json --out /tmp/rvv-report.json \
+  --search-budget 48 --measure-c-oracle
 ```
 
 RVV exporter 已接入与 CUDA 相同的 18-entry regression `--workload-profile` 与 per-kernel valuation receipt；
-RVV 没有 Triton Source executable，所以性能报告仍统一标记 `Target--RefJ-only`。CUDA 与 RVV
+当前 RVV bundle 仍没有 Triton-CPU/Best Native RVV executable，因此内部结果必须标记
+`Target--RefJ-only`，外部 panel 保持明确未完成，不能用 CUDA Source 或 RefJ latency代替。CUDA 与 RVV
 可以共享 `(j_digest, nu, workload_profile)`，但不能跨 target 复用 latency 或把 CUDA Source
 speedup 转写成 RVV 结果。
 
 ## 10. 当前边界
 
-当前冻结实现对 **16-certified + 2-canary regression entries** 均可 deterministic materialize/generic
-compile，并已有 elementwise、row/padded reduction、scan、effect/inout、half epilogue、multi-launch 等
-真实 C++/MLIR paths。RoPE 与 SplitK 只有在 provisional J_dev 或新的 exact certified intake 到位后才进入
-planned high-performance matrix；canary 不替代它们。
+当前冻结实现对 **legacy 16-high-performance + 2-canary regression entries** 均可 deterministic
+materialize/generic compile，并已有 elementwise、row/padded reduction、scan、effect/inout、half
+epilogue、multi-launch 等真实 C++/MLIR paths。fresh SplitK 已有 exact certified recheck evidence，但须与
+其余 fresh 13 项一起完成 v2 intake 后才进入正式矩阵；canary、同名 legacy J 与 J_dev 不替代它们。
 
 历史 closed/symbolic valuation 数字保留为 compiler regression 与机制线索，不再作为 18-certified
 aggregate。几十倍 materialized/whole-graph 差值只表示消除故意低效中间物化/dispatch 的内部上界；

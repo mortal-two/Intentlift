@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pair target-side CUDA E2/E3 reports under one measurement contract."""
+"""Pair CUDA C-Fixed/Schedule-Only/IntentIR reports under one contract."""
 
 from __future__ import annotations
 
@@ -7,12 +7,13 @@ import argparse
 import hashlib
 import json
 import math
+import statistics
 from pathlib import Path
 from typing import Any, Mapping
 
 
 REPORT_PROTOCOL = "intentir.production.cuda-remote-performance.v3"
-SUMMARY_PROTOCOL = "intentir.production.cuda-portable-ablation-summary.v1"
+SUMMARY_PROTOCOL = "intentir.production.cuda-portable-ablation-summary.v3"
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -24,8 +25,10 @@ def _load(path: Path) -> dict[str, Any]:
 
 def _arm(report: Mapping[str, Any]) -> str:
     axes = report.get("ablation_axes")
-    if not isinstance(axes, Mapping) or axes.get("arm") not in {"E2", "E3"}:
-        raise ValueError("CUDA report lacks a frozen E2/E3 ablation arm")
+    if not isinstance(axes, Mapping) or axes.get("arm") not in {"CF", "E2", "E3"}:
+        raise ValueError(
+            "CUDA report lacks a C-Fixed/Schedule-Only/IntentIR ablation arm"
+        )
     return str(axes["arm"])
 
 
@@ -97,9 +100,16 @@ def _topology_digests(record: Mapping[str, Any]) -> set[str]:
     return result
 
 
-def summarize(e2: Mapping[str, Any], e3: Mapping[str, Any]) -> dict[str, Any]:
+def summarize(
+    e2: Mapping[str, Any],
+    e3: Mapping[str, Any],
+    c_fixed: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     if _arm(e2) != "E2" or _arm(e3) != "E3":
         raise ValueError("reports must be passed as E2 then E3")
+    if c_fixed is not None and _arm(c_fixed) != "CF":
+        raise ValueError("C-Fixed report must carry the CF arm")
+    reports = (e2, e3) if c_fixed is None else (c_fixed, e2, e3)
     for key in (
         "target",
         "bundle_toolchain_digest",
@@ -109,32 +119,42 @@ def summarize(e2: Mapping[str, Any], e3: Mapping[str, Any]) -> dict[str, Any]:
         "workload_profile",
         "baseline_policy",
     ):
-        if e2.get(key) != e3.get(key):
-            raise ValueError(f"E2/E3 differ in {key}")
-    if _device_identity(e2) != _device_identity(e3):
-        raise ValueError("E2/E3 were not measured on the same CUDA device")
+        if any(report.get(key) != e2.get(key) for report in reports):
+            raise ValueError(f"CF/E2/E3 differ in {key}")
+    if any(_device_identity(report) != _device_identity(e2) for report in reports):
+        raise ValueError("CF/E2/E3 were not measured on the same CUDA device")
     measurement = _measurement_identity(e2)
-    if measurement != _measurement_identity(e3):
-        raise ValueError("E2/E3 measurement contracts differ")
+    if any(_measurement_identity(report) != measurement for report in reports):
+        raise ValueError("CF/E2/E3 measurement contracts differ")
 
+    cf_records = _records(c_fixed) if c_fixed is not None else {}
     e2_records = _records(e2)
     e3_records = _records(e3)
-    kernel_universe = sorted(set(e2_records) | set(e3_records))
+    kernel_universe = sorted(set(cf_records) | set(e2_records) | set(e3_records))
     per_kernel: list[dict[str, Any]] = []
-    e3_over_e2: list[float] = []
-    cross_report_e3_over_e2: list[float] = []
-    e2_over_source: list[float] = []
-    e3_over_source: list[float] = []
+    schedule_gain: list[float] = []
+    lowering_gain: list[float] = []
+    cross_report_lowering_gain: list[float] = []
+    schedule_only_over_source: list[float] = []
+    intentir_over_source: list[float] = []
     c_speedups: list[float] = []
+    c_candidates_to_95pct: list[int] = []
+    erase_c_candidates_to_95pct: list[int] = []
     structurally_expanded: list[str] = []
     paired_success_count = 0
     for kernel in kernel_universe:
         left = e2_records.get(kernel)
         right = e3_records.get(kernel)
+        fixed = cf_records.get(kernel)
+        cf_status = _record_status(fixed) if c_fixed is not None else "not_requested"
         e2_status = _record_status(left)
         e3_status = _record_status(right)
-        if e2_status != "success" or e3_status != "success":
-            identity = left or right or {}
+        if (
+            e2_status != "success"
+            or e3_status != "success"
+            or (c_fixed is not None and cf_status != "success")
+        ):
+            identity = fixed or left or right or {}
             per_kernel.append(
                 {
                     "kernel": kernel,
@@ -151,14 +171,23 @@ def summarize(e2: Mapping[str, Any], e3: Mapping[str, Any]) -> dict[str, Any]:
                         "baseline_policy", e2.get("baseline_policy")
                     ),
                     "status": "failed_or_missing",
-                    "e2_status": e2_status,
-                    "e3_status": e3_status,
-                    "e2_error": left.get("error") if left is not None else None,
-                    "e3_error": right.get("error") if right is not None else None,
+                    "c_fixed_status": cf_status,
+                    "schedule_only_status": e2_status,
+                    "intentir_status": e3_status,
+                    "schedule_only_error": (
+                        left.get("error") if left is not None else None
+                    ),
+                    "intentir_error": (
+                        right.get("error") if right is not None else None
+                    ),
+                    "c_fixed_error": (
+                        fixed.get("error") if fixed is not None else None
+                    ),
                 }
             )
             continue
         assert left is not None and right is not None
+        comparable = (left, right) if fixed is None else (fixed, left, right)
         for key in (
             "case_id",
             "snapshot_digest",
@@ -169,31 +198,65 @@ def summarize(e2: Mapping[str, Any], e3: Mapping[str, Any]) -> dict[str, Any]:
             "workload_profile",
             "baseline_policy",
         ):
-            if left.get(key) != right.get(key):
-                raise ValueError(f"{kernel} E2/E3 differ in {key}")
+            if any(item.get(key) != left.get(key) for item in comparable):
+                raise ValueError(f"{kernel} CF/E2/E3 differ in {key}")
         if left.get("j_digest") is None:
             raise ValueError(f"{kernel} CUDA reports lack J identity")
-        e2_us = float(left["performance"]["mlir_us"])
-        e3_us = float(right["performance"]["mlir_us"])
-        e2_source_value = left["performance"].get("source_triton_us")
-        e3_source_value = right["performance"].get("source_triton_us")
-        if (e2_source_value is None) != (e3_source_value is None):
-            raise ValueError(f"{kernel} E2/E3 source baseline availability differs")
-        e2_source_us = (
-            float(e2_source_value) if e2_source_value is not None else None
+        schedule_only_us = float(left["performance"]["mlir_us"])
+        intentir_us = float(right["performance"]["mlir_us"])
+        c_fixed_us = (
+            float(fixed["performance"]["mlir_us"])
+            if fixed is not None
+            else None
         )
-        e3_source_us = (
-            float(e3_source_value) if e3_source_value is not None else None
+        c_fixed_schedule_ablation = left["performance"].get(
+            "c_fixed_schedule_ablation"
+        )
+        same_receipt_schedule_gain = None
+        if isinstance(c_fixed_schedule_ablation, Mapping):
+            if not c_fixed_schedule_ablation.get(
+                "same_candidate_measurement_receipt"
+            ):
+                raise ValueError(
+                    f"{kernel} C-Fixed/Schedule-Only comparison is not same-receipt"
+                )
+            same_receipt_schedule_gain = float(
+                c_fixed_schedule_ablation["schedule_over_c_fixed_speedup"]
+            )
+            if fixed is not None:
+                fixed_winner_id = fixed["winner"]["candidate"]["candidate_id"]
+                if fixed_winner_id != c_fixed_schedule_ablation.get(
+                    "c_fixed_candidate_id"
+                ):
+                    raise ValueError(
+                        f"{kernel} standalone and same-receipt C-Fixed identities differ"
+                    )
+        schedule_source_value = left["performance"].get("source_triton_us")
+        intentir_source_value = right["performance"].get("source_triton_us")
+        if (schedule_source_value is None) != (intentir_source_value is None):
+            raise ValueError(f"{kernel} E2/E3 source baseline availability differs")
+        source_us = (
+            float(intentir_source_value)
+            if intentir_source_value is not None
+            else None
         )
         structural = bool(_topology_digests(right) - _topology_digests(left))
         if structural:
             structurally_expanded.append(kernel)
-        c_gain = right["performance"]["c_ordering_ablation"].get(
+        c_ordering = right["performance"]["c_ordering_ablation"]
+        c_gain = c_ordering.get(
             "c_prior_over_erase_c_speedup"
         )
         if c_gain is not None:
             c_speedups.append(float(c_gain))
-        cross_report_gain = e2_us / e3_us
+        c_to_95 = c_ordering.get("with_c_candidates_to_95pct_of_final_best")
+        erase_to_95 = c_ordering.get(
+            "without_c_candidates_to_95pct_of_final_best"
+        )
+        if c_to_95 is not None and erase_to_95 is not None:
+            c_candidates_to_95pct.append(int(c_to_95))
+            erase_c_candidates_to_95pct.append(int(erase_to_95))
+        cross_report_gain = schedule_only_us / intentir_us
         spine_ablation = right["performance"].get("schedule_spine_ablation")
         same_receipt_gain = None
         if isinstance(spine_ablation, Mapping):
@@ -226,43 +289,77 @@ def summarize(e2: Mapping[str, Any], e3: Mapping[str, Any]) -> dict[str, Any]:
                 "baseline_policy", e2.get("baseline_policy")
             ),
             "status": "paired_success",
-            "e2_status": e2_status,
-            "e3_status": e3_status,
-            "e2_us": e2_us,
-            "e3_us": e3_us,
-            "e3_over_e2_speedup": primary_gain,
-            "same_receipt_e3_over_e2_speedup": same_receipt_gain,
-            "cross_report_e3_over_e2_speedup": cross_report_gain,
-            "schedule_spine_best_us_in_e3_receipt": (
-                spine_ablation.get("schedule_spine_best_us")
-                if isinstance(spine_ablation, Mapping)
+            "c_fixed_status": cf_status,
+            "schedule_only_status": e2_status,
+            "intentir_status": e3_status,
+            "c_fixed_us": c_fixed_us,
+            "schedule_only_us": schedule_only_us,
+            "intentir_us": intentir_us,
+            "g_schedule": (
+                same_receipt_schedule_gain
+                if same_receipt_schedule_gain is not None
+                else c_fixed_us / schedule_only_us
+                if c_fixed_us is not None
                 else None
             ),
-            "expanded_best_us_in_e3_receipt": (
-                spine_ablation.get("expanded_best_us")
-                if isinstance(spine_ablation, Mapping)
-                else None
-            ),
-            "e2_speedup_over_source": (
-                e2_source_us / e2_us if e2_source_us is not None else None
-            ),
-            "e3_speedup_over_source": (
-                e3_source_us / e3_us if e3_source_us is not None else None
-            ),
-            "e2_source_us": e2_source_us,
-            "e3_source_us": e3_source_us,
-            "structural_state_expansion_observed": structural,
-            "e2_topology_count": len(_topology_digests(left)),
-            "e3_topology_count": len(_topology_digests(right)),
-            "c_prior_over_erase_c_speedup": c_gain,
+            "g_lowering": primary_gain,
+            "external_competitiveness": {
+                "source": {
+                    "status": "measured" if source_us is not None else "unavailable",
+                    "latency_us": source_us,
+                },
+                "best_applicable": {
+                    "status": "not_supplied",
+                    "latency_us": None,
+                },
+                "intentir_latency_us": intentir_us,
+                "intentir_speedup_over_source": (
+                    source_us / intentir_us if source_us is not None else None
+                ),
+            },
+            "c_prior_efficiency": {
+                "best_at_budget_c_over_erase_c_speedup": c_gain,
+                "c_prior_candidates_to_95pct_of_final_best": c_to_95,
+                "erase_c_candidates_to_95pct_of_final_best": erase_to_95,
+                "unavailable_reason": c_ordering.get("unavailable_reason"),
+            },
+            "supplementary_diagnostics": {
+                "formal_role": "not_a_main_experiment_arm",
+                "same_receipt_g_lowering": same_receipt_gain,
+                "cross_report_g_lowering": cross_report_gain,
+                "same_receipt_g_schedule": same_receipt_schedule_gain,
+                "cross_report_g_schedule": (
+                    c_fixed_us / schedule_only_us
+                    if c_fixed_us is not None
+                    else None
+                ),
+                "schedule_spine_best_us_in_intentir_receipt": (
+                    spine_ablation.get("schedule_spine_best_us")
+                    if isinstance(spine_ablation, Mapping)
+                    else None
+                ),
+                "expanded_best_us_in_intentir_receipt": (
+                    spine_ablation.get("expanded_best_us")
+                    if isinstance(spine_ablation, Mapping)
+                    else None
+                ),
+                "structural_state_expansion_observed": structural,
+                "schedule_only_topology_count": len(_topology_digests(left)),
+                "intentir_topology_count": len(_topology_digests(right)),
+            },
         }
         per_kernel.append(record)
         paired_success_count += 1
-        e3_over_e2.append(record["e3_over_e2_speedup"])
-        cross_report_e3_over_e2.append(cross_report_gain)
-        if record["e2_speedup_over_source"] is not None:
-            e2_over_source.append(record["e2_speedup_over_source"])
-            e3_over_source.append(record["e3_speedup_over_source"])
+        lowering_gain.append(record["g_lowering"])
+        if record["g_schedule"] is not None:
+            schedule_gain.append(record["g_schedule"])
+        cross_report_lowering_gain.append(cross_report_gain)
+        source_speedup = record["external_competitiveness"][
+            "intentir_speedup_over_source"
+        ]
+        if source_speedup is not None:
+            intentir_over_source.append(source_speedup)
+            schedule_only_over_source.append(source_us / schedule_only_us)
     return {
         "protocol": SUMMARY_PROTOCOL,
         "target": e2["target"],
@@ -275,22 +372,41 @@ def summarize(e2: Mapping[str, Any], e3: Mapping[str, Any]) -> dict[str, Any]:
         "measurement_spec_digest": e2.get("measurement_spec_digest"),
         "bundle_toolchain_digest": e2["bundle_toolchain_digest"],
         "summary": {
+            "formal_three_arm": c_fixed is not None,
             "kernel_count": len(kernel_universe),
             "paired_success_count": paired_success_count,
             "failed_or_missing_count": len(kernel_universe) - paired_success_count,
-            "source_baseline_kernel_count": len(e2_over_source),
-            "geomean_e3_over_e2_speedup": _geomean(e3_over_e2),
-            "geomean_cross_report_e3_over_e2_speedup": _geomean(
-                cross_report_e3_over_e2
+            "source_baseline_kernel_count": len(intentir_over_source),
+            "geomean_g_schedule": _geomean(schedule_gain),
+            "geomean_g_lowering": _geomean(lowering_gain),
+            "geomean_intentir_speedup_over_source": _geomean(
+                intentir_over_source
             ),
-            "primary_e3_e2_estimand": (
-                "same-E3-receipt schedule-spine/expanded best when available; "
-                "cross-report ratio only for legacy reports"
+        },
+        "c_prior_efficiency_summary": {
+            "geomean_best_at_budget_c_over_erase_c_speedup": _geomean(
+                c_speedups
             ),
-            "geomean_e2_speedup_over_source": _geomean(e2_over_source),
-            "geomean_e3_speedup_over_source": _geomean(e3_over_source),
-            "geomean_c_prior_over_erase_c_speedup": _geomean(c_speedups),
-            "e3_over_e2_win_count": sum(item > 1 for item in e3_over_e2),
+            "oracle_complete_kernel_count": len(c_candidates_to_95pct),
+            "median_c_prior_candidates_to_95pct_of_final_best": (
+                statistics.median(c_candidates_to_95pct)
+                if c_candidates_to_95pct
+                else None
+            ),
+            "median_erase_c_candidates_to_95pct_of_final_best": (
+                statistics.median(erase_c_candidates_to_95pct)
+                if erase_c_candidates_to_95pct
+                else None
+            ),
+        },
+        "supplementary_diagnostics": {
+            "formal_role": "not_a_main_experiment_arm",
+            "geomean_cross_report_g_lowering": _geomean(
+                cross_report_lowering_gain
+            ),
+            "geomean_schedule_only_speedup_over_source": _geomean(
+                schedule_only_over_source
+            ),
             "structural_state_expansion_count": len(structurally_expanded),
             "structural_state_expansion_kernels": structurally_expanded,
         },
@@ -302,13 +418,23 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--e2", type=Path, required=True)
     parser.add_argument("--e3", type=Path, required=True)
+    parser.add_argument(
+        "--c-fixed",
+        type=Path,
+        required=True,
+        help="machine-executed C-Fixed report required for formal three-arm output",
+    )
     parser.add_argument("--out", type=Path, required=True)
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    result = summarize(_load(args.e2), _load(args.e3))
+    result = summarize(
+        _load(args.e2),
+        _load(args.e3),
+        _load(args.c_fixed),
+    )
     encoded = json.dumps(result, indent=2, sort_keys=True) + "\n"
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(encoded, encoding="utf-8")

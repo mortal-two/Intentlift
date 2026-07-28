@@ -1,11 +1,24 @@
 # Task 15：16-Certified + 2-Provisional J Development 与真实跨目标后端能力闭合
 
-> 状态：执行中
+> 状态：阶段性冻结，等待 fresh Task14-14 intake/后端任务设计确认
 >
 > 类型：production backend 能力建设、lowering-state search 与论文实验落地；不是 SCRC Gate、
 > 新 Agent 或 per-kernel emitter。
 >
 > 执行分支：`codex/backend-certified-j-search-20260725`
+
+## 2026-07-28 fresh closure 边界更新
+
+本文件记录的是 legacy `production-jc-v1 = 16 high-performance + 2 canary` 上已经完成的后端能力
+建设与实验协议校准。frontend Task14 随后产生了新的 fresh **14/28** 正式 evidence（11 direct + 3
+exact-artifact zero-model Gate2 recheck），其中 SplitK reduce 已正式认证；因此本文后续出现的
+“16-certified + 2-provisional / planned-18 / 等待 SplitK closure”只保留为当时执行记录，不再决定下一
+正式 corpus。
+
+下一任务尚未创建。其首批分母应严格是 fresh Task14-14，经 content-addressed v2 intake 后横向执行；
+legacy J、J_dev 与 canary 继续独立回归，不能混入 fresh aggregate。创建下一任务前先冻结每项 exact
+artifact/recheck、允许的 shape/dtype/selected-variant 域、Source/Replay 可用性与三个 target 的自然
+workload 配置。
 
 ## 目标
 
@@ -136,16 +149,26 @@ H=16384仍只有16元素/thread且接近logical roof。因而不继续用更多H
 
 RVV natural-shape输入主链现已补齐：CUDA与RVV exporter共用同一个
 `prepare_dev_bundle_input`，对base重放J_dev edits、校验shape/dtype config、固定Source adapter digest，
-但RVV仍明确`Target--RefJ-only`。Softmax `M=N=4096,FP32` 已形成48个不同native object，tile
-requested/applied、generated loops及structured/LLVM/object digest均来自真实编译回执。
+但RVV仍明确`Target--RefJ-only`。旧48-object/v4报告使用raw-C frozen与贪心fusion，只保留作历史
+诊断，不再解释为正式三臂。
 
-该运行还修正了RVV有限预算语义。旧runner即使`search-budget=12`仍会穷举计时全部object；v4现在只
-访问C-prior E3、C/Erase-C E2前缀与frozen/no-retile必选控制的并集，未访问对象明确记账。首个
-budget=4 development run访问10/48且10/10 Target--RefJ通过：frozen-C `793.84 ms`，Schedule-Only
-best `728.10 ms`（schedule-search/frozen=`1.0903x`）；非零retiled best `771.88 ms`相对frozen为
-`1.0285x`，但相对no-retile仅`0.9433x`。whole-graph fused best约`728.29 ms`也未胜出，因此
-E3/E2=`1.0000x`。C-prior前4相对Erase-C前4仅`0.7813x`，真实显示当前target-aware排序仍需改进，
-而不是把C预写成正收益。
+v3 bundle/v5 runner 已机器执行 `C-Fixed / Schedule-Only / IntentIR`：C-Fixed是canonical
+materialized path上的唯一target C投影；Schedule-Only搜同一path；IntentIR在同一总预算内包含完整
+schedule spine并追加structural states。C/no-C full order必须具有相同universe digest、map和budget；
+完整latency map可计算candidates-to-95%。RVV object receipt现分离requested/actual schedule，path
+digest擦除tile/vector/opt参数。producer-consumer fusion从terminal consumer反向融合，多消费者
+producer停在read-once frontier，避免重复计算exp/reduction。
+
+Softmax `M=N=4096,FP32` 的35-object warm开发回执全部通过Target--RefJ：C-Fixed与Schedule-Only
+均约`589.43 ms`，IntentIR约`531.05 ms`，同回执`G_lowering=1.110x`；C/no-C最终best相同，达到
+95% best分别需26/35个候选。该结果用于验证协议和通用MLIR路径，不进入最终single/16-thread外部主图。
+
+同一自然 Softmax config 的 CUDA cold-data/event 三臂也已配对：RTX 5090D
+`G_schedule=1.026x, G_lowering=1.000x, IntentIR/Source=1.139x`；H100
+`G_schedule=1.120x, G_lowering=1.000x, IntentIR/Source=0.986x`。两者都由同一 IntentIR 回执中的
+schedule-spine/expanded best定义`G_lowering`，独立报告比值仅作漂移诊断。该点说明 C 解耦在H100
+有明确收益，但额外structural path没有胜过canonical Softmax path；后续`G_lowering`应在7个
+producer→reduction→epilogue适用图上建立，不能反复测同一Softmax或把cross-report噪声写成收益。
 
 ## 第一性原理约束
 
@@ -257,7 +280,7 @@ matched/admitted/rejected。无适用 graph 时保留既有单阶段或 generic 
 
 ## Phase E：最终机器实验臂
 
-新增并机器化：
+已由 `backend-search-ablation-v3.json` 机器化：
 
 ```text
 C-Fixed:
@@ -274,7 +297,8 @@ IntentIR:
   + per-path schedule search
 ```
 
-当前E2映射Schedule-Only，E3映射IntentIR，E4保留为Erase-C；E1不能冒充C-Fixed。
+`CF/E2/E3` 的报告名分别是C-Fixed、Schedule-Only、IntentIR；E4只进入Erase-C小表，E1与L/N/G
+只作baseline或补充诊断，不能冒充第四根主柱。
 
 另做C-prior小表：同一candidate universe、相同预算、相同latency map，只切换C/no-C order，报告固定
 预算best与达到最终best 95%所需候选数。
@@ -336,9 +360,10 @@ task/docs checkpoint
   -> direct !llvm.ptr multi-stage graph transport（已完成）
   -> requested/actual launch schedule receipt（已完成）
   -> real 5090 natural-shape + BF16 mechanism calibration（reduction/elementwise/mixed precision已落首轮）
+  -> C-Fixed + unified arms + C/no-C oracle（已完成）
+  -> RVV producer-consumer read-once frontier（已完成首轮；7/16 reduction图适用性待横向执行）
   -> horizontal CUDA states（长规约与scan合同消费执行中）
-  -> RVV VL/retile/multicore
-  -> C-Fixed + unified arms
+  -> RVV dynamic-VL/SEW/LMUL/multicore
   -> H100/RVV/5090 planned-18 high-performance evidence（certified/provisional分账）
   -> full regression + clean commits
 ```

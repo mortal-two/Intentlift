@@ -39,7 +39,7 @@ def test_rvv_transformation_and_schedule_are_separate_search_axes() -> None:
 
     assert materialized.schedule == fused.schedule
     assert materialized.transformation.lowering_path_kind == "materialized"
-    assert fused.transformation.lowering_path_kind == "whole_graph_fused"
+    assert fused.transformation.lowering_path_kind == "producer_consumer_fused"
     assert not materialized.transformation.b_transformations
     assert fused.transformation.required_b_capabilities == (
         B_CAP_READONLY_INPUTS,
@@ -110,11 +110,42 @@ def test_rvv_record_exposes_real_mlir_topology_receipt(monkeypatch) -> None:
     )
     record = compiled.to_record()
 
-    assert record["lowering_path_kind"] == "whole_graph_fused"
+    assert record["lowering_path_kind"] == "producer_consumer_fused"
     assert record["transformation_receipt"]["linalg_ops_before"] == 7
     assert record["transformation_receipt"]["linalg_ops_after"] == 3
     assert record["true_mlir_pipeline"] is True
     assert record["python_target_kernel_emission"] is False
+
+
+def test_rvv_topology_digest_erases_schedule_but_preserves_realized_path() -> None:
+    common = {
+        "linalg_before_sha256": "1" * 64,
+        "structured_after_sha256": "2" * 64,
+        "linalg_ops_before": 4,
+        "linalg_ops_after": 5,
+        "pre_schedule_structured_sha256": "3" * 64,
+    }
+    left = rvv.RiscvTransformationReceipt(
+        **common,
+        parallel_tile_requested=1,
+        parallel_tile_applied=1,
+        fused_producers=2,
+    )
+    retiled = rvv.RiscvTransformationReceipt(
+        **common,
+        parallel_tile_requested=64,
+        parallel_tile_applied=64,
+        fused_producers=2,
+    )
+    materialized = rvv.RiscvTransformationReceipt(
+        **common,
+        parallel_tile_requested=1,
+        parallel_tile_applied=1,
+        fused_producers=0,
+    )
+
+    assert left.topology_digest == retiled.topology_digest
+    assert left.topology_digest != materialized.topology_digest
 
 
 def test_rvv_contract_consumes_only_materialized_typed_access_guards() -> None:
@@ -218,10 +249,16 @@ def test_rvv_c_reorders_but_does_not_change_retile_universe() -> None:
     assert with_c.c_prior_order != with_c.erase_c_order
     assert erased.c_prior_order == erased.erase_c_order
     by_id = {item.candidate_id: item for item in with_c.universe}
-    frozen = by_id[with_c.frozen_c_candidate_id]
-    assert not frozen.transformation.fuse_elementwise
-    assert frozen.schedule.parallel_tile == 128
-    assert frozen.schedule.reduction_tile == 0
+    c_fixed = by_id[with_c.c_fixed_candidate_id]
+    assert not c_fixed.transformation.fuse_producers
+    assert c_fixed.schedule.parallel_tile == 2
+    assert c_fixed.schedule.reduction_tile == 8
+    assert with_c.schedule_only_c_prior_order[0] == c_fixed.candidate_id
+    assert with_c.c_projection["raw_c_value_used_as_target_tile"] is False
+    assert with_c.c_projection["projected_priors"][0][
+        "schedule_dimension"
+    ] == "reduction_tile"
+    assert with_c.c_projection["projected_priors"][0]["target_value"] == 8
     record = with_c.to_record()
     assert record["same_universe_for_erase_c_and_c_prior"] is True
     assert record["c_controls_admission"] is False

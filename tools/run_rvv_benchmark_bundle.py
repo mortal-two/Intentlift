@@ -16,8 +16,8 @@ import json
 import math
 import os
 import platform
+import shutil
 import statistics
-import struct
 import subprocess
 import tempfile
 import time
@@ -26,8 +26,169 @@ from pathlib import Path
 from typing import Any, Mapping
 
 
-BUNDLE_PROTOCOL = "intentir.production.rvv-search-bundle.v2"
-REPORT_PROTOCOL = "intentir.production.rvv-remote-performance.v4"
+BUNDLE_PROTOCOL = "intentir.production.rvv-search-bundle.v3"
+REPORT_PROTOCOL = "intentir.production.rvv-remote-performance.v5"
+NATIVE_COMPARATOR_PROTOCOL = "intentir.backend.native-output-comparator.v1"
+
+_NATIVE_COMPARATOR_SOURCE = r"""
+#include <math.h>
+#include <stdint.h>
+#include <string.h>
+
+int intentir_equal_bytes(const void *left, const void *right, uint64_t bytes) {
+  return memcmp(left, right, (size_t)bytes) == 0;
+}
+
+int intentir_close_f32(const float *left, const float *right, uint64_t count,
+                       double atol, double rtol, int equal_nan,
+                       double *max_abs_error) {
+  double maximum = 0.0;
+  for (uint64_t index = 0; index < count; ++index) {
+    const double a = (double)left[index];
+    const double b = (double)right[index];
+    if (isnan(a) || isnan(b)) {
+      if (!(equal_nan && isnan(a) && isnan(b))) {
+        *max_abs_error = INFINITY;
+        return 0;
+      }
+      continue;
+    }
+    if (isinf(a) || isinf(b)) {
+      if (a != b) {
+        *max_abs_error = INFINITY;
+        return 0;
+      }
+      continue;
+    }
+    const double error = fabs(a - b);
+    if (error > maximum)
+      maximum = error;
+    if (error > atol + rtol * fmax(fabs(a), fabs(b))) {
+      *max_abs_error = maximum;
+      return 0;
+    }
+  }
+  *max_abs_error = maximum;
+  return 1;
+}
+
+int intentir_close_f64(const double *left, const double *right, uint64_t count,
+                       double atol, double rtol, int equal_nan,
+                       double *max_abs_error) {
+  double maximum = 0.0;
+  for (uint64_t index = 0; index < count; ++index) {
+    const double a = left[index];
+    const double b = right[index];
+    if (isnan(a) || isnan(b)) {
+      if (!(equal_nan && isnan(a) && isnan(b))) {
+        *max_abs_error = INFINITY;
+        return 0;
+      }
+      continue;
+    }
+    if (isinf(a) || isinf(b)) {
+      if (a != b) {
+        *max_abs_error = INFINITY;
+        return 0;
+      }
+      continue;
+    }
+    const double error = fabs(a - b);
+    if (error > maximum)
+      maximum = error;
+    if (error > atol + rtol * fmax(fabs(a), fabs(b))) {
+      *max_abs_error = maximum;
+      return 0;
+    }
+  }
+  *max_abs_error = maximum;
+  return 1;
+}
+
+static float intentir_half_to_float(uint16_t value) {
+  const uint32_t sign = ((uint32_t)value & 0x8000u) << 16;
+  uint32_t exponent = ((uint32_t)value >> 10) & 0x1fu;
+  uint32_t mantissa = (uint32_t)value & 0x03ffu;
+  uint32_t bits;
+  if (exponent == 0) {
+    if (mantissa == 0) {
+      bits = sign;
+    } else {
+      int shift = 0;
+      while ((mantissa & 0x0400u) == 0) {
+        mantissa <<= 1;
+        ++shift;
+      }
+      mantissa &= 0x03ffu;
+      bits = sign | ((uint32_t)(113 - shift) << 23) | (mantissa << 13);
+    }
+  } else if (exponent == 31) {
+    bits = sign | 0x7f800000u | (mantissa << 13);
+  } else {
+    bits = sign | ((exponent + 112u) << 23) | (mantissa << 13);
+  }
+  float result;
+  memcpy(&result, &bits, sizeof(result));
+  return result;
+}
+
+static float intentir_bf16_to_float(uint16_t value) {
+  const uint32_t bits = (uint32_t)value << 16;
+  float result;
+  memcpy(&result, &bits, sizeof(result));
+  return result;
+}
+
+static int intentir_close_16(const uint16_t *left, const uint16_t *right,
+                             uint64_t count, double atol, double rtol,
+                             int equal_nan, double *max_abs_error,
+                             int bfloat) {
+  double maximum = 0.0;
+  for (uint64_t index = 0; index < count; ++index) {
+    const double a = bfloat ? intentir_bf16_to_float(left[index])
+                            : intentir_half_to_float(left[index]);
+    const double b = bfloat ? intentir_bf16_to_float(right[index])
+                            : intentir_half_to_float(right[index]);
+    if (isnan(a) || isnan(b)) {
+      if (!(equal_nan && isnan(a) && isnan(b))) {
+        *max_abs_error = INFINITY;
+        return 0;
+      }
+      continue;
+    }
+    if (isinf(a) || isinf(b)) {
+      if (a != b) {
+        *max_abs_error = INFINITY;
+        return 0;
+      }
+      continue;
+    }
+    const double error = fabs(a - b);
+    if (error > maximum)
+      maximum = error;
+    if (error > atol + rtol * fmax(fabs(a), fabs(b))) {
+      *max_abs_error = maximum;
+      return 0;
+    }
+  }
+  *max_abs_error = maximum;
+  return 1;
+}
+
+int intentir_close_f16(const uint16_t *left, const uint16_t *right,
+                       uint64_t count, double atol, double rtol, int equal_nan,
+                       double *max_abs_error) {
+  return intentir_close_16(left, right, count, atol, rtol, equal_nan,
+                           max_abs_error, 0);
+}
+
+int intentir_close_bf16(const uint16_t *left, const uint16_t *right,
+                        uint64_t count, double atol, double rtol, int equal_nan,
+                        double *max_abs_error) {
+  return intentir_close_16(left, right, count, atol, rtol, equal_nan,
+                           max_abs_error, 1);
+}
+"""
 
 
 class KernelFailure(RuntimeError):
@@ -106,57 +267,6 @@ def _cpu_cache_record() -> dict[str, Any]:
     return {"levels": caches, "last_level_data_cache_bytes": last_level_bytes}
 
 
-def _encoded_values(record: Mapping[str, Any]) -> list[Any]:
-    payload = _decode_payload(record)
-    dtype = str(record["dtype"])
-    count = _numel([int(item) for item in record["shape"]])
-    normalized = dtype.lstrip("<>=|")
-    formats = {
-        "b1": "?",
-        "i1": "b",
-        "u1": "B",
-        "i2": "h",
-        "u2": "H",
-        "i4": "i",
-        "u4": "I",
-        "i8": "q",
-        "u8": "Q",
-        "f2": "e",
-        "f4": "f",
-        "f8": "d",
-    }
-    if normalized not in formats:
-        raise ValueError(f"unsupported portable dtype {dtype!r}")
-    fmt = "<" + formats[normalized]
-    values = [item[0] for item in struct.iter_unpack(fmt, payload)]
-    if len(values) != count:
-        raise ValueError("portable array size differs from shape")
-    return values
-
-
-def _output_values(payload: bytes, dtype: str) -> list[Any]:
-    key = dtype.removeprefix("torch.").lower()
-    formats = {
-        "bool": "?",
-        "i1": "?",
-        "i8": "b",
-        "i16": "h",
-        "i32": "i",
-        "i64": "q",
-        "f16": "e",
-        "f32": "f",
-        "f64": "d",
-    }
-    if key == "bf16":
-        result = []
-        for (bits,) in struct.iter_unpack("<H", payload):
-            result.append(struct.unpack("<f", struct.pack("<I", bits << 16))[0])
-        return result
-    if key not in formats:
-        raise ValueError(f"unsupported output dtype {dtype!r}")
-    return [item[0] for item in struct.iter_unpack("<" + formats[key], payload)]
-
-
 @lru_cache(maxsize=None)
 def _descriptor_type(rank: int) -> type[ctypes.Structure]:
     fields: list[tuple[str, Any]] = [
@@ -200,40 +310,91 @@ def _descriptor(buffer: Any, shape: list[int]) -> ctypes.Structure:
     return _descriptor_from_address(ctypes.addressof(buffer), shape)
 
 
-def _close(
-    actual: list[Any],
-    expected: list[Any],
-    rule: Mapping[str, Any],
-) -> tuple[bool, float]:
-    if len(actual) != len(expected):
-        return False, float("inf")
-    tolerance = rule.get("tolerance")
-    if tolerance is None or not rule["dtype"].startswith(("f", "bf")):
-        return actual == expected, 0.0 if actual == expected else float("inf")
-    max_error = 0.0
-    for left, right in zip(actual, expected, strict=True):
-        left = float(left)
-        right = float(right)
-        if math.isnan(left) or math.isnan(right):
-            if not (
-                math.isnan(left)
-                and math.isnan(right)
-                and tolerance["equal_nan"]
-            ):
-                return False, float("inf")
-            continue
-        if math.isinf(left) or math.isinf(right):
-            if left != right:
-                return False, float("inf")
-            continue
-        error = abs(left - right)
-        max_error = max(max_error, error)
-        bound = float(tolerance["atol"]) + float(tolerance["rtol"]) * max(
-            abs(left), abs(right)
+class _NativeComparator:
+    def __init__(self, directory: Path):
+        source = directory / "intentir_native_compare.c"
+        library_path = directory / "intentir_native_compare.so"
+        source.write_text(_NATIVE_COMPARATOR_SOURCE, encoding="utf-8")
+        compiler = shutil.which("clang") or shutil.which("cc")
+        if compiler is None:
+            raise RuntimeError("native comparator requires target clang or cc")
+        process = subprocess.run(
+            [
+                compiler,
+                "-shared",
+                "-O3",
+                "-fPIC",
+                str(source),
+                "-lm",
+                "-o",
+                str(library_path),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
         )
-        if error > bound:
-            return False, max_error
-    return True, max_error
+        if process.returncode != 0:
+            raise RuntimeError(f"native comparator compile failed: {process.stderr}")
+        self.library = ctypes.CDLL(str(library_path))
+        self.equal_bytes = self.library.intentir_equal_bytes
+        self.equal_bytes.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint64]
+        self.equal_bytes.restype = ctypes.c_int
+        self.close_functions = {}
+        for dtype in ("f16", "bf16", "f32", "f64"):
+            function = getattr(self.library, f"intentir_close_{dtype}")
+            function.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_void_p,
+                ctypes.c_uint64,
+                ctypes.c_double,
+                ctypes.c_double,
+                ctypes.c_int,
+                ctypes.POINTER(ctypes.c_double),
+            ]
+            function.restype = ctypes.c_int
+            self.close_functions[dtype] = function
+        self.receipt = {
+            "protocol": NATIVE_COMPARATOR_PROTOCOL,
+            "source_sha256": hashlib.sha256(
+                _NATIVE_COMPARATOR_SOURCE.encode("utf-8")
+            ).hexdigest(),
+            "compiler": f"{Path(compiler).name} -O3 -shared -fPIC",
+            "compares_all_output_elements": True,
+            "python_elementwise_comparison": False,
+        }
+
+    def close(
+        self,
+        actual: Any,
+        expected: Any,
+        *,
+        byte_count: int,
+        element_count: int,
+        dtype: str,
+        rule: Mapping[str, Any],
+    ) -> tuple[bool, float]:
+        actual_pointer = ctypes.c_void_p(ctypes.addressof(actual))
+        expected_pointer = ctypes.c_void_p(ctypes.addressof(expected))
+        key = dtype.removeprefix("torch.").lower()
+        tolerance = rule.get("tolerance")
+        if tolerance is None or key not in self.close_functions:
+            equal = bool(
+                self.equal_bytes(actual_pointer, expected_pointer, byte_count)
+            )
+            return equal, 0.0 if equal else float("inf")
+        maximum = ctypes.c_double(0.0)
+        passed = bool(
+            self.close_functions[key](
+                actual_pointer,
+                expected_pointer,
+                element_count,
+                float(tolerance["atol"]),
+                float(tolerance["rtol"]),
+                int(bool(tolerance["equal_nan"])),
+                ctypes.byref(maximum),
+            )
+        )
+        return passed, float(maximum.value)
 
 
 def _link_object(directory: Path, candidate: Mapping[str, Any]) -> Path:
@@ -374,15 +535,15 @@ def _measure(
 
 
 def _bounded_candidate_orders(
-    entry: Mapping[str, Any], search_budget: int
+    entry: Mapping[str, Any], search_budget: int, *, measure_c_oracle: bool = False
 ) -> dict[str, list[str]]:
     """Select the exact bounded timing union before any candidate executes.
 
-    Only visited native objects receive Q/D and timing.  The visited union is the
-    active C-prior E3 prefix, both schedule-only C/Erase-C prefixes, and the
-    mandatory frozen/no-retile controls.  Other compiled objects remain explicit
-    ``not_visited_due_budget`` records.  This makes the CLI budget executable
-    instead of an after-the-fact report cut.
+    C-Fixed owns exactly one target-projected state. Schedule-Only and IntentIR
+    receive the same caller-supplied total budget; the IntentIR order starts with
+    the complete fixed-structure schedule spine. The independent C table compares
+    C/Erase-C prefixes over the same IntentIR universe. Only this exact union is
+    executed unless ``measure_c_oracle`` requests the complete latency map.
     """
 
     if search_budget <= 0:
@@ -404,7 +565,6 @@ def _bounded_candidate_orders(
                 f"{candidate_id!r} duplicates {previous!r}"
             )
     available = set(candidate_by_id)
-    schedule_only = set(entry["schedule_only_candidate_ids"]) & available
     plan = entry.get("concrete_search_plan", {})
 
     def ordered(raw: Any) -> list[str]:
@@ -418,11 +578,38 @@ def _bounded_candidate_orders(
 
     c_order = ordered(plan.get("c_prior_order", tuple(candidate_by_id)))
     erase_order = ordered(plan.get("erase_c_order", tuple(candidate_by_id)))
-    c_schedule_order = [item for item in c_order if item in schedule_only]
-    erase_schedule_order = [item for item in erase_order if item in schedule_only]
-    active_e3 = c_order[:search_budget]
+    c_schedule_order = ordered(plan.get("schedule_only_c_prior_order", ()))
+    erase_schedule_order = ordered(plan.get("schedule_only_erase_c_order", ()))
+    if not c_schedule_order or not erase_schedule_order:
+        raise ValueError("RVV bundle lacks explicit Schedule-Only search orders")
+    actual_universe_digest = hashlib.sha256(
+        json.dumps(sorted(available), separators=(",", ":")).encode()
+    ).hexdigest()
+    if plan.get("candidate_universe_digest") != actual_universe_digest:
+        raise ValueError("RVV concrete candidate-universe digest drifted")
+    if set(c_order) != available or set(erase_order) != available:
+        raise ValueError("RVV C/Erase-C orders do not cover the same full universe")
+    if set(c_schedule_order) != set(erase_schedule_order):
+        raise ValueError("RVV C changed the concrete Schedule-Only universe")
+    canonical_path = plan.get("canonical_lowering_path")
+    if not isinstance(canonical_path, str) or not canonical_path:
+        raise ValueError("RVV bundle lacks canonical lowering-path identity")
+    for candidate_id in c_schedule_order:
+        actual_path = candidate_by_id[candidate_id]["candidate"][
+            "transformation"
+        ].get("lowering_path_kind")
+        if actual_path != canonical_path:
+            raise ValueError("RVV Schedule-Only escaped the canonical lowering path")
+    if c_order[: len(c_schedule_order)] != c_schedule_order:
+        raise ValueError("RVV IntentIR C order does not start with the E2 spine")
+    if erase_order[: len(erase_schedule_order)] != erase_schedule_order:
+        raise ValueError("RVV IntentIR Erase-C order does not start with the E2 spine")
     active_e2 = c_schedule_order[:search_budget]
-    erase_e2 = erase_schedule_order[:search_budget]
+    active_e3 = c_order[:search_budget]
+    erase_e3 = erase_order[:search_budget]
+    c_fixed_id = plan.get("c_fixed_candidate_id")
+    if c_fixed_id not in available:
+        raise ValueError("RVV bundle lacks the concrete C-Fixed candidate")
     no_retile = [
         candidate_id
         for candidate_id in c_schedule_order
@@ -435,11 +622,6 @@ def _bounded_candidate_orders(
         ))
         == 0
     ]
-    frozen_id = plan.get("frozen_c_candidate_id")
-    mandatory = [*no_retile]
-    if frozen_id in available:
-        mandatory.append(frozen_id)
-
     def unique(items: Any) -> list[str]:
         result = []
         seen = set()
@@ -449,9 +631,14 @@ def _bounded_candidate_orders(
                 seen.add(candidate_id)
         return result
 
-    e2_evaluation = unique((*active_e2, *mandatory))
-    # E3 is nested: it can never forget the E2 controls under a finite budget.
-    e3_evaluation = unique((*active_e3, *e2_evaluation))
+    e2_evaluation = unique(active_e2)
+    e3_evaluation = unique(active_e3)
+    if not set(e2_evaluation).issubset(set(c_order)):
+        raise AssertionError("RVV E2 candidates escaped the IntentIR universe")
+    if search_budget >= len(c_schedule_order) and not set(
+        c_schedule_order
+    ).issubset(set(e3_evaluation)):
+        raise AssertionError("RVV IntentIR budget omitted the complete E2 spine")
     # This arm isolates schedule retile: do not mix B/structural states into it.
     schedule_only_retiled = [
         candidate_id
@@ -468,16 +655,23 @@ def _bounded_candidate_orders(
 
     timed = []
     seen = set()
-    for candidate_id in (*e3_evaluation, *erase_e2):
+    timed_source = (
+        tuple(candidate_by_id)
+        if measure_c_oracle
+        else (c_fixed_id, *e2_evaluation, *e3_evaluation, *erase_e3)
+    )
+    for candidate_id in timed_source:
         if candidate_id not in seen:
             timed.append(candidate_id)
             seen.add(candidate_id)
     return {
         "active_e3": active_e3,
         "active_e2": active_e2,
-        "erase_e2": erase_e2,
+        "erase_e3": erase_e3,
+        "c_order": c_order,
+        "erase_order": erase_order,
         "no_retile": no_retile,
-        "mandatory": unique(mandatory),
+        "c_fixed": [c_fixed_id],
         "e2_evaluation": e2_evaluation,
         "e3_evaluation": e3_evaluation,
         "schedule_only_retiled": schedule_only_retiled,
@@ -496,6 +690,7 @@ def _one_kernel(
     warmup: int,
     iterations: int,
     batches: int,
+    measure_c_oracle: bool,
 ) -> dict[str, Any]:
     logical_io = _logical_io_bytes(entry)
     io_bytes = logical_io["boundary_io_bytes"]
@@ -541,13 +736,37 @@ def _one_kernel(
         if candidate_id in candidate_by_id and candidate_id not in seen_ids:
             seen_ids.add(candidate_id)
             ordered_ids.append(candidate_id)
-    bounded_orders = _bounded_candidate_orders(entry, search_budget)
+    bounded_orders = _bounded_candidate_orders(
+        entry, search_budget, measure_c_oracle=measure_c_oracle
+    )
     timed_ids = set(bounded_orders["timed"])
+
+    expected_outputs: dict[str, tuple[Any, int, int, str]] = {}
+    for spec in entry["output_specs"]:
+        output_name = spec["name"]
+        reference_record = entry["reference_outputs"][
+            entry["output_bindings"][output_name]
+        ]
+        payload = _decode_payload(reference_record)
+        element_count = _numel([int(item) for item in spec["shape"]])
+        byte_count = element_count * _dtype_size(spec["dtype"])
+        if len(payload) != byte_count:
+            raise ValueError(
+                f"reference payload size differs from output {output_name!r}"
+            )
+        expected_outputs[output_name] = (
+            ctypes.create_string_buffer(payload, len(payload)),
+            element_count,
+            byte_count,
+            spec["dtype"],
+        )
 
     records = []
     candidate_artifacts: dict[str, tuple[Any, Any, _ArgumentRotation]] = {}
     with tempfile.TemporaryDirectory(prefix="intentir-rvv-") as temporary:
         directory = Path(temporary)
+        comparator = _NativeComparator(directory)
+        comparator_receipt = comparator.receipt
         for candidate_id in ordered_ids:
             candidate = candidate_by_id[candidate_id]
             if candidate_id not in timed_ids:
@@ -574,21 +793,23 @@ def _one_kernel(
                     entry["output_specs"], output_buffers, strict=True
                 ):
                     output_name = spec["name"]
-                    actual = _output_values(bytes(buffer.raw), spec["dtype"])
-                    reference_record = entry["reference_outputs"][
-                        entry["output_bindings"][output_name]
+                    expected, element_count, byte_count, dtype = expected_outputs[
+                        output_name
                     ]
-                    expected = _encoded_values(reference_record)
-                    agrees, max_error = _close(
-                        actual,
+                    agrees, max_error = comparator.close(
+                        buffer,
                         expected,
-                        entry["output_rules"][output_name],
+                        byte_count=byte_count,
+                        element_count=element_count,
+                        dtype=dtype,
+                        rule=entry["output_rules"][output_name],
                     )
                     correctness.append(
                         {
                             "output": output_name,
                             "passed": agrees,
                             "max_abs_error": max_error,
+                            "comparator_protocol": NATIVE_COMPARATOR_PROTOCOL,
                         }
                     )
                     passed = passed and agrees
@@ -678,20 +899,53 @@ def _one_kernel(
             raise KernelFailure("ablation arm has no correct RVV candidate", records)
         return min(available, key=lambda item: item["latency_us"])
 
+    def optional_best(candidate_ids: list[str]) -> dict[str, Any] | None:
+        available = [
+            measured_by_id[candidate_id]
+            for candidate_id in candidate_ids
+            if candidate_id in measured_by_id
+        ]
+        return min(available, key=lambda item: item["latency_us"]) if available else None
+
     e2 = best(bounded_orders["e2_evaluation"])
     e3 = best(bounded_orders["e3_evaluation"])
-    no_retile = best(bounded_orders["no_retile"])
-    schedule_only_retiled = best(bounded_orders["schedule_only_retiled"])
-    erase_budget_ids = bounded_orders["erase_e2"]
-    c_prior_budget_ids = bounded_orders["active_e2"]
+    c_fixed = best(bounded_orders["c_fixed"])
+    no_retile = optional_best(bounded_orders["no_retile"])
+    schedule_only_retiled = optional_best(
+        bounded_orders["schedule_only_retiled"]
+    )
+    erase_budget_ids = bounded_orders["erase_e3"]
+    c_prior_budget_ids = bounded_orders["active_e3"]
     erase_budget_winner = best(erase_budget_ids)
     c_prior_budget_winner = best(c_prior_budget_ids)
-    frozen_id = concrete_plan.get("frozen_c_candidate_id")
-    if frozen_id not in measured_by_id:
-        raise KernelFailure(
-            "frozen-C projection has no correct executable candidate", records
-        )
-    frozen_c = measured_by_id[frozen_id]
+    c_fixed_id = concrete_plan.get("c_fixed_candidate_id")
+    if c_fixed_id != c_fixed["candidate"]["candidate_id"]:
+        raise KernelFailure("C-Fixed candidate identity drifted", records)
+
+    oracle_complete = measure_c_oracle and not any(
+        item["status"] == "not_visited_due_budget" for item in records
+    )
+    oracle_best = optional_best(bounded_orders["c_order"]) if oracle_complete else None
+
+    def candidates_to_95pct(order: list[str]) -> int | None:
+        if oracle_best is None:
+            return None
+        threshold_us = float(oracle_best["latency_us"]) / 0.95
+        best_so_far = float("inf")
+        for count, candidate_id in enumerate(order, start=1):
+            measured_candidate = measured_by_id.get(candidate_id)
+            if measured_candidate is not None:
+                best_so_far = min(
+                    best_so_far, float(measured_candidate["latency_us"])
+                )
+            if best_so_far <= threshold_us:
+                return count
+        return None
+
+    c_candidates_to_95pct = candidates_to_95pct(bounded_orders["c_order"])
+    erase_candidates_to_95pct = candidates_to_95pct(
+        bounded_orders["erase_order"]
+    )
     achieved_working_set_bytes = required_replicas * io_bytes
     floating_point_ops = (
         int(workload_cost["floating_point_ops"])
@@ -713,29 +967,84 @@ def _one_kernel(
         "candidates": records,
         "winner": e3["candidate"],
         "performance": {
-            "e2_schedule_only_us": e2["latency_us"],
-            "e3_contract_guided_us": e3["latency_us"],
-            "e3_over_e2_speedup": e2["latency_us"] / e3["latency_us"],
+            "c_fixed_us": c_fixed["latency_us"],
+            "schedule_only_us": e2["latency_us"],
+            "intentir_us": e3["latency_us"],
+            "g_schedule": c_fixed["latency_us"] / e2["latency_us"],
+            "g_lowering": e2["latency_us"] / e3["latency_us"],
+            "c_fixed_candidate_id": c_fixed_id,
+            "schedule_only_winner_candidate_id": e2["candidate"]["candidate_id"],
+            "intentir_winner_candidate_id": e3["candidate"]["candidate_id"],
+        },
+        "c_prior_efficiency": {
+            "candidate_budget": search_budget,
+            "budget_unit": "distinct_native_object_sha256",
+            "c_prior_best_us": c_prior_budget_winner["latency_us"],
+            "erase_c_best_us": erase_budget_winner["latency_us"],
+            "best_at_budget_c_over_erase_c_speedup": (
+                erase_budget_winner["latency_us"]
+                / c_prior_budget_winner["latency_us"]
+            ),
+            "c_prior_candidates_to_95pct_of_final_best": c_candidates_to_95pct,
+            "erase_c_candidates_to_95pct_of_final_best": (
+                erase_candidates_to_95pct
+            ),
+            "oracle_complete": oracle_complete,
+            "oracle_best_us": (
+                oracle_best["latency_us"] if oracle_best is not None else None
+            ),
+            "unavailable_reason": (
+                None
+                if oracle_complete
+                else "complete_latency_map_not_requested"
+            ),
+            "c_prior_budget_winner_candidate_id": c_prior_budget_winner[
+                "candidate"
+            ]["candidate_id"],
+            "erase_c_budget_winner_candidate_id": erase_budget_winner[
+                "candidate"
+            ]["candidate_id"],
+        },
+        "supplementary_diagnostics": {
+            "formal_role": "not_a_main_experiment_arm",
             "b_transformation_wins": bool(
                 e3["candidate"]["transformation"]["b_transformations"]
             ),
-            "no_retile_schedule_us": no_retile["latency_us"],
-            "retiled_schedule_us": schedule_only_retiled["latency_us"],
+            "no_retile_schedule_us": (
+                no_retile["latency_us"] if no_retile is not None else None
+            ),
+            "retiled_schedule_us": (
+                schedule_only_retiled["latency_us"]
+                if schedule_only_retiled is not None
+                else None
+            ),
             "retiled_over_no_retile_speedup": (
                 no_retile["latency_us"] / schedule_only_retiled["latency_us"]
+                if no_retile is not None and schedule_only_retiled is not None
+                else None
             ),
-            "frozen_c_us": frozen_c["latency_us"],
-            "schedule_only_over_frozen_c_speedup": (
-                frozen_c["latency_us"] / e2["latency_us"]
+            "retiled_over_c_fixed_speedup": (
+                c_fixed["latency_us"] / schedule_only_retiled["latency_us"]
+                if schedule_only_retiled is not None
+                else None
             ),
-            "retiled_over_frozen_c_speedup": (
-                frozen_c["latency_us"] / schedule_only_retiled["latency_us"]
+            "intentir_over_c_fixed_speedup": (
+                c_fixed["latency_us"] / e3["latency_us"]
             ),
-            "full_search_over_frozen_c_speedup": (
-                frozen_c["latency_us"] / e3["latency_us"]
+            "no_retile_winner_candidate_id": (
+                no_retile["candidate"]["candidate_id"]
+                if no_retile is not None
+                else None
             ),
-            "search_budget": search_budget,
-            "search_budget_unit": "distinct_native_object_sha256",
+            "retiled_winner_candidate_id": (
+                schedule_only_retiled["candidate"]["candidate_id"]
+                if schedule_only_retiled is not None
+                else None
+            ),
+        },
+        "search_execution": {
+            "candidate_budget": search_budget,
+            "budget_unit": "distinct_native_object_sha256",
             "candidate_correctness_pass_count": len(
                 [
                     item
@@ -759,33 +1068,17 @@ def _one_kernel(
             ),
             "active_e3_budget_candidate_ids": bounded_orders["active_e3"],
             "active_e2_budget_candidate_ids": bounded_orders["active_e2"],
+            "erase_c_e3_budget_candidate_ids": bounded_orders["erase_e3"],
             "e3_evaluation_candidate_ids": bounded_orders["e3_evaluation"],
             "e2_evaluation_candidate_ids": bounded_orders["e2_evaluation"],
             "retiled_schedule_candidate_ids": bounded_orders[
                 "schedule_only_retiled"
             ],
-            "erase_c_e2_budget_candidate_ids": bounded_orders["erase_e2"],
-            "mandatory_control_candidate_ids": bounded_orders["mandatory"],
+            "c_fixed_candidate_ids": bounded_orders["c_fixed"],
             "timed_candidate_ids": bounded_orders["timed"],
-            "erase_c_budget_us": erase_budget_winner["latency_us"],
-            "c_prior_budget_us": c_prior_budget_winner["latency_us"],
-            "c_prior_over_erase_c_speedup": (
-                erase_budget_winner["latency_us"]
-                / c_prior_budget_winner["latency_us"]
-            ),
-            "no_retile_winner_candidate_id": no_retile["candidate"][
-                "candidate_id"
-            ],
-            "retiled_winner_candidate_id": schedule_only_retiled["candidate"][
-                "candidate_id"
-            ],
-            "frozen_c_candidate_id": frozen_id,
-            "erase_c_budget_winner_candidate_id": erase_budget_winner[
-                "candidate"
-            ]["candidate_id"],
-            "c_prior_budget_winner_candidate_id": c_prior_budget_winner[
-                "candidate"
-            ]["candidate_id"],
+            "correctness_comparator": comparator_receipt,
+        },
+        "measurement_analysis": {
             "logical_io": {
                 **logical_io,
                 "e2_logical_boundary_gbps": (
@@ -866,6 +1159,14 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--working-set-mib", type=int, default=128)
     parser.add_argument("--max-replicas", type=int, default=262144)
     parser.add_argument("--search-budget", type=int, default=12)
+    parser.add_argument(
+        "--measure-c-oracle",
+        action="store_true",
+        help=(
+            "execute the complete concrete object universe so C/no-C can report "
+            "candidates-to-95%-of-final-best"
+        ),
+    )
     parser.add_argument("--warmup", type=int, default=50)
     parser.add_argument("--iterations", type=int, default=1000)
     parser.add_argument("--cold-iterations", type=int, default=16)
@@ -926,15 +1227,18 @@ def main(argv: list[str] | None = None) -> int:
                 warmup=args.warmup,
                 iterations=measured_iterations,
                 batches=args.batches,
+                measure_c_oracle=args.measure_c_oracle,
             )
             kernels.append(record)
             performance = record["performance"]
             print(
-                f"{entry['kernel']}: E2={performance['e2_schedule_only_us']:.4f} "
-                f"us E3={performance['e3_contract_guided_us']:.4f} us "
-                f"structural={performance['e3_over_e2_speedup']:.3f}x "
-                f"retile={performance['retiled_over_no_retile_speedup']:.3f}x "
-                f"C={performance['c_prior_over_erase_c_speedup']:.3f}x",
+                f"{entry['kernel']}: CF={performance['c_fixed_us']:.4f} us "
+                f"Schedule={performance['schedule_only_us']:.4f} us "
+                f"IntentIR={performance['intentir_us']:.4f} us "
+                f"G_schedule={performance['g_schedule']:.3f}x "
+                f"G_lowering={performance['g_lowering']:.3f}x "
+                "C="
+                f"{record['c_prior_efficiency']['best_at_budget_c_over_erase_c_speedup']:.3f}x",
                 flush=True,
             )
         except Exception as error:
@@ -949,12 +1253,31 @@ def main(argv: list[str] | None = None) -> int:
                 f"{entry['kernel']}: FAILED: {type(error).__name__}: {error}",
                 flush=True,
             )
-    speedups = [item["performance"]["e3_over_e2_speedup"] for item in kernels]
-    retiled_speedups = [
-        item["performance"]["retiled_over_no_retile_speedup"] for item in kernels
-    ]
+    schedule_speedups = [item["performance"]["g_schedule"] for item in kernels]
+    lowering_speedups = [item["performance"]["g_lowering"] for item in kernels]
     c_speedups = [
-        item["performance"]["c_prior_over_erase_c_speedup"] for item in kernels
+        item["c_prior_efficiency"]["best_at_budget_c_over_erase_c_speedup"]
+        for item in kernels
+    ]
+    c_candidates_to_95pct = [
+        item["c_prior_efficiency"][
+            "c_prior_candidates_to_95pct_of_final_best"
+        ]
+        for item in kernels
+        if item["c_prior_efficiency"][
+            "c_prior_candidates_to_95pct_of_final_best"
+        ]
+        is not None
+    ]
+    erase_c_candidates_to_95pct = [
+        item["c_prior_efficiency"][
+            "erase_c_candidates_to_95pct_of_final_best"
+        ]
+        for item in kernels
+        if item["c_prior_efficiency"][
+            "erase_c_candidates_to_95pct_of_final_best"
+        ]
+        is not None
     ]
 
     def geomean(values: list[float]) -> float | None:
@@ -1007,19 +1330,29 @@ def main(argv: list[str] | None = None) -> int:
             "iterations": measured_iterations,
             "batches": args.batches,
             "search_budget": args.search_budget,
+            "measure_c_oracle": args.measure_c_oracle,
         },
         "summary": {
             "requested": len(entries),
             "successful": len(kernels),
             "failed": len(failures),
-            "geomean_e3_over_e2_speedup": geomean(speedups),
-            "geomean_retiled_over_no_retile_speedup": geomean(
-                retiled_speedups
+            "geomean_g_schedule": geomean(schedule_speedups),
+            "geomean_g_lowering": geomean(lowering_speedups),
+        },
+        "c_prior_efficiency_summary": {
+            "geomean_best_at_budget_c_over_erase_c_speedup": geomean(
+                c_speedups
             ),
-            "geomean_c_prior_over_erase_c_speedup": geomean(c_speedups),
-            "b_transformation_winner_count": sum(
-                item["performance"]["b_transformation_wins"]
-                for item in kernels
+            "oracle_complete_kernel_count": len(c_candidates_to_95pct),
+            "median_c_prior_candidates_to_95pct_of_final_best": (
+                statistics.median(c_candidates_to_95pct)
+                if c_candidates_to_95pct
+                else None
+            ),
+            "median_erase_c_candidates_to_95pct_of_final_best": (
+                statistics.median(erase_c_candidates_to_95pct)
+                if erase_c_candidates_to_95pct
+                else None
             ),
         },
         "kernels": kernels,

@@ -42,8 +42,11 @@ def TileLinalgByIteratorKind : Pass<
     Applies the upstream TilingInterface/SCF tiler to tensor-semantics Linalg
     operations. Parallel and reduction iterators receive independent static
     tile extents; zero leaves that iterator kind untiled. The pass is target
-    neutral and records only actual tiled operations/loops. RVV uses it for
-    real retile search, but no target or C semantics are embedded here.
+    neutral and records only actual tiled operations/loops. Optional producer
+    fusion starts from terminal consumers and stops at multi-use read-once
+    frontiers instead of duplicating producer computation. RVV uses it for real
+    retile and structural-path search, but no target or C semantics are embedded
+    here.
   }];
   let dependentDialects = [
     "::mlir::arith::ArithDialect",
@@ -56,6 +59,8 @@ def TileLinalgByIteratorKind : Pass<
            "Tile extent for every parallel iterator (zero disables)">,
     Option<"reductionTile", "reduction-tile", "unsigned", "0",
            "Tile extent for every reduction iterator (zero disables)">,
+    Option<"fuseProducers", "fuse-producers", "bool", "false",
+           "Tile terminal consumers and fuse single-consumer tensor producers into their SCF loops">,
   ];
 }
 

@@ -30,7 +30,7 @@ LLC = os.environ.get("LLC", str(LLVM_BIN / "llc"))
 TRIPLE = os.environ.get("INTENT_RISCV_TRIPLE", "riscv64-unknown-linux-gnu")
 MATTR = os.environ.get("INTENT_RISCV_MATTR", "+v,+zfh")
 
-RVV_B_FUSION = "riscv.b.readonly_whole_graph_fusion.v1"
+RVV_B_FUSION = "riscv.b.readonly_producer_consumer_fusion.v2"
 
 
 def _sha_file(path: os.PathLike[str] | str) -> str:
@@ -93,40 +93,40 @@ def _run_bytes(command: list[str], *, stdin: str) -> bytes:
 
 @dataclass(frozen=True)
 class RiscvTransformationState:
-    fuse_elementwise: bool
+    fuse_producers: bool
 
     def __post_init__(self) -> None:
-        if type(self.fuse_elementwise) is not bool:
-            raise TypeError("fuse_elementwise must be bool")
+        if type(self.fuse_producers) is not bool:
+            raise TypeError("fuse_producers must be bool")
 
     @property
     def lowering_path_kind(self) -> str:
         return (
-            "whole_graph_fused"
-            if self.fuse_elementwise
+            "producer_consumer_fused"
+            if self.fuse_producers
             else "materialized"
         )
 
     @property
     def transformation_trace(self) -> tuple[str, ...]:
         return (
-            ("rvv.linalg.whole_graph_elementwise_fusion.v1",)
-            if self.fuse_elementwise
+            ("rvv.linalg.producer_consumer_fusion.v2",)
+            if self.fuse_producers
             else ("rvv.linalg.materialized.v1",)
         )
 
     @property
     def b_transformations(self) -> tuple[str, ...]:
-        return (RVV_B_FUSION,) if self.fuse_elementwise else ()
+        return (RVV_B_FUSION,) if self.fuse_producers else ()
 
     @property
     def required_b_capabilities(self) -> tuple[str, ...]:
-        return (B_CAP_READONLY_INPUTS,) if self.fuse_elementwise else ()
+        return (B_CAP_READONLY_INPUTS,) if self.fuse_producers else ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "lowering_path_kind": self.lowering_path_kind,
-            "fuse_elementwise": self.fuse_elementwise,
+            "fuse_producers": self.fuse_producers,
             "transformation_trace": list(self.transformation_trace),
             "b_transformations": list(self.b_transformations),
             "required_b_capabilities": list(self.required_b_capabilities),
@@ -200,10 +200,32 @@ class RiscvTransformationReceipt:
     reduction_tile_applied: int = 0
     linalg_tiled_ops: int = 0
     generated_tile_loops: int = 0
+    fused_producers: int = 0
+    fusion_outer_parallel_only_ops: int = 0
+    fusion_multi_use_rejections: int = 0
+    pre_schedule_structured_sha256: str = ""
 
     @property
     def topology_digest(self) -> str:
-        return content_digest(self.to_dict())
+        # This digest identifies the realized lowering path after erasing tile,
+        # vectorization and optimization parameters.  The concrete post-pass
+        # state remains identified separately by structured_after_sha256 and
+        # the final object SHA-256.
+        return content_digest(
+            {
+                "linalg_before_sha256": self.linalg_before_sha256,
+                "pre_schedule_structured_sha256": (
+                    self.pre_schedule_structured_sha256
+                    or self.linalg_before_sha256
+                ),
+                "tile_and_fuse_realized": self.fused_producers > 0,
+                "fused_producers": self.fused_producers,
+                "fusion_outer_parallel_only_ops": (
+                    self.fusion_outer_parallel_only_ops
+                ),
+                "fusion_multi_use_rejections": self.fusion_multi_use_rejections,
+            }
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -217,6 +239,14 @@ class RiscvTransformationReceipt:
             "reduction_tile_applied": self.reduction_tile_applied,
             "linalg_tiled_ops": self.linalg_tiled_ops,
             "generated_tile_loops": self.generated_tile_loops,
+            "fused_producers": self.fused_producers,
+            "fusion_outer_parallel_only_ops": self.fusion_outer_parallel_only_ops,
+            "fusion_multi_use_rejections": self.fusion_multi_use_rejections,
+            "pre_schedule_structured_sha256": (
+                self.pre_schedule_structured_sha256
+                or self.linalg_before_sha256
+            ),
+            "topology_digest_semantics": "lowering_path_after_erasing_schedule",
         }
 
 
@@ -237,13 +267,29 @@ class RiscvCompiledObject:
         return f"_mlir_ciface_{self.symbol}"
 
     def to_record(self) -> dict[str, Any]:
+        requested_schedule = self.candidate.schedule.to_dict()
+        actual_schedule = {
+            **requested_schedule,
+            "parallel_tile": self.transformation_receipt.parallel_tile_applied,
+            "reduction_tile": self.transformation_receipt.reduction_tile_applied,
+        }
         return {
             "candidate_id": self.candidate.candidate_id,
             "lowering_path_kind": (
                 self.candidate.transformation.lowering_path_kind
             ),
             "transformation": self.candidate.transformation.to_dict(),
-            "schedule": self.candidate.schedule.to_dict(),
+            "schedule": actual_schedule,
+            "requested_schedule": requested_schedule,
+            "schedule_realization": {
+                "parallel_tile_applied": (
+                    self.transformation_receipt.parallel_tile_applied
+                ),
+                "reduction_tile_applied": (
+                    self.transformation_receipt.reduction_tile_applied
+                ),
+                "requested_equals_actual": requested_schedule == actual_schedule,
+            },
             "transformation_receipt": self.transformation_receipt.to_dict(),
             "topology_digest": self.transformation_receipt.topology_digest,
             "symbol": self.symbol,
@@ -284,13 +330,14 @@ def _lower_to_llvm_ir(
         [INTENT_OPT, "-convert-intent-to-linalg", "-expand-rsqrt-for-libm"],
         stdin=source,
     )
-    if candidate.transformation.fuse_elementwise:
-        structured = _run_text(
+    if candidate.transformation.fuse_producers:
+        pre_schedule_structured = _run_text(
             [MLIR_OPT, "--linalg-fuse-elementwise-ops", "--canonicalize"],
             stdin=linalg,
         )
     else:
-        structured = linalg
+        pre_schedule_structured = linalg
+    structured = pre_schedule_structured
     schedule = candidate.schedule
     if schedule.parallel_tile or schedule.reduction_tile:
         structured = _run_text(
@@ -299,7 +346,9 @@ def _lower_to_llvm_ir(
                 (
                     "-tile-linalg-by-iterator-kind="
                     f"parallel-tile={schedule.parallel_tile} "
-                    f"reduction-tile={schedule.reduction_tile}"
+                    f"reduction-tile={schedule.reduction_tile} "
+                    "fuse-producers="
+                    f"{'true' if candidate.transformation.fuse_producers else 'false'}"
                 ),
                 "-canonicalize",
                 "-cse",
@@ -327,6 +376,18 @@ def _lower_to_llvm_ir(
         generated_tile_loops=_module_i64_attr(
             structured, "intent.schedule.generated_loop_count"
         ),
+        fused_producers=_module_i64_attr(
+            structured, "intent.schedule.fused_producer_count"
+        ),
+        fusion_outer_parallel_only_ops=_module_i64_attr(
+            structured, "intent.schedule.fusion_outer_parallel_only_count"
+        ),
+        fusion_multi_use_rejections=_module_i64_attr(
+            structured, "intent.schedule.fusion_multi_use_rejection_count"
+        ),
+        pre_schedule_structured_sha256=hashlib.sha256(
+            pre_schedule_structured.encode()
+        ).hexdigest(),
     )
     front = [
         "--one-shot-bufferize=bufferize-function-boundaries",

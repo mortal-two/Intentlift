@@ -1,6 +1,7 @@
 # IntentIR J-Grounded、Q/D-Certified Lowering-State Search：后端最终设计
 
-> 状态：第五份权威设计（2026-07-24；2026-07-28 修正为 16-certified + 2-provisional + 2-canary 分账，并加入 J_dev/actual-schedule/multi-stage 实施状态）
+> 状态：第五份权威设计（2026-07-24；2026-07-28 更新为 fresh Task14-14 首批正式输入、legacy
+> 16-high-performance + 2-canary 回归与 J_dev 分账，并加入 actual-schedule/multi-stage 实施状态）
 >
 > 文件名为保持既有链接稳定而不变。本文不再把 `implementation family` 作为 compiler object、
 > registry key 或 emitter 概念；旧材料中的 `multi-lowering` 统一按本文定义解释为
@@ -916,82 +917,60 @@ digest、所有 observable outputs 的三条 direct-edge verdict，以及独立 
 
 ## 18. 实验与消融设计
 
-实验使用四个主要层级。这里的“固定结构”由 canonical structural transformation trace 决定，不由
-`family_id` 或 named emitter 决定：
+最终论文把外部竞争力与内部因果归因分开。外部 panel 固定为：
 
 ```text
-E0  Source frontend implementation
-E1  canonical deterministic target lowering + default schedule
-E2  fixed structural + fixed numeric trace, schedule search
-E3  hard-safe structural/numeric lowering-state + independent schedule search,
-    filtered by the same Q/D, with C
+GPU: Source / Best Applicable / IntentIR
+RVV: Triton-CPU / Best Native RVV / IntentIR
 ```
 
-额外消融：
+所有外部 baseline 必须严格匹配 operator、shape、dtype、layout、output relation、timed boundary、
+cache policy、device 与 profiler；Source 已是 strongest applicable 时合并为 `Source / Best`。
+
+内部归因在所有 target 上只保留三臂。这里的“固定路径”由 canonical transformation trace 和真实
+post-pass MLIR 决定，不由 `family_id`、named emitter 或 kernel 名决定：
 
 ```text
-E4  same ReachHard/Q/D and budget as E3, with Erase_C
+CF / C-Fixed:
+  canonical lowering path
+  + target 对 C role/axis 的确定性 schedule 投影
+  + exactly one concrete candidate, no search
+
+E2 / Schedule-Only:
+  与 C-Fixed 相同的 canonical lowering path
+  + target schedule search
+
+E3 / IntentIR:
+  immutable J
+  + multiple hard-admitted structural/numeric lowering paths
+  + schedule search within each path
+  + the same Q/D filter
 ```
 
-对应问题：
-
-- `E1 vs E0`：semantic interface 与 canonical lowering 的基础质量；
-- `E2 vs E1`：只调 schedule 的收益；
-- `E3 vs E2`：结构性与数值 lowering-state expansion 的额外收益；
-- `E3 vs E4`：C 作为搜索先验的作用，而不是 correctness 作用。
-
-另设与 E0--E4 正交的 local-B 配对实验：
+主指标以 latency 记为：
 
 ```text
-L0  fixed hard-safe structural state set, registered B-conditioned local transforms disabled
-L1  same state set/Q/D/budget, registered B-conditioned local transforms enabled
+G_schedule = latency(C-Fixed) / latency(Schedule-Only)
+G_lowering = latency(Schedule-Only) / latency(IntentIR)
 ```
 
-L1/L0 保留完整 J=A+B 和 fail-closed `ContractView`；关闭的只是额外 local transformation，不是 B
-语义。rank-0 capture、singleton capture、load motion 与 predicate specialization 的收益只写入该轴，
-不得混写成 E3/E2 的结构路径收益。
+`E4 / IntentIR-Erase-C` 不进入第四根主柱。它只与 E3 在相同 J、相同 lowering/schedule universe、
+相同总预算和同一 latency map 上切换遍历顺序，正文 C prior 小表只报固定预算下 best performance 与
+达到最终最好性能 95% 所需候选数。
 
-E3 内再做机制消融，均复用同一个通用 search controller，不建立 named family：
+E0/E1、L0/L1、N0--N3 与 materialized/fused、reduction-tree、FMA/approximation 等仍可保留为补充
+诊断，但不得变成主实验臂。它们必须复用 E3 的同一 controller、hard verifier、Q/D、target pipeline
+与总预算；不匹配记 `not_matched`，不得从 all-corpus aggregate 删除。特别地，producer/reduction/
+epilogue 的 read-once frontier、materialization elimination 和真正 whole-graph path 都只是 IntentIR
+候选；只有 actual post-pass receipt 证明相应 producer 被融合或中间物化被删除时，才可使用该机制
+标签。requested pass 开关本身不是证据。
 
-```text
-N0  E3, observation-changing numeric states disabled
-N1  N0 + reduction-tree states
-N2  N1 + FMA/contraction states
-N3  N2 + target-supported precision/approximation states
-```
-
-N0--N3 的 hard verifier、Q、D、target pipeline 与总搜索预算保持一致；某个 Kernel 不匹配某类
-transformation 时记录 `not_matched`，不得从 aggregate 中删除。
-
-结构机制还必须单独做“瓶颈切断”对照，避免 E3/E2 的平均数掩盖 J 打开的最大结构机会：
-
-```text
-G0  best admitted materialized state：保留 producer/reduction/epilogue 中间值与 dispatch 边界
-G1  best admitted whole-graph state：消除对应 materialization/dispatch，融合后再独立调 schedule
-```
-
-G0/G1 必须来自同一 J、同一 Q/D、同一 target pipeline 和同一份候选测量回执；两侧都独立搜索
-schedule，只在真实 post-pass MLIR 同时观察到 `kernel_count>1` 的 materialized state 与
-`kernel_count=1` 的 whole-graph state 时计入 applicable subset。该对照回答的不是“多开一个 pass
-是否更快”，而是 J 的 typed producer--consumer graph 与 B hard boundary 能否合法删除一次或多次
-全张量物化、内存往返和 dispatch。它应当作为结构创新的首要机制结果；L0/L1 的 scalar capture、
-load motion 等局部收益只作次级证据。G0/G1 是 E3 同一候选回执上的派生对照，不是新的搜索 arm，
-因此不修改 v2 machine spec 或其 digest，也不为它另造 candidate universe。
-
-这些实验臂不是文档中的自由文本约定。实现必须从
-`spec/lowering/backend-search-ablation-v2.json` 读取 E0--E4、L0/L1、N0--N3 的开关、预算类别、
-concrete-state identity 与计时合同，
-校验 protocol、字段全集和类型，并把 canonical spec digest 写入每份实验报告。当前 v2 spec digest 为
-`28c2117f35e1360fa4f9b4c85f4af27edf343630d0d5be000eef0b3b4e9c8f9a`。runner 不得在代码中重新定义
-同名实验臂；spec 缺失、未知 arm、重复 arm 或非布尔开关均须 fail closed。这样论文中的 E2/E3、
-C 消融和数值机制消融都与实际执行的 candidate universe 绑定，而不是事后按 winner 改口径。
-
-v2 中一个预算单位是一个不同的 canonical post-pass MLIR state；相同 MLIR digest 的重复编译仍留在
-audit log，但不消耗预算。无法形成 state 的不同 exact candidate compile failure 消耗一个预算单位。
-finalist 不混用初次排序样本，而按正反交替 traversal 做 fresh round-robin remeasurement；最终 Source
-对比使用等数量、顺序交替的 Source/target paired batches。正式确认前，Source 与 target prepared
-thunk 按相同声明时长做 round-robin untimed warm-up；计时只覆盖 prepared launch/graph，allocation、
-cache eviction 与 correctness synchronization 位于 timed closure 之外。
+机器实现从 `spec/lowering/backend-search-ablation-v3.json` 读取完整合同并 fail closed 校验。当前
+canonical spec digest 为
+`6ac5f2b4f2a26a282aa61cda3e48e9bee7469946300e9bbba0322f227ae4250b`。一个预算单位是一个不同的
+canonical post-pass MLIR state；重复 state 留在 audit log 但不消耗预算，无法形成 state 的不同 exact
+candidate failure 消耗一个预算单位。finalist 不混用初次排序样本，而按正反交替 traversal 做 fresh
+round-robin remeasurement；Source/Best/target 使用一致的准备、cache 与计时规则。
 
 ### 18.1 TileLang-aligned 主评测、缓存状态与 Roofline
 
@@ -1106,7 +1085,7 @@ lowering-state 收益。
 不同结构路径必然经过不同的高层 transformation trace；“同一 code generator”指共享同一 backend
 revision 和 terminal target pipeline，不要求结构分支使用完全相同的高层 rewrite。
 
-### 18.3 planned-18 high-performance 横向矩阵，不以 canary 或代表 Kernel 代替全量实验
+### 18.3 fresh-14 首批横向矩阵，不以 canary、legacy J 或代表 Kernel 代替全量实验
 
 主实验的基本单位不是“选几个算子讲故事”，而是一个显式 coverage cell：
 
@@ -1120,24 +1099,25 @@ revision 和 terminal target pipeline，不要求结构分支使用完全相同�
  Q/D protocol)
 ```
 
-当前主矩阵必须区分三类输入，并在 RTX 5090D、H100 与 RVV4 上横向扩展：
+当前主矩阵必须区分 fresh 正式输入与历史/开发输入，并在 RTX 5090D、H100 与 RVV4 上横向扩展：
 
 ```text
-16 certified high-performance J
-+ 2 provisional high-performance J_dev（RoPE、SplitK，等待 exact closure）
-+ 2 compiler/correctness canary（独立回归，不进论文 aggregate）
+14 fresh Task14 certified high-performance J（首批正式 aggregate）
++ legacy production-jc-v1（16 high-performance + 2 canary，只作回归）
++ provisional J_dev（能力开发，独立分账）
 ```
 
 对每个 target：
 
-- planned 18 个 high-performance 输入都要 materialize、compile 并给出 Target--RefJ/RefDev
-  correctness 或精确的 fail-closed 状态，但 certified 与 provisional 必须分栏；
+- fresh 14 个 high-performance 输入都要 materialize、compile 并给出 Target--RefJ correctness 或精确的
+  fail-closed 状态；legacy/provisional/canary 另表，不进入 fresh aggregate；
 - CUDA/H100 在 Source 可执行时，进入 Source--RefJ/RefDev 与 Source--Target 主性能表；
-- E0--E4、L0/L1、N0--N3 对 planned 18 个 high-performance 输入执行；不适用的 transformation 记为 `not_matched`，
-  不从 all-corpus aggregate 中删除；
+- C-Fixed、Schedule-Only、IntentIR 对 fresh 14 个 high-performance 输入执行；E0/E1、Erase-C、
+  L0/L1、N0--N3 只进入外部 baseline、C 小表或补充诊断。不适用的 transformation 记为
+  `not_matched`，不从 all-corpus aggregate 中删除；
 - 每个 J 除 closed valuation 外，还要运行所有已登记且只绑定 J-declared symbols 的
-  valuation；literal shape/dtype 只能通过显式、uncertified、带 lineage 的 J_dev 修改，`rows=2`、Flash 的
-  batch/sequence/head_dim 等 literal 必须原样保留；未来完全没有符号轴的 J 才记
+  valuation；fresh Task14 J 已符号化的 rows/cols 及 Flash 逻辑轴可以绑定新 valuation，而仍为 literal
+  的 shape/dtype/selected variant 只能通过显式、uncertified、带 lineage 的 J_dev 修改；完全没有符号轴的 J 才记
   `literal_shape_only`，不伪造大 shape；
 - 报告同时给出 all-corpus、structure-applicable subset 与每 Kernel 数字，禁止只保留 winner
   或只报加速的 case；
@@ -1146,7 +1126,7 @@ revision 和 terminal target pipeline，不要求结构分支使用完全相同�
 
 只有开销极高、用于解释机制而非建立性能事实的证据，例如 Nsight/CUPTI 详细 counters、
 Roofline 分解和单变量 instruction-level 剖析，可以在每类结构上选 1--2 个代表 valuation。
-这只是降低“解释证据”成本，不缩小 planned high-performance 主性能、correctness、E2/E3 或 C
+这只是降低“解释证据”成本，不缩小 fresh high-performance 主性能、correctness、E2/E3 或 C
 消融的横向覆盖；canary 只进入独立 regression 表。
 
 ## 19. 版本与演进规则
@@ -1169,17 +1149,18 @@ Roofline 分解和单变量 instruction-level 剖析，可以在每类结构上�
 每闭合一个 Kernel 就紧邻实现其 backend。SCRC 阶段若真实证据暴露 J/TypeCheck/Replay/RefEval 的
 通用缺口，可以修正对应 A/B 语义合同，但不提前混入本节的 IntentOp ownership/search 重构。
 
-### 20.1 当前闭合与 production intake 基线（2026-07-26）
+### 20.1 当前闭合与 production intake 基线（2026-07-28）
 
-截至 2026-07-28，可由 backend 本地 evidence 逐 digest 核验的严格 high-performance SCRC 覆盖是
-**16/28**。`corpus/production-jc-v1` 的 18 个 entry 实际由 **16 high-performance + 2 canary**
-组成；canary 不得进入 16/28、主性能表或 geomean。
+frontend Task14 的当前 fresh 权威账本是 **14/28**：11 个原运行直接认证，3 个复用各自 exact
+Gate1 artifact/Replay、以零模型 Gate2-only capability recheck 认证。它们构成下一版 production intake
+的首批正式分母。`corpus/production-jc-v1` 的 18 个 entry 仍由 **16 个历史 high-performance + 2 个
+canary** 组成，只保留作 legacy regression，不能与 fresh-14 混合统计。
 
-RoPE 与 xFormers SplitK reduce 曾被外部进度口径写成第 17/18 个 closure，但当前提供的 exact 路径
-分别是 `GATE2_FAILED` 与 `NO_CLOSURE`，故不能 production intake。它们在新证据到来前只能作为
-`certification_status=uncertified_backend_dev` 的 provisional backend 输入，不能继承 Gate1/Gate2。
+三个 capability recheck（Flash one-pass LayerNorm、xFormers RMSNorm-add、SplitK reduce）都是正式
+`scrc_certified` evidence；`changes_parent_verdict=false` 表示 append-only、不改写 parent report，不表示
+证据无效。backend intake 必须绑定 recheck receipt 与 exact Gate1 artifact/Replay digest。
 
-当前 planned 18 个 high-performance 输入都没有 typed rank-2/3 contraction；名称含 `do_o_dot` 的 Flash preprocess 仍是 FP32
+当前 fresh 14 个 high-performance 输入都没有 typed rank-2/3 contraction；名称含 `do_o_dot` 的 Flash preprocess 仍是 FP32
 elementwise multiply + row sum。因此这批的首要数值搜索轴是 reduction tree、FP32 FMA、fusion 与
 materialization，不是 TF32。TF32 只在未来闭合的 `tl.dot`/matmul/完整 Attention contraction 上按
 target capability 枚举，并与 IEEE state 使用同一 Q/D 做配对。
@@ -1187,13 +1168,12 @@ target capability 枚举，并与 IEEE state 使用同一 Q/D 做配对。
 因此：
 
 ```text
-SCRC-certified high-performance = 16
-provisional high-performance J_dev = 2
-compiler/correctness canary = 2
-verified pending intake = 0
+fresh SCRC-certified high-performance pending v2 intake = 14
+legacy v1 high-performance regression = 16
+legacy compiler/correctness canary = 2
 ```
 
-不得把历史 12/16-kernel 性能数字、16+2 canary 或 16+2 provisional 结果重标为 18-certified 结果。
+不得把历史 12/16-kernel 性能数字、16+2 canary 或 provisional 结果重标为 fresh-14 结果。
 正式导入只复制 exact accepted artifact、C、Source、Replay 与 closure receipt 并交叉核验 digest；后续新
 closure 继续使用同一 append-only intake 工具，同名不同 digest 必须 fail closed，未冻结 `/tmp` 路径
 不能成为长期 truth。
@@ -1241,10 +1221,19 @@ regression，不是 18-certified 主表。其同回执 Schedule-Only/expanded、
 `BT=4096,H=4096` 分别为 `1.0024x` 与 `1.0275x`，约 128 MiB 工作集已接近带宽。它们当前是 warm
 机制校准，不是最终 cold-data/BF16 主表；尤其旧小输入的 1.57x 不得外推。
 
+RVV 机器三臂与 C 小表现已由同一个 native-object timing receipt 执行：C-Fixed 是 canonical
+materialized path 上 target 对 C 的唯一投影；Schedule-Only 搜完整固定路径 schedule spine；IntentIR
+在相同总预算内先访问该 spine，再访问 producer-consumer structural expansion。runner 显式验证
+C/no-C full order 的 candidate-universe digest、map 与 budget 相同，并可选择测完整 latency map 计算
+candidates-to-95%。2026-07-28 的 Softmax `M=N=4096, FP32` warm 开发回执中，修复后的真实 MLIR
+producer-consumer path 相对同回执 Schedule-Only 为约 `1.11x`；C/no-C 最终 best 相同，达到 95% best
+分别需要 26/35 个候选。该数字仅是协议与路径校准，不进入最终 single/16-thread、外部 baseline 主图。
+
 ### 20.2 当前横向里程碑与下一 target
 
-当前 16-certified + 2-canary regression entry 按 A 结构覆盖四类横向路径；RoPE/SplitK provisional
-J_dev 到位后再加入 planned 18-high-performance matrix，不能用 canary 代替：
+当前 legacy 16-high-performance + 2-canary regression entry 按 A 结构覆盖四类横向路径；下一任务应
+先将 fresh Task14-14 content-addressed intake 后，再据其 A 结构生成正式矩阵，不能用 legacy J、J_dev
+或 canary 代替：
 
 | 结构类 | frozen J | 当前共性瓶颈 | 下一批真实 MLIR state |
 |---|---|---|---|
@@ -1263,13 +1252,13 @@ J_dev 到位后再加入 planned 18-high-performance matrix，不能用 canary �
    选择 NVVM/MMA 终端能力，不分裂出 kernel-name recipe。
 3. **RVV 与 CUDA 同步横向扩展。** workload-profile/symbolic valuation 与 per-kernel receipt 已由
    两个 portable exporter 共用；下一步实现 dynamic-VL strip mining、SEW/LMUL 状态、vector
-   reduction/scan 和可审计的 multicore state，不把工作停在静态 tile 与 whole-graph fusion。
+   reduction/scan 和可审计的 multicore state，不把工作停在静态 tile 与 producer-consumer fusion。
 4. **搜索与 C 做横向收敛。** 每类 transformation 都进入同一 candidate-state universe；C 只重排
-   全量状态。主表对 planned 18 个 high-performance 输入运行 E2/E3/E4，同时给 certified、
-   provisional、all-high-performance 与 applicable subset；canary 单列。
+   全量状态。主表对 fresh 14 个 high-performance 输入运行 CF/E2/E3，并用 E4 形成独立 C 小表；
+   applicable subset 另报但不能替代 all-fresh-14，legacy/provisional/canary 单列。
 5. **性能验收不代替 correctness。** 所有候选仍先 Target--RefJ；有 Source/Replay 的 target 再完成
    held-out direct edges。主 latency 用 L2-controlled event protocol，Nsight/Roofline 只解释每类机制，
-   不代替全 18 表。
+   不代替全 fresh-14 表。
 
 禁止为了某一 Kernel 的数字在 Python 中增加 target emission、按 case name 切换 compiler pass、
 改写 frozen J literal 或只运行一个适用子集后声称全量提升。当前仅有一个 J 命中的结构
@@ -1305,11 +1294,13 @@ J-search 分支；旧 artifact 在缺少某个高级 consumer 前提时保留 ge
 
 ### 阶段 B2：第一批 lowering-path expansion
 
-**当前状态：第一批已实现并完成 16-certified + 2-canary regression matrix、三 target 的开发消融。** CUDA
-row/elementwise/padded/generic-Linalg lowering 与 RVV materialized/whole-graph states 均由真实
-post-pass MLIR receipt 驱动。主收益来自 materialization/dispatch elimination、reduction topology 和
-Q/D-admitted precision/approximation；FMA 的接近 1.0x 结果照录。下一步是把同一通用 transformation
-library 扩到 contraction/完整 Attention 等新 A 图，而不是新增 family 抽象或继续堆无关局部 pass。
+**当前状态：第一批已实现并完成 16-certified + 2-canary regression；自然 workload 的正式全 target
+矩阵仍在推进。** CUDA row/elementwise/padded/generic-Linalg lowering 与 RVV materialized/
+producer-consumer paths 均由真实 post-pass MLIR receipt 驱动。RVV fusion 从 terminal consumer 反向
+遍历 producer，multi-use producer 停在 read-once frontier，避免把 `exp` 或 reduction 重复计算；receipt
+记录 fused producer、multi-use rejection、requested/actual schedule 与擦除 schedule 后的 path digest。
+下一步是横向扩展到 scan、dynamic-VL/multicore、contraction/完整 Attention，而不是新增 family 抽象
+或继续堆无关局部 pass。
 
 当前 CUDA 已登记并在 receipt 中区分：padded-row `serial_row/subgroup_feature`、row reduction
 `gpu_all_reduce/workgroup_hierarchical/subgroup_rows`（含 `rows_per_block`）、FP32 FMA count，以及 DYT
@@ -1326,7 +1317,8 @@ kernel emitter，也不另建发射抽象。
 
 - elementwise producer/reduction fusion；
 - 在 hard boundary 足够时启用 producer/reduction/epilogue fusion、materialization/copy elimination；
-- 把 RVV whole-graph fusion 从 schedule flag 分离为显式 structural transformation trace；
+- 把 RVV producer-consumer fusion 从 schedule flag 分离为显式 structural transformation trace，并以
+  actual fusion/materialization receipt 决定标签；
 - 注册 sequential/subgroup/workgroup/hierarchical reduction states、FP32 FMA 与 target-supported
   precision states；保持 hard boundary 后以 `observation-changing` 标记进入 Q/D filter，不新增 J 字段；
 - schedule candidate 与 C-prior ordering；
@@ -1344,15 +1336,15 @@ kernel emitter，也不另建发射抽象。
 
 ### 阶段 B4：实验与消融
 
-**当前状态：closed valuation 上的 E2/E3、E3/E4、L0/L1、N0--N3 与 G0/G1 已按
-v2 spec 在 16-certified + 2-canary regression corpus 上执行并归档；第 18.1--18.3 节的全 target、L2-controlled、
-production-valuation 横向矩阵是下一个未完成里程碑。**
+**当前状态：v3 machine spec、真实 C-Fixed、统一三臂、同 universe C/no-C 与 complete latency-map
+能力已实现；第 18.1--18.3 节的全 target、L2-controlled、production-valuation 与外部 baseline 横向矩阵
+仍未完成。**
 
-- E2/E3 正式 CUDA 主实验报告 search cost/time-to-best、all-corpus、applicable subset 与三边 closure；
-- G0/G1 从同一候选回执报告 materialization/dispatch elimination，不以 winner 名称反推适用性；
-- E3/E4 证明 C 的低预算 ordering 作用；L0/L1 隔离 local-B；N0--N3 隔离数值机制；
+- 正式内部主实验只报告 C-Fixed、Schedule-Only、IntentIR 与 `G_schedule/G_lowering`；
+- materialization/producer fusion 从同一候选回执作补充机制解释，不以 requested 名称反推适用性；
+- C/no-C 小表只报告 best-at-budget 与 candidates-to-95%；L0/L1、N0--N3 仅作补充机制诊断；
 - H100/RVV 严格标明缺失的 Replay/Source 边，不把 Target–RefJ correctness 冒充 formal closure；
-- 当前 18 J 与后续新 J 均复用同一 machine spec、receipt schema 与 all-corpus/not-matched
+- 当前 16 accepted high-performance J、两个 provisional J_dev 与后续新 J 均复用同一 machine spec、receipt schema 与 all-corpus/not-matched
   口径；主表不因机制解释只取代表点而收缩。
 
 ## 21. 最终系统表述

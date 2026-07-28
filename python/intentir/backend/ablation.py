@@ -11,11 +11,12 @@ from typing import Any
 from intentir.ir.production_snapshot import content_digest
 
 
-ABLATION_PROTOCOL = "intentir.backend.ablation-plan.v2"
+ABLATION_PROTOCOL = "intentir.backend.ablation-plan.v3"
 ABLATION_SCOPE = "J-grounded Q/D-certified concrete lowering-state search"
 ABLATION_BUDGET_RULE = (
-    "all non-baseline arms receive the same caller-supplied total budget over "
-    "distinct post-pass MLIR states and distinct failed exact candidates"
+    "C-Fixed receives exactly one deterministic target projection of C; all "
+    "search arms receive the same caller-supplied total budget over distinct "
+    "post-pass MLIR states and distinct failed exact candidates"
 )
 ABLATION_CORRECTNESS = {
     "immutable_semantic_input": "J=A+B",
@@ -49,13 +50,29 @@ ABLATION_CANDIDATE_IDENTITY = {
         "C-conditioned order before spending its remaining equal total budget "
         "on other concrete lowering states"
     ),
+    "c_fixed_rule": (
+        "the canonical structural path plus one deterministic target projection "
+        "of C forms exactly one candidate and performs no search"
+    ),
     "abstraction_rule": (
         "no implementation-family object, family id, or named emitter participates "
         "in generation, legality, or selection"
     ),
 }
 ABLATION_MEASUREMENT = {
-    "performance_baseline": "exact Source frontend implementation",
+    "formal_panels": {
+        "cuda_external": ["Source", "Best Applicable", "IntentIR"],
+        "rvv_external": ["Triton-CPU", "Best Native RVV", "IntentIR"],
+        "internal_attribution": ["C-Fixed", "Schedule-Only", "IntentIR"],
+        "c_prior_table": [
+            "best performance at fixed budget",
+            "candidates to 95% of final best",
+        ],
+    },
+    "external_match_rule": (
+        "operator, shape, dtype, layout, output relation, timed boundary, "
+        "cache policy, device and profiler must match exactly"
+    ),
     "timed_scope": (
         "prepared launch or prepared graph only; allocation and correctness "
         "synchronization are outside the timed closure"
@@ -84,13 +101,14 @@ DEFAULT_ABLATION_SPEC = (
     Path(__file__).resolve().parents[3]
     / "spec"
     / "lowering"
-    / "backend-search-ablation-v2.json"
+    / "backend-search-ablation-v3.json"
 )
 
 
 class ExperimentArm(str, Enum):
     E0_SOURCE = "E0"
     E1_CANONICAL = "E1"
+    C_FIXED = "CF"
     E2_SCHEDULE = "E2"
     E3_STATE_SEARCH = "E3"
     E4_ERASE_C = "E4"
@@ -100,6 +118,23 @@ class ExperimentArm(str, Enum):
     N1_REDUCTION_TREE = "N1"
     N2_FMA = "N2"
     N3_PRECISION_APPROX = "N3"
+
+    @property
+    def experiment_name(self) -> str:
+        return {
+            ExperimentArm.E0_SOURCE: "Source",
+            ExperimentArm.E1_CANONICAL: "Canonical-Diagnostic",
+            ExperimentArm.C_FIXED: "C-Fixed",
+            ExperimentArm.E2_SCHEDULE: "Schedule-Only",
+            ExperimentArm.E3_STATE_SEARCH: "IntentIR",
+            ExperimentArm.E4_ERASE_C: "IntentIR-Erase-C",
+            ExperimentArm.L0_LOCAL_OFF: "Local-B-Off-Diagnostic",
+            ExperimentArm.L1_LOCAL_ON: "Local-B-On-Diagnostic",
+            ExperimentArm.N0_NUMERIC_OFF: "Numeric-Off-Diagnostic",
+            ExperimentArm.N1_REDUCTION_TREE: "Reduction-Tree-Diagnostic",
+            ExperimentArm.N2_FMA: "FMA-Diagnostic",
+            ExperimentArm.N3_PRECISION_APPROX: "Precision-Approx-Diagnostic",
+        }[self]
 
 
 @dataclass(frozen=True)
@@ -124,10 +159,16 @@ class SearchAxes:
         if isinstance(self.candidate_budget, bool) or self.candidate_budget < 0:
             raise ValueError("candidate budget must be a non-negative integer")
         if self.baseline_kind is not None:
-            if self.baseline_kind not in {"source", "canonical"}:
-                raise ValueError("baseline_kind must be source or canonical")
-            if self.candidate_budget != 0:
-                raise ValueError("baseline arms do not own a search budget")
+            if self.baseline_kind not in {"source", "canonical", "c_fixed"}:
+                raise ValueError(
+                    "baseline_kind must be source, canonical, or c_fixed"
+                )
+            expected_budget = 1 if self.baseline_kind == "c_fixed" else 0
+            if self.candidate_budget != expected_budget:
+                raise ValueError(
+                    "source/canonical baselines own no search budget and "
+                    "C-Fixed owns exactly one candidate"
+                )
         elif self.candidate_budget <= 0:
             raise ValueError("search arms require a positive candidate budget")
         for name in (
@@ -158,6 +199,7 @@ class SearchAxes:
         return {
             "protocol": self.protocol,
             "arm": self.arm.value,
+            "experiment_name": self.arm.experiment_name,
             "candidate_budget": self.candidate_budget,
             "use_c_prior": self.use_c_prior,
             "search_structural_states": self.search_structural_states,
@@ -236,7 +278,7 @@ def standard_ablation_plan(
     result = []
     for record in records:
         budget_class = record.get("budget_class")
-        if budget_class not in {"baseline", "equal_total"}:
+        if budget_class not in {"baseline", "single_candidate", "equal_total"}:
             raise ValueError("unknown ablation budget_class")
         allowed = {
             "arm",
@@ -249,7 +291,13 @@ def standard_ablation_plan(
         result.append(
             SearchAxes(
                 arm=ExperimentArm(record["arm"]),
-                candidate_budget=(0 if budget_class == "baseline" else candidate_budget),
+                candidate_budget=(
+                    0
+                    if budget_class == "baseline"
+                    else 1
+                    if budget_class == "single_candidate"
+                    else candidate_budget
+                ),
                 baseline_kind=record["baseline_kind"],
                 **{name: record[name] for name in axis_names},
             )
@@ -262,7 +310,7 @@ def assert_fair_pair(left: SearchAxes, right: SearchAxes, *, varying: str) -> No
 
     left_record = left.to_dict()
     right_record = right.to_dict()
-    ignored = {"arm", varying, "numeric_state_level"}
+    ignored = {"arm", "experiment_name", varying, "numeric_state_level"}
     differences = {
         key
         for key in left_record

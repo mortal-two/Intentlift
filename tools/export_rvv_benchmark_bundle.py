@@ -46,7 +46,7 @@ from intentir.verify.gate2.scalar import ScalarLoweringRunner
 from intentir.verify.scrc_workload_run import build_workload_jc_suite
 
 
-BUNDLE_PROTOCOL = "intentir.production.rvv-search-bundle.v2"
+BUNDLE_PROTOCOL = "intentir.production.rvv-search-bundle.v3"
 TARGET = BackendTarget("riscv", "rv64gcv_zfh", ("vlen128",))
 
 
@@ -178,25 +178,53 @@ def _entry(
         )
     concrete_candidates = []
     duplicate_candidates = []
-    object_owner: dict[str, str] = {}
     aliases: dict[str, str] = {}
+    object_groups: dict[str, list[dict[str, Any]]] = {}
     for item in candidates:
-        candidate_id = item["candidate"]["candidate_id"]
         object_digest = item["candidate"]["object_sha256"]
-        owner = object_owner.get(object_digest)
-        if owner is not None:
+        object_groups.setdefault(object_digest, []).append(item)
+
+    requested_candidate_by_id = {
+        item.candidate_id: item for item in search_plan.universe
+    }
+    canonical_requested_path = requested_candidate_by_id[
+        search_plan.c_fixed_candidate_id
+    ].transformation.lowering_path_kind
+
+    def representative_key(item: Mapping[str, Any]) -> tuple[int, int, str]:
+        candidate = item["candidate"]
+        requested = candidate["requested_schedule"]
+        actual = candidate["schedule"]
+        path_penalty = int(
+            candidate["transformation"]["lowering_path_kind"]
+            != canonical_requested_path
+        )
+        mismatch_count = sum(
+            requested[name] != actual[name]
+            for name in ("parallel_tile", "reduction_tile")
+        )
+        return path_penalty, mismatch_count, str(candidate["candidate_id"])
+
+    for group in object_groups.values():
+        owner_item = min(group, key=representative_key)
+        owner = owner_item["candidate"]["candidate_id"]
+        concrete_candidates.append(owner_item)
+        for item in group:
+            candidate_id = item["candidate"]["candidate_id"]
             aliases[candidate_id] = owner
+            if candidate_id == owner:
+                continue
             duplicate_candidates.append(
                 {
                     "candidate": item["candidate"],
                     "duplicate_of": owner,
-                    "reason": "identical_native_object_sha256",
+                    "reason": (
+                        "identical_native_object_sha256; representative preserves "
+                        "the canonical path first, then minimizes requested-vs-actual "
+                        "schedule mismatch"
+                    ),
                 }
             )
-            continue
-        object_owner[object_digest] = candidate_id
-        aliases[candidate_id] = candidate_id
-        concrete_candidates.append(item)
     candidates = concrete_candidates
     available_ids = {
         item["candidate"]["candidate_id"] for item in candidates
@@ -219,17 +247,39 @@ def _entry(
 
     erase_c_order = concrete_order(search_plan.erase_c_order)
     c_prior_order = concrete_order(search_plan.c_prior_order)
-    frozen_c_candidate_id = aliases.get(search_plan.frozen_c_candidate_id)
-    if frozen_c_candidate_id not in available_ids:
-        frozen_c_candidate_id = next(
+    schedule_only_erase_c_order = concrete_order(
+        search_plan.schedule_only_erase_c_order
+    )
+    schedule_only_c_prior_order = concrete_order(
+        search_plan.schedule_only_c_prior_order
+    )
+    c_fixed_candidate_id = aliases.get(search_plan.c_fixed_candidate_id)
+    if c_fixed_candidate_id not in available_ids:
+        c_fixed_candidate_id = next(
             candidate_id
-            for candidate_id in erase_c_order
+            for candidate_id in schedule_only_c_prior_order
             if not next(
                 item["candidate"]
                 for item in candidates
                 if item["candidate"]["candidate_id"] == candidate_id
-            )["transformation"]["fuse_elementwise"]
+            )["transformation"]["fuse_producers"]
         )
+    candidate_by_id = {
+        item["candidate"]["candidate_id"]: item["candidate"] for item in candidates
+    }
+    schedule_only_ids = set(schedule_only_c_prior_order)
+    if schedule_only_ids != set(schedule_only_erase_c_order):
+        raise AssertionError("C changed the concrete Schedule-Only universe")
+    c_fixed_candidate = candidate_by_id[c_fixed_candidate_id]
+    canonical_lowering_path = str(
+        c_fixed_candidate["transformation"]["lowering_path_kind"]
+    )
+    if any(
+        str(candidate_by_id[candidate_id]["transformation"]["lowering_path_kind"])
+        != canonical_lowering_path
+        for candidate_id in schedule_only_ids
+    ):
+        raise AssertionError("Schedule-Only escaped the canonical lowering path")
     concrete_universe_digest = hashlib.sha256(
         json.dumps(sorted(available_ids), separators=(",", ":")).encode()
     ).hexdigest()
@@ -280,20 +330,25 @@ def _entry(
         "concrete_search_plan": {
             "candidate_universe_digest": concrete_universe_digest,
             "candidate_universe_count": len(candidates),
+            "schedule_only_erase_c_order": schedule_only_erase_c_order,
+            "schedule_only_c_prior_order": schedule_only_c_prior_order,
             "erase_c_order": erase_c_order,
             "c_prior_order": c_prior_order,
-            "frozen_c_requested_candidate_id": (
-                search_plan.frozen_c_candidate_id
+            "c_fixed_requested_candidate_id": (
+                search_plan.c_fixed_candidate_id
             ),
-            "frozen_c_candidate_id": frozen_c_candidate_id,
+            "c_fixed_candidate_id": c_fixed_candidate_id,
+            "c_fixed_exactly_one": True,
+            "c_projection": dict(search_plan.c_projection),
+            "canonical_lowering_path": canonical_lowering_path,
             "same_universe_for_erase_c_and_c_prior": True,
+            "same_schedule_only_universe_for_erase_c_and_c_prior": True,
             "budget_unit": "distinct_native_object_sha256",
         },
         "candidate_order": c_prior_order,
         "schedule_only_candidate_ids": [
-            item["candidate"]["candidate_id"]
-            for item in candidates
-            if not item["candidate"]["transformation"]["b_transformations"]
+            candidate_id
+            for candidate_id in schedule_only_c_prior_order
         ],
         "candidates": candidates,
         "duplicate_candidates": duplicate_candidates,
