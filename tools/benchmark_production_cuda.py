@@ -636,6 +636,8 @@ def _one_kernel(
     if not mlir_j.passed:
         raise RuntimeError("compiled MLIR result differs from canonical J")
 
+    search_record = search.to_record()
+
     (
         source_j,
         mlir_latency,
@@ -657,7 +659,7 @@ def _one_kernel(
     ]
     return {
         **common_record(),
-        "search": search.to_record(),
+        "search": search_record,
         "winner": {
             "candidate": search.winner.to_dict(),
             "lowering": winner.to_record(),
@@ -692,6 +694,15 @@ def _one_kernel(
                 "warmup_pair_discarded": True,
                 "paired_batches": paired_batches,
             },
+            # These are copied from the same search receipt.  They are the
+            # primary internal attribution fields; separately launched arm
+            # latencies remain useful drift diagnostics only.
+            "schedule_spine_ablation": search_record[
+                "schedule_spine_ablation"
+            ],
+            "c_fixed_schedule_ablation": search_record[
+                "c_fixed_schedule_ablation"
+            ],
         },
     }
 

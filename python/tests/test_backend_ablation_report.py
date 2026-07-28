@@ -133,3 +133,49 @@ def test_summary_keeps_all_corpus_and_applicable_subset_separate() -> None:
     assert effect["paired_applicable_subset"]["count"] == 1
     assert effect["paired_applicable_subset"]["kernels"] == ["k0"]
     assert effect["paired_applicable_subset"]["geomean_gain"] == 2.0
+
+
+def test_primary_schedule_and_lowering_gains_require_same_receipt() -> None:
+    e2 = _record("E2", "k0", 8.0, paths=["cuda.a"])
+    e2["performance"]["c_fixed_schedule_ablation"] = {
+        "same_candidate_measurement_receipt": True,
+        "c_fixed_us": 12.0,
+        "schedule_only_best_us": 8.0,
+        "schedule_over_c_fixed_speedup": 1.5,
+    }
+    e3 = _record("E3", "k0", 4.0, paths=["cuda.a"], reduction=True)
+    e3["search"]["schedule_spine_ablation"] = {
+        "same_candidate_measurement_receipt": True,
+        "expanded_state_measured_count": 2,
+    }
+    e3["performance"]["schedule_spine_ablation"] = {
+        "same_candidate_measurement_receipt": True,
+        "schedule_spine_best_us": 8.0,
+        "expanded_best_us": 4.0,
+        "expanded_over_schedule_spine_speedup": 2.0,
+    }
+
+    summary = summarize_ablation_records(
+        (e2, e3),
+        selected_kernels=("k0",),
+        kernel_universe=("k0",),
+        selected_arms=("E2", "E3"),
+    )
+
+    schedule, lowering = summary["same_receipt_effects"]
+    assert schedule["same_receipt_all_corpus"]["geomean_gain"] == 1.5
+    assert lowering["same_receipt_all_corpus"]["geomean_gain"] == 2.0
+    assert lowering["same_receipt_applicable_subset"]["kernels"] == ["k0"]
+
+    e3["performance"]["schedule_spine_ablation"][
+        "same_candidate_measurement_receipt"
+    ] = False
+    rejected = summarize_ablation_records(
+        (e2, e3),
+        selected_kernels=("k0",),
+        kernel_universe=("k0",),
+        selected_arms=("E2", "E3"),
+    )
+    assert rejected["same_receipt_effects"][1]["same_receipt_all_corpus"][
+        "count"
+    ] == 0

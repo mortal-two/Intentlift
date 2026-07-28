@@ -53,7 +53,7 @@ from .program import analyze_j_for_cuda
 from .selection import DEFAULT_PASSES, LoweringTarget, select_variant
 
 
-SEARCH_PROTOCOL = "intentir.backend.cuda.measured-search.v3"
+SEARCH_PROTOCOL = "intentir.backend.cuda.measured-search.v4"
 CACHE_PROTOCOL = "intentir.backend.cuda.performance-cache.v2"
 CONTRACT_VIEW_VERSION = "intentir.backend.cuda.contract-view.v2"
 
@@ -64,6 +64,9 @@ B_TRANSFORM_RANK0_HOST_CAPTURE = "cuda.b.rank0_host_value_capture.v1"
 B_TRANSFORM_UNIFORM_HOST_CAPTURE = "cuda.b.uniform_host_value_capture.v1"
 LINALG_FUSED_FAST_PATH_ID = "cuda.linalg.elementwise-fused.v1"
 SPLITK_VARARGS_FAST_PATH_ID = "cuda.splitk.reduce-varargs.v1"
+SEARCH_PARTITION_UNPARTITIONED = "unpartitioned"
+SEARCH_PARTITION_SCHEDULE_SPINE = "schedule_spine"
+SEARCH_PARTITION_EXPANDED = "expanded"
 
 
 Benchmark = Callable[[LoweredProgram, "CudaSearchCandidate"], float]
@@ -244,6 +247,7 @@ class CudaSearchCandidate:
         ObservationClass.HARD_PRESERVING
     )
     compiler_pipeline: str = "direct"
+    search_partition: str = SEARCH_PARTITION_UNPARTITIONED
 
     @property
     def generic(self) -> bool:
@@ -270,6 +274,7 @@ class CudaSearchCandidate:
                 self.requested_observation_class.value
             ),
             "compiler_pipeline": self.compiler_pipeline,
+            "search_partition": self.search_partition,
         }
 
     def concrete_state(self, program: LoweredProgram) -> ConcreteLoweringState:
@@ -351,6 +356,7 @@ class SearchAttempt:
     lowering_record: Mapping[str, Any] | None = None
     concrete_state: ConcreteLoweringState | None = None
     qd_search: CandidateQDResult | None = None
+    finalist_samples_us: tuple[float, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -375,6 +381,7 @@ class SearchAttempt:
                 if self.qd_search is not None
                 else None
             ),
+            "finalist_samples_us": list(self.finalist_samples_us),
         }
 
 
@@ -403,6 +410,10 @@ class CudaSearchResult:
     candidate_universe_count: int = 0
     candidate_budget: int = 0
     budget_consumed: int = 0
+    c_fixed_candidate_id: str | None = None
+    finalist_actual_count: int = 0
+    schedule_spine_candidate_count: int = 0
+    expanded_candidate_count: int = 0
 
     def to_record(self) -> dict[str, Any]:
         best_latency: float | None = None
@@ -529,6 +540,130 @@ class CudaSearchResult:
             and any(count == 1 for count in whole_graph_kernel_counts)
         )
 
+        # Formal marginal gains are computed from candidates remeasured inside
+        # this one search visit.  Never compare cached/initial ranking samples
+        # against fresh finalist medians, and never use a separately launched E2
+        # process as the primary lowering attribution for E3.
+        fresh_attempts = tuple(
+            item
+            for item in self.attempts
+            if item.latency_us is not None and item.finalist_samples_us
+        )
+
+        def best_attempt(
+            pool: tuple[SearchAttempt, ...],
+        ) -> SearchAttempt | None:
+            return (
+                min(pool, key=lambda item: item.latency_us)
+                if pool
+                else None
+            )
+
+        fresh_global_best = best_attempt(fresh_attempts)
+        fresh_spine = tuple(
+            item
+            for item in fresh_attempts
+            if item.candidate.search_partition
+            == SEARCH_PARTITION_SCHEDULE_SPINE
+        )
+        fresh_expanded = tuple(
+            item
+            for item in fresh_attempts
+            if item.candidate.search_partition == SEARCH_PARTITION_EXPANDED
+        )
+        spine_best = best_attempt(fresh_spine)
+        expanded_only_best = best_attempt(fresh_expanded)
+        schedule_spine_ablation = None
+        if (
+            self.ablation_axes is not None
+            and self.ablation_axes.search_structural_states
+            and spine_best is not None
+            and fresh_global_best is not None
+        ):
+            assert spine_best.latency_us is not None
+            assert fresh_global_best.latency_us is not None
+            schedule_spine_ablation = {
+                "same_candidate_measurement_receipt": True,
+                "same_total_search_visit": True,
+                "schedule_spine_candidate_count": (
+                    self.schedule_spine_candidate_count
+                ),
+                "schedule_spine_measured_count": len(fresh_spine),
+                "expanded_candidate_count": self.expanded_candidate_count,
+                "expanded_state_measured_count": len(fresh_expanded),
+                "schedule_spine_best_candidate_id": (
+                    spine_best.candidate.candidate_id
+                ),
+                "schedule_spine_best_us": spine_best.latency_us,
+                "schedule_spine_best_batch_us": list(
+                    spine_best.finalist_samples_us
+                ),
+                # "expanded best" is the nested E3 global best, so it may be
+                # the spine winner and the gain is guaranteed not to fall below
+                # one merely because a new state loses.
+                "expanded_best_candidate_id": (
+                    fresh_global_best.candidate.candidate_id
+                ),
+                "expanded_best_us": fresh_global_best.latency_us,
+                "expanded_best_batch_us": list(
+                    fresh_global_best.finalist_samples_us
+                ),
+                "expanded_over_schedule_spine_speedup": (
+                    spine_best.latency_us / fresh_global_best.latency_us
+                ),
+                "expanded_state_best_candidate_id": (
+                    expanded_only_best.candidate.candidate_id
+                    if expanded_only_best is not None
+                    else None
+                ),
+                "expanded_state_best_us": (
+                    expanded_only_best.latency_us
+                    if expanded_only_best is not None
+                    else None
+                ),
+            }
+
+        c_fixed_schedule_ablation = None
+        if (
+            self.ablation_axes is not None
+            and self.ablation_axes.baseline_kind is None
+            and not self.ablation_axes.search_structural_states
+            and self.c_fixed_candidate_id is not None
+            and fresh_global_best is not None
+        ):
+            c_fixed_attempt = next(
+                (
+                    item
+                    for item in fresh_attempts
+                    if item.candidate.candidate_id
+                    == self.c_fixed_candidate_id
+                ),
+                None,
+            )
+            if c_fixed_attempt is not None:
+                assert c_fixed_attempt.latency_us is not None
+                assert fresh_global_best.latency_us is not None
+                c_fixed_schedule_ablation = {
+                    "same_candidate_measurement_receipt": True,
+                    "same_total_search_visit": True,
+                    "c_fixed_candidate_id": self.c_fixed_candidate_id,
+                    "c_fixed_us": c_fixed_attempt.latency_us,
+                    "c_fixed_batch_us": list(
+                        c_fixed_attempt.finalist_samples_us
+                    ),
+                    "schedule_only_best_candidate_id": (
+                        fresh_global_best.candidate.candidate_id
+                    ),
+                    "schedule_only_best_us": fresh_global_best.latency_us,
+                    "schedule_only_best_batch_us": list(
+                        fresh_global_best.finalist_samples_us
+                    ),
+                    "schedule_over_c_fixed_speedup": (
+                        c_fixed_attempt.latency_us
+                        / fresh_global_best.latency_us
+                    ),
+                }
+
         return {
             "protocol": SEARCH_PROTOCOL,
             "materialization": self.state.base.to_record(),
@@ -558,6 +693,8 @@ class CudaSearchResult:
             ),
             "fixed_lowering_path_kind": self.fixed_lowering_path_kind,
             "fixed_fast_path_id": self.fixed_fast_path_id,
+            "schedule_spine_ablation": schedule_spine_ablation,
+            "c_fixed_schedule_ablation": c_fixed_schedule_ablation,
             "registered_state_axes": {
                 "reduction_topology": True,
                 "fma_contraction": True,
@@ -570,7 +707,9 @@ class CudaSearchResult:
             "elapsed_ms": self.elapsed_ms,
             "time_to_best_ms": self.time_to_best_ms,
             "finalist_tournament": {
-                "count": self.finalist_count,
+                "count": self.finalist_actual_count,
+                "requested_count": self.finalist_count,
+                "actual_count": self.finalist_actual_count,
                 "remeasurements_per_candidate": self.finalist_remeasurements,
                 "aggregation": (
                     "median of fresh round-robin measurements; initial ranking "
@@ -648,6 +787,21 @@ class CudaSearchResult:
                 "precision_or_approximation_observed": (
                     len(approximation_modes) > 1
                     or "native_tanh" in approximation_modes
+                ),
+                "schedule_spine_concrete_states": sum(
+                    item.candidate.search_partition
+                    == SEARCH_PARTITION_SCHEDULE_SPINE
+                    for item in admitted
+                ),
+                "expanded_concrete_states": sum(
+                    item.candidate.search_partition
+                    == SEARCH_PARTITION_EXPANDED
+                    for item in admitted
+                ),
+                "expanded_state_search_observed": any(
+                    item.candidate.search_partition
+                    == SEARCH_PARTITION_EXPANDED
+                    for item in admitted
                 ),
                 "evidence_rule": (
                     "count only compiler-admitted, compiled post-pass MLIR; "
@@ -1579,8 +1733,18 @@ def enumerate_cuda_candidates(
     )
     spine_ids = {item.candidate_id for item in schedule_spine}
     return (
-        *schedule_spine,
-        *(item for item in expanded if item.candidate_id not in spine_ids),
+        *(
+            replace(
+                item,
+                search_partition=SEARCH_PARTITION_SCHEDULE_SPINE,
+            )
+            for item in schedule_spine
+        ),
+        *(
+            replace(item, search_partition=SEARCH_PARTITION_EXPANDED)
+            for item in expanded
+            if item.candidate_id not in spine_ids
+        ),
     )
 
 
@@ -1803,6 +1967,17 @@ def search_cuda(
     # structural/compiler probe; such duplicates remain in the receipt but no
     # longer starve later topology paths under a finite tuning budget.
     candidates = list(admitted_candidates)
+    c_fixed_candidate_id = (
+        candidates[0].candidate_id if candidates else None
+    )
+    schedule_spine_candidate_count = sum(
+        item.search_partition == SEARCH_PARTITION_SCHEDULE_SPINE
+        for item in candidates
+    )
+    expanded_candidate_count = sum(
+        item.search_partition == SEARCH_PARTITION_EXPANDED
+        for item in candidates
+    )
 
     attempts: list[SearchAttempt] = []
     winner: CudaSearchCandidate | None = None
@@ -1961,15 +2136,61 @@ def search_cuda(
                 time.perf_counter_ns() - started
             ) / 1_000_000.0
 
+    finalist_actual_count = 0
     if benchmark is not None and finalist_remeasurements:
-        ranked = sorted(
+        initial_ranked = sorted(
             (
                 (index, attempt)
                 for index, attempt in enumerate(attempts)
                 if attempt.latency_us is not None
             ),
             key=lambda item: item[1].latency_us,
-        )[:finalist_count]
+        )
+
+        def provisional_best_index(
+            predicate: Callable[[SearchAttempt], bool],
+        ) -> int | None:
+            eligible = [
+                (index, attempt)
+                for index, attempt in initial_ranked
+                if predicate(attempt)
+            ]
+            return eligible[0][0] if eligible else None
+
+        # Preserve the causal contrasts even when a small finalist_count would
+        # otherwise exclude a slow C projection or one side of the nested E3
+        # state-space comparison.
+        mandatory_indices = [
+            index
+            for index in (
+                provisional_best_index(
+                    lambda item: item.candidate.candidate_id
+                    == c_fixed_candidate_id
+                ),
+                provisional_best_index(
+                    lambda item: item.candidate.search_partition
+                    == SEARCH_PARTITION_SCHEDULE_SPINE
+                ),
+                provisional_best_index(
+                    lambda item: item.candidate.search_partition
+                    == SEARCH_PARTITION_EXPANDED
+                ),
+            )
+            if index is not None
+        ]
+        ranked_indices: list[int] = []
+        for index in (
+            *mandatory_indices,
+            *(index for index, _attempt in initial_ranked),
+        ):
+            if index not in ranked_indices:
+                ranked_indices.append(index)
+            if (
+                len(ranked_indices) >= finalist_count
+                and all(item in ranked_indices for item in mandatory_indices)
+            ):
+                break
+        ranked = [(index, attempts[index]) for index in ranked_indices]
         fresh_samples: dict[int, list[float]] = {
             index: [] for index, _attempt in ranked
         }
@@ -2016,6 +2237,7 @@ def search_cuda(
                     "measurements"
                 ),
                 cache_hit=False,
+                finalist_samples_us=tuple(samples),
             )
             performance_cache.store(
                 cache_keys[candidate.candidate_id],
@@ -2023,11 +2245,17 @@ def search_cuda(
                 candidate=candidate,
             )
 
-        measured = [
-            attempt for attempt in attempts if attempt.latency_us is not None
+        freshly_remeasured = [
+            attempts[index]
+            for index, _attempt in ranked
+            if attempts[index].finalist_samples_us
         ]
-        if measured:
-            robust_winner = min(measured, key=lambda item: item.latency_us)
+        finalist_actual_count = len(freshly_remeasured)
+        if freshly_remeasured:
+            robust_winner = min(
+                freshly_remeasured,
+                key=lambda item: item.latency_us,
+            )
             winner = robust_winner.candidate
             winner_latency = robust_winner.latency_us
             winner_program = measured_programs[winner.candidate_id]
@@ -2094,6 +2322,10 @@ def search_cuda(
         candidate_universe_count=len(candidate_universe),
         candidate_budget=budget,
         budget_consumed=budget_consumed,
+        c_fixed_candidate_id=c_fixed_candidate_id,
+        finalist_actual_count=finalist_actual_count,
+        schedule_spine_candidate_count=schedule_spine_candidate_count,
+        expanded_candidate_count=expanded_candidate_count,
     )
 
 
@@ -2112,6 +2344,9 @@ __all__ = [
     "CudaSearchCandidate",
     "CudaSearchResult",
     "PerformanceCache",
+    "SEARCH_PARTITION_EXPANDED",
+    "SEARCH_PARTITION_SCHEDULE_SPINE",
+    "SEARCH_PARTITION_UNPARTITIONED",
     "SearchAttempt",
     "admit_cuda_candidate_paths",
     "canonical_cuda_candidate",

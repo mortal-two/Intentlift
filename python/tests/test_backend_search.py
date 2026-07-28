@@ -11,6 +11,8 @@ from intentir.backend.cuda.search import (
     B_TRANSFORM_RANK0_HOST_CAPTURE,
     CudaContractError,
     PerformanceCache,
+    SEARCH_PARTITION_EXPANDED,
+    SEARCH_PARTITION_SCHEDULE_SPINE,
     canonical_cuda_candidate,
     derive_cuda_contract_view,
     derive_default_fast_path_id,
@@ -414,6 +416,14 @@ def test_expanded_search_preserves_fixed_structure_schedule_spine() -> None:
     assert {item.candidate_id for item in e2} < {
         item.candidate_id for item in e3
     }
+    assert all(
+        item.search_partition == SEARCH_PARTITION_SCHEDULE_SPINE
+        for item in e3[: len(e2)]
+    )
+    assert all(
+        item.search_partition == SEARCH_PARTITION_EXPANDED
+        for item in e3[len(e2) :]
+    )
 
 
 def test_registry_paths_are_enumerated_without_kernel_allowlists() -> None:
