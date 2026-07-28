@@ -387,11 +387,25 @@ struct PaddedRowDotLowering {
     Location location = function.getLoc();
     OpBuilder builder(context);
     auto originalType = function.getFunctionType();
+    int64_t packetWidth = isa<Float32Type>(storageType) ? 4 : 8;
+    Type packetType = VectorType::get({packetWidth}, storageType);
     SmallVector<Type> inputs;
+    unsigned inputIndex = 0;
     for (Type input : originalType.getInputs()) {
       auto tensor = cast<RankedTensorType>(input);
-      inputs.push_back(MemRefType::get(tensor.getShape(),
-                                       tensor.getElementType()));
+      if (requestedVectorizeFullFeatures && inputIndex < 2) {
+        // Keep the packet in the memref element type.  A vector.load from a
+        // scalar-element memref is scalarized by GPU-to-NVVM, while this form
+        // reaches one wide global-memory instruction under the same bare-pointer
+        // kernel ABI.
+        SmallVector<int64_t> packetShape(tensor.getShape());
+        packetShape.back() /= packetWidth;
+        inputs.push_back(MemRefType::get(packetShape, packetType));
+      } else {
+        inputs.push_back(MemRefType::get(tensor.getShape(),
+                                         tensor.getElementType()));
+      }
+      ++inputIndex;
     }
     auto output = cast<RankedTensorType>(originalType.getResult(0));
     inputs.push_back(MemRefType::get(output.getShape(),
@@ -513,14 +527,13 @@ struct PaddedRowDotLowering {
         }
         return nested.create<arith::MulFOp>(location, left, right);
       };
-      int64_t packetWidth = isa<Float32Type>(storageType) ? 4 : 8;
-      auto emitPacketProduct = [&](OpBuilder &nested, Value column) -> Value {
-        auto vectorType = VectorType::get({packetWidth}, storageType);
-        SmallVector<Value> indices{batchId, row, paddedRow, column};
-        Value leftVector = nested.create<vector::LoadOp>(
-            location, vectorType, entry->getArgument(0), indices);
-        Value rightVector = nested.create<vector::LoadOp>(
-            location, vectorType, entry->getArgument(1), indices);
+      auto emitPacketProduct = [&](OpBuilder &nested,
+                                   Value packetColumn) -> Value {
+        SmallVector<Value> indices{batchId, row, paddedRow, packetColumn};
+        Value leftVector = nested.create<memref::LoadOp>(
+            location, entry->getArgument(0), indices);
+        Value rightVector = nested.create<memref::LoadOp>(
+            location, entry->getArgument(1), indices);
         Value sum = nested.create<arith::ConstantFloatOp>(
             location, APFloat(0.0f), nested.getF32Type());
         for (int64_t element = 0; element < packetWidth; ++element) {
@@ -543,15 +556,12 @@ struct PaddedRowDotLowering {
 
       Value accumulator = zero;
       if (requestedVectorizeFullFeatures) {
-        Value cPacketWidth = builder.create<arith::ConstantIndexOp>(
-            location, packetWidth);
-        Value lanePacket = builder.create<arith::MulIOp>(
-            location, lane, cPacketWidth);
         for (int64_t base = 0; base < featureWidth;
              base += requestedLanesPerRow * packetWidth) {
-          Value cBase = builder.create<arith::ConstantIndexOp>(location, base);
-          Value column =
-              builder.create<arith::AddIOp>(location, lanePacket, cBase);
+          Value cPacketBase = builder.create<arith::ConstantIndexOp>(
+              location, base / packetWidth);
+          Value packetColumn = builder.create<arith::AddIOp>(
+              location, lane, cPacketBase);
           auto termIf = builder.create<scf::IfOp>(
               location, TypeRange{builder.getF32Type()}, rowActive,
               /*withElseRegion=*/true);
@@ -559,7 +569,7 @@ struct PaddedRowDotLowering {
             OpBuilder::InsertionGuard guard(builder);
             builder.setInsertionPointToStart(termIf.thenBlock());
             builder.create<scf::YieldOp>(
-                location, emitPacketProduct(builder, column));
+                location, emitPacketProduct(builder, packetColumn));
           }
           {
             OpBuilder::InsertionGuard guard(builder);

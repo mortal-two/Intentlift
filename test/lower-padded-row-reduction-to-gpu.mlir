@@ -2,9 +2,9 @@
 // RUN: intent-opt -convert-intent-padded-row-reduction-to-gpu='block-threads=64 vectorize-full-features=false promote-rank0-scalars=false' %s | FileCheck %s --check-prefix=DEVICE
 // RUN: intent-opt -convert-intent-padded-row-reduction-to-gpu='block-threads=64 vectorize-full-features=false promote-rank0-scalars=true' %s | FileCheck %s --check-prefix=STATIC
 // RUN: intent-opt -convert-intent-padded-row-reduction-to-gpu='block-threads=64 vectorize-full-features=false promote-rank0-scalars=true' %s | FileCheck %s --check-prefix=NATURAL
-// RUN: intent-opt -convert-intent-padded-row-reduction-to-gpu='block-threads=256 reduction-topology=subgroup-feature' %s | FileCheck %s --check-prefix=NATURAL-SUBGROUP
-// RUN: intent-opt -convert-intent-padded-row-reduction-to-gpu='block-threads=256 reduction-topology=subgroup-feature rows-per-subgroup=4' %s | FileCheck %s --check-prefix=NATURAL-MULTIROW
-// RUN: intent-opt -convert-intent-padded-row-reduction-to-gpu='block-threads=128 reduction-topology=subgroup-feature lanes-per-row=4' %s | FileCheck %s --check-prefix=NATURAL-SUBWARP
+// RUN: intent-opt -convert-intent-padded-row-reduction-to-gpu='block-threads=256 reduction-topology=subgroup-feature vectorize-full-features=false' %s | FileCheck %s --check-prefix=NATURAL-SUBGROUP
+// RUN: intent-opt -convert-intent-padded-row-reduction-to-gpu='block-threads=256 reduction-topology=subgroup-feature rows-per-subgroup=4 vectorize-full-features=false' %s | FileCheck %s --check-prefix=NATURAL-MULTIROW
+// RUN: intent-opt -convert-intent-padded-row-reduction-to-gpu='block-threads=128 reduction-topology=subgroup-feature lanes-per-row=4 vectorize-full-features=false' %s | FileCheck %s --check-prefix=NATURAL-SUBWARP
 // RUN: intent-opt -convert-intent-padded-row-reduction-to-gpu='block-threads=128 reduction-topology=subgroup-feature lanes-per-row=16 vectorize-full-features=true' %s | FileCheck %s --check-prefix=NATURAL-PACKET
 
 // The matcher is source/name neutral and consumes the exact structural form
@@ -133,9 +133,10 @@ func.func @static_bounds(
 // NATURAL-SUBWARP: memref.store
 // NATURAL-SUBWARP-NOT: intent.
 // NATURAL-PACKET-LABEL: func.func @natural_batch(
-// NATURAL-PACKET-SAME: intent.backend.vector_width = 8 : i64
+// NATURAL-PACKET-SAME: memref<4x16x8192x16xvector<8xf16>>
 // NATURAL-PACKET-SAME: "cuda.memory.packetized_feature_load.v1"
-// NATURAL-PACKET: vector.load
+// NATURAL-PACKET-SAME: intent.backend.vector_width = 8 : i64
+// NATURAL-PACKET: memref.load
 // NATURAL-PACKET: gpu.shuffle
 // NATURAL-PACKET: memref.store
 // NATURAL-PACKET-NOT: intent.
