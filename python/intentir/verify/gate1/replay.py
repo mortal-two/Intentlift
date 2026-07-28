@@ -38,12 +38,12 @@ from .tilelang_codegen import extract_tilelang_module
 from .ttir import TTIRParseError, parse_ttir
 
 
-MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v16"
+MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v17"
 MINISWE_REPLAY_TURN_TIMEOUT_SECONDS = 300.0
 MINISWE_REPLAY_XHIGH_TURN_TIMEOUT_SECONDS = 900.0
 RESPONSES_REPLAY_BACKEND = "openai.responses.intentir-replay.v1"
 STATIC_REPLAY_BACKEND = "intentir.static-replay-test.v1"
-REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v7"
+REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v8"
 _ANONYMOUS_HANDLE = re.compile(r"^[pc][0-9]+$")
 
 
@@ -1258,6 +1258,118 @@ def _packet_required_compiled_iteration_arities(
     return tuple(sorted(arities))
 
 
+def _packet_required_compiled_address_operations(
+    packet: Mapping[str, Any],
+) -> tuple[int | None, tuple[str, ...]]:
+    """Return the pointer-address stage count closed by signature kinds and pi.
+
+    ``address_base`` and ``address_lane`` may denote either integer address
+    contributions or pointer-producing stages.  The pi grammar makes the latter
+    distinction closed: a stage is a pointer operation exactly when a routed
+    pointer/tensor signature carrier, or an earlier pointer-producing address
+    stage, enters it.  Packets whose address topology does not expose a
+    pointer-producing stage for every authored access are outside this narrow
+    construction check; no missing final address operation is inferred.
+    """
+
+    j = packet.get("j")
+    pi = packet.get("pi")
+    if not isinstance(j, Mapping) or not isinstance(pi, Mapping):
+        return None, ()
+    signature = j.get("signature")
+    parameters = (
+        signature.get("parameters") if isinstance(signature, Mapping) else None
+    )
+    instances_value = pi.get("instances")
+    routes_value = pi.get("routes")
+    if not isinstance(parameters, list) or not isinstance(instances_value, list):
+        return None, ()
+    if not isinstance(routes_value, list):
+        return None, ()
+
+    pointer_parameters = {
+        str(item.get("name"))
+        for item in parameters
+        if isinstance(item, Mapping)
+        and item.get("kind") in {"pointer", "tensor"}
+        and isinstance(item.get("name"), str)
+    }
+    instances = {
+        str(item.get("id")): item
+        for item in instances_value
+        if isinstance(item, Mapping) and isinstance(item.get("id"), str)
+    }
+    address_ids = {
+        instance_id
+        for instance_id, item in instances.items()
+        if item.get("mechanism") in {"address_base", "address_lane"}
+    }
+    if not address_ids:
+        return None, ()
+
+    memory_mechanisms = {
+        "transfer_direct",
+        "transfer_async",
+        "update_atomic",
+        "update_privatized",
+    }
+    memory_instances = [
+        item
+        for item in instances.values()
+        if item.get("mechanism") in memory_mechanisms
+    ]
+    if not memory_instances or any(
+        item.get("mechanism") != "transfer_direct" for item in memory_instances
+    ):
+        return None, ()
+
+    incoming: dict[str, set[str]] = {instance_id: set() for instance_id in instances}
+    for route in routes_value:
+        if not isinstance(route, Mapping):
+            continue
+        source = route.get("source")
+        target = route.get("target")
+        if isinstance(source, str) and isinstance(target, str) and target in incoming:
+            incoming[target].add(source)
+
+    pointer_outputs = {
+        instance_id
+        for instance_id, item in instances.items()
+        if item.get("semantic_ref") in pointer_parameters
+    }
+    changed = True
+    while changed:
+        changed = False
+        for instance_id in address_ids - pointer_outputs:
+            if incoming[instance_id] & pointer_outputs:
+                pointer_outputs.add(instance_id)
+                changed = True
+
+    pointer_address_ids = address_ids & pointer_outputs
+    address_refs = {
+        str(instances[instance_id].get("semantic_ref"))
+        for instance_id in address_ids
+        if isinstance(instances[instance_id].get("semantic_ref"), str)
+    }
+    pointer_address_refs = {
+        str(instances[instance_id].get("semantic_ref"))
+        for instance_id in pointer_address_ids
+        if isinstance(instances[instance_id].get("semantic_ref"), str)
+    }
+    transfer_refs = {
+        str(item.get("semantic_ref"))
+        for item in memory_instances
+        if isinstance(item.get("semantic_ref"), str)
+    }
+    if (
+        not address_refs
+        or address_refs != transfer_refs
+        or not address_refs <= pointer_address_refs
+    ):
+        return None, ()
+    return len(pointer_address_ids), tuple(sorted(address_refs))
+
+
 def source_blind_replay_compile_check(
     code: str,
     artifact: Gate1Artifact,
@@ -1295,7 +1407,14 @@ def source_blind_replay_compile_check(
     expected_iteration_arities = _packet_required_compiled_iteration_arities(
         selected_packet
     )
-    if (expected_transfers or expected_iteration_arities) and result.ttir is not None:
+    expected_address_operations, address_refs = (
+        _packet_required_compiled_address_operations(selected_packet)
+    )
+    if (
+        expected_transfers
+        or expected_iteration_arities
+        or expected_address_operations is not None
+    ) and result.ttir is not None:
         try:
             fingerprint = parse_ttir(result.ttir)
         except TTIRParseError:
@@ -1311,6 +1430,24 @@ def source_blind_replay_compile_check(
                 ),
             )
         actual_ops = dict(fingerprint.op_multiset)
+        if expected_address_operations is not None:
+            actual_address_operations = actual_ops.get("tt.addptr", 0)
+            if expected_address_operations != actual_address_operations:
+                return ReplayIngressResult(
+                    "fail",
+                    diagnostics=(
+                        {
+                            "rule_code": "compiled_address_operation_count",
+                            "path": (
+                                "<synthetic-frontend-compile> tt.addptr: expected="
+                                f"{expected_address_operations}, actual="
+                                f"{actual_address_operations}"
+                            ),
+                            "anonymous_handles": list(address_refs[:32]),
+                            "line": None,
+                        },
+                    ),
+                )
         if expected_iteration_arities:
             actual_iteration_arities = tuple(
                 sorted(loop.block_argument_count for loop in fingerprint.loops)

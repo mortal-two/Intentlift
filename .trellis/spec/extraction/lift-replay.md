@@ -198,7 +198,7 @@ Replay 或 production；production 只消费最终已作者化的 `x*`。不同 
 rounded capacity）保持独立，除非 Source-aware Lift 在现有 J/B vocabulary 中另行作者化其语义关系；
 Harness 不按数值猜 `ceil_div`、容量或有效域公式。
 
-当前持久 owner 使用 `artifact.v8 / decode.v12 / typecheck.v20 / candidate-check.v1` 实现上述
+当前持久 owner 使用 `artifact.v9 / decode.v13 / typecheck.v22 / candidate-check.v1` 实现上述
 CandidateCheck、C attachment、numeric-cast dependent typing 与 result-relation compatibility。v7
 继承 v6，v6 继承 v5；v5 继承 v4 的
 rank-0 closed signature、Layer-A graph value typing total 与显式 NumPy broadcast 合同；它只消费 Lift
@@ -222,11 +222,13 @@ value 或 frontend 惯例补造。不同 physical loop region 可分别引用同
 完全遗漏且没有 handle 的 Source region，也不能发现 custom/misclassified role 下完全遗漏的 relation；
 两者必须由 Gate1 topology 暴露。
 
-`artifact.v8` 对 J 中没有 structured loop、但 Source 用物理 tile loop实现已有 reduce/contraction 的
+`artifact.v8` 历史上对 J 中没有 structured loop、但 Source 用物理 tile loop实现已有 reduce/contraction 的
 情形增加 `pi.physical_iterations` 与 `pi.physical_loop_carriers`。前者只绑定已有 J node、同 axis 的
 required positive-integer C slot、closed basis/direction；后者只绑定 typed init/state/next/result 时间
 拓扑。它们不携带 bound/formula/value/API，也不让 fixed code创建 J loop。真实性和遗漏继续由
 fresh Replay/Gate1 检查。
+`artifact.v9` 再加入 `pi.terminal_controls`，只在 J 已有 `effect_if` 的 sibling arm scopes 上指定
+terminal/continuation topology；不复制 predicate、return、Source 或 frontend spelling。
 
 Lift receipt 分别记录 artifact/decode/typecheck version，以及 CandidateCheck 调用次数与 closed
 diagnostic rule codes。正式提交后 Runner 仍独立重跑 Decode/TypeCheck；`artifact.v1/v2` 历史对象按
@@ -299,14 +301,14 @@ ReplayLLM(J,pi,MaskC(C);U_f) -> complete source R_f
 ```
 
 当前 packet protocol 为 `intentir.scrc.replay-input.v1`，Triton 公共上下文为
-`public_frontend_context_v11`；source-aware MiniSWE/Codex Lift 的当前 knowledge receipt 为
-`intentir.lift-knowledge.v56`，source-blind MiniSWE/Codex Replay backend 为
-`minisweagent.intentir-replay.v12 / openai.codex-cli.intentir-replay.v6`。这些版本必须随 fresh run 原样记录；旧 packet/context/knowledge
+`public_frontend_context_v12`；source-aware Codex Lift 的当前 knowledge receipt 为
+`intentir.lift-knowledge.v59`，source-blind MiniSWE/Codex Replay backend 为
+`minisweagent.intentir-replay.v17 / openai.codex-cli.intentir-replay.v13`。这些版本必须随 fresh run 原样记录；旧 packet/context/knowledge
 evidence 不因实现升级而被重判。
 
-Codex Replay v6 的 focused realization view 只是 source-isolated packet 的 lossless 投影：匿名 C slots、
-J boundary accesses/effects 与完整 π 对象必须原样可见，尤其不能遗漏 `loop_carriers`、
-`physical_iterations` 或 `physical_loop_carriers`。投影不排序、推导或推荐 schedule/code；Replay LLM
+Codex Replay v13 的 workspace view 只是 source-isolated packet 的 lossless 投影：匿名 C slots、
+J graph/boundary 与完整 π obligation ledger 必须原样可见，尤其不能遗漏 `loop_carriers`、
+`physical_iterations`、`physical_loop_carriers`、`terminal_controls` 或 address routes。投影不推导或推荐 schedule/code；Replay LLM
 仍完整作者化 source，host只对其 exact bytes做ReplayCheck和public synthetic compile。
 
 v50/v8 只升级 proof-irrelevant Agent execution transport：活动 staged writer 被移除，MiniSWE 使用
@@ -323,6 +325,12 @@ Lift、MiniSWE Replay 或 Codex CLI provider turn 中的 sibling 可被终止并
 `candidate_superseded + winner_branch_id` receipt；取消检查位于 transport retry 之外，不能把取消
 伪装成 transient retry，也不丢弃已经完成的 winner evidence。这些版本都不改变 artifact、packet、
 TypeCheck、ReplayCheck、Gate1 或 Gate2 接受集合。
+
+`replay-check.v8` 在既有 transfer occurrence、iteration count 与 carrier arity guard 之外，只按
+J.signature 中已声明的 pointer/tensor carrier kind 和 π 已作者化的 address routes 传播
+pointer-producing stage，并核对 synthetic TTIR 的 `tt.addptr` occurrence。只有每个 address access 都
+得到闭合 pointer stage 时才启用；否则不猜 final address。它不读取 Source/Gate，不构造 offset、
+program id、lane、dtype/cast 或 frontend spelling，也不具有 Gate/认证权威。
 
 v55 的 continuation 默认读取 deterministic bounded `feedback_frontier`：interface、reduction、
 predicate/effect、op 与 dataflow 只保留计数、少量 direct examples/local frontier/effect-order witness；

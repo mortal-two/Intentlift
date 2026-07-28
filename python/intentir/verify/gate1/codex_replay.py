@@ -40,7 +40,7 @@ from .replay import (
 )
 
 
-CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v12"
+CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v13"
 
 _INITIAL_PROMPT = """You are the sole writer for one fresh source-blind IntentIR Replay episode.
 The outer runtime exposes only this isolated /workspace. input/ is immutable;
@@ -73,7 +73,10 @@ choice in the Replay. Run
 repair it until PASS, then run
 `python .agents/intentir_agent_tool.py replay_compile_check` for the public
 synthetic construction profile. Fixed host code only checks exact bytes and
-never writes or repairs Replay. Both checks must pass before this episode ends;
+never writes or repairs Replay. The compile check also preserves the exact
+pointer-address operation count already determined by J.signature carrier kinds
+and authored pi address routes; it derives no address formula. Both checks must
+pass before this episode ends;
 neither has Gate or certification authority.
 Do not claim Gate1, Gate2, or certification.
 """
