@@ -63,10 +63,10 @@ from intentir.verify.scrc_runner import (
 )
 
 
-FRONTEND_DATASET_HARNESS_PROTOCOL = "intentir.scrc.frontend-dataset-harness.v1"
+FRONTEND_DATASET_HARNESS_PROTOCOL = "intentir.scrc.frontend-dataset-harness.v2"
 FRONTEND_DATASET_SOURCE_PROTOCOL = "intentir.scrc.frontend-source-projection.v1"
 FRONTEND_DATASET_PROJECTION_PROTOCOL = (
-    "intentir.scrc.frontend-dataset-harness-projection.v1"
+    "intentir.scrc.frontend-dataset-harness-projection.v2"
 )
 _DEFAULT_DATASET_DIMENSION = 4
 _DEFAULT_DATASET_BLOCK_1D = (16, 1, 1)
@@ -578,6 +578,7 @@ def _metadata_parameters(
     scalars: Mapping[str, bool | int | float],
     source_names: tuple[str, ...] | None = None,
     include_runtime_scalars: bool,
+    use_logical_interface_dtypes: bool = False,
 ) -> tuple[DatasetRuntimeParameter, ...]:
     rows = list(_ordered_abi_rows(metadata))
     if not include_runtime_scalars:
@@ -588,6 +589,39 @@ def _metadata_parameters(
             raise ValueError("materialized TileLang ABI differs from generated metadata")
     else:
         source_rows = tuple((str(row.get("name") or ""), row) for row in rows)
+    logical_rows_by_source: dict[str, Mapping[str, Any]] = {}
+    if use_logical_interface_dtypes:
+        interface = metadata.get("interface")
+        raw_logical_rows = (
+            interface.get("parameters") if isinstance(interface, Mapping) else None
+        )
+        if not isinstance(raw_logical_rows, list) or not raw_logical_rows:
+            raise ValueError("TileLang Dataset metadata lacks its logical interface")
+        if not all(isinstance(item, Mapping) for item in raw_logical_rows):
+            raise ValueError("TileLang logical interface parameters must be objects")
+        logical_source_rows = _metadata_rows_in_source_order(
+            tuple(source_name for source_name, _row in source_rows),
+            list(raw_logical_rows),
+        )
+        if len(logical_source_rows) != len(source_rows):
+            raise ValueError(
+                "TileLang logical interface differs from its materialized pointer ABI"
+            )
+        for (source_name, physical), (_logical_source, logical) in zip(
+            source_rows, logical_source_rows, strict=True
+        ):
+            physical_shape = _source_shape_contract(physical.get("shape"))
+            logical_shape = _source_shape_contract(logical.get("shape"))
+            if (
+                logical.get("kind") != physical.get("kind")
+                or logical.get("mode") != physical.get("mode")
+                or logical.get("rank") != physical.get("rank")
+                or logical_shape != physical_shape
+            ):
+                raise ValueError(
+                    "TileLang logical interface differs from its physical CUDA ABI"
+                )
+            logical_rows_by_source[source_name] = logical
     result: list[DatasetRuntimeParameter] = []
     for source_name, row in source_rows:
         semantic_name = str(row.get("semantic_name") or row.get("name") or "")
@@ -610,7 +644,13 @@ def _metadata_parameters(
                 source_name=source_name,
                 semantic_name=semantic_name,
                 kind=kind,
-                dtype=str(row.get("dtype") or ""),
+                dtype=(
+                    _normalize_dataset_dtype(
+                        logical_rows_by_source[source_name].get("dtype")
+                    )
+                    if source_name in logical_rows_by_source
+                    else str(row.get("dtype") or "")
+                ),
                 rank=int(row.get("rank", 0)),
                 mode=str(row.get("mode") or "value"),
                 shape=shape,
@@ -1188,6 +1228,7 @@ def prepare_frontend_dataset_workload(
             scalars=adapter.scalar_map,
             source_names=projection.parameters,
             include_runtime_scalars=False,
+            use_logical_interface_dtypes=True,
         )
         gate_source: Any = TileLangKernelSource.from_factory_file(
             kernel.path,
@@ -1549,6 +1590,7 @@ def _descriptor_sha256(metadata: Mapping[str, Any]) -> str:
 
     payload = {
         "cuda_abi": metadata.get("cuda_abi"),
+        "interface": metadata.get("interface"),
         "launch": metadata.get("launch"),
         "target": metadata.get("target"),
         "include_roots": metadata.get("include_roots"),

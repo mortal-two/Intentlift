@@ -413,6 +413,20 @@ def test_projected_dataset_harnesses_prepare_every_nonopaque_case() -> None:
         None,
         None,
     )
+    tilelang_mask = prepared["tilelang:masked_softmax2d"]
+    cuda_mask = prepared["cuda:tilelang_masked_softmax2d"]
+    assert next(
+        item.dtype
+        for item in tilelang_mask.runtime_parameters
+        if item.semantic_name == "mask"
+    ) == "i1"
+    assert next(
+        item.dtype
+        for item in cuda_mask.runtime_parameters
+        if item.semantic_name == "mask"
+    ) == "i8"
+    assert tilelang_mask.compiler_view.arguments[1].dtype == "i1"
+    assert tilelang_mask.request.binding.gate1_case.parameters[1].dtype == "i1"
 
 
 def test_dataset_shape_coordinates_remain_injective_when_values_coincide() -> None:
