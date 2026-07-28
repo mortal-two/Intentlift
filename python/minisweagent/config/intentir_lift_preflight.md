@@ -176,6 +176,10 @@ the artifact schema or external TypeCheck.
    several accesses, emit one producer with routed consumers and one-producer
    sharing; syntactic uses do not create repeated producer instances. Repeat a
    semantic ref only for distinct compiler-visible Source definitions/stages.
+   Every `transfer_direct/transfer_async` must be route-reachable from a `p*`
+   pointer/tensor carrier bound to that boundary access's exact J tensor. This
+   route records authored topology; fixed code never invents an address formula
+   or missing stage.
 10. A J `contraction` uses only canonical `attrs.subscripts`; never emit
    `lhs_contract_axes`/`rhs_contract_axes`. A direct Source contraction primitive
    represented by one canonical J `contraction` node gets one
@@ -285,13 +289,18 @@ the artifact schema or external TypeCheck.
    local tile axis after program/grid axes select the program instance. It is
    not `reduce.attrs.axes`' whole-tensor logical axis ordinal; do not copy or
    offset one to obtain the other.
+   If Source omits the frontend reduction axis and thereby has a visible flatten,
+   add one distinct `realize` instance refined as `reduction_linearization`
+   (`auth_ref=null`) with exactly one slot-0 route into that reduce instance.
+   Keep the logical axes in J; pi carries neither an axis/API nor Source text.
 21. Pi contains anonymous realization relations only. It contains no dtype,
    shape, operator, formula, predicate, source fragment, frontend API, C value,
    or executable text.
-   A Source-visible physical tiled loop around an ordinary J reduce/contraction
-   uses `physical_iterations`, not a synthetic J loop: bind the existing body n*,
-   the same-node/same-axis required positive C tile, the authored induction basis,
-   and forward/reverse direction. When compiler-visible accumulator stages exist,
+   A Source-visible physical tiled loop around an ordinary J reduce/contraction or
+   boundary access/domain traversal uses `physical_iterations`, not a synthetic J
+   loop: bind the existing body instance, the same-subject/same-axis required
+   positive C tile, the authored induction basis, and forward/reverse direction.
+   When compiler-visible accumulator stages exist,
    author `physical_loop_carriers` in that region. These are temporal topology,
    never an initialization/update formula, and fixed code never creates them.
 22. Run the supplied static schema validator and then

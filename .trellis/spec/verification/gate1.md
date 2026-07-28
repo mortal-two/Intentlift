@@ -9,13 +9,16 @@ Gate1 只接收已经通过 `TypeCheck(J,C,π)`、由当前三元组生成的全
 conditions。该 Gate1 claim 只针对这个 c0。
 
 当前 fresh-run artifact/decode/typecheck 组合为
-`intentir.scrc.artifact.v9 / intentir.scrc.decode.v13 / intentir.scrc.typecheck.v23`。Lift LLM 是完整
+`intentir.scrc.artifact.v9 / intentir.scrc.decode.v13 / intentir.scrc.typecheck.v25`。Lift LLM 是完整
 artifact 的唯一作者：value/dimension、consumer-extension、access-guard、typed control/inout、
 output binding、physical iteration/carrier 与 terminal-control relation 都必须由模型显式提交。Decode、
 CandidateCheck 与 TypeCheck 只能做 closed
 解析、检查、拒绝和诊断，不会补 relation、选择 axes/polarity、插入 `select`、创建 pre-state，或把
-相同 concrete extents 当作 axis identity；v23 对 canonical output binding 执行完整 dtype/shape
-equality，axis permutation 必须由 J 自己用 typed op 表达。它也不会把
+相同 concrete extents 当作 axis identity；v25 继承 v24，并检查作者化
+`reduction_linearization` 只能经唯一 slot-0 route 进入一个 J reduce；v24 继承 v23 对 canonical output binding 的完整
+dtype/shape equality，并在 Replay 前拒绝没有从匹配 boundary tensor 的 pointer/tensor signature
+carrier 到达 transfer 的 authored route；浮点 typed constant 的字符串值只允许 closed
+`inf/-inf/nan`。axis permutation 和 special constant 都必须由 J 自己显式表达。它也不会把
 output 改成 inout。CandidateCheck 的 PASS 也不是 Gate1 前置证书；外部 Runner 仍对同一完整 bytes
 重跑权威 TypeCheck。
 
@@ -39,11 +42,15 @@ v5 guarded store 的 merge 已经是 Layer A 中显式 `select`，且精确 inou
 通过 TypeCheck；Replay 不得把 relation 解读成允许它自行发明 branch、merge 或 mutation。Gate1
 比较的是 Replay 对这些已声明事实的 source realization，不为缺失 relation 建议或生成答案。
 
-当前 `replay-check.v9` 的 synthetic compile 只消费匿名 packet：核对作者化 `transfer_direct`
+当前 `replay-check.v10` 的 synthetic compile 只消费匿名 packet：核对作者化 `transfer_direct`
 occurrence、structured J loop 加 `pi.physical_iterations` 的 loop occurrence、对应 carrier arity；并且
 只在 signature pointer/tensor kind 与 π address routes 完全闭合时核对 pointer-address operation
-occurrence。完整闭包允许独立 integer base/lane contribution，但要求 transfer refs 与
-pointer-producing address refs 精确相等。无法闭合的 address topology 不猜。该 check 只拒绝错误 Replay bytes，不生成 source、
+occurrence。完整闭包允许独立 integer base/lane contribution，且不要求 address instance 与 transfer
+使用相同 `semantic_ref` spelling；它要求每个 transfer 从匹配 boundary tensor 的 pointer/tensor
+signature carrier 经作者化 routes 可达，并要求每个 pointer-producing address stage 最终流向某个
+transfer；并要求 compiled distinct `tt.reshape -> tt.reduce(axis=0)` dataflow 不少于已作者化
+`reduction_linearization` 数量。无法闭合的
+address topology 不猜。该 check 只拒绝错误 Replay bytes，不生成 source、
 address formula、loop/carrier 或 relation，也没有 Gate1/认证权威。
 
 presentation/alpha canonicalization 只能消除名称、SSA 编号、无关打印顺序等表示噪声。它不得

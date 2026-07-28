@@ -29,6 +29,7 @@ from minisweagent.environments.intentir_replay import (
     REPLAY_TOOL_APPLETS,
     IntentIRReplayEnvironment,
     IntentIRReplayWorkspace,
+    _packet_critical_facts,
     _packet_overview,
     _packet_requirements,
 )
@@ -286,6 +287,7 @@ def _replay_startup_context(workspace: IntentIRReplayWorkspace) -> str:
         "embed_limit_bytes": REPLAY_STARTUP_PACKET_EMBED_LIMIT_BYTES,
         "root_sections": sorted(str(key) for key in packet),
         "exact_packet_embedded": embedded,
+        "critical_facts": _packet_critical_facts(packet),
     }
     if embedded:
         exact["packet"] = packet

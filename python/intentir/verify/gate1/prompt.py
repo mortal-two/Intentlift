@@ -20,7 +20,7 @@ from .pi import (
 REPLAY_PACKET_SCHEMA = "intentir.scrc.replay-input.v1"
 PUBLIC_FRONTEND_CONTEXT = {
     "triton": {
-        "context_policy": "public_frontend_context_v12",
+        "context_policy": "public_frontend_context_v14",
         "retrieval_scope": "public Triton documentation and public examples",
         "tool_access": ["public_document_lookup"],
         "compile_entry_contract": (
@@ -91,10 +91,11 @@ PUBLIC_FRONTEND_CONTEXT = {
             "that C tile as the upper bound. Do not use the current tensor shape, "
             "a launch value, or an invented rounding formula."
             " Every pi.physical_iterations entry is mandatory realization "
-            "topology for a Source-visible physical loop around an existing J "
-            "reduce or contraction; it never creates a semantic J loop. Resolve "
-            "body_instance to that J node and tile_instance to the required "
-            "positive C slot attached to the same reduced/contracted axis. The "
+            "topology for a Source-visible physical loop around an existing "
+            "non-loop J reduce/contraction or boundary access/domain; it never "
+            "creates a semantic J loop. Resolve body_instance to that authored "
+            "subject and tile_instance to the required positive C slot attached "
+            "to the same closed dependent axis. The "
             "axis attachment determines the logical extent, and induction_basis "
             "has the same extent_step, rounded_extent_step, or tile_ordinal "
             "denotation as pi.iterations. direction=forward visits that closed "
@@ -139,6 +140,20 @@ PUBLIC_FRONTEND_CONTEXT = {
             "shares a dtype or address expression. Signature dtypes are otherwise "
             "authoritative: do not guess a stride/index widening or emit `.to` for "
             "a p* carrier without its own routed refinement or an explicit J cast."
+            " A reduction_linearization refinement is the exact source-neutral "
+            "full-axis materialization immediately before its uniquely routed J "
+            "reduce. For Triton, emit `tl.reshape(value, (value.numel,), "
+            "can_reorder=True)` at that stage, then reduce on local axis 0. Never "
+            "infer it from reduction kind or shape, apply it to another consumer, "
+            "or omit it because the current carrier is already rank one."
+            " A J const with value '-inf', 'inf', or 'nan' is the exact typed IEEE "
+            "special authored by J. Materialize it directly at its declared dtype; "
+            "never approximate it with a finite literal or promote it through an "
+            "undeclared wider floating type."
+            " A J.signature constexpr p* with logical_ref=x* is the callable "
+            "carrier of that exact semantic dimension. Use that same p* directly "
+            "where the authored pi lane/iteration realization requires x*; never "
+            "replace it with a current-shape literal or an arbitrary unit extent."
             " A J.signature constexpr p* with logical_ref=null is only a "
             "Harness-fixed JIT-specialization carrier: preserve its constexpr "
             "ABI, emit the already-authored active graph, and never read it, "
@@ -204,7 +219,7 @@ PUBLIC_FRONTEND_CONTEXT = {
 # u_f object; changing that basis requires an explicit future policy version.
 PUBLIC_FRONTEND_CONTEXT_ACTIVE_POLICY = MappingProxyType(
     {
-        "triton": "public_frontend_context_v12",
+        "triton": "public_frontend_context_v14",
         "cute": "public_frontend_context_v1",
         "tilelang": "public_frontend_context_v1",
         "cuda": "public_frontend_context_v1",
@@ -234,6 +249,12 @@ PUBLIC_FRONTEND_CONTEXT_DIGEST_HISTORY = MappingProxyType(
                 ),
                 "public_frontend_context_v12": (
                     "15829eaa0e9e844ab6362c51adb7ec8cd2aa5045c6cd8c6ad8a2093276101ba9"
+                ),
+                "public_frontend_context_v13": (
+                    "e93e54400c4fc3e52b048d3b21d85f674a60ee3ba71eefae74f29c081719f1c2"
+                ),
+                "public_frontend_context_v14": (
+                    "d7b785bb9439c247d7dba481362969c5031de931ab368452192ad79296ec2c0f"
                 ),
             }
         ),
@@ -317,6 +338,22 @@ PUBLIC_FRONTEND_CONTEXT_RECEIPT_HISTORY = MappingProxyType(
                         "receipt_hash_basis": "full_u_f",
                         "context_sha256": (
                             "12b6972a0d9ef800ccde574d970132c2aa66ac5e1dfbdd8dc39ce8d367e1c3a2"
+                        ),
+                    }
+                ),
+                "public_frontend_context_v13": MappingProxyType(
+                    {
+                        "receipt_hash_basis": "full_u_f",
+                        "context_sha256": (
+                            "08640a27e471eff751f9dcaed01c5292a8ceb073fe988d89064714668611aef4"
+                        ),
+                    }
+                ),
+                "public_frontend_context_v14": MappingProxyType(
+                    {
+                        "receipt_hash_basis": "full_u_f",
+                        "context_sha256": (
+                            "60cd010e25be5a4089629ac56f3f6d27bc4e20765bb410472604301059f45014"
                         ),
                     }
                 ),
@@ -915,9 +952,9 @@ def _instructions(*, frontend: Frontend, masked: bool) -> str:
         "C slot; use lower 0, step equal to that C tile, and upper exactly "
         "ceil_div(trip extent, C tile) * C tile. Do not infer a bound from current "
         "shapes/values or invent another rounding formula. "
-        "For every pi.physical_iterations relation, keep J's reduce/contraction "
-        "logical while materializing the explicit physical loop from its C-attached "
-        "reduced/contracted axis, induction_basis, and direction. Preserve every "
+        "For every pi.physical_iterations relation, keep J's operation or boundary "
+        "traversal logical while materializing the explicit physical loop from its "
+        "same-subject C-attached axis, induction_basis, and direction. Preserve every "
         "pi.physical_loop_carriers init/state/next/result temporal stage; neither "
         "relation authorizes a new semantic operator or formula. "
         + frontend_realization_clause

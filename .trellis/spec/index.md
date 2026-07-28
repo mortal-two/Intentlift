@@ -1,6 +1,6 @@
 # IntentIR 当前派生规范
 
-> 状态：2026-07-27 当前派生规范。
+> 状态：2026-07-28 当前派生规范。
 
 `.trellis/spec` 只把四份 SCRC 设计与第五份 production backend 设计投影为 schema、API、runner、
 lowering 和测试要求，不形成另一套设计。上位文档按作用域组合，不构成一条让旧 SCRC 文档覆盖
@@ -19,28 +19,38 @@ lowering 和测试要求，不形成另一套设计。上位文档按作用域�
 若派生规范与上位设计冲突，应修订派生规范；不得通过增加 interface artifact、hash gate、
 epoch、commitment、额外认证 Gate 或兼容旁路来调和冲突。
 
-当前 fresh-run 栈为 `artifact.v9 / decode.v13 / typecheck.v23 / candidate-check.v1 / replay-check.v9`。它继承 rank-0
+当前 fresh-run 栈为 `artifact.v9 / decode.v13 / typecheck.v25 / candidate-check.v1 / replay-check.v10`。它继承 rank-0
 closed signature、Layer-A total typing、显式 broadcast、canonical reduce/contraction、absent carrier
 拒绝、functional-domain closure、rank-0 liveness、padded-mean necessary condition 与 closed
 `pi.iterations`，并验证 Lift 已作者化的 value/dimension、consumer-extension、access-guard、typed
 control/inout/output-binding/terminal-control 关系。fixed code只诊断，不翻译别名、补齐 attrs、生成 handle/relation、
 改图或修复 artifact；历史 wire/receipt 继续按自身版本读取，不静默升级或重判。当前 Agent execution
-receipt 为 `intentir.lift-knowledge.v62 / intentir.lift-knowledge.v59 / minisweagent.intentir-replay.v21 / openai.codex-cli.intentir-replay.v17`；
-artifact.v9 的 `physical_iterations/physical_loop_carriers` 只表达 J reduce/contraction 外的物理时间，
+receipt 为 `intentir.lift-knowledge.v64 / intentir.lift-knowledge.v61 / minisweagent.intentir-replay.v23 / openai.codex-cli.intentir-replay.v19`；
+artifact.v9 的 `physical_iterations/physical_loop_carriers` 表达 structured J loop 外、由已作者化
+reduce/contraction 或 boundary access/domain 锚定的物理时间，
 feedback frontier/category、candidate-control 与 Replay local-axis 合同只改 agent 消费，不改变接受
 集合。持久 Lift owner 固定使用创建时的私有 Source/Harness/schema/knowledge/tool 快照；续轮只刷新
 closed feedback，host 仓库并发升级不得改变既有 owner。Harness adapter v5 另把 concrete
 shape valuation 与 Harness-only `h*` shape identity 分开，并可显式声明 valuation-matched semantic
 constexpr ↔ `h*`；最终 `x*`/equality 仍由 Lift 完整作者化。
-Replay v21/v17 对不超过 64 KiB 的完整匿名 J/C/π/U_f 只在首次上下文 exact embedding 一次；超限
+Replay v23/v19 对不超过 64 KiB 的完整匿名 J/C/π/U_f 只在首次上下文 exact embedding 一次，并额外
+并置一个只重索引 semantic dimension carrier、IEEE special typed constant、physical iteration 与
+`reduction_linearization + consumer route` 的 exact `critical_facts`；超限
 packet 才接收一个自带 authored op/boundary、π instance mechanism 与 time/control/terminal 清单的
-compact manifest，并只查询明确遗漏页。Codex Lift v8 / knowledge v62 同样直接嵌入 exact Harness ABI
+compact manifest，并只查询明确遗漏页。Codex Lift v10 / knowledge v64 同样直接嵌入 exact Harness ABI
 与 relift frontier，原有只读工具退为可选局部自读。两条路径都不生成 artifact/realization，没有 Gate
 或认证权限。
-`replay-check.v9` 只在 J.signature carrier kind 与 π address routes 能完全决定时，核对 compiled
-pointer-address operation occurrence；独立的 integer base/lane contribution 不被误当 pointer stage，
-但每个 transfer 必须有同 ref 的 pointer-producing stage，且不能存在未绑定 transfer 的额外 pointer
-stage。无法闭合的 topology 不猜，不读取 Source，也不生成地址公式。
+`replay-check.v10` 还要求 synthetic TTIR 至少包含 π 已作者化 `reduction_linearization` 数量的
+distinct `tt.reshape -> tt.reduce(axis=0)` dataflow，避免无关 reshape 冒充，但不从 reduction/shape
+生成 relation；地址检查只在 J.signature carrier kind 与 π
+address routes 能完全决定时，沿作者化 route
+传播 pointer reachability，并核对 compiled pointer-address operation occurrence；独立的 integer
+base/lane contribution 不被误当 pointer stage，address instance 的 `semantic_ref` spelling 不必等于
+transfer ref，但每个 transfer 必须从匹配 boundary tensor 的 pointer/tensor signature carrier 可达，
+且每个 pointer-producing address stage 必须流向至少一个 transfer。无法闭合的 topology 不猜，不读取
+Source，也不生成地址公式。`typecheck.v25` 继承 v24 的 pointer route 与 floating typed constant
+检查，并把 `reduction_linearization` 限定为一个 `realize` stage 经唯一 slot-0 route 进入一个 J
+`reduce` realize stage；fixed code只检查 Lift 已作者化的事实。
 
 当前 Gate1 observer profile 是 `triton-ttir-3.6-gate1-v11`；它保留既有对已建模 op 与 public-entry
 reachable、static、structured、acyclic `tt.call` 的 interprocedural comparison rules，并包含 typed
@@ -67,7 +77,7 @@ v18/v19 还完整消费同一 inout handle 上多个 closed store→reload stage
 SSA、相同坐标/predicate、同 scope 的 store-before-load effect order 且无中间覆盖共同决定；只有最终
 canonical output binding 对应的 store 是 observable output。J 中未被 logical access/predicate 使用的
 矩形 domain 作为 `context_domain` 保留在 projection receipt 中，供 π 锚定 compiler-visible program
-context；它不参与 Layer-A 数值求值，也不生成 access/program 公式。TypeCheck v23 另要求每个
+context；它不参与 Layer-A 数值求值，也不生成 access/program 公式。TypeCheck v24 继承 v23，要求每个
 canonical output binding 的完整 dtype/shape 与声明输出精确相等。Gate2 Triton 两条执行 leg 共享
 `triton_static_dot_transpose_v1`，只把已移除的静态 `trans_a/trans_b` 等价写法归一成 `tl.trans`。
 

@@ -37,6 +37,7 @@ from minisweagent.environments.intentir_replay import (
     REPLAY_TRANSACTION_PROTOCOL,
     IntentIRReplayEnvironment,
     IntentIRReplayWorkspace,
+    _packet_critical_facts,
 )
 from minisweagent.exceptions import Submitted
 from minisweagent.run.intentir_replay import (
@@ -503,7 +504,7 @@ def test_episode_contract_digest_binds_exact_files_prompts_and_budgets() -> None
     assert default_config["model"]["retry_timeouts"] is True
     assert default_config["model"]["semantic_initial_turns"] == 1
     assert default_config["model"]["model_kwargs"]["parallel_tool_calls"] is True
-    assert MINISWE_REPLAY_BACKEND == "minisweagent.intentir-replay.v21"
+    assert MINISWE_REPLAY_BACKEND == "minisweagent.intentir-replay.v23"
     instance = default_config["agent"]["instance_template"]
     assert "exact immutable source-blind startup transport" in instance
     assert "exact_packet_embedded=true" in instance
@@ -887,6 +888,15 @@ def test_address_count_check_allows_authored_integer_base_contribution() -> None
     ) == (1, ("a0",))
 
 
+def test_address_count_follows_routes_not_address_anchor_spelling() -> None:
+    artifact = _address_count_replay_artifact(pointer_enters_base=False)
+    artifact.pi.instances[3]["semantic_ref"] = "p0"
+
+    assert replay_module._packet_required_compiled_address_operations(
+        artifact.rewriter_view(masked=False)
+    ) == (1, ("a0",))
+
+
 def test_address_count_check_skips_unmatched_pointer_address_stage() -> None:
     artifact = _address_count_replay_artifact(pointer_enters_base=False)
     artifact.pi.instances.extend(
@@ -942,6 +952,129 @@ module {
     diagnostic = result.to_check_response()["diagnostics"][0]
     assert diagnostic["rule_code"] == "compiled_iteration_count"
     assert "expected=1, actual=0" in diagnostic["path"]
+
+
+def _reshape_count_ttir(count: int) -> str:
+    stages = []
+    for index in range(count):
+        stages.extend(
+            [
+                f"    %r{index} = tt.reshape %p0 allow_reorder : "
+                "tensor<4xf32> -> tensor<4xf32>",
+                f'    %total{index} = "tt.reduce"(%r{index}) '
+                "<{axis = 0 : i32}> ({",
+                f"    ^bb0(%lhs{index}: f32, %rhs{index}: f32):",
+                f"      %combined{index} = arith.addf %lhs{index}, "
+                f"%rhs{index} : f32",
+                f"      tt.reduce.return %combined{index} : f32",
+                "    }) : (tensor<4xf32>) -> f32",
+            ]
+        )
+    reshapes = "\n".join(stages)
+    return f"""
+module {{
+  tt.func public @scrc_k0(%p0: tensor<4xf32>) {{
+{reshapes}
+    tt.return
+  }}
+}}
+"""
+
+
+@pytest.mark.parametrize(
+    ("compiled_count", "expected_status"), ((0, "fail"), (1, "pass"), (2, "pass"))
+)
+def test_synthetic_compile_checks_authored_reduction_linearization(
+    compiled_count: int, expected_status: str
+) -> None:
+    artifact = make_reduce_artifact()
+    artifact.pi.refinements = [
+        {
+            "instance": "i1",
+            "kind": "reduction_linearization",
+            "auth_ref": None,
+        }
+    ]
+
+    class PassingCompiler:
+        def compile(self, _source, _case):
+            return CompileResult(True, ttir=_reshape_count_ttir(compiled_count))
+
+    result = source_blind_replay_compile_check(
+        VALID_REPLAY,
+        artifact,
+        "scrc_k0",
+        compiler=PassingCompiler(),  # type: ignore[arg-type]
+    )
+
+    assert result.status == expected_status
+    if expected_status == "fail":
+        diagnostic = result.to_check_response()["diagnostics"][0]
+        assert diagnostic["rule_code"] == (
+            "compiled_reduction_linearization_count"
+        )
+        assert "expected-at-least=1, actual=0" in diagnostic["path"]
+
+
+def test_unrelated_reshape_does_not_discharge_reduction_linearization() -> None:
+    artifact = make_reduce_artifact()
+    artifact.pi.refinements = [
+        {
+            "instance": "i1",
+            "kind": "reduction_linearization",
+            "auth_ref": None,
+        }
+    ]
+    unrelated_ttir = """
+module {
+  tt.func public @scrc_k0(%p0: tensor<4xf32>) {
+    %r0 = tt.reshape %p0 allow_reorder : tensor<4xf32> -> tensor<4xf32>
+    tt.return
+  }
+}
+"""
+
+    class PassingCompiler:
+        def compile(self, _source, _case):
+            return CompileResult(True, ttir=unrelated_ttir)
+
+    result = source_blind_replay_compile_check(
+        VALID_REPLAY,
+        artifact,
+        "scrc_k0",
+        compiler=PassingCompiler(),  # type: ignore[arg-type]
+    )
+
+    assert result.status == "fail"
+    assert result.to_check_response()["diagnostics"][0]["rule_code"] == (
+        "compiled_reduction_linearization_count"
+    )
+
+
+def test_critical_facts_project_reduction_linearization_without_source() -> None:
+    artifact = make_reduce_artifact()
+    artifact.pi.refinements = [
+        {
+            "instance": "i1",
+            "kind": "reduction_linearization",
+            "auth_ref": None,
+        }
+    ]
+
+    facts = _packet_critical_facts(artifact.rewriter_view(masked=False))
+
+    assert facts["protocol"] == "intentir.replay-critical-facts.v1"
+    assert facts["reduction_linearizations"] == [
+        {
+            "instance": "i1",
+            "semantic_ref": "n0",
+            "mechanism": "realize",
+            "region": "r0",
+            "consumer_routes": [
+                {"source": "i1", "target": "i2", "slots": [0]}
+            ],
+        }
+    ]
 
 
 def test_synthetic_compile_rejects_omitted_authored_physical_carrier() -> None:
@@ -1052,6 +1185,8 @@ def test_static_error_can_be_repaired_in_one_fresh_multi_turn_episode() -> None:
     assert '"exact_packet_embedded":true' in first_packet
     assert '"packet_bytes":' in first_packet
     assert '"bootstrap_command":null' in first_packet
+    assert "intentir.replay-critical-facts.v1" in first_packet
+    assert '"logical_ref":"x1"' in first_packet
     assert '"packet":' in first_packet
     assert "anonymous_source" not in first_packet
     evidence = result.trajectory["info"]["replay_check"]

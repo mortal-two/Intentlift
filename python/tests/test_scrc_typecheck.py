@@ -47,6 +47,45 @@ def _codes(artifact) -> set[TypeCheckErrorCode]:
     }
 
 
+def test_const_ieee_special_is_typed_and_arbitrary_string_is_rejected() -> None:
+    artifact = make_copy_artifact()
+    artifact.j.intent.body = [
+        IntentOp.from_json(
+            {
+                "id": "n0",
+                "op": "const",
+                "result": "t1",
+                "attrs": {"value": "-inf", "dtype": "f32", "shape": ["x0"]},
+                "type": {"dtype": "f32", "shape": ["x0"]},
+            }
+        )
+    ]
+    artifact.j.node_ids = {"n0": "body[0]"}
+
+    assert type_check(artifact.j, artifact.c, artifact.pi).passed
+
+    artifact.j.intent.body[0].attrs["value"] = "negative_infinity"
+    assert TypeCheckErrorCode.KNOWN_OP_CONTRACT_INVALID in _codes(artifact)
+
+
+def test_direct_transfer_requires_authored_tensor_carrier_route() -> None:
+    artifact = make_reduce_artifact()
+    artifact.pi.instances[0]["mechanism"] = "transfer_direct"
+
+    assert TypeCheckErrorCode.TRANSFER_ADDRESS_ROUTE_MISSING in _codes(artifact)
+
+    artifact.pi.instances.append(
+        {
+            "id": "i4",
+            "semantic_ref": "p0",
+            "region": "r0",
+            "mechanism": "realize",
+        }
+    )
+    artifact.pi.routes.append({"source": "i4", "target": "i0", "slots": [0]})
+    assert type_check(artifact.j, artifact.c, artifact.pi).passed
+
+
 def _constant_gather_artifact(*, coordinate: int = 1, index: int = 1):
     artifact = make_copy_artifact()
     artifact.j.intent.inputs[0].shape = [3]
@@ -252,7 +291,7 @@ def test_valid_dependent_witness_passes_before_replay() -> None:
     artifact = make_reduce_artifact()
     report = type_check(artifact.j, artifact.c, artifact.pi)
     assert report.passed
-    assert report.protocol == TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v23"
+    assert report.protocol == TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v25"
     assert report.diagnostics == ()
     assert set(build_normal_rewriter_view(artifact)) == {"j", "c", "pi", "u_f"}
 
@@ -1846,7 +1885,7 @@ def test_authoritative_typecheck_accepts_strict_integer_widen(
     report = type_check(artifact.j, artifact.c, artifact.pi)
 
     assert report.passed, report.to_json()
-    assert report.protocol == "intentir.scrc.typecheck.v23"
+    assert report.protocol == "intentir.scrc.typecheck.v25"
 
 
 @pytest.mark.parametrize(
@@ -2041,3 +2080,20 @@ def test_global_safe_refinement_is_closed_and_cannot_cite_candidate_auth() -> No
     ]
     artifact.pi = RealizationWitness.from_json(payload)
     assert TypeCheckErrorCode.GLOBAL_SAFE_AUTH_FORBIDDEN in _codes(artifact)
+
+
+def test_reduction_linearization_requires_a_unique_slot_zero_reduce_route() -> None:
+    artifact = make_reduce_artifact()
+    artifact.pi.refinements = [
+        {
+            "instance": "i1",
+            "kind": "reduction_linearization",
+            "auth_ref": None,
+        }
+    ]
+    assert type_check(artifact.j, artifact.c, artifact.pi).passed
+
+    artifact.pi.routes.append(
+        {"source": "i1", "target": "i3", "slots": [0]}
+    )
+    assert TypeCheckErrorCode.REFINEMENT_TOPOLOGY_INVALID in _codes(artifact)

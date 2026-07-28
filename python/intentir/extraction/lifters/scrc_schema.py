@@ -744,8 +744,9 @@ def _pi_schema() -> dict[str, Any]:
                 "type": "string",
                 "pattern": "^i[0-9]+$",
                 "description": (
-                    "Instance anchored to the existing J reduce/contraction "
-                    "realized by this physical-only loop region."
+                    "Instance anchored to one existing non-loop J "
+                    "reduce/contraction or boundary access/domain realized by "
+                    "this physical-only loop region."
                 ),
             },
             "tile_instance": {
@@ -773,9 +774,9 @@ def _pi_schema() -> dict[str, Any]:
             "direction",
         ),
         description=(
-            "A physical iteration shell for an existing logical reduce or "
-            "contraction. It adds no J loop, bound formula, numeric value, "
-            "operator, source text, or frontend API."
+            "A physical iteration shell for an existing logical operation or "
+            "boundary traversal with a closed dependent axis. It adds no J loop, "
+            "bound formula, numeric value, operator, source text, or frontend API."
         ),
     )
     physical_loop_carrier = _closed_object(

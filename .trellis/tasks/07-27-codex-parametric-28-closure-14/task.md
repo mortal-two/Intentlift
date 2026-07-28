@@ -26,7 +26,9 @@ document sha256 = f9dd1ff1ea4879f664de3fa5c3b86e5ed9c558c511197255e32344a3fbbf9f
 也不能要求J迎合某个target/backend recipe。后端的capability/paper config、Target--Ref receipt、
 MLIR search和`intentir.backend.dev-j-variant.v1`均不进入本任务。
 
-当前没有仍在运行的闭合进程。Wave 14 曾从 clean commit `16904c1f` 对剩余 11 项启动 Codex
+Wave 16 的旧六核 Sol-high 诊断批与 Wave 17 的 GroupNorm/SplitK-backward Sol-xhigh 双核批正在仓库外
+`/tmp` 独立运行；运行中局部 TypeCheck/Replay 状态不计闭合进度。Wave 14 曾从 clean commit
+`16904c1f` 对剩余 11 项启动 Codex
 Sol-high、`B=3,K=5` fresh run；若干 branch 已进入 1--3 个 formal Gate1 round 并形成 no-closure
 frontier，但运行期间 host 更新了共享 `tools/context_query.py`。旧 runtime 在 continuation 时把仓库
 当前工具字节与 owner 创建时的 immutable workspace 比较，因而使受影响 branch 聚合为
@@ -185,10 +187,10 @@ fixed code不得替Lift修成`x*`。
 ## 4. 当前执行栈
 
 - frontend commit起点：`460aaed1c6af0b267a4a9da9ca497aea6e66ad40`；
-- artifact/decode/typecheck：`artifact.v9 / decode.v13 / typecheck.v23`；
-- Lift：Codex `openai.codex-cli.intentir-lift.v8 / intentir.lift-knowledge.v62`，MiniSWE `intentir.lift-knowledge.v59`；
-- Replay：Codex `openai.codex-cli.intentir-replay.v17`，MiniSWE `minisweagent.intentir-replay.v21`；
-- Replay packet/check：`replay-input.v1 / public_frontend_context_v12 / replay-check.v9`；
+- artifact/decode/typecheck：`artifact.v9 / decode.v13 / typecheck.v25`；
+- Lift：Codex `openai.codex-cli.intentir-lift.v10 / intentir.lift-knowledge.v64`，MiniSWE `minisweagent.intentir-lift.v3 / intentir.lift-knowledge.v61`；
+- Replay：Codex `openai.codex-cli.intentir-replay.v19`，MiniSWE `minisweagent.intentir-replay.v23`；
+- Replay packet/check：`replay-input.v1 / public_frontend_context_v14 / replay-check.v10`；
 - Harness：Triton workload adapter v5；
 - Gate1 observer：`triton-ttir-3.6-gate1-v11`；outer batch：`intentir.scrc.batch.v3`；
   candidate fan-out：v4 `first_observed_gate1_closure_cooperative_stop`；
@@ -249,6 +251,24 @@ fixed code不得替Lift修成`x*`。
   comparison；部分既有 owner 因此 infrastructure fail，但后启动 owner 使用增强只读工具本可继续。
   全波因过度保守判断被人工停止，保留 infrastructure/partial-frontier evidence；没有新增认证，也没有任何 case 获得完整
   `NO_CLOSURE_(B,K)` 结论。
+- 2026-07-28 通用能力批没有增加 kernel recipe 或新 semantic artifact：J typed constant 现在可精确
+  作者化 `inf/-inf/nan`；`physical_iterations` 可在同 subject/axis 上锚定 access/domain，以表达
+  reduction 之后的 output epilogue/transfer traversal；`typecheck.v24` 在 Replay 前拒绝没有 pointer
+  signature-carrier route 的 transfer；Replay startup 将 dimension carrier、special constant 与 physical
+  iteration 作 exact bounded 重索引，ReplayCheck 则按 route reachability 而非 ref spelling 计数
+  pointer-producing address stages。所有新增规则都只消费或拒绝 LLM 已作者化事实，不从 Source/Gate
+  推导 route、constant、loop、bound 或代码。
+- Wave 16（commit `7272bc13`，六个未闭合项，Codex Sol high，`B=3,K=5`）已结束：RoPE、
+  CrossEntropy、GroupNorm、Flash one-col backward、SplitK backward 均完整 NO_CLOSURE；Flash full
+  backward 的三个 branch 都在 fresh Replay 生成阶段 infrastructure_failed，未消耗完整 formal K。
+  该 wave运行的是 v25/v14 前旧代码，只保留为 frontier/latency evidence，不能评价下述新 relation。
+- Wave 17（GroupNorm/SplitK backward，Codex Sol xhigh，`B=3,K=3`）未闭合，但最佳分支共同收敛到
+  Source 省略 reduction axis 所产生的两次 compiler-visible `tt.reshape`；其中 SplitK 的
+  reduction 与 predicate/effect 已闭合，dataflow mismatch 从 460 降至 46。系统因此新增通用、
+  source-neutral π `reduction_linearization`：它只由 Lift 作者化全轴线性化 stage及其唯一 reduce
+  route；TypeCheck v25 验证、U_f v14消费、ReplayCheck v10只做 source-blind
+  `tt.reshape -> tt.reduce(axis=0)` dataflow 下界检查。
+  这不是 GroupNorm/SplitK recipe，也不让 fixed code从 Gate1补 relation。
 - 当前可用闭合总计 `17/28`：14 个原运行直接认证，3 个 exact-artifact capability recheck 认证。
   TypeCheck PASS 不计进度；只有 Gate1 已闭合且当前 Gate2 三边通过才计入。
 
@@ -286,14 +306,16 @@ refinement/terminal facts，不生成 op、predicate、地址公式或 schedule�
 
 本轮 Codex Replay v14 使用该 v2 view，只把 J 中已经作者化的 reduction operand/result type、
 semantic axes、对应 boundary reduction、C attachment 与 π instance 无损并置成 reduction obligation；
-它不选择 physical rank、tile、reshape、loop 或 frontend spelling。`replay-check.v9` 在公共 synthetic
+它不选择 physical rank、tile、reshape、loop 或 frontend spelling。`replay-check.v10` 在公共 synthetic
 compile 后按 π 已作者化的 `transfer_direct` occurrence 核对 compiled load/store multiplicity，并按
 structured J loops 加 `pi.physical_iterations` 核对 compiled `scf.for` multiplicity，再按对应
 `pi.loop_carriers/physical_loop_carriers` 核对 block-argument arity；`pi.iterations`只 realize 已存在的
 J loop，不重复计数；并只在 J.signature carrier kind 与 π address routes 完全闭合时核对 compiled
 `tt.addptr` occurrence。检查防止 CSE 折叠 transfer、Replay 遗漏已声明物理时间/carrier/address
-stage。v9 将完整闭包修正为：transfer refs 必须与 pointer-producing address refs 精确相等，允许额外
-非 pointer 的 integer base/lane contribution；真实 GroupNorm branch 3 因而从“跳过”变为闭合要求
+stage。当前完整闭包按 authorship route reachability 判定：每个 transfer 必须从绑定同一 boundary
+tensor 的 pointer/tensor signature carrier 可达，每个 pointer-producing address stage 必须流向至少
+一个 transfer；address 与 transfer 不要求复用相同 semantic-ref spelling，并允许额外非 pointer 的
+integer base/lane contribution。真实 GroupNorm branch 3 因而从“跳过”变为闭合要求
 11 个 `tt.addptr`，旧 Replay 为 13，Gate1 Source 也为 11。该结论中的 11 由 π 决定，Source 只作为
 事后 Gate1 evidence，不进入 ReplayCheck。检查仍不读取 Source、Harness value 或 Gate1，也不补
 loop/bound/carrier/transfer/address formula。
@@ -319,10 +341,11 @@ Source、Harness或Gate，不给frontend spelling、bound、schedule、地址公
 因此解决的是Replay owner遗漏可见packet义务的attention/consumption问题，不是新增FMA permission、
 kernel recipe或deterministic composer。旧v15/v19 run保持原receipt，只fresh rerun使用新版本。
 
-Replay v17/v21撤销该强制查询协议：不超过64 KiB的完整匿名packet只在首次上下文exact embedding
+Replay v18/v22 撤销该强制查询协议：不超过64 KiB的完整匿名packet只在首次上下文exact embedding
 一次；超限manifest直接携带同一requirements清单，并补齐π instance mechanism计数/顺序，focused
-query只用于明确截断页。当前六个难核packet实测最大约47 KiB，正常路径可直接写完整Replay。
-Codex Lift v8 / knowledge v62同时将exact Harness ABI与closed relift frontier/primary category直接交给
+query只用于明确截断页；当前版本再并置 dimension carrier、IEEE special constant 与 physical
+iteration 的 exact `critical_facts`，不生成实现。当前六个难核packet实测最大约47 KiB，正常路径可直接写完整Replay。
+Codex Lift v9 / knowledge v63同时将exact Harness ABI与closed relift frontier/primary category直接交给
 同一持久owner，原有harness/candidate-control/feedback-category工具均退为可选局部自读。两项修改
 只减少协议/attention负担，不生成J/C/π、Replay代码、schedule或repair，也不改变任何门禁。
 
@@ -357,8 +380,10 @@ K；无法安全resume时归为infrastructure failure。first-winner cancellatio
 
 ## 6. 并行、branch与预算
 
-- 主闭合模型：Sol high；Sol xhigh只在high稳定暴露模型作者能力不足时明确升级。Terra high只作为
-  独立速度/模型能力对照，不占用主闭合branch，也不能用其失败覆盖Sol证据；
+- 主闭合模型：Sol high；对经过通用能力修复后仍未闭合的两核重点批升级为 Sol xhigh。只有 xhigh
+  已形成稳定、可行动且只剩单一高难语义前沿时才使用 Sol max；max 不替代 schema/consumer 修复，
+  也不靠更多思考预算重烧相同 candidate。Terra high只作为独立速度/模型能力对照，不占用主闭合
+  branch，也不能用其失败覆盖Sol证据；
 - 同case默认`B=3`，三个branch彼此隔离；formal Gate1上限默认`K=5`，首个Gate1 closure立即成为
   winner并cooperative stop siblings；
 - agent内部tool/model steps没有“三次”capability上限，由active wall-time、transport safety与exact

@@ -40,7 +40,7 @@ from .replay import (
 )
 
 
-CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v17"
+CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v19"
 
 _INITIAL_PROMPT = """You are the sole writer for one fresh source-blind IntentIR Replay episode.
 The outer runtime exposes only this isolated /workspace. input/ is immutable;
@@ -206,6 +206,7 @@ def _replay_startup_context(packet: Mapping[str, Any]) -> dict[str, Any]:
 
     from minisweagent.environments.intentir_replay import (
         REPLAY_STARTUP_PACKET_EMBED_LIMIT_BYTES,
+        _packet_critical_facts,
     )
 
     encoded = json.dumps(
@@ -226,6 +227,7 @@ def _replay_startup_context(packet: Mapping[str, Any]) -> dict[str, Any]:
             "exact source-isolated packet transport only; no Source, Harness "
             "value, Gate evidence, inference, repair, code, or schedule"
         ),
+        "critical_facts": _packet_critical_facts(packet),
     }
     if result["exact_packet_embedded"]:
         result["packet"] = packet

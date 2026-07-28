@@ -383,6 +383,8 @@ def _row_stride_pi() -> RealizationWitness:
                 {"id": "i4", "semantic_ref": "a0", "region": "r1", "mechanism": "transfer_direct"},
                 {"id": "i5", "semantic_ref": "a1", "region": "r1", "mechanism": "realize"},
                 {"id": "i6", "semantic_ref": "a1", "region": "r1", "mechanism": "transfer_direct"},
+                {"id": "i7", "semantic_ref": "p0", "region": "r1", "mechanism": "realize"},
+                {"id": "i8", "semantic_ref": "p1", "region": "r1", "mechanism": "realize"},
             ],
             "routes": [
                 {"source": "i0", "target": "i1", "slots": [0]},
@@ -391,6 +393,8 @@ def _row_stride_pi() -> RealizationWitness:
                 {"source": "i3", "target": "i4", "slots": [0]},
                 {"source": "i2", "target": "i5", "slots": [0]},
                 {"source": "i5", "target": "i6", "slots": [0]},
+                {"source": "i7", "target": "i4", "slots": [1]},
+                {"source": "i8", "target": "i6", "slots": [1]},
             ],
             "order": [],
             "sharing": [{"source": "i2", "consumers": ["i3", "i5"]}],
@@ -737,6 +741,15 @@ def _historical_triton_v6_payload() -> dict[str, object]:
     u_f["context_policy"] = "public_frontend_context_v6"
     contract = u_f["compile_entry_contract"]
     contract = contract.replace(
+        " A reduction_linearization refinement is the exact source-neutral "
+        "full-axis materialization immediately before its uniquely routed J "
+        "reduce. For Triton, emit `tl.reshape(value, (value.numel,), "
+        "can_reorder=True)` at that stage, then reduce on local axis 0. Never "
+        "infer it from reduction kind or shape, apply it to another consumer, "
+        "or omit it because the current carrier is already rank one.",
+        "",
+    )
+    contract = contract.replace(
         " When pi.terminal_controls relates the two authored arm instances of "
         "that effect_if, emit the terminal arm as the sole body of a runtime "
         "`if` followed by a bare return, then emit the continuation arm after "
@@ -749,10 +762,11 @@ def _historical_triton_v6_payload() -> dict[str, object]:
     )
     contract = contract.replace(
         " Every pi.physical_iterations entry is mandatory realization "
-        "topology for a Source-visible physical loop around an existing J "
-        "reduce or contraction; it never creates a semantic J loop. Resolve "
-        "body_instance to that J node and tile_instance to the required "
-        "positive C slot attached to the same reduced/contracted axis. The "
+        "topology for a Source-visible physical loop around an existing "
+        "non-loop J reduce/contraction or boundary access/domain; it never "
+        "creates a semantic J loop. Resolve body_instance to that authored "
+        "subject and tile_instance to the required positive C slot attached "
+        "to the same closed dependent axis. The "
         "axis attachment determines the logical extent, and induction_basis "
         "has the same extent_step, rounded_extent_step, or tile_ordinal "
         "denotation as pi.iterations. direction=forward visits that closed "
@@ -763,6 +777,17 @@ def _historical_triton_v6_payload() -> dict[str, object]:
         "declared init/state/next/result temporal stages for its physical "
         "iteration region; do not collapse the loop-carried accumulator into "
         "one stateless reduction or invent an update formula absent from J.",
+        "",
+    )
+    contract = contract.replace(
+        " A J const with value '-inf', 'inf', or 'nan' is the exact typed IEEE "
+        "special authored by J. Materialize it directly at its declared dtype; "
+        "never approximate it with a finite literal or promote it through an "
+        "undeclared wider floating type."
+        " A J.signature constexpr p* with logical_ref=x* is the callable "
+        "carrier of that exact semantic dimension. Use that same p* directly "
+        "where the authored pi lane/iteration realization requires x*; never "
+        "replace it with a current-shape literal or an arbitrary unit extent.",
         "",
     )
     contract = contract.replace(
@@ -830,13 +855,13 @@ def test_public_frontend_context_history_is_read_only_and_exact() -> None:
         PUBLIC_FRONTEND_CONTEXT["triton"]
     )
 
-    assert current_digest == history["public_frontend_context_v12"]
+    assert current_digest == history["public_frontend_context_v14"]
     current_receipt_digest = PUBLIC_FRONTEND_CONTEXT_RECEIPT_HISTORY[
         "triton"
-    ]["public_frontend_context_v12"]["context_sha256"]
+    ]["public_frontend_context_v14"]["context_sha256"]
     current_receipt = audit_public_frontend_context_receipt(
         frontend="triton",
-        context_policy="public_frontend_context_v12",
+        context_policy="public_frontend_context_v14",
         context_sha256=current_receipt_digest,
     )
     assert current_receipt["status"] == "current"
@@ -934,7 +959,7 @@ def test_historical_packet_has_read_only_audit_but_cannot_be_fresh_replay() -> N
         audit_replay_packet_digest(payload, expected_digest="0" * 64)
     assert build_rewriter_packet(make_reduce_artifact()).u_f[
         "context_policy"
-    ] == "public_frontend_context_v12"
+    ] == "public_frontend_context_v14"
 
 
 def test_real_v6_u_f_uses_the_historical_full_u_f_receipt_basis() -> None:
@@ -962,7 +987,7 @@ def test_real_v6_u_f_uses_the_historical_full_u_f_receipt_basis() -> None:
     [
         (
             Frontend.TRITON,
-            "12b6972a0d9ef800ccde574d970132c2aa66ac5e1dfbdd8dc39ce8d367e1c3a2",
+            "60cd010e25be5a4089629ac56f3f6d27bc4e20765bb410472604301059f45014",
         ),
         (
             Frontend.CUTE,
@@ -1057,9 +1082,9 @@ def test_replay_contract_accepts_an_explicit_strict_integer_widen() -> None:
 
     report = type_check(artifact.j, artifact.c, artifact.pi)
     assert report.passed
-    assert report.protocol == "intentir.scrc.typecheck.v23"
+    assert report.protocol == "intentir.scrc.typecheck.v25"
     assert build_rewriter_packet(artifact).u_f["context_policy"] == (
-        "public_frontend_context_v12"
+        "public_frontend_context_v14"
     )
 
 
@@ -1078,7 +1103,7 @@ def test_typecheck_rejects_non_widening_or_untyped_signed_widen(
 
     report = type_check(artifact.j, artifact.c, artifact.pi)
     assert not report.passed
-    assert report.protocol == "intentir.scrc.typecheck.v23"
+    assert report.protocol == "intentir.scrc.typecheck.v25"
     assert "refinement_auth_invalid_widen" in {
         item.code.value for item in report.diagnostics
     }
@@ -1091,7 +1116,7 @@ def test_triton_u_f_preserves_constexpr_and_projects_coordinate_roles() -> None:
     context = payload["u_f"]
     contract = context["compile_entry_contract"]
 
-    assert context["context_policy"] == "public_frontend_context_v12"
+    assert context["context_policy"] == "public_frontend_context_v14"
     assert "pass a c* handle directly to tl.arange" in contract
     assert "never copy it to a local first" in contract
     assert "satisfied by the parameter binding" in contract
@@ -1111,6 +1136,8 @@ def test_triton_u_f_preserves_constexpr_and_projects_coordinate_roles() -> None:
     assert "even if its grid extent is one" in contract
     assert "pointer/tensor p* carrier directly enters address_base" in contract
     assert "requires a second pointer/address operation" in contract
+    assert "A reduction_linearization refinement" in contract
+    assert "tl.reshape(value, (value.numel,), can_reorder=True)" in contract
     assert "carrier bypasses address_base" in contract
     assert "before exactly one pointer/address operation" in contract
     assert "edge alone" in contract
