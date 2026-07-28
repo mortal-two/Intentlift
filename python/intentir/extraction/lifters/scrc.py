@@ -1210,8 +1210,9 @@ def _anonymous_compiler_view(
 def build_scrc_lift_instructions() -> str:
     return f"""You are the source-aware Lift LLM for IntentIR.
 Return one complete JSON object: anonymous J=A+B, independent pure C, and pi.
-There is no downstream composer or rule catalog. The supplied Responses schema
-is authoritative for fields, enums, optionality, grammar, and structure; never
+There is no downstream composer or rule catalog.
+The supplied Responses schema is authoritative for fields, enums, optionality,
+grammar, and structure; never
 duplicate, rename, or extend it.
 
 Use gap-free declaration-order names: kernel scrc_k0; tensors t*; J nodes n*;
