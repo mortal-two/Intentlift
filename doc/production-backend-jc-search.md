@@ -441,6 +441,19 @@ RVV winner 不强制“必须含向量指令”：标量、vectorized、O2/O3 st
 `D_cert`，因此 1.1817x 只解释为同一 J、同一 target 下从 materialized E2 到 expanded/fused E3 的
 内部因果增量，不能解释为超越 Source 或正式端到端 backend closure。
 
+RVV exporter现与CUDA共用J_dev/workload准备器，能消费物理分离的自然shape variant并保留完整
+lineage；远端仍只链接冻结object。首个Softmax `M=N=4096,FP32` natural bundle编译出48个不同native
+objects，真实tile receipt显示requested/applied一致。runner v4把`search_budget`落实为访问/QD/计时
+边界：C-prior/Erase-C前缀和frozen/no-retile控制取exact并集，未访问object不做事后穷举计时。
+
+VLEN=128的budget=4 warm development run中，10/10访问状态通过Target--RefJ。frozen-C为
+`793.84 ms`，Schedule-Only best为`728.10 ms`，schedule-search/frozen-C=`1.0903x`。非零retiled
+best为`771.88 ms`，相对frozen-C=`1.0285x`，但相对no-retile仅`0.9433x`；whole-graph fused也没有
+超过E2，故E3/E2=`1.0000x`。C-prior前4相对Erase-C前4为`0.7813x`，说明当前C排序在该target/shape上
+失配。该负结果不改变candidate universe或legality，详情见
+[Softmax natural RVV result](results/backend-natural-softmax-rvv-vlen128/README.md)。最终主表仍需增加
+iterations/batches并使用冻结cold-data/streaming协议。
+
 retile 不再是 report 中的虚拟参数：C++ pass 通过 upstream TilingInterface/SCF tiler 对 parallel 与
 reduction iterator 使用独立 extent，并在 module receipt 记录实际 tiled Linalg op/loop 数。搜索使用
 固定、C-independent 的 52-state 请求宇宙；C 只重排相同 concrete native-object universe。

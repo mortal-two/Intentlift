@@ -1,0 +1,2957 @@
+{
+  "baseline_policy": "target_refj_only",
+  "bundle_protocol": "intentir.production.rvv-search-bundle.v2",
+  "bundle_sha256": "05f06c7f092e6389513b3ffaa0d22f7eae8b50e3e5855e3b4b7a968a0841d603",
+  "bundle_toolchain_digest": "02a6ce299fcc0a3f7b8646a4119d344eb4d75a2601cc37a7276d4567ba9f8486",
+  "created_unix_ns": 1785186164700383918,
+  "device": {
+    "cache": {
+      "last_level_data_cache_bytes": 67108864,
+      "levels": [
+        {
+          "coherency_line_bytes": 64,
+          "level": 1,
+          "size_bytes": 65536,
+          "type": "Data"
+        },
+        {
+          "coherency_line_bytes": 64,
+          "level": 1,
+          "size_bytes": 65536,
+          "type": "Instruction"
+        },
+        {
+          "coherency_line_bytes": 64,
+          "level": 2,
+          "size_bytes": 2097152,
+          "type": "Unified"
+        },
+        {
+          "coherency_line_bytes": 64,
+          "level": 3,
+          "size_bytes": 67108864,
+          "type": "Unified"
+        }
+      ]
+    },
+    "cpu_affinity": [
+      0
+    ],
+    "host": "localhost.localdomain",
+    "machine": "riscv64",
+    "python": "3.11.6",
+    "vlen_bits": 128
+  },
+  "elapsed_seconds": 715.466403552,
+  "experiment_spec_digest": "28c2117f35e1360fa4f9b4c85f4af27edf343630d0d5be000eef0b3b4e9c8f9a",
+  "experiment_spec_protocol": "intentir.backend.ablation-plan.v2",
+  "failures": [],
+  "kernels": [
+    {
+      "baseline_policy": "target_refj_only",
+      "c_digest": "0a87378060aa89cbb3be3e27e2d9d173f7e6080f9bc7283eb9bd14ee5aee839e",
+      "candidates": [
+        {
+          "candidate": {
+            "assembly_sha256": "53e474c1f906ba7664eb3e089e4592063db6224b3ccdf4ac5c4d7e5bba20406c",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.5f24143e18b24070",
+            "llvm_ir_sha256": "0da92b14ca6ff276d25109c26fe9daeffa28ef273b5b212705489d82c310c0bd",
+            "lowered_mlir_sha256": "d19bf1397bbf8d2fd82b28c81d0438d57481191c2100840d9f5519da4c842aa4",
+            "lowering_path_kind": "materialized",
+            "object_sha256": "7d2138159ded73ebfac5e4b5a8ebb5a276fd6a660719a2bb0254f597b488b08d",
+            "object_size_bytes": 7232,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 133,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 128,
+              "reduction_tile": 0,
+              "vector_bits": 128,
+              "vectorize": true
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "85d2f1c6f3079028fca024c5faec80c7a332123f0c8a47a0c9ee2dfd5da1135f",
+            "transformation": {
+              "b_transformations": [],
+              "fuse_elementwise": false,
+              "lowering_path_kind": "materialized",
+              "required_b_capabilities": [],
+              "transformation_trace": [
+                "rvv.linalg.materialized.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 10,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 7,
+              "parallel_tile_applied": 128,
+              "parallel_tile_requested": 128,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0,
+              "structured_after_sha256": "621dd1eb4f626c4615f69fcfcdb66eea9585bec55895c37311ee5dee2a6fe59b"
+            },
+            "true_mlir_pipeline": true
+          },
+          "correctness": [
+            {
+              "max_abs_error": 0.0,
+              "output": "t1",
+              "passed": true
+            }
+          ],
+          "data_prep_samples_us": [
+            0.0,
+            0.0
+          ],
+          "initial_data_prep_us_per_call": 0.0,
+          "initial_ranking_samples_us": [
+            761828.348
+          ],
+          "latency_us": 793841.0775,
+          "logical_boundary_gbps": 0.16907380054290527,
+          "selection_protocol": "fresh-alternating-round-robin.v1",
+          "selection_samples_us": [
+            799559.792,
+            788122.363
+          ],
+          "status": "measured"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "c3fdf2f45a5e98d97453e82e9a9067fe8a97f277a07c6370f94253e970dc2913",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.f7e48802292b1088",
+            "llvm_ir_sha256": "282c1ef2d6ae9f9184435847524cc64ff9758b35535f90f4fa443be8f3c8c234",
+            "lowered_mlir_sha256": "e8de03063f9b40f0160234ea4ae7608d77dc435dd8398915a9a6d66784786d5c",
+            "lowering_path_kind": "whole_graph_fused",
+            "object_sha256": "1c3d81014d16640d342dbdc8acf4568336831ff6c8fdb65c875194f4efe0e4da",
+            "object_size_bytes": 6912,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 130,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 128,
+              "reduction_tile": 0,
+              "vector_bits": 128,
+              "vectorize": true
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "61f63c5ce27db8b740310e0988fb41f1871ff8d55c3f03952520022f40d8680d",
+            "transformation": {
+              "b_transformations": [
+                "riscv.b.readonly_whole_graph_fusion.v1"
+              ],
+              "fuse_elementwise": true,
+              "lowering_path_kind": "whole_graph_fused",
+              "required_b_capabilities": [
+                "b.readonly_nonalias_inputs.v1"
+              ],
+              "transformation_trace": [
+                "rvv.linalg.whole_graph_elementwise_fusion.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 12,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 6,
+              "parallel_tile_applied": 128,
+              "parallel_tile_requested": 128,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0,
+              "structured_after_sha256": "c493711aba756c2e5de209f6c3d3fe1fd9680dc28a2bcf113db23b4cec0017e5"
+            },
+            "true_mlir_pipeline": true
+          },
+          "correctness": [
+            {
+              "max_abs_error": 0.0,
+              "output": "t1",
+              "passed": true
+            }
+          ],
+          "data_prep_samples_us": [
+            0.0,
+            0.0
+          ],
+          "initial_data_prep_us_per_call": 0.0,
+          "initial_ranking_samples_us": [
+            728206.783
+          ],
+          "latency_us": 730548.2239999999,
+          "logical_boundary_gbps": 0.18372192771219442,
+          "selection_protocol": "fresh-alternating-round-robin.v1",
+          "selection_samples_us": [
+            731245.217,
+            729851.231
+          ],
+          "status": "measured"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "0f66f92fcf2498e51c38fd47595b52498f0f872074f6fc6e528f29959c86d799",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.13531bf75724cf4d",
+            "llvm_ir_sha256": "b9801bb4350408b341f8fbca2738e4dc452430e8c947dd61739c4497e3b47632",
+            "lowered_mlir_sha256": "ff26e4bbdd22c268bda08f914a0ad7bf9c387da8938afde97fdbcbebd12939e4",
+            "lowering_path_kind": "materialized",
+            "object_sha256": "3f71e9bce28262911c97068cc93627b76a9ab0516e6be04d5462c45ba6312176",
+            "object_size_bytes": 4288,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 107,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 64,
+              "reduction_tile": 0,
+              "vector_bits": 128,
+              "vectorize": true
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "e4384c48774ad7b6bfbdc1bd6aa96ca2ae75f7cd0bd797c8ff837dee314dfe92",
+            "transformation": {
+              "b_transformations": [],
+              "fuse_elementwise": false,
+              "lowering_path_kind": "materialized",
+              "required_b_capabilities": [],
+              "transformation_trace": [
+                "rvv.linalg.materialized.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 10,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 7,
+              "parallel_tile_applied": 64,
+              "parallel_tile_requested": 64,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0,
+              "structured_after_sha256": "f815812557d9e3530943899b2aed3ff7534b259fd1cffeabb9a1c195de522bcd"
+            },
+            "true_mlir_pipeline": true
+          },
+          "correctness": [
+            {
+              "max_abs_error": 0.0,
+              "output": "t1",
+              "passed": true
+            }
+          ],
+          "data_prep_samples_us": [
+            0.0,
+            0.0
+          ],
+          "initial_data_prep_us_per_call": 0.0,
+          "initial_ranking_samples_us": [
+            765201.103
+          ],
+          "latency_us": 771877.552,
+          "logical_boundary_gbps": 0.1738847407237463,
+          "selection_protocol": "fresh-alternating-round-robin.v1",
+          "selection_samples_us": [
+            776965.094,
+            766790.01
+          ],
+          "status": "measured"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "3652e6654b90a55382fdb3c59ec91896bcf7189e1152ea21859cb1cf1cd4846c",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.ec2bca6e1cd699a7",
+            "llvm_ir_sha256": "42d5f22b44d4cb663e786f94f80dbdc98ae75007dfc8f408e1be05b64c32131c",
+            "lowered_mlir_sha256": "1c83aabbaaa59b1358bff1c2071fbb3e3e7b27696ea0e521905bd1b655431fda",
+            "lowering_path_kind": "whole_graph_fused",
+            "object_sha256": "0e5bc9ba125ec7a7b773d906a3b4aa1ee46d535b1f6f326025875d651e61eeb3",
+            "object_size_bytes": 3984,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 104,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 64,
+              "reduction_tile": 0,
+              "vector_bits": 128,
+              "vectorize": true
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "7920be8663ddb68c9ab389c382030ce5287cd23af05ef59bc6bee4a6bfb3e413",
+            "transformation": {
+              "b_transformations": [
+                "riscv.b.readonly_whole_graph_fusion.v1"
+              ],
+              "fuse_elementwise": true,
+              "lowering_path_kind": "whole_graph_fused",
+              "required_b_capabilities": [
+                "b.readonly_nonalias_inputs.v1"
+              ],
+              "transformation_trace": [
+                "rvv.linalg.whole_graph_elementwise_fusion.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 12,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 6,
+              "parallel_tile_applied": 64,
+              "parallel_tile_requested": 64,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0,
+              "structured_after_sha256": "9f800d1039e0cac7490e2e33df13906dc427302cce531651fb5d7938eb034acd"
+            },
+            "true_mlir_pipeline": true
+          },
+          "correctness": [
+            {
+              "max_abs_error": 0.0,
+              "output": "t1",
+              "passed": true
+            }
+          ],
+          "data_prep_samples_us": [
+            0.0,
+            0.0
+          ],
+          "initial_data_prep_us_per_call": 0.0,
+          "initial_ranking_samples_us": [
+            729484.649
+          ],
+          "latency_us": 728291.8935,
+          "logical_boundary_gbps": 0.18429111898387485,
+          "selection_protocol": "fresh-alternating-round-robin.v1",
+          "selection_samples_us": [
+            726885.217,
+            729698.57
+          ],
+          "status": "measured"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "0b1892ad896b083e117f2219dae7fc910befb9267acd84c8537b7bad90aa4a67",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.6b9114527e0e8874",
+            "llvm_ir_sha256": "e3fdba0897e04dc99a5b0cacc048b5b342494bc2d0cc8e0d71fe67a3b5bc96ce",
+            "lowered_mlir_sha256": "c1cd0e93821e7a2a6ef528128808172d0467a2e6468f62a15c29d64396e9ba56",
+            "lowering_path_kind": "materialized",
+            "object_sha256": "ee24dca58c8176aec22f39db39b28c33833d7c9bbb317666f8fa5179daf94d23",
+            "object_size_bytes": 4936,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 51,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 32,
+              "reduction_tile": 128,
+              "vector_bits": 128,
+              "vectorize": true
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "5292d7cb357b2052bf6f680add437f43b159c6228c49cb10df2b63b53cb97019",
+            "transformation": {
+              "b_transformations": [],
+              "fuse_elementwise": false,
+              "lowering_path_kind": "materialized",
+              "required_b_capabilities": [],
+              "transformation_trace": [
+                "rvv.linalg.materialized.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 12,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 7,
+              "parallel_tile_applied": 32,
+              "parallel_tile_requested": 32,
+              "reduction_tile_applied": 128,
+              "reduction_tile_requested": 128,
+              "structured_after_sha256": "1169496f8efe26ac516599b214a6cdcad3d502742d35e25eca5cb811e42e5496"
+            },
+            "true_mlir_pipeline": true
+          },
+          "correctness": [
+            {
+              "max_abs_error": 0.0,
+              "output": "t1",
+              "passed": true
+            }
+          ],
+          "data_prep_samples_us": [
+            0.0,
+            0.0
+          ],
+          "initial_data_prep_us_per_call": 0.0,
+          "initial_ranking_samples_us": [
+            954461.3
+          ],
+          "latency_us": 954621.591,
+          "logical_boundary_gbps": 0.14059783401651554,
+          "selection_protocol": "fresh-alternating-round-robin.v1",
+          "selection_samples_us": [
+            953209.195,
+            956033.987
+          ],
+          "status": "measured"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "4983aef864e981b5d553f8297128c2e9d30997db41d57d005f9916dd91eb842b",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.e0f6d66c2500d681",
+            "llvm_ir_sha256": "6aff8ca41b3cfbbac2da332a8bcfa7888337bbe2dc4887b2ee8ab96c375b0589",
+            "lowered_mlir_sha256": "5133c8c1d708be2042397dd78162b768fab4e54bef68e8442c141125f9c88135",
+            "lowering_path_kind": "whole_graph_fused",
+            "object_sha256": "b85829bf07186113938567413d1fb66a52050f62db0bc7b15b6641f1a50b45ae",
+            "object_size_bytes": 5824,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 232,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 32,
+              "reduction_tile": 128,
+              "vector_bits": 128,
+              "vectorize": true
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "3f9a3efced1a9e5a59fdadfacb691b5d70d81fcf6bbdfc0b20ab5ad50e886227",
+            "transformation": {
+              "b_transformations": [
+                "riscv.b.readonly_whole_graph_fusion.v1"
+              ],
+              "fuse_elementwise": true,
+              "lowering_path_kind": "whole_graph_fused",
+              "required_b_capabilities": [
+                "b.readonly_nonalias_inputs.v1"
+              ],
+              "transformation_trace": [
+                "rvv.linalg.whole_graph_elementwise_fusion.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 14,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 6,
+              "parallel_tile_applied": 32,
+              "parallel_tile_requested": 32,
+              "reduction_tile_applied": 128,
+              "reduction_tile_requested": 128,
+              "structured_after_sha256": "e645a56fc7f4371bb76116aba409101aaaf7ffdd0ff0e01e20ca52140fe1e8f2"
+            },
+            "true_mlir_pipeline": true
+          },
+          "status": "not_visited_due_budget"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "8fb6fc3329ea12de74f3c778074f2d8e3af32c49143a80a00b4c8854a64e666f",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.98f9e088aadaec01",
+            "llvm_ir_sha256": "ba6396ab8968a27effc4377a4d878536770ae06069126969b6a6a5b1ddc8d68c",
+            "lowered_mlir_sha256": "697949d9f3f9e8152d80766b0d9744221507f88872bae3f52388c4057364c6c8",
+            "lowering_path_kind": "materialized",
+            "object_sha256": "356d4b3ec8061c0bde839b227b28f0661ded8e147d3b19815a441ef9779b378b",
+            "object_size_bytes": 4840,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 51,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 32,
+              "reduction_tile": 0,
+              "vector_bits": 128,
+              "vectorize": true
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "2111fe56e4c7f21a7005545dceb304581489db2342bfadfa177dcd6ae723e75d",
+            "transformation": {
+              "b_transformations": [],
+              "fuse_elementwise": false,
+              "lowering_path_kind": "materialized",
+              "required_b_capabilities": [],
+              "transformation_trace": [
+                "rvv.linalg.materialized.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 10,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 7,
+              "parallel_tile_applied": 32,
+              "parallel_tile_requested": 32,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0,
+              "structured_after_sha256": "40e7b49da4b7c3078262cbf31af5329494e987956557e6e4bfb859185c950207"
+            },
+            "true_mlir_pipeline": true
+          },
+          "correctness": [
+            {
+              "max_abs_error": 0.0,
+              "output": "t1",
+              "passed": true
+            }
+          ],
+          "data_prep_samples_us": [
+            0.0,
+            0.0
+          ],
+          "initial_data_prep_us_per_call": 0.0,
+          "initial_ranking_samples_us": [
+            943639.414
+          ],
+          "latency_us": 944289.1465,
+          "logical_boundary_gbps": 0.14213626037901303,
+          "selection_protocol": "fresh-alternating-round-robin.v1",
+          "selection_samples_us": [
+            944113.636,
+            944464.657
+          ],
+          "status": "measured"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "32ed56bf1fb98880d6f6cd623c554c13034ec888482f221ada58f2efdda0bc3c",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.73164c2d5729c403",
+            "llvm_ir_sha256": "8e99f45896a22a40c4d4529835ffec81e46570b3e0f0a054f95de2b4afa0a5ed",
+            "lowered_mlir_sha256": "d2e85667bdf668058b82f269c88a7f1acbc163328f84ea57c89e2b4c0e45a1eb",
+            "lowering_path_kind": "whole_graph_fused",
+            "object_sha256": "7e4a1218f45bfd9be5569febfbbe4b6ad8fa55be54076dd03d98b22c4e58f3e0",
+            "object_size_bytes": 5728,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 232,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 32,
+              "reduction_tile": 0,
+              "vector_bits": 128,
+              "vectorize": true
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "b333d17c55644862efd318796413904a12e5050b5b77b564602a59d1ac84ac68",
+            "transformation": {
+              "b_transformations": [
+                "riscv.b.readonly_whole_graph_fusion.v1"
+              ],
+              "fuse_elementwise": true,
+              "lowering_path_kind": "whole_graph_fused",
+              "required_b_capabilities": [
+                "b.readonly_nonalias_inputs.v1"
+              ],
+              "transformation_trace": [
+                "rvv.linalg.whole_graph_elementwise_fusion.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 12,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 6,
+              "parallel_tile_applied": 32,
+              "parallel_tile_requested": 32,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0,
+              "structured_after_sha256": "f18a218dfe594380d17c767109a4cb906225561ce9177839554f826b3b89455d"
+            },
+            "true_mlir_pipeline": true
+          },
+          "status": "not_visited_due_budget"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "135a0f9779332acee0fd2f9e2dc03b7e54c36d6278efda9c42cfaa94f9604627",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.6d3b268af7375931",
+            "llvm_ir_sha256": "97be9e05a94c7bcf6bbfb24565c681250dfa4a8398f85c2b8cff7f17fd3900d3",
+            "lowered_mlir_sha256": "78f83ba15dd8ae80afeac00fcdb8e55f4ea51d1ec5158ac0cf47a4369aee9c79",
+            "lowering_path_kind": "materialized",
+            "object_sha256": "810226710e276cb01eadad7dea37f1656581707b48b61527c2a102caa8985dc8",
+            "object_size_bytes": 10664,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 145,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 16,
+              "reduction_tile": 64,
+              "vector_bits": 128,
+              "vectorize": true
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "5131d1beb29cf051dd70fab3c92f525d9c01894c58af26e146bfd0ae58b317fc",
+            "transformation": {
+              "b_transformations": [],
+              "fuse_elementwise": false,
+              "lowering_path_kind": "materialized",
+              "required_b_capabilities": [],
+              "transformation_trace": [
+                "rvv.linalg.materialized.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 12,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 7,
+              "parallel_tile_applied": 16,
+              "parallel_tile_requested": 16,
+              "reduction_tile_applied": 64,
+              "reduction_tile_requested": 64,
+              "structured_after_sha256": "3ac58f263fbd1bc0470985ecfe18eceea6fad14d40486ddc577f4c92b9525395"
+            },
+            "true_mlir_pipeline": true
+          },
+          "status": "not_visited_due_budget"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "a24520794e46daf7ac458d137eac1dbe5a59fe344efaf04538b74e8fa6ab7d64",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.6147fbb91967c892",
+            "llvm_ir_sha256": "434a9533306de9d09c3defb1f5baa7cb4881bb826cba137b8f43e6ff32bde2dd",
+            "lowered_mlir_sha256": "c3da3c27a5c40d00e52b3b5fa7c18c3906773bc397fdce30f94265a981b4015a",
+            "lowering_path_kind": "whole_graph_fused",
+            "object_sha256": "25a3ce06a20ac29e801ffdc1ec5082bb658b4518b18575928993dd8dbf1055d4",
+            "object_size_bytes": 13520,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 472,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 16,
+              "reduction_tile": 64,
+              "vector_bits": 128,
+              "vectorize": true
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "7c9a1263e4b714187169c80149f73cef4b155bdc177f52974ff2eba39284ad38",
+            "transformation": {
+              "b_transformations": [
+                "riscv.b.readonly_whole_graph_fusion.v1"
+              ],
+              "fuse_elementwise": true,
+              "lowering_path_kind": "whole_graph_fused",
+              "required_b_capabilities": [
+                "b.readonly_nonalias_inputs.v1"
+              ],
+              "transformation_trace": [
+                "rvv.linalg.whole_graph_elementwise_fusion.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 14,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 6,
+              "parallel_tile_applied": 16,
+              "parallel_tile_requested": 16,
+              "reduction_tile_applied": 64,
+              "reduction_tile_requested": 64,
+              "structured_after_sha256": "1618171f2f411e5c1a73d946fef67735c836b34a7446ee2bdef68ec7cfaef2a2"
+            },
+            "true_mlir_pipeline": true
+          },
+          "status": "not_visited_due_budget"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "41860c07b5995ad5712d7902284c962b8cf1de493cc4f9ed830b62f9ac93f4dd",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.a431d5eb9435143a",
+            "llvm_ir_sha256": "de3e8538fcc8678b6e9c52e0b225c8a24ea7d0ad305cacc2d2074e889df0c981",
+            "lowered_mlir_sha256": "14d1ed19a52ae4001fd4f52bdebd99cc50265830258d6cdf381053a42d441ac6",
+            "lowering_path_kind": "materialized",
+            "object_sha256": "708258de0619b5fafb15e192e5d3b1d087ecc0a227cb03d92ae21a4f5cabf305",
+            "object_size_bytes": 11832,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 241,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 16,
+              "reduction_tile": 0,
+              "vector_bits": 128,
+              "vectorize": true
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "5717066457b7d094d57bde8fb46f9ecad7afd0622dec322caffa70b38deafcfe",
+            "transformation": {
+              "b_transformations": [],
+              "fuse_elementwise": false,
+              "lowering_path_kind": "materialized",
+              "required_b_capabilities": [],
+              "transformation_trace": [
+                "rvv.linalg.materialized.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 10,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 7,
+              "parallel_tile_applied": 16,
+              "parallel_tile_requested": 16,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0,
+              "structured_after_sha256": "dfd220083bc5536977b1c69a5e07ff8b53b4a278c5a235d712b8a662e7d2b29e"
+            },
+            "true_mlir_pipeline": true
+          },
+          "status": "not_visited_due_budget"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "2578669ee33134310b12fb984f64b34ce96bf61d0234695a2fc6d91de2a22a00",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.f311da00646a94eb",
+            "llvm_ir_sha256": "32ac8885275b8658e6ed58dd2ecdc62dca95f013a1d8a1624148dc11b539c478",
+            "lowered_mlir_sha256": "af9567f4fc4c94de2c4914a52eb16cbec8fad20b1f3d389cae335b5498853e00",
+            "lowering_path_kind": "whole_graph_fused",
+            "object_sha256": "11d012ccc2bfa97caa3b132893643e27eb968999ef4b591384d1f75f7d5f4ec0",
+            "object_size_bytes": 14848,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 568,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 16,
+              "reduction_tile": 0,
+              "vector_bits": 128,
+              "vectorize": true
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "4a2fe346eae61cfb1abfcdcef1b918d604cae4bed69a461e7f4062644ad18945",
+            "transformation": {
+              "b_transformations": [
+                "riscv.b.readonly_whole_graph_fusion.v1"
+              ],
+              "fuse_elementwise": true,
+              "lowering_path_kind": "whole_graph_fused",
+              "required_b_capabilities": [
+                "b.readonly_nonalias_inputs.v1"
+              ],
+              "transformation_trace": [
+                "rvv.linalg.whole_graph_elementwise_fusion.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 12,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 6,
+              "parallel_tile_applied": 16,
+              "parallel_tile_requested": 16,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0,
+              "structured_after_sha256": "470a2f8d842c76bd72dfd89d6c4f8771b8e21c5912a9720d4249c103149841cc"
+            },
+            "true_mlir_pipeline": true
+          },
+          "status": "not_visited_due_budget"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "058900ca237f371cffc6afadad1a9f025ac56628059dc40c07ab7818bffbbf50",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.d6d50f34dd55a523",
+            "llvm_ir_sha256": "5e9f7dbebd4897792519630adfdfce717945d942647b21f7a5319c22690c44eb",
+            "lowered_mlir_sha256": "fdd7a498d47abc227572eec226e48172ba82f3e1d7d730b673a08769347089eb",
+            "lowering_path_kind": "materialized",
+            "object_sha256": "6b4d9e6ab76c0e24bd939eee3a4adc570b00cd656f7430da35b22163b46ccb3a",
+            "object_size_bytes": 15048,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 371,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 8,
+              "reduction_tile": 32,
+              "vector_bits": 128,
+              "vectorize": true
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "b0f23e8fc3c77f2bb4dbb88b0ae27cfdfd19cd0af68c609fbef5184bbbffcc5a",
+            "transformation": {
+              "b_transformations": [],
+              "fuse_elementwise": false,
+              "lowering_path_kind": "materialized",
+              "required_b_capabilities": [],
+              "transformation_trace": [
+                "rvv.linalg.materialized.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 12,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 7,
+              "parallel_tile_applied": 8,
+              "parallel_tile_requested": 8,
+              "reduction_tile_applied": 32,
+              "reduction_tile_requested": 32,
+              "structured_after_sha256": "f7a90e9ddca00195df0388f6cf305d1cba7a94a8ca8f21e866f423876923fae1"
+            },
+            "true_mlir_pipeline": true
+          },
+          "status": "not_visited_due_budget"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "b6f8e5cfba68aa6e47b510a21a6fc18d5b4cbbcf91625250a74cbbc3e57c684b",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.28e29a9cc40e6770",
+            "llvm_ir_sha256": "bfdbcf3eaef104c4e19013b82ae856c8c944569aa4241e45c59ba77b93b2d594",
+            "lowered_mlir_sha256": "8fbc7e5d52c9cef7ed107785d5fa3f8d3c4710a2f2f87da72e370e7ba95f9b5a",
+            "lowering_path_kind": "whole_graph_fused",
+            "object_sha256": "9aeaf73ff50487b17ee64abfe4343d5fbd03c9c7f1b4b3d4385061c6e6922ad5",
+            "object_size_bytes": 3504,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 3,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 8,
+              "reduction_tile": 32,
+              "vector_bits": 128,
+              "vectorize": true
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "5f587766ab1557ab863f803bba32d88d700729e8a397237a64a3f56f23f77a2f",
+            "transformation": {
+              "b_transformations": [
+                "riscv.b.readonly_whole_graph_fusion.v1"
+              ],
+              "fuse_elementwise": true,
+              "lowering_path_kind": "whole_graph_fused",
+              "required_b_capabilities": [
+                "b.readonly_nonalias_inputs.v1"
+              ],
+              "transformation_trace": [
+                "rvv.linalg.whole_graph_elementwise_fusion.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 14,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 6,
+              "parallel_tile_applied": 8,
+              "parallel_tile_requested": 8,
+              "reduction_tile_applied": 32,
+              "reduction_tile_requested": 32,
+              "structured_after_sha256": "51eb488dec506b31a3619a606ed9072d92221e0b8f4ca4a7d06a581b19a28eef"
+            },
+            "true_mlir_pipeline": true
+          },
+          "status": "not_visited_due_budget"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "213a52fe4d644052ad4344dc35f9dc243044b2d358241d8dfe28a68fff3a3eb3",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.725f1aa2b351d835",
+            "llvm_ir_sha256": "bb789058cac3835ce63382d9703b4e549019e26fe2aa99a2b4fdc49290082dfa",
+            "lowered_mlir_sha256": "fc416c31345d5f3be2e11f986d3896119d25eac80e75a2452a834816c57ba8e9",
+            "lowering_path_kind": "materialized",
+            "object_sha256": "bc3719601b155a4a57bfa3b4938a05014e85d2e06f5db906983daba7e76aac5c",
+            "object_size_bytes": 16000,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 419,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 8,
+              "reduction_tile": 0,
+              "vector_bits": 128,
+              "vectorize": true
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "5d8303ce4c8c24b0383652fcbb12cb617dbeaa96c65178bc0a4f23cf5785a82c",
+            "transformation": {
+              "b_transformations": [],
+              "fuse_elementwise": false,
+              "lowering_path_kind": "materialized",
+              "required_b_capabilities": [],
+              "transformation_trace": [
+                "rvv.linalg.materialized.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 10,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 7,
+              "parallel_tile_applied": 8,
+              "parallel_tile_requested": 8,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0,
+              "structured_after_sha256": "7464dd235a6dc4e373af683de4832fd39142a3ef55c6301c277f0f6aab29976f"
+            },
+            "true_mlir_pipeline": true
+          },
+          "status": "not_visited_due_budget"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "20d1d146e4fbe6c8c3d17afafe8e2aa752c8128c65de526f9ae20f6dc3407c5c",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.c18f7786eccfddf0",
+            "llvm_ir_sha256": "b50bc79152d6a33ea3885aa9b722d8513c82ced9124a77245701674f78999d4f",
+            "lowered_mlir_sha256": "2a0d27dc91028ebb7db61463d7927313b081d2fc07900eac74c002f5b1721ff8",
+            "lowering_path_kind": "whole_graph_fused",
+            "object_sha256": "1eb4c2c723463d09d9a55b6e3ac0e26e30d8f50306b818f114517c0a8454c320",
+            "object_size_bytes": 4384,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 51,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 8,
+              "reduction_tile": 0,
+              "vector_bits": 128,
+              "vectorize": true
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "ab56bf65e3fbd6df92ac16e9c92b166d86e9b7a525f904b4bf7f4f19e4ec22d5",
+            "transformation": {
+              "b_transformations": [
+                "riscv.b.readonly_whole_graph_fusion.v1"
+              ],
+              "fuse_elementwise": true,
+              "lowering_path_kind": "whole_graph_fused",
+              "required_b_capabilities": [
+                "b.readonly_nonalias_inputs.v1"
+              ],
+              "transformation_trace": [
+                "rvv.linalg.whole_graph_elementwise_fusion.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 12,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 6,
+              "parallel_tile_applied": 8,
+              "parallel_tile_requested": 8,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0,
+              "structured_after_sha256": "80cc914a59f80acb6c794f64af682a7bab88c87f335cfb0bbe68dea0ebf9b904"
+            },
+            "true_mlir_pipeline": true
+          },
+          "status": "not_visited_due_budget"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "2ee29b120157c0cc0b0544179bfc5b19523180620646de626c7ca22acd950947",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.59ccd64e35e78d07",
+            "llvm_ir_sha256": "9a93ee37a160a08da5471fb8c261bb65191ebae365a9f2e21bed77eae21fbfe7",
+            "lowered_mlir_sha256": "8b8078b450dba4f4ce815c279019e83e00e13b4286036fd20ab619d7c4104ca9",
+            "lowering_path_kind": "materialized",
+            "object_sha256": "e0592404c3d59eed4682239cab559dab1fff6b2761f068d007021e98074e0eea",
+            "object_size_bytes": 7752,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 118,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 4,
+              "reduction_tile": 16,
+              "vector_bits": 128,
+              "vectorize": true
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "953b67fa9404ea46d5ad3bf11cd9d4f1324e843ffd69dc31c7b51f4c0e7d1691",
+            "transformation": {
+              "b_transformations": [],
+              "fuse_elementwise": false,
+              "lowering_path_kind": "materialized",
+              "required_b_capabilities": [],
+              "transformation_trace": [
+                "rvv.linalg.materialized.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 12,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 7,
+              "parallel_tile_applied": 4,
+              "parallel_tile_requested": 4,
+              "reduction_tile_applied": 16,
+              "reduction_tile_requested": 16,
+              "structured_after_sha256": "d20b6a8bbfad907cc9985002ac5c0bc88de66ac3a3a15c80f525dbe0919e40cf"
+            },
+            "true_mlir_pipeline": true
+          },
+          "status": "not_visited_due_budget"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "9cda8e22787ec731f84d6cd0e9a70f0cec98bbe57df74625cb651da9ed59701d",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.4032f709f69185f2",
+            "llvm_ir_sha256": "034bcf778b0ccdcd9b8ad891ee43a1ed1c88f5616bf6594aeb72adb3d488fda1",
+            "lowered_mlir_sha256": "5106e4cb8a562c4785618009f9e379488cfcfbfc660cff64422e5bedf8232276",
+            "lowering_path_kind": "whole_graph_fused",
+            "object_sha256": "4a73193abc57cf50e13d274eeebc10eac475e94f990324e5968dbd6357b5bebc",
+            "object_size_bytes": 5544,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 28,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 4,
+              "reduction_tile": 16,
+              "vector_bits": 128,
+              "vectorize": true
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "66f46748845c571a33e2d76b53045caca45916e838caa99ed9ed7b07aea11d9e",
+            "transformation": {
+              "b_transformations": [
+                "riscv.b.readonly_whole_graph_fusion.v1"
+              ],
+              "fuse_elementwise": true,
+              "lowering_path_kind": "whole_graph_fused",
+              "required_b_capabilities": [
+                "b.readonly_nonalias_inputs.v1"
+              ],
+              "transformation_trace": [
+                "rvv.linalg.whole_graph_elementwise_fusion.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 14,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 6,
+              "parallel_tile_applied": 4,
+              "parallel_tile_requested": 4,
+              "reduction_tile_applied": 16,
+              "reduction_tile_requested": 16,
+              "structured_after_sha256": "b035a54d9426c27aa416af86efbcdd28f60ea493257e13cf800143f10642d0e9"
+            },
+            "true_mlir_pipeline": true
+          },
+          "status": "not_visited_due_budget"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "c9fcc466c588de6bdd9bd7712a4be52f16c52c1a2b266eeff98042058535be79",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.2ae12954b5419610",
+            "llvm_ir_sha256": "459d57ca072733dc183df3a47e6a7e9aa1cf5025be6ce0e939e9ac7de6c28dea",
+            "lowered_mlir_sha256": "0fa5a47c19fdfcb48eebed4282b26b7da17647b152c8b7e76740bffafdc3ee4e",
+            "lowering_path_kind": "materialized",
+            "object_sha256": "f59b3f2be48768acc45aa2c3571fbdead5471d783dd5efe137e063f153231e67",
+            "object_size_bytes": 6648,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 142,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 4,
+              "reduction_tile": 0,
+              "vector_bits": 128,
+              "vectorize": true
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "e92a4c9e10f03500a3c8e62c18687fff78e2d88cac178ccd76832346b5967b74",
+            "transformation": {
+              "b_transformations": [],
+              "fuse_elementwise": false,
+              "lowering_path_kind": "materialized",
+              "required_b_capabilities": [],
+              "transformation_trace": [
+                "rvv.linalg.materialized.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 10,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 7,
+              "parallel_tile_applied": 4,
+              "parallel_tile_requested": 4,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0,
+              "structured_after_sha256": "85b692c951cfce851be1614cd23c1b0d79821a9701ed57cd35841370b0e25658"
+            },
+            "true_mlir_pipeline": true
+          },
+          "status": "not_visited_due_budget"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "602648373cac13bf997a8ec8e67bc4dadf4dabae9ce8351d349ddcb8d8044331",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.77ece543ad5620a8",
+            "llvm_ir_sha256": "1aa690f46939f20add0d5a85b0d7043e2f48fb499f3c10048c01f41bd0fd980e",
+            "lowered_mlir_sha256": "82fb47a98a7182d82339ec4057650bcd6682a755fb82140dab6655aef35dceaa",
+            "lowering_path_kind": "whole_graph_fused",
+            "object_sha256": "0be40ef33387960cb8e2703249e455f47ade8ab89c9160cfcd70e8de0106dc95",
+            "object_size_bytes": 4472,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 52,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 4,
+              "reduction_tile": 0,
+              "vector_bits": 128,
+              "vectorize": true
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "02add28c8756bba1e9df9fd42acdc9e84137cf85db3cef337d6398f3c45a4d7b",
+            "transformation": {
+              "b_transformations": [
+                "riscv.b.readonly_whole_graph_fusion.v1"
+              ],
+              "fuse_elementwise": true,
+              "lowering_path_kind": "whole_graph_fused",
+              "required_b_capabilities": [
+                "b.readonly_nonalias_inputs.v1"
+              ],
+              "transformation_trace": [
+                "rvv.linalg.whole_graph_elementwise_fusion.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 12,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 6,
+              "parallel_tile_applied": 4,
+              "parallel_tile_requested": 4,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0,
+              "structured_after_sha256": "9e3ad542374605c529b2b5378ab292ee90cdc5237d76fae97265d1ef3eeb1771"
+            },
+            "true_mlir_pipeline": true
+          },
+          "status": "not_visited_due_budget"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "5665ac14c3e1cbdca97c178413dff48c57690668bc8073d008626a0aa89e1c0b",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.8ad208aa8e4d09e3",
+            "llvm_ir_sha256": "46552a5c4400d250c0f2caaf169f6782ec347414ee545c3cbb3c8a21b2cec859",
+            "lowered_mlir_sha256": "76ec67a6728615ed6c752d1774baaeb84016605080fb5761fd10dc2aae53afea",
+            "lowering_path_kind": "materialized",
+            "object_sha256": "eec49dcdd923dbc0f05d368531c61f999ae52d2b7d0555de34d201202bbbda3f",
+            "object_size_bytes": 3936,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 41,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 2,
+              "reduction_tile": 8,
+              "vector_bits": 128,
+              "vectorize": true
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "3806ca0943177f02fb002d687cf1a112e112c3d058c6ea35fc885907b786a8ff",
+            "transformation": {
+              "b_transformations": [],
+              "fuse_elementwise": false,
+              "lowering_path_kind": "materialized",
+              "required_b_capabilities": [],
+              "transformation_trace": [
+                "rvv.linalg.materialized.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 12,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 7,
+              "parallel_tile_applied": 2,
+              "parallel_tile_requested": 2,
+              "reduction_tile_applied": 8,
+              "reduction_tile_requested": 8,
+              "structured_after_sha256": "cc4ef0a3190b2c730a2c3818314bddbfa88de9730991c42c86e5cc867ac999cf"
+            },
+            "true_mlir_pipeline": true
+          },
+          "correctness": [
+            {
+              "max_abs_error": 0.0,
+              "output": "t1",
+              "passed": true
+            }
+          ],
+          "data_prep_samples_us": [
+            0.0,
+            0.0
+          ],
+          "initial_data_prep_us_per_call": 0.0,
+          "initial_ranking_samples_us": [
+            602761.702
+          ],
+          "latency_us": 603072.443,
+          "logical_boundary_gbps": 0.2225565594281349,
+          "selection_protocol": "fresh-alternating-round-robin.v1",
+          "selection_samples_us": [
+            601876.458,
+            604268.428
+          ],
+          "status": "measured"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "f6b60e2cd30fc4d0e2b50e6c7fed3a6ed1f75bfe4e64c7ec01616930c1317dab",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.b77fbe231aa3988e",
+            "llvm_ir_sha256": "510edcc7fcbb278cec2493c972bd83f24768708322dcf6ed520fe011828d3c29",
+            "lowered_mlir_sha256": "d800a7f5fbb6a68520c5f9e7506cdd8a5b0a2601216fb657ce6bec75262134e2",
+            "lowering_path_kind": "whole_graph_fused",
+            "object_sha256": "60bfd94ebeccff14336c0c8b24daf27e4dec84b6ebd173678acc3189a45abbd6",
+            "object_size_bytes": 4656,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 129,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 2,
+              "reduction_tile": 8,
+              "vector_bits": 128,
+              "vectorize": true
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "662b4f94fc6ad4e861c6e70ff560d8fd31942ce9de517654abba4a6ef7ada7e4",
+            "transformation": {
+              "b_transformations": [
+                "riscv.b.readonly_whole_graph_fusion.v1"
+              ],
+              "fuse_elementwise": true,
+              "lowering_path_kind": "whole_graph_fused",
+              "required_b_capabilities": [
+                "b.readonly_nonalias_inputs.v1"
+              ],
+              "transformation_trace": [
+                "rvv.linalg.whole_graph_elementwise_fusion.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 14,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 6,
+              "parallel_tile_applied": 2,
+              "parallel_tile_requested": 2,
+              "reduction_tile_applied": 8,
+              "reduction_tile_requested": 8,
+              "structured_after_sha256": "672f6d0136331a4186baab1683fde000c7a3d69509948757296ec1b1bfe99331"
+            },
+            "true_mlir_pipeline": true
+          },
+          "status": "not_visited_due_budget"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "cb0001e6e8a341a09d118e1ea0c2bfce901a88503c834e50e7383fab1f1bd8bb",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.e71a36364bb5ba74",
+            "llvm_ir_sha256": "44507e1bdce8d858f56f0314b8670aaacc44f961225c2c1e73db4665e88e03d3",
+            "lowered_mlir_sha256": "55ec6744b7ecf73847730e1a606a6fd47ffa6f65728161e87b5464930eb0b7c9",
+            "lowering_path_kind": "materialized",
+            "object_sha256": "9cb21c555f0d3a998dc7100c924391bddd96c310b3fad03d5c3ff967ec344318",
+            "object_size_bytes": 3784,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 53,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 2,
+              "reduction_tile": 0,
+              "vector_bits": 128,
+              "vectorize": true
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "3af8e09c5f431a42f63c6e706593a93434fa25fe2692caf9730faa31991a5071",
+            "transformation": {
+              "b_transformations": [],
+              "fuse_elementwise": false,
+              "lowering_path_kind": "materialized",
+              "required_b_capabilities": [],
+              "transformation_trace": [
+                "rvv.linalg.materialized.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 10,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 7,
+              "parallel_tile_applied": 2,
+              "parallel_tile_requested": 2,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0,
+              "structured_after_sha256": "b75b8d91e42f3e1bc9f9b0abfd943b13d573b2649b79314e3db111e0ebabc1fc"
+            },
+            "true_mlir_pipeline": true
+          },
+          "status": "not_visited_due_budget"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "ceb62471fca4cec0c45b4991a97cdb654d150a325fdae0e1f02fc1b574102d63",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.cf9603a1a95f6c47",
+            "llvm_ir_sha256": "bd071bb0d909bf448c73f66243e28feb405123394e32be1f2a23ccc52bbdf0c9",
+            "lowered_mlir_sha256": "55da248535992386a2402f73f3f2b603f5041cbf3920680536c6c89505acc0f9",
+            "lowering_path_kind": "whole_graph_fused",
+            "object_sha256": "37dd69b9ad7e77bb660b85b8c50e80c35df284e9eb51e47d2b726eee33aee44f",
+            "object_size_bytes": 4512,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 141,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 2,
+              "reduction_tile": 0,
+              "vector_bits": 128,
+              "vectorize": true
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "16942b74f9d24b62bd8f29d2141bb31ac68f5f4f434124734d5de32fe723ac07",
+            "transformation": {
+              "b_transformations": [
+                "riscv.b.readonly_whole_graph_fusion.v1"
+              ],
+              "fuse_elementwise": true,
+              "lowering_path_kind": "whole_graph_fused",
+              "required_b_capabilities": [
+                "b.readonly_nonalias_inputs.v1"
+              ],
+              "transformation_trace": [
+                "rvv.linalg.whole_graph_elementwise_fusion.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 12,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 6,
+              "parallel_tile_applied": 2,
+              "parallel_tile_requested": 2,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0,
+              "structured_after_sha256": "c61bc23940b524eecec2b7e853bd8b9a54d777d059ad239ab96ea276e05ac878"
+            },
+            "true_mlir_pipeline": true
+          },
+          "status": "not_visited_due_budget"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "0c4cb64842064fbde54d3f3e7d010fb77e100db3048060ab04d6d78c93d6b515",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.cbd1810c08ed4f1c",
+            "llvm_ir_sha256": "6414c80bf4e32e9a8d38e4112942ce4e831717acc8355de0fa9dcc4c5b0ee2c3",
+            "lowered_mlir_sha256": "fbb2088f3882d0973958fd55190d885f5f377cf4b50060515e4f32bda38567b7",
+            "lowering_path_kind": "materialized",
+            "object_sha256": "0262df97f3fab43bf0afafc3624c2892e7d2ff26ed6d93fcd412957a108a2b7e",
+            "object_size_bytes": 2920,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 34,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 1,
+              "reduction_tile": 4,
+              "vector_bits": 128,
+              "vectorize": true
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "32c6567f8557b488bf74f9c1c46665dc13f69b2fe97bb5335f627f45df5fd76f",
+            "transformation": {
+              "b_transformations": [],
+              "fuse_elementwise": false,
+              "lowering_path_kind": "materialized",
+              "required_b_capabilities": [],
+              "transformation_trace": [
+                "rvv.linalg.materialized.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 12,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 7,
+              "parallel_tile_applied": 1,
+              "parallel_tile_requested": 1,
+              "reduction_tile_applied": 4,
+              "reduction_tile_requested": 4,
+              "structured_after_sha256": "bfa933e17c54833d75648c02818eed444d0c16845cc6165a89a79d72d5dd6c9a"
+            },
+            "true_mlir_pipeline": true
+          },
+          "correctness": [
+            {
+              "max_abs_error": 0.0,
+              "output": "t1",
+              "passed": true
+            }
+          ],
+          "data_prep_samples_us": [
+            0.0,
+            0.0
+          ],
+          "initial_data_prep_us_per_call": 0.0,
+          "initial_ranking_samples_us": [
+            630639.542
+          ],
+          "latency_us": 630325.1705,
+          "logical_boundary_gbps": 0.21293410811047406,
+          "selection_protocol": "fresh-alternating-round-robin.v1",
+          "selection_samples_us": [
+            629064.455,
+            631585.886
+          ],
+          "status": "measured"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "b9bb275e7bb62c0dc2ac6c6a2e6ad44f338468772524bed70ebed7ed1861c72e",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.f06ae9a680011fab",
+            "llvm_ir_sha256": "757bcfa20a0ac8117aafb9791f66446fa17ac20c4cabcabaf678262541a2e6e1",
+            "lowered_mlir_sha256": "f0626640262fdd514ca3975af705b955e338f38d7e5743246751a0ab8daf5f76",
+            "lowering_path_kind": "whole_graph_fused",
+            "object_sha256": "04edf7ff9640f5e906bc4a683386ca2cdd032d3b0ab8c83e4e981b0cbaa050f4",
+            "object_size_bytes": 2720,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 31,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 1,
+              "reduction_tile": 4,
+              "vector_bits": 128,
+              "vectorize": true
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "0f1d21f377d23e70ec2c8e58991bcd495dc364907e7e75ff337c898b4a40debe",
+            "transformation": {
+              "b_transformations": [
+                "riscv.b.readonly_whole_graph_fusion.v1"
+              ],
+              "fuse_elementwise": true,
+              "lowering_path_kind": "whole_graph_fused",
+              "required_b_capabilities": [
+                "b.readonly_nonalias_inputs.v1"
+              ],
+              "transformation_trace": [
+                "rvv.linalg.whole_graph_elementwise_fusion.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 14,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 6,
+              "parallel_tile_applied": 1,
+              "parallel_tile_requested": 1,
+              "reduction_tile_applied": 4,
+              "reduction_tile_requested": 4,
+              "structured_after_sha256": "c778bbd8d6e8d3b13c4aaf494f5a62e07d319feeec2fe0b708da8cbe296363c9"
+            },
+            "true_mlir_pipeline": true
+          },
+          "status": "not_visited_due_budget"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "8358fbf9777a1a188cf19bbb390502e5547246afe8cf2cff664fcb6c53459034",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.60b074d065ff4376",
+            "llvm_ir_sha256": "093b048e928569eaa98612f7eacde89c787ad32cfc6b1558b2d68defee19cbff",
+            "lowered_mlir_sha256": "513973483cb91f7ac6640399c820c7982987e582fc314206e7909f14b412b819",
+            "lowering_path_kind": "materialized",
+            "object_sha256": "acac02508bc7edf0028183957e5da35d5ff7e6ebdcf8b3a6d39fe878046e3cf0",
+            "object_size_bytes": 2904,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 40,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 1,
+              "reduction_tile": 0,
+              "vector_bits": 128,
+              "vectorize": true
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "29a1f0e1ae3549705766c6de4f4485e2da35e56f9be79d392412ff3d846f8183",
+            "transformation": {
+              "b_transformations": [],
+              "fuse_elementwise": false,
+              "lowering_path_kind": "materialized",
+              "required_b_capabilities": [],
+              "transformation_trace": [
+                "rvv.linalg.materialized.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 10,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 7,
+              "parallel_tile_applied": 1,
+              "parallel_tile_requested": 1,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0,
+              "structured_after_sha256": "c35f6d35656345f1178dd69cdf9654d136057803ec5b53185c64fac124342294"
+            },
+            "true_mlir_pipeline": true
+          },
+          "status": "not_visited_due_budget"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "fd15e908a47fd7543ae5dcf22aa14ee0e9eedee1b1698093386ba46969118852",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.34698ad5ae4eaaad",
+            "llvm_ir_sha256": "4a4fcdd6cec52be6945c94fa4edcffdebd8516ac9c47e278a62324e7f4174dfb",
+            "lowered_mlir_sha256": "794136c66f76ff7d1c54a8194c59fcaad9498f3e4cdde48ba23d489820ec74b1",
+            "lowering_path_kind": "whole_graph_fused",
+            "object_sha256": "27950b647889c2d75d331567dc1ceff74cb31749a9481c371f2accc8ae35af3d",
+            "object_size_bytes": 2664,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 37,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 1,
+              "reduction_tile": 0,
+              "vector_bits": 128,
+              "vectorize": true
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "bf2374494a08719617c8417b5acb394895276f0941bffd3a3e019f4e118ce82b",
+            "transformation": {
+              "b_transformations": [
+                "riscv.b.readonly_whole_graph_fusion.v1"
+              ],
+              "fuse_elementwise": true,
+              "lowering_path_kind": "whole_graph_fused",
+              "required_b_capabilities": [
+                "b.readonly_nonalias_inputs.v1"
+              ],
+              "transformation_trace": [
+                "rvv.linalg.whole_graph_elementwise_fusion.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 12,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 6,
+              "parallel_tile_applied": 1,
+              "parallel_tile_requested": 1,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0,
+              "structured_after_sha256": "1b6e471030f2ad01cac1bc4a3aa65ad4900d2c7429f4b8ff4000148f8874214a"
+            },
+            "true_mlir_pipeline": true
+          },
+          "status": "not_visited_due_budget"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "33ddbaa5bd3de49cb3451c9ee267db3a2113f40f40e5a884996f246ac7d9b976",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.631cdb356b88dbe5",
+            "llvm_ir_sha256": "36172fc33654490ea191eb943baccd2f798db9dc1df7c43394304bbfcf5f335a",
+            "lowered_mlir_sha256": "73b21383f8a0db3ae9749708548574e59c97eed3d6995ea18849a1fd89db929b",
+            "lowering_path_kind": "materialized",
+            "object_sha256": "4731f14cc07c5618f544b34843877464a254bb80941b45e793e7fb33b7503b96",
+            "object_size_bytes": 3056,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 40,
+            "schedule": {
+              "opt_level": 2,
+              "parallel_tile": 0,
+              "reduction_tile": 0,
+              "vector_bits": 128,
+              "vectorize": true
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "1c11b641dce325b03b480980729af24fd30efd32840239fd4eac9b95b5d96fb1",
+            "transformation": {
+              "b_transformations": [],
+              "fuse_elementwise": false,
+              "lowering_path_kind": "materialized",
+              "required_b_capabilities": [],
+              "transformation_trace": [
+                "rvv.linalg.materialized.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 0,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 0,
+              "parallel_tile_applied": 0,
+              "parallel_tile_requested": 0,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0,
+              "structured_after_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2"
+            },
+            "true_mlir_pipeline": true
+          },
+          "correctness": [
+            {
+              "max_abs_error": 0.0,
+              "output": "t1",
+              "passed": true
+            }
+          ],
+          "data_prep_samples_us": [
+            0.0,
+            0.0
+          ],
+          "initial_data_prep_us_per_call": 0.0,
+          "initial_ranking_samples_us": [
+            764973.843
+          ],
+          "latency_us": 763522.426,
+          "logical_boundary_gbps": 0.17578753868848382,
+          "selection_protocol": "fresh-alternating-round-robin.v1",
+          "selection_samples_us": [
+            767015.391,
+            760029.461
+          ],
+          "status": "measured"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "52de6634bab8b3f0d22837092d21b47146a3aaf14b57c38e8369831ee1c81e25",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.9d4c87cf3b196c27",
+            "llvm_ir_sha256": "9c52dc8e513759baaedde487a197b3fa26ad5cb00c8cd22f66edaa0e0f537383",
+            "lowered_mlir_sha256": "ddc567f679bb860012b79d0bc30c69e6fe257c85da830f660fac7325eaea1ea1",
+            "lowering_path_kind": "whole_graph_fused",
+            "object_sha256": "ceea93a20fef273480281f9f6cd074723e6a07355c1373021fef345cfd98eca7",
+            "object_size_bytes": 2752,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 37,
+            "schedule": {
+              "opt_level": 2,
+              "parallel_tile": 0,
+              "reduction_tile": 0,
+              "vector_bits": 128,
+              "vectorize": true
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "1e50b07f37153654ca05179d3fb777ad55c2c99b2fb466d4edb1fe7b1116a29c",
+            "transformation": {
+              "b_transformations": [
+                "riscv.b.readonly_whole_graph_fusion.v1"
+              ],
+              "fuse_elementwise": true,
+              "lowering_path_kind": "whole_graph_fused",
+              "required_b_capabilities": [
+                "b.readonly_nonalias_inputs.v1"
+              ],
+              "transformation_trace": [
+                "rvv.linalg.whole_graph_elementwise_fusion.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 0,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 0,
+              "parallel_tile_applied": 0,
+              "parallel_tile_requested": 0,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0,
+              "structured_after_sha256": "e704af0b58ea9b18a4253db4a9e2cbb1945ff14a69a5be3fb666e5ea6513ae97"
+            },
+            "true_mlir_pipeline": true
+          },
+          "status": "not_visited_due_budget"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "ee5d50f148a65788f0a9c71ff4aab6420046c4eaeeb6431c18a61d39eeaabfae",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.a5d50f97a6eb8faa",
+            "llvm_ir_sha256": "fe077a59a2fc6ef1a2b668f452d45544e4ffd69018772d96cd3141528a9f4b41",
+            "lowered_mlir_sha256": "73b21383f8a0db3ae9749708548574e59c97eed3d6995ea18849a1fd89db929b",
+            "lowering_path_kind": "materialized",
+            "object_sha256": "f3ae786418b2e230e6c29c2ba9872f6e99a1b5361e38d4e8d7efac453c7b3b05",
+            "object_size_bytes": 2112,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 0,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 0,
+              "reduction_tile": 0,
+              "vector_bits": 128,
+              "vectorize": false
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "1c11b641dce325b03b480980729af24fd30efd32840239fd4eac9b95b5d96fb1",
+            "transformation": {
+              "b_transformations": [],
+              "fuse_elementwise": false,
+              "lowering_path_kind": "materialized",
+              "required_b_capabilities": [],
+              "transformation_trace": [
+                "rvv.linalg.materialized.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 0,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 0,
+              "parallel_tile_applied": 0,
+              "parallel_tile_requested": 0,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0,
+              "structured_after_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2"
+            },
+            "true_mlir_pipeline": true
+          },
+          "correctness": [
+            {
+              "max_abs_error": 0.0,
+              "output": "t1",
+              "passed": true
+            }
+          ],
+          "data_prep_samples_us": [
+            0.0,
+            0.0
+          ],
+          "initial_data_prep_us_per_call": 0.0,
+          "initial_ranking_samples_us": [
+            730129.012
+          ],
+          "latency_us": 728095.9824999999,
+          "logical_boundary_gbps": 0.18434070675565087,
+          "selection_protocol": "fresh-alternating-round-robin.v1",
+          "selection_samples_us": [
+            727720.561,
+            728471.404
+          ],
+          "status": "measured"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "a4d855029a5f2149dc9e2330efe0a5191c867f0d3173baef8ca3fbec3f7b56b9",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.75f4332072523bc2",
+            "llvm_ir_sha256": "a46af6647d95993385a058d7be545e584bd526234d6bfcbc9563aff505eabe40",
+            "lowered_mlir_sha256": "ddc567f679bb860012b79d0bc30c69e6fe257c85da830f660fac7325eaea1ea1",
+            "lowering_path_kind": "whole_graph_fused",
+            "object_sha256": "fd7d697525ca639e0e0738f0bee9de4fd5b60bdce50b5018c799ec7a280f6564",
+            "object_size_bytes": 1960,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 0,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 0,
+              "reduction_tile": 0,
+              "vector_bits": 128,
+              "vectorize": false
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "1e50b07f37153654ca05179d3fb777ad55c2c99b2fb466d4edb1fe7b1116a29c",
+            "transformation": {
+              "b_transformations": [
+                "riscv.b.readonly_whole_graph_fusion.v1"
+              ],
+              "fuse_elementwise": true,
+              "lowering_path_kind": "whole_graph_fused",
+              "required_b_capabilities": [
+                "b.readonly_nonalias_inputs.v1"
+              ],
+              "transformation_trace": [
+                "rvv.linalg.whole_graph_elementwise_fusion.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 0,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 0,
+              "parallel_tile_applied": 0,
+              "parallel_tile_requested": 0,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0,
+              "structured_after_sha256": "e704af0b58ea9b18a4253db4a9e2cbb1945ff14a69a5be3fb666e5ea6513ae97"
+            },
+            "true_mlir_pipeline": true
+          },
+          "status": "not_visited_due_budget"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "c414d966e72d4cf9586e92fcfbc96ca472cab1591c846dc72be94cf8bc53ccdf",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.b817ab76ad232fea",
+            "llvm_ir_sha256": "7c2005836e7ee10fb74bb35a1ae4362fc72b5b0ff66b2172bb816a9fed462b41",
+            "lowered_mlir_sha256": "fb4e0b414c534a8c761902baa9f11316e5ef3e059f4216a1d1c26a025868140d",
+            "lowering_path_kind": "materialized",
+            "object_sha256": "8027bf3fbdf306717bac8b1e7c3361dac034ae29a113f78fc0af3301385002dc",
+            "object_size_bytes": 2952,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 44,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 0,
+              "reduction_tile": 1,
+              "vector_bits": 128,
+              "vectorize": true
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "0b8d8d85d2678e301edbe36eed9a4000b5b8189c86f83019029d090ab7a73f30",
+            "transformation": {
+              "b_transformations": [],
+              "fuse_elementwise": false,
+              "lowering_path_kind": "materialized",
+              "required_b_capabilities": [],
+              "transformation_trace": [
+                "rvv.linalg.materialized.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 2,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 2,
+              "parallel_tile_applied": 0,
+              "parallel_tile_requested": 0,
+              "reduction_tile_applied": 1,
+              "reduction_tile_requested": 1,
+              "structured_after_sha256": "6ef2a0d2ee967ef7ac1226c0040df1b3df670b6f7a027488ab99710b0becfd08"
+            },
+            "true_mlir_pipeline": true
+          },
+          "status": "not_visited_due_budget"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "e103a4c2d2d15f019d15f9ba0f3cb48de03417ddfa9ced02afbf27b770d54152",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.2148c08babb6e83a",
+            "llvm_ir_sha256": "2b986c7c159af7fc1012e6e0c0b27f551ff969ae029e00d5d649be1aa157ac91",
+            "lowered_mlir_sha256": "d445c7e3deece2738974d0d93fd5b203847545b926b6ee72d3438828e4de56de",
+            "lowering_path_kind": "whole_graph_fused",
+            "object_sha256": "02cbfef567080937b2d1f7038cc7107cde2af88e82e58f39e0e0e9276583bdb5",
+            "object_size_bytes": 2848,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 41,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 0,
+              "reduction_tile": 1,
+              "vector_bits": 128,
+              "vectorize": true
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "173f82c5c1747c84fe4912528ba19cce8ee1db4225537965928031dbe358c4b9",
+            "transformation": {
+              "b_transformations": [
+                "riscv.b.readonly_whole_graph_fusion.v1"
+              ],
+              "fuse_elementwise": true,
+              "lowering_path_kind": "whole_graph_fused",
+              "required_b_capabilities": [
+                "b.readonly_nonalias_inputs.v1"
+              ],
+              "transformation_trace": [
+                "rvv.linalg.whole_graph_elementwise_fusion.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 2,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 2,
+              "parallel_tile_applied": 0,
+              "parallel_tile_requested": 0,
+              "reduction_tile_applied": 1,
+              "reduction_tile_requested": 1,
+              "structured_after_sha256": "cf5c662e7eb94293b2c0193ee3cfb00421f7dce8c9ec6b47af7094ba60cd381c"
+            },
+            "true_mlir_pipeline": true
+          },
+          "status": "not_visited_due_budget"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "2d48af88756c3d85b46f16d143f033dc22676cd5a1330e2c5c4217d4ba34a336",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.d2aec4ed67f401a0",
+            "llvm_ir_sha256": "d03709941c8464e38093587c1427ee2d9bce61f7d0d86316fc2d696c29f5b9c2",
+            "lowered_mlir_sha256": "032cad7a808dc13f4517f436dacf6abca468983212cecb9a605c10fd6458a8f8",
+            "lowering_path_kind": "materialized",
+            "object_sha256": "c988c549e52af47896634ca149b07f94d93efb64befb641b9a1dd6433ba4716c",
+            "object_size_bytes": 3128,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 49,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 0,
+              "reduction_tile": 2,
+              "vector_bits": 128,
+              "vectorize": true
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "8688c21dffe806a0e5beb3e1044eb427cd52e5ba6ab6c8673fbae57a03be4d2e",
+            "transformation": {
+              "b_transformations": [],
+              "fuse_elementwise": false,
+              "lowering_path_kind": "materialized",
+              "required_b_capabilities": [],
+              "transformation_trace": [
+                "rvv.linalg.materialized.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 2,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 2,
+              "parallel_tile_applied": 0,
+              "parallel_tile_requested": 0,
+              "reduction_tile_applied": 2,
+              "reduction_tile_requested": 2,
+              "structured_after_sha256": "ba0cd9e26269d6e247fbcefca30771480b3b29cfdc2bbfc5b269e489f51aff70"
+            },
+            "true_mlir_pipeline": true
+          },
+          "status": "not_visited_due_budget"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "f1b29f11d86910cad7af4f9a2193266515717dcd32690799adec424a8832b7b7",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.5124242e51292ddc",
+            "llvm_ir_sha256": "2dd503bc9a07e45c32112ddc9961346a6a6a0d622c6f56ffc2ed4a65cbf6f699",
+            "lowered_mlir_sha256": "d57cfefaa205b9264310cae995b6fb1d9b51f954742140a75af955841c94923e",
+            "lowering_path_kind": "whole_graph_fused",
+            "object_sha256": "4001594122950cbb480afb19c64d0ba03177053d004390df0e2f2a77c59fd309",
+            "object_size_bytes": 3032,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 46,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 0,
+              "reduction_tile": 2,
+              "vector_bits": 128,
+              "vectorize": true
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "6213a1b1c9fd8be37913389732f810e571a1177fb0e1001303c55127a4380651",
+            "transformation": {
+              "b_transformations": [
+                "riscv.b.readonly_whole_graph_fusion.v1"
+              ],
+              "fuse_elementwise": true,
+              "lowering_path_kind": "whole_graph_fused",
+              "required_b_capabilities": [
+                "b.readonly_nonalias_inputs.v1"
+              ],
+              "transformation_trace": [
+                "rvv.linalg.whole_graph_elementwise_fusion.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 2,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 2,
+              "parallel_tile_applied": 0,
+              "parallel_tile_requested": 0,
+              "reduction_tile_applied": 2,
+              "reduction_tile_requested": 2,
+              "structured_after_sha256": "348a0f17e7019a973f291fbfdb8750474e784cbf739fba13182896d1f268a3f9"
+            },
+            "true_mlir_pipeline": true
+          },
+          "status": "not_visited_due_budget"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "3778880fcb9863750da975393bab973825d23aeed3f241443e92389b5f815d9d",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.5d124be66c735310",
+            "llvm_ir_sha256": "f7337a942cc5cdde08a9d335ffc33cea6451312cdf5cdf9673a73c2a327a3652",
+            "lowered_mlir_sha256": "89703d073cc25c26a51adad4908c22982877fe0b7cf8055847518ff5abf26786",
+            "lowering_path_kind": "materialized",
+            "object_sha256": "051573045c602def3b65da54456ce35bf4a152253691ba4a83629ad2cabe6c76",
+            "object_size_bytes": 3448,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 59,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 0,
+              "reduction_tile": 4,
+              "vector_bits": 128,
+              "vectorize": true
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "c81a62f6154752dc8994cc70f571906c2ec64b1a01efd8bd25f92327de31bf22",
+            "transformation": {
+              "b_transformations": [],
+              "fuse_elementwise": false,
+              "lowering_path_kind": "materialized",
+              "required_b_capabilities": [],
+              "transformation_trace": [
+                "rvv.linalg.materialized.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 2,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 2,
+              "parallel_tile_applied": 0,
+              "parallel_tile_requested": 0,
+              "reduction_tile_applied": 4,
+              "reduction_tile_requested": 4,
+              "structured_after_sha256": "988f6e59af5162f74a9fea46cc9df4a2cc1dbeb09950878577a5c40d56ec4672"
+            },
+            "true_mlir_pipeline": true
+          },
+          "status": "not_visited_due_budget"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "a1127c98b8153fb69b728e4d7f31e41b97403adef81dcccaa35e11b4053553cc",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.c30c56bd965a954b",
+            "llvm_ir_sha256": "e491a3462c68d49571444e35fb5f30a2fcc4ef64d1e7029de96a4577fea720e2",
+            "lowered_mlir_sha256": "8e79c1f96bd1c899f70a32066510b547d7c604a2811a40a2bdd1df65ede61a31",
+            "lowering_path_kind": "whole_graph_fused",
+            "object_sha256": "9bc3eb0db85a565ac79887c20c3f0cd869939e0cf1e2f4d8e89344d961127f1e",
+            "object_size_bytes": 3360,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 56,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 0,
+              "reduction_tile": 4,
+              "vector_bits": 128,
+              "vectorize": true
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "bcacba17c17bf31efb7f875541c090801f64b04cc9e8a298eeeb8bfcc813c4ad",
+            "transformation": {
+              "b_transformations": [
+                "riscv.b.readonly_whole_graph_fusion.v1"
+              ],
+              "fuse_elementwise": true,
+              "lowering_path_kind": "whole_graph_fused",
+              "required_b_capabilities": [
+                "b.readonly_nonalias_inputs.v1"
+              ],
+              "transformation_trace": [
+                "rvv.linalg.whole_graph_elementwise_fusion.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 2,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 2,
+              "parallel_tile_applied": 0,
+              "parallel_tile_requested": 0,
+              "reduction_tile_applied": 4,
+              "reduction_tile_requested": 4,
+              "structured_after_sha256": "d9c91d4dd9e26c5e4ed053054843c4d351809adbd1ef15a01a48a3ec729b7aa4"
+            },
+            "true_mlir_pipeline": true
+          },
+          "status": "not_visited_due_budget"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "c2cbfc1039e5e8c4e315c6e527ecc3df8b6e6d4342837e4e18f7f833df1d0ee7",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.1f8f1465e665d5d9",
+            "llvm_ir_sha256": "08f10c6ef1401e7e43b433ab6dcbb99cac96369bda8596527f26d519f6a8ef81",
+            "lowered_mlir_sha256": "a9d8dd9bf578fe4cd05383e2372036e8799f98d099a557f48dddf87ff60c7339",
+            "lowering_path_kind": "materialized",
+            "object_sha256": "a8c080d75f0bd78466c9dfc6d493edee236ebde68f13f67ec1bd6464ecaba7ba",
+            "object_size_bytes": 4312,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 79,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 0,
+              "reduction_tile": 8,
+              "vector_bits": 128,
+              "vectorize": true
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "ffc8f947a5903f5c93bbc4f22ea50c43075007b8f1f7ce3f801bbe71e0ce2ab7",
+            "transformation": {
+              "b_transformations": [],
+              "fuse_elementwise": false,
+              "lowering_path_kind": "materialized",
+              "required_b_capabilities": [],
+              "transformation_trace": [
+                "rvv.linalg.materialized.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 2,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 2,
+              "parallel_tile_applied": 0,
+              "parallel_tile_requested": 0,
+              "reduction_tile_applied": 8,
+              "reduction_tile_requested": 8,
+              "structured_after_sha256": "31b699ed43bfee298310815ddf2f160c21c43591b3dd0e036feb742e30ec82d0"
+            },
+            "true_mlir_pipeline": true
+          },
+          "status": "not_visited_due_budget"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "e32a70d6d16d8697fa6bf95fb631b43f2b5b609b2602dcbaaf827dc8d5a99b80",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.a97cc16c192870a3",
+            "llvm_ir_sha256": "c804c0d66b4b50a072b14aa4db1eb1c5f96d11dd97e3bf1205bc2187cdc339fc",
+            "lowered_mlir_sha256": "4b157df9c6cb4a6b6c15c905f6af5fb197a84a09adf03802a614c05810f17b5f",
+            "lowering_path_kind": "whole_graph_fused",
+            "object_sha256": "22bf74aae75f370f7640110c5b9f2964d56b9066730f93b083c0242403b21fbd",
+            "object_size_bytes": 4208,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 76,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 0,
+              "reduction_tile": 8,
+              "vector_bits": 128,
+              "vectorize": true
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "25c1b0603304ac855ab27b82412a4bada0bffd438bb244a839048e24623c368d",
+            "transformation": {
+              "b_transformations": [
+                "riscv.b.readonly_whole_graph_fusion.v1"
+              ],
+              "fuse_elementwise": true,
+              "lowering_path_kind": "whole_graph_fused",
+              "required_b_capabilities": [
+                "b.readonly_nonalias_inputs.v1"
+              ],
+              "transformation_trace": [
+                "rvv.linalg.whole_graph_elementwise_fusion.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 2,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 2,
+              "parallel_tile_applied": 0,
+              "parallel_tile_requested": 0,
+              "reduction_tile_applied": 8,
+              "reduction_tile_requested": 8,
+              "structured_after_sha256": "d117fa14ea1ae20ad907f6d23d5fe304ec09598e3013d30d50aed3be2197e35d"
+            },
+            "true_mlir_pipeline": true
+          },
+          "status": "not_visited_due_budget"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "b289150909e8d16e39f976bb3c35f52f0b28d893c859f7c20ee33d4c183b64ac",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.04ca59b2d6d9a6ca",
+            "llvm_ir_sha256": "6cb63386574364eda762ddb4d08c3a77146683070e885b5d8ea9175286fee8b1",
+            "lowered_mlir_sha256": "396e75027e4a57100886f72ef3594bea54ed16b68263eab8a62d4db51b6469ed",
+            "lowering_path_kind": "materialized",
+            "object_sha256": "9c16a1013e68422b0d12d724ba4e3c73b4859dc93898cb42fe1ca1fc88233f3e",
+            "object_size_bytes": 5968,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 119,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 0,
+              "reduction_tile": 16,
+              "vector_bits": 128,
+              "vectorize": true
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "713663fb9186ab37e00e780fa30f4d0c918961ca156c3907dfe7c9b5145f464e",
+            "transformation": {
+              "b_transformations": [],
+              "fuse_elementwise": false,
+              "lowering_path_kind": "materialized",
+              "required_b_capabilities": [],
+              "transformation_trace": [
+                "rvv.linalg.materialized.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 2,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 2,
+              "parallel_tile_applied": 0,
+              "parallel_tile_requested": 0,
+              "reduction_tile_applied": 16,
+              "reduction_tile_requested": 16,
+              "structured_after_sha256": "b7249f793639a3312ac246ade95aebbd9b88df7e25c24dee09d3edaa7aaa1d87"
+            },
+            "true_mlir_pipeline": true
+          },
+          "status": "not_visited_due_budget"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "bab4fcfd63d6fef0dc02c0fd9199a5f370e18c0352abf630d56cf3f8d6c25e47",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.1d0a82859cb6f19d",
+            "llvm_ir_sha256": "3eaa403fb83c87de238ee73c13358ea3773d454cbff2790d1810f52fa868501b",
+            "lowered_mlir_sha256": "97bcaf2c11c695beb9cb9f0c00c64715098b5651bd7242c896616ebe793aabec",
+            "lowering_path_kind": "whole_graph_fused",
+            "object_sha256": "65bf4dd17202022cc47352376aee199b2da2be01fe478e03016569c58c9f3d42",
+            "object_size_bytes": 5864,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 116,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 0,
+              "reduction_tile": 16,
+              "vector_bits": 128,
+              "vectorize": true
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "7906b3ee3dfcbdf5fc504db476b9d1b2ef71fe0d5388423fb9852af219a05f6a",
+            "transformation": {
+              "b_transformations": [
+                "riscv.b.readonly_whole_graph_fusion.v1"
+              ],
+              "fuse_elementwise": true,
+              "lowering_path_kind": "whole_graph_fused",
+              "required_b_capabilities": [
+                "b.readonly_nonalias_inputs.v1"
+              ],
+              "transformation_trace": [
+                "rvv.linalg.whole_graph_elementwise_fusion.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 2,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 2,
+              "parallel_tile_applied": 0,
+              "parallel_tile_requested": 0,
+              "reduction_tile_applied": 16,
+              "reduction_tile_requested": 16,
+              "structured_after_sha256": "cb936f329229e62046e408c3fd6958d9f500c72ff4439c235f28705a3ff49fb3"
+            },
+            "true_mlir_pipeline": true
+          },
+          "status": "not_visited_due_budget"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "496a5f4b96ee9fbd98a0d25932bb268a9b26efb7cbaa8436203b410376bb2b42",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.19d5eaa370ad6bbf",
+            "llvm_ir_sha256": "e4aa944087e618d53f0b717b20d37665ba8ccd7457ec297a781d1d441ac053b4",
+            "lowered_mlir_sha256": "087da6f0e6ca08e71dcfdaddc08ffc15a1e94f3927d556316d6d85db89a573dc",
+            "lowering_path_kind": "materialized",
+            "object_sha256": "06005eb7178f88e1019e0263b4d709fbe9b57a143b668e8106b305e688a45e80",
+            "object_size_bytes": 9920,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 215,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 0,
+              "reduction_tile": 32,
+              "vector_bits": 128,
+              "vectorize": true
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "bbd3dab78a1b0a93c7050a7b5ead1e2f9d446d23b73dfcd45f087d839117e86d",
+            "transformation": {
+              "b_transformations": [],
+              "fuse_elementwise": false,
+              "lowering_path_kind": "materialized",
+              "required_b_capabilities": [],
+              "transformation_trace": [
+                "rvv.linalg.materialized.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 2,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 2,
+              "parallel_tile_applied": 0,
+              "parallel_tile_requested": 0,
+              "reduction_tile_applied": 32,
+              "reduction_tile_requested": 32,
+              "structured_after_sha256": "c0a69958ada816e0460438a1dba8cd4a424772013542157f25c5093b0791c265"
+            },
+            "true_mlir_pipeline": true
+          },
+          "status": "not_visited_due_budget"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "5f2cf81a5bf4d2c70ab9dfbf291bdccb153b64ee8bd28b94e598c5d0f54761a9",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.8029bbb6ea1a76a2",
+            "llvm_ir_sha256": "54b2741e3bfec89ae341d266c330fcebe8e1b627f64c64650fe6d25a81718e8b",
+            "lowered_mlir_sha256": "b37a5df38a0ca8d513a858ec1dc902af458ba23f369643b65125d4b40ca02ecb",
+            "lowering_path_kind": "whole_graph_fused",
+            "object_sha256": "c44c256f542d24cc17ad17750026241e4223ca0ea389951dd41cebab0a2e17b9",
+            "object_size_bytes": 9808,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 212,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 0,
+              "reduction_tile": 32,
+              "vector_bits": 128,
+              "vectorize": true
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "426633d89fe2066a990a74ecd3aea0ba619904f9a77777359358ab16a6a1e1c2",
+            "transformation": {
+              "b_transformations": [
+                "riscv.b.readonly_whole_graph_fusion.v1"
+              ],
+              "fuse_elementwise": true,
+              "lowering_path_kind": "whole_graph_fused",
+              "required_b_capabilities": [
+                "b.readonly_nonalias_inputs.v1"
+              ],
+              "transformation_trace": [
+                "rvv.linalg.whole_graph_elementwise_fusion.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 2,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 2,
+              "parallel_tile_applied": 0,
+              "parallel_tile_requested": 0,
+              "reduction_tile_applied": 32,
+              "reduction_tile_requested": 32,
+              "structured_after_sha256": "8f350c88e0ce542d99dca86c2cfc3276f1e5c8c23c0315b1383897f9f562671c"
+            },
+            "true_mlir_pipeline": true
+          },
+          "status": "not_visited_due_budget"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "cb76ff246ad311b9559a385a196732382fda04e2f69f6837f54afbef95348934",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.a24db7c3fd663af0",
+            "llvm_ir_sha256": "8e397cff466f57a57e8b244a37feadbd6fd048ab879efb1d4fcaff8443e52e37",
+            "lowered_mlir_sha256": "408ab17e0421428f7f5c2c5461e2dc53fe7440adf68155a4cf4e5b6401de68d2",
+            "lowering_path_kind": "materialized",
+            "object_sha256": "3e5dfbbdf543c998f11b80d162b0d23210228f4fe7b199b0403f5d46e22f6bc8",
+            "object_size_bytes": 2736,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 40,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 0,
+              "reduction_tile": 64,
+              "vector_bits": 128,
+              "vectorize": true
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "65f4fc84794da95bd27df7ab9302c851ec401214bd1e09f28f49b1cab182b476",
+            "transformation": {
+              "b_transformations": [],
+              "fuse_elementwise": false,
+              "lowering_path_kind": "materialized",
+              "required_b_capabilities": [],
+              "transformation_trace": [
+                "rvv.linalg.materialized.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 2,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 2,
+              "parallel_tile_applied": 0,
+              "parallel_tile_requested": 0,
+              "reduction_tile_applied": 64,
+              "reduction_tile_requested": 64,
+              "structured_after_sha256": "e21724788bf54d29a4813327ea049d6ac439633560433bf0463b777b2e200f47"
+            },
+            "true_mlir_pipeline": true
+          },
+          "status": "not_visited_due_budget"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "894c3e0402a57bc6a3f451cb8e0bf50365b5094571e9b10e93aa3ac80a13d438",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.e0e41063aa4dfc72",
+            "llvm_ir_sha256": "0298edbd0de832f630ffa5a12a7ef6c647d049562bf3ab5d15ba1dc9ddc554e6",
+            "lowered_mlir_sha256": "59cabbf2ab9e53614eac503cad44a054027b20a71077219a182edad63d92b08d",
+            "lowering_path_kind": "whole_graph_fused",
+            "object_sha256": "bbc298ab68ffa5520d920e72c18b943975f18adb874c1a7a64280f3aae1f6627",
+            "object_size_bytes": 2608,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 37,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 0,
+              "reduction_tile": 64,
+              "vector_bits": 128,
+              "vectorize": true
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "9dafda9cbd5306dcd90d9aa6d018b9eedc220dc13712748c78e4311fd4b8d057",
+            "transformation": {
+              "b_transformations": [
+                "riscv.b.readonly_whole_graph_fusion.v1"
+              ],
+              "fuse_elementwise": true,
+              "lowering_path_kind": "whole_graph_fused",
+              "required_b_capabilities": [
+                "b.readonly_nonalias_inputs.v1"
+              ],
+              "transformation_trace": [
+                "rvv.linalg.whole_graph_elementwise_fusion.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 2,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 2,
+              "parallel_tile_applied": 0,
+              "parallel_tile_requested": 0,
+              "reduction_tile_applied": 64,
+              "reduction_tile_requested": 64,
+              "structured_after_sha256": "4afdf5b923c9e261fdc4d4aa7beefaf0d646aa1985bb80202b97a94a43b52cd4"
+            },
+            "true_mlir_pipeline": true
+          },
+          "status": "not_visited_due_budget"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "bd073fbd0c6a685a1f6a16dfd5051f179b63958a1b934cdd08dbc97b098e932a",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.d834b4d89bba311f",
+            "llvm_ir_sha256": "132148e58dd1853ea92694fad50e69582ed3b987a4f945616f26935201e10928",
+            "lowered_mlir_sha256": "f13889eea50bb70d07d5b547290a08e751b999b8ce211a03e6b07d50564b5e8e",
+            "lowering_path_kind": "materialized",
+            "object_sha256": "a793fa956a0c1d8e36e66defd75d8a1f5e617035e41d9a63769589ff9d1c6e54",
+            "object_size_bytes": 2736,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 40,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 0,
+              "reduction_tile": 128,
+              "vector_bits": 128,
+              "vectorize": true
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "c5adc4b882fccb53123801f1d9b173f7eb26c5aec88e514f5460be8ee4d3a7a4",
+            "transformation": {
+              "b_transformations": [],
+              "fuse_elementwise": false,
+              "lowering_path_kind": "materialized",
+              "required_b_capabilities": [],
+              "transformation_trace": [
+                "rvv.linalg.materialized.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 2,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 2,
+              "parallel_tile_applied": 0,
+              "parallel_tile_requested": 0,
+              "reduction_tile_applied": 128,
+              "reduction_tile_requested": 128,
+              "structured_after_sha256": "713896d0a9e98fdfaed5ecb206d2dfbfa1172abe736d20fecbd3a28610648807"
+            },
+            "true_mlir_pipeline": true
+          },
+          "status": "not_visited_due_budget"
+        },
+        {
+          "candidate": {
+            "assembly_sha256": "ced55133650a5d5354aa43527f4af08232666126481db16c506eb32cde80c152",
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.state-request.44b960552ceece06",
+            "llvm_ir_sha256": "aaeb1465dbb2941ccb5ef8d3f228d9ef2e23a6e34354946c932586d8110025c0",
+            "lowered_mlir_sha256": "db16d6bcc11ebfd8a0c4863f739eae3ddfc41235f9fe16d8821ce63ee7e8578c",
+            "lowering_path_kind": "whole_graph_fused",
+            "object_sha256": "6658a524163f47f8283ff27daa5162357b80bc82c5de01574b1b03459bd0fc82",
+            "object_size_bytes": 2608,
+            "python_target_kernel_emission": false,
+            "rvv_instruction_count": 37,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 0,
+              "reduction_tile": 128,
+              "vector_bits": 128,
+              "vectorize": true
+            },
+            "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+            "symbol": "scrc_j0",
+            "topology_digest": "de3d806bd5f774e90087dbfe920d8d0927a63e942528b6f03c725caf0099f1ec",
+            "transformation": {
+              "b_transformations": [
+                "riscv.b.readonly_whole_graph_fusion.v1"
+              ],
+              "fuse_elementwise": true,
+              "lowering_path_kind": "whole_graph_fused",
+              "required_b_capabilities": [
+                "b.readonly_nonalias_inputs.v1"
+              ],
+              "transformation_trace": [
+                "rvv.linalg.whole_graph_elementwise_fusion.v1"
+              ]
+            },
+            "transformation_receipt": {
+              "generated_tile_loops": 2,
+              "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+              "linalg_ops_after": 12,
+              "linalg_ops_before": 12,
+              "linalg_tiled_ops": 2,
+              "parallel_tile_applied": 0,
+              "parallel_tile_requested": 0,
+              "reduction_tile_applied": 128,
+              "reduction_tile_requested": 128,
+              "structured_after_sha256": "8d2d3192e8fd1036198f1198000c60d7df4575d7043ea14741cbc5fa1e3825fd"
+            },
+            "true_mlir_pipeline": true
+          },
+          "status": "not_visited_due_budget"
+        }
+      ],
+      "case_id": "high_performance:liger_softmax",
+      "contract_view": {
+        "boundary_sha256": "4d61d0cadc62e1856ede8d4851c19dc41dffc6d1e036a7c43454c8e496babf81",
+        "capabilities": [
+          "b.readonly_nonalias_inputs.v1"
+        ],
+        "consumed": [
+          "access:a0",
+          "access:a1",
+          "domain:d0",
+          "domain:d1",
+          "effect:e0",
+          "effect:e0:read",
+          "effect:e1",
+          "effect:e1:write",
+          "reduction:n0",
+          "reduction:n3",
+          "result_relation:t1",
+          "result_relation:t1:tolerance",
+          "scope:q0"
+        ],
+        "digest": "f02f55934bc08c7d69003699b93b9b44fccbd14708f9a7bd4e59f16ab277e77d",
+        "j_digest": "5a7313146f2cf33d9990970d77c550fa9367545f5bdd05c4d50a1ae45d3832b0",
+        "supported": true,
+        "target": {
+          "architecture": "rv64gcv_zfh",
+          "family": "riscv",
+          "features": [
+            "vlen128"
+          ]
+        },
+        "unsupported": [],
+        "version": "intentir.backend.riscv.contract-view.v1"
+      },
+      "extents": {
+        "x0": 4096
+      },
+      "j_digest": "5a7313146f2cf33d9990970d77c550fa9367545f5bdd05c4d50a1ae45d3832b0",
+      "j_provenance": {
+        "allowed_claims": [
+          "backend_capability",
+          "target_correctness_on_recorded_QD",
+          "performance"
+        ],
+        "base_j_digest": "610f239b6fb6135d2e71851cc02cd45a6e9da06f4ac12356cef2bbc13e55e2ab",
+        "base_snapshot_digest": "2828eba9e064e190d5acd058aabb0cbe49e12ac62b78a67174d353680b1dbb06",
+        "certification_status": "uncertified_backend_dev",
+        "j_unchanged": false,
+        "protocol": "intentir.backend.dev-j-variant.v1",
+        "receipt_digest": "c028948a30a90d64ac3d11fba529bfc36f8a604ce891a3946986296e67595837",
+        "variant_c_digest": "0a87378060aa89cbb3be3e27e2d9d173f7e6080f9bc7283eb9bd14ee5aee839e",
+        "variant_j_digest": "5a7313146f2cf33d9990970d77c550fa9367545f5bdd05c4d50a1ae45d3832b0"
+      },
+      "kernel": "softmax",
+      "performance": {
+        "active_e2_budget_candidate_ids": [
+          "rvv.state-request.5f24143e18b24070",
+          "rvv.state-request.13531bf75724cf4d",
+          "rvv.state-request.6b9114527e0e8874",
+          "rvv.state-request.98f9e088aadaec01"
+        ],
+        "active_e3_budget_candidate_ids": [
+          "rvv.state-request.5f24143e18b24070",
+          "rvv.state-request.f7e48802292b1088",
+          "rvv.state-request.13531bf75724cf4d",
+          "rvv.state-request.ec2bca6e1cd699a7"
+        ],
+        "b_transformation_wins": false,
+        "batches": 2,
+        "c_prior_budget_us": 771877.552,
+        "c_prior_budget_winner_candidate_id": "rvv.state-request.13531bf75724cf4d",
+        "c_prior_over_erase_c_speedup": 0.7813058449975495,
+        "cache_regime": {
+          "achieved_working_set_bytes": 134217728,
+          "buffer_policy": "persistent-single-address",
+          "data_prep_in_timed_region": false,
+          "eviction_bytes": 0,
+          "last_level_cache_bytes": 67108864,
+          "name": "warm",
+          "replicas": 1,
+          "requested_working_set_bytes": 134217728,
+          "streaming_target_achieved": null,
+          "working_set_exceeds_last_level_cache": null
+        },
+        "candidate_correctness_fail_count": 0,
+        "candidate_correctness_pass_count": 10,
+        "candidate_execution_failure_count": 0,
+        "comparison_protocol": "fresh-alternating-round-robin.v1",
+        "e2_evaluation_candidate_ids": [
+          "rvv.state-request.5f24143e18b24070",
+          "rvv.state-request.13531bf75724cf4d",
+          "rvv.state-request.6b9114527e0e8874",
+          "rvv.state-request.98f9e088aadaec01",
+          "rvv.state-request.631cdb356b88dbe5",
+          "rvv.state-request.a5d50f97a6eb8faa"
+        ],
+        "e2_schedule_only_us": 728095.9824999999,
+        "e3_contract_guided_us": 728095.9824999999,
+        "e3_evaluation_candidate_ids": [
+          "rvv.state-request.5f24143e18b24070",
+          "rvv.state-request.f7e48802292b1088",
+          "rvv.state-request.13531bf75724cf4d",
+          "rvv.state-request.ec2bca6e1cd699a7",
+          "rvv.state-request.6b9114527e0e8874",
+          "rvv.state-request.98f9e088aadaec01",
+          "rvv.state-request.631cdb356b88dbe5",
+          "rvv.state-request.a5d50f97a6eb8faa"
+        ],
+        "e3_over_e2_speedup": 1.0,
+        "erase_c_budget_us": 603072.443,
+        "erase_c_budget_winner_candidate_id": "rvv.state-request.8ad208aa8e4d09e3",
+        "erase_c_e2_budget_candidate_ids": [
+          "rvv.state-request.631cdb356b88dbe5",
+          "rvv.state-request.a5d50f97a6eb8faa",
+          "rvv.state-request.cbd1810c08ed4f1c",
+          "rvv.state-request.8ad208aa8e4d09e3"
+        ],
+        "frozen_c_candidate_id": "rvv.state-request.5f24143e18b24070",
+        "frozen_c_us": 793841.0775,
+        "full_search_over_frozen_c_speedup": 1.0902972912640678,
+        "iterations": 1,
+        "logical_io": {
+          "boundary_input_bytes": 67108864,
+          "boundary_io_bytes": 134217728,
+          "boundary_output_bytes": 67108864,
+          "e2_logical_boundary_gbps": 0.18434070675565087,
+          "e3_logical_boundary_gbps": 0.18434070675565087,
+          "traffic_definition": "sum of certified boundary input and output payload bytes; not measured DRAM transactions"
+        },
+        "mandatory_control_candidate_ids": [
+          "rvv.state-request.631cdb356b88dbe5",
+          "rvv.state-request.a5d50f97a6eb8faa",
+          "rvv.state-request.5f24143e18b24070"
+        ],
+        "no_retile_schedule_us": 728095.9824999999,
+        "no_retile_winner_candidate_id": "rvv.state-request.a5d50f97a6eb8faa",
+        "not_visited_candidate_count": 38,
+        "retiled_over_frozen_c_speedup": 1.0284546758007027,
+        "retiled_over_no_retile_speedup": 0.943279125832124,
+        "retiled_schedule_candidate_ids": [
+          "rvv.state-request.5f24143e18b24070",
+          "rvv.state-request.13531bf75724cf4d",
+          "rvv.state-request.6b9114527e0e8874",
+          "rvv.state-request.98f9e088aadaec01"
+        ],
+        "retiled_schedule_us": 771877.552,
+        "retiled_winner_candidate_id": "rvv.state-request.13531bf75724cf4d",
+        "roofline_point": {
+          "arithmetic_intensity_flop_per_byte": 0.374969482421875,
+          "e2_achieved_gflops": 0.06912213940144905,
+          "e3_achieved_gflops": 0.06912213940144905,
+          "hardware_counter_traffic": null,
+          "interpretation": "J-derived logical/minimum-traffic point",
+          "j_workload_cost": {
+            "arithmetic_intensity_flop_per_byte": 0.374969482421875,
+            "boundary_input_bytes": 67108864,
+            "boundary_io_bytes": 134217728,
+            "boundary_output_bytes": 67108864,
+            "caveats": [
+              "boundary bytes exclude intermediate/cache-line/transaction traffic",
+              "one add/sub/mul/div counts as one FLOP; FMA would count as two",
+              "transcendentals are reported separately and are not assigned an arbitrary FLOP weight",
+              "comparisons are reported separately from FLOPs"
+            ],
+            "comparison_ops": 16773120,
+            "complete": true,
+            "control_iterations": 0,
+            "data_movement_elements": 0,
+            "dynamic_branches": 0,
+            "floating_point_ops": 50327552,
+            "integer_logic_ops": 0,
+            "protocol": "intentir.backend.j-workload-cost.v1",
+            "select_ops": 0,
+            "special_function_ops": 16777216,
+            "traffic_interpretation": "certified-boundary-logical-minimum",
+            "type_conversion_ops": 0,
+            "unsupported_semantic_ops": []
+          }
+        },
+        "schedule_only_over_frozen_c_speedup": 1.0902972912640678,
+        "search_budget": 4,
+        "search_budget_unit": "distinct_native_object_sha256",
+        "timed_candidate_count": 10,
+        "timed_candidate_ids": [
+          "rvv.state-request.5f24143e18b24070",
+          "rvv.state-request.f7e48802292b1088",
+          "rvv.state-request.13531bf75724cf4d",
+          "rvv.state-request.ec2bca6e1cd699a7",
+          "rvv.state-request.6b9114527e0e8874",
+          "rvv.state-request.98f9e088aadaec01",
+          "rvv.state-request.631cdb356b88dbe5",
+          "rvv.state-request.a5d50f97a6eb8faa",
+          "rvv.state-request.cbd1810c08ed4f1c",
+          "rvv.state-request.8ad208aa8e4d09e3"
+        ],
+        "timing": "pinned-process perf_counter_ns via ctypes C ABI",
+        "warmup": 1
+      },
+      "snapshot_digest": "40db5c455cdca3e4e0f502ea57c96243764892c8f7d3e21f81dd236c0a9dacbe",
+      "winner": {
+        "assembly_sha256": "ee5d50f148a65788f0a9c71ff4aab6420046c4eaeeb6431c18a61d39eeaabfae",
+        "c_interface_symbol": "_mlir_ciface_scrc_j0",
+        "candidate_id": "rvv.state-request.a5d50f97a6eb8faa",
+        "llvm_ir_sha256": "fe077a59a2fc6ef1a2b668f452d45544e4ffd69018772d96cd3141528a9f4b41",
+        "lowered_mlir_sha256": "73b21383f8a0db3ae9749708548574e59c97eed3d6995ea18849a1fd89db929b",
+        "lowering_path_kind": "materialized",
+        "object_sha256": "f3ae786418b2e230e6c29c2ba9872f6e99a1b5361e38d4e8d7efac453c7b3b05",
+        "object_size_bytes": 2112,
+        "python_target_kernel_emission": false,
+        "rvv_instruction_count": 0,
+        "schedule": {
+          "opt_level": 3,
+          "parallel_tile": 0,
+          "reduction_tile": 0,
+          "vector_bits": 128,
+          "vectorize": false
+        },
+        "source_mlir_sha256": "e76d0566bc29bc7774738e77c267a45e2b98c16dc303fc3dca076f3fd8ad8c4f",
+        "symbol": "scrc_j0",
+        "topology_digest": "1c11b641dce325b03b480980729af24fd30efd32840239fd4eac9b95b5d96fb1",
+        "transformation": {
+          "b_transformations": [],
+          "fuse_elementwise": false,
+          "lowering_path_kind": "materialized",
+          "required_b_capabilities": [],
+          "transformation_trace": [
+            "rvv.linalg.materialized.v1"
+          ]
+        },
+        "transformation_receipt": {
+          "generated_tile_loops": 0,
+          "linalg_before_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2",
+          "linalg_ops_after": 12,
+          "linalg_ops_before": 12,
+          "linalg_tiled_ops": 0,
+          "parallel_tile_applied": 0,
+          "parallel_tile_requested": 0,
+          "reduction_tile_applied": 0,
+          "reduction_tile_requested": 0,
+          "structured_after_sha256": "7e029b64a80bfbdb0657f5edf3bab0458b6853f8452435dd1443c5855d5a76b2"
+        },
+        "true_mlir_pipeline": true
+      },
+      "workload_profile": "upstream_m4096_n4096_fp32",
+      "workload_valuation": {
+        "active_c_digest": "0a87378060aa89cbb3be3e27e2d9d173f7e6080f9bc7283eb9bd14ee5aee839e",
+        "active_j_digest": "5a7313146f2cf33d9990970d77c550fa9367545f5bdd05c4d50a1ae45d3832b0",
+        "active_snapshot_digest": "40db5c455cdca3e4e0f502ea57c96243764892c8f7d3e21f81dd236c0a9dacbe",
+        "base_c_digest": "39d9091b22221be04bdccdbc4faca30215af9d2c8074af867d52c4d01a02442d",
+        "base_j_digest": "610f239b6fb6135d2e71851cc02cd45a6e9da06f4ac12356cef2bbc13e55e2ab",
+        "base_snapshot_digest": "2828eba9e064e190d5acd058aabb0cbe49e12ac62b78a67174d353680b1dbb06",
+        "baseline_policy": "target_refj_only",
+        "dtype_config_id": "fp32_boundary_fp32_accum",
+        "j_unchanged": false,
+        "kind": "manual_dev_j_variant",
+        "profile": "upstream_m4096_n4096_fp32",
+        "shape_config_id": "upstream_m4096_n4096_fp32",
+        "source_unavailable_reason": "rvv_bundle_has_no_triton_source_executable",
+        "status": "uncertified_backend_dev",
+        "upstream_evidence": [
+          "python/tests/test_row_reduction_pk.py:94-120",
+          "FP32 and shape (4096,4096) are exercised by the upstream-facing PK harness"
+        ],
+        "workload_config_digest": "0f1dca82342a1bffb2ee7d79c7d4b696499845cc274d1ea96f21cb81a5bc1064"
+      }
+    }
+  ],
+  "measurement": {
+    "batches": 2,
+    "cache_eviction_in_timed_region": false,
+    "correctness_policy": {
+      "policy_id": "intentir.gate2.default.v1",
+      "protocol": "intentir.scrc.gate2-q.v1",
+      "tolerances": {
+        "bf16": {
+          "atol": 0.002,
+          "equal_nan": false,
+          "rtol": 0.02
+        },
+        "f16": {
+          "atol": 0.001,
+          "equal_nan": false,
+          "rtol": 0.01
+        },
+        "f32": {
+          "atol": 1e-06,
+          "equal_nan": false,
+          "rtol": 1e-05
+        },
+        "f64": {
+          "atol": 1e-12,
+          "equal_nan": false,
+          "rtol": 1e-12
+        }
+      }
+    },
+    "data_regime": "warm",
+    "detected_last_level_data_cache_bytes": 67108864,
+    "effective_timing": "monotonic-clock-batch",
+    "iterations": 1,
+    "iterations_per_batch": 1,
+    "measurement_batches": 2,
+    "regime": "warm",
+    "search_budget": 4,
+    "timer": "perf_counter_ns",
+    "warmup": 1,
+    "warmup_iterations": 1,
+    "working_set_bytes": 134217728,
+    "working_set_mib": 128
+  },
+  "measurement_spec_digest": "7797827a12b0563084dcc8c838c3b3017b84ae9381c9ad87e6379210b72c4fcf",
+  "measurement_spec_protocol": "intentir.backend.performance-measurement.v1",
+  "protocol": "intentir.production.rvv-remote-performance.v4",
+  "summary": {
+    "b_transformation_winner_count": 0,
+    "failed": 0,
+    "geomean_c_prior_over_erase_c_speedup": 0.7813058449975495,
+    "geomean_e3_over_e2_speedup": 1.0,
+    "geomean_retiled_over_no_retile_speedup": 0.943279125832124,
+    "requested": 1,
+    "successful": 1
+  },
+  "target": {
+    "architecture": "rv64gcv_zfh",
+    "family": "riscv",
+    "features": [
+      "vlen128"
+    ]
+  },
+  "workload_profile": "upstream_m4096_n4096_fp32"
+}

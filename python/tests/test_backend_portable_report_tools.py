@@ -26,6 +26,10 @@ rvv_merge = _load_tool(
     "intentir_rvv_report_merge_tool",
     "tools/merge_rvv_benchmark_reports.py",
 )
+rvv_runner = _load_tool(
+    "intentir_rvv_target_runner_tool",
+    "tools/run_rvv_benchmark_bundle.py",
+)
 
 
 def _cuda_report(arm: str, latency_us: float) -> dict:
@@ -188,7 +192,7 @@ def _rvv_report(kernel: str, *, toolchain: str = "a" * 64) -> dict:
                 "extents": {"x0": 1},
                 "performance": {
                     "e3_over_e2_speedup": 1.1,
-                    "retile_over_no_retile_speedup": 1.0,
+                    "retiled_over_no_retile_speedup": 1.0,
                     "c_prior_over_erase_c_speedup": 1.0,
                     "b_transformation_wins": 0,
                 },
@@ -224,3 +228,69 @@ def test_rvv_merge_rejects_different_toolchains(tmp_path):
 
     with pytest.raises(ValueError, match="bundle_toolchain_digest"):
         rvv_merge.main([str(left), str(right), "--out", str(out)])
+
+
+def test_rvv_bounded_candidate_union_makes_budget_executable() -> None:
+    def candidate(candidate_id: str, parallel: int, reduction: int, *, b: bool):
+        return {
+            "candidate": {
+                "candidate_id": candidate_id,
+                "object_sha256": candidate_id.encode().hex().ljust(64, "0"),
+                "schedule": {
+                    "parallel_tile": parallel,
+                    "reduction_tile": reduction,
+                },
+                "transformation": {
+                    "b_transformations": ["fuse"] if b else [],
+                },
+            }
+        }
+
+    entry = {
+        "candidates": [
+            candidate("no-retile", 0, 0, b=False),
+            candidate("frozen", 128, 0, b=False),
+            candidate("fused", 64, 32, b=True),
+            candidate("erase-only", 8, 8, b=False),
+        ],
+        "schedule_only_candidate_ids": ["no-retile", "frozen", "erase-only"],
+        "concrete_search_plan": {
+            "c_prior_order": ["fused", "frozen", "no-retile", "erase-only"],
+            "erase_c_order": ["no-retile", "erase-only", "frozen", "fused"],
+            "frozen_c_candidate_id": "frozen",
+        },
+    }
+
+    orders = rvv_runner._bounded_candidate_orders(entry, 2)
+
+    assert orders["active_e3"] == ["fused", "frozen"]
+    assert orders["active_e2"] == ["frozen", "no-retile"]
+    assert orders["erase_e2"] == ["no-retile", "erase-only"]
+    assert orders["no_retile"] == ["no-retile"]
+    assert orders["e2_evaluation"] == ["frozen", "no-retile"]
+    assert orders["e3_evaluation"] == ["fused", "frozen", "no-retile"]
+    assert orders["schedule_only_retiled"] == ["frozen"]
+    assert orders["timed"] == ["fused", "frozen", "no-retile", "erase-only"]
+
+
+def test_rvv_bounded_candidate_union_rejects_duplicate_native_objects() -> None:
+    candidate = {
+        "schedule": {"parallel_tile": 0, "reduction_tile": 0},
+        "transformation": {"b_transformations": []},
+        "object_sha256": "a" * 64,
+    }
+    entry = {
+        "candidates": [
+            {"candidate": {**candidate, "candidate_id": "left"}},
+            {"candidate": {**candidate, "candidate_id": "right"}},
+        ],
+        "schedule_only_candidate_ids": ["left", "right"],
+        "concrete_search_plan": {
+            "c_prior_order": ["left", "right"],
+            "erase_c_order": ["left", "right"],
+            "frozen_c_candidate_id": "left",
+        },
+    }
+
+    with pytest.raises(ValueError, match="deduplicate native objects"):
+        rvv_runner._bounded_candidate_orders(entry, 1)

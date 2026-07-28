@@ -27,7 +27,7 @@ from typing import Any, Mapping
 
 
 BUNDLE_PROTOCOL = "intentir.production.rvv-search-bundle.v2"
-REPORT_PROTOCOL = "intentir.production.rvv-remote-performance.v3"
+REPORT_PROTOCOL = "intentir.production.rvv-remote-performance.v4"
 
 
 class KernelFailure(RuntimeError):
@@ -373,6 +373,118 @@ def _measure(
     return float(statistics.median(samples)), samples, prep_us
 
 
+def _bounded_candidate_orders(
+    entry: Mapping[str, Any], search_budget: int
+) -> dict[str, list[str]]:
+    """Select the exact bounded timing union before any candidate executes.
+
+    Only visited native objects receive Q/D and timing.  The visited union is the
+    active C-prior E3 prefix, both schedule-only C/Erase-C prefixes, and the
+    mandatory frozen/no-retile controls.  Other compiled objects remain explicit
+    ``not_visited_due_budget`` records.  This makes the CLI budget executable
+    instead of an after-the-fact report cut.
+    """
+
+    if search_budget <= 0:
+        raise ValueError("RVV search budget must be positive")
+    candidate_by_id = {
+        item["candidate"]["candidate_id"]: item for item in entry["candidates"]
+    }
+    object_owner: dict[str, str] = {}
+    for candidate_id, item in candidate_by_id.items():
+        object_sha256 = item["candidate"].get("object_sha256")
+        if not isinstance(object_sha256, str) or len(object_sha256) != 64:
+            raise ValueError(
+                f"RVV candidate {candidate_id!r} has no canonical object SHA-256"
+            )
+        previous = object_owner.setdefault(object_sha256, candidate_id)
+        if previous != candidate_id:
+            raise ValueError(
+                "RVV bundle must deduplicate native objects before budgeting: "
+                f"{candidate_id!r} duplicates {previous!r}"
+            )
+    available = set(candidate_by_id)
+    schedule_only = set(entry["schedule_only_candidate_ids"]) & available
+    plan = entry.get("concrete_search_plan", {})
+
+    def ordered(raw: Any) -> list[str]:
+        result = []
+        seen = set()
+        for candidate_id in raw:
+            if candidate_id in available and candidate_id not in seen:
+                result.append(candidate_id)
+                seen.add(candidate_id)
+        return result
+
+    c_order = ordered(plan.get("c_prior_order", tuple(candidate_by_id)))
+    erase_order = ordered(plan.get("erase_c_order", tuple(candidate_by_id)))
+    c_schedule_order = [item for item in c_order if item in schedule_only]
+    erase_schedule_order = [item for item in erase_order if item in schedule_only]
+    active_e3 = c_order[:search_budget]
+    active_e2 = c_schedule_order[:search_budget]
+    erase_e2 = erase_schedule_order[:search_budget]
+    no_retile = [
+        candidate_id
+        for candidate_id in c_schedule_order
+        if int(candidate_by_id[candidate_id]["candidate"]["schedule"].get(
+            "parallel_tile", 0
+        ))
+        == 0
+        and int(candidate_by_id[candidate_id]["candidate"]["schedule"].get(
+            "reduction_tile", 0
+        ))
+        == 0
+    ]
+    frozen_id = plan.get("frozen_c_candidate_id")
+    mandatory = [*no_retile]
+    if frozen_id in available:
+        mandatory.append(frozen_id)
+
+    def unique(items: Any) -> list[str]:
+        result = []
+        seen = set()
+        for candidate_id in items:
+            if candidate_id in available and candidate_id not in seen:
+                result.append(candidate_id)
+                seen.add(candidate_id)
+        return result
+
+    e2_evaluation = unique((*active_e2, *mandatory))
+    # E3 is nested: it can never forget the E2 controls under a finite budget.
+    e3_evaluation = unique((*active_e3, *e2_evaluation))
+    # This arm isolates schedule retile: do not mix B/structural states into it.
+    schedule_only_retiled = [
+        candidate_id
+        for candidate_id in e2_evaluation
+        if int(candidate_by_id[candidate_id]["candidate"]["schedule"].get(
+            "parallel_tile", 0
+        ))
+        != 0
+        or int(candidate_by_id[candidate_id]["candidate"]["schedule"].get(
+            "reduction_tile", 0
+        ))
+        != 0
+    ]
+
+    timed = []
+    seen = set()
+    for candidate_id in (*e3_evaluation, *erase_e2):
+        if candidate_id not in seen:
+            timed.append(candidate_id)
+            seen.add(candidate_id)
+    return {
+        "active_e3": active_e3,
+        "active_e2": active_e2,
+        "erase_e2": erase_e2,
+        "no_retile": no_retile,
+        "mandatory": unique(mandatory),
+        "e2_evaluation": e2_evaluation,
+        "e3_evaluation": e3_evaluation,
+        "schedule_only_retiled": schedule_only_retiled,
+        "timed": timed,
+    }
+
+
 def _one_kernel(
     entry: Mapping[str, Any],
     *,
@@ -429,6 +541,8 @@ def _one_kernel(
         if candidate_id in candidate_by_id and candidate_id not in seen_ids:
             seen_ids.add(candidate_id)
             ordered_ids.append(candidate_id)
+    bounded_orders = _bounded_candidate_orders(entry, search_budget)
+    timed_ids = set(bounded_orders["timed"])
 
     records = []
     candidate_artifacts: dict[str, tuple[Any, Any, _ArgumentRotation]] = {}
@@ -436,6 +550,14 @@ def _one_kernel(
         directory = Path(temporary)
         for candidate_id in ordered_ids:
             candidate = candidate_by_id[candidate_id]
+            if candidate_id not in timed_ids:
+                records.append(
+                    {
+                        "candidate": candidate["candidate"],
+                        "status": "not_visited_due_budget",
+                    }
+                )
+                continue
             try:
                 library_path = _link_object(directory, candidate)
                 library = ctypes.CDLL(str(library_path))
@@ -542,7 +664,6 @@ def _one_kernel(
         item["selection_samples_us"] = samples
         item["selection_protocol"] = "fresh-alternating-round-robin.v1"
         item["logical_boundary_gbps"] = io_bytes / item["latency_us"] / 1_000.0
-    schedule_only_ids = set(entry["schedule_only_candidate_ids"])
     measured_by_id = {
         item["candidate"]["candidate_id"]: item for item in measured
     }
@@ -557,45 +678,12 @@ def _one_kernel(
             raise KernelFailure("ablation arm has no correct RVV candidate", records)
         return min(available, key=lambda item: item["latency_us"])
 
-    e2 = min(
-        (
-            item
-            for item in measured
-            if item["candidate"]["candidate_id"] in schedule_only_ids
-        ),
-        key=lambda item: item["latency_us"],
-    )
-    e3 = min(measured, key=lambda item: item["latency_us"])
-    materialized_ids = [
-        item["candidate"]["candidate_id"]
-        for item in measured
-        if item["candidate"]["candidate_id"] in schedule_only_ids
-    ]
-    no_retile_ids = [
-        candidate_id
-        for candidate_id in materialized_ids
-        if int(measured_by_id[candidate_id]["candidate"]["schedule"].get(
-            "parallel_tile", 0
-        ))
-        == 0
-        and int(measured_by_id[candidate_id]["candidate"]["schedule"].get(
-            "reduction_tile", 0
-        ))
-        == 0
-    ]
-    no_retile = best(no_retile_ids)
-    erase_order = [
-        candidate_id
-        for candidate_id in concrete_plan.get("erase_c_order", materialized_ids)
-        if candidate_id in schedule_only_ids
-    ]
-    c_prior_order = [
-        candidate_id
-        for candidate_id in concrete_plan.get("c_prior_order", materialized_ids)
-        if candidate_id in schedule_only_ids
-    ]
-    erase_budget_ids = erase_order[:search_budget]
-    c_prior_budget_ids = c_prior_order[:search_budget]
+    e2 = best(bounded_orders["e2_evaluation"])
+    e3 = best(bounded_orders["e3_evaluation"])
+    no_retile = best(bounded_orders["no_retile"])
+    schedule_only_retiled = best(bounded_orders["schedule_only_retiled"])
+    erase_budget_ids = bounded_orders["erase_e2"]
+    c_prior_budget_ids = bounded_orders["active_e2"]
     erase_budget_winner = best(erase_budget_ids)
     c_prior_budget_winner = best(c_prior_budget_ids)
     frozen_id = concrete_plan.get("frozen_c_candidate_id")
@@ -613,6 +701,10 @@ def _one_kernel(
     return {
         "kernel": entry["kernel"],
         "case_id": entry["case_id"],
+        "workload_profile": entry.get("workload_profile"),
+        "workload_valuation": entry.get("workload_valuation"),
+        "j_provenance": entry.get("j_provenance"),
+        "baseline_policy": entry.get("baseline_policy"),
         "snapshot_digest": entry["snapshot_digest"],
         "j_digest": entry["j_digest"],
         "c_digest": entry["c_digest"],
@@ -628,19 +720,53 @@ def _one_kernel(
                 e3["candidate"]["transformation"]["b_transformations"]
             ),
             "no_retile_schedule_us": no_retile["latency_us"],
-            "retile_schedule_us": e2["latency_us"],
-            "retile_over_no_retile_speedup": (
-                no_retile["latency_us"] / e2["latency_us"]
+            "retiled_schedule_us": schedule_only_retiled["latency_us"],
+            "retiled_over_no_retile_speedup": (
+                no_retile["latency_us"] / schedule_only_retiled["latency_us"]
             ),
             "frozen_c_us": frozen_c["latency_us"],
-            "retile_over_frozen_c_speedup": (
+            "schedule_only_over_frozen_c_speedup": (
                 frozen_c["latency_us"] / e2["latency_us"]
+            ),
+            "retiled_over_frozen_c_speedup": (
+                frozen_c["latency_us"] / schedule_only_retiled["latency_us"]
             ),
             "full_search_over_frozen_c_speedup": (
                 frozen_c["latency_us"] / e3["latency_us"]
             ),
             "search_budget": search_budget,
             "search_budget_unit": "distinct_native_object_sha256",
+            "candidate_correctness_pass_count": len(
+                [
+                    item
+                    for item in records
+                    if item["status"] == "measured"
+                ]
+            ),
+            "candidate_correctness_fail_count": len(
+                [item for item in records if item["status"] == "incorrect"]
+            ),
+            "candidate_execution_failure_count": len(
+                [item for item in records if item["status"] == "failed"]
+            ),
+            "timed_candidate_count": len(measured),
+            "not_visited_candidate_count": len(
+                [
+                    item
+                    for item in records
+                    if item["status"] == "not_visited_due_budget"
+                ]
+            ),
+            "active_e3_budget_candidate_ids": bounded_orders["active_e3"],
+            "active_e2_budget_candidate_ids": bounded_orders["active_e2"],
+            "e3_evaluation_candidate_ids": bounded_orders["e3_evaluation"],
+            "e2_evaluation_candidate_ids": bounded_orders["e2_evaluation"],
+            "retiled_schedule_candidate_ids": bounded_orders[
+                "schedule_only_retiled"
+            ],
+            "erase_c_e2_budget_candidate_ids": bounded_orders["erase_e2"],
+            "mandatory_control_candidate_ids": bounded_orders["mandatory"],
+            "timed_candidate_ids": bounded_orders["timed"],
             "erase_c_budget_us": erase_budget_winner["latency_us"],
             "c_prior_budget_us": c_prior_budget_winner["latency_us"],
             "c_prior_over_erase_c_speedup": (
@@ -650,7 +776,9 @@ def _one_kernel(
             "no_retile_winner_candidate_id": no_retile["candidate"][
                 "candidate_id"
             ],
-            "retile_winner_candidate_id": e2["candidate"]["candidate_id"],
+            "retiled_winner_candidate_id": schedule_only_retiled["candidate"][
+                "candidate_id"
+            ],
             "frozen_c_candidate_id": frozen_id,
             "erase_c_budget_winner_candidate_id": erase_budget_winner[
                 "candidate"
@@ -805,7 +933,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"{entry['kernel']}: E2={performance['e2_schedule_only_us']:.4f} "
                 f"us E3={performance['e3_contract_guided_us']:.4f} us "
                 f"structural={performance['e3_over_e2_speedup']:.3f}x "
-                f"retile={performance['retile_over_no_retile_speedup']:.3f}x "
+                f"retile={performance['retiled_over_no_retile_speedup']:.3f}x "
                 f"C={performance['c_prior_over_erase_c_speedup']:.3f}x",
                 flush=True,
             )
@@ -822,8 +950,8 @@ def main(argv: list[str] | None = None) -> int:
                 flush=True,
             )
     speedups = [item["performance"]["e3_over_e2_speedup"] for item in kernels]
-    retile_speedups = [
-        item["performance"]["retile_over_no_retile_speedup"] for item in kernels
+    retiled_speedups = [
+        item["performance"]["retiled_over_no_retile_speedup"] for item in kernels
     ]
     c_speedups = [
         item["performance"]["c_prior_over_erase_c_speedup"] for item in kernels
@@ -885,8 +1013,8 @@ def main(argv: list[str] | None = None) -> int:
             "successful": len(kernels),
             "failed": len(failures),
             "geomean_e3_over_e2_speedup": geomean(speedups),
-            "geomean_retile_over_no_retile_speedup": geomean(
-                retile_speedups
+            "geomean_retiled_over_no_retile_speedup": geomean(
+                retiled_speedups
             ),
             "geomean_c_prior_over_erase_c_speedup": geomean(c_speedups),
             "b_transformation_winner_count": sum(

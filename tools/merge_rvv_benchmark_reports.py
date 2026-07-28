@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 
-REPORT_PROTOCOL = "intentir.production.rvv-remote-performance.v3"
+REPORT_PROTOCOL = "intentir.production.rvv-remote-performance.v4"
 
 
 def _geomean(values: list[float]) -> float | None:
@@ -88,6 +88,7 @@ def main(argv: list[str] | None = None) -> int:
                     "c_digest",
                     "extents",
                     "workload_valuation",
+                    "j_provenance",
                 )
             }
             if name in kernel_identities and kernel_identities[name] != identity:
@@ -107,8 +108,8 @@ def main(argv: list[str] | None = None) -> int:
     structural = [
         item["performance"]["e3_over_e2_speedup"] for item in successful
     ]
-    retile = [
-        item["performance"]["retile_over_no_retile_speedup"]
+    retiled = [
+        item["performance"]["retiled_over_no_retile_speedup"]
         for item in successful
     ]
     c_prior = [
@@ -138,7 +139,7 @@ def main(argv: list[str] | None = None) -> int:
             "successful": len(successful),
             "failed": len(failures),
             "geomean_e3_over_e2_speedup": _geomean(structural),
-            "geomean_retile_over_no_retile_speedup": _geomean(retile),
+            "geomean_retiled_over_no_retile_speedup": _geomean(retiled),
             "geomean_c_prior_over_erase_c_speedup": _geomean(c_prior),
             "b_transformation_winner_count": sum(
                 item["performance"]["b_transformation_wins"]

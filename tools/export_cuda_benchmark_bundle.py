@@ -9,7 +9,7 @@ import json
 import time
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import intentir.backend.cuda.compile as backend_compile
 from intentir.backend.ablation import (
@@ -43,10 +43,10 @@ from intentir.backend.cuda.search import (
     toolchain_fingerprint,
 )
 from intentir.backend.dev_j_variant import JDevVariant, load_j_dev_variant
+from intentir.backend.dev_bundle import prepare_dev_bundle_input
 from intentir.backend.dev_workload import (
     DevWorkloadConfig,
     load_dev_workload_config,
-    prepare_dev_workload,
 )
 from intentir.backend.materialize import attach_c, materialize_j
 from intentir.backend.measurement_spec import (
@@ -55,7 +55,7 @@ from intentir.backend.measurement_spec import (
 )
 from intentir.backend.protocol import BackendTarget
 from intentir.backend.workload_cost import derive_j_workload_cost
-from intentir.ir.production_snapshot import ProductionSnapshot, load_production_snapshot
+from intentir.ir.production_snapshot import load_production_snapshot
 from intentir.verify.gate2.scalar import ScalarLoweringRunner
 from intentir.verify.scrc_workload_run import build_workload_jc_suite
 
@@ -94,53 +94,23 @@ def _entry(
         raise ValueError("portable search bundle requires frozen C")
     if (j_dev_variant is None) != (dev_workload is None):
         raise ValueError("J_dev variant and development workload must be paired")
-    j_provenance: dict[str, Any] | None = None
+    j_provenance: Mapping[str, Any] | None = None
     if j_dev_variant is not None and dev_workload is not None:
-        j_dev_variant.validate_against_base(base_snapshot)
-        if j_dev_variant.source_kernel_id != dev_workload.case_id:
-            raise ValueError("J_dev and development workload kernel identity mismatch")
-        if j_dev_variant.shape_config_id != dev_workload.shape_config_id:
-            raise ValueError("J_dev and development workload shape config mismatch")
-        if j_dev_variant.dtype_config_id != dev_workload.dtype_config_id:
-            raise ValueError("J_dev and development workload dtype config mismatch")
-        prepared = prepare_dev_workload(dev_workload)
-        snapshot = ProductionSnapshot(j_dev_variant.j, j_dev_variant.c)
-        workload_profile = dev_workload.shape_config_id
-        workload_valuation = {
-            "kind": "manual_dev_j_variant",
-            "profile": workload_profile,
-            "status": "uncertified_backend_dev",
-            "base_snapshot_digest": base_snapshot.snapshot_digest,
-            "base_j_digest": base_snapshot.j_digest,
-            "base_c_digest": base_snapshot.c_digest,
-            "active_snapshot_digest": snapshot.snapshot_digest,
-            "active_j_digest": snapshot.j_digest,
-            "active_c_digest": snapshot.c_digest,
-            "j_unchanged": False,
-            "shape_config_id": dev_workload.shape_config_id,
-            "dtype_config_id": dev_workload.dtype_config_id,
-            "workload_config_digest": dev_workload.config_digest,
-            "baseline_policy": "source_and_refj",
-            "source_unavailable_reason": None,
-            "upstream_evidence": list(dev_workload.upstream_evidence),
-        }
-        j_provenance = {
-            "protocol": j_dev_variant.to_dict()["protocol"],
-            "receipt_digest": j_dev_variant.receipt_digest,
-            "base_snapshot_digest": j_dev_variant.base_snapshot_digest,
-            "base_j_digest": j_dev_variant.base_j_digest,
-            "variant_j_digest": j_dev_variant.variant_j_digest,
-            "variant_c_digest": j_dev_variant.variant_c_digest,
-            "certification_status": j_dev_variant.to_dict()[
-                "certification_status"
-            ],
-            "allowed_claims": list(
-                j_dev_variant.to_dict()["allowed_claims"]
-            ),
-            "j_unchanged": False,
-        }
-        if j_dev_path is not None:
-            path = j_dev_path
+        dev_input = prepare_dev_bundle_input(
+            base_snapshot,
+            path,
+            j_dev_variant,
+            dev_workload,
+            variant_path=j_dev_path,
+            baseline_policy="source_and_refj",
+            source_unavailable_reason=None,
+        )
+        prepared = dev_input.prepared
+        snapshot = dev_input.snapshot
+        workload_profile = dev_input.workload_profile
+        workload_valuation = dev_input.workload_valuation
+        j_provenance = dev_input.j_provenance
+        path = dev_input.snapshot_path
     else:
         prepared = prepare_production_workload(name, profile=workload_profile)
         snapshot, workload_valuation = profile_production_snapshot(

@@ -12,7 +12,9 @@ from intentir.backend.dev_workload import (
     load_dev_workload_config,
     prepare_dev_workload,
 )
-from intentir.ir.production_snapshot import content_digest
+from intentir.backend.dev_bundle import prepare_dev_bundle_input
+from intentir.backend.dev_j_variant import load_j_dev_variant
+from intentir.ir.production_snapshot import content_digest, load_production_snapshot
 from intentir.verify.workload_adapters import TRITON_WORKLOAD_ADAPTERS
 
 
@@ -186,3 +188,55 @@ def test_real_rmsnorm_long_reduction_workload_is_digest_pinned() -> None:
     assert buffers["W_ptr"].shape == (16384,)
     assert buffers["RSTD_ptr"].shape == (2048,)
     assert dict(prepared.adapter.c_values)["BLOCK_SIZE"] == 16384
+
+
+def test_shared_dev_bundle_input_preserves_target_specific_baseline_policy() -> None:
+    base, base_path = load_production_snapshot(
+        _ROOT / "corpus" / "production-jc-v1", "softmax"
+    )
+    variant_path = (
+        _ROOT
+        / "corpus"
+        / "backend-j-dev-v1"
+        / "liger_softmax_upstream_m4096_n4096_fp32.json"
+    )
+    variant = load_j_dev_variant(variant_path)
+    workload = load_dev_workload_config(
+        _ROOT
+        / "spec"
+        / "lowering"
+        / "backend-natural-workloads-v1"
+        / "liger_softmax_upstream_m4096_n4096_fp32.json"
+    )
+
+    prepared = prepare_dev_bundle_input(
+        base,
+        base_path,
+        variant,
+        workload,
+        variant_path=variant_path,
+        baseline_policy="target_refj_only",
+        source_unavailable_reason="rvv_bundle_has_no_triton_source_executable",
+    )
+
+    assert prepared.snapshot.j_digest == variant.variant_j_digest
+    assert prepared.snapshot_path == variant_path
+    assert prepared.workload_profile == "upstream_m4096_n4096_fp32"
+    assert prepared.workload_valuation["baseline_policy"] == "target_refj_only"
+    assert (
+        prepared.workload_valuation["source_unavailable_reason"]
+        == "rvv_bundle_has_no_triton_source_executable"
+    )
+    assert prepared.j_provenance["receipt_digest"] == variant.receipt_digest
+    assert prepared.prepared.adapter.grid == (4096,)
+
+    with pytest.raises(ValueError, match="baseline_policy must be one of"):
+        prepare_dev_bundle_input(
+            base,
+            base_path,
+            variant,
+            workload,
+            variant_path=variant_path,
+            baseline_policy="source_if_convenient",
+            source_unavailable_reason=None,
+        )

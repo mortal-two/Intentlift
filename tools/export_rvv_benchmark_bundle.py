@@ -9,7 +9,7 @@ import hashlib
 import json
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from intentir.backend.ablation import ABLATION_PROTOCOL, ablation_spec_digest
 from intentir.backend.cuda.portable_bundle import encode_values
@@ -22,6 +22,12 @@ from intentir.backend.cuda.production_cases import (
     constexpr_input_bindings,
     profile_production_snapshot,
     prepare_production_workload,
+)
+from intentir.backend.dev_bundle import prepare_dev_bundle_input
+from intentir.backend.dev_j_variant import JDevVariant, load_j_dev_variant
+from intentir.backend.dev_workload import (
+    DevWorkloadConfig,
+    load_dev_workload_config,
 )
 from intentir.backend.materialize import attach_c, materialize_j
 from intentir.backend.measurement_spec import (
@@ -72,21 +78,51 @@ def _entry(
     name: str,
     snapshot_dir: Path,
     workload_profile: str = PRODUCTION_WORKLOAD_PROFILE_CLOSED,
+    j_dev_variant: JDevVariant | None = None,
+    dev_workload: DevWorkloadConfig | None = None,
+    j_dev_path: Path | None = None,
 ) -> dict[str, Any]:
     base_snapshot, path = load_production_snapshot(snapshot_dir, name)
     if base_snapshot.c is None:
         raise ValueError("RVV bundle requires frozen accepted C")
-    prepared = prepare_production_workload(name, profile=workload_profile)
-    snapshot, workload_valuation = profile_production_snapshot(
-        base_snapshot,
-        prepared,
-        workload_profile,
-    )
+    if (j_dev_variant is None) != (dev_workload is None):
+        raise ValueError("J_dev variant and development workload must be paired")
+    j_provenance: Mapping[str, Any] | None = None
+    if j_dev_variant is not None and dev_workload is not None:
+        if PRODUCTION_CASE_IDS[name] != dev_workload.case_id:
+            raise ValueError("development workload does not match selected kernel")
+        dev_input = prepare_dev_bundle_input(
+            base_snapshot,
+            path,
+            j_dev_variant,
+            dev_workload,
+            variant_path=j_dev_path,
+            baseline_policy="target_refj_only",
+            source_unavailable_reason="rvv_bundle_has_no_triton_source_executable",
+        )
+        prepared = dev_input.prepared
+        snapshot = dev_input.snapshot
+        workload_profile = dev_input.workload_profile
+        workload_valuation = dev_input.workload_valuation
+        j_provenance = dev_input.j_provenance
+        path = dev_input.snapshot_path
+    else:
+        prepared = prepare_production_workload(name, profile=workload_profile)
+        snapshot, workload_valuation = profile_production_snapshot(
+            base_snapshot,
+            prepared,
+            workload_profile,
+        )
     if snapshot.c is None:
         raise AssertionError("workload valuation erased required C")
     suite = build_workload_jc_suite(prepared, snapshot.j, snapshot.c)
     case = suite.cases[0]
     dims = case.refeval.dims_map
+    if dev_workload is not None and dims != dict(dev_workload.concrete_extents):
+        raise ValueError(
+            "development workload extents disagree with J/Source binding: "
+            f"declared {dict(dev_workload.concrete_extents)}, resolved {dims}"
+        )
     constexpr_bindings = constexpr_input_bindings(
         snapshot.j,
         case.refeval.input_binding_map,
@@ -205,6 +241,7 @@ def _entry(
         "case_id": PRODUCTION_CASE_IDS[name],
         "workload_profile": workload_profile,
         "workload_valuation": workload_valuation,
+        "j_provenance": j_provenance,
         # RVV has no Triton Source executable.  The Source-availability field in
         # workload_valuation is retained for cross-target identity only.
         "baseline_policy": "target_refj_only",
@@ -269,6 +306,22 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--snapshot-dir", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument(
+        "--j-dev-variant",
+        type=Path,
+        help=(
+            "uncertified dev-j-variant envelope; requires exactly one kernel "
+            "and --dev-workload-config"
+        ),
+    )
+    parser.add_argument(
+        "--dev-workload-config",
+        type=Path,
+        help=(
+            "digest-pinned natural Source/Harness invocation paired with "
+            "--j-dev-variant"
+        ),
+    )
+    parser.add_argument(
         "--kernels",
         nargs="*",
         choices=sorted(PRODUCTION_CASE_IDS),
@@ -292,6 +345,22 @@ def main(argv: list[str] | None = None) -> int:
     started = time.time_ns()
     entries = []
     failures = []
+    if (args.j_dev_variant is None) != (args.dev_workload_config is None):
+        raise ValueError(
+            "--j-dev-variant and --dev-workload-config must be supplied together"
+        )
+    if args.j_dev_variant is not None:
+        if len(args.kernels) != 1:
+            raise ValueError("development J export currently requires exactly one kernel")
+        if args.workload_profile != PRODUCTION_WORKLOAD_PROFILE_CLOSED:
+            raise ValueError(
+                "development workload owns its shape; --workload-profile must be closed-v1"
+            )
+        j_dev_variant = load_j_dev_variant(args.j_dev_variant)
+        dev_workload = load_dev_workload_config(args.dev_workload_config)
+    else:
+        j_dev_variant = None
+        dev_workload = None
     if (
         args.workload_profile == PRODUCTION_WORKLOAD_PROFILE_ROOFLINE_LARGE
         and args.kernels != ["masked_copy"]
@@ -302,7 +371,14 @@ def main(argv: list[str] | None = None) -> int:
         )
     for name in args.kernels:
         try:
-            entry = _entry(name, args.snapshot_dir, args.workload_profile)
+            entry = _entry(
+                name,
+                args.snapshot_dir,
+                args.workload_profile,
+                j_dev_variant,
+                dev_workload,
+                args.j_dev_variant,
+            )
             entries.append(entry)
             print(
                 f"{name}: {len(entry['candidates'])} native RVV objects",
@@ -319,6 +395,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"{name}: FAILED: {type(error).__name__}: {error}",
                 flush=True,
             )
+    baseline_policies = {str(entry["baseline_policy"]) for entry in entries}
     payload = {
         "protocol": BUNDLE_PROTOCOL,
         "created_unix_ns": time.time_ns(),
@@ -329,8 +406,16 @@ def main(argv: list[str] | None = None) -> int:
         "experiment_spec_digest": ablation_spec_digest(),
         "measurement_spec_protocol": MEASUREMENT_PROTOCOL,
         "measurement_spec_digest": measurement_spec_digest(),
-        "workload_profile": args.workload_profile,
-        "baseline_policy": "target_refj_only",
+        "workload_profile": (
+            next(iter({entry["workload_profile"] for entry in entries}))
+            if len({entry["workload_profile"] for entry in entries}) == 1
+            else "mixed_by_kernel"
+        ),
+        "baseline_policy": (
+            next(iter(baseline_policies))
+            if len(baseline_policies) == 1
+            else "mixed_by_kernel"
+        ),
         "correctness_policy": DEFAULT_GATE2_POLICY.to_json(),
         "true_mlir_pipeline": True,
         "python_target_kernel_emission": False,

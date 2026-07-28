@@ -134,6 +134,19 @@ winner为`176.09 us`，Source为`184.60 us`（Source/Target=`1.0483x`）。三la
 H=16384仍只有16元素/thread且接近logical roof。因而不继续用更多H点重复这一已识别流量瓶颈，下一步
 转向可以真正删除读取/物化的scan关系消费和RVV retile。
 
+RVV natural-shape输入主链现已补齐：CUDA与RVV exporter共用同一个
+`prepare_dev_bundle_input`，对base重放J_dev edits、校验shape/dtype config、固定Source adapter digest，
+但RVV仍明确`Target--RefJ-only`。Softmax `M=N=4096,FP32` 已形成48个不同native object，tile
+requested/applied、generated loops及structured/LLVM/object digest均来自真实编译回执。
+
+该运行还修正了RVV有限预算语义。旧runner即使`search-budget=12`仍会穷举计时全部object；v4现在只
+访问C-prior E3、C/Erase-C E2前缀与frozen/no-retile必选控制的并集，未访问对象明确记账。首个
+budget=4 development run访问10/48且10/10 Target--RefJ通过：frozen-C `793.84 ms`，Schedule-Only
+best `728.10 ms`（schedule-search/frozen=`1.0903x`）；非零retiled best `771.88 ms`相对frozen为
+`1.0285x`，但相对no-retile仅`0.9433x`。whole-graph fused best约`728.29 ms`也未胜出，因此
+E3/E2=`1.0000x`。C-prior前4相对Erase-C前4仅`0.7813x`，真实显示当前target-aware排序仍需改进，
+而不是把C预写成正收益。
+
 ## 第一性原理约束
 
 1. core lowerer 只读取 J、可选 C 与 target capability；禁止读取 Source、Replay、pi、kernel name、
