@@ -17,7 +17,6 @@ import numpy as np
 
 from intentir.backend.cpu.abi import (
     CPUBackendUnsupportedError,
-    mlir_element_type,
     numpy_dtype,
     validate_array,
 )
@@ -57,8 +56,6 @@ _ORDINARY_OPS = frozenset(
     }
 )
 
-_FLOAT_ELEMENT_TYPES = frozenset({"f16", "bf16", "f32", "f64"})
-_INTEGER_ELEMENT_TYPES = frozenset({"i1", "i8", "i16", "i32", "i64"})
 _EINSUM_TERM = re.compile(r"^[A-Za-z]*$")
 
 _BINARY = {
@@ -140,89 +137,27 @@ def _result_names(operation: IntentOp) -> tuple[str, ...]:
     return ()
 
 
-def _element_class(dtype: str) -> str | None:
-    """Mirror the element classes consumed by ContractionLowering."""
-
-    try:
-        element_type = mlir_element_type(dtype)
-    except CPUBackendUnsupportedError:
-        return None
-    if element_type in _FLOAT_ELEMENT_TYPES:
-        return "float"
-    if element_type in _INTEGER_ELEMENT_TYPES:
-        return "integer"
-    return None
-
-
-def _scalar_cpu_lowers_contraction(
-    op: IntentOp,
-    value_types: Mapping[str, Any],
-) -> bool:
-    """Return the exact typed subset eliminated by ContractionLowering.
-
-    This mirrors ``ConvertIntentToLinalg`` rather than predicting whether a
-    target compiler might happen to accept an unlowered ``intent`` op.  The
-    common lowering accepts arbitrary widths within the floating class, but it
-    rejects mixed integer/float operands and mixed-width integer contractions.
-    Malformed or incompletely typed contractions are conservatively outside
-    the scalar capability and will fail closed in the structured evaluator.
-    """
-
-    if (
-        set(op.attrs) != {"subscripts"}
-        or len(op.operands) != 2
-        or not isinstance(op.result, str)
-    ):
-        return False
-    operand_types = [value_types.get(name) for name in op.operands]
-    result_type = value_types.get(op.result)
-    if result_type is None or any(value is None for value in operand_types):
-        return False
-    operand_dtypes = [str(value.dtype) for value in operand_types]
-    result_dtype = str(result_type.dtype)
-    try:
-        operand_element_types = [
-            mlir_element_type(dtype) for dtype in operand_dtypes
-        ]
-        result_element_type = mlir_element_type(result_dtype)
-    except CPUBackendUnsupportedError:
-        return False
-    operand_classes = [_element_class(dtype) for dtype in operand_dtypes]
-    result_class = _element_class(result_dtype)
-    if result_class is None or any(kind is None for kind in operand_classes):
-        return False
-    if any(kind != result_class for kind in operand_classes):
-        return False
-    if result_class == "integer" and any(
-        element_type != result_element_type
-        for element_type in operand_element_types
-    ):
-        return False
-    return True
-
-
 def requires_structured_reference(j: SemanticArchive) -> bool:
     """Return whether J needs the J-only typed reference denotation.
 
-    ``tile`` selects this path because the scalar Intent-to-Linalg executor does
-    not lower it.  A typed contraction selects the same path only when the
-    common scalar lowering cannot eliminate that contraction.  The structured
-    evaluator consequently owns a closed ordinary op table as well as
-    loops/scans; it never falls back into a second consumer halfway through a
-    graph.
+    Structured control/tile/scan and every contraction select one closed
+    evaluator for the complete J graph.  In particular, a dense contraction is
+    not sent through the scalar native loop executor merely because that
+    lowering is technically legal; the structured path preserves the same J
+    denotation while using bounded NumPy/BLAS implementations for model extents.
     """
 
     accepted = elaborate_j(j)
     operations = _walk_ops(accepted.intent.body)
-    if any(
-        op.op in {"loop", "scan", "tile", "effect_if", "value_if"}
-        for op in operations
-    ):
-        return True
-    value_types = j_elaboration(accepted).value_type_by_name
     return any(
-        op.op == "contraction"
-        and not _scalar_cpu_lowers_contraction(op, value_types)
+        op.op in {
+            "contraction",
+            "loop",
+            "scan",
+            "tile",
+            "effect_if",
+            "value_if",
+        }
         for op in operations
     )
 
@@ -850,12 +785,42 @@ class _Evaluator:
             value.astype(result_dtype, copy=False) for value in operands
         ]
         try:
-            value = np.einsum(
-                compact,
-                cast_operands[0],
-                cast_operands[1],
-                optimize=False,
+            contracted = (
+                set(lhs_labels).intersection(rhs_labels).difference(output_labels)
             )
+            lhs_free = [label for label in lhs_labels if label not in contracted]
+            rhs_free = [label for label in rhs_labels if label not in contracted]
+            direct_matrix_product = (
+                len(lhs_labels) == 2
+                and len(rhs_labels) == 2
+                and len(output_labels) == 2
+                and len(contracted) == 1
+                and len(lhs_free) == 1
+                and len(rhs_free) == 1
+                and set(output_labels) == {lhs_free[0], rhs_free[0]}
+            )
+            if direct_matrix_product:
+                contraction_label = next(iter(contracted))
+                lhs_matrix = (
+                    cast_operands[0]
+                    if lhs_labels == lhs_free[0] + contraction_label
+                    else cast_operands[0].T
+                )
+                rhs_matrix = (
+                    cast_operands[1]
+                    if rhs_labels == contraction_label + rhs_free[0]
+                    else cast_operands[1].T
+                )
+                value = np.matmul(lhs_matrix, rhs_matrix)
+                if output_labels == rhs_free[0] + lhs_free[0]:
+                    value = value.T
+            else:
+                value = np.einsum(
+                    compact,
+                    cast_operands[0],
+                    cast_operands[1],
+                    optimize=False,
+                )
         except (TypeError, ValueError) as exc:
             raise StructuredReferenceUnsupportedError(
                 "structured contraction dtype is unsupported by the closed "

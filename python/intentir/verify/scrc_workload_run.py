@@ -951,17 +951,29 @@ def validate_workload_gate1_recheck_parent(
 
     This is lineage validation only, not a Gate or certificate predicate.  It
     fails closed before any provider call when an old evidence directory lacks
-    the request/source/digest receipts needed to identify its parent run.
+    the exact artifact/request/source content needed to identify its parent run.
     """
 
     parent = Path(parent_evidence).expanduser().resolve()
     if not parent.is_dir():
         raise ValueError("parent Gate1 evidence directory does not exist")
 
-    digest = canonical_artifact_digest(canonicalize_gate1_artifact(artifact))
-    gate1 = _read_recheck_lineage_object(parent / "gate1.json", "gate1.json")
-    if gate1.get("artifact_digest") != digest:
-        raise ValueError("parent Gate1 artifact digest differs from input artifact")
+    _read_recheck_lineage_object(parent / "gate1.json", "gate1.json")
+    parent_artifact_payload = _read_recheck_lineage_object(
+        parent / "artifact.json",
+        "artifact.json",
+    )
+    try:
+        parent_artifact = canonicalize_gate1_artifact(
+            Gate1Artifact.from_json(parent_artifact_payload)
+        )
+    except Exception as exc:
+        raise ValueError(
+            "parent Gate1 artifact cannot be decoded under the current contract: "
+            f"{type(exc).__name__}: {exc}"
+        ) from exc
+    if parent_artifact.to_json() != canonicalize_gate1_artifact(artifact).to_json():
+        raise ValueError("parent Gate1 artifact bytes denote a different artifact")
 
     lineage_root: Path | None = None
     required_names = ("request.json", "source_projection.json", "source.py")

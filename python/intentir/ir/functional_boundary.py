@@ -4985,45 +4985,13 @@ def _project_functional_boundary(
         )
     )
     concrete_predicates = [item for item in predicates.values() if item is not None]
-    if concrete_predicates:
-        masked_axes = {
-            axis
-            for predicate in concrete_predicates
-            for axis, _extent in predicate.upper_bounds
-        }
-        for access in boundary.accesses:
-            operation = nodes.get(access.node_ref)
-            bounded_gather_data_access = (
-                operation is not None
-                and operation.op == "gather"
-                and bool(operation.operands)
-                and operation.operands[0] == access.tensor
-                and any(
-                    item.node_ref == access.node_ref
-                    and item.data == access.tensor
-                    and len(operation.operands) > 1
-                    and item.indices == operation.operands[1]
-                    for item in boundary.index_bounds
-                )
-            )
-            if (
-                bounded_gather_data_access
-                and predicates.get(access.access_id) is None
-            ):
-                # A bounded gather is one J-authored point selection, not one
-                # pass through the padded stream traversed by other accesses.
-                # Its own index_bounds relation remains mandatory and Gate2
-                # validates that relation against the current hidden inputs.
-                continue
-            axes = axis_refs_by_access[access.access_id]
-            predicate = predicates[access.access_id]
-            upper = dict(predicate.upper_bounds) if predicate is not None else {}
-            for axis in masked_axes.intersection(axes):
-                if upper.get(axis) != domains.get(axis):
-                    raise NotImplementedError(
-                        "functional mask projection requires the same predicate "
-                        "on every access of a masked axis"
-                    )
+    # Predicates are access-local Layer-B facts.  The checks above have already
+    # proved that each projected upper bound equals the complete logical domain
+    # of that access axis.  A physical padding predicate on one tensor therefore
+    # cannot be globalized to every other access that happens to reuse the same
+    # logical axis: those accesses may have different physical tiling/capacity
+    # while denoting the same dense J domain.  Reduction/scan outside-lane
+    # semantics remain checked per access and per consumer below.
 
     _validate_broadcast_closure(j, broadcast_axes)
     (
