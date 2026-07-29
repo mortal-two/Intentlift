@@ -54,6 +54,27 @@ def test_rvv_transformation_and_schedule_are_separate_search_axes() -> None:
         reassociated.transformation.transformation_trace
     )
     assert reassociated.candidate_id != materialized.candidate_id
+    explicit = rvv.RiscvLoweringCandidate(
+        rvv.RiscvTransformationState(False, True, True),
+        rvv.RiscvSchedule(3, True, 0, scalable_vectorization=True),
+    )
+    assert explicit.transformation.lowering_path_kind == "explicit_vector_reduction"
+    assert "explicit_row_reduction" in " ".join(
+        explicit.transformation.transformation_trace
+    )
+    assert explicit.schedule.scalable_vectorization
+
+
+def test_rvv_explicit_reduction_only_enumerates_scalable_schedules() -> None:
+    universe = rvv_search.enumerate_riscv_candidates()
+    explicit = [
+        item for item in universe if item.transformation.explicit_vector_reduction
+    ]
+
+    assert explicit
+    assert all(item.schedule.scalable_vectorization for item in explicit)
+    assert all(item.schedule.vectorize for item in explicit)
+    assert len(universe) == 182
 
 
 def test_rvv_retile_schedule_is_an_explicit_search_axis() -> None:
@@ -347,35 +368,51 @@ def test_rvv_c_reorders_but_does_not_change_retile_universe() -> None:
         for item in with_c.c_prior_order
         if by_id[item].schedule.thread_count == 1
     ]
-    first_four = [by_id[item] for item in c_order_t1[:4]]
-    assert len({item.schedule for item in first_four}) == 1
-    assert [item.transformation.fuse_producers for item in first_four] == [
-        False,
-        True,
-        False,
-        True,
-    ]
+    first_six = [by_id[item] for item in c_order_t1[:6]]
     assert [
-        item.transformation.reassociate_reductions for item in first_four
-    ] == [False, False, True, True]
+        (
+            item.transformation.fuse_producers,
+            item.transformation.reassociate_reductions,
+            item.transformation.explicit_vector_reduction,
+        )
+        for item in first_six
+    ] == [
+        (False, False, False),
+        (True, False, False),
+        (False, True, False),
+        (False, True, True),
+        (True, True, False),
+        (True, True, True),
+    ]
+    assert all(item.schedule.parallel_tile == 2 for item in first_six)
+    assert all(item.schedule.reduction_tile == 8 for item in first_six)
+    assert all(
+        item.schedule.scalable_vectorization
+        == item.transformation.explicit_vector_reduction
+        for item in first_six
+    )
     c_anchor_states = [
-        by_id[item] for item in c_order_t1[4:8]
+        by_id[item] for item in c_order_t1[6:12]
     ]
     assert all(item.schedule.vectorize for item in c_anchor_states)
-    assert [item.transformation.fuse_producers for item in c_anchor_states] == [
-        False,
-        True,
-        False,
-        True,
-    ]
-    erase_first_four = [by_id[item] for item in with_c.erase_c_order[:4]]
-    assert len({item.schedule for item in erase_first_four}) == 1
-    assert [item.transformation.fuse_producers for item in erase_first_four] == [
-        False,
-        True,
-        False,
-        True,
-    ]
+    assert all(item.schedule.parallel_tile == 0 for item in c_anchor_states)
+    assert all(item.schedule.reduction_tile == 0 for item in c_anchor_states)
+    erase_first_six = [by_id[item] for item in with_c.erase_c_order[:6]]
+    assert {
+        (
+            item.transformation.fuse_producers,
+            item.transformation.reassociate_reductions,
+            item.transformation.explicit_vector_reduction,
+        )
+        for item in erase_first_six
+    } == {
+        (False, False, False),
+        (True, False, False),
+        (False, True, False),
+        (False, True, True),
+        (True, True, False),
+        (True, True, True),
+    }
     assert with_c.c_projection["raw_c_value_used_as_target_tile"] is False
     assert with_c.c_projection["projected_priors"][0][
         "schedule_dimension"
@@ -384,7 +421,7 @@ def test_rvv_c_reorders_but_does_not_change_retile_universe() -> None:
     record = with_c.to_record()
     assert record["same_universe_for_erase_c_and_c_prior"] is True
     assert record["c_controls_admission"] is False
-    assert record["candidate_universe_count"] == 156
+    assert record["candidate_universe_count"] == 182
     assert {
         item.schedule.thread_count for item in with_c.universe
     } == {1}

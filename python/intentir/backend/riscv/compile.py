@@ -66,20 +66,30 @@ def _run_bytes(command: list[str], *, stdin: str) -> bytes:
 class RiscvTransformationState:
     fuse_producers: bool
     reassociate_reductions: bool = False
+    explicit_vector_reduction: bool = False
 
     def __post_init__(self) -> None:
         if type(self.fuse_producers) is not bool:
             raise TypeError("fuse_producers must be bool")
         if type(self.reassociate_reductions) is not bool:
             raise TypeError("reassociate_reductions must be bool")
+        if type(self.explicit_vector_reduction) is not bool:
+            raise TypeError("explicit_vector_reduction must be bool")
+        if self.explicit_vector_reduction and not self.reassociate_reductions:
+            raise ValueError(
+                "explicit float vector reduction requires the admitted "
+                "reassociation state"
+            )
 
     @property
     def lowering_path_kind(self) -> str:
-        return (
-            "producer_consumer_fused"
-            if self.fuse_producers
-            else "materialized"
-        )
+        if self.explicit_vector_reduction:
+            return (
+                "producer_consumer_fused_vector_reduction"
+                if self.fuse_producers
+                else "explicit_vector_reduction"
+            )
+        return "producer_consumer_fused" if self.fuse_producers else "materialized"
 
     @property
     def transformation_trace(self) -> tuple[str, ...]:
@@ -93,7 +103,12 @@ class RiscvTransformationState:
             if self.reassociate_reductions
             else ()
         )
-        return (structural, *numeric)
+        vector = (
+            ("rvv.vector.explicit_row_reduction.v1",)
+            if self.explicit_vector_reduction
+            else ()
+        )
+        return (structural, *numeric, *vector)
 
     @property
     def b_transformations(self) -> tuple[str, ...]:
@@ -108,6 +123,7 @@ class RiscvTransformationState:
             "lowering_path_kind": self.lowering_path_kind,
             "fuse_producers": self.fuse_producers,
             "reassociate_reductions": self.reassociate_reductions,
+            "explicit_vector_reduction": self.explicit_vector_reduction,
             "transformation_trace": list(self.transformation_trace),
             "b_transformations": list(self.b_transformations),
             "required_b_capabilities": list(self.required_b_capabilities),
@@ -191,7 +207,8 @@ class RiscvLoweringCandidate:
             f"scalable{int(schedule.scalable_vectorization)}."
             f"pt{schedule.parallel_tile}.rt{schedule.reduction_tile}."
             f"thr{schedule.thread_count}."
-            f"reassoc{int(self.transformation.reassociate_reductions)}"
+            f"reassoc{int(self.transformation.reassociate_reductions)}."
+            f"explicitvec{int(self.transformation.explicit_vector_reduction)}"
         )
 
     def _content(self) -> dict[str, Any]:
@@ -219,6 +236,10 @@ class RiscvTransformationRecord:
     fusion_multi_use_rejections: int = 0
     openmp_parallel_ops: int = 0
     reassociated_float_combines: int = 0
+    explicit_vector_reductions: int = 0
+    explicit_vector_reduction_width: int = 0
+    explicit_vector_reduction_loops: int = 0
+    explicit_vector_reduction_scalable: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -235,6 +256,12 @@ class RiscvTransformationRecord:
             "fusion_multi_use_rejections": self.fusion_multi_use_rejections,
             "openmp_parallel_ops": self.openmp_parallel_ops,
             "reassociated_float_combines": self.reassociated_float_combines,
+            "explicit_vector_reductions": self.explicit_vector_reductions,
+            "explicit_vector_reduction_width": self.explicit_vector_reduction_width,
+            "explicit_vector_reduction_loops": self.explicit_vector_reduction_loops,
+            "explicit_vector_reduction_scalable": (
+                self.explicit_vector_reduction_scalable
+            ),
         }
 
 
@@ -244,6 +271,7 @@ class RiscvCompiledObject:
     symbol: str
     object_bytes: bytes
     rvv_instruction_count: int
+    rvv_reduction_instruction_count: int
     scalable_vector_ir_count: int
     rvv_vsetvl_modes: tuple[str, ...]
     transformation_record: RiscvTransformationRecord
@@ -281,6 +309,9 @@ class RiscvCompiledObject:
             "c_interface_symbol": self.c_interface_symbol,
             "object_size_bytes": len(self.object_bytes),
             "rvv_instruction_count": self.rvv_instruction_count,
+            "rvv_reduction_instruction_count": (
+                self.rvv_reduction_instruction_count
+            ),
             "scalable_vector_ir_count": self.scalable_vector_ir_count,
             "rvv_vsetvl_modes": list(self.rvv_vsetvl_modes),
             "true_mlir_pipeline": True,
@@ -308,6 +339,14 @@ def _lower_to_llvm_ir(
     candidate: RiscvLoweringCandidate,
 ) -> tuple[str, str, RiscvTransformationRecord]:
     source = state.base.intent_mlir
+    schedule = candidate.schedule
+    if (
+        candidate.transformation.explicit_vector_reduction
+        and not schedule.scalable_vectorization
+    ):
+        raise ValueError(
+            "explicit RVV vector reduction requires a scalable-vector schedule"
+        )
     linalg = _run_text(
         [
             INTENT_OPT,
@@ -321,18 +360,31 @@ def _lower_to_llvm_ir(
         stdin=source,
     )
     if candidate.transformation.fuse_producers:
-        pre_schedule_structured = _run_text(
+        fused_structured = _run_text(
             [MLIR_OPT, "--linalg-fuse-elementwise-ops", "--canonicalize"],
             stdin=linalg,
         )
     else:
-        pre_schedule_structured = linalg
-    structured = pre_schedule_structured
-    schedule = candidate.schedule
+        fused_structured = linalg
     fusion_changed_ir = bool(
-        candidate.transformation.fuse_producers
-        and pre_schedule_structured != linalg
+        candidate.transformation.fuse_producers and fused_structured != linalg
     )
+    pre_schedule_structured = fused_structured
+    if candidate.transformation.explicit_vector_reduction:
+        pre_schedule_structured = _run_text(
+            [
+                INTENT_OPT,
+                (
+                    "-vectorize-linalg-row-reduction="
+                    "vector-width=4 scalable-vector=true "
+                    "require-vectorization=true"
+                ),
+                "-canonicalize",
+                "-cse",
+            ],
+            stdin=pre_schedule_structured,
+        )
+    structured = pre_schedule_structured
     if schedule.parallel_tile or schedule.reduction_tile:
         structured = _run_text(
             [
@@ -379,7 +431,19 @@ def _lower_to_llvm_ir(
             structured, "intent.schedule.fusion_multi_use_rejection_count"
         ),
         reassociated_float_combines=len(
-            re.findall(r"fastmath<[^>]*\breassoc\b[^>]*>", structured)
+            re.findall(r"fastmath<[^>]*\breassoc\b[^>]*>", linalg)
+        ),
+        explicit_vector_reductions=_module_i64_attr(
+            structured, "intent.rvv.explicit_vector_reduction_count"
+        ),
+        explicit_vector_reduction_width=_module_i64_attr(
+            structured, "intent.rvv.explicit_vector_reduction_width"
+        ),
+        explicit_vector_reduction_loops=_module_i64_attr(
+            structured, "intent.rvv.explicit_vector_reduction_loop_count"
+        ),
+        explicit_vector_reduction_scalable=_module_i64_attr(
+            structured, "intent.rvv.explicit_vector_reduction_scalable_count"
         ),
     )
     if (
@@ -394,6 +458,14 @@ def _lower_to_llvm_ir(
         raise RuntimeError(
             "requested RVV producer-consumer fusion produced no fused Linalg "
             "operation"
+        )
+    if (
+        candidate.transformation.explicit_vector_reduction
+        and record.explicit_vector_reductions == 0
+    ):
+        raise RuntimeError(
+            "requested explicit RVV vector reduction matched no supported "
+            "Linalg row reduction"
         )
     parallel_runtime = schedule.thread_count > 1
     front = [
@@ -453,6 +525,11 @@ def _lower_to_llvm_ir(
             "--expand-strided-metadata",
             "--lower-affine",
             "--convert-scf-to-cf",
+            *(
+                ["--convert-vector-to-llvm"]
+                if candidate.transformation.explicit_vector_reduction
+                else []
+            ),
             "--convert-math-to-libm",
             "--convert-arith-to-llvm",
             "--convert-index-to-llvm",
@@ -521,6 +598,14 @@ def compile_riscv_object(
             "requested RVV producer-consumer fusion produced no fused Linalg "
             "operation"
         )
+    if (
+        candidate.transformation.explicit_vector_reduction
+        and transformation_record.explicit_vector_reductions == 0
+    ):
+        raise RuntimeError(
+            "requested explicit RVV vector reduction produced no vectorized "
+            "row reduction"
+        )
     schedule = candidate.schedule
     vector_shape_flags = (
         [
@@ -568,6 +653,21 @@ def compile_riscv_object(
             flags=re.MULTILINE,
         )
     )
+    rvv_reduction_instruction_count = len(
+        re.findall(
+            r"^\s+vfred[a-z0-9_.]*\s",
+            assembly,
+            flags=re.MULTILINE,
+        )
+    )
+    if (
+        candidate.transformation.explicit_vector_reduction
+        and rvv_reduction_instruction_count == 0
+    ):
+        raise RuntimeError(
+            "requested explicit RVV vector reduction produced no RVV "
+            "floating-point reduction instruction"
+        )
     scalable_vector_ir_count = len(re.findall(r"<vscale\s+x\s+", optimized))
     if schedule.scalable_vectorization and scalable_vector_ir_count == 0:
         raise RuntimeError(
@@ -591,6 +691,7 @@ def compile_riscv_object(
         symbol=_function_symbol(state.base.intent_mlir),
         object_bytes=object_bytes,
         rvv_instruction_count=rvv_instruction_count,
+        rvv_reduction_instruction_count=rvv_reduction_instruction_count,
         scalable_vector_ir_count=scalable_vector_ir_count,
         rvv_vsetvl_modes=rvv_vsetvl_modes,
         transformation_record=transformation_record,

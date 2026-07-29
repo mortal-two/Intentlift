@@ -87,8 +87,8 @@ accepted J literal、放宽 tolerance 或减少输出制造 Full 收益。
 
 ### M1. RVV vector-accumulator row reduction
 
-当前实验性 pass 只是把固定宽度 reduction tile vectorize，并可能在每个小 tile 内做一次 horizontal
-reduction；这还不是高性能 row reduction。
+本任务起点的实验性 pass 只是把固定宽度 reduction tile vectorize，并可能在每个小 tile 内做一次
+horizontal reduction；这不是高性能 row reduction。Phase A 已将其替换为下述整行 accumulator结构。
 
 目标结构：
 
@@ -296,3 +296,42 @@ per-kernel与C-prior小表。
 5. 不弱化任何 baseline，不修改J/Q/workload，不使用Python target-kernel emission；
 6. 相关编译、MLIR lit、Python controller与target execution测试通过；
 7. 代码、task和最终数据提交，工作区干净。
+
+## 11. 当前进展（2026-07-30）
+
+### 11.1 M1/M2 首个真实闭环
+
+已实现通用 `vectorize-linalg-row-reduction` C++/MLIR pass：
+
+- 支持 fixed/scalable vector，scalable strip size由 `vector.vscale`产生；
+- vector accumulator跨完整 reduction axis存活，行末只做一次 horizontal finalize；
+- `vector.transfer_read`处理自然 shape tail；
+- 支持任意数量的前导 parallel/unit dims；
+- 支持 fused `linalg.generic` region中的任意 Elementwise scalar producer payload，而不是只认裸 `addf`；
+- 只有 reduction自身带 `reassoc` 时准入；ordered reduction继续fail closed；
+- 最终 object必须包含真实 RVV `vfred*` 指令，否则候选编译失败；
+- 显式 dynamic-VL state只枚举scalable schedules，不复制到不合法的fixed-VLEN组合。
+
+Fused Add RMSNorm natural workload `[2048,4096]`、f32、RVV4 CPU0单线程、code-warm/data-cold
+工程筛选结果：
+
+| State | Latency |
+|---|---:|
+| Schedule-Only strong scalable canonical | 168.122 ms |
+| Fusion only | 37.438 ms |
+| Explicit whole-row vector reduction only | 51.983 ms |
+| Fusion + explicit whole-row vector reduction | **31.619 ms** |
+| Independent Native RVV | 31.683 ms |
+
+组合 state 成为 winner：`Full/Schedule-Only = 5.317x`，`Native/Full = 1.004x`。三个 observable
+outputs全部通过比较；winner由真实MLIR pipeline生成，含2条RVV floating-point reduction指令，
+`python_target_kernel_emission=false`。
+
+这是一次cold调用的go/no-go工程筛选，不冒充最终论文置信区间；它已经证明M1/M2存在远大于1.5×的
+真实headroom，下一步应横向推广并做fresh finalist重测。
+
+### 11.2 Softmax边界
+
+同样的8-state筛选在Softmax `[2048,4096]` 上得到约`1.254x` Full/Schedule；fusion-only仍是winner，
+组合vector reduction没有消除max、exp、sum与divide之间的多阶段materialization。因此Softmax不继续堆
+reduction vector参数，后续只在online/joint-statistics dataflow真正减少阶段或完整遍历时再投入。

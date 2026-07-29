@@ -21,7 +21,7 @@ from intentir.backend.riscv.compile import (
 )
 
 
-RVV_SEARCH_PLAN_PROTOCOL = "intentir.backend.riscv.search-plan.v4"
+RVV_SEARCH_PLAN_PROTOCOL = "intentir.backend.riscv.search-plan.v5"
 RVV_C_PROJECTION_PROTOCOL = "intentir.backend.riscv.c-projection.v1"
 
 _PARALLEL_TILES = (1, 2, 4, 8, 16, 32, 64, 128)
@@ -88,17 +88,24 @@ def enumerate_riscv_candidates(
 ) -> tuple[RiscvLoweringCandidate, ...]:
     """Build the target schedule/structure universe without reading C."""
 
-    transformations = [RiscvTransformationState(False, False)]
+    transformations = [RiscvTransformationState(False, False, False)]
     if enable_b_transformations:
-        transformations.append(RiscvTransformationState(True, False))
+        transformations.append(RiscvTransformationState(True, False, False))
     if enable_reassociation:
-        transformations.append(RiscvTransformationState(False, True))
+        transformations.append(RiscvTransformationState(False, True, False))
+        transformations.append(RiscvTransformationState(False, True, True))
         if enable_b_transformations:
-            transformations.append(RiscvTransformationState(True, True))
+            transformations.append(RiscvTransformationState(True, True, False))
+            transformations.append(RiscvTransformationState(True, True, True))
+    schedules = _schedule_universe()
     return tuple(
         RiscvLoweringCandidate(transformation, schedule)
         for transformation in transformations
-        for schedule in _schedule_universe()
+        for schedule in schedules
+        if (
+            not transformation.explicit_vector_reduction
+            or schedule.scalable_vectorization
+        )
     )
 
 
@@ -370,15 +377,18 @@ def _c_ranked_with_robust_anchors(
             (False, False),
         ):
             anchor = next(
-                item
-                for item in group
-                if item.schedule.opt_level == 3
-                and item.schedule.vectorize is vectorize
-                and item.schedule.scalable_vectorization is scalable
-                and item.schedule.parallel_tile == 0
-                and item.schedule.reduction_tile == 0
+                (
+                    item
+                    for item in group
+                    if item.schedule.opt_level == 3
+                    and item.schedule.vectorize is vectorize
+                    and item.schedule.scalable_vectorization is scalable
+                    and item.schedule.parallel_tile == 0
+                    and item.schedule.reduction_tile == 0
+                ),
+                None,
             )
-            if anchor != first:
+            if anchor is not None and anchor != first:
                 anchors.append(anchor)
         promoted = {first.candidate_id, *(item.candidate_id for item in anchors)}
         ranked_groups.append(
@@ -405,21 +415,17 @@ def _interleave_lowering_paths(
     A state+schedule budget must actually reach both concrete MLIR paths.  The
     previous concatenation spent every practical budget on the canonical path,
     making E3 observationally identical to E2 even when a faster fused state
-    existed.  Interleaving preserves each state's schedule order and equal total
-    visit budget while preventing fusion or explicit reduction reassociation
-    from being starved.
+    existed. Interleaving preserves each state's own valid schedule order while
+    preventing fusion or explicit reduction reassociation from being starved;
+    different MLIR states need not expose identical schedule domains.
     """
 
     if not expanded_paths:
         return canonical
-    if any(len(canonical) != len(path) for path in expanded_paths):
-        raise AssertionError("RVV MLIR states expose different schedule universes")
     result: list[RiscvLoweringCandidate] = []
-    for index, base in enumerate(canonical):
-        alternatives = tuple(path[index] for path in expanded_paths)
-        if any(base.schedule != item.schedule for item in alternatives):
-            raise AssertionError("RVV MLIR states use different schedule ordering")
-        result.extend((base, *alternatives))
+    all_paths = (canonical, *expanded_paths)
+    for index in range(max(len(path) for path in all_paths)):
+        result.extend(path[index] for path in all_paths if index < len(path))
     return tuple(result)
 
 
@@ -493,6 +499,7 @@ def plan_riscv_search(
             (
                 item.transformation.fuse_producers,
                 item.transformation.reassociate_reductions,
+                item.transformation.explicit_vector_reduction,
             )
             for item in universe
             if item not in canonical
@@ -505,6 +512,7 @@ def plan_riscv_search(
             if (
                 item.transformation.fuse_producers,
                 item.transformation.reassociate_reductions,
+                item.transformation.explicit_vector_reduction,
             )
             == state_key
         )
@@ -523,8 +531,9 @@ def plan_riscv_search(
         for path in expanded
     )
     # E2 retains the complete canonical schedule order. E3 has the same total
-    # visit budget but interleaves canonical and structurally expanded MLIR for
-    # each ranked schedule, so a finite budget cannot starve the new path.
+    # visit budget but round-robin interleaves canonical and structurally
+    # expanded MLIR. Each state owns its valid schedule domain; in particular,
+    # the dynamic-VL explicit vector state only admits scalable schedules.
     # C-Fixed remains exactly the first target-projected canonical candidate.
     erase_order = _interleave_lowering_paths(schedule_erase, expanded_erase)
     c_order = _interleave_lowering_paths(schedule_c, expanded_c)
