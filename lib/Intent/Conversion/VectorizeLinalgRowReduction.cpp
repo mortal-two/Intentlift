@@ -29,6 +29,7 @@
 #include "mlir/IR/PatternMatch.h"
 
 #include <functional>
+#include <limits>
 #include <optional>
 
 namespace intent {
@@ -59,13 +60,13 @@ static bool isScalarVectorElementType(Type type) {
 /// lane-wise.  Constants and captured scalar values are splatted; every other
 /// operation must carry MLIR's Elementwise trait.  The accumulator may only be
 /// consumed by the final add, so no hidden sequential recurrence is admitted.
-static bool hasVectorizablePayload(linalg::GenericOp op, arith::AddFOp combine) {
+static bool hasVectorizablePayload(linalg::GenericOp op, Operation *combine) {
   Block &body = op.getRegion().front();
   Value accumulator = body.getArguments().back();
   for (Operation &nested : body.without_terminator()) {
     if (nested.getNumRegions() != 0 || nested.getNumSuccessors() != 0)
       return false;
-    if (&nested != combine.getOperation() &&
+    if (&nested != combine &&
         llvm::is_contained(nested.getOperands(), accumulator))
       return false;
     if (!isa<arith::ConstantOp>(nested) &&
@@ -137,9 +138,62 @@ static arith::AddFOp getSupportedAddCombine(linalg::GenericOp op) {
       !arith::bitEnumContainsAll(add.getFastmath(),
                                  arith::FastMathFlags::reassoc))
     return {};
-  if (!hasVectorizablePayload(op, add))
+  if (!hasVectorizablePayload(op, add.getOperation()))
     return {};
   return add;
+}
+
+/// Return the scalar maxnumf that defines an associative row maximum.  Unlike
+/// floating add, maxnumf does not need a reassociation flag: the Intent max
+/// reduction lowers to this explicit associative combiner.  The rest of the
+/// shape/map contract is identical to the add path so the same strip-mined
+/// vector accumulator and tail masking apply.
+static arith::MaxNumFOp getSupportedMaxCombine(linalg::GenericOp op) {
+  if (!op.hasPureTensorSemantics() || op.getNumLoops() < 2 ||
+      op.getNumDpsInputs() != 1 || op.getNumDpsInits() != 1 ||
+      op->getNumResults() != 1)
+    return {};
+
+  ArrayRef<utils::IteratorType> iterators = op.getIteratorTypesArray();
+  if (iterators.size() != op.getNumLoops() ||
+      iterators.back() != utils::IteratorType::reduction ||
+      llvm::any_of(llvm::drop_end(iterators), [](utils::IteratorType iterator) {
+        return iterator != utils::IteratorType::parallel;
+      }))
+    return {};
+
+  SmallVector<AffineMap> maps = op.getIndexingMapsArray();
+  if (maps.size() != 2 || !maps.front().isIdentity() ||
+      maps.front().getNumResults() != op.getNumLoops() ||
+      !isParallelProjection(maps.back()))
+    return {};
+
+  auto inputType =
+      dyn_cast<RankedTensorType>(op.getDpsInputs()[0].getType());
+  auto outputType =
+      dyn_cast<RankedTensorType>(op.getDpsInits()[0].getType());
+  if (!inputType || inputType.getRank() != op.getNumLoops() ||
+      !inputType.getElementType().isF32() || !outputType ||
+      outputType.getRank() + 1 != inputType.getRank() ||
+      !outputType.getElementType().isF32())
+    return {};
+
+  Block &body = op.getRegion().front();
+  if (body.getNumArguments() != 2)
+    return {};
+  auto yield = dyn_cast<linalg::YieldOp>(body.getTerminator());
+  if (!yield || yield.getValues().size() != 1)
+    return {};
+  auto maximum = yield.getValues().front().getDefiningOp<arith::MaxNumFOp>();
+  if (!maximum)
+    return {};
+  Value accumulator = body.getArgument(1);
+  bool lhsIsAccumulator = maximum.getLhs() == accumulator;
+  bool rhsIsAccumulator = maximum.getRhs() == accumulator;
+  if (lhsIsAccumulator == rhsIsAccumulator ||
+      !hasVectorizablePayload(op, maximum.getOperation()))
+    return {};
+  return maximum;
 }
 
 /// A joint-statistics state may look through pure elementwise tensor producers
@@ -969,12 +1023,13 @@ struct VectorizeLinalgRowReductionPass
     SmallVector<linalg::GenericOp> allGenerics;
     module.walk([&](linalg::GenericOp op) {
       allGenerics.push_back(op);
-      if (getSupportedAddCombine(op))
+      if (getSupportedAddCombine(op) || getSupportedMaxCombine(op))
         worklist.push_back(op);
     });
 
     IRRewriter rewriter(&getContext());
     unsigned vectorizedCount = 0;
+    unsigned vectorizedMaxCount = 0;
     unsigned generatedLoopCount = 0;
     unsigned jointGroupCount = 0;
     unsigned jointReductionCount = 0;
@@ -1041,7 +1096,8 @@ struct VectorizeLinalgRowReductionPass
       if (jointedOperations.contains(op.getOperation()))
         continue;
       arith::AddFOp combine = getSupportedAddCombine(op);
-      if (!combine || !op->getBlock())
+      arith::MaxNumFOp maximum = getSupportedMaxCombine(op);
+      if ((!combine && !maximum) || !op->getBlock())
         continue;
 
       Location location = op.getLoc();
@@ -1068,27 +1124,34 @@ struct VectorizeLinalgRowReductionPass
         step = rewriter.create<arith::MulIOp>(location, minimumLanes, vscale);
       }
 
-      arith::FastMathFlags flags = combine.getFastmath();
+      arith::FastMathFlags flags = combine ? combine.getFastmath()
+                                           : arith::FastMathFlags::none;
+      vector::CombiningKind combiningKind =
+          combine ? vector::CombiningKind::ADD
+                  : vector::CombiningKind::MAXNUMF;
       std::function<Value(OpBuilder &, unsigned, Value, ArrayRef<Value>)>
           emitParallelLoops;
       emitParallelLoops = [&](OpBuilder &builder, unsigned dimension,
                               Value output,
                               ArrayRef<Value> parallelIndices) -> Value {
         if (dimension == reductionDimension) {
-          Value zero = builder.create<arith::ConstantOp>(
-              location, builder.getF32FloatAttr(0.0));
-          Value zeroVector = builder.create<vector::SplatOp>(
-              location, vectorType, zero);
+          Value identity = builder.create<arith::ConstantOp>(
+              location,
+              builder.getF32FloatAttr(
+                  combine ? 0.0
+                          : -std::numeric_limits<double>::infinity()));
+          Value identityVector = builder.create<vector::SplatOp>(
+              location, vectorType, identity);
           auto inner = builder.create<scf::ForOp>(
-              location, zeroIndex, columns, step, ValueRange{zeroVector},
+              location, zeroIndex, columns, step, ValueRange{identityVector},
               [&](OpBuilder &innerBuilder, Location innerLocation, Value column,
                   ValueRange innerArgs) {
                 SmallVector<Value> inputIndices(parallelIndices);
                 inputIndices.push_back(column);
-                // Out-of-bounds lanes are padded with the additive identity;
+                // Out-of-bounds lanes are padded with the combiner identity;
                 // lowering keeps the tail masked for dynamic/scalable rows.
                 Value packet = innerBuilder.create<vector::TransferReadOp>(
-                    innerLocation, vectorType, input, inputIndices, zero);
+                    innerLocation, vectorType, input, inputIndices, identity);
                 Value accumulated = emitVectorPayload(
                     innerBuilder, op, packet, innerArgs[0], vectorType);
                 if (!accumulated) {
@@ -1100,7 +1163,7 @@ struct VectorizeLinalgRowReductionPass
           Value initial = builder.create<tensor::ExtractOp>(
               location, output, parallelIndices);
           Value reduced = builder.create<vector::ReductionOp>(
-              location, vector::CombiningKind::ADD, inner.getResult(0), initial,
+              location, combiningKind, inner.getResult(0), initial,
               flags);
           return builder.create<tensor::InsertOp>(
               location, reduced, output, parallelIndices);
@@ -1124,6 +1187,8 @@ struct VectorizeLinalgRowReductionPass
           emitParallelLoops(rewriter, 0, initialOutput, ArrayRef<Value>{});
       rewriter.replaceOp(op, replacement);
       ++vectorizedCount;
+      if (maximum)
+        ++vectorizedMaxCount;
       generatedLoopCount += inputType.getRank();
     }
 
@@ -1137,6 +1202,8 @@ struct VectorizeLinalgRowReductionPass
                     builder.getI64IntegerAttr(vectorizedCount));
     module->setAttr("intent.rvv.explicit_vector_reduction_width",
                     builder.getI64IntegerAttr(vectorizedCount ? vectorWidth : 0));
+    module->setAttr("intent.rvv.explicit_vector_max_reduction_count",
+                    builder.getI64IntegerAttr(vectorizedMaxCount));
     module->setAttr("intent.rvv.explicit_vector_reduction_loop_count",
                     builder.getI64IntegerAttr(generatedLoopCount));
     module->setAttr("intent.rvv.explicit_vector_reduction_scalable_count",

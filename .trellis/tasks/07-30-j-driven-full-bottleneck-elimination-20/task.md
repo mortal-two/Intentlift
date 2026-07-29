@@ -118,15 +118,20 @@ frontier 的 subgroup/CTA state。变换必须由 C++/MLIR pass 实现，不能�
 
 ### P2. Online normalization 与无物化 softmax
 
-当前 Softmax 的 max、exp、sum、divide 仍形成多阶段 traversal/materialization。新增两种具体 state：
+Softmax 的缺口必须按 target 区分。RVV canonical Linalg 当前仍把 max、exp tensor、sum、divide保留为
+多个完整 traversal/materialization；CUDA direct row lowering则已经把输入行与 `exp(x-max)` 保存在
+SSA register tile 中，既不二次读取 HBM，也不在 epilogue重算 exp，因此不能把 CUDA 现状误写成
+“仍有 exp tensor materialization”。RVV 新增两种具体 state：
 
 1. `online-statistics + second output pass`：第一遍以稳定 recurrence 同时求 max/sum，第二遍重新读输入并
    直接产生最终输出，不物化 exp/statistics tensor；
 2. `resident-row online`：当 target capacity 与静态 shape 允许时，输入或 unnormalized values 保留在
    register/shared/vector scratch，统计完成后直接归一化写回。
 
-这不是 schedule 参数。online recurrence 与普通 two-pass graph 擦除 tile 后仍具有不同 dataflow；可能
-改变浮点观察顺序的 state 标记为 observation-changing，并由统一 Q/D 筛选。
+这不是 schedule 参数。online recurrence 与普通 materialized graph 擦除 tile 后仍具有不同 dataflow；
+可能改变浮点观察顺序的 state 标记为 observation-changing，并由统一 Q/D 筛选。CUDA 只有在真实
+post-pass/counter证明能进一步删除 barrier、exp 或 register spill 时才增加对应 state；不为对称性复制
+一个已经被现有 read-once lowering包含的候选。
 
 性能来源：删除完整 exp tensor 的 store/load、减少 exp 重算或输入重读、减少 barrier 与 stage。
 
@@ -357,7 +362,23 @@ Native RVV / joint Full               2.665x
 winner 的 post-pass record 是 `1 joint group / 2 reductions / 1 root load / 1 raw-moment variance`，122 个
 executable 全部通过正确性；三个 observable output 的最大绝对误差为 `3.34e-6 / 3.40e-8 / 6.20e-6`。
 这里不仅总 Full/Schedule 跨过 1.5×，新增 raw-moment mechanism 相对此前最佳非联合 Full 也达到
-`1.813x`。多批次确认正在执行，确认前仍按工程筛选解释。
+`1.813x`。
+
+同一 bundle 的 `warmup=3、cold-iterations=3、batches=3` 确认为：
+
+```text
+C-Fixed                             647.496 ms
+Schedule-Only                       391.326 ms
+joint raw-moment Full                34.759 ms
+Native RVV                           96.340 ms
+G_schedule                            1.655x
+Schedule-Only / joint Full           11.258x
+Native RVV / joint Full               2.778x
+```
+
+joint Full 的三个 fresh finalist样本为 `34.676/34.806/34.759 ms`，Schedule-Only为
+`393.203/391.326/387.025 ms`；122 个 executable仍全部通过正确性。LayerNorm 因而成为第二个稳定越过
+1.5× 的 Fresh-14 cell，而不是依赖单批次波动。
 
 Flash one-pass LayerNorm `[4096,4096]` 的相同首轮筛选为：
 

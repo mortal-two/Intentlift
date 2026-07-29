@@ -78,12 +78,13 @@ def VectorizeLinalgRowReduction : Pass<
   let description = [{
     Matches tensor-semantics `linalg.generic` operations with one or more
     leading parallel iterators followed by one reduction iterator, an identity
-    input map, a projection output map, and an f32 add combiner carrying the
-    explicit reassoc flag. The reduction region may contain an arbitrary
+    input map, a projection output map, and either an f32 add combiner carrying
+    the explicit reassoc flag or an associative f32 maxnumf combiner. The
+    reduction region may contain an arbitrary
     Elementwise scalar producer payload before the final add; those operations
     are cloned lane-wise using their MLIR traits. The pass strip-mines the
     reduction axis, keeps one vector accumulator live across the complete row,
-    and emits exactly one horizontal finalize per logical row.
+    and emits exactly one matching add/max horizontal finalize per logical row.
     `scalable-vector` derives the strip size from `vector.vscale`; otherwise
     `vector-width` is fixed. Tail reads use transfer padding and lower to masked
     accesses. `joint-reductions` traces pure identity-mapped elementwise producer

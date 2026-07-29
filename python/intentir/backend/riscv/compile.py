@@ -261,6 +261,7 @@ class RiscvTransformationRecord:
     explicit_vector_reduction_width: int = 0
     explicit_vector_reduction_loops: int = 0
     explicit_vector_reduction_scalable: int = 0
+    explicit_vector_max_reductions: int = 0
     joint_vector_reduction_groups: int = 0
     joint_vector_reductions: int = 0
     joint_vector_reduction_root_loads: int = 0
@@ -287,6 +288,7 @@ class RiscvTransformationRecord:
             "explicit_vector_reduction_scalable": (
                 self.explicit_vector_reduction_scalable
             ),
+            "explicit_vector_max_reductions": self.explicit_vector_max_reductions,
             "joint_vector_reduction_groups": self.joint_vector_reduction_groups,
             "joint_vector_reductions": self.joint_vector_reductions,
             "joint_vector_reduction_root_loads": (
@@ -503,6 +505,9 @@ def _lower_to_llvm_ir(
         ),
         explicit_vector_reduction_scalable=_module_i64_attr(
             structured, "intent.rvv.explicit_vector_reduction_scalable_count"
+        ),
+        explicit_vector_max_reductions=_module_i64_attr(
+            structured, "intent.rvv.explicit_vector_max_reduction_count"
         ),
         joint_vector_reduction_groups=_module_i64_attr(
             structured, "intent.rvv.joint_vector_reduction_group_count"
