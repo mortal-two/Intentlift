@@ -114,11 +114,11 @@
       "c_digest": "7734935e6dbc163b06412083f302b039f471f7cd7108f5549424f6c86ea39511",
       "case_id": "high_performance:xformers.ops.fmha._triton.splitk_kernels._splitK_reduce_varargs",
       "evidence_kind": "zero_model_gate2_recheck",
-      "j_digest": "c860639d00fee552375a99045ea76871428817ecca2dafa1d9de07e5190870fe",
+      "j_digest": "9b3977dbdc377ecdaf87e058c528024fb8fa342ce542999b4f0d68759ad8e68b",
       "name": "splitk_reduce_varargs",
       "receipt_digest": "9eb4aad53e9028038854fcf45c1e3efbfd5c7f0616522e5b7c0b307ee2887ae8",
-      "snapshot_digest": "c8bc45b49afbed84c3afd627e4105586ee6aeff8752f9b90cf3d93fe492e132c",
-      "snapshot_file": "c8bc45b49afbed84c3afd627e4105586ee6aeff8752f9b90cf3d93fe492e132c.json"
+      "snapshot_digest": "7eb3943bcea298c34e4ec021d1fe01d1144b5c362d1bd315f9c200e24797cc6f",
+      "snapshot_file": "7eb3943bcea298c34e4ec021d1fe01d1144b5c362d1bd315f9c200e24797cc6f.json"
     },
     {
       "c_digest": "39d9091b22221be04bdccdbc4faca30215af9d2c8074af867d52c4d01a02442d",

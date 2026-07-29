@@ -418,3 +418,28 @@ def test_natural_flash_and_splitk_contiguous_stride_products_are_revalued():
     assert splitk_constexprs["head_dim"] == 256
     assert splitk_constexprs["H"] == 16
     assert splitk.vararg_arity == 2
+
+
+def test_natural_splitk_binds_h_and_g_to_their_physical_tensor_axes():
+    snapshot, _ = load_production_snapshot(
+        FRESH_SNAPSHOTS, "splitk_reduce_varargs"
+    )
+    prepared = prepare_production_workload(
+        "splitk_reduce_varargs",
+        profile=PRODUCTION_WORKLOAD_PROFILE_NATURAL_HEADLINE,
+    )
+    active, _ = profile_production_snapshot(
+        snapshot,
+        prepared,
+        PRODUCTION_WORKLOAD_PROFILE_NATURAL_HEADLINE,
+    )
+    case = build_workload_jc_suite(prepared, active.j, active.c).cases[0]
+    logical_refs = {
+        parameter.name: parameter.logical_ref
+        for parameter in active.j.signature.parameters
+    }
+
+    assert logical_refs["p34"] == "x2"  # H -> tensor head axis
+    assert logical_refs["p35"] == "x1"  # G -> tensor group axis
+    assert case.refeval.dims_map["x2"] == 16
+    assert case.refeval.dims_map["x1"] == 1

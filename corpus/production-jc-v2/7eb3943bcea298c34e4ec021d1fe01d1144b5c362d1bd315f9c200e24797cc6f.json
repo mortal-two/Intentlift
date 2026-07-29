@@ -1011,7 +1011,7 @@
         {
           "dtype": "i64",
           "kind": "constexpr",
-          "logical_ref": "x1",
+          "logical_ref": "x2",
           "mode": "value",
           "name": "p34",
           "rank": 0
@@ -1019,7 +1019,7 @@
         {
           "dtype": "i64",
           "kind": "constexpr",
-          "logical_ref": "x2",
+          "logical_ref": "x1",
           "mode": "value",
           "name": "p35",
           "rank": 0
@@ -1036,7 +1036,7 @@
     "storage": [],
     "value_dimension_relations": []
   },
-  "j_digest": "c860639d00fee552375a99045ea76871428817ecca2dafa1d9de07e5190870fe",
+  "j_digest": "9b3977dbdc377ecdaf87e058c528024fb8fa342ce542999b4f0d68759ad8e68b",
   "schema_version": "intentir.production.jc-snapshot.v1",
-  "snapshot_digest": "c8bc45b49afbed84c3afd627e4105586ee6aeff8752f9b90cf3d93fe492e132c"
+  "snapshot_digest": "7eb3943bcea298c34e4ec021d1fe01d1144b5c362d1bd315f9c200e24797cc6f"
 }
