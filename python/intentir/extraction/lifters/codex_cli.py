@@ -14,8 +14,6 @@ from minisweagent.config.intentir_context_query import (
     _candidate_control_value,
     _feedback_category_value,
     _harness_abi_value,
-    _source_outline_value,
-    _source_observer_value,
 )
 
 from intentir.extraction.providers.codex_cli import (
@@ -57,20 +55,19 @@ The outer runtime exposes only this isolated workspace. Work only under /workspa
 input/ is immutable; work/, output/, and tmp/ are writable. Never inspect any
 other path and never use network tools.
 
-The startup files already contain the exact Source, Harness view, feedback,
-minimal example, exact Source-side TTIR observation when compilation succeeds,
-and focused lookup tools. The final `<source-aware-startup>`
-block directly contains the compact exact Harness ABI ledger; consume it without
-a mandatory tool call. Read Source and only the additional files you need. Author
-every field of one complete output/candidate.json containing exactly J, C, and
-pi. You may keep proof-irrelevant notes or a model-authored build script under
-work/.
+The exact Source, Harness view, schema, knowledge, optional Source-side TTIR
+observation, and focused tools are ordinary files under input/. The final
+`<source-aware-startup>` block is only a path manifest; it deliberately does not
+repeat their contents. Read input/source.py and input/harness_view.json directly,
+then inspect only the additional files needed for a named uncertainty. Do not
+inventory or read the complete global schema/knowledge/TTIR up front. Author every
+field of one complete output/candidate.json containing exactly J, C, and pi. You
+may keep proof-irrelevant notes or a model-authored build script under work/.
 
-Use compiler observation only when it helps resolve Source control, time,
-def-use, effects, or materialization. Start with
-`python input/tools/context_query.py --input-root input --output-root output source-observer`
-or `source-ttir-outline`; page exact TTIR, query one %SSA def-use token, or read
-one observer fingerprint path only as needed. This observation describes the
+Use compiler observation only when it helps resolve one concrete Source control,
+time, def-use, effect, or materialization uncertainty. Read the relevant local
+TTIR with ordinary file tools or query one named %SSA/path; do not load the whole
+Gate1 observer fingerprint as a default phase. This observation describes the
 same anonymous Source specialization. It never prescribes or constructs J/C/pi.
 
 Treat Harness `shape` as one valuation: map every `shape_contract` h* to a
@@ -82,14 +79,15 @@ For every Source index, domain, and predicate expression already representable
 by the closed ContractExpr grammar, preserve its integer operator tree (`//`,
 `%`, `ceil_div`, `+`, `-`, `*`) rather than replacing it with an algebraically
 equivalent formula; Gate1 observes the resulting realization topology.
-Before CandidateCheck, reconcile every loop, if, and return in the syntax-only
-Source control-flow outline with the complete candidate. Decide from Source and
+Before CandidateCheck, reconcile every loop, if, and return in Source with the
+complete candidate. Decide from Source and
 the selected specialization whether each item belongs to logical J control,
 pi-owned physical time/control, C-owned compile-time choice, or has no
 compiler-visible event. Do not treat a loop region, a large route set, or syntax
 alone as evidence that the corresponding control/time obligation was authored;
-and do not invent an obligation merely because it appears in the outline. Treat
-each `lexically_preexisting_writes` row only as a checklist: inspect the Source
+and do not invent an obligation merely because it appears in syntax. If you query
+the syntax-only outline, treat each `lexically_preexisting_writes` row only as a
+checklist: inspect the Source
 and decide every real loop carrier yourself, then author the complete carrier
 set and frontend tuple order. For each selected reachable helper, preserve the
 literal Source statement order of writes in J scope.effects and pi transfer/order
@@ -147,29 +145,29 @@ diagnostic-only and has no certification authority.
 
 
 def _source_aware_startup_context(workspace: Any, *, fresh_owner: bool) -> dict[str, Any]:
-    """Return exact existing ABI or closed-feedback facts without a tool round."""
+    """Return only paths on first use, or bounded closed feedback later."""
 
     if fresh_owner:
-        value = {
+        return {
             "protocol": "intentir.codex-lift-startup-view.v1",
             "fresh_owner": True,
-            "harness_abi": _harness_abi_value(workspace.input_dir, 1, 80),
-            "source_outline": _source_outline_value(workspace.input_dir, 1, 32),
+            "paths": {
+                "source": "input/source.py",
+                "harness": "input/harness_view.json",
+                "source_ttir": "input/source_ttir.json",
+                "schema": "input/schema/artifact.schema.json",
+                "contract": "input/knowledge/lift_contract.md",
+                "preflight": "input/knowledge/preflight.md",
+                "intent_ops": "input/knowledge/intent_ops.md",
+                "minimal_example": "input/knowledge/minimal_example.json",
+                "candidate": "output/candidate.json",
+            },
             "authority": (
-                "exact Harness-owned projection only; no logical_ref, J/C/pi "
-                "field, semantic classification, or repair is generated"
+                "path manifest only; exact bytes remain in mounted files and no "
+                "logical_ref, J/C/pi field, semantic classification, or repair "
+                "is generated"
             ),
         }
-        try:
-            value["source_compiler_observation"] = _source_observer_value(
-                workspace.input_dir
-            )
-        except (FileNotFoundError, KeyError, TypeError, ValueError) as exc:
-            value["source_compiler_observation"] = {
-                "status": "unavailable",
-                "diagnostic": f"{type(exc).__name__}: {exc}",
-            }
-        return value
 
     frontier = json.loads(
         (workspace.input_dir / "feedback_frontier.json").read_text(

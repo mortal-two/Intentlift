@@ -1,7 +1,8 @@
 # Task 15：模型级输入到 Compiler-Observed Lift / Closed J / Source-Blind Replay 的最终闭合系统
 
-> 状态：`P1_IMPLEMENTED / P2_READY`（2026-07-29）。通用能力已实现并完成无模型边界校验；下一步
-> 启动四个 formal pilot，再按真实 frontier 推进十项 active queue。
+> 状态：`P1_CONTEXT_REDUCTION / P2_DIAGNOSTIC`（2026-07-29）。通用语义边界已实现；formal
+> pilot 暴露出首轮 Lift 的 workspace/π authoring attention 瓶颈，先完成不改变数学对象的上下文减法，
+> 再继续十项 active queue。
 >
 > 定位：Task 11 的下一次能力建设与最终十项闭合波。Task 14 已结束归档；其18份可保留证书、十项
 > active queue与中断 evidence 是本任务的历史输入，不是本任务已经完成的结果。
@@ -259,6 +260,29 @@ candidate bytes
 不进入证书。PASS后外部Runner仍对exact submitted bytes重跑正式TypeCheck。构造阶段不设低
 tool/check次数上限，由active wall time、provider安全和exact stagnation治理。
 
+### 4.5 LLM-facing workspace 与 π authoring 边界（新增）
+
+2026-07-29 的 Linear/SplitK 首轮轨迹显示：Codex 已能自行浏览文件，但当前 workspace 同时挂载并
+重复暴露 Source、Harness、minimal example、schema、lift contract、preflight、IntentOps、TTIR 和
+observer projection；首轮还会通过自定义分页/查询协议试错。Linear 单次 Lift 的累计输入达到约
+`1.19M` token（其中约`1.02M`为cached input），而实际 Source 只有百余行。这是上下文/序列化负担，
+不是 Source 语义或模型深度不足。
+
+因此后续 Codex 首包只给文件路径和极短的工作合同；exact Source、Harness、schema、knowledge、
+TTIR 仍挂载在 workspace，由 Codex 自己按需读取。首包不得再次嵌入同一 Source/Harness/outline/
+observer 的完整或大块投影，也不要求模型学习额外的分页协议；仅保留 CandidateCheck 与必要的
+SSA/TTIR 定点查询能力。该减法不改变`(J,C,π)`、TypeCheck、Replay输入或SCRC谓词。
+
+π 的 `regions`、`instances`、`routes`、`order`、`sharing`、`iterations`、
+`physical_iterations`、`physical_loop_carriers` 暂不删除或合并。它们分别承载词法作用域、实例身份、operand-slot wiring、
+显式执行顺序、单一producer复用、逻辑循环与物理循环/载体等不可互相推导的 witness。当前问题是
+扁平 wire 对 LLM 的序列化负担，而不是这些数学关系本身错误。若后续要做 region-centric authoring
+syntax，必须是一对一的闭合表示、同时更新 Decode/TypeCheck/Replay/RefEval/production consumers；
+不得让 fixed code 从 Source 或 valuation 猜造 π/J/C 语义。
+
+首轮能力验收只比较 `time-to-first-complete-candidate`、首次 Gate1 frontier 和累计输入，不把
+TypeCheck PASS 当作语义进展；先用 Linear、SplitK、Flash 三个 profile 做小规模 A/B。
+
 ## 5. J / C / π的能力计划
 
 ### 5.1 不做大重构
@@ -443,6 +467,9 @@ sibling；hidden Gate2输入和结果绝不回流本次Lift/Replay。Liger RoPE�
 2026-07-29实现状态：上述1--6已落地。真实DYT匿名Source编译观察为`pass`并得到6029字符TTIR；
 `artifact.v11`的closed `dimension_relations`已贯穿Decode/TypeCheck、Replay packet、RefEval、ContractIR
 与production materializer；Codex Replay已可查询自己的synthetic TTIR，并按3600秒episode总预算运行。
+formal pilot 随后证明编译观察能帮助 Linear 首轮恢复多物理 carrier，但原始 TTIR/低层 π 与重复
+startup context 仍造成显著 attention/serialization 成本，故 P1 重新打开为上述 context-reduction
+工作，不引入新数学对象。
 
 ### P2：四个真实pilot
 
