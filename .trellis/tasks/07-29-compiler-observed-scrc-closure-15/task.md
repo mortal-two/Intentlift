@@ -268,10 +268,12 @@ observer projection；首轮还会通过自定义分页/查询协议试错。Lin
 `1.19M` token（其中约`1.02M`为cached input），而实际 Source 只有百余行。这是上下文/序列化负担，
 不是 Source 语义或模型深度不足。
 
-因此后续 Codex 首包只给文件路径和极短的工作合同；exact Source、Harness、schema、knowledge、
-TTIR 仍挂载在 workspace，由 Codex 自己按需读取。首包不得再次嵌入同一 Source/Harness/outline/
-observer 的完整或大块投影，也不要求模型学习额外的分页协议；仅保留 CandidateCheck 与必要的
-SSA/TTIR 定点查询能力。该减法不改变`(J,C,π)`、TypeCheck、Replay输入或SCRC谓词。
+因此 Codex 首包只给路径和极短工作合同；workspace 只暴露 exact Source、Harness、TTIR、一个
+source-neutral closed wire reference、continuation feedback 占位及 CandidateCheck。完整Schema仍由
+host checker权威消费，但模型侧只看到从同一Schema机械去掉长description后的结构合同与十条简短
+所有权规则；README/contract/preflight/IntentOps/minimal-example不再同时挂载。首包不得再次嵌入
+Source/Harness/outline/observer的大块投影，也不要求模型学习额外分页协议。该减法不改变
+`(J,C,π)`、TypeCheck、Replay输入或SCRC谓词。
 
 π 的 `regions`、`instances`、`routes`、`order`、`sharing`、`iterations`、
 `physical_iterations`、`physical_loop_carriers` 暂不删除或合并。它们分别承载词法作用域、实例身份、operand-slot wiring、
@@ -294,6 +296,12 @@ TTIR片段，共产生约257KB shell输出并做8次CandidateCheck。因此“�
 exact Source/Harness/TTIR和CandidateCheck即可；完整Schema继续由host checker消费，不作为默认可浏览
 教程，重叠的README/contract/preflight/IntentOps/minimal-example不得同时要求模型核对。该变化仍不
 删除π关系，也不由fixed code作者化任何J/C/π字段。
+
+该最小surface现已作为Codex专用投影实现；MiniSWE的既有workspace不受影响。模型侧reference约
+26KB，来自当前artifact.v11 Schema的机械去description投影，并保留所有required、closed field、
+enum、pattern、dependent authoring入口；它不是typed skeleton、composer或候选生成器。下一步只用
+同一个Linear `B=1/K=1`、Sol xhigh、单候选/单Gate1做对照，先看首次Lift的累计输入、model
+segments、CandidateCheck调用、墙钟与Gate1 frontier，再决定是否扩展到SplitK/Flash。
 
 ## 5. J / C / π的能力计划
 

@@ -42,8 +42,8 @@ from .scrc import (
 )
 
 
-CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v12"
-CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v70"
+CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v13"
+CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v71"
 CODEX_CLI_TURN_TIMEOUT_SECONDS = 900.0
 
 _EAGER_DIRECT_FEEDBACK_CATEGORIES = frozenset(
@@ -55,20 +55,20 @@ The outer runtime exposes only this isolated workspace. Work only under /workspa
 input/ is immutable; work/, output/, and tmp/ are writable. Never inspect any
 other path and never use network tools.
 
-The exact Source, Harness view, schema, knowledge, optional Source-side TTIR
-observation, and focused tools are ordinary files under input/. The final
-`<source-aware-startup>` block is only a path manifest; it deliberately does not
-repeat their contents. Read input/source.py and input/harness_view.json directly,
-then inspect only the additional files needed for a named uncertainty. Do not
-inventory or read the complete global schema/knowledge/TTIR up front. Author every
-field of one complete output/candidate.json containing exactly J, C, and pi. You
-may keep proof-irrelevant notes or a model-authored build script under work/.
+This is a deliberately small authoring workspace, not a repository checkout.
+Read input/source.py, input/harness_view.json, and the single closed
+input/wire_contract.json. It contains the concise semantic ownership rules and
+the exact annotation-free artifact.v11 JSON Schema. Do not search for another
+schema, tutorial, example, preflight, or operation catalog: none is authoritative
+here. Author every field of one complete output/candidate.json containing exactly
+J, C, and pi. You may keep proof-irrelevant notes or a model-authored build script
+under work/.
 
-Use compiler observation only when it helps resolve one concrete Source control,
-time, def-use, effect, or materialization uncertainty. Read the relevant local
-TTIR with ordinary file tools or query one named %SSA/path; do not load the whole
-Gate1 observer fingerprint as a default phase. This observation describes the
-same anonymous Source specialization. It never prescribes or constructs J/C/pi.
+Use input/source_ttir.json only when it helps resolve one concrete Source control,
+time, def-use, effect, or materialization uncertainty. Read only the relevant
+local TTIR fragment; do not load the complete observer fingerprint as a default
+phase. This observation describes the same anonymous Source specialization. It
+never prescribes or constructs J/C/pi.
 
 Treat Harness `shape` as one valuation: map every `shape_contract` h* to a
 distinct/repeated symbolic J dimension as declared, preserve scalar and bound
@@ -96,7 +96,8 @@ After the first meaningful complete edit run:
 
 python .agents/intentir_agent_tool.py candidate_check
 
-Use `lift_candidate_control overview|outputs|operands|boundary|pi` only when a focused
+Use `lift_harness_abi`, or
+`lift_candidate_control overview|outputs|operands|boundary|pi`, only when a focused
 self-read of your current candidate would resolve a named uncertainty; it is not
 a mandatory pre-check phase. These tools only project exact Harness facts or
 your current authored candidate; they never infer or edit J/C/pi.
@@ -108,6 +109,100 @@ independently reruns CandidateCheck after the turn and may resume this same
 thread with closed diagnostics. Do not claim TypeCheck, Replay, Gate1, Gate2, or
 certification. Do not create any other file under output/.
 """
+
+
+_COMPACT_WIRE_RULES = (
+    "The only accepted envelope is exactly schema,j,c,pi with schema="
+    "intentir.scrc.artifact.v11. Lift authors every required field, including "
+    "required empty arrays; fixed code never fills, renames, reorders, or infers "
+    "artifact content.",
+    "J=A+B is the sole logical semantic object. J owns typed logical values and "
+    "state, dataflow/control, domains, predicates/fills, logical indices, effects, "
+    "aliases, output mappings, result-relation classes, logical signature, scopes, "
+    "storage identity, and value/dimension relations.",
+    "C owns only implementation-selection slots and their values. A Source value, "
+    "shape, predicate, effect, or operation never moves to C merely because it is "
+    "compile-time in the selected specialization.",
+    "pi is a realization witness for the authored J+C only. It may preserve regions, "
+    "instances, routes, route-local extent transforms, order, sharing, refinements, "
+    "logical-loop realization, physical-only iteration/carriers, and terminal "
+    "topology; it must not introduce a logical op, predicate, shape, dtype, value, "
+    "bound formula, or frontend spelling.",
+    "Use opaque declaration-ordered handles only. n* maps to an exact structural "
+    "IntentOp path; v* is an SSA result. pi route/order/sharing endpoints are i* "
+    "instances, never raw J/C handles.",
+    "Harness concrete tensor shapes are valuations, not permission to literalize a "
+    "parametric Source dimension. Preserve every declared h* shape contract as x*, "
+    "author value_dimension_relations when one integral rank-0 logical value equals "
+    "an extent, and author every Source-grounded dimension_relation explicitly.",
+    "Preserve Source loops, branches, returns, carries, output multiplicity, access "
+    "identity, and literal effect order in J and the corresponding realization "
+    "topology in pi. Node declaration order is not effect order.",
+    "A non-null access fill requires a predicated load. Bind ambiguous access views "
+    "to their actual node_ref. Predicated sum/max/min consumers require their exact "
+    "consumer_extensions relation; computed access guards require an authored "
+    "access_guard_relation and explicit Layer-A select/state semantics where needed.",
+    "Choose each output result-relation class from the authored floating dependency "
+    "graph. Concrete tolerance values are external and never appear in J.",
+    "CandidateCheck is source-free parse/Decode/dependent-TypeCheck diagnostics over "
+    "the exact current bytes. It neither judges Source semantic completeness nor "
+    "repairs or certifies a candidate; Gate1 feedback is the semantic counterexample.",
+)
+
+
+def _strip_schema_annotations(value: Any) -> Any:
+    """Keep the exact structural schema while removing tutorial-sized prose."""
+
+    if isinstance(value, Mapping):
+        return {
+            str(key): _strip_schema_annotations(item)
+            for key, item in value.items()
+            if key not in {"description", "title", "examples", "default"}
+        }
+    if isinstance(value, list):
+        return [_strip_schema_annotations(item) for item in value]
+    return value
+
+
+def _codex_input_files(
+    request: Any,
+    *,
+    source_ttir_observation: Mapping[str, Any] | None,
+) -> dict[str, str]:
+    """Project one minimal Codex authoring surface from the shared Lift packet."""
+
+    complete = _input_files(
+        request,
+        source_ttir_observation=source_ttir_observation,
+    )
+    schema = json.loads(complete["schema/artifact.schema.json"])
+    wire_contract = {
+        "protocol": "intentir.codex-lift-wire-contract.v1",
+        "authority": (
+            "source-neutral authoring reference only; the host independently "
+            "runs the full schema, Decode, and dependent TypeCheck"
+        ),
+        "semantic_rules": list(_COMPACT_WIRE_RULES),
+        "wire_schema": _strip_schema_annotations(schema),
+    }
+    files = {
+        "source.py": complete["source.py"],
+        "harness_view.json": complete["harness_view.json"],
+        "feedback.json": complete["feedback.json"],
+        "feedback_frontier.json": complete["feedback_frontier.json"],
+        "wire_contract.json": json.dumps(
+            wire_contract,
+            indent=0,
+            sort_keys=True,
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+        + "\n",
+        "candidate_check.json": "null\n",
+    }
+    if "source_ttir.json" in complete:
+        files["source_ttir.json"] = complete["source_ttir.json"]
+    return files
 
 _EXTERNAL_CONTINUATION_PROMPT = """The same branch-local source-aware Lift task continues in the same workspace and thread.
 The final `<source-aware-startup>` block contains the exact bounded feedback
@@ -155,11 +250,7 @@ def _source_aware_startup_context(workspace: Any, *, fresh_owner: bool) -> dict[
                 "source": "input/source.py",
                 "harness": "input/harness_view.json",
                 "source_ttir": "input/source_ttir.json",
-                "schema": "input/schema/artifact.schema.json",
-                "contract": "input/knowledge/lift_contract.md",
-                "preflight": "input/knowledge/preflight.md",
-                "intent_ops": "input/knowledge/intent_ops.md",
-                "minimal_example": "input/knowledge/minimal_example.json",
+                "wire_contract": "input/wire_contract.json",
                 "candidate": "output/candidate.json",
             },
             "authority": (
@@ -368,13 +459,10 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                 anonymous_source,
                 anonymous_view,
             )
-        files = {
-            **_input_files(
-                prepared,
-                source_ttir_observation=self._source_ttir_observation,
-            ),
-            "candidate_check.json": "null\n",
-        }
+        files = _codex_input_files(
+            prepared,
+            source_ttir_observation=self._source_ttir_observation,
+        )
 
         try:
             fresh_workspace = self._create_or_refresh_session_workspace(
