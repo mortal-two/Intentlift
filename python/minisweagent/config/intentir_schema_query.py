@@ -153,6 +153,12 @@ def _sections(schema: dict[str, Any]) -> dict[str, dict[str, Any]]:
     }
 
 
+def schema_sections(schema: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Return the exact source-neutral leaf sections used by CLI and agents."""
+
+    return _sections(schema)
+
+
 def _section(schema: dict[str, Any], name: str) -> None:
     sections = _sections(schema)
     if name not in sections:

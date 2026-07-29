@@ -15,6 +15,7 @@ from minisweagent.config.intentir_context_query import (
     _feedback_category_value,
     _harness_abi_value,
 )
+from minisweagent.config.intentir_schema_query import schema_sections
 
 from intentir.extraction.providers.codex_cli import (
     CODEX_CLI_AGENT_RUNTIME,
@@ -42,6 +43,7 @@ from .scrc import (
     scrc_candidate_check_context,
 )
 from .prompt import SCHEMA as _INTENTIR_OPERATION_REFERENCE
+from .scrc_schema import scrc_lift_core_json_schema
 
 
 CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v14"
@@ -59,10 +61,21 @@ other path and never use network tools.
 
 This is a deliberately small authoring workspace, not a repository checkout.
 Read input/source.py, input/harness_view.json, and the single closed
-input/wire_contract.json. It contains the concise semantic ownership rules and
-the exact annotation-free artifact.v11 JSON Schema in one compact JSON line; read
-that one file in one tool action. Do not search for another schema, tutorial,
-example, preflight, or operation catalog: none is authoritative here.
+input/wire_contract.json. It contains concise semantic ownership rules and the
+exact IntentOp vocabulary. Do not search for another schema, tutorial, example,
+preflight, or operation catalog: none is authoritative here.
+
+Before authoring the signature or first complete candidate, run these two exact
+read-only projections once:
+
+python .agents/intentir_agent_tool.py lift_harness_abi 1 64
+python .agents/intentir_agent_tool.py lift_contract core boundary pi
+
+The first is the complete anonymous ABI/Harness ledger. The second projects the
+exact required keys, fields, enums, and closed JSON Schema sections for all
+artifact object families. They expose no Source meaning and never generate an
+artifact field. Use them to form one coordinated complete draft before the first
+CandidateCheck; do not use CandidateCheck as a missing-field tutorial.
 
 Author the artifact incrementally under work/candidate_parts/ instead of emitting
 one giant first patch or writing another Python builder. Each *.json file there is
@@ -272,19 +285,89 @@ finally:
 print(json.dumps({"status":"pass","fragments":len(paths),"bytes":len(text.encode())}))
 '''
 
+_CONTRACT_SECTION_PROFILES = {
+    "core": (
+        "tensor",
+        "parameter",
+        "scope",
+        "storage",
+        "value_dimension_relation",
+        "dimension_relation",
+        "c_slot",
+    ),
+    "boundary": (
+        "domain",
+        "access",
+        "broadcast",
+        "alias",
+        "effect",
+        "output_mapping",
+        "reduction",
+        "index_bound",
+        "update",
+        "result_relation",
+        "consumer_extension",
+        "access_guard_relation",
+        "authorization",
+    ),
+    "pi": (
+        "pi_region",
+        "pi_instance",
+        "pi_route",
+        "pi_route_extent_transform",
+        "pi_order",
+        "pi_sharing",
+        "pi_iteration",
+        "pi_loop_carrier",
+        "pi_physical_iteration",
+        "pi_physical_loop_carrier",
+        "pi_terminal_control",
+        "pi_refinement",
+    ),
+}
 
-def _strip_schema_annotations(value: Any) -> Any:
-    """Keep the exact structural schema while removing tutorial-sized prose."""
+
+def _compact_schema_fragment(value: Any) -> Any:
+    """Remove prose while retaining exact structure, enums, and defaults."""
 
     if isinstance(value, Mapping):
         return {
-            str(key): _strip_schema_annotations(item)
+            str(key): _compact_schema_fragment(item)
             for key, item in value.items()
-            if key not in {"description", "title", "examples", "default"}
+            if key not in {"description", "title", "examples"}
         }
     if isinstance(value, list):
-        return [_strip_schema_annotations(item) for item in value]
+        return [_compact_schema_fragment(item) for item in value]
     return value
+
+
+def _contract_object_shapes(schema: Mapping[str, Any]) -> dict[str, Any]:
+    """Project required/allowed keys for the artifact's enclosing objects."""
+
+    root_properties = schema["properties"]
+    j = root_properties["j"]
+    j_properties = j["properties"]
+    intent = j_properties["intent"]
+    intent_function = intent["properties"]["intent_function"]
+    objects = {
+        "root": schema,
+        "j": j,
+        "j.intent": intent,
+        "j.intent.intent_function": intent_function,
+        "j.boundary": j_properties["boundary"],
+        "j.signature": j_properties["signature"],
+        "c": root_properties["c"],
+        "pi": root_properties["pi"],
+    }
+    result: dict[str, Any] = {}
+    for name, item in objects.items():
+        properties = item.get("properties", {})
+        result[name] = {
+            "required": list(item.get("required", [])),
+            "fields": list(properties),
+            "additional_properties": item.get("additionalProperties"),
+        }
+    return result
 
 
 def _codex_input_files(
@@ -298,7 +381,6 @@ def _codex_input_files(
         request,
         source_ttir_observation=source_ttir_observation,
     )
-    schema = json.loads(complete["schema/artifact.schema.json"])
     wire_contract = {
         "protocol": "intentir.codex-lift-wire-contract.v2",
         "authority": (
@@ -307,7 +389,9 @@ def _codex_input_files(
         ),
         "semantic_rules": list(_COMPACT_WIRE_RULES),
         "intent_op_authoring_reference": _compact_intent_op_reference(),
-        "wire_schema": _strip_schema_annotations(schema),
+        "closed_contract_query": (
+            "python .agents/intentir_agent_tool.py lift_contract core boundary pi"
+        ),
     }
     files = {
         "source.py": complete["source.py"],
@@ -593,6 +677,9 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
             prepared,
             source_ttir_observation=self._source_ttir_observation,
         )
+        contract_schema = scrc_lift_core_json_schema()
+        contract_sections = schema_sections(contract_schema)
+        contract_shapes = _contract_object_shapes(contract_schema)
 
         try:
             fresh_workspace = self._create_or_refresh_session_workspace(
@@ -707,6 +794,50 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                 }
             return {"status": "pass", **view}
 
+        def contract_tool(arguments: tuple[str, ...]) -> Mapping[str, Any]:
+            try:
+                if not arguments or len(arguments) > 4:
+                    raise ValueError(
+                        "lift_contract accepts one to four profile/section names"
+                    )
+                names: list[str] = []
+                for argument in arguments:
+                    if argument in _CONTRACT_SECTION_PROFILES:
+                        requested = _CONTRACT_SECTION_PROFILES[argument]
+                    elif argument in contract_sections:
+                        requested = (argument,)
+                    else:
+                        choices = sorted(
+                            set(_CONTRACT_SECTION_PROFILES) | set(contract_sections)
+                        )
+                        raise ValueError(
+                            f"unknown contract section {argument!r}; choose {choices}"
+                        )
+                    for name in requested:
+                        if name not in names:
+                            names.append(name)
+                selected = {
+                    name: _compact_schema_fragment(contract_sections[name])
+                    for name in names
+                }
+            except (KeyError, TypeError, ValueError) as exc:
+                return {
+                    "protocol": "intentir.lift-contract-view.v1",
+                    "status": "fail",
+                    "diagnostic": str(exc),
+                }
+            return {
+                "protocol": "intentir.lift-contract-view.v1",
+                "status": "pass",
+                "object_shapes": contract_shapes,
+                "sections": selected,
+                "authority": (
+                    "exact source-neutral projection of the authoritative JSON "
+                    "Schema; no artifact field, handle, or semantic choice is "
+                    "generated"
+                ),
+            }
+
         def candidate_control_tool(
             arguments: tuple[str, ...],
         ) -> Mapping[str, Any]:
@@ -786,6 +917,7 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
             },
             argument_handlers={
                 "lift_harness_abi": harness_abi_tool,
+                "lift_contract": contract_tool,
                 "lift_candidate_control": candidate_control_tool,
                 "lift_feedback_category": feedback_category_tool,
             },

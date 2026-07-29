@@ -346,6 +346,14 @@ fragment interface有效，但Terra-high仍不适合作为Linear这类复杂首�
 JSON，而应让owner在第一次CandidateCheck前获得并主动消费所需closed object contract，或直接用
 Sol承担复杂first Lift。
 
+第四版据此不再扩大prompt或增加模板。wire contract移除模型默认可见的整份annotation-stripped
+Schema，只保留所有权规则和准确IntentOp vocabulary；owner在首稿前一次调用`lift_harness_abi 1 64`
+取得完整匿名ABI，再一次调用`lift_contract core boundary pi`取得由同一权威Schema机械投影的32个
+object section（required keys、fields、enum与default，总计约15KB）。该query不读取Source、不选择
+relation、不生成候选字段。CandidateCheck同时先用同一JSON Schema聚合最多20个独立结构错误，再进入
+原dependent Decode/TypeCheck，避免严格parser每次只暴露最早nested missing-field。此实现仍由LLM
+完整作者化fragment与所有handle/关系；下一项验收直接使用Sol-high Linear并以Gate1 frontier裁决。
+
 ## 5. J / C / π的能力计划
 
 ### 5.1 不做大重构

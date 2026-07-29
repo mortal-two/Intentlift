@@ -26,7 +26,7 @@ from intentir.verify.gate1.model import (
 )
 from intentir.verify.typecheck import TYPECHECK_PROTOCOL, type_check
 
-from .scrc_schema import scrc_lift_core_text_format
+from .scrc_schema import scrc_lift_core_json_schema, scrc_lift_core_text_format
 
 
 SCRC_RELIFT_PROTOCOL = "llm_direct_pi_structured_source_aware_relift_v2"
@@ -1338,6 +1338,22 @@ def check_scrc_lift_candidate(
                 }
             ],
         }
+    schema_diagnostics = _candidate_json_schema_diagnostics(response_text)
+    if schema_diagnostics:
+        occupied_paths = {item["path"] for item in schema_diagnostics}
+        for item in _candidate_surface_diagnostics(response_text, context):
+            if len(schema_diagnostics) >= _CANDIDATE_DIAGNOSTIC_LIMIT:
+                break
+            if item["path"] in occupied_paths:
+                continue
+            schema_diagnostics.append(item)
+            occupied_paths.add(item["path"])
+        return {
+            "protocol": CANDIDATE_CHECK_PROTOCOL,
+            "status": "fail",
+            "diagnostics": schema_diagnostics,
+        }
+
     try:
         artifact = _decode_scrc_lift_artifact_core(
             response_text,
@@ -1380,6 +1396,57 @@ def check_scrc_lift_candidate(
             for item in report.diagnostics[:_CANDIDATE_DIAGNOSTIC_LIMIT]
         ],
     }
+
+
+def _candidate_json_schema_diagnostics(
+    response_text: str,
+) -> list[dict[str, Any]]:
+    """Aggregate independent structural errors before dependent Decode.
+
+    This is the same closed wire schema already supplied to every Lift backend.
+    It never fills a field or changes acceptance: an empty result merely allows
+    the existing strict Decode/TypeCheck path to run.
+    """
+
+    try:
+        payload = _json_object(response_text)
+    except Exception:
+        return []
+    try:
+        import jsonschema
+    except ImportError:
+        return []
+
+    schema = scrc_lift_core_json_schema()
+    validator = jsonschema.validators.validator_for(schema)(schema)
+    errors = sorted(
+        validator.iter_errors(payload),
+        key=lambda error: (
+            tuple(str(item) for item in error.absolute_path),
+            tuple(str(item) for item in error.absolute_schema_path),
+            error.message,
+        ),
+    )
+    diagnostics: list[dict[str, Any]] = []
+    for error in errors[:_CANDIDATE_DIAGNOSTIC_LIMIT]:
+        path = ""
+        for item in error.absolute_path:
+            if isinstance(item, int):
+                path += f"[{item}]"
+            else:
+                path += ("." if path else "") + str(item)
+        diagnostics.append(
+            {
+                "rule_code": "schema_rejected",
+                "path": _bounded_candidate_diagnostic_text(
+                    path or "<candidate>"
+                ),
+                "observed_refs_or_types": [
+                    _bounded_candidate_diagnostic_text(error.message)
+                ],
+            }
+        )
+    return diagnostics
 
 
 def _candidate_surface_diagnostics(
