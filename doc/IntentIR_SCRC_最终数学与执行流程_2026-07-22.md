@@ -482,7 +482,7 @@ dependent checking 夸写成 Source topology 的形式证明。
 
 首版不需要让 TypeCheck 成为 SMT 或完整图证明器。最小可行实现只需 fail closed 地完成上述局部检查。
 
-当前合并协议为 `artifact.v11 / decode.v16 / typecheck.v28 / candidate-check.v1 / replay-check.v12`；
+当前合并协议为 `artifact.v11 / decode.v16 / typecheck.v28 / candidate-check.v1 / replay-check.v13`；
 Replay packet envelope 为 `replay-input.v2`；Triton 公共上下文由当前固定公开字段直接给出，不再使用 context version、SHA 或 receipt 作为运行门禁；
 Codex/MiniSWE Lift knowledge 为 v70/v65，MiniSWE Replay backend 为 v30，Codex Replay backend 为 v28。
 v30/v26 完整执行 authored route extent transform 合同：将其纳入 `critical_facts.v4`、
@@ -496,7 +496,7 @@ outline（function/loop/if/return 的行号与嵌套深度）；v41 只把 share
 `other`，不允许用 downstream-neutral 等价值替换。Replay v4 只要求 source-blind writer 保留 J typed
 rank/axis 与必要 compiler-visible reshape，不把 shaped reduction 压成 flattened reduction。这些版本
 都不分类/补造 artifact 语义，也不生成 Replay；仍由 Lift 与 Replay LLM 分别完整作者化输出。
-Replay workspace view v2 只把 packet 中已有的 typed reduction facts 无损并置；replay-check.v11 在
+Replay workspace view v2 只把 packet 中已有的 typed reduction facts 无损并置；replay-check.v13 在
 公共 source-blind synthetic compile 后核对 π 已声明 `transfer_direct` occurrence 的 compiled
 load/store multiplicity，并核对 structured J loop 加 `pi.physical_iterations` 已声明的 compiled
 `scf.for` occurrence，并核对对应 authored logical/physical carrier 的 block-argument arity；只在
@@ -504,7 +504,9 @@ signature carrier kind 与 π address routes 完全闭合时核对 `tt.addptr` o
 address contribution 可使用自身 semantic ref，address 与 transfer 也不必复用同一 ref spelling，但
 每个 transfer 必须从匹配 boundary tensor 的 pointer/tensor signature carrier 可达，且每个
 pointer-producing stage 必须流向某个 transfer；并要求 compiled distinct
-`tt.reshape -> tt.reduce(axis=0)` dataflow 数不少于已作者化 `reduction_linearization` 数。它不重复
+`tt.reshape -> tt.reduce(axis=0)` dataflow 数不少于已作者化 `reduction_linearization` 数；并只在
+authored route/carrier 与 Replay 自身 TTIR 都给出唯一同-region occurrence 对应时，核对
+`pi.order` 已声明的 transfer 词法先后，歧义时不猜。它不重复
 计算 `pi.iterations`，也不选择 loop bound、carrier、update、address formula、reshape、tile 或 spelling，不读取
 Source/Harness value/Gate，不改变最终 SCRC 接受谓词。Codex Lift v5 只要求 LLM reconcile
 syntax-only Source control-flow outline，固定代码仍不分类或补 artifact。单次 provider turn wall-time 后只允许同 invocation/episode 的 exact checked

@@ -47,7 +47,7 @@ v5 guarded store 的 merge 已经是 Layer A 中显式 `select`，且精确 inou
 通过 TypeCheck；Replay 不得把 relation 解读成允许它自行发明 branch、merge 或 mutation。Gate1
 比较的是 Replay 对这些已声明事实的 source realization，不为缺失 relation 建议或生成答案。
 
-当前 `replay-check.v12` 的 synthetic compile 只消费匿名 packet：核对作者化 `transfer_direct`
+当前 `replay-check.v13` 的 synthetic compile 只消费匿名 packet：核对作者化 `transfer_direct`
 occurrence、structured J loop 加 `pi.physical_iterations` 的 loop occurrence、对应 carrier arity；并且
 只在 signature pointer/tensor kind 与 π address routes 完全闭合时核对 pointer-address operation
 occurrence。完整闭包允许独立 integer base/lane contribution，且不要求 address instance 与 transfer
@@ -56,7 +56,10 @@ signature carrier 经作者化 routes 可达，并要求每个 pointer-producing
 transfer；并要求 compiled distinct `tt.reshape -> tt.reduce(axis=0)` dataflow 不少于已作者化
 `reduction_linearization` 数量，并拒绝 authored route extent transform 完全缺失 closed
 floor/ceil-div spelling。精确 target-local topology 仍由 Gate1，而不是 ReplayCheck 裁决。无法闭合的
-address topology 不猜。该 check 只拒绝错误 Replay bytes，不生成 source、
+address topology 不猜。v13 还只在同一 π region 的 ordered `transfer_direct` 可分别经作者化
+routes/carrier 唯一回溯到一个 signature pointer，且 Replay 自身 TTIR 中对应 load/store occurrence
+也唯一并处于同一词法 region 时，核对其词法顺序是否遵守 `pi.order`；任一映射有歧义就不猜，留给
+正式 Gate1。该 check 只拒绝错误 Replay bytes，不生成 source、
 address formula、loop/carrier 或 relation，也没有 Gate1/认证权威。
 
 presentation/alpha canonicalization 只能消除名称、SSA 编号、无关打印顺序等表示噪声。它不得

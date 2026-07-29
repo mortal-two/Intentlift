@@ -19,7 +19,7 @@ lowering 和测试要求，不形成另一套设计。上位文档按作用域�
 若派生规范与上位设计冲突，应修订派生规范；不得通过增加 interface artifact、hash gate、
 epoch、commitment、额外认证 Gate 或兼容旁路来调和冲突。
 
-当前 fresh-run 栈为 `artifact.v11 / decode.v16 / typecheck.v28 / candidate-check.v1 / replay-check.v12`。它继承 rank-0
+当前 fresh-run 栈为 `artifact.v11 / decode.v16 / typecheck.v28 / candidate-check.v1 / replay-check.v13`。它继承 rank-0
 closed signature、Layer-A total typing、显式 broadcast、canonical reduce/contraction、absent carrier
 拒绝、functional-domain closure、rank-0 liveness、padded-mean necessary condition 与 closed
 `pi.iterations`，并验证 Lift 已作者化的 value/dimension、closed dimension definition、consumer-extension、access-guard、typed
@@ -40,7 +40,9 @@ valuation provenance，不进入semantic artifact或Gate。
 Replay v28/v24 明确同一 region 中 `physical_loop_carriers` declaration order 是跨
 init/state/next/result 共享的 carrier-tuple ordinal；Lift knowledge v66/v62 必须从 Source frontend
 loop 的 argument/yield/result tuple 作者化该顺序，Replay 不按 dtype/ref/mechanism 重排。该 tuple slot
-顺序不是 event execution order，后者仍只由 `pi.order` 拥有。v28/v24 继承 v27/v23；v27/v23 对不超过
+顺序不是 event execution order，后者仍只由 `pi.order` 拥有。`replay-check.v13` 仅在 packet route
+和 Replay 自身 TTIR 都提供唯一对应时检查 ordered transfer 的词法先后，不从 Source 或 Gate 构造
+对应。v28/v24 继承 v27/v23；v27/v23 对不超过
 64 KiB 的完整匿名 J/C/π/U_f 只在首次上下文 exact embedding 一次，并额外
 并置一个只重索引 semantic dimension carrier、IEEE special typed constant、physical iteration、
 `reduction_linearization + consumer route`、loop/branch lexical region membership、cross-region
@@ -57,7 +59,7 @@ source-aware owner workspace中按需查询，不进入Replay或artifact。原�
 含 broadcast/lexical/cross-region/route-extent critical facts 的 Replay 在 construction compile 前还必须对当前 exact bytes
 完成 `replay-obligation-audit.v3`；该工具只并置 J/π ledger 与 Replay 自己的编号源码，不映射 relation/instance、
 不诊断、不修复，也不参与 Gate 接受。
-`replay-check.v11` 还要求 synthetic TTIR 至少包含 π 已作者化 `reduction_linearization` 数量的
+`replay-check.v13` 还要求 synthetic TTIR 至少包含 π 已作者化 `reduction_linearization` 数量的
 distinct `tt.reshape -> tt.reduce(axis=0)` dataflow，避免无关 reshape 冒充，但不从 reduction/shape
 生成 relation；地址检查只在 J.signature carrier kind 与 π
 address routes 能完全决定时，沿作者化 route

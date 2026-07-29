@@ -363,7 +363,7 @@ ReplayLLM(J,pi,MaskC(C);U_f) -> complete source R_f
 evidence 不因实现升级而被重判；fresh Replay 只做当前字段的结构和 source-isolation 检查。
 
 Replay v28把一个formal round保持为同一个fresh、单writer、source-blind coding episode，总active
-wall time默认3600秒。它可重复编辑、运行`replay-check.v12`和public synthetic compile，并只对当前
+wall time默认3600秒。它可重复编辑、运行`replay-check.v13`和public synthetic compile，并只对当前
 Replay源码查询其自身TTIR/fingerprint。累计provider上下文超过阈值或有draft的turn timeout时，可以在
 同一workspace内更换transport thread；新thread只重读exact packet、当前Replay bytes与closed host
 diagnostic，不接收语义摘要、旧episode、Source或Gate。该rollover不复用跨round Replay，也不增加
@@ -382,7 +382,8 @@ v29/v25 历史 evidence 不重判。
 Replay v28/v24 与 Lift knowledge v66/v62 只把现有 ordered relation 的含义显式化：同一 region 的
 `physical_loop_carriers` declaration order 是 init/state/next/result 共用的 carrier-tuple ordinal，Lift
 从 Source frontend loop tuple作者化，Replay原样消费；不得按 dtype/ref/mechanism排序。它不是 event
-execution order，后者仍只由 `pi.order` 声明。Replay v28/v24 继承 v27/v23；v27/v23 又继承 v26/v22 对 π region 的原有闭合含义：region 是 compiler-visible instance 的
+execution order，后者仍只由 `pi.order` 声明；`replay-check.v13` 只在 authored route 与 Replay
+自身 TTIR occurrence 均可唯一对应时提前拒绝顺序反转，歧义时不猜。Replay v28/v24 继承 v27/v23；v27/v23 又继承 v26/v22 对 π region 的原有闭合含义：region 是 compiler-visible instance 的
 精确词法 realization scope，不是优化提示或 consumer membership。声明在 loop region 的 instance
 即使只依赖 loop-invariant operands，也必须在该 loop 内 materialize；Replay 不得把它 hoist 到父
 region，也不得跨 region sink、clone 或 fold。该规则只消费 Lift 已作者化 placement，不从 Source、

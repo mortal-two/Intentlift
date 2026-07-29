@@ -649,6 +649,18 @@ class TTIRFingerprint:
         repr=False,
         compare=False,
     )
+    # Diagnostic-only lexical memory events with the function-argument
+    # positions that may supply each pointer operand.  Replay's source-blind
+    # compile preflight uses this sidecar to check ordering already authored in
+    # pi.  It is deliberately excluded from equality, serialization and the
+    # digest, so it cannot change Gate1 membership.
+    diagnostic_memory_effect_origins: tuple[
+        tuple[str, tuple[int, ...], tuple[str, ...]], ...
+    ] = field(
+        default=(),
+        repr=False,
+        compare=False,
+    )
 
     @property
     def digest(self) -> str:
@@ -5019,7 +5031,7 @@ class TTIRParser:
                 )
             )
 
-        access = self._infer_access(
+        access, diagnostic_memory_effect_origins = self._infer_access(
             function, operations, result_to_node, leaf_labels, node_by_id
         )
         interface_arguments: list[InterfaceArgument] = []
@@ -5204,6 +5216,7 @@ class TTIRParser:
             diagnostic_effect_traces=tuple(
                 sorted(diagnostic_effect_traces)
             ),
+            diagnostic_memory_effect_origins=diagnostic_memory_effect_origins,
         )
 
     def _infer_access(
@@ -5213,7 +5226,10 @@ class TTIRParser:
         result_to_node: dict[str, int],
         leaf_labels: dict[str, str],
         node_by_id: dict[int, _Operation],
-    ) -> dict[int, str]:
+    ) -> tuple[
+        dict[int, str],
+        tuple[tuple[str, tuple[int, ...], tuple[str, ...]], ...],
+    ]:
         arg_position = {
             name: index for index, (name, _, _) in enumerate(function.arguments)
         }
@@ -5347,6 +5363,9 @@ class TTIRParser:
             acyclic.add(name)
 
         modes: dict[int, set[str]] = {}
+        diagnostic_memory_effect_origins: list[
+            tuple[str, tuple[int, ...], tuple[str, ...]]
+        ] = []
         for operation in operations:
             if not operation.operands:
                 continue
@@ -5359,14 +5378,38 @@ class TTIRParser:
             else:
                 continue
             validate_acyclic(operation.operands[0])
-            for position in dependencies[operation.operands[0]]:
+            pointer_origins = tuple(sorted(dependencies[operation.operands[0]]))
+            for position in pointer_origins:
                 modes.setdefault(position, set()).add(mode)
+            if operation.name in {"tt.load", "tt.store"}:
+                # The numeric suffix is used only to distinguish two sibling
+                # regions inside this one compiled fingerprint.  It is never
+                # serialized or compared across Source and Replay.
+                context = tuple(
+                    f"{node_by_id[owner].name}@{owner}"
+                    for owner in operation.context
+                )
+                if operation.structured_if_arm is not None:
+                    context += (
+                        f"structured_if_arm={operation.structured_if_arm}",
+                    )
+                if operation.fork_arm is not None:
+                    context += (f"terminal_fork_arm={operation.fork_arm}",)
+                diagnostic_memory_effect_origins.append(
+                    (
+                        _semantic_op_name(
+                            operation, node_by_id, result_to_node
+                        ),
+                        pointer_origins,
+                        context,
+                    )
+                )
         access: dict[int, str] = {}
         for position, seen in modes.items():
             read = bool(seen & {"read", "readwrite"})
             write = bool(seen & {"write", "readwrite"})
             access[position] = "inout" if read and write else "input" if read else "output"
-        return access
+        return access, tuple(diagnostic_memory_effect_origins)
 
 
 def _semantic_op_name(

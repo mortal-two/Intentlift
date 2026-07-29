@@ -958,7 +958,7 @@ artifact 保持原始序列化、digest 与字段集合，禁止静默附加空�
 
 固定代码不把 π 解码成源码，不建立 deterministic composer。
 
-`replay-check.v12` 可以在公共、source-blind synthetic compile 后核对 π 已作者化的
+`replay-check.v13` 可以在公共、source-blind synthetic compile 后核对 π 已作者化的
 `transfer_direct` occurrence 与 compiled load/store multiplicity；它只拒绝 compiler 已经折叠的
 作者化 event，不补 transfer、不决定保留它的源码写法。它同时将 structured J loop 数与
 `pi.physical_iterations` 数之和作为已作者化的 compiled `scf.for` 必要 occurrence；
@@ -971,7 +971,10 @@ spelling，但每个 transfer 必须从绑定同一 boundary tensor 的 pointer/
 每个 pointer-producing address stage 也必须流向至少一个 transfer。v10 另要求 compiled
 distinct `tt.reshape -> tt.reduce(axis=0)` dataflow 数不少于 π 已作者化
 `reduction_linearization` 数；额外 reshape 仍由正式 Gate1 精确
-比较，避免 non-authoritative preflight 越权。无法闭合时不猜 final address。
+比较，避免 non-authoritative preflight 越权。v13 另对同一 region 中由 `pi.order` 已排序的
+`transfer_direct` 作窄检查：只有两端都能沿作者化 routes/carrier 唯一回溯到 signature pointer，且
+Replay 自身 TTIR 中相应 load/store occurrence 唯一并位于同一词法 region 时，才拒绝词法反序；
+映射有歧义时不猜。无法闭合时不猜 final address。
 该检查不补 loop、bound、carrier、update、address formula 或 schedule，也不
 具有 Gate 或认证权威。单次Replay turn超时或累计transport context过大时，只允许在同一fresh
 episode/workspace中继续；若已有draft，可以让新thread重读exact packet、当前Replay与closed

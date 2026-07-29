@@ -32,7 +32,7 @@ from .prompt import (
     build_rewriter_payload,
 )
 from .tilelang_codegen import extract_tilelang_module
-from .ttir import TTIRParseError, parse_ttir
+from .ttir import TTIRParseError, parse_ttir, runtime_argument_names
 
 
 MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v30"
@@ -40,7 +40,7 @@ MINISWE_REPLAY_TURN_TIMEOUT_SECONDS = 300.0
 MINISWE_REPLAY_XHIGH_TURN_TIMEOUT_SECONDS = 900.0
 RESPONSES_REPLAY_BACKEND = "openai.responses.intentir-replay.v1"
 STATIC_REPLAY_BACKEND = "intentir.static-replay-test.v1"
-REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v12"
+REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v13"
 _ANONYMOUS_HANDLE = re.compile(r"^[pc][0-9]+$")
 
 
@@ -1334,6 +1334,193 @@ def _packet_transfer_direct_counts(
     return counts, tuple(dict.fromkeys(refs))
 
 
+def _packet_transfer_order_constraints(
+    packet: Mapping[str, Any],
+) -> tuple[
+    tuple[str, str, str, str, str, str, str, str],
+    ...,
+]:
+    """Project unambiguous, same-region transfer order already authored in pi.
+
+    Each row is ``(before_instance, after_instance, before_access,
+    after_access, before_operation, after_operation, before_pointer,
+    after_pointer)``.  Pointer
+    roots are discovered only by walking authored pi routes and carrier edges
+    back to pointer/tensor signature instances.  Ambiguous or incomplete
+    topology is ignored here and remains the responsibility of formal Gate1.
+    """
+
+    j = packet.get("j")
+    pi = packet.get("pi")
+    if not isinstance(j, Mapping) or not isinstance(pi, Mapping):
+        return ()
+    signature = j.get("signature")
+    boundary = j.get("boundary")
+    parameters = (
+        signature.get("parameters") if isinstance(signature, Mapping) else None
+    )
+    accesses_value = (
+        boundary.get("accesses") if isinstance(boundary, Mapping) else None
+    )
+    instances_value = pi.get("instances")
+    routes_value = pi.get("routes")
+    order_value = pi.get("order")
+    if not all(
+        isinstance(value, list)
+        for value in (
+            parameters,
+            accesses_value,
+            instances_value,
+            routes_value,
+            order_value,
+        )
+    ):
+        return ()
+
+    pointer_parameters = {
+        str(item.get("name"))
+        for item in parameters
+        if isinstance(item, Mapping)
+        and item.get("kind") in {"pointer", "tensor"}
+        and isinstance(item.get("name"), str)
+    }
+    accesses = {
+        str(item.get("access_id")): item
+        for item in accesses_value
+        if isinstance(item, Mapping)
+        and isinstance(item.get("access_id"), str)
+    }
+    instances = {
+        str(item.get("id")): item
+        for item in instances_value
+        if isinstance(item, Mapping) and isinstance(item.get("id"), str)
+    }
+    if not pointer_parameters or not instances:
+        return ()
+
+    incoming: dict[str, set[str]] = {instance_id: set() for instance_id in instances}
+    for route in routes_value:
+        if not isinstance(route, Mapping):
+            continue
+        source = route.get("source")
+        target = route.get("target")
+        if isinstance(source, str) and isinstance(target, str) and target in incoming:
+            incoming[target].add(source)
+    for key in ("loop_carriers", "physical_loop_carriers"):
+        relations = pi.get(key)
+        if not isinstance(relations, list):
+            continue
+        for relation in relations:
+            if not isinstance(relation, Mapping):
+                continue
+            init = relation.get("init")
+            state = relation.get("state")
+            next_value = relation.get("next")
+            result = relation.get("result")
+            if all(
+                isinstance(value, str) and value in instances
+                for value in (init, state, next_value, result)
+            ):
+                assert isinstance(init, str)
+                assert isinstance(state, str)
+                assert isinstance(next_value, str)
+                assert isinstance(result, str)
+                incoming[state].update((init, next_value))
+                incoming[result].add(state)
+
+    transfer_ids = {
+        instance_id
+        for instance_id, instance in instances.items()
+        if instance.get("mechanism") == "transfer_direct"
+        and str(instance.get("semantic_ref")) in accesses
+    }
+
+    def unique_pointer_root(instance_id: str) -> str | None:
+        pending = [instance_id]
+        visited: set[str] = set()
+        roots: set[str] = set()
+        while pending:
+            current = pending.pop()
+            if current in visited:
+                continue
+            visited.add(current)
+            instance = instances.get(current)
+            if instance is None:
+                continue
+            semantic_ref = instance.get("semantic_ref")
+            if semantic_ref in pointer_parameters:
+                roots.add(str(semantic_ref))
+            pending.extend(incoming.get(current, ()))
+        return next(iter(roots)) if len(roots) == 1 else None
+
+    order_outgoing: dict[str, set[str]] = {
+        instance_id: set() for instance_id in instances
+    }
+    for item in order_value:
+        if not isinstance(item, Mapping):
+            continue
+        before = item.get("before")
+        after = item.get("after")
+        if isinstance(before, str) and isinstance(after, str):
+            order_outgoing.setdefault(before, set()).add(after)
+
+    constraints: list[
+        tuple[str, str, str, str, str, str, str, str]
+    ] = []
+    for before in sorted(transfer_ids):
+        before_region = instances[before].get("region")
+        reachable: set[str] = set()
+        pending = list(order_outgoing.get(before, ()))
+        while pending:
+            current = pending.pop()
+            if current in reachable:
+                continue
+            current_instance = instances.get(current)
+            if current_instance is None or current_instance.get(
+                "region"
+            ) != before_region:
+                continue
+            reachable.add(current)
+            pending.extend(order_outgoing.get(current, ()))
+        for after in sorted(reachable & transfer_ids):
+            before_instance = instances[before]
+            after_instance = instances[after]
+            before_root = unique_pointer_root(before)
+            after_root = unique_pointer_root(after)
+            if before_root is None or after_root is None:
+                continue
+            before_access_id = str(before_instance.get("semantic_ref"))
+            after_access_id = str(after_instance.get("semantic_ref"))
+            before_access = accesses[before_access_id]
+            after_access = accesses[after_access_id]
+            before_kind = before_access.get("kind")
+            after_kind = after_access.get("kind")
+            if before_kind not in {"load", "store"} or after_kind not in {
+                "load",
+                "store",
+            }:
+                continue
+            before_operation = f"tt.{before_kind}"
+            after_operation = f"tt.{after_kind}"
+            if before_access.get("predicate") is not None:
+                before_operation += ".masked"
+            if after_access.get("predicate") is not None:
+                after_operation += ".masked"
+            constraints.append(
+                (
+                    before,
+                    after,
+                    before_access_id,
+                    after_access_id,
+                    before_operation,
+                    after_operation,
+                    before_root,
+                    after_root,
+                )
+            )
+    return tuple(constraints)
+
+
 def _packet_required_compiled_iteration_arities(
     packet: Mapping[str, Any],
 ) -> tuple[int, ...]:
@@ -1680,6 +1867,88 @@ def _packet_required_compiled_program_ids(
     return len(authorized), tuple(sorted(authorized))
 
 
+def _compiled_transfer_order_diagnostic(
+    packet: Mapping[str, Any],
+    ttir: str,
+    fingerprint: Any,
+) -> Mapping[str, Any] | None:
+    """Reject a Replay whose own TTIR reverses an unambiguous pi order edge."""
+
+    constraints = _packet_transfer_order_constraints(packet)
+    if not constraints:
+        return None
+    argument_names = runtime_argument_names(ttir)
+    pointer_parameters = {
+        pointer
+        for constraint in constraints
+        for pointer in constraint[-2:]
+    }
+    events: list[tuple[int, str, str, tuple[str, ...]]] = []
+    for index, (operation, origins, context) in enumerate(
+        fingerprint.diagnostic_memory_effect_origins
+    ):
+        roots = {
+            argument_names[position]
+            for position in origins
+            if position < len(argument_names)
+            and argument_names[position] in pointer_parameters
+        }
+        if len(roots) != 1:
+            continue
+        events.append((index, operation, next(iter(roots)), context))
+
+    for (
+        before_instance,
+        after_instance,
+        before_access,
+        after_access,
+        before_operation,
+        after_operation,
+        before_pointer,
+        after_pointer,
+    ) in constraints:
+        before_matches = [
+            event
+            for event in events
+            if event[1] == before_operation and event[2] == before_pointer
+        ]
+        after_matches = [
+            event
+            for event in events
+            if event[1] == after_operation and event[2] == after_pointer
+        ]
+        # Repeated accesses through one carrier cannot be assigned to individual
+        # pi occurrences without inventing identity.  Leave those cases to the
+        # formal observer instead of guessing.
+        if len(before_matches) != 1 or len(after_matches) != 1:
+            continue
+        before_event = before_matches[0]
+        after_event = after_matches[0]
+        if before_event[3] != after_event[3]:
+            continue
+        if before_event[0] < after_event[0]:
+            continue
+        return {
+            "rule_code": "compiled_transfer_order",
+            "path": (
+                "<synthetic-frontend-compile> pi.order: "
+                f"{before_access}({before_pointer}) before "
+                f"{after_access}({after_pointer}); compiled lexical positions="
+                f"{before_event[0]},{after_event[0]}"
+            ),
+            "anonymous_handles": [
+                before_instance,
+                after_instance,
+                before_access,
+                after_access,
+                before_pointer,
+                after_pointer,
+            ],
+            "line": None,
+        }
+    return None
+
+
 def source_blind_replay_compile_check(
     code: str,
     artifact: Gate1Artifact,
@@ -1872,6 +2141,16 @@ def source_blind_replay_compile_check(
                         "line": None,
                     },
                 ),
+            )
+        transfer_order_diagnostic = _compiled_transfer_order_diagnostic(
+            selected_packet,
+            result.ttir,
+            fingerprint,
+        )
+        if transfer_order_diagnostic is not None:
+            return ReplayIngressResult(
+                "fail",
+                diagnostics=(transfer_order_diagnostic,),
             )
     return ReplayIngressResult(
         "pass",
