@@ -63,6 +63,20 @@ def test_rvv_transformation_and_schedule_are_separate_search_axes() -> None:
         explicit.transformation.transformation_trace
     )
     assert explicit.schedule.scalable_vectorization
+    joint = rvv.RiscvLoweringCandidate(
+        rvv.RiscvTransformationState(True, True, True, True),
+        explicit.schedule,
+    )
+    assert (
+        joint.transformation.lowering_path_kind
+        == "producer_consumer_fused_joint_vector_reduction"
+    )
+    assert "joint_row_statistics" in " ".join(
+        joint.transformation.transformation_trace
+    )
+    assert joint.candidate_id != explicit.candidate_id
+    with pytest.raises(ValueError, match="requires producer fusion"):
+        rvv.RiscvTransformationState(False, True, True, True)
 
 
 def test_rvv_explicit_reduction_only_enumerates_scalable_schedules() -> None:
@@ -74,7 +88,9 @@ def test_rvv_explicit_reduction_only_enumerates_scalable_schedules() -> None:
     assert explicit
     assert all(item.schedule.scalable_vectorization for item in explicit)
     assert all(item.schedule.vectorize for item in explicit)
-    assert len(universe) == 182
+    joint = [item for item in explicit if item.transformation.joint_vector_reduction]
+    assert len(joint) == 13
+    assert len(universe) == 195
 
 
 def test_rvv_retile_schedule_is_an_explicit_search_axis() -> None:
@@ -133,6 +149,37 @@ def test_rvv_fusion_request_fails_when_mlir_graph_did_not_change(monkeypatch) ->
         rvv.compile_riscv_object(
             state,
             _candidate(True),
+            capabilities=(B_CAP_READONLY_INPUTS,),
+        )
+
+
+def test_rvv_joint_request_fails_without_actual_same_root_group(monkeypatch) -> None:
+    state = SimpleNamespace(target=SimpleNamespace(family="riscv"))
+    candidate = rvv.RiscvLoweringCandidate(
+        rvv.RiscvTransformationState(True, True, True, True),
+        rvv.RiscvSchedule(3, True, 0, scalable_vectorization=True),
+    )
+    monkeypatch.setattr(
+        rvv,
+        "_lower_to_llvm_ir",
+        lambda state, candidate: (
+            "lowered",
+            "raw llvm",
+            rvv.RiscvTransformationRecord(
+                7,
+                3,
+                fused_producers=1,
+                reassociated_float_combines=3,
+                explicit_vector_reductions=3,
+                joint_vector_reduction_groups=0,
+            ),
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="same-root statistics group"):
+        rvv.compile_riscv_object(
+            state,
+            candidate,
             capabilities=(B_CAP_READONLY_INPUTS,),
         )
 
@@ -368,50 +415,54 @@ def test_rvv_c_reorders_but_does_not_change_retile_universe() -> None:
         for item in with_c.c_prior_order
         if by_id[item].schedule.thread_count == 1
     ]
-    first_six = [by_id[item] for item in c_order_t1[:6]]
+    first_seven = [by_id[item] for item in c_order_t1[:7]]
     assert [
         (
             item.transformation.fuse_producers,
             item.transformation.reassociate_reductions,
             item.transformation.explicit_vector_reduction,
+            item.transformation.joint_vector_reduction,
         )
-        for item in first_six
+        for item in first_seven
     ] == [
-        (False, False, False),
-        (True, False, False),
-        (False, True, False),
-        (False, True, True),
-        (True, True, False),
-        (True, True, True),
+        (False, False, False, False),
+        (True, False, False, False),
+        (False, True, False, False),
+        (False, True, True, False),
+        (True, True, False, False),
+        (True, True, True, False),
+        (True, True, True, True),
     ]
-    assert all(item.schedule.parallel_tile == 2 for item in first_six)
-    assert all(item.schedule.reduction_tile == 8 for item in first_six)
+    assert all(item.schedule.parallel_tile == 2 for item in first_seven)
+    assert all(item.schedule.reduction_tile == 8 for item in first_seven)
     assert all(
         item.schedule.scalable_vectorization
         == item.transformation.explicit_vector_reduction
-        for item in first_six
+        for item in first_seven
     )
     c_anchor_states = [
-        by_id[item] for item in c_order_t1[6:12]
+        by_id[item] for item in c_order_t1[7:14]
     ]
     assert all(item.schedule.vectorize for item in c_anchor_states)
     assert all(item.schedule.parallel_tile == 0 for item in c_anchor_states)
     assert all(item.schedule.reduction_tile == 0 for item in c_anchor_states)
-    erase_first_six = [by_id[item] for item in with_c.erase_c_order[:6]]
+    erase_first_seven = [by_id[item] for item in with_c.erase_c_order[:7]]
     assert {
         (
             item.transformation.fuse_producers,
             item.transformation.reassociate_reductions,
             item.transformation.explicit_vector_reduction,
+            item.transformation.joint_vector_reduction,
         )
-        for item in erase_first_six
+        for item in erase_first_seven
     } == {
-        (False, False, False),
-        (True, False, False),
-        (False, True, False),
-        (False, True, True),
-        (True, True, False),
-        (True, True, True),
+        (False, False, False, False),
+        (True, False, False, False),
+        (False, True, False, False),
+        (False, True, True, False),
+        (True, True, False, False),
+        (True, True, True, False),
+        (True, True, True, True),
     }
     assert with_c.c_projection["raw_c_value_used_as_target_tile"] is False
     assert with_c.c_projection["projected_priors"][0][
@@ -421,7 +472,7 @@ def test_rvv_c_reorders_but_does_not_change_retile_universe() -> None:
     record = with_c.to_record()
     assert record["same_universe_for_erase_c_and_c_prior"] is True
     assert record["c_controls_admission"] is False
-    assert record["candidate_universe_count"] == 182
+    assert record["candidate_universe_count"] == 195
     assert {
         item.schedule.thread_count for item in with_c.universe
     } == {1}

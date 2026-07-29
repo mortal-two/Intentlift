@@ -21,7 +21,7 @@ from intentir.backend.riscv.compile import (
 )
 
 
-RVV_SEARCH_PLAN_PROTOCOL = "intentir.backend.riscv.search-plan.v5"
+RVV_SEARCH_PLAN_PROTOCOL = "intentir.backend.riscv.search-plan.v6"
 RVV_C_PROJECTION_PROTOCOL = "intentir.backend.riscv.c-projection.v1"
 
 _PARALLEL_TILES = (1, 2, 4, 8, 16, 32, 64, 128)
@@ -97,6 +97,7 @@ def enumerate_riscv_candidates(
         if enable_b_transformations:
             transformations.append(RiscvTransformationState(True, True, False))
             transformations.append(RiscvTransformationState(True, True, True))
+            transformations.append(RiscvTransformationState(True, True, True, True))
     schedules = _schedule_universe()
     return tuple(
         RiscvLoweringCandidate(transformation, schedule)
@@ -500,6 +501,7 @@ def plan_riscv_search(
                 item.transformation.fuse_producers,
                 item.transformation.reassociate_reductions,
                 item.transformation.explicit_vector_reduction,
+                item.transformation.joint_vector_reduction,
             )
             for item in universe
             if item not in canonical
@@ -513,6 +515,7 @@ def plan_riscv_search(
                 item.transformation.fuse_producers,
                 item.transformation.reassociate_reductions,
                 item.transformation.explicit_vector_reduction,
+                item.transformation.joint_vector_reduction,
             )
             == state_key
         )

@@ -86,8 +86,11 @@ def VectorizeLinalgRowReduction : Pass<
     and emits exactly one horizontal finalize per logical row.
     `scalable-vector` derives the strip size from `vector.vscale`; otherwise
     `vector-width` is fixed. Tail reads use transfer padding and lower to masked
-    accesses. Matching is structural and target/source-name blind. Unsupported
-    graphs remain untouched;
+    accesses. `joint-reductions` traces pure identity-mapped elementwise producer
+    DAGs to a common root and evaluates two or more independent row statistics
+    in one traversal with one root packet load and multiple vector accumulators.
+    Matching is structural and target/source-name blind. Unsupported graphs
+    remain untouched;
     `require-vectorization` makes a requested Full candidate fail closed when no
     operation is transformed.
   }];
@@ -103,6 +106,10 @@ def VectorizeLinalgRowReduction : Pass<
            "Fixed lanes, or minimum scalable lanes, in the vector accumulator">,
     Option<"scalableVector", "scalable-vector", "bool", "false",
            "Use a scalable vector accumulator and a vector.vscale-derived strip size">,
+    Option<"jointReductions", "joint-reductions", "bool", "false",
+           "Fuse independent same-root row reductions into one vector traversal">,
+    Option<"requireJointReductions", "require-joint-reductions", "bool", "false",
+           "Fail the pass if no same-root joint-reduction group is transformed">,
     Option<"requireVectorization", "require-vectorization", "bool", "false",
            "Fail the pass if no structurally supported row reduction is vectorized">,
   ];

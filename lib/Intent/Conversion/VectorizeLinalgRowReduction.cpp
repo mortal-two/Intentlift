@@ -12,7 +12,9 @@
 
 #include "Intent/Conversion/Common/Passes.h"
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
@@ -20,10 +22,13 @@
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/AffineExpr.h"
+#include "mlir/IR/Dominance.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/PatternMatch.h"
 
 #include <functional>
+#include <optional>
 
 namespace intent {
 #define GEN_PASS_DEF_VECTORIZELINALGROWREDUCTION
@@ -68,6 +73,16 @@ static bool hasVectorizablePayload(linalg::GenericOp op, arith::AddFOp combine) 
     if (llvm::any_of(nested.getResultTypes(),
                      [](Type type) { return !isScalarVectorElementType(type); }))
       return false;
+    for (Value operand : nested.getOperands()) {
+      if (auto argument = dyn_cast<BlockArgument>(operand);
+          argument && argument.getOwner() == &body)
+        continue;
+      if (Operation *definition = operand.getDefiningOp();
+          definition && definition->getBlock() == &body)
+        continue;
+      if (!isScalarVectorElementType(operand.getType()))
+        return false;
+    }
   }
   return true;
 }
@@ -124,6 +139,194 @@ static arith::AddFOp getSupportedAddCombine(linalg::GenericOp op) {
   if (!hasVectorizablePayload(op, add))
     return {};
   return add;
+}
+
+/// A joint-statistics state may look through pure elementwise tensor producers
+/// only when every shaped operand is an identity-mapped view of the same
+/// logical iteration space.  The destination argument must be dead: otherwise
+/// the region contains a recurrence rather than a producer expression.
+static bool isSupportedElementwiseProducer(linalg::GenericOp op,
+                                             RankedTensorType expectedType) {
+  if (!op.hasPureTensorSemantics() || op.getNumDpsInputs() == 0 ||
+      op.getNumDpsInits() != 1 || op->getNumResults() != 1 ||
+      op.getNumLoops() != static_cast<unsigned>(expectedType.getRank()))
+    return false;
+
+  if (llvm::any_of(op.getIteratorTypesArray(), [](utils::IteratorType iterator) {
+        return iterator != utils::IteratorType::parallel;
+      }))
+    return false;
+
+  SmallVector<AffineMap> maps = op.getIndexingMapsArray();
+  if (maps.size() != static_cast<size_t>(op.getNumDpsInputs() + 1) ||
+      llvm::any_of(maps, [&](AffineMap map) {
+        return !map.isIdentity() ||
+               map.getNumResults() != static_cast<unsigned>(expectedType.getRank());
+      }))
+    return false;
+
+  for (OpOperand *input : op.getDpsInputOperands())
+    if (input->get().getType() != expectedType)
+      return false;
+  if (op.getDpsInits()[0].getType() != expectedType ||
+      op.getResult(0).getType() != expectedType)
+    return false;
+
+  Block &body = op.getRegion().front();
+  unsigned inputCount = op.getNumDpsInputs();
+  if (body.getNumArguments() != inputCount + 1 ||
+      !body.getArgument(inputCount).use_empty())
+    return false;
+
+  for (Operation &nested : body.without_terminator()) {
+    if (nested.getNumRegions() != 0 || nested.getNumSuccessors() != 0 ||
+        (!isa<arith::ConstantOp>(nested) &&
+         !nested.hasTrait<OpTrait::Elementwise>()) ||
+        llvm::any_of(nested.getResultTypes(), [](Type type) {
+          return !isScalarVectorElementType(type);
+        }))
+      return false;
+    for (Value operand : nested.getOperands()) {
+      if (auto argument = dyn_cast<BlockArgument>(operand)) {
+        if (argument.getOwner() == &body &&
+            argument.getArgNumber() < inputCount)
+          continue;
+      }
+      if (Operation *definition = operand.getDefiningOp();
+          definition && definition->getBlock() == &body)
+        continue;
+      if (!isScalarVectorElementType(operand.getType()))
+        return false;
+    }
+  }
+
+  auto yield = dyn_cast<linalg::YieldOp>(body.getTerminator());
+  return yield && yield.getValues().size() == 1 &&
+         yield.getValues().front() != body.getArgument(inputCount) &&
+         yield.getValues().front().getType().isF32();
+}
+
+static bool isZeroInitialized(linalg::GenericOp reduction) {
+  Value init = reduction.getDpsInits()[0];
+  if (auto fill = init.getDefiningOp<linalg::FillOp>())
+    return fill.getInputs().size() == 1 &&
+           matchPattern(fill.getInputs().front(), m_AnyZeroFloat());
+  auto generic = init.getDefiningOp<linalg::GenericOp>();
+  auto initType = dyn_cast<RankedTensorType>(init.getType());
+  if (!generic || !generic.hasPureTensorSemantics() ||
+      generic.getNumDpsInputs() != 0 || generic.getNumDpsInits() != 1 ||
+      generic->getNumResults() != 1 || !initType ||
+      generic.getNumLoops() != static_cast<unsigned>(initType.getRank()) ||
+      llvm::any_of(generic.getIteratorTypesArray(),
+                   [](utils::IteratorType iterator) {
+                     return iterator != utils::IteratorType::parallel;
+                   }))
+    return false;
+  SmallVector<AffineMap> maps = generic.getIndexingMapsArray();
+  if (maps.size() != 1 || !maps.front().isIdentity() ||
+      maps.front().getNumResults() !=
+          static_cast<unsigned>(initType.getRank()))
+    return false;
+  auto yield = dyn_cast<linalg::YieldOp>(generic.getRegion().front().getTerminator());
+  return yield && yield.getValues().size() == 1 &&
+         matchPattern(yield.getValues().front(), m_AnyZeroFloat());
+}
+
+struct ReductionPlan {
+  linalg::GenericOp reduction;
+  Value root;
+  SmallVector<linalg::GenericOp> producers;
+};
+
+static Value collectProducerRoot(
+    Value value, RankedTensorType expectedType,
+    SmallVectorImpl<linalg::GenericOp> &orderedProducers,
+    llvm::SmallPtrSetImpl<Operation *> &visited,
+    llvm::SmallPtrSetImpl<Operation *> &visiting, bool &valid) {
+  if (!valid || value.getType() != expectedType) {
+    valid = false;
+    return {};
+  }
+  auto producer = value.getDefiningOp<linalg::GenericOp>();
+  if (!producer)
+    return value;
+  if (!isSupportedElementwiseProducer(producer, expectedType) ||
+      !visiting.insert(producer.getOperation()).second) {
+    valid = false;
+    return {};
+  }
+
+  Value commonRoot;
+  for (OpOperand *input : producer.getDpsInputOperands()) {
+    Value root = collectProducerRoot(input->get(), expectedType,
+                                     orderedProducers, visited, visiting, valid);
+    if (!valid || !root || (commonRoot && commonRoot != root)) {
+      valid = false;
+      visiting.erase(producer.getOperation());
+      return {};
+    }
+    commonRoot = root;
+  }
+  visiting.erase(producer.getOperation());
+  if (visited.insert(producer.getOperation()).second)
+    orderedProducers.push_back(producer);
+  return commonRoot;
+}
+
+static std::optional<ReductionPlan> buildReductionPlan(linalg::GenericOp op) {
+  if (!getSupportedAddCombine(op) || !isZeroInitialized(op))
+    return std::nullopt;
+  Value input = op.getDpsInputs()[0];
+  auto inputType = dyn_cast<RankedTensorType>(input.getType());
+  auto outputType = dyn_cast<RankedTensorType>(op.getDpsInits()[0].getType());
+  if (!inputType || !outputType || !outputType.hasStaticShape() ||
+      outputType.getEncoding())
+    return std::nullopt;
+
+  ReductionPlan plan{op, {}, {}};
+  llvm::SmallPtrSet<Operation *, 8> visited;
+  llvm::SmallPtrSet<Operation *, 8> visiting;
+  bool valid = true;
+  plan.root = collectProducerRoot(input, inputType, plan.producers, visited,
+                                  visiting, valid);
+  if (!valid || !plan.root || plan.root.getType() != inputType)
+    return std::nullopt;
+  return plan;
+}
+
+static bool sameJointDomain(const ReductionPlan &lhs,
+                            const ReductionPlan &rhs) {
+  linalg::GenericOp lhsReduction = lhs.reduction;
+  linalg::GenericOp rhsReduction = rhs.reduction;
+  if (lhs.root != rhs.root ||
+      lhsReduction->getBlock() != rhsReduction->getBlock() ||
+      lhsReduction.getDpsInputs()[0].getType() !=
+          rhsReduction.getDpsInputs()[0].getType() ||
+      lhsReduction.getDpsInits()[0].getType() !=
+          rhsReduction.getDpsInits()[0].getType() ||
+      lhsReduction.getIteratorTypesArray() !=
+          rhsReduction.getIteratorTypesArray())
+    return false;
+  SmallVector<AffineMap> lhsMaps = lhsReduction.getIndexingMapsArray();
+  SmallVector<AffineMap> rhsMaps = rhsReduction.getIndexingMapsArray();
+  return lhsMaps == rhsMaps;
+}
+
+static bool capturedValuesDominate(linalg::GenericOp op, Operation *anchor,
+                                   DominanceInfo &dominance) {
+  Block &body = op.getRegion().front();
+  for (Operation &nested : body.getOperations())
+    for (Value operand : nested.getOperands()) {
+      if (auto argument = dyn_cast<BlockArgument>(operand);
+          argument && argument.getOwner() == &body)
+        continue;
+      if (Operation *definition = operand.getDefiningOp();
+          definition && definition->getBlock() == &body)
+        continue;
+      if (!dominance.dominates(operand, anchor))
+        return false;
+    }
+  return true;
 }
 
 static Value dimValue(OpBuilder &builder, Location location, Value tensor,
@@ -188,6 +391,207 @@ static Value emitVectorPayload(OpBuilder &builder, linalg::GenericOp op,
   return mapping.lookupOrNull(yield.getValues().front());
 }
 
+static Value emitElementwiseProducerPayload(OpBuilder &builder,
+                                             linalg::GenericOp op,
+                                             ArrayRef<Value> inputPackets,
+                                             VectorType lanes) {
+  Block &body = op.getRegion().front();
+  IRMapping mapping;
+  for (auto [argument, packet] :
+       llvm::zip(body.getArguments().take_front(inputPackets.size()),
+                 inputPackets))
+    mapping.map(argument, packet);
+
+  auto mapCapturedScalar = [&](Value operand) -> Value {
+    if (mapping.contains(operand))
+      return mapping.lookup(operand);
+    if (!isScalarVectorElementType(operand.getType()))
+      return {};
+    Value splat = builder.create<vector::SplatOp>(
+        op.getLoc(), vectorTypeLike(lanes, operand.getType()), operand);
+    mapping.map(operand, splat);
+    return splat;
+  };
+
+  for (Operation &nested : body.without_terminator()) {
+    if (isa<arith::ConstantOp>(nested)) {
+      Operation *scalar = builder.clone(nested);
+      for (auto [source, cloned] :
+           llvm::zip(nested.getResults(), scalar->getResults())) {
+        Value splat = builder.create<vector::SplatOp>(
+            op.getLoc(), vectorTypeLike(lanes, source.getType()), cloned);
+        mapping.map(source, splat);
+      }
+      continue;
+    }
+    for (Value operand : nested.getOperands())
+      if (!mapCapturedScalar(operand))
+        return {};
+    Operation *cloned = builder.clone(nested, mapping);
+    for (auto [source, result] :
+         llvm::zip(nested.getResults(), cloned->getResults()))
+      result.setType(vectorTypeLike(lanes, source.getType()));
+  }
+
+  auto yield = cast<linalg::YieldOp>(body.getTerminator());
+  return mapping.lookupOrNull(yield.getValues().front());
+}
+
+static Value emitProducerPacket(OpBuilder &builder, Value tensor,
+                                DenseMap<Value, Value> &packets,
+                                VectorType lanes) {
+  if (auto found = packets.find(tensor); found != packets.end())
+    return found->second;
+  auto producer = tensor.getDefiningOp<linalg::GenericOp>();
+  if (!producer)
+    return {};
+  SmallVector<Value> inputs;
+  inputs.reserve(producer.getNumDpsInputs());
+  for (OpOperand *input : producer.getDpsInputOperands()) {
+    Value packet = emitProducerPacket(builder, input->get(), packets, lanes);
+    if (!packet)
+      return {};
+    inputs.push_back(packet);
+  }
+  Value result =
+      emitElementwiseProducerPayload(builder, producer, inputs, lanes);
+  if (result)
+    packets.try_emplace(tensor, result);
+  return result;
+}
+
+static SmallVector<Value>
+emitJointReductionGroup(IRRewriter &rewriter, ArrayRef<ReductionPlan> plans,
+                        unsigned vectorWidth, bool scalableVector,
+                        bool &payloadEmissionFailed) {
+  assert(plans.size() >= 2 && "joint reduction requires multiple statistics");
+  linalg::GenericOp firstReduction = plans.front().reduction;
+  Operation *anchor = firstReduction.getOperation();
+  for (const ReductionPlan &plan : llvm::drop_begin(plans)) {
+    linalg::GenericOp reduction = plan.reduction;
+    if (reduction->isBeforeInBlock(anchor))
+      anchor = reduction.getOperation();
+  }
+
+  DominanceInfo dominance(anchor->getParentOp());
+  for (const ReductionPlan &plan : plans) {
+    if (!dominance.dominates(plan.root, anchor) ||
+        !capturedValuesDominate(plan.reduction, anchor, dominance))
+      return {};
+    for (linalg::GenericOp producer : plan.producers)
+      if (!capturedValuesDominate(producer, anchor, dominance))
+        return {};
+  }
+
+  rewriter.setInsertionPoint(anchor);
+  Location location = anchor->getLoc();
+  Value root = plans.front().root;
+  auto rootType = cast<RankedTensorType>(root.getType());
+  unsigned reductionDimension = rootType.getRank() - 1;
+  auto elementType = cast<FloatType>(rootType.getElementType());
+  auto vectorType = VectorType::get(
+      {static_cast<int64_t>(vectorWidth)}, elementType,
+      SmallVector<bool>{scalableVector});
+
+  Value zeroIndex = rewriter.create<arith::ConstantIndexOp>(location, 0);
+  Value oneIndex = rewriter.create<arith::ConstantIndexOp>(location, 1);
+  Value columns = dimValue(rewriter, location, root, reductionDimension);
+  Value minimumLanes = rewriter.create<arith::ConstantIndexOp>(
+      location, static_cast<int64_t>(vectorWidth));
+  Value step = minimumLanes;
+  if (scalableVector) {
+    Value vscale = rewriter.create<vector::VectorScaleOp>(location);
+    step = rewriter.create<arith::MulIOp>(location, minimumLanes, vscale);
+  }
+  Value zero = rewriter.create<arith::ConstantOp>(
+      location, rewriter.getF32FloatAttr(0.0));
+  Value zeroVector =
+      rewriter.create<vector::SplatOp>(location, vectorType, zero);
+
+  SmallVector<Value> initialOutputs;
+  initialOutputs.reserve(plans.size());
+  for (const ReductionPlan &plan : plans) {
+    linalg::GenericOp reduction = plan.reduction;
+    auto outputType =
+        cast<RankedTensorType>(reduction.getDpsInits()[0].getType());
+    initialOutputs.push_back(rewriter.create<tensor::EmptyOp>(
+        location, outputType.getShape(), outputType.getElementType()));
+  }
+
+  std::function<SmallVector<Value>(OpBuilder &, unsigned, ValueRange,
+                                   ArrayRef<Value>)>
+      emitParallelLoops;
+  emitParallelLoops = [&](OpBuilder &builder, unsigned dimension,
+                          ValueRange outputs,
+                          ArrayRef<Value> parallelIndices) -> SmallVector<Value> {
+    if (dimension == reductionDimension) {
+      SmallVector<Value> zeroVectors(plans.size(), zeroVector);
+      auto inner = builder.create<scf::ForOp>(
+          location, zeroIndex, columns, step, zeroVectors,
+          [&](OpBuilder &innerBuilder, Location innerLocation, Value column,
+              ValueRange innerArgs) {
+            SmallVector<Value> rootIndices(parallelIndices);
+            rootIndices.push_back(column);
+            Value rootPacket = innerBuilder.create<vector::TransferReadOp>(
+                innerLocation, vectorType, root, rootIndices, zero);
+            DenseMap<Value, Value> packets;
+            packets.try_emplace(root, rootPacket);
+            SmallVector<Value> accumulated;
+            accumulated.reserve(plans.size());
+            for (auto [index, plan] : llvm::enumerate(plans)) {
+              linalg::GenericOp reduction = plan.reduction;
+              Value inputPacket = emitProducerPacket(
+                  innerBuilder, reduction.getDpsInputs()[0], packets,
+                  vectorType);
+              if (!inputPacket) {
+                payloadEmissionFailed = true;
+                accumulated.push_back(innerArgs[index]);
+                continue;
+              }
+              Value next = emitVectorPayload(innerBuilder, reduction,
+                                             inputPacket, innerArgs[index],
+                                             vectorType);
+              if (!next) {
+                payloadEmissionFailed = true;
+                next = innerArgs[index];
+              }
+              accumulated.push_back(next);
+            }
+            innerBuilder.create<scf::YieldOp>(innerLocation, accumulated);
+          });
+
+      SmallVector<Value> updatedOutputs;
+      updatedOutputs.reserve(plans.size());
+      for (auto [index, plan] : llvm::enumerate(plans)) {
+        linalg::GenericOp reduction = plan.reduction;
+        arith::FastMathFlags flags =
+            getSupportedAddCombine(reduction).getFastmath();
+        Value reduced = builder.create<vector::ReductionOp>(
+            location, vector::CombiningKind::ADD, inner.getResult(index), zero,
+            flags);
+        updatedOutputs.push_back(builder.create<tensor::InsertOp>(
+            location, reduced, outputs[index], parallelIndices));
+      }
+      return updatedOutputs;
+    }
+
+    Value upper = dimValue(builder, location, root, dimension);
+    auto loop = builder.create<scf::ForOp>(
+        location, zeroIndex, upper, oneIndex, outputs,
+        [&](OpBuilder &nestedBuilder, Location nestedLocation, Value index,
+            ValueRange nestedArgs) {
+          SmallVector<Value> indices(parallelIndices);
+          indices.push_back(index);
+          SmallVector<Value> updated = emitParallelLoops(
+              nestedBuilder, dimension + 1, nestedArgs, indices);
+          nestedBuilder.create<scf::YieldOp>(nestedLocation, updated);
+        });
+    return SmallVector<Value>(loop.getResults().begin(), loop.getResults().end());
+  };
+
+  return emitParallelLoops(rewriter, 0, initialOutputs, ArrayRef<Value>{});
+}
+
 struct VectorizeLinalgRowReductionPass
     : ::intent::impl::VectorizeLinalgRowReductionBase<
           VectorizeLinalgRowReductionPass> {
@@ -197,6 +601,11 @@ struct VectorizeLinalgRowReductionPass
     ModuleOp module = getOperation();
     if (vectorWidth == 0 || (vectorWidth & (vectorWidth - 1)) != 0) {
       module.emitError("row-reduction vector width must be a power of two");
+      return signalPassFailure();
+    }
+    if (requireJointReductions && !jointReductions) {
+      module.emitError(
+          "require-joint-reductions needs joint-reductions to be enabled");
       return signalPassFailure();
     }
 
@@ -209,7 +618,61 @@ struct VectorizeLinalgRowReductionPass
     IRRewriter rewriter(&getContext());
     unsigned vectorizedCount = 0;
     unsigned generatedLoopCount = 0;
+    unsigned jointGroupCount = 0;
+    unsigned jointReductionCount = 0;
+    bool payloadEmissionFailed = false;
+    llvm::SmallPtrSet<Operation *, 16> jointedOperations;
+
+    if (jointReductions) {
+      SmallVector<ReductionPlan> plans;
+      for (linalg::GenericOp op : worklist)
+        if (std::optional<ReductionPlan> plan = buildReductionPlan(op))
+          plans.push_back(std::move(*plan));
+
+      SmallVector<bool> consumed(plans.size(), false);
+      for (unsigned leader = 0; leader < plans.size(); ++leader) {
+        if (consumed[leader])
+          continue;
+        SmallVector<ReductionPlan> group{plans[leader]};
+        SmallVector<unsigned> memberIndices{leader};
+        for (unsigned candidate = leader + 1; candidate < plans.size();
+             ++candidate) {
+          if (!consumed[candidate] &&
+              sameJointDomain(plans[leader], plans[candidate])) {
+            group.push_back(plans[candidate]);
+            memberIndices.push_back(candidate);
+          }
+        }
+        if (group.size() < 2)
+          continue;
+
+        SmallVector<Value> replacements = emitJointReductionGroup(
+            rewriter, group, vectorWidth, scalableVector,
+            payloadEmissionFailed);
+        if (payloadEmissionFailed) {
+          module.emitError(
+              "failed to emit an admitted joint row-reduction payload");
+          return signalPassFailure();
+        }
+        if (replacements.size() != group.size())
+          continue;
+        for (auto [plan, replacement, memberIndex] :
+             llvm::zip(group, replacements, memberIndices)) {
+          jointedOperations.insert(plan.reduction.getOperation());
+          consumed[memberIndex] = true;
+          rewriter.replaceOp(plan.reduction, replacement);
+        }
+        ++jointGroupCount;
+        jointReductionCount += group.size();
+        vectorizedCount += group.size();
+        generatedLoopCount +=
+            cast<RankedTensorType>(group.front().root.getType()).getRank();
+      }
+    }
+
     for (linalg::GenericOp op : worklist) {
+      if (jointedOperations.contains(op.getOperation()))
+        continue;
       arith::AddFOp combine = getSupportedAddCombine(op);
       if (!combine || !op->getBlock())
         continue;
@@ -262,7 +725,7 @@ struct VectorizeLinalgRowReductionPass
                 Value accumulated = emitVectorPayload(
                     innerBuilder, op, packet, innerArgs[0], vectorType);
                 if (!accumulated) {
-                  op.emitError("failed to vectorize admitted reduction payload");
+                  payloadEmissionFailed = true;
                   accumulated = innerArgs[0];
                 }
                 innerBuilder.create<scf::YieldOp>(innerLocation, accumulated);
@@ -297,6 +760,11 @@ struct VectorizeLinalgRowReductionPass
       generatedLoopCount += inputType.getRank();
     }
 
+    if (payloadEmissionFailed) {
+      module.emitError("failed to emit an admitted row-reduction payload");
+      return signalPassFailure();
+    }
+
     Builder builder(&getContext());
     module->setAttr("intent.rvv.explicit_vector_reduction_count",
                     builder.getI64IntegerAttr(vectorizedCount));
@@ -308,6 +776,17 @@ struct VectorizeLinalgRowReductionPass
                     builder.getI64IntegerAttr(scalableVector
                                                   ? vectorizedCount
                                                   : 0));
+    module->setAttr("intent.rvv.joint_vector_reduction_group_count",
+                    builder.getI64IntegerAttr(jointGroupCount));
+    module->setAttr("intent.rvv.joint_vector_reduction_count",
+                    builder.getI64IntegerAttr(jointReductionCount));
+    module->setAttr("intent.rvv.joint_vector_reduction_root_load_count",
+                    builder.getI64IntegerAttr(jointGroupCount));
+    if (requireJointReductions && jointGroupCount == 0) {
+      module.emitError(
+          "required joint row-reduction vectorization matched no group");
+      return signalPassFailure();
+    }
     if (requireVectorization && vectorizedCount == 0) {
       module.emitError(
           "required explicit row-reduction vectorization matched no operation");

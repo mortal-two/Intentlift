@@ -270,3 +270,48 @@ instruction/transaction/launch/barrier 或 roofline 证据解释剩余下限；�
 5. 达到第8节目标，或在真实高杠杆机制完成后给出不能达到的物理证据；
 6. 不修改 J、SCRC、Source baseline、Q/D、workload 语义，不使用 Python target-kernel emission；
 7. 代码、任务与结果提交，工作区干净。
+
+## 10. 当前进展（2026-07-30）
+
+### 10.1 P1 共同根多统计首个真实闭环
+
+已实现通用 `joint-reductions` C++/MLIR state：
+
+- 从多个 reassociable row reduction 沿纯 elementwise、identity-mapped producer DAG 回溯共同 root；
+- 要求相同 row domain、reduction axis、静态输出 carrier和可证明的零初始化；
+- 在一个 dynamic-VL loop 中只对 root 执行一次 `vector.transfer_read`，同时携带多个 vector accumulator；
+- 每个 statistic只在行末执行一次 horizontal finalize；
+- 第二次 Linalg fusion删除统计路径不再需要的 `x2/x3` tensor materialization，最终 epilogue直接消费 root
+  与三个统计结果；
+- 不同 root、非零 init、ordered reduction、非 identity producer或不满足 dominance的图 fail closed；
+- 搜索器把 joint state作为独立 Full transition，只枚举 scalable-vector schedule，并以实际 module attrs、
+  LLVM scalable-vector IR 与 RVV `vfred*` 指令作为命中条件。
+
+Fresh PolyNorm natural workload `[2048,4096]`、f32、RVV4 CPU0 单线程、code-warm/data-cold 的完整
+122-executable工程筛选结果为：
+
+| 实验臂/状态 | Latency |
+|---|---:|
+| C-Fixed | 852.908 ms |
+| Schedule-Only（完整固定结构 schedule 子空间的最好值） | 589.536 ms |
+| 旧 Full 最好值（fusion + 三个独立 vector reduction） | 107.429 ms |
+| 新 joint Full | **20.342 ms** |
+| 独立 Native RVV | 41.890 ms |
+
+因此本次同次测量得到：
+
+```text
+G_schedule                         = 1.447x
+Schedule-Only / joint Full         = 28.982x
+best non-joint Full / joint Full   = 5.281x
+Native RVV / joint Full            = 2.048x
+```
+
+winner 的 post-pass record 为 `1 joint group / 3 reductions / 1 root load`，目标汇编含3条RVV浮点
+reduction指令（`vfred*`），并明确记录
+`python_target_kernel_emission=false`。122 个实际 executable 的 candidate correctness均通过；joint winner
+对两个 observable output 的最大绝对误差分别为 `1.67e-5` 与 `4.10e-5`，符合固定 Q。
+
+这仍是 `warmup=1、cold-iterations=1、batches=1` 的 go/no-go 工程筛选，不冒充正式论文置信数据。下一步
+先对同一 bundle做多批 fresh finalist重测，再将共同根统计机制推广到可改写为 raw moments 的 LayerNorm
+与 Flash one-pass LayerNorm；不以 PolyNorm单点替代 Fresh-14 横向结果。

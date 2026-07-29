@@ -67,6 +67,7 @@ class RiscvTransformationState:
     fuse_producers: bool
     reassociate_reductions: bool = False
     explicit_vector_reduction: bool = False
+    joint_vector_reduction: bool = False
 
     def __post_init__(self) -> None:
         if type(self.fuse_producers) is not bool:
@@ -75,14 +76,27 @@ class RiscvTransformationState:
             raise TypeError("reassociate_reductions must be bool")
         if type(self.explicit_vector_reduction) is not bool:
             raise TypeError("explicit_vector_reduction must be bool")
+        if type(self.joint_vector_reduction) is not bool:
+            raise TypeError("joint_vector_reduction must be bool")
         if self.explicit_vector_reduction and not self.reassociate_reductions:
             raise ValueError(
                 "explicit float vector reduction requires the admitted "
                 "reassociation state"
             )
+        if self.joint_vector_reduction and not (
+            self.fuse_producers
+            and self.reassociate_reductions
+            and self.explicit_vector_reduction
+        ):
+            raise ValueError(
+                "joint RVV vector reduction requires producer fusion, "
+                "reassociation, and explicit vector reduction"
+            )
 
     @property
     def lowering_path_kind(self) -> str:
+        if self.joint_vector_reduction:
+            return "producer_consumer_fused_joint_vector_reduction"
         if self.explicit_vector_reduction:
             return (
                 "producer_consumer_fused_vector_reduction"
@@ -108,7 +122,12 @@ class RiscvTransformationState:
             if self.explicit_vector_reduction
             else ()
         )
-        return (structural, *numeric, *vector)
+        joint = (
+            ("rvv.vector.joint_row_statistics.v1",)
+            if self.joint_vector_reduction
+            else ()
+        )
+        return (structural, *numeric, *vector, *joint)
 
     @property
     def b_transformations(self) -> tuple[str, ...]:
@@ -124,6 +143,7 @@ class RiscvTransformationState:
             "fuse_producers": self.fuse_producers,
             "reassociate_reductions": self.reassociate_reductions,
             "explicit_vector_reduction": self.explicit_vector_reduction,
+            "joint_vector_reduction": self.joint_vector_reduction,
             "transformation_trace": list(self.transformation_trace),
             "b_transformations": list(self.b_transformations),
             "required_b_capabilities": list(self.required_b_capabilities),
@@ -208,7 +228,8 @@ class RiscvLoweringCandidate:
             f"pt{schedule.parallel_tile}.rt{schedule.reduction_tile}."
             f"thr{schedule.thread_count}."
             f"reassoc{int(self.transformation.reassociate_reductions)}."
-            f"explicitvec{int(self.transformation.explicit_vector_reduction)}"
+            f"explicitvec{int(self.transformation.explicit_vector_reduction)}."
+            f"jointvec{int(self.transformation.joint_vector_reduction)}"
         )
 
     def _content(self) -> dict[str, Any]:
@@ -240,6 +261,9 @@ class RiscvTransformationRecord:
     explicit_vector_reduction_width: int = 0
     explicit_vector_reduction_loops: int = 0
     explicit_vector_reduction_scalable: int = 0
+    joint_vector_reduction_groups: int = 0
+    joint_vector_reductions: int = 0
+    joint_vector_reduction_root_loads: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -261,6 +285,11 @@ class RiscvTransformationRecord:
             "explicit_vector_reduction_loops": self.explicit_vector_reduction_loops,
             "explicit_vector_reduction_scalable": (
                 self.explicit_vector_reduction_scalable
+            ),
+            "joint_vector_reduction_groups": self.joint_vector_reduction_groups,
+            "joint_vector_reductions": self.joint_vector_reductions,
+            "joint_vector_reduction_root_loads": (
+                self.joint_vector_reduction_root_loads
             ),
         }
 
@@ -334,6 +363,10 @@ def _module_i64_attr(mlir: str, name: str, *, default: int = 0) -> int:
     return int(match.group(1)) if match is not None else default
 
 
+def _linalg_op_count(mlir: str) -> int:
+    return len(re.findall(r"\blinalg\.[A-Za-z0-9_]+", mlir))
+
+
 def _lower_to_llvm_ir(
     state: BackendSearchState,
     candidate: RiscvLoweringCandidate,
@@ -367,22 +400,48 @@ def _lower_to_llvm_ir(
     else:
         fused_structured = linalg
     fusion_changed_ir = bool(
-        candidate.transformation.fuse_producers and fused_structured != linalg
+        candidate.transformation.fuse_producers
+        and _linalg_op_count(fused_structured) < _linalg_op_count(linalg)
     )
     pre_schedule_structured = fused_structured
+    if candidate.transformation.joint_vector_reduction:
+        pre_schedule_structured = _run_text(
+            [
+                MLIR_OPT,
+                "--linalg-fold-unit-extent-dims",
+                "--canonicalize",
+                "--cse",
+            ],
+            stdin=pre_schedule_structured,
+        )
     if candidate.transformation.explicit_vector_reduction:
+        joint_options = (
+            " joint-reductions=true require-joint-reductions=true"
+            if candidate.transformation.joint_vector_reduction
+            else ""
+        )
         pre_schedule_structured = _run_text(
             [
                 INTENT_OPT,
                 (
                     "-vectorize-linalg-row-reduction="
                     "vector-width=4 scalable-vector=true "
-                    "require-vectorization=true"
+                    f"require-vectorization=true{joint_options}"
                 ),
                 "-canonicalize",
                 "-cse",
             ],
             stdin=pre_schedule_structured,
+        )
+    if candidate.transformation.joint_vector_reduction:
+        before_second_fusion = pre_schedule_structured
+        pre_schedule_structured = _run_text(
+            [MLIR_OPT, "--linalg-fuse-elementwise-ops", "--canonicalize", "--cse"],
+            stdin=pre_schedule_structured,
+        )
+        fusion_changed_ir = fusion_changed_ir or (
+            _linalg_op_count(pre_schedule_structured)
+            < _linalg_op_count(before_second_fusion)
         )
     structured = pre_schedule_structured
     if schedule.parallel_tile or schedule.reduction_tile:
@@ -402,10 +461,8 @@ def _lower_to_llvm_ir(
             stdin=structured,
         )
     record = RiscvTransformationRecord(
-        linalg_ops_before=len(re.findall(r"\blinalg\.[A-Za-z0-9_]+", linalg)),
-        linalg_ops_after=len(
-            re.findall(r"\blinalg\.[A-Za-z0-9_]+", structured)
-        ),
+        linalg_ops_before=_linalg_op_count(linalg),
+        linalg_ops_after=_linalg_op_count(structured),
         parallel_tile_requested=schedule.parallel_tile,
         reduction_tile_requested=schedule.reduction_tile,
         parallel_tile_applied=_module_i64_attr(
@@ -445,6 +502,15 @@ def _lower_to_llvm_ir(
         explicit_vector_reduction_scalable=_module_i64_attr(
             structured, "intent.rvv.explicit_vector_reduction_scalable_count"
         ),
+        joint_vector_reduction_groups=_module_i64_attr(
+            structured, "intent.rvv.joint_vector_reduction_group_count"
+        ),
+        joint_vector_reductions=_module_i64_attr(
+            structured, "intent.rvv.joint_vector_reduction_count"
+        ),
+        joint_vector_reduction_root_loads=_module_i64_attr(
+            structured, "intent.rvv.joint_vector_reduction_root_load_count"
+        ),
     )
     if (
         candidate.transformation.reassociate_reductions
@@ -466,6 +532,16 @@ def _lower_to_llvm_ir(
         raise RuntimeError(
             "requested explicit RVV vector reduction matched no supported "
             "Linalg row reduction"
+        )
+    if candidate.transformation.joint_vector_reduction and (
+        record.joint_vector_reduction_groups == 0
+        or record.joint_vector_reductions < 2
+        or record.joint_vector_reduction_root_loads
+        != record.joint_vector_reduction_groups
+    ):
+        raise RuntimeError(
+            "requested joint RVV vector reduction produced no valid "
+            "same-root statistics group"
         )
     parallel_runtime = schedule.thread_count > 1
     front = [
@@ -605,6 +681,16 @@ def compile_riscv_object(
         raise RuntimeError(
             "requested explicit RVV vector reduction produced no vectorized "
             "row reduction"
+        )
+    if candidate.transformation.joint_vector_reduction and (
+        transformation_record.joint_vector_reduction_groups == 0
+        or transformation_record.joint_vector_reductions < 2
+        or transformation_record.joint_vector_reduction_root_loads
+        != transformation_record.joint_vector_reduction_groups
+    ):
+        raise RuntimeError(
+            "requested joint RVV vector reduction produced no valid "
+            "same-root statistics group"
         )
     schedule = candidate.schedule
     vector_shape_flags = (
