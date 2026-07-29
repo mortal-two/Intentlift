@@ -5,19 +5,20 @@ Trellis CLI、自动 session 或 workflow phase。
 
 ## 当前任务
 
-2026-07-30 有两条对象所有权互不重叠的活动主线。Task 11/14 负责 fresh SCRC corpus；Task 19
+2026-07-30 有两条对象所有权互不重叠的活动主线。Task 11/14 负责 fresh SCRC corpus；Task 20
 以当前 fresh 14 J 为正式横向分母，扩展真实 MLIR Full 结构空间，并完成 CUDA 5090D/H100、RVV
-单线程的 Source/Native baseline、统一三柱和 1.5× 性能闭合。Task 19 不调用 provider、不修改
+单线程的 Source/Native baseline、统一三柱和 1.5× 性能闭合。Task 20 不调用 provider、不修改
 Lift/Replay/Gate verdict。
 
 - [Task 11：SCRC v4 的 28-Kernel 有界并行全闭合](07-24-scrc-v4-full-closure-11/task.md)（执行中；SCRC 主线）
-- [Task 19：Full 真实结构空间扩展与 1.5× 性能闭合](07-30-full-structural-space-15x-19/task.md)（执行中；backend主线）
+- [Task 20：J 驱动的 Full 瓶颈消除与 1.5× 机制闭环](07-30-j-driven-full-bottleneck-elimination-20/task.md)（执行中；backend主线）
 
-Task 16 建立 Fresh-14 production controller，Task 17/18 收直实验边界并落地首批结构，现作为 Task 19
-的实现基础，不再作为独立活动主线：
+Task 16 建立 Fresh-14 production controller，Task 17/18 收直实验边界，Task 19 完成首个真实 RVV
+结构纵切；现均作为 Task 20 的实现基础，不再作为独立活动主线：
 
 - [Task 16：Fresh-14 J 的真实 MLIR 跨目标搜索与 Source/Native Baseline 性能闭合](07-28-fresh14-real-mlir-cross-target-search-16/task.md)（基础能力）
 - [Task 18：J-Driven High-Leverage Full Search](07-29-j-driven-full-15x-18/task.md)（阶段性收口）
+- [Task 19：Full 真实结构空间扩展与 1.5× 性能闭合](07-30-full-structural-space-15x-19/task.md)（首个高杠杆纵切）
 
 Task 15 已完成阶段性 checkpoint 并冻结为历史执行记录；其中 legacy 16-high-performance + 2-canary
 与 J_dev 结果继续用于 compiler regression，但不再决定 fresh 正式分母：
