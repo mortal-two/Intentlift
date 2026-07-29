@@ -482,10 +482,12 @@ dependent checking 夸写成 Source topology 的形式证明。
 
 当前合并协议为 `artifact.v10 / decode.v15 / typecheck.v27 / candidate-check.v1 / replay-check.v11`；
 Replay packet envelope 仍是 `replay-input.v1`，Triton context 为 `public_frontend_context_v17`，
-Codex/MiniSWE Lift knowledge 为 v68/v64，MiniSWE Replay backend 为 v29，Codex Replay backend 为 v25。
-v29/v25 将 authored route extent transforms 纳入 `critical_facts.v4`、
+Codex/MiniSWE Lift knowledge 为 v68/v64，MiniSWE Replay backend 为 v30，Codex Replay backend 为 v26。
+v30/v26 完整执行 authored route extent transform 合同：将其纳入 `critical_facts.v4`、
 `replay-obligation-audit.v3` 与 source-blind static ingress；只检查 closed floor/ceil-div spelling，
-不生成 relation/code，也不替代 Gate1。
+不生成 relation/code，也不替代 Gate1；单独存在该 relation 也必须审阅当前 exact Replay bytes。
+Codex v26 将每个 provider turn 的 900 秒上限与 fresh owner episode 的 1800 秒总预算分离，使超时后
+只能沿原 resumable thread 继续；不跨 Replay episode 继承。v29/v25 历史 evidence 保持原 verdict。
 v40 为 source-aware Lift worker 增加只读、分页的 Source control-flow
 outline（function/loop/if/return 的行号与嵌套深度）；v41 只把 shared dialect/lowering 已支持的
 `log2` 补入通用 `map_unary` vocabulary；v42 只要求 access `fill_value` 保留 Source 该 load 的实际
@@ -505,8 +507,8 @@ pointer-producing stage 必须流向某个 transfer；并要求 compiled distinc
 Source/Harness value/Gate，不改变最终 SCRC 接受谓词。Codex Lift v5 只要求 LLM reconcile
 syntax-only Source control-flow outline，固定代码仍不分类或补 artifact。单次 provider turn wall-time 后只允许同 invocation/episode 的 exact checked
 bytes 或 resumable same thread 继续；禁止跨 formal round/Replay episode 继承候选。
-Replay v29/v25 与 Lift knowledge v68/v64 继承 v28/v24、v66/v62，并增加上述 route-local extent
-relation 的显式作者/消费合同。Replay v28/v24 与 Lift knowledge v66/v62 明确同一 physical region 中 carrier relation 的 declaration
+Replay v30/v26 继承 v29/v25，并完整执行上述 route-local extent relation 的消费合同；Lift knowledge
+保持 v68/v64，继续承担该 relation 的显式作者合同。Replay v28/v24 与 Lift knowledge v66/v62 明确同一 physical region 中 carrier relation 的 declaration
 order 是跨 init/state/next/result 共享的 tuple ordinal；Lift 完整作者化，Replay 原样消费，fixed code
 不按 dtype/ref/mechanism 重排。它不表示 event execution order，后者仍由 `pi.order` 拥有。
 v28/v24 继承 v27/v23；v27/v23 继承 v26/v22，并把每条 J-authored broadcast 的 operand closed type、matching access、
@@ -643,8 +645,9 @@ consumer topology 由 functional consumer 明确 unsupported。该判定只读 J
 将 mean 自动改写；若 Source 是 masked sum 后显式除法，Lift 必须完整生成
 `reduce(sum) + explicit div`。
 
-Scalar RefEval 当前能力版本为 `j_scalar_cpu_mlir_v20`，shared projection 为
-`intentir.j-functional-boundary.v19`。它们完整继承 v14/v13、v12/v11 与 v10/v3；v10 已继承 v9，v9 已继承 v8 的唯一 node-less
+Scalar RefEval 当前能力版本为 `j_scalar_cpu_mlir_v22`，shared projection 为
+`intentir.j-functional-boundary.v20`，typed relation-indexed reference 为
+`intentir.j-contract-indexed-cpu-reference.v1`。它们完整继承 v14/v13、v12/v11 与 v10/v3；v10 已继承 v9，v9 已继承 v8 的唯一 node-less
 logical-input load，并把 padded reduction 从 single input/output/sum 特例改为 J-only 的通用闭合：
 每个 predicated direct access 必须
 覆盖自身完整 logical domain，仍携带 masked axis 的 access 使用同一 predicate；每个 logical reduce
@@ -692,7 +695,7 @@ order 必须同时成立。v14/v13 只在 missing-fill load 的所有 downstream
 outside-domain value 不可观察；reduction/scan/loop/transpose/pad、不同 predicate 与未知 effect 继续
 fail closed。两者都不读 Source/C/π/Harness，也不修改 J。
 
-当前 `j_scalar_cpu_mlir_v20` / `intentir.j-functional-boundary.v19` 完整继承 v17/v16，并继续只扩展 deterministic
+历史 `j_scalar_cpu_mlir_v20` / `intentir.j-functional-boundary.v19` 完整继承 v17/v16，并继续只扩展 deterministic
 consumer：显式 product domain 只有在 access coordinates 构成完整、唯一、逐 factor 的 mixed-radix
 bijection 时才投影为 logical tensor axes；missing-fill provenance 只有在 shape-preserving pointwise
 链后接精确 `transpose`，且 store coordinates 等于 load coordinates 的 authored permutation、predicate
@@ -726,6 +729,20 @@ interval 不含零的 signed integer `div` 按 toward-zero 语义传播区间；
 overflow。动态 gather 的 index shape 必须唯一绑定 logical domain axes。node-less padded load 只有
 已有 consumer extension 才可与同 tensor 的显式 reload 共存，后者在自己的 operand edge 上覆盖
 前者 provenance；这仍是 J/B consumer closure，不是从 Harness valuation 发明 shape identity。
+
+v21/v20 继续只扩展 deterministic J/B consumer：J direct `x* == 1`/`1 == x*` 是 constant
+coordinate 0 的唯一 symbolic singleton 证据；同一 `effect_if` 的正负 sibling arm 若分别完整写同一
+output，则既有 conditional-store receipts 证明控制分区，无需伪造共同 producer。它们均不读
+Source/Gate、不补 J relation。
+
+v22 再增加 `intentir.j-contract-indexed-cpu-reference.v1`：当旧 functional projection 无法把一般
+affine/sub-domain B 擦成 full-tensor 执行时，只对 flat、acyclic、shape-preserving pointwise A graph
+从 canonical ContractIR 执行 typed index/predicate/fill 和穷尽、无重叠的 output stores。access 的
+`node_ref` 是 consumer-local；sibling node 没有自己的 access 时保留普通 Layer-A operand 语义，
+fixed consumer 不复制 relation、也不按 Kernel 名识别 half/split/rotation。于是 Gate1 已闭合但 J
+漏写 consumer-local access 时，Gate2 会形成真实 Source--J/Replay--J 数值分歧，后续必须 fresh
+relift，不能把 RefEval capability repair 伪装成 J repair。该 reference receipt 不自动赋予 production
+target indexed-store lowering permission。
 
 函数 `returns` 或 boundary `output_mapping` 任一均可唯一声明 canonical output binding，同时出现必须
 一致。shared J→Intent MLIR 入口及 structured reference v9 消费 deterministic `JElaboration.output_bindings`，所以 Gate2 与

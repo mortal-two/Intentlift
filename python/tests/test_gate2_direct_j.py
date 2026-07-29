@@ -1363,7 +1363,7 @@ def test_scalar_e_j_consumes_general_masked_softmax_graph() -> None:
     expected /= np.sum(expected, axis=1, keepdims=True)
     assert result.ok, result.error
     np.testing.assert_allclose(result.outputs["output"], expected, rtol=1e-6)
-    assert result.metadata["protocol"] == "j_scalar_cpu_mlir_v20"
+    assert result.metadata["protocol"] == "j_scalar_cpu_mlir_v22"
     assert (
         result.metadata["boundary_profile"]
         == "logical_domain_reduction_padding_v2"
@@ -1583,7 +1583,7 @@ def test_refeval_runtime_proves_rank_zero_logical_bound_tautology(limit: int) ->
     assert result.ok, result.error
     np.testing.assert_array_equal(result.outputs["output"], value)
     projection = result.metadata["boundary_projection"]
-    assert projection["protocol"] == "intentir.j-functional-boundary.v19"
+    assert projection["protocol"] == "intentir.j-functional-boundary.v20"
     assert FUNCTIONAL_BOUNDARY_PROTOCOL == projection["protocol"]
     assert result.metadata["boundary_profile"] == (
         "logical_domain_runtime_mask_erasure_v1"
@@ -1952,7 +1952,7 @@ def test_scalar_e_j_erases_tail_mask_for_general_pointwise_j() -> None:
 
     assert result.ok, result.error
     assert result.metadata["protocol"] == SCALAR_LOWERING_PROTOCOL
-    assert SCALAR_LOWERING_PROTOCOL == "j_scalar_cpu_mlir_v20"
+    assert SCALAR_LOWERING_PROTOCOL == "j_scalar_cpu_mlir_v22"
     np.testing.assert_allclose(result.outputs["output"], np.tanh(value))
 
 
@@ -2582,7 +2582,64 @@ def test_singleton_zero_keeps_legacy_axis_receipt_and_typed_coordinate() -> None
     projection = project_functional_boundary(artifact.j)
 
     assert projection.access_axes_map == {"a0": ("0",), "a1": ("0",)}
+
+
+def test_direct_authored_singleton_constraint_closes_constant_coordinate() -> None:
+    artifact = make_copy_artifact()
+    artifact.j.intent.inputs[0].shape = ["x5"]
+    artifact.j.intent.outputs[0].shape = ["x5"]
+    artifact.j.intent.body[0].type = {"dtype": "f32", "shape": ["x5"]}
+    artifact.j.signature.parameters[0].rank = 1
+    artifact.j.signature.parameters[1].rank = 1
+    artifact.j.signature.parameters[2].logical_ref = "x5"
+    artifact.j.dimension_constraints = ["x5 == 1"]
+    artifact.j.boundary.accesses = [
+        BoundaryAccess(
+            "a0", AccessKind.LOAD, "t0", node_ref="n0",
+            index_expression="[0]",
+        ),
+        BoundaryAccess(
+            "a1", AccessKind.STORE, "t1", node_ref="n0",
+            index_expression="[0]",
+        ),
+    ]
+    artifact.j.boundary.effects = [
+        EffectSpec(EffectKind.READ, "t0", "n0", "e0", "a0"),
+        EffectSpec(EffectKind.WRITE, "t1", "n0", "e1", "a1"),
+    ]
+
+    projection = project_functional_boundary(artifact.j)
+
     assert projection.access_coordinates_map == {"a0": (0,), "a1": (0,)}
+
+
+def test_conflicting_singleton_constraint_does_not_authorize_constant_coordinate() -> None:
+    artifact = make_copy_artifact()
+    artifact.j.intent.inputs[0].shape = ["x5"]
+    artifact.j.intent.outputs[0].shape = ["x5"]
+    artifact.j.intent.body[0].type = {"dtype": "f32", "shape": ["x5"]}
+    artifact.j.signature.parameters[2].logical_ref = "x5"
+    artifact.j.dimension_constraints = ["x5 == 1", "x5 == 2"]
+    artifact.j.boundary.accesses = [
+        BoundaryAccess(
+            "a0", AccessKind.LOAD, "t0", node_ref="n0",
+            index_expression="[0]",
+        ),
+        BoundaryAccess(
+            "a1", AccessKind.STORE, "t1", node_ref="n0",
+            index_expression="[0]",
+        ),
+    ]
+    artifact.j.boundary.effects = [
+        EffectSpec(EffectKind.READ, "t0", "n0", "e0", "a0"),
+        EffectSpec(EffectKind.WRITE, "t1", "n0", "e1", "a1"),
+    ]
+
+    with pytest.raises(
+        NotImplementedError,
+        match="constant access requires a static tensor extent",
+    ):
+        project_functional_boundary(artifact.j)
 
 
 def test_constant_gather_boundary_coordinate_mismatch_fails_closed() -> None:

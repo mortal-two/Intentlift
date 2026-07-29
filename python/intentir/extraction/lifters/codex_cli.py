@@ -43,7 +43,7 @@ from .scrc import (
 
 
 CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v11"
-CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v68"
+CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v69"
 CODEX_CLI_TURN_TIMEOUT_SECONDS = 900.0
 
 _EAGER_DIRECT_FEEDBACK_CATEGORIES = frozenset(
@@ -84,7 +84,7 @@ After the first meaningful complete edit run:
 
 python .agents/intentir_agent_tool.py candidate_check
 
-Use `lift_candidate_control overview|outputs|boundary|pi` only when a focused
+Use `lift_candidate_control overview|outputs|operands|boundary|pi` only when a focused
 self-read of your current candidate would resolve a named uncertainty; it is not
 a mandatory pre-check phase. These tools only project exact Harness facts or
 your current authored candidate; they never infer or edit J/C/pi.
@@ -439,9 +439,11 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                         "lift_candidate_control accepts SECTION [START [COUNT]]"
                     )
                 section = arguments[0] if arguments else "overview"
-                if section not in {"overview", "outputs", "boundary", "pi"}:
+                if section not in {
+                    "overview", "outputs", "operands", "boundary", "pi"
+                }:
                     raise ValueError(
-                        "SECTION must be overview, outputs, boundary, or pi"
+                        "SECTION must be overview, outputs, operands, boundary, or pi"
                     )
                 start = int(arguments[1]) if len(arguments) >= 2 else 1
                 count = int(arguments[2]) if len(arguments) >= 3 else 20
@@ -452,7 +454,7 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                     view["next_queries"] = [
                         "python .agents/intentir_agent_tool.py "
                         f"lift_candidate_control {name} 1 20"
-                        for name in ("outputs", "boundary", "pi")
+                        for name in ("outputs", "operands", "boundary", "pi")
                     ]
                 elif view.get("next_command") is not None:
                     next_start = start + int(view.get("returned", 0))
@@ -462,7 +464,7 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                     )
             except (TypeError, ValueError) as exc:
                 return {
-                    "protocol": "intentir.lift-candidate-control-view.v1",
+                    "protocol": "intentir.lift-candidate-control-view.v2",
                     "status": "fail",
                     "diagnostic": str(exc),
                 }

@@ -343,13 +343,19 @@ ReplayLLM(J,pi,MaskC(C);U_f) -> complete source R_f
 
 当前 packet protocol 为 `intentir.scrc.replay-input.v1`，Triton 公共上下文为
 `public_frontend_context_v17`；source-aware Codex/MiniSWE Lift 的当前 knowledge receipt 分别为
-`intentir.lift-knowledge.v68 / intentir.lift-knowledge.v64`，source-blind MiniSWE/Codex Replay backend 为
-`minisweagent.intentir-replay.v29 / openai.codex-cli.intentir-replay.v25`。这些版本必须随 fresh run 原样记录；旧 packet/context/knowledge
+`intentir.lift-knowledge.v69 / intentir.lift-knowledge.v65`，source-blind MiniSWE/Codex Replay backend 为
+`minisweagent.intentir-replay.v30 / openai.codex-cli.intentir-replay.v26`。这些版本必须随 fresh run 原样记录；旧 packet/context/knowledge
 evidence 不因实现升级而被重判。
 
-Replay v29/v25 把 v10 `route_extent_transforms` 纳入 exact packet、critical ledger、obligation audit 与
+Replay v30/v26 完整执行 v10 `route_extent_transforms` 的 exact packet、critical ledger、obligation audit 与
 source-blind static ingress；它只拒绝缺失 closed floor/ceil-div spelling，不判断 target-local Gate1
-同构，也不生成代码。Lift knowledge v68/v64 只要求同一 owner 显式作者化 relation 与 attachment。
+同构，也不生成代码。即使没有其他 complex obligation，单独存在该 relation 也要求审阅当前 exact
+Replay bytes。Codex v26 的单 turn 仍上限 900 秒，但 fresh Replay owner episode 总预算为 1800 秒；
+首个 turn 超时只可沿原 resumable thread 继续，不允许跨 episode 恢复。Lift knowledge v69/v65 在
+v68/v64 上只明确已有 access 的 consumer-local 所有权：同 tensor 在 sibling consumer 使用不同
+index/predicate/fill/sub-domain 时，由 owner 分别作者化；fixed code不复制或推荐 relation。只读
+`candidate-control.v2 operands` 仅并置当前草稿 node operand 与该 node 已有 access，空项不构造事实。
+v29/v25 历史 evidence 不重判。
 
 Replay v28/v24 与 Lift knowledge v66/v62 只把现有 ordered relation 的含义显式化：同一 region 的
 `physical_loop_carriers` declaration order 是 init/state/next/result 共用的 carrier-tuple ordinal，Lift
@@ -376,7 +382,7 @@ public synthetic compile。旧 v20/v16 的强制 requirements 查询 receipt 保
 
 当 `critical_facts.v4` 含 broadcast obligation、lexical region、cross-region order 或 route extent
 transform 时，Replay
-v29/v25 在 construction compile 前要求同一 owner 对当前 exact source bytes 调用一次
+v30/v26 在 construction compile 前要求同一 owner 对当前 exact source bytes 调用一次
 `replay-obligation-audit.v3`。返回值只把上述 J/π ledger 与该 owner 自己源码的带行号非空行并置；
 它不建立 `source statement ↔ relation/i*` 映射，不判断
 满足与否，也不建议或执行修复。owner 修改任一 byte 后必须重新审阅新 digest。该事务约束只保证模型

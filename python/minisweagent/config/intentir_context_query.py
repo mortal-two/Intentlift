@@ -1264,6 +1264,67 @@ _CONTROL_PI_FIELDS = (
 )
 
 
+def _candidate_operand_access_records(
+    candidate: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Join only exact candidate node operands with their authored accesses."""
+
+    j = candidate.get("j")
+    boundary = j.get("boundary") if isinstance(j, dict) else None
+    accesses = boundary.get("accesses", []) if isinstance(boundary, dict) else []
+    authored = [item for item in accesses if isinstance(item, dict)]
+    records: list[dict[str, Any]] = []
+    for path, node in _iter_candidate_nodes(candidate):
+        node_ref = node.get("id")
+        operands = node.get("operands", [])
+        if not isinstance(node_ref, str) or not isinstance(operands, list):
+            continue
+        attached = [item for item in authored if item.get("node_ref") == node_ref]
+        operand_accesses = []
+        for ordinal, operand in enumerate(operands):
+            matches = [
+                {
+                    key: access.get(key)
+                    for key in (
+                        "access_id", "kind", "tensor", "index_expression",
+                        "predicate", "fill_value",
+                    )
+                    if key in access
+                }
+                for access in attached
+                if access.get("kind") == "load" and access.get("tensor") == operand
+            ]
+            operand_accesses.append(
+                {
+                    "ordinal": ordinal,
+                    "operand": operand,
+                    "authored_load_accesses": matches,
+                }
+            )
+        stores = [
+            {
+                key: access.get(key)
+                for key in (
+                    "access_id", "kind", "tensor", "index_expression", "predicate",
+                )
+                if key in access
+            }
+            for access in attached
+            if access.get("kind") in {"store", "update"}
+        ]
+        records.append(
+            {
+                "path": path,
+                "node_ref": node_ref,
+                "op": node.get("op"),
+                "result": node.get("result"),
+                "operand_accesses": operand_accesses,
+                "authored_store_or_update_accesses": stores,
+            }
+        )
+    return records
+
+
 def _candidate_control_records(
     candidate: dict[str, Any], section: str
 ) -> list[dict[str, Any]]:
@@ -1271,6 +1332,8 @@ def _candidate_control_records(
     boundary = j.get("boundary") if isinstance(j, dict) else None
     pi = candidate.get("pi")
     records: list[dict[str, Any]] = []
+    if section == "operands":
+        return _candidate_operand_access_records(candidate)
     if section == "boundary":
         owner = boundary if isinstance(boundary, dict) else {}
         fields = _CONTROL_BOUNDARY_FIELDS
@@ -1280,7 +1343,10 @@ def _candidate_control_records(
         fields = _CONTROL_PI_FIELDS
         prefix = "pi"
     else:
-        raise ValueError("candidate-control section must be overview, outputs, boundary, or pi")
+        raise ValueError(
+            "candidate-control section must be overview, outputs, operands, "
+            "boundary, or pi"
+        )
     for field in fields:
         value = owner.get(field, [])
         if isinstance(value, list):
@@ -1311,7 +1377,7 @@ def _candidate_control_value(
     candidate_path = output_root / "candidate.json"
     if not candidate_path.is_file():
         return {
-            "protocol": "intentir.lift-candidate-control-view.v1",
+            "protocol": "intentir.lift-candidate-control-view.v2",
             "candidate_found": False,
             "authority": "read-only; no artifact field was inferred or edited",
         }
@@ -1334,7 +1400,8 @@ def _candidate_control_value(
     authority = (
         "Read-only projection of the current LLM-authored candidate. Counts and "
         "pages preserve authored multiplicity/order; no missing control, effect, "
-        "output, carrier, route, or relation was inferred or repaired."
+        "output, operand/access edge, carrier, route, or relation was inferred "
+        "or repaired."
     )
     if section == "overview":
         control_nodes = [
@@ -1343,7 +1410,7 @@ def _candidate_control_value(
             if node.get("op") in _CONTROL_NODE_OPS
         ]
         return {
-            "protocol": "intentir.lift-candidate-control-view.v1",
+            "protocol": "intentir.lift-candidate-control-view.v2",
             "candidate_found": True,
             "section": section,
             "intent_outputs": function.get("outputs", []),
@@ -1367,6 +1434,7 @@ def _candidate_control_value(
             },
             "next_queries": [
                 f"{QUERY_COMMAND} candidate-control --section outputs",
+                f"{QUERY_COMMAND} candidate-control --section operands --start 1 --count 20",
                 f"{QUERY_COMMAND} candidate-control --section boundary --start 1 --count 20",
                 f"{QUERY_COMMAND} candidate-control --section pi --start 1 --count 20",
             ],
@@ -1389,7 +1457,7 @@ def _candidate_control_value(
             )
         ] if isinstance(effects, list) else []
         return {
-            "protocol": "intentir.lift-candidate-control-view.v1",
+            "protocol": "intentir.lift-candidate-control-view.v2",
             "candidate_found": True,
             "section": section,
             "intent_outputs": function.get("outputs", []),
@@ -1409,7 +1477,7 @@ def _candidate_control_value(
         selected = trial
     next_start = start + len(selected)
     return {
-        "protocol": "intentir.lift-candidate-control-view.v1",
+        "protocol": "intentir.lift-candidate-control-view.v2",
         "candidate_found": True,
         "section": section,
         "start": start,
@@ -1809,7 +1877,9 @@ def main() -> int:
     subparsers.add_parser("candidate-abi")
     candidate_control = subparsers.add_parser("candidate-control")
     candidate_control.add_argument(
-        "--section", choices=("overview", "outputs", "boundary", "pi"), default="overview"
+        "--section",
+        choices=("overview", "outputs", "operands", "boundary", "pi"),
+        default="overview",
     )
     candidate_control.add_argument("--start", type=int, default=1)
     candidate_control.add_argument("--count", type=int, default=20)

@@ -972,12 +972,7 @@ def _replay_obligation_audit_view(
         "protocol": "intentir.replay-obligation-audit.v3",
         "status": "pass",
         "source_sha256": hashlib.sha256(source_text.encode("utf-8")).hexdigest(),
-        "audit_required": bool(
-            broadcast_obligations
-            or lexical_regions
-            or cross_region_order
-            or route_extent_transforms
-        ),
+        "audit_required": _replay_obligation_audit_required(facts),
         "broadcast_obligations": broadcast_obligations,
         "lexical_regions": lexical_regions,
         "cross_region_order": cross_region_order,
@@ -997,6 +992,22 @@ def _replay_obligation_audit_view(
             "acceptance decision"
         ),
     }
+
+
+def _replay_obligation_audit_required(
+    critical_facts: Mapping[str, Any],
+) -> bool:
+    """Return whether exact Replay bytes need the proof-irrelevant ledger audit."""
+
+    return any(
+        bool(critical_facts[name])
+        for name in (
+            "broadcast_obligations",
+            "lexical_regions",
+            "cross_region_order",
+            "route_extent_transforms",
+        )
+    )
 
 
 def _packet_edges(
@@ -3044,11 +3055,7 @@ class IntentIRReplayEnvironment:
             else:
                 source_digest = hashlib.sha256(source_bytes).hexdigest()
                 facts = _packet_critical_facts(self._read_closed_packet())
-                audit_required = bool(
-                    facts["broadcast_obligations"]
-                    or facts["lexical_regions"]
-                    or facts["cross_region_order"]
-                )
+                audit_required = _replay_obligation_audit_required(facts)
                 if (
                     audit_required
                     and source_digest not in self._obligation_audited_source_digests
@@ -3139,6 +3146,9 @@ class IntentIRReplayEnvironment:
                 ),
                 "lexical_region_count": len(value["lexical_regions"]),
                 "cross_region_order_count": len(value["cross_region_order"]),
+                "route_extent_transform_count": len(
+                    value["route_extent_transforms"]
+                ),
             }
         )
         return {
@@ -3527,6 +3537,16 @@ class IntentIRReplayEnvironment:
                     "evaluations": self._compile_check_evaluations,
                     "limit": self.config.replay_compile_check_limit,
                     "results": list(self._compile_check_audit),
+                },
+                "replay_obligation_audit": {
+                    "protocol": "intentir.replay-obligation-audit.v3",
+                    "authority": (
+                        "exact current Replay bytes plus exact source-isolated "
+                        "J/pi ledger only; no mapping, diagnosis, repair, Gate, "
+                        "or acceptance authority"
+                    ),
+                    "calls": len(self._obligation_audit_log),
+                    "results": list(self._obligation_audit_log),
                 },
                 "replay_source_inspect": {
                     "protocol": "intentir.replay-own-source-inventory.v1",

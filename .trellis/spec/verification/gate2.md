@@ -19,8 +19,8 @@ Source/Replay。所有 output、inout、alias/writeback 与声明的 observable 
 
 Gate2 不直接消费未接受的 Lift response。固定 Decode/Elaborate 成功后只产生一个 typed J；
 RefEval 与 production lowering 使用同一个 canonical-J elaboration 与 functional-boundary core；
-production 走共享 `J -> Intent MLIR` materialization，RefEval 则可在 scalar Intent-MLIR 与 closed
-structured J-only reference 之间按全局 capability 选择。于是 `k1,k0` 与 `[k1,k0]`、可唯一推导的
+production 走共享 `J -> Intent MLIR` materialization，RefEval 则可在 scalar Intent-MLIR、closed
+structured J-only reference 与 typed ContractIR indexed reference 之间按全局 capability 选择。于是 `k1,k0` 与 `[k1,k0]`、可唯一推导的
 result type、冗余 identity output mapping 不会由消费者再次私自解释；general affine、缺
 predicate/effect、类型冲突或不在 closed reference op table 内的图仍在准确边界 fail closed。两条
 reference 执行路径都不是 production target lowering，也不产生第二份 J。
@@ -111,13 +111,22 @@ for every x in T:
 
 ## 当前 RefEval 的标量与 logical-domain 支持边界
 
-当前固定 scalar RefEval protocol 为 `j_scalar_cpu_mlir_v11`，shared functional projection receipt 为
-`intentir.j-functional-boundary.v9`，structured reference 为
-`intentir.j-structured-cpu-reference.v3`。这些版本在 v10/v3 的 source-neutral multi-reduction 与
+当前固定 scalar RefEval protocol 为 `j_scalar_cpu_mlir_v22`，shared functional projection receipt 为
+`intentir.j-functional-boundary.v20`，structured reference 为
+`intentir.j-structured-cpu-reference.v9`，relation-indexed pointwise reference 为
+`intentir.j-contract-indexed-cpu-reference.v1`。这些版本在既有 source-neutral multi-reduction 与
 invocation-local predicate proof 之上，消费当前 artifact.v4/v5 typed relations、闭合 direct-store
 partition，并为 common scalar lowering 尚不能消去的 typed contraction 提供闭合 J-only reference。
 旧 RefEval/projection 的 `REFERENCE_UNSUPPORTED`、receipt 和 Gate2 verdict 保持原解释，不由新
 consumer 追认、覆盖或静默刷新。
+
+当 shared functional projection 因一般 affine/sub-domain predicate 无法把 B 擦除为完整 tensor 时，
+v22 只能尝试一个 closed ContractIR profile：flat、acyclic、shape-preserving pointwise A graph；每个
+被作者化的 load 在其 `node_ref`/operand edge 上按 typed index 与 predicate 取值，predicate 域外只用
+该 access 的显式 fill；每个 output 再由 typed store index/predicate 无重叠、无缺口地组装。所有
+ContractExpr 都由 canonical typed evaluator 执行，不匹配公式或 Kernel 名。没有绑定 access 的
+sibling operand 保持普通 Layer-A 语义，绝不继承另一 node 的 access。这样 accepted J 若遗漏关系，
+Gate2 会得到可比较但与 Source/Replay 不同的 `O_J`；系统应 fresh relift，而不是给 consumer 写答案。
 
 当前 consumer 对新 relation 的权限是“逐项消费或显式 unsupported”，不是忽略：
 

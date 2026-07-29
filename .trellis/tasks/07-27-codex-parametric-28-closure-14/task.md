@@ -1,6 +1,6 @@
 # Task 14：Source-Grounded Certification Profile 下的 Codex 28-Kernel Fresh SCRC 最终闭合
 
-> 状态：执行中（2026-07-28）；六组已横向 fresh 覆盖，当前 20/28 已取得可用闭合 evidence
+> 状态：执行中（2026-07-29）；六组已横向 fresh 覆盖，当前 20/28 已取得可用闭合 evidence
 >（15 个原运行直接认证，另 5 个复用各自 exact Gate1-closed artifact/Replay 经零模型 Gate2-only
 > capability recheck 认证）；下一步按 Gate1 frontier 修复通用 Lift/Replay 消费并继续复跑未闭合项
 >
@@ -188,14 +188,14 @@ fixed code不得替Lift修成`x*`。
 
 - frontend commit起点：`460aaed1c6af0b267a4a9da9ca497aea6e66ad40`；
 - artifact/decode/typecheck：`artifact.v10 / decode.v15 / typecheck.v27`；
-- Lift：Codex `openai.codex-cli.intentir-lift.v11 / intentir.lift-knowledge.v68`，MiniSWE `minisweagent.intentir-lift.v3 / intentir.lift-knowledge.v64`；
-- Replay：Codex `openai.codex-cli.intentir-replay.v25`，MiniSWE `minisweagent.intentir-replay.v29`；
+- Lift：Codex `openai.codex-cli.intentir-lift.v11 / intentir.lift-knowledge.v69`，MiniSWE `minisweagent.intentir-lift.v3 / intentir.lift-knowledge.v65`；
+- Replay：Codex `openai.codex-cli.intentir-replay.v26`，MiniSWE `minisweagent.intentir-replay.v30`；
 - Replay packet/check：`replay-input.v1 / public_frontend_context_v17 / replay-check.v11`；
 - Harness：Triton workload adapter v5；
 - Gate1 observer：`triton-ttir-3.6-gate1-v11`；outer batch：`intentir.scrc.batch.v3`；
   candidate fan-out：v4 `first_observed_gate1_closure_cooperative_stop`；
 - Gate2：三条直接比较，threshold只来自外部Q。
-- Gate2 RefEval：`j_scalar_cpu_mlir_v20 / intentir.j-functional-boundary.v19`。
+- Gate2 RefEval：`j_scalar_cpu_mlir_v22 / intentir.j-functional-boundary.v20 / intentir.j-contract-indexed-cpu-reference.v1`。
 
 ### 4.1 当前 fresh closure 账本
 
@@ -350,6 +350,22 @@ fixed code不得替Lift修成`x*`。
   J half-domain/shape/predicate、不读取 concrete value、不传播 sibling use；Replay v29/v25 将 relation
   放入 exact critical/audit/ingress，production仍在π前停止。修复后 RoPE 必须 fresh relift，旧 artifact
   不得由 fixed code 补 relation，也尚未新增认证。
+- Wave 38（clean commit `483bf697`，两核 `B=3,K=3`）中，one-col backward 使用 Lift Sol-max、
+  Replay Sol-xhigh，由 branch 2 formal round 2 fresh Gate1 closure；Liger RoPE 同配置由 branch 1
+  round 2 fresh Gate1 closure。one-col 的 Source 与 Replay 在 Gate2 同时因 shared memory
+  `108544 > 101376` 无法执行，不能把共同 OOR 记成数值认证；RoPE 的 Source--Replay q/k 均为 0
+  误差，但旧 RefEval 先停在 symbolic singleton/half-domain consumer capability。
+- Wave 39/40 对上述 exact artifact/Replay 做零模型诊断 recheck。v21/v20 已以 J direct `x5==1`
+  消费 constant coordinate 0，并以 sibling `effect_if` full-store control partition 修通 one-col 的 J leg；
+  one-col 仍只剩共同 OOR。v22 的通用 ContractIR indexed pointwise reference 随后完整执行 RoPE J
+  已写出的 index/predicate/fill/store：Source--Replay 仍为 0，而 Source--J/Replay--J 在 q/k 上分别
+  出现约 `0.248206 / 0.206278` 最大绝对误差。这证明旧 RoPE J 缺 consumer-local half-view access，
+  不是继续修 Gate2 的理由，必须 fresh relift。
+- one-col 的 reviewed P_cert/C valuation 已把 `BLOCK_M` 从 128 改为 64。Source 内部 loop 仍遍历完整
+  `Sq=128`，grid、logical shape 与算法不变；实机 Source 可执行，相对独立 PyTorch 梯度参考的
+  dQ/dK/dV 相对误差约 `2.46e-6 / 2.01e-6 / 3.62e-6`。旧 C=128 artifact 不追认，下一轮在 C=64
+  profile fresh SCRC。RoPE/one-col 下一轮默认 Sol-xhigh；若同一明确语义 frontier 稳定重复，再升
+  Sol-max，不能把 effort 升级替代系统能力判断。
 - 当前可用闭合总计 `20/28`：Wave32 将 GroupNorm 从 exact-artifact capability evidence 升级为 fresh
   直接认证后，现为 16 个原运行直接认证、4 个 exact-artifact capability recheck 认证。
   TypeCheck PASS 不计进度；只有 Gate1 已闭合且当前 Gate2 三边通过才计入。

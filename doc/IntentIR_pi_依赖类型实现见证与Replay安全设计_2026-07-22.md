@@ -905,9 +905,11 @@ Replay LLM 应遵守以下过程合同：
 16. 不从 π 猜出后覆盖 J，也不从 compiler diff 修补。
 
 当前 fresh receipt 组合为 `intentir.scrc.replay-input.v1`、Triton
-`public_frontend_context_v17`、Codex/MiniSWE Lift `intentir.lift-knowledge.v68/v64`、MiniSWE Replay v29 与 Codex Replay v25；旧 receipt 保持其原 verdict，不能由
-当前 Replay consumer 或 Lift knowledge 静默升级。v29/v25 将 authored route extent transforms
-加入 exact critical ledger、audit 与 static ingress；它不生成 relation/code，也不替代 Gate1。
+`public_frontend_context_v17`、Codex/MiniSWE Lift `intentir.lift-knowledge.v69/v65`、MiniSWE Replay v30 与 Codex Replay v26；旧 receipt 保持其原 verdict，不能由
+当前 Replay consumer 或 Lift knowledge 静默升级。v30/v26 将 authored route extent transforms
+加入 exact critical ledger、audit 与 static ingress，并在它单独存在时也要求审阅当前 exact bytes；
+它不生成 relation/code，也不替代 Gate1。Codex v26 将 900 秒单 turn 与 1800 秒 fresh episode 分离，
+超时只沿同一 resumable thread 继续，不跨 episode 继承。
 
 v28/v24 与 Lift knowledge v66/v62 明确已有 ordered wire 的 tuple denotation：同一 region 中
 `physical_loop_carriers` 的 declaration order 是 init/state/next/result 共享的 carrier-tuple ordinal；
@@ -1412,8 +1414,9 @@ mean、guard、cross-axis/general predicate、domain/extent 不闭合、mask 位
 checker 不读取 Source/C/π且不自动变换图；Source 的显式 sum/div 必须由 Lift 原样写成
 `reduce(sum)` 与 explicit division。
 
-Gate2 scalar consumer 当前独立标为 `j_scalar_cpu_mlir_v20`，共享
-`intentir.j-functional-boundary.v19`：它们继承 v14/v13、v12/v11 与 v10/v3；v10 已继承 v9 的 node-less input load，并按 J 自身的完整
+Gate2 scalar consumer 当前独立标为 `j_scalar_cpu_mlir_v22`，共享
+`intentir.j-functional-boundary.v20`，并可选择 J-only
+`intentir.j-contract-indexed-cpu-reference.v1`：它们继承 v14/v13、v12/v11 与 v10/v3；v10 已继承 v9 的 node-less input load，并按 J 自身的完整
 logical domains、逐 access predicate/fill、逐 reduction 中性 `masked_contribution` 与 closed broadcast
 relation 消费通用 padded pointwise/multi-reduce DAG。它不从 π route 推导 operator、padding 公式或
 logical input。
@@ -1452,7 +1455,7 @@ missing-fill proof 只接受全 downstream pointwise 且所有 observable store 
 reduce/scan/loop/transpose/pad 或不同 predicate 一律 unsupported。两种 proof 都只读 J 并形成 receipt，
 π 不携带、不授权也不修补这些关系。
 
-`j_scalar_cpu_mlir_v20` / `intentir.j-functional-boundary.v19` 完整继承 v17/v16，只消费 J 已写出的完整 product-domain
+历史 `j_scalar_cpu_mlir_v20` / `intentir.j-functional-boundary.v19` 完整继承 v17/v16，只消费 J 已写出的完整 product-domain
 mixed-radix bijection，以及 pointwise provenance 后精确 `transpose` 的 axis permutation；后者还要求
 store coordinates 与 load coordinates 的 permutation 完全一致并由同 predicate 支配。`log2` 与 IEEE
 special literal 也由 shared materializer 直接消费。π route/instance/order 不能提供 factor、digit、perm、
@@ -1483,7 +1486,13 @@ dynamic iota/div 的 invocation interval、bounded-gather index-shape→domain-a
 node-less load/node-bound reload 的 edge ownership也都只由 J/B 与当前 closed input决定；π 不提供
 divisor、shape equality、consumer extension 或 access ownership。
 
-当前 Lift knowledge v57 继承 v56-v42，要求 `fill_value` 保留 Source load 的实际 `other`，并要求
+v21/v20 的 direct singleton 与 sibling-`effect_if` full-store control partition，以及 v22 的
+ContractIR indexed pointwise reference，都不增加 π 权力。后者只执行 J 已作者化的 consumer-local
+index/predicate/fill/store；一个 node 的 access 不传播给 sibling，π route/sharing 也不能补这种 J/B
+关系。缺失关系会在 Gate2 形成 Source--J/Replay--J 数值分歧并要求 fresh relift，而不是由 π 或
+RefEval 猜测修复。该 Gate2 receipt 同样不进入 post-SCRC production search。
+
+当前 Lift knowledge v69/v65 继承 v68-v42，要求 `fill_value` 保留 Source load 的实际 `other`，并要求
 adapter 明示的 bound-constexpr/shape-coordinate equality 仍由 Lift 绑定 `x*` 或作者化 `t*=x*`；
 MiniSWE Replay v13 / Codex Replay v8 继承既有 typed-rank 合同，要求
 writer 按 J typed rank/axis 保留必要的 reshape/expand-dimension stage。π route 可以约束已有 instance

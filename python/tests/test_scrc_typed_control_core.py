@@ -441,6 +441,90 @@ def test_functional_boundary_executes_authored_effect_if_full_store() -> None:
     assert result.metadata["conditional_effect_store_count"] == 1
 
 
+def test_functional_boundary_executes_sibling_effect_if_full_stores() -> None:
+    payload = _effect_if_payload()
+    conditional = payload["j"]["intent"]["intent_function"]["body"][0]
+    conditional["negative"]["body"] = [
+        {
+            "id": "n3",
+            "op": "map_binary",
+            "result": "v2",
+            "operands": ["t0", "t0"],
+            "attrs": {"fn": "sub"},
+            "type": {"dtype": "f32", "shape": ["x0", "x1"]},
+        },
+        {
+            "id": "n4",
+            "op": "reduce",
+            "result": "v3",
+            "operands": ["v2"],
+            "attrs": {
+                "fn": "sum",
+                "axes": [1],
+                "assoc": "float_nondeterministic",
+            },
+            "type": {"dtype": "f32", "shape": ["x0"]},
+        },
+    ]
+    payload["j"]["node_ids"]["n3"] = "body[0].negative.body[0]"
+    payload["j"]["node_ids"]["n4"] = "body[0].negative.body[1]"
+    payload["j"]["boundary"]["accesses"].append(
+        {
+            "access_id": "a2",
+            "kind": "store",
+            "tensor": "t2",
+            "node_ref": "n4",
+            "index_expression": "k0",
+        }
+    )
+    payload["j"]["boundary"]["effects"].append(
+        {
+            "effect_id": "e2",
+            "kind": "write",
+            "target": "t2",
+            "node_ref": "n4",
+            "access_ref": "a2",
+        }
+    )
+    payload["j"]["boundary"]["reductions"].append(
+        {"node_ref": "n4", "tile_axis": 0, "identity": 0}
+    )
+    payload["j"]["scopes"][2]["captures"] = ["t0"]
+    payload["j"]["scopes"][2]["definitions"] = ["v2", "v3"]
+    payload["j"]["scopes"][2]["effects"] = ["e2"]
+    artifact = Gate1Artifact.from_json(payload)
+
+    projection = project_functional_boundary(artifact.j)
+
+    assert {item.access_id for item in projection.conditional_effect_stores} == {
+        "a1",
+        "a2",
+    }
+    value = np.asarray([[1, 2, 3], [4, 5, 6]], dtype=np.float32)
+    positive = execute_structured_reference(
+        artifact.j,
+        {"x0": 2, "x1": 3},
+        [value, np.asarray(True)],
+        broadcast_axes=projection.emitter_broadcast_axes(),
+        conditional_effect_stores=projection.conditional_effect_stores,
+    )
+    negative = execute_structured_reference(
+        artifact.j,
+        {"x0": 2, "x1": 3},
+        [value, np.asarray(False)],
+        broadcast_axes=projection.emitter_broadcast_axes(),
+        conditional_effect_stores=projection.conditional_effect_stores,
+    )
+
+    np.testing.assert_array_equal(
+        positive.outputs["t2"],
+        np.asarray([14, 77], dtype=np.float32),
+    )
+    np.testing.assert_array_equal(
+        negative.outputs["t2"], np.zeros(2, dtype=np.float32)
+    )
+
+
 def test_structured_reference_rejects_unproduced_conditional_output() -> None:
     artifact = Gate1Artifact.from_json(_effect_if_payload())
     projection = project_functional_boundary(artifact.j)

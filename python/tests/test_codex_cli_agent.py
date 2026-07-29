@@ -753,7 +753,7 @@ def scrc_k0(p0, p1, p2, c0: tl.constexpr):
     second = writer.generate(make_copy_artifact())
 
     assert first.backend_protocol == second.backend_protocol == CODEX_CLI_REPLAY_BACKEND
-    assert CODEX_CLI_REPLAY_BACKEND == "openai.codex-cli.intentir-replay.v25"
+    assert CODEX_CLI_REPLAY_BACKEND == "openai.codex-cli.intentir-replay.v26"
     assert first.response_id == "fresh-replay-1"
     assert second.response_id == "fresh-replay-2"
     assert first.attempts == second.attempts == 3
@@ -1032,5 +1032,86 @@ def scrc_k0(p0, p1, p2, c0: tl.constexpr):
             "turn_timeout_seconds": 1,
             "thread_id": "timed-out-replay-thread",
             "recovery": "current_exact_replay",
+        }
+    ]
+
+
+def test_codex_replay_resumes_same_thread_after_timed_out_invalid_source() -> None:
+    valid_replay = """import triton
+import triton.language as tl
+
+@triton.jit
+def scrc_k0(p0, p1, p2, c0: tl.constexpr):
+    v0 = tl.arange(0, c0)
+    v1 = tl.load(p0 + v0, mask=v0 < p2, other=0.0)
+    tl.store(p1 + v0, v1, mask=v0 < p2)
+"""
+
+    class FakeSession:
+        def __init__(self, **kwargs):
+            self.output_dir = kwargs["output_dir"]
+            self.scratch_dir = kwargs["scratch_dir"]
+            self.thread_id = None
+            self.calls = 0
+
+        def run(self, prompt, **_kwargs):
+            self.calls += 1
+            self.thread_id = "resumable-replay-thread"
+            if self.calls == 1:
+                (self.output_dir / "replay.source").write_text(
+                    valid_replay.replace("scrc_k0", "wrong_entry")
+                )
+                raise CodexCLIError("Codex turn exceeded its wall-time limit")
+            assert "same fresh source-blind Replay episode" in prompt
+            assert json.loads(
+                (self.scratch_dir / "host_replay_check.json").read_text()
+            )["status"] == "fail"
+            (self.output_dir / "replay.source").write_text(valid_replay)
+            return CodexCLITurn(
+                self.thread_id,
+                10.0,
+                {"input_tokens": 12, "cached_input_tokens": 9, "output_tokens": 3},
+                events=(),
+                model_segments=1,
+                tool_actions=1,
+                resumed=True,
+            )
+
+        def close(self):
+            return None
+
+    sessions = []
+
+    def session_factory(**kwargs):
+        session = FakeSession(**kwargs)
+        sessions.append(session)
+        return session
+
+    writer = CodexCLIReplayWriter(
+        provider=ProviderConfig(
+            "test",
+            "http://provider.invalid/v1",
+            "provider-secret",
+            "test-model",
+            reasoning_effort="xhigh",
+        ),
+        session_factory=session_factory,
+        compile_checker=lambda code, _artifact, function_name: ReplayIngressResult(
+            "pass", code=code, entry_function_name=function_name
+        ),
+        model_timeout_seconds=1,
+        session_wall_time_limit_seconds=2,
+    )
+    generation = writer.generate(make_copy_artifact())
+
+    assert generation.code == valid_replay
+    assert sessions[0].calls == 2
+    assert generation.attempts == 2
+    assert generation.physical_provider_calls == 2
+    assert generation.trajectory["timeout_events"] == [
+        {
+            "turn_timeout_seconds": 1,
+            "thread_id": "resumable-replay-thread",
+            "recovery": "same_thread_continuation",
         }
     ]

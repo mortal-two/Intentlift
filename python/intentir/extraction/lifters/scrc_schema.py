@@ -207,6 +207,8 @@ def _boundary_schema() -> dict[str, Any]:
             "to the same structured ordered axes. General non-direct affine "
             "relations remain typed expressions but can be unsupported by a "
             "particular RefEval capability profile. "
+            "A node_ref makes the access consumer-local: the relation is not "
+            "implicitly inherited by sibling uses of the same tensor. "
             "fill_value is legal only on a load with a non-null predicate. An "
             "unconditional access uses the unique canonical spelling with both "
             "predicate and fill_value absent/null; consumers reject rather than "

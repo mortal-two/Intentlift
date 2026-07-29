@@ -943,6 +943,13 @@ kind, target, node_ref (including null), and access_ref must agree exactly with
 the access; never attach an otherwise matching access to a different node. A
 direct logical-input load may use node_ref=null with the matching null effect;
 do not invent map_unary(identity) solely to create an access anchor.
+An access attached to one node is consumer-local: it does not silently change
+the same tensor operand at a sibling node. When Source reuses one physical
+tensor through different logical indices, predicates, fills, or sub-domains at
+different Layer-A consumers, author each distinct consumer-local access/effect
+explicitly at the node that consumes that view. Conversely, do not duplicate an
+access merely because several consumers use the same complete logical tensor.
+Fixed code never copies, propagates, or recommends a sibling access relation.
 
 index_expression uses the closed ContractExpr syntax. For a direct dense
 projection, k0 and [k0] are equivalent one-axis surface forms, while k1,k0 and

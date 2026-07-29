@@ -546,7 +546,7 @@ def test_episode_contract_digest_binds_exact_files_prompts_and_budgets() -> None
     assert default_config["model"]["retry_timeouts"] is True
     assert default_config["model"]["semantic_initial_turns"] == 1
     assert default_config["model"]["model_kwargs"]["parallel_tool_calls"] is True
-    assert MINISWE_REPLAY_BACKEND == "minisweagent.intentir-replay.v29"
+    assert MINISWE_REPLAY_BACKEND == "minisweagent.intentir-replay.v30"
     instance = default_config["agent"]["instance_template"]
     assert "exact immutable source-blind startup transport" in instance
     assert "exact_packet_embedded=true" in instance
@@ -1483,6 +1483,63 @@ def test_complex_replay_compile_requires_audit_of_current_exact_bytes() -> None:
     assert compile_calls == 1
     assert changed["returncode"] == 1
     assert "replay_obligation_audit_required" in changed["output"]
+
+
+def test_route_extent_transform_alone_requires_exact_source_audit() -> None:
+    artifact = _route_extent_artifact()
+    files, _, _ = _replay_input_files(
+        artifact, frontend=Frontend.TRITON, masked=False
+    )
+    workspace = IntentIRReplayWorkspace.create(files)
+    passing = {
+        "protocol": REPLAY_CHECK_PROTOCOL,
+        "status": "pass",
+        "diagnostics": [],
+    }
+    environment = IntentIRReplayEnvironment(
+        input_dir=workspace.input_dir,
+        output_dir=workspace.output_dir,
+        scratch_dir=workspace.scratch_dir,
+        replay_checker=lambda _source: passing,
+        replay_compile_checker=lambda _source: passing,
+    )
+    try:
+        assert environment.execute({"command": _write_source(ROUTE_EXTENT_REPLAY)})[
+            "returncode"
+        ] == 0
+        unaudited = environment.execute(
+            {
+                "command": (
+                    f"{INTENTIR_REPLAY_COMPILE_CHECK} /output/replay.source"
+                )
+            }
+        )
+        audited = environment.execute(
+            {
+                "command": (
+                    f"{INTENTIR_REPLAY_OBLIGATION_AUDIT} /output/replay.source"
+                )
+            }
+        )
+        compiled = environment.execute(
+            {
+                "command": (
+                    f"{INTENTIR_REPLAY_COMPILE_CHECK} /output/replay.source"
+                )
+            }
+        )
+        audit_receipt = environment.serialize()["info"][
+            "replay_obligation_audit"
+        ]
+    finally:
+        workspace.cleanup()
+
+    assert unaudited["returncode"] == 1
+    assert "replay_obligation_audit_required" in unaudited["output"]
+    assert audited["returncode"] == compiled["returncode"] == 0
+    assert audit_receipt["protocol"] == "intentir.replay-obligation-audit.v3"
+    assert audit_receipt["calls"] == 1
+    assert audit_receipt["results"][0]["route_extent_transform_count"] == 1
 
 
 def test_synthetic_compile_rejects_omitted_authored_physical_carrier() -> None:

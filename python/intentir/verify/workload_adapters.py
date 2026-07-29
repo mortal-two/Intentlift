@@ -1157,7 +1157,12 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
             ("EVEN_M", True),
             ("EVEN_N", True),
             ("EVEN_HEADDIM", True),
-            ("BLOCK_M", 128),
+            # The one-col kernel traverses all query rows in its internal
+            # BLOCK_M loop, so 64 preserves the selected Sq=128 program while
+            # avoiding the 108544-byte shared-memory image produced by 128 on
+            # the certification GPU (101376-byte limit).  This is a reviewed
+            # Harness/C valuation, not a J relation or backend repair.
+            ("BLOCK_M", 64),
             ("BLOCK_N", 64),
         ),
         grid=(1,),

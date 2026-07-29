@@ -229,13 +229,16 @@ refinement carrier；sandbox CandidateCheck 复用同一个 source-free checker�
 不能分别重采样。
 由于 `none -> opaque(dtype=none)` 与 canonical contraction/stage-multiplicity 是新增的模型
 可见构造合同；v14 加入 generic functional logical-domain closure 与上述有界诊断反馈合同。fresh
-Codex/MiniSWE Lift knowledge 当前使用 `intentir.lift-knowledge.v68/v64`，新增的通用作者合同要求
+Codex/MiniSWE Lift knowledge 当前使用 `intentir.lift-knowledge.v69/v65`，新增的通用作者合同要求
 IEEE infinity/NaN 保持 closed typed constant，不以最大有限数近似，并允许 `physical_iterations` 在
 同 subject/axis 的 boundary access/domain 上表达 epilogue/transfer traversal；fixed checker 不代选
 constant 或 physical anchor；Source reduction 省略 frontend axis 且存在 compiler-visible flatten 时，
 还要求作者化 closed `reduction_linearization`，而不是让 Replay 从 reduction kind 猜 reshape；并要求
 v10 route-local physical extent transform 由 Lift 通过既有 C attachment/J domain/route 显式作者化，
-不能从 concrete valuation、J half-domain 或名字猜 divisor。既有 runtime scalar 的
+不能从 concrete valuation、J half-domain 或名字猜 divisor。
+同 tensor 若在 sibling Layer-A consumers 使用不同 index/predicate/fill/sub-domain，每个 access 仍由
+Lift 在自己的 node_ref 上分别作者化；Harness 与只读 candidate-control 不复制或推荐 relation。
+既有 runtime scalar 的
 logical-data/representation-only source-use 分类：只有显式 rank-0、`mode=value`、public dtype、
 `logical_ref=null` 的 scalar 可不创建 J input并只供 π realization 使用；Harness 不按参数名/位置
 替 Lift 分类；该 null form 只允许 runtime scalar。`bound_constexpr_values` 必须表示逻辑语义 constexpr：

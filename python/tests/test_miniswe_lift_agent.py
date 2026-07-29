@@ -198,7 +198,7 @@ def test_real_input_bundle_has_compact_source_neutral_knowledge() -> None:
     files = _real_lift_input_files()
 
     assert CANDIDATE_CHECK_PROTOCOL == SCRC_CANDIDATE_CHECK_PROTOCOL
-    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v64"
+    assert MINISWE_LIFT_KNOWLEDGE == "intentir.lift-knowledge.v65"
     assert "knowledge/minimal_example.json" in files
     assert "knowledge/intent_ops.md" in files
     assert "tools/schema_query.py" in files
@@ -1093,7 +1093,9 @@ def test_context_discovery_queries_work_in_real_bubblewrap() -> None:
                     "python /input/tools/context_query.py candidate-nodes "
                     "--start 1 --count 2; "
                     "python /input/tools/context_query.py candidate-node n0; "
-                    "python /input/tools/context_query.py candidate-control"
+                    "python /input/tools/context_query.py candidate-control; "
+                    "python /input/tools/context_query.py candidate-control "
+                    "--section operands --start 1 --count 2"
                 )
             }
         )
@@ -1109,7 +1111,10 @@ def test_context_discovery_queries_work_in_real_bubblewrap() -> None:
         '"protocol": "intentir.lift-candidate-node-query.v1"'
     ) == 2
     assert '"protocol": "intentir.lift-harness-abi-view.v1"' in result["output"]
-    assert '"protocol": "intentir.lift-candidate-control-view.v1"' in result["output"]
+    assert result["output"].count(
+        '"protocol": "intentir.lift-candidate-control-view.v2"'
+    ) == 2
+    assert '"operand_accesses"' in result["output"]
     assert '"id": "n0"' in result["output"]
     assert after == before
 

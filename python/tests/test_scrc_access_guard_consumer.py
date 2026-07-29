@@ -121,7 +121,7 @@ def _guarded_select_j(
 def test_access_guard_projects_authored_relation_and_unique_broadcast() -> None:
     projection = project_functional_boundary(_guarded_select_j())
 
-    assert FUNCTIONAL_BOUNDARY_PROTOCOL == "intentir.j-functional-boundary.v19"
+    assert FUNCTIONAL_BOUNDARY_PROTOCOL == "intentir.j-functional-boundary.v20"
     assert projection.emitter_broadcast_axes() == {"v0": {"Guard": (1,)}}
     assert projection.to_json()["access_guard_relations"] == [
         {

@@ -177,9 +177,10 @@ seed，未知 op 会停止 TypeCheck 的窄传播；value-free projector 对 gua
 provenance 进入未知 op 均显式 consumer-unsupported。v11 继承 v10 的上述 invocation-local、可证明全真的
 guard/runtime-bound 例外；fixed code 不补写 count、domain、predicate 或 reduction contract。
 
-当前 shared projection receipt 为 `intentir.j-functional-boundary.v19`，scalar RefEval 为
-`j_scalar_cpu_mlir_v20`，closed structured reference 为
-`intentir.j-structured-cpu-reference.v9`。v20/v19 完整继承既有唯一 node-less logical-input load、
+当前 shared projection receipt 为 `intentir.j-functional-boundary.v20`，scalar RefEval 为
+`j_scalar_cpu_mlir_v22`，closed structured reference 为
+`intentir.j-structured-cpu-reference.v9`，typed relation-indexed reference 为
+`intentir.j-contract-indexed-cpu-reference.v1`。v21/v20 完整继承既有唯一 node-less logical-input load、
 通用 multi-reduction padding closure、当前 Gate2 invocation 的 runtime predicate tautology proof、
 v4/v5 relations、direct-store partition、closed typed contraction、product-domain mixed-radix、精确
 transpose 与 pointwise broadcast consumer。logical inout 的每个 post-state reload 由唯一 producer
@@ -200,7 +201,9 @@ v18/v17 还允许唯一 node-less predicated whole-input load 从 canonical J �
 consumer 开始 missing-fill provenance；同 tensor 多 load、零个/多个 direct consumer、非 pointwise
 consumer 或任一后续路径不闭合都拒绝。该解析结果只存在于 projection invocation，不写回 J。
 
-v20/v19/v9 新增的仍是窄 consumer，而不是新 artifact：predicated-load padding provenance 绑定到
+v21/v20 新增的仍是窄 consumer，而不是新 artifact：J direct `x* == 1`/`1 == x*` 可证明 constant
+coordinate 0；同一 `effect_if` 的正负 sibling arm 若分别完整写同一 output，则已有 conditional-store
+receipt 可证明控制分区，无需伪造共同 producer。历史 v20/v19/v9 的 predicated-load padding provenance 绑定到
 `(node_ref, operand)` edge，不再污染同一 tensor 的无关 gather/use；只有 J 已有 `gather(data,indices)`
 及匹配 `index_bounds` 时，该点访问才不继承另一条 padded stream 的 predicate。对 `effect_if` arm
 中的 full logical store，projection 仅把既有 branch-local 单结果 producer 与同一 Layer-B
@@ -217,6 +220,17 @@ shape relation，rank-0 compressed form 与任一非轴 shape 不一致继续 fa
 `arith.divsi` 的 toward-zero 语义传播端点区间；随后 `add/mul/gather` 仍逐 dtype overflow 与
 `index_bounds` containment 检查。node-less padded load 若与同 tensor 的 node-bound reload 共存，只有
 已有 `consumer_extensions` 才允许；显式 reload edge 覆盖该 edge 上的 node-less provenance。
+
+`j_scalar_cpu_mlir_v22` 另增加一个真正的、通用的 ContractIR reference lowering，而不是继续向
+functional-boundary 加 Kernel 公式。它只接受 flat、acyclic、shape-preserving pointwise Layer-A graph，
+并从 canonical ContractIR 执行任意已类型化的 access index、predicate、masked-load fill 与
+consumer-local broadcast；output 只能由 J 已写出的 stores 无重叠、无缺口覆盖。一个 access 的
+`node_ref` 只作用于该 consumer；sibling 使用同 tensor 时若没有自己的 access，就保留普通 Layer-A
+operand 语义，consumer 绝不复制另一节点的 relation。这个路径不读 Source、Replay、Gate、C 或 π，
+不按 Kernel 名识别 half/split/rotation，也不补 artifact；因此它既能执行闭合的 affine sub-domain J，
+也能把“Gate1 已过但 J 少了 consumer-local access”暴露为真实 Source--J/Replay--J 数值分歧。
+当前 production target 尚不能因为该 RefEval receipt 自动获得 indexed-store lowering permission；它必须
+独立消费同一 J/ContractIR 或显式 capability fail closed。
 
 修复上述 RefEval capability 后，可以对 parent 中 `replay_closed` 的精确 artifact/Replay 做零模型调用
 Gate2-only recheck；它写独立 evidence 且 `changes_parent_verdict=false`。这只证明当前 reference

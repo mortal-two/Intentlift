@@ -40,7 +40,7 @@ from .replay import (
 )
 
 
-CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v25"
+CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v26"
 
 _INITIAL_PROMPT = """You are the sole writer for one fresh source-blind IntentIR Replay episode.
 The outer runtime exposes only this isolated /workspace. input/ is immutable;
@@ -512,7 +512,10 @@ class CodexCLIReplayWriter:
     effort: str | None = None
     frontend: Frontend = Frontend.TRITON
     model_timeout_seconds: float | None = None
-    session_wall_time_limit_seconds: float = 900.0
+    # One xhigh provider turn may legitimately consume the full 900-second
+    # transport limit.  The owner episode must outlive that turn so the exact
+    # same Codex thread can consume the host check and repair its own bytes.
+    session_wall_time_limit_seconds: float = 1800.0
     repair_effort: str | None = None
     compile_checker: Callable[[str, Gate1Artifact, str], Any] | None = None
     stop_requested: Callable[[], int | None] | None = field(
@@ -590,13 +593,12 @@ class CodexCLIReplayWriter:
         from minisweagent.environments.intentir_replay import (
             _packet_critical_facts,
             _replay_obligation_audit_view,
+            _replay_obligation_audit_required,
         )
 
         critical_facts = _packet_critical_facts(packet)
-        obligation_audit_required = bool(
-            critical_facts["broadcast_obligations"]
-            or critical_facts["lexical_regions"]
-            or critical_facts["cross_region_order"]
+        obligation_audit_required = _replay_obligation_audit_required(
+            critical_facts
         )
         obligation_audited_source_digests: set[str] = set()
         prompt = (
@@ -704,6 +706,9 @@ class CodexCLIReplayWriter:
                     ),
                     "lexical_region_count": len(view["lexical_regions"]),
                     "cross_region_order_count": len(view["cross_region_order"]),
+                    "route_extent_transform_count": len(
+                        view["route_extent_transforms"]
+                    ),
                 }
             )
             return view

@@ -38,7 +38,7 @@ from .prompt import SCHEMA as INTENTIR_OPERATION_REFERENCE
 
 
 MINISWE_LIFT_BACKEND = "minisweagent.intentir-lift.v3"
-MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v64"
+MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v65"
 MINISWE_LIFT_TURN_TIMEOUT_SECONDS = 300.0
 MINISWE_LIFT_XHIGH_TURN_TIMEOUT_SECONDS = 900.0
 MAX_RELIFT_CHECK_FEEDBACK_ITEMS = 20
@@ -472,7 +472,8 @@ continuations for the same Source; Replay remains a separate fresh process.
   ledger. Its `candidate-abi` command compares the current draft with only
   Harness-authored mechanical ABI facts and never proposes semantic fields.
   Its paged `candidate-control` views project only the current LLM-authored
-  control/reduction nodes, output/effect facts, and pi time/control topology.
+  control/reduction nodes, output/effect facts, exact node-operand/access joins,
+  and pi time/control topology.
   Its syntax-only `source-outline`, literal `source-find` search, and paged `candidate-nodes`/single
   `candidate-node` views expose only Source and J content already visible to
   this worker; they never parse semantics, construct fields, or edit the draft.
@@ -533,6 +534,11 @@ and the authored control/effect/output ledger without paging the whole artifact:
 `python /input/tools/context_query.py candidate-abi`
 
 `python /input/tools/context_query.py candidate-control`
+
+For a graph where one logical tensor is viewed through different indices at
+different consumers, use `candidate-control --section operands`; it only joins
+the draft's exact node operands with accesses already attached to that node and
+does not infer that any empty entry should be filled.
 
 For multi-output/effect cases follow with `candidate-control --section outputs`;
 for loop, carrier, terminal-control, route, or order obligations page the `pi`

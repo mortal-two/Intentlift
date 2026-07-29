@@ -10,6 +10,11 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 
 from intentir.backend.cpu.abi import CPUABIValidationError, CPUBackendUnsupportedError
+from intentir.backend.cpu.contract_reference import (
+    ContractReferenceUnsupportedError,
+    execute_contract_reference,
+    project_contract_reference,
+)
 from intentir.backend.cpu.pipeline import execute_on_cpu_outputs
 from intentir.backend.cpu.structured_reference import (
     execute_structured_reference,
@@ -50,7 +55,7 @@ from intentir.verify.gate1.model import (
 from .model import ExecutionResult
 
 
-SCALAR_LOWERING_PROTOCOL = "j_scalar_cpu_mlir_v20"
+SCALAR_LOWERING_PROTOCOL = "j_scalar_cpu_mlir_v22"
 
 
 def _digest(value: Mapping[str, Any]) -> str:
@@ -1153,6 +1158,8 @@ class ScalarLoweringRunner:
                 inputs_by_ref,
                 spec.dims_map,
             )
+            projection = None
+            contract_reference_plan = None
             try:
                 projection = project_functional_boundary_for_refeval(
                     spec.j,
@@ -1160,33 +1167,47 @@ class ScalarLoweringRunner:
                     spec.dims_map,
                 )
             except NotImplementedError as capability_error:
-                # A capability-shaped formula must not become a second J
-                # membership test.  Preserve the complete typed contract and
-                # execute the canonical Layer-A graph.  Relations whose current
-                # RefEval semantics require extra runtime materialization retain
-                # the established specialized consumer until that lowering is
-                # migrated to ContractIR.
-                if not _contract_ir_indexed_graph_fallback(spec.j):
-                    raise capability_error
-                contract_ir = project_contract_ir(spec.j)
-                boundary_digest = contract_ir.digest
-                broadcast_axes = canonical_broadcast_axes(spec.j)
-                guarded_loads = ()
-                proven_index_bounds = frozenset(
-                    spec.j.node_ids.get(item.node_ref, item.node_ref)
-                    for item in spec.j.boundary.index_bounds
-                )
-                boundary_profile = "canonical_contract_ir_a_graph_v1"
-                boundary_projection_record = {
-                    **contract_ir.to_json(),
-                    "fallback_from": str(capability_error),
-                }
-                predicated_access_count = sum(
-                    item.predicate is not None
-                    for item in spec.j.boundary.accesses
-                )
-                erased_fill_count = 0
-                runtime_predicate_proof_count = 0
+                try:
+                    contract_reference_plan = project_contract_reference(spec.j)
+                except ContractReferenceUnsupportedError:
+                    # A capability-shaped formula must not become a second J
+                    # membership test.  Preserve the complete typed contract and
+                    # retain the older pure indexed-A fallback for its already
+                    # closed capability class.
+                    if not _contract_ir_indexed_graph_fallback(spec.j):
+                        raise capability_error
+                    contract_ir = project_contract_ir(spec.j)
+                    boundary_digest = contract_ir.digest
+                    broadcast_axes = canonical_broadcast_axes(spec.j)
+                    guarded_loads = ()
+                    proven_index_bounds = frozenset(
+                        spec.j.node_ids.get(item.node_ref, item.node_ref)
+                        for item in spec.j.boundary.index_bounds
+                    )
+                    boundary_profile = "canonical_contract_ir_a_graph_v1"
+                    boundary_projection_record = {
+                        **contract_ir.to_json(),
+                        "fallback_from": str(capability_error),
+                    }
+                    predicated_access_count = sum(
+                        item.predicate is not None
+                        for item in spec.j.boundary.accesses
+                    )
+                    erased_fill_count = 0
+                    runtime_predicate_proof_count = 0
+                else:
+                    boundary_projection_record = contract_reference_plan.to_json()
+                    boundary_digest = boundary_projection_record["plan_digest"]
+                    broadcast_axes = contract_reference_plan.broadcast_map
+                    guarded_loads = ()
+                    proven_index_bounds = frozenset()
+                    boundary_profile = "relation_indexed_pointwise_v1"
+                    predicated_access_count = sum(
+                        item.predicate is not None
+                        for item in spec.j.boundary.accesses
+                    )
+                    erased_fill_count = 0
+                    runtime_predicate_proof_count = 0
             else:
                 boundary_digest = projection.boundary_digest
                 broadcast_axes = projection.emitter_broadcast_axes()
@@ -1207,7 +1228,14 @@ class ScalarLoweringRunner:
                 guarded_loads
             )
             execution = (
-                execute_structured_reference(
+                execute_contract_reference(
+                    spec.j,
+                    spec.dims_map,
+                    inputs,
+                    plan=contract_reference_plan,
+                )
+                if contract_reference_plan is not None
+                else execute_structured_reference(
                     spec.j,
                     spec.dims_map,
                     inputs,
@@ -1215,6 +1243,7 @@ class ScalarLoweringRunner:
                     access_guard_relations=guarded_loads,
                     conditional_effect_stores=(
                         projection.conditional_effect_stores
+                        if projection is not None else ()
                     ),
                 )
                 if structured
@@ -1240,7 +1269,9 @@ class ScalarLoweringRunner:
                 metadata={
                     "protocol": SCALAR_LOWERING_PROTOCOL,
                     "path": (
-                        "canonical J -> typed structured CPU reference"
+                        "canonical J -> ContractIR -> indexed CPU reference"
+                        if contract_reference_plan is not None
+                        else "canonical J -> typed structured CPU reference"
                         if structured
                         else "canonical J -> intent MLIR -> scalar CPU"
                     ),
