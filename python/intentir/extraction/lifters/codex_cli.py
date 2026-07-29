@@ -191,11 +191,13 @@ _COMPACT_WIRE_RULES = (
     "and observable produced value; preserve canonical output ABI order separately "
     "from Source effect order.",
     "Scopes q* are exact lexical dominance objects whose definitions, captures, and "
-    "effects contain neither missing nor extra handles. J.storage is optional semantic "
-    "identity/lifetime, not an inventory of tensors, SSA values, or loop carries and "
-    "not physical placement; keep storage=[] unless Source requires such identity. "
-    "If authored, b* membership and lifetime events must cover the complete declared "
-    "identity consistently.",
+    "effects contain neither missing nor extra handles. J.storage is semantic identity/"
+    "lifetime, not a general inventory of tensors or ordinary SSA and not physical "
+    "placement. Every authored structured-loop semantic state is cross-iteration "
+    "identity: one loop-scoped StorageObject owns its state/body-argument/next/result "
+    "and any non-literal init, with crosses_iteration=true and escapes=true. Other "
+    "values use storage only when Source requires semantic identity; every authored "
+    "b* membership and lifetime must cover that identity completely.",
     "A C subject_ref may name only an existing J node, domain, access, scope, or "
     "storage. axis_ref requires subject_ref and must be in that subject's closed axis "
     "domain: reduce axes, loop trip axis, or canonical domain/access axes; scopes and "
@@ -369,6 +371,11 @@ _DEPENDENT_CONTRACT_RULES = {
         "all four roles have identical dtype, rank, and pointer-or-value carrier class",
         "routes contain init->state and, unless state==next, state->next",
         "state reaches at least one transfer_direct, transfer_async, update_atomic, update_privatized, or synchronize instance through routes",
+    ),
+    "structured_loop_storage": (
+        "every authored semantic loop state belongs to one StorageObject",
+        "that StorageObject contains state_id, body_argument, next_value, result_value, and init_value when init_value is not a semantic literal",
+        "that StorageObject uses the loop scope_id with crosses_iteration=true and escapes=true",
     ),
     "sharing": (
         "source is not one of its consumers and every consumer has a direct route from source",

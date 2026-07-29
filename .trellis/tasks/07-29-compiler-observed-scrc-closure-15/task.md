@@ -305,7 +305,8 @@ Sol-xhigh在约476秒产生19.6KB完整首稿，首次CandidateCheck时累计约
 CandidateCheck分层暴露；运行在1034秒人工停止，未进入正式Gate1，不计NO_CLOSURE。
 
 第二版reference仍约26KB，但压成单行、要求一次读取，并把上述source-neutral dependent rules与
-“普通SSA/loop carry不必作者化storage”写入同一合同。Prompt同时要求owner尽早在`work/`持久化
+“普通SSA不必作者化storage”写入同一合同；后续Flash首轮进一步澄清：一旦LLM作者化structured-loop
+semantic state，它就是跨迭代语义identity，必须有完整loop-scoped StorageObject。Prompt同时要求owner尽早在`work/`持久化
 model-authored builder/section draft并分段patch；只有CandidateCheck与提交要求完整
 `output/candidate.json`。固定代码仍不分配handle、不补字段、不推导J/C/π，因而它不是typed
 skeleton、composer或候选生成器。下一步先用同一个Linear、Terra-high、B=1/K=1验证首次Lift速度与
@@ -360,6 +361,9 @@ Linear Sol-high约491秒、10次CandidateCheck后得到TypeCheck-valid artifact�
 reduction/consumer extension、authorization、route、physical carrier和sharing的必要条件；它不读取
 Source、不选择关系、不产生handle或字段。首个Gate1显示该artifact与Replay共同缺失pid/group/index、
 mask及pointer-update闭合连接，故正式`K`必须把closed diff反馈给同一Lift owner，而不能以`K=1`结束。
+Flash B3首轮随后稳定暴露同一遗漏：两个branch分别卡在semantic loop state没有StorageObject、以及
+StorageObject未覆盖state/body-argument/next/result/non-literal-init。该约束来自既有Canonical J checker，
+现已一并加入`lift_contract dependent`；仍由LLM判断是否存在semantic state并作者化完整storage。
 
 ## 5. J / C / π的能力计划
 
