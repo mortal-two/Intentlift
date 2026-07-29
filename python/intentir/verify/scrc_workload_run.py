@@ -415,6 +415,7 @@ def build_workload_gate2_suite(
         {
             "test_mode": "finite_hidden_after_gate1",
             "adapter_protocol": adapter.protocol,
+            "input_profile": adapter.input_profile,
         },
     )
     return Gate2Suite(adapter.case_id, (case,), prepared.request.binding.c_values)

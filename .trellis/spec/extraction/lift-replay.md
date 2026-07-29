@@ -193,7 +193,7 @@ presence、literal memory-call 顺序，以及“loop 前已有 lexical binding 
 semantic outline、摘要、operator、binding、π 或修改建议；目的是让首个高 effort 回合直接做语义
 工作，而不是决定下一条读取命令。
 
-`intentir.scrc.triton-workload-adapter.v5` 把 tensor shape 的**参数恒等关系**与本次 concrete
+`intentir.scrc.triton-workload-adapter.v6` 把 tensor shape 的**参数恒等关系**与本次 concrete
 valuation 分开：`shape` 仍是本次可执行值；`shape_contract` 每个轴只能是正整数或匿名 Harness-only
 `h*`，相同 `h*` 表示跨 buffer 的同一 source-grounded logical extent；可选 scalar
 `shape_coordinate=h*` 或 explicit `bound_constexpr_shape_coordinates` 表示 runtime scalar/semantic
@@ -204,7 +204,9 @@ CandidateCheck/Runner 只核对完整映射，不能从 concrete `1/2/33/16/64`�
 relation 或 J shape。整数 contract 仍必须保持静态。`h*`、grid 与本次 valuation 都不进入 J/C/π、
 Replay 或 production；production 只消费最终已作者化的 `x*`。不同 `h*`（例如 valid sequence 与
 rounded capacity）保持独立，除非 Source-aware Lift 在现有 J/B vocabulary 中另行作者化其语义关系；
-Harness 不按数值猜 `ceil_div`、容量或有效域公式。
+Harness 不按数值猜 `ceil_div`、容量或有效域公式。v6的`input_profile`只进入Harness/evidence receipt，
+用于区分capture、model/upstream与direct-tile valuation；它不进入J/C/π、Replay或Gate，也不向Lift
+提供operator/shape公式。
 
 持久 Lift owner 还可使用四个等合同的只读投影：`harness-abi` 将匿名 Harness view 中已经声明的
 `p*/c*` 顺序、bound non-C constexpr membership、compiler role 与 `h*` shape-coordinate ledger

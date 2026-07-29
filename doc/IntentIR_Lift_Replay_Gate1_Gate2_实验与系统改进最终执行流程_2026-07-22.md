@@ -582,7 +582,7 @@ regions/instances/loop/carrier/terminal/route/order；`feedback-category` 只返
 closed Gate1 类别。投影不生成、补齐或建议任何 J/C/π 字段，不读额外 Source/Gate/Replay；MiniSWE 和 Codex
 提供同一字段视图，CandidateCheck/TypeCheck 仍是唯一机械门禁。
 
-`intentir.scrc.triton-workload-adapter.v5` 继承 v4 对 source-grounded shape identity 与本次可执行
+`intentir.scrc.triton-workload-adapter.v6` 继承 v5 对 source-grounded shape identity 与本次可执行
 valuation。匿名 Harness view 对 tensor 同时给出 concrete `shape` 与逐轴 `shape_contract`：正整数表示
 真正静态轴，`h*` 表示跨 tensor 共享的匿名 logical extent；runtime scalar 可用
 `shape_coordinate=h*`、integral semantic constexpr 可用 closed
@@ -593,7 +593,8 @@ valuation。匿名 Harness view 对 tensor 同时给出 concrete `shape` 与逐�
 只拒绝 literal specialization、遗漏、合并或 valuation 不一致，不生成 `x*`、J shape 或 relation。
 `h*`、grid 与 concrete valuation 均不进入 artifact/Replay/production；grid 不是 J 语义来源。valid
 sequence、rounded capacity 等不同 coordinate 也不由 Harness 猜出 derived formula，所需语义关系仍由
-Source-aware Lift 在 J/B 中完整作者化。
+Source-aware Lift 在 J/B 中完整作者化。v6新增非空`input_profile` receipt，区分model/upstream、
+direct-tile与历史capture valuation；该token只属于Harness/evidence，不进入J/C/π、Replay或Gate。
 
 该能力把原本发生在相邻 fresh Lift invocation 之间的机械反馈和 Gate1 relift 工作保留在一个
 branch-local owner conversation 与 workspace 内，不增加 Agent、proof artifact 或 Replay 信息通道，也不改变正式
@@ -1379,7 +1380,7 @@ relation/op 的通用消费缺口，修复 consumer 后执行 10.1.2 的 Gate2-o
 
 这些是实验记录，不是新的证明对象，也不是 Replay 输入。
 
-当前 `intentir.scrc.triton-workload-adapter.v5` 继承 v4/v3，并在 28 项 registry 中声明全部 28 项：原六项代表 adapter；
+当前 `intentir.scrc.triton-workload-adapter.v6` 继承 v5/v4/v3，并在 28 项 registry 中声明全部 28 项：原六项代表 adapter；
 full FlashAttention forward/backward、fused-add RMSNorm、Sparsemax、one-column-block backward；以及
 Qwen2-VL MRoPE、GroupNorm、JSD、CrossEntropy、GEGLU、PolyNorm、Llama4 RoPE、FlashAttention
 LayerNorm、RoPE、LayerNorm、KLDiv、TVD、xFormers RMSNorm/RMSNorm-add 与三个 SplitK entry。ordinal
@@ -1391,8 +1392,8 @@ Triton CUDA frontend compile。v3 另只按精确 `VAR_ARGS_ARRAY` annotation、
 marker 只允许出现在 selected top-level entry 的当前 lexical scope，nested function/class/lambda 不被
 遍历或改写；nested marker、跨 scope 捕获以及 marker positional 自身带 default 均拒绝，普通 trailing
 default 则保持不变。它不调用外部 `unroll_varargs`、`exec` 或 monkey patch。ordinal 26 使用 8 个真实 runtime `None`
-carrier、arity 1 和非退化 split grid；ordinal 27/28 使用 arity 2，展开后 ABI 分别为 38/51
-参数。`None` 在 J.signature 中只能是 `opaque(mode=value,dtype=none)`，无 logical_ref/J
+carrier、arity 1 和正式`B=1,Mq=1,G=1,H=16,KV=4096,D=256,split=4` grid；ordinal 27/28
+使用arity 4展开四个chunk。旧arity 2是独立历史variant，不能继承到正式split=4证书。`None` 在 J.signature 中只能是 `opaque(mode=value,dtype=none)`，无 logical_ref/J
 tensor/node/effect/π instance，不得换成 dummy pointer 或 scalar；加入 canonical contraction 与
 direct/decomposed stage multiplicity 合同后，Codex/MiniSWE Lift knowledge 当前为
 `intentir.lift-knowledge.v69/v65`。Codex CLI agent runtime v3 在不接受任何未通过候选、也不补写 artifact 的前提下，从被 wall-time 中断的 JSONL 中恢复已经发出的唯一 `thread.started`，使同一 Lift owner 能在剩余 branch 时间内继续；v49/v50 在不改变 artifact/判定的前提下加入 persistent-workspace exact mirror
@@ -1403,8 +1404,7 @@ source-blind packet query 的精确视图，不生成 handle/type/relation/sourc
 v47/v46/v45/v44 与 v17/v15 的 generic functional logical-domain 闭合提示、
 CandidateCheck diagnostics，以及 rank-0 logical-data/representation-only scalar
 分类合同；并加入 value/dimension equality、consumer extension 与 access guard 的完整 authored
-合同；全部 28 项的 static prepare 与真实 CUDA frontend compile 已通过；
-`declared` 只表示 Harness/source ABI 有闭合配置，不构成 TypeCheck、Gate 或 SCRC 终态。v4 对具备
+合同；`declared`只表示Harness/source ABI有闭合配置，不构成TypeCheck、Gate或SCRC终态。v4 对具备
 source/launcher grounding 的 tensor axes 增加匿名 `h*` shape identity、runtime-scalar equality 与
 grid realization sidecar；静态 axes 仍保持整数。它只为 fresh Lift 提供参数化事实，不升级旧 artifact，
 也不让 grid、concrete valuation 或 `h*` 进入 J/C/π。
@@ -1412,6 +1412,8 @@ v5 进一步加入 valuation-matched semantic constexpr equality、真实 scratc
 由 ABI/tensor axes 唯一确定的 batch/sequence/head/head-dim identity；相等 valuation 的 broadcast
 batch仍使用不同 `h*`。Llama4 的 `2*head_dim_half` 与 SplitK product/derived capacity/variant family
 在当前 relation vocabulary 中保持 selected-variant literal，不从 grid/prose或数值相等猜公式。
+v6只新增`input_profile` provenance并把当前10项active queue切换到正式model/direct-tile valuation；
+已参数化完整的18个accepted J不因旧concrete valuation被机械重跑。
 
 当前 Codex Lift v5 / Replay v13 对单次 turn wall-time 不再直接丢弃当前成果：runtime v3 可从被中断
 JSONL 中已经完整发出的唯一 `thread.started` 恢复同一 thread identity；host 只重新检查同一

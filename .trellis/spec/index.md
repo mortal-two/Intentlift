@@ -31,9 +31,10 @@ artifact.v10 的 `physical_iterations/physical_loop_carriers` 表达 structured 
 reduce/contraction 或 boundary access/domain 锚定的物理时间，
 feedback frontier/category、candidate-control 与 Replay local-axis 合同只改 agent 消费，不改变接受
 集合。持久 Lift owner 固定使用创建时的私有 Source/Harness/schema/knowledge/tool 快照；续轮只刷新
-closed feedback，host 仓库并发升级不得改变既有 owner。Harness adapter v5 另把 concrete
+closed feedback，host 仓库并发升级不得改变既有 owner。Harness adapter v6 另把 concrete
 shape valuation 与 Harness-only `h*` shape identity 分开，并可显式声明 valuation-matched semantic
-constexpr ↔ `h*`；最终 `x*`/equality 仍由 Lift 完整作者化。
+constexpr ↔ `h*`；最终 `x*`/equality 仍由 Lift 完整作者化。v6的`input_profile`仅记录Harness
+valuation provenance，不进入semantic artifact或Gate。
 Replay v28/v24 明确同一 region 中 `physical_loop_carriers` declaration order 是跨
 init/state/next/result 共享的 carrier-tuple ordinal；Lift knowledge v66/v62 必须从 Source frontend
 loop 的 argument/yield/result tuple 作者化该顺序，Replay 不按 dtype/ref/mechanism 重排。该 tuple slot
