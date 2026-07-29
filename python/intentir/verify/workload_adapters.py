@@ -794,7 +794,10 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
             ),
             _buffer(
                 "B", BufferRole.INPUT, "f16", (4096, 4096),
-                shape_contract=("h2", "h1"),
+                # The selected B_COLMAJOR specialization indexes the flat
+                # buffer as B[n, k] (k + n * stride_bn).  Equal model extents
+                # must not hide that logical ABI orientation from Lift.
+                shape_contract=("h1", "h2"),
             ),
             _buffer(
                 "bias", BufferRole.INPUT, "f16", (4096,),
