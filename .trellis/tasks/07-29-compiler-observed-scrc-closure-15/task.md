@@ -354,6 +354,13 @@ relation、不生成候选字段。CandidateCheck同时先用同一JSON Schema�
 原dependent Decode/TypeCheck，避免严格parser每次只暴露最早nested missing-field。此实现仍由LLM
 完整作者化fragment与所有handle/关系；下一项验收直接使用Sol-high Linear并以Gate1 frontier裁决。
 
+Linear Sol-high约491秒、10次CandidateCheck后得到TypeCheck-valid artifact；其中同一physical carrier
+到observable realization的闭合条件连续重复5次，说明JSON Schema投影还缺权威dependent predicate的
+可发现性。第五版因此新增独立`lift_contract dependent`小文件，只逐字压缩现有TypeCheck对C attachment、
+reduction/consumer extension、authorization、route、physical carrier和sharing的必要条件；它不读取
+Source、不选择关系、不产生handle或字段。首个Gate1显示该artifact与Replay共同缺失pid/group/index、
+mask及pointer-update闭合连接，故正式`K`必须把closed diff反馈给同一Lift owner，而不能以`K=1`结束。
+
 ## 5. J / C / π的能力计划
 
 ### 5.1 不做大重构
@@ -507,8 +514,8 @@ sibling；hidden Gate2输入和结果绝不回流本次Lift/Replay。Liger RoPE�
 - 主模型：Codex Sol xhigh；若同一source-grounded语义frontier在xhigh下稳定重复且系统表达已充分，
   才对该case使用Sol max。Terra不作为最终难核主证据；
 - 每case默认`B=3`，branch互不共享artifact、conversation、diff或Replay；
-- 每branch默认`K=3`个TypeCheck-valid formal rounds。K只约束Gate1 relift，不限制branch内部Codex工具
-  循环；若三轮重复暴露同一系统缺口，先结束运行并修能力，不盲目把K加长；
+- 每branch默认`K=5`个TypeCheck-valid formal rounds。K只约束Gate1 relift，不限制branch内部Codex工具
+  循环；若4--5轮重复暴露同一系统缺口，结束该branch并修能力，不再用额外轮次碰运气；
 - 首个被coordinator原子观察到的Gate1 closure成为winner，siblings cooperative stop；
 - hidden Gate2只对winner执行，设备并发`G2=1`；
 - capability pilot稳定后从`W=2,B=3,G=6`开始，provider/host稳定且首轮延迟可控时升到

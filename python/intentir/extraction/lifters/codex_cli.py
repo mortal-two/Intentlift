@@ -66,20 +66,23 @@ exact IntentOp vocabulary. Do not search for another schema, tutorial, example,
 preflight, or operation catalog: none is authoritative here.
 
 Before authoring the signature or first complete candidate, materialize these
-four exact read-only projections once as local proof-irrelevant files:
+five exact read-only projections once as local proof-irrelevant files:
 
 python .agents/intentir_agent_tool.py lift_harness_abi 1 64 > work/harness_abi.json
 python .agents/intentir_agent_tool.py lift_contract core > work/contract_core.json
 python .agents/intentir_agent_tool.py lift_contract boundary > work/contract_boundary.json
 python .agents/intentir_agent_tool.py lift_contract pi > work/contract_pi.json
+python .agents/intentir_agent_tool.py lift_contract dependent > work/contract_dependent.json
 
 Do not print these payloads together with Source or each other: combined terminal
-output may be clipped. Read the four small files separately. The first is the
-complete anonymous ABI/Harness ledger. The other three project the exact required
+output may be clipped. Read the five small files separately. The first is the
+complete anonymous ABI/Harness ledger. The next three project the exact required
 keys, fields, enums, defaults, and closed JSON Schema sections for all artifact
-object families. They expose no Source meaning and never generate an artifact
-field. Use them to form one coordinated complete draft before the first
-CandidateCheck; do not use CandidateCheck as a missing-field tutorial.
+object families. The final file projects only closed source-neutral dependent
+checker predicates for those objects. They expose no Source meaning and never
+generate an artifact field or choose a relation. Use them to form one coordinated
+complete draft before the first CandidateCheck; do not use CandidateCheck as a
+missing-field or dependent-rule tutorial.
 
 Author the artifact incrementally under work/candidate_parts/ instead of emitting
 one giant first patch or writing another Python builder. Each *.json file there is
@@ -331,6 +334,48 @@ _CONTRACT_SECTION_PROFILES = {
 }
 
 
+_DEPENDENT_CONTRACT_RULES = {
+    "c_attachment": (
+        "subject_ref, when present, names one declared schedule-addressable J node, domain, access, scope, or storage",
+        "axis_ref requires subject_ref and belongs to AxisRefs_v1(J,subject_ref); scopes and storage have no axes",
+    ),
+    "reduction_boundary": (
+        "node_ref names an existing semantic reduce or inclusive scan node",
+        "one semantic reduce or scan has at most one reduction boundary contract",
+    ),
+    "consumer_extension": (
+        "consumer_ref names a sum/max/min reduce or inclusive scan and operand_index selects one declared string operand",
+        "tile_axis equals the consumer's closed local axis; outside dtype equals that operand dtype and outside value is the consumer's two-sided identity",
+        "access_ref names one predicate-bearing load whose provenance unambiguously reaches that operand",
+        "a required predicate-bearing reduce/scan operand has exactly one explicit outside-domain identity authority; masked_contribution and consumer_extension cannot duplicate it",
+    ),
+    "realization_authorization": (
+        "subject_ref names a declared non-absent J carrier, never an authorization handle",
+        "numeric_cast subject_ref names the explicit unary cast node and source_dtype/target_dtype exactly equal its operand/result dtypes",
+        "for other typed authorizations, an explicit source_dtype equals the subject carrier dtype",
+    ),
+    "route": (
+        "source and target name declared pi instances and the combined routes plus order graph is acyclic",
+        "when target anchors a J node, every slot is a valid target operand ordinal and the source carrier type equals that operand type",
+    ),
+    "route_extent_transform": (
+        "source is a realize instance anchored to one required positive-integer C slot",
+        "target is a realize instance anchored to the J domain and axis attached by that same C slot",
+    ),
+    "physical_loop_carrier": (
+        "region is one placement=loop region declared by physical_iterations",
+        "init is visible from a strict ancestor; state and next are in the exact loop region; result is in its direct parent",
+        "init/state/next/result each anchor one typed J signature, tensor, value, node, or access carrier; node carriers have exactly one typed result",
+        "all four roles have identical dtype, rank, and pointer-or-value carrier class",
+        "routes contain init->state and, unless state==next, state->next",
+        "state reaches at least one transfer_direct, transfer_async, update_atomic, update_privatized, or synchronize instance through routes",
+    ),
+    "sharing": (
+        "source is not one of its consumers and every consumer has a direct route from source",
+    ),
+}
+
+
 def _compact_schema_fragment(value: Any) -> Any:
     """Remove prose while retaining exact structure, enums, and defaults."""
 
@@ -397,6 +442,7 @@ def _codex_input_files(
             "python .agents/intentir_agent_tool.py lift_contract core",
             "python .agents/intentir_agent_tool.py lift_contract boundary",
             "python .agents/intentir_agent_tool.py lift_contract pi",
+            "python .agents/intentir_agent_tool.py lift_contract dependent",
         ],
     }
     files = {
@@ -806,6 +852,17 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                     raise ValueError(
                         "lift_contract accepts exactly one profile/section name"
                     )
+                if arguments[0] == "dependent":
+                    return {
+                        "protocol": "intentir.lift-dependent-contract-view.v1",
+                        "status": "pass",
+                        "rules": _DEPENDENT_CONTRACT_RULES,
+                        "authority": (
+                            "exact source-neutral projection of necessary predicates "
+                            "already enforced by dependent TypeCheck; no relation, "
+                            "handle, value, or artifact field is selected or generated"
+                        ),
+                    }
                 names: list[str] = []
                 for argument in arguments:
                     if argument in _CONTRACT_SECTION_PROFILES:
@@ -814,7 +871,9 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                         requested = (argument,)
                     else:
                         choices = sorted(
-                            set(_CONTRACT_SECTION_PROFILES) | set(contract_sections)
+                            set(_CONTRACT_SECTION_PROFILES)
+                            | set(contract_sections)
+                            | {"dependent"}
                         )
                         raise ValueError(
                             f"unknown contract section {argument!r}; choose {choices}"
