@@ -10,7 +10,6 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass, field
 from enum import Enum
-import hashlib
 import json
 import re
 from typing import Any, Callable, Mapping, Protocol
@@ -85,25 +84,6 @@ def _feedback_item(value: Any) -> Any:
             for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
         }
     return value
-
-
-def _canonical_json_digest(value: Any) -> str:
-    encoded = json.dumps(
-        value,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-        allow_nan=False,
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
-
-
-def _artifact_component_digests(artifact: Gate1Artifact) -> dict[str, str]:
-    payload = artifact.to_json()
-    return {
-        component: _canonical_json_digest(payload[component])
-        for component in ("j", "c", "pi")
-    }
 
 
 def _changed_json_paths(
@@ -383,6 +363,114 @@ def _observer_diagnostic_signatures(
             for token in _observer_fingerprints(entry[0]):
                 result.setdefault(token, {}).setdefault(side, signature)
     return result
+
+
+def _observer_diagnostic_profiles(
+    source_fingerprint: Any | None,
+    replay_fingerprint: Any | None,
+) -> dict[str, dict[str, dict[str, Any]]]:
+    """Index diagnostic-only immediate profiles by opaque comparison token."""
+
+    result: dict[str, dict[str, dict[str, Any]]] = {}
+    for side, fingerprint in (
+        ("source", source_fingerprint),
+        ("replay", replay_fingerprint),
+    ):
+        entries = getattr(fingerprint, "diagnostic_node_profiles", ())
+        if not isinstance(entries, (list, tuple)):
+            continue
+        for entry in entries:
+            if (
+                not isinstance(entry, (list, tuple))
+                or len(entry) != 4
+                or not isinstance(entry[0], str)
+                or not isinstance(entry[1], str)
+                or not isinstance(entry[2], (list, tuple))
+                or not isinstance(entry[3], (list, tuple))
+                or not all(
+                    isinstance(item, (list, tuple))
+                    and len(item) == 2
+                    and isinstance(item[0], str)
+                    and isinstance(item[1], str)
+                    for item in entry[2]
+                )
+                or not all(isinstance(item, str) for item in entry[3])
+            ):
+                continue
+            profile = _feedback_item(
+                {
+                    "local_signature": entry[1][
+                        :MAX_GATE1_FEEDBACK_LOCAL_SIGNATURE_CHARS
+                    ],
+                    "inputs": [
+                        {
+                            "role": role,
+                            "producer": producer[
+                                :MAX_GATE1_FEEDBACK_LOCAL_SIGNATURE_CHARS
+                            ],
+                        }
+                        for role, producer in entry[2]
+                    ],
+                    "context": [
+                        item[:MAX_GATE1_FEEDBACK_LOCAL_SIGNATURE_CHARS]
+                        for item in entry[3]
+                    ],
+                }
+            )
+            for token in _observer_fingerprints(entry[0]):
+                result.setdefault(token, {})[side] = profile
+    return result
+
+
+def _observer_category_node_profiles(
+    differences: list[Mapping[str, Any]],
+    aliases: Mapping[str, str],
+    diagnostic_profiles: Mapping[str, Mapping[str, Mapping[str, Any]]],
+) -> list[dict[str, Any]]:
+    """Explain nodes named by one hard category without exposing Source text.
+
+    The hard observer already names these opaque nodes in its difference.  This
+    sidecar merely joins each directly named node to the observer's non-recursive
+    local profile.  It is excluded from comparison, ranking, and Replay input.
+    """
+
+    witnesses: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for difference in differences:
+        kind = str(difference.get("kind", "unknown"))
+        preferred_side = (
+            "source"
+            if kind == "missing"
+            else "replay"
+            if kind == "unexpected"
+            else None
+        )
+        for token in _observer_fingerprints(difference.get("item")):
+            profiles = diagnostic_profiles.get(token, {})
+            sides = (
+                (preferred_side,)
+                if preferred_side in profiles
+                else tuple(sorted(profiles))
+            )
+            for side in sides:
+                if side is None or (side, token) in seen:
+                    continue
+                profile = profiles.get(side)
+                if profile is None:
+                    continue
+                seen.add((side, token))
+                witnesses.append(
+                    {
+                        "side": side,
+                        "kind": kind,
+                        "difference_role": _observer_difference_role(difference),
+                        "node": aliases.get(token, f"{side}_node"),
+                        **profile,
+                    }
+                )
+                if len(witnesses) >= MAX_GATE1_FEEDBACK_NODE_WITNESSES:
+                    return witnesses
+    return witnesses
 
 
 def _observer_local_profile_counter(
@@ -730,6 +818,10 @@ def _compact_gate1_observer_diff(
         source_fingerprint,
         replay_fingerprint,
     )
+    diagnostic_profiles = _observer_diagnostic_profiles(
+        source_fingerprint,
+        replay_fingerprint,
+    )
 
     grouped: dict[str, dict[str, Any]] = {}
     for difference in mapped_differences:
@@ -796,6 +888,15 @@ def _compact_gate1_observer_diff(
             )
             if effect_order_witnesses:
                 group["effect_order_witnesses"] = effect_order_witnesses
+        else:
+            node_profiles = _observer_category_node_profiles(
+                category_differences,
+                node_aliases,
+                diagnostic_profiles,
+            )
+            if node_profiles:
+                group["node_profiles"] = node_profiles
+                group["node_alias_scope"] = "this_feedback_only"
         group["truncated_count"] = max(
             0, group["difference_count"] - len(group["examples"])
         )
@@ -1209,10 +1310,8 @@ class SCRCGateRunner:
             parent_payload,
             current_payload,
         )
-        parent_digests = _artifact_component_digests(parent)
-        current_digests = _artifact_component_digests(artifact)
         component_changed = {
-            component: parent_digests[component] != current_digests[component]
+            component: parent_payload[component] != current_payload[component]
             for component in ("j", "c", "pi")
         }
         parent_counts = _observer_category_counts(prior_feedback.diagnostics)
@@ -1253,8 +1352,6 @@ class SCRCGateRunner:
         return {
             "protocol": GATE1_REPAIR_PROGRESS_PROTOCOL,
             "parent_formal_round": prior_feedback.formal_round,
-            "parent_component_sha256": parent_digests,
-            "current_component_sha256": current_digests,
             "component_changed": component_changed,
             "artifact_changed": bool(changed_path_count),
             "changed_path_count": changed_path_count,

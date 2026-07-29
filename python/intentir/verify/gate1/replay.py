@@ -1427,9 +1427,13 @@ def _packet_required_compiled_address_operations(
     contributions or pointer-producing stages.  The pi grammar makes the latter
     distinction closed: a stage is a pointer operation exactly when a routed
     pointer/tensor signature carrier, or an earlier pointer-producing address
-    stage, enters it.  Packets whose address topology does not expose a
-    pointer-producing stage for every authored access are outside this narrow
-    construction check; no missing final address operation is inferred.
+    stage, enters it.  Loop-carrier ``state`` and ``result`` instances are
+    compiler block plumbing rather than address operations; their authored
+    ``init -> state``, ``next -> state`` and ``state -> result`` temporal edges
+    are nevertheless part of pointer reachability.  Packets whose resulting
+    address topology does not expose a pointer-producing stage for every
+    authored access are outside this narrow construction check; no missing
+    final address operation is inferred.
     """
 
     j = packet.get("j")
@@ -1492,21 +1496,64 @@ def _packet_required_compiled_address_operations(
         if isinstance(source, str) and isinstance(target, str) and target in incoming:
             incoming[target].add(source)
 
-    pointer_outputs = {
+    carrier_relations = [
+        item
+        for key in ("loop_carriers", "physical_loop_carriers")
+        for item in pi.get(key, [])
+        if isinstance(item, Mapping)
+    ]
+    carrier_state_ids: set[str] = set()
+    carrier_result_ids: set[str] = set()
+    carrier_derived_ids: set[str] = set()
+    for relation in carrier_relations:
+        init = relation.get("init")
+        state = relation.get("state")
+        next_value = relation.get("next")
+        result = relation.get("result")
+        if not all(
+            isinstance(value, str) and value in instances
+            for value in (init, state, next_value, result)
+        ):
+            return None, ()
+        assert isinstance(init, str)
+        assert isinstance(state, str)
+        assert isinstance(next_value, str)
+        assert isinstance(result, str)
+        # These are the closed temporal edges of the authored carrier.  They do
+        # not invent a route or an update; they make the relation already present
+        # in pi visible to this source-blind occurrence projection.
+        incoming[state].update((init, next_value))
+        incoming[result].add(state)
+        carrier_state_ids.add(state)
+        carrier_result_ids.add(result)
+        carrier_derived_ids.update((state, next_value, result))
+
+    pointer_roots = {
         instance_id
         for instance_id, item in instances.items()
         if item.get("semantic_ref") in pointer_parameters
+        and instance_id not in carrier_derived_ids
+        and (
+            item.get("mechanism") == "realize"
+            or not incoming.get(instance_id)
+        )
     }
-    pointer_roots = set(pointer_outputs)
+    pointer_outputs = set(pointer_roots)
+    pointer_passthrough_ids = address_ids | carrier_state_ids | carrier_result_ids
     changed = True
     while changed:
         changed = False
-        for instance_id in address_ids - pointer_outputs:
+        for instance_id in pointer_passthrough_ids - pointer_outputs:
             if incoming[instance_id] & pointer_outputs:
                 pointer_outputs.add(instance_id)
                 changed = True
 
-    pointer_address_ids = address_ids & pointer_outputs
+    # A carrier state is a block argument and a carrier result is a block result;
+    # neither is a compiled pointer-add operation even if its typed instance uses
+    # an address mechanism.  Authored init/next address stages remain counted.
+    pointer_address_ids = (
+        address_ids & pointer_outputs
+    ) - carrier_state_ids - carrier_result_ids
     transfer_refs = {
         str(item.get("semantic_ref"))
         for item in memory_instances
