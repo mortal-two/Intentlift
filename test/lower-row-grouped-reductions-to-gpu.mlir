@@ -1,6 +1,7 @@
 // RUN: intent-opt -convert-intent-row-reduction-to-gpu=block-threads=64 %s | FileCheck %s
 // RUN: intent-opt '-convert-intent-row-reduction-to-gpu=block-threads=4 tile-cols=2' %s | FileCheck %s --check-prefix=TILED
 // RUN: intent-opt '-convert-intent-row-reduction-to-gpu=block-threads=64 tile-cols=1' %s | FileCheck %s --check-prefix=WARP-TILED
+// RUN: intent-opt '-convert-intent-row-reduction-to-gpu=block-threads=64 leader-finalize=true' %s | FileCheck %s --check-prefix=LEADER
 
 // Two independent f32 reductions share one publication barrier. Each reduction
 // has its own compact [numWarps] dynamic-shared slot, so neither a second
@@ -39,6 +40,17 @@
 // WARP-TILED-NOT: gpu.all_reduce
 // WARP-TILED: gpu.terminator
 // WARP-TILED-NOT: intent.
+// LEADER-LABEL: func.func @independent_pair(
+// LEADER-SAME: intent.backend.barrier_count = 2
+// LEADER-SAME: intent.backend.reduction_topology = "workgroup_leader_broadcast"
+// LEADER-SAME: "cuda.reduction.workgroup_leader_broadcast.v1"
+// LEADER: gpu.launch
+// LEADER: scf.if
+// LEADER: gpu.shuffle
+// LEADER-COUNT-2: gpu.barrier
+// LEADER-NOT: gpu.all_reduce
+// LEADER: gpu.terminator
+// LEADER-NOT: intent.
 func.func @independent_pair(%X: tensor<2x128xf32>)
     -> (tensor<2x128xf32>, tensor<2x1xf32>, tensor<2x1xf32>) {
   %sum = intent.reduce %X {fn = "sum", axes = [1], assoc = "float_nondeterministic"}

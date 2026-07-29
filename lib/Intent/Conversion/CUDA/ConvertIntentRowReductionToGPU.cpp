@@ -348,23 +348,20 @@ static unsigned foldRankZeroConstantSelects(func::FuncOp fn) {
   return folded;
 }
 
-/// Attach a machine-readable receipt to the concrete MLIR state produced by
-/// this C++ lowering.  The outer search controller reads only these facts and
-/// the resulting IR digest; it never infers a mechanism from a kernel name or
-/// from the requested pass option.  In particular, an FMA request that matched
-/// no concrete mul+add is recorded with fma_count=0.
-static void attachConcreteStateReceipt(func::FuncOp lowered, int64_t threads,
-                                       unsigned predicatedValueIfCount,
-                                       unsigned foldedConstexprSelectCount,
-                                       int64_t rowsPerBlock = 1,
-                                       unsigned approximateDivCount = 0,
-                                       unsigned hostValueCaptureCount = 0,
-                                       unsigned epilogueLoadMotionCount = 0,
-                                       bool materializedSharedRowOutput = false,
-                                       bool elidedSharedRowMaterialization = false,
-                                       StringRef topologyOverride = {},
-                                       int64_t stageCount = 1,
-                                       int64_t reductionParts = 1) {
+/// Attach directly readable attributes to the concrete MLIR state produced by
+/// this C++ lowering.  The outer search controller reads only these facts; it
+/// never infers a mechanism from a kernel name or from the requested pass
+/// option.  In particular, an FMA request that matched no concrete mul+add is
+/// recorded with fma_count=0.
+static void attachConcreteStateAttributes(
+    func::FuncOp lowered, int64_t threads, unsigned predicatedValueIfCount,
+    unsigned foldedConstexprSelectCount, int64_t rowsPerBlock = 1,
+    unsigned approximateDivCount = 0, unsigned hostValueCaptureCount = 0,
+    unsigned epilogueLoadMotionCount = 0,
+    bool materializedSharedRowOutput = false,
+    bool elidedSharedRowMaterialization = false,
+    StringRef topologyOverride = {}, int64_t stageCount = 1,
+    int64_t reductionParts = 1) {
   MLIRContext *ctx = lowered.getContext();
   unsigned fmaCount = 0;
   unsigned shuffleCount = 0;
@@ -855,6 +852,7 @@ struct RowReductionLowering {
   bool enableApproximateDiv;
   bool deferEpilogueColumnLoads;
   bool materializeSharedRowOutput;
+  bool useLeaderFinalization;
   bool promoteRank0ScalarInputs;
   bool enableSortedPrefix;
   unsigned requestedRowsPerBlock;
@@ -921,7 +919,7 @@ struct RowReductionLowering {
   SmallVector<int64_t> colSegLen;
   SmallVector<AffineMap> colSegMap;
   int64_t numGroups = 0;
-  // Receipt-bound Layer-B equalities materialized by the JSON emitter as
+  // Layer-B equalities materialized by the JSON emitter as
   // (argument-index, signed-value) pairs. The specialized kernel may constant
   // fold these rank-0 integer inputs; the automatic selection artifact records
   // the same contract and keeps the generic path as the mismatch fallback.
@@ -942,7 +940,8 @@ struct RowReductionLowering {
   RowReductionLowering(func::FuncOp fn, unsigned bt, unsigned tc,
                        unsigned vw, bool fuseFma, bool approximateDiv,
                        bool deferColLoads, bool materializeRowOutput,
-                       bool promoteScalars, bool enablePrefix,
+                       bool leaderFinalization, bool promoteScalars,
+                       bool enablePrefix,
                        unsigned predicatedValueIfs,
                        unsigned foldedConstexprSelects,
                        unsigned rowsPerBlock, unsigned reductionParts)
@@ -952,6 +951,7 @@ struct RowReductionLowering {
         enableApproximateDiv(approximateDiv),
         deferEpilogueColumnLoads(deferColLoads),
         materializeSharedRowOutput(materializeRowOutput),
+        useLeaderFinalization(leaderFinalization),
         promoteRank0ScalarInputs(promoteScalars),
         enableSortedPrefix(enablePrefix),
         requestedRowsPerBlock(rowsPerBlock),
@@ -973,7 +973,7 @@ struct RowReductionLowering {
   }
 
   /// Prove that an authored scalar tensor is the static trailing extent N.
-  /// This consumes only the concrete tensor constant or the receipt-bound
+  /// This consumes only the concrete tensor constant or the contract-bound
   /// scalar equality already admitted by match(); runtime sample values never
   /// participate. Casts and a select whose two arms prove the same extent are
   /// transparent.
@@ -2027,6 +2027,14 @@ struct RowReductionLowering {
     }
     if (requestedVectorWidth == 4 && !useVec4 && !useHalfVec4)
       return failure();
+    if (useLeaderFinalization) {
+      int64_t numWarps = (T + 31) / 32;
+      if (sched.kind != KRegister || requestedRowsPerBlock != 1 ||
+          requestedReductionParts != 1 || reduces.size() < 2 || T < 64 ||
+          (T % 32) != 0 || numWarps > 32 ||
+          (numWarps & (numWarps - 1)) != 0)
+        return failure();
+    }
     return success();
   }
 
@@ -3124,7 +3132,7 @@ struct RowReductionLowering {
     }
 
     b.create<func::ReturnOp>(loc);
-    attachConcreteStateReceipt(
+    attachConcreteStateAttributes(
         gpuFn, T, predicatedValueIfCount, foldedConstexprSelectCount,
         /*rowsPerBlock=*/1, emittedApproximateDivCount,
         static_cast<unsigned>(launchScalars.size()),
@@ -3551,7 +3559,7 @@ struct RowReductionLowering {
                                   : "tiled_frontier_warp")
             : (reduces.size() > 1 ? "tiled_shared_multi_reduce"
                                   : "tiled_shared");
-    attachConcreteStateReceipt(gpuFn, T, predicatedValueIfCount,
+    attachConcreteStateAttributes(gpuFn, T, predicatedValueIfCount,
                                foldedConstexprSelectCount, 1,
                                emittedApproximateDivCount, 0, 0,
                                /*materializedSharedRowOutput=*/false,
@@ -3935,7 +3943,7 @@ struct RowReductionLowering {
     b.create<gpu::TerminatorOp>(loc);
     b.setInsertionPointAfter(launch);
     b.create<func::ReturnOp>(loc);
-    attachConcreteStateReceipt(gpuFn, T, predicatedValueIfCount,
+    attachConcreteStateAttributes(gpuFn, T, predicatedValueIfCount,
                                foldedConstexprSelectCount, 1,
                                emittedApproximateDivCount);
     fn.erase();
@@ -4691,7 +4699,7 @@ struct RowReductionLowering {
     b.setInsertionPointAfter(launch);
     b.create<func::ReturnOp>(loc);
 
-    attachConcreteStateReceipt(gpuFn, T, predicatedValueIfCount,
+    attachConcreteStateAttributes(gpuFn, T, predicatedValueIfCount,
                                foldedConstexprSelectCount, 1,
                                emittedApproximateDivCount);
     fn.erase();
@@ -5342,45 +5350,95 @@ struct RowReductionLowering {
       if (reduceNumWarps > 1)
         b.create<gpu::BarrierOp>(loc);
 
-      for (PendingRegisterReduce &item : pending) {
-        Value scalar = item.warpAcc;
-        if (reduceNumWarps > 1) {
-          // Every warp redundantly folds the compact partial vector.  Using a
-          // width-32 identity-padded fold gives every lane the block scalar
-          // without a second block barrier; measured Layer-C selection decides
-          // whether this synchronization tradeoff beats other candidates.
-          Value activeLane = b.create<arith::CmpIOp>(
-              loc, arith::CmpIPredicate::slt, reduceLane,
-              b.create<arith::ConstantIntOp>(loc, reduceNumWarps, 32));
-          auto loadWarp = b.create<scf::IfOp>(
-              loc, TypeRange{f32}, activeLane, /*withElseRegion=*/true);
-          {
-            OpBuilder::InsertionGuard guard(b);
-            b.setInsertionPointToStart(loadWarp.thenBlock());
-            Value laneIndex = b.create<arith::IndexCastOp>(
-                loc, b.getIndexType(), reduceLane);
-            Value total = b.create<memref::LoadOp>(
-                loc, reduceScratch[item.index], ValueRange{laneIndex});
-            b.create<scf::YieldOp>(loc, total);
-            b.setInsertionPointToStart(loadWarp.elseBlock());
-            Value identity = b.create<arith::ConstantOp>(
-                loc, b.getF32FloatAttr(item.info.ident));
-            b.create<scf::YieldOp>(loc, identity);
-          }
-          scalar = loadWarp.getResult(0);
-          for (int32_t delta = 1; delta < 32; delta <<= 1) {
-            Value other = b.create<gpu::ShuffleOp>(
-                              loc, scalar, delta, 32,
-                              gpu::ShuffleMode::XOR)
-                              .getShuffleResult();
-            scalar =
-                combineScalar(b, loc, item.info.op, scalar, other);
-          }
+      auto foldCompactPartials = [&](OpBuilder &builder,
+                                     PendingRegisterReduce &item) {
+        Value activeLane = builder.create<arith::CmpIOp>(
+            loc, arith::CmpIPredicate::slt, reduceLane,
+            builder.create<arith::ConstantIntOp>(loc, reduceNumWarps, 32));
+        auto loadWarp = builder.create<scf::IfOp>(
+            loc, TypeRange{f32}, activeLane, /*withElseRegion=*/true);
+        {
+          OpBuilder::InsertionGuard guard(builder);
+          builder.setInsertionPointToStart(loadWarp.thenBlock());
+          Value laneIndex = builder.create<arith::IndexCastOp>(
+              loc, builder.getIndexType(), reduceLane);
+          Value total = builder.create<memref::LoadOp>(
+              loc, reduceScratch[item.index], ValueRange{laneIndex});
+          builder.create<scf::YieldOp>(loc, total);
+          builder.setInsertionPointToStart(loadWarp.elseBlock());
+          Value identity = builder.create<arith::ConstantOp>(
+              loc, builder.getF32FloatAttr(item.info.ident));
+          builder.create<scf::YieldOp>(loc, identity);
         }
-        if (item.info.isMean)
-          scalar = finalizeMean(b, loc, scalar, nF);
-        uniform[item.red.getResult()] = scalar;
-        hoistUniforms(b, loc);
+        Value scalar = loadWarp.getResult(0);
+        for (int32_t delta = 1; delta < 32; delta <<= 1) {
+          Value other = builder.create<gpu::ShuffleOp>(
+                                    loc, scalar, delta, 32,
+                                    gpu::ShuffleMode::XOR)
+                                    .getShuffleResult();
+          scalar =
+              combineScalar(builder, loc, item.info.op, scalar, other);
+        }
+        return scalar;
+      };
+
+      if (useLeaderFinalization && reduceNumWarps > 1) {
+        Value firstWarp = b.create<arith::CmpIOp>(
+            loc, arith::CmpIPredicate::ult, tx,
+            b.create<arith::ConstantIndexOp>(loc, 32));
+        Value txZero = b.create<arith::CmpIOp>(
+            loc, arith::CmpIPredicate::eq, tx,
+            b.create<arith::ConstantIndexOp>(loc, 0));
+        SmallVector<Value> leaderScalars;
+        leaderScalars.reserve(pending.size());
+        for (PendingRegisterReduce &item : pending) {
+          auto leaderFold = b.create<scf::IfOp>(
+              loc, TypeRange{f32}, firstWarp, /*withElseRegion=*/true);
+          {
+            OpBuilder thenBuilder = leaderFold.getThenBodyBuilder();
+            Value scalar = foldCompactPartials(thenBuilder, item);
+            thenBuilder.create<scf::YieldOp>(loc, scalar);
+            OpBuilder elseBuilder = leaderFold.getElseBodyBuilder();
+            Value identity = elseBuilder.create<arith::ConstantOp>(
+                loc, elseBuilder.getF32FloatAttr(item.info.ident));
+            elseBuilder.create<scf::YieldOp>(loc, identity);
+          }
+          leaderScalars.push_back(leaderFold.getResult(0));
+        }
+        for (auto [item, scalar] : llvm::zip_equal(pending, leaderScalars)) {
+          auto publish = b.create<scf::IfOp>(loc, txZero,
+                                             /*withElseRegion=*/false);
+          OpBuilder::InsertionGuard guard(b);
+          b.setInsertionPointToStart(publish.thenBlock());
+          Value zero = b.create<arith::ConstantIndexOp>(loc, 0);
+          b.create<memref::StoreOp>(loc, scalar,
+                                    reduceScratch[item.index],
+                                    ValueRange{zero});
+        }
+        b.create<gpu::BarrierOp>(loc);
+        for (PendingRegisterReduce &item : pending) {
+          Value zero = b.create<arith::ConstantIndexOp>(loc, 0);
+          Value scalar = b.create<memref::LoadOp>(
+              loc, reduceScratch[item.index], ValueRange{zero});
+          if (item.info.isMean)
+            scalar = finalizeMean(b, loc, scalar, nF);
+          uniform[item.red.getResult()] = scalar;
+          hoistUniforms(b, loc);
+        }
+      } else {
+        for (PendingRegisterReduce &item : pending) {
+          Value scalar = item.warpAcc;
+          if (reduceNumWarps > 1) {
+            // Every warp redundantly folds the compact partial vector. Using a
+            // width-32 identity-padded fold gives every lane the block scalar
+            // without a second block barrier.
+            scalar = foldCompactPartials(b, item);
+          }
+          if (item.info.isMean)
+            scalar = finalizeMean(b, loc, scalar, nF);
+          uniform[item.red.getResult()] = scalar;
+          hoistUniforms(b, loc);
+        }
       }
       groupStart = groupEnd;
     }
@@ -5610,14 +5668,13 @@ struct RowReductionLowering {
     b.setInsertionPointAfter(launch);
     b.create<func::ReturnOp>(loc);
 
-    attachConcreteStateReceipt(gpuFn, T, predicatedValueIfCount,
-                               foldedConstexprSelectCount,
-                               requestedRowsPerBlock,
-                               emittedApproximateDivCount,
-                               launchScalars.size(),
-                               deferredColArgs.size(),
-                               stagedRowOutput.has_value(),
-                               elidedSharedRowMaterialization);
+    attachConcreteStateAttributes(
+        gpuFn, T, predicatedValueIfCount, foldedConstexprSelectCount,
+        requestedRowsPerBlock, emittedApproximateDivCount,
+        launchScalars.size(), deferredColArgs.size(),
+        stagedRowOutput.has_value(), elidedSharedRowMaterialization,
+        useLeaderFinalization ? StringRef("workgroup_leader_broadcast")
+                              : StringRef());
     fn.erase();
     return success();
   }
@@ -5645,6 +5702,7 @@ struct ConvertIntentRowReductionToGPUPass
                                  fuseFma, approximateDiv,
                                  deferEpilogueColLoads,
                                  materializeSharedRowOutput,
+                                 leaderFinalize,
                                  promoteRank0Scalars,
                                  enableSortedPrefix, predicatedValueIfs,
                                  foldedConstexprSelects, rowsPerBlock,
@@ -5658,6 +5716,7 @@ struct ConvertIntentRowReductionToGPUPass
                                fuseFma, approximateDiv,
                                deferEpilogueColLoads,
                                materializeSharedRowOutput,
+                               leaderFinalize,
                                promoteRank0Scalars,
                                enableSortedPrefix,
                                target.predicatedValueIfs,

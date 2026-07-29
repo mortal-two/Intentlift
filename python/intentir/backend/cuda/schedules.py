@@ -30,6 +30,7 @@ class RowSchedule:
     vector_width: int = 0
     fuse_fma: bool = False
     approximate_div: bool = False
+    leader_finalize: bool = False
     defer_epilogue_col_loads: bool = True
     promote_rank0_scalars: bool = True
     rows_per_block: int = 1
@@ -56,6 +57,8 @@ class RowSchedule:
             raise ValueError("row schedule fuse_fma must be a bool")
         if type(self.approximate_div) is not bool:
             raise ValueError("row schedule approximate_div must be a bool")
+        if type(self.leader_finalize) is not bool:
+            raise ValueError("row schedule leader_finalize must be a bool")
         if type(self.defer_epilogue_col_loads) is not bool:
             raise ValueError("row schedule defer_epilogue_col_loads must be a bool")
         if type(self.promote_rank0_scalars) is not bool:
@@ -105,6 +108,7 @@ class RowSchedule:
             f"vector-width={self.vector_width} "
             f"fuse-fma={'true' if self.fuse_fma else 'false'} "
             f"approximate-div={'true' if self.approximate_div else 'false'} "
+            f"leader-finalize={'true' if self.leader_finalize else 'false'} "
             "promote-rank0-scalars="
             f"{'true' if self.promote_rank0_scalars else 'false'} "
             "predicate-pure-value-if=true "
@@ -124,6 +128,7 @@ class RowSchedule:
             "vector_width": self.vector_width,
             "fuse_fma": self.fuse_fma,
             "approximate_div": self.approximate_div,
+            "leader_finalize": self.leader_finalize,
             "promote_rank0_scalars": self.promote_rank0_scalars,
             "defer_epilogue_col_loads": self.defer_epilogue_col_loads,
             "rows_per_block": self.rows_per_block,

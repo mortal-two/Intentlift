@@ -962,8 +962,8 @@ def _row_elements_per_thread(state: BackendSearchState) -> int:
 
 def _row_numeric_opportunities(
     state: BackendSearchState,
-) -> tuple[bool, bool]:
-    """Return A-visible FMA and division opportunities for row lowering."""
+) -> tuple[bool, bool, int]:
+    """Return A-visible numeric opportunities and last-axis reduction count."""
 
     payload = state.base.j.to_json()["intent"]["intent_function"]["body"]
     nodes: list[Mapping[str, Any]] = []
@@ -1017,7 +1017,119 @@ def _row_numeric_opportunities(
         )
         for node in nodes
     )
-    return has_fma, has_division
+    last_axis_reductions = sum(
+        node.get("op") == "reduce"
+        and node.get("attrs", {}).get("axes") == [1]
+        for node in nodes
+    )
+    return has_fma, has_division, last_axis_reductions
+
+
+def _row_materialization_opportunity(state: BackendSearchState) -> bool:
+    """Prove that A exposes the exact shared-row spill/elision choice.
+
+    The C++ lowering admits this state only when one authored rank-2 output is
+    also an ancestor of the sole row reduction and of another authored output.
+    Recover the same necessary graph fact from A before enumeration so kernels
+    without that intermediate do not spend finite search budget on requests
+    that the compiler must reject.  The C++ matcher remains the authoritative
+    sufficient legality check for vector width, aliasing, and expression form.
+    """
+
+    function = state.base.j.to_json()["intent"]["intent_function"]
+    raw_body = function.get("body", [])
+    raw_outputs = function.get("outputs", [])
+    if not isinstance(raw_body, list) or not isinstance(raw_outputs, list):
+        return False
+    body = [item for item in raw_body if isinstance(item, Mapping)]
+    output_names = {
+        str(item["name"])
+        for item in raw_outputs
+        if isinstance(item, Mapping) and isinstance(item.get("name"), str)
+    }
+    nodes_by_result = {
+        str(item["result"]): item
+        for item in body
+        if isinstance(item.get("result"), str)
+    }
+    reductions = [
+        item
+        for item in body
+        if item.get("op") == "reduce"
+        and isinstance(item.get("attrs"), Mapping)
+        and item["attrs"].get("axes") == [1]
+    ]
+    if len(reductions) != 1:
+        return False
+    reduction_operands = reductions[0].get("operands", [])
+    if not isinstance(reduction_operands, list) or len(reduction_operands) != 1:
+        return False
+    reduction_input = reduction_operands[0]
+    if not isinstance(reduction_input, str):
+        return False
+
+    def depends_on(value: str, ancestor: str, visiting: set[str]) -> bool:
+        if value == ancestor:
+            return True
+        if value in visiting:
+            return False
+        node = nodes_by_result.get(value)
+        if node is None:
+            return False
+        operands = node.get("operands", [])
+        if not isinstance(operands, list):
+            return False
+        visiting.add(value)
+        try:
+            return any(
+                isinstance(operand, str)
+                and depends_on(operand, ancestor, visiting)
+                for operand in operands
+            )
+        finally:
+            visiting.remove(value)
+
+    def contains_select(value: str, visiting: set[str]) -> bool:
+        if value in visiting:
+            return False
+        node = nodes_by_result.get(value)
+        if node is None:
+            return False
+        if node.get("op") == "select":
+            return True
+        operands = node.get("operands", [])
+        if not isinstance(operands, list):
+            return False
+        visiting.add(value)
+        try:
+            return any(
+                isinstance(operand, str) and contains_select(operand, visiting)
+                for operand in operands
+            )
+        finally:
+            visiting.remove(value)
+
+    for output in output_names:
+        producer = nodes_by_result.get(output)
+        if producer is None or producer.get("op") != "map_binary":
+            continue
+        result_type = producer.get("type", {})
+        if not isinstance(result_type, Mapping):
+            continue
+        shape = result_type.get("shape")
+        if not isinstance(shape, list) or len(shape) != 2:
+            continue
+        if not depends_on(reduction_input, output, set()):
+            continue
+        if not any(
+            other != output and depends_on(other, output, set())
+            for other in output_names
+        ):
+            continue
+        if contains_select(output, set()):
+            continue
+        return True
+    return False
 
 
 def _referenced_intent_inputs(state: BackendSearchState) -> frozenset[str]:
@@ -1133,9 +1245,10 @@ def enumerate_cuda_candidates(
         else ()
     )
     row_elements_per_thread = _row_elements_per_thread(state)
-    has_fma_opportunity, has_division_opportunity = (
+    has_fma_opportunity, has_division_opportunity, last_axis_reduction_count = (
         _row_numeric_opportunities(state)
     )
+    has_materialization_opportunity = _row_materialization_opportunity(state)
     elementwise_thread_hint = _elementwise_thread_hint(state)
     specialized: list[CudaSearchCandidate] = []
 
@@ -1225,18 +1338,19 @@ def enumerate_cuda_candidates(
             RowSchedule(32, 32, rows_per_block=rows)
             for rows in (2, 4, 8)
         )
-        row_schedule_bases.extend(
-            RowSchedule(
-                threads,
-                32,
-                vector_width=1,
-                promote_rank0_scalars=False,
-                defer_epilogue_col_loads=False,
-                reduction_parts=parts,
+        if last_axis_reduction_count == 1:
+            row_schedule_bases.extend(
+                RowSchedule(
+                    threads,
+                    32,
+                    vector_width=1,
+                    promote_rank0_scalars=False,
+                    defer_epilogue_col_loads=False,
+                    reduction_parts=parts,
+                )
+                for threads in (128, 256)
+                for parts in (2, 4, 8, 16, 32)
             )
-            for threads in (128, 256)
-            for parts in (2, 4, 8, 16, 32)
-        )
     if axes is not None and not axes.search_reduction_topology:
         # Schedule-Only keeps the concrete collective topology on the canonical
         # multi-warp hierarchy while still tuning its schedule parameters.
@@ -1253,9 +1367,16 @@ def enumerate_cuda_candidates(
         if (axes is None or axes.search_precision) and has_division_opportunity
         else (False,)
     )
+    leader_finalize_modes = (
+        (False, True)
+        if (axes is None or axes.search_reduction_topology)
+        and last_axis_reduction_count > 1
+        else (False,)
+    )
     materialize_shared_row_output_modes = (
         (True, False)
-        if axes is None or axes.search_structural_states
+        if (axes is None or axes.search_structural_states)
+        and has_materialization_opportunity
         else (True,)
     )
     promote_rank0_modes = (True, False) if has_runtime_rank0 else (False,)
@@ -1265,6 +1386,7 @@ def enumerate_cuda_candidates(
             schedule,
             fuse_fma=fuse_fma,
             approximate_div=approximate_div,
+            leader_finalize=leader_finalize,
             promote_rank0_scalars=promote,
             defer_epilogue_col_loads=defer,
             materialize_shared_row_output=materialize_row_output,
@@ -1272,10 +1394,15 @@ def enumerate_cuda_candidates(
         for schedule in row_schedule_bases
         for fuse_fma in fma_modes
         for approximate_div in approximate_div_modes
+        for leader_finalize in leader_finalize_modes
         for promote in promote_rank0_modes
         for defer in defer_column_modes
         for materialize_row_output in materialize_shared_row_output_modes
         if schedule.reduction_parts == 1
+        and (
+            not leader_finalize
+            or (schedule.block_threads > 32 and schedule.rows_per_block == 1)
+        )
     ]
     row_schedules.extend(
         schedule for schedule in row_schedule_bases if schedule.reduction_parts > 1
@@ -1317,6 +1444,8 @@ def enumerate_cuda_candidates(
                         if schedule.reduction_parts > 1
                         else "cuda.reduction.subgroup_rows.v1"
                         if schedule.rows_per_block > 1
+                        else "cuda.reduction.workgroup_leader_broadcast.v1"
+                        if schedule.leader_finalize
                         else "cuda.reduction.subgroup_shuffle.v1"
                         if schedule.block_threads == 32
                         else "cuda.reduction.workgroup_hierarchical.v1"
@@ -1578,6 +1707,8 @@ def enumerate_cuda_candidates(
                 if int(item.schedule.get("reduction_parts", 1)) > 1
                 else "subgroup_rows"
                 if int(item.schedule.get("rows_per_block", 1)) > 1
+                else "workgroup_leader"
+                if item.schedule.get("leader_finalize") is True
                 else "subgroup"
                 if int(item.schedule.get("block_threads", 64)) == 32
                 else "workgroup"
@@ -1632,9 +1763,15 @@ def enumerate_cuda_candidates(
         "row_reduction.workgroup.approximate_div.base",
         "row_reduction.subgroup_rows.approximate_div.base",
         "row_reduction.subgroup.approximate_div.base",
+        "row_reduction.workgroup_leader.plain.base",
+        "row_reduction.workgroup_leader.fma.base",
+        "row_reduction.workgroup_leader.approximate_div.base",
         "row_reduction.workgroup.plain.elide.base",
         "row_reduction.workgroup.fma.elide.base",
         "row_reduction.workgroup.approximate_div.elide.base",
+        "row_reduction.workgroup_leader.plain.elide.base",
+        "row_reduction.workgroup_leader.fma.elide.base",
+        "row_reduction.workgroup_leader.approximate_div.elide.base",
         "elementwise.stable-ex2.local",
         "elementwise.native-ptx.local",
         "row_reduction.workgroup.plain.local",
@@ -1765,6 +1902,7 @@ def enumerate_cuda_candidates(
             choice = (
                 bool(item.schedule.get("fuse_fma", False)),
                 bool(item.schedule.get("approximate_div", False)),
+                bool(item.schedule.get("leader_finalize", False)),
                 item.schedule.get("materialize_shared_row_output", True) is False,
             )
             return ("row_reduction", *choice) if any(choice) else None
@@ -1779,9 +1917,12 @@ def enumerate_cuda_candidates(
     # A finite IntentIR search must exercise each admitted same-path lowering
     # choice at more than one schedule without crowding out other paths.  Take
     # the first three distinct thread counts in the C-ranked Schedule-Only
-    # order, cross single numeric/materialization changes with all three, and
-    # exercise their interactions at the first schedule.  The remaining
-    # lowering paths retain their ordinary path-fair order afterwards.
+    # order and cross both individual changes and their interactions with all
+    # three.  A's opportunity gates make materialization mutually exclusive
+    # with multi-reduction finalization, so at most three independent axes are
+    # active here and the complete three-schedule cross fits budget 32 after the
+    # fixed Schedule-Only spine.  Remaining lowering paths retain their ordinary
+    # path-fair order afterwards.
     by_lowering_choice: dict[
         tuple[object, ...], list[CudaSearchCandidate]
     ] = {}
@@ -1815,14 +1956,11 @@ def enumerate_cuda_candidates(
 
     prioritized: list[CudaSearchCandidate] = []
     prioritized_ids: set[str] = set()
-    for spine_index, spine_item in enumerate(representative_spine):
+    for spine_item in representative_spine:
         coordinate = schedule_coordinate(spine_item)
         if coordinate is None:
             continue
-        choices = (
-            *single_choices,
-            *(interaction_choices if spine_index == 0 else ()),
-        )
+        choices = (*single_choices, *interaction_choices)
         for choice in choices:
             candidates = by_lowering_choice[choice]
             match = next(

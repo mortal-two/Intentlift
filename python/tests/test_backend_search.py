@@ -96,6 +96,31 @@ def _fresh_softmax_state():
     )
 
 
+def _fresh_fused_add_rms_norm_state():
+    root = Path(__file__).parents[2]
+    snapshot, _path = load_production_snapshot(
+        root / "corpus" / "production-jc-v2",
+        "fused_add_rms_norm",
+    )
+    prepared = prepare_production_workload("fused_add_rms_norm")
+    case = build_workload_jc_suite(prepared, snapshot.j, snapshot.c).cases[0]
+    constexpr = constexpr_input_bindings(
+        snapshot.j,
+        case.refeval.input_binding_map,
+        case.values,
+    )
+    base = materialize_j(
+        snapshot.j,
+        case.refeval.dims_map,
+        constexpr_bindings=constexpr,
+    )
+    return attach_c(
+        base,
+        snapshot.c,
+        BackendTarget("cuda", "sm_120a"),
+    )
+
+
 def test_c_changes_only_candidate_order() -> None:
     with_c, without_c = _states()
     ordered = enumerate_cuda_candidates(with_c)
@@ -165,9 +190,53 @@ def test_intentir_budget_crosses_softmax_numeric_lowering_with_schedules() -> No
         and item.schedule.get("approximate_div") is True
         and item.schedule.get("materialize_shared_row_output") is True
     }
+    leader_threads = {
+        int(item.schedule["block_threads"])
+        for item in within_budget
+        if item.lowering_path_kind == "row_reduction"
+        and item.schedule.get("leader_finalize") is True
+        and item.schedule.get("materialize_shared_row_output") is True
+        and item.schedule.get("approximate_div") is not True
+    }
+    combined_threads = {
+        int(item.schedule["block_threads"])
+        for item in within_budget
+        if item.lowering_path_kind == "row_reduction"
+        and item.schedule.get("leader_finalize") is True
+        and item.schedule.get("approximate_div") is True
+        and item.schedule.get("materialize_shared_row_output") is True
+    }
 
     assert set(schedule_threads[:3]) <= approximate_threads
+    assert set(schedule_threads[:3]) <= leader_threads
+    assert set(schedule_threads[:3]) <= combined_threads
+    assert all(
+        item.schedule.get("materialize_shared_row_output") is not False
+        for item in candidates
+        if item.lowering_path_kind == "row_reduction"
+    )
+    assert all(
+        item.schedule.get("reduction_parts", 1) == 1
+        for item in candidates
+        if item.lowering_path_kind == "row_reduction"
+    )
     assert len({item.candidate_id for item in candidates}) == len(candidates)
+
+
+def test_materialization_axis_requires_a_visible_shared_row_output() -> None:
+    state = _fresh_fused_add_rms_norm_state()
+    axes = next(
+        item
+        for item in standard_ablation_plan(32)
+        if item.arm is ExperimentArm.E3_STATE_SEARCH
+    )
+    candidates = enumerate_cuda_candidates(state, axes=axes)
+
+    assert any(
+        item.schedule.get("materialize_shared_row_output") is False
+        for item in candidates
+        if item.lowering_path_kind == "row_reduction"
+    )
 
 
 def test_fresh_splitk_search_enumerates_real_rows_per_block_schedules() -> None:
@@ -350,6 +419,13 @@ def test_row_schedule_names_multi_stage_reduction_mapping() -> None:
         RowSchedule(32, 32, rows_per_block=2, reduction_parts=2)
 
 
+def test_row_schedule_names_leader_finalization_mapping() -> None:
+    leader = RowSchedule(256, 32, leader_finalize=True)
+
+    assert "leader-finalize=true" in leader.pass_argument
+    assert leader.to_dict()["leader_finalize"] is True
+
+
 def test_row_schedule_names_intermediate_materialization_choice() -> None:
     keep_in_ssa = RowSchedule(
         128,
@@ -410,6 +486,9 @@ def test_ablation_axes_expand_concrete_reduction_and_fma_states() -> None:
         not item.schedule.get("approximate_div", False) for item in e2
     )
     assert all(
+        not item.schedule.get("leader_finalize", False) for item in e2
+    )
+    assert all(
         item.schedule.get("materialize_shared_row_output", True) is True
         for item in e2
     )
@@ -437,8 +516,8 @@ def test_ablation_axes_expand_concrete_reduction_and_fma_states() -> None:
         for item in n1
         if item.lowering_path_kind == "row_reduction"
     )
-    assert any(
-        item.schedule.get("materialize_shared_row_output") is False
+    assert all(
+        item.schedule.get("materialize_shared_row_output") is not False
         for item in n1
         if item.lowering_path_kind == "row_reduction"
     )

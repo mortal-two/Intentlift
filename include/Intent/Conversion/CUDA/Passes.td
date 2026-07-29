@@ -61,14 +61,14 @@ def ConvertIntentRowReductionToGPU
            "Emit explicit f32 math.fma for single-use mul+add epilogues and "
            "sum-of-products reduction accumulation. Disabled by default. The "
            "production search may enable it as an observation-changing concrete "
-           "MLIR state; that state must pass the frozen Q on D_search before "
+           "MLIR state; that state must pass Q on D_search before "
            "performance selection and the fixed winner must pass D_cert.">,
     Option<"approximateDiv", "approximate-div", "bool", "false",
            "Lower f32 division to multiplication by a native approximate "
            "reciprocal (or a rounded constant reciprocal for a proven static "
            "divisor). Disabled by default because its allowed observations differ "
            "from divf. Production search treats it as an observation-changing "
-           "precision state and requires frozen Q/D_search and D_cert.">,
+           "precision state and requires Q/D_search and D_cert.">,
     Option<"deferEpilogueColLoads", "defer-epilogue-col-loads", "bool", "true",
            "Delay epilogue-only contiguous Col loads until after all row "
            "collectives, reducing cross-barrier register pressure. Set false "
@@ -83,6 +83,13 @@ def ConvertIntentRowReductionToGPU
            "required final store, eliminating one full-row reload. The false "
            "state is admitted only when that exact graph is proved; unsupported "
            "graphs fail closed.">,
+    Option<"leaderFinalize", "leader-finalize", "bool", "false",
+           "For a multi-warp register reduction with two or more reduction ops, "
+           "let warp 0 fold the compact per-warp partials, publish one scalar per "
+           "reduction, and broadcast it after a workgroup barrier. False retains "
+           "the state in which every warp redundantly folds the same partials. "
+           "Both states preserve the same arithmetic tree; unsupported graphs "
+           "fail closed.">,
     Option<"promoteRank0Scalars", "promote-rank0-scalars", "bool", "true",
            "Load dynamic rank-0 inputs once in the host launch stub and pass "
            "them to the outlined kernel by value. False retains device-side "
@@ -97,7 +104,7 @@ def ConvertIntentRowReductionToGPU
            "dataflow plus intent.select before row-graph admission. The "
            "transformation is restricted to typed side-effect-free MLIR arms, "
            "does not specialize the predicate, and records its actual count "
-           "in the concrete-state receipt.">,
+           "in the concrete MLIR attributes.">,
     Option<"rowsPerBlock", "rows-per-block", "unsigned", "1",
            "Independent logical rows assigned to one block. 1 preserves the "
            "one-block-per-row lowering. Values 2, 4, or 8 enable the fail-closed "
