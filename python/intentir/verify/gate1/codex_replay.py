@@ -66,7 +66,10 @@ versus atomic realization), and every authored route/order/time/control relation
 Use `critical_facts.lexical_regions` as the exact region-by-region construction
 ledger and `critical_facts.cross_region_order` as the exact ordering checklist;
 use `critical_facts.broadcast_obligations` as the exact operand/access/consumer
-rank-projection checklist, and consume every
+rank-projection checklist. Every `critical_facts.sharing_obligations` source is
+one compiler-visible materialization: bind it once and reuse that exact local at
+all listed consumers; do not recompute an equivalent predicate, address, load,
+or value at each use. Consume every
 `critical_facts.route_extent_transforms` item at its exact existing route slot.
 These views only reindex the same J/pi and add no
 realization decision. For each authored J.boundary.broadcasts item, preserve the

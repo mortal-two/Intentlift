@@ -387,7 +387,7 @@ packet 最大约 47 KiB，因此正常路径不再强制调用 manifest、requir
 obligations。startup 另带一个由同一 packet 精确投影的 bounded `critical_facts.v4`：只列 semantic
 dimension carrier、IEEE special typed constant、`physical_iterations`、
 `reduction_linearization + consumer route`、按 loop/branch region 分组的 instance membership 与
-跨 region order、route-local extent transforms，并把每条 `J.boundary.broadcasts` 与其原 operand type、matching boundary access、
+跨 region order、route-local extent transforms、`pi.sharing` source/consumers，并把每条 `J.boundary.broadcasts` 与其原 operand type、matching boundary access、
 named consumer/operand ordinal 无损并置，使 Replay 不必在大图中重新
 寻找这些易漏的已作者化事实；它不推断、补齐或推荐实现。超过上限时，首次 manifest 自带 bounded authored-requirements：J op/boundary 与 π
 instance mechanism、route/order/time/control 的 exact 重索引，并只为被明确截断的页提供 focused

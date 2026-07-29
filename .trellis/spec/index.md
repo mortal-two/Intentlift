@@ -44,7 +44,7 @@ loop 的 argument/yield/result tuple 作者化该顺序，Replay 不按 dtype/re
 64 KiB 的完整匿名 J/C/π/U_f 只在首次上下文 exact embedding 一次，并额外
 并置一个只重索引 semantic dimension carrier、IEEE special typed constant、physical iteration、
 `reduction_linearization + consumer route`、loop/branch lexical region membership、cross-region
-order 与 route-local extent transform，以及 authored broadcast 的 operand type/access/named consumer
+order、route-local extent transform 与 `pi.sharing` source/consumers，以及 authored broadcast 的 operand type/access/named consumer
 的 exact `critical_facts.v4`；超限
 packet 才接收一个自带 authored op/boundary、π instance mechanism 与 time/control/terminal 清单的
 compact manifest，并只查询明确遗漏页。Codex Lift v12 / knowledge v70 同样直接嵌入 exact Harness ABI

@@ -772,8 +772,8 @@ def _packet_critical_facts(packet: Mapping[str, Any]) -> dict[str, Any]:
     closed fact classes whose distant cross-references are otherwise easy to
     overlook in a large ABI: semantic dimension carriers, typed IEEE-special
     constants, physical-iteration relations, reduction linearizations, exact
-    lexical-region membership, cross-region order, and explicit broadcast
-    obligations.
+    lexical-region membership, cross-region order, explicit broadcast
+    obligations, and authored sharing.
     """
 
     j = packet.get("j", {})
@@ -913,8 +913,31 @@ def _packet_critical_facts(packet: Mapping[str, Any]) -> dict[str, Any]:
         )
     routes = pi.get("routes", [])
     refinements = pi.get("refinements", [])
-    if not isinstance(routes, list) or not isinstance(refinements, list):
-        raise TypeError("packet pi routes/refinements must be arrays")
+    sharing_value = pi.get("sharing", [])
+    if (
+        not isinstance(routes, list)
+        or not isinstance(refinements, list)
+        or not isinstance(sharing_value, list)
+    ):
+        raise TypeError("packet pi routes/refinements/sharing must be arrays")
+    sharing_obligations = []
+    for relation in sharing_value:
+        if not isinstance(relation, Mapping):
+            continue
+        source = relation.get("source")
+        consumers = relation.get("consumers")
+        if not isinstance(source, str) or source not in instances:
+            continue
+        if not isinstance(consumers, list) or not all(
+            isinstance(item, str) and item in instances for item in consumers
+        ):
+            continue
+        sharing_obligations.append(
+            {
+                "source": instance_scope(source),
+                "consumers": [instance_scope(item) for item in consumers],
+            }
+        )
     reduction_linearizations = []
     for refinement in refinements:
         if not isinstance(refinement, Mapping) or refinement.get(
@@ -942,6 +965,7 @@ def _packet_critical_facts(packet: Mapping[str, Any]) -> dict[str, Any]:
         "semantic_dimension_carriers": dimension_carriers,
         "typed_ieee_special_constants": special_constants,
         "broadcast_obligations": broadcast_obligations,
+        "sharing_obligations": sharing_obligations,
         "physical_iterations": physical_iterations,
         "route_extent_transforms": route_extent_transforms,
         "reduction_linearizations": reduction_linearizations,
