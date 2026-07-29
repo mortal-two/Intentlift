@@ -75,7 +75,8 @@ projection。RefEval 与 CUDA analyzer 使用同一 protocol/core output structu
 保留第二套 wire parser 或 B-consumption 判定。
 
 当前 fresh artifact 的 typed relations 同样进入这一唯一消费边界：v4 的
-`value_dimension_relations` 与 `consumer_extensions`、v5 的 `access_guard_relations` 全部由 Lift LLM
+`value_dimension_relations` 与 `consumer_extensions`、v5 的 `access_guard_relations`、v11的
+`dimension_relations`全部由 Lift LLM
 显式写入 J。shared core 只能验证并投影已声明 relation；不得从相等 runtime value、reducer/fill、
 Source、C、π 或 target pattern 补造 relation。对任一 active relation，consumer 必须产生明确 receipt
 或返回 unsupported/error，不能在发射 A 时静默丢弃 B。
@@ -136,8 +137,11 @@ lowerer 的 compiler contract；独立 backend conformance 只做 CI/debug/evalu
 - 不能满足上述 full-domain/access/reduction/broadcast relation 的 incomplete padding、update padding、
   affine/gathered access、alias/inout、一般 mutable storage与 padded mean 仍显式 unsupported。
 
-artifact.v4/v5 的新增 closed profile 继续遵守同一规则：
+artifact.v4/v5/v11 的新增 closed profile 继续遵守同一规则：
 
+- `dimension_relations`按其acyclic closed grammar从public base dimensions求出derived dimensions，
+  并核对重复valuation；RefEval与production materializer共享该J-only消费规则，不从Harness、C、π、
+  Source TTIR或concrete shape补关系；
 - `value_dimension_relations` 在 invocation 时检查已声明 integral rank-0 J value 与 symbolic dimension
   valuation 精确相等；不从 valuation coincidence 反向生成 relation；
 - `consumer_extensions` 是 `sum|max|min` reduce/scan 的逐 consumer 域外 typed two-sided identity，
@@ -177,10 +181,10 @@ seed，未知 op 会停止 TypeCheck 的窄传播；value-free projector 对 gua
 provenance 进入未知 op 均显式 consumer-unsupported。v11 继承 v10 的上述 invocation-local、可证明全真的
 guard/runtime-bound 例外；fixed code 不补写 count、domain、predicate 或 reduction contract。
 
-当前 shared projection receipt 为 `intentir.j-functional-boundary.v20`，scalar RefEval 为
-`j_scalar_cpu_mlir_v22`，closed structured reference 为
-`intentir.j-structured-cpu-reference.v9`，typed relation-indexed reference 为
-`intentir.j-contract-indexed-cpu-reference.v1`。v21/v20 完整继承既有唯一 node-less logical-input load、
+当前 shared projection receipt 为 `intentir.j-functional-boundary.v22`，scalar RefEval 为
+`j_scalar_cpu_mlir_v24`，closed structured reference 为
+`intentir.j-structured-cpu-reference.v10`，typed relation-indexed reference 为
+`intentir.j-contract-indexed-cpu-reference.v2`。v22 完整继承既有唯一 node-less logical-input load、
 通用 multi-reduction padding closure、当前 Gate2 invocation 的 runtime predicate tautology proof、
 v4/v5 relations、direct-store partition、closed typed contraction、product-domain mixed-radix、精确
 transpose 与 pointwise broadcast consumer。logical inout 的每个 post-state reload 由唯一 producer

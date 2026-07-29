@@ -15,6 +15,7 @@ from minisweagent.config.intentir_context_query import (
     _feedback_category_value,
     _harness_abi_value,
     _source_outline_value,
+    _source_observer_value,
 )
 
 from intentir.extraction.providers.codex_cli import (
@@ -30,6 +31,7 @@ from intentir.extraction.providers.provider import ProviderConfig, get_provider
 from intentir.verify.scrc_runner import CandidateLiftError
 
 from .miniswe import MiniSWELiftAdapter, _input_files, _trajectory_bytes
+from .compiler_observation import observe_anonymous_source_ttir
 from .scrc import (
     CANDIDATE_CHECK_PROTOCOL,
     SCRCExtraction,
@@ -42,8 +44,8 @@ from .scrc import (
 )
 
 
-CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v11"
-CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v69"
+CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v12"
+CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v70"
 CODEX_CLI_TURN_TIMEOUT_SECONDS = 900.0
 
 _EAGER_DIRECT_FEEDBACK_CATEGORIES = frozenset(
@@ -56,12 +58,20 @@ input/ is immutable; work/, output/, and tmp/ are writable. Never inspect any
 other path and never use network tools.
 
 The startup files already contain the exact Source, Harness view, feedback,
-minimal example and focused lookup tools. The final `<source-aware-startup>`
+minimal example, exact Source-side TTIR observation when compilation succeeds,
+and focused lookup tools. The final `<source-aware-startup>`
 block directly contains the compact exact Harness ABI ledger; consume it without
 a mandatory tool call. Read Source and only the additional files you need. Author
 every field of one complete output/candidate.json containing exactly J, C, and
 pi. You may keep proof-irrelevant notes or a model-authored build script under
 work/.
+
+Use compiler observation only when it helps resolve Source control, time,
+def-use, effects, or materialization. Start with
+`python input/tools/context_query.py --input-root input --output-root output source-observer`
+or `source-ttir-outline`; page exact TTIR, query one %SSA def-use token, or read
+one observer fingerprint path only as needed. This observation describes the
+same anonymous Source specialization. It never prescribes or constructs J/C/pi.
 
 Treat Harness `shape` as one valuation: map every `shape_contract` h* to a
 distinct/repeated symbolic J dimension as declared, preserve scalar and bound
@@ -136,7 +146,7 @@ def _source_aware_startup_context(workspace: Any, *, fresh_owner: bool) -> dict[
     """Return exact existing ABI or closed-feedback facts without a tool round."""
 
     if fresh_owner:
-        return {
+        value = {
             "protocol": "intentir.codex-lift-startup-view.v1",
             "fresh_owner": True,
             "harness_abi": _harness_abi_value(workspace.input_dir, 1, 80),
@@ -146,6 +156,16 @@ def _source_aware_startup_context(workspace: Any, *, fresh_owner: bool) -> dict[
                 "field, semantic classification, or repair is generated"
             ),
         }
+        try:
+            value["source_compiler_observation"] = _source_observer_value(
+                workspace.input_dir
+            )
+        except (FileNotFoundError, KeyError, TypeError, ValueError) as exc:
+            value["source_compiler_observation"] = {
+                "status": "unavailable",
+                "diagnostic": f"{type(exc).__name__}: {exc}",
+            }
+        return value
 
     frontier = json.loads(
         (workspace.input_dir / "feedback_frontier.json").read_text(
@@ -251,12 +271,16 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
     )
     repair_effort: str | None = None
     _codex_session: Any = field(default=None, init=False, repr=False)
+    _source_ttir_observation: dict[str, Any] | None = field(
+        default=None, init=False, repr=False
+    )
 
     def close(self) -> None:
         session = self._codex_session
         self._codex_session = None
         if session is not None:
             session.close()
+        self._source_ttir_observation = None
         super().close()
 
     def _remaining_seconds(self) -> float:
@@ -334,8 +358,19 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
         )
         candidate_check_context = scrc_candidate_check_context(prepared)
         round_index = len(self._records) + 1
+        if self._source_ttir_observation is None:
+            prepared_packet = json.loads(prepared.user_input)
+            anonymous_source = prepared_packet.get("anonymous_source")
+            anonymous_view = prepared_packet.get("harness_compiler_view")
+            self._source_ttir_observation = observe_anonymous_source_ttir(
+                anonymous_source,
+                anonymous_view,
+            )
         files = {
-            **_input_files(prepared),
+            **_input_files(
+                prepared,
+                source_ttir_observation=self._source_ttir_observation,
+            ),
             "candidate_check.json": "null\n",
         }
 
@@ -716,6 +751,11 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
             "candidate_check": list(check_results),
             "timeout_events": list(timeout_events),
             "tool_bridge": bridge.evidence,
+            "source_ttir_observation": {
+                key: value
+                for key, value in self._source_ttir_observation.items()
+                if key not in {"ttir", "fingerprint"}
+            },
             "isolation": {
                 "outer": "bubblewrap-host-fs-v1",
                 "input": "read-only",

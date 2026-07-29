@@ -989,6 +989,100 @@ def direct_unit_dimension_refs(
     )
 
 
+def direct_dimension_lower_bounds(
+    constraints: Sequence[str],
+) -> dict[str, int]:
+    """Return only direct, contradiction-free integer lower bounds.
+
+    This is deliberately smaller than affine or SMT reasoning.  It consumes
+    authored conjunction atoms of the forms ``k <= x``, ``k < x``, ``x >= k``,
+    ``x > k`` and direct equality with an integer literal.  Bounds hidden
+    behind arithmetic, disjunction or another dimension are ignored.  A
+    directly contradictory interval authorizes nothing.
+    """
+
+    lower: dict[str, int] = {}
+    upper: dict[str, int] = {}
+
+    def update_lower(reference: str, value: int) -> None:
+        lower[reference] = max(lower.get(reference, value), value)
+
+    def update_upper(reference: str, value: int) -> None:
+        upper[reference] = min(upper.get(reference, value), value)
+
+    def consume(expression: ContractExpr) -> None:
+        if expression.op == "and":
+            for argument in expression.args:
+                consume(argument)
+            return
+        if expression.op not in {"lt", "le", "gt", "ge", "eq"}:
+            return
+        if len(expression.args) != 2:
+            return
+        left, right = expression.args
+        reference: str | None = None
+        literal: int | None = None
+        reference_on_left = False
+        if (
+            left.op == "ref"
+            and isinstance(left.value, str)
+            and right.op == "int"
+            and isinstance(right.value, int)
+            and not isinstance(right.value, bool)
+        ):
+            reference = left.value
+            literal = right.value
+            reference_on_left = True
+        elif (
+            right.op == "ref"
+            and isinstance(right.value, str)
+            and left.op == "int"
+            and isinstance(left.value, int)
+            and not isinstance(left.value, bool)
+        ):
+            reference = right.value
+            literal = left.value
+        if reference is None or literal is None:
+            return
+
+        if expression.op == "eq":
+            update_lower(reference, literal)
+            update_upper(reference, literal)
+        elif reference_on_left:
+            if expression.op == "ge":
+                update_lower(reference, literal)
+            elif expression.op == "gt":
+                update_lower(reference, literal + 1)
+            elif expression.op == "le":
+                update_upper(reference, literal)
+            elif expression.op == "lt":
+                update_upper(reference, literal - 1)
+        else:
+            if expression.op == "le":
+                update_lower(reference, literal)
+            elif expression.op == "lt":
+                update_lower(reference, literal + 1)
+            elif expression.op == "ge":
+                update_upper(reference, literal)
+            elif expression.op == "gt":
+                update_upper(reference, literal - 1)
+
+    for index, constraint in enumerate(constraints):
+        consume(
+            parse_contract_expr(
+                constraint,
+                expected=ContractSort.BOOLEAN,
+                context=f"J.dimension_constraints[{index}]",
+            )
+        )
+
+    return {
+        reference: value
+        for reference, value in lower.items()
+        if reference not in upper or value <= upper[reference]
+    }
+
+
 def _snapshot(value: Mapping[str, Any]) -> str:
     return json.dumps(
         value,
@@ -1211,6 +1305,7 @@ __all__ = [
     "canonical_broadcast_axes",
     "canonicalize_gate1_artifact",
     "canonicalize_semantic_archive",
+    "direct_dimension_lower_bounds",
     "direct_unit_dimension_refs",
     "elaborate_j",
     "j_elaboration",

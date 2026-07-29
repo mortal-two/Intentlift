@@ -219,6 +219,12 @@ output/effect/guard、以及 π regions/instances/iterations/carriers/terminal/r
 字段投影，任何缺失仍由 Lift 自己从 Source 作者化，任何冲突仍由 CandidateCheck/TypeCheck
 fail closed。
 
+Codex Lift v12另在owner创建时，以同一匿名Source和冻结匿名compiler view执行一次
+`intentir.lift-source-ttir.v1`。成功结果只在该branch的immutable input中保存exact TTIR与现有Gate1
+observer fingerprint；owner可分页读取TTIR、按token或单个`%SSA`查看局部上下文、读取syntax
+outline或一个fingerprint path。该工具不解释Source、不决定J/C/π所有权、不生成relation或patch；
+raw TTIR/fingerprint不写入模型trajectory，更不得进入Replay、证书或production。
+
 Codex Lift v11 / knowledge v68 将同一 exact Harness ABI ledger 与 syntax-only
 `source-outline.v2` 直接放入首次 owner prompt，并将
 后续 closed feedback frontier 中已有的 interface、reduction、predicate/effect 与 op-multiset 直接
@@ -229,7 +235,7 @@ representation-only op 差异只要求 owner 对照 Source 重新审查已有 π
 提交前的强制串行协议。MiniSWE knowledge v64 暴露同一 outline/checklist 合同。该 transport 不生成
 `logical_ref`、J/C/π 字段或修复。
 
-当前持久 owner 使用 `artifact.v10 / decode.v15 / typecheck.v27 / candidate-check.v1` 实现上述
+当前持久 owner 使用 `artifact.v11 / decode.v16 / typecheck.v28 / candidate-check.v1` 实现上述
 CandidateCheck、C attachment、numeric-cast dependent typing 与 result-relation compatibility。v7
 继承 v6，v6 继承 v5；v5 继承 v4 的
 rank-0 closed signature、Layer-A graph value typing total 与显式 NumPy broadcast 合同；它只消费 Lift
@@ -343,11 +349,18 @@ TypeCheck 不做 SMT、range proof 或一般语义等价证明。检查失败时
 ReplayLLM(J,pi,MaskC(C);U_f) -> complete source R_f
 ```
 
-当前 packet protocol 为 `intentir.scrc.replay-input.v1`，Triton 公共上下文为
+当前 packet protocol 为 `intentir.scrc.replay-input.v2`，Triton 公共上下文为
 `public_frontend_context_v17`；source-aware Codex/MiniSWE Lift 的当前 knowledge receipt 分别为
-`intentir.lift-knowledge.v69 / intentir.lift-knowledge.v65`，source-blind MiniSWE/Codex Replay backend 为
-`minisweagent.intentir-replay.v30 / openai.codex-cli.intentir-replay.v26`。这些版本必须随 fresh run 原样记录；旧 packet/context/knowledge
+`intentir.lift-knowledge.v70 / intentir.lift-knowledge.v65`，source-blind MiniSWE/Codex Replay backend 为
+`minisweagent.intentir-replay.v30 / openai.codex-cli.intentir-replay.v28`。这些版本必须随 fresh run 原样记录；旧 packet/context/knowledge
 evidence 不因实现升级而被重判。
+
+Replay v28把一个formal round保持为同一个fresh、单writer、source-blind coding episode，总active
+wall time默认3600秒。它可重复编辑、运行`replay-check.v12`和public synthetic compile，并只对当前
+Replay源码查询其自身TTIR/fingerprint。累计provider上下文超过阈值或有draft的turn timeout时，可以在
+同一workspace内更换transport thread；新thread只重读exact packet、当前Replay bytes与closed host
+diagnostic，不接收语义摘要、旧episode、Source或Gate。该rollover不复用跨round Replay，也不增加
+认证输入。
 
 Replay v30/v26 完整执行 v10 `route_extent_transforms` 的 exact packet、critical ledger、obligation audit 与
 source-blind static ingress；它只拒绝缺失 closed floor/ceil-div spelling，不判断 target-local Gate1
@@ -514,7 +527,7 @@ relift diagnostic view 必须明确区分。
 禁止把 diff 交给 Replay、patch 旧 Replay、只输出 artifact 增量，或跨候选复用 Replay。
 
 协议允许独立的 `intentir.scrc.gate1-diagnostic-recheck.v1` 对一份已落盘 artifact 做只读诊断：
-保持 artifact bytes/digest 不变，执行当前 canonical Decode、`typecheck.v27`、一个 fresh normal Replay
+保持 artifact bytes/digest 不变，执行当前 canonical Decode、`typecheck.v28`、一个 fresh normal Replay
 与 Gate1，并写入独立 `recheck-NNN` evidence。它不调用 Lift、不运行 masked-J 或 Gate2、不参与
 candidate/winner 选择，也不改变 parent run 的 verdict 或 certificate；因此只用于定位固定 consumer/
 observer/context 改动，不能冒充 fresh SCRC rerun。provider 调用前必须把 selected case/current prepared

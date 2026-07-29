@@ -20,9 +20,10 @@ from typing import Any, Mapping
 
 from .canonical_j import ContractSort, elaborate_j, j_elaboration
 from .contract_semantics import ContractSemanticsError, TypedContractProgram
+from .dimension_relation import DimensionRelationError, validate_dimension_relations
 
 
-CONTRACT_IR_PROTOCOL = "intentir.canonical-contract-ir.v1"
+CONTRACT_IR_PROTOCOL = "intentir.canonical-contract-ir.v2"
 
 
 class ContractIRProjectionError(ValueError):
@@ -160,6 +161,14 @@ def _logical_sort_hints(j: Any) -> dict[str, ContractSort]:
                         f"symbolic dimension {extent!r} conflicts with a boolean value"
                     )
                 hints[extent] = ContractSort.INTEGER
+    for relation in j.dimension_relations:
+        for extent in (relation.result, relation.expr.arg):
+            previous = hints.get(extent)
+            if previous not in {None, ContractSort.INTEGER}:
+                raise ContractIRProjectionError(
+                    f"dimension relation reference {extent!r} conflicts with a boolean value"
+                )
+            hints[extent] = ContractSort.INTEGER
     return hints
 
 
@@ -183,6 +192,10 @@ def project_contract_ir(j: Any) -> CanonicalContractIR:
     """Project all of J's contract without testing a target capability profile."""
 
     canonical = elaborate_j(j)
+    try:
+        validate_dimension_relations(canonical)
+    except DimensionRelationError as exc:
+        raise ContractIRProjectionError(str(exc)) from exc
     elaboration = j_elaboration(canonical)
     hints = _logical_sort_hints(canonical)
     global_sorts = dict(hints)
@@ -260,6 +273,9 @@ def project_contract_ir(j: Any) -> CanonicalContractIR:
         "dimension_constraints": list(canonical.dimension_constraints),
         "value_dimension_relations": [
             item.to_json() for item in canonical.value_dimension_relations
+        ],
+        "dimension_relations": [
+            item.to_json() for item in canonical.dimension_relations
         ],
         "scopes": [item.to_json() for item in canonical.scopes],
         "storage": [item.to_json() for item in canonical.storage],

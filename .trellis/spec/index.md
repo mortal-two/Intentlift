@@ -19,15 +19,17 @@ lowering 和测试要求，不形成另一套设计。上位文档按作用域�
 若派生规范与上位设计冲突，应修订派生规范；不得通过增加 interface artifact、hash gate、
 epoch、commitment、额外认证 Gate 或兼容旁路来调和冲突。
 
-当前 fresh-run 栈为 `artifact.v10 / decode.v15 / typecheck.v27 / candidate-check.v1 / replay-check.v11`。它继承 rank-0
+当前 fresh-run 栈为 `artifact.v11 / decode.v16 / typecheck.v28 / candidate-check.v1 / replay-check.v12`。它继承 rank-0
 closed signature、Layer-A total typing、显式 broadcast、canonical reduce/contraction、absent carrier
 拒绝、functional-domain closure、rank-0 liveness、padded-mean necessary condition 与 closed
-`pi.iterations`，并验证 Lift 已作者化的 value/dimension、consumer-extension、access-guard、typed
+`pi.iterations`，并验证 Lift 已作者化的 value/dimension、closed dimension definition、consumer-extension、access-guard、typed
 control/inout/output-binding/terminal-control 关系，并检查 v10 authored route-local extent transform 的
 existing-route、C/J attachment 与 closed divisor/rounding。fixed code只诊断，不翻译别名、补齐 attrs、生成 handle/relation、
 改图或修复 artifact；历史 wire/receipt 继续按自身版本读取，不静默升级或重判。当前 Agent execution
-receipt 为 `intentir.lift-knowledge.v69 / intentir.lift-knowledge.v65 / minisweagent.intentir-replay.v30 / openai.codex-cli.intentir-replay.v26`；
-artifact.v10 的 `physical_iterations/physical_loop_carriers` 表达 structured J loop 外、由已作者化
+receipt 为 `intentir.lift-knowledge.v70 / intentir.lift-knowledge.v65 / minisweagent.intentir-replay.v30 / openai.codex-cli.intentir-replay.v28`；
+artifact.v11 的 `dimension_relations`只接受identity、常数加/乘、常数ceil-div与round-up的acyclic closed grammar；
+relation由Lift从Source作者化，所有J消费者只能验证/求值，不能从Harness valuation、grid、C、π或TTIR生成。
+artifact.v10+ 的 `physical_iterations/physical_loop_carriers` 表达 structured J loop 外、由已作者化
 reduce/contraction 或 boundary access/domain 锚定的物理时间，
 feedback frontier/category、candidate-control 与 Replay local-axis 合同只改 agent 消费，不改变接受
 集合。持久 Lift owner 固定使用创建时的私有 Source/Harness/schema/knowledge/tool 快照；续轮只刷新
@@ -45,8 +47,10 @@ loop 的 argument/yield/result tuple 作者化该顺序，Replay 不按 dtype/re
 order 与 route-local extent transform，以及 authored broadcast 的 operand type/access/named consumer
 的 exact `critical_facts.v4`；超限
 packet 才接收一个自带 authored op/boundary、π instance mechanism 与 time/control/terminal 清单的
-compact manifest，并只查询明确遗漏页。Codex Lift v11 / knowledge v69 同样直接嵌入 exact Harness ABI
-与 relift frontier，并一次并列展开非递归 direct hard categories；原有只读工具退为可选局部自读。
+compact manifest，并只查询明确遗漏页。Codex Lift v12 / knowledge v70 同样直接嵌入 exact Harness ABI
+与 relift frontier，并一次并列展开非递归 direct hard categories；此外以
+`intentir.lift-source-ttir.v1`在同一匿名specialization上编译一次Source，TTIR与observer fingerprint只在
+source-aware owner workspace中按需查询，不进入Replay或artifact。原有只读工具退为可选局部自读。
 两条路径都不生成 artifact/realization，没有 Gate
 或认证权限。
 
@@ -83,9 +87,9 @@ cooperative stop并保存 receipt；hidden Gate2 尚未生成，因此调度次�
 outer batch protocol 是 `intentir.scrc.batch.v3`；其 `observer_unsupported` 只表示 Source observer
 能力缺口，不是候选非法或 `NO_CLOSURE`，历史 batch v2 report 不重判。
 
-当前 scalar RefEval 是 `j_scalar_cpu_mlir_v22`，shared functional-boundary receipt 是
-`intentir.j-functional-boundary.v20`；relation-indexed pointwise 的 J-only 执行 receipt 是
-`intentir.j-contract-indexed-cpu-reference.v1`。主 SCRC runner 选定 Gate2 winner 后，才为当前 invocation 调用
+当前 scalar RefEval 是 `j_scalar_cpu_mlir_v24`，shared functional-boundary receipt 是
+`intentir.j-functional-boundary.v22`；structured与relation-indexed J-only执行receipt分别是
+`intentir.j-structured-cpu-reference.v10 / intentir.j-contract-indexed-cpu-reference.v2`。主 SCRC runner 选定 Gate2 winner 后，才为当前 invocation 调用
 RefEval-only 入口；projection library 不选择 winner。该入口用 J 自身
 rank-0 logical `i1`/integer values 和完整 closed dimensions 逐 access 证明 predicate 对完整 logical
 domain 恒真；不改 J、不读 Source/C/π、不进入 Lift feedback。invocation-local

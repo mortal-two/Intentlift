@@ -146,6 +146,7 @@ def _bootstrap(input_root: Path, output_root: Path) -> None:
     files = {}
     for relative in (
         "source.py",
+        "source_ttir.json",
         "harness_view.json",
         "feedback_frontier.json",
         "feedback.json",
@@ -158,6 +159,7 @@ def _bootstrap(input_root: Path, output_root: Path) -> None:
             "bytes": path.stat().st_size,
             "read_command": {
                 "source.py": f"{QUERY_COMMAND} source --start 1 --lines 160",
+                "source_ttir.json": f"{QUERY_COMMAND} source-observer",
                 "harness_view.json": f"{QUERY_COMMAND} harness",
                 "feedback_frontier.json": f"{QUERY_COMMAND} feedback-frontier",
                 "feedback.json": f"{QUERY_COMMAND} feedback",
@@ -191,6 +193,7 @@ def _bootstrap(input_root: Path, output_root: Path) -> None:
             f"Use `{QUERY_COMMAND} harness-abi` for the exact compact p*/c*/shape-coordinate ledger.",
             f"Use `{QUERY_COMMAND} source-find TEXT --context 3` for literal Source lookup.",
             f"Use `{QUERY_COMMAND} source-outline --start 1 --count 32` to locate syntax-level control before paging a long Source.",
+            f"When available, use `{QUERY_COMMAND} source-observer` and `{QUERY_COMMAND} source-ttir-outline` before paging exact TTIR.",
             f"After drafting, run `{QUERY_COMMAND} candidate-abi` for a read-only ABI diff.",
             f"Run `{QUERY_COMMAND} candidate-control` to audit authored control, time, effects, and outputs before CandidateCheck.",
             f"Inspect a draft with `{QUERY_COMMAND} candidate --path j.PATH` or `candidate-find HANDLE`.",
@@ -328,6 +331,155 @@ def _source(input_root: Path, start: int, line_count: int) -> None:
             f"\n[source continues: run `{QUERY_COMMAND} source --start "
             f"{next_line} --lines {line_count}`]"
         )
+
+
+def _source_ttir_observation(input_root: Path) -> dict[str, Any]:
+    path = input_root / "source_ttir.json"
+    if not path.is_file() or path.is_symlink():
+        raise FileNotFoundError("source_ttir.json is unavailable for this Lift input")
+    value = _load_json(path)
+    if not isinstance(value, dict):
+        raise TypeError("source_ttir.json must contain one object")
+    return value
+
+
+def _source_ttir_text(input_root: Path) -> str:
+    value = _source_ttir_observation(input_root)
+    if value.get("status") != "pass":
+        diagnostic = value.get("diagnostic", "Source TTIR observation did not pass")
+        raise ValueError(str(diagnostic))
+    text = value.get("ttir")
+    if not isinstance(text, str) or not text:
+        raise ValueError("passing source_ttir.json contains no TTIR text")
+    return text
+
+
+def _source_ttir(input_root: Path, start: int, line_count: int) -> None:
+    if start < 1 or line_count < 1:
+        raise ValueError("Source TTIR start and lines must be positive")
+    lines = _source_ttir_text(input_root).splitlines()
+    selected: list[str] = []
+    used = 0
+    for ordinal, line in enumerate(lines[start - 1 :], start=start):
+        rendered = f"{ordinal:5d} | {line}"
+        if selected and used + len(rendered) + 1 > MAX_OUTPUT_CHARS - 300:
+            break
+        selected.append(rendered)
+        used += len(rendered) + 1
+        if len(selected) >= line_count:
+            break
+    print("\n".join(selected))
+    next_line = start + len(selected)
+    if next_line <= len(lines):
+        print(
+            f"\n[TTIR continues: run `{QUERY_COMMAND} source-ttir --start "
+            f"{next_line} --lines {line_count}`]"
+        )
+
+
+def _source_ttir_find(
+    input_root: Path, query: str, context: int, *, exact_token: bool = False
+) -> None:
+    if not query or len(query) > 256 or any(character.isspace() for character in query):
+        raise ValueError("Source TTIR query must be one bounded non-whitespace token")
+    if context < 0 or context > 20:
+        raise ValueError("Source TTIR context must be in [0, 20]")
+    if exact_token and not query.startswith("%"):
+        raise ValueError("Source TTIR def-use query must name one %SSA value")
+    lines = _source_ttir_text(input_root).splitlines()
+    needle = query if exact_token else query.casefold()
+    matches = [
+        index
+        for index, line in enumerate(lines)
+        if (needle in line if exact_token else needle in line.casefold())
+    ]
+    if not matches:
+        raise KeyError(f"no Source TTIR lines match {query!r}")
+    ranges: list[tuple[int, int]] = []
+    for index in matches:
+        begin = max(0, index - context)
+        end = min(len(lines), index + context + 1)
+        if ranges and begin <= ranges[-1][1]:
+            ranges[-1] = (ranges[-1][0], max(ranges[-1][1], end))
+        else:
+            ranges.append((begin, end))
+    rendered_blocks: list[str] = []
+    used = 0
+    for begin, end in ranges:
+        block = "\n".join(
+            f"{ordinal + 1:5d} | {lines[ordinal]}"
+            for ordinal in range(begin, end)
+        )
+        if rendered_blocks and used + len(block) + 2 > MAX_OUTPUT_CHARS - 200:
+            break
+        rendered_blocks.append(block)
+        used += len(block) + 2
+    print("\n\n".join(rendered_blocks))
+    if len(rendered_blocks) < len(ranges):
+        print("\n[more TTIR matches omitted; use a narrower token]")
+
+
+def _source_ttir_outline(input_root: Path, start: int, count: int) -> None:
+    if start < 1 or count < 1 or count > 200:
+        raise ValueError("Source TTIR outline start/count must be positive and count <= 200")
+    interesting = (
+        "module ", "tt.func", "func.func", "^bb", "scf.for", "scf.if",
+        "scf.while", "cf.br", "cf.cond_br", "tt.load", "tt.store",
+        "tt.atomic", "tt.reduce", "tt.scan", "tt.dot", "scf.yield",
+        "tt.return", "func.return",
+    )
+    rows = [
+        {"line": ordinal, "text": line.strip()}
+        for ordinal, line in enumerate(
+            _source_ttir_text(input_root).splitlines(), start=1
+        )
+        if any(token in line for token in interesting)
+    ]
+    selected = rows[start - 1 : start - 1 + count]
+    _emit_json(
+        {
+            "protocol": "intentir.lift-source-ttir-outline.v1",
+            "start": start,
+            "returned": len(selected),
+            "total": len(rows),
+            "rows": selected,
+            "next_start": start + len(selected) if start - 1 + len(selected) < len(rows) else None,
+            "authority": "syntax navigation over exact Source TTIR; no semantic classification or J/C/pi inference",
+        }
+    )
+
+
+def _source_observer_value(input_root: Path) -> dict[str, Any]:
+    value = _source_ttir_observation(input_root)
+    ttir = value.get("ttir")
+    summary = {
+        key: item
+        for key, item in value.items()
+        if key not in {"ttir", "fingerprint"}
+    }
+    summary["ttir_lines"] = len(ttir.splitlines()) if isinstance(ttir, str) else 0
+    fingerprint = value.get("fingerprint")
+    summary["fingerprint_sections"] = (
+        list(fingerprint) if isinstance(fingerprint, dict) else []
+    )
+    summary["queries"] = [
+        f"{QUERY_COMMAND} source-ttir-outline --start 1 --count 80",
+        f"{QUERY_COMMAND} source-ttir-find TOKEN --context 3",
+        f"{QUERY_COMMAND} source-ttir-def-use %SSA --context 2",
+        f"{QUERY_COMMAND} source-observer --path fingerprint.loops",
+        f"{QUERY_COMMAND} source-observer --path fingerprint.structured_ifs",
+        f"{QUERY_COMMAND} source-observer --path fingerprint.memory_effects",
+        f"{QUERY_COMMAND} source-observer --path fingerprint.dataflow_edges",
+    ]
+    return summary
+
+
+def _source_observer(input_root: Path, path: str | None) -> None:
+    value = _source_ttir_observation(input_root)
+    if path is not None:
+        _emit_json(_resolve_json_path(value, path))
+        return
+    _emit_json(_source_observer_value(input_root))
 
 
 def _source_find(input_root: Path, query: str, context: int) -> None:
@@ -1858,6 +2010,20 @@ def main() -> int:
     source_outline = subparsers.add_parser("source-outline")
     source_outline.add_argument("--start", type=int, default=1)
     source_outline.add_argument("--count", type=int, default=32)
+    source_ttir = subparsers.add_parser("source-ttir")
+    source_ttir.add_argument("--start", type=int, default=1)
+    source_ttir.add_argument("--lines", type=int, default=160)
+    source_ttir_find = subparsers.add_parser("source-ttir-find")
+    source_ttir_find.add_argument("query")
+    source_ttir_find.add_argument("--context", type=int, default=3)
+    source_ttir_def_use = subparsers.add_parser("source-ttir-def-use")
+    source_ttir_def_use.add_argument("value")
+    source_ttir_def_use.add_argument("--context", type=int, default=2)
+    source_ttir_outline = subparsers.add_parser("source-ttir-outline")
+    source_ttir_outline.add_argument("--start", type=int, default=1)
+    source_ttir_outline.add_argument("--count", type=int, default=80)
+    source_observer = subparsers.add_parser("source-observer")
+    source_observer.add_argument("--path")
     harness = subparsers.add_parser("harness")
     harness.add_argument("--path")
     harness_abi = subparsers.add_parser("harness-abi")
@@ -1903,6 +2069,18 @@ def main() -> int:
         _source_find(args.input_root, args.query, args.context)
     elif args.command == "source-outline":
         _source_outline(args.input_root, args.start, args.count)
+    elif args.command == "source-ttir":
+        _source_ttir(args.input_root, args.start, args.lines)
+    elif args.command == "source-ttir-find":
+        _source_ttir_find(args.input_root, args.query, args.context)
+    elif args.command == "source-ttir-def-use":
+        _source_ttir_find(
+            args.input_root, args.value, args.context, exact_token=True
+        )
+    elif args.command == "source-ttir-outline":
+        _source_ttir_outline(args.input_root, args.start, args.count)
+    elif args.command == "source-observer":
+        _source_observer(args.input_root, args.path)
     elif args.command == "harness":
         _harness(args.input_root, args.path)
     elif args.command == "harness-abi":

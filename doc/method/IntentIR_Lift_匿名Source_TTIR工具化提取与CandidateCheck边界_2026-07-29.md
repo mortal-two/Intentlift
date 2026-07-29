@@ -1,15 +1,16 @@
 # Lift 使用匿名 Source / TTIR 的方法
 
-> 状态：方法决议，TTIR 工具待实现；不修改 SCRC 数学与 `(J,C,π)` 边界。
+> 状态：已实现；不修改 SCRC 数学与 `(J,C,π)` 边界。
 
 ## 方法
 
-匿名 Source 已可在冻结的匿名 Harness binding 下真实编译。下一步让同一个持久 Lift agent：
+匿名 Source 在冻结的匿名 Harness binding 下编译一次，exact TTIR与同一Gate1 observer fingerprint进入
+该branch的只读Lift workspace。同一个持久Lift agent按需查询：
 
 ```text
 匿名 Source + 匿名 Harness view
         → 调用现有 frontend Compile/Observe
-        → 查看匿名、规范化 TTIR
+        → 分页查看匿名 TTIR / token与%SSA局部上下文 / observer path
         → LLM 自己生成完整 (J,C,π)
         → CandidateCheck
         → 外部正式 TypeCheck → fresh blind Replay
@@ -39,5 +40,6 @@ SCRC_CERT = TypeCheck ∧ Gate1 ∧ Gate2
 
 ## 当前状态
 
-- 已有：匿名 Source、真实编译绑定、Compile/Observe、CandidateCheck、Source-blind Replay。
-- 待做：向 Lift workspace 开放只读 Source-side TTIR 查询，并补齐匿名化、权限和回归测试。
+Codex Lift已提供`source-observer`、`source-ttir-outline`、`source-ttir-find`、
+`source-ttir-def-use`和分页`source-ttir`。真实DYT canary编译通过；工具不读取Gate、不生成artifact，
+raw TTIR也不进入trajectory或Replay。正式验收只看后续真实pilot，不恢复独立测试套件。

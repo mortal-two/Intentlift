@@ -52,7 +52,7 @@ feedback，不复制、重排或覆盖当前 candidate，也不因 host 仓库�
 提交 candidate，同一 branch 的持久 owner 可以在下一真实 user continuation 中接收最后一次实际 source-free evaluation 的至多 20 条
 `rule_code/path`；不得包含 observed value、patch、hidden/sibling 信息。Source 仅作为该 owner 原有
 source-aware conversation 的上下文保留。Harness 不应用摘要修补 artifact，submission `PASS` 也不能
-替代正式 Runner 的 `typecheck.v27`。
+替代正式 Runner 的 `typecheck.v28`。
 
 generic exact-text patch 不是 Harness semantic construction：LLM 必须同时提供唯一 old/new 字符串，
 runtime 只原子替换并使旧 PASS 失效；Harness 不解析字段、不推荐修改、不生成 corrected artifact。
@@ -94,6 +94,10 @@ RefEval 的功能输入。
 新增前端首先实现上述薄 adapter；不要求 J-to-frontend lowerer、RuleCard、source-to-π parser
 或 Kernel-specific mapping table。observer 强度可以逐步增强，并必须记录 frontend、observer
 profile/version、compiler/dump stage 与 canonicalization version。
+
+Source-aware Lift可以在完全相同的匿名Source、selected specialization与anonymous compiler view上
+调用现有`Compile_f/Observe_f`，并把exact TTIR/fingerprint放入该branch只读workspace。Harness只负责
+重建这次可编译调用；它不从TTIR生成J/C/π、semantic outline或patch。Source TTIR绝不进入Replay。
 
 ## 高性能工作负载投影与有界隔离批量入口
 
@@ -229,7 +233,7 @@ refinement carrier；sandbox CandidateCheck 复用同一个 source-free checker�
 不能分别重采样。
 由于 `none -> opaque(dtype=none)` 与 canonical contraction/stage-multiplicity 是新增的模型
 可见构造合同；v14 加入 generic functional logical-domain closure 与上述有界诊断反馈合同。fresh
-Codex/MiniSWE Lift knowledge 当前使用 `intentir.lift-knowledge.v69/v65`，新增的通用作者合同要求
+Codex/MiniSWE Lift knowledge 当前使用 `intentir.lift-knowledge.v70/v65`，新增的通用作者合同要求
 IEEE infinity/NaN 保持 closed typed constant，不以最大有限数近似，并允许 `physical_iterations` 在
 同 subject/axis 的 boundary access/domain 上表达 epilogue/transfer traversal；fixed checker 不代选
 constant 或 physical anchor；Source reduction 省略 frontend axis 且存在 compiler-visible flatten 时，
@@ -273,9 +277,10 @@ checker只拒绝遗漏、literal specialization、coordinate 合并或 valuation
 v6另要求每次运行写入非空`input_profile` token，记录本次valuation来自哪个model/upstream/direct-tile
 调用；该token只属于Harness/evidence，不进入LLM语义输入、J/C/π或Gate predicate。
 当前 RoPE/MRoPE adapter只提升 Source ABI 与 tensor axes 唯一确定的 batch、sequence、head-count、
-head-dim identity；相等 valuation 的 tensor batch 与 broadcast batch使用不同 `h*`。Llama4 的
-`full_head_dim=2*head_dim_half`、SplitK 的产品/derived capacity/variant family在当前 closed relation
-vocabulary中保持 selected-variant literal，不能伪造独立 `h*` 或从 grid/string contract反推公式。
+head-dim identity；相等 valuation 的 tensor batch 与 broadcast batch使用不同 `h*`。Harness仍不表达
+derived formula；若Source确立`full_head_dim=2*head_dim_half`或rounded capacity，Lift使用
+artifact.v11 closed `dimension_relations`作者化。SplitK variant family仍先由Harness选择一个程序；
+不得把compile-time family伪装成J runtime branch，也不得从grid/string/current valuation反推公式。
 
 scalar/constexpr 的归属按以下机械边界处理：
 

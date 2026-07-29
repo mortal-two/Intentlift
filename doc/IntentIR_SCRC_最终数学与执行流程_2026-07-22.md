@@ -400,7 +400,9 @@ TypeCheck 还检查 closed comparison class 与 output dtype、A 依赖图和 B 
 见最终执行流程第 6.1 节。v1 中 `RequiresTolerance=true` 即拒绝显式或默认 `exact`，没有自由文本
 或“更强合同”例外；阈值仍完全由外部 Q 决定。该 reassociation fact 只约束 SCRC comparison class，
 不是 production backend permission。
-当前 `typecheck.v27` 只新增上述 route extent transform 的 existing-route、required positive-int C、
+当前 `typecheck.v28`新增J dimension relation的closed grammar、引用、唯一性与acyclic检查，并拒绝
+同tensor多个不同却都无consumer锚点的node-less load views；不从valuation、Harness或compiler
+observation生成relation，也不猜access consumer。v27只新增 route extent transform 的 existing-route、required positive-int C、
 matching J-domain attachment/axis 与 realize-anchor dependent checks；checker 不生成 relation、
 divisor 或 attachment。v26 继承 v25，只把 J direct `x* == 1`/`1 == x*` 作为 symbolic singleton
 证据来消费同一 J 的显式 broadcast axes；缺失、非 1 或冲突 direct equality 拒绝。它不做
@@ -480,9 +482,9 @@ dependent checking 夸写成 Source topology 的形式证明。
 
 首版不需要让 TypeCheck 成为 SMT 或完整图证明器。最小可行实现只需 fail closed 地完成上述局部检查。
 
-当前合并协议为 `artifact.v10 / decode.v15 / typecheck.v27 / candidate-check.v1 / replay-check.v11`；
-Replay packet envelope 仍是 `replay-input.v1`，Triton context 为 `public_frontend_context_v17`，
-Codex/MiniSWE Lift knowledge 为 v68/v64，MiniSWE Replay backend 为 v30，Codex Replay backend 为 v26。
+当前合并协议为 `artifact.v11 / decode.v16 / typecheck.v28 / candidate-check.v1 / replay-check.v12`；
+Replay packet envelope 为 `replay-input.v2`，Triton context 为 `public_frontend_context_v17`，
+Codex/MiniSWE Lift knowledge 为 v70/v65，MiniSWE Replay backend 为 v30，Codex Replay backend 为 v28。
 v30/v26 完整执行 authored route extent transform 合同：将其纳入 `critical_facts.v4`、
 `replay-obligation-audit.v3` 与 source-blind static ingress；只检查 closed floor/ceil-div spelling，
 不生成 relation/code，也不替代 Gate1；单独存在该 relation 也必须审阅当前 exact Replay bytes。
@@ -523,10 +525,12 @@ v3 历史上引入 `pi.iterations`；v4 引入 J-owned `value_dimension_relation
 `consumer_extensions` 等 typed relations；v5 引入 J-owned `access_guard_relations`；v6/v7 分别引入
 typed `effect_if/value_if`；v8 增加 π-owned `physical_iterations/physical_loop_carriers`；v9 增加
 π-owned `terminal_controls`，只为 J 已存在的 `effect_if` 指定 terminal/continuation arm topology；
-v10 增加依附既有 C/J/route 的 closed `route_extent_transforms`。每个当前字段都由
+v10 增加依附既有 C/J/route 的 closed `route_extent_transforms`，v11增加J-owned closed
+`dimension_relations`。后者只含identity、常数加/乘、常数ceil-div与round-up的acyclic grammar，
+consumer只能验证/求值，不从Harness/grid/C/π/TTIR生成。每个当前字段都由
 Lift LLM 作为完整 `(J,C,π)` 的一部分显式作者，Decode/TypeCheck/CandidateCheck 只解析、检查、拒绝
 和诊断，不补造 relation 或 artifact。v1-v7 保持各自 wire bytes/digest 与字段集合，不得静默升级、
-刷新或追认；v8/v9 同样保持各自字段集合。SCRC 后 π 停止，
+刷新或追认；v8/v9/v10 同样保持各自字段集合。SCRC 后 π 停止，
 production backend 仍只消费 J+C；iteration witness 不进入 `Impl(J)` search。
 
 ## 4.4 持久 Lift owner 内的非认证 CandidateCheck
@@ -594,7 +598,7 @@ artifact 语义，不增加 acceptance path，正式 Runner 仍独立执行 Deco
 扩充 TypeCheck judgement 必须提升 `v_TC`，CandidateCheck 与正式 Runner 必须记录并使用同一版本；
 新版本不静默重判历史证书。
 
-当前 fresh-run 取 `v_TC = typecheck.v27`。v27 增加上述 route extent transform dependent check；
+当前 fresh-run 取 `v_TC = typecheck.v28`。v28增加上述dimension relation dependent check；v27增加route extent transform dependent check；
 v26 增加上述 direct singleton broadcast dependent check；
 v25 增加上述 reduction-linearization topology check；v24 增加上述 special-constant 与 transfer pointer-route
 closed checks，并完整继承 v23；v23 增加 canonical output binding 的完整 dtype/shape equality；v22 增加 signature mode 与 J boundary partition 的 exact
@@ -645,9 +649,9 @@ consumer topology 由 functional consumer 明确 unsupported。该判定只读 J
 将 mean 自动改写；若 Source 是 masked sum 后显式除法，Lift 必须完整生成
 `reduce(sum) + explicit div`。
 
-Scalar RefEval 当前能力版本为 `j_scalar_cpu_mlir_v22`，shared projection 为
-`intentir.j-functional-boundary.v20`，typed relation-indexed reference 为
-`intentir.j-contract-indexed-cpu-reference.v1`。它们完整继承 v14/v13、v12/v11 与 v10/v3；v10 已继承 v9，v9 已继承 v8 的唯一 node-less
+Scalar RefEval 当前能力版本为 `j_scalar_cpu_mlir_v24`，shared projection 为
+`intentir.j-functional-boundary.v22`，typed relation-indexed reference 为
+`intentir.j-contract-indexed-cpu-reference.v2`。它们完整继承 v14/v13、v12/v11 与 v10/v3；v10 已继承 v9，v9 已继承 v8 的唯一 node-less
 logical-input load，并把 padded reduction 从 single input/output/sum 特例改为 J-only 的通用闭合：
 每个 predicated direct access 必须
 覆盖自身完整 logical domain，仍携带 masked axis 的 access 使用同一 predicate；每个 logical reduce

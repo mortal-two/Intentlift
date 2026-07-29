@@ -366,7 +366,11 @@ def _last_candidate_check_feedback(
     return None
 
 
-def _input_files(request: SCRCLiftRequest) -> dict[str, str]:
+def _input_files(
+    request: SCRCLiftRequest,
+    *,
+    source_ttir_observation: Mapping[str, Any] | None = None,
+) -> dict[str, str]:
     packet = json.loads(request.user_input)
     anonymous_source = packet.get("anonymous_source")
     if not isinstance(anonymous_source, str) or not anonymous_source:
@@ -418,6 +422,10 @@ continuations for the same Source; Replay remains a separate fresh process.
 
 - `source.py`: alpha-renamed Source available only to Lift.
 - `harness_view.json`: trusted anonymous compiler/Harness view.
+- `source_ttir.json`: optional exact compilation of this same anonymous Source
+  under the frozen anonymous Harness specialization, plus the existing Gate1
+  observer fingerprint. It is source-aware navigation evidence only and never
+  proposes or constructs J/C/pi.
 - `feedback.json`: null on the first round, otherwise only the explicitly
   allowed previous parser/TypeCheck/Gate1/Gate2 feedback, previous candidate, or the
   last worker's bounded source-free CandidateCheck diagnostic summary.
@@ -481,6 +489,10 @@ continuations for the same Source; Replay remains a separate fresh process.
   load/store/atomic call sites, and names that were lexically bound before a loop
   and written inside it. These remain navigation checklists, not inferred
   effects, carriers, or frontend tuple order.
+  When `source_ttir.json` is available, use `source-ttir`,
+  `source-ttir-find`, `source-ttir-outline`, `source-ttir-def-use`, and
+  `source-observer --path ...` to inspect exact compiler facts without loading
+  the complete TTIR/fingerprint. These commands never infer a J/C/pi field.
   Its `feedback --path`, `candidate --path`, and `candidate-find` commands are
   bounded read-only inspection over already-mounted data and the current draft.
   `bootstrap` copies an explicitly supplied previous artifact only when no
@@ -601,7 +613,7 @@ Old tool calls and observations may appear as deterministic hash receipts in the
 model packet. Re-read the persistent files for exact content; the runtime never
 summarizes or interprets J/C/pi semantics during compaction.
 """
-    return {
+    files = {
         "README.md": readme,
         "source.py": anonymous_source,
         "harness_view.json": json.dumps(
@@ -631,6 +643,18 @@ summarizes or interprets J/C/pi semantics during compaction.
         "tools/schema_query.py": schema_query,
         "tools/context_query.py": context_query,
     }
+    if source_ttir_observation is not None:
+        files["source_ttir.json"] = (
+            json.dumps(
+                dict(source_ttir_observation),
+                indent=2,
+                sort_keys=True,
+                ensure_ascii=False,
+                allow_nan=False,
+            )
+            + "\n"
+        )
+    return files
 
 
 @dataclass

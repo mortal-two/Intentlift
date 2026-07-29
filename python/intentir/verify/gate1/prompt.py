@@ -17,7 +17,8 @@ from .pi import (
 )
 
 
-REPLAY_PACKET_SCHEMA = "intentir.scrc.replay-input.v1"
+REPLAY_PACKET_SCHEMA = "intentir.scrc.replay-input.v2"
+LEGACY_REPLAY_PACKET_SCHEMAS = frozenset({"intentir.scrc.replay-input.v1"})
 PUBLIC_FRONTEND_CONTEXT = {
     "triton": {
         "context_policy": "public_frontend_context_v17",
@@ -475,6 +476,7 @@ _REPLAY_COMPONENT_KEYS = {
             "kernel_id", "intent", "node_ids", "boundary", "signature",
             "scopes", "storage", "dimension_constraints",
             "value_dimension_relations",
+            "dimension_relations",
         }
     ),
     "c": frozenset({"slots"}),
@@ -495,8 +497,12 @@ _REPLAY_COMPONENT_KEYS = {
         }
     ),
 }
-_HISTORICAL_J_KEYS_WITHOUT_VALUE_DIMENSION_RELATIONS = (
-    _REPLAY_COMPONENT_KEYS["j"] - {"value_dimension_relations"}
+_HISTORICAL_J_KEY_SETS = frozenset(
+    {
+        _REPLAY_COMPONENT_KEYS["j"] - {"dimension_relations"},
+        _REPLAY_COMPONENT_KEYS["j"]
+        - {"dimension_relations", "value_dimension_relations"},
+    }
 )
 _U_F_KEYS = frozenset(
     {
@@ -695,7 +701,7 @@ def _validate_source_isolated_payload(
         historical_j = (
             not require_active_context
             and component == "j"
-            and actual == _HISTORICAL_J_KEYS_WITHOUT_VALUE_DIMENSION_RELATIONS
+            and frozenset(actual) in _HISTORICAL_J_KEY_SETS
         )
         if not isinstance(value, Mapping) or (
             actual != expected and not historical_j
@@ -718,7 +724,10 @@ def _validate_source_isolated_payload(
         raise SchemaError(
             f"Replay payload u_f is missing field(s): {missing_u_f}"
         )
-    if u_f["protocol"] != REPLAY_PACKET_SCHEMA:
+    if u_f["protocol"] != REPLAY_PACKET_SCHEMA and not (
+        not require_active_context
+        and u_f["protocol"] in LEGACY_REPLAY_PACKET_SCHEMAS
+    ):
         raise SchemaError("Replay payload u_f uses an unsupported protocol")
     try:
         frontend = Frontend(u_f["frontend"])
@@ -987,8 +996,14 @@ def _instructions(*, frontend: Frontend, masked: bool) -> str:
         "Consume only the declared relation where J shapes, domains, predicates, "
         "or operators require it. Never infer, create, delete, repair, weaken, or "
         "strengthen a value/dimension relation from concrete values, parameter "
-        "positions, C, pi, Harness conventions, or frontend behavior. A boundary "
-        "access with no predicate is unconditional: "
+        "positions, C, pi, Harness conventions, or frontend behavior. "
+        "Treat every J.dimension_relations item as an authored logical-dimension "
+        "definition. Implement exactly identity/add_const/mul_const/ceil_div_const/"
+        "round_up_const over its named x* handles wherever the graph, indices, "
+        "predicates, or realization topology consume the derived extent. Never "
+        "infer a relation from concrete shapes, C, pi, grid, or frontend rounding, "
+        "and never replace an authored relation with the current valuation. A "
+        "boundary access with no predicate is unconditional: "
         "never derive a redundant mask from domains, grid extents, C, or defensive "
         "safety. "
         "Treat each J effect_if as effect control, not a value expression. Ordinarily "

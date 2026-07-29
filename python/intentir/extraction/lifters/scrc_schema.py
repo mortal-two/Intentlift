@@ -162,6 +162,45 @@ def _value_dimension_relation_schema() -> dict[str, Any]:
     )
 
 
+def _dimension_relation_schema() -> dict[str, Any]:
+    dimension = {"type": "string", "pattern": r"^x[0-9]+$"}
+    identity = _closed_object(
+        {
+            "op": {"type": "string", "enum": ["identity"]},
+            "arg": dimension,
+        },
+        ("op", "arg"),
+    )
+    const_expr = _closed_object(
+        {
+            "op": {
+                "type": "string",
+                "enum": [
+                    "add_const",
+                    "mul_const",
+                    "ceil_div_const",
+                    "round_up_const",
+                ],
+            },
+            "arg": dimension,
+            "value": {"type": "integer", "minimum": 1},
+        },
+        ("op", "arg", "value"),
+    )
+    return _closed_object(
+        {
+            "result": dimension,
+            "expr": {"oneOf": [identity, const_expr]},
+        },
+        ("result", "expr"),
+        description=(
+            "LLM-authored closed definition of one declared logical dimension "
+            "from another. Fixed code validates and consumes it but never infers "
+            "the relation from Harness values, grid, C, pi, or compiler output."
+        ),
+    )
+
+
 def _intent_schema() -> dict[str, Any]:
     logical_return = _closed_object(
         {"output": _STRING, "value": _STRING},
@@ -1015,6 +1054,7 @@ def scrc_lift_core_json_schema() -> dict[str, Any]:
             "value_dimension_relations": _array(
                 _value_dimension_relation_schema()
             ),
+            "dimension_relations": _array(_dimension_relation_schema()),
         },
         SEMANTIC_ARCHIVE_WIRE_FIELDS,
         description=render_semantic_archive_wire_grammar(),

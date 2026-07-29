@@ -940,9 +940,10 @@ rank、reshape、tile 或 spelling。它不能生成或省略 relation。v7 的
 推导 schedule、生成 source 或访问 Source/Harness/Gate；因此不改变 Replay 的 source-blind LLM-first
 所有权。
 
-当前新 Lift wire/decode 为 `intentir.scrc.artifact.v10 / intentir.scrc.decode.v15`；v3 历史上把上述
+当前新 Lift wire/decode 为 `intentir.scrc.artifact.v11 / intentir.scrc.decode.v16`；v3 历史上把上述
 `pi.iterations` 变为 required closed field，v4-v7 再增加前述 J-owned typed relations/control，v8
-增加 physical-only time，v9 增加 terminal-control topology，v10 增加 closed route extent transform。v1-v9 历史
+增加 physical-only time，v9 增加 terminal-control topology，v10 增加 closed route extent transform，
+v11增加J-owned closed dimension relations。v1-v10 历史
 artifact 保持原始序列化、digest 与字段集合，禁止静默附加空数组、重标或刷新证书。
 
 固定代码仍只做：
@@ -955,7 +956,7 @@ artifact 保持原始序列化、digest 与字段集合，禁止静默附加空�
 
 固定代码不把 π 解码成源码，不建立 deterministic composer。
 
-`replay-check.v11` 可以在公共、source-blind synthetic compile 后核对 π 已作者化的
+`replay-check.v12` 可以在公共、source-blind synthetic compile 后核对 π 已作者化的
 `transfer_direct` occurrence 与 compiled load/store multiplicity；它只拒绝 compiler 已经折叠的
 作者化 event，不补 transfer、不决定保留它的源码写法。它同时将 structured J loop 数与
 `pi.physical_iterations` 数之和作为已作者化的 compiled `scf.for` 必要 occurrence；
@@ -970,9 +971,10 @@ distinct `tt.reshape -> tt.reduce(axis=0)` dataflow 数不少于 π 已作者化
 `reduction_linearization` 数；额外 reshape 仍由正式 Gate1 精确
 比较，避免 non-authoritative preflight 越权。无法闭合时不猜 final address。
 该检查不补 loop、bound、carrier、update、address formula 或 schedule，也不
-具有 Gate 或认证权威。单次 Replay turn
-超时只允许在同一 fresh episode/thread 继续，或恢复该 episode 内 Replay LLM 已写出且通过 closed
-check 的 exact bytes；禁止跨 episode 继承 Replay。
+具有 Gate 或认证权威。单次Replay turn超时或累计transport context过大时，只允许在同一fresh
+episode/workspace中继续；若已有draft，可以让新thread重读exact packet、当前Replay与closed
+diagnostic。不得提供语义摘要，不得跨episode继承Replay、Source或Gate evidence。Replay可查询的TTIR
+只来自自己当前源码的public synthetic compile。
 
 ## 8. Gate1 completeness：没有第四个事实来源
 
@@ -1414,9 +1416,9 @@ mean、guard、cross-axis/general predicate、domain/extent 不闭合、mask 位
 checker 不读取 Source/C/π且不自动变换图；Source 的显式 sum/div 必须由 Lift 原样写成
 `reduce(sum)` 与 explicit division。
 
-Gate2 scalar consumer 当前独立标为 `j_scalar_cpu_mlir_v22`，共享
-`intentir.j-functional-boundary.v20`，并可选择 J-only
-`intentir.j-contract-indexed-cpu-reference.v1`：它们继承 v14/v13、v12/v11 与 v10/v3；v10 已继承 v9 的 node-less input load，并按 J 自身的完整
+Gate2 scalar consumer 当前独立标为 `j_scalar_cpu_mlir_v24`，共享
+`intentir.j-functional-boundary.v22`，并可选择 J-only
+`intentir.j-contract-indexed-cpu-reference.v2`：它们继承 v14/v13、v12/v11 与 v10/v3；v10 已继承 v9 的 node-less input load，并按 J 自身的完整
 logical domains、逐 access predicate/fill、逐 reduction 中性 `masked_contribution` 与 closed broadcast
 relation 消费通用 padded pointwise/multi-reduce DAG。它不从 π route 推导 operator、padding 公式或
 logical input。

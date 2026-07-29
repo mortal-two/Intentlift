@@ -19,6 +19,7 @@ import numpy as np
 from ...frontend.canonical_j import emit_j_module
 from ...frontend.emit_mlir import IndexBoundsProjection, emit_module
 from ...ir.canonical_j import elaborate_j
+from ...ir.dimension_relation import resolve_dimension_relations
 from ...ir.model import IntentFunction
 from ...ir.value_dimension import validate_value_dimension_instantiation
 from .abi import (
@@ -258,6 +259,8 @@ def emit_cpu_module(
         raise ValueError("CPU execution requires at least one logical output")
     validate_cpu_capability(fn)
     checked_dims = _checked_dims(dims)
+    if j is not None:
+        checked_dims = resolve_dimension_relations(j, checked_dims)
     (
         input_shapes,
         input_element_types,
@@ -316,6 +319,7 @@ def execute_on_cpu_outputs(
     validate_cpu_capability(fn)
     checked_dims = _checked_dims(dims)
     if j is not None:
+        checked_dims = resolve_dimension_relations(j, checked_dims)
         validate_value_dimension_instantiation(
             j,
             checked_dims,

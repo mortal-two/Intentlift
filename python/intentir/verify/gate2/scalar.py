@@ -31,6 +31,7 @@ from intentir.ir.canonical_j import (
 )
 from intentir.ir.contract_ir import project_contract_ir
 from intentir.ir.dim_expr import validate_dimension_instantiation
+from intentir.ir.dimension_relation import resolve_dimension_relations
 from intentir.ir.functional_boundary import (
     direct_logical_operand_sources,
     explicit_inout_poststate_reload_value,
@@ -55,7 +56,7 @@ from intentir.verify.gate1.model import (
 from .model import ExecutionResult
 
 
-SCALAR_LOWERING_PROTOCOL = "j_scalar_cpu_mlir_v22"
+SCALAR_LOWERING_PROTOCOL = "j_scalar_cpu_mlir_v24"
 
 
 def _digest(value: Mapping[str, Any]) -> str:
@@ -1014,7 +1015,7 @@ class ScalarLoweringSpec:
         if not isinstance(self.j, SemanticArchive):
             raise ValueError("scalar lowering requires canonical J")
         object.__setattr__(self, "j", elaborate_j(self.j))
-        dims = dict(self.dims)
+        dims = resolve_dimension_relations(self.j, dict(self.dims))
         inputs = dict(self.input_bindings)
         outputs = dict(self.output_bindings)
         object.__setattr__(self, "dims", _canonical_int_mapping(dims))

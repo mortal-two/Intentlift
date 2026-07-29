@@ -1,7 +1,7 @@
 # Task 15：模型级输入到 Compiler-Observed Lift / Closed J / Source-Blind Replay 的最终闭合系统
 
-> 状态：`DESIGN_READY / EXECUTION_NOT_STARTED`（2026-07-29）。本轮只建立任务与系统计划，不启动
-> formal Lift、Replay、Gate1 或 Gate2。
+> 状态：`P1_IMPLEMENTED / P2_READY`（2026-07-29）。通用能力已实现并完成无模型边界校验；下一步
+> 启动四个 formal pilot，再按真实 frontier 推进十项 active queue。
 >
 > 定位：Task 11 的下一次能力建设与最终十项闭合波。Task 14 已结束归档；其18份可保留证书、十项
 > active queue与中断 evidence 是本任务的历史输入，不是本任务已经完成的结果。
@@ -78,9 +78,10 @@ case移回fresh Lift；不能因为schema新增了一个该artifact不需要的r
 2026-07-29的adapter-v6模型输入批被人工停止，不产生新的最终certified或完整
 `NO_CLOSURE_(B,K)`：
 
-- Liger RoPE candidate 2在formal round 3取得Gate1 closure；Source–Replay的q/k误差均为0；Gate2的
-  J leg以`functional constant access requires a static tensor extent`明确`reference_unsupported`。
-  exact artifact/Replay必须保留，先区分通用RefEval consumer缺口与J自身缺失，不能直接重新Lift；
+- Liger RoPE candidate 2在formal round 3取得Gate1 closure；Source–Replay的q/k误差均为0。通用
+  dynamic-extent/index-bound consumer缺口修复后，exact artifact暴露出真正的J缺失：同一tensor存在
+  多个不同的node-less load view，却没有声明各自Layer-A consumer。当前TypeCheck明确拒绝这一含混
+  ownership；旧Gate1 evidence保留，但该case必须fresh Lift，不能让RefEval猜consumer映射；
 - Llama4一个fresh Replay episode耗尽1800秒；其前置Lift约10分钟，receipt累计约90.5万input tokens，
   说明当前主要性能问题是重复上下文与Replay构造工作空间，而不是TypeCheck；
 - Qwen2VL、Flash forward/full backward已有部分Gate1 no-closure或未完成round；
@@ -206,11 +207,10 @@ Compile_f + Run_f + Observe_f
 对当前Triton，Lift workspace开放以下只读能力：
 
 1. 在冻结匿名Harness binding下编译匿名Source并缓存exact TTIR；
-2. 按function/block/op/region读取TTIR原文；
-3. 查询SSA def-use、CFG predecessor/successor、structured region、loop carrier、branch/effect与
-   compiler-visible materialization/order；
-4. 在compiler真实保留location时，查询匿名Source span到TTIR op的provenance；
-5. 查看同一Source的Gate1 observer projection，用于理解当前observer到底要求恢复什么。
+2. 分页读取TTIR原文，并按token或单个`%SSA`查询局部def-use上下文；
+3. 查看function/block/control/loop/memory/reduction等syntax outline；
+4. 按路径读取同一Source的Gate1 observer fingerprint，用于理解当前observer实际比较的
+   CFG/dataflow/effect/time事实。
 
 这些查询只展示compiler已经产生的事实，不输出“应写哪个J op/π relation”、不从TTIR生成artifact、
 不建立每kernel parser/RuleCard或frontend专用DFG语义器。新增前端仍只实现其真实
@@ -376,6 +376,11 @@ wall time分离：单turn保持可恢复的有限上限，复杂Replay episode�
 或“必须三步完成”不作为capability cutoff。只有request、workspace digest与closed output连续完全相同
 时才按exact stagnation停止。
 
+当单个provider thread因累计上下文过大或timeout失去效率，而当前workspace已有Replay draft时，可在
+同一个fresh episode内滚动到新transport thread；新thread只重读exact `packet.json`、当前Replay bytes与
+host closed diagnostic，不接收语义摘要、旧episode或Gate信息。episode的单writer、总wall time和
+source-blind输入边界均不改变。
+
 ## 7. Gate反馈与责任判断
 
 ### 7.1 formal round
@@ -417,7 +422,7 @@ sibling；hidden Gate2输入和结果绝不回流本次Lift/Replay。Liger RoPE�
 - TypeCheck/CandidateCheck/ReplayCheck通过数不计semantic progress；进度只报告Gate1 frontier/closure、
   Gate2三边与SCRC verdict。
 
-## 9. 执行阶段（本轮不启动）
+## 9. 执行阶段
 
 ### P0：设计与接口收敛
 
@@ -435,6 +440,10 @@ sibling；hidden Gate2输入和结果绝不回流本次Lift/Replay。Liger RoPE�
 4. 消除Source/J/π/schema在provider turns中的重复大上下文；
 5. 修复Liger暴露的dynamic-extent RefEval consumer能力，或以证据判定其J确实缺失；
 6. 不新增或恢复`python/tests`；真实pilot artifact是唯一验收入口。
+
+2026-07-29实现状态：上述1--6已落地。真实DYT匿名Source编译观察为`pass`并得到6029字符TTIR；
+`artifact.v11`的closed `dimension_relations`已贯穿Decode/TypeCheck、Replay packet、RefEval、ContractIR
+与production materializer；Codex Replay已可查询自己的synthetic TTIR，并按3600秒episode总预算运行。
 
 ### P2：四个真实pilot
 

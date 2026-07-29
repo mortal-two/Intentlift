@@ -24,6 +24,8 @@ from intentir.extraction.providers.client import (
     XHIGH_RESPONSES_TIMEOUT_SECONDS,
 )
 from intentir.extraction.providers.provider import ProviderConfig, get_provider
+from intentir.verify.gate1.compiler import KernelSource, TritonCompiler
+from intentir.verify.gate1.ttir import fingerprint_ttir
 
 from .model import Frontend, Gate1Artifact
 from .prompt import replay_packet_digest
@@ -33,6 +35,7 @@ from .replay import (
     ReplayGeneration,
     ReplayGenerationError,
     _context_receipt,
+    build_source_blind_replay_compile_case,
     _replay_input_files,
     _trajectory_bytes,
     replay_source_ingress,
@@ -40,7 +43,7 @@ from .replay import (
 )
 
 
-CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v26"
+CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v28"
 
 _INITIAL_PROMPT = """You are the sole writer for one fresh source-blind IntentIR Replay episode.
 The outer runtime exposes only this isolated /workspace. input/ is immutable;
@@ -106,6 +109,11 @@ pointer-address operation count already determined by J.signature carrier kinds
 and authored pi address routes; it derives no address formula. Both checks must
 pass before this episode ends;
 neither has Gate or certification authority.
+When construction compile succeeds but a compiler-visible obligation remains
+unclear, use `replay_ttir_inspect summary`, `raw START COUNT`, `find TOKEN CONTEXT`,
+or `observer PATH` to inspect only the TTIR/fingerprint compiled from your own
+current Replay under the same public synthetic profile. It cannot see Source or
+Gate evidence and never proposes a repair.
 Do not claim Gate1, Gate2, or certification.
 """
 
@@ -116,6 +124,15 @@ Read work/host_replay_check.json and the current output/replay.source, then
 repair the complete source yourself. The diagnostic is rejection-only and has
 no Gate or certification authority. End only after the current complete
 output/replay.source passes both replay_check and replay_compile_check.
+"""
+
+_ROLLOVER_PROMPT = """The same fresh source-blind Replay episode continues in the same workspace under a new transport thread because the previous thread context became oversized.
+You remain the sole writer. No semantic summary or prior Replay was imported.
+Read the exact immutable input/packet.json, current output/replay.source, and
+work/host_replay_check.json as needed. Continue editing those current bytes and
+use the same source-blind tools. End only after replay_check and
+replay_compile_check both pass. Source, Harness values, Gate evidence, siblings,
+and any Replay from another formal episode remain unavailable.
 """
 
 
@@ -361,6 +378,7 @@ def _replay_workspace_view(packet: Mapping[str, Any]) -> dict[str, Any]:
             "storage": j.get("storage"),
             "dimension_constraints": j.get("dimension_constraints"),
             "value_dimension_relations": j.get("value_dimension_relations"),
+            "dimension_relations": j.get("dimension_relations"),
             "reduction_obligations": reductions,
         },
         "pi": {
@@ -515,7 +533,8 @@ class CodexCLIReplayWriter:
     # One xhigh provider turn may legitimately consume the full 900-second
     # transport limit.  The owner episode must outlive that turn so the exact
     # same Codex thread can consume the host check and repair its own bytes.
-    session_wall_time_limit_seconds: float = 1800.0
+    session_wall_time_limit_seconds: float = 3600.0
+    context_rollover_input_tokens: int = 300_000
     repair_effort: str | None = None
     compile_checker: Callable[[str, Gate1Artifact, str], Any] | None = None
     stop_requested: Callable[[], int | None] | None = field(
@@ -540,6 +559,8 @@ class CodexCLIReplayWriter:
     ) -> ReplayGeneration:
         if self.session_wall_time_limit_seconds <= 0:
             raise ValueError("Replay episode wall-time limit must be positive")
+        if self.context_rollover_input_tokens <= 0:
+            raise ValueError("Replay context rollover token threshold must be positive")
         provider = self.provider or get_provider()
         effective_effort = self.effort or provider.reasoning_effort
         turn_limit = self.model_timeout_seconds
@@ -584,7 +605,9 @@ class CodexCLIReplayWriter:
         checks: list[dict[str, Any]] = []
         compile_checks: list[dict[str, Any]] = []
         obligation_audits: list[dict[str, Any]] = []
+        ttir_inspections: list[dict[str, Any]] = []
         timeout_events: list[dict[str, Any]] = []
+        context_rollovers: list[dict[str, Any]] = []
         source_text = ""
         formal_ingress = None
         formal_compile = None
@@ -601,6 +624,15 @@ class CodexCLIReplayWriter:
             critical_facts
         )
         obligation_audited_source_digests: set[str] = set()
+        synthetic_compiler = (
+            None
+            if self.compile_checker is not None
+            else TritonCompiler(
+                timeout=120.0,
+                cache_dir=workspace.tmp_dir / "synthetic-replay-compile-cache",
+            )
+        )
+        ttir_observations: dict[str, dict[str, Any]] = {}
         prompt = (
             _INITIAL_PROMPT
             + "\n\n<source-blind-startup>\n"
@@ -617,7 +649,65 @@ class CodexCLIReplayWriter:
         active_elapsed_ms = 0.0
         timed_out_calls = 0
         thread_id: str | None = None
+        thread_ids: list[str] = []
+        current_thread_input_tokens = 0
         session: Any | None = None
+
+        def write_host_check(check: Mapping[str, Any]) -> None:
+            _atomic_write_text(
+                workspace.scratch_dir / "host_replay_check.json",
+                json.dumps(
+                    check,
+                    indent=2,
+                    sort_keys=True,
+                    ensure_ascii=False,
+                    allow_nan=False,
+                )
+                + "\n",
+            )
+
+        def new_session() -> Any:
+            return self.session_factory(
+                provider=provider,
+                input_dir=workspace.input_dir,
+                output_dir=workspace.output_dir,
+                scratch_dir=workspace.scratch_dir,
+                tmp_dir=workspace.tmp_dir,
+                model=provider.model,
+                effort=effective_effort,
+            )
+
+        def rollover_prompt(reason: str) -> str:
+            receipt = {
+                "protocol": "intentir.scrc.replay-context-rollover.v1",
+                "reason": reason,
+                "packet_digest": packet_digest,
+                "packet_path": "input/packet.json",
+                "replay_path": "output/replay.source",
+                "check_path": "work/host_replay_check.json",
+                "replay_sha256": (
+                    hashlib.sha256(source_text.encode()).hexdigest()
+                    if source_text
+                    else None
+                ),
+                "authority": (
+                    "transport-only exact file handoff inside the same fresh Replay "
+                    "episode; no semantic summary, Source, Gate evidence, or prior "
+                    "episode Replay"
+                ),
+            }
+            return (
+                _ROLLOVER_PROMPT
+                + "\n\n<source-blind-rollover>\n"
+                + json.dumps(
+                    receipt,
+                    sort_keys=True,
+                    ensure_ascii=False,
+                    allow_nan=False,
+                    separators=(",", ":"),
+                )
+                + "\n</source-blind-rollover>\n"
+            )
 
         def ingress_current() -> Any:
             current = workspace.read_replay()
@@ -682,6 +772,7 @@ class CodexCLIReplayWriter:
                     ingress.code,
                     artifact,
                     function_name,
+                    compiler=synthetic_compiler,
                     packet=packet,
                 )
             )
@@ -721,6 +812,162 @@ class CodexCLIReplayWriter:
         ) -> Mapping[str, Any]:
             return _replay_packet_query(packet, arguments)
 
+        def replay_ttir_inspect_tool(
+            arguments: tuple[str, ...]
+        ) -> Mapping[str, Any]:
+            if synthetic_compiler is None:
+                return {
+                    "protocol": "intentir.scrc.replay-own-ttir-view.v1",
+                    "status": "unavailable",
+                    "diagnostic": "custom compile checker exposes no Replay TTIR",
+                }
+            current = workspace.read_replay()
+            source_digest = hashlib.sha256(current.encode()).hexdigest()
+            observation = ttir_observations.get(source_digest)
+            if observation is None:
+                ingress = replay_source_ingress(
+                    current,
+                    artifact=artifact,
+                    frontend=self.frontend,
+                    function_name=function_name,
+                    packet=packet,
+                )
+                if ingress.status != "pass" or ingress.code is None:
+                    return ingress.to_check_response()
+                case = build_source_blind_replay_compile_case(artifact)
+                result = synthetic_compiler.compile(
+                    KernelSource.from_replay(ingress.code, function_name),
+                    case,
+                )
+                if not result.ok or not isinstance(result.ttir, str):
+                    observation = {
+                        "protocol": "intentir.scrc.replay-own-ttir-view.v1",
+                        "status": "fail",
+                        "diagnostic": result.diagnostic or "compiler returned no TTIR",
+                    }
+                else:
+                    fingerprint = fingerprint_ttir(
+                        result.ttir,
+                        python_interface=result.python_interface,
+                        schedule=case.schedule,
+                    )
+                    observation = {
+                        "protocol": "intentir.scrc.replay-own-ttir-view.v1",
+                        "status": "pass",
+                        "ttir": result.ttir,
+                        "fingerprint": fingerprint.to_dict(),
+                        "fingerprint_digest": fingerprint.digest,
+                        "compiler": dict(result.compiler),
+                        "target": dict(result.target),
+                    }
+                ttir_observations[source_digest] = observation
+
+            mode = arguments[0] if arguments else "summary"
+            if mode not in {"summary", "raw", "find", "observer"}:
+                raise ValueError(
+                    "replay_ttir_inspect mode must be summary/raw/find/observer"
+                )
+            if observation.get("status") != "pass":
+                result_view = dict(observation)
+            else:
+                ttir = str(observation["ttir"])
+                lines = ttir.splitlines()
+                if mode == "summary":
+                    fingerprint = observation.get("fingerprint")
+                    result_view = {
+                        key: value
+                        for key, value in observation.items()
+                        if key not in {"ttir", "fingerprint"}
+                    }
+                    result_view["ttir_lines"] = len(lines)
+                    result_view["fingerprint_sections"] = (
+                        list(fingerprint)
+                        if isinstance(fingerprint, Mapping)
+                        else []
+                    )
+                elif mode == "raw":
+                    if len(arguments) > 3:
+                        raise ValueError("raw accepts START [COUNT]")
+                    start = int(arguments[1]) if len(arguments) >= 2 else 1
+                    count = int(arguments[2]) if len(arguments) >= 3 else 80
+                    if start < 1 or count < 1 or count > 160:
+                        raise ValueError("raw START/COUNT must be positive; COUNT <= 160")
+                    selected = lines[start - 1 : start - 1 + count]
+                    result_view = {
+                        "protocol": observation["protocol"],
+                        "status": "pass",
+                        "start": start,
+                        "total": len(lines),
+                        "lines": [
+                            [ordinal, line]
+                            for ordinal, line in enumerate(selected, start=start)
+                        ],
+                        "next_start": (
+                            start + len(selected)
+                            if start - 1 + len(selected) < len(lines)
+                            else None
+                        ),
+                    }
+                elif mode == "find":
+                    if len(arguments) not in {2, 3}:
+                        raise ValueError("find accepts TOKEN [CONTEXT]")
+                    token = arguments[1]
+                    context = int(arguments[2]) if len(arguments) == 3 else 2
+                    if not token or len(token) > 256 or not 0 <= context <= 12:
+                        raise ValueError("find TOKEN/CONTEXT is outside the closed bound")
+                    matches = [index for index, line in enumerate(lines) if token in line]
+                    rows: list[list[Any]] = []
+                    seen: set[int] = set()
+                    for index in matches[:32]:
+                        for ordinal in range(
+                            max(0, index - context),
+                            min(len(lines), index + context + 1),
+                        ):
+                            if ordinal not in seen:
+                                rows.append([ordinal + 1, lines[ordinal]])
+                                seen.add(ordinal)
+                    result_view = {
+                        "protocol": observation["protocol"],
+                        "status": "pass",
+                        "token": token,
+                        "match_count": len(matches),
+                        "lines": rows,
+                    }
+                else:
+                    if len(arguments) != 2:
+                        raise ValueError("observer accepts one dotted PATH")
+                    value: Any = observation.get("fingerprint")
+                    for component in arguments[1].split("."):
+                        if not component:
+                            raise ValueError("observer PATH contains an empty component")
+                        if isinstance(value, Mapping) and component in value:
+                            value = value[component]
+                        elif isinstance(value, list) and component.isdigit():
+                            value = value[int(component)]
+                        else:
+                            raise KeyError("observer PATH is absent")
+                    result_view = {
+                        "protocol": observation["protocol"],
+                        "status": "pass",
+                        "path": arguments[1],
+                        "value": value,
+                    }
+            ttir_inspections.append(
+                {
+                    "source_sha256": source_digest,
+                    "query": list(arguments) if arguments else ["summary"],
+                    "status": result_view.get("status"),
+                }
+            )
+            return {
+                **result_view,
+                "authority": (
+                    "exact TTIR/fingerprint of this episode's current Replay under "
+                    "the public synthetic profile only; no Source, Gate, inference, "
+                    "or repair"
+                ),
+            }
+
         bridge = CodexCLIToolBridge(
             workspace.scratch_dir / CODEX_CLI_TOOL_BRIDGE_ROOT_NAME,
             {
@@ -731,6 +978,7 @@ class CodexCLIReplayWriter:
             },
             argument_handlers={
                 "replay_packet_query": replay_packet_query_tool,
+                "replay_ttir_inspect": replay_ttir_inspect_tool,
             },
         )
 
@@ -820,6 +1068,7 @@ class CodexCLIReplayWriter:
                     formal_ingress.code,
                     artifact,
                     function_name,
+                    compiler=synthetic_compiler,
                     packet=packet,
                 )
             )
@@ -840,15 +1089,7 @@ class CodexCLIReplayWriter:
 
         try:
             bridge.start()
-            session = self.session_factory(
-                provider=provider,
-                input_dir=workspace.input_dir,
-                output_dir=workspace.output_dir,
-                scratch_dir=workspace.scratch_dir,
-                tmp_dir=workspace.tmp_dir,
-                model=provider.model,
-                effort=effective_effort,
-            )
+            session = new_session()
             while True:
                 remaining = (
                     self.session_wall_time_limit_seconds
@@ -910,39 +1151,71 @@ class CodexCLIReplayWriter:
                             "initial Codex Replay turn timed out without a "
                             "resumable thread or checked Replay"
                         ) from exc
-                    (workspace.scratch_dir / "host_replay_check.json").write_text(
-                        json.dumps(
-                            check,
-                            indent=2,
-                            sort_keys=True,
-                            ensure_ascii=False,
-                            allow_nan=False,
+                    write_host_check(check)
+                    if source_text:
+                        if thread_id not in thread_ids:
+                            thread_ids.append(thread_id)
+                        session.close()
+                        context_rollovers.append(
+                            {
+                                "reason": "timeout_with_materialized_draft",
+                                "previous_thread_id": thread_id,
+                                "previous_thread_input_tokens": (
+                                    current_thread_input_tokens
+                                ),
+                                "replay_sha256": hashlib.sha256(
+                                    source_text.encode()
+                                ).hexdigest(),
+                            }
                         )
-                        + "\n",
-                        encoding="utf-8",
-                    )
-                    timeout_event["recovery"] = "same_thread_continuation"
-                    prompt = _REPAIR_PROMPT
+                        session = new_session()
+                        current_thread_input_tokens = 0
+                        timeout_event["recovery"] = "same_episode_context_rollover"
+                        prompt = rollover_prompt(
+                            "timeout_with_materialized_draft"
+                        )
+                    else:
+                        timeout_event["recovery"] = "same_thread_continuation"
+                        prompt = _REPAIR_PROMPT
                     selected_effort = self.repair_effort or effective_effort
                     continue
                 turns.append(turn)
                 thread_id = turn.thread_id
+                if thread_id not in thread_ids:
+                    thread_ids.append(thread_id)
+                current_thread_input_tokens += int(
+                    turn.usage.get("input_tokens", 0)
+                )
                 active_elapsed_ms += turn.elapsed_ms
                 passed, check = evaluate_current(trigger="host_post_turn")
                 if passed:
                     break
-                (workspace.scratch_dir / "host_replay_check.json").write_text(
-                    json.dumps(
-                        check,
-                        indent=2,
-                        sort_keys=True,
-                        ensure_ascii=False,
-                        allow_nan=False,
+                write_host_check(check)
+                if (
+                    source_text
+                    and current_thread_input_tokens
+                    >= self.context_rollover_input_tokens
+                ):
+                    session.close()
+                    context_rollovers.append(
+                        {
+                            "reason": "input_context_threshold",
+                            "previous_thread_id": thread_id,
+                            "previous_thread_input_tokens": (
+                                current_thread_input_tokens
+                            ),
+                            "replay_sha256": (
+                                hashlib.sha256(source_text.encode()).hexdigest()
+                                if source_text
+                                else None
+                            ),
+                        }
                     )
-                    + "\n",
-                    encoding="utf-8",
-                )
-                prompt = _REPAIR_PROMPT
+                    session = new_session()
+                    current_thread_input_tokens = 0
+                    prompt = rollover_prompt("input_context_threshold")
+                else:
+                    prompt = _REPAIR_PROMPT
                 selected_effort = self.repair_effort or effective_effort
 
             assert formal_ingress is not None and formal_ingress.code is not None
@@ -953,11 +1226,14 @@ class CodexCLIReplayWriter:
                 "backend": CODEX_CLI_REPLAY_BACKEND,
                 "fresh_session": True,
                 "thread_id": thread_id,
+                "thread_ids": list(thread_ids),
                 "turns": [turn.to_evidence() for turn in turns],
                 "replay_check": checks,
                 "replay_compile_check": compile_checks,
                 "replay_obligation_audits": obligation_audits,
+                "replay_ttir_inspections": ttir_inspections,
                 "timeout_events": timeout_events,
+                "context_rollovers": context_rollovers,
                 "tool_bridge": bridge.evidence,
                 "formal_ingress_recheck": True,
                 "isolation": {
@@ -975,6 +1251,14 @@ class CodexCLIReplayWriter:
                     "backend_protocol": CODEX_CLI_REPLAY_BACKEND,
                     "fresh_session": True,
                     "thread_id": thread_id,
+                    "thread_ids": list(thread_ids),
+                    "context_rollovers": len(context_rollovers),
+                    "context_rollover_input_tokens": (
+                        self.context_rollover_input_tokens
+                    ),
+                    "episode_wall_time_limit_seconds": (
+                        self.session_wall_time_limit_seconds
+                    ),
                     "cli_turns": len(turns) + timed_out_calls,
                     "model_segments_lower_bound": sum(
                         turn.model_segments for turn in turns
@@ -1024,11 +1308,14 @@ class CodexCLIReplayWriter:
                 "backend": CODEX_CLI_REPLAY_BACKEND,
                 "fresh_session": True,
                 "thread_id": thread_id,
+                "thread_ids": list(thread_ids),
                 "turns": [turn.to_evidence() for turn in turns],
                 "replay_check": checks,
                 "replay_compile_check": compile_checks,
                 "replay_obligation_audits": obligation_audits,
+                "replay_ttir_inspections": ttir_inspections,
                 "timeout_events": timeout_events,
+                "context_rollovers": context_rollovers,
                 "tool_bridge": bridge.evidence,
                 "failure_class": type(exc).__name__,
                 **(

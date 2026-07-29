@@ -17,13 +17,13 @@ inputs 中声明，`mode=output` 要求只在 J outputs 中声明；同一 handl
 时必须显式写 `mode=inout`。Decode/TypeCheck 不得把 input/output 自动升级为 inout，也不得让
 Harness 或 Gate2 为错误 overlap 伪造输入值。
 
-当前 fresh-run wire 是 `intentir.scrc.artifact.v10`，固定 Decode 是
-`intentir.scrc.decode.v15`。Lift LLM 必须一次性显式写出完整 `(J,C,π)`，包括当前版本要求的空数组；
+当前 fresh-run wire 是 `intentir.scrc.artifact.v11`，固定 Decode 是
+`intentir.scrc.decode.v16`。Lift LLM 必须一次性显式写出完整 `(J,C,π)`，包括当前版本要求的空数组；
 固定代码不从 Source、Harness valuation、C、π、Replay 或 Gate 结果补造 artifact 字段。`artifact.v4`
 引入 J-owned `value_dimension_relations` 与 `boundary.consumer_extensions`；`artifact.v5` 再引入
 J-owned `boundary.access_guard_relations`；v6/v7 增加 typed control，v8 增加 π-owned physical-only
 time relations，v9 增加 π-owned terminal-control topology，v10 增加下述 closed
-route-local extent transform。旧 v1-v9 wire 仍按各自字段集合读取，
+route-local extent transform，v11增加J-owned closed dimension definition。旧 v1-v10 wire 仍按各自字段集合读取，
 不通过附加空数组或新 relation 静默升级。
 
 `opaque(mode=value,dtype=none)` 是一个精确的缺席 ABI carrier：它只证明调用位置必须原样接收
@@ -68,6 +68,11 @@ fill_value != null => kind = load and predicate != null
 `TypeCheck(J,C,pi)` 必须权威拒绝 orphan fill；任何消费者都不得通过静默删除或猜测 predicate
 来归一化候选 J。
 
+一个logical input tensor可以有一个`node_ref=null`的默认直接load view；若同一tensor声明多个
+index/predicate/fill不同的node-less load views，J没有给出它们各自属于哪个Layer-A consumer，属于
+functional boundary含混。当前TypeCheck拒绝这种候选；Lift必须用每个真实consumer的`node_ref`
+明确绑定。RefEval不得按shape、声明顺序或Source/Gate结果猜映射。
+
 `typecheck.v6` 还复用 `FunctionalBoundaryProjection` 的 J-only necessary condition。对于 checker
 可识别的零起点矩形 logical-domain profile，direct access index、padding predicate、
 `boundary.domains` 与 typed tensor extent 必须闭合：`k0 < x0` 必须直接索引 `k0`，且 J 显式包含
@@ -98,6 +103,19 @@ Source/C/π，也不把 mean 自动重写为 sum/div。
 relation 只允许 `eq`。TypeCheck、CandidateCheck、Replay、RefEval 与 production projection 只能
 检查或消费这条已声明等式；不得因两者当前 valuation、dtype、位置或 shape 恰好相同而自动建立
 relation。一个 extent-only scalar 仍直接绑定 `x*`，不需要伪造 rank-0 data value。
+
+`artifact.v11`的`dimension_relations`只表达Source-grounded的logical dimension identity：
+
+```json
+{"result":"x2","expr":{"op":"mul_const","arg":"x1","value":2}}
+```
+
+首版`op`封闭为`identity|add_const|mul_const|ceil_div_const|round_up_const`；常数必须为正整数，
+result/arg都必须是已声明`x*`，result唯一，依赖图acyclic。Lift是relation唯一作者。Decode、
+TypeCheck、Replay、RefEval、ContractIR与production materializer只验证或求值exact relation；不得从
+Harness valuation、tensor concrete shape、grid、C、π、Source TTIR或当前数值巧合补造。调用方可只给
+base dimensions，consumer按J求出derived dimensions；若同时给出result valuation则必须精确一致。
+旧v1--v10 artifact禁止携带该字段，也不静默添加空数组升级。
 
 `boundary.consumer_extensions` 是 predicated load 到一个 `sum|max|min` reduce/scan operand 的
 J-owned consumer-context relation：
@@ -208,7 +226,7 @@ C 只包含在不改变 J denotation 时可替换的匿名 slot、binding kind�
 valuation 与必要的 source-neutral selection metadata。C 不得包含 operator、predicate、formula、
 logical shape、result semantics、source topology、frontend API 或 per-kernel executable policy。
 
-`artifact.v2` 引入、当前 `artifact.v10` 保留的 slot 字段为
+`artifact.v2` 引入、当前 `artifact.v11` 保留的 slot 字段为
 `name/kind/role/value_type/required`，其中 `role` 必填，并增加两个可选 attachment：
 
 ```text
@@ -360,7 +378,7 @@ extent_step:  for k in [0, Trip(J.loop)) step Tile(C.slot)
 tile_ordinal: for q in [0, ceil_div(Trip(J.loop), Tile(C.slot))) step 1
 ```
 
-因此 `artifact.v3` 引入、当前 `artifact.v10` 继续要求 π 包含 closed `iterations` 数组。每项只有：
+因此 `artifact.v3` 引入、当前 `artifact.v11` 继续要求 π 包含 closed `iterations` 数组。每项只有：
 
 ```text
 {region, loop_instance, tile_instance, induction_basis}
@@ -503,7 +521,9 @@ TypeCheck(J,C,pi) -> FreshLogicalSemDecl(C,pi | J) = empty
 
 上述 C attachment、numeric-cast、result-relation compatibility、rank-0 closed signature、Layer-A total
 typing 与显式 non-trailing broadcast 合同已由早期 TypeCheck 版本逐步建立。当前
-`decode.v15/typecheck.v27` 只新增 route extent transform 的 existing-route、required positive-int C、
+`decode.v16/typecheck.v28` 在v15/v27上新增closed dimension relation的引用、唯一性、grammar与
+acyclic dependent check，并拒绝同一tensor多个不同却都无consumer锚点的node-less load views；它不从
+任一valuation/compiler observation生成relation，也不替access猜consumer。v27只新增 route extent transform 的 existing-route、required positive-int C、
 matching J-domain attachment/axis 与 realize-anchor dependent checks；它不生成 relation、divisor 或
 attachment。v26 只把 J 直接写出的 `x* == 1` 或 `1 == x*` 当作该 symbolic extent 的
 singleton 证据，供同一 J 已显式声明的 broadcast axes 做 shape alignment；缺少 direct equality、
@@ -512,12 +532,13 @@ singleton 证据，供同一 J 已显式声明的 broadcast axes 做 shape align
 canonical reduce/
 contraction fail-early、functional logical-domain closure、rank-0 logical-input liveness 与
 representation-only scalar 合同也保持原有版本化历史。物理迭代基底 relation 曾使 fresh-run
-wire/decode 窄升为 `artifact.v3 / decode.v3`；v4 随后增加 closed dimension relations、
+wire/decode 窄升为 `artifact.v3 / decode.v3`；v4 随后增加 dimension constraints、
 `value_dimension_relations`、`consumer_extensions` 和 typed loop-carrier wire，v5 再增加
 `access_guard_relations`，v6/v7 增加 typed control，v8 增加 physical-only time，v9 增加
-terminal-control topology，v10 增加上述 closed route-local extent transform。当前 active 合同为
-`artifact.v10 / decode.v15 / typecheck.v27 / candidate-check.v1`；v27 新增上述 route extent
-dependent check。v26 继承 v25，并新增上述 direct
+terminal-control topology，v10 增加上述 closed route-local extent transform，v11增加closed
+dimension relations。当前 active 合同为
+`artifact.v11 / decode.v16 / typecheck.v28 / candidate-check.v1`；v28新增上述dimension relation
+dependent check，v27新增route extent dependent check。v26 继承 v25，并新增上述 direct
 singleton equality 的 source-free broadcast dependent check。v25 继承 v24，并新增
 `reduction_linearization` 的 closed topology check：该 global-safe refinement 不带 authorization，
 只能修饰一个 `realize` instance，且必须经唯一 slot-0 route 进入一个 J `reduce` 的 `realize`
@@ -539,4 +560,4 @@ select、精确 inout/pre-state 与 loop/non-loop observable merge。`candidate-
 另执行 source-identifier privacy、receipt/provenance，并在提交后重新运行该 core。receipt 必须记录
 这些版本；`artifact.v1`、`artifact.v2` 仍按各自旧 wire 读取且不得携带 `pi.iterations`，其中 v1
 也不能携带 v2 引入的 C attachment；v1-v3 禁止 v4 字段，v1-v4 禁止 v5 access guard。旧
-receipt/证书不由新 wire 静默重写、追认或刷新；v8/v9/v10 的新增字段同样不附加到旧 wire。
+receipt/证书不由新 wire 静默重写、追认或刷新；v8/v9/v10/v11 的新增字段同样不附加到旧 wire。

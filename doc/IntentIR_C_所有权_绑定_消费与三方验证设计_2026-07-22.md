@@ -299,13 +299,17 @@ constexpr 只能在纯 selector 情形使用这一 Harness specialization 形式
 只影响 layout/tile/stage 等 implementation
 selection 的 constexpr 应由 Harness 分类为 C slot；static specialization carrier 不得进入 π topology。
 
-Gate2 scalar RefEval 当前使用 `j_scalar_cpu_mlir_v22`，shared functional projection 使用
-`intentir.j-functional-boundary.v20`，typed relation-indexed reference 使用
-`intentir.j-contract-indexed-cpu-reference.v1`。它们完整继承 v14/v13、v12/v11、v10/v3 的唯一 node-less logical-input load 与严格
+Gate2 scalar RefEval 当前使用 `j_scalar_cpu_mlir_v24`，shared functional projection 使用
+`intentir.j-functional-boundary.v22`，typed relation-indexed reference 使用
+`intentir.j-contract-indexed-cpu-reference.v2`。它们完整继承 v14/v13、v12/v11、v10/v3 的唯一 node-less logical-input load 与严格
 J-only 通用 padded functional graph 消费：每个 predicated direct access 的完整 logical domain、
 每个 logical reduction 的唯一中性 outside-domain contract，以及 pointwise operand 的 closed
 broadcast relation 必须同时闭合；于是多 input/output、max+sum 等多 reduction 与普通 pointwise DAG
 不再被旧 single-sum topology 人为拒绝。
+
+artifact.v11的J-owned `dimension_relations`只声明logical dimensions之间的closed identity/常数
+arithmetic关系。它不属于C：Lift从Source作者化，RefEval与production按J求值；Harness concrete
+valuation、grid、C与Source TTIR都不得补造或覆盖该关系。
 
 v10/v3 只新增当前 Gate2 winner invocation 的 runtime predicate tautology proof：主 SCRC runner
 先选定 winner，再把该次 J logical inputs 与 closed dimensions 交给 RefEval-only 入口；projection

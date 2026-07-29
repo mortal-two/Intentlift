@@ -30,7 +30,7 @@ from .scrc_schema import scrc_lift_core_text_format
 
 
 SCRC_RELIFT_PROTOCOL = "llm_direct_pi_structured_source_aware_relift_v2"
-SCRC_DECODE_PROTOCOL = "intentir.scrc.decode.v15"
+SCRC_DECODE_PROTOCOL = "intentir.scrc.decode.v16"
 CANDIDATE_CHECK_PROTOCOL = "intentir.scrc.candidate-check.v1"
 _CANDIDATE_DIAGNOSTIC_LIMIT = 20
 _CANDIDATE_DIAGNOSTIC_TEXT_LIMIT = 2048
@@ -895,6 +895,14 @@ form. Never infer h* from values, shape, grid, C, names, or coincident numbers.
 Capacity and active-length coordinates remain distinct: preserve Source padding,
 domains, and required non-negative affine constraints, but do not invent a
 C-dependent roundup equation. Grid/C/pi may realize rounding, not J ownership.
+When Source itself establishes a logical dimension identity, author it in the
+complete J.dimension_relations array. The only legal expressions are identity,
+add_const, mul_const, ceil_div_const, and round_up_const over declared x* handles
+and positive integer constants. Typical examples are a full extent that Source
+defines as twice a half extent or a logical rounded capacity that Source defines
+from an active extent. Never infer such a relation from equal concrete values,
+Harness shapes, grid, C, pi, TTIR layout, or a frontend convention. Emit [] when
+Source establishes no dimension relation; fixed code only validates and consumes.
 
 bound_constexpr_values are Harness-owned, non-C JIT bindings; constexprness alone
 never makes one a graph selector. Across all Source uses, logical
@@ -916,6 +924,7 @@ scalar binds x* directly.
 Emit the complete J.value_dimension_relations array, including []; fixed code and
 Replay never add or repair it. Symbolic x* are signature/type handles, not SSA
 values; never list x* in portable scope definitions/captures or storage members.
+Also emit the complete J.dimension_relations array, including [].
 
 Each physical p* has exactly one logical_ref. Dtype/rank/mode must agree; inout binds one tensor
 declared as both input and output, and value parameters never bind outputs merely

@@ -131,6 +131,7 @@ def _sections(schema: dict[str, Any]) -> dict[str, dict[str, Any]]:
         "value_dimension_relation": _array_item(
             j["value_dimension_relations"]
         ),
+        "dimension_relation": _array_item(j["dimension_relations"]),
         "authorization": _array_item(
             boundary["realization_authorizations"]
         ),

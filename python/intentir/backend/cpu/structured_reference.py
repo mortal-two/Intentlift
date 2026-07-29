@@ -23,6 +23,7 @@ from intentir.backend.cpu.abi import (
 )
 from intentir.backend.cpu.pipeline import CPUExecutionResult
 from intentir.ir.canonical_j import elaborate_j, j_elaboration
+from intentir.ir.dimension_relation import resolve_dimension_relations
 from intentir.ir.value_dimension import validate_value_dimension_instantiation
 from intentir.ir.model import IntentOp, LoopStateBinding
 
@@ -30,7 +31,7 @@ if TYPE_CHECKING:
     from intentir.verify.gate1.model import SemanticArchive
 
 
-STRUCTURED_CPU_REFERENCE_PROTOCOL = "intentir.j-structured-cpu-reference.v9"
+STRUCTURED_CPU_REFERENCE_PROTOCOL = "intentir.j-structured-cpu-reference.v10"
 
 
 class StructuredReferenceUnsupportedError(CPUBackendUnsupportedError):
@@ -1277,6 +1278,7 @@ def execute_structured_reference(
         raise ValueError(
             "structured reference dims must be non-negative integer bindings"
         )
+    checked_dims = resolve_dimension_relations(j, checked_dims)
     checked_inputs = {
         tensor.name: validate_array(
             np.asarray(value),

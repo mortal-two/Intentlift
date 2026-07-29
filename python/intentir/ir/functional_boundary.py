@@ -20,20 +20,30 @@ from intentir.ir.canonical_j import (
     CanonicalValueType,
     ContractExpr,
     ContractSort,
+    direct_dimension_lower_bounds,
     direct_unit_dimension_refs,
     elaborate_j,
     j_elaboration,
     parse_contract_expr,
     parse_index_expression,
 )
+from intentir.ir.contract_semantics import (
+    ContractSemanticsError,
+    evaluate_contract_expr,
+)
 from intentir.ir.model import IntentOp
+from intentir.ir.dimension_relation import (
+    resolve_dimension_relations,
+    validate_dimension_relation_instantiation,
+    validate_dimension_relations,
+)
 from intentir.ir.value_dimension import (
     validate_value_dimension_instantiation,
     validate_value_dimension_relations,
 )
 
 
-FUNCTIONAL_BOUNDARY_PROTOCOL = "intentir.j-functional-boundary.v20"
+FUNCTIONAL_BOUNDARY_PROTOCOL = "intentir.j-functional-boundary.v22"
 RUNTIME_PREDICATE_PROOF_PROTOCOL = (
     "intentir.j-functional-runtime-predicate-tautology.v1"
 )
@@ -344,6 +354,7 @@ class FunctionalBoundaryProjection:
     runtime_predicate_proofs: tuple[RuntimePredicateProofReceipt, ...] = ()
     consumer_extensions: tuple[ConsumerOutsideProjection, ...] = ()
     value_dimension_relations: tuple[tuple[str, str], ...] = ()
+    dimension_relations: tuple[tuple[str, str, str, int | None], ...] = ()
     constant_gathers: tuple[ConstantGatherProjection, ...] = ()
     concat_store_partitions: tuple[ConcatStorePartitionProjection, ...] = ()
     direct_store_partitions: tuple[DirectStorePartitionProjection, ...] = ()
@@ -411,6 +422,17 @@ class FunctionalBoundaryProjection:
                     "relation": "eq",
                 }
                 for value_ref, dimension_ref in self.value_dimension_relations
+            ],
+            "dimension_relations": [
+                {
+                    "result": result,
+                    "expr": {
+                        "op": op,
+                        "arg": arg,
+                        **({"value": value} if value is not None else {}),
+                    },
+                }
+                for result, op, arg, value in self.dimension_relations
             ],
             "constant_gathers": [
                 proof.to_json() for proof in self.constant_gathers
@@ -1162,8 +1184,6 @@ def static_index_bounds_status(j: Any, relation: Any) -> bool | None:
     ):
         return None
     extent = data_type.shape[relation.axis]
-    if type(extent) is not int:
-        return None
     producer = next(
         (
             operation
@@ -1177,7 +1197,15 @@ def static_index_bounds_status(j: Any, relation: Any) -> bool | None:
     value = producer.attrs.get("value")
     if type(value) is not int:
         return None
-    return 0 <= value < extent
+    if value < 0:
+        return False
+    if type(extent) is int:
+        return value < extent
+    if isinstance(extent, str):
+        lower = direct_dimension_lower_bounds(j.dimension_constraints).get(extent)
+        if lower is not None and lower > value:
+            return True
+    return None
 
 
 def _canonical_nodes(j: Any) -> dict[str, IntentOp]:
@@ -1777,6 +1805,18 @@ def _value_dimension_pairs(j: Any) -> tuple[tuple[str, str], ...]:
     )
 
 
+def _dimension_relation_tuples(
+    j: Any,
+) -> tuple[tuple[str, str, str, int | None], ...]:
+    """Return exact, validated J-owned dimension definitions."""
+
+    validate_dimension_relations(j)
+    return tuple(
+        (relation.result, relation.expr.op, relation.expr.arg, relation.expr.value)
+        for relation in j.dimension_relations
+    )
+
+
 def _functional_access_coordinates(
     j: Any,
     index: Any,
@@ -1990,6 +2030,54 @@ def _substitute_value_dimension_bounds(
                 value_dimensions.get(extent, extent)
                 if isinstance(extent, str)
                 else extent,
+            )
+            for axis, extent in predicate.upper_bounds
+        ),
+    )
+
+
+def _resolve_runtime_dimension_bound(
+    extent: int | str,
+    logical_dimensions: Mapping[str, int] | None,
+) -> int | str:
+    """Evaluate one exact J integer bound only from this J invocation's x*."""
+
+    if isinstance(extent, int) or logical_dimensions is None:
+        return extent
+    if extent in logical_dimensions:
+        return logical_dimensions[extent]
+    try:
+        expression = parse_contract_expr(
+            extent,
+            expected=ContractSort.INTEGER,
+            context="J functional runtime dimension bound",
+        )
+        if not expression.references.issubset(logical_dimensions):
+            return extent
+        value = evaluate_contract_expr(
+            expression,
+            logical_dimensions,
+            expected_sort=ContractSort.INTEGER,
+            context="J functional runtime dimension bound",
+        )
+    except (ContractSemanticsError, TypeError, ValueError):
+        return extent
+    return value if type(value) is int and value >= 0 else extent
+
+
+def _resolve_runtime_predicate_bounds(
+    predicate: PredicateProjection,
+    logical_dimensions: Mapping[str, int] | None,
+) -> PredicateProjection:
+    if logical_dimensions is None:
+        return predicate
+    return PredicateProjection(
+        predicate.guards,
+        predicate.lower_axes,
+        tuple(
+            (
+                axis,
+                _resolve_runtime_dimension_bound(extent, logical_dimensions),
             )
             for axis, extent in predicate.upper_bounds
         ),
@@ -2282,6 +2370,47 @@ def functional_boundary_closure_issues(
     }
     direct_coordinates: dict[str, tuple[str | int, ...]] = {}
     issues: list[FunctionalBoundaryClosureIssue] = []
+
+    null_load_views: dict[str, dict[tuple[str, str | None, str], list[str]]] = {}
+    for access in boundary.accesses:
+        if access.kind.value != "load" or access.node_ref is not None:
+            continue
+        parsed_access = parsed_accesses.get(access.access_id)
+        if parsed_access is None:
+            continue
+        view = (
+            parsed_access.index.to_text(),
+            (
+                parsed_access.predicate.to_text()
+                if parsed_access.predicate is not None
+                else None
+            ),
+            json.dumps(
+                access.fill_value,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+                allow_nan=False,
+            ),
+        )
+        null_load_views.setdefault(access.tensor, {}).setdefault(view, []).append(
+            access.access_id
+        )
+    for tensor, views in sorted(null_load_views.items()):
+        if len(views) <= 1:
+            continue
+        access_ids = sorted(
+            access_id for ids in views.values() for access_id in ids
+        )
+        issues.append(
+            FunctionalBoundaryClosureIssue(
+                "j.boundary.accesses",
+                "one logical input has multiple distinct node_ref=null access "
+                "views; consumer-specific index/predicate views must identify "
+                "their Layer-A consumer",
+                f"{tensor}:{','.join(access_ids)}",
+            )
+        )
 
     for index, access in enumerate(boundary.accesses):
         parsed_access = parsed_accesses.get(access.access_id)
@@ -4195,6 +4324,13 @@ def _project_functional_boundary(
     structured_scopes, structured_storage = _structured_loop_boundary_refs(j)
 
     domains = _full_domains(j) if boundary.accesses else {}
+    if runtime_logical_dimensions is not None:
+        domains = {
+            axis: _resolve_runtime_dimension_bound(
+                extent, runtime_logical_dimensions
+            )
+            for axis, extent in domains.items()
+        }
     domain_products = _domain_product_factors(j) if boundary.accesses else {}
     if not boundary.accesses and (boundary.domains or boundary.effects):
         raise ValueError(
@@ -4214,6 +4350,9 @@ def _project_functional_boundary(
     effect_if_arm_memberships = _effect_if_arm_memberships(j.intent.body)
     conditional_effect_stores: list[ConditionalEffectStoreProjection] = []
     direct_unit_dimensions = direct_unit_dimension_refs(
+        j.dimension_constraints
+    )
+    direct_dimension_lowers = direct_dimension_lower_bounds(
         j.dimension_constraints
     )
     tensors = {
@@ -4421,31 +4560,42 @@ def _project_functional_boundary(
                 continue
             if dimension in mixed_tensor_axes:
                 continue
+            runtime_declared_extent = _resolve_runtime_dimension_bound(
+                declared_extent, runtime_logical_dimensions
+            )
             if isinstance(coordinate, int):
                 effective_extent = (
                     1
                     if _is_direct_unit_extent(
                         declared_extent, direct_unit_dimensions
                     )
-                    else declared_extent
+                    else runtime_declared_extent
                 )
                 if type(effective_extent) is not int:
-                    raise NotImplementedError(
-                        "functional constant access requires a static tensor extent"
-                    )
+                    if not (
+                        isinstance(effective_extent, str)
+                        and coordinate >= 0
+                        and direct_dimension_lowers.get(effective_extent, 0)
+                        > coordinate
+                    ):
+                        raise NotImplementedError(
+                            "functional constant access requires a static tensor "
+                            "extent or a direct J lower-bound proof"
+                        )
+                    continue
                 if coordinate < 0 or coordinate >= effective_extent:
                     raise ValueError(
                         "functional constant access coordinate is out of bounds"
                     )
                 continue
             axis = coordinate
-            actual_extent = inferred_extents.get(axis, declared_extent)
-            if actual_extent != declared_extent:
+            actual_extent = inferred_extents.get(axis, runtime_declared_extent)
+            if actual_extent != runtime_declared_extent:
                 raise ValueError(
                     f"functional axis {axis!r} extent {actual_extent!r} differs "
-                    f"from J tensor extent {declared_extent!r}"
+                    f"from J tensor extent {runtime_declared_extent!r}"
                 )
-            inferred_extents.setdefault(axis, declared_extent)
+            inferred_extents.setdefault(axis, runtime_declared_extent)
             if axis in domains:
                 consumed_domain_axes.add(axis)
 
@@ -4469,6 +4619,10 @@ def _project_functional_boundary(
             )
             if parsed is not None else None
         )
+        if predicate is not None:
+            predicate = _resolve_runtime_predicate_bounds(
+                predicate, runtime_logical_dimensions
+            )
         runtime_predicate_proved = False
         if predicate is not None:
             runtime_refs = {
@@ -4519,8 +4673,9 @@ def _project_functional_boundary(
                         "functional predicate upper bound is not an access axis"
                     )
                 if domains.get(axis) != extent:
-                    raise ValueError(
-                        "functional predicate differs from the full logical domain"
+                    raise NotImplementedError(
+                        "functional full-tensor mask erasure does not implement "
+                        "an authored consumer-local sub-domain predicate"
                     )
             if predicate.upper_bounds:
                 missing_domains = sorted(
@@ -4951,6 +5106,7 @@ def _project_functional_boundary(
     if context_domains:
         profile = f"context_{profile}"
     value_dimension_pairs = _value_dimension_pairs(j)
+    dimension_relation_tuples = _dimension_relation_tuples(j)
     consumed = {
         *(f"domain:{name}" for name in boundary.domains),
         *(f"access:{item.access_id}" for item in boundary.accesses),
@@ -4975,6 +5131,11 @@ def _project_functional_boundary(
         *(
             f"value_dimension:{value_ref}:{dimension_ref}:eq"
             for value_ref, dimension_ref in value_dimension_pairs
+        ),
+        *(
+            f"dimension_relation:{result}:{op}:{arg}:"
+            f"{value if value is not None else ''}"
+            for result, op, arg, value in dimension_relation_tuples
         ),
         *(f"scope:{item}" for item in structured_scopes),
         *(f"storage:{item}" for item in structured_storage),
@@ -5019,6 +5180,17 @@ def _project_functional_boundary(
                     }
                     for value_ref, dimension_ref in value_dimension_pairs
                 ],
+                "dimension_relations": [
+                    {
+                        "result": result,
+                        "expr": {
+                            "op": op,
+                            "arg": arg,
+                            **({"value": value} if value is not None else {}),
+                        },
+                    }
+                    for result, op, arg, value in dimension_relation_tuples
+                ],
             }
         ),
         predicated_access_count=sum(
@@ -5032,6 +5204,7 @@ def _project_functional_boundary(
         runtime_predicate_proofs=tuple(runtime_predicate_proofs),
         consumer_extensions=consumer_extensions,
         value_dimension_relations=value_dimension_pairs,
+        dimension_relations=dimension_relation_tuples,
         constant_gathers=tuple(constant_gathers),
         concat_store_partitions=tuple(concat_store_partitions),
         direct_store_partitions=tuple(direct_store_partitions),
@@ -5072,24 +5245,27 @@ def project_functional_boundary_for_refeval(
         for dimension in item.shape
         if isinstance(dimension, str)
     }
-    if set(logical_dimensions) != expected_dimensions or any(
-        not isinstance(value, int)
-        or isinstance(value, bool)
-        or value < 0
-        for value in logical_dimensions.values()
-    ):
+    expected_dimensions.update(
+        parameter.logical_ref
+        for parameter in j.signature.parameters
+        if isinstance(parameter.logical_ref, str)
+        and re.fullmatch(r"x[0-9]+", parameter.logical_ref)
+    )
+    resolved_dimensions = resolve_dimension_relations(j, logical_dimensions)
+    if set(resolved_dimensions) != expected_dimensions:
         raise ValueError(
             "RefEval runtime predicate proof requires exactly the J logical dimensions"
         )
     validate_value_dimension_instantiation(
         j,
-        logical_dimensions,
+        resolved_dimensions,
         logical_input_values,
     )
+    validate_dimension_relation_instantiation(j, resolved_dimensions)
     return _project_functional_boundary(
         j,
         runtime_logical_inputs=dict(logical_input_values),
-        runtime_logical_dimensions=dict(logical_dimensions),
+        runtime_logical_dimensions=resolved_dimensions,
     )
 
 

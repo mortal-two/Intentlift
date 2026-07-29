@@ -43,7 +43,7 @@ MINISWE_REPLAY_TURN_TIMEOUT_SECONDS = 300.0
 MINISWE_REPLAY_XHIGH_TURN_TIMEOUT_SECONDS = 900.0
 RESPONSES_REPLAY_BACKEND = "openai.responses.intentir-replay.v1"
 STATIC_REPLAY_BACKEND = "intentir.static-replay-test.v1"
-REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v11"
+REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v12"
 _ANONYMOUS_HANDLE = re.compile(r"^[pc][0-9]+$")
 
 
@@ -686,6 +686,7 @@ def _packet_rounded_iteration_contracts(
         else []
     )
     relations = packet.get("j", {}).get("value_dimension_relations", [])
+    dimension_relations = packet.get("j", {}).get("dimension_relations", [])
     c_slots = {
         str(item.get("name"))
         for item in packet.get("c", {}).get("slots", [])
@@ -710,6 +711,21 @@ def _packet_rounded_iteration_contracts(
             # them from shape, C, or pi; the ablation may then fail Gate1.
             continue
         extent_refs = {axis}
+        dimension_sources = {
+            str(item.get("result")): str(item.get("expr", {}).get("arg"))
+            for item in dimension_relations
+            if isinstance(item, Mapping)
+            and isinstance(item.get("result"), str)
+            and isinstance(item.get("expr"), Mapping)
+            and isinstance(item.get("expr", {}).get("arg"), str)
+        } if isinstance(dimension_relations, list) else {}
+        frontier = [axis]
+        while frontier:
+            current = frontier.pop()
+            source = dimension_sources.get(current)
+            if source is not None and source not in extent_refs:
+                extent_refs.add(source)
+                frontier.append(source)
         for item in relations if isinstance(relations, list) else []:
             if (
                 isinstance(item, Mapping)
@@ -2109,9 +2125,11 @@ compiler-free ingress callable after submission, and formal Gate1 compiles c0.
 
 In the isolated Codex workspace, invoke the equivalent closed callbacks as
 `python .agents/intentir_agent_tool.py replay_realization_view`, `replay_check`,
-or `replay_compile_check`; these callbacks take no path argument and never expose
-Source, Harness values, or Gate evidence. Read this file for usage instead of
-probing the fixed client with an unrecognized tool name.
+or `replay_compile_check`. After a successful public synthetic compile,
+`replay_ttir_inspect summary|raw|find|observer` exposes only the current Replay's
+own TTIR/fingerprint for focused debugging. These callbacks take no host path and
+never expose Source, Source TTIR, Harness values, or Gate evidence. Read this file
+for usage instead of probing the fixed client with an unrecognized tool name.
 """
     return (
         {

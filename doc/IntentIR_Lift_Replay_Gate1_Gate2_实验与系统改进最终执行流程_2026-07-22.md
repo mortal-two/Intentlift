@@ -620,7 +620,9 @@ Gate round 的定义。
 权威错误列表有界展开、不改变接受集合时，`candidate-check.v1` 无需升版。任何新规则都只对带新
 version receipt 的 fresh run 生效，不得静默重判历史 artifact。
 
-当前 fresh-run 版本为 `typecheck.v27`。v27 只新增上述 route extent transform 的 existing-route、
+当前 fresh-run 版本为 `typecheck.v28`。v28新增J dimension relation的closed grammar、引用、唯一性与
+acyclic检查，并拒绝同tensor多个不同却都无consumer锚点的node-less load views；不从valuation、
+Harness或compiler observation生成relation，也不猜access consumer。v27只新增上述 route extent transform 的 existing-route、
 required positive-int C、matching J-domain attachment/axis 与 realize-anchor dependent checks；不生成
 relation/divisor/attachment。v26 继承 v25，并只把 J 直接作者化的 `x* == 1` 或
 `1 == x*` 当作该 symbolic extent 的 singleton 证据，供 J 已显式声明的 broadcast axes 做 shape
@@ -709,6 +711,9 @@ instance relation 显式声明，fixed code 不从臂内容补造。
 v40 的只读 `source-outline` 对长 Source 分页显示
 function/loop/if/return 的语法位置与嵌套深度。这只是 source-aware worker 的可发现性工具：不判定
 哪个循环是 Layer A recurrence、不产生 `loop/effect_if/value_if`、carry 或 π，也不进入 Replay。
+Codex Lift v12再以同一匿名Source与冻结anonymous compiler view执行一次
+`intentir.lift-source-ttir.v1`，只向该source-aware owner开放exact TTIR与现有Gate1 observer
+fingerprint的分页/token/%SSA/path查询；它不生成或建议J/C/π，raw观察不进入Replay或trajectory。
 v41 只把已由 Intent dialect、TypeCheck 与 shared lowering 支持的 `log2` 补入通用 `map_unary`
 vocabulary。v42 只明确 predicate-bearing Source load 的 `fill_value` 必须是该 access 实际 authored
 `other`，不得换成 downstream neutral/canceling/observationally-equivalent value；consumer extension
@@ -740,9 +745,9 @@ production 不消费该值。只影响 layout/tile/stage 等
 implementation selection 的 constexpr 必须在 Harness 分类为 C slot，而不能作为 bound constexpr
 留在 π-only 形态；static specialization carrier 也不得进入 π topology。
 
-当前 RefEval 消费版本为 `j_scalar_cpu_mlir_v22`，shared functional projection 为
-`intentir.j-functional-boundary.v20`，typed relation-indexed reference 为
-`intentir.j-contract-indexed-cpu-reference.v1`。它们完整继承 v14/v13、v12/v11 与 v10/v3；v10 已继承 v9，v9 已继承 v8 对唯一 node-less
+当前 RefEval 消费版本为 `j_scalar_cpu_mlir_v24`，shared functional projection 为
+`intentir.j-functional-boundary.v22`，typed relation-indexed reference 为
+`intentir.j-contract-indexed-cpu-reference.v2`。它们完整继承 v14/v13、v12/v11 与 v10/v3；v10 已继承 v9，v9 已继承 v8 对唯一 node-less
 logical-input load 的通用消费，并移除旧 single-input/single-output/single-sum padded topology 限制。
 对 predicated direct access，J 必须
 自行声明每个 axis 的完整零起点 logical domain与显式 load fill，仍携带 masked axis 的 access 使用
@@ -902,16 +907,19 @@ Replay 不得：
 - 等待 Harness 在生成后补出新的 use-site。
 
 `U_f` 必须是版本化、source-neutral 的公共前端知识，不能按当前 Kernel、operator 或失败样本选择。
-当前版本组合是 `intentir.scrc.replay-input.v1`、Triton
-`public_frontend_context_v17`、source-aware Codex/MiniSWE Lift `intentir.lift-knowledge.v69/v65`、
-source-blind MiniSWE Replay v30 与 Codex Replay v26、
-`replay-check.v11`；fresh evidence必须保存实际 receipt，
+当前版本组合是 `intentir.scrc.replay-input.v2`、Triton
+`public_frontend_context_v17`、source-aware Codex/MiniSWE Lift `intentir.lift-knowledge.v70/v65`、
+source-blind MiniSWE Replay v30 与 Codex Replay v28、
+`replay-check.v12`；fresh evidence必须保存实际 receipt，
 旧版本 run 不能被新组合追认。
 v30/v26 完整执行既有 authored route extent transform 合同：将其纳入 exact `critical_facts.v4`、
 `replay-obligation-audit.v3` 与 source-blind static ingress；只拒绝缺失 closed floor/ceil-div spelling，
 不生成 relation/code，也不替代 Gate1。即使不存在 broadcast/lexical/cross-region obligation，单独存在
 route extent transform 也必须审阅当前 exact Replay bytes；Codex v26 另以上述 1800 秒 episode 保留
 900 秒 turn 超时后的同-thread continuation。v29/v25 历史 receipt 保持原 verdict。
+Codex Replay v28把fresh episode总active预算提升到3600秒，并允许在已有draft且transport context过大或
+turn timeout时，在同一workspace内新建thread重读exact packet/current Replay/closed diagnostic；不做
+语义摘要、不继承跨episode Replay，并只查询自己public synthetic compile得到的TTIR。
 v28/v24 只明确现有 ordered carrier relation：同一 region 的 `physical_loop_carriers` declaration
 order 是 init/state/next/result 共享的 carrier-tuple ordinal；Lift 从 Source frontend loop tuple 完整
 作者化，Replay 不按 dtype/ref/mechanism 重排。它不是 event execution order，后者仍只由
@@ -926,21 +934,19 @@ program-region distinct J domain 到 `address_base` 的作者化 route 投影合
 runner 可以保存实际 request/output 和 compiler metadata 供追溯，但这些内容不能回流 Replay packet；
 不需要为此增加 hash、commitment 或签名门。
 
-当前新 Lift response 使用 `intentir.scrc.artifact.v10`，固定 decode 使用
-`intentir.scrc.decode.v15`。v3 历史上引入 required closed `pi.iterations`；v4 引入
+当前新 Lift response 使用 `intentir.scrc.artifact.v11`，固定 decode 使用
+`intentir.scrc.decode.v16`。v3 历史上引入 required closed `pi.iterations`；v4 引入
 `value_dimension_relations`、`consumer_extensions` 等 typed relations；v5 引入
 `access_guard_relations`；v6/v7 引入 typed control；v8 引入上述 π-owned physical-only time relations；
 v9 引入 π-owned terminal-control topology，v10 引入依附既有 C/J/route 的 closed route-local extent
-transform。
+transform，v11引入J-owned closed dimension relations。
 每次 fresh response 必须完整作者当前 wire，fixed code 不构造新增字段。`artifact.v1-v7` 保持各自
 wire bytes/digest 与字段集合，不静默升级、刷新或追认；v8/v9 同样保持各自字段集合。
 
-除 v10 artifact 已显式作者化的 route-local closed extent transform 外，当前 `replay-input.v1` 不包含
-任何 general pad-discharge derived hint。若 J 只有 symbolic input
-extent、literal pad 与 static output extent，却没有闭合三者的 dependent equality，U_f 不能读取
-Harness valuation 猜等式，也不能让 Replay 省略 pad。下一次 Source-aware Lift 必须给出可检查的
-J relation或不生成该冗余 pad；fixed consumer 不为一份旧 artifact 在 packet 内增加 shape/slot
-theorem prover。
+除v10的route-local physical transform与v11的J-owned closed dimension relation外，当前
+`replay-input.v2`不包含general pad-discharge hint。若J缺少dependent equality，U_f不能读取Harness
+valuation猜等式；fresh Lift必须作者化closed relation或保留完整逻辑阶段。fixed consumer只求值
+J已有relation，不为旧artifact建立shape/slot theorem prover。
 
 ## 8. 第四步：Harness 绑定 C
 
@@ -1104,7 +1110,7 @@ Source/当前 J 的 writer。Runner 更新 branch-local feedback view 并追加�
 ### 10.1.1 固定 artifact 的 diagnostic recheck
 
 `intentir.scrc.gate1-diagnostic-recheck.v1` 可以对 parent evidence 中一份已落盘 artifact 做独立只读
-诊断：保持 artifact bytes/digest 不变，以当前 canonical Decode、`typecheck.v27`、一个 fresh normal
+诊断：保持 artifact bytes/digest 不变，以当前 canonical Decode、`typecheck.v28`、一个 fresh normal
 Replay 与 Gate1 写入单独的原子 `recheck-NNN` 目录。该路径不调用 Lift、不运行 masked-J 或 Gate2、
 不参加 candidate/winner 选择，并显式记录 `diagnostic_only=true`、`enters_gate2=false`、
 `changes_prior_verdict=false`。它只能判断当前固定 consumer/context 如何消费旧 artifact，不能把

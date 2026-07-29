@@ -24,9 +24,11 @@ the artifact schema or external TypeCheck.
    rank-0 `t*` and authoring its `value_dimension_relations` equality to that
    `x*`. The checker never creates either representation. Do not infer any
    coordinate from concrete values, grid, C, names, or positions. Keep a
-   capacity coordinate distinct from active length; author Source-visible pad
-   semantics and non-negative affine constraints, never a C-dependent roundup
-   equation in J.
+   capacity coordinate distinct from active length. If Source defines one logical
+   dimension from another, author the exact closed `J.dimension_relations` item
+   (`identity|add_const|mul_const|ceil_div_const|round_up_const`); never infer it
+   from the current valuation, grid, C, pi, or compiler output. Emit this complete
+   array, including `[]`.
 4. Every `J.signature.logical_ref` names only a declared J input/output `t*`
    or symbolic dimension `x*`, never a `p*` or body/local `v*`. A scalar or semantic
    constexpr used as logical data gets a dtype-matching rank-0 J input with

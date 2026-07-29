@@ -111,10 +111,10 @@ for every x in T:
 
 ## 当前 RefEval 的标量与 logical-domain 支持边界
 
-当前固定 scalar RefEval protocol 为 `j_scalar_cpu_mlir_v22`，shared functional projection receipt 为
-`intentir.j-functional-boundary.v20`，structured reference 为
-`intentir.j-structured-cpu-reference.v9`，relation-indexed pointwise reference 为
-`intentir.j-contract-indexed-cpu-reference.v1`。这些版本在既有 source-neutral multi-reduction 与
+当前固定 scalar RefEval protocol 为 `j_scalar_cpu_mlir_v24`，shared functional projection receipt 为
+`intentir.j-functional-boundary.v22`，structured reference 为
+`intentir.j-structured-cpu-reference.v10`，relation-indexed pointwise reference 为
+`intentir.j-contract-indexed-cpu-reference.v2`。这些版本在既有 source-neutral multi-reduction 与
 invocation-local predicate proof 之上，消费当前 artifact.v4/v5 typed relations、闭合 direct-store
 partition，并为 common scalar lowering 尚不能消去的 typed contraction 提供闭合 J-only reference。
 旧 RefEval/projection 的 `REFERENCE_UNSUPPORTED`、receipt 和 Gate2 verdict 保持原解释，不由新
@@ -130,6 +130,9 @@ Gate2 会得到可比较但与 Source/Replay 不同的 `O_J`；系统应 fresh r
 
 当前 consumer 对新 relation 的权限是“逐项消费或显式 unsupported”，不是忽略：
 
+- 对`J.dimension_relations`，RefEval以调用方提供的base dimension valuation求值closed identity/
+  const-arithmetic DAG，补出缺失derived dimensions，并核对显式提供的result valuation；它不读取
+  Harness、grid、C、π、Source或TTIR，也不从concrete shapes猜relation；
 - 对 `J.value_dimension_relations`，RefEval 在 invocation 上同时检查 integral rank-0 logical value 与
   closed symbolic dimension valuation 的已声明 `eq`；缺值、冲突或不可表示均在执行前拒绝。relation
   只能来自 J，consumer 不从相等的 runtime 数字反推 relation；

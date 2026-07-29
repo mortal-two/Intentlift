@@ -47,6 +47,7 @@ from intentir.ir.contract_ir import (
     project_contract_ir,
 )
 from intentir.ir.contract_semantics import ContractSemanticsError
+from intentir.ir.dimension_relation import resolve_dimension_relations
 from intentir.ir.functional_boundary import project_predicate_text
 from intentir.ir.value_dimension import validate_value_dimension_instantiation
 from intentir.ir.model import IntentOp
@@ -55,7 +56,7 @@ if TYPE_CHECKING:
     from intentir.verify.gate1.model import SemanticArchive
 
 
-CONTRACT_REFERENCE_PROTOCOL = "intentir.j-contract-indexed-cpu-reference.v1"
+CONTRACT_REFERENCE_PROTOCOL = "intentir.j-contract-indexed-cpu-reference.v2"
 
 
 class ContractReferenceUnsupportedError(CPUBackendUnsupportedError):
@@ -620,6 +621,7 @@ def execute_contract_reference(
         raise ValueError(
             "contract reference dims must be non-negative integer bindings"
         )
+    checked_dims = resolve_dimension_relations(canonical, checked_dims)
     checked_inputs = {
         tensor.name: validate_array(
             np.asarray(value),

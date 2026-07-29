@@ -9,12 +9,14 @@ Gate1 只接收已经通过 `TypeCheck(J,C,π)`、由当前三元组生成的全
 conditions。该 Gate1 claim 只针对这个 c0。
 
 当前 fresh-run artifact/decode/typecheck 组合为
-`intentir.scrc.artifact.v10 / intentir.scrc.decode.v15 / intentir.scrc.typecheck.v27`。Lift LLM 是完整
-artifact 的唯一作者：value/dimension、consumer-extension、access-guard、typed control/inout、
+`intentir.scrc.artifact.v11 / intentir.scrc.decode.v16 / intentir.scrc.typecheck.v28`。Lift LLM 是完整
+artifact 的唯一作者：value/dimension equality、closed dimension definition、consumer-extension、access-guard、typed control/inout、
 output binding、physical iteration/carrier、terminal-control 与 route-local extent transform 都必须由模型显式提交。Decode、
 CandidateCheck 与 TypeCheck 只能做 closed
 解析、检查、拒绝和诊断，不会补 relation、选择 axes/polarity、插入 `select`、创建 pre-state，或把
-相同 concrete extents 当作 axis identity；v27 另检查 route extent transform 只能限定一条已存在
+相同 concrete extents 当作 axis identity；v28验证dimension relation的closed grammar、引用与acyclicity，
+并拒绝同tensor多个不同却都无consumer锚点的node-less load views，但不从Source
+TTIR/Harness/grid/C/π生成relation或猜consumer；v27 另检查 route extent transform 只能限定一条已存在
 route slot，且 source 是 attached required positive-int C、target 是匹配 J domain realization；它不
 生成 divisor/attachment/relation。其余 v26 合同继承 v25；v25 继承 v24，并检查作者化
 `reduction_linearization` 只能经唯一 slot-0 route 进入一个 J reduce；v24 继承 v23 对 canonical output binding 的完整
@@ -36,6 +38,7 @@ Gate1 回答 Replay 是否重建了 Source 对 J 的 realization。它不执行�
 结果，也不通过 composer/RuleCard 构造 Replay。
 
 Replay normal view 必须保留当前 J-owned typed relations；它从 J 读取 value/dimension equality、
+closed dimension definitions、
 consumer-specific outside-domain contract 与 access guard，从 π 读取 realization topology，以及 J
 reduce/contraction 之外已声明的 physical iteration/carrier。logical J axis ordinal 不是 Triton tile
 tensor 的 rank-local reduction axis；Replay 必须从 J/C/π 共同确定 active physical tile，并对一维 tile
@@ -44,7 +47,7 @@ v5 guarded store 的 merge 已经是 Layer A 中显式 `select`，且精确 inou
 通过 TypeCheck；Replay 不得把 relation 解读成允许它自行发明 branch、merge 或 mutation。Gate1
 比较的是 Replay 对这些已声明事实的 source realization，不为缺失 relation 建议或生成答案。
 
-当前 `replay-check.v11` 的 synthetic compile 只消费匿名 packet：核对作者化 `transfer_direct`
+当前 `replay-check.v12` 的 synthetic compile 只消费匿名 packet：核对作者化 `transfer_direct`
 occurrence、structured J loop 加 `pi.physical_iterations` 的 loop occurrence、对应 carrier arity；并且
 只在 signature pointer/tensor kind 与 π address routes 完全闭合时核对 pointer-address operation
 occurrence。完整闭包允许独立 integer base/lane contribution，且不要求 address instance 与 transfer
