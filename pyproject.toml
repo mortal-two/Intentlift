@@ -36,7 +36,3 @@ minisweagent = [
     "config/*.md",
     "config/*.json",
 ]
-
-[tool.pytest.ini_options]
-testpaths = ["python/tests"]
-norecursedirs = ["archive", "build", ".git", ".trellis"]
