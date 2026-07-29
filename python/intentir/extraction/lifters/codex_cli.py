@@ -65,16 +65,20 @@ input/wire_contract.json. It contains concise semantic ownership rules and the
 exact IntentOp vocabulary. Do not search for another schema, tutorial, example,
 preflight, or operation catalog: none is authoritative here.
 
-Before authoring the signature or first complete candidate, run these two exact
-read-only projections once:
+Before authoring the signature or first complete candidate, materialize these
+four exact read-only projections once as local proof-irrelevant files:
 
-python .agents/intentir_agent_tool.py lift_harness_abi 1 64
-python .agents/intentir_agent_tool.py lift_contract core boundary pi
+python .agents/intentir_agent_tool.py lift_harness_abi 1 64 > work/harness_abi.json
+python .agents/intentir_agent_tool.py lift_contract core > work/contract_core.json
+python .agents/intentir_agent_tool.py lift_contract boundary > work/contract_boundary.json
+python .agents/intentir_agent_tool.py lift_contract pi > work/contract_pi.json
 
-The first is the complete anonymous ABI/Harness ledger. The second projects the
-exact required keys, fields, enums, and closed JSON Schema sections for all
-artifact object families. They expose no Source meaning and never generate an
-artifact field. Use them to form one coordinated complete draft before the first
+Do not print these payloads together with Source or each other: combined terminal
+output may be clipped. Read the four small files separately. The first is the
+complete anonymous ABI/Harness ledger. The other three project the exact required
+keys, fields, enums, defaults, and closed JSON Schema sections for all artifact
+object families. They expose no Source meaning and never generate an artifact
+field. Use them to form one coordinated complete draft before the first
 CandidateCheck; do not use CandidateCheck as a missing-field tutorial.
 
 Author the artifact incrementally under work/candidate_parts/ instead of emitting
@@ -389,9 +393,11 @@ def _codex_input_files(
         ),
         "semantic_rules": list(_COMPACT_WIRE_RULES),
         "intent_op_authoring_reference": _compact_intent_op_reference(),
-        "closed_contract_query": (
-            "python .agents/intentir_agent_tool.py lift_contract core boundary pi"
-        ),
+        "closed_contract_queries": [
+            "python .agents/intentir_agent_tool.py lift_contract core",
+            "python .agents/intentir_agent_tool.py lift_contract boundary",
+            "python .agents/intentir_agent_tool.py lift_contract pi",
+        ],
     }
     files = {
         "source.py": complete["source.py"],
@@ -796,9 +802,9 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
 
         def contract_tool(arguments: tuple[str, ...]) -> Mapping[str, Any]:
             try:
-                if not arguments or len(arguments) > 4:
+                if len(arguments) != 1:
                     raise ValueError(
-                        "lift_contract accepts one to four profile/section names"
+                        "lift_contract accepts exactly one profile/section name"
                     )
                 names: list[str] = []
                 for argument in arguments:
