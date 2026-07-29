@@ -1715,15 +1715,16 @@ def _packet_required_compiled_address_operations(
         carrier_result_ids.add(result)
         carrier_derived_ids.update((state, next_value, result))
 
+    # A pointer/tensor signature instance is already rooted in its callable ABI
+    # carrier even when that same instance is an ``address_base`` receiving
+    # integer offset routes.  Requiring ``mechanism=realize`` (or no incoming
+    # routes) would incorrectly make such a closed pointer stage invisible and
+    # silently disable the address-occurrence check.
     pointer_roots = {
         instance_id
         for instance_id, item in instances.items()
         if item.get("semantic_ref") in pointer_parameters
         and instance_id not in carrier_derived_ids
-        and (
-            item.get("mechanism") == "realize"
-            or not incoming.get(instance_id)
-        )
     }
     pointer_outputs = set(pointer_roots)
     pointer_passthrough_ids = address_ids | carrier_state_ids | carrier_result_ids
