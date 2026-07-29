@@ -208,7 +208,9 @@ Harness 不按数值猜 `ceil_div`、容量或有效域公式。
 
 持久 Lift owner 还可使用四个等合同的只读投影：`harness-abi` 将匿名 Harness view 中已经声明的
 `p*/c*` 顺序、bound non-C constexpr membership、compiler role 与 `h*` shape-coordinate ledger
-并置；`source-outline` 只分页上述 syntax-only navigation facts；`candidate-control` 只分页当前 LLM
+并置；`source-outline` 只分页上述 syntax-only navigation facts：Python AST 可解析时提供
+control/memory ledger，native CUDA/C++ 或其他不可解析语法退化为 exact non-empty source lines，
+不引入 C++ parser 或 fixed semantic inference；`candidate-control` 只分页当前 LLM
 已写出的 J control/reduction nodes、branch arms、boundary
 output/effect/guard、以及 π regions/instances/iterations/carriers/terminal/routes/order；
 `feedback-category` 只投影 closed frontier 已命名的一个 Gate1 类别。它们是 attention/transport

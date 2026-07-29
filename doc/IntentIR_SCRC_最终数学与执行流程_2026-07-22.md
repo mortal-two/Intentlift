@@ -648,7 +648,7 @@ consumer topology 由 functional consumer 明确 unsupported。该判定只读 J
 `reduce(sum) + explicit div`。
 
 Scalar RefEval 当前能力版本为 `j_scalar_cpu_mlir_v20`，shared projection 为
-`intentir.j-functional-boundary.v19`。它们完整继承 v14/v13、v12/v11 与 v10/v3；v10 已继承 v9，v9 已继承 v8 的唯一 node-less
+`intentir.j-functional-boundary.v20`。它们完整继承 v14/v13、v12/v11 与 v10/v3；v10 已继承 v9，v9 已继承 v8 的唯一 node-less
 logical-input load，并把 padded reduction 从 single input/output/sum 特例改为 J-only 的通用闭合：
 每个 predicated direct access 必须
 覆盖自身完整 logical domain，仍携带 masked axis 的 access 使用同一 predicate；每个 logical reduce
@@ -696,8 +696,12 @@ order 必须同时成立。v14/v13 只在 missing-fill load 的所有 downstream
 outside-domain value 不可观察；reduction/scan/loop/transpose/pad、不同 predicate 与未知 effect 继续
 fail closed。两者都不读 Source/C/π/Harness，也不修改 J。
 
-当前 `j_scalar_cpu_mlir_v20` / `intentir.j-functional-boundary.v19` 完整继承 v17/v16，并继续只扩展 deterministic
-consumer：显式 product domain 只有在 access coordinates 构成完整、唯一、逐 factor 的 mixed-radix
+当前 `j_scalar_cpu_mlir_v20` / `intentir.j-functional-boundary.v20` 完整继承此前的 deterministic
+consumer。functional-boundary v20 只新增一个 closed direct-identity 入口：node-less store 必须同时
+满足 J body 为空、canonical output binding 的 `node_ref=null`、value 是 J input tensor；该 binding
+可直接来自 J `returns`，不要求 Lift 冗余写 output_mapping。非空 body、node-bound output 或非 input
+value 继续 unsupported。已有 product-domain 能力仍要求 access coordinates 构成完整、唯一、逐
+factor 的 mixed-radix
 bijection 时才投影为 logical tensor axes；missing-fill provenance 只有在 shape-preserving pointwise
 链后接精确 `transpose`，且 store coordinates 等于 load coordinates 的 authored permutation、predicate
 完全一致时才允许穿过 transpose。它还消费 J 已写出的 `map_unary(log2)` 与 JSON-safe IEEE special

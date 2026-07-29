@@ -177,9 +177,12 @@ seed，未知 op 会停止 TypeCheck 的窄传播；value-free projector 对 gua
 provenance 进入未知 op 均显式 consumer-unsupported。v11 继承 v10 的上述 invocation-local、可证明全真的
 guard/runtime-bound 例外；fixed code 不补写 count、domain、predicate 或 reduction contract。
 
-当前 shared projection receipt 为 `intentir.j-functional-boundary.v19`，scalar RefEval 为
+当前 shared projection receipt 为 `intentir.j-functional-boundary.v20`，scalar RefEval 为
 `j_scalar_cpu_mlir_v20`，closed structured reference 为
-`intentir.j-structured-cpu-reference.v9`。v20/v19 完整继承既有唯一 node-less logical-input load、
+`intentir.j-structured-cpu-reference.v9`。functional-boundary v20 在 v19 上新增一个 closed direct
+identity 入口：node-less store 只有在 J body 为空、canonical output binding 的 `node_ref=null` 且
+value 是 J input tensor 时成立；binding 可由 J `returns` 单独给出，不要求冗余 output_mapping。
+非空 body、node-bound output 或非 input value 继续拒绝。其余 v20/v19 完整继承既有唯一 node-less logical-input load、
 通用 multi-reduction padding closure、当前 Gate2 invocation 的 runtime predicate tautology proof、
 v4/v5 relations、direct-store partition、closed typed contraction、product-domain mixed-radix、精确
 transpose 与 pointwise broadcast consumer。logical inout 的每个 post-state reload 由唯一 producer

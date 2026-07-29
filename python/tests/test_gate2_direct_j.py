@@ -172,6 +172,46 @@ def test_functional_boundary_preserves_context_only_domain_without_evaluating_it
     ]
 
 
+def test_functional_boundary_accepts_canonical_node_less_identity_return() -> None:
+    artifact = make_copy_artifact()
+    artifact.j.intent.body = []
+    artifact.j.intent.returns = [IntentReturn("t1", "t0")]
+    artifact.j.node_ids = {}
+    artifact.j.boundary = Boundary(
+        domains={"d0": "0 <= i0 and i0 < x0"},
+        accesses=[
+            BoundaryAccess(
+                "a0",
+                AccessKind.LOAD,
+                "t0",
+                node_ref=None,
+                index_expression="[i0]",
+            ),
+            BoundaryAccess(
+                "a1",
+                AccessKind.STORE,
+                "t1",
+                node_ref=None,
+                index_expression="[i0]",
+            ),
+        ],
+        effects=[
+            EffectSpec(EffectKind.READ, "t0", None, "e0", "a0"),
+            EffectSpec(EffectKind.WRITE, "t1", None, "e1", "a1"),
+        ],
+    )
+
+    projection = project_functional_boundary(artifact.j)
+
+    assert "access:a0" in projection.consumed
+    assert "access:a1" in projection.consumed
+
+    nonidentity = make_copy_artifact()
+    nonidentity.j.boundary = artifact.j.boundary
+    with pytest.raises(NotImplementedError, match="direct identity J"):
+        project_functional_boundary(nonidentity.j)
+
+
 def test_functional_boundary_consumes_complete_mixed_radix_bijection() -> None:
     j = _mixed_radix_copy_j()
 
@@ -1583,7 +1623,7 @@ def test_refeval_runtime_proves_rank_zero_logical_bound_tautology(limit: int) ->
     assert result.ok, result.error
     np.testing.assert_array_equal(result.outputs["output"], value)
     projection = result.metadata["boundary_projection"]
-    assert projection["protocol"] == "intentir.j-functional-boundary.v19"
+    assert projection["protocol"] == "intentir.j-functional-boundary.v20"
     assert FUNCTIONAL_BOUNDARY_PROTOCOL == projection["protocol"]
     assert result.metadata["boundary_profile"] == (
         "logical_domain_runtime_mask_erasure_v1"

@@ -1003,6 +1003,7 @@ def test_context_query_searches_source_and_pages_authored_nodes_without_editing(
     outline = json.loads(capsys.readouterr().out)
     assert outline["protocol"] == "intentir.lift-source-outline.v2"
     assert "syntax-only Source navigation" in outline["authority"]
+    assert outline["parser"] == "python_ast"
     assert [
         (item["kind"], item["line"], item["depth"])
         for item in outline["items"]
@@ -1063,6 +1064,34 @@ def test_source_outline_nested_loop_does_not_self_author_a_preexisting_write(
             "first_loop_write_line": 5,
         }
     ]
+
+
+def test_source_outline_falls_back_to_exact_lines_for_native_cuda(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    input_root = tmp_path / "input"
+    input_root.mkdir()
+    (input_root / "source.py").write_text(
+        'extern "C" __global__ void kernel(const float* x, float* y) {\n'
+        "  int i = blockIdx.x * blockDim.x + threadIdx.x;\n"
+        "  y[i] = x[i];\n"
+        "}\n"
+    )
+
+    _source_outline(input_root, 1, 32)
+    outline = json.loads(capsys.readouterr().out)
+
+    assert outline["protocol"] == "intentir.lift-source-outline.v2"
+    assert outline["parser"] == "lexical_lines"
+    assert [item["kind"] for item in outline["items"]] == [
+        "source_line",
+        "source_line",
+        "source_line",
+        "source_line",
+    ]
+    assert outline["items"][1]["header"] == (
+        "int i = blockIdx.x * blockDim.x + threadIdx.x;"
+    )
 
 
 def test_context_discovery_queries_work_in_real_bubblewrap() -> None:

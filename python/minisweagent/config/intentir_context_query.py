@@ -398,7 +398,14 @@ def _source_outline_value(input_root: Path, start: int, count: int) -> dict[str,
         raise ValueError("source-outline start must be positive and count in [1, 48]")
     source = (input_root / "source.py").read_text(encoding="utf-8")
     lines = source.splitlines()
-    tree = ast.parse(source, filename="source.py")
+    try:
+        tree: ast.AST | None = ast.parse(source, filename="source.py")
+    except SyntaxError:
+        # Native CUDA/C++ and malformed Python-family sources must not turn this
+        # proof-irrelevant navigation aid into a Lift infrastructure gate.  Keep
+        # the fallback exact and syntax-only; the LLM still owns every frontend
+        # interpretation and every J/C/pi field.
+        tree = None
     items: list[dict[str, Any]] = []
 
     def bound_names(node: ast.AST) -> list[tuple[str, int, int]]:
@@ -693,16 +700,31 @@ def _source_outline_value(input_root: Path, start: int, count: int) -> dict[str,
         def visit_Continue(self, node: ast.Continue) -> None:
             self.record(node, "continue")
 
-    OutlineVisitor().visit(tree)
+    if tree is not None:
+        OutlineVisitor().visit(tree)
+    else:
+        items.extend(
+            {
+                "kind": "source_line",
+                "line": line_number,
+                "end_line": line_number,
+                "depth": 0,
+                "header": line.strip()[:200],
+            }
+            for line_number, line in enumerate(lines, start=1)
+            if line.strip()
+        )
     page = items[start - 1 : start - 1 + count]
     next_start = start + len(page) if start - 1 + len(page) < len(items) else None
     return {
         "protocol": "intentir.lift-source-outline.v2",
         "authority": (
-            "syntax-only Source navigation; names, return presence, and memory-call "
-            "order are literal AST facts, not carrier/effect classification or "
-            "frontend tuple order; Lift still authors all J/C/pi fields"
+            "syntax-only Source navigation; parsed names, return presence, and "
+            "memory-call order are literal AST facts, while unsupported syntax "
+            "falls back to exact non-empty source lines; neither form classifies "
+            "carriers/effects or frontend tuples, and Lift still authors all J/C/pi"
         ),
+        "parser": "python_ast" if tree is not None else "lexical_lines",
         "total": len(items),
         "start": start,
         "items": [

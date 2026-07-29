@@ -32,7 +32,7 @@ from intentir.ir.value_dimension import (
 )
 
 
-FUNCTIONAL_BOUNDARY_PROTOCOL = "intentir.j-functional-boundary.v19"
+FUNCTIONAL_BOUNDARY_PROTOCOL = "intentir.j-functional-boundary.v20"
 RUNTIME_PREDICATE_PROOF_PROTOCOL = (
     "intentir.j-functional-runtime-predicate-tautology.v1"
 )
@@ -4200,6 +4200,9 @@ def _project_functional_boundary(
     elaboration = j_elaboration(j)
     parsed_accesses = elaboration.access_by_id
     value_types = elaboration.value_type_by_name
+    canonical_output_bindings = {
+        item.output: item for item in elaboration.output_bindings
+    }
     expected_effect = {"load": "read", "store": "write"}
     for access in boundary.accesses:
         if access.kind.value == "update":
@@ -4603,12 +4606,18 @@ def _project_functional_boundary(
                 or op.type.get("shape") != tensor.shape
             ):
                 raise ValueError("functional store producer type differs from output")
-        elif (
-            j.intent.body or mapping is None or observable_value not in input_names
-        ):
-            raise NotImplementedError(
-                "node-less store is supported only for direct identity J"
-            )
+        else:
+            canonical_binding = canonical_output_bindings.get(access.tensor)
+            if (
+                j.intent.body
+                or canonical_binding is None
+                or canonical_binding.node_ref is not None
+                or canonical_binding.value not in input_names
+                or observable_value != canonical_binding.value
+            ):
+                raise NotImplementedError(
+                    "node-less store is supported only for direct identity J"
+                )
         if is_observable_store:
             stores_by_output[access.tensor].append(access)
 

@@ -737,7 +737,7 @@ implementation selection 的 constexpr 必须在 Harness 分类为 C slot，而�
 留在 π-only 形态；static specialization carrier 也不得进入 π topology。
 
 当前 RefEval 消费版本为 `j_scalar_cpu_mlir_v20`，shared functional projection 为
-`intentir.j-functional-boundary.v19`。它们完整继承 v14/v13、v12/v11 与 v10/v3；v10 已继承 v9，v9 已继承 v8 对唯一 node-less
+`intentir.j-functional-boundary.v20`。它们完整继承 v14/v13、v12/v11 与 v10/v3；v10 已继承 v9，v9 已继承 v8 对唯一 node-less
 logical-input load 的通用消费，并移除旧 single-input/single-output/single-sum padded topology 限制。
 对 predicated direct access，J 必须
 自行声明每个 axis 的完整零起点 logical domain与显式 load fill，仍携带 masked axis 的 access 使用
@@ -789,7 +789,7 @@ v13/v12 仅消费 J 已明确证明的 inout post-state reload：唯一 output m
 擦除 physical outside-domain value；任何 reduction、scan、loop、transpose、pad、不同 predicate 或
 未匹配 effect 都拒绝。两项都只产生 consumer receipt，不生成 artifact field，不进入 Lift feedback。
 
-当前 `j_scalar_cpu_mlir_v20` / `intentir.j-functional-boundary.v19` 完整继承 v17/v16 在上述 v14/v13 上增加的两项共享、
+当前 `j_scalar_cpu_mlir_v20` / `intentir.j-functional-boundary.v20` 完整继承 v17/v16 在上述 v14/v13 上增加的两项共享、
 J-only 的确定性消费能力。第一，若 domain upper bound 是 J 显式写出的正整数/`x*` 乘积，access 的
 每个非 direct coordinate 必须恰好是该乘积的一位 mixed-radix digit，且所有 factor 各出现一次、
 stride 为精确 suffix，才形成 `complete_mixed_radix_bijection` receipt；不做交换律猜测、不补缺位、
