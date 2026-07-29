@@ -335,6 +335,17 @@ assembler只拼接model-authored键值，拒绝重复leaf，不分配handle、�
 CandidateCheck PASS后才以基础设施错误丢失candidate。完成该实现并提交干净后，才重新运行
 Terra-high对照；其目的只是检验分片authoring是否降低首稿和修正成本，不预设Terra可替代难核Sol。
 
+分片版Terra-high已按上述顺序在提交`7789863a`之后启动，并于493秒人工停止。它约35秒建立四个
+独立fragment，之后始终只局部修改所属fragment；准确op reference也使首轮contraction/cast/map
+直接采用正确`subscripts/to_dtype/fn`，因此“一次写整份20KB”和“猜IntentOp attrs”两个问题确认已
+解决。但owner在形成完整artifact之前调用了13次CandidateCheck，逐层追missing π/J字段、signature、
+C slot与shape equality；停止时累计input约1.01M token，π仍是required-empty arrays，当前frontier还有
+C bool value type、无依据reduction boundary、dimension relation自环、cast authorization与J result type
+不完整。该运行是人工中止的authoring capability evidence，不是NO_CLOSURE或Gate1结果。结论是
+fragment interface有效，但Terra-high仍不适合作为Linear这类复杂首轮Lift owner；下一步不能继续拆
+JSON，而应让owner在第一次CandidateCheck前获得并主动消费所需closed object contract，或直接用
+Sol承担复杂first Lift。
+
 ## 5. J / C / π的能力计划
 
 ### 5.1 不做大重构
