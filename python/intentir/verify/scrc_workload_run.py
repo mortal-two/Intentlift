@@ -121,6 +121,8 @@ def _new_replay_writer(
         "provider": provider,
         "effort": effort,
     }
+    if replay_backend == "codex" and (effort or provider.reasoning_effort) == "xhigh":
+        writer_kwargs["repair_effort"] = "high"
     if stop_requested is not None:
         writer_kwargs["stop_requested"] = stop_requested
     if replay_backend == "miniswe":
@@ -692,6 +694,8 @@ def _build_workload_runtime(
     }
     if lift_backend in {"miniswe", "codex"}:
         lift_kwargs["workflow"] = lift_workflow
+    if lift_backend == "codex" and (effort or provider.reasoning_effort) == "xhigh":
+        lift_kwargs["repair_effort"] = "high"
         lift_kwargs["stop_requested"] = stop_requested
     lift = lift_class(
         **lift_kwargs,
