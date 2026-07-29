@@ -1,6 +1,6 @@
 # Task 16：Fresh-14 J 的真实 MLIR 跨目标搜索与 Source/Native Baseline 性能闭合
 
-> 状态：执行中（Fresh-14 已 14/14 接入 typed J→Intent MLIR；5090D 的真实 Q/D、搜索与高杠杆 lowering 正在横向推进）
+> 状态：阶段性交付；后续三柱能力分离与完整搜索转入 Task 17
 >
 > 类型：production backend 能力建设、真实 lowering-state search、跨目标性能与消融实验
 >
@@ -408,9 +408,9 @@ Internal: C-Fixed / Schedule-Only / IntentIR
   中的 inout post-state，后者从唯一 node-less masked load 恢复 pointwise consumer，并用 J broadcast
   axes 验证坐标；两者均没有新增 J 字段或放宽 Q。closed SplitK 已实际完成 CF/E2/E3 搜索（约
   0.97/0.93/0.93 us 的 bring-up 值）。
-- Fresh SplitK 的自然 `[B,G,H,M,D]` 上游布局与当前 J 的 `p34=H -> x1`、`p35=G -> x2` 轴声明不一致；
-  `H!=G` 时 shared workload builder 正确拒绝，而不是用交换 constexpr 或改 shape 掩盖。该 cell 暂不
-  计入自然 headline；需要前端重新提供 source-grounded 轴对应后，才可形成新的 accepted J。
+- Fresh SplitK 的 Source-grounded轴对应已修正为 `p34=H -> x2`、`p35=G -> x1`。自然
+  `[B,G,H,M,D]=[1,1,16,1,256]` 已完成 Source--RefJ 与全部 MLIR/CUDA候选正确性，并在 5090D
+  cold-data 测得 Source `46.208 us`、IntentIR `16.608 us`（`2.78x`）。该项现正式进入 Fresh-14 headline。
 
 ## 10. 总体验收
 
