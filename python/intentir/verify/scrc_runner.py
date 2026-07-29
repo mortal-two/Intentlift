@@ -419,7 +419,65 @@ def _observer_diagnostic_profiles(
             )
             for token in _observer_fingerprints(entry[0]):
                 result.setdefault(token, {})[side] = profile
-    return result
+    return {
+        token: profiles
+        for token, profiles in result.items()
+        if not (
+            profiles.get("source") is not None
+            and profiles.get("source") == profiles.get("replay")
+        )
+    }
+
+
+def _observer_diagnostic_representation_profiles(
+    source_fingerprint: Any | None,
+    replay_fingerprint: Any | None,
+) -> dict[str, dict[str, dict[str, Any]]]:
+    """Index hash-free origins of representation carriers contracted by Gate1."""
+
+    result: dict[str, dict[str, dict[str, Any]]] = {}
+    for side, fingerprint in (
+        ("source", source_fingerprint),
+        ("replay", replay_fingerprint),
+    ):
+        entries = getattr(
+            fingerprint,
+            "diagnostic_representation_profiles",
+            (),
+        )
+        if not isinstance(entries, (list, tuple)):
+            continue
+        for entry in entries:
+            if (
+                not isinstance(entry, (list, tuple))
+                or len(entry) != 3
+                or not isinstance(entry[0], str)
+                or not isinstance(entry[1], str)
+                or not isinstance(entry[2], (list, tuple))
+                or not all(isinstance(item, str) for item in entry[2])
+            ):
+                continue
+            profile = _feedback_item(
+                {
+                    "result_contract": entry[1][
+                        :MAX_GATE1_FEEDBACK_LOCAL_SIGNATURE_CHARS
+                    ],
+                    "origins": [
+                        item[:MAX_GATE1_FEEDBACK_LOCAL_SIGNATURE_CHARS]
+                        for item in entry[2]
+                    ],
+                }
+            )
+            for token in _observer_fingerprints(entry[0]):
+                result.setdefault(token, {})[side] = profile
+    return {
+        token: profiles
+        for token, profiles in result.items()
+        if not (
+            profiles.get("source") is not None
+            and profiles.get("source") == profiles.get("replay")
+        )
+    }
 
 
 def _observer_category_node_profiles(
@@ -822,6 +880,12 @@ def _compact_gate1_observer_diff(
         source_fingerprint,
         replay_fingerprint,
     )
+    diagnostic_representation_profiles = (
+        _observer_diagnostic_representation_profiles(
+            source_fingerprint,
+            replay_fingerprint,
+        )
+    )
 
     grouped: dict[str, dict[str, Any]] = {}
     for difference in mapped_differences:
@@ -888,6 +952,13 @@ def _compact_gate1_observer_diff(
             )
             if effect_order_witnesses:
                 group["effect_order_witnesses"] = effect_order_witnesses
+            representation_frontier = _observer_category_node_profiles(
+                category_differences,
+                node_aliases,
+                diagnostic_representation_profiles,
+            )
+            if representation_frontier:
+                group["representation_frontier"] = representation_frontier
         else:
             node_profiles = _observer_category_node_profiles(
                 category_differences,

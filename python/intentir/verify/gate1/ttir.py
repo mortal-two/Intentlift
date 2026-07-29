@@ -625,6 +625,18 @@ class TTIRFingerprint:
         repr=False,
         compare=False,
     )
+    # Diagnostic-only expansion of representation carriers contracted by the
+    # v12 hard observer.  It exposes only the carrier result contract and its
+    # normalized anonymous origins, never the discarded arithmetic formula.
+    # This lets source-aware Lift repair an authored route whose dependency set
+    # was incomplete without turning Gate1 feedback into a hidden Source trace.
+    diagnostic_representation_profiles: tuple[
+        tuple[str, str, tuple[str, ...]], ...
+    ] = field(
+        default=(),
+        repr=False,
+        compare=False,
+    )
     # Diagnostic-only expansion of each synthetic ``effect.trace`` node.
     # Keeping the ordered event spellings beside the opaque trace digest lets
     # SCRC explain *which* lexical effect sequence diverged.  Like node
@@ -5175,6 +5187,18 @@ class TTIRParser:
                     diagnostic_node_profile(operation)
                     for operation in operations
                     if operation.name not in _TERMINATORS
+                )
+            ),
+            diagnostic_representation_profiles=tuple(
+                sorted(
+                    {
+                        (
+                            reference,
+                            result_contract(node_by_id[result_to_node[name]]),
+                            representation_atoms(name),
+                        )
+                        for name, reference in representation_ref_cache.items()
+                    }
                 )
             ),
             diagnostic_effect_traces=tuple(
