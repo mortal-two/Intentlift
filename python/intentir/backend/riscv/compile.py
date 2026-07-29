@@ -264,6 +264,7 @@ class RiscvTransformationRecord:
     joint_vector_reduction_groups: int = 0
     joint_vector_reductions: int = 0
     joint_vector_reduction_root_loads: int = 0
+    joint_raw_moment_variances: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -291,6 +292,7 @@ class RiscvTransformationRecord:
             "joint_vector_reduction_root_loads": (
                 self.joint_vector_reduction_root_loads
             ),
+            "joint_raw_moment_variances": self.joint_raw_moment_variances,
         }
 
 
@@ -510,6 +512,9 @@ def _lower_to_llvm_ir(
         ),
         joint_vector_reduction_root_loads=_module_i64_attr(
             structured, "intent.rvv.joint_vector_reduction_root_load_count"
+        ),
+        joint_raw_moment_variances=_module_i64_attr(
+            structured, "intent.rvv.joint_raw_moment_variance_count"
         ),
     )
     if (

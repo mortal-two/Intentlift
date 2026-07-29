@@ -17,6 +17,7 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
@@ -235,7 +236,11 @@ static bool isZeroInitialized(linalg::GenericOp reduction) {
 struct ReductionPlan {
   linalg::GenericOp reduction;
   Value root;
+  Value statisticalInput;
   SmallVector<linalg::GenericOp> producers;
+  arith::FastMathFlags fastMath;
+  bool synthesizeSquarePayload = false;
+  linalg::GenericOp rawMomentMeanReduction;
 };
 
 static Value collectProducerRoot(
@@ -250,8 +255,12 @@ static Value collectProducerRoot(
   auto producer = value.getDefiningOp<linalg::GenericOp>();
   if (!producer)
     return value;
-  if (!isSupportedElementwiseProducer(producer, expectedType) ||
-      !visiting.insert(producer.getOperation()).second) {
+  // An unsupported Linalg producer is a materialized frontier, not something
+  // this pass may clone.  It can still be the common root read by several
+  // reductions; only supported identity-mapped elementwise DAGs are crossed.
+  if (!isSupportedElementwiseProducer(producer, expectedType))
+    return value;
+  if (!visiting.insert(producer.getOperation()).second) {
     valid = false;
     return {};
   }
@@ -283,7 +292,13 @@ static std::optional<ReductionPlan> buildReductionPlan(linalg::GenericOp op) {
       outputType.getEncoding())
     return std::nullopt;
 
-  ReductionPlan plan{op, {}, {}};
+  ReductionPlan plan{op,
+                     {},
+                     input,
+                     {},
+                     getSupportedAddCombine(op).getFastmath(),
+                     false,
+                     {}};
   llvm::SmallPtrSet<Operation *, 8> visited;
   llvm::SmallPtrSet<Operation *, 8> visiting;
   bool valid = true;
@@ -294,22 +309,329 @@ static std::optional<ReductionPlan> buildReductionPlan(linalg::GenericOp op) {
   return plan;
 }
 
+struct SquareReductionMatch {
+  Value centeredInput;
+  arith::FastMathFlags fastMath;
+};
+
+static bool hasScalarEquality(Value scalarTensor, int64_t expected,
+                              Operation *context) {
+  auto argument = dyn_cast<BlockArgument>(scalarTensor);
+  auto function = context->getParentOfType<func::FuncOp>();
+  if (!argument || !function || argument.getOwner() != &function.front())
+    return false;
+  auto equalities =
+      function->getAttrOfType<DenseI64ArrayAttr>("intent.scalar_equalities");
+  if (!equalities || equalities.size() % 2 != 0)
+    return false;
+  ArrayRef<int64_t> values = equalities.asArrayRef();
+  for (unsigned index = 0; index < values.size(); index += 2)
+    if (values[index] == static_cast<int64_t>(argument.getArgNumber()) &&
+        values[index + 1] == expected)
+      return true;
+  return false;
+}
+
+static std::optional<SquareReductionMatch>
+matchSquareSumReduction(linalg::GenericOp reduction) {
+  if (arith::AddFOp combine = getSupportedAddCombine(reduction)) {
+    Block &body = reduction.getRegion().front();
+    Value accumulator = body.getArgument(1);
+    Value payload = combine.getLhs() == accumulator ? combine.getRhs()
+                                                    : combine.getLhs();
+    auto square = payload.getDefiningOp<arith::MulFOp>();
+    if (square && square.getLhs() == body.getArgument(0) &&
+        square.getRhs() == body.getArgument(0))
+      return SquareReductionMatch{reduction.getDpsInputs()[0],
+                                  combine.getFastmath()};
+    return std::nullopt;
+  }
+
+  if (!reduction.hasPureTensorSemantics() || reduction.getNumLoops() < 2 ||
+      reduction.getNumDpsInputs() != 2 || reduction.getNumDpsInits() != 1 ||
+      reduction->getNumResults() != 1)
+    return std::nullopt;
+  ArrayRef<utils::IteratorType> iterators = reduction.getIteratorTypesArray();
+  if (iterators.back() != utils::IteratorType::reduction ||
+      llvm::any_of(llvm::drop_end(iterators), [](utils::IteratorType iterator) {
+        return iterator != utils::IteratorType::parallel;
+      }))
+    return std::nullopt;
+
+  SmallVector<AffineMap> maps = reduction.getIndexingMapsArray();
+  if (maps.size() != 3 || !isParallelProjection(maps.back()))
+    return std::nullopt;
+  auto outputType =
+      dyn_cast<RankedTensorType>(reduction.getDpsInits()[0].getType());
+  if (!outputType || !outputType.getElementType().isF32())
+    return std::nullopt;
+
+  Block &body = reduction.getRegion().front();
+  if (body.getNumArguments() != 3)
+    return std::nullopt;
+  auto yield = dyn_cast<linalg::YieldOp>(body.getTerminator());
+  auto combine = yield && yield.getValues().size() == 1
+                     ? yield.getValues().front().getDefiningOp<arith::AddFOp>()
+                     : arith::AddFOp{};
+  Value accumulator = body.getArgument(2);
+  if (!combine ||
+      !arith::bitEnumContainsAll(combine.getFastmath(),
+                                 arith::FastMathFlags::reassoc))
+    return std::nullopt;
+  bool lhsIsAccumulator = combine.getLhs() == accumulator;
+  bool rhsIsAccumulator = combine.getRhs() == accumulator;
+  if (lhsIsAccumulator == rhsIsAccumulator)
+    return std::nullopt;
+  Value payload = lhsIsAccumulator ? combine.getRhs() : combine.getLhs();
+  auto square = payload.getDefiningOp<arith::MulFOp>();
+  if (!square || square.getLhs() != square.getRhs())
+    return std::nullopt;
+  auto select = square.getLhs().getDefiningOp<arith::SelectOp>();
+  if (!select || !matchPattern(select.getFalseValue(), m_AnyZeroFloat()))
+    return std::nullopt;
+  auto centeredArgument = dyn_cast<BlockArgument>(select.getTrueValue());
+  if (!centeredArgument || centeredArgument.getOwner() != &body ||
+      centeredArgument.getArgNumber() >= 2)
+    return std::nullopt;
+  unsigned centeredIndex = centeredArgument.getArgNumber();
+  if (!maps[centeredIndex].isIdentity())
+    return std::nullopt;
+  Value centeredInput = reduction.getDpsInputs()[centeredIndex];
+  auto centeredType = dyn_cast<RankedTensorType>(centeredInput.getType());
+  if (!centeredType || !centeredType.getElementType().isF32() ||
+      centeredType.getRank() != reduction.getNumLoops() ||
+      !centeredType.hasStaticShape())
+    return std::nullopt;
+
+  auto compare = select.getCondition().getDefiningOp<arith::CmpIOp>();
+  if (!compare || compare.getPredicate() != arith::CmpIPredicate::slt)
+    return std::nullopt;
+  auto indexCast = compare.getLhs().getDefiningOp<arith::IndexCastOp>();
+  auto index = indexCast
+                   ? indexCast.getIn().getDefiningOp<linalg::IndexOp>()
+                   : linalg::IndexOp{};
+  auto boundArgument = dyn_cast<BlockArgument>(compare.getRhs());
+  if (!index ||
+      index.getDim() != static_cast<uint64_t>(centeredType.getRank() - 1) ||
+      !boundArgument || boundArgument.getOwner() != &body ||
+      boundArgument.getArgNumber() >= 2 ||
+      boundArgument == centeredArgument)
+    return std::nullopt;
+  unsigned boundIndex = boundArgument.getArgNumber();
+  if (maps[boundIndex].getNumResults() != 0 ||
+      !hasScalarEquality(reduction.getDpsInputs()[boundIndex],
+                         centeredType.getShape().back(), reduction))
+    return std::nullopt;
+  return SquareReductionMatch{centeredInput, combine.getFastmath()};
+}
+
+static bool isFeatureCountTensor(Value tensor, int64_t featureCount,
+                                 Operation *context) {
+  if (hasScalarEquality(tensor, featureCount, context))
+    return true;
+  auto producer = tensor.getDefiningOp<linalg::GenericOp>();
+  if (!producer || !producer.hasPureTensorSemantics() ||
+      producer.getNumLoops() != 0 || producer.getNumDpsInputs() != 1 ||
+      producer.getNumDpsInits() != 1 || producer->getNumResults() != 1)
+    return false;
+  Block &body = producer.getRegion().front();
+  auto yield = dyn_cast<linalg::YieldOp>(body.getTerminator());
+  if (body.getNumArguments() != 2 || !yield ||
+      yield.getValues().size() != 1)
+    return false;
+  Value result = yield.getValues().front();
+  if (auto cast = result.getDefiningOp<arith::SIToFPOp>())
+    if (cast.getIn() == body.getArgument(0))
+      return hasScalarEquality(producer.getDpsInputs()[0], featureCount,
+                               context);
+  return false;
+}
+
+static linalg::GenericOp matchFeatureAverage(Value meanValue,
+                                             int64_t featureCount) {
+  auto mean = meanValue.getDefiningOp<linalg::GenericOp>();
+  auto meanType = dyn_cast<RankedTensorType>(meanValue.getType());
+  if (!mean || !meanType || !mean.hasPureTensorSemantics() ||
+      mean.getNumDpsInputs() == 0 || mean.getNumDpsInits() != 1 ||
+      mean->getNumResults() != 1 ||
+      mean.getNumLoops() != static_cast<unsigned>(meanType.getRank()) ||
+      llvm::any_of(mean.getIteratorTypesArray(),
+                   [](utils::IteratorType iterator) {
+                     return iterator != utils::IteratorType::parallel;
+                   }))
+    return {};
+  Block &body = mean.getRegion().front();
+  unsigned inputCount = mean.getNumDpsInputs();
+  auto yield = dyn_cast<linalg::YieldOp>(body.getTerminator());
+  auto divide = yield && yield.getValues().size() == 1
+                    ? yield.getValues().front().getDefiningOp<arith::DivFOp>()
+                    : arith::DivFOp{};
+  if (body.getNumArguments() != inputCount + 1 || !divide)
+    return {};
+  auto numerator = dyn_cast<BlockArgument>(divide.getLhs());
+  if (!numerator || numerator.getOwner() != &body ||
+      numerator.getArgNumber() >= inputCount)
+    return {};
+  unsigned numeratorIndex = numerator.getArgNumber();
+  auto numeratorMap = mean.getIndexingMapsArray()[numeratorIndex];
+  if (!numeratorMap.isIdentity())
+    return {};
+  Value numeratorTensor = mean.getDpsInputs()[numeratorIndex];
+  auto reduction = numeratorTensor.getDefiningOp<linalg::GenericOp>();
+  if (!reduction || !getSupportedAddCombine(reduction) ||
+      !isZeroInitialized(reduction))
+    return {};
+
+  Value denominator = divide.getRhs();
+  if (auto argument = dyn_cast<BlockArgument>(denominator)) {
+    if (argument.getOwner() != &body ||
+        argument.getArgNumber() >= inputCount)
+      return {};
+    unsigned denominatorIndex = argument.getArgNumber();
+    AffineMap denominatorMap = mean.getIndexingMapsArray()[denominatorIndex];
+    if (denominatorMap.getNumResults() != 0 ||
+        !isFeatureCountTensor(mean.getDpsInputs()[denominatorIndex],
+                              featureCount, mean))
+      return {};
+  } else {
+    Attribute attribute;
+    if (!matchPattern(denominator, m_Constant(&attribute)))
+      return {};
+    auto floatValue = dyn_cast<FloatAttr>(attribute);
+    if (!floatValue ||
+        floatValue.getValue().convertToDouble() !=
+            static_cast<double>(featureCount))
+      return {};
+  }
+  return reduction;
+}
+
+/// Recognize a centered-variance graph and replace only its statistical input:
+///
+///   sum(x) -> mean; sum((x - mean)^2)
+///
+/// becomes one joint traversal accumulating sum(x) and sum(x^2).  Finalization
+/// reconstructs the original centered sum as sum(x^2) - N * mean^2.  The
+/// transformation is observation-changing for floating point and is admitted
+/// only in the same reassociation/QD state as the joint vector reduction.
+static std::optional<ReductionPlan>
+buildRawMomentVariancePlan(linalg::GenericOp varianceReduction) {
+  std::optional<SquareReductionMatch> squareReduction =
+      matchSquareSumReduction(varianceReduction);
+  if (!squareReduction || !isZeroInitialized(varianceReduction))
+    return std::nullopt;
+
+  Value centeredValue = squareReduction->centeredInput;
+  auto centeredType = dyn_cast<RankedTensorType>(centeredValue.getType());
+  auto centered = centeredValue.getDefiningOp<linalg::GenericOp>();
+  if (!centeredType || !centered || !centered.hasPureTensorSemantics() ||
+      centered.getNumDpsInputs() != 2 || centered.getNumDpsInits() != 1 ||
+      centered->getNumResults() != 1 ||
+      centered.getNumLoops() != static_cast<unsigned>(centeredType.getRank()) ||
+      llvm::any_of(centered.getIteratorTypesArray(),
+                   [](utils::IteratorType iterator) {
+                     return iterator != utils::IteratorType::parallel;
+                   }))
+    return std::nullopt;
+
+  SmallVector<AffineMap> centeredMaps = centered.getIndexingMapsArray();
+  if (centeredMaps.size() != 3 || !centeredMaps[0].isIdentity() ||
+      !isParallelProjection(centeredMaps[1]) ||
+      !centeredMaps[2].isIdentity())
+    return std::nullopt;
+  Block &centeredBody = centered.getRegion().front();
+  if (centeredBody.getNumArguments() != 3 ||
+      !centeredBody.getArgument(2).use_empty())
+    return std::nullopt;
+  auto centeredYield =
+      dyn_cast<linalg::YieldOp>(centeredBody.getTerminator());
+  auto subtract = centeredYield && centeredYield.getValues().size() == 1
+                      ? centeredYield.getValues().front()
+                            .getDefiningOp<arith::SubFOp>()
+                      : arith::SubFOp{};
+  if (!subtract || subtract.getLhs() != centeredBody.getArgument(0) ||
+      subtract.getRhs() != centeredBody.getArgument(1))
+    return std::nullopt;
+
+  Value statisticalInput = centered.getDpsInputs()[0];
+  Value meanValue = centered.getDpsInputs()[1];
+  auto statisticalType = dyn_cast<RankedTensorType>(statisticalInput.getType());
+  auto meanType = dyn_cast<RankedTensorType>(meanValue.getType());
+  if (!statisticalType || statisticalType != centeredType || !meanType ||
+      meanType.getRank() + 1 != statisticalType.getRank() ||
+      !statisticalType.hasStaticShape())
+    return std::nullopt;
+
+  int64_t featureCount = statisticalType.getShape().back();
+  linalg::GenericOp meanReduction =
+      matchFeatureAverage(meanValue, featureCount);
+  if (!meanReduction || meanReduction.getDpsInits()[0].getType() != meanType)
+    return std::nullopt;
+
+  std::optional<ReductionPlan> meanPlan = buildReductionPlan(meanReduction);
+  if (!meanPlan || meanReduction.getDpsInputs()[0] != statisticalInput ||
+      meanPlan->root.getType() != statisticalType)
+    return std::nullopt;
+
+  auto varianceOutputType =
+      dyn_cast<RankedTensorType>(varianceReduction.getDpsInits()[0].getType());
+  if (!varianceOutputType || varianceOutputType != meanType ||
+      !varianceOutputType.hasStaticShape() || varianceOutputType.getEncoding())
+    return std::nullopt;
+
+  ReductionPlan plan{varianceReduction,
+                     meanPlan->root,
+                     statisticalInput,
+                     meanPlan->producers,
+                     squareReduction->fastMath,
+                     true,
+                     meanReduction};
+  return plan;
+}
+
+static AffineMap statisticalInputMap(ReductionPlan plan) {
+  SmallVector<AffineMap> maps = plan.reduction.getIndexingMapsArray();
+  for (auto [index, input] : llvm::enumerate(plan.reduction.getDpsInputs()))
+    if (input == plan.statisticalInput)
+      return maps[index];
+  // A raw-moment plan deliberately bypasses the materialized centered tensor:
+  // its statistical input is the pre-centering root, while the reduction still
+  // names the centered tensor as its identity-mapped operand.  The matcher has
+  // already proved that exact centered-value structure; recover its logical map
+  // by type and require it to be unique.
+  AffineMap rawMomentMap;
+  if (plan.rawMomentMeanReduction)
+    for (auto [index, input] : llvm::enumerate(plan.reduction.getDpsInputs()))
+      if (input.getType() == plan.statisticalInput.getType() &&
+          maps[index].isIdentity()) {
+        if (rawMomentMap)
+          return {};
+        rawMomentMap = maps[index];
+      }
+  if (rawMomentMap)
+    return rawMomentMap;
+  return {};
+}
+
 static bool sameJointDomain(const ReductionPlan &lhs,
                             const ReductionPlan &rhs) {
   linalg::GenericOp lhsReduction = lhs.reduction;
   linalg::GenericOp rhsReduction = rhs.reduction;
+  AffineMap lhsStatisticalMap = statisticalInputMap(lhs);
+  AffineMap rhsStatisticalMap = statisticalInputMap(rhs);
+  AffineMap lhsOutputMap = lhsReduction.getIndexingMapsArray().back();
+  AffineMap rhsOutputMap = rhsReduction.getIndexingMapsArray().back();
   if (lhs.root != rhs.root ||
       lhsReduction->getBlock() != rhsReduction->getBlock() ||
-      lhsReduction.getDpsInputs()[0].getType() !=
-          rhsReduction.getDpsInputs()[0].getType() ||
+      lhs.statisticalInput.getType() != rhs.statisticalInput.getType() ||
       lhsReduction.getDpsInits()[0].getType() !=
           rhsReduction.getDpsInits()[0].getType() ||
+      !lhsStatisticalMap || lhsStatisticalMap != rhsStatisticalMap ||
+      lhsOutputMap != rhsOutputMap ||
       lhsReduction.getIteratorTypesArray() !=
           rhsReduction.getIteratorTypesArray())
     return false;
-  SmallVector<AffineMap> lhsMaps = lhsReduction.getIndexingMapsArray();
-  SmallVector<AffineMap> rhsMaps = rhsReduction.getIndexingMapsArray();
-  return lhsMaps == rhsMaps;
+  return true;
 }
 
 static bool capturedValuesDominate(linalg::GenericOp op, Operation *anchor,
@@ -541,16 +863,22 @@ emitJointReductionGroup(IRRewriter &rewriter, ArrayRef<ReductionPlan> plans,
             for (auto [index, plan] : llvm::enumerate(plans)) {
               linalg::GenericOp reduction = plan.reduction;
               Value inputPacket = emitProducerPacket(
-                  innerBuilder, reduction.getDpsInputs()[0], packets,
-                  vectorType);
+                  innerBuilder, plan.statisticalInput, packets, vectorType);
               if (!inputPacket) {
                 payloadEmissionFailed = true;
                 accumulated.push_back(innerArgs[index]);
                 continue;
               }
-              Value next = emitVectorPayload(innerBuilder, reduction,
-                                             inputPacket, innerArgs[index],
-                                             vectorType);
+              Value next;
+              if (plan.synthesizeSquarePayload) {
+                Value square = innerBuilder.create<arith::MulFOp>(
+                    innerLocation, inputPacket, inputPacket);
+                next = innerBuilder.create<arith::AddFOp>(
+                    innerLocation, innerArgs[index], square, plan.fastMath);
+              } else {
+                next = emitVectorPayload(innerBuilder, reduction, inputPacket,
+                                         innerArgs[index], vectorType);
+              }
               if (!next) {
                 payloadEmissionFailed = true;
                 next = innerArgs[index];
@@ -560,15 +888,43 @@ emitJointReductionGroup(IRRewriter &rewriter, ArrayRef<ReductionPlan> plans,
             innerBuilder.create<scf::YieldOp>(innerLocation, accumulated);
           });
 
+      SmallVector<Value> reducedScalars;
+      reducedScalars.reserve(plans.size());
+      for (auto [index, plan] : llvm::enumerate(plans)) {
+        reducedScalars.push_back(builder.create<vector::ReductionOp>(
+            location, vector::CombiningKind::ADD, inner.getResult(index), zero,
+            plan.fastMath));
+      }
+
+      for (auto [index, plan] : llvm::enumerate(plans)) {
+        if (!plan.rawMomentMeanReduction)
+          continue;
+        auto mean = llvm::find_if(plans, [&](const ReductionPlan &candidate) {
+          return candidate.reduction == plan.rawMomentMeanReduction;
+        });
+        if (mean == plans.end()) {
+          payloadEmissionFailed = true;
+          continue;
+        }
+        unsigned meanIndex = std::distance(plans.begin(), mean);
+        auto statisticalType =
+            cast<RankedTensorType>(plan.statisticalInput.getType());
+        int64_t featureCount = statisticalType.getShape().back();
+        Value featureCountValue = builder.create<arith::ConstantOp>(
+            location, builder.getF32FloatAttr(featureCount));
+        Value meanValue = builder.create<arith::DivFOp>(
+            location, reducedScalars[meanIndex], featureCountValue);
+        Value meanSquare =
+            builder.create<arith::MulFOp>(location, meanValue, meanValue);
+        Value centeredCorrection = builder.create<arith::MulFOp>(
+            location, featureCountValue, meanSquare);
+        reducedScalars[index] = builder.create<arith::SubFOp>(
+            location, reducedScalars[index], centeredCorrection);
+      }
+
       SmallVector<Value> updatedOutputs;
       updatedOutputs.reserve(plans.size());
-      for (auto [index, plan] : llvm::enumerate(plans)) {
-        linalg::GenericOp reduction = plan.reduction;
-        arith::FastMathFlags flags =
-            getSupportedAddCombine(reduction).getFastmath();
-        Value reduced = builder.create<vector::ReductionOp>(
-            location, vector::CombiningKind::ADD, inner.getResult(index), zero,
-            flags);
+      for (auto [index, reduced] : llvm::enumerate(reducedScalars)) {
         updatedOutputs.push_back(builder.create<tensor::InsertOp>(
             location, reduced, outputs[index], parallelIndices));
       }
@@ -610,7 +966,9 @@ struct VectorizeLinalgRowReductionPass
     }
 
     SmallVector<linalg::GenericOp> worklist;
+    SmallVector<linalg::GenericOp> allGenerics;
     module.walk([&](linalg::GenericOp op) {
+      allGenerics.push_back(op);
       if (getSupportedAddCombine(op))
         worklist.push_back(op);
     });
@@ -620,14 +978,19 @@ struct VectorizeLinalgRowReductionPass
     unsigned generatedLoopCount = 0;
     unsigned jointGroupCount = 0;
     unsigned jointReductionCount = 0;
+    unsigned jointRawMomentVarianceCount = 0;
     bool payloadEmissionFailed = false;
     llvm::SmallPtrSet<Operation *, 16> jointedOperations;
 
     if (jointReductions) {
       SmallVector<ReductionPlan> plans;
-      for (linalg::GenericOp op : worklist)
-        if (std::optional<ReductionPlan> plan = buildReductionPlan(op))
+      for (linalg::GenericOp op : allGenerics) {
+        std::optional<ReductionPlan> plan = buildRawMomentVariancePlan(op);
+        if (!plan && getSupportedAddCombine(op))
+          plan = buildReductionPlan(op);
+        if (plan)
           plans.push_back(std::move(*plan));
+      }
 
       SmallVector<bool> consumed(plans.size(), false);
       for (unsigned leader = 0; leader < plans.size(); ++leader) {
@@ -664,6 +1027,10 @@ struct VectorizeLinalgRowReductionPass
         }
         ++jointGroupCount;
         jointReductionCount += group.size();
+        jointRawMomentVarianceCount += llvm::count_if(
+            group, [](const ReductionPlan &plan) {
+              return static_cast<bool>(plan.rawMomentMeanReduction);
+            });
         vectorizedCount += group.size();
         generatedLoopCount +=
             cast<RankedTensorType>(group.front().root.getType()).getRank();
@@ -782,6 +1149,8 @@ struct VectorizeLinalgRowReductionPass
                     builder.getI64IntegerAttr(jointReductionCount));
     module->setAttr("intent.rvv.joint_vector_reduction_root_load_count",
                     builder.getI64IntegerAttr(jointGroupCount));
+    module->setAttr("intent.rvv.joint_raw_moment_variance_count",
+                    builder.getI64IntegerAttr(jointRawMomentVarianceCount));
     if (requireJointReductions && jointGroupCount == 0) {
       module.emitError(
           "required joint row-reduction vectorization matched no group");

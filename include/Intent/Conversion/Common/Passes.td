@@ -89,6 +89,9 @@ def VectorizeLinalgRowReduction : Pass<
     accesses. `joint-reductions` traces pure identity-mapped elementwise producer
     DAGs to a common root and evaluates two or more independent row statistics
     in one traversal with one root packet load and multiple vector accumulators.
+    It can also rewrite a full-domain centered variance into joint raw moments
+    when a materialized scalar equality proves that the mask bound equals the
+    complete feature extent; without that hard fact the masked graph is rejected.
     Matching is structural and target/source-name blind. Unsupported graphs
     remain untouched;
     `require-vectorization` makes a requested Full candidate fail closed when no

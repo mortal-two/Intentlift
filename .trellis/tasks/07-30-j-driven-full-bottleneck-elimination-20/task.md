@@ -315,3 +315,64 @@ reduction指令（`vfred*`），并明确记录
 这仍是 `warmup=1、cold-iterations=1、batches=1` 的 go/no-go 工程筛选，不冒充正式论文置信数据。下一步
 先对同一 bundle做多批 fresh finalist重测，再将共同根统计机制推广到可改写为 raw moments 的 LayerNorm
 与 Flash one-pass LayerNorm；不以 PolyNorm单点替代 Fresh-14 横向结果。
+
+同一完整 candidate bundle 随后以 `warmup=3、cold-iterations=3、batches=3` 完成确认：
+
+```text
+C-Fixed                            806.712 ms
+Schedule-Only                      572.231 ms
+joint Full                          19.960 ms
+Native RVV                          41.365 ms
+G_schedule                           1.410x
+Schedule-Only / joint Full          28.668x
+Native RVV / joint Full              2.069x
+```
+
+joint Full 的三个 fresh finalist样本为 `19.956/19.960/19.961 ms`；Schedule-Only为
+`574.537/572.231/570.016 ms`。122 个 executable仍为 correctness `122 pass / 0 fail`。因此该 cell 已经
+越过 1.5× 的稳定确认线，但它仍只是 Fresh-14 横向矩阵中的第一格。
+
+### 10.2 P1 raw-moment 扩展的横向工程筛选
+
+同一 joint state 已扩展到结构匹配的 centered-variance 图。它不直接把 `(x-mean)^2` 的 materialized
+tensor送入第二次规约，而是在一次 root traversal 中累积 `sum(x)` 与 `sum(x^2)`，行末以
+`sum(x^2)-N*mean^2` 重建 centered sum。该变化会改变浮点观察顺序，只在显式 reassociation state 中
+枚举并接受相同 Q/D 筛选；带运行时 mask 的图还必须有 `intent.scalar_equalities` 证明 mask bound 等于
+完整 feature extent，否则 pass fail closed。
+
+LayerNorm `[4096,4096]`、f32、RVV4 CPU0 单线程、code-warm/data-cold 的 122-executable首轮筛选为：
+
+```text
+C-Fixed                             668.492 ms
+Schedule-Only                       409.661 ms
+best non-joint Full                  66.019 ms
+joint raw-moment Full                36.409 ms
+Native RVV                           98.514 ms
+G_schedule                            1.632x
+Schedule-Only / joint Full           11.252x
+best non-joint Full / joint Full      1.813x
+Native RVV / joint Full               2.665x
+```
+
+winner 的 post-pass record 是 `1 joint group / 2 reductions / 1 root load / 1 raw-moment variance`，122 个
+executable 全部通过正确性；三个 observable output 的最大绝对误差为 `3.34e-6 / 3.40e-8 / 6.20e-6`。
+这里不仅总 Full/Schedule 跨过 1.5×，新增 raw-moment mechanism 相对此前最佳非联合 Full 也达到
+`1.813x`。多批次确认正在执行，确认前仍按工程筛选解释。
+
+Flash one-pass LayerNorm `[4096,4096]` 的相同首轮筛选为：
+
+```text
+C-Fixed                            1903.828 ms
+Schedule-Only                      1245.776 ms
+best non-joint Full                 394.694 ms
+joint raw-moment Full               371.445 ms
+Native RVV                          899.590 ms
+G_schedule                            1.528x
+Schedule-Only / joint Full            3.354x
+best non-joint Full / joint Full      1.063x
+Native RVV / joint Full               2.415x
+```
+
+该 winner 同样实际记录 `1/2/1/1`，且 122 个 executable全部正确。但其 joint 相对最佳非联合 Full 只有
+`1.063x`；因此该 cell 的 `3.354x` 主要归因于 producer fusion 与显式整行 vector reduction，不能全部
+归因于 raw-moment。它保留为 P1 横向有效命中，同时明确说明新增 joint 子机制在此图上的边际收益较小。
