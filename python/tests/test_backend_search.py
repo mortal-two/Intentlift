@@ -8,7 +8,6 @@ import intentir.backend.cuda.search as cuda_search
 from direct_fixtures import make_reduce_artifact
 from intentir.backend.cuda.search import (
     B_CAP_RANK0_HOST_CAPTURE,
-    B_TRANSFORM_RANK0_HOST_CAPTURE,
     CudaContractError,
     SEARCH_PARTITION_EXPANDED,
     SEARCH_PARTITION_SCHEDULE_SPINE,
@@ -72,6 +71,31 @@ def _fresh_splitk_state():
     )
 
 
+def _fresh_softmax_state():
+    root = Path(__file__).parents[2]
+    snapshot, _path = load_production_snapshot(
+        root / "corpus" / "production-jc-v2",
+        "softmax",
+    )
+    prepared = prepare_production_workload("softmax")
+    case = build_workload_jc_suite(prepared, snapshot.j, snapshot.c).cases[0]
+    constexpr = constexpr_input_bindings(
+        snapshot.j,
+        case.refeval.input_binding_map,
+        case.values,
+    )
+    base = materialize_j(
+        snapshot.j,
+        case.refeval.dims_map,
+        constexpr_bindings=constexpr,
+    )
+    return attach_c(
+        base,
+        snapshot.c,
+        BackendTarget("cuda", "sm_120a"),
+    )
+
+
 def test_c_changes_only_candidate_order() -> None:
     with_c, without_c = _states()
     ordered = enumerate_cuda_candidates(with_c)
@@ -94,7 +118,56 @@ def test_c_changes_only_candidate_order() -> None:
     ]
     assert any("fuse-fma=false" in argument for argument in row_arguments)
     assert any("fuse-fma=true" in argument for argument in row_arguments)
-    assert any("approximate-div=true" in argument for argument in row_arguments)
+    assert not any("approximate-div=true" in argument for argument in row_arguments)
+
+
+def test_numeric_states_require_a_visible_operation() -> None:
+    softmax = _fresh_softmax_state()
+    axes = next(
+        item
+        for item in standard_ablation_plan(96)
+        if item.arm is ExperimentArm.N3_PRECISION_APPROX
+    )
+    candidates = enumerate_cuda_candidates(softmax, axes=axes)
+
+    assert any(
+        item.schedule.get("approximate_div") is True
+        for item in candidates
+        if item.lowering_path_kind == "row_reduction"
+    )
+    assert all(
+        item.schedule.get("fuse_fma") is not True
+        for item in candidates
+        if item.lowering_path_kind == "row_reduction"
+    )
+
+
+def test_intentir_budget_crosses_softmax_numeric_lowering_with_schedules() -> None:
+    softmax = _fresh_softmax_state()
+    axes = next(
+        item
+        for item in standard_ablation_plan(32)
+        if item.arm is ExperimentArm.E3_STATE_SEARCH
+    )
+    candidates = enumerate_cuda_candidates(softmax, axes=axes)
+    within_budget = candidates[: axes.candidate_budget]
+    schedule_threads: list[int] = []
+    for item in candidates:
+        if item.search_partition != SEARCH_PARTITION_SCHEDULE_SPINE:
+            break
+        block_threads = int(item.schedule["block_threads"])
+        if block_threads not in schedule_threads:
+            schedule_threads.append(block_threads)
+    approximate_threads = {
+        int(item.schedule["block_threads"])
+        for item in within_budget
+        if item.lowering_path_kind == "row_reduction"
+        and item.schedule.get("approximate_div") is True
+        and item.schedule.get("materialize_shared_row_output") is True
+    }
+
+    assert set(schedule_threads[:3]) <= approximate_threads
+    assert len({item.candidate_id for item in candidates}) == len(candidates)
 
 
 def test_fresh_splitk_search_enumerates_real_rows_per_block_schedules() -> None:
@@ -182,7 +255,7 @@ def test_b_relation_can_reject_search_but_c_cannot_authorize_it() -> None:
             state.base.j.boundary.aliases.pop()
 
 
-def test_b_conditioned_search_is_a_strict_extension_of_schedule_only() -> None:
+def test_unused_b_capability_does_not_create_a_candidate_state() -> None:
     corpus = Path(__file__).parents[2] / "corpus" / "production-jc-v1"
     snapshot, _path = load_production_snapshot(
         corpus, "flash_bwd_preprocess"
@@ -201,14 +274,11 @@ def test_b_conditioned_search_is_a_strict_extension_of_schedule_only() -> None:
     )
 
     assert B_CAP_RANK0_HOST_CAPTURE in view.capabilities
-    assert {item.candidate_id for item in schedule_only} < {
+    assert {item.candidate_id for item in schedule_only} == {
         item.candidate_id for item in full
     }
     assert all(not item.b_transformations for item in schedule_only)
-    assert any(
-        B_TRANSFORM_RANK0_HOST_CAPTURE in item.b_transformations
-        for item in full
-    )
+    assert all(not item.b_transformations for item in full)
     assert any(
         item.schedule.get("reduction_topology") == "subgroup-feature"
         for item in full
@@ -382,7 +452,7 @@ def test_ablation_axes_expand_concrete_reduction_and_fma_states() -> None:
         for item in n3
         if item.lowering_path_kind == "elementwise"
     )
-    assert any(
+    assert not any(
         item.schedule.get("approximate_div") is True
         for item in n3
         if item.lowering_path_kind == "row_reduction"

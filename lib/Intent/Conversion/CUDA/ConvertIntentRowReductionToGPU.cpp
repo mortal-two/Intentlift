@@ -1004,18 +1004,26 @@ struct RowReductionLowering {
                          Value rhs, Type f32) {
     if (enableApproximateDiv && op.getFn() == "div" && lhs && rhs &&
         lhs.getType() == f32 && rhs.getType() == f32) {
-      ++emittedApproximateDivCount;
       if (isStaticFeatureExtent(op.getRhs())) {
+        ++emittedApproximateDivCount;
         Value reciprocal = b.create<arith::ConstantOp>(
             loc, b.getF32FloatAttr(1.0 / static_cast<double>(N)));
         return b.create<arith::MulFOp>(loc, lhs, reciprocal);
       }
-      // Preserve the concrete division in target-independent MLIR and mark
-      // only this explicitly searched state. The NVIDIA preparation pass turns
-      // the marked op into lhs * rcp.approx(rhs); unmarked divf remains exact.
-      auto division = b.create<arith::DivFOp>(loc, lhs, rhs);
-      division->setAttr("intent.cuda.approximate_div", b.getUnitAttr());
-      return division;
+      // SSA identity is a sufficient proof that unrolled lanes share one
+      // divisor. Materialize one explicitly searched reciprocal for each
+      // distinct emitted rhs; lane-varying divisors have distinct SSA values
+      // and therefore retain one reciprocal each.
+      Value reciprocal = approximateReciprocals.lookup(rhs);
+      if (!reciprocal) {
+        Value one = b.create<arith::ConstantOp>(loc, b.getF32FloatAttr(1.0));
+        auto division = b.create<arith::DivFOp>(loc, one, rhs);
+        division->setAttr("intent.cuda.approximate_div", b.getUnitAttr());
+        reciprocal = division;
+        approximateReciprocals[rhs] = reciprocal;
+        ++emittedApproximateDivCount;
+      }
+      return b.create<arith::MulFOp>(loc, lhs, reciprocal);
     }
     return emitRowScalarBinary(b, loc, op.getFn(), lhs, rhs, f32);
   }
@@ -2033,6 +2041,7 @@ struct RowReductionLowering {
   DenseMap<Value, SmallVector<Value>> colVals;   // vec4 Col arg -> K loaded SSA values
   DenseMap<Value, SmallVector<Value>> scanVals;  // scan result -> K cumsum SSA values
   DenseMap<Value, SmallVector<Value>> pointVals; // common per-column DAG values
+  DenseMap<Value, Value> approximateReciprocals; // emitted rhs -> searched rcp
   SmallVector<Value> cols;                       // K column indices (tx + k*T)
   DenseMap<Value, Value> frontierBuf;            // cached row value -> smem memref
 
@@ -2843,6 +2852,7 @@ struct RowReductionLowering {
     colVals.clear();
     scanVals.clear();
     pointVals.clear();
+    approximateReciprocals.clear();
     cols.clear();
     frontierBuf.clear();
     groupVal = nullptr;
