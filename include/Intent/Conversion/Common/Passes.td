@@ -19,6 +19,14 @@ def ConvertIntentToLinalg : Pass<"convert-intent-to-linalg", "::mlir::ModuleOp">
     "::mlir::arith::ArithDialect",
     "::mlir::scf::SCFDialect",
   ];
+  let options = [
+    Option<"reassociateFloatReductions", "reassociate-float-reductions",
+           "bool", "false",
+           "Attach only the reassoc fast-math flag to sum/mean/prod combines "
+           "whose intent.reduce explicitly declares assoc = "
+           "float_nondeterministic. Other floating-point operations and "
+           "ordered reductions remain strict.">,
+  ];
 }
 
 def ExpandRsqrtForLibm : Pass<"expand-rsqrt-for-libm", "::mlir::ModuleOp"> {

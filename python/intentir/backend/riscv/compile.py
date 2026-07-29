@@ -65,10 +65,13 @@ def _run_bytes(command: list[str], *, stdin: str) -> bytes:
 @dataclass(frozen=True)
 class RiscvTransformationState:
     fuse_producers: bool
+    reassociate_reductions: bool = False
 
     def __post_init__(self) -> None:
         if type(self.fuse_producers) is not bool:
             raise TypeError("fuse_producers must be bool")
+        if type(self.reassociate_reductions) is not bool:
+            raise TypeError("reassociate_reductions must be bool")
 
     @property
     def lowering_path_kind(self) -> str:
@@ -80,11 +83,17 @@ class RiscvTransformationState:
 
     @property
     def transformation_trace(self) -> tuple[str, ...]:
-        return (
-            ("rvv.linalg.producer_consumer_fusion.v2",)
+        structural = (
+            "rvv.linalg.producer_consumer_fusion.v2"
             if self.fuse_producers
-            else ("rvv.linalg.materialized.v1",)
+            else "rvv.linalg.materialized.v1"
         )
+        numeric = (
+            ("rvv.numeric.explicit_reduction_reassociation.v1",)
+            if self.reassociate_reductions
+            else ()
+        )
+        return (structural, *numeric)
 
     @property
     def b_transformations(self) -> tuple[str, ...]:
@@ -98,6 +107,7 @@ class RiscvTransformationState:
         return {
             "lowering_path_kind": self.lowering_path_kind,
             "fuse_producers": self.fuse_producers,
+            "reassociate_reductions": self.reassociate_reductions,
             "transformation_trace": list(self.transformation_trace),
             "b_transformations": list(self.b_transformations),
             "required_b_capabilities": list(self.required_b_capabilities),
@@ -157,7 +167,8 @@ class RiscvLoweringCandidate:
             f"rvv.{path}.o{schedule.opt_level}."
             f"vec{int(schedule.vectorize)}.vlen{schedule.vector_bits}."
             f"pt{schedule.parallel_tile}.rt{schedule.reduction_tile}."
-            f"thr{schedule.thread_count}"
+            f"thr{schedule.thread_count}."
+            f"reassoc{int(self.transformation.reassociate_reductions)}"
         )
 
     def _content(self) -> dict[str, Any]:
@@ -184,6 +195,7 @@ class RiscvTransformationRecord:
     fusion_outer_parallel_only_ops: int = 0
     fusion_multi_use_rejections: int = 0
     openmp_parallel_ops: int = 0
+    reassociated_float_combines: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -199,6 +211,7 @@ class RiscvTransformationRecord:
             "fusion_outer_parallel_only_ops": self.fusion_outer_parallel_only_ops,
             "fusion_multi_use_rejections": self.fusion_multi_use_rejections,
             "openmp_parallel_ops": self.openmp_parallel_ops,
+            "reassociated_float_combines": self.reassociated_float_combines,
         }
 
 
@@ -269,7 +282,15 @@ def _lower_to_llvm_ir(
 ) -> tuple[str, str, RiscvTransformationRecord]:
     source = state.base.intent_mlir
     linalg = _run_text(
-        [INTENT_OPT, "-convert-intent-to-linalg", "-expand-rsqrt-for-libm"],
+        [
+            INTENT_OPT,
+            (
+                "-convert-intent-to-linalg="
+                "reassociate-float-reductions="
+                f"{'true' if candidate.transformation.reassociate_reductions else 'false'}"
+            ),
+            "-expand-rsqrt-for-libm",
+        ],
         stdin=source,
     )
     if candidate.transformation.fuse_producers:
@@ -325,10 +346,31 @@ def _lower_to_llvm_ir(
         fusion_multi_use_rejections=_module_i64_attr(
             structured, "intent.schedule.fusion_multi_use_rejection_count"
         ),
+        reassociated_float_combines=len(
+            re.findall(r"fastmath<[^>]*\breassoc\b[^>]*>", structured)
+        ),
     )
+    if (
+        candidate.transformation.reassociate_reductions
+        and record.reassociated_float_combines == 0
+    ):
+        raise RuntimeError(
+            "requested reduction reassociation matched no explicit "
+            "float_nondeterministic combine"
+        )
     parallel_runtime = schedule.thread_count > 1
     front = [
-        "--one-shot-bufferize=bufferize-function-boundaries",
+        # Intent functions expose logical tensor values.  This backend owns the
+        # target ABI and the benchmark/runtime binds those values to dense
+        # row-major buffers, so use the same identity-layout boundary
+        # conversion as the CPU and CUDA pipelines.  Leaving the default
+        # fully-dynamic strided layout prevents the downstream LLVM loop
+        # vectorizer from proving unit-stride RVV accesses even though the
+        # concrete buffers are contiguous.
+        (
+            "--one-shot-bufferize=bufferize-function-boundaries "
+            "function-boundary-type-conversion=identity-layout-map"
+        ),
         "--buffer-results-to-out-params",
         (
             "--convert-linalg-to-parallel-loops"

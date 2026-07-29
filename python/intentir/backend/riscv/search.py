@@ -32,13 +32,13 @@ _JOINT_TILES = ((1, 4), (2, 8), (4, 16), (8, 32), (16, 64), (32, 128))
 def _schedule_universe() -> tuple[RiscvSchedule, ...]:
     schedules = [
         RiscvSchedule(opt, vectorize, 128, 0, 0, thread_count)
-        for thread_count in (1, 16)
+        for thread_count in (1,)
         for opt in (2, 3)
         for vectorize in (False, True)
     ]
     schedules.extend(
         RiscvSchedule(3, True, 128, parallel, reduction, thread_count)
-        for thread_count in (1, 16)
+        for thread_count in (1,)
         for parallel, reduction in (
             *((value, 0) for value in _PARALLEL_TILES),
             *((0, value) for value in _REDUCTION_TILES),
@@ -60,13 +60,22 @@ def _schedule_universe() -> tuple[RiscvSchedule, ...]:
 
 
 def enumerate_riscv_candidates(
-    *, enable_b_transformations: bool = True
+    *,
+    enable_b_transformations: bool = True,
+    enable_reassociation: bool = True,
 ) -> tuple[RiscvLoweringCandidate, ...]:
     """Build the target schedule/structure universe without reading C."""
 
+    transformations = [RiscvTransformationState(False, False)]
+    if enable_b_transformations:
+        transformations.append(RiscvTransformationState(True, False))
+    if enable_reassociation:
+        transformations.append(RiscvTransformationState(False, True))
+        if enable_b_transformations:
+            transformations.append(RiscvTransformationState(True, True))
     return tuple(
-        RiscvLoweringCandidate(RiscvTransformationState(fuse), schedule)
-        for fuse in ((False, True) if enable_b_transformations else (False,))
+        RiscvLoweringCandidate(transformation, schedule)
+        for transformation in transformations
         for schedule in _schedule_universe()
     )
 
@@ -92,13 +101,16 @@ def _dtype_bits(dtype: str) -> int | None:
     return int(match.group(1)) if match is not None else None
 
 
-def _operation_facts(value: Any) -> tuple[set[tuple[int, ...]], bool, list[int]]:
+def _operation_facts(
+    value: Any,
+) -> tuple[set[tuple[int, ...]], bool, list[int], bool]:
     reduction_axes: set[tuple[int, ...]] = set()
     has_scan = False
     float_bits: list[int] = []
+    has_reassociable_float_reduction = False
 
     def visit(item: Any) -> None:
-        nonlocal has_scan
+        nonlocal has_scan, has_reassociable_float_reduction
         if isinstance(item, Mapping):
             dtype = item.get("dtype")
             if isinstance(dtype, str):
@@ -109,6 +121,12 @@ def _operation_facts(value: Any) -> tuple[set[tuple[int, ...]], bool, list[int]]
             if op in {"reduce", "scan"}:
                 has_scan = has_scan or op == "scan"
                 attrs = item.get("attrs", {})
+                if (
+                    op == "reduce"
+                    and isinstance(attrs, Mapping)
+                    and attrs.get("assoc") == "float_nondeterministic"
+                ):
+                    has_reassociable_float_reduction = True
                 raw_axes = attrs.get("axes", [attrs.get("axis")]) if isinstance(
                     attrs, Mapping
                 ) else []
@@ -123,7 +141,12 @@ def _operation_facts(value: Any) -> tuple[set[tuple[int, ...]], bool, list[int]]
                 visit(child)
 
     visit(value)
-    return reduction_axes, has_scan, float_bits
+    return (
+        reduction_axes,
+        has_scan,
+        float_bits,
+        has_reassociable_float_reduction,
+    )
 
 
 def _target_vlen_bits(state: BackendSearchState) -> int:
@@ -149,7 +172,9 @@ def _project_c_priors(
     dict[str, Any],
 ]:
     payload = state.base.j.to_json()
-    reduction_axes, has_scan, float_bits = _operation_facts(payload)
+    reduction_axes, has_scan, float_bits, _has_reassociation = (
+        _operation_facts(payload)
+    )
     vlen_bits = _target_vlen_bits(state)
     element_bits = max(float_bits, default=32)
     vector_lanes = max(1, vlen_bits // element_bits)
@@ -345,26 +370,28 @@ def _c_ranked_with_robust_anchors(
 
 def _interleave_lowering_paths(
     canonical: tuple[RiscvLoweringCandidate, ...],
-    expanded: tuple[RiscvLoweringCandidate, ...],
+    expanded_paths: tuple[tuple[RiscvLoweringCandidate, ...], ...],
 ) -> tuple[RiscvLoweringCandidate, ...]:
-    """Give each ranked schedule one canonical and one structural visit.
+    """Give each ranked schedule one visit for every admitted MLIR state.
 
     A state+schedule budget must actually reach both concrete MLIR paths.  The
     previous concatenation spent every practical budget on the canonical path,
     making E3 observationally identical to E2 even when a faster fused state
-    existed.  Pairing preserves each arm's schedule order and equal total visit
-    budget while preventing path starvation.
+    existed.  Interleaving preserves each state's schedule order and equal total
+    visit budget while preventing fusion or explicit reduction reassociation
+    from being starved.
     """
 
-    if not expanded:
+    if not expanded_paths:
         return canonical
-    if len(canonical) != len(expanded):
-        raise AssertionError("RVV lowering paths expose different schedule universes")
+    if any(len(canonical) != len(path) for path in expanded_paths):
+        raise AssertionError("RVV MLIR states expose different schedule universes")
     result: list[RiscvLoweringCandidate] = []
-    for base, alternative in zip(canonical, expanded, strict=True):
-        if base.schedule != alternative.schedule:
-            raise AssertionError("RVV lowering paths use different schedule ordering")
-        result.extend((base, alternative))
+    for index, base in enumerate(canonical):
+        alternatives = tuple(path[index] for path in expanded_paths)
+        if any(base.schedule != item.schedule for item in alternatives):
+            raise AssertionError("RVV MLIR states use different schedule ordering")
+        result.extend((base, *alternatives))
     return tuple(result)
 
 
@@ -415,28 +442,58 @@ def plan_riscv_search(
 ) -> RiscvSearchPlan:
     if not isinstance(state, BackendSearchState):
         raise TypeError("RVV search planning requires BackendSearchState")
+    _axes, _has_scan, _float_bits, has_reassociation = _operation_facts(
+        state.base.j.to_json()
+    )
     universe = enumerate_riscv_candidates(
-        enable_b_transformations=enable_b_transformations
+        enable_b_transformations=enable_b_transformations,
+        enable_reassociation=has_reassociation,
     )
     projected_priors, ignored_priors, projection = _project_c_priors(state)
     scores = {
         item.candidate_id: _c_score(item.schedule, projected_priors)
         for item in universe
     }
-    materialized = tuple(
-        item for item in universe if not item.transformation.fuse_producers
+    canonical = tuple(
+        item
+        for item in universe
+        if not item.transformation.fuse_producers
+        and not item.transformation.reassociate_reductions
+    )
+    alternative_states = tuple(
+        dict.fromkeys(
+            (
+                item.transformation.fuse_producers,
+                item.transformation.reassociate_reductions,
+            )
+            for item in universe
+            if item not in canonical
+        )
     )
     expanded = tuple(
-        item for item in universe if item.transformation.fuse_producers
+        tuple(
+            item
+            for item in universe
+            if (
+                item.transformation.fuse_producers,
+                item.transformation.reassociate_reductions,
+            )
+            == state_key
+        )
+        for state_key in alternative_states
     )
     schedule_erase = tuple(
-        sorted(materialized, key=lambda item: _erase_schedule_key(item.schedule))
+        sorted(canonical, key=lambda item: _erase_schedule_key(item.schedule))
     )
-    schedule_c = _c_ranked_with_robust_anchors(materialized, projected_priors)
+    schedule_c = _c_ranked_with_robust_anchors(canonical, projected_priors)
     expanded_erase = tuple(
-        sorted(expanded, key=lambda item: _erase_schedule_key(item.schedule))
+        tuple(sorted(path, key=lambda item: _erase_schedule_key(item.schedule)))
+        for path in expanded
     )
-    expanded_c = _c_ranked_with_robust_anchors(expanded, projected_priors)
+    expanded_c = tuple(
+        _c_ranked_with_robust_anchors(path, projected_priors)
+        for path in expanded
+    )
     # E2 retains the complete canonical schedule order. E3 has the same total
     # visit budget but interleaves canonical and structurally expanded MLIR for
     # each ranked schedule, so a finite budget cannot starve the new path.

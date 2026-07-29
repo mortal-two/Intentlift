@@ -1,4 +1,5 @@
 // RUN: intent-opt -convert-intent-to-linalg %s | FileCheck %s
+// RUN: intent-opt '-convert-intent-to-linalg=reassociate-float-reductions=true' %s | FileCheck %s --check-prefix=REASSOC
 
 // reduce{max} over axis 1 with keepdims (result rank == input rank): a
 // linalg.generic reduction into a rank-1 temp, then tensor.expand_shape back
@@ -24,6 +25,13 @@ func.func @rsum(%x: tensor<4x8xf32>) -> tensor<4xf32> {
   %s = intent.reduce %x {fn = "sum", axes = [1], assoc = "float_nondeterministic"} : (tensor<4x8xf32>) -> tensor<4xf32>
   return %s : tensor<4xf32>
 }
+// REASSOC-LABEL: func.func @rsum
+// REASSOC: arith.addf %{{.*}}, %{{.*}} fastmath<reassoc> : f32
+
+// An exact/ordered float reduction must not inherit reassociation merely
+// because another reduction in the module permits it.
+// REASSOC-LABEL: func.func @rmax_axis0_rank4
+// REASSOC: arith.maxnumf
 
 // -----
 

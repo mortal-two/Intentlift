@@ -36,6 +36,10 @@ def _candidate(fused: bool) -> rvv.RiscvLoweringCandidate:
 def test_rvv_transformation_and_schedule_are_separate_search_axes() -> None:
     materialized = _candidate(False)
     fused = _candidate(True)
+    reassociated = rvv.RiscvLoweringCandidate(
+        rvv.RiscvTransformationState(False, True),
+        materialized.schedule,
+    )
 
     assert materialized.schedule == fused.schedule
     assert materialized.transformation.lowering_path_kind == "materialized"
@@ -45,6 +49,11 @@ def test_rvv_transformation_and_schedule_are_separate_search_axes() -> None:
         B_CAP_READONLY_INPUTS,
     )
     assert materialized.candidate_id != fused.candidate_id
+    assert reassociated.transformation.required_b_capabilities == ()
+    assert "explicit_reduction_reassociation" in " ".join(
+        reassociated.transformation.transformation_trace
+    )
+    assert reassociated.candidate_id != materialized.candidate_id
 
 
 def test_rvv_retile_schedule_is_an_explicit_search_axis() -> None:
@@ -109,6 +118,35 @@ def test_rvv_record_exposes_real_mlir_topology(monkeypatch) -> None:
     assert record["transformation_record"]["linalg_ops_after"] == 3
     assert record["true_mlir_pipeline"] is True
     assert record["python_target_kernel_emission"] is False
+
+
+def test_rvv_bufferization_exposes_dense_identity_layout(monkeypatch) -> None:
+    commands: list[list[str]] = []
+
+    def record_command(command, *, stdin):
+        commands.append(command)
+        if command[0] == rvv.MLIR_TRANSLATE:
+            return "raw llvm"
+        return stdin
+
+    monkeypatch.setattr(rvv, "_run_text", record_command)
+    state = SimpleNamespace(
+        base=SimpleNamespace(
+            intent_mlir="module { func.func @kernel() { return } }",
+        ),
+    )
+
+    rvv._lower_to_llvm_ir(state, _candidate(False))
+
+    bufferize = next(
+        command
+        for command in commands
+        if any("one-shot-bufferize" in item for item in command)
+    )
+    assert any(
+        "function-boundary-type-conversion=identity-layout-map" in item
+        for item in bufferize
+    )
 
 
 def test_rvv_contract_consumes_only_materialized_typed_access_guards() -> None:
@@ -235,30 +273,32 @@ def test_rvv_c_reorders_but_does_not_change_retile_universe() -> None:
         for item in with_c.c_prior_order
         if by_id[item].schedule.thread_count == 1
     ]
-    first_two = [by_id[item] for item in c_order_t1[:2]]
-    assert first_two[0].schedule == first_two[1].schedule
-    assert [item.transformation.fuse_producers for item in first_two] == [
-        False,
-        True,
-    ]
-    c_anchor_pairs = [
-        by_id[item] for item in c_order_t1[2:6]
-    ]
-    assert [item.schedule.vectorize for item in c_anchor_pairs] == [
-        True,
-        True,
-        False,
-        False,
-    ]
-    assert [item.transformation.fuse_producers for item in c_anchor_pairs] == [
+    first_four = [by_id[item] for item in c_order_t1[:4]]
+    assert len({item.schedule for item in first_four}) == 1
+    assert [item.transformation.fuse_producers for item in first_four] == [
         False,
         True,
         False,
         True,
     ]
-    erase_first_two = [by_id[item] for item in with_c.erase_c_order[:2]]
-    assert erase_first_two[0].schedule == erase_first_two[1].schedule
-    assert [item.transformation.fuse_producers for item in erase_first_two] == [
+    assert [
+        item.transformation.reassociate_reductions for item in first_four
+    ] == [False, False, True, True]
+    c_anchor_states = [
+        by_id[item] for item in c_order_t1[4:8]
+    ]
+    assert all(item.schedule.vectorize for item in c_anchor_states)
+    assert [item.transformation.fuse_producers for item in c_anchor_states] == [
+        False,
+        True,
+        False,
+        True,
+    ]
+    erase_first_four = [by_id[item] for item in with_c.erase_c_order[:4]]
+    assert len({item.schedule for item in erase_first_four}) == 1
+    assert [item.transformation.fuse_producers for item in erase_first_four] == [
+        False,
+        True,
         False,
         True,
     ]
@@ -271,3 +311,6 @@ def test_rvv_c_reorders_but_does_not_change_retile_universe() -> None:
     assert record["same_universe_for_erase_c_and_c_prior"] is True
     assert record["c_controls_admission"] is False
     assert record["candidate_universe_count"] == 104
+    assert {
+        item.schedule.thread_count for item in with_c.universe
+    } == {1}

@@ -536,12 +536,16 @@ struct GatherLowering : OpRewritePattern<GatherOp> {
 /// integers use signed max/min and integer add/mul. Boolean all/any remain the
 /// dedicated i1 reductions.
 static Value emitReduceCombine(OpBuilder &b, Location loc, StringRef fn, Value a,
-                               Value c) {
+                               Value c,
+                               bool allowFloatReassociation = false) {
   bool isInteger = isa<IntegerType>(a.getType());
+  arith::FastMathFlags floatFlags =
+      allowFloatReassociation ? arith::FastMathFlags::reassoc
+                              : arith::FastMathFlags::none;
   if (fn == "sum" || fn == "mean") {
     if (isInteger)
       return b.create<arith::AddIOp>(loc, a, c);
-    return b.create<arith::AddFOp>(loc, a, c);
+    return b.create<arith::AddFOp>(loc, a, c, floatFlags);
   }
   if (fn == "max") {
     if (isInteger)
@@ -556,7 +560,7 @@ static Value emitReduceCombine(OpBuilder &b, Location loc, StringRef fn, Value a
   if (fn == "prod") {
     if (isInteger)
       return b.create<arith::MulIOp>(loc, a, c);
-    return b.create<arith::MulFOp>(loc, a, c);
+    return b.create<arith::MulFOp>(loc, a, c, floatFlags);
   }
   if (fn == "all")
     return b.create<arith::AndIOp>(loc, a, c);
@@ -608,7 +612,11 @@ static Value reduceIdentityConst(OpBuilder &b, Location loc, StringRef fn,
 /// axes as size-1 (keepdims, result rank == input rank), a tensor.expand_shape
 /// re-inserts them so downstream broadcasts (e.g. S - rowmax) line up.
 struct ReduceLowering : OpRewritePattern<ReduceOp> {
-  using OpRewritePattern::OpRewritePattern;
+  ReduceLowering(MLIRContext *context, bool reassociateFloatReductions)
+      : OpRewritePattern<ReduceOp>(context),
+        reassociateFloatReductions(reassociateFloatReductions) {}
+
+  bool reassociateFloatReductions;
 
   LogicalResult matchAndRewrite(ReduceOp op,
                                 PatternRewriter &rewriter) const override {
@@ -616,6 +624,9 @@ struct ReduceLowering : OpRewritePattern<ReduceOp> {
     auto resTy = cast<RankedTensorType>(op.getResult().getType());
     Type elemTy = inTy.getElementType();
     StringRef fn = op.getFn();
+    bool allowFloatReassociation =
+        reassociateFloatReductions &&
+        op.getAssoc() == "float_nondeterministic";
     // Float supports numeric reductions; signless integer supports the
     // non-mean numeric reductions; i1 is reserved for all/any.
     bool supported =
@@ -717,7 +728,8 @@ struct ReduceLowering : OpRewritePattern<ReduceOp> {
                   maps, iters,
                   [&](OpBuilder &b, Location l, ValueRange args) {
                     b.create<linalg::YieldOp>(
-                        l, emitReduceCombine(b, l, fn, args[1], args[0]));
+                        l, emitReduceCombine(b, l, fn, args[1], args[0],
+                                             allowFloatReassociation));
                   })
               .getResult(0);
 
@@ -814,7 +826,9 @@ struct ReduceLowering : OpRewritePattern<ReduceOp> {
     auto generic = rewriter.create<linalg::GenericOp>(
         loc, TypeRange{reducedTy}, ValueRange{op.getInput()}, ValueRange{init},
         maps, iters, [&](OpBuilder &b, Location l, ValueRange args) {
-          b.create<linalg::YieldOp>(l, emitReduceCombine(b, l, fn, args[1], args[0]));
+          b.create<linalg::YieldOp>(
+              l, emitReduceCombine(b, l, fn, args[1], args[0],
+                                   allowFloatReassociation));
         });
     Value reduced = generic.getResult(0);
 
@@ -1333,10 +1347,11 @@ struct ConvertIntentToLinalgPass
   void runOnOperation() override {
     RewritePatternSet patterns(&getContext());
     patterns.add<IotaLowering, MapUnaryLowering, MapBinaryLowering, SelectLowering,
-                 GatherLowering, ReduceLowering, ScanLowering, ContractionLowering,
+                 GatherLowering, ScanLowering, ContractionLowering,
                  LoopLowering, CastLowering, TransposeLowering, ConcatLowering,
                  PadLowering>(
         &getContext());
+    patterns.add<ReduceLowering>(&getContext(), reassociateFloatReductions);
     if (failed(applyPatternsGreedily(getOperation(), std::move(patterns))))
       signalPassFailure();
   }
