@@ -10,6 +10,8 @@ import tempfile
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping
 
+from minisweagent.config.intentir_schema_query import schema_sections
+
 from intentir.extraction.providers.codex_cli import (
     CODEX_CLI_AGENT_RUNTIME,
     CODEX_CLI_TOOL_BRIDGE_ROOT_NAME,
@@ -39,19 +41,19 @@ from .prompt import SCHEMA as _INTENTIR_OPERATION_REFERENCE
 from .scrc_schema import scrc_lift_core_json_schema
 
 
-CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v16"
-CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v74"
+CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v17"
+CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v75"
 CODEX_CLI_TURN_TIMEOUT_SECONDS = 900.0
 
 _INITIAL_PROMPT = """You are the sole source-aware IntentIR Lift owner for this branch.
 Work only under the isolated /workspace; input/ is immutable and output/, work/,
 and tmp/ are writable. There is no repository or network.
 
-Act like a coding agent, not a staged JSON generator. Read input/source.py and
-input/harness_view.json, inspect only useful ranges of input/source.ttir, and use
-input/artifact.schema.json plus input/intent_ops.md as the exact closed authoring
-reference. Do not dump those large files wholesale when a targeted grep/range is
-enough. input/README.md states the small ownership boundary.
+Act like a coding agent, not a staged JSON generator. Read input/source.py,
+input/harness_view.json, and input/README.md; inspect only useful ranges of
+input/source.ttir. input/artifact_contract.json is the complete high-density closed
+wire reference projected from the host Schema, and input/intent_ops.md gives exact
+IntentOp spelling. Do not search for another schema, tutorial, or tool source.
 
 You alone author the complete output/candidate.json. J owns all logical semantics;
 C owns only implementation choices; pi owns only source-realization relations for
@@ -96,6 +98,32 @@ def _compact_authoring_schema(value: Any) -> Any:
     return value
 
 
+def _contract_object_shapes(schema: Mapping[str, Any]) -> dict[str, Any]:
+    root = schema["properties"]
+    j = root["j"]
+    j_properties = j["properties"]
+    intent = j_properties["intent"]
+    function = intent["properties"]["intent_function"]
+    objects = {
+        "root": schema,
+        "j": j,
+        "j.intent": intent,
+        "j.intent.intent_function": function,
+        "j.boundary": j_properties["boundary"],
+        "j.signature": j_properties["signature"],
+        "c": root["c"],
+        "pi": root["pi"],
+    }
+    return {
+        name: {
+            "required": list(item.get("required", [])),
+            "fields": list(item.get("properties", {})),
+            "additional_properties": item.get("additionalProperties"),
+        }
+        for name, item in objects.items()
+    }
+
+
 
 def _codex_input_files(
     request: Any,
@@ -108,7 +136,19 @@ def _codex_input_files(
         request,
         source_ttir_observation=source_ttir_observation,
     )
-    schema = _compact_authoring_schema(scrc_lift_core_json_schema())
+    schema = scrc_lift_core_json_schema()
+    contract = {
+        "protocol": "intentir.codex-lift-authoring-contract.v1",
+        "authority": (
+            "source-neutral exact projection of the authoritative JSON Schema; "
+            "no artifact field, handle, semantic choice, or repair is generated"
+        ),
+        "object_shapes": _contract_object_shapes(schema),
+        "sections": {
+            name: _compact_authoring_schema(section)
+            for name, section in schema_sections(schema).items()
+        },
+    }
     files = {
         "source.py": complete["source.py"],
         "harness_view.json": complete["harness_view.json"],
@@ -122,7 +162,7 @@ def _codex_input_files(
             "relations indexed by J+C. Every artifact field and opaque handle is "
             "model-authored. Fixed code only checks and rejects. Harness shapes are "
             "valuations unless an explicit shape contract binds a parametric extent. "
-            "Use the exact schema and operation reference locally; inspect raw TTIR "
+            "Use the exact contract and operation reference locally; inspect raw TTIR "
             "only where it clarifies Source control, def-use, effects, or time.\n\n"
             "Before the first CandidateCheck, enforce these closed language "
             "invariants in your own artifact:\n"
@@ -155,8 +195,8 @@ def _codex_input_files(
             "complete and mutually consistent. CandidateCheck only diagnoses these "
             "facts; it never supplies them.\n"
         ),
-        "artifact.schema.json": json.dumps(
-            schema,
+        "artifact_contract.json": json.dumps(
+            contract,
             sort_keys=True,
             ensure_ascii=False,
             allow_nan=False,
@@ -200,7 +240,7 @@ def _source_aware_startup_context(workspace: Any, *, fresh_owner: bool) -> dict[
             "source": "input/source.py",
             "harness": "input/harness_view.json",
             "source_ttir": "input/source.ttir",
-            "schema": "input/artifact.schema.json",
+            "artifact_contract": "input/artifact_contract.json",
             "intent_ops": "input/intent_ops.md",
             "feedback_frontier": "input/feedback_frontier.json",
             "feedback_full": "input/feedback.json",
