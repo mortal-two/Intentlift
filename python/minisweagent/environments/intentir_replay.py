@@ -2968,7 +2968,7 @@ class IntentIRReplayEnvironment:
             result = _closed_failure("replay_check_unavailable")
         else:
             try:
-                source_bytes, source_text = self._read_check_target(arguments[1])
+                _source_bytes, source_text = self._read_check_target(arguments[1])
             except Exception:
                 result = _closed_failure("replay_check_read_failed")
             else:
@@ -3052,23 +3052,14 @@ class IntentIRReplayEnvironment:
             except Exception:
                 result = _closed_failure("replay_compile_check_read_failed")
             else:
-                source_digest = hashlib.sha256(source_bytes).hexdigest()
-                facts = _packet_critical_facts(self._read_closed_packet())
-                audit_required = _replay_obligation_audit_required(facts)
-                if (
-                    audit_required
-                    and source_digest not in self._obligation_audited_source_digests
-                ):
-                    result = _closed_failure("replay_obligation_audit_required")
-                else:
-                    evaluated = True
-                    self._compile_check_evaluations += 1
-                    try:
-                        result = self._replay_compile_checker(source_text)
-                    except Exception:
-                        result = _closed_failure(
-                            "replay_compile_check_internal_failure"
-                        )
+                evaluated = True
+                self._compile_check_evaluations += 1
+                try:
+                    result = self._replay_compile_checker(source_text)
+                except Exception:
+                    result = _closed_failure(
+                        "replay_compile_check_internal_failure"
+                    )
         result = self._validate_check_result(result)
         diagnostics = result["diagnostics"]
         self._compile_check_audit.append(

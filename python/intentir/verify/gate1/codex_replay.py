@@ -585,16 +585,9 @@ class CodexCLIReplayWriter:
         last_checked_good: str | None = None
         startup_context = _replay_startup_context(packet)
         from minisweagent.environments.intentir_replay import (
-            _packet_critical_facts,
             _replay_obligation_audit_view,
-            _replay_obligation_audit_required,
         )
 
-        critical_facts = _packet_critical_facts(packet)
-        obligation_audit_required = _replay_obligation_audit_required(
-            critical_facts
-        )
-        obligation_audited_sources: set[str] = set()
         synthetic_compiler = (
             None
             if self.compile_checker is not None
@@ -704,22 +697,6 @@ class CodexCLIReplayWriter:
         def replay_compile_tool() -> Mapping[str, Any]:
             nonlocal last_checked_good
             current = workspace.read_replay()
-            if (
-                obligation_audit_required
-                and current not in obligation_audited_sources
-            ):
-                return {
-                    "protocol": REPLAY_CHECK_PROTOCOL,
-                    "status": "fail",
-                    "diagnostics": [
-                        {
-                            "rule_code": "replay_obligation_audit_required",
-                            "path": "<current-replay-bytes>",
-                            "anonymous_handles": [],
-                            "line": None,
-                        }
-                    ],
-                }
             ingress = replay_source_ingress(
                 current,
                 artifact=artifact,
@@ -751,7 +728,6 @@ class CodexCLIReplayWriter:
         def replay_obligation_audit_tool() -> Mapping[str, Any]:
             current = workspace.read_replay()
             view = _replay_obligation_audit_view(packet, current)
-            obligation_audited_sources.add(current)
             obligation_audits.append(
                 {
                     "broadcast_obligation_count": len(
@@ -983,32 +959,6 @@ class CodexCLIReplayWriter:
                 or formal_ingress.code is None
             ):
                 return False, check
-            if (
-                obligation_audit_required
-                and source_text not in obligation_audited_sources
-            ):
-                audit_check: Mapping[str, Any] = {
-                    "protocol": REPLAY_CHECK_PROTOCOL,
-                    "status": "fail",
-                    "diagnostics": [
-                        {
-                            "rule_code": "replay_obligation_audit_required",
-                            "path": "<current-replay-bytes>",
-                            "anonymous_handles": [],
-                            "line": None,
-                        }
-                    ],
-                }
-                compile_checks.append(
-                    {
-                        "trigger": trigger,
-                        "status": "fail",
-                        "diagnostics": [
-                            dict(item) for item in audit_check["diagnostics"]
-                        ],
-                    }
-                )
-                return False, audit_check
             formal_compile = (
                 self.compile_checker(
                     formal_ingress.code,

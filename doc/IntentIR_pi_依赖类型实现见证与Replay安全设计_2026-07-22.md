@@ -906,7 +906,7 @@ Replay LLM 应遵守以下过程合同：
 
 当前 fresh Replay packet 为 `intentir.scrc.replay-input.v2`；Triton 公共上下文由固定公开字段直接给出，不使用 context version、SHA 或 receipt 作为运行门禁；Codex/MiniSWE Lift `intentir.lift-knowledge.v69/v65`、MiniSWE Replay v30 与 Codex Replay v26；旧 receipt 保持其原 verdict，不能由
 当前 Replay consumer 或 Lift knowledge 静默升级。v30/v26 将 authored route extent transforms
-加入 exact critical ledger、audit 与 static ingress，并在它单独存在时也要求审阅当前 exact bytes；
+加入 exact critical ledger、audit 与 static ingress，并在它单独存在时也提供可选的 exact-bytes audit；该 audit 不作为 ReplayCheck、compile 或 Gate1 前置条件；
 它不生成 relation/code，也不替代 Gate1。Codex v26 将 900 秒单 turn 与 1800 秒 fresh episode 分离，
 超时只沿同一 resumable thread 继续，不跨 episode 继承。
 

@@ -487,7 +487,7 @@ Replay packet envelope 为 `replay-input.v2`；Triton 公共上下文由当前�
 Codex/MiniSWE Lift knowledge 为 v70/v65，MiniSWE Replay backend 为 v30，Codex Replay backend 为 v28。
 v30/v26 完整执行 authored route extent transform 合同：将其纳入 `critical_facts.v4`、
 `replay-obligation-audit.v3` 与 source-blind static ingress；只检查 closed floor/ceil-div spelling，
-不生成 relation/code，也不替代 Gate1；单独存在该 relation 也必须审阅当前 exact Replay bytes。
+不生成 relation/code，也不替代 Gate1；单独存在该 relation 时也可用可选 audit 并置当前 exact Replay bytes；audit 不作为 ReplayCheck、compile 或 Gate1 前置条件。
 Codex v26 将每个 provider turn 的 900 秒上限与 fresh owner episode 的 1800 秒总预算分离，使超时后
 只能沿原 resumable thread 继续；不跨 Replay episode 继承。v29/v25 历史 evidence 保持原 verdict。
 v40 为 source-aware Lift worker 增加只读、分页的 Source control-flow

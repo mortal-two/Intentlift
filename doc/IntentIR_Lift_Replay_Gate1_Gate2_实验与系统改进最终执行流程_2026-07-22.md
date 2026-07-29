@@ -914,7 +914,7 @@ source-blind MiniSWE Replay v30 与 Codex Replay v28、
 v30/v26 完整执行既有 authored route extent transform 合同：将其纳入 exact `critical_facts.v4`、
 `replay-obligation-audit.v3` 与 source-blind static ingress；只拒绝缺失 closed floor/ceil-div spelling，
 不生成 relation/code，也不替代 Gate1。即使不存在 broadcast/lexical/cross-region obligation，单独存在
-route extent transform 也必须审阅当前 exact Replay bytes；Codex v26 另以上述 1800 秒 episode 保留
+route extent transform 也可用可选 audit 并置当前 exact Replay bytes；audit 不作为 ReplayCheck、compile 或 Gate1 前置条件；Codex v26 另以上述 1800 秒 episode 保留
 900 秒 turn 超时后的同-thread continuation。v29/v25 历史 receipt 保持原 verdict。
 Codex Replay v28把fresh episode总active预算提升到3600秒，并允许在已有draft且transport context过大或
 turn timeout时，在同一workspace内新建thread重读exact packet/current Replay/closed diagnostic；不做

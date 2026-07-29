@@ -397,11 +397,9 @@ public synthetic compile。旧 v20/v16 的强制 requirements 查询 receipt 保
 
 当 `critical_facts.v4` 含 broadcast obligation、lexical region、cross-region order 或 route extent
 transform 时，Replay
-v30/v26 在 construction compile 前要求同一 owner 对当前 exact source bytes 调用一次
-`replay-obligation-audit.v3`。返回值只把上述 J/π ledger 与该 owner 自己源码的带行号非空行并置；
+v30/v26 为同一 owner 提供可选的 `replay-obligation-audit.v3`，用于把当前 exact source bytes 与 ledger 并置。返回值只把上述 J/π ledger 与该 owner 自己源码的带行号非空行并置；
 它不建立 `source statement ↔ relation/i*` 映射，不判断
-满足与否，也不建议或执行修复。owner 修改任一 byte 后必须重新审阅当前源码。该事务约束只保证模型
-在提交前实际看到约束和当前代码，既不是 Replay 输入 artifact，也不进入 TypeCheck/Gate1 membership。
+满足与否，也不建议或执行修复。该视图只帮助模型审阅当前代码，既不是 Replay 输入 artifact，也不是 ReplayCheck、compile 或 Gate1 的前置条件。
 
 v50/v8 只升级 proof-irrelevant Agent execution transport：活动 staged writer 被移除，MiniSWE 使用
 一个持久 Lift owner 和每轮一个 exact Replay packet；首轮 exact allowlisted workspace mirror 在
