@@ -275,7 +275,10 @@ DEFAULT_PASSES: tuple[PassDescriptor, ...] = (
     ),
     PassDescriptor(
         fast_path_id="cuda.row_scan.sparsemax.sorted_prefix.v1",
-        pass_argument="-convert-intent-row-reduction-to-gpu=block-threads=256",
+        pass_argument=(
+            "-convert-intent-row-reduction-to-gpu=block-threads=256 "
+            "require-sorted-prefix=true"
+        ),
         supported_chips=_PORTABLE_BLOCK_CUDA_CHIPS,
         description="sorted-prefix Sparsemax row scan",
         scf_to_cf=True,
@@ -311,6 +314,21 @@ DEFAULT_PASSES: tuple[PassDescriptor, ...] = (
         ),
         supported_chips=_PORTABLE_BLOCK_CUDA_CHIPS,
         description="row normalization/loss reduction graph",
+    ),
+    PassDescriptor(
+        fast_path_id=(
+            "cuda.row_scan.sparsemax.sorted_prefix.execution_domain.v1"
+        ),
+        pass_argument=(
+            "-convert-intent-row-reduction-to-gpu=block-threads=256 "
+            "allow-execution-domain-sorted-prefix=true "
+            "require-sorted-prefix=true"
+        ),
+        supported_chips=_PORTABLE_BLOCK_CUDA_CHIPS,
+        description=(
+            "graph-structural Sparsemax sorted-prefix execution-domain state"
+        ),
+        scf_to_cf=True,
     ),
     PassDescriptor(
         fast_path_id="cuda.gather-scatter.block.v1",

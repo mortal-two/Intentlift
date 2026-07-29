@@ -855,11 +855,23 @@ struct RowReductionLowering {
   bool useLeaderFinalization;
   bool promoteRank0ScalarInputs;
   bool enableSortedPrefix;
+  bool allowExecutionDomainSortedPrefix;
+  bool requireSortedPrefix;
+  unsigned requestedPrefixThreads;
+  bool crossMultiplySupportPredicate;
+  bool crossRowFinalize;
+  bool requestRawMomentVariance;
+  bool enableCompactReductionTopology;
   unsigned requestedRowsPerBlock;
   unsigned requestedReductionParts;
   unsigned predicatedValueIfCount;
   unsigned foldedConstexprSelectCount;
   unsigned emittedApproximateDivCount = 0;
+  bool rawMomentVariance = false;
+  ReduceOp rawMomentMeanReduce;
+  ReduceOp rawMomentVarianceReduce;
+  Value rawMomentInput;
+  Value rawMomentMeanValue;
 
   // populated by match()
   int64_t M = 0, N = 0, T = 0, K = 0;
@@ -941,10 +953,15 @@ struct RowReductionLowering {
                        unsigned vw, bool fuseFma, bool approximateDiv,
                        bool deferColLoads, bool materializeRowOutput,
                        bool leaderFinalization, bool promoteScalars,
-                       bool enablePrefix,
+                       bool enablePrefix, bool allowDomainPrefix,
+                       bool requirePrefix, bool enableCrossRowFinalize,
+                       bool enableRawMomentVariance,
+                       bool compactReductionTopology,
                        unsigned predicatedValueIfs,
                        unsigned foldedConstexprSelects,
-                       unsigned rowsPerBlock, unsigned reductionParts)
+                       unsigned rowsPerBlock, unsigned reductionParts,
+                       unsigned prefixThreads,
+                       bool crossMultiplySupport)
       : fn(fn), blockThreads(bt), tileColsMax(tc),
         requestedVectorWidth(vw),
         enableFmaFusion(fuseFma),
@@ -954,6 +971,13 @@ struct RowReductionLowering {
         useLeaderFinalization(leaderFinalization),
         promoteRank0ScalarInputs(promoteScalars),
         enableSortedPrefix(enablePrefix),
+        allowExecutionDomainSortedPrefix(allowDomainPrefix),
+        requireSortedPrefix(requirePrefix),
+        requestedPrefixThreads(prefixThreads),
+        crossMultiplySupportPredicate(crossMultiplySupport),
+        crossRowFinalize(enableCrossRowFinalize),
+        requestRawMomentVariance(enableRawMomentVariance),
+        enableCompactReductionTopology(compactReductionTopology),
         requestedRowsPerBlock(rowsPerBlock),
         requestedReductionParts(reductionParts),
         predicatedValueIfCount(predicatedValueIfs),
@@ -1209,7 +1233,10 @@ struct RowReductionLowering {
   // ---- recognition ------------------------------------------------------- //
   LogicalResult match() {
     if (requestedRowsPerBlock != 1 && requestedRowsPerBlock != 2 &&
-        requestedRowsPerBlock != 4 && requestedRowsPerBlock != 8)
+        requestedRowsPerBlock != 4 && requestedRowsPerBlock != 8 &&
+        requestedRowsPerBlock != 16 && requestedRowsPerBlock != 32)
+      return failure();
+    if (requestedPrefixThreads != 0 && requestedPrefixThreads != 32)
       return failure();
     if (requestedReductionParts == 0 || requestedReductionParts > 128 ||
         (requestedReductionParts & (requestedReductionParts - 1)) != 0 ||
@@ -1814,6 +1841,8 @@ struct RowReductionLowering {
       if (!cr || !cr.getResult().hasOneUse())
         return failure();
     }
+    if (requestRawMomentVariance && !matchRawMomentVariance())
+      return failure();
 
     // Geometry: T threads over the feature dim, K columns per thread.
     T = blockThreads ? (int64_t)blockThreads : autoThreads(N);
@@ -1935,6 +1964,25 @@ struct RowReductionLowering {
       sched.kind = KTiled;
     else
       sched.kind = KRegister;
+    // Cache the exact graph proof before geometry-specific admission below.
+    // A multi-row scan is legal only for the sorted-prefix implementation; the
+    // generic full-row scan still owns one complete workgroup per row.
+    auto sortedPrefixArgs =
+        sched.kind == KScan ? sortedSparsemaxArgIndices()
+                            : std::optional<std::pair<unsigned, unsigned>>{};
+    if (requestedPrefixThreads != 0 && !sortedPrefixArgs)
+      return failure();
+    if (crossMultiplySupportPredicate && !sortedPrefixArgs)
+      return failure();
+    if (crossRowFinalize) {
+      if (sched.kind != KRegister || requestedRowsPerBlock != 1 ||
+          requestedReductionParts != 1 || crossReduces.size() != 1 ||
+          outRoles.size() != 1 || outRoles.front() != ResultRole::AtomicOut ||
+          crossReduces.front().getAssoc() != "float_nondeterministic" ||
+          storageType != f32 || groupedBatch != 0 || numGroups != 0 ||
+          flatSingletonRank4)
+        return failure();
+    }
     if ((sched.kind == KTiled || sched.kind == KScan) &&
         std::any_of(inplaceArg.begin(), inplaceArg.end(),
                     [](int64_t arg) { return arg >= 0; }))
@@ -1947,12 +1995,25 @@ struct RowReductionLowering {
           });
       bool hasInplaceOutput = llvm::any_of(
           inplaceArg, [](int64_t argument) { return argument >= 0; });
-      if (T != 32 || M % requestedRowsPerBlock != 0 ||
-          sched.kind != KRegister || !scans.empty() ||
-          !crossReduces.empty() || groupedBatch != 0 || numGroups != 0 ||
-          flatSingletonRank4 || hasUnsupportedOutput || hasInplaceOutput ||
+      bool sortedPrefixWarpRows =
+          sched.kind == KScan && sortedPrefixArgs.has_value() &&
+          ((T == 32 && requestedPrefixThreads == 0) ||
+           (requestedPrefixThreads == 32 && T >= 64 &&
+            T * static_cast<int64_t>(requestedRowsPerBlock) <= 1024));
+      if (M % requestedRowsPerBlock != 0 || !crossReduces.empty() ||
+          groupedBatch != 0 || numGroups != 0 || flatSingletonRank4 ||
+          hasUnsupportedOutput || hasInplaceOutput ||
           requestedReductionParts != 1)
         return failure();
+      if (sortedPrefixWarpRows) {
+        // One physical warp owns one row.  The prefix/reduction exchange is
+        // entirely warp-local, so no compact workgroup scratch is required.
+        if (requestedRowsPerBlock * 32 > 1024)
+          return failure();
+      } else if (!enableCompactReductionTopology || T != 32 ||
+                 sched.kind != KRegister || !scans.empty()) {
+        return failure();
+      }
       sched.gridX = M / requestedRowsPerBlock;
       sched.blockX = T * requestedRowsPerBlock;
     }
@@ -2027,14 +2088,27 @@ struct RowReductionLowering {
     }
     if (requestedVectorWidth == 4 && !useVec4 && !useHalfVec4)
       return failure();
+    if (rawMomentVariance &&
+        (sched.kind != KRegister || requestedRowsPerBlock != 1 ||
+         requestedReductionParts != 1 || T < 64 || T > 1024 ||
+         (T & (T - 1)) != 0))
+      return failure();
     if (useLeaderFinalization) {
       int64_t numWarps = (T + 31) / 32;
-      if (sched.kind != KRegister || requestedRowsPerBlock != 1 ||
+      if (!enableCompactReductionTopology || sched.kind != KRegister ||
+          requestedRowsPerBlock != 1 ||
           requestedReductionParts != 1 || reduces.size() < 2 || T < 64 ||
           (T % 32) != 0 || numWarps > 32 ||
           (numWarps & (numWarps - 1)) != 0)
         return failure();
     }
+    // `require-sorted-prefix` names a concrete emitted topology, not merely a
+    // request to run this pass.  Fail the structural probe here so non-scan
+    // graphs cannot be admitted under the sparsemax candidate identity and
+    // silently lowered by the ordinary register/tiled paths.
+    if (requireSortedPrefix &&
+        (sched.kind != KScan || !sortedPrefixArgs.has_value()))
+      return failure();
     return success();
   }
 
@@ -2339,6 +2413,20 @@ struct RowReductionLowering {
                                     const ReduceInfo &info, Value acc,
                                     unsigned k, Value featureLaneActive,
                                     ArrayRef<Value> featureTileActive) {
+    if (rawMomentVariance && red == rawMomentVarianceReduce) {
+      Value input = emitAt(b, loc, rawMomentInput, k);
+      if (!input || input.getType() != f32)
+        return nullptr;
+      Value term = b.create<arith::MulFOp>(loc, input, input);
+      Value active =
+          hasFeatureTail ? featureTileActive[k] : featureLaneActive;
+      if (active) {
+        Value identity =
+            b.create<arith::ConstantOp>(loc, b.getF32FloatAttr(info.ident));
+        term = b.create<arith::SelectOp>(loc, active, term, identity);
+      }
+      return combineScalar(b, loc, info.op, acc, term);
+    }
     if (enableFmaFusion && info.op == gpu::AllReduceOperation::ADD &&
         red.getAssoc() == "float_nondeterministic") {
       auto mul = red.getInput().getDefiningOp<MapBinaryOp>();
@@ -2369,6 +2457,24 @@ struct RowReductionLowering {
     return combineScalar(b, loc, info.op, acc, term);
   }
 
+  Value finalizeRegisterReductionScalar(OpBuilder &b, Location loc,
+                                        ReduceOp reduction,
+                                        const ReduceInfo &info, Value scalar,
+                                        Value featureCount) {
+    if (info.isMean)
+      scalar = finalizeMean(b, loc, scalar, featureCount);
+    if (!rawMomentVariance || reduction != rawMomentVarianceReduce)
+      return scalar;
+
+    Value mean = emitAt(b, loc, rawMomentMeanValue, 0);
+    if (!mean || mean.getType() != f32)
+      return nullptr;
+    Value meanSquare = b.create<arith::MulFOp>(loc, mean, mean);
+    if (!info.isMean)
+      meanSquare = b.create<arith::MulFOp>(loc, meanSquare, featureCount);
+    return b.create<arith::SubFOp>(loc, scalar, meanSquare);
+  }
+
   /// Is an original value uniform (per-row / rank-0)? Row/Col args are not.
   bool isUniform(Value v) {
     if (uniform.count(v))
@@ -2394,6 +2500,104 @@ struct RowReductionLowering {
     return false;
   }
 
+  bool isZeroSplat(Value value) const {
+    auto constant = value.getDefiningOp<arith::ConstantOp>();
+    auto dense = constant ? dyn_cast<DenseElementsAttr>(constant.getValue())
+                          : DenseElementsAttr();
+    if (!dense || !dense.isSplat())
+      return false;
+    if (isa<FloatType>(dense.getElementType()))
+      return dense.getSplatValue<APFloat>().isZero();
+    if (isa<IntegerType>(dense.getElementType()))
+      return dense.getSplatValue<APInt>().isZero();
+    return false;
+  }
+
+  bool isFullFeaturePredicate(Value value) const {
+    auto comparison = value.getDefiningOp<MapBinaryOp>();
+    if (!comparison)
+      return false;
+    auto lhsIota = comparison.getLhs().getDefiningOp<IotaOp>();
+    auto rhsIota = comparison.getRhs().getDefiningOp<IotaOp>();
+    if (comparison.getFn() == "lt" && lhsIota &&
+        isStaticFeatureExtent(comparison.getRhs())) {
+      auto found = iotaRoles.find(lhsIota.getResult());
+      return found != iotaRoles.end() &&
+             found->second == IotaRole::Column;
+    }
+    if (comparison.getFn() == "gt" && rhsIota &&
+        isStaticFeatureExtent(comparison.getLhs())) {
+      auto found = iotaRoles.find(rhsIota.getResult());
+      return found != iotaRoles.end() &&
+             found->second == IotaRole::Column;
+    }
+    return false;
+  }
+
+  bool matchRawMomentVariance() {
+    if (reduces.size() != 2 || !crossReduces.empty() || !scans.empty())
+      return false;
+    ReduceOp meanReduce = reduces[0];
+    ReduceOp varianceReduce = reduces[1];
+    if ((meanReduce.getFn() != "sum" && meanReduce.getFn() != "mean") ||
+        (varianceReduce.getFn() != "sum" &&
+         varianceReduce.getFn() != "mean") ||
+        meanReduce.getAssoc() != "float_nondeterministic" ||
+        varianceReduce.getAssoc() != "float_nondeterministic")
+      return false;
+
+    Value squared = varianceReduce.getInput();
+    if (auto select = squared.getDefiningOp<SelectOp>()) {
+      if (!isFullFeaturePredicate(select.getCond()))
+        return false;
+      if (isZeroSplat(select.getY()))
+        squared = select.getX();
+      else if (isZeroSplat(select.getX()))
+        squared = select.getY();
+      else
+        return false;
+    }
+    auto square = squared.getDefiningOp<MapBinaryOp>();
+    if (!square || square.getFn() != "mul" ||
+        square.getLhs() != square.getRhs())
+      return false;
+    Value centered = square.getLhs();
+    if (auto select = centered.getDefiningOp<SelectOp>()) {
+      if (!isFullFeaturePredicate(select.getCond()))
+        return false;
+      if (isZeroSplat(select.getY()))
+        centered = select.getX();
+      else if (isZeroSplat(select.getX()))
+        centered = select.getY();
+      else
+        return false;
+    }
+    auto subtract = centered.getDefiningOp<MapBinaryOp>();
+    if (!subtract || subtract.getFn() != "sub" ||
+        subtract.getLhs() != meanReduce.getInput() ||
+        !dependsOn(subtract.getRhs(), meanReduce.getResult()))
+      return false;
+
+    auto inputType = dyn_cast<RankedTensorType>(meanReduce.getInput().getType());
+    if (!inputType || inputType.getRank() != 2 ||
+        inputType.getShape() != ArrayRef<int64_t>({M, N}) ||
+        inputType.getElementType() != f32)
+      return false;
+    rawMomentVariance = true;
+    rawMomentMeanReduce = meanReduce;
+    rawMomentVarianceReduce = varianceReduce;
+    rawMomentInput = meanReduce.getInput();
+    rawMomentMeanValue = subtract.getRhs();
+    return true;
+  }
+
+  bool reductionDependsOn(ReduceOp reduction, ReduceOp prior) {
+    if (rawMomentVariance && reduction == rawMomentVarianceReduce &&
+        prior == rawMomentMeanReduce)
+      return false;
+    return dependsOn(reduction.getInput(), prior.getResult());
+  }
+
   /// True when at least two row reductions can amortize one publication
   /// barrier. Single reductions and fully dependent chains keep gpu.all_reduce;
   /// the redundant cross-warp finalization of the grouped hierarchy is only a
@@ -2405,8 +2609,7 @@ struct RowReductionLowering {
       while (groupEnd < reduces.size()) {
         bool dependent = false;
         for (size_t prior = groupStart; prior < groupEnd; ++prior)
-          dependent |= dependsOn(reduces[groupEnd].getInput(),
-                                 reduces[prior].getResult());
+          dependent |= reductionDependsOn(reduces[groupEnd], reduces[prior]);
         if (dependent)
           break;
         ++groupEnd;
@@ -2418,25 +2621,33 @@ struct RowReductionLowering {
     return false;
   }
 
-  /// A B-certified, exact sparsemax graph can use the sorted-prefix algorithm
-  /// in `rewriteSortedSparsemax`.  Return (X arg index, SortedX arg index) only
-  /// when the proof is entirely structural:
+  /// An exact sparsemax graph can use the sorted-prefix algorithm in
+  /// `rewriteSortedSparsemax`. Return (X arg index, SortedX arg index) only when
+  /// the dataflow proof is entirely structural:
   ///
   ///   scan(SortedX) -> strict support predicate
   ///   k = sum(cast_i32(support))
   ///   s = sum(select(support, SortedX, 0))
   ///   O = max(X - tau(k, s), 0)
   ///
-  /// The descending-order fact itself is never inferred from names; it must be
-  /// the validated Layer-B BoolAttr materialized by P4.
+  /// The descending-order fact itself is never inferred from names. It is
+  /// either the validated Layer-B BoolAttr materialized by P4, or an explicit
+  /// execution-domain search assumption whose candidate must pass Q/D before
+  /// it is measured or selected.
   std::optional<std::pair<unsigned, unsigned>>
   sortedSparsemaxArgIndices() {
     auto sortedAttr = fn->getAttrOfType<BoolAttr>("intent_sorted_descending");
-    if (!enableSortedPrefix || !sortedAttr || !sortedAttr.getValue() ||
+    bool contractCertified = sortedAttr && sortedAttr.getValue();
+    int64_t scanThreads = requestedPrefixThreads
+                              ? static_cast<int64_t>(requestedPrefixThreads)
+                              : T;
+    if (!enableSortedPrefix ||
+        (!contractCertified && !allowExecutionDomainSortedPrefix) ||
         scans.size() != 1 ||
         reduces.size() != 2 || outputVals.size() != 1 ||
-        outRoles[0] != ResultRole::RowOut || fn.getNumArguments() != 2 ||
-        T < 32 || T > 1024 || (T % 32) != 0 || (N % (T * 4)) != 0)
+        outRoles[0] != ResultRole::RowOut ||
+        scanThreads < 32 || scanThreads > 1024 ||
+        (scanThreads % 32) != 0 || (N % (scanThreads * 4)) != 0)
       return std::nullopt;
 
     auto isZeroSplat = [](Value value) {
@@ -2448,7 +2659,38 @@ struct RowReductionLowering {
              dense.getSplatValue<APFloat>().isZero();
     };
 
-    auto sortedArg = dyn_cast<BlockArgument>(scans[0].getInput());
+    // The source kernel guards a static tl.arange by `col < N` and scans
+    // select(mask, SortedX, 0).  At materialization time the authored scalar
+    // equality proves that bound is exactly the row extent, so the mask is all
+    // true.  Recognize that typed graph instead of demanding that the scan take
+    // the argument directly; no runtime sample value is consulted.
+    auto isFullFeatureMask = [&](Value value) {
+      auto compare = value.getDefiningOp<MapBinaryOp>();
+      if (!compare || compare.getFn() != "lt" ||
+          !isStaticFeatureExtent(compare.getRhs()))
+        return false;
+      auto iota = compare.getLhs().getDefiningOp<IotaOp>();
+      auto iotaType = iota
+                          ? dyn_cast<RankedTensorType>(iota.getResult().getType())
+                          : RankedTensorType();
+      return iota && iotaType && iotaType.hasStaticShape() &&
+             iotaType.getRank() == 1 && iotaType.getDimSize(0) == N;
+    };
+
+    Value validMask;
+    Value featureExtent;
+    Value scanInput = scans[0].getInput();
+    auto sortedArg = dyn_cast<BlockArgument>(scanInput);
+    if (!sortedArg) {
+      auto maskedScanInput = scanInput.getDefiningOp<SelectOp>();
+      if (!maskedScanInput || !isZeroSplat(maskedScanInput.getY()) ||
+          !isFullFeatureMask(maskedScanInput.getCond()))
+        return std::nullopt;
+      sortedArg = dyn_cast<BlockArgument>(maskedScanInput.getX());
+      validMask = maskedScanInput.getCond();
+      featureExtent =
+          validMask.getDefiningOp<MapBinaryOp>().getRhs();
+    }
     if (!sortedArg || argRoles[sortedArg.getArgNumber()] != Role::Row)
       return std::nullopt;
 
@@ -2482,7 +2724,19 @@ struct RowReductionLowering {
       return std::nullopt;
 
     Value support = countCast.getInput();
-    auto compare = support.getDefiningOp<MapBinaryOp>();
+    Value strictSupport = support;
+    if (validMask) {
+      auto conjunction = support.getDefiningOp<MapBinaryOp>();
+      if (!conjunction || conjunction.getFn() != "logical_and")
+        return std::nullopt;
+      if (conjunction.getLhs() == validMask)
+        strictSupport = conjunction.getRhs();
+      else if (conjunction.getRhs() == validMask)
+        strictSupport = conjunction.getLhs();
+      else
+        return std::nullopt;
+    }
+    auto compare = strictSupport.getDefiningOp<MapBinaryOp>();
     if (!compare || compare.getFn() != "gt" ||
         compare.getLhs() != sortedArg ||
         !dependsOn(compare.getRhs(), scans[0].getResult()))
@@ -2507,6 +2761,23 @@ struct RowReductionLowering {
         !dependsOn(subtract.getRhs(), countReduce.getResult()) ||
         !dependsOn(subtract.getRhs(), sumReduce.getResult()))
       return std::nullopt;
+
+    // The device computation may erase a third scalar extent only when it is
+    // the single-use value whose authored equality established the all-true
+    // feature mask above.  rewriteSortedSparsemax still preserves that argument
+    // in the host function ABI so positional input/output mapping remains exact.
+    if (fn.getNumArguments() == 2) {
+      if (xArg.getArgNumber() > 1 || sortedArg.getArgNumber() > 1)
+        return std::nullopt;
+    } else if (fn.getNumArguments() == 3 && validMask) {
+      auto extentArg = dyn_cast<BlockArgument>(featureExtent);
+      if (!extentArg || extentArg.getArgNumber() != 2 ||
+          argRoles[2] != Role::Scalar || !extentArg.hasOneUse() ||
+          xArg.getArgNumber() > 1 || sortedArg.getArgNumber() > 1)
+        return std::nullopt;
+    } else {
+      return std::nullopt;
+    }
 
     return std::make_pair(xArg.getArgNumber(), sortedArg.getArgNumber());
   }
@@ -3340,8 +3611,7 @@ struct RowReductionLowering {
       while (groupEnd < reduces.size()) {
         bool dependent = false;
         for (size_t prior = groupStart; prior < groupEnd; ++prior)
-          dependent |= dependsOn(reduces[groupEnd].getInput(),
-                                 reduces[prior].getResult());
+          dependent |= reductionDependsOn(reduces[groupEnd], reduces[prior]);
         if (dependent)
           break;
         ++groupEnd;
@@ -3593,55 +3863,129 @@ struct RowReductionLowering {
     Type vec4Ty = VectorType::get({4}, f32Ty);
     auto wgSpace = gpu::AddressSpaceAttr::get(ctx, gpu::AddressSpace::Workgroup);
     MemRefType rowVecMemref = MemRefType::get({M, N / 4}, vec4Ty);
+    auto sortedAttr = fn->getAttrOfType<BoolAttr>("intent_sorted_descending");
+    bool contractCertified = sortedAttr && sortedAttr.getValue();
 
     std::string name = fn.getName().str();
     fn.setName(name + "_intent_src");
     b.setInsertionPoint(fn);
-    auto newFty = FunctionType::get(
-        ctx, {rowVecMemref, rowVecMemref, rowVecMemref}, {});
+    SmallVector<Type> abiTypes;
+    abiTypes.reserve(fn.getNumArguments() + 1);
+    for (unsigned index = 0; index < argRoles.size(); ++index)
+      abiTypes.push_back(argRoles[index] == Role::Row ? rowVecMemref
+                                                      : memrefOf(index));
+    abiTypes.push_back(rowVecMemref);
+    auto newFty = FunctionType::get(ctx, abiTypes, {});
     auto gpuFn = b.create<func::FuncOp>(loc, name, newFty);
-    gpuFn->setAttr("intent_sorted_descending", b.getBoolAttr(true));
-    gpuFn->setAttr("intent.fast_path_id",
-                   b.getStringAttr("cuda.row_scan.sparsemax.sorted_prefix.v1"));
+    if (contractCertified) {
+      gpuFn->setAttr("intent_sorted_descending", b.getBoolAttr(true));
+      gpuFn->setAttr(
+          "intent.fast_path_id",
+          b.getStringAttr("cuda.row_scan.sparsemax.sorted_prefix.v1"));
+    } else {
+      gpuFn->setAttr("intent.backend.execution_domain_assumption",
+                     b.getStringAttr("sorted_descending_input"));
+      gpuFn->setAttr(
+          "intent.fast_path_id",
+          b.getStringAttr(
+              "cuda.row_scan.sparsemax.sorted_prefix.execution_domain.v1"));
+    }
     Block *entry = gpuFn.addEntryBlock();
     b.setInsertionPointToStart(entry);
 
     Value xMem = entry->getArgument(xArgIndex);
     Value sortedMem = entry->getArgument(sortedArgIndex);
-    Value outMem = entry->getArgument(2);
-    Value cM = b.create<arith::ConstantIndexOp>(loc, M);
-    Value cT = b.create<arith::ConstantIndexOp>(loc, T);
+    Value outMem = entry->getArgument(fn.getNumArguments());
+    int64_t rowsPerBlock = requestedRowsPerBlock;
+    int64_t threadsPerRow = T;
+    int64_t scanThreads = requestedPrefixThreads
+                              ? static_cast<int64_t>(requestedPrefixThreads)
+                              : threadsPerRow;
+    bool decoupledWideEpilogue = scanThreads < threadsPerRow;
+    int64_t numWarpsPerRow = scanThreads / 32;
+    bool warpRows = rowsPerBlock > 1;
+    Value cGrid = b.create<arith::ConstantIndexOp>(loc, sched.gridX);
+    Value cBlock = b.create<arith::ConstantIndexOp>(loc, sched.blockX);
+    Value cScanThreads = b.create<arith::ConstantIndexOp>(loc, scanThreads);
     Value c1 = b.create<arith::ConstantIndexOp>(loc, 1);
-    int64_t numWarps = T / 32;
-    int64_t scratchSlotBytes = numWarps * 4;
-    int64_t shBytes = scratchSlotBytes * 3;
+    int64_t scratchSlotBytes = numWarpsPerRow * 4;
+    int64_t compactScratchBytes =
+        numWarpsPerRow > 1 ? scratchSlotBytes * 3 : 0;
+    int64_t tauScratchBytes =
+        decoupledWideEpilogue ? rowsPerBlock * 4 : 0;
+    int64_t shBytes = compactScratchBytes + tauScratchBytes;
     sched.smemBytes = shBytes;
     sched.vectorWidth = 4;
     attachLaunchPlan(gpuFn, sched);
     Value shBytesValue =
         b.create<arith::ConstantOp>(loc, b.getI32IntegerAttr(shBytes));
     auto launch =
-        b.create<gpu::LaunchOp>(loc, cM, c1, c1, cT, c1, c1, shBytesValue);
+        b.create<gpu::LaunchOp>(loc, cGrid, c1, c1, cBlock, c1, c1,
+                                shBytesValue);
     b.setInsertionPointToStart(&launch.getBody().front());
 
     Value bx = launch.getBlockIds().x;
     Value tx = launch.getThreadIds().x;
-    auto rawType = MemRefType::get({ShapedType::kDynamic}, b.getI8Type(),
-                                   nullptr, wgSpace);
-    Value raw = b.create<gpu::DynamicSharedMemoryOp>(loc, rawType);
-    auto warpF32Type = MemRefType::get({numWarps}, f32Ty, nullptr, wgSpace);
-    auto warpI32Type = MemRefType::get({numWarps}, i32, nullptr, wgSpace);
-    Value c0Index = b.create<arith::ConstantIndexOp>(loc, 0);
-    Value scanScratch = b.create<memref::ViewOp>(
-        loc, warpF32Type, raw, c0Index, ValueRange{});
-    Value rankOffset =
-        b.create<arith::ConstantIndexOp>(loc, scratchSlotBytes);
-    Value rankScratch = b.create<memref::ViewOp>(
-        loc, warpI32Type, raw, rankOffset, ValueRange{});
-    Value sumOffset =
-        b.create<arith::ConstantIndexOp>(loc, scratchSlotBytes * 2);
-    Value sumScratch = b.create<memref::ViewOp>(
-        loc, warpF32Type, raw, sumOffset, ValueRange{});
+    Value txI32 = b.create<arith::IndexCastOp>(loc, i32, tx);
+    Value lane = b.create<arith::AndIOp>(
+        loc, txI32, b.create<arith::ConstantIntOp>(loc, 31, 32));
+    Value c32Index = b.create<arith::ConstantIndexOp>(loc, 32);
+    Value blockWarpId = b.create<arith::DivUIOp>(loc, tx, c32Index);
+    Value row = bx;
+    Value rowThread = tx;
+    Value warpIdInRow = blockWarpId;
+    Value rowInBlock = b.create<arith::ConstantIndexOp>(loc, 0);
+    if (warpRows) {
+      Value cThreadsPerOutputRow =
+          b.create<arith::ConstantIndexOp>(loc, threadsPerRow);
+      rowInBlock =
+          b.create<arith::DivUIOp>(loc, tx, cThreadsPerOutputRow);
+      row = b.create<arith::AddIOp>(
+          loc,
+          b.create<arith::MulIOp>(
+              loc, bx,
+              b.create<arith::ConstantIndexOp>(loc, rowsPerBlock)),
+          rowInBlock);
+      rowThread =
+          b.create<arith::RemUIOp>(loc, tx, cThreadsPerOutputRow);
+      warpIdInRow = b.create<arith::DivUIOp>(loc, rowThread, c32Index);
+    }
+
+    Value raw;
+    if (shBytes > 0) {
+      auto rawType = MemRefType::get({ShapedType::kDynamic}, b.getI8Type(),
+                                    nullptr, wgSpace);
+      raw = b.create<gpu::DynamicSharedMemoryOp>(loc, rawType);
+    }
+    Value scanScratch;
+    Value rankScratch;
+    Value sumScratch;
+    if (numWarpsPerRow > 1) {
+      auto warpF32Type =
+          MemRefType::get({numWarpsPerRow}, f32Ty, nullptr, wgSpace);
+      auto warpI32Type =
+          MemRefType::get({numWarpsPerRow}, i32, nullptr, wgSpace);
+      Value c0Index = b.create<arith::ConstantIndexOp>(loc, 0);
+      scanScratch = b.create<memref::ViewOp>(
+          loc, warpF32Type, raw, c0Index, ValueRange{});
+      Value rankOffset =
+          b.create<arith::ConstantIndexOp>(loc, scratchSlotBytes);
+      rankScratch = b.create<memref::ViewOp>(
+          loc, warpI32Type, raw, rankOffset, ValueRange{});
+      Value sumOffset =
+          b.create<arith::ConstantIndexOp>(loc, scratchSlotBytes * 2);
+      sumScratch = b.create<memref::ViewOp>(
+          loc, warpF32Type, raw, sumOffset, ValueRange{});
+    }
+    Value tauScratch;
+    if (decoupledWideEpilogue) {
+      auto tauType =
+          MemRefType::get({rowsPerBlock}, f32Ty, nullptr, wgSpace);
+      Value tauOffset =
+          b.create<arith::ConstantIndexOp>(loc, compactScratchBytes);
+      tauScratch = b.create<memref::ViewOp>(
+          loc, tauType, raw, tauOffset, ValueRange{});
+    }
 
     Value zeroF =
         b.create<arith::ConstantOp>(loc, b.getF32FloatAttr(0.0));
@@ -3651,7 +3995,7 @@ struct RowReductionLowering {
     Value falseValue = b.create<arith::ConstantIntOp>(loc, 0, 1);
     Value c0 = b.create<arith::ConstantIndexOp>(loc, 0);
     Value cChunks =
-        b.create<arith::ConstantIndexOp>(loc, N / (T * 4));
+        b.create<arith::ConstantIndexOp>(loc, N / (scanThreads * 4));
 
     // Loop state: accumulated sum of fully-supported preceding chunks, the
     // best support rank/sum seen so far, and a uniform done flag.  Completed
@@ -3669,16 +4013,24 @@ struct RowReductionLowering {
       Value done = chunkLoop.getRegionIterArg(3);
       Value trueValue = lb.create<arith::ConstantIntOp>(loc, 1, 1);
       Value active = lb.create<arith::XOrIOp>(loc, done, trueValue);
+      if (decoupledWideEpilogue) {
+        Value isScanThread = lb.create<arith::CmpIOp>(
+            loc, arith::CmpIPredicate::ult, rowThread,
+            lb.create<arith::ConstantIndexOp>(loc, scanThreads));
+        active = lb.create<arith::AndIOp>(loc, active, isScanThread);
+      }
       auto activeIf = lb.create<scf::IfOp>(
           loc, TypeRange{f32Ty, i32, f32Ty, b.getI1Type()}, active,
           /*withElseRegion=*/true);
 
       {
         OpBuilder tb(activeIf.thenBlock(), activeIf.thenBlock()->begin());
-        Value chunkBase = tb.create<arith::MulIOp>(loc, chunk, cT);
-        Value vecIndex = tb.create<arith::AddIOp>(loc, chunkBase, tx);
+        Value chunkBase =
+            tb.create<arith::MulIOp>(loc, chunk, cScanThreads);
+        Value vecIndex =
+            tb.create<arith::AddIOp>(loc, chunkBase, rowThread);
         auto sortedLoad = tb.create<memref::LoadOp>(
-            loc, sortedMem, ValueRange{bx, vecIndex});
+            loc, sortedMem, ValueRange{row, vecIndex});
         sortedLoad.setNontemporal(true);
         Value sortedVector = sortedLoad;
         SmallVector<Value> z(4);
@@ -3692,11 +4044,6 @@ struct RowReductionLowering {
               loc, localPrefix[laneIndex - 1], z[laneIndex]);
         Value segmentTotal = localPrefix[3];
 
-        Value txI32 = tb.create<arith::IndexCastOp>(loc, i32, tx);
-        Value lane = tb.create<arith::AndIOp>(
-            loc, txI32, tb.create<arith::ConstantIntOp>(loc, 31, 32));
-        Value c32Index = tb.create<arith::ConstantIndexOp>(loc, 32);
-        Value warpId = tb.create<arith::DivUIOp>(loc, tx, c32Index);
         Value warpInclusive = segmentTotal;
         for (int32_t offset = 1; offset < 32; offset <<= 1) {
           Value prior = tb.create<gpu::ShuffleOp>(
@@ -3711,63 +4058,75 @@ struct RowReductionLowering {
           warpInclusive = tb.create<arith::SelectOp>(
               loc, participates, combined, warpInclusive);
         }
-        Value lastLane = tb.create<arith::CmpIOp>(
-            loc, arith::CmpIPredicate::eq, lane,
-            tb.create<arith::ConstantIntOp>(loc, 31, 32));
-        auto publishScan =
-            tb.create<scf::IfOp>(loc, lastLane, /*withElseRegion=*/false);
-        {
-          OpBuilder pb(publishScan.thenBlock(),
-                       publishScan.thenBlock()->begin());
-          pb.create<memref::StoreOp>(loc, warpInclusive, scanScratch,
-                                     ValueRange{warpId});
-        }
-        tb.create<gpu::BarrierOp>(loc);
-
-        Value activeWarpLane = tb.create<arith::CmpIOp>(
-            loc, arith::CmpIPredicate::slt, lane,
-            tb.create<arith::ConstantIntOp>(loc, numWarps, 32));
-        auto loadWarp = tb.create<scf::IfOp>(
-            loc, TypeRange{f32Ty}, activeWarpLane,
-            /*withElseRegion=*/true);
-        {
-          OpBuilder wb(loadWarp.thenBlock(), loadWarp.thenBlock()->begin());
-          Value laneIndex =
-              wb.create<arith::IndexCastOp>(loc, b.getIndexType(), lane);
-          Value value = wb.create<memref::LoadOp>(
-              loc, scanScratch, ValueRange{laneIndex});
-          wb.create<scf::YieldOp>(loc, ValueRange{value});
-          OpBuilder eb(loadWarp.elseBlock(), loadWarp.elseBlock()->begin());
-          eb.create<scf::YieldOp>(loc, ValueRange{zeroF});
-        }
-        Value ownWarpTotal = loadWarp.getResult(0);
-        Value warpPrefix = ownWarpTotal;
-        for (int32_t offset = 1; offset < 32; offset <<= 1) {
-          Value prior = tb.create<gpu::ShuffleOp>(
-                              loc, warpPrefix, offset, 32,
-                              gpu::ShuffleMode::UP)
-                            .getShuffleResult();
-          Value participates = tb.create<arith::CmpIOp>(
-              loc, arith::CmpIPredicate::sge, lane,
-              tb.create<arith::ConstantIntOp>(loc, offset, 32));
-          Value combined = tb.create<arith::AddFOp>(loc, warpPrefix, prior);
-          warpPrefix = tb.create<arith::SelectOp>(
-              loc, participates, combined, warpPrefix);
-        }
-        Value warpExclusive =
-            tb.create<arith::SubFOp>(loc, warpPrefix, ownWarpTotal);
-        Value warpIdI32 = tb.create<arith::IndexCastOp>(loc, i32, warpId);
         Value width32 = tb.create<arith::ConstantIntOp>(loc, 32, 32);
-        Value warpBase = tb.create<gpu::ShuffleOp>(
-                               loc, warpExclusive, warpIdI32, width32,
-                               gpu::ShuffleMode::IDX)
-                             .getShuffleResult();
-        Value lastWarpLane =
-            tb.create<arith::ConstantIntOp>(loc, numWarps - 1, 32);
-        Value chunkTotal = tb.create<gpu::ShuffleOp>(
-                                loc, warpPrefix, lastWarpLane, width32,
-                                gpu::ShuffleMode::IDX)
+        Value warpBase;
+        Value chunkTotal;
+        if (numWarpsPerRow == 1) {
+          warpBase = zeroF;
+          chunkTotal = tb.create<gpu::ShuffleOp>(
+                             loc, warpInclusive,
+                             tb.create<arith::ConstantIntOp>(loc, 31, 32),
+                             width32, gpu::ShuffleMode::IDX)
+                           .getShuffleResult();
+        } else {
+          Value lastLane = tb.create<arith::CmpIOp>(
+              loc, arith::CmpIPredicate::eq, lane,
+              tb.create<arith::ConstantIntOp>(loc, 31, 32));
+          auto publishScan =
+              tb.create<scf::IfOp>(loc, lastLane, /*withElseRegion=*/false);
+          {
+            OpBuilder pb(publishScan.thenBlock(),
+                         publishScan.thenBlock()->begin());
+            pb.create<memref::StoreOp>(loc, warpInclusive, scanScratch,
+                                       ValueRange{warpIdInRow});
+          }
+          tb.create<gpu::BarrierOp>(loc);
+
+          Value activeWarpLane = tb.create<arith::CmpIOp>(
+              loc, arith::CmpIPredicate::slt, lane,
+              tb.create<arith::ConstantIntOp>(loc, numWarpsPerRow, 32));
+          auto loadWarp = tb.create<scf::IfOp>(
+              loc, TypeRange{f32Ty}, activeWarpLane,
+              /*withElseRegion=*/true);
+          {
+            OpBuilder wb(loadWarp.thenBlock(), loadWarp.thenBlock()->begin());
+            Value laneIndex =
+                wb.create<arith::IndexCastOp>(loc, b.getIndexType(), lane);
+            Value value = wb.create<memref::LoadOp>(
+                loc, scanScratch, ValueRange{laneIndex});
+            wb.create<scf::YieldOp>(loc, ValueRange{value});
+            OpBuilder eb(loadWarp.elseBlock(), loadWarp.elseBlock()->begin());
+            eb.create<scf::YieldOp>(loc, ValueRange{zeroF});
+          }
+          Value ownWarpTotal = loadWarp.getResult(0);
+          Value warpPrefix = ownWarpTotal;
+          for (int32_t offset = 1; offset < 32; offset <<= 1) {
+            Value prior = tb.create<gpu::ShuffleOp>(
+                                loc, warpPrefix, offset, 32,
+                                gpu::ShuffleMode::UP)
                               .getShuffleResult();
+            Value participates = tb.create<arith::CmpIOp>(
+                loc, arith::CmpIPredicate::sge, lane,
+                tb.create<arith::ConstantIntOp>(loc, offset, 32));
+            Value combined = tb.create<arith::AddFOp>(loc, warpPrefix, prior);
+            warpPrefix = tb.create<arith::SelectOp>(
+                loc, participates, combined, warpPrefix);
+          }
+          Value warpExclusive =
+              tb.create<arith::SubFOp>(loc, warpPrefix, ownWarpTotal);
+          Value warpIdI32 =
+              tb.create<arith::IndexCastOp>(loc, i32, warpIdInRow);
+          warpBase = tb.create<gpu::ShuffleOp>(
+                            loc, warpExclusive, warpIdI32, width32,
+                            gpu::ShuffleMode::IDX)
+                         .getShuffleResult();
+          Value lastWarpLane =
+              tb.create<arith::ConstantIntOp>(loc, numWarpsPerRow - 1, 32);
+          chunkTotal = tb.create<gpu::ShuffleOp>(
+                              loc, warpPrefix, lastWarpLane, width32,
+                              gpu::ShuffleMode::IDX)
+                           .getShuffleResult();
+        }
         Value laneExclusive =
             tb.create<arith::SubFOp>(loc, warpInclusive, segmentTotal);
         Value prefixBase =
@@ -3791,10 +4150,19 @@ struct RowReductionLowering {
           Value rankF = tb.create<arith::SIToFPOp>(loc, f32Ty, rank);
           Value thresholdNumerator =
               tb.create<arith::SubFOp>(loc, prefix, oneF);
-          Value threshold =
-              tb.create<arith::DivFOp>(loc, thresholdNumerator, rankF);
-          Value supported = tb.create<arith::CmpFOp>(
-              loc, arith::CmpFPredicate::OGT, z[laneIndex], threshold);
+          Value supported;
+          if (crossMultiplySupportPredicate) {
+            Value scaledValue =
+                tb.create<arith::MulFOp>(loc, rankF, z[laneIndex]);
+            supported = tb.create<arith::CmpFOp>(
+                loc, arith::CmpFPredicate::OGT, scaledValue,
+                thresholdNumerator);
+          } else {
+            Value threshold =
+                tb.create<arith::DivFOp>(loc, thresholdNumerator, rankF);
+            supported = tb.create<arith::CmpFOp>(
+                loc, arith::CmpFPredicate::OGT, z[laneIndex], threshold);
+          }
           threadBestRank = tb.create<arith::SelectOp>(
               loc, supported, rank, threadBestRank);
           threadBestSum = tb.create<arith::SelectOp>(
@@ -3820,64 +4188,71 @@ struct RowReductionLowering {
           threadBestSum = tb.create<arith::SelectOp>(
               loc, takeOther, otherSum, threadBestSum);
         }
-        Value laneZero = tb.create<arith::CmpIOp>(
-            loc, arith::CmpIPredicate::eq, lane,
-            tb.create<arith::ConstantIntOp>(loc, 0, 32));
-        auto publishPair =
-            tb.create<scf::IfOp>(loc, laneZero, /*withElseRegion=*/false);
-        {
-          OpBuilder pb(publishPair.thenBlock(),
-                       publishPair.thenBlock()->begin());
-          pb.create<memref::StoreOp>(loc, threadBestRank, rankScratch,
-                                     ValueRange{warpId});
-          pb.create<memref::StoreOp>(loc, threadBestSum, sumScratch,
-                                     ValueRange{warpId});
-        }
-        tb.create<gpu::BarrierOp>(loc);
+        Value chunkBestRank = threadBestRank;
+        Value chunkBestSum = threadBestSum;
+        if (numWarpsPerRow > 1) {
+          Value laneZero = tb.create<arith::CmpIOp>(
+              loc, arith::CmpIPredicate::eq, lane,
+              tb.create<arith::ConstantIntOp>(loc, 0, 32));
+          auto publishPair =
+              tb.create<scf::IfOp>(loc, laneZero, /*withElseRegion=*/false);
+          {
+            OpBuilder pb(publishPair.thenBlock(),
+                         publishPair.thenBlock()->begin());
+            pb.create<memref::StoreOp>(loc, threadBestRank, rankScratch,
+                                       ValueRange{warpIdInRow});
+            pb.create<memref::StoreOp>(loc, threadBestSum, sumScratch,
+                                       ValueRange{warpIdInRow});
+          }
+          tb.create<gpu::BarrierOp>(loc);
 
-        auto loadRank = tb.create<scf::IfOp>(
-            loc, TypeRange{i32}, activeWarpLane,
-            /*withElseRegion=*/true);
-        {
-          OpBuilder rb(loadRank.thenBlock(), loadRank.thenBlock()->begin());
-          Value laneIndex =
-              rb.create<arith::IndexCastOp>(loc, b.getIndexType(), lane);
-          Value value = rb.create<memref::LoadOp>(
-              loc, rankScratch, ValueRange{laneIndex});
-          rb.create<scf::YieldOp>(loc, ValueRange{value});
-          OpBuilder eb(loadRank.elseBlock(), loadRank.elseBlock()->begin());
-          eb.create<scf::YieldOp>(loc, ValueRange{zeroI});
-        }
-        auto loadSum = tb.create<scf::IfOp>(
-            loc, TypeRange{f32Ty}, activeWarpLane,
-            /*withElseRegion=*/true);
-        {
-          OpBuilder sb(loadSum.thenBlock(), loadSum.thenBlock()->begin());
-          Value laneIndex =
-              sb.create<arith::IndexCastOp>(loc, b.getIndexType(), lane);
-          Value value = sb.create<memref::LoadOp>(
-              loc, sumScratch, ValueRange{laneIndex});
-          sb.create<scf::YieldOp>(loc, ValueRange{value});
-          OpBuilder eb(loadSum.elseBlock(), loadSum.elseBlock()->begin());
-          eb.create<scf::YieldOp>(loc, ValueRange{zeroF});
-        }
-        Value chunkBestRank = loadRank.getResult(0);
-        Value chunkBestSum = loadSum.getResult(0);
-        for (int32_t delta = 1; delta < 32; delta <<= 1) {
-          Value otherRank = tb.create<gpu::ShuffleOp>(
-                                  loc, chunkBestRank, delta, 32,
-                                  gpu::ShuffleMode::XOR)
-                                .getShuffleResult();
-          Value otherSum = tb.create<gpu::ShuffleOp>(
-                                 loc, chunkBestSum, delta, 32,
-                                 gpu::ShuffleMode::XOR)
-                               .getShuffleResult();
-          Value takeOther = tb.create<arith::CmpIOp>(
-              loc, arith::CmpIPredicate::sgt, otherRank, chunkBestRank);
-          chunkBestRank = tb.create<arith::SelectOp>(
-              loc, takeOther, otherRank, chunkBestRank);
-          chunkBestSum = tb.create<arith::SelectOp>(
-              loc, takeOther, otherSum, chunkBestSum);
+          Value activeWarpLane = tb.create<arith::CmpIOp>(
+              loc, arith::CmpIPredicate::slt, lane,
+              tb.create<arith::ConstantIntOp>(loc, numWarpsPerRow, 32));
+          auto loadRank = tb.create<scf::IfOp>(
+              loc, TypeRange{i32}, activeWarpLane,
+              /*withElseRegion=*/true);
+          {
+            OpBuilder rb(loadRank.thenBlock(), loadRank.thenBlock()->begin());
+            Value laneIndex =
+                rb.create<arith::IndexCastOp>(loc, b.getIndexType(), lane);
+            Value value = rb.create<memref::LoadOp>(
+                loc, rankScratch, ValueRange{laneIndex});
+            rb.create<scf::YieldOp>(loc, ValueRange{value});
+            OpBuilder eb(loadRank.elseBlock(), loadRank.elseBlock()->begin());
+            eb.create<scf::YieldOp>(loc, ValueRange{zeroI});
+          }
+          auto loadSum = tb.create<scf::IfOp>(
+              loc, TypeRange{f32Ty}, activeWarpLane,
+              /*withElseRegion=*/true);
+          {
+            OpBuilder sb(loadSum.thenBlock(), loadSum.thenBlock()->begin());
+            Value laneIndex =
+                sb.create<arith::IndexCastOp>(loc, b.getIndexType(), lane);
+            Value value = sb.create<memref::LoadOp>(
+                loc, sumScratch, ValueRange{laneIndex});
+            sb.create<scf::YieldOp>(loc, ValueRange{value});
+            OpBuilder eb(loadSum.elseBlock(), loadSum.elseBlock()->begin());
+            eb.create<scf::YieldOp>(loc, ValueRange{zeroF});
+          }
+          chunkBestRank = loadRank.getResult(0);
+          chunkBestSum = loadSum.getResult(0);
+          for (int32_t delta = 1; delta < 32; delta <<= 1) {
+            Value otherRank = tb.create<gpu::ShuffleOp>(
+                                    loc, chunkBestRank, delta, 32,
+                                    gpu::ShuffleMode::XOR)
+                                  .getShuffleResult();
+            Value otherSum = tb.create<gpu::ShuffleOp>(
+                                   loc, chunkBestSum, delta, 32,
+                                   gpu::ShuffleMode::XOR)
+                                 .getShuffleResult();
+            Value takeOther = tb.create<arith::CmpIOp>(
+                loc, arith::CmpIPredicate::sgt, otherRank, chunkBestRank);
+            chunkBestRank = tb.create<arith::SelectOp>(
+                loc, takeOther, otherRank, chunkBestRank);
+            chunkBestSum = tb.create<arith::SelectOp>(
+                loc, takeOther, otherSum, chunkBestSum);
+          }
         }
 
         Value takeChunk = tb.create<arith::CmpIOp>(
@@ -3889,7 +4264,7 @@ struct RowReductionLowering {
         Value chunkPlusOne = tb.create<arith::AddIOp>(loc, chunk, c1);
         Value chunkEndIndex = tb.create<arith::MulIOp>(
             loc, chunkPlusOne,
-            tb.create<arith::ConstantIndexOp>(loc, T * 4));
+            tb.create<arith::ConstantIndexOp>(loc, scanThreads * 4));
         Value chunkEnd =
             tb.create<arith::IndexCastOp>(loc, i32, chunkEndIndex);
         Value nextDone = tb.create<arith::CmpIOp>(
@@ -3915,14 +4290,31 @@ struct RowReductionLowering {
     Value rankF = b.create<arith::SIToFPOp>(loc, f32Ty, clampedRank);
     Value tauNumerator = b.create<arith::SubFOp>(loc, bestSum, oneF);
     Value tau = b.create<arith::DivFOp>(loc, tauNumerator, rankF);
+    if (decoupledWideEpilogue) {
+      Value isLeader = b.create<arith::CmpIOp>(
+          loc, arith::CmpIPredicate::eq, rowThread,
+          b.create<arith::ConstantIndexOp>(loc, 0));
+      auto publishTau =
+          b.create<scf::IfOp>(loc, isLeader, /*withElseRegion=*/false);
+      {
+        OpBuilder pb(publishTau.thenBlock(),
+                     publishTau.thenBlock()->begin());
+        pb.create<memref::StoreOp>(loc, tau, tauScratch,
+                                   ValueRange{rowInBlock});
+      }
+      b.create<gpu::BarrierOp>(loc);
+      tau = b.create<memref::LoadOp>(loc, tauScratch,
+                                     ValueRange{rowInBlock});
+    }
 
     // Coalesced X -> O pass.  Adjacent lanes own adjacent float4 vectors.
-    int64_t outputVecTiles = N / (T * 4);
+    int64_t outputVecTiles = N / (threadsPerRow * 4);
     for (int64_t tile = 0; tile < outputVecTiles; ++tile) {
       Value vecIndex = b.create<arith::AddIOp>(
-          loc, tx, b.create<arith::ConstantIndexOp>(loc, tile * T));
+          loc, rowThread,
+          b.create<arith::ConstantIndexOp>(loc, tile * threadsPerRow));
       auto xLoad =
-          b.create<memref::LoadOp>(loc, xMem, ValueRange{bx, vecIndex});
+          b.create<memref::LoadOp>(loc, xMem, ValueRange{row, vecIndex});
       xLoad.setNontemporal(true);
       Value xVector = xLoad;
       SmallVector<Value> outputs(4);
@@ -3936,16 +4328,31 @@ struct RowReductionLowering {
       Value outputVector =
           b.create<vector::FromElementsOp>(loc, vec4Ty, outputs);
       auto store = b.create<memref::StoreOp>(
-          loc, outputVector, outMem, ValueRange{bx, vecIndex});
+          loc, outputVector, outMem, ValueRange{row, vecIndex});
       store.setNontemporal(true);
     }
 
     b.create<gpu::TerminatorOp>(loc);
     b.setInsertionPointAfter(launch);
     b.create<func::ReturnOp>(loc);
-    attachConcreteStateAttributes(gpuFn, T, predicatedValueIfCount,
-                               foldedConstexprSelectCount, 1,
-                               emittedApproximateDivCount);
+    attachConcreteStateAttributes(gpuFn, threadsPerRow, predicatedValueIfCount,
+                                  foldedConstexprSelectCount, rowsPerBlock,
+                                  emittedApproximateDivCount, 0, 0, false,
+                                  false,
+                                  decoupledWideEpilogue
+                                      ? (warpRows
+                                             ? (crossMultiplySupportPredicate
+                                                    ? "sorted_prefix_multirow_warp_scan_wide_epilogue_cross_multiply"
+                                                    : "sorted_prefix_multirow_warp_scan_wide_epilogue")
+                                         : crossMultiplySupportPredicate
+                                             ? "sorted_prefix_warp_scan_wide_epilogue_cross_multiply"
+                                             : "sorted_prefix_warp_scan_wide_epilogue")
+                                  : warpRows
+                                      ? "sorted_prefix_multirow_warp_early_stop"
+                                  : crossMultiplySupportPredicate
+                                      ? "sorted_prefix_early_stop_cross_multiply"
+                                      : "sorted_prefix_early_stop",
+                                  1, 1);
     fn.erase();
     return success();
   }
@@ -4491,8 +4898,7 @@ struct RowReductionLowering {
       while (groupEnd < reduces.size()) {
         bool dependent = false;
         for (size_t prior = groupStart; prior < groupEnd; ++prior)
-          dependent |= dependsOn(reduces[groupEnd].getInput(),
-                                 reduces[prior].getResult());
+          dependent |= reductionDependsOn(reduces[groupEnd], reduces[prior]);
         if (dependent)
           break;
         ++groupEnd;
@@ -4713,6 +5119,8 @@ struct RowReductionLowering {
     if (sched.kind == KScan) {
       if (auto args = sortedSparsemaxArgIndices())
         return rewriteSortedSparsemax(args->first, args->second);
+      if (requireSortedPrefix)
+        return failure();
       return rewriteScan();
     }
     if (sched.kind == KTiled)
@@ -4772,9 +5180,10 @@ struct RowReductionLowering {
 
     b.setInsertionPoint(fn);
     auto gpuFn = b.create<func::FuncOp>(loc, name, newFty);
-    bool useMultiRowWarpReduction = requestedRowsPerBlock > 1;
+    bool useMultiRowWarpReduction =
+        enableCompactReductionTopology && requestedRowsPerBlock > 1;
     bool useWarpLocalRegisterReduction =
-        sched.kind == KRegister && T == 32;
+        enableCompactReductionTopology && sched.kind == KRegister && T == 32;
     // Register-tile reductions use one compact f32 slot per (reduction, warp).
     // Independent reductions publish all warp partials before a shared barrier,
     // avoiding one standalone gpu.all_reduce synchronization sequence per op.
@@ -4788,16 +5197,19 @@ struct RowReductionLowering {
     // shared allocation and redundant 32-lane second-level fold.
     int64_t reduceNumWarps = (T + 31) / 32;
     bool useCompactDependentRegisterReductions =
-        !useMultiRowWarpReduction && reduces.size() > 1 && T >= 64 &&
+        enableCompactReductionTopology && !useMultiRowWarpReduction &&
+        reduces.size() > 1 && T >= 64 &&
         (T % 32) == 0 &&
         reduceNumWarps <= 32 &&
         (reduceNumWarps & (reduceNumWarps - 1)) == 0;
     bool useGroupedRegisterReductions =
-        !useMultiRowWarpReduction && T > 0 && (T & (T - 1)) == 0 &&
+        enableCompactReductionTopology && !useMultiRowWarpReduction && T > 0 &&
+        (T & (T - 1)) == 0 &&
         (hasIndependentReductionGroup() ||
          useCompactDependentRegisterReductions);
     bool useCompactSingleRegisterReduction =
-        !useMultiRowWarpReduction && !useGroupedRegisterReductions &&
+        enableCompactReductionTopology && !useMultiRowWarpReduction &&
+        !useGroupedRegisterReductions &&
         reduces.size() == 1 && T >= 64 &&
         (T % 32) == 0 && reduceNumWarps <= 32 &&
         (reduceNumWarps & (reduceNumWarps - 1)) == 0;
@@ -4830,6 +5242,10 @@ struct RowReductionLowering {
       else
         outMems.push_back(entry->getArgument(freshOutput++));
     }
+    Value crossRowScratch;
+    if (crossRowFinalize)
+      crossRowScratch = b.create<memref::AllocOp>(
+          loc, MemRefType::get({M}, f32));
 
     // Preserve the public rank-0 memref ABI while promoting invocation
     // scalars to by-value gpu.launch captures.  The host stub performs one
@@ -5162,8 +5578,7 @@ struct RowReductionLowering {
                             .getShuffleResult();
           acc = combineScalar(b, loc, info.op, acc, other);
         }
-        if (info.isMean)
-          acc = finalizeMean(b, loc, acc, nF);
+        acc = finalizeRegisterReductionScalar(b, loc, red, info, acc, nF);
         uniform[red.getResult()] = acc;
         hoistUniforms(b, loc);
       }
@@ -5181,8 +5596,8 @@ struct RowReductionLowering {
             loc, acc, gpu::AllReduceOperationAttr::get(ctx, info.op),
             /*uniform=*/UnitAttr::get(ctx));
         Value scalar = allRed.getResult();
-        if (info.isMean)
-          scalar = finalizeMean(b, loc, scalar, nF);
+        scalar =
+            finalizeRegisterReductionScalar(b, loc, red, info, scalar, nF);
         uniform[red.getResult()] = scalar;
         hoistUniforms(b, loc);
       }
@@ -5273,8 +5688,7 @@ struct RowReductionLowering {
             loc, reduceScratch.front(),
             ValueRange{b.create<arith::ConstantIndexOp>(loc, 0)});
       }
-      if (info.isMean)
-        scalar = finalizeMean(b, loc, scalar, nF);
+      scalar = finalizeRegisterReductionScalar(b, loc, red, info, scalar, nF);
       uniform[red.getResult()] = scalar;
       hoistUniforms(b, loc);
     } else {
@@ -5310,8 +5724,7 @@ struct RowReductionLowering {
       while (groupEnd < reduces.size()) {
         bool dependent = false;
         for (size_t prior = groupStart; prior < groupEnd; ++prior)
-          dependent |= dependsOn(reduces[groupEnd].getInput(),
-                                 reduces[prior].getResult());
+          dependent |= reductionDependsOn(reduces[groupEnd], reduces[prior]);
         if (dependent)
           break;
         ++groupEnd;
@@ -5420,8 +5833,8 @@ struct RowReductionLowering {
           Value zero = b.create<arith::ConstantIndexOp>(loc, 0);
           Value scalar = b.create<memref::LoadOp>(
               loc, reduceScratch[item.index], ValueRange{zero});
-          if (item.info.isMean)
-            scalar = finalizeMean(b, loc, scalar, nF);
+          scalar = finalizeRegisterReductionScalar(
+              b, loc, item.red, item.info, scalar, nF);
           uniform[item.red.getResult()] = scalar;
           hoistUniforms(b, loc);
         }
@@ -5434,8 +5847,8 @@ struct RowReductionLowering {
             // without a second block barrier.
             scalar = foldCompactPartials(b, item);
           }
-          if (item.info.isMean)
-            scalar = finalizeMean(b, loc, scalar, nF);
+          scalar = finalizeRegisterReductionScalar(
+              b, loc, item.red, item.info, scalar, nF);
           uniform[item.red.getResult()] = scalar;
           hoistUniforms(b, loc);
         }
@@ -5652,20 +6065,59 @@ struct RowReductionLowering {
                                       ValueRange{bx, c});
           }
         }
-      } else { // AtomicOut: thread 0 atomic-adds this block's scaled contribution
+      } else { // AtomicOut: one scaled contribution per logical row.
         Value contrib = uniform.lookup(outputVals[j]); // folded per-block scalar
         if (!contrib)
           return failure(); // scale chain failed to hoist to a uniform (unreached)
         auto ifOp = b.create<scf::IfOp>(loc, isLead, /*withElseRegion=*/false);
         OpBuilder::InsertionGuard guard(b);
         b.setInsertionPointToStart(ifOp.thenBlock());
-        b.create<memref::AtomicRMWOp>(loc, arith::AtomicRMWKind::addf, contrib,
-                                      outMems[j], ValueRange{});
+        if (crossRowFinalize)
+          b.create<memref::StoreOp>(loc, contrib, crossRowScratch,
+                                    ValueRange{bx});
+        else
+          b.create<memref::AtomicRMWOp>(loc, arith::AtomicRMWKind::addf,
+                                        contrib, outMems[j], ValueRange{});
       }
     }
 
     b.create<gpu::TerminatorOp>(loc);
     b.setInsertionPointAfter(launch);
+    if (crossRowFinalize) {
+      Value one = b.create<arith::ConstantIndexOp>(loc, 1);
+      Value threads = b.create<arith::ConstantIndexOp>(loc, T);
+      auto finalize =
+          b.create<gpu::LaunchOp>(loc, one, one, one, threads, one, one);
+      OpBuilder stage = OpBuilder::atBlockBegin(&finalize.getBody().front());
+      Value thread = finalize.getThreadIds().x;
+      Value upper = stage.create<arith::ConstantIndexOp>(loc, M);
+      Value step = stage.create<arith::ConstantIndexOp>(loc, T);
+      Value zero =
+          stage.create<arith::ConstantOp>(loc, stage.getF32FloatAttr(0.0));
+      auto loop = stage.create<scf::ForOp>(loc, thread, upper, step,
+                                           ValueRange{zero});
+      OpBuilder body = OpBuilder::atBlockBegin(loop.getBody());
+      Value contribution = body.create<memref::LoadOp>(
+          loc, crossRowScratch, ValueRange{loop.getInductionVar()});
+      Value accumulated = body.create<arith::AddFOp>(
+          loc, loop.getRegionIterArg(0), contribution);
+      body.create<scf::YieldOp>(loc, accumulated);
+      auto total = stage.create<gpu::AllReduceOp>(
+          loc, loop.getResult(0),
+          gpu::AllReduceOperationAttr::get(
+              ctx, gpu::AllReduceOperation::ADD),
+          /*uniform=*/UnitAttr::get(ctx));
+      Value zeroIndex = stage.create<arith::ConstantIndexOp>(loc, 0);
+      Value lead = stage.create<arith::CmpIOp>(
+          loc, arith::CmpIPredicate::eq, thread, zeroIndex);
+      auto store = stage.create<scf::IfOp>(loc, lead, false);
+      OpBuilder storeBuilder = store.getThenBodyBuilder();
+      storeBuilder.create<memref::StoreOp>(
+          loc, total.getResult(), outMems.front(), ValueRange{});
+      stage.create<gpu::TerminatorOp>(loc);
+      b.setInsertionPointAfter(finalize);
+      b.create<memref::DeallocOp>(loc, crossRowScratch);
+    }
     b.create<func::ReturnOp>(loc);
 
     attachConcreteStateAttributes(
@@ -5673,8 +6125,14 @@ struct RowReductionLowering {
         requestedRowsPerBlock, emittedApproximateDivCount,
         launchScalars.size(), deferredColArgs.size(),
         stagedRowOutput.has_value(), elidedSharedRowMaterialization,
-        useLeaderFinalization ? StringRef("workgroup_leader_broadcast")
-                              : StringRef());
+        crossRowFinalize
+            ? StringRef("two_stage_cross_row_finalize")
+            : rawMomentVariance
+                  ? StringRef("raw_moment_hierarchical")
+            : useLeaderFinalization
+                  ? StringRef("workgroup_leader_broadcast")
+                  : StringRef(),
+        crossRowFinalize ? 2 : 1, requestedReductionParts);
     fn.erase();
     return success();
   }
@@ -5704,9 +6162,16 @@ struct ConvertIntentRowReductionToGPUPass
                                  materializeSharedRowOutput,
                                  leaderFinalize,
                                  promoteRank0Scalars,
-                                 enableSortedPrefix, predicatedValueIfs,
+                                 enableSortedPrefix,
+                                 allowExecutionDomainSortedPrefix,
+                                 requireSortedPrefix,
+                                 crossRowFinalize,
+                                 rawMomentVariance,
+                                 compactReductionTopology,
+                                 predicatedValueIfs,
                                  foldedConstexprSelects, rowsPerBlock,
-                                 reductionParts);
+                                 reductionParts, prefixThreads,
+                                 crossMultiplySupportPredicate);
       if (succeeded(probe.match()))
         targets.push_back(
             {fn, predicatedValueIfs, foldedConstexprSelects});
@@ -5719,9 +6184,15 @@ struct ConvertIntentRowReductionToGPUPass
                                leaderFinalize,
                                promoteRank0Scalars,
                                enableSortedPrefix,
+                               allowExecutionDomainSortedPrefix,
+                               requireSortedPrefix,
+                               crossRowFinalize,
+                               rawMomentVariance,
+                               compactReductionTopology,
                                target.predicatedValueIfs,
                                target.foldedConstexprSelects, rowsPerBlock,
-                               reductionParts);
+                               reductionParts, prefixThreads,
+                               crossMultiplySupportPredicate);
       if (failed(low.match()) || failed(low.rewrite())) {
         target.fn.emitError("row-reduction lowering failed after match");
         return signalPassFailure();

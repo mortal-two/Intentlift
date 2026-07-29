@@ -31,13 +31,18 @@ _JOINT_TILES = ((1, 4), (2, 8), (4, 16), (8, 32), (16, 64), (32, 128))
 
 def _schedule_universe() -> tuple[RiscvSchedule, ...]:
     schedules = [
-        RiscvSchedule(opt, vectorize, 128, 0, 0, thread_count)
+        RiscvSchedule(opt, vectorize, 128, 0, 0, thread_count, False)
         for thread_count in (1,)
         for opt in (2, 3)
         for vectorize in (False, True)
     ]
+    # RVV's scalable-vector policy is a real LLVM schedule state, not a
+    # spelling of an arbitrary VLEN.  Keep the untiled anchors in the complete
+    # space so a target with a different implementation VLEN can choose
+    # strip-mined loops without changing J or the MLIR graph.
+    schedules.append(RiscvSchedule(3, True, 0, 0, 0, 1, True))
     schedules.extend(
-        RiscvSchedule(3, True, 128, parallel, reduction, thread_count)
+        RiscvSchedule(3, True, 128, parallel, reduction, thread_count, False)
         for thread_count in (1,)
         for parallel, reduction in (
             *((value, 0) for value in _PARALLEL_TILES),
@@ -45,7 +50,23 @@ def _schedule_universe() -> tuple[RiscvSchedule, ...]:
             *_JOINT_TILES,
         )
     )
-    unique: dict[tuple[int, bool, int, int, int, int], RiscvSchedule] = {}
+    # A small set of tiled scalable states is enough to expose the interaction
+    # between LLVM strip-mining and the MLIR retile.  The exhaustive fixed-VLEN
+    # tile domain remains intact; scalable candidates are not represented by a
+    # fake SEW/LMUL knob.
+    schedules.extend(
+        RiscvSchedule(3, True, 0, parallel, reduction, 1, True)
+        for parallel, reduction in (
+            (4, 0),
+            (16, 0),
+            (64, 0),
+            (0, 4),
+            (0, 16),
+            (0, 64),
+            *_JOINT_TILES,
+        )
+    )
+    unique: dict[tuple[int, bool, int, int, int, int, bool], RiscvSchedule] = {}
     for item in schedules:
         key = (
             item.opt_level,
@@ -54,6 +75,7 @@ def _schedule_universe() -> tuple[RiscvSchedule, ...]:
             item.parallel_tile,
             item.reduction_tile,
             item.thread_count,
+            item.scalable_vectorization,
         )
         unique.setdefault(key, item)
     return tuple(unique[key] for key in sorted(unique))
@@ -303,6 +325,7 @@ def _erase_schedule_key(schedule: RiscvSchedule) -> tuple[Any, ...]:
         schedule.parallel_tile,
         schedule.reduction_tile,
         not schedule.vectorize,
+        schedule.scalable_vectorization,
         -schedule.opt_level,
         schedule.thread_count,
     )
@@ -341,12 +364,17 @@ def _c_ranked_with_robust_anchors(
         )
         first = ranked[0]
         anchors: list[RiscvLoweringCandidate] = []
-        for vectorize in (True, False):
+        for vectorize, scalable in (
+            (True, False),
+            (True, True),
+            (False, False),
+        ):
             anchor = next(
                 item
                 for item in group
                 if item.schedule.opt_level == 3
                 and item.schedule.vectorize is vectorize
+                and item.schedule.scalable_vectorization is scalable
                 and item.schedule.parallel_tile == 0
                 and item.schedule.reduction_tile == 0
             )

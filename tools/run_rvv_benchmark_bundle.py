@@ -654,11 +654,11 @@ def _bounded_candidate_orders(
 ) -> dict[str, list[str]]:
     """Select the exact bounded timing union before any candidate executes.
 
-    C-Fixed owns exactly one target-projected state. Schedule-Only and IntentIR
-    receive the same caller-supplied total budget. IntentIR interleaves each
-    ranked schedule across concrete lowering paths, so finite budgets exercise
-    structural freedom instead of starving it behind the full E2 spine. The
-    independent C table compares C/Erase-C prefixes over the same universe.
+    C-Fixed owns exactly one target-projected state. Main Schedule-Only and
+    IntentIR evaluate their complete executable spaces. IntentIR interleaves
+    each ranked schedule across concrete lowering paths only to define the
+    bounded C-prior anytime prefix. The independent C table compares C/Erase-C
+    prefixes under the same caller-supplied budget.
     """
 
     if search_budget <= 0:
@@ -739,7 +739,9 @@ def _bounded_candidate_orders(
     active_e2 = c_schedule_order[:search_budget]
     active_e3 = c_order[:search_budget]
     erase_e3 = erase_order[:search_budget]
-    c_fixed_id = c_schedule_order[0]
+    c_fixed_id = plan.get("c_fixed_candidate_id")
+    if c_fixed_id not in set(c_schedule_order):
+        raise ValueError("RVV C-Fixed projection is absent from Schedule-Only")
     no_retile = [
         candidate_id
         for candidate_id in c_schedule_order
@@ -761,8 +763,10 @@ def _bounded_candidate_orders(
                 seen.add(candidate_id)
         return result
 
-    e2_evaluation = unique(active_e2)
-    e3_evaluation = unique(active_e3)
+    # Main bars are capability envelopes over the complete executable spaces.
+    # The bounded prefixes above exist only for the C-prior anytime table.
+    e2_evaluation = unique(c_schedule_order)
+    e3_evaluation = unique(c_order)
     if not set(e2_evaluation).issubset(set(c_order)):
         raise AssertionError("RVV E2 candidates escaped the IntentIR universe")
     # This arm isolates schedule retile: do not mix B/structural states into it.
@@ -781,11 +785,7 @@ def _bounded_candidate_orders(
 
     timed = []
     seen = set()
-    timed_source = (
-        tuple(candidate_by_id)
-        if measure_c_oracle
-        else (c_fixed_id, *e2_evaluation, *e3_evaluation, *erase_e3)
-    )
+    timed_source = tuple(candidate_by_id)
     for candidate_id in timed_source:
         if candidate_id not in seen:
             timed.append(candidate_id)
@@ -1217,7 +1217,7 @@ def _one_kernel(
         statistics.median(intentir_native_pair_samples)
     )
 
-    oracle_complete = measure_c_oracle and not any(
+    oracle_complete = not any(
         item["status"] == "not_visited_due_budget" for item in records
     )
     oracle_best = optional_best(bounded_orders["c_order"]) if oracle_complete else None
@@ -1302,7 +1302,7 @@ def _one_kernel(
             "unavailable_reason": (
                 None
                 if oracle_complete
-                else "complete_latency_map_not_requested"
+                else "complete_latency_map_unavailable"
             ),
             "c_prior_budget_winner_candidate_id": c_prior_budget_winner[
                 "candidate"
@@ -1462,7 +1462,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--kernels", nargs="*")
     parser.add_argument("--cpu", type=int, default=0)
-    parser.add_argument("--threads", type=int, choices=(1, 16), default=1)
+    parser.add_argument("--threads", type=int, choices=(1,), default=1)
     parser.add_argument(
         "--regime",
         choices=("warm", "streaming", "cold-data"),
@@ -1475,8 +1475,8 @@ def _parser() -> argparse.ArgumentParser:
         "--measure-c-oracle",
         action="store_true",
         help=(
-            "execute the complete concrete object universe so C/no-C can report "
-            "candidates-to-95%%-of-final-best"
+            "compatibility flag; complete concrete-space execution is mandatory "
+            "for the main three bars and candidates-to-95%% is always available"
         ),
     )
     parser.add_argument("--warmup", type=int, default=50)

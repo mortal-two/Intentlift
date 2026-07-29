@@ -189,6 +189,28 @@ def test_parse_direct_opaque_malloc_as_loose_scratch() -> None:
     assert buffers["%scratch"].elem == "f32"
 
 
+def test_parse_loose_scratch_with_ssa_gep_element_count() -> None:
+    from intentir.backend.cuda.orchestrate import _parse_loose_buffers
+
+    host = """
+      %null = llvm.mlir.zero : !llvm.ptr
+      %count = llvm.mlir.constant(360710144 : index) : i64
+      %align = llvm.mlir.constant(64 : index) : i64
+      %g = llvm.getelementptr %null[%count] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+      %bytes = llvm.ptrtoint %g : !llvm.ptr to i64
+      %size = llvm.add %bytes, %align : i64
+      %malloc = llvm.call @malloc(%size) : (i64) -> !llvm.ptr
+      %raw = llvm.ptrtoint %malloc : !llvm.ptr to i64
+      %aligned_i = llvm.add %raw, %align : i64
+      %aligned = llvm.inttoptr %aligned_i : i64 to !llvm.ptr
+    """
+
+    buffers = _parse_loose_buffers(host)
+
+    assert buffers["%aligned"].n_elems == 360710144
+    assert buffers["%aligned"].elem == "f32"
+
+
 def test_parse_malloc_aliases_by_def_use_not_source_order() -> None:
     from intentir.backend.cuda.orchestrate import _parse_loose_buffers
 

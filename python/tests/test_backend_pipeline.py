@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -121,10 +122,31 @@ def test_cpp_authored_concrete_state_record_is_decoded_without_name_rules() -> N
     assert record.folded_constexpr_select_count == 0
     assert record.rows_per_block == 2
     assert record.to_dict()["rows_per_block"] == 2
+    assert record.warps_per_row == 1
     assert record.stage_count == 3
     assert record.reduction_parts == 16
     assert record.observation_changing
     assert record.reduction_topology == "workgroup_hierarchical"
+    canonical_collective = replace(
+        record,
+        reduction_topology="gpu_all_reduce",
+        fma_count=0,
+        approximate_div_count=0,
+        approximation_mode="none",
+    )
+    assert not canonical_collective.observation_changing
+    multirow_prefix = replace(
+        canonical_collective,
+        reduction_topology="sorted_prefix_multirow_warp_early_stop",
+    )
+    assert multirow_prefix.observation_changing
+    wide_prefix = replace(
+        canonical_collective,
+        reduction_topology=(
+            "sorted_prefix_warp_scan_wide_epilogue_cross_multiply"
+        ),
+    )
+    assert wide_prefix.observation_changing
     assert [item.to_dict() for item in record.launch_plans] == [
         {
             "grid": [7, 1, 1],

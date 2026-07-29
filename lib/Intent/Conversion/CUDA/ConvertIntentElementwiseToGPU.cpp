@@ -86,6 +86,9 @@ static Value emitSplatScalarConstant(OpBuilder &b, Location loc,
 static void attachElementwiseStateReceipt(func::FuncOp lowered, int64_t threads,
                                           int64_t gridBlocks,
                                           bool gridStrideFlat,
+                                          int64_t gridStrideUnroll,
+                                          int64_t logicalTileElements,
+                                          int64_t vectorWidth,
                                           StringRef approximationMode,
                                           bool oneDimensionalResults,
                                           unsigned hostValueCaptureCount) {
@@ -98,6 +101,12 @@ static void attachElementwiseStateReceipt(func::FuncOp lowered, int64_t threads,
   if (gridStrideFlat)
     trace.push_back(
         StringAttr::get(context, "cuda.elementwise.flat_grid_stride.v1"));
+  if (gridStrideFlat && gridStrideUnroll > 1)
+    trace.push_back(StringAttr::get(
+        context, "cuda.elementwise.flat_grid_stride.unroll.v1"));
+  if (logicalTileElements > 0)
+    trace.push_back(
+        StringAttr::get(context, "cuda.elementwise.flat_logical_tile.v1"));
   if (approximationMode == "native_tanh")
     trace.push_back(
         StringAttr::get(context, "cuda.numeric.tanh_native_ptx.f32.v1"));
@@ -126,6 +135,12 @@ static void attachElementwiseStateReceipt(func::FuncOp lowered, int64_t threads,
                    IntegerAttr::get(i64, gridBlocks));
   lowered->setAttr("intent.backend.grid_stride_loop_count",
                    IntegerAttr::get(i64, gridStrideFlat ? 1 : 0));
+  lowered->setAttr("intent.backend.grid_stride_unroll",
+                   IntegerAttr::get(i64, gridStrideUnroll));
+  lowered->setAttr("intent.backend.logical_tile_elements",
+                   IntegerAttr::get(i64, logicalTileElements));
+  lowered->setAttr("intent.backend.vector_width",
+                   IntegerAttr::get(i64, vectorWidth));
   lowered->setAttr("intent.backend.predicated_value_if_count",
                    IntegerAttr::get(i64, 0));
   lowered->setAttr("intent.backend.folded_constexpr_select_count",
@@ -143,6 +158,9 @@ struct ElementwiseLowering {
   unsigned blockThreads;
   bool requestFlattenContiguous;
   unsigned requestFlatVectorWidth;
+  unsigned requestGridStrideUnroll;
+  unsigned requestLogicalTileElements;
+  unsigned requestRowVectorWidth;
   bool requestPromoteUniformScalars;
   std::string requestTanhApproximation;
 
@@ -183,10 +201,16 @@ struct ElementwiseLowering {
   SmallVector<Value> outputVals;     // the returned values (>=1, all [M,N])
 
   ElementwiseLowering(func::FuncOp fn, unsigned bt, bool flatten,
-                      unsigned flatWidth, bool promoteUniformScalars,
+                      unsigned flatWidth, unsigned gridUnroll,
+                      unsigned logicalTileElements,
+                      unsigned rowVectorWidth,
+                      bool promoteUniformScalars,
                       StringRef tanhApproximation)
       : fn(fn), blockThreads(bt), requestFlattenContiguous(flatten),
         requestFlatVectorWidth(flatWidth),
+        requestGridStrideUnroll(gridUnroll),
+        requestLogicalTileElements(logicalTileElements),
+        requestRowVectorWidth(rowVectorWidth),
         requestPromoteUniformScalars(promoteUniformScalars),
         requestTanhApproximation(tanhApproximation.str()) {}
 
@@ -235,6 +259,16 @@ struct ElementwiseLowering {
   LogicalResult match() {
     if (requestTanhApproximation != "stable-ex2" &&
         requestTanhApproximation != "native-ptx")
+      return failure();
+    if (requestGridStrideUnroll != 1 && requestGridStrideUnroll != 2 &&
+        requestGridStrideUnroll != 4 && requestGridStrideUnroll != 8)
+      return failure();
+    if (requestRowVectorWidth != 0 && requestRowVectorWidth != 1 &&
+        requestRowVectorWidth != 2 && requestRowVectorWidth != 4)
+      return failure();
+    if (requestLogicalTileElements != 0 &&
+        (requestLogicalTileElements < 32 || requestLogicalTileElements > 8192 ||
+         (requestLogicalTileElements & (requestLogicalTileElements - 1)) != 0))
       return failure();
     auto fty = fn.getFunctionType();
     unsigned nRes = fty.getNumResults();
@@ -398,6 +432,8 @@ struct ElementwiseLowering {
     // operands.  Broadcast rows, strided views and indexed/select bodies remain
     // fail-closed. Each thread owns exactly one vec2/vec4 packet.
     if (requestFlattenContiguous) {
+      if (requestGridStrideUnroll != 1 || requestLogicalTileElements != 0)
+        return failure();
       T = blockThreads ? (int64_t)blockThreads : 256;
       int64_t flatWidth = static_cast<int64_t>(requestFlatVectorWidth);
       bool eligible = T >= 32 && T % 32 == 0 &&
@@ -427,6 +463,31 @@ struct ElementwiseLowering {
       return success();
     }
 
+    // Preserve an authored logical C tile as a logical block domain.  Thread
+    // mapping remains an independent target coordinate.  The common
+    // tile=4096,T=128 state therefore emits one 32-element register strip per
+    // thread instead of pretending that the source tile means 4096 CUDA lanes.
+    if (requestLogicalTileElements != 0) {
+      if (requestGridStrideUnroll != 1)
+        return failure();
+      T = blockThreads ? static_cast<int64_t>(blockThreads) : 128;
+      int64_t tile = static_cast<int64_t>(requestLogicalTileElements);
+      if (T < 32 || T > 1024 || T % 32 != 0 || tile < T || tile % T != 0)
+        return failure();
+      K = tile / T;
+      if (K <= 0 || K > 32)
+        return failure();
+      for (int64_t alias : inplaceArg)
+        if (alias >= 0)
+          return failure();
+      gridStrideFlat = true;
+      tailMasked = K > 1;
+      vectorWidth = 1;
+      numVectorTiles = 0;
+      gridBlocks = (M * N + tile - 1) / tile;
+      return success();
+    }
+
     // Default geometry: T threads over the feature dim, K columns per thread.
     T = blockThreads ? (int64_t)blockThreads : autoThreads(N);
     if (T <= 0 || T > 1024)
@@ -447,11 +508,11 @@ struct ElementwiseLowering {
         if (alias >= 0)
           return failure();
       gridStrideFlat = true;
-      tailMasked = false;
-      K = 1;
+      K = requestGridStrideUnroll;
+      tailMasked = K > 1;
       vectorWidth = 1;
       numVectorTiles = 0;
-      gridBlocks = flatGridBlocks(M * N, T);
+      gridBlocks = flatGridBlocks((M * N + K - 1) / K, T);
       return success();
     }
 
@@ -462,10 +523,18 @@ struct ElementwiseLowering {
     // and no iota/select in the body (those index a per-column scalar, not a
     // vectorizable lane). Col/Scalar args stay scalar-loaded at col[k]/once —
     // the vector column layout keeps cols[k] pointing at the right scalar column.
-    int64_t candidateVectorWidth =
-        !tailMasked && T >= 32
-            ? (K % 4 == 0 ? 4 : (K % 2 == 0 ? 2 : 1))
-            : 1;
+    int64_t candidateVectorWidth = 1;
+    if (!tailMasked && T >= 32) {
+      if (requestRowVectorWidth != 0) {
+        candidateVectorWidth = requestRowVectorWidth;
+        if (candidateVectorWidth > 1 && K % candidateVectorWidth != 0)
+          return failure();
+      } else {
+        candidateVectorWidth = K % 4 == 0 ? 4 : (K % 2 == 0 ? 2 : 1);
+      }
+    } else if (requestRowVectorWidth > 1) {
+      return failure();
+    }
     if (candidateVectorWidth > 1) {
       bool ok = true;
       for (unsigned i = 0; i < argRoles.size(); ++i)
@@ -480,8 +549,14 @@ struct ElementwiseLowering {
       if (ok) {
         vectorWidth = candidateVectorWidth;
         numVectorTiles = K / vectorWidth;
+      } else if (requestRowVectorWidth > 1) {
+        return failure();
       }
     }
+    if (requestGridStrideUnroll != 1)
+      return failure();
+    if (requestRowVectorWidth == 1)
+      vectorWidth = 1;
     return success();
   }
 
@@ -775,19 +850,48 @@ struct ElementwiseLowering {
     //    args still index cols[k]/once, so they need no retype.
     cols.clear();
     cols.resize(K);
-    Value logicalRow = bx;
+    SmallVector<Value> logicalRows(K, bx);
+    SmallVector<Value> columnActive(K);
     scf::ForOp gridStrideLoop;
     Type vectorTy = VectorType::get({vectorWidth}, storageType);
     SmallVector<Value> vecIdx; // vector tile index tx+vt*T (reused by store)
     if (gridStrideFlat) {
-      Value flatIndex;
-      gridStrideLoop = emitGridStride(b, loc, bx, tx, T, gridBlocks, M * N,
-                                      flatIndex);
+      // One iteration covers U coalesced lane waves:
+      //   flat[k] = block*(T*U) + tx + k*T
+      // and advances by grid*(T*U).  U is a real schedule coordinate.  The
+      // first lane-wave is protected by the scf.for upper bound; later waves
+      // use explicit tail predicates when the flattened domain is ragged.
+      Value cBlockSpan =
+          b.create<arith::ConstantIndexOp>(loc, T * K);
+      Value first = b.create<arith::AddIOp>(
+          loc, b.create<arith::MulIOp>(loc, bx, cBlockSpan), tx);
+      Value upper = b.create<arith::ConstantIndexOp>(loc, M * N);
+      Value step =
+          b.create<arith::ConstantIndexOp>(loc, gridBlocks * T * K);
+      gridStrideLoop = b.create<scf::ForOp>(loc, first, upper, step);
+      b.setInsertionPointToStart(gridStrideLoop.getBody());
+      Value flatBase = gridStrideLoop.getInductionVar();
       Value cN = b.create<arith::ConstantIndexOp>(loc, N);
-      cols[0] = b.create<arith::RemUIOp>(loc, flatIndex, cN);
-      logicalRow = M == 1
-                       ? b.create<arith::ConstantIndexOp>(loc, 0).getResult()
-                       : b.create<arith::DivUIOp>(loc, flatIndex, cN).getResult();
+      Value cTotal = b.create<arith::ConstantIndexOp>(loc, M * N);
+      Value cZero = b.create<arith::ConstantIndexOp>(loc, 0);
+      for (int64_t k = 0; k < K; ++k) {
+        Value flatIndex = flatBase;
+        if (k != 0) {
+          Value offset = b.create<arith::ConstantIndexOp>(loc, k * T);
+          flatIndex = b.create<arith::AddIOp>(loc, flatBase, offset);
+        }
+        if (tailMasked) {
+          columnActive[k] = b.create<arith::CmpIOp>(
+              loc, arith::CmpIPredicate::ult, flatIndex, cTotal);
+          flatIndex = b.create<arith::SelectOp>(
+              loc, columnActive[k], flatIndex, cZero);
+        }
+        cols[k] = b.create<arith::RemUIOp>(loc, flatIndex, cN);
+        logicalRows[k] =
+            M == 1
+                ? cZero
+                : b.create<arith::DivUIOp>(loc, flatIndex, cN).getResult();
+      }
     } else if (vectorWidth > 1) {
       vecIdx.resize(numVectorTiles);
       Value cWidth = b.create<arith::ConstantIndexOp>(loc, vectorWidth);
@@ -827,8 +931,7 @@ struct ElementwiseLowering {
         cols[k] = b.create<arith::AddIOp>(loc, tx, off);
       }
     }
-    SmallVector<Value> columnActive(K);
-    if (tailMasked) {
+    if (tailMasked && !gridStrideFlat) {
       Value cN = b.create<arith::ConstantIndexOp>(loc, N);
       Value c0 = b.create<arith::ConstantIndexOp>(loc, 0);
       for (int64_t k = 0; k < K; ++k) {
@@ -846,13 +949,13 @@ struct ElementwiseLowering {
       if (argRoles[i] == Role::Row) {
         // Broadcast Row (div>1): one source row shared by `div` consecutive
         // blocks -> source row index = bx / div (rope cos: token = bx/n_head).
-        Value ridx = logicalRow;
-        if (argRowDiv[i] != 1) {
-          Value d = b.create<arith::ConstantIndexOp>(loc, argRowDiv[i]);
-          ridx = b.create<arith::DivUIOp>(loc, logicalRow, d);
-        }
         SmallVector<Value> vals(K);
         if (vectorWidth > 1) {
+          Value ridx = logicalRows[0];
+          if (argRowDiv[i] != 1) {
+            Value d = b.create<arith::ConstantIndexOp>(loc, argRowDiv[i]);
+            ridx = b.create<arith::DivUIOp>(loc, ridx, d);
+          }
           // One coalesced vector load per tile; the flattened schedule uses a
           // rank-1 packet memref, while the row schedule keeps [row, packet].
           for (int64_t vt = 0; vt < numVectorTiles; ++vt) {
@@ -869,6 +972,11 @@ struct ElementwiseLowering {
           }
         } else {
           for (int64_t k = 0; k < K; ++k) {
+            Value ridx = logicalRows[k];
+            if (argRowDiv[i] != 1) {
+              Value d = b.create<arith::ConstantIndexOp>(loc, argRowDiv[i]);
+              ridx = b.create<arith::DivUIOp>(loc, ridx, d);
+            }
             vals[k] = b.create<memref::LoadOp>(
                 loc, argMemref[arg], ValueRange{ridx, cols[k]});
           }
@@ -912,7 +1020,7 @@ struct ElementwiseLowering {
                                       ValueRange{vecIdx[vt]});
           else
             b.create<memref::StoreOp>(loc, vec, outMems[j],
-                                      ValueRange{logicalRow, vecIdx[vt]});
+                                      ValueRange{logicalRows[0], vecIdx[vt]});
         }
       } else {
         for (int64_t k = 0; k < K; ++k) {
@@ -924,7 +1032,7 @@ struct ElementwiseLowering {
                                         ValueRange{cols[k]});
             else
               b.create<memref::StoreOp>(loc, out, outMems[j],
-                                        ValueRange{logicalRow, cols[k]});
+                                        ValueRange{logicalRows[k], cols[k]});
             continue;
           }
           auto guarded = b.create<scf::IfOp>(
@@ -938,7 +1046,7 @@ struct ElementwiseLowering {
                 loc, out, outMems[j], ValueRange{cols[k]});
           else
             thenBuilder.create<memref::StoreOp>(
-                loc, out, outMems[j], ValueRange{logicalRow, cols[k]});
+                loc, out, outMems[j], ValueRange{logicalRows[k], cols[k]});
         }
       }
     }
@@ -951,6 +1059,9 @@ struct ElementwiseLowering {
 
     attachElementwiseStateReceipt(
         gpuFn, T, gridBlocks, gridStrideFlat,
+        gridStrideFlat ? static_cast<int64_t>(requestGridStrideUnroll) : 1,
+        static_cast<int64_t>(requestLogicalTileElements),
+        vectorWidth,
         containsTanh
             ? (requestTanhApproximation == "native-ptx" ? "native_tanh"
                                                          : "stable_tanh")
@@ -971,14 +1082,18 @@ struct ConvertIntentElementwiseToGPUPass
     SmallVector<func::FuncOp> targets;
     for (auto fn : mod.getOps<func::FuncOp>()) {
       ElementwiseLowering probe(fn, blockThreads, flattenContiguous,
-                                flatVectorWidth, promoteUniformScalars,
+                                flatVectorWidth, gridStrideUnroll,
+                                logicalTileElements, rowVectorWidth,
+                                promoteUniformScalars,
                                 tanhApproximation);
       if (succeeded(probe.match()))
         targets.push_back(fn);
     }
     for (func::FuncOp fn : targets) {
       ElementwiseLowering low(fn, blockThreads, flattenContiguous,
-                              flatVectorWidth, promoteUniformScalars,
+                              flatVectorWidth, gridStrideUnroll,
+                              logicalTileElements, rowVectorWidth,
+                              promoteUniformScalars,
                               tanhApproximation);
       if (failed(low.match()) || failed(low.rewrite())) {
         fn.emitError("elementwise lowering failed after match");

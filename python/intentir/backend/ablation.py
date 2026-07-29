@@ -11,9 +11,10 @@ from typing import Any
 ABLATION_PROTOCOL = "intentir.backend.ablation-plan.v3"
 ABLATION_SCOPE = "J-grounded Q/D-certified concrete lowering-state search"
 ABLATION_BUDGET_RULE = (
-    "C-Fixed receives exactly one deterministic target projection of C; all "
-    "search arms receive the same caller-supplied total budget over explicitly "
-    "enumerated candidates, including candidates that fail compilation"
+    "C-Fixed receives exactly one mechanical legal projection of C; the "
+    "caller-supplied equal budget governs bounded C-guided and Erase-C "
+    "search-efficiency orders, while formal Schedule-Only and IntentIR "
+    "performance envelopes use the complete admitted candidate space"
 )
 ABLATION_CORRECTNESS = {
     "immutable_semantic_input": "J=A+B",
@@ -39,13 +40,15 @@ ABLATION_CANDIDATE_SPACE = {
         "one budget unit"
     ),
     "expanded_arm_nesting_rule": (
-        "an expanded arm visits the fixed-structure schedule spine in the same "
-        "C-conditioned order before spending its remaining equal total budget "
-        "on other concrete lowering states"
+        "bounded-search and anytime diagnostics visit the fixed-structure "
+        "schedule spine in the same C-conditioned order before visiting other "
+        "concrete lowering states; this order does not truncate the "
+        "complete-space main performance envelope"
     ),
     "c_fixed_rule": (
-        "the canonical structural path plus one deterministic target projection "
-        "of C forms exactly one candidate and performs no search"
+        "the canonical structural path plus one mechanical legal projection of "
+        "the authored C tile/schedule forms exactly one candidate and performs "
+        "no search, workload-derived occupancy and cost heuristics are forbidden"
     ),
     "abstraction_rule": (
         "no implementation-family object, family id, or named emitter participates "
@@ -83,10 +86,16 @@ ABLATION_MEASUREMENT = {
         "evicts L2 before every measured launch"
     ),
     "e3_e2_comparison_rule": (
-        "the primary marginal E3/E2 gain selects fixed-structure schedule-spine "
-        "best and expanded best from the same E3 candidate timing run; "
-        "separately launched E2/E3 absolute latencies remain a diagnostic "
-        "cross-report ratio"
+        "the primary marginal E3/E2 gain selects the complete fixed-structure "
+        "schedule-spine best and complete global best from one transported "
+        "candidate universe and one target timing run; separately launched "
+        "bounded E2/E3 searches remain anytime diagnostics"
+    ),
+    "main_three_arm_rule": (
+        "C-Fixed, Schedule-Only and IntentIR are performance envelopes over one "
+        "mechanical C projection, the complete canonical-path schedule space "
+        "and the complete admitted lowering-state space respectively; Source "
+        "remains the mandatory independent GPU external baseline"
     ),
     "aggregation": "median per side with every paired batch retained",
 }

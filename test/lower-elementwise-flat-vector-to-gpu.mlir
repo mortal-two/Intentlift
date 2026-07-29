@@ -32,11 +32,11 @@ func.func @arbitrary_activation(
 // broadcasts. The absolute packet address indexes X/Y, while remui recovers the
 // logical feature column before gamma/beta loads.
 // CHECK-LABEL: func.func @row_col_scalar_activation(
-// CHECK-SAME: %{{.*}}: memref<1024xvector<4xf32>>
-// CHECK-SAME: %{{.*}}: memref<1xf32>
-// CHECK-SAME: %{{.*}}: memref<256xf32>
-// CHECK-SAME: %{{.*}}: memref<256xf32>
-// CHECK-SAME: %{{.*}}: memref<1024xvector<4xf32>>)
+// CHECK-SAME: %{{[^:]+}}: memref<1024xvector<4xf32>>
+// CHECK-SAME: %{{[^:]+}}: memref<1xf32>
+// CHECK-SAME: %{{[^:]+}}: memref<256xf32>
+// CHECK-SAME: %{{[^:]+}}: memref<256xf32>
+// CHECK-SAME: %{{[^:]+}}: memref<1024xvector<4xf32>>)
 // CHECK: arith.remui
 // CHECK: memref.load %{{.*}}[%{{.*}}] : memref<256xf32>
 // CHECK: vector.from_elements

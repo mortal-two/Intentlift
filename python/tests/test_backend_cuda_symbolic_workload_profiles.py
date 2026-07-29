@@ -223,7 +223,7 @@ def test_large_reduction_c_prior_orders_exact_cuda_retile_first():
     ]
 
     assert workgroup_plain[0].schedule["block_threads"] == 512
-    assert workgroup_plain[0].schedule["tile_cols"] == 32
+    assert workgroup_plain[0].schedule["tile_cols"] == 16
 
 
 def test_dense_transcendental_j_retiles_same_c_to_more_cuda_threads():

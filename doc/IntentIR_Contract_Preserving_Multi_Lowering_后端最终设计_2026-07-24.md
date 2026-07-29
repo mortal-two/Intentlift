@@ -935,7 +935,7 @@ post-pass MLIR 决定，不由 `family_id`、named emitter 或 kernel 名决定�
 ```text
 CF / C-Fixed:
   canonical lowering path
-  + target 对 C role/axis 的确定性 schedule 投影
+  + target 对真实 C tile/schedule 的机械合法投影
   + exactly one concrete candidate, no search
 
 E2 / Schedule-Only:
@@ -948,6 +948,11 @@ E3 / IntentIR:
   + schedule search within each path
   + the same Q/D filter
 ```
+
+C-Fixed 与 Schedule-Only 的唯一变量是 target schedule：前者固定 C 投影，后者开放 tile、threads/warps、
+vector width、unroll、pipeline等同结构参数。二者擦除 schedule 后必须拥有相同的 graph、fusion、
+materialization、reduction topology和stage decomposition。C-Fixed投影只允许 role/axis解释、固定缺省值
+和target legality/clamp；禁止用 workload shape、occupancy heuristic、cost model或历史性能替换 C。
 
 主指标以 latency 记为：
 
@@ -1063,14 +1068,14 @@ transformation admission，也不改变 J/C、candidate ID 或 concrete-state un
 - pass/library 的跨 Kernel、跨 frontend、跨 target 复用。
 
 E2/E3 必须共享同一 J、target、compiler revision、terminal code generator、Q/D policy 与 profiler。
-E3 的 hard-safe candidate set 必须包含 E2 的全部候选；equal-total-budget 访问顺序先走与 E2 相同、
-同样由 C 排序的 fixed-structure schedule spine，再用剩余预算访问结构/数值扩展状态。这样
-`E3 vs E2` 不会混入“扩大搜索后反而忘记固定路径强 schedule”的伪回退，同时仍把额外路径的编译、
-失败和测量计入同一总预算。所有性能比较只在通过相同 `D_search` filter 的候选间进行，最终 winner
-使用相同 `D_cert` protocol。报告同时给出：
+E3 的 hard-safe candidate set 必须包含 E2 的全部候选。主三柱从同一次 complete-space target timing中
+分别选择机械 C 投影、完整 fixed-structure schedule best和完整 global best；这三个性能包络不由 bounded
+search budget截断。equal-total-budget只用于C-guided/Erase-C与辅助anytime诊断：其访问顺序先走与E2
+相同的 fixed-structure schedule spine，再访问结构/数值扩展状态。所有性能比较只在通过相同
+`D_search` filter的候选间进行，最终winner使用相同`D_cert` protocol。报告同时给出：
 
-- equal-total-budget 的 anytime/time-to-best 曲线；
-- 小候选空间 exhaustive/oracle best；
+- complete-space 的 C-Fixed/Schedule-Only/IntentIR 三柱；
+- equal-total-budget 的 C/no-C 与辅助 anytime/time-to-best 曲线；
 - 固定 latency map 下 E3/E4 的 full-budget convergence；
 - all-kernel 与 transformation-applicable subset，禁止只挑 winner。
 

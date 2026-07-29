@@ -1,5 +1,8 @@
 // RUN: intent-opt -convert-intent-splitk-reduce-varargs-to-gpu %s | FileCheck %s --check-prefix=DEFAULT
 // RUN: intent-opt -convert-intent-splitk-reduce-varargs-to-gpu='rows-per-block=8' %s | FileCheck %s --check-prefix=TUNED
+// RUN: intent-opt -convert-intent-splitk-reduce-varargs-to-gpu='vector-width=4' %s | FileCheck %s --check-prefix=VEC4
+// RUN: intent-opt -convert-intent-splitk-reduce-varargs-to-gpu='warp-broadcast-scalars=true' %s | FileCheck %s --check-prefix=BCAST
+// RUN: intent-opt -convert-intent-splitk-reduce-varargs-to-gpu='rows-per-block=1 warps-per-row=4 vector-width=4 warp-broadcast-scalars=true' %s | FileCheck %s --check-prefix=MULTIWARP
 
 // Exact typed topology materialized from the Fresh14 two-vararg SplitK J.  The
 // pass must recognize the weighted-merge algebra from SSA, consume the complete
@@ -82,3 +85,32 @@ module {
 // TUNED: %c256 = arith.constant 256 : index
 // TUNED: gpu.launch blocks
 // TUNED-NOT: intent.
+
+// VEC4-LABEL: func.func @fresh_splitk(
+// VEC4-SAME: intent.backend.vector_width = 4 : i64
+// VEC4: vector.load {{.*}} : memref<32xf32>, vector<4xf32>
+// VEC4: vector.store {{.*}} : memref<32xf32>, vector<4xf32>
+// VEC4-NOT: intent.
+
+// BCAST-LABEL: func.func @fresh_splitk(
+// BCAST-SAME: intent.backend.reduction_topology = "warp_broadcast_weighted_merge"
+// BCAST-SAME: intent.backend.shuffle_count = 4 : i64
+// BCAST: scf.if
+// BCAST: math.exp2
+// BCAST: gpu.shuffle idx
+// BCAST-NOT: intent.
+
+// MULTIWARP-LABEL: func.func @fresh_splitk(
+// MULTIWARP-SAME: intent.backend.barrier_count = 1 : i64
+// MULTIWARP-SAME: intent.backend.block_threads = 128 : i64
+// MULTIWARP-SAME: intent.backend.reduction_topology = "multi_warp_d_partition"
+// MULTIWARP-SAME: intent.backend.rows_per_block = 1 : i64
+// MULTIWARP-SAME: "cuda.splitk.workgroup_broadcast_row_scalars.v1"
+// MULTIWARP-SAME: "cuda.splitk.multi_warp_d_partition.v1"
+// MULTIWARP-SAME: intent.backend.warps_per_row = 4 : i64
+// MULTIWARP: %c128 = arith.constant 128 : index
+// MULTIWARP: gpu.launch blocks
+// MULTIWARP: gpu.dynamic_shared_memory
+// MULTIWARP: gpu.barrier
+// MULTIWARP: vector.load
+// MULTIWARP-NOT: intent.

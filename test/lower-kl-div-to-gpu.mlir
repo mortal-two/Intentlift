@@ -1,4 +1,5 @@
 // RUN: intent-opt -convert-intent-row-reduction-to-gpu=block-threads=4 %s | FileCheck %s
+// RUN: intent-opt '-convert-intent-row-reduction-to-gpu=block-threads=4 cross-row-finalize=true' %s | FileCheck %s --check-prefix=FINALIZE
 
 // kl_div (batchmean, log_target=False): the cross-row AtomicOut fold. Per row,
 // loss_v = y_true * (log(max(y_true, eps)) - y); the per-row sum is reduced over
@@ -20,6 +21,19 @@
 // CHECK:         memref.atomic_rmw addf %{{.*}}, %{{.*}}[] : (f32, memref<f32>) -> f32
 // CHECK:         gpu.terminator
 // CHECK-NOT:     intent.
+// FINALIZE-LABEL: func.func @kl_div(
+// FINALIZE-SAME: intent.backend.reduction_topology = "two_stage_cross_row_finalize"
+// FINALIZE-SAME: intent.backend.stage_count = 2 : i64
+// FINALIZE: memref.alloc() : memref<4xf32>
+// FINALIZE: gpu.launch
+// FINALIZE: memref.store {{.*}}[%{{.*}}] : memref<4xf32>
+// FINALIZE: gpu.terminator
+// FINALIZE: gpu.launch
+// FINALIZE: gpu.all_reduce{{.*}}add
+// FINALIZE: memref.store {{.*}}[] : memref<f32>
+// FINALIZE-NOT: memref.atomic_rmw
+// FINALIZE: memref.dealloc
+// FINALIZE-NOT: intent.
 func.func @kl_div(%y: tensor<4x8xf32>, %gt: tensor<4x8xf32>,
                   %eps: tensor<f32>, %invBT: tensor<f32>) -> tensor<f32> {
   %me = intent.map_binary %gt, %eps {fn = "max"} : (tensor<4x8xf32>, tensor<f32>) -> tensor<4x8xf32>

@@ -186,14 +186,9 @@ def _entry(
     )
     c_fixed_candidate_id = search_plan.c_fixed_candidate_id
     if c_fixed_candidate_id not in available_ids:
-        c_fixed_candidate_id = next(
-            candidate_id
-            for candidate_id in schedule_only_c_prior_order
-            if not next(
-                item["candidate"]
-                for item in candidates
-                if item["candidate"]["candidate_id"] == candidate_id
-            )["transformation"]["fuse_producers"]
+        raise RuntimeError(
+            "mechanical RVV C-Fixed projection did not compile; refusing to "
+            "substitute another schedule"
         )
     candidate_by_id = {
         item["candidate"]["candidate_id"]: item["candidate"] for item in candidates

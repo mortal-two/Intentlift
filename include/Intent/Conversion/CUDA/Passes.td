@@ -99,6 +99,47 @@ def ConvertIntentRowReductionToGPU
            "Set false to force the general scan/reduction implementation for "
            "the same Intent graph, providing an independently executable "
            "generic correctness fallback.">,
+    Option<"allowExecutionDomainSortedPrefix",
+           "allow-execution-domain-sorted-prefix", "bool", "false",
+           "Permit the same graph-structural sorted-prefix lowering without a "
+           "Layer-B descending-order marker. This does not certify or infer the "
+           "ordering fact: the emitted state is explicitly marked as an "
+           "execution-domain assumption and production search must validate it "
+           "with Q/D before timing or selection.">,
+    Option<"requireSortedPrefix", "require-sorted-prefix", "bool", "false",
+           "Require this invocation to materialize the sorted-prefix topology. "
+           "If the exact structural matcher does not fire, fail the pass instead "
+           "of silently relabeling the complete generic scan lowering.">,
+    Option<"prefixThreads", "prefix-threads", "unsigned", "0",
+           "Physical threads used by the sorted-prefix scan. 0 keeps the scan "
+           "and output on the same block geometry. 32 assigns the prefix/support "
+           "work to one warp while the full block writes the row epilogue, "
+           "decoupling active-prefix work from full-row output parallelism. The "
+           "nonzero state is accepted only by the exact sorted-prefix matcher.">,
+    Option<"crossMultiplySupportPredicate",
+           "cross-multiply-support-predicate", "bool", "false",
+           "For the exact sorted-prefix support test, replace z > (prefix-1)/rank "
+           "with rank*z > prefix-1 using the proved-positive rank. This removes "
+           "per-element floating division but changes rounding observations, so "
+           "it is an explicit Full numeric state that must pass Q/D. Unsupported "
+           "graphs fail closed.">,
+    Option<"crossRowFinalize", "cross-row-finalize", "bool", "false",
+           "For one float-nondeterministic axis-0 sum of row statistics, write "
+           "one contribution per row to compiler-owned scratch and finalize it "
+           "in a second GPU launch. False retains one atomic add per row. The "
+           "graph matcher fails closed for any other output topology.">,
+    Option<"rawMomentVariance", "raw-moment-variance", "bool", "false",
+           "For a proven two-reduction mean/centered-square graph, evaluate raw "
+           "sum and raw sum-of-squares in one independent reduction group, then "
+           "form the variance from the two summaries. This is an observation-"
+           "changing execution state and is admitted only for the exact typed "
+           "pattern; otherwise the pass fails closed.">,
+    Option<"compactReductionTopology", "compact-reduction-topology", "bool", "true",
+           "Select the compiler-owned compact shuffle/shared reduction topology. "
+           "False retains the standard MLIR gpu.all_reduce collective for every "
+           "row reduction while preserving the same read-once producer/epilogue "
+           "graph. C-Fixed and Schedule-Only use false; IntentIR may search both "
+           "concrete topologies under the same Q/D policy.">,
     Option<"predicatePureValueIf", "predicate-pure-value-if", "bool", "true",
            "Convert a runtime rank-0 pure tensor scf.if into eager arm "
            "dataflow plus intent.select before row-graph admission. The "
@@ -107,10 +148,11 @@ def ConvertIntentRowReductionToGPU
            "in the concrete MLIR attributes.">,
     Option<"rowsPerBlock", "rows-per-block", "unsigned", "1",
            "Independent logical rows assigned to one block. 1 preserves the "
-           "one-block-per-row lowering. Values 2, 4, or 8 enable the fail-closed "
-           "one-warp-per-row register path (32 logical lanes per row, no "
-           "block-wide collective or shared scratch). Unsupported graphs remain "
-           "unmatched rather than falling back under this candidate identity.">,
+           "one-block-per-row lowering. Values 2, 4, 8, 16, or 32 enable either "
+           "the fail-closed one-warp-per-row register path or a sorted-prefix "
+           "mapping with one prefix warp and a wider output group per row. "
+           "Unsupported graphs remain unmatched rather than falling back under "
+           "this candidate identity.">,
     Option<"reductionParts", "reduction-parts", "unsigned", "1",
            "Independent blocks assigned to one logical row for a true multi-stage "
            "single-reduction lowering. Values 2--128 (powers of two) emit partial, "
@@ -231,6 +273,24 @@ def ConvertIntentElementwiseToGPU
     Option<"flatVectorWidth", "flat-vector-width", "unsigned", "4",
            "Vector width for flatten-contiguous (2 or 4). Ignored by the "
            "default row schedule.">,
+    Option<"rowVectorWidth", "row-vector-width", "unsigned", "0",
+           "Vector width for the ordinary row elementwise schedule. 0 lets "
+           "the pass choose the largest legal contiguous packet; 1 forces "
+           "scalar row loads/stores and 2 or 4 requests an explicit packet. "
+           "The request is checked against the exact static row tile and the "
+           "same MLIR path, so it is a real schedule coordinate.">,
+    Option<"gridStrideUnroll", "grid-stride-unroll", "unsigned", "1",
+           "Static elements-per-thread unroll for the scalar flat grid-stride "
+           "state. Legal values are 1, 2, 4, or 8. Each block covers "
+           "block-threads*unroll contiguous logical elements before advancing "
+           "by the complete grid stride; inactive tail elements are guarded. "
+           "This is a target schedule coordinate, not a graph transformation.">,
+    Option<"logicalTileElements", "logical-tile-elements", "unsigned", "0",
+           "Logical contiguous elements assigned to one block before target "
+           "thread mapping; 0 selects the compiler default. A nonzero tile must "
+           "be a power of two, be divisible by block-threads, and assign at most "
+           "32 scalar elements to each thread. This coordinate preserves a C "
+           "tile independently from CUDA thread count and enables true retile.">,
     Option<"promoteUniformScalars", "promote-uniform-scalars", "bool", "false",
            "Capture rank-0 or singleton broadcast inputs by value from the "
            "host launch stub. False retains the historical per-thread device "
@@ -1202,11 +1262,27 @@ def ConvertIntentSplitKReduceVarargsToGPU
     "::mlir::arith::ArithDialect",
     "::mlir::math::MathDialect",
     "::mlir::func::FuncDialect",
+    "::mlir::vector::VectorDialect",
   ];
   let options = [
     Option<"rowsPerBlock", "rows-per-block", "int64_t", /*default=*/"4",
            "Number of independent output rows assigned to one block. Must be "
            "one of 1, 2, 4 or 8; one warp owns each row.">,
+    Option<"warpsPerRow", "warps-per-row", "int64_t", /*default=*/"1",
+           "Number of warps cooperatively partitioning the contiguous D axis of "
+           "one output row in the typed unrolled graph. Legal values are 1, 2, "
+           "4 or 8. Values above one require rows-per-block=1 and form a distinct "
+           "multi-warp D topology; the runtime-stride legacy graph fails closed.">,
+    Option<"vectorWidth", "vector-width", "int64_t", /*default=*/"1",
+           "Contiguous output-D packet width for the typed unrolled graph. "
+           "Legal values are 1, 2 or 4 and D must be divisible by the width. "
+           "The runtime-stride legacy graph remains scalar unless contiguous "
+           "D strides are proven by a future typed contract.">,
+    Option<"warpBroadcastScalars", "warp-broadcast-scalars", "bool", "false",
+           "Compute the per-row LSE maximum, split weights, and denominator in "
+           "lane zero once, then broadcast them through warp shuffles before "
+           "the cooperative D merge. False redundantly computes them in every "
+           "lane and is the fixed-structure schedule baseline.">,
   ];
 }
 

@@ -68,6 +68,16 @@ def test_rvv_retile_schedule_is_an_explicit_search_axis() -> None:
     assert tiled.candidate_id != untiled.candidate_id
     with pytest.raises(ValueError, match="power of two"):
         rvv.RiscvSchedule(3, True, 128, parallel_tile=3)
+    with pytest.raises(ValueError, match="single-thread only"):
+        rvv.RiscvSchedule(3, True, 128, thread_count=16)
+    scalable = rvv.RiscvSchedule(
+        3, True, 0, parallel_tile=16, scalable_vectorization=True
+    )
+    assert scalable.to_dict()["vector_policy"] == "scalable"
+    with pytest.raises(ValueError, match="reserved for scalable"):
+        rvv.RiscvSchedule(3, True, 0)
+    with pytest.raises(ValueError, match="requires vectorize=true"):
+        rvv.RiscvSchedule(3, False, 0, scalable_vectorization=True)
 
 
 def test_rvv_fusion_fails_before_lowering_without_b_capability(monkeypatch) -> None:
@@ -86,6 +96,26 @@ def test_rvv_fusion_fails_before_lowering_without_b_capability(monkeypatch) -> N
     assert not called
 
 
+def test_rvv_fusion_request_fails_when_mlir_graph_did_not_change(monkeypatch) -> None:
+    state = SimpleNamespace(target=SimpleNamespace(family="riscv"))
+    monkeypatch.setattr(
+        rvv,
+        "_lower_to_llvm_ir",
+        lambda state, candidate: (
+            "lowered",
+            "raw llvm",
+            rvv.RiscvTransformationRecord(7, 7, fused_producers=0),
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="produced no fused Linalg"):
+        rvv.compile_riscv_object(
+            state,
+            _candidate(True),
+            capabilities=(B_CAP_READONLY_INPUTS,),
+        )
+
+
 def test_rvv_record_exposes_real_mlir_topology(monkeypatch) -> None:
     state = SimpleNamespace(
         target=SimpleNamespace(family="riscv"),
@@ -93,7 +123,7 @@ def test_rvv_record_exposes_real_mlir_topology(monkeypatch) -> None:
             intent_mlir="module { func.func @kernel() { return } }",
         ),
     )
-    transformation = rvv.RiscvTransformationRecord(7, 3)
+    transformation = rvv.RiscvTransformationRecord(7, 3, fused_producers=1)
     monkeypatch.setattr(
         rvv,
         "_lower_to_llvm_ir",
@@ -118,6 +148,45 @@ def test_rvv_record_exposes_real_mlir_topology(monkeypatch) -> None:
     assert record["transformation_record"]["linalg_ops_after"] == 3
     assert record["true_mlir_pipeline"] is True
     assert record["python_target_kernel_emission"] is False
+
+
+def test_rvv_scalable_policy_reaches_llvm_and_must_materialize(monkeypatch) -> None:
+    state = SimpleNamespace(
+        target=SimpleNamespace(family="riscv"),
+        base=SimpleNamespace(
+            intent_mlir="module { func.func @kernel() { return } }",
+        ),
+    )
+    candidate = rvv.RiscvLoweringCandidate(
+        rvv.RiscvTransformationState(False),
+        rvv.RiscvSchedule(3, True, 0, scalable_vectorization=True),
+    )
+    monkeypatch.setattr(
+        rvv,
+        "_lower_to_llvm_ir",
+        lambda state, candidate: (
+            "lowered",
+            "raw llvm",
+            rvv.RiscvTransformationRecord(1, 1),
+        ),
+    )
+    commands: list[list[str]] = []
+
+    def run_text(command, *, stdin):
+        commands.append(command)
+        if command[0] == rvv.OPT:
+            return "define void @kernel() { %v = insertelement <vscale x 4 x float> poison, float 0.0, i64 0 ret void }"
+        return "  vsetvli a0, a1, e32, m2\n  vle32.v v8, (a0)\n"
+
+    monkeypatch.setattr(rvv, "_run_text", run_text)
+    monkeypatch.setattr(rvv, "_run_bytes", lambda command, stdin: b"\x7fELF-rvv")
+
+    compiled = rvv.compile_riscv_object(state, candidate, capabilities=())
+
+    assert compiled.scalable_vector_ir_count == 1
+    assert compiled.rvv_vsetvl_modes == ("e32,m2",)
+    assert any("--riscv-v-vector-bits-min=-1" in item for item in commands[0])
+    assert any("--scalable-vectorization=preferred" in item for item in commands[0])
 
 
 def test_rvv_bufferization_exposes_dense_identity_layout(monkeypatch) -> None:
@@ -262,9 +331,14 @@ def test_rvv_c_reorders_but_does_not_change_retile_universe() -> None:
     ]
     c_anchor_schedules = [
         by_id[item].schedule
-        for item in c_schedule_t1[1:3]
+        for item in c_schedule_t1[1:4]
     ]
-    assert [item.vectorize for item in c_anchor_schedules] == [True, False]
+    assert [item.vectorize for item in c_anchor_schedules] == [True, True, False]
+    assert [item.scalable_vectorization for item in c_anchor_schedules] == [
+        False,
+        True,
+        False,
+    ]
     assert all(item.opt_level == 3 for item in c_anchor_schedules)
     assert all(item.parallel_tile == 0 for item in c_anchor_schedules)
     assert all(item.reduction_tile == 0 for item in c_anchor_schedules)
@@ -310,7 +384,7 @@ def test_rvv_c_reorders_but_does_not_change_retile_universe() -> None:
     record = with_c.to_record()
     assert record["same_universe_for_erase_c_and_c_prior"] is True
     assert record["c_controls_admission"] is False
-    assert record["candidate_universe_count"] == 104
+    assert record["candidate_universe_count"] == 156
     assert {
         item.schedule.thread_count for item in with_c.universe
     } == {1}

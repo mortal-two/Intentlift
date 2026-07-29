@@ -49,7 +49,10 @@ class MLIRTransformationRecord:
     block_threads: int
     grid_blocks: int
     grid_stride_loop_count: int
+    grid_stride_unroll: int
+    logical_tile_elements: int
     rows_per_block: int
+    warps_per_row: int
     stage_count: int
     reduction_parts: int
     predicated_value_if_count: int
@@ -57,6 +60,7 @@ class MLIRTransformationRecord:
     host_value_capture_count: int
     epilogue_load_motion_count: int
     approximation_mode: str
+    vector_width: int = 1
     launch_plans: tuple[KernelLaunchConfig, ...] = ()
 
     @property
@@ -64,10 +68,19 @@ class MLIRTransformationRecord:
         return self.fma_count > 0 or self.approximate_div_count > 0 or self.approximation_mode != "none" or self.reduction_topology in {
             "subgroup_shuffle",
             "workgroup_hierarchical",
-            "gpu_all_reduce",
             "subgroup_feature",
             "subgroup_rows",
+            "multi_warp_d_partition",
             "multi_stage_partial_finalize",
+            "sorted_prefix_early_stop",
+            "sorted_prefix_early_stop_cross_multiply",
+            "sorted_prefix_multirow_warp_early_stop",
+            "sorted_prefix_multirow_warp_scan_wide_epilogue",
+            "sorted_prefix_multirow_warp_scan_wide_epilogue_cross_multiply",
+            "sorted_prefix_warp_scan_wide_epilogue",
+            "sorted_prefix_warp_scan_wide_epilogue_cross_multiply",
+            "two_stage_cross_row_finalize",
+            "raw_moment_hierarchical",
         }
 
     def to_dict(self) -> dict[str, object]:
@@ -83,7 +96,10 @@ class MLIRTransformationRecord:
             "block_threads": self.block_threads,
             "grid_blocks": self.grid_blocks,
             "grid_stride_loop_count": self.grid_stride_loop_count,
+            "grid_stride_unroll": self.grid_stride_unroll,
+            "logical_tile_elements": self.logical_tile_elements,
             "rows_per_block": self.rows_per_block,
+            "warps_per_row": self.warps_per_row,
             "stage_count": self.stage_count,
             "reduction_parts": self.reduction_parts,
             "predicated_value_if_count": self.predicated_value_if_count,
@@ -91,6 +107,7 @@ class MLIRTransformationRecord:
             "host_value_capture_count": self.host_value_capture_count,
             "epilogue_load_motion_count": self.epilogue_load_motion_count,
             "approximation_mode": self.approximation_mode,
+            "vector_width": self.vector_width,
             "launch_plans": [item.to_dict() for item in self.launch_plans],
             "observation_changing": self.observation_changing,
         }
@@ -142,6 +159,9 @@ def _transformation_record(mlir: str) -> MLIRTransformationRecord | None:
     rows_per_block = integer_attr("intent.backend.rows_per_block")
     if rows_per_block is None:
         rows_per_block = 1
+    warps_per_row = integer_attr("intent.backend.warps_per_row")
+    if warps_per_row is None:
+        warps_per_row = 1
     stage_count = integer_attr("intent.backend.stage_count")
     if stage_count is None:
         stage_count = 1
@@ -156,6 +176,15 @@ def _transformation_record(mlir: str) -> MLIRTransformationRecord | None:
     )
     if grid_stride_loop_count is None:
         grid_stride_loop_count = 0
+    grid_stride_unroll = integer_attr("intent.backend.grid_stride_unroll")
+    if grid_stride_unroll is None:
+        grid_stride_unroll = 1
+    logical_tile_elements = integer_attr("intent.backend.logical_tile_elements")
+    if logical_tile_elements is None:
+        logical_tile_elements = 0
+    vector_width = integer_attr("intent.backend.vector_width")
+    if vector_width is None:
+        vector_width = 1
     approximate_div_count = integer_attr(
         "intent.backend.approximate_div_count"
     )
@@ -174,10 +203,14 @@ def _transformation_record(mlir: str) -> MLIRTransformationRecord | None:
     if (
         not trace
         or rows_per_block <= 0
+        or warps_per_row <= 0
         or stage_count <= 0
         or reduction_parts <= 0
         or grid_blocks < 0
         or grid_stride_loop_count not in {0, 1}
+        or grid_stride_unroll not in {1, 2, 4, 8}
+        or logical_tile_elements < 0
+        or vector_width not in {1, 2, 4}
         or any(value is None or value < 0 for value in counts.values())
     ):
         raise ValueError("C++ concrete-state record has invalid trace/counts")
@@ -194,7 +227,10 @@ def _transformation_record(mlir: str) -> MLIRTransformationRecord | None:
         block_threads=int(counts["block_threads"]),
         grid_blocks=grid_blocks,
         grid_stride_loop_count=grid_stride_loop_count,
+        grid_stride_unroll=grid_stride_unroll,
+        logical_tile_elements=logical_tile_elements,
         rows_per_block=rows_per_block,
+        warps_per_row=warps_per_row,
         stage_count=stage_count,
         reduction_parts=reduction_parts,
         predicated_value_if_count=int(counts["predicated_value_if_count"]),
@@ -204,6 +240,7 @@ def _transformation_record(mlir: str) -> MLIRTransformationRecord | None:
         host_value_capture_count=host_value_capture_count,
         epilogue_load_motion_count=epilogue_load_motion_count,
         approximation_mode=approximation_mode,
+        vector_width=vector_width,
         launch_plans=tuple(parse_launch_configs(mlir)),
     )
 

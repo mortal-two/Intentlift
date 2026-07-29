@@ -34,7 +34,7 @@ from intentir.backend.contract_capabilities import (
     derive_search_capabilities,
 )
 from intentir.backend.materialize import BackendSearchState, CPrior
-from intentir.backend.ablation import SearchAxes
+from intentir.backend.ablation import ExperimentArm, SearchAxes
 from intentir.backend.search_and_close import (
     BackendClosureError,
     BackendClosureResult,
@@ -78,6 +78,7 @@ def _lowering_path_kind_for_fast_path(fast_path_id: str) -> str:
         PADDED_ROW_FAST_PATH_ID: "padded_row_reduction",
         ROW_FAST_PATH_ID: "row_reduction",
         "cuda.row_scan.sparsemax.sorted_prefix.v1": "row_scan",
+        "cuda.row_scan.sparsemax.sorted_prefix.execution_domain.v1": "row_scan",
         SPLITK_VARARGS_FAST_PATH_ID: "splitk_weighted_merge",
     }
     # Unknown registered paths keep their exact compiler identity.  This avoids
@@ -110,6 +111,23 @@ def derive_default_lowering_path_kind(state: BackendSearchState) -> str:
         if fast_path_id is None
         else _lowering_path_kind_for_fast_path(fast_path_id)
     )
+
+
+def schedule_only_cuda_path_identity(
+    state: BackendSearchState,
+) -> tuple[str, str | None]:
+    """Choose the production canonical structure held fixed by CF/E2.
+
+    The fixed structure is the first compiler-admitted production path for the
+    graph.  For row reductions its standard collective is kept as
+    ``gpu.all_reduce``; IntentIR may later replace that collective with the
+    compact shuffle/shared topology without changing the read-once graph.
+    """
+
+    fast_path_id = derive_default_fast_path_id(state)
+    if fast_path_id is None:
+        return "generic", None
+    return _lowering_path_kind_for_fast_path(fast_path_id), fast_path_id
 
 
 @dataclass(frozen=True)
@@ -242,12 +260,15 @@ class CudaSearchCandidate:
                 {
                     "block_threads": primary.block[0],
                     "actual_grid_blocks": primary.grid[0],
+                    "actual_grid_stride_unroll": record.grid_stride_unroll,
+                    "actual_logical_tile_elements": record.logical_tile_elements,
                     "actual_smem_bytes": primary.smem,
                     "actual_per_thread_tile": primary.per_thread_tile,
                     "vector_width": primary.vector_width,
                     "actual_pipeline_depth": primary.pipeline_depth,
                     "actual_split_factor": primary.split_factor,
                     "actual_launch_plan_count": len(record.launch_plans),
+                    "warps_per_row": record.warps_per_row,
                 }
             )
         return ConcreteLoweringState(
@@ -859,6 +880,195 @@ def _numeric_priors(state: BackendSearchState) -> tuple[CPrior, ...]:
     )
 
 
+def project_cuda_c_fixed_candidate(
+    state: BackendSearchState,
+    candidates: tuple[CudaSearchCandidate, ...],
+) -> tuple[CudaSearchCandidate, dict[str, Any]]:
+    """Mechanically project authored C onto one legal canonical-path schedule.
+
+    This is deliberately weaker than target-aware Retile ordering.  It may use
+    only the role/value carried by C and fixed compiler defaults.  In
+    particular it cannot inspect workload extents, occupancy, A-level operator
+    mix, a cost model, or measurements.  The returned candidate therefore is a
+    causal fixed-schedule baseline; opening the remaining candidates is the
+    Schedule-Only treatment.
+
+    ``candidates`` must be the admitted canonical-path schedule space.  The
+    nearest legal coordinate is selected when C names a value that the target
+    schedule cannot represent exactly.
+    """
+
+    if not isinstance(state, BackendSearchState):
+        raise TypeError("CUDA C projection requires BackendSearchState")
+    if not candidates:
+        raise CudaContractError("CUDA C projection has no admitted schedule")
+
+    candidate_paths = {
+        (item.lowering_path_kind, item.fast_path_id) for item in candidates
+    }
+    if len(candidate_paths) != 1:
+        raise CudaContractError(
+            "CUDA C projection requires exactly one fixed structural path"
+        )
+    projection_kind, projection_fast_path = next(iter(candidate_paths))
+    eligible = tuple(
+        item
+        for item in candidates
+        if item.lowering_path_kind == projection_kind
+        and item.fast_path_id == projection_fast_path
+    )
+    if not eligible:
+        raise CudaContractError(
+            "CUDA C projection has no admitted candidate on the canonical path"
+        )
+
+    # Defaults are compiler policy, not workload policy.  They resolve schedule
+    # coordinates that C does not author and make ties deterministic.  Local-B,
+    # structural and numeric choices stay disabled in this baseline.
+    if projection_kind == "row_reduction":
+        fixed_default: Mapping[str, int | bool | str] = RowSchedule(
+            64,
+            32,
+            promote_rank0_scalars=False,
+            defer_epilogue_col_loads=False,
+            compact_reduction_topology=False,
+        ).to_dict()
+    elif projection_kind == "elementwise":
+        fixed_default = ElementwiseSchedule(64, False, 1).to_dict()
+    elif projection_kind == "padded_row_reduction":
+        fixed_default = PaddedRowSchedule(64, False, False).to_dict()
+    elif projection_kind == "splitk_weighted_merge":
+        fixed_default = {
+            "rows_per_block": 4,
+            "warps_per_row": 1,
+            "block_threads": 128,
+            "vector_width": 1,
+        }
+    elif projection_kind == "linalg_fused":
+        fixed_default = {"tile_width": 128}
+    else:
+        fixed_default = {}
+
+    available_keys = {
+        key for candidate in eligible for key in candidate.schedule
+    }
+    consumed: list[dict[str, Any]] = []
+    ignored: list[dict[str, Any]] = []
+    targets: list[tuple[str, float, CPrior]] = []
+    for prior in state.priors:
+        value = prior.value
+        if (
+            prior.role not in _CUDA_ORDERING_PRIOR_ROLES
+            or not isinstance(value, (int, float))
+            or isinstance(value, bool)
+            or value <= 0
+        ):
+            ignored.append(
+                {**prior.to_record(), "reason": "not_a_positive_schedule_prior"}
+            )
+            continue
+
+        coordinate: str | None = None
+        projected_value = float(value)
+        if prior.role == "execution_warps":
+            if "num_warps" in available_keys:
+                coordinate = "num_warps"
+            elif "block_threads" in available_keys:
+                coordinate = "block_threads"
+                projected_value *= 32.0
+        elif prior.role in {
+            "tile_extent",
+            "reduction_tile_extent",
+            "constexpr",
+        }:
+            if projection_kind == "row_reduction" and "tile_cols" in available_keys:
+                coordinate = "tile_cols"
+            elif (
+                projection_kind == "elementwise"
+                and "logical_tile_elements" in available_keys
+            ):
+                coordinate = "logical_tile_elements"
+            elif (
+                projection_kind == "padded_row_reduction"
+                and "block_threads" in available_keys
+            ):
+                coordinate = "block_threads"
+            elif projection_kind == "linalg_fused" and "tile_width" in available_keys:
+                coordinate = "tile_width"
+
+        if coordinate is None:
+            ignored.append(
+                {**prior.to_record(), "reason": "no_corresponding_schedule_coordinate"}
+            )
+            continue
+        targets.append((coordinate, projected_value, prior))
+        consumed.append(
+            {
+                **prior.to_record(),
+                "target_schedule_coordinate": coordinate,
+                "requested_target_value": projected_value,
+            }
+        )
+
+    def scalar_distance(actual: Any, expected: Any) -> float:
+        if (
+            isinstance(actual, (int, float))
+            and not isinstance(actual, bool)
+            and isinstance(expected, (int, float))
+            and not isinstance(expected, bool)
+            and actual > 0
+            and expected > 0
+        ):
+            return abs(math.log2(float(actual) / float(expected)))
+        return 0.0 if actual == expected else 1.0
+
+    def projection_key(
+        candidate: CudaSearchCandidate,
+    ) -> tuple[float, float, str]:
+        prior_distances = [
+            scalar_distance(candidate.schedule.get(coordinate), value)
+            for coordinate, value, _prior in targets
+            if coordinate in candidate.schedule
+        ]
+        prior_distance = (
+            statistics.fmean(prior_distances) if prior_distances else 0.0
+        )
+        default_distances = [
+            scalar_distance(candidate.schedule.get(key), value)
+            for key, value in fixed_default.items()
+            if key in candidate.schedule
+        ]
+        default_distance = (
+            statistics.fmean(default_distances) if default_distances else 0.0
+        )
+        return prior_distance, default_distance, candidate.candidate_id
+
+    selected = min(eligible, key=projection_key)
+    prior_distance, default_distance, _ = projection_key(selected)
+    record = {
+        "protocol": "intentir.backend.cuda.c-projection.v2",
+        "selection_rule": (
+            "nearest legal authored-C schedule coordinate, then fixed compiler "
+            "defaults; no workload, occupancy, cost-model or performance input"
+        ),
+        "source_priors": [item.to_record() for item in state.priors],
+        "consumed_priors": consumed,
+        "ignored_priors": ignored,
+        "canonical_lowering_path": {
+            "lowering_path_kind": projection_kind,
+            "fast_path_id": projection_fast_path,
+        },
+        "fixed_unspecified_schedule_defaults": dict(fixed_default),
+        "selected_candidate_id": selected.candidate_id,
+        "selected_target_schedule": dict(selected.schedule),
+        "authored_c_distance": prior_distance,
+        "fixed_default_distance": default_distance,
+        "workload_or_cost_model_used": False,
+        "performance_measurement_used": False,
+    }
+    return selected, record
+
+
 def _c_score(
     schedule: Mapping[str, int | bool | str],
     priors: tuple[CPrior, ...],
@@ -903,6 +1113,14 @@ def _c_score(
                 thread_count * row_elements_per_thread
                 for thread_count in row_threads
             )
+        elif prior.role in {
+            "reduction_tile_extent",
+            "tile_extent",
+            "constexpr",
+        } and is_elementwise_schedule:
+            values = positive_values(("logical_tile_elements",))
+            if not values:
+                values = row_threads
         elif prior.role == "reduction_tile_extent":
             values = positive_values(
                 ("tile_cols", "tile_rows", "tile_width", "block_threads")
@@ -919,6 +1137,7 @@ def _c_score(
         value = float(
             elementwise_thread_hint
             if is_elementwise_schedule
+            and not positive_values(("logical_tile_elements",))
             and elementwise_thread_hint is not None
             and prior.role in {"tile_extent", "constexpr"}
             else prior.value
@@ -958,6 +1177,71 @@ def _row_elements_per_thread(state: BackendSearchState) -> int:
         return False
 
     return 4 if contains_dense_transcendental(payload) else 8
+
+
+def _materialized_row_extents(
+    state: BackendSearchState,
+) -> tuple[int | None, int | None]:
+    """Return concrete (row-count, feature-count) bounds for schedule pruning.
+
+    This is not a kernel recipe or a performance heuristic.  It only removes
+    row-group requests that the C++ matcher can prove impossible (a 32-lane
+    row group needs one complete static feature strip per lane).  The actual
+    legality remains in the target pass and every surviving state is compiled.
+    """
+
+    shapes = [
+        *[tuple(item.shape) for item in state.base.j.intent.inputs],
+        *[tuple(item.shape) for item in state.base.j.intent.outputs],
+    ]
+    rank2 = [shape for shape in shapes if len(shape) == 2]
+    concrete = [
+        shape
+        for shape in rank2
+        if all(type(dim) is int and dim > 0 for dim in shape)
+    ]
+    if not concrete:
+        return None, None
+    rows = max(shape[0] for shape in concrete)
+    cols = max(shape[1] for shape in concrete)
+    return rows, cols
+
+
+def _row_tile_candidates(
+    state: BackendSearchState, threads: int
+) -> tuple[int, ...]:
+    """Keep one requested tile for each distinct C++ register/tiled schedule.
+
+    Several large ``tile-cols`` requests collapse to the same register path once
+    the complete per-thread strip fits.  They are not different target states
+    and should not multiply every numeric/structural combination.
+    """
+
+    _rows, cols = _materialized_row_extents(state)
+    tiles = (16, 32, 64, 128, 256)
+    if cols is None:
+        return tiles
+    per_thread = (cols + threads - 1) // threads
+    representatives: list[int] = []
+    seen: set[tuple[int, int]] = set()
+    for tile in tiles:
+        per_thread_tile = per_thread
+        split = 1
+        if per_thread > tile:
+            for candidate_split in range(2, per_thread + 1):
+                if (
+                    per_thread % candidate_split == 0
+                    and per_thread // candidate_split <= tile
+                ):
+                    split = candidate_split
+                    per_thread_tile = per_thread // candidate_split
+                    break
+        key = (per_thread_tile, split)
+        if key in seen:
+            continue
+        seen.add(key)
+        representatives.append(tile)
+    return tuple(representatives)
 
 
 def _row_numeric_opportunities(
@@ -1023,6 +1307,99 @@ def _row_numeric_opportunities(
         for node in nodes
     )
     return has_fma, has_division, last_axis_reductions
+
+
+def _has_cross_row_float_sum(state: BackendSearchState) -> bool:
+    """Return whether A exposes an axis-0 sum feeding a rank-0 output."""
+
+    if not any(len(output.shape) == 0 for output in state.base.j.intent.outputs):
+        return False
+    payload = state.base.j.to_json()["intent"]["intent_function"]["body"]
+    if not isinstance(payload, list):
+        return False
+    return any(
+        isinstance(node, Mapping)
+        and node.get("op") == "reduce"
+        and node.get("attrs", {}).get("fn") == "sum"
+        and node.get("attrs", {}).get("axes") == [0]
+        for node in payload
+    )
+
+
+def _raw_moment_variance_opportunity(state: BackendSearchState) -> bool:
+    """Match A's mean followed by a centered-square row reduction."""
+
+    body = state.base.j.intent.body
+    producers = {
+        item.result: item
+        for item in body
+        if isinstance(item.result, str) and item.result
+    }
+
+    def depends(value: str, target: str, seen: set[str] | None = None) -> bool:
+        if value == target:
+            return True
+        visited = seen if seen is not None else set()
+        if value in visited:
+            return False
+        visited.add(value)
+        producer = producers.get(value)
+        return producer is not None and any(
+            depends(operand, target, visited) for operand in producer.operands
+        )
+
+    def is_zero(value: str) -> bool:
+        producer = producers.get(value)
+        return (
+            producer is not None
+            and producer.op == "const"
+            and producer.attrs.get("value") in {0, 0.0, False}
+        )
+
+    def unwrap_full_select(value: str) -> str:
+        producer = producers.get(value)
+        if producer is None or producer.op != "select" or len(producer.operands) != 3:
+            return value
+        _condition, positive, negative = producer.operands
+        if is_zero(negative):
+            return positive
+        if is_zero(positive):
+            return negative
+        return value
+
+    reductions = [
+        item
+        for item in body
+        if item.op == "reduce"
+        and item.attrs.get("axes") == [1]
+        and item.attrs.get("fn") in {"sum", "mean"}
+        and item.attrs.get("assoc") == "float_nondeterministic"
+    ]
+    if len(reductions) != 2:
+        return False
+    mean_reduce, variance_reduce = reductions
+    if not mean_reduce.operands or not variance_reduce.operands:
+        return False
+    squared_id = unwrap_full_select(variance_reduce.operands[0])
+    square = producers.get(squared_id)
+    if (
+        square is None
+        or square.op != "map_binary"
+        or square.attrs.get("fn") != "mul"
+        or len(square.operands) != 2
+        or square.operands[0] != square.operands[1]
+    ):
+        return False
+    centered_id = unwrap_full_select(square.operands[0])
+    centered = producers.get(centered_id)
+    return bool(
+        centered is not None
+        and centered.op == "map_binary"
+        and centered.attrs.get("fn") == "sub"
+        and len(centered.operands) == 2
+        and centered.operands[0] == mean_reduce.operands[0]
+        and depends(centered.operands[1], mean_reduce.result)
+    )
 
 
 def _row_materialization_opportunity(state: BackendSearchState) -> bool:
@@ -1248,13 +1625,33 @@ def enumerate_cuda_candidates(
     has_fma_opportunity, has_division_opportunity, last_axis_reduction_count = (
         _row_numeric_opportunities(state)
     )
+    has_cross_row_float_sum = _has_cross_row_float_sum(state)
     has_materialization_opportunity = _row_materialization_opportunity(state)
+    has_raw_moment_opportunity = _raw_moment_variance_opportunity(state)
     elementwise_thread_hint = _elementwise_thread_hint(state)
     specialized: list[CudaSearchCandidate] = []
 
     elementwise_schedule_bases = [
-        *(ElementwiseSchedule(threads, False, 1)
-          for threads in (32, 64, 128, 256, 512, 1024)),
+        *(ElementwiseSchedule(threads, False, width)
+          for threads in (32, 64, 128, 256, 512, 1024)
+          for width in (1, 2, 4)),
+        *(ElementwiseSchedule(
+              threads,
+              False,
+              1,
+              grid_stride_unroll=unroll,
+          )
+          for threads in (32, 64, 128, 256, 512, 1024)
+          for unroll in (2, 4, 8)),
+        *(ElementwiseSchedule(
+              threads,
+              False,
+              1,
+              logical_tile_elements=tile,
+          )
+          for threads in (32, 64, 128, 256, 512, 1024)
+          for tile in (128, 256, 512, 1024, 2048, 4096, 8192)
+          if tile >= threads and tile % threads == 0 and tile // threads <= 32),
         *(ElementwiseSchedule(threads, True, width)
           for threads in (64, 128, 256)
           for width in (2, 4)),
@@ -1326,17 +1723,29 @@ def enumerate_cuda_candidates(
     # fails admission; it is not a distinct concrete state and must not consume
     # finite search budget.  Width=1 remains the deliberate scalar ablation.
     row_schedule_bases = [
-        *(RowSchedule(threads, 32, vector_width=0, fuse_fma=False)
-          for threads in (32, 64, 128, 256, 512, 1024)),
-        *(RowSchedule(threads, 64, vector_width=0, fuse_fma=False)
-          for threads in (64, 128, 256)),
+        *(RowSchedule(threads, tile, vector_width=0, fuse_fma=False)
+          for threads in (32, 64, 128, 256, 512, 1024)
+          for tile in _row_tile_candidates(state, threads)),
         *(RowSchedule(threads, 32, vector_width=1, fuse_fma=False)
           for threads in (64, 128, 256)),
     ]
     if axes is None or axes.search_reduction_topology:
+        concrete_rows, concrete_cols = _materialized_row_extents(state)
+        # The subgroup-rows implementation is a register-tile path with
+        # exactly 32 lanes per logical row.  Do not transport tile requests
+        # that are statically too small for the feature strip (or row groups
+        # that cannot divide the concrete row domain); they can never reach
+        # the C++ state and otherwise consume the whole E3 search budget as
+        # predictable probe failures.
+        min_subgroup_tile = (
+            (concrete_cols + 31) // 32 if concrete_cols is not None else 0
+        )
         row_schedule_bases.extend(
-            RowSchedule(32, 32, rows_per_block=rows)
-            for rows in (2, 4, 8)
+            RowSchedule(32, tile, rows_per_block=rows)
+            for rows in (2, 4, 8, 16, 32)
+            for tile in _row_tile_candidates(state, 32)
+            if tile >= min_subgroup_tile
+            and (concrete_rows is None or concrete_rows % rows == 0)
         )
         if last_axis_reduction_count == 1:
             row_schedule_bases.extend(
@@ -1379,6 +1788,23 @@ def enumerate_cuda_candidates(
         and has_materialization_opportunity
         else (True,)
     )
+    cross_row_finalize_modes = (
+        (False, True)
+        if (axes is None or axes.search_reduction_topology)
+        and has_cross_row_float_sum
+        else (False,)
+    )
+    raw_moment_modes = (
+        (False, True)
+        if (axes is None or axes.search_reduction_topology)
+        and has_raw_moment_opportunity
+        else (False,)
+    )
+    compact_reduction_modes = (
+        (False, True)
+        if axes is None or axes.search_reduction_topology
+        else (False,)
+    )
     promote_rank0_modes = (True, False) if has_runtime_rank0 else (False,)
     defer_column_modes = (True, False) if has_column_input else (False,)
     row_schedules = [
@@ -1390,6 +1816,9 @@ def enumerate_cuda_candidates(
             promote_rank0_scalars=promote,
             defer_epilogue_col_loads=defer,
             materialize_shared_row_output=materialize_row_output,
+            cross_row_finalize=cross_row_finalize,
+            raw_moment_variance=raw_moment,
+            compact_reduction_topology=compact_reduction,
         )
         for schedule in row_schedule_bases
         for fuse_fma in fma_modes
@@ -1398,10 +1827,32 @@ def enumerate_cuda_candidates(
         for promote in promote_rank0_modes
         for defer in defer_column_modes
         for materialize_row_output in materialize_shared_row_output_modes
+        for cross_row_finalize in cross_row_finalize_modes
+        for raw_moment in raw_moment_modes
+        for compact_reduction in (
+            (True,)
+            if schedule.rows_per_block > 1
+            else compact_reduction_modes
+        )
         if schedule.reduction_parts == 1
+        and (compact_reduction or not leader_finalize)
+        and (compact_reduction or not cross_row_finalize)
+        and (compact_reduction or not raw_moment)
+        and (
+            not cross_row_finalize
+            or (schedule.rows_per_block == 1 and schedule.reduction_parts == 1)
+        )
         and (
             not leader_finalize
             or (schedule.block_threads > 32 and schedule.rows_per_block == 1)
+        )
+        and (
+            not raw_moment
+            or (
+                schedule.block_threads >= 64
+                and schedule.rows_per_block == 1
+                and schedule.reduction_parts == 1
+            )
         )
     ]
     row_schedules.extend(
@@ -1421,6 +1872,17 @@ def enumerate_cuda_candidates(
             continue
         if transformations and not enable_b_transformations:
             continue
+        changes_observable_evaluation = (
+            schedule.compact_reduction_topology
+            or schedule.fuse_fma
+            or schedule.approximate_div
+            or schedule.leader_finalize
+            or schedule.rows_per_block != 1
+            or schedule.reduction_parts != 1
+            or not schedule.materialize_shared_row_output
+            or schedule.cross_row_finalize
+            or schedule.raw_moment_variance
+        )
         specialized.append(
             CudaSearchCandidate(
                 _candidate_id(
@@ -1440,7 +1902,13 @@ def enumerate_cuda_candidates(
                 (
                     "cuda.row_reduction.read_once.v1",
                     (
-                        "cuda.reduction.multi_stage_partial_finalize.v1"
+                        "cuda.reduction.gpu_all_reduce.v1"
+                        if not schedule.compact_reduction_topology
+                        else "cuda.reduction.two_stage_cross_row_finalize.v1"
+                        if schedule.cross_row_finalize
+                        else "cuda.reduction.raw_moment_hierarchical.v1"
+                        if schedule.raw_moment_variance
+                        else "cuda.reduction.multi_stage_partial_finalize.v1"
                         if schedule.reduction_parts > 1
                         else "cuda.reduction.subgroup_rows.v1"
                         if schedule.rows_per_block > 1
@@ -1467,7 +1935,11 @@ def enumerate_cuda_candidates(
                     ),
                     *transformations,
                 ),
-                ObservationClass.OBSERVATION_CHANGING,
+                (
+                    ObservationClass.OBSERVATION_CHANGING
+                    if changes_observable_evaluation
+                    else ObservationClass.HARD_PRESERVING
+                ),
             )
         )
 
@@ -1560,46 +2032,202 @@ def enumerate_cuda_candidates(
         )
 
     # The typed unrolled SplitK graph has one concrete whole-graph compiler path
-    # and a genuine launch-schedule axis: the number of output rows assigned to
-    # each warp block.  Keep the pass default (rows=4) byte-identical to the
-    # canonical compiler state so the Schedule-Only prefix is nested, and
-    # enumerate the remaining legal C++ options as ordinary schedule states.
+    # and genuine launch-schedule axes: output rows per warp block and contiguous
+    # D-packet width.  Keep the pass default (rows=4, warps-per-row=1, width=1)
+    # byte-identical to the canonical compiler state so the Schedule-Only prefix
+    # is nested.  Multi-warp-per-row is a distinct structural state and is only
+    # opened with the Full structural axes.
     # The compiler probe still decides
     # whether the current J has the required weighted-merge SSA topology.
+    broadcast_modes = (
+        (False, True)
+        if axes is None or axes.search_structural_states
+        else (False,)
+    )
+    warps_per_row_modes = (
+        (1, 2, 4, 8)
+        if axes is None or axes.search_structural_states
+        else (1,)
+    )
     for rows_per_block in (4, 1, 2, 8):
-        pass_argument = (
-            "-convert-intent-splitk-reduce-varargs-to-gpu"
-            if rows_per_block == 4
-            else (
-                "-convert-intent-splitk-reduce-varargs-to-gpu="
-                f"rows-per-block={rows_per_block}"
-            )
+        for warps_per_row in warps_per_row_modes:
+            if warps_per_row > 1 and rows_per_block != 1:
+                continue
+            if rows_per_block * warps_per_row > 32:
+                continue
+            for vector_width in (1, 2, 4):
+                for broadcast_scalars in broadcast_modes:
+                    options = []
+                    if rows_per_block != 4:
+                        options.append(f"rows-per-block={rows_per_block}")
+                    if warps_per_row != 1:
+                        options.append(f"warps-per-row={warps_per_row}")
+                    if vector_width != 1:
+                        options.append(f"vector-width={vector_width}")
+                    if broadcast_scalars:
+                        options.append("warp-broadcast-scalars=true")
+                    pass_argument = (
+                        "-convert-intent-splitk-reduce-varargs-to-gpu"
+                        if not options
+                        else "-convert-intent-splitk-reduce-varargs-to-gpu="
+                        + " ".join(options)
+                    )
+                    values = {
+                        "rows_per_block": rows_per_block,
+                        "warps_per_row": warps_per_row,
+                        "block_threads": rows_per_block * warps_per_row * 32,
+                        "vector_width": vector_width,
+                        "broadcast_row_scalars": broadcast_scalars,
+                    }
+                    specialized.append(
+                        CudaSearchCandidate(
+                            _candidate_id(
+                                "splitk_weighted_merge",
+                                SPLITK_VARARGS_FAST_PATH_ID,
+                                pass_argument,
+                            ),
+                            "splitk_weighted_merge",
+                            SPLITK_VARARGS_FAST_PATH_ID,
+                            pass_argument,
+                            values,
+                            _c_score(values, priors),
+                            requested_trace=(
+                                "cuda.splitk.unrolled_weighted_merge.v2",
+                                "cuda.materialization.whole_graph_elimination.v1",
+                                *(
+                                    ("cuda.splitk.warp_broadcast_row_scalars.v1",)
+                                    if broadcast_scalars and warps_per_row == 1
+                                    else ()
+                                ),
+                                *(
+                                    ("cuda.splitk.workgroup_broadcast_row_scalars.v1",)
+                                    if broadcast_scalars and warps_per_row > 1
+                                    else ()
+                                ),
+                                *(
+                                    ("cuda.splitk.multi_warp_d_partition.v1",)
+                                    if warps_per_row > 1
+                                    else ()
+                                ),
+                            ),
+                            requested_observation_class=(
+                                ObservationClass.OBSERVATION_CHANGING
+                            ),
+                        )
+                    )
+
+    # A sorted-prefix graph has additional physical mappings unavailable to the
+    # canonical full-row scan: multiple warp-owned rows may share a CTA, or one
+    # warp may own only the active-prefix scan while a wider CTA writes the full
+    # row epilogue.  The latter decouples prefix work from output parallelism.
+    # Enumerate it from registered path identities and let the C++ graph matcher
+    # fail closed for every non-Sparsemax graph; no kernel-name admission occurs.
+    sorted_prefix_ids = {
+        "cuda.row_scan.sparsemax.sorted_prefix.v1",
+        "cuda.row_scan.sparsemax.sorted_prefix.execution_domain.v1",
+    }
+    if axes is None or axes.search_reduction_topology:
+        prefix_geometries = (
+            # output threads, rows/CTA, tile cols, prefix threads, cross-multiply
+            (256, 1, 32, 0, False),
+            (128, 1, 32, 0, False),
+            (64, 1, 64, 0, False),
+            (32, 1, 128, 0, False),
+            (32, 2, 128, 0, False),
+            (32, 4, 128, 0, False),
+            (32, 8, 128, 0, False),
+            (32, 16, 128, 0, False),
+            (64, 1, 64, 32, False),
+            (128, 1, 32, 32, False),
+            (256, 1, 32, 32, False),
+            (512, 1, 16, 32, False),
+            (1024, 1, 8, 32, False),
+            (256, 2, 32, 32, False),
+            (256, 4, 32, 32, False),
+            (512, 2, 16, 32, False),
+            (512, 1, 16, 32, True),
+            (1024, 1, 8, 32, True),
+            (512, 2, 16, 32, True),
         )
-        values = {
-            "rows_per_block": rows_per_block,
-            "block_threads": rows_per_block * 32,
-        }
-        specialized.append(
-            CudaSearchCandidate(
-                _candidate_id(
-                    "splitk_weighted_merge",
-                    SPLITK_VARARGS_FAST_PATH_ID,
-                    pass_argument,
-                ),
-                "splitk_weighted_merge",
-                SPLITK_VARARGS_FAST_PATH_ID,
-                pass_argument,
-                values,
-                _c_score(values, priors),
-                requested_trace=(
-                    "cuda.splitk.unrolled_weighted_merge.v2",
-                    "cuda.materialization.whole_graph_elimination.v1",
-                ),
-                requested_observation_class=(
-                    ObservationClass.OBSERVATION_CHANGING
-                ),
+        for descriptor in DEFAULT_PASSES:
+            if descriptor.fast_path_id not in sorted_prefix_ids:
+                continue
+            if state.target.architecture not in descriptor.supported_chips:
+                continue
+            execution_domain = descriptor.fast_path_id.endswith(
+                ".execution_domain.v1"
             )
-        )
+            for (
+                threads_per_row,
+                rows_per_block,
+                tile_cols,
+                prefix_threads,
+                cross_multiply,
+            ) in prefix_geometries:
+                options = [
+                    f"block-threads={threads_per_row}",
+                    f"tile-cols={tile_cols}",
+                    "vector-width=4",
+                    f"rows-per-block={rows_per_block}",
+                    "require-sorted-prefix=true",
+                ]
+                if prefix_threads:
+                    options.insert(-1, f"prefix-threads={prefix_threads}")
+                if cross_multiply:
+                    options.insert(
+                        -1, "cross-multiply-support-predicate=true"
+                    )
+                if execution_domain:
+                    options.insert(
+                        -1, "allow-execution-domain-sorted-prefix=true"
+                    )
+                pass_argument = (
+                    "-convert-intent-row-reduction-to-gpu="
+                    + " ".join(options)
+                )
+                values = {
+                    "threads_per_row": threads_per_row,
+                    "rows_per_block": rows_per_block,
+                    "block_threads": threads_per_row * rows_per_block,
+                    "tile_cols": tile_cols,
+                    "vector_width": 4,
+                }
+                if prefix_threads:
+                    values["prefix_threads"] = prefix_threads
+                if cross_multiply:
+                    values["cross_multiply_support_predicate"] = True
+                specialized.append(
+                    CudaSearchCandidate(
+                        _candidate_id(
+                            "row_scan",
+                            descriptor.fast_path_id,
+                            pass_argument,
+                        ),
+                        "row_scan",
+                        descriptor.fast_path_id,
+                        pass_argument,
+                        values,
+                        _c_score(values, priors),
+                        requested_trace=(
+                            (
+                                "cuda.reduction.sorted_prefix_multirow_warp_scan_wide_epilogue_cross_multiply.v1"
+                                if rows_per_block > 1 and cross_multiply
+                                else "cuda.reduction.sorted_prefix_multirow_warp_scan_wide_epilogue.v1"
+                                if rows_per_block > 1 and prefix_threads
+                                else "cuda.reduction.sorted_prefix_multirow_warp_early_stop.v1"
+                                if rows_per_block > 1
+                                else "cuda.reduction.sorted_prefix_warp_scan_wide_epilogue_cross_multiply.v1"
+                                if cross_multiply
+                                else "cuda.reduction.sorted_prefix_warp_scan_wide_epilogue.v1"
+                                if prefix_threads
+                                else "cuda.reduction.sorted_prefix_early_stop.v1"
+                            ),
+                        ),
+                        requested_observation_class=(
+                            ObservationClass.OBSERVATION_CHANGING
+                        ),
+                    )
+                )
 
     output_rank = max(
         (len(item.shape) for item in state.base.j.intent.outputs),
@@ -1641,6 +2269,7 @@ def enumerate_cuda_candidates(
         PADDED_ROW_FAST_PATH_ID,
         ROW_FAST_PATH_ID,
         SPLITK_VARARGS_FAST_PATH_ID,
+        *sorted_prefix_ids,
     }
     for descriptor in DEFAULT_PASSES:
         if descriptor.fast_path_id in scheduled_ids:
@@ -1703,7 +2332,13 @@ def enumerate_cuda_candidates(
         local = "local" if item.b_transformations else "base"
         if item.lowering_path_kind == "row_reduction":
             topology = (
-                "multi_stage"
+                "all_reduce"
+                if item.schedule.get("compact_reduction_topology") is False
+                else "cross_row_finalize"
+                if item.schedule.get("cross_row_finalize") is True
+                else "raw_moment"
+                if item.schedule.get("raw_moment_variance") is True
+                else "multi_stage"
                 if int(item.schedule.get("reduction_parts", 1)) > 1
                 else "subgroup_rows"
                 if int(item.schedule.get("rows_per_block", 1)) > 1
@@ -1754,6 +2389,11 @@ def enumerate_cuda_candidates(
         "padded_row_reduction.subgroup-feature.scalar.lanes16.base",
         "padded_row_reduction.subgroup-feature.scalar.lanes8.base",
         "padded_row_reduction.subgroup-feature.scalar.lanes4.base",
+        "row_reduction.cross_row_finalize.plain.base",
+        "row_reduction.cross_row_finalize.fma.base",
+        "row_reduction.raw_moment.plain.base",
+        "row_reduction.raw_moment.fma.base",
+        "row_reduction.raw_moment.approximate_div.base",
         "row_reduction.multi_stage.plain.base",
         "elementwise.native-ptx.base",
         "row_reduction.subgroup_rows.plain.base",
@@ -1785,6 +2425,8 @@ def enumerate_cuda_candidates(
         "row_reduction.workgroup.plain.elide.local",
         "row_reduction.workgroup.fma.elide.local",
         "row_reduction.workgroup.approximate_div.elide.local",
+        "row_reduction.cross_row_finalize.plain.local",
+        "row_reduction.cross_row_finalize.fma.local",
         "padded_row_reduction.serial-row.scalar.lanes32.local",
         "padded_row_reduction.serial-row.packet.lanes32.local",
         "padded_row_reduction.subgroup-feature.scalar.lanes32.local",
@@ -1838,7 +2480,7 @@ def enumerate_cuda_candidates(
     # IntentIR expands the concrete state space, but its fixed budget must retain
     # the complete Schedule-Only prefix.  Build that prefix through this exact
     # enumerator with structural/numeric/local expansion disabled.
-    canonical = canonical_cuda_candidate(state)
+    canonical_kind, canonical_fast_path_id = schedule_only_cuda_path_identity(state)
     schedule_axes = replace(
         axes,
         search_structural_states=False,
@@ -1853,9 +2495,9 @@ def enumerate_cuda_candidates(
         enable_b_transformations=False,
         axes=schedule_axes,
         fixed_lowering_path_kind=(
-            "generic" if canonical.generic else canonical.lowering_path_kind
+            canonical_kind
         ),
-        fixed_fast_path_id=(None if canonical.generic else canonical.fast_path_id),
+        fixed_fast_path_id=canonical_fast_path_id,
     )
     spine_ids = {item.candidate_id for item in schedule_spine}
     expanded_remainder = [
@@ -1876,6 +2518,8 @@ def enumerate_cuda_candidates(
                 item.schedule.get("block_threads"),
                 item.schedule.get("flatten_contiguous"),
                 item.schedule.get("vector_width"),
+                item.schedule.get("grid_stride_unroll"),
+                item.schedule.get("logical_tile_elements"),
             )
         return None
 
@@ -1883,7 +2527,7 @@ def enumerate_cuda_candidates(
         item: CudaSearchCandidate,
     ) -> tuple[object, ...] | None:
         if (
-            item.fast_path_id != canonical.fast_path_id
+            item.fast_path_id != canonical_fast_path_id
             or item.b_transformations
             or schedule_coordinate(item) is None
         ):
@@ -1900,10 +2544,12 @@ def enumerate_cuda_candidates(
             ):
                 return None
             choice = (
+                bool(item.schedule.get("compact_reduction_topology", True)),
                 bool(item.schedule.get("fuse_fma", False)),
                 bool(item.schedule.get("approximate_div", False)),
                 bool(item.schedule.get("leader_finalize", False)),
                 item.schedule.get("materialize_shared_row_output", True) is False,
+                bool(item.schedule.get("raw_moment_variance", False)),
             )
             return ("row_reduction", *choice) if any(choice) else None
         if item.lowering_path_kind == "elementwise":
@@ -2116,7 +2762,11 @@ def compile_cuda_candidate(
         return lower_to_cuda_fused(
             state.base_ir,
             tile=tile,
-            require_single_kernel=True,
+            # A reduction barrier can legitimately leave two or more fused
+            # stages.  That compiler-emitted graph is the production canonical
+            # CF/E2 structure; requiring one launch would silently exclude the
+            # very materialization boundary that Full is intended to remove.
+            require_single_kernel=False,
         )
     assert candidate.fast_path_id is not None
     assert candidate.pass_argument is not None
@@ -2168,32 +2818,10 @@ def search_cuda(
         and fixed_lowering_path_kind is None
         and fixed_fast_path_id is None
     ):
-        default_fast_path_id = derive_default_fast_path_id(state)
-        default_lowering_path_kind = derive_default_lowering_path_kind(state)
-        default_probe = select_variant(
-            state.base_ir,
-            target=LoweringTarget(
-                backend="cuda",
-                chip=state.target.architecture,
-                features=frozenset(state.target.features),
-            ),
-            only_fast_path=default_fast_path_id,
+        fixed_lowering_path_kind, fixed_fast_path_id = (
+            schedule_only_cuda_path_identity(state)
         )
-        if (
-            default_probe.pipeline_kind == "specialized"
-            and default_probe.fast_path_id == default_fast_path_id
-        ):
-            fixed_fast_path_id = default_fast_path_id
-            fixed_lowering_path_kind = default_lowering_path_kind
-            include_generic = False
-        else:
-            # A requested graph class is not a concrete path identity until its
-            # registered C++ matcher admits the current IR.  Keep Schedule-Only
-            # on the canonical generic state instead of manufacturing a missing
-            # specialized trace or leaving the arm without an executable.
-            fixed_fast_path_id = None
-            fixed_lowering_path_kind = "generic"
-            include_generic = True
+        include_generic = fixed_lowering_path_kind == "generic"
     planned = enumerate_cuda_candidates(
         state,
         enable_b_transformations=enable_b_transformations,
@@ -2210,11 +2838,37 @@ def search_cuda(
         state,
         tuple(candidate_universe),
     )
-    # Budget counts the explicit, directly readable candidate list.
-    candidates = list(admitted_candidates)
-    c_fixed_candidate_id = (
-        candidates[0].candidate_id if candidates else None
+    # C-Fixed is not "the first candidate under a clever C-aware order".  It is
+    # one mechanical projection inside the same canonical-path schedule space
+    # used by Schedule-Only.  Expanded searches carry that spine as an explicit
+    # partition; fixed-path searches are already the spine.
+    schedule_candidates = tuple(
+        item
+        for item in admitted_candidates
+        if (
+            item.search_partition == SEARCH_PARTITION_SCHEDULE_SPINE
+            if axes is not None and axes.search_structural_states
+            else True
+        )
     )
+    c_fixed_candidate: CudaSearchCandidate | None = None
+    if schedule_candidates:
+        c_fixed_candidate, _c_fixed_projection = project_cuda_c_fixed_candidate(
+            state,
+            schedule_candidates,
+        )
+    c_fixed_candidate_id = (
+        c_fixed_candidate.candidate_id if c_fixed_candidate is not None else None
+    )
+
+    # Budget counts the explicit, directly readable candidate list.  The CF arm
+    # contains exactly the projected state; it does not enumerate then truncate
+    # a target-aware order at budget one.
+    candidates = list(admitted_candidates)
+    if axes is not None and axes.arm is ExperimentArm.C_FIXED:
+        if c_fixed_candidate is None:
+            raise CudaContractError("C-Fixed has no legal canonical-path projection")
+        candidates = [c_fixed_candidate]
     schedule_spine_candidate_count = sum(
         item.search_partition == SEARCH_PARTITION_SCHEDULE_SPINE
         for item in candidates
@@ -2561,5 +3215,7 @@ __all__ = [
     "derive_cuda_contract_view",
     "derive_default_fast_path_id",
     "derive_default_lowering_path_kind",
+    "project_cuda_c_fixed_candidate",
+    "schedule_only_cuda_path_identity",
     "search_cuda",
 ]

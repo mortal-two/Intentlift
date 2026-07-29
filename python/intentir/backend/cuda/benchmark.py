@@ -403,7 +403,15 @@ def extract_portable_launch(
     if len(program.kernels) == 1:
         _name, host = orchestrate._host_func_text(program.kernels[0].binary_mlir)
         if len(orchestrate._parse_launches(host)) == 1:
-            return extract_single_launch(program, intent_module)
+            try:
+                return extract_single_launch(program, intent_module)
+            except ValueError:
+                # A fused one-kernel Linalg state may still allocate a
+                # compiler-owned temporary and pass that non-ABI pointer to the
+                # launch.  The compact record intentionally cannot represent
+                # it; transport the exact compiler host graph instead of
+                # rejecting a valid production MLIR state.
+                pass
     return extract_graph_launch(program, intent_module)
 
 

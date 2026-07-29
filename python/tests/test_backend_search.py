@@ -15,6 +15,7 @@ from intentir.backend.cuda.search import (
     derive_cuda_contract_view,
     derive_default_fast_path_id,
     enumerate_cuda_candidates,
+    project_cuda_c_fixed_candidate,
 )
 from intentir.backend.cuda.production_cases import (
     constexpr_input_bindings,
@@ -28,6 +29,7 @@ from intentir.backend.cuda.schedules import (
 from intentir.backend.materialize import CPrior, attach_c, materialize_j
 from intentir.backend.ablation import ExperimentArm, standard_ablation_plan
 from intentir.backend.protocol import BackendTarget
+from intentir.backend.search_and_close import ObservationClass
 from intentir.ir.canonical_j import canonicalize_gate1_artifact
 from intentir.ir.production_snapshot import load_production_snapshot
 from intentir.verify.gate1.model import AliasKind, AliasSpec
@@ -78,6 +80,31 @@ def _fresh_softmax_state():
         "softmax",
     )
     prepared = prepare_production_workload("softmax")
+    case = build_workload_jc_suite(prepared, snapshot.j, snapshot.c).cases[0]
+    constexpr = constexpr_input_bindings(
+        snapshot.j,
+        case.refeval.input_binding_map,
+        case.values,
+    )
+    base = materialize_j(
+        snapshot.j,
+        case.refeval.dims_map,
+        constexpr_bindings=constexpr,
+    )
+    return attach_c(
+        base,
+        snapshot.c,
+        BackendTarget("cuda", "sm_120a"),
+    )
+
+
+def _fresh_dyt_state():
+    root = Path(__file__).parents[2]
+    snapshot, _path = load_production_snapshot(
+        root / "corpus" / "production-jc-v2",
+        "dyt",
+    )
+    prepared = prepare_production_workload("dyt")
     case = build_workload_jc_suite(prepared, snapshot.j, snapshot.c).cases[0]
     constexpr = constexpr_input_bindings(
         snapshot.j,
@@ -167,7 +194,7 @@ def test_numeric_states_require_a_visible_operation() -> None:
     )
 
 
-def test_intentir_budget_crosses_softmax_numeric_lowering_with_schedules() -> None:
+def test_intentir_complete_space_crosses_softmax_numeric_lowering_with_schedules() -> None:
     softmax = _fresh_softmax_state()
     axes = next(
         item
@@ -175,7 +202,6 @@ def test_intentir_budget_crosses_softmax_numeric_lowering_with_schedules() -> No
         if item.arm is ExperimentArm.E3_STATE_SEARCH
     )
     candidates = enumerate_cuda_candidates(softmax, axes=axes)
-    within_budget = candidates[: axes.candidate_budget]
     schedule_threads: list[int] = []
     for item in candidates:
         if item.search_partition != SEARCH_PARTITION_SCHEDULE_SPINE:
@@ -185,14 +211,14 @@ def test_intentir_budget_crosses_softmax_numeric_lowering_with_schedules() -> No
             schedule_threads.append(block_threads)
     approximate_threads = {
         int(item.schedule["block_threads"])
-        for item in within_budget
+        for item in candidates
         if item.lowering_path_kind == "row_reduction"
         and item.schedule.get("approximate_div") is True
         and item.schedule.get("materialize_shared_row_output") is True
     }
     leader_threads = {
         int(item.schedule["block_threads"])
-        for item in within_budget
+        for item in candidates
         if item.lowering_path_kind == "row_reduction"
         and item.schedule.get("leader_finalize") is True
         and item.schedule.get("materialize_shared_row_output") is True
@@ -200,7 +226,7 @@ def test_intentir_budget_crosses_softmax_numeric_lowering_with_schedules() -> No
     }
     combined_threads = {
         int(item.schedule["block_threads"])
-        for item in within_budget
+        for item in candidates
         if item.lowering_path_kind == "row_reduction"
         and item.schedule.get("leader_finalize") is True
         and item.schedule.get("approximate_div") is True
@@ -239,7 +265,7 @@ def test_materialization_axis_requires_a_visible_shared_row_output() -> None:
     )
 
 
-def test_fresh_splitk_search_enumerates_real_rows_per_block_schedules() -> None:
+def test_fresh_splitk_search_enumerates_real_row_and_packet_schedules() -> None:
     state = _fresh_splitk_state()
     canonical = canonical_cuda_candidate(state)
     candidates = [
@@ -265,6 +291,123 @@ def test_fresh_splitk_search_enumerates_real_rows_per_block_schedules() -> None:
         128,
         256,
     }
+    assert {item.schedule["vector_width"] for item in candidates} == {1, 2, 4}
+    assert {item.schedule["broadcast_row_scalars"] for item in candidates} == {
+        False,
+        True,
+    }
+    assert {item.schedule["warps_per_row"] for item in candidates} == {
+        1,
+        2,
+        4,
+        8,
+    }
+    assert all(
+        item.schedule["rows_per_block"] == 1
+        for item in candidates
+        if item.schedule["warps_per_row"] > 1
+    )
+    assert len(candidates) == 42
+
+    axes = next(
+        item
+        for item in standard_ablation_plan(96)
+        if item.arm is ExperimentArm.E2_SCHEDULE
+    )
+    schedule_only = enumerate_cuda_candidates(
+        state,
+        axes=axes,
+        fixed_fast_path_id=canonical.fast_path_id,
+    )
+    assert all(item.schedule["warps_per_row"] == 1 for item in schedule_only)
+
+
+def test_c_fixed_is_mechanical_authored_tile_projection() -> None:
+    state = _fresh_softmax_state()
+    axes = next(
+        item
+        for item in standard_ablation_plan(96)
+        if item.arm is ExperimentArm.E2_SCHEDULE
+    )
+    canonical = canonical_cuda_candidate(state)
+    assert canonical.fast_path_id is not None
+    schedules = enumerate_cuda_candidates(
+        state,
+        axes=axes,
+        fixed_fast_path_id=canonical.fast_path_id,
+    )
+
+    selected, projection = project_cuda_c_fixed_candidate(state, schedules)
+
+    assert selected in schedules
+    assert selected.schedule["tile_cols"] == 128
+    # C does not author CUDA occupancy.  The missing coordinate stays at the
+    # fixed compiler default instead of being inferred from the workload shape.
+    assert selected.schedule["block_threads"] == 64
+    assert projection["workload_or_cost_model_used"] is False
+    assert projection["performance_measurement_used"] is False
+    assert any(
+        item["target_schedule_coordinate"] == "tile_cols"
+        for item in projection["consumed_priors"]
+    )
+    assert any(
+        item.schedule["tile_cols"] != selected.schedule["tile_cols"]
+        or item.schedule["block_threads"] != selected.schedule["block_threads"]
+        for item in schedules
+    )
+
+
+def test_elementwise_c_fixed_preserves_logical_tile_not_thread_count() -> None:
+    state = _fresh_dyt_state()
+    axes = next(
+        item
+        for item in standard_ablation_plan(96)
+        if item.arm is ExperimentArm.E2_SCHEDULE
+    )
+    canonical = canonical_cuda_candidate(state)
+    assert canonical.fast_path_id is not None
+    schedules = enumerate_cuda_candidates(
+        state,
+        axes=axes,
+        fixed_fast_path_id=canonical.fast_path_id,
+    )
+
+    selected, projection = project_cuda_c_fixed_candidate(state, schedules)
+
+    assert selected.schedule["logical_tile_elements"] == 128
+    assert selected.schedule["block_threads"] == 64
+    assert any(
+        item["target_schedule_coordinate"] == "logical_tile_elements"
+        for item in projection["consumed_priors"]
+    )
+
+
+def test_c_fixed_ignores_splitk_c_without_corresponding_schedule_axis() -> None:
+    state = _fresh_splitk_state()
+    axes = next(
+        item
+        for item in standard_ablation_plan(96)
+        if item.arm is ExperimentArm.E2_SCHEDULE
+    )
+    canonical = canonical_cuda_candidate(state)
+    assert canonical.fast_path_id is not None
+    schedules = enumerate_cuda_candidates(
+        state,
+        axes=axes,
+        fixed_fast_path_id=canonical.fast_path_id,
+    )
+
+    selected, projection = project_cuda_c_fixed_candidate(state, schedules)
+
+    assert selected.schedule["rows_per_block"] == 4
+    assert selected.schedule["block_threads"] == 128
+    assert selected.schedule["vector_width"] == 1
+    assert selected.schedule["warps_per_row"] == 1
+    assert projection["consumed_priors"] == []
+    assert any(
+        item["reason"] == "no_corresponding_schedule_coordinate"
+        for item in projection["ignored_priors"]
+    )
 
 
 def test_c_schedule_score_consumes_roles_without_changing_states() -> None:
@@ -379,12 +522,38 @@ def test_padded_row_schedule_names_concrete_reduction_topology() -> None:
 def test_elementwise_schedule_names_tanh_evaluation_state() -> None:
     stable = ElementwiseSchedule(128, False, 1, True, "stable-ex2")
     native = ElementwiseSchedule(128, False, 1, True, "native-ptx")
+    unrolled = ElementwiseSchedule(
+        256,
+        False,
+        1,
+        grid_stride_unroll=4,
+    )
+    tiled = ElementwiseSchedule(
+        128,
+        False,
+        1,
+        logical_tile_elements=4096,
+    )
 
     assert "tanh-approximation=stable-ex2" in stable.pass_argument
     assert "tanh-approximation=native-ptx" in native.pass_argument
+    assert "row-vector-width=1" in stable.pass_argument
+    assert "row-vector-width=4" in ElementwiseSchedule(128, False, 4).pass_argument
     assert native.to_dict()["tanh_approximation"] == "native-ptx"
+    assert "grid-stride-unroll=4" in unrolled.pass_argument
+    assert unrolled.to_dict()["grid_stride_unroll"] == 4
+    assert "logical-tile-elements=4096" in tiled.pass_argument
+    assert tiled.to_dict()["logical_tile_elements"] == 4096
     with pytest.raises(ValueError, match="tanh_approximation"):
         ElementwiseSchedule(128, False, 1, True, "invented")
+    with pytest.raises(ValueError, match="grid_stride_unroll"):
+        ElementwiseSchedule(128, False, 1, grid_stride_unroll=3)
+    with pytest.raises(ValueError, match="requires unroll=1"):
+        ElementwiseSchedule(128, True, 4, grid_stride_unroll=2)
+    with pytest.raises(ValueError, match="logical_tile_elements"):
+        ElementwiseSchedule(128, False, 1, logical_tile_elements=3000)
+    with pytest.raises(ValueError, match="logical tile=0"):
+        ElementwiseSchedule(128, True, 4, logical_tile_elements=4096)
 
 
 def test_row_schedule_names_multi_row_warp_mapping() -> None:
@@ -399,8 +568,21 @@ def test_row_schedule_names_multi_row_warp_mapping() -> None:
     assert "approximate-div=true" in multi.pass_argument
     assert multi.to_dict()["approximate_div"] is True
     assert multi.to_dict()["rows_per_block"] == 2
+    assert RowSchedule(32, 32, rows_per_block=32).rows_per_block == 32
     with pytest.raises(ValueError, match="32 logical threads"):
         RowSchedule(64, 32, rows_per_block=2)
+    with pytest.raises(ValueError, match="rows_per_block"):
+        RowSchedule(32, 32, rows_per_block=64)
+
+
+def test_row_schedule_names_canonical_and_compact_reduction_topologies() -> None:
+    canonical = RowSchedule(128, 32, compact_reduction_topology=False)
+    compact = RowSchedule(128, 32, compact_reduction_topology=True)
+
+    assert "compact-reduction-topology=false" in canonical.pass_argument
+    assert "compact-reduction-topology=true" in compact.pass_argument
+    assert canonical.to_dict()["compact_reduction_topology"] is False
+    assert compact.to_dict()["compact_reduction_topology"] is True
 
 
 def test_row_schedule_names_multi_stage_reduction_mapping() -> None:
@@ -492,6 +674,14 @@ def test_ablation_axes_expand_concrete_reduction_and_fma_states() -> None:
         item.schedule.get("materialize_shared_row_output", True) is True
         for item in e2
     )
+    assert all(
+        item.schedule.get("compact_reduction_topology") is False
+        for item in e2
+    )
+    assert all(
+        item.requested_observation_class.value == "hard_preserving"
+        for item in e2
+    )
     assert all(not item.b_transformations for item in e2)
     row_vector_requests = {
         item.schedule.get("vector_width")
@@ -513,6 +703,11 @@ def test_ablation_axes_expand_concrete_reduction_and_fma_states() -> None:
     )
     assert any(
         item.schedule.get("reduction_parts", 1) > 1
+        for item in n1
+        if item.lowering_path_kind == "row_reduction"
+    )
+    assert any(
+        item.schedule.get("compact_reduction_topology") is True
         for item in n1
         if item.lowering_path_kind == "row_reduction"
     )
@@ -603,6 +798,67 @@ def test_registry_paths_are_enumerated_without_kernel_allowlists() -> None:
     assert "cuda.gather-scatter.block.v1" in ids
     assert "cuda.layout.block.v1" in ids
     assert all("kernel" not in item.to_dict() for item in candidates)
+
+
+def test_full_enumerates_multirow_warp_sorted_prefix_as_structural_state() -> None:
+    state, _without_c = _states()
+    arms = {item.arm: item for item in standard_ablation_plan(32)}
+    candidates = enumerate_cuda_candidates(
+        state,
+        axes=arms[ExperimentArm.E3_STATE_SEARCH],
+    )
+    prefix = [
+        item
+        for item in candidates
+        if item.fast_path_id
+        == "cuda.row_scan.sparsemax.sorted_prefix.execution_domain.v1"
+        and int(item.schedule.get("rows_per_block", 1)) > 1
+        and int(item.schedule.get("prefix_threads", 0)) == 0
+    ]
+
+    assert {int(item.schedule["rows_per_block"]) for item in prefix} == {
+        2,
+        4,
+        8,
+        16,
+    }
+    assert all(item.schedule["threads_per_row"] == 32 for item in prefix)
+    assert all(item.schedule["vector_width"] == 4 for item in prefix)
+    assert all(
+        item.requested_trace
+        == ("cuda.reduction.sorted_prefix_multirow_warp_early_stop.v1",)
+        for item in prefix
+    )
+    assert all(
+        item.requested_observation_class
+        is ObservationClass.OBSERVATION_CHANGING
+        for item in prefix
+    )
+
+    wide = [
+        item
+        for item in candidates
+        if item.fast_path_id
+        == "cuda.row_scan.sparsemax.sorted_prefix.execution_domain.v1"
+        and int(item.schedule.get("prefix_threads", 0)) == 32
+        and int(item.schedule.get("threads_per_row", 0)) > 32
+    ]
+    assert {int(item.schedule["threads_per_row"]) for item in wide} >= {
+        64,
+        128,
+        256,
+        512,
+        1024,
+    }
+    assert any(
+        item.schedule.get("cross_multiply_support_predicate") is True
+        for item in wide
+    )
+    assert any(
+        int(item.schedule["rows_per_block"]) == 2
+        and int(item.schedule["threads_per_row"]) == 512
+        for item in wide
+    )
 
 
 def test_fixed_structure_uses_exact_compiler_path_identity() -> None:

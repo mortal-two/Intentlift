@@ -36,10 +36,11 @@ from intentir.backend.cuda.production_cases import (
 )
 from intentir.backend.cuda.search import (
     admit_cuda_candidate_paths,
-    canonical_cuda_candidate,
     compile_cuda_candidate,
     derive_cuda_contract_view,
     enumerate_cuda_candidates,
+    project_cuda_c_fixed_candidate,
+    schedule_only_cuda_path_identity,
 )
 from intentir.backend.materialize import attach_c, materialize_j
 from intentir.backend.measurement_spec import (
@@ -66,10 +67,7 @@ def _fixed_path_for_axes(
 ) -> tuple[str | None, str | None]:
     if axes is None or axes.search_structural_states:
         return None, None
-    canonical = canonical_cuda_candidate(state)
-    if canonical.generic:
-        return "generic", None
-    return canonical.lowering_path_kind, canonical.fast_path_id
+    return schedule_only_cuda_path_identity(state)
 
 
 def _entry(
@@ -172,9 +170,7 @@ def _entry(
         spine_state: Any,
         admitted_candidates: tuple[Any, ...],
     ) -> list[str]:
-        if axes is None:
-            return []
-        if not axes.search_structural_states:
+        if axes is not None and not axes.search_structural_states:
             return [item.candidate_id for item in admitted_candidates]
         schedule_axes = next(
             item
@@ -183,7 +179,10 @@ def _entry(
         )
         schedule_axes = replace(
             schedule_axes,
-            use_c_prior=axes.use_c_prior,
+            # ``axes=None`` is the production full-universe export, not an
+            # absent experiment definition.  Its schedule spine retains the
+            # normal C-prior ordering while hard admission remains C-free.
+            use_c_prior=axes.use_c_prior if axes is not None else True,
         )
         spine_kind, spine_fast_path = _fixed_path_for_axes(
             spine_state, schedule_axes
@@ -211,6 +210,10 @@ def _entry(
     )
 
     candidates_by_id = {item.candidate_id: item for item in seeded_candidates}
+    c_fixed_candidate, c_fixed_projection = project_cuda_c_fixed_candidate(
+        state,
+        tuple(candidates_by_id[item] for item in seeded_schedule_spine),
+    )
     compiled: dict[str, dict[str, Any]] = {}
 
     def compile_once(candidate: Any) -> dict[str, Any]:
@@ -286,7 +289,11 @@ def _entry(
             "concrete_ids": concrete_ids,
         }
 
-    with_c_visit = visit_order(seeded_candidates)
+    with_c_visit = visit_order(
+        (c_fixed_candidate,)
+        if axes is not None and axes.arm is ExperimentArm.C_FIXED
+        else seeded_candidates
+    )
     if axes is not None and axes.arm is ExperimentArm.C_FIXED:
         without_c_visit = {
             "budget_consumed": 0,
@@ -303,10 +310,18 @@ def _entry(
     else:
         without_c_visit = visit_order(unseeded_candidates)
 
+    # C-Fixed is a formal main bar even when exporting E2/E3.  Carry its exact
+    # state in the same bundle, and fail rather than silently substitute another
+    # schedule when that mechanical projection cannot compile or transport.
+    c_fixed_outcome = compile_once(c_fixed_candidate)
+    if c_fixed_outcome["status"] != "compiled_state":
+        reason = c_fixed_outcome["rejection"]["reason"]
+        raise RuntimeError(f"C-Fixed projection failed: {reason}")
+
     oracle_trace: list[dict[str, Any]] = []
     oracle_concrete_ids: list[str] = []
     if measure_c_oracle:
-        if axes is None or not axes.search_structural_states:
+        if axes is not None and not axes.search_structural_states:
             raise ValueError(
                 "complete C oracle requires an expanded IntentIR search arm"
             )
@@ -331,6 +346,7 @@ def _entry(
     # The portable bundle carries the candidate-id union of both equal-budget
     # visits. Each explicitly enumerated candidate consumes one budget slot.
     selected_ids = [
+        c_fixed_candidate.candidate_id,
         *with_c_visit["concrete_ids"],
         *without_c_visit["concrete_ids"],
         *oracle_concrete_ids,
@@ -383,37 +399,8 @@ def _entry(
     )
     if not with_c_order or not with_c_schedule_spine_order:
         raise RuntimeError(f"{name} has no concrete target projection of C")
-    # C-Fixed and E2 share the canonical structural path.  E3's C-ranked order
-    # may legitimately begin with an expanded topology, so selecting its first
-    # state here would silently turn C-Fixed into an IntentIR arm.
-    c_fixed_candidate = candidates_by_id[with_c_schedule_spine_order[0]]
-    canonical_projection = canonical_cuda_candidate(state)
-    projection_kind = (
-        "generic"
-        if canonical_projection.generic
-        else canonical_projection.lowering_path_kind
-    )
-    projection_fast_path = (
-        None if canonical_projection.generic else canonical_projection.fast_path_id
-    )
-    if c_fixed_candidate.lowering_path_kind != projection_kind:
-        raise AssertionError("C-Fixed target projection escaped the canonical path")
     c_fixed_projection = {
-        "protocol": "intentir.backend.cuda.c-projection.v1",
-        "selection_rule": (
-            "first concrete state after registered target-aware C distance "
-            "ordering on the canonical lowering path; deterministic schedule "
-            "enumeration order breaks equal-score ties"
-        ),
-        "source_priors": [item.to_record() for item in state.priors],
-        "canonical_lowering_path": {
-            "lowering_path_kind": projection_kind,
-            "fast_path_id": projection_fast_path,
-        },
-        "selected_candidate_id": c_fixed_candidate.candidate_id,
-        "selected_target_schedule": dict(c_fixed_candidate.schedule),
-        "selected_c_order_score": c_fixed_candidate.c_order_score,
-        "raw_c_value_used_as_exact_target_schedule": False,
+        **c_fixed_projection,
         "executed_without_search": bool(
             axes is not None and axes.arm is ExperimentArm.C_FIXED
         ),
@@ -578,9 +565,10 @@ def _parser() -> argparse.ArgumentParser:
         "--measure-c-oracle",
         action="store_true",
         help=(
-            "transport the complete expanded concrete-state universe so the "
-            "target can compute candidates-to-95%%-of-final-best; search-arm "
-            "budgets remain unchanged"
+            "transport the complete expanded concrete-state universe for the "
+            "formal C-Fixed/Schedule-Only/IntentIR performance envelopes and "
+            "the candidates-to-95%% anytime diagnostic; bounded-order budgets "
+            "remain unchanged"
         ),
     )
     parser.add_argument(

@@ -545,9 +545,89 @@ def _one_kernel(
     candidate_artifacts: dict[
         str, tuple[Mapping[str, Any], PortableExtractedLaunch, Any, list[Any]]
     ] = {}
+    # Different requested schedules can collapse to the exact same executable
+    # after the C++/MLIR pipeline.  Measure that executable once, then attach the
+    # same observation to every causal-arm candidate that produced it.  This is
+    # exact target-code equality (cubin + launch/host graph), not a performance
+    # cache or an artifact hash, and it prevents a large requested space from
+    # overweighting duplicate code in the finalist protocol.
+    execution_cache: dict[tuple[Any, ...], dict[str, Any]] = {}
+    execution_signature_by_id: dict[str, tuple[Any, ...]] = {}
+
+    def execution_signature(
+        extracted: PortableExtractedLaunch,
+    ) -> tuple[Any, ...]:
+        if isinstance(extracted, ExtractedSingleLaunch):
+            record = extracted.record
+            return (
+                "single",
+                extracted.cubin,
+                extracted.kernel_name,
+                extracted.binary_name,
+                extracted.plan,
+                record.grid,
+                record.block,
+                record.dynamic_smem_bytes,
+            )
+        if isinstance(extracted, ExtractedGraphLaunch):
+            return (
+                "graph",
+                tuple(
+                    (item.cubin, item.kernel_name, item.binary_name)
+                    for item in extracted.kernels
+                ),
+                extracted.source_mlir,
+                extracted.binary_mlir,
+                extracted.record,
+            )
+        raise TypeError("unsupported portable CUDA launch record")
+
     for candidate in entry["candidates"]:
         try:
             extracted = portable_launch_from_dict(candidate["launch"])
+            candidate_id = candidate["candidate"]["candidate_id"]
+            signature = execution_signature(extracted)
+            execution_signature_by_id[candidate_id] = signature
+            cached = execution_cache.get(signature)
+            if cached is not None:
+                alias_record = {
+                    "candidate": candidate["candidate"],
+                    "status": cached["status"],
+                    "correctness": cached["correctness"],
+                    "concrete_state": candidate.get("concrete_state"),
+                    "lowering": candidate.get("lowering"),
+                    "execution_equivalent_to": cached["candidate_id"],
+                }
+                if cached["status"] == "measured":
+                    alias_record.update(
+                        {
+                            "latency_us": cached["latency_us"],
+                            "launch": extracted.record.to_dict(),
+                            "binary_size_bytes": extracted.binary_size_bytes,
+                            "cubin_size_bytes": (
+                                len(extracted.cubin)
+                                if isinstance(extracted, ExtractedSingleLaunch)
+                                else None
+                            ),
+                            "logical_boundary_gbps": (
+                                logical_io_bytes / cached["latency_us"] / 1_000.0
+                            ),
+                            "achieved_gflops": (
+                                floating_point_ops / cached["latency_us"] / 1_000.0
+                            ),
+                            "cold_pre_measure_warmup_rounds": cached[
+                                "cold_pre_measure_warmup_rounds"
+                            ],
+                        }
+                    )
+                    candidate_artifacts[candidate_id] = (
+                        candidate,
+                        extracted,
+                        cached["thunk"],
+                        cached["outputs"],
+                    )
+                candidate_records.append(alias_record)
+                continue
             if isinstance(extracted, ExtractedSingleLaunch):
                 prepared = PreparedSingleLaunch.from_extracted(extracted)
                 thunk = prepared.thunk(tensors)
@@ -577,15 +657,21 @@ def _one_kernel(
                 policy=policy,
             )
             if not agreement.passed:
+                correctness = agreement.to_json()
                 candidate_records.append(
                     {
                         "candidate": candidate["candidate"],
                         "status": "incorrect",
-                        "correctness": agreement.to_json(),
+                        "correctness": correctness,
                         "concrete_state": candidate.get("concrete_state"),
                         "lowering": candidate.get("lowering"),
                     }
                 )
+                execution_cache[signature] = {
+                    "candidate_id": candidate_id,
+                    "status": "incorrect",
+                    "correctness": correctness,
+                }
                 continue
             cold_warmup_rounds = (
                 _warmup_thunks(torch, (thunk,), warmup_ms=warmup_ms)
@@ -613,13 +699,21 @@ def _one_kernel(
                     "cold_pre_measure_warmup_rounds": cold_warmup_rounds,
                 }
             )
-            candidate_id = candidate["candidate"]["candidate_id"]
             candidate_artifacts[candidate_id] = (
                 candidate,
                 extracted,
                 thunk,
                 candidate_outputs,
             )
+            execution_cache[signature] = {
+                "candidate_id": candidate_id,
+                "status": "measured",
+                "correctness": agreement.to_json(),
+                "latency_us": latency,
+                "cold_pre_measure_warmup_rounds": cold_warmup_rounds,
+                "thunk": thunk,
+                "outputs": candidate_outputs,
+            }
         except Exception as exc:
             candidate_records.append(
                 {
@@ -639,6 +733,11 @@ def _one_kernel(
         candidate_records[index]["candidate"]["candidate_id"]: index
         for index in measured_indices
     }
+    execution_group_indices: dict[tuple[Any, ...], list[int]] = {}
+    for index in measured_indices:
+        candidate_id = candidate_records[index]["candidate"]["candidate_id"]
+        signature = execution_signature_by_id[candidate_id]
+        execution_group_indices.setdefault(signature, []).append(index)
     search_orders = entry["search_orders"]
     default_order = list(measured_index_by_id)
     with_c_order = list(
@@ -682,8 +781,9 @@ def _one_kernel(
         measured_indices,
         key=lambda item: candidate_records[item]["latency_us"],
     )
-    # Always remeasure each ordering's provisional winner.  Otherwise a small
-    # finalist_count could accidentally give only one C arm fresh samples.
+    # Always remeasure each bounded ordering's provisional winner and each main
+    # three-bar provisional winner.  Otherwise a small finalist_count could
+    # accidentally give one causal arm only initial ranking samples.
     mandatory_indices: list[int] = []
     mandatory_orders = [with_c_order, without_c_order, schedule_spine_order]
     if c_fixed_candidate_id is not None:
@@ -695,21 +795,37 @@ def _one_kernel(
             if candidate_id in measured_index_by_id
         ]
         if arm_indices:
-            mandatory_indices.append(
-                min(
-                    arm_indices,
-                    key=lambda item: candidate_records[item]["latency_us"],
-                )
+            provisional = min(
+                arm_indices,
+                key=lambda item: candidate_records[item]["latency_us"],
             )
+            provisional_id = candidate_records[provisional]["candidate"][
+                "candidate_id"
+            ]
+            provisional_signature = execution_signature_by_id[provisional_id]
+            if not any(
+                execution_signature_by_id[
+                    candidate_records[item]["candidate"]["candidate_id"]
+                ]
+                == provisional_signature
+                for item in mandatory_indices
+            ):
+                mandatory_indices.append(provisional)
     ranked_indices = []
-    # The complete C oracle needs one latency for every transported candidate,
-    # but it must not turn every candidate into a main-performance finalist.
+    # Complete-space main bars need one initial latency for every transported
+    # candidate, but that must not turn every candidate into a finalist.
     # Rank the complete initial map, then freshly remeasure only the requested
     # top set plus each formal arm's provisional winner.  Otherwise a large
     # oracle universe changes the confirmation protocol and introduces minutes
     # of target drift into Source/IntentIR paired timing.
     ranking_source = [*mandatory_indices, *initial_ranked]
+    ranked_signatures: set[tuple[Any, ...]] = set()
     for index in ranking_source:
+        candidate_id = candidate_records[index]["candidate"]["candidate_id"]
+        signature = execution_signature_by_id[candidate_id]
+        if signature in ranked_signatures:
+            continue
+        ranked_signatures.add(signature)
         if index not in ranked_indices:
             ranked_indices.append(index)
         if (
@@ -738,17 +854,27 @@ def _one_kernel(
         # Initial ranking samples are deliberately excluded from final
         # selection.  Fresh alternating round-robin batches remove incumbent
         # and thermal-order bias from the target-side search.
-        record["latency_us"] = float(statistics.median(samples))
-        record["finalist_batch_us"] = samples
+        latency = float(statistics.median(samples))
+        candidate_id = record["candidate"]["candidate_id"]
+        signature = execution_signature_by_id[candidate_id]
+        for equivalent_index in execution_group_indices[signature]:
+            equivalent = candidate_records[equivalent_index]
+            equivalent["latency_us"] = latency
+            equivalent["finalist_batch_us"] = samples
     if not measured_indices:
         raise KernelFailure(
             "no correct bundled MLIR candidate",
             {"candidates": candidate_records},
         )
 
-    freshly_remeasured = {
-        index for index, samples in finalist_samples.items() if samples
-    }
+    freshly_remeasured: set[int] = set()
+    for index, samples in finalist_samples.items():
+        if not samples:
+            continue
+        candidate_id = candidate_records[index]["candidate"]["candidate_id"]
+        freshly_remeasured.update(
+            execution_group_indices[execution_signature_by_id[candidate_id]]
+        )
 
     def best_for_order(order: list[str]) -> dict[str, Any] | None:
         records = [
@@ -773,7 +899,13 @@ def _one_kernel(
         if c_fixed_candidate_id is not None
         else None
     )
-    best_record = best_for_order(active_order)
+    # The formal IntentIR bar is the complete admitted lowering-state envelope.
+    # Bounded C-guided/Erase-C orders remain search-efficiency diagnostics only.
+    best_record = (
+        c_oracle_best
+        if c_oracle_complete
+        else best_for_order(active_order)
+    )
     if best_record is None:
         raise RuntimeError(
             f"active CUDA search order {active_order_name!r} has no correct candidate"
@@ -1051,7 +1183,12 @@ def _one_kernel(
             "schedule_spine_ablation": (
                 {
                     "same_run_measurement": True,
-                    "same_total_search_visit": True,
+                    "same_total_search_visit": not c_oracle_complete,
+                    "comparison_scope": (
+                        "complete_candidate_space"
+                        if c_oracle_complete
+                        else "bounded_active_order"
+                    ),
                     "schedule_spine_candidate_count": len(schedule_spine_order),
                     "schedule_spine_best_candidate_id": (
                         schedule_spine_best["candidate"]["candidate_id"]
@@ -1140,7 +1277,9 @@ def _one_kernel(
                 "finalist_count": len(ranked_indices),
                 "finalist_remeasurements": finalist_remeasurements,
                 "winner_selection_scope": (
-                    "freshly-remeasured-finalists"
+                    "complete-space-ranked-fresh-finalists"
+                    if c_oracle_complete and freshly_remeasured
+                    else "freshly-remeasured-finalists"
                     if freshly_remeasured
                     else "initial-ranking-samples"
                 ),

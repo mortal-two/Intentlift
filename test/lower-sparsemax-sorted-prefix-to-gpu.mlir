@@ -1,4 +1,4 @@
-// RUN: intent-opt -convert-intent-row-reduction-to-gpu=block-threads=32 %s | FileCheck %s
+// RUN: intent-opt '-convert-intent-row-reduction-to-gpu=block-threads=32 require-sorted-prefix=true' %s | FileCheck %s
 // RUN: intent-opt '-convert-intent-row-reduction-to-gpu=block-threads=32 enable-sorted-prefix=false' %s | FileCheck %s --check-prefix=GENERIC
 
 // The specialized path is legal only because P4 materialized the validated
@@ -11,16 +11,17 @@
 // CHECK-SAME: intent.fast_path_id = "cuda.row_scan.sparsemax.sorted_prefix.v1"
 // CHECK-SAME: intent_sorted_descending = true
 // CHECK: gpu.launch
-// CHECK: gpu.dynamic_shared_memory
 // CHECK: scf.for
 // CHECK: memref.load {{.*}} : memref<2x32xvector<4xf32>>
 // CHECK: gpu.shuffle up
-// CHECK: gpu.barrier
 // CHECK: arith.cmpf ogt
-// CHECK: gpu.barrier
+// CHECK: gpu.shuffle xor
+// CHECK: arith.cmpi sgt
 // CHECK: arith.maxnumf
 // CHECK: memref.store {{.*}} : memref<2x32xvector<4xf32>>
 // CHECK: gpu.terminator
+// CHECK-NOT: gpu.dynamic_shared_memory
+// CHECK-NOT: gpu.barrier
 // CHECK-NOT: intent.
 // GENERIC-LABEL: func.func @certified_prefix_graph(
 // GENERIC-NOT: intent.fast_path_id

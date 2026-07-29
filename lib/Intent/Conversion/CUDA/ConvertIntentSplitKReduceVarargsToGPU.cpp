@@ -22,6 +22,7 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -145,11 +146,11 @@ static bool allBodyOperationsReachResults(func::FuncOp fn,
                            entry.without_terminator().end()));
 }
 
-static void attachSplitKReceipt(func::FuncOp lowered, StringRef path,
-                                StringRef topology, int64_t blockThreads,
-                                int64_t rowsPerBlock, int64_t splitCount,
-                                int64_t gridBlocks,
-                                ArrayRef<StringRef> trace) {
+static void attachSplitKStateAttributes(
+    func::FuncOp lowered, StringRef path, StringRef topology,
+    int64_t blockThreads, int64_t rowsPerBlock, int64_t warpsPerRow,
+    int64_t splitCount, int64_t gridBlocks, int64_t vectorWidth,
+    int64_t shuffleCount, int64_t barrierCount, ArrayRef<StringRef> trace) {
   MLIRContext *ctx = lowered.getContext();
   auto i64 = IntegerType::get(ctx, 64);
   auto integer = [&](int64_t value) { return IntegerAttr::get(i64, value); };
@@ -168,13 +169,15 @@ static void attachSplitKReceipt(func::FuncOp lowered, StringRef path,
                    StringAttr::get(ctx, "source_exp2_log2"));
   lowered->setAttr("intent.backend.fma_count", integer(0));
   lowered->setAttr("intent.backend.approximate_div_count", integer(0));
-  lowered->setAttr("intent.backend.shuffle_count", integer(0));
-  lowered->setAttr("intent.backend.barrier_count", integer(0));
+  lowered->setAttr("intent.backend.shuffle_count", integer(shuffleCount));
+  lowered->setAttr("intent.backend.barrier_count", integer(barrierCount));
   lowered->setAttr("intent.backend.all_reduce_count", integer(0));
   lowered->setAttr("intent.backend.block_threads", integer(blockThreads));
   lowered->setAttr("intent.backend.grid_blocks", integer(gridBlocks));
   lowered->setAttr("intent.backend.grid_stride_loop_count", integer(0));
   lowered->setAttr("intent.backend.rows_per_block", integer(rowsPerBlock));
+  lowered->setAttr("intent.backend.warps_per_row", integer(warpsPerRow));
+  lowered->setAttr("intent.backend.vector_width", integer(vectorWidth));
   lowered->setAttr("intent.backend.stage_count", integer(1));
   lowered->setAttr("intent.backend.reduction_parts", integer(splitCount));
   lowered->setAttr("intent.backend.predicated_value_if_count", integer(0));
@@ -382,10 +385,23 @@ struct UnrolledSplitKVarargsMatch {
     return success(allBodyOperationsReachResults(fn, ret));
   }
 
-  LogicalResult rewrite(int64_t rowsPerBlock) {
+  LogicalResult rewrite(int64_t rowsPerBlock, int64_t warpsPerRow,
+                        int64_t vectorWidth, bool broadcastScalars) {
     if (rowsPerBlock != 1 && rowsPerBlock != 2 && rowsPerBlock != 4 &&
         rowsPerBlock != 8)
       return fn.emitError("rows-per-block must be one of 1, 2, 4 or 8");
+    if (warpsPerRow != 1 && warpsPerRow != 2 && warpsPerRow != 4 &&
+        warpsPerRow != 8)
+      return fn.emitError("warps-per-row must be one of 1, 2, 4 or 8");
+    if (warpsPerRow > 1 && rowsPerBlock != 1)
+      return fn.emitError(
+          "multi-warp D partition currently requires rows-per-block=1");
+    if (rowsPerBlock * warpsPerRow > 32)
+      return fn.emitError("split-K launch exceeds 32 warps per block");
+    if ((vectorWidth != 1 && vectorWidth != 2 && vectorWidth != 4) ||
+        (D % vectorWidth) != 0)
+      return fn.emitError(
+          "vector-width must be 1, 2 or 4 and divide output D");
 
     MLIRContext *ctx = fn.getContext();
     Location loc = fn.getLoc();
@@ -411,12 +427,28 @@ struct UnrolledSplitKVarargsMatch {
                    builder.getStringAttr("cuda.splitk.unrolled-merge.v2"));
     gpuFn->setAttr("intentir.runtime_abi_args",
                    builder.getI64IntegerAttr(2 * splitCount + 2));
-    attachSplitKReceipt(
-        gpuFn, "splitk_weighted_merge", "unrolled_vararg_merge",
-        rowsPerBlock * 32, rowsPerBlock, splitCount,
-        ((M + rowsPerBlock - 1) / rowsPerBlock) * B * G * H,
-        {"cuda.splitk.unrolled_weighted_merge.v2",
-         "cuda.materialization.whole_graph_elimination.v1"});
+    SmallVector<StringRef> transformationTrace{
+        "cuda.splitk.unrolled_weighted_merge.v2",
+        "cuda.materialization.whole_graph_elimination.v1"};
+    if (broadcastScalars && warpsPerRow == 1)
+      transformationTrace.push_back(
+          "cuda.splitk.warp_broadcast_row_scalars.v1");
+    if (broadcastScalars && warpsPerRow > 1)
+      transformationTrace.push_back(
+          "cuda.splitk.workgroup_broadcast_row_scalars.v1");
+    if (warpsPerRow > 1)
+      transformationTrace.push_back(
+          "cuda.splitk.multi_warp_d_partition.v1");
+    attachSplitKStateAttributes(
+        gpuFn, "splitk_weighted_merge",
+        warpsPerRow > 1
+            ? StringRef("multi_warp_d_partition")
+            : broadcastScalars ? StringRef("warp_broadcast_weighted_merge")
+                               : StringRef("unrolled_vararg_merge"),
+        rowsPerBlock * warpsPerRow * 32, rowsPerBlock, warpsPerRow, splitCount,
+        ((M + rowsPerBlock - 1) / rowsPerBlock) * B * G * H, vectorWidth,
+        broadcastScalars && warpsPerRow == 1 ? splitCount + 2 : 0,
+        broadcastScalars && warpsPerRow > 1 ? 1 : 0, transformationTrace);
     Block *entry = gpuFn.addEntryBlock();
     builder.setInsertionPointToStart(entry);
 
@@ -424,22 +456,44 @@ struct UnrolledSplitKVarargsMatch {
         loc, (M + rowsPerBlock - 1) / rowsPerBlock);
     Value gridY = builder.create<arith::ConstantIndexOp>(loc, B * G * H);
     Value blockX = builder.create<arith::ConstantIndexOp>(
-        loc, rowsPerBlock * 32);
+        loc, rowsPerBlock * warpsPerRow * 32);
     Value c1 = builder.create<arith::ConstantIndexOp>(loc, 1);
-    auto launch = builder.create<gpu::LaunchOp>(loc, gridX, gridY, c1, blockX,
-                                                 c1, c1);
+    gpu::LaunchOp launch;
+    if (broadcastScalars && warpsPerRow > 1) {
+      Value sharedBytes = builder.create<arith::ConstantOp>(
+          loc, builder.getI32IntegerAttr((splitCount + 2) * 4));
+      launch = builder.create<gpu::LaunchOp>(loc, gridX, gridY, c1, blockX, c1,
+                                             c1, sharedBytes);
+    } else {
+      launch = builder.create<gpu::LaunchOp>(loc, gridX, gridY, c1, blockX, c1,
+                                             c1);
+    }
     builder.setInsertionPointToStart(&launch.getBody().front());
 
     Value bx = launch.getBlockIds().x;
     Value by = launch.getBlockIds().y;
     Value tx = launch.getThreadIds().x;
     Value c0 = builder.create<arith::ConstantIndexOp>(loc, 0);
+    Value scalarScratch;
+    if (broadcastScalars && warpsPerRow > 1) {
+      auto workgroupSpace =
+          gpu::AddressSpaceAttr::get(ctx, gpu::AddressSpace::Workgroup);
+      auto rawType = MemRefType::get({ShapedType::kDynamic}, builder.getI8Type(),
+                                     nullptr, workgroupSpace);
+      Value raw = builder.create<gpu::DynamicSharedMemoryOp>(loc, rawType);
+      auto scratchType = MemRefType::get({splitCount + 2}, f32, nullptr,
+                                         workgroupSpace);
+      scalarScratch = builder.create<memref::ViewOp>(
+          loc, scratchType, raw, c0, ValueRange{});
+    }
     for (unsigned index = 0; index < entry->getNumArguments(); ++index)
       (void)builder.create<memref::DimOp>(loc, entry->getArgument(index), c0);
 
     Value c32 = builder.create<arith::ConstantIndexOp>(loc, 32);
     Value cRows =
         builder.create<arith::ConstantIndexOp>(loc, rowsPerBlock);
+    Value cWarpsPerRow =
+        builder.create<arith::ConstantIndexOp>(loc, warpsPerRow);
     Value cG = builder.create<arith::ConstantIndexOp>(loc, G);
     Value cH = builder.create<arith::ConstantIndexOp>(loc, H);
     Value cGH = builder.create<arith::ConstantIndexOp>(loc, G * H);
@@ -447,8 +501,12 @@ struct UnrolledSplitKVarargsMatch {
     Value cD = builder.create<arith::ConstantIndexOp>(loc, D);
     Value warp = builder.create<arith::DivUIOp>(loc, tx, c32);
     Value lane = builder.create<arith::RemUIOp>(loc, tx, c32);
+    Value rowSlot =
+        builder.create<arith::DivUIOp>(loc, warp, cWarpsPerRow);
+    Value warpInRow =
+        builder.create<arith::RemUIOp>(loc, warp, cWarpsPerRow);
     Value rowBase = builder.create<arith::MulIOp>(loc, bx, cRows);
-    Value m = builder.create<arith::AddIOp>(loc, rowBase, warp);
+    Value m = builder.create<arith::AddIOp>(loc, rowBase, rowSlot);
     Value z = builder.create<arith::DivUIOp>(loc, by, cGH);
     Value groupHead = builder.create<arith::RemUIOp>(loc, by, cGH);
     Value g = builder.create<arith::DivUIOp>(loc, groupHead, cH);
@@ -477,34 +535,153 @@ struct UnrolledSplitKVarargsMatch {
           Value log2e = b.create<arith::ConstantOp>(
               bodyLoc, b.getF32FloatAttr(1.44269504));
 
-          SmallVector<Value> lseValues(splitCount);
-          Value lseMaxValue = negativeInfinity;
-          for (int64_t split = 0; split < splitCount; ++split) {
-            lseValues[split] = b.create<memref::LoadOp>(
-                bodyLoc, entry->getArgument(splitCount + split),
-                ValueRange{row});
-            lseMaxValue = b.create<arith::MaxNumFOp>(
-                bodyLoc, lseMaxValue, lseValues[split]);
-          }
-
+          Value laneZero = b.create<arith::CmpIOp>(
+              bodyLoc, arith::CmpIPredicate::eq, lane, c0);
+          Value rowLaneBase = b.create<arith::MulIOp>(
+              bodyLoc, warpInRow, c32);
+          Value rowLane =
+              b.create<arith::AddIOp>(bodyLoc, rowLaneBase, lane);
+          Value lseMaxValue;
           SmallVector<Value> weights(splitCount);
-          Value sumexp = zero;
-          for (int64_t split = 0; split < splitCount; ++split) {
-            Value shifted = b.create<arith::SubFOp>(
-                bodyLoc, lseValues[split], lseMaxValue);
-            Value shiftedBase2 =
-                b.create<arith::MulFOp>(bodyLoc, shifted, log2e);
-            weights[split] =
-                b.create<math::Exp2Op>(bodyLoc, shiftedBase2);
-            sumexp =
-                b.create<arith::AddFOp>(bodyLoc, sumexp, weights[split]);
+          Value sumexp;
+          if (!broadcastScalars) {
+            SmallVector<Value> lseValues(splitCount);
+            lseMaxValue = negativeInfinity;
+            for (int64_t split = 0; split < splitCount; ++split) {
+              lseValues[split] = b.create<memref::LoadOp>(
+                  bodyLoc, entry->getArgument(splitCount + split),
+                  ValueRange{row});
+              lseMaxValue = b.create<arith::MaxNumFOp>(
+                  bodyLoc, lseMaxValue, lseValues[split]);
+            }
+            sumexp = zero;
+            for (int64_t split = 0; split < splitCount; ++split) {
+              Value shifted = b.create<arith::SubFOp>(
+                  bodyLoc, lseValues[split], lseMaxValue);
+              Value shiftedBase2 =
+                  b.create<arith::MulFOp>(bodyLoc, shifted, log2e);
+              weights[split] =
+                  b.create<math::Exp2Op>(bodyLoc, shiftedBase2);
+              sumexp =
+                  b.create<arith::AddFOp>(bodyLoc, sumexp, weights[split]);
+            }
+          } else if (warpsPerRow == 1) {
+            SmallVector<Type> scalarTypes(splitCount + 2, b.getF32Type());
+            auto scalarState = b.create<scf::IfOp>(
+                bodyLoc, scalarTypes, laneZero, /*withElseRegion=*/true);
+            OpBuilder leader = scalarState.getThenBodyBuilder();
+            SmallVector<Value> lseValues(splitCount);
+            Value leaderMax = negativeInfinity;
+            for (int64_t split = 0; split < splitCount; ++split) {
+              lseValues[split] = leader.create<memref::LoadOp>(
+                  bodyLoc, entry->getArgument(splitCount + split),
+                  ValueRange{row});
+              leaderMax = leader.create<arith::MaxNumFOp>(
+                  bodyLoc, leaderMax, lseValues[split]);
+            }
+            SmallVector<Value> leaderWeights(splitCount);
+            Value leaderSum = zero;
+            for (int64_t split = 0; split < splitCount; ++split) {
+              Value shifted = leader.create<arith::SubFOp>(
+                  bodyLoc, lseValues[split], leaderMax);
+              Value shiftedBase2 = leader.create<arith::MulFOp>(
+                  bodyLoc, shifted, log2e);
+              leaderWeights[split] = leader.create<math::Exp2Op>(
+                  bodyLoc, shiftedBase2);
+              leaderSum = leader.create<arith::AddFOp>(
+                  bodyLoc, leaderSum, leaderWeights[split]);
+            }
+            SmallVector<Value> leaderResults{leaderMax};
+            llvm::append_range(leaderResults, leaderWeights);
+            leaderResults.push_back(leaderSum);
+            leader.create<scf::YieldOp>(bodyLoc, leaderResults);
+            OpBuilder nonLeader = scalarState.getElseBodyBuilder();
+            SmallVector<Value> identityResults{negativeInfinity};
+            for (int64_t split = 0; split < splitCount; ++split)
+              identityResults.push_back(zero);
+            identityResults.push_back(zero);
+            nonLeader.create<scf::YieldOp>(bodyLoc, identityResults);
+
+            Value sourceLane = b.create<arith::ConstantIntOp>(
+                bodyLoc, 0, 32);
+            Value width = b.create<arith::ConstantIntOp>(bodyLoc, 32, 32);
+            auto broadcast = [&](Value value) {
+              return b.create<gpu::ShuffleOp>(
+                                bodyLoc, value, sourceLane, width,
+                                gpu::ShuffleMode::IDX)
+                  .getShuffleResult();
+            };
+            lseMaxValue = broadcast(scalarState.getResult(0));
+            for (int64_t split = 0; split < splitCount; ++split)
+              weights[split] = broadcast(scalarState.getResult(split + 1));
+            sumexp = broadcast(scalarState.getResult(splitCount + 1));
+          } else {
+            Value rowLeader = b.create<arith::CmpIOp>(
+                bodyLoc, arith::CmpIPredicate::eq, rowLane, c0);
+            b.create<scf::IfOp>(
+                bodyLoc, rowLeader, [&](OpBuilder &leader, Location leaderLoc) {
+                  SmallVector<Value> lseValues(splitCount);
+                  Value leaderMax = negativeInfinity;
+                  for (int64_t split = 0; split < splitCount; ++split) {
+                    lseValues[split] = leader.create<memref::LoadOp>(
+                        leaderLoc, entry->getArgument(splitCount + split),
+                        ValueRange{row});
+                    leaderMax = leader.create<arith::MaxNumFOp>(
+                        leaderLoc, leaderMax, lseValues[split]);
+                  }
+                  leader.create<memref::StoreOp>(
+                      leaderLoc, leaderMax, scalarScratch,
+                      ValueRange{leader.create<arith::ConstantIndexOp>(leaderLoc,
+                                                                       0)});
+                  Value leaderSum = zero;
+                  for (int64_t split = 0; split < splitCount; ++split) {
+                    Value shifted = leader.create<arith::SubFOp>(
+                        leaderLoc, lseValues[split], leaderMax);
+                    Value shiftedBase2 = leader.create<arith::MulFOp>(
+                        leaderLoc, shifted, log2e);
+                    Value weight =
+                        leader.create<math::Exp2Op>(leaderLoc, shiftedBase2);
+                    leader.create<memref::StoreOp>(
+                        leaderLoc, weight, scalarScratch,
+                        ValueRange{leader.create<arith::ConstantIndexOp>(
+                            leaderLoc, split + 1)});
+                    leaderSum = leader.create<arith::AddFOp>(
+                        leaderLoc, leaderSum, weight);
+                  }
+                  leader.create<memref::StoreOp>(
+                      leaderLoc, leaderSum, scalarScratch,
+                      ValueRange{leader.create<arith::ConstantIndexOp>(
+                          leaderLoc, splitCount + 1)});
+                  leader.create<scf::YieldOp>(leaderLoc);
+                });
+            b.create<gpu::BarrierOp>(bodyLoc);
+            lseMaxValue = b.create<memref::LoadOp>(
+                bodyLoc, scalarScratch,
+                ValueRange{b.create<arith::ConstantIndexOp>(bodyLoc, 0)});
+            for (int64_t split = 0; split < splitCount; ++split)
+              weights[split] = b.create<memref::LoadOp>(
+                  bodyLoc, scalarScratch,
+                  ValueRange{b.create<arith::ConstantIndexOp>(bodyLoc,
+                                                               split + 1)});
+            sumexp = b.create<memref::LoadOp>(
+                bodyLoc, scalarScratch,
+                ValueRange{b.create<arith::ConstantIndexOp>(bodyLoc,
+                                                             splitCount + 1)});
           }
 
-          int64_t dIterations = (D + 31) / 32;
+          int64_t packetCount = D / vectorWidth;
+          int64_t lanesPerRow = warpsPerRow * 32;
+          int64_t dIterations =
+              (packetCount + lanesPerRow - 1) / lanesPerRow;
           for (int64_t iteration = 0; iteration < dIterations; ++iteration) {
             Value delta = b.create<arith::ConstantIndexOp>(bodyLoc,
-                                                            iteration * 32);
-            Value d = b.create<arith::AddIOp>(bodyLoc, lane, delta);
+                                                            iteration * lanesPerRow);
+            Value packet = b.create<arith::AddIOp>(bodyLoc, rowLane, delta);
+            Value d = packet;
+            if (vectorWidth != 1)
+              d = b.create<arith::MulIOp>(
+                  bodyLoc, packet,
+                  b.create<arith::ConstantIndexOp>(bodyLoc, vectorWidth));
             Value dValid = b.create<arith::CmpIOp>(
                 bodyLoc, arith::CmpIPredicate::ult, d, cD);
             b.create<scf::IfOp>(
@@ -513,34 +690,66 @@ struct UnrolledSplitKVarargsMatch {
                       db.create<arith::MulIOp>(dLoc, row, cD);
                   outputOffset =
                       db.create<arith::AddIOp>(dLoc, outputOffset, d);
-                  Value numerator = zero;
-                  for (int64_t split = 0; split < splitCount; ++split) {
-                    Value partial = db.create<memref::LoadOp>(
-                        dLoc, entry->getArgument(split),
-                        ValueRange{outputOffset});
-                    Value weighted = db.create<arith::MulFOp>(
-                        dLoc, partial, weights[split]);
-                    numerator = db.create<arith::AddFOp>(dLoc, numerator,
-                                                         weighted);
-                  }
-                  Value quotient =
-                      db.create<arith::DivFOp>(dLoc, numerator, sumexp);
                   Value allMasked = db.create<arith::CmpFOp>(
                       dLoc, arith::CmpFPredicate::OEQ, lseMaxValue,
                       negativeInfinity);
-                  Value result = db.create<arith::SelectOp>(
-                      dLoc, allMasked, zero, quotient);
-                  db.create<memref::StoreOp>(
-                      dLoc, result, entry->getArgument(2 * splitCount),
-                      ValueRange{outputOffset});
+                  if (vectorWidth == 1) {
+                    Value numerator = zero;
+                    for (int64_t split = 0; split < splitCount; ++split) {
+                      Value partial = db.create<memref::LoadOp>(
+                          dLoc, entry->getArgument(split),
+                          ValueRange{outputOffset});
+                      Value weighted = db.create<arith::MulFOp>(
+                          dLoc, partial, weights[split]);
+                      numerator = db.create<arith::AddFOp>(dLoc, numerator,
+                                                           weighted);
+                    }
+                    Value quotient =
+                        db.create<arith::DivFOp>(dLoc, numerator, sumexp);
+                    Value result = db.create<arith::SelectOp>(
+                        dLoc, allMasked, zero, quotient);
+                    db.create<memref::StoreOp>(
+                        dLoc, result, entry->getArgument(2 * splitCount),
+                        ValueRange{outputOffset});
+                  } else {
+                    auto packetType =
+                        VectorType::get({vectorWidth}, db.getF32Type());
+                    Value zeroPacket =
+                        db.create<vector::SplatOp>(dLoc, packetType, zero);
+                    Value numerator = zeroPacket;
+                    for (int64_t split = 0; split < splitCount; ++split) {
+                      Value partial = db.create<vector::LoadOp>(
+                          dLoc, packetType, entry->getArgument(split),
+                          ValueRange{outputOffset});
+                      Value weightPacket = db.create<vector::SplatOp>(
+                          dLoc, packetType, weights[split]);
+                      Value weighted = db.create<arith::MulFOp>(
+                          dLoc, partial, weightPacket);
+                      numerator = db.create<arith::AddFOp>(dLoc, numerator,
+                                                           weighted);
+                    }
+                    Value denominator = db.create<vector::SplatOp>(
+                        dLoc, packetType, sumexp);
+                    Value quotient = db.create<arith::DivFOp>(
+                        dLoc, numerator, denominator);
+                    auto maskType =
+                        VectorType::get({vectorWidth}, db.getI1Type());
+                    Value maskPacket = db.create<vector::SplatOp>(
+                        dLoc, maskType, allMasked);
+                    Value result = db.create<arith::SelectOp>(
+                        dLoc, maskPacket, zeroPacket, quotient);
+                    db.create<vector::StoreOp>(
+                        dLoc, result, entry->getArgument(2 * splitCount),
+                        ValueRange{outputOffset});
+                  }
                   db.create<scf::YieldOp>(dLoc);
                 });
           }
 
-          Value laneZero = b.create<arith::CmpIOp>(
-              bodyLoc, arith::CmpIPredicate::eq, lane, c0);
+          Value rowLeader = b.create<arith::CmpIOp>(
+              bodyLoc, arith::CmpIPredicate::eq, rowLane, c0);
           b.create<scf::IfOp>(
-              bodyLoc, laneZero, [&](OpBuilder &lb, Location lseLoc) {
+              bodyLoc, rowLeader, [&](OpBuilder &lb, Location lseLoc) {
                 Value logSum = lb.create<math::Log2Op>(lseLoc, sumexp);
                 Value naturalLog =
                     lb.create<arith::DivFOp>(lseLoc, logSum, log2e);
@@ -713,10 +922,20 @@ struct SplitKVarargsMatch {
     return success();
   }
 
-  LogicalResult rewrite(int64_t rowsPerBlock) {
+  LogicalResult rewrite(int64_t rowsPerBlock, int64_t warpsPerRow,
+                        int64_t vectorWidth, bool broadcastScalars) {
     if (rowsPerBlock != 1 && rowsPerBlock != 2 && rowsPerBlock != 4 &&
         rowsPerBlock != 8)
       return fn.emitError("rows-per-block must be one of 1, 2, 4 or 8");
+    if (warpsPerRow != 1)
+      return fn.emitError(
+          "runtime-stride SplitK requires warps-per-row=1 without a typed contiguous-D proof");
+    if (vectorWidth != 1)
+      return fn.emitError(
+          "runtime-stride SplitK requires vector-width=1 without a contiguous-D proof");
+    if (broadcastScalars)
+      return fn.emitError(
+          "runtime-stride SplitK requires warp-broadcast proof in the typed ABI");
 
     MLIRContext *ctx = fn.getContext();
     Location loc = fn.getLoc();
@@ -940,11 +1159,13 @@ struct ConvertIntentSplitKReduceVarargsToGPUPass
       if (isUnrolled) {
         UnrolledSplitKVarargsMatch lowering(fn);
         if (succeeded(lowering.match()))
-          result = lowering.rewrite(rowsPerBlock);
+          result = lowering.rewrite(rowsPerBlock, warpsPerRow, vectorWidth,
+                                    warpBroadcastScalars);
       } else {
         SplitKVarargsMatch lowering(fn);
         if (succeeded(lowering.match()))
-          result = lowering.rewrite(rowsPerBlock);
+          result = lowering.rewrite(rowsPerBlock, warpsPerRow, vectorWidth,
+                                    warpBroadcastScalars);
       }
       if (failed(result)) {
         fn.emitError("split-K varargs lowering failed after structural match");

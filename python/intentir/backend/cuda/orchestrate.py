@@ -833,14 +833,28 @@ def _parse_loose_buffers(func_text: str) -> dict[str, _LooseBuffer]:
     for m in re.finditer(r"(%\w+)\s*=\s*([^\n]+)", func_text):
         defs.setdefault(m.group(1), m.group(2).strip())
 
-    # getelementptr def -> (N, elem). Matches "llvm.getelementptr %x[N] : (...) , elem".
+    # getelementptr def -> (N, elem).  LLVM may spell the static element count
+    # either as a literal ``[N]`` or as an SSA constant ``[%n]`` after CSE.
     def _gep_info(rhs: str):
         gm = re.match(
-            r"llvm\.getelementptr\s+%\w+\[(\d+)\][^,]*,\s*([A-Za-z0-9_!.<>]+)", rhs
+            r"llvm\.getelementptr\s+%\w+\[(%\w+|\d+)\]\s*:\s*"
+            r"\([^)]*\)\s*->\s*!llvm\.ptr\s*,\s*"
+            r"([A-Za-z0-9_!.<>]+)",
+            rhs,
         )
         if not gm:
             return None
-        return int(gm.group(1)), gm.group(2).strip()
+        count = gm.group(1)
+        if count.startswith("%"):
+            definition = defs.get(count, "")
+            constant = re.match(
+                r"llvm\.mlir\.constant\((-?\d+)\s*:\s*[^)]+\)\s*:\s*i64",
+                definition,
+            )
+            if constant is None:
+                return None
+            count = constant.group(1)
+        return int(count), gm.group(2).strip()
 
     def _trace_size(size_ssa: str):
         """size_ssa -> (n_elems, elem) by walking add/ptrtoint/getelementptr."""

@@ -36,6 +36,9 @@ class RowSchedule:
     rows_per_block: int = 1
     reduction_parts: int = 1
     materialize_shared_row_output: bool = True
+    cross_row_finalize: bool = False
+    raw_moment_variance: bool = False
+    compact_reduction_topology: bool = True
 
     def __post_init__(self) -> None:
         if type(self.block_threads) is not int or self.block_threads not in _BLOCK_THREADS:
@@ -67,13 +70,23 @@ class RowSchedule:
             raise ValueError(
                 "row schedule materialize_shared_row_output must be a bool"
             )
+        if type(self.cross_row_finalize) is not bool:
+            raise ValueError("row schedule cross_row_finalize must be a bool")
+        if type(self.raw_moment_variance) is not bool:
+            raise ValueError("row schedule raw_moment_variance must be a bool")
+        if type(self.compact_reduction_topology) is not bool:
+            raise ValueError("row schedule compact_reduction_topology must be a bool")
         if type(self.rows_per_block) is not int or self.rows_per_block not in {
             1,
             2,
             4,
             8,
+            16,
+            32,
         }:
-            raise ValueError("row schedule rows_per_block must be 1, 2, 4, or 8")
+            raise ValueError(
+                "row schedule rows_per_block must be 1, 2, 4, 8, 16, or 32"
+            )
         if self.rows_per_block > 1 and self.block_threads != 32:
             raise ValueError(
                 "multi-row schedule requires 32 logical threads per row"
@@ -94,6 +107,19 @@ class RowSchedule:
         if self.reduction_parts > 1 and self.vector_width == 4:
             raise ValueError(
                 "multi-stage reduction currently requires scalar feature loads"
+            )
+        if self.cross_row_finalize and (
+            self.rows_per_block != 1 or self.reduction_parts != 1
+        ):
+            raise ValueError(
+                "cross-row finalize requires one row per block and one row stage"
+            )
+        if not self.compact_reduction_topology and (
+            self.rows_per_block > 1 or self.leader_finalize
+        ):
+            raise ValueError(
+                "multi-row and leader-finalize schedules require the compact "
+                "reduction topology"
             )
 
     @property
@@ -117,7 +143,13 @@ class RowSchedule:
             f"rows-per-block={self.rows_per_block} "
             f"reduction-parts={self.reduction_parts} "
             "materialize-shared-row-output="
-            f"{'true' if self.materialize_shared_row_output else 'false'}"
+            f"{'true' if self.materialize_shared_row_output else 'false'} "
+            "cross-row-finalize="
+            f"{'true' if self.cross_row_finalize else 'false'} "
+            "raw-moment-variance="
+            f"{'true' if self.raw_moment_variance else 'false'} "
+            "compact-reduction-topology="
+            f"{'true' if self.compact_reduction_topology else 'false'}"
         )
 
     def to_dict(self) -> dict[str, int | bool]:
@@ -134,6 +166,9 @@ class RowSchedule:
             "rows_per_block": self.rows_per_block,
             "reduction_parts": self.reduction_parts,
             "materialize_shared_row_output": self.materialize_shared_row_output,
+            "cross_row_finalize": self.cross_row_finalize,
+            "raw_moment_variance": self.raw_moment_variance,
+            "compact_reduction_topology": self.compact_reduction_topology,
         }
 
 
@@ -144,6 +179,8 @@ class ElementwiseSchedule:
     vector_width: int = 4
     promote_uniform_scalars: bool = False
     tanh_approximation: str = "stable-ex2"
+    grid_stride_unroll: int = 1
+    logical_tile_elements: int = 0
 
     def __post_init__(self) -> None:
         if type(self.block_threads) is not int or self.block_threads not in _BLOCK_THREADS:
@@ -160,10 +197,27 @@ class ElementwiseSchedule:
             raise ValueError(
                 "elementwise tanh_approximation must be stable-ex2 or native-ptx"
             )
+        if self.grid_stride_unroll not in {1, 2, 4, 8}:
+            raise ValueError("elementwise grid_stride_unroll must be 1, 2, 4, or 8")
+        if (
+            type(self.logical_tile_elements) is not int
+            or self.logical_tile_elements < 0
+            or self.logical_tile_elements > 8192
+            or (
+                self.logical_tile_elements
+                and self.logical_tile_elements
+                & (self.logical_tile_elements - 1)
+            )
+        ):
+            raise ValueError(
+                "elementwise logical_tile_elements must be zero or a power of two <= 8192"
+            )
         if self.flatten_contiguous and self.vector_width not in {2, 4}:
             raise ValueError("flattened elementwise vector_width must be 2 or 4")
-        if not self.flatten_contiguous and self.vector_width != 1:
-            raise ValueError("row elementwise schedule derives scalar/vector access")
+        if self.flatten_contiguous and self.grid_stride_unroll != 1:
+            raise ValueError("flattened elementwise schedule requires unroll=1")
+        if self.flatten_contiguous and self.logical_tile_elements != 0:
+            raise ValueError("flattened elementwise schedule requires logical tile=0")
 
     @property
     def pass_argument(self) -> str:
@@ -176,8 +230,12 @@ class ElementwiseSchedule:
                 " flatten-contiguous=true "
                 f"flat-vector-width={self.vector_width}"
             )
+        else:
+            argument += f" row-vector-width={self.vector_width}"
         if self.promote_uniform_scalars:
             argument += " promote-uniform-scalars=true"
+        argument += f" grid-stride-unroll={self.grid_stride_unroll}"
+        argument += f" logical-tile-elements={self.logical_tile_elements}"
         argument += f" tanh-approximation={self.tanh_approximation}"
         return argument
 
@@ -188,6 +246,8 @@ class ElementwiseSchedule:
             "vector_width": self.vector_width,
             "promote_uniform_scalars": self.promote_uniform_scalars,
             "tanh_approximation": self.tanh_approximation,
+            "grid_stride_unroll": self.grid_stride_unroll,
+            "logical_tile_elements": self.logical_tile_elements,
         }
 
 

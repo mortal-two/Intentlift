@@ -1,4 +1,6 @@
 // RUN: intent-opt -convert-intent-elementwise-to-gpu=block-threads=256 %s | FileCheck %s
+// RUN: intent-opt -convert-intent-elementwise-to-gpu='block-threads=256 grid-stride-unroll=4' %s | FileCheck %s --check-prefix=UNROLL
+// RUN: intent-opt -convert-intent-elementwise-to-gpu='block-threads=128 logical-tile-elements=4096' %s | FileCheck %s --check-prefix=TILE
 
 // A large static pure-map domain must not materialize N/T copies of the map DAG
 // in compiler IR.  The generic elementwise pass reuses the shared flat
@@ -19,6 +21,23 @@
 // CHECK-COUNT-1: memref.store
 // CHECK: gpu.terminator
 // CHECK-NOT: intent.
+// UNROLL-LABEL: func.func @large_identity(
+// UNROLL-SAME: intent.backend.grid_blocks = 1024 : i64
+// UNROLL-SAME: intent.backend.grid_stride_unroll = 4 : i64
+// UNROLL-SAME: "cuda.elementwise.flat_grid_stride.unroll.v1"
+// UNROLL: %[[UGRID:.*]] = arith.constant 1024 : index
+// UNROLL: gpu.launch{{.*}}%[[UGRID]]
+// UNROLL: scf.for
+// UNROLL-COUNT-4: memref.load
+// UNROLL-COUNT-4: memref.store
+// TILE-LABEL: func.func @large_identity(
+// TILE-SAME: intent.backend.grid_blocks = 256 : i64
+// TILE-SAME: intent.backend.logical_tile_elements = 4096 : i64
+// TILE-SAME: "cuda.elementwise.flat_logical_tile.v1"
+// TILE: %[[TGRID:.*]] = arith.constant 256 : index
+// TILE: %[[TBLOCK:.*]] = arith.constant 128 : index
+// TILE: gpu.launch{{.*}}%[[TGRID]]{{.*}}%[[TBLOCK]]
+// TILE: scf.for
 func.func @large_identity(%x: tensor<1048576xf32>) -> tensor<1048576xf32> {
   %y = intent.map_unary %x {fn = "identity"}
     : (tensor<1048576xf32>) -> tensor<1048576xf32>

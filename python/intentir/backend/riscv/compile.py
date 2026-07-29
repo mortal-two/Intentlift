@@ -122,16 +122,30 @@ class RiscvSchedule:
     parallel_tile: int = 0
     reduction_tile: int = 0
     thread_count: int = 1
+    scalable_vectorization: bool = False
 
     def __post_init__(self) -> None:
         if self.opt_level not in {2, 3}:
             raise ValueError("RVV opt_level must be 2 or 3")
         if type(self.vectorize) is not bool:
             raise TypeError("vectorize must be bool")
+        if type(self.scalable_vectorization) is not bool:
+            raise TypeError("scalable_vectorization must be bool")
         if self.vector_bits not in {0, 128}:
             raise ValueError("RVV vector_bits must be 0 or native VLEN=128")
-        if self.thread_count not in {1, 16}:
-            raise ValueError("RVV thread_count must be 1 or 16")
+        if self.scalable_vectorization and (
+            not self.vectorize or self.vector_bits != 0
+        ):
+            raise ValueError(
+                "RVV scalable vectorization requires vectorize=true and "
+                "vector_bits=0"
+            )
+        if self.vector_bits == 0 and not self.scalable_vectorization:
+            raise ValueError(
+                "RVV vector_bits=0 is reserved for scalable vectorization"
+            )
+        if self.thread_count != 1:
+            raise ValueError("RVV production search is single-thread only")
         for name, value in (
             ("parallel_tile", self.parallel_tile),
             ("reduction_tile", self.reduction_tile),
@@ -148,6 +162,14 @@ class RiscvSchedule:
             "opt_level": self.opt_level,
             "vectorize": self.vectorize,
             "vector_bits": self.vector_bits,
+            "vector_policy": (
+                "scalable"
+                if self.scalable_vectorization
+                else "fixed"
+                if self.vectorize
+                else "scalar"
+            ),
+            "scalable_vectorization": self.scalable_vectorization,
             "parallel_tile": self.parallel_tile,
             "reduction_tile": self.reduction_tile,
             "thread_count": self.thread_count,
@@ -166,6 +188,7 @@ class RiscvLoweringCandidate:
         return (
             f"rvv.{path}.o{schedule.opt_level}."
             f"vec{int(schedule.vectorize)}.vlen{schedule.vector_bits}."
+            f"scalable{int(schedule.scalable_vectorization)}."
             f"pt{schedule.parallel_tile}.rt{schedule.reduction_tile}."
             f"thr{schedule.thread_count}."
             f"reassoc{int(self.transformation.reassociate_reductions)}"
@@ -221,6 +244,8 @@ class RiscvCompiledObject:
     symbol: str
     object_bytes: bytes
     rvv_instruction_count: int
+    scalable_vector_ir_count: int
+    rvv_vsetvl_modes: tuple[str, ...]
     transformation_record: RiscvTransformationRecord
 
     @property
@@ -256,6 +281,8 @@ class RiscvCompiledObject:
             "c_interface_symbol": self.c_interface_symbol,
             "object_size_bytes": len(self.object_bytes),
             "rvv_instruction_count": self.rvv_instruction_count,
+            "scalable_vector_ir_count": self.scalable_vector_ir_count,
+            "rvv_vsetvl_modes": list(self.rvv_vsetvl_modes),
             "true_mlir_pipeline": True,
             "python_target_kernel_emission": False,
         }
@@ -302,6 +329,10 @@ def _lower_to_llvm_ir(
         pre_schedule_structured = linalg
     structured = pre_schedule_structured
     schedule = candidate.schedule
+    fusion_changed_ir = bool(
+        candidate.transformation.fuse_producers
+        and pre_schedule_structured != linalg
+    )
     if schedule.parallel_tile or schedule.reduction_tile:
         structured = _run_text(
             [
@@ -337,8 +368,9 @@ def _lower_to_llvm_ir(
         generated_tile_loops=_module_i64_attr(
             structured, "intent.schedule.generated_loop_count"
         ),
-        fused_producers=_module_i64_attr(
-            structured, "intent.schedule.fused_producer_count"
+        fused_producers=max(
+            _module_i64_attr(structured, "intent.schedule.fused_producer_count"),
+            int(fusion_changed_ir),
         ),
         fusion_outer_parallel_only_ops=_module_i64_attr(
             structured, "intent.schedule.fusion_outer_parallel_only_count"
@@ -357,6 +389,11 @@ def _lower_to_llvm_ir(
         raise RuntimeError(
             "requested reduction reassociation matched no explicit "
             "float_nondeterministic combine"
+        )
+    if candidate.transformation.fuse_producers and record.fused_producers == 0:
+        raise RuntimeError(
+            "requested RVV producer-consumer fusion produced no fused Linalg "
+            "operation"
         )
     parallel_runtime = schedule.thread_count > 1
     front = [
@@ -465,15 +502,46 @@ def compile_riscv_object(
     lowered, raw_llvm_ir, transformation_record = _lower_to_llvm_ir(
         state, candidate
     )
+    # Keep the production entrypoint fail-closed even when an alternate caller
+    # supplies a pre-lowered module.  A requested structural/numeric state is
+    # not a distinct candidate unless the compiler record proves it happened.
+    if (
+        candidate.transformation.reassociate_reductions
+        and transformation_record.reassociated_float_combines == 0
+    ):
+        raise RuntimeError(
+            "requested reduction reassociation matched no explicit "
+            "float_nondeterministic combine"
+        )
+    if (
+        candidate.transformation.fuse_producers
+        and transformation_record.fused_producers == 0
+    ):
+        raise RuntimeError(
+            "requested RVV producer-consumer fusion produced no fused Linalg "
+            "operation"
+        )
     schedule = candidate.schedule
+    vector_shape_flags = (
+        [
+            "--riscv-v-vector-bits-min=-1",
+            "--riscv-v-vector-bits-max=0",
+            "--scalable-vectorization=preferred",
+        ]
+        if schedule.scalable_vectorization
+        else [
+            f"--riscv-v-vector-bits-min={schedule.vector_bits}",
+            f"--riscv-v-vector-bits-max={schedule.vector_bits}",
+            "--scalable-vectorization=off",
+        ]
+    )
     opt_command = [
         OPT,
         f"-O{schedule.opt_level}",
         "-S",
         f"-mtriple={TRIPLE}",
         f"-mattr={MATTR}",
-        f"--riscv-v-vector-bits-min={schedule.vector_bits}",
-        f"--riscv-v-vector-bits-max={schedule.vector_bits}",
+        *vector_shape_flags,
         f"-vectorize-loops={'true' if schedule.vectorize else 'false'}",
         f"-vectorize-slp={'true' if schedule.vectorize else 'false'}",
         "-o",
@@ -484,8 +552,7 @@ def compile_riscv_object(
         LLC,
         f"-mtriple={TRIPLE}",
         f"-mattr={MATTR}",
-        f"--riscv-v-vector-bits-min={schedule.vector_bits}",
-        f"--riscv-v-vector-bits-max={schedule.vector_bits}",
+        *vector_shape_flags,
         f"-O{schedule.opt_level}",
         "-relocation-model=pic",
     ]
@@ -501,11 +568,31 @@ def compile_riscv_object(
             flags=re.MULTILINE,
         )
     )
+    scalable_vector_ir_count = len(re.findall(r"<vscale\s+x\s+", optimized))
+    if schedule.scalable_vectorization and scalable_vector_ir_count == 0:
+        raise RuntimeError(
+            "requested scalable RVV vectorization produced no scalable-vector "
+            "LLVM IR"
+        )
+    rvv_vsetvl_modes = tuple(
+        sorted(
+            {
+                match.group(1).replace(" ", "")
+                for match in re.finditer(
+                    r"^\s+vset(?:i?vli|vl)\s+[^\n]*?\b(e(?:8|16|32|64)\s*,\s*m(?:f[248]|[1248]))\b",
+                    assembly,
+                    flags=re.MULTILINE,
+                )
+            }
+        )
+    )
     return RiscvCompiledObject(
         candidate=candidate,
         symbol=_function_symbol(state.base.intent_mlir),
         object_bytes=object_bytes,
         rvv_instruction_count=rvv_instruction_count,
+        scalable_vector_ir_count=scalable_vector_ir_count,
+        rvv_vsetvl_modes=rvv_vsetvl_modes,
         transformation_record=transformation_record,
     )
 

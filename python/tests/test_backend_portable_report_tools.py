@@ -484,10 +484,19 @@ def test_rvv_bounded_candidate_union_makes_budget_executable() -> None:
     assert orders["erase_e3"] == ["no-retile", "erase-only"]
     assert orders["no_retile"] == ["no-retile"]
     assert orders["c_fixed"] == ["c-fixed"]
-    assert orders["e2_evaluation"] == ["c-fixed", "no-retile"]
-    assert orders["e3_evaluation"] == ["c-fixed", "fused"]
-    assert orders["schedule_only_retiled"] == ["c-fixed"]
-    assert orders["timed"] == ["c-fixed", "no-retile", "fused", "erase-only"]
+    assert orders["e2_evaluation"] == [
+        "c-fixed",
+        "no-retile",
+        "erase-only",
+    ]
+    assert orders["e3_evaluation"] == [
+        "c-fixed",
+        "fused",
+        "no-retile",
+        "erase-only",
+    ]
+    assert orders["schedule_only_retiled"] == ["c-fixed", "erase-only"]
+    assert orders["timed"] == ["no-retile", "c-fixed", "fused", "erase-only"]
 
     oracle = rvv_runner._bounded_candidate_orders(
         entry, 2, thread_count=1, measure_c_oracle=True
