@@ -35,11 +35,13 @@ from .scrc import (
     SCRCExtraction,
     SCRCProvenance,
     SCRCReliftRecord,
+    SourceIdentifierPrivacyError,
     check_scrc_lift_candidate,
     decode_scrc_lift_artifact,
     prepare_scrc_lift,
     scrc_candidate_check_context,
 )
+from .prompt import SCHEMA as _INTENTIR_OPERATION_REFERENCE
 
 
 CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v14"
@@ -62,14 +64,19 @@ the exact annotation-free artifact.v11 JSON Schema in one compact JSON line; rea
 that one file in one tool action. Do not search for another schema, tutorial,
 example, preflight, or operation catalog: none is authoritative here.
 
-Persist your own construction state early instead of privately planning the whole
-artifact and then emitting one giant first patch. You may incrementally author a
-proof-irrelevant work/build_candidate.py or section drafts under work/, run that
-model-written builder to materialize output/candidate.json, and keep patching the
-same files. The runtime never reads those drafts to infer a field. Completeness is
-required when CandidateCheck or final submission reads output/candidate.json, not
-for each preceding file edit. After the first complete candidate, prefer local
-patches over rewriting the full object.
+Author the artifact incrementally under work/candidate_parts/ instead of emitting
+one giant first patch or writing another Python builder. Each *.json file there is
+one model-authored JSON object fragment. Split at recursively disjoint object keys,
+for example envelope, J intent, J boundary groups, signature/relations, C, and pi
+relation groups. Every leaf and every array element remains authored by you. Run:
+
+python input/assemble_candidate.py
+
+The fixed assembler only recursively joins disjoint JSON object keys and writes
+output/candidate.json; it rejects duplicate leaves and never allocates a handle,
+adds a field, concatenates an array, or infers J/C/pi semantics. Edit the small
+owning fragment after diagnostics and reassemble. Completeness is required only
+for the assembled candidate consumed by CandidateCheck and final submission.
 
 Use input/source_ttir.json only when it helps resolve one concrete Source control,
 time, def-use, effect, or materialization uncertainty. Read only the relevant
@@ -110,11 +117,13 @@ a mandatory pre-check phase. These tools only project exact Harness facts or
 your current authored candidate; they never infer or edit J/C/pi.
 
 This invokes the same diagnostic-only CandidateCheck used by the host over your
-exact current bytes. It never edits or generates a field. Repair the current
-complete file yourself until it reports PASS, then end this Codex turn. The host
-independently reruns CandidateCheck after the turn and may resume this same
-thread with closed diagnostics. Do not claim TypeCheck, Replay, Gate1, Gate2, or
-certification. Do not create any other file under output/.
+exact current bytes, followed only by the adjacent anonymous-submission privacy
+check. A privacy rejection names the artifact path but never reveals the private
+Source spelling. Neither check edits or generates a field. Repair the owning
+fragment, reassemble, and continue until the command reports PASS; then end this
+Codex turn. The host independently reruns the same boundary after the turn and
+may resume this same thread with closed diagnostics. Do not claim TypeCheck,
+Replay, Gate1, Gate2, or certification. Do not create any other file under output/.
 """
 
 
@@ -200,6 +209,70 @@ _COMPACT_WIRE_RULES = (
 )
 
 
+def _compact_intent_op_reference() -> str:
+    """Reuse the existing op vocabulary without exposing its legacy top level."""
+
+    start_marker = "Atomic ops (each is one JSON object in a \"body\" list):"
+    end_marker = "Hard rules:"
+    start = _INTENTIR_OPERATION_REFERENCE.index(start_marker)
+    end = _INTENTIR_OPERATION_REFERENCE.index(end_marker, start)
+    return _INTENTIR_OPERATION_REFERENCE[start:end].strip()
+
+
+_CANDIDATE_FRAGMENT_ASSEMBLER = r'''from __future__ import annotations
+import json
+import os
+from pathlib import Path
+import tempfile
+
+PARTS = Path("work/candidate_parts")
+OUTPUT = Path("output/candidate.json")
+
+def merge(left, right, path):
+    if not isinstance(right, dict):
+        raise SystemExit(f"fragment {path or '<root>'} must be a JSON object")
+    for key, value in right.items():
+        child = f"{path}.{key}" if path else key
+        if key not in left:
+            left[key] = value
+        elif isinstance(left[key], dict) and isinstance(value, dict):
+            merge(left[key], value, child)
+        else:
+            raise SystemExit(f"duplicate fragment leaf: {child}")
+
+if not PARTS.is_dir():
+    raise SystemExit("create work/candidate_parts/*.json first")
+paths = sorted(PARTS.glob("*.json"))
+if not paths:
+    raise SystemExit("work/candidate_parts contains no JSON fragments")
+candidate = {}
+for path in paths:
+    if path.is_symlink() or not path.is_file():
+        raise SystemExit(f"fragment must be a regular file: {path}")
+    value = json.loads(path.read_text(encoding="utf-8"))
+    merge(candidate, value, "")
+text = json.dumps(
+    candidate,
+    indent=2,
+    sort_keys=True,
+    ensure_ascii=False,
+    allow_nan=False,
+) + "\n"
+OUTPUT.parent.mkdir(parents=True, exist_ok=True)
+descriptor, temporary_name = tempfile.mkstemp(prefix=".candidate-", dir=OUTPUT.parent)
+temporary = Path(temporary_name)
+try:
+    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        stream.write(text)
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, OUTPUT)
+finally:
+    temporary.unlink(missing_ok=True)
+print(json.dumps({"status":"pass","fragments":len(paths),"bytes":len(text.encode())}))
+'''
+
+
 def _strip_schema_annotations(value: Any) -> Any:
     """Keep the exact structural schema while removing tutorial-sized prose."""
 
@@ -233,6 +306,7 @@ def _codex_input_files(
             "runs the full schema, Decode, and dependent TypeCheck"
         ),
         "semantic_rules": list(_COMPACT_WIRE_RULES),
+        "intent_op_authoring_reference": _compact_intent_op_reference(),
         "wire_schema": _strip_schema_annotations(schema),
     }
     files = {
@@ -249,6 +323,7 @@ def _codex_input_files(
         )
         + "\n",
         "candidate_check.json": "null\n",
+        "assemble_candidate.py": _CANDIDATE_FRAGMENT_ASSEMBLER,
     }
     if "source_ttir.json" in complete:
         files["source_ttir.json"] = complete["source_ttir.json"]
@@ -271,18 +346,21 @@ terminal-fork witness appears, reread the selected reachable helper bodies and
 compare their literal memory-call sequence with each branch scope.effects and pi
 transfer/order edges; do not infer effect order from J node declaration order. Use
 the bounded exact category/path query only when the frontier names an unresolved
-section. Repair the complete model-authored (J,C,pi) against the closed external
-feedback and Source, run `python .agents/intentir_agent_tool.py candidate_check`,
+section. Repair the complete model-authored (J,C,pi) fragments against the closed
+external feedback and Source, run `python input/assemble_candidate.py`, then run
+`python .agents/intentir_agent_tool.py candidate_check`,
 and end only after it
 passes for the complete current output/candidate.json. This is not a new writer
 and not a patch-only artifact. The host alone will rerun CandidateCheck and the
 formal SCRC gates.
 """
 
-_CANDIDATE_CHECK_CONTINUATION_PROMPT = """The host CandidateCheck rejected the current exact candidate bytes.
-Read input/candidate_check.json, then repair output/candidate.json yourself in
-this same thread. Make coordinated J/C/pi changes when required; do not merely
-silence the first path. Rerun `python .agents/intentir_agent_tool.py candidate_check`
+_CANDIDATE_CHECK_CONTINUATION_PROMPT = """The host submission preflight rejected the current exact candidate bytes.
+Read input/candidate_check.json, then repair the owning files under
+work/candidate_parts/ in this same thread. Make coordinated J/C/pi changes when
+required; do not merely silence the first path. Rerun
+`python input/assemble_candidate.py` and then
+`python .agents/intentir_agent_tool.py candidate_check`
 and end only after the
 complete candidate passes. CandidateCheck is
 diagnostic-only and has no certification authority.
@@ -301,6 +379,8 @@ def _source_aware_startup_context(workspace: Any, *, fresh_owner: bool) -> dict[
                 "harness": "input/harness_view.json",
                 "source_ttir": "input/source_ttir.json",
                 "wire_contract": "input/wire_contract.json",
+                "assembler": "input/assemble_candidate.py",
+                "candidate_parts": "work/candidate_parts/*.json",
                 "candidate": "output/candidate.json",
             },
             "authority": (
@@ -556,6 +636,28 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                     candidate_text,
                     candidate_check_context,
                 )
+                if check["status"] == "pass":
+                    try:
+                        # CandidateCheck intentionally remains source-free.  The
+                        # adjacent submission boundary additionally enforces
+                        # anonymity before a passing draft may leave this owner.
+                        decode_scrc_lift_artifact(candidate_text, prepared)
+                    except SourceIdentifierPrivacyError as exc:
+                        check = {
+                            "protocol": CANDIDATE_CHECK_PROTOCOL,
+                            "status": "fail",
+                            "diagnostics": [
+                                {
+                                    "rule_code": "source_identifier_privacy",
+                                    "path": exc.path,
+                                    "observed_refs_or_types": [
+                                        "replace this free-form Source spelling "
+                                        "with the correct anonymous handle or a "
+                                        "source-neutral closed protocol value"
+                                    ],
+                                }
+                            ],
+                        }
             check_results.append(
                 {
                     "trigger": trigger,

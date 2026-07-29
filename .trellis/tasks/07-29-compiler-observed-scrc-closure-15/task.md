@@ -320,6 +320,21 @@ Lift owner”的当前配置；Terra仍可在简单Kernel或语义已稳定的�
 使用Sol-high而非Sol-xhigh：保持同一最小workspace与单writer，检验能否保留Sol语义质量而降低首稿
 延迟；不得通过Terra→Sol artifact handoff破坏owner上下文或复用错误语义。
 
+上述`build_candidate.py`仍只是允许模型自行选择分段，并未真正消除“自写第二套构造程序+反复维护
+整份全局对象”的负担，因此Terra结果只作为旧authoring接口基线。随后同一Linear的Sol-high在约
+296秒写出28.6KB首稿，并在约654秒到达source-free CandidateCheck PASS；过程中仍因精简合同删除了
+准确IntentOp authoring spelling而反复猜测cast、broadcast、contraction与map attrs。PASS后的正式出口
+又首次触发旧的Source-identifier privacy检查，Runner把它错误归类为infrastructure failure并清理了
+candidate；这不构成Gate1或NO_CLOSURE证据。
+
+第三版authoring接口先修完再启动任何模型：workspace提供一个通用JSON fragment assembler，owner把
+envelope、J intent、J boundary各组、signature/relations、C与π各组写成递归不重叠的小JSON fragment；
+assembler只拼接model-authored键值，拒绝重复leaf，不分配handle、不补字段、不拼数组、不推导语义。
+同一个wire contract同时复用既有IntentOp closed spelling，避免另建教程或kernel模板。Source标识符
+检查仍在匿名提交边界，但现在并入owner的pre-submit循环且只返回artifact path，不再允许
+CandidateCheck PASS后才以基础设施错误丢失candidate。完成该实现并提交干净后，才重新运行
+Terra-high对照；其目的只是检验分片authoring是否降低首稿和修正成本，不预设Terra可替代难核Sol。
+
 ## 5. J / C / π的能力计划
 
 ### 5.1 不做大重构

@@ -568,6 +568,21 @@ class SCRCLiftError(RuntimeError):
         super().__init__(f"SCRC Lift response rejected: {attempt.diagnostic}")
 
 
+class SourceIdentifierPrivacyError(ValueError):
+    """A submitted artifact retained a private Source spelling at one JSON path.
+
+    The diagnostic deliberately exposes only the artifact path.  Returning the
+    original spelling to a source-aware owner would defeat the anonymous naming
+    boundary that this check protects.
+    """
+
+    def __init__(self, path: str) -> None:
+        self.path = path
+        super().__init__(
+            f"Lift response retained a source identifier at {path}"
+        )
+
+
 def _annotation_is_constexpr(annotation: ast.expr | None) -> bool:
     if annotation is None:
         return False
@@ -2138,24 +2153,37 @@ def _validate_source_identifier_privacy(
         "c": artifact.c.to_json(),
         "pi": artifact.pi.to_json(),
     }
-    visible_strings: list[str] = []
+    visible_strings: list[tuple[str, str]] = []
     literal_fields = {
         "dtype", "fn", "frontend", "kind", "mechanism", "mode", "op",
         "placement", "producer", "role", "subscripts", "value_type",
     }
 
-    def collect_strings(value: Any, field_name: str | None = None) -> None:
+    def collect_strings(
+        value: Any,
+        *,
+        path: str,
+        field_name: str | None = None,
+    ) -> None:
         if isinstance(value, str):
             if field_name not in literal_fields:
-                visible_strings.append(value)
+                visible_strings.append((path, value))
         elif isinstance(value, Mapping):
             for key, item in value.items():
-                collect_strings(item, key)
+                collect_strings(
+                    item,
+                    path=f"{path}.{key}" if path else str(key),
+                    field_name=key,
+                )
         elif isinstance(value, list):
-            for item in value:
-                collect_strings(item, field_name)
+            for index, item in enumerate(value):
+                collect_strings(
+                    item,
+                    path=f"{path}[{index}]",
+                    field_name=field_name,
+                )
 
-    collect_strings(visible)
+    collect_strings(visible, path="")
     for source_name, opaque in binding.source_to_opaque:
         if source_name == opaque:
             continue
@@ -2167,8 +2195,9 @@ def _validate_source_identifier_privacy(
         ):
             continue
         pattern = rf"(?<![A-Za-z0-9_]){re.escape(source_name)}(?![A-Za-z0-9_])"
-        if any(re.search(pattern, item) for item in visible_strings):
-            raise ValueError("Lift response retained a source identifier")
+        for path, item in visible_strings:
+            if re.search(pattern, item):
+                raise SourceIdentifierPrivacyError(path)
 
 
 def extract_scrc_artifact(
@@ -2399,6 +2428,7 @@ __all__ = [
     "SCRCCandidateCheckContext", "SCRCCompilerArgument",
     "SCRCCompilerView", "SCRCExtraction", "SCRCHarnessBinding",
     "SCRCLiftAttempt", "SCRCLiftError", "SCRCLiftRequest", "SCRCProvenance", "SCRCReliftContext",
+    "SourceIdentifierPrivacyError",
     "SCRCReliftRecord", "anonymize_source", "build_scrc_lift_instructions",
     "check_scrc_lift_candidate", "decode_scrc_lift_artifact", "extract_scrc_artifact", "prepare_scrc_lift", "scrc_candidate_check_context", "scrc_lift_prompt_sha256",
     "scrc_relift_prompt_sha256",
