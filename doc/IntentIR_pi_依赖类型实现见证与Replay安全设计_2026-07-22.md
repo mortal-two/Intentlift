@@ -906,19 +906,21 @@ Replay LLM 应遵守以下过程合同：
 17. 不从 π 猜出后覆盖 J，也不从 compiler diff 修补。
 
 当前 fresh receipt 组合为 `intentir.scrc.replay-input.v1`、Triton
-`public_frontend_context_v18`、TileLang `public_frontend_context_v8`、CUDA
-`public_frontend_context_v4`、Codex/MiniSWE Lift `intentir.lift-knowledge.v68/v65`、MiniSWE Replay v34 与 Codex Replay v30；旧 receipt 保持其原 verdict，不能由
+`public_frontend_context_v18`、TileLang `public_frontend_context_v9`、CUDA
+`public_frontend_context_v4`、Codex/MiniSWE Lift `intentir.lift-knowledge.v68/v65`、MiniSWE Replay v35 与 Codex Replay v31；旧 receipt 保持其原 verdict，不能由
 当前 Replay consumer 或 Lift knowledge 静默升级。
 
-v34/v30 将 authored route extent transforms 加入 exact critical ledger、audit 与 static ingress；它不
+v35/v31 将 authored route extent transforms 加入 exact critical ledger、audit 与 static ingress；它不
 生成 relation/code，也不替代 Gate1。同一 region 中 `physical_loop_carriers` 的 declaration order 是
 init/state/next/result 共享的 carrier-tuple ordinal；Lift 从 Source frontend loop tuple 作者化，Replay
 不按 dtype/ref/mechanism 重排。该 slot order 不表示 event execution order，也不替代 `pi.order`。
-v34/v30 对正常大小匿名 packet 只做一次 exact startup embedding，并将 semantic dimension carrier、
+v35/v31 对正常大小匿名 packet 只做一次 exact startup embedding，并将 semantic dimension carrier、
 IEEE special typed constant、physical/unit iteration、transfer route/order 与
-`reduction_linearization + consumer route` 作一次 bounded exact `critical_facts.v4` 重索引；它还把 J-authored broadcast 与 operand closed type、matching
-access、named consumer/ordinal，以及 identity materialization 与相邻 transfer 无损并置，并要求有该 obligation 的 owner 对当前源码运行
-`replay-obligation-audit.v3`。它不建立 relation-to-statement 映射、不选择 rank-lift spelling/次数，
+`reduction_linearization + consumer route` 作一次 bounded exact `critical_facts.v5` 重索引；它还把
+J-authored broadcast 与 operand closed type、matching access、named consumer/ordinal，以及 identity
+materialization 相邻 transfer 的方向、exact boundary access 与 tensor type 无损并置，使 U_f 能区分
+shaped participant copy 与 per-program scalar load/store，并要求有该 obligation 的 owner 对当前源码运行
+`replay-obligation-audit.v4`。它不建立 relation-to-statement 映射、不选择 rank-lift spelling/次数，
 也不生成或修复 Replay。超限时
 manifest 才将 J 中已声明
 的 op/boundary 与 π 中已声明的 instance mechanism、time/control/terminal obligation 重新索引为
@@ -956,7 +958,7 @@ artifact 保持原始序列化、digest 与字段集合，禁止静默附加空�
 
 固定代码不把 π 解码成源码，不建立 deterministic composer。
 
-`replay-check.v14` 可以在公共、source-blind synthetic compile 后核对 π 已作者化的
+`replay-check.v15` 可以在公共、source-blind synthetic compile 后核对 π 已作者化的
 `transfer_direct` occurrence 与 compiled load/store multiplicity；它只拒绝 compiler 已经折叠的
 作者化 event，不补 transfer、不决定保留它的源码写法。它同时将 structured J loop 数与
 `pi.physical_iterations|unit_iterations` 数之和作为已作者化的 compiled `scf.for` 必要 occurrence；

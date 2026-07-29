@@ -885,19 +885,19 @@ Replay 不得：
 
 `U_f` 必须是版本化、source-neutral 的公共前端知识，不能按当前 Kernel、operator 或失败样本选择。
 当前版本组合是 `intentir.scrc.replay-input.v1`、Triton
-`public_frontend_context_v18`、TileLang/CUDA `public_frontend_context_v8/v4`、source-aware
-Codex/MiniSWE Lift `intentir.lift-knowledge.v68/v65`、source-blind MiniSWE Replay v34 与 Codex Replay v30、
-`replay-check.v14`；fresh evidence必须保存实际 receipt，
+`public_frontend_context_v18`、TileLang/CUDA `public_frontend_context_v9/v4`、source-aware
+Codex/MiniSWE Lift `intentir.lift-knowledge.v68/v65`、source-blind MiniSWE Replay v35 与 Codex Replay v31、
+`replay-check.v15`；fresh evidence必须保存实际 receipt，
 旧版本 run 不能被新组合追认。
-v34/v30 将 authored route extent transforms 纳入 exact `critical_facts.v4`、
-`replay-obligation-audit.v3` 与 source-blind static ingress；只拒绝缺失 closed floor/ceil-div spelling，
+v35/v31 将 authored route extent transforms 纳入 exact `critical_facts.v5`、
+`replay-obligation-audit.v4` 与 source-blind static ingress；只拒绝缺失 closed floor/ceil-div spelling，
 不生成 relation/code，也不替代 Gate1。
 同一 region 的 `physical_loop_carriers` declaration
 order 是 init/state/next/result 共享的 carrier-tuple ordinal；Lift 从 Source frontend loop tuple 完整
 作者化，Replay 不按 dtype/ref/mechanism 重排。它不是 event execution order，后者仍只由
-`pi.order` 拥有。v34/v30 还把每条 J-authored `boundary.broadcasts` 与 operand closed type、matching
+`pi.order` 拥有。v35/v31 还把每条 J-authored `boundary.broadcasts` 与 operand closed type、matching
 boundary access、named consumer/operand ordinal 作 exact source-blind 重索引；存在该 obligation 时，
-owner 必须用 `replay-obligation-audit.v3` 将 ledger 与自己的当前编号源码并置自审。工具不建立
+owner 必须用 `replay-obligation-audit.v4` 将 ledger 与自己的当前编号源码并置自审。工具不建立
 relation-to-statement 映射、不选择 rank-lift spelling/次数、不生成或修复 Replay，也不读取 Source/Gate。
 同一 `J.signature p*` 的多个 π instance 只能共享该唯一 callable ABI carrier，不能因
 `placement=program` 或 instance multiplicity 生成额外 `tl.program_id`。construction compile 可从
@@ -1399,7 +1399,7 @@ JSONL 中已经完整发出的唯一 `thread.started` 恢复同一 thread identi
 invocation/episode 的 exact current bytes，若它们已通过 closed check则接收，否则只可恢复同一 LLM
 本轮已检查通过的 exact checkpoint，或继续这个已建立的同一 thread。这里没有
 跨 formal round 的 best-parent、语义合并或 fixed repair。Replay workspace view v2 只无损并置 typed
-reduction obligations；`replay-check.v14` 在 source-blind synthetic compile 后核对作者化
+reduction obligations；`replay-check.v15` 在 source-blind synthetic compile 后核对作者化
 `transfer_direct` occurrence 的 compiled multiplicity，并核对 structured J loops 加
 `pi.physical_iterations|unit_iterations` 所要求的 `scf.for` 数及对应 logical/physical carrier block arity，并要求
 distinct `tt.reshape -> tt.reduce(axis=0)` dataflow 数不少于已作者化

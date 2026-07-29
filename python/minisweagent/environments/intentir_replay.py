@@ -32,7 +32,7 @@ INTENTIR_REPLAY_OBLIGATION_AUDIT = "intentir_replay_obligation_audit"
 INTENTIR_PACKET_QUERY = "intentir_packet_query"
 REPLAY_STARTUP_PACKET_EMBED_LIMIT_BYTES = 64 * 1024
 INTENTIR_REPLAY_INSPECT = "intentir_replay_inspect"
-REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v14"
+REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v15"
 REPLAY_TRANSACTION_PROTOCOL = "intentir.replay-transaction.v1"
 REPLAY_APPLY_PATCH_PROTOCOL = "intentir.replay-exact-text-patch.v1"
 REPLAY_DIRECT_SUBMIT_PROTOCOL = "intentir.replay-direct-submit.v1"
@@ -988,6 +988,49 @@ def _packet_critical_facts(packet: Mapping[str, Any]) -> dict[str, Any]:
         str(item["instance"])
         for item in transfer_occurrences
     }
+    tensor_types = {
+        str(item.get("name")): {
+            "dtype": item.get("dtype"),
+            "shape": item.get("shape"),
+        }
+        for collection in ("inputs", "outputs")
+        for item in (
+            function.get(collection, [])
+            if isinstance(function.get(collection, []), list)
+            else []
+        )
+        if isinstance(item, Mapping) and isinstance(item.get("name"), str)
+    }
+    boundary = j.get("boundary", {})
+    boundary_accesses = (
+        boundary.get("accesses", []) if isinstance(boundary, Mapping) else []
+    )
+    access_by_id = {
+        str(item.get("access_id")): item
+        for item in boundary_accesses
+        if isinstance(item, Mapping) and isinstance(item.get("access_id"), str)
+    }
+
+    def adjacent_transfer_fact(
+        transfer_id: str,
+        *,
+        direction: str,
+        route: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        transfer = instances.get(transfer_id, {})
+        semantic_ref = str(transfer.get("semantic_ref"))
+        access = access_by_id.get(semantic_ref)
+        tensor_ref = access.get("tensor") if isinstance(access, Mapping) else None
+        return {
+            "instance": transfer_id,
+            "direction": direction,
+            "semantic_ref": transfer.get("semantic_ref"),
+            "mechanism": transfer.get("mechanism"),
+            "route": dict(route),
+            "boundary_access": dict(access) if isinstance(access, Mapping) else None,
+            "tensor_type": tensor_types.get(str(tensor_ref)),
+        }
+
     identity_materializations = []
     for refinement in refinements:
         if not isinstance(refinement, Mapping) or refinement.get(
@@ -996,6 +1039,27 @@ def _packet_critical_facts(packet: Mapping[str, Any]) -> dict[str, Any]:
             continue
         instance_id = str(refinement.get("instance"))
         instance = instances.get(instance_id, {})
+        adjacent_transfer_facts = [
+            adjacent_transfer_fact(
+                str(route.get("source")),
+                direction="into_materialization",
+                route=route,
+            )
+            for route in routes
+            if isinstance(route, Mapping)
+            and route.get("target") == instance_id
+            and str(route.get("source")) in transfer_ids
+        ] + [
+            adjacent_transfer_fact(
+                str(route.get("target")),
+                direction="from_materialization",
+                route=route,
+            )
+            for route in routes
+            if isinstance(route, Mapping)
+            and route.get("source") == instance_id
+            and str(route.get("target")) in transfer_ids
+        ]
         adjacent_transfers = sorted(
             {
                 str(route.get("source"))
@@ -1031,10 +1095,11 @@ def _packet_critical_facts(packet: Mapping[str, Any]) -> dict[str, Any]:
                     and route.get("source") == instance_id
                 ],
                 "adjacent_transfer_instances": adjacent_transfers,
+                "adjacent_transfers": adjacent_transfer_facts,
             }
         )
     return {
-        "protocol": "intentir.replay-critical-facts.v4",
+        "protocol": "intentir.replay-critical-facts.v5",
         "semantic_dimension_carriers": dimension_carriers,
         "typed_ieee_special_constants": special_constants,
         "broadcast_obligations": broadcast_obligations,
@@ -1069,7 +1134,7 @@ def _replay_obligation_audit_view(
     cross_region_order = facts["cross_region_order"]
     route_extent_transforms = facts["route_extent_transforms"]
     return {
-        "protocol": "intentir.replay-obligation-audit.v3",
+        "protocol": "intentir.replay-obligation-audit.v4",
         "status": "pass",
         "source_sha256": hashlib.sha256(source_text.encode("utf-8")).hexdigest(),
         "audit_required": bool(

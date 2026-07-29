@@ -45,7 +45,7 @@ v5 guarded store 的 merge 已经是 Layer A 中显式 `select`，且精确 inou
 通过 TypeCheck；Replay 不得把 relation 解读成允许它自行发明 branch、merge 或 mutation。Gate1
 比较的是 Replay 对这些已声明事实的 source realization，不为缺失 relation 建议或生成答案。
 
-当前 `replay-check.v14` 的 synthetic compile 只消费匿名 packet：核对作者化 `transfer_direct`
+当前 `replay-check.v15` 的 synthetic compile 只消费匿名 packet：核对作者化 `transfer_direct`
 occurrence、structured J loop 加 `pi.physical_iterations|unit_iterations` 的 loop occurrence、对应 carrier arity；并且
 只在 signature pointer/tensor kind 与 π address routes 完全闭合时核对 pointer-address operation
 occurrence。完整闭包允许独立 integer base/lane contribution，且不要求 address instance 与 transfer

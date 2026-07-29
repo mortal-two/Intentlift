@@ -1074,7 +1074,7 @@ def test_real_v6_u_f_uses_the_historical_full_u_f_receipt_basis() -> None:
         ),
         (
             Frontend.TILELANG,
-            "3a6b2c9ba6a61e7bd220e68875b6702db6ae36b27212206965e2d6247cde38ce",
+            "390ab1b9f16fc802c6a84c431fd14e101bc1bb9097b5ae6551efd8fafd6c7657",
         ),
         (
             Frontend.CUDA,
@@ -1266,15 +1266,16 @@ def test_tilelang_u_f_materializes_only_authored_expression_boundaries() -> None
     )["u_f"]
     contract = context["compile_entry_contract"]
 
-    assert context["context_policy"] == "public_frontend_context_v8"
+    assert context["context_policy"] == "public_frontend_context_v9"
     assert "pure single-consumer load/value chain" in contract
     assert "do not add an annotated scalar merely to name an instance" in contract
     assert "fan-out, region/order/control placement" in contract
     assert "J.storage owns semantic alias/destination/state lifetime only" in contract
     assert "refined by `identity_materialization`" in contract
     assert "emit one `T.alloc_fragment`" in contract
-    assert "distinct `T.copy` in exact route/order" in contract
-    assert "Never replace that topology with an explicit" in contract
+    assert "only when its exact boundary access and routed participant slice are shaped" in contract
+    assert "per-program scalar load/store remains a direct expression/assignment" in contract
+    assert "Never replace an authored shaped-copy topology" in contract
 
 
 def test_cuda_u_f_keeps_launch_slots_in_the_external_harness_binding() -> None:

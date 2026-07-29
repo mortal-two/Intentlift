@@ -52,12 +52,12 @@ from .tilelang_compiler import (
 from .ttir import TTIRParseError, parse_ttir
 
 
-MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v34"
+MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v35"
 MINISWE_REPLAY_TURN_TIMEOUT_SECONDS = 300.0
 MINISWE_REPLAY_XHIGH_TURN_TIMEOUT_SECONDS = 900.0
 RESPONSES_REPLAY_BACKEND = "openai.responses.intentir-replay.v1"
 STATIC_REPLAY_BACKEND = "intentir.static-replay-test.v1"
-REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v14"
+REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v15"
 _ANONYMOUS_HANDLE = re.compile(r"^[pc][0-9]+$")
 
 

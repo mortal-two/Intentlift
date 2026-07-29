@@ -209,7 +209,7 @@ PUBLIC_FRONTEND_CONTEXT = {
         ),
     },
     "tilelang": {
-        "context_policy": "public_frontend_context_v8",
+        "context_policy": "public_frontend_context_v9",
         "retrieval_scope": "public TileLang documentation and public examples",
         "tool_access": ["public_document_lookup"],
         "compile_entry_contract": (
@@ -245,9 +245,13 @@ PUBLIC_FRONTEND_CONTEXT = {
             "refined by `identity_materialization` and routed next to a shaped "
             "`transfer_direct|transfer_async` is the sole authority for a "
             "representation-only participant fragment: emit one `T.alloc_fragment` "
-            "for that stage and map every directly adjacent authored transfer to a "
-            "distinct `T.copy` in exact route/order, using the J access/consumer "
-            "slice for shape and dtype. Never replace that topology with an explicit "
+            "for that stage. Map an adjacent transfer to `T.copy` only when its exact "
+            "boundary access and routed participant slice are shaped. In particular, "
+            "a per-program scalar load/store remains a direct expression/assignment "
+            "even when routed from a reduction-result fragment; a shaped transfer "
+            "into or out of the fragment is one distinct `T.copy` in exact order. "
+            "Use the J access/consumer slice for shape and dtype. Never replace an "
+            "authored shaped-copy topology with an explicit "
             "`T.Parallel` load/store loop, and never use this rule for a scalar "
             "identity stage or absent identity refinement. "
             "TIR structure is the hard frontend evidence; PTX details below its ABI "
@@ -298,7 +302,7 @@ PUBLIC_FRONTEND_CONTEXT_ACTIVE_POLICY = MappingProxyType(
     {
         "triton": "public_frontend_context_v18",
         "cute": "public_frontend_context_v1",
-        "tilelang": "public_frontend_context_v8",
+        "tilelang": "public_frontend_context_v9",
         "cuda": "public_frontend_context_v4",
     }
 )
@@ -379,6 +383,9 @@ PUBLIC_FRONTEND_CONTEXT_DIGEST_HISTORY = MappingProxyType(
                 ),
                 "public_frontend_context_v8": (
                     "f182cfe01f53cb47977b2b0c561049045b17a47138b40b8ff9a28b6e24d429cb"
+                ),
+                "public_frontend_context_v9": (
+                    "d412484f84cc363d0e068d1bce2e191ba2062d451c8ce4bd183f49ee66fed5d2"
                 ),
             }
         ),
@@ -625,6 +632,14 @@ PUBLIC_FRONTEND_CONTEXT_RECEIPT_HISTORY = MappingProxyType(
                         "receipt_hash_basis": "full_u_f",
                         "context_sha256": (
                             "3a6b2c9ba6a61e7bd220e68875b6702db6ae36b27212206965e2d6247cde38ce"
+                        ),
+                    }
+                ),
+                "public_frontend_context_v9": MappingProxyType(
+                    {
+                        "receipt_hash_basis": "full_u_f",
+                        "context_sha256": (
+                            "390ab1b9f16fc802c6a84c431fd14e101bc1bb9097b5ae6551efd8fafd6c7657"
                         ),
                     }
                 ),
