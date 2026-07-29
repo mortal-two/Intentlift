@@ -326,6 +326,11 @@ the artifact schema or external TypeCheck.
    iter-argument/yield/result tuple; never sort carriers by dtype, semantic ref,
    mechanism, or convenience. This tuple order is not execution order; use
    `pi.order` for compiler-visible event ordering.
+   For each Source index, domain, or predicate expression already representable
+   by the closed ContractExpr grammar, preserve the exact integer operator tree
+   (`//`, `%`, `ceil_div`, `+`, `-`, `*`). Do not replace it with an
+   algebraically equivalent formula: Gate1 observes the realized topology and
+   fixed checking is not a general algebraic-equivalence prover.
 22. Run the supplied static schema validator and then
    `intentir_candidate_check /output/candidate.json`. CandidateCheck is bounded
    diagnostics only; you must make every edit, and the external Runner still

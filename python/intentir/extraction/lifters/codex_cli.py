@@ -78,6 +78,10 @@ distinct/repeated symbolic J dimension as declared, preserve scalar and bound
 constexpr shape-coordinate equality in authored J, and keep integer contract axes
 literal. Trace predicated loads to every sum/max/min consumer and author each
 required per-consumer outside-domain relation; fills are not a substitute.
+For every Source index, domain, and predicate expression already representable
+by the closed ContractExpr grammar, preserve its integer operator tree (`//`,
+`%`, `ceil_div`, `+`, `-`, `*`) rather than replacing it with an algebraically
+equivalent formula; Gate1 observes the resulting realization topology.
 Before CandidateCheck, reconcile every loop, if, and return in the syntax-only
 Source control-flow outline with the complete candidate. Decide from Source and
 the selected specialization whether each item belongs to logical J control,

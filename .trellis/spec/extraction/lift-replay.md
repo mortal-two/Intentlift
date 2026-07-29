@@ -345,6 +345,11 @@ TypeCheck 不做 SMT、range proof 或一般语义等价证明。检查失败时
 不进入 Replay。它只支撑 `FreshLogicalSemDecl(C,pi | J)=empty` 的显式所有权结论，不证明 π
 没有统计语义线索，也不证明 realization 行为正确。
 
+因此，Lift 对 closed ContractExpr grammar 已能表示的 Source index/domain/predicate，必须作者化保留
+原始整数算子树（如 `//`、`%`、`ceil_div`、`+`、`-`、`*`），不得擅自改写为代数等价式。
+这是对 compiler-observed realization topology 的保真要求，不是 TypeCheck 增加等价证明，也不由
+固定代码替模型补造表达式。
+
 ## Replay
 
 ```text
