@@ -297,11 +297,19 @@ exact Source/Harness/TTIR和CandidateCheck即可；完整Schema继续由host che
 教程，重叠的README/contract/preflight/IntentOps/minimal-example不得同时要求模型核对。该变化仍不
 删除π关系，也不由fixed code作者化任何J/C/π字段。
 
-该最小surface现已作为Codex专用投影实现；MiniSWE的既有workspace不受影响。模型侧reference约
-26KB，来自当前artifact.v11 Schema的机械去description投影，并保留所有required、closed field、
-enum、pattern、dependent authoring入口；它不是typed skeleton、composer或候选生成器。下一步只用
-同一个Linear `B=1/K=1`、Sol xhigh、单候选/单Gate1做对照，先看首次Lift的累计输入、model
-segments、CandidateCheck调用、墙钟与Gate1 frontier，再决定是否扩展到SplitK/Flash。
+该最小surface现已作为Codex专用投影实现；MiniSWE的既有workspace不受影响。第一轮Linear
+Sol-xhigh在约476秒产生19.6KB完整首稿，首次CandidateCheck时累计约208K input tokens，证明相对
+路径清单版本的1.84M输入已显著减负；但26KB reference被格式化成2071行，模型仍用5个turn分页读完，
+且纯去description Schema缺少跨对象dependent construction规则。随后连续handle、dimension首次出现
+顺序、scope/storage、structured/physical iteration、output binding与constexpr carrier等错误只能由
+CandidateCheck分层暴露；运行在1034秒人工停止，未进入正式Gate1，不计NO_CLOSURE。
+
+第二版reference仍约26KB，但压成单行、要求一次读取，并把上述source-neutral dependent rules与
+“普通SSA/loop carry不必作者化storage”写入同一合同。Prompt同时要求owner尽早在`work/`持久化
+model-authored builder/section draft并分段patch；只有CandidateCheck与提交要求完整
+`output/candidate.json`。固定代码仍不分配handle、不补字段、不推导J/C/π，因而它不是typed
+skeleton、composer或候选生成器。下一步先用同一个Linear、Terra-high、B=1/K=1验证首次Lift速度与
+语义frontier，再按证据决定是否升Sol或扩展到SplitK/Flash。
 
 ## 5. J / C / π的能力计划
 

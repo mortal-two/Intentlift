@@ -42,8 +42,8 @@ from .scrc import (
 )
 
 
-CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v13"
-CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v71"
+CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v14"
+CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v72"
 CODEX_CLI_TURN_TIMEOUT_SECONDS = 900.0
 
 _EAGER_DIRECT_FEEDBACK_CATEGORIES = frozenset(
@@ -58,11 +58,18 @@ other path and never use network tools.
 This is a deliberately small authoring workspace, not a repository checkout.
 Read input/source.py, input/harness_view.json, and the single closed
 input/wire_contract.json. It contains the concise semantic ownership rules and
-the exact annotation-free artifact.v11 JSON Schema. Do not search for another
-schema, tutorial, example, preflight, or operation catalog: none is authoritative
-here. Author every field of one complete output/candidate.json containing exactly
-J, C, and pi. You may keep proof-irrelevant notes or a model-authored build script
-under work/.
+the exact annotation-free artifact.v11 JSON Schema in one compact JSON line; read
+that one file in one tool action. Do not search for another schema, tutorial,
+example, preflight, or operation catalog: none is authoritative here.
+
+Persist your own construction state early instead of privately planning the whole
+artifact and then emitting one giant first patch. You may incrementally author a
+proof-irrelevant work/build_candidate.py or section drafts under work/, run that
+model-written builder to materialize output/candidate.json, and keep patching the
+same files. The runtime never reads those drafts to infer a field. Completeness is
+required when CandidateCheck or final submission reads output/candidate.json, not
+for each preceding file edit. After the first complete candidate, prefer local
+patches over rewriting the full object.
 
 Use input/source_ttir.json only when it helps resolve one concrete Source control,
 time, def-use, effect, or materialization uncertainty. Read only the relevant
@@ -128,9 +135,20 @@ _COMPACT_WIRE_RULES = (
     "logical-loop realization, physical-only iteration/carriers, and terminal "
     "topology; it must not introduce a logical op, predicate, shape, dtype, value, "
     "bound formula, or frontend spelling.",
-    "Use opaque declaration-ordered handles only. n* maps to an exact structural "
-    "IntentOp path; v* is an SSA result. pi route/order/sharing endpoints are i* "
-    "instances, never raw J/C handles.",
+    "Every handle family is dense and declaration ordered from zero: unique tensors "
+    "t*, recursive IntentOp ids and node_ids n*, SSA results v*, signature parameters "
+    "p*, domains d*, accesses a*, effects e*, scopes q*, storage b*, C slots c*, pi "
+    "regions r*, and pi instances i*. An inout output repeats its input t* instead "
+    "of allocating another tensor handle. x* order is first appearance across J "
+    "tensor shapes. node_ids map n* to exact structural IntentOp paths; pi route, "
+    "order, and sharing endpoints are i*, never raw J/C handles.",
+    "J.signature parameters are exactly the anonymous Harness p0,p1,... in ABI order. "
+    "logical_ref is only a declared t*, declared x*, or null, never v*. A Harness-fixed "
+    "constexpr used only for compile-time graph discrimination is a value carrier "
+    "with logical_ref=null: author only the selected active J graph and do not create "
+    "a selector constant or branch in J. A constexpr used as logical data, extent, "
+    "shape, index, mask, predicate, or result must instead bind its authored t*/x*; "
+    "only an implementation selection belongs to C.",
     "Harness concrete tensor shapes are valuations, not permission to literalize a "
     "parametric Source dimension. Preserve every declared h* shape contract as x*, "
     "author value_dimension_relations when one integral rank-0 logical value equals "
@@ -138,12 +156,44 @@ _COMPACT_WIRE_RULES = (
     "Preserve Source loops, branches, returns, carries, output multiplicity, access "
     "identity, and literal effect order in J and the corresponding realization "
     "topology in pi. Node declaration order is not effect order.",
+    "The J input/output partition and signature modes are exact: input-only, "
+    "output-only, and explicit inout may not be silently interchanged. Every declared "
+    "output has exact return and output_mapping coverage with matching dtype, shape, "
+    "and observable produced value; preserve canonical output ABI order separately "
+    "from Source effect order.",
+    "Scopes q* are exact lexical dominance objects whose definitions, captures, and "
+    "effects contain neither missing nor extra handles. J.storage is optional semantic "
+    "identity/lifetime, not an inventory of tensors, SSA values, or loop carries and "
+    "not physical placement; keep storage=[] unless Source requires such identity. "
+    "If authored, b* membership and lifetime events must cover the complete declared "
+    "identity consistently.",
+    "A C subject_ref may name only an existing J node, domain, access, scope, or "
+    "storage. axis_ref requires subject_ref and must be in that subject's closed axis "
+    "domain: reduce axes, loop trip axis, or canonical domain/access axes; scopes and "
+    "storage are axis-free. Never infer an attachment or axis from role, shape, Source, "
+    "pi, or a unique-looking position.",
+    "A J structured loop owns complete trip, carry init/body argument/update/next, "
+    "yield, and result semantics. A C-tiled structured loop uses pi.iterations and "
+    "pi.loop_carriers in its loop region and preserves J carry declaration order. One "
+    "pi region cannot carry both structured iterations/loop_carriers and physical-only "
+    "iterations/physical_loop_carriers.",
+    "pi.physical_iterations only realizes an existing non-loop J reduce, contraction, "
+    "access, or domain with a same-subject/axis positive integer C tile. Its carriers "
+    "may be heterogeneous pointer or value slots but each slot has type-consistent "
+    "init/state/next/result and array order is the frontend tuple order. When physical "
+    "pointer time coexists with a structured logical loop, use a distinct nested "
+    "physical-only region rather than inventing extra J state.",
     "A non-null access fill requires a predicated load. Bind ambiguous access views "
     "to their actual node_ref. Predicated sum/max/min consumers require their exact "
     "consumer_extensions relation; computed access guards require an authored "
     "access_guard_relation and explicit Layer-A select/state semantics where needed.",
     "Choose each output result-relation class from the authored floating dependency "
     "graph. Concrete tolerance values are external and never appear in J.",
+    "Each transfer_direct or transfer_async instance must be reachable through pi "
+    "routes from the matching pointer/tensor signature carrier for its boundary access; "
+    "fixed code never inserts an address stage. A sensitive numeric-cast refinement "
+    "anchors the explicit cast node, cites its one J authorization, and uses the cast "
+    "operand/result dtypes; one pi instance has at most one refinement.",
     "CandidateCheck is source-free parse/Decode/dependent-TypeCheck diagnostics over "
     "the exact current bytes. It neither judges Source semantic completeness nor "
     "repairs or certifies a candidate; Gate1 feedback is the semantic counterexample.",
@@ -177,7 +227,7 @@ def _codex_input_files(
     )
     schema = json.loads(complete["schema/artifact.schema.json"])
     wire_contract = {
-        "protocol": "intentir.codex-lift-wire-contract.v1",
+        "protocol": "intentir.codex-lift-wire-contract.v2",
         "authority": (
             "source-neutral authoring reference only; the host independently "
             "runs the full schema, Decode, and dependent TypeCheck"
@@ -192,10 +242,10 @@ def _codex_input_files(
         "feedback_frontier.json": complete["feedback_frontier.json"],
         "wire_contract.json": json.dumps(
             wire_contract,
-            indent=0,
             sort_keys=True,
             ensure_ascii=False,
             allow_nan=False,
+            separators=(",", ":"),
         )
         + "\n",
         "candidate_check.json": "null\n",
