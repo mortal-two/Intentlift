@@ -924,7 +924,12 @@ topology、reduction tree 与浮点 realization。
 
 Gate1 不能从额外 binding artifact、RuleCard 或 source-conditioned sidecar 获得 construction 信息。
 
-当前 active Triton profile 是 `triton-ttir-3.6-gate1-v11`。closed cache modifier 与 closed eviction
+当前 active Triton profile 是 `triton-ttir-3.6-gate1-v12`。v12以全局图切片保留observable value、
+predicate/boolean、reduction/control/effect、region/loop/carrier及program/pointer/transfer anchors，
+仅将无J/C/π所有者、只服务physical scheduling/address/rank/bound的known-pure公式收缩成typed、
+carrier-origin-preserving representation edge。C concrete values仍作为同一Harness schedule binding
+比较；quotient不吞掉C carrier使用、program-axis/transfer数量、predicate/fill或effect topology。
+closed cache modifier 与 closed eviction
 spelling 均作为不由 J/C/π 拥有的 frontend presentation noise 归一；π 仍拥有 distinct transfer
 instance 的数量、顺序与 route，Replay 可用 public spelling 防止同址 transfer 被 compiler CSE。
 它保留既有对已建模 op 与 reachable

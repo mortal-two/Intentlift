@@ -1,8 +1,8 @@
 # Task 15：模型级输入到 Compiler-Observed Lift / Closed J / Source-Blind Replay 的最终闭合系统
 
-> 状态：`P1_CONTEXT_REDUCTION / P2_DIAGNOSTIC`（2026-07-29）。通用语义边界已实现；formal
-> pilot 暴露出首轮 Lift 的 workspace/π authoring attention 瓶颈，先完成不改变数学对象的上下文减法，
-> 再继续十项 active queue。
+> 状态：`P2_GATE1_OWNERSHIP_RECHECK`（2026-07-30）。Codex-native single-owner路径已稳定形成
+> TypeCheck-valid候选；当前以active Gate1 v12消除J/C/π均不拥有的physical-formula隐藏答案，再对
+> exact artifacts作fresh source-blind Replay/Gate1/Gate2 recheck，并继续十项active queue。
 >
 > 定位：Task 11 的下一次能力建设与最终十项闭合波。Task 14 已结束归档；其18份可保留证书、十项
 > active queue与中断 evidence 是本任务的历史输入，不是本任务已经完成的结果。
@@ -390,6 +390,23 @@ Codex自行决定局部读取、草稿组织和修复顺序。特殊host工具�
 入口。Replay不再用累计API input token误判live context并切换新thread，而让同一Codex thread管理自身
 context compaction。该重构删除的是proof-irrelevant编排，不改变LLM对全部J/C/π字段与handle的作者权，
 不改变CandidateCheck、外部TypeCheck、fresh source-blind Replay、Gate1/Gate2或证书谓词。
+
+真实v17 Linear `B=3`首轮分别在约`587/632/701s`进入正式Replay，三份candidate均通过外部
+TypeCheck；首轮Gate1失败后，closed diff已回到各自同一Lift owner继续修改。这证明single-owner链路
+可用，但不是性能或closure跃迁。两份exact frontier共同显示：J已恢复GEMM、bias、双输出，π已声明
+physical K-loop、pointer/accumulator carriers、transfer与effect order；旧observer的主要差异却是Source
+program grouping产生的`div/rem/min/add/mul/splat/broadcast`具体TTIR树。π按定稿禁止保存该公式，J只
+拥有logical index，故要求source-blind Replay逐节点猜同一树违反第8节唯一所有权。
+
+active `triton-ttir-3.6-gate1-v12`据此实现通用use-slice quotient：observable value与predicate树保持
+hard，effect/region/loop/carrier/reduction/program/addptr/transfer anchors保持hard；仅known-pure且只
+服务physical scheduling/address/rank/bound的内部树收缩为typed、ABI/region-origin-preserving edge。
+它不是kernel例外，也不读取J/Source文本。对保存的raw Source/Replay TTIR做确定性重算：Wave32三个
+既有Gate1 closure仍全部hard-pass；Linear carriers三份中仅原本只差representation formula的
+attempt-01转为hard-pass，另两份仍因额外program coordinate或真实dataflow拒绝；SplitK split=4
+capability的candidate-01三个formula-only attempts转为hard-pass，而带错误reduction/predicate的
+Sol-high attempts继续拒绝。上述只是observer capability evidence；只有fresh recheck与Gate2三边通过
+才增加18/28计数。
 
 ## 5. J / C / π的能力计划
 

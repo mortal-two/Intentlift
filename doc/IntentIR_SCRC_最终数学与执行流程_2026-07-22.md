@@ -953,7 +953,13 @@ G_1^{\Phi_1}=1.
 canonicalization version。mutation test 可以评估 observer 的经验敏感性，但不构成 observer
 完备性定理，也不进入主认证谓词。
 
-当前 Triton active profile 是 `triton-ttir-3.6-gate1-v11`。它将 closed cache modifier 与 closed
+当前 Triton active profile 是 `triton-ttir-3.6-gate1-v12`。除closed cache/eviction spelling外，v12
+进一步按唯一所有权作compiler图切片：完整保留observable value slice、predicate/boolean树、直接
+常量、reduction/control/effect、region/loop/carrier及program/pointer/transfer anchors；只将不进入
+上述切片的known-pure physical scheduling/address/rank/bound公式收缩为typed、carrier-origin-preserving
+edge。该quotient不改变`G1=[F_source==F_replay]`，而是定义当前`F`不观察J/C/π均不拥有的具体公式
+拼写；错误语义、predicate/fill、reducer、effect、carrier/route/stage数量仍导致不等。
+它将 closed cache modifier 与 closed
 eviction spelling 统一视为不由 J/C/π 拥有的 frontend presentation noise；π 仍严格拥有 distinct
 transfer instance 的数量、顺序与 route，Replay 只可用 public spelling 防止 compiler CSE。它保留
 既有对已建模 op 的 closed load/store policy 规则，以及从 public entry 可达、静态已知、structured 且无环 `tt.call` 的

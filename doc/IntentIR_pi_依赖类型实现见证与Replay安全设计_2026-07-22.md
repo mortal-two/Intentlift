@@ -1015,7 +1015,15 @@ frontend cache spelling。`triton-ttir-3.6-gate1-v8` 进一步把 closed
 type、volatility 与其他 attributes 仍是 hard evidence。这一决策不在 π 中新增假装的 frontend API
 mechanism，也不把 cache hint 当作 J 语义。
 
-当前 active `triton-ttir-3.6-gate1-v11` 保留既有对已建模 op 与 public-entry reachable、静态已知、
+当前 active `triton-ttir-3.6-gate1-v12` 将上述所有权规则落实为通用图切片。进入 public return、
+store/update value 的完整值流，predicate/boolean 树、polarity与直接常量，以及 effect、region、
+loop/carrier、reduction、program-coordinate、pointer/addptr/transfer anchor仍是hard evidence；仅有
+known-pure且只服务program scheduling、address offset、rank lift或physical bound的内部算术/shape树
+被收缩为带typed result与ABI/region carrier origins的不透明representation edge。它不删除逻辑
+predicate/fill/index consumer，不合并transfer/coordinate/address anchor，也不接受unknown op。因而
+Source特有的`div/rem/min/add/mul/splat/broadcast`公式不再成为J/C/π之外的隐藏答案，而其拥有者边界、
+carrier provenance、stage数量与最终effect topology仍被比较。
+v12 保留既有对已建模 op 与 public-entry reachable、静态已知、
 structured 且无环 `tt.call` graph 的 interprocedural comparison rules；formal-to-actual、helper return SSA、
 op/def-use、effect 与已支持 region 都是 hard evidence，π 仍不保存 helper 名或 frontend call API。
 

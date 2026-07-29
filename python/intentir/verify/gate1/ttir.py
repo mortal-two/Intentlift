@@ -49,7 +49,7 @@ __all__ = [
 ]
 
 
-TTIR_FINGERPRINT_SCHEMA = "triton-ttir-3.6-gate1-v11"
+TTIR_FINGERPRINT_SCHEMA = "triton-ttir-3.6-gate1-v12"
 _SCHEMA_VERSION = TTIR_FINGERPRINT_SCHEMA
 _SSA_RE = re.compile(r"%[A-Za-z0-9_.$-]+(?:#[0-9]+)?")
 _LOC_START_RE = re.compile(r"loc\s*\(")
@@ -1736,6 +1736,160 @@ def _bounded_normalize_operations(
         for result in operation.result_names
     }
     return normalized, normalized_result_to_node, terminal_forks
+
+
+_PREDICATE_VIEW_OPS = {
+    "arith.cmpi",
+    "arith.cmpf",
+    "arith.andi",
+    "arith.ori",
+    "arith.xori",
+    "arith.select",
+    "tt.broadcast",
+    "tt.expand_dims",
+    "tt.reshape",
+    "tt.trans",
+}
+
+_REPRESENTATION_ANCHOR_OPS = {
+    # These stages have an owner in the closed realization topology.  Their
+    # existence remains hard evidence even though the pure formula between
+    # them is quotiented below.
+    "tt.get_program_id",
+    "tt.get_num_programs",
+    "tt.addptr",
+}
+
+
+def _representation_only_nodes(
+    operations: Sequence[_Operation],
+    result_to_node: Mapping[str, int],
+    terminal_forks: Sequence[_TerminalFork],
+) -> frozenset[int]:
+    """Find pure compiler scaffolding with no independent artifact owner.
+
+    The observer keeps three hard slices intact:
+
+    * values contributing to public returns or stored/updated values;
+    * the boolean structure and exact constants of observable predicates;
+    * effects, structured regions, transfers, and explicit address/program
+      anchors.
+
+    Remaining known-pure operations are representation-only when they merely
+    spell a program schedule, address offset, rank lift, or loop bound.  Their
+    concrete arithmetic tree is not present in J/C/pi and therefore cannot be
+    a source-blind hidden answer.  The fingerprint contracts that tree to a
+    typed carrier-origin edge; it does not erase the surviving predicate,
+    pointer, transfer, region, or effect that consumes it.
+    """
+
+    node_by_id = {operation.node_id: operation for operation in operations}
+    value_nodes: set[int] = set()
+    predicate_nodes: set[int] = set()
+
+    def mark_value(name: str, active: frozenset[int] = frozenset()) -> None:
+        node_id = result_to_node.get(name)
+        if node_id is None or node_id in value_nodes or node_id in active:
+            return
+        operation = node_by_id[node_id]
+        value_nodes.add(node_id)
+
+        # A load is the semantic value boundary.  Its pointer, mask, and fill
+        # are observed by the address/predicate/effect slices instead of being
+        # folded into the data-value computation.
+        if operation.name == "tt.load":
+            return
+        if operation.name in _REPRESENTATION_ANCHOR_OPS:
+            return
+        if operation.name == "scf.for":
+            try:
+                slot = operation.result_names.index(name)
+            except ValueError as error:  # pragma: no cover - map is co-built
+                raise TTIRParseError(
+                    f"loop result {name!r} is absent from its producer"
+                ) from error
+            names = [
+                operation.operands[3 + slot],
+                operation.region_results[slot],
+            ]
+        elif operation.name == "scf.if":
+            names = list(operation.region_results)
+        else:
+            names = [*operation.operands, *operation.region_results]
+        for operand in names:
+            mark_value(operand, active | {node_id})
+
+    def mark_predicate(name: str, active: frozenset[int] = frozenset()) -> None:
+        node_id = result_to_node.get(name)
+        if node_id is None or node_id in predicate_nodes or node_id in active:
+            return
+        operation = node_by_id[node_id]
+        if operation.name == "arith.constant":
+            predicate_nodes.add(node_id)
+            return
+        if operation.name not in _PREDICATE_VIEW_OPS:
+            # Numeric index/address construction below the comparison is a
+            # representation carrier.  The comparison itself, its polarity,
+            # exact direct constants, and boolean composition remain hard.
+            return
+        predicate_nodes.add(node_id)
+        for operand in [*operation.operands, *operation.region_results]:
+            producer_id = result_to_node.get(operand)
+            if producer_id is None:
+                continue
+            producer = node_by_id[producer_id]
+            if (
+                producer.name == "arith.constant"
+                or producer.name in _PREDICATE_VIEW_OPS
+            ):
+                mark_predicate(operand, active | {node_id})
+
+    for operation in operations:
+        if operation.name == "tt.store" and len(operation.operands) >= 2:
+            mark_value(operation.operands[1])
+        elif operation.name == "tt.return":
+            for operand in operation.operands:
+                mark_value(operand)
+        elif operation.name.startswith("tt.atomic"):
+            # Pointer operand zero belongs to the address slice.  All remaining
+            # authored update operands are observable values or predicates and
+            # stay conservative hard evidence.
+            for operand in operation.operands[1:]:
+                mark_value(operand)
+
+        if operation.name == "tt.load" and operation.header_operand_count >= 2:
+            mark_predicate(operation.operands[1])
+        elif (
+            operation.name == "tt.store"
+            and operation.header_operand_count >= 3
+        ):
+            mark_predicate(operation.operands[2])
+        elif operation.name == "scf.if" and operation.operands:
+            mark_predicate(operation.operands[0])
+        elif (
+            operation.name in {"tt.assert", "tt.device_assert"}
+            and operation.operands
+        ):
+            mark_predicate(operation.operands[0])
+    for terminal_fork in terminal_forks:
+        mark_predicate(terminal_fork.predicate)
+
+    representation: set[int] = set()
+    for operation in operations:
+        if operation.node_id in value_nodes or operation.node_id in predicate_nodes:
+            continue
+        if operation.name in _REPRESENTATION_ANCHOR_OPS:
+            continue
+        if operation.name in _REGION_OWNERS or operation.name in _TERMINATORS:
+            continue
+        if _operation_has_effect(operation):
+            continue
+        # Unknown operations never become presentation noise merely because
+        # they happen not to reach the current output slice.
+        if operation.name not in _KNOWN_PURE_OPS:
+            continue
+        representation.add(operation.node_id)
+    return frozenset(representation)
 
 
 def _cmp_info(name: str, tail: str) -> tuple[str | None, bool]:
@@ -3873,14 +4027,123 @@ class TTIRParser:
         effect_occurrences = _effect_occurrence_identities(
             operations, terminal_forks
         )
+        representation_only = _representation_only_nodes(
+            operations, result_to_node, terminal_forks
+        )
         structural_cache: dict[int, str] = {}
         semantic_cache: dict[int, str] = {}
+        representation_atom_cache: dict[str, tuple[str, ...]] = {}
+        representation_ref_cache: dict[str, str] = {}
+
+        def result_contract(operation: _Operation) -> str:
+            """Return a bounded result-type view without retaining its formula."""
+
+            signature = _trailing_type_signature(operation.local_signature)
+            if signature is None:
+                return f"results={len(operation.result_names)}"
+            arrow = _find_top_level_token(signature, "->", last=True)
+            if arrow is not None:
+                result_text = signature[arrow + 2 :]
+            else:
+                conversion = _find_top_level_token(signature, " to ", last=True)
+                result_text = (
+                    signature[conversion + 4 :]
+                    if conversion is not None
+                    else signature
+                )
+            return _normalize_space(result_text)
+
+        def hard_local_signature(operation: _Operation) -> str:
+            if operation.name != "tt.addptr":
+                return operation.local_signature
+            signature = _trailing_type_signature(operation.local_signature)
+            pointer_type: str | None = None
+            if signature is not None:
+                arrow = _find_top_level_token(signature, "->", last=True)
+                declared = _declared_types(
+                    signature[arrow + 2 :] if arrow is not None else signature
+                )
+                pointer_type = next(
+                    (
+                        item
+                        for item in declared
+                        if _pointer_dtype(item) is not None
+                    ),
+                    None,
+                )
+            if pointer_type is None:
+                return "tt.addptr pointer=unknown"
+            tensor = _ranked_tensor_contract(pointer_type)
+            rank = len(tensor[0]) if tensor is not None else 0
+            return (
+                f"tt.addptr pointer_dtype={_pointer_dtype(pointer_type)} "
+                f"pointer_rank={rank}"
+            )
+
+        def representation_atoms(
+            name: str, active: frozenset[int] = frozenset()
+        ) -> tuple[str, ...]:
+            cached = representation_atom_cache.get(name)
+            if cached is not None:
+                return cached
+            leaf = leaf_labels.get(name)
+            if leaf is not None:
+                cached = (leaf,)
+                representation_atom_cache[name] = cached
+                return cached
+            node_id = result_to_node[name]
+            if node_id not in representation_only:
+                cached = (operand_ref(name, semantic=True),)
+                representation_atom_cache[name] = cached
+                return cached
+            if node_id in active:
+                raise TTIRParseError(
+                    "cyclic representation-only SSA dependency"
+                )
+            operation = node_by_id[node_id]
+            atoms: set[str] = set()
+            if operation.name == "tt.make_range":
+                atoms.add(f"lane:{result_contract(operation)}")
+            for operand in [*operation.operands, *operation.region_results]:
+                atoms.update(
+                    representation_atoms(operand, active | {node_id})
+                )
+            if not atoms:
+                # Constants specialized from C and other closed literal-only
+                # scaffolding retain their type but not a formula/value already
+                # owned by the schedule binding or a surviving predicate.
+                atoms.add(f"literal:{result_contract(operation)}")
+            cached = tuple(sorted(atoms))
+            representation_atom_cache[name] = cached
+            return cached
+
+        def representation_ref(name: str) -> str:
+            cached = representation_ref_cache.get(name)
+            if cached is not None:
+                return cached
+            node_id = result_to_node[name]
+            operation = node_by_id[node_id]
+            slot = (
+                operation.result_names.index(name)
+                if len(operation.result_names) > 1
+                else 0
+            )
+            payload = {
+                "contract": result_contract(operation),
+                "origins": representation_atoms(name),
+                "slot": slot,
+            }
+            cached = f"representation[{_digest(payload)[:20]}]"
+            representation_ref_cache[name] = cached
+            return cached
 
         def operand_ref(name: str, *, semantic: bool) -> str:
             if name in leaf_labels:
                 return leaf_labels[name]
             node_id = result_to_node[name]
             producer = node_by_id[node_id]
+            if node_id in representation_only:
+                return representation_ref(name)
             base = node_ref(node_id, semantic=semantic)
             if len(producer.result_names) <= 1:
                 return base
@@ -3915,7 +4178,7 @@ class TTIRParser:
             operation = node_by_id[node_id]
             refs = normalized_operand_refs(operation, semantic=semantic)
             if semantic:
-                local = operation.local_signature
+                local = hard_local_signature(operation)
             else:
                 # Producer/consumer topology deliberately uses operation kinds,
                 # while predicates, fill values, dot attributes and reductions
@@ -3932,13 +4195,17 @@ class TTIRParser:
             _semantic_op_name(operation, node_by_id, result_to_node)
             for operation in operations
             if operation.name not in _TERMINATORS
+            and operation.node_id not in representation_only
         )
         if terminal_forks:
             op_counts["control.conditional"] += len(terminal_forks)
 
         edges: list[tuple[str, str, str]] = []
         for operation in operations:
-            if operation.name in _TERMINATORS:
+            if (
+                operation.name in _TERMINATORS
+                or operation.node_id in representation_only
+            ):
                 continue
             # Hard dataflow labels include normalized operation attributes and
             # constants, not just graph topology.  Otherwise an unchanged op
@@ -4097,7 +4364,10 @@ class TTIRParser:
                     direct_sequence.setdefault(parent, []).append(operation)
                 if operation.node_id in region_ids:
                     direct_children.setdefault(parent, []).append(operation.node_id)
-                elif operation.name not in _TERMINATORS:
+                elif (
+                    operation.name not in _TERMINATORS
+                    and operation.node_id not in representation_only
+                ):
                     direct_members.setdefault(parent, []).append(operation)
 
             restricted_ancestor = next(
@@ -4177,6 +4447,7 @@ class TTIRParser:
                 for operation in direct
                 if operation.node_id not in region_ids
                 and operation.name not in _TERMINATORS
+                and operation.node_id not in representation_only
             )
             structured_regions = sorted(
                 region_ref(operation.node_id)
@@ -4279,6 +4550,7 @@ class TTIRParser:
                 for operation in direct
                 if operation.node_id not in region_ids
                 and operation.name not in _TERMINATORS
+                and operation.node_id not in representation_only
             )
             structured_regions = sorted(
                 region_ref(operation.node_id)
@@ -4657,7 +4929,11 @@ class TTIRParser:
                 inside_structured_if = (
                     nested.structured_if_id in nested_structured_if_ids
                 )
-                if nested.name not in _TERMINATORS and not inside_structured_if:
+                if (
+                    nested.name not in _TERMINATORS
+                    and not inside_structured_if
+                    and nested.node_id not in representation_only
+                ):
                     body_ops[
                         _semantic_op_name(
                             nested, node_by_id, result_to_node
