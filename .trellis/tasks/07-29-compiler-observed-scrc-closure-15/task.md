@@ -365,6 +365,32 @@ Flash B3首轮随后稳定暴露同一遗漏：两个branch分别卡在semantic 
 StorageObject未覆盖state/body-argument/next/result/non-literal-init。该约束来自既有Canonical J checker，
 现已一并加入`lift_contract dependent`；仍由LLM判断是否存在semantic state并作者化完整storage。
 
+### 4.6 Codex-native减法重构
+
+上述逐次增加投影没有带来性能跃迁。真实Flash Lift rollout在约24分钟内执行71次工具、10次
+CandidateCheck，累计约6.0M input token；checker/assembler每次均小于1秒，主要成本来自强制读取五份
+合同、分块读取大TTIR、首稿全局JSON和随后反复携带工具历史。一个Replay首prompt又直接嵌入56.9KB
+packet；ReplayCheck首轮已PASS，只有两个construction-compile topology错误，但数次工具交互后累计输入
+已超过300K token。证据否定了“继续增加query/ledger/audit工具即可提速”。
+
+因此Codex路径改成真正的普通coding-agent工作区：
+
+```text
+Lift:   source.py + harness_view.json + source.ttir
+        + artifact.schema.json + intent_ops.md + feedback files
+        -> model直接编辑output/candidate.json -> candidate_check
+
+Replay: packet.json + public contract
+        -> model直接编辑output/replay.source
+        -> replay_check -> replay_compile_check -> optional own-TTIR inspect
+```
+
+首prompt只传路径，不再强制五份contract投影、不嵌packet、不规定planner/fragment/ledger/audit步骤；
+Codex自行决定局部读取、草稿组织和修复顺序。特殊host工具收缩到不可由普通文件操作替代的只读裁决
+入口。Replay不再用累计API input token误判live context并切换新thread，而让同一Codex thread管理自身
+context compaction。该重构删除的是proof-irrelevant编排，不改变LLM对全部J/C/π字段与handle的作者权，
+不改变CandidateCheck、外部TypeCheck、fresh source-blind Replay、Gate1/Gate2或证书谓词。
+
 ## 5. J / C / π的能力计划
 
 ### 5.1 不做大重构

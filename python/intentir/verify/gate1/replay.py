@@ -1977,25 +1977,17 @@ CompileCase/grid, Gate diff/TTIR, previous Replay, sibling trajectory, or
 network is available. Generate the entire source yourself. Fixed code only
 checks and rejects; it never generates, patches, or certifies source.
 
-The startup message embeds the complete exact packet once whenever it is within
-the fixed byte bound. Consume that packet directly and write Replay without a
-mandatory overview/requirements/query sequence. An oversized packet instead
-receives one exact manifest containing the authored-requirements checklist and
-explicit continuation paths; use `section PATH`, `obligation HANDLE`, or
-`find HANDLE` only for a named omitted fact. These views expose only authored
-packet facts and never add an edge or lowering decision.
+The startup message gives only local paths. Read `packet.json` with ordinary
+coding-agent file tools and inspect only the sections needed for the current
+construction step. The complete exact packet remains available throughout the
+fresh episode; no host summary, planner, or hidden lowering decision replaces it.
 
 After writing a complete first source, use `intentir_replay_inspect` only when a
 focused own-source inventory would resolve uncertainty. The tool reports only
 your syntax and never declares a semantic mismatch or recommends a repair.
 
-When the startup critical ledger contains lexical regions, cross-region order,
-or route extent transforms,
-run `intentir_replay_obligation_audit /output/replay.source` on the complete current
-bytes before the construction compile. It only colocates the exact authored ledger
-with numbered lines from your own source. Compare them yourself; the tool maps no
-instance, diagnoses no mismatch, and prescribes no edit. Any later byte change
-requires another audit. After mandatory ReplayCheck, run
+After writing a meaningful complete source, run
+`intentir_replay_check /output/replay.source`, then
 `intentir_replay_compile_check /output/replay.source` for a construction compile
 against one public synthetic profile: every pointer has one element,
 dtype-declared scalar and constexpr representatives are bool=true, integer=16,
@@ -2085,12 +2077,7 @@ eviction-policy spelling; the observer erases that spelling but not the event.
 """
     tool = """# Replay tool contract
 
-Write exactly `/output/replay.source`. You may run the bounded, diagnostic-only
-`intentir_replay_inspect /output/replay.source overview`, `statements START COUNT`,
-or `find NAME` views over your own current bytes; none enters submission or Gate
-authority. Run
-`intentir_replay_obligation_audit /output/replay.source` when lexical/cross-region
-critical facts exist, then
+Write exactly `/output/replay.source`. Run
 `intentir_replay_check /output/replay.source` for diagnostic ingress, then
 `intentir_replay_compile_check /output/replay.source` for the public synthetic
 construction-compile profile. Calls are audited telemetry and governed by the
@@ -2109,8 +2096,8 @@ independently reruns the same
 compiler-free ingress callable after submission, and formal Gate1 compiles c0.
 
 In the isolated Codex workspace, invoke the equivalent closed callbacks as
-`python .agents/intentir_agent_tool.py replay_realization_view`, `replay_check`,
-or `replay_compile_check`. After a successful public synthetic compile,
+`python .agents/intentir_agent_tool.py replay_check` or
+`replay_compile_check`. After a successful public synthetic compile,
 `replay_ttir_inspect summary|raw|find|observer` exposes only the current Replay's
 own TTIR/fingerprint for focused debugging. These callbacks take no host path and
 never expose Source, Source TTIR, Harness values, or Gate evidence. Read this file
