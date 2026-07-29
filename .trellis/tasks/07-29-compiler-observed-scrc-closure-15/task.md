@@ -311,6 +311,15 @@ model-authored builder/section draft并分段patch；只有CandidateCheck与提�
 skeleton、composer或候选生成器。下一步先用同一个Linear、Terra-high、B=1/K=1验证首次Lift速度与
 语义frontier，再按证据决定是否升Sol或扩展到SplitK/Flash。
 
+Terra-high对照已在630秒人工停止：约143秒产生model-authored `work/build_candidate.py`与首稿，首次
+CandidateCheck约88K input tokens，证明增量workspace与单次reference读取都真实生效；但到停止前
+累计输入至少1.35M且仍未通过CandidateCheck。它反复改写output/inout、做全局handle字符串重命名，
+并在合同已明确普通carry无需storage后仍新增三项storage陷入lifetime修复；首稿还把纯物理pointer
+advance写入J logical loop。该样本不计NO_CLOSURE，但足以否定“Terra-high作为复杂Kernel唯一首次
+Lift owner”的当前配置；Terra仍可在简单Kernel或语义已稳定的窄机械修复中单独评估。下一项中间点
+使用Sol-high而非Sol-xhigh：保持同一最小workspace与单writer，检验能否保留Sol语义质量而降低首稿
+延迟；不得通过Terra→Sol artifact handoff破坏owner上下文或复用错误语义。
+
 ## 5. J / C / π的能力计划
 
 ### 5.1 不做大重构
