@@ -145,7 +145,7 @@ Decode/TypeCheck；工具 `PASS`
 agent 内部多步和 CandidateCheck 不增加正式 Gate round，也不削弱门禁。报告必须分别记录外部
 Lift invocation、owner session id/累计 active wall time、agent model turns、实际 provider calls、
 CandidateCheck 调用次数与诊断类别。
-Replay、compiler observer、Gate1、Gate2 与 RefEval 在 session 内仍然绝对不可调用。
+Replay、正式 Source/Replay comparison、Gate1、Gate2 与 RefEval 在 session 内仍然绝对不可调用。
 
 当前 active single-owner 路径默认每 branch 累计 3600 秒 active Lift wall time；`step_limit=0` 与
 CandidateCheck count limit 0 都表示不按次数截断，而不是无资源约束。model/tool/check 调用全部作为
@@ -224,6 +224,16 @@ Codex Lift v12另在owner创建时，以同一匿名Source和冻结匿名compile
 observer fingerprint；owner可分页读取TTIR、按token或单个`%SSA`查看局部上下文、读取syntax
 outline或一个fingerprint path。该工具不解释Source、不决定J/C/π所有权、不生成relation或patch；
 raw TTIR/fingerprint不写入模型trajectory，更不得进入Replay、证书或production。
+
+Codex Lift v18 在 source-free `CandidateCheck` 之后增加独立的
+`intentir.lift-source-reconcile.v1`。它只把模型当前完整候选可确定投影出的 compiler obligations
+（direct transfer multiplicity、structured/physical iteration 与 carrier arity、已声明 reduction
+linearization、闭合时的 pointer-address operation、program-coordinate occurrence，以及无歧义的
+ordered transfer）同该 owner 已冻结的 Source TTIR observer 比较。FAIL 只返回匿名 handle、rule 与
+expected/actual count/order；模型仍须自行修改完整 J/C/π。该工具不生成字段、关系、源码或 patch，
+不读取 Replay/Gate feedback，不形成 TypeCheck/Gate/证书结论；投影不能唯一确定时跳过该项，最终
+一致性仍由 fresh Replay + Gate1 裁决。v18 的 host submission preflight 要求当前 exact bytes 依次
+通过 CandidateCheck 与 SourceReconcile，并分别记录调用与诊断。
 
 Codex Lift v11 / knowledge v68 将同一 exact Harness ABI ledger 与 syntax-only
 `source-outline.v2` 直接放入首次 owner prompt，并将

@@ -8,6 +8,7 @@ stored in the branch-local read-only Lift input tree for focused queries.
 
 from __future__ import annotations
 
+import json
 from typing import Any, Mapping
 
 from intentir.verify.gate1.compiler import (
@@ -17,9 +18,11 @@ from intentir.verify.gate1.compiler import (
     TritonCompiler,
 )
 from intentir.verify.gate1.ttir import fingerprint_ttir
+from intentir.verify.gate1.replay import compiled_packet_obligation_diagnostics
 
 
 SOURCE_TTIR_OBSERVATION_PROTOCOL = "intentir.lift-source-ttir.v1"
+SOURCE_TTIR_RECONCILE_PROTOCOL = "intentir.lift-source-reconcile.v1"
 
 _DTYPE_ALIASES = {
     "f16": "float16",
@@ -165,7 +168,74 @@ def observe_anonymous_source_ttir(
         }
 
 
+def reconcile_candidate_source_ttir(
+    candidate_text: str,
+    observation: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Diagnose candidate-authored compiled obligations against Source TTIR.
+
+    This runs only inside source-aware Lift.  It neither constructs artifact
+    fields nor contributes to TypeCheck, Gate1, or certification.
+    """
+
+    base: dict[str, Any] = {
+        "protocol": SOURCE_TTIR_RECONCILE_PROTOCOL,
+        "authority": (
+            "source-aware diagnostic comparison of model-authored closed pi "
+            "obligations with the existing Source TTIR observer; reject-only, "
+            "no artifact construction and no Gate or certification authority"
+        ),
+    }
+    if not isinstance(observation, Mapping) or observation.get("status") != "pass":
+        return {
+            **base,
+            "status": "pass",
+            "applicable": False,
+            "diagnostics": [],
+        }
+    ttir = observation.get("ttir")
+    if not isinstance(ttir, str) or not ttir:
+        return {
+            **base,
+            "status": "pass",
+            "applicable": False,
+            "diagnostics": [],
+        }
+    try:
+        packet = json.loads(candidate_text)
+        if not isinstance(packet, Mapping):
+            raise TypeError("candidate root is not an object")
+        diagnostics = compiled_packet_obligation_diagnostics(
+            packet,
+            ttir,
+            path_prefix="<source-ttir-obligation>",
+        )
+    except Exception as exc:
+        return {
+            **base,
+            "status": "fail",
+            "applicable": True,
+            "diagnostics": [
+                {
+                    "rule_code": "source_reconcile_observer_failed",
+                    "path": "<source-ttir-obligation>",
+                    "anonymous_handles": [],
+                    "observed_refs_or_types": [type(exc).__name__],
+                    "line": None,
+                }
+            ],
+        }
+    return {
+        **base,
+        "status": "fail" if diagnostics else "pass",
+        "applicable": True,
+        "diagnostics": [dict(item) for item in diagnostics],
+    }
+
+
 __all__ = [
+    "SOURCE_TTIR_RECONCILE_PROTOCOL",
     "SOURCE_TTIR_OBSERVATION_PROTOCOL",
     "observe_anonymous_source_ttir",
+    "reconcile_candidate_source_ttir",
 ]

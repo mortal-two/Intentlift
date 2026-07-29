@@ -32,7 +32,12 @@ from .prompt import (
     build_rewriter_payload,
 )
 from .tilelang_codegen import extract_tilelang_module
-from .ttir import TTIRParseError, parse_ttir, runtime_argument_names
+from .ttir import (
+    TTIRFingerprint,
+    TTIRParseError,
+    parse_ttir,
+    runtime_argument_names,
+)
 
 
 MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v30"
@@ -1871,7 +1876,9 @@ def _packet_required_compiled_program_ids(
 def _compiled_transfer_order_diagnostic(
     packet: Mapping[str, Any],
     ttir: str,
-    fingerprint: Any,
+    fingerprint: TTIRFingerprint,
+    *,
+    path_prefix: str = "<synthetic-frontend-compile>",
 ) -> Mapping[str, Any] | None:
     """Reject a Replay whose own TTIR reverses an unambiguous pi order edge."""
 
@@ -1932,7 +1939,7 @@ def _compiled_transfer_order_diagnostic(
         return {
             "rule_code": "compiled_transfer_order",
             "path": (
-                "<synthetic-frontend-compile> pi.order: "
+                f"{path_prefix} pi.order: "
                 f"{before_access}({before_pointer}) before "
                 f"{after_access}({after_pointer}); compiled lexical positions="
                 f"{before_event[0]},{after_event[0]}"
@@ -1948,6 +1955,156 @@ def _compiled_transfer_order_diagnostic(
             "line": None,
         }
     return None
+
+
+def compiled_packet_obligation_diagnostics(
+    packet: Mapping[str, Any],
+    ttir: str,
+    *,
+    fingerprint: TTIRFingerprint | None = None,
+    path_prefix: str = "<compiled-obligation>",
+) -> tuple[Mapping[str, Any], ...]:
+    """Compare closed packet obligations with one compiled TTIR observation.
+
+    The projection is source-neutral and reject-only.  It does not choose an
+    operation, address, loop, relation, or repair; callers decide whether the
+    observed TTIR belongs to source-aware Lift or source-blind Replay.
+    """
+
+    observed = fingerprint if fingerprint is not None else parse_ttir(ttir)
+    actual_ops = dict(observed.op_multiset)
+    diagnostics: list[Mapping[str, Any]] = []
+
+    expected_transfers, transfer_refs = _packet_transfer_direct_counts(packet)
+    expected_iteration_arities = _packet_required_compiled_iteration_arities(packet)
+    expected_reduction_linearizations, linearization_refs = (
+        _packet_required_compiled_reduction_linearizations(packet)
+    )
+    expected_address_operations, address_refs = (
+        _packet_required_compiled_address_operations(packet)
+    )
+    expected_program_ids, program_domain_refs = (
+        _packet_required_compiled_program_ids(packet)
+    )
+
+    if expected_program_ids is not None:
+        actual_program_ids = actual_ops.get("tt.get_program_id", 0)
+        if expected_program_ids != actual_program_ids:
+            diagnostics.append(
+                {
+                    "rule_code": "compiled_program_id_count",
+                    "path": (
+                        f"{path_prefix} tt.get_program_id: "
+                        f"expected={expected_program_ids}, "
+                        f"actual={actual_program_ids}"
+                    ),
+                    "anonymous_handles": list(program_domain_refs[:32]),
+                    "line": None,
+                }
+            )
+
+    linearized_reduce_producers = {
+        producer
+        for producer, consumer, role in observed.dataflow_edges
+        if producer.startswith("tt.reshape[")
+        and consumer.startswith("tt.reduce[")
+        and role == "operand[0]"
+    }
+    actual_reduction_linearizations = min(
+        len(linearized_reduce_producers),
+        sum(reduction.axis == 0 for reduction in observed.reductions),
+    )
+    if actual_reduction_linearizations < expected_reduction_linearizations:
+        diagnostics.append(
+            {
+                "rule_code": "compiled_reduction_linearization_count",
+                "path": (
+                    f"{path_prefix} tt.reshape->tt.reduce(axis=0): "
+                    "expected-at-least="
+                    f"{expected_reduction_linearizations}, "
+                    f"actual={actual_reduction_linearizations}"
+                ),
+                "anonymous_handles": list(linearization_refs[:32]),
+                "line": None,
+            }
+        )
+
+    if expected_address_operations is not None:
+        actual_address_operations = actual_ops.get("tt.addptr", 0)
+        if expected_address_operations != actual_address_operations:
+            diagnostics.append(
+                {
+                    "rule_code": "compiled_address_operation_count",
+                    "path": (
+                        f"{path_prefix} tt.addptr: expected="
+                        f"{expected_address_operations}, "
+                        f"actual={actual_address_operations}"
+                    ),
+                    "anonymous_handles": list(address_refs[:32]),
+                    "line": None,
+                }
+            )
+
+    actual_iteration_arities = tuple(
+        sorted(loop.block_argument_count for loop in observed.loops)
+    )
+    if len(expected_iteration_arities) != len(actual_iteration_arities):
+        diagnostics.append(
+            {
+                "rule_code": "compiled_iteration_count",
+                "path": (
+                    f"{path_prefix} scf.for: "
+                    f"expected={len(expected_iteration_arities)}, "
+                    f"actual={len(actual_iteration_arities)}"
+                ),
+                "anonymous_handles": [],
+                "line": None,
+            }
+        )
+    elif expected_iteration_arities != actual_iteration_arities:
+        diagnostics.append(
+            {
+                "rule_code": "compiled_iteration_carrier_arity",
+                "path": (
+                    f"{path_prefix} scf.for block-arguments: expected="
+                    f"{list(expected_iteration_arities)}, "
+                    f"actual={list(actual_iteration_arities)}"
+                ),
+                "anonymous_handles": [],
+                "line": None,
+            }
+        )
+
+    for operation in (
+        "tt.load",
+        "tt.load.masked",
+        "tt.store",
+        "tt.store.masked",
+    ):
+        expected = expected_transfers.get(operation, 0)
+        actual = actual_ops.get(operation, 0)
+        if expected != actual:
+            diagnostics.append(
+                {
+                    "rule_code": "compiled_transfer_direct_count",
+                    "path": (
+                        f"{path_prefix} {operation}: "
+                        f"expected={expected}, actual={actual}"
+                    ),
+                    "anonymous_handles": list(transfer_refs[:32]),
+                    "line": None,
+                }
+            )
+
+    transfer_order_diagnostic = _compiled_transfer_order_diagnostic(
+        packet,
+        ttir,
+        observed,
+        path_prefix=path_prefix,
+    )
+    if transfer_order_diagnostic is not None:
+        diagnostics.append(transfer_order_diagnostic)
+    return tuple(diagnostics[:20])
 
 
 def source_blind_replay_compile_check(
@@ -1981,178 +2138,43 @@ def source_blind_replay_compile_check(
     selected_packet = (
         packet if packet is not None else artifact.rewriter_view(masked=False)
     )
-    expected_transfers, transfer_refs = _packet_transfer_direct_counts(
-        selected_packet
-    )
-    expected_iteration_arities = _packet_required_compiled_iteration_arities(
-        selected_packet
-    )
-    expected_reduction_linearizations, linearization_refs = (
-        _packet_required_compiled_reduction_linearizations(selected_packet)
-    )
-    expected_address_operations, address_refs = (
-        _packet_required_compiled_address_operations(selected_packet)
-    )
-    expected_program_ids, program_domain_refs = (
-        _packet_required_compiled_program_ids(selected_packet)
-    )
-    if (
-        expected_transfers
-        or expected_iteration_arities
-        or expected_reduction_linearizations
-        or expected_address_operations is not None
-        or expected_program_ids is not None
-    ) and result.ttir is not None:
-        try:
-            fingerprint = parse_ttir(result.ttir)
-        except TTIRParseError:
-            return ReplayIngressResult(
-                "fail",
-                diagnostics=(
-                    {
-                        "rule_code": "synthetic_replay_observer_failed",
-                        "path": "<synthetic-frontend-compile>",
-                        "anonymous_handles": [],
-                        "line": None,
-                    },
-                ),
-            )
-        actual_ops = dict(fingerprint.op_multiset)
-        if expected_program_ids is not None:
-            actual_program_ids = actual_ops.get("tt.get_program_id", 0)
-            if expected_program_ids != actual_program_ids:
-                return ReplayIngressResult(
-                    "fail",
-                    diagnostics=(
-                        {
-                            "rule_code": "compiled_program_id_count",
-                            "path": (
-                                "<synthetic-frontend-compile> tt.get_program_id: "
-                                f"expected={expected_program_ids}, "
-                                f"actual={actual_program_ids}"
-                            ),
-                            "anonymous_handles": list(program_domain_refs[:32]),
-                            "line": None,
-                        },
-                    ),
-                )
-        linearized_reduce_producers = {
-            producer
-            for producer, consumer, role in fingerprint.dataflow_edges
-            if producer.startswith("tt.reshape[")
-            and consumer.startswith("tt.reduce[")
-            and role == "operand[0]"
-        }
-        actual_reduction_linearizations = min(
-            len(linearized_reduce_producers),
-            sum(reduction.axis == 0 for reduction in fingerprint.reductions),
+    if result.ttir is None:
+        return ReplayIngressResult(
+            "fail",
+            diagnostics=(
+                {
+                    "rule_code": "synthetic_replay_observer_failed",
+                    "path": "<synthetic-frontend-compile>",
+                    "anonymous_handles": [],
+                    "line": None,
+                },
+            ),
         )
-        if actual_reduction_linearizations < expected_reduction_linearizations:
-            return ReplayIngressResult(
-                "fail",
-                diagnostics=(
-                    {
-                        "rule_code": "compiled_reduction_linearization_count",
-                        "path": (
-                            "<synthetic-frontend-compile> "
-                            "tt.reshape->tt.reduce(axis=0): expected-at-least="
-                            f"{expected_reduction_linearizations}, "
-                            f"actual={actual_reduction_linearizations}"
-                        ),
-                        "anonymous_handles": list(linearization_refs[:32]),
-                        "line": None,
-                    },
-                ),
-            )
-        if expected_address_operations is not None:
-            actual_address_operations = actual_ops.get("tt.addptr", 0)
-            if expected_address_operations != actual_address_operations:
-                return ReplayIngressResult(
-                    "fail",
-                    diagnostics=(
-                        {
-                            "rule_code": "compiled_address_operation_count",
-                            "path": (
-                                "<synthetic-frontend-compile> tt.addptr: expected="
-                                f"{expected_address_operations}, actual="
-                                f"{actual_address_operations}"
-                            ),
-                            "anonymous_handles": list(address_refs[:32]),
-                            "line": None,
-                        },
-                    ),
-                )
-        if expected_iteration_arities:
-            actual_iteration_arities = tuple(
-                sorted(loop.block_argument_count for loop in fingerprint.loops)
-            )
-            if len(expected_iteration_arities) != len(actual_iteration_arities):
-                return ReplayIngressResult(
-                    "fail",
-                    diagnostics=(
-                        {
-                            "rule_code": "compiled_iteration_count",
-                            "path": (
-                                "<synthetic-frontend-compile> scf.for: "
-                                f"expected={len(expected_iteration_arities)}, "
-                                f"actual={len(actual_iteration_arities)}"
-                            ),
-                            "anonymous_handles": [],
-                            "line": None,
-                        },
-                    ),
-                )
-            if expected_iteration_arities != actual_iteration_arities:
-                return ReplayIngressResult(
-                    "fail",
-                    diagnostics=(
-                        {
-                            "rule_code": "compiled_iteration_carrier_arity",
-                            "path": (
-                                "<synthetic-frontend-compile> scf.for "
-                                f"block-arguments: expected="
-                                f"{list(expected_iteration_arities)}, actual="
-                                f"{list(actual_iteration_arities)}"
-                            ),
-                            "anonymous_handles": [],
-                            "line": None,
-                        },
-                    ),
-                )
-        for operation in (
-            "tt.load",
-            "tt.load.masked",
-            "tt.store",
-            "tt.store.masked",
-        ):
-            expected = expected_transfers.get(operation, 0)
-            actual = actual_ops.get(operation, 0)
-            if expected == actual:
-                continue
-            return ReplayIngressResult(
-                "fail",
-                diagnostics=(
-                    {
-                        "rule_code": "compiled_transfer_direct_count",
-                        "path": (
-                            "<synthetic-frontend-compile> "
-                            f"{operation}: expected={expected}, actual={actual}"
-                        ),
-                        "anonymous_handles": list(transfer_refs[:32]),
-                        "line": None,
-                    },
-                ),
-            )
-        transfer_order_diagnostic = _compiled_transfer_order_diagnostic(
+    try:
+        fingerprint = parse_ttir(result.ttir)
+        obligation_diagnostics = compiled_packet_obligation_diagnostics(
             selected_packet,
             result.ttir,
-            fingerprint,
+            fingerprint=fingerprint,
+            path_prefix="<synthetic-frontend-compile>",
         )
-        if transfer_order_diagnostic is not None:
-            return ReplayIngressResult(
-                "fail",
-                diagnostics=(transfer_order_diagnostic,),
-            )
+    except TTIRParseError:
+        return ReplayIngressResult(
+            "fail",
+            diagnostics=(
+                {
+                    "rule_code": "synthetic_replay_observer_failed",
+                    "path": "<synthetic-frontend-compile>",
+                    "anonymous_handles": [],
+                    "line": None,
+                },
+            ),
+        )
+    if obligation_diagnostics:
+        return ReplayIngressResult(
+            "fail",
+            diagnostics=obligation_diagnostics,
+        )
     return ReplayIngressResult(
         "pass",
         code=code,
@@ -2867,5 +2889,6 @@ __all__ = [
     "ReplayAttempt", "ReplayGeneration", "ReplayGenerationError",
     "ReplayIngressResult", "ReplayWriter", "ResponsesReplayWriter",
     "StaticReplayWriter", "build_source_blind_replay_compile_case",
-    "replay_source_ingress", "source_blind_replay_compile_check",
+    "compiled_packet_obligation_diagnostics", "replay_source_ingress",
+    "source_blind_replay_compile_check",
 ]

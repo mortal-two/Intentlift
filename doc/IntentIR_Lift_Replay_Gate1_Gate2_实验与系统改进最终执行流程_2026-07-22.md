@@ -714,6 +714,13 @@ function/loop/if/return 的语法位置与嵌套深度。这只是 source-aware 
 Codex Lift v12再以同一匿名Source与冻结anonymous compiler view执行一次
 `intentir.lift-source-ttir.v1`，只向该source-aware owner开放exact TTIR与现有Gate1 observer
 fingerprint的分页/token/%SSA/path查询；它不生成或建议J/C/π，raw观察不进入Replay或trajectory。
+Codex Lift v18 在该 source-aware owner 内增加只拒绝的
+`intentir.lift-source-reconcile.v1`：仅把候选已经作者化的 transfer 数量/遮罩、可投影地址拓扑、
+program-id、loop/carrier、reduction linearization 与无歧义 transfer order，同本次匿名 Source TTIR 的
+同一公共投影逐项对账。不可投影项跳过，失败只返回 closed diagnostics；它不补字段、不修改
+`(J,C,π)`、不运行 Replay/Gate，也不构成 TypeCheck、Gate1 或证书。候选必须同时通过 source-free
+CandidateCheck 与该窄对账后才成为 Lift 的 last-known-good；完整语义闭合仍只由后续 fresh Replay 和
+Gate1 判定。
 v41 只把已由 Intent dialect、TypeCheck 与 shared lowering 支持的 `log2` 补入通用 `map_unary`
 vocabulary。v42 只明确 predicate-bearing Source load 的 `fill_value` 必须是该 access 实际 authored
 `other`，不得换成 downstream neutral/canceling/observationally-equivalent value；consumer extension

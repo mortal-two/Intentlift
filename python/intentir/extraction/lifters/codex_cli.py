@@ -25,7 +25,11 @@ from intentir.extraction.providers.provider import ProviderConfig, get_provider
 from intentir.verify.scrc_runner import CandidateLiftError
 
 from .miniswe import MiniSWELiftAdapter, _input_files, _trajectory_bytes
-from .compiler_observation import observe_anonymous_source_ttir
+from .compiler_observation import (
+    SOURCE_TTIR_RECONCILE_PROTOCOL,
+    observe_anonymous_source_ttir,
+    reconcile_candidate_source_ttir,
+)
 from .scrc import (
     CANDIDATE_CHECK_PROTOCOL,
     SCRCExtraction,
@@ -41,8 +45,8 @@ from .prompt import SCHEMA as _INTENTIR_OPERATION_REFERENCE
 from .scrc_schema import scrc_lift_core_json_schema
 
 
-CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v17"
-CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v75"
+CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v18"
+CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v76"
 CODEX_CLI_TURN_TIMEOUT_SECONDS = 900.0
 
 _INITIAL_PROMPT = """You are the sole source-aware IntentIR Lift owner for this branch.
@@ -67,8 +71,11 @@ Organize your own scratch files or helper edits under work/ however you find
 efficient; no host-prescribed planner, fragment layout, ledger, or builder is
 required. The final candidate bytes must be entirely your work. Run
 `python .agents/intentir_agent_tool.py candidate_check` after a meaningful complete
-draft, repair the exact reported mechanical errors, and finish only when it reports
-PASS. The host independently reruns Decode and TypeCheck, then starts fresh
+draft, then run `python .agents/intentir_agent_tool.py source_reconcile`. Repair the
+exact diagnostics and finish only when both report PASS. CandidateCheck remains
+source-free; source_reconcile only compares your already-authored closed compiled
+obligations with the immutable Source TTIR observation. The host independently
+reruns Decode and TypeCheck, then starts fresh
 source-blind Replay and the formal gates. Do not claim certification.
 """
 
@@ -194,6 +201,9 @@ def _codex_input_files(
             "class, scope captures/effect order, and all J/C/pi cross-references are "
             "complete and mutually consistent. CandidateCheck only diagnoses these "
             "facts; it never supplies them.\n"
+            "After CandidateCheck passes, run the separate source_reconcile tool. It "
+            "only compares occurrence obligations already authored by your pi with "
+            "the immutable Source TTIR observer; it never supplies a field or repair.\n"
         ),
         "artifact_contract.json": json.dumps(
             contract,
@@ -205,6 +215,7 @@ def _codex_input_files(
         + "\n",
         "intent_ops.md": _compact_intent_op_reference() + "\n",
         "candidate_check.json": "null\n",
+        "source_reconcile.json": "null\n",
     }
     if "source_ttir.json" in complete:
         observation = json.loads(complete["source_ttir.json"])
@@ -229,6 +240,14 @@ thread. Make coordinated J/C/pi changes when required. Rerun
 complete candidate passes. CandidateCheck is diagnostic-only.
 """
 
+_SOURCE_RECONCILE_CONTINUATION_PROMPT = """The source-aware occurrence preflight rejected the current exact candidate bytes.
+Read input/source_reconcile.json and revise only the model-authored J/C/pi facts whose
+closed compiled obligations disagree with the immutable Source TTIR observation.
+This diagnostic supplies no artifact field or repair. Rerun candidate_check and
+source_reconcile, and finish only after both pass. Formal TypeCheck, Replay, and
+Gate1 remain external.
+"""
+
 
 def _source_aware_startup_context(workspace: Any, *, fresh_owner: bool) -> dict[str, Any]:
     """Return a path-only receipt; exact task state stays in ordinary files."""
@@ -245,6 +264,7 @@ def _source_aware_startup_context(workspace: Any, *, fresh_owner: bool) -> dict[
             "feedback_frontier": "input/feedback_frontier.json",
             "feedback_full": "input/feedback.json",
             "candidate_check": "input/candidate_check.json",
+            "source_reconcile": "input/source_reconcile.json",
             "candidate": "output/candidate.json",
         },
         "authority": (
@@ -412,6 +432,7 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                         "feedback.json",
                         "feedback_frontier.json",
                         "candidate_check.json",
+                        "source_reconcile.json",
                     }
                 ),
             )
@@ -426,6 +447,7 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
         fresh_owner = self._codex_session is None
         call_turns: list[CodexCLITurn] = []
         check_results: list[dict[str, Any]] = []
+        source_reconcile_results: list[dict[str, Any]] = []
         timeout_events: list[dict[str, Any]] = []
         candidate_text: str | None = None
         last_checked_good: str | None = None
@@ -433,7 +455,7 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
         timed_out_elapsed_ms = 0.0
 
         def check_current_candidate(*, trigger: str) -> dict[str, Any]:
-            nonlocal candidate_text, last_checked_good
+            nonlocal candidate_text
             try:
                 candidate_text = workspace.read_candidate()
             except Exception as exc:
@@ -482,19 +504,92 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                     ),
                 }
             )
-            if (
-                trigger == "agent_tool"
-                and check["status"] == "pass"
-                and candidate_text is not None
-            ):
-                # Exact LLM-authored bytes only.  This is a transactional
-                # checkpoint for this one Lift invocation, never a previous
-                # formal-round parent and never a synthesized artifact.
-                last_checked_good = candidate_text
             return check
 
         def candidate_check_tool() -> Mapping[str, Any]:
             return check_current_candidate(trigger="agent_tool")
+
+        def reconcile_current_candidate(*, trigger: str) -> dict[str, Any]:
+            nonlocal candidate_text, last_checked_good
+            if candidate_text is None:
+                try:
+                    candidate_text = workspace.read_candidate()
+                except Exception as exc:
+                    result = {
+                        "protocol": SOURCE_TTIR_RECONCILE_PROTOCOL,
+                        "status": "fail",
+                        "applicable": False,
+                        "diagnostics": [
+                            {
+                                "rule_code": "candidate_unavailable",
+                                "path": "<candidate>",
+                                "anonymous_handles": [],
+                                "observed_refs_or_types": [type(exc).__name__],
+                                "line": None,
+                            }
+                        ],
+                    }
+                else:
+                    result = reconcile_candidate_source_ttir(
+                        candidate_text,
+                        self._source_ttir_observation,
+                    )
+            else:
+                result = reconcile_candidate_source_ttir(
+                    candidate_text,
+                    self._source_ttir_observation,
+                )
+            source_reconcile_results.append(
+                {
+                    "trigger": trigger,
+                    "status": result["status"],
+                    "applicable": result.get("applicable"),
+                    "diagnostics": [
+                        dict(item) for item in result.get("diagnostics", [])
+                    ],
+                    "candidate_sha256": (
+                        hashlib.sha256(candidate_text.encode()).hexdigest()
+                        if candidate_text is not None
+                        else None
+                    ),
+                }
+            )
+            if result["status"] == "pass" and candidate_text is not None:
+                # Exact LLM-authored bytes only.  This checkpoint has passed both
+                # source-free CandidateCheck (enforced by callers) and the
+                # source-aware reject-only occurrence preflight.
+                last_checked_good = candidate_text
+            return result
+
+        def source_reconcile_tool() -> Mapping[str, Any]:
+            candidate_check = check_current_candidate(
+                trigger="source_reconcile_candidate_check"
+            )
+            if candidate_check["status"] != "pass":
+                return {
+                    "protocol": SOURCE_TTIR_RECONCILE_PROTOCOL,
+                    "status": "fail",
+                    "applicable": False,
+                    "diagnostics": [
+                        {
+                            "rule_code": "candidate_check_required",
+                            "path": "<candidate>",
+                            "anonymous_handles": [],
+                            "observed_refs_or_types": [],
+                            "line": None,
+                        }
+                    ],
+                }
+            return reconcile_current_candidate(trigger="agent_tool")
+
+        def host_preflight(
+            *, trigger: str
+        ) -> tuple[dict[str, Any], dict[str, Any] | None]:
+            candidate_check = check_current_candidate(trigger=trigger)
+            if candidate_check["status"] != "pass" or candidate_text is None:
+                return candidate_check, None
+            source_reconcile = reconcile_current_candidate(trigger=trigger)
+            return candidate_check, source_reconcile
 
         bridge = CodexCLIToolBridge(
             workspace.scratch_dir / CODEX_CLI_TOOL_BRIDGE_ROOT_NAME,
@@ -509,6 +604,7 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                     ),
                 },
                 "candidate_check": candidate_check_tool,
+                "source_reconcile": source_reconcile_tool,
             },
         )
         try:
@@ -571,6 +667,7 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                         "cancelled_stderr_sha256": exc.stderr_sha256,
                         "turns": [item.to_evidence() for item in call_turns],
                         "candidate_check": list(check_results),
+                        "source_reconcile": list(source_reconcile_results),
                         "tool_bridge": bridge.evidence,
                     }
                     self._records.append(
@@ -608,11 +705,13 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                         }
                         timeout_events.append(timeout_event)
 
-                        check = check_current_candidate(
+                        check, source_reconcile = host_preflight(
                             trigger="host_timeout_recheck"
                         )
                         if (
                             check["status"] == "pass"
+                            and source_reconcile is not None
+                            and source_reconcile["status"] == "pass"
                             and candidate_text is not None
                         ):
                             timeout_event["recovery"] = "current_exact_candidate"
@@ -621,11 +720,13 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                             _atomic_write_text(
                                 workspace.candidate_path, last_checked_good
                             )
-                            check = check_current_candidate(
+                            check, source_reconcile = host_preflight(
                                 trigger="host_timeout_checkpoint_restore"
                             )
                             if (
                                 check["status"] == "pass"
+                                and source_reconcile is not None
+                                and source_reconcile["status"] == "pass"
                                 and candidate_text is not None
                             ):
                                 timeout_event["recovery"] = (
@@ -643,12 +744,20 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                                 "initial Codex Lift turn timed out without a "
                                 "resumable thread or checked candidate"
                             ) from exc
-                        _atomic_write_json(
-                            workspace.input_dir / "candidate_check.json",
-                            check,
-                        )
+                        if check["status"] != "pass":
+                            _atomic_write_json(
+                                workspace.input_dir / "candidate_check.json",
+                                check,
+                            )
+                            prompt = _CANDIDATE_CHECK_CONTINUATION_PROMPT
+                        else:
+                            assert source_reconcile is not None
+                            _atomic_write_json(
+                                workspace.input_dir / "source_reconcile.json",
+                                source_reconcile,
+                            )
+                            prompt = _SOURCE_RECONCILE_CONTINUATION_PROMPT
                         timeout_event["recovery"] = "same_thread_continuation"
-                        prompt = _CANDIDATE_CHECK_CONTINUATION_PROMPT
                         selected_effort = self.repair_effort or effective_effort
                         continue
                     raise
@@ -657,14 +766,27 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                 self._session_model_turns += 1
                 self._session_physical_provider_calls += turn.model_segments
 
-                check = check_current_candidate(trigger="host_post_turn")
-                if check["status"] == "pass" and candidate_text is not None:
+                check, source_reconcile = host_preflight(trigger="host_post_turn")
+                if (
+                    check["status"] == "pass"
+                    and source_reconcile is not None
+                    and source_reconcile["status"] == "pass"
+                    and candidate_text is not None
+                ):
                     break
-                _atomic_write_json(
-                    workspace.input_dir / "candidate_check.json",
-                    check,
-                )
-                prompt = _CANDIDATE_CHECK_CONTINUATION_PROMPT
+                if check["status"] != "pass":
+                    _atomic_write_json(
+                        workspace.input_dir / "candidate_check.json",
+                        check,
+                    )
+                    prompt = _CANDIDATE_CHECK_CONTINUATION_PROMPT
+                else:
+                    assert source_reconcile is not None
+                    _atomic_write_json(
+                        workspace.input_dir / "source_reconcile.json",
+                        source_reconcile,
+                    )
+                    prompt = _SOURCE_RECONCILE_CONTINUATION_PROMPT
                 selected_effort = self.repair_effort or effective_effort
         except Exception as exc:
             if isinstance(exc, CandidateLiftError):
@@ -679,6 +801,7 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                 "fresh_session": fresh_owner,
                 "turns": [turn.to_evidence() for turn in call_turns],
                 "candidate_check": list(check_results),
+                "source_reconcile": list(source_reconcile_results),
                 "timeout_events": list(timeout_events),
                 "tool_bridge": bridge.evidence,
             }
@@ -712,6 +835,7 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
             "thread_id": self._codex_session.thread_id,
             "turns": [turn.to_evidence() for turn in call_turns],
             "candidate_check": list(check_results),
+            "source_reconcile": list(source_reconcile_results),
             "timeout_events": list(timeout_events),
             "tool_bridge": bridge.evidence,
             "source_ttir_observation": {
@@ -747,7 +871,7 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
             attempts=len(call_turns) + timed_out_calls,
             elapsed_ms=elapsed_ms,
             backend=CODEX_CLI_LIFT_BACKEND,
-            termination_status="CandidateCheckPass",
+            termination_status="CandidateCheckAndSourceReconcilePass",
             trajectory=trajectory,
         )
         extraction = SCRCExtraction(
@@ -772,6 +896,7 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
             "elapsed_ms": elapsed_ms,
             "usage": usage,
             "candidate_check": list(check_results),
+            "source_reconcile": list(source_reconcile_results),
             "timeout_events": list(timeout_events),
             "tool_bridge": bridge.evidence,
             "trajectory": trajectory,

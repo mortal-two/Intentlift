@@ -53,6 +53,8 @@ compact manifest，并只查询明确遗漏页。Codex Lift v12 / knowledge v70 
 与 relift frontier，并一次并列展开非递归 direct hard categories；此外以
 `intentir.lift-source-ttir.v1`在同一匿名specialization上编译一次Source，TTIR与observer fingerprint只在
 source-aware owner workspace中按需查询，不进入Replay或artifact。原有只读工具退为可选局部自读。
+Codex Lift v18 还用同一公共 obligation 投影对账候选已写出的 realization 与 Source TTIR；它只拒绝和
+诊断，不生成语义、不修改artifact，也不替代 fresh Replay/Gate1。
 两条路径都不生成 artifact/realization，没有 Gate
 或认证权限。
 
