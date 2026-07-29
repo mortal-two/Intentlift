@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from collections import Counter
-import hashlib
 import json
 from pathlib import Path
 import re
@@ -1134,7 +1133,6 @@ def _replay_receipt(record: ReplayGeneration | ReplayAttempt) -> dict[str, Any]:
     result: dict[str, Any] = {
         "recorded": True,
         "backend_protocol": record.backend_protocol,
-        "episode_contract_sha256": record.episode_contract_sha256,
         "model": record.model,
         "response_model": record.response_model,
         "response_id": record.response_id,
@@ -1143,16 +1141,11 @@ def _replay_receipt(record: ReplayGeneration | ReplayAttempt) -> dict[str, Any]:
         "physical_provider_calls": record.physical_provider_calls,
         "transport_retries": record.transport_retries,
         "elapsed_ms": record.elapsed_ms,
-        "request_sha256": record.request_sha256,
-        "response_sha256": record.response_sha256,
-        "raw_response_sha256": record.raw_response_sha256,
     }
     if isinstance(record, ReplayGeneration):
         result.update(
             {
                 "status": "generated",
-                "packet_digest": record.packet_digest,
-                "prompt_digest": record.prompt_digest,
                 "context_receipt": dict(record.context_receipt),
                 "function_name": record.function_name,
             }
@@ -1217,11 +1210,6 @@ def _verified_replay_trajectory_bytes(
         return None
     _assert_sanitized_replay_trajectory(record.trajectory)
     encoded = _canonical_replay_trajectory_bytes(record.trajectory)
-    digest = hashlib.sha256(encoded).hexdigest()
-    if digest != record.raw_response_sha256:
-        raise ValueError(
-            "Replay trajectory canonical hash differs from raw_response_sha256"
-        )
     if record.raw_response and record.raw_response != encoded:
         raise ValueError("Replay raw_response differs from canonical trajectory bytes")
     return encoded

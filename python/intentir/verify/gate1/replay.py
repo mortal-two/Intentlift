@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import ast
-import hashlib
 import json
 import re
 from dataclasses import dataclass, field
@@ -29,10 +28,8 @@ from .cute_codegen import extract_cute_module
 from .model import Frontend, Gate1Artifact
 from .prompt import (
     assert_source_isolated_payload,
-    build_public_frontend_context_receipt,
     build_rewriter_prompt,
     build_rewriter_payload,
-    replay_packet_digest,
 )
 from .tilelang_codegen import extract_tilelang_module
 from .ttir import TTIRParseError, parse_ttir
@@ -53,22 +50,16 @@ class ReplayGeneration:
     function_name: str
     model: str
     response_id: str | None
-    packet_digest: str
-    prompt_digest: str
     context_receipt: Mapping[str, Any] = field(default_factory=dict)
     usage: Mapping[str, int] = field(default_factory=dict)
     response_model: str | None = None
     entry_function_name: str | None = None
-    request_sha256: str = ""
-    response_sha256: str = ""
-    raw_response_sha256: str = ""
     response_text: str = field(default="", repr=False)
     raw_response: bytes = field(default=b"", repr=False)
     attempts: int = 1
     elapsed_ms: float = 0.0
     trajectory: Mapping[str, Any] = field(default_factory=dict, repr=False)
     backend_protocol: str = RESPONSES_REPLAY_BACKEND
-    episode_contract_sha256: str = ""
     physical_provider_calls: int = 0
     transport_retries: int = 0
 
@@ -81,15 +72,11 @@ class ReplayAttempt:
     response_id: str | None = None
     response_model: str | None = None
     usage: Mapping[str, int] = field(default_factory=dict)
-    request_sha256: str = ""
-    response_sha256: str = ""
-    raw_response_sha256: str = ""
     raw_response: bytes = field(default=b"", repr=False)
     attempts: int = 1
     elapsed_ms: float = 0.0
     trajectory: Mapping[str, Any] = field(default_factory=dict, repr=False)
     backend_protocol: str = RESPONSES_REPLAY_BACKEND
-    episode_contract_sha256: str = ""
     physical_provider_calls: int = 0
     transport_retries: int = 0
 
@@ -1878,10 +1865,8 @@ def _context_receipt(raw: Mapping[str, Any], context: Mapping[str, Any]) -> dict
                         "id": item.get("id") if isinstance(item.get("id"), str) else "",
                     }
                 )
-    receipt = build_public_frontend_context_receipt(context)
     return {
         "replay_input_protocol": str(context.get("protocol", "")),
-        **receipt,
         "retrieval_trace": trace,
     }
 
@@ -2183,9 +2168,6 @@ class ResponsesReplayWriter:
             provider=self.provider,
             effort=self.effort,
         )
-        prompt_digest = hashlib.sha256(
-            (instructions + "\0" + user).encode()
-        ).hexdigest()
         try:
             code, entry_function_name = _extract_replay_code(
                 reply.text,
@@ -2208,12 +2190,6 @@ class ResponsesReplayWriter:
                     else None
                 ),
                 usage=_usage(reply.raw),
-                request_sha256=reply.request_sha256,
-                response_sha256=(
-                    reply.response_sha256
-                    or hashlib.sha256(reply.text.encode()).hexdigest()
-                ),
-                raw_response_sha256=reply.raw_response_sha256,
                 raw_response=reply.raw_response,
                 attempts=reply.attempts,
                 physical_provider_calls=reply.attempts,
@@ -2230,8 +2206,6 @@ class ResponsesReplayWriter:
                 reply.raw.get("id")
                 if isinstance(reply.raw.get("id"), str) else None
             ),
-            packet_digest=replay_packet_digest(packet),
-            prompt_digest=prompt_digest,
             context_receipt=_context_receipt(
                 reply.raw, packet.get("u_f", {})
             ),
@@ -2242,12 +2216,6 @@ class ResponsesReplayWriter:
                 else None
             ),
             entry_function_name=entry_function_name,
-            request_sha256=reply.request_sha256,
-            response_sha256=(
-                reply.response_sha256
-                or hashlib.sha256(reply.text.encode()).hexdigest()
-            ),
-            raw_response_sha256=reply.raw_response_sha256,
             response_text=reply.text,
             raw_response=reply.raw_response,
             attempts=reply.attempts,
@@ -2307,20 +2275,7 @@ class MiniSWEReplayWriter:
             frontend=self.frontend,
             masked=masked,
         )
-        packet_digest = replay_packet_digest(packet)
         function_name = str(packet["u_f"]["replay_function"])
-        prompt_digest = hashlib.sha256(
-            (
-                instructions
-                + "\0"
-                + json.dumps(
-                    packet,
-                    sort_keys=True,
-                    ensure_ascii=False,
-                    allow_nan=False,
-                )
-            ).encode()
-        ).hexdigest()
         try:
             from minisweagent.environments.intentir_replay import (
                 IntentIRReplayWorkspace,
@@ -2328,7 +2283,6 @@ class MiniSWEReplayWriter:
             from minisweagent.run.intentir_replay import (
                 IntentIRReplayRunError,
                 create_intentir_replay_model,
-                intentir_replay_episode_contract_sha256,
                 run_intentir_replay,
                 validated_intentir_replay_config,
             )
@@ -2340,11 +2294,6 @@ class MiniSWEReplayWriter:
         effective_worker_config = validated_intentir_replay_config(
             self.worker_config
         )
-        episode_contract_sha256 = intentir_replay_episode_contract_sha256(
-            files,
-            effective_worker_config,
-        )
-
         # This exact callable is used by every virtual ingress check and once
         # again by the writer after submission. It has no compiler or Source
         # dependency.
@@ -2391,9 +2340,6 @@ class MiniSWEReplayWriter:
                 api_key=provider.api_key,
                 reasoning_effort=effective_effort,
                 timeout_seconds=timeout,
-                prompt_cache_key=(
-                    "intentir-replay-" + packet_digest[:48]
-                ),
             )
             set_cancel_requested = getattr(model, "set_cancel_requested", None)
             if callable(set_cancel_requested):
@@ -2428,13 +2374,6 @@ class MiniSWEReplayWriter:
                 response_id=response_id,
                 response_model=response_model,
                 usage=usage,
-                request_sha256=prompt_digest,
-                response_sha256=(
-                    hashlib.sha256((result.source_text or "").encode()).hexdigest()
-                    if result.source_text is not None
-                    else ""
-                ),
-                raw_response_sha256=hashlib.sha256(raw_trajectory).hexdigest(),
                 raw_response=raw_trajectory,
                 attempts=result.model_calls,
                 physical_provider_calls=result.physical_provider_calls,
@@ -2442,7 +2381,6 @@ class MiniSWEReplayWriter:
                 elapsed_ms=result.elapsed_ms,
                 trajectory=safe_trajectory,
                 backend_protocol=MINISWE_REPLAY_BACKEND,
-                episode_contract_sha256=episode_contract_sha256,
             )
             self._records.append(attempt)
             raise ReplayGenerationError(attempt) from exc
@@ -2466,13 +2404,6 @@ class MiniSWEReplayWriter:
                     if result is not None and result.source_text is not None
                     else ""
                 ),
-                request_sha256=prompt_digest,
-                response_sha256=(
-                    hashlib.sha256(result.source_text.encode()).hexdigest()
-                    if result is not None and result.source_text is not None
-                    else ""
-                ),
-                raw_response_sha256=hashlib.sha256(raw_trajectory).hexdigest(),
                 raw_response=raw_trajectory,
                 attempts=result.model_calls if result is not None else 0,
                 physical_provider_calls=(
@@ -2484,7 +2415,6 @@ class MiniSWEReplayWriter:
                 elapsed_ms=result.elapsed_ms if result is not None else 0.0,
                 trajectory=infrastructure_trajectory,
                 backend_protocol=MINISWE_REPLAY_BACKEND,
-                episode_contract_sha256=episode_contract_sha256,
             )
             self._records.append(attempt)
             raise
@@ -2510,11 +2440,6 @@ class MiniSWEReplayWriter:
                 response_id=response_id,
                 response_model=response_model,
                 usage=usage,
-                request_sha256=prompt_digest,
-                response_sha256=hashlib.sha256(
-                    result.source_text.encode()
-                ).hexdigest(),
-                raw_response_sha256=hashlib.sha256(raw_trajectory).hexdigest(),
                 raw_response=raw_trajectory,
                 attempts=result.model_calls,
                 physical_provider_calls=result.physical_provider_calls,
@@ -2522,7 +2447,6 @@ class MiniSWEReplayWriter:
                 elapsed_ms=result.elapsed_ms,
                 trajectory=safe_trajectory,
                 backend_protocol=MINISWE_REPLAY_BACKEND,
-                episode_contract_sha256=episode_contract_sha256,
             )
             self._records.append(attempt)
             raise ReplayGenerationError(attempt)
@@ -2547,7 +2471,6 @@ class MiniSWEReplayWriter:
                 "physical_provider_calls": result.physical_provider_calls,
                 "transport_retries": result.transport_retries,
                 "termination_status": result.exit_status,
-                "packet_digest": packet_digest,
                 "replay_check": (
                     dict(replay_check)
                     if isinstance(replay_check, Mapping)
@@ -2566,7 +2489,6 @@ class MiniSWEReplayWriter:
                 "formal_ingress_recheck": True,
                 "formal_ingress_protocol": REPLAY_CHECK_PROTOCOL,
                 "source_blind_synthetic_compile_probe": True,
-                "episode_contract_sha256": episode_contract_sha256,
             }
         )
         generation = ReplayGeneration(
@@ -2574,17 +2496,10 @@ class MiniSWEReplayWriter:
             function_name=function_name,
             model=provider.model,
             response_id=response_id,
-            packet_digest=packet_digest,
-            prompt_digest=prompt_digest,
             context_receipt=context_receipt,
             usage=usage,
             response_model=response_model,
             entry_function_name=formal_ingress.entry_function_name,
-            request_sha256=prompt_digest,
-            response_sha256=hashlib.sha256(
-                result.source_text.encode()
-            ).hexdigest(),
-            raw_response_sha256=hashlib.sha256(raw_trajectory).hexdigest(),
             response_text=result.source_text,
             raw_response=raw_trajectory,
             attempts=result.model_calls,
@@ -2593,7 +2508,6 @@ class MiniSWEReplayWriter:
             elapsed_ms=result.elapsed_ms,
             trajectory=safe_trajectory,
             backend_protocol=MINISWE_REPLAY_BACKEND,
-            episode_contract_sha256=episode_contract_sha256,
         )
         self._records.append(generation)
         return generation
@@ -2609,7 +2523,7 @@ class StaticReplayWriter:
     def generate(
         self, artifact: Gate1Artifact, *, masked: bool = False
     ) -> ReplayGeneration:
-        instructions, user = build_rewriter_prompt(
+        _instructions, user = build_rewriter_prompt(
             artifact, frontend=self.frontend, masked=masked
         )
         packet = json.loads(user)
@@ -2628,10 +2542,6 @@ class StaticReplayWriter:
             model=self.model,
             response_id=None,
             entry_function_name=entry_function_name,
-            packet_digest=replay_packet_digest(packet),
-            prompt_digest=hashlib.sha256(
-                (instructions + "\0" + user).encode()
-            ).hexdigest(),
             context_receipt=_context_receipt({}, packet.get("u_f", {})),
             backend_protocol=STATIC_REPLAY_BACKEND,
         )

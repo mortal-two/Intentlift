@@ -971,7 +971,6 @@ def _replay_obligation_audit_view(
     return {
         "protocol": "intentir.replay-obligation-audit.v3",
         "status": "pass",
-        "source_sha256": hashlib.sha256(source_text.encode("utf-8")).hexdigest(),
         "audit_required": _replay_obligation_audit_required(facts),
         "broadcast_obligations": broadcast_obligations,
         "lexical_regions": lexical_regions,

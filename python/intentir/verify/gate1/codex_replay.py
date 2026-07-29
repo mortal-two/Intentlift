@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -28,7 +27,6 @@ from intentir.verify.gate1.compiler import KernelSource, TritonCompiler
 from intentir.verify.gate1.ttir import fingerprint_ttir
 
 from .model import Frontend, Gate1Artifact
-from .prompt import replay_packet_digest
 from .replay import (
     REPLAY_CHECK_PROTOCOL,
     ReplayAttempt,
@@ -158,19 +156,6 @@ def _aggregate_usage(turns: list[CodexCLITurn]) -> dict[str, int]:
             if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
                 usage[key] = usage.get(key, 0) + value
     return usage
-
-
-def _episode_contract_sha256(files: Mapping[str, str | bytes]) -> str:
-    digest = hashlib.sha256()
-    digest.update(CODEX_CLI_REPLAY_BACKEND.encode())
-    for name in sorted(files):
-        content = files[name]
-        raw = content if isinstance(content, bytes) else content.encode()
-        digest.update(b"\0")
-        digest.update(name.encode())
-        digest.update(b"\0")
-        digest.update(hashlib.sha256(raw).digest())
-    return digest.hexdigest()
 
 
 def _replay_realization_view(packet: Mapping[str, Any]) -> dict[str, Any]:
@@ -575,21 +560,7 @@ class CodexCLIReplayWriter:
             frontend=self.frontend,
             masked=masked,
         )
-        packet_digest = replay_packet_digest(packet)
         function_name = str(packet["u_f"]["replay_function"])
-        prompt_digest = hashlib.sha256(
-            (
-                instructions
-                + "\0"
-                + json.dumps(
-                    packet,
-                    sort_keys=True,
-                    ensure_ascii=False,
-                    allow_nan=False,
-                )
-            ).encode()
-        ).hexdigest()
-        episode_contract_sha256 = _episode_contract_sha256(files)
 
         try:
             from minisweagent.environments.intentir_replay import (
@@ -623,7 +594,7 @@ class CodexCLIReplayWriter:
         obligation_audit_required = _replay_obligation_audit_required(
             critical_facts
         )
-        obligation_audited_source_digests: set[str] = set()
+        obligation_audited_sources: set[str] = set()
         synthetic_compiler = (
             None
             if self.compile_checker is not None
@@ -681,15 +652,9 @@ class CodexCLIReplayWriter:
             receipt = {
                 "protocol": "intentir.scrc.replay-context-rollover.v1",
                 "reason": reason,
-                "packet_digest": packet_digest,
                 "packet_path": "input/packet.json",
                 "replay_path": "output/replay.source",
                 "check_path": "work/host_replay_check.json",
-                "replay_sha256": (
-                    hashlib.sha256(source_text.encode()).hexdigest()
-                    if source_text
-                    else None
-                ),
                 "authority": (
                     "transport-only exact file handoff inside the same fresh Replay "
                     "episode; no semantic summary, Source, Gate evidence, or prior "
@@ -739,10 +704,9 @@ class CodexCLIReplayWriter:
         def replay_compile_tool() -> Mapping[str, Any]:
             nonlocal last_checked_good
             current = workspace.read_replay()
-            current_digest = hashlib.sha256(current.encode()).hexdigest()
             if (
                 obligation_audit_required
-                and current_digest not in obligation_audited_source_digests
+                and current not in obligation_audited_sources
             ):
                 return {
                     "protocol": REPLAY_CHECK_PROTOCOL,
@@ -787,11 +751,9 @@ class CodexCLIReplayWriter:
         def replay_obligation_audit_tool() -> Mapping[str, Any]:
             current = workspace.read_replay()
             view = _replay_obligation_audit_view(packet, current)
-            source_digest = str(view["source_sha256"])
-            obligation_audited_source_digests.add(source_digest)
+            obligation_audited_sources.add(current)
             obligation_audits.append(
                 {
-                    "source_sha256": source_digest,
                     "broadcast_obligation_count": len(
                         view["broadcast_obligations"]
                     ),
@@ -822,8 +784,7 @@ class CodexCLIReplayWriter:
                     "diagnostic": "custom compile checker exposes no Replay TTIR",
                 }
             current = workspace.read_replay()
-            source_digest = hashlib.sha256(current.encode()).hexdigest()
-            observation = ttir_observations.get(source_digest)
+            observation = ttir_observations.get(current)
             if observation is None:
                 ingress = replay_source_ingress(
                     current,
@@ -856,11 +817,10 @@ class CodexCLIReplayWriter:
                         "status": "pass",
                         "ttir": result.ttir,
                         "fingerprint": fingerprint.to_dict(),
-                        "fingerprint_digest": fingerprint.digest,
                         "compiler": dict(result.compiler),
                         "target": dict(result.target),
                     }
-                ttir_observations[source_digest] = observation
+                ttir_observations[current] = observation
 
             mode = arguments[0] if arguments else "summary"
             if mode not in {"summary", "raw", "find", "observer"}:
@@ -954,7 +914,6 @@ class CodexCLIReplayWriter:
                     }
             ttir_inspections.append(
                 {
-                    "source_sha256": source_digest,
                     "query": list(arguments) if arguments else ["summary"],
                     "status": result_view.get("status"),
                 }
@@ -1016,11 +975,6 @@ class CodexCLIReplayWriter:
                     "trigger": trigger,
                     "status": check["status"],
                     "diagnostics": [dict(item) for item in check["diagnostics"]],
-                    "source_sha256": (
-                        hashlib.sha256(source_text.encode()).hexdigest()
-                        if source_text
-                        else None
-                    ),
                 }
             )
             if (
@@ -1029,10 +983,9 @@ class CodexCLIReplayWriter:
                 or formal_ingress.code is None
             ):
                 return False, check
-            source_digest = hashlib.sha256(source_text.encode()).hexdigest()
             if (
                 obligation_audit_required
-                and source_digest not in obligation_audited_source_digests
+                and source_text not in obligation_audited_sources
             ):
                 audit_check: Mapping[str, Any] = {
                     "protocol": REPLAY_CHECK_PROTOCOL,
@@ -1053,7 +1006,6 @@ class CodexCLIReplayWriter:
                         "diagnostics": [
                             dict(item) for item in audit_check["diagnostics"]
                         ],
-                        "source_sha256": source_digest,
                     }
                 )
                 return False, audit_check
@@ -1080,9 +1032,6 @@ class CodexCLIReplayWriter:
                     "diagnostics": [
                         dict(item) for item in compile_check["diagnostics"]
                     ],
-                    "source_sha256": hashlib.sha256(
-                        source_text.encode()
-                    ).hexdigest(),
                 }
             )
             return formal_compile.status == "pass", compile_check
@@ -1163,9 +1112,6 @@ class CodexCLIReplayWriter:
                                 "previous_thread_input_tokens": (
                                     current_thread_input_tokens
                                 ),
-                                "replay_sha256": hashlib.sha256(
-                                    source_text.encode()
-                                ).hexdigest(),
                             }
                         )
                         session = new_session()
@@ -1203,11 +1149,6 @@ class CodexCLIReplayWriter:
                             "previous_thread_id": thread_id,
                             "previous_thread_input_tokens": (
                                 current_thread_input_tokens
-                            ),
-                            "replay_sha256": (
-                                hashlib.sha256(source_text.encode()).hexdigest()
-                                if source_text
-                                else None
                             ),
                         }
                     )
@@ -1264,10 +1205,8 @@ class CodexCLIReplayWriter:
                         turn.model_segments for turn in turns
                     ) + timed_out_calls,
                     "tool_actions": sum(turn.tool_actions for turn in turns),
-                    "packet_digest": packet_digest,
                     "formal_ingress_protocol": REPLAY_CHECK_PROTOCOL,
                     "formal_compile_recheck": True,
-                    "episode_contract_sha256": episode_contract_sha256,
                 }
             )
             generation = ReplayGeneration(
@@ -1275,15 +1214,10 @@ class CodexCLIReplayWriter:
                 function_name=function_name,
                 model=provider.model,
                 response_id=thread_id,
-                packet_digest=packet_digest,
-                prompt_digest=prompt_digest,
                 context_receipt=context_receipt,
                 usage=usage,
                 response_model=provider.model,
                 entry_function_name=formal_ingress.entry_function_name,
-                request_sha256=prompt_digest,
-                response_sha256=hashlib.sha256(source_text.encode()).hexdigest(),
-                raw_response_sha256=hashlib.sha256(raw_trajectory).hexdigest(),
                 response_text=source_text,
                 raw_response=raw_trajectory,
                 attempts=len(turns) + timed_out_calls,
@@ -1294,7 +1228,6 @@ class CodexCLIReplayWriter:
                 elapsed_ms=active_elapsed_ms,
                 trajectory=trajectory,
                 backend_protocol=CODEX_CLI_REPLAY_BACKEND,
-                episode_contract_sha256=episode_contract_sha256,
             )
             self._records.append(generation)
             return generation
@@ -1322,8 +1255,6 @@ class CodexCLIReplayWriter:
                     {
                         "winner_branch_id": exc.winner_branch_id,
                         "cancelled_elapsed_ms": exc.elapsed_ms,
-                        "cancelled_stdout_sha256": exc.stdout_sha256,
-                        "cancelled_stderr_sha256": exc.stderr_sha256,
                     }
                     if isinstance(exc, CodexCLICancelled)
                     else {}
@@ -1337,19 +1268,11 @@ class CodexCLIReplayWriter:
                 response_id=thread_id,
                 response_model=provider.model,
                 usage=_aggregate_usage(turns),
-                request_sha256=prompt_digest,
-                response_sha256=(
-                    hashlib.sha256(source_text.encode()).hexdigest()
-                    if source_text
-                    else ""
-                ),
-                raw_response_sha256=hashlib.sha256(raw_trajectory).hexdigest(),
                 raw_response=raw_trajectory,
                 attempts=len(turns) + timed_out_calls,
                 elapsed_ms=active_elapsed_ms,
                 trajectory=trajectory,
                 backend_protocol=CODEX_CLI_REPLAY_BACKEND,
-                episode_contract_sha256=episode_contract_sha256,
                 physical_provider_calls=sum(
                     turn.model_segments for turn in turns
                 ) + cancelled_calls + timed_out_calls,
