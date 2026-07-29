@@ -283,6 +283,18 @@ syntax，必须是一对一的闭合表示、同时更新 Decode/TypeCheck/Repla
 首轮能力验收只比较 `time-to-first-complete-candidate`、首次 Gate1 frontier 和累计输入，不把
 TypeCheck PASS 当作语义进展；先用 Linear、SplitK、Flash 三个 profile 做小规模 A/B。
 
+Linear 的首个路径清单 A/B 已给出反例：仅删除首包中的 ABI/outline/observer 投影不足以降低成本。
+旧首轮为 `683s / 1.19M input tokens / 5 model segments / Gate1 score 0.687`；路径清单版本为
+`846s / 1.84M input tokens / 10 model segments / Gate1 score 0.627`。新 owner 随后主动读取完整
+minimal example、IntentOps、lift contract、多个 preflight 区段、接近完整的83KB JSON Schema和
+TTIR片段，共产生约257KB shell输出并做8次CandidateCheck。因此“把大对象从prompt移到文件”不是
+能力改进；只要重复的authoring surface仍对模型可见，它就会在不确定时重新全部读取。
+
+下一次减法必须真正收敛对Agent可见的authoring surface：一个短而权威的closed wire reference、
+exact Source/Harness/TTIR和CandidateCheck即可；完整Schema继续由host checker消费，不作为默认可浏览
+教程，重叠的README/contract/preflight/IntentOps/minimal-example不得同时要求模型核对。该变化仍不
+删除π关系，也不由fixed code作者化任何J/C/π字段。
+
 ## 5. J / C / π的能力计划
 
 ### 5.1 不做大重构
