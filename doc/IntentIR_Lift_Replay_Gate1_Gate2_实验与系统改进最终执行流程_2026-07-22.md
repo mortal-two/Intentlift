@@ -906,12 +906,11 @@ Replay 不得：
 - 从旧 Replay 或 Gate1 diff 推断修补方案；
 - 等待 Harness 在生成后补出新的 use-site。
 
-`U_f` 必须是版本化、source-neutral 的公共前端知识，不能按当前 Kernel、operator 或失败样本选择。
-当前版本组合是 `intentir.scrc.replay-input.v2`、Triton
-`public_frontend_context_v17`、source-aware Codex/MiniSWE Lift `intentir.lift-knowledge.v70/v65`、
+`U_f` 必须是 source-neutral 的公共前端知识，不能按当前 Kernel、operator 或失败样本选择。
+当前 packet protocol 是 `intentir.scrc.replay-input.v2`；Triton 公共上下文由固定公开字段直接给出，
+不使用 context version、SHA 或 receipt 作为运行门禁。source-aware Codex/MiniSWE Lift `intentir.lift-knowledge.v70/v65`、
 source-blind MiniSWE Replay v30 与 Codex Replay v28、
-`replay-check.v12`；fresh evidence必须保存实际 receipt，
-旧版本 run 不能被新组合追认。
+`replay-check.v12`；fresh Replay 只检查当前字段、packet closure 和 source isolation，旧版本 run 不能被新组合追认。
 v30/v26 完整执行既有 authored route extent transform 合同：将其纳入 exact `critical_facts.v4`、
 `replay-obligation-audit.v3` 与 source-blind static ingress；只拒绝缺失 closed floor/ceil-div spelling，
 不生成 relation/code，也不替代 Gate1。即使不存在 broadcast/lexical/cross-region obligation，单独存在

@@ -483,7 +483,7 @@ dependent checking 夸写成 Source topology 的形式证明。
 首版不需要让 TypeCheck 成为 SMT 或完整图证明器。最小可行实现只需 fail closed 地完成上述局部检查。
 
 当前合并协议为 `artifact.v11 / decode.v16 / typecheck.v28 / candidate-check.v1 / replay-check.v12`；
-Replay packet envelope 为 `replay-input.v2`，Triton context 为 `public_frontend_context_v17`，
+Replay packet envelope 为 `replay-input.v2`；Triton 公共上下文由当前固定公开字段直接给出，不再使用 context version、SHA 或 receipt 作为运行门禁；
 Codex/MiniSWE Lift knowledge 为 v70/v65，MiniSWE Replay backend 为 v30，Codex Replay backend 为 v28。
 v30/v26 完整执行 authored route extent transform 合同：将其纳入 `critical_facts.v4`、
 `replay-obligation-audit.v3` 与 source-blind static ingress；只检查 closed floor/ceil-div spelling，

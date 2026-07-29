@@ -222,12 +222,12 @@ Lift首包只包含：
 
 - 简短所有权合同与精确工具清单；
 - `source.py`、匿名Harness view、schema bundle和feedback文件路径；
-- 总bytes/hash与必要的小文件原文；
+- 必要的小文件原文与路径；
 - 当前formal round与exact artifact路径。
 
 Source、TTIR、完整schema、历史artifact和recursive Gate diff留在本地文件，按需读取；同一大对象不在
-每个model turn重复嵌入。工具结果允许在后续turn以bytes/hash receipt压缩，但exact内容始终可从同一
-workspace重读，不由host生成语义摘要。
+每个model turn重复嵌入。工具结果保留路径和必要的小片段，exact内容始终可从同一 workspace 重读，
+不由 host 生成语义摘要或 hash receipt。
 
 目标不是人为限制模型调用次数，而是让一次Codex式回合只做少量“读—改—查”动作。必须记录：
 
@@ -373,8 +373,7 @@ construction compile与ReplayCheck只是source-blind拒绝/诊断，不是Gate1 
 
 正常大小packet只exact嵌入一次；超限时给compact manifest和按需分页。provider单turn与episode总active
 wall time分离：单turn保持可恢复的有限上限，复杂Replay episode默认允许累计约3600秒；低tool-call
-或“必须三步完成”不作为capability cutoff。只有request、workspace digest与closed output连续完全相同
-时才按exact stagnation停止。
+或“必须三步完成”不作为capability cutoff。只有当前 exact output 连续没有变化时才按 stagnation 停止。
 
 当单个provider thread因累计上下文过大或timeout失去效率，而当前workspace已有Replay draft时，可在
 同一个fresh episode内滚动到新transport thread；新thread只重读exact `packet.json`、当前Replay bytes与
@@ -389,7 +388,7 @@ source-blind输入边界均不改变。
 CandidateCheck、Replay自身语法/编译修正都记录成本，但不冒充formal closure次数。
 
 Gate1 diff只返回产生该candidate的同一Lift owner。Replay永远看不到diff。owner可以修改J、C或π，
-也可以明确保持exact artifact digest；无论哪种选择，下一formal round都使用fresh Replay。
+也可以明确保持 exact artifact；无论哪种选择，下一formal round都使用fresh Replay。
 
 ### 7.2 失败所有权
 

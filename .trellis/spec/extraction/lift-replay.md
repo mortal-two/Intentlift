@@ -349,11 +349,11 @@ TypeCheck 不做 SMT、range proof 或一般语义等价证明。检查失败时
 ReplayLLM(J,pi,MaskC(C);U_f) -> complete source R_f
 ```
 
-当前 packet protocol 为 `intentir.scrc.replay-input.v2`，Triton 公共上下文为
-`public_frontend_context_v17`；source-aware Codex/MiniSWE Lift 的当前 knowledge receipt 分别为
+当前 packet protocol 为 `intentir.scrc.replay-input.v2`；Triton 公共上下文直接由当前固定字段给出，
+不再附带 context version、SHA 或 receipt 门禁。source-aware Codex/MiniSWE Lift 的当前 knowledge receipt 分别为
 `intentir.lift-knowledge.v70 / intentir.lift-knowledge.v65`，source-blind MiniSWE/Codex Replay backend 为
 `minisweagent.intentir-replay.v30 / openai.codex-cli.intentir-replay.v28`。这些版本必须随 fresh run 原样记录；旧 packet/context/knowledge
-evidence 不因实现升级而被重判。
+evidence 不因实现升级而被重判；fresh Replay 只做当前字段的结构和 source-isolation 检查。
 
 Replay v28把一个formal round保持为同一个fresh、单writer、source-blind coding episode，总active
 wall time默认3600秒。它可重复编辑、运行`replay-check.v12`和public synthetic compile，并只对当前
@@ -400,12 +400,12 @@ transform 时，Replay
 v30/v26 在 construction compile 前要求同一 owner 对当前 exact source bytes 调用一次
 `replay-obligation-audit.v3`。返回值只把上述 J/π ledger 与该 owner 自己源码的带行号非空行并置；
 它不建立 `source statement ↔ relation/i*` 映射，不判断
-满足与否，也不建议或执行修复。owner 修改任一 byte 后必须重新审阅新 digest。该事务约束只保证模型
+满足与否，也不建议或执行修复。owner 修改任一 byte 后必须重新审阅当前源码。该事务约束只保证模型
 在提交前实际看到约束和当前代码，既不是 Replay 输入 artifact，也不进入 TypeCheck/Gate1 membership。
 
 v50/v8 只升级 proof-irrelevant Agent execution transport：活动 staged writer 被移除，MiniSWE 使用
 一个持久 Lift owner 和每轮一个 exact Replay packet；首轮 exact allowlisted workspace mirror 在
-模型收到一次后可于后续无状态 provider packet 中替换为 hash/length receipt；旧 response/tool group
+模型收到一次后可于后续无状态 provider packet 中按路径重读 exact 文件；旧 response/tool group
 只保留最近窗口，完整本地 trajectory 与 workspace 文件不变。Lift 可把多个显式 schema lookup 合并为
 一个只读 bundle；Replay 可把完整 LLM-authored source 直接原样提交，或对自己的当前 source 做唯一
 exact-text replacement 后在同一 action 触发既有 ReplayCheck preflight。固定代码不得据此解释、生成、
