@@ -1,6 +1,6 @@
 # Task 18：J-Driven High-Leverage Full Search（真实 1.5× 结构机制）
 
-> 状态：执行中
+> 状态：阶段性收口；三柱边界、首批 Sparsemax/RVV 结构与当前性能已落地，未完成的 1.5× 目标由 Task 19 接管
 >
 > 类型：production backend 能力扩展、CUDA/H100/RVV 单线程真实 MLIR lowering search
 >
