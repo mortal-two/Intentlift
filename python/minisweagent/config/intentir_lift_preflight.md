@@ -311,9 +311,13 @@ the artifact schema or external TypeCheck.
    boundary access/domain traversal uses `physical_iterations`, not a synthetic J
    loop: bind the existing body instance, the same-subject/same-axis required
    positive C tile, the authored induction basis, and forward/reverse direction.
-   When compiler-visible accumulator stages exist,
-   author `physical_loop_carriers` in that region. These are temporal topology,
-   never an initialization/update formula, and fixed code never creates them.
+   When compiler-visible loop-carried stages exist, author every tuple member as
+   one ordered `physical_loop_carriers` relation in that region, including
+   pointer/address recurrences as well as accumulators. Each relation's own
+   init/state/next/result types must agree; different tuple slots may be
+   heterogeneous and need not match the body instance type. These are temporal
+   topology, never an initialization/update formula, and fixed code never creates
+   them.
    The syntax-only Source outline lists names that were lexically bound before a
    loop and written inside it. Treat every listed name as a required inspection
    point, not an inferred carrier; decide the complete carrier set from Source.

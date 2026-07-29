@@ -3616,35 +3616,6 @@ def _check_physical_loop_carriers(
                     role_ids["state"],
                 )
             )
-        body_instance_id = physical_bodies.get(region_ref)
-        body_anchor = (
-            instance_anchors.get(body_instance_id)
-            if body_instance_id is not None
-            else None
-        )
-        body_key = (
-            (
-                body_anchor.value_type.dtype.casefold(),
-                body_anchor.value_type.rank,
-                str(body_anchor.carrier_class),
-            )
-            if body_anchor is not None
-            and body_anchor.value_type is not None
-            and body_anchor.carrier_class in {"pointer", "value"}
-            else None
-        )
-        if typed_keys and body_key is not None and any(
-            key != body_key for key in typed_keys
-        ):
-            diagnostics.append(
-                TypeCheckDiagnostic(
-                    TypeCheckErrorCode.PHYSICAL_LOOP_CARRIER_INVALID,
-                    base,
-                    "physical carrier dtype, rank, and class must match the "
-                    "indexed reduce/contraction result",
-                    role_ids["state"],
-                )
-            )
         if (role_ids["init"], role_ids["state"]) not in route_edges:
             diagnostics.append(
                 TypeCheckDiagnostic(

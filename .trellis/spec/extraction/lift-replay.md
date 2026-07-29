@@ -266,6 +266,8 @@ transfer traversal 等不改变 `[[J]]` 的物理时间；tile instance 仍必�
 positive-integer C slot。后者只绑定 typed init/state/next/result 时间拓扑。两者都不携带
 bound/formula/value/API，也不让 fixed code创建 J loop、选择锚点或推导 traversal。真实性和遗漏继续
 由 fresh Replay/Gate1 检查。
+每条 physical carrier 是一个 tuple slot：slot 内四个 stage 类型一致；不同 slot 可异构、无需匹配
+body instance 类型，因此 pointer/address recurrence 与 accumulator 都由 Lift 分别作者化。
 `artifact.v9` 再加入 `pi.terminal_controls`，只在 J 已有 `effect_if` 的 sibling arm scopes 上指定
 terminal/continuation topology；不复制 predicate、return、Source 或 frontend spelling。
 `artifact.v10` 再加入 `pi.route_extent_transforms`：只允许 attached required positive-int C extent

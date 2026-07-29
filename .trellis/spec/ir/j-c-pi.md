@@ -423,6 +423,10 @@ reference/type/scope/axis/totality，不选择锚点或推导 traversal；Source
 Gate1 判断。Replay 必须由 J+C+π 得到 active physical tile rank，不能把 logical axis ordinal 直接当
 frontend tensor-rank axis。
 
+每条 carrier relation 是一个 tuple slot；该 slot 内 init/state/next/result 的 dtype、rank 与
+pointer/value class 必须一致，但不同 slot 可以异构，也不要求等于 `body_instance` 的类型。由此可同时
+表达 pointer/address recurrence 与 accumulator，而不把任何 update 公式写入 π。
+
 同一 `region` 的 `physical_loop_carriers` 按数组 declaration order 定义唯一 carrier-tuple ordinal；
 该 ordinal 同时用于 init/state/next/result 的对应 slot。Lift 必须按 Source frontend loop 的
 argument/yield/result tuple作者化，Replay 原样保持，不得按 dtype、semantic ref 或 mechanism 重排。

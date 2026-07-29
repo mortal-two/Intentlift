@@ -497,6 +497,9 @@ pi.physical_loop_carriers[*] = {
 C slot 指向同一 J node/axis；body 锚定 boundary access/domain 时，C slot 指向同一 subject/axis。后一种
 只表达 output epilogue 或 transfer traversal 的物理时间，不产生新的 logical recurrence。
 carrier 五元组只保存 typed temporal topology；不得携带 init/update 公式、bound、value 或 frontend API。
+每条 relation 对应一个 carrier-tuple slot：该 slot 的 init/state/next/result 类型一致；不同 slot 可以
+异构，也不要求匹配 `body_instance` 类型。因此 pointer/address recurrence 与 accumulator 可在同一
+physical loop 中分别声明，而无需把更新公式写入 π。
 一个 region 至多一条 physical iteration，不能与 structured `pi.iterations` 重叠。TypeCheck 验证 closed
 引用、类型、作用域、basis/direction vocabulary 和必要 totality；它不从 Source 推导 relation，也不证明
 Source 的真实方向/loop 数量。遗漏或错误仍由 source-blind Replay 后的 Gate1 检出。
