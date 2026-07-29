@@ -1,12 +1,11 @@
 # Task 14：Source-Grounded Certification Profile 下的 Codex 28-Kernel Fresh SCRC 最终闭合
 
-> 状态：执行中（2026-07-29）；model-input审计后保留18个参数化完整的accepted J；旧SplitK
-> reduce/backward固定`vararg_arity=2`，不能代表正式`split=4`模型调用，降为历史evidence。当前正式
-> fresh队列为8个未闭合case加这2个SplitK case，共10项；统一使用adapter v6记录的模型级/direct-tile
-> input profile。
+> 状态：已结束并归档（2026-07-29）。model-input审计保留18个参数化完整的accepted J；旧SplitK
+> reduce/backward固定`vararg_arity=2`，不能代表正式`split=4`模型调用，降为历史evidence。8个未闭合
+> case与这2个SplitK case共10项，连同尚未完成的通用agent/J/Replay能力建设，统一移交Task 15。
 >
-> 类型：Task 11 的最终 fresh corpus执行波；不是 production backend、`J_dev`能力建设、性能搜索、
-> 论文实验或历史证书重判。
+> 类型：Task 11 的历史 fresh corpus执行波；不是 production backend、`J_dev`能力建设、性能搜索、
+> 论文实验或历史证书重判。本文只作为历史轨迹，不再调度新运行。
 >
 > 历史基线：18/28只说明旧版本各自曾取得证书；本任务对active registry的28个direct symbols全部
 > fresh运行，不用旧证书替代当前参数化/runtime版本。

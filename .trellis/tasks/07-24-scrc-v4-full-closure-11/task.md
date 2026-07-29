@@ -5,18 +5,16 @@
 > 类型：Task 10 完成后的 fresh SCRC corpus 构建；不是 backend 性能搜索、论文实验或旧 Task 03
 > 恢复执行。
 >
-> 活动性：Task 01–10 与未通过性能验收的 Task 12 已物理归档；Task 11 闭合主线保持活跃。Task 13
-> 收口 MiniSWE/Codex Agent runtime 后归档；Task 14 先审查每项source-grounded certification profile，
-> 再使用该runtime fresh重闭合当前28项，但不终止、替代或归档本任务。
+> 活动性：Task 01–10、Task 12–14均已物理归档；Task 11闭合主线保持活跃。Task 15承接model-level
+> input、Compiler-observed Codex Lift、closed J、source-blind Replay agent与最终十项闭合；它不终止、
+> 替代或归档本任务。
 
 ## 目标
 
-Task 14 对 active registry 的全部 28 个 Kernel 建立各自独立、按落盘版本解释的 fresh accepted
-`(J,C,π)`、Replay、Gate1、Gate2 与预算证据。历史 18/28（包括 DYT、SwiGLU、Softmax 等）继续按
-其原版本保持不可变，只作为旧证书对照，不替代当前 shape-parametricity/runtime 栈的 fresh 28/28
-corpus。当前执行以
-`artifact.v8 / decode.v12 / typecheck.v20 / candidate-check.v1 / j_scalar_cpu_mlir_v16 /
-intentir.j-functional-boundary.v15 / Gate1 observer v11` 开 fresh run。执行必须真正支持多个语义族
+Task 15保留经逐artifact审查确认参数化、ABI/variant正确的18份accepted J，并对8个未闭合case及
+正式`split=4`下失效的2个SplitK旧证书进行fresh闭合。最终corpus由`18 retained + 10 fresh`组成，
+不因通用schema增加该artifact不需要的relation而机械重跑18项。实际protocol版本以Task 15每次
+能力提交后的fresh receipt为准。执行必须真正支持多个语义族
 wall-clock 并行，同时保持每个 case 的证书谓词与 evidence 完全隔离。
 
 稳定 J corpus 完成后，production backend B0/B1 作为独立任务消费这些 J；本任务不要求每闭合一个
@@ -542,24 +540,23 @@ FlashAttention 或其他 Kernel 专用 prompt、Replay、J/C/π 构造或 Intent
 
 ### Task 12 归档 / Task 13 接力 checkpoint（2026-07-27）
 
-Task 12 runtime 实验没有新增证书；后续独立 fresh closure 与 exact Gate2 capability recheck 已把当前
-严格覆盖推进到 **18/28**。当前 18 项为 DYT、FlashAttention backward preprocess dot、
-fused-add RMSNorm、GEGLU、JSD、Liger LayerNorm、Liger RMSNorm、PolyNorm、Softmax、SwiGLU、TVD、
-xFormers RMSNorm、FlashAttention LayerNorm、Liger RoPE、Sparsemax、SplitK reduce varargs、KLDiv 与
-xFormers RMSNorm-add。各证书继续按自身 artifact/Replay/Gate版本解释，不被新实现静默重写或重判；
-Task 14 另为全部28项建立当前参数化/runtime版本的fresh corpus。
+Task 12 runtime实验没有新增证书；后续独立fresh closure与exact Gate2 capability recheck曾把严格覆盖
+推进到18/28。Task 14的model-input审计进一步确认可保留的18项为SwiGLU、RMSNorm、fused-add
+RMSNorm、GeGLU、LayerNorm、Softmax、DYT、Sparsemax、KLDiv、PolyNorm、JSD、TVD、xFormers
+RMSNorm、xFormers RMSNorm-add、Flash backward preprocess、CrossEntropy、GroupNorm与Flash
+one-pass LayerNorm。旧Liger RoPE与SplitK reduce不再位于这18项：前者的consumer-local half-view J
+有误，后者旧证书只覆盖`vararg_arity=2`。各保留证书继续按自身artifact/Replay/Gate版本解释，不被
+新实现静默重写或重判；Task 15只fresh闭合active十项。
 
-Task 13 为全部28项建立低摩擦 single-owner执行引擎；Task 14 以 Codex 为主力批量闭合路径，
-MiniSWE 保持轻量可用路径。两者共享同一 `(J,C,pi)`、TypeCheck、fresh source-blind Replay、
-Gate1/Gate2 与 C 绑定合同。
+Task 13提供历史single-owner执行基线；Task 15只使用Codex主路径，并在同一数学合同下增强匿名
+Compiler观察、持久Lift owner、closed J dimension relation与fresh source-blind Replay coding episode。
 Task 13 的 diagnostic pilot 不冒充新的 SCRC 证书。
 
 Task 13 同时把 fresh Harness 升为 `triton-workload-adapter.v5`：concrete `shape` 只作本次 valuation，
 source-grounded shared axes 由 Harness-only `h*` shape contract 暴露，runtime scalar/grid 只能声明与
 该 coordinate 的 equality/realization。Lift 必须显式作者化双射 `x*` 与必要的 value-dimension
 relation；v5 另闭合 semantic constexpr ↔ `h*` 与真实 scratch inout role。fixed code不从
-literal/grid生成 J。旧 18 项证书不重写；Task 14 为避免旧 J 中的 valuation specialization遗漏，
-仍对全部28项 fresh Lift。
+literal/grid生成 J。旧18项证书不重写；只有active十项与后续证明确有profile/J错误的case fresh Lift。
 
 v55 DYT canary 首次形成 `[x0,x1]` 且 SCRC-certified 的 fixed-valuation J，但暴露 semantic constexpr
 `N` 与 `h1` 尚未闭合；因此 current knowledge v56 将 adapter 显式、valuation-matched 的
@@ -575,21 +572,20 @@ dataflow realization。两项 immutable evidence 详见 Task 13，均不能用 v
   sibling，Gate2 失败不 fallback；
 - 每轮汇总 TypeCheck rule、Gate1 hard category、Gate2 三边、J-necessity 与真实物理调用预算，按通用
   failure class 决定下一横向修正；
-- 最终每个 registry item 都必须有自己的独立当前版本 `SCRC_CERTIFIED` evidence，aggregate 不能
-  替代单项证书；旧 DYT/SwiGLU/18项 receipts只作历史对照，Task 14 fresh生成当前28项。
+- 最终每个 registry item 都必须有自己的独立accepted `SCRC_CERTIFIED` evidence，aggregate不能
+  替代单项证书；Task 15形成10项fresh证书，与18项保留证书组成最终corpus。
 
 ## 验收
 
 1. outer case-level bounded parallel 有实现、正反例、异常隔离和稳定 ordinal 测试；
 2. `W/B/G/G2` 合同 fail closed，实际测试证明多个不同 case lifecycle 确实重叠；
 3. same-case candidate-fanout v4 first-observed winner、cooperative sibling stop 与唯一 Gate2 规则不回退；
-4. B1/B3/v6-v14 slice 的旧 receipt terminal evidence 保持不可变；受影响项若要形成当前
-   artifact.v8/decode.v12/typecheck.v20/context.v11/knowledge.v56/RefEval.v16/
-   functional-boundary.v15/observer.v11 结论，必须分别
-   fresh rerun，且问题归因不复用旧 verdict 或 diagnostic recheck；旧 Softmax及其他证书继续保持
-   原 verdict，但不替代Task14当前版本验收；
-5. 28/28 各自具有独立、当前参数化/runtime版本的 fresh `SCRC_CERTIFIED` artifact 与完整 evidence；
-6. 全量回归通过，活动 task 唯一，完成后本 Task 直接迁入 archive，工作区提交且干净。
+4. 历史receipt terminal evidence保持不可变；active十项必须在Task 15声明的current protocol下fresh
+   闭合，18项保留artifact只有在证明确受新能力/输入错误影响时才重新Lift；
+5. 28/28各自具有独立、source-grounded且ABI/variant正确的accepted `SCRC_CERTIFIED` artifact与完整
+   evidence，其中18项retained、10项fresh的谱系明确；
+6. 以真实closure artifact完成验收，不新增或恢复mock tests；完成后本Task直接迁入archive，工作区
+   提交且干净。
 
 ## 非目标
 
