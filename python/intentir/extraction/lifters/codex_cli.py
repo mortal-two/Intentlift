@@ -39,8 +39,8 @@ from .prompt import SCHEMA as _INTENTIR_OPERATION_REFERENCE
 from .scrc_schema import scrc_lift_core_json_schema
 
 
-CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v15"
-CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v73"
+CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v16"
+CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v74"
 CODEX_CLI_TURN_TIMEOUT_SECONDS = 900.0
 
 _INITIAL_PROMPT = """You are the sole source-aware IntentIR Lift owner for this branch.
@@ -82,6 +82,20 @@ def _compact_intent_op_reference() -> str:
     return _INTENTIR_OPERATION_REFERENCE[start:end].strip()
 
 
+def _compact_authoring_schema(value: Any) -> Any:
+    """Drop prose only; preserve the exact closed JSON Schema structure."""
+
+    if isinstance(value, Mapping):
+        return {
+            str(key): _compact_authoring_schema(item)
+            for key, item in value.items()
+            if key not in {"description", "title", "examples"}
+        }
+    if isinstance(value, list):
+        return [_compact_authoring_schema(item) for item in value]
+    return value
+
+
 
 def _codex_input_files(
     request: Any,
@@ -94,7 +108,7 @@ def _codex_input_files(
         request,
         source_ttir_observation=source_ttir_observation,
     )
-    schema = scrc_lift_core_json_schema()
+    schema = _compact_authoring_schema(scrc_lift_core_json_schema())
     files = {
         "source.py": complete["source.py"],
         "harness_view.json": complete["harness_view.json"],
@@ -109,14 +123,44 @@ def _codex_input_files(
             "model-authored. Fixed code only checks and rejects. Harness shapes are "
             "valuations unless an explicit shape contract binds a parametric extent. "
             "Use the exact schema and operation reference locally; inspect raw TTIR "
-            "only where it clarifies Source control, def-use, effects, or time.\n"
+            "only where it clarifies Source control, def-use, effects, or time.\n\n"
+            "Before the first CandidateCheck, enforce these closed language "
+            "invariants in your own artifact:\n"
+            "- Every required array is present. Each handle family is dense from zero "
+            "in declaration order. Tensor handles follow first declaration across "
+            "inputs then outputs; an inout output reuses its input handle. Symbolic "
+            "x* order is first appearance in tensor shapes.\n"
+            "- Signature p* exactly follows anonymous ABI order. logical_ref names a "
+            "declared t*/x* or null. A scalar used only for representation/address may "
+            "be null; active logical data, predicate, index, shape, or result may not.\n"
+            "- C subject_ref names an existing J node/domain/access/scope/storage. "
+            "axis_ref is present only with subject_ref and must be one of that "
+            "subject's actual closed axes. C never owns logical values or operations.\n"
+            "- A predicated load that reaches sum/max/min has one typed, consumer-local "
+            "outside-domain identity relation. A numeric-cast authorization anchors "
+            "the explicit cast node and uses its operand/result dtypes.\n"
+            "- Every authored semantic loop state has one loop-scoped StorageObject "
+            "covering state/body-argument/next/result and non-literal init, with "
+            "crosses_iteration=true and escapes=true. Physical-only source loops stay "
+            "in pi rather than becoming false J recurrence.\n"
+            "- Every physical carrier has type-consistent init/state/next/result, "
+            "authored init->state and state->next routes, and a route from state to an "
+            "observable transfer/update/synchronization instance. Array order is the "
+            "Source frontend carrier-tuple order.\n"
+            "- Every direct/async transfer is reachable through authored pi routes "
+            "from the matching pointer/tensor signature carrier. Route slots match "
+            "the target J operand type; sharing consumers each have a direct route.\n"
+            "- Canonical outputs, returns/output_mapping, effects, result-relation "
+            "class, scope captures/effect order, and all J/C/pi cross-references are "
+            "complete and mutually consistent. CandidateCheck only diagnoses these "
+            "facts; it never supplies them.\n"
         ),
         "artifact.schema.json": json.dumps(
             schema,
-            indent=2,
             sort_keys=True,
             ensure_ascii=False,
             allow_nan=False,
+            separators=(",", ":"),
         )
         + "\n",
         "intent_ops.md": _compact_intent_op_reference() + "\n",
