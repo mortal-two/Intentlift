@@ -73,6 +73,9 @@ case移回fresh Lift；不能因为schema新增了一个该artifact不需要的r
 
 其中SplitK reduce/backward的旧证书只覆盖`vararg_arity=2`；正式模型profile选择`split=4`、
 `vararg_arity=4`，属于不同compile-time program specialization，必须fresh Lift。
+SplitK forward 的同一`split=4,D=256`模型profile还必须保留上游launch的compiler C：
+`num_warps=2,num_stages=1`；它们不是Source constexpr或J语义，缺失时Triton默认schedule会在当前GPU
+产生shared-memory OOR。reduce/backward的`vararg_arity=4`身份不由这两个compiler slot改变。
 
 ### 1.3 Task 14中断批次只作诊断
 

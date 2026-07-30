@@ -197,6 +197,7 @@ class TritonWorkloadAdapter:
     grid: tuple[int, ...]
     grid_contract: tuple[str, ...]
     seed: int
+    compiler_options: tuple[tuple[str, Any], ...] = ()
     input_profile: str = "capture-seed-v1"
     none_arguments: tuple[NoneBinding, ...] = ()
     vararg_arity: int | None = None
@@ -226,13 +227,19 @@ class TritonWorkloadAdapter:
             self.semantic_constexprs, label="semantic constexpr"
         )
         c_values = _pairs(self.c_values, label="C")
+        compiler_options = _pairs(
+            self.compiler_options, label="compiler option"
+        )
         object.__setattr__(self, "semantic_constexprs", semantics)
         object.__setattr__(self, "c_values", c_values)
+        object.__setattr__(self, "compiler_options", compiler_options)
         names = [item.formal for item in buffers] + [
             item.formal for item in scalars
         ] + [item.formal for item in none_arguments] + [
             name for name, _ in semantics
-        ] + [name for name, _ in c_values]
+        ] + [name for name, _ in c_values] + [
+            name for name, _ in compiler_options
+        ]
         if len(names) != len(set(names)):
             raise ValueError("adapter formals must be globally unique")
         grid = tuple(int(dim) for dim in self.grid)
@@ -406,14 +413,16 @@ class TritonWorkloadAdapter:
             )
         semantics = dict(self.semantic_constexprs)
         c_values = dict(self.c_values)
+        compiler_options = dict(self.compiler_options)
         if set(constexpr_parameters) != set(semantics) | set(c_values):
             raise ValueError("adapter constexpr ABI differs from source")
         return SCRCCompilerView(
-            schedule_values=c_values,
+            schedule_values={**c_values, **compiler_options},
             bound_constexpr_values=semantics,
             bound_constexpr_shape_coordinates=dict(
                 self.semantic_constexpr_shape_coordinates
             ),
+            compiler_slots=tuple(compiler_options),
             arguments=tuple(runtime[name] for name in expected_runtime),
             grid=self.grid,
             grid_contract=self.grid_contract,
@@ -464,6 +473,7 @@ class TritonWorkloadAdapter:
                 self.semantic_constexpr_shape_coordinates
             ),
             "c_values": dict(self.c_values),
+            "compiler_options": dict(self.compiler_options),
             "grid": list(self.grid),
             "grid_contract": list(self.grid_contract),
             "grid_shape_coordinates": list(self.grid_shape_coordinates),
@@ -544,6 +554,13 @@ def prepare_triton_workload(
             name for name, _value in adapter.semantic_constexprs
         ),
     )
+    used_opaque_names = set(mapping.values())
+    next_c = 0
+    for name, _value in adapter.compiler_options:
+        while f"c{next_c}" in used_opaque_names:
+            next_c += 1
+        mapping[name] = f"c{next_c}"
+        used_opaque_names.add(mapping[name])
     arguments = {
         mapping[item.name]: _runtime_argument(item)
         for item in view.arguments
@@ -556,9 +573,13 @@ def prepare_triton_workload(
         mapping[name]: all_constexprs[name]
         for name in source_slice.constexpr_parameters
     }
+    schedule.update(dict(adapter.compiler_options))
     c0 = {
         mapping[name]: value for name, value in adapter.c_values
     }
+    c0.update(
+        (mapping[name], value) for name, value in adapter.compiler_options
+    )
     gate_source = KernelSource.from_code(
         anonymous, "scrc_k0", trusted=True
     )
@@ -1985,7 +2006,11 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
         grid=(1, 16, 4),
         grid_contract=("ceil_div(N_CTX_Q,BLOCK_M)", "Z*G*H", "split_k"),
         seed=241,
-        input_profile="xformers-decode-B1-Mq1-G1-H16-KV4096-D256-split4-f16-v1",
+        compiler_options=(("num_warps", 2), ("num_stages", 1)),
+        input_profile=(
+            "xformers-decode-B1-Mq1-G1-H16-KV4096-D256-"
+            "split4-bm16-bn64-w2-s1-f16-v2"
+        ),
         none_arguments=tuple(
             NoneBinding(name)
             for name in (

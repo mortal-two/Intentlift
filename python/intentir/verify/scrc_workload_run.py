@@ -17,6 +17,7 @@ from intentir.verify.gate1.model import (
     Gate1Artifact,
     ParameterKind,
     ParameterMode,
+    ScheduleSlotKind,
 )
 from intentir.extraction.lifters.miniswe import MiniSWELiftAdapter
 from intentir.extraction.lifters.codex_cli import CodexCLILiftAdapter
@@ -407,10 +408,20 @@ def _build_workload_execution_case(
         input_bindings=input_bindings,
         output_bindings=output_bindings,
     )
+    schedule: dict[str, Any] = {}
+    for slot in artifact.c.slots:
+        launch_name = (
+            slot.role
+            if slot.kind is ScheduleSlotKind.COMPILER
+            else slot.name
+        )
+        if launch_name in schedule:
+            raise ValueError("C slots collide at one Triton launch option")
+        schedule[launch_name] = artifact.c.values[slot.name]
     execution = TritonExecutionSpec(
         tuple(arguments),
         adapter.grid,
-        artifact.c.values,
+        schedule,
     )
     output_keys = tuple(
         output_bindings[item.name] for item in artifact.j.intent.outputs
