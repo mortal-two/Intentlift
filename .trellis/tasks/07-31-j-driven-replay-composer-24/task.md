@@ -1,6 +1,6 @@
 # Task 24：J 主导的 π_min 与三前端 Episode-Local Composer Replay
 
-> 状态：`P5_TILELANG_REDUCTION_CERTIFIED_COMPOSER_AB_PENDING`（2026-07-31）。
+> 状态：`P5_COMPOSER_AB_POSITIVE_CUDA_REDUCTION_PENDING`（2026-07-31）。
 >
 > 定位：Task 15/Task 11 的 Replay 构造机制升级，以及 Task 23 多前端实证的真实 closure 执行线。
 > 本任务不接管 production backend；backend 仍在 SCRC 后只消费 accepted `J+C`。
@@ -181,6 +181,33 @@ Replay，`gpt-5.6-sol high`，Mask-J配置开启）：
   因此这是Composer当前“可选但无效用”的真实负结果，不能作为提速证据；
 - 下一步必须以accepted exact artifact做fresh `composer off / preferred` A/B。若preferred分支仍不
   使用或成本不降，则继续收缩/重构Composer，而不是扩大kernel模板。
+
+### Pilot F：同artifact Composer v2 fresh A/B
+
+父artifact固定为Pilot E accepted attempt-03，digest
+`2c9fe2c20b37700aaa97fd4141c786d17db3bed06f5626ba1c6e9a97caddb0a9`。两臂均使用
+`gpt-5.6-sol high`，只运行authoritative TypeCheck与fresh normal Gate1；不调用Lift、masked-J或Gate2，
+不改变parent verdict：
+
+| 指标 | off / recheck-001 | preferred / recheck-002 | preferred相对变化 |
+|---|---:|---:|---:|
+| Gate1 | replay_closed | replay_closed | 相同 |
+| Composer最终路径 | raw_escape | composer | 实际采用 |
+| elapsed | 141.212 s | 111.523 s | -21.02% |
+| input tokens | 174,443 | 142,642 | -18.23% |
+| cached input tokens | 143,872 | 115,968 | -19.40% |
+| model segments lower bound | 6 | 5 | -16.67% |
+| tool actions | 9 | 7 | -22.22% |
+| output tokens | 3,063 | 3,379 | +10.32% |
+| reasoning tokens | 1,905 | 2,097 | +10.08% |
+| submit_replay | 1 fail + 1 pass | first pass | 少1次失败修复 |
+
+- 两臂最终normal hard Gate1均通过，Source/Replay TIR digest均为
+  `094a01244932fb98c87651c3f572c3a012e6f8e827c0a64bcb5016c7685e55b1`；
+- preferred臂为Composer v2：`compose=1`、10个stable nodes（2 block + 8 line）、source map 10 nodes、
+  plan/source/map revision一致、无failed composer action；
+- 该单对样本证明“agent真实使用Composer且本次减少构造/修复成本”，不证明总体平均提速或统计显著；
+  output/reasoning tokens反而略升，后续至少增加CUDA reduction或Triton难例复核。
 
 ## 3. 交付物
 

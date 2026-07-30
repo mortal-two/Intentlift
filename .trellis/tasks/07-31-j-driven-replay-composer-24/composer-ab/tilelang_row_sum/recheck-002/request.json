@@ -1,0 +1,28 @@
+{
+  "c0": {
+    "c0": 128
+  },
+  "case_id": "tilelang:row_sum",
+  "changes_prior_verdict": false,
+  "diagnostic_only": true,
+  "enters_gate2": false,
+  "frontend": "tilelang",
+  "grid": [
+    16,
+    1,
+    1
+  ],
+  "model": "gpt-5.6-sol",
+  "observer_profile": "tilelang_tir_semantic_structure@tilelang-tir-semantic-structure-ptx-diagnostic-v4",
+  "parent_evidence": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/07-31-j-driven-replay-composer-24/runs/tilelang_row_sum/run-001/attempt-03",
+  "protocol": "intentir.scrc.gate1-diagnostic-recheck.v1",
+  "provider": "gpt-5.6-sol",
+  "reasoning_effort": "high",
+  "replay_backend": "codex",
+  "replay_composer_mode": "preferred",
+  "run_masked_j": false,
+  "source_to_opaque": {
+    "inp_handle": "p0",
+    "out_handle": "p1"
+  }
+}
