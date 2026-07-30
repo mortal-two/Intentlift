@@ -164,6 +164,30 @@ def _observer_diff_from_diagnostics(
     return observer if isinstance(observer, Mapping) else None
 
 
+def _replay_counterexample_from_diagnostics(
+    diagnostics: Mapping[str, Any] | None,
+) -> Mapping[str, Any] | None:
+    """Find the exact prior Replay evidence through retained Gate1 wrappers."""
+
+    if not isinstance(diagnostics, Mapping):
+        return None
+    evidence = diagnostics.get("replay_counterexample")
+    if isinstance(evidence, Mapping):
+        return evidence
+    unresolved = diagnostics.get("unresolved_gate1")
+    nested = (
+        unresolved.get("diagnostics")
+        if isinstance(unresolved, Mapping)
+        else None
+    )
+    evidence = (
+        nested.get("replay_counterexample")
+        if isinstance(nested, Mapping)
+        else None
+    )
+    return evidence if isinstance(evidence, Mapping) else None
+
+
 def _codex_feedback_files(feedback_text: str) -> dict[str, str]:
     """Partition exact closed feedback without exposing one bulk relift object.
 
@@ -174,11 +198,18 @@ def _codex_feedback_files(feedback_text: str) -> dict[str, str]:
 
     feedback = json.loads(feedback_text)
     categories: dict[str, Any] = {}
+    replay_counterexample: Mapping[str, Any] | None = None
     if isinstance(feedback, Mapping):
-        observer = _observer_diff_from_diagnostics(
+        diagnostics = (
             feedback.get("diagnostics")
             if isinstance(feedback.get("diagnostics"), Mapping)
             else None
+        )
+        replay_counterexample = _replay_counterexample_from_diagnostics(
+            diagnostics
+        )
+        observer = _observer_diff_from_diagnostics(
+            diagnostics
         )
         raw_categories = observer.get("categories") if isinstance(observer, Mapping) else None
         if isinstance(raw_categories, list):
@@ -201,7 +232,11 @@ def _codex_feedback_files(feedback_text: str) -> dict[str, str]:
             pruned = {
                 str(key): value
                 for key, value in diagnostics.items()
-                if key not in {"observer_diff", "unresolved_gate1"}
+                if key not in {
+                    "observer_diff",
+                    "replay_counterexample",
+                    "unresolved_gate1",
+                }
             }
             unresolved = diagnostics.get("unresolved_gate1")
             if isinstance(unresolved, Mapping):
@@ -211,20 +246,45 @@ def _codex_feedback_files(feedback_text: str) -> dict[str, str]:
                     unresolved_copy["diagnostics"] = {
                         str(key): value
                         for key, value in nested.items()
-                        if key != "observer_diff"
+                        if key not in {
+                            "observer_diff",
+                            "replay_counterexample",
+                        }
                     }
                 pruned["unresolved_gate1"] = unresolved_copy
             if pruned:
                 detail["diagnostics"] = pruned
 
-    values: dict[str, Any] = {"feedback_detail.json": detail}
+    replay_source = (
+        replay_counterexample.get("replay_source")
+        if isinstance(replay_counterexample, Mapping)
+        else None
+    )
+    replay_ttir = (
+        replay_counterexample.get("replay_ttir")
+        if isinstance(replay_counterexample, Mapping)
+        else None
+    )
+    replay_metadata = (
+        {
+            str(key): value
+            for key, value in replay_counterexample.items()
+            if key not in {"replay_source", "replay_ttir"}
+        }
+        if isinstance(replay_counterexample, Mapping)
+        else None
+    )
+    values: dict[str, Any] = {
+        "feedback_detail.json": detail,
+        "feedback_replay.json": replay_metadata,
+    }
     values.update(
         {
             f"feedback_category_{name}.json": categories.get(name)
             for name in _FEEDBACK_CATEGORY_NAMES
         }
     )
-    return {
+    rendered = {
         name: json.dumps(
             value,
             sort_keys=True,
@@ -235,6 +295,17 @@ def _codex_feedback_files(feedback_text: str) -> dict[str, str]:
         + "\n"
         for name, value in values.items()
     }
+    rendered["feedback_replay.py"] = (
+        replay_source.rstrip() + "\n"
+        if isinstance(replay_source, str) and replay_source
+        else "# No formal Replay source is available before a Gate1 counterexample.\n"
+    )
+    rendered["feedback_replay.ttir"] = (
+        replay_ttir.rstrip() + "\n"
+        if isinstance(replay_ttir, str) and replay_ttir
+        else "// No formal Replay TTIR is available before a Gate1 counterexample.\n"
+    )
+    return rendered
 
 
 
@@ -342,7 +413,10 @@ def _codex_input_files(
             "feedback_category_NAME.json required by the current hypothesis. Each "
             "category file retains its exact differences; "
             "feedback_detail.json contains non-observer diagnostics and never "
-            "duplicates the previous artifact.\n"
+            "duplicates the previous artifact. After a formal Gate1 failure, "
+            "feedback_replay.py and feedback_replay.ttir are the exact preceding "
+            "source-blind Replay outputs; inspect them against source.py/source.ttir "
+            "instead of guessing a repair from opaque node labels.\n"
             "Use the single `submit_candidate` transaction after a complete draft. It "
             "runs CandidateCheck and then SourceReconcile on the same exact bytes; it "
             "only compares occurrence obligations already authored by your pi with "
@@ -376,6 +450,11 @@ input/feedback_category_NAME.json when its bounded frontier is insufficient; tha
 file contains the exact differences for the named category.
 input/feedback_detail.json contains exact non-observer diagnostics. The previous
 artifact already exists at output/candidate.json and is never duplicated in input.
+After a formal Gate1 failure, input/feedback_replay.py and
+input/feedback_replay.ttir contain the exact preceding source-blind Replay output;
+use them only as read-only counterexample evidence.
+Your own prior formal candidates are immutable under work/candidate_history/;
+consult or restore them when a repair regresses, but decide every edit yourself.
 Inspect Source/TTIR only where needed, then revise the complete model-authored
 J/C/pi in place. If a named relation's ownership is unclear, search only that name
 in input/lift_contract.md. Treat feedback as a compiler counterexample, not as a semantic patch.
@@ -415,6 +494,9 @@ def _source_aware_startup_context(workspace: Any, *, fresh_owner: bool) -> dict[
             "lift_contract": "input/lift_contract.md",
             "feedback_frontier": "input/feedback_frontier.json",
             "feedback_detail": "input/feedback_detail.json",
+            "feedback_replay_source": "input/feedback_replay.py",
+            "feedback_replay_ttir": "input/feedback_replay.ttir",
+            "feedback_replay_metadata": "input/feedback_replay.json",
             "feedback_categories": [
                 f"input/feedback_category_{name}.json"
                 for name in _FEEDBACK_CATEGORY_NAMES
@@ -422,6 +504,7 @@ def _source_aware_startup_context(workspace: Any, *, fresh_owner: bool) -> dict[
             "candidate_check": "input/candidate_check.json",
             "source_reconcile": "input/source_reconcile.json",
             "candidate": "output/candidate.json",
+            "candidate_history": "work/candidate_history/",
         },
         "authority": (
             "path manifest only; exact bytes remain in files and no artifact "
@@ -545,6 +628,45 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
             ],
         }
 
+    @staticmethod
+    def _archive_formal_candidate(workspace: Any, feedback: Any) -> None:
+        """Preserve this owner's exact formal candidates without selecting one."""
+
+        formal_round = getattr(feedback, "formal_round", None)
+        artifact = getattr(feedback, "previous_artifact", None)
+        kind = getattr(getattr(feedback, "kind", None), "value", None)
+        if (
+            kind != "gate1"
+            or not isinstance(formal_round, int)
+            or isinstance(formal_round, bool)
+            or formal_round < 1
+            or artifact is None
+        ):
+            return
+        payload = getattr(artifact, "to_json", None)
+        if not callable(payload):
+            return
+        encoded = (
+            json.dumps(
+                payload(),
+                indent=2,
+                sort_keys=True,
+                ensure_ascii=False,
+                allow_nan=False,
+            )
+            + "\n"
+        )
+        history_dir = workspace.scratch_dir / "candidate_history"
+        history_dir.mkdir(parents=True, exist_ok=True)
+        destination = history_dir / f"gate1_round_{formal_round:03d}.json"
+        if destination.exists():
+            if destination.read_text(encoding="utf-8") != encoded:
+                raise ValueError(
+                    "branch-local formal candidate history changed for one round"
+                )
+            return
+        _atomic_write_text(destination, encoded)
+
     def lift(self, request: Any, feedback: Any) -> Any:
         if self.workflow != "single":
             raise ValueError("Codex CLI Lift supports only the single-owner workflow")
@@ -587,6 +709,9 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                     {
                         "feedback_frontier.json",
                         "feedback_detail.json",
+                        "feedback_replay.py",
+                        "feedback_replay.ttir",
+                        "feedback_replay.json",
                         *{
                             f"feedback_category_{name}.json"
                             for name in _FEEDBACK_CATEGORY_NAMES
@@ -604,6 +729,9 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                 evidence={"backend": CODEX_CLI_LIFT_BACKEND},
             ) from exc
         workspace = self._session_workspace
+        if workspace is None:
+            raise RuntimeError("Codex Lift workspace was not created")
+        self._archive_formal_candidate(workspace, feedback)
         fresh_owner = self._codex_session is None
         call_turns: list[CodexCLITurn] = []
         check_results: list[dict[str, Any]] = []
