@@ -255,6 +255,7 @@ class PreparedTritonInvocation:
         self._device = spec.device
         self._launch_args: dict[str, Any] = {}
         self.outputs: dict[str, Any] = {}
+        self._mutable_input_resets: list[tuple[Any, Any]] = []
         for argument in spec.arguments:
             if argument.role is ArgumentRole.NONE:
                 self._launch_args[argument.name] = None
@@ -290,6 +291,7 @@ class PreparedTritonInvocation:
                 if argument.role is ArgumentRole.INOUT:
                     tensor = tensor.clone()
                     self.outputs[argument.output_key or argument.name] = tensor
+                    self._mutable_input_resets.append((tensor, tensor.clone()))
             self._launch_args[argument.name] = tensor
 
     def launch(self) -> None:
@@ -302,6 +304,12 @@ class PreparedTritonInvocation:
 
     def thunk(self):
         return self.launch
+
+    def reset_mutable_inputs(self) -> None:
+        """Restore INOUT arguments to the authored workload valuation."""
+
+        for destination, pristine in self._mutable_input_resets:
+            destination.copy_(pristine)
 
     def copied_outputs(self) -> dict[str, np.ndarray]:
         import torch

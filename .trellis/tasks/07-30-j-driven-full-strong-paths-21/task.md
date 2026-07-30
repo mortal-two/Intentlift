@@ -81,6 +81,30 @@ preprocess 的 padded/subgroup-feature lowering 也已经到 1.5x 附近。
   的重复路径；普通 CUDA Norm 也已非常接近 read-once，除非 profile 证明 barrier、spill 或重新物化存在，
   否则它们不是优先纵切。
 
+### 3.3 2026-07-30 CUDA 自然负载进展
+
+当前执行优先级已切到 5090D/H100；RVV 只保留已通过编译与测试的能力，不继续占用本轮主要调优时间。
+以下均为 `natural-headline-v1`、code-warm/data-cold、CUDA event；筛选数据用于决定实现方向，最终论文表仍按
+第8节协议统一重测。
+
+| Kernel / target | C-Fixed (us) | Schedule-Only (us) | Full (us) | `G_full` | Source (us) | 结论 |
+|---|---:|---:|---:|---:|---:|---|
+| Flash backward preprocess / 5090D | 412.320 | 308.864 | 195.424 | 1.580x | 207.520 | subgroup-feature reduction 为强路径 |
+| Flash backward preprocess / H100 | 827.840 | 807.232 | 127.136 | 6.349x | 122.992 | 同一结构在 H100 上收益更大 |
+| Sparsemax / 5090D | 75.808 | 71.200 | 51.168 | 1.391x | 82.864 | 保留单 prefix warp + wide epilogue |
+| Sparsemax / H100 | 52.608 | 46.848 | 36.608 | 1.280x | 57.520 | winner 改为 per-output-warp replicated prefix |
+| DYT / 5090D | 100.960 | 93.696 | 93.696 | 1.000x | 110.208 | 当前自然负载为 Full 负例 |
+| KLDiv / 5090D | 107.648 | 107.648 | 103.904 | 1.036x | 142.368 | 外部竞争力成立，新增结构收益弱 |
+| SplitK reduce / 5090D | 16.192 | 15.680 | 15.584 | 1.006x | 46.304 | 当前 J 边界 launch-limited，Full 负例 |
+
+Sparsemax 新增的 H100 状态不是 schedule label：每个输出 warp 重算短 active prefix 并在 warp-local SSA 中保留
+tau，因而删除 shared tau publication 与整块 `gpu.barrier`。5090D 搜索会自动拒绝其性能，而 H100 选择它，
+直接给出同一个 J 跨目标选择不同 concrete MLIR topology 的证据。
+
+本轮还发现并修复了一个搜索正确性缺口：候选输出缓冲复用时，漏写候选可能继承前一候选的正确结果。
+runner 现在在每个候选 Q 前分别写入两种 canary，并要求两次完整输出都通过；C++ matcher 同时拒绝不能覆盖
+完整输出域的 packet geometry。由漏写产生的表面加速一律作废。
+
 ## 4. 本任务实现的四条强路径
 
 ### P1. RVV fused Softmax：先删除物化，再比较两种真实拓扑
@@ -192,6 +216,8 @@ exact-preserving 或 observation-changing
   的几个百分点冒充强 Full 收益。
 
 ## 7. 执行顺序
+
+2026-07-30 调整：先执行 CUDA 强路径与 5090D/H100 横向覆盖；RVV Phase 保留但后移。
 
 ### Phase A：RVV Softmax 纵切
 

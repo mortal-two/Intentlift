@@ -1,4 +1,6 @@
 // RUN: intent-opt '-convert-intent-row-reduction-to-gpu=block-threads=512 tile-cols=16 vector-width=4 rows-per-block=2 prefix-threads=32 cross-multiply-support-predicate=true allow-execution-domain-sorted-prefix=true require-sorted-prefix=true' %s | FileCheck %s
+// RUN: intent-opt '-convert-intent-row-reduction-to-gpu=block-threads=256 tile-cols=32 vector-width=4 rows-per-block=1 prefix-threads=32 replicate-prefix-per-warp=true cross-multiply-support-predicate=true allow-execution-domain-sorted-prefix=true require-sorted-prefix=true' %s | FileCheck %s --check-prefix=REPLICATED
+// RUN: intent-opt '-convert-intent-row-reduction-to-gpu=block-threads=512 tile-cols=16 vector-width=16 rows-per-block=1 prefix-threads=32 replicate-prefix-per-warp=true allow-execution-domain-sorted-prefix=true require-sorted-prefix=true' %s | FileCheck %s --check-prefix=INVALID
 
 // The prefix/support work is owned by one warp per row while 512 logical
 // threads per row write the full epilogue. Two rows share the 1024-thread CTA.
@@ -22,6 +24,23 @@
 // CHECK-COUNT-1: gpu.barrier
 // CHECK: arith.maxnumf
 // CHECK: gpu.terminator
+// REPLICATED-LABEL: func.func @wide_prefix_graph(
+// REPLICATED-SAME: memref<2x1024xvector<4xf32>>
+// REPLICATED-SAME: intent.backend.block_threads = 256 : i64
+// REPLICATED-SAME: intent.backend.reduction_topology = "sorted_prefix_replicated_warp_cross_multiply"
+// REPLICATED: %[[BLOCK:.*]] = arith.constant 256 : index
+// REPLICATED: gpu.launch{{.*}}%[[BLOCK]]
+// REPLICATED: gpu.shuffle up
+// REPLICATED: arith.mulf
+// REPLICATED: gpu.shuffle xor
+// REPLICATED: arith.divf
+// REPLICATED: arith.maxnumf
+// REPLICATED-NOT: gpu.dynamic_shared_memory
+// REPLICATED-NOT: gpu.barrier
+// REPLICATED: gpu.terminator
+// INVALID-LABEL: func.func @wide_prefix_graph(
+// INVALID-NOT: gpu.launch
+// INVALID: intent.scan
 func.func @wide_prefix_graph(
     %x: tensor<2x4096xf32>, %sorted: tensor<2x4096xf32>)
     -> tensor<2x4096xf32> {

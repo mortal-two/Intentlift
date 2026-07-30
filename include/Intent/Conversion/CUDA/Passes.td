@@ -123,6 +123,12 @@ def ConvertIntentRowReductionToGPU
            "per-element floating division but changes rounding observations, so "
            "it is an explicit Full numeric state that must pass Q/D. Unsupported "
            "graphs fail closed.">,
+    Option<"replicatePrefixPerWarp", "replicate-prefix-per-warp", "bool", "false",
+           "For a 32-thread sorted-prefix scan with a wider one-row CTA, let every "
+           "output warp recompute the short active prefix and retain tau in warp-"
+           "local SSA. This removes the shared tau publication and workgroup "
+           "barrier at the cost of cache-local repeated prefix work. The state is "
+           "accepted only by the exact sorted-prefix matcher.">,
     Option<"crossRowFinalize", "cross-row-finalize", "bool", "false",
            "For one float-nondeterministic axis-0 sum of row statistics, write "
            "one contribution per row to compiler-owned scratch and finalize it "

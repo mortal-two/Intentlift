@@ -859,6 +859,7 @@ struct RowReductionLowering {
   bool requireSortedPrefix;
   unsigned requestedPrefixThreads;
   bool crossMultiplySupportPredicate;
+  bool replicatePrefixPerWarp;
   bool crossRowFinalize;
   bool requestRawMomentVariance;
   bool enableCompactReductionTopology;
@@ -961,7 +962,7 @@ struct RowReductionLowering {
                        unsigned foldedConstexprSelects,
                        unsigned rowsPerBlock, unsigned reductionParts,
                        unsigned prefixThreads,
-                       bool crossMultiplySupport)
+                       bool crossMultiplySupport, bool replicatePrefix)
       : fn(fn), blockThreads(bt), tileColsMax(tc),
         requestedVectorWidth(vw),
         enableFmaFusion(fuseFma),
@@ -975,6 +976,7 @@ struct RowReductionLowering {
         requireSortedPrefix(requirePrefix),
         requestedPrefixThreads(prefixThreads),
         crossMultiplySupportPredicate(crossMultiplySupport),
+        replicatePrefixPerWarp(replicatePrefix),
         crossRowFinalize(enableCrossRowFinalize),
         requestRawMomentVariance(enableRawMomentVariance),
         enableCompactReductionTopology(compactReductionTopology),
@@ -1237,6 +1239,10 @@ struct RowReductionLowering {
         requestedRowsPerBlock != 16 && requestedRowsPerBlock != 32)
       return failure();
     if (requestedPrefixThreads != 0 && requestedPrefixThreads != 32)
+      return failure();
+    if (replicatePrefixPerWarp &&
+        (requestedPrefixThreads != 32 || requestedRowsPerBlock != 1 ||
+         blockThreads < 64))
       return failure();
     if (requestedReductionParts == 0 || requestedReductionParts > 128 ||
         (requestedReductionParts & (requestedReductionParts - 1)) != 0 ||
@@ -2641,13 +2647,19 @@ struct RowReductionLowering {
     int64_t scanThreads = requestedPrefixThreads
                               ? static_cast<int64_t>(requestedPrefixThreads)
                               : T;
+    constexpr int64_t packetWidth = 4;
     if (!enableSortedPrefix ||
         (!contractCertified && !allowExecutionDomainSortedPrefix) ||
         scans.size() != 1 ||
         reduces.size() != 2 || outputVals.size() != 1 ||
         outRoles[0] != ResultRole::RowOut ||
         scanThreads < 32 || scanThreads > 1024 ||
-        (scanThreads % 32) != 0 || (N % (scanThreads * 4)) != 0)
+        (scanThreads % 32) != 0 ||
+        (N % (scanThreads * packetWidth)) != 0 ||
+        T * packetWidth > N || (N % (T * packetWidth)) != 0)
+      return std::nullopt;
+    if (replicatePrefixPerWarp &&
+        (scanThreads != 32 || T < 64 || requestedRowsPerBlock != 1))
       return std::nullopt;
 
     auto isZeroSplat = [](Value value) {
@@ -3860,9 +3872,11 @@ struct RowReductionLowering {
     OpBuilder b(ctx);
     Type i32 = b.getI32Type();
     Type f32Ty = b.getF32Type();
-    Type vec4Ty = VectorType::get({4}, f32Ty);
+    constexpr int64_t packetWidth = 4;
+    Type packetTy = VectorType::get({packetWidth}, f32Ty);
     auto wgSpace = gpu::AddressSpaceAttr::get(ctx, gpu::AddressSpace::Workgroup);
-    MemRefType rowVecMemref = MemRefType::get({M, N / 4}, vec4Ty);
+    MemRefType rowVecMemref =
+        MemRefType::get({M, N / packetWidth}, packetTy);
     auto sortedAttr = fn->getAttrOfType<BoolAttr>("intent_sorted_descending");
     bool contractCertified = sortedAttr && sortedAttr.getValue();
 
@@ -3901,8 +3915,10 @@ struct RowReductionLowering {
     int64_t scanThreads = requestedPrefixThreads
                               ? static_cast<int64_t>(requestedPrefixThreads)
                               : threadsPerRow;
-    bool decoupledWideEpilogue = scanThreads < threadsPerRow;
-    int64_t numWarpsPerRow = scanThreads / 32;
+    bool replicatedWarpPrefix = replicatePrefixPerWarp;
+    bool decoupledWideEpilogue =
+        scanThreads < threadsPerRow && !replicatedWarpPrefix;
+    int64_t numWarpsPerRow = replicatedWarpPrefix ? 1 : scanThreads / 32;
     bool warpRows = rowsPerBlock > 1;
     Value cGrid = b.create<arith::ConstantIndexOp>(loc, sched.gridX);
     Value cBlock = b.create<arith::ConstantIndexOp>(loc, sched.blockX);
@@ -3915,7 +3931,7 @@ struct RowReductionLowering {
         decoupledWideEpilogue ? rowsPerBlock * 4 : 0;
     int64_t shBytes = compactScratchBytes + tauScratchBytes;
     sched.smemBytes = shBytes;
-    sched.vectorWidth = 4;
+    sched.vectorWidth = packetWidth;
     attachLaunchPlan(gpuFn, sched);
     Value shBytesValue =
         b.create<arith::ConstantOp>(loc, b.getI32IntegerAttr(shBytes));
@@ -3933,6 +3949,7 @@ struct RowReductionLowering {
     Value blockWarpId = b.create<arith::DivUIOp>(loc, tx, c32Index);
     Value row = bx;
     Value rowThread = tx;
+    Value scanThread = tx;
     Value warpIdInRow = blockWarpId;
     Value rowInBlock = b.create<arith::ConstantIndexOp>(loc, 0);
     if (warpRows) {
@@ -3950,6 +3967,8 @@ struct RowReductionLowering {
           b.create<arith::RemUIOp>(loc, tx, cThreadsPerOutputRow);
       warpIdInRow = b.create<arith::DivUIOp>(loc, rowThread, c32Index);
     }
+    if (replicatedWarpPrefix)
+      scanThread = b.create<arith::RemUIOp>(loc, tx, c32Index);
 
     Value raw;
     if (shBytes > 0) {
@@ -3995,7 +4014,8 @@ struct RowReductionLowering {
     Value falseValue = b.create<arith::ConstantIntOp>(loc, 0, 1);
     Value c0 = b.create<arith::ConstantIndexOp>(loc, 0);
     Value cChunks =
-        b.create<arith::ConstantIndexOp>(loc, N / (scanThreads * 4));
+        b.create<arith::ConstantIndexOp>(
+            loc, N / (scanThreads * packetWidth));
 
     // Loop state: accumulated sum of fully-supported preceding chunks, the
     // best support rank/sum seen so far, and a uniform done flag.  Completed
@@ -4028,21 +4048,21 @@ struct RowReductionLowering {
         Value chunkBase =
             tb.create<arith::MulIOp>(loc, chunk, cScanThreads);
         Value vecIndex =
-            tb.create<arith::AddIOp>(loc, chunkBase, rowThread);
+            tb.create<arith::AddIOp>(loc, chunkBase, scanThread);
         auto sortedLoad = tb.create<memref::LoadOp>(
             loc, sortedMem, ValueRange{row, vecIndex});
         sortedLoad.setNontemporal(true);
         Value sortedVector = sortedLoad;
-        SmallVector<Value> z(4);
-        for (int64_t laneIndex = 0; laneIndex < 4; ++laneIndex)
+        SmallVector<Value> z(packetWidth);
+        for (int64_t laneIndex = 0; laneIndex < packetWidth; ++laneIndex)
           z[laneIndex] = tb.create<vector::ExtractOp>(
               loc, sortedVector, ArrayRef<int64_t>{laneIndex});
-        SmallVector<Value> localPrefix(4);
+        SmallVector<Value> localPrefix(packetWidth);
         localPrefix[0] = z[0];
-        for (int64_t laneIndex = 1; laneIndex < 4; ++laneIndex)
+        for (int64_t laneIndex = 1; laneIndex < packetWidth; ++laneIndex)
           localPrefix[laneIndex] = tb.create<arith::AddFOp>(
               loc, localPrefix[laneIndex - 1], z[laneIndex]);
-        Value segmentTotal = localPrefix[3];
+        Value segmentTotal = localPrefix[packetWidth - 1];
 
         Value warpInclusive = segmentTotal;
         for (int32_t offset = 1; offset < 32; offset <<= 1) {
@@ -4135,10 +4155,11 @@ struct RowReductionLowering {
             tb.create<arith::AddFOp>(loc, prefixBase, laneExclusive);
 
         Value scalarBase = tb.create<arith::MulIOp>(
-            loc, vecIndex, tb.create<arith::ConstantIndexOp>(loc, 4));
+            loc, vecIndex,
+            tb.create<arith::ConstantIndexOp>(loc, packetWidth));
         Value threadBestRank = zeroI;
         Value threadBestSum = zeroF;
-        for (int64_t laneIndex = 0; laneIndex < 4; ++laneIndex) {
+        for (int64_t laneIndex = 0; laneIndex < packetWidth; ++laneIndex) {
           Value prefix = tb.create<arith::AddFOp>(
               loc, prefixBase, localPrefix[laneIndex]);
           Value scalarIndex = tb.create<arith::AddIOp>(
@@ -4264,7 +4285,8 @@ struct RowReductionLowering {
         Value chunkPlusOne = tb.create<arith::AddIOp>(loc, chunk, c1);
         Value chunkEndIndex = tb.create<arith::MulIOp>(
             loc, chunkPlusOne,
-            tb.create<arith::ConstantIndexOp>(loc, scanThreads * 4));
+            tb.create<arith::ConstantIndexOp>(
+                loc, scanThreads * packetWidth));
         Value chunkEnd =
             tb.create<arith::IndexCastOp>(loc, i32, chunkEndIndex);
         Value nextDone = tb.create<arith::CmpIOp>(
@@ -4308,7 +4330,7 @@ struct RowReductionLowering {
     }
 
     // Coalesced X -> O pass.  Adjacent lanes own adjacent float4 vectors.
-    int64_t outputVecTiles = N / (threadsPerRow * 4);
+    int64_t outputVecTiles = N / (threadsPerRow * packetWidth);
     for (int64_t tile = 0; tile < outputVecTiles; ++tile) {
       Value vecIndex = b.create<arith::AddIOp>(
           loc, rowThread,
@@ -4317,8 +4339,8 @@ struct RowReductionLowering {
           b.create<memref::LoadOp>(loc, xMem, ValueRange{row, vecIndex});
       xLoad.setNontemporal(true);
       Value xVector = xLoad;
-      SmallVector<Value> outputs(4);
-      for (int64_t laneIndex = 0; laneIndex < 4; ++laneIndex) {
+      SmallVector<Value> outputs(packetWidth);
+      for (int64_t laneIndex = 0; laneIndex < packetWidth; ++laneIndex) {
         Value x = b.create<vector::ExtractOp>(
             loc, xVector, ArrayRef<int64_t>{laneIndex});
         Value shifted = b.create<arith::SubFOp>(loc, x, tau);
@@ -4326,7 +4348,7 @@ struct RowReductionLowering {
             b.create<arith::MaxNumFOp>(loc, shifted, zeroF);
       }
       Value outputVector =
-          b.create<vector::FromElementsOp>(loc, vec4Ty, outputs);
+          b.create<vector::FromElementsOp>(loc, packetTy, outputs);
       auto store = b.create<memref::StoreOp>(
           loc, outputVector, outMem, ValueRange{row, vecIndex});
       store.setNontemporal(true);
@@ -4339,7 +4361,11 @@ struct RowReductionLowering {
                                   foldedConstexprSelectCount, rowsPerBlock,
                                   emittedApproximateDivCount, 0, 0, false,
                                   false,
-                                  decoupledWideEpilogue
+                                  replicatedWarpPrefix
+                                      ? (crossMultiplySupportPredicate
+                                             ? "sorted_prefix_replicated_warp_cross_multiply"
+                                             : "sorted_prefix_replicated_warp")
+                                  : decoupledWideEpilogue
                                       ? (warpRows
                                              ? (crossMultiplySupportPredicate
                                                     ? "sorted_prefix_multirow_warp_scan_wide_epilogue_cross_multiply"
@@ -6171,7 +6197,8 @@ struct ConvertIntentRowReductionToGPUPass
                                  predicatedValueIfs,
                                  foldedConstexprSelects, rowsPerBlock,
                                  reductionParts, prefixThreads,
-                                 crossMultiplySupportPredicate);
+                                 crossMultiplySupportPredicate,
+                                 replicatePrefixPerWarp);
       if (succeeded(probe.match()))
         targets.push_back(
             {fn, predicatedValueIfs, foldedConstexprSelects});
@@ -6192,7 +6219,8 @@ struct ConvertIntentRowReductionToGPUPass
                                target.predicatedValueIfs,
                                target.foldedConstexprSelects, rowsPerBlock,
                                reductionParts, prefixThreads,
-                               crossMultiplySupportPredicate);
+                               crossMultiplySupportPredicate,
+                               replicatePrefixPerWarp);
       if (failed(low.match()) || failed(low.rewrite())) {
         target.fn.emitError("row-reduction lowering failed after match");
         return signalPassFailure();

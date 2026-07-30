@@ -860,6 +860,29 @@ def test_full_enumerates_multirow_warp_sorted_prefix_as_structural_state() -> No
         for item in wide
     )
 
+    replicated = [
+        item
+        for item in candidates
+        if item.fast_path_id
+        == "cuda.row_scan.sparsemax.sorted_prefix.execution_domain.v1"
+        and item.schedule.get("replicate_prefix_per_warp") is True
+    ]
+    assert {int(item.schedule["threads_per_row"]) for item in replicated} == {
+        64,
+        128,
+        256,
+        512,
+        1024,
+    }
+    assert all(int(item.schedule["prefix_threads"]) == 32 for item in replicated)
+    assert all(int(item.schedule["rows_per_block"]) == 1 for item in replicated)
+    assert {int(item.schedule["vector_width"]) for item in replicated} == {4}
+    assert any(
+        item.requested_trace
+        == ("cuda.reduction.sorted_prefix_replicated_warp_cross_multiply.v1",)
+        for item in replicated
+    )
+
 
 def test_fixed_structure_uses_exact_compiler_path_identity() -> None:
     state, _without_c = _states()

@@ -2229,6 +2229,86 @@ def enumerate_cuda_candidates(
                     )
                 )
 
+        # Barrier-free sorted-prefix state: every output warp recomputes the
+        # short active prefix and keeps tau in warp-local SSA.  This is a real
+        # topology change, not another block/tile schedule, so it is deliberately
+        # absent from the Schedule-Only spine.  The C++ matcher remains the hard
+        # graph/precondition gate for both registered path identities.
+        replicated_prefix_geometries = (
+            # output threads, tile cols
+            (64, 64),
+            (128, 32),
+            (256, 32),
+            (512, 16),
+            (1024, 8),
+        )
+        for descriptor in DEFAULT_PASSES:
+            if descriptor.fast_path_id not in sorted_prefix_ids:
+                continue
+            if state.target.architecture not in descriptor.supported_chips:
+                continue
+            execution_domain = descriptor.fast_path_id.endswith(
+                ".execution_domain.v1"
+            )
+            for threads_per_row, tile_cols in replicated_prefix_geometries:
+                for cross_multiply in (False, True):
+                    options = [
+                        f"block-threads={threads_per_row}",
+                        f"tile-cols={tile_cols}",
+                        "vector-width=4",
+                        "rows-per-block=1",
+                        "prefix-threads=32",
+                        "replicate-prefix-per-warp=true",
+                        "require-sorted-prefix=true",
+                    ]
+                    if cross_multiply:
+                        options.insert(
+                            -1, "cross-multiply-support-predicate=true"
+                        )
+                    if execution_domain:
+                        options.insert(
+                            -1, "allow-execution-domain-sorted-prefix=true"
+                        )
+                    pass_argument = (
+                        "-convert-intent-row-reduction-to-gpu="
+                        + " ".join(options)
+                    )
+                    values = {
+                        "threads_per_row": threads_per_row,
+                        "rows_per_block": 1,
+                        "block_threads": threads_per_row,
+                        "tile_cols": tile_cols,
+                        "vector_width": 4,
+                        "prefix_threads": 32,
+                        "replicate_prefix_per_warp": True,
+                    }
+                    if cross_multiply:
+                        values["cross_multiply_support_predicate"] = True
+                    specialized.append(
+                        CudaSearchCandidate(
+                            _candidate_id(
+                                "row_scan",
+                                descriptor.fast_path_id,
+                                pass_argument,
+                            ),
+                            "row_scan",
+                            descriptor.fast_path_id,
+                            pass_argument,
+                            values,
+                            _c_score(values, priors),
+                            requested_trace=(
+                                (
+                                    "cuda.reduction.sorted_prefix_replicated_warp_cross_multiply.v1"
+                                    if cross_multiply
+                                    else "cuda.reduction.sorted_prefix_replicated_warp.v1"
+                                ),
+                            ),
+                            requested_observation_class=(
+                                ObservationClass.OBSERVATION_CHANGING
+                            ),
+                        )
+                    )
+
     output_rank = max(
         (len(item.shape) for item in state.base.j.intent.outputs),
         default=1,

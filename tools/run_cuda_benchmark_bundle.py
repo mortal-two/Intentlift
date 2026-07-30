@@ -95,12 +95,47 @@ def _device_record(torch: Any) -> dict[str, Any]:
     }
 
 
+def _poison_cuda_outputs(
+    torch: Any,
+    outputs: list[Any],
+    *,
+    variant: int,
+    protected: list[Any] | None = None,
+) -> None:
+    """Overwrite every observable output before a correctness launch.
+
+    Candidate output buffers are intentionally reused across a large search.
+    Without an explicit poison, a candidate that omits some or all stores can
+    inherit a prior candidate's correct bytes and falsely pass Q.  Two distinct
+    variants make accidental agreement with a legitimate constant output
+    insufficient: the candidate must overwrite the complete observable result
+    on both launches.
+    """
+
+    protected_storages = {
+        item.untyped_storage().data_ptr() for item in (protected or [])
+    }
+    for index, output in enumerate(outputs):
+        if output.untyped_storage().data_ptr() in protected_storages:
+            continue
+        salt = variant * 17 + index * 3
+        if output.dtype == torch.bool:
+            output.fill_(bool((salt + 1) & 1))
+        elif output.dtype.is_floating_point:
+            output.fill_(float(91 + salt))
+        else:
+            info = torch.iinfo(output.dtype)
+            value = info.max - min(salt, max(0, info.max - info.min))
+            output.fill_(value)
+
+
 def _measure_cold_data_us(
     torch: Any,
     thunk: Any,
     *,
     eviction: Any,
     iterations: int,
+    prepare: Any | None = None,
 ) -> float:
     """Measure single launches after a target-side L2 eviction.
 
@@ -111,6 +146,8 @@ def _measure_cold_data_us(
 
     samples: list[float] = []
     for _ in range(iterations):
+        if prepare is not None:
+            prepare()
         eviction.add_(1.0)
         torch.cuda.synchronize()
         start = torch.cuda.Event(enable_timing=True)
@@ -511,7 +548,13 @@ def _one_kernel(
         else 0
     )
 
-    def measure(thunk) -> float:
+    pristine_inputs = [item.clone() for item in inputs]
+
+    def reset_inputs() -> None:
+        for destination, pristine in zip(inputs, pristine_inputs, strict=True):
+            destination.copy_(pristine)
+
+    def measure(thunk, *, prepare=None) -> float:
         samples = []
         for _ in range(measurement_rounds):
             if data_regime == "cold-data":
@@ -523,15 +566,20 @@ def _one_kernel(
                         thunk,
                         eviction=cache_eviction,
                         iterations=cold_iterations,
+                        prepare=prepare,
                     )
                 )
             elif timing == "graph":
+                if prepare is not None:
+                    prepare()
                 samples.append(
                     do_bench_cudagraph_us(
                         thunk, repetitions=graph_repetitions
                     )
                 )
             else:
+                if prepare is not None:
+                    prepare()
                 samples.append(
                     do_bench_us(
                         thunk,
@@ -642,22 +690,37 @@ def _one_kernel(
                     )
             else:
                 raise TypeError("unsupported portable CUDA launch record")
-            thunk()
-            torch.cuda.synchronize()
-            cuda_actual = dict(
-                zip(entry["output_keys"], candidate_outputs, strict=True)
-            )
-            agreement = _compare_cuda_outputs(
-                torch,
-                name="mlir-cubin",
-                actual=cuda_actual,
-                reference=reference_cuda,
-                j=j,
-                entry=entry,
-                policy=policy,
-            )
-            if not agreement.passed:
-                correctness = agreement.to_json()
+            agreements = []
+            for poison_variant in (0, 1):
+                reset_inputs()
+                _poison_cuda_outputs(
+                    torch,
+                    candidate_outputs,
+                    variant=poison_variant,
+                    protected=inputs,
+                )
+                thunk()
+                torch.cuda.synchronize()
+                cuda_actual = dict(
+                    zip(entry["output_keys"], candidate_outputs, strict=True)
+                )
+                agreements.append(
+                    _compare_cuda_outputs(
+                        torch,
+                        name=f"mlir-cubin-canary-{poison_variant}",
+                        actual=cuda_actual,
+                        reference=reference_cuda,
+                        j=j,
+                        entry=entry,
+                        policy=policy,
+                    )
+                )
+            agreement = agreements[-1]
+            if not all(item.passed for item in agreements):
+                correctness = {
+                    "passed": False,
+                    "canary_runs": [item.to_json() for item in agreements],
+                }
                 candidate_records.append(
                     {
                         "candidate": candidate["candidate"],
@@ -678,7 +741,7 @@ def _one_kernel(
                 if data_regime == "cold-data"
                 else 0
             )
-            latency = measure(thunk)
+            latency = measure(thunk, prepare=reset_inputs)
             candidate_records.append(
                 {
                     "candidate": candidate["candidate"],
@@ -846,7 +909,9 @@ def _one_kernel(
             record = candidate_records[index]
             candidate_id = record["candidate"]["candidate_id"]
             thunk = candidate_artifacts[candidate_id][2]
-            finalist_samples[index].append(measure(thunk))
+            finalist_samples[index].append(
+                measure(thunk, prepare=reset_inputs)
+            )
     for index, samples in finalist_samples.items():
         if not samples:
             continue
@@ -912,6 +977,7 @@ def _one_kernel(
         )
     best_id = best_record["candidate"]["candidate_id"]
     winner, extracted, winner_thunk, winner_outputs = candidate_artifacts[best_id]
+    reset_inputs()
     winner_thunk()
     torch.cuda.synchronize()
     winner_agreement = _compare(
@@ -974,6 +1040,7 @@ def _one_kernel(
         with PreparedTritonInvocation(
             source_program, source_spec, values
         ) as source:
+            source.reset_mutable_inputs()
             source.launch()
             torch.cuda.synchronize()
             source_agreement = _compare(
@@ -1002,12 +1069,16 @@ def _one_kernel(
             for pair_index in range(confirmation_batches):
                 if pair_index % 2 == 0:
                     order = ("source", "target")
-                    source_us = measure(source_thunk)
-                    target_us = measure(winner_thunk)
+                    source_us = measure(
+                        source_thunk, prepare=source.reset_mutable_inputs
+                    )
+                    target_us = measure(winner_thunk, prepare=reset_inputs)
                 else:
                     order = ("target", "source")
-                    target_us = measure(winner_thunk)
-                    source_us = measure(source_thunk)
+                    target_us = measure(winner_thunk, prepare=reset_inputs)
+                    source_us = measure(
+                        source_thunk, prepare=source.reset_mutable_inputs
+                    )
                 source_samples.append(source_us)
                 mlir_samples.append(target_us)
                 paired_batches.append(
@@ -1030,7 +1101,7 @@ def _one_kernel(
             warmup_ms=warmup_ms,
         )
         for batch_index in range(confirmation_batches):
-            target_us = measure(winner_thunk)
+            target_us = measure(winner_thunk, prepare=reset_inputs)
             mlir_samples.append(target_us)
             paired_batches.append(
                 {
