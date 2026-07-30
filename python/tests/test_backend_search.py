@@ -789,6 +789,30 @@ def test_expanded_search_visits_packetized_padded_states_within_first_lanes() ->
     assert {8, 16} <= observed
 
 
+def test_full_search_covers_padded_multirow_schedule_domain() -> None:
+    state, _without_c = _states()
+    arms = {item.arm: item for item in standard_ablation_plan(32)}
+    full = enumerate_cuda_candidates(
+        state,
+        axes=arms[ExperimentArm.E3_STATE_SEARCH],
+    )
+    multirow = [
+        item
+        for item in full
+        if item.lowering_path_kind == "padded_row_reduction"
+        and item.schedule.get("reduction_topology") == "subgroup-feature"
+        and int(item.schedule.get("rows_per_subgroup", 1)) > 1
+    ]
+
+    assert {2, 4, 8} == {
+        int(item.schedule["rows_per_subgroup"]) for item in multirow
+    }
+    assert all(
+        "cuda.reduction.padded_subgroup_multirow.v1" in item.requested_trace
+        for item in multirow
+    )
+
+
 def test_registry_paths_are_enumerated_without_kernel_allowlists() -> None:
     state, _without_c = _states()
     candidates = enumerate_cuda_candidates(state)

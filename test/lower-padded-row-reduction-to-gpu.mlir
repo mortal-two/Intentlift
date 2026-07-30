@@ -120,6 +120,9 @@ func.func @static_bounds(
 // NATURAL-SUBGROUP-NOT: intent.
 // NATURAL-MULTIROW-LABEL: func.func @natural_batch(
 // NATURAL-MULTIROW-SAME: intent.backend.rows_per_block = 32 : i64
+// NATURAL-MULTIROW-SAME: intent.backend.rows_per_subgroup = 4 : i64
+// NATURAL-MULTIROW-SAME: intent.backend.shuffle_count = 20 : i64
+// NATURAL-MULTIROW-SAME: "cuda.reduction.padded_subgroup_multirow.v1"
 // NATURAL-MULTIROW: arith.constant 16384 : index
 // NATURAL-MULTIROW: gpu.launch
 // NATURAL-MULTIROW-COUNT-4: memref.store

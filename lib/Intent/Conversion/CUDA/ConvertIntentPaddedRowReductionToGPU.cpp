@@ -37,11 +37,10 @@ using namespace intent;
 namespace {
 
 static void annotatePaddedRowState(func::FuncOp lowered, int64_t threads,
-                                        StringRef topology,
-                                        int64_t rowsPerBlock,
-                                        int64_t subgroupWidth,
-                                        int64_t vectorWidth,
-                                        unsigned hostValueCaptureCount) {
+                                   StringRef topology, int64_t rowsPerBlock,
+                                   int64_t rowsPerSubgroup,
+                                   int64_t subgroupWidth, int64_t vectorWidth,
+                                   unsigned hostValueCaptureCount) {
   MLIRContext *context = lowered.getContext();
   unsigned shuffleCount = 0;
   unsigned barrierCount = 0;
@@ -60,6 +59,9 @@ static void annotatePaddedRowState(func::FuncOp lowered, int64_t threads,
   if (vectorWidth > 1)
     trace.push_back(StringAttr::get(
         context, "cuda.memory.packetized_feature_load.v1"));
+  if (rowsPerSubgroup > 1)
+    trace.push_back(StringAttr::get(
+        context, "cuda.reduction.padded_subgroup_multirow.v1"));
   auto i64 = IntegerType::get(context, 64);
   lowered->setAttr("intent.backend.lowering_path_kind",
                    StringAttr::get(context, "padded_row_reduction"));
@@ -79,6 +81,8 @@ static void annotatePaddedRowState(func::FuncOp lowered, int64_t threads,
                    IntegerAttr::get(i64, threads));
   lowered->setAttr("intent.backend.rows_per_block",
                    IntegerAttr::get(i64, rowsPerBlock));
+  lowered->setAttr("intent.backend.rows_per_subgroup",
+                   IntegerAttr::get(i64, rowsPerSubgroup));
   lowered->setAttr("intent.backend.subgroup_width",
                    IntegerAttr::get(i64, subgroupWidth));
   lowered->setAttr("intent.backend.vector_width",
@@ -471,10 +475,216 @@ struct PaddedRowDotLowering {
     Value zero = builder.create<arith::ConstantFloatOp>(
         location, APFloat(0.0f), builder.getF32Type());
 
-    // Each hardware warp owns several independent output rows.  The rows keep
-    // separate accumulator/shuffle chains, reducing grid and launch overhead
-    // while exposing row-level ILP.  The arithmetic tree of each row is exactly
-    // the one-row subgroup tree below.
+    if (requestedRowsPerSubgroup > 1) {
+      // Keep several independent rows live at once.  The former implementation
+      // completed the entire reduction/shuffle/store chain for row N before it
+      // issued any work for row N+1.  Interleaving the feature work below
+      // exposes row-level memory and arithmetic ILP while preserving the exact
+      // reduction tree within every row.
+      Value validRows;
+      Value validFeatures;
+      if (staticBounds) {
+        validRows =
+            builder.create<arith::ConstantIndexOp>(location, physicalRows);
+        validFeatures =
+            builder.create<arith::ConstantIndexOp>(location, featureWidth);
+      } else {
+        if (!requestedPromoteRank0Scalars) {
+          validRowsRaw = builder.create<memref::LoadOp>(
+              location, entry->getArgument(validRowsArgument), ValueRange{});
+          validFeaturesRaw = builder.create<memref::LoadOp>(
+              location, entry->getArgument(validFeaturesArgument), ValueRange{});
+        }
+        validRows = builder.create<arith::IndexCastOp>(
+            location, builder.getIndexType(), validRowsRaw);
+        validFeatures = builder.create<arith::IndexCastOp>(
+            location, builder.getIndexType(), validFeaturesRaw);
+      }
+
+      SmallVector<Value> paddedRowValues;
+      SmallVector<Value> outputActiveValues;
+      SmallVector<Value> rowActiveValues;
+      paddedRowValues.reserve(requestedRowsPerSubgroup);
+      outputActiveValues.reserve(requestedRowsPerSubgroup);
+      rowActiveValues.reserve(requestedRowsPerSubgroup);
+      for (unsigned rowSlot = 0; rowSlot < requestedRowsPerSubgroup;
+           ++rowSlot) {
+        Value paddedRow = subgroupBaseRow;
+        if (rowSlot != 0) {
+          Value cRowOffset = builder.create<arith::ConstantIndexOp>(
+              location, rowSlot * subgroupsPerBlock);
+          paddedRow = builder.create<arith::AddIOp>(location, subgroupBaseRow,
+                                                    cRowOffset);
+        }
+        Value outputActive = builder.create<arith::CmpIOp>(
+            location, arith::CmpIPredicate::ult, paddedRow, cPaddedRows);
+        Value inPhysicalRows = builder.create<arith::CmpIOp>(
+            location, arith::CmpIPredicate::ult, paddedRow, cPhysicalRows);
+        Value inValidRows = builder.create<arith::CmpIOp>(
+            location, arith::CmpIPredicate::slt, paddedRow, validRows);
+        Value inInput = builder.create<arith::AndIOp>(
+            location, inPhysicalRows, inValidRows);
+        Value rowActive = builder.create<arith::AndIOp>(
+            location, outputActive, inInput);
+        paddedRowValues.push_back(paddedRow);
+        outputActiveValues.push_back(outputActive);
+        rowActiveValues.push_back(rowActive);
+      }
+
+      auto emitScalarProduct = [&](OpBuilder &nested, Value paddedRow,
+                                   Value column) -> Value {
+        SmallVector<Value> indices{batchId, row, paddedRow, column};
+        Value left = nested.create<memref::LoadOp>(
+            location, entry->getArgument(0), indices);
+        Value right = nested.create<memref::LoadOp>(
+            location, entry->getArgument(1), indices);
+        if (storageType != builder.getF32Type()) {
+          left = nested.create<arith::ExtFOp>(location,
+                                              builder.getF32Type(), left);
+          right = nested.create<arith::ExtFOp>(location,
+                                               builder.getF32Type(), right);
+        }
+        return nested.create<arith::MulFOp>(location, left, right);
+      };
+      auto emitPacketProduct = [&](OpBuilder &nested, Value paddedRow,
+                                   Value packetColumn) -> Value {
+        SmallVector<Value> indices{batchId, row, paddedRow, packetColumn};
+        Value leftVector = nested.create<memref::LoadOp>(
+            location, entry->getArgument(0), indices);
+        Value rightVector = nested.create<memref::LoadOp>(
+            location, entry->getArgument(1), indices);
+        Value sum = nested.create<arith::ConstantFloatOp>(
+            location, APFloat(0.0f), nested.getF32Type());
+        for (int64_t element = 0; element < packetWidth; ++element) {
+          Value left = nested.create<vector::ExtractOp>(
+              location, leftVector, ArrayRef<int64_t>{element});
+          Value right = nested.create<vector::ExtractOp>(
+              location, rightVector, ArrayRef<int64_t>{element});
+          if (storageType != nested.getF32Type()) {
+            left = nested.create<arith::ExtFOp>(location, nested.getF32Type(),
+                                                left);
+            right = nested.create<arith::ExtFOp>(location, nested.getF32Type(),
+                                                 right);
+          }
+          Value product =
+              nested.create<arith::MulFOp>(location, left, right);
+          sum = nested.create<arith::AddFOp>(location, sum, product);
+        }
+        return sum;
+      };
+
+      SmallVector<Value> accumulators(requestedRowsPerSubgroup, zero);
+      if (requestedVectorizeFullFeatures) {
+        for (int64_t base = 0; base < featureWidth;
+             base += requestedLanesPerRow * packetWidth) {
+          Value cPacketBase = builder.create<arith::ConstantIndexOp>(
+              location, base / packetWidth);
+          Value packetColumn = builder.create<arith::AddIOp>(
+              location, lane, cPacketBase);
+          for (unsigned rowSlot = 0; rowSlot < requestedRowsPerSubgroup;
+               ++rowSlot) {
+            auto termIf = builder.create<scf::IfOp>(
+                location, TypeRange{builder.getF32Type()},
+                rowActiveValues[rowSlot], /*withElseRegion=*/true);
+            {
+              OpBuilder::InsertionGuard guard(builder);
+              builder.setInsertionPointToStart(termIf.thenBlock());
+              builder.create<scf::YieldOp>(
+                  location,
+                  emitPacketProduct(builder, paddedRowValues[rowSlot],
+                                    packetColumn));
+            }
+            {
+              OpBuilder::InsertionGuard guard(builder);
+              builder.setInsertionPointToStart(termIf.elseBlock());
+              builder.create<scf::YieldOp>(location, zero);
+            }
+            builder.setInsertionPointAfter(termIf);
+            accumulators[rowSlot] = builder.create<arith::AddFOp>(
+                location, accumulators[rowSlot], termIf.getResult(0));
+          }
+        }
+      } else {
+        for (int64_t base = 0; base < featureWidth;
+             base += requestedLanesPerRow) {
+          Value cBase = builder.create<arith::ConstantIndexOp>(location, base);
+          Value column = builder.create<arith::AddIOp>(location, lane, cBase);
+          Value inStaticFeatures = builder.create<arith::CmpIOp>(
+              location, arith::CmpIPredicate::ult, column, cFeatureWidth);
+          Value inValidFeatures = builder.create<arith::CmpIOp>(
+              location, arith::CmpIPredicate::slt, column, validFeatures);
+          Value featureActive = builder.create<arith::AndIOp>(
+              location, inStaticFeatures, inValidFeatures);
+          for (unsigned rowSlot = 0; rowSlot < requestedRowsPerSubgroup;
+               ++rowSlot) {
+            Value termActive = builder.create<arith::AndIOp>(
+                location, rowActiveValues[rowSlot], featureActive);
+            auto termIf = builder.create<scf::IfOp>(
+                location, TypeRange{builder.getF32Type()}, termActive,
+                /*withElseRegion=*/true);
+            {
+              OpBuilder::InsertionGuard guard(builder);
+              builder.setInsertionPointToStart(termIf.thenBlock());
+              builder.create<scf::YieldOp>(
+                  location,
+                  emitScalarProduct(builder, paddedRowValues[rowSlot], column));
+            }
+            {
+              OpBuilder::InsertionGuard guard(builder);
+              builder.setInsertionPointToStart(termIf.elseBlock());
+              builder.create<scf::YieldOp>(location, zero);
+            }
+            builder.setInsertionPointAfter(termIf);
+            accumulators[rowSlot] = builder.create<arith::AddFOp>(
+                location, accumulators[rowSlot], termIf.getResult(0));
+          }
+        }
+      }
+
+      Value laneZero = builder.create<arith::CmpIOp>(
+          location, arith::CmpIPredicate::eq, lane, c0);
+      for (unsigned rowSlot = 0; rowSlot < requestedRowsPerSubgroup;
+           ++rowSlot) {
+        Value accumulator = accumulators[rowSlot];
+        for (int64_t delta = 1; delta < requestedLanesPerRow; delta <<= 1) {
+          Value other = builder
+                            .create<gpu::ShuffleOp>(location, accumulator, delta,
+                                                    32,
+                                                    gpu::ShuffleMode::XOR)
+                            .getShuffleResult();
+          accumulator = builder.create<arith::AddFOp>(location, accumulator,
+                                                       other);
+        }
+        Value storeActive = builder.create<arith::AndIOp>(
+            location, laneZero, outputActiveValues[rowSlot]);
+        auto storeIf = builder.create<scf::IfOp>(
+            location, storeActive, /*withElseRegion=*/false);
+        builder.setInsertionPointToStart(storeIf.thenBlock());
+        Value outputValue = builder.create<arith::SelectOp>(
+            location, rowActiveValues[rowSlot], accumulator, zero);
+        builder.create<memref::StoreOp>(
+            location, outputValue, entry->getArgument(outputArgument),
+            ValueRange{batchId, row, paddedRowValues[rowSlot]});
+        builder.setInsertionPointAfter(storeIf);
+      }
+
+      builder.create<gpu::TerminatorOp>(location);
+      builder.setInsertionPointAfter(launch);
+      builder.create<func::ReturnOp>(location);
+      annotatePaddedRowState(
+          lowered, threads, "subgroup_feature", outputRowsPerBlock,
+          requestedRowsPerSubgroup, requestedLanesPerRow,
+          requestedVectorizeFullFeatures
+              ? (isa<Float32Type>(storageType) ? 4 : 8)
+              : 1,
+          !staticBounds && requestedPromoteRank0Scalars ? 2 : 0);
+      function.erase();
+      return success();
+    }
+
+    // Preserve the compact one-row lowering byte-for-byte when multirow search
+    // is disabled.  The multirow state above deliberately uses a different,
+    // interleaved live-accumulator graph.
     for (unsigned rowSlot = 0; rowSlot < requestedRowsPerSubgroup; ++rowSlot) {
       Value paddedRow = subgroupBaseRow;
       if (rowSlot != 0) {
@@ -638,7 +848,7 @@ struct PaddedRowDotLowering {
     builder.create<func::ReturnOp>(location);
     annotatePaddedRowState(
         lowered, threads, "subgroup_feature", outputRowsPerBlock,
-        requestedLanesPerRow,
+        requestedRowsPerSubgroup, requestedLanesPerRow,
         requestedVectorizeFullFeatures
             ? (isa<Float32Type>(storageType) ? 4 : 8)
             : 1,
@@ -877,11 +1087,10 @@ struct PaddedRowDotLowering {
                 featureWidth % (isa<Float32Type>(storageType) ? 4 : 8) == 0
             ? (isa<Float32Type>(storageType) ? 4 : 8)
             : 1;
-    annotatePaddedRowState(lowered, threads, "serial_row",
-                                outputRowsPerBlock, 32, serialVectorWidth,
-                                !staticBounds && requestedPromoteRank0Scalars
-                                    ? 2
-                                    : 0);
+    annotatePaddedRowState(
+        lowered, threads, "serial_row", outputRowsPerBlock,
+        /*rowsPerSubgroup=*/1, /*subgroupWidth=*/32, serialVectorWidth,
+        !staticBounds && requestedPromoteRank0Scalars ? 2 : 0);
     function.erase();
     return success();
   }

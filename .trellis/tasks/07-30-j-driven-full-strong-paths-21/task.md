@@ -138,6 +138,29 @@ runner 现在在每个候选 Q 前分别写入两种 canary，并要求两次完
 完整输出域的 packet geometry。每个 cold sample 还会在 CUDA event 计时区间外恢复输入，再做 L2 eviction，
 保证 in-place Source/候选不会改变下一次测量的 workload。由漏写或状态串扰产生的表面加速一律作废。
 
+### 3.4 Flash preprocess 八批稳定结果
+
+在相同自然负载 `B=4, H=16, S=8192, D=128` 上，Full 现在搜索真实的多行 live-accumulator
+MLIR 状态：同一 subgroup 的 2/4/8 个行累加器同时存活，feature load/multiply/add 按行交错发射，随后每行
+独立完成 shuffle 与 store。它不改变单行内部的规约树；旧实现虽然接受 `rows-per-subgroup>1`，实际上仍是
+完整做完一行再做下一行，不能算 row-level ILP。
+
+| Target | C-Fixed | Schedule | Full | `G_schedule` | `G_full` | Source | Source/Full |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 5090D | 418.624 | 307.264 | 190.768 | 1.362x | 1.609x | 204.752 | 1.073x |
+| H100 | 648.928 | 648.928 | 118.256 | 1.000x | 5.399x | 124.208 | 1.050x |
+
+两卡均使用 code-warm/data-cold CUDA event、5 samples/batch、8 个 Source/target 交替确认批次。5090D 的八个
+Full 批次为 `190.560--191.264 us`，H100 后六批稳定在 `117.728--123.200 us`；表中取八批中位数。
+两张卡从同一候选并集独立选择出不同 executable：
+
+- 5090D：`1024 threads, 32 lanes/row, 1 row/subgroup`；
+- H100：`256 threads, 32 lanes/row, 4 interleaved rows/subgroup`。
+
+因此这里的跨目标复用不是携带一个 GPU winner，而是复用同一个 typed padded-reduction J 和同一个 C++/MLIR
+变换集合，再由目标测量选择不同的具体执行图。Schedule-Only 仍只搜索 serial-row direct-lowering spine，
+多行 interleaved 状态只存在于 Full 的 subgroup-feature 结构中。
+
 ## 4. 本任务实现的四条强路径
 
 ### P1. RVV fused Softmax：先删除物化，再比较两种真实拓扑
@@ -206,6 +229,10 @@ vector width 仍属于 Schedule-Only。
 把 RVV row packet state 扩展为同时读取多个同域输入、显式 cast 到 accumulator dtype、融合 map/select/mul
 producer，并只在 row 末做一次 horizontal finalize。CUDA 将 Flash preprocess 已验证的 padded/
 subgroup-feature reduction按 typed map/select/cast/reduce 结构通用化。
+
+CUDA 部分已进一步实现多行 interleaved live-accumulator 状态，并把 `rows-per-subgroup={1,2,4,8}` 纳入同一
+完整搜索；C++ post-pass 明确记录 `rows_per_subgroup`、实际 shuffle 数与 multirow trace，而不是由 Python
+候选标签声称命中。
 
 优先覆盖 KLDiv、Flash backward preprocess、Fused Add RMSNorm 与 xFormers RMSNorm-add。目标是删除独立
 cast/mul/mask tensor 与标量 feature traversal，并让 5090D、H100、RVV 分别选择自己的 schedule。

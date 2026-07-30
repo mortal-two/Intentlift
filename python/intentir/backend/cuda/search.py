@@ -1984,6 +1984,41 @@ def enumerate_cuda_candidates(
             for vectorize in (False, True)
             for lanes_per_row in (4, 8, 16)
         )
+        # The lowering already supports assigning several independent output
+        # rows to each logical subgroup.  This is a genuine launch/scheduling
+        # coordinate of the subgroup-feature state: it reduces the block grid
+        # and exposes row-level ILP without changing the per-row reduction tree.
+        # Keep the one-row states first so existing C-prior ordering remains
+        # stable, then search the complete bounded 2/4/8 domain implemented by
+        # the C++ pass.
+        padded_schedule_bases.extend(
+            PaddedRowSchedule(
+                threads,
+                vectorize,
+                True,
+                "subgroup-feature",
+                rows_per_subgroup,
+                lanes_per_row,
+            )
+            for rows_per_subgroup in (2, 4, 8)
+            for threads in (64, 128, 256, 512, 1024)
+            for vectorize in (False, True)
+            for lanes_per_row in (32,)
+        )
+        padded_schedule_bases.extend(
+            PaddedRowSchedule(
+                threads,
+                vectorize,
+                True,
+                "subgroup-feature",
+                rows_per_subgroup,
+                lanes_per_row,
+            )
+            for rows_per_subgroup in (2, 4, 8)
+            for threads in (128, 256)
+            for vectorize in (False, True)
+            for lanes_per_row in (4, 8, 16)
+        )
     for schedule in (
         replace(base, promote_rank0_scalars=promote)
         for base in padded_schedule_bases
