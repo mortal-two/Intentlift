@@ -68,6 +68,11 @@ lowering permission。
 per-observation conformance；有限次 membership 不能被宣称为完整的行为集合包含证明，两个不同
 但都合法的集合值结果也不应继续强制三条 `Close_Q`。
 
+Gate2 input precondition 直接检查 external J input 上可判定的 `index_bounds` 与 duplicate contract；
+若 data/indices 是 J 内部值，则不要求把它们伪装成额外外部输入，而由 J-only structured
+gather/scatter evaluator 在该 authored op 执行时对真实计算值检查 dtype、axis、bounds 与 duplicate
+policy。检查失败仍使 J leg fail closed；该分工不从 Source、Replay、Harness、C 或 π 推导索引关系。
+
 ## Gate2 输入模式
 
 多候选搜索先完成 pre-Gate2 wave，并仅依据 TypeCheck/Gate1 evidence 按固定
@@ -114,19 +119,28 @@ for every x in T:
 当前固定 scalar RefEval protocol 为 `j_scalar_cpu_mlir_v24`，shared functional projection receipt 为
 `intentir.j-functional-boundary.v22`，structured reference 为
 `intentir.j-structured-cpu-reference.v10`，relation-indexed pointwise reference 为
-`intentir.j-contract-indexed-cpu-reference.v2`。这些版本在既有 source-neutral multi-reduction 与
+`intentir.j-contract-indexed-cpu-reference.v3`。这些版本在既有 source-neutral multi-reduction 与
 invocation-local predicate proof 之上，消费当前 artifact.v4/v5 typed relations、闭合 direct-store
 partition，并为 common scalar lowering 尚不能消去的 typed contraction 提供闭合 J-only reference。
 旧 RefEval/projection 的 `REFERENCE_UNSUPPORTED`、receipt 和 Gate2 verdict 保持原解释，不由新
 consumer 追认、覆盖或静默刷新。
 
 当 shared functional projection 因一般 affine/sub-domain predicate 无法把 B 擦除为完整 tensor 时，
-v22 只能尝试一个 closed ContractIR profile：flat、acyclic、shape-preserving pointwise A graph；每个
+v22 只能尝试一个 closed ContractIR profile：flat、acyclic、relation-indexed pointwise/gather A graph；每个
 被作者化的 load 在其 `node_ref`/operand edge 上按 typed index 与 predicate 取值，predicate 域外只用
 该 access 的显式 fill；每个 output 再由 typed store index/predicate 无重叠、无缺口地组装。所有
 ContractExpr 都由 canonical typed evaluator 执行，不匹配公式或 Kernel 名。没有绑定 access 的
 sibling operand 保持普通 Layer-A 语义，绝不继承另一 node 的 access。这样 accepted J 若遗漏关系，
 Gate2 会得到可比较但与 Source/Replay 不同的 `O_J`；系统应 fresh relift，而不是给 consumer 写答案。
+
+该profile允许多个J domain axis具有相同extent，但producer轴只能由该producer自身access index中唯一
+出现的axis绑定，不能按shape相等猜测。未直接绑定boundary access的普通gather，其`index_bounds`也
+必须与该gather的data/indices/axis逐项一致，并由typed structured gather在执行时检查真实内部index。
+terminal `concat`只在它是唯一output binding、每个operand与该output的唯一indexed store一一对应时
+成为output-assembly receipt；每个store还必须在当前closed invocation上证明非concat轴逐点恒等、
+concat轴从0开始连续且按operand顺序平移，所有切片无重叠并穷尽output。否则明确unsupported/error。
+这只是从完整J/B确定性执行consumer-local sub-domain，不读取Source/Replay/C/π，也不允许普通
+full-tensor concat被静默跳过。
 
 当前 consumer 对新 relation 的权限是“逐项消费或显式 unsupported”，不是忽略：
 

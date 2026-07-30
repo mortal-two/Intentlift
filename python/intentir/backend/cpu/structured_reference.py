@@ -204,6 +204,7 @@ def requires_structured_reference(j: SemanticArchive) -> bool:
             "tile",
             "effect_if",
             "value_if",
+            "gather",
             "scatter",
         }
         for op in operations

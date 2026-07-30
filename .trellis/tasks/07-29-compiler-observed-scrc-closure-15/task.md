@@ -1,7 +1,7 @@
 # Task 15：模型级输入到 Compiler-Observed Lift / Closed J / Source-Blind Replay 的最终闭合系统
 
-> 状态：`P3_CLOSURE_19_OF_28`（2026-07-30）。Codex-native single-owner路径已在active Gate1 v12下
-> fresh闭合Flash Linear；继续九项active queue。
+> 状态：`P3_CLOSURE_20_OF_28`（2026-07-30）。Codex-native single-owner路径已在active Gate1 v12下
+> fresh闭合Flash Linear与Qwen2VL MRoPE；继续八项active queue。
 >
 > 定位：Task 11 的下一次能力建设与最终十项闭合波。Task 14 已结束归档；其18份可保留证书、十项
 > active queue与中断 evidence 是本任务的历史输入，不是本任务已经完成的结果。
@@ -90,7 +90,7 @@ SplitK forward 的同一`split=4,D=256`模型profile还必须保留上游launch�
 - Qwen2VL、Flash forward/full backward已有部分Gate1 no-closure或未完成round；
 - Linear、one-col和SplitK只在停止过程中短暂启动，均不构成能力证据。
 
-### 1.4 当前正式进度：19/28
+### 1.4 当前正式进度：20/28
 
 `/tmp/intentir-task15-v12-owned-realization-linear-splitkfwd-sol-high-b3k5-20260730-01`中的
 Flash Linear branch 2在formal round 3取得Gate1 v12 closure并完成三边Gate2：Source--Replay两输出
@@ -103,6 +103,23 @@ forward/one-column backward/full backward与SplitK forward/reduce/backward。
 合同与ingress仍曾把全部MaskC slot误列为kernel `tl.constexpr`形参。现统一为只有
 `kind=constexpr`进入Replay callable ABI；`kind=compiler`保留在MaskC中、无J attachment/π route，
 由外部CompileCase消费。修复前启动的SplitK Replay只作诊断，必须fresh rerun才能形成证据。
+
+`/tmp/intentir-task15-v12-refeval-llama4-qwen-sol-high-b3k5-20260730-01`中的Qwen2VL
+MRoPE branch 1在formal round 3取得Gate1 v12 closure。原Gate2先被internal `index_bounds`误当成
+external-input precondition拒绝；随后exact artifact又暴露functional full-tensor mask projection不能
+消费cross-axis consumer access。通用ContractIR reference现逐access执行typed index/predicate/fill，
+从各access自身绑定同形多域轴，核对内部gather bounds，并仅在terminal concat的每个operand与唯一
+indexed store一一对应、运行时证明非concat轴恒等、concat轴零起连续有序、无重叠且穷尽时组装输出。
+它不读取Source/Replay/C/π或Kernel名，也不删除predicate。零模型exact recheck证据位于
+`/tmp/intentir-task15-qwen-contract-indexed-gate2-recheck-20260730-01/liger_qwen2vl_mrope/gate2-recheck-001`：
+Source--Replay q/k误差均为0，Source--J与Replay--J q/k最大误差均为`0.00048828125`，三边全部通过，
+`status=scrc_certified`。当前剩余八项为Liger/Llama4 RoPE、Flash forward/one-column/full backward与
+SplitK forward/reduce/backward。
+
+同批Llama4 RoPE的三个branch已各完成5个TypeCheck-valid formal rounds，最终仍分别硬失败于
+`op_multiset/dataflow`（其中一支另含`predicate_effect`），正式记为本配置下`NO_CLOSURE_(3,5)`；
+它不是TypeCheck或Gate2 consumer问题，下一轮必须针对Source/TTIR到J/π的Lift表达与Replay消费分析，
+不能继续无界增加K。
 
 ## 2. 从真实输入到证书的完整数据流
 
@@ -624,7 +641,7 @@ startup context 仍造成显著 attention/serialization 成本，故 P1 重新�
 
 2026-07-30进一步补齐`Run_f`反馈：Codex Lift owner在CandidateCheck/SourceReconcile通过后可显式调用
 固定public seed的`SemanticProbe(Source,RefEval(J))`。该工具只返回Source–J逐输出差异，不读π/Replay、
-不生成或修补artifact、不进入证书；hidden Gate2 seed仍只在Gate1 winner之后生成。冻结Qwen J由原先
+不生成或修补artifact、不进入证书；hidden Gate2 seed仍只在Gate1 winner之后生成。当时的旧冻结Qwen J由原先
 `reference_unsupported`变为可执行并暴露约1.2的真实half-view语义差，证明该闭环能在formal Replay前
 发现“well-typed但J欠表达”，而不是继续用更多Gate1轮次碰运气。
 

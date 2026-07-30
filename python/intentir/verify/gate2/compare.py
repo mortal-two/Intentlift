@@ -237,9 +237,11 @@ def validate_j_inputs(
         ):
             continue
         if item.data not in j_inputs or item.indices not in j_inputs:
-            raise NotImplementedError(
-                "Gate2 index bounds currently require external data/indices inputs"
-            )
+            # Canonical internal gather/scatter values do not exist until the
+            # J-only reference graph executes.  The structured evaluator checks
+            # their exact runtime dtype, axis and bounds at the authored op; do
+            # not misclassify that closed check as a missing input precondition.
+            continue
         data = np.asarray(j_inputs[item.data])
         indices = np.asarray(j_inputs[item.indices])
         if item.axis >= data.ndim or indices.dtype.kind not in {"i", "u"}:
@@ -252,6 +254,10 @@ def validate_j_inputs(
             )
     for update in j.boundary.updates:
         if update.duplicate_policy is not DuplicatePolicy.FORBID:
+            continue
+        if update.base not in j_inputs or update.indices not in j_inputs:
+            # The structured scatter evaluator enforces the same authored
+            # duplicate policy over computed internal indices.
             continue
         _base, groups = _active_update_groups(
             update, j_inputs, require_values=False

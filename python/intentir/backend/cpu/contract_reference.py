@@ -123,33 +123,6 @@ def _rectangular_domains(j: "SemanticArchive") -> dict[str, int | str]:
     return domains
 
 
-def _axes_for_shape(
-    value_type: CanonicalValueType,
-    domains: Mapping[str, int | str],
-    *,
-    context: str,
-) -> tuple[str, ...]:
-    """Bind result dimensions to uniquely matching authored domain axes."""
-
-    axes: list[str] = []
-    used: set[str] = set()
-    for dimension, extent in enumerate(value_type.shape):
-        candidates = [
-            axis
-            for axis, domain_extent in domains.items()
-            if axis not in used and domain_extent == extent
-        ]
-        if len(candidates) != 1:
-            raise ContractReferenceUnsupportedError(
-                f"{context} dimension {dimension} does not have one unique "
-                "J-authored domain axis"
-            )
-        axis = candidates[0]
-        axes.append(axis)
-        used.add(axis)
-    return tuple(axes)
-
-
 @dataclass(frozen=True)
 class IndexedLoadProjection:
     access: ContractAccessIR
@@ -183,6 +156,25 @@ class IndexedStoreProjection:
 
 
 @dataclass(frozen=True)
+class IndexedOutputAssembly:
+    """One output whose authored concat is realized by exact indexed stores."""
+
+    output: str
+    result_ref: str
+    axis: int
+    operand_refs: tuple[str, ...]
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "proof": "typed_indexed_concat_output_assembly",
+            "output": self.output,
+            "result_ref": self.result_ref,
+            "axis": self.axis,
+            "operand_refs": list(self.operand_refs),
+        }
+
+
+@dataclass(frozen=True)
 class IndexedResultLoadProjection:
     """One gather result whose exact masked access view is authored in Layer B."""
 
@@ -208,6 +200,8 @@ class ContractReferencePlan:
     loads: tuple[IndexedLoadProjection, ...]
     result_loads: tuple[IndexedResultLoadProjection, ...]
     stores: tuple[IndexedStoreProjection, ...]
+    output_assemblies: tuple[IndexedOutputAssembly, ...]
+    native_index_bounds: tuple[tuple[str, str, str, int], ...]
     broadcast_axes: tuple[
         tuple[str, tuple[tuple[str, tuple[int, ...]], ...]], ...
     ]
@@ -235,6 +229,10 @@ class ContractReferencePlan:
         return {name: tuple(items) for name, items in grouped.items()}
 
     @property
+    def output_assembly_map(self) -> dict[str, IndexedOutputAssembly]:
+        return {item.output: item for item in self.output_assemblies}
+
+    @property
     def broadcast_map(self) -> dict[str, dict[str, tuple[int, ...]]]:
         return {
             result: dict(operands) for result, operands in self.broadcast_axes
@@ -249,6 +247,18 @@ class ContractReferencePlan:
             "loads": [item.to_json() for item in self.loads],
             "result_loads": [item.to_json() for item in self.result_loads],
             "stores": [item.to_json() for item in self.stores],
+            "output_assemblies": [
+                item.to_json() for item in self.output_assemblies
+            ],
+            "native_index_bounds": [
+                {
+                    "node_ref": node_ref,
+                    "data": data,
+                    "indices": indices,
+                    "axis": axis,
+                }
+                for node_ref, data, indices, axis in self.native_index_bounds
+            ],
             "broadcast_axes": [
                 [
                     result,
@@ -263,6 +273,7 @@ class ContractReferencePlan:
 _RELATION_INDEXED_OPS = frozenset(
     {
         "cast",
+        "concat",
         "const",
         "gather",
         "iota",
@@ -324,10 +335,13 @@ def project_contract_reference(j: "SemanticArchive") -> ContractReferencePlan:
     unit_dimensions = direct_unit_dimension_refs(canonical.dimension_constraints)
     result_axes: dict[str, tuple[str, ...]] = {}
 
-    def axes_for_result(
+    def axes_for_access_result(
         operation: IntentOp,
         node_ref: str,
+        access: ContractAccessIR,
     ) -> tuple[str, ...]:
+        """Bind a producer domain from its own authored access programs."""
+
         result_ref = _result_names(operation)[0]
         cached = result_axes.get(result_ref)
         if cached is not None:
@@ -335,13 +349,55 @@ def project_contract_reference(j: "SemanticArchive") -> ContractReferencePlan:
         value_type = value_types.get(result_ref)
         if value_type is None:
             raise ValueError("contract reference operation lacks a closed result type")
-        axes = _axes_for_shape(
-            value_type,
-            domains,
-            context=f"J node {node_ref!r} result {result_ref!r}",
+        if len(access.index) != len(value_type.shape):
+            raise ContractReferenceUnsupportedError(
+                "contract access rank differs from its producer result"
+            )
+        axes: list[str] = []
+        for dimension, (program, extent) in enumerate(
+            zip(access.index, value_type.shape, strict=True)
+        ):
+            referenced_axes = [
+                axis
+                for axis in domains
+                if axis in program.expression.references
+            ]
+            if len(referenced_axes) == 1:
+                axis = referenced_axes[0]
+                if domains[axis] != extent:
+                    raise ContractReferenceUnsupportedError(
+                        f"J node {node_ref!r} access axis {axis!r} differs from "
+                        f"result dimension {dimension}"
+                    )
+                axes.append(axis)
+                continue
+            if len(referenced_axes) > 1:
+                raise ContractReferenceUnsupportedError(
+                    "one contract access component uses multiple producer axes"
+                )
+            if not (
+                (isinstance(extent, int) and extent == 1)
+                or (isinstance(extent, str) and extent in unit_dimensions)
+            ):
+                raise ContractReferenceUnsupportedError(
+                    "contract producer dimension lacks one authored access axis"
+                )
+            axes.append(f"@unit:{result_ref}:{dimension}")
+        if len(set(axes)) != len(axes):
+            raise ContractReferenceUnsupportedError(
+                "contract producer access axes are not unique"
+            )
+        predicate_axes = (
+            set(access.predicate.expression.references).intersection(domains)
+            if access.predicate is not None
+            else set()
         )
-        result_axes[result_ref] = axes
-        return axes
+        if not predicate_axes.issubset(set(axes)):
+            raise ContractReferenceUnsupportedError(
+                "contract access predicate uses axes outside its producer domain"
+            )
+        result_axes[result_ref] = tuple(axes)
+        return tuple(axes)
 
     def axes_for_gather_result(
         operation: IntentOp,
@@ -483,7 +539,7 @@ def project_contract_reference(j: "SemanticArchive") -> ContractReferencePlan:
             seen_accesses.add(access.access_id)
             continue
 
-        axes = axes_for_result(operation, node_ref)
+        axes = axes_for_access_result(operation, node_ref, access)
         axis_refs = set().union(
             *(set(program.expression.references) for program in access.index),
             (
@@ -561,10 +617,26 @@ def project_contract_reference(j: "SemanticArchive") -> ContractReferencePlan:
         (item.node_ref, item.data, item.indices, item.axis)
         for item in boundary.index_bounds
     }
+    native_index_bounds: list[tuple[str, str, str, int]] = []
+    for bound_key in sorted(authored_index_bounds - consumed_index_bounds):
+        node_ref, data, indices, axis = bound_key
+        operation = nodes.get(node_ref)
+        if (
+            operation is None
+            or operation.op != "gather"
+            or len(operation.operands) != 2
+            or operation.operands[0] != data
+            or operation.operands[1] != indices
+            or operation.attrs.get("axis") != axis
+            or operation.attrs.get("mode") not in {"along_axis", "take"}
+        ):
+            raise ContractReferenceUnsupportedError(
+                "contract native index bound does not match one typed gather"
+            )
+        native_index_bounds.append(bound_key)
+        consumed_index_bounds.add(bound_key)
     if consumed_index_bounds != authored_index_bounds:
-        raise ContractReferenceUnsupportedError(
-            "contract reference v2 consumes index bounds only through indexed gathers"
-        )
+        raise ValueError("contract reference left an authored index bound unconsumed")
     stores_by_output = {item.access.tensor for item in stores}
     if stores_by_output != output_names:
         raise ContractReferenceUnsupportedError(
@@ -573,9 +645,65 @@ def project_contract_reference(j: "SemanticArchive") -> ContractReferencePlan:
     output_bindings = {
         item.output: item.value for item in j_elaboration(canonical).output_bindings
     }
-    if any(output_bindings.get(output) != output for output in output_names):
+    producers = {
+        _result_names(operation)[0]: operation for operation in operations
+    }
+    output_assemblies: list[IndexedOutputAssembly] = []
+    assembly_results: set[str] = set()
+    for output in sorted(output_names):
+        binding = output_bindings.get(output)
+        if binding == output:
+            continue
+        operation = producers.get(binding)
+        output_stores = [item for item in stores if item.access.tensor == output]
+        if (
+            operation is None
+            or operation.op != "concat"
+            or set(operation.attrs) != {"axis"}
+            or not operation.operands
+            or not isinstance(operation.attrs.get("axis"), int)
+            or isinstance(operation.attrs.get("axis"), bool)
+            or any(
+                binding in candidate.operands
+                for candidate in operations
+                if candidate is not operation
+            )
+        ):
+            raise ContractReferenceUnsupportedError(
+                "contract indexed non-identity output requires one terminal concat"
+            )
+        axis = int(operation.attrs["axis"])
+        output_type = value_types.get(output)
+        if output_type is None or not 0 <= axis < len(output_type.shape):
+            raise ValueError("contract output concat axis is outside output rank")
+        stores_by_value: dict[str, list[IndexedStoreProjection]] = {}
+        for store in output_stores:
+            stores_by_value.setdefault(store.value_ref, []).append(store)
+        if (
+            len(operation.operands) != len(output_stores)
+            or set(operation.operands) != set(stores_by_value)
+            or any(len(stores_by_value[operand]) != 1 for operand in operation.operands)
+        ):
+            raise ContractReferenceUnsupportedError(
+                "contract output concat operands differ from its indexed stores"
+            )
+        output_assemblies.append(
+            IndexedOutputAssembly(
+                output,
+                binding,
+                axis,
+                tuple(operation.operands),
+            )
+        )
+        assembly_results.add(binding)
+    concat_results = {
+        _result_names(operation)[0]
+        for operation in operations
+        if operation.op == "concat"
+    }
+    if concat_results != assembly_results:
         raise ContractReferenceUnsupportedError(
-            "contract indexed stores require identity/inout output bindings"
+            "contract reference permits concat only as a closed output assembly"
         )
 
     effects = {item.access_ref: item for item in boundary.effects}
@@ -598,6 +726,8 @@ def project_contract_reference(j: "SemanticArchive") -> ContractReferencePlan:
         loads=tuple(loads),
         result_loads=tuple(result_loads),
         stores=tuple(stores),
+        output_assemblies=tuple(output_assemblies),
+        native_index_bounds=tuple(native_index_bounds),
         broadcast_axes=tuple(
             sorted(
                 (
@@ -873,7 +1003,29 @@ class _ContractEvaluator(_Evaluator):
         self.contract_loads = plan.load_map
         self.contract_result_loads = plan.result_load_map
         self.contract_scalar_bindings = dict(scalar_bindings)
+        self.output_assembly_results = {
+            item.result_ref for item in plan.output_assemblies
+        }
         self.indexed_load_materialization_count = 0
+        self.output_assembly_elision_count = 0
+
+    def sequence(
+        self,
+        body: Sequence[IntentOp],
+        env: Mapping[str, np.ndarray],
+        *,
+        allow_loop: bool,
+    ) -> dict[str, np.ndarray]:
+        """Execute the flat graph, deferring proven output concat to stores."""
+
+        filtered: list[IntentOp] = []
+        for operation in body:
+            result_ref = self._result_name(operation)
+            if result_ref in self.output_assembly_results:
+                self.output_assembly_elision_count += 1
+                continue
+            filtered.append(operation)
+        return super().sequence(filtered, env, allow_loop=allow_loop)
 
     def _materialize_indexed_load(
         self,
@@ -996,6 +1148,73 @@ class _ContractEvaluator(_Evaluator):
         return self._materialize_indexed_load(projection, source, op)
 
 
+def _validate_indexed_concat_store_slice(
+    *,
+    predicate: np.ndarray,
+    target_index: tuple[np.ndarray, ...],
+    producer_shape: tuple[int, ...],
+    output_shape: tuple[int, ...],
+    axis: int,
+    offset: int,
+) -> int:
+    """Prove one store is the next ordered, complete concat-axis slice."""
+
+    if len(producer_shape) != len(output_shape) or len(target_index) != len(output_shape):
+        raise ContractReferenceUnsupportedError(
+            "contract output concat store rank differs from its output"
+        )
+    if any(
+        producer_shape[dimension] != output_shape[dimension]
+        for dimension in range(len(output_shape))
+        if dimension != axis
+    ):
+        raise ContractReferenceUnsupportedError(
+            "contract output concat store changes a non-concat extent"
+        )
+    selected_count = int(np.count_nonzero(predicate))
+    if selected_count == 0:
+        raise ContractReferenceUnsupportedError(
+            "contract output concat contains an empty authored slice"
+        )
+    grids = np.indices(producer_shape, sparse=False, dtype=np.int64)
+    for dimension in range(len(output_shape)):
+        selected_target = target_index[dimension][predicate]
+        selected_source = grids[dimension][predicate]
+        expected = (
+            selected_source + offset
+            if dimension == axis
+            else selected_source
+        )
+        if not np.array_equal(selected_target, expected):
+            raise ContractReferenceUnsupportedError(
+                "contract output concat store is not an ordered identity slice"
+            )
+    active_source_axis = np.unique(grids[axis][predicate])
+    if (
+        active_source_axis.size == 0
+        or active_source_axis[0] != 0
+        or not np.array_equal(
+            active_source_axis,
+            np.arange(active_source_axis.size, dtype=np.int64),
+        )
+    ):
+        raise ContractReferenceUnsupportedError(
+            "contract output concat predicate is not a zero-based contiguous slice"
+        )
+    width = int(active_source_axis.size)
+    expected_count = width
+    for dimension, extent in enumerate(output_shape):
+        if dimension != axis:
+            expected_count *= extent
+    if selected_count != expected_count:
+        raise ContractReferenceUnsupportedError(
+            "contract output concat predicate does not cover every outer coordinate"
+        )
+    if offset + width > output_shape[axis]:
+        raise ValueError("contract output concat slice exceeds the output extent")
+    return width
+
+
 def execute_contract_reference(
     j: "SemanticArchive",
     dims: Mapping[str, int],
@@ -1045,12 +1264,20 @@ def execute_contract_reference(
     value_types = j_elaboration(canonical).value_type_by_name
     outputs: dict[str, np.ndarray] = {}
     stores_by_output = selected.stores_by_output
+    output_assemblies = selected.output_assembly_map
     executed_stores = 0
+    assembled_slices = 0
     for tensor in canonical.intent.outputs:
         shape = _resolved_shape(tensor.shape, checked_dims)
         output = np.empty(shape, dtype=numpy_dtype(tensor.dtype))
         covered = np.zeros(shape, dtype=np.bool_)
-        for store in stores_by_output[tensor.name]:
+        assembly = output_assemblies.get(tensor.name)
+        output_stores = stores_by_output[tensor.name]
+        if assembly is not None:
+            by_value = {item.value_ref: item for item in output_stores}
+            output_stores = tuple(by_value[item] for item in assembly.operand_refs)
+        concat_offset = 0
+        for store in output_stores:
             try:
                 value = np.asarray(env[store.value_ref])
             except KeyError as exc:
@@ -1072,6 +1299,16 @@ def execute_contract_reference(
                 for axis, item in enumerate(target_index)
             ):
                 raise ValueError("contract output store is outside its J tensor")
+            if assembly is not None:
+                concat_offset += _validate_indexed_concat_store_slice(
+                    predicate=predicate,
+                    target_index=target_index,
+                    producer_shape=producer_shape,
+                    output_shape=shape,
+                    axis=assembly.axis,
+                    offset=concat_offset,
+                )
+                assembled_slices += 1
             linear = np.zeros(producer_shape, dtype=np.int64)
             for extent, index_values in zip(shape, target_index, strict=True):
                 linear = linear * extent + index_values
@@ -1089,6 +1326,10 @@ def execute_contract_reference(
         if not bool(np.all(covered)):
             raise ContractReferenceUnsupportedError(
                 "contract output stores do not exhaust the logical output"
+            )
+        if assembly is not None and concat_offset != shape[assembly.axis]:
+            raise ContractReferenceUnsupportedError(
+                "contract output concat slices do not exhaust the concat axis"
             )
         outputs[tensor.name] = validate_array(
             output,
@@ -1109,6 +1350,12 @@ def execute_contract_reference(
             "domain_axis_count": len(domain_extents),
             "indexed_load_count": evaluator.indexed_load_materialization_count,
             "executed_store_element_count": executed_stores,
+            "output_assembly_count": len(output_assemblies),
+            "assembled_slice_count": assembled_slices,
+            "elided_terminal_concat_count": (
+                evaluator.output_assembly_elision_count
+            ),
+            "native_index_bound_count": len(selected.native_index_bounds),
             "operation_count": evaluator.operation_count,
             "input_count": len(checked_inputs),
             "output_count": len(outputs),
@@ -1121,6 +1368,7 @@ __all__ = [
     "ContractReferencePlan",
     "ContractReferenceUnsupportedError",
     "IndexedLoadProjection",
+    "IndexedOutputAssembly",
     "IndexedStoreProjection",
     "execute_contract_reference",
     "project_contract_reference",
