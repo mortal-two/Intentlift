@@ -26,7 +26,7 @@ closed signature、Layer-A total typing、显式 broadcast、canonical reduce/co
 control/inout/output-binding/terminal-control 关系，并检查 v10 authored route-local extent transform 的
 existing-route、C/J attachment 与 closed divisor/rounding。fixed code只诊断，不翻译别名、补齐 attrs、生成 handle/relation、
 改图或修复 artifact；历史 wire/receipt 继续按自身版本读取，不静默升级或重判。当前 Agent execution
-receipt 为 `intentir.lift-knowledge.v68 / intentir.lift-knowledge.v65 / minisweagent.intentir-replay.v35 / openai.codex-cli.intentir-replay.v31`；
+receipt 为 `intentir.lift-knowledge.v69 / intentir.lift-knowledge.v66 / minisweagent.intentir-replay.v35 / openai.codex-cli.intentir-replay.v31`；
 artifact.v10 的 `physical_iterations|unit_iterations/physical_loop_carriers` 表达 structured J loop 外、由已作者化
 reduce/contraction 或 boundary access/domain 锚定的物理时间，
 feedback frontier/category、candidate-control 与 Replay local-axis 合同只改 agent 消费，不改变接受
@@ -44,11 +44,14 @@ packet 才接收一个自带 authored op/boundary、π instance mechanism 与 ti
 compact manifest，并只查询明确遗漏页。同一 region 中 `physical_loop_carriers` declaration order 是跨
 init/state/next/result 共享的 carrier-tuple ordinal；Lift 必须从 Source frontend loop 的
 argument/yield/result tuple 作者化该顺序，Replay 不按 dtype/ref/mechanism 重排。该 tuple slot 顺序
-不是 event execution order，后者仍只由 `pi.order` 拥有。Codex Lift v12 / knowledge v68 还直接嵌入
+不是 event execution order，后者仍只由 `pi.order` 拥有。Codex Lift v12 / knowledge v69 还直接嵌入
 exact Harness ABI 与 syntax-only `source-outline.v2`
 与 relift frontier，并一次并列展开非递归 direct hard categories；原有只读工具退为可选局部自读。
 两条路径都不生成 artifact/realization，没有 Gate
-或认证权限。
+或认证权限。knowledge v69/v66 还禁止用 J domain、grid、C、Harness valuation 或当前 concrete
+value 擦除 Source runtime condition：semantic scalar-i1 effect guard 必须进入 typed control，物理
+coordinate/access validity 必须逐 access 保留 exact predicate；只有无独立 Source branch event 且有
+完整 full-logical-domain proof 的纯 lane-padding mask 才可消去。
 
 含 broadcast/identity-materialization/lexical/cross-region/route-extent critical facts 的 Replay 在 construction compile 前还必须对当前 exact bytes
 完成 `replay-obligation-audit.v4`；该工具只并置 J/π ledger 与 Replay 自己的编号源码，不映射 relation/instance、

@@ -11,9 +11,11 @@ from __future__ import annotations
 # --- provisional semantic vocabulary; every executor still fails closed ---
 SCHEMA = """\
 IntentIR J is a tensor-level, atomic semantic representation.
-You LIFT a kernel into the math it computes over whole tensors -- never threads,
-tiles, pointers, masks, or strides. Re-roll any hand-unrolled / strip-mined loop
-back into a single tensor op or a structured loop.
+You LIFT a kernel into the math it computes over whole tensors. Remove physical
+thread, tile, pointer, lane-mask, and stride spelling, but never erase a Source
+runtime predicate or control event merely because its condition resembles a
+logical-domain bound. Re-roll any hand-unrolled / strip-mined loop back into a
+single tensor op or a structured loop.
 
 Layers:
   A (algorithmic intent): the actual math -- the ops below.
@@ -262,6 +264,11 @@ Hard rules:
   tile/block/stage choices live only in C.
 - `boundary.index_bounds` exactly binds node/data/indices/axis and always means
   `0 <= indices < dim(data, axis)`; never emit proof prose or `proven=true`.
+- `boundary.domains` quantifies logical axes; it is not authority to erase a
+  Source runtime condition that controls accesses/effects. Preserve a semantic
+  scalar-i1 condition as typed control, or an access-validity condition on every
+  governed boundary access. Erase only a pure physical lane-padding mask with a
+  complete full-logical-domain proof and no distinct Source branch event.
 - `boundary.updates` records only logical base/indices/values/axis, combiner,
   duplicate policy and observable order. Atomic/CAS/thread ownership belongs to
   pi/backend realization. Result tolerance or one-of winners belong only to

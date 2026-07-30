@@ -91,7 +91,16 @@ the artifact schema or external TypeCheck.
    A padding predicate `k0 < x0` must index `k0` directly and have a matching
    domain `0 <= k0 and k0 < x0`; tensor shape, C, pi, Source, and runtime values
    never fill a missing/different domain. Preserve general logical predicates
-   rather than deleting them to force this profile.
+   rather than deleting them to force this profile. A domain only quantifies the
+   logical iteration set; it never erases a compiler-visible Source runtime
+   condition. If a Source condition lexically controls accesses/effects, keep a
+   dominating semantic scalar-i1 condition as typed control, or copy an exact
+   coordinate/access-validity predicate onto every governed boundary access.
+   Never demote either form to "domain-owned" from tensor shapes, grid, C,
+   Harness values, or the current valuation. Erase only a pure physical
+   lane-padding mask with a complete full-logical-domain proof and no distinct
+   Source branch event; otherwise fail closed instead of authoring an
+   unconditional access.
 7. `fill_value` is legal only on a load with an authored predicate or
    `access_guard_relation`. An
    unconditional access omits both fields (or leaves both null); never attach a
@@ -201,9 +210,12 @@ the artifact schema or external TypeCheck.
    around an otherwise ordinary reduction is Layer C/pi realization, not by itself
    a semantic recurrence. `boundary.reductions` must reference the actual J
    reduce/scan and cannot manufacture a missing reduction at the loop node.
-12. A Source binary conditional that controls whether accesses/effects occur
-   and then reaches a parent continuation is one Layer-A `effect_if`, not a
-   value `select`. Its already-visible predicate is scalar `i1`; positive and
+12. A Source binary conditional with an already-visible Layer-A scalar-`i1`
+   predicate that controls whether accesses/effects occur and then reaches a
+   parent continuation is one Layer-A `effect_if`, not a value `select`.
+   Coordinate/access-validity branches instead retain their exact predicate on
+   every governed boundary access under rule 6; domains and pi cannot erase or
+   reconstruct it. The effect_if predicate is scalar `i1`; positive and
    negative arms are both explicit and bind distinct sibling `branch_region`
    scopes, even when either arm body is empty. The conditional itself has no
    result or yield. Arm-local pure values may feed effects in that arm but never

@@ -1358,7 +1358,7 @@ def test_lift_instruction_assigns_only_comparison_class_not_thresholds() -> None
     normalized = " ".join(instructions.split())
 
     assert "supplied Responses schema is authoritative" in normalized
-    assert len(instructions) < 19_200
+    assert len(instructions) < 20_000
     assert "Floating transcendentals" in normalized
     assert "must use `tolerance`" in normalized
     assert "external Gate2 policy Q supplies all atol" in normalized
@@ -1381,9 +1381,13 @@ def test_lift_instruction_assigns_only_comparison_class_not_thresholds() -> None
     assert "strictly wider target_dtype" in normalized
     assert "local tile axis after program/grid axes" in normalized
     assert "not the whole-tensor logical axis number" in normalized
-    assert "effect-controlling binary Source branch is one Layer-A `effect_if`" in normalized
+    assert "effect-controlling binary Source branch whose predicate is an already-visible Layer-A scalar i1 is one Layer-A `effect_if`" in normalized
     assert "value-yielding Source `scf.if` is one Layer-A `value_if`" in normalized
     assert "scope.effects plus matching EffectSpec/access_ref is sole membership" in normalized
+    assert "Boundary domains only quantify the logical iteration set" in normalized
+    assert "coordinate/access-validity condition is copied exactly" in normalized
+    assert 'Never call it "domain-owned"' in normalized
+    assert "no distinct Source branch event" in normalized
     assert "`rounded_extent_step` uses the same lower/step" in normalized
 
 

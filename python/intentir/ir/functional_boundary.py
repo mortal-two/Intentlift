@@ -1115,6 +1115,215 @@ def predicate_dominated_pointwise_load(
     return True
 
 
+def _binary_contraction_terms(
+    operation: IntentOp,
+) -> tuple[str, str, str] | None:
+    """Return one closed, non-diagonal binary contraction spelling."""
+
+    if (
+        operation.op != "contraction"
+        or len(operation.operands) != 2
+        or len(_result_names(operation)) != 1
+        or set(operation.attrs) != {"subscripts"}
+    ):
+        return None
+    subscripts = operation.attrs.get("subscripts")
+    if not isinstance(subscripts, str):
+        return None
+    compact = "".join(subscripts.split())
+    inputs_and_output = compact.split("->")
+    input_terms = (
+        inputs_and_output[0].split(",")
+        if len(inputs_and_output) == 2
+        else []
+    )
+    if (
+        len(input_terms) != 2
+        or any(re.fullmatch(r"[A-Za-z]*", term) is None for term in input_terms)
+        or re.fullmatch(r"[A-Za-z]*", inputs_and_output[-1]) is None
+    ):
+        return None
+    lhs, rhs = input_terms
+    output = inputs_and_output[-1]
+    if (
+        len(set(lhs)) != len(lhs)
+        or len(set(rhs)) != len(rhs)
+        or len(set(output)) != len(output)
+        or set(output) - set(lhs) - set(rhs)
+    ):
+        return None
+    return lhs, rhs, output
+
+
+def predicate_dominated_contraction_load(
+    j: Any,
+    access_id: str,
+) -> bool:
+    """Prove one no-fill contraction load unobservable outside free axes.
+
+    A Source branch may guard a contraction by output coordinates while the
+    reduction loop itself remains exact.  Such a load has no masked-load
+    ``other`` value: whenever its free-axis predicate is false, every observable
+    result store is also false.  This proof accepts exactly that J-owned shape.
+
+    Predicates on a contracted axis remain physical reduction padding and still
+    require an explicit fill.  The proof is frontend- and invocation-independent;
+    it consults no Source, C, pi, Replay, Harness, or runtime dimensions.
+    """
+
+    j = elaborate_j(j)
+    accesses = {item.access_id: item for item in j.boundary.accesses}
+    access = accesses.get(access_id)
+    if (
+        access is None
+        or access.kind.value != "load"
+        or access.predicate is None
+        or access.fill_value is not None
+    ):
+        return False
+
+    nodes = _node_table(j)
+    resolved_start = _predicate_dominated_load_start(
+        j,
+        access=access,
+        nodes=nodes,
+    )
+    if resolved_start is None:
+        return False
+    node_ref, operation, source_ref = resolved_start
+    terms = _binary_contraction_terms(operation)
+    if terms is None or source_ref != access.tensor:
+        return False
+    operand_matches = [
+        index
+        for index, operand in enumerate(operation.operands)
+        if operand == source_ref
+    ]
+    if len(operand_matches) != 1:
+        return False
+    operand_index = operand_matches[0]
+    input_labels = terms[operand_index]
+    output_labels = terms[2]
+
+    elaboration = j_elaboration(j)
+    value_types = elaboration.value_type_by_name
+    input_type = value_types.get(source_ref)
+    result_ref = _result_names(operation)[0]
+    result_type = value_types.get(result_ref)
+    parsed_load = elaboration.access_by_id.get(access_id)
+    input_coordinates = (
+        parsed_load.index.direct_coordinates
+        if parsed_load is not None
+        else None
+    )
+    if (
+        input_type is None
+        or result_type is None
+        or input_coordinates is None
+        or any(not isinstance(axis, str) for axis in input_coordinates)
+        or len(input_labels) != len(input_type.shape)
+        or len(input_coordinates) != len(input_type.shape)
+        or len(output_labels) != len(result_type.shape)
+        or len(set(input_coordinates)) != len(input_coordinates)
+    ):
+        return False
+
+    output_bindings = [
+        item
+        for item in elaboration.output_bindings
+        if item.value == result_ref
+    ]
+    if len(output_bindings) != 1:
+        return False
+    output_binding = output_bindings[0]
+    stores = [
+        item
+        for item in j.boundary.accesses
+        if item.kind.value == "store"
+        and item.tensor == output_binding.output
+        and item.node_ref == node_ref
+    ]
+    if len(stores) != 1 or stores[0].predicate is None:
+        return False
+    store = stores[0]
+    parsed_store = elaboration.access_by_id.get(store.access_id)
+    output_coordinates = (
+        parsed_store.index.direct_coordinates
+        if parsed_store is not None
+        else None
+    )
+    if (
+        output_coordinates is None
+        or any(not isinstance(axis, str) for axis in output_coordinates)
+        or len(output_coordinates) != len(output_labels)
+        or len(set(output_coordinates)) != len(output_coordinates)
+    ):
+        return False
+
+    # The contraction result must be the terminal observable value.  A later
+    # consumer needs its own explicit dominance/provenance proof.
+    if any(
+        result_ref in _operation_dependencies(candidate)
+        for candidate in _walk_ops(j.intent.body)
+        if candidate is not operation
+    ):
+        return False
+
+    try:
+        domains = _full_domains(j)
+        logical_guards = _logical_boolean_guards(j)
+        load_predicate = _j_predicate_projection(
+            j,
+            parsed_load.predicate,
+            logical_guards=logical_guards,
+        )
+        store_predicate = _j_predicate_projection(
+            j,
+            parsed_store.predicate,
+            logical_guards=logical_guards,
+        )
+    except (NotImplementedError, ValueError):
+        return False
+    if (
+        load_predicate.guards
+        or store_predicate.guards
+        or not load_predicate.upper_bounds
+    ):
+        return False
+
+    input_axis_to_label = dict(zip(input_coordinates, input_labels, strict=True))
+    output_label_to_axis = dict(zip(output_labels, output_coordinates, strict=True))
+    load_upper = dict(load_predicate.upper_bounds)
+    store_upper = dict(store_predicate.upper_bounds)
+    predicate_axes = set(load_predicate.lower_axes) | set(load_upper)
+    if predicate_axes - set(input_coordinates):
+        return False
+    for axis in predicate_axes:
+        label = input_axis_to_label[axis]
+        output_axis = output_label_to_axis.get(label)
+        if output_axis is None:
+            # A predicate on a contracted axis controls padding contributions;
+            # it cannot be erased without a J-authored fill/identity.
+            return False
+        input_position = input_coordinates.index(axis)
+        output_position = output_coordinates.index(output_axis)
+        if axis in load_predicate.lower_axes and (
+            output_axis not in store_predicate.lower_axes
+        ):
+            return False
+        if axis in load_upper:
+            extent = load_upper[axis]
+            if (
+                domains.get(axis) != extent
+                or input_type.shape[input_position] != extent
+                or domains.get(output_axis) != extent
+                or result_type.shape[output_position] != extent
+                or store_upper.get(output_axis) != extent
+            ):
+                return False
+    return True
+
+
 def static_index_bounds_status(j: Any, relation: Any) -> bool | None:
     """Decide a closed internal-constant index precondition from J alone.
 
@@ -4169,6 +4378,7 @@ def _project_functional_boundary(
     loaded: set[str] = set()
     inout_poststate_reloads: set[tuple[str, str, str]] = set()
     predicate_dominated_loads: set[tuple[str, str]] = set()
+    contraction_dominated_loads: set[str] = set()
     stores_by_output: dict[str, list[Any]] = {
         name: [] for name in output_names
     }
@@ -4428,11 +4638,14 @@ def _project_functional_boundary(
                 and access.fill_value is None
                 and not runtime_predicate_proved
             ):
-                if (
-                    bounded_gather_projection is None
-                    and not predicate_dominated_pointwise_load(
-                        j, access.access_id
-                    )
+                pointwise_dominated = predicate_dominated_pointwise_load(
+                    j, access.access_id
+                )
+                contraction_dominated = predicate_dominated_contraction_load(
+                    j, access.access_id
+                )
+                if bounded_gather_projection is None and not (
+                    pointwise_dominated or contraction_dominated
                 ):
                     raise NotImplementedError(
                         "functional mask projection requires an explicit "
@@ -4441,6 +4654,8 @@ def _project_functional_boundary(
                 predicate_dominated_loads.add(
                     (access.access_id, access.predicate)
                 )
+                if contraction_dominated:
+                    contraction_dominated_loads.add(access.access_id)
         elif (
             access.fill_value is not None
             and access.access_id not in projected_guarded_load_accesses
@@ -4750,12 +4965,21 @@ def _project_functional_boundary(
                     )
 
     _validate_broadcast_closure(j, broadcast_axes)
+    padding_predicates = dict(predicates)
+    for access_id in contraction_dominated_loads:
+        # The J-only proof above establishes that this Source branch predicate
+        # controls only observable free axes.  It is not physical reduction
+        # padding and therefore must not seed masked-value provenance.
+        padding_predicates[access_id] = None
     (
         padding_issues,
         consumer_issues,
         extension_requirements,
         affected_consumers,
-    ) = _reduction_padding_analysis(j, predicate_overrides=predicates)
+    ) = _reduction_padding_analysis(
+        j,
+        predicate_overrides=padding_predicates,
+    )
     _validate_reduction_padding_closure(
         j,
         has_physical_padding=has_predicate_or_fill,
@@ -4994,6 +5218,7 @@ __all__ = [
     "functional_reduction_padding_issues",
     "direct_logical_operand_sources",
     "explicit_inout_poststate_reload_value",
+    "predicate_dominated_contraction_load",
     "predicate_dominated_pointwise_load",
     "parse_direct_axes",
     "project_predicate_text",

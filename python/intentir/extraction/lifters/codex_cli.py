@@ -43,7 +43,7 @@ from .scrc import (
 
 
 CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v12"
-CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v68"
+CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v69"
 CODEX_CLI_TURN_TIMEOUT_SECONDS = 900.0
 
 _EAGER_DIRECT_FEEDBACK_CATEGORIES = frozenset(
@@ -68,6 +68,11 @@ distinct/repeated symbolic J dimension as declared, preserve scalar and bound
 constexpr shape-coordinate equality in authored J, and keep integer contract axes
 literal. Trace predicated loads to every sum/max/min consumer and author each
 required per-consumer outside-domain relation; fills are not a substitute.
+Logical domains never erase compiler-visible Source runtime conditions. Preserve
+a semantic scalar-i1 effect guard as typed control, or preserve an exact
+coordinate/access-validity condition on every governed boundary access. Only a
+proved pure lane-padding mask with no distinct Source branch event may disappear;
+grid, C, Harness values and the current valuation are not proofs.
 Before CandidateCheck, reconcile every loop, if, and return in the syntax-only
 Source control-flow outline with the complete candidate. Decide from Source and
 the selected specialization whether each item belongs to logical J control,

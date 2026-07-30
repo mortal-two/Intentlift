@@ -350,13 +350,19 @@ ReplayLLM(J,pi,MaskC(C);U_f) -> complete source R_f
 当前 packet protocol 为 `intentir.scrc.replay-input.v1`，Triton 公共上下文为
 `public_frontend_context_v18`，TileLang/CUDA 公共上下文为
 `public_frontend_context_v9/v4`；source-aware Codex/MiniSWE Lift 的当前 knowledge receipt 分别为
-`intentir.lift-knowledge.v68 / intentir.lift-knowledge.v65`，source-blind MiniSWE/Codex Replay backend 为
+`intentir.lift-knowledge.v69 / intentir.lift-knowledge.v66`，source-blind MiniSWE/Codex Replay backend 为
 `minisweagent.intentir-replay.v35 / openai.codex-cli.intentir-replay.v31`。这些版本必须随 fresh run 原样记录；旧 packet/context/knowledge
 evidence 不因实现升级而被重判。
 
+Lift knowledge v69/v66 进一步明确：J domain 只量化逻辑迭代集，不能擦除 Source 中编译器可见的
+runtime condition。已有 Layer-A scalar-i1 的 effect guard 进入 typed control；物理 coordinate/access
+validity 必须逐 access 保留 exact predicate。只有具备完整 full-logical-domain proof、且 Source 没有
+独立 branch event 的纯 lane-padding mask 才可擦除；grid、C、Harness valuation 与当前 concrete value
+均不构成该证明。
+
 Replay v35/v31 把 v10 `route_extent_transforms` 纳入 exact packet、critical ledger、obligation audit 与
 source-blind static ingress；它只拒绝缺失 closed floor/ceil-div spelling，不判断 target-local Gate1
-同构，也不生成代码。Lift knowledge v68/v65 只要求同一 owner 显式作者化 relation 与 attachment。
+同构，也不生成代码。Lift knowledge v69/v66 仍要求同一 owner 显式作者化 relation 与 attachment。
 
 同一 region 的
 `physical_loop_carriers` declaration order 是 init/state/next/result 共用的 carrier-tuple ordinal，Lift

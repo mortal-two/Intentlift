@@ -229,7 +229,11 @@ refinement carrier；sandbox CandidateCheck 复用同一个 source-free checker�
 不能分别重采样。
 由于 `none -> opaque(dtype=none)` 与 canonical contraction/stage-multiplicity 是新增的模型
 可见构造合同；v14 加入 generic functional logical-domain closure 与上述有界诊断反馈合同。fresh
-Codex/MiniSWE Lift knowledge 当前使用 `intentir.lift-knowledge.v68/v65`，新增的通用作者合同要求
+Codex/MiniSWE Lift knowledge 当前使用 `intentir.lift-knowledge.v69/v66`。其中 J domain 只量化逻辑
+迭代集，不拥有擦除 Source runtime condition 的权限：semantic scalar-i1 effect guard 进入 typed
+control，物理 coordinate/access validity 逐 access 保留 exact predicate；只有无独立 Source branch
+event 且有完整 full-logical-domain proof 的纯 lane-padding mask 才可消去。grid、C、Harness valuation
+和当前 concrete value 均不是该证明。其余通用作者合同要求
 IEEE infinity/NaN 保持 closed typed constant，不以最大有限数近似，并允许 `physical_iterations` 在
 同 subject/axis 的 boundary access/domain 上表达 epilogue/transfer traversal；fixed checker 不代选
 constant 或 physical anchor；Source reduction 省略 frontend axis 且存在 compiler-visible flatten 时，

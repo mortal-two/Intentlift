@@ -11,6 +11,7 @@ from intentir.ir.functional_boundary import (
     FUNCTIONAL_BOUNDARY_PROTOCOL,
     RUNTIME_PREDICATE_PROOF_PROTOCOL,
     functional_reduction_padding_issues,
+    predicate_dominated_contraction_load,
     predicate_dominated_pointwise_load,
     project_functional_boundary,
     project_functional_boundary_for_refeval,
@@ -2044,6 +2045,143 @@ def test_scalar_e_j_erases_unobservable_pointwise_masked_load_fill() -> None:
     assert "predicate differs from the full logical domain" in (
         rejected.error or ""
     )
+
+
+def _make_free_axis_predicated_contraction_artifact():
+    artifact = make_copy_artifact()
+    artifact.j.intent = IntentFunction.from_json(
+        {
+            "name": "scrc_j0",
+            "inputs": [
+                {"name": "t0", "dtype": "f32", "shape": ["x0", "x1"]},
+                {"name": "t1", "dtype": "f32", "shape": ["x1", "x2"]},
+            ],
+            "outputs": [
+                {"name": "t2", "dtype": "f32", "shape": ["x0", "x2"]},
+            ],
+            "body": [
+                {
+                    "id": "n0",
+                    "op": "contraction",
+                    "result": "t2",
+                    "operands": ["t0", "t1"],
+                    "attrs": {"subscripts": "ab,bc->ac"},
+                    "type": {"dtype": "f32", "shape": ["x0", "x2"]},
+                }
+            ],
+        }
+    )
+    artifact.j.node_ids = {"n0": "body[0]"}
+    artifact.j.signature = LogicalSignature(
+        [
+            SignatureParameter(
+                "p0", ParameterKind.POINTER, ParameterMode.INPUT,
+                "f32", 2, logical_ref="t0",
+            ),
+            SignatureParameter(
+                "p1", ParameterKind.POINTER, ParameterMode.INPUT,
+                "f32", 2, logical_ref="t1",
+            ),
+            SignatureParameter(
+                "p2", ParameterKind.POINTER, ParameterMode.OUTPUT,
+                "f32", 2, logical_ref="t2",
+            ),
+            SignatureParameter(
+                "p3", ParameterKind.SCALAR, ParameterMode.VALUE,
+                "i32", logical_ref="x0",
+            ),
+            SignatureParameter(
+                "p4", ParameterKind.SCALAR, ParameterMode.VALUE,
+                "i32", logical_ref="x2",
+            ),
+            SignatureParameter(
+                "p5", ParameterKind.SCALAR, ParameterMode.VALUE,
+                "i32", logical_ref="x1",
+            ),
+        ]
+    )
+    artifact.j.boundary = Boundary(
+        domains={
+            "d0": "0 <= k0 and k0 < x0",
+            "d1": "0 <= k1 and k1 < x2",
+            "d2": "0 <= k2 and k2 < x1",
+        },
+        accesses=[
+            BoundaryAccess(
+                "a0", AccessKind.LOAD, "t0", node_ref="n0",
+                predicate="k0 < x0", index_expression="[k0, k2]",
+            ),
+            BoundaryAccess(
+                "a1", AccessKind.LOAD, "t1", node_ref="n0",
+                predicate="k1 < x2", index_expression="[k2, k1]",
+            ),
+            BoundaryAccess(
+                "a2", AccessKind.STORE, "t2", node_ref="n0",
+                predicate="(k0 < x0) and (k1 < x2)",
+                index_expression="[k0, k1]",
+            ),
+        ],
+        effects=[
+            EffectSpec(EffectKind.READ, "t0", "n0", "e0", "a0"),
+            EffectSpec(EffectKind.READ, "t1", "n0", "e1", "a1"),
+            EffectSpec(EffectKind.WRITE, "t2", "n0", "e2", "a2"),
+        ],
+    )
+    return artifact
+
+
+def test_scalar_e_j_consumes_free_axis_predicated_contraction_loads() -> None:
+    artifact = _make_free_axis_predicated_contraction_artifact()
+
+    assert predicate_dominated_contraction_load(artifact.j, "a0")
+    assert predicate_dominated_contraction_load(artifact.j, "a1")
+    projection = project_functional_boundary(artifact.j)
+    assert projection.runtime_predicate_proofs == ()
+    assert {
+        item
+        for item in projection.consumed
+        if item.startswith("predicate_dominated_load:")
+    } == {
+        "predicate_dominated_load:a0:k0 < x0",
+        "predicate_dominated_load:a1:k1 < x2",
+    }
+
+    lhs = np.arange(6, dtype=np.float32).reshape(2, 3) / 7.0
+    rhs = np.arange(12, dtype=np.float32).reshape(3, 4) / 11.0
+    result = ScalarLoweringRunner().run(
+        ScalarLoweringSpec.create(
+            artifact.j,
+            dims={"x0": 2, "x1": 3, "x2": 4},
+            input_bindings={"t0": "lhs", "t1": "rhs"},
+            output_bindings={"t2": "output"},
+        ),
+        {"lhs": lhs, "rhs": rhs},
+    )
+
+    assert result.ok, result.error
+    np.testing.assert_allclose(result.outputs["output"], lhs @ rhs, rtol=1e-6)
+    assert result.metadata["boundary_profile"] == "logical_domain_mask_erasure_v1"
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["reduction_axis_predicate", "store_does_not_dominate_load"],
+)
+def test_scalar_e_j_contraction_no_fill_proof_fails_closed(mutation: str) -> None:
+    artifact = _make_free_axis_predicated_contraction_artifact()
+    if mutation == "reduction_axis_predicate":
+        artifact.j.boundary.accesses[0].predicate = "k2 < x1"
+    elif mutation == "store_does_not_dominate_load":
+        artifact.j.boundary.accesses[2].predicate = "k1 < x2"
+    else:  # pragma: no cover - parametrization is closed above
+        raise AssertionError(mutation)
+
+    assert not predicate_dominated_contraction_load(artifact.j, "a0")
+    with pytest.raises(
+        NotImplementedError,
+        match="requires an explicit masked-load fill",
+    ):
+        project_functional_boundary(artifact.j)
 
 
 def test_scalar_e_j_erases_mask_through_exact_terminal_transpose() -> None:

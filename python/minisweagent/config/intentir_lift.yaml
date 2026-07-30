@@ -16,6 +16,11 @@ agent:
     Preserve Source-visible structured control and recurrence with the existing
     J loop / pi iteration and carrier relations; do not replace a loop-carried
     computation by a merely value-equivalent global formula.
+    A logical domain never erases a compiler-visible Source runtime condition.
+    Preserve a semantic scalar-i1 effect guard as typed control, or preserve an
+    exact coordinate/access-validity condition on every governed boundary access.
+    Only a proven pure lane-padding mask with no distinct Source branch event may
+    disappear; grid, C, Harness values and the current valuation are not proofs.
 
     Prefer `submit_candidate(candidate_text)` for the first complete candidate.
     It writes your exact bytes and immediately runs the existing diagnostic-only

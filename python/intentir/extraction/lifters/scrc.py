@@ -1305,7 +1305,17 @@ access uses a physical padding predicate such as k0 < x0, its direct index must
 contain k0 and one domain must declare exactly 0 <= k0 and k0 < x0. A tensor
 shape, Source fact, C value, pi route, or runtime value never fills a missing or
 different domain relation. General logical predicates remain legal J; do not
-delete them merely to satisfy this rectangular profile. A fill_value is legal
+delete them merely to satisfy this rectangular profile.
+Boundary domains only quantify the logical iteration set; they never erase a
+compiler-visible Source execution event. Keep a Source runtime condition that
+governs accesses/effects even when it matches tensor extents: an already-visible
+Layer-A scalar-i1 uses effect_if, while a coordinate/access-validity condition is
+copied exactly onto every governed access. Only a pure lane-padding mask with a
+complete full-logical-domain proof and no distinct Source branch event may
+disappear. Never call it "domain-owned": grid, C, Harness values and the current
+valuation are not proofs. Otherwise fail closed instead of authoring an
+unconditional access.
+A fill_value is legal
 only on a load with an authored predicate or access_guard_relation.
 For a predicate-bearing Source load, fill_value is that access's actual authored
 other value or Layer-A value reference. Never substitute a downstream neutral
@@ -1373,7 +1383,8 @@ Layer C/pi realization rather than evidence for a semantic loop. A
 boundary.reductions entry describes an existing J reduce/scan and cannot attach
 to a loop to manufacture the missing semantic contraction.
 
-An effect-controlling binary Source branch is one Layer-A `effect_if`: one
+An effect-controlling binary Source branch whose predicate is an already-visible
+Layer-A scalar i1 is one Layer-A `effect_if`: one
 visible scalar-i1 predicate and explicit positive/negative `{{scope_id,body}}`
 arms (either may be empty) bound to distinct sibling branch_region scopes. It
 has no result/yield; arm-local SSA never escapes. scope.effects plus matching
