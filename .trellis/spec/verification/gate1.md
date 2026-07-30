@@ -9,7 +9,7 @@ Gate1 只接收已经通过 `TypeCheck(J,C,π)`、由当前三元组生成的全
 conditions。该 Gate1 claim 只针对这个 c0。
 
 当前 fresh-run artifact/decode/typecheck 组合为
-`intentir.scrc.artifact.v12 / intentir.scrc.decode.v17 / intentir.scrc.typecheck.v29`。Lift LLM 是完整
+`intentir.scrc.artifact.v12 / intentir.scrc.decode.v17 / intentir.scrc.typecheck.v30`。Lift LLM 是完整
 artifact 的唯一作者：value/dimension equality、closed dimension definition、consumer-extension、access-guard、typed control/inout、
 output binding、physical iteration/carrier、terminal-control 与 route-local extent transform 都必须由模型显式提交。Decode、
 CandidateCheck 与 TypeCheck 只能做 closed
@@ -35,7 +35,8 @@ G1 = [F_(f,p)(Compile_H(Source,c0)) == F_(f,p)(Compile_H(Replay,c0))]
 ```
 
 Gate1 回答 Replay 是否重建了 Source 对 J 的 realization。它不执行数值语义、不读取 Gate2
-结果，也不通过 composer/RuleCard 构造 Replay。
+结果，也不通过 host semantic composer/RuleCard 构造 Replay。agent-local syntax composer 只拼接
+该 fresh Replay agent 自己写出的 exact fragments，不读 Source/Gate，不生成语义，且不进入裁决关系。
 
 Replay normal view 必须保留当前 J-owned typed relations；它从 J 读取 value/dimension equality、
 closed dimension definitions、

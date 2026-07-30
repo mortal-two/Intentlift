@@ -164,8 +164,9 @@ MiniSWE 的无状态 provider transport 可以把旧 response/tool 大字段替�
 hash/length receipt；正式 continuation 不再重复嵌入同一 workspace 中已经存在的完整 candidate，
 owner 按路径读取 exact bytes，同时保留最新 closed feedback、完整本地 trajectory 与
 persistent workspace。Codex 可以通过隔离的 allowlisted host bridge 调用同一
-CandidateCheck/ReplayCheck/public synthetic compile；bridge 只返回闭合结果，不得写
-artifact/source。两条路径均保持 configured reasoning effort，不把 repair/continuation 从 `xhigh`
+CandidateCheck/ReplayCheck/public synthetic compile。bridge 不得写 artifact 或选择/修复语义；
+Replay episode 的 syntax-only composer 可以把该 agent 自己写入的有序 source fragments 原样拼成
+`replay.source`，这不是 J/π 到目标代码的映射。两条路径均保持 configured reasoning effort，不把 repair/continuation 从 `xhigh`
 自动降级。
 
 每个持久 Lift owner 在创建时固定自己的 Source/Harness/schema/knowledge/tool 私有输入快照；后续
@@ -262,8 +263,10 @@ representation-only op 差异只要求 owner 对照 Source 重新审查已有 π
 提交前的强制串行协议。MiniSWE knowledge v64 暴露同一 outline/checklist 合同。该 transport 不生成
 `logical_ref`、J/C/π 字段或修复。
 
-当前持久 owner 使用 `artifact.v12 / decode.v17 / typecheck.v29 / candidate-check.v1` 实现上述
-CandidateCheck、C attachment、numeric-cast dependent typing 与 result-relation compatibility。v7
+当前持久 owner 使用 `artifact.v12 / decode.v17 / typecheck.v30 / candidate-check.v1` 实现上述
+CandidateCheck、C attachment、numeric-cast dependent typing 与 result-relation compatibility。v30
+只接受同一authored `effect_if`两臂各唯一完整store定义的conditional post-state output；不补
+`select`、mapping或新字段。v7
 继承 v6，v6 继承 v5；v5 继承 v4 的
 rank-0 closed signature、Layer-A graph value typing total 与显式 NumPy broadcast 合同；它只消费 Lift
 已在 `J.boundary.broadcasts` 中声明的 non-trailing relation，不推导或补写轴。v5 新增
@@ -383,60 +386,22 @@ TypeCheck 不做 SMT、range proof 或一般语义等价证明。检查失败时
 ReplayLLM(J,pi,MaskC(C);U_f) -> complete source R_f
 ```
 
-当前 packet protocol 为 `intentir.scrc.replay-input.v2`；Triton 公共上下文直接由当前固定字段给出，
-不再附带 context version、SHA 或 receipt 门禁。source-aware Codex/MiniSWE Lift 的当前 knowledge receipt 分别为
-`intentir.lift-knowledge.v70 / intentir.lift-knowledge.v65`，source-blind MiniSWE/Codex Replay backend 为
-`minisweagent.intentir-replay.v30 / openai.codex-cli.intentir-replay.v28`。这些版本必须随 fresh run 原样记录；旧 packet/context/knowledge
-evidence 不因实现升级而被重判；fresh Replay 只做当前字段的结构和 source-isolation 检查。
+当前外部 packet protocol 仍为 `intentir.scrc.replay-input.v2`。Codex Replay backend
+`openai.codex-cli.intentir-replay.v51` 只把 packet 中 canonical π 的固定 relation list 编为
+`intentir.pi-min.relational-column-wire.v1`：columns 明示字段顺序，发送前必须精确 round-trip 回原 π；
+它不修改 artifact π、TypeCheck judgement 或证书身份，旧 evidence 也不因 codec 升级而重判。
 
-Replay v28把一个formal round保持为同一个fresh、单writer、source-blind coding episode，总active
-wall time默认3600秒。它可重复编辑、运行`replay-check.v14`和public synthetic compile，并只对当前
-Replay源码查询其自身TTIR/fingerprint。累计provider上下文超过阈值或有draft的turn timeout时，可以在
-同一workspace内更换transport thread；新thread只重读exact packet、当前Replay bytes与closed host
-diagnostic，不接收语义摘要、旧episode、Source或Gate。该rollover不复用跨round Replay，也不增加
-认证输入。
-
-Replay v30/v26 完整执行 v10 `route_extent_transforms` 的 exact packet、critical ledger、obligation audit 与
-source-blind static ingress；它只拒绝缺失 closed floor/ceil-div spelling，不判断 target-local Gate1
-同构，也不生成代码。即使没有其他 complex obligation，单独存在该 relation 也要求审阅当前 exact
-Replay bytes。Codex v26 的单 turn 仍上限 900 秒，但 fresh Replay owner episode 总预算为 1800 秒；
-首个 turn 超时只可沿原 resumable thread 继续，不允许跨 episode 恢复。Lift knowledge v69/v65 在
-v68/v64 上只明确已有 access 的 consumer-local 所有权：同 tensor 在 sibling consumer 使用不同
-index/predicate/fill/sub-domain 时，由 owner 分别作者化；fixed code不复制或推荐 relation。只读
-`candidate-control.v2 operands` 仅并置当前草稿 node operand 与该 node 已有 access，空项不构造事实。
-v29/v25 历史 evidence 不重判。
-
-Replay v28/v24 与 Lift knowledge v66/v62 只把现有 ordered relation 的含义显式化：同一 region 的
-`physical_loop_carriers` declaration order 是 init/state/next/result 共用的 carrier-tuple ordinal，Lift
-从 Source frontend loop tuple作者化，Replay原样消费；不得按 dtype/ref/mechanism排序。它不是 event
-execution order，后者仍只由 `pi.order` 声明；`replay-check.v14` 只在 authored route 与 Replay
-自身 TTIR occurrence 均可唯一对应时提前拒绝顺序反转，歧义时不猜。Replay v28/v24 继承 v27/v23；v27/v23 又继承 v26/v22 对 π region 的原有闭合含义：region 是 compiler-visible instance 的
-精确词法 realization scope，不是优化提示或 consumer membership。声明在 loop region 的 instance
-即使只依赖 loop-invariant operands，也必须在该 loop 内 materialize；Replay 不得把它 hoist 到父
-region，也不得跨 region sink、clone 或 fold。该规则只消费 Lift 已作者化 placement，不从 Source、
-Gate diff 或常见优化推导新的 instance；ReplayCheck 不据此猜 op↔instance 映射，最终一致性仍由正式
-Gate1 observer 判定。
-
-Replay v28/v24 继承 v27/v23 对不超过 64 KiB 的匿名 packet 一次性 exact startup embedding；当前六个难核实测
-packet 最大约 47 KiB，因此正常路径不再强制调用 manifest、requirements、ABI、graph、realization 或
-obligations。startup 另带一个由同一 packet 精确投影的 bounded `critical_facts.v4`：只列 semantic
-dimension carrier、IEEE special typed constant、`physical_iterations`、
-`reduction_linearization + consumer route`、按 loop/branch region 分组的 instance membership 与
-跨 region order、route-local extent transforms、`pi.sharing` source/consumers，并把每条 `J.boundary.broadcasts` 与其原 operand type、matching boundary access、
-named consumer/operand ordinal 无损并置，使 Replay 不必在大图中重新
-寻找这些易漏的已作者化事实；它不推断、补齐或推荐实现。超过上限时，首次 manifest 自带 bounded authored-requirements：J op/boundary 与 π
-instance mechanism、route/order/time/control 的 exact 重索引，并只为被明确截断的页提供 focused
-query。完整 `/input/packet.json` 仍是 immutable authority；embedding/manifest/query 都不摘要、补齐、
-推断或推荐 schedule/code。Replay LLM仍完整作者化 source，host只对 exact bytes 做 ReplayCheck 和
-public synthetic compile。旧 v20/v16 的强制 requirements 查询 receipt 保持原 verdict。
-
-当 `critical_facts.v4` 含 broadcast obligation、lexical region、cross-region order 或 route extent
-transform 时，Replay
-v30/v26 为同一 owner 提供可选的 `replay-obligation-audit.v3`，用于把当前 exact source bytes 与 ledger 并置。返回值只把上述 J/π ledger 与该 owner 自己源码的带行号非空行并置；
-它不建立 `source statement ↔ relation/i*` 映射，不判断
-满足与否，也不建议或执行修复。该视图只帮助模型审阅当前代码，既不是 Replay 输入 artifact，也不是 ReplayCheck、compile 或 Gate1 的前置条件。
-
-v50/v8 只升级 proof-irrelevant Agent execution transport：活动 staged writer 被移除，MiniSWE 使用
+每个 formal round 是一个 fresh、single-writer、source-blind coding episode，以 active wall time而非
+极小 tool-call 数治理。agent 可把源码拆为本轮 `work/composer/*.source` fragments；plain mode 只按
+词法文件名拼接 exact UTF-8 bytes。复杂 Replay 可由 agent 另写 episode-local
+`work/replay.compose.json` 与 `NNN-iK.source`：fragment 中的 `{{out}}`、显式 operand
+`{{slot:N}}` 和按同 target empty-slot route 声明序编号的 `{{dep:N}}` 都是 agent 作者化目标语法的
+一部分，host 只按 accepted π 中已经显式、唯一的 route 替换 stable local ID，并
+检查 closed source/target、slot、sharing 与 order。host 不选择 target op/expression/control/API，
+不把 π relation 翻译成 code fragment；歧义、缺 occurrence、重复 slot 或错误顺序立即拒绝。direct
+`replay.source` raw escape 始终保留。agent 可反复 render、ReplayCheck、public synthetic compile 与
+查看自己 Replay 的 TTIR；任何 manifest、fragment、checkpoint 或 helper 都不得跨 formal round 保留。
+\nv50/v8 只升级 proof-irrelevant Agent execution transport：活动 staged writer 被移除，MiniSWE 使用
 一个持久 Lift owner 和每轮一个 exact Replay packet；首轮 exact allowlisted workspace mirror 在
 模型收到一次后可于后续无状态 provider packet 中按路径重读 exact 文件；旧 response/tool group
 只保留最近窗口，完整本地 trajectory 与 workspace 文件不变。Lift 可把多个显式 schema lookup 合并为
@@ -486,8 +451,8 @@ annotation；`kind=compiler` 的 slot 只声明由外部 compiler invocation 消
 Replay 函数签名、body 或 π route 中。正式 Gate1/Gate2 在 Replay 提交后以与 Source 相同的 C value
 绑定该 role；source-blind construction compile 不读取其 value，也不能把它伪装成公开代表值。
 
-Replay 必须生成完整、可独立构建的当前前端源码；固定代码只做绑定和检查，不根据 π 或 compiler
-diff 施工。
+Replay 必须生成完整、可独立构建的当前前端源码；固定代码只做 syntax-byte composition、绑定和
+reject-only 检查，不根据 J、π 或 compiler diff 选择目标语义、修复或施工。
 
 Replay instruction 的共享前缀只能陈述 frontend-neutral 的 J/C/π ownership、拓扑保持、拒绝与输出
 合同。`tl.dot`、`tl.sum`、Triton program-axis 以及 base/lane 到具体 pointer operation 的拼写，只能在
@@ -565,7 +530,7 @@ relift diagnostic view 必须明确区分。
 禁止把 diff 交给 Replay、patch 旧 Replay、只输出 artifact 增量，或跨候选复用 Replay。
 
 协议允许独立的 `intentir.scrc.gate1-diagnostic-recheck.v1` 对一份已落盘 artifact 做只读诊断：
-保持 artifact bytes/digest 不变，执行当前 canonical Decode、`typecheck.v29`、一个 fresh normal Replay
+保持 artifact bytes/digest 不变，执行当前 canonical Decode、`typecheck.v30`、一个 fresh normal Replay
 与 Gate1，并写入独立 `recheck-NNN` evidence。它不调用 Lift、不运行 masked-J 或 Gate2、不参与
 candidate/winner 选择，也不改变 parent run 的 verdict 或 certificate；因此只用于定位固定 consumer/
 observer/context 改动，不能冒充 fresh SCRC rerun。provider 调用前必须把 selected case/current prepared

@@ -55,6 +55,12 @@ class 与必要语义合同。Q 根据经验证的 class、dtype、reduction ext
 source-realization authorization，只触发 SCRC compatibility check，不成为 backend permission。
 Lift 仍显式声明 relation，Q 仍独占具体阈值。
 
+当前 `intentir.scrc.gate2-q.v2` 对每个 output 独立选择冻结规则。默认仍按 observable output dtype；
+只有 accepted J 的该 output dependency 明确包含较低精度 operand 的 `contraction/reduce/scan` 时，
+才改用 Q 中预先冻结的对应 compute-dtype profile。选择器只消费 canonical J 的 typed dataflow，
+不读取 Source、Replay、C、π、backend、Kernel identity 或本次观测误差；因此不是 Lift 自授容差，
+也不是 production mixed-precision permission。无法得到闭合 profile 或 Q 缺少相应规则时 fail closed。
+
 `Close_Q` 必须是确定性、对称的谓词；若底层 `isclose` 有方向性，Q 必须显式对称化或执行双向
 检查。第三条 Replay–J 边不增加执行，只比较已经产生的三个输出；两条 Source-centered 近似边
 不能依靠传递性推出它。

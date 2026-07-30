@@ -5,20 +5,19 @@ Trellis CLI、自动 session 或 workflow phase。
 
 ## 当前任务
 
-Task 11 继续作为不停止的28-Kernel闭合主线；当前保留18份参数化、ABI正确的accepted J。Task 14完成
-模型级输入审计、adapter v6与十项active queue识别后归档，其长批次只保留历史/诊断evidence。
-Task 15先统一规划输入、匿名Compiler观察、持久Codex Lift owner、closed J能力、source-blind Replay
-agent、Gate反馈和最终十项闭合；当前只做设计与能力建设准备，不启动formal closure。production backend
-仍只在SCRC后消费J+C，并与本任务分离。
+Task 11 继续作为不停止的28-Kernel闭合主线。Task 16 在当前23/28 evidence基线上重构J-led minimal π
+与Replay agent内部composer，闭合剩余五项；若新路径足够轻，再让原先22项统一经过新composer。
+production backend仍只在SCRC后消费J+C，并与本任务分离。
 
 - [Task 11：SCRC v4 的 28-Kernel 有界并行全闭合](07-24-scrc-v4-full-closure-11/task.md)（执行中；闭合主线）
-- [Task 15：模型级输入到 Compiler-Observed Lift / Closed J / Source-Blind Replay 的最终闭合系统](07-29-compiler-observed-scrc-closure-15/task.md)（设计已建立；formal closure尚未启动）
+- [Task 16：J 主导的最小约束 π / Replay 内部 Composer 与 28-Kernel 最终闭合](07-31-j-led-minimal-pi-replay-composer-16/task.md)（执行中）
 
 ## 本轮已归档任务
 
-Task 01–10、Task 12、Task 13 与 Task 14 均已结束并迁入 `archive/2026-07/`。其中任务正文与 evidence 是历史记录，不再作为
+Task 01–10、Task 12–15 均已结束并迁入 `archive/2026-07/`。其中任务正文与 evidence 是历史记录，不再作为
 当前执行状态或后继调度的权威来源。
 
+- [Task 15：Compiler-Observed Lift / Closed J / Source-Blind Replay（23/28后由Task 16接管）](archive/2026-07/07-29-compiler-observed-scrc-closure-15/task.md)
 - [Task 14：Source-Grounded Certification Profile 与 Codex 28-Kernel Fresh SCRC（已结束）](archive/2026-07/07-27-codex-parametric-28-closure-14/task.md)
 - [Task 13：Lightweight Single-Owner MiniSWE / Codex Agent Runtime（工程完成）](archive/2026-07/07-27-lightweight-miniswe-codex-runtime-13/task.md)
 - [Task 12：Persistent Single-Owner Transactional Agent Runtime（验收未通过）](archive/2026-07/07-26-single-owner-agent-runtime-12/task.md)

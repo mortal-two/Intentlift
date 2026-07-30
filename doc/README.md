@@ -3,13 +3,15 @@
 ## 当前权威设计
 
 当前规范性设计由五份相互约束的权威文档共同组成。前四份定义 SCRC，
-第五份定义 SCRC 之后的 production backend：
+第五份定义 SCRC 之后的 production backend。另有一份窄化修订规定 Replay 作者化接口，但不增加
+新的证明对象或权威层级：
 
 1. [C：所有权、绑定、消费与三方验证](IntentIR_C_所有权_绑定_消费与三方验证设计_2026-07-22.md)：确定信息归属、组件可见范围、Harness/RefEval/lowering 边界与三对象因子化。
 2. [π：依赖类型实现见证与 Replay 安全](IntentIR_pi_依赖类型实现见证与Replay安全设计_2026-07-22.md)：确定 realization witness、`TypeCheck(J,C,π)`、授权规则与 Replay 安全边界。
 3. [Lift、Replay、Gate1、Gate2 最终执行流程](IntentIR_Lift_Replay_Gate1_Gate2_实验与系统改进最终执行流程_2026-07-22.md)：确定实验轮次、relift、失败停止、Gate2 与实验结束后的系统改进流程。
 4. [IntentIR / SCRC 最终数学、执行流程与论文表述](IntentIR_SCRC_最终数学与执行流程_2026-07-22.md)：是上述三份 SCRC 设计的数学与 claim 总述，统一 `TypeCheck` 所有权结论、observer-relative Gate1、外部比较政策 Q、Gate2 三条直接比较、instance-wise `c0` 与概率声明边界。它不增加第四个设计对象或新的运行阶段；若对象/schema/API 细节发生歧义，仍回到对应的三份核心设计修订。
 5. [Contract-Preserving Multi-Lowering 后端最终设计](IntentIR_Contract_Preserving_Multi_Lowering_后端最终设计_2026-07-24.md)：定义 accepted J+C 的 production 消费边界、Intent MLIR materialization、A/B/C 后端作用、generic implementation families、pass contracts、搜索与实验设计；它不修改 SCRC 接受谓词。
+6. [J 主导的最小约束 π 与 Replay 内部 Composer 重构](IntentIR_J主导_最小约束pi与Replay内部Composer重构设计_2026-07-31.md)：窄化 π wire 与 Replay coding-agent 的作者化接口；composer 只是一轮内的 proof-irrelevant scratch，固定代码不从 J/π 生成目标语义。
 
 前四份 SCRC 文档共同规定：
 
@@ -35,7 +37,7 @@ optional C
   -> performance-only selection
 ```
 
-任何实现文档或派生 spec 若与这五份文档冲突，应修订派生材料，而不是增加额外证明对象、
+任何实现文档或派生 spec 若与前五份权威文档及第六项的窄化边界冲突，应修订派生材料，而不是增加额外证明对象、
 认证 Gate、隐藏信息通道或 per-kernel construction policy。
 
 ## 派生规范

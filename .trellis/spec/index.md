@@ -19,7 +19,7 @@ lowering 和测试要求，不形成另一套设计。上位文档按作用域�
 若派生规范与上位设计冲突，应修订派生规范；不得通过增加 interface artifact、hash gate、
 epoch、commitment、额外认证 Gate 或兼容旁路来调和冲突。
 
-当前 fresh-run 栈为 `artifact.v12 / decode.v17 / typecheck.v29 / candidate-check.v1 / replay-check.v14`。它继承 rank-0
+当前 fresh-run 栈为 `artifact.v12 / decode.v17 / typecheck.v30 / candidate-check.v1 / replay-check.v14`。它继承 rank-0
 closed signature、Layer-A total typing、显式 broadcast、canonical reduce/contraction、absent carrier
 拒绝、functional-domain closure、rank-0 liveness、padded-mean necessary condition 与 closed
 `pi.iterations`，并验证 Lift 已作者化的 value/dimension、closed dimension definition、consumer-extension、access-guard、typed
@@ -76,7 +76,8 @@ compiled `tt.get_program_id` occurrence；artifact v12还按π作者化的`progr
 精确launch axis，不从声明顺序/grid/C猜测；同一 `p*` 的多个 π instance 始终共享一个既有 ABI carrier，
 placement 本身不产生 program coordinate。
 且每个 pointer-producing address stage 必须流向至少一个 transfer。无法闭合的 topology 不猜，不读取
-Source，也不生成地址公式。`typecheck.v29`新增program-axis completeness dependent check，v28新增closed
+Source，也不生成地址公式。`typecheck.v30`新增双臂完整store的J-only conditional post-state
+output binding，v29新增program-axis completeness dependent check，v28新增closed
 dimension relation check；`typecheck.v27` 只新增 route extent transform 的 closed dependent check；
 `typecheck.v26` 只新增 direct `x* == 1`/`1 == x*` 对显式 broadcast
 shape alignment 的 singleton dependent check；不做 SMT/transitive inference，也不从 concrete

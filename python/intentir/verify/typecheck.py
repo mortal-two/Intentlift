@@ -30,6 +30,7 @@ from intentir.ir.dimension_relation import (
     validate_dimension_relations,
 )
 from intentir.ir.functional_boundary import (
+    complete_conditional_effect_outputs,
     functional_boundary_closure_issues,
     functional_consumer_extension_requirements,
     functional_reduction_padding_issues,
@@ -53,7 +54,7 @@ from intentir.verify.gate1.model import (
 from intentir.verify.gate1.pi import RealizationWitness
 
 
-TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v29"
+TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v30"
 GLOBAL_SAFE_REFINEMENTS = frozenset(
     {"identity_materialization", "reduction_linearization"}
 )
@@ -2299,8 +2300,16 @@ def _check_output_binding_types(
     intent = j.intent.to_json()["intent_function"]
     for _path, operation in _walk_operations(intent.get("body", [])):
         producible_values.update(_operation_results(operation.get("result")))
+    try:
+        effect_defined_outputs = complete_conditional_effect_outputs(j)
+    except (NotImplementedError, ValueError):
+        # Full functional projection owns this narrow proof.  If another boundary
+        # capability is unsupported, retain the ordinary fail-closed output rule.
+        effect_defined_outputs = frozenset()
     for binding in elaboration.output_bindings:
         if binding.value not in producible_values:
+            if binding.output in effect_defined_outputs:
+                continue
             if binding.output in mapping_positions:
                 path = (
                     "j.boundary.output_mappings"

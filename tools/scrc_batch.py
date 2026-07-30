@@ -729,7 +729,9 @@ def main(argv: list[str] | None = None) -> int:
             WorkloadExecution,
             classify_scrc_report,
             complete_prepared_workload_gate2,
+            gate2_exposes_logical_j_pass_implementation_failure,
             initialize_workload_evidence,
+            merge_fixed_artifact_replay_retry_execution,
             next_candidate_fanout_dir,
             next_workload_run_dir,
             save_candidate_fanout_report,
@@ -739,6 +741,7 @@ def main(argv: list[str] | None = None) -> int:
             scrc_gate1_search_diagnostic,
             scrc_report_diagnostic,
             search_prepared_workload_gate1,
+            retry_prepared_workload_gate1_fixed_artifact,
             save_workload_gate1_search,
             WorkloadExecutionError,
         )
@@ -790,42 +793,107 @@ def main(argv: list[str] | None = None) -> int:
             branch_id,
             formal_round,
         ):
-            progress.stage_transition(
-                entry.case_id,
-                entry.ordinal,
-                branch_id=None,
-                stage="gate2_wait",
-                formal_round=formal_round,
-                status="waiting",
-            )
-            with gate2_slots:
-                progress.gate2_started(
+            def execute_gate2_once(current_search, current_round):
+                progress.stage_transition(
                     entry.case_id,
                     entry.ordinal,
-                    branch_id=branch_id,
-                    formal_round=formal_round,
+                    branch_id=None,
+                    stage="gate2_wait",
+                    formal_round=current_round,
+                    status="waiting",
                 )
-                try:
-                    execution = complete_prepared_workload_gate2(
-                        prepared, search
+                with gate2_slots:
+                    progress.gate2_started(
+                        entry.case_id,
+                        entry.ordinal,
+                        branch_id=branch_id,
+                        formal_round=current_round,
                     )
-                except Exception:
+                    try:
+                        current_execution = complete_prepared_workload_gate2(
+                            prepared, current_search
+                        )
+                    except Exception:
+                        progress.gate2_finished(
+                            entry.case_id,
+                            entry.ordinal,
+                            branch_id=branch_id,
+                            formal_round=current_round,
+                            status="infrastructure_failed",
+                        )
+                        raise
                     progress.gate2_finished(
                         entry.case_id,
                         entry.ordinal,
                         branch_id=branch_id,
-                        formal_round=formal_round,
-                        status="infrastructure_failed",
+                        formal_round=current_round,
+                        status=current_execution.report.main_status.value.lower(),
                     )
-                    raise
-                progress.gate2_finished(
-                    entry.case_id,
-                    entry.ordinal,
-                    branch_id=branch_id,
-                    formal_round=formal_round,
-                    status=execution.report.main_status.value.lower(),
-                )
+                    return current_execution
+
+            execution = execute_gate2_once(search, formal_round)
+            base_execution = execution
+            gate2 = execution.report.gate2
+            if not gate2_exposes_logical_j_pass_implementation_failure(gate2):
                 return execution
+
+            accepted = [
+                attempt
+                for attempt in search.report.attempts
+                if attempt.formal_round == search.report.accepted_attempt
+            ]
+            if len(accepted) != 1 or accepted[0].artifact is None:
+                return execution
+            artifact = accepted[0].artifact
+            consumed_rounds = search.report.call_budget.formal_gate1_rounds
+            retry_searches = []
+            retry_executions = []
+            callback = progress.callback(
+                entry.case_id,
+                entry.ordinal,
+                branch_id,
+            )
+            next_round_offset = consumed_rounds
+            while next_round_offset < args.gate1_rounds:
+                retry_search = retry_prepared_workload_gate1_fixed_artifact(
+                    prepared,
+                    artifact,
+                    provider=provider,
+                    formal_round_offset=next_round_offset,
+                    effort=args.effort,
+                    replay_provider=replay_provider,
+                    replay_effort=replay_effort,
+                    run_masked_j=not args.skip_masked_j,
+                    lift_backend=args.lift_backend,
+                    lift_workflow=args.lift_workflow,
+                    replay_backend=args.replay_backend,
+                    replay_width=args.replay_width,
+                    progress_callback=callback,
+                )
+                retry_searches.append(retry_search)
+                replay_rounds = (
+                    retry_search.report.call_budget.formal_gate1_rounds
+                )
+                if replay_rounds == 0:
+                    break
+                next_round_offset += replay_rounds
+                if not retry_search.report.closed:
+                    continue
+                execution = execute_gate2_once(
+                    retry_search,
+                    retry_search.report.accepted_attempt,
+                )
+                retry_executions.append(execution)
+                if not gate2_exposes_logical_j_pass_implementation_failure(
+                    execution.report.gate2
+                ):
+                    break
+
+            return merge_fixed_artifact_replay_retry_execution(
+                base_execution,
+                tuple(retry_searches),
+                tuple(retry_executions),
+            )
 
         def execution_result(
             entry,

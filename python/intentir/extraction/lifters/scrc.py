@@ -1156,7 +1156,16 @@ domain-anchored realization path entering an address_base instance, even when
 the current concrete grid extent on that axis is one. One logical domain may
 therefore have both a program-coordinate path into address_base and a separate
 lane-coordinate path into address_lane; never collapse the former into a loop
-or erase it as constant-degenerate topology. Encode the pointer-carrier boundary
+or erase it as constant-degenerate topology. Emit exactly one
+pi.program_axes{domain_ref,axis} binding for every distinct program-coordinate
+domain, using the physical axis observed in Source/TTIR; multiple realization
+instances of the same domain share that one binding. Never derive axis from grid,
+instance order, C, or placement alone.
+When one Source program ordinal is decoded by integer // or % before tensor
+addressing, preserve that source-grounded integer tree in J's logical access/index
+relations and route its realization occurrences in pi. program_axes supplies only
+the physical axis identity; it cannot carry, infer, or replace the div/rem formula.
+Encode the pointer-carrier boundary
 without adding fields: when a Source pointer/tensor carrier is applied at the
 program-uniform base stage and that pointer result then receives the lane
 contribution, route its p* instance directly into address_base and route

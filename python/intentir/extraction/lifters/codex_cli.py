@@ -39,8 +39,8 @@ from .scrc import (
     prepare_scrc_lift,
     scrc_candidate_check_context,
 )
-CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v30"
-CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v89"
+CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v34"
+CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v93"
 CODEX_CLI_TURN_TIMEOUT_SECONDS = 900.0
 
 _FEEDBACK_CATEGORY_NAMES = (
@@ -322,6 +322,12 @@ input/feedback_replay.ttir contain the exact preceding source-blind Replay outpu
 use them only as read-only counterexample evidence.
 Your own prior formal candidates are immutable under work/candidate_history/;
 consult or restore them when a repair regresses, but decide every edit yourself.
+Treat the first exact missing/extra operation only as an entry point: compare its
+typed Source-TTIR and Replay-TTIR def-use neighborhood with the current J node and
+pi instances. Preserve cast order and operation spelling when they are semantic;
+when a logical J node already exists but its compiler-visible realization is absent,
+check whether pi actually realizes that authored handle. Patch the smallest complete
+source-grounded relation set instead of regenerating unrelated artifact sections.
 Use the compact source query only where the named feedback needs exact Source or
 compiler evidence, then revise the complete model-authored J/C/pi in place. If a
 named relation's ownership is unclear, search only that name in
@@ -341,7 +347,10 @@ in input/knowledge/lift_contract.md when its ownership is unclear. The transacti
 
 _SOURCE_RECONCILE_CONTINUATION_PROMPT = """The source-aware occurrence preflight rejected the current exact candidate bytes.
 Read input/source_reconcile.json and revise only the model-authored J/C/pi facts whose
-closed compiled obligations disagree with the immutable Source TTIR observation.
+closed realization obligations disagree with the immutable anonymous Source syntax
+or Source TTIR observation. For a Source-used runtime carrier, trace its existing
+anonymous Source expression and author its complete pi occurrence/route topology;
+do not change J semantics or guess from the concrete value.
 This diagnostic supplies no artifact field or repair. Rerun
 `python .agents/intentir_agent_tool.py submit_candidate` and finish immediately
 after it passes. Formal TypeCheck, Replay, and Gate1 remain external.
@@ -350,9 +359,12 @@ after it passes. Formal TypeCheck, Replay, and Gate1 remain external.
 _SEMANTIC_PROBE_CONTINUATION_PROMPT = """The current exact candidate passed CandidateCheck and SourceReconcile, and the host ran the public Source-vs-J semantic probe.
 Read input/semantic_probe.json in this same thread. It is diagnostic-only and does
 not accept, reject, certify, or edit J. If the observed divergence exposes an error
-in your authored J, patch output/candidate.json and rerun submit_candidate. If the
-probe is unsupported or the remaining delta is only an expected floating reduction
-difference, leave the candidate unchanged and finish. Do not claim Gate membership.
+in your authored J, patch output/candidate.json and rerun submit_candidate. A failed
+J reference construction/execution is also actionable: check authored loops, carries,
+branch-local stores, output mappings, and result types before deciding that the fixed
+consumer is genuinely unsupported. If it is genuinely unsupported or the remaining
+delta is only an expected floating reduction difference, leave the candidate unchanged
+and finish. Do not claim Gate membership.
 """
 
 
@@ -844,8 +856,15 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
             result = semantic_probe_by_candidate.get(candidate_sha256)
             if result is None:
                 result = dict(semantic_probe_tool())
+            actionable = result.get("status") == "diverged" or (
+                result.get("status") == "unavailable"
+                and (
+                    result.get("failed_leg") == "j"
+                    or result.get("phase") == "j_reference_construction"
+                )
+            )
             if (
-                result.get("status") == "diverged"
+                actionable
                 and candidate_sha256 not in semantic_probe_feedback_delivered
             ):
                 semantic_probe_feedback_delivered.add(candidate_sha256)

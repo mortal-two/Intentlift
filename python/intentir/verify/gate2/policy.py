@@ -9,12 +9,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 import re
-from typing import Iterable
+from typing import Any, Iterable, Mapping
 
+from intentir.ir.canonical_j import j_elaboration
 from intentir.verify.gate1.model import ResultRelationKind, SemanticArchive
 
 
-GATE2_POLICY_PROTOCOL = "intentir.scrc.gate2-q.v1"
+GATE2_POLICY_PROTOCOL = "intentir.scrc.gate2-q.v2"
 
 _DTYPE_ALIASES = {
     "float16": "f16",
@@ -79,6 +80,7 @@ class CloseRule:
 class ComparisonPolicy:
     policy_id: str
     tolerances: tuple[tuple[str, NumericTolerance], ...]
+    mixed_precision_tolerances: tuple[tuple[str, NumericTolerance], ...] = ()
     protocol: str = GATE2_POLICY_PROTOCOL
 
     def __post_init__(self) -> None:
@@ -96,7 +98,24 @@ class ComparisonPolicy:
             for _, tolerance in normalized
         ):
             raise TypeError("Gate2 Q entries must be NumericTolerance values")
+        mixed_precision = tuple(
+            (canonical_dtype(dtype), tolerance)
+            for dtype, tolerance in self.mixed_precision_tolerances
+        )
+        mixed_keys = [dtype for dtype, _ in mixed_precision]
+        if mixed_keys != sorted(mixed_keys) or len(mixed_keys) != len(set(mixed_keys)):
+            raise ValueError(
+                "Gate2 Q mixed-precision rules must be unique and sorted"
+            )
+        if any(
+            not isinstance(tolerance, NumericTolerance)
+            for _, tolerance in mixed_precision
+        ):
+            raise TypeError(
+                "Gate2 Q mixed-precision entries must be NumericTolerance values"
+            )
         object.__setattr__(self, "tolerances", normalized)
+        object.__setattr__(self, "mixed_precision_tolerances", mixed_precision)
         if self.protocol != GATE2_POLICY_PROTOCOL:
             raise ValueError("unsupported Gate2 Q protocol")
 
@@ -105,8 +124,21 @@ class ComparisonPolicy:
         cls,
         policy_id: str,
         tolerances: Iterable[tuple[str, NumericTolerance]],
+        *,
+        mixed_precision_tolerances: Iterable[
+            tuple[str, NumericTolerance]
+        ] = (),
     ) -> "ComparisonPolicy":
-        return cls(policy_id, tuple(sorted(tolerances, key=lambda item: item[0])))
+        return cls(
+            policy_id,
+            tuple(sorted(tolerances, key=lambda item: item[0])),
+            tuple(
+                sorted(
+                    mixed_precision_tolerances,
+                    key=lambda item: item[0],
+                )
+            ),
+        )
 
     def rule_for(
         self,
@@ -141,7 +173,37 @@ class ComparisonPolicy:
                 if relation is not None
                 else ResultRelationKind.EXACT
             )
-            self.rule_for(kind, output.dtype)
+            self.rule_for_output(j, output.name, kind, output.dtype)
+
+    def rule_for_output(
+        self,
+        j: SemanticArchive,
+        output: str,
+        comparison_class: ResultRelationKind | str,
+        dtype: str,
+    ) -> CloseRule:
+        """Select Q from one output's closed J-only numeric dependency path.
+
+        J continues to declare only the result-relation class.  This method does
+        not inspect Source, Replay, C, pi, backend identity, or observed errors.
+        It merely selects one externally frozen Q profile when the accepted J
+        explicitly routes a lower-precision contraction/reduction into this
+        output.  Exact relations remain exact.
+        """
+
+        base = self.rule_for(comparison_class, dtype)
+        if base.exact:
+            return base
+        compute_dtype = _output_low_precision_compute_dtype(j, output, dtype)
+        if compute_dtype is None:
+            return base
+        tolerance = dict(self.mixed_precision_tolerances).get(compute_dtype)
+        if tolerance is None:
+            raise ComparisonPolicyError(
+                "Gate2 Q has no mixed-precision tolerance rule for compute dtype "
+                f"{compute_dtype!r}"
+            )
+        return CloseRule(base.comparison_class, base.dtype, tolerance)
 
     def to_json(self) -> dict[str, object]:
         return {
@@ -151,16 +213,166 @@ class ComparisonPolicy:
                 dtype: tolerance.to_json()
                 for dtype, tolerance in self.tolerances
             },
+            "mixed_precision_compute_tolerances": {
+                dtype: tolerance.to_json()
+                for dtype, tolerance in self.mixed_precision_tolerances
+            },
+            "mixed_precision_selection": (
+                "per-output closed J dependency; lower-precision operand of "
+                "contraction/reduce/scan only"
+            ),
         }
 
 
+def _operation_results(operation: Mapping[str, Any]) -> tuple[str, ...]:
+    result = operation.get("result")
+    if isinstance(result, str):
+        return (result,)
+    if isinstance(result, list):
+        return tuple(item for item in result if isinstance(item, str))
+    return ()
+
+
+def _operation_dependencies(operation: Mapping[str, Any]) -> tuple[str, ...]:
+    result: list[str] = []
+
+    def add(value: Any) -> None:
+        if isinstance(value, str) and value not in result:
+            result.append(value)
+
+    for value in operation.get("operands", ()):
+        add(value)
+    if operation.get("op") in {"effect_if", "value_if"}:
+        add(operation.get("predicate"))
+    if operation.get("op") == "value_if":
+        for polarity in ("positive", "negative"):
+            arm = operation.get(polarity)
+            if isinstance(arm, Mapping):
+                add(arm.get("yield_value"))
+    if operation.get("op") == "loop":
+        for item in operation.get("scan", ()):
+            if isinstance(item, Mapping):
+                add(item.get("from"))
+        for item in operation.get("carry", ()):
+            if isinstance(item, Mapping):
+                add(item.get("init_value"))
+                add(item.get("next_value"))
+        for value in operation.get("yield", ()):
+            add(value)
+    return tuple(result)
+
+
+def _walk_operations(
+    body: Any,
+    *,
+    prefix: str = "body",
+) -> Iterable[tuple[str, Mapping[str, Any]]]:
+    if not isinstance(body, list):
+        return
+    for index, operation in enumerate(body):
+        if not isinstance(operation, Mapping):
+            continue
+        path = f"{prefix}[{index}]"
+        yield path, operation
+        yield from _walk_operations(
+            operation.get("body"), prefix=f"{path}.body"
+        )
+        if operation.get("op") in {"effect_if", "value_if"}:
+            for polarity in ("positive", "negative"):
+                arm = operation.get(polarity)
+                if isinstance(arm, Mapping):
+                    yield from _walk_operations(
+                        arm.get("body"),
+                        prefix=f"{path}.{polarity}.body",
+                    )
+
+
+_FLOAT_PRECISION_RANK = {"bf16": 0, "f16": 1, "f32": 2, "f64": 3}
+_MIXED_PRECISION_OPS = frozenset({"contraction", "reduce", "scan"})
+
+
+def _output_low_precision_compute_dtype(
+    j: SemanticArchive,
+    output: str,
+    output_dtype: str,
+) -> str | None:
+    """Return the least precise floating compute operand on one output path."""
+
+    output_dtype = canonical_dtype(output_dtype)
+    output_rank = _FLOAT_PRECISION_RANK.get(output_dtype)
+    if output_rank is None:
+        return None
+
+    intent = j.intent.to_json()["intent_function"]
+    operations = dict(_walk_operations(intent.get("body", [])))
+    path_to_node = {path: node for node, path in j.node_ids.items()}
+    nodes: dict[str, Mapping[str, Any]] = dict(operations)
+    producers: dict[str, Mapping[str, Any]] = {}
+    for path, operation in operations.items():
+        node = path_to_node.get(path)
+        if node is not None:
+            nodes[node] = operation
+        for result in _operation_results(operation):
+            producers[result] = operation
+
+    seeds: list[str] = []
+    for binding in j_elaboration(j).output_bindings:
+        if binding.output == output:
+            seeds.append(binding.value)
+    for access in j.boundary.accesses:
+        if (
+            access.kind.value == "store"
+            and access.tensor == output
+            and access.node_ref is not None
+        ):
+            producer = nodes.get(access.node_ref)
+            if producer is not None:
+                seeds.extend(_operation_results(producer))
+
+    value_types = j_elaboration(j).value_type_by_name
+    dependency_ops: list[Mapping[str, Any]] = []
+    pending = list(dict.fromkeys(seeds))
+    visited: set[str] = set()
+    while pending:
+        value = pending.pop()
+        if value in visited:
+            continue
+        visited.add(value)
+        operation = producers.get(value)
+        if operation is None:
+            continue
+        dependency_ops.append(operation)
+        pending.extend(_operation_dependencies(operation))
+
+    candidates: list[str] = []
+    for operation in dependency_ops:
+        if operation.get("op") not in _MIXED_PRECISION_OPS:
+            continue
+        for operand in _operation_dependencies(operation):
+            value_type = value_types.get(operand)
+            if value_type is None:
+                continue
+            operand_dtype = canonical_dtype(value_type.dtype)
+            operand_rank = _FLOAT_PRECISION_RANK.get(operand_dtype)
+            if operand_rank is not None and operand_rank < output_rank:
+                candidates.append(operand_dtype)
+    if not candidates:
+        return None
+    return min(candidates, key=lambda item: _FLOAT_PRECISION_RANK[item])
+
+
 DEFAULT_GATE2_POLICY = ComparisonPolicy.create(
-    "intentir.gate2.default.v1",
+    "intentir.gate2.default.v2",
     (
         ("bf16", NumericTolerance(2.0e-2, 2.0e-3)),
         ("f16", NumericTolerance(1.0e-2, 1.0e-3)),
         ("f32", NumericTolerance(1.0e-5, 1.0e-6)),
         ("f64", NumericTolerance(1.0e-12, 1.0e-12)),
+    ),
+    mixed_precision_tolerances=(
+        ("bf16", NumericTolerance(2.0e-2, 2.0e-3)),
+        ("f16", NumericTolerance(1.0e-2, 1.0e-3)),
+        ("f32", NumericTolerance(1.0e-5, 1.0e-6)),
     ),
 )
 

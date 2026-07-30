@@ -269,13 +269,61 @@ class _TypedControlContract:
     terminal_polarity: str | None = None
     positive_scope_id: str | None = None
     negative_scope_id: str | None = None
+    positive_effect_kinds: tuple[str, ...] = ()
+    negative_effect_kinds: tuple[str, ...] = ()
+    required_loop_depth: int | None = None
 
 
 def _packet_typed_controls(packet: Mapping[str, Any]) -> list[_TypedControlContract]:
     """Return explicitly typed J controls in lexical preorder."""
 
     result: list[_TypedControlContract] = []
+    j = packet.get("j")
+    boundary = j.get("boundary") if isinstance(j, Mapping) else None
+    raw_scopes = (
+        j.get("scopes", [])
+        if isinstance(j, Mapping) and isinstance(j.get("scopes"), list)
+        else boundary.get("scopes", [])
+        if isinstance(boundary, Mapping)
+        else []
+    )
+    scopes = (
+        {
+            str(item.get("scope_id")): item
+            for item in raw_scopes
+            if isinstance(item, Mapping) and isinstance(item.get("scope_id"), str)
+        }
+    )
+    boundary_effect_kinds = (
+        {
+            str(item.get("effect_id")): str(item.get("kind"))
+            for item in boundary.get("effects", [])
+            if isinstance(item, Mapping)
+            and isinstance(item.get("effect_id"), str)
+            and isinstance(item.get("kind"), str)
+        }
+        if isinstance(boundary, Mapping)
+        else {}
+    )
     pi = packet.get("pi")
+    regions = (
+        {
+            str(item.get("id")): item
+            for item in pi.get("regions", [])
+            if isinstance(item, Mapping) and isinstance(item.get("id"), str)
+        }
+        if isinstance(pi, Mapping)
+        else {}
+    )
+    scope_regions: dict[str, set[str]] = {}
+    if isinstance(pi, Mapping):
+        for item in pi.get("instances", []):
+            if not isinstance(item, Mapping):
+                continue
+            semantic_ref = item.get("semantic_ref")
+            region = item.get("region")
+            if isinstance(semantic_ref, str) and isinstance(region, str):
+                scope_regions.setdefault(semantic_ref, set()).add(region)
     instances = (
         {
             str(item.get("id")): str(item.get("semantic_ref"))
@@ -298,6 +346,68 @@ def _packet_typed_controls(packet: Mapping[str, Any]) -> list[_TypedControlContr
         if isinstance(pi, Mapping)
         else {}
     )
+
+    def loop_ancestors(region_id: str) -> tuple[str, ...] | None:
+        ancestors: list[str] = []
+        seen: set[str] = set()
+        current: str | None = region_id
+        while current is not None:
+            if current in seen:
+                return None
+            seen.add(current)
+            region = regions.get(current)
+            if region is None:
+                return None
+            if region.get("placement") == "loop":
+                ancestors.append(current)
+            parent = region.get("parent")
+            current = str(parent) if isinstance(parent, str) else None
+        return tuple(reversed(ancestors))
+
+    def required_loop_depth(
+        positive_scope: object,
+        negative_scope: object,
+    ) -> int | None:
+        if not isinstance(positive_scope, str) or not isinstance(negative_scope, str):
+            return None
+        positive_regions = scope_regions.get(positive_scope, set())
+        negative_regions = scope_regions.get(negative_scope, set())
+        depths = {
+            ancestors
+            for region_id in positive_regions | negative_regions
+            if (ancestors := loop_ancestors(region_id)) is not None
+        }
+        if len(depths) != 1:
+            return None
+        return len(next(iter(depths)))
+
+    def arm_has_authored_activity(arm: Mapping[str, Any], body: object) -> bool:
+        """Include boundary-owned effects/definitions in an arm's activity.
+
+        An ``effect_if`` arm may own observable boundary effects through its typed
+        scope even when its Layer-A body is empty.  Those effects must still remain
+        lexically inside the Replay arm; captures alone do not require a statement.
+        """
+
+        if isinstance(body, list) and body:
+            return True
+        scope_id = arm.get("scope_id")
+        scope = scopes.get(str(scope_id)) if isinstance(scope_id, str) else None
+        return bool(
+            isinstance(scope, Mapping)
+            and (scope.get("definitions") or scope.get("effects"))
+        )
+
+    def arm_effect_kinds(arm: Mapping[str, Any]) -> tuple[str, ...]:
+        scope_id = arm.get("scope_id")
+        scope = scopes.get(str(scope_id)) if isinstance(scope_id, str) else None
+        if not isinstance(scope, Mapping):
+            return ()
+        return tuple(
+            boundary_effect_kinds[str(effect_ref)]
+            for effect_ref in scope.get("effects", [])
+            if str(effect_ref) in boundary_effect_kinds
+        )
 
     def visit(body: Any, prefix: str) -> None:
         if not isinstance(body, list):
@@ -337,8 +447,12 @@ def _packet_typed_controls(packet: Mapping[str, Any]) -> list[_TypedControlContr
                     _TypedControlContract(
                         path=path,
                         kind=str(kind),
-                        positive_nonempty=bool(positive_body),
-                        negative_nonempty=bool(negative_body),
+                        positive_nonempty=arm_has_authored_activity(
+                            positive, positive_body
+                        ),
+                        negative_nonempty=arm_has_authored_activity(
+                            negative, negative_body
+                        ),
                         terminal_polarity=terminal_polarity,
                         positive_scope_id=(
                             str(positive.get("scope_id"))
@@ -349,6 +463,12 @@ def _packet_typed_controls(packet: Mapping[str, Any]) -> list[_TypedControlContr
                             str(negative.get("scope_id"))
                             if negative.get("scope_id") is not None
                             else None
+                        ),
+                        positive_effect_kinds=arm_effect_kinds(positive),
+                        negative_effect_kinds=arm_effect_kinds(negative),
+                        required_loop_depth=required_loop_depth(
+                            positive.get("scope_id"),
+                            negative.get("scope_id"),
                         ),
                     )
                 )
@@ -439,6 +559,8 @@ def _check_triton_program_id_axes(code: str, function_name: str) -> None:
 class _RuntimeIfSite:
     node: ast.If
     following: tuple[ast.stmt, ...]
+    loop_depth: int
+    helper_local: bool = False
 
 
 def _runtime_if_nodes(
@@ -446,6 +568,8 @@ def _runtime_if_nodes(
     *,
     runtime_parameters: set[str],
     constexpr_parameters: set[str],
+    base_loop_depth: int = 0,
+    helper_local: bool = False,
 ) -> list[_RuntimeIfSite]:
     """Collect runtime ``if`` nodes while excluding closed constexpr control."""
 
@@ -455,6 +579,19 @@ def _runtime_if_nodes(
     }
     result: list[_RuntimeIfSite] = []
 
+    def compiler_visible_loop(statement: ast.For) -> bool:
+        iterator = statement.iter
+        if not isinstance(iterator, ast.Call):
+            return False
+        function_name = (
+            iterator.func.attr
+            if isinstance(iterator.func, ast.Attribute)
+            else iterator.func.id
+            if isinstance(iterator.func, ast.Name)
+            else ""
+        )
+        return function_name == "range"
+
     def bind_target(target: ast.AST, value: bool, env: dict[str, bool]) -> None:
         if isinstance(target, ast.Name):
             env[target.id] = value
@@ -462,7 +599,20 @@ def _runtime_if_nodes(
             for item in target.elts:
                 bind_target(item, value, env)
 
-    def visit(statements: list[ast.stmt], env: dict[str, bool]) -> None:
+    def literal_truth_value(expression: ast.AST) -> bool | None:
+        try:
+            value = ast.literal_eval(expression)
+        except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
+            return None
+        if isinstance(value, (bool, int, float, complex, str, bytes)) or value is None:
+            return bool(value)
+        return None
+
+    def visit(
+        statements: list[ast.stmt],
+        env: dict[str, bool],
+        loop_depth: int,
+    ) -> None:
         for index, statement in enumerate(statements):
             if isinstance(statement, (ast.Assign, ast.AnnAssign)):
                 value = statement.value
@@ -480,18 +630,97 @@ def _runtime_if_nodes(
                     bind_target(target, dependency, env)
                 continue
             if isinstance(statement, ast.If):
+                literal_truth = literal_truth_value(statement.test)
+                if literal_truth is not None:
+                    visit(
+                        statement.body if literal_truth else statement.orelse,
+                        dict(env),
+                        loop_depth,
+                    )
+                    continue
                 if _expression_is_runtime(statement.test, env):
                     result.append(
-                        _RuntimeIfSite(statement, tuple(statements[index + 1 :]))
+                        _RuntimeIfSite(
+                            statement,
+                            tuple(statements[index + 1 :]),
+                            loop_depth,
+                            helper_local,
+                        )
                     )
-                visit(statement.body, dict(env))
-                visit(statement.orelse, dict(env))
+                visit(statement.body, dict(env), loop_depth)
+                visit(statement.orelse, dict(env), loop_depth)
                 continue
-            if isinstance(statement, (ast.For, ast.While)):
-                visit(statement.body, dict(env))
-                visit(statement.orelse, dict(env))
+            if isinstance(statement, ast.For):
+                visit(
+                    statement.body,
+                    dict(env),
+                    loop_depth + int(compiler_visible_loop(statement)),
+                )
+                visit(statement.orelse, dict(env), loop_depth)
+                continue
+            if isinstance(statement, ast.While):
+                visit(statement.body, dict(env), loop_depth + 1)
+                visit(statement.orelse, dict(env), loop_depth)
 
-    visit(function.body, initial)
+    visit(function.body, initial, base_loop_depth)
+    return result
+
+
+def _direct_helper_call_depths(
+    function: ast.FunctionDef,
+    *,
+    helper_names: set[str],
+    base_loop_depth: int,
+) -> list[tuple[str, int]]:
+    """Return direct sibling-JIT calls with their compiler-visible loop depth."""
+
+    result: list[tuple[str, int]] = []
+
+    def compiler_visible_loop(statement: ast.For) -> bool:
+        iterator = statement.iter
+        if not isinstance(iterator, ast.Call):
+            return False
+        called = (
+            iterator.func.attr
+            if isinstance(iterator.func, ast.Attribute)
+            else iterator.func.id
+            if isinstance(iterator.func, ast.Name)
+            else ""
+        )
+        return called == "range"
+
+    def calls_in(expression: ast.AST | None, depth: int) -> None:
+        if expression is None:
+            return
+        for node in ast.walk(expression):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id in helper_names
+            ):
+                result.append((node.func.id, depth))
+
+    def visit(statements: list[ast.stmt], depth: int) -> None:
+        for statement in statements:
+            if isinstance(statement, ast.If):
+                calls_in(statement.test, depth)
+                visit(statement.body, depth)
+                visit(statement.orelse, depth)
+            elif isinstance(statement, ast.For):
+                calls_in(statement.iter, depth)
+                nested_depth = depth + int(compiler_visible_loop(statement))
+                visit(statement.body, nested_depth)
+                visit(statement.orelse, depth)
+            elif isinstance(statement, ast.While):
+                calls_in(statement.test, depth)
+                visit(statement.body, depth + 1)
+                visit(statement.orelse, depth)
+            elif isinstance(statement, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+                calls_in(statement.value, depth)
+            elif isinstance(statement, (ast.Expr, ast.Return)):
+                calls_in(statement.value, depth)
+
+    visit(function.body, base_loop_depth)
     return result
 
 
@@ -501,6 +730,28 @@ def _arm_is_explicitly_empty(statements: list[ast.stmt]) -> bool:
 
 def _statements_are_nonempty(statements: list[ast.stmt] | tuple[ast.stmt, ...]) -> bool:
     return any(not isinstance(item, ast.Pass) for item in statements)
+
+
+def _statement_effect_counts(
+    statements: list[ast.stmt] | tuple[ast.stmt, ...],
+) -> dict[str, int]:
+    counts = {"read": 0, "write": 0}
+    for statement in statements:
+        for node in ast.walk(statement):
+            if not isinstance(node, ast.Call):
+                continue
+            called = (
+                node.func.attr
+                if isinstance(node.func, ast.Attribute)
+                else node.func.id
+                if isinstance(node.func, ast.Name)
+                else ""
+            )
+            if called == "load":
+                counts["read"] += 1
+            elif called == "store":
+                counts["write"] += 1
+    return counts
 
 
 def _final_simple_assignment_target(statements: list[ast.stmt]) -> str | None:
@@ -534,11 +785,12 @@ def _check_triton_typed_control_contract(
     if not expected:
         return
     tree = ast.parse(code, mode="exec")
-    function = next(
-        node
+    functions = {
+        node.name: node
         for node in tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == function_name
-    )
+        if isinstance(node, ast.FunctionDef)
+    }
+    function = functions[function_name]
     j_parameters = packet["j"]["signature"]["parameters"]
     runtime_parameters = {
         str(item["name"])
@@ -559,6 +811,47 @@ def _check_triton_typed_control_contract(
         runtime_parameters=runtime_parameters,
         constexpr_parameters=constexpr_parameters,
     )
+    helper_names = set(functions) - {function_name}
+    pending = _direct_helper_call_depths(
+        function,
+        helper_names=helper_names,
+        base_loop_depth=0,
+    )
+    visited_calls: set[tuple[str, int]] = set()
+    while pending:
+        helper_name, call_depth = pending.pop(0)
+        call_key = (helper_name, call_depth)
+        if call_key in visited_calls:
+            continue
+        visited_calls.add(call_key)
+        helper = functions[helper_name]
+        helper_constexpr = {
+            argument.arg
+            for argument in helper.args.args
+            if isinstance(argument.annotation, ast.Attribute)
+            and isinstance(argument.annotation.value, ast.Name)
+            and argument.annotation.value.id == "tl"
+            and argument.annotation.attr == "constexpr"
+        }
+        helper_runtime = {
+            argument.arg for argument in helper.args.args
+        } - helper_constexpr
+        actual.extend(
+            _runtime_if_nodes(
+                helper,
+                runtime_parameters=helper_runtime,
+                constexpr_parameters=helper_constexpr,
+                base_loop_depth=call_depth,
+                helper_local=True,
+            )
+        )
+        pending.extend(
+            _direct_helper_call_depths(
+                helper,
+                helper_names=helper_names,
+                base_loop_depth=call_depth,
+            )
+        )
     if len(actual) != len(expected):
         kinds = {contract.kind for contract in expected}
         rule_code = (
@@ -577,6 +870,25 @@ def _check_triton_typed_control_contract(
         zip(actual, expected, strict=True)
     ):
         node = site.node
+        if (
+            contract.required_loop_depth is not None
+            and site.loop_depth != contract.required_loop_depth
+        ):
+            raise _ReplayABIViolation(
+                "typed_control_loop_depth",
+                path=f"{contract.path} -> <{contract.kind}:{index}>",
+                handles=tuple(
+                    item
+                    for item in (
+                        contract.positive_scope_id,
+                        contract.negative_scope_id,
+                    )
+                    if item is not None
+                ),
+                line=node.lineno,
+                expected={"authored_loop_depth": contract.required_loop_depth},
+                observed={"replay_loop_depth": site.loop_depth},
+            )
         if contract.kind == "effect_if" and contract.terminal_polarity is not None:
             terminal_nonempty = (
                 contract.positive_nonempty
@@ -588,31 +900,67 @@ def _check_triton_typed_control_contract(
                 if contract.terminal_polarity == "positive"
                 else contract.positive_nonempty
             )
-            has_bare_return = bool(
-                node.body
-                and isinstance(node.body[-1], ast.Return)
-                and node.body[-1].value is None
+            terminal_effect_kinds = (
+                contract.positive_effect_kinds
+                if contract.terminal_polarity == "positive"
+                else contract.negative_effect_kinds
             )
-            terminal_prefix = node.body[:-1] if has_bare_return else node.body
+            terminates_loop_iteration = bool(
+                contract.required_loop_depth is not None
+                and contract.required_loop_depth > 0
+            )
+            helper_return = bool(terminates_loop_iteration and site.helper_local)
+            terminal_statement_kind = (
+                ast.Return
+                if helper_return or not terminates_loop_iteration
+                else ast.Continue
+            )
+            has_terminal_statement = bool(
+                node.body
+                and isinstance(node.body[-1], terminal_statement_kind)
+                and (
+                    not isinstance(node.body[-1], ast.Return)
+                    or node.body[-1].value is None
+                )
+            )
+            terminal_prefix = (
+                node.body[:-1] if has_terminal_statement else node.body
+            )
             predicate_negated = isinstance(node.test, ast.UnaryOp) and isinstance(
                 node.test.op, ast.Not
             )
             actual_terminal_nonempty = _statements_are_nonempty(terminal_prefix)
             actual_continuation_nonempty = _statements_are_nonempty(site.following)
+            expected_terminal_effect_counts = {
+                kind: terminal_effect_kinds.count(kind)
+                for kind in ("read", "write")
+                if kind in terminal_effect_kinds
+            }
+            actual_terminal_effect_counts = _statement_effect_counts(terminal_prefix)
             expected_shape = {
                 "j_control_path": contract.path,
                 "terminal_polarity": contract.terminal_polarity,
                 "forbids_else": True,
-                "terminal_arm_ends_in_bare_return": True,
-                "terminal_arm_nonempty_before_return": terminal_nonempty,
+                "terminal_arm_ends_in": (
+                    "helper_bare_return"
+                    if helper_return
+                    else "continue"
+                    if terminates_loop_iteration
+                    else "bare_return"
+                ),
+                "terminal_arm_nonempty_before_terminator": terminal_nonempty,
+                "terminal_arm_effect_counts": expected_terminal_effect_counts,
                 "continuation_nonempty_after_if": continuation_nonempty,
                 "continuation_contains_return": False,
             }
             observed_shape = {
                 "has_else": bool(node.orelse),
-                "terminal_arm_ends_in_bare_return": has_bare_return,
+                "terminal_arm_ends_in": (
+                    type(node.body[-1]).__name__ if node.body else None
+                ),
                 "predicate_negated": predicate_negated,
-                "terminal_arm_nonempty_before_return": actual_terminal_nonempty,
+                "terminal_arm_nonempty_before_terminator": actual_terminal_nonempty,
+                "terminal_arm_effect_counts": actual_terminal_effect_counts,
                 "continuation_nonempty_after_if": actual_continuation_nonempty,
                 "continuation_contains_return": any(
                     isinstance(item, ast.Return) for item in site.following
@@ -639,13 +987,15 @@ def _check_triton_typed_control_contract(
                     expected=expected_shape,
                     observed=observed_shape,
                 )
-            if (
-                not node.body
-                or not isinstance(node.body[-1], ast.Return)
-                or node.body[-1].value is not None
-            ):
+            if not has_terminal_statement:
                 raise _ReplayABIViolation(
-                    "terminal_effect_if_bare_return",
+                    (
+                        "terminal_effect_if_helper_bare_return"
+                        if helper_return
+                        else "terminal_effect_if_continue"
+                        if terminates_loop_iteration
+                        else "terminal_effect_if_bare_return"
+                    ),
                     path=diagnostic_path,
                     handles=scope_handles,
                     line=node.lineno,
@@ -664,6 +1014,18 @@ def _check_triton_typed_control_contract(
             if actual_terminal_nonempty != terminal_nonempty:
                 raise _ReplayABIViolation(
                     "terminal_effect_if_terminal_arm",
+                    path=diagnostic_path,
+                    handles=scope_handles,
+                    line=node.lineno,
+                    expected=expected_shape,
+                    observed=observed_shape,
+                )
+            if any(
+                actual_terminal_effect_counts.get(kind, 0) < count
+                for kind, count in expected_terminal_effect_counts.items()
+            ):
+                raise _ReplayABIViolation(
+                    "terminal_effect_if_scope_effects",
                     path=diagnostic_path,
                     handles=scope_handles,
                     line=node.lineno,
@@ -2819,163 +3181,86 @@ def _replay_input_files(
 ) -> tuple[dict[str, str], dict[str, Any], str]:
     """Build the complete, closed allowlist mounted for one agent episode."""
 
-    instructions, user = build_rewriter_prompt(
+    packet = build_rewriter_payload(
         artifact, frontend=frontend, masked=masked
     )
-    packet = json.loads(user)
     assert_source_isolated_payload(packet)
     packet_text = json.dumps(
         packet,
         sort_keys=True,
         ensure_ascii=False,
         allow_nan=False,
+        indent=2,
     ) + "\n"
+    instructions = """# Replay ownership contract
+
+J is the sole semantic authority: operators, operands, constants, predicates,
+domains, effects, result relations, and boundary index expressions come only from J.
+C is masked and supplies only its declared anonymous slot. Pi is a dependent
+realization witness: it may constrain occurrence, region, route, order, sharing,
+iteration/carrier, program axis, terminal control, materialization, and refinement,
+but it never supplies an operator, formula, predicate, fill value, or target recipe.
+For Codex episodes, pi may use its declared `columns` plus row arrays; this is an
+exact bijective serialization of the same relations, not a summary or inferred plan.
+
+Realize every explicit pi relation exactly once at its typed endpoints. Omit no
+non-default relation and invent none. When a relation is unclear, inspect its exact
+record and neighboring opaque handles in packet.json. Source code, source TTIR,
+Harness values, Gate evidence, previous Replay, and kernel templates do not exist in
+this episode. The agent chooses all target spelling. Fixed tools only edit syntax,
+compile, inspect this Replay's own TTIR, and reject.
+
+An authored occurrence is not an algebraic equivalence class. Preserve J body
+occurrence order and every explicit pi order edge; do not merge, reorder, hoist, or
+sink compiler-visible occurrences merely because values are equivalent. Distinct pi
+instances remain distinct, each route is an exact producer-to-slot edge, and only an
+explicit sharing relation authorizes one local realization to serve several consumers.
+"""
     readme = """# IntentIR source-blind Replay input
 
-This is the complete immutable input allowlist for one fresh Replay episode.
+This immutable directory is the complete input allowlist for one fresh episode.
 
-- `packet.json`: exactly source-isolated J + pi + MaskC(C) + U_f.
-- `REPLAY_CONTRACT.md`: fixed public Replay construction contract.
-- `TOOL.md`: fixed bounded check and submission interface.
-- `intentir_packet_query`: bounded read-only packet inventory, exact authored
-  requirements checklist, path lookup, and anonymous-handle search plus paged
-  graph/realization/resolved-edge and local instance-obligation views. It exposes only packet.json and never writes
-  Replay or infers relations.
-- `intentir_replay_inspect`: bounded syntax-only inventory of the writer's own
-  current replay.source. It reads no packet or external evidence, performs no
-  comparison, and never edits or generates source.
+- `packet.json`: exact J + pi + MaskC(C) + public U_f.
+- `REPLAY_CONTRACT.md`: ownership and no-leak boundary.
+- `TOOL.md`: syntax-only composer, check, compile, own-TTIR, and submit commands.
 
-No Source or source slice, Harness/compiler view, actual C values, real
-CompileCase/grid, Gate diff/TTIR, previous Replay, sibling trajectory, or
-network is available. Generate the entire source yourself. Fixed code only
-checks and rejects; it never generates, patches, or certifies source.
-
-The startup message gives only local paths. Read `packet.json` with ordinary
-coding-agent file tools and inspect only the sections needed for the current
-construction step. The complete exact packet remains available throughout the
-fresh episode; no host summary, planner, or hidden lowering decision replaces it.
-
-After writing a complete first source, use `intentir_replay_inspect` only when a
-focused own-source inventory would resolve uncertainty. The tool reports only
-your syntax and never declares a semantic mismatch or recommends a repair.
-
-After writing a meaningful complete source, run
-`intentir_replay_check /output/replay.source`, then
-`intentir_replay_compile_check /output/replay.source` for a construction compile
-against one public synthetic profile: every pointer has one element,
-dtype-declared scalar and constexpr representatives are bool=true, integer=16,
-float=1.0, and the grid is (1,1,1). C values are never read; constexpr C slots
-use the same public type representatives. Compiler C slots are external compiler
-invocation options, never callable parameters or kernel-body values. This probe must pass before the exact
-Replay bytes leave the authoring episode, but it is not a semantic membership
-oracle and has no Gate or certification authority. Formal Gate1 recompiles the
-exact submitted bytes at c0.
-
-Before ReplayCheck, inspect packet control mechanically: every J `effect_if`
-must remain one runtime `if` with explicit polarity-preserving arms (including
-an explicit empty arm), except that a matching pi `terminal_controls` relation
-requires the named terminal arm to end in a bare return and the named
-continuation arm to follow without an else; every J `value_if` must remain a distinct runtime `if`
-whose explicit arms finally assign their yielded values to one common merge
-local; and every pi `rounded_extent_step` must use its declared J trip extent
-and matching C tile as `range(0, ceil_div(extent,tile)*tile, tile)`. `effect_if`,
-`value_if`, and select are hard-distinct. Never substitute select/predicated
-unconditional execution, current-shape guesses, or a second rounding formula.
-
-Every `pi.route_extent_transforms` item qualifies exactly one already-authored
-route slot from a required positive-integer C extent. Apply its literal divisor
-and floor/ceil rounding only at that target-local realization use. It is not a J
-shape/domain/predicate relation and does not authorize transforming sibling C uses.
-
-Every `pi.physical_iterations` item is an authored physical loop around an
-already-logical non-loop J reduce/contraction or boundary access/domain. Resolve
-its extent only through the same-subject C-attached closed axis, preserve its
-induction basis and forward or reverse order, and preserve any
-`pi.physical_loop_carriers` temporal stages.
-These relations never create a J loop or authorize a guessed bound/update.
-Every pi instance's declared region is exact lexical realization scope. Emit a
-loop-region instance inside that exact loop even when all of its operands are
-available outside and ordinary code motion would be semantically safe. Never
-hoist, sink, clone, or fold an authored instance across a region boundary; Gate1
-observes compiler-visible region membership.
-A J.signature p* is one already-existing callable ABI carrier. Any number of pi
-instances anchored to that same p* scope or route uses of that one carrier; they
-never create another external value or a program coordinate. In particular,
-placement=`program` does not turn p* into `tl.program_id`, and duplicate p*
-instances do not authorize duplicate reads or coordinates. Only the distinct
-typed J-domain realization authorized by the public frontend contract can create
-a program coordinate.
-The source-blind construction compile rejects a compiled `scf.for` multiplicity
-different from the number of structured J loops plus authored
-`pi.physical_iterations`; `pi.iterations` realizes its existing J loop and is
-not an additional loop. It also requires each loop's compiled block-argument
-arity to match its induction variable plus only the corresponding authored
-`pi.loop_carriers` or `pi.physical_loop_carriers`. This check never supplies a
-loop, bound, carrier, or update.
-
-A logical J axis ordinal is not automatically a Triton tensor-rank index. Build
-the active physical tile from the C slot attached to that J node and logical
-axis. If that tile is represented by one local Triton lane dimension, emit the
-tile-local reduction/contraction axis (normally 0), not the original logical
-tensor axis number. Never copy a J axis ordinal into `tl.sum`, `tl.max`,
-`tl.min`, or `tl.dot` without first deriving the physical tile rank from the
-authored J+C+pi packet. This is realization consumption, not a new semantic
-relation or permission.
-
-A J.signature constexpr p* with no logical_ref is only the callable carrier for
-the fixed Harness JIT specialization. Keep it in the exact constexpr ABI, but
-never read it or create a dummy use, Python branch, runtime conditional, or
-inactive graph. The packet deliberately omits its concrete value; emit the
-complete active J graph already authored by Lift. A null-ref runtime scalar is
-different and may be used only through its packet-declared pi realization.
-
-A J.signature constexpr p* with logical_ref=x* is the callable carrier of that
-exact semantic dimension. Use it directly wherever the authored pi lane or
-physical-iteration realization requires x*. Never replace it with a literal
-current shape or an arbitrary unit extent. A J const string `"-inf"`, `"inf"`,
-or `"nan"` is an exact typed IEEE special; materialize it at the declared dtype
-without a finite approximation or an undeclared wider-float round trip.
-
-A J.signature `opaque` parameter with dtype `none` is a true absent runtime
-carrier. Preserve its exact ABI position but never load, index, branch on,
-assemble, route, or otherwise read it. It has no J logical value and no pi
-instance. Public-dtype opaque carriers are different and remain governed by
-their authored pi topology.
-
-Distinct pi `transfer_direct` instances are distinct compiler-visible transfer
-occurrences, including repeated instances anchored to the same boundary access.
-The source-blind construction compile compares the compiled load/store
-multiplicity with those authored instances. If ordinary CSE would collapse a
-required occurrence, retain the LLM-authored transfer with a public closed
-eviction-policy spelling; the observer erases that spelling but not the event.
+Read files by path and only page sections needed for the current construction. No
+Source, real C value, CompileCase/grid, Gate result, history, repository, or network
+is available.
 """
-    tool = """# Replay tool contract
+    tool = """# Replay agent tools
 
-Write exactly `/output/replay.source`. Run
-`intentir_replay_check /output/replay.source` for diagnostic ingress, then
-`intentir_replay_compile_check /output/replay.source` for the public synthetic
-construction-compile profile. Calls are audited telemetry and governed by the
-Replay episode's active wall time; submission independently rechecks changed
-exact bytes with both checks. Results contain only a closed
-protocol/status/rule/path plus anonymous handles or line number. No Source,
-Harness value, actual C value, Gate1 observer, or execution oracle is run. The
-compile profile is the public fixed synthetic profile in README.md. Neither
-check has Gate, semantic-membership, or certification authority. After exact
-bytes pass both construction checks, preserve the LLM owner's fallback choice with
-`intentir_replay_commit /output/replay.source`; restore only those bytes with
-`intentir_replay_rollback /output/replay.source`. Submit directly with
-`intentir_replay_submit /output/replay.source` or
-`intentir_replay_submit --committed`; no stdout marker is used. The writer
-independently reruns the same
-compiler-free ingress callable after submission, and formal Gate1 compiles c0.
+For nontrivial source, use the route-bound composer. Write
+`/work/replay.compose.json` as:
 
-In the isolated Codex workspace, invoke the equivalent closed callbacks as
-`python .agents/intentir_agent_tool.py replay_check` or
-`replay_compile_check`. After a successful public synthetic compile,
-`replay_ttir_inspect summary|raw|find|observer` exposes only the current Replay's
-own TTIR/fingerprint for focused debugging. These callbacks take no host path and
-never expose Source, Source TTIR, Harness values, or Gate evidence. Read this file
-for usage instead of probing the fixed client with an unrecognized tool name.
+```json
+{"protocol":"intentir.replay-route-composer.v1","bindings":{"i0":"p0"}}
+```
+
+Bindings are allowed only when an instance's semantic_ref is that exact p*/c*
+signature carrier. A bound instance has no occurrence fragment and cannot be a
+pi.order endpoint; an ordered use must remain an authored occurrence instead of
+being erased into a direct binding. Write raw scaffold fragments normally. Name each routed occurrence fragment
+`NNN-iK.source`; within it, author all target syntax using
+`{{out}}` for that occurrence's stable local and `{{slot:N}}` exactly once for
+each explicit incoming pi route slot. For an incoming route whose `slots` is
+empty, use `{{dep:N}}` exactly once in that target, where N is its zero-based
+declaration order among that target's empty-slot routes. Fixed code substitutes names and validates
+route/order/sharing; it never chooses an op, expression, control form, or API.
+Lexical filename order is exact source order. Run:
+
+```text
+python .agents/intentir_agent_tool.py composer_status
+python .agents/intentir_agent_tool.py composer_render
+```
+
+`composer_render` renders only the agent's exact templates and explicit route
+references into `/output/replay.source`. Without replay.compose.json it performs
+plain lexical concatenation. Directly writing that file remains the raw escape hatch.
+Then use `replay_check`, `replay_compile_check`, and optionally
+`replay_ttir_inspect summary|raw|find|observer`. Finish with `submit_replay`. All
+callbacks are source-blind and diagnostic-only; formal Gate1 runs outside this
+episode.
 """
     return (
         {

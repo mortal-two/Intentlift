@@ -2216,7 +2216,8 @@ class IntentIRReplayWorkspace:
 
     @classmethod
     def create(cls, files: Mapping[str, str | bytes]) -> "IntentIRReplayWorkspace":
-        if set(files) != REPLAY_INPUT_FILES:
+        file_names = set(files)
+        if file_names != REPLAY_INPUT_FILES:
             raise ValueError(
                 "Replay input must contain exactly the fixed allowlisted files"
             )

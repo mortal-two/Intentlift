@@ -386,8 +386,9 @@ class CodexCLIToolBridge:
             "calls": len(receipts),
             "receipts": receipts,
             "authority": (
-                "diagnostic-only callbacks over exact host-read output bytes; "
-                "no artifact or Replay field is generated or edited"
+                "closed allowlisted workspace callbacks; each handler response "
+                "declares its own authority, and the mailbox transport performs no "
+                "semantic inference, lowering, repair, Gate, or certification"
             ),
         }
 

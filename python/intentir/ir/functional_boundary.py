@@ -5279,6 +5279,43 @@ def project_functional_boundary(j: Any) -> FunctionalBoundaryProjection:
     )
 
 
+def complete_conditional_effect_outputs(j: Any) -> frozenset[str]:
+    """Return outputs exhaustively defined by one authored ``effect_if``.
+
+    This deliberately recognizes only the closed single-level profile: exactly one
+    full-store receipt in each sibling polarity of the same effect-if, with no other
+    conditional-store receipt for that output.  Producer/type/full-store validity is
+    inherited from the shared functional projection.  Nested or partial coverage is
+    not guessed.
+    """
+
+    canonical = elaborate_j(j)
+    projection = project_functional_boundary(canonical)
+    memberships = _effect_if_arm_memberships(canonical)
+    by_output: dict[
+        str,
+        list[tuple[str, str, ConditionalEffectStoreProjection]],
+    ] = {}
+    for relation in projection.conditional_effect_stores:
+        membership = memberships.get(relation.node_ref, ())
+        if len(membership) != 1:
+            continue
+        control_ref, polarity = membership[0]
+        by_output.setdefault(relation.output, []).append(
+            (control_ref, polarity, relation)
+        )
+
+    result: set[str] = set()
+    for output, rows in by_output.items():
+        controls = {control_ref for control_ref, _polarity, _relation in rows}
+        if len(controls) != 1 or len(rows) != 2:
+            continue
+        polarities = [polarity for _control, polarity, _relation in rows]
+        if sorted(polarities) == ["negative", "positive"]:
+            result.add(output)
+    return frozenset(result)
+
+
 def project_functional_boundary_for_refeval(
     j: Any,
     logical_input_values: Mapping[str, Any],
@@ -5336,6 +5373,7 @@ __all__ = [
     "DirectStoreSliceProjection",
     "FunctionalBoundaryClosureIssue",
     "FunctionalBoundaryProjection",
+    "complete_conditional_effect_outputs",
     "ConsumerOutsideProjection",
     "PredicateProjection",
     "RuntimePredicateProofReceipt",

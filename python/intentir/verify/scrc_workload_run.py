@@ -43,7 +43,7 @@ from intentir.verify.gate1.replay import (
     ResponsesReplayWriter,
 )
 from intentir.verify.gate1.codex_replay import CodexCLIReplayWriter
-from intentir.verify.gate2.model import Gate2Status
+from intentir.verify.gate2.model import Gate2Status, Gate2SuiteResult
 from intentir.verify.gate2.compare import compare_outputs
 from intentir.verify.gate2.orchestrate import (
     Gate2Case,
@@ -60,6 +60,9 @@ from intentir.verify.gate2.triton import (
 )
 from intentir.verify.scrc_batch import BatchClassification
 from intentir.verify.scrc_runner import (
+    CallBudget,
+    CandidateAttemptReport,
+    FeedbackKind,
     LiftFeedback,
     MainStatus,
     SCRCGateRunner,
@@ -545,6 +548,8 @@ def run_workload_lift_semantic_probe(
         return {
             "protocol": LIFT_SEMANTIC_PROBE_PROTOCOL,
             "status": "unavailable",
+            "failed_leg": "j",
+            "phase": "j_reference_construction",
             "diagnostic": f"{type(exc).__name__}: {exc}",
             "authority": (
                 "public diagnostic only; probe failure does not reject or certify "
@@ -683,6 +688,7 @@ class WorkloadExecution:
     report: SCRCRunReport
     lift: RecordedLiftAdapter
     replay_writers: tuple[RecordedReplayEvidenceWriter, ...]
+    gate2_attempts: tuple[Gate2SuiteResult, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -958,7 +964,251 @@ def complete_prepared_workload_gate2(
         raise WorkloadExecutionError(
             exc, search.lift, search.replay_writers
         ) from exc
-    return WorkloadExecution(report, search.lift, search.replay_writers)
+    return WorkloadExecution(
+        report,
+        search.lift,
+        search.replay_writers,
+        (report.gate2,) if report.gate2 is not None else (),
+    )
+
+
+def gate2_exposes_logical_j_pass_implementation_failure(
+    gate2: Gate2SuiteResult | None,
+) -> bool:
+    """Recognize logical-J pass with an implementation-side Gate2 failure.
+
+    The failure may belong to Replay consumption or to an incomplete pi realization;
+    Source/J alone cannot distinguish them.  This predicate is host-side lifecycle
+    control only.  It never enters a Replay packet or prompt and cannot select
+    another J candidate.  Every failed case must have a successful Source/J
+    comparison and matching failures on both Replay legs.
+    """
+
+    if gate2 is None or gate2.passed:
+        return False
+    failed = tuple(case for case in gate2.cases if not case.passed)
+    if not failed:
+        return False
+    return all(
+        case.source.ok
+        and case.replay.ok
+        and case.reference.ok
+        and case.source_j is not None
+        and case.source_j.passed
+        and case.source_replay is not None
+        and not case.source_replay.passed
+        and case.replay_j is not None
+        and not case.replay_j.passed
+        for case in failed
+    )
+
+
+def _rebase_fixed_artifact_retry_attempt(
+    attempt: CandidateAttemptReport,
+    *,
+    formal_round_offset: int,
+) -> CandidateAttemptReport:
+    formal_round = (
+        formal_round_offset + attempt.formal_round
+        if attempt.formal_round is not None
+        else None
+    )
+    feedback = attempt.feedback
+    if feedback is not None and feedback.formal_round is not None:
+        feedback = replace(
+            feedback,
+            formal_round=formal_round_offset + feedback.formal_round,
+        )
+    return replace(
+        attempt,
+        formal_round=formal_round,
+        feedback=feedback,
+        lift_metadata={
+            **dict(attempt.lift_metadata),
+            "fixed_artifact_fresh_replay": True,
+            "formal_round_offset": formal_round_offset,
+        },
+    )
+
+
+def retry_prepared_workload_gate1_fixed_artifact(
+    prepared: PreparedTritonWorkload,
+    artifact: Gate1Artifact,
+    *,
+    provider: ProviderConfig,
+    formal_round_offset: int,
+    effort: str | None = None,
+    replay_provider: ProviderConfig | None = None,
+    replay_effort: str | None = None,
+    run_masked_j: bool = True,
+    lift_backend: str = "responses",
+    lift_workflow: str = "single",
+    replay_backend: str = "responses",
+    replay_width: int = 1,
+    stop_requested: Callable[[], int | None] | None = None,
+    progress_callback: SCRCProgressCallback | None = None,
+) -> WorkloadGate1Search:
+    """Run exactly one fresh formal Replay/Gate1 round over an exact artifact.
+
+    No Lift model call is permitted.  The synthetic Gate1 feedback contains no
+    Source, Gate2, prior Replay, or repair diagnostic; it exists only to activate
+    the runner's exact-artifact transaction.  A failed Gate1 round returns normally
+    and the caller may start another independent fresh episode within the original K.
+    """
+
+    if not isinstance(formal_round_offset, int) or formal_round_offset < 1:
+        raise ValueError("formal_round_offset must be a positive integer")
+    canonical = canonicalize_gate1_artifact(artifact)
+    neutral_feedback = LiftFeedback(
+        FeedbackKind.GATE1,
+        {
+            "status": "fixed_artifact_fresh_replay",
+            "authority": (
+                "host lifecycle marker only; never supplied to Replay and contains "
+                "no Source, Gate2, prior Replay, or semantic repair information"
+            ),
+        },
+        formal_round_offset,
+        canonical,
+    )
+
+    def offset_progress(
+        stage: str,
+        attempt: int | None,
+        formal_round: int | None,
+        status: str,
+    ) -> None:
+        if progress_callback is None:
+            return
+        progress_callback(
+            stage,
+            attempt,
+            (
+                formal_round_offset + formal_round
+                if formal_round is not None
+                else None
+            ),
+            status,
+        )
+
+    search = search_prepared_workload_gate1(
+        prepared,
+        provider=provider,
+        initial_feedback=neutral_feedback,
+        effort=effort,
+        replay_provider=replay_provider,
+        replay_effort=replay_effort,
+        run_masked_j=run_masked_j,
+        lift_backend=lift_backend,
+        lift_workflow=lift_workflow,
+        replay_backend=replay_backend,
+        replay_width=replay_width,
+        retry_initial_artifact=True,
+        max_gate1_rounds=1,
+        # Exact-artifact retry is intentionally one-shot before Replay.  A current
+        # TypeCheck rejection must return without ever falling through to Lift.
+        max_pre_replay_rejections=1,
+        stop_requested=stop_requested,
+        progress_callback=offset_progress,
+    )
+    if search.report.call_budget.lift_calls != 0 or search.lift.records:
+        raise RuntimeError("fixed-artifact Replay retry unexpectedly invoked Lift")
+    rebased_attempts = tuple(
+        _rebase_fixed_artifact_retry_attempt(
+            attempt,
+            formal_round_offset=formal_round_offset,
+        )
+        for attempt in search.report.attempts
+    )
+    rebased_report = replace(
+        search.report,
+        attempts=rebased_attempts,
+        accepted_attempt=(
+            formal_round_offset + search.report.accepted_attempt
+            if search.report.accepted_attempt is not None
+            else None
+        ),
+    )
+    return replace(search, report=rebased_report)
+
+
+def _add_call_budgets(left: CallBudget, right: CallBudget) -> CallBudget:
+    return CallBudget(
+        lift_calls=left.lift_calls + right.lift_calls,
+        lift_physical_calls=left.lift_physical_calls + right.lift_physical_calls,
+        typecheck_calls=left.typecheck_calls + right.typecheck_calls,
+        formal_gate1_rounds=(
+            left.formal_gate1_rounds + right.formal_gate1_rounds
+        ),
+        replay_normal_calls=left.replay_normal_calls + right.replay_normal_calls,
+        replay_masked_calls=left.replay_masked_calls + right.replay_masked_calls,
+        replay_physical_calls=(
+            left.replay_physical_calls + right.replay_physical_calls
+        ),
+        gate2_cases=left.gate2_cases + right.gate2_cases,
+        source_executions=left.source_executions + right.source_executions,
+        replay_executions=left.replay_executions + right.replay_executions,
+        refeval_executions=left.refeval_executions + right.refeval_executions,
+    )
+
+
+def _gate2_only_budget(gate2: Gate2SuiteResult) -> CallBudget:
+    case_count = len(gate2.cases)
+    return CallBudget(
+        lift_calls=0,
+        lift_physical_calls=0,
+        typecheck_calls=0,
+        formal_gate1_rounds=0,
+        replay_normal_calls=0,
+        replay_masked_calls=0,
+        replay_physical_calls=0,
+        gate2_cases=case_count,
+        source_executions=case_count,
+        replay_executions=case_count,
+        refeval_executions=case_count,
+    )
+
+
+def merge_fixed_artifact_replay_retry_execution(
+    base: WorkloadExecution,
+    retry_searches: tuple[WorkloadGate1Search, ...],
+    retry_executions: tuple[WorkloadExecution, ...],
+) -> WorkloadExecution:
+    """Merge exact-artifact retry evidence without changing candidate selection."""
+
+    attempts = list(base.report.attempts)
+    writers = list(base.replay_writers)
+    budget = base.report.call_budget
+    for search in retry_searches:
+        attempts.extend(search.report.attempts)
+        writers.extend(search.replay_writers)
+        budget = _add_call_budgets(budget, search.report.call_budget)
+    gate2_attempts = list(base.gate2_attempts)
+    if not gate2_attempts and base.report.gate2 is not None:
+        gate2_attempts.append(base.report.gate2)
+    for execution in retry_executions:
+        if execution.report.gate2 is None:
+            raise ValueError("retry execution lacks Gate2 evidence")
+        gate2_attempts.append(execution.report.gate2)
+        budget = _add_call_budgets(
+            budget,
+            _gate2_only_budget(execution.report.gate2),
+        )
+    final = retry_executions[-1] if retry_executions else base
+    report = SCRCRunReport(
+        main_status=final.report.main_status,
+        attempts=tuple(attempts),
+        accepted_attempt=final.report.accepted_attempt,
+        gate2=final.report.gate2,
+        j_necessity_status=final.report.j_necessity_status,
+        call_budget=budget,
+    )
+    return WorkloadExecution(
+        report,
+        base.lift,
+        tuple(writers),
+        tuple(gate2_attempts),
+    )
 
 
 def execute_prepared_workload(
@@ -1512,6 +1762,18 @@ def save_workload_execution(
         execution.lift,
         execution.replay_writers,
     )
+    gate2_attempts = execution.gate2_attempts
+    if not gate2_attempts and report.gate2 is not None:
+        gate2_attempts = (report.gate2,)
+    if gate2_attempts and report.gate2 is not gate2_attempts[-1]:
+        if report.gate2 is None or report.gate2.to_json() != gate2_attempts[-1].to_json():
+            raise ValueError("final Gate2 report differs from retry evidence")
+    if len(gate2_attempts) > 1:
+        for index, gate2_attempt in enumerate(gate2_attempts, start=1):
+            _write_json(
+                run_dir / f"gate2-attempt-{index:02d}.json",
+                gate2_attempt.to_json(),
+            )
     if report.gate2 is not None:
         _write_json(run_dir / "gate2.json", report.gate2.to_json())
     classification = classify_scrc_report(report)
@@ -1538,6 +1800,8 @@ def save_workload_execution(
             + json.dumps(report.gate2.status_counts, sort_keys=True)
             + "`"
         )
+    if gate2_attempts:
+        summary.append(f"- gate2_attempts: `{len(gate2_attempts)}`")
     summary.extend(
         [
             "",
@@ -1912,18 +2176,21 @@ __all__ = [
     "classify_scrc_report",
     "complete_prepared_workload_gate2",
     "execute_prepared_workload",
+    "gate2_exposes_logical_j_pass_implementation_failure",
     "initialize_workload_gate1_recheck_evidence",
     "initialize_workload_evidence",
     "next_candidate_fanout_dir",
     "next_gate1_recheck_dir",
     "next_workload_run_dir",
     "recheck_prepared_workload_gate1",
+    "retry_prepared_workload_gate1_fixed_artifact",
     "run_workload_lift_semantic_probe",
     "save_candidate_fanout_report",
     "save_workload_execution",
     "save_workload_failure",
     "save_workload_gate1_search",
     "save_workload_gate1_recheck",
+    "merge_fixed_artifact_replay_retry_execution",
     "scrc_gate1_search_diagnostic",
     "scrc_attempt_stage_counts",
     "scrc_report_diagnostic",

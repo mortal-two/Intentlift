@@ -289,6 +289,12 @@ Gamma_(J,C) |- pi : RealizationWitness(J,C)
 mu : Instances -> Ids(J) union Ids(C)
 ```
 
+accepted artifact 中的 π 始终是上述 canonical dependent object。fresh Codex Replay packet 可以使用
+`intentir.pi-min.relational-column-wire.v1` 对固定 relation list 做 columns + row 的一一可逆编码；
+codec 必须在发送前 round-trip 得到完全相等的 canonical π，字段集合变化即 fail closed。它只消除
+JSON key 重复，不省略 multiplicity、route/order/sharing、time/control、program axis 或 refinement，
+也不要求旧 artifact relift。
+
 不存在 `Ids(interface)`。需要接口信息时读取 `InterfaceView(J)`，但该投影不增加命名空间、
 不序列化成独立 artifact，也不作为 Replay 的额外输入。
 
@@ -327,6 +333,11 @@ scalar dependency path 先进入 `address_base` 再进入 transfer，表示 prog
 domain 与 axis 均唯一。Replay 必须保持 base/lane 区分并消费该 axis identity，`U_f` 只负责映射到
 公共前端 API。π 不保存 grid extent、地址公式、Source 文本或前端 API，也不增加 mechanism enum；
 axis 不得从 declaration order、grid、C 或 instance multiplicity 推断。
+
+若一个 Source program ordinal 在进入 tensor address 前显式经过整数 `//`/`%` 解码，则该闭合整数树
+必须由 J 的 source-grounded logical access/index relation 表达，并由 π occurrence/route 保持；
+`program_axes` 只绑定原始 program-coordinate domain 的物理 axis，不能携带或替代 div/rem 公式。
+固定 Replay 工具既不能从多个 logical extent 猜 row-major delinearization，也不能把该树藏进 C。
 
 `address_base/address_lane` 标记 address contribution 角色；pointer/address operation 的次数由
 `J.signature` carrier kind 与 π route 共同决定，不能只看 base-to-lane edge。若 pointer/tensor 的
@@ -535,7 +546,7 @@ TypeCheck(J,C,pi) -> FreshLogicalSemDecl(C,pi | J) = empty
 
 上述 C attachment、numeric-cast、result-relation compatibility、rank-0 closed signature、Layer-A total
 typing 与显式 non-trailing broadcast 合同已由早期 TypeCheck 版本逐步建立。当前
-`decode.v17/typecheck.v29` 继承v16/v28的closed dimension relation引用、唯一性、grammar与
+`decode.v17/typecheck.v30` 继承v16/v28的closed dimension relation引用、唯一性、grammar与
 acyclic dependent check，并增加program-axis completeness检查；同时拒绝同一tensor多个不同却都无consumer锚点的node-less load views；它不从
 任一valuation/compiler observation生成relation，也不替access猜consumer。v27只新增 route extent transform 的 existing-route、required positive-int C、
 matching J-domain attachment/axis 与 realize-anchor dependent checks；它不生成 relation、divisor 或
@@ -551,7 +562,8 @@ wire/decode 窄升为 `artifact.v3 / decode.v3`；v4 随后增加 dimension cons
 `access_guard_relations`，v6/v7 增加 typed control，v8 增加 physical-only time，v9 增加
 terminal-control topology，v10 增加上述 closed route-local extent transform，v11增加closed
 dimension relations，v12增加closed program-axis identity。当前 active 合同为
-`artifact.v12 / decode.v17 / typecheck.v29 / candidate-check.v1`；v29新增program-axis completeness
+`artifact.v12 / decode.v17 / typecheck.v30 / candidate-check.v1`；v30只接受同一authored
+`effect_if`两臂各唯一完整store所定义的conditional post-state output，不生成select/mapping；v29新增program-axis completeness
 dependent check，v28新增上述dimension relation dependent check，v27新增route extent dependent check。v26 继承 v25，并新增上述 direct
 singleton equality 的 source-free broadcast dependent check。v25 继承 v24，并新增
 `reduction_linearization` 的 closed topology check：该 global-safe refinement 不带 authorization，

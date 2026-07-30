@@ -620,7 +620,10 @@ Gate round 的定义。
 权威错误列表有界展开、不改变接受集合时，`candidate-check.v1` 无需升版。任何新规则都只对带新
 version receipt 的 fresh run 生效，不得静默重判历史 artifact。
 
-当前 fresh-run 版本为 `typecheck.v29`。v29增加program-axis completeness dependent check并继承v28的
+当前 fresh-run 版本为 `typecheck.v30`。v30只新增一条J-only conditional post-state规则：同一个
+authored `effect_if` 的正/负 sibling arm 对同一output各有唯一、类型一致的完整store时，该output可由
+effect定义而无需伪造单一SSA binding；缺臂、多写、嵌套或部分store仍fail closed，checker不生成
+`select`、mapping或J字段。v29增加program-axis completeness dependent check并继承v28的
 J dimension relation closed grammar、引用、唯一性与acyclic检查；同时拒绝同tensor多个不同却都无consumer锚点的node-less load views；不从valuation、
 Harness或compiler observation生成relation，也不猜access consumer。v27只新增上述 route extent transform 的 existing-route、
 required positive-int C、matching J-domain attachment/axis 与 realize-anchor dependent checks；不生成
@@ -1141,7 +1144,7 @@ Source/当前 J 的 writer。Runner 更新 branch-local feedback view 并追加�
 ### 10.1.1 固定 artifact 的 diagnostic recheck
 
 `intentir.scrc.gate1-diagnostic-recheck.v1` 可以对 parent evidence 中一份已落盘 artifact 做独立只读
-诊断：保持 artifact bytes/digest 不变，以当前 canonical Decode、`typecheck.v29`、一个 fresh normal
+诊断：保持 artifact bytes/digest 不变，以当前 canonical Decode、`typecheck.v30`、一个 fresh normal
 Replay 与 Gate1 写入单独的原子 `recheck-NNN` 目录。该路径不调用 Lift、不运行 masked-J 或 Gate2、
 不参加 candidate/winner 选择，并显式记录 `diagnostic_only=true`、`enters_gate2=false`、
 `changes_prior_verdict=false`。它只能判断当前固定 consumer/context 如何消费旧 artifact，不能把

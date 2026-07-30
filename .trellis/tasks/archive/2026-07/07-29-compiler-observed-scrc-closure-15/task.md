@@ -1,7 +1,8 @@
 # Task 15：模型级输入到 Compiler-Observed Lift / Closed J / Source-Blind Replay 的最终闭合系统
 
-> 状态：`P3_CLOSURE_20_OF_28`（2026-07-30）。Codex-native single-owner路径已在active Gate1 v12下
-> fresh闭合Flash Linear与Qwen2VL MRoPE；继续八项active queue。
+> 状态：`ARCHIVED_SUPERSEDED_AT_23_OF_28`（2026-07-31）。本任务完成 Compiler-observed Lift、
+> Codex single-owner 与 23/28 evidence 基线；flat-π Replay 作者化接口暴露根本瓶颈后，由 Task 16 的
+> J-led minimal-π / agent-internal composer 重构接管。归档不表示剩余五项已经完成。
 >
 > 定位：Task 11 的下一次能力建设与最终十项闭合波。Task 14 已结束归档；其18份可保留证书、十项
 > active queue与中断 evidence 是本任务的历史输入，不是本任务已经完成的结果。

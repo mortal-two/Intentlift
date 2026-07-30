@@ -331,6 +331,11 @@ stage。`pi.program_axes` 以 `{domain_ref,axis}` 将每个 distinct program-coo
 到物理 launch axis `0..2`，domain 与 axis 均唯一。Replay 保持该拓扑并消费 axis identity，公共前端
 上下文 (U_f) 只决定公开 API spelling。π 不保存 grid extent、地址公式、Source 文本或新的 mechanism tag。
 
+当一个 Source program ordinal 在进入 tensor address 前显式经过整数 `//`/`%` 解码时，Lift 必须把
+这个 source-grounded logical access/index 整数树写入 J，并以 π occurrence/route 保持其 realization；
+`program_axes` 只绑定原始 coordinate domain 的物理 axis，不能携带或替代 div/rem 公式。Replay
+不得从多个 extent、常见 row-major 约定、grid 或 C 自行猜 delinearization。
+
 program axis 的 identity 来自 Lift 作者化的 J-domain binding，不来自 instance 数量、声明顺序、grid
 extent 或 C。同一 `d*` 上的多个 realization instance 仍是多个 compiler-visible stage，必须分别
 materialize，但都读取 `program_axes` 绑定的同一 axis。这个规则不合并 instance，也不替 Lift 修复

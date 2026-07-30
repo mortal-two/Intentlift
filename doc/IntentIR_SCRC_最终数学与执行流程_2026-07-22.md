@@ -400,7 +400,8 @@ TypeCheck 还检查 closed comparison class 与 output dtype、A 依赖图和 B 
 见最终执行流程第 6.1 节。v1 中 `RequiresTolerance=true` 即拒绝显式或默认 `exact`，没有自由文本
 或“更强合同”例外；阈值仍完全由外部 Q 决定。该 reassociation fact 只约束 SCRC comparison class，
 不是 production backend permission。
-当前 `typecheck.v29`增加program-axis completeness dependent check，并继承v28的J dimension relation
+当前 `typecheck.v30`新增上述双臂完整store的conditional post-state output binding，并继承v29的
+program-axis completeness dependent check及v28的J dimension relation
 closed grammar、引用、唯一性与acyclic检查；同时拒绝
 同tensor多个不同却都无consumer锚点的node-less load views；不从valuation、Harness或compiler
 observation生成relation，也不猜access consumer。v27只新增 route extent transform 的 existing-route、required positive-int C、
@@ -483,7 +484,7 @@ dependent checking 夸写成 Source topology 的形式证明。
 
 首版不需要让 TypeCheck 成为 SMT 或完整图证明器。最小可行实现只需 fail closed 地完成上述局部检查。
 
-当前合并协议为 `artifact.v12 / decode.v17 / typecheck.v29 / candidate-check.v1 / replay-check.v14`；
+当前合并协议为 `artifact.v12 / decode.v17 / typecheck.v30 / candidate-check.v1 / replay-check.v14`；
 Replay packet envelope 为 `replay-input.v2`；Triton 公共上下文由当前固定公开字段直接给出，不再使用 context version、SHA 或 receipt 作为运行门禁；
 Codex/MiniSWE Lift knowledge 为 v89/v67，MiniSWE Replay backend 为 v31，Codex Replay backend 为 v32。
 v30/v26 完整执行 authored route extent transform 合同：将其纳入 `critical_facts.v4`、
@@ -532,7 +533,10 @@ v10 增加依附既有 C/J/route 的 closed `route_extent_transforms`，v11增�
 `dimension_relations`。后者只含identity、常数加/乘、常数ceil-div与round-up的acyclic grammar，
 consumer只能验证/求值，不从Harness/grid/C/π/TTIR生成。v12增加π-owned closed
 `program_axes`，只把Source-visible program-coordinate domain绑定到axis `0..2`，不携带grid extent、
-地址公式或前端文本。每个当前字段都由Lift LLM 作为完整 `(J,C,π)` 的一部分显式作者，
+地址公式或前端文本。若 Source program ordinal 在地址前显式经过整数 `//`/`%` 解码，该
+source-grounded logical access/index 整数树属于 J，π 只保持 occurrence/route；`program_axes` 不能
+替代公式，Replay 也不能从多个 extent、grid、C 或常见 delinearization 约定猜出公式。
+每个当前字段都由Lift LLM 作为完整 `(J,C,π)` 的一部分显式作者，
 Decode/TypeCheck/CandidateCheck 只解析、检查、拒绝
 和诊断，不补造 relation 或 artifact。v1-v7 保持各自 wire bytes/digest 与字段集合，不得静默升级、
 刷新或追认；v8/v9/v10 同样保持各自字段集合。SCRC 后 π 停止，
@@ -603,7 +607,8 @@ artifact 语义，不增加 acceptance path，正式 Runner 仍独立执行 Deco
 扩充 TypeCheck judgement 必须提升 `v_TC`，CandidateCheck 与正式 Runner 必须记录并使用同一版本；
 新版本不静默重判历史证书。
 
-当前 fresh-run 取 `v_TC = typecheck.v29`。v29增加program-axis completeness dependent check；v28增加上述dimension relation dependent check；v27增加route extent transform dependent check；
+当前 fresh-run 取 `v_TC = typecheck.v30`。v30增加上述J-only conditional post-state output binding；
+v29增加program-axis completeness dependent check；v28增加上述dimension relation dependent check；v27增加route extent transform dependent check；
 v26 增加上述 direct singleton broadcast dependent check；
 v25 增加上述 reduction-linearization topology check；v24 增加上述 special-constant 与 transfer pointer-route
 closed checks，并完整继承 v23；v23 增加 canonical output binding 的完整 dtype/shape equality；v22 增加 signature mode 与 J boundary partition 的 exact
@@ -1001,6 +1006,14 @@ J/B 可以声明所需的语义类别与合同，但不能自由产生一个任�
 受信任验证协议中从已验证 comparison class、dtype、extent 和合同参数构造比较器的确定性政策；
 它不是 Lift artifact，也不进入 Replay。用于“两两闭合”时，\(\operatorname{Close}_Q\) 必须由
 协议定义为对称谓词；若底层 `isclose` 有方向性，必须显式对称化或规定双向检查。
+
+当前 `gate2-q.v2` 仍由外部协议冻结阈值，但把 dtype policy 从“只看 observable storage
+dtype”窄化为逐 output 的 closed J-only compute profile：若该 output 的已类型化依赖图明确经过
+低于 output dtype 的 `contraction/reduce/scan` operand，Q 可选择该低精度 compute profile 的固定
+阈值；否则继续使用 output dtype 的固定阈值。这个选择只读取 accepted J 的 output dependency、op
+kind 与 dtype，不读取 Source、Replay、C、π、backend identity 或实际误差；Lift 仍只声明
+`exact/tolerance` class，不能写入或放宽数值阈值。该规则只修正验证器对 mixed-precision execution
+path 的比较模型，不构成 backend contraction、reassociation 或 accumulator permission。
 
 ## 8.2 三个实际输出
 

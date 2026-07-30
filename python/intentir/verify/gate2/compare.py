@@ -21,7 +21,7 @@ from .model import OutputAgreement, PairwiseAgreement
 from .policy import ComparisonPolicy, CloseRule, canonical_dtype
 
 
-GATE2_COMPARISON_PROTOCOL = "external_q_symmetric_pairwise_v4"
+GATE2_COMPARISON_PROTOCOL = "external_q_symmetric_pairwise_v5"
 
 _DTYPE_ALIASES = {
     "bool": "i1",
@@ -296,7 +296,12 @@ def compare_outputs(
             logical_key,
             ResultRelationSpec(logical_key, ResultRelationKind.EXACT),
         )
-        rule = policy.rule_for(relation.kind, output.dtype)
+        rule = policy.rule_for_output(
+            j,
+            logical_key,
+            relation.kind,
+            output.dtype,
+        )
         missing = []
         if runtime_key not in left:
             missing.append(left_name)
