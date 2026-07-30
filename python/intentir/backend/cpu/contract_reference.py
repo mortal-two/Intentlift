@@ -36,6 +36,8 @@ from intentir.backend.cpu.structured_reference import (
 from intentir.frontend.emit_mlir import _broadcast_projection
 from intentir.ir.canonical_j import (
     CanonicalValueType,
+    ContractExpr,
+    ContractSort,
     canonical_broadcast_axes,
     elaborate_j,
     j_elaboration,
@@ -46,7 +48,7 @@ from intentir.ir.contract_ir import (
     ContractIRProjectionError,
     project_contract_ir,
 )
-from intentir.ir.contract_semantics import ContractSemanticsError
+from intentir.ir.contract_semantics import ContractSemanticsError, TypedContractProgram
 from intentir.ir.dimension_relation import resolve_dimension_relations
 from intentir.ir.functional_boundary import project_predicate_text
 from intentir.ir.value_dimension import validate_value_dimension_instantiation
@@ -56,7 +58,7 @@ if TYPE_CHECKING:
     from intentir.verify.gate1.model import SemanticArchive
 
 
-CONTRACT_REFERENCE_PROTOCOL = "intentir.j-contract-indexed-cpu-reference.v2"
+CONTRACT_REFERENCE_PROTOCOL = "intentir.j-contract-indexed-cpu-reference.v3"
 
 
 class ContractReferenceUnsupportedError(CPUBackendUnsupportedError):
@@ -186,6 +188,7 @@ class ContractReferencePlan:
     contract_ir: CanonicalContractIR
     domains: tuple[tuple[str, int | str], ...]
     loads: tuple[IndexedLoadProjection, ...]
+    graph_native_loads: tuple[str, ...]
     stores: tuple[IndexedStoreProjection, ...]
     broadcast_axes: tuple[
         tuple[str, tuple[tuple[str, tuple[int, ...]], ...]], ...
@@ -198,7 +201,7 @@ class ContractReferencePlan:
     @property
     def load_map(self) -> dict[tuple[str, int], IndexedLoadProjection]:
         return {
-            (item.access.node_ref or "", item.operand_index): item
+            (item.result_ref, item.operand_index): item
             for item in self.loads
         }
 
@@ -218,10 +221,11 @@ class ContractReferencePlan:
     def to_json(self) -> dict[str, Any]:
         record = {
             "protocol": CONTRACT_REFERENCE_PROTOCOL,
-            "profile": "relation_indexed_pointwise_v1",
+            "profile": "relation_indexed_graph_v2",
             "contract_ir_digest": self.contract_ir.digest,
             "domains": [list(item) for item in self.domains],
             "loads": [item.to_json() for item in self.loads],
+            "graph_native_loads": list(self.graph_native_loads),
             "stores": [item.to_json() for item in self.stores],
             "broadcast_axes": [
                 [
@@ -234,7 +238,17 @@ class ContractReferencePlan:
         return {**record, "plan_digest": _digest(record)}
 
 
-_POINTWISE_OPS = frozenset({"cast", "const", "map_binary", "map_unary", "select"})
+_RELATION_INDEXED_OPS = frozenset(
+    {
+        "cast",
+        "const",
+        "gather",
+        "iota",
+        "map_binary",
+        "map_unary",
+        "select",
+    }
+)
 
 
 def project_contract_reference(j: "SemanticArchive") -> ContractReferencePlan:
@@ -248,42 +262,63 @@ def project_contract_reference(j: "SemanticArchive") -> ContractReferencePlan:
         or boundary.updates
         or boundary.consumer_extensions
         or boundary.access_guard_relations
-        or boundary.index_bounds
     ):
         raise ContractReferenceUnsupportedError(
             "contract reference v1 does not implement alias, reduction, update, "
-            "consumer-extension, access-guard, or index-bounds relations"
+            "consumer-extension, or access-guard relations"
         )
     operations = tuple(canonical.intent.body)
-    if any(operation.body or operation.op not in _POINTWISE_OPS for operation in operations):
+    if any(
+        operation.body or operation.op not in _RELATION_INDEXED_OPS
+        for operation in operations
+    ):
         raise ContractReferenceUnsupportedError(
-            "contract reference v1 requires a flat pointwise Layer-A graph"
+            "contract reference v2 requires a flat relation-indexed Layer-A graph"
         )
     if any(len(_result_names(operation)) != 1 for operation in operations):
         raise ContractReferenceUnsupportedError(
             "contract reference v1 requires one result per Layer-A operation"
         )
 
-    nodes = {
-        operation.node_id: operation
-        for operation in operations
-        if isinstance(operation.node_id, str)
+    operations_by_path = {
+        f"body[{index}]": operation
+        for index, operation in enumerate(operations)
     }
-    if len(nodes) != len(operations):
-        raise ValueError("contract reference requires unique authored node ids")
+    node_refs_by_path: dict[str, str] = {}
+    for node_ref, path in canonical.node_ids.items():
+        if path not in operations_by_path:
+            continue
+        previous = node_refs_by_path.setdefault(path, node_ref)
+        if previous != node_ref:
+            raise ValueError("contract reference has duplicate authored node paths")
+    if set(node_refs_by_path) != set(operations_by_path):
+        raise ValueError("contract reference requires one authored id per flat node")
+    nodes = {
+        node_refs_by_path[path]: operation
+        for path, operation in operations_by_path.items()
+    }
     value_types = j_elaboration(canonical).value_type_by_name
     domains = _rectangular_domains(canonical)
     result_axes: dict[str, tuple[str, ...]] = {}
-    for operation in operations:
+
+    def axes_for_result(
+        operation: IntentOp,
+        node_ref: str,
+    ) -> tuple[str, ...]:
         result_ref = _result_names(operation)[0]
+        cached = result_axes.get(result_ref)
+        if cached is not None:
+            return cached
         value_type = value_types.get(result_ref)
         if value_type is None:
             raise ValueError("contract reference operation lacks a closed result type")
-        result_axes[result_ref] = _axes_for_shape(
+        axes = _axes_for_shape(
             value_type,
             domains,
-            context=f"J node {operation.node_id!r} result {result_ref!r}",
+            context=f"J node {node_ref!r} result {result_ref!r}",
         )
+        result_axes[result_ref] = axes
+        return axes
 
     try:
         contract_ir = project_contract_ir(canonical)
@@ -294,9 +329,11 @@ def project_contract_reference(j: "SemanticArchive") -> ContractReferencePlan:
     input_names = {item.name for item in canonical.intent.inputs}
     output_names = {item.name for item in canonical.intent.outputs}
     loads: list[IndexedLoadProjection] = []
+    graph_native_loads: list[str] = []
     stores: list[IndexedStoreProjection] = []
     seen_load_edges: set[tuple[str, int]] = set()
     seen_accesses: set[str] = set()
+    consumed_index_bounds: set[tuple[str, str, str, int]] = set()
     for access in contract_ir.accesses:
         node_ref = access.node_ref
         operation = nodes.get(node_ref)
@@ -305,6 +342,57 @@ def project_contract_reference(j: "SemanticArchive") -> ContractReferencePlan:
                 "contract reference v1 requires every access to name one flat J node"
             )
         result_ref = _result_names(operation)[0]
+        if access.kind == "load" and operation.op == "gather":
+            axis = operation.attrs.get("axis")
+            mode = operation.attrs.get("mode", "along_axis")
+            if (
+                mode != "take"
+                or not isinstance(axis, int)
+                or isinstance(axis, bool)
+                or len(operation.operands) != 2
+                or operation.operands[0] != access.tensor
+            ):
+                raise ContractReferenceUnsupportedError(
+                    "graph-native contract gather requires one typed take edge"
+                )
+            bound_key = (
+                node_ref,
+                access.tensor,
+                operation.operands[1],
+                axis,
+            )
+            matching_bounds = [
+                item
+                for item in boundary.index_bounds
+                if (
+                    item.node_ref,
+                    item.data,
+                    item.indices,
+                    item.axis,
+                )
+                == bound_key
+            ]
+            if len(matching_bounds) != 1:
+                raise ContractReferenceUnsupportedError(
+                    "graph-native contract gather requires one exact index bound"
+                )
+            if access.predicate is not None:
+                predicate = project_predicate_text(
+                    access.predicate.expression.to_text()
+                )
+                if predicate.guards or any(
+                    domains.get(bound_axis) != extent
+                    for bound_axis, extent in predicate.upper_bounds
+                ):
+                    raise ContractReferenceUnsupportedError(
+                        "graph-native contract gather requires a full-domain predicate"
+                    )
+            graph_native_loads.append(access.access_id)
+            consumed_index_bounds.add(bound_key)
+            seen_accesses.add(access.access_id)
+            continue
+
+        axes = axes_for_result(operation, node_ref)
         axis_refs = set().union(
             *(set(program.expression.references) for program in access.index),
             (
@@ -312,7 +400,7 @@ def project_contract_reference(j: "SemanticArchive") -> ContractReferencePlan:
                 if access.predicate is not None else set()
             ),
         )
-        unknown_axes = (axis_refs & set(domains)) - set(result_axes[result_ref])
+        unknown_axes = (axis_refs & set(domains)) - set(axes)
         if unknown_axes:
             raise ContractReferenceUnsupportedError(
                 "contract access uses domain axes outside its producer result: "
@@ -348,7 +436,7 @@ def project_contract_reference(j: "SemanticArchive") -> ContractReferencePlan:
                     access,
                     positions[0],
                     result_ref,
-                    result_axes[result_ref],
+                    axes,
                 )
             )
         elif access.kind == "store":
@@ -367,7 +455,7 @@ def project_contract_reference(j: "SemanticArchive") -> ContractReferencePlan:
                 IndexedStoreProjection(
                     access,
                     result_ref,
-                    result_axes[result_ref],
+                    axes,
                 )
             )
         else:
@@ -378,6 +466,14 @@ def project_contract_reference(j: "SemanticArchive") -> ContractReferencePlan:
 
     if seen_accesses != {item.access_id for item in canonical.boundary.accesses}:
         raise ValueError("contract reference did not consume every authored access")
+    authored_index_bounds = {
+        (item.node_ref, item.data, item.indices, item.axis)
+        for item in boundary.index_bounds
+    }
+    if consumed_index_bounds != authored_index_bounds:
+        raise ContractReferenceUnsupportedError(
+            "contract reference v2 consumes index bounds only through graph-native gathers"
+        )
     stores_by_output = {item.access.tensor for item in stores}
     if stores_by_output != output_names:
         raise ContractReferenceUnsupportedError(
@@ -409,6 +505,7 @@ def project_contract_reference(j: "SemanticArchive") -> ContractReferencePlan:
         contract_ir=contract_ir,
         domains=tuple(sorted(domains.items())),
         loads=tuple(loads),
+        graph_native_loads=tuple(sorted(graph_native_loads)),
         stores=tuple(stores),
         broadcast_axes=tuple(
             sorted(
@@ -454,6 +551,180 @@ def _scalar_bindings(
         item = array.item()
         bindings[name] = bool(item) if array.dtype.kind == "b" else int(item)
     return bindings
+
+
+def _evaluate_array_program(
+    program: TypedContractProgram,
+    bindings: Mapping[str, Any],
+    *,
+    context: str,
+) -> int | bool | np.ndarray:
+    """Evaluate one typed ContractExpr over broadcast NumPy index grids.
+
+    This is the array denotation of the same closed opcode set implemented by
+    ``TypedContractProgram.evaluate``.  It changes only execution granularity:
+    no formula recognition, Source fact, C value, or pi relation enters here.
+    """
+
+    missing = set(program.expression.references) - set(bindings)
+    if missing:
+        raise ContractReferenceUnsupportedError(
+            f"{context} lacks bindings for {sorted(missing)}"
+        )
+    reference_sorts = program.reference_sort_map
+
+    def visit(expression: ContractExpr) -> Any:
+        if expression.op == "ref":
+            assert isinstance(expression.value, str)
+            value = bindings[expression.value]
+            array = np.asarray(value)
+            expected = reference_sorts[expression.value]
+            if expected is ContractSort.INTEGER and array.dtype.kind not in {"i", "u"}:
+                raise ContractReferenceUnsupportedError(
+                    f"{context} reference {expression.value!r} is not integer"
+                )
+            if expected is ContractSort.BOOLEAN and array.dtype.kind != "b":
+                raise ContractReferenceUnsupportedError(
+                    f"{context} reference {expression.value!r} is not boolean"
+                )
+            return value
+        if expression.op in {"int", "bool"}:
+            return expression.value
+
+        values = tuple(visit(argument) for argument in expression.args)
+        if expression.op == "pos":
+            return values[0]
+        if expression.op == "neg":
+            return np.negative(values[0])
+        if expression.op == "not":
+            return np.logical_not(values[0])
+        if expression.op == "add":
+            return np.add(values[0], values[1])
+        if expression.op == "sub":
+            return np.subtract(values[0], values[1])
+        if expression.op == "mul":
+            return np.multiply(values[0], values[1])
+        if expression.op in {"floordiv", "mod"}:
+            if bool(np.any(np.asarray(values[1]) == 0)):
+                raise ContractReferenceUnsupportedError(f"{context} divides by zero")
+            return (
+                np.floor_divide(values[0], values[1])
+                if expression.op == "floordiv"
+                else np.mod(values[0], values[1])
+            )
+        if expression.op in {"lt", "le", "gt", "ge", "eq", "ne"}:
+            return {
+                "lt": np.less,
+                "le": np.less_equal,
+                "gt": np.greater,
+                "ge": np.greater_equal,
+                "eq": np.equal,
+                "ne": np.not_equal,
+            }[expression.op](values[0], values[1])
+        if expression.op in {"and", "or"}:
+            reducer = np.logical_and if expression.op == "and" else np.logical_or
+            result = values[0]
+            for value in values[1:]:
+                result = reducer(result, value)
+            return result
+        if expression.op == "call":
+            left, right = values
+            if expression.value == "ceil_div":
+                if bool(np.any(np.asarray(right) == 0)):
+                    raise ContractReferenceUnsupportedError(
+                        f"{context} divides by zero"
+                    )
+                return np.negative(np.floor_divide(np.negative(left), right))
+            if expression.value == "min":
+                return np.minimum(left, right)
+            if expression.value == "max":
+                return np.maximum(left, right)
+        raise ContractReferenceUnsupportedError(
+            f"{context} has unsupported opcode {expression.op!r}"
+        )
+
+    result = visit(program.expression)
+    result_array = np.asarray(result)
+    if (
+        program.result_sort is ContractSort.INTEGER
+        and result_array.dtype.kind not in {"i", "u"}
+    ):
+        raise ValueError(f"{context} did not produce integer values")
+    if program.result_sort is ContractSort.BOOLEAN and result_array.dtype.kind != "b":
+        raise ValueError(f"{context} did not produce boolean values")
+    return result
+
+
+def _access_grid_bindings(
+    shape: tuple[int, ...],
+    axes: tuple[str, ...],
+    scalar_bindings: Mapping[str, int | bool],
+) -> dict[str, Any]:
+    if len(shape) != len(axes):
+        raise ValueError("contract access axes differ from producer rank")
+    grids = np.indices(shape, sparse=True, dtype=np.int64) if shape else ()
+    return {
+        **scalar_bindings,
+        **dict(zip(axes, grids, strict=True)),
+    }
+
+
+def _broadcast_access_value(
+    value: Any,
+    shape: tuple[int, ...],
+    *,
+    boolean: bool,
+    context: str,
+) -> np.ndarray:
+    array = np.asarray(value)
+    if boolean and array.dtype.kind != "b":
+        raise ValueError(f"{context} is not boolean")
+    if not boolean and array.dtype.kind not in {"i", "u"}:
+        raise ValueError(f"{context} is not integer")
+    try:
+        return np.broadcast_to(array, shape)
+    except ValueError as exc:
+        raise ContractReferenceUnsupportedError(
+            f"{context} does not broadcast to its producer domain"
+        ) from exc
+
+
+def _vectorized_access(
+    access: ContractAccessIR,
+    *,
+    shape: tuple[int, ...],
+    axes: tuple[str, ...],
+    scalar_bindings: Mapping[str, int | bool],
+) -> tuple[np.ndarray, tuple[np.ndarray, ...]]:
+    bindings = _access_grid_bindings(shape, axes, scalar_bindings)
+    predicate = (
+        np.ones(shape, dtype=np.bool_)
+        if access.predicate is None
+        else _broadcast_access_value(
+            _evaluate_array_program(
+                access.predicate,
+                bindings,
+                context=f"J access {access.access_id!r} predicate",
+            ),
+            shape,
+            boolean=True,
+            context=f"J access {access.access_id!r} predicate",
+        )
+    )
+    indices = tuple(
+        _broadcast_access_value(
+            _evaluate_array_program(
+                program,
+                bindings,
+                context=f"J access {access.access_id!r} index[{position}]",
+            ),
+            shape,
+            boolean=False,
+            context=f"J access {access.access_id!r} index[{position}]",
+        )
+        for position, program in enumerate(access.index)
+    )
+    return predicate, indices
 
 
 def _evaluate_predicate(
@@ -518,7 +789,7 @@ class _ContractEvaluator(_Evaluator):
         env: Mapping[str, np.ndarray],
         index: int,
     ) -> np.ndarray:
-        projection = self.contract_loads.get((op.node_id or "", index))
+        projection = self.contract_loads.get((self._result_name(op), index))
         if projection is None:
             value = super()._operand(op, env, index)
             try:
@@ -575,23 +846,24 @@ class _ContractEvaluator(_Evaluator):
                 raise ContractReferenceUnsupportedError(
                     "contract indexed load v1 requires a scalar fill"
                 )
-        result = np.empty(result_shape, dtype=source.dtype)
-        for coordinate in np.ndindex(result_shape):
-            bindings = {
-                **self.contract_scalar_bindings,
-                **dict(zip(projection.result_axes, coordinate, strict=True)),
-            }
-            if not _evaluate_predicate(projection.access, bindings):
-                assert fill is not None
-                result[coordinate] = fill
-                continue
-            source_index = _evaluate_index(projection.access, bindings)
-            if len(source_index) != source.ndim or any(
-                item < 0 or item >= source.shape[axis]
-                for axis, item in enumerate(source_index)
-            ):
-                raise ValueError("contract indexed load is outside its J tensor")
-            result[coordinate] = source[source_index]
+        predicate, source_index = _vectorized_access(
+            projection.access,
+            shape=result_shape,
+            axes=projection.result_axes,
+            scalar_bindings=self.contract_scalar_bindings,
+        )
+        if len(source_index) != source.ndim or any(
+            bool(np.any((item[predicate] < 0) | (item[predicate] >= source.shape[axis])))
+            for axis, item in enumerate(source_index)
+        ):
+            raise ValueError("contract indexed load is outside its J tensor")
+        result = (
+            np.full(result_shape, fill, dtype=source.dtype)
+            if fill is not None else np.empty(result_shape, dtype=source.dtype)
+        )
+        result[predicate] = source[
+            tuple(item[predicate] for item in source_index)
+        ]
         self.indexed_load_materialization_count += 1
         return result
 
@@ -661,24 +933,31 @@ def execute_contract_reference(
             producer_shape = _resolved_shape(declared.shape, checked_dims)
             if value.shape != producer_shape or len(value.shape) != len(store.value_axes):
                 raise ValueError("contract output store producer type is inconsistent")
-            for coordinate in np.ndindex(producer_shape):
-                bindings = {
-                    **scalar_bindings,
-                    **dict(zip(store.value_axes, coordinate, strict=True)),
-                }
-                if not _evaluate_predicate(store.access, bindings):
-                    continue
-                target_index = _evaluate_index(store.access, bindings)
-                if len(target_index) != len(shape) or any(
-                    item < 0 or item >= shape[axis]
-                    for axis, item in enumerate(target_index)
-                ):
-                    raise ValueError("contract output store is outside its J tensor")
-                if covered[target_index]:
-                    raise ValueError("contract output stores overlap")
-                output[target_index] = value[coordinate]
-                covered[target_index] = True
-                executed_stores += 1
+            predicate, target_index = _vectorized_access(
+                store.access,
+                shape=producer_shape,
+                axes=store.value_axes,
+                scalar_bindings=scalar_bindings,
+            )
+            if len(target_index) != len(shape) or any(
+                bool(np.any((item[predicate] < 0) | (item[predicate] >= shape[axis])))
+                for axis, item in enumerate(target_index)
+            ):
+                raise ValueError("contract output store is outside its J tensor")
+            linear = np.zeros(producer_shape, dtype=np.int64)
+            for extent, index_values in zip(shape, target_index, strict=True):
+                linear = linear * extent + index_values
+            selected_indices = linear[predicate]
+            if np.unique(selected_indices).size != selected_indices.size:
+                raise ValueError("contract output store contains overlapping indices")
+            covered_flat = covered.reshape(-1)
+            if bool(np.any(covered_flat[selected_indices])):
+                raise ValueError("contract output stores overlap")
+            output.reshape(-1)[selected_indices] = value.reshape(-1)[
+                predicate.reshape(-1)
+            ]
+            covered_flat[selected_indices] = True
+            executed_stores += int(selected_indices.size)
         if not bool(np.all(covered)):
             raise ContractReferenceUnsupportedError(
                 "contract output stores do not exhaust the logical output"
@@ -696,7 +975,7 @@ def execute_contract_reference(
         {
             "protocol": CONTRACT_REFERENCE_PROTOCOL,
             "authority": "canonical_J_contract_ir_only",
-            "profile": "relation_indexed_pointwise_v1",
+            "profile": "relation_indexed_graph_v2",
             "plan_digest": plan_record["plan_digest"],
             "contract_ir_digest": selected.contract_ir.digest,
             "domain_axis_count": len(domain_extents),

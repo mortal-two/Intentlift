@@ -953,11 +953,14 @@ contributes no J tensor, node, access, effect, or pi instance.
 For every observable output, J.boundary.result_relations declares only the
 closed semantic comparison class; it never declares numeric thresholds. Use
 `exact` only when cross-backend equality is part of the logical contract (for
-example integer/boolean results or exactly specified copies). Floating
-transcendentals, floating reductions, and contracts that allow reassociation
-must use `tolerance`; the trusted external Gate2 policy Q supplies all atol,
-rtol, ULP, and NaN rules. Never place a Python comparator or a
-candidate-selected tolerance in J, C, or pi.
+example integer/boolean results, bitwise operations, or exactly specified
+copies). Any output reached by floating arithmetic uses `tolerance` unless the
+Source itself establishes cross-backend bitwise equality. This includes ordinary
+f16/bf16/f32 pointwise add/sub/mul/div as well as casts, transcendentals,
+reductions, contraction, and reassociation: target evaluation width and rounding
+may differ even when the logical arithmetic graph is the same. The trusted
+external Gate2 policy Q supplies all atol, rtol, ULP, and NaN rules. Never place
+a Python comparator or a candidate-selected tolerance in J, C, or pi.
 For `exact` and `tolerance`, omit `update_node_ref` entirely: an empty string
 or null is invalid. Only `one_of_updates` carries one non-empty
 `update_node_ref` that names an existing logical update.

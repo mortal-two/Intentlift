@@ -1883,6 +1883,35 @@ def _functional_access_coordinates(
     return next(iter(candidates))
 
 
+def _logical_index_axis_refs(
+    index: Any,
+    domains: Mapping[str, int | str],
+) -> tuple[str, ...]:
+    """Return J-domain axes used by one authored index, in expression order.
+
+    An index-bounded gather has two independent pieces of logical context: the
+    axes carried by the index tensor and the outer axes that select the source
+    tensor slice.  The former can be recovered from the gather result type, but
+    dropping the latter turns a predicate such as ``k2 < x2`` into a spurious
+    non-access-axis error.  This projection reads only references already
+    authored in J and filters out dimension/value refs by the closed domain map.
+    """
+
+    result: list[str] = []
+
+    def visit(expression: ContractExpr) -> None:
+        if expression.op == "ref":
+            assert isinstance(expression.value, str)
+            if expression.value in domains and expression.value not in result:
+                result.append(expression.value)
+        for argument in expression.args:
+            visit(argument)
+
+    for component in index.components:
+        visit(component)
+    return tuple(result)
+
+
 def _flat_stride_factors(
     expression: ContractExpr,
     flat_axis: str,
@@ -4500,7 +4529,11 @@ def _project_functional_boundary(
                             "index shape to logical domain axes"
                         )
                     consumer_axes.append(candidates[0])
-                axes = tuple(consumer_axes)
+                authored_axes = _logical_index_axis_refs(
+                    parsed_accesses[access.access_id].index,
+                    domains,
+                )
+                axes = tuple(dict.fromkeys((*authored_axes, *consumer_axes)))
                 coordinates = tuple(bound.indices for _ in tensor.shape)
                 bounded_gather_projection = IndexBoundedGatherProjection(
                     access.access_id,
@@ -4508,7 +4541,7 @@ def _project_functional_boundary(
                     access.tensor,
                     bound.axis,
                     bound.indices,
-                    axes,
+                    tuple(consumer_axes),
                 )
                 index_bounded_gathers.append(bounded_gather_projection)
             else:

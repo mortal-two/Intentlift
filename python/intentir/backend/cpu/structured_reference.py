@@ -81,6 +81,30 @@ _BINARY = {
     "logical_xor": np.logical_xor,
 }
 
+
+def _integer_divide(
+    left: np.ndarray,
+    right: np.ndarray,
+    dtype: np.dtype[Any],
+) -> np.ndarray:
+    """Implement MLIR ``arith.divsi/divui`` without a float round-trip."""
+
+    lhs, rhs = np.broadcast_arrays(
+        np.asarray(left, dtype=dtype),
+        np.asarray(right, dtype=dtype),
+    )
+    if bool(np.any(rhs == 0)):
+        raise ValueError("structured integer division by zero")
+    if np.issubdtype(dtype, np.signedinteger):
+        info = np.iinfo(dtype)
+        if bool(np.any((lhs == info.min) & (rhs == -1))):
+            raise ValueError("structured signed integer division overflows")
+        quotient = np.floor_divide(lhs, rhs)
+        remainder = np.remainder(lhs, rhs)
+        adjust = ((lhs < 0) != (rhs < 0)) & (remainder != 0)
+        return np.asarray(quotient + adjust.astype(dtype), dtype=dtype)
+    return np.asarray(np.floor_divide(lhs, rhs), dtype=dtype)
+
 _UNARY = {
     "identity": lambda value: value,
     "exp": np.exp,
@@ -893,9 +917,14 @@ class _Evaluator:
                 raise StructuredReferenceUnsupportedError(
                     f"structured map_binary has unsupported fn {fn!r}"
                 )
-            return np.asarray(
-                implementation(self._operand(op, env, 0), self._operand(op, env, 1))
-            )
+            left = self._operand(op, env, 0)
+            right = self._operand(op, env, 1)
+            declared = self._declared_type(self._result_name(op), op)
+            if fn == "div" and declared is not None:
+                result_dtype = np.dtype(numpy_dtype(declared[0]))
+                if np.issubdtype(result_dtype, np.integer):
+                    return _integer_divide(left, right, result_dtype)
+            return np.asarray(implementation(left, right))
         if op.op == "map_unary":
             if set(op.attrs) != {"fn"} or len(op.operands) != 1:
                 raise StructuredReferenceUnsupportedError(

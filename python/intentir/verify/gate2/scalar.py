@@ -1202,7 +1202,7 @@ class ScalarLoweringRunner:
                     broadcast_axes = contract_reference_plan.broadcast_map
                     guarded_loads = ()
                     proven_index_bounds = frozenset()
-                    boundary_profile = "relation_indexed_pointwise_v1"
+                    boundary_profile = str(boundary_projection_record["profile"])
                     predicated_access_count = sum(
                         item.predicate is not None
                         for item in spec.j.boundary.accesses
