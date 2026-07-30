@@ -332,10 +332,14 @@ stage。`pi.program_axes` 以 `{domain_ref,axis}` 将每个 distinct program-coo
 logical consumer domain，不同 d* 可共享 axis，并复用一次 compiled coordinate。Replay 保持该拓扑并消费 axis identity，公共前端
 上下文 (U_f) 只决定公开 API spelling。π 不保存 grid extent、地址公式、Source 文本或新的 mechanism tag。
 
-当一个 Source program ordinal 在进入 tensor address 前显式经过整数 `//`/`%` 解码时，Lift 必须把
-这个 source-grounded logical access/index 整数树写入 J，并以 π occurrence/route 保持其 realization；
-`program_axes` 只绑定原始 coordinate domain 的物理 axis，不能携带或替代 div/rem 公式。Replay
-不得从多个 extent、常见 row-major 约定、grid 或 C 自行猜 delinearization。
+当一个 Source program ordinal 在进入 tensor address 前显式经过整数 `//`/`%` 解码时，program-id
+及其物理整数树不进入 J；J 只拥有解码后的 logical access/index。Lift 用 closed
+`program_linearizations{domain_ref,dimension_refs}` 以 outer-to-inner J `x*` 顺序作者化唯一 row-major
+mixed-radix projection。若该 coordinate 还选择一个全局 J axis 的连续 block，则用 closed
+`program_partitions{domain_ref,target_dimension_ref,block_dimension_ref}` 表示唯一
+`[coord*block_extent,min((coord+1)*block_extent,target_extent))`；两个 x* 均由 J 声明，且 target
+必须等于 block 或通过 closed J dimension relation 依赖 block。两者只引用 J 已有 opaque dimensions；不保存公式文本、具体值、predicate、grid、Source/API 或 target recipe，
+Replay 也不得从当前 valuation 或 kernel 惯例猜出替代关系。
 
 program axis 的 identity 来自 Lift 作者化的 J-domain binding，不来自 instance 数量、声明顺序、grid
 extent 或 C。同一 `d*` 上的多个 realization instance 仍是多个 compiler-visible stage，必须分别

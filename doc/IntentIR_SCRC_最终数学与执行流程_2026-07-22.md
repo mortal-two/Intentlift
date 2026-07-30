@@ -537,8 +537,11 @@ consumer只能验证/求值，不从Harness/grid/C/π/TTIR生成。v12增加π-o
 地址公式或前端文本。domain_ref 唯一，但多个 logical consumer domain 可以按 Source realization
 共享同一物理 axis；其 domain-owned consumer branch 以 empty-slot d* route + branch region 表达，
 π 不复制 predicate。若 Source program ordinal 在地址前显式经过整数 `//`/`%` 解码，该
-source-grounded logical access/index 整数树属于 J，π 只保持 occurrence/route；`program_axes` 不能
-替代公式，Replay 也不能从多个 extent、grid、C 或常见 delinearization 约定猜出公式。
+物理整数树不属于 J；J 只保存解码后的 logical access/index。π 以 closed
+`program_linearizations` 引用 J 的 outer-to-inner dimensions，或以 closed `program_partitions` 引用
+J 已有 target/block dimensions，分别唯一表达 row-major mixed-radix projection 与连续 block
+半开区间。两者不携带公式文本、具体值、predicate、grid、Source/API 或 target recipe；Replay 不能
+从当前 valuation、C 或常见 delinearization 约定猜出替代关系。
 每个当前字段都由Lift LLM 作为完整 `(J,C,π)` 的一部分显式作者，
 Decode/TypeCheck/CandidateCheck 只解析、检查、拒绝
 和诊断，不补造 relation 或 artifact。v1-v7 保持各自 wire bytes/digest 与字段集合，不得静默升级、

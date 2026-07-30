@@ -95,6 +95,13 @@ public entry ABI 仍是边界，private helper 名称本身不进入 J/C/π。
 Replay/Lift construction compile 对 artifact v12 的π-owned `program_axes{domain_ref,axis}`执行
 reject-only核对：compiled `tt.get_program_id` 的数量与literal axis集合都必须匹配；旧v11 packet仅保留
 原count合同，不被静默升级。该检查不生成program coordinate，也不从grid、C或声明顺序选择axis。
+若 accepted π 还以 empty-slot program-domain route 控制 branch region，construction compile 只要求
+compiled structured branch 数不小于这些 distinct `(domain,region)` obligations；它不选择条件、分支
+内容或 target spelling。`program_linearizations/program_partitions` 的具体 def-use 仍由 agent 作者化并
+由正式 Gate1 精确比较，不能把这个最低结构拒绝器写成固定 lowering 或候选合法性 oracle。
+同理，每条 `pi.terminal_controls` 至少要求一个 compiled `control.conditional` terminal fork；普通
+`scf.if` 不能冒充 early-return/continuation topology。checker 不选择 predicate、polarity、arm body 或
+return spelling，精确 CFG 仍由 Gate1 比较。
 
 v6 新增 Triton 3.6 quoted-generic `tt.scan` 的 typed、single-block、encodingless observer contract：
 输入/结果必须是同 shape 的 ranked tensor，axis/reverse、`2N` 个有序 combine block arguments、唯一

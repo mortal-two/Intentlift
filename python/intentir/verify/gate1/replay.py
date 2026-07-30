@@ -2726,6 +2726,105 @@ def _compiled_program_id_axes(ttir: str) -> tuple[int, ...] | None:
     return tuple(sorted(axes))
 
 
+def _packet_required_compiled_program_branches(
+    packet: Mapping[str, Any],
+) -> tuple[int, tuple[str, ...]]:
+    """Project branch regions controlled by exact empty-slot program-domain routes."""
+
+    j = packet.get("j")
+    pi = packet.get("pi")
+    if not isinstance(j, Mapping) or not isinstance(pi, Mapping):
+        return 0, ()
+    boundary = j.get("boundary")
+    domains = boundary.get("domains") if isinstance(boundary, Mapping) else None
+    regions_value = pi.get("regions")
+    instances_value = pi.get("instances")
+    routes_value = pi.get("routes")
+    if not isinstance(domains, Mapping) or not all(
+        isinstance(value, list)
+        for value in (regions_value, instances_value, routes_value)
+    ):
+        return 0, ()
+    regions = {
+        str(item.get("id")): item
+        for item in regions_value
+        if isinstance(item, Mapping) and isinstance(item.get("id"), str)
+    }
+    instances = {
+        str(item.get("id")): item
+        for item in instances_value
+        if isinstance(item, Mapping) and isinstance(item.get("id"), str)
+    }
+    program_regions = {
+        region_ref
+        for region_ref, item in regions.items()
+        if item.get("placement") == "program"
+    }
+
+    def owning_branch(region_ref: str) -> str | None:
+        current: str | None = region_ref
+        seen: set[str] = set()
+        while current is not None and current not in seen:
+            seen.add(current)
+            region = regions.get(current)
+            if region is None:
+                return None
+            if region.get("placement") == "branch":
+                return current
+            parent = region.get("parent")
+            current = str(parent) if parent is not None else None
+        return None
+
+    branch_by_domain: set[tuple[str, str]] = set()
+    for route in routes_value:
+        if not isinstance(route, Mapping) or route.get("slots") != []:
+            continue
+        source_ref = route.get("source")
+        target_ref = route.get("target")
+        if not isinstance(source_ref, str) or not isinstance(target_ref, str):
+            continue
+        source = instances.get(source_ref)
+        target = instances.get(target_ref)
+        if source is None or target is None:
+            continue
+        domain_ref = source.get("semantic_ref")
+        branch_ref = owning_branch(str(target.get("region")))
+        if (
+            source.get("mechanism") == "realize"
+            and source.get("region") in program_regions
+            and isinstance(domain_ref, str)
+            and domain_ref in domains
+            and branch_ref is not None
+        ):
+            branch_by_domain.add((domain_ref, branch_ref))
+    handles = tuple(
+        f"{domain_ref}:{branch_ref}"
+        for domain_ref, branch_ref in sorted(branch_by_domain)
+    )
+    return len(branch_by_domain), handles
+
+
+def _packet_required_terminal_controls(
+    packet: Mapping[str, Any],
+) -> tuple[int, tuple[str, ...]]:
+    """Project exact pi terminal/continuation relations without choosing syntax."""
+
+    pi = packet.get("pi")
+    if not isinstance(pi, Mapping):
+        return 0, ()
+    relations = pi.get("terminal_controls")
+    if not isinstance(relations, list):
+        return 0, ()
+    handles = tuple(
+        f"{item.get('terminal_instance')}:{item.get('continuation_instance')}"
+        for item in relations
+        if isinstance(item, Mapping)
+        and isinstance(item.get("terminal_instance"), str)
+        and isinstance(item.get("continuation_instance"), str)
+    )
+    return len(handles), handles
+
+
 def _compiled_transfer_order_diagnostic(
     packet: Mapping[str, Any],
     ttir: str,
@@ -2841,6 +2940,12 @@ def compiled_packet_obligation_diagnostics(
     expected_program_ids, program_domain_refs, expected_program_axes = (
         _packet_required_compiled_program_ids(packet)
     )
+    expected_program_branches, program_branch_refs = (
+        _packet_required_compiled_program_branches(packet)
+    )
+    expected_terminal_controls, terminal_control_refs = (
+        _packet_required_terminal_controls(packet)
+    )
 
     if expected_program_ids is not None:
         actual_program_ids = actual_ops.get("tt.get_program_id", 0)
@@ -2873,6 +2978,34 @@ def compiled_packet_obligation_diagnostics(
                     "line": None,
                 }
             )
+
+    actual_program_branches = actual_ops.get("control.scf.if", 0)
+    if actual_program_branches < expected_program_branches:
+        diagnostics.append(
+            {
+                "rule_code": "compiled_program_domain_branch_count",
+                "path": (
+                    f"{path_prefix} control.scf.if: expected-at-least="
+                    f"{expected_program_branches}, actual={actual_program_branches}"
+                ),
+                "anonymous_handles": list(program_branch_refs[:32]),
+                "line": None,
+            }
+        )
+
+    actual_terminal_controls = actual_ops.get("control.conditional", 0)
+    if actual_terminal_controls < expected_terminal_controls:
+        diagnostics.append(
+            {
+                "rule_code": "compiled_terminal_control_count",
+                "path": (
+                    f"{path_prefix} control.conditional: expected-at-least="
+                    f"{expected_terminal_controls}, actual={actual_terminal_controls}"
+                ),
+                "anonymous_handles": list(terminal_control_refs[:32]),
+                "line": None,
+            }
+        )
 
     linearized_reduce_producers = {
         producer
@@ -3257,6 +3390,15 @@ Distinct J domains may share one pi.program_axes axis. An empty-slot route from 
 program-region d* realization into a placement=branch region means that region is
 realized only inside that authored J domain; read the condition from J and the axis
 from pi, and do not invent another predicate or program coordinate.
+
+A pi.program_linearizations row decodes the bound coordinate of its domain into the
+listed outer-to-inner J dimensions by the unique row-major mixed-radix quotient and
+remainder projection. A pi.program_partitions row applies that coordinate to the
+named global J target dimension using its named J block dimension: lower is coordinate times block
+extent and upper is min((coordinate+1) times block extent, target extent). These are
+closed realization relations, not permission to guess another formula, grid extent,
+constant, predicate, or target recipe. Preserve their integer dataflow before the
+named target realization.
 """
     readme = """# IntentIR source-blind Replay input
 

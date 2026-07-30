@@ -61,6 +61,12 @@ Codex Lift v20 删除重复的 feedback host tool，特殊回调只保留两个 
 两条路径都不生成 artifact/realization，没有 Gate
 或认证权限。
 
+Task16 的 source-blind `requirements` view 按 declaration order 原样列出每个 J node 的
+`id/op/operands/attrs/result`，并 exact join program-domain branch；它只重索引当前 packet，不生成
+target code。当前 π 还可作者化 closed `program_linearizations` 与 `program_partitions`，分别引用 J
+已有 dimensions 表示 mixed-radix decode 与 program block interval，不携带公式文本、值、Source/API
+或 target recipe。
+
 含 broadcast/lexical/cross-region/route-extent critical facts 的 Replay 在 construction compile 前还必须对当前 exact bytes
 完成 `replay-obligation-audit.v3`；该工具只并置 J/π ledger 与 Replay 自己的编号源码，不映射 relation/instance、
 不诊断、不修复，也不参与 Gate 接受。
@@ -74,7 +80,9 @@ transfer ref，但每个 transfer 必须从匹配 boundary tensor 的 pointer/te
 并按位于 program region、沿作者化 route 到达 `address_base` 的 distinct J domain 数量核对
 compiled `tt.get_program_id` occurrence；artifact v12还按π作者化的`program_axes{domain_ref,axis}`核对
 精确launch axis，不从声明顺序/grid/C猜测；同一 `p*` 的多个 π instance 始终共享一个既有 ABI carrier，
-placement 本身不产生 program coordinate。
+placement 本身不产生 program coordinate。domain-owned branch 至少要求 compiled structured branch，
+`terminal_controls` 至少要求 compiled terminal conditional；两项都只拒绝最低结构，不选择条件、arm
+或目标写法。
 且每个 pointer-producing address stage 必须流向至少一个 transfer。无法闭合的 topology 不猜，不读取
 Source，也不生成地址公式。`typecheck.v30`新增双臂完整store的J-only conditional post-state
 output binding，v29新增program-axis completeness dependent check，v28新增closed

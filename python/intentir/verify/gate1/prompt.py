@@ -100,6 +100,8 @@ _REPLAY_COMPONENT_KEYS = {
             "instances",
             "routes",
             "program_axes",
+            "program_linearizations",
+            "program_partitions",
             "route_extent_transforms",
             "order",
             "sharing",
@@ -120,7 +122,12 @@ _HISTORICAL_J_KEY_SETS = frozenset(
     }
 )
 _HISTORICAL_PI_KEY_SETS = frozenset(
-    {_REPLAY_COMPONENT_KEYS["pi"] - {"program_axes"}}
+    {
+        _REPLAY_COMPONENT_KEYS["pi"]
+        - {"program_linearizations", "program_partitions"},
+        _REPLAY_COMPONENT_KEYS["pi"]
+        - {"program_axes", "program_linearizations", "program_partitions"},
+    }
 )
 _U_F_KEYS = frozenset(
     {

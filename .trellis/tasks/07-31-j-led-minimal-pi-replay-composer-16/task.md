@@ -1,6 +1,6 @@
 # Task 16：J 主导的最小约束 π / Replay 内部 Composer 与 28-Kernel 最终闭合
 
-> 状态：`P0_ACTIVE`（2026-07-31）  
+> 状态：`P1_P2_ACTIVE`（2026-07-31）
 > 接管 Task 15。Task 15 在完成 Compiler-observed Lift、Codex owner 与 23/28 基线后，因 flat-π Replay 作者化接口暴露根本瓶颈而归档；未完成项由本任务继续，不把归档误写成完成。
 
 ## 0. 唯一目标
@@ -59,7 +59,7 @@ artifact 的独立 Gate2 recheck 冒充最终 28/28 交付。
 - [x] 删除/停用 flat `AUTHORING_INDEX.json` 与重复自然语言 ledger；
 - [x] 删除后置可写 reviewer/强制第二次 semantic self-review；
 - [x] Replay prompt 缩为输入路径、工具入口、禁止信息和提交条件；
-- [ ] 逐项区分 Task 15 未提交改动：保留独立正确的 compiler observation/typed relation，剥离旧 ledger 和无关 Gate2 retry 改造；
+- [x] 逐项区分 Task 15 未提交改动：保留独立正确的 compiler observation/typed relation，剥离旧 ledger 和无关 Gate2 retry 改造；
 - [x] 不新增或恢复 `python/tests`，只运行真实 Kernel closure。
 
 ## 3. P1：π_min
@@ -70,6 +70,9 @@ artifact 的独立 Gate2 recheck 冒充最终 28/28 交付。
 - [ ] 只有可由 typed graph 唯一恢复的 identity/default 才允许省略；
 - [x] compact codec 只移除重复 JSON object keys，不能自动发明或删除 artifact 字段；
 - [x] 旧 accepted π 原样复用，不静默重写旧证书，也不因 packet serialization relift。
+- [x] 对 program ordinal 的 mixed-radix decode 与连续 block selection 增加最小 closed
+  `program_linearizations/program_partitions`；两者只引用 J-owned dimensions，不携带 Source、值、
+  predicate、公式文本或 target recipe。
 
 ## 4. P2：Replay 内部 Composer
 
@@ -84,6 +87,9 @@ artifact 的独立 Gate2 recheck 冒充最终 28/28 交付。
   occurrence 强制一个 fragment。
 - [x] 删除 Triton 的 relation/op-to-target 长 RuleCard；`U_f` 只保留短 ABI，避免固定 recipe 与
   12 KiB 无关注意力负担。
+- [x] `requirements` 以 declaration order 原样列出每个 J node 的
+  `id/op/operands/attrs/result`，并把 program-domain branch 做 exact join；该视图不生成 target code，
+  只防止 Replay 把 `exp2/log2` 等已作者化 J 节点漏掉或改写。
 
 真实 legacy-v11 Flash-forward pilot 已证明 Codex 在一个 episode 内作者化 60+ occurrence fragments，
 `composer_status/render` 对显式 slot 与 empty-slot dependency routes 达到 PASS，并将完整源码送入正式
@@ -117,6 +123,25 @@ Llama4 首轮又定位到 consumer-context 的通用 overconstraint：Q/K 两个
 共享 Source physical axis 1，而旧 checker 强制 axis 注入并迫使 Lift 发明常量真假 `effect_if`。
 当前改为 domain_ref 唯一、axis 可 many-to-one；empty-slot d* route 到 branch region 表达
 domain-owned physical consumer control。它不新增 J op、π predicate 字段或 per-kernel recipe。
+
+旧 SplitK-forward Replay 的首个确定性偏差也已定位：accepted J 已显式包含 `exp2` 与 `log2`，但
+Replay 写成 `exp/log`；同时 Source 的 program-axis mixed-radix decode 与 split block selection 只靠
+旧 `program_axes/routes` 无法唯一表达。前者由 exact J-node requirements 解决注意力/消费问题，后者
+由上述两种 closed π relation 补齐，不向 Replay 泄漏 Source recipe。
+
+Llama 的 fresh frontier 还证明普通 `scf.if` 会错误冒充 π 已声明的 terminal/continuation CFG；当前
+source-blind construction compile 对每条 `terminal_controls` 只做最低 `control.conditional` presence
+拒绝，不选择 predicate、arm 或 return，精确 topology 仍交给 Gate1。
+
+pre-change Llama 三分支三轮结果保留为 `NO_CLOSURE` 诊断，不计新增闭合：
+
+```text
+/tmp/intentir-task16-domain-branch-lean-llama-sol-high-b3r2k3-20260731-01/
+```
+
+其中 candidate-01/attempt-03 的 real Replay 在当前 source-blind compile 下被新的
+`compiled_program_domain_branch_count` 直接拒绝（两条 authored domain-branch、compiled 0），证明该
+检查拦截的正是旧 Gate1 已观察到的 consumer-control omission，而不是构造一份新 Replay。
 
 ## 5. P3：J 主导与无泄漏验收
 

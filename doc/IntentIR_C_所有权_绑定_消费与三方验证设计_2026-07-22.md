@@ -422,7 +422,7 @@ TypeCheck(J,C,pi)
 |---|---|---|---|
 | `J=A+B` | 唯一 denotational semantic object | logical signature、value/state relation、domain、predicate、fill、effect、alias、result relation | schedule、frontend API、source topology |
 | `C` | denotation-preserving implementation-selection object | anonymous slots、binding kind、value type、concrete valuation、source-neutral role，以及可选的 J-owned subject/axis attachment | J 语义副本、predicate/formula、kernel-specific executable policy、transformation permission |
-| `pi` | source realization witness | instance、region、route、slot、order、sharing、placement、representation topology | C value、J 语义副本、production target policy |
+| `pi` | source realization witness | instance、region、route、slot、order、sharing、placement、representation topology，以及只引用 J-owned dimension/axis 的 closed program-coordinate mapping | C value、J 语义副本、Source/target recipe、production target policy |
 | `H` | 隐藏求值环境 | inputs、C values、source/replay invocation coordinates、grid、device、compiler options、receipts | 新 IR、语义分类、Replay construction |
 
 最重要的关系是：

@@ -6,6 +6,7 @@ import ast
 import hashlib
 import json
 import os
+import re
 import shlex
 import stat
 import struct
@@ -451,6 +452,93 @@ def _packet_realization(packet: Mapping[str, Any]) -> Any:
     }
 
 
+def _packet_program_domain_branches(packet: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Join exact pi rows that make one J domain own a physical branch region."""
+
+    j = packet.get("j", {})
+    pi = packet.get("pi", {})
+    if not isinstance(j, Mapping) or not isinstance(pi, Mapping):
+        raise TypeError("packet J/pi must be objects")
+    boundary = j.get("boundary", {})
+    domains = boundary.get("domains", {}) if isinstance(boundary, Mapping) else {}
+    regions_value = pi.get("regions", [])
+    instances_value = pi.get("instances", [])
+    routes_value = pi.get("routes", [])
+    axes_value = pi.get("program_axes", [])
+    if not isinstance(domains, Mapping) or not all(
+        isinstance(value, list)
+        for value in (regions_value, instances_value, routes_value, axes_value)
+    ):
+        raise TypeError("packet program-domain branch relations are malformed")
+    regions = {
+        str(item.get("id")): item
+        for item in regions_value
+        if isinstance(item, Mapping) and isinstance(item.get("id"), str)
+    }
+    instances = {
+        str(item.get("id")): item
+        for item in instances_value
+        if isinstance(item, Mapping) and isinstance(item.get("id"), str)
+    }
+    axes = {
+        str(item.get("domain_ref")): item.get("axis")
+        for item in axes_value
+        if isinstance(item, Mapping) and isinstance(item.get("domain_ref"), str)
+    }
+    program_regions = {
+        region_ref
+        for region_ref, item in regions.items()
+        if item.get("placement") == "program"
+    }
+
+    def owning_branch(region_ref: str) -> str | None:
+        current: str | None = region_ref
+        seen: set[str] = set()
+        while current is not None and current not in seen:
+            seen.add(current)
+            region = regions.get(current)
+            if region is None:
+                return None
+            if region.get("placement") == "branch":
+                return current
+            parent = region.get("parent")
+            current = str(parent) if parent is not None else None
+        return None
+
+    result: list[dict[str, Any]] = []
+    for index, route in enumerate(routes_value):
+        if not isinstance(route, Mapping) or route.get("slots") != []:
+            continue
+        source_ref = route.get("source")
+        target_ref = route.get("target")
+        source = instances.get(str(source_ref))
+        target = instances.get(str(target_ref))
+        if source is None or target is None:
+            continue
+        domain_ref = source.get("semantic_ref")
+        branch_ref = owning_branch(str(target.get("region")))
+        if (
+            source.get("mechanism") != "realize"
+            or source.get("region") not in program_regions
+            or not isinstance(domain_ref, str)
+            or domain_ref not in domains
+            or branch_ref is None
+        ):
+            continue
+        result.append(
+            {
+                "route_index": index,
+                "domain_ref": domain_ref,
+                "domain": domains[domain_ref],
+                "physical_axis": axes.get(domain_ref),
+                "source_instance": source_ref,
+                "target_instance": target_ref,
+                "branch_region": branch_ref,
+            }
+        )
+    return result
+
+
 def _packet_requirements(packet: Mapping[str, Any]) -> dict[str, Any]:
     """Return a bounded exact checklist over authored Replay obligations.
 
@@ -477,6 +565,23 @@ def _packet_requirements(packet: Mapping[str, Any]) -> dict[str, Any]:
     operations = _packet_graph_ops(
         function.get("body", []), "j.intent.intent_function.body"
     )
+    node_ids = j.get("node_ids", {})
+    path_to_node = (
+        {
+            "j.intent.intent_function."
+            + re.sub(r"\[([0-9]+)\]", r".\1", str(path)): str(node_ref)
+            for node_ref, path in node_ids.items()
+        }
+        if isinstance(node_ids, Mapping)
+        else {}
+    )
+    operations = [
+        {
+            **item,
+            "id": item.get("id") or path_to_node.get(str(item.get("path"))),
+        }
+        for item in operations
+    ]
     operation_counts = Counter(
         str(item.get("op"))
         for item in operations
@@ -484,7 +589,14 @@ def _packet_requirements(packet: Mapping[str, Any]) -> dict[str, Any]:
     )
     sequence_limit = 64
     sequence = [
-        [item.get("path"), item.get("id"), item.get("op")]
+        [
+            item.get("path"),
+            item.get("id"),
+            item.get("op"),
+            item.get("operands"),
+            item.get("attrs"),
+            item.get("result"),
+        ]
         for item in operations[:sequence_limit]
     ]
     topology_ops = {
@@ -502,6 +614,8 @@ def _packet_requirements(packet: Mapping[str, Any]) -> dict[str, Any]:
 
     relation_names = (
         "program_axes",
+        "program_linearizations",
+        "program_partitions",
         "route_extent_transforms",
         "iterations",
         "loop_carriers",
@@ -511,8 +625,15 @@ def _packet_requirements(packet: Mapping[str, Any]) -> dict[str, Any]:
     )
     relation_views: dict[str, Any] = {}
     referenced_instances: set[str] = set()
+    program_domain_branches = _packet_program_domain_branches(packet)
+    for row in program_domain_branches:
+        referenced_instances.update(
+            {str(row["source_instance"]), str(row["target_instance"])}
+        )
     relation_instance_fields = {
         "program_axes": (),
+        "program_linearizations": (),
+        "program_partitions": (),
         "route_extent_transforms": ("source", "target"),
         "iterations": ("loop_instance", "tile_instance"),
         "loop_carriers": ("loop_instance", "init", "state", "next", "result"),
@@ -640,7 +761,14 @@ def _packet_requirements(packet: Mapping[str, Any]) -> dict[str, Any]:
         "operations": {
             "total": len(operations),
             "counts": dict(sorted(operation_counts.items())),
-            "sequence_columns": ["path", "id", "op"],
+            "sequence_columns": [
+                "path",
+                "id",
+                "op",
+                "operands",
+                "attrs",
+                "result",
+            ],
             "sequence": sequence,
             "sequence_omitted": max(0, len(operations) - sequence_limit),
             "sequence_next": (
@@ -672,6 +800,7 @@ def _packet_requirements(packet: Mapping[str, Any]) -> dict[str, Any]:
             "items": broadcast_obligations,
         },
         "pi_time_and_control": relation_views,
+        "pi_program_domain_branches": program_domain_branches,
         "pi_instance_mechanisms": {
             "columns": ["id", "semantic_ref", "mechanism", "region"],
             "total": len(instances),
@@ -867,6 +996,12 @@ def _packet_critical_facts(packet: Mapping[str, Any]) -> dict[str, Any]:
     program_axes = pi.get("program_axes", [])
     if not isinstance(program_axes, list):
         raise TypeError("packet pi program_axes must be an array")
+    program_linearizations = pi.get("program_linearizations", [])
+    if not isinstance(program_linearizations, list):
+        raise TypeError("packet pi program_linearizations must be an array")
+    program_partitions = pi.get("program_partitions", [])
+    if not isinstance(program_partitions, list):
+        raise TypeError("packet pi program_partitions must be an array")
     instances_value = pi.get("instances", [])
     regions_value = pi.get("regions", [])
     order_value = pi.get("order", [])
@@ -1001,6 +1136,8 @@ def _packet_critical_facts(packet: Mapping[str, Any]) -> dict[str, Any]:
         "sharing_obligations": sharing_obligations,
         "physical_iterations": physical_iterations,
         "program_axes": program_axes,
+        "program_linearizations": program_linearizations,
+        "program_partitions": program_partitions,
         "route_extent_transforms": route_extent_transforms,
         "reduction_linearizations": reduction_linearizations,
         "lexical_regions": lexical_regions,
@@ -1026,6 +1163,8 @@ def _replay_obligation_audit_view(
     lexical_regions = facts["lexical_regions"]
     cross_region_order = facts["cross_region_order"]
     program_axes = facts["program_axes"]
+    program_linearizations = facts["program_linearizations"]
+    program_partitions = facts["program_partitions"]
     route_extent_transforms = facts["route_extent_transforms"]
     return {
         "protocol": "intentir.replay-obligation-audit.v3",
@@ -1035,6 +1174,8 @@ def _replay_obligation_audit_view(
         "lexical_regions": lexical_regions,
         "cross_region_order": cross_region_order,
         "program_axes": program_axes,
+        "program_linearizations": program_linearizations,
+        "program_partitions": program_partitions,
         "route_extent_transforms": route_extent_transforms,
         "source_nonempty_lines": [
             {
@@ -1065,6 +1206,8 @@ def _replay_obligation_audit_required(
             "lexical_regions",
             "cross_region_order",
             "program_axes",
+            "program_linearizations",
+            "program_partitions",
             "route_extent_transforms",
         )
     )
@@ -3199,6 +3342,10 @@ class IntentIRReplayEnvironment:
                 "lexical_region_count": len(value["lexical_regions"]),
                 "cross_region_order_count": len(value["cross_region_order"]),
                 "program_axis_count": len(value["program_axes"]),
+                "program_linearization_count": len(
+                    value["program_linearizations"]
+                ),
+                "program_partition_count": len(value["program_partitions"]),
                 "route_extent_transform_count": len(
                     value["route_extent_transforms"]
                 ),

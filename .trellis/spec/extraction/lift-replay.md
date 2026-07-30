@@ -300,6 +300,8 @@ bound/formula/value/API，也不让 fixed code创建 J loop、选择锚点或推
 body instance 类型，因此 pointer/address recurrence 与 accumulator 都由 Lift 分别作者化。
 `artifact.v9` 再加入 `pi.terminal_controls`，只在 J 已有 `effect_if` 的 sibling arm scopes 上指定
 terminal/continuation topology；不复制 predicate、return、Source 或 frontend spelling。
+source-blind construction compile 对每条 relation 只要求至少一个 compiled terminal conditional，拒绝
+用普通 structured value/effect `if` 冒充 early-return CFG；它不生成 predicate、arm 或 return。
 `artifact.v10` 再加入 `pi.route_extent_transforms`：只允许 attached required positive-int C extent
 在一条已存在 route 的一个 target slot 上按 literal divisor>1 做 floor/ceil partition。Lift 必须显式
 作者化 source/target/slot/divisor/rounding 与 C attachment；checker 不从 Source、J domain 或 valuation
@@ -429,6 +431,11 @@ LLM-authored exact bytes 已重新通过 Replay ingress 与 synthetic compile �
 缺少最后一次 submit 调用的情况下保留它进入正式 Gate1。任一检查未通过仍以 infrastructure failure
 结束，host 不补写或修复源码。
 
+该 requirements view 还按 declaration order 原样列出每个 J node 的
+`id/op/operands/attrs/result`，并把 empty-slot program-domain route 与其 branch region 作 exact join。
+这些行只是在同一 packet 内重索引，防止 coding agent 漏读或改写已有 J；它们不映射 target API、
+不生成源码，也不能成为 Gate1 membership oracle。
+
 `replay-check.v10` 在 v9 的 transfer、iteration、carrier 与 pointer-address guard 之外，按 π 中
 `reduction_linearization` 的作者化数量要求 synthetic TTIR 至少出现相同数量的 distinct
 `tt.reshape -> tt.reduce(axis=0)` dataflow；额外
@@ -489,6 +496,14 @@ realize但共享该 coordinate；instance multiplicity、声明顺序、grid ext
 axis。若 empty-slot route 从 program-region d* instance 进入 `placement=branch` region，该 region
 只在 J domain 内 realization；J 保存 domain 公式，π 不复制 predicate。具体 frontend spelling 由
 agent 选择并由 construction compile/Gate 拒绝，`U_f` 不再提供 relation-to-API 映射。
+
+若该 coordinate 在 Source realization 中还执行 row-major mixed-radix decode，
+`pi.program_linearizations{domain_ref,dimension_refs}` 以 outer-to-inner J `x*` 顺序给出唯一 closed
+projection；若 coordinate 选择一个 J target axis 的连续 block，
+`pi.program_partitions{domain_ref,target_dimension_ref,block_dimension_ref}` 给出唯一半开区间；target
+必须等于 block，或通过 closed `J.dimension_relations` 依赖 block。二者只引用已存在的 J dimensions，不携带 concrete extent、公式文本、
+predicate、grid、Source/API 或 target recipe。Replay 必须消费其整数 dataflow，fixed code只检查引用、
+闭合与可观察的最低结构，不生成实现。
 
 `pi.iterations` 是必须消费的 source-realization topology，不是可选 schedule hint。对
 `extent_step`，Replay 使用 J trip extent 为 upper、匹配 C tile 为 step；对 `tile_ordinal`，Replay

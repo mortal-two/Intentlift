@@ -56,7 +56,11 @@ tmp/ are writable. There is no Source, Harness/compiler view, actual C value, Ga
 result, earlier Replay, sibling state, repository, or network.
 
 J is the only semantic authority; pi supplies realization constraints only. Read
-input/packet.json by file path and inspect only the sections you need. Do not infer a
+input/packet.json by file path and inspect only the sections you need. Begin with
+`python .agents/intentir_agent_tool.py packet_query requirements`; it is an exact,
+bounded declaration-order view of J nodes and pi control/time relations, not a plan
+or lowering rule. Preserve every listed J node's operands, attrs and result before
+choosing target syntax. Do not infer a
 Source recipe or invent a missing fact. input/REPLAY_CONTRACT.md defines the compact
 ownership boundary; input/TOOL.md defines the exact tools.
 
@@ -195,6 +199,12 @@ _PI_ROW_COLUMNS: dict[str, tuple[str, ...]] = {
     "sharing": ("source", "consumers"),
     "refinements": ("instance", "kind", "auth_ref"),
     "program_axes": ("domain_ref", "axis"),
+    "program_linearizations": ("domain_ref", "dimension_refs"),
+    "program_partitions": (
+        "domain_ref",
+        "target_dimension_ref",
+        "block_dimension_ref",
+    ),
 }
 
 

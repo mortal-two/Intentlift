@@ -1173,9 +1173,19 @@ domains may bind the same axis when Source multiplexes that coordinate; the
 domain_ref is unique but the physical axis need not be. Never derive axis from grid,
 instance order, C, or placement alone.
 When one Source program ordinal is decoded by integer // or % before tensor
-addressing, preserve that source-grounded integer tree in J's logical access/index
-relations and route its realization occurrences in pi. program_axes supplies only
-the physical axis identity; it cannot carry, infer, or replace the div/rem formula.
+addressing, do not put program_id or its physical arithmetic in J. Keep J access
+indices logical. Author one program_linearizations row whose outer-to-inner x*
+dimension order gives the closed row-major mixed-radix decode of that d* coordinate,
+then route its realization occurrence to the affected address stages. This pi row is
+physical coordinate topology only: no formula string, value, predicate, Source/API,
+or target recipe. program_axes still supplies only physical axis identity.
+When one program coordinate selects a block of a larger J dimension, author one
+program_partitions row: target_dimension_ref names that declared global J dimension
+and block_dimension_ref names its declared J block dimension. The target must equal
+or depend on the block through J.dimension_relations. Its fixed interval is
+[coordinate*block_extent,min((coordinate+1)*block_extent,target_extent)). The owning
+d* program occurrence remains connected to address realization through normal pi routes. Do not replace this with a
+literal current block, a C-only guess, or a J program_id node.
 Encode the pointer-carrier boundary
 without adding fields: when a Source pointer/tensor carrier is applied at the
 program-uniform base stage and that pointer result then receives the lane

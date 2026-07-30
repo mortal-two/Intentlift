@@ -4633,6 +4633,7 @@ class Gate1Artifact(StrictJSONMixin):
                     self.SCHEMA,
                 },
                 include_program_axes=self.wire_schema == self.SCHEMA,
+                include_program_coordinate_maps=self.wire_schema == self.SCHEMA,
             ),
         }
 
@@ -5141,7 +5142,10 @@ def _opaque_pi_json(
 ) -> dict[str, Any]:
     """Alpha-rename only pi's opaque J/C references; topology is unchanged."""
 
-    result = witness.to_json(include_program_axes=include_program_axes)
+    result = witness.to_json(
+        include_program_axes=include_program_axes,
+        include_program_coordinate_maps=include_program_axes,
+    )
     for instance in result["instances"]:
         instance["semantic_ref"] = _opaque_reference(
             instance["semantic_ref"], aliases
@@ -5154,6 +5158,24 @@ def _opaque_pi_json(
     for binding in result.get("program_axes", []):
         binding["domain_ref"] = _opaque_reference(
             binding["domain_ref"], aliases
+        )
+    for relation in result.get("program_linearizations", []):
+        relation["domain_ref"] = _opaque_reference(
+            relation["domain_ref"], aliases
+        )
+        relation["dimension_refs"] = [
+            _opaque_reference(item, aliases)
+            for item in relation["dimension_refs"]
+        ]
+    for relation in result.get("program_partitions", []):
+        relation["domain_ref"] = _opaque_reference(
+            relation["domain_ref"], aliases
+        )
+        relation["target_dimension_ref"] = _opaque_reference(
+            relation["target_dimension_ref"], aliases
+        )
+        relation["block_dimension_ref"] = _opaque_reference(
+            relation["block_dimension_ref"], aliases
         )
     return result
 

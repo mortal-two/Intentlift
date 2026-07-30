@@ -292,7 +292,7 @@ mu : Instances -> Ids(J) union Ids(C)
 accepted artifact 中的 π 始终是上述 canonical dependent object。fresh Codex Replay packet 可以使用
 `intentir.pi-min.relational-column-wire.v1` 对固定 relation list 做 columns + row 的一一可逆编码；
 codec 必须在发送前 round-trip 得到完全相等的 canonical π，字段集合变化即 fail closed。它只消除
-JSON key 重复，不省略 multiplicity、route/order/sharing、time/control、program axis 或 refinement，
+JSON key 重复，不省略 multiplicity、route/order/sharing、time/control、program axis/coordinate map 或 refinement，
 也不要求旧 artifact relift。
 
 不存在 `Ids(interface)`。需要接口信息时读取 `InterfaceView(J)`，但该投影不增加命名空间、
@@ -301,7 +301,8 @@ JSON key 重复，不省略 multiplicity、route/order/sharing、time/control、
 除下述 v10 closed route-local extent divisor/rounding 外，π 禁止携带：
 
 - operator/function/reducer、predicate/fill/index formula 或 semantic constant；
-- logical shape、result relation、destination/conflict semantics；
+- 可独立解释的 logical shape、result relation、destination/conflict semantics；closed program-coordinate
+  relation 只能引用 J 已声明的 opaque x*/subject-axis，不能复制 shape/value；
 - Source text/name/path/span、Kernel/rule/family ID；
 - frontend API、C concrete value 或可执行自由文本；
 - 任何能在删除 J/C 后获得独立 denotation 的结构。
@@ -343,10 +344,38 @@ axis 不得从 declaration order、grid、C 或 instance multiplicity 推断。
 topology；π 不保存比较式、extent、polarity、Source spelling 或 target API。Mask-J 后 d* 仍是不透明
 handle，不能据此恢复计算语义。
 
-若一个 Source program ordinal 在进入 tensor address 前显式经过整数 `//`/`%` 解码，则该闭合整数树
-必须由 J 的 source-grounded logical access/index relation 表达，并由 π occurrence/route 保持；
-`program_axes` 只绑定原始 program-coordinate domain 的物理 axis，不能携带或替代 div/rem 公式。
-固定 Replay 工具既不能从多个 logical extent 猜 row-major delinearization，也不能把该树藏进 C。
+若一个 Source program ordinal 在进入 tensor address 前显式经过整数 `//`/`%` 解码，program_id 与
+这棵物理整数树都不进入 J。J 只保存解码后逻辑坐标上的 access/index。Lift 另写 closed relation：
+
+```text
+program_linearizations = {
+  domain_ref,
+  dimension_refs: [outermost_x, ..., innermost_x]
+}
+```
+
+`domain_ref` 必须已有 `program_axes` binding；每个 x* 必须由该 J domain 引用。relation 的唯一全局
+denotation 是对该物理 coordinate 按所列 extents 作 row-major mixed-radix quotient/remainder projection。
+它不保存公式文本、常量、predicate、grid extent、Source/API 或 target recipe。若 Source 使用另一种
+非 row-major 映射，不能滥用该 relation，必须先增加另一种 closed typed relation 或 fail closed。
+
+若同一 program coordinate 选择一个全局 J axis 的连续 block，则 Lift 可进一步作者化：
+
+```text
+program_partitions = {
+  domain_ref,
+  target_dimension_ref,
+  block_dimension_ref
+}
+```
+
+两个 x* 都必须是已声明 J dimensions，且 target 必须等于 block，或通过 closed
+`J.dimension_relations` 依赖 block。program-domain occurrence 到 address realization 的连接仍由普通 π
+routes 表达。relation 的唯一
+denotation 是半开区间
+`[coord*BlockExtent, min((coord+1)*BlockExtent, TargetExtent))`。因此 target/block extent 都由 J 拥有，
+π 不携带值或公式；它只保存 Source physical program-to-block realization。固定 Replay
+工具不能从 output shape、C、grid 或当前 valuation 猜该关系，也不能把 program_id 塞进 J。
 
 `address_base/address_lane` 标记 address contribution 角色；pointer/address operation 的次数由
 `J.signature` carrier kind 与 π route 共同决定，不能只看 base-to-lane edge。若 pointer/tensor 的
@@ -570,8 +599,11 @@ wire/decode 窄升为 `artifact.v3 / decode.v3`；v4 随后增加 dimension cons
 `value_dimension_relations`、`consumer_extensions` 和 typed loop-carrier wire，v5 再增加
 `access_guard_relations`，v6/v7 增加 typed control，v8 增加 physical-only time，v9 增加
 terminal-control topology，v10 增加上述 closed route-local extent transform，v11增加closed
-dimension relations，v12增加closed program-axis identity。当前 active 合同为
-`artifact.v12 / decode.v17 / typecheck.v30 / candidate-check.v1`；v30只接受同一authored
+dimension relations，v12增加closed program-axis identity；Task16 的当前 pre-freeze v12 wire 另允许
+上述可选 `program_linearizations/program_partitions`，缺失时均为空且不改写历史 evidence。当前 active 合同为
+`artifact.v12 / decode.v17 / typecheck.v30 / candidate-check.v1`；当前 pre-freeze checker 对两种
+program-coordinate relation 额外检查 J dimension/axis、program binding、instance ownership 与从 owning
+domain realization 到 target 的 route reachability，只拒绝不补造；v30只接受同一authored
 `effect_if`两臂各唯一完整store所定义的conditional post-state output，不生成select/mapping；v29新增program-axis completeness
 dependent check，v28新增上述dimension relation dependent check，v27新增route extent dependent check。v26 继承 v25，并新增上述 direct
 singleton equality 的 source-free broadcast dependent check。v25 继承 v24，并新增

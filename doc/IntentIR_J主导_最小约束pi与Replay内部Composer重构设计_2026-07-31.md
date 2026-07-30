@@ -65,6 +65,19 @@ Replay := Render_f(K)
 独立 branch region，并由 program-region d* instance 的 empty-slot route 控制。J domain 是唯一条件，
 π 只保存共享 axis 与 branch topology，不保存比较式或 extent。
 
+当 Source 的一个 program ordinal 还要经过 mixed-radix 解码或选择一个逻辑轴的连续 block 时，仅靠
+`program_axes` 与 route 并不能唯一重建 realization。π_min 因而允许两种 closed typed relation：
+
+- `program_linearizations{domain_ref,dimension_refs}`：按 outer-to-inner 的 J `x*` 顺序，唯一表示
+  row-major quotient/remainder projection；
+- `program_partitions{domain_ref,target_dimension_ref,block_dimension_ref}`：直接引用 J 声明的全局与
+  block dimensions；target 必须等于 block，或通过 closed J dimension relation 依赖 block；唯一表示
+  `[coord*block_extent,min((coord+1)*block_extent,target_extent))`。
+
+两者只引用 J 已经作者化的 opaque dimensions，不携带公式文本、具体 extent、grid、
+predicate、Source/API 或 target spelling；删除 J 后没有可独立执行的 denotation。`program_id` 及其
+物理整数树不进入 J，J 仍只描述解码后的逻辑 access/index。
+
 π 禁止携带：
 
 - J operator、计算公式、常量填充值、predicate 表达式或 reduction 语义；
@@ -121,6 +134,12 @@ host 不得提供：
 - 从 Source、Gate1/Gate2、Harness 或 kernel identity 获得的提示；
 - 自动补写 semantic node、predicate、effect、route 或 control。
 
+为了避免 agent 在长 JSON 中漏掉 J 节点，工具可以提供 declaration-order 的 exact requirements view：
+每行只是当前 J 节点的 `id/op/operands/attrs/result`，以及当前 π 的 time/control/route relation。它是
+同一 packet 的有界重索引，不是 lowering plan；不得给出 target statement、API、代码片段或推荐。
+fixed host 也不依据该 view 宣告节点已经被正确实现，真正的语义/realization 闭合仍由 fresh Gate1
+裁决。
+
 Replay agent 可以在本次 episode 内自己抽象局部 helper；这等价于 Codex 自己写程序，不是共享模板。helper 不得跨 formal Replay round 保留。
 
 ## 5. 为什么它仍然由 J 主导
@@ -174,7 +193,8 @@ wall-time 截止也不应丢弃已完成的 LLM 输出：只有当截止点的 e
 
 ### 7.2 再建立内部 composer
 
-- 在现有 Codex Replay bridge 上增加通用 syntax-tree/editor 操作；
+- 默认让 Codex 直接维护完整 source，提供 exact-text patch、checkpoint/rollback、compile/check 与
+  own-TTIR inspection；只有真实交叉引用需要时才使用 route-bound fragment；
 - composer state 保存在 episode workspace，runner不持有语义状态；
 - compile/check/own-TTIR 读取当前 render 结果；
 - raw escape 保留开放世界能力，避免固定 AST 覆盖不了新 frontend 语法。

@@ -122,6 +122,8 @@ class TypeCheckErrorCode(str, Enum):
     ROUTE_TYPE_MISMATCH = "route_type_mismatch"
     ROUTE_EXTENT_TRANSFORM_INVALID = "route_extent_transform_invalid"
     PROGRAM_AXIS_BINDING_INVALID = "program_axis_binding_invalid"
+    PROGRAM_LINEARIZATION_INVALID = "program_linearization_invalid"
+    PROGRAM_PARTITION_INVALID = "program_partition_invalid"
     TRANSFER_ADDRESS_ROUTE_MISSING = "transfer_address_route_missing"
     INVALID_SHARING = "invalid_sharing"
     ITERATION_WITNESS_INVALID = "iteration_witness_invalid"
@@ -4822,6 +4824,108 @@ def _check_program_axes(
             )
 
 
+def _check_program_coordinate_maps(
+    j: SemanticArchive,
+    pi: RealizationWitness,
+    diagnostics: list[TypeCheckDiagnostic],
+) -> None:
+    """Check closed mixed-radix and program-block realization relations."""
+
+    domains = set(j.boundary.domains)
+    dimensions = _declared_dimensions(j)
+    bound_domains = {str(item["domain_ref"]) for item in pi.program_axes}
+    dimension_dependencies = {
+        relation.result: relation.expr.arg for relation in j.dimension_relations
+    }
+
+    def depends_on(target: str, block: str) -> bool:
+        current = target
+        seen: set[str] = set()
+        while current not in seen:
+            if current == block:
+                return True
+            seen.add(current)
+            next_ref = dimension_dependencies.get(current)
+            if next_ref is None:
+                return False
+            current = next_ref
+        return False
+
+    for index, relation in enumerate(pi.program_linearizations):
+        base = f"pi.program_linearizations[{index}]"
+        domain_ref = str(relation["domain_ref"])
+        dimension_refs = tuple(str(item) for item in relation["dimension_refs"])
+        domain_dimensions = (
+            set(re.findall(r"x[0-9]+", str(j.boundary.domains[domain_ref])))
+            if domain_ref in domains
+            else set()
+        )
+        if domain_ref not in domains or domain_ref not in bound_domains:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.PROGRAM_LINEARIZATION_INVALID,
+                    f"{base}.domain_ref",
+                    "program linearization requires one declared J domain with an "
+                    "explicit pi.program_axes binding",
+                    domain_ref,
+                )
+            )
+        if any(item not in dimensions for item in dimension_refs):
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.PROGRAM_LINEARIZATION_INVALID,
+                    f"{base}.dimension_refs",
+                    "program linearization may reference only declared J dimensions",
+                    ",".join(dimension_refs),
+                )
+            )
+        if domain_ref in domains and set(dimension_refs) != domain_dimensions:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.PROGRAM_LINEARIZATION_INVALID,
+                    f"{base}.dimension_refs",
+                    "mixed-radix dimensions must be exactly visible in the owning "
+                    "J domain rather than borrowed from an unrelated shape",
+                    ",".join(dimension_refs),
+                )
+            )
+
+    for index, relation in enumerate(pi.program_partitions):
+        base = f"pi.program_partitions[{index}]"
+        domain_ref = str(relation["domain_ref"])
+        target_ref = str(relation["target_dimension_ref"])
+        block_ref = str(relation["block_dimension_ref"])
+        if domain_ref not in domains or domain_ref not in bound_domains:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.PROGRAM_PARTITION_INVALID,
+                    f"{base}.domain_ref",
+                    "program partition requires one declared J domain with an "
+                    "explicit pi.program_axes binding",
+                    domain_ref,
+                )
+            )
+        if target_ref not in dimensions or block_ref not in dimensions:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.PROGRAM_PARTITION_INVALID,
+                    base,
+                    "program partition may reference only declared J dimensions",
+                    f"{target_ref}:{block_ref}",
+                )
+            )
+        elif not depends_on(target_ref, block_ref):
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.PROGRAM_PARTITION_INVALID,
+                    f"{base}.block_dimension_ref",
+                    "target dimension must equal or have a closed J dimension-relation "
+                    "dependency on the declared block dimension",
+                    f"{target_ref}:{block_ref}",
+                )
+            )
+
+
 def type_check(
     j: SemanticArchive,
     c: ImplementationConfig,
@@ -5102,6 +5206,11 @@ def type_check(
         pi,
         diagnostics,
         required=require_program_axes,
+    )
+    _check_program_coordinate_maps(
+        j,
+        pi,
+        diagnostics,
     )
 
     route_edges = {

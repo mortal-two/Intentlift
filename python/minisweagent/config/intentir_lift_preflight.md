@@ -179,6 +179,15 @@ the artifact schema or external TypeCheck.
    when Source multiplexes that coordinate. Never infer or renumber an axis from declaration
    order, grid extent, C, or instance multiplicity. Use a distinct
    J domain anchor only when Source really contains a distinct program coordinate.
+   When one bound program coordinate is decoded by `//`/`%`, keep `program_id` out
+   of J and author one `program_linearizations` row with the exact outer-to-inner
+   J `x*` dimension order. Its denotation is the fixed row-major mixed-radix
+   projection; it contains no formula, constant, predicate, Source/API, or target
+   recipe. When that coordinate selects a block of a larger J axis, author one
+   `program_partitions` row naming the declared global J target dimension and its
+   declared J block dimension. The target must equal or depend on the block through
+   closed J.dimension_relations. Its interval is fixed by the relation; never guess a literal block
+   from the current valuation and never introduce a J program-coordinate node.
    If one Source SSA coordinate/address intermediate is defined once and reused by
    several accesses, emit one producer with routed consumers and one-producer
    sharing; syntactic uses do not create repeated producer instances. Repeat a
