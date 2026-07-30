@@ -1989,6 +1989,38 @@ def _packet_required_compiled_reduction_linearizations(
     return len(refs), refs
 
 
+def _packet_required_compiled_transposes(
+    packet: Mapping[str, Any],
+) -> tuple[int, tuple[str, ...]]:
+    """Return explicit transpose stages authored by J and pi."""
+
+    j = packet.get("j")
+    pi = packet.get("pi")
+    if not isinstance(j, Mapping) or not isinstance(pi, Mapping):
+        return 0, ()
+    operations = _packet_intent_ops_by_path(packet)
+    node_ids = j.get("node_ids")
+    transpose_nodes = {
+        str(node)
+        for node, raw_path in node_ids.items()
+        if isinstance(node_ids, Mapping)
+        and isinstance(raw_path, str)
+        and (
+            operations.get(raw_path.removeprefix("intent_function."), {}).get("op")
+            == "transpose"
+        )
+    } if isinstance(node_ids, Mapping) else set()
+    refs = tuple(
+        str(item.get("id"))
+        for item in pi.get("instances", [])
+        if isinstance(item, Mapping)
+        and item.get("mechanism") == "realize"
+        and item.get("semantic_ref") in transpose_nodes
+        and isinstance(item.get("id"), str)
+    )
+    return len(refs), refs
+
+
 def _packet_required_compiled_address_operations(
     packet: Mapping[str, Any],
 ) -> tuple[int | None, tuple[str, ...]]:
@@ -2360,6 +2392,7 @@ def compiled_packet_obligation_diagnostics(
     expected_reduction_linearizations, linearization_refs = (
         _packet_required_compiled_reduction_linearizations(packet)
     )
+    expected_transposes, transpose_refs = _packet_required_compiled_transposes(packet)
     expected_address_operations, address_refs = (
         _packet_required_compiled_address_operations(packet)
     )
@@ -2405,6 +2438,20 @@ def compiled_packet_obligation_diagnostics(
                     f"actual={actual_reduction_linearizations}"
                 ),
                 "anonymous_handles": list(linearization_refs[:32]),
+                "line": None,
+            }
+        )
+
+    actual_transposes = actual_ops.get("tt.trans", 0)
+    if actual_transposes < expected_transposes:
+        diagnostics.append(
+            {
+                "rule_code": "compiled_transpose_realization_count",
+                "path": (
+                    f"{path_prefix} tt.trans: expected-at-least="
+                    f"{expected_transposes}, actual={actual_transposes}"
+                ),
+                "anonymous_handles": list(transpose_refs[:32]),
                 "line": None,
             }
         )
