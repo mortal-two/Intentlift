@@ -1,0 +1,195 @@
+{
+  "backend": "openai.codex-cli.intentir-lift.v31",
+  "candidate_check": [
+    {
+      "candidate_sha256": "707fecbebd4e066a44a8fbe8b199cc477ee75821d637b07dbf6d0a83e805bfc2",
+      "diagnostics": [
+        {
+          "observed_refs_or_types": [
+            "ValueError: J q handles are not declaration ordered"
+          ],
+          "path": "<candidate>",
+          "rule_code": "decode_rejected"
+        },
+        {
+          "observed_refs_or_types": [
+            "expected=[\"q0\"]",
+            "actual=[\"s0\"]"
+          ],
+          "path": "j.scopes[*].scope_id",
+          "rule_code": "construction_handle_sequence"
+        }
+      ],
+      "status": "fail",
+      "trigger": "submit_candidate"
+    },
+    {
+      "candidate_sha256": "b76554973d0f8db7f675d20c7c1685d7bddfa3357b6fd25a93be904a85570b00",
+      "diagnostics": [
+        {
+          "observed_refs_or_types": [
+            "t1",
+            "detail: floating transcendental/reduction/reassociation output requires explicit tolerance relation"
+          ],
+          "path": "j.boundary.result_relations",
+          "rule_code": "result_relation_incompatible"
+        },
+        {
+          "observed_refs_or_types": [
+            "i8",
+            "detail: source carrier _ValueType(dtype='f32', rank=1) is incompatible with target operand _ValueType(dtype='f32', rank=2)"
+          ],
+          "path": "pi.routes[6].slots[0]",
+          "rule_code": "route_type_mismatch"
+        },
+        {
+          "observed_refs_or_types": [
+            "i9",
+            "detail: source carrier _ValueType(dtype='f32', rank=1) is incompatible with target operand _ValueType(dtype='f32', rank=2)"
+          ],
+          "path": "pi.routes[7].slots[0]",
+          "rule_code": "route_type_mismatch"
+        }
+      ],
+      "status": "fail",
+      "trigger": "submit_candidate"
+    },
+    {
+      "candidate_sha256": "7c4b30fcd05d1187f769d197bae1451e342f9becd19b157f3dd8968403926dcd",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "submit_candidate"
+    },
+    {
+      "candidate_sha256": "7c4b30fcd05d1187f769d197bae1451e342f9becd19b157f3dd8968403926dcd",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "host_post_turn"
+    },
+    {
+      "candidate_sha256": "7c4b30fcd05d1187f769d197bae1451e342f9becd19b157f3dd8968403926dcd",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "semantic_probe"
+    }
+  ],
+  "cli_turns": 1,
+  "elapsed_ms": 297155.3371300688,
+  "fresh_session": true,
+  "fresh_workspace": true,
+  "knowledge_profile": "intentir.lift-knowledge.v90",
+  "model_segments_lower_bound": 8,
+  "owner_session_id": "cbfb425abb0649d685321db9aab8ec9b",
+  "persistent_owner": true,
+  "persistent_workspace": true,
+  "runtime": "intentir.codex-cli.agent-runtime.v3",
+  "semantic_probe": [
+    {
+      "authority": "public Source-vs-J diagnostic only; no artifact field is generated, repaired, accepted, or certified",
+      "candidate_sha256": "7c4b30fcd05d1187f769d197bae1451e342f9becd19b157f3dd8968403926dcd",
+      "case_id": "finite-public-lift-probe-1",
+      "comparison": {
+        "left": "source",
+        "outputs": [
+          {
+            "atol": 1e-06,
+            "detail": "",
+            "equal_nan": false,
+            "equality_required": true,
+            "max_abs_error": 1.1920928955078125e-07,
+            "output": "output_p1",
+            "passed": true,
+            "policy_id": "intentir.gate2.default.v1",
+            "relation_kind": "tolerance",
+            "rtol": 1e-05
+          }
+        ],
+        "passed": true,
+        "policy_id": "intentir.gate2.default.v1",
+        "right": "j"
+      },
+      "protocol": "intentir.lift.public-semantic-probe.v1",
+      "seed": 2026073001,
+      "status": "pass"
+    }
+  ],
+  "source_reconcile": [
+    {
+      "applicable": false,
+      "candidate_sha256": "707fecbebd4e066a44a8fbe8b199cc477ee75821d637b07dbf6d0a83e805bfc2",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "submit_candidate"
+    },
+    {
+      "applicable": false,
+      "candidate_sha256": "b76554973d0f8db7f675d20c7c1685d7bddfa3357b6fd25a93be904a85570b00",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "submit_candidate"
+    },
+    {
+      "applicable": false,
+      "candidate_sha256": "7c4b30fcd05d1187f769d197bae1451e342f9becd19b157f3dd8968403926dcd",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "submit_candidate"
+    },
+    {
+      "applicable": false,
+      "candidate_sha256": "7c4b30fcd05d1187f769d197bae1451e342f9becd19b157f3dd8968403926dcd",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "host_post_turn"
+    },
+    {
+      "applicable": false,
+      "candidate_sha256": "7c4b30fcd05d1187f769d197bae1451e342f9becd19b157f3dd8968403926dcd",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "semantic_probe"
+    }
+  ],
+  "thread_id": "019fb53a-422f-7062-b21f-fbc385204925",
+  "timeout_events": [],
+  "tool_actions": 42,
+  "tool_bridge": {
+    "authority": "diagnostic-only callbacks over exact host-read output bytes; no artifact or Replay field is generated or edited",
+    "calls": 3,
+    "protocol": "intentir.codex-cli.tool-bridge.v3",
+    "receipts": [
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 70.43668394908309,
+        "result_sha256": "50a5d815a5804c491a23b0652af24b8db241aed56e7f67b40de7e6255690299d",
+        "status": "fail",
+        "tool": "submit_candidate"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 21.301263011991978,
+        "result_sha256": "092399b0706f6d1545f337130d24be185f2609944ef2644b1c54704f31069461",
+        "status": "fail",
+        "tool": "submit_candidate"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 23.9403989398852,
+        "result_sha256": "e1845851d5446d80b94180378d508911d77b4f2ade5630ebec67e9495405a7b3",
+        "status": "pass",
+        "tool": "submit_candidate"
+      }
+    ],
+    "transport": "isolated_workspace_file_mailbox"
+  },
+  "usage": {
+    "cache_write_input_tokens": 0,
+    "cached_input_tokens": 498176,
+    "input_tokens": 583190,
+    "output_tokens": 9149,
+    "reasoning_output_tokens": 3822
+  }
+}

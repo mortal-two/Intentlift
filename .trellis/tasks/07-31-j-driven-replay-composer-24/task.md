@@ -1,6 +1,6 @@
 # Task 24：J 主导的 π_min 与三前端 Episode-Local Composer Replay
 
-> 状态：`P5_RUN002_ROOT_CAUSE_FIXED_FRESH_RERUN_PENDING`（2026-07-31）。
+> 状态：`P5_CUDA_ROW_SUM_CERTIFIED_HORIZONTAL_EXPANSION`（2026-07-31）。
 >
 > 定位：Task 15/Task 11 的 Replay 构造机制升级，以及 Task 23 多前端实证的真实 closure 执行线。
 > 本任务不接管 production backend；backend 仍在 SCRC 后只消费 accepted `J+C`。
@@ -265,6 +265,36 @@ Replay，`gpt-5.6-sol high`，Mask-J配置开启）：
 - 本地检查已覆盖稳定persistent feedback刷新、动态类别精确查询/路径拒绝、真实run-002第一轮PTX v5
   等价、identity正负TypeCheck、normal/Mask-J无语义泄漏以及旧TileLang artifact回放。上述修复必须以
   run-003 fresh provider episode验证后才可声称CUDA row_sum闭合。
+
+### Pilot I：CUDA row_sum在J主导Composer流程中正式闭合
+
+`cuda:tilelang_row_sum / .trellis/tasks/07-31-j-driven-replay-composer-24/runs/cuda_tilelang_row_sum/run-003`
+（Codex Lift v31 + Codex Replay v36，`gpt-5.6-sol high`，Composer preferred，PTX v5）：
+
+- fresh run最终为`SCRC_CERTIFIED`，accepted attempt 2；2个formal Gate1 rounds、2次normal Replay，
+  accepted round另有1次独立masked Replay与1个Gate2 case；两轮TypeCheck均为v31 PASS；
+- Lift从第一轮起就同时作者化closed cyclic participant mapping与
+  `transfer_direct -> identity_materialization(realize) -> J-reduce synchronize`拓扑。π只含opaque
+  handle、slot和refinement kind；reducer=sum、identity=0.0、dtype=f32、logical extent=16仍只在J，C=128
+  未进入Replay packet；
+- 第一轮fresh Replay已经消费identity，`value_operations` hard pass，但遗漏cyclic projection，唯一hard
+  category为`address_coordinate_folds`。第二轮同一persistent Lift owner通过新的stable category index
+  成功执行`feedback-category address_coordinate_folds`，得到Source有
+  `ld.global.f32:%tid.x:cyclic:16`而Replay为空的exact evidence；没有再出现`feedback.json`缺失；
+- 两轮artifact的计算语义相同，第二轮只对anonymous J index variable做alpha-equivalent重命名；闭合来自
+  fresh Replay真正消费当前participant relation，而不是Lift把modulo或CUDA recipe写进π。accepted
+  Replay自行写出`threadIdx.x % 16`、`0.0f + loaded`、4步xor shuffle与store；
+- accepted normal Replay实际使用Composer v2：`selected_path=composer`、1次compose、12个stable nodes、
+  source map与rendered source一致、无failed action；normal Gate1的schema/interface/value operations/
+  memory effects/address folds/collectives/control/coordinate/target九类全部hard pass；
+- masked臂使用不同writer、workspace、thread与generate call；它虽能从π拓扑构造可编译程序，但在
+  value operations、memory effects、address folds和collectives上hard mismatch，故
+  `J_NECESSARY=proved`；这证明exact J必要，不声称π零统计信息；
+- Gate2三边均真实执行并通过：Source--Replay最大误差0，Source--J与Replay--J最大误差均
+  `2.384185791015625e-07`，小于`atol=1e-6, rtol=1e-5`；Source、Replay、RefEval(J)各执行一次；
+- accepted normal Replay为6个provider segments、8个tool actions、146.613秒；masked为7个segments、
+  13个tool actions、196.276秒。整轮相对run-002从3轮无闭合收敛为2轮认证，但这里只把改进归因到
+  “新机制与fresh agent共同作用”，不把单样本写成统计显著提速。
 
 ## 3. 交付物
 

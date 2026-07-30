@@ -1,0 +1,150 @@
+{
+  "schema": "intentir.scrc.artifact.v13",
+  "j": {
+    "kernel_id": "scrc_k0",
+    "intent": {
+      "intent_function": {
+        "name": "scrc_j0",
+        "inputs": [
+          {"name": "t0", "dtype": "f32", "shape": ["x0", 16]}
+        ],
+        "outputs": [
+          {"name": "t1", "dtype": "f32", "shape": ["x0"]}
+        ],
+        "body": [
+          {
+            "op": "reduce",
+            "result": "t1",
+            "operands": ["t0"],
+            "attrs": {"fn": "sum", "axes": [1], "assoc": "float_nondeterministic"}
+          }
+        ],
+        "returns": [
+          {"output": "t1", "value": "t1"}
+        ]
+      }
+    },
+    "node_ids": {"n0": "body[0]"},
+    "boundary": {
+      "domains": {
+        "d0": "0 <= k1 and k1 < x0",
+        "d1": "0 <= k0 and k0 < 16"
+      },
+      "accesses": [
+        {
+          "access_id": "a0",
+          "kind": "load",
+          "tensor": "t0",
+          "index_expression": "[k1,k0]",
+          "node_ref": "n0",
+          "predicate": null,
+          "fill_value": null
+        },
+        {
+          "access_id": "a1",
+          "kind": "store",
+          "tensor": "t1",
+          "index_expression": "[k1]",
+          "node_ref": "n0",
+          "predicate": null,
+          "fill_value": null
+        }
+      ],
+      "broadcasts": [],
+      "aliases": [],
+      "effects": [
+        {"effect_id": "e0", "kind": "read", "target": "t0", "access_ref": "a0", "node_ref": "n0"},
+        {"effect_id": "e1", "kind": "write", "target": "t1", "access_ref": "a1", "node_ref": "n0"}
+      ],
+      "output_mappings": [],
+      "reductions": [
+        {"node_ref": "n0", "tile_axis": 1, "identity": 0.0}
+      ],
+      "index_bounds": [],
+      "updates": [],
+      "result_relations": [
+        {"output": "t1", "kind": "tolerance"}
+      ],
+      "realization_authorizations": [],
+      "consumer_extensions": [],
+      "access_guard_relations": []
+    },
+    "signature": {
+      "parameters": [
+        {"name": "p0", "kind": "tensor", "mode": "input", "dtype": "f32", "rank": 2, "logical_ref": "t0", "alias_of": null},
+        {"name": "p1", "kind": "tensor", "mode": "output", "dtype": "f32", "rank": 1, "logical_ref": "t1", "alias_of": null},
+        {"name": "p2", "kind": "scalar", "mode": "value", "dtype": "i32", "rank": 0, "logical_ref": "x0", "alias_of": null}
+      ]
+    },
+    "scopes": [
+      {
+        "scope_id": "q0",
+        "kind": "function",
+        "parent_scope": null,
+        "captures": [],
+        "definitions": ["t0", "t1"],
+        "effects": ["e0", "e1"]
+      }
+    ],
+    "storage": [],
+    "dimension_constraints": ["x0 >= 1"],
+    "value_dimension_relations": [],
+    "dimension_relations": []
+  },
+  "c": {
+    "slots": [
+      {"name": "c0", "kind": "compiler", "role": "launch_block_x", "required": true, "value_type": "i32"}
+    ],
+    "values": {"c0": 128}
+  },
+  "pi": {
+    "regions": [
+      {"id": "r0", "parent": null, "placement": "root"},
+      {"id": "r1", "parent": "r0", "placement": "program"}
+    ],
+    "instances": [
+      {"id": "i0", "semantic_ref": "p0", "region": "r0", "mechanism": "realize"},
+      {"id": "i1", "semantic_ref": "p1", "region": "r0", "mechanism": "realize"},
+      {"id": "i2", "semantic_ref": "d0", "region": "r1", "mechanism": "realize"},
+      {"id": "i3", "semantic_ref": "d1", "region": "r1", "mechanism": "realize"},
+      {"id": "i4", "semantic_ref": "a0", "region": "r1", "mechanism": "address_base"},
+      {"id": "i5", "semantic_ref": "a0", "region": "r1", "mechanism": "address_lane"},
+      {"id": "i6", "semantic_ref": "a0", "region": "r1", "mechanism": "transfer_direct"},
+      {"id": "i7", "semantic_ref": "t0", "region": "r1", "mechanism": "realize"},
+      {"id": "i8", "semantic_ref": "n0", "region": "r1", "mechanism": "synchronize"},
+      {"id": "i9", "semantic_ref": "d0", "region": "r1", "mechanism": "realize"},
+      {"id": "i10", "semantic_ref": "a1", "region": "r1", "mechanism": "address_base"},
+      {"id": "i11", "semantic_ref": "a1", "region": "r1", "mechanism": "transfer_direct"}
+    ],
+    "routes": [
+      {"source": "i2", "target": "i4", "slots": [0]},
+      {"source": "i0", "target": "i5", "slots": [0]},
+      {"source": "i4", "target": "i5", "slots": [1]},
+      {"source": "i3", "target": "i5", "slots": [2]},
+      {"source": "i5", "target": "i6", "slots": [0]},
+      {"source": "i6", "target": "i7", "slots": [0]},
+      {"source": "i7", "target": "i8", "slots": [0]},
+      {"source": "i1", "target": "i10", "slots": [0]},
+      {"source": "i9", "target": "i10", "slots": [1]},
+      {"source": "i10", "target": "i11", "slots": [0]},
+      {"source": "i8", "target": "i11", "slots": [1]}
+    ],
+    "program_axes": [
+      {"domain_ref": "d0", "axis": 0}
+    ],
+    "participant_mappings": [
+      {"domain_instance": "i3", "axis": 0, "extent_slot": "c0", "projection": "cyclic"}
+    ],
+    "route_extent_transforms": [],
+    "order": [],
+    "sharing": [],
+    "refinements": [
+      {"instance": "i7", "kind": "identity_materialization", "auth_ref": null}
+    ],
+    "iterations": [],
+    "loop_carriers": [],
+    "physical_iterations": [],
+    "physical_loop_carriers": [],
+    "terminal_controls": []
+  }
+}
