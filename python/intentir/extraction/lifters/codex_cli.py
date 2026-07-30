@@ -328,6 +328,13 @@ pi instances. Preserve cast order and operation spelling when they are semantic;
 when a logical J node already exists but its compiler-visible realization is absent,
 check whether pi actually realizes that authored handle. Patch the smallest complete
 source-grounded relation set instead of regenerating unrelated artifact sections.
+Before editing local operations, check whether one omitted Source-visible loop,
+effect_if, early terminal branch, continuation, or effect region explains the
+downstream op/dataflow/predicate differences; if so, repair that complete J scope and
+its pi region/time/control topology rather than its symptoms. Conversely, when the
+current J/B/pi already authors the exact logical fact and Source-local boundary fact
+but the preceding Replay alone failed to consume it, do not mutate the artifact to
+imitate that Replay: resubmit the unchanged artifact for a fresh source-blind Replay.
 Use the compact source query only where the named feedback needs exact Source or
 compiler evidence, then revise the complete model-authored J/C/pi in place. If a
 named relation's ownership is unclear, search only that name in

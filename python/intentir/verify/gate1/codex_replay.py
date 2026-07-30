@@ -293,7 +293,7 @@ class CodexCLIReplayWriter:
     frontend: Frontend = Frontend.TRITON
     model_timeout_seconds: float | None = None
     # Time, not a semantic-attempt count, bounds one fresh Replay episode.  High
-    # gets two full provider windows; xhigh retains its full transport window.
+    # gets three full provider windows; xhigh gets two of its longer windows.
     # This prevents a bad direction from cycling for an hour while leaving every
     # useful coding-agent tool action inside those turns unrestricted.
     session_wall_time_limit_seconds: float | None = None
@@ -329,9 +329,9 @@ class CodexCLIReplayWriter:
         episode_limit = self.session_wall_time_limit_seconds
         if episode_limit is None:
             episode_limit = (
-                XHIGH_RESPONSES_TIMEOUT_SECONDS
+                2.0 * XHIGH_RESPONSES_TIMEOUT_SECONDS
                 if effective_effort.casefold() == "xhigh"
-                else 2.0 * DEFAULT_RESPONSES_TIMEOUT_SECONDS
+                else 3.0 * DEFAULT_RESPONSES_TIMEOUT_SECONDS
             )
         if episode_limit <= 0:
             raise ValueError("Replay episode wall-time limit must be positive")
@@ -931,8 +931,19 @@ class CodexCLIReplayWriter:
                     passed, check = evaluate_current(
                         trigger="host_timeout_recheck"
                     )
-                    if passed and explicit_submission_accepted:
-                        timeout_event["recovery"] = "current_exact_replay"
+                    remaining_after_timeout = (
+                        episode_limit
+                        - active_elapsed_ms / 1000.0
+                    )
+                    if passed and (
+                        explicit_submission_accepted
+                        or remaining_after_timeout <= 0
+                    ):
+                        timeout_event["recovery"] = (
+                            "current_exact_replay"
+                            if explicit_submission_accepted
+                            else "deadline_host_validated_current_exact_replay"
+                        )
                         break
                     if last_checked_good is not None:
                         _atomic_write_text(
@@ -941,15 +952,16 @@ class CodexCLIReplayWriter:
                         passed, check = evaluate_current(
                             trigger="host_timeout_checkpoint_restore"
                         )
-                        if passed and explicit_submission_accepted:
+                        if passed and (
+                            explicit_submission_accepted
+                            or remaining_after_timeout <= 0
+                        ):
                             timeout_event["recovery"] = (
                                 "same_episode_checked_checkpoint"
+                                if explicit_submission_accepted
+                                else "deadline_host_validated_checked_checkpoint"
                             )
                             break
-                    remaining_after_timeout = (
-                        episode_limit
-                        - active_elapsed_ms / 1000.0
-                    )
                     if remaining_after_timeout <= 0:
                         timeout_event["recovery"] = "episode_time_exhausted"
                         raise RuntimeError(

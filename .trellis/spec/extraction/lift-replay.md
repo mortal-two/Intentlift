@@ -416,6 +416,16 @@ Lift、MiniSWE Replay 或 Codex CLI provider turn 中的 sibling 可被终止并
 伪装成 transient retry，也不丢弃已经完成的 winner evidence。这些版本都不改变 artifact、packet、
 TypeCheck、ReplayCheck、Gate1 或 Gate2 接受集合。
 
+Codex Replay 的 `intentir.replay-authored-requirements.v2` 只是对 immutable packet 中既有事实的
+有界 exact 重排：除 π time/control/route 外，启动视图直接列出 J/B 的 accesses、aliases、
+output mappings、physical reduction tile axes、index bounds、updates、consumer extensions、
+access guards 与 result relations；超过上限的行保留精确 section query。该视图不读取 Source、
+Harness value 或 Gate，也不把 J op/relation 映射成 target code。普通 effort 的 fresh Replay episode
+默认可用三个 provider wall-time window，xhigh 可用两个长 window；到最终截止点时，只有当前
+LLM-authored exact bytes 已重新通过 Replay ingress 与 synthetic compile 两项固定检查，host 才可在
+缺少最后一次 submit 调用的情况下保留它进入正式 Gate1。任一检查未通过仍以 infrastructure failure
+结束，host 不补写或修复源码。
+
 `replay-check.v10` 在 v9 的 transfer、iteration、carrier 与 pointer-address guard 之外，按 π 中
 `reduction_linearization` 的作者化数量要求 synthetic TTIR 至少出现相同数量的 distinct
 `tt.reshape -> tt.reduce(axis=0)` dataflow；额外

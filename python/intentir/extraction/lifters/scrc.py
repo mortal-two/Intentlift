@@ -1157,7 +1157,7 @@ the current concrete grid extent on that axis is one. One logical domain may
 therefore have both a program-coordinate path into address_base and a separate
 lane-coordinate path into address_lane; never collapse the former into a loop
 or erase it as constant-degenerate topology. Emit exactly one
-pi.program_axes{domain_ref,axis} binding for every distinct program-coordinate
+pi.program_axes{{domain_ref,axis}} binding for every distinct program-coordinate
 domain, using the physical axis observed in Source/TTIR; multiple realization
 instances of the same domain share that one binding. Never derive axis from grid,
 instance order, C, or placement alone.

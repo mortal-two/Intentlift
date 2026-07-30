@@ -144,6 +144,10 @@ Mask-J 只回答 π 是否泄漏到足以独立恢复语义，不替代正式证
 
 不以工具调用次数硬切断正常 coding loop。资源边界使用 wall-time、上下文窗口和 formal Gate1 round 上限；统计内部 tool/compile 次数，但不把它们误记为 relift 或 Gate1 round。
 
+Replay 启动只可对已认证 packet 做有界、exact 的注意力重排：除了 π 的 time/control/route，还必须直接呈现 J/B 已声明的 access、physical reduction tile axis、output/update 和 result relation；省略行只给出精确续查路径。这不是从 J 生成 target recipe，而是避免 agent 在大 packet 中遗漏已有 authority。
+
+wall-time 截止也不应丢弃已完成的 LLM 输出：只有当截止点的 exact Replay bytes 已被固定 ingress 与 synthetic compile 双检查接受时，host 才可将其作为本 episode 的最终输出送往 Gate1；这只消除未来得及调用 submit 的协议失败，不修复任何字节或源码。
+
 ## 7. 实现与迁移
 
 ### 7.1 先删除旧负担

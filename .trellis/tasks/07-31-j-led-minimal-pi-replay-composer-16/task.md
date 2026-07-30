@@ -91,6 +91,20 @@ Kernel closure：
 /tmp/intentir-task16-routecomposer-deps-flashfwd-terra-high-20260731-01/
 ```
 
+fresh artifact.v12 的 Llama/SplitK 双核 pilot 又暴露并修正两项通用 agent 接口问题：
+
+- Replay startup 原先只前置 J 的 effects/broadcasts，physical
+  `boundary.reductions.tile_axis`、access predicate/fill 等既有 J/B authority 留在完整 packet 中，
+  导致 Replay 偶尔误用 logical reduction axis。现在 startup 以有界、exact、可续查的
+  `boundary_relations` 投影直接呈现这些 authored rows；它不读取 Source、不产生 target recipe；
+- 一个 SplitK Replay 在 20 分钟截止前已写出 6.6 KiB 完整 source，却因尚未完成 submit transaction
+  被归为 infrastructure failure。Codex Replay 现以三个普通 provider window（xhigh 两个长 window）
+  为默认 episode；截止点只在 LLM 原样 bytes 已通过 ingress 与 synthetic compile 双检查时保留，
+  否则仍 fail closed。
+
+同一 pilot 也确认 `reduce.attrs.axes` 是 logical axis，而
+`boundary.reductions.tile_axis` 是 Source-local physical axis，两者不得被错误加上等值 checker。
+
 ## 5. P3：J 主导与无泄漏验收
 
 - [x] Replay request 严格只有 `J+π+MaskC(C)+U_f`；

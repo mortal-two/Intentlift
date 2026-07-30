@@ -601,9 +601,36 @@ def _packet_requirements(packet: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(effects, list):
         raise TypeError("packet J boundary effects must be an array")
     effect_limit = 16
+    boundary_relation_names = (
+        "accesses",
+        "aliases",
+        "output_mappings",
+        "reductions",
+        "index_bounds",
+        "updates",
+        "consumer_extensions",
+        "access_guard_relations",
+        "result_relations",
+    )
+    boundary_relation_limit = 12
+    boundary_relation_views: dict[str, Any] = {}
+    for name in boundary_relation_names:
+        rows = boundary.get(name, [])
+        if not isinstance(rows, list):
+            raise TypeError(f"packet J boundary {name} must be an array")
+        boundary_relation_views[name] = {
+            "total": len(rows),
+            "items": rows[:boundary_relation_limit],
+            "omitted": max(0, len(rows) - boundary_relation_limit),
+            "omitted_query": (
+                f"{INTENTIR_PACKET_QUERY} section j.boundary.{name}"
+                if len(rows) > boundary_relation_limit
+                else None
+            ),
+        }
     broadcast_obligations = _packet_broadcast_obligations(j, operations)
     return {
-        "protocol": "intentir.replay-authored-requirements.v1",
+        "protocol": "intentir.replay-authored-requirements.v2",
         "meaning": (
             "A bounded declaration-order reindex of exact packet facts. It does "
             "not infer an operator, edge, schedule, frontend spelling, source "
@@ -639,6 +666,7 @@ def _packet_requirements(packet: Mapping[str, Any]) -> dict[str, Any]:
                 else None
             ),
         },
+        "boundary_relations": boundary_relation_views,
         "boundary_broadcasts": {
             "total": len(broadcast_obligations),
             "items": broadcast_obligations,
