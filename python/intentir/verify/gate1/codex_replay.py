@@ -41,7 +41,7 @@ from .replay import (
 )
 
 
-CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v31"
+CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v32"
 
 _INITIAL_PROMPT = """You are the sole writer for one fresh source-blind IntentIR Replay episode.
 Work only under the isolated /workspace. input/ is immutable; output/, work/, and
@@ -49,14 +49,15 @@ tmp/ are writable. There is no Source, Harness/compiler view, actual C value, Ga
 result, earlier Replay, sibling state, repository, or network.
 
 Act like a coding agent. The exact source-blind packet is J + pi + MaskC(C) + public
-U_f. Do not dump the whole packet into the thread. Start with
-`python .agents/intentir_agent_tool.py packet_query overview`, then query
-`requirements` and `realization`; page only the graph, ABI, routes, order, or named
-obligations needed by your current implementation. input/REPLAY_CONTRACT.md is a
-public reference to inspect only when one exact rule is unclear. You choose source
-spelling and realization, but every semantic operation, operand edge, predicate,
-effect, ABI carrier, region, route, order, sharing, and time/control obligation must
-come from the packet. Do not guess a Source recipe or invent missing facts.
+U_f in input/packet.json. Read that file once with ordinary file tools, form one
+coherent implementation, and write a complete output/replay.source early. Do not
+walk the packet one leaf at a time. The packet_query tool is only a fallback for one
+precise path or handle that remains unclear; do not begin with overview/requirements/
+realization query chains. input/REPLAY_CONTRACT.md is a public reference to inspect
+only when one exact rule is unclear. You choose source spelling and realization,
+but every semantic operation, operand edge, predicate, effect, ABI carrier, region,
+route, order, sharing, and time/control obligation must come from the packet. Do not
+guess a Source recipe or invent missing facts.
 
 After a meaningful complete draft run
 `python .agents/intentir_agent_tool.py submit_replay`. It transactionally runs the
@@ -135,10 +136,11 @@ class CodexCLIReplayWriter:
     effort: str | None = None
     frontend: Frontend = Frontend.TRITON
     model_timeout_seconds: float | None = None
-    # One xhigh provider turn may legitimately consume the full 900-second
-    # transport limit.  The owner episode must outlive that turn so the exact
-    # same Codex thread can consume the host check and repair its own bytes.
-    session_wall_time_limit_seconds: float = 3600.0
+    # Time, not a semantic-attempt count, bounds one fresh Replay episode.  High
+    # gets two full provider windows; xhigh retains its full transport window.
+    # This prevents a bad direction from cycling for an hour while leaving every
+    # useful coding-agent tool action inside those turns unrestricted.
+    session_wall_time_limit_seconds: float | None = None
     # Codex owns its thread compaction.  Zero disables host-side thread rollover;
     # cumulative API input-token counters are not a measure of live context size.
     context_rollover_input_tokens: int = 0
@@ -164,12 +166,19 @@ class CodexCLIReplayWriter:
     def generate(
         self, artifact: Gate1Artifact, *, masked: bool = False
     ) -> ReplayGeneration:
-        if self.session_wall_time_limit_seconds <= 0:
-            raise ValueError("Replay episode wall-time limit must be positive")
         if self.context_rollover_input_tokens < 0:
             raise ValueError("Replay context rollover token threshold cannot be negative")
         provider = self.provider or get_provider()
         effective_effort = self.effort or provider.reasoning_effort
+        episode_limit = self.session_wall_time_limit_seconds
+        if episode_limit is None:
+            episode_limit = (
+                XHIGH_RESPONSES_TIMEOUT_SECONDS
+                if effective_effort.casefold() == "xhigh"
+                else 2.0 * DEFAULT_RESPONSES_TIMEOUT_SECONDS
+            )
+        if episode_limit <= 0:
+            raise ValueError("Replay episode wall-time limit must be positive")
         turn_limit = self.model_timeout_seconds
         if turn_limit is None:
             turn_limit = (
@@ -645,7 +654,7 @@ class CodexCLIReplayWriter:
             session = new_session()
             while True:
                 remaining = (
-                    self.session_wall_time_limit_seconds
+                    episode_limit
                     - active_elapsed_ms / 1000.0
                 )
                 if remaining <= 0:
@@ -690,7 +699,7 @@ class CodexCLIReplayWriter:
                             )
                             break
                     remaining_after_timeout = (
-                        self.session_wall_time_limit_seconds
+                        episode_limit
                         - active_elapsed_ms / 1000.0
                     )
                     if remaining_after_timeout <= 0:
@@ -758,7 +767,7 @@ class CodexCLIReplayWriter:
                         self.context_rollover_input_tokens
                     ),
                     "episode_wall_time_limit_seconds": (
-                        self.session_wall_time_limit_seconds
+                        episode_limit
                     ),
                     "cli_turns": len(turns) + timed_out_calls,
                     "model_segments_lower_bound": sum(

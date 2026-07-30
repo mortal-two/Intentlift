@@ -1050,6 +1050,11 @@ an online or loop-carried recurrence with a global contraction/reduction and ask
 Replay to rediscover the missing update algorithm. Pi records only realization
 topology, multiplicity, placement, and routes; it cannot carry, repair, or infer
 an omitted initialization, update formula, yield, or contraction orientation.
+When one authored J transpose is also a distinct compiler-visible stage in the
+anonymous Source TTIR, bind that particular J node to a pi `realize` instance.
+Do not mark every logical transpose by count: select the correspondence from the
+Source/TTIR and authored dataflow. Without that pi instance a source-blind Replay
+has no authority to decide which logical transpose must remain a physical stage.
 Each scan name retains the complete logical tensor type of its `from` source;
 it is not a physical tile and does not remove the trip axis. Pointwise body ops
 retain that axis until an explicit J reduce/scan consumes it. Conversely, a

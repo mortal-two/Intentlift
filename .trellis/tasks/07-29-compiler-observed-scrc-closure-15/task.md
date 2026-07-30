@@ -472,6 +472,13 @@ artifact，只按既有 Gate1 label 暴露 exact category 文件，并要求 con
 v20 再删除与普通 frontier 文件重复的 host feedback tool，特殊 bridge 只剩两个不可由文件替代的
 reject-only checker。
 
+Replay侧的真实审计得到同一结论：Flash forward/one-column的单次Codex Replay虽只有5--6个model
+segment，却执行46--72次tool action并重复packet query 21--59次；SplitK backward一个错误方向在
+3600秒内循环82个turn、164个model segment，累计约982M输入token，仍未形成正式Gate1比较。
+Codex Replay v32因此不再强制逐叶query链，而要求直接读取一次exact `packet.json`、尽早写完整
+Replay；query退回单path/handle的按需fallback。episode仍只按时间治理，high默认1200秒、xhigh
+默认3600秒，时间内不限制有效工具调用。该变更不增加planner、模板、语义摘要或确定性lower。
+
 ## 5. J / C / π的能力计划
 
 ### 5.1 不做大重构
