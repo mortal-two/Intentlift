@@ -129,6 +129,13 @@ def ConvertIntentRowReductionToGPU
            "local SSA. This removes the shared tau publication and workgroup "
            "barrier at the cost of cache-local repeated prefix work. The state is "
            "accepted only by the exact sorted-prefix matcher.">,
+    Option<"prefetchEpilogueInputBeforeSummary",
+           "prefetch-epilogue-input-before-summary", "bool", "false",
+           "For the exact sorted-prefix graph, issue each output thread's "
+           "coalesced X packet loads before prefix/support/tau evaluation and "
+           "keep those packets live until the epilogue. This overlaps the full-"
+           "row input fetch with the serial prefix state at the cost of register "
+           "pressure. Unsupported graphs fail closed.">,
     Option<"crossRowFinalize", "cross-row-finalize", "bool", "false",
            "For one float-nondeterministic axis-0 sum of row statistics, write "
            "one contribution per row to compiler-owned scratch and finalize it "

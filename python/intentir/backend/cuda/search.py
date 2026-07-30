@@ -2162,7 +2162,7 @@ def enumerate_cuda_candidates(
         "cuda.row_scan.sparsemax.sorted_prefix.execution_domain.v1",
     }
     if axes is None or axes.search_reduction_topology:
-        prefix_geometries = (
+        base_prefix_geometries = (
             # output threads, rows/CTA, tile cols, prefix threads, cross-multiply
             (256, 1, 32, 0, False),
             (128, 1, 32, 0, False),
@@ -2184,6 +2184,11 @@ def enumerate_cuda_candidates(
             (1024, 1, 8, 32, True),
             (512, 2, 16, 32, True),
         )
+        prefix_geometries = tuple(
+            (*geometry, prefetch_epilogue_input)
+            for prefetch_epilogue_input in (False, True)
+            for geometry in base_prefix_geometries
+        )
         for descriptor in DEFAULT_PASSES:
             if descriptor.fast_path_id not in sorted_prefix_ids:
                 continue
@@ -2198,6 +2203,7 @@ def enumerate_cuda_candidates(
                 tile_cols,
                 prefix_threads,
                 cross_multiply,
+                prefetch_epilogue_input,
             ) in prefix_geometries:
                 options = [
                     f"block-threads={threads_per_row}",
@@ -2211,6 +2217,10 @@ def enumerate_cuda_candidates(
                 if cross_multiply:
                     options.insert(
                         -1, "cross-multiply-support-predicate=true"
+                    )
+                if prefetch_epilogue_input:
+                    options.insert(
+                        -1, "prefetch-epilogue-input-before-summary=true"
                     )
                 if execution_domain:
                     options.insert(
@@ -2231,6 +2241,8 @@ def enumerate_cuda_candidates(
                     values["prefix_threads"] = prefix_threads
                 if cross_multiply:
                     values["cross_multiply_support_predicate"] = True
+                if prefetch_epilogue_input:
+                    values["prefetch_epilogue_input_before_summary"] = True
                 specialized.append(
                     CudaSearchCandidate(
                         _candidate_id(
@@ -2257,6 +2269,13 @@ def enumerate_cuda_candidates(
                                 if prefix_threads
                                 else "cuda.reduction.sorted_prefix_early_stop.v1"
                             ),
+                            *(
+                                (
+                                    "cuda.memory.prefetch_epilogue_input_before_summary.v1",
+                                )
+                                if prefetch_epilogue_input
+                                else ()
+                            ),
                         ),
                         requested_observation_class=(
                             ObservationClass.OBSERVATION_CHANGING
@@ -2269,13 +2288,18 @@ def enumerate_cuda_candidates(
         # topology change, not another block/tile schedule, so it is deliberately
         # absent from the Schedule-Only spine.  The C++ matcher remains the hard
         # graph/precondition gate for both registered path identities.
-        replicated_prefix_geometries = (
+        base_replicated_prefix_geometries = (
             # output threads, tile cols
             (64, 64),
             (128, 32),
             (256, 32),
             (512, 16),
             (1024, 8),
+        )
+        replicated_prefix_geometries = tuple(
+            (*geometry, prefetch_epilogue_input)
+            for prefetch_epilogue_input in (False, True)
+            for geometry in base_replicated_prefix_geometries
         )
         for descriptor in DEFAULT_PASSES:
             if descriptor.fast_path_id not in sorted_prefix_ids:
@@ -2285,7 +2309,11 @@ def enumerate_cuda_candidates(
             execution_domain = descriptor.fast_path_id.endswith(
                 ".execution_domain.v1"
             )
-            for threads_per_row, tile_cols in replicated_prefix_geometries:
+            for (
+                threads_per_row,
+                tile_cols,
+                prefetch_epilogue_input,
+            ) in replicated_prefix_geometries:
                 for cross_multiply in (False, True):
                     options = [
                         f"block-threads={threads_per_row}",
@@ -2299,6 +2327,10 @@ def enumerate_cuda_candidates(
                     if cross_multiply:
                         options.insert(
                             -1, "cross-multiply-support-predicate=true"
+                        )
+                    if prefetch_epilogue_input:
+                        options.insert(
+                            -1, "prefetch-epilogue-input-before-summary=true"
                         )
                     if execution_domain:
                         options.insert(
@@ -2319,6 +2351,10 @@ def enumerate_cuda_candidates(
                     }
                     if cross_multiply:
                         values["cross_multiply_support_predicate"] = True
+                    if prefetch_epilogue_input:
+                        values[
+                            "prefetch_epilogue_input_before_summary"
+                        ] = True
                     specialized.append(
                         CudaSearchCandidate(
                             _candidate_id(
@@ -2336,6 +2372,13 @@ def enumerate_cuda_candidates(
                                     "cuda.reduction.sorted_prefix_replicated_warp_cross_multiply.v1"
                                     if cross_multiply
                                     else "cuda.reduction.sorted_prefix_replicated_warp.v1"
+                                ),
+                                *(
+                                    (
+                                        "cuda.memory.prefetch_epilogue_input_before_summary.v1",
+                                    )
+                                    if prefetch_epilogue_input
+                                    else ()
                                 ),
                             ),
                             requested_observation_class=(

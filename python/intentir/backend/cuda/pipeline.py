@@ -59,6 +59,7 @@ class MLIRTransformationRecord:
     folded_constexpr_select_count: int
     host_value_capture_count: int
     epilogue_load_motion_count: int
+    prefetched_epilogue_input_count: int
     approximation_mode: str
     vector_width: int = 1
     launch_plans: tuple[KernelLaunchConfig, ...] = ()
@@ -106,6 +107,9 @@ class MLIRTransformationRecord:
             "folded_constexpr_select_count": self.folded_constexpr_select_count,
             "host_value_capture_count": self.host_value_capture_count,
             "epilogue_load_motion_count": self.epilogue_load_motion_count,
+            "prefetched_epilogue_input_count": (
+                self.prefetched_epilogue_input_count
+            ),
             "approximation_mode": self.approximation_mode,
             "vector_width": self.vector_width,
             "launch_plans": [item.to_dict() for item in self.launch_plans],
@@ -200,6 +204,11 @@ def _transformation_record(mlir: str) -> MLIRTransformationRecord | None:
     )
     if epilogue_load_motion_count is None:
         epilogue_load_motion_count = 0
+    prefetched_epilogue_input_count = integer_attr(
+        "intent.backend.prefetched_epilogue_input_count"
+    )
+    if prefetched_epilogue_input_count is None:
+        prefetched_epilogue_input_count = 0
     if (
         not trace
         or rows_per_block <= 0
@@ -211,6 +220,7 @@ def _transformation_record(mlir: str) -> MLIRTransformationRecord | None:
         or grid_stride_unroll not in {1, 2, 4, 8}
         or logical_tile_elements < 0
         or vector_width not in {1, 2, 4}
+        or prefetched_epilogue_input_count < 0
         or any(value is None or value < 0 for value in counts.values())
     ):
         raise ValueError("C++ concrete-state record has invalid trace/counts")
@@ -239,6 +249,7 @@ def _transformation_record(mlir: str) -> MLIRTransformationRecord | None:
         ),
         host_value_capture_count=host_value_capture_count,
         epilogue_load_motion_count=epilogue_load_motion_count,
+        prefetched_epilogue_input_count=prefetched_epilogue_input_count,
         approximation_mode=approximation_mode,
         vector_width=vector_width,
         launch_plans=tuple(parse_launch_configs(mlir)),

@@ -161,6 +161,25 @@ Full 批次为 `190.560--191.264 us`，H100 后六批稳定在 `117.728--123.200
 变换集合，再由目标测量选择不同的具体执行图。Schedule-Only 仍只搜索 serial-row direct-lowering spine，
 多行 interleaved 状态只存在于 Full 的 subgroup-feature 结构中。
 
+### 3.5 Sparsemax prefix/epilogue live-state 八批结果
+
+Sorted-prefix Full 新增了一个独立 live-state：每个输出线程在 prefix/support/tau 之前发起其 coalesced X packet
+读取，并把 packet 保存在 SSA/register 中；tau 就绪后直接执行 `max(X-tau,0)`。这使完整 X 读取与串行
+active-prefix 延迟重叠，不改变字节数，也不从运行样本推导排序语义。该状态只能由精确的 typed
+`scan -> support -> (k,s) -> tau -> epilogue` matcher 准入，post-pass 必须记录
+`prefetched_epilogue_input_count=1` 和实际 transformation trace。
+
+| Target | C-Fixed | Schedule | Full | `G_schedule` | `G_full` | Source | Source/Full |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 5090D | 76.256 | 70.656 | 49.056 | 1.079x | 1.439x | 82.752 | 1.687x |
+| H100 | 53.440 | 48.224 | 32.560 | 1.108x | 1.466x | 57.664 | 1.771x |
+
+两卡均为 5 samples/batch、8 个交替确认批次；5090D 的 Full 批次为 `48.672--49.280 us`，H100 为
+`32.288--32.832 us`。5090D 选择 `256-thread replicated-prefix + prefetched X`，H100 选择
+`32-thread single-warp prefix + prefetched X`。相对旧 Full 的 `51.168/36.608 us`，绝对延迟分别继续下降
+约 `4.1%/11.1%`。当前稳定 `G_full` 仍是 `1.439x/1.466x`，因此不能宣称跨过 1.50x；下一步针对的是真实
+残余开销——support 很短时，固定 chunk loop 在 `done` 后仍执行空迭代——而不是削弱 Schedule。
+
 ## 4. 本任务实现的四条强路径
 
 ### P1. RVV fused Softmax：先删除物化，再比较两种真实拓扑

@@ -361,7 +361,8 @@ static void attachConcreteStateAttributes(
     bool materializedSharedRowOutput = false,
     bool elidedSharedRowMaterialization = false,
     StringRef topologyOverride = {}, int64_t stageCount = 1,
-    int64_t reductionParts = 1) {
+    int64_t reductionParts = 1,
+    bool prefetchedEpilogueInputBeforeSummary = false) {
   MLIRContext *ctx = lowered.getContext();
   unsigned fmaCount = 0;
   unsigned shuffleCount = 0;
@@ -409,6 +410,9 @@ static void attachConcreteStateAttributes(
   if (elidedSharedRowMaterialization)
     trace.push_back(StringAttr::get(
         ctx, "cuda.elide.intermediate_row_materialization.v1"));
+  if (prefetchedEpilogueInputBeforeSummary)
+    trace.push_back(StringAttr::get(
+        ctx, "cuda.memory.prefetch_epilogue_input_before_summary.v1"));
 
   lowered->setAttr("intent.backend.lowering_path_kind",
                    StringAttr::get(ctx, "row_reduction"));
@@ -448,6 +452,10 @@ static void attachConcreteStateAttributes(
   lowered->setAttr(
       "intent.backend.epilogue_load_motion_count",
       IntegerAttr::get(IntegerType::get(ctx, 64), epilogueLoadMotionCount));
+  lowered->setAttr(
+      "intent.backend.prefetched_epilogue_input_count",
+      IntegerAttr::get(IntegerType::get(ctx, 64),
+                       prefetchedEpilogueInputBeforeSummary ? 1 : 0));
 }
 
 /// Match the common normalization scalar fast path `recip(sqrt(x))`.  The
@@ -860,6 +868,7 @@ struct RowReductionLowering {
   unsigned requestedPrefixThreads;
   bool crossMultiplySupportPredicate;
   bool replicatePrefixPerWarp;
+  bool prefetchEpilogueInputBeforeSummary;
   bool crossRowFinalize;
   bool requestRawMomentVariance;
   bool enableCompactReductionTopology;
@@ -962,7 +971,8 @@ struct RowReductionLowering {
                        unsigned foldedConstexprSelects,
                        unsigned rowsPerBlock, unsigned reductionParts,
                        unsigned prefixThreads,
-                       bool crossMultiplySupport, bool replicatePrefix)
+                       bool crossMultiplySupport, bool replicatePrefix,
+                       bool prefetchEpilogueInput)
       : fn(fn), blockThreads(bt), tileColsMax(tc),
         requestedVectorWidth(vw),
         enableFmaFusion(fuseFma),
@@ -977,6 +987,7 @@ struct RowReductionLowering {
         requestedPrefixThreads(prefixThreads),
         crossMultiplySupportPredicate(crossMultiplySupport),
         replicatePrefixPerWarp(replicatePrefix),
+        prefetchEpilogueInputBeforeSummary(prefetchEpilogueInput),
         crossRowFinalize(enableCrossRowFinalize),
         requestRawMomentVariance(enableRawMomentVariance),
         enableCompactReductionTopology(compactReductionTopology),
@@ -4017,6 +4028,24 @@ struct RowReductionLowering {
         b.create<arith::ConstantIndexOp>(
             loc, N / (scanThreads * packetWidth));
 
+    int64_t outputVecTiles = N / (threadsPerRow * packetWidth);
+    SmallVector<Value> prefetchedXIndices;
+    SmallVector<Value> prefetchedXVectors;
+    if (prefetchEpilogueInputBeforeSummary) {
+      prefetchedXIndices.reserve(outputVecTiles);
+      prefetchedXVectors.reserve(outputVecTiles);
+      for (int64_t tile = 0; tile < outputVecTiles; ++tile) {
+        Value vecIndex = b.create<arith::AddIOp>(
+            loc, rowThread,
+            b.create<arith::ConstantIndexOp>(loc, tile * threadsPerRow));
+        auto xLoad =
+            b.create<memref::LoadOp>(loc, xMem, ValueRange{row, vecIndex});
+        xLoad.setNontemporal(true);
+        prefetchedXIndices.push_back(vecIndex);
+        prefetchedXVectors.push_back(xLoad.getResult());
+      }
+    }
+
     // Loop state: accumulated sum of fully-supported preceding chunks, the
     // best support rank/sum seen so far, and a uniform done flag.  Completed
     // rows take the empty branch on later static iterations; no loads/barriers
@@ -4330,15 +4359,21 @@ struct RowReductionLowering {
     }
 
     // Coalesced X -> O pass.  Adjacent lanes own adjacent float4 vectors.
-    int64_t outputVecTiles = N / (threadsPerRow * packetWidth);
     for (int64_t tile = 0; tile < outputVecTiles; ++tile) {
-      Value vecIndex = b.create<arith::AddIOp>(
-          loc, rowThread,
-          b.create<arith::ConstantIndexOp>(loc, tile * threadsPerRow));
-      auto xLoad =
-          b.create<memref::LoadOp>(loc, xMem, ValueRange{row, vecIndex});
-      xLoad.setNontemporal(true);
-      Value xVector = xLoad;
+      Value vecIndex;
+      Value xVector;
+      if (prefetchEpilogueInputBeforeSummary) {
+        vecIndex = prefetchedXIndices[tile];
+        xVector = prefetchedXVectors[tile];
+      } else {
+        vecIndex = b.create<arith::AddIOp>(
+            loc, rowThread,
+            b.create<arith::ConstantIndexOp>(loc, tile * threadsPerRow));
+        auto xLoad =
+            b.create<memref::LoadOp>(loc, xMem, ValueRange{row, vecIndex});
+        xLoad.setNontemporal(true);
+        xVector = xLoad;
+      }
       SmallVector<Value> outputs(packetWidth);
       for (int64_t laneIndex = 0; laneIndex < packetWidth; ++laneIndex) {
         Value x = b.create<vector::ExtractOp>(
@@ -4378,7 +4413,8 @@ struct RowReductionLowering {
                                   : crossMultiplySupportPredicate
                                       ? "sorted_prefix_early_stop_cross_multiply"
                                       : "sorted_prefix_early_stop",
-                                  1, 1);
+                                  1, 1,
+                                  prefetchEpilogueInputBeforeSummary);
     fn.erase();
     return success();
   }
@@ -5140,12 +5176,14 @@ struct RowReductionLowering {
 
   LogicalResult rewrite() {
     // Dispatch on the Schedule's fork decision (set in match()).
+    if (prefetchEpilogueInputBeforeSummary && sched.kind != KScan)
+      return failure();
     if (sched.kind == KMultiStage)
       return rewriteMultiStage();
     if (sched.kind == KScan) {
       if (auto args = sortedSparsemaxArgIndices())
         return rewriteSortedSparsemax(args->first, args->second);
-      if (requireSortedPrefix)
+      if (requireSortedPrefix || prefetchEpilogueInputBeforeSummary)
         return failure();
       return rewriteScan();
     }
@@ -6198,7 +6236,8 @@ struct ConvertIntentRowReductionToGPUPass
                                  foldedConstexprSelects, rowsPerBlock,
                                  reductionParts, prefixThreads,
                                  crossMultiplySupportPredicate,
-                                 replicatePrefixPerWarp);
+                                 replicatePrefixPerWarp,
+                                 prefetchEpilogueInputBeforeSummary);
       if (succeeded(probe.match()))
         targets.push_back(
             {fn, predicatedValueIfs, foldedConstexprSelects});
@@ -6220,7 +6259,8 @@ struct ConvertIntentRowReductionToGPUPass
                                target.foldedConstexprSelects, rowsPerBlock,
                                reductionParts, prefixThreads,
                                crossMultiplySupportPredicate,
-                               replicatePrefixPerWarp);
+                               replicatePrefixPerWarp,
+                               prefetchEpilogueInputBeforeSummary);
       if (failed(low.match()) || failed(low.rewrite())) {
         target.fn.emitError("row-reduction lowering failed after match");
         return signalPassFailure();

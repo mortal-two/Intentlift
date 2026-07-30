@@ -838,6 +838,8 @@ def test_full_enumerates_multirow_warp_sorted_prefix_as_structural_state() -> No
         == "cuda.row_scan.sparsemax.sorted_prefix.execution_domain.v1"
         and int(item.schedule.get("rows_per_block", 1)) > 1
         and int(item.schedule.get("prefix_threads", 0)) == 0
+        and item.schedule.get("prefetch_epilogue_input_before_summary")
+        is not True
     ]
 
     assert {int(item.schedule["rows_per_block"]) for item in prefix} == {
@@ -905,6 +907,28 @@ def test_full_enumerates_multirow_warp_sorted_prefix_as_structural_state() -> No
         item.requested_trace
         == ("cuda.reduction.sorted_prefix_replicated_warp_cross_multiply.v1",)
         for item in replicated
+    )
+
+    prefetched = [
+        item
+        for item in candidates
+        if item.fast_path_id
+        == "cuda.row_scan.sparsemax.sorted_prefix.execution_domain.v1"
+        and item.schedule.get("prefetch_epilogue_input_before_summary") is True
+    ]
+    assert prefetched
+    assert any(
+        item.schedule.get("replicate_prefix_per_warp") is True
+        for item in prefetched
+    )
+    assert any(
+        item.schedule.get("replicate_prefix_per_warp") is not True
+        for item in prefetched
+    )
+    assert all(
+        "cuda.memory.prefetch_epilogue_input_before_summary.v1"
+        in item.requested_trace
+        for item in prefetched
     )
 
 

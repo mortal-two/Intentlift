@@ -1,5 +1,6 @@
 // RUN: intent-opt '-convert-intent-row-reduction-to-gpu=block-threads=512 tile-cols=16 vector-width=4 rows-per-block=2 prefix-threads=32 cross-multiply-support-predicate=true allow-execution-domain-sorted-prefix=true require-sorted-prefix=true' %s | FileCheck %s
 // RUN: intent-opt '-convert-intent-row-reduction-to-gpu=block-threads=256 tile-cols=32 vector-width=4 rows-per-block=1 prefix-threads=32 replicate-prefix-per-warp=true cross-multiply-support-predicate=true allow-execution-domain-sorted-prefix=true require-sorted-prefix=true' %s | FileCheck %s --check-prefix=REPLICATED
+// RUN: intent-opt '-convert-intent-row-reduction-to-gpu=block-threads=1024 tile-cols=8 vector-width=4 rows-per-block=1 prefix-threads=32 cross-multiply-support-predicate=true prefetch-epilogue-input-before-summary=true allow-execution-domain-sorted-prefix=true require-sorted-prefix=true' %s | FileCheck %s --check-prefix=PREFETCH
 // RUN: intent-opt '-convert-intent-row-reduction-to-gpu=block-threads=512 tile-cols=16 vector-width=16 rows-per-block=1 prefix-threads=32 replicate-prefix-per-warp=true allow-execution-domain-sorted-prefix=true require-sorted-prefix=true' %s | FileCheck %s --check-prefix=INVALID
 
 // The prefix/support work is owned by one warp per row while 512 logical
@@ -38,6 +39,18 @@
 // REPLICATED-NOT: gpu.dynamic_shared_memory
 // REPLICATED-NOT: gpu.barrier
 // REPLICATED: gpu.terminator
+// PREFETCH-LABEL: func.func @wide_prefix_graph(
+// PREFETCH-SAME: %[[X:[^:]+]]: memref<2x1024xvector<4xf32>>
+// PREFETCH-SAME: %[[SORTED:[^:]+]]: memref<2x1024xvector<4xf32>>
+// PREFETCH-SAME: intent.backend.prefetched_epilogue_input_count = 1 : i64
+// PREFETCH-SAME: "cuda.memory.prefetch_epilogue_input_before_summary.v1"
+// PREFETCH: gpu.launch
+// PREFETCH: memref.load %[[X]]
+// PREFETCH: scf.for
+// PREFETCH: memref.load %[[SORTED]]
+// PREFETCH: gpu.barrier
+// PREFETCH: arith.maxnumf
+// PREFETCH: gpu.terminator
 // INVALID-LABEL: func.func @wide_prefix_graph(
 // INVALID-NOT: gpu.launch
 // INVALID: intent.scan
