@@ -41,33 +41,35 @@ from .replay import (
 )
 
 
-CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v29"
+CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v30"
 
 _INITIAL_PROMPT = """You are the sole writer for one fresh source-blind IntentIR Replay episode.
 Work only under the isolated /workspace. input/ is immutable; output/, work/, and
 tmp/ are writable. There is no Source, Harness/compiler view, actual C value, Gate
 result, earlier Replay, sibling state, repository, or network.
 
-Act like a coding agent. Read input/packet.json, which is exactly J + pi + MaskC(C)
-+ public U_f, and write the complete frontend program to output/replay.source.
-input/REPLAY_CONTRACT.md is a public reference to inspect only when a rule is
-unclear. You choose source spelling and realization, but every semantic operation,
-operand edge, predicate, effect, ABI carrier, region, route, order, sharing, and
-time/control obligation must come from the packet. Do not guess a Source recipe or
-invent missing facts.
+Act like a coding agent. The exact source-blind packet is J + pi + MaskC(C) + public
+U_f. Do not dump the whole packet into the thread. Start with
+`python .agents/intentir_agent_tool.py packet_query overview`, then query
+`requirements` and `realization`; page only the graph, ABI, routes, order, or named
+obligations needed by your current implementation. input/REPLAY_CONTRACT.md is a
+public reference to inspect only when one exact rule is unclear. You choose source
+spelling and realization, but every semantic operation, operand edge, predicate,
+effect, ABI carrier, region, route, order, sharing, and time/control obligation must
+come from the packet. Do not guess a Source recipe or invent missing facts.
 
 After a meaningful complete draft run
-`python .agents/intentir_agent_tool.py replay_check`, then
-`python .agents/intentir_agent_tool.py replay_compile_check`. Repair your own exact
-source until both pass. If compilation is unclear, use `replay_ttir_inspect` only
-on your current Replay. Fixed code only checks and rejects; it never writes or
-repairs Replay. Finish only with both checks passing and do not claim Gate1, Gate2,
-or certification.
+`python .agents/intentir_agent_tool.py submit_replay`. It transactionally runs the
+source-blind ingress and synthetic compile checks on your exact bytes. Repair your
+own source until it passes. If compilation is unclear, use `replay_ttir_inspect`
+only on your current Replay. Fixed code only projects packet facts, checks, and
+rejects; it never writes or repairs Replay. Finish only with the transaction passing
+and do not claim Gate1, Gate2, or certification.
 """
 
 _REPAIR_PROMPT = """The same fresh source-blind Replay episode continues in the same thread and workspace.
 Read work/host_replay_check.json and the current output/replay.source, repair the
-complete source yourself, and rerun replay_check plus replay_compile_check. The
+complete source yourself, and rerun submit_replay. The
 diagnostic is rejection-only. Finish only when both pass.
 """
 
@@ -184,7 +186,9 @@ class CodexCLIReplayWriter:
 
         try:
             from minisweagent.environments.intentir_replay import (
+                INTENTIR_PACKET_QUERY,
                 IntentIRReplayWorkspace,
+                _query_packet,
             )
         except ImportError as exc:
             raise RuntimeError(
@@ -196,6 +200,7 @@ class CodexCLIReplayWriter:
         checks: list[dict[str, Any]] = []
         compile_checks: list[dict[str, Any]] = []
         ttir_inspections: list[dict[str, Any]] = []
+        packet_queries: list[dict[str, Any]] = []
         timeout_events: list[dict[str, Any]] = []
         source_text = ""
         formal_ingress = None
@@ -361,6 +366,45 @@ class CodexCLIReplayWriter:
                 last_checked_good = current
             return response
 
+        def submit_replay_tool() -> Mapping[str, Any]:
+            """Run both construction checks as one exact-source transaction."""
+
+            ingress = dict(replay_check_tool())
+            if ingress.get("status") != "pass":
+                return {
+                    "protocol": "intentir.codex-cli.replay-submit.v1",
+                    "status": "fail",
+                    "phase": "ingress",
+                    "ingress": ingress,
+                    "compile": None,
+                    "authority": "diagnostic-only; no Replay source is generated or repaired",
+                }
+            compiled = dict(replay_compile_tool())
+            return {
+                "protocol": "intentir.codex-cli.replay-submit.v1",
+                "status": compiled.get("status", "fail"),
+                "phase": "compile",
+                "ingress": ingress,
+                "compile": compiled,
+                "authority": "diagnostic-only; no Replay source is generated or repaired",
+            }
+
+        def packet_query_tool(arguments: tuple[str, ...]) -> Mapping[str, Any]:
+            """Project one bounded exact view from the immutable source-blind packet."""
+
+            value = _query_packet(packet, [INTENTIR_PACKET_QUERY, *arguments])
+            packet_queries.append({"query": list(arguments)})
+            return {
+                "protocol": "intentir.codex-cli.replay-packet-query.v1",
+                "status": "pass",
+                "query": list(arguments),
+                "value": value,
+                "authority": (
+                    "exact bounded packet projection only; no Source, semantic "
+                    "inference, realization choice, code generation, or Gate authority"
+                ),
+            }
+
         def replay_ttir_inspect_tool(
             arguments: tuple[str, ...]
         ) -> Mapping[str, Any]:
@@ -519,8 +563,10 @@ class CodexCLIReplayWriter:
             {
                 "replay_check": replay_check_tool,
                 "replay_compile_check": replay_compile_tool,
+                "submit_replay": submit_replay_tool,
             },
             argument_handlers={
+                "packet_query": packet_query_tool,
                 "replay_ttir_inspect": replay_ttir_inspect_tool,
             },
         )
@@ -688,6 +734,7 @@ class CodexCLIReplayWriter:
                 "replay_check": checks,
                 "replay_compile_check": compile_checks,
                 "replay_ttir_inspections": ttir_inspections,
+                "packet_queries": packet_queries,
                 "timeout_events": timeout_events,
                 "tool_bridge": bridge.evidence,
                 "formal_ingress_recheck": True,
@@ -759,6 +806,7 @@ class CodexCLIReplayWriter:
                 "replay_check": checks,
                 "replay_compile_check": compile_checks,
                 "replay_ttir_inspections": ttir_inspections,
+                "packet_queries": packet_queries,
                 "timeout_events": timeout_events,
                 "tool_bridge": bridge.evidence,
                 "failure_class": type(exc).__name__,

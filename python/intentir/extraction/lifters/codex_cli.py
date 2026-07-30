@@ -10,8 +10,6 @@ import tempfile
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping
 
-from minisweagent.config.intentir_schema_query import schema_sections
-
 from intentir.extraction.providers.codex_cli import (
     CODEX_CLI_AGENT_RUNTIME,
     CODEX_CLI_TOOL_BRIDGE_ROOT_NAME,
@@ -36,18 +34,13 @@ from .scrc import (
     SCRCProvenance,
     SCRCReliftRecord,
     SourceIdentifierPrivacyError,
-    build_scrc_lift_instructions,
     check_scrc_lift_candidate,
     decode_scrc_lift_artifact,
     prepare_scrc_lift,
     scrc_candidate_check_context,
 )
-from .prompt import SCHEMA as _INTENTIR_OPERATION_REFERENCE
-from .scrc_schema import scrc_lift_core_json_schema
-
-
-CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v26"
-CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v84"
+CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v27"
+CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v85"
 CODEX_CLI_TURN_TIMEOUT_SECONDS = 900.0
 
 _FEEDBACK_CATEGORY_NAMES = (
@@ -62,16 +55,13 @@ _INITIAL_PROMPT = """You are the sole source-aware IntentIR Lift owner for this 
 Work only under the isolated /workspace; input/ is immutable and output/, work/,
 and tmp/ are writable. There is no repository or network.
 
-Act like a coding agent, not a staged JSON generator. Read input/source.py,
-input/harness_view.json, and input/README.md; inspect only useful ranges of
-input/source.ttir. input/artifact_contract.json is the complete high-density closed
-wire reference projected from the host Schema, and input/intent_ops.md gives exact
-IntentOp spelling. Query only `.object_shapes` and the leaf `.sections.NAME` values
-you actually need; do not pretty-print the whole contract or read the entire op
-catalog into the thread. When ownership or the denotation of a named relation is
-unclear, search that exact field/mechanism in input/lift_contract.md and read only
-the surrounding lines. Do not read that reference wholesale or search for another
-schema, tutorial, or tool source.
+Act like a coding agent, not a staged JSON generator. Start with the one compact
+`source-brief` command in input/README.md, then read input/source.py. The brief is
+only exact Source/Harness/compiler navigation; you decide all meaning. Query an
+exact compiler-observer section, TTIR slice, schema leaf, operation, or contract
+term only when the current draft needs it. Do not dump input/source_ttir.json, the
+whole Schema, the whole operation catalog, or the whole Lift contract into the
+thread.
 
 You alone author the complete output/candidate.json. J owns all logical semantics;
 C owns only implementation choices; pi owns only source-realization relations for
@@ -81,74 +71,21 @@ identities, control/time, effects, and realization structure visible in Source a
 the selected anonymous specialization. Use dense declaration-ordered opaque
 handles and never copy Source identifiers into the artifact.
 
-Organize your own scratch files or helper edits under work/ however you find
-efficient; no host-prescribed planner, fragment layout, ledger, or builder is
-required. The final candidate bytes must be entirely your work. Run
+Write a meaningful complete output/candidate.json early, then inspect and patch
+that persistent file in place; do not postpone all authoring until after exhaustive
+reading. Organize scratch under work/ however useful. The final J/C/pi and every
+semantic field remain entirely your work. Run
 `python .agents/intentir_agent_tool.py submit_candidate` after a meaningful complete
 draft. This transaction first runs the source-free CandidateCheck and then the
 reject-only SourceReconcile on the same exact bytes. Repair the returned diagnostics
-and invoke it again. Once it returns PASS, run
-`python .agents/intentir_agent_tool.py semantic_probe` once before finishing. This
-separate public Source-vs-J diagnostic never certifies or edits the candidate; use a
-large semantic divergence to inspect and repair your own J, while treating an
-unsupported probe or small floating reduction delta as diagnostic rather than a
-membership verdict. Rerun submit_candidate after any edit, then finish. CandidateCheck
-remains source-free; SourceReconcile only compares your already-authored closed
-compiled obligations with the immutable Source TTIR observation. The host independently
-reruns Decode and TypeCheck, then starts fresh
-source-blind Replay and the formal gates. Do not claim certification.
+and invoke it again. The host then runs the public Source-vs-J semantic probe on
+those exact passing bytes and returns a same-thread diagnostic if they diverge.
+That probe never certifies or edits the candidate: repair only when the evidence
+shows your J is wrong, rerun submit_candidate, and leave small floating deltas or
+unsupported execution as diagnostics. The host independently reruns Decode and
+TypeCheck, then starts fresh source-blind Replay and the formal gates. Do not claim
+certification.
 """
-
-
-
-def _compact_intent_op_reference() -> str:
-    """Reuse the existing op vocabulary without exposing its legacy top level."""
-
-    start_marker = "Atomic ops (each is one JSON object in a \"body\" list):"
-    end_marker = "Hard rules:"
-    start = _INTENTIR_OPERATION_REFERENCE.index(start_marker)
-    end = _INTENTIR_OPERATION_REFERENCE.index(end_marker, start)
-    return _INTENTIR_OPERATION_REFERENCE[start:end].strip()
-
-
-def _compact_authoring_schema(value: Any) -> Any:
-    """Drop prose only; preserve the exact closed JSON Schema structure."""
-
-    if isinstance(value, Mapping):
-        return {
-            str(key): _compact_authoring_schema(item)
-            for key, item in value.items()
-            if key not in {"description", "title", "examples"}
-        }
-    if isinstance(value, list):
-        return [_compact_authoring_schema(item) for item in value]
-    return value
-
-
-def _contract_object_shapes(schema: Mapping[str, Any]) -> dict[str, Any]:
-    root = schema["properties"]
-    j = root["j"]
-    j_properties = j["properties"]
-    intent = j_properties["intent"]
-    function = intent["properties"]["intent_function"]
-    objects = {
-        "root": schema,
-        "j": j,
-        "j.intent": intent,
-        "j.intent.intent_function": function,
-        "j.boundary": j_properties["boundary"],
-        "j.signature": j_properties["signature"],
-        "c": root["c"],
-        "pi": root["pi"],
-    }
-    return {
-        name: {
-            "required": list(item.get("required", [])),
-            "fields": list(item.get("properties", {})),
-            "additional_properties": item.get("additionalProperties"),
-        }
-        for name, item in objects.items()
-    }
 
 
 def _observer_diff_from_diagnostics(
@@ -325,129 +262,42 @@ def _codex_input_files(
         request,
         source_ttir_observation=source_ttir_observation,
     )
-    schema = scrc_lift_core_json_schema()
-    contract = {
-        "protocol": "intentir.codex-lift-authoring-contract.v1",
-        "authority": (
-            "source-neutral exact projection of the authoritative JSON Schema; "
-            "no artifact field, handle, semantic choice, or repair is generated"
-        ),
-        "object_shapes": _contract_object_shapes(schema),
-        "sections": {
-            name: _compact_authoring_schema(section)
-            for name, section in schema_sections(schema).items()
-        },
-    }
     files = {
         "source.py": complete["source.py"],
         "harness_view.json": complete["harness_view.json"],
         "feedback_frontier.json": complete["feedback_frontier.json"],
         "README.md": (
             "# IntentIR Lift workspace\n\n"
-            "Author exactly `output/candidate.json` from the anonymous Source and "
-            "Harness. J is the sole logical semantic carrier; C contains only "
-            "implementation selections; pi contains only anonymous realization "
-            "relations indexed by J+C. Every artifact field and opaque handle is "
-            "model-authored. Fixed code only checks and rejects. Harness shapes are "
-            "valuations unless an explicit shape contract binds a parametric extent. "
-            "Use the exact contract and operation reference locally; inspect raw TTIR "
-            "only where it clarifies Source control, def-use, effects, or time.\n\n"
-            "Before the first CandidateCheck, enforce these closed language "
-            "invariants in your own artifact:\n"
-            "- Every required array is present. Each handle family is dense from zero "
-            "in declaration order. Tensor handles follow first declaration across "
-            "inputs then outputs; an inout output reuses its input handle. Symbolic "
-            "x* order is first appearance in tensor shapes.\n"
-            "- Signature p* exactly follows anonymous ABI order. logical_ref names a "
-            "declared t*/x* or null. A scalar used only for representation/address may "
-            "be null; active logical data, predicate, index, shape, or result may not. "
-            "Null removes the carrier only from J semantics: if the selected Source "
-            "TTIR still uses it for address, control, or realization, pi must author "
-            "its occurrence and wiring so source-blind Replay never guesses its role; "
-            "if that selected TTIR has no body use, do not invent a pi occurrence.\n"
-            "- C subject_ref names an existing J node/domain/access/scope/storage. "
-            "axis_ref is present only with subject_ref and must be one of that "
-            "subject's actual closed axes. C never owns logical values or operations.\n"
-            "- Layer-B domains and access indices are logical, not pointer arithmetic. "
-            "Use explicit logical index variables (k0, k1, ...) and author every "
-            "zero-based bound that makes an access/predicate closed; x* denotes an "
-            "extent and never substitutes for the varying index. An ordered direct "
-            "index lists its logical coordinates. General affine indices remain legal "
-            "only over authored logical indices/extents. Program ids, tile rounding, "
-            "strides, and flattened address construction stay in C/pi realization.\n"
-            "- Each compiler-visible Source program-coordinate occurrence is a generic "
-            "program-region realize instance anchored to its existing J domain and "
-            "routed into address_base. Distinct domain anchors define program axes; "
-            "multiple instances on one domain preserve Source stages but reuse that "
-            "axis and never invent another program_id. Concrete grid extent one does "
-            "not erase the path.\n"
-            "- Keep program-uniform address_base and lane-varying address_lane routes "
-            "separate. A pointer carrier entering address_base and then address_lane "
-            "denotes two pointer/address operations; if Source combines integer base "
-            "and lane contributions first, the pointer bypasses address_base and "
-            "enters the final lane/address stage once. Author topology and typed "
-            "carrier origins, not Source arithmetic spelling.\n"
-            "- A route_extent_transform is only a required positive-integer C-slot "
-            "realize routed to its attached J-domain realize on that existing target "
-            "slot. It never targets an Intent node, access, address stage, or iota and "
-            "never changes a logical shape, predicate, or consumer rank lift.\n"
-            "- Preserve each Source load/store predicate as J logical validity when it "
-            "guards the logical access, including conjuncts that happen to be true for "
-            "the current valuation. C tile bounds may realize that predicate but may "
-            "not replace, weaken, or invent it.\n"
-            "- A predicated load that reaches sum/max/min has one typed, consumer-local "
-            "outside-domain identity relation. A numeric-cast authorization anchors "
-            "the explicit cast node and uses its operand/result dtypes.\n"
-            "- Every authored semantic loop state has one loop-scoped StorageObject "
-            "covering state/body-argument/next/result and non-literal init, with "
-            "crosses_iteration=true and escapes=true. Physical-only source loops stay "
-            "in pi rather than becoming false J recurrence.\n"
-            "- Every physical carrier has type-consistent init/state/next/result, "
-            "authored init->state and state->next routes, and a route from state to an "
-            "observable transfer/update/synchronization instance. Array order is the "
-            "Source frontend carrier-tuple order.\n"
-            "- Every direct/async transfer is reachable through authored pi routes "
-            "from the matching pointer/tensor signature carrier. Route slots match "
-            "the target J operand type; sharing consumers each have a direct route.\n"
-            "- Canonical outputs, returns/output_mapping, effects, result-relation "
-            "class, scope captures/effect order, and all J/C/pi cross-references are "
-            "complete and mutually consistent. CandidateCheck only diagnoses these "
-            "facts; it never supplies them.\n"
-            "On a relift, read feedback_frontier.json first. Exact bulk Gate1 "
-            "feedback is never injected into the prompt: open only the already-labelled "
-            "feedback_category_NAME.json required by the current hypothesis. Each "
-            "category file retains its exact differences; "
-            "feedback_detail.json contains non-observer diagnostics and never "
-            "duplicates the previous artifact. After a formal Gate1 failure, "
-            "feedback_replay.py and feedback_replay.ttir are the exact preceding "
-            "source-blind Replay outputs; inspect them against source.py/source.ttir "
-            "instead of guessing a repair from opaque node labels.\n"
-            "Use the single `submit_candidate` transaction after a complete draft. It "
-            "runs CandidateCheck and then SourceReconcile on the same exact bytes; it "
-            "only compares occurrence obligations already authored by your pi with "
-            "the immutable Source TTIR observer and never supplies a field or repair. "
-            "When it returns PASS, stop immediately so the host can run formal gates.\n"
+            "J owns logical semantics, C only implementation choices, and pi only "
+            "anonymous Source realization of the authored J+C. You author every "
+            "semantic field; fixed code only projects evidence, checks, and rejects.\n\n"
+            "Start once with:\n"
+            "`python input/tools/context_query.py --input-root input --output-root output source-brief`\n\n"
+            "Then read `input/source.py`. For an exact compiler fact, use the same tool "
+            "with `source-observer --path fingerprint.NAME`, `source-ttir-outline`, "
+            "`source-ttir-find`, or `source-ttir-def-use`. For wire syntax, query only "
+            "the needed leaves, for example:\n"
+            "`python input/tools/schema_query.py input/schema/artifact.schema.json "
+            "--ops-reference input/knowledge/intent_ops.md bundle top section:tensor "
+            "section:parameter op:loop`\n\n"
+            "Search one exact term in `input/knowledge/lift_contract.md` only when its "
+            "ownership is unclear. Write `output/candidate.json` early and patch it in "
+            "place. Run `python .agents/intentir_agent_tool.py submit_candidate`; the "
+            "host supplies the public semantic probe after a mechanically passing draft.\n"
         ),
-        "artifact_contract.json": json.dumps(
-            contract,
-            sort_keys=True,
-            ensure_ascii=False,
-            allow_nan=False,
-            separators=(",", ":"),
-        )
-        + "\n",
-        "intent_ops.md": _compact_intent_op_reference() + "\n",
-        "lift_contract.md": build_scrc_lift_instructions().rstrip() + "\n",
+        "schema/artifact.schema.json": complete["schema/artifact.schema.json"],
+        "knowledge/lift_contract.md": complete["knowledge/lift_contract.md"],
+        "knowledge/intent_ops.md": complete["knowledge/intent_ops.md"],
+        "knowledge/preflight.md": complete["knowledge/preflight.md"],
+        "tools/context_query.py": complete["tools/context_query.py"],
+        "tools/schema_query.py": complete["tools/schema_query.py"],
         "candidate_check.json": "null\n",
         "source_reconcile.json": "null\n",
         "semantic_probe.json": "null\n",
     }
     files.update(_codex_feedback_files(complete["feedback.json"]))
     if "source_ttir.json" in complete:
-        observation = json.loads(complete["source_ttir.json"])
-        ttir = observation.get("ttir") if isinstance(observation, Mapping) else None
-        if isinstance(ttir, str) and ttir:
-            files["source.ttir"] = ttir.rstrip() + "\n"
+        files["source_ttir.json"] = complete["source_ttir.json"]
     return files
 
 _EXTERNAL_CONTINUATION_PROMPT = """The same branch-local source-aware Lift task continues in the same workspace and thread.
@@ -486,6 +336,14 @@ This diagnostic supplies no artifact field or repair. Rerun
 after it passes. Formal TypeCheck, Replay, and Gate1 remain external.
 """
 
+_SEMANTIC_PROBE_CONTINUATION_PROMPT = """The current exact candidate passed CandidateCheck and SourceReconcile, and the host ran the public Source-vs-J semantic probe.
+Read input/semantic_probe.json in this same thread. It is diagnostic-only and does
+not accept, reject, certify, or edit J. If the observed divergence exposes an error
+in your authored J, patch output/candidate.json and rerun submit_candidate. If the
+probe is unsupported or the remaining delta is only an expected floating reduction
+difference, leave the candidate unchanged and finish. Do not claim Gate membership.
+"""
+
 
 def _source_aware_startup_context(workspace: Any, *, fresh_owner: bool) -> dict[str, Any]:
     """Return a path-only receipt; exact task state stays in ordinary files."""
@@ -496,10 +354,12 @@ def _source_aware_startup_context(workspace: Any, *, fresh_owner: bool) -> dict[
         "paths": {
             "source": "input/source.py",
             "harness": "input/harness_view.json",
-            "source_ttir": "input/source.ttir",
-            "artifact_contract": "input/artifact_contract.json",
-            "intent_ops": "input/intent_ops.md",
-            "lift_contract": "input/lift_contract.md",
+            "source_observer": "input/source_ttir.json",
+            "source_query": "input/tools/context_query.py",
+            "schema_query": "input/tools/schema_query.py",
+            "artifact_schema": "input/schema/artifact.schema.json",
+            "intent_ops": "input/knowledge/intent_ops.md",
+            "lift_contract": "input/knowledge/lift_contract.md",
             "feedback_frontier": "input/feedback_frontier.json",
             "feedback_detail": "input/feedback_detail.json",
             "feedback_replay_source": "input/feedback_replay.py",
@@ -751,6 +611,8 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
         check_results: list[dict[str, Any]] = []
         source_reconcile_results: list[dict[str, Any]] = []
         semantic_probe_results: list[dict[str, Any]] = []
+        semantic_probe_by_candidate: dict[str, dict[str, Any]] = {}
+        semantic_probe_feedback_delivered: set[str] = set()
         timeout_events: list[dict[str, Any]] = []
         candidate_text: str | None = None
         last_checked_good: str | None = None
@@ -938,12 +800,37 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                 "authority",
                 "public diagnostic only; not CandidateCheck or certification",
             )
+            candidate_sha256 = (
+                hashlib.sha256(candidate_text.encode()).hexdigest()
+                if candidate_text is not None
+                else None
+            )
+            result["candidate_sha256"] = candidate_sha256
             semantic_probe_results.append(dict(result))
+            if candidate_sha256 is not None:
+                semantic_probe_by_candidate[candidate_sha256] = dict(result)
             _atomic_write_json(
                 workspace.input_dir / "semantic_probe.json",
                 result,
             )
             return result
+
+        def semantic_probe_needs_owner_turn() -> bool:
+            """Run one public probe per exact passing draft and surface divergence."""
+
+            if candidate_text is None:
+                return False
+            candidate_sha256 = hashlib.sha256(candidate_text.encode()).hexdigest()
+            result = semantic_probe_by_candidate.get(candidate_sha256)
+            if result is None:
+                result = dict(semantic_probe_tool())
+            if (
+                result.get("status") == "diverged"
+                and candidate_sha256 not in semantic_probe_feedback_delivered
+            ):
+                semantic_probe_feedback_delivered.add(candidate_sha256)
+                return True
+            return False
 
         bridge = CodexCLIToolBridge(
             workspace.scratch_dir / CODEX_CLI_TOOL_BRIDGE_ROOT_NAME,
@@ -1060,6 +947,13 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                             and source_reconcile["status"] == "pass"
                             and candidate_text is not None
                         ):
+                            if semantic_probe_needs_owner_turn():
+                                timeout_event["recovery"] = (
+                                    "current_exact_candidate_semantic_probe"
+                                )
+                                prompt = _SEMANTIC_PROBE_CONTINUATION_PROMPT
+                                selected_effort = self.repair_effort or effective_effort
+                                continue
                             timeout_event["recovery"] = "current_exact_candidate"
                             break
                         if last_checked_good is not None:
@@ -1075,6 +969,13 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                                 and source_reconcile["status"] == "pass"
                                 and candidate_text is not None
                             ):
+                                if semantic_probe_needs_owner_turn():
+                                    timeout_event["recovery"] = (
+                                        "checkpoint_semantic_probe"
+                                    )
+                                    prompt = _SEMANTIC_PROBE_CONTINUATION_PROMPT
+                                    selected_effort = self.repair_effort or effective_effort
+                                    continue
                                 timeout_event["recovery"] = (
                                     "same_invocation_checked_checkpoint"
                                 )
@@ -1119,6 +1020,10 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                     and source_reconcile["status"] == "pass"
                     and candidate_text is not None
                 ):
+                    if semantic_probe_needs_owner_turn():
+                        prompt = _SEMANTIC_PROBE_CONTINUATION_PROMPT
+                        selected_effort = self.repair_effort or effective_effort
+                        continue
                     break
                 if check["status"] != "pass":
                     _atomic_write_json(

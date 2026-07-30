@@ -13,6 +13,8 @@ import ast
 import hashlib
 import json
 from pathlib import Path
+import shlex
+import sys
 from typing import Any
 
 
@@ -480,6 +482,123 @@ def _source_observer(input_root: Path, path: str | None) -> None:
         _emit_json(_resolve_json_path(value, path))
         return
     _emit_json(_source_observer_value(input_root))
+
+
+def _bounded_preview(value: Any, *, item_limit: int, char_limit: int) -> dict[str, Any]:
+    """Return an exact prefix plus a receipt, without interpreting its meaning."""
+
+    if isinstance(value, dict):
+        items = list(value.items())
+        selected: dict[str, Any] = {}
+        for key, item in items[:item_limit]:
+            trial = {**selected, str(key): item}
+            if len(json.dumps(trial, sort_keys=True, ensure_ascii=False)) > char_limit:
+                break
+            selected[str(key)] = item
+        return {
+            "kind": "object",
+            "total": len(items),
+            "value": selected,
+            "truncated": len(selected) < len(items),
+        }
+    if isinstance(value, list):
+        selected: list[Any] = []
+        for item in value[:item_limit]:
+            trial = [*selected, item]
+            if len(json.dumps(trial, sort_keys=True, ensure_ascii=False)) > char_limit:
+                break
+            selected.append(item)
+        return {
+            "kind": "array",
+            "total": len(value),
+            "value": selected,
+            "truncated": len(selected) < len(value),
+        }
+    return {"kind": type(value).__name__, "total": 1, "value": value, "truncated": False}
+
+
+def _source_brief(input_root: Path) -> None:
+    """Expose one compact, exact navigation surface for the Lift owner.
+
+    This is deliberately a projection of already-public Source, Harness, and
+    compiler-observer facts.  It neither maps those facts to IntentIR nor authors
+    any J/C/pi field.  Every truncated section remains available through the exact
+    focused queries named in the receipt.
+    """
+
+    observation = _source_ttir_observation(input_root)
+    fingerprint = observation.get("fingerprint")
+    fingerprint = fingerprint if isinstance(fingerprint, dict) else {}
+    section_names = (
+        "interface",
+        "op_multiset",
+        "program_address_maps",
+        "reductions",
+        "memory_effects",
+        "mask_predicates",
+        "effect_multiset",
+        "dots",
+        "loops",
+        "structured_ifs",
+        "terminal_forks",
+        "schedule_view",
+        "dataflow_edges",
+    )
+    compiler_sections: dict[str, Any] = {}
+    for name in section_names:
+        if name not in fingerprint:
+            continue
+        preview = _bounded_preview(
+            fingerprint[name],
+            item_limit=12 if name == "dataflow_edges" else 6,
+            char_limit=1400,
+        )
+        if preview["truncated"]:
+            preview["exact_query"] = (
+                f"{QUERY_COMMAND} source-observer --path fingerprint.{name}"
+            )
+        compiler_sections[name] = preview
+
+    value = {
+        "protocol": "intentir.lift-source-brief.v1",
+        "source": _source_outline_value(input_root, 1, 16),
+        "harness_abi": _harness_abi_value(input_root, 1, 24),
+        "compiler": {
+            "status": observation.get("status"),
+            "ttir_lines": len(str(observation.get("ttir", "")).splitlines()),
+            "sections": compiler_sections,
+            "exact_ttir_queries": [
+                f"{QUERY_COMMAND} source-ttir-outline --start 1 --count 80",
+                f"{QUERY_COMMAND} source-ttir-find TOKEN --context 3",
+                f"{QUERY_COMMAND} source-ttir-def-use %SSA --context 2",
+            ],
+        },
+        "authority": (
+            "Exact bounded projection only. Source syntax, Harness ABI declarations, "
+            "and compiler-observer records remain separate evidence; Lift alone "
+            "decides their J/C/pi meaning and authors every artifact field."
+        ),
+    }
+    try:
+        _emit_json(value)
+    except ValueError:
+        # Preserve the same exact kinds of evidence with smaller prefixes.  This
+        # fallback changes only navigation volume, never a semantic classification.
+        value["source"] = _source_outline_value(input_root, 1, 8)
+        value["harness_abi"] = _harness_abi_value(input_root, 1, 12)
+        for name, preview in compiler_sections.items():
+            current = preview.get("value")
+            if isinstance(current, list):
+                preview["value"] = current[:2]
+                preview["truncated"] = preview["total"] > len(preview["value"])
+            elif isinstance(current, dict):
+                preview["value"] = dict(list(current.items())[:2])
+                preview["truncated"] = preview["total"] > len(preview["value"])
+            if preview["truncated"]:
+                preview["exact_query"] = (
+                    f"{QUERY_COMMAND} source-observer --path fingerprint.{name}"
+                )
+        _emit_json(value)
 
 
 def _source_find(input_root: Path, query: str, context: int) -> None:
@@ -1991,6 +2110,7 @@ def _knowledge(input_root: Path, query: str, context: int) -> None:
 
 
 def main() -> int:
+    global QUERY_COMMAND
     parser = argparse.ArgumentParser()
     parser.add_argument("--input-root", type=Path, default=Path("/input"))
     parser.add_argument("--output-root", type=Path, default=Path("/output"))
@@ -2024,6 +2144,7 @@ def main() -> int:
     source_ttir_outline.add_argument("--count", type=int, default=80)
     source_observer = subparsers.add_parser("source-observer")
     source_observer.add_argument("--path")
+    subparsers.add_parser("source-brief")
     harness = subparsers.add_parser("harness")
     harness.add_argument("--path")
     harness_abi = subparsers.add_parser("harness-abi")
@@ -2054,6 +2175,17 @@ def main() -> int:
     knowledge.add_argument("--context", type=int, default=3)
     subparsers.add_parser("copy-previous")
     args = parser.parse_args()
+    if args.input_root != Path("/input") or args.output_root != Path("/output"):
+        QUERY_COMMAND = " ".join(
+            (
+                "python",
+                shlex.quote(sys.argv[0]),
+                "--input-root",
+                shlex.quote(str(args.input_root)),
+                "--output-root",
+                shlex.quote(str(args.output_root)),
+            )
+        )
 
     if args.command == "bootstrap":
         _bootstrap(args.input_root, args.output_root)
@@ -2081,6 +2213,8 @@ def main() -> int:
         _source_ttir_outline(args.input_root, args.start, args.count)
     elif args.command == "source-observer":
         _source_observer(args.input_root, args.path)
+    elif args.command == "source-brief":
+        _source_brief(args.input_root)
     elif args.command == "harness":
         _harness(args.input_root, args.path)
     elif args.command == "harness-abi":

@@ -45,6 +45,12 @@ _LIFT_READ_ONLY_CONTEXT_COMMANDS = frozenset(
         "source",
         "source-find",
         "source-outline",
+        "source-brief",
+        "source-ttir",
+        "source-ttir-find",
+        "source-ttir-def-use",
+        "source-ttir-outline",
+        "source-observer",
         "harness",
         "harness-abi",
         "candidate",
@@ -503,7 +509,7 @@ class IntentIRLiftEnvironment:
             return self._structured_tool_error("unknown context-inspection argument")
         view = action.get("view")
         if view not in {
-            "source", "source_outline", "source_find", "harness", "harness_abi", "feedback",
+            "source", "source_outline", "source_find", "source_brief", "harness", "harness_abi", "feedback",
             "feedback_category",
             "candidate", "candidate_find", "candidate_nodes", "candidate_node",
             "candidate_abi", "candidate_control", "candidate_diff", "knowledge",
@@ -558,6 +564,8 @@ class IntentIRLiftEnvironment:
             command += ["source-outline", "--start", str(start), "--count", str(count)]
         elif view == "source_find":
             command += ["source-find", str(query), "--context", str(context)]
+        elif view == "source_brief":
+            command.append("source-brief")
         elif view in {"harness", "feedback", "candidate"}:
             command.append(view)
             if path is not None:
