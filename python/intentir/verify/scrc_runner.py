@@ -862,7 +862,14 @@ def _compact_gate1_observer_diff(
     source_fingerprint: Any | None = None,
     replay_fingerprint: Any | None = None,
 ) -> dict[str, Any]:
-    """Keep full evidence on disk while sending Lift a bounded actionable diff."""
+    """Expose a bounded frontier plus exact, category-local Gate1 evidence.
+
+    The bounded examples remain the cheap first read.  The exact differences are
+    retained in their already-labelled category so a persistent Lift owner can
+    inspect the same counterexample evidence as a human/Codex diagnosis without
+    injecting the bulk object into its prompt.  This function still performs no
+    attribution and proposes no artifact repair.
+    """
 
     raw = comparison.to_dict()
     differences = raw.get("differences")
@@ -911,6 +918,10 @@ def _compact_gate1_observer_diff(
         group = grouped[category]
         category_differences = group.pop("_differences")
         group["examples"] = _bounded_observer_examples(
+            category_differences,
+            node_aliases,
+        )
+        group["differences"] = _pseudonymize_observer_nodes(
             category_differences,
             node_aliases,
         )

@@ -45,8 +45,8 @@ from .prompt import SCHEMA as _INTENTIR_OPERATION_REFERENCE
 from .scrc_schema import scrc_lift_core_json_schema
 
 
-CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v21"
-CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v79"
+CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v22"
+CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v80"
 CODEX_CLI_TURN_TIMEOUT_SECONDS = 900.0
 
 _FEEDBACK_CATEGORY_NAMES = (
@@ -318,8 +318,9 @@ def _codex_input_files(
             "complete and mutually consistent. CandidateCheck only diagnoses these "
             "facts; it never supplies them.\n"
             "On a relift, read feedback_frontier.json first. Exact bulk Gate1 "
-            "feedback is not mounted: open only the already-labelled "
-            "feedback_category_NAME.json required by the current hypothesis; "
+            "feedback is never injected into the prompt: open only the already-labelled "
+            "feedback_category_NAME.json required by the current hypothesis. Each "
+            "category file retains its exact differences; "
             "feedback_detail.json contains non-observer diagnostics and never "
             "duplicates the previous artifact.\n"
             "Use the single `submit_candidate` transaction after a complete draft. It "
@@ -350,7 +351,8 @@ def _codex_input_files(
 
 _EXTERNAL_CONTINUATION_PROMPT = """The same branch-local source-aware Lift task continues in the same workspace and thread.
 Read input/feedback_frontier.json first. Open only a named
-input/feedback_category_NAME.json when its bounded frontier is insufficient;
+input/feedback_category_NAME.json when its bounded frontier is insufficient; that
+file contains the exact differences for the named category.
 input/feedback_detail.json contains exact non-observer diagnostics. The previous
 artifact already exists at output/candidate.json and is never duplicated in input.
 Inspect Source/TTIR only where needed, then revise the complete model-authored
