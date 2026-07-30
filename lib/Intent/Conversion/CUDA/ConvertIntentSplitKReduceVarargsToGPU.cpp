@@ -149,7 +149,8 @@ static bool allBodyOperationsReachResults(func::FuncOp fn,
 static void attachSplitKStateAttributes(
     func::FuncOp lowered, StringRef path, StringRef topology,
     int64_t blockThreads, int64_t rowsPerBlock, int64_t warpsPerRow,
-    int64_t splitCount, int64_t gridBlocks, int64_t vectorWidth,
+    int64_t dPartitions, int64_t splitCount, int64_t gridBlocks,
+    int64_t vectorWidth,
     int64_t shuffleCount, int64_t barrierCount, ArrayRef<StringRef> trace) {
   MLIRContext *ctx = lowered.getContext();
   auto i64 = IntegerType::get(ctx, 64);
@@ -177,6 +178,7 @@ static void attachSplitKStateAttributes(
   lowered->setAttr("intent.backend.grid_stride_loop_count", integer(0));
   lowered->setAttr("intent.backend.rows_per_block", integer(rowsPerBlock));
   lowered->setAttr("intent.backend.warps_per_row", integer(warpsPerRow));
+  lowered->setAttr("intent.backend.d_partitions", integer(dPartitions));
   lowered->setAttr("intent.backend.vector_width", integer(vectorWidth));
   lowered->setAttr("intent.backend.stage_count", integer(1));
   lowered->setAttr("intent.backend.reduction_parts", integer(splitCount));
@@ -386,7 +388,8 @@ struct UnrolledSplitKVarargsMatch {
   }
 
   LogicalResult rewrite(int64_t rowsPerBlock, int64_t warpsPerRow,
-                        int64_t vectorWidth, bool broadcastScalars) {
+                        int64_t dPartitions, int64_t vectorWidth,
+                        bool broadcastScalars) {
     if (rowsPerBlock != 1 && rowsPerBlock != 2 && rowsPerBlock != 4 &&
         rowsPerBlock != 8)
       return fn.emitError("rows-per-block must be one of 1, 2, 4 or 8");
@@ -398,6 +401,12 @@ struct UnrolledSplitKVarargsMatch {
           "multi-warp D partition currently requires rows-per-block=1");
     if (rowsPerBlock * warpsPerRow > 32)
       return fn.emitError("split-K launch exceeds 32 warps per block");
+    if (dPartitions != 1 && dPartitions != 2 && dPartitions != 4 &&
+        dPartitions != 8)
+      return fn.emitError("d-partitions must be one of 1, 2, 4 or 8");
+    if (dPartitions > 1 && (rowsPerBlock != 1 || warpsPerRow != 1))
+      return fn.emitError(
+          "cross-CTA D partition requires rows-per-block=1 and warps-per-row=1");
     if ((vectorWidth != 1 && vectorWidth != 2 && vectorWidth != 4) ||
         (D % vectorWidth) != 0)
       return fn.emitError(
@@ -439,14 +448,22 @@ struct UnrolledSplitKVarargsMatch {
     if (warpsPerRow > 1)
       transformationTrace.push_back(
           "cuda.splitk.multi_warp_d_partition.v1");
+    if (dPartitions > 1)
+      transformationTrace.push_back(
+          "cuda.splitk.cross_cta_d_partition.v1");
+    StringRef topology = "unrolled_vararg_merge";
+    if (broadcastScalars)
+      topology = "warp_broadcast_weighted_merge";
+    if (warpsPerRow > 1)
+      topology = "multi_warp_d_partition";
+    if (dPartitions > 1)
+      topology = "cross_cta_d_partition";
     attachSplitKStateAttributes(
-        gpuFn, "splitk_weighted_merge",
-        warpsPerRow > 1
-            ? StringRef("multi_warp_d_partition")
-            : broadcastScalars ? StringRef("warp_broadcast_weighted_merge")
-                               : StringRef("unrolled_vararg_merge"),
-        rowsPerBlock * warpsPerRow * 32, rowsPerBlock, warpsPerRow, splitCount,
-        ((M + rowsPerBlock - 1) / rowsPerBlock) * B * G * H, vectorWidth,
+        gpuFn, "splitk_weighted_merge", topology,
+        rowsPerBlock * warpsPerRow * 32, rowsPerBlock, warpsPerRow,
+        dPartitions, splitCount,
+        ((M + rowsPerBlock - 1) / rowsPerBlock) * B * G * H * dPartitions,
+        vectorWidth,
         broadcastScalars && warpsPerRow == 1 ? splitCount + 2 : 0,
         broadcastScalars && warpsPerRow > 1 ? 1 : 0, transformationTrace);
     Block *entry = gpuFn.addEntryBlock();
@@ -455,6 +472,8 @@ struct UnrolledSplitKVarargsMatch {
     Value gridX = builder.create<arith::ConstantIndexOp>(
         loc, (M + rowsPerBlock - 1) / rowsPerBlock);
     Value gridY = builder.create<arith::ConstantIndexOp>(loc, B * G * H);
+    Value gridZ =
+        builder.create<arith::ConstantIndexOp>(loc, dPartitions);
     Value blockX = builder.create<arith::ConstantIndexOp>(
         loc, rowsPerBlock * warpsPerRow * 32);
     Value c1 = builder.create<arith::ConstantIndexOp>(loc, 1);
@@ -462,16 +481,17 @@ struct UnrolledSplitKVarargsMatch {
     if (broadcastScalars && warpsPerRow > 1) {
       Value sharedBytes = builder.create<arith::ConstantOp>(
           loc, builder.getI32IntegerAttr((splitCount + 2) * 4));
-      launch = builder.create<gpu::LaunchOp>(loc, gridX, gridY, c1, blockX, c1,
+      launch = builder.create<gpu::LaunchOp>(loc, gridX, gridY, gridZ, blockX, c1,
                                              c1, sharedBytes);
     } else {
-      launch = builder.create<gpu::LaunchOp>(loc, gridX, gridY, c1, blockX, c1,
+      launch = builder.create<gpu::LaunchOp>(loc, gridX, gridY, gridZ, blockX, c1,
                                              c1);
     }
     builder.setInsertionPointToStart(&launch.getBody().front());
 
     Value bx = launch.getBlockIds().x;
     Value by = launch.getBlockIds().y;
+    Value bz = launch.getBlockIds().z;
     Value tx = launch.getThreadIds().x;
     Value c0 = builder.create<arith::ConstantIndexOp>(loc, 0);
     Value scalarScratch;
@@ -670,20 +690,34 @@ struct UnrolledSplitKVarargsMatch {
           }
 
           int64_t packetCount = D / vectorWidth;
+          int64_t packetsPerPartition =
+              (packetCount + dPartitions - 1) / dPartitions;
           int64_t lanesPerRow = warpsPerRow * 32;
           int64_t dIterations =
-              (packetCount + lanesPerRow - 1) / lanesPerRow;
+              (packetsPerPartition + lanesPerRow - 1) / lanesPerRow;
+          Value cPacketsPerPartition = b.create<arith::ConstantIndexOp>(
+              bodyLoc, packetsPerPartition);
+          Value partitionBase = b.create<arith::MulIOp>(
+              bodyLoc, bz, cPacketsPerPartition);
           for (int64_t iteration = 0; iteration < dIterations; ++iteration) {
             Value delta = b.create<arith::ConstantIndexOp>(bodyLoc,
                                                             iteration * lanesPerRow);
-            Value packet = b.create<arith::AddIOp>(bodyLoc, rowLane, delta);
+            Value localPacket =
+                b.create<arith::AddIOp>(bodyLoc, rowLane, delta);
+            Value packet = b.create<arith::AddIOp>(
+                bodyLoc, partitionBase, localPacket);
             Value d = packet;
             if (vectorWidth != 1)
               d = b.create<arith::MulIOp>(
                   bodyLoc, packet,
                   b.create<arith::ConstantIndexOp>(bodyLoc, vectorWidth));
-            Value dValid = b.create<arith::CmpIOp>(
+            Value localValid = b.create<arith::CmpIOp>(
+                bodyLoc, arith::CmpIPredicate::ult, localPacket,
+                cPacketsPerPartition);
+            Value globalValid = b.create<arith::CmpIOp>(
                 bodyLoc, arith::CmpIPredicate::ult, d, cD);
+            Value dValid =
+                b.create<arith::AndIOp>(bodyLoc, localValid, globalValid);
             b.create<scf::IfOp>(
                 bodyLoc, dValid, [&](OpBuilder &db, Location dLoc) {
                   Value outputOffset =
@@ -748,8 +782,12 @@ struct UnrolledSplitKVarargsMatch {
 
           Value rowLeader = b.create<arith::CmpIOp>(
               bodyLoc, arith::CmpIPredicate::eq, rowLane, c0);
+          Value firstDPartition = b.create<arith::CmpIOp>(
+              bodyLoc, arith::CmpIPredicate::eq, bz, c0);
+          Value lseWriter =
+              b.create<arith::AndIOp>(bodyLoc, rowLeader, firstDPartition);
           b.create<scf::IfOp>(
-              bodyLoc, rowLeader, [&](OpBuilder &lb, Location lseLoc) {
+              bodyLoc, lseWriter, [&](OpBuilder &lb, Location lseLoc) {
                 Value logSum = lb.create<math::Log2Op>(lseLoc, sumexp);
                 Value naturalLog =
                     lb.create<arith::DivFOp>(lseLoc, logSum, log2e);
@@ -923,13 +961,17 @@ struct SplitKVarargsMatch {
   }
 
   LogicalResult rewrite(int64_t rowsPerBlock, int64_t warpsPerRow,
-                        int64_t vectorWidth, bool broadcastScalars) {
+                        int64_t dPartitions, int64_t vectorWidth,
+                        bool broadcastScalars) {
     if (rowsPerBlock != 1 && rowsPerBlock != 2 && rowsPerBlock != 4 &&
         rowsPerBlock != 8)
       return fn.emitError("rows-per-block must be one of 1, 2, 4 or 8");
     if (warpsPerRow != 1)
       return fn.emitError(
           "runtime-stride SplitK requires warps-per-row=1 without a typed contiguous-D proof");
+    if (dPartitions != 1)
+      return fn.emitError(
+          "runtime-stride SplitK requires d-partitions=1 without a typed contiguous-D proof");
     if (vectorWidth != 1)
       return fn.emitError(
           "runtime-stride SplitK requires vector-width=1 without a contiguous-D proof");
@@ -1159,13 +1201,13 @@ struct ConvertIntentSplitKReduceVarargsToGPUPass
       if (isUnrolled) {
         UnrolledSplitKVarargsMatch lowering(fn);
         if (succeeded(lowering.match()))
-          result = lowering.rewrite(rowsPerBlock, warpsPerRow, vectorWidth,
-                                    warpBroadcastScalars);
+          result = lowering.rewrite(rowsPerBlock, warpsPerRow, dPartitions,
+                                    vectorWidth, warpBroadcastScalars);
       } else {
         SplitKVarargsMatch lowering(fn);
         if (succeeded(lowering.match()))
-          result = lowering.rewrite(rowsPerBlock, warpsPerRow, vectorWidth,
-                                    warpBroadcastScalars);
+          result = lowering.rewrite(rowsPerBlock, warpsPerRow, dPartitions,
+                                    vectorWidth, warpBroadcastScalars);
       }
       if (failed(result)) {
         fn.emitError("split-K varargs lowering failed after structural match");

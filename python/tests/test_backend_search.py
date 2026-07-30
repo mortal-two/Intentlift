@@ -302,12 +302,24 @@ def test_fresh_splitk_search_enumerates_real_row_and_packet_schedules() -> None:
         4,
         8,
     }
+    assert {item.schedule["d_partitions"] for item in candidates} == {
+        1,
+        2,
+        4,
+        8,
+    }
     assert all(
         item.schedule["rows_per_block"] == 1
         for item in candidates
         if item.schedule["warps_per_row"] > 1
     )
-    assert len(candidates) == 42
+    assert all(
+        item.schedule["rows_per_block"] == 1
+        and item.schedule["warps_per_row"] == 1
+        for item in candidates
+        if item.schedule["d_partitions"] > 1
+    )
+    assert len(candidates) == 60
 
     axes = next(
         item
@@ -320,6 +332,7 @@ def test_fresh_splitk_search_enumerates_real_row_and_packet_schedules() -> None:
         fixed_fast_path_id=canonical.fast_path_id,
     )
     assert all(item.schedule["warps_per_row"] == 1 for item in schedule_only)
+    assert all(item.schedule["d_partitions"] == 1 for item in schedule_only)
 
 
 def test_c_fixed_is_mechanical_authored_tile_projection() -> None:

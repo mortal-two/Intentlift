@@ -4,9 +4,9 @@
 >
 > 类型：production backend 能力建设、真实 C++/MLIR 结构搜索、Fresh-14 跨目标消融
 >
-> 继承：Task 20 已在 RVV 上完成 joint statistics 与 raw-moment 的第一轮闭环；本任务继续把
-> Full 扩展到 normalization、scan 和 padded/multi-input reduction，并在 CUDA 与 RVV 上建立可重复的
-> `Full / Schedule-Only` 强收益。
+> 继承：Task 20 已完成第一轮结构能力闭环；本任务以 5090D/H100 为主线，把 Full 扩展到
+> normalization、scan 和 padded/multi-input reduction。RVV 保留已有能力与后续横向入口，但不占用当前
+> GPU 强路径的主要调优时间。
 
 ## 1. 第一性目标
 
@@ -198,6 +198,18 @@ SortedX，导致全部多行候选被 Q/D 拒绝；改为 row-local scan thread 
 都选择单行 winner。当前同轮三柱的稳定 `G_full` 是 `1.489x/1.503x`；5090D 仍按实报告略低于 1.50x，H100
 已跨过 1.50x，收益来自更少的实际 prefix 工作与既有 frontier/epilogue live state，而不是削弱 Schedule。
 
+### 3.6 SplitK 跨 CTA D 分片的跨目标裁决
+
+Full 现在额外包含一个真实的 cross-CTA D partition：同一输出 row 的连续 D packet 由
+`d_partitions={2,4,8}` 个 CTA 无重叠地写回，grid 的 z 维显式承载 partition；LSE 只由 `z=0` 的 row leader
+写入。它改变 work decomposition，而不是增加一个候选标签；Schedule-Only 固定 `d_partitions=1`。
+
+同协议复测中，H100 选择 `d_partitions=8`，得到 `C-Fixed=15.744 us`、`Schedule=15.616 us`、
+`Full=14.432 us`，即 `G_full=1.082x`；5090D 的 Full 则保留原有单 CTA 多 warp 状态，
+`C-Fixed=15.872 us`、`Schedule=15.424 us`、`Full=15.424 us`。这说明同一候选并集能够产生真实的跨目标
+选择，但 SplitK 当前自然 shape 已接近 launch/短规约下限，因此该路径保留为后端能力和物理负例，不冒充
+`>=1.50x` 的 headline 机制。两卡相对 Source 仍分别约为 `2.93x/3.61x`。
+
 ## 4. 本任务实现的四条强路径
 
 ### P1. RVV fused Softmax：先删除物化，再比较两种真实拓扑
@@ -278,7 +290,7 @@ cast/mul/mask tensor 与标量 feature traversal，并让 5090D、H100、RVV 分
 
 | 类别 | Kernel | 本任务角色 |
 |---|---|---|
-| 已融合 elementwise | SwiGLU、GeGLU、DYT | 全量报告；DYT保留已有强信号，其余作为物理负例 |
+| 已融合 elementwise | SwiGLU、GeGLU、DYT | 全量报告；自然 shape 下均作为带宽主导的物理负例 |
 | normalization/statistics | RMSNorm、Fused Add RMSNorm、LayerNorm、PolyNorm、Flash one-pass LayerNorm、xFormers RMSNorm-add | P2 与 P4 |
 | stable normalization | Softmax | P1 |
 | prefix/support | Sparsemax | P3 |
@@ -316,22 +328,21 @@ exact-preserving 或 observation-changing
 
 2026-07-30 调整：先执行 CUDA 强路径与 5090D/H100 横向覆盖；RVV Phase 保留但后移。
 
-### Phase A：RVV Softmax 纵切
-
-1. 先将 max 与 sum 的 scalable-vector reduction作为 P1 的必要能力，而不把其约 1.06x 单独算作成功；
-2. 实现 conventional fused state并确认删除中间 tensor/traversal；
-3. 实现 online two-pass state；
-4. 在 RVV4 单线程 natural workload上完成 complete-space C-Fixed/Schedule-Only/Full/Native 比较；
-5. 若 `G_full < 1.5x`，直接依据 exp 指令、访存字节与 traversal profile选择下一步，不增加局部开关。
-
-### Phase B：CUDA 强路径
+### Phase A：CUDA 强路径
 
 1. 将 Flash preprocess padded/subgroup-feature state收敛为通用 typed-pattern rewrite；
 2. 在 5090D 与 H100 分别搜索，不跨 GPU 复用 winner；
 3. 完成 Sparsemax warp/CTA scan 与 support/tau fusion；
 4. 仅在 post-pass/profile发现真实 barrier、spill或重复 materialization时扩展 CUDA Softmax/Norm。
 
-### Phase C：RVV 横向覆盖
+### Phase B：GPU Fresh-14 能力横向
+
+1. 对 reduction、scan、multi-input 与 normalization 逐类寻找会删除 traversal/materialization 或改变同步图的状态；
+2. 所有新状态在 5090D/H100 上使用同一候选并集独立搜索；
+3. 同轮产出 C-Fixed、Schedule-Only、Full 与 Source，并报告全表负例；
+4. 若 profile 已证明 read-once/带宽或 launch 下限，不用局部算术开关伪造结构收益。
+
+### Phase C：RVV 后续横向覆盖
 
 1. 完成 P2 statistics-to-epilogue live state；
 2. 完成 P3 RVV prefix scan；

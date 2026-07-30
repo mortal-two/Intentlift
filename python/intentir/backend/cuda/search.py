@@ -249,6 +249,14 @@ class CudaSearchCandidate:
             else self.requested_observation_class
         )
         actual_schedule = dict(self.schedule)
+        if record is not None:
+            actual_schedule.update(
+                {
+                    "rows_per_block": record.rows_per_block,
+                    "warps_per_row": record.warps_per_row,
+                    "d_partitions": record.d_partitions,
+                }
+            )
         if record is not None and record.launch_plans:
             # The candidate records the requested pass options.  The concrete
             # state records what C++ actually emitted: in particular row
@@ -427,6 +435,12 @@ class CudaSearchResult:
         rows_per_block_values = sorted(
             {
                 int(record.get("rows_per_block", 1))
+                for record in actual_records
+            }
+        )
+        d_partition_values = sorted(
+            {
+                int(record.get("d_partitions", 1))
                 for record in actual_records
             }
         )
@@ -697,6 +711,7 @@ class CudaSearchResult:
                 ),
                 "reduction_topologies": reduction_topologies,
                 "rows_per_block_values": rows_per_block_values,
+                "d_partition_values": d_partition_values,
                 "actual_fma_counts": actual_fma_counts,
                 "approximation_modes": approximation_modes,
                 "structural_path_expansion_observed": (
@@ -945,6 +960,7 @@ def project_cuda_c_fixed_candidate(
         fixed_default = {
             "rows_per_block": 4,
             "warps_per_row": 1,
+            "d_partitions": 1,
             "block_threads": 128,
             "vector_width": 1,
         }
@@ -2088,72 +2104,90 @@ def enumerate_cuda_candidates(
         if axes is None or axes.search_structural_states
         else (1,)
     )
+    d_partition_modes = (
+        (1, 2, 4, 8)
+        if axes is None or axes.search_structural_states
+        else (1,)
+    )
     for rows_per_block in (4, 1, 2, 8):
         for warps_per_row in warps_per_row_modes:
             if warps_per_row > 1 and rows_per_block != 1:
                 continue
             if rows_per_block * warps_per_row > 32:
                 continue
-            for vector_width in (1, 2, 4):
-                for broadcast_scalars in broadcast_modes:
-                    options = []
-                    if rows_per_block != 4:
-                        options.append(f"rows-per-block={rows_per_block}")
-                    if warps_per_row != 1:
-                        options.append(f"warps-per-row={warps_per_row}")
-                    if vector_width != 1:
-                        options.append(f"vector-width={vector_width}")
-                    if broadcast_scalars:
-                        options.append("warp-broadcast-scalars=true")
-                    pass_argument = (
-                        "-convert-intent-splitk-reduce-varargs-to-gpu"
-                        if not options
-                        else "-convert-intent-splitk-reduce-varargs-to-gpu="
-                        + " ".join(options)
-                    )
-                    values = {
-                        "rows_per_block": rows_per_block,
-                        "warps_per_row": warps_per_row,
-                        "block_threads": rows_per_block * warps_per_row * 32,
-                        "vector_width": vector_width,
-                        "broadcast_row_scalars": broadcast_scalars,
-                    }
-                    specialized.append(
-                        CudaSearchCandidate(
-                            _candidate_id(
+            for d_partitions in d_partition_modes:
+                if d_partitions > 1 and (
+                    rows_per_block != 1 or warps_per_row != 1
+                ):
+                    continue
+                for vector_width in (1, 2, 4):
+                    for broadcast_scalars in broadcast_modes:
+                        options = []
+                        if rows_per_block != 4:
+                            options.append(f"rows-per-block={rows_per_block}")
+                        if warps_per_row != 1:
+                            options.append(f"warps-per-row={warps_per_row}")
+                        if d_partitions != 1:
+                            options.append(f"d-partitions={d_partitions}")
+                        if vector_width != 1:
+                            options.append(f"vector-width={vector_width}")
+                        if broadcast_scalars:
+                            options.append("warp-broadcast-scalars=true")
+                        pass_argument = (
+                            "-convert-intent-splitk-reduce-varargs-to-gpu"
+                            if not options
+                            else "-convert-intent-splitk-reduce-varargs-to-gpu="
+                            + " ".join(options)
+                        )
+                        values = {
+                            "rows_per_block": rows_per_block,
+                            "warps_per_row": warps_per_row,
+                            "d_partitions": d_partitions,
+                            "block_threads": rows_per_block * warps_per_row * 32,
+                            "vector_width": vector_width,
+                            "broadcast_row_scalars": broadcast_scalars,
+                        }
+                        specialized.append(
+                            CudaSearchCandidate(
+                                _candidate_id(
+                                    "splitk_weighted_merge",
+                                    SPLITK_VARARGS_FAST_PATH_ID,
+                                    pass_argument,
+                                ),
                                 "splitk_weighted_merge",
                                 SPLITK_VARARGS_FAST_PATH_ID,
                                 pass_argument,
-                            ),
-                            "splitk_weighted_merge",
-                            SPLITK_VARARGS_FAST_PATH_ID,
-                            pass_argument,
-                            values,
-                            _c_score(values, priors),
-                            requested_trace=(
-                                "cuda.splitk.unrolled_weighted_merge.v2",
-                                "cuda.materialization.whole_graph_elimination.v1",
-                                *(
-                                    ("cuda.splitk.warp_broadcast_row_scalars.v1",)
-                                    if broadcast_scalars and warps_per_row == 1
-                                    else ()
+                                values,
+                                _c_score(values, priors),
+                                requested_trace=(
+                                    "cuda.splitk.unrolled_weighted_merge.v2",
+                                    "cuda.materialization.whole_graph_elimination.v1",
+                                    *(
+                                        ("cuda.splitk.warp_broadcast_row_scalars.v1",)
+                                        if broadcast_scalars and warps_per_row == 1
+                                        else ()
+                                    ),
+                                    *(
+                                        ("cuda.splitk.workgroup_broadcast_row_scalars.v1",)
+                                        if broadcast_scalars and warps_per_row > 1
+                                        else ()
+                                    ),
+                                    *(
+                                        ("cuda.splitk.multi_warp_d_partition.v1",)
+                                        if warps_per_row > 1
+                                        else ()
+                                    ),
+                                    *(
+                                        ("cuda.splitk.cross_cta_d_partition.v1",)
+                                        if d_partitions > 1
+                                        else ()
+                                    ),
                                 ),
-                                *(
-                                    ("cuda.splitk.workgroup_broadcast_row_scalars.v1",)
-                                    if broadcast_scalars and warps_per_row > 1
-                                    else ()
+                                requested_observation_class=(
+                                    ObservationClass.OBSERVATION_CHANGING
                                 ),
-                                *(
-                                    ("cuda.splitk.multi_warp_d_partition.v1",)
-                                    if warps_per_row > 1
-                                    else ()
-                                ),
-                            ),
-                            requested_observation_class=(
-                                ObservationClass.OBSERVATION_CHANGING
-                            ),
+                            )
                         )
-                    )
 
     # A sorted-prefix graph has additional physical mappings unavailable to the
     # canonical full-row scan: multiple warp-owned rows may share a CTA, or one

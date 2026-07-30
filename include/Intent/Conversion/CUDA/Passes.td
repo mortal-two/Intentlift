@@ -1302,6 +1302,11 @@ def ConvertIntentSplitKReduceVarargsToGPU
            "one output row in the typed unrolled graph. Legal values are 1, 2, "
            "4 or 8. Values above one require rows-per-block=1 and form a distinct "
            "multi-warp D topology; the runtime-stride legacy graph fails closed.">,
+    Option<"dPartitions", "d-partitions", "int64_t", /*default=*/"1",
+           "Number of independent CTAs partitioning the contiguous D packets of "
+           "one output row in the typed unrolled graph. Legal values are 1, 2, "
+           "4 or 8. Values above one require rows-per-block=1 and "
+           "warps-per-row=1; the runtime-stride legacy graph fails closed.">,
     Option<"vectorWidth", "vector-width", "int64_t", /*default=*/"1",
            "Contiguous output-D packet width for the typed unrolled graph. "
            "Legal values are 1, 2 or 4 and D must be divisible by the width. "

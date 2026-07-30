@@ -53,6 +53,7 @@ class MLIRTransformationRecord:
     logical_tile_elements: int
     rows_per_block: int
     warps_per_row: int
+    d_partitions: int
     stage_count: int
     reduction_parts: int
     predicated_value_if_count: int
@@ -73,6 +74,7 @@ class MLIRTransformationRecord:
             "subgroup_feature",
             "subgroup_rows",
             "multi_warp_d_partition",
+            "cross_cta_d_partition",
             "multi_stage_partial_finalize",
             "sorted_prefix_early_stop",
             "sorted_prefix_early_stop_cross_multiply",
@@ -102,6 +104,7 @@ class MLIRTransformationRecord:
             "logical_tile_elements": self.logical_tile_elements,
             "rows_per_block": self.rows_per_block,
             "warps_per_row": self.warps_per_row,
+            "d_partitions": self.d_partitions,
             "stage_count": self.stage_count,
             "reduction_parts": self.reduction_parts,
             "predicated_value_if_count": self.predicated_value_if_count,
@@ -168,6 +171,9 @@ def _transformation_record(mlir: str) -> MLIRTransformationRecord | None:
     warps_per_row = integer_attr("intent.backend.warps_per_row")
     if warps_per_row is None:
         warps_per_row = 1
+    d_partitions = integer_attr("intent.backend.d_partitions")
+    if d_partitions is None:
+        d_partitions = 1
     stage_count = integer_attr("intent.backend.stage_count")
     if stage_count is None:
         stage_count = 1
@@ -218,6 +224,7 @@ def _transformation_record(mlir: str) -> MLIRTransformationRecord | None:
         not trace
         or rows_per_block <= 0
         or warps_per_row <= 0
+        or d_partitions not in {1, 2, 4, 8}
         or stage_count <= 0
         or reduction_parts <= 0
         or grid_blocks < 0
@@ -247,6 +254,7 @@ def _transformation_record(mlir: str) -> MLIRTransformationRecord | None:
         logical_tile_elements=logical_tile_elements,
         rows_per_block=rows_per_block,
         warps_per_row=warps_per_row,
+        d_partitions=d_partitions,
         stage_count=stage_count,
         reduction_parts=reduction_parts,
         predicated_value_if_count=int(counts["predicated_value_if_count"]),

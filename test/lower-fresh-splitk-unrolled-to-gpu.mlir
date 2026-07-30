@@ -3,6 +3,7 @@
 // RUN: intent-opt -convert-intent-splitk-reduce-varargs-to-gpu='vector-width=4' %s | FileCheck %s --check-prefix=VEC4
 // RUN: intent-opt -convert-intent-splitk-reduce-varargs-to-gpu='warp-broadcast-scalars=true' %s | FileCheck %s --check-prefix=BCAST
 // RUN: intent-opt -convert-intent-splitk-reduce-varargs-to-gpu='rows-per-block=1 warps-per-row=4 vector-width=4 warp-broadcast-scalars=true' %s | FileCheck %s --check-prefix=MULTIWARP
+// RUN: intent-opt -convert-intent-splitk-reduce-varargs-to-gpu='rows-per-block=1 d-partitions=4' %s | FileCheck %s --check-prefix=DPART
 
 // Exact typed topology materialized from the Fresh14 two-vararg SplitK J.  The
 // pass must recognize the weighted-merge algebra from SSA, consume the complete
@@ -114,3 +115,16 @@ module {
 // MULTIWARP: gpu.barrier
 // MULTIWARP: vector.load
 // MULTIWARP-NOT: intent.
+
+// DPART-LABEL: func.func @fresh_splitk(
+// DPART-SAME: intent.backend.block_threads = 32 : i64
+// DPART-SAME: intent.backend.d_partitions = 4 : i64
+// DPART-SAME: intent.backend.grid_blocks = 8 : i64
+// DPART-SAME: intent.backend.reduction_topology = "cross_cta_d_partition"
+// DPART-SAME: "cuda.splitk.cross_cta_d_partition.v1"
+// DPART-SAME: intent.backend.warps_per_row = 1 : i64
+// DPART: gpu.launch blocks
+// DPART: arith.cmpi ult
+// DPART: arith.andi
+// DPART: math.log2
+// DPART-NOT: intent.
