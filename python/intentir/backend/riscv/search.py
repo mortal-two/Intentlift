@@ -158,14 +158,15 @@ def _dtype_bits(dtype: str) -> int | None:
 
 def _operation_facts(
     value: Any,
-) -> tuple[set[tuple[int, ...]], bool, list[int], bool]:
+) -> tuple[set[tuple[int, ...]], bool, list[int], bool, bool]:
     reduction_axes: set[tuple[int, ...]] = set()
     has_scan = False
     float_bits: list[int] = []
     has_reassociable_float_reduction = False
+    has_contraction = False
 
     def visit(item: Any) -> None:
-        nonlocal has_scan, has_reassociable_float_reduction
+        nonlocal has_scan, has_reassociable_float_reduction, has_contraction
         if isinstance(item, Mapping):
             dtype = item.get("dtype")
             if isinstance(dtype, str):
@@ -173,6 +174,7 @@ def _operation_facts(
                 if bits is not None:
                     float_bits.append(bits)
             op = item.get("op")
+            has_contraction = has_contraction or op == "contraction"
             if op in {"reduce", "scan"}:
                 has_scan = has_scan or op == "scan"
                 attrs = item.get("attrs", {})
@@ -201,6 +203,7 @@ def _operation_facts(
         has_scan,
         float_bits,
         has_reassociable_float_reduction,
+        has_contraction,
     )
 
 
@@ -227,7 +230,7 @@ def _project_c_priors(
     dict[str, Any],
 ]:
     payload = state.base.j.to_json()
-    reduction_axes, has_scan, float_bits, _has_reassociation = (
+    reduction_axes, has_scan, float_bits, _has_reassociation, _has_contraction = (
         _operation_facts(payload)
     )
     vlen_bits = _target_vlen_bits(state)
@@ -519,7 +522,7 @@ def plan_riscv_search(
 ) -> RiscvSearchPlan:
     if not isinstance(state, BackendSearchState):
         raise TypeError("RVV search planning requires BackendSearchState")
-    _axes, _has_scan, _float_bits, has_reassociation = _operation_facts(
+    _axes, _has_scan, _float_bits, has_reassociation, has_contraction = _operation_facts(
         state.base.j.to_json()
     )
     projected_priors, ignored_priors, projection = _project_c_priors(state)
@@ -528,18 +531,36 @@ def plan_riscv_search(
         enable_reassociation=has_reassociation,
     )
     minimum_reduction_tile = int(projection["vector_lanes"])
+    subvector_reduction_schedules_rejected = sum(
+        0 < item.schedule.reduction_tile < minimum_reduction_tile
+        for item in raw_universe
+    )
+    contraction_reduction_schedules_rejected = sum(
+        has_contraction and item.schedule.reduction_tile > 0
+        for item in raw_universe
+    )
     universe = tuple(
         item
         for item in raw_universe
         if item.schedule.reduction_tile == 0
-        or item.schedule.reduction_tile >= minimum_reduction_tile
+        or (
+            not has_contraction
+            and item.schedule.reduction_tile >= minimum_reduction_tile
+        )
     )
     projection = {
         **projection,
         "minimum_reduction_tile": minimum_reduction_tile,
-        "subvector_reduction_schedules_rejected": len(raw_universe) - len(universe),
+        "target_schedule_rejections": len(raw_universe) - len(universe),
+        "subvector_reduction_schedules_rejected": (
+            subvector_reduction_schedules_rejected
+        ),
         "subvector_reduction_rule": (
             "a vectorized reduction tile must cover at least one target vector"
+        ),
+        "generic_contraction_reduction_tiling_admitted": not has_contraction,
+        "generic_contraction_reduction_schedules_rejected": (
+            contraction_reduction_schedules_rejected
         ),
     }
     scores = {

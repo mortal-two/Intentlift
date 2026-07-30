@@ -597,3 +597,38 @@ def test_rvv_c_fixed_does_not_activate_an_unmentioned_tile_axis() -> None:
         item["schedule_dimension"]
         for item in plan.c_projection["projected_priors"]
     } == {"parallel_tile"}
+
+
+def test_rvv_generic_contraction_does_not_claim_reduction_retile_support() -> None:
+    snapshot, _path = load_production_snapshot(
+        _ROOT / "corpus" / "production-jc-v3",
+        "flash_linear",
+    )
+    assert snapshot.c is not None
+    prepared = prepare_production_workload(
+        "flash_linear", profile="natural-headline-v1"
+    )
+    case = build_workload_jc_suite(prepared, snapshot.j, snapshot.c).cases[0]
+    constexpr = constexpr_input_bindings(
+        snapshot.j,
+        case.refeval.input_binding_map,
+        case.values,
+    )
+    materialized = materialize_j(
+        snapshot.j,
+        case.refeval.dims_map,
+        constexpr_bindings=constexpr,
+    )
+    target = BackendTarget("riscv", "rv64gcv_zfh", ("vlen128",))
+
+    plan = rvv_search.plan_riscv_search(
+        attach_c(materialized, snapshot.c, target)
+    )
+
+    assert all(item.schedule.reduction_tile == 0 for item in plan.universe)
+    assert not plan.c_projection[
+        "generic_contraction_reduction_tiling_admitted"
+    ]
+    assert plan.c_projection[
+        "generic_contraction_reduction_schedules_rejected"
+    ] > 0
