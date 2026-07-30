@@ -19,6 +19,7 @@ from intentir.ir.canonical_j import (
     direct_unit_dimension_refs,
     j_elaboration,
 )
+from intentir.ir.contract_ir import ContractIRProjectionError, project_contract_ir
 from intentir.ir.dim_expr import (
     DimExprError,
     DimensionConstraintSet,
@@ -4591,6 +4592,25 @@ def type_check(
     known_op_diagnostics = _check_known_operation_contracts(j)
     if known_op_diagnostics:
         return TypeCheckReport(TypeCheckStatus.FAIL, known_op_diagnostics)
+
+    # ContractIR is the target-neutral, one-to-one typed projection of every
+    # authored Layer-B domain, index, and predicate.  Failure here is a J type
+    # error, not a RefEval/backend capability decision.  In particular, an x*
+    # dimension already has integer sort and cannot also stand alone as a boolean
+    # domain predicate.  No Source, C value, pi topology, or target is consulted.
+    try:
+        project_contract_ir(j)
+    except ContractIRProjectionError as exc:
+        return TypeCheckReport(
+            TypeCheckStatus.FAIL,
+            (
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.J_ELABORATION_FAILED,
+                    "j.boundary",
+                    str(exc),
+                ),
+            ),
+        )
 
     diagnostics: list[TypeCheckDiagnostic] = []
     _check_dimension_and_pad_contracts(j, diagnostics)
