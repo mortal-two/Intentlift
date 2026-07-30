@@ -4351,21 +4351,57 @@ struct RowReductionLowering {
           }
           chunkBestRank = loadRank.getResult(0);
           chunkBestSum = loadSum.getResult(0);
-          for (int32_t delta = 1; delta < 32; delta <<= 1) {
-            Value otherRank = tb.create<gpu::ShuffleOp>(
-                                    loc, chunkBestRank, delta, 32,
-                                    gpu::ShuffleMode::XOR)
-                                  .getShuffleResult();
-            Value otherSum = tb.create<gpu::ShuffleOp>(
-                                   loc, chunkBestSum, delta, 32,
-                                   gpu::ShuffleMode::XOR)
-                                 .getShuffleResult();
-            Value takeOther = tb.create<arith::CmpIOp>(
-                loc, arith::CmpIPredicate::sgt, otherRank, chunkBestRank);
+          if (frontierBallotSupport) {
+            // Every active lane now holds one warp's frontier pair, ordered by
+            // the disjoint rank interval owned by that warp.  Descending input
+            // makes nonzero support a prefix of those lanes, so the last set
+            // ballot bit is exactly the block frontier.  Preserve the generic
+            // max-pair fold below for paths without that certified theorem.
+            Value hasChunkSupport = tb.create<arith::CmpIOp>(
+                loc, arith::CmpIPredicate::sgt, chunkBestRank, zeroI);
+            Value fullWarpMask =
+                tb.create<arith::ConstantIntOp>(loc, -1, 32);
+            Value supportMask = tb.create<NVVM::VoteBallotOp>(
+                loc, i32, fullWarpMask, hasChunkSupport);
+            Value hasAnySupport = tb.create<arith::CmpIOp>(
+                loc, arith::CmpIPredicate::ne, supportMask, zeroI);
+            Value safeMask = tb.create<arith::SelectOp>(
+                loc, hasAnySupport, supportMask,
+                tb.create<arith::ConstantIntOp>(loc, 1, 32));
+            Value leadingZeros =
+                tb.create<math::CountLeadingZerosOp>(loc, safeMask);
+            Value frontierWarp = tb.create<arith::SubIOp>(
+                loc, tb.create<arith::ConstantIntOp>(loc, 31, 32),
+                leadingZeros);
+            Value frontierRank = tb.create<gpu::ShuffleOp>(
+                                     loc, chunkBestRank, frontierWarp, width32,
+                                     gpu::ShuffleMode::IDX)
+                                     .getShuffleResult();
+            Value frontierSum = tb.create<gpu::ShuffleOp>(
+                                    loc, chunkBestSum, frontierWarp, width32,
+                                    gpu::ShuffleMode::IDX)
+                                    .getShuffleResult();
             chunkBestRank = tb.create<arith::SelectOp>(
-                loc, takeOther, otherRank, chunkBestRank);
+                loc, hasAnySupport, frontierRank, zeroI);
             chunkBestSum = tb.create<arith::SelectOp>(
-                loc, takeOther, otherSum, chunkBestSum);
+                loc, hasAnySupport, frontierSum, zeroF);
+          } else {
+            for (int32_t delta = 1; delta < 32; delta <<= 1) {
+              Value otherRank = tb.create<gpu::ShuffleOp>(
+                                      loc, chunkBestRank, delta, 32,
+                                      gpu::ShuffleMode::XOR)
+                                    .getShuffleResult();
+              Value otherSum = tb.create<gpu::ShuffleOp>(
+                                     loc, chunkBestSum, delta, 32,
+                                     gpu::ShuffleMode::XOR)
+                                   .getShuffleResult();
+              Value takeOther = tb.create<arith::CmpIOp>(
+                  loc, arith::CmpIPredicate::sgt, otherRank, chunkBestRank);
+              chunkBestRank = tb.create<arith::SelectOp>(
+                  loc, takeOther, otherRank, chunkBestRank);
+              chunkBestSum = tb.create<arith::SelectOp>(
+                  loc, takeOther, otherSum, chunkBestSum);
+            }
           }
         }
 
