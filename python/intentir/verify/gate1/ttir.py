@@ -33,6 +33,7 @@ __all__ = [
     "InterfaceArgument",
     "LoopFingerprint",
     "MemoryEffect",
+    "ProgramAddressMapFingerprint",
     "ReductionFingerprint",
     "RuntimeInterface",
     "StructuredIfArmFingerprint",
@@ -49,7 +50,7 @@ __all__ = [
 ]
 
 
-TTIR_FINGERPRINT_SCHEMA = "triton-ttir-3.6-gate1-v12"
+TTIR_FINGERPRINT_SCHEMA = "triton-ttir-3.6-gate1-v13"
 _SCHEMA_VERSION = TTIR_FINGERPRINT_SCHEMA
 _SSA_RE = re.compile(r"%[A-Za-z0-9_.$-]+(?:#[0-9]+)?")
 _LOC_START_RE = re.compile(r"loc\s*\(")
@@ -580,12 +581,31 @@ class TerminalForkFingerprint:
 
 
 @dataclass(frozen=True)
+class ProgramAddressMapFingerprint:
+    """Closed symbolic route from one program coordinate to one pointer value."""
+
+    base_expression: str
+    offset_expression: str
+    result_contract: str
+    region_context: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "base_expression": json.loads(self.base_expression),
+            "offset_expression": json.loads(self.offset_expression),
+            "result_contract": self.result_contract,
+            "region_context": list(self.region_context),
+        }
+
+
+@dataclass(frozen=True)
 class TTIRFingerprint:
     """Immutable Gate1 fingerprint.  All sequence fields are canonically sorted."""
 
     interface: RuntimeInterface
     op_multiset: tuple[tuple[str, int], ...]
     dataflow_edges: tuple[tuple[str, str, str], ...]
+    program_address_maps: tuple[ProgramAddressMapFingerprint, ...]
     reductions: tuple[ReductionFingerprint, ...]
     memory_effects: tuple[MemoryEffect, ...]
     mask_predicates: tuple[str, ...]
@@ -672,6 +692,9 @@ class TTIRFingerprint:
             "interface": self.interface.to_dict(),
             "op_multiset": dict(self.op_multiset),
             "dataflow_edges": [list(edge) for edge in self.dataflow_edges],
+            "program_address_maps": [
+                item.to_dict() for item in self.program_address_maps
+            ],
             "reductions": [item.to_dict() for item in self.reductions],
             "memory_effects": [item.to_dict() for item in self.memory_effects],
             "mask_predicates": list(self.mask_predicates),
@@ -4058,6 +4081,7 @@ class TTIRParser:
         semantic_cache: dict[int, str] = {}
         representation_atom_cache: dict[str, tuple[str, ...]] = {}
         representation_ref_cache: dict[str, str] = {}
+        address_expression_cache: dict[str, tuple[tuple[Any, ...], bool]] = {}
 
         def result_contract(operation: _Operation) -> str:
             """Return a bounded result-type view without retaining its formula."""
@@ -4179,6 +4203,77 @@ class TTIRParser:
                 ) from error
             return f"{base}#result[{slot}]"
 
+        def address_expression(
+            name: str,
+            active: frozenset[int] = frozenset(),
+        ) -> tuple[tuple[Any, ...], bool]:
+            """Canonicalize the closed integer/pointer expression rooted at SSA.
+
+            Unlike the ordinary representation quotient, this keeps literals,
+            divisors, strides, argument positions, and program-axis selection.
+            It is used only for routes that transitively depend on
+            ``tt.get_program_id``; unrelated schedule spelling remains outside
+            the hard observer.
+            """
+
+            cached = address_expression_cache.get(name)
+            if cached is not None:
+                return cached
+            leaf = leaf_labels.get(name)
+            if leaf is not None:
+                result = (("leaf", leaf), False)
+                address_expression_cache[name] = result
+                return result
+            node_id = result_to_node.get(name)
+            if node_id is None:
+                raise TTIRParseError(
+                    f"address expression has unresolved SSA value {name!r}"
+                )
+            if node_id in active:
+                raise TTIRParseError("cyclic program-address SSA dependency")
+            operation = node_by_id[node_id]
+            children_with_flags = tuple(
+                address_expression(
+                    operand,
+                    active | {node_id},
+                )
+                for operand in (*operation.operands, *operation.region_results)
+            )
+            children = [item[0] for item in children_with_flags]
+            depends_on_program = operation.name == "tt.get_program_id" or any(
+                item[1] for item in children_with_flags
+            )
+            if (
+                operation.name in _COMMUTATIVE_OPS
+                or operation.cmp_predicate in _SYMMETRIC_CMP
+            ):
+                header = children[: operation.header_operand_count]
+                header.sort(key=_stable_json)
+                children = header + children[operation.header_operand_count :]
+            slot = (
+                operation.result_names.index(name)
+                if len(operation.result_names) > 1 else 0
+            )
+            constant: int | float | None = None
+            if operation.name == "arith.constant" and operation.constant_value is not None:
+                constant = (
+                    int(operation.constant_value)
+                    if operation.constant_value.is_integer()
+                    else operation.constant_value
+                )
+            expression = (
+                "op",
+                operation.name,
+                hard_local_signature(operation),
+                result_contract(operation),
+                slot,
+                constant,
+                tuple(children),
+            )
+            result = (expression, depends_on_program)
+            address_expression_cache[name] = result
+            return result
+
         def normalized_operand_refs(
             operation: _Operation, *, semantic: bool
         ) -> list[str]:
@@ -4223,6 +4318,30 @@ class TTIRParser:
         )
         if terminal_forks:
             op_counts["control.conditional"] += len(terminal_forks)
+
+        program_address_maps: list[ProgramAddressMapFingerprint] = []
+        for operation in operations:
+            if operation.name != "tt.addptr" or len(operation.operands) < 2:
+                continue
+            base_expression, base_depends = address_expression(
+                operation.operands[0]
+            )
+            offset_expression, offset_depends = address_expression(
+                operation.operands[1]
+            )
+            if not (base_depends or offset_depends):
+                continue
+            program_address_maps.append(
+                ProgramAddressMapFingerprint(
+                    _stable_json(base_expression),
+                    _stable_json(offset_expression),
+                    result_contract(operation),
+                    tuple(node_by_id[parent].name for parent in operation.context),
+                )
+            )
+        program_address_maps.sort(
+            key=lambda item: _stable_json(item.to_dict())
+        )
 
         edges: list[tuple[str, str, str]] = []
         for operation in operations:
@@ -5175,6 +5294,7 @@ class TTIRParser:
             ),
             op_multiset=tuple(sorted(op_counts.items())),
             dataflow_edges=tuple(sorted(edges)),
+            program_address_maps=tuple(program_address_maps),
             reductions=tuple(reductions),
             memory_effects=tuple(memory_effects),
             mask_predicates=tuple(mask_predicates),
