@@ -721,7 +721,9 @@ pilot证明系统接口稳定后，对10项按`2--3 cases × B=3`持续保持并
 4. 所有source-grounded logical/derived extent由J closed relation表达，grid/C/valuation不补语义；
 5. 十项active queue均取得current-version TypeCheck、fresh Replay、Gate1与三边Gate2；
 6. 最终28项均有可供production backend消费的accepted J+C；π不越过SCRC；
-7. 没有新增tests、kernel模板、RuleCard、composer、跨branch信息共享或hidden Gate2反馈；
+7. 没有新增tests、kernel模板、RuleCard、deterministic semantic composer、跨branch信息共享或hidden
+   Gate2反馈；后继Task 24允许fresh Replay episode内的syntax-only editing composer，它不从J/π生成
+   target实现、不跨episode，也不改变本Task历史证据；
 8. 文档/spec/代码/evidence一致，提交后worktree clean。
 
 ## 12. 非目标与禁止退化
@@ -731,7 +733,9 @@ pilot证明系统接口稳定后，对10项按`2--3 cases × B=3`持续保持并
 - 不恢复planner/builder/reviewer多agent写作；
 - 不让Compiler/TTIR工具生成J/C/π或Replay；
 - 不把Source TTIR、Harness、C value、Gate diff或旧Replay交给Replay；
-- 不建立deterministic Replay composer、kernel-specific prompt/template或每frontend语义规则库；
+- 不建立从J/π选择target实现的deterministic Replay composer、kernel-specific prompt/template或每
+  frontend语义规则库；后继Task 24的episode-local syntax composer只编辑Replay agent自己作者化的
+  syntax nodes，不属于该禁令；
 - 不用hash/signature gate、全量重复审查或mock test代替真实闭合；
 - 不用TypeCheck PASS、更多token、跨轮best-parent或无限K冒充能力提升；
 - 不因后端搜索新增FMA/TF32/reassociation permission；

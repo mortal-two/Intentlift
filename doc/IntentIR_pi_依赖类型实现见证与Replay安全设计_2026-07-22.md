@@ -955,7 +955,11 @@ artifact 保持原始序列化、digest 与字段集合，禁止静默附加空�
 - Replay code policy；
 - compiler observation 与 Gate verdict。
 
-固定代码不把 π 解码成源码，不建立 deterministic composer。
+固定代码不把 π 解码成源码，不建立 deterministic semantic composer。Replay agent 可以在本次 fresh
+episode 内使用只操作 agent-authored syntax nodes 的 editing composer；它不读取 J/π 选择 target API、
+不展开 realization recipe，状态不跨 episode，也不进入 artifact/Gate/backend。该边界以
+[J 主导的 π_min 与 Episode-Local Composer Replay](IntentIR_J主导_pi_min与Episode_Local_Composer_Replay最终设计_2026-07-31.md)
+为准。
 
 `replay-check.v14` 可以在公共、source-blind synthetic compile 后核对 π 已作者化的
 `transfer_direct` occurrence 与 compiled load/store multiplicity；它只拒绝 compiler 已经折叠的
@@ -1287,7 +1291,8 @@ Gate2：semantic soundness
 - multiple instances 可以锚定同一个 semantic ref；
 - Replay 使用 J/C/pi source-blind packet。
 
-这些部分应保留并扩展，而不是恢复 composer。
+这些部分应保留并扩展，而不是恢复 deterministic semantic composer。纯语法、episode-local 的编辑
+composer 不构造实现，只用于让 Replay LLM 稳定维护自己作者化的源码，因此不在此禁令内。
 
 ## 14. 当前实现状态与剩余缺口
 
@@ -1586,7 +1591,8 @@ masked-J hard close and TypeCheck(J,C,pi) = PASS
 
 ## 15. 当前阶段不做什么
 
-- 不恢复 deterministic composer；
+- 不恢复从 J/π 选择算法或 target API 的 deterministic semantic composer；允许 fresh Replay episode
+  内、无语义映射且不跨 episode 的 syntax-only editing composer；
 - 不恢复 RuleCard/RuleRegistry；
 - 不恢复 `C.strategy`；
 - 不向 Replay 增加第四输入；

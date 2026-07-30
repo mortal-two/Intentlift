@@ -14,7 +14,10 @@ lowering 和测试要求，不形成另一套设计。上位文档按作用域�
   统一 SCRC 数学与 claim；
 - [Contract-Preserving Multi-Lowering 后端最终设计](../../doc/IntentIR_Contract_Preserving_Multi_Lowering_后端最终设计_2026-07-24.md)
   在服从前四份对象边界的条件下，权威定义 post-SCRC production backend；
-- 本目录只做上述五份文档的派生投影。
+- [J 主导的 π_min 与 Episode-Local Composer Replay](../../doc/IntentIR_J主导_pi_min与Episode_Local_Composer_Replay最终设计_2026-07-31.md)
+  在不改变上述对象和认证公式的前提下，权威细化 Replay runtime：禁止 deterministic semantic
+  composer，允许 fresh episode 内 syntax-only editing composer，并要求 normal/masked 独立；
+- 本目录只做上述权威文档的派生投影；Replay增补不增加新的数学对象。
 
 若派生规范与上位设计冲突，应修订派生规范；不得通过增加 interface artifact、hash gate、
 epoch、commitment、额外认证 Gate 或兼容旁路来调和冲突。

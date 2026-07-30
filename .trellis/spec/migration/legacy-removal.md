@@ -7,7 +7,8 @@
 
 - artifact hash/digest/commitment/epoch 认证门与所谓冻结状态机；
 - 独立 interface artifact、`Ids(interface)`、LogicalABI/LogicalInterface 与语义 BindingMap；
-- deterministic composer、RuleCard/RuleRegistry、selected card、`C.strategy`；
+- deterministic semantic composer、RuleCard/RuleRegistry、selected card、`C.strategy`；fresh Replay
+  episode内不含J/π语义映射的syntax-only editing composer不属于被迁回的旧控制面；
 - Replay patch、diff-guided Replay、跨候选复用 Replay；
 - 仅自闭合的 `Parse(π)` 冒充 `TypeCheck(J,C,π)`；
 - `masked hard-close -> LEAKAGE_REJECTED` 的旧主状态机；

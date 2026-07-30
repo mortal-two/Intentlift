@@ -365,7 +365,9 @@ Erase_C(M_C) = M0
 投影为 C-derived MLIR attr；parser、`Emit_v`、pass default 或 kernel recognizer 都不能冒充 C 来源。
 该步骤不产生新的顶层 artifact，也不修改 J。
 
-这里的 deterministic materialization 与 Lift/Replay 中被禁止的 deterministic composer完全不同：
+这里的 deterministic materialization 与 Lift/Replay 中被禁止的 deterministic semantic composer完全不同。
+Replay fresh episode 内的 syntax-only editing composer 也与二者不同：它只渲染 agent 已作者化的
+源码结构，不读取 J/π 选择 lowering，不跨 episode，也不进入 production：
 
 - Lift/Replay 面对开放前端，语义理解与源码生成归 LLM；
 - production materializer 面对已经 closed、typed、accepted 的 J，只执行 compiler encoding。

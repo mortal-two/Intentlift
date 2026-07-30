@@ -487,7 +487,9 @@ Replay 函数签名、body 或 π route 中。正式 Gate1/Gate2 在 Replay 提�
 绑定该 role；source-blind construction compile 不读取其 value，也不能把它伪装成公开代表值。
 
 Replay 必须生成完整、可独立构建的当前前端源码；固定代码只做绑定和检查，不根据 π 或 compiler
-diff 施工。
+diff 施工。fresh Replay owner 可以使用 episode-local syntax composer，对自己给出的 line/block/raw
+syntax nodes 做稳定ID、局部编辑、render、source-map与rollback；Composer不得读取J/π选择API或算法，
+不得跨episode复用，最终仍只提交完整exact source并经过同一ReplayCheck/compile/Gate。
 
 Replay instruction 的共享前缀只能陈述 frontend-neutral 的 J/C/π ownership、拓扑保持、拒绝与输出
 合同。`tl.dot`、`tl.sum`、Triton program-axis 以及 base/lane 到具体 pointer operation 的拼写，只能在

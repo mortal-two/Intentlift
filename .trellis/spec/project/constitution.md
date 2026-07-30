@@ -61,9 +61,12 @@ lowering derivations，但不得读取 kernel name、Source、π 或使用 per-k
 ## 明确禁止
 
 - 独立 interface/ABI 语义对象、BindingMap 或 source-conditioned sidecar 进入 Replay；
-- Lift/Replay/SCRC 中的 deterministic composer、per-kernel RuleCard/RuleRegistry、`C.strategy` 或
-  per-kernel construction policy；production 只允许以 typed A pattern、B/current-state precondition
-  与 target capability 为 key 的 generic compiler transformation registration；
+- Lift/Replay/SCRC 中从 J/π pattern 选择 target algorithm/API 的 deterministic semantic composer、
+  per-kernel RuleCard/RuleRegistry、`C.strategy` 或 per-kernel construction policy；允许 source-blind
+  Replay owner 在本次 fresh episode 内使用 syntax-only editing composer维护自己作者化的源码，但其
+  固定实现不得读取J/π语义、展开recipe、跨episode复用或进入artifact/Gate/backend；production只允许
+  以 typed A pattern、B/current-state precondition 与 target capability 为 key 的 generic compiler
+  transformation registration；
 - 以 hash、digest、commitment、epoch 或所谓冻结门决定候选是否合法；
 - 让 Lift 自定义任意 comparator、任意 tolerance 或“所有输出均可接受”；
 - Gate1 失败后 patch Replay，或 Gate2 失败后在同一次实验中继续修补候选；

@@ -1487,7 +1487,7 @@ J mutation / J-authority challenge 不进入主在线 Gate。若研究需要，�
 | 最初版本倾向 | 最终版本 |
 |---|---|
 | C.strategy 承载 source realization | C 恢复为纯 implementation selection；realization 进入 \(\pi\) |
-| RuleCard / RuleRegistry / deterministic composer 持续扩张 | Replay LLM 直接消费 typed relational \(\pi\) 与公共 \(U_f\) |
+| RuleCard / RuleRegistry / deterministic semantic composer 持续扩张 | Replay LLM 直接消费 typed relational \(\pi\) 与公共 \(U_f\)；可在 fresh episode 内用 syntax-only editing composer 维护自己作者化的源码 |
 | Lift 输出 J/C/π 外还有 interface、BindingMap、Resolver 等 | proof artifact 严格只有 \((J,C,\pi)\) |
 | Replay 可能看到 Harness、真实名字或额外 context | Replay 只看 J + \(\pi\) + MaskC(C) + 公共 \(U_f\) |
 | \(\pi\) 是机制/施工 opcode 列表 | \(\pi\) 是 anonymous relational witness |
@@ -1526,7 +1526,9 @@ J mutation / J-authority challenge 不进入主在线 Gate。若研究需要，�
 - per-kernel RuleCard；
 - LoweringAgent / retune agent；
 - 公共语义 IR Q；
-- deterministic Replay composer。
+- 从 J/π 选择 target algorithm/API 的 deterministic Replay composer。fresh Replay agent 内部的
+  syntax-only editing composer 只渲染 agent-authored nodes，不是 J→frontend lowerer，也不进入证书；
+  具体边界见 [J 主导的 π_min 与 Episode-Local Composer Replay](IntentIR_J主导_pi_min与Episode_Local_Composer_Replay最终设计_2026-07-31.md)。
 
 通用核心仍然只有：
 

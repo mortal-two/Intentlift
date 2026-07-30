@@ -35,7 +35,9 @@ G1 = [F_(f,p)(Compile_H(Source,c0)) == F_(f,p)(Compile_H(Replay,c0))]
 ```
 
 Gate1 回答 Replay 是否重建了 Source 对 J 的 realization。它不执行数值语义、不读取 Gate2
-结果，也不通过 composer/RuleCard 构造 Replay。
+结果，也不通过 semantic composer/RuleCard 构造 Replay。Replay agent可在自己的fresh episode内用
+syntax-only composer编辑agent-authored源码；该state不进入Gate1，Gate1仍只重编译和比较最终exact
+Replay source。
 
 Replay normal view 必须保留当前 J-owned typed relations；它从 J 读取 value/dimension equality、
 closed dimension definitions、
