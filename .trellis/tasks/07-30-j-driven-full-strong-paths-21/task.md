@@ -67,71 +67,78 @@ RVV joint statistics 已经证明结构空间是真实存在的，而不是论�
 - Flash one-pass LayerNorm `[4096,4096]` 首轮：`Schedule-Only / Full = 3.354x`。
 
 这些收益来自共同 root 的一次 packet load、多 accumulator 同时存活、raw-moment 重写以及 producer fusion，
-不是来自把 C-Fixed 做弱。CUDA 已有 DYT 的 `Full / Schedule-Only = 1.568x` 信号；历史 Flash backward
-preprocess 的 padded/subgroup-feature lowering 也已经到 1.5x 附近。
+不是来自把 C-Fixed 做弱。CUDA 当前的正式强结构证据来自 Flash backward preprocess 的 interleaved
+multirow live-accumulator，以及 Sparsemax 的 prefix/frontier/epilogue live state；DYT 在模型级自然 shape 上是
+带宽负例，不再沿用早期小规模筛选中的强收益表述。
 
 ### 3.2 目前真正缺少的路径
 
 - RVV Softmax 仍将 max、shift/exp、sum、divide lower 成多个 traversal/materialization；
 - RVV 的显式 vector reduction 已支持 sum/max，但单独 vectorize reduction 并不会删除 exp tensor 与阶段流量；
 - RVV multi-input、mixed-dtype、masked/padded row reduction 还不能统一进入 packet state；
-- CUDA Sparsemax 仍缺少完整的并行 prefix/support/tau live-state 路径；
-- CUDA Flash preprocess 的强 padded reduction 尚未作为通用 typed-pattern state 覆盖两个 GPU target；
+- CUDA Sparsemax 已完成 prefix/support/tau、X prefetch、frontier ballot 与 leader-tau 状态；其剩余下限是完整
+  X/output 流量与短 active-prefix 控制；
+- CUDA Flash preprocess 已由通用 typed padded-reduction matcher覆盖 5090D/H100，并让两卡独立选择不同
+  interleaved row geometry；
 - CUDA direct Softmax 已经把输入行和 `exp(x-max)` 保存在寄存器 SSA 中，不能虚构一个“删除 exp tensor”
   的重复路径；普通 CUDA Norm 也已非常接近 read-once，除非 profile 证明 barrier、spill 或重新物化存在，
   否则它们不是优先纵切。
 
-### 3.3 2026-07-30 CUDA 自然负载进展
+### 3.3 2026-07-30 CUDA 自然负载横向结果
 
 当前执行优先级已切到 5090D/H100；RVV 只保留已通过编译与测试的能力，不继续占用本轮主要调优时间。
-以下均为 `natural-headline-v1`、code-warm/data-cold、CUDA event；筛选数据用于决定实现方向，最终论文表仍按
-第8节协议统一重测。
+以下均为 `natural-headline-v1`、code-warm/data-cold、CUDA event。每个三柱 winner 使用 5 个 measurement
+rounds；最终 target 与 Source 再做 8 个交替批次、每批 5 个 L2-evicted samples。`Source/target` 使用交替确认
+阶段的 paired latency；内部 `G_schedule/G_full` 使用同一次候选空间测量，避免跨阶段时钟漂移污染消融。
 
-5090D 首轮横向表：
-
-| Kernel | C-Fixed | Schedule | Full | `G_schedule` | `G_full` | Source/target |
-|---|---:|---:|---:|---:|---:|---:|
-| SwiGLU | 1465.344 | 1384.448 | 1382.272 | 1.058x | 1.002x | 1.017x |
-| RMSNorm | 49.920 | 49.408 | 47.968 | 1.010x | 1.030x | 1.408x |
-| Fused Add RMSNorm | 103.872 | 101.856 | 101.216 | 1.020x | 1.006x | 1.262x |
-| GeGLU | 2927.264 | 2751.136 | 2751.136 | 1.064x | 1.000x | 1.025x |
-| LayerNorm | 94.240 | 94.240 | 93.440 | 1.000x | 1.009x | 1.136x |
-| Softmax | 53.536 | 47.552 | 46.400 | 1.126x | 1.025x | 1.290x |
-| DYT | 97.984 | 90.912 | 90.912 | 1.078x | 1.000x | 1.177x |
-| Sparsemax | 76.608 | 69.728 | 52.256 | 1.099x | 1.334x | 1.627x |
-| KLDiv | 97.632 | 97.632 | 93.920 | 1.000x | 1.040x | 1.168x |
-| PolyNorm | 48.704 | 48.704 | 48.640 | 1.000x | 1.001x | 1.341x |
-| Flash backward preprocess | 377.792 | 312.672 | 187.584 | 1.208x | 1.667x | 1.092x |
-| Flash one-pass LayerNorm | 147.520 | 143.392 | 140.992 | 1.029x | 1.017x | 1.235x |
-| xFormers RMSNorm-add | 2356.864 | 536.672 | 535.072 | 4.392x | 1.003x | 1.042x |
-| SplitK reduce | 18.688 | 15.680 | 15.680 | 1.192x | 1.000x | 2.954x |
-
-H100 首轮横向表：
+5090D 正式横向表：
 
 | Kernel | C-Fixed | Schedule | Full | `G_schedule` | `G_full` | Source/target |
 |---|---:|---:|---:|---:|---:|---:|
-| SwiGLU | 954.752 | 803.392 | 717.920 | 1.188x | 1.119x | 1.025x |
-| RMSNorm | 35.136 | 35.136 | 33.088 | 1.000x | 1.062x | 1.586x |
-| Fused Add RMSNorm | 56.128 | 56.128 | 54.912 | 1.000x | 1.022x | 1.425x |
-| GeGLU | 1667.936 | 1403.360 | 1403.360 | 1.189x | 1.000x | 1.032x |
-| LayerNorm | 57.184 | 56.736 | 54.976 | 1.008x | 1.032x | 1.354x |
-| Softmax | 38.176 | 35.616 | 33.920 | 1.072x | 1.050x | 1.317x |
-| DYT | 68.064 | 56.544 | 56.544 | 1.204x | 1.000x | 1.233x |
-| Sparsemax | 51.008 | 47.168 | 36.288 | 1.081x | 1.300x | 1.584x |
-| KLDiv | 70.688 | 68.544 | 66.624 | 1.031x | 1.029x | 1.257x |
-| PolyNorm | 36.448 | 34.976 | 33.664 | 1.042x | 1.039x | 1.434x |
-| Flash backward preprocess | 820.064 | 812.000 | 128.064 | 1.010x | 6.341x | 1.106x |
-| Flash one-pass LayerNorm | 88.480 | 82.400 | 80.608 | 1.074x | 1.022x | 1.452x |
-| xFormers RMSNorm-add | 1470.336 | 276.512 | 276.512 | 5.317x | 1.000x | 1.083x |
-| SplitK reduce | 15.936 | 15.456 | 14.464 | 1.031x | 1.069x | 3.453x |
+| SwiGLU | 1458.208 | 1382.912 | 1382.848 | 1.054x | 1.000x | 1.021x |
+| RMSNorm | 49.376 | 49.376 | 48.960 | 1.000x | 1.008x | 1.295x |
+| Fused Add RMSNorm | 96.320 | 95.072 | 93.888 | 1.013x | 1.013x | 1.182x |
+| GeGLU | 2922.624 | 2751.712 | 2751.712 | 1.062x | 1.000x | 1.022x |
+| LayerNorm | 94.304 | 94.304 | 94.304 | 1.000x | 1.000x | 1.122x |
+| Softmax | 49.792 | 46.272 | 45.248 | 1.076x | 1.023x | 1.259x |
+| DYT | 98.400 | 91.328 | 91.168 | 1.077x | 1.002x | 1.136x |
+| Sparsemax | 76.320 | 71.680 | 49.088 | 1.065x | 1.460x | 1.719x |
+| KLDiv | 98.592 | 97.984 | 94.688 | 1.006x | 1.035x | 1.196x |
+| PolyNorm | 47.488 | 47.488 | 46.880 | 1.000x | 1.013x | 1.239x |
+| Flash backward preprocess | 418.624 | 307.264 | 190.912 | 1.362x | 1.609x | 1.073x |
+| Flash one-pass LayerNorm | 156.288 | 155.008 | 152.128 | 1.008x | 1.019x | 1.187x |
+| xFormers RMSNorm-add | 2350.080 | 533.920 | 533.920 | 4.402x | 1.000x | 1.047x |
+| SplitK reduce | 15.936 | 15.648 | 15.584 | 1.018x | 1.004x | 2.914x |
 
-首轮几何均值：5090D 为 `G_schedule=1.179x`、`G_full=1.069x`、Source/target `1.286x`；H100 为
-`G_schedule=1.199x`、`G_full=1.199x`、Source/target `1.379x`。Flash/Sparsemax 使用完整空间；其余横向项
-使用统一 96-candidate 预算，只有出现结构收益的项才升级为完整空间。最终论文数仍需按第8节增加测量轮数重测。
+H100 正式横向表：
 
-Sparsemax 新增的 H100 状态不是 schedule label：每个输出 warp 重算短 active prefix 并在 warp-local SSA 中保留
-tau，因而删除 shared tau publication 与整块 `gpu.barrier`。5090D 搜索会自动拒绝其性能，而 H100 选择它，
-直接给出同一个 J 跨目标选择不同 concrete MLIR topology 的证据。
+| Kernel | C-Fixed | Schedule | Full | `G_schedule` | `G_full` | Source/target |
+|---|---:|---:|---:|---:|---:|---:|
+| SwiGLU | 856.352 | 761.632 | 752.192 | 1.124x | 1.013x | 1.024x |
+| RMSNorm | 33.952 | 33.248 | 32.864 | 1.021x | 1.012x | 1.517x |
+| Fused Add RMSNorm | 56.160 | 55.104 | 55.008 | 1.019x | 1.002x | 1.346x |
+| GeGLU | 1890.272 | 1569.760 | 1569.760 | 1.204x | 1.000x | 1.084x |
+| LayerNorm | 57.728 | 57.728 | 56.096 | 1.000x | 1.029x | 1.301x |
+| Softmax | 35.008 | 33.344 | 31.520 | 1.050x | 1.058x | 1.336x |
+| DYT | 68.960 | 56.896 | 56.896 | 1.212x | 1.000x | 1.199x |
+| Sparsemax | 54.048 | 48.352 | 32.864 | 1.118x | 1.471x | 1.771x |
+| KLDiv | 63.104 | 61.824 | 61.696 | 1.021x | 1.002x | 1.251x |
+| PolyNorm | 36.704 | 35.168 | 33.728 | 1.044x | 1.043x | 1.428x |
+| Flash backward preprocess | 648.928 | 648.928 | 120.192 | 1.000x | 5.399x | 1.050x |
+| Flash one-pass LayerNorm | 92.000 | 83.072 | 81.184 | 1.107x | 1.023x | 1.424x |
+| xFormers RMSNorm-add | 1507.456 | 286.656 | 282.592 | 5.259x | 1.014x | 1.085x |
+| SplitK reduce | 15.776 | 15.616 | 14.336 | 1.010x | 1.089x | 3.470x |
+
+Fresh-14 全量几何均值：5090D 为 `G_schedule=1.167x`、`G_full=1.072x`、Source/target `1.260x`；H100
+为 `G_schedule=1.198x`、`G_full=1.183x`、Source/target `1.372x`。Full 计数分别为
+`#>=1/#>=1.05/#>=1.5/#<1 = 14/2/1/0` 与 `14/4/1/0`。只统计本轮真实新增结构适用的
+Flash+Sparsemax，`G_full` 几何均值为 5090D `1.533x`、H100 `2.818x`；因此强结构结论成立，同时全表保留
+已经 read-once、带宽/launch 下限主导的负例。Flash/Sparsemax 使用完整空间，其余项使用统一
+96-candidate 预算。
+
+Sparsemax 新增的 H100 winner 不是 schedule label：single-warp 状态用 frontier ballot 直接选出 `(rank,sum)`，
+leader-only tau 继续留在 warp-local SSA。5090D 自动拒绝该图并选择更宽的 epilogue mapping，直接给出同一个 J
+在两个 GPU target 上选择不同 concrete MLIR topology 的证据。
 
 本轮还发现并修复了一个搜索正确性缺口：候选输出缓冲复用时，漏写候选可能继承前一候选的正确结果。
 runner 现在在每个候选 Q 前分别写入两种 canary，并要求两次完整输出都通过；C++ matcher 同时拒绝不能覆盖
@@ -145,13 +152,14 @@ MLIR 状态：同一 subgroup 的 2/4/8 个行累加器同时存活，feature lo
 独立完成 shuffle 与 store。它不改变单行内部的规约树；旧实现虽然接受 `rows-per-subgroup>1`，实际上仍是
 完整做完一行再做下一行，不能算 row-level ILP。
 
-| Target | C-Fixed | Schedule | Full | `G_schedule` | `G_full` | Source | Source/Full |
+| Target | C-Fixed | Schedule | Full | `G_schedule` | `G_full` | Source | paired Source/target |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| 5090D | 418.624 | 307.264 | 190.768 | 1.362x | 1.609x | 204.752 | 1.073x |
-| H100 | 648.928 | 648.928 | 118.256 | 1.000x | 5.399x | 124.208 | 1.050x |
+| 5090D | 418.624 | 307.264 | 190.912 | 1.362x | 1.609x | 204.752 | 1.073x |
+| H100 | 648.928 | 648.928 | 120.192 | 1.000x | 5.399x | 124.208 | 1.050x |
 
-两卡均使用 code-warm/data-cold CUDA event、5 samples/batch、8 个 Source/target 交替确认批次。5090D 的八个
-Full 批次为 `190.560--191.264 us`，H100 后六批稳定在 `117.728--123.200 us`；表中取八批中位数。
+两卡均使用 code-warm/data-cold CUDA event、5 samples/batch、8 个 Source/target 交替确认批次。表内 Full
+来自内部三柱的同轮候选测量；5090D 的八个 target 确认批次为 `190.560--191.264 us`，H100 后六批稳定在
+`117.728--123.200 us`，paired Source/target 使用确认批次中位数。
 两张卡从同一候选并集独立选择出不同 executable：
 
 - 5090D：`1024 threads, 32 lanes/row, 1 row/subgroup`；
@@ -172,7 +180,7 @@ XOR tree；随后每个 warp 只由 leader 计算一次 tau，再广播 live sca
 `scan -> support -> (k,s) -> tau -> epilogue` matcher 准入，不读取 kernel 名；缺少 descending 证据时只可
 作为 execution-domain candidate 进入 Q/D，不能转写成 B hard fact。
 
-| Target | C-Fixed | Schedule | Full | `G_schedule` | `G_full` | Source | Source/Full |
+| Target | C-Fixed | Schedule | Full | `G_schedule` | `G_full` | Source | paired Source/target |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | 5090D | 76.320 | 71.680 | 49.088 | 1.065x | 1.460x | 84.368 | 1.719x |
 | H100 | 54.048 | 48.352 | 32.864 | 1.118x | 1.471x | 57.216 | 1.771x |
