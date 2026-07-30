@@ -522,11 +522,26 @@ def plan_riscv_search(
     _axes, _has_scan, _float_bits, has_reassociation = _operation_facts(
         state.base.j.to_json()
     )
-    universe = enumerate_riscv_candidates(
+    projected_priors, ignored_priors, projection = _project_c_priors(state)
+    raw_universe = enumerate_riscv_candidates(
         enable_b_transformations=enable_b_transformations,
         enable_reassociation=has_reassociation,
     )
-    projected_priors, ignored_priors, projection = _project_c_priors(state)
+    minimum_reduction_tile = int(projection["vector_lanes"])
+    universe = tuple(
+        item
+        for item in raw_universe
+        if item.schedule.reduction_tile == 0
+        or item.schedule.reduction_tile >= minimum_reduction_tile
+    )
+    projection = {
+        **projection,
+        "minimum_reduction_tile": minimum_reduction_tile,
+        "subvector_reduction_schedules_rejected": len(raw_universe) - len(universe),
+        "subvector_reduction_rule": (
+            "a vectorized reduction tile must cover at least one target vector"
+        ),
+    }
     scores = {
         item.candidate_id: _c_score(item.schedule, projected_priors)
         for item in universe

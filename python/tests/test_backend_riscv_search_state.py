@@ -552,7 +552,14 @@ def test_rvv_c_reorders_but_does_not_change_retile_universe() -> None:
     record = with_c.to_record()
     assert record["same_universe_for_erase_c_and_c_prior"] is True
     assert record["c_controls_admission"] is False
-    assert record["candidate_universe_count"] == 204
+    assert record["candidate_universe_count"] == 196
+    assert with_c.c_projection["minimum_reduction_tile"] == 4
+    assert with_c.c_projection["subvector_reduction_schedules_rejected"] == 8
+    assert all(
+        item.schedule.reduction_tile == 0
+        or item.schedule.reduction_tile >= 4
+        for item in with_c.universe
+    )
     assert {
         item.schedule.thread_count for item in with_c.universe
     } == {1}
