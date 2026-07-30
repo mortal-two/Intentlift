@@ -33,6 +33,7 @@ Compile_f + Run_f + Observe_f
 CandidateCheck 只是 **Lift-local TypeCheck preflight**：对 LLM 尚未正式提交的完整草稿运行严格 parse、Decode/Elaborate、匿名 Harness 一致性检查和正式 TypeCheck 的同一 source-free 核心，并把机械错误返回同一个 Lift agent。
 
 它不读取或比较 Source，不判断 J/π 是否正确，不生成 patch，不修改 artifact，也不进入证书。PASS 后 Runner 仍必须对 exact submitted bytes 重新执行正式 TypeCheck。
+一次`submit_candidate`会对同一份exact bytes同时返回当前可定义的CandidateCheck与SourceReconcile诊断；dependent Decode尚未成立的后续检查仍然不猜。两者的拒绝条件和权威边界不变，只有模型不再等前一阶段PASS后才第一次看见后一阶段机械问题。
 
 `SemanticProbe`与CandidateCheck严格分离：宿主对每份通过CandidateCheck+SourceReconcile的精确草稿自动在一个固定public seed上执行Source与J-only RefEval，
 若有分歧就把逐输出差异交还同一个source-aware Lift owner。它不读π、不运行Replay、不自动修J，也不进入认证；

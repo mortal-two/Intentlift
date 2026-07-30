@@ -670,7 +670,9 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
             )
             return check
 
-        def reconcile_current_candidate(*, trigger: str) -> dict[str, Any]:
+        def reconcile_current_candidate(
+            *, trigger: str, checkpoint_allowed: bool = True
+        ) -> dict[str, Any]:
             nonlocal candidate_text, last_checked_good
             if candidate_text is None:
                 try:
@@ -715,7 +717,11 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                     ),
                 }
             )
-            if result["status"] == "pass" and candidate_text is not None:
+            if (
+                checkpoint_allowed
+                and result["status"] == "pass"
+                and candidate_text is not None
+            ):
                 # Exact LLM-authored bytes only.  This checkpoint has passed both
                 # source-free CandidateCheck (enforced by callers) and the
                 # source-aware reject-only occurrence preflight.
@@ -731,28 +737,31 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
             """
 
             candidate_check = check_current_candidate(trigger="submit_candidate")
-            if candidate_check["status"] != "pass":
-                return {
-                    "protocol": "intentir.codex-cli.lift-submit.v1",
-                    "status": "fail",
-                    "phase": "candidate_check",
-                    "candidate_check": candidate_check,
-                    "source_reconcile": None,
-                    "authority": (
-                        "diagnostic-only; no artifact field is generated or repaired"
-                    ),
-                }
             source_reconcile = reconcile_current_candidate(
-                trigger="submit_candidate"
+                trigger="submit_candidate",
+                checkpoint_allowed=candidate_check["status"] == "pass",
+            )
+            passed = (
+                candidate_check["status"] == "pass"
+                and source_reconcile["status"] == "pass"
             )
             return {
                 "protocol": "intentir.codex-cli.lift-submit.v1",
-                "status": source_reconcile["status"],
-                "phase": "source_reconcile",
+                "status": "pass" if passed else "fail",
+                "phase": (
+                    "complete"
+                    if passed
+                    else (
+                        "candidate_check"
+                        if candidate_check["status"] != "pass"
+                        else "source_reconcile"
+                    )
+                ),
                 "candidate_check": candidate_check,
                 "source_reconcile": source_reconcile,
                 "authority": (
-                    "diagnostic-only; no artifact field is generated or repaired"
+                    "diagnostic-only independent phase results over the same exact "
+                    "candidate bytes; no artifact field is generated or repaired"
                 ),
             }
 
