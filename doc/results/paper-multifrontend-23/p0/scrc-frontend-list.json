@@ -1,0 +1,404 @@
+{
+  "cases": [
+    {
+      "case_id": "cuda:naive_gemm",
+      "frontend": "cuda"
+    },
+    {
+      "case_id": "cuda:row_sum",
+      "frontend": "cuda"
+    },
+    {
+      "case_id": "cuda:tilelang__attn_fwd",
+      "frontend": "cuda"
+    },
+    {
+      "case_id": "cuda:tilelang_add2d",
+      "frontend": "cuda"
+    },
+    {
+      "case_id": "cuda:tilelang_add_bias2d",
+      "frontend": "cuda"
+    },
+    {
+      "case_id": "cuda:tilelang_any_kernel_dim",
+      "frontend": "cuda"
+    },
+    {
+      "case_id": "cuda:tilelang_clamp2d",
+      "frontend": "cuda"
+    },
+    {
+      "case_id": "cuda:tilelang_copy2d_divmod",
+      "frontend": "cuda"
+    },
+    {
+      "case_id": "cuda:tilelang_exp2d",
+      "frontend": "cuda"
+    },
+    {
+      "case_id": "cuda:tilelang_flash_attention2d",
+      "frontend": "cuda"
+    },
+    {
+      "case_id": "cuda:tilelang_floor2d",
+      "frontend": "cuda"
+    },
+    {
+      "case_id": "cuda:tilelang_gather2d",
+      "frontend": "cuda"
+    },
+    {
+      "case_id": "cuda:tilelang_grouped_row_sum2d",
+      "frontend": "cuda"
+    },
+    {
+      "case_id": "cuda:tilelang_groupnorm",
+      "frontend": "cuda"
+    },
+    {
+      "case_id": "cuda:tilelang_layer_norm_residual2d",
+      "frontend": "cuda"
+    },
+    {
+      "case_id": "cuda:tilelang_layernorm",
+      "frontend": "cuda"
+    },
+    {
+      "case_id": "cuda:tilelang_masked_attention2d",
+      "frontend": "cuda"
+    },
+    {
+      "case_id": "cuda:tilelang_masked_softmax2d",
+      "frontend": "cuda"
+    },
+    {
+      "case_id": "cuda:tilelang_relu2d",
+      "frontend": "cuda"
+    },
+    {
+      "case_id": "cuda:tilelang_rms_norm2d",
+      "frontend": "cuda"
+    },
+    {
+      "case_id": "cuda:tilelang_rms_norm_residual2d",
+      "frontend": "cuda"
+    },
+    {
+      "case_id": "cuda:tilelang_row_max",
+      "frontend": "cuda"
+    },
+    {
+      "case_id": "cuda:tilelang_row_sum",
+      "frontend": "cuda"
+    },
+    {
+      "case_id": "cuda:tilelang_rowmask_where2d",
+      "frontend": "cuda"
+    },
+    {
+      "case_id": "cuda:tilelang_softmax_inner",
+      "frontend": "cuda"
+    },
+    {
+      "case_id": "cuda:tilelang_transpose2d",
+      "frontend": "cuda"
+    },
+    {
+      "case_id": "cuda:tilelang_upsample_bicubic2d_aa",
+      "frontend": "cuda"
+    },
+    {
+      "case_id": "cuda:tilelang_where2d",
+      "frontend": "cuda"
+    },
+    {
+      "case_id": "cuda:transpose2d",
+      "frontend": "cuda"
+    },
+    {
+      "case_id": "cuda:vec_add",
+      "frontend": "cuda"
+    },
+    {
+      "case_id": "high_performance:flash_attn.flash_attn_triton._bwd_kernel",
+      "frontend": "triton"
+    },
+    {
+      "case_id": "high_performance:flash_attn.flash_attn_triton._bwd_kernel_one_col_block",
+      "frontend": "triton"
+    },
+    {
+      "case_id": "high_performance:flash_attn.flash_attn_triton._bwd_preprocess_do_o_dot",
+      "frontend": "triton"
+    },
+    {
+      "case_id": "high_performance:flash_attn.flash_attn_triton._fwd_kernel",
+      "frontend": "triton"
+    },
+    {
+      "case_id": "high_performance:flash_attn.ops.triton.layer_norm._layer_norm_fwd_1pass_kernel",
+      "frontend": "triton"
+    },
+    {
+      "case_id": "high_performance:flash_attn.ops.triton.linear.kernel_fwd",
+      "frontend": "triton"
+    },
+    {
+      "case_id": "high_performance:liger_cross_entropy",
+      "frontend": "triton"
+    },
+    {
+      "case_id": "high_performance:liger_dyt",
+      "frontend": "triton"
+    },
+    {
+      "case_id": "high_performance:liger_fused_add_rms_norm",
+      "frontend": "triton"
+    },
+    {
+      "case_id": "high_performance:liger_geglu",
+      "frontend": "triton"
+    },
+    {
+      "case_id": "high_performance:liger_group_norm",
+      "frontend": "triton"
+    },
+    {
+      "case_id": "high_performance:liger_jsd",
+      "frontend": "triton"
+    },
+    {
+      "case_id": "high_performance:liger_kl_div",
+      "frontend": "triton"
+    },
+    {
+      "case_id": "high_performance:liger_layer_norm",
+      "frontend": "triton"
+    },
+    {
+      "case_id": "high_performance:liger_llama4_rope",
+      "frontend": "triton"
+    },
+    {
+      "case_id": "high_performance:liger_poly_norm",
+      "frontend": "triton"
+    },
+    {
+      "case_id": "high_performance:liger_qwen2vl_mrope",
+      "frontend": "triton"
+    },
+    {
+      "case_id": "high_performance:liger_rms_norm",
+      "frontend": "triton"
+    },
+    {
+      "case_id": "high_performance:liger_rope",
+      "frontend": "triton"
+    },
+    {
+      "case_id": "high_performance:liger_softmax",
+      "frontend": "triton"
+    },
+    {
+      "case_id": "high_performance:liger_sparsemax",
+      "frontend": "triton"
+    },
+    {
+      "case_id": "high_performance:liger_swiglu",
+      "frontend": "triton"
+    },
+    {
+      "case_id": "high_performance:liger_tvd",
+      "frontend": "triton"
+    },
+    {
+      "case_id": "high_performance:xformers.ops._triton.rmsnorm_kernels._rms_norm_add_kernel",
+      "frontend": "triton"
+    },
+    {
+      "case_id": "high_performance:xformers.ops._triton.rmsnorm_kernels._rms_norm_kernel",
+      "frontend": "triton"
+    },
+    {
+      "case_id": "high_performance:xformers.ops.fmha._triton.splitk_kernels._fwd_kernel_splitK",
+      "frontend": "triton"
+    },
+    {
+      "case_id": "high_performance:xformers.ops.fmha._triton.splitk_kernels._splitK_reduce_varargs",
+      "frontend": "triton"
+    },
+    {
+      "case_id": "high_performance:xformers.ops.fmha._triton.splitk_kernels._splitK_reduce_varargs_backward",
+      "frontend": "triton"
+    },
+    {
+      "case_id": "tilelang:_attn_fwd",
+      "frontend": "tilelang"
+    },
+    {
+      "case_id": "tilelang:add2d",
+      "frontend": "tilelang"
+    },
+    {
+      "case_id": "tilelang:add_bias2d",
+      "frontend": "tilelang"
+    },
+    {
+      "case_id": "tilelang:any_kernel_dim",
+      "frontend": "tilelang"
+    },
+    {
+      "case_id": "tilelang:clamp2d",
+      "frontend": "tilelang"
+    },
+    {
+      "case_id": "tilelang:copy2d_divmod",
+      "frontend": "tilelang"
+    },
+    {
+      "case_id": "tilelang:exp2d",
+      "frontend": "tilelang"
+    },
+    {
+      "case_id": "tilelang:flash_attention2d",
+      "frontend": "tilelang"
+    },
+    {
+      "case_id": "tilelang:floor2d",
+      "frontend": "tilelang"
+    },
+    {
+      "case_id": "tilelang:gather2d",
+      "frontend": "tilelang"
+    },
+    {
+      "case_id": "tilelang:grouped_row_sum2d",
+      "frontend": "tilelang"
+    },
+    {
+      "case_id": "tilelang:groupnorm",
+      "frontend": "tilelang"
+    },
+    {
+      "case_id": "tilelang:layer_norm_residual2d",
+      "frontend": "tilelang"
+    },
+    {
+      "case_id": "tilelang:layernorm",
+      "frontend": "tilelang"
+    },
+    {
+      "case_id": "tilelang:masked_attention2d",
+      "frontend": "tilelang"
+    },
+    {
+      "case_id": "tilelang:masked_softmax2d",
+      "frontend": "tilelang"
+    },
+    {
+      "case_id": "tilelang:relu2d",
+      "frontend": "tilelang"
+    },
+    {
+      "case_id": "tilelang:rms_norm2d",
+      "frontend": "tilelang"
+    },
+    {
+      "case_id": "tilelang:rms_norm_residual2d",
+      "frontend": "tilelang"
+    },
+    {
+      "case_id": "tilelang:row_max",
+      "frontend": "tilelang"
+    },
+    {
+      "case_id": "tilelang:row_sum",
+      "frontend": "tilelang"
+    },
+    {
+      "case_id": "tilelang:rowmask_where2d",
+      "frontend": "tilelang"
+    },
+    {
+      "case_id": "tilelang:softmax_inner",
+      "frontend": "tilelang"
+    },
+    {
+      "case_id": "tilelang:transpose2d",
+      "frontend": "tilelang"
+    },
+    {
+      "case_id": "tilelang:upsample_bicubic2d_aa",
+      "frontend": "tilelang"
+    },
+    {
+      "case_id": "tilelang:where2d",
+      "frontend": "tilelang"
+    }
+  ],
+  "count": 84,
+  "native_unavailable": [
+    {
+      "case_id": "cuda:tilelang_gemm",
+      "frontend": "cuda",
+      "reason": "FrontendDatasetCaseUnavailableError: CUDA Dataset opaque ABI requires an explicit descriptor sidecar",
+      "status": "case_unavailable"
+    },
+    {
+      "case_id": "cuda:tilelang_matmul_bias_relu2d",
+      "frontend": "cuda",
+      "reason": "FrontendDatasetCaseUnavailableError: CUDA Dataset opaque ABI requires an explicit descriptor sidecar",
+      "status": "case_unavailable"
+    },
+    {
+      "case_id": "cuda:tilelang_matmul_fused_epilogue2d",
+      "frontend": "cuda",
+      "reason": "FrontendDatasetCaseUnavailableError: CUDA Dataset opaque ABI requires an explicit descriptor sidecar",
+      "status": "case_unavailable"
+    },
+    {
+      "case_id": "cuda:tilelang_matmul_relu2d",
+      "frontend": "cuda",
+      "reason": "FrontendDatasetCaseUnavailableError: CUDA Dataset opaque ABI requires an explicit descriptor sidecar",
+      "status": "case_unavailable"
+    },
+    {
+      "case_id": "cuda:tilelang_mlp2d",
+      "frontend": "cuda",
+      "reason": "FrontendDatasetCaseUnavailableError: CUDA Dataset opaque ABI requires an explicit descriptor sidecar",
+      "status": "case_unavailable"
+    },
+    {
+      "case_id": "tilelang:gemm",
+      "frontend": "tilelang",
+      "reason": "FrontendDatasetCaseUnavailableError: TileLang Dataset opaque ABI requires an explicit descriptor sidecar",
+      "status": "case_unavailable"
+    },
+    {
+      "case_id": "tilelang:matmul_bias_relu2d",
+      "frontend": "tilelang",
+      "reason": "FrontendDatasetCaseUnavailableError: TileLang Dataset opaque ABI requires an explicit descriptor sidecar",
+      "status": "case_unavailable"
+    },
+    {
+      "case_id": "tilelang:matmul_fused_epilogue2d",
+      "frontend": "tilelang",
+      "reason": "FrontendDatasetCaseUnavailableError: TileLang Dataset opaque ABI requires an explicit descriptor sidecar",
+      "status": "case_unavailable"
+    },
+    {
+      "case_id": "tilelang:matmul_relu2d",
+      "frontend": "tilelang",
+      "reason": "FrontendDatasetCaseUnavailableError: TileLang Dataset opaque ABI requires an explicit descriptor sidecar",
+      "status": "case_unavailable"
+    },
+    {
+      "case_id": "tilelang:mlp2d",
+      "frontend": "tilelang",
+      "reason": "FrontendDatasetCaseUnavailableError: TileLang Dataset opaque ABI requires an explicit descriptor sidecar",
+      "status": "case_unavailable"
+    }
+  ],
+  "native_unavailable_count": 10
+}

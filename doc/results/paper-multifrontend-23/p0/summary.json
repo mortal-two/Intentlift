@@ -1,0 +1,79 @@
+{
+  "protocol": "intentir.paper.multifrontend-p0-summary.v1",
+  "measured_at": "2026-07-31T00:27:07+08:00",
+  "commit": "3a9fe4aa814736fdff07aed63349c02c35d39de9",
+  "commands": [
+    "PYTHONPATH=python python tools/frontend_dataset.py --validate",
+    "PYTHONPATH=python python tools/scrc_frontend.py --list --json",
+    "python tools/measure_multifrontend_onboarding.py"
+  ],
+  "raw_catalog": {
+    "total": 66,
+    "counts": {
+      "cuda": 35,
+      "tilelang": 31
+    },
+    "validation_passed": true,
+    "validation_error_count": 0,
+    "generated_cuda_from_tilelang": 31,
+    "handwritten_cuda": 4
+  },
+  "runnable_projection": {
+    "total": 84,
+    "counts": {
+      "cuda": 30,
+      "triton": 28,
+      "tilelang": 26
+    },
+    "native_unavailable": 10,
+    "unavailable_reason_counts": {
+      "FrontendDatasetCaseUnavailableError: CUDA Dataset opaque ABI requires an explicit descriptor sidecar": 5,
+      "FrontendDatasetCaseUnavailableError: TileLang Dataset opaque ABI requires an explicit descriptor sidecar": 5
+    }
+  },
+  "pairing": {
+    "raw_origin_pairs": 31,
+    "runnable_pairs": 26,
+    "unavailable_pairs": 5,
+    "definition": "TileLang case_id equals generated CUDA metadata.origin_case_id; both must appear in runnable projection"
+  },
+  "onboarding_loc": {
+    "production_headline": {
+      "additions": 5109,
+      "deletions": 115,
+      "file_touches": 29,
+      "unique_files": 23
+    },
+    "tilelang_specific": {
+      "additions": 818,
+      "deletions": 1,
+      "unique_files": 4
+    },
+    "cuda_specific": {
+      "additions": 972,
+      "deletions": 1,
+      "unique_files": 3
+    },
+    "multifrontend_shared": {
+      "additions": 2580,
+      "deletions": 16,
+      "unique_files": 8
+    },
+    "scrc_shared_core": {
+      "additions": 739,
+      "deletions": 97,
+      "unique_files": 8
+    },
+    "backend_delta": {
+      "additions": 0,
+      "deletions": 0,
+      "unique_files": 0
+    }
+  },
+  "interpretation": {
+    "catalog": "descriptor/digest validation only; not compilation or closure",
+    "runnable_projection": "Harness preparation/projection availability only; not Source compile or closure",
+    "onboarding_loc": "commit-level physical LoC across three historical checkpoints; shared code is not assigned to either frontend and person-hours are not inferred",
+    "closure_claimed": false
+  }
+}

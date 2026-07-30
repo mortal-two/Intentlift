@@ -1,0 +1,430 @@
+{
+  "aggregate": {
+    "cuda_specific": {
+      "additions": 972,
+      "deletions": 1,
+      "file_touches": 5,
+      "unique_files": 3
+    },
+    "docs_specs": {
+      "additions": 377,
+      "deletions": 13,
+      "file_touches": 3,
+      "unique_files": 2
+    },
+    "historical_tests": {
+      "additions": 1100,
+      "deletions": 5,
+      "file_touches": 11,
+      "unique_files": 8
+    },
+    "multifrontend_shared": {
+      "additions": 2580,
+      "deletions": 16,
+      "file_touches": 10,
+      "unique_files": 8
+    },
+    "scrc_shared_core": {
+      "additions": 739,
+      "deletions": 97,
+      "file_touches": 9,
+      "unique_files": 8
+    },
+    "tilelang_specific": {
+      "additions": 818,
+      "deletions": 1,
+      "file_touches": 5,
+      "unique_files": 4
+    }
+  },
+  "backend_delta": {
+    "additions": 0,
+    "deletions": 0,
+    "file_touches": 0,
+    "unique_files": 0
+  },
+  "caveats": [
+    "TileLang and CUDA were historically onboarded together; shared LoC is not assigned to either frontend.",
+    "Counts are commit-level physical LoC, not person-hours.",
+    "Historical tests and docs/specs are reported but excluded from the production headline.",
+    "The checkpoints are measured individually; intervening ancestry is not claimed as frontend-only work."
+  ],
+  "checkpoints": [
+    {
+      "categories": {
+        "cuda_specific": {
+          "additions": 926,
+          "deletions": 0,
+          "files": 3
+        },
+        "docs_specs": {
+          "additions": 125,
+          "deletions": 0,
+          "files": 1
+        },
+        "historical_tests": {
+          "additions": 462,
+          "deletions": 0,
+          "files": 4
+        },
+        "multifrontend_shared": {
+          "additions": 1200,
+          "deletions": 0,
+          "files": 5
+        },
+        "scrc_shared_core": {
+          "additions": 135,
+          "deletions": 5,
+          "files": 4
+        },
+        "tilelang_specific": {
+          "additions": 771,
+          "deletions": 0,
+          "files": 4
+        }
+      },
+      "commit": "d30753e7a1c7aafbd6d28632bf9e46e119249efc",
+      "files": [
+        {
+          "additions": 125,
+          "category": "docs_specs",
+          "deletions": 0,
+          "path": ".trellis/spec/verification/multifrontend-gate1.md"
+        },
+        {
+          "additions": 51,
+          "category": "scrc_shared_core",
+          "deletions": 0,
+          "path": "python/intentir/verify/adapters.py"
+        },
+        {
+          "additions": 191,
+          "category": "multifrontend_shared",
+          "deletions": 0,
+          "path": "python/intentir/verify/frontend_dataset.py"
+        },
+        {
+          "additions": 109,
+          "category": "tilelang_specific",
+          "deletions": 0,
+          "path": "python/intentir/verify/gate1/_tilelang_worker.py"
+        },
+        {
+          "additions": 143,
+          "category": "cuda_specific",
+          "deletions": 0,
+          "path": "python/intentir/verify/gate1/cuda_codegen.py"
+        },
+        {
+          "additions": 316,
+          "category": "cuda_specific",
+          "deletions": 0,
+          "path": "python/intentir/verify/gate1/cuda_compiler.py"
+        },
+        {
+          "additions": 96,
+          "category": "multifrontend_shared",
+          "deletions": 0,
+          "path": "python/intentir/verify/gate1/frontend.py"
+        },
+        {
+          "additions": 432,
+          "category": "multifrontend_shared",
+          "deletions": 0,
+          "path": "python/intentir/verify/gate1/native_orchestrate.py"
+        },
+        {
+          "additions": 24,
+          "category": "scrc_shared_core",
+          "deletions": 0,
+          "path": "python/intentir/verify/gate1/profile.py"
+        },
+        {
+          "additions": 36,
+          "category": "scrc_shared_core",
+          "deletions": 4,
+          "path": "python/intentir/verify/gate1/prompt.py"
+        },
+        {
+          "additions": 467,
+          "category": "cuda_specific",
+          "deletions": 0,
+          "path": "python/intentir/verify/gate1/ptx.py"
+        },
+        {
+          "additions": 24,
+          "category": "scrc_shared_core",
+          "deletions": 1,
+          "path": "python/intentir/verify/gate1/replay.py"
+        },
+        {
+          "additions": 219,
+          "category": "tilelang_specific",
+          "deletions": 0,
+          "path": "python/intentir/verify/gate1/tilelang.py"
+        },
+        {
+          "additions": 203,
+          "category": "tilelang_specific",
+          "deletions": 0,
+          "path": "python/intentir/verify/gate1/tilelang_codegen.py"
+        },
+        {
+          "additions": 240,
+          "category": "tilelang_specific",
+          "deletions": 0,
+          "path": "python/intentir/verify/gate1/tilelang_compiler.py"
+        },
+        {
+          "additions": 335,
+          "category": "multifrontend_shared",
+          "deletions": 0,
+          "path": "python/intentir/verify/gate2/native.py"
+        },
+        {
+          "additions": 31,
+          "category": "historical_tests",
+          "deletions": 0,
+          "path": "python/tests/test_frontend_dataset.py"
+        },
+        {
+          "additions": 190,
+          "category": "historical_tests",
+          "deletions": 0,
+          "path": "python/tests/test_gate1_cuda.py"
+        },
+        {
+          "additions": 120,
+          "category": "historical_tests",
+          "deletions": 0,
+          "path": "python/tests/test_gate1_tilelang.py"
+        },
+        {
+          "additions": 121,
+          "category": "historical_tests",
+          "deletions": 0,
+          "path": "python/tests/test_gate2_native.py"
+        },
+        {
+          "additions": 146,
+          "category": "multifrontend_shared",
+          "deletions": 0,
+          "path": "tools/frontend_dataset.py"
+        }
+      ],
+      "subject": "feat(scrc): add CUDA and TileLang frontend closure"
+    },
+    {
+      "categories": {
+        "cuda_specific": {
+          "additions": 11,
+          "deletions": 0,
+          "files": 1
+        },
+        "docs_specs": {
+          "additions": 26,
+          "deletions": 13,
+          "files": 1
+        },
+        "historical_tests": {
+          "additions": 40,
+          "deletions": 2,
+          "files": 2
+        },
+        "multifrontend_shared": {
+          "additions": 306,
+          "deletions": 16,
+          "files": 2
+        },
+        "tilelang_specific": {
+          "additions": 47,
+          "deletions": 1,
+          "files": 1
+        }
+      },
+      "commit": "eb58f3aed66b5f02b6a008e072ca9fecd3d2f367",
+      "files": [
+        {
+          "additions": 26,
+          "category": "docs_specs",
+          "deletions": 13,
+          "path": ".trellis/spec/verification/multifrontend-gate1.md"
+        },
+        {
+          "additions": 112,
+          "category": "multifrontend_shared",
+          "deletions": 9,
+          "path": "python/intentir/verify/frontend_dataset.py"
+        },
+        {
+          "additions": 47,
+          "category": "tilelang_specific",
+          "deletions": 1,
+          "path": "python/intentir/verify/gate1/_tilelang_worker.py"
+        },
+        {
+          "additions": 11,
+          "category": "cuda_specific",
+          "deletions": 0,
+          "path": "python/intentir/verify/gate1/cuda_compiler.py"
+        },
+        {
+          "additions": 29,
+          "category": "historical_tests",
+          "deletions": 2,
+          "path": "python/tests/test_frontend_dataset.py"
+        },
+        {
+          "additions": 11,
+          "category": "historical_tests",
+          "deletions": 0,
+          "path": "python/tests/test_gate1_cuda.py"
+        },
+        {
+          "additions": 194,
+          "category": "multifrontend_shared",
+          "deletions": 7,
+          "path": "tools/frontend_dataset.py"
+        }
+      ],
+      "subject": "fix(dataset): close TileLang and CUDA corpus"
+    },
+    {
+      "categories": {
+        "cuda_specific": {
+          "additions": 35,
+          "deletions": 1,
+          "files": 1
+        },
+        "docs_specs": {
+          "additions": 226,
+          "deletions": 0,
+          "files": 1
+        },
+        "historical_tests": {
+          "additions": 598,
+          "deletions": 3,
+          "files": 5
+        },
+        "multifrontend_shared": {
+          "additions": 1074,
+          "deletions": 0,
+          "files": 3
+        },
+        "scrc_shared_core": {
+          "additions": 604,
+          "deletions": 92,
+          "files": 5
+        }
+      },
+      "commit": "a21f90f27bffe9a6b79c17c440aa6d74ebe5b701",
+      "files": [
+        {
+          "additions": 226,
+          "category": "docs_specs",
+          "deletions": 0,
+          "path": "doc/IntentIR_多前端前端扩展现状与接入路线_2026-07-26.md"
+        },
+        {
+          "additions": 2,
+          "category": "scrc_shared_core",
+          "deletions": 0,
+          "path": "python/intentir/extraction/lifters/miniswe.py"
+        },
+        {
+          "additions": 373,
+          "category": "scrc_shared_core",
+          "deletions": 30,
+          "path": "python/intentir/extraction/lifters/scrc.py"
+        },
+        {
+          "additions": 823,
+          "category": "multifrontend_shared",
+          "deletions": 0,
+          "path": "python/intentir/verify/frontend_workloads.py"
+        },
+        {
+          "additions": 35,
+          "category": "cuda_specific",
+          "deletions": 1,
+          "path": "python/intentir/verify/gate1/cuda_codegen.py"
+        },
+        {
+          "additions": 81,
+          "category": "scrc_shared_core",
+          "deletions": 26,
+          "path": "python/intentir/verify/gate1/replay.py"
+        },
+        {
+          "additions": 121,
+          "category": "scrc_shared_core",
+          "deletions": 29,
+          "path": "python/intentir/verify/scrc_workload_run.py"
+        },
+        {
+          "additions": 75,
+          "category": "multifrontend_shared",
+          "deletions": 0,
+          "path": "python/intentir/verify/workload_registry.py"
+        },
+        {
+          "additions": 335,
+          "category": "historical_tests",
+          "deletions": 0,
+          "path": "python/tests/test_frontend_workloads.py"
+        },
+        {
+          "additions": 31,
+          "category": "historical_tests",
+          "deletions": 0,
+          "path": "python/tests/test_gate1_cuda.py"
+        },
+        {
+          "additions": 3,
+          "category": "historical_tests",
+          "deletions": 3,
+          "path": "python/tests/test_miniswe_replay_agent.py"
+        },
+        {
+          "additions": 115,
+          "category": "historical_tests",
+          "deletions": 0,
+          "path": "python/tests/test_multifrontend_lift_ingress.py"
+        },
+        {
+          "additions": 114,
+          "category": "historical_tests",
+          "deletions": 0,
+          "path": "python/tests/test_multifrontend_replay_ingress.py"
+        },
+        {
+          "additions": 176,
+          "category": "multifrontend_shared",
+          "deletions": 0,
+          "path": "tools/scrc_frontend.py"
+        },
+        {
+          "additions": 27,
+          "category": "scrc_shared_core",
+          "deletions": 7,
+          "path": "tools/scrc_gate1_recheck.py"
+        }
+      ],
+      "subject": "feat(scrc): connect TileLang and CUDA frontend canaries"
+    }
+  ],
+  "production_categories": [
+    "tilelang_specific",
+    "cuda_specific",
+    "multifrontend_shared",
+    "scrc_shared_core",
+    "backend"
+  ],
+  "production_headline": {
+    "additions": 5109,
+    "deletions": 115,
+    "file_touches": 29,
+    "unique_files": 23
+  },
+  "protocol": "intentir.paper.multifrontend-onboarding-loc.v1"
+}

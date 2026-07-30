@@ -1,0 +1,4777 @@
+{
+  "counts": {
+    "cuda": 35,
+    "tilelang": 31
+  },
+  "errors": [],
+  "kernels": [
+    {
+      "case_id": "tilelang:_attn_fwd",
+      "frontend": "tilelang",
+      "location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/_attn_fwd.py",
+      "metadata": {},
+      "source_kind": "factory_file",
+      "symbol": "make_attn_fwd_prim_func"
+    },
+    {
+      "case_id": "tilelang:add2d",
+      "frontend": "tilelang",
+      "location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/add2d.py",
+      "metadata": {},
+      "source_kind": "factory_file",
+      "symbol": "make_add2d_prim_func"
+    },
+    {
+      "case_id": "tilelang:add_bias2d",
+      "frontend": "tilelang",
+      "location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/add_bias2d.py",
+      "metadata": {},
+      "source_kind": "factory_file",
+      "symbol": "make_add_bias2d_prim_func"
+    },
+    {
+      "case_id": "tilelang:any_kernel_dim",
+      "frontend": "tilelang",
+      "location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/any_kernel_dim.py",
+      "metadata": {},
+      "source_kind": "factory_file",
+      "symbol": "make_any_kernel_dim_prim_func"
+    },
+    {
+      "case_id": "tilelang:clamp2d",
+      "frontend": "tilelang",
+      "location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/clamp2d.py",
+      "metadata": {},
+      "source_kind": "factory_file",
+      "symbol": "make_clamp2d_prim_func"
+    },
+    {
+      "case_id": "tilelang:copy2d_divmod",
+      "frontend": "tilelang",
+      "location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/copy2d_divmod.py",
+      "metadata": {},
+      "source_kind": "factory_file",
+      "symbol": "make_copy2d_divmod_prim_func"
+    },
+    {
+      "case_id": "tilelang:exp2d",
+      "frontend": "tilelang",
+      "location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/exp2d.py",
+      "metadata": {},
+      "source_kind": "factory_file",
+      "symbol": "make_exp2d_prim_func"
+    },
+    {
+      "case_id": "tilelang:flash_attention2d",
+      "frontend": "tilelang",
+      "location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/flash_attention2d.py",
+      "metadata": {},
+      "source_kind": "factory_file",
+      "symbol": "make_flash_attention2d_prim_func"
+    },
+    {
+      "case_id": "tilelang:floor2d",
+      "frontend": "tilelang",
+      "location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/floor2d.py",
+      "metadata": {},
+      "source_kind": "factory_file",
+      "symbol": "make_floor2d_prim_func"
+    },
+    {
+      "case_id": "tilelang:gather2d",
+      "frontend": "tilelang",
+      "location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/gather2d.py",
+      "metadata": {},
+      "source_kind": "factory_file",
+      "symbol": "make_gather2d_prim_func"
+    },
+    {
+      "case_id": "tilelang:gemm",
+      "frontend": "tilelang",
+      "location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/gemm.py",
+      "metadata": {},
+      "source_kind": "factory_file",
+      "symbol": "make_gemm_relu_prim_func"
+    },
+    {
+      "case_id": "tilelang:grouped_row_sum2d",
+      "frontend": "tilelang",
+      "location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/grouped_row_sum2d.py",
+      "metadata": {},
+      "source_kind": "factory_file",
+      "symbol": "make_grouped_row_sum2d_prim_func"
+    },
+    {
+      "case_id": "tilelang:groupnorm",
+      "frontend": "tilelang",
+      "location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/groupnorm.py",
+      "metadata": {},
+      "source_kind": "factory_file",
+      "symbol": "make_group_norm_kernel_prim_func"
+    },
+    {
+      "case_id": "tilelang:layer_norm_residual2d",
+      "frontend": "tilelang",
+      "location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/layer_norm_residual2d.py",
+      "metadata": {},
+      "source_kind": "factory_file",
+      "symbol": "make_layer_norm_residual2d_prim_func"
+    },
+    {
+      "case_id": "tilelang:layernorm",
+      "frontend": "tilelang",
+      "location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/layernorm.py",
+      "metadata": {},
+      "source_kind": "factory_file",
+      "symbol": "make_layer_norm_persistent_prim_func"
+    },
+    {
+      "case_id": "tilelang:masked_attention2d",
+      "frontend": "tilelang",
+      "location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/masked_attention2d.py",
+      "metadata": {},
+      "source_kind": "factory_file",
+      "symbol": "make_masked_attention2d_prim_func"
+    },
+    {
+      "case_id": "tilelang:masked_softmax2d",
+      "frontend": "tilelang",
+      "location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/masked_softmax2d.py",
+      "metadata": {},
+      "source_kind": "factory_file",
+      "symbol": "make_masked_softmax2d_prim_func"
+    },
+    {
+      "case_id": "tilelang:matmul_bias_relu2d",
+      "frontend": "tilelang",
+      "location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/matmul_bias_relu2d.py",
+      "metadata": {},
+      "source_kind": "factory_file",
+      "symbol": "make_matmul_bias_relu2d_prim_func"
+    },
+    {
+      "case_id": "tilelang:matmul_fused_epilogue2d",
+      "frontend": "tilelang",
+      "location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/matmul_fused_epilogue2d.py",
+      "metadata": {},
+      "source_kind": "factory_file",
+      "symbol": "make_matmul_fused_epilogue2d_prim_func"
+    },
+    {
+      "case_id": "tilelang:matmul_relu2d",
+      "frontend": "tilelang",
+      "location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/matmul_relu2d.py",
+      "metadata": {},
+      "source_kind": "factory_file",
+      "symbol": "make_matmul_relu2d_prim_func"
+    },
+    {
+      "case_id": "tilelang:mlp2d",
+      "frontend": "tilelang",
+      "location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/mlp2d.py",
+      "metadata": {},
+      "source_kind": "factory_file",
+      "symbol": "make_mlp2d_prim_func"
+    },
+    {
+      "case_id": "tilelang:relu2d",
+      "frontend": "tilelang",
+      "location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/relu2d.py",
+      "metadata": {},
+      "source_kind": "factory_file",
+      "symbol": "make_relu2d_prim_func"
+    },
+    {
+      "case_id": "tilelang:rms_norm2d",
+      "frontend": "tilelang",
+      "location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/rms_norm2d.py",
+      "metadata": {},
+      "source_kind": "factory_file",
+      "symbol": "make_rms_norm2d_prim_func"
+    },
+    {
+      "case_id": "tilelang:rms_norm_residual2d",
+      "frontend": "tilelang",
+      "location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/rms_norm_residual2d.py",
+      "metadata": {},
+      "source_kind": "factory_file",
+      "symbol": "make_rms_norm_residual2d_prim_func"
+    },
+    {
+      "case_id": "tilelang:row_max",
+      "frontend": "tilelang",
+      "location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/row_max.py",
+      "metadata": {},
+      "source_kind": "factory_file",
+      "symbol": "make_row_max_prim_func"
+    },
+    {
+      "case_id": "tilelang:row_sum",
+      "frontend": "tilelang",
+      "location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/row_sum.py",
+      "metadata": {},
+      "source_kind": "factory_file",
+      "symbol": "make_row_sum_prim_func"
+    },
+    {
+      "case_id": "tilelang:rowmask_where2d",
+      "frontend": "tilelang",
+      "location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/rowmask_where2d.py",
+      "metadata": {},
+      "source_kind": "factory_file",
+      "symbol": "make_rowmask_where2d_prim_func"
+    },
+    {
+      "case_id": "tilelang:softmax_inner",
+      "frontend": "tilelang",
+      "location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/softmax_inner.py",
+      "metadata": {},
+      "source_kind": "factory_file",
+      "symbol": "make_softmax_inner_prim_func"
+    },
+    {
+      "case_id": "tilelang:transpose2d",
+      "frontend": "tilelang",
+      "location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/transpose2d.py",
+      "metadata": {},
+      "source_kind": "factory_file",
+      "symbol": "make_transpose2d_prim_func"
+    },
+    {
+      "case_id": "tilelang:upsample_bicubic2d_aa",
+      "frontend": "tilelang",
+      "location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/upsample_bicubic2d_aa.py",
+      "metadata": {},
+      "source_kind": "factory_file",
+      "symbol": "make_upsample_bicubic2d_aa_prim_func"
+    },
+    {
+      "case_id": "tilelang:where2d",
+      "frontend": "tilelang",
+      "location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/where2d.py",
+      "metadata": {},
+      "source_kind": "factory_file",
+      "symbol": "make_where2d_prim_func"
+    },
+    {
+      "case_id": "cuda:naive_gemm",
+      "frontend": "cuda",
+      "location": "dataset://TianchenIR-MultiFrontend/cuda/ops/naive_gemm.cu",
+      "metadata": {
+        "origin": "handwritten"
+      },
+      "source_kind": "module_file",
+      "symbol": "naive_gemm"
+    },
+    {
+      "case_id": "cuda:row_sum",
+      "frontend": "cuda",
+      "location": "dataset://TianchenIR-MultiFrontend/cuda/ops/row_sum.cu",
+      "metadata": {
+        "origin": "handwritten"
+      },
+      "source_kind": "module_file",
+      "symbol": "row_sum"
+    },
+    {
+      "case_id": "cuda:transpose2d",
+      "frontend": "cuda",
+      "location": "dataset://TianchenIR-MultiFrontend/cuda/ops/transpose2d.cu",
+      "metadata": {
+        "origin": "handwritten"
+      },
+      "source_kind": "module_file",
+      "symbol": "transpose2d"
+    },
+    {
+      "case_id": "cuda:vec_add",
+      "frontend": "cuda",
+      "location": "dataset://TianchenIR-MultiFrontend/cuda/ops/vec_add.cu",
+      "metadata": {
+        "origin": "handwritten"
+      },
+      "source_kind": "module_file",
+      "symbol": "vec_add"
+    },
+    {
+      "case_id": "cuda:tilelang__attn_fwd",
+      "frontend": "cuda",
+      "location": "dataset://TianchenIR-MultiFrontend/cuda/generated/_attn_fwd.cu",
+      "metadata": {
+        "compiler": {
+          "name": "tilelang",
+          "version": "0.1.8"
+        },
+        "cuda_abi": {
+          "parameters": [
+            {
+              "declaration": "const float* __restrict__ K",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "K",
+              "position": 0,
+              "rank": 4,
+              "semantic_name": "K",
+              "shape": [
+                1,
+                1,
+                16,
+                16
+              ]
+            },
+            {
+              "declaration": "float* __restrict__ Out",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "Out",
+              "position": 1,
+              "rank": 4,
+              "semantic_name": "Out",
+              "shape": [
+                1,
+                1,
+                16,
+                16
+              ]
+            },
+            {
+              "declaration": "const float* __restrict__ Q",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "Q",
+              "position": 2,
+              "rank": 4,
+              "semantic_name": "Q",
+              "shape": [
+                1,
+                1,
+                16,
+                16
+              ]
+            },
+            {
+              "declaration": "const float* __restrict__ V",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "V",
+              "position": 3,
+              "rank": 4,
+              "semantic_name": "V",
+              "shape": [
+                1,
+                1,
+                16,
+                16
+              ]
+            },
+            {
+              "declaration": "const float* __restrict__ attn_mask",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "attn_mask",
+              "position": 4,
+              "rank": 4,
+              "semantic_name": "attn_mask",
+              "shape": [
+                1,
+                1,
+                16,
+                16
+              ]
+            },
+            {
+              "declaration": "const float* __restrict__ sm_scale",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "sm_scale",
+              "position": 5,
+              "rank": 1,
+              "semantic_name": "sm_scale",
+              "shape": [
+                1
+              ]
+            }
+          ]
+        },
+        "cuda_sha256": "21d18292455aac26b1ab294cb59f69bd53f09f958fe107718468d16d31b95e0a",
+        "entry_name": "main_kernel",
+        "include_roots": [
+          "tilelang/src",
+          "tilelang/3rdparty/cutlass/include"
+        ],
+        "interface": {
+          "parameters": [
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "Q",
+              "rank": 4,
+              "shape": [
+                1,
+                1,
+                16,
+                16
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "K",
+              "rank": 4,
+              "shape": [
+                1,
+                1,
+                16,
+                16
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "V",
+              "rank": 4,
+              "shape": [
+                1,
+                1,
+                16,
+                16
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "attn_mask",
+              "rank": 4,
+              "shape": [
+                1,
+                1,
+                16,
+                16
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "sm_scale",
+              "rank": 1,
+              "shape": [
+                1
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "Out",
+              "rank": 4,
+              "shape": [
+                1,
+                1,
+                16,
+                16
+              ]
+            }
+          ]
+        },
+        "launch": {
+          "blockIdx.x": "16",
+          "threadIdx.x": "128",
+          "threadIdx.y": "1",
+          "threadIdx.z": "1"
+        },
+        "origin": "tilelang_export",
+        "origin_case_id": "tilelang:_attn_fwd",
+        "origin_location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/_attn_fwd.py",
+        "protocol": "intentir.tilelang-cuda-snapshot.v2",
+        "ptx_sha256": "0586da2519acc298f083fd589d4b6e301b5d237942932e28172edebf1ec5ae91",
+        "target": {
+          "name": "cuda"
+        }
+      },
+      "source_kind": "module_file",
+      "symbol": "main_kernel"
+    },
+    {
+      "case_id": "cuda:tilelang_add2d",
+      "frontend": "cuda",
+      "location": "dataset://TianchenIR-MultiFrontend/cuda/generated/add2d.cu",
+      "metadata": {
+        "compiler": {
+          "name": "tilelang",
+          "version": "0.1.8"
+        },
+        "cuda_abi": {
+          "parameters": [
+            {
+              "declaration": "const float* __restrict__ A",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "A",
+              "position": 0,
+              "rank": 2,
+              "semantic_name": "A",
+              "shape": [
+                "M",
+                16
+              ]
+            },
+            {
+              "declaration": "const float* __restrict__ B",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "B",
+              "position": 1,
+              "rank": 2,
+              "semantic_name": "B",
+              "shape": [
+                "M",
+                16
+              ]
+            },
+            {
+              "declaration": "float* __restrict__ C",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "C",
+              "position": 2,
+              "rank": 2,
+              "semantic_name": "C",
+              "shape": [
+                "M",
+                16
+              ]
+            },
+            {
+              "declaration": "int M",
+              "dtype": "i32",
+              "kind": "scalar",
+              "mode": "value",
+              "name": "M",
+              "position": 3,
+              "rank": 0,
+              "semantic_name": "M"
+            }
+          ]
+        },
+        "cuda_sha256": "2ffca814f59525234c27ee419e6856dd6488f94d1d32354977407ae43b772a81",
+        "entry_name": "main_kernel",
+        "include_roots": [
+          "tilelang/src",
+          "tilelang/3rdparty/cutlass/include"
+        ],
+        "interface": {
+          "parameters": [
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "A",
+              "rank": 2,
+              "shape": [
+                "M",
+                16
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "B",
+              "rank": 2,
+              "shape": [
+                "M",
+                16
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "C",
+              "rank": 2,
+              "shape": [
+                "M",
+                16
+              ]
+            }
+          ]
+        },
+        "launch": {
+          "blockIdx.x": "M",
+          "threadIdx.x": "16",
+          "threadIdx.y": "1",
+          "threadIdx.z": "1"
+        },
+        "origin": "tilelang_export",
+        "origin_case_id": "tilelang:add2d",
+        "origin_location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/add2d.py",
+        "protocol": "intentir.tilelang-cuda-snapshot.v2",
+        "ptx_sha256": "50ed891f82a77d490833fae6a88c61923d90303f0a123e8069ea41a85dff16c8",
+        "target": {
+          "name": "cuda"
+        }
+      },
+      "source_kind": "module_file",
+      "symbol": "main_kernel"
+    },
+    {
+      "case_id": "cuda:tilelang_add_bias2d",
+      "frontend": "cuda",
+      "location": "dataset://TianchenIR-MultiFrontend/cuda/generated/add_bias2d.cu",
+      "metadata": {
+        "compiler": {
+          "name": "tilelang",
+          "version": "0.1.8"
+        },
+        "cuda_abi": {
+          "parameters": [
+            {
+              "declaration": "const float* __restrict__ bias",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "bias",
+              "position": 0,
+              "rank": 1,
+              "semantic_name": "bias",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "declaration": "const float* __restrict__ inp",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "inp",
+              "position": 1,
+              "rank": 2,
+              "semantic_name": "inp",
+              "shape": [
+                "M",
+                16
+              ]
+            },
+            {
+              "declaration": "float* __restrict__ out",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "out",
+              "position": 2,
+              "rank": 2,
+              "semantic_name": "out",
+              "shape": [
+                "M",
+                16
+              ]
+            },
+            {
+              "declaration": "int M",
+              "dtype": "i32",
+              "kind": "scalar",
+              "mode": "value",
+              "name": "M",
+              "position": 3,
+              "rank": 0,
+              "semantic_name": "M"
+            }
+          ]
+        },
+        "cuda_sha256": "651a3cc0270759c37f60aaf58576828b517e22b7ab95791ccdd17674932451b0",
+        "entry_name": "main_kernel",
+        "include_roots": [
+          "tilelang/src",
+          "tilelang/3rdparty/cutlass/include"
+        ],
+        "interface": {
+          "parameters": [
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "inp",
+              "rank": 2,
+              "shape": [
+                "M",
+                16
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "bias",
+              "rank": 1,
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "out",
+              "rank": 2,
+              "shape": [
+                "M",
+                16
+              ]
+            }
+          ]
+        },
+        "launch": {
+          "blockIdx.x": "M",
+          "threadIdx.x": "16",
+          "threadIdx.y": "1",
+          "threadIdx.z": "1"
+        },
+        "origin": "tilelang_export",
+        "origin_case_id": "tilelang:add_bias2d",
+        "origin_location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/add_bias2d.py",
+        "protocol": "intentir.tilelang-cuda-snapshot.v2",
+        "ptx_sha256": "91dddc771f811d09a2b10fb1e1c4fe13b4014b1249676268842ca1069ab2bd99",
+        "target": {
+          "name": "cuda"
+        }
+      },
+      "source_kind": "module_file",
+      "symbol": "main_kernel"
+    },
+    {
+      "case_id": "cuda:tilelang_any_kernel_dim",
+      "frontend": "cuda",
+      "location": "dataset://TianchenIR-MultiFrontend/cuda/generated/any_kernel_dim.cu",
+      "metadata": {
+        "compiler": {
+          "name": "tilelang",
+          "version": "0.1.8"
+        },
+        "cuda_abi": {
+          "parameters": [
+            {
+              "declaration": "const float* __restrict__ inp",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "inp",
+              "position": 0,
+              "rank": 2,
+              "semantic_name": "inp",
+              "shape": [
+                "M",
+                16
+              ]
+            },
+            {
+              "declaration": "signed char* __restrict__ out",
+              "dtype": "i8",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "out",
+              "position": 1,
+              "rank": 1,
+              "semantic_name": "out",
+              "shape": [
+                "M"
+              ]
+            },
+            {
+              "declaration": "int M",
+              "dtype": "i32",
+              "kind": "scalar",
+              "mode": "value",
+              "name": "M",
+              "position": 2,
+              "rank": 0,
+              "semantic_name": "M"
+            }
+          ]
+        },
+        "cuda_sha256": "467ac35c98f0c4ed78b349696fbc3db6c7306403974fff2d7d2efe25df77cead",
+        "entry_name": "main_kernel",
+        "include_roots": [
+          "tilelang/src",
+          "tilelang/3rdparty/cutlass/include"
+        ],
+        "interface": {
+          "parameters": [
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "inp",
+              "rank": 2,
+              "shape": [
+                "M",
+                16
+              ]
+            },
+            {
+              "dtype": "bool",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "out",
+              "rank": 1,
+              "shape": [
+                "M"
+              ]
+            }
+          ]
+        },
+        "launch": {
+          "blockIdx.x": "M",
+          "threadIdx.x": "128",
+          "threadIdx.y": "1",
+          "threadIdx.z": "1"
+        },
+        "origin": "tilelang_export",
+        "origin_case_id": "tilelang:any_kernel_dim",
+        "origin_location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/any_kernel_dim.py",
+        "protocol": "intentir.tilelang-cuda-snapshot.v2",
+        "ptx_sha256": "2c01e2a0e0b809cd0cb82a3aaca75eaf5384175be3183484e60561e4b470dabb",
+        "target": {
+          "name": "cuda"
+        }
+      },
+      "source_kind": "module_file",
+      "symbol": "main_kernel"
+    },
+    {
+      "case_id": "cuda:tilelang_clamp2d",
+      "frontend": "cuda",
+      "location": "dataset://TianchenIR-MultiFrontend/cuda/generated/clamp2d.cu",
+      "metadata": {
+        "compiler": {
+          "name": "tilelang",
+          "version": "0.1.8"
+        },
+        "cuda_abi": {
+          "parameters": [
+            {
+              "declaration": "const float* __restrict__ hi",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "hi",
+              "position": 0,
+              "rank": 1,
+              "semantic_name": "hi",
+              "shape": [
+                1
+              ]
+            },
+            {
+              "declaration": "const float* __restrict__ inp",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "inp",
+              "position": 1,
+              "rank": 2,
+              "semantic_name": "inp",
+              "shape": [
+                "M",
+                16
+              ]
+            },
+            {
+              "declaration": "const float* __restrict__ lo",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "lo",
+              "position": 2,
+              "rank": 1,
+              "semantic_name": "lo",
+              "shape": [
+                1
+              ]
+            },
+            {
+              "declaration": "float* __restrict__ out",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "out",
+              "position": 3,
+              "rank": 2,
+              "semantic_name": "out",
+              "shape": [
+                "M",
+                16
+              ]
+            },
+            {
+              "declaration": "int M",
+              "dtype": "i32",
+              "kind": "scalar",
+              "mode": "value",
+              "name": "M",
+              "position": 4,
+              "rank": 0,
+              "semantic_name": "M"
+            }
+          ]
+        },
+        "cuda_sha256": "94d659bc4bf18544b4d5b5064f4e055625fac4c7ff934deeaf9c32a71b92ab20",
+        "entry_name": "main_kernel",
+        "include_roots": [
+          "tilelang/src",
+          "tilelang/3rdparty/cutlass/include"
+        ],
+        "interface": {
+          "parameters": [
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "inp",
+              "rank": 2,
+              "shape": [
+                "M",
+                16
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "lo",
+              "rank": 1,
+              "shape": [
+                1
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "hi",
+              "rank": 1,
+              "shape": [
+                1
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "out",
+              "rank": 2,
+              "shape": [
+                "M",
+                16
+              ]
+            }
+          ]
+        },
+        "launch": {
+          "blockIdx.x": "M",
+          "threadIdx.x": "16",
+          "threadIdx.y": "1",
+          "threadIdx.z": "1"
+        },
+        "origin": "tilelang_export",
+        "origin_case_id": "tilelang:clamp2d",
+        "origin_location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/clamp2d.py",
+        "protocol": "intentir.tilelang-cuda-snapshot.v2",
+        "ptx_sha256": "6272ea7acb76cc8e8d68d307fcd6d76f783cfeb6f63efb9e7cc660203d5bb73b",
+        "target": {
+          "name": "cuda"
+        }
+      },
+      "source_kind": "module_file",
+      "symbol": "main_kernel"
+    },
+    {
+      "case_id": "cuda:tilelang_copy2d_divmod",
+      "frontend": "cuda",
+      "location": "dataset://TianchenIR-MultiFrontend/cuda/generated/copy2d_divmod.cu",
+      "metadata": {
+        "compiler": {
+          "name": "tilelang",
+          "version": "0.1.8"
+        },
+        "cuda_abi": {
+          "parameters": [
+            {
+              "declaration": "const float* __restrict__ inp",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "inp",
+              "position": 0,
+              "rank": 2,
+              "semantic_name": "inp",
+              "shape": [
+                "M",
+                16
+              ]
+            },
+            {
+              "declaration": "float* __restrict__ out",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "out",
+              "position": 1,
+              "rank": 2,
+              "semantic_name": "out",
+              "shape": [
+                "M",
+                16
+              ]
+            },
+            {
+              "declaration": "int M",
+              "dtype": "i32",
+              "kind": "scalar",
+              "mode": "value",
+              "name": "M",
+              "position": 2,
+              "rank": 0,
+              "semantic_name": "M"
+            }
+          ]
+        },
+        "cuda_sha256": "f96e890f24976fce85ee150ca5091e3ff67333b77cfa4b8c039cec51a5991200",
+        "entry_name": "main_kernel",
+        "include_roots": [
+          "tilelang/src",
+          "tilelang/3rdparty/cutlass/include"
+        ],
+        "interface": {
+          "parameters": [
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "inp",
+              "rank": 2,
+              "shape": [
+                "M",
+                16
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "out",
+              "rank": 2,
+              "shape": [
+                "M",
+                16
+              ]
+            }
+          ]
+        },
+        "launch": {
+          "blockIdx.x": "M",
+          "threadIdx.x": "128",
+          "threadIdx.y": "1",
+          "threadIdx.z": "1"
+        },
+        "origin": "tilelang_export",
+        "origin_case_id": "tilelang:copy2d_divmod",
+        "origin_location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/copy2d_divmod.py",
+        "protocol": "intentir.tilelang-cuda-snapshot.v2",
+        "ptx_sha256": "3eea96a06b939a3737d79d136a58fc6757c2c1cfc1ace5330da0cfbb36927415",
+        "target": {
+          "name": "cuda"
+        }
+      },
+      "source_kind": "module_file",
+      "symbol": "main_kernel"
+    },
+    {
+      "case_id": "cuda:tilelang_exp2d",
+      "frontend": "cuda",
+      "location": "dataset://TianchenIR-MultiFrontend/cuda/generated/exp2d.cu",
+      "metadata": {
+        "compiler": {
+          "name": "tilelang",
+          "version": "0.1.8"
+        },
+        "cuda_abi": {
+          "parameters": [
+            {
+              "declaration": "const float* __restrict__ inp",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "inp",
+              "position": 0,
+              "rank": 2,
+              "semantic_name": "inp",
+              "shape": [
+                "M",
+                16
+              ]
+            },
+            {
+              "declaration": "float* __restrict__ out",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "out",
+              "position": 1,
+              "rank": 2,
+              "semantic_name": "out",
+              "shape": [
+                "M",
+                16
+              ]
+            },
+            {
+              "declaration": "int M",
+              "dtype": "i32",
+              "kind": "scalar",
+              "mode": "value",
+              "name": "M",
+              "position": 2,
+              "rank": 0,
+              "semantic_name": "M"
+            }
+          ]
+        },
+        "cuda_sha256": "85ce32d192b0d1e6624bcedeb9f7912e0b73898e89316849cfe86d632e80b60d",
+        "entry_name": "main_kernel",
+        "include_roots": [
+          "tilelang/src",
+          "tilelang/3rdparty/cutlass/include"
+        ],
+        "interface": {
+          "parameters": [
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "inp",
+              "rank": 2,
+              "shape": [
+                "M",
+                16
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "out",
+              "rank": 2,
+              "shape": [
+                "M",
+                16
+              ]
+            }
+          ]
+        },
+        "launch": {
+          "blockIdx.x": "M",
+          "threadIdx.x": "16",
+          "threadIdx.y": "1",
+          "threadIdx.z": "1"
+        },
+        "origin": "tilelang_export",
+        "origin_case_id": "tilelang:exp2d",
+        "origin_location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/exp2d.py",
+        "protocol": "intentir.tilelang-cuda-snapshot.v2",
+        "ptx_sha256": "de6326ec2ca047cd5ddfc6584778320684e046150d1fbaa84afa858baa816d97",
+        "target": {
+          "name": "cuda"
+        }
+      },
+      "source_kind": "module_file",
+      "symbol": "main_kernel"
+    },
+    {
+      "case_id": "cuda:tilelang_flash_attention2d",
+      "frontend": "cuda",
+      "location": "dataset://TianchenIR-MultiFrontend/cuda/generated/flash_attention2d.cu",
+      "metadata": {
+        "compiler": {
+          "name": "tilelang",
+          "version": "0.1.8"
+        },
+        "cuda_abi": {
+          "parameters": [
+            {
+              "declaration": "const float* __restrict__ K",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "K",
+              "position": 0,
+              "rank": 2,
+              "semantic_name": "K",
+              "shape": [
+                64,
+                64
+              ]
+            },
+            {
+              "declaration": "float* __restrict__ Out",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "Out",
+              "position": 1,
+              "rank": 2,
+              "semantic_name": "Out",
+              "shape": [
+                64,
+                64
+              ]
+            },
+            {
+              "declaration": "const float* __restrict__ Q",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "Q",
+              "position": 2,
+              "rank": 2,
+              "semantic_name": "Q",
+              "shape": [
+                64,
+                64
+              ]
+            },
+            {
+              "declaration": "const float* __restrict__ V",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "V",
+              "position": 3,
+              "rank": 2,
+              "semantic_name": "V",
+              "shape": [
+                64,
+                64
+              ]
+            },
+            {
+              "declaration": "const float* __restrict__ sm_scale",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "sm_scale",
+              "position": 4,
+              "rank": 1,
+              "semantic_name": "sm_scale",
+              "shape": [
+                1
+              ]
+            }
+          ]
+        },
+        "cuda_sha256": "596c7ddf757e7d4d7687ea34043bd16f562198e4122a2fe0e893d84025f280f7",
+        "entry_name": "main_kernel",
+        "include_roots": [
+          "tilelang/src",
+          "tilelang/3rdparty/cutlass/include"
+        ],
+        "interface": {
+          "parameters": [
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "Q",
+              "rank": 2,
+              "shape": [
+                64,
+                64
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "K",
+              "rank": 2,
+              "shape": [
+                64,
+                64
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "V",
+              "rank": 2,
+              "shape": [
+                64,
+                64
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "sm_scale",
+              "rank": 1,
+              "shape": [
+                1
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "Out",
+              "rank": 2,
+              "shape": [
+                64,
+                64
+              ]
+            }
+          ]
+        },
+        "launch": {
+          "blockIdx.x": "64",
+          "threadIdx.x": "1",
+          "threadIdx.y": "1",
+          "threadIdx.z": "1"
+        },
+        "origin": "tilelang_export",
+        "origin_case_id": "tilelang:flash_attention2d",
+        "origin_location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/flash_attention2d.py",
+        "protocol": "intentir.tilelang-cuda-snapshot.v2",
+        "ptx_sha256": "86c3ffbf5f9e397ef0bcc4873e88113d5853c13e5669d79cea639b6a37b3e4af",
+        "target": {
+          "name": "cuda"
+        }
+      },
+      "source_kind": "module_file",
+      "symbol": "main_kernel"
+    },
+    {
+      "case_id": "cuda:tilelang_floor2d",
+      "frontend": "cuda",
+      "location": "dataset://TianchenIR-MultiFrontend/cuda/generated/floor2d.cu",
+      "metadata": {
+        "compiler": {
+          "name": "tilelang",
+          "version": "0.1.8"
+        },
+        "cuda_abi": {
+          "parameters": [
+            {
+              "declaration": "const float* __restrict__ inp",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "inp",
+              "position": 0,
+              "rank": 2,
+              "semantic_name": "inp",
+              "shape": [
+                "M",
+                16
+              ]
+            },
+            {
+              "declaration": "float* __restrict__ out",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "out",
+              "position": 1,
+              "rank": 2,
+              "semantic_name": "out",
+              "shape": [
+                "M",
+                16
+              ]
+            },
+            {
+              "declaration": "int M",
+              "dtype": "i32",
+              "kind": "scalar",
+              "mode": "value",
+              "name": "M",
+              "position": 2,
+              "rank": 0,
+              "semantic_name": "M"
+            }
+          ]
+        },
+        "cuda_sha256": "04856d563c4207464eb238725d1cfa17885525496ae6fc6e439b3b64dd27dd38",
+        "entry_name": "main_kernel",
+        "include_roots": [
+          "tilelang/src",
+          "tilelang/3rdparty/cutlass/include"
+        ],
+        "interface": {
+          "parameters": [
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "inp",
+              "rank": 2,
+              "shape": [
+                "M",
+                16
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "out",
+              "rank": 2,
+              "shape": [
+                "M",
+                16
+              ]
+            }
+          ]
+        },
+        "launch": {
+          "blockIdx.x": "M",
+          "threadIdx.x": "16",
+          "threadIdx.y": "1",
+          "threadIdx.z": "1"
+        },
+        "origin": "tilelang_export",
+        "origin_case_id": "tilelang:floor2d",
+        "origin_location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/floor2d.py",
+        "protocol": "intentir.tilelang-cuda-snapshot.v2",
+        "ptx_sha256": "dc6da36af9d797689ec1be35e7772b3db554cea0476efd9fd38a5b4d852410b2",
+        "target": {
+          "name": "cuda"
+        }
+      },
+      "source_kind": "module_file",
+      "symbol": "main_kernel"
+    },
+    {
+      "case_id": "cuda:tilelang_gather2d",
+      "frontend": "cuda",
+      "location": "dataset://TianchenIR-MultiFrontend/cuda/generated/gather2d.cu",
+      "metadata": {
+        "compiler": {
+          "name": "tilelang",
+          "version": "0.1.8"
+        },
+        "cuda_abi": {
+          "parameters": [
+            {
+              "declaration": "const int* __restrict__ col_idx",
+              "dtype": "i32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "col_idx",
+              "position": 0,
+              "rank": 1,
+              "semantic_name": "col_idx",
+              "shape": [
+                256
+              ]
+            },
+            {
+              "declaration": "const float* __restrict__ inp",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "inp",
+              "position": 1,
+              "rank": 2,
+              "semantic_name": "inp",
+              "shape": [
+                "M",
+                64
+              ]
+            },
+            {
+              "declaration": "float* __restrict__ out",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "out",
+              "position": 2,
+              "rank": 1,
+              "semantic_name": "out",
+              "shape": [
+                256
+              ]
+            },
+            {
+              "declaration": "const int* __restrict__ row_idx",
+              "dtype": "i32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "row_idx",
+              "position": 3,
+              "rank": 1,
+              "semantic_name": "row_idx",
+              "shape": [
+                256
+              ]
+            },
+            {
+              "declaration": "int M",
+              "dtype": "i32",
+              "kind": "scalar",
+              "mode": "value",
+              "name": "M",
+              "position": 4,
+              "rank": 0,
+              "semantic_name": "M"
+            }
+          ]
+        },
+        "cuda_sha256": "cfe1eddaaf41fc386dbb62aaba272f04015f0bf66ab60230b7a776437b8df3da",
+        "entry_name": "main_kernel",
+        "include_roots": [
+          "tilelang/src",
+          "tilelang/3rdparty/cutlass/include"
+        ],
+        "interface": {
+          "parameters": [
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "inp",
+              "rank": 2,
+              "shape": [
+                "M",
+                64
+              ]
+            },
+            {
+              "dtype": "int32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "row_idx",
+              "rank": 1,
+              "shape": [
+                256
+              ]
+            },
+            {
+              "dtype": "int32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "col_idx",
+              "rank": 1,
+              "shape": [
+                256
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "out",
+              "rank": 1,
+              "shape": [
+                256
+              ]
+            }
+          ]
+        },
+        "launch": {
+          "blockIdx.x": "256",
+          "threadIdx.x": "128",
+          "threadIdx.y": "1",
+          "threadIdx.z": "1"
+        },
+        "origin": "tilelang_export",
+        "origin_case_id": "tilelang:gather2d",
+        "origin_location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/gather2d.py",
+        "protocol": "intentir.tilelang-cuda-snapshot.v2",
+        "ptx_sha256": "c943e9a41c70db97f7ee8337ecff7943ce8eb7c8a217418eef81ec601ccd9a4c",
+        "target": {
+          "name": "cuda"
+        }
+      },
+      "source_kind": "module_file",
+      "symbol": "main_kernel"
+    },
+    {
+      "case_id": "cuda:tilelang_gemm",
+      "frontend": "cuda",
+      "location": "dataset://TianchenIR-MultiFrontend/cuda/generated/gemm.cu",
+      "metadata": {
+        "compiler": {
+          "name": "tilelang",
+          "version": "0.1.8"
+        },
+        "cuda_abi": {
+          "parameters": [
+            {
+              "declaration": "__grid_constant__ const CUtensorMap A_desc",
+              "dtype": "tensor_map",
+              "kind": "opaque",
+              "mode": "value",
+              "name": "A_desc",
+              "position": 0,
+              "rank": 2,
+              "semantic_mode": "input",
+              "semantic_name": "A",
+              "shape": [
+                "M",
+                "K"
+              ]
+            },
+            {
+              "declaration": "__grid_constant__ const CUtensorMap B_desc",
+              "dtype": "tensor_map",
+              "kind": "opaque",
+              "mode": "value",
+              "name": "B_desc",
+              "position": 1,
+              "rank": 2,
+              "semantic_mode": "input",
+              "semantic_name": "B",
+              "shape": [
+                "K",
+                "N"
+              ]
+            },
+            {
+              "declaration": "half_t* __restrict__ C",
+              "dtype": "f16",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "C",
+              "position": 2,
+              "rank": 2,
+              "semantic_name": "C",
+              "shape": [
+                "M",
+                "N"
+              ]
+            },
+            {
+              "declaration": "int K",
+              "dtype": "i32",
+              "kind": "scalar",
+              "mode": "value",
+              "name": "K",
+              "position": 3,
+              "rank": 0,
+              "semantic_name": "K"
+            },
+            {
+              "declaration": "int M",
+              "dtype": "i32",
+              "kind": "scalar",
+              "mode": "value",
+              "name": "M",
+              "position": 4,
+              "rank": 0,
+              "semantic_name": "M"
+            },
+            {
+              "declaration": "int N",
+              "dtype": "i32",
+              "kind": "scalar",
+              "mode": "value",
+              "name": "N",
+              "position": 5,
+              "rank": 0,
+              "semantic_name": "N"
+            }
+          ]
+        },
+        "cuda_sha256": "3f599e3747b2a8eb59601d69e75d444dced4d7ab3de707acfda5334ab3a38ffe",
+        "entry_name": "main_kernel",
+        "include_roots": [
+          "tilelang/src",
+          "tilelang/3rdparty/cutlass/include"
+        ],
+        "interface": {
+          "parameters": [
+            {
+              "dtype": "float16",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "A",
+              "rank": 2,
+              "shape": [
+                "M",
+                "K"
+              ]
+            },
+            {
+              "dtype": "float16",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "B",
+              "rank": 2,
+              "shape": [
+                "K",
+                "N"
+              ]
+            },
+            {
+              "dtype": "float16",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "C",
+              "rank": 2,
+              "shape": [
+                "M",
+                "N"
+              ]
+            }
+          ]
+        },
+        "launch": {
+          "blockIdx.x": "(N + 128 - 1",
+          "blockIdx.y": "(M + 128 - 1",
+          "threadIdx.x": "128",
+          "threadIdx.y": "1",
+          "threadIdx.z": "1"
+        },
+        "origin": "tilelang_export",
+        "origin_case_id": "tilelang:gemm",
+        "origin_location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/gemm.py",
+        "protocol": "intentir.tilelang-cuda-snapshot.v2",
+        "ptx_sha256": "c2fa99c479cf8afac7fdd4a2fb37d86e83b9d5711c33beea4c1665c7a24e0984",
+        "target": {
+          "name": "cuda"
+        }
+      },
+      "source_kind": "module_file",
+      "symbol": "main_kernel"
+    },
+    {
+      "case_id": "cuda:tilelang_grouped_row_sum2d",
+      "frontend": "cuda",
+      "location": "dataset://TianchenIR-MultiFrontend/cuda/generated/grouped_row_sum2d.cu",
+      "metadata": {
+        "compiler": {
+          "name": "tilelang",
+          "version": "0.1.8"
+        },
+        "cuda_abi": {
+          "parameters": [
+            {
+              "declaration": "const float* __restrict__ inp",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "inp",
+              "position": 0,
+              "rank": 2,
+              "semantic_name": "inp",
+              "shape": [
+                "M",
+                64
+              ]
+            },
+            {
+              "declaration": "float* __restrict__ out",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "out",
+              "position": 1,
+              "rank": 2,
+              "semantic_name": "out",
+              "shape": [
+                "M",
+                16
+              ]
+            },
+            {
+              "declaration": "int M",
+              "dtype": "i32",
+              "kind": "scalar",
+              "mode": "value",
+              "name": "M",
+              "position": 2,
+              "rank": 0,
+              "semantic_name": "M"
+            }
+          ]
+        },
+        "cuda_sha256": "27e1a550caf3e3f8de38dd932e8fb1839d139dd828e01daab9f6b0c27b18efa2",
+        "entry_name": "main_kernel",
+        "include_roots": [
+          "tilelang/src",
+          "tilelang/3rdparty/cutlass/include"
+        ],
+        "interface": {
+          "parameters": [
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "inp",
+              "rank": 2,
+              "shape": [
+                "M",
+                64
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "out",
+              "rank": 2,
+              "shape": [
+                "M",
+                16
+              ]
+            }
+          ]
+        },
+        "launch": {
+          "blockIdx.x": "16",
+          "blockIdx.y": "M",
+          "threadIdx.x": "128",
+          "threadIdx.y": "1",
+          "threadIdx.z": "1"
+        },
+        "origin": "tilelang_export",
+        "origin_case_id": "tilelang:grouped_row_sum2d",
+        "origin_location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/grouped_row_sum2d.py",
+        "protocol": "intentir.tilelang-cuda-snapshot.v2",
+        "ptx_sha256": "f5bfc979f061d1895a464b1e8f32ef3505272c827dbf6b581a1c4b406095ca77",
+        "target": {
+          "name": "cuda"
+        }
+      },
+      "source_kind": "module_file",
+      "symbol": "main_kernel"
+    },
+    {
+      "case_id": "cuda:tilelang_groupnorm",
+      "frontend": "cuda",
+      "location": "dataset://TianchenIR-MultiFrontend/cuda/generated/groupnorm.cu",
+      "metadata": {
+        "compiler": {
+          "name": "tilelang",
+          "version": "0.1.8"
+        },
+        "cuda_abi": {
+          "parameters": [
+            {
+              "declaration": "const float* __restrict__ B",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "B",
+              "position": 0,
+              "rank": 1,
+              "semantic_name": "B",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "declaration": "float* __restrict__ Mean",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "Mean",
+              "position": 1,
+              "rank": 2,
+              "semantic_name": "Mean",
+              "shape": [
+                "N",
+                4
+              ]
+            },
+            {
+              "declaration": "float* __restrict__ Rstd",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "Rstd",
+              "position": 2,
+              "rank": 2,
+              "semantic_name": "Rstd",
+              "shape": [
+                "N",
+                4
+              ]
+            },
+            {
+              "declaration": "const float* __restrict__ W",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "W",
+              "position": 3,
+              "rank": 1,
+              "semantic_name": "W",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "declaration": "const float* __restrict__ X",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "X",
+              "position": 4,
+              "rank": 3,
+              "semantic_name": "X",
+              "shape": [
+                "N",
+                64,
+                16
+              ]
+            },
+            {
+              "declaration": "float* __restrict__ Y",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "Y",
+              "position": 5,
+              "rank": 3,
+              "semantic_name": "Y",
+              "shape": [
+                "N",
+                64,
+                16
+              ]
+            },
+            {
+              "declaration": "int N",
+              "dtype": "i32",
+              "kind": "scalar",
+              "mode": "value",
+              "name": "N",
+              "position": 6,
+              "rank": 0,
+              "semantic_name": "N"
+            }
+          ]
+        },
+        "cuda_sha256": "e5bbe45e2302daed592946faa8ec7b7ab0616f3776f59daa7bd42797a32c55fc",
+        "entry_name": "main_kernel",
+        "include_roots": [
+          "tilelang/src",
+          "tilelang/3rdparty/cutlass/include"
+        ],
+        "interface": {
+          "parameters": [
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "X",
+              "rank": 3,
+              "shape": [
+                "N",
+                64,
+                16
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "Y",
+              "rank": 3,
+              "shape": [
+                "N",
+                64,
+                16
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "W",
+              "rank": 1,
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "B",
+              "rank": 1,
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "Mean",
+              "rank": 2,
+              "shape": [
+                "N",
+                4
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "Rstd",
+              "rank": 2,
+              "shape": [
+                "N",
+                4
+              ]
+            }
+          ]
+        },
+        "launch": {
+          "blockIdx.x": "N",
+          "blockIdx.y": "4",
+          "threadIdx.x": "128",
+          "threadIdx.y": "1",
+          "threadIdx.z": "1"
+        },
+        "origin": "tilelang_export",
+        "origin_case_id": "tilelang:groupnorm",
+        "origin_location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/groupnorm.py",
+        "protocol": "intentir.tilelang-cuda-snapshot.v2",
+        "ptx_sha256": "9e383815b7348b525fbd6fe0be25a8b7ed5a3166ec8ce93103d3a6f0c2b953c2",
+        "target": {
+          "name": "cuda"
+        }
+      },
+      "source_kind": "module_file",
+      "symbol": "main_kernel"
+    },
+    {
+      "case_id": "cuda:tilelang_layer_norm_residual2d",
+      "frontend": "cuda",
+      "location": "dataset://TianchenIR-MultiFrontend/cuda/generated/layer_norm_residual2d.cu",
+      "metadata": {
+        "compiler": {
+          "name": "tilelang",
+          "version": "0.1.8"
+        },
+        "cuda_abi": {
+          "parameters": [
+            {
+              "declaration": "const float* __restrict__ bias",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "bias",
+              "position": 0,
+              "rank": 1,
+              "semantic_name": "bias",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "declaration": "const float* __restrict__ inp",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "inp",
+              "position": 1,
+              "rank": 2,
+              "semantic_name": "inp",
+              "shape": [
+                "M",
+                64
+              ]
+            },
+            {
+              "declaration": "float* __restrict__ mean",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "mean",
+              "position": 2,
+              "rank": 1,
+              "semantic_name": "mean",
+              "shape": [
+                "M"
+              ]
+            },
+            {
+              "declaration": "float* __restrict__ out",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "out",
+              "position": 3,
+              "rank": 2,
+              "semantic_name": "out",
+              "shape": [
+                "M",
+                64
+              ]
+            },
+            {
+              "declaration": "const float* __restrict__ residual",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "residual",
+              "position": 4,
+              "rank": 2,
+              "semantic_name": "residual",
+              "shape": [
+                "M",
+                64
+              ]
+            },
+            {
+              "declaration": "float* __restrict__ rstd",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "rstd",
+              "position": 5,
+              "rank": 1,
+              "semantic_name": "rstd",
+              "shape": [
+                "M"
+              ]
+            },
+            {
+              "declaration": "const float* __restrict__ weight",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "weight",
+              "position": 6,
+              "rank": 1,
+              "semantic_name": "weight",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "declaration": "int M",
+              "dtype": "i32",
+              "kind": "scalar",
+              "mode": "value",
+              "name": "M",
+              "position": 7,
+              "rank": 0,
+              "semantic_name": "M"
+            }
+          ]
+        },
+        "cuda_sha256": "c522cd264606dd639fa221a333d17a209a4ec76c65ebface5d70ff33f72b22a9",
+        "entry_name": "main_kernel",
+        "include_roots": [
+          "tilelang/src",
+          "tilelang/3rdparty/cutlass/include"
+        ],
+        "interface": {
+          "parameters": [
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "inp",
+              "rank": 2,
+              "shape": [
+                "M",
+                64
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "residual",
+              "rank": 2,
+              "shape": [
+                "M",
+                64
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "weight",
+              "rank": 1,
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "bias",
+              "rank": 1,
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "out",
+              "rank": 2,
+              "shape": [
+                "M",
+                64
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "mean",
+              "rank": 1,
+              "shape": [
+                "M"
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "rstd",
+              "rank": 1,
+              "shape": [
+                "M"
+              ]
+            }
+          ]
+        },
+        "launch": {
+          "blockIdx.x": "M",
+          "threadIdx.x": "64",
+          "threadIdx.y": "1",
+          "threadIdx.z": "1"
+        },
+        "origin": "tilelang_export",
+        "origin_case_id": "tilelang:layer_norm_residual2d",
+        "origin_location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/layer_norm_residual2d.py",
+        "protocol": "intentir.tilelang-cuda-snapshot.v2",
+        "ptx_sha256": "b51069d14dc6bb9032ddac32220d2b97c71f470085ae21e5bfafc8517278b1f5",
+        "target": {
+          "name": "cuda"
+        }
+      },
+      "source_kind": "module_file",
+      "symbol": "main_kernel"
+    },
+    {
+      "case_id": "cuda:tilelang_layernorm",
+      "frontend": "cuda",
+      "location": "dataset://TianchenIR-MultiFrontend/cuda/generated/layernorm.cu",
+      "metadata": {
+        "compiler": {
+          "name": "tilelang",
+          "version": "0.1.8"
+        },
+        "cuda_abi": {
+          "parameters": [
+            {
+              "declaration": "const float* __restrict__ bias_ptr",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "bias_ptr",
+              "position": 0,
+              "rank": 1,
+              "semantic_name": "bias_ptr",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "declaration": "const float* __restrict__ in_ptr",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "in_ptr",
+              "position": 1,
+              "rank": 2,
+              "semantic_name": "in_ptr",
+              "shape": [
+                "M",
+                16
+              ]
+            },
+            {
+              "declaration": "float* __restrict__ out_mean_ptr",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "out_mean_ptr",
+              "position": 2,
+              "rank": 1,
+              "semantic_name": "out_mean_ptr",
+              "shape": [
+                "M"
+              ]
+            },
+            {
+              "declaration": "float* __restrict__ out_ptr",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "out_ptr",
+              "position": 3,
+              "rank": 2,
+              "semantic_name": "out_ptr",
+              "shape": [
+                "M",
+                16
+              ]
+            },
+            {
+              "declaration": "float* __restrict__ out_rstd_ptr",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "out_rstd_ptr",
+              "position": 4,
+              "rank": 1,
+              "semantic_name": "out_rstd_ptr",
+              "shape": [
+                "M"
+              ]
+            },
+            {
+              "declaration": "const float* __restrict__ weight_ptr",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "weight_ptr",
+              "position": 5,
+              "rank": 1,
+              "semantic_name": "weight_ptr",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "declaration": "int M",
+              "dtype": "i32",
+              "kind": "scalar",
+              "mode": "value",
+              "name": "M",
+              "position": 6,
+              "rank": 0,
+              "semantic_name": "M"
+            }
+          ]
+        },
+        "cuda_sha256": "932460612349ba1e9c0bb8fa13ae50b06f5923f5c1856fa10c98f0cf521045e9",
+        "entry_name": "main_kernel",
+        "include_roots": [
+          "tilelang/src",
+          "tilelang/3rdparty/cutlass/include"
+        ],
+        "interface": {
+          "parameters": [
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "in_ptr",
+              "rank": 2,
+              "shape": [
+                "M",
+                16
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "out_ptr",
+              "rank": 2,
+              "shape": [
+                "M",
+                16
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "weight_ptr",
+              "rank": 1,
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "bias_ptr",
+              "rank": 1,
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "out_mean_ptr",
+              "rank": 1,
+              "shape": [
+                "M"
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "out_rstd_ptr",
+              "rank": 1,
+              "shape": [
+                "M"
+              ]
+            }
+          ]
+        },
+        "launch": {
+          "blockIdx.x": "M",
+          "threadIdx.x": "128",
+          "threadIdx.y": "1",
+          "threadIdx.z": "1"
+        },
+        "origin": "tilelang_export",
+        "origin_case_id": "tilelang:layernorm",
+        "origin_location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/layernorm.py",
+        "protocol": "intentir.tilelang-cuda-snapshot.v2",
+        "ptx_sha256": "a1bd8451b38495beaa8c986217e9b46eff1226c5bd9beb677db82dc20400b70b",
+        "target": {
+          "name": "cuda"
+        }
+      },
+      "source_kind": "module_file",
+      "symbol": "main_kernel"
+    },
+    {
+      "case_id": "cuda:tilelang_masked_attention2d",
+      "frontend": "cuda",
+      "location": "dataset://TianchenIR-MultiFrontend/cuda/generated/masked_attention2d.cu",
+      "metadata": {
+        "compiler": {
+          "name": "tilelang",
+          "version": "0.1.8"
+        },
+        "cuda_abi": {
+          "parameters": [
+            {
+              "declaration": "const float* __restrict__ K",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "K",
+              "position": 0,
+              "rank": 2,
+              "semantic_name": "K",
+              "shape": [
+                16,
+                16
+              ]
+            },
+            {
+              "declaration": "float* __restrict__ Out",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "Out",
+              "position": 1,
+              "rank": 2,
+              "semantic_name": "Out",
+              "shape": [
+                16,
+                16
+              ]
+            },
+            {
+              "declaration": "const float* __restrict__ Q",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "Q",
+              "position": 2,
+              "rank": 2,
+              "semantic_name": "Q",
+              "shape": [
+                16,
+                16
+              ]
+            },
+            {
+              "declaration": "const float* __restrict__ V",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "V",
+              "position": 3,
+              "rank": 2,
+              "semantic_name": "V",
+              "shape": [
+                16,
+                16
+              ]
+            },
+            {
+              "declaration": "const float* __restrict__ sm_scale",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "sm_scale",
+              "position": 4,
+              "rank": 1,
+              "semantic_name": "sm_scale",
+              "shape": [
+                1
+              ]
+            }
+          ]
+        },
+        "cuda_sha256": "0b74db665f65d19ccc6a12456614df90be684361dd733eed004da82c13ef7352",
+        "entry_name": "main_kernel",
+        "include_roots": [
+          "tilelang/src",
+          "tilelang/3rdparty/cutlass/include"
+        ],
+        "interface": {
+          "parameters": [
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "Q",
+              "rank": 2,
+              "shape": [
+                16,
+                16
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "K",
+              "rank": 2,
+              "shape": [
+                16,
+                16
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "V",
+              "rank": 2,
+              "shape": [
+                16,
+                16
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "sm_scale",
+              "rank": 1,
+              "shape": [
+                1
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "Out",
+              "rank": 2,
+              "shape": [
+                16,
+                16
+              ]
+            }
+          ]
+        },
+        "launch": {
+          "blockIdx.x": "16",
+          "threadIdx.x": "1",
+          "threadIdx.y": "1",
+          "threadIdx.z": "1"
+        },
+        "origin": "tilelang_export",
+        "origin_case_id": "tilelang:masked_attention2d",
+        "origin_location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/masked_attention2d.py",
+        "protocol": "intentir.tilelang-cuda-snapshot.v2",
+        "ptx_sha256": "8a951bc5a2480be2a827a40d8883cd195aac43335f1a6e82a8cd5e3bb0e0294e",
+        "target": {
+          "name": "cuda"
+        }
+      },
+      "source_kind": "module_file",
+      "symbol": "main_kernel"
+    },
+    {
+      "case_id": "cuda:tilelang_masked_softmax2d",
+      "frontend": "cuda",
+      "location": "dataset://TianchenIR-MultiFrontend/cuda/generated/masked_softmax2d.cu",
+      "metadata": {
+        "compiler": {
+          "name": "tilelang",
+          "version": "0.1.8"
+        },
+        "cuda_abi": {
+          "parameters": [
+            {
+              "declaration": "const float* __restrict__ inp",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "inp",
+              "position": 0,
+              "rank": 2,
+              "semantic_name": "inp",
+              "shape": [
+                "M",
+                64
+              ]
+            },
+            {
+              "declaration": "const signed char* __restrict__ mask",
+              "dtype": "i8",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "mask",
+              "position": 1,
+              "rank": 1,
+              "semantic_name": "mask",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "declaration": "float* __restrict__ out",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "out",
+              "position": 2,
+              "rank": 2,
+              "semantic_name": "out",
+              "shape": [
+                "M",
+                64
+              ]
+            },
+            {
+              "declaration": "int M",
+              "dtype": "i32",
+              "kind": "scalar",
+              "mode": "value",
+              "name": "M",
+              "position": 3,
+              "rank": 0,
+              "semantic_name": "M"
+            }
+          ]
+        },
+        "cuda_sha256": "17dc58de05f4bce1ce9b38acf977674c9b4653afad66cae34411433baa795f9b",
+        "entry_name": "main_kernel",
+        "include_roots": [
+          "tilelang/src",
+          "tilelang/3rdparty/cutlass/include"
+        ],
+        "interface": {
+          "parameters": [
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "inp",
+              "rank": 2,
+              "shape": [
+                "M",
+                64
+              ]
+            },
+            {
+              "dtype": "bool",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "mask",
+              "rank": 1,
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "out",
+              "rank": 2,
+              "shape": [
+                "M",
+                64
+              ]
+            }
+          ]
+        },
+        "launch": {
+          "blockIdx.x": "M",
+          "threadIdx.x": "64",
+          "threadIdx.y": "1",
+          "threadIdx.z": "1"
+        },
+        "origin": "tilelang_export",
+        "origin_case_id": "tilelang:masked_softmax2d",
+        "origin_location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/masked_softmax2d.py",
+        "protocol": "intentir.tilelang-cuda-snapshot.v2",
+        "ptx_sha256": "f1108aba5f062a36f3825911dd2a30c54e9c520fb7cc5621046f9daaa49cc7ef",
+        "target": {
+          "name": "cuda"
+        }
+      },
+      "source_kind": "module_file",
+      "symbol": "main_kernel"
+    },
+    {
+      "case_id": "cuda:tilelang_matmul_bias_relu2d",
+      "frontend": "cuda",
+      "location": "dataset://TianchenIR-MultiFrontend/cuda/generated/matmul_bias_relu2d.cu",
+      "metadata": {
+        "compiler": {
+          "name": "tilelang",
+          "version": "0.1.8"
+        },
+        "cuda_abi": {
+          "parameters": [
+            {
+              "declaration": "__grid_constant__ const CUtensorMap A_desc",
+              "dtype": "tensor_map",
+              "kind": "opaque",
+              "mode": "value",
+              "name": "A_desc",
+              "position": 0,
+              "rank": 2,
+              "semantic_mode": "input",
+              "semantic_name": "A",
+              "shape": [
+                "M",
+                "K"
+              ]
+            },
+            {
+              "declaration": "__grid_constant__ const CUtensorMap B_desc",
+              "dtype": "tensor_map",
+              "kind": "opaque",
+              "mode": "value",
+              "name": "B_desc",
+              "position": 1,
+              "rank": 2,
+              "semantic_mode": "input",
+              "semantic_name": "B",
+              "shape": [
+                "K",
+                "N"
+              ]
+            },
+            {
+              "declaration": "float* __restrict__ C",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "C",
+              "position": 2,
+              "rank": 2,
+              "semantic_name": "C",
+              "shape": [
+                "M",
+                "N"
+              ]
+            },
+            {
+              "declaration": "const float* __restrict__ bias",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "bias",
+              "position": 3,
+              "rank": 1,
+              "semantic_name": "bias",
+              "shape": [
+                "N"
+              ]
+            },
+            {
+              "declaration": "int K",
+              "dtype": "i32",
+              "kind": "scalar",
+              "mode": "value",
+              "name": "K",
+              "position": 4,
+              "rank": 0,
+              "semantic_name": "K"
+            },
+            {
+              "declaration": "int M",
+              "dtype": "i32",
+              "kind": "scalar",
+              "mode": "value",
+              "name": "M",
+              "position": 5,
+              "rank": 0,
+              "semantic_name": "M"
+            },
+            {
+              "declaration": "int N",
+              "dtype": "i32",
+              "kind": "scalar",
+              "mode": "value",
+              "name": "N",
+              "position": 6,
+              "rank": 0,
+              "semantic_name": "N"
+            }
+          ]
+        },
+        "cuda_sha256": "342b9fae68bdc05394fe5a5f8677bbacf45b0eb642cd490cb5723fdbec1f4f6b",
+        "entry_name": "main_kernel",
+        "include_roots": [
+          "tilelang/src",
+          "tilelang/3rdparty/cutlass/include"
+        ],
+        "interface": {
+          "parameters": [
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "A",
+              "rank": 2,
+              "shape": [
+                "M",
+                "K"
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "B",
+              "rank": 2,
+              "shape": [
+                "K",
+                "N"
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "bias",
+              "rank": 1,
+              "shape": [
+                "N"
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "C",
+              "rank": 2,
+              "shape": [
+                "M",
+                "N"
+              ]
+            }
+          ]
+        },
+        "launch": {
+          "blockIdx.x": "(N + 64 - 1",
+          "blockIdx.y": "(M + 64 - 1",
+          "threadIdx.x": "128",
+          "threadIdx.y": "1",
+          "threadIdx.z": "1"
+        },
+        "origin": "tilelang_export",
+        "origin_case_id": "tilelang:matmul_bias_relu2d",
+        "origin_location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/matmul_bias_relu2d.py",
+        "protocol": "intentir.tilelang-cuda-snapshot.v2",
+        "ptx_sha256": "d2e73a32b53c3b890358e40d90e99b1d82caba2a68f1f38dd913de7f809dd314",
+        "target": {
+          "name": "cuda"
+        }
+      },
+      "source_kind": "module_file",
+      "symbol": "main_kernel"
+    },
+    {
+      "case_id": "cuda:tilelang_matmul_fused_epilogue2d",
+      "frontend": "cuda",
+      "location": "dataset://TianchenIR-MultiFrontend/cuda/generated/matmul_fused_epilogue2d.cu",
+      "metadata": {
+        "compiler": {
+          "name": "tilelang",
+          "version": "0.1.8"
+        },
+        "cuda_abi": {
+          "parameters": [
+            {
+              "declaration": "__grid_constant__ const CUtensorMap A_desc",
+              "dtype": "tensor_map",
+              "kind": "opaque",
+              "mode": "value",
+              "name": "A_desc",
+              "position": 0,
+              "rank": 2,
+              "semantic_mode": "input",
+              "semantic_name": "A",
+              "shape": [
+                "M",
+                "K"
+              ]
+            },
+            {
+              "declaration": "__grid_constant__ const CUtensorMap B_desc",
+              "dtype": "tensor_map",
+              "kind": "opaque",
+              "mode": "value",
+              "name": "B_desc",
+              "position": 1,
+              "rank": 2,
+              "semantic_mode": "input",
+              "semantic_name": "B",
+              "shape": [
+                "K",
+                "N"
+              ]
+            },
+            {
+              "declaration": "float* __restrict__ C",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "C",
+              "position": 2,
+              "rank": 2,
+              "semantic_name": "C",
+              "shape": [
+                "M",
+                "N"
+              ]
+            },
+            {
+              "declaration": "const float* __restrict__ bias",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "bias",
+              "position": 3,
+              "rank": 1,
+              "semantic_name": "bias",
+              "shape": [
+                "N"
+              ]
+            },
+            {
+              "declaration": "const signed char* __restrict__ col_mask",
+              "dtype": "i8",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "col_mask",
+              "position": 4,
+              "rank": 1,
+              "semantic_name": "col_mask",
+              "shape": [
+                "N"
+              ]
+            },
+            {
+              "declaration": "const signed char* __restrict__ row_mask",
+              "dtype": "i8",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "row_mask",
+              "position": 5,
+              "rank": 1,
+              "semantic_name": "row_mask",
+              "shape": [
+                "M"
+              ]
+            },
+            {
+              "declaration": "int K",
+              "dtype": "i32",
+              "kind": "scalar",
+              "mode": "value",
+              "name": "K",
+              "position": 6,
+              "rank": 0,
+              "semantic_name": "K"
+            },
+            {
+              "declaration": "int M",
+              "dtype": "i32",
+              "kind": "scalar",
+              "mode": "value",
+              "name": "M",
+              "position": 7,
+              "rank": 0,
+              "semantic_name": "M"
+            },
+            {
+              "declaration": "int N",
+              "dtype": "i32",
+              "kind": "scalar",
+              "mode": "value",
+              "name": "N",
+              "position": 8,
+              "rank": 0,
+              "semantic_name": "N"
+            }
+          ]
+        },
+        "cuda_sha256": "0af31a550f445260460831ea58385108dbb271394d438c377991bb730f91520d",
+        "entry_name": "main_kernel",
+        "include_roots": [
+          "tilelang/src",
+          "tilelang/3rdparty/cutlass/include"
+        ],
+        "interface": {
+          "parameters": [
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "A",
+              "rank": 2,
+              "shape": [
+                "M",
+                "K"
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "B",
+              "rank": 2,
+              "shape": [
+                "K",
+                "N"
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "bias",
+              "rank": 1,
+              "shape": [
+                "N"
+              ]
+            },
+            {
+              "dtype": "bool",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "row_mask",
+              "rank": 1,
+              "shape": [
+                "M"
+              ]
+            },
+            {
+              "dtype": "bool",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "col_mask",
+              "rank": 1,
+              "shape": [
+                "N"
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "C",
+              "rank": 2,
+              "shape": [
+                "M",
+                "N"
+              ]
+            }
+          ]
+        },
+        "launch": {
+          "blockIdx.x": "(N + 64 - 1",
+          "blockIdx.y": "(M + 64 - 1",
+          "threadIdx.x": "128",
+          "threadIdx.y": "1",
+          "threadIdx.z": "1"
+        },
+        "origin": "tilelang_export",
+        "origin_case_id": "tilelang:matmul_fused_epilogue2d",
+        "origin_location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/matmul_fused_epilogue2d.py",
+        "protocol": "intentir.tilelang-cuda-snapshot.v2",
+        "ptx_sha256": "3ee09458dc05137d2e71c5d3c945e103d734ee5ca61ea036bd406160a543606d",
+        "target": {
+          "name": "cuda"
+        }
+      },
+      "source_kind": "module_file",
+      "symbol": "main_kernel"
+    },
+    {
+      "case_id": "cuda:tilelang_matmul_relu2d",
+      "frontend": "cuda",
+      "location": "dataset://TianchenIR-MultiFrontend/cuda/generated/matmul_relu2d.cu",
+      "metadata": {
+        "compiler": {
+          "name": "tilelang",
+          "version": "0.1.8"
+        },
+        "cuda_abi": {
+          "parameters": [
+            {
+              "declaration": "__grid_constant__ const CUtensorMap A_desc",
+              "dtype": "tensor_map",
+              "kind": "opaque",
+              "mode": "value",
+              "name": "A_desc",
+              "position": 0,
+              "rank": 2,
+              "semantic_mode": "input",
+              "semantic_name": "A",
+              "shape": [
+                "M",
+                "K"
+              ]
+            },
+            {
+              "declaration": "__grid_constant__ const CUtensorMap B_desc",
+              "dtype": "tensor_map",
+              "kind": "opaque",
+              "mode": "value",
+              "name": "B_desc",
+              "position": 1,
+              "rank": 2,
+              "semantic_mode": "input",
+              "semantic_name": "B",
+              "shape": [
+                "K",
+                "N"
+              ]
+            },
+            {
+              "declaration": "float* __restrict__ C",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "C",
+              "position": 2,
+              "rank": 2,
+              "semantic_name": "C",
+              "shape": [
+                "M",
+                "N"
+              ]
+            },
+            {
+              "declaration": "int K",
+              "dtype": "i32",
+              "kind": "scalar",
+              "mode": "value",
+              "name": "K",
+              "position": 3,
+              "rank": 0,
+              "semantic_name": "K"
+            },
+            {
+              "declaration": "int M",
+              "dtype": "i32",
+              "kind": "scalar",
+              "mode": "value",
+              "name": "M",
+              "position": 4,
+              "rank": 0,
+              "semantic_name": "M"
+            },
+            {
+              "declaration": "int N",
+              "dtype": "i32",
+              "kind": "scalar",
+              "mode": "value",
+              "name": "N",
+              "position": 5,
+              "rank": 0,
+              "semantic_name": "N"
+            }
+          ]
+        },
+        "cuda_sha256": "5e93ae69a23474c7f06e124910b0d2e15ec48f5795b71a3de22ec3abc69713c9",
+        "entry_name": "main_kernel",
+        "include_roots": [
+          "tilelang/src",
+          "tilelang/3rdparty/cutlass/include"
+        ],
+        "interface": {
+          "parameters": [
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "A",
+              "rank": 2,
+              "shape": [
+                "M",
+                "K"
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "B",
+              "rank": 2,
+              "shape": [
+                "K",
+                "N"
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "C",
+              "rank": 2,
+              "shape": [
+                "M",
+                "N"
+              ]
+            }
+          ]
+        },
+        "launch": {
+          "blockIdx.x": "(N + 64 - 1",
+          "blockIdx.y": "(M + 64 - 1",
+          "threadIdx.x": "128",
+          "threadIdx.y": "1",
+          "threadIdx.z": "1"
+        },
+        "origin": "tilelang_export",
+        "origin_case_id": "tilelang:matmul_relu2d",
+        "origin_location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/matmul_relu2d.py",
+        "protocol": "intentir.tilelang-cuda-snapshot.v2",
+        "ptx_sha256": "da46525f4aac416a62b0ba30e60f19b266a2612c905f75d4cd3d068003f08ed5",
+        "target": {
+          "name": "cuda"
+        }
+      },
+      "source_kind": "module_file",
+      "symbol": "main_kernel"
+    },
+    {
+      "case_id": "cuda:tilelang_mlp2d",
+      "frontend": "cuda",
+      "location": "dataset://TianchenIR-MultiFrontend/cuda/generated/mlp2d.cu",
+      "metadata": {
+        "compiler": {
+          "name": "tilelang",
+          "version": "0.1.8"
+        },
+        "cuda_abi": {
+          "parameters": [
+            {
+              "declaration": "__grid_constant__ const CUtensorMap A_desc",
+              "dtype": "tensor_map",
+              "kind": "opaque",
+              "mode": "value",
+              "name": "A_desc",
+              "position": 0,
+              "rank": 2,
+              "semantic_mode": "input",
+              "semantic_name": "A",
+              "shape": [
+                "M",
+                "K"
+              ]
+            },
+            {
+              "declaration": "float* __restrict__ C",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "C",
+              "position": 1,
+              "rank": 2,
+              "semantic_name": "C",
+              "shape": [
+                "M",
+                "N"
+              ]
+            },
+            {
+              "declaration": "__grid_constant__ const CUtensorMap W1_desc",
+              "dtype": "tensor_map",
+              "kind": "opaque",
+              "mode": "value",
+              "name": "W1_desc",
+              "position": 2,
+              "rank": 2,
+              "semantic_mode": "input",
+              "semantic_name": "W1",
+              "shape": [
+                "K",
+                "H"
+              ]
+            },
+            {
+              "declaration": "__grid_constant__ const CUtensorMap W2_desc",
+              "dtype": "tensor_map",
+              "kind": "opaque",
+              "mode": "value",
+              "name": "W2_desc",
+              "position": 3,
+              "rank": 2,
+              "semantic_mode": "input",
+              "semantic_name": "W2",
+              "shape": [
+                "H",
+                "N"
+              ]
+            },
+            {
+              "declaration": "const float* __restrict__ b1",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "b1",
+              "position": 4,
+              "rank": 1,
+              "semantic_name": "b1",
+              "shape": [
+                "H"
+              ]
+            },
+            {
+              "declaration": "const float* __restrict__ b2",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "b2",
+              "position": 5,
+              "rank": 1,
+              "semantic_name": "b2",
+              "shape": [
+                "N"
+              ]
+            },
+            {
+              "declaration": "int H",
+              "dtype": "i32",
+              "kind": "scalar",
+              "mode": "value",
+              "name": "H",
+              "position": 6,
+              "rank": 0,
+              "semantic_name": "H"
+            },
+            {
+              "declaration": "int K",
+              "dtype": "i32",
+              "kind": "scalar",
+              "mode": "value",
+              "name": "K",
+              "position": 7,
+              "rank": 0,
+              "semantic_name": "K"
+            },
+            {
+              "declaration": "int M",
+              "dtype": "i32",
+              "kind": "scalar",
+              "mode": "value",
+              "name": "M",
+              "position": 8,
+              "rank": 0,
+              "semantic_name": "M"
+            },
+            {
+              "declaration": "int N",
+              "dtype": "i32",
+              "kind": "scalar",
+              "mode": "value",
+              "name": "N",
+              "position": 9,
+              "rank": 0,
+              "semantic_name": "N"
+            }
+          ]
+        },
+        "cuda_sha256": "8188f722f8af89700c9a3d994311288320870be767fe45bf56978f6619802e2b",
+        "entry_name": "main_kernel",
+        "include_roots": [
+          "tilelang/src",
+          "tilelang/3rdparty/cutlass/include"
+        ],
+        "interface": {
+          "parameters": [
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "A",
+              "rank": 2,
+              "shape": [
+                "M",
+                "K"
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "W1",
+              "rank": 2,
+              "shape": [
+                "K",
+                "H"
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "b1",
+              "rank": 1,
+              "shape": [
+                "H"
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "W2",
+              "rank": 2,
+              "shape": [
+                "H",
+                "N"
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "b2",
+              "rank": 1,
+              "shape": [
+                "N"
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "C",
+              "rank": 2,
+              "shape": [
+                "M",
+                "N"
+              ]
+            }
+          ]
+        },
+        "launch": {
+          "blockIdx.x": "(N + 64 - 1",
+          "blockIdx.y": "(M + 64 - 1",
+          "threadIdx.x": "128",
+          "threadIdx.y": "1",
+          "threadIdx.z": "1"
+        },
+        "origin": "tilelang_export",
+        "origin_case_id": "tilelang:mlp2d",
+        "origin_location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/mlp2d.py",
+        "protocol": "intentir.tilelang-cuda-snapshot.v2",
+        "ptx_sha256": "dcecb5da6c5a6da662cfa3a370a63938f8feb2728a657bff91a48583d8f7af51",
+        "target": {
+          "name": "cuda"
+        }
+      },
+      "source_kind": "module_file",
+      "symbol": "main_kernel"
+    },
+    {
+      "case_id": "cuda:tilelang_relu2d",
+      "frontend": "cuda",
+      "location": "dataset://TianchenIR-MultiFrontend/cuda/generated/relu2d.cu",
+      "metadata": {
+        "compiler": {
+          "name": "tilelang",
+          "version": "0.1.8"
+        },
+        "cuda_abi": {
+          "parameters": [
+            {
+              "declaration": "const float* __restrict__ inp",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "inp",
+              "position": 0,
+              "rank": 2,
+              "semantic_name": "inp",
+              "shape": [
+                "M",
+                16
+              ]
+            },
+            {
+              "declaration": "float* __restrict__ out",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "out",
+              "position": 1,
+              "rank": 2,
+              "semantic_name": "out",
+              "shape": [
+                "M",
+                16
+              ]
+            },
+            {
+              "declaration": "int M",
+              "dtype": "i32",
+              "kind": "scalar",
+              "mode": "value",
+              "name": "M",
+              "position": 2,
+              "rank": 0,
+              "semantic_name": "M"
+            }
+          ]
+        },
+        "cuda_sha256": "a938824a8018aa40e9fd047a34149523e4b155539018cf04e656293615596d34",
+        "entry_name": "main_kernel",
+        "include_roots": [
+          "tilelang/src",
+          "tilelang/3rdparty/cutlass/include"
+        ],
+        "interface": {
+          "parameters": [
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "inp",
+              "rank": 2,
+              "shape": [
+                "M",
+                16
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "out",
+              "rank": 2,
+              "shape": [
+                "M",
+                16
+              ]
+            }
+          ]
+        },
+        "launch": {
+          "blockIdx.x": "M",
+          "threadIdx.x": "16",
+          "threadIdx.y": "1",
+          "threadIdx.z": "1"
+        },
+        "origin": "tilelang_export",
+        "origin_case_id": "tilelang:relu2d",
+        "origin_location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/relu2d.py",
+        "protocol": "intentir.tilelang-cuda-snapshot.v2",
+        "ptx_sha256": "2e4ce43ab056cd3bf86978aff35d71ea8a17e860b35f70d2531e3214d8527165",
+        "target": {
+          "name": "cuda"
+        }
+      },
+      "source_kind": "module_file",
+      "symbol": "main_kernel"
+    },
+    {
+      "case_id": "cuda:tilelang_rms_norm2d",
+      "frontend": "cuda",
+      "location": "dataset://TianchenIR-MultiFrontend/cuda/generated/rms_norm2d.cu",
+      "metadata": {
+        "compiler": {
+          "name": "tilelang",
+          "version": "0.1.8"
+        },
+        "cuda_abi": {
+          "parameters": [
+            {
+              "declaration": "const float* __restrict__ inp",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "inp",
+              "position": 0,
+              "rank": 2,
+              "semantic_name": "inp",
+              "shape": [
+                "M",
+                64
+              ]
+            },
+            {
+              "declaration": "float* __restrict__ out",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "out",
+              "position": 1,
+              "rank": 2,
+              "semantic_name": "out",
+              "shape": [
+                "M",
+                64
+              ]
+            },
+            {
+              "declaration": "float* __restrict__ rstd",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "rstd",
+              "position": 2,
+              "rank": 1,
+              "semantic_name": "rstd",
+              "shape": [
+                "M"
+              ]
+            },
+            {
+              "declaration": "const float* __restrict__ weight",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "weight",
+              "position": 3,
+              "rank": 1,
+              "semantic_name": "weight",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "declaration": "int M",
+              "dtype": "i32",
+              "kind": "scalar",
+              "mode": "value",
+              "name": "M",
+              "position": 4,
+              "rank": 0,
+              "semantic_name": "M"
+            }
+          ]
+        },
+        "cuda_sha256": "6808f7a86880945618dd36ecf47d10dcfde74272fc32170c959f14629ce7525b",
+        "entry_name": "main_kernel",
+        "include_roots": [
+          "tilelang/src",
+          "tilelang/3rdparty/cutlass/include"
+        ],
+        "interface": {
+          "parameters": [
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "inp",
+              "rank": 2,
+              "shape": [
+                "M",
+                64
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "weight",
+              "rank": 1,
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "out",
+              "rank": 2,
+              "shape": [
+                "M",
+                64
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "rstd",
+              "rank": 1,
+              "shape": [
+                "M"
+              ]
+            }
+          ]
+        },
+        "launch": {
+          "blockIdx.x": "M",
+          "threadIdx.x": "64",
+          "threadIdx.y": "1",
+          "threadIdx.z": "1"
+        },
+        "origin": "tilelang_export",
+        "origin_case_id": "tilelang:rms_norm2d",
+        "origin_location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/rms_norm2d.py",
+        "protocol": "intentir.tilelang-cuda-snapshot.v2",
+        "ptx_sha256": "54d3920f4a1862e1766fe2758a2070d373c6b34ae97b4f769e948a4bec96794f",
+        "target": {
+          "name": "cuda"
+        }
+      },
+      "source_kind": "module_file",
+      "symbol": "main_kernel"
+    },
+    {
+      "case_id": "cuda:tilelang_rms_norm_residual2d",
+      "frontend": "cuda",
+      "location": "dataset://TianchenIR-MultiFrontend/cuda/generated/rms_norm_residual2d.cu",
+      "metadata": {
+        "compiler": {
+          "name": "tilelang",
+          "version": "0.1.8"
+        },
+        "cuda_abi": {
+          "parameters": [
+            {
+              "declaration": "const float* __restrict__ bias",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "bias",
+              "position": 0,
+              "rank": 1,
+              "semantic_name": "bias",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "declaration": "const float* __restrict__ inp",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "inp",
+              "position": 1,
+              "rank": 2,
+              "semantic_name": "inp",
+              "shape": [
+                "M",
+                64
+              ]
+            },
+            {
+              "declaration": "float* __restrict__ out",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "out",
+              "position": 2,
+              "rank": 2,
+              "semantic_name": "out",
+              "shape": [
+                "M",
+                64
+              ]
+            },
+            {
+              "declaration": "const float* __restrict__ residual",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "residual",
+              "position": 3,
+              "rank": 2,
+              "semantic_name": "residual",
+              "shape": [
+                "M",
+                64
+              ]
+            },
+            {
+              "declaration": "float* __restrict__ rstd",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "rstd",
+              "position": 4,
+              "rank": 1,
+              "semantic_name": "rstd",
+              "shape": [
+                "M"
+              ]
+            },
+            {
+              "declaration": "const float* __restrict__ weight",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "weight",
+              "position": 5,
+              "rank": 1,
+              "semantic_name": "weight",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "declaration": "int M",
+              "dtype": "i32",
+              "kind": "scalar",
+              "mode": "value",
+              "name": "M",
+              "position": 6,
+              "rank": 0,
+              "semantic_name": "M"
+            }
+          ]
+        },
+        "cuda_sha256": "876489d212edbb423f7a4476ab6ae2756af8a7927b5bfb4309a945cbcbd9c717",
+        "entry_name": "main_kernel",
+        "include_roots": [
+          "tilelang/src",
+          "tilelang/3rdparty/cutlass/include"
+        ],
+        "interface": {
+          "parameters": [
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "inp",
+              "rank": 2,
+              "shape": [
+                "M",
+                64
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "residual",
+              "rank": 2,
+              "shape": [
+                "M",
+                64
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "weight",
+              "rank": 1,
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "bias",
+              "rank": 1,
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "out",
+              "rank": 2,
+              "shape": [
+                "M",
+                64
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "rstd",
+              "rank": 1,
+              "shape": [
+                "M"
+              ]
+            }
+          ]
+        },
+        "launch": {
+          "blockIdx.x": "M",
+          "threadIdx.x": "64",
+          "threadIdx.y": "1",
+          "threadIdx.z": "1"
+        },
+        "origin": "tilelang_export",
+        "origin_case_id": "tilelang:rms_norm_residual2d",
+        "origin_location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/rms_norm_residual2d.py",
+        "protocol": "intentir.tilelang-cuda-snapshot.v2",
+        "ptx_sha256": "77872f1172427f76cc04489e81ff63eb12e0eccb745e51f0deb5a4115ad0d0cd",
+        "target": {
+          "name": "cuda"
+        }
+      },
+      "source_kind": "module_file",
+      "symbol": "main_kernel"
+    },
+    {
+      "case_id": "cuda:tilelang_row_max",
+      "frontend": "cuda",
+      "location": "dataset://TianchenIR-MultiFrontend/cuda/generated/row_max.cu",
+      "metadata": {
+        "compiler": {
+          "name": "tilelang",
+          "version": "0.1.8"
+        },
+        "cuda_abi": {
+          "parameters": [
+            {
+              "declaration": "const float* __restrict__ inp",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "inp",
+              "position": 0,
+              "rank": 2,
+              "semantic_name": "inp",
+              "shape": [
+                "M",
+                16
+              ]
+            },
+            {
+              "declaration": "float* __restrict__ out",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "out",
+              "position": 1,
+              "rank": 1,
+              "semantic_name": "out",
+              "shape": [
+                "M"
+              ]
+            },
+            {
+              "declaration": "int M",
+              "dtype": "i32",
+              "kind": "scalar",
+              "mode": "value",
+              "name": "M",
+              "position": 2,
+              "rank": 0,
+              "semantic_name": "M"
+            }
+          ]
+        },
+        "cuda_sha256": "a6c427cf4f30935a871e007451d3b4379ddaf55b6b3d2a24ca5ef728618b198c",
+        "entry_name": "main_kernel",
+        "include_roots": [
+          "tilelang/src",
+          "tilelang/3rdparty/cutlass/include"
+        ],
+        "interface": {
+          "parameters": [
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "inp",
+              "rank": 2,
+              "shape": [
+                "M",
+                16
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "out",
+              "rank": 1,
+              "shape": [
+                "M"
+              ]
+            }
+          ]
+        },
+        "launch": {
+          "blockIdx.x": "M",
+          "threadIdx.x": "128",
+          "threadIdx.y": "1",
+          "threadIdx.z": "1"
+        },
+        "origin": "tilelang_export",
+        "origin_case_id": "tilelang:row_max",
+        "origin_location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/row_max.py",
+        "protocol": "intentir.tilelang-cuda-snapshot.v2",
+        "ptx_sha256": "efddec9f6f342c16034c8e8ea1b73aa7aab2bf4c1b1fb745549d2af5d5f28849",
+        "target": {
+          "name": "cuda"
+        }
+      },
+      "source_kind": "module_file",
+      "symbol": "main_kernel"
+    },
+    {
+      "case_id": "cuda:tilelang_row_sum",
+      "frontend": "cuda",
+      "location": "dataset://TianchenIR-MultiFrontend/cuda/generated/row_sum.cu",
+      "metadata": {
+        "compiler": {
+          "name": "tilelang",
+          "version": "0.1.8"
+        },
+        "cuda_abi": {
+          "parameters": [
+            {
+              "declaration": "const float* __restrict__ inp",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "inp",
+              "position": 0,
+              "rank": 2,
+              "semantic_name": "inp",
+              "shape": [
+                "M",
+                16
+              ]
+            },
+            {
+              "declaration": "float* __restrict__ out",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "out",
+              "position": 1,
+              "rank": 1,
+              "semantic_name": "out",
+              "shape": [
+                "M"
+              ]
+            },
+            {
+              "declaration": "int M",
+              "dtype": "i32",
+              "kind": "scalar",
+              "mode": "value",
+              "name": "M",
+              "position": 2,
+              "rank": 0,
+              "semantic_name": "M"
+            }
+          ]
+        },
+        "cuda_sha256": "8239fe40b8ac4303c559d310d6e2606b06c851ace3c9051ae42a1782d28a6a5f",
+        "entry_name": "main_kernel",
+        "include_roots": [
+          "tilelang/src",
+          "tilelang/3rdparty/cutlass/include"
+        ],
+        "interface": {
+          "parameters": [
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "inp",
+              "rank": 2,
+              "shape": [
+                "M",
+                16
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "out",
+              "rank": 1,
+              "shape": [
+                "M"
+              ]
+            }
+          ]
+        },
+        "launch": {
+          "blockIdx.x": "M",
+          "threadIdx.x": "128",
+          "threadIdx.y": "1",
+          "threadIdx.z": "1"
+        },
+        "origin": "tilelang_export",
+        "origin_case_id": "tilelang:row_sum",
+        "origin_location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/row_sum.py",
+        "protocol": "intentir.tilelang-cuda-snapshot.v2",
+        "ptx_sha256": "7d582fad0867605df4de56a2949b6a0ae52d7dbbd8e29ab0abb42cd26ea1951f",
+        "target": {
+          "name": "cuda"
+        }
+      },
+      "source_kind": "module_file",
+      "symbol": "main_kernel"
+    },
+    {
+      "case_id": "cuda:tilelang_rowmask_where2d",
+      "frontend": "cuda",
+      "location": "dataset://TianchenIR-MultiFrontend/cuda/generated/rowmask_where2d.cu",
+      "metadata": {
+        "compiler": {
+          "name": "tilelang",
+          "version": "0.1.8"
+        },
+        "cuda_abi": {
+          "parameters": [
+            {
+              "declaration": "const float* __restrict__ inp",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "inp",
+              "position": 0,
+              "rank": 2,
+              "semantic_name": "inp",
+              "shape": [
+                "M",
+                64
+              ]
+            },
+            {
+              "declaration": "float* __restrict__ out",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "out",
+              "position": 1,
+              "rank": 2,
+              "semantic_name": "out",
+              "shape": [
+                "M",
+                64
+              ]
+            },
+            {
+              "declaration": "const signed char* __restrict__ row_mask",
+              "dtype": "i8",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "row_mask",
+              "position": 2,
+              "rank": 1,
+              "semantic_name": "row_mask",
+              "shape": [
+                "M"
+              ]
+            },
+            {
+              "declaration": "int M",
+              "dtype": "i32",
+              "kind": "scalar",
+              "mode": "value",
+              "name": "M",
+              "position": 3,
+              "rank": 0,
+              "semantic_name": "M"
+            }
+          ]
+        },
+        "cuda_sha256": "f42bb8d4983e3122c4ef2e542aa1d58b1a7e47a30d89c98bf7f01c00398e03d0",
+        "entry_name": "main_kernel",
+        "include_roots": [
+          "tilelang/src",
+          "tilelang/3rdparty/cutlass/include"
+        ],
+        "interface": {
+          "parameters": [
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "inp",
+              "rank": 2,
+              "shape": [
+                "M",
+                64
+              ]
+            },
+            {
+              "dtype": "bool",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "row_mask",
+              "rank": 1,
+              "shape": [
+                "M"
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "out",
+              "rank": 2,
+              "shape": [
+                "M",
+                64
+              ]
+            }
+          ]
+        },
+        "launch": {
+          "blockIdx.x": "M",
+          "threadIdx.x": "64",
+          "threadIdx.y": "1",
+          "threadIdx.z": "1"
+        },
+        "origin": "tilelang_export",
+        "origin_case_id": "tilelang:rowmask_where2d",
+        "origin_location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/rowmask_where2d.py",
+        "protocol": "intentir.tilelang-cuda-snapshot.v2",
+        "ptx_sha256": "8ef231956107bc592c65d8ab874ad63581d588bd9c6c2be9a64afd2f55ccae63",
+        "target": {
+          "name": "cuda"
+        }
+      },
+      "source_kind": "module_file",
+      "symbol": "main_kernel"
+    },
+    {
+      "case_id": "cuda:tilelang_softmax_inner",
+      "frontend": "cuda",
+      "location": "dataset://TianchenIR-MultiFrontend/cuda/generated/softmax_inner.cu",
+      "metadata": {
+        "compiler": {
+          "name": "tilelang",
+          "version": "0.1.8"
+        },
+        "cuda_abi": {
+          "parameters": [
+            {
+              "declaration": "const float* __restrict__ input_ptr",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "input_ptr",
+              "position": 0,
+              "rank": 2,
+              "semantic_name": "input_ptr",
+              "shape": [
+                "M",
+                16
+              ]
+            },
+            {
+              "declaration": "float* __restrict__ output_ptr",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "output_ptr",
+              "position": 1,
+              "rank": 2,
+              "semantic_name": "output_ptr",
+              "shape": [
+                "M",
+                16
+              ]
+            },
+            {
+              "declaration": "float* __restrict__ row_max_ptr",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "row_max_ptr",
+              "position": 2,
+              "rank": 1,
+              "semantic_name": "row_max_ptr",
+              "shape": [
+                "M"
+              ]
+            },
+            {
+              "declaration": "float* __restrict__ row_sum_ptr",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "row_sum_ptr",
+              "position": 3,
+              "rank": 1,
+              "semantic_name": "row_sum_ptr",
+              "shape": [
+                "M"
+              ]
+            },
+            {
+              "declaration": "int M",
+              "dtype": "i32",
+              "kind": "scalar",
+              "mode": "value",
+              "name": "M",
+              "position": 4,
+              "rank": 0,
+              "semantic_name": "M"
+            }
+          ]
+        },
+        "cuda_sha256": "0f44405e67bc6b69036a68bea25090a127bef089d1ec2a309f5568a40f05a2ed",
+        "entry_name": "main_kernel",
+        "include_roots": [
+          "tilelang/src",
+          "tilelang/3rdparty/cutlass/include"
+        ],
+        "interface": {
+          "parameters": [
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "input_ptr",
+              "rank": 2,
+              "shape": [
+                "M",
+                16
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "output_ptr",
+              "rank": 2,
+              "shape": [
+                "M",
+                16
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "row_max_ptr",
+              "rank": 1,
+              "shape": [
+                "M"
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "row_sum_ptr",
+              "rank": 1,
+              "shape": [
+                "M"
+              ]
+            }
+          ]
+        },
+        "launch": {
+          "blockIdx.x": "M",
+          "threadIdx.x": "128",
+          "threadIdx.y": "1",
+          "threadIdx.z": "1"
+        },
+        "origin": "tilelang_export",
+        "origin_case_id": "tilelang:softmax_inner",
+        "origin_location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/softmax_inner.py",
+        "protocol": "intentir.tilelang-cuda-snapshot.v2",
+        "ptx_sha256": "100541d3cb63ec4244d67ae2b9f57461217337d47458c769c786b3572a91d37b",
+        "target": {
+          "name": "cuda"
+        }
+      },
+      "source_kind": "module_file",
+      "symbol": "main_kernel"
+    },
+    {
+      "case_id": "cuda:tilelang_transpose2d",
+      "frontend": "cuda",
+      "location": "dataset://TianchenIR-MultiFrontend/cuda/generated/transpose2d.cu",
+      "metadata": {
+        "compiler": {
+          "name": "tilelang",
+          "version": "0.1.8"
+        },
+        "cuda_abi": {
+          "parameters": [
+            {
+              "declaration": "const float* __restrict__ inp",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "inp",
+              "position": 0,
+              "rank": 2,
+              "semantic_name": "inp",
+              "shape": [
+                "M",
+                16
+              ]
+            },
+            {
+              "declaration": "float* __restrict__ out",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "out",
+              "position": 1,
+              "rank": 2,
+              "semantic_name": "out",
+              "shape": [
+                16,
+                "M"
+              ]
+            },
+            {
+              "declaration": "int M",
+              "dtype": "i32",
+              "kind": "scalar",
+              "mode": "value",
+              "name": "M",
+              "position": 2,
+              "rank": 0,
+              "semantic_name": "M"
+            }
+          ]
+        },
+        "cuda_sha256": "cc66abf7e8e5afdde21d43d3fdeb98a0486359453283d837a097a0b105d56fe8",
+        "entry_name": "main_kernel",
+        "include_roots": [
+          "tilelang/src",
+          "tilelang/3rdparty/cutlass/include"
+        ],
+        "interface": {
+          "parameters": [
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "inp",
+              "rank": 2,
+              "shape": [
+                "M",
+                16
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "out",
+              "rank": 2,
+              "shape": [
+                16,
+                "M"
+              ]
+            }
+          ]
+        },
+        "launch": {
+          "blockIdx.x": "M",
+          "threadIdx.x": "128",
+          "threadIdx.y": "1",
+          "threadIdx.z": "1"
+        },
+        "origin": "tilelang_export",
+        "origin_case_id": "tilelang:transpose2d",
+        "origin_location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/transpose2d.py",
+        "protocol": "intentir.tilelang-cuda-snapshot.v2",
+        "ptx_sha256": "0521244cea70d01ff23b588a7520c4ff44355253dd7f0b6e84167c6d70e997de",
+        "target": {
+          "name": "cuda"
+        }
+      },
+      "source_kind": "module_file",
+      "symbol": "main_kernel"
+    },
+    {
+      "case_id": "cuda:tilelang_upsample_bicubic2d_aa",
+      "frontend": "cuda",
+      "location": "dataset://TianchenIR-MultiFrontend/cuda/generated/upsample_bicubic2d_aa.cu",
+      "metadata": {
+        "compiler": {
+          "name": "tilelang",
+          "version": "0.1.8"
+        },
+        "cuda_abi": {
+          "parameters": [
+            {
+              "declaration": "const float* __restrict__ I",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "I",
+              "position": 0,
+              "rank": 4,
+              "semantic_name": "I",
+              "shape": [
+                1,
+                1,
+                4,
+                4
+              ]
+            },
+            {
+              "declaration": "float* __restrict__ O",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "O",
+              "position": 1,
+              "rank": 4,
+              "semantic_name": "O",
+              "shape": [
+                1,
+                1,
+                8,
+                8
+              ]
+            }
+          ]
+        },
+        "cuda_sha256": "96145bc04d0395b4cbb0631dd6a1e213fdcf5625bb13050ff40436e2a66c778e",
+        "entry_name": "main_kernel",
+        "include_roots": [
+          "tilelang/src",
+          "tilelang/3rdparty/cutlass/include"
+        ],
+        "interface": {
+          "parameters": [
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "I",
+              "rank": 4,
+              "shape": [
+                1,
+                1,
+                4,
+                4
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "O",
+              "rank": 4,
+              "shape": [
+                1,
+                1,
+                8,
+                8
+              ]
+            }
+          ]
+        },
+        "launch": {
+          "blockIdx.x": "8",
+          "blockIdx.y": "8",
+          "threadIdx.x": "128",
+          "threadIdx.y": "1",
+          "threadIdx.z": "1"
+        },
+        "origin": "tilelang_export",
+        "origin_case_id": "tilelang:upsample_bicubic2d_aa",
+        "origin_location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/upsample_bicubic2d_aa.py",
+        "protocol": "intentir.tilelang-cuda-snapshot.v2",
+        "ptx_sha256": "6c754e896cc68770e6119525cb011a57fa27a057971373ddf0ac1345c2135050",
+        "target": {
+          "name": "cuda"
+        }
+      },
+      "source_kind": "module_file",
+      "symbol": "main_kernel"
+    },
+    {
+      "case_id": "cuda:tilelang_where2d",
+      "frontend": "cuda",
+      "location": "dataset://TianchenIR-MultiFrontend/cuda/generated/where2d.cu",
+      "metadata": {
+        "compiler": {
+          "name": "tilelang",
+          "version": "0.1.8"
+        },
+        "cuda_abi": {
+          "parameters": [
+            {
+              "declaration": "const float* __restrict__ A",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "A",
+              "position": 0,
+              "rank": 2,
+              "semantic_name": "A",
+              "shape": [
+                "M",
+                16
+              ]
+            },
+            {
+              "declaration": "const float* __restrict__ B",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "B",
+              "position": 1,
+              "rank": 2,
+              "semantic_name": "B",
+              "shape": [
+                "M",
+                16
+              ]
+            },
+            {
+              "declaration": "float* __restrict__ C",
+              "dtype": "f32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "C",
+              "position": 2,
+              "rank": 2,
+              "semantic_name": "C",
+              "shape": [
+                "M",
+                16
+              ]
+            },
+            {
+              "declaration": "int M",
+              "dtype": "i32",
+              "kind": "scalar",
+              "mode": "value",
+              "name": "M",
+              "position": 3,
+              "rank": 0,
+              "semantic_name": "M"
+            }
+          ]
+        },
+        "cuda_sha256": "2923448c53b3ae71fe9dcb7fa43086b847c20dd7b9ac731352cfb04cb017b5ba",
+        "entry_name": "main_kernel",
+        "include_roots": [
+          "tilelang/src",
+          "tilelang/3rdparty/cutlass/include"
+        ],
+        "interface": {
+          "parameters": [
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "A",
+              "rank": 2,
+              "shape": [
+                "M",
+                16
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "input",
+              "name": "B",
+              "rank": 2,
+              "shape": [
+                "M",
+                16
+              ]
+            },
+            {
+              "dtype": "float32",
+              "kind": "pointer",
+              "mode": "output",
+              "name": "C",
+              "rank": 2,
+              "shape": [
+                "M",
+                16
+              ]
+            }
+          ]
+        },
+        "launch": {
+          "blockIdx.x": "M",
+          "threadIdx.x": "16",
+          "threadIdx.y": "1",
+          "threadIdx.z": "1"
+        },
+        "origin": "tilelang_export",
+        "origin_case_id": "tilelang:where2d",
+        "origin_location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/where2d.py",
+        "protocol": "intentir.tilelang-cuda-snapshot.v2",
+        "ptx_sha256": "749c951fb69b1c59d1ad2c0e17b79dd2a137f092e3b20f0ebf0ed48d8d320cd8",
+        "target": {
+          "name": "cuda"
+        }
+      },
+      "source_kind": "module_file",
+      "symbol": "main_kernel"
+    }
+  ],
+  "passed": true,
+  "protocol": "intentir.multifrontend-dataset.v1"
+}

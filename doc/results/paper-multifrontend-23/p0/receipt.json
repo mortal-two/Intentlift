@@ -1,0 +1,13 @@
+{
+  "protocol": "intentir.paper.machine-data-receipt.v1",
+  "commit": "3a9fe4aa814736fdff07aed63349c02c35d39de9",
+  "measured_at": "2026-07-31T00:27:07+08:00",
+  "files": {
+    "COMMANDS.md": "a12629eced51507c7f81641601b33e8a1c41ea25938446842a7d4f03a5196507",
+    "frontend-dataset-validate.json": "052302c1699f4f930be3e6dde94067a8410cbf30f067871ede2595982a7075eb",
+    "onboarding-loc.json": "3a8e0219e4f38daf77b1081c21ef1a1b06b3dce6689937445a44eae252732c1a",
+    "scrc-frontend-list.json": "c7e70772c942906d0d56dfda9822d253613e74f91b87d42f235b3173deb277c3",
+    "summary.json": "b41afc31ad26ddfc7e0cf861a83454bcee6995802c9d8512efa7d0193264bf08",
+    "tools/measure_multifrontend_onboarding.py": "ca76e8f66f90797ac74936b6a3eab1f6a5c6ea61c7b78ce328711477fca2a7e1"
+  }
+}
