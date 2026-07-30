@@ -9,7 +9,7 @@ Gate1 只接收已经通过 `TypeCheck(J,C,π)`、由当前三元组生成的全
 conditions。该 Gate1 claim 只针对这个 c0。
 
 当前 fresh-run artifact/decode/typecheck 组合为
-`intentir.scrc.artifact.v13 / intentir.scrc.decode.v18 / intentir.scrc.typecheck.v30`。Lift LLM 是完整
+`intentir.scrc.artifact.v13 / intentir.scrc.decode.v18 / intentir.scrc.typecheck.v31`。Lift LLM 是完整
 artifact 的唯一作者：value/dimension equality、closed dimension definition、consumer-extension、access-guard、typed control/inout、
 output binding、physical iteration/carrier、terminal-control、route-local extent transform与participant
 projection都必须由模型显式提交。Decode、
@@ -65,9 +65,11 @@ routes/carrier 唯一回溯到一个 signature pointer，且 Replay 自身 TTIR 
 正式 Gate1。该 check 只拒绝错误 Replay bytes，不生成 source、
 address formula、loop/carrier 或 relation，也没有 Gate1/认证权威。
 
-CUDA hard observer `cuda-ptx-semantic-effects-v4`继续放松register/label/cache与ordinary affine address
-spelling，但沿每个memory address的reaching definitions保留information-losing participant fold：closed
-power-of-two low-bit `and` 与positive `rem`归一为cyclic projection，其他bitmask保持bitmask类别。
+CUDA hard observer `cuda-ptx-semantic-effects-v5`继续放松register/label/cache与ordinary affine address
+spelling，但沿每个memory address的reaching definitions保留information-losing participant fold。v5
+把纯power-of-two byte scale后的low-bit `and`或positive `rem`除回logical coordinate domain，只有mask/
+divisor整除scale、conversion为同signedness非窄化integer且路径不跨predicated/control/opaque mixing时
+才归一为cyclic projection；其他bitmask/remainder保持原类别。
 Source有fold而Replay直接使用raw participant coordinate时，`address_coordinate_folds`必须hard fail。
 该观察器不把PTX、fold tag或差异交给source-blind Replay；它只在Gate1比较最终exact Source/Replay，
 也不替Lift生成`participant_mappings`。TileLang的hard closure仍是结构TIR，PTX仅作diagnostic。

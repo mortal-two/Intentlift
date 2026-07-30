@@ -54,7 +54,7 @@ from .ttir import (
 )
 
 
-MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v35"
+MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v36"
 MINISWE_REPLAY_TURN_TIMEOUT_SECONDS = 300.0
 MINISWE_REPLAY_XHIGH_TURN_TIMEOUT_SECONDS = 900.0
 RESPONSES_REPLAY_BACKEND = "openai.responses.intentir-replay.v1"
@@ -3148,6 +3148,16 @@ coordinate cyclically into it. axis selects the participant coordinate;
 extent_slot binds only its anonymous external launch extent. Never copy a Source
 formula, guess the hidden C value, substitute blockDim for the J extent, or infer
 this relation from reduction shape or frontend convention.
+
+An `identity_materialization` refined instance whose sole outgoing route enters a
+`synchronize` instance that resolves through exact J to a reduce denotes one
+explicit pre-collective identity combine. Obtain the
+reducer, typed identity, and carrier type only from J, combine that identity with
+the incoming value once, and preserve the result as the input to the downstream
+`synchronize` stage. Pi does not carry the operator or identity value. Do not
+replace this compiler-visible stage with a cast, barrier, allocation, or inferred
+target recipe. Other identity_materializations retain their routed representation
+stage meaning and do not authorize a reducer combine.
 
 Every `pi.physical_iterations` item is an authored physical loop around an
 already-logical non-loop J reduce/contraction or boundary access/domain. Resolve

@@ -1,0 +1,179 @@
+{
+  "backend": "openai.codex-cli.intentir-lift.v30",
+  "candidate_check": [
+    {
+      "candidate_sha256": "ea644c20a9c10d91a563fd9e47a3bd6763e680130557f9d858a5c4934ee5a393",
+      "diagnostics": [
+        {
+          "observed_refs_or_types": [
+            "SchemaError: portable scope 's0' definitions must exactly match derived J values; missing=[], extra=['t1']"
+          ],
+          "path": "<candidate>",
+          "rule_code": "decode_rejected"
+        },
+        {
+          "observed_refs_or_types": [
+            "expected=[\"q0\"]",
+            "actual=[\"s0\"]"
+          ],
+          "path": "j.scopes[*].scope_id",
+          "rule_code": "construction_handle_sequence"
+        }
+      ],
+      "status": "fail",
+      "trigger": "submit_candidate"
+    },
+    {
+      "candidate_sha256": "f549482af960c398233c960090330f05fb2b6599d2534a224975156c7b86caae",
+      "diagnostics": [
+        {
+          "observed_refs_or_types": [
+            "i7",
+            "detail: source carrier _ValueType(dtype='f32', rank=1) is incompatible with target operand _ValueType(dtype='f32', rank=2)"
+          ],
+          "path": "pi.routes[6].slots[0]",
+          "rule_code": "route_type_mismatch"
+        }
+      ],
+      "status": "fail",
+      "trigger": "submit_candidate"
+    },
+    {
+      "candidate_sha256": "44bd0fc06a60724d65cd272dfd8f230c3b2f965d6168df4ca2c9028fc6423d39",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "submit_candidate"
+    },
+    {
+      "candidate_sha256": "44bd0fc06a60724d65cd272dfd8f230c3b2f965d6168df4ca2c9028fc6423d39",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "host_post_turn"
+    },
+    {
+      "candidate_sha256": "44bd0fc06a60724d65cd272dfd8f230c3b2f965d6168df4ca2c9028fc6423d39",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "semantic_probe"
+    }
+  ],
+  "cli_turns": 1,
+  "elapsed_ms": 232385.26319991797,
+  "fresh_session": true,
+  "fresh_workspace": true,
+  "knowledge_profile": "intentir.lift-knowledge.v89",
+  "model_segments_lower_bound": 8,
+  "owner_session_id": "ba244821ae8a4eb4ae93af4dd36a3c09",
+  "persistent_owner": true,
+  "persistent_workspace": true,
+  "runtime": "intentir.codex-cli.agent-runtime.v3",
+  "semantic_probe": [
+    {
+      "authority": "public Source-vs-J diagnostic only; no artifact field is generated, repaired, accepted, or certified",
+      "candidate_sha256": "44bd0fc06a60724d65cd272dfd8f230c3b2f965d6168df4ca2c9028fc6423d39",
+      "case_id": "finite-public-lift-probe-1",
+      "comparison": {
+        "left": "source",
+        "outputs": [
+          {
+            "atol": 1e-06,
+            "detail": "",
+            "equal_nan": false,
+            "equality_required": true,
+            "max_abs_error": 1.1920928955078125e-07,
+            "output": "output_p1",
+            "passed": true,
+            "policy_id": "intentir.gate2.default.v1",
+            "relation_kind": "tolerance",
+            "rtol": 1e-05
+          }
+        ],
+        "passed": true,
+        "policy_id": "intentir.gate2.default.v1",
+        "right": "j"
+      },
+      "protocol": "intentir.lift.public-semantic-probe.v1",
+      "seed": 2026073001,
+      "status": "pass"
+    }
+  ],
+  "source_reconcile": [
+    {
+      "applicable": false,
+      "candidate_sha256": "ea644c20a9c10d91a563fd9e47a3bd6763e680130557f9d858a5c4934ee5a393",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "submit_candidate"
+    },
+    {
+      "applicable": false,
+      "candidate_sha256": "f549482af960c398233c960090330f05fb2b6599d2534a224975156c7b86caae",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "submit_candidate"
+    },
+    {
+      "applicable": false,
+      "candidate_sha256": "44bd0fc06a60724d65cd272dfd8f230c3b2f965d6168df4ca2c9028fc6423d39",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "submit_candidate"
+    },
+    {
+      "applicable": false,
+      "candidate_sha256": "44bd0fc06a60724d65cd272dfd8f230c3b2f965d6168df4ca2c9028fc6423d39",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "host_post_turn"
+    },
+    {
+      "applicable": false,
+      "candidate_sha256": "44bd0fc06a60724d65cd272dfd8f230c3b2f965d6168df4ca2c9028fc6423d39",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "semantic_probe"
+    }
+  ],
+  "thread_id": "019fb4fe-0822-7481-a534-57a76b54739b",
+  "timeout_events": [],
+  "tool_actions": 18,
+  "tool_bridge": {
+    "authority": "diagnostic-only callbacks over exact host-read output bytes; no artifact or Replay field is generated or edited",
+    "calls": 3,
+    "protocol": "intentir.codex-cli.tool-bridge.v3",
+    "receipts": [
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 60.81836298108101,
+        "result_sha256": "02d931c0839ee1fc8caf824b8b9bc9e7a030b1ddfafd26b843aa820c818677ad",
+        "status": "fail",
+        "tool": "submit_candidate"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 19.589161034673452,
+        "result_sha256": "e608efd4b40ca90e424f860072abe33d21ecf5c9c4e070821d92cf9836279cb6",
+        "status": "fail",
+        "tool": "submit_candidate"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 21.058160928077996,
+        "result_sha256": "42ea65db9be1dac29a2a3ee0e1263e9162f38f0713d106537cbe828b1919427f",
+        "status": "pass",
+        "tool": "submit_candidate"
+      }
+    ],
+    "transport": "isolated_workspace_file_mailbox"
+  },
+  "usage": {
+    "cache_write_input_tokens": 0,
+    "cached_input_tokens": 387584,
+    "input_tokens": 433542,
+    "output_tokens": 7596,
+    "reasoning_output_tokens": 2742
+  }
+}

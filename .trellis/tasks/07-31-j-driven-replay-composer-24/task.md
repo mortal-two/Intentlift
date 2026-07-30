@@ -1,6 +1,6 @@
 # Task 24：J 主导的 π_min 与三前端 Episode-Local Composer Replay
 
-> 状态：`P5_CYCLIC_PARTICIPANT_MECHANISM_IMPLEMENTED_FRESH_RERUN_PENDING`（2026-07-31）。
+> 状态：`P5_RUN002_ROOT_CAUSE_FIXED_FRESH_RERUN_PENDING`（2026-07-31）。
 >
 > 定位：Task 15/Task 11 的 Replay 构造机制升级，以及 Task 23 多前端实证的真实 closure 执行线。
 > 本任务不接管 production backend；backend 仍在 SCRC 后只消费 accepted `J+C`。
@@ -44,7 +44,7 @@ Composer只存在于`FreshAgent_f`内部；最终提交物仍是完整`replay.so
 
 ### 2.1 已有能力
 
-- artifact/decode/typecheck：`v13 / v18 / v30`（v12 继续作为严格 legacy wire 回放）；
+- artifact/decode/typecheck：`v13 / v18 / v31`（v12 继续作为严格 legacy wire 回放）；
 - π已有closed regions/instances/routes/order/sharing/program_axes/iterations/physical time/terminal control/
   route extent transform；
 - Codex Replay每个`generate`已创建fresh workspace，并有exact patch、ReplayCheck、compile、own-IR、
@@ -67,7 +67,7 @@ Composer只存在于`FreshAgent_f`内部；最终提交物仍是完整`replay.so
 - `python/intentir/verify/gate1/replay_composer.py`已实现共享stdlib-only core：closed
   `line/block/raw_block`、stable ID、局部insert/replace/delete/move、Python/C-like render、source map、
   bounded state/audit以及plan/source/map一致的checkpoint/rollback；
-- Codex Replay backend现升为`openai.codex-cli.intentir-replay.v35`，Composer protocol为v2；每个
+- Codex Replay backend现升为`openai.codex-cli.intentir-replay.v36`，Composer protocol为v2；每个
   fresh workspace安装自己的通用builder/plan/editor；agent仍可直接作者化完整source，两条路径都进入
   原有exact ingress/compile/submit；
 - Composer失败或未使用不改变Replay接受集合；host checkpoint/diagnostic map只作非权威辅助；
@@ -233,6 +233,38 @@ Replay，`gpt-5.6-sol high`，Mask-J配置开启）：
   Source/API或C value；旧错误Source/Replay现在在`address_coordinate_folds` hard category稳定分离；
 - 当前只声称机制已实现并通过本地回归。必须从Source重新fresh Lift/Replay/Gate1/Gate2后，才能声称
   CUDA row_sum闭合；不得手改旧artifact追认run-001。
+
+### Pilot H：v13 fresh run定位feedback、observer与identity三个通用缺口
+
+`cuda:tilelang_row_sum / .trellis/tasks/07-31-j-driven-replay-composer-24/runs/cuda_tilelang_row_sum/run-002`
+（Codex Lift + Codex Replay，`gpt-5.6-sol high`，Composer preferred）：
+
+- fresh run完成3个TypeCheck-valid formal rounds，最终仍为`NO_CLOSURE`；masked-J与Gate2均未运行，
+  因而这是一份真实失败证据，不是closure；
+- 三轮均为`artifact.v13`，J稳定拥有`f32 [x0,16] -> [x0]`的sum与identity 0，C稳定拥有匿名
+  `launch_block_x=128`；Lift从第一轮起就作者化并保持
+  `{domain_instance:i3,axis:0,extent_slot:c0,projection:cyclic}`，证明v13 relation已被Lift消费；
+- 三轮normal Replay都实际走Composer最终路径。第一轮Replay正确写出`threadIdx.x % 16`并生成4步
+  shuffle，证明J、π和Composer数据流本身已经工作；
+- PTX v4却把Replay的NVCC等价形式`(tid << 2) & 60`记为`bitmask:60`，把Source的
+  `(tid & 15) << 2`记为`cyclic:16`。这不是realization差异，而是byte scaling后的同一低位投影；
+  PTX v5现只在纯power-of-two scale、整除mask/positive remainder、精确非窄化整数conversion且不跨
+  predicated/control boundary时作等价归一，其他路径保守保留原类别；
+- v5重放第一轮exact PTX后，interface、address folds、memory effects、collectives、control、coordinate
+  uses和target全部hard pass，唯一hard差异是Source `add.f32=5`、Replay `add.f32=4`。额外一次add来自
+  Source显式`identity + incoming carrier`阶段，不能把浮点`x+0`全局NormalizeAway；
+- relift frontier正确列出`value_operations`与`address_coordinate_folds`，但旧Codex Lift workspace只
+  挂载5个Triton legacy category文件，`feedback-category value_operations`因故意不存在的bulk
+  `feedback.json`失败。Lift随后从raw PTX误加`signed_widen`，后两轮丢失cyclic spelling，第三轮还
+  引入未授权barrier并使collective category回归；
+- 通用修复不是kernel patch：Codex Lift v31/knowledge v90以固定文件集合中的稳定exact category index
+  支持任意合法Gate1 label（含`ptx.*`），每轮原子覆盖、无旧类别残留；`typecheck.v31`把已有
+  `identity_materialization`的一个窄拓扑解释闭合为“slot-0 incoming realize -> J reduce synchronize”的
+  显式pre-collective identity combine。π仍不含reducer、identity value、dtype、Source/API或target
+  recipe；TileLang原有shaped representation-stage语义保持不变；
+- 本地检查已覆盖稳定persistent feedback刷新、动态类别精确查询/路径拒绝、真实run-002第一轮PTX v5
+  等价、identity正负TypeCheck、normal/Mask-J无语义泄漏以及旧TileLang artifact回放。上述修复必须以
+  run-003 fresh provider episode验证后才可声称CUDA row_sum闭合。
 
 ## 3. 交付物
 

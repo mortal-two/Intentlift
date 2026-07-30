@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import tempfile
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping
@@ -45,8 +46,8 @@ from .scrc import (
     prepare_scrc_lift,
     scrc_candidate_check_context,
 )
-CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v30"
-CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v89"
+CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v31"
+CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v90"
 CODEX_CLI_TURN_TIMEOUT_SECONDS = 900.0
 
 _FEEDBACK_CATEGORY_NAMES = (
@@ -56,6 +57,8 @@ _FEEDBACK_CATEGORY_NAMES = (
     "dataflow",
     "reduction",
 )
+_FEEDBACK_CATEGORY_NAME_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
+_FEEDBACK_CATEGORY_INDEX = "feedback_observer_categories.json"
 
 _INITIAL_PROMPT = """You are the sole source-aware IntentIR Lift owner for this branch.
 Work only under the isolated /workspace; input/ is immutable and output/, work/,
@@ -161,12 +164,27 @@ def _codex_feedback_files(feedback_text: str) -> dict[str, str]:
         )
         raw_categories = observer.get("categories") if isinstance(observer, Mapping) else None
         if isinstance(raw_categories, list):
-            for category in raw_categories:
+            for category_index, category in enumerate(raw_categories):
                 if not isinstance(category, Mapping):
-                    continue
+                    raise TypeError(
+                        "observer feedback category must be an object at index "
+                        f"{category_index}"
+                    )
                 name = category.get("category")
-                if isinstance(name, str) and name in _FEEDBACK_CATEGORY_NAMES:
-                    categories[name] = dict(category)
+                if not isinstance(name, str) or _FEEDBACK_CATEGORY_NAME_RE.fullmatch(
+                    name
+                ) is None:
+                    raise ValueError(
+                        "observer feedback contains an invalid category name at "
+                        f"index {category_index}"
+                    )
+                normalized = dict(category)
+                previous = categories.get(name)
+                if previous is not None and previous != normalized:
+                    raise ValueError(
+                        f"observer feedback category {name!r} is duplicated"
+                    )
+                categories[name] = normalized
 
     detail: Any = None
     if isinstance(feedback, Mapping):
@@ -261,6 +279,10 @@ def _codex_feedback_files(feedback_text: str) -> dict[str, str]:
     values: dict[str, Any] = {
         "feedback_detail.json": detail,
         "feedback_replay.json": replay_metadata,
+    }
+    values[_FEEDBACK_CATEGORY_INDEX] = {
+        name: categories[name]
+        for name in sorted(categories)
     }
     values.update(
         {
@@ -366,9 +388,9 @@ def _codex_input_files(
     return files
 
 _EXTERNAL_CONTINUATION_PROMPT = """The same branch-local source-aware Lift task continues in the same workspace and thread.
-Read input/feedback_frontier.json first. Open only a named
-input/feedback_category_NAME.json when its bounded frontier is insufficient; that
-file contains the exact differences for the named category.
+Read input/feedback_frontier.json first. When its bounded frontier is insufficient,
+run `python input/tools/context_query.py feedback-category NAME`; it returns the
+exact differences for that named category without exposing one bulk relift object.
 input/feedback_detail.json contains exact non-observer diagnostics. The previous
 artifact already exists at output/candidate.json and is never duplicated in input.
 After a formal Gate1 failure, input/feedback_replay.py and the compiler-stage path
@@ -434,6 +456,9 @@ def _source_aware_startup_context(workspace: Any, *, fresh_owner: bool) -> dict[
                 for kind in REPLAY_COMPILER_ARTIFACT_KINDS
             },
             "feedback_replay_metadata": "input/feedback_replay.json",
+            "feedback_observer_query_index": (
+                f"input/{_FEEDBACK_CATEGORY_INDEX}"
+            ),
             "feedback_categories": [
                 f"input/feedback_category_{name}.json"
                 for name in _FEEDBACK_CATEGORY_NAMES
@@ -664,6 +689,7 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                             for kind in REPLAY_COMPILER_ARTIFACT_KINDS
                         },
                         "feedback_replay.json",
+                        _FEEDBACK_CATEGORY_INDEX,
                         *{
                             f"feedback_category_{name}.json"
                             for name in _FEEDBACK_CATEGORY_NAMES

@@ -209,7 +209,11 @@ def render_realization_witness_wire_grammar() -> str:
         "refinement has null auth_ref and refines one realize instance whose sole "
         "slot-0 route enters a J reduce realize instance. It denotes full-axis "
         "linearization before that consumer without carrying an axis, operator, "
-        "value, or frontend API."
+        "value, or frontend API. An identity_materialization with one outgoing "
+        "slot-0 route into a J reduce synchronize is a distinct pre-collective "
+        "realize stage. It requires one explicit combine of the J-owned reducer "
+        "identity with the incoming carrier before that synchronize; pi carries neither reducer, "
+        "identity value, dtype, Source spelling, nor frontend API."
     )
 
 

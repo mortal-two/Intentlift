@@ -113,7 +113,7 @@ coverage.
 
 ## Episode-local syntax Composer
 
-Codex Replay v33 installs the same source-neutral Composer core in each fresh
+Codex Replay v36 installs the same source-neutral Composer core in each fresh
 Triton, TileLang or CUDA workspace. The only frontend profile choice is
 Python-like indentation (`triton`, `tilelang`) versus C-like braces (`cuda`). The
 core receives only agent-authored `line/block/raw_block` nodes and local edit

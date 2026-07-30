@@ -55,7 +55,7 @@ from intentir.verify.gate1.model import (
 from intentir.verify.gate1.pi import RealizationWitness
 
 
-TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v30"
+TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v31"
 GLOBAL_SAFE_REFINEMENTS = frozenset(
     {"identity_materialization", "reduction_linearization"}
 )
@@ -5390,6 +5390,56 @@ def type_check(
                             instance_id,
                         )
                     )
+            if kind == "identity_materialization":
+                incoming = [
+                    route
+                    for route in pi.routes
+                    if str(route["target"]) == instance_id
+                ]
+                outgoing = [
+                    route
+                    for route in pi.routes
+                    if str(route["source"]) == instance_id
+                ]
+                reduce_synchronizes = []
+                for route in outgoing:
+                    candidate_target = instances.get(str(route["target"]))
+                    candidate_operation = (
+                        node_operations.get(
+                            str(candidate_target.get("semantic_ref"))
+                        )
+                        if candidate_target is not None
+                        else None
+                    )
+                    if (
+                        candidate_target is not None
+                        and candidate_target.get("mechanism") == "synchronize"
+                        and candidate_operation is not None
+                        and candidate_operation.get("op") == "reduce"
+                    ):
+                        reduce_synchronizes.append((route, candidate_target))
+                if reduce_synchronizes:
+                    valid_precollective_identity = (
+                        refined_instance is not None
+                        and refined_instance.get("mechanism") == "realize"
+                        and len(incoming) == 1
+                        and list(incoming[0]["slots"]) == [0]
+                        and len(outgoing) == 1
+                        and list(outgoing[0]["slots"]) == [0]
+                        and len(reduce_synchronizes) == 1
+                    )
+                    if not valid_precollective_identity:
+                        diagnostics.append(
+                            TypeCheckDiagnostic(
+                                TypeCheckErrorCode.REFINEMENT_TOPOLOGY_INVALID,
+                                f"pi.refinements[{index}]",
+                                "identity_materialization immediately before a J "
+                                "reduce synchronize requires one refined realize stage "
+                                "with one incoming slot-0 route and one outgoing slot-0 "
+                                "route into that synchronize instance",
+                                instance_id,
+                            )
+                        )
             continue
         if auth_ref is None:
             diagnostics.append(

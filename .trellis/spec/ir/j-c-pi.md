@@ -355,6 +355,19 @@ relation中的`i*`不再给出周期或逻辑意义；Replay必须读取J，再�
 该relation只约束Source realization，不进入production backend，也不允许fixed code从reduction、shape、
 C valuation或常见frontend写法推导。
 
+### J-dependent identity materialization
+
+`identity_materialization`修饰的`realize`若以唯一slot-0 outgoing route进入一个通过exact J解析为
+`reduce`的`synchronize` instance，则该关系只表示一个distinct pre-collective realization stage：它
+接收唯一slot-0 incoming carrier，并在synchronize前显式执行一次“J-owned reducer identity与incoming
+carrier的combine”。reducer、identity value、dtype、logical shape全部只在J中；π不携带这些字段，
+也不携带Source spelling、frontend API或target recipe。删除J后，该拓扑不能独立决定combine语义。
+
+该闭合解释只适用于上述唯一route topology；其他`identity_materialization`继续表示原有routed
+representation stage，例如TileLang shaped materialization。Lift只能在Source可见该distinct stage时
+作者化，不能因J中存在reduce或Gate1缺少一个value op而由fixed code推导。`typecheck.v31`只验证已
+作者化拓扑，Replay从exact J读取语义并自行选择公开target spelling。
+
 `address_base/address_lane` 标记 address contribution 角色；pointer/address operation 的次数由
 `J.signature` carrier kind 与 π route 共同决定，不能只看 base-to-lane edge。若 pointer/tensor 的
 `p*` instance 直接进入 `address_base`，该 base 已经是一次 pointer/address operation；其 pointer
@@ -575,8 +588,9 @@ TypeCheck(J,C,pi) -> FreshLogicalSemDecl(C,pi | J) = empty
 
 上述 C attachment、numeric-cast、result-relation compatibility、rank-0 closed signature、Layer-A total
 typing 与显式 non-trailing broadcast 合同已由早期 TypeCheck 版本逐步建立。当前
-`decode.v18/typecheck.v30` 继承v17/v29的closed dimension relation引用、唯一性、grammar、
-acyclic dependent check与program-axis completeness检查，并增加participant mapping对exact J lane
+`decode.v18/typecheck.v31` 继承v17/v30的closed dimension relation引用、唯一性、grammar、
+acyclic dependent check、program-axis completeness与participant mapping检查，并增加上述
+pre-collective identity materialization topology check；participant mapping仍检查exact J lane
 domain、route与matching C launch extent的dependent check；同时拒绝同一tensor多个不同却都无consumer锚点的node-less load views；它不从
 任一valuation/compiler observation生成relation，也不替access猜consumer。v27只新增 route extent transform 的 existing-route、required positive-int C、
 matching J-domain attachment/axis 与 realize-anchor dependent checks；它不生成 relation、divisor 或
@@ -592,8 +606,8 @@ wire/decode 窄升为 `artifact.v3 / decode.v3`；v4 随后增加 dimension cons
 `access_guard_relations`，v6/v7 增加 typed control，v8 增加 physical-only time，v9 增加
 terminal-control topology，v10 增加上述 closed route-local extent transform，v11增加closed
 dimension relations，v12增加closed program-axis identity，v13增加closed participant projection。当前 active 合同为
-`artifact.v13 / decode.v18 / typecheck.v30 / candidate-check.v1`；v30新增participant mapping的
-J/C-dependent check，v29新增program-axis completeness dependent check，v28新增上述dimension relation dependent check，v27新增route extent dependent check。v26 继承 v25，并新增上述 direct
+`artifact.v13 / decode.v18 / typecheck.v31 / candidate-check.v1`；v31新增上述identity topology check，
+v30新增participant mapping的J/C-dependent check，v29新增program-axis completeness dependent check，v28新增上述dimension relation dependent check，v27新增route extent dependent check。v26 继承 v25，并新增上述 direct
 singleton equality 的 source-free broadcast dependent check。v25 继承 v24，并新增
 `reduction_linearization` 的 closed topology check：该 global-safe refinement 不带 authorization，
 只能修饰一个 `realize` instance，且必须经唯一 slot-0 route 进入一个 J `reduce` 的 `realize`

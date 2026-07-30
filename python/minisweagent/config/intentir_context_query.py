@@ -13,6 +13,7 @@ import ast
 import hashlib
 import json
 from pathlib import Path
+import re
 import shlex
 import sys
 from typing import Any
@@ -20,6 +21,8 @@ from typing import Any
 
 MAX_OUTPUT_CHARS = 10_000
 QUERY_COMMAND = "python /input/tools/context_query.py"
+_FEEDBACK_CATEGORY_INDEX = "feedback_observer_categories.json"
+_FEEDBACK_CATEGORY_NAME_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
 
 
 def _load_json(path: Path) -> Any:
@@ -27,7 +30,63 @@ def _load_json(path: Path) -> Any:
 
 
 def _feedback_without_candidate(input_root: Path) -> dict[str, Any] | None:
-    value = _load_json(input_root / "feedback.json")
+    feedback_path = input_root / "feedback.json"
+    if feedback_path.is_file():
+        value = _load_json(feedback_path)
+    else:
+        categories_by_name: dict[str, dict[str, Any]] = {}
+        category_index_path = input_root / _FEEDBACK_CATEGORY_INDEX
+        if category_index_path.is_file():
+            category_index = _load_json(category_index_path)
+            if not isinstance(category_index, dict):
+                raise TypeError(f"{_FEEDBACK_CATEGORY_INDEX} must be an object")
+            for name, category in category_index.items():
+                if (
+                    not isinstance(name, str)
+                    or _FEEDBACK_CATEGORY_NAME_RE.fullmatch(name) is None
+                ):
+                    raise ValueError(
+                        f"{_FEEDBACK_CATEGORY_INDEX} contains an invalid category name"
+                    )
+                if not isinstance(category, dict):
+                    raise TypeError(
+                        f"{_FEEDBACK_CATEGORY_INDEX}.{name} must be an object"
+                    )
+                if category.get("category") != name:
+                    raise ValueError(
+                        f"{_FEEDBACK_CATEGORY_INDEX}.{name} category does not match its key"
+                    )
+                categories_by_name[name] = category
+        category_name = re.compile(r"^feedback_category_([a-z][a-z0-9_]*)\.json$")
+        for path in sorted(input_root.glob("feedback_category_*.json")):
+            match = category_name.fullmatch(path.name)
+            if match is None:
+                continue
+            category = _load_json(path)
+            if category is None:
+                continue
+            if not isinstance(category, dict):
+                raise TypeError(f"{path.name} must be null or an object")
+            if category.get("category") != match.group(1):
+                raise ValueError(
+                    f"{path.name} category does not match its closed filename"
+                )
+            name = match.group(1)
+            indexed = categories_by_name.get(name)
+            if indexed is not None and indexed != category:
+                raise ValueError(
+                    f"{path.name} disagrees with {_FEEDBACK_CATEGORY_INDEX}.{name}"
+                )
+            categories_by_name[name] = category
+        categories = [categories_by_name[name] for name in sorted(categories_by_name)]
+        value = (
+            {
+                "diagnostics": {"observer_diff": {"categories": categories}},
+                "partitioned_feedback": True,
+            }
+            if categories
+            else None
+        )
     if value is None:
         return None
     if not isinstance(value, dict):

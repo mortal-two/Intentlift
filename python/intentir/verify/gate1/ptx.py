@@ -19,7 +19,7 @@ import re
 from typing import Any, Mapping
 
 
-PTX_FINGERPRINT_SCHEMA = "cuda-ptx-semantic-effects-v4"
+PTX_FINGERPRINT_SCHEMA = "cuda-ptx-semantic-effects-v5"
 
 
 class PTXObservationError(ValueError):
@@ -500,13 +500,10 @@ def _ptx_integer_literal(value: str) -> int | None:
     return None
 
 
-def _coordinate_fold_tag(opcode: str, operands: tuple[str, ...]) -> str | None:
-    """Normalize information-losing participant projections on address paths.
-
-    Ordinary add/mul/shift/cast address spelling remains relaxed.  A modulo or
-    low-bit mask is different: it changes which logical coordinate a physical
-    participant denotes and therefore cannot be erased as pointer algebra.
-    """
+def _coordinate_path_step(
+    opcode: str, operands: tuple[str, ...]
+) -> tuple[str, int] | None:
+    """Describe only transforms needed to normalize one coordinate-fold path."""
 
     base = opcode.split(".", 1)[0]
     literals = [
@@ -515,13 +512,99 @@ def _coordinate_fold_tag(opcode: str, operands: tuple[str, ...]) -> str | None:
         if (literal := _ptx_integer_literal(operand)) is not None
     ]
     if base == "and" and literals:
-        mask = literals[-1]
-        if mask >= 0 and mask & (mask + 1) == 0:
-            return f"cyclic:{mask + 1}"
-        return f"bitmask:{mask}"
+        return ("and", literals[-1])
     if base == "rem" and literals and literals[-1] > 0:
-        return f"cyclic:{literals[-1]}"
-    return None
+        return ("rem", literals[-1])
+    if base == "shl" and literals and 0 <= literals[-1] <= 63:
+        return ("scale", 1 << literals[-1])
+    if base == "mul" and len(literals) == 1 and literals[0] > 0:
+        return ("scale", literals[0])
+    source_registers = [
+        register
+        for operand in operands[1:]
+        for register in _REGISTER_RE.findall(operand)
+    ]
+    if base == "mov" and len(source_registers) == 1:
+        return None
+    if base == "cvt" and len(source_registers) == 1:
+        # Only a same-signedness, non-narrowing integer conversion preserves the
+        # mathematical coordinate.  In particular, this admits NVCC's exact
+        # ``cvt.u64.u32`` between byte scaling and a scaled mask, but refuses
+        # truncation, float conversion, saturation, rounding, and reinterpretation.
+        conversion = re.fullmatch(r"cvt\.([us])([0-9]+)\.\1([0-9]+)", opcode)
+        if conversion is not None and int(conversion.group(2)) >= int(
+            conversion.group(3)
+        ):
+            return None
+    # Address-space conversion and every unproved conversion are deliberately
+    # opaque: missing an equivalent fold is safer than certifying a false one.
+    return ("opaque", 0)
+
+
+def _coordinate_fold_tags(steps: tuple[tuple[str, int], ...]) -> tuple[str, ...]:
+    """Resolve folds only through a pure, exactly scaled participant path.
+
+    ``steps`` are collected while walking backward from an address.  Reversing
+    them recovers coordinate-to-address order.  Opaque address arithmetic after
+    a fold does not erase that fold, while opaque mixing before a fold prevents
+    it from being mistaken for a pure participant projection.
+    """
+
+    scale = 1
+    pure_coordinate = True
+    tags: list[str] = []
+    for kind, value in reversed(steps):
+        if kind == "scale":
+            if pure_coordinate:
+                scale *= value
+            continue
+        if kind == "opaque":
+            pure_coordinate = False
+            continue
+        if kind == "and":
+            normalized_mask: int | None = None
+            if (
+                pure_coordinate
+                and value >= 0
+                and scale > 0
+                and scale & (scale - 1) == 0
+                and value % scale == 0
+            ):
+                candidate = value // scale
+                if candidate & (candidate + 1) == 0:
+                    normalized_mask = candidate
+            tags.append(
+                f"cyclic:{normalized_mask + 1}"
+                if normalized_mask is not None
+                else f"bitmask:{value}"
+            )
+            continue
+        if kind == "rem":
+            normalized_divisor: int | None = None
+            if (
+                pure_coordinate
+                and scale > 0
+                and scale & (scale - 1) == 0
+                and value % scale == 0
+                and value // scale > 0
+            ):
+                normalized_divisor = value // scale
+            tags.append(
+                f"cyclic:{normalized_divisor}"
+                if normalized_divisor is not None
+                else f"remainder:{value}"
+            )
+    return tuple(tags)
+
+
+def _coordinate_fold_tag(opcode: str, operands: tuple[str, ...]) -> str | None:
+    """Compatibility helper for one direct fold instruction."""
+
+    step = _coordinate_path_step(opcode, operands)
+    if step is None:
+        return None
+    tags = _coordinate_fold_tags((step,))
+    return tags[0] if tags else None
 
 
 def _semantic_address_coordinate_folds(
@@ -551,6 +634,20 @@ def _semantic_address_coordinate_folds(
         if len(registers) == 1:
             definitions.setdefault(registers[0], []).append(index)
 
+    control_boundaries = tuple(
+        index
+        for index, (instruction, record) in enumerate(zip(instructions, records))
+        if instruction.endswith(":")
+        or (
+            record is not None
+            and record[1].startswith(("bra", "brx", "call", "ret", "exit"))
+        )
+    )
+
+    def crosses_control_boundary(start: int, end: int) -> bool:
+        position = bisect_left(control_boundaries, end)
+        return position > 0 and control_boundaries[position - 1] > start
+
     def reaching_definition(register: str, before: int) -> int | None:
         history = definitions.get(register, ())
         position = bisect_left(history, before)
@@ -559,11 +656,11 @@ def _semantic_address_coordinate_folds(
     def traces(
         register: str,
         before: int,
-        inherited: tuple[str, ...] = (),
+        inherited: tuple[tuple[str, int], ...] = (),
         active: frozenset[tuple[str, int]] = frozenset(),
     ) -> set[tuple[str, tuple[str, ...]]]:
         if _is_special_register(register):
-            return {(register, inherited)}
+            return {(register, _coordinate_fold_tags(inherited))}
         state = (register, before)
         if state in active:
             return set()
@@ -572,14 +669,16 @@ def _semantic_address_coordinate_folds(
             return set()
         record = records[index]
         assert record is not None
-        _predicate, opcode, operands = record
-        tag = _coordinate_fold_tag(opcode, operands)
-        next_tags = (*inherited, tag) if tag is not None else inherited
+        predicate, opcode, operands = record
+        if predicate or crosses_control_boundary(index, before):
+            return set()
+        step = _coordinate_path_step(opcode, operands)
+        next_steps = (*inherited, step) if step is not None else inherited
         result: set[tuple[str, tuple[str, ...]]] = set()
         for operand in operands[1:]:
             for dependency in _REGISTER_RE.findall(operand):
                 result.update(
-                    traces(dependency, index, next_tags, active | frozenset({state}))
+                    traces(dependency, index, next_steps, active | frozenset({state}))
                 )
         return result
 

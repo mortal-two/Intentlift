@@ -1464,6 +1464,15 @@ distinct pi `realize` refined by `identity_materialization` (`auth_ref=null`),
 with each Source movement a distinct ordered transfer into or out of it. Pi has
 no buffer details; Replay derives the participant slice from J and U_f.
 
+When Source visibly initializes a local reducer carrier with that J reducer's
+identity and performs one compiler-visible combine with the incoming value before
+a later collective/reduction stage, preserve it without copying the reducer or
+identity into pi: author a distinct `realize` instance on the incoming J carrier,
+refine it by `identity_materialization`, route the preceding transfer/value into
+slot 0, then route slot 0 into a distinct `synchronize` instance anchored to that
+J reduce. Do not infer this stage merely because J contains a reduction, and
+do not replace it with a cast, barrier, duplicate domain, or target recipe.
+
 For each J `reduce` or inclusive `scan`, boundary.reductions.tile_axis is the
 Source frontend's local tile axis after program/grid axes select the program instance. It
 is not the whole-tensor logical axis number from reduce.attrs.axes. Preserve the

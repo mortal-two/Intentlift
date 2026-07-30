@@ -251,6 +251,10 @@ workspace 的 `output/candidate.json`；closed Gate1 diff 只按既有 protocol 
 Codex Lift v20 同时删除与普通文件读取重复的 `feedback_frontier` host tool；workspace 中 exact frontier
 文件是唯一入口。当前特殊 bridge 只保留无法由本地文件操作替代的CandidateCheck、SourceReconcile，
 以及上述显式调用、非认证的public SemanticProbe。
+Codex Lift v31进一步把所有合法Gate1 category写入一个首次即存在、续轮原子覆盖的stable exact
+category index。frontier中的任意label（含CUDA/TileLang的`ptx.*`）都可由同一context query精确读取；
+新增或消失的类别不改变persistent workspace文件集合，也不留下旧轮内容。index只分区既有comparison，
+不解释差异、不选择refinement或repair。
 
 `gate1-replay-counterexample.v2`不再假设所有前端都有TTIR。共享SCRC按Gate1已声明的
 `observer_profile.compiler_stage`机械投影前一formal Replay的exact只读compiler artifact：Triton为
@@ -268,7 +272,7 @@ representation-only op 差异只要求 owner 对照 Source 重新审查已有 π
 提交前的强制串行协议。MiniSWE knowledge v64 暴露同一 outline/checklist 合同。该 transport 不生成
 `logical_ref`、J/C/π 字段或修复。
 
-当前持久 owner 使用 `artifact.v13 / decode.v18 / typecheck.v30 / candidate-check.v1` 实现上述
+当前持久 owner 使用 `artifact.v13 / decode.v18 / typecheck.v31 / candidate-check.v1` 实现上述
 CandidateCheck、C attachment、numeric-cast dependent typing 与 result-relation compatibility。v7
 继承 v6，v6 继承 v5；v5 继承 v4 的
 rank-0 closed signature、Layer-A graph value typing total 与显式 NumPy broadcast 合同；它只消费 Lift
@@ -391,8 +395,8 @@ ReplayLLM(J,pi,MaskC(C);U_f) -> complete source R_f
 
 当前 packet protocol 为 `intentir.scrc.replay-input.v3`；Triton 公共上下文直接由当前固定字段给出，
 不再附带 context version、SHA 或 receipt 门禁。source-aware Codex/MiniSWE Lift 的当前 knowledge receipt 分别为
-`intentir.lift-knowledge.v89 / intentir.lift-knowledge.v67`，source-blind MiniSWE/Codex Replay backend 为
-`minisweagent.intentir-replay.v31 / openai.codex-cli.intentir-replay.v35`。这些版本必须随 fresh run 原样记录；旧 packet/context/knowledge
+`intentir.lift-knowledge.v90 / intentir.lift-knowledge.v68`，source-blind MiniSWE/Codex Replay backend 为
+`minisweagent.intentir-replay.v36 / openai.codex-cli.intentir-replay.v36`。这些版本必须随 fresh run 原样记录；旧 packet/context/knowledge
 evidence 不因实现升级而被重判；fresh Replay 只做当前字段的结构和 source-isolation 检查。
 
 Replay v28把一个formal round保持为同一个fresh、单writer、source-blind coding episode，总active
@@ -402,8 +406,10 @@ Replay源码查询其自身TTIR/fingerprint。累计provider上下文超过阈�
 diagnostic，不接收语义摘要、旧episode、Source或Gate。该rollover不复用跨round Replay，也不增加
 认证输入。
 
-Codex Replay v35继承v34的packet-first、proof-irrelevant episode-local syntax composer，并消费
-v13 `participant_mappings` critical facts；v34增加
+Codex Replay v36继承v35的packet-first、proof-irrelevant episode-local syntax composer和v13
+`participant_mappings`消费，并增加pre-collective `identity_materialization`的J-driven消费：只有唯一
+outgoing route进入J reduce synchronize时，才从J读取reducer/typed identity/carrier并保留一次显式
+combine；π不提供operator/value/dtype/API。其他identity stage保持原representation语义。v34增加
 agent-owned `work/build_replay.py`快速路径与`off/available/preferred`实验模式。共享core只渲染agent
 作者化的`line/block/raw_block`，支持stable ID局部
 insert/replace/delete/move、source map与plan/source/map一致的checkpoint/rollback；Triton、TileLang、
@@ -593,7 +599,7 @@ relift diagnostic view 必须明确区分。
 禁止把 diff 交给 Replay、patch 旧 Replay、只输出 artifact 增量，或跨候选复用 Replay。
 
 协议允许独立的 `intentir.scrc.gate1-diagnostic-recheck.v1` 对一份已落盘 artifact 做只读诊断：
-保持 artifact bytes/digest 不变，执行当前 canonical Decode、`typecheck.v30`、一个 fresh normal Replay
+保持 artifact bytes/digest 不变，执行当前 canonical Decode、`typecheck.v31`、一个 fresh normal Replay
 与 Gate1，并写入独立 `recheck-NNN` evidence。它不调用 Lift、不运行 masked-J 或 Gate2、不参与
 candidate/winner 选择，也不改变 parent run 的 verdict 或 certificate；因此只用于定位固定 consumer/
 observer/context 改动，不能冒充 fresh SCRC rerun。provider 调用前必须把 selected case/current prepared

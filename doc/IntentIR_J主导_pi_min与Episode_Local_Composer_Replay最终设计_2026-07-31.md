@@ -90,6 +90,7 @@ Composer回答：当前 agent 决定的目标源码怎样稳定地组织、编�
 - 一个 J/C handle 有几个 compiler-visible realization instance；
 - instance 间 route、operand slot、order 与 sharing；
 - materialization、duplication、reuse 与 representation-only staging；
+- J reducer synchronize 前一次显式identity materialization的closed route topology；
 - program-coordinate domain 到物理 axis 的 identity；
 - 物理 participant axis 对 exact J domain 的 closed cyclic projection；
 - C slot 在 source realization 中的匿名 attachment/use；
@@ -174,6 +175,27 @@ spelling、frontend API 或 target recipe。删除或 Mask J 后，`i2` 不再�
 这次升版来自真实反例，而不是预先扩张 grammar：v12 CUDA `row_sum` 的三轮 Replay 都直接使用物理
 participant coordinate，导致错误 row/OOB/race；Composer 每轮均实际使用，却无从恢复缺失约束。
 因此根因是 Lift 表达能力与 observer coverage 的共同缺口，不是给 Composer 增加 reduction 模板的理由。
+
+### 2.6 J-dependent identity materialization
+
+`identity_materialization`仍是已有closed refinement，不增加operator、constant或target recipe。只有当
+被修饰的`realize`恰有一条slot-0 incoming route，且唯一slot-0 outgoing route进入一个通过exact J解析为
+`reduce`的`synchronize` instance时，它才具有下面的窄denotation：
+
+```text
+incoming physical carrier
+  -> one explicit combine with the exact J reducer identity
+  -> downstream reduce synchronize
+```
+
+reducer、typed identity、carrier dtype与逻辑shape全部只从J读取；π只声明该compiler-visible stage必须
+存在，不保存`sum/max`、`0/-inf`、Source拼写、CUDA shuffle、TileLang copy或任何frontend API。删除或
+Mask J后，route topology不能独立决定combine为何种计算。若Source没有可见的identity初始化与combine，
+Lift不得仅因J含reduction就作者化该refinement。
+
+该拓扑不会覆盖TileLang已有的shaped representation materialization：未以唯一route进入J-reduce
+`synchronize`的`identity_materialization`仍只表示其原有routed representation stage。Replay依据当前
+frontend公开`U_f`自行写出实现，最终由TileLang结构TIR或CUDA PTX hard observer判断是否重建Source。
 
 ## 3. Composer 的准确身份
 
@@ -394,9 +416,13 @@ Gate2: native CUDA execution + three edges
 profile 只处理 C-like braces、function/helper surface与现有安全 allowlist；不选择 thread/block mapping、
 shuffle、shared memory、barrier、atomic、MMA 或 reduction recipe。CUDA PTX observer按现有 contract 放松
 cache、register、label与纯 address spelling，但保留 observable value、memory/effect、control、coordinate、
-collective、ABI 与 target hard evidence。`cuda-ptx-semantic-effects-v4` 额外沿每个 memory address 的
-reaching definitions保留 information-losing coordinate fold（closed `and/rem` projection）；普通
-add/mul/shift/cast地址拼写仍放松。该观察发生在 Gate1，结果不会返回 Replay或写入π。
+collective、ABI 与 target hard evidence。`cuda-ptx-semantic-effects-v5` 沿每个 memory address 的
+reaching definitions保留 information-losing coordinate fold，并把byte-domain中的
+`(coordinate << k) & ((period-1) << k)`与logical-domain的`coordinate & (period-1)`归一为同一closed
+cyclic projection。该归一只跨纯power-of-two scale、整除mask或positive remainder，以及可证明精确的
+同signedness非窄化整数conversion；predicated definition、control boundary、address-space conversion、
+窄化或其他opaque mixing均保守停止传播。普通affine address spelling继续放松，但不删除value/effect/
+control差异。该观察发生在 Gate1，结果不会返回 Replay或写入π。
 
 ## 7. Runtime 数据流
 
@@ -417,6 +443,12 @@ exact typed artifact
 
 Composer 不增加新的认证步骤。`render` 只产生候选 bytes；`submit_replay` 仍必须对 exact bytes运行已有
 ingress、ReplayCheck与compile preflight。Gate1始终独立重编译并比较 Source/Replay observation。
+
+同一source-aware Lift owner的relift feedback使用稳定、每轮原子覆盖的exact category index。index的
+文件身份在首次episode即固定，因此新增CUDA/TileLang observer label不会改变persistent workspace文件
+集合；category消失时其旧内容也不会残留。owner先读bounded frontier，再按exact label查询单一category。
+该transport只搬运既有Gate1 comparison，不解释差异、不选择π refinement，也不把feedback送给fresh
+source-blind Replay。
 
 ## 8. 静态反泄漏与运行审计
 
