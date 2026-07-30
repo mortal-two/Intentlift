@@ -1,0 +1,883 @@
+{
+  "backend": "openai.codex-cli.intentir-replay.v33",
+  "formal_ingress_recheck": true,
+  "fresh_session": true,
+  "isolation": {
+    "composer_episode_local": true,
+    "composer_reads_packet": false,
+    "input": "read-only",
+    "output_work_tmp": "write-only-scope",
+    "provider_secret_in_tool_env": false,
+    "source_blind": true,
+    "tool_network": "disabled"
+  },
+  "packet_queries": [],
+  "pi_min_ownership": {
+    "artifact_schema": "intentir.scrc.artifact.v12",
+    "claim_scope": "proof-irrelevant ownership receipt; it neither proves zero statistical information nor changes TypeCheck, Replay, Gate1, or Gate2 acceptance",
+    "masked_j": false,
+    "pi_authority": "J/C-dependent realization constraints only",
+    "pi_closed_fields": [
+      "instances",
+      "iterations",
+      "loop_carriers",
+      "order",
+      "physical_iterations",
+      "physical_loop_carriers",
+      "program_axes",
+      "refinements",
+      "regions",
+      "route_extent_transforms",
+      "routes",
+      "sharing",
+      "terminal_controls"
+    ],
+    "protocol": "intentir.pi-min.ownership-receipt.v1",
+    "relation_counts": {
+      "instances": 9,
+      "iterations": 0,
+      "loop_carriers": 0,
+      "order": 2,
+      "physical_iterations": 0,
+      "physical_loop_carriers": 0,
+      "program_axes": 1,
+      "refinements": 0,
+      "regions": 2,
+      "route_extent_transforms": 0,
+      "routes": 9,
+      "sharing": 1,
+      "terminal_controls": 0
+    },
+    "semantic_authority": "J only",
+    "status": "pass",
+    "validation_basis": [
+      "canonical Gate1Artifact closed-schema decode",
+      "TypeCheck(J,C,pi)=PASS before Replay packet construction",
+      "closed source-isolated Replay payload grammar"
+    ]
+  },
+  "protocol": "intentir.codex-cli.agent-runtime.v3",
+  "replay_check": [
+    {
+      "diagnostics": [],
+      "source_sha256": "f26b10f338716c28880e8fb791670360135c38f0314f2e3941c822c29770a91f",
+      "status": "pass",
+      "trigger": "host_post_turn"
+    }
+  ],
+  "replay_compile_check": [
+    {
+      "diagnostics": [],
+      "source_sha256": "f26b10f338716c28880e8fb791670360135c38f0314f2e3941c822c29770a91f",
+      "status": "pass",
+      "trigger": "host_post_turn"
+    }
+  ],
+  "replay_obligation_audits": [
+    {
+      "broadcast_obligation_count": 0,
+      "cross_region_order_count": 0,
+      "identity_materialization_count": 0,
+      "lexical_region_count": 0,
+      "program_axis_count": 1,
+      "route_extent_transform_count": 0,
+      "source_sha256": "527e045e6a3012ad1f601c4ad0e68cd3b38aa3ceaf4f8d1d14ed4db2983a8d5c"
+    },
+    {
+      "broadcast_obligation_count": 0,
+      "cross_region_order_count": 0,
+      "identity_materialization_count": 0,
+      "lexical_region_count": 0,
+      "program_axis_count": 1,
+      "route_extent_transform_count": 0,
+      "source_sha256": "6b5bce30018171fcc49497767aec8f913e0f32b4d25f2cca25361bda99156a14"
+    },
+    {
+      "broadcast_obligation_count": 0,
+      "cross_region_order_count": 0,
+      "identity_materialization_count": 0,
+      "lexical_region_count": 0,
+      "program_axis_count": 1,
+      "route_extent_transform_count": 0,
+      "source_sha256": "b78f94920d7b9008f33523375043b0c12baddad464c12759fd2293a59ec8b927"
+    },
+    {
+      "broadcast_obligation_count": 0,
+      "cross_region_order_count": 0,
+      "identity_materialization_count": 0,
+      "lexical_region_count": 0,
+      "program_axis_count": 1,
+      "route_extent_transform_count": 0,
+      "source_sha256": "62e95a441dc865aa1581e2cfa1d14ae0d866341d30b6c2712f03669f4fe3ac15"
+    },
+    {
+      "broadcast_obligation_count": 0,
+      "cross_region_order_count": 0,
+      "identity_materialization_count": 0,
+      "lexical_region_count": 0,
+      "program_axis_count": 1,
+      "route_extent_transform_count": 0,
+      "source_sha256": "f26b10f338716c28880e8fb791670360135c38f0314f2e3941c822c29770a91f"
+    }
+  ],
+  "replay_ttir_inspections": [],
+  "syntax_composer": {
+    "actions": {
+      "install": 1
+    },
+    "authority": "proof-irrelevant episode-local syntax telemetry only; it is not trusted for J/pi consumption, Source equivalence, or Gate closure",
+    "checkpoint_available": false,
+    "frontend": "tilelang",
+    "host_events": [],
+    "installed": true,
+    "last_action": "install",
+    "layout_profile": "python",
+    "node_count": 0,
+    "node_kinds": {},
+    "output_matches_last_render": false,
+    "protocol": "intentir.replay.syntax-composer.v1",
+    "revision": 0,
+    "source_map_nodes": 0,
+    "source_map_revision_matches_state": null,
+    "status": "pass",
+    "used": false
+  },
+  "thread_id": "019fb48a-055a-7e40-ab14-e607aa7ccda2",
+  "thread_ids": [
+    "019fb48a-055a-7e40-ab14-e607aa7ccda2"
+  ],
+  "timeout_events": [],
+  "tool_bridge": {
+    "authority": "diagnostic-only callbacks over exact host-read output bytes; no artifact or Replay field is generated or edited",
+    "calls": 12,
+    "protocol": "intentir.codex-cli.tool-bridge.v3",
+    "receipts": [
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 5.309035070240498,
+        "result_sha256": "49739252ceb7a128c8a8830b41ef6ddbf9927efafb0be5a663883f749257eb8f",
+        "status": "fail",
+        "tool": "submit_replay"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 3.4169680438935757,
+        "result_sha256": "4b705f4a42d5a63a0281fb7304495bef12e46afc73b97bee5dcd67a17ee20392",
+        "status": "pass",
+        "tool": "replay_obligation_audit"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 4345.591380028054,
+        "result_sha256": "7707d20ba8496b02271e9f1853c4da5d23bf56b0fd73cf9fe69d8f33cc9a13ce",
+        "status": "fail",
+        "tool": "submit_replay"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 2.1699880016967654,
+        "result_sha256": "4b37fb40957145c3678edad9ef62a5cda147c769c1b3df13967d106305ee2eda",
+        "status": "fail",
+        "tool": "<invalid>"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 3.9520689751952887,
+        "result_sha256": "57526172c2df34a283afd6385dc012d009cf0b9788373dbec5755d96e09eab5b",
+        "status": "pass",
+        "tool": "replay_obligation_audit"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 3548.5158329829574,
+        "result_sha256": "21a5b02313a6c58f3a1860736cb6feb42d2abcb27e5fd7d77f5435eb3be00ac5",
+        "status": "fail",
+        "tool": "submit_replay"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 2.9577160021290183,
+        "result_sha256": "30e0554c4cc3b7591895aee34f10959e1975b25f36e3df5498f027d86e92dd9e",
+        "status": "pass",
+        "tool": "replay_obligation_audit"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 3315.7266969792545,
+        "result_sha256": "0c50365384f05ac363d6ba40b7dfed845f5a8f978cb5dc0cdbbca579bc88464c",
+        "status": "fail",
+        "tool": "submit_replay"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 3.5125850699841976,
+        "result_sha256": "879886bd8e9e14fbbfb8fc3b4888dc1fbd14fa95a4e380a0b49482fed007d119",
+        "status": "pass",
+        "tool": "replay_obligation_audit"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 4230.265361955389,
+        "result_sha256": "72754d3e817ebb82992a1c58e1c7a106cdc72d5a1867e3608c3587ff898e65c1",
+        "status": "fail",
+        "tool": "submit_replay"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 2.561942092142999,
+        "result_sha256": "b1e4069f5eca2bb5ed9b528555e8c81f35c97c7093a116dace69e843e4bff2c2",
+        "status": "pass",
+        "tool": "replay_obligation_audit"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 8286.308484966867,
+        "result_sha256": "5687586f6d9f80d159033fb0a69f813636466a57a9f9f7856867bedf18424e2f",
+        "status": "pass",
+        "tool": "submit_replay"
+      }
+    ],
+    "transport": "isolated_workspace_file_mailbox"
+  },
+  "turns": [
+    {
+      "elapsed_ms": 241689.4596068887,
+      "events": [
+        {
+          "thread_id": "019fb48a-055a-7e40-ab14-e607aa7ccda2",
+          "type": "thread.started"
+        },
+        {
+          "type": "turn.started"
+        },
+        {
+          "item": {
+            "id": "item_0",
+            "text": "I’ll read the packet once, reconcile the full graph and transfer topology as a whole, then author the complete replay early and iterate only through the mandated audit and transactional checks.",
+            "type": "agent_message"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c \"sed -n '1,240p' input/packet.json\"",
+            "exit_code": null,
+            "id": "item_1",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "{\"c\": {\"slots\": [{\"kind\": \"compiler\", \"name\": \"c0\", \"required\": true, \"role\": \"launch_block_x\", \"value_type\": \"int32\"}]}, \"j\": {\"boundary\": {\"access_guard_relations\": [], \"accesses\": [{\"access_id\": \"a0\", \"index_expression\": \"[d0, d1]\", \"kind\": \"load\", \"node_ref\": \"n0\", \"tensor\": \"t0\"}, {\"access_id\": \"a1\", \"index_expression\": \"[d0]\", \"kind\": \"store\", \"node_ref\": \"n0\", \"tensor\": \"t1\"}], \"aliases\": [], \"broadcasts\": [], \"consumer_extensions\": [], \"domains\": {\"d0\": \"(0 <= d0) and (d0 < x0)\", \"d1\": \"(0 <= d1) and (d1 < 16)\"}, \"effects\": [{\"access_ref\": \"a0\", \"effect_id\": \"e0\", \"kind\": \"read\", \"node_ref\": \"n0\", \"target\": \"t0\"}, {\"access_ref\": \"a1\", \"effect_id\": \"e1\", \"kind\": \"write\", \"node_ref\": \"n0\", \"target\": \"t1\"}], \"index_bounds\": [], \"output_mappings\": [], \"realization_authorizations\": [], \"reductions\": [{\"identity\": 0.0, \"node_ref\": \"n0\", \"tile_axis\": 1}], \"result_relations\": [{\"kind\": \"tolerance\", \"output\": \"t1\"}], \"updates\": []}, \"dimension_constraints\": [\"x0 > 0\"], \"dimension_relations\": [], \"intent\": {\"intent_function\": {\"body\": [{\"attrs\": {\"assoc\": \"float_nondeterministic\", \"axes\": [1], \"fn\": \"sum\"}, \"id\": \"n0\", \"op\": \"reduce\", \"operands\": [\"t0\"], \"result\": \"t1\", \"type\": {\"dtype\": \"f32\", \"shape\": [\"x0\"]}}], \"inputs\": [{\"dtype\": \"f32\", \"name\": \"t0\", \"shape\": [\"x0\", 16]}], \"name\": \"scrc_intent0\", \"outputs\": [{\"dtype\": \"f32\", \"name\": \"t1\", \"shape\": [\"x0\"]}]}}, \"kernel_id\": \"scrc_j0\", \"node_ids\": {\"n0\": \"body[0]\"}, \"scopes\": [{\"captures\": [], \"definitions\": [\"t0\", \"t1\"], \"effects\": [\"e0\", \"e1\"], \"kind\": \"function\", \"parent_scope\": null, \"scope_id\": \"q0\"}], \"signature\": {\"parameters\": [{\"dtype\": \"f32\", \"kind\": \"tensor\", \"logical_ref\": \"t0\", \"mode\": \"input\", \"name\": \"p0\", \"rank\": 2}, {\"dtype\": \"f32\", \"kind\": \"tensor\", \"logical_ref\": \"t1\", \"mode\": \"output\", \"name\": \"p1\", \"rank\": 1}]}, \"storage\": [], \"value_dimension_relations\": []}, \"pi\": {\"instances\": [{\"id\": \"i0\", \"mechanism\": \"realize\", \"region\": \"r1\", \"semantic_ref\": \"d0\"}, {\"id\": \"i1\", \"mechanism\": \"realize\", \"region\": \"r1\", \"semantic_ref\": \"p0\"}, {\"id\": \"i2\", \"mechanism\": \"address_base\", \"region\": \"r1\", \"semantic_ref\": \"a0\"}, {\"id\": \"i3\", \"mechanism\": \"address_lane\", \"region\": \"r1\", \"semantic_ref\": \"a0\"}, {\"id\": \"i4\", \"mechanism\": \"transfer_direct\", \"region\": \"r1\", \"semantic_ref\": \"a0\"}, {\"id\": \"i5\", \"mechanism\": \"realize\", \"region\": \"r1\", \"semantic_ref\": \"n0\"}, {\"id\": \"i6\", \"mechanism\": \"realize\", \"region\": \"r1\", \"semantic_ref\": \"p1\"}, {\"id\": \"i7\", \"mechanism\": \"address_base\", \"region\": \"r1\", \"semantic_ref\": \"a1\"}, {\"id\": \"i8\", \"mechanism\": \"transfer_direct\", \"region\": \"r1\", \"semantic_ref\": \"a1\"}], \"iterations\": [], \"loop_carriers\": [], \"order\": [{\"after\": \"i5\", \"before\": \"i4\"}, {\"after\": \"i8\", \"before\": \"i5\"}], \"physical_iterations\": [], \"physical_loop_carriers\": [], \"program_axes\": [{\"axis\": 0, \"domain_ref\": \"d0\"}], \"refinements\": [], \"regions\": [{\"id\": \"r0\", \"parent\": null, \"placement\": \"root\"}, {\"id\": \"r1\", \"parent\": \"r0\", \"placement\": \"program\"}], \"route_extent_transforms\": [], \"routes\": [{\"slots\": [0], \"source\": \"i0\", \"target\": \"i2\"}, {\"slots\": [1], \"source\": \"i1\", \"target\": \"i2\"}, {\"slots\": [0], \"source\": \"i2\", \"target\": \"i3\"}, {\"slots\": [0], \"source\": \"i3\", \"target\": \"i4\"}, {\"slots\": [0], \"source\": \"i4\", \"target\": \"i5\"}, {\"slots\": [0], \"source\": \"i0\", \"target\": \"i7\"}, {\"slots\": [1], \"source\": \"i6\", \"target\": \"i7\"}, {\"slots\": [0], \"source\": \"i5\", \"target\": \"i8\"}, {\"slots\": [1], \"source\": \"i7\", \"target\": \"i8\"}], \"sharing\": [{\"consumers\": [\"i2\", \"i7\"], \"source\": \"i0\"}], \"terminal_controls\": []}, \"u_f\": {\"compile_entry_contract\": \"Return one self-contained Python module using exactly `import tilelang.language as T` and one `@T.prim_func` named `scrc_k0`. Express tensor ABI through public `T.Tensor` annotations, device launch through `T.Kernel`, and realization topology through public TileLang operations. C values are compile-time schedule constants, never additional logical runtime parameters. Bind each distinct J x* once with one uppercase `T.dynamic` module binding and reuse it in every `T.Tensor` shape; repeated `T.dynamic` calls for one x* create false ABI parameters. A program-region domain path entering address_base is a `T.Kernel` program coordinate only when that domain has an exact pi.program_axes binding; preserve its authored axis 0/1/2 and never infer or renumber it. A domain path entering address_lane is participant-parallel and uses `T.Parallel`, not a serial loop. Only an authored pi.iterations or pi.physical_iterations relation authorizes a serial loop. A J reduce fed by a lane-realized reduced domain uses the matching public `T.reduce_*` collective; never sequentialize the whole axis per lane. Preserve pi transfers as exact load/store or `T.copy` occurrences and preserve distinct node realizations as compiler-visible expressions or required materializations in authored order. A pure single-consumer load/value chain may remain inline only when region, order, control, sharing, and storage topology do not require a distinct stage. A pi `realize` refined by `identity_materialization` and routed next to a shaped transfer is the sole authority for a representation-only participant fragment; use `T.alloc_fragment`/`T.copy` only for that exact shaped topology, never for a scalar identity stage. TIR structure is the hard frontend evidence; PTX below its ABI envelope is diagnostic only. A MaskC compiler slot with role `launch_block_x|y|z` is an injected module-global schedule handle and may appear only in the corresponding `T.Kernel` thread extent; never turn it into a runtime parameter or guess its hidden value.\", \"frontend\": \"tilelang\", \"protocol\": \"intentir.scrc.replay-input.v2\", \"replay_function\": \"scrc_k0\", \"retrieval_scope\": \"public TileLang documentation and public examples\", \"tool_access\": [\"public_document_lookup\"]}}\n",
+            "command": "/bin/bash -c \"sed -n '1,240p' input/packet.json\"",
+            "exit_code": 0,
+            "id": "item_1",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "id": "item_2",
+            "text": "The packet is compact and coherent: one dynamic row extent, one axis-0 program coordinate shared by the input/output address bases, a 16-lane participant axis, a direct load feeding a lane collective reduction, then a direct store. I’m mapping the compiler carrier only to the kernel’s block-x thread extent, with no extra ABI value or serial loop.",
+            "type": "agent_message"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c \"rg -n \\\"T\\\\.reduce_sum|T\\\\.Kernel\\\\(|T\\\\.dynamic\\\" .agents work input/TOOL.md input/REPLAY_CONTRACT.md 2>/dev/null | head -80\"",
+            "exit_code": null,
+            "id": "item_3",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c \"rg -n \\\"T\\\\.reduce_sum|T\\\\.Kernel\\\\(|T\\\\.dynamic\\\" .agents work input/TOOL.md input/REPLAY_CONTRACT.md 2>/dev/null | head -80\"",
+            "exit_code": 0,
+            "id": "item_3",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "changes": [
+              {
+                "kind": "add",
+                "path": "/workspace/output/replay.source"
+              }
+            ],
+            "id": "item_4",
+            "status": "in_progress",
+            "type": "file_change"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "changes": [
+              {
+                "kind": "add",
+                "path": "/workspace/output/replay.source"
+              }
+            ],
+            "id": "item_4",
+            "status": "completed",
+            "type": "file_change"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py submit_replay'",
+            "exit_code": null,
+            "id": "item_5",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "{\"authority\": \"diagnostic-only; no Replay source is generated or repaired\", \"compile\": {\"diagnostics\": [{\"anonymous_handles\": [], \"line\": null, \"path\": \"<current-replay-bytes>\", \"rule_code\": \"replay_obligation_audit_required\"}], \"protocol\": \"intentir.scrc.replay-check.v15\", \"status\": \"fail\"}, \"ingress\": {\"diagnostic_progress\": {\"authority\": \"mechanical episode-local observation only; it neither edits Replay nor changes ingress or Gate1 membership\", \"replay_source_changed_since_previous_check\": false, \"same_rule_path_streak\": 0}, \"diagnostics\": [], \"protocol\": \"intentir.scrc.replay-check.v15\", \"status\": \"pass\"}, \"phase\": \"compile\", \"protocol\": \"intentir.codex-cli.replay-submit.v1\", \"status\": \"fail\"}\n",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py submit_replay'",
+            "exit_code": 1,
+            "id": "item_5",
+            "status": "failed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "id": "item_6",
+            "text": "Ingress accepts the authored shape, but this episode requires the ledger audit despite the listed construction/order ledgers being empty. I’m running it against the current numbered bytes now, then I’ll use the compile diagnostics to make only packet-preserving syntax corrections.",
+            "type": "agent_message"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py replay_obligation_audit'",
+            "exit_code": null,
+            "id": "item_7",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "{\"audit_required\": true, \"authority\": \"exact current Replay bytes plus exact source-isolated pi projection; no Source, Gate evidence, inference, mapping, diagnosis, repair, or acceptance decision\", \"broadcast_obligations\": [], \"cross_region_order\": [], \"identity_materializations\": [], \"lexical_regions\": [], \"program_axes\": [{\"axis\": 0, \"domain_ref\": \"d0\"}], \"protocol\": \"intentir.replay-obligation-audit.v4\", \"route_extent_transforms\": [], \"source_nonempty_lines\": [{\"indent\": 0, \"line\": 1, \"text\": \"import tilelang.language as T\"}, {\"indent\": 0, \"line\": 3, \"text\": \"X0 = T.dynamic(\\\"x0\\\")\"}, {\"indent\": 0, \"line\": 6, \"text\": \"@T.prim_func\"}, {\"indent\": 0, \"line\": 7, \"text\": \"def scrc_k0(\"}, {\"indent\": 4, \"line\": 8, \"text\": \"p0: T.Tensor((X0, 16), \\\"float32\\\"),\"}, {\"indent\": 4, \"line\": 9, \"text\": \"p1: T.Tensor((X0,), \\\"float32\\\"),\"}, {\"indent\": 0, \"line\": 10, \"text\": \"):\"}, {\"indent\": 4, \"line\": 11, \"text\": \"with T.Kernel(X0, threads=c0) as d0:\"}, {\"indent\": 8, \"line\": 12, \"text\": \"for d1 in T.Parallel(16):\"}, {\"indent\": 12, \"line\": 13, \"text\": \"p1[d0] = T.reduce_sum(p0[d0, d1])\"}], \"source_sha256\": \"527e045e6a3012ad1f601c4ad0e68cd3b38aa3ceaf4f8d1d14ed4db2983a8d5c\", \"status\": \"pass\"}\n",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py replay_obligation_audit'",
+            "exit_code": 0,
+            "id": "item_7",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py submit_replay'",
+            "exit_code": null,
+            "id": "item_8",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "{\"authority\": \"diagnostic-only; no Replay source is generated or repaired\", \"compile\": {\"diagnostics\": [{\"anonymous_handles\": [], \"line\": null, \"path\": \"<synthetic-frontend-compile> TypeError: reduce_sum() missing 1 required positional argument: 'out'\", \"rule_code\": \"synthetic_frontend_compile_failed\"}], \"protocol\": \"intentir.scrc.replay-check.v15\", \"status\": \"fail\"}, \"ingress\": {\"diagnostic_progress\": {\"authority\": \"mechanical episode-local observation only; it neither edits Replay nor changes ingress or Gate1 membership\", \"replay_source_changed_since_previous_check\": false, \"same_rule_path_streak\": 0}, \"diagnostics\": [], \"protocol\": \"intentir.scrc.replay-check.v15\", \"status\": \"pass\"}, \"phase\": \"compile\", \"protocol\": \"intentir.codex-cli.replay-submit.v1\", \"status\": \"fail\"}\n",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py submit_replay'",
+            "exit_code": 1,
+            "id": "item_8",
+            "status": "failed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c \"python - <<'PY'\nimport inspect\nimport tilelang.language as T\nprint(inspect.signature(T.reduce_sum))\nprint(inspect.getsource(T.reduce_sum))\nPY\"",
+            "exit_code": null,
+            "id": "item_9",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "Traceback (most recent call last):\n  File \"<stdin>\", line 2, in <module>\nModuleNotFoundError: No module named 'tilelang'\n",
+            "command": "/bin/bash -c \"python - <<'PY'\nimport inspect\nimport tilelang.language as T\nprint(inspect.signature(T.reduce_sum))\nprint(inspect.getsource(T.reduce_sum))\nPY\"",
+            "exit_code": 1,
+            "id": "item_9",
+            "status": "failed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "id": "item_10",
+            "text": "The frontend reports that TileLang’s collective is an out-parameter operation, not an expression. That changes only the realization spelling: the direct load/value must be materialized, the collective writes its result, and the authored store remains afterward. I’m checking the public contract narrowly for the permitted scalar/fragment form before editing.",
+            "type": "agent_message"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c 'rg -n -C 4 \"reduce_sum|collective|alloc_fragment|transfer_direct|TileLang\" input/REPLAY_CONTRACT.md'",
+            "exit_code": null,
+            "id": "item_11",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "1:You are the source-blind Replay LLM. Generate one complete, self-contained tilelang public-frontend kernel module. You never see the source implementation. Consume J, pure C and pi directly; pi is topology, not semantic authority. Treat every pi instance, route, order edge, sharing relation, route extent transform, structured or physical iteration relation, physical carrier, representation refinement and region placement as required realization topology. Region placement is exact lexical scope: emit each compiler-visible instance in its declared region, keep a loop-region instance lexically inside that loop even when it is induction-invariant, and never hoist, sink, clone, or fold it across a region boundary. In every pi order item, the instance named by before must execute before the instance named by after, including across regions and observable effects. Resolve each refinement auth_ref only through the matching J realization_authorization, materialize it at the refined instance before routed consumers, and never infer, omit, move, or copy a sensitive conversion onto a sibling instance. A logical_ref=null p* may be read only when pi contains its anchored instance and a route from that instance to a realization consumer; otherwise it remains an unused ABI parameter. Multiple instances anchored to one handle are distinct source stages: do not collapse their chain, discard J/C dependencies, duplicate a shared producer, or invent an undocumented stage. Obtain the callable runtime ABI only from J.signature. Keep every MaskC(C) slot outside that runtime ABI and consume it only through the frontend-specific public schedule/launch contract in U_f. Obtain all logical operators, predicates, fills, constants, index relations and effects only from J. Preserve explicit J stages: reduce(sum) followed by division remains sum then division, never mean or a generated sum-of-ones count. Every J.boundary.broadcasts item applies only at its named consumer: keep the operand's closed type at its producer/access and materialize the declared axes with explicit public rank-lift operations before that consumer. Do not pre-expand the load/index shape or erase the stage through implicit broadcasting. Treat every J.value_dimension_relations item as an already J-certified precondition: relation=eq permits the declared integral rank-0 value_ref and dimension_ref to denote the same logical extent. Consume only the declared relation where J shapes, domains, predicates, or operators require it. Never infer, create, delete, repair, weaken, or strengthen a value/dimension relation from concrete values, parameter positions, C, pi, Harness conventions, or frontend behavior. Treat every J.dimension_relations item as an authored logical-dimension definition. Implement exactly identity/add_const/mul_const/ceil_div_const/round_up_const over its named x* handles wherever the graph, indices, predicates, or realization topology consume the derived extent. Never infer a relation from concrete shapes, C, pi, grid, or frontend rounding, and never replace an authored relation with the current valuation. A pi.program_axes item is the sole authority that maps one J domain_ref to physical program axis 0, 1, or 2. Preserve it exactly across repeated instances and never derive, reorder, or add axes from source spelling, declaration order, shapes, grid extents, C, or frontend conventions. A boundary access with no predicate is unconditional: never derive a redundant mask from domains, grid extents, C, or defensive safety. Treat each J effect_if as effect control, not a value expression. Ordinarily emit one real runtime if with explicit positive and negative arms in the authored polarity, keep every arm-local operation/effect in authored order, and spell an authored empty arm explicitly. If and only if one pi.terminal_controls item names the two realize instances anchored to that effect_if's sibling arm scopes, emit the named terminal arm as one runtime if ending in a bare return and emit the named continuation arm immediately after it without an else; negate the condition exactly when the negative arm is terminal. The relation supplies only arm topology: never guess, copy, or change the J predicate, polarity, arm operations, or effects. Never lower effect_if to tl.where/select or execute either arm unconditionally under a mask. Treat each J value_if as pure value control, distinct from effect_if and select: emit one real runtime if with explicit polarity-preserving arms; each arm may use pure local temporaries but must finally assign its J yield to the same merge local. Never lower value_if to tl.where/select, effect_if, predicated unconditional computation, or compile-time control. For every pi.iterations rounded_extent_step relation, resolve its loop_instance to the J loop trip extent and tile_instance to the matching C slot; use lower 0, step equal to that C tile, and upper exactly ceil_div(trip extent, C tile) * C tile. Do not infer a bound from current shapes/values or invent another rounding formula. For every pi.route_extent_transforms item, resolve source to its anonymous required positive-integer C slot and apply the declared floor/ceil division by the literal divisor only at the named existing route target slot. This is a representation extent partition: do not turn it into J shape/domain/predicate semantics, apply it to another C use, or infer another transform. For every pi.physical_iterations relation, keep J's operation or boundary traversal logical while materializing the explicit physical loop from its same-subject C-attached axis, induction_basis, and direction. Preserve every pi.physical_loop_carriers init/state/next/result temporal stage; neither relation authorizes a new semantic operator or formula. Preserve same-region physical_loop_carriers declaration order as the shared carrier-tuple ordinal across init/state/next/result; do not sort it or treat it as event order. Do not output analysis, patches, placeholders, helper prose or markdown. Use only public frontend APIs and the canonical opaque handles in J.signature/MaskC(C). Pi graph reference contract: Pi has exactly two reference roles. instances[k].semantic_ref is an anchor into a declared anonymous J/C handle; J.signature handles are ordinary J handles and there is no interface namespace. It is not a pi graph node. instances[k].id declares the only pi graph-node namespace i0,i1,... in declaration order. Every routes source/target, order before/after, and sharing source/consumer must equal one already declared instance id i*. Edges never use raw t*/n*/a*/d*/e*/q*/b*/s*/v*/p*/c*/x* handles and never declare instances implicitly. To represent a p0 dependency on access a0, declare i0 anchored by p0 and i1 anchored by a0, then route i0 to i1; routing p0 to i1 is invalid. Multiple instances may share one semantic_ref when the source has multiple compiler-visible stages. Route slots are distinct, non-negative, target-local opaque input ordinals. An instance region is exact lexical realization scope, not an optimization hint or consumer membership. Replay emits every compiler-visible stage inside that exact region: a loop-region instance stays lexically inside its loop even when its operands are loop invariant, and a parent-region instance stays outside. Replay never hoists, sinks, clones, or folds a stage across a region boundary. program_axes binds each distinct J-domain program coordinate to one physical launch axis 0, 1, or 2. It is authored by Lift from the compiler-visible Source realization, is unique by both domain_ref and axis, and carries no grid extent, Source spelling, or frontend API. Repeated coordinate instances anchored to the same d* use that same bound axis. route_extent_transforms qualifies one existing route slot: a required positive-integer C extent reaches its attached J domain as floor_div/ceil_div by a literal divisor greater than one. It is representation-only and creates no J fact or Source/API spelling. Each iterations entry relates one loop region to one instance anchored by its J loop and one instance anchored by the matching C tile slot. Its closed induction_basis records only whether the physical induction variable is measured in logical extent units, rounded extent units, or tile ordinals. The global source-neutral denotation is closed: extent_step means lower zero, upper equal to the J loop trip extent, and step equal to the matching C tile; rounded_extent_step means lower zero, upper equal to ceil_div(J loop trip extent, matching C tile) multiplied by that C tile, and step equal to the matching C tile; tile_ordinal means lower zero, upper equal to ceil_div of that J trip extent by that matching C tile, and unit step. Every frontend maps this same relation to its public constructs. The wire entry never carries a bound expression, value, operator, source fragment, or frontend API. Each declaration-ordered loop_carriers entry has exactly region, loop_instance, init, state, next, and result instance refs. Its global temporal denotation is state[0]=init, state[k+1]=next[k], result=state[T], including T=0. The temporal next-to-state edge and loop-exit result edge are not ordinary DAG routes and never carry an expression or frontend spelling. Each physical_iterations entry has exactly region, body_instance, tile_instance, induction_basis, and direction. body_instance anchors an existing non-loop J reduce/contraction or boundary access/domain with a closed dependent axis; tile_instance anchors one required positive C tile attached to that same semantic subject and axis. forward uses the corresponding zero-origin basis order; reverse visits that same closed basis in descending order. It never adds a J loop or carries bounds/formulas. Each physical_loop_carriers entry has exactly region, init, state, next, and result, with the same temporal denotation as loop_carriers, but its region is indexed by one physical_iterations relation rather than a structured J loop. For all physical_loop_carriers entries sharing one region, declaration order is the common carrier-tuple ordinal across init/state/next/result and must be preserved by Replay. It is not event execution order and does not replace explicit pi.order edges. terminal_controls has exactly terminal_instance and continuation_instance: distinct realize instances on sibling J effect_if arm scopes. It names which arm terminates and which continues; it carries no predicate, polarity, return, Source spelling, or API. Each reduction_linearization refinement has null auth_ref and refines one realize instance whose sole slot-0 route enters a J reduce realize instance. It denotes full-axis linearization before that consumer without carrying an axis, operator, value, or frontend API. Pi mechanism contract: Pi mechanism is one closed source-neutral event class. realize is a generic representation-only stage when no more specific class applies. One realize instance anchored directly to a J.signature handle or C slot may be discharged by that parameter binding and its direct routed use; it does not require an identity assignment. Multiple instances anchored to the same handle still denote distinct routed use-sites/stages. address_base is an independently compiler-visible, program-uniform pointer/base or integer base-address contribution before lane merge; Lift uses it only when that separate source stage exists. address_lane is the compiler-visible stage that forms the lane-varying contribution or final address. When routes contain address_base -> address_lane, Replay must materialize two distinct stages in that order and must not algebraically fold them into one flat vector offset. Pointer-operation count is determined only by source-neutral carrier routing and the carrier kind declared in J.signature. If a pointer/tensor carrier directly enters address_base, that base is a pointer/address operation and its route to address_lane requires a second pointer/address operation for the lane contribution. If the pointer/tensor carrier bypasses address_base and enters address_lane or the final address stage, while address_base receives only integer, domain, or C contributions, Replay merges the integer base and lane contributions before exactly one pointer/address operation. The address_base -> address_lane edge alone never decides between these cases. transfer_direct and transfer_async classify data movement after address formation; update_atomic and update_privatized classify physical update realization; synchronize classifies synchronization. Region placement='program' only scopes an instance to one program; it does not assert that a program/grid coordinate is read. A compiler-visible program/grid coordinate is a separate realization stage and requires its own realize instance and routes. Its source-neutral encoding is a realize instance anchored to the corresponding J domain in a program region whose scalar dependency path enters address_base before transfer; a domain/C dependency path entering address_lane is lane-varying instead. Replay must preserve this base-versus-lane distinction and U_f maps it to public frontend APIs. Program-axis identity follows the closed pi.program_axes binding of the J domain semantic_ref, not instance multiplicity: repeated program-coordinate instances on one d* remain distinct stages of the same bound axis. Replay must not infer an axis from declaration order, grid extent, instance multiplicity, or C. Integer coordinate arithmetic is a realize stage; address_base and address_lane classify where its program-uniform and lane-varying paths enter address formation rather than relabeling every arithmetic op. If Source visibly forms a separable program-uniform integer base and a lane offset, then merges them before its first pointer application, the program path still enters address_base and routes to address_lane while the pointer carrier bypasses address_base. Replay preserves both integer stages and uses one pointer/address operation at the lane/final stage. Only a Source with no separable program-uniform contribution uses a lone address_lane stage. Replay must not invent program_id, a grid offset, or an affine address stage from region placement, grid convention, or C alone. Address classes never carry an index/offset formula, constant, integer width, cast, dtype, shape, vector length, predicate, fill, frontend API, or logical access semantics. Return Python source only.\n",
+            "command": "/bin/bash -c 'rg -n -C 4 \"reduce_sum|collective|alloc_fragment|transfer_direct|TileLang\" input/REPLAY_CONTRACT.md'",
+            "exit_code": 0,
+            "id": "item_11",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py --help'",
+            "exit_code": null,
+            "id": "item_12",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "usage: intentir_agent_tool.py TOOL [ARG ...]\n",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py --help'",
+            "exit_code": 0,
+            "id": "item_12",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py public_document_lookup --help'",
+            "exit_code": null,
+            "id": "item_13",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "IntentIR tool response protocol mismatch\n",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py public_document_lookup --help'",
+            "exit_code": 1,
+            "id": "item_13",
+            "status": "failed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "changes": [
+              {
+                "kind": "update",
+                "path": "/workspace/output/replay.source"
+              }
+            ],
+            "id": "item_14",
+            "status": "in_progress",
+            "type": "file_change"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "changes": [
+              {
+                "kind": "update",
+                "path": "/workspace/output/replay.source"
+              }
+            ],
+            "id": "item_14",
+            "status": "completed",
+            "type": "file_change"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py replay_obligation_audit'",
+            "exit_code": null,
+            "id": "item_15",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "{\"audit_required\": true, \"authority\": \"exact current Replay bytes plus exact source-isolated pi projection; no Source, Gate evidence, inference, mapping, diagnosis, repair, or acceptance decision\", \"broadcast_obligations\": [], \"cross_region_order\": [], \"identity_materializations\": [], \"lexical_regions\": [], \"program_axes\": [{\"axis\": 0, \"domain_ref\": \"d0\"}], \"protocol\": \"intentir.replay-obligation-audit.v4\", \"route_extent_transforms\": [], \"source_nonempty_lines\": [{\"indent\": 0, \"line\": 1, \"text\": \"import tilelang.language as T\"}, {\"indent\": 0, \"line\": 3, \"text\": \"X0 = T.dynamic(\\\"x0\\\")\"}, {\"indent\": 0, \"line\": 6, \"text\": \"@T.prim_func\"}, {\"indent\": 0, \"line\": 7, \"text\": \"def scrc_k0(\"}, {\"indent\": 4, \"line\": 8, \"text\": \"p0: T.Tensor((X0, 16), \\\"float32\\\"),\"}, {\"indent\": 4, \"line\": 9, \"text\": \"p1: T.Tensor((X0,), \\\"float32\\\"),\"}, {\"indent\": 0, \"line\": 10, \"text\": \"):\"}, {\"indent\": 4, \"line\": 11, \"text\": \"with T.Kernel(X0, threads=c0) as d0:\"}, {\"indent\": 8, \"line\": 12, \"text\": \"for d1 in T.Parallel(16):\"}, {\"indent\": 12, \"line\": 13, \"text\": \"T.reduce_sum(p0[d0, d1], p1[d0])\"}], \"source_sha256\": \"6b5bce30018171fcc49497767aec8f913e0f32b4d25f2cca25361bda99156a14\", \"status\": \"pass\"}\n",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py replay_obligation_audit'",
+            "exit_code": 0,
+            "id": "item_15",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py submit_replay'",
+            "exit_code": null,
+            "id": "item_16",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "{\"authority\": \"diagnostic-only; no Replay source is generated or repaired\", \"compile\": {\"diagnostics\": [{\"anonymous_handles\": [], \"line\": null, \"path\": \"<synthetic-frontend-compile> AttributeError: 'BufferLoad' object has no attribute 'shape'\", \"rule_code\": \"synthetic_frontend_compile_failed\"}], \"protocol\": \"intentir.scrc.replay-check.v15\", \"status\": \"fail\"}, \"ingress\": {\"diagnostic_progress\": {\"authority\": \"mechanical episode-local observation only; it neither edits Replay nor changes ingress or Gate1 membership\", \"replay_source_changed_since_previous_check\": true, \"same_rule_path_streak\": 0}, \"diagnostics\": [], \"protocol\": \"intentir.scrc.replay-check.v15\", \"status\": \"pass\"}, \"phase\": \"compile\", \"protocol\": \"intentir.codex-cli.replay-submit.v1\", \"status\": \"fail\"}\n",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py submit_replay'",
+            "exit_code": 1,
+            "id": "item_16",
+            "status": "failed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "id": "item_17",
+            "text": "The next diagnostic confirms the collective expects shaped buffer operands. I’ll preserve the two direct transfers explicitly: load the authored 16-element lane tile into a local shaped value, reduce it into a one-element local result, then perform the authored scalar store. No additional semantic operation or address route is introduced.",
+            "type": "agent_message"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c \"sed -n '1,220p' input/TOOL.md\"",
+            "exit_code": null,
+            "id": "item_18",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "# Replay tool contract\n\nWrite exactly `/output/replay.source`. Run\n`intentir_replay_check /output/replay.source` for diagnostic ingress, then\n`intentir_replay_compile_check /output/replay.source` for the public synthetic\nconstruction-compile profile. Calls are audited telemetry and governed by the\nReplay episode's active wall time; submission independently rechecks changed\nexact bytes with both checks. Results contain only a closed\nprotocol/status/rule/path plus anonymous handles or line number. No Source,\nHarness value, actual C value, Gate1 observer, or execution oracle is run. The\ncompile profile is the public fixed synthetic profile in README.md. Neither\ncheck has Gate, semantic-membership, or certification authority. After exact\nbytes pass both construction checks, preserve the LLM owner's fallback choice with\n`intentir_replay_commit /output/replay.source`; restore only those bytes with\n`intentir_replay_rollback /output/replay.source`. Submit directly with\n`intentir_replay_submit /output/replay.source` or\n`intentir_replay_submit --committed`; no stdout marker is used. The writer\nindependently reruns the same\ncompiler-free ingress callable after submission, and formal Gate1 compiles c0.\n\nIn the isolated Codex workspace, invoke the equivalent closed callbacks as\n`python .agents/intentir_agent_tool.py replay_check` or\n`replay_compile_check`. After a successful public synthetic compile,\n`replay_ttir_inspect summary|raw|find|observer` exposes only the current Replay's\nown TTIR/fingerprint for focused debugging. These callbacks take no host path and\nnever expose Source, Source TTIR, Harness values, or Gate evidence. Read this file\nfor usage instead of probing the fixed client with an unrecognized tool name.\n\nCodex Replay episodes also install `work/replay_composer.py` and an empty\n`work/replay.composer.json`. The helper is optional and syntax-only: it does not\nread `input/`, J, C, pi, compiler output, or Gate evidence. Edit the plan and run\n`python work/replay_composer.py render` to atomically write\n`output/replay.source`. Its closed plan grammar is:\n\n```json\n{\n  \"protocol\": \"intentir.replay.syntax-composer.v1\",\n  \"frontend\": \"triton\",\n  \"nodes\": [\n    {\"id\": \"import0\", \"kind\": \"line\", \"text\": \"import triton\"},\n    {\n      \"id\": \"fn0\",\n      \"kind\": \"block\",\n      \"header\": \"def scrc_k0(...):\",\n      \"children\": [\n        {\"id\": \"body0\", \"kind\": \"line\", \"text\": \"...\"}\n      ]\n    },\n    {\n      \"id\": \"raw0\",\n      \"kind\": \"raw_block\",\n      \"lines\": [\"# exact agent-authored escape line\"]\n    }\n  ]\n}\n```\n\nUse frontend `triton`, `tilelang`, or `cuda`. Triton/TileLang blocks require an\nagent-authored header ending in `:`; CUDA blocks omit braces and the composer adds\nthem. Node IDs are stable source-map handles. Full-plan edits are allowed. For a\nsmall insertion or replacement, write exactly one node object to\n`work/replay.composer.node.json`, then run one of:\n\n```text\npython work/replay_composer.py insert-before TARGET\npython work/replay_composer.py insert-after TARGET\npython work/replay_composer.py append-child BLOCK\npython work/replay_composer.py replace TARGET\npython work/replay_composer.py delete TARGET\npython work/replay_composer.py move-before NODE ANCHOR\npython work/replay_composer.py move-after NODE ANCHOR\npython work/replay_composer.py move-child NODE BLOCK\n```\n\nEvery successful edit validates the complete tree and immediately renders exact\nReplay bytes. Replacement preserves the target ID; moves preserve the moved ID.\nUnknown syntax uses `raw_block`; direct editing of `output/replay.source` remains\nthe unrestricted raw escape. `status`, `checkpoint`, and `rollback` are also\navailable. The composer never chooses a target API, algorithm, expression, or\nrealization and has no ReplayCheck, Gate, or certification authority.\n",
+            "command": "/bin/bash -c \"sed -n '1,220p' input/TOOL.md\"",
+            "exit_code": 0,
+            "id": "item_18",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "changes": [
+              {
+                "kind": "update",
+                "path": "/workspace/output/replay.source"
+              }
+            ],
+            "id": "item_19",
+            "status": "in_progress",
+            "type": "file_change"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "changes": [
+              {
+                "kind": "update",
+                "path": "/workspace/output/replay.source"
+              }
+            ],
+            "id": "item_19",
+            "status": "completed",
+            "type": "file_change"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py replay_obligation_audit'",
+            "exit_code": null,
+            "id": "item_20",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "{\"audit_required\": true, \"authority\": \"exact current Replay bytes plus exact source-isolated pi projection; no Source, Gate evidence, inference, mapping, diagnosis, repair, or acceptance decision\", \"broadcast_obligations\": [], \"cross_region_order\": [], \"identity_materializations\": [], \"lexical_regions\": [], \"program_axes\": [{\"axis\": 0, \"domain_ref\": \"d0\"}], \"protocol\": \"intentir.replay-obligation-audit.v4\", \"route_extent_transforms\": [], \"source_nonempty_lines\": [{\"indent\": 0, \"line\": 1, \"text\": \"import tilelang.language as T\"}, {\"indent\": 0, \"line\": 3, \"text\": \"X0 = T.dynamic(\\\"x0\\\")\"}, {\"indent\": 0, \"line\": 6, \"text\": \"@T.prim_func\"}, {\"indent\": 0, \"line\": 7, \"text\": \"def scrc_k0(\"}, {\"indent\": 4, \"line\": 8, \"text\": \"p0: T.Tensor((X0, 16), \\\"float32\\\"),\"}, {\"indent\": 4, \"line\": 9, \"text\": \"p1: T.Tensor((X0,), \\\"float32\\\"),\"}, {\"indent\": 0, \"line\": 10, \"text\": \"):\"}, {\"indent\": 4, \"line\": 11, \"text\": \"with T.Kernel(X0, threads=c0) as d0:\"}, {\"indent\": 8, \"line\": 12, \"text\": \"input_local = T.alloc_local((16,), \\\"float32\\\")\"}, {\"indent\": 8, \"line\": 13, \"text\": \"output_local = T.alloc_local((1,), \\\"float32\\\")\"}, {\"indent\": 8, \"line\": 14, \"text\": \"for d1 in T.Parallel(16):\"}, {\"indent\": 12, \"line\": 15, \"text\": \"input_local[d1] = p0[d0, d1]\"}, {\"indent\": 8, \"line\": 16, \"text\": \"T.reduce_sum(input_local, output_local, dim=0)\"}, {\"indent\": 8, \"line\": 17, \"text\": \"p1[d0] = output_local[0]\"}], \"source_sha256\": \"b78f94920d7b9008f33523375043b0c12baddad464c12759fd2293a59ec8b927\", \"status\": \"pass\"}\n",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py replay_obligation_audit'",
+            "exit_code": 0,
+            "id": "item_20",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py submit_replay'",
+            "exit_code": null,
+            "id": "item_21",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "{\"authority\": \"diagnostic-only; no Replay source is generated or repaired\", \"compile\": {\"diagnostics\": [{\"anonymous_handles\": [], \"line\": null, \"path\": \"<synthetic-frontend-compile> ValueError: Invalid buffer scopes: local and local\", \"rule_code\": \"synthetic_frontend_compile_failed\"}], \"protocol\": \"intentir.scrc.replay-check.v15\", \"status\": \"fail\"}, \"ingress\": {\"diagnostic_progress\": {\"authority\": \"mechanical episode-local observation only; it neither edits Replay nor changes ingress or Gate1 membership\", \"replay_source_changed_since_previous_check\": true, \"same_rule_path_streak\": 0}, \"diagnostics\": [], \"protocol\": \"intentir.scrc.replay-check.v15\", \"status\": \"pass\"}, \"phase\": \"compile\", \"protocol\": \"intentir.codex-cli.replay-submit.v1\", \"status\": \"fail\"}\n",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py submit_replay'",
+            "exit_code": 1,
+            "id": "item_21",
+            "status": "failed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "id": "item_22",
+            "text": "The collective’s required scope pairing is now explicit from the compiler: its lane-shaped input must be a participant fragment and its scalar output local. This fragment carries the actual direct-loaded reduction operand (it is not an identity or representation-only transfer), while the one-element local preserves the distinct reduction realization before the final store.",
+            "type": "agent_message"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "changes": [
+              {
+                "kind": "update",
+                "path": "/workspace/output/replay.source"
+              }
+            ],
+            "id": "item_23",
+            "status": "in_progress",
+            "type": "file_change"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "changes": [
+              {
+                "kind": "update",
+                "path": "/workspace/output/replay.source"
+              }
+            ],
+            "id": "item_23",
+            "status": "completed",
+            "type": "file_change"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py replay_obligation_audit'",
+            "exit_code": null,
+            "id": "item_24",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py replay_obligation_audit'",
+            "exit_code": 0,
+            "id": "item_24",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py submit_replay'",
+            "exit_code": null,
+            "id": "item_25",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "{\"authority\": \"diagnostic-only; no Replay source is generated or repaired\", \"compile\": {\"diagnostics\": [{\"anonymous_handles\": [], \"line\": null, \"path\": \"<synthetic-frontend-compile> ValueError: Invalid buffer scopes: local.fragment and local\", \"rule_code\": \"synthetic_frontend_compile_failed\"}], \"protocol\": \"intentir.scrc.replay-check.v15\", \"status\": \"fail\"}, \"ingress\": {\"diagnostic_progress\": {\"authority\": \"mechanical episode-local observation only; it neither edits Replay nor changes ingress or Gate1 membership\", \"replay_source_changed_since_previous_check\": true, \"same_rule_path_streak\": 0}, \"diagnostics\": [], \"protocol\": \"intentir.scrc.replay-check.v15\", \"status\": \"pass\"}, \"phase\": \"compile\", \"protocol\": \"intentir.codex-cli.replay-submit.v1\", \"status\": \"fail\"}\n",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py submit_replay'",
+            "exit_code": 1,
+            "id": "item_25",
+            "status": "failed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "changes": [
+              {
+                "kind": "update",
+                "path": "/workspace/output/replay.source"
+              }
+            ],
+            "id": "item_26",
+            "status": "in_progress",
+            "type": "file_change"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "changes": [
+              {
+                "kind": "update",
+                "path": "/workspace/output/replay.source"
+              }
+            ],
+            "id": "item_26",
+            "status": "completed",
+            "type": "file_change"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py replay_obligation_audit'",
+            "exit_code": null,
+            "id": "item_27",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "{\"audit_required\": true, \"authority\": \"exact current Replay bytes plus exact source-isolated pi projection; no Source, Gate evidence, inference, mapping, diagnosis, repair, or acceptance decision\", \"broadcast_obligations\": [], \"cross_region_order\": [], \"identity_materializations\": [], \"lexical_regions\": [], \"program_axes\": [{\"axis\": 0, \"domain_ref\": \"d0\"}], \"protocol\": \"intentir.replay-obligation-audit.v4\", \"route_extent_transforms\": [], \"source_nonempty_lines\": [{\"indent\": 0, \"line\": 1, \"text\": \"import tilelang.language as T\"}, {\"indent\": 0, \"line\": 3, \"text\": \"X0 = T.dynamic(\\\"x0\\\")\"}, {\"indent\": 0, \"line\": 6, \"text\": \"@T.prim_func\"}, {\"indent\": 0, \"line\": 7, \"text\": \"def scrc_k0(\"}, {\"indent\": 4, \"line\": 8, \"text\": \"p0: T.Tensor((X0, 16), \\\"float32\\\"),\"}, {\"indent\": 4, \"line\": 9, \"text\": \"p1: T.Tensor((X0,), \\\"float32\\\"),\"}, {\"indent\": 0, \"line\": 10, \"text\": \"):\"}, {\"indent\": 4, \"line\": 11, \"text\": \"with T.Kernel(X0, threads=c0) as d0:\"}, {\"indent\": 8, \"line\": 12, \"text\": \"input_fragment = T.alloc_fragment((16,), \\\"float32\\\")\"}, {\"indent\": 8, \"line\": 13, \"text\": \"output_fragment = T.alloc_fragment((1,), \\\"float32\\\")\"}, {\"indent\": 8, \"line\": 14, \"text\": \"for d1 in T.Parallel(16):\"}, {\"indent\": 12, \"line\": 15, \"text\": \"input_fragment[d1] = p0[d0, d1]\"}, {\"indent\": 8, \"line\": 16, \"text\": \"T.reduce_sum(input_fragment, output_fragment, dim=0)\"}, {\"indent\": 8, \"line\": 17, \"text\": \"p1[d0] = output_fragment[0]\"}], \"source_sha256\": \"f26b10f338716c28880e8fb791670360135c38f0314f2e3941c822c29770a91f\", \"status\": \"pass\"}\n",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py replay_obligation_audit'",
+            "exit_code": 0,
+            "id": "item_27",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py submit_replay'",
+            "exit_code": null,
+            "id": "item_28",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "{\"authority\": \"diagnostic-only; no Replay source is generated or repaired\", \"compile\": {\"diagnostics\": [], \"protocol\": \"intentir.scrc.replay-check.v15\", \"status\": \"pass\"}, \"ingress\": {\"diagnostic_progress\": {\"authority\": \"mechanical episode-local observation only; it neither edits Replay nor changes ingress or Gate1 membership\", \"replay_source_changed_since_previous_check\": true, \"same_rule_path_streak\": 0}, \"diagnostics\": [], \"protocol\": \"intentir.scrc.replay-check.v15\", \"status\": \"pass\"}, \"phase\": \"compile\", \"protocol\": \"intentir.codex-cli.replay-submit.v1\", \"status\": \"pass\"}\n",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py submit_replay'",
+            "exit_code": 0,
+            "id": "item_28",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "id": "item_29",
+            "text": "Implemented [output/replay.source](/workspace/output/replay.source).\n\nThe required obligation audit and transactional submission both pass, including ingress and synthetic compilation checks. No Gate or certification claim is made.",
+            "type": "agent_message"
+          },
+          "type": "item.completed"
+        },
+        {
+          "type": "turn.completed",
+          "usage": {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 413952,
+            "input_tokens": 465937,
+            "output_tokens": 5507,
+            "reasoning_output_tokens": 3140
+          }
+        }
+      ],
+      "model_segments": 7,
+      "protocol": "intentir.codex-cli.agent-runtime.v3",
+      "resumed": false,
+      "stderr": "Reading additional input from stdin...\n",
+      "thread_id": "019fb48a-055a-7e40-ab14-e607aa7ccda2",
+      "tool_actions": 23,
+      "usage": {
+        "cache_write_input_tokens": 0,
+        "cached_input_tokens": 413952,
+        "input_tokens": 465937,
+        "output_tokens": 5507,
+        "reasoning_output_tokens": 3140
+      }
+    }
+  ]
+}

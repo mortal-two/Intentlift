@@ -1,6 +1,6 @@
 # Task 24：J 主导的 π_min 与三前端 Episode-Local Composer Replay
 
-> 状态：`P5_ADD2D_CROSS_FRONTEND_CERTIFIED_COMPLEX_CASE_PENDING`（2026-07-31）。
+> 状态：`P5_TILELANG_REDUCTION_CERTIFIED_COMPOSER_AB_PENDING`（2026-07-31）。
 >
 > 定位：Task 15/Task 11 的 Replay 构造机制升级，以及 Task 23 多前端实证的真实 closure 执行线。
 > 本任务不接管 production backend；backend 仍在 SCRC 后只消费 accepted `J+C`。
@@ -153,6 +153,31 @@ Replay，`gpt-5.6-sol high`，Mask-J配置开启）：
   1个CLI turn、6个provider segments、6个tool actions、130.303秒；
 - CUDA C-like Composer在两臂均安装但`used=false`。因此当前证明的是共享Composer机制不妨碍两种
   原生前端closure，尚未证明它带来效率收益；下一阶段必须转向row_sum/gather等结构化case。
+
+### Pilot E：TileLang reduction纵切与Composer负结果
+
+`tilelang:row_sum / .trellis/tasks/07-31-j-driven-replay-composer-24/runs/tilelang_row_sum/run-001`
+（Codex Lift + Codex Replay，`gpt-5.6-sol high`，Mask-J开启）：
+
+- 最终为`SCRC_CERTIFIED`，accepted attempt 3；3个formal Gate1 rounds、3次Lift episode、3次
+  normal Replay episode，accepted round另有1次独立masked Replay；
+- 三轮J和C保持相同，前两轮的PTX/数学语义相容，但TileLang hard TIR structure/topology/operations
+  不闭合：Source使用`T.copy + T.region`物化一行，Replay使用显式逐元素parallel loop；
+- Gate1 feedback只使Lift调整π中的materialization ownership/refinement。第三轮fresh Replay根据当前
+  exact J+π改用`T.copy`，Source/Replay TIR digest一致，normal Gate1 hard pass；
+- Gate2三边均通过：Source--Replay最大误差0，Source--J与Replay--J最大误差均
+  `2.384185791015625e-07`，在声明的f32 policy内；
+- masked臂与normal臂物理隔离；它能从π拓扑猜测存在load/materialize/reduce/store阶段并产出可编译
+  reduction，但缺少exact J后在TIR结构、坐标使用、PTX collective和ABI上均不闭合，故
+  `J_NECESSARY=proved`。这证明J对exact语义必要，不声称π零统计信息；
+- 三轮normal Replay分别使用7、6、6个provider/model segment lower bounds，episode elapsed分别
+  241.689、168.446、123.484秒；accepted masked为14个segments、414.276秒。这里的segments不是
+  raw HTTP调用，`call_budget.replay_physical_calls=4`只计3次normal+1次masked Replay执行；
+- 三轮normal与masked的Composer都`installed=true, used=false`。各episode仍反复整文件写
+  `output/replay.source`，第一轮5次submit失败后通过、第二轮3次失败后通过、第三轮2次失败后通过；
+  因此这是Composer当前“可选但无效用”的真实负结果，不能作为提速证据；
+- 下一步必须以accepted exact artifact做fresh `composer off / preferred` A/B。若preferred分支仍不
+  使用或成本不降，则继续收缩/重构Composer，而不是扩大kernel模板。
 
 ## 3. 交付物
 

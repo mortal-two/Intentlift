@@ -1,0 +1,28 @@
+{
+  "c0": {
+    "c0": 128
+  },
+  "case_id": "tilelang:row_sum",
+  "frontend": "tilelang",
+  "grid": [
+    16,
+    1,
+    1
+  ],
+  "lift_backend": "codex",
+  "lift_workflow": "single",
+  "model": "gpt-5.6-sol",
+  "observer_profile": "tilelang_tir_semantic_structure@tilelang-tir-semantic-structure-ptx-diagnostic-v4",
+  "provider": "gpt-5.6-sol",
+  "q_policy": "intentir.gate2.default.v1",
+  "reasoning_effort": "high",
+  "replay_backend": "codex",
+  "replay_model": "gpt-5.6-sol",
+  "replay_provider": "gpt-5.6-sol",
+  "replay_reasoning_effort": "high",
+  "run_masked_j": true,
+  "source_to_opaque": {
+    "inp_handle": "p0",
+    "out_handle": "p1"
+  }
+}

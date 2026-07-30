@@ -1,0 +1,13 @@
+{
+  "constexpr_parameters": [],
+  "frontend": "tilelang",
+  "function": "main",
+  "origin_location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/row_sum.py",
+  "parameters": [
+    "inp_handle",
+    "out_handle"
+  ],
+  "protocol": "intentir.scrc.frontend-source-projection.v1",
+  "source_kind": "materialized_tir",
+  "source_location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/row_sum.py"
+}
