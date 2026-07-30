@@ -45,8 +45,8 @@ from .prompt import SCHEMA as _INTENTIR_OPERATION_REFERENCE
 from .scrc_schema import scrc_lift_core_json_schema
 
 
-CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v20"
-CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v78"
+CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v21"
+CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v79"
 CODEX_CLI_TURN_TIMEOUT_SECONDS = 900.0
 
 _FEEDBACK_CATEGORY_NAMES = (
@@ -80,11 +80,12 @@ handles and never copy Source identifiers into the artifact.
 Organize your own scratch files or helper edits under work/ however you find
 efficient; no host-prescribed planner, fragment layout, ledger, or builder is
 required. The final candidate bytes must be entirely your work. Run
-`python .agents/intentir_agent_tool.py candidate_check` after a meaningful complete
-draft, then run `python .agents/intentir_agent_tool.py source_reconcile`. Repair the
-exact diagnostics and finish only when both report PASS. CandidateCheck remains
-source-free; source_reconcile only compares your already-authored closed compiled
-obligations with the immutable Source TTIR observation. The host independently
+`python .agents/intentir_agent_tool.py submit_candidate` after a meaningful complete
+draft. This transaction first runs the source-free CandidateCheck and then the
+reject-only SourceReconcile on the same exact bytes. Repair the returned diagnostics
+and invoke it again; once it returns PASS, stop the turn immediately. CandidateCheck
+remains source-free; SourceReconcile only compares your already-authored closed
+compiled obligations with the immutable Source TTIR observation. The host independently
 reruns Decode and TypeCheck, then starts fresh
 source-blind Replay and the formal gates. Do not claim certification.
 """
@@ -321,9 +322,11 @@ def _codex_input_files(
             "feedback_category_NAME.json required by the current hypothesis; "
             "feedback_detail.json contains non-observer diagnostics and never "
             "duplicates the previous artifact.\n"
-            "After CandidateCheck passes, run the separate source_reconcile tool. It "
+            "Use the single `submit_candidate` transaction after a complete draft. It "
+            "runs CandidateCheck and then SourceReconcile on the same exact bytes; it "
             "only compares occurrence obligations already authored by your pi with "
-            "the immutable Source TTIR observer; it never supplies a field or repair.\n"
+            "the immutable Source TTIR observer and never supplies a field or repair. "
+            "When it returns PASS, stop immediately so the host can run formal gates.\n"
         ),
         "artifact_contract.json": json.dumps(
             contract,
@@ -352,23 +355,23 @@ input/feedback_detail.json contains exact non-observer diagnostics. The previous
 artifact already exists at output/candidate.json and is never duplicated in input.
 Inspect Source/TTIR only where needed, then revise the complete model-authored
 J/C/pi in place. Treat feedback as a compiler counterexample, not as a semantic patch.
-Run `python .agents/intentir_agent_tool.py candidate_check` and finish only after
-the current exact candidate passes. The host alone reruns the checks and gates.
+Run `python .agents/intentir_agent_tool.py submit_candidate` and finish immediately
+after the current exact candidate passes. The host alone reruns the checks and gates.
 """
 
 _CANDIDATE_CHECK_CONTINUATION_PROMPT = """The host submission preflight rejected the current exact candidate bytes.
 Read input/candidate_check.json and repair output/candidate.json in this same
 thread. Make coordinated J/C/pi changes when required. Rerun
-`python .agents/intentir_agent_tool.py candidate_check` and finish only after the
-complete candidate passes. CandidateCheck is diagnostic-only.
+`python .agents/intentir_agent_tool.py submit_candidate` and finish immediately
+after the complete candidate passes. The transaction is diagnostic-only.
 """
 
 _SOURCE_RECONCILE_CONTINUATION_PROMPT = """The source-aware occurrence preflight rejected the current exact candidate bytes.
 Read input/source_reconcile.json and revise only the model-authored J/C/pi facts whose
 closed compiled obligations disagree with the immutable Source TTIR observation.
-This diagnostic supplies no artifact field or repair. Rerun candidate_check and
-source_reconcile, and finish only after both pass. Formal TypeCheck, Replay, and
-Gate1 remain external.
+This diagnostic supplies no artifact field or repair. Rerun
+`python .agents/intentir_agent_tool.py submit_candidate` and finish immediately
+after it passes. Formal TypeCheck, Replay, and Gate1 remain external.
 """
 
 
@@ -637,9 +640,6 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
             )
             return check
 
-        def candidate_check_tool() -> Mapping[str, Any]:
-            return check_current_candidate(trigger="agent_tool")
-
         def reconcile_current_candidate(*, trigger: str) -> dict[str, Any]:
             nonlocal candidate_text, last_checked_good
             if candidate_text is None:
@@ -692,26 +692,39 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                 last_checked_good = candidate_text
             return result
 
-        def source_reconcile_tool() -> Mapping[str, Any]:
-            candidate_check = check_current_candidate(
-                trigger="source_reconcile_candidate_check"
-            )
+        def submit_candidate_tool() -> Mapping[str, Any]:
+            """Run both reject-only preflights as one exact-byte transaction.
+
+            CandidateCheck and SourceReconcile retain separate authority and
+            diagnostics.  This wrapper only removes the model-facing sequencing
+            overhead; the host still reruns both checks after the CLI turn.
+            """
+
+            candidate_check = check_current_candidate(trigger="submit_candidate")
             if candidate_check["status"] != "pass":
                 return {
-                    "protocol": SOURCE_TTIR_RECONCILE_PROTOCOL,
+                    "protocol": "intentir.codex-cli.lift-submit.v1",
                     "status": "fail",
-                    "applicable": False,
-                    "diagnostics": [
-                        {
-                            "rule_code": "candidate_check_required",
-                            "path": "<candidate>",
-                            "anonymous_handles": [],
-                            "observed_refs_or_types": [],
-                            "line": None,
-                        }
-                    ],
+                    "phase": "candidate_check",
+                    "candidate_check": candidate_check,
+                    "source_reconcile": None,
+                    "authority": (
+                        "diagnostic-only; no artifact field is generated or repaired"
+                    ),
                 }
-            return reconcile_current_candidate(trigger="agent_tool")
+            source_reconcile = reconcile_current_candidate(
+                trigger="submit_candidate"
+            )
+            return {
+                "protocol": "intentir.codex-cli.lift-submit.v1",
+                "status": source_reconcile["status"],
+                "phase": "source_reconcile",
+                "candidate_check": candidate_check,
+                "source_reconcile": source_reconcile,
+                "authority": (
+                    "diagnostic-only; no artifact field is generated or repaired"
+                ),
+            }
 
         def host_preflight(
             *, trigger: str
@@ -725,8 +738,7 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
         bridge = CodexCLIToolBridge(
             workspace.scratch_dir / CODEX_CLI_TOOL_BRIDGE_ROOT_NAME,
             {
-                "candidate_check": candidate_check_tool,
-                "source_reconcile": source_reconcile_tool,
+                "submit_candidate": submit_candidate_tool,
             },
         )
         try:
