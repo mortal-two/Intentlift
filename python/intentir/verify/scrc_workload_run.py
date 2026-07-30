@@ -105,21 +105,31 @@ LIFT_SEMANTIC_PROBE_SEED = 2026073001
 
 @dataclass(frozen=True)
 class RecordedReplayWriterGroup:
-    """One formal Gate1 round's independent source-blind Replay writers."""
+    """One round's independent normal writers and optional masked writer."""
 
-    writers: tuple[RecordedReplayWriter, ...]
+    normal_writers: tuple[RecordedReplayWriter, ...]
+    masked_writer: RecordedReplayWriter | None = None
 
     def __post_init__(self) -> None:
-        if len(self.writers) < 2:
-            raise ValueError("Replay writer group requires fan-out width >= 2")
-        if len({id(writer) for writer in self.writers}) != len(self.writers):
+        if not self.normal_writers:
+            raise ValueError("Replay writer group requires at least one normal writer")
+        all_writers = (
+            *self.normal_writers,
+            *((self.masked_writer,) if self.masked_writer is not None else ()),
+        )
+        if len(all_writers) < 2:
+            raise ValueError("Replay writer group requires fan-out or a masked writer")
+        if len({id(writer) for writer in all_writers}) != len(all_writers):
             raise ValueError("Replay writer group members must be independent")
 
     @property
     def records(self) -> tuple[ReplayGeneration | ReplayAttempt, ...]:
         return tuple(
             record
-            for writer in self.writers
+            for writer in (
+                *self.normal_writers,
+                *((self.masked_writer,) if self.masked_writer is not None else ()),
+            )
             for record in writer.records
         )
 
@@ -187,14 +197,23 @@ def _build_frontend_gate1_runner(
     *,
     compiler: Any,
     writer: Any,
+    masked_writer: Any | None,
     config: Gate1Config,
 ) -> Any:
     # Keep the long-standing Triton construction seam available to callers and
     # tests; native frontends use the public capability registry.
     if frontend is Frontend.TRITON:
-        return Gate1Runner(compiler=compiler, writer=writer, config=config)
+        return Gate1Runner(
+            compiler=compiler,
+            writer=writer,
+            masked_writer=masked_writer,
+            config=config,
+        )
     return frontend_gate1_capability(frontend).build_runner(
-        compiler=compiler, writer=writer, config=config
+        compiler=compiler,
+        writer=writer,
+        masked_writer=masked_writer,
+        config=config,
     )
 
 
@@ -902,6 +921,7 @@ def recheck_prepared_workload_gate1(
             frontend,
             compiler=_new_frontend_compiler(frontend),
             writer=writer,
+            masked_writer=None,
             config=Gate1Config(run_masked_j=False),
         )
     ).run(canonical, prepared.request)
@@ -990,11 +1010,25 @@ def _build_workload_runtime(
             )
             for _ in range(replay_width)
         )
+        masked_writer = (
+            _new_replay_writer(
+                replay_backend,
+                provider=effective_replay_provider,
+                effort=effective_replay_effort,
+                frontend=frontend,
+                stop_requested=stop_requested,
+            )
+            if run_masked_j
+            else None
+        )
         writer_evidence: RecordedReplayEvidenceWriter
-        if replay_width == 1:
+        if replay_width == 1 and masked_writer is None:
             writer_evidence = round_writers[0]
         else:
-            writer_evidence = RecordedReplayWriterGroup(round_writers)
+            writer_evidence = RecordedReplayWriterGroup(
+                normal_writers=round_writers,
+                masked_writer=masked_writer,
+            )
         writers.append(writer_evidence)
         return BoundGate1Adapter(
             _build_frontend_gate1_runner(
@@ -1005,6 +1039,7 @@ def _build_workload_runtime(
                     if replay_width == 1
                     else round_writers
                 ),
+                masked_writer=masked_writer,
                 config=Gate1Config(run_masked_j=run_masked_j),
             )
         )
@@ -1810,19 +1845,17 @@ def _save_attempt_evidence(
             if attempt.gate1 is None:
                 raise ValueError("Replay writer fan-out lacks Gate1 evidence")
             selected = attempt.gate1.selected_normal_index
-            if not 0 <= selected < len(writer.writers):
+            if not 0 <= selected < len(writer.normal_writers):
                 raise ValueError("Gate1 selected Replay index is out of range")
-            selected_records = list(writer.writers[selected].records)
+            selected_records = list(writer.normal_writers[selected].records)
             for record_index, record in enumerate(selected_records):
                 prefix = (
                     "replay"
                     if record_index == 0
-                    else "masked_j_replay"
-                    if record_index == 1
                     else f"replay_selected_extra_{record_index + 1:02d}"
                 )
                 record_entries.append((prefix, record))
-            for writer_index, candidate_writer in enumerate(writer.writers):
+            for writer_index, candidate_writer in enumerate(writer.normal_writers):
                 if writer_index == selected:
                     continue
                 for record_index, record in enumerate(candidate_writer.records):
@@ -1833,6 +1866,10 @@ def _save_attempt_evidence(
                             record,
                         )
                     )
+            if writer.masked_writer is not None:
+                for record_index, record in enumerate(writer.masked_writer.records):
+                    suffix = "" if record_index == 0 else f"_{record_index + 1:02d}"
+                    record_entries.append((f"masked_j_replay{suffix}", record))
             if not record_entries and attempt.gate1.normal.generation is not None:
                 record_entries.append(
                     ("replay", attempt.gate1.normal.generation)
@@ -2031,14 +2068,39 @@ def save_workload_failure(
         ):
             call_dir = run_dir / f"gate1-call-{writer_index:02d}"
             call_dir.mkdir()
-            for record_index, record in enumerate(writer.records, start=1):
-                prefix = (
-                    "replay"
-                    if record_index == 1
-                    else "masked_j_replay"
-                    if record_index == 2
-                    else f"replay_extra_{record_index:02d}"
-                )
+            record_entries: list[
+                tuple[str, ReplayGeneration | ReplayAttempt]
+            ] = []
+            if isinstance(writer, RecordedReplayWriterGroup):
+                for normal_index, normal_writer in enumerate(
+                    writer.normal_writers, start=1
+                ):
+                    for record_index, record in enumerate(
+                        normal_writer.records, start=1
+                    ):
+                        suffix = (
+                            "" if record_index == 1 else f"_{record_index:02d}"
+                        )
+                        record_entries.append(
+                            (f"normal_{normal_index:02d}{suffix}", record)
+                        )
+                if writer.masked_writer is not None:
+                    for record_index, record in enumerate(
+                        writer.masked_writer.records, start=1
+                    ):
+                        suffix = (
+                            "" if record_index == 1 else f"_{record_index:02d}"
+                        )
+                        record_entries.append((f"masked_j{suffix}", record))
+            else:
+                for record_index, record in enumerate(writer.records, start=1):
+                    prefix = (
+                        "replay"
+                        if record_index == 1
+                        else f"replay_extra_{record_index:02d}"
+                    )
+                    record_entries.append((prefix, record))
+            for prefix, record in record_entries:
                 exact_name = (
                     f"{prefix}.py"
                     if isinstance(record, ReplayGeneration)

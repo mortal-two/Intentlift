@@ -111,6 +111,24 @@ coverage.
   compile worker imports the module.
 - Neither compiler path launches a kernel during Gate1.
 
+## Episode-local syntax Composer
+
+Codex Replay v33 installs the same source-neutral Composer core in each fresh
+Triton, TileLang or CUDA workspace. The only frontend profile choice is
+Python-like indentation (`triton`, `tilelang`) versus C-like braces (`cuda`). The
+core receives only agent-authored `line/block/raw_block` nodes and local edit
+commands; it does not import artifact models or read `J`, `C`, `pi`, Source,
+compiler output or Gate evidence, and it contains no op-to-API, realization-to-
+skeleton or kernel-family mapping.
+
+Composer plan, source map, checkpoint and telemetry are proof-irrelevant episode
+state. The accepted object remains the exact complete Replay source after the
+existing frontend ingress, compile and Gate checks. Direct source authoring and
+`raw_block` remain escape paths, so extending frontend syntax does not require a
+new host grammar. Normal and Mask-J arms use distinct writer/workspace/session/
+Composer instances; neither arm receives the other's source, diagnostics or
+checkpoint.
+
 ## Gate2 execution
 
 The shared three-edge Gate2 judge can receive native CUDA or TileLang runners.

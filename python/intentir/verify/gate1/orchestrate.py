@@ -68,6 +68,7 @@ class Gate1ExecutionResult:
     observer_profile: ObserverProfile = TRITON_OBSERVER_PROFILE
     normal_candidates: tuple[Gate1ArmEvidence, ...] = ()
     selected_normal_index: int = 0
+    masked_j_independent_writer: bool | None = None
 
     @property
     def passed(self) -> bool:
@@ -145,6 +146,17 @@ class Gate1ExecutionResult:
             ),
             "normal": arm(self.normal),
             "masked_j": arm(self.masked_j),
+            "masked_j_isolation": {
+                "independent_writer": self.masked_j_independent_writer,
+                "separate_generate_call": (
+                    True if self.masked_j_independent_writer else None
+                ),
+                "fresh_session_evidence": (
+                    "recorded by the selected Replay backend trajectory"
+                    if self.masked_j_independent_writer
+                    else None
+                ),
+            },
             "llm_calls": {
                 "normal": self.normal_calls,
                 "masked_j": self.masked_j_calls,
@@ -405,6 +417,7 @@ class Gate1Runner:
         *,
         compiler: TritonCompiler,
         writer: ReplayWriter | tuple[ReplayWriter, ...],
+        masked_writer: ReplayWriter | None = None,
         comparator: TTIRComparator | None = None,
         config: Gate1Config | None = None,
     ) -> None:
@@ -414,10 +427,18 @@ class Gate1Runner:
             raise ValueError("Gate1 requires at least one Replay writer")
         if len({id(item) for item in writers}) != len(writers):
             raise ValueError("Gate1 Replay fan-out requires fresh independent writers")
+        self.config = config or Gate1Config()
+        if self.config.run_masked_j:
+            if masked_writer is None:
+                raise ValueError("masked-J requires a fresh independent Replay writer")
+            if id(masked_writer) in {id(item) for item in writers}:
+                raise ValueError("masked-J writer must differ from every normal writer")
+        elif masked_writer is not None:
+            raise ValueError("masked-J writer was provided while the audit is disabled")
         self.writers = writers
         self.writer = writers[0]
+        self.masked_writer = masked_writer
         self.comparator = comparator or TTIRComparator()
-        self.config = config or Gate1Config()
 
     def _arm(
         self,
@@ -628,9 +649,10 @@ class Gate1Runner:
         masked_calls = 0
         status = Gate1Status.REPLAY_CLOSED
         if self.config.run_masked_j:
+            assert self.masked_writer is not None
             masked_calls = 1
             masked_evidence = self._arm(
-                self.writers[selected_normal_index],
+                self.masked_writer,
                 artifact,
                 source_fingerprint,
                 replay_case,
@@ -647,6 +669,9 @@ class Gate1Runner:
             masked_calls,
             normal_candidates=normal_candidates,
             selected_normal_index=selected_normal_index,
+            masked_j_independent_writer=(
+                True if self.config.run_masked_j else None
+            ),
         )
 
 

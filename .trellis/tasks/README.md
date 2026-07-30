@@ -16,7 +16,7 @@ Triton、TileLang和CUDA。production backend仍只在SCRC后消费J+C。Task 23
 - [Task 11：SCRC v4 的 28-Kernel 有界并行全闭合](07-24-scrc-v4-full-closure-11/task.md)（执行中；闭合主线）
 - [Task 15：模型级输入到 Compiler-Observed Lift / Closed J / Source-Blind Replay 的最终闭合系统](07-29-compiler-observed-scrc-closure-15/task.md)（设计已建立；formal closure尚未启动）
 - [Task 23：论文多前端接入与可复用 Lowering 最小实证](07-31-paper-multifrontend-evidence-23/task.md)（执行中；最多六次 fresh episode）
-- [Task 24：J 主导的 π_min 与三前端 Episode-Local Composer Replay](07-31-j-driven-replay-composer-24/task.md)（P0；Replay机制重构）
+- [Task 24：J 主导的 π_min 与三前端 Episode-Local Composer Replay](07-31-j-driven-replay-composer-24/task.md)（P1--P4实现完成；P5真实provider纵切待执行）
 
 ## 本轮已归档任务
 

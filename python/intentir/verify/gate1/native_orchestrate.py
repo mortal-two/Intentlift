@@ -157,14 +157,23 @@ class CudaGate1Runner:
         *,
         compiler: CudaCompiler,
         writer: ReplayWriter | tuple[ReplayWriter, ...],
+        masked_writer: ReplayWriter | None = None,
         comparator: PTXComparator | None = None,
         config: Gate1Config | None = None,
     ) -> None:
         self.compiler = compiler
-        self.writers = _replay_writers(writer)
-        self.writer = self.writers[0]
-        self.comparator = comparator or PTXComparator()
         self.config = config or Gate1Config()
+        self.writers = _replay_writers(writer)
+        if self.config.run_masked_j:
+            if masked_writer is None:
+                raise ValueError("masked-J requires a fresh independent Replay writer")
+            if id(masked_writer) in {id(item) for item in self.writers}:
+                raise ValueError("masked-J writer must differ from every normal writer")
+        elif masked_writer is not None:
+            raise ValueError("masked-J writer was provided while the audit is disabled")
+        self.writer = self.writers[0]
+        self.masked_writer = masked_writer
+        self.comparator = comparator or PTXComparator()
 
     def _fingerprint(
         self,
@@ -316,9 +325,10 @@ class CudaGate1Runner:
         masked_evidence = None
         masked_calls = 0
         if self.config.run_masked_j:
+            assert self.masked_writer is not None
             masked_calls = 1
             masked_evidence = self._arm(
-                self.writers[selected_normal_index],
+                self.masked_writer,
                 artifact,
                 source_fingerprint,
                 source_case,
@@ -336,6 +346,9 @@ class CudaGate1Runner:
             observer_profile=CUDA_OBSERVER_PROFILE,
             normal_candidates=normal_candidates,
             selected_normal_index=selected_normal_index,
+            masked_j_independent_writer=(
+                True if self.config.run_masked_j else None
+            ),
         )
 
 
@@ -345,14 +358,23 @@ class TileLangGate1Runner:
         *,
         compiler: TileLangCompiler,
         writer: ReplayWriter | tuple[ReplayWriter, ...],
+        masked_writer: ReplayWriter | None = None,
         comparator: TileLangComparator | None = None,
         config: Gate1Config | None = None,
     ) -> None:
         self.compiler = compiler
-        self.writers = _replay_writers(writer)
-        self.writer = self.writers[0]
-        self.comparator = comparator or TileLangComparator()
         self.config = config or Gate1Config()
+        self.writers = _replay_writers(writer)
+        if self.config.run_masked_j:
+            if masked_writer is None:
+                raise ValueError("masked-J requires a fresh independent Replay writer")
+            if id(masked_writer) in {id(item) for item in self.writers}:
+                raise ValueError("masked-J writer must differ from every normal writer")
+        elif masked_writer is not None:
+            raise ValueError("masked-J writer was provided while the audit is disabled")
+        self.writer = self.writers[0]
+        self.masked_writer = masked_writer
+        self.comparator = comparator or TileLangComparator()
 
     def _fingerprint(
         self,
@@ -488,9 +510,10 @@ class TileLangGate1Runner:
         masked_evidence = None
         masked_calls = 0
         if self.config.run_masked_j:
+            assert self.masked_writer is not None
             masked_calls = 1
             masked_evidence = self._arm(
-                self.writers[selected_normal_index],
+                self.masked_writer,
                 artifact,
                 source_fingerprint,
                 source_case,
@@ -508,6 +531,9 @@ class TileLangGate1Runner:
             observer_profile=TILELANG_OBSERVER_PROFILE,
             normal_candidates=normal_candidates,
             selected_normal_index=selected_normal_index,
+            masked_j_independent_writer=(
+                True if self.config.run_masked_j else None
+            ),
         )
 
 

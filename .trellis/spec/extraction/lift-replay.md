@@ -385,8 +385,8 @@ ReplayLLM(J,pi,MaskC(C);U_f) -> complete source R_f
 
 当前 packet protocol 为 `intentir.scrc.replay-input.v2`；Triton 公共上下文直接由当前固定字段给出，
 不再附带 context version、SHA 或 receipt 门禁。source-aware Codex/MiniSWE Lift 的当前 knowledge receipt 分别为
-`intentir.lift-knowledge.v70 / intentir.lift-knowledge.v65`，source-blind MiniSWE/Codex Replay backend 为
-`minisweagent.intentir-replay.v30 / openai.codex-cli.intentir-replay.v28`。这些版本必须随 fresh run 原样记录；旧 packet/context/knowledge
+`intentir.lift-knowledge.v89 / intentir.lift-knowledge.v67`，source-blind MiniSWE/Codex Replay backend 为
+`minisweagent.intentir-replay.v31 / openai.codex-cli.intentir-replay.v33`。这些版本必须随 fresh run 原样记录；旧 packet/context/knowledge
 evidence 不因实现升级而被重判；fresh Replay 只做当前字段的结构和 source-isolation 检查。
 
 Replay v28把一个formal round保持为同一个fresh、单writer、source-blind coding episode，总active
@@ -395,6 +395,13 @@ Replay源码查询其自身TTIR/fingerprint。累计provider上下文超过阈�
 同一workspace内更换transport thread；新thread只重读exact packet、当前Replay bytes与closed host
 diagnostic，不接收语义摘要、旧episode、Source或Gate。该rollover不复用跨round Replay，也不增加
 认证输入。
+
+Codex Replay v33在v32的packet-first coding-agent入口上增加proof-irrelevant、episode-local
+syntax composer：共享core只渲染agent作者化的`line/block/raw_block`，支持stable ID局部
+insert/replace/delete/move、source map与plan/source/map一致的checkpoint/rollback；Triton、TileLang、
+CUDA profile只决定Python-like或C-like排版。Composer不读取packet，不含J/π到API、算法或kernel
+template的映射，也不进入TypeCheck、Gate或backend。normal与Mask-J使用不同writer；fresh session的
+最终证据仍由各自Replay backend trajectory记录，而不是由Composer自报。
 
 Replay v30/v26 完整执行 v10 `route_extent_transforms` 的 exact packet、critical ledger、obligation audit 与
 source-blind static ingress；它只拒绝缺失 closed floor/ceil-div spelling，不判断 target-local Gate1

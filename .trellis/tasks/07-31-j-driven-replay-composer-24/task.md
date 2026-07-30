@@ -1,6 +1,6 @@
 # Task 24：J 主导的 π_min 与三前端 Episode-Local Composer Replay
 
-> 状态：`P0_DESIGN_COMMITTED`（2026-07-31）。
+> 状态：`P1_P4_IMPLEMENTED_P5_REAL_PROVIDER_PENDING`（2026-07-31）。
 >
 > 定位：Task 15/Task 11 的 Replay 构造机制升级，以及 Task 23 多前端实证的真实 closure 执行线。
 > 本任务不接管 production backend；backend 仍在 SCRC 后只消费 accepted `J+C`。
@@ -60,6 +60,25 @@ Composer只存在于`FreshAgent_f`内部；最终提交物仍是完整`replay.so
 - “composer”在旧文档中被一概禁止，未区分semantic lowerer与syntax-only editing mechanism；
 - 三前端有compile/observe，但没有同一Composer core上的真实provider closure证据；
 - Task 15轨迹显示大量时间/token耗在重复构造与修整源码，不是check/compile本身。
+
+### 2.3 当前实现检查点（尚无closure claim）
+
+- `python/intentir/verify/gate1/replay_composer.py`已实现共享stdlib-only core：closed
+  `line/block/raw_block`、stable ID、局部insert/replace/delete/move、Python/C-like render、source map、
+  bounded state/audit以及plan/source/map一致的checkpoint/rollback；
+- Codex Replay backend已升为`openai.codex-cli.intentir-replay.v33`，每个fresh workspace安装自己的
+  Composer；agent仍可直接作者化完整source，两条路径都进入原有exact ingress/compile/submit；
+- Composer失败或未使用不改变Replay接受集合；host checkpoint/diagnostic map只作非权威辅助；
+- Triton/TileLang/CUDA共享同一core，profile只选择Python-like或C-like排版；
+- normal与Mask-J由不同writer对象发起，正式workload runtime会为每个formal round另外创建masked
+  writer，证据按normal candidate与masked物理角色分开保存；
+- 每份Codex trajectory附带`pi-min.ownership-receipt.v1`，它只重述已经通过的strict artifact decode、
+  dependent TypeCheck与closed Replay packet事实，不是第二个validator或新artifact；
+- 已完成不调用provider的三前端render、全部八种局部edit、source-map、checkpoint/rollback、copied CLI、
+  stdlib-only import与writer identity smoke；独立只读审计未发现J/π读取、target recipe、kernel template或
+  Gate bypass；
+- 真实TileLang/CUDA provider closure与Composer/direct-source效率比较尚未运行，因此本检查点不声称
+  Gate1、Gate2或SCRC closure。
 
 ## 3. 交付物
 
@@ -211,4 +230,3 @@ compile-only、dataset membership、provider写出源码、ReplayCheck PASS或PT
 最终原则：
 
 > **给agent更好的手，而不是在宿主里替agent写答案；用J决定语义、π_min约束realization、Composer稳定编辑，最终仍让Gate1/Gate2裁决。**
-

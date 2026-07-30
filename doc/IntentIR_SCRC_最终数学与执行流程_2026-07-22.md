@@ -485,7 +485,11 @@ dependent checking 夸写成 Source topology 的形式证明。
 
 当前合并协议为 `artifact.v12 / decode.v17 / typecheck.v29 / candidate-check.v1 / replay-check.v14`；
 Replay packet envelope 为 `replay-input.v2`；Triton 公共上下文由当前固定公开字段直接给出，不再使用 context version、SHA 或 receipt 作为运行门禁；
-Codex/MiniSWE Lift knowledge 为 v89/v67，MiniSWE Replay backend 为 v31，Codex Replay backend 为 v32。
+Codex/MiniSWE Lift knowledge 为 v89/v67，MiniSWE Replay backend 为 v31，Codex Replay backend 为 v33。
+Codex Replay v33只升级Replay episode内部的构造能力：安装不读取packet的syntax-only Composer，
+支持stable node ID、局部编辑、source map与exact checkpoint/rollback；normal与Mask-J使用独立
+writer/session/ workspace。Composer telemetry不进入artifact、TypeCheck、Gate或certificate，最终
+接受集合仍只由exact Replay ingress、compile、Gate1与Gate2决定。
 v30/v26 完整执行 authored route extent transform 合同：将其纳入 `critical_facts.v4`、
 `replay-obligation-audit.v3` 与 source-blind static ingress；只检查 closed floor/ceil-div spelling，
 不生成 relation/code，也不替代 Gate1；单独存在该 relation 时也可用可选 audit 并置当前 exact Replay bytes；audit 不作为 ReplayCheck、compile 或 Gate1 前置条件。

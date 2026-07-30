@@ -138,13 +138,22 @@ class CuteGate1Runner:
         *,
         compiler: CuteCompiler,
         writer: ReplayWriter,
+        masked_writer: ReplayWriter | None = None,
         comparator: CuteComparator | None = None,
         config: Gate1Config | None = None,
     ) -> None:
         self.compiler = compiler
-        self.writer = writer
-        self.comparator = comparator or CuteComparator()
         self.config = config or Gate1Config()
+        if self.config.run_masked_j:
+            if masked_writer is None:
+                raise ValueError("masked-J requires a fresh independent Replay writer")
+            if masked_writer is writer:
+                raise ValueError("masked-J writer must differ from the normal writer")
+        elif masked_writer is not None:
+            raise ValueError("masked-J writer was provided while the audit is disabled")
+        self.writer = writer
+        self.masked_writer = masked_writer
+        self.comparator = comparator or CuteComparator()
 
     def _fingerprint(
         self,
@@ -173,7 +182,9 @@ class CuteGate1Runner:
     ) -> Gate1ArmEvidence:
         mode = "masked_j" if masked else "normal"
         try:
-            generation = self.writer.generate(artifact, masked=masked)
+            selected_writer = self.masked_writer if masked else self.writer
+            assert selected_writer is not None
+            generation = selected_writer.generate(artifact, masked=masked)
         except Exception as exc:
             return Gate1ArmEvidence(
                 mode,
@@ -314,6 +325,9 @@ class CuteGate1Runner:
             1,
             masked_calls,
             observer_profile=CUTE_OBSERVER_PROFILE,
+            masked_j_independent_writer=(
+                True if self.config.run_masked_j else None
+            ),
         )
 
 

@@ -28,6 +28,19 @@ from intentir.verify.gate1.compiler import KernelSource, TritonCompiler
 from intentir.verify.gate1.ttir import fingerprint_ttir
 
 from .model import Frontend, Gate1Artifact
+from .replay_composer import (
+    REPLAY_COMPOSER_PLAN,
+    REPLAY_COMPOSER_NODE_DRAFT,
+    REPLAY_COMPOSER_PROTOCOL,
+    REPLAY_COMPOSER_SOURCE_MAP,
+    REPLAY_COMPOSER_STATE,
+    REPLAY_COMPOSER_TOOL,
+    checkpoint_episode_composer,
+    composer_diagnostic_map,
+    install_episode_composer,
+    load_episode_composer_evidence,
+    restore_episode_composer_checkpoint,
+)
 from .replay import (
     REPLAY_CHECK_PROTOCOL,
     ReplayAttempt,
@@ -42,7 +55,8 @@ from .replay import (
 )
 
 
-CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v32"
+CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v33"
+PI_MIN_OWNERSHIP_RECEIPT_PROTOCOL = "intentir.pi-min.ownership-receipt.v1"
 
 _INITIAL_PROMPT = """You are the sole writer for one fresh source-blind IntentIR Replay episode.
 Work only under the isolated /workspace. input/ is immutable; output/, work/, and
@@ -118,6 +132,22 @@ complete source yourself, and rerun submit_replay. The
 diagnostic is rejection-only. Finish only when both pass.
 """
 
+_COMPOSER_PROMPT = """
+
+This fresh episode also provides a tiny syntax-only composer. It never reads
+input/packet.json and contains no J/pi-to-target mapping. For a structured Replay,
+edit work/replay.composer.json and run
+`python work/replay_composer.py render`; it atomically renders your line/block/
+raw_block nodes to output/replay.source and records stable node-to-line spans. For
+local edits, put one node in work/replay.composer.node.json and use insert-before,
+insert-after, append-child, or replace; delete/move commands need no node draft.
+Use `checkpoint`, `rollback`, or `status` on the same helper when useful. Directly
+authoring output/replay.source remains a valid raw escape. Do not spend a turn
+reimplementing the composer or treating it as a semantic planner: you still choose
+every target API, expression, control structure, and realization from exact J/pi.
+See input/TOOL.md for the compact plan grammar.
+"""
+
 
 def _atomic_write_text(path: Path, text: str) -> None:
     descriptor, temporary_name = tempfile.mkstemp(
@@ -143,8 +173,39 @@ def _aggregate_usage(turns: list[CodexCLITurn]) -> dict[str, int]:
     return usage
 
 
+def _pi_min_ownership_receipt(
+    packet: Mapping[str, Any], *, artifact_schema: str, masked: bool
+) -> dict[str, Any]:
+    """Summarize already-validated ownership without becoming another validator."""
 
-def _replay_startup_context(packet: Mapping[str, Any]) -> dict[str, Any]:
+    pi = packet.get("pi")
+    relation_counts = {
+        key: len(value)
+        for key, value in (pi.items() if isinstance(pi, Mapping) else ())
+        if isinstance(value, list)
+    }
+    return {
+        "protocol": PI_MIN_OWNERSHIP_RECEIPT_PROTOCOL,
+        "status": "pass",
+        "artifact_schema": artifact_schema,
+        "masked_j": masked,
+        "semantic_authority": "J only",
+        "pi_authority": "J/C-dependent realization constraints only",
+        "pi_closed_fields": sorted(pi) if isinstance(pi, Mapping) else [],
+        "relation_counts": relation_counts,
+        "validation_basis": [
+            "canonical Gate1Artifact closed-schema decode",
+            "TypeCheck(J,C,pi)=PASS before Replay packet construction",
+            "closed source-isolated Replay payload grammar",
+        ],
+        "claim_scope": (
+            "proof-irrelevant ownership receipt; it neither proves zero statistical "
+            "information nor changes TypeCheck, Replay, Gate1, or Gate2 acceptance"
+        ),
+    }
+def _replay_startup_context(
+    packet: Mapping[str, Any], *, composer_available: bool
+) -> dict[str, Any]:
     """Return paths plus a proof-irrelevant index of the exact local packet."""
 
     from minisweagent.environments.intentir_replay import _packet_critical_facts
@@ -165,6 +226,25 @@ def _replay_startup_context(packet: Mapping[str, Any]) -> dict[str, Any]:
             "tool_contract": "input/TOOL.md",
             "replay": "output/replay.source",
             "host_check": "work/host_replay_check.json",
+            **(
+                {
+                    "composer_tool": f"work/{REPLAY_COMPOSER_TOOL}",
+                    "composer_plan": f"work/{REPLAY_COMPOSER_PLAN}",
+                    "composer_node_draft": f"work/{REPLAY_COMPOSER_NODE_DRAFT}",
+                    "composer_state": f"work/{REPLAY_COMPOSER_STATE}",
+                    "composer_source_map": f"work/{REPLAY_COMPOSER_SOURCE_MAP}",
+                }
+                if composer_available
+                else {}
+            ),
+        },
+        "syntax_composer": {
+            "available": composer_available,
+            "protocol": REPLAY_COMPOSER_PROTOCOL if composer_available else None,
+            "authority": (
+                "episode-local syntax rendering of agent-authored nodes only; "
+                "no packet read, semantic mapping, target recipe, or Gate authority"
+            ),
         },
         "critical_facts": _packet_critical_facts(packet),
         "authority": (
@@ -173,9 +253,6 @@ def _replay_startup_context(packet: Mapping[str, Any]) -> dict[str, Any]:
             "generated"
         ),
     }
-
-
-
 @dataclass
 class CodexCLIReplayWriter:
     """Time-governed Codex writer; every ``generate`` is a fresh episode."""
@@ -194,6 +271,7 @@ class CodexCLIReplayWriter:
     context_rollover_input_tokens: int = 0
     repair_effort: str | None = None
     compile_checker: Callable[[str, Gate1Artifact, str], Any] | None = None
+    enable_composer: bool = True
     stop_requested: Callable[[], int | None] | None = field(
         default=None, repr=False
     )
@@ -216,6 +294,8 @@ class CodexCLIReplayWriter:
     ) -> ReplayGeneration:
         if self.context_rollover_input_tokens < 0:
             raise ValueError("Replay context rollover token threshold cannot be negative")
+        if not isinstance(self.enable_composer, bool):
+            raise TypeError("enable_composer must be boolean")
         if self.frontend not in {
             Frontend.TRITON,
             Frontend.CUDA,
@@ -264,6 +344,15 @@ class CodexCLIReplayWriter:
             ) from exc
 
         workspace = IntentIRReplayWorkspace.create(files)
+        composer_installation: Mapping[str, Any] | None = None
+        if self.enable_composer:
+            try:
+                composer_installation = install_episode_composer(
+                    workspace.scratch_dir, self.frontend.value
+                )
+            except Exception:
+                workspace.cleanup()
+                raise
         turns: list[CodexCLITurn] = []
         checks: list[dict[str, Any]] = []
         compile_checks: list[dict[str, Any]] = []
@@ -271,11 +360,19 @@ class CodexCLIReplayWriter:
         ttir_inspections: list[dict[str, Any]] = []
         packet_queries: list[dict[str, Any]] = []
         timeout_events: list[dict[str, Any]] = []
+        composer_host_events: list[dict[str, Any]] = []
         source_text = ""
         formal_ingress = None
         formal_compile = None
         last_checked_good: str | None = None
-        startup_context = _replay_startup_context(packet)
+        startup_context = _replay_startup_context(
+            packet, composer_available=composer_installation is not None
+        )
+        pi_min_ownership = _pi_min_ownership_receipt(
+            packet,
+            artifact_schema=artifact.wire_schema,
+            masked=masked,
+        )
         synthetic_compiler = (
             None
             if self.compile_checker is not None or self.frontend is not Frontend.TRITON
@@ -292,6 +389,7 @@ class CodexCLIReplayWriter:
         ttir_observations: dict[str, dict[str, Any]] = {}
         prompt = (
             _INITIAL_PROMPT
+            + (_COMPOSER_PROMPT if composer_installation is not None else "")
             + "\n\n<source-blind-startup>\n"
             + json.dumps(
                 startup_context,
@@ -311,6 +409,79 @@ class CodexCLIReplayWriter:
         last_replay_check_source: str | None = None
         last_replay_check_signature: tuple[tuple[str, str], ...] | None = None
         repeated_replay_diagnostic = 0
+
+        def current_composer_evidence() -> Mapping[str, Any]:
+            if composer_installation is None:
+                return {
+                    "protocol": REPLAY_COMPOSER_PROTOCOL,
+                    "status": "disabled",
+                    "installed": False,
+                    "used": False,
+                }
+            evidence = dict(
+                load_episode_composer_evidence(
+                    workspace.scratch_dir, workspace.replay_path
+                )
+            )
+            evidence["host_events"] = list(composer_host_events)
+            return evidence
+
+        def checkpoint_current_composer(expected_source: str) -> bool:
+            if composer_installation is None:
+                return False
+            try:
+                return checkpoint_episode_composer(
+                    workspace.scratch_dir,
+                    workspace.replay_path,
+                    expected_source=expected_source,
+                )
+            except Exception as exc:
+                composer_host_events.append(
+                    {
+                        "action": "checkpoint",
+                        "status": "unavailable",
+                        "diagnostic_class": type(exc).__name__,
+                    }
+                )
+                return False
+
+        def restore_current_composer(expected_source: str) -> bool:
+            if composer_installation is None:
+                return False
+            try:
+                return restore_episode_composer_checkpoint(
+                    workspace.scratch_dir,
+                    workspace.replay_path,
+                    expected_source=expected_source,
+                )
+            except Exception as exc:
+                composer_host_events.append(
+                    {
+                        "action": "rollback",
+                        "status": "unavailable",
+                        "diagnostic_class": type(exc).__name__,
+                    }
+                )
+                return False
+
+        def attach_composer_map(
+            response: Mapping[str, Any], current: str | None
+        ) -> dict[str, Any]:
+            result = dict(response)
+            diagnostics = result.get("diagnostics")
+            if (
+                composer_installation is not None
+                and current is not None
+                and isinstance(diagnostics, list)
+            ):
+                mapped = composer_diagnostic_map(
+                    workspace.scratch_dir,
+                    current,
+                    [item for item in diagnostics if isinstance(item, Mapping)],
+                )
+                if mapped:
+                    result["composer_diagnostic_map"] = mapped
+            return result
 
         def write_host_check(check: Mapping[str, Any]) -> None:
             _atomic_write_text(
@@ -407,7 +578,7 @@ class CodexCLIReplayWriter:
             }
             last_replay_check_source = current
             last_replay_check_signature = signature
-            return response
+            return attach_composer_map(response, current)
 
         def replay_compile_tool() -> Mapping[str, Any]:
             nonlocal last_checked_good
@@ -450,12 +621,13 @@ class CodexCLIReplayWriter:
                     packet=packet,
                 )
             )
-            response = checked.to_check_response()
+            response = attach_composer_map(checked.to_check_response(), current)
             if checked.status == "pass":
                 # The checkpoint is the exact Replay-LLM-authored text that
                 # passed both source-blind construction checks in this fresh
                 # episode.  Fixed code may restore only these bytes.
                 last_checked_good = current
+                checkpoint_current_composer(current)
             return response
 
         def replay_obligation_audit_tool() -> Mapping[str, Any]:
@@ -716,7 +888,9 @@ class CodexCLIReplayWriter:
                     function_name=function_name,
                     packet=packet,
                 )
-                check = formal_ingress.to_check_response()
+                check = attach_composer_map(
+                    formal_ingress.to_check_response(), source_text
+                )
             checks.append(
                 {
                     "trigger": trigger,
@@ -779,7 +953,9 @@ class CodexCLIReplayWriter:
                     packet=packet,
                 )
             )
-            compile_check = formal_compile.to_check_response()
+            compile_check = attach_composer_map(
+                formal_compile.to_check_response(), source_text
+            )
             compile_checks.append(
                 {
                     "trigger": trigger,
@@ -790,6 +966,8 @@ class CodexCLIReplayWriter:
                     "source_sha256": source_digest,
                 }
             )
+            if formal_compile.status == "pass":
+                checkpoint_current_composer(source_text)
             return formal_compile.status == "pass", compile_check
 
         try:
@@ -830,9 +1008,13 @@ class CodexCLIReplayWriter:
                         timeout_event["recovery"] = "current_exact_replay"
                         break
                     if last_checked_good is not None:
-                        _atomic_write_text(
-                            workspace.replay_path, last_checked_good
+                        restored_composer = restore_current_composer(
+                            last_checked_good
                         )
+                        if not restored_composer:
+                            _atomic_write_text(
+                                workspace.replay_path, last_checked_good
+                            )
                         passed, check = evaluate_current(
                             trigger="host_timeout_checkpoint_restore"
                         )
@@ -889,6 +1071,8 @@ class CodexCLIReplayWriter:
                 "replay_ttir_inspections": ttir_inspections,
                 "packet_queries": packet_queries,
                 "timeout_events": timeout_events,
+                "syntax_composer": current_composer_evidence(),
+                "pi_min_ownership": pi_min_ownership,
                 "tool_bridge": bridge.evidence,
                 "formal_ingress_recheck": True,
                 "isolation": {
@@ -897,6 +1081,8 @@ class CodexCLIReplayWriter:
                     "output_work_tmp": "write-only-scope",
                     "tool_network": "disabled",
                     "provider_secret_in_tool_env": False,
+                    "composer_reads_packet": False,
+                    "composer_episode_local": True,
                 },
             }
             raw_trajectory = _trajectory_bytes(trajectory)
@@ -920,6 +1106,8 @@ class CodexCLIReplayWriter:
                     "tool_actions": sum(turn.tool_actions for turn in turns),
                     "formal_ingress_protocol": REPLAY_CHECK_PROTOCOL,
                     "formal_compile_recheck": True,
+                    "syntax_composer": current_composer_evidence(),
+                    "pi_min_ownership": pi_min_ownership,
                 }
             )
             generation = ReplayGeneration(
@@ -962,6 +1150,8 @@ class CodexCLIReplayWriter:
                 "replay_ttir_inspections": ttir_inspections,
                 "packet_queries": packet_queries,
                 "timeout_events": timeout_events,
+                "syntax_composer": current_composer_evidence(),
+                "pi_min_ownership": pi_min_ownership,
                 "tool_bridge": bridge.evidence,
                 "failure_class": type(exc).__name__,
                 **(

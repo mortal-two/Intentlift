@@ -35,7 +35,11 @@ from intentir.verify.gate1.model import (
     ParameterMode,
 )
 from intentir.verify.gate1.orchestrate import Gate1Config, Gate1Runner
-from intentir.verify.gate1.replay import ResponsesReplayWriter
+from intentir.verify.gate1.replay import (
+    ReplayAttempt,
+    ReplayGeneration,
+    ResponsesReplayWriter,
+)
 from intentir.verify.gate2.orchestrate import (
     Gate2Case,
     Gate2Runner,
@@ -56,6 +60,7 @@ from intentir.verify.scrc_runner import (
     SCRCRunRequest,
     SourceProgram,
 )
+from intentir.verify.scrc_workload_run import _save_replay_record_evidence
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -477,15 +482,75 @@ def _save_lift_records_on_failure(
         )
 
 
+def _save_replay_writer_round(
+    directory: Path,
+    normal_writer: ResponsesReplayWriter,
+    masked_writer: ResponsesReplayWriter | None,
+    *,
+    fallback_normal: ReplayGeneration | None = None,
+    fallback_masked: ReplayGeneration | None = None,
+) -> None:
+    entries: list[tuple[str, ReplayGeneration | ReplayAttempt]] = []
+    for index, record in enumerate(normal_writer.records, start=1):
+        prefix = "replay" if index == 1 else f"replay_extra_{index:02d}"
+        entries.append((prefix, record))
+    if masked_writer is not None:
+        for index, record in enumerate(masked_writer.records, start=1):
+            prefix = (
+                "masked_j_replay"
+                if index == 1
+                else f"masked_j_replay_{index:02d}"
+            )
+            entries.append((prefix, record))
+    if not normal_writer.records and fallback_normal is not None:
+        entries.append(("replay", fallback_normal))
+    if (
+        masked_writer is not None
+        and not masked_writer.records
+        and fallback_masked is not None
+    ):
+        entries.append(("masked_j_replay", fallback_masked))
+    for prefix, record in entries:
+        exact_name = (
+            f"{prefix}.py"
+            if isinstance(record, ReplayGeneration)
+            else f"{prefix}_rejected.txt"
+        )
+        _save_replay_record_evidence(
+            directory,
+            prefix=prefix,
+            exact_source_name=exact_name,
+            record=record,
+        )
+
+
+def _save_replay_rounds_on_failure(
+    run_dir: Path,
+    replay_writer_rounds: list[
+        tuple[ResponsesReplayWriter, ResponsesReplayWriter | None]
+    ],
+) -> None:
+    for index, (normal_writer, masked_writer) in enumerate(
+        replay_writer_rounds, start=1
+    ):
+        call_dir = run_dir / f"gate1-call-{index:02d}"
+        call_dir.mkdir(exist_ok=True)
+        _save_replay_writer_round(call_dir, normal_writer, masked_writer)
+
+
 def _save_report(
     run_dir: Path,
     spec: CanarySpec,
     provider: ProviderConfig,
     report: SCRCRunReport,
     lift: ResponsesSCRCLiftAdapter,
+    replay_writer_rounds: list[
+        tuple[ResponsesReplayWriter, ResponsesReplayWriter | None]
+    ],
 ) -> None:
     payload = report.to_json()
     _write_json(run_dir / "report.json", payload)
+    formal_round_index = 0
     for index, attempt in enumerate(report.attempts, start=1):
         attempt_dir = run_dir / f"attempt-{index:02d}"
         attempt_dir.mkdir()
@@ -493,19 +558,24 @@ def _save_report(
             _write_json(attempt_dir / "artifact.json", attempt.artifact.to_json())
         if attempt.gate1 is not None:
             _write_json(attempt_dir / "gate1.json", attempt.gate1.to_json())
-            if attempt.gate1.normal.generation is not None:
-                (attempt_dir / "replay.py").write_text(
-                    attempt.gate1.normal.generation.code,
-                    encoding="utf-8",
-                )
-            if (
-                attempt.gate1.masked_j is not None
-                and attempt.gate1.masked_j.generation is not None
-            ):
-                (attempt_dir / "masked_j_replay.py").write_text(
-                    attempt.gate1.masked_j.generation.code,
-                    encoding="utf-8",
-                )
+            formal_round_index += 1
+            if formal_round_index > len(replay_writer_rounds):
+                raise ValueError("Gate1 evidence lacks its Replay writer round")
+            normal_writer, masked_writer = replay_writer_rounds[
+                formal_round_index - 1
+            ]
+            masked_generation = (
+                attempt.gate1.masked_j.generation
+                if attempt.gate1.masked_j is not None
+                else None
+            )
+            _save_replay_writer_round(
+                attempt_dir,
+                normal_writer,
+                masked_writer,
+                fallback_normal=attempt.gate1.normal.generation,
+                fallback_masked=masked_generation,
+            )
         if index <= len(lift.records):
             record = lift.records[index - 1]
             if record.extraction is not None:
@@ -531,6 +601,8 @@ def _save_report(
                     record,
                     diagnostic_filename="lift_rejection.txt",
                 )
+    if formal_round_index != len(replay_writer_rounds):
+        raise ValueError("Replay writer rounds do not match formal Gate1 attempts")
     if report.gate2 is not None:
         _write_json(run_dir / "gate2.json", report.gate2.to_json())
     summary = [
@@ -590,7 +662,9 @@ def run_canary(
         effort=effort,
         source_symbol=spec.source_function,
     )
-    writers: list[ResponsesReplayWriter] = []
+    replay_writer_rounds: list[
+        tuple[ResponsesReplayWriter, ResponsesReplayWriter | None]
+    ] = []
     compiler = TritonCompiler(timeout=240.0)
 
     def gate1_factory(_formal_round: int) -> BoundGate1Adapter:
@@ -598,11 +672,18 @@ def run_canary(
             provider=provider,
             effort=effort,
         )
-        writers.append(writer)
+        masked_writer = None
+        if run_masked_j:
+            masked_writer = ResponsesReplayWriter(
+                provider=provider,
+                effort=effort,
+            )
+        replay_writer_rounds.append((writer, masked_writer))
         return BoundGate1Adapter(
             Gate1Runner(
                 compiler=compiler,
                 writer=writer,
+                masked_writer=masked_writer,
                 config=Gate1Config(run_masked_j=run_masked_j),
             )
         )
@@ -620,6 +701,7 @@ def run_canary(
         report = runner.run(request)
     except Exception as exc:
         _save_lift_records_on_failure(run_dir, lift)
+        _save_replay_rounds_on_failure(run_dir, replay_writer_rounds)
         evidence = getattr(exc, "evidence", None)
         if isinstance(evidence, Mapping) and evidence:
             _write_json(run_dir / "partial_evidence.json", dict(evidence))
@@ -629,7 +711,11 @@ def run_canary(
                 "failure_class": type(exc).__name__,
                 "diagnostic": str(exc),
                 "lift_records": len(lift.records),
-                "replay_writers": len(writers),
+                "replay_writer_rounds": len(replay_writer_rounds),
+                "replay_writers": sum(
+                    1 + int(masked_writer is not None)
+                    for _normal_writer, masked_writer in replay_writer_rounds
+                ),
             },
         )
         (run_dir / "SUMMARY.md").write_text(
@@ -639,7 +725,14 @@ def run_canary(
             encoding="utf-8",
         )
         raise
-    _save_report(run_dir, spec, provider, report, lift)
+    _save_report(
+        run_dir,
+        spec,
+        provider,
+        report,
+        lift,
+        replay_writer_rounds,
+    )
     return run_dir, report
 
 

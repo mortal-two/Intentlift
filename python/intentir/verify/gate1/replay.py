@@ -3229,6 +3229,59 @@ In the isolated Codex workspace, invoke the equivalent closed callbacks as
 own TTIR/fingerprint for focused debugging. These callbacks take no host path and
 never expose Source, Source TTIR, Harness values, or Gate evidence. Read this file
 for usage instead of probing the fixed client with an unrecognized tool name.
+
+Codex Replay episodes also install `work/replay_composer.py` and an empty
+`work/replay.composer.json`. The helper is optional and syntax-only: it does not
+read `input/`, J, C, pi, compiler output, or Gate evidence. Edit the plan and run
+`python work/replay_composer.py render` to atomically write
+`output/replay.source`. Its closed plan grammar is:
+
+```json
+{
+  "protocol": "intentir.replay.syntax-composer.v1",
+  "frontend": "triton",
+  "nodes": [
+    {"id": "import0", "kind": "line", "text": "import triton"},
+    {
+      "id": "fn0",
+      "kind": "block",
+      "header": "def scrc_k0(...):",
+      "children": [
+        {"id": "body0", "kind": "line", "text": "..."}
+      ]
+    },
+    {
+      "id": "raw0",
+      "kind": "raw_block",
+      "lines": ["# exact agent-authored escape line"]
+    }
+  ]
+}
+```
+
+Use frontend `triton`, `tilelang`, or `cuda`. Triton/TileLang blocks require an
+agent-authored header ending in `:`; CUDA blocks omit braces and the composer adds
+them. Node IDs are stable source-map handles. Full-plan edits are allowed. For a
+small insertion or replacement, write exactly one node object to
+`work/replay.composer.node.json`, then run one of:
+
+```text
+python work/replay_composer.py insert-before TARGET
+python work/replay_composer.py insert-after TARGET
+python work/replay_composer.py append-child BLOCK
+python work/replay_composer.py replace TARGET
+python work/replay_composer.py delete TARGET
+python work/replay_composer.py move-before NODE ANCHOR
+python work/replay_composer.py move-after NODE ANCHOR
+python work/replay_composer.py move-child NODE BLOCK
+```
+
+Every successful edit validates the complete tree and immediately renders exact
+Replay bytes. Replacement preserves the target ID; moves preserve the moved ID.
+Unknown syntax uses `raw_block`; direct editing of `output/replay.source` remains
+the unrestricted raw escape. `status`, `checkpoint`, and `rollback` are also
+available. The composer never chooses a target API, algorithm, expression, or
+realization and has no ReplayCheck, Gate, or certification authority.
 """
     return (
         {

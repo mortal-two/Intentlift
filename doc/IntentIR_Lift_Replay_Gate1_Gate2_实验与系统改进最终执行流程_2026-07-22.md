@@ -923,7 +923,7 @@ Replay 不得：
 `U_f` 必须是 source-neutral 的公共前端知识，不能按当前 Kernel、operator 或失败样本选择。
 当前 packet protocol 是 `intentir.scrc.replay-input.v2`；Triton 公共上下文由固定公开字段直接给出，
 不使用 context version、SHA 或 receipt 作为运行门禁。source-aware Codex/MiniSWE Lift `intentir.lift-knowledge.v89/v67`、
-source-blind MiniSWE Replay v31 / Codex Replay v32、
+source-blind MiniSWE Replay v31 / Codex Replay v33、
 `replay-check.v14`；fresh Replay 只检查当前字段、packet closure 和 source isolation，旧版本 run 不能被新组合追认。
 v30/v26 完整执行既有 authored route extent transform 合同：将其纳入 exact `critical_facts.v4`、
 `replay-obligation-audit.v3` 与 source-blind static ingress；只拒绝缺失 closed floor/ceil-div spelling，
@@ -937,6 +937,10 @@ Codex Replay v32恢复coding-agent的路径优先入口：首轮直接读取一�
 不再强制`overview -> requirements -> realization`逐叶查询；query只用于一个仍不明确的精确path/handle。
 episode仍按时间而非调用次数治理：high默认1200秒，xhigh默认3600秒，episode内工具调用不设语义次数
 上限。该改动只删除proof-irrelevant编排，不摘要、补造或选择J/C/π事实。
+Codex Replay v33在该入口内增加episode-local syntax-only Composer：它只操作agent作者化的
+structured text，提供stable ID、局部insert/replace/delete/move、source map和一致性
+checkpoint/rollback；不读取J/π、不选择target API/算法、不生成kernel skeleton，也不参与Gate。
+normal与Mask-J由不同writer发起，不能共享conversation、workspace、Composer或checkpoint。
 v28/v24 只明确现有 ordered carrier relation：同一 region 的 `physical_loop_carriers` declaration
 order 是 init/state/next/result 共享的 carrier-tuple ordinal；Lift 从 Source frontend loop tuple 完整
 作者化，Replay 不按 dtype/ref/mechanism 重排。它不是 event execution order，后者仍只由
