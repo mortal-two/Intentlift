@@ -726,6 +726,8 @@ Codex Lift v19 再只缩小持久 owner 的工作表面：前一 artifact 只保
 拆成固定 exact 文件，frontier 首读，非 observer 诊断单列。fixed code 只做字节分区，不归因、不选
 repair；contract/op reference 也只按 owner 所需 leaf 局部读取。该变化不生成或省略任何最终
 `(J,C,π)` 字段，不改变 TypeCheck/Gate/SCRC 谓词。
+Codex Lift v20 删除可由同一 frontier 文件完全替代的 feedback host tool；特殊 bridge 只保留
+CandidateCheck 与 SourceReconcile 两个 reject-only callback。
 v41 只把已由 Intent dialect、TypeCheck 与 shared lowering 支持的 `log2` 补入通用 `map_unary`
 vocabulary。v42 只明确 predicate-bearing Source load 的 `fill_value` 必须是该 access 实际 authored
 `other`，不得换成 downstream neutral/canceling/observationally-equivalent value；consumer extension

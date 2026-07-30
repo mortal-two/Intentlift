@@ -241,6 +241,8 @@ workspace 的 `output/candidate.json`；closed Gate1 diff 只按既有 protocol 
 这是 exact bytes 的机械分区，不选择类别、不生成修复。首次 contract 也只要求读取 top-level shape
 与当前需要的 leaf section，禁止把整份 schema/op catalog pretty-print 进线程；最终 artifact 与所有
 字段仍完全由同一 LLM owner 作者化。
+Codex Lift v20 同时删除与普通文件读取重复的 `feedback_frontier` host tool；workspace 中 exact frontier
+文件是唯一入口，特殊 bridge 只剩无法由本地文件操作替代的 CandidateCheck 与 SourceReconcile。
 
 Codex Lift v11 / knowledge v68 将同一 exact Harness ABI ledger 与 syntax-only
 `source-outline.v2` 直接放入首次 owner prompt，并将

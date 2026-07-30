@@ -45,8 +45,8 @@ from .prompt import SCHEMA as _INTENTIR_OPERATION_REFERENCE
 from .scrc_schema import scrc_lift_core_json_schema
 
 
-CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v19"
-CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v77"
+CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v20"
+CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v78"
 CODEX_CLI_TURN_TIMEOUT_SECONDS = 900.0
 
 _FEEDBACK_CATEGORY_NAMES = (
@@ -710,15 +710,6 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
         bridge = CodexCLIToolBridge(
             workspace.scratch_dir / CODEX_CLI_TOOL_BRIDGE_ROOT_NAME,
             {
-                "feedback_frontier": lambda: {
-                    "protocol": "intentir.codex-feedback-frontier.v1",
-                    "status": "pass",
-                    "frontier": json.loads(
-                        (workspace.input_dir / "feedback_frontier.json").read_text(
-                            encoding="utf-8"
-                        )
-                    ),
-                },
                 "candidate_check": candidate_check_tool,
                 "source_reconcile": source_reconcile_tool,
             },

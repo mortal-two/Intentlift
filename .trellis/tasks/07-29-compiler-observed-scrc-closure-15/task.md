@@ -415,6 +415,8 @@ frontier 与当前 candidate。故瓶颈是 provider 在增长上下文中反复
 不是 Source 理解或工具执行速度。v19 删除 Codex workspace 的 bulk `feedback.json` 与重复 previous
 artifact，只按既有 Gate1 label 暴露 exact category 文件，并要求 contract/op reference leaf-local
 读取；不新增语义工具，不改变 artifact 作者权或闭合谓词。
+v20 再删除与普通 frontier 文件重复的 host feedback tool，特殊 bridge 只剩两个不可由文件替代的
+reject-only checker。
 
 ## 5. J / C / π的能力计划
 

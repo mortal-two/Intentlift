@@ -57,6 +57,7 @@ Codex Lift v18 还用同一公共 obligation 投影对账候选已写出的 real
 诊断，不生成语义、不修改artifact，也不替代 fresh Replay/Gate1。
 Codex Lift v19 将 relift 的 bulk feedback 改成 workspace 内按既有 Gate1 label 分区的 exact 文件，
 不再重复输入上一 artifact；这只缩小 agent 上下文，不改变任何接受集合。
+Codex Lift v20 删除重复的 feedback host tool，特殊回调只保留两个 reject-only checker。
 两条路径都不生成 artifact/realization，没有 Gate
 或认证权限。
 
