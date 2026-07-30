@@ -280,7 +280,6 @@ def _unowned_source_runtime_carrier_diagnostics(
             not isinstance(name, str)
             or kind not in {"pointer", "scalar"}
             or logical_ref is not None
-            or name in pi_refs
         ):
             continue
         # The function signature contributes exactly one occurrence.  A second
@@ -288,21 +287,36 @@ def _unowned_source_runtime_carrier_diagnostics(
         # this runtime argument in its body.  The token boundary excludes derived
         # names such as %p11_3.
         token = re.compile(rf"%{re.escape(name)}(?![A-Za-z0-9_.$])")
-        if len(token.findall(ttir)) <= 1:
-            continue
-        diagnostics.append(
-            {
-                "rule_code": "source_runtime_carrier_without_owner",
-                "path": (
-                    "<source-ttir-obligation> j.signature.parameters: "
-                    f"Source-used runtime carrier {name} has logical_ref=null "
-                    "and no pi instance occurrence"
-                ),
-                "anonymous_handles": [name],
-                "observed_refs_or_types": ["source-ttir-runtime-use"],
-                "line": None,
-            }
-        )
+        source_used = len(token.findall(ttir)) > 1
+        pi_owned = name in pi_refs
+        if source_used and not pi_owned:
+            diagnostics.append(
+                {
+                    "rule_code": "source_runtime_carrier_without_owner",
+                    "path": (
+                        "<source-ttir-obligation> j.signature.parameters: "
+                        f"Source-used runtime carrier {name} has logical_ref=null "
+                        "and no pi instance occurrence"
+                    ),
+                    "anonymous_handles": [name],
+                    "observed_refs_or_types": ["source-ttir-runtime-use"],
+                    "line": None,
+                }
+            )
+        elif pi_owned and not source_used:
+            diagnostics.append(
+                {
+                    "rule_code": "source_unused_runtime_carrier_has_occurrence",
+                    "path": (
+                        "<source-ttir-obligation> pi.instances: "
+                        f"runtime carrier {name} has logical_ref=null and a pi "
+                        "occurrence, but the selected Source TTIR has no body use"
+                    ),
+                    "anonymous_handles": [name],
+                    "observed_refs_or_types": ["source-ttir-runtime-unused"],
+                    "line": None,
+                }
+            )
     return tuple(diagnostics[:20])
 
 
