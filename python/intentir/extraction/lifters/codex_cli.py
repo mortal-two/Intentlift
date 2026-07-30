@@ -45,8 +45,8 @@ from .prompt import SCHEMA as _INTENTIR_OPERATION_REFERENCE
 from .scrc_schema import scrc_lift_core_json_schema
 
 
-CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v22"
-CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v80"
+CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v23"
+CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v81"
 CODEX_CLI_TURN_TIMEOUT_SECONDS = 900.0
 
 _FEEDBACK_CATEGORY_NAMES = (
@@ -295,6 +295,18 @@ def _codex_input_files(
             "index lists its logical coordinates. General affine indices remain legal "
             "only over authored logical indices/extents. Program ids, tile rounding, "
             "strides, and flattened address construction stay in C/pi realization.\n"
+            "- Each compiler-visible Source program-coordinate occurrence is a generic "
+            "program-region realize instance anchored to its existing J domain and "
+            "routed into address_base. Distinct domain anchors define program axes; "
+            "multiple instances on one domain preserve Source stages but reuse that "
+            "axis and never invent another program_id. Concrete grid extent one does "
+            "not erase the path.\n"
+            "- Keep program-uniform address_base and lane-varying address_lane routes "
+            "separate. A pointer carrier entering address_base and then address_lane "
+            "denotes two pointer/address operations; if Source combines integer base "
+            "and lane contributions first, the pointer bypasses address_base and "
+            "enters the final lane/address stage once. Author topology and typed "
+            "carrier origins, not Source arithmetic spelling.\n"
             "- Preserve each Source load/store predicate as J logical validity when it "
             "guards the logical access, including conjuncts that happen to be true for "
             "the current valuation. C tile bounds may realize that predicate but may "
