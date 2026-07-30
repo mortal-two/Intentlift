@@ -1,6 +1,8 @@
 // RUN: intent-opt '-convert-intent-row-reduction-to-gpu=block-threads=32 require-sorted-prefix=true' %s | FileCheck %s
 // RUN: intent-opt '-convert-intent-row-reduction-to-gpu=block-threads=32 require-sorted-prefix=true frontier-ballot-support=true' %s | FileCheck %s --check-prefix=BALLOT
 // RUN: intent-opt '-convert-intent-row-reduction-to-gpu=block-threads=32 enable-sorted-prefix=false' %s | FileCheck %s --check-prefix=GENERIC
+// RUN: intent-opt '-convert-intent-row-reduction-to-gpu=block-threads=32 prefix-packet-width=2 require-sorted-prefix=true' %s | FileCheck %s --check-prefix=PACKET2
+// RUN: intent-opt '-convert-intent-row-reduction-to-gpu=block-threads=32 prefix-packet-width=1 require-sorted-prefix=true' %s | FileCheck %s --check-prefix=PACKET1
 
 // The specialized path is legal only because P4 materialized the validated
 // Layer-B descending-order precondition.  Matching is graph-structural: the
@@ -35,6 +37,20 @@
 // BALLOT: memref.store
 // BALLOT: gpu.terminator
 // BALLOT-NOT: intent.
+// PACKET2-LABEL: func.func @certified_prefix_graph(
+// PACKET2-SAME: %{{[^:]+}}: memref<2x32xvector<4xf32>>
+// PACKET2-SAME: %{{[^:]+}}: memref<2x64xvector<2xf32>>
+// PACKET2-SAME: %{{[^:]+}}: memref<2x32xvector<4xf32>>
+// PACKET2-SAME: intent.backend.prefix_packet_width = 2 : i64
+// PACKET2: memref.load {{.*}} : memref<2x64xvector<2xf32>>
+// PACKET2: memref.store {{.*}} : memref<2x32xvector<4xf32>>
+// PACKET1-LABEL: func.func @certified_prefix_graph(
+// PACKET1-SAME: %{{[^:]+}}: memref<2x32xvector<4xf32>>
+// PACKET1-SAME: %{{[^:]+}}: memref<2x128xf32>
+// PACKET1-SAME: %{{[^:]+}}: memref<2x32xvector<4xf32>>
+// PACKET1-SAME: intent.backend.prefix_packet_width = 1 : i64
+// PACKET1: memref.load {{.*}} : memref<2x128xf32>
+// PACKET1: memref.store {{.*}} : memref<2x32xvector<4xf32>>
 // GENERIC-LABEL: func.func @certified_prefix_graph(
 // GENERIC-NOT: intent.fast_path_id
 // GENERIC: gpu.launch

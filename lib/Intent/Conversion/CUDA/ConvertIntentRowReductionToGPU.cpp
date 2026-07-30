@@ -867,6 +867,7 @@ struct RowReductionLowering {
   bool allowExecutionDomainSortedPrefix;
   bool requireSortedPrefix;
   unsigned requestedPrefixThreads;
+  unsigned requestedPrefixPacketWidth;
   bool crossMultiplySupportPredicate;
   bool replicatePrefixPerWarp;
   bool prefetchEpilogueInputBeforeSummary;
@@ -972,7 +973,7 @@ struct RowReductionLowering {
                        unsigned predicatedValueIfs,
                        unsigned foldedConstexprSelects,
                        unsigned rowsPerBlock, unsigned reductionParts,
-                       unsigned prefixThreads,
+                       unsigned prefixThreads, unsigned prefixPacketWidth,
                        bool crossMultiplySupport, bool replicatePrefix,
                        bool prefetchEpilogueInput, bool enableFrontierBallot)
       : fn(fn), blockThreads(bt), tileColsMax(tc),
@@ -987,6 +988,7 @@ struct RowReductionLowering {
         allowExecutionDomainSortedPrefix(allowDomainPrefix),
         requireSortedPrefix(requirePrefix),
         requestedPrefixThreads(prefixThreads),
+        requestedPrefixPacketWidth(prefixPacketWidth),
         crossMultiplySupportPredicate(crossMultiplySupport),
         replicatePrefixPerWarp(replicatePrefix),
         prefetchEpilogueInputBeforeSummary(prefetchEpilogueInput),
@@ -1253,6 +1255,9 @@ struct RowReductionLowering {
         requestedRowsPerBlock != 16 && requestedRowsPerBlock != 32)
       return failure();
     if (requestedPrefixThreads != 0 && requestedPrefixThreads != 32)
+      return failure();
+    if (requestedPrefixPacketWidth != 1 && requestedPrefixPacketWidth != 2 &&
+        requestedPrefixPacketWidth != 4)
       return failure();
     if (replicatePrefixPerWarp &&
         (requestedPrefixThreads != 32 || requestedRowsPerBlock != 1 ||
@@ -1992,6 +1997,8 @@ struct RowReductionLowering {
                             : std::optional<std::pair<unsigned, unsigned>>{};
     if (requestedPrefixThreads != 0 && !sortedPrefixArgs)
       return failure();
+    if (requestedPrefixPacketWidth != 4 && !sortedPrefixArgs)
+      return failure();
     if (crossMultiplySupportPredicate && !sortedPrefixArgs)
       return failure();
     if (frontierBallotSupport &&
@@ -2664,7 +2671,8 @@ struct RowReductionLowering {
     int64_t scanThreads = requestedPrefixThreads
                               ? static_cast<int64_t>(requestedPrefixThreads)
                               : T;
-    constexpr int64_t packetWidth = 4;
+    int64_t prefixPacketWidth = requestedPrefixPacketWidth;
+    constexpr int64_t outputPacketWidth = 4;
     if (!enableSortedPrefix ||
         (!contractCertified && !allowExecutionDomainSortedPrefix) ||
         scans.size() != 1 ||
@@ -2672,8 +2680,9 @@ struct RowReductionLowering {
         outRoles[0] != ResultRole::RowOut ||
         scanThreads < 32 || scanThreads > 1024 ||
         (scanThreads % 32) != 0 ||
-        (N % (scanThreads * packetWidth)) != 0 ||
-        T * packetWidth > N || (N % (T * packetWidth)) != 0)
+        (N % (scanThreads * prefixPacketWidth)) != 0 ||
+        T * outputPacketWidth > N ||
+        (N % (T * outputPacketWidth)) != 0)
       return std::nullopt;
     if (replicatePrefixPerWarp &&
         (scanThreads != 32 || T < 64 || requestedRowsPerBlock != 1))
@@ -3874,14 +3883,11 @@ struct RowReductionLowering {
   //
   //   z[r] > (cumsum(z)[r] - 1) / (r + 1).
   //
-  // Process one coalesced float4 per thread at a time (4*T sorted elements per
-  // chunk) and stop reading SortedX after the first chunk whose last element is
-  // outside the support.  The common captured distribution normally stops
-  // after the first 1024 elements at T=256, while a worst-case all-supported
-  // row simply continues through all chunks.  X is read only after tau is
-  // known, in a separately coalesced output pass.  Thus the optimization is
-  // exact for the B-certified domain and removes most SortedX HBM traffic on
-  // the common path rather than merely retuning the same three full-row passes.
+  // Process one independently selected 1/2/4-element sorted packet per active
+  // prefix thread and stop after the first unsupported chunk.  The X/output
+  // pass remains float4 regardless of the prefix packet: support-frontier
+  // granularity and full-row bandwidth are separate physical coordinates.  A
+  // worst-case all-supported row simply continues through every chunk.
   LogicalResult rewriteSortedSparsemax(unsigned xArgIndex,
                                        unsigned sortedArgIndex) {
     MLIRContext *ctx = fn.getContext();
@@ -3889,11 +3895,17 @@ struct RowReductionLowering {
     OpBuilder b(ctx);
     Type i32 = b.getI32Type();
     Type f32Ty = b.getF32Type();
-    constexpr int64_t packetWidth = 4;
-    Type packetTy = VectorType::get({packetWidth}, f32Ty);
+    int64_t prefixPacketWidth = requestedPrefixPacketWidth;
+    constexpr int64_t outputPacketWidth = 4;
+    Type outputPacketTy = VectorType::get({outputPacketWidth}, f32Ty);
+    Type prefixPacketTy = prefixPacketWidth == 1
+                              ? f32Ty
+                              : Type(VectorType::get({prefixPacketWidth}, f32Ty));
     auto wgSpace = gpu::AddressSpaceAttr::get(ctx, gpu::AddressSpace::Workgroup);
-    MemRefType rowVecMemref =
-        MemRefType::get({M, N / packetWidth}, packetTy);
+    MemRefType outputRowMemref = MemRefType::get(
+        {M, N / outputPacketWidth}, outputPacketTy);
+    MemRefType prefixRowMemref = MemRefType::get(
+        {M, N / prefixPacketWidth}, prefixPacketTy);
     auto sortedAttr = fn->getAttrOfType<BoolAttr>("intent_sorted_descending");
     bool contractCertified = sortedAttr && sortedAttr.getValue();
 
@@ -3902,10 +3914,15 @@ struct RowReductionLowering {
     b.setInsertionPoint(fn);
     SmallVector<Type> abiTypes;
     abiTypes.reserve(fn.getNumArguments() + 1);
-    for (unsigned index = 0; index < argRoles.size(); ++index)
-      abiTypes.push_back(argRoles[index] == Role::Row ? rowVecMemref
-                                                      : memrefOf(index));
-    abiTypes.push_back(rowVecMemref);
+    for (unsigned index = 0; index < argRoles.size(); ++index) {
+      if (index == sortedArgIndex)
+        abiTypes.push_back(prefixRowMemref);
+      else if (argRoles[index] == Role::Row)
+        abiTypes.push_back(outputRowMemref);
+      else
+        abiTypes.push_back(memrefOf(index));
+    }
+    abiTypes.push_back(outputRowMemref);
     auto newFty = FunctionType::get(ctx, abiTypes, {});
     auto gpuFn = b.create<func::FuncOp>(loc, name, newFty);
     if (contractCertified) {
@@ -3948,7 +3965,7 @@ struct RowReductionLowering {
         decoupledWideEpilogue ? rowsPerBlock * 4 : 0;
     int64_t shBytes = compactScratchBytes + tauScratchBytes;
     sched.smemBytes = shBytes;
-    sched.vectorWidth = packetWidth;
+    sched.vectorWidth = outputPacketWidth;
     attachLaunchPlan(gpuFn, sched);
     Value shBytesValue =
         b.create<arith::ConstantOp>(loc, b.getI32IntegerAttr(shBytes));
@@ -3982,6 +3999,10 @@ struct RowReductionLowering {
           rowInBlock);
       rowThread =
           b.create<arith::RemUIOp>(loc, tx, cThreadsPerOutputRow);
+      // Prefix packet indices are local to the logical row.  Using the physical
+      // CTA thread id here makes every row after row 0 start in the middle of
+      // SortedX (and was correctly rejected by target-to-RefJ Q/D).
+      scanThread = rowThread;
       warpIdInRow = b.create<arith::DivUIOp>(loc, rowThread, c32Index);
     }
     if (replicatedWarpPrefix)
@@ -4032,9 +4053,9 @@ struct RowReductionLowering {
     Value c0 = b.create<arith::ConstantIndexOp>(loc, 0);
     Value cChunks =
         b.create<arith::ConstantIndexOp>(
-            loc, N / (scanThreads * packetWidth));
+            loc, N / (scanThreads * prefixPacketWidth));
 
-    int64_t outputVecTiles = N / (threadsPerRow * packetWidth);
+    int64_t outputVecTiles = N / (threadsPerRow * outputPacketWidth);
     SmallVector<Value> prefetchedXIndices;
     SmallVector<Value> prefetchedXVectors;
     if (prefetchEpilogueInputBeforeSummary) {
@@ -4053,7 +4074,7 @@ struct RowReductionLowering {
     }
 
     // Loop state: accumulated sum of fully-supported preceding chunks, the
-    // best support rank/sum seen so far, and a uniform done flag.  Completed
+    // best support rank/sum seen so far, and a uniform done flag. Completed
     // rows take the empty branch on later static iterations; no loads/barriers
     // occur there.
     auto chunkLoop = b.create<scf::ForOp>(
@@ -4087,17 +4108,20 @@ struct RowReductionLowering {
         auto sortedLoad = tb.create<memref::LoadOp>(
             loc, sortedMem, ValueRange{row, vecIndex});
         sortedLoad.setNontemporal(true);
-        Value sortedVector = sortedLoad;
-        SmallVector<Value> z(packetWidth);
-        for (int64_t laneIndex = 0; laneIndex < packetWidth; ++laneIndex)
-          z[laneIndex] = tb.create<vector::ExtractOp>(
-              loc, sortedVector, ArrayRef<int64_t>{laneIndex});
-        SmallVector<Value> localPrefix(packetWidth);
+        Value sortedPacket = sortedLoad;
+        SmallVector<Value> z(prefixPacketWidth);
+        for (int64_t laneIndex = 0; laneIndex < prefixPacketWidth; ++laneIndex)
+          z[laneIndex] = prefixPacketWidth == 1
+                             ? sortedPacket
+                             : Value(tb.create<vector::ExtractOp>(
+                                   loc, sortedPacket,
+                                   ArrayRef<int64_t>{laneIndex}));
+        SmallVector<Value> localPrefix(prefixPacketWidth);
         localPrefix[0] = z[0];
-        for (int64_t laneIndex = 1; laneIndex < packetWidth; ++laneIndex)
+        for (int64_t laneIndex = 1; laneIndex < prefixPacketWidth; ++laneIndex)
           localPrefix[laneIndex] = tb.create<arith::AddFOp>(
               loc, localPrefix[laneIndex - 1], z[laneIndex]);
-        Value segmentTotal = localPrefix[packetWidth - 1];
+        Value segmentTotal = localPrefix[prefixPacketWidth - 1];
 
         Value warpInclusive = segmentTotal;
         for (int32_t offset = 1; offset < 32; offset <<= 1) {
@@ -4191,10 +4215,10 @@ struct RowReductionLowering {
 
         Value scalarBase = tb.create<arith::MulIOp>(
             loc, vecIndex,
-            tb.create<arith::ConstantIndexOp>(loc, packetWidth));
+            tb.create<arith::ConstantIndexOp>(loc, prefixPacketWidth));
         Value threadBestRank = zeroI;
         Value threadBestSum = zeroF;
-        for (int64_t laneIndex = 0; laneIndex < packetWidth; ++laneIndex) {
+        for (int64_t laneIndex = 0; laneIndex < prefixPacketWidth; ++laneIndex) {
           Value prefix = tb.create<arith::AddFOp>(
               loc, prefixBase, localPrefix[laneIndex]);
           Value scalarIndex = tb.create<arith::AddIOp>(
@@ -4355,7 +4379,7 @@ struct RowReductionLowering {
         Value chunkEndIndex = tb.create<arith::MulIOp>(
             loc, chunkPlusOne,
             tb.create<arith::ConstantIndexOp>(
-                loc, scanThreads * packetWidth));
+                loc, scanThreads * prefixPacketWidth));
         Value chunkEnd =
             tb.create<arith::IndexCastOp>(loc, i32, chunkEndIndex);
         Value nextDone = tb.create<arith::CmpIOp>(
@@ -4431,7 +4455,8 @@ struct RowReductionLowering {
                                      ValueRange{rowInBlock});
     }
 
-    // Coalesced X -> O pass.  Adjacent lanes own adjacent float4 vectors.
+    // Coalesced X -> O pass. Adjacent lanes always own adjacent float4 vectors,
+    // independently of the selected sorted-prefix packet width above.
     for (int64_t tile = 0; tile < outputVecTiles; ++tile) {
       Value vecIndex;
       Value xVector;
@@ -4447,8 +4472,8 @@ struct RowReductionLowering {
         xLoad.setNontemporal(true);
         xVector = xLoad;
       }
-      SmallVector<Value> outputs(packetWidth);
-      for (int64_t laneIndex = 0; laneIndex < packetWidth; ++laneIndex) {
+      SmallVector<Value> outputs(outputPacketWidth);
+      for (int64_t laneIndex = 0; laneIndex < outputPacketWidth; ++laneIndex) {
         Value x = b.create<vector::ExtractOp>(
             loc, xVector, ArrayRef<int64_t>{laneIndex});
         Value shifted = b.create<arith::SubFOp>(loc, x, tau);
@@ -4456,7 +4481,7 @@ struct RowReductionLowering {
             b.create<arith::MaxNumFOp>(loc, shifted, zeroF);
       }
       Value outputVector =
-          b.create<vector::FromElementsOp>(loc, packetTy, outputs);
+          b.create<vector::FromElementsOp>(loc, outputPacketTy, outputs);
       auto store = b.create<memref::StoreOp>(
           loc, outputVector, outMem, ValueRange{row, vecIndex});
       store.setNontemporal(true);
@@ -4496,6 +4521,8 @@ struct RowReductionLowering {
                                   false, sortedPrefixTopology,
                                   1, 1,
                                   prefetchEpilogueInputBeforeSummary);
+    gpuFn->setAttr("intent.backend.prefix_packet_width",
+                   b.getI64IntegerAttr(prefixPacketWidth));
     fn.erase();
     return success();
   }
@@ -6318,6 +6345,7 @@ struct ConvertIntentRowReductionToGPUPass
                                  predicatedValueIfs,
                                  foldedConstexprSelects, rowsPerBlock,
                                  reductionParts, prefixThreads,
+                                 prefixPacketWidth,
                                  crossMultiplySupportPredicate,
                                  replicatePrefixPerWarp,
                                  prefetchEpilogueInputBeforeSummary,
@@ -6342,6 +6370,7 @@ struct ConvertIntentRowReductionToGPUPass
                                target.predicatedValueIfs,
                                target.foldedConstexprSelects, rowsPerBlock,
                                reductionParts, prefixThreads,
+                               prefixPacketWidth,
                                crossMultiplySupportPredicate,
                                replicatePrefixPerWarp,
                                prefetchEpilogueInputBeforeSummary,

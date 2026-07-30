@@ -117,6 +117,13 @@ def ConvertIntentRowReductionToGPU
            "work to one warp while the full block writes the row epilogue, "
            "decoupling active-prefix work from full-row output parallelism. The "
            "nonzero state is accepted only by the exact sorted-prefix matcher.">,
+    Option<"prefixPacketWidth", "prefix-packet-width", "unsigned", "4",
+           "Sorted-input elements loaded by each active prefix thread per scan "
+           "chunk. Legal values are 1, 2, or 4. This coordinate is independent "
+           "of the full-row X/output packet, which remains vector<4xf32>: a "
+           "narrow prefix packet can stop after 32 or 64 sorted values without "
+           "degrading the coalesced epilogue. Accepted only by the exact sorted-"
+           "prefix matcher.">,
     Option<"crossMultiplySupportPredicate",
            "cross-multiply-support-predicate", "bool", "false",
            "For the exact sorted-prefix support test, replace z > (prefix-1)/rank "

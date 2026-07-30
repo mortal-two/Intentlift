@@ -271,6 +271,10 @@ class CudaSearchCandidate:
                     "warps_per_row": record.warps_per_row,
                 }
             )
+            if record.prefix_packet_width:
+                actual_schedule["prefix_packet_width"] = (
+                    record.prefix_packet_width
+                )
         return ConcreteLoweringState(
             state_id=self.candidate_id,
             lowering_path_kind=(
@@ -2209,94 +2213,104 @@ def enumerate_cuda_candidates(
                 prefetch_epilogue_input,
                 frontier_ballot,
             ) in prefix_geometries:
-                options = [
-                    f"block-threads={threads_per_row}",
-                    f"tile-cols={tile_cols}",
-                    "vector-width=4",
-                    f"rows-per-block={rows_per_block}",
-                    "require-sorted-prefix=true",
-                ]
-                if prefix_threads:
-                    options.insert(-1, f"prefix-threads={prefix_threads}")
-                if cross_multiply:
-                    options.insert(
-                        -1, "cross-multiply-support-predicate=true"
-                    )
-                if prefetch_epilogue_input:
-                    options.insert(
-                        -1, "prefetch-epilogue-input-before-summary=true"
-                    )
-                if frontier_ballot:
-                    options.insert(-1, "frontier-ballot-support=true")
-                if execution_domain:
-                    options.insert(
-                        -1, "allow-execution-domain-sorted-prefix=true"
-                    )
-                pass_argument = (
-                    "-convert-intent-row-reduction-to-gpu="
-                    + " ".join(options)
+                prefix_packet_widths = (
+                    (4, 2, 1)
+                    if prefetch_epilogue_input
+                    else (4,)
                 )
-                values = {
-                    "threads_per_row": threads_per_row,
-                    "rows_per_block": rows_per_block,
-                    "block_threads": threads_per_row * rows_per_block,
-                    "tile_cols": tile_cols,
-                    "vector_width": 4,
-                }
-                if prefix_threads:
-                    values["prefix_threads"] = prefix_threads
-                if cross_multiply:
-                    values["cross_multiply_support_predicate"] = True
-                if prefetch_epilogue_input:
-                    values["prefetch_epilogue_input_before_summary"] = True
-                if frontier_ballot:
-                    values["frontier_ballot_support"] = True
-                topology_trace = (
-                    "cuda.reduction.sorted_prefix_multirow_warp_scan_wide_epilogue_cross_multiply.v1"
-                    if rows_per_block > 1 and cross_multiply
-                    else "cuda.reduction.sorted_prefix_multirow_warp_scan_wide_epilogue.v1"
-                    if rows_per_block > 1 and prefix_threads
-                    else "cuda.reduction.sorted_prefix_multirow_warp_early_stop.v1"
-                    if rows_per_block > 1
-                    else "cuda.reduction.sorted_prefix_warp_scan_wide_epilogue_cross_multiply.v1"
-                    if cross_multiply
-                    else "cuda.reduction.sorted_prefix_warp_scan_wide_epilogue.v1"
-                    if prefix_threads
-                    else "cuda.reduction.sorted_prefix_early_stop.v1"
-                )
-                if frontier_ballot:
+                for prefix_packet_width in prefix_packet_widths:
+                    options = [
+                        f"block-threads={threads_per_row}",
+                        f"tile-cols={tile_cols}",
+                        "vector-width=4",
+                        f"rows-per-block={rows_per_block}",
+                        "require-sorted-prefix=true",
+                    ]
+                    if prefix_packet_width != 4:
+                        options.insert(
+                            -1, f"prefix-packet-width={prefix_packet_width}"
+                        )
+                    if prefix_threads:
+                        options.insert(-1, f"prefix-threads={prefix_threads}")
+                    if cross_multiply:
+                        options.insert(
+                            -1, "cross-multiply-support-predicate=true"
+                        )
+                    if prefetch_epilogue_input:
+                        options.insert(
+                            -1, "prefetch-epilogue-input-before-summary=true"
+                        )
+                    if frontier_ballot:
+                        options.insert(-1, "frontier-ballot-support=true")
+                    if execution_domain:
+                        options.insert(
+                            -1, "allow-execution-domain-sorted-prefix=true"
+                        )
+                    pass_argument = (
+                        "-convert-intent-row-reduction-to-gpu="
+                        + " ".join(options)
+                    )
+                    values = {
+                        "threads_per_row": threads_per_row,
+                        "rows_per_block": rows_per_block,
+                        "block_threads": threads_per_row * rows_per_block,
+                        "tile_cols": tile_cols,
+                        "vector_width": 4,
+                        "prefix_packet_width": prefix_packet_width,
+                    }
+                    if prefix_threads:
+                        values["prefix_threads"] = prefix_threads
+                    if cross_multiply:
+                        values["cross_multiply_support_predicate"] = True
+                    if prefetch_epilogue_input:
+                        values["prefetch_epilogue_input_before_summary"] = True
+                    if frontier_ballot:
+                        values["frontier_ballot_support"] = True
                     topology_trace = (
-                        topology_trace.removesuffix(".v1")
-                        + "_frontier_ballot.v1"
+                        "cuda.reduction.sorted_prefix_multirow_warp_scan_wide_epilogue_cross_multiply.v1"
+                        if rows_per_block > 1 and cross_multiply
+                        else "cuda.reduction.sorted_prefix_multirow_warp_scan_wide_epilogue.v1"
+                        if rows_per_block > 1 and prefix_threads
+                        else "cuda.reduction.sorted_prefix_multirow_warp_early_stop.v1"
+                        if rows_per_block > 1
+                        else "cuda.reduction.sorted_prefix_warp_scan_wide_epilogue_cross_multiply.v1"
+                        if cross_multiply
+                        else "cuda.reduction.sorted_prefix_warp_scan_wide_epilogue.v1"
+                        if prefix_threads
+                        else "cuda.reduction.sorted_prefix_early_stop.v1"
                     )
-                specialized.append(
-                    CudaSearchCandidate(
-                        _candidate_id(
+                    if frontier_ballot:
+                        topology_trace = (
+                            topology_trace.removesuffix(".v1")
+                            + "_frontier_ballot.v1"
+                        )
+                    specialized.append(
+                        CudaSearchCandidate(
+                            _candidate_id(
+                                "row_scan",
+                                descriptor.fast_path_id,
+                                pass_argument,
+                            ),
                             "row_scan",
                             descriptor.fast_path_id,
                             pass_argument,
-                        ),
-                        "row_scan",
-                        descriptor.fast_path_id,
-                        pass_argument,
-                        values,
-                        _c_score(values, priors),
-                        requested_trace=(
-                            topology_trace,
-                            *(
-                                (
-                                    "cuda.memory.prefetch_epilogue_input_before_summary.v1",
-                                )
-                                if prefetch_epilogue_input
-                                else ()
+                            values,
+                            _c_score(values, priors),
+                            requested_trace=(
+                                topology_trace,
+                                *(
+                                    (
+                                        "cuda.memory.prefetch_epilogue_input_before_summary.v1",
+                                    )
+                                    if prefetch_epilogue_input
+                                    else ()
+                                ),
                             ),
-                        ),
-                        requested_observation_class=(
-                            ObservationClass.OBSERVATION_CHANGING
-                        ),
+                            requested_observation_class=(
+                                ObservationClass.OBSERVATION_CHANGING
+                            ),
+                        )
                     )
-                )
-
         # Barrier-free sorted-prefix state: every output warp recomputes the
         # short active prefix and keeps tau in warp-local SSA.  This is a real
         # topology change, not another block/tile schedule, so it is deliberately

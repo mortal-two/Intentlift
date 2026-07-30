@@ -102,7 +102,7 @@ rounds；最终 target 与 Source 再做 8 个交替批次、每批 5 个 L2-evi
 | LayerNorm | 94.304 | 94.304 | 94.304 | 1.000x | 1.000x | 1.122x |
 | Softmax | 49.792 | 46.272 | 45.248 | 1.076x | 1.023x | 1.259x |
 | DYT | 98.400 | 91.328 | 91.168 | 1.077x | 1.002x | 1.136x |
-| Sparsemax | 76.320 | 71.680 | 49.088 | 1.065x | 1.460x | 1.719x |
+| Sparsemax | 76.544 | 71.232 | 47.840 | 1.075x | 1.489x | 1.741x |
 | KLDiv | 98.592 | 97.984 | 94.688 | 1.006x | 1.035x | 1.196x |
 | PolyNorm | 47.488 | 47.488 | 46.880 | 1.000x | 1.013x | 1.239x |
 | Flash backward preprocess | 418.624 | 307.264 | 190.912 | 1.362x | 1.609x | 1.073x |
@@ -121,7 +121,7 @@ H100 正式横向表：
 | LayerNorm | 57.728 | 57.728 | 56.096 | 1.000x | 1.029x | 1.301x |
 | Softmax | 35.008 | 33.344 | 31.520 | 1.050x | 1.058x | 1.336x |
 | DYT | 68.960 | 56.896 | 56.896 | 1.212x | 1.000x | 1.199x |
-| Sparsemax | 54.048 | 48.352 | 32.864 | 1.118x | 1.471x | 1.771x |
+| Sparsemax | 53.728 | 48.832 | 32.480 | 1.100x | 1.503x | 1.784x |
 | KLDiv | 63.104 | 61.824 | 61.696 | 1.021x | 1.002x | 1.251x |
 | PolyNorm | 36.704 | 35.168 | 33.728 | 1.044x | 1.043x | 1.428x |
 | Flash backward preprocess | 648.928 | 648.928 | 120.192 | 1.000x | 5.399x | 1.050x |
@@ -129,10 +129,10 @@ H100 正式横向表：
 | xFormers RMSNorm-add | 1507.456 | 286.656 | 282.592 | 5.259x | 1.014x | 1.085x |
 | SplitK reduce | 15.776 | 15.616 | 14.336 | 1.010x | 1.089x | 3.470x |
 
-Fresh-14 全量几何均值：5090D 为 `G_schedule=1.167x`、`G_full=1.072x`、Source/target `1.260x`；H100
-为 `G_schedule=1.198x`、`G_full=1.183x`、Source/target `1.372x`。Full 计数分别为
-`#>=1/#>=1.05/#>=1.5/#<1 = 14/2/1/0` 与 `14/4/1/0`。只统计本轮真实新增结构适用的
-Flash+Sparsemax，`G_full` 几何均值为 5090D `1.533x`、H100 `2.818x`；因此强结构结论成立，同时全表保留
+Fresh-14 全量几何均值：5090D 为 `G_schedule=1.168x`、`G_full=1.073x`、Source/target `1.261x`；H100
+为 `G_schedule=1.197x`、`G_full=1.185x`、Source/target `1.373x`。Full 计数分别为
+`#>=1/#>=1.05/#>=1.5/#<1 = 14/2/1/0` 与 `14/4/2/0`。只统计本轮真实新增结构适用的
+Flash+Sparsemax，`G_full` 几何均值为 5090D `1.548x`、H100 `2.849x`；因此强结构结论成立，同时全表保留
 已经 read-once、带宽/launch 下限主导的负例。Flash/Sparsemax 使用完整空间，其余项使用统一
 96-candidate 预算。
 
@@ -171,26 +171,32 @@ MLIR 状态：同一 subgroup 的 2/4/8 个行累加器同时存活，feature lo
 
 ### 3.5 Sparsemax prefix/frontier/epilogue live-state 八批结果
 
-Sorted-prefix Full 现在包含两个可组合的独立 live-state。第一项在 prefix/support/tau 之前发起每个输出线程的
+Sorted-prefix Full 现在包含三个可组合的独立物理坐标。第一项在 prefix/support/tau 之前发起每个输出线程的
 coalesced X packet 读取，并把 packet 保存在 SSA/register 中；tau 就绪后直接执行 `max(X-tau,0)`，使完整 X
 读取与串行 active-prefix 延迟重叠。第二项消费 descending typed precondition：support 必然是一个前缀，因此
 用 `nvvm.vote.ballot.sync + ctlz + indexed shuffle` 直接取得最后 supported `(rank,sum)`，替代逐 lane pair 的
 XOR tree；随后每个 warp 只由 leader 计算一次 tau，再广播 live scalar。该状态把实际 shuffle 从 16 降为 9，
-并把每行/warp 的重复 tau division 从 32 次降为 1 次。两项都只能由精确的 typed
+并把每行/warp 的重复 tau division 从 32 次降为 1 次。第三项把 sorted-prefix packet width `1/2/4` 与完整
+X/output 的固定 `vector<4>` 解耦：前者决定每个 early-stop chunk 覆盖 32/64/128 等多少个排序值，后者继续
+保持 16-byte 合并访存。三项都只能由精确的 typed
 `scan -> support -> (k,s) -> tau -> epilogue` matcher 准入，不读取 kernel 名；缺少 descending 证据时只可
 作为 execution-domain candidate 进入 Q/D，不能转写成 B hard fact。
 
 | Target | C-Fixed | Schedule | Full | `G_schedule` | `G_full` | Source | paired Source/target |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| 5090D | 76.320 | 71.680 | 49.088 | 1.065x | 1.460x | 84.368 | 1.719x |
-| H100 | 54.048 | 48.352 | 32.864 | 1.118x | 1.471x | 57.216 | 1.771x |
+| 5090D | 76.544 | 71.232 | 47.840 | 1.075x | 1.489x | 83.056 | 1.741x |
+| H100 | 53.728 | 48.832 | 32.480 | 1.100x | 1.503x | 57.184 | 1.784x |
 
-两卡均为 5 samples/batch、8 个交替确认批次。5090D 的 Full 确认批次为 `48.928--49.312 us`；其目标更适合
-`256-thread wide epilogue + prefetched X`，因此自动拒绝 ballot 状态的性能。H100 则选择
-`32-thread single-warp + prefetched X + frontier ballot + leader tau`，确认批次为 `32.096--32.448 us`，
-中位数 `32.304 us`。同一个候选并集因目标不同选择了不同 executable；所有获胜状态都通过两次 canary Q。
-当前同轮三柱的稳定 `G_full` 是 `1.460x/1.471x`，仍不能宣称跨过 1.50x，但比旧 prefix-only 状态继续扩大，
-且增益可直接归因于被删除的 pair-reduction shuffle 与重复 tau division，而不是削弱 Schedule。
+两卡均为 5 samples/batch、8 个交替确认批次。5090D 选择
+`64-thread + prefix packet 1 + prefetched X + frontier ballot`，确认批次为 `47.392--47.904 us`，中位数
+`47.696 us`；H100 保留 `32-thread single-warp + prefix packet 4 + prefetched X + frontier ballot + leader tau`，
+确认批次为 `31.872--32.416 us`，中位数 `32.048 us`。同一个候选并集因 target 不同选择了不同 packet/
+thread executable；所有获胜状态都通过两次 canary Q。
+
+本轮还修复了 multi-row sorted-prefix 的真实索引错误：第二个逻辑行过去错误使用 CTA 全局线程号索引
+SortedX，导致全部多行候选被 Q/D 拒绝；改为 row-local scan thread 后，32 个多行状态全部正确可测，但两卡
+都选择单行 winner。当前同轮三柱的稳定 `G_full` 是 `1.489x/1.503x`；5090D 仍按实报告略低于 1.50x，H100
+已跨过 1.50x，收益来自更少的实际 prefix 工作与既有 frontier/epilogue live state，而不是削弱 Schedule。
 
 ## 4. 本任务实现的四条强路径
 
