@@ -1086,6 +1086,11 @@ source stages; fixed code cannot infer an undeclared cast; never propagate one
 conversion to sibling parameters, strides, or instances. Signed/unsigned widen
 states explicit same-signedness source_dtype and a strictly wider target_dtype;
 equal-width or missing dtype pairs are not widening.
+Floating cast placement is part of the typed graph: never commute a cast across
+mul/add/sub or replace a low-precision operation followed by extension with an
+operation performed after extension, even when the result relation is tolerance
+or Source uses a fused primitive. Query the exact TTIR def-use when Source-level
+promotion is ambiguous.
 
 For each J `reduce` or inclusive `scan`, boundary.reductions.tile_axis is the
 Source frontend's local tile axis after program/grid axes select the program instance. It

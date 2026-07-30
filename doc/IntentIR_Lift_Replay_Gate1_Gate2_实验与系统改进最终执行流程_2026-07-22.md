@@ -1028,14 +1028,16 @@ eviction spelling 当作防止 compiler CSE 的 public frontend mechanism；具�
 fingerprint。未知或方向不合法的 cache/eviction policy、mask、fill、type、volatility 及其他 operation
 attributes 仍被观察；不得借此归一任意 memory difference。
 
-当前 active profile 是 `triton-ttir-3.6-gate1-v12`。v12只增加一项全局ownership quotient：完整保留
+当前 active profile 是 `triton-ttir-3.6-gate1-v13`。v13只增加 direct typed FMA 与相同 typed
+operands 的 direct mul+add/sub value-tree canonicalization；不移动cast、不重关联更大的树，也不授权
+production backend执行FMA contraction。v13继承v12；v12只增加一项全局ownership quotient：完整保留
 输出值反向切片、predicate/boolean结构与直接常量、reduction/control/effect、region/loop/carrier、
 program-coordinate和pointer/addptr/transfer anchor；把不进入这些切片、仅拼写program scheduling、
 address offset、rank lift或physical bound的known-pure内部子图压成typed、carrier-origin-preserving的
 不透明representation edge。它不读取kernel名/J/Source文本，不归一错误predicate/fill/reducer、未知
 op、carrier provenance、program-axis/transfer数量或effect topology。这是对所有kernel统一修改
 observer，不是失败样例的临时忽略。
-v12 保留既有对已建模 op 的 cache-policy 规则与
+v13 保留既有对已建模 op 的 cache-policy 规则与
 从 public entry 可达、静态已知且无环的 `tt.call` interprocedural comparison：按 formal-to-actual
 substitution 展开 private helper，并将其返回 SSA、op/def-use、effect 与当前已支持的 structured region
 纳入同一 observation；public entry ABI 仍是比较边界，helper 名称本身不是新的语义 artifact。

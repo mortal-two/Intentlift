@@ -82,19 +82,21 @@ valuation 猜测。它继承 v25；v25 继承 v24 的 pointer route 与 floating
 `reduction_linearization` 限定为一个 `realize` stage 经唯一 slot-0 route 进入一个 J
 `reduce` realize stage；fixed code只检查 Lift 已作者化的事实。
 
-当前 Gate1 observer profile 是 `triton-ttir-3.6-gate1-v12`。v12 对 compiler 图先作通用 ownership
+当前 Gate1 observer profile 是 `triton-ttir-3.6-gate1-v13`。v13 只把 direct typed FMA 与相同
+typed operands 的 direct mul+add（或 direct negated addend 对应的 mul-sub）规范为同一 value tree；
+不移动 cast、不重关联更大表达式，也不是 production FMA permission。v13 继承 v12；v12 对 compiler 图先作通用 ownership
 切片：所有进入返回值、store/update value 的计算，完整 predicate/boolean 树及其直接常量，以及
 reduction、control、effect、region/loop/carrier、program-coordinate 与 pointer/transfer anchor 继续作为
 hard evidence；仅把不进入这些切片、只拼写 program scheduling、address offset、rank lift 或物理 loop
 bound 的 known-pure 子图收缩为带类型和原始 ABI/region carrier 的不透明 representation edge。具体
 `div/rem/min/add/mul/splat/broadcast` 树不由 J/C/π 拥有，不能成为 source-blind hidden answer；unknown
 op、错误 predicate/fill/reducer/effect/transfer 数量或 carrier provenance 不在该 quotient 内。
-v12 保留既有对已建模 op 与 public-entry
+v13 保留既有对已建模 op 与 public-entry
 reachable、static、structured、acyclic `tt.call` 的 interprocedural comparison rules，并包含 typed
 single-block、encodingless `tt.scan`、closed structured `scf.if` 与 exact terminal binary fork observation。
 operation/effect classification 是全局 closed profile；unknown op、malformed generic/body line、超出
 closed profile 的 multi-block CFG/structured region 与未支持 control/region fail closed。历史
-v5–v11 evidence 不由 v12 静默重判；该 profile 只是当前 compiler
+v5–v12 evidence 不由 v13 静默重判；该 profile 只是当前 compiler
 contract，不是形式完备性证明。同 case fan-out 协议是
 `intentir.scrc.candidate-fanout.v4`：首个被观察到的完整 Gate1 closure 成为 winner，sibling
 cooperative stop并保存 receipt；hidden Gate2 尚未生成，因此调度次序不进入认证谓词。

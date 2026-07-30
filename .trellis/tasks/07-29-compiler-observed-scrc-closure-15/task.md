@@ -118,8 +118,11 @@ SplitK forward/reduce/backward。
 
 同批Llama4 RoPE的三个branch已各完成5个TypeCheck-valid formal rounds，最终仍分别硬失败于
 `op_multiset/dataflow`（其中一支另含`predicate_effect`），正式记为本配置下`NO_CLOSURE_(3,5)`；
-它不是TypeCheck或Gate2 consumer问题，下一轮必须针对Source/TTIR到J/π的Lift表达与Replay消费分析，
-不能继续无界增加K。
+它不是TypeCheck或Gate2 consumer问题。v13只将direct typed FMA与相同typed operands的direct
+mul+add/sub规范为同一observer value tree；零模型exact Replay重算后op multiset只剩Source比Replay
+多两个`arith.extf`。raw TTIR确认Source含f16乘法后extf，而旧J/Replay把cast提前成f32乘法；下一轮
+必须由Source-aware Lift修正typed J graph，不能靠observer隐藏cast motion或继续无界增加K。诊断
+recheck位于`/tmp/intentir-task15-llama4-fma-v13-zero-model-recheck-20260730-01/liger_llama4_rope/gate2-recheck-001`，不改变parent verdict。
 
 ## 2. 从真实输入到证书的完整数据流
 
@@ -431,9 +434,10 @@ physical K-loop、pointer/accumulator carriers、transfer与effect order；旧ob
 program grouping产生的`div/rem/min/add/mul/splat/broadcast`具体TTIR树。π按定稿禁止保存该公式，J只
 拥有logical index，故要求source-blind Replay逐节点猜同一树违反第8节唯一所有权。
 
-active `triton-ttir-3.6-gate1-v12`据此实现通用use-slice quotient：observable value与predicate树保持
+active `triton-ttir-3.6-gate1-v13`继承v12通用use-slice quotient：observable value与predicate树保持
 hard，effect/region/loop/carrier/reduction/program/addptr/transfer anchors保持hard；仅known-pure且只
 服务physical scheduling/address/rank/bound的内部树收缩为typed、ABI/region-origin-preserving edge。
+v13只额外规范direct typed FMA与相同typed operands的direct mul+add/sub，不移动cast或重关联更大的树。
 它不是kernel例外，也不读取J/Source文本。对保存的raw Source/Replay TTIR做确定性重算：Wave32三个
 既有Gate1 closure仍全部hard-pass；Linear carriers三份中仅原本只差representation formula的
 attempt-01转为hard-pass，另两份仍因额外program coordinate或真实dataflow拒绝；SplitK split=4

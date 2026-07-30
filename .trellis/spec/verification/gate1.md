@@ -72,14 +72,19 @@ J/C/π 拥有的 target cache-policy presentation hint，不改变 J denotation�
 predicate/fill、address/dataflow 或 transfer topology。未知值、load/store 方向不合法的值、eviction
 以及其他 memory attributes 仍参与 hard comparison。
 
-当前 active profile 是 `triton-ttir-3.6-gate1-v12`。v12 在既有 canonicalization 后作一项全局、
+当前 active profile 是 `triton-ttir-3.6-gate1-v13`。v13 只增加一条全局 closed value-tree
+canonicalization：一个 direct typed `math.fma(a,b,c)` 与使用相同 typed operands 的 direct
+`a*b+c` 等价；若 `c` 是同 region、direct `0-d`/`neg(d)`，则只与 direct `a*b-d` 等价。它不移动
+cast、不改变 operand/type、不重关联更大的树，也不授权 production backend 进行 FMA contraction；
+J 的 typed graph 与 result relation、Gate2/Q 仍各自保持原所有权。
+v13 完整继承 v12。v12 在既有 canonicalization 后作一项全局、
 source-neutral 的 ownership quotient：从 public return 与 store/update value 反向保留完整值流；从
 load/store mask、structured condition 与 terminal condition 保留 comparison/boolean 结构、polarity 和
 直接常量；effect、region、loop/carrier、reduction、`tt.get_program_id`、`tt.addptr` 与 transfer anchor
 始终保留。只有剩余 known-pure、仅服务 program scheduling/address/rank/bound 的子图被压成带结果类型
 与 ABI/region origin 的不透明 representation edge。该规则不读取 J、Source 文本或 kernel family，
 也不把错误 mask/fill、reducer、effect、pointer provenance、program-axis 数量或 transfer topology
-NormalizeAway。v12 保留既有对已建模 op 与 interprocedural
+NormalizeAway。v13 保留既有对已建模 op 与 interprocedural
 observation 的 comparison rules：从 public entry 可达、callee 静态已知且 call graph 无环的
 structured `tt.call` 仍按
 formal-to-actual 与 helper return 展开，op/def-use、effect 与已支持 region 继续参与 hard comparison；

@@ -49,7 +49,7 @@ __all__ = [
 ]
 
 
-TTIR_FINGERPRINT_SCHEMA = "triton-ttir-3.6-gate1-v12"
+TTIR_FINGERPRINT_SCHEMA = "triton-ttir-3.6-gate1-v13"
 _SCHEMA_VERSION = TTIR_FINGERPRINT_SCHEMA
 _SSA_RE = re.compile(r"%[A-Za-z0-9_.$-]+(?:#[0-9]+)?")
 _LOC_START_RE = re.compile(r"loc\s*\(")
@@ -1781,8 +1781,9 @@ def _bounded_normalize_operations(
     """Apply the registered bounded rewrites after lexical SSA resolution.
 
     Gate1 deliberately keeps these false-reject normalizations narrow: neutral
-    ``x + 0``, ``1 / sqrt(x)`` versus ``rsqrt(x)``, and Triton's exact
-    libdevice-rsqrt spelling versus ``math.rsqrt``.  Applying them to the
+    ``x + 0``, ``1 / sqrt(x)`` versus ``rsqrt(x)``, Triton's exact
+    libdevice-rsqrt spelling versus ``math.rsqrt``, and a direct typed FMA versus
+    its direct typed multiply-add/subtract expansion.  Applying them to the
     parsed graph is essential: MLIR SSA spellings are region-scoped, so a
     textual whole-function substitution would otherwise depend on whether
     sibling or nested regions happened to reuse the same local name.
@@ -1916,6 +1917,83 @@ def _bounded_normalize_operations(
         normalization_constant_nodes.add(result_to_node[numerator])
         if original_uses[denominator] == 1:
             removed_nodes.add(sqrt_node_id)
+
+    # Rule N3: one direct typed ``fma(a,b,c)`` has the same observer-level value
+    # tree as ``a*b+c``.  A direct ``c = 0-d``/``neg(d)`` is represented as
+    # ``a*b-d``.  Operand identities and their already-compiled types remain
+    # untouched; no cast motion, reassociation, contraction of a larger tree, or
+    # shared producer is hidden by this rewrite.  Floating rounding remains the
+    # responsibility of the predeclared Gate2 comparison relation/Q.
+    expanded_operations: list[_Operation] = []
+    next_node_id = max((item.node_id for item in operations), default=-1) + 1
+    for operation in operations:
+        if (
+            operation.node_id in removed_nodes
+            or operation.name != "math.fma"
+            or len(operation.result_names) != 1
+            or len(operation.operands) != 3
+        ):
+            expanded_operations.append(operation)
+            continue
+        left, right, addend = operation.operands
+        result_type = _normalize_space(operation.local_signature.rsplit(":", 1)[-1])
+        multiply_result = f"{operation.result_names[0]}$fma_mul"
+        while multiply_result in result_to_node:
+            multiply_result += "$"
+        multiply = _Operation(
+            node_id=next_node_id,
+            name="arith.mulf",
+            result_names=(multiply_result,),
+            operands=[left, right],
+            local_signature=_normalize_space(
+                f"arith.mulf %, % : {result_type}"
+            ),
+            context=operation.context,
+            header_operand_count=2,
+            fork_id=operation.fork_id,
+            fork_arm=operation.fork_arm,
+            structured_if_id=operation.structured_if_id,
+            structured_if_arm=operation.structured_if_arm,
+        )
+        next_node_id += 1
+        result_to_node[multiply_result] = multiply.node_id
+        node_by_id[multiply.node_id] = multiply
+
+        addend_node_id = result_to_node.get(addend)
+        addend_operation = (
+            node_by_id.get(addend_node_id) if addend_node_id is not None else None
+        )
+        subtract_operand: str | None = None
+        if (
+            addend_operation is not None
+            and addend_operation.name == "arith.subf"
+            and len(addend_operation.operands) == 2
+            and direct_constant(addend_operation.operands[0]) == 0.0
+        ):
+            subtract_operand = addend_operation.operands[1]
+            normalization_constant_nodes.add(
+                result_to_node[addend_operation.operands[0]]
+            )
+        elif (
+            addend_operation is not None
+            and addend_operation.name == "arith.negf"
+            and len(addend_operation.operands) == 1
+        ):
+            subtract_operand = addend_operation.operands[0]
+        if subtract_operand is not None:
+            operation.name = "arith.subf"
+            operation.operands = [multiply_result, subtract_operand]
+            if original_uses[addend] == 1 and addend_node_id is not None:
+                removed_nodes.add(addend_node_id)
+        else:
+            operation.name = "arith.addf"
+            operation.operands = [multiply_result, addend]
+        operation.local_signature = _normalize_space(
+            f"{operation.name} %, % : {result_type}"
+        )
+        operation.header_operand_count = 2
+        expanded_operations.extend((multiply, operation))
+    operations = expanded_operations
 
     remaining_uses: Counter[str] = Counter()
     for operation in operations:
