@@ -408,6 +408,14 @@ capability的candidate-01三个formula-only attempts转为hard-pass，而带错�
 Sol-high attempts继续拒绝。上述只是observer capability evidence；只有fresh recheck与Gate2三边通过
 才增加18/28计数。
 
+2026-07-30 的逐turn审计进一步定位到真正的 agent 成本：Flash full backward 首稿分别用 8/6 个
+model segment、11/8 次 CandidateCheck、12/9 次 `candidate.json` 编辑，累计输入约 1.36M/1.05M；
+checker 单次只有 18--85ms。Linear continuation 则每轮重复读取约 70--76KB full feedback、10--14KB
+frontier 与当前 candidate。故瓶颈是 provider 在增长上下文中反复处理整份 dependent artifact/diff，
+不是 Source 理解或工具执行速度。v19 删除 Codex workspace 的 bulk `feedback.json` 与重复 previous
+artifact，只按既有 Gate1 label 暴露 exact category 文件，并要求 contract/op reference leaf-local
+读取；不新增语义工具，不改变 artifact 作者权或闭合谓词。
+
 ## 5. J / C / π的能力计划
 
 ### 5.1 不做大重构

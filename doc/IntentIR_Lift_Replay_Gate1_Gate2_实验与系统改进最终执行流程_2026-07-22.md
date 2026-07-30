@@ -721,6 +721,11 @@ program-id、loop/carrier、reduction linearization 与无歧义 transfer order�
 `(J,C,π)`、不运行 Replay/Gate，也不构成 TypeCheck、Gate1 或证书。候选必须同时通过 source-free
 CandidateCheck 与该窄对账后才成为 Lift 的 last-known-good；完整语义闭合仍只由后续 fresh Replay 和
 Gate1 判定。
+Codex Lift v19 再只缩小持久 owner 的工作表面：前一 artifact 只保留在
+`output/candidate.json`，不随 relift feedback 重复挂载；Gate1 closed diff 按其已有 category label
+拆成固定 exact 文件，frontier 首读，非 observer 诊断单列。fixed code 只做字节分区，不归因、不选
+repair；contract/op reference 也只按 owner 所需 leaf 局部读取。该变化不生成或省略任何最终
+`(J,C,π)` 字段，不改变 TypeCheck/Gate/SCRC 谓词。
 v41 只把已由 Intent dialect、TypeCheck 与 shared lowering 支持的 `log2` 补入通用 `map_unary`
 vocabulary。v42 只明确 predicate-bearing Source load 的 `fill_value` 必须是该 access 实际 authored
 `other`，不得换成 downstream neutral/canceling/observationally-equivalent value；consumer extension

@@ -45,9 +45,17 @@ from .prompt import SCHEMA as _INTENTIR_OPERATION_REFERENCE
 from .scrc_schema import scrc_lift_core_json_schema
 
 
-CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v18"
-CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v76"
+CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v19"
+CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v77"
 CODEX_CLI_TURN_TIMEOUT_SECONDS = 900.0
+
+_FEEDBACK_CATEGORY_NAMES = (
+    "interface",
+    "predicate_effect",
+    "op_multiset",
+    "dataflow",
+    "reduction",
+)
 
 _INITIAL_PROMPT = """You are the sole source-aware IntentIR Lift owner for this branch.
 Work only under the isolated /workspace; input/ is immutable and output/, work/,
@@ -57,7 +65,9 @@ Act like a coding agent, not a staged JSON generator. Read input/source.py,
 input/harness_view.json, and input/README.md; inspect only useful ranges of
 input/source.ttir. input/artifact_contract.json is the complete high-density closed
 wire reference projected from the host Schema, and input/intent_ops.md gives exact
-IntentOp spelling. Do not search for another schema, tutorial, or tool source.
+IntentOp spelling. Query only `.object_shapes` and the leaf `.sections.NAME` values
+you actually need; do not pretty-print the whole contract or read the entire op
+catalog into the thread. Do not search for another schema, tutorial, or tool source.
 
 You alone author the complete output/candidate.json. J owns all logical semantics;
 C owns only implementation choices; pi owns only source-realization relations for
@@ -131,6 +141,97 @@ def _contract_object_shapes(schema: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _observer_diff_from_diagnostics(
+    diagnostics: Mapping[str, Any] | None,
+) -> Mapping[str, Any] | None:
+    if not isinstance(diagnostics, Mapping):
+        return None
+    observer = diagnostics.get("observer_diff")
+    if isinstance(observer, Mapping):
+        return observer
+    unresolved = diagnostics.get("unresolved_gate1")
+    nested = (
+        unresolved.get("diagnostics")
+        if isinstance(unresolved, Mapping)
+        else None
+    )
+    observer = nested.get("observer_diff") if isinstance(nested, Mapping) else None
+    return observer if isinstance(observer, Mapping) else None
+
+
+def _codex_feedback_files(feedback_text: str) -> dict[str, str]:
+    """Partition exact closed feedback without exposing one bulk relift object.
+
+    Category names already belong to the Gate1 diagnostic protocol.  This only
+    separates bytes by that existing label and removes the duplicate previous
+    artifact, which the persistent owner already has in output/candidate.json.
+    """
+
+    feedback = json.loads(feedback_text)
+    categories: dict[str, Any] = {}
+    if isinstance(feedback, Mapping):
+        observer = _observer_diff_from_diagnostics(
+            feedback.get("diagnostics")
+            if isinstance(feedback.get("diagnostics"), Mapping)
+            else None
+        )
+        raw_categories = observer.get("categories") if isinstance(observer, Mapping) else None
+        if isinstance(raw_categories, list):
+            for category in raw_categories:
+                if not isinstance(category, Mapping):
+                    continue
+                name = category.get("category")
+                if isinstance(name, str) and name in _FEEDBACK_CATEGORY_NAMES:
+                    categories[name] = dict(category)
+
+    detail: Any = None
+    if isinstance(feedback, Mapping):
+        detail = {
+            str(key): value
+            for key, value in feedback.items()
+            if key not in {"previous_artifact", "diagnostics"}
+        }
+        diagnostics = feedback.get("diagnostics")
+        if isinstance(diagnostics, Mapping):
+            pruned = {
+                str(key): value
+                for key, value in diagnostics.items()
+                if key not in {"observer_diff", "unresolved_gate1"}
+            }
+            unresolved = diagnostics.get("unresolved_gate1")
+            if isinstance(unresolved, Mapping):
+                unresolved_copy = dict(unresolved)
+                nested = unresolved_copy.get("diagnostics")
+                if isinstance(nested, Mapping):
+                    unresolved_copy["diagnostics"] = {
+                        str(key): value
+                        for key, value in nested.items()
+                        if key != "observer_diff"
+                    }
+                pruned["unresolved_gate1"] = unresolved_copy
+            if pruned:
+                detail["diagnostics"] = pruned
+
+    values: dict[str, Any] = {"feedback_detail.json": detail}
+    values.update(
+        {
+            f"feedback_category_{name}.json": categories.get(name)
+            for name in _FEEDBACK_CATEGORY_NAMES
+        }
+    )
+    return {
+        name: json.dumps(
+            value,
+            sort_keys=True,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+        )
+        + "\n"
+        for name, value in values.items()
+    }
+
+
 
 def _codex_input_files(
     request: Any,
@@ -159,7 +260,6 @@ def _codex_input_files(
     files = {
         "source.py": complete["source.py"],
         "harness_view.json": complete["harness_view.json"],
-        "feedback.json": complete["feedback.json"],
         "feedback_frontier.json": complete["feedback_frontier.json"],
         "README.md": (
             "# IntentIR Lift workspace\n\n"
@@ -201,6 +301,11 @@ def _codex_input_files(
             "class, scope captures/effect order, and all J/C/pi cross-references are "
             "complete and mutually consistent. CandidateCheck only diagnoses these "
             "facts; it never supplies them.\n"
+            "On a relift, read feedback_frontier.json first. Exact bulk Gate1 "
+            "feedback is not mounted: open only the already-labelled "
+            "feedback_category_NAME.json required by the current hypothesis; "
+            "feedback_detail.json contains non-observer diagnostics and never "
+            "duplicates the previous artifact.\n"
             "After CandidateCheck passes, run the separate source_reconcile tool. It "
             "only compares occurrence obligations already authored by your pi with "
             "the immutable Source TTIR observer; it never supplies a field or repair.\n"
@@ -217,6 +322,7 @@ def _codex_input_files(
         "candidate_check.json": "null\n",
         "source_reconcile.json": "null\n",
     }
+    files.update(_codex_feedback_files(complete["feedback.json"]))
     if "source_ttir.json" in complete:
         observation = json.loads(complete["source_ttir.json"])
         ttir = observation.get("ttir") if isinstance(observation, Mapping) else None
@@ -225,10 +331,12 @@ def _codex_input_files(
     return files
 
 _EXTERNAL_CONTINUATION_PROMPT = """The same branch-local source-aware Lift task continues in the same workspace and thread.
-Read input/feedback_frontier.json first and input/feedback.json only for a named
-detail that the bounded frontier omits. Inspect the current output/candidate.json
-and Source/TTIR where needed, then revise the complete model-authored J/C/pi in
-place. Treat feedback as a compiler counterexample, not as a semantic patch.
+Read input/feedback_frontier.json first. Open only a named
+input/feedback_category_NAME.json when its bounded frontier is insufficient;
+input/feedback_detail.json contains exact non-observer diagnostics. The previous
+artifact already exists at output/candidate.json and is never duplicated in input.
+Inspect Source/TTIR only where needed, then revise the complete model-authored
+J/C/pi in place. Treat feedback as a compiler counterexample, not as a semantic patch.
 Run `python .agents/intentir_agent_tool.py candidate_check` and finish only after
 the current exact candidate passes. The host alone reruns the checks and gates.
 """
@@ -262,7 +370,11 @@ def _source_aware_startup_context(workspace: Any, *, fresh_owner: bool) -> dict[
             "artifact_contract": "input/artifact_contract.json",
             "intent_ops": "input/intent_ops.md",
             "feedback_frontier": "input/feedback_frontier.json",
-            "feedback_full": "input/feedback.json",
+            "feedback_detail": "input/feedback_detail.json",
+            "feedback_categories": [
+                f"input/feedback_category_{name}.json"
+                for name in _FEEDBACK_CATEGORY_NAMES
+            ],
             "candidate_check": "input/candidate_check.json",
             "source_reconcile": "input/source_reconcile.json",
             "candidate": "output/candidate.json",
@@ -429,8 +541,12 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                 files,
                 mutable_paths=frozenset(
                     {
-                        "feedback.json",
                         "feedback_frontier.json",
+                        "feedback_detail.json",
+                        *{
+                            f"feedback_category_{name}.json"
+                            for name in _FEEDBACK_CATEGORY_NAMES
+                        },
                         "candidate_check.json",
                         "source_reconcile.json",
                     }

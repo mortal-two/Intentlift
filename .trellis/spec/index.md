@@ -55,6 +55,8 @@ compact manifest，并只查询明确遗漏页。Codex Lift v12 / knowledge v70 
 source-aware owner workspace中按需查询，不进入Replay或artifact。原有只读工具退为可选局部自读。
 Codex Lift v18 还用同一公共 obligation 投影对账候选已写出的 realization 与 Source TTIR；它只拒绝和
 诊断，不生成语义、不修改artifact，也不替代 fresh Replay/Gate1。
+Codex Lift v19 将 relift 的 bulk feedback 改成 workspace 内按既有 Gate1 label 分区的 exact 文件，
+不再重复输入上一 artifact；这只缩小 agent 上下文，不改变任何接受集合。
 两条路径都不生成 artifact/realization，没有 Gate
 或认证权限。
 

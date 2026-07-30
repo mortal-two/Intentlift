@@ -235,6 +235,13 @@ expected/actual count/order；模型仍须自行修改完整 J/C/π。该工具�
 一致性仍由 fresh Replay + Gate1 裁决。v18 的 host submission preflight 要求当前 exact bytes 依次
 通过 CandidateCheck 与 SourceReconcile，并分别记录调用与诊断。
 
+Codex Lift v19 不再把整份 relift `feedback.json` 暴露给持久 owner。前一 artifact 已存在于同一
+workspace 的 `output/candidate.json`；closed Gate1 diff 只按既有 protocol label 分成固定的
+`feedback_category_NAME.json`，frontier 仍是首读入口，非 observer 诊断另存一个小 detail 文件。
+这是 exact bytes 的机械分区，不选择类别、不生成修复。首次 contract 也只要求读取 top-level shape
+与当前需要的 leaf section，禁止把整份 schema/op catalog pretty-print 进线程；最终 artifact 与所有
+字段仍完全由同一 LLM owner 作者化。
+
 Codex Lift v11 / knowledge v68 将同一 exact Harness ABI ledger 与 syntax-only
 `source-outline.v2` 直接放入首次 owner prompt，并将
 后续 closed feedback frontier 中已有的 interface、reduction、predicate/effect 与 op-multiset 直接
