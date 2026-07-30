@@ -38,3 +38,13 @@ def test_candidate_output_canaries_cover_float_integer_and_bool() -> None:
         torch, [aliased], variant=0, protected=[aliased]
     )
     assert torch.all(aliased == 7.0)
+
+
+def test_full_selection_contains_the_measured_schedule_spine() -> None:
+    runner = _load_runner()
+    structural = {"candidate": "structural", "latency_us": 101.0}
+    schedule = {"candidate": "schedule", "latency_us": 100.0}
+
+    assert runner._select_full_record(structural, schedule) is schedule
+    assert runner._select_full_record(structural, None) is structural
+    assert runner._select_full_record(None, None) is None

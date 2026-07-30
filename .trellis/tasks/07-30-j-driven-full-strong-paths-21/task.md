@@ -87,15 +87,47 @@ preprocess 的 padded/subgroup-feature lowering 也已经到 1.5x 附近。
 以下均为 `natural-headline-v1`、code-warm/data-cold、CUDA event；筛选数据用于决定实现方向，最终论文表仍按
 第8节协议统一重测。
 
-| Kernel / target | C-Fixed (us) | Schedule-Only (us) | Full (us) | `G_full` | Source (us) | 结论 |
-|---|---:|---:|---:|---:|---:|---|
-| Flash backward preprocess / 5090D | 412.320 | 308.864 | 195.424 | 1.580x | 207.520 | subgroup-feature reduction 为强路径 |
-| Flash backward preprocess / H100 | 827.840 | 807.232 | 127.136 | 6.349x | 122.992 | 同一结构在 H100 上收益更大 |
-| Sparsemax / 5090D | 75.808 | 71.200 | 51.168 | 1.391x | 82.864 | 保留单 prefix warp + wide epilogue |
-| Sparsemax / H100 | 52.608 | 46.848 | 36.608 | 1.280x | 57.520 | winner 改为 per-output-warp replicated prefix |
-| DYT / 5090D | 100.960 | 93.696 | 93.696 | 1.000x | 110.208 | 当前自然负载为 Full 负例 |
-| KLDiv / 5090D | 107.648 | 107.648 | 103.904 | 1.036x | 142.368 | 外部竞争力成立，新增结构收益弱 |
-| SplitK reduce / 5090D | 16.192 | 15.680 | 15.584 | 1.006x | 46.304 | 当前 J 边界 launch-limited，Full 负例 |
+5090D 首轮横向表：
+
+| Kernel | C-Fixed | Schedule | Full | `G_schedule` | `G_full` | Source/target |
+|---|---:|---:|---:|---:|---:|---:|
+| SwiGLU | 1465.344 | 1384.448 | 1382.272 | 1.058x | 1.002x | 1.017x |
+| RMSNorm | 49.920 | 49.408 | 47.968 | 1.010x | 1.030x | 1.408x |
+| Fused Add RMSNorm | 103.872 | 101.856 | 101.216 | 1.020x | 1.006x | 1.262x |
+| GeGLU | 2927.264 | 2751.136 | 2751.136 | 1.064x | 1.000x | 1.025x |
+| LayerNorm | 94.240 | 94.240 | 93.440 | 1.000x | 1.009x | 1.136x |
+| Softmax | 53.536 | 47.552 | 46.400 | 1.126x | 1.025x | 1.290x |
+| DYT | 97.984 | 90.912 | 90.912 | 1.078x | 1.000x | 1.177x |
+| Sparsemax | 76.608 | 69.728 | 52.256 | 1.099x | 1.334x | 1.627x |
+| KLDiv | 97.632 | 97.632 | 93.920 | 1.000x | 1.040x | 1.168x |
+| PolyNorm | 48.704 | 48.704 | 48.640 | 1.000x | 1.001x | 1.341x |
+| Flash backward preprocess | 377.792 | 312.672 | 187.584 | 1.208x | 1.667x | 1.092x |
+| Flash one-pass LayerNorm | 147.520 | 143.392 | 140.992 | 1.029x | 1.017x | 1.235x |
+| xFormers RMSNorm-add | 2356.864 | 536.672 | 535.072 | 4.392x | 1.003x | 1.042x |
+| SplitK reduce | 18.688 | 15.680 | 15.680 | 1.192x | 1.000x | 2.954x |
+
+H100 首轮横向表：
+
+| Kernel | C-Fixed | Schedule | Full | `G_schedule` | `G_full` | Source/target |
+|---|---:|---:|---:|---:|---:|---:|
+| SwiGLU | 954.752 | 803.392 | 717.920 | 1.188x | 1.119x | 1.025x |
+| RMSNorm | 35.136 | 35.136 | 33.088 | 1.000x | 1.062x | 1.586x |
+| Fused Add RMSNorm | 56.128 | 56.128 | 54.912 | 1.000x | 1.022x | 1.425x |
+| GeGLU | 1667.936 | 1403.360 | 1403.360 | 1.189x | 1.000x | 1.032x |
+| LayerNorm | 57.184 | 56.736 | 54.976 | 1.008x | 1.032x | 1.354x |
+| Softmax | 38.176 | 35.616 | 33.920 | 1.072x | 1.050x | 1.317x |
+| DYT | 68.064 | 56.544 | 56.544 | 1.204x | 1.000x | 1.233x |
+| Sparsemax | 51.008 | 47.168 | 36.288 | 1.081x | 1.300x | 1.584x |
+| KLDiv | 70.688 | 68.544 | 66.624 | 1.031x | 1.029x | 1.257x |
+| PolyNorm | 36.448 | 34.976 | 33.664 | 1.042x | 1.039x | 1.434x |
+| Flash backward preprocess | 820.064 | 812.000 | 128.064 | 1.010x | 6.341x | 1.106x |
+| Flash one-pass LayerNorm | 88.480 | 82.400 | 80.608 | 1.074x | 1.022x | 1.452x |
+| xFormers RMSNorm-add | 1470.336 | 276.512 | 276.512 | 5.317x | 1.000x | 1.083x |
+| SplitK reduce | 15.936 | 15.456 | 14.464 | 1.031x | 1.069x | 3.453x |
+
+首轮几何均值：5090D 为 `G_schedule=1.179x`、`G_full=1.069x`、Source/target `1.286x`；H100 为
+`G_schedule=1.199x`、`G_full=1.199x`、Source/target `1.379x`。Flash/Sparsemax 使用完整空间；其余横向项
+使用统一 96-candidate 预算，只有出现结构收益的项才升级为完整空间。最终论文数仍需按第8节增加测量轮数重测。
 
 Sparsemax 新增的 H100 状态不是 schedule label：每个输出 warp 重算短 active prefix 并在 warp-local SSA 中保留
 tau，因而删除 shared tau publication 与整块 `gpu.barrier`。5090D 搜索会自动拒绝其性能，而 H100 选择它，
@@ -103,7 +135,8 @@ tau，因而删除 shared tau publication 与整块 `gpu.barrier`。5090D 搜索
 
 本轮还发现并修复了一个搜索正确性缺口：候选输出缓冲复用时，漏写候选可能继承前一候选的正确结果。
 runner 现在在每个候选 Q 前分别写入两种 canary，并要求两次完整输出都通过；C++ matcher 同时拒绝不能覆盖
-完整输出域的 packet geometry。由漏写产生的表面加速一律作废。
+完整输出域的 packet geometry。每个 cold sample 还会在 CUDA event 计时区间外恢复输入，再做 L2 eviction，
+保证 in-place Source/候选不会改变下一次测量的 workload。由漏写或状态串扰产生的表面加速一律作废。
 
 ## 4. 本任务实现的四条强路径
 

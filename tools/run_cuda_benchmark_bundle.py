@@ -129,6 +129,16 @@ def _poison_cuda_outputs(
             output.fill_(value)
 
 
+def _select_full_record(
+    expanded: Mapping[str, Any] | None,
+    schedule_spine: Mapping[str, Any] | None,
+) -> Mapping[str, Any] | None:
+    """Select Full over the measured structural and Schedule-Only union."""
+
+    records = [item for item in (expanded, schedule_spine) if item is not None]
+    return min(records, key=lambda item: item["latency_us"]) if records else None
+
+
 def _measure_cold_data_us(
     torch: Any,
     thunk: Any,
@@ -966,11 +976,17 @@ def _one_kernel(
     )
     # The formal IntentIR bar is the complete admitted lowering-state envelope.
     # Bounded C-guided/Erase-C orders remain search-efficiency diagnostics only.
-    best_record = (
+    expanded_best = (
         c_oracle_best
         if c_oracle_complete
         else best_for_order(active_order)
     )
+    # Full is definitionally the union of the fixed-structure schedule spine and
+    # the additional admitted structures.  A bounded C-guided order may omit a
+    # late schedule-spine candidate even though that executable was transported
+    # and freshly measured for the formal E2 bar.  Select over the measured union
+    # so Full can never lose the Schedule-Only executable by controller ordering.
+    best_record = _select_full_record(expanded_best, schedule_spine_best)
     if best_record is None:
         raise RuntimeError(
             f"active CUDA search order {active_order_name!r} has no correct candidate"
