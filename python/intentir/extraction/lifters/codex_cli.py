@@ -40,7 +40,7 @@ from .scrc import (
     scrc_candidate_check_context,
 )
 CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v30"
-CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v88"
+CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v89"
 CODEX_CLI_TURN_TIMEOUT_SECONDS = 900.0
 
 _FEEDBACK_CATEGORY_NAMES = (
