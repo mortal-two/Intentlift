@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pair CUDA C-Fixed/Schedule-Only/IntentIR reports under one contract."""
+"""Pair CUDA C-Fixed/Schedule-Only/Full reports under one contract."""
 
 from __future__ import annotations
 
@@ -11,8 +11,8 @@ from pathlib import Path
 from typing import Any, Mapping
 
 
-REPORT_PROTOCOL = "intentir.production.cuda-remote-performance.v3"
-SUMMARY_PROTOCOL = "intentir.production.cuda-portable-ablation-summary.v3"
+REPORT_PROTOCOL = "intentir.production.cuda-remote-performance.v4"
+SUMMARY_PROTOCOL = "intentir.production.cuda-portable-ablation-summary.v4"
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -26,7 +26,7 @@ def _arm(report: Mapping[str, Any]) -> str:
     axes = report.get("ablation_axes")
     if not isinstance(axes, Mapping) or axes.get("arm") not in {"CF", "E2", "E3"}:
         raise ValueError(
-            "CUDA report lacks a C-Fixed/Schedule-Only/IntentIR ablation arm"
+            "CUDA report lacks a C-Fixed/Schedule-Only/Full ablation arm"
         )
     return str(axes["arm"])
 
@@ -110,7 +110,7 @@ def summarize(
     c_fixed: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     if _arm(e2) != "E2" or _arm(e3) != "E3":
-        raise ValueError("reports must be passed as E2 then E3")
+        raise ValueError("reports must be passed as Schedule-Only then Full")
     if c_fixed is not None and _arm(c_fixed) != "CF":
         raise ValueError("C-Fixed report must carry the CF arm")
     reports = (e2, e3) if c_fixed is None else (c_fixed, e2, e3)
@@ -121,12 +121,14 @@ def summarize(
         "baseline_policy",
     ):
         if any(report.get(key) != e2.get(key) for report in reports):
-            raise ValueError(f"CF/E2/E3 differ in {key}")
+            raise ValueError(f"C-Fixed/Schedule-Only/Full differ in {key}")
     if any(_device_config(report) != _device_config(e2) for report in reports):
-        raise ValueError("CF/E2/E3 were not measured on the same CUDA device")
+        raise ValueError(
+            "C-Fixed/Schedule-Only/Full were not measured on the same CUDA device"
+        )
     measurement = _measurement_config(e2)
     if any(_measurement_config(report) != measurement for report in reports):
-        raise ValueError("CF/E2/E3 measurement contracts differ")
+        raise ValueError("C-Fixed/Schedule-Only/Full measurement contracts differ")
 
     cf_records = _records(c_fixed) if c_fixed is not None else {}
     e2_records = _records(e2)
@@ -134,10 +136,10 @@ def summarize(
     kernel_universe = sorted(set(cf_records) | set(e2_records) | set(e3_records))
     per_kernel: list[dict[str, Any]] = []
     schedule_gain: list[float] = []
-    lowering_gain: list[float] = []
-    cross_report_lowering_gain: list[float] = []
+    full_gain: list[float] = []
+    cross_report_full_gain: list[float] = []
     schedule_only_over_source: list[float] = []
-    intentir_over_source: list[float] = []
+    full_over_source: list[float] = []
     c_speedups: list[float] = []
     c_candidates_to_95pct: list[int] = []
     erase_c_candidates_to_95pct: list[int] = []
@@ -171,11 +173,11 @@ def summarize(
                     "status": "failed_or_missing",
                     "c_fixed_status": cf_status,
                     "schedule_only_status": e2_status,
-                    "intentir_status": e3_status,
+                    "full_status": e3_status,
                     "schedule_only_error": (
                         left.get("error") if left is not None else None
                     ),
-                    "intentir_error": (
+                    "full_error": (
                         right.get("error") if right is not None else None
                     ),
                     "c_fixed_error": (
@@ -194,11 +196,13 @@ def summarize(
             "baseline_policy",
         ):
             if any(item.get(key) != left.get(key) for item in comparable):
-                raise ValueError(f"{kernel} CF/E2/E3 differ in {key}")
-        schedule_only_us = float(left["performance"]["mlir_us"])
-        intentir_us = float(right["performance"]["mlir_us"])
+                raise ValueError(
+                    f"{kernel} C-Fixed/Schedule-Only/Full differ in {key}"
+                )
+        schedule_only_us = float(left["performance"]["selected_us"])
+        full_us = float(right["performance"]["selected_us"])
         c_fixed_us = (
-            float(fixed["performance"]["mlir_us"])
+            float(fixed["performance"]["selected_us"])
             if fixed is not None
             else None
         )
@@ -222,13 +226,15 @@ def summarize(
                     raise ValueError(
                         f"{kernel} standalone and same-run C-Fixed selections differ"
                     )
-        schedule_source_value = left["performance"].get("source_triton_us")
-        intentir_source_value = right["performance"].get("source_triton_us")
-        if (schedule_source_value is None) != (intentir_source_value is None):
-            raise ValueError(f"{kernel} E2/E3 source baseline availability differs")
+        schedule_source_value = left["performance"].get("source_us")
+        full_source_value = right["performance"].get("source_us")
+        if (schedule_source_value is None) != (full_source_value is None):
+            raise ValueError(
+                f"{kernel} Schedule-Only/Full source baseline availability differs"
+            )
         source_us = (
-            float(intentir_source_value)
-            if intentir_source_value is not None
+            float(full_source_value)
+            if full_source_value is not None
             else None
         )
         structural = bool(_structural_paths(right) - _structural_paths(left))
@@ -247,7 +253,7 @@ def summarize(
         if c_to_95 is not None and erase_to_95 is not None:
             c_candidates_to_95pct.append(int(c_to_95))
             erase_c_candidates_to_95pct.append(int(erase_to_95))
-        cross_report_gain = schedule_only_us / intentir_us
+        cross_report_gain = schedule_only_us / full_us
         spine_ablation = right["performance"].get("schedule_spine_ablation")
         same_run_gain = None
         if isinstance(spine_ablation, Mapping):
@@ -279,10 +285,10 @@ def summarize(
             "status": "paired_success",
             "c_fixed_status": cf_status,
             "schedule_only_status": e2_status,
-            "intentir_status": e3_status,
+            "full_status": e3_status,
             "c_fixed_us": c_fixed_us,
             "schedule_only_us": schedule_only_us,
-            "intentir_us": intentir_us,
+            "full_us": full_us,
             "g_schedule": (
                 same_run_schedule_gain
                 if same_run_schedule_gain is not None
@@ -290,15 +296,15 @@ def summarize(
                 if c_fixed_us is not None
                 else None
             ),
-            "g_lowering": primary_gain,
+            "g_full": primary_gain,
             "external_competitiveness": {
                 "source": {
                     "status": "measured" if source_us is not None else "unavailable",
                     "latency_us": source_us,
                 },
-                "intentir_latency_us": intentir_us,
-                "intentir_speedup_over_source": (
-                    source_us / intentir_us if source_us is not None else None
+                "full_latency_us": full_us,
+                "full_speedup_over_source": (
+                    source_us / full_us if source_us is not None else None
                 ),
             },
             "c_prior_efficiency": {
@@ -309,40 +315,40 @@ def summarize(
             },
             "supplementary_diagnostics": {
                 "formal_role": "not_a_main_experiment_arm",
-                "same_run_g_lowering": same_run_gain,
-                "cross_report_g_lowering": cross_report_gain,
+                "same_run_g_full": same_run_gain,
+                "cross_report_g_full": cross_report_gain,
                 "same_run_g_schedule": same_run_schedule_gain,
                 "cross_report_g_schedule": (
                     c_fixed_us / schedule_only_us
                     if c_fixed_us is not None
                     else None
                 ),
-                "schedule_spine_best_us_in_intentir_run": (
+                "schedule_spine_best_us_in_full_run": (
                     spine_ablation.get("schedule_spine_best_us")
                     if isinstance(spine_ablation, Mapping)
                     else None
                 ),
-                "expanded_best_us_in_intentir_run": (
+                "expanded_best_us_in_full_run": (
                     spine_ablation.get("expanded_best_us")
                     if isinstance(spine_ablation, Mapping)
                     else None
                 ),
                 "structural_state_expansion_observed": structural,
                 "schedule_only_structural_path_count": len(_structural_paths(left)),
-                "intentir_structural_path_count": len(_structural_paths(right)),
+                "full_structural_path_count": len(_structural_paths(right)),
             },
         }
         per_kernel.append(record)
         paired_success_count += 1
-        lowering_gain.append(record["g_lowering"])
+        full_gain.append(record["g_full"])
         if record["g_schedule"] is not None:
             schedule_gain.append(record["g_schedule"])
-        cross_report_lowering_gain.append(cross_report_gain)
+        cross_report_full_gain.append(cross_report_gain)
         source_speedup = record["external_competitiveness"][
-            "intentir_speedup_over_source"
+            "full_speedup_over_source"
         ]
         if source_speedup is not None:
-            intentir_over_source.append(source_speedup)
+            full_over_source.append(source_speedup)
             schedule_only_over_source.append(source_us / schedule_only_us)
     return {
         "protocol": SUMMARY_PROTOCOL,
@@ -357,11 +363,11 @@ def summarize(
             "kernel_count": len(kernel_universe),
             "paired_success_count": paired_success_count,
             "failed_or_missing_count": len(kernel_universe) - paired_success_count,
-            "source_baseline_kernel_count": len(intentir_over_source),
+            "source_baseline_kernel_count": len(full_over_source),
             "geomean_g_schedule": _geomean(schedule_gain),
-            "geomean_g_lowering": _geomean(lowering_gain),
-            "geomean_intentir_speedup_over_source": _geomean(
-                intentir_over_source
+            "geomean_g_full": _geomean(full_gain),
+            "geomean_full_speedup_over_source": _geomean(
+                full_over_source
             ),
         },
         "c_prior_efficiency_summary": {
@@ -382,8 +388,8 @@ def summarize(
         },
         "supplementary_diagnostics": {
             "formal_role": "not_a_main_experiment_arm",
-            "geomean_cross_report_g_lowering": _geomean(
-                cross_report_lowering_gain
+            "geomean_cross_report_g_full": _geomean(
+                cross_report_full_gain
             ),
             "geomean_schedule_only_speedup_over_source": _geomean(
                 schedule_only_over_source
@@ -397,8 +403,10 @@ def summarize(
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--e2", type=Path, required=True)
-    parser.add_argument("--e3", type=Path, required=True)
+    parser.add_argument(
+        "--schedule-only", "--e2", dest="schedule_only", type=Path, required=True
+    )
+    parser.add_argument("--full", "--e3", dest="full", type=Path, required=True)
     parser.add_argument(
         "--c-fixed",
         type=Path,
@@ -412,8 +420,8 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     result = summarize(
-        _load(args.e2),
-        _load(args.e3),
+        _load(args.schedule_only),
+        _load(args.full),
         _load(args.c_fixed),
     )
     encoded = json.dumps(result, indent=2, sort_keys=True) + "\n"

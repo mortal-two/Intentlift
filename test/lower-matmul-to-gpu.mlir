@@ -72,3 +72,45 @@ func.func @linear_sqrelu(%A: tensor<128x64xf16>, %W: tensor<256x64xf16>,
       : (tensor<128x256xf32>, tensor<128x256xf32>) -> tensor<128x256xf32>
   return %sq : tensor<128x256xf32>
 }
+
+// -----
+
+// The canonical WMMA structure also consumes the formal Flash Linear spelling:
+// explicit f16->f32 input/bias casts, spelling-independent row contraction, and
+// two observable f16 saved outputs.  Unlike the register-epilogue Full state,
+// this canonical path materializes one block-local f32 accumulator tile before
+// evaluating the typed epilogue, which gives C-Fixed/Schedule-Only a genuine
+// fixed structure that can be retiled.
+// CHECK-LABEL: func.func @linear_live_saved(
+// CHECK-SAME:    %{{.*}}: memref<128x256xf16>, %{{.*}}: memref<512x256xf16>, %{{.*}}: memref<512xf16>, %{{.*}}: memref<128x512xf16>, %{{.*}}: memref<128x512xf16>)
+// CHECK:         gpu.launch
+// CHECK:         memref<64x64xf32, #gpu.address_space<workgroup>>
+// CHECK:         gpu.subgroup_mma_compute
+// CHECK:         arith.extf
+// CHECK:         arith.addf
+// CHECK:         arith.truncf
+// CHECK:         memref.store
+// CHECK:         arith.truncf
+// CHECK:         memref.store
+// CHECK-NOT:     linalg.generic
+// CHECK-NOT:     intent.
+func.func @linear_live_saved(%A: tensor<128x256xf16>,
+                             %W: tensor<512x256xf16>,
+                             %bias: tensor<512xf16>)
+    -> (tensor<128x512xf16>, tensor<128x512xf16>) {
+  %Af = intent.cast %A {to_dtype = "f32"}
+      : (tensor<128x256xf16>) -> tensor<128x256xf32>
+  %Wf = intent.cast %W {to_dtype = "f32"}
+      : (tensor<512x256xf16>) -> tensor<512x256xf32>
+  %Y = intent.contraction %Af, %Wf {subscripts = "ik,jk->ij"}
+      : (tensor<128x256xf32>, tensor<512x256xf32>) -> tensor<128x512xf32>
+  %bf = intent.cast %bias {to_dtype = "f32"}
+      : (tensor<512xf16>) -> tensor<512xf32>
+  %pre = intent.map_binary %Y, %bf {fn = "add"}
+      : (tensor<128x512xf32>, tensor<512xf32>) -> tensor<128x512xf32>
+  %saved = intent.cast %pre {to_dtype = "f16"}
+      : (tensor<128x512xf32>) -> tensor<128x512xf16>
+  %out = intent.cast %pre {to_dtype = "f16"}
+      : (tensor<128x512xf32>) -> tensor<128x512xf16>
+  return %out, %saved : tensor<128x512xf16>, tensor<128x512xf16>
+}

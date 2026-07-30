@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 
-REPORT_PROTOCOL = "intentir.production.rvv-remote-performance.v5"
+REPORT_PROTOCOL = "intentir.production.rvv-remote-performance.v6"
 
 
 def _geomean(values: list[float]) -> float | None:
@@ -93,8 +93,8 @@ def main(argv: list[str] | None = None) -> int:
     schedule = [
         item["performance"]["g_schedule"] for item in successful
     ]
-    lowering = [
-        item["performance"]["g_lowering"] for item in successful
+    full = [
+        item["performance"]["g_full"] for item in successful
     ]
     c_prior = [
         item["c_prior_efficiency"]["best_at_budget_c_over_erase_c_speedup"]
@@ -139,7 +139,7 @@ def main(argv: list[str] | None = None) -> int:
             "successful": len(successful),
             "failed": len(failures),
             "geomean_g_schedule": _geomean(schedule),
-            "geomean_g_lowering": _geomean(lowering),
+            "geomean_g_full": _geomean(full),
         },
         "c_prior_efficiency_summary": {
             "geomean_best_at_budget_c_over_erase_c_speedup": _geomean(c_prior),

@@ -219,9 +219,13 @@ def validate_j_inputs(
                 f"Gate2 index-bounds precondition failed at {item.node_ref!r}"
             )
         if item.data not in j_inputs or item.indices not in j_inputs:
-            raise NotImplementedError(
-                "Gate2 index bounds currently require external data/indices inputs"
-            )
+            # This validator owns invocation preconditions only.  An index/data
+            # ref computed inside A is not user-supplied state and therefore
+            # cannot be checked from the external input map; its typed access
+            # predicate/index relation is enforced by RefEval and target
+            # lowering instead.  Do not mistake that internal proof obligation
+            # for a missing runtime input contract.
+            continue
         data = np.asarray(j_inputs[item.data])
         indices = np.asarray(j_inputs[item.indices])
         if item.axis >= data.ndim or indices.dtype.kind not in {"i", "u"}:

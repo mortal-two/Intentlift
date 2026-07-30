@@ -48,7 +48,7 @@ from intentir.verify.gate2.scalar import ScalarLoweringRunner, ScalarLoweringSpe
 from intentir.verify.gate2.triton import PreparedTritonInvocation
 
 
-REPORT_PROTOCOL = "intentir.production.cuda-remote-performance.v3"
+REPORT_PROTOCOL = "intentir.production.cuda-remote-performance.v4"
 BUNDLE_PROTOCOL = "intentir.production.cuda-search-bundle.v3"
 SUPPORTED_BUNDLE_PROTOCOLS = frozenset(
     {BUNDLE_PROTOCOL, "intentir.production.cuda-search-bundle.v2"}
@@ -344,11 +344,12 @@ def _compare_cuda_outputs(
     name: str,
     actual: Mapping[str, Any],
     reference: Mapping[str, Any],
+    reference_name: str,
     j: SemanticArchive,
     entry: Mapping[str, Any],
     policy: ComparisonPolicy,
 ) -> PairwiseAgreement:
-    """Compare candidate outputs to canonical J on the target GPU."""
+    """Compare candidate outputs to the selected target-side reference."""
 
     expected_outputs = {item.name for item in j.intent.outputs}
     if set(entry["output_bindings"]) != expected_outputs:
@@ -428,7 +429,7 @@ def _compare_cuda_outputs(
         )
     return PairwiseAgreement(
         name,
-        "canonical-J-reference",
+        reference_name,
         all(item.passed for item in observations),
         tuple(observations),
         policy.policy_id,
@@ -444,11 +445,12 @@ def _compare(
     entry: Mapping[str, Any],
     values: Mapping[str, np.ndarray],
     policy: ComparisonPolicy,
+    reference_name: str,
 ):
     return compare_outputs(
         name,
         actual,
-        "canonical-J-reference",
+        reference_name,
         reference,
         j=j,
         input_bindings=entry["input_bindings"],
@@ -481,6 +483,11 @@ def _one_kernel(
         entry.get("comparison_policy", DEFAULT_GATE2_POLICY.to_json())
     )
     policy.validate_j(j)
+    baseline_policy = str(entry.get("baseline_policy", "source_and_refj"))
+    if baseline_policy not in {"source_and_refj", "target_refj_only"}:
+        raise ValueError(f"unknown CUDA baseline policy {baseline_policy!r}")
+    reference_name = "canonical-J-reference"
+    canonical_j_reference_error: str | None = None
     if "workload_recipe" in entry:
         if "values" in entry or "reference_outputs" in entry:
             raise ValueError("CUDA bundle mixes rebuilt and embedded workloads")
@@ -495,10 +502,29 @@ def _one_kernel(
             values,
         )
         if not reference_result.ok:
-            raise RuntimeError(
-                f"target-side canonical J reference failed: {reference_result.error}"
+            canonical_j_reference_error = reference_result.error
+            if baseline_policy != "source_and_refj":
+                raise RuntimeError(
+                    "target-side canonical J reference failed: "
+                    f"{reference_result.error}"
+                )
+            source_record = entry["source_triton"]
+            source_program = KernelSource.from_code(
+                source_record["code"],
+                source_record["function"],
+                trusted=True,
             )
-        reference = dict(reference_result.outputs)
+            source_spec = decode_triton_spec(source_record["execution_spec"])
+            with PreparedTritonInvocation(
+                source_program, source_spec, values
+            ) as source_reference:
+                source_reference.reset_mutable_inputs()
+                source_reference.launch()
+                torch.cuda.synchronize()
+                reference = dict(source_reference.copied_outputs())
+            reference_name = "source-reference"
+        else:
+            reference = dict(reference_result.outputs)
     else:
         values = decode_values(entry["values"])
         reference = decode_values(entry["reference_outputs"])
@@ -532,6 +558,40 @@ def _one_kernel(
             device="cuda",
         )
         for item in entry["output_specs"]
+    ]
+    inout_refs = {
+        parameter.logical_ref
+        for parameter in j.signature.parameters
+        if parameter.mode.value == "inout"
+        and parameter.logical_ref is not None
+    }
+    input_index = {name: index for index, name in enumerate(entry["input_order"])}
+    inplace_output_input_indices: list[int | None] = []
+    for spec in entry["output_specs"]:
+        logical_ref = str(spec["name"])
+        if logical_ref in inout_refs:
+            if logical_ref not in input_index:
+                raise ValueError(
+                    f"inout J output {logical_ref!r} lacks its runtime input"
+                )
+            inplace_output_input_indices.append(input_index[logical_ref])
+        else:
+            inplace_output_input_indices.append(None)
+    single_launch_tensors = [
+        *inputs,
+        *(
+            output
+            for output, inplace_index in zip(
+                outputs, inplace_output_input_indices, strict=True
+            )
+            if inplace_index is None
+        ),
+    ]
+    single_launch_outputs = [
+        inputs[inplace_index] if inplace_index is not None else output
+        for output, inplace_index in zip(
+            outputs, inplace_output_input_indices, strict=True
+        )
     ]
     reference_cuda = {
         key: torch_tensor_from_numpy(
@@ -688,8 +748,8 @@ def _one_kernel(
                 continue
             if isinstance(extracted, ExtractedSingleLaunch):
                 prepared = PreparedSingleLaunch.from_extracted(extracted)
-                thunk = prepared.thunk(tensors)
-                candidate_outputs = outputs
+                thunk = prepared.thunk(single_launch_tensors)
+                candidate_outputs = single_launch_outputs
             elif isinstance(extracted, ExtractedGraphLaunch):
                 prepared = PreparedGraphLaunch.from_extracted(extracted, inputs)
                 thunk = prepared.thunk()
@@ -720,6 +780,7 @@ def _one_kernel(
                         name=f"mlir-cubin-canary-{poison_variant}",
                         actual=cuda_actual,
                         reference=reference_cuda,
+                        reference_name=reference_name,
                         j=j,
                         entry=entry,
                         policy=policy,
@@ -996,18 +1057,19 @@ def _one_kernel(
     reset_inputs()
     winner_thunk()
     torch.cuda.synchronize()
-    winner_agreement = _compare(
+    winner_agreement = _compare_cuda_outputs(
+        torch,
         name="mlir-cubin-final-winner",
-        actual=_actual_outputs(entry["output_keys"], winner_outputs),
-        reference=reference,
+        actual=dict(zip(entry["output_keys"], winner_outputs, strict=True)),
+        reference=reference_cuda,
+        reference_name=reference_name,
         j=j,
         entry=entry,
-        values=values,
         policy=policy,
     )
     if not winner_agreement.passed:
         raise KernelFailure(
-            "selected CUDA winner differs from canonical J under CPU Q",
+            f"selected CUDA winner differs from {reference_name}",
             {
                 "candidates": candidate_records,
                 "winner_correctness": winner_agreement.to_json(),
@@ -1036,9 +1098,6 @@ def _one_kernel(
         without_c_full_order
     )
 
-    baseline_policy = str(entry.get("baseline_policy", "source_and_refj"))
-    if baseline_policy not in {"source_and_refj", "target_refj_only"}:
-        raise ValueError(f"unknown CUDA baseline policy {baseline_policy!r}")
     source_agreement = None
     source_latency: float | None = None
     source_samples: list[float] = []
@@ -1059,23 +1118,25 @@ def _one_kernel(
             source.reset_mutable_inputs()
             source.launch()
             torch.cuda.synchronize()
-            source_agreement = _compare(
-                name="source-triton",
-                actual=source.copied_outputs(),
-                reference=reference,
-                j=j,
-                entry=entry,
-                values=values,
-                policy=policy,
-            )
-            if not source_agreement.passed:
-                raise KernelFailure(
-                    "source Triton baseline differs from canonical J",
-                    {
-                        "candidates": candidate_records,
-                        "source_correctness": source_agreement.to_json(),
-                    },
+            if reference_name == "canonical-J-reference":
+                source_agreement = _compare(
+                    name="source-triton",
+                    actual=source.copied_outputs(),
+                    reference=reference,
+                    j=j,
+                    entry=entry,
+                    values=values,
+                    policy=policy,
+                    reference_name=reference_name,
                 )
+                if not source_agreement.passed:
+                    raise KernelFailure(
+                        "source Triton baseline differs from canonical J",
+                        {
+                            "candidates": candidate_records,
+                            "source_correctness": source_agreement.to_json(),
+                        },
+                    )
             source_thunk = source.thunk()
             confirmation_warmup_rounds = _warmup_thunks(
                 torch,
@@ -1131,7 +1192,7 @@ def _one_kernel(
     roofline_evaluations = None
     if workload_cost is not None and roofline_ceilings is not None:
         roofline_evaluations = {
-            "mlir": evaluate_logical_roofline(
+            "full": evaluate_logical_roofline(
                 workload_cost, mlir_latency, roofline_ceilings
             )
         }
@@ -1173,7 +1234,9 @@ def _one_kernel(
                 if source_agreement is not None
                 else None
             ),
-            "target_refj_measured_candidate_count": len(measured_indices),
+            "target_reference": reference_name,
+            "canonical_j_reference_error": canonical_j_reference_error,
+            "target_reference_measured_candidate_count": len(measured_indices),
             "formal_source_replay_closure_claimed": False,
             "policy": policy.policy_id,
         },
@@ -1188,7 +1251,7 @@ def _one_kernel(
                 if schedule_spine_best is not None
                 else None
             ),
-            "intentir_us": best_record["latency_us"],
+            "full_us": best_record["latency_us"],
             "g_schedule": (
                 c_fixed_same_run["latency_us"]
                 / schedule_spine_best["latency_us"]
@@ -1196,25 +1259,25 @@ def _one_kernel(
                 and schedule_spine_best is not None
                 else None
             ),
-            "g_lowering": (
+            "g_full": (
                 schedule_spine_best["latency_us"]
                 / best_record["latency_us"]
                 if schedule_spine_best is not None
                 else None
             ),
-            "mlir_us": mlir_latency,
-            "source_triton_us": source_latency,
-            "mlir_over_triton": (
+            "selected_us": mlir_latency,
+            "source_us": source_latency,
+            "selected_over_source": (
                 mlir_latency / source_latency
                 if source_latency is not None
                 else None
             ),
-            "speedup_over_triton": (
+            "speedup_over_source": (
                 source_latency / mlir_latency
                 if source_latency is not None
                 else None
             ),
-            "meets_or_beats_triton": (
+            "meets_or_beats_source": (
                 mlir_latency <= source_latency
                 if source_latency is not None
                 else None
@@ -1508,17 +1571,17 @@ def main(argv: list[str] | None = None) -> int:
             )
             records.append(record)
             perf = record["performance"]
-            if perf["source_triton_us"] is None:
+            if perf["source_us"] is None:
                 print(
-                    f"{entry['kernel']}: {perf['mlir_us']:.4f} us "
+                    f"{entry['kernel']}: selected={perf['selected_us']:.4f} us "
                     "(Target--RefJ-only; no Source claim)",
                     flush=True,
                 )
             else:
                 print(
-                    f"{entry['kernel']}: {perf['mlir_us']:.4f} us vs "
-                    f"{perf['source_triton_us']:.4f} us "
-                    f"({perf['mlir_over_triton']:.3f}x)",
+                    f"{entry['kernel']}: selected={perf['selected_us']:.4f} us vs "
+                    f"Source={perf['source_us']:.4f} us "
+                    f"({perf['selected_over_source']:.3f}x)",
                     flush=True,
                 )
         except Exception as exc:
@@ -1603,12 +1666,12 @@ def main(argv: list[str] | None = None) -> int:
             "requested": len(entries),
             "successful": len(successful),
             "failed": len(records) - len(successful),
-            "meets_or_beats_triton": sum(
-                item["performance"]["meets_or_beats_triton"] is True
+            "meets_or_beats_source": sum(
+                item["performance"]["meets_or_beats_source"] is True
                 for item in successful
             ),
             "source_baseline_count": sum(
-                item["performance"]["source_triton_us"] is not None
+                item["performance"]["source_us"] is not None
                 for item in successful
             ),
             "geomean_c_prior_over_erase_c_speedup": (

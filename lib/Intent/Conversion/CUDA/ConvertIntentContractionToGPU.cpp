@@ -71,6 +71,7 @@
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 
 namespace intent {
@@ -97,6 +98,23 @@ static constexpr int64_t BK = 32, kWMMA = 16;
 // W columns in L2. Decisive on large K-bound shapes (4096^3 was L2-thrashing).
 static constexpr int64_t GROUP_M = 8;
 
+/// Recognize the rank-2 row-by-row contraction independently of the author's
+/// einsum letters.  The J spellings ``mk,nk->mn`` and ``ik,jk->ij`` expose the
+/// same canonical WMMA implementation structure.
+static bool isRowByRowContraction(StringRef subscripts) {
+  auto arrow = subscripts.split("->");
+  if (arrow.second.empty())
+    return false;
+  auto inputs = arrow.first.split(',');
+  StringRef lhs = inputs.first.trim();
+  StringRef rhs = inputs.second.trim();
+  StringRef out = arrow.second.trim();
+  if (lhs.size() != 2 || rhs.size() != 2 || out.size() != 2)
+    return false;
+  return lhs[0] != lhs[1] && rhs[0] != rhs[1] && lhs[0] != rhs[0] &&
+         lhs[1] == rhs[1] && out[0] == lhs[0] && out[1] == rhs[0];
+}
+
 /// One contraction func's tensor-core lowering. Reads the original (tensor)
 /// func body (exactly one intent.contraction), builds a new memref+gpu.launch
 /// func with the same name, erases the old.
@@ -112,9 +130,10 @@ struct ContractionLowering {
   unsigned aArgIdx = 0, wArgIdx = 0; // which func args are A[M,K] / W[N,K]
   ContractionOp con;
   Type f16, f32;
-  // M7b epilogue: the returned value (== con result for the id case), whether a
-  // pointwise epilogue is present, and the per-arg role (Col bias / Scalar).
-  Value retVal;
+  // The canonical path keeps every observable result from J.  A direct
+  // contraction has one f32 result; a typed epilogue may return several f16/f32
+  // results, all produced by the same launch.
+  SmallVector<Value> retVals;
   bool hasEpilogue = false;
   SmallVector<Role> argRoles;       // per func arg (A/W = Row, bias = Col, ...)
   DenseMap<Value, Value> argMemref; // src block arg -> new memref arg
@@ -126,7 +145,7 @@ struct ContractionLowering {
   // ---- recognition ------------------------------------------------------- //
   LogicalResult match() {
     auto fty = fn.getFunctionType();
-    if (fty.getNumResults() != 1)
+    if (fty.getNumResults() == 0)
       return failure();
     if (!fn.getBody().hasOneBlock())
       return failure();
@@ -142,8 +161,8 @@ struct ContractionLowering {
         if (c)
           return failure(); // more than one contraction
         c = cc;
-      } else if (!isa<MapUnaryOp, MapBinaryOp, SelectOp, arith::ConstantOp>(
-                     &op)) {
+      } else if (!isa<CastOp, MapUnaryOp, MapBinaryOp, SelectOp,
+                           arith::ConstantOp>(&op)) {
         return failure();
       }
     }
@@ -151,33 +170,60 @@ struct ContractionLowering {
       return failure();
     con = c;
     auto ret = dyn_cast<func::ReturnOp>(body.getTerminator());
-    if (!ret || ret.getNumOperands() != 1)
+    if (!ret || ret.getNumOperands() == 0 ||
+        ret.getNumOperands() != fty.getNumResults())
       return failure();
-    retVal = ret.getOperand(0);
-    hasEpilogue = retVal != c.getResult();
-    if (c.getSubscripts() != "mk,nk->mn")
+    retVals.assign(ret.getOperands().begin(), ret.getOperands().end());
+    hasEpilogue = retVals.size() != 1 || retVals.front() != c.getResult();
+    if (!isRowByRowContraction(c.getSubscripts()))
       return failure();
 
-    // A[M,K] f16, W[N,K] f16, Y[M,N] f32, all rank-2 static. A and W must be the
-    // func's block arguments (destination-passing maps them to memref args).
-    auto aArg = dyn_cast<BlockArgument>(c.getA());
-    auto wArg = dyn_cast<BlockArgument>(c.getB());
+    // Canonical live graphs spell the storage-to-accumulator conversion as an
+    // explicit f16->f32 cast.  Peel exactly that lossless widening: the target
+    // kernel still reads the original 16-bit ABI and accumulates in f32.
+    auto peelF16Input = [&](Value operand) -> BlockArgument {
+      if (auto arg = dyn_cast<BlockArgument>(operand))
+        return arg;
+      auto castOp = operand.getDefiningOp<CastOp>();
+      if (!castOp)
+        return {};
+      auto srcTy = dyn_cast<RankedTensorType>(castOp.getInput().getType());
+      auto dstTy = dyn_cast<RankedTensorType>(castOp.getResult().getType());
+      if (!srcTy || !dstTy || srcTy.getShape() != dstTy.getShape() ||
+          !isa<Float16Type>(srcTy.getElementType()) ||
+          !isa<Float32Type>(dstTy.getElementType()))
+        return {};
+      return dyn_cast<BlockArgument>(castOp.getInput());
+    };
+    auto aArg = peelF16Input(c.getA());
+    auto wArg = peelF16Input(c.getB());
     if (!aArg || !wArg || aArg.getOwner() != &body || wArg.getOwner() != &body)
       return failure();
     aArgIdx = aArg.getArgNumber();
     wArgIdx = wArg.getArgNumber();
 
-    auto aTy = dyn_cast<RankedTensorType>(c.getA().getType());
-    auto wTy = dyn_cast<RankedTensorType>(c.getB().getType());
+    auto aTy = dyn_cast<RankedTensorType>(aArg.getType());
+    auto wTy = dyn_cast<RankedTensorType>(wArg.getType());
+    auto conATy = dyn_cast<RankedTensorType>(c.getA().getType());
+    auto conWTy = dyn_cast<RankedTensorType>(c.getB().getType());
     auto yTy = dyn_cast<RankedTensorType>(c.getResult().getType());
-    if (!aTy || !wTy || !yTy || !aTy.hasStaticShape() ||
-        !wTy.hasStaticShape() || !yTy.hasStaticShape())
+    if (!aTy || !wTy || !conATy || !conWTy || !yTy ||
+        !aTy.hasStaticShape() || !wTy.hasStaticShape() ||
+        !conATy.hasStaticShape() || !conWTy.hasStaticShape() ||
+        !yTy.hasStaticShape())
       return failure();
     if (aTy.getRank() != 2 || wTy.getRank() != 2 || yTy.getRank() != 2)
       return failure();
     if (!isa<Float16Type>(aTy.getElementType()) ||
         !isa<Float16Type>(wTy.getElementType()) ||
         !isa<Float32Type>(yTy.getElementType()))
+      return failure();
+    if (conATy.getShape() != aTy.getShape() ||
+        conWTy.getShape() != wTy.getShape() ||
+        (conATy.getElementType() != aTy.getElementType() &&
+         !isa<Float32Type>(conATy.getElementType())) ||
+        (conWTy.getElementType() != wTy.getElementType() &&
+         !isa<Float32Type>(conWTy.getElementType())))
       return failure();
     f16 = aTy.getElementType();
     f32 = yTy.getElementType();
@@ -188,6 +234,16 @@ struct ContractionLowering {
     if (wTy.getDimSize(1) != K || yTy.getDimSize(0) != M ||
         yTy.getDimSize(1) != N)
       return failure();
+    for (auto [index, value] : llvm::enumerate(retVals)) {
+      auto resultTy = dyn_cast<RankedTensorType>(value.getType());
+      auto declaredTy = dyn_cast<RankedTensorType>(fty.getResult(index));
+      if (!resultTy || !declaredTy || !resultTy.hasStaticShape() ||
+          resultTy != declaredTy || resultTy.getRank() != 2 ||
+          resultTy.getDimSize(0) != M || resultTy.getDimSize(1) != N ||
+          (!isa<Float16Type>(resultTy.getElementType()) &&
+           resultTy.getElementType() != f32))
+        return failure();
+    }
     // Divisibility: full tiles only (non-divisible tail-mask is a follow-up).
     // Pick the effective block tile: the requested (BM,BN) if it divides, else
     // fall back to 64x64 (covers the smoke shapes 64x64x32 / 128x128x64 that the
@@ -222,7 +278,9 @@ struct ContractionLowering {
         continue;
       }
       auto t = dyn_cast<RankedTensorType>(inputs[i]);
-      if (!t || !t.hasStaticShape() || !isa<Float32Type>(t.getElementType()))
+      if (!t || !t.hasStaticShape() ||
+          (!isa<Float16Type>(t.getElementType()) &&
+           !isa<Float32Type>(t.getElementType())))
         return failure();
       if (t.getRank() == 1 && t.getDimSize(0) == N)
         argRoles[i] = Role::Col;
@@ -263,6 +321,24 @@ struct ContractionLowering {
                        dense.getSplatValue<APFloat>().convertToDouble()));
       return nullptr;
     }
+    if (auto castOp = dyn_cast<CastOp>(def)) {
+      Value source = emitEpilogue(b, loc, castOp.getInput(), cScalar, gcol);
+      if (!source)
+        return nullptr;
+      auto resultTy = cast<RankedTensorType>(castOp.getResult().getType());
+      Type target = resultTy.getElementType();
+      if (source.getType() == target)
+        return source;
+      auto sourceFloat = dyn_cast<FloatType>(source.getType());
+      auto targetFloat = dyn_cast<FloatType>(target);
+      if (!sourceFloat || !targetFloat)
+        return nullptr;
+      if (sourceFloat.getWidth() < targetFloat.getWidth())
+        return b.create<arith::ExtFOp>(loc, target, source);
+      if (sourceFloat.getWidth() > targetFloat.getWidth())
+        return b.create<arith::TruncFOp>(loc, target, source);
+      return nullptr;
+    }
     if (auto mu = dyn_cast<MapUnaryOp>(def))
       return emitScalarUnary(b, loc, mu.getFn(),
                              emitEpilogue(b, loc, mu.getInput(), cScalar, gcol));
@@ -293,13 +369,18 @@ struct ContractionLowering {
     OpBuilder b(ctx);
     auto wgSpace = gpu::AddressSpaceAttr::get(ctx, gpu::AddressSpace::Workgroup);
 
-    // New signature: original args as memrefs ++ the destination-passing Y.
+    // New signature: original args as memrefs ++ one destination per observable
+    // J result.  Multi-output saved activations are not dropped or reconstructed
+    // outside the launch.
     SmallVector<Type> inTys;
     for (Type at : fn.getFunctionType().getInputs()) {
       auto t = cast<RankedTensorType>(at);
       inTys.push_back(MemRefType::get(t.getShape(), t.getElementType()));
     }
-    inTys.push_back(MemRefType::get({M, N}, f32));
+    for (Type resultType : fn.getFunctionType().getResults()) {
+      auto t = cast<RankedTensorType>(resultType);
+      inTys.push_back(MemRefType::get(t.getShape(), t.getElementType()));
+    }
     auto newFty = FunctionType::get(ctx, inTys, {});
 
     std::string name = fn.getName().str();
@@ -312,7 +393,11 @@ struct ContractionLowering {
 
     Value aMem = entry->getArgument(aArgIdx);
     Value wMem = entry->getArgument(wArgIdx);
-    Value yMem = entry->getArgument(fn.getFunctionType().getNumInputs());
+    unsigned outputBase = fn.getFunctionType().getNumInputs();
+    SmallVector<Value> outputMems;
+    for (unsigned i = 0; i < fn.getFunctionType().getNumResults(); ++i)
+      outputMems.push_back(entry->getArgument(outputBase + i));
+    Value yMem = outputMems.front();
 
     // Map the original tensor block args to the new memref args (the epilogue
     // evaluator gathers Col bias / Scalar args through this map).
@@ -572,10 +657,16 @@ struct ContractionLowering {
         Value cScalar = b.create<memref::LoadOp>(loc, cSh, ValueRange{r, cc});
         Value gcol = b.create<arith::AddIOp>(loc, colBlk, cc);
         Value grow = b.create<arith::AddIOp>(loc, rowBlk, r);
-        Value out = emitEpilogue(b, loc, retVal, cScalar, gcol);
-        if (!out)
-          return failure(); // an unsupported epilogue fn slipped past match()
-        b.create<memref::StoreOp>(loc, out, yMem, ValueRange{grow, gcol});
+        for (unsigned outputIndex = 0; outputIndex < retVals.size();
+             ++outputIndex) {
+          Value out =
+              emitEpilogue(b, loc, retVals[outputIndex], cScalar, gcol);
+          auto outputTy = cast<MemRefType>(outputMems[outputIndex].getType());
+          if (!out || out.getType() != outputTy.getElementType())
+            return failure(); // unsupported typed epilogue slipped past match()
+          b.create<memref::StoreOp>(loc, out, outputMems[outputIndex],
+                                    ValueRange{grow, gcol});
+        }
       }
     }
 

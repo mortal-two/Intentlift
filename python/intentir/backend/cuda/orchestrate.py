@@ -1306,7 +1306,7 @@ def _execute_host_scalar_prelude(
             return value
 
         binary = re.match(
-            r"llvm\.(add|sub|mul|sdiv|udiv|fadd|fsub|fmul|fdiv)\s+"
+            r"llvm\.(add|sub|mul|sdiv|udiv|fadd|fsub|fmul|fdiv|and|or|xor)\s+"
             r"(%\w+),\s*(%\w+)",
             rhs,
         )
@@ -1320,13 +1320,19 @@ def _execute_host_scalar_prelude(
                 value = lhs - rhs_value
             elif operation in {"mul", "fmul"}:
                 value = lhs * rhs_value
+            elif operation == "and":
+                value = torch.bitwise_and(lhs, rhs_value)
+            elif operation == "or":
+                value = torch.bitwise_or(lhs, rhs_value)
+            elif operation == "xor":
+                value = torch.bitwise_xor(lhs, rhs_value)
             else:
                 value = lhs / rhs_value
             cache[ssa] = value
             return value
 
         icmp = re.match(
-            r'llvm\.icmp\s+"(eq|ne)"\s+'
+            r'llvm\.icmp\s+"(eq|ne|slt|sle|sgt|sge|ult|ule|ugt|uge)"\s+'
             r"(%\w+),\s*(%\w+)",
             rhs,
         )
@@ -1336,8 +1342,16 @@ def _execute_host_scalar_prelude(
             predicate = icmp.group(1)
             if predicate == "eq":
                 value = lhs == rhs_value
-            else:
+            elif predicate == "ne":
                 value = lhs != rhs_value
+            elif predicate in {"slt", "ult"}:
+                value = lhs < rhs_value
+            elif predicate in {"sle", "ule"}:
+                value = lhs <= rhs_value
+            elif predicate in {"sgt", "ugt"}:
+                value = lhs > rhs_value
+            else:
+                value = lhs >= rhs_value
             cache[ssa] = value
             return value
 

@@ -59,6 +59,8 @@ B_TRANSFORM_UNIFORM_HOST_CAPTURE = "cuda.b.uniform_host_value_capture.v1"
 LINALG_FUSED_FAST_PATH_ID = "cuda.linalg.elementwise-fused.v1"
 SPLITK_VARARGS_FAST_PATH_ID = "cuda.splitk.reduce-varargs.v1"
 DIRECT_CONTRACTION_FAST_PATH_ID = "cuda.contraction.tiled.v1"
+MMA_CONTRACTION_FAST_PATH_ID = "cuda.contraction.mma-sync.v1"
+TUNED_LINEAR_FAST_PATH_ID = "cuda.linear.f16_f32.bias_saved.mma_sync.v1"
 _PAIRED_ROTATION_MARKER = "intent.paired_rotation_version"
 SEARCH_PARTITION_UNPARTITIONED = "unpartitioned"
 SEARCH_PARTITION_SCHEDULE_SPINE = "schedule_spine"
@@ -135,6 +137,20 @@ def schedule_only_cuda_path_identity(
     fast_path_id = derive_default_fast_path_id(state)
     if fast_path_id is None:
         return "generic", None
+    # A row pass that only consumes the graph after capturing a referenced
+    # runtime rank-0 value is already performing a B-conditioned structural/ABI
+    # specialization.  Keep DirectLower(J) materialized for C-Fixed and
+    # Schedule-Only; Full may admit the captured one-launch row state.
+    if fast_path_id == ROW_FAST_PATH_ID:
+        runtime_names = set(state.base.runtime_input_names)
+        referenced_inputs = _referenced_intent_inputs(state)
+        if any(
+            item.name in runtime_names
+            and item.name in referenced_inputs
+            and not item.shape
+            for item in state.base.j.intent.inputs
+        ):
+            return "generic", None
     # Tensor-core substitution changes the contraction implementation.  The
     # direct contraction is the registered SIMT tiled path; Schedule-Only may
     # tune that structure, while Full additionally opens MMA/Split-K states.
@@ -909,6 +925,9 @@ _CUDA_ORDERING_PRIOR_ROLES = frozenset(
         "reduction_tile_extent",
         "execution_warps",
         "constexpr",
+        "tile_output_axis0",
+        "tile_output_axis1",
+        "tile_contraction_axis",
     }
 )
 
@@ -1006,6 +1025,14 @@ def project_cuda_c_fixed_candidate(
         }
     elif projection_kind == "linalg_fused":
         fixed_default = {"tile_width": 128}
+    elif projection_kind == DIRECT_CONTRACTION_FAST_PATH_ID:
+        fixed_default = {
+            "tile_rows": 64,
+            "tile_cols": 128,
+            "tile_k": 32,
+            "num_warps": 4,
+            "pipeline_stages": 3,
+        }
     else:
         fixed_default = {}
 
@@ -1036,6 +1063,14 @@ def project_cuda_c_fixed_candidate(
             elif "block_threads" in available_keys:
                 coordinate = "block_threads"
                 projected_value *= 32.0
+        elif prior.role == "tile_output_axis0" and "tile_rows" in available_keys:
+            coordinate = "tile_rows"
+        elif prior.role == "tile_output_axis1" and "tile_cols" in available_keys:
+            coordinate = "tile_cols"
+        elif (
+            prior.role == "tile_contraction_axis" and "tile_k" in available_keys
+        ):
+            coordinate = "tile_k"
         elif prior.role in {
             "tile_extent",
             "reduction_tile_extent",
@@ -1160,6 +1195,12 @@ def _c_score(
             if not values:
                 threads = positive_values(("block_threads",))
                 values = tuple(value / 32.0 for value in threads)
+        elif prior.role == "tile_output_axis0":
+            values = positive_values(("tile_rows",))
+        elif prior.role == "tile_output_axis1":
+            values = positive_values(("tile_cols",))
+        elif prior.role == "tile_contraction_axis":
+            values = positive_values(("tile_k",))
         elif prior.role in {
             "reduction_tile_extent",
             "tile_extent",
@@ -2526,6 +2567,98 @@ def enumerate_cuda_candidates(
                         )
                     )
 
+    # Canonical contraction schedule spine.  Every state invokes the same WMMA
+    # C++ pass and changes only BM/BN/warps/pipeline depth; this is the exact
+    # C-Fixed -> Schedule-Only retile space.  Full separately admits the
+    # register-level mma.sync state below.
+    tensor_core_chips = {"sm_90a", "sm_120a"}
+    if state.target.architecture in tensor_core_chips:
+        for block_m in (16, 32, 64, 128):
+            for block_n in (32, 64, 128):
+                for pipeline_stages in (1, 2, 3, 4, 5):
+                    pass_argument = (
+                        "-convert-intent-contraction-to-gpu="
+                        f"num-stages={pipeline_stages} block-m={block_m} "
+                        f"block-n={block_n}"
+                    )
+                    schedule = {
+                        "tile_rows": block_m,
+                        "tile_cols": block_n,
+                        "tile_k": 32,
+                        "num_warps": block_m // 16,
+                        "pipeline_stages": pipeline_stages,
+                    }
+                    specialized.append(
+                        CudaSearchCandidate(
+                            _candidate_id(
+                                DIRECT_CONTRACTION_FAST_PATH_ID,
+                                DIRECT_CONTRACTION_FAST_PATH_ID,
+                                pass_argument,
+                            ),
+                            DIRECT_CONTRACTION_FAST_PATH_ID,
+                            DIRECT_CONTRACTION_FAST_PATH_ID,
+                            pass_argument,
+                            schedule,
+                            _c_score(schedule, priors),
+                            requested_trace=(DIRECT_CONTRACTION_FAST_PATH_ID,),
+                            requested_observation_class=(
+                                ObservationClass.OBSERVATION_CHANGING
+                            ),
+                        )
+                    )
+
+        # Full implementation state: known-layout register mma.sync plus its own
+        # independent schedule space.  The exact typed Flash Linear epilogue is
+        # kept in registers and writes both observable f16 outputs; the canonical
+        # WMMA spine above materializes the f32 block tile instead.
+        mma_schedules = (
+            (16, 32, 32, 3, 8),
+            (16, 32, 32, 5, 8),
+            (32, 32, 32, 3, 8),
+            (32, 64, 32, 3, 8),
+            (32, 64, 64, 3, 8),
+            (64, 64, 32, 2, 8),
+            (64, 64, 32, 4, 8),
+            (64, 128, 32, 3, 8),
+            (64, 128, 64, 2, 8),
+            (128, 64, 32, 2, 8),
+            (128, 128, 32, 2, 8),
+            (128, 128, 64, 2, 8),
+        )
+        for block_m, block_n, block_k, pipeline_stages, smem_pad_k in mma_schedules:
+            pass_argument = (
+                "-convert-intent-contraction-to-gpu-mma="
+                f"num-stages={pipeline_stages} block-m={block_m} "
+                f"block-n={block_n} block-k={block_k} "
+                f"smem-pad-k={smem_pad_k}"
+            )
+            schedule = {
+                "tile_rows": block_m,
+                "tile_cols": block_n,
+                "tile_k": block_k,
+                "num_warps": block_m // 16,
+                "pipeline_stages": pipeline_stages,
+                "smem_pad_k": smem_pad_k,
+            }
+            specialized.append(
+                CudaSearchCandidate(
+                    _candidate_id(
+                        MMA_CONTRACTION_FAST_PATH_ID,
+                        MMA_CONTRACTION_FAST_PATH_ID,
+                        pass_argument,
+                    ),
+                    MMA_CONTRACTION_FAST_PATH_ID,
+                    MMA_CONTRACTION_FAST_PATH_ID,
+                    pass_argument,
+                    schedule,
+                    _c_score(schedule, priors),
+                    requested_trace=(MMA_CONTRACTION_FAST_PATH_ID,),
+                    requested_observation_class=(
+                        ObservationClass.OBSERVATION_CHANGING
+                    ),
+                )
+            )
+
     output_rank = max(
         (len(item.shape) for item in state.base.j.intent.outputs),
         default=1,
@@ -2566,6 +2699,9 @@ def enumerate_cuda_candidates(
         PADDED_ROW_FAST_PATH_ID,
         ROW_FAST_PATH_ID,
         SPLITK_VARARGS_FAST_PATH_ID,
+        DIRECT_CONTRACTION_FAST_PATH_ID,
+        MMA_CONTRACTION_FAST_PATH_ID,
+        TUNED_LINEAR_FAST_PATH_ID,
         *sorted_prefix_ids,
     }
     for descriptor in DEFAULT_PASSES:

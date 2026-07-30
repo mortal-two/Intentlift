@@ -1182,7 +1182,7 @@ def _one_kernel(
                 iterations=iterations,
                 batches=1,
             )
-            intentir_us, _, _ = _measure(
+            full_us, _, _ = _measure(
                 e3_function,
                 e3_rotation,
                 regime=regime,
@@ -1192,7 +1192,7 @@ def _one_kernel(
                 batches=1,
             )
         else:
-            intentir_us, _, _ = _measure(
+            full_us, _, _ = _measure(
                 e3_function,
                 e3_rotation,
                 regime=regime,
@@ -1211,7 +1211,7 @@ def _one_kernel(
                 batches=1,
             )
         native_samples.append(native_us)
-        intentir_native_pair_samples.append(intentir_us)
+        intentir_native_pair_samples.append(full_us)
     native_latency = float(statistics.median(native_samples))
     intentir_native_pair_latency = float(
         statistics.median(intentir_native_pair_samples)
@@ -1266,21 +1266,21 @@ def _one_kernel(
             **(native_compile_record or {}),
             "correctness": native_correctness,
             "selection_samples_us": native_samples,
-            "intentir_paired_samples_us": intentir_native_pair_samples,
+            "full_paired_samples_us": intentir_native_pair_samples,
             "comparison_protocol": "paired-alternating.v1",
         },
         "performance": {
             "c_fixed_us": c_fixed["latency_us"],
             "schedule_only_us": e2["latency_us"],
-            "intentir_us": e3["latency_us"],
+            "full_us": e3["latency_us"],
             "g_schedule": c_fixed["latency_us"] / e2["latency_us"],
-            "g_lowering": e2["latency_us"] / e3["latency_us"],
-            "native_rvv_us": native_latency,
-            "intentir_paired_with_native_us": intentir_native_pair_latency,
+            "g_full": e2["latency_us"] / e3["latency_us"],
+            "native_us": native_latency,
+            "full_paired_with_native_us": intentir_native_pair_latency,
             "g_native": native_latency / intentir_native_pair_latency,
             "c_fixed_candidate_id": c_fixed_id,
             "schedule_only_winner_candidate_id": e2["candidate"]["candidate_id"],
-            "intentir_winner_candidate_id": e3["candidate"]["candidate_id"],
+            "full_winner_candidate_id": e3["candidate"]["candidate_id"],
         },
         "c_prior_efficiency": {
             "candidate_budget": search_budget,
@@ -1568,9 +1568,9 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 f"{entry['kernel']}: CF={performance['c_fixed_us']:.4f} us "
                 f"Schedule={performance['schedule_only_us']:.4f} us "
-                f"IntentIR={performance['intentir_us']:.4f} us "
+                f"Full={performance['full_us']:.4f} us "
                 f"G_schedule={performance['g_schedule']:.3f}x "
-                f"G_lowering={performance['g_lowering']:.3f}x "
+                f"G_full={performance['g_full']:.3f}x "
                 f"G_native={performance['g_native']:.3f}x "
                 "C="
                 f"{record['c_prior_efficiency']['best_at_budget_c_over_erase_c_speedup']:.3f}x",
@@ -1589,7 +1589,7 @@ def main(argv: list[str] | None = None) -> int:
                 flush=True,
             )
     schedule_speedups = [item["performance"]["g_schedule"] for item in kernels]
-    lowering_speedups = [item["performance"]["g_lowering"] for item in kernels]
+    full_speedups = [item["performance"]["g_full"] for item in kernels]
     native_speedups = [item["performance"]["g_native"] for item in kernels]
     c_speedups = [
         item["c_prior_efficiency"]["best_at_budget_c_over_erase_c_speedup"]
@@ -1675,7 +1675,7 @@ def main(argv: list[str] | None = None) -> int:
             "successful": len(kernels),
             "failed": len(failures),
             "geomean_g_schedule": geomean(schedule_speedups),
-            "geomean_g_lowering": geomean(lowering_speedups),
+            "geomean_g_full": geomean(full_speedups),
             "geomean_g_native": geomean(native_speedups),
         },
         "c_prior_efficiency_summary": {

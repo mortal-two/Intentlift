@@ -16,6 +16,7 @@ from intentir.backend.cuda.search import (
     derive_default_fast_path_id,
     enumerate_cuda_candidates,
     project_cuda_c_fixed_candidate,
+    schedule_only_cuda_path_identity,
 )
 from intentir.backend.cuda.production_cases import (
     constexpr_input_bindings,
@@ -27,6 +28,9 @@ from intentir.backend.cuda.schedules import (
     RowSchedule,
 )
 from intentir.backend.materialize import CPrior, attach_c, materialize_j
+from intentir.backend.workload_valuation import (
+    PRODUCTION_WORKLOAD_PROFILE_NATURAL_HEADLINE,
+)
 from intentir.backend.ablation import ExperimentArm, standard_ablation_plan
 from intentir.backend.protocol import BackendTarget
 from intentir.backend.search_and_close import ObservationClass
@@ -130,6 +134,34 @@ def _fresh_fused_add_rms_norm_state():
         "fused_add_rms_norm",
     )
     prepared = prepare_production_workload("fused_add_rms_norm")
+    case = build_workload_jc_suite(prepared, snapshot.j, snapshot.c).cases[0]
+    constexpr = constexpr_input_bindings(
+        snapshot.j,
+        case.refeval.input_binding_map,
+        case.values,
+    )
+    base = materialize_j(
+        snapshot.j,
+        case.refeval.dims_map,
+        constexpr_bindings=constexpr,
+    )
+    return attach_c(
+        base,
+        snapshot.c,
+        BackendTarget("cuda", "sm_120a"),
+    )
+
+
+def _stage2_flash_linear_state():
+    root = Path(__file__).parents[2]
+    snapshot, _path = load_production_snapshot(
+        root / "corpus" / "production-jc-v3",
+        "flash_linear",
+    )
+    prepared = prepare_production_workload(
+        "flash_linear",
+        profile=PRODUCTION_WORKLOAD_PROFILE_NATURAL_HEADLINE,
+    )
     case = build_workload_jc_suite(prepared, snapshot.j, snapshot.c).cases[0]
     constexpr = constexpr_input_bindings(
         snapshot.j,
@@ -368,6 +400,51 @@ def test_c_fixed_is_mechanical_authored_tile_projection() -> None:
         or item.schedule["block_threads"] != selected.schedule["block_threads"]
         for item in schedules
     )
+
+
+def test_flash_linear_has_real_retile_spine_and_distinct_full_mma_state() -> None:
+    state = _stage2_flash_linear_state()
+    arms = {item.arm: item for item in standard_ablation_plan(96)}
+
+    path_kind, fast_path_id = schedule_only_cuda_path_identity(state)
+    assert path_kind == "cuda.contraction.tiled.v1"
+    assert fast_path_id == "cuda.contraction.tiled.v1"
+    schedule_only = enumerate_cuda_candidates(
+        state,
+        axes=arms[ExperimentArm.E2_SCHEDULE],
+        fixed_fast_path_id=fast_path_id,
+    )
+    assert len(schedule_only) == 60
+    assert {item.fast_path_id for item in schedule_only} == {
+        "cuda.contraction.tiled.v1"
+    }
+    assert len({item.schedule["tile_rows"] for item in schedule_only}) == 4
+    assert len({item.schedule["tile_cols"] for item in schedule_only}) == 3
+    assert len({item.schedule["pipeline_stages"] for item in schedule_only}) == 5
+
+    c_fixed, projection = project_cuda_c_fixed_candidate(state, schedule_only)
+    assert c_fixed.schedule["tile_rows"] == 32
+    assert c_fixed.schedule["tile_cols"] == 32
+    assert projection["workload_or_cost_model_used"] is False
+
+    full = enumerate_cuda_candidates(
+        state,
+        axes=arms[ExperimentArm.E3_STATE_SEARCH],
+    )
+    assert [item.candidate_id for item in full[: len(schedule_only)]] == [
+        item.candidate_id for item in schedule_only
+    ]
+    mma = [
+        item
+        for item in full
+        if item.fast_path_id == "cuda.contraction.mma-sync.v1"
+    ]
+    assert len(mma) == 12
+    assert all(item.search_partition == SEARCH_PARTITION_EXPANDED for item in mma)
+    assert {
+        item["target_schedule_coordinate"]
+        for item in projection["consumed_priors"]
+    } >= {"tile_rows", "tile_cols", "tile_k"}
 
 
 def test_elementwise_c_fixed_preserves_logical_tile_not_thread_count() -> None:

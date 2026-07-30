@@ -235,28 +235,28 @@ DEFAULT_PASSES: tuple[PassDescriptor, ...] = (
             "-convert-intent-contraction-to-gpu-mma=num-stages=5 "
             "block-m=16 block-n=32 block-k=32 smem-pad-k=8"
         ),
-        supported_chips=("sm_120a",),
+        supported_chips=_PORTABLE_BLOCK_CUDA_CHIPS,
         description="tuned f16/bf16 tensor-core contraction with f32 accumulate",
         scf_to_cf=True,
     ),
     PassDescriptor(
         fast_path_id="cuda.contraction.mma-warp-specialized.v1",
         pass_argument="-convert-intent-contraction-to-gpu-mma-ws",
-        supported_chips=("sm_120a",),
+        supported_chips=_PORTABLE_BLOCK_CUDA_CHIPS,
         description="warp-specialized tensor-core contraction",
         scf_to_cf=True,
     ),
     PassDescriptor(
         fast_path_id="cuda.contraction.mma-sync.v1",
         pass_argument="-convert-intent-contraction-to-gpu-mma",
-        supported_chips=("sm_120a",),
+        supported_chips=_PORTABLE_BLOCK_CUDA_CHIPS,
         description="tensor-core contraction",
         scf_to_cf=True,
     ),
     PassDescriptor(
         fast_path_id="cuda.contraction.tiled.v1",
         pass_argument="-convert-intent-contraction-to-gpu",
-        supported_chips=("sm_120a",),
+        supported_chips=_PORTABLE_BLOCK_CUDA_CHIPS,
         description="tiled-K contraction",
         scf_to_cf=True,
     ),

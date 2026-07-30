@@ -163,8 +163,8 @@ def _cuda_report(arm: str, latency_us: float) -> dict:
                 "candidates": [],
                 "winner": {"candidate": {"candidate_id": "c-fixed-state"}},
                 "performance": {
-                    "mlir_us": latency_us,
-                    "source_triton_us": None,
+                    "selected_us": latency_us,
+                    "source_us": None,
                     "schedule_spine_ablation": None,
                     "c_ordering_ablation": {
                         "c_prior_over_erase_c_speedup": 1.0
@@ -183,10 +183,10 @@ def test_cuda_ablation_summary_accepts_target_refj_only_reports():
 
     assert result["summary"]["kernel_count"] == 1
     assert result["summary"]["source_baseline_kernel_count"] == 0
-    assert result["summary"]["geomean_g_lowering"] == 2.0
-    assert result["summary"]["geomean_intentir_speedup_over_source"] is None
+    assert result["summary"]["geomean_g_full"] == 2.0
+    assert result["summary"]["geomean_full_speedup_over_source"] is None
     assert result["per_kernel"][0]["external_competitiveness"][
-        "intentir_speedup_over_source"
+        "full_speedup_over_source"
     ] is None
     assert "best_applicable" not in result["per_kernel"][0][
         "external_competitiveness"
@@ -202,12 +202,12 @@ def test_cuda_ablation_summary_reports_formal_three_arm_gains():
 
     assert result["summary"]["formal_three_arm"] is True
     assert result["summary"]["geomean_g_schedule"] == 2.0
-    assert result["summary"]["geomean_g_lowering"] == 2.0
+    assert result["summary"]["geomean_g_full"] == 2.0
     assert result["per_kernel"][0]["c_fixed_us"] == 8.0
     assert result["per_kernel"][0]["schedule_only_us"] == 4.0
-    assert result["per_kernel"][0]["intentir_us"] == 2.0
+    assert result["per_kernel"][0]["full_us"] == 2.0
     assert result["per_kernel"][0]["g_schedule"] == 2.0
-    assert result["per_kernel"][0]["g_lowering"] == 2.0
+    assert result["per_kernel"][0]["g_full"] == 2.0
 
 
 def test_cuda_ablation_summary_prefers_same_run_schedule_gain():
@@ -242,11 +242,11 @@ def test_cuda_ablation_summary_prefers_same_run_schedule_spine_gain():
 
     result = cuda_summary.summarize(e2, e3)
 
-    assert result["summary"]["geomean_g_lowering"] == 1.5
+    assert result["summary"]["geomean_g_full"] == 1.5
     assert result["supplementary_diagnostics"][
-        "geomean_cross_report_g_lowering"
+        "geomean_cross_report_g_full"
     ] == 2.0
-    assert result["per_kernel"][0]["g_lowering"] == 1.5
+    assert result["per_kernel"][0]["g_full"] == 1.5
 
 
 def test_cuda_ablation_summary_preserves_failed_horizontal_cells():
@@ -279,7 +279,7 @@ def test_cuda_ablation_summary_preserves_failed_horizontal_cells():
     failed = next(item for item in result["per_kernel"] if item["kernel"] == "softmax")
     assert failed["status"] == "failed_or_missing"
     assert failed["schedule_only_error"] == "compile failed"
-    assert failed["intentir_error"] == "QD failed"
+    assert failed["full_error"] == "QD failed"
 
 
 def test_cuda_ablation_summary_rejects_different_stabilization_protocols():
@@ -317,7 +317,7 @@ def _rvv_report(kernel: str) -> dict:
                 "extents": {"x0": 1},
                 "performance": {
                     "g_schedule": 1.2,
-                    "g_lowering": 1.1,
+                    "g_full": 1.1,
                 },
                 "c_prior_efficiency": {
                     "best_at_budget_c_over_erase_c_speedup": 1.0

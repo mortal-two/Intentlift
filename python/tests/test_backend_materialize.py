@@ -202,6 +202,37 @@ def test_stage2_paired_rotations_lower_as_one_cuda_launch(name: str) -> None:
     assert " = intent." not in lowered.stdout
 
 
+@pytest.mark.skipif(not _INTENT_OPT.exists(), reason="intent-opt is not built")
+def test_stage2_flash_linear_enters_canonical_wmma_and_full_mma_states() -> None:
+    _snapshot, _case, materialized = _materialize_closed_case(
+        "flash_linear", "production-jc-v3"
+    )
+
+    for pass_argument, expected_op in (
+        (
+            "-convert-intent-contraction-to-gpu=block-m=16 block-n=32",
+            "gpu.subgroup_mma_compute",
+        ),
+        (
+            "-convert-intent-contraction-to-gpu-mma=block-m=16 block-n=32",
+            "nvgpu.mma.sync",
+        ),
+    ):
+        lowered = subprocess.run(
+            [str(_INTENT_OPT), pass_argument],
+            input=materialized.intent_mlir,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        assert lowered.returncode == 0, lowered.stderr
+        assert lowered.stdout.count("gpu.launch") == 1
+        assert lowered.stdout.count("memref.store") >= 2
+        assert expected_op in lowered.stdout
+        assert " = intent." not in lowered.stdout
+
+
 @pytest.mark.parametrize(
     "name", ("xformers_rms_norm_add", "splitk_reduce_varargs")
 )

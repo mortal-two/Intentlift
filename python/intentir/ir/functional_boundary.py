@@ -981,6 +981,7 @@ def _project_constant_gather_load(
     coordinates: tuple[str | int, ...],
     tensor: Any,
     operation: IntentOp | None,
+    runtime_logical_dimensions: Mapping[str, int] | None = None,
 ) -> ConstantGatherProjection | None:
     """Prove one non-singleton constant coordinate through exact J dataflow."""
 
@@ -990,7 +991,16 @@ def _project_constant_gather_load(
             zip(coordinates, tensor.shape, strict=True)
         )
         if isinstance(coordinate, int)
-        and not (coordinate == 0 and extent == 1)
+        and not (
+            coordinate == 0
+            and (
+                extent == 1
+                or (
+                    runtime_logical_dimensions is not None
+                    and runtime_logical_dimensions.get(extent) == 1
+                )
+            )
+        )
     ]
     if not non_singleton_constants:
         return None
@@ -1034,9 +1044,17 @@ def _project_constant_gather_load(
             "functional constant load requires one exact index-bounds relation"
         )
     if static_index_bounds_status(j, matches[0]) is not True:
-        raise ValueError(
-            "functional constant load lacks a closed in-bounds proof"
+        declared_extent = tensor.shape[axis]
+        runtime_extent = (
+            runtime_logical_dimensions.get(declared_extent)
+            if runtime_logical_dimensions is not None
+            and isinstance(declared_extent, str)
+            else None
         )
+        if runtime_extent is None or coordinate < 0 or coordinate >= runtime_extent:
+            raise ValueError(
+                "functional constant load lacks a closed in-bounds proof"
+            )
 
     value_types = j_elaboration(j).value_type_by_name
     data_type = value_types.get(access.tensor)
@@ -3779,11 +3797,18 @@ def _project_functional_boundary(
             coordinates, tensor.shape, strict=True
         ):
             if isinstance(coordinate, int):
-                if type(declared_extent) is not int:
+                concrete_extent = (
+                    declared_extent
+                    if type(declared_extent) is int
+                    else runtime_logical_dimensions.get(declared_extent)
+                    if runtime_logical_dimensions is not None
+                    else None
+                )
+                if concrete_extent is None:
                     raise NotImplementedError(
                         "functional constant access requires a static tensor extent"
                     )
-                if coordinate < 0 or coordinate >= declared_extent:
+                if coordinate < 0 or coordinate >= concrete_extent:
                     raise ValueError(
                         "functional constant access coordinate is out of bounds"
                     )
@@ -3806,6 +3831,7 @@ def _project_functional_boundary(
                 coordinates=coordinates,
                 tensor=tensor,
                 operation=op,
+                runtime_logical_dimensions=runtime_logical_dimensions,
             )
             if access.kind.value == "load"
             else None

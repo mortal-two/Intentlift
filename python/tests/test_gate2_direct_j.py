@@ -2087,6 +2087,23 @@ def test_constant_gather_loads_match_boundary_coordinates_bidirectionally() -> N
     ]
 
 
+def test_refeval_uses_bound_symbolic_extent_for_constant_gather_bounds() -> None:
+    j = _constant_gather_boundary_j()
+    j.intent.inputs[0].shape = ["x0"]
+
+    with pytest.raises(NotImplementedError, match="static tensor extent"):
+        project_functional_boundary(j)
+
+    projection = project_functional_boundary_for_refeval(
+        j,
+        {"X": np.arange(3, dtype=np.float32)},
+        {"x0": 3},
+    )
+
+    assert projection.access_coordinates_map["a0"] == (0,)
+    assert projection.access_coordinates_map["a2"] == (2,)
+
+
 def test_singleton_zero_keeps_legacy_axis_receipt_and_typed_coordinate() -> None:
     artifact = make_copy_artifact()
     artifact.j.intent.inputs[0].shape = [1]
