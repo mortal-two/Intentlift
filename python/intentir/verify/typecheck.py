@@ -93,6 +93,7 @@ class TypeCheckStatus(str, Enum):
 class TypeCheckErrorCode(str, Enum):
     J_ELABORATION_FAILED = "j_elaboration_failed"
     J_VALUE_TYPE_INCOMPLETE = "j_value_type_incomplete"
+    OUTPUT_BINDING_INCOMPLETE = "output_binding_incomplete"
     OUTPUT_BINDING_TYPE_MISMATCH = "output_binding_type_mismatch"
     KNOWN_OP_CONTRACT_INVALID = "known_op_contract_invalid"
     DUPLICATE_J_REF = "duplicate_j_ref"
@@ -2293,7 +2294,37 @@ def _check_output_binding_types(
         item.name: CanonicalValueType(item.dtype, tuple(item.shape))
         for item in j.intent.outputs
     }
+    producible_values = {item.name for item in j.intent.inputs}
+    intent = j.intent.to_json()["intent_function"]
+    for _path, operation in _walk_operations(intent.get("body", [])):
+        producible_values.update(_operation_results(operation.get("result")))
     for binding in elaboration.output_bindings:
+        if binding.value not in producible_values:
+            if binding.output in mapping_positions:
+                path = (
+                    "j.boundary.output_mappings"
+                    f"[{mapping_positions[binding.output]}].value"
+                )
+            elif binding.output in return_positions:
+                path = (
+                    "j.intent.intent_function.returns"
+                    f"[{return_positions[binding.output]}].value"
+                )
+            else:
+                path = (
+                    "j.intent.intent_function.outputs"
+                    f"[{output_positions[binding.output]}]"
+                )
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.OUTPUT_BINDING_INCOMPLETE,
+                    path,
+                    "canonical output binding value is neither a J input nor "
+                    "an authored operation result",
+                    binding.output,
+                )
+            )
+            continue
         expected = outputs[binding.output]
         actual = value_types.get(binding.value)
         if actual is None or actual == expected:
