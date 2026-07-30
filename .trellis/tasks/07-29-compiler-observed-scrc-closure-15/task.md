@@ -1,8 +1,7 @@
 # Task 15：模型级输入到 Compiler-Observed Lift / Closed J / Source-Blind Replay 的最终闭合系统
 
-> 状态：`P2_GATE1_OWNERSHIP_RECHECK`（2026-07-30）。Codex-native single-owner路径已稳定形成
-> TypeCheck-valid候选；当前以active Gate1 v12消除J/C/π均不拥有的physical-formula隐藏答案，再对
-> exact artifacts作fresh source-blind Replay/Gate1/Gate2 recheck，并继续十项active queue。
+> 状态：`P3_CLOSURE_19_OF_28`（2026-07-30）。Codex-native single-owner路径已在active Gate1 v12下
+> fresh闭合Flash Linear；继续九项active queue。
 >
 > 定位：Task 11 的下一次能力建设与最终十项闭合波。Task 14 已结束归档；其18份可保留证书、十项
 > active queue与中断 evidence 是本任务的历史输入，不是本任务已经完成的结果。
@@ -90,6 +89,14 @@ SplitK forward 的同一`split=4,D=256`模型profile还必须保留上游launch�
   说明当前主要性能问题是重复上下文与Replay构造工作空间，而不是TypeCheck；
 - Qwen2VL、Flash forward/full backward已有部分Gate1 no-closure或未完成round；
 - Linear、one-col和SplitK只在停止过程中短暂启动，均不构成能力证据。
+
+### 1.4 当前正式进度：19/28
+
+`/tmp/intentir-task15-v12-owned-realization-linear-splitkfwd-sol-high-b3k5-20260730-01`中的
+Flash Linear branch 2在formal round 3取得Gate1 v12 closure并完成三边Gate2：Source--Replay两输出
+误差均为0，Source--J与Replay--J两输出最大误差均为0.015625且通过J的tolerance relation，最终
+`main_status=SCRC_CERTIFIED`。因此当前为18项历史保留+1项fresh闭合，剩余九项为三种RoPE、Flash
+forward/one-column backward/full backward与SplitK forward/reduce/backward。
 
 ## 2. 从真实输入到证书的完整数据流
 
