@@ -229,6 +229,9 @@ class CodexCLIReplayWriter:
         thread_id: str | None = None
         thread_ids: list[str] = []
         session: Any | None = None
+        last_replay_check_source: str | None = None
+        last_replay_check_signature: tuple[tuple[str, str], ...] | None = None
+        repeated_replay_diagnostic = 0
 
         def write_host_check(check: Mapping[str, Any]) -> None:
             _atomic_write_text(
@@ -265,10 +268,15 @@ class CodexCLIReplayWriter:
             )
 
         def replay_check_tool() -> Mapping[str, Any]:
+            nonlocal last_replay_check_source
+            nonlocal last_replay_check_signature
+            nonlocal repeated_replay_diagnostic
             try:
-                return ingress_current().to_check_response()
+                current = workspace.read_replay()
+                response = dict(ingress_current().to_check_response())
             except Exception:
-                return {
+                current = None
+                response = {
                     "protocol": REPLAY_CHECK_PROTOCOL,
                     "status": "fail",
                     "diagnostics": [
@@ -280,6 +288,47 @@ class CodexCLIReplayWriter:
                         }
                     ],
                 }
+            diagnostics = response.get("diagnostics")
+            signature = tuple(
+                (
+                    str(item.get("rule_code", "")),
+                    str(item.get("path", "")),
+                )
+                for item in diagnostics
+                if isinstance(item, Mapping)
+            ) if isinstance(diagnostics, list) else ()
+            source_changed = (
+                current is not None
+                and last_replay_check_source is not None
+                and current != last_replay_check_source
+            )
+            if signature and signature == last_replay_check_signature:
+                repeated_replay_diagnostic += 1
+            else:
+                repeated_replay_diagnostic = 1 if signature else 0
+            response["diagnostic_progress"] = {
+                "same_rule_path_streak": repeated_replay_diagnostic,
+                "replay_source_changed_since_previous_check": source_changed,
+                "authority": (
+                    "mechanical episode-local observation only; it neither edits "
+                    "Replay nor changes ingress or Gate1 membership"
+                ),
+                **(
+                    {
+                        "next_inspection": (
+                            "The same closed obligation persists. Read its expected/"
+                            "observed fields, inspect the exact packet path and search "
+                            "the relation name in input/REPLAY_CONTRACT.md before "
+                            "another structural edit."
+                        )
+                    }
+                    if repeated_replay_diagnostic >= 2
+                    else {}
+                ),
+            }
+            last_replay_check_source = current
+            last_replay_check_signature = signature
+            return response
 
         def replay_compile_tool() -> Mapping[str, Any]:
             nonlocal last_checked_good

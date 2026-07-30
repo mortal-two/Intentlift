@@ -128,11 +128,15 @@ class _ReplayABIViolation(ValueError):
         path: str,
         handles: tuple[str, ...] = (),
         line: int | None = None,
+        expected: Mapping[str, Any] | None = None,
+        observed: Mapping[str, Any] | None = None,
     ) -> None:
         self.rule_code = rule_code
         self.path = path
         self.handles = handles
         self.line = line
+        self.expected = dict(expected) if expected is not None else None
+        self.observed = dict(observed) if observed is not None else None
         super().__init__(rule_code)
 
 
@@ -254,10 +258,13 @@ def _check_triton_exact_abi(
 
 @dataclass(frozen=True)
 class _TypedControlContract:
+    path: str
     kind: str
     positive_nonempty: bool
     negative_nonempty: bool
     terminal_polarity: str | None = None
+    positive_scope_id: str | None = None
+    negative_scope_id: str | None = None
 
 
 def _packet_typed_controls(packet: Mapping[str, Any]) -> list[_TypedControlContract]:
@@ -288,12 +295,13 @@ def _packet_typed_controls(packet: Mapping[str, Any]) -> list[_TypedControlContr
         else {}
     )
 
-    def visit(body: Any) -> None:
+    def visit(body: Any, prefix: str) -> None:
         if not isinstance(body, list):
             return
-        for operation in body:
+        for index, operation in enumerate(body):
             if not isinstance(operation, Mapping):
                 continue
+            path = f"{prefix}[{index}]"
             positive = operation.get("positive")
             negative = operation.get("negative")
             kind = operation.get("op")
@@ -323,23 +331,37 @@ def _packet_typed_controls(packet: Mapping[str, Any]) -> list[_TypedControlContr
                 )
                 result.append(
                     _TypedControlContract(
+                        path=path,
                         kind=str(kind),
                         positive_nonempty=bool(positive_body),
                         negative_nonempty=bool(negative_body),
                         terminal_polarity=terminal_polarity,
+                        positive_scope_id=(
+                            str(positive.get("scope_id"))
+                            if positive.get("scope_id") is not None
+                            else None
+                        ),
+                        negative_scope_id=(
+                            str(negative.get("scope_id"))
+                            if negative.get("scope_id") is not None
+                            else None
+                        ),
                     )
                 )
                 if terminal_polarity == "negative":
-                    visit(negative_body)
-                    visit(positive_body)
+                    visit(negative_body, f"{path}.negative.body")
+                    visit(positive_body, f"{path}.positive.body")
                 else:
-                    visit(positive_body)
-                    visit(negative_body)
-            visit(operation.get("body"))
+                    visit(positive_body, f"{path}.positive.body")
+                    visit(negative_body, f"{path}.negative.body")
+            visit(operation.get("body"), f"{path}.body")
 
     intent = packet.get("j", {}).get("intent", {})
     function = intent.get("intent_function", {}) if isinstance(intent, Mapping) else {}
-    visit(function.get("body") if isinstance(function, Mapping) else None)
+    visit(
+        function.get("body") if isinstance(function, Mapping) else None,
+        "j.intent.intent_function.body",
+    )
     return result
 
 
@@ -540,37 +562,14 @@ def _check_triton_typed_control_contract(
             rule_code,
             path="<typed-control>",
             line=(actual[0].node.lineno if actual else function.lineno),
+            expected={"runtime_control_count": len(expected)},
+            observed={"runtime_control_count": len(actual)},
         )
     for index, (site, contract) in enumerate(
         zip(actual, expected, strict=True)
     ):
         node = site.node
         if contract.kind == "effect_if" and contract.terminal_polarity is not None:
-            if node.orelse:
-                raise _ReplayABIViolation(
-                    "terminal_effect_if_forbids_else",
-                    path=f"<effect_if:{index}>",
-                    line=node.lineno,
-                )
-            if (
-                not node.body
-                or not isinstance(node.body[-1], ast.Return)
-                or node.body[-1].value is not None
-            ):
-                raise _ReplayABIViolation(
-                    "terminal_effect_if_bare_return",
-                    path=f"<effect_if:{index}>",
-                    line=node.lineno,
-                )
-            negated = isinstance(node.test, ast.UnaryOp) and isinstance(
-                node.test.op, ast.Not
-            )
-            if negated != (contract.terminal_polarity == "negative"):
-                raise _ReplayABIViolation(
-                    "terminal_effect_if_polarity",
-                    path=f"<effect_if:{index}>",
-                    line=node.lineno,
-                )
             terminal_nonempty = (
                 contract.positive_nonempty
                 if contract.terminal_polarity == "positive"
@@ -581,23 +580,105 @@ def _check_triton_typed_control_contract(
                 if contract.terminal_polarity == "positive"
                 else contract.positive_nonempty
             )
-            if _statements_are_nonempty(node.body[:-1]) != terminal_nonempty:
+            has_bare_return = bool(
+                node.body
+                and isinstance(node.body[-1], ast.Return)
+                and node.body[-1].value is None
+            )
+            terminal_prefix = node.body[:-1] if has_bare_return else node.body
+            predicate_negated = isinstance(node.test, ast.UnaryOp) and isinstance(
+                node.test.op, ast.Not
+            )
+            actual_terminal_nonempty = _statements_are_nonempty(terminal_prefix)
+            actual_continuation_nonempty = _statements_are_nonempty(site.following)
+            expected_shape = {
+                "j_control_path": contract.path,
+                "terminal_polarity": contract.terminal_polarity,
+                "forbids_else": True,
+                "terminal_arm_ends_in_bare_return": True,
+                "terminal_arm_nonempty_before_return": terminal_nonempty,
+                "continuation_nonempty_after_if": continuation_nonempty,
+                "continuation_contains_return": False,
+            }
+            observed_shape = {
+                "has_else": bool(node.orelse),
+                "terminal_arm_ends_in_bare_return": has_bare_return,
+                "predicate_negated": predicate_negated,
+                "terminal_arm_nonempty_before_return": actual_terminal_nonempty,
+                "continuation_nonempty_after_if": actual_continuation_nonempty,
+                "continuation_contains_return": any(
+                    isinstance(item, ast.Return) for item in site.following
+                ),
+                "continuation_statement_kinds": [
+                    type(item).__name__ for item in site.following[:16]
+                ],
+            }
+            diagnostic_path = f"{contract.path} -> <effect_if:{index}>"
+            scope_handles = tuple(
+                item
+                for item in (
+                    contract.positive_scope_id,
+                    contract.negative_scope_id,
+                )
+                if item is not None
+            )
+            if node.orelse:
+                raise _ReplayABIViolation(
+                    "terminal_effect_if_forbids_else",
+                    path=diagnostic_path,
+                    handles=scope_handles,
+                    line=node.lineno,
+                    expected=expected_shape,
+                    observed=observed_shape,
+                )
+            if (
+                not node.body
+                or not isinstance(node.body[-1], ast.Return)
+                or node.body[-1].value is not None
+            ):
+                raise _ReplayABIViolation(
+                    "terminal_effect_if_bare_return",
+                    path=diagnostic_path,
+                    handles=scope_handles,
+                    line=node.lineno,
+                    expected=expected_shape,
+                    observed=observed_shape,
+                )
+            if predicate_negated != (contract.terminal_polarity == "negative"):
+                raise _ReplayABIViolation(
+                    "terminal_effect_if_polarity",
+                    path=diagnostic_path,
+                    handles=scope_handles,
+                    line=node.lineno,
+                    expected=expected_shape,
+                    observed=observed_shape,
+                )
+            if actual_terminal_nonempty != terminal_nonempty:
                 raise _ReplayABIViolation(
                     "terminal_effect_if_terminal_arm",
-                    path=f"<effect_if:{index}>",
+                    path=diagnostic_path,
+                    handles=scope_handles,
                     line=node.lineno,
+                    expected=expected_shape,
+                    observed=observed_shape,
                 )
-            if _statements_are_nonempty(site.following) != continuation_nonempty:
+            if actual_continuation_nonempty != continuation_nonempty:
                 raise _ReplayABIViolation(
                     "terminal_effect_if_continuation",
-                    path=f"<effect_if:{index}>",
+                    path=diagnostic_path,
+                    handles=scope_handles,
                     line=node.lineno,
+                    expected=expected_shape,
+                    observed=observed_shape,
                 )
             if any(isinstance(item, ast.Return) for item in site.following):
                 raise _ReplayABIViolation(
                     "terminal_effect_if_continuation_return",
-                    path=f"<effect_if:{index}>",
+                    path=diagnostic_path,
+                    handles=scope_handles,
                     line=node.lineno,
+                    expected=expected_shape,
+                    observed=observed_shape,
                 )
             continue
         if not node.orelse:
@@ -1069,6 +1150,8 @@ def _closed_ingress_diagnostic(exc: Exception) -> dict[str, Any]:
             "path": exc.path,
             "anonymous_handles": list(exc.handles),
             "line": exc.line,
+            **({"expected": exc.expected} if exc.expected is not None else {}),
+            **({"observed": exc.observed} if exc.observed is not None else {}),
         }
     line_match = re.search(r"\bline\s+(\d+)\b", str(exc))
     line = int(line_match.group(1)) if line_match is not None else None
