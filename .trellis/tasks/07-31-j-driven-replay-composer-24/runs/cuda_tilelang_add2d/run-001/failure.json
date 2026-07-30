@@ -1,0 +1,552 @@
+{
+  "diagnostic": "Gate1 source compilation failed; it is not a closure verdict",
+  "failure_class": "SCRCInfrastructureError",
+  "partial_evidence": {
+    "artifact": {
+      "c": {
+        "slots": [
+          {
+            "kind": "compiler",
+            "name": "c0",
+            "required": true,
+            "role": "launch_block_x",
+            "value_type": "i32"
+          }
+        ],
+        "values": {
+          "c0": 16
+        }
+      },
+      "j": {
+        "boundary": {
+          "access_guard_relations": [],
+          "accesses": [
+            {
+              "access_id": "a0",
+              "index_expression": "[k1, k0]",
+              "kind": "load",
+              "node_ref": "n0",
+              "tensor": "t0"
+            },
+            {
+              "access_id": "a1",
+              "index_expression": "[k1, k0]",
+              "kind": "load",
+              "node_ref": "n0",
+              "tensor": "t1"
+            },
+            {
+              "access_id": "a2",
+              "index_expression": "[k1, k0]",
+              "kind": "store",
+              "node_ref": "n0",
+              "tensor": "t2"
+            }
+          ],
+          "aliases": [],
+          "broadcasts": [],
+          "consumer_extensions": [],
+          "domains": {
+            "d0": "(0 <= k0) and (k0 < 16)",
+            "d1": "(0 <= k1) and (k1 < x0)"
+          },
+          "effects": [
+            {
+              "access_ref": "a0",
+              "effect_id": "e0",
+              "kind": "read",
+              "node_ref": "n0",
+              "target": "t0"
+            },
+            {
+              "access_ref": "a1",
+              "effect_id": "e1",
+              "kind": "read",
+              "node_ref": "n0",
+              "target": "t1"
+            },
+            {
+              "access_ref": "a2",
+              "effect_id": "e2",
+              "kind": "write",
+              "node_ref": "n0",
+              "target": "t2"
+            }
+          ],
+          "index_bounds": [],
+          "output_mappings": [],
+          "realization_authorizations": [],
+          "reductions": [],
+          "result_relations": [
+            {
+              "kind": "tolerance",
+              "output": "t2"
+            }
+          ],
+          "updates": []
+        },
+        "dimension_constraints": [
+          "x0 >= 0"
+        ],
+        "dimension_relations": [],
+        "intent": {
+          "intent_function": {
+            "body": [
+              {
+                "attrs": {
+                  "fn": "add"
+                },
+                "op": "map_binary",
+                "operands": [
+                  "t0",
+                  "t1"
+                ],
+                "result": "t2",
+                "type": {
+                  "dtype": "f32",
+                  "shape": [
+                    "x0",
+                    16
+                  ]
+                }
+              }
+            ],
+            "inputs": [
+              {
+                "dtype": "f32",
+                "name": "t0",
+                "shape": [
+                  "x0",
+                  16
+                ]
+              },
+              {
+                "dtype": "f32",
+                "name": "t1",
+                "shape": [
+                  "x0",
+                  16
+                ]
+              }
+            ],
+            "name": "scrc_j0",
+            "outputs": [
+              {
+                "dtype": "f32",
+                "name": "t2",
+                "shape": [
+                  "x0",
+                  16
+                ]
+              }
+            ]
+          }
+        },
+        "kernel_id": "scrc_k0",
+        "node_ids": {
+          "n0": "body[0]"
+        },
+        "scopes": [
+          {
+            "captures": [],
+            "definitions": [
+              "t0",
+              "t1",
+              "t2"
+            ],
+            "effects": [
+              "e0",
+              "e1",
+              "e2"
+            ],
+            "kind": "function",
+            "parent_scope": null,
+            "scope_id": "q0"
+          }
+        ],
+        "signature": {
+          "parameters": [
+            {
+              "dtype": "f32",
+              "kind": "tensor",
+              "logical_ref": "t0",
+              "mode": "input",
+              "name": "p0",
+              "rank": 2
+            },
+            {
+              "dtype": "f32",
+              "kind": "tensor",
+              "logical_ref": "t1",
+              "mode": "input",
+              "name": "p1",
+              "rank": 2
+            },
+            {
+              "dtype": "f32",
+              "kind": "tensor",
+              "logical_ref": "t2",
+              "mode": "output",
+              "name": "p2",
+              "rank": 2
+            },
+            {
+              "dtype": "i32",
+              "kind": "scalar",
+              "logical_ref": "x0",
+              "mode": "value",
+              "name": "p3",
+              "rank": 0
+            }
+          ]
+        },
+        "storage": [],
+        "value_dimension_relations": []
+      },
+      "pi": {
+        "instances": [
+          {
+            "id": "i0",
+            "mechanism": "realize",
+            "region": "r1",
+            "semantic_ref": "p0"
+          },
+          {
+            "id": "i1",
+            "mechanism": "realize",
+            "region": "r1",
+            "semantic_ref": "d1"
+          },
+          {
+            "id": "i2",
+            "mechanism": "address_base",
+            "region": "r1",
+            "semantic_ref": "a0"
+          },
+          {
+            "id": "i3",
+            "mechanism": "realize",
+            "region": "r1",
+            "semantic_ref": "d0"
+          },
+          {
+            "id": "i4",
+            "mechanism": "address_lane",
+            "region": "r1",
+            "semantic_ref": "a0"
+          },
+          {
+            "id": "i5",
+            "mechanism": "transfer_direct",
+            "region": "r1",
+            "semantic_ref": "a0"
+          },
+          {
+            "id": "i6",
+            "mechanism": "realize",
+            "region": "r1",
+            "semantic_ref": "p1"
+          },
+          {
+            "id": "i7",
+            "mechanism": "realize",
+            "region": "r1",
+            "semantic_ref": "d1"
+          },
+          {
+            "id": "i8",
+            "mechanism": "address_base",
+            "region": "r1",
+            "semantic_ref": "a1"
+          },
+          {
+            "id": "i9",
+            "mechanism": "realize",
+            "region": "r1",
+            "semantic_ref": "d0"
+          },
+          {
+            "id": "i10",
+            "mechanism": "address_lane",
+            "region": "r1",
+            "semantic_ref": "a1"
+          },
+          {
+            "id": "i11",
+            "mechanism": "transfer_direct",
+            "region": "r1",
+            "semantic_ref": "a1"
+          },
+          {
+            "id": "i12",
+            "mechanism": "realize",
+            "region": "r1",
+            "semantic_ref": "n0"
+          },
+          {
+            "id": "i13",
+            "mechanism": "realize",
+            "region": "r1",
+            "semantic_ref": "p2"
+          },
+          {
+            "id": "i14",
+            "mechanism": "realize",
+            "region": "r1",
+            "semantic_ref": "d1"
+          },
+          {
+            "id": "i15",
+            "mechanism": "address_base",
+            "region": "r1",
+            "semantic_ref": "a2"
+          },
+          {
+            "id": "i16",
+            "mechanism": "realize",
+            "region": "r1",
+            "semantic_ref": "d0"
+          },
+          {
+            "id": "i17",
+            "mechanism": "address_lane",
+            "region": "r1",
+            "semantic_ref": "a2"
+          },
+          {
+            "id": "i18",
+            "mechanism": "transfer_direct",
+            "region": "r1",
+            "semantic_ref": "a2"
+          }
+        ],
+        "iterations": [],
+        "loop_carriers": [],
+        "order": [
+          {
+            "after": "i12",
+            "before": "i5"
+          },
+          {
+            "after": "i12",
+            "before": "i11"
+          },
+          {
+            "after": "i18",
+            "before": "i12"
+          }
+        ],
+        "physical_iterations": [],
+        "physical_loop_carriers": [],
+        "program_axes": [
+          {
+            "axis": 0,
+            "domain_ref": "d1"
+          }
+        ],
+        "refinements": [],
+        "regions": [
+          {
+            "id": "r0",
+            "parent": null,
+            "placement": "root"
+          },
+          {
+            "id": "r1",
+            "parent": "r0",
+            "placement": "program"
+          }
+        ],
+        "route_extent_transforms": [],
+        "routes": [
+          {
+            "slots": [
+              0
+            ],
+            "source": "i1",
+            "target": "i2"
+          },
+          {
+            "slots": [
+              0
+            ],
+            "source": "i2",
+            "target": "i4"
+          },
+          {
+            "slots": [
+              1
+            ],
+            "source": "i3",
+            "target": "i4"
+          },
+          {
+            "slots": [
+              2
+            ],
+            "source": "i0",
+            "target": "i4"
+          },
+          {
+            "slots": [
+              0
+            ],
+            "source": "i4",
+            "target": "i5"
+          },
+          {
+            "slots": [
+              0
+            ],
+            "source": "i7",
+            "target": "i8"
+          },
+          {
+            "slots": [
+              0
+            ],
+            "source": "i8",
+            "target": "i10"
+          },
+          {
+            "slots": [
+              1
+            ],
+            "source": "i9",
+            "target": "i10"
+          },
+          {
+            "slots": [
+              2
+            ],
+            "source": "i6",
+            "target": "i10"
+          },
+          {
+            "slots": [
+              0
+            ],
+            "source": "i10",
+            "target": "i11"
+          },
+          {
+            "slots": [
+              0
+            ],
+            "source": "i5",
+            "target": "i12"
+          },
+          {
+            "slots": [
+              1
+            ],
+            "source": "i11",
+            "target": "i12"
+          },
+          {
+            "slots": [
+              0
+            ],
+            "source": "i14",
+            "target": "i15"
+          },
+          {
+            "slots": [
+              0
+            ],
+            "source": "i15",
+            "target": "i17"
+          },
+          {
+            "slots": [
+              1
+            ],
+            "source": "i16",
+            "target": "i17"
+          },
+          {
+            "slots": [
+              2
+            ],
+            "source": "i13",
+            "target": "i17"
+          },
+          {
+            "slots": [
+              0
+            ],
+            "source": "i17",
+            "target": "i18"
+          },
+          {
+            "slots": [
+              1
+            ],
+            "source": "i12",
+            "target": "i18"
+          }
+        ],
+        "sharing": [],
+        "terminal_controls": []
+      },
+      "schema": "intentir.scrc.artifact.v12"
+    },
+    "formal_round": 1,
+    "gate1": {
+      "artifact_digest": "3339bc235e93f678dc4ac885399fcdc8836aef758ced12bceb042466ae2994a4",
+      "j_necessity_status": "inconclusive",
+      "llm_calls": {
+        "masked_j": 0,
+        "normal": 0
+      },
+      "masked_j": null,
+      "masked_j_isolation": {
+        "fresh_session_evidence": null,
+        "independent_writer": null,
+        "separate_generate_call": null
+      },
+      "normal": {
+        "comparison": null,
+        "compile": null,
+        "diagnostic": null,
+        "fingerprint": null,
+        "generation": null,
+        "mode": "normal",
+        "physical_calls": 0
+      },
+      "normal_fanout": null,
+      "observer_profile": {
+        "canonicalization_version": "cuda-ptx-semantic-effects-v3",
+        "compiler_stage": "ptx",
+        "evidence_class": "semantic_effects_with_raw_topology_diagnostic",
+        "frontend": "cuda",
+        "profile_id": "cuda_ptx_semantic_effects",
+        "profile_version": "cuda-ptx-semantic-effects-v3"
+      },
+      "protocol": "llm_direct_pi_gate1_level2_v1",
+      "source_compile": {
+        "cache_key": "933141685dfef1249cdb0f7d83665f4112eb7c0698b60100169b8dd5b4049ad1",
+        "compiler": {
+          "name": "nvcc",
+          "version": "Build cuda_12.8.r12.8/compiler.35404655_0"
+        },
+        "diagnostic": "/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/layout.hpp(181): error: expected a \")\"\n    operator()(Coord0 const& 16, Coord1 const& c1, Coords const&... cs) const {\n                             ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/layout_composed.hpp(128): error: expected a \")\"\n    operator()(Coord0 const& 16, Coord1 const& c1, Coords const&... cs) const {\n                             ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/tensor_impl.hpp(265): error: expected a \")\"\n    operator()(Coord0 const& 16, Coord1 const& c1, Coords const&... cs) {\n                             ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/tensor_impl.hpp(272): error: expected a \")\"\n    operator()(Coord0 const& 16, Coord1 const& c1, Coords const&... cs) const {\n                             ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(66): error: expected a \")\"\n        float const & 16, float const & c1, float const & c2, float const & c3)\n                      ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(78): error: asm operand type size(4) does not match type/size implied by constraint 'f'\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n           ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(78): error: identifier \"c1\" is undefined\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                        ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(78): error: an asm operand must have scalar type\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                    ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(78): error: identifier \"c2\" is undefined\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                                 ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(78): error: an asm operand must have scalar type\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                             ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(78): error: identifier \"c3\" is undefined\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                                          ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(78): error: an asm operand must have scalar type\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                                      ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(100): error: expected a \")\"\n        float const & 16, float const & c1, float const & c2, float const & c3)\n                      ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(112): error: asm operand type size(4) does not match type/size implied by constraint 'f'\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n           ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(112): error: identifier \"c1\" is undefined\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                        ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(112): error: an asm operand must have scalar type\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                    ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(112): error: identifier \"c2\" is undefined\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                                 ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(112): error: an asm operand must have scalar type\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                             ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(112): error: identifier \"c3\" is undefined\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                                          ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(112): error: an asm operand must have scalar type\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                                      ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(134): error: expected a \")\"\n        float const & 16, float const & c1, float const & c2, float const & c3)\n                      ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(146): error: asm operand type size(4) does not match type/size implied by constraint 'f'\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n           ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(146): error: identifier \"c1\" is undefined\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                        ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(146): error: an asm operand must have scalar type\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                    ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(146): error: identifier \"c2\" is undefined\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                                 ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(146): error: an asm operand must have scalar type\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                             ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(146): error: identifier \"c3\" is undefined\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                                          ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(146): error: an asm operand must have scalar type\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                                      ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(168): error: expected a \")\"\n        float const & 16, float const & c1, float const & c2, float const & c3)\n                      ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(180): error: asm operand type size(4) does not match type/size implied by constraint 'f'\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n           ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(180): error: identifier \"c1\" is undefined\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                        ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(180): error: an asm operand must have scalar type\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                    ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(180): error: identifier \"c2\" is undefined\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                                 ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(180): error: an asm operand must have scalar type\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                             ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(180): error: identifier \"c3\" is undefined\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                                          ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(180): error: an asm operand must have scalar type\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                                      ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(202): error: expected a \")\"\n        float const & 16, float const & c1, float const & c2, float const & c3)\n                      ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(214): error: asm operand type size(4) does not match type/size implied by constraint 'f'\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n           ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(214): error: identifier \"c1\" is undefined\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                        ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(214): error: an asm operand must have scalar type\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                    ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(214): error: identifier \"c2\" is undefined\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                                 ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(214): error: an asm operand must have scalar type\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                             ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(214): error: identifier \"c3\" is undefined\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                                          ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(214): error: an asm operand must have scalar type\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                                      ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(235): error: expected a \")\"\n        float const & 16, float const & c1, float const & c2, float const & c3)\n                      ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(247): error: asm operand type size(4) does not match type/size implied by constraint 'f'\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n           ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(247): error: identifier \"c1\" is undefined\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                        ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(247): error: an asm operand must have scalar type\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                    ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(247): error: identifier \"c2\" is undefined\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                                 ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(247): error: an asm operand must have scalar type\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                             ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(247): error: identifier \"c3\" is undefined\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                                          ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(247): error: an asm operand must have scalar type\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                                      ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(269): error: expected a \")\"\n        float const & 16, float const & c1, float const & c2, float const & c3)\n                      ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(281): error: asm operand type size(4) does not match type/size implied by constraint 'f'\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n           ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(281): error: identifier \"c1\" is undefined\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                        ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(281): error: an asm operand must have scalar type\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                    ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(281): error: identifier \"c2\" is undefined\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                                 ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(281): error: an asm operand must have scalar type\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                             ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(281): error: identifier \"c3\" is undefined\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                                          ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(281): error: an asm operand must have scalar type\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                                      ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(303): error: expected a \")\"\n        float const & 16, float const & c1, float const & c2, float const & c3)\n                      ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(315): error: asm operand type size(4) does not match type/size implied by constraint 'f'\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n           ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(315): error: identifier \"c1\" is undefined\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                        ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(315): error: an asm operand must have scalar type\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                    ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(315): error: identifier \"c2\" is undefined\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                                 ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(315): error: an asm operand must have scalar type\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                             ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(315): error: identifier \"c3\" is undefined\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                                          ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(315): error: an asm operand must have scalar type\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                                      ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(337): error: expected a \")\"\n        float const & 16, float const & c1, float const & c2, float const & c3)\n                      ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(349): error: asm operand type size(4) does not match type/size implied by constraint 'f'\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n           ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(349): error: identifier \"c1\" is undefined\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                        ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(349): error: an asm operand must have scalar type\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                    ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(349): error: identifier \"c2\" is undefined\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                                 ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(349): error: an asm operand must have scalar type\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                             ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(349): error: identifier \"c3\" is undefined\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                                          ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(349): error: an asm operand must have scalar type\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                                      ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(371): error: expected a \")\"\n        float const & 16, float const & c1, float const & c2, float const & c3)\n                      ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(383): error: asm operand type size(4) does not match type/size implied by constraint 'f'\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n           ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(383): error: identifier \"c1\" is undefined\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                        ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(383): error: an asm operand must have scalar type\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                    ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(383): error: identifier \"c2\" is undefined\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                                 ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(383): error: an asm operand must have scalar type\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                             ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(383): error: identifier \"c3\" is undefined\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                                          ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(383): error: an asm operand must have scalar type\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                                      ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(407): error: expected a \")\"\n        float const & 16, float const & c1, float const & c2, float const & c3)\n                      ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(419): error: asm operand type size(4) does not match type/size implied by constraint 'f'\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n           ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(419): error: identifier \"c1\" is undefined\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                        ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(419): error: an asm operand must have scalar type\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                    ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(419): error: identifier \"c2\" is undefined\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                                 ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(419): error: an asm operand must have scalar type\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                             ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(419): error: identifier \"c3\" is undefined\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                                          ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(419): error: an asm operand must have scalar type\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                                      ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(441): error: expected a \")\"\n        float const & 16, float const & c1, float const & c2, float const & c3)\n                      ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(453): error: asm operand type size(4) does not match type/size implied by constraint 'f'\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n           ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(453): error: identifier \"c1\" is undefined\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                        ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(453): error: an asm operand must have scalar type\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                    ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(453): error: identifier \"c2\" is undefined\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                                 ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(453): error: an asm operand must have scalar type\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                             ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(453): error: identifier \"c3\" is undefined\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                                          ^\n\n/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/cutlass/include/cute/arch/mma_sm120.hpp(453): error: an asm operand must have scalar type\n           \"f\"(16), \"f\"(c1), \"f\"(c2), \"f\"(c3));\n                                      ^\n\nError limit reached.\n100 errors detected in the compilation of \"/tmp/intentir-cuda-gate1-vpz18r2h/kernel.cu\".\nCompilation terminated.",
+        "elapsed_ms": 1482.0684780133888,
+        "entry": "main_kernel",
+        "interface": {},
+        "ok": false,
+        "ptx": null,
+        "target": {
+          "arch": "sm_120"
+        }
+      },
+      "source_fingerprint": null,
+      "status": "compile_failed"
+    },
+    "typecheck": {
+      "diagnostics": [],
+      "protocol": "intentir.scrc.typecheck.v29",
+      "status": "pass"
+    }
+  }
+}

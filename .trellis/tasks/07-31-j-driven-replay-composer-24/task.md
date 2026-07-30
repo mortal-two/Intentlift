@@ -1,6 +1,6 @@
 # Task 24：J 主导的 π_min 与三前端 Episode-Local Composer Replay
 
-> 状态：`P5_TILELANG_ADD2D_CERTIFIED_CUDA_PENDING`（2026-07-31）。
+> 状态：`P5_TILELANG_ADD2D_CERTIFIED_CUDA_INFRA_FIXED_RERUN_PENDING`（2026-07-31）。
 >
 > 定位：Task 15/Task 11 的 Replay 构造机制升级，以及 Task 23 多前端实证的真实 closure 执行线。
 > 本任务不接管 production backend；backend 仍在 SCRC 后只消费 accepted `J+C`。
@@ -118,6 +118,23 @@ Replay，`gpt-5.6-sol high`，Mask-J配置开启）：
   segments、48个tool actions、287.174秒；
 - normal与masked都安装了Composer，但agent对该简单case选择direct-source，`used=false`。这证明raw
   escape和Composer不改变接受集合，但**不能**证明Composer加速；后续必须在结构化case做fresh A/B。
+
+### Pilot C：首次CUDA纵切暴露C-slot宏污染
+
+`cuda:tilelang_add2d / .trellis/tasks/07-31-j-driven-replay-composer-24/runs/cuda_tilelang_add2d/run-001`
+（Codex Lift，`gpt-5.6-sol high`）：
+
+- Lift产生的artifact通过strict decode和dependent TypeCheck；在任何normal/masked Replay调用之前，
+  Gate1 Source compile以`SCRCInfrastructureError` fail closed，因此本轮不评价Replay或Composer；
+- 原因是`CudaCompiler`把匿名C-slot valuation `c0=16`无条件转成Translation Unit全局
+  `-Dc0=16`。预处理器由此把CUTLASS/CuTe头文件中的合法参数名`c0`也替换为数字`16`；
+- C中的`c0`是artifact handle，`role=launch_block_x`才是固定adapter语义。CUDA已经通过`grid/block`
+  消费launch metadata，并通过独立白名单`compiler_options`消费真实NVCC选项；匿名handle不属于Source
+  标识符或预处理器API；
+- 通用修复是保留`CudaCompileCase.schedule`用于C绑定、cache key和PTX observer，但禁止把它物化为
+  `-D`。没有修改dataset、Source、J/π、observer或case-specific规则；
+- 修复后对同一Dataset Source、同一Harness case直接重编译成功：NVCC 12.8、`sm_120`、PTX 2140
+  bytes、空诊断。正式provider fresh rerun待执行。
 
 ## 3. 交付物
 

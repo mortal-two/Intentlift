@@ -46,6 +46,10 @@ class CudaCompileCase:
     parameters: tuple[FrontendParameter, ...]
     grid: tuple[int, int, int] = (1, 1, 1)
     block: tuple[int, int, int] = (1, 1, 1)
+    # Opaque C-slot valuation used by the Harness and PTX observer.  These
+    # names are artifact handles, not CUDA preprocessor identifiers; launch
+    # roles are consumed through ``grid``/``block`` and actual nvcc flags
+    # through the separately allowlisted ``compiler_options``.
     schedule: Mapping[str, int | float | bool | str] = field(default_factory=dict)
     arch: str = "sm_80"
     compiler_options: tuple[str, ...] = ()
@@ -202,16 +206,6 @@ def _normalize_arch(raw: str) -> str:
     return f"sm_{digits}"
 
 
-def _schedule_define(name: str, value: int | float | bool | str) -> str:
-    if isinstance(value, bool):
-        literal = "1" if value else "0"
-    elif isinstance(value, (int, float)):
-        literal = repr(value)
-    else:
-        literal = json.dumps(value, ensure_ascii=True)
-    return f"-D{name}={literal}"
-
-
 def find_nvcc() -> str | None:
     direct = shutil.which("nvcc")
     if direct:
@@ -289,10 +283,9 @@ class CudaCompiler:
                 "-O3",
                 "-lineinfo",
                 f"-arch={case.arch}",
-                *(
-                    _schedule_define(name, value)
-                    for name, value in sorted(case.schedule.items())
-                ),
+                # Never materialize opaque schedule handles as -D macros.
+                # A TU-global ``-Dc0=...`` also rewrites vendor headers and
+                # makes the compiler consume an artifact name as source code.
                 *case.compiler_options,
                 *(
                     item
