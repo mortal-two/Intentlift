@@ -15,8 +15,10 @@ from .pi import (
 )
 
 
-REPLAY_PACKET_SCHEMA = "intentir.scrc.replay-input.v2"
-LEGACY_REPLAY_PACKET_SCHEMAS = frozenset({"intentir.scrc.replay-input.v1"})
+REPLAY_PACKET_SCHEMA = "intentir.scrc.replay-input.v3"
+LEGACY_REPLAY_PACKET_SCHEMAS = frozenset(
+    {"intentir.scrc.replay-input.v1", "intentir.scrc.replay-input.v2"}
+)
 PUBLIC_FRONTEND_CONTEXT = {
     "triton": {
         "retrieval_scope": "public Triton documentation and public examples",
@@ -75,6 +77,11 @@ PUBLIC_FRONTEND_CONTEXT = {
             "the program_id even if its grid extent is one. Never choose from the "
             "address_base -> address_lane edge alone, and never infer from Source "
             "names, paths, or text."
+            " A pi.participant_mappings item binds its domain_instance to the exact "
+            "J domain and public participant axis. projection=cyclic means project "
+            "the participant coordinate cyclically into the J-owned domain extent; "
+            "extent_slot only binds the anonymous physical extent and its hidden "
+            "value must not be guessed."
             " For a canonical binary J contraction whose per-program operands and "
             "result are rank-2 floating tiles with exactly one contracted label, "
             "and whose declared operand/result dtypes are accepted by public "
@@ -243,7 +250,10 @@ PUBLIC_FRONTEND_CONTEXT = {
             "diagnostic only. A MaskC compiler slot with role "
             "`launch_block_x|y|z` is an injected module-global schedule handle and "
             "may appear only in the corresponding `T.Kernel` thread extent; never "
-            "turn it into a runtime parameter or guess its hidden value."
+            "turn it into a runtime parameter or guess its hidden value. A "
+            "pi.participant_mappings item is mandatory: projection=cyclic maps the "
+            "named public participant axis into the exact J-owned domain extent. "
+            "Use extent_slot only for its public launch binding."
         ),
     },
     "cuda": {
@@ -268,7 +278,12 @@ PUBLIC_FRONTEND_CONTEXT = {
             "public CUDA intrinsics; never make every thread traverse the whole "
             "logical axis. Preserve every distinct transfer, realization, region, "
             "sharing, and order stage. A boundary access without a predicate is "
-            "unconditional and never authorizes an invented lane-leader guard."
+            "unconditional and never authorizes an invented lane-leader guard. "
+            "Every pi.participant_mappings item is mandatory. Resolve its "
+            "domain_instance through pi to the exact J domain; projection=cyclic "
+            "maps the public threadIdx axis into that J-owned logical extent. "
+            "extent_slot binds only the matching external blockDim axis: never name "
+            "c*, guess its value, or replace the J extent with blockDim."
         ),
     },
 }
@@ -311,6 +326,7 @@ _REPLAY_COMPONENT_KEYS = {
             "instances",
             "routes",
             "program_axes",
+            "participant_mappings",
             "route_extent_transforms",
             "order",
             "sharing",
@@ -331,7 +347,11 @@ _HISTORICAL_J_KEY_SETS = frozenset(
     }
 )
 _HISTORICAL_PI_KEY_SETS = frozenset(
-    {_REPLAY_COMPONENT_KEYS["pi"] - {"program_axes"}}
+    {
+        _REPLAY_COMPONENT_KEYS["pi"] - {"participant_mappings"},
+        _REPLAY_COMPONENT_KEYS["pi"]
+        - {"participant_mappings", "program_axes"},
+    }
 )
 _U_F_KEYS = frozenset(
     {
@@ -377,7 +397,8 @@ def _validate_source_isolated_payload(
             and frozenset(actual) in _HISTORICAL_J_KEY_SETS
         )
         historical_pi = (
-            component == "pi"
+            not require_active_context
+            and component == "pi"
             and frozenset(actual) in _HISTORICAL_PI_KEY_SETS
         )
         if not isinstance(value, Mapping) or (
@@ -501,7 +522,7 @@ def build_rewriter_packet(
         artifact.j,
         artifact.c,
         artifact.pi,
-        require_program_axes=artifact.wire_schema == artifact.SCHEMA,
+        require_program_axes=artifact.requires_program_axes,
     )
     if not report.passed:
         summary = ", ".join(
@@ -608,8 +629,8 @@ def _instructions(*, frontend: Frontend, masked: bool) -> str:
         f"{frontend.value} public-frontend kernel module. You never see "
         "the source implementation. Consume J, pure C and pi directly; pi is topology, "
         "not semantic authority. Treat every pi instance, route, order edge, sharing "
-        "relation, route extent transform, structured or physical iteration "
-        "relation, physical carrier, "
+        "relation, route extent transform, participant mapping, structured or "
+        "physical iteration relation, physical carrier, "
         "representation refinement and region placement as required "
         "realization topology. Region placement is exact lexical scope: emit each "
         "compiler-visible instance in its declared region, keep a loop-region "
@@ -653,6 +674,15 @@ def _instructions(*, frontend: Frontend, masked: bool) -> str:
         "physical program axis 0, 1, or 2. Preserve it exactly across repeated "
         "instances and never derive, reorder, or add axes from source spelling, "
         "declaration order, shapes, grid extents, C, or frontend conventions. A "
+        "pi.participant_mappings item is the sole authority for cyclic physical "
+        "participant projection. Resolve domain_instance to its exact J boundary "
+        "one-axis zero-based domain and obtain the logical period only from its "
+        "positive literal or declared x* upper extent; axis selects "
+        "the public participant coordinate and extent_slot selects only the matching "
+        "anonymous external launch extent. projection=cyclic denotes physical "
+        "coordinate modulo the J-owned domain extent without carrying a Source "
+        "formula or target spelling. Never infer it from a reduction, shape, C "
+        "value, block size, frontend convention, or instance multiplicity. A "
         "boundary access with no predicate is unconditional: "
         "never derive a redundant mask from domains, grid extents, C, or defensive "
         "safety. "

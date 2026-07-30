@@ -152,7 +152,7 @@ def _load_seed(parent_path: Path, prepared: Any) -> LiftFeedback:
         artifact.j,
         artifact.c,
         artifact.pi,
-        require_program_axes=artifact.wire_schema == artifact.SCHEMA,
+        require_program_axes=artifact.requires_program_axes,
     )
     if not checked.passed:
         raise ValueError(

@@ -400,8 +400,9 @@ TypeCheck 还检查 closed comparison class 与 output dtype、A 依赖图和 B 
 见最终执行流程第 6.1 节。v1 中 `RequiresTolerance=true` 即拒绝显式或默认 `exact`，没有自由文本
 或“更强合同”例外；阈值仍完全由外部 Q 决定。该 reassociation fact 只约束 SCRC comparison class，
 不是 production backend permission。
-当前 `typecheck.v29`增加program-axis completeness dependent check，并继承v28的J dimension relation
-closed grammar、引用、唯一性与acyclic检查；同时拒绝
+当前 `typecheck.v30`增加participant mapping对exact J lane domain、route与matching C launch extent的
+dependent check，并继承v29的program-axis completeness与v28的J dimension relation closed grammar、
+引用、唯一性与acyclic检查；同时拒绝
 同tensor多个不同却都无consumer锚点的node-less load views；不从valuation、Harness或compiler
 observation生成relation，也不猜access consumer。v27只新增 route extent transform 的 existing-route、required positive-int C、
 matching J-domain attachment/axis 与 realize-anchor dependent checks；checker 不生成 relation、
@@ -459,6 +460,8 @@ transformation permission，也不改变 `Reach_t(J)`。
   lexical parent 中为 final；terminal/continuation role 不携带 predicate、polarity 或 return 语义；
 - `route_extent_transforms` 只限定一条既有 route slot，并依赖 required positive-int C 与匹配的
   J-domain attachment/axis；divisor/rounding 属于 closed vocabulary，不形成一般表达式；
+- `participant_mappings`只允许既有program-region lane-domain instance、物理axis、matching匿名C launch
+  extent与`projection=cyclic`；logical period只来自exact J，不含公式/API/target recipe/C value；
 - observable instance 锚定 J；
 - 不新增 operator、predicate、fill、effect 或 semantic constant；
 - sensitive representation refinement 有 J/B 授权；
@@ -483,15 +486,17 @@ dependent checking 夸写成 Source topology 的形式证明。
 
 首版不需要让 TypeCheck 成为 SMT 或完整图证明器。最小可行实现只需 fail closed 地完成上述局部检查。
 
-当前合并协议为 `artifact.v12 / decode.v17 / typecheck.v29 / candidate-check.v1 / replay-check.v14`；
-Replay packet envelope 为 `replay-input.v2`；Triton 公共上下文由当前固定公开字段直接给出，不再使用 context version、SHA 或 receipt 作为运行门禁；
-Codex/MiniSWE Lift knowledge 为 v89/v67，MiniSWE Replay backend 为 v31，Codex Replay backend 为 v33。
-Codex Replay v33只升级Replay episode内部的构造能力：安装不读取packet的syntax-only Composer，
+当前合并协议为 `artifact.v13 / decode.v18 / typecheck.v30 / candidate-check.v1 / replay-check.v16`；
+Replay packet envelope 为 `replay-input.v3`；Triton 公共上下文由当前固定公开字段直接给出，不再使用 context version、SHA 或 receipt 作为运行门禁；
+Codex/MiniSWE Lift knowledge 为 v89/v67，MiniSWE Replay backend 为 v31，Codex Replay backend 为 v35。
+Codex Replay v35在episode-local syntax-only Composer基础上消费v13 participant critical facts；Composer仍
+不读取packet，只操作agent作者化源码，
 支持stable node ID、局部编辑、source map与exact checkpoint/rollback；normal与Mask-J使用独立
 writer/session/ workspace。Composer telemetry不进入artifact、TypeCheck、Gate或certificate，最终
 接受集合仍只由exact Replay ingress、compile、Gate1与Gate2决定。
-v30/v26 完整执行 authored route extent transform 合同：将其纳入 `critical_facts.v4`、
-`replay-obligation-audit.v3` 与 source-blind static ingress；只检查 closed floor/ceil-div spelling，
+当前runtime把authored route extent transform与participant mapping纳入`critical_facts.v6`、
+`replay-obligation-audit.v5`与source-blind static ingress；前者只检查closed floor/ceil-div spelling，
+后者要求logical period从exact J解析而不能从C/reduction猜测，
 不生成 relation/code，也不替代 Gate1；单独存在该 relation 时也可用可选 audit 并置当前 exact Replay bytes；audit 不作为 ReplayCheck、compile 或 Gate1 前置条件。
 Codex v26 将每个 provider turn 的 900 秒上限与 fresh owner episode 的 1800 秒总预算分离，使超时后
 只能沿原 resumable thread 继续；不跨 Replay episode 继承。v29/v25 历史 evidence 保持原 verdict。
@@ -501,7 +506,7 @@ outline（function/loop/if/return 的行号与嵌套深度）；v41 只把 share
 `other`，不允许用 downstream-neutral 等价值替换。Replay v4 只要求 source-blind writer 保留 J typed
 rank/axis 与必要 compiler-visible reshape，不把 shaped reduction 压成 flattened reduction。这些版本
 都不分类/补造 artifact 语义，也不生成 Replay；仍由 Lift 与 Replay LLM 分别完整作者化输出。
-Replay workspace view v2 只把 packet 中已有的 typed reduction facts 无损并置；replay-check.v14 在
+Replay workspace view v2 只把 packet 中已有的 typed reduction facts 无损并置；replay-check.v16 在
 公共 source-blind synthetic compile 后核对 π 已声明 `transfer_direct` occurrence 的 compiled
 load/store multiplicity，并核对 structured J loop 加 `pi.physical_iterations` 已声明的 compiled
 `scf.for` occurrence，并核对对应 authored logical/physical carrier 的 block-argument arity；只在
@@ -536,7 +541,8 @@ v10 增加依附既有 C/J/route 的 closed `route_extent_transforms`，v11增�
 `dimension_relations`。后者只含identity、常数加/乘、常数ceil-div与round-up的acyclic grammar，
 consumer只能验证/求值，不从Harness/grid/C/π/TTIR生成。v12增加π-owned closed
 `program_axes`，只把Source-visible program-coordinate domain绑定到axis `0..2`，不携带grid extent、
-地址公式或前端文本。每个当前字段都由Lift LLM 作为完整 `(J,C,π)` 的一部分显式作者，
+地址公式或前端文本。v13增加closed `participant_mappings`，只将公开物理participant axis循环投影到
+exact J lane domain；不携带period/formula/API/target recipe/C value。每个当前字段都由Lift LLM 作为完整 `(J,C,π)` 的一部分显式作者，
 Decode/TypeCheck/CandidateCheck 只解析、检查、拒绝
 和诊断，不补造 relation 或 artifact。v1-v7 保持各自 wire bytes/digest 与字段集合，不得静默升级、
 刷新或追认；v8/v9/v10 同样保持各自字段集合。SCRC 后 π 停止，
@@ -607,7 +613,7 @@ artifact 语义，不增加 acceptance path，正式 Runner 仍独立执行 Deco
 扩充 TypeCheck judgement 必须提升 `v_TC`，CandidateCheck 与正式 Runner 必须记录并使用同一版本；
 新版本不静默重判历史证书。
 
-当前 fresh-run 取 `v_TC = typecheck.v29`。v29增加program-axis completeness dependent check；v28增加上述dimension relation dependent check；v27增加route extent transform dependent check；
+当前 fresh-run 取 `v_TC = typecheck.v30`。v30增加participant mapping dependent check；v29增加program-axis completeness dependent check；v28增加上述dimension relation dependent check；v27增加route extent transform dependent check；
 v26 增加上述 direct singleton broadcast dependent check；
 v25 增加上述 reduction-linearization topology check；v24 增加上述 special-constant 与 transfer pointer-route
 closed checks，并完整继承 v23；v23 增加 canonical output binding 的完整 dtype/shape equality；v22 增加 signature mode 与 J boundary partition 的 exact

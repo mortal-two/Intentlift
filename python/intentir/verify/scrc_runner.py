@@ -1834,7 +1834,7 @@ class SCRCGateRunner:
                 artifact.j,
                 artifact.c,
                 artifact.pi,
-                require_program_axes=artifact.wire_schema == artifact.SCHEMA,
+                require_program_axes=artifact.requires_program_axes,
             )
             _notify_progress(
                 progress_callback,

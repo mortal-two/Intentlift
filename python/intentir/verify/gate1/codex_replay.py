@@ -57,7 +57,7 @@ from .replay import (
 )
 
 
-CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v34"
+CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v35"
 PI_MIN_OWNERSHIP_RECEIPT_PROTOCOL = "intentir.pi-min.ownership-receipt.v1"
 
 _INITIAL_PROMPT = """You are the sole writer for one fresh source-blind IntentIR Replay episode.
@@ -85,6 +85,8 @@ use `critical_facts.broadcast_obligations` as the exact operand/access/consumer
 rank-projection checklist; use `critical_facts.identity_materializations` as the
 exact representation-stage/adjacent-transfer checklist; consume every
 `critical_facts.route_extent_transforms` item at its exact existing route slot.
+Consume every `critical_facts.participant_mappings` item by resolving its
+domain_instance to exact J before selecting the public participant spelling.
 These views only reindex the same J/pi and add no
 realization decision. For each authored J.boundary.broadcasts item, preserve the
 operand's closed type at its producer and boundary access, then materialize the
@@ -679,6 +681,9 @@ class CodexCLIReplayWriter:
                     "program_axis_count": len(view["program_axes"]),
                     "route_extent_transform_count": len(
                         view["route_extent_transforms"]
+                    ),
+                    "participant_mapping_count": len(
+                        view["participant_mappings"]
                     ),
                 }
             )

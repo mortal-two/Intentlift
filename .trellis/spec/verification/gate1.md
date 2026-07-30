@@ -9,9 +9,10 @@ Gate1 只接收已经通过 `TypeCheck(J,C,π)`、由当前三元组生成的全
 conditions。该 Gate1 claim 只针对这个 c0。
 
 当前 fresh-run artifact/decode/typecheck 组合为
-`intentir.scrc.artifact.v12 / intentir.scrc.decode.v17 / intentir.scrc.typecheck.v29`。Lift LLM 是完整
+`intentir.scrc.artifact.v13 / intentir.scrc.decode.v18 / intentir.scrc.typecheck.v30`。Lift LLM 是完整
 artifact 的唯一作者：value/dimension equality、closed dimension definition、consumer-extension、access-guard、typed control/inout、
-output binding、physical iteration/carrier、terminal-control 与 route-local extent transform 都必须由模型显式提交。Decode、
+output binding、physical iteration/carrier、terminal-control、route-local extent transform与participant
+projection都必须由模型显式提交。Decode、
 CandidateCheck 与 TypeCheck 只能做 closed
 解析、检查、拒绝和诊断，不会补 relation、选择 axes/polarity、插入 `select`、创建 pre-state，或把
 相同 concrete extents 当作 axis identity；v28验证dimension relation的closed grammar、引用与acyclicity，
@@ -49,7 +50,7 @@ v5 guarded store 的 merge 已经是 Layer A 中显式 `select`，且精确 inou
 通过 TypeCheck；Replay 不得把 relation 解读成允许它自行发明 branch、merge 或 mutation。Gate1
 比较的是 Replay 对这些已声明事实的 source realization，不为缺失 relation 建议或生成答案。
 
-当前 `replay-check.v14` 的 synthetic compile 只消费匿名 packet：核对作者化 `transfer_direct`
+当前 `replay-check.v16` 的 synthetic compile 只消费匿名 packet：核对作者化 `transfer_direct`
 occurrence、structured J loop 加 `pi.physical_iterations` 的 loop occurrence、对应 carrier arity；并且
 只在 signature pointer/tensor kind 与 π address routes 完全闭合时核对 pointer-address operation
 occurrence。完整闭包允许独立 integer base/lane contribution，且不要求 address instance 与 transfer
@@ -63,6 +64,13 @@ routes/carrier 唯一回溯到一个 signature pointer，且 Replay 自身 TTIR 
 也唯一并处于同一词法 region 时，核对其词法顺序是否遵守 `pi.order`；任一映射有歧义就不猜，留给
 正式 Gate1。该 check 只拒绝错误 Replay bytes，不生成 source、
 address formula、loop/carrier 或 relation，也没有 Gate1/认证权威。
+
+CUDA hard observer `cuda-ptx-semantic-effects-v4`继续放松register/label/cache与ordinary affine address
+spelling，但沿每个memory address的reaching definitions保留information-losing participant fold：closed
+power-of-two low-bit `and` 与positive `rem`归一为cyclic projection，其他bitmask保持bitmask类别。
+Source有fold而Replay直接使用raw participant coordinate时，`address_coordinate_folds`必须hard fail。
+该观察器不把PTX、fold tag或差异交给source-blind Replay；它只在Gate1比较最终exact Source/Replay，
+也不替Lift生成`participant_mappings`。TileLang的hard closure仍是结构TIR，PTX仅作diagnostic。
 
 presentation/alpha canonicalization 只能消除名称、SSA 编号、无关打印顺序等表示噪声。它不得
 删除会改变必要 realization closure 的 op、def-use、predicate/fill、effect、region、order、

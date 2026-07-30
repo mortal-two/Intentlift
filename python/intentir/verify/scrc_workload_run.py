@@ -911,7 +911,7 @@ def recheck_prepared_workload_gate1(
         canonical.j,
         canonical.c,
         canonical.pi,
-        require_program_axes=canonical.wire_schema == canonical.SCHEMA,
+        require_program_axes=canonical.requires_program_axes,
     )
     if not checked.passed:
         return WorkloadGate1Recheck(

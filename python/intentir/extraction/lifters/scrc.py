@@ -30,7 +30,7 @@ from .scrc_schema import scrc_lift_core_json_schema, scrc_lift_core_text_format
 
 
 SCRC_RELIFT_PROTOCOL = "llm_direct_pi_structured_source_aware_relift_v2"
-SCRC_DECODE_PROTOCOL = "intentir.scrc.decode.v17"
+SCRC_DECODE_PROTOCOL = "intentir.scrc.decode.v18"
 CANDIDATE_CHECK_PROTOCOL = "intentir.scrc.candidate-check.v1"
 _CANDIDATE_DIAGNOSTIC_LIMIT = 20
 _CANDIDATE_DIAGNOSTIC_TEXT_LIMIT = 2048
@@ -1486,8 +1486,22 @@ In native CUDA, `launch_block_x|y|z` is an external Harness binding: `blockDim`
 creates no c* instance/route. Domain-anchored coordinates map through U_f to
 `blockIdx`/`threadIdx`/`blockDim` under that binding.
 
+When Source maps a physical participant axis cyclically onto a smaller logical J
+domain (for example many physical participants repeatedly cover one logical
+reduction lane domain), author one `pi.participant_mappings` row. Its
+domain_instance is the existing lane-domain realize instance whose route reaches
+address_lane and not address_base. That J domain must be one zero-based logical
+axis with a positive literal or declared x* upper extent; do not force a mapping
+onto multi-axis, shifted, predicate-shaped, or otherwise non-unique domains. axis is the physical participant axis;
+extent_slot is the matching anonymous `launch_block_x|y|z` C slot; projection is
+the closed tag `cyclic`. The logical period remains only in the exact J domain and
+the physical extent value remains only in C. Never copy `%`, bitmask, modulo,
+threadIdx/blockDim, a numeric period, Source expression, or target API into pi.
+Do not author this relation for an identity participant mapping or infer it merely
+because the Source contains a reduction.
+
 Pi is non-semantic, non-executable anonymous topology. Except for the closed
-route-extent divisor/rounding below, it contains no operator/value and never a
+route-extent divisor/rounding and participant projection tag below, it contains no operator/value and never a
 predicate, dtype, logical shape, frontend API, Source spelling, prose, or rule ID.
 
 For a tiled physical realization of a structured J `loop`, author exactly one
@@ -1775,7 +1789,7 @@ def check_scrc_lift_candidate(
         artifact.j,
         artifact.c,
         artifact.pi,
-        require_program_axes=artifact.wire_schema == artifact.SCHEMA,
+        require_program_axes=artifact.requires_program_axes,
     )
     return {
         "protocol": CANDIDATE_CHECK_PROTOCOL,
@@ -2657,7 +2671,7 @@ def _validate_source_identifier_privacy(
     visible_strings: list[tuple[str, str]] = []
     literal_fields = {
         "dtype", "fn", "frontend", "kind", "mechanism", "mode", "op",
-        "placement", "producer", "role", "subscripts", "value_type",
+        "placement", "producer", "projection", "role", "subscripts", "value_type",
     }
 
     def collect_strings(

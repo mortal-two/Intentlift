@@ -1,6 +1,6 @@
 # Task 24：J 主导的 π_min 与三前端 Episode-Local Composer Replay
 
-> 状态：`P5_COMPOSER_AB_POSITIVE_CUDA_REDUCTION_PENDING`（2026-07-31）。
+> 状态：`P5_CYCLIC_PARTICIPANT_MECHANISM_IMPLEMENTED_FRESH_RERUN_PENDING`（2026-07-31）。
 >
 > 定位：Task 15/Task 11 的 Replay 构造机制升级，以及 Task 23 多前端实证的真实 closure 执行线。
 > 本任务不接管 production backend；backend 仍在 SCRC 后只消费 accepted `J+C`。
@@ -12,8 +12,9 @@
 
 本任务只证明四件事：
 
-1. `artifact.v12` 的 π 在现有 closed schema/TypeCheck 下可以作为首版 `π_min`：它依赖 J/C、没有
-   op/dataflow/type/shape/Source/API/target recipe副本；
+1. `artifact.v12` 是首版 `π_min` 兼容基线；真实反例需要的 `artifact.v13` 也只能增加
+   J/C-dependent、target-independent 的窄 realization delta，不能复制
+   op/dataflow/type/shape/Source/API/target recipe；
 2. source-blind Codex可以在fresh episode内借助纯语法Composer更快地构造、编译和修正Replay；
 3. 同一共享Composer core可以被Triton、TileLang和CUDA薄profile复用，而无需每前端J lowerer或
    kernel模板；
@@ -43,7 +44,7 @@ Composer只存在于`FreshAgent_f`内部；最终提交物仍是完整`replay.so
 
 ### 2.1 已有能力
 
-- artifact/decode/typecheck：`v12 / v17 / v29`；
+- artifact/decode/typecheck：`v13 / v18 / v30`（v12 继续作为严格 legacy wire 回放）；
 - π已有closed regions/instances/routes/order/sharing/program_axes/iterations/physical time/terminal control/
   route extent transform；
 - Codex Replay每个`generate`已创建fresh workspace，并有exact patch、ReplayCheck、compile、own-IR、
@@ -66,7 +67,7 @@ Composer只存在于`FreshAgent_f`内部；最终提交物仍是完整`replay.so
 - `python/intentir/verify/gate1/replay_composer.py`已实现共享stdlib-only core：closed
   `line/block/raw_block`、stable ID、局部insert/replace/delete/move、Python/C-like render、source map、
   bounded state/audit以及plan/source/map一致的checkpoint/rollback；
-- Codex Replay backend现升为`openai.codex-cli.intentir-replay.v34`，Composer protocol为v2；每个
+- Codex Replay backend现升为`openai.codex-cli.intentir-replay.v35`，Composer protocol为v2；每个
   fresh workspace安装自己的通用builder/plan/editor；agent仍可直接作者化完整source，两条路径都进入
   原有exact ingress/compile/submit；
 - Composer失败或未使用不改变Replay接受集合；host checkpoint/diagnostic map只作非权威辅助；
@@ -209,6 +210,30 @@ Replay，`gpt-5.6-sol high`，Mask-J配置开启）：
 - 该单对样本证明“agent真实使用Composer且本次减少构造/修复成本”，不证明总体平均提速或统计显著；
   output/reasoning tokens反而略升，后续至少增加CUDA reduction或Triton难例复核。
 
+### Pilot G：CUDA reduction反例推动`artifact.v13`
+
+`cuda:tilelang_row_sum / .trellis/tasks/07-31-j-driven-replay-composer-24/runs/cuda_tilelang_row_sum/run-001`
+（Codex Lift + Codex Replay，`gpt-5.6-sol high`，Composer preferred）：
+
+- 三个formal rounds均完成真实fresh Replay，Composer每轮都实际生成最终source，但最终为
+  `NO_CLOSURE`；该记录是有效失败证据，不重标为Replay或Composer成功；
+- 三轮J与C的逻辑事实稳定：J拥有`[k0,16] -> [k0]`的row-sum语义，C拥有匿名
+  `launch_block_x=128`外部binding。Source的128个物理线程通过`threadIdx.x & 15`循环覆盖16个逻辑
+  lanes，而三轮Replay都直接使用`threadIdx.x`，造成错误row/OOB并让不同线程竞争同一归约结果；
+- v12 π只能表达lane-domain realization/routes，不能表达“物理participant循环投影到exact J domain”。
+  Lift在重复realize、identity materialization和barrier之间振荡，证明缺的是closed relation，不是继续
+  增加instance数量；
+- 旧PTX observer只统计`%tid.x` coordinate use，且memory-effect投影有意忽略地址operand，因此Source与
+  Replay看起来都使用同一个coordinate；最终hard failure来自偶然的`add.f32`数量差，无法给Lift准确归因；
+- 不采用`x+0`消除或进一步放松PTX：浮点`x+0`对signed zero、NaN等并非全局数学恒等。机制修复为
+  `artifact.v13`的closed `participant_mappings{domain_instance,axis,extent_slot,projection=cyclic}`，以及
+  PTX v4沿memory-address reaching definition观察`and/rem` coordinate fold；两者都不含kernel模板；
+- 本地严格检查已经证明：v12 round-trip不变；v13缺字段或加入target recipe均fail closed；删除所引用
+  J domain后dependent TypeCheck失败；normal与Mask-J packet中的relation均不含logical period、公式、
+  Source/API或C value；旧错误Source/Replay现在在`address_coordinate_folds` hard category稳定分离；
+- 当前只声称机制已实现并通过本地回归。必须从Source重新fresh Lift/Replay/Gate1/Gate2后，才能声称
+  CUDA row_sum闭合；不得手改旧artifact追认run-001。
+
 ## 3. 交付物
 
 1. 权威设计增补、spec与任务索引更新；
@@ -229,7 +254,7 @@ Replay，`gpt-5.6-sol high`，Mask-J配置开启）：
 
 - 建立设计文档和Task 24；
 - 更新文档/spec：禁止deterministic semantic composer，允许episode-local syntax-only composer；
-- 明确v12为`π_min-v1`兼容基线，不在无证据时升schema；
+- 明确v12为兼容基线；只有真实CUDA reduction反例支持的closed participant projection进入v13；
 - 列出normal/masked writer生命周期与三前端compile/observe边界；
 - provider调用为0。
 

@@ -156,8 +156,18 @@ def render_realization_witness_wire_grammar() -> str:
         "that same bound axis. route_extent_transforms qualifies one existing route slot: "
         "a required positive-integer C extent reaches its attached J domain as "
         "floor_div/ceil_div by a literal divisor greater than one. It is "
-        "representation-only and creates no J fact or Source/API spelling. Each iterations "
-        "entry relates one loop region to one instance anchored by its J loop "
+        "representation-only and creates no J fact or Source/API spelling. "
+        "Each participant_mappings entry has exactly domain_instance, axis, "
+        "extent_slot, and projection=cyclic. domain_instance is one realize "
+        "instance anchored to a one-axis zero-based J boundary domain on a "
+        "lane/address path; that domain's upper extent is a positive literal or "
+        "declared J x*; axis is "
+        "a public physical participant axis; extent_slot is the matching anonymous "
+        "external launch extent in C. Its closed denotation is the physical "
+        "participant coordinate projected cyclically into the exact logical domain "
+        "extent owned by J. It carries neither that extent nor a modulo expression, "
+        "Source spelling, frontend API, target recipe, or C value. "
+        "Each iterations entry relates one loop region to one instance anchored by its J loop "
         "and one instance anchored by the matching C tile slot. Its closed "
         "induction_basis records only whether the physical induction variable "
         "is measured in logical extent units, rounded extent units, or tile "
@@ -295,6 +305,7 @@ class RealizationWitness:
     instances: list[dict[str, JsonValue]] = field(default_factory=list)
     routes: list[dict[str, JsonValue]] = field(default_factory=list)
     program_axes: list[dict[str, JsonValue]] = field(default_factory=list)
+    participant_mappings: list[dict[str, JsonValue]] = field(default_factory=list)
     route_extent_transforms: list[dict[str, JsonValue]] = field(default_factory=list)
     order: list[dict[str, JsonValue]] = field(default_factory=list)
     sharing: list[dict[str, JsonValue]] = field(default_factory=list)
@@ -425,6 +436,57 @@ class RealizationWitness:
             bound_domains.add(domain_ref)
             bound_axes.add(axis)
             checked_program_axes.append({"domain_ref": domain_ref, "axis": axis})
+
+        checked_participant_mappings: list[dict[str, JsonValue]] = []
+        mapped_instances: set[str] = set()
+        mapped_axes: set[int] = set()
+        for index, raw in enumerate(self.participant_mappings):
+            path = f"pi.participant_mappings[{index}]"
+            item = _record(
+                raw,
+                path=path,
+                required=frozenset(
+                    {"domain_instance", "axis", "extent_slot", "projection"}
+                ),
+            )
+            domain_instance = _declared_instance_ref(
+                item["domain_instance"],
+                path=f"{path}.domain_instance",
+                known_instances=known_instances,
+            )
+            axis = item["axis"]
+            if isinstance(axis, bool) or not isinstance(axis, int) or not 0 <= axis <= 2:
+                raise RealizationWitnessError(
+                    f"{path}.axis must be an integer participant axis in [0, 2]"
+                )
+            extent_slot = _name(item["extent_slot"], f"{path}.extent_slot")
+            if re.fullmatch(r"c[0-9]+", extent_slot) is None:
+                raise RealizationWitnessError(
+                    f"{path}.extent_slot must be an anonymous C handle c*"
+                )
+            projection = _name(item["projection"], f"{path}.projection")
+            if projection != "cyclic":
+                raise RealizationWitnessError(
+                    f"{path}.projection must use the closed value 'cyclic'"
+                )
+            if domain_instance in mapped_instances:
+                raise RealizationWitnessError(
+                    "pi participant domain instances must be unique"
+                )
+            if axis in mapped_axes:
+                raise RealizationWitnessError(
+                    "pi participant physical axes must be unique"
+                )
+            mapped_instances.add(domain_instance)
+            mapped_axes.add(axis)
+            checked_participant_mappings.append(
+                {
+                    "domain_instance": domain_instance,
+                    "axis": axis,
+                    "extent_slot": extent_slot,
+                    "projection": projection,
+                }
+            )
 
         checked_terminal_controls: list[dict[str, JsonValue]] = []
         terminal_control_instances: set[str] = set()
@@ -878,6 +940,7 @@ class RealizationWitness:
         self.instances = checked_instances
         self.routes = checked_routes
         self.program_axes = checked_program_axes
+        self.participant_mappings = checked_participant_mappings
         self.route_extent_transforms = checked_route_extent_transforms
         self.order = checked_order
         self.sharing = checked_sharing
@@ -909,6 +972,7 @@ class RealizationWitness:
                     "instances",
                     "routes",
                     "program_axes",
+                    "participant_mappings",
                     "route_extent_transforms",
                     "order",
                     "sharing",
@@ -926,6 +990,7 @@ class RealizationWitness:
             "instances",
             "routes",
             "program_axes",
+            "participant_mappings",
             "route_extent_transforms",
             "order",
             "sharing",
@@ -943,6 +1008,9 @@ class RealizationWitness:
             instances=copy.deepcopy(data["instances"]),
             routes=copy.deepcopy(data["routes"]),
             program_axes=copy.deepcopy(data.get("program_axes", [])),
+            participant_mappings=copy.deepcopy(
+                data.get("participant_mappings", [])
+            ),
             route_extent_transforms=copy.deepcopy(
                 data.get("route_extent_transforms", [])
             ),
@@ -967,6 +1035,7 @@ class RealizationWitness:
         include_terminal_controls: bool = True,
         include_route_extent_transforms: bool = True,
         include_program_axes: bool = True,
+        include_participant_mappings: bool = True,
     ) -> dict[str, Any]:
         result = {
             "regions": copy.deepcopy(self.regions),
@@ -982,6 +1051,10 @@ class RealizationWitness:
             )
         if include_program_axes:
             result["program_axes"] = copy.deepcopy(self.program_axes)
+        if include_participant_mappings:
+            result["participant_mappings"] = copy.deepcopy(
+                self.participant_mappings
+            )
         if include_iterations:
             result["iterations"] = copy.deepcopy(self.iterations)
         if include_loop_carriers:

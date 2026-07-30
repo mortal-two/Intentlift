@@ -32,7 +32,7 @@ INTENTIR_REPLAY_OBLIGATION_AUDIT = "intentir_replay_obligation_audit"
 INTENTIR_PACKET_QUERY = "intentir_packet_query"
 REPLAY_STARTUP_PACKET_EMBED_LIMIT_BYTES = 64 * 1024
 INTENTIR_REPLAY_INSPECT = "intentir_replay_inspect"
-REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v15"
+REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v16"
 REPLAY_TRANSACTION_PROTOCOL = "intentir.replay-transaction.v1"
 REPLAY_APPLY_PATCH_PROTOCOL = "intentir.replay-exact-text-patch.v1"
 REPLAY_DIRECT_SUBMIT_PROTOCOL = "intentir.replay-direct-submit.v1"
@@ -502,6 +502,7 @@ def _packet_requirements(packet: Mapping[str, Any]) -> dict[str, Any]:
 
     relation_names = (
         "program_axes",
+        "participant_mappings",
         "route_extent_transforms",
         "iterations",
         "loop_carriers",
@@ -513,6 +514,7 @@ def _packet_requirements(packet: Mapping[str, Any]) -> dict[str, Any]:
     referenced_instances: set[str] = set()
     relation_instance_fields = {
         "program_axes": (),
+        "participant_mappings": ("domain_instance",),
         "route_extent_transforms": ("source", "target"),
         "iterations": ("loop_instance", "tile_instance"),
         "loop_carriers": ("loop_instance", "init", "state", "next", "result"),
@@ -778,7 +780,7 @@ def _packet_critical_facts(packet: Mapping[str, Any]) -> dict[str, Any]:
     overlook in a large ABI: semantic dimension carriers, typed IEEE-special
     constants, explicit broadcast and sharing obligations, physical-iteration
     relations, transfer occurrences, identity materializations,
-    explicit program-axis bindings and route-extent transforms, reduction
+    explicit program-axis bindings, participant mappings and route-extent transforms, reduction
     linearizations, exact lexical-region membership, and cross-region order.
     """
 
@@ -843,6 +845,9 @@ def _packet_critical_facts(packet: Mapping[str, Any]) -> dict[str, Any]:
     program_axes = pi.get("program_axes", [])
     if not isinstance(program_axes, list):
         raise TypeError("packet pi program_axes must be an array")
+    participant_mappings = pi.get("participant_mappings", [])
+    if not isinstance(participant_mappings, list):
+        raise TypeError("packet pi participant_mappings must be an array")
     instances_value = pi.get("instances", [])
     regions_value = pi.get("regions", [])
     order_value = pi.get("order", [])
@@ -1122,7 +1127,7 @@ def _packet_critical_facts(packet: Mapping[str, Any]) -> dict[str, Any]:
             }
         )
     return {
-        "protocol": "intentir.replay-critical-facts.v5",
+        "protocol": "intentir.replay-critical-facts.v6",
         "semantic_dimension_carriers": dimension_carriers,
         "typed_ieee_special_constants": special_constants,
         "broadcast_obligations": broadcast_obligations,
@@ -1131,6 +1136,7 @@ def _packet_critical_facts(packet: Mapping[str, Any]) -> dict[str, Any]:
         "transfer_occurrences": transfer_occurrences,
         "identity_materializations": identity_materializations,
         "program_axes": program_axes,
+        "participant_mappings": participant_mappings,
         "route_extent_transforms": route_extent_transforms,
         "reduction_linearizations": reduction_linearizations,
         "lexical_regions": lexical_regions,
@@ -1157,9 +1163,10 @@ def _replay_obligation_audit_view(
     lexical_regions = facts["lexical_regions"]
     cross_region_order = facts["cross_region_order"]
     program_axes = facts["program_axes"]
+    participant_mappings = facts["participant_mappings"]
     route_extent_transforms = facts["route_extent_transforms"]
     return {
-        "protocol": "intentir.replay-obligation-audit.v4",
+        "protocol": "intentir.replay-obligation-audit.v5",
         "status": "pass",
         "source_sha256": hashlib.sha256(source_text.encode("utf-8")).hexdigest(),
         "audit_required": _replay_obligation_audit_required(facts),
@@ -1168,6 +1175,7 @@ def _replay_obligation_audit_view(
         "lexical_regions": lexical_regions,
         "cross_region_order": cross_region_order,
         "program_axes": program_axes,
+        "participant_mappings": participant_mappings,
         "route_extent_transforms": route_extent_transforms,
         "source_nonempty_lines": [
             {
@@ -1199,6 +1207,7 @@ def _replay_obligation_audit_required(
             "lexical_regions",
             "cross_region_order",
             "program_axes",
+            "participant_mappings",
             "route_extent_transforms",
         )
     )
@@ -1547,6 +1556,7 @@ def _packet_obligation_records(packet: Mapping[str, Any]) -> list[dict[str, Any]
         "loop_carriers",
         "physical_iterations",
         "physical_loop_carriers",
+        "participant_mappings",
     )
     values: dict[str, list[Any]] = {}
     for name in list_names:
@@ -1653,6 +1663,7 @@ def _packet_obligation_records(packet: Mapping[str, Any]) -> list[dict[str, Any]
         instance_id: [] for instance_id in instance_index
     }
     for relation_name, role_names in (
+        ("participant_mappings", ("domain_instance",)),
         ("iterations", ("loop_instance", "tile_instance")),
         (
             "loop_carriers",
@@ -3344,6 +3355,9 @@ class IntentIRReplayEnvironment:
                 "lexical_region_count": len(value["lexical_regions"]),
                 "cross_region_order_count": len(value["cross_region_order"]),
                 "program_axis_count": len(value["program_axes"]),
+                "participant_mapping_count": len(
+                    value["participant_mappings"]
+                ),
                 "route_extent_transform_count": len(
                     value["route_extent_transforms"]
                 ),
@@ -3737,7 +3751,7 @@ class IntentIRReplayEnvironment:
                     "results": list(self._compile_check_audit),
                 },
                 "replay_obligation_audit": {
-                    "protocol": "intentir.replay-obligation-audit.v3",
+                    "protocol": "intentir.replay-obligation-audit.v5",
                     "authority": (
                         "exact current Replay bytes plus exact source-isolated "
                         "J/pi ledger only; no mapping, diagnosis, repair, Gate, "

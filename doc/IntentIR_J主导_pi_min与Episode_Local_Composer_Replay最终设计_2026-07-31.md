@@ -40,10 +40,12 @@ SCRC_CERTIFIED
   and Gate2(Source(C),Replay(C),RefEval(J))
 ```
 
-这里的 `π_min` 不是第四种 artifact，也不是新 wire 名称。当前 `artifact.v12` 已经满足首版的关键
-所有权条件：π 只有 closed、J/C-dependent realization relations，没有 op、operand graph、dtype、shape、
-predicate、formula、Source/API 或 target recipe。因此第一阶段直接把 v12 作为 `π_min-v1` 的兼容基线，
-不为了“看起来是重构”而无证据地重写 schema。
+这里的 `π_min` 不是第四种 artifact，也不是新 wire 名称。`artifact.v12` 是首版兼容基线；它已经满足
+closed、J/C-dependent、无 op/dataflow/type/shape/Source/API/target recipe 副本的所有权条件。真实
+CUDA `row_sum` 纵切随后给出了升版所需的反例：exact J 拥有 16-lane logical domain，C 拥有外部
+participant extent，但 v12 无法表达多个物理 participant 循环覆盖该 logical domain。于是当前
+`artifact.v13` 只增加一类窄的 `participant_mappings` realization delta；它不增加计算语义或 target
+recipe，旧 v12 artifact 继续按原字段集合读取，不被静默升级或重判。
 
 本次真正改变的是 Replay 的构造机制：允许 source-blind agent 在自己的 fresh episode 内使用一个
 **纯语法、可局部编辑、可回滚的 Composer**，但固定宿主仍不得把 J/π 解码成目标代码或算法。
@@ -89,6 +91,7 @@ Composer回答：当前 agent 决定的目标源码怎样稳定地组织、编�
 - instance 间 route、operand slot、order 与 sharing；
 - materialization、duplication、reuse 与 representation-only staging；
 - program-coordinate domain 到物理 axis 的 identity；
+- 物理 participant axis 对 exact J domain 的 closed cyclic projection；
 - C slot 在 source realization 中的匿名 attachment/use；
 - structured J loop 的 physical induction basis；
 - J 外 physical iteration 与 typed temporal carrier topology；
@@ -140,8 +143,37 @@ Composer回答：当前 agent 决定的目标源码怎样稳定地组织、编�
 materialization，该 relation 就不是冗余。不能为了减小 π 把 Source realization topology重新交给
 Replay 猜测。
 
-首版不删除 v12 relation。先对真实 kernel 记录每类 relation 的消费与 Gate1 必要性；只有跨样本证据
+不删除 v12 relation。先对真实 kernel 记录每类 relation 的消费与 Gate1 必要性；只有跨样本证据
 表明某字段可由 J/C 全局唯一推导或应由 observer 统一 NormalizeAway，才做版本化 schema 收缩。
+
+### 2.5 `artifact.v13` 的 participant projection
+
+唯一 wire form 是：
+
+```json
+{
+  "domain_instance": "i2",
+  "axis": 0,
+  "extent_slot": "c0",
+  "projection": "cyclic"
+}
+```
+
+其 dependent denotation 只在 `Γ_(J,C)` 中成立：`domain_instance` 必须是 program region 中锚定某个
+J boundary domain、沿 route 到达 `address_lane` 而不到达 `address_base` 的既有 `realize` instance；
+该domain必须唯一规范为单逻辑轴`[0,E)`，其中`E`是positive literal或J中declared `x*`；多轴、非零
+下界、额外predicate或无法唯一得到extent的domain fail closed；
+`axis` 是公开物理 participant axis；`extent_slot` 必须是 C 中同轴、required、positive-integer 的
+外部 launch extent；`cyclic` 表示该物理 coordinate 循环投影到 **J 自己拥有的 exact domain extent**。
+
+该行刻意不携带 logical extent、replica count、bitmask、modulo/address formula、C value、Source
+spelling、frontend API 或 target recipe。删除或 Mask J 后，`i2` 不再给出周期或计算含义；π 只泄漏
+“存在循环物理覆盖”这一 realization topology，不能独立恢复 reduce/add/dot 等计算语义。Replay agent
+必须读取 exact J 才能得到 logical period，再自行选择 CUDA、TileLang 或 Triton 的公开 target spelling。
+
+这次升版来自真实反例，而不是预先扩张 grammar：v12 CUDA `row_sum` 的三轮 Replay 都直接使用物理
+participant coordinate，导致错误 row/OOB/race；Composer 每轮均实际使用，却无从恢复缺失约束。
+因此根因是 Lift 表达能力与 observer coverage 的共同缺口，不是给 Composer 增加 reduction 模板的理由。
 
 ## 3. Composer 的准确身份
 
@@ -346,7 +378,10 @@ compile feedback: TIR first, PTX diagnostic
 ```
 
 TileLang closure 以 TIR 为准，PTX 不要求逐指令或逐地址拼写相同。Composer 只帮助组织 Python/TIR
-surface；它不把 π loop 自动映射成 `T.serial/T.parallel/T.vectorized`，也不选择 fragment/shared layout。
+surface；它不把 π loop 或 participant projection 自动映射成
+`T.serial/T.parallel/T.vectorized/thread_binding`，也不选择 fragment/shared layout。若 π 含
+`participant_mappings`，agent从 exact J 读取 logical extent并自行选择公开 TileLang/TIR spelling；
+最终仍由结构 TIR hard observer 裁决。
 
 ### 6.3 CUDA
 
@@ -359,7 +394,9 @@ Gate2: native CUDA execution + three edges
 profile 只处理 C-like braces、function/helper surface与现有安全 allowlist；不选择 thread/block mapping、
 shuffle、shared memory、barrier、atomic、MMA 或 reduction recipe。CUDA PTX observer按现有 contract 放松
 cache、register、label与纯 address spelling，但保留 observable value、memory/effect、control、coordinate、
-collective、ABI 与 target hard evidence。
+collective、ABI 与 target hard evidence。`cuda-ptx-semantic-effects-v4` 额外沿每个 memory address 的
+reaching definitions保留 information-losing coordinate fold（closed `and/rem` projection）；普通
+add/mul/shift/cast地址拼写仍放松。该观察发生在 Gate1，结果不会返回 Replay或写入π。
 
 ## 7. Runtime 数据流
 
@@ -393,6 +430,7 @@ validator。至少记录：
 - 是否出现 Source/API/kernel/family/free-text 字段；
 - 是否出现 J op/attrs/type/shape/dataflow 的显式副本；
 - route-extent closed constructor 是否满足既有 dependent contract。
+- participant mapping 是否只含闭合四字段、锚定 exact J lane domain 与 matching C launch extent。
 
 若审计只是重述 TypeCheck，不必升 artifact/typecheck protocol；若改变接受集合，必须窄升版本并对
 fresh run生效，历史证书不重判。
@@ -471,7 +509,7 @@ Gate2，也不改变parent verdict。若 Composer 只增加工具调用、token�
 - 建立本文与 Task 24；
 - 修订旧文档/spec中“禁止 composer”的歧义：禁止的是 deterministic semantic composer，允许
   episode-local syntax-only composer；
-- 明确 v12 是 `π_min-v1` 兼容基线；
+- 明确 v12 是兼容基线，v13 只接受由真实 cyclic-participant 反例支持的窄扩展；
 - 不调用 provider，不产生 closure claim。
 
 ### P1：共享 Composer core

@@ -336,6 +336,20 @@ extent 或 C。同一 `d*` 上的多个 realization instance 仍是多个 compil
 materialize，但都读取 `program_axes` 绑定的同一 axis。这个规则不合并 instance，也不替 Lift 修复
 错误 multiplicity；若 Source 只有一次 coordinate stage，Lift 仍只声明一次并共享到全部消费者。
 
+`artifact.v13`进一步允许一个closed physical-participant projection：
+
+```json
+{"domain_instance":"i2","axis":0,"extent_slot":"c0","projection":"cyclic"}
+```
+
+`domain_instance`必须是program region中锚定exact J boundary domain、route到`address_lane`但不到
+`address_base`的既有realize instance；该domain必须唯一规范为单轴`[0,E)`，其中`E`是positive literal
+或declared J `x*`，多轴、非零下界、额外predicate或未闭合extent均拒绝；`extent_slot`必须是同axis的required positive-integer compiler C
+launch binding。`cyclic`只表示物理participant coordinate循环投影到J拥有的exact domain extent。
+relation不保存logical period、replica count、bitmask/modulo/address formula、C value、Source/API或target
+recipe；删除J后opaque instance本身不能恢复周期或计算语义。Lift只能从Source明确作者化，不能因
+reduction/shape/C valuation猜测；Replay读取J后自行选择公开target spelling。
+
 更一般地，一个 Source SSA coordinate/address intermediate 只定义一次、被多个 access 使用时，π
 必须声明一个 producer、多个 routed consumers 与 one-producer sharing。多个语法 use 不构成多个
 producer instance；重复同一 semantic ref 只表示不同 compiler-visible definition/stage。Replay 不得
@@ -892,23 +906,24 @@ Replay LLM 应遵守以下过程合同：
 4. 为每个 π instance 建立一次 source realization；
 5. 按 routes 和 operand slots 连接 producer/consumer；
 6. 按 `route_extent_transforms` 只在 named route slot 消费 closed C-extent partition；
-7. 按 sharing 复用 producer，不得擅自复制或折叠；
-8. 按 order 保留必要偏序；
-9. 按 `iterations` 保留 structured J loop 的物理 induction basis；
-10. 按 `physical_iterations/physical_loop_carriers` 保留 structured J loop 外、由已有
+7. 按 `participant_mappings` 从exact J读取logical period并保留物理participant cyclic projection；
+8. 按 sharing 复用 producer，不得擅自复制或折叠；
+9. 按 order 保留必要偏序；
+10. 按 `iterations` 保留 structured J loop 的物理 induction basis；
+11. 按 `physical_iterations/physical_loop_carriers` 保留 structured J loop 外、由已有
    reduce/contraction 或 boundary access/domain 锚定的物理 tile time；
-11. 按 `terminal_controls` 将已作者化 `effect_if` 的 terminal arm 与 lexical continuation
+12. 按 `terminal_controls` 将已作者化 `effect_if` 的 terminal arm 与 lexical continuation
     materialize 为 terminal CFG，不从臂内容猜 role；
-12. 按 representation refinements 保留 source materialization/placement；其中
+13. 按 representation refinements 保留 source materialization/placement；其中
     `reduction_linearization` 精确保留经唯一 slot-0 route 进入 J reduce 的全轴线性化；
-13. 遇到 J semantic ref 时从 J 查询当前语义 label；
-14. 使用固定公共 frontend 知识 `U_f` 选择合法 API spelling；
-15. 输出完整、参数化、source-blind frontend source；
-16. 不从 π 猜出后覆盖 J，也不从 compiler diff 修补。
+14. 遇到 J semantic ref 时从 J 查询当前语义 label；
+15. 使用固定公共 frontend 知识 `U_f` 选择合法 API spelling；
+16. 输出完整、参数化、source-blind frontend source；
+17. 不从 π 猜出后覆盖 J，也不从 compiler diff 修补。
 
-当前 fresh Replay packet 为 `intentir.scrc.replay-input.v2`；Triton 公共上下文由固定公开字段直接给出，不使用 context version、SHA 或 receipt 作为运行门禁；Codex/MiniSWE Lift `intentir.lift-knowledge.v69/v65`、MiniSWE Replay v30 与 Codex Replay v26；旧 receipt 保持其原 verdict，不能由
-当前 Replay consumer 或 Lift knowledge 静默升级。v30/v26 将 authored route extent transforms
-加入 exact critical ledger、audit 与 static ingress，并在它单独存在时也提供可选的 exact-bytes audit；该 audit 不作为 ReplayCheck、compile 或 Gate1 前置条件；
+当前 fresh Replay packet 为 `intentir.scrc.replay-input.v3`；Triton 公共上下文由固定公开字段直接给出，不使用 context version、SHA 或 receipt 作为运行门禁；Codex/MiniSWE Lift `intentir.lift-knowledge.v89/v67`、MiniSWE Replay v31 与 Codex Replay v35；旧 receipt 保持其原 verdict，不能由
+当前 Replay consumer 或 Lift knowledge 静默升级。当前runtime将authored route extent transforms与
+participant mappings加入exact critical ledger、audit与static ingress，并在它们单独存在时也提供可选的 exact-bytes audit；该 audit 不作为 ReplayCheck、compile 或 Gate1 前置条件；
 它不生成 relation/code，也不替代 Gate1。Codex v26 将 900 秒单 turn 与 1800 秒 fresh episode 分离，
 超时只沿同一 resumable thread 继续，不跨 episode 继承。
 
@@ -917,9 +932,9 @@ v28/v24 与 Lift knowledge v66/v62 明确已有 ordered wire 的 tuple denotatio
 Lift 从 Source frontend loop tuple 作者化，Replay 不按 dtype/ref/mechanism 重排。该 slot order 不表示
 event execution order，也不替代 `pi.order`。v28/v24 继承 v27/v23；v27/v23 继承 v26/v22：对正常大小匿名 packet 只做一次 exact startup embedding，并将 semantic dimension carrier、
 IEEE special typed constant、physical iteration 与 `reduction_linearization + consumer route` 作一次
-bounded exact `critical_facts.v4` 重索引；v27/v23 另把 J-authored broadcast 与 operand closed type、matching
+bounded exact `critical_facts.v6` 重索引；v27/v23 另把 J-authored broadcast 与 operand closed type、matching
 access、named consumer/ordinal 无损并置，并要求有该 obligation 的 owner 对当前源码运行
-`replay-obligation-audit.v3`。它不建立 relation-to-statement 映射、不选择 rank-lift spelling/次数，
+`replay-obligation-audit.v5`。它不建立 relation-to-statement 映射、不选择 rank-lift spelling/次数，
 也不生成或修复 Replay。超限时
 manifest 才将 J 中已声明
 的 op/boundary 与 π 中已声明的 instance mechanism、time/control/terminal obligation 重新索引为
@@ -941,10 +956,11 @@ rank、reshape、tile 或 spelling。它不能生成或省略 relation。v7 的
 推导 schedule、生成 source 或访问 Source/Harness/Gate；因此不改变 Replay 的 source-blind LLM-first
 所有权。
 
-当前新 Lift wire/decode 为 `intentir.scrc.artifact.v12 / intentir.scrc.decode.v17`；v3 历史上把上述
+当前新 Lift wire/decode 为 `intentir.scrc.artifact.v13 / intentir.scrc.decode.v18`；v3 历史上把上述
 `pi.iterations` 变为 required closed field，v4-v7 再增加前述 J-owned typed relations/control，v8
 增加 physical-only time，v9 增加 terminal-control topology，v10 增加 closed route extent transform，
-v11增加J-owned closed dimension relations，v12增加π-owned closed program-axis identity。v1-v11 历史
+v11增加J-owned closed dimension relations，v12增加π-owned closed program-axis identity，v13增加上述
+closed participant projection。v1-v12 历史
 artifact 保持原始序列化、digest 与字段集合，禁止静默附加空数组、重标或刷新证书。
 
 固定代码仍只做：
@@ -961,7 +977,7 @@ episode 内使用只操作 agent-authored syntax nodes 的 editing composer；�
 [J 主导的 π_min 与 Episode-Local Composer Replay](IntentIR_J主导_pi_min与Episode_Local_Composer_Replay最终设计_2026-07-31.md)
 为准。
 
-`replay-check.v14` 可以在公共、source-blind synthetic compile 后核对 π 已作者化的
+`replay-check.v16` 可以在公共、source-blind synthetic compile 后核对 π 已作者化的
 `transfer_direct` occurrence 与 compiled load/store multiplicity；它只拒绝 compiler 已经折叠的
 作者化 event，不补 transfer、不决定保留它的源码写法。它同时将 structured J loop 数与
 `pi.physical_iterations` 数之和作为已作者化的 compiled `scf.for` 必要 occurrence；

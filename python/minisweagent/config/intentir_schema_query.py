@@ -170,6 +170,7 @@ def _sections(schema: dict[str, Any]) -> dict[str, dict[str, Any]]:
         "pi_instance": _array_item(pi["instances"]),
         "pi_route": _array_item(pi["routes"]),
         "pi_program_axis": _array_item(pi["program_axes"]),
+        "pi_participant_mapping": _array_item(pi["participant_mappings"]),
         "pi_route_extent_transform": _array_item(
             pi["route_extent_transforms"]
         ),

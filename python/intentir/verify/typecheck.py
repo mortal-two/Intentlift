@@ -14,10 +14,12 @@ import re
 from typing import Any, Iterable, Mapping
 
 from intentir.ir.canonical_j import (
+    CanonicalJError,
     CanonicalValueType,
     canonicalize_semantic_archive,
     direct_unit_dimension_refs,
     j_elaboration,
+    project_zero_based_single_axis_domain,
 )
 from intentir.ir.contract_ir import ContractIRProjectionError, project_contract_ir
 from intentir.ir.dim_expr import (
@@ -53,7 +55,7 @@ from intentir.verify.gate1.model import (
 from intentir.verify.gate1.pi import RealizationWitness
 
 
-TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v29"
+TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v30"
 GLOBAL_SAFE_REFINEMENTS = frozenset(
     {"identity_materialization", "reduction_linearization"}
 )
@@ -121,6 +123,7 @@ class TypeCheckErrorCode(str, Enum):
     ROUTE_TYPE_MISMATCH = "route_type_mismatch"
     ROUTE_EXTENT_TRANSFORM_INVALID = "route_extent_transform_invalid"
     PROGRAM_AXIS_BINDING_INVALID = "program_axis_binding_invalid"
+    PARTICIPANT_MAPPING_INVALID = "participant_mapping_invalid"
     TRANSFER_ADDRESS_ROUTE_MISSING = "transfer_address_route_missing"
     INVALID_SHARING = "invalid_sharing"
     ITERATION_WITNESS_INVALID = "iteration_witness_invalid"
@@ -4678,6 +4681,124 @@ def _check_program_axes(
             )
 
 
+def _check_participant_mappings(
+    j: SemanticArchive,
+    c: ImplementationConfig,
+    pi: RealizationWitness,
+    diagnostics: list[TypeCheckDiagnostic],
+) -> None:
+    """Bind cyclic physical participants to an exact J domain and anonymous C extent."""
+
+    domain_expressions = j_elaboration(j).domain_by_id
+    domains = set(domain_expressions)
+    declared_dimensions = _declared_dimensions(j)
+    regions = {str(item["id"]): item for item in pi.regions}
+    instances = {str(item["id"]): item for item in pi.instances}
+    slots = {slot.name: slot for slot in c.slots}
+    address_lanes = {
+        instance_id
+        for instance_id, item in instances.items()
+        if item.get("mechanism") == "address_lane"
+    }
+    address_bases = {
+        instance_id
+        for instance_id, item in instances.items()
+        if item.get("mechanism") == "address_base"
+    }
+    outgoing: dict[str, set[str]] = {instance_id: set() for instance_id in instances}
+    for route in pi.routes:
+        outgoing.setdefault(str(route["source"]), set()).add(str(route["target"]))
+
+    def reaches(source: str, targets: set[str]) -> bool:
+        pending = [source]
+        visited: set[str] = set()
+        while pending:
+            current = pending.pop()
+            if current in targets:
+                return True
+            if current in visited:
+                continue
+            visited.add(current)
+            pending.extend(outgoing.get(current, ()))
+        return False
+
+    axis_names = ("x", "y", "z")
+    integer_types = {"int", "integer", "i32", "i64", "u32", "u64"}
+    for index, relation in enumerate(pi.participant_mappings):
+        base = f"pi.participant_mappings[{index}]"
+        instance_id = str(relation["domain_instance"])
+        instance = instances.get(instance_id)
+        domain_ref = (
+            str(instance.get("semantic_ref")) if instance is not None else ""
+        )
+        region = regions.get(str(instance.get("region"))) if instance else None
+        domain_contract_valid = False
+        if domain_ref in domain_expressions:
+            try:
+                _logical_axis, logical_extent = (
+                    project_zero_based_single_axis_domain(
+                        domain_expressions[domain_ref]
+                    )
+                )
+                if (
+                    isinstance(logical_extent, str)
+                    and logical_extent not in declared_dimensions
+                ):
+                    raise CanonicalJError(
+                        "cyclic participant extent must be a declared J dimension"
+                    )
+                domain_contract_valid = True
+            except CanonicalJError:
+                domain_contract_valid = False
+        valid_domain = (
+            instance is not None
+            and instance.get("mechanism") == "realize"
+            and domain_ref in domains
+            and domain_contract_valid
+            and region is not None
+            and region.get("placement") == "program"
+            and reaches(instance_id, address_lanes)
+            and not reaches(instance_id, address_bases)
+        )
+        if not valid_domain:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.PARTICIPANT_MAPPING_INVALID,
+                    f"{base}.domain_instance",
+                    "participant mapping requires one program-region realize instance "
+                    "anchored to a one-axis zero-based J boundary interval whose route "
+                    "reaches address_lane but not address_base; the upper bound must be "
+                    "a positive integer or declared x* dimension",
+                    instance_id,
+                )
+            )
+
+        axis = int(relation["axis"])
+        extent_slot = str(relation["extent_slot"])
+        slot = slots.get(extent_slot)
+        value = c.values.get(extent_slot)
+        valid_slot = (
+            slot is not None
+            and slot.kind is ScheduleSlotKind.COMPILER
+            and slot.role == f"launch_block_{axis_names[axis]}"
+            and slot.required
+            and slot.value_type.casefold() in integer_types
+            and isinstance(value, int)
+            and not isinstance(value, bool)
+            and value > 0
+        )
+        if not valid_slot:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.PARTICIPANT_MAPPING_INVALID,
+                    f"{base}.extent_slot",
+                    "participant mapping extent_slot must be the required positive "
+                    "external launch_block axis binding for the same physical axis",
+                    extent_slot,
+                )
+            )
+
+
 def type_check(
     j: SemanticArchive,
     c: ImplementationConfig,
@@ -4956,6 +5077,7 @@ def type_check(
         diagnostics,
         required=require_program_axes,
     )
+    _check_participant_mappings(j, c, pi, diagnostics)
 
     route_edges = {
         (str(item["source"]), str(item["target"])) for item in pi.routes

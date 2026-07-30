@@ -10,6 +10,7 @@ instructions remain diagnostic evidence.
 
 from __future__ import annotations
 
+from bisect import bisect_left
 from collections import Counter
 from dataclasses import dataclass
 import hashlib
@@ -18,7 +19,7 @@ import re
 from typing import Any, Mapping
 
 
-PTX_FINGERPRINT_SCHEMA = "cuda-ptx-semantic-effects-v3"
+PTX_FINGERPRINT_SCHEMA = "cuda-ptx-semantic-effects-v4"
 
 
 class PTXObservationError(ValueError):
@@ -490,6 +491,126 @@ def _semantic_value_opcodes(
     return tuple(sorted(opcodes.items()))
 
 
+def _ptx_integer_literal(value: str) -> int | None:
+    text = value.strip()
+    if re.fullmatch(r"-?[0-9]+", text):
+        return int(text, 10)
+    if re.fullmatch(r"-?0[xX][0-9A-Fa-f]+", text):
+        return int(text, 16)
+    return None
+
+
+def _coordinate_fold_tag(opcode: str, operands: tuple[str, ...]) -> str | None:
+    """Normalize information-losing participant projections on address paths.
+
+    Ordinary add/mul/shift/cast address spelling remains relaxed.  A modulo or
+    low-bit mask is different: it changes which logical coordinate a physical
+    participant denotes and therefore cannot be erased as pointer algebra.
+    """
+
+    base = opcode.split(".", 1)[0]
+    literals = [
+        literal
+        for operand in operands[1:]
+        if (literal := _ptx_integer_literal(operand)) is not None
+    ]
+    if base == "and" and literals:
+        mask = literals[-1]
+        if mask >= 0 and mask & (mask + 1) == 0:
+            return f"cyclic:{mask + 1}"
+        return f"bitmask:{mask}"
+    if base == "rem" and literals and literals[-1] > 0:
+        return f"cyclic:{literals[-1]}"
+    return None
+
+
+def _semantic_address_coordinate_folds(
+    instructions: tuple[str, ...],
+) -> tuple[tuple[str, int], ...]:
+    """Trace only cyclic/bitmask coordinate folds that reach memory addresses."""
+
+    records = [_instruction_parts(item) for item in instructions]
+    # PTX virtual registers are not guaranteed to be SSA.  Retain every
+    # definition and resolve the reaching one at each use instead of silently
+    # attaching an earlier memory access to the register's final definition.
+    definitions: dict[str, list[int]] = {}
+    no_destination = (
+        "st.", "sust.", "red.", "bra", "brx", "ret", "exit", "bar.",
+        "barrier.", "mbarrier.", "fence.", "membar.",
+    )
+    for index, record in enumerate(records):
+        if record is None:
+            continue
+        _predicate, opcode, operands = record
+        if not operands or opcode.startswith(no_destination):
+            continue
+        destination = operands[0]
+        if destination.startswith("["):
+            continue
+        registers = _REGISTER_RE.findall(destination)
+        if len(registers) == 1:
+            definitions.setdefault(registers[0], []).append(index)
+
+    def reaching_definition(register: str, before: int) -> int | None:
+        history = definitions.get(register, ())
+        position = bisect_left(history, before)
+        return history[position - 1] if position else None
+
+    def traces(
+        register: str,
+        before: int,
+        inherited: tuple[str, ...] = (),
+        active: frozenset[tuple[str, int]] = frozenset(),
+    ) -> set[tuple[str, tuple[str, ...]]]:
+        if _is_special_register(register):
+            return {(register, inherited)}
+        state = (register, before)
+        if state in active:
+            return set()
+        index = reaching_definition(register, before)
+        if index is None:
+            return set()
+        record = records[index]
+        assert record is not None
+        _predicate, opcode, operands = record
+        tag = _coordinate_fold_tag(opcode, operands)
+        next_tags = (*inherited, tag) if tag is not None else inherited
+        result: set[tuple[str, tuple[str, ...]]] = set()
+        for operand in operands[1:]:
+            for dependency in _REGISTER_RE.findall(operand):
+                result.update(
+                    traces(dependency, index, next_tags, active | frozenset({state}))
+                )
+        return result
+
+    folds: Counter[str] = Counter()
+    for instruction_index, record in enumerate(records):
+        if record is None:
+            continue
+        predicate, opcode, operands = record
+        if not opcode.startswith(("ld.", "st.", "atom.", "red.", "suld.", "sust.")):
+            continue
+        address_operands = [operand for operand in operands if operand.startswith("[")]
+        polarity = (
+            "not_predicated:"
+            if predicate.startswith("@!")
+            else "predicated:"
+            if predicate
+            else ""
+        )
+        observed: set[tuple[str, str]] = set()
+        for address in address_operands:
+            for register in _REGISTER_RE.findall(address):
+                for coordinate, tags in traces(register, instruction_index):
+                    for tag in tags:
+                        observed.add((coordinate, tag))
+        for coordinate, tag in observed:
+            folds[
+                f"{polarity}{_semantic_memory_opcode(opcode)}:{coordinate}:{tag}"
+            ] += 1
+    return tuple(sorted(folds.items()))
+
+
 def _semantic_collectives(instructions: tuple[str, ...]) -> tuple[str, ...]:
     """Project collective effects without freezing one legal PTX algorithm."""
 
@@ -530,6 +651,7 @@ class PTXFingerprint:
     memory_effects: tuple[str, ...]
     semantic_value_opcodes: tuple[tuple[str, int], ...]
     semantic_memory_effects: tuple[tuple[str, int], ...]
+    semantic_address_coordinate_folds: tuple[tuple[str, int], ...]
     collectives: tuple[str, ...]
     control_flow: tuple[str, ...]
     coordinate_uses: tuple[str, ...]
@@ -549,6 +671,9 @@ class PTXFingerprint:
             ],
             "semantic_memory_effects": [
                 list(item) for item in self.semantic_memory_effects
+            ],
+            "semantic_address_coordinate_folds": [
+                list(item) for item in self.semantic_address_coordinate_folds
             ],
             "collectives": list(self.collectives),
             "control_flow": list(self.control_flow),
@@ -599,6 +724,9 @@ def fingerprint_ptx(
     memory = _category(instructions, ("ld.", "st.", "atom.", "red.", "suld.", "sust."))
     semantic_value_opcodes = _semantic_value_opcodes(instructions)
     semantic_memory_effects = _semantic_memory_effects(instructions)
+    semantic_address_coordinate_folds = _semantic_address_coordinate_folds(
+        instructions
+    )
     collectives = _semantic_collectives(instructions)
     control = tuple(
         item
@@ -630,6 +758,7 @@ def fingerprint_ptx(
         "memory": memory,
         "semantic_value_opcodes": semantic_value_opcodes,
         "semantic_memory_effects": semantic_memory_effects,
+        "semantic_address_coordinate_folds": semantic_address_coordinate_folds,
         "collectives": collectives,
         "control": control,
         "coordinates": coordinates,
@@ -643,6 +772,7 @@ def fingerprint_ptx(
         memory,
         semantic_value_opcodes,
         semantic_memory_effects,
+        semantic_address_coordinate_folds,
         collectives,
         control,
         coordinates,
@@ -717,6 +847,11 @@ def compare_ptx_fingerprints(
             "memory_effects",
             source.semantic_memory_effects,
             replay.semantic_memory_effects,
+        ),
+        (
+            "address_coordinate_folds",
+            source.semantic_address_coordinate_folds,
+            replay.semantic_address_coordinate_folds,
         ),
         ("collectives", source.collectives, replay.collectives),
         ("control_flow", source.control_flow, replay.control_flow),

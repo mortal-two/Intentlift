@@ -209,7 +209,7 @@ def main(argv: list[str] | None = None) -> int:
             artifact.j,
             artifact.c,
             artifact.pi,
-            require_program_axes=artifact.wire_schema == artifact.SCHEMA,
+            require_program_axes=artifact.requires_program_axes,
         )
         _write_json(recheck_dir / "typecheck.json", checked.to_json())
         if not checked.passed:

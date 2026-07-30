@@ -1,5 +1,5 @@
 {
-  "schema": "intentir.scrc.artifact.v12",
+  "schema": "intentir.scrc.artifact.v13",
   "j": {
     "kernel_id": "scrc_k0",
     "intent": {
@@ -224,6 +224,7 @@
       {"source": "i6", "target": "i4", "slots": [0]}
     ],
     "program_axes": [],
+    "participant_mappings": [],
     "order": [
       {"before": "i0", "after": "i1"},
       {"before": "i1", "after": "i3"},

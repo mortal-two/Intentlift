@@ -22,14 +22,16 @@ lowering 和测试要求，不形成另一套设计。上位文档按作用域�
 若派生规范与上位设计冲突，应修订派生规范；不得通过增加 interface artifact、hash gate、
 epoch、commitment、额外认证 Gate 或兼容旁路来调和冲突。
 
-当前 fresh-run 栈为 `artifact.v12 / decode.v17 / typecheck.v29 / candidate-check.v1 / replay-check.v14`。它继承 rank-0
+当前 fresh-run 栈为 `artifact.v13 / decode.v18 / typecheck.v30 / candidate-check.v1 / replay-check.v16`。它继承 rank-0
 closed signature、Layer-A total typing、显式 broadcast、canonical reduce/contraction、absent carrier
 拒绝、functional-domain closure、rank-0 liveness、padded-mean necessary condition 与 closed
 `pi.iterations`，并验证 Lift 已作者化的 value/dimension、closed dimension definition、consumer-extension、access-guard、typed
 control/inout/output-binding/terminal-control 关系，并检查 v10 authored route-local extent transform 的
 existing-route、C/J attachment 与 closed divisor/rounding。fixed code只诊断，不翻译别名、补齐 attrs、生成 handle/relation、
-改图或修复 artifact；历史 wire/receipt 继续按自身版本读取，不静默升级或重判。当前 Agent execution
-receipt 为 `intentir.lift-knowledge.v89 / intentir.lift-knowledge.v67 / minisweagent.intentir-replay.v31 / openai.codex-cli.intentir-replay.v34`；Codex Replay v34的syntax-composer.v2增加agent-owned builder与
+改图或修复 artifact；v13只新增J/C-dependent closed `participant_mappings`，把物理participant axis
+循环投影到exact J lane domain，wire不含logical extent/formula/API/target recipe/C value；历史
+wire/receipt继续按自身版本读取，不静默升级或重判。当前 Agent execution
+receipt 为 `intentir.lift-knowledge.v89 / intentir.lift-knowledge.v67 / minisweagent.intentir-replay.v31 / openai.codex-cli.intentir-replay.v35`；Codex Replay v35的syntax-composer.v2增加agent-owned builder与
 `off/available/preferred`诊断模式，但不改变Replay输入或接受集合；
 artifact.v11 的 `dimension_relations`只接受identity、常数加/乘、常数ceil-div与round-up的acyclic closed grammar；
 relation由Lift从Source作者化，所有J消费者只能验证/求值，不能从Harness valuation、grid、C、π或TTIR生成。
@@ -44,14 +46,14 @@ valuation provenance，不进入semantic artifact或Gate。
 Replay v28/v24 明确同一 region 中 `physical_loop_carriers` declaration order 是跨
 init/state/next/result 共享的 carrier-tuple ordinal；Lift knowledge v66/v62 必须从 Source frontend
 loop 的 argument/yield/result tuple 作者化该顺序，Replay 不按 dtype/ref/mechanism 重排。该 tuple slot
-顺序不是 event execution order，后者仍只由 `pi.order` 拥有。`replay-check.v14` 仅在 packet route
+顺序不是 event execution order，后者仍只由 `pi.order` 拥有。当前`replay-check.v16`仅在 packet route
 和 Replay 自身 TTIR 都提供唯一对应时检查 ordered transfer 的词法先后，不从 Source 或 Gate 构造
 对应。v28/v24 继承 v27/v23；v27/v23 对不超过
 64 KiB 的完整匿名 J/C/π/U_f 只在首次上下文 exact embedding 一次，并额外
 并置一个只重索引 semantic dimension carrier、IEEE special typed constant、physical iteration、
 `reduction_linearization + consumer route`、loop/branch lexical region membership、cross-region
-order、route-local extent transform 与 `pi.sharing` source/consumers，以及 authored broadcast 的 operand type/access/named consumer
-的 exact `critical_facts.v4`；超限
+order、route-local extent transform、participant mappings 与 `pi.sharing` source/consumers，以及 authored broadcast 的 operand type/access/named consumer
+的 exact `critical_facts.v6`；超限
 packet 才接收一个自带 authored op/boundary、π instance mechanism 与 time/control/terminal 清单的
 compact manifest，并只查询明确遗漏页。Codex Lift v12 / knowledge v70 同样直接嵌入 exact Harness ABI
 与 relift frontier，并一次并列展开非递归 direct hard categories；此外以
@@ -65,10 +67,10 @@ Codex Lift v20 删除重复的 feedback host tool，特殊回调只保留两个 
 两条路径都不生成 artifact/realization，没有 Gate
 或认证权限。
 
-含 broadcast/lexical/cross-region/route-extent critical facts 的 Replay 在 construction compile 前还必须对当前 exact bytes
-完成 `replay-obligation-audit.v3`；该工具只并置 J/π ledger 与 Replay 自己的编号源码，不映射 relation/instance、
+含 broadcast/lexical/cross-region/route-extent/participant-mapping critical facts 的 Replay 在 construction compile 前还必须对当前 exact bytes
+完成 `replay-obligation-audit.v5`；该工具只并置 J/π ledger 与 Replay 自己的编号源码，不映射 relation/instance、
 不诊断、不修复，也不参与 Gate 接受。
-`replay-check.v14` 还要求 synthetic TTIR 至少包含 π 已作者化 `reduction_linearization` 数量的
+`replay-check.v16` 还要求 synthetic TTIR 至少包含 π 已作者化 `reduction_linearization` 数量的
 distinct `tt.reshape -> tt.reduce(axis=0)` dataflow，避免无关 reshape 冒充，但不从 reduction/shape
 生成 relation；地址检查只在 J.signature carrier kind 与 π
 address routes 能完全决定时，沿作者化 route
@@ -76,11 +78,12 @@ address routes 能完全决定时，沿作者化 route
 base/lane contribution 不被误当 pointer stage，address instance 的 `semantic_ref` spelling 不必等于
 transfer ref，但每个 transfer 必须从匹配 boundary tensor 的 pointer/tensor signature carrier 可达，
 并按位于 program region、沿作者化 route 到达 `address_base` 的 distinct J domain 数量核对
-compiled `tt.get_program_id` occurrence；artifact v12还按π作者化的`program_axes{domain_ref,axis}`核对
+compiled `tt.get_program_id` occurrence；artifact v12+还按π作者化的`program_axes{domain_ref,axis}`核对
 精确launch axis，不从声明顺序/grid/C猜测；同一 `p*` 的多个 π instance 始终共享一个既有 ABI carrier，
 placement 本身不产生 program coordinate。
-且每个 pointer-producing address stage 必须流向至少一个 transfer。无法闭合的 topology 不猜，不读取
-Source，也不生成地址公式。`typecheck.v29`新增program-axis completeness dependent check，v28新增closed
+且每个 pointer-producing address stage 必须流向至少一个 transfer。v13 participant mapping由Replay从
+exact J解析logical period，不能从C或reduction猜测。无法闭合的 topology 不猜，不读取
+Source，也不生成地址公式。`typecheck.v30`新增participant-mapping dependent check，v29新增program-axis completeness dependent check，v28新增closed
 dimension relation check；`typecheck.v27` 只新增 route extent transform 的 closed dependent check；
 `typecheck.v26` 只新增 direct `x* == 1`/`1 == x*` 对显式 broadcast
 shape alignment 的 singleton dependent check；不做 SMT/transitive inference，也不从 concrete

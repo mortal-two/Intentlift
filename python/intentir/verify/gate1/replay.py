@@ -59,7 +59,7 @@ MINISWE_REPLAY_TURN_TIMEOUT_SECONDS = 300.0
 MINISWE_REPLAY_XHIGH_TURN_TIMEOUT_SECONDS = 900.0
 RESPONSES_REPLAY_BACKEND = "openai.responses.intentir-replay.v1"
 STATIC_REPLAY_BACKEND = "intentir.static-replay-test.v1"
-REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v15"
+REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v16"
 _ANONYMOUS_HANDLE = re.compile(r"^[pc][0-9]+$")
 
 
@@ -3139,6 +3139,15 @@ Every `pi.route_extent_transforms` item qualifies exactly one already-authored
 route slot from a required positive-integer C extent. Apply its literal divisor
 and floor/ceil rounding only at that target-local realization use. It is not a J
 shape/domain/predicate relation and does not authorize transforming sibling C uses.
+
+Every `pi.participant_mappings` item qualifies one existing lane-domain realize
+instance. For projection=`cyclic`, obtain the logical period only from the exact
+one-axis zero-based J domain reached through domain_instance (its positive literal
+or declared x* upper extent) and project the public physical participant
+coordinate cyclically into it. axis selects the participant coordinate;
+extent_slot binds only its anonymous external launch extent. Never copy a Source
+formula, guess the hidden C value, substitute blockDim for the J extent, or infer
+this relation from reduction shape or frontend convention.
 
 Every `pi.physical_iterations` item is an authored physical loop around an
 already-logical non-loop J reduce/contraction or boundary access/domain. Resolve

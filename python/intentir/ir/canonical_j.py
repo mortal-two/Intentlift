@@ -122,6 +122,103 @@ class ContractExpr:
         return result
 
 
+def project_zero_based_single_axis_domain(
+    expression: ContractExpr,
+) -> tuple[str, int | str]:
+    """Return the unique axis/extent of one closed ``[0, extent)`` domain.
+
+    This is deliberately narrower than general ContractExpr.  Consumers that
+    need one physical coordinate period must not choose an axis, origin, or
+    flattening rule for a multi-axis or predicate-shaped J domain.
+    """
+
+    if not isinstance(expression, ContractExpr):
+        raise TypeError("domain projection requires ContractExpr")
+
+    def conjunction_terms(value: ContractExpr) -> tuple[ContractExpr, ...]:
+        if value.op != "and":
+            return (value,)
+        result: list[ContractExpr] = []
+        for argument in value.args:
+            result.extend(conjunction_terms(argument))
+        return tuple(result)
+
+    def reference(value: ContractExpr) -> str | None:
+        if value.op == "ref" and isinstance(value.value, str):
+            return value.value
+        return None
+
+    def logical_axis(value: ContractExpr) -> str | None:
+        name = reference(value)
+        if name is not None and name.startswith("k") and name[1:].isdigit():
+            return name
+        return None
+
+    def logical_extent(value: ContractExpr) -> int | str | None:
+        if (
+            value.op == "int"
+            and isinstance(value.value, int)
+            and not isinstance(value.value, bool)
+            and value.value > 0
+        ):
+            return value.value
+        name = reference(value)
+        if name is not None and name.startswith("x") and name[1:].isdigit():
+            return name
+        return None
+
+    lower_axis: str | None = None
+    upper_axis: str | None = None
+    extent: int | str | None = None
+    for term in conjunction_terms(expression):
+        if len(term.args) != 2:
+            raise CanonicalJError(
+                "cyclic participant domain must contain only interval bounds"
+            )
+        left, right = term.args
+        candidate_lower: str | None = None
+        if term.op == "le" and left.op == "int" and left.value == 0:
+            candidate_lower = logical_axis(right)
+        elif term.op == "ge" and right.op == "int" and right.value == 0:
+            candidate_lower = logical_axis(left)
+        if candidate_lower is not None:
+            if lower_axis is not None:
+                raise CanonicalJError(
+                    "cyclic participant domain must have one lower-zero bound"
+                )
+            lower_axis = candidate_lower
+            continue
+
+        candidate_axis: str | None = None
+        candidate_extent: int | str | None = None
+        if term.op == "lt":
+            candidate_axis = logical_axis(left)
+            candidate_extent = logical_extent(right)
+        elif term.op == "gt":
+            candidate_axis = logical_axis(right)
+            candidate_extent = logical_extent(left)
+        if candidate_axis is None or candidate_extent is None:
+            raise CanonicalJError(
+                "cyclic participant domain upper bound must be k* < positive-int|x*"
+            )
+        if upper_axis is not None:
+            raise CanonicalJError(
+                "cyclic participant domain must have one upper bound"
+            )
+        upper_axis = candidate_axis
+        extent = candidate_extent
+
+    if lower_axis is None or upper_axis is None or extent is None:
+        raise CanonicalJError(
+            "cyclic participant domain requires exact lower-zero and upper bounds"
+        )
+    if lower_axis != upper_axis:
+        raise CanonicalJError(
+            "cyclic participant domain bounds must name one logical axis"
+        )
+    return lower_axis, extent
+
+
 def _integer_like(expression: ContractExpr) -> bool:
     return expression.sort in {ContractSort.INTEGER, ContractSort.UNKNOWN_REF}
 
@@ -1311,4 +1408,5 @@ __all__ = [
     "j_elaboration",
     "parse_contract_expr",
     "parse_index_expression",
+    "project_zero_based_single_axis_domain",
 ]

@@ -1609,6 +1609,7 @@ _CONTROL_PI_FIELDS = (
     "terminal_controls",
     "routes",
     "program_axes",
+    "participant_mappings",
     "route_extent_transforms",
     "order",
     "sharing",

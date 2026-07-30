@@ -1,0 +1,371 @@
+{
+  "c": {
+    "slots": [
+      {
+        "kind": "compiler",
+        "name": "c0",
+        "required": true,
+        "role": "launch_block_x",
+        "value_type": "i32"
+      }
+    ],
+    "values": {
+      "c0": 128
+    }
+  },
+  "j": {
+    "boundary": {
+      "access_guard_relations": [],
+      "accesses": [
+        {
+          "access_id": "a0",
+          "index_expression": "[k0, k1]",
+          "kind": "load",
+          "node_ref": "n0",
+          "tensor": "t0"
+        },
+        {
+          "access_id": "a1",
+          "index_expression": "[k0]",
+          "kind": "store",
+          "node_ref": "n0",
+          "tensor": "t1"
+        }
+      ],
+      "aliases": [],
+      "broadcasts": [],
+      "consumer_extensions": [],
+      "domains": {
+        "d0": "(0 <= k0) and (k0 < x0)",
+        "d1": "(0 <= k1) and (k1 < 16)"
+      },
+      "effects": [
+        {
+          "access_ref": "a0",
+          "effect_id": "e0",
+          "kind": "read",
+          "node_ref": "n0",
+          "target": "t0"
+        },
+        {
+          "access_ref": "a1",
+          "effect_id": "e1",
+          "kind": "write",
+          "node_ref": "n0",
+          "target": "t1"
+        }
+      ],
+      "index_bounds": [],
+      "output_mappings": [],
+      "realization_authorizations": [],
+      "reductions": [
+        {
+          "identity": 0.0,
+          "node_ref": "n0",
+          "tile_axis": 0
+        }
+      ],
+      "result_relations": [
+        {
+          "kind": "tolerance",
+          "output": "t1"
+        }
+      ],
+      "updates": []
+    },
+    "dimension_constraints": [
+      "x0 >= 0"
+    ],
+    "dimension_relations": [],
+    "intent": {
+      "intent_function": {
+        "body": [
+          {
+            "attrs": {
+              "assoc": "float_nondeterministic",
+              "axes": [
+                1
+              ],
+              "fn": "sum"
+            },
+            "op": "reduce",
+            "operands": [
+              "t0"
+            ],
+            "result": "t1",
+            "type": {
+              "dtype": "f32",
+              "shape": [
+                "x0"
+              ]
+            }
+          }
+        ],
+        "inputs": [
+          {
+            "dtype": "f32",
+            "name": "t0",
+            "shape": [
+              "x0",
+              16
+            ]
+          }
+        ],
+        "name": "scrc_j0",
+        "outputs": [
+          {
+            "dtype": "f32",
+            "name": "t1",
+            "shape": [
+              "x0"
+            ]
+          }
+        ]
+      }
+    },
+    "kernel_id": "scrc_k0",
+    "node_ids": {
+      "n0": "body[0]"
+    },
+    "scopes": [
+      {
+        "captures": [],
+        "definitions": [
+          "t0",
+          "t1"
+        ],
+        "effects": [
+          "e0",
+          "e1"
+        ],
+        "kind": "function",
+        "parent_scope": null,
+        "scope_id": "q0"
+      }
+    ],
+    "signature": {
+      "parameters": [
+        {
+          "dtype": "f32",
+          "kind": "tensor",
+          "logical_ref": "t0",
+          "mode": "input",
+          "name": "p0",
+          "rank": 2
+        },
+        {
+          "dtype": "f32",
+          "kind": "tensor",
+          "logical_ref": "t1",
+          "mode": "output",
+          "name": "p1",
+          "rank": 1
+        },
+        {
+          "dtype": "i32",
+          "kind": "scalar",
+          "logical_ref": "x0",
+          "mode": "value",
+          "name": "p2",
+          "rank": 0
+        }
+      ]
+    },
+    "storage": [],
+    "value_dimension_relations": []
+  },
+  "pi": {
+    "instances": [
+      {
+        "id": "i0",
+        "mechanism": "realize",
+        "region": "r0",
+        "semantic_ref": "p0"
+      },
+      {
+        "id": "i1",
+        "mechanism": "realize",
+        "region": "r1",
+        "semantic_ref": "d0"
+      },
+      {
+        "id": "i2",
+        "mechanism": "realize",
+        "region": "r1",
+        "semantic_ref": "d1"
+      },
+      {
+        "id": "i3",
+        "mechanism": "realize",
+        "region": "r1",
+        "semantic_ref": "a0"
+      },
+      {
+        "id": "i4",
+        "mechanism": "address_base",
+        "region": "r1",
+        "semantic_ref": "a0"
+      },
+      {
+        "id": "i5",
+        "mechanism": "address_lane",
+        "region": "r1",
+        "semantic_ref": "a0"
+      },
+      {
+        "id": "i6",
+        "mechanism": "transfer_direct",
+        "region": "r1",
+        "semantic_ref": "a0"
+      },
+      {
+        "id": "i7",
+        "mechanism": "realize",
+        "region": "r1",
+        "semantic_ref": "n0"
+      },
+      {
+        "id": "i8",
+        "mechanism": "realize",
+        "region": "r0",
+        "semantic_ref": "p1"
+      },
+      {
+        "id": "i9",
+        "mechanism": "address_base",
+        "region": "r1",
+        "semantic_ref": "a1"
+      },
+      {
+        "id": "i10",
+        "mechanism": "transfer_direct",
+        "region": "r1",
+        "semantic_ref": "a1"
+      }
+    ],
+    "iterations": [],
+    "loop_carriers": [],
+    "order": [
+      {
+        "after": "i7",
+        "before": "i6"
+      },
+      {
+        "after": "i10",
+        "before": "i7"
+      }
+    ],
+    "physical_iterations": [],
+    "physical_loop_carriers": [],
+    "program_axes": [
+      {
+        "axis": 0,
+        "domain_ref": "d0"
+      }
+    ],
+    "refinements": [],
+    "regions": [
+      {
+        "id": "r0",
+        "parent": null,
+        "placement": "root"
+      },
+      {
+        "id": "r1",
+        "parent": "r0",
+        "placement": "program"
+      }
+    ],
+    "route_extent_transforms": [],
+    "routes": [
+      {
+        "slots": [
+          0
+        ],
+        "source": "i0",
+        "target": "i5"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i1",
+        "target": "i4"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i2",
+        "target": "i3"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i3",
+        "target": "i5"
+      },
+      {
+        "slots": [
+          2
+        ],
+        "source": "i4",
+        "target": "i5"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i5",
+        "target": "i6"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i6",
+        "target": "i7"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i8",
+        "target": "i9"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i1",
+        "target": "i9"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i9",
+        "target": "i10"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i7",
+        "target": "i10"
+      }
+    ],
+    "sharing": [
+      {
+        "consumers": [
+          "i4",
+          "i9"
+        ],
+        "source": "i1"
+      }
+    ],
+    "terminal_controls": []
+  },
+  "schema": "intentir.scrc.artifact.v12"
+}

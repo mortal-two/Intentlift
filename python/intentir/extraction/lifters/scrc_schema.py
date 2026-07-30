@@ -711,6 +711,43 @@ def _pi_schema() -> dict[str, Any]:
             "extent, Source spelling, frontend API, or logical J semantics."
         ),
     )
+    participant_mapping = _closed_object(
+        {
+            "domain_instance": {
+                "type": "string",
+                "pattern": "^i[0-9]+$",
+                "description": (
+                    "A declared realize instance anchored to the exact one-axis, "
+                    "zero-based J boundary domain covered by this physical "
+                    "participant axis. Its upper extent is a positive literal or "
+                    "declared J x* dimension."
+                ),
+            },
+            "axis": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 2,
+                "description": "Public physical participant-axis identity.",
+            },
+            "extent_slot": {
+                "type": "string",
+                "pattern": "^c[0-9]+$",
+                "description": (
+                    "Anonymous C launch-extent handle; its concrete value is absent "
+                    "from Replay."
+                ),
+            },
+            "projection": {"type": "string", "enum": ["cyclic"]},
+        },
+        ("domain_instance", "axis", "extent_slot", "projection"),
+        description=(
+            "A closed J/C-dependent participant projection over one zero-based "
+            "logical axis. cyclic means the "
+            "physical participant coordinate covers the exact J domain cyclically. "
+            "The wire row carries no logical extent, modulo expression, Source "
+            "spelling, frontend API, target recipe, or C value."
+        ),
+    )
     route_extent_transform = _closed_object(
         {
             "source": {
@@ -920,6 +957,7 @@ def _pi_schema() -> dict[str, Any]:
             "instances": _array(instance),
             "routes": _array(route),
             "program_axes": _array(program_axis),
+            "participant_mappings": _array(participant_mapping),
             "route_extent_transforms": _array(route_extent_transform),
             "order": _array(order),
             "sharing": _array(sharing),
@@ -935,6 +973,7 @@ def _pi_schema() -> dict[str, Any]:
             "instances",
             "routes",
             "program_axes",
+            "participant_mappings",
             "route_extent_transforms",
             "order",
             "sharing",
@@ -950,7 +989,8 @@ def _pi_schema() -> dict[str, Any]:
             + " "
             + render_realization_mechanism_grammar()
             + " Preserve route/order/share/region multiplicity. Apart from the "
-            "closed route-extent divisor/rounding, no operator or value; never a "
+            "closed route-extent divisor/rounding and participant projection tag, "
+            "no operator or value; never a "
             "predicate, dtype, frontend API, rule identity or source text."
         ),
     )
