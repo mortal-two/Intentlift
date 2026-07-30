@@ -45,8 +45,8 @@ from .prompt import SCHEMA as _INTENTIR_OPERATION_REFERENCE
 from .scrc_schema import scrc_lift_core_json_schema
 
 
-CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v23"
-CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v81"
+CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v24"
+CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v82"
 CODEX_CLI_TURN_TIMEOUT_SECONDS = 900.0
 
 _FEEDBACK_CATEGORY_NAMES = (
@@ -307,6 +307,10 @@ def _codex_input_files(
             "and lane contributions first, the pointer bypasses address_base and "
             "enters the final lane/address stage once. Author topology and typed "
             "carrier origins, not Source arithmetic spelling.\n"
+            "- A route_extent_transform is only a required positive-integer C-slot "
+            "realize routed to its attached J-domain realize on that existing target "
+            "slot. It never targets an Intent node, access, address stage, or iota and "
+            "never changes a logical shape, predicate, or consumer rank lift.\n"
             "- Preserve each Source load/store predicate as J logical validity when it "
             "guards the logical access, including conjuncts that happen to be true for "
             "the current valuation. C tile bounds may realize that predicate but may "
