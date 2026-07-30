@@ -274,7 +274,7 @@ def _codex_input_files(
             "Start once with:\n"
             "`python input/tools/context_query.py --input-root input --output-root output source-brief`\n\n"
             "Then read `input/source.py`. For an exact compiler fact, use the same tool "
-            "with `source-observer --path fingerprint.NAME`, `source-address-dag`, `source-ttir-outline`, "
+            "with `source-observer --path fingerprint.NAME`, `source-ttir-outline`, "
             "`source-ttir-find`, or `source-ttir-def-use`. For wire syntax, query only "
             "the needed leaves, for example:\n"
             "`python input/tools/schema_query.py authoring-brief`\n"

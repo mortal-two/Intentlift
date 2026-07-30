@@ -268,8 +268,6 @@ def _dataflow_counter(fingerprint: TTIRFingerprint) -> Counter[Any]:
     items: Counter[Any] = Counter()
     for edge in fingerprint.dataflow_edges:
         items[("edge", *edge)] += 1
-    for address_map in fingerprint.program_address_maps:
-        items[("program_address_map", _stable_json(address_map.to_dict()))] += 1
     for dot in fingerprint.dots:
         items[("dot", _stable_json(dot.to_dict()))] += 1
     for loop in fingerprint.loops:
