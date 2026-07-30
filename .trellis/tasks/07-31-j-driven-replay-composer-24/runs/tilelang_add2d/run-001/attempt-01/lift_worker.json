@@ -1,0 +1,149 @@
+{
+  "backend": "openai.codex-cli.intentir-lift.v30",
+  "candidate_check": [
+    {
+      "candidate_sha256": "7eb1a62ede0a7233963c29558f2464f55c21bb5550288dbfcd31ea5dde25eef3",
+      "diagnostics": [
+        {
+          "observed_refs_or_types": [
+            "SchemaError: portable scope 's0' definitions must exactly match derived J values; missing=[], extra=['n0']"
+          ],
+          "path": "<candidate>",
+          "rule_code": "decode_rejected"
+        },
+        {
+          "observed_refs_or_types": [
+            "expected=[\"q0\"]",
+            "actual=[\"s0\"]"
+          ],
+          "path": "j.scopes[*].scope_id",
+          "rule_code": "construction_handle_sequence"
+        }
+      ],
+      "status": "fail",
+      "trigger": "submit_candidate"
+    },
+    {
+      "candidate_sha256": "5222c0aaf733eb8618abfb55a95b8b05e080083157b2229a53b90c86b508d9a9",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "submit_candidate"
+    },
+    {
+      "candidate_sha256": "5222c0aaf733eb8618abfb55a95b8b05e080083157b2229a53b90c86b508d9a9",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "host_post_turn"
+    },
+    {
+      "candidate_sha256": "5222c0aaf733eb8618abfb55a95b8b05e080083157b2229a53b90c86b508d9a9",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "semantic_probe"
+    }
+  ],
+  "cli_turns": 1,
+  "elapsed_ms": 287174.2992600193,
+  "fresh_session": true,
+  "fresh_workspace": true,
+  "knowledge_profile": "intentir.lift-knowledge.v89",
+  "model_segments_lower_bound": 7,
+  "owner_session_id": "3e00b91bd41b4e89b9e1385c32727b9e",
+  "persistent_owner": true,
+  "persistent_workspace": true,
+  "runtime": "intentir.codex-cli.agent-runtime.v3",
+  "semantic_probe": [
+    {
+      "authority": "public Source-vs-J diagnostic only; no artifact field is generated, repaired, accepted, or certified",
+      "candidate_sha256": "5222c0aaf733eb8618abfb55a95b8b05e080083157b2229a53b90c86b508d9a9",
+      "case_id": "finite-public-lift-probe-1",
+      "comparison": {
+        "left": "source",
+        "outputs": [
+          {
+            "atol": 1e-06,
+            "detail": "",
+            "equal_nan": false,
+            "equality_required": true,
+            "max_abs_error": 0.0,
+            "output": "output_p2",
+            "passed": true,
+            "policy_id": "intentir.gate2.default.v1",
+            "relation_kind": "tolerance",
+            "rtol": 1e-05
+          }
+        ],
+        "passed": true,
+        "policy_id": "intentir.gate2.default.v1",
+        "right": "j"
+      },
+      "protocol": "intentir.lift.public-semantic-probe.v1",
+      "seed": 2026073001,
+      "status": "pass"
+    }
+  ],
+  "source_reconcile": [
+    {
+      "applicable": false,
+      "candidate_sha256": "7eb1a62ede0a7233963c29558f2464f55c21bb5550288dbfcd31ea5dde25eef3",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "submit_candidate"
+    },
+    {
+      "applicable": false,
+      "candidate_sha256": "5222c0aaf733eb8618abfb55a95b8b05e080083157b2229a53b90c86b508d9a9",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "submit_candidate"
+    },
+    {
+      "applicable": false,
+      "candidate_sha256": "5222c0aaf733eb8618abfb55a95b8b05e080083157b2229a53b90c86b508d9a9",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "host_post_turn"
+    },
+    {
+      "applicable": false,
+      "candidate_sha256": "5222c0aaf733eb8618abfb55a95b8b05e080083157b2229a53b90c86b508d9a9",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "semantic_probe"
+    }
+  ],
+  "thread_id": "019fb464-18e1-77f1-aced-c5bcd93d359b",
+  "timeout_events": [],
+  "tool_actions": 48,
+  "tool_bridge": {
+    "authority": "diagnostic-only callbacks over exact host-read output bytes; no artifact or Replay field is generated or edited",
+    "calls": 2,
+    "protocol": "intentir.codex-cli.tool-bridge.v3",
+    "receipts": [
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 199.079969082959,
+        "result_sha256": "7b28a7ca6f11b1d5c2794c014bc1bcc4777e2ca0935ce6983329de2286a1f451",
+        "status": "fail",
+        "tool": "submit_candidate"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 24.772308068349957,
+        "result_sha256": "4293619c4884bd1d30a7d30667f8728cd503c16f5ab806ac848bf186054c896b",
+        "status": "pass",
+        "tool": "submit_candidate"
+      }
+    ],
+    "transport": "isolated_workspace_file_mailbox"
+  },
+  "usage": {
+    "cache_write_input_tokens": 0,
+    "cached_input_tokens": 468480,
+    "input_tokens": 516139,
+    "output_tokens": 8967,
+    "reasoning_output_tokens": 3936
+  }
+}

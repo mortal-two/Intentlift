@@ -1,6 +1,6 @@
 # Task 24：J 主导的 π_min 与三前端 Episode-Local Composer Replay
 
-> 状态：`P5_ACTIVE_FIRST_NATIVE_INFRA_FIXED`（2026-07-31）。
+> 状态：`P5_TILELANG_ADD2D_CERTIFIED_CUDA_PENDING`（2026-07-31）。
 >
 > 定位：Task 15/Task 11 的 Replay 构造机制升级，以及 Task 23 多前端实证的真实 closure 执行线。
 > 本任务不接管 production backend；backend 仍在 SCRC 后只消费 accepted `J+C`。
@@ -77,12 +77,15 @@ Composer只存在于`FreshAgent_f`内部；最终提交物仍是完整`replay.so
 - 已完成不调用provider的三前端render、全部八种局部edit、source-map、checkpoint/rollback、copied CLI、
   stdlib-only import与writer identity smoke；独立只读审计未发现J/π读取、target recipe、kernel template或
   Gate bypass；
-- 真实TileLang/CUDA provider closure与Composer/direct-source效率比较尚未运行，因此本检查点不声称
-  Gate1、Gate2或SCRC closure。
+- 真实TileLang `add2d` provider纵切已达到`SCRC_CERTIFIED`；CUDA纵切和Composer/direct-source效率
+  比较尚未完成，因此当前只对该单个TileLang case声称closure，不外推三前端或Composer提速。
 
 ### 2.4 P5真实运行日志
 
-`tilelang:add2d / run-001`（Codex Lift + Codex Replay，`gpt-5.6-sol high`，Mask-J配置开启）：
+### Pilot A：修复前的外部临时运行
+
+`tilelang:add2d / /tmp/intentir-task24-composer/tilelang_add2d/run-001`（Codex Lift + Codex
+Replay，`gpt-5.6-sol high`，Mask-J配置开启）：
 
 - real Lift产生`artifact.v12`，normal Codex Replay在一个CLI turn内生成完整TileLang source，并通过
   `replay-check.v15`与source-blind construction compile；
@@ -94,7 +97,27 @@ Composer只存在于`FreshAgent_f`内部；最终提交物仍是完整`replay.so
   也有同类潜伏错误；
 - 修复采用`observer_profile.compiler_stage`驱动的通用compiler-counterexample合同，并把共享
   `Gate1ArmEvidence`的compile/fingerprint/comparison类型改为frontend-neutral Protocol；没有给TileLang
-  伪造TTIR或增加case特判。fresh rerun待执行。
+  伪造TTIR或增加case特判。
+
+### Pilot B：修复后的正式fresh rerun
+
+`tilelang:add2d / .trellis/tasks/07-31-j-driven-replay-composer-24/runs/tilelang_add2d/run-001`
+（Codex Lift + Codex Replay，`gpt-5.6-sol high`，Mask-J开启）：
+
+- 最终状态为`SCRC_CERTIFIED`，accepted attempt为1，formal Gate1 round为1；
+- artifact strict decode与dependent TypeCheck通过；Lift在第一次CandidateCheck暴露scope/handle问题后自行
+  修正，第二次通过，Source--J semantic probe精确通过；
+- normal Replay以TileLang **TIR** hard observer闭合，Source/Replay TIR fingerprint一致；PTX没有替代
+  TIR成为hard closure；
+- normal和masked Replay由不同writer、workspace、provider thread和fresh session生成；masked臂TIR
+  mismatch，因此`J_NECESSARY=proved`；
+- Gate2仅在normal Gate1通过后运行，`Source--Replay`、`Source--J`、`Replay--J`三边均通过，唯一输出的
+  `max_abs_error`均为0；Source、Replay和RefEval(J)各有一次真实执行；
+- normal Replay为1个CLI turn、5个provider segments、7个tool actions、81.632秒；masked Replay为1个
+  CLI turn、6个provider segments、10个tool actions、141.783秒；Lift为1个CLI turn、7个provider
+  segments、48个tool actions、287.174秒；
+- normal与masked都安装了Composer，但agent对该简单case选择direct-source，`used=false`。这证明raw
+  escape和Composer不改变接受集合，但**不能**证明Composer加速；后续必须在结构化case做fresh A/B。
 
 ## 3. 交付物
 

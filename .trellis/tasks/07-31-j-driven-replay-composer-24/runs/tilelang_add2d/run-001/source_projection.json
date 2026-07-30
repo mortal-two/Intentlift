@@ -1,0 +1,14 @@
+{
+  "constexpr_parameters": [],
+  "frontend": "tilelang",
+  "function": "main",
+  "origin_location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/add2d.py",
+  "parameters": [
+    "A_handle",
+    "B_handle",
+    "C_handle"
+  ],
+  "protocol": "intentir.scrc.frontend-source-projection.v1",
+  "source_kind": "materialized_tir",
+  "source_location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/add2d.py"
+}
