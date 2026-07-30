@@ -188,6 +188,12 @@ def ConvertIntentRowReductionToGPU
            "finalize, and—when a full-row result exists—epilogue launches sharing "
            "compiler-managed global scratch. 1 preserves the single-launch paths. "
            "Unsupported graphs fail closed; no atomic or Python-emitted fallback.">,
+    Option<"accumulatorChains", "accumulator-chains", "unsigned", "1",
+           "Independent per-thread accumulator chains used by the register row "
+           "reduction before the subgroup/workgroup tree. Legal values are 1, 2 "
+           "or 4. Values above one change the floating reduction tree, are Full-"
+           "only execution-domain candidates, and fail closed outside the single-"
+           "launch register path.">,
   ];
 }
 

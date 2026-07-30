@@ -255,6 +255,7 @@ class CudaSearchCandidate:
                     "rows_per_block": record.rows_per_block,
                     "warps_per_row": record.warps_per_row,
                     "d_partitions": record.d_partitions,
+                    "accumulator_chains": record.accumulator_chains,
                 }
             )
         if record is not None and record.launch_plans:
@@ -441,6 +442,12 @@ class CudaSearchResult:
         d_partition_values = sorted(
             {
                 int(record.get("d_partitions", 1))
+                for record in actual_records
+            }
+        )
+        accumulator_chain_values = sorted(
+            {
+                int(record.get("accumulator_chains", 1))
                 for record in actual_records
             }
         )
@@ -652,6 +659,7 @@ class CudaSearchResult:
                 "fma_contraction": True,
                 "precision_mode": False,
                 "approximation_mode": True,
+                "per_thread_reduction_tree": True,
                 "precision_reason": (
                     "no typed contraction in the frozen 18-kernel catalog"
                 ),
@@ -712,6 +720,7 @@ class CudaSearchResult:
                 "reduction_topologies": reduction_topologies,
                 "rows_per_block_values": rows_per_block_values,
                 "d_partition_values": d_partition_values,
+                "accumulator_chain_values": accumulator_chain_values,
                 "actual_fma_counts": actual_fma_counts,
                 "approximation_modes": approximation_modes,
                 "structural_path_expansion_observed": (
@@ -1767,6 +1776,28 @@ def enumerate_cuda_candidates(
             if tile >= min_subgroup_tile
             and (concrete_rows is None or concrete_rows % rows == 0)
         )
+        # Per-thread multi-accumulator trees are a bounded Full-only topology.
+        # Give each tree several independent workgroup schedules while avoiding
+        # a Cartesian copy of the already-large local/numeric candidate space.
+        # The C++ matcher remains the hard gate for the static feature strip.
+        for threads in (64, 128, 256, 512, 1024):
+            tiles = _row_tile_candidates(state, threads)
+            if not tiles:
+                continue
+            register_tile = max(tiles)
+            for chains in (2, 4):
+                if (
+                    concrete_cols is not None
+                    and (concrete_cols + threads - 1) // threads < chains
+                ):
+                    continue
+                row_schedule_bases.append(
+                    RowSchedule(
+                        threads,
+                        register_tile,
+                        accumulator_chains=chains,
+                    )
+                )
         if last_axis_reduction_count == 1:
             row_schedule_bases.extend(
                 RowSchedule(
@@ -1902,6 +1933,7 @@ def enumerate_cuda_candidates(
             or not schedule.materialize_shared_row_output
             or schedule.cross_row_finalize
             or schedule.raw_moment_variance
+            or schedule.accumulator_chains != 1
         )
         specialized.append(
             CudaSearchCandidate(
@@ -1930,6 +1962,8 @@ def enumerate_cuda_candidates(
                         if schedule.raw_moment_variance
                         else "cuda.reduction.multi_stage_partial_finalize.v1"
                         if schedule.reduction_parts > 1
+                        else "cuda.reduction.per_thread_multi_accumulator_tree.v1"
+                        if schedule.accumulator_chains > 1
                         else "cuda.reduction.subgroup_rows.v1"
                         if schedule.rows_per_block > 1
                         else "cuda.reduction.workgroup_leader_broadcast.v1"
@@ -2572,6 +2606,11 @@ def enumerate_cuda_candidates(
                 if item.schedule.get("raw_moment_variance") is True
                 else "multi_stage"
                 if int(item.schedule.get("reduction_parts", 1)) > 1
+                else (
+                    "multi_accumulator"
+                    f"{int(item.schedule.get('accumulator_chains', 1))}"
+                )
+                if int(item.schedule.get("accumulator_chains", 1)) > 1
                 else "subgroup_rows"
                 if int(item.schedule.get("rows_per_block", 1)) > 1
                 else "workgroup_leader"
@@ -2626,6 +2665,8 @@ def enumerate_cuda_candidates(
         "row_reduction.raw_moment.plain.base",
         "row_reduction.raw_moment.fma.base",
         "row_reduction.raw_moment.approximate_div.base",
+        "row_reduction.multi_accumulator2.plain.base",
+        "row_reduction.multi_accumulator4.plain.base",
         "row_reduction.multi_stage.plain.base",
         "elementwise.native-ptx.base",
         "row_reduction.subgroup_rows.plain.base",
@@ -2782,6 +2823,7 @@ def enumerate_cuda_candidates(
                 bool(item.schedule.get("leader_finalize", False)),
                 item.schedule.get("materialize_shared_row_output", True) is False,
                 bool(item.schedule.get("raw_moment_variance", False)),
+                int(item.schedule.get("accumulator_chains", 1)) - 1,
             )
             return ("row_reduction", *choice) if any(choice) else None
         if item.lowering_path_kind == "elementwise":

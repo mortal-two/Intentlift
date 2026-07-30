@@ -614,6 +614,17 @@ def test_row_schedule_names_multi_stage_reduction_mapping() -> None:
         RowSchedule(32, 32, rows_per_block=2, reduction_parts=2)
 
 
+def test_row_schedule_names_per_thread_multi_accumulator_tree() -> None:
+    multi_accumulator = RowSchedule(256, 32, accumulator_chains=4)
+
+    assert "accumulator-chains=4" in multi_accumulator.pass_argument
+    assert multi_accumulator.to_dict()["accumulator_chains"] == 4
+    with pytest.raises(ValueError, match="accumulator_chains"):
+        RowSchedule(256, 32, accumulator_chains=3)
+    with pytest.raises(ValueError, match="one row and one stage"):
+        RowSchedule(32, 32, rows_per_block=2, accumulator_chains=2)
+
+
 def test_row_schedule_names_leader_finalization_mapping() -> None:
     leader = RowSchedule(256, 32, leader_finalize=True)
 
@@ -691,6 +702,7 @@ def test_ablation_axes_expand_concrete_reduction_and_fma_states() -> None:
         item.schedule.get("compact_reduction_topology") is False
         for item in e2
     )
+    assert all(item.schedule.get("accumulator_chains") == 1 for item in e2)
     assert all(
         item.requested_observation_class.value == "hard_preserving"
         for item in e2
@@ -721,6 +733,11 @@ def test_ablation_axes_expand_concrete_reduction_and_fma_states() -> None:
     )
     assert any(
         item.schedule.get("compact_reduction_topology") is True
+        for item in n1
+        if item.lowering_path_kind == "row_reduction"
+    )
+    assert any(
+        item.schedule.get("accumulator_chains", 1) > 1
         for item in n1
         if item.lowering_path_kind == "row_reduction"
     )

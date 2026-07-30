@@ -363,7 +363,8 @@ static void attachConcreteStateAttributes(
     bool elidedSharedRowMaterialization = false,
     StringRef topologyOverride = {}, int64_t stageCount = 1,
     int64_t reductionParts = 1,
-    bool prefetchedEpilogueInputBeforeSummary = false) {
+    bool prefetchedEpilogueInputBeforeSummary = false,
+    int64_t accumulatorChains = 1) {
   MLIRContext *ctx = lowered.getContext();
   unsigned fmaCount = 0;
   unsigned shuffleCount = 0;
@@ -414,6 +415,9 @@ static void attachConcreteStateAttributes(
   if (prefetchedEpilogueInputBeforeSummary)
     trace.push_back(StringAttr::get(
         ctx, "cuda.memory.prefetch_epilogue_input_before_summary.v1"));
+  if (accumulatorChains > 1)
+    trace.push_back(StringAttr::get(
+        ctx, "cuda.reduction.per_thread_multi_accumulator_tree.v1"));
 
   lowered->setAttr("intent.backend.lowering_path_kind",
                    StringAttr::get(ctx, "row_reduction"));
@@ -441,6 +445,9 @@ static void attachConcreteStateAttributes(
                    IntegerAttr::get(IntegerType::get(ctx, 64), stageCount));
   lowered->setAttr("intent.backend.reduction_parts",
                    IntegerAttr::get(IntegerType::get(ctx, 64), reductionParts));
+  lowered->setAttr("intent.backend.accumulator_chains",
+                   IntegerAttr::get(IntegerType::get(ctx, 64),
+                                    accumulatorChains));
   lowered->setAttr(
       "intent.backend.predicated_value_if_count",
       IntegerAttr::get(IntegerType::get(ctx, 64), predicatedValueIfCount));
@@ -877,6 +884,7 @@ struct RowReductionLowering {
   bool enableCompactReductionTopology;
   unsigned requestedRowsPerBlock;
   unsigned requestedReductionParts;
+  unsigned requestedAccumulatorChains;
   unsigned predicatedValueIfCount;
   unsigned foldedConstexprSelectCount;
   unsigned emittedApproximateDivCount = 0;
@@ -975,7 +983,8 @@ struct RowReductionLowering {
                        unsigned rowsPerBlock, unsigned reductionParts,
                        unsigned prefixThreads, unsigned prefixPacketWidth,
                        bool crossMultiplySupport, bool replicatePrefix,
-                       bool prefetchEpilogueInput, bool enableFrontierBallot)
+                       bool prefetchEpilogueInput, bool enableFrontierBallot,
+                       unsigned accumulatorChains)
       : fn(fn), blockThreads(bt), tileColsMax(tc),
         requestedVectorWidth(vw),
         enableFmaFusion(fuseFma),
@@ -998,6 +1007,7 @@ struct RowReductionLowering {
         enableCompactReductionTopology(compactReductionTopology),
         requestedRowsPerBlock(rowsPerBlock),
         requestedReductionParts(reductionParts),
+        requestedAccumulatorChains(accumulatorChains),
         predicatedValueIfCount(predicatedValueIfs),
         foldedConstexprSelectCount(foldedConstexprSelects) {}
 
@@ -1266,6 +1276,9 @@ struct RowReductionLowering {
     if (requestedReductionParts == 0 || requestedReductionParts > 128 ||
         (requestedReductionParts & (requestedReductionParts - 1)) != 0 ||
         (requestedReductionParts > 1 && requestedRowsPerBlock != 1))
+      return failure();
+    if (requestedAccumulatorChains != 1 && requestedAccumulatorChains != 2 &&
+        requestedAccumulatorChains != 4)
       return failure();
     if (requestedVectorWidth != 0 && requestedVectorWidth != 1 &&
         requestedVectorWidth != 4)
@@ -1989,6 +2002,10 @@ struct RowReductionLowering {
       sched.kind = KTiled;
     else
       sched.kind = KRegister;
+    if (requestedAccumulatorChains > 1 &&
+        (sched.kind != KRegister || requestedRowsPerBlock != 1 ||
+         requestedReductionParts != 1 || K < requestedAccumulatorChains))
+      return failure();
     // Cache the exact graph proof before geometry-specific admission below.
     // A multi-row scan is legal only for the sorted-prefix implementation; the
     // generic full-row scan still owns one complete workgroup per row.
@@ -2485,6 +2502,31 @@ struct RowReductionLowering {
       term = b.create<arith::SelectOp>(loc, active, term, identity);
     }
     return combineScalar(b, loc, info.op, acc, term);
+  }
+
+  /// Split a thread's serial feature strip into independent accumulator chains,
+  /// then combine those chains before the existing subgroup/workgroup tree.
+  /// One chain reproduces the previous emitted SSA exactly.  Multiple chains
+  /// expose instruction-level parallelism while remaining an explicit
+  /// observation-changing reduction tree selected only by Full search.
+  Value accumulateRegisterReductionChains(
+      OpBuilder &b, Location loc, ReduceOp red, const ReduceInfo &info,
+      Value featureLaneActive, ArrayRef<Value> featureTileActive) {
+    SmallVector<Value> accumulators;
+    accumulators.reserve(requestedAccumulatorChains);
+    for (unsigned chain = 0; chain < requestedAccumulatorChains; ++chain)
+      accumulators.push_back(
+          b.create<arith::ConstantOp>(loc, b.getF32FloatAttr(info.ident)));
+    for (int64_t k = 0; k < K; ++k) {
+      unsigned chain = static_cast<unsigned>(k) % requestedAccumulatorChains;
+      accumulators[chain] = accumulateRegisterReduction(
+          b, loc, red, info, accumulators[chain], k, featureLaneActive,
+          featureTileActive);
+    }
+    Value result = accumulators.front();
+    for (Value accumulator : ArrayRef<Value>(accumulators).drop_front())
+      result = combineScalar(b, loc, info.op, result, accumulator);
+    return result;
   }
 
   Value finalizeRegisterReductionScalar(OpBuilder &b, Location loc,
@@ -5776,12 +5818,8 @@ struct RowReductionLowering {
       // reductions are emitted in program order and hoisted after each tree.
       for (ReduceOp red : reduces) {
         ReduceInfo info = *reduceInfoFor(red.getFn());
-        Value acc =
-            b.create<arith::ConstantOp>(loc, b.getF32FloatAttr(info.ident));
-        for (int64_t k = 0; k < K; ++k)
-          acc = accumulateRegisterReduction(b, loc, red, info, acc, k,
-                                            featureLaneActive,
-                                            featureTileActive);
+        Value acc = accumulateRegisterReductionChains(
+            b, loc, red, info, featureLaneActive, featureTileActive);
         for (int32_t delta = 1; delta < 32; delta <<= 1) {
           Value other = b.create<gpu::ShuffleOp>(
                             loc, acc, delta, 32, gpu::ShuffleMode::XOR)
@@ -5796,12 +5834,8 @@ struct RowReductionLowering {
         !useCompactSingleRegisterReduction) {
       for (ReduceOp red : reduces) {
         ReduceInfo info = *reduceInfoFor(red.getFn());
-        Value acc =
-            b.create<arith::ConstantOp>(loc, b.getF32FloatAttr(info.ident));
-        for (int64_t k = 0; k < K; ++k)
-          acc = accumulateRegisterReduction(b, loc, red, info, acc, k,
-                                            featureLaneActive,
-                                            featureTileActive);
+        Value acc = accumulateRegisterReductionChains(
+            b, loc, red, info, featureLaneActive, featureTileActive);
         auto allRed = b.create<gpu::AllReduceOp>(
             loc, acc, gpu::AllReduceOperationAttr::get(ctx, info.op),
             /*uniform=*/UnitAttr::get(ctx));
@@ -5814,12 +5848,8 @@ struct RowReductionLowering {
     } else if (useCompactSingleRegisterReduction) {
       ReduceOp red = reduces.front();
       ReduceInfo info = *reduceInfoFor(red.getFn());
-      Value acc =
-          b.create<arith::ConstantOp>(loc, b.getF32FloatAttr(info.ident));
-      for (int64_t k = 0; k < K; ++k)
-        acc = accumulateRegisterReduction(b, loc, red, info, acc, k,
-                                          featureLaneActive,
-                                          featureTileActive);
+      Value acc = accumulateRegisterReductionChains(
+          b, loc, red, info, featureLaneActive, featureTileActive);
 
       // First level: every warp reduces its thread partial in five shuffles.
       Value warpAcc = acc;
@@ -5945,12 +5975,8 @@ struct RowReductionLowering {
       for (size_t index = groupStart; index < groupEnd; ++index) {
         ReduceOp red = reduces[index];
         ReduceInfo info = *reduceInfoFor(red.getFn());
-        Value acc =
-            b.create<arith::ConstantOp>(loc, b.getF32FloatAttr(info.ident));
-        for (int64_t k = 0; k < K; ++k)
-          acc = accumulateRegisterReduction(b, loc, red, info, acc, k,
-                                            featureLaneActive,
-                                            featureTileActive);
+        Value acc = accumulateRegisterReductionChains(
+            b, loc, red, info, featureLaneActive, featureTileActive);
         Value warpAcc = acc;
         for (int32_t delta = 1; delta < reduceWarpWidth; delta <<= 1) {
           Value other = b.create<gpu::ShuffleOp>(
@@ -6342,7 +6368,9 @@ struct RowReductionLowering {
             : useLeaderFinalization
                   ? StringRef("workgroup_leader_broadcast")
                   : StringRef(),
-        crossRowFinalize ? 2 : 1, requestedReductionParts);
+        crossRowFinalize ? 2 : 1, requestedReductionParts,
+        /*prefetchedEpilogueInputBeforeSummary=*/false,
+        requestedAccumulatorChains);
     fn.erase();
     return success();
   }
@@ -6385,7 +6413,7 @@ struct ConvertIntentRowReductionToGPUPass
                                  crossMultiplySupportPredicate,
                                  replicatePrefixPerWarp,
                                  prefetchEpilogueInputBeforeSummary,
-                                 frontierBallotSupport);
+                                 frontierBallotSupport, accumulatorChains);
       if (succeeded(probe.match()))
         targets.push_back(
             {fn, predicatedValueIfs, foldedConstexprSelects});
@@ -6410,7 +6438,7 @@ struct ConvertIntentRowReductionToGPUPass
                                crossMultiplySupportPredicate,
                                replicatePrefixPerWarp,
                                prefetchEpilogueInputBeforeSummary,
-                               frontierBallotSupport);
+                               frontierBallotSupport, accumulatorChains);
       if (failed(low.match()) || failed(low.rewrite())) {
         target.fn.emitError("row-reduction lowering failed after match");
         return signalPassFailure();

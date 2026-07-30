@@ -93,6 +93,7 @@ def test_cpp_authored_concrete_state_record_is_decoded_without_name_rules() -> N
           intent.backend.block_threads = 64 : i64,
           intent.backend.rows_per_block = 2 : i64,
           intent.backend.d_partitions = 4 : i64,
+          intent.backend.accumulator_chains = 2 : i64,
           intent.backend.stage_count = 3 : i64,
           intent.backend.reduction_parts = 16 : i64,
           intent.backend.fma_count = 4 : i64,
@@ -126,6 +127,8 @@ def test_cpp_authored_concrete_state_record_is_decoded_without_name_rules() -> N
     assert record.warps_per_row == 1
     assert record.d_partitions == 4
     assert record.to_dict()["d_partitions"] == 4
+    assert record.accumulator_chains == 2
+    assert record.to_dict()["accumulator_chains"] == 2
     assert record.stage_count == 3
     assert record.reduction_parts == 16
     assert record.observation_changing
@@ -136,6 +139,7 @@ def test_cpp_authored_concrete_state_record_is_decoded_without_name_rules() -> N
         fma_count=0,
         approximate_div_count=0,
         approximation_mode="none",
+        accumulator_chains=1,
     )
     assert not canonical_collective.observation_changing
     multirow_prefix = replace(

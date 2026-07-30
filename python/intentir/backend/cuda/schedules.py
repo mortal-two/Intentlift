@@ -39,6 +39,7 @@ class RowSchedule:
     cross_row_finalize: bool = False
     raw_moment_variance: bool = False
     compact_reduction_topology: bool = True
+    accumulator_chains: int = 1
 
     def __post_init__(self) -> None:
         if type(self.block_threads) is not int or self.block_threads not in _BLOCK_THREADS:
@@ -121,6 +122,17 @@ class RowSchedule:
                 "multi-row and leader-finalize schedules require the compact "
                 "reduction topology"
             )
+        if (
+            type(self.accumulator_chains) is not int
+            or self.accumulator_chains not in {1, 2, 4}
+        ):
+            raise ValueError("row schedule accumulator_chains must be 1, 2, or 4")
+        if self.accumulator_chains > 1 and (
+            self.rows_per_block != 1 or self.reduction_parts != 1
+        ):
+            raise ValueError(
+                "multi-accumulator reduction requires one row and one stage"
+            )
 
     @property
     def num_warps(self) -> int:
@@ -149,7 +161,8 @@ class RowSchedule:
             "raw-moment-variance="
             f"{'true' if self.raw_moment_variance else 'false'} "
             "compact-reduction-topology="
-            f"{'true' if self.compact_reduction_topology else 'false'}"
+            f"{'true' if self.compact_reduction_topology else 'false'} "
+            f"accumulator-chains={self.accumulator_chains}"
         )
 
     def to_dict(self) -> dict[str, int | bool]:
@@ -169,6 +182,7 @@ class RowSchedule:
             "cross_row_finalize": self.cross_row_finalize,
             "raw_moment_variance": self.raw_moment_variance,
             "compact_reduction_topology": self.compact_reduction_topology,
+            "accumulator_chains": self.accumulator_chains,
         }
 
 

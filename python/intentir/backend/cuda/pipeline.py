@@ -54,6 +54,7 @@ class MLIRTransformationRecord:
     rows_per_block: int
     warps_per_row: int
     d_partitions: int
+    accumulator_chains: int
     stage_count: int
     reduction_parts: int
     predicated_value_if_count: int
@@ -68,24 +69,31 @@ class MLIRTransformationRecord:
 
     @property
     def observation_changing(self) -> bool:
-        return self.fma_count > 0 or self.approximate_div_count > 0 or self.approximation_mode != "none" or self.reduction_topology in {
-            "subgroup_shuffle",
-            "workgroup_hierarchical",
-            "subgroup_feature",
-            "subgroup_rows",
-            "multi_warp_d_partition",
-            "cross_cta_d_partition",
-            "multi_stage_partial_finalize",
-            "sorted_prefix_early_stop",
-            "sorted_prefix_early_stop_cross_multiply",
-            "sorted_prefix_multirow_warp_early_stop",
-            "sorted_prefix_multirow_warp_scan_wide_epilogue",
-            "sorted_prefix_multirow_warp_scan_wide_epilogue_cross_multiply",
-            "sorted_prefix_warp_scan_wide_epilogue",
-            "sorted_prefix_warp_scan_wide_epilogue_cross_multiply",
-            "two_stage_cross_row_finalize",
-            "raw_moment_hierarchical",
-        }
+        return (
+            self.fma_count > 0
+            or self.approximate_div_count > 0
+            or self.approximation_mode != "none"
+            or self.accumulator_chains > 1
+            or self.reduction_topology
+            in {
+                "subgroup_shuffle",
+                "workgroup_hierarchical",
+                "subgroup_feature",
+                "subgroup_rows",
+                "multi_warp_d_partition",
+                "cross_cta_d_partition",
+                "multi_stage_partial_finalize",
+                "sorted_prefix_early_stop",
+                "sorted_prefix_early_stop_cross_multiply",
+                "sorted_prefix_multirow_warp_early_stop",
+                "sorted_prefix_multirow_warp_scan_wide_epilogue",
+                "sorted_prefix_multirow_warp_scan_wide_epilogue_cross_multiply",
+                "sorted_prefix_warp_scan_wide_epilogue",
+                "sorted_prefix_warp_scan_wide_epilogue_cross_multiply",
+                "two_stage_cross_row_finalize",
+                "raw_moment_hierarchical",
+            }
+        )
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -105,6 +113,7 @@ class MLIRTransformationRecord:
             "rows_per_block": self.rows_per_block,
             "warps_per_row": self.warps_per_row,
             "d_partitions": self.d_partitions,
+            "accumulator_chains": self.accumulator_chains,
             "stage_count": self.stage_count,
             "reduction_parts": self.reduction_parts,
             "predicated_value_if_count": self.predicated_value_if_count,
@@ -174,6 +183,9 @@ def _transformation_record(mlir: str) -> MLIRTransformationRecord | None:
     d_partitions = integer_attr("intent.backend.d_partitions")
     if d_partitions is None:
         d_partitions = 1
+    accumulator_chains = integer_attr("intent.backend.accumulator_chains")
+    if accumulator_chains is None:
+        accumulator_chains = 1
     stage_count = integer_attr("intent.backend.stage_count")
     if stage_count is None:
         stage_count = 1
@@ -225,6 +237,7 @@ def _transformation_record(mlir: str) -> MLIRTransformationRecord | None:
         or rows_per_block <= 0
         or warps_per_row <= 0
         or d_partitions not in {1, 2, 4, 8}
+        or accumulator_chains not in {1, 2, 4}
         or stage_count <= 0
         or reduction_parts <= 0
         or grid_blocks < 0
@@ -255,6 +268,7 @@ def _transformation_record(mlir: str) -> MLIRTransformationRecord | None:
         rows_per_block=rows_per_block,
         warps_per_row=warps_per_row,
         d_partitions=d_partitions,
+        accumulator_chains=accumulator_chains,
         stage_count=stage_count,
         reduction_parts=reduction_parts,
         predicated_value_if_count=int(counts["predicated_value_if_count"]),
