@@ -1,0 +1,15 @@
+{
+  "constexpr_parameters": [],
+  "frontend": "cuda",
+  "function": "main_kernel",
+  "origin_location": "dataset://TianchenIR-MultiFrontend/cuda/generated/add2d.cu",
+  "parameters": [
+    "A",
+    "B",
+    "C",
+    "M"
+  ],
+  "protocol": "intentir.scrc.frontend-source-projection.v1",
+  "source_kind": "module_file",
+  "source_location": "dataset://TianchenIR-MultiFrontend/cuda/generated/add2d.cu"
+}

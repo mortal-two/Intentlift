@@ -1,0 +1,301 @@
+{
+  "backend": "openai.codex-cli.intentir-replay.v33",
+  "formal_ingress_recheck": true,
+  "fresh_session": true,
+  "isolation": {
+    "composer_episode_local": true,
+    "composer_reads_packet": false,
+    "input": "read-only",
+    "output_work_tmp": "write-only-scope",
+    "provider_secret_in_tool_env": false,
+    "source_blind": true,
+    "tool_network": "disabled"
+  },
+  "packet_queries": [],
+  "pi_min_ownership": {
+    "artifact_schema": "intentir.scrc.artifact.v12",
+    "claim_scope": "proof-irrelevant ownership receipt; it neither proves zero statistical information nor changes TypeCheck, Replay, Gate1, or Gate2 acceptance",
+    "masked_j": false,
+    "pi_authority": "J/C-dependent realization constraints only",
+    "pi_closed_fields": [
+      "instances",
+      "iterations",
+      "loop_carriers",
+      "order",
+      "physical_iterations",
+      "physical_loop_carriers",
+      "program_axes",
+      "refinements",
+      "regions",
+      "route_extent_transforms",
+      "routes",
+      "sharing",
+      "terminal_controls"
+    ],
+    "protocol": "intentir.pi-min.ownership-receipt.v1",
+    "relation_counts": {
+      "instances": 13,
+      "iterations": 0,
+      "loop_carriers": 0,
+      "order": 0,
+      "physical_iterations": 0,
+      "physical_loop_carriers": 0,
+      "program_axes": 1,
+      "refinements": 0,
+      "regions": 2,
+      "route_extent_transforms": 0,
+      "routes": 16,
+      "sharing": 2,
+      "terminal_controls": 0
+    },
+    "semantic_authority": "J only",
+    "status": "pass",
+    "validation_basis": [
+      "canonical Gate1Artifact closed-schema decode",
+      "TypeCheck(J,C,pi)=PASS before Replay packet construction",
+      "closed source-isolated Replay payload grammar"
+    ]
+  },
+  "protocol": "intentir.codex-cli.agent-runtime.v3",
+  "replay_check": [
+    {
+      "diagnostics": [],
+      "source_sha256": "01a20a945676ef44a7bf1318a1d2381faeda6efccf98ce4e0661fc2b9d04edc2",
+      "status": "pass",
+      "trigger": "host_post_turn"
+    }
+  ],
+  "replay_compile_check": [
+    {
+      "diagnostics": [],
+      "source_sha256": "01a20a945676ef44a7bf1318a1d2381faeda6efccf98ce4e0661fc2b9d04edc2",
+      "status": "pass",
+      "trigger": "host_post_turn"
+    }
+  ],
+  "replay_obligation_audits": [
+    {
+      "broadcast_obligation_count": 0,
+      "cross_region_order_count": 0,
+      "identity_materialization_count": 0,
+      "lexical_region_count": 0,
+      "program_axis_count": 1,
+      "route_extent_transform_count": 0,
+      "source_sha256": "01a20a945676ef44a7bf1318a1d2381faeda6efccf98ce4e0661fc2b9d04edc2"
+    }
+  ],
+  "replay_ttir_inspections": [],
+  "syntax_composer": {
+    "actions": {
+      "install": 1
+    },
+    "authority": "proof-irrelevant episode-local syntax telemetry only; it is not trusted for J/pi consumption, Source equivalence, or Gate closure",
+    "checkpoint_available": false,
+    "frontend": "cuda",
+    "host_events": [],
+    "installed": true,
+    "last_action": "install",
+    "layout_profile": "c_like",
+    "node_count": 0,
+    "node_kinds": {},
+    "output_matches_last_render": false,
+    "protocol": "intentir.replay.syntax-composer.v1",
+    "revision": 0,
+    "source_map_nodes": 0,
+    "source_map_revision_matches_state": null,
+    "status": "pass",
+    "used": false
+  },
+  "thread_id": "019fb47d-10e9-7d91-a429-1f96d18db4be",
+  "thread_ids": [
+    "019fb47d-10e9-7d91-a429-1f96d18db4be"
+  ],
+  "timeout_events": [],
+  "tool_bridge": {
+    "authority": "diagnostic-only callbacks over exact host-read output bytes; no artifact or Replay field is generated or edited",
+    "calls": 2,
+    "protocol": "intentir.codex-cli.tool-bridge.v3",
+    "receipts": [
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 3.2482428941875696,
+        "result_sha256": "3e040bf80eb0c67efa18d8ca084dd7fa3159600e40a6b615824ef6621493db12",
+        "status": "pass",
+        "tool": "replay_obligation_audit"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 398.62210396677256,
+        "result_sha256": "5b5bebf3072df3e9dbb6444a9c41882a676aa533862348f02be90c27e603c009",
+        "status": "pass",
+        "tool": "submit_replay"
+      }
+    ],
+    "transport": "isolated_workspace_file_mailbox"
+  },
+  "turns": [
+    {
+      "elapsed_ms": 70303.60950902104,
+      "events": [
+        {
+          "thread_id": "019fb47d-10e9-7d91-a429-1f96d18db4be",
+          "type": "thread.started"
+        },
+        {
+          "type": "turn.started"
+        },
+        {
+          "item": {
+            "id": "item_0",
+            "text": "I’ll read the packet once, reconcile its full operation and topology ledger as a whole, then author the complete replay early. After that I’ll run the mandatory obligation audit and transactional submission, revising only from those source-blind checks.",
+            "type": "agent_message"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c 'cat input/packet.json'",
+            "exit_code": null,
+            "id": "item_1",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "{\"c\": {\"slots\": [{\"kind\": \"compiler\", \"name\": \"c0\", \"required\": true, \"role\": \"launch_block_x\", \"value_type\": \"i32\"}]}, \"j\": {\"boundary\": {\"access_guard_relations\": [], \"accesses\": [{\"access_id\": \"a0\", \"index_expression\": \"[v1, v2]\", \"kind\": \"load\", \"node_ref\": \"n0\", \"tensor\": \"t0\"}, {\"access_id\": \"a1\", \"index_expression\": \"[v1, v2]\", \"kind\": \"load\", \"node_ref\": \"n0\", \"tensor\": \"t1\"}, {\"access_id\": \"a2\", \"index_expression\": \"[v1, v2]\", \"kind\": \"store\", \"node_ref\": \"n0\", \"tensor\": \"t2\"}], \"aliases\": [], \"broadcasts\": [], \"consumer_extensions\": [], \"domains\": {\"d0\": \"(0 <= v1) and (v1 < x0)\", \"d1\": \"(0 <= v2) and (v2 < 16)\"}, \"effects\": [{\"access_ref\": \"a0\", \"effect_id\": \"e0\", \"kind\": \"read\", \"node_ref\": \"n0\", \"target\": \"t0\"}, {\"access_ref\": \"a1\", \"effect_id\": \"e1\", \"kind\": \"read\", \"node_ref\": \"n0\", \"target\": \"t1\"}, {\"access_ref\": \"a2\", \"effect_id\": \"e2\", \"kind\": \"write\", \"node_ref\": \"n0\", \"target\": \"t2\"}], \"index_bounds\": [], \"output_mappings\": [], \"realization_authorizations\": [], \"reductions\": [], \"result_relations\": [{\"kind\": \"tolerance\", \"output\": \"t2\"}], \"updates\": []}, \"dimension_constraints\": [\"x0 >= 0\"], \"dimension_relations\": [], \"intent\": {\"intent_function\": {\"body\": [{\"attrs\": {\"fn\": \"add\"}, \"op\": \"map_binary\", \"operands\": [\"t0\", \"t1\"], \"result\": \"t2\", \"type\": {\"dtype\": \"f32\", \"shape\": [\"x0\", 16]}}], \"inputs\": [{\"dtype\": \"f32\", \"name\": \"t0\", \"shape\": [\"x0\", 16]}, {\"dtype\": \"f32\", \"name\": \"t1\", \"shape\": [\"x0\", 16]}], \"name\": \"scrc_intent0\", \"outputs\": [{\"dtype\": \"f32\", \"name\": \"t2\", \"shape\": [\"x0\", 16]}]}}, \"kernel_id\": \"scrc_j0\", \"node_ids\": {\"n0\": \"body[0]\"}, \"scopes\": [{\"captures\": [], \"definitions\": [\"t0\", \"t1\", \"t2\"], \"effects\": [\"e0\", \"e1\", \"e2\"], \"kind\": \"function\", \"parent_scope\": null, \"scope_id\": \"q0\"}], \"signature\": {\"parameters\": [{\"dtype\": \"f32\", \"kind\": \"pointer\", \"logical_ref\": \"t0\", \"mode\": \"input\", \"name\": \"p0\", \"rank\": 2}, {\"dtype\": \"f32\", \"kind\": \"pointer\", \"logical_ref\": \"t1\", \"mode\": \"input\", \"name\": \"p1\", \"rank\": 2}, {\"dtype\": \"f32\", \"kind\": \"pointer\", \"logical_ref\": \"t2\", \"mode\": \"output\", \"name\": \"p2\", \"rank\": 2}, {\"dtype\": \"i32\", \"kind\": \"scalar\", \"logical_ref\": \"x0\", \"mode\": \"value\", \"name\": \"p3\", \"rank\": 0}]}, \"storage\": [], \"value_dimension_relations\": []}, \"pi\": {\"instances\": [{\"id\": \"i0\", \"mechanism\": \"realize\", \"region\": \"r1\", \"semantic_ref\": \"d0\"}, {\"id\": \"i1\", \"mechanism\": \"address_base\", \"region\": \"r1\", \"semantic_ref\": \"d0\"}, {\"id\": \"i2\", \"mechanism\": \"realize\", \"region\": \"r1\", \"semantic_ref\": \"d1\"}, {\"id\": \"i3\", \"mechanism\": \"realize\", \"region\": \"r1\", \"semantic_ref\": \"p0\"}, {\"id\": \"i4\", \"mechanism\": \"address_lane\", \"region\": \"r1\", \"semantic_ref\": \"a0\"}, {\"id\": \"i5\", \"mechanism\": \"transfer_direct\", \"region\": \"r1\", \"semantic_ref\": \"a0\"}, {\"id\": \"i6\", \"mechanism\": \"realize\", \"region\": \"r1\", \"semantic_ref\": \"p1\"}, {\"id\": \"i7\", \"mechanism\": \"address_lane\", \"region\": \"r1\", \"semantic_ref\": \"a1\"}, {\"id\": \"i8\", \"mechanism\": \"transfer_direct\", \"region\": \"r1\", \"semantic_ref\": \"a1\"}, {\"id\": \"i9\", \"mechanism\": \"realize\", \"region\": \"r1\", \"semantic_ref\": \"n0\"}, {\"id\": \"i10\", \"mechanism\": \"realize\", \"region\": \"r1\", \"semantic_ref\": \"p2\"}, {\"id\": \"i11\", \"mechanism\": \"address_lane\", \"region\": \"r1\", \"semantic_ref\": \"a2\"}, {\"id\": \"i12\", \"mechanism\": \"transfer_direct\", \"region\": \"r1\", \"semantic_ref\": \"a2\"}], \"iterations\": [], \"loop_carriers\": [], \"order\": [], \"physical_iterations\": [], \"physical_loop_carriers\": [], \"program_axes\": [{\"axis\": 0, \"domain_ref\": \"d0\"}], \"refinements\": [], \"regions\": [{\"id\": \"r0\", \"parent\": null, \"placement\": \"root\"}, {\"id\": \"r1\", \"parent\": \"r0\", \"placement\": \"program\"}], \"route_extent_transforms\": [], \"routes\": [{\"slots\": [0], \"source\": \"i0\", \"target\": \"i1\"}, {\"slots\": [0], \"source\": \"i1\", \"target\": \"i4\"}, {\"slots\": [1], \"source\": \"i2\", \"target\": \"i4\"}, {\"slots\": [2], \"source\": \"i3\", \"target\": \"i4\"}, {\"slots\": [0], \"source\": \"i4\", \"target\": \"i5\"}, {\"slots\": [0], \"source\": \"i1\", \"target\": \"i7\"}, {\"slots\": [1], \"source\": \"i2\", \"target\": \"i7\"}, {\"slots\": [2], \"source\": \"i6\", \"target\": \"i7\"}, {\"slots\": [0], \"source\": \"i7\", \"target\": \"i8\"}, {\"slots\": [0], \"source\": \"i5\", \"target\": \"i9\"}, {\"slots\": [1], \"source\": \"i8\", \"target\": \"i9\"}, {\"slots\": [0], \"source\": \"i1\", \"target\": \"i11\"}, {\"slots\": [1], \"source\": \"i2\", \"target\": \"i11\"}, {\"slots\": [2], \"source\": \"i10\", \"target\": \"i11\"}, {\"slots\": [0], \"source\": \"i11\", \"target\": \"i12\"}, {\"slots\": [1], \"source\": \"i9\", \"target\": \"i12\"}], \"sharing\": [{\"consumers\": [\"i4\", \"i7\", \"i11\"], \"source\": \"i1\"}, {\"consumers\": [\"i4\", \"i7\", \"i11\"], \"source\": \"i2\"}], \"terminal_controls\": []}, \"u_f\": {\"compile_entry_contract\": \"Return one standalone CUDA C++ translation unit containing exactly one `extern \\\"C\\\" __global__` kernel named `scrc_k0`. Its positional runtime parameters follow J.signature; C values are external schedule bindings and are not runtime parameters. A MaskC compiler slot with role `launch_block_x|y|z` is bound by the Harness launch: never name its c* handle in the kernel body or replace public `blockDim.x|y|z` with a guessed value. Use only public CUDA language constructs and intrinsics. Do not emit host code, launch syntax, file I/O, inline PTX, build directives, or `main`. A program-region domain path entering address_base maps to `blockIdx.x|y|z` only through its exact pi.program_axes axis binding; never assign axes by declaration order or instance multiplicity. A lane path maps to the authored participant topology using public `threadIdx`/`blockDim`. Only pi.iterations or pi.physical_iterations authorizes a serial loop. A J reduce fed by a lane-realized reduced domain remains a participant collective using public CUDA intrinsics; never make every thread traverse the whole logical axis. Preserve every distinct transfer, realization, region, sharing, and order stage. A boundary access without a predicate is unconditional and never authorizes an invented lane-leader guard.\", \"frontend\": \"cuda\", \"protocol\": \"intentir.scrc.replay-input.v2\", \"replay_function\": \"scrc_k0\", \"retrieval_scope\": \"public CUDA C++ programming documentation and examples\", \"tool_access\": [\"public_document_lookup\"]}}\n",
+            "command": "/bin/bash -c 'cat input/packet.json'",
+            "exit_code": 0,
+            "id": "item_1",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "id": "item_2",
+            "text": "The packet is internally complete: one CUDA program region, `blockIdx.x` for the authored program axis, one lane coordinate for the fixed inner domain, three distinct address-lane stages, two direct loads, one `f32` add realization, and one direct store. There are no guards, loops, broadcasts, extent transforms, or authored order edges, so I’m keeping every access unconditional and introducing none of those structures.",
+            "type": "agent_message"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "changes": [
+              {
+                "kind": "add",
+                "path": "/workspace/output/replay.source"
+              }
+            ],
+            "id": "item_3",
+            "status": "in_progress",
+            "type": "file_change"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "changes": [
+              {
+                "kind": "add",
+                "path": "/workspace/output/replay.source"
+              }
+            ],
+            "id": "item_3",
+            "status": "completed",
+            "type": "file_change"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py replay_obligation_audit'",
+            "exit_code": null,
+            "id": "item_4",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "{\"audit_required\": true, \"authority\": \"exact current Replay bytes plus exact source-isolated pi projection; no Source, Gate evidence, inference, mapping, diagnosis, repair, or acceptance decision\", \"broadcast_obligations\": [], \"cross_region_order\": [], \"identity_materializations\": [], \"lexical_regions\": [], \"program_axes\": [{\"axis\": 0, \"domain_ref\": \"d0\"}], \"protocol\": \"intentir.replay-obligation-audit.v4\", \"route_extent_transforms\": [], \"source_nonempty_lines\": [{\"indent\": 0, \"line\": 1, \"text\": \"extern \\\"C\\\" __global__ void scrc_k0(\"}, {\"indent\": 4, \"line\": 2, \"text\": \"const float* p0,\"}, {\"indent\": 4, \"line\": 3, \"text\": \"const float* p1,\"}, {\"indent\": 4, \"line\": 4, \"text\": \"float* p2,\"}, {\"indent\": 4, \"line\": 5, \"text\": \"int p3) {\"}, {\"indent\": 2, \"line\": 6, \"text\": \"const int v1 = static_cast<int>(blockIdx.x);\"}, {\"indent\": 2, \"line\": 7, \"text\": \"const int v2 = static_cast<int>(threadIdx.x);\"}, {\"indent\": 2, \"line\": 8, \"text\": \"const int base = v1 * 16;\"}, {\"indent\": 2, \"line\": 10, \"text\": \"const float* a0 = p0 + base + v2;\"}, {\"indent\": 2, \"line\": 11, \"text\": \"const float x = *a0;\"}, {\"indent\": 2, \"line\": 13, \"text\": \"const float* a1 = p1 + base + v2;\"}, {\"indent\": 2, \"line\": 14, \"text\": \"const float y = *a1;\"}, {\"indent\": 2, \"line\": 16, \"text\": \"const float z = x + y;\"}, {\"indent\": 2, \"line\": 18, \"text\": \"float* a2 = p2 + base + v2;\"}, {\"indent\": 2, \"line\": 19, \"text\": \"*a2 = z;\"}, {\"indent\": 0, \"line\": 20, \"text\": \"}\"}], \"source_sha256\": \"01a20a945676ef44a7bf1318a1d2381faeda6efccf98ce4e0661fc2b9d04edc2\", \"status\": \"pass\"}\n",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py replay_obligation_audit'",
+            "exit_code": 0,
+            "id": "item_4",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "id": "item_5",
+            "text": "The numbered-byte audit matches the ledger: the sole program-axis binding is present at line 6, and every checklist that could require extra lexical/order/broadcast/identity/extent structure is exactly empty. The shared base and lane coordinates feed all three distinct address stages, while each transfer remains separately materialized. I’m submitting these exact audited bytes now.",
+            "type": "agent_message"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py submit_replay'",
+            "exit_code": null,
+            "id": "item_6",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "{\"authority\": \"diagnostic-only; no Replay source is generated or repaired\", \"compile\": {\"diagnostics\": [], \"protocol\": \"intentir.scrc.replay-check.v15\", \"status\": \"pass\"}, \"ingress\": {\"diagnostic_progress\": {\"authority\": \"mechanical episode-local observation only; it neither edits Replay nor changes ingress or Gate1 membership\", \"replay_source_changed_since_previous_check\": false, \"same_rule_path_streak\": 0}, \"diagnostics\": [], \"protocol\": \"intentir.scrc.replay-check.v15\", \"status\": \"pass\"}, \"phase\": \"compile\", \"protocol\": \"intentir.codex-cli.replay-submit.v1\", \"status\": \"pass\"}\n",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py submit_replay'",
+            "exit_code": 0,
+            "id": "item_6",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "id": "item_7",
+            "text": "Created [output/replay.source](/workspace/output/replay.source).\n\n- Obligation audit: passed\n- Source-blind ingress: passed\n- Synthetic CUDA compile check: passed\n- Submission transaction: passed",
+            "type": "agent_message"
+          },
+          "type": "item.completed"
+        },
+        {
+          "type": "turn.completed",
+          "usage": {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 58112,
+            "input_tokens": 68840,
+            "output_tokens": 1612,
+            "reasoning_output_tokens": 928
+          }
+        }
+      ],
+      "model_segments": 4,
+      "protocol": "intentir.codex-cli.agent-runtime.v3",
+      "resumed": false,
+      "stderr": "Reading additional input from stdin...\n",
+      "thread_id": "019fb47d-10e9-7d91-a429-1f96d18db4be",
+      "tool_actions": 4,
+      "usage": {
+        "cache_write_input_tokens": 0,
+        "cached_input_tokens": 58112,
+        "input_tokens": 68840,
+        "output_tokens": 1612,
+        "reasoning_output_tokens": 928
+      }
+    }
+  ]
+}

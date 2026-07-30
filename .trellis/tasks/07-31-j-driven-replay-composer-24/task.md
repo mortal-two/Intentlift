@@ -1,6 +1,6 @@
 # Task 24：J 主导的 π_min 与三前端 Episode-Local Composer Replay
 
-> 状态：`P5_TILELANG_ADD2D_CERTIFIED_CUDA_INFRA_FIXED_RERUN_PENDING`（2026-07-31）。
+> 状态：`P5_ADD2D_CROSS_FRONTEND_CERTIFIED_COMPLEX_CASE_PENDING`（2026-07-31）。
 >
 > 定位：Task 15/Task 11 的 Replay 构造机制升级，以及 Task 23 多前端实证的真实 closure 执行线。
 > 本任务不接管 production backend；backend 仍在 SCRC 后只消费 accepted `J+C`。
@@ -134,7 +134,25 @@ Replay，`gpt-5.6-sol high`，Mask-J配置开启）：
 - 通用修复是保留`CudaCompileCase.schedule`用于C绑定、cache key和PTX observer，但禁止把它物化为
   `-D`。没有修改dataset、Source、J/π、observer或case-specific规则；
 - 修复后对同一Dataset Source、同一Harness case直接重编译成功：NVCC 12.8、`sm_120`、PTX 2140
-  bytes、空诊断。正式provider fresh rerun待执行。
+  bytes、空诊断。
+
+### Pilot D：修复后的CUDA fresh certification
+
+`cuda:tilelang_add2d / .trellis/tasks/07-31-j-driven-replay-composer-24/runs/cuda_tilelang_add2d/run-002`
+（Codex Lift + Codex Replay，`gpt-5.6-sol high`，Mask-J开启）：
+
+- 没有复用Pilot C artifact或会话；fresh run最终为`SCRC_CERTIFIED`，accepted attempt 1、formal
+  Gate1 round 1；Lift 1次逻辑调用、8个physical provider segments；
+- CUDA hard observer为`cuda_ptx_semantic_effects@cuda-ptx-semantic-effects-v3`。normal臂的interface、
+  target、coordinate uses、memory effects、value operations、control flow和collectives全部hard pass；
+  cache/load形式等raw PTX topology差异仍只保留为diagnostic；
+- masked臂由独立writer和独立fresh session生成，`coordinate_uses` hard mismatch，故
+  `J_NECESSARY=proved`；
+- 三边Gate2均通过且`max_abs_error=0`，Source、Replay和RefEval(J)各真实执行一次；
+- normal Replay为1个CLI turn、4个provider segments、4个tool actions、70.304秒；masked Replay为
+  1个CLI turn、6个provider segments、6个tool actions、130.303秒；
+- CUDA C-like Composer在两臂均安装但`used=false`。因此当前证明的是共享Composer机制不妨碍两种
+  原生前端closure，尚未证明它带来效率收益；下一阶段必须转向row_sum/gather等结构化case。
 
 ## 3. 交付物
 

@@ -1,0 +1,102 @@
+{
+  "attempts": 1,
+  "backend_protocol": "openai.codex-cli.intentir-replay.v33",
+  "context_receipt": {
+    "backend_protocol": "openai.codex-cli.intentir-replay.v33",
+    "cli_turns": 1,
+    "context_rollover_input_tokens": 0,
+    "episode_wall_time_limit_seconds": 1200.0,
+    "formal_compile_recheck": true,
+    "formal_ingress_protocol": "intentir.scrc.replay-check.v15",
+    "fresh_session": true,
+    "model_segments_lower_bound": 6,
+    "pi_min_ownership": {
+      "artifact_schema": "intentir.scrc.artifact.v12",
+      "claim_scope": "proof-irrelevant ownership receipt; it neither proves zero statistical information nor changes TypeCheck, Replay, Gate1, or Gate2 acceptance",
+      "masked_j": true,
+      "pi_authority": "J/C-dependent realization constraints only",
+      "pi_closed_fields": [
+        "instances",
+        "iterations",
+        "loop_carriers",
+        "order",
+        "physical_iterations",
+        "physical_loop_carriers",
+        "program_axes",
+        "refinements",
+        "regions",
+        "route_extent_transforms",
+        "routes",
+        "sharing",
+        "terminal_controls"
+      ],
+      "protocol": "intentir.pi-min.ownership-receipt.v1",
+      "relation_counts": {
+        "instances": 13,
+        "iterations": 0,
+        "loop_carriers": 0,
+        "order": 0,
+        "physical_iterations": 0,
+        "physical_loop_carriers": 0,
+        "program_axes": 1,
+        "refinements": 0,
+        "regions": 2,
+        "route_extent_transforms": 0,
+        "routes": 16,
+        "sharing": 2,
+        "terminal_controls": 0
+      },
+      "semantic_authority": "J only",
+      "status": "pass",
+      "validation_basis": [
+        "canonical Gate1Artifact closed-schema decode",
+        "TypeCheck(J,C,pi)=PASS before Replay packet construction",
+        "closed source-isolated Replay payload grammar"
+      ]
+    },
+    "replay_input_protocol": "intentir.scrc.replay-input.v2",
+    "retrieval_trace": [],
+    "syntax_composer": {
+      "actions": {
+        "install": 1
+      },
+      "authority": "proof-irrelevant episode-local syntax telemetry only; it is not trusted for J/pi consumption, Source equivalence, or Gate closure",
+      "checkpoint_available": false,
+      "frontend": "cuda",
+      "host_events": [],
+      "installed": true,
+      "last_action": "install",
+      "layout_profile": "c_like",
+      "node_count": 0,
+      "node_kinds": {},
+      "output_matches_last_render": false,
+      "protocol": "intentir.replay.syntax-composer.v1",
+      "revision": 0,
+      "source_map_nodes": 0,
+      "source_map_revision_matches_state": null,
+      "status": "pass",
+      "used": false
+    },
+    "thread_id": "019fb47e-26fd-7493-a648-8df5284a4e8a",
+    "thread_ids": [
+      "019fb47e-26fd-7493-a648-8df5284a4e8a"
+    ],
+    "tool_actions": 6
+  },
+  "elapsed_ms": 130303.04558901116,
+  "function_name": "scrc_k0",
+  "model": "gpt-5.6-sol",
+  "physical_provider_calls": 6,
+  "recorded": true,
+  "response_id": "019fb47e-26fd-7493-a648-8df5284a4e8a",
+  "response_model": "gpt-5.6-sol",
+  "status": "generated",
+  "transport_retries": 0,
+  "usage": {
+    "cache_write_input_tokens": 0,
+    "cached_input_tokens": 88576,
+    "input_tokens": 112852,
+    "output_tokens": 3308,
+    "reasoning_output_tokens": 2326
+  }
+}
