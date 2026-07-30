@@ -18,7 +18,7 @@
 ```
 
 Source 用于判断逻辑语义，compiler view用于观察def-use、control、loop、address、materialization与sharing。
-brief和查询只是现有Source/Harness/observer事实的有界投影；它们不映射IntentOp、不生成字段、不补全J/C/π。
+brief和查询只是现有Source/Harness/observer事实的有界投影；重复展开的program-address表达式会被无损因式分解成可分页的共享DAG，Schema工具只列出真实合法的section/op并按名返回原始closed schema。二者都不映射IntentOp、不生成字段、不补全J/C/π。
 
 新 frontend 仍只需已有的：
 

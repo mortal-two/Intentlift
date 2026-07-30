@@ -484,6 +484,136 @@ def _source_observer(input_root: Path, path: str | None) -> None:
     _emit_json(_source_observer_value(input_root))
 
 
+def _program_address_dag_value(input_root: Path) -> dict[str, Any]:
+    """Factor exact program-address expression trees into one shared DAG.
+
+    The Gate1 observer stores every address expression as a closed canonical
+    tuple.  Several routes may contain the same large prefix, so printing one
+    map at a time needlessly repeats tens of thousands of characters.  This
+    projection only interns byte-identical tuples and gives them dense local
+    handles; it does not classify a route or map it to J/C/pi.
+    """
+
+    observation = _source_ttir_observation(input_root)
+    fingerprint = observation.get("fingerprint")
+    if not isinstance(fingerprint, dict):
+        raise TypeError("Source compiler observation has no fingerprint object")
+    raw_maps = fingerprint.get("program_address_maps", [])
+    if not isinstance(raw_maps, list):
+        raise TypeError("fingerprint.program_address_maps must be an array")
+
+    nodes: list[dict[str, Any] | None] = []
+    node_ids: dict[str, str] = {}
+
+    def intern(expression: Any) -> str:
+        key = json.dumps(
+            expression, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        )
+        existing = node_ids.get(key)
+        if existing is not None:
+            return existing
+        node_id = f"e{len(nodes)}"
+        node_ids[key] = node_id
+        position = len(nodes)
+        nodes.append(None)
+        if (
+            isinstance(expression, list)
+            and len(expression) == 2
+            and expression[0] == "leaf"
+        ):
+            node = {"id": node_id, "kind": "leaf", "label": expression[1]}
+        elif (
+            isinstance(expression, list)
+            and len(expression) == 7
+            and expression[0] == "op"
+            and isinstance(expression[6], list)
+        ):
+            node = {
+                "id": node_id,
+                "kind": "op",
+                "op": expression[1],
+                "local_signature": expression[2],
+                "result_contract": expression[3],
+                "result_slot": expression[4],
+                "constant": expression[5],
+                "operands": [intern(child) for child in expression[6]],
+            }
+        else:
+            raise ValueError(
+                "program-address expression is outside the closed Gate1 tuple grammar"
+            )
+        nodes[position] = node
+        return node_id
+
+    maps: list[dict[str, Any]] = []
+    for index, raw_map in enumerate(raw_maps):
+        if not isinstance(raw_map, dict):
+            raise TypeError("program-address map must be an object")
+        maps.append(
+            {
+                "index": index,
+                "base_root": intern(raw_map.get("base_expression")),
+                "offset_root": intern(raw_map.get("offset_expression")),
+                "result_contract": raw_map.get("result_contract"),
+                "region_context": raw_map.get("region_context"),
+            }
+        )
+    return {
+        "protocol": "intentir.lift-program-address-dag.v1",
+        "maps": maps,
+        "nodes": [node for node in nodes if node is not None],
+        "authority": (
+            "Exact reversible factoring of the compiler observer's canonical "
+            "program-address tuples. Dense e* handles only remove repeated bytes; "
+            "Lift alone decides whether and how any route is represented in J/C/pi."
+        ),
+    }
+
+
+def _program_address_dag(input_root: Path, start: int, count: int) -> None:
+    if start < 1 or count < 1 or count > 200:
+        raise ValueError("program-address start/count must be positive and count <= 200")
+    value = _program_address_dag_value(input_root)
+    nodes = value.pop("nodes")
+    selected: list[dict[str, Any]] = []
+    for node in nodes[start - 1 : start - 1 + count]:
+        trial = selected + [node]
+        if len(json.dumps(trial, sort_keys=True, ensure_ascii=False)) > MAX_OUTPUT_CHARS - 2_000:
+            break
+        selected = trial
+    next_start = start + len(selected)
+    value.update(
+        {
+            "node_start": start,
+            "node_returned": len(selected),
+            "node_total": len(nodes),
+            "nodes": selected,
+            "next_command": (
+                f"{QUERY_COMMAND} source-address-dag --start {next_start} --count {count}"
+                if next_start <= len(nodes)
+                else None
+            ),
+            "single_node_command": f"{QUERY_COMMAND} source-address-node eN",
+        }
+    )
+    _emit_json(value)
+
+
+def _program_address_node(input_root: Path, node_id: str) -> None:
+    value = _program_address_dag_value(input_root)
+    for node in value["nodes"]:
+        if node.get("id") == node_id:
+            _emit_json(
+                {
+                    "protocol": value["protocol"],
+                    "node": node,
+                    "authority": value["authority"],
+                }
+            )
+            return
+    raise KeyError(f"unknown program-address node {node_id!r}")
+
+
 def _bounded_preview(value: Any, *, item_limit: int, char_limit: int) -> dict[str, Any]:
     """Return an exact prefix plus a receipt, without interpreting its meaning."""
 
@@ -555,7 +685,9 @@ def _source_brief(input_root: Path) -> None:
         )
         if preview["truncated"]:
             preview["exact_query"] = (
-                f"{QUERY_COMMAND} source-observer --path fingerprint.{name}"
+                f"{QUERY_COMMAND} source-address-dag --start 1 --count 24"
+                if name == "program_address_maps"
+                else f"{QUERY_COMMAND} source-observer --path fingerprint.{name}"
             )
         compiler_sections[name] = preview
 
@@ -634,7 +766,9 @@ def _source_brief(input_root: Path) -> None:
             preview["truncated"] = bool(preview["total"])
             if preview["truncated"]:
                 preview["exact_query"] = (
-                    f"{QUERY_COMMAND} source-observer --path fingerprint.{name}"
+                    f"{QUERY_COMMAND} source-address-dag --start 1 --count 24"
+                    if name == "program_address_maps"
+                    else f"{QUERY_COMMAND} source-observer --path fingerprint.{name}"
                 )
     if rendered_chars() > MAX_OUTPUT_CHARS:
         value["source"]["items"] = value["source"]["items"][:6]
@@ -2202,6 +2336,11 @@ def main() -> int:
     source_ttir_outline.add_argument("--count", type=int, default=80)
     source_observer = subparsers.add_parser("source-observer")
     source_observer.add_argument("--path")
+    source_address_dag = subparsers.add_parser("source-address-dag")
+    source_address_dag.add_argument("--start", type=int, default=1)
+    source_address_dag.add_argument("--count", type=int, default=24)
+    source_address_node = subparsers.add_parser("source-address-node")
+    source_address_node.add_argument("node_id")
     subparsers.add_parser("source-brief")
     harness = subparsers.add_parser("harness")
     harness.add_argument("--path")
@@ -2271,6 +2410,10 @@ def main() -> int:
         _source_ttir_outline(args.input_root, args.start, args.count)
     elif args.command == "source-observer":
         _source_observer(args.input_root, args.path)
+    elif args.command == "source-address-dag":
+        _program_address_dag(args.input_root, args.start, args.count)
+    elif args.command == "source-address-node":
+        _program_address_node(args.input_root, args.node_id)
     elif args.command == "source-brief":
         _source_brief(args.input_root)
     elif args.command == "harness":

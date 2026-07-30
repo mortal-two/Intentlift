@@ -11,8 +11,24 @@ from typing import Any
 
 
 _OP_HEADING = re.compile(r"^  ([a-z][a-z0-9_]*)\s*:")
-_DEFAULT_SCHEMA = "/input/schema/artifact.schema.json"
-_COMMANDS = {"top", "catalog", "op", "section", "bundle"}
+_BUNDLED_INPUT_ROOT = (
+    Path("/input")
+    if Path("/input").is_dir()
+    else Path(__file__).resolve().parents[1]
+)
+_DEFAULT_SCHEMA = str(_BUNDLED_INPUT_ROOT / "schema" / "artifact.schema.json")
+_DEFAULT_OPS_REFERENCE = str(
+    _BUNDLED_INPUT_ROOT / "knowledge" / "intent_ops.md"
+)
+_COMMANDS = {
+    "top",
+    "catalog",
+    "sections",
+    "authoring-brief",
+    "op",
+    "section",
+    "bundle",
+}
 
 
 def _load_json(path: str) -> dict[str, Any]:
@@ -73,6 +89,20 @@ def _catalog(reference: str) -> None:
     print("ordinary operations: " + ", ".join(sections))
     print("structured operations: loop, effect_if, value_if")
     print("Use `op NAME` to print only one operation contract.")
+
+
+def _section_catalog(schema: dict[str, Any]) -> None:
+    names = list(_sections(schema))
+    print("artifact sections: " + ", ".join(names))
+    print("Use `section NAME` to print the exact closed schema for one item.")
+
+
+def _authoring_brief(schema: dict[str, Any], reference: str) -> None:
+    """Print one compact source-neutral navigation index, never a template."""
+
+    _top(schema)
+    _section_catalog(schema)
+    _catalog(reference)
 
 
 def _op(schema: dict[str, Any], reference: str, name: str) -> None:
@@ -177,13 +207,18 @@ def _bundle(schema: dict[str, Any], reference: str, items: list[str]) -> None:
             _top(schema)
         elif item == "catalog":
             _catalog(reference)
+        elif item == "sections":
+            _section_catalog(schema)
+        elif item == "authoring-brief":
+            _authoring_brief(schema, reference)
         elif item.startswith("op:") and len(item) > 3:
             _op(schema, reference, item[3:])
         elif item.startswith("section:") and len(item) > 8:
             _section(schema, item[8:])
         else:
             raise ValueError(
-                "bundle items must be top, catalog, op:NAME, or section:NAME"
+                "bundle items must be top, catalog, sections, authoring-brief, "
+                "op:NAME, or section:NAME"
             )
 
 
@@ -192,12 +227,14 @@ def main() -> int:
     parser.add_argument("schema")
     parser.add_argument(
         "--ops-reference",
-        default="/input/knowledge/intent_ops.md",
+        default=_DEFAULT_OPS_REFERENCE,
         help="source-neutral operation reference mounted for this Lift round",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("top")
     subparsers.add_parser("catalog")
+    subparsers.add_parser("sections")
+    subparsers.add_parser("authoring-brief")
     op_parser = subparsers.add_parser("op")
     op_parser.add_argument("name")
     section_parser = subparsers.add_parser("section")
@@ -213,6 +250,10 @@ def main() -> int:
         _top(schema)
     elif args.command == "catalog":
         _catalog(_load_text(args.ops_reference))
+    elif args.command == "sections":
+        _section_catalog(schema)
+    elif args.command == "authoring-brief":
+        _authoring_brief(schema, _load_text(args.ops_reference))
     elif args.command == "op":
         _op(schema, _load_text(args.ops_reference), args.name)
     elif args.command == "section":
