@@ -583,6 +583,8 @@ epilogue 或 transfer traversal 的 physical time。carrier 只声明 init/state
 topology，不能携带初始化或更新公式。该 relation 不在 J 中制造 loop，也不向 C 增加 basis、direction、
 bound 或 permission。TypeCheck 只能检查 closed vocabulary、引用、可见性、axis attachment、类型与 carrier
 拓扑；它不读取 Source，因而不能证明 direction 的事实真实性或发现一条完全未作者化的 Source loop。
+四个 role 必须是 distinct physical occurrence，即使引用同一 J semantic value；ordinary route 闭合
+`init -> state -> next`，跨迭代和 loop-exit 时间边仍由 relation 自身表示。
 这些真实性/完整性义务仍由 fresh Replay 消费和 Gate1 observer comparison承担。SCRC 后 π 停止，
 production backend 不读取上述字段。
 

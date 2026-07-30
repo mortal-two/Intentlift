@@ -1142,7 +1142,11 @@ untiled loop.
 For a physical tiled loop around an existing non-loop J reduce/contraction/access/
 domain, author physical_iterations with its same-subject/axis positive-int C tile
 and Source basis/direction; structured J loops use iterations. Add physical carriers
-only for visible state, in Source tuple order. `pi.order` alone orders events.
+only for visible state, in Source tuple order. Each carrier uses four distinct physical
+instances for init/state/next/result, even when they anchor the same J semantic value,
+and ordinary routes close init -> state -> next. The carrier relation itself denotes
+the next-to-state temporal edge and loop-exit result. It contains no update formula.
+`pi.order` alone orders events.
 
 For a Source C-extent partition at one existing route slot, author exact
 source/target/slot, divisor>1, floor/ceil, and target-domain/axis attachment.

@@ -859,8 +859,9 @@ def _pi_schema() -> dict[str, Any]:
         description=(
             "One declaration-ordered physical loop-carrier slot. Its temporal "
             "denotation is state[0]=init, state[k+1]=next[k], and "
-            "result=state[T], including T=0. Temporal/exit edges are not "
-            "ordinary pi DAG edges."
+            "result=state[T], including T=0. state and next are distinct physical "
+            "occurrences joined by an ordinary route; next-to-state temporal and "
+            "loop-exit result edges are implicit in this relation."
         ),
     )
     physical_iteration = _closed_object(
@@ -916,7 +917,10 @@ def _pi_schema() -> dict[str, Any]:
         ("region", "init", "state", "next", "result"),
         description=(
             "One typed physical carrier in a physical_iterations region. "
-            "Temporal edges carry no initialization/update formula or frontend spelling."
+            "init/state/next/result are distinct temporal occurrences; init -> state "
+            "and state -> next are ordinary pi routes, while next-to-state temporal "
+            "and loop-exit result edges are implicit. Roles may anchor the same J "
+            "semantic value and carry no update formula or frontend spelling."
         ),
     )
     terminal_control = _closed_object(

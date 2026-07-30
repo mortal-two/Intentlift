@@ -60,6 +60,11 @@ Replay := Render_f(K)
 - representation-only 参数或 C slot 的 opaque attachment；
 - packing/layout/cast 等实现见证，但只能通过 typed opaque refs 与 relation kind 表达。
 
+loop carrier 的 `init/state/next/result` 是四个 physical occurrence，而不是四个可退化为同一 handle 的
+标签。它们即使引用同一 J semantic value，也必须以 ordinary routes 显式形成
+`init -> state -> next`；carrier relation 自身再给出 next-to-state 与 loop-exit 时间语义。这样 π
+只增加 occurrence/time topology，不复制 update formula，Replay 也不能自行更换 recurrence。
+
 同一 physical program axis 可以 realization 多个 J logical consumer domain。每个 d* 在
 `program_axes` 中仍恰有一个 binding，但不同 d* 可以共享 axis；对应 consumer occurrences 放在
 独立 branch region，并由 program-region d* instance 的 empty-slot route 控制。J domain 是唯一条件，

@@ -455,7 +455,9 @@ transformation permission，也不改变 `Reach_t(J)`。
 - route operand slot 与 J carrier 相容；
 - `physical_iterations` 只以已有 J reduce/contraction 或 boundary access/domain 与同 subject/axis 的
   required positive-integer C slot声明物理 tile time，basis/direction 属于 closed vocabulary；
-- `physical_loop_carriers` 只保存对应 region 内 typed `init/state/next/result` 时间拓扑，不含公式/value；
+- `physical_loop_carriers` 只保存对应 region 内 typed `init/state/next/result` 时间拓扑；四个 role 为
+  distinct physical occurrence，普通 route 闭合 `init -> state -> next`，relation 自身表示跨迭代与
+  loop-exit 时间边，不含公式/value；
 - `terminal_controls` 只连接同一 J `effect_if` 的两个 sibling arm instance，且该 `effect_if` 在当前
   lexical parent 中为 final；terminal/continuation role 不携带 predicate、polarity 或 return 语义；
 - `route_extent_transforms` 只限定一条既有 route slot，并依赖 required positive-int C 与匹配的

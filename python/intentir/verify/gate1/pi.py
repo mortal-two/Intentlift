@@ -181,7 +181,9 @@ def render_realization_witness_wire_grammar() -> str:
         "frontend API. Each declaration-ordered loop_carriers entry has exactly "
         "region, loop_instance, init, state, next, and result instance refs. "
         "Its global temporal denotation is state[0]=init, "
-        "state[k+1]=next[k], result=state[T], including T=0. The temporal "
+        "state[k+1]=next[k], result=state[T], including T=0. The four roles are "
+        "distinct occurrences even when they anchor the same J semantic value; "
+        "ordinary routes close init -> state -> next. The temporal "
         "next-to-state edge and loop-exit result edge are not ordinary DAG "
         "routes and never carry an expression or frontend spelling. Each "
         "physical_iterations entry has exactly region, body_instance, "
@@ -194,7 +196,11 @@ def render_realization_witness_wire_grammar() -> str:
         "loop or carries bounds/formulas. Each physical_loop_carriers entry has "
         "exactly region, init, state, next, and result, with the same temporal "
         "denotation as loop_carriers, but its region is indexed by one "
-        "physical_iterations relation rather than a structured J loop. For all "
+        "physical_iterations relation rather than a structured J loop. The four "
+        "roles are distinct physical occurrences even when they anchor the same J "
+        "semantic value; ordinary routes close init -> state -> next, while the "
+        "next-to-state temporal edge and loop-exit result remain denoted by this "
+        "carrier relation. For all "
         "physical_loop_carriers entries sharing one region, declaration order is "
         "the common carrier-tuple ordinal across init/state/next/result and must be "
         "preserved by Replay. It is not event execution order and does not replace "
@@ -677,6 +683,10 @@ class RealizationWitness:
                 raise RealizationWitnessError(
                     "pi loop carrier result must be a distinct instance"
                 )
+            if refs["state"] == refs["next"]:
+                raise RealizationWitnessError(
+                    "pi loop carrier state and next must be distinct temporal instances"
+                )
             if refs["state"] in carrier_states:
                 raise RealizationWitnessError(
                     "pi loop carrier state slots must be unique"
@@ -718,6 +728,10 @@ class RealizationWitness:
             if refs["result"] in {refs["state"], refs["next"]}:
                 raise RealizationWitnessError(
                     "pi physical loop carrier result must be a distinct instance"
+                )
+            if refs["state"] == refs["next"]:
+                raise RealizationWitnessError(
+                    "pi physical loop carrier state and next must be distinct temporal instances"
                 )
             if refs["state"] in carrier_states:
                 raise RealizationWitnessError(

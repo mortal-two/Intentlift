@@ -335,9 +335,11 @@ the artifact schema or external TypeCheck.
    one ordered `physical_loop_carriers` relation in that region, including
    pointer/address recurrences as well as accumulators. Each relation's own
    init/state/next/result types must agree; different tuple slots may be
-   heterogeneous and need not match the body instance type. These are temporal
-   topology, never an initialization/update formula, and fixed code never creates
-   them.
+   heterogeneous and need not match the body instance type. The four roles are
+   distinct physical instances even when they anchor the same J semantic value;
+   ordinary routes must form init -> state -> next. The carrier relation itself
+   denotes next-to-state time and loop-exit result. This is temporal topology, never
+   an initialization/update formula, and fixed code never creates it.
    The syntax-only Source outline lists names that were lexically bound before a
    loop and written inside it. Treat every listed name as a required inspection
    point, not an inferred carrier; decide the complete carrier set from Source.

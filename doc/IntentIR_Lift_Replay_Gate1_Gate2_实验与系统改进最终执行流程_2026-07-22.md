@@ -391,7 +391,8 @@ select、不升级 inout、不选择 polarity/axes，也不修 candidate。
   tile-loop shell，使用 `extent_step|rounded_extent_step|tile_ordinal` 与 `forward|reverse`，并把 tile
   instance 绑定到同一 subject/axis 的 required positive-integer C slot；
 - `physical_loop_carriers` 是否只在对应 physical iteration region 中声明 typed
-  `init/state/next/result` temporal topology，而没有初始化/update/bound 或 frontend formula；
+  `init/state/next/result` temporal topology，四个 role 是否为 distinct physical occurrence，普通
+  route 是否闭合 `init -> state -> next`，且没有初始化/update/bound 或 frontend formula；
 - `terminal_controls` 是否只连接同一 authored J `effect_if` 的两个 sibling arm-scope `realize`
   instances，该 control 是否为 lexical parent 的 final operation，且 relation 没有复制
   predicate/polarity/return/Source/API；
@@ -427,6 +428,8 @@ subject/axis 的 required positive-integer C slot。后者只表达 output epilo
 `forward|reverse`。`physical_loop_carriers` 仅保存 typed `init/state/next/result` 时间拓扑。它们不含
 bound、公式、operator、initial/update value 或 Source API。TypeCheck 只能证明引用、类型、作用域与
 closed vocabulary；Source 是否确有该 loop、方向和 carrier topology 仍由 fresh Replay/Gate1 检验。
+四个 role 即使锚定同一 J semantic value 也必须是 distinct occurrence；ordinary route 只闭合
+`init -> state -> next`，跨迭代 next-to-state 与 loop-exit result 由 relation 自身表示。
 
 `artifact.v9` 再只增加 π-owned terminal-control topology。J `effect_if` 继续拥有 predicate、显式
 positive/negative arms 及其 value/effect；Lift 可以用

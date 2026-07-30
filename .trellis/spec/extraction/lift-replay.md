@@ -298,6 +298,9 @@ bound/formula/value/API，也不让 fixed code创建 J loop、选择锚点或推
 由 fresh Replay/Gate1 检查。
 每条 physical carrier 是一个 tuple slot：slot 内四个 stage 类型一致；不同 slot 可异构、无需匹配
 body instance 类型，因此 pointer/address recurrence 与 accumulator 都由 Lift 分别作者化。
+四个 stage 是不同 physical occurrence，即使它们可锚定同一 J semantic value；ordinary routes 必须
+闭合 `init -> state -> next`。跨迭代 next-to-state 与 loop-exit result 仍由 carrier relation 本身表示，
+不携带 update formula。
 `artifact.v9` 再加入 `pi.terminal_controls`，只在 J 已有 `effect_if` 的 sibling arm scopes 上指定
 terminal/continuation topology；不复制 predicate、return、Source 或 frontend spelling。
 source-blind construction compile 对每条 relation 只要求至少一个 compiled terminal conditional，拒绝

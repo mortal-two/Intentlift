@@ -3768,15 +3768,22 @@ def _check_physical_loop_carriers(
                     role_ids["init"],
                 )
             )
-        if role_ids["state"] != role_ids["next"] and (
-            role_ids["state"], role_ids["next"]
-        ) not in route_edges:
+        if role_ids["state"] == role_ids["next"]:
             diagnostics.append(
                 TypeCheckDiagnostic(
                     TypeCheckErrorCode.PHYSICAL_LOOP_CARRIER_INVALID,
                     f"{base}.next",
-                    "ordinary pi routes must contain physical state -> next; "
-                    "state==next is the only route-free update",
+                    "physical state and next must be distinct temporal occurrences; "
+                    "they may still anchor the same J semantic value",
+                    role_ids["next"],
+                )
+            )
+        elif (role_ids["state"], role_ids["next"]) not in route_edges:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.PHYSICAL_LOOP_CARRIER_INVALID,
+                    f"{base}.next",
+                    "ordinary pi routes must contain physical state -> next",
                     role_ids["next"],
                 )
             )
@@ -4464,15 +4471,22 @@ def _check_loop_carriers(
                     role_ids["init"],
                 )
             )
-        if state_id != role_ids["next"] and (
-            state_id, role_ids["next"]
-        ) not in route_edges:
+        if state_id == role_ids["next"]:
             diagnostics.append(
                 TypeCheckDiagnostic(
                     TypeCheckErrorCode.LOOP_CARRIER_INVALID,
                     f"{base}.next",
-                    "ordinary pi routes must contain state -> next; identity "
-                    "state==next is the only route-free update",
+                    "state and next must be distinct temporal occurrences; they may "
+                    "still anchor the same J semantic value",
+                    role_ids["next"],
+                )
+            )
+        elif (state_id, role_ids["next"]) not in route_edges:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.LOOP_CARRIER_INVALID,
+                    f"{base}.next",
+                    "ordinary pi routes must contain state -> next",
                     role_ids["next"],
                 )
             )

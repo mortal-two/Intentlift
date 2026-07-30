@@ -73,6 +73,8 @@ artifact 的独立 Gate2 recheck 冒充最终 28/28 交付。
 - [x] 对 program ordinal 的 mixed-radix decode 增加最小 closed `program_linearizations`；它只引用
   J-owned dimensions，不携带 Source、值、predicate、公式文本或 target recipe。会改变 value 的
   block interval/mask 明确保留在 J，禁止 π partition relation。
+- [x] 收紧 logical/physical loop carrier：四个 role 为 distinct occurrences，ordinary routes 闭合
+  `init -> state -> next`；跨迭代与 loop-exit 仍由 relation 自身表示，不向 π 加 update formula。
 
 ## 4. P2：Replay 内部 Composer
 
@@ -128,6 +130,12 @@ domain-owned physical consumer control。它不新增 J op、π predicate 字段
 另一类 J 已显式包含 `exp2/log2`，新 Replay 已跟随写出对应调用。Source 的 program-axis
 mixed-radix decode 由 closed `program_linearizations` 补齐；split block 的 mul/add/compare/select 已在 J，
 不得复制到 π，以免形成 Mask-J 泄漏。
+
+当前 fresh Flash-forward 与 SplitK-forward 又暴露一个跨 Kernel 的 typed topology 缺口：候选把多条
+非 identity physical carrier 写成 `state==next`，并因此省掉 state-to-next route；Replay 只能自行选择
+另一套 online recurrence。当前 parser/TypeCheck 改为要求四个 role 是 distinct occurrences，并由普通
+route 闭合 `init -> state -> next`。它们仍可锚定同一 J semantic value；next-to-state、loop exit 仍由
+carrier relation 自身表达，所以该修复没有向 π 加 formula 或 target recipe。
 
 Llama 的 fresh frontier 还证明普通 `scf.if` 会错误冒充 π 已声明的 terminal/continuation CFG；当前
 source-blind construction compile 对每条 `terminal_controls` 只做最低 `control.conditional` presence

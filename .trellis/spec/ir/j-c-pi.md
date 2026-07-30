@@ -472,6 +472,9 @@ frontend tensor-rank axis。
 每条 carrier relation 是一个 tuple slot；该 slot 内 init/state/next/result 的 dtype、rank 与
 pointer/value class 必须一致，但不同 slot 可以异构，也不要求等于 `body_instance` 的类型。由此可同时
 表达 pointer/address recurrence 与 accumulator，而不把任何 update 公式写入 π。
+四个 role 必须是不同 physical occurrence，即使它们引用同一个 J semantic value；普通 route 必须显式
+闭合 `init -> state -> next`。`next[k] -> state[k+1]` 与 loop-exit result 仍由 carrier relation 自身
+表示，不另造 DAG edge，也不向 π 写入 update 公式。
 
 同一 `region` 的 `physical_loop_carriers` 按数组 declaration order 定义唯一 carrier-tuple ordinal；
 该 ordinal 同时用于 init/state/next/result 的对应 slot。Lift 必须按 Source frontend loop 的

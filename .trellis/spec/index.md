@@ -40,7 +40,9 @@ valuation provenance，不进入semantic artifact或Gate。
 Replay v28/v24 明确同一 region 中 `physical_loop_carriers` declaration order 是跨
 init/state/next/result 共享的 carrier-tuple ordinal；Lift knowledge v66/v62 必须从 Source frontend
 loop 的 argument/yield/result tuple 作者化该顺序，Replay 不按 dtype/ref/mechanism 重排。该 tuple slot
-顺序不是 event execution order，后者仍只由 `pi.order` 拥有。`replay-check.v14` 仅在 packet route
+的四个 role 必须为 distinct occurrences，普通 route 闭合 `init -> state -> next`；跨迭代和 exit
+仍由 carrier relation 自身表示。slot 顺序不是 event execution order，后者仍只由 `pi.order` 拥有。
+`replay-check.v14` 仅在 packet route
 和 Replay 自身 TTIR 都提供唯一对应时检查 ordered transfer 的词法先后，不从 Source 或 Gate 构造
 对应。v28/v24 继承 v27/v23；v27/v23 对不超过
 64 KiB 的完整匿名 J/C/π/U_f 只在首次上下文 exact embedding 一次，并额外

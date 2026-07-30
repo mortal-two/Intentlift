@@ -3391,6 +3391,12 @@ program-region d* realization into a placement=branch region means that region i
 realized only inside that authored J domain; read the condition from J and the axis
 from pi, and do not invent another predicate or program coordinate.
 
+Each pi.loop_carriers or pi.physical_loop_carriers row names four distinct physical
+occurrences even when several anchor the same J semantic value. Consume the ordinary
+init -> state and state -> next routes exactly; the carrier row itself denotes the
+next-to-state temporal edge and loop-exit result. Preserve declaration-order tuple
+ordinals and do not invent an update formula.
+
 A pi.program_linearizations row decodes the bound coordinate of its domain into the
 listed outer-to-inner J dimensions by the unique row-major mixed-radix quotient and
 remainder projection. It is a closed realization relation, not permission to guess

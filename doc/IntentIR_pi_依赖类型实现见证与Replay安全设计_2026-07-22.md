@@ -513,6 +513,9 @@ carrier 五元组只保存 typed temporal topology；不得携带 init/update �
 每条 relation 对应一个 carrier-tuple slot：该 slot 的 init/state/next/result 类型一致；不同 slot 可以
 异构，也不要求匹配 `body_instance` 类型。因此 pointer/address recurrence 与 accumulator 可在同一
 physical loop 中分别声明，而无需把更新公式写入 π。
+同一 slot 的四个 role 必须是不同 physical occurrence，即使它们引用同一个 J semantic value；ordinary
+routes 必须闭合 `init -> state -> next`。`next[k] -> state[k+1]` 与 loop-exit result 是 relation
+自身的时间语义，不另写普通 DAG edge。
 一个 region 至多一条 physical iteration，不能与 structured `pi.iterations` 重叠。TypeCheck 验证 closed
 引用、类型、作用域、basis/direction vocabulary 和必要 totality；它不从 Source 推导 relation，也不证明
 Source 的真实方向/loop 数量。遗漏或错误仍由 source-blind Replay 后的 Gate1 检出。
