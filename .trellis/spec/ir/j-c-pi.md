@@ -330,9 +330,18 @@ affine address stage。
 scalar dependency path 先进入 `address_base` 再进入 transfer，表示 program-coordinate stage；进入
 `address_lane` 的 domain/C dependency path 表示 lane-varying stage。`pi.program_axes` 再以闭合
 `{domain_ref,axis}` 把每个 distinct program-coordinate domain 绑定到物理 launch axis `0..2`；
-domain 与 axis 均唯一。Replay 必须保持 base/lane 区分并消费该 axis identity，`U_f` 只负责映射到
+domain_ref 唯一，但 Source 以一个物理 coordinate multiplex 多个 logical consumer domain 时，不同
+d* 可以共享同一 axis，并共同复用一次 compiled program-coordinate occurrence。Replay 必须保持
+base/lane 区分并消费该 axis identity，`U_f` 只负责映射到
 公共前端 API。π 不保存 grid extent、地址公式、Source 文本或前端 API，也不增加 mechanism enum；
 axis 不得从 declaration order、grid、C 或 instance multiplicity 推断。
+
+若某个 Source branch 只表达“该 shared physical coordinate 位于某个已声明 J domain 时才 realization
+这一组 consumer occurrences”，不应为此在 J 发明常量真假 `effect_if`。Lift 将这些 occurrences 放入
+一个 `placement=branch` region，并用 empty-slot route 从 program-region 的 d* `realize` instance
+进入该 region。J domain 保存唯一条件，`program_axes` 保存 axis identity，region/route 保存物理控制
+topology；π 不保存比较式、extent、polarity、Source spelling 或 target API。Mask-J 后 d* 仍是不透明
+handle，不能据此恢复计算语义。
 
 若一个 Source program ordinal 在进入 tensor address 前显式经过整数 `//`/`%` 解码，则该闭合整数树
 必须由 J 的 source-grounded logical access/index relation 表达，并由 π occurrence/route 保持；

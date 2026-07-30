@@ -150,10 +150,13 @@ def render_realization_witness_wire_grammar() -> str:
         "outside. Replay never hoists, sinks, clones, or folds a stage across a "
         "region boundary. program_axes binds each distinct J-domain program "
         "coordinate to one physical launch axis 0, 1, or 2. It is authored by "
-        "Lift from the compiler-visible Source realization, is unique by both "
-        "domain_ref and axis, and carries no grid extent, Source spelling, or "
-        "frontend API. Repeated coordinate instances anchored to the same d* use "
-        "that same bound axis. route_extent_transforms qualifies one existing route slot: "
+        "Lift from the compiler-visible Source realization and is unique by "
+        "domain_ref. Distinct logical consumer domains may share one physical axis; "
+        "they and repeated instances of the same d* reuse one compiled coordinate. "
+        "An empty-slot route from a program-region d* realization into a branch "
+        "region makes that region an inside-domain physical realization. The "
+        "condition remains the J domain; pi carries no predicate, grid extent, "
+        "Source spelling, or frontend API. route_extent_transforms qualifies one existing route slot: "
         "a required positive-integer C extent reaches its attached J domain as "
         "floor_div/ceil_div by a literal divisor greater than one. It is "
         "representation-only and creates no J fact or Source/API spelling. Each iterations "
@@ -396,7 +399,6 @@ class RealizationWitness:
 
         checked_program_axes: list[dict[str, JsonValue]] = []
         bound_domains: set[str] = set()
-        bound_axes: set[int] = set()
         for index, raw in enumerate(self.program_axes):
             path = f"pi.program_axes[{index}]"
             item = _record(
@@ -418,12 +420,7 @@ class RealizationWitness:
                 raise RealizationWitnessError(
                     "pi program-axis domain bindings must be unique"
                 )
-            if axis in bound_axes:
-                raise RealizationWitnessError(
-                    "pi program-axis physical axes must be unique"
-                )
             bound_domains.add(domain_ref)
-            bound_axes.add(axis)
             checked_program_axes.append({"domain_ref": domain_ref, "axis": axis})
 
         checked_terminal_controls: list[dict[str, JsonValue]] = []

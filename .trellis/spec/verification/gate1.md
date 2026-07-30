@@ -35,8 +35,9 @@ G1 = [F_(f,p)(Compile_H(Source,c0)) == F_(f,p)(Compile_H(Replay,c0))]
 ```
 
 Gate1 回答 Replay 是否重建了 Source 对 J 的 realization。它不执行数值语义、不读取 Gate2
-结果，也不通过 host semantic composer/RuleCard 构造 Replay。agent-local syntax composer 只拼接
-该 fresh Replay agent 自己写出的 exact fragments，不读 Source/Gate，不生成语义，且不进入裁决关系。
+结果，也不通过 host semantic composer/RuleCard 构造 Replay。fresh Replay agent 默认直接维护完整
+source；可选 syntax composer 只拼接它自己写出的 exact fragments，不读 Source/Gate、不生成语义，
+且不进入裁决关系。
 
 Replay normal view 必须保留当前 J-owned typed relations；它从 J 读取 value/dimension equality、
 closed dimension definitions、

@@ -1070,6 +1070,15 @@ has no result/yield; arm-local SSA never escapes. scope.effects plus matching
 EffectSpec/access_ref is sole membership and cannot overlap access_guard. Pi
 only realizes each arm scope in sibling placement=branch regions; it never
 copies predicate/polarity or turns the branch into select.
+If Source control only multiplexes one physical program axis across multiple
+already-authored J logical domains, it is realization rather than a new Layer-A
+predicate. Keep the computations/effects in J, bind each distinct d* once in
+pi.program_axes (several d* may share the same physical axis), place each
+consumer's occurrences in its own placement=branch region, and add an empty-slot
+route from that domain's program-region realize instance into the region. The J
+domain remains the sole condition; pi carries no comparison, extent, polarity, or
+frontend spelling. Do not invent constant true/false effect_if predicates for this
+case.
 Source early return: final `effect_if`; later work in its continuation arm; one
 pi.terminal_controls pair over arm `realize` instances. It names only
 terminal/continuation, never predicate/polarity/return/Source/API.
@@ -1159,7 +1168,9 @@ lane-coordinate path into address_lane; never collapse the former into a loop
 or erase it as constant-degenerate topology. Emit exactly one
 pi.program_axes{{domain_ref,axis}} binding for every distinct program-coordinate
 domain, using the physical axis observed in Source/TTIR; multiple realization
-instances of the same domain share that one binding. Never derive axis from grid,
+instances of the same domain share that one binding. Distinct logical consumer
+domains may bind the same axis when Source multiplexes that coordinate; the
+domain_ref is unique but the physical axis need not be. Never derive axis from grid,
 instance order, C, or placement alone.
 When one Source program ordinal is decoded by integer // or % before tensor
 addressing, preserve that source-grounded integer tree in J's logical access/index

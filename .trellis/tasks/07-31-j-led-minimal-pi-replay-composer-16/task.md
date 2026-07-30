@@ -32,13 +32,12 @@ SCRC_CERTIFIED iff TypeCheck(J,C,π) and Gate1 and Gate2
 
 该报告为 `accepted_attempt=2`、`main_status=SCRC_CERTIFIED`。
 
-剩余 active queue：
+加入 one-column 的 fresh Replay + Qv2 证据后，剩余 active queue：
 
 1. Llama4 RoPE；
 2. FlashAttention forward；
-3. FlashAttention one-column backward；
-4. FlashAttention full backward；
-5. SplitK forward。
+3. FlashAttention full backward；
+4. SplitK forward。
 
 若后续证据证明某个已有 accepted artifact 的模型级输入、参数化或证书版本无效，该项明确退回 active queue；不靠旧计数掩盖。
 
@@ -81,6 +80,10 @@ artifact 的独立 Gate2 recheck 冒充最终 28/28 交付。
 - [x] host 不提供 J-op/π-relation 到 target code 的映射、kernel helper 或模板库；
 - [x] prompt 文件化、按需读取，禁止反复内嵌几十 KB J/π/手册；
 - [x] 资源边界用 wall-time/context/formal round，不用极小工具调用上限打断 coding loop。
+- [x] 完整源码与局部 patch 是默认 coding 路径；route-bound fragment 仅为可选编辑辅助，禁止每个
+  occurrence 强制一个 fragment。
+- [x] 删除 Triton 的 relation/op-to-target 长 RuleCard；`U_f` 只保留短 ABI，避免固定 recipe 与
+  12 KiB 无关注意力负担。
 
 真实 legacy-v11 Flash-forward pilot 已证明 Codex 在一个 episode 内作者化 60+ occurrence fragments，
 `composer_status/render` 对显式 slot 与 empty-slot dependency routes 达到 PASS，并将完整源码送入正式
@@ -105,6 +108,16 @@ fresh artifact.v12 的 Llama/SplitK 双核 pilot 又暴露并修正两项通用 
 同一 pilot 也确认 `reduce.attrs.axes` 是 logical axis，而
 `boundary.reductions.tile_axis` 是 Source-local physical axis，两者不得被错误加上等值 checker。
 
+后续 full-backward Replay 的真实工作区进一步定位到原接口的核心退化：约 6 KiB 最终源码被拆为
+100 余个 occurrence fragments，同时 packet 携带约 12 KiB Triton spelling 合同。Task16 已改为
+whole-source-first，并规定“Replay 在真实 C 下尚未形成 TTIR”只触发同一 `(J,C,π)` 的 fresh
+Replay，不把纯 Replay 编译失败送回 Lift 诱发无意义 J 改写。
+
+Llama4 首轮又定位到 consumer-context 的通用 overconstraint：Q/K 两个不同 logical head domain
+共享 Source physical axis 1，而旧 checker 强制 axis 注入并迫使 Lift 发明常量真假 `effect_if`。
+当前改为 domain_ref 唯一、axis 可 many-to-one；empty-slot d* route 到 branch region 表达
+domain-owned physical consumer control。它不新增 J op、π predicate 字段或 per-kernel recipe。
+
 ## 5. P3：J 主导与无泄漏验收
 
 - [x] Replay request 严格只有 `J+π+MaskC(C)+U_f`；
@@ -113,15 +126,14 @@ fresh artifact.v12 的 Llama/SplitK 双核 pilot 又暴露并修正两项通用 
 - [ ] 做一次 J-authority mutation：相同 realization shell 下改变闭合 J，fresh Replay 必须跟随 J；
 - [x] 最终 Gate2 仍为 Source–Replay、Source–J、Replay–J 三条直接比较。
 
-## 6. P4：剩余五项闭合循环
+## 6. P4：剩余四项闭合循环
 
 优先顺序不是逐项死磕，而是按能力面横向覆盖：
 
 1. Flash full backward：recurrence、multi-output、conditional post-state；
 2. Flash forward：online recurrence 与 program-id/address realization；
-3. one-column backward：terminal CFG/observer；
-4. SplitK forward：program-id → div/rem/mul/add → addptr 与跨实例 realization；
-5. Llama4 RoPE：conditional path、shape/value relation。
+3. SplitK forward：program-id → div/rem/mul/add → addptr 与跨实例 realization；
+4. Llama4 RoPE：conditional path、shape/value relation。
 
 执行规则：
 
@@ -133,7 +145,7 @@ fresh artifact.v12 的 Llama/SplitK 双核 pilot 又暴露并修正两项通用 
 
 ## 7. P5：原 22 项重放
 
-剩余五项若能稳定、明显更轻地闭合，原先 22 项全部保留其 accepted `(J,C,π)` 或按新 π version fresh Lift，并统一经过新 Replay composer：
+剩余四项若能稳定、明显更轻地闭合，原先 22 项全部保留其 accepted `(J,C,π)` 或按新 π version fresh Lift，并统一经过新 Replay composer：
 
 - 不从历史 Replay source、Gate diff 或 winner 学习；
 - 统计 packet bytes、首次可编译时间、compile/tool 次数、Gate1 round 与 wall-time；

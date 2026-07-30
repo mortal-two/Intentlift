@@ -522,8 +522,9 @@ named consumer/ordinal 作 exact source-blind 重索引；存在该 obligation �
 自己的当前编号源码并置自审。工具不建立 relation-to-statement 映射、不选择 rank-lift spelling/次数、
 不生成或修复 Replay，也不读取 Source/Gate。v26/v22 已固定：J.signature 的一个 `p*` 是一个既有 callable ABI carrier，同一 `p*` 的
 多个 π instance 只定位或路由多处 use，不能产生新 carrier 或 `program_id`。source-blind construction
-compile 从 program region 中沿作者化 route 到达 `address_base` 的 distinct J domain 投影合法
-`tt.get_program_id` occurrence，并在 v12 按 `pi.program_axes{domain_ref,axis}` 核对精确 launch axis；
+compile 从 program region 中沿作者化 route 到达 `address_base` 或控制 branch region 的 J domain
+投影合法 physical axis，并按 unique axis 而非 domain 数量核对 `tt.get_program_id` occurrence；v12
+继续按 `pi.program_axes{domain_ref,axis}` 核对精确 launch axis；
 它不生成 coordinate、不从声明顺序/grid/C选择 axis，也不参与 Gate/认证。
 v3 历史上引入 `pi.iterations`；v4 引入 J-owned `value_dimension_relations`、
 `consumer_extensions` 等 typed relations；v5 引入 J-owned `access_guard_relations`；v6/v7 分别引入
@@ -533,7 +534,9 @@ v10 增加依附既有 C/J/route 的 closed `route_extent_transforms`，v11增�
 `dimension_relations`。后者只含identity、常数加/乘、常数ceil-div与round-up的acyclic grammar，
 consumer只能验证/求值，不从Harness/grid/C/π/TTIR生成。v12增加π-owned closed
 `program_axes`，只把Source-visible program-coordinate domain绑定到axis `0..2`，不携带grid extent、
-地址公式或前端文本。若 Source program ordinal 在地址前显式经过整数 `//`/`%` 解码，该
+地址公式或前端文本。domain_ref 唯一，但多个 logical consumer domain 可以按 Source realization
+共享同一物理 axis；其 domain-owned consumer branch 以 empty-slot d* route + branch region 表达，
+π 不复制 predicate。若 Source program ordinal 在地址前显式经过整数 `//`/`%` 解码，该
 source-grounded logical access/index 整数树属于 J，π 只保持 occurrence/route；`program_axes` 不能
 替代公式，Replay 也不能从多个 extent、grid、C 或常见 delinearization 约定猜出公式。
 每个当前字段都由Lift LLM 作为完整 `(J,C,π)` 的一部分显式作者，

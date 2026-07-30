@@ -1883,6 +1883,26 @@ class SCRCGateRunner:
                     for arm in normal_arms_for_progress
                 )
             )
+            # If every authored Replay failed before a TTIR comparison, Gate1 has
+            # learned nothing about J/C/pi.  A fresh source-blind Replay should retry
+            # the same TypeCheck-valid artifact; sending this compiler-only failure
+            # through Lift would waste a semantic rewrite and can corrupt a correct J.
+            replay_compile_failed_before_comparison = (
+                replay_was_generated
+                and not any(
+                    arm.comparison is not None for arm in normal_arms_for_progress
+                )
+                and any(
+                    arm.generation is not None
+                    and arm.compile_result is not None
+                    and not arm.compile_result.ok
+                    for arm in normal_arms_for_progress
+                )
+                and not any(
+                    arm.compile_result is not None and arm.compile_result.ok
+                    for arm in normal_arms_for_progress
+                )
+            )
             if replay_generation_failed:
                 _notify_progress(
                     progress_callback,
@@ -2003,6 +2023,8 @@ class SCRCGateRunner:
                 # parent behind the owner's conversation.
                 feedback = candidate_feedback
                 last_artifact = artifact
+                if replay_compile_failed_before_comparison:
+                    pending_initial_artifact = artifact
                 stopped = superseded("after_gate1")
                 if stopped is not None:
                     return stopped

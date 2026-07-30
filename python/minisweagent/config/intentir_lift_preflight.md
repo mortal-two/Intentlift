@@ -174,8 +174,9 @@ the artifact schema or external TypeCheck.
    zero. Repeated occurrences anchored to the same `d*` are repeated realizations
    of the same program-axis identity, not evidence for another axis. Author exactly
    one `pi.program_axes {domain_ref, axis}` binding for every such distinct `d*`,
-   using the literal compiler-visible Source/TTIR launch axis 0, 1, or 2. Axes and
-   domain refs are each unique. Never infer or renumber an axis from declaration
+   using the literal compiler-visible Source/TTIR launch axis 0, 1, or 2. Domain
+   refs are unique; distinct logical consumer domains may share one physical axis
+   when Source multiplexes that coordinate. Never infer or renumber an axis from declaration
    order, grid extent, C, or instance multiplicity. Use a distinct
    J domain anchor only when Source really contains a distinct program coordinate.
    If one Source SSA coordinate/address intermediate is defined once and reused by
@@ -221,6 +222,13 @@ the artifact schema or external TypeCheck.
    it never copies predicate or polarity. CandidateCheck only rejects missing or
    contradictory authorship and never inserts an arm, scope, predicate, polarity,
    or select.
+   When Source control only gates separate consumers of one shared physical
+   program axis by their already-authored J domains, do not fabricate a scalar
+   Layer-A predicate or constant `effect_if`. Bind every d* to that shared axis,
+   put each consumer's occurrences in its own `placement=branch` region, and use
+   an empty-slot route from the program-region d* realize instance into that
+   region. The J domain owns the condition; pi owns only branch topology and
+   carries no comparison, extent, polarity, or frontend API.
    For a Source one-arm early return, preserve control without inventing a return
    op: the returning arm contains exactly its pre-return computations/effects,
    the sibling arm contains the entire lexical continuation that Source executes

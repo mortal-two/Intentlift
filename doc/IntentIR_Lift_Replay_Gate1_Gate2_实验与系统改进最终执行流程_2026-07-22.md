@@ -950,7 +950,8 @@ owner 必须用 `replay-obligation-audit.v2` 将 ledger 与自己的当前编号
 relation-to-statement 映射、不选择 rank-lift spelling/次数、不生成或修复 Replay，也不读取 Source/Gate。
 同一 `J.signature p*` 的多个 π instance 只能共享该唯一 callable ABI carrier，不能因
 `placement=program` 或 instance multiplicity 生成额外 `tl.program_id`。construction compile 可从
-program-region distinct J domain 到 `address_base` 的作者化 route 投影合法 coordinate occurrence 数并
+program-region J domain 到 `address_base` 或 domain-owned branch region 的作者化 route 投影合法
+unique physical-axis occurrence 数并
 拒绝多余 occurrence；它只做 source-blind rejection，不生成实现，也不改变 Gate1 membership。
 runner 可以保存实际 request/output 和 compiler metadata 供追溯，但这些内容不能回流 Replay packet；
 不需要为此增加 hash、commitment 或签名门。
@@ -963,7 +964,9 @@ v9 引入 π-owned terminal-control topology，v10 引入依附既有 C/J/route 
 transform，v11引入J-owned closed dimension relations，v12引入π-owned closed
 `program_axes{domain_ref,axis}`。后者只保存Source-visible program-coordinate domain到物理axis
 `0..2`的identity，不保存grid extent、地址公式或前端文本；fixed code只验证并消费，不从声明顺序、
-grid、C或instance multiplicity生成axis。
+grid、C或instance multiplicity生成axis。domain_ref保持唯一；Source用一个physical coordinate
+multiplex多个logical consumer domain时，不同d*可以共享axis，并以empty-slot domain route到
+branch region表达consumer-local physical control，π不保存predicate。
 每次 fresh response 必须完整作者当前 wire，fixed code 不构造新增字段。`artifact.v1-v7` 保持各自
 wire bytes/digest 与字段集合，不静默升级、刷新或追认；v8/v9 同样保持各自字段集合。
 

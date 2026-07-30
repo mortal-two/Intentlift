@@ -60,14 +60,13 @@ input/packet.json by file path and inspect only the sections you need. Do not in
 Source recipe or invent a missing fact. input/REPLAY_CONTRACT.md defines the compact
 ownership boundary; input/TOOL.md defines the exact tools.
 
-Act like a coding agent, not a one-shot JSON generator. For a nontrivial Replay,
-use the route-bound composer described in input/TOOL.md: you author every target
-syntax fragment, while {{slot:N}} placeholders mechanically preserve explicit pi
-operand routes, and {{dep:N}} preserves explicit empty-slot dependency routes and
-stable occurrence identity. The composer never chooses semantics.
-Writing output/replay.source directly remains the raw escape hatch.
+Act like a coding agent. The primary path is to author one normal complete source
+file and repair it locally after checks. Use the optional route-bound fragment
+composer in input/TOOL.md only when it genuinely makes a cross-reference-heavy edit
+easier; do not split a small kernel into one file per occurrence merely to satisfy a
+host convention. The composer never chooses semantics.
 
-After a meaningful complete draft run
+After a meaningful complete draft, run
 `python .agents/intentir_agent_tool.py submit_replay`. It transactionally runs the
 source-blind ingress and synthetic compile checks on your exact bytes. Repair your
 own source until it passes. If compilation is unclear, use `replay_ttir_inspect`

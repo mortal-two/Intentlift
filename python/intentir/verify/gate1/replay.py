@@ -2566,9 +2566,10 @@ def _packet_required_compiled_program_ids(
     """Project the exact number of packet-authorized program coordinates.
 
     A program-region placement is only lexical scope.  Under the public Triton
-    contract, a ``tl.program_id`` exists only for a distinct J boundary domain
-    whose program-region realization reaches an authored ``address_base``
-    stage.  Repeated pi instances of the same domain share that coordinate, and
+    contract, a ``tl.program_id`` exists only for a J boundary domain whose
+    program-region realization reaches an authored ``address_base`` stage or
+    controls a physical branch region. Repeated pi instances of the same domain,
+    and distinct domains bound to the same physical axis, share that coordinate;
     signature ``p*`` instances always share their already-existing callable ABI
     carrier.  This projection rejects extra compiled coordinates but never
     invents a coordinate.  In artifact v12 the authored ``pi.program_axes``
@@ -2613,9 +2614,32 @@ def _packet_required_compiled_program_ids(
         for instance_id, item in instances.items()
         if item.get("mechanism") == "address_base"
     }
+    regions = {
+        str(item.get("id")): item
+        for item in regions_value
+        if isinstance(item, Mapping) and isinstance(item.get("id"), str)
+    }
+    branch_regions = {
+        region_id
+        for region_id, item in regions.items()
+        if item.get("placement") == "branch"
+    }
+
+    def region_is_within_branch(region_ref: str) -> bool:
+        current: str | None = region_ref
+        seen: set[str] = set()
+        while current is not None and current not in seen:
+            if current in branch_regions:
+                return True
+            seen.add(current)
+            parent = regions.get(current, {}).get("parent")
+            current = str(parent) if parent is not None else None
+        return False
+
     outgoing: dict[str, set[str]] = {
         instance_id: set() for instance_id in instances
     }
+    program_domain_branch_sources: set[str] = set()
     for route in routes_value:
         if not isinstance(route, Mapping):
             continue
@@ -2623,6 +2647,18 @@ def _packet_required_compiled_program_ids(
         target = route.get("target")
         if isinstance(source, str) and isinstance(target, str):
             outgoing.setdefault(source, set()).add(target)
+            source_instance = instances.get(source)
+            target_instance = instances.get(target)
+            if (
+                route.get("slots") == []
+                and source_instance is not None
+                and target_instance is not None
+                and source_instance.get("mechanism") == "realize"
+                and source_instance.get("region") in program_regions
+                and source_instance.get("semantic_ref") in domain_refs
+                and region_is_within_branch(str(target_instance.get("region")))
+            ):
+                program_domain_branch_sources.add(source)
 
     def reaches_address_base(source: str) -> bool:
         pending = [source]
@@ -2643,7 +2679,10 @@ def _packet_required_compiled_program_ids(
         if item.get("mechanism") == "realize"
         and item.get("region") in program_regions
         and item.get("semantic_ref") in domain_refs
-        and reaches_address_base(instance_id)
+        and (
+            reaches_address_base(instance_id)
+            or instance_id in program_domain_branch_sources
+        )
     }
     ordered_domains = tuple(sorted(authorized))
     program_axes_value = pi.get("program_axes")
@@ -2661,11 +2700,10 @@ def _packet_required_compiled_program_ids(
     }
     if set(axes_by_domain) != authorized:
         return len(authorized), ordered_domains, None
-    return (
-        len(authorized),
-        ordered_domains,
-        tuple(sorted(axes_by_domain[domain] for domain in ordered_domains)),
+    expected_axes = tuple(
+        sorted({axes_by_domain[domain] for domain in ordered_domains})
     )
+    return len(expected_axes), ordered_domains, expected_axes
 
 
 def _compiled_program_id_axes(ttir: str) -> tuple[int, ...] | None:
@@ -3215,6 +3253,10 @@ occurrence order and every explicit pi order edge; do not merge, reorder, hoist,
 sink compiler-visible occurrences merely because values are equivalent. Distinct pi
 instances remain distinct, each route is an exact producer-to-slot edge, and only an
 explicit sharing relation authorizes one local realization to serve several consumers.
+Distinct J domains may share one pi.program_axes axis. An empty-slot route from a
+program-region d* realization into a placement=branch region means that region is
+realized only inside that authored J domain; read the condition from J and the axis
+from pi, and do not invent another predicate or program coordinate.
 """
     readme = """# IntentIR source-blind Replay input
 
@@ -3230,7 +3272,9 @@ is available.
 """
     tool = """# Replay agent tools
 
-For nontrivial source, use the route-bound composer. Write
+The shortest path is to author and patch one complete `/output/replay.source`, then
+run the checks below. If a route-heavy program is easier to maintain as fragments,
+you may instead use the optional route-bound composer. Write
 `/work/replay.compose.json` as:
 
 ```json
@@ -3256,7 +3300,7 @@ python .agents/intentir_agent_tool.py composer_render
 
 `composer_render` renders only the agent's exact templates and explicit route
 references into `/output/replay.source`. Without replay.compose.json it performs
-plain lexical concatenation. Directly writing that file remains the raw escape hatch.
+plain lexical concatenation. It is an editing aid, never a completion requirement.
 Then use `replay_check`, `replay_compile_check`, and optionally
 `replay_ttir_inspect summary|raw|find|observer`. Finish with `submit_replay`. All
 callbacks are source-blind and diagnostic-only; formal Gate1 runs outside this

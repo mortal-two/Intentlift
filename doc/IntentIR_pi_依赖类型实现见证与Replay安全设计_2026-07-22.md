@@ -328,7 +328,8 @@ or the route must be a validated representation-only path.
 的 `realize` instance，若其 scalar dependency path 先进入 `address_base` 再进入 transfer，则表示
 program-coordinate stage；若 domain/C dependency path 进入 `address_lane`，则表示 lane-varying
 stage。`pi.program_axes` 以 `{domain_ref,axis}` 将每个 distinct program-coordinate domain 显式绑定
-到物理 launch axis `0..2`，domain 与 axis 均唯一。Replay 保持该拓扑并消费 axis identity，公共前端
+到物理 launch axis `0..2`，domain_ref 唯一；若 Source 在同一物理 coordinate 上 multiplex 多个
+logical consumer domain，不同 d* 可共享 axis，并复用一次 compiled coordinate。Replay 保持该拓扑并消费 axis identity，公共前端
 上下文 (U_f) 只决定公开 API spelling。π 不保存 grid extent、地址公式、Source 文本或新的 mechanism tag。
 
 当一个 Source program ordinal 在进入 tensor address 前显式经过整数 `//`/`%` 解码时，Lift 必须把
@@ -340,6 +341,11 @@ program axis 的 identity 来自 Lift 作者化的 J-domain binding，不来自 
 extent 或 C。同一 `d*` 上的多个 realization instance 仍是多个 compiler-visible stage，必须分别
 materialize，但都读取 `program_axes` 绑定的同一 axis。这个规则不合并 instance，也不替 Lift 修复
 错误 multiplicity；若 Source 只有一次 coordinate stage，Lift 仍只声明一次并共享到全部消费者。
+
+当 Source branch 只表示某组 consumer occurrences 位于一个已声明 J domain 内时，J 不需要发明
+program-id value 或常量真假 `effect_if`。这些 occurrences 位于 `placement=branch` region，且由
+program-region d* `realize` instance 通过 empty-slot route 控制。domain 公式仍只在 J，axis identity
+仍只在 `program_axes`，π 只保存 region/route topology，不保存比较式、extent、polarity 或 API。
 
 更一般地，一个 Source SSA coordinate/address intermediate 只定义一次、被多个 access 使用时，π
 必须声明一个 producer、多个 routed consumers 与 one-producer sharing。多个语法 use 不构成多个

@@ -928,10 +928,14 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
             ("EVEN_M", True),
             ("EVEN_N", True),
             ("EVEN_HEADDIM", True),
-            ("BLOCK_M", 128),
-            ("BLOCK_N", 128),
+            # Keep the model-level B4/H16/S8192/D128 valuation intact while
+            # choosing a target-executable implementation schedule.  The
+            # 128x128 tile requires 164352 bytes of shared memory on the
+            # current target (limit 101376); BLOCK_* belongs to C, not J.
+            ("BLOCK_M", 64),
+            ("BLOCK_N", 64),
         ),
-        grid=(64, 64),
+        grid=(128, 64),
         grid_contract=("ceil_div(seqlen_q,BLOCK_M)", "batch*nheads"),
         seed=131,
         input_profile="flashattention-B4-H16-S8192-D128-f16-v1",
@@ -1031,8 +1035,11 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
             ("EVEN_M", True),
             ("EVEN_N", True),
             ("EVEN_HEADDIM", True),
-            ("BLOCK_M", 128),
-            ("BLOCK_N", 128),
+            # As above, this changes only the frozen implementation choice C;
+            # tensor shapes and their logical shape identities remain model
+            # level.  The backward kernel's first grid axis is source-fixed.
+            ("BLOCK_M", 64),
+            ("BLOCK_N", 64),
         ),
         grid=(1, 64),
         grid_contract=("1", "batch*nheads"),

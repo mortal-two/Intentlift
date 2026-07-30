@@ -2376,10 +2376,98 @@ def _iteration_axis_matches(axis_ref: int | str | None, trip_axis: str) -> bool:
     return axis_ref == 0 or axis_ref == trip_axis
 
 
+def _program_domain_branch_regions(
+    j: SemanticArchive,
+    pi: RealizationWitness,
+    diagnostics: list[TypeCheckDiagnostic],
+) -> dict[str, str]:
+    """Recognize physical consumer branches guarded by authored J domains.
+
+    One empty-slot route from a program-region ``d*`` realization into a branch
+    region means that the region is realized only for coordinates inside that J
+    domain.  The domain expression remains in J and the physical axis remains in
+    ``pi.program_axes``; pi carries no predicate text or target spelling.
+    """
+
+    domains = set(j.boundary.domains)
+    regions = {str(item["id"]): item for item in pi.regions}
+    branch_regions = {
+        region_id
+        for region_id, item in regions.items()
+        if item.get("placement") == "branch"
+    }
+    program_regions = {
+        region_id
+        for region_id, item in regions.items()
+        if item.get("placement") == "program"
+    }
+    instances = {str(item["id"]): item for item in pi.instances}
+    domain_sources = {
+        instance_id: str(item["semantic_ref"])
+        for instance_id, item in instances.items()
+        if item.get("mechanism") == "realize"
+        and item.get("region") in program_regions
+        and item.get("semantic_ref") in domains
+    }
+    bound_domains = {str(item["domain_ref"]) for item in pi.program_axes}
+
+    def region_is_within(region_ref: str, ancestor_ref: str) -> bool:
+        current: str | None = region_ref
+        seen: set[str] = set()
+        while current is not None and current not in seen:
+            if current == ancestor_ref:
+                return True
+            seen.add(current)
+            parent = regions.get(current, {}).get("parent")
+            current = str(parent) if parent is not None else None
+        return False
+
+    controlled: dict[str, str] = {}
+    for region_ref in sorted(branch_regions):
+        guard_domains = {
+            domain_sources[str(route["source"])]
+            for route in pi.routes
+            if not route["slots"]
+            and str(route["source"]) in domain_sources
+            and str(route["target"]) in instances
+            and region_is_within(
+                str(instances[str(route["target"])]["region"]), region_ref
+            )
+        }
+        if not guard_domains:
+            continue
+        if len(guard_domains) != 1:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.PROGRAM_AXIS_BINDING_INVALID,
+                    "pi.routes",
+                    "one physical branch region may be guarded by exactly one "
+                    "authored J program domain",
+                    region_ref,
+                )
+            )
+            continue
+        domain_ref = next(iter(guard_domains))
+        if domain_ref not in bound_domains:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.PROGRAM_AXIS_BINDING_INVALID,
+                    "pi.program_axes",
+                    "a program-domain branch requires the same J domain to have "
+                    "one physical launch-axis binding",
+                    domain_ref,
+                )
+            )
+            continue
+        controlled[region_ref] = domain_ref
+    return controlled
+
+
 def _check_effect_conditionals(
     j: SemanticArchive,
     pi: RealizationWitness,
     diagnostics: list[TypeCheckDiagnostic],
+    program_domain_regions: set[str],
 ) -> None:
     """Check authored binary effect regions without constructing control.
 
@@ -2844,7 +2932,18 @@ def _check_effect_conditionals(
         and str(instance.get("semantic_ref")) in value_arm_scopes
         and str(instance.get("region")) in branch_regions
     }
-    anchored_regions = set(scope_anchor_regions.values()) | value_anchor_regions
+    conditional_regions = set(scope_anchor_regions.values()) | value_anchor_regions
+    for region_ref in sorted(conditional_regions & program_domain_regions):
+        diagnostics.append(
+            TypeCheckDiagnostic(
+                TypeCheckErrorCode.EFFECT_CONDITIONAL_INVALID,
+                "pi.regions",
+                "one branch region cannot simultaneously realize a J conditional "
+                "arm and a program-domain consumer guard",
+                region_ref,
+            )
+        )
+    anchored_regions = conditional_regions | program_domain_regions
     for region_ref in sorted(branch_regions - anchored_regions):
         diagnostics.append(
             TypeCheckDiagnostic(
@@ -2872,6 +2971,7 @@ def _check_value_conditionals(
     j: SemanticArchive,
     pi: RealizationWitness,
     diagnostics: list[TypeCheckDiagnostic],
+    program_domain_regions: set[str],
 ) -> None:
     """Check authored single-result pure conditionals without constructing one."""
 
@@ -3144,7 +3244,7 @@ def _check_value_conditionals(
                 )
             )
 
-    anchored_regions = set(global_scope_regions.values())
+    anchored_regions = set(global_scope_regions.values()) | program_domain_regions
     for region_ref in sorted(branch_regions - anchored_regions):
         diagnostics.append(
             TypeCheckDiagnostic(
@@ -4617,9 +4717,41 @@ def _check_program_axes(
         for instance_id, item in instances.items()
         if item.get("mechanism") == "address_base"
     }
+    branch_regions = {
+        region_id
+        for region_id, item in regions.items()
+        if item.get("placement") == "branch"
+    }
+
+    def region_is_within_branch(region_ref: str) -> bool:
+        current: str | None = region_ref
+        seen: set[str] = set()
+        while current is not None and current not in seen:
+            if current in branch_regions:
+                return True
+            seen.add(current)
+            parent = regions.get(current, {}).get("parent")
+            current = str(parent) if parent is not None else None
+        return False
+
     outgoing: dict[str, set[str]] = {instance_id: set() for instance_id in instances}
+    program_domain_branch_sources: set[str] = set()
     for route in pi.routes:
-        outgoing.setdefault(str(route["source"]), set()).add(str(route["target"]))
+        source = str(route["source"])
+        target = str(route["target"])
+        outgoing.setdefault(source, set()).add(target)
+        target_instance = instances.get(target)
+        source_instance = instances.get(source)
+        if (
+            not route["slots"]
+            and target_instance is not None
+            and source_instance is not None
+            and source_instance.get("mechanism") == "realize"
+            and source_instance.get("region") in program_regions
+            and source_instance.get("semantic_ref") in domains
+            and region_is_within_branch(str(target_instance.get("region")))
+        ):
+            program_domain_branch_sources.add(source)
 
     def reaches_address_base(source: str) -> bool:
         pending = [source]
@@ -4640,7 +4772,10 @@ def _check_program_axes(
         if item.get("mechanism") == "realize"
         and item.get("region") in program_regions
         and item.get("semantic_ref") in domains
-        and reaches_address_base(instance_id)
+        and (
+            reaches_address_base(instance_id)
+            or instance_id in program_domain_branch_sources
+        )
     }
     bound = {str(item["domain_ref"]) for item in pi.program_axes}
     for index, item in enumerate(pi.program_axes):
@@ -4660,7 +4795,7 @@ def _check_program_axes(
                     TypeCheckErrorCode.PROGRAM_AXIS_BINDING_INVALID,
                     f"pi.program_axes[{index}].domain_ref",
                     "program-axis binding requires a program-region domain realize "
-                    "path that reaches address_base",
+                    "path that reaches address_base or controls a branch region",
                     domain_ref,
                 )
             )
@@ -4760,8 +4895,11 @@ def type_check(
     _check_rank_zero_logical_input_liveness(j, diagnostics)
     _check_boundary_value_dominance(j, diagnostics)
     _check_access_guard_relations(j, diagnostics)
-    _check_effect_conditionals(j, pi, diagnostics)
-    _check_value_conditionals(j, pi, diagnostics)
+    program_domain_regions = set(
+        _program_domain_branch_regions(j, pi, diagnostics)
+    )
+    _check_effect_conditionals(j, pi, diagnostics, program_domain_regions)
+    _check_value_conditionals(j, pi, diagnostics, program_domain_regions)
     diagnostics.extend(
         TypeCheckDiagnostic(
             TypeCheckErrorCode.FUNCTIONAL_BOUNDARY_INCOMPLETE,

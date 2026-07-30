@@ -392,14 +392,16 @@ ReplayLLM(J,pi,MaskC(C);U_f) -> complete source R_f
 它不修改 artifact π、TypeCheck judgement 或证书身份，旧 evidence 也不因 codec 升级而重判。
 
 每个 formal round 是一个 fresh、single-writer、source-blind coding episode，以 active wall time而非
-极小 tool-call 数治理。agent 可把源码拆为本轮 `work/composer/*.source` fragments；plain mode 只按
-词法文件名拼接 exact UTF-8 bytes。复杂 Replay 可由 agent 另写 episode-local
+极小 tool-call 数治理。默认由 agent 直接维护一份完整 `replay.source` 并做局部 patch/compile；不得
+为了 host 协议把几 KB 源码强制拆成每 occurrence 一个文件。只有 agent 自己判断有利时，才把源码拆为
+本轮 `work/composer/*.source` fragments；plain mode只按词法文件名拼接 exact UTF-8 bytes，或另写
+episode-local
 `work/replay.compose.json` 与 `NNN-iK.source`：fragment 中的 `{{out}}`、显式 operand
 `{{slot:N}}` 和按同 target empty-slot route 声明序编号的 `{{dep:N}}` 都是 agent 作者化目标语法的
 一部分，host 只按 accepted π 中已经显式、唯一的 route 替换 stable local ID，并
 检查 closed source/target、slot、sharing 与 order。host 不选择 target op/expression/control/API，
 不把 π relation 翻译成 code fragment；歧义、缺 occurrence、重复 slot 或错误顺序立即拒绝。direct
-`replay.source` raw escape 始终保留。agent 可反复 render、ReplayCheck、public synthetic compile 与
+完整 `replay.source` 是首选 coding 路径。agent 可反复 render、ReplayCheck、public synthetic compile 与
 查看自己 Replay 的 TTIR；任何 manifest、fragment、checkpoint 或 helper 都不得跨 formal round 保留。
 \nv50/v8 只升级 proof-irrelevant Agent execution transport：活动 staged writer 被移除，MiniSWE 使用
 一个持久 Lift owner 和每轮一个 exact Replay packet；首轮 exact allowlisted workspace mirror 在
@@ -416,10 +418,11 @@ Lift、MiniSWE Replay 或 Codex CLI provider turn 中的 sibling 可被终止并
 伪装成 transient retry，也不丢弃已经完成的 winner evidence。这些版本都不改变 artifact、packet、
 TypeCheck、ReplayCheck、Gate1 或 Gate2 接受集合。
 
-Codex Replay 的 `intentir.replay-authored-requirements.v2` 只是对 immutable packet 中既有事实的
-有界 exact 重排：除 π time/control/route 外，启动视图直接列出 J/B 的 accesses、aliases、
+MiniSWE 的 `intentir.replay-authored-requirements.v2` 只是对 immutable packet 中既有事实的
+有界 exact 重排：除 π time/control/route 外，它可列出 J/B 的 accesses、aliases、
 output mappings、physical reduction tile axes、index bounds、updates、consumer extensions、
-access guards 与 result relations；超过上限的行保留精确 section query。该视图不读取 Source、
+access guards 与 result relations；超过上限的行保留精确 section query。Codex 启动只收到 packet/
+contract/tool 的路径和字节数，自己按需读文件，不再重复注入该 projection。两者都不读取 Source、
 Harness value 或 Gate，也不把 J op/relation 映射成 target code。普通 effort 的 fresh Replay episode
 默认可用三个 provider wall-time window，xhigh 可用两个长 window；到最终截止点时，只有当前
 LLM-authored exact bytes 已重新通过 Replay ingress 与 synthetic compile 两项固定检查，host 才可在
@@ -465,10 +468,10 @@ Replay 必须生成完整、可独立构建的当前前端源码；固定代码�
 reject-only 检查，不根据 J、π 或 compiler diff 选择目标语义、修复或施工。
 
 Replay instruction 的共享前缀只能陈述 frontend-neutral 的 J/C/π ownership、拓扑保持、拒绝与输出
-合同。`tl.dot`、`tl.sum`、Triton program-axis 以及 base/lane 到具体 pointer operation 的拼写，只能在
-`frontend=triton` 时由 Triton `U_f`/instruction clause 给出；CUDA、CuTe、TileLang prompt 不得收到
-这些 Triton 实现话术。π 的 source-neutral mechanism grammar 仍对所有前端共享，它只定义 artifact
-tag 的意义，不指定某个前端 API。
+合同。`U_f` 只声明 callable/import ABI 与公共文档入口，不再列举 `J/π relation -> tl.dot/tl.sum/
+program-axis/address spelling` 的 RuleCard。具体 public frontend API 与源码组织由 coding agent 根据
+J/π 自行选择；construction compile 与 Gate 只拒绝。π 的版本化 schema定义 relation 的意义，但不
+指定某个前端 API。
 
 π region placement 不是隐式代码生成指令：`placement=program` 不等于存在 `program_id`。只有 π
 中另有一个表示 compiler-visible program/grid coordinate 的独立 `realize` instance 与 routes 时，
@@ -480,15 +483,12 @@ J.signature `p*` 同样不会因位于 program region 或拥有多个 π instanc
 现有关系的机械解释是：锚定 J domain、位于 program region 且 scalar dependency path 进入
 `address_base` 的 `realize` stage 是 program coordinate；进入 `address_lane` 的 domain/C path 是
 lane coordinate。`pi.program_axes` 为每个 distinct coordinate domain 作者化精确 axis `0..2`；
-Triton `U_f` 必须按该 binding 生成 `tl.program_id(axis)`。锚定同一 `d*` 的多个 instance 仍分别
-materialize，但共享同一 bound axis；instance multiplicity、声明顺序、grid extent 与 C 均不能分配
-或重编号 axis。lane path 才使用 `tl.arange` 等 lane realization；placement 单独出现时两者都不能
-推断。Triton 的 `tl.arange` 等
-compile-time-only API 必须直接读取仍带 `tl.constexpr` 注解的匿名 `c*` 参数，不得先复制到普通
-Python local 再传入。单个锚定 `c*` 的 `realize` instance 由参数 binding 和直接 routed use 即可
-满足，不要求恒等 alias。`IntentFunction.reduce.axes` 是 logical axes；匹配的
-`J.boundary.reductions.tile_axis` 才是 Triton reduction call 使用的物理 tile axis。这里都是固定、
-source-neutral 的前端合同，不是 per-kernel hint。
+domain_ref 唯一，但多个 logical consumer domain 可按 Source realization 共享一个 physical axis，
+compiled coordinate 按 unique axis 只 materialize 一次。锚定同一 `d*` 的多个 instance 仍分别
+realize但共享该 coordinate；instance multiplicity、声明顺序、grid extent 与 C 均不能分配或重编号
+axis。若 empty-slot route 从 program-region d* instance 进入 `placement=branch` region，该 region
+只在 J domain 内 realization；J 保存 domain 公式，π 不复制 predicate。具体 frontend spelling 由
+agent 选择并由 construction compile/Gate 拒绝，`U_f` 不再提供 relation-to-API 映射。
 
 `pi.iterations` 是必须消费的 source-realization topology，不是可选 schedule hint。对
 `extent_step`，Replay 使用 J trip extent 为 upper、匹配 C tile 为 step；对 `tile_ordinal`，Replay
@@ -502,16 +502,10 @@ valuation 猜出等式，也不能授权 Replay 省略 pad。应由下一次 Sou
 relation（或不生成该冗余 pad）；固定 Replay consumer 不在 packet 内建立临时 shape/slot theorem
 prover。
 
-对 canonical binary J contraction，若 per-program 两个 operand 与 result 都是 rank-2 floating
-tile、恰有一个 contracted label，且声明的 operand/result/accumulation dtype 均由 public
-`tl.dot` 支持，则一个锚定该 contraction node 的 `realize` instance 在当前 Triton `U_f v11`（继承
-v5 direct-contraction 合同）中使用一个
-direct `tl.dot` realization。它不能被展开成 broadcasted outer-product multiply + `tl.sum`，因为
-后者制造了 artifact 未声明的 compiler-visible stages。该规则不适用于 outer product、batched 或
-其他 unsupported contraction/tile/dtype，也不覆盖 π 已显式声明多个 contraction-anchored stage 的
-情况；Replay 不得为了强用 `tl.dot` 修改 J 或删除 π stage。若 Source 本来就是多个显式 stage，下一次
-Lift 必须用完整 π multiplicity/order 表达；若 Source 是一次 direct primitive，则只能声明对应的一次
-stage。
+一个锚定 J contraction 的 `realize` instance 只授权一个 compiler-visible contraction occurrence；
+若 Source 本来有多个显式 stage，Lift 必须用 π multiplicity/order 表达。Replay 自己选择该 frontend
+的公开构造，但不得把一次 occurrence 展开成额外 compiler-visible stages，也不得为了某个 API 修改
+J 或删除 π stage。这个约束来自 occurrence identity，不是 op-to-API RuleCard。
 
 若 Source 中一个 SSA coordinate/address intermediate 只定义一次却被多个 access 使用，Lift 必须
 声明一个 producer、把 consumers/routes 与 one-producer sharing 闭合；多个语法 use 不等于多个

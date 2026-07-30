@@ -60,6 +60,11 @@ Replay := Render_f(K)
 - representation-only 参数或 C slot 的 opaque attachment；
 - packing/layout/cast 等实现见证，但只能通过 typed opaque refs 与 relation kind 表达。
 
+同一 physical program axis 可以 realization 多个 J logical consumer domain。每个 d* 在
+`program_axes` 中仍恰有一个 binding，但不同 d* 可以共享 axis；对应 consumer occurrences 放在
+独立 branch region，并由 program-region d* instance 的 empty-slot route 控制。J domain 是唯一条件，
+π 只保存共享 axis 与 branch topology，不保存比较式或 extent。
+
 π 禁止携带：
 
 - J operator、计算公式、常量填充值、predicate 表达式或 reduction 语义；
@@ -81,9 +86,14 @@ Replay := Render_f(K)
 Replay agent 可以在自己的工作区建立和修改一个小型结构化构造文件，例如：
 
 ```text
-work/replay.compose.json
-work/replay_source.py
+work/replay.source
+work/replay.compose.json      # 可选
+work/composer/*.source       # 可选
 ```
+
+默认路径是像普通 Codex 一样直接维护一份完整源码，并在同一 episode 中局部 patch、编译和修正。
+route-bound fragments 只在 agent 自己判断交叉引用确实难维护时使用；系统不得要求“每个 π occurrence
+一个文件”。否则几 KB 目标源码会膨胀成上百个机械 fragment，内部 Composer 反而成为新的协议负担。
 
 host 只提供通用、syntax-only 的能力：
 
@@ -92,6 +102,9 @@ host 只提供通用、syntax-only 的能力：
 - `if/for/while/call/assign/return/raw` 等目标语法节点；
 - render、format、compile、运行正式 Replay check、查看自身 TTIR/编译诊断；
 - checkpoint、局部修改和原子 submit。
+
+公开 `U_f` 只保留短 ABI 约束，不再携带按 relation/op 罗列的 target spelling RuleCard。relation 的
+含义来自版本化 schema/J/π 自身，目标写法由 agent 选择；编译和 construction diagnostics 只拒绝。
 
 对交叉引用密集的 Replay，通用 editor 允许 agent 在每个 occurrence fragment 中作者化
 `{{out}}`、`{{slot:N}}` 与 `{{dep:N}}` 占位符；`slot` 对应 π 显式 operand slot，`dep` 只按同一
@@ -144,7 +157,9 @@ Mask-J 只回答 π 是否泄漏到足以独立恢复语义，不替代正式证
 
 不以工具调用次数硬切断正常 coding loop。资源边界使用 wall-time、上下文窗口和 formal Gate1 round 上限；统计内部 tool/compile 次数，但不把它们误记为 relift 或 Gate1 round。
 
-Replay 启动只可对已认证 packet 做有界、exact 的注意力重排：除了 π 的 time/control/route，还必须直接呈现 J/B 已声明的 access、physical reduction tile axis、output/update 和 result relation；省略行只给出精确续查路径。这不是从 J 生成 target recipe，而是避免 agent 在大 packet 中遗漏已有 authority。
+Replay 启动只给文件路径和字节数；agent 按需读取 packet。若某个前端桥接器额外提供 attention
+projection，它只能是已认证 packet 的有界、exact 行式视图，并必须有精确续查路径；不能变成
+target recipe，也不能把整份 artifact/RuleCard 重复塞入 prompt。
 
 wall-time 截止也不应丢弃已完成的 LLM 输出：只有当截止点的 exact Replay bytes 已被固定 ingress 与 synthetic compile 双检查接受时，host 才可将其作为本 episode 的最终输出送往 Gate1；这只消除未来得及调用 submit 的协议失败，不修复任何字节或源码。
 
