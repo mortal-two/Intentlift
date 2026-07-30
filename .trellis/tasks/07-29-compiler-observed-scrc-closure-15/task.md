@@ -606,6 +606,12 @@ formal pilot 随后证明编译观察能帮助 Linear 首轮恢复多物理 carr
 startup context 仍造成显著 attention/serialization 成本，故 P1 重新打开为上述 context-reduction
 工作，不引入新数学对象。
 
+2026-07-30进一步补齐`Run_f`反馈：Codex Lift owner在CandidateCheck/SourceReconcile通过后可显式调用
+固定public seed的`SemanticProbe(Source,RefEval(J))`。该工具只返回Source–J逐输出差异，不读π/Replay、
+不生成或修补artifact、不进入证书；hidden Gate2 seed仍只在Gate1 winner之后生成。冻结Qwen J由原先
+`reference_unsupported`变为可执行并暴露约1.2的真实half-view语义差，证明该闭环能在formal Replay前
+发现“well-typed但J欠表达”，而不是继续用更多Gate1轮次碰运气。
+
 ### P2：四个真实pilot
 
 能力提交且工作区干净后，才依次/并行启动：

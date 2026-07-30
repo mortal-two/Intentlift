@@ -46,8 +46,8 @@ from .prompt import SCHEMA as _INTENTIR_OPERATION_REFERENCE
 from .scrc_schema import scrc_lift_core_json_schema
 
 
-CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v25"
-CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v83"
+CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v26"
+CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v84"
 CODEX_CLI_TURN_TIMEOUT_SECONDS = 900.0
 
 _FEEDBACK_CATEGORY_NAMES = (
@@ -87,7 +87,12 @@ required. The final candidate bytes must be entirely your work. Run
 `python .agents/intentir_agent_tool.py submit_candidate` after a meaningful complete
 draft. This transaction first runs the source-free CandidateCheck and then the
 reject-only SourceReconcile on the same exact bytes. Repair the returned diagnostics
-and invoke it again; once it returns PASS, stop the turn immediately. CandidateCheck
+and invoke it again. Once it returns PASS, run
+`python .agents/intentir_agent_tool.py semantic_probe` once before finishing. This
+separate public Source-vs-J diagnostic never certifies or edits the candidate; use a
+large semantic divergence to inspect and repair your own J, while treating an
+unsupported probe or small floating reduction delta as diagnostic rather than a
+membership verdict. Rerun submit_candidate after any edit, then finish. CandidateCheck
 remains source-free; SourceReconcile only compares your already-authored closed
 compiled obligations with the immutable Source TTIR observation. The host independently
 reruns Decode and TypeCheck, then starts fresh
@@ -435,6 +440,7 @@ def _codex_input_files(
         "lift_contract.md": build_scrc_lift_instructions().rstrip() + "\n",
         "candidate_check.json": "null\n",
         "source_reconcile.json": "null\n",
+        "semantic_probe.json": "null\n",
     }
     files.update(_codex_feedback_files(complete["feedback.json"]))
     if "source_ttir.json" in complete:
@@ -458,8 +464,10 @@ consult or restore them when a repair regresses, but decide every edit yourself.
 Inspect Source/TTIR only where needed, then revise the complete model-authored
 J/C/pi in place. If a named relation's ownership is unclear, search only that name
 in input/lift_contract.md. Treat feedback as a compiler counterexample, not as a semantic patch.
-Run `python .agents/intentir_agent_tool.py submit_candidate` and finish immediately
-after the current exact candidate passes. The host alone reruns the checks and gates.
+Run `python .agents/intentir_agent_tool.py submit_candidate`; after it passes, use
+`python .agents/intentir_agent_tool.py semantic_probe` once on the current exact J.
+Treat it only as public diagnostic evidence, repair any clear semantic divergence,
+rerun submit_candidate after edits, and then finish. The host alone runs formal gates.
 """
 
 _CANDIDATE_CHECK_CONTINUATION_PROMPT = """The host submission preflight rejected the current exact candidate bytes.
@@ -503,6 +511,7 @@ def _source_aware_startup_context(workspace: Any, *, fresh_owner: bool) -> dict[
             ],
             "candidate_check": "input/candidate_check.json",
             "source_reconcile": "input/source_reconcile.json",
+            "semantic_probe": "input/semantic_probe.json",
             "candidate": "output/candidate.json",
             "candidate_history": "work/candidate_history/",
         },
@@ -563,6 +572,10 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
         repr=False,
     )
     repair_effort: str | None = None
+    semantic_probe: Callable[[Any], Mapping[str, Any]] | None = field(
+        default=None,
+        repr=False,
+    )
     _codex_session: Any = field(default=None, init=False, repr=False)
     _source_ttir_observation: dict[str, Any] | None = field(
         default=None, init=False, repr=False
@@ -718,6 +731,7 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                         },
                         "candidate_check.json",
                         "source_reconcile.json",
+                        "semantic_probe.json",
                     }
                 ),
             )
@@ -736,6 +750,7 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
         call_turns: list[CodexCLITurn] = []
         check_results: list[dict[str, Any]] = []
         source_reconcile_results: list[dict[str, Any]] = []
+        semantic_probe_results: list[dict[str, Any]] = []
         timeout_events: list[dict[str, Any]] = []
         candidate_text: str | None = None
         last_checked_good: str | None = None
@@ -889,10 +904,52 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
             source_reconcile = reconcile_current_candidate(trigger=trigger)
             return candidate_check, source_reconcile
 
+        def semantic_probe_tool() -> Mapping[str, Any]:
+            """Execute one public Source-vs-J diagnostic over exact candidate bytes."""
+
+            candidate_check, source_reconcile = host_preflight(
+                trigger="semantic_probe"
+            )
+            if candidate_check["status"] != "pass":
+                result: dict[str, Any] = {
+                    "protocol": "intentir.lift.public-semantic-probe.v1",
+                    "status": "unavailable",
+                    "phase": "candidate_check",
+                    "diagnostic": "current candidate has not passed CandidateCheck",
+                }
+            elif source_reconcile is None or source_reconcile["status"] != "pass":
+                result = {
+                    "protocol": "intentir.lift.public-semantic-probe.v1",
+                    "status": "unavailable",
+                    "phase": "source_reconcile",
+                    "diagnostic": "current candidate has not passed SourceReconcile",
+                }
+            elif candidate_text is None or self.semantic_probe is None:
+                result = {
+                    "protocol": "intentir.lift.public-semantic-probe.v1",
+                    "status": "unavailable",
+                    "phase": "execution",
+                    "diagnostic": "this Lift invocation has no public probe runner",
+                }
+            else:
+                artifact = decode_scrc_lift_artifact(candidate_text, prepared)
+                result = dict(self.semantic_probe(artifact))
+            result.setdefault(
+                "authority",
+                "public diagnostic only; not CandidateCheck or certification",
+            )
+            semantic_probe_results.append(dict(result))
+            _atomic_write_json(
+                workspace.input_dir / "semantic_probe.json",
+                result,
+            )
+            return result
+
         bridge = CodexCLIToolBridge(
             workspace.scratch_dir / CODEX_CLI_TOOL_BRIDGE_ROOT_NAME,
             {
                 "submit_candidate": submit_candidate_tool,
+                "semantic_probe": semantic_probe_tool,
             },
         )
         try:
@@ -956,6 +1013,7 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                         "turns": [item.to_evidence() for item in call_turns],
                         "candidate_check": list(check_results),
                         "source_reconcile": list(source_reconcile_results),
+                        "semantic_probe": list(semantic_probe_results),
                         "tool_bridge": bridge.evidence,
                     }
                     self._records.append(
@@ -1090,6 +1148,7 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                 "turns": [turn.to_evidence() for turn in call_turns],
                 "candidate_check": list(check_results),
                 "source_reconcile": list(source_reconcile_results),
+                "semantic_probe": list(semantic_probe_results),
                 "timeout_events": list(timeout_events),
                 "tool_bridge": bridge.evidence,
             }
@@ -1124,6 +1183,7 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
             "turns": [turn.to_evidence() for turn in call_turns],
             "candidate_check": list(check_results),
             "source_reconcile": list(source_reconcile_results),
+            "semantic_probe": list(semantic_probe_results),
             "timeout_events": list(timeout_events),
             "tool_bridge": bridge.evidence,
             "source_ttir_observation": {
@@ -1185,6 +1245,7 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
             "usage": usage,
             "candidate_check": list(check_results),
             "source_reconcile": list(source_reconcile_results),
+            "semantic_probe": list(semantic_probe_results),
             "timeout_events": list(timeout_events),
             "tool_bridge": bridge.evidence,
             "trajectory": trajectory,

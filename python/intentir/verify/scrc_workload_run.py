@@ -43,16 +43,19 @@ from intentir.verify.gate1.replay import (
 )
 from intentir.verify.gate1.codex_replay import CodexCLIReplayWriter
 from intentir.verify.gate2.model import Gate2Status
+from intentir.verify.gate2.compare import compare_outputs
 from intentir.verify.gate2.orchestrate import (
     Gate2Case,
     Gate2Runner,
     Gate2Suite,
 )
-from intentir.verify.gate2.scalar import ScalarLoweringSpec
+from intentir.verify.gate2.policy import DEFAULT_GATE2_POLICY
+from intentir.verify.gate2.scalar import ScalarLoweringRunner, ScalarLoweringSpec
 from intentir.verify.gate2.triton import (
     ArgumentRole,
     TritonArgument,
     TritonExecutionSpec,
+    TritonRunner,
 )
 from intentir.verify.scrc_batch import BatchClassification
 from intentir.verify.scrc_runner import (
@@ -80,6 +83,8 @@ RecordedLiftAdapter = (
 GATE1_DIAGNOSTIC_RECHECK_PROTOCOL = (
     "intentir.scrc.gate1-diagnostic-recheck.v1"
 )
+LIFT_SEMANTIC_PROBE_PROTOCOL = "intentir.lift.public-semantic-probe.v1"
+LIFT_SEMANTIC_PROBE_SEED = 2026073001
 
 
 @dataclass(frozen=True)
@@ -225,11 +230,15 @@ def _bind_logical_scalar_input(
         raise ValueError("scalar dimension is inconsistent")
 
 
-def build_workload_gate2_suite(
+def _build_workload_execution_case(
     prepared: PreparedTritonWorkload,
     artifact: Gate1Artifact,
-) -> Gate2Suite:
-    """Generate the hidden finite case only after Gate1 accepts the Replay."""
+    *,
+    seed: int,
+    case_id: str,
+    test_mode: str,
+) -> Gate2Case:
+    """Bind one explicit execution valuation without assigning it gate authority."""
 
     adapter = prepared.adapter
     mapping = dict(prepared.source_to_opaque)
@@ -243,7 +252,7 @@ def build_workload_gate2_suite(
     }
     j_inputs = {item.name: item for item in artifact.j.intent.inputs}
     j_outputs = {item.name: item for item in artifact.j.intent.outputs}
-    rng = np.random.default_rng(adapter.seed)
+    rng = np.random.default_rng(seed)
     values: dict[str, Any] = {}
     dimensions: dict[str, int] = {}
     input_bindings: dict[str, str] = {}
@@ -407,19 +416,130 @@ def build_workload_gate2_suite(
         output_bindings[item.name] for item in artifact.j.intent.outputs
     )
     case = Gate2Case(
-        "finite-hidden-1",
+        case_id,
         refeval.j,
         values,
         execution,
         refeval,
         output_keys,
         {
-            "test_mode": "finite_hidden_after_gate1",
+            "test_mode": test_mode,
             "adapter_protocol": adapter.protocol,
             "input_profile": adapter.input_profile,
         },
     )
-    return Gate2Suite(adapter.case_id, (case,), prepared.request.binding.c_values)
+    return case
+
+
+def build_workload_gate2_suite(
+    prepared: PreparedTritonWorkload,
+    artifact: Gate1Artifact,
+) -> Gate2Suite:
+    """Generate the hidden finite case only after Gate1 accepts the Replay."""
+
+    case = _build_workload_execution_case(
+        prepared,
+        artifact,
+        seed=prepared.adapter.seed,
+        case_id="finite-hidden-1",
+        test_mode="finite_hidden_after_gate1",
+    )
+    return Gate2Suite(
+        prepared.adapter.case_id,
+        (case,),
+        prepared.request.binding.c_values,
+    )
+
+
+def run_workload_lift_semantic_probe(
+    prepared: PreparedTritonWorkload,
+    artifact: Gate1Artifact,
+) -> dict[str, Any]:
+    """Run a public, non-certifying Source-vs-J probe for the Lift owner.
+
+    The probe uses a fixed public seed distinct from the adapter's hidden Gate2
+    seed.  Source executes with the candidate C, while the reference leg receives
+    J and logical input bindings only.  No Replay, pi relation, Gate observation,
+    or hidden input enters this diagnostic.
+    """
+
+    if tuple(sorted(artifact.c.values.items())) != prepared.request.binding.c_values:
+        return {
+            "protocol": LIFT_SEMANTIC_PROBE_PROTOCOL,
+            "status": "unavailable",
+            "diagnostic": "candidate C values differ from the frozen Harness binding",
+            "authority": "public diagnostic only; not CandidateCheck or certification",
+        }
+    seed = LIFT_SEMANTIC_PROBE_SEED
+    if seed == prepared.adapter.seed:
+        seed += 1
+    try:
+        case = _build_workload_execution_case(
+            prepared,
+            artifact,
+            seed=seed,
+            case_id="finite-public-lift-probe-1",
+            test_mode="finite_public_before_gate1",
+        )
+
+        def clone_values() -> dict[str, Any]:
+            return {
+                name: value.copy() if isinstance(value, np.ndarray) else value
+                for name, value in case.values.items()
+            }
+
+        source = TritonRunner().run(
+            "source",
+            prepared.request.source.gate_source,
+            case.triton,
+            clone_values(),
+        )
+        reference = ScalarLoweringRunner().run(case.refeval, clone_values())
+        if not source.ok or not reference.ok:
+            failed = source if not source.ok else reference
+            return {
+                "protocol": LIFT_SEMANTIC_PROBE_PROTOCOL,
+                "status": "unavailable",
+                "failed_leg": failed.leg,
+                "unsupported": failed.unsupported,
+                "diagnostic": failed.error,
+                "authority": (
+                    "public diagnostic only; unsupported execution does not reject "
+                    "or certify the candidate"
+                ),
+            }
+        agreement = compare_outputs(
+            "source",
+            source.outputs,
+            "j",
+            reference.outputs,
+            j=case.j,
+            input_bindings=case.refeval.input_binding_map,
+            output_bindings=case.refeval.output_binding_map,
+            inputs=case.values,
+            policy=DEFAULT_GATE2_POLICY,
+        )
+        return {
+            "protocol": LIFT_SEMANTIC_PROBE_PROTOCOL,
+            "status": "pass" if agreement.passed else "diverged",
+            "case_id": case.case_id,
+            "seed": seed,
+            "comparison": agreement.to_json(),
+            "authority": (
+                "public Source-vs-J diagnostic only; no artifact field is generated, "
+                "repaired, accepted, or certified"
+            ),
+        }
+    except Exception as exc:
+        return {
+            "protocol": LIFT_SEMANTIC_PROBE_PROTOCOL,
+            "status": "unavailable",
+            "diagnostic": f"{type(exc).__name__}: {exc}",
+            "authority": (
+                "public diagnostic only; probe failure does not reject or certify "
+                "the candidate"
+            ),
+        }
 
 
 def classify_scrc_report(report: SCRCRunReport) -> BatchClassification:
@@ -694,6 +814,10 @@ def _build_workload_runtime(
     }
     if lift_backend in {"miniswe", "codex"}:
         lift_kwargs["workflow"] = lift_workflow
+    if lift_backend == "codex":
+        lift_kwargs["semantic_probe"] = lambda artifact: (
+            run_workload_lift_semantic_probe(prepared, artifact)
+        )
     if lift_backend == "codex" and (effort or provider.reasoning_effort) == "xhigh":
         lift_kwargs["repair_effort"] = "high"
         lift_kwargs["stop_requested"] = stop_requested
@@ -1762,6 +1886,8 @@ def save_workload_failure(
 
 __all__ = [
     "GATE1_DIAGNOSTIC_RECHECK_PROTOCOL",
+    "LIFT_SEMANTIC_PROBE_PROTOCOL",
+    "LIFT_SEMANTIC_PROBE_SEED",
     "WorkloadExecution",
     "WorkloadExecutionError",
     "WorkloadGate1Search",
@@ -1776,6 +1902,7 @@ __all__ = [
     "next_gate1_recheck_dir",
     "next_workload_run_dir",
     "recheck_prepared_workload_gate1",
+    "run_workload_lift_semantic_probe",
     "save_candidate_fanout_report",
     "save_workload_execution",
     "save_workload_failure",

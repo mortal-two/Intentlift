@@ -145,7 +145,14 @@ Decode/TypeCheck；工具 `PASS`
 agent 内部多步和 CandidateCheck 不增加正式 Gate round，也不削弱门禁。报告必须分别记录外部
 Lift invocation、owner session id/累计 active wall time、agent model turns、实际 provider calls、
 CandidateCheck 调用次数与诊断类别。
-Replay、正式 Source/Replay comparison、Gate1、Gate2 与 RefEval 在 session 内仍然绝对不可调用。
+Replay、Gate1、Gate2与hidden input在session内仍然绝对不可调用。
+
+source-aware owner可以在CandidateCheck/SourceReconcile通过后，独立调用一次非认证的public
+`SemanticProbe(Source,RefEval(J))`。它使用与hidden Gate2不同的预先固定seed；Source腿使用当前候选C，
+RefEval腿只接收J与logical inputs，π和Replay均不进入。工具只返回逐输出差异与外部Q的当前诊断，
+不得生成、修改、接受或拒绝artifact。大差异由LLM自行回读Source/J并修改；unsupported或小幅浮点
+归约差异不能成为membership verdict。该probe调用与结果作为proof-irrelevant telemetry保存，正式
+TypeCheck、fresh Replay、Gate1和hidden Gate2仍由外部Runner独立执行。
 
 当前 active single-owner 路径默认每 branch 累计 3600 秒 active Lift wall time；`step_limit=0` 与
 CandidateCheck count limit 0 都表示不按次数截断，而不是无资源约束。model/tool/check 调用全部作为
@@ -242,7 +249,8 @@ workspace 的 `output/candidate.json`；closed Gate1 diff 只按既有 protocol 
 与当前需要的 leaf section，禁止把整份 schema/op catalog pretty-print 进线程；最终 artifact 与所有
 字段仍完全由同一 LLM owner 作者化。
 Codex Lift v20 同时删除与普通文件读取重复的 `feedback_frontier` host tool；workspace 中 exact frontier
-文件是唯一入口，特殊 bridge 只剩无法由本地文件操作替代的 CandidateCheck 与 SourceReconcile。
+文件是唯一入口。当前特殊 bridge 只保留无法由本地文件操作替代的CandidateCheck、SourceReconcile，
+以及上述显式调用、非认证的public SemanticProbe。
 
 Codex Lift v11 / knowledge v68 将同一 exact Harness ABI ledger 与 syntax-only
 `source-outline.v2` 直接放入首次 owner prompt，并将
