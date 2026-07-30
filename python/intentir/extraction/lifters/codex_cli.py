@@ -39,8 +39,8 @@ from .scrc import (
     prepare_scrc_lift,
     scrc_candidate_check_context,
 )
-CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v28"
-CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v86"
+CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v29"
+CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v87"
 CODEX_CLI_TURN_TIMEOUT_SECONDS = 900.0
 
 _FEEDBACK_CATEGORY_NAMES = (
@@ -311,13 +311,13 @@ input/feedback_replay.ttir contain the exact preceding source-blind Replay outpu
 use them only as read-only counterexample evidence.
 Your own prior formal candidates are immutable under work/candidate_history/;
 consult or restore them when a repair regresses, but decide every edit yourself.
-Inspect Source/TTIR only where needed, then revise the complete model-authored
-J/C/pi in place. If a named relation's ownership is unclear, search only that name
-in input/lift_contract.md. Treat feedback as a compiler counterexample, not as a semantic patch.
-Run `python .agents/intentir_agent_tool.py submit_candidate`; after it passes, use
-`python .agents/intentir_agent_tool.py semantic_probe` once on the current exact J.
-Treat it only as public diagnostic evidence, repair any clear semantic divergence,
-rerun submit_candidate after edits, and then finish. The host alone runs formal gates.
+Use the compact source query only where the named feedback needs exact Source or
+compiler evidence, then revise the complete model-authored J/C/pi in place. If a
+named relation's ownership is unclear, search only that name in
+input/knowledge/lift_contract.md. Treat feedback as a compiler counterexample, not
+as a semantic patch. Run `python .agents/intentir_agent_tool.py submit_candidate`;
+the host automatically probes the exact passing J and returns any public divergence
+to this same thread. The host alone runs formal gates.
 """
 
 _CANDIDATE_CHECK_CONTINUATION_PROMPT = """The host submission preflight rejected the current exact candidate bytes.
@@ -325,7 +325,7 @@ Read input/candidate_check.json and repair output/candidate.json in this same
 thread. Make coordinated J/C/pi changes when required. Rerun
 `python .agents/intentir_agent_tool.py submit_candidate` and finish immediately
 after the complete candidate passes. Search a rejected relation's exact field name
-in input/lift_contract.md when its ownership is unclear. The transaction is diagnostic-only.
+in input/knowledge/lift_contract.md when its ownership is unclear. The transaction is diagnostic-only.
 """
 
 _SOURCE_RECONCILE_CONTINUATION_PROMPT = """The source-aware occurrence preflight rejected the current exact candidate bytes.
