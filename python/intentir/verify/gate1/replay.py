@@ -40,12 +40,12 @@ from .ttir import (
 )
 
 
-MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v30"
+MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v31"
 MINISWE_REPLAY_TURN_TIMEOUT_SECONDS = 300.0
 MINISWE_REPLAY_XHIGH_TURN_TIMEOUT_SECONDS = 900.0
 RESPONSES_REPLAY_BACKEND = "openai.responses.intentir-replay.v1"
 STATIC_REPLAY_BACKEND = "intentir.static-replay-test.v1"
-REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v13"
+REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v14"
 _ANONYMOUS_HANDLE = re.compile(r"^[pc][0-9]+$")
 
 
@@ -2200,7 +2200,7 @@ def _packet_required_compiled_address_operations(
 
 def _packet_required_compiled_program_ids(
     packet: Mapping[str, Any],
-) -> tuple[int | None, tuple[str, ...]]:
+) -> tuple[int | None, tuple[str, ...], tuple[int, ...] | None]:
     """Project the exact number of packet-authorized program coordinates.
 
     A program-region placement is only lexical scope.  Under the public Triton
@@ -2209,13 +2209,15 @@ def _packet_required_compiled_program_ids(
     stage.  Repeated pi instances of the same domain share that coordinate, and
     signature ``p*`` instances always share their already-existing callable ABI
     carrier.  This projection rejects extra compiled coordinates but never
-    invents a coordinate or chooses an axis for Replay.
+    invents a coordinate.  In artifact v12 the authored ``pi.program_axes``
+    relation supplies the exact physical axis; legacy packets retain count-only
+    diagnostics and are never silently upgraded.
     """
 
     j = packet.get("j")
     pi = packet.get("pi")
     if not isinstance(j, Mapping) or not isinstance(pi, Mapping):
-        return None, ()
+        return None, (), None
     boundary = j.get("boundary")
     domains_value = (
         boundary.get("domains") if isinstance(boundary, Mapping) else None
@@ -2224,12 +2226,12 @@ def _packet_required_compiled_program_ids(
     instances_value = pi.get("instances")
     routes_value = pi.get("routes")
     if not isinstance(domains_value, Mapping):
-        return None, ()
+        return None, (), None
     if not all(
         isinstance(value, list)
         for value in (regions_value, instances_value, routes_value)
     ):
-        return None, ()
+        return None, (), None
 
     domain_refs = {str(name) for name in domains_value}
     program_regions = {
@@ -2281,7 +2283,47 @@ def _packet_required_compiled_program_ids(
         and item.get("semantic_ref") in domain_refs
         and reaches_address_base(instance_id)
     }
-    return len(authorized), tuple(sorted(authorized))
+    ordered_domains = tuple(sorted(authorized))
+    program_axes_value = pi.get("program_axes")
+    if program_axes_value is None:
+        return len(authorized), ordered_domains, None
+    if not isinstance(program_axes_value, list):
+        return None, (), None
+    axes_by_domain = {
+        str(item.get("domain_ref")): int(item["axis"])
+        for item in program_axes_value
+        if isinstance(item, Mapping)
+        and isinstance(item.get("domain_ref"), str)
+        and isinstance(item.get("axis"), int)
+        and not isinstance(item.get("axis"), bool)
+    }
+    if set(axes_by_domain) != authorized:
+        return len(authorized), ordered_domains, None
+    return (
+        len(authorized),
+        ordered_domains,
+        tuple(sorted(axes_by_domain[domain] for domain in ordered_domains)),
+    )
+
+
+def _compiled_program_id_axes(ttir: str) -> tuple[int, ...] | None:
+    """Read the literal Triton launch-axis multiset from pinned TTIR."""
+
+    axes: list[int] = []
+    axis_names = {"x": 0, "y": 1, "z": 2}
+    for line in ttir.splitlines():
+        if "tt.get_program_id" not in line:
+            continue
+        named = re.search(r"\btt\.get_program_id\s+([xyz])(?:\s|:)", line)
+        if named is not None:
+            axes.append(axis_names[named.group(1)])
+            continue
+        generic = re.search(r"\baxis\s*=\s*([0-2])(?:\s*:\s*i32)?", line)
+        if generic is not None:
+            axes.append(int(generic.group(1)))
+            continue
+        return None
+    return tuple(sorted(axes))
 
 
 def _compiled_transfer_order_diagnostic(
@@ -2396,7 +2438,7 @@ def compiled_packet_obligation_diagnostics(
     expected_address_operations, address_refs = (
         _packet_required_compiled_address_operations(packet)
     )
-    expected_program_ids, program_domain_refs = (
+    expected_program_ids, program_domain_refs, expected_program_axes = (
         _packet_required_compiled_program_ids(packet)
     )
 
@@ -2410,6 +2452,22 @@ def compiled_packet_obligation_diagnostics(
                         f"{path_prefix} tt.get_program_id: "
                         f"expected={expected_program_ids}, "
                         f"actual={actual_program_ids}"
+                    ),
+                    "anonymous_handles": list(program_domain_refs[:32]),
+                    "line": None,
+                }
+            )
+
+    if expected_program_axes is not None:
+        actual_program_axes = _compiled_program_id_axes(ttir)
+        if actual_program_axes is None or expected_program_axes != actual_program_axes:
+            diagnostics.append(
+                {
+                    "rule_code": "compiled_program_id_axes",
+                    "path": (
+                        f"{path_prefix} tt.get_program_id axes: "
+                        f"expected={list(expected_program_axes)}, "
+                        f"actual={list(actual_program_axes) if actual_program_axes is not None else 'unrecognized'}"
                     ),
                     "anonymous_handles": list(program_domain_refs[:32]),
                     "line": None,

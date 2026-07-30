@@ -39,8 +39,8 @@ from .scrc import (
     prepare_scrc_lift,
     scrc_candidate_check_context,
 )
-CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v29"
-CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v87"
+CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v30"
+CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v88"
 CODEX_CLI_TURN_TIMEOUT_SECONDS = 900.0
 
 _FEEDBACK_CATEGORY_NAMES = (
@@ -295,6 +295,18 @@ def _codex_input_files(
         "semantic_probe.json": "null\n",
     }
     files.update(_codex_feedback_files(complete["feedback.json"]))
+    replay_source = complete.get("gate1_counterexample/replay.py", "")
+    replay_ttir = complete.get("gate1_counterexample/replay.ttir", "")
+    files["feedback_replay.py"] = (
+        replay_source.rstrip() + "\n"
+        if replay_source
+        else "# No formal Replay source is available before a Gate1 counterexample.\n"
+    )
+    files["feedback_replay.ttir"] = (
+        replay_ttir.rstrip() + "\n"
+        if replay_ttir
+        else "// No formal Replay TTIR is available before a Gate1 counterexample.\n"
+    )
     if "source_ttir.json" in complete:
         files["source_ttir.json"] = complete["source_ttir.json"]
     return files

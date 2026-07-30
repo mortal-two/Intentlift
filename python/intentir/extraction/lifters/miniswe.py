@@ -38,7 +38,7 @@ from .prompt import SCHEMA as INTENTIR_OPERATION_REFERENCE
 
 
 MINISWE_LIFT_BACKEND = "minisweagent.intentir-lift.v3"
-MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v65"
+MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v66"
 MINISWE_LIFT_TURN_TIMEOUT_SECONDS = 300.0
 MINISWE_LIFT_XHIGH_TURN_TIMEOUT_SECONDS = 900.0
 MAX_RELIFT_CHECK_FEEDBACK_ITEMS = 20
@@ -377,6 +377,9 @@ def _input_files(
         raise ValueError("prepared Lift packet lacks anonymous Source")
     harness_view = packet.get("harness_compiler_view", {})
     feedback = packet.get("relift")
+    feedback_for_mount = copy.deepcopy(feedback)
+    replay_counterexample_source = ""
+    replay_counterexample_ttir = ""
     feedback_frontier = None
     if isinstance(feedback, Mapping):
         feedback_frontier = _feedback_frontier(
@@ -397,6 +400,35 @@ def _input_files(
                 else None
             ),
         )
+    if isinstance(feedback_for_mount, dict):
+        # The persistent owner already retains candidate.json.  Carrying the
+        # complete prior artifact again in feedback.json duplicates tens of KiB
+        # on every continuation and competes with the focused Gate frontier.
+        # Removing this transport copy does not alter or derive artifact bytes.
+        feedback_for_mount.pop("previous_artifact", None)
+        diagnostics = feedback_for_mount.get("diagnostics")
+        counterexample = (
+            diagnostics.get("replay_counterexample")
+            if isinstance(diagnostics, dict)
+            else None
+        )
+        if isinstance(counterexample, dict):
+            source_value = counterexample.pop("replay_source", None)
+            ttir_value = counterexample.pop("replay_ttir", None)
+            if isinstance(source_value, str):
+                replay_counterexample_source = source_value
+            if isinstance(ttir_value, str):
+                replay_counterexample_ttir = ttir_value
+            counterexample["replay_source_path"] = (
+                "/input/gate1_counterexample/replay.py"
+                if replay_counterexample_source
+                else None
+            )
+            counterexample["replay_ttir_path"] = (
+                "/input/gate1_counterexample/replay.ttir"
+                if replay_counterexample_ttir
+                else None
+            )
     from minisweagent import package_dir
 
     validator = (
@@ -433,6 +465,10 @@ continuations for the same Source; Replay remains a separate fresh process.
   feedback. Read this first; it orders already-labelled hard categories and
   omits bulk recursive witnesses without inferring a cause or repair. Query the
   exact `feedback.json` only for a named unresolved category/path.
+- `gate1_counterexample/replay.py` and `replay.ttir`: exact read-only outputs of
+  the immediately preceding formal Replay/compiler when available. Feedback
+  stores only these paths, so compare them with `source.py`/`source_ttir.json`
+    on demand instead of loading duplicate bulk strings into the conversation.
 - `inspect_lift_context(view="feedback_category", query="CATEGORY")` (or the
   matching `context_query.py feedback-category CATEGORY`) returns just that
   exact bounded category, including local/effect-order witnesses when present.
@@ -564,12 +600,13 @@ Do not page through the raw schema. Use the example plus compact queries such as
 
 Query exact `op NAME` or leaf `section NAME` only when needed. Useful leaf
 sections include `access`, `effect`, `result_relation`, `authorization`,
-`scope`, `c_slot`, `pi_instance`, `pi_route`, `pi_iteration`, and
+`scope`, `c_slot`, `pi_instance`, `pi_route`, `pi_program_axis`, `pi_iteration`, and
 `pi_refinement`. Create the
 first complete candidate early, then let validator errors drive further lookup.
 On a continuation, keep editing the current complete candidate in the persistent
-workspace; `feedback.json.previous_artifact` is an external receipt and bootstrap
-fallback, not a command to overwrite newer working bytes. Use `repair_progress` when present and make the
+    workspace; the external previous-artifact receipt is intentionally omitted
+    because the exact working candidate is already retained. Use `repair_progress`
+    when present and make the
 Source-justified coordinated J/C/pi changes needed by the external
 counterexample; do not blindly rebuild or mechanically resubmit the same
 artifact. Run `python /input/tools/context_query.py candidate-diff` before
@@ -621,13 +658,15 @@ summarizes or interprets J/C/pi semantics during compaction.
         )
         + "\n",
         "feedback.json": json.dumps(
-            feedback, indent=2, sort_keys=True, ensure_ascii=False
+            feedback_for_mount, indent=2, sort_keys=True, ensure_ascii=False
         )
         + "\n",
         "feedback_frontier.json": json.dumps(
             feedback_frontier, indent=2, sort_keys=True, ensure_ascii=False
         )
         + "\n",
+        "gate1_counterexample/replay.py": replay_counterexample_source,
+        "gate1_counterexample/replay.ttir": replay_counterexample_ttir,
         "schema/artifact.schema.json": json.dumps(
             scrc_lift_core_json_schema(),
             indent=2,
@@ -1109,7 +1148,12 @@ class MiniSWELiftAdapter:
             fresh_workspace = self._create_or_refresh_session_workspace(
                 input_files,
                 mutable_paths=frozenset(
-                    {"feedback.json", "feedback_frontier.json"}
+                    {
+                        "feedback.json",
+                        "feedback_frontier.json",
+                        "gate1_counterexample/replay.py",
+                        "gate1_counterexample/replay.ttir",
+                    }
                 ),
             )
         except ImportError as exc:

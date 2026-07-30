@@ -205,7 +205,12 @@ def main(argv: list[str] | None = None) -> int:
         _write_json(recheck_dir / "artifact.json", artifact.to_json())
         (recheck_dir / "replay.py").write_text(replay_code, encoding="utf-8")
 
-        checked = type_check(artifact.j, artifact.c, artifact.pi)
+        checked = type_check(
+            artifact.j,
+            artifact.c,
+            artifact.pi,
+            require_program_axes=artifact.wire_schema == artifact.SCHEMA,
+        )
         _write_json(recheck_dir / "typecheck.json", checked.to_json())
         if not checked.passed:
             raise ValueError("exact artifact no longer passes current TypeCheck")

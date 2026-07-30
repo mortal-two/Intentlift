@@ -9,7 +9,7 @@ Gate1 只接收已经通过 `TypeCheck(J,C,π)`、由当前三元组生成的全
 conditions。该 Gate1 claim 只针对这个 c0。
 
 当前 fresh-run artifact/decode/typecheck 组合为
-`intentir.scrc.artifact.v11 / intentir.scrc.decode.v16 / intentir.scrc.typecheck.v28`。Lift LLM 是完整
+`intentir.scrc.artifact.v12 / intentir.scrc.decode.v17 / intentir.scrc.typecheck.v29`。Lift LLM 是完整
 artifact 的唯一作者：value/dimension equality、closed dimension definition、consumer-extension、access-guard、typed control/inout、
 output binding、physical iteration/carrier、terminal-control 与 route-local extent transform 都必须由模型显式提交。Decode、
 CandidateCheck 与 TypeCheck 只能做 closed
@@ -47,7 +47,7 @@ v5 guarded store 的 merge 已经是 Layer A 中显式 `select`，且精确 inou
 通过 TypeCheck；Replay 不得把 relation 解读成允许它自行发明 branch、merge 或 mutation。Gate1
 比较的是 Replay 对这些已声明事实的 source realization，不为缺失 relation 建议或生成答案。
 
-当前 `replay-check.v13` 的 synthetic compile 只消费匿名 packet：核对作者化 `transfer_direct`
+当前 `replay-check.v14` 的 synthetic compile 只消费匿名 packet：核对作者化 `transfer_direct`
 occurrence、structured J loop 加 `pi.physical_iterations` 的 loop occurrence、对应 carrier arity；并且
 只在 signature pointer/tensor kind 与 π address routes 完全闭合时核对 pointer-address operation
 occurrence。完整闭包允许独立 integer base/lane contribution，且不要求 address instance 与 transfer
@@ -89,6 +89,10 @@ observation 的 comparison rules：从 public entry 可达、callee 静态已知
 structured `tt.call` 仍按
 formal-to-actual 与 helper return 展开，op/def-use、effect 与已支持 region 继续参与 hard comparison；
 public entry ABI 仍是边界，private helper 名称本身不进入 J/C/π。
+
+Replay/Lift construction compile 对 artifact v12 的π-owned `program_axes{domain_ref,axis}`执行
+reject-only核对：compiled `tt.get_program_id` 的数量与literal axis集合都必须匹配；旧v11 packet仅保留
+原count合同，不被静默升级。该检查不生成program coordinate，也不从grid、C或声明顺序选择axis。
 
 v6 新增 Triton 3.6 quoted-generic `tt.scan` 的 typed、single-block、encodingless observer contract：
 输入/结果必须是同 shape 的 ranked tensor，axis/reverse、`2N` 个有序 combine block arguments、唯一

@@ -684,6 +684,33 @@ def _pi_schema() -> dict[str, Any]:
         },
         ("source", "target", "slots"),
     )
+    program_axis = _closed_object(
+        {
+            "domain_ref": {
+                "type": "string",
+                "pattern": "^d[0-9]+$",
+                "description": (
+                    "J boundary domain anchoring one compiler-visible program "
+                    "coordinate."
+                ),
+            },
+            "axis": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 2,
+                "description": (
+                    "Exact physical launch-axis identity; never inferred from "
+                    "grid extent, declaration order, C, or instance multiplicity."
+                ),
+            },
+        },
+        ("domain_ref", "axis"),
+        description=(
+            "A closed pi-owned binding from one J domain program-coordinate "
+            "identity to physical launch axis 0, 1, or 2. It carries no grid "
+            "extent, Source spelling, frontend API, or logical J semantics."
+        ),
+    )
     route_extent_transform = _closed_object(
         {
             "source": {
@@ -892,6 +919,7 @@ def _pi_schema() -> dict[str, Any]:
             "regions": _array(region),
             "instances": _array(instance),
             "routes": _array(route),
+            "program_axes": _array(program_axis),
             "route_extent_transforms": _array(route_extent_transform),
             "order": _array(order),
             "sharing": _array(sharing),
@@ -906,6 +934,7 @@ def _pi_schema() -> dict[str, Any]:
             "regions",
             "instances",
             "routes",
+            "program_axes",
             "route_extent_transforms",
             "order",
             "sharing",

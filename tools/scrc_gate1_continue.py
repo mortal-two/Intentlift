@@ -148,7 +148,12 @@ def _load_seed(parent_path: Path, prepared: Any) -> LiftFeedback:
             f"parent artifact decode rejected: {type(exc).__name__}: {exc}"
         ) from exc
     validate_workload_gate1_recheck_parent(parent, prepared, artifact)
-    checked = type_check(artifact.j, artifact.c, artifact.pi)
+    checked = type_check(
+        artifact.j,
+        artifact.c,
+        artifact.pi,
+        require_program_axes=artifact.wire_schema == artifact.SCHEMA,
+    )
     if not checked.passed:
         raise ValueError(
             "parent artifact no longer passes current TypeCheck: "

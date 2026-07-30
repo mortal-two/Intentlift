@@ -90,7 +90,7 @@ SplitK forward 的同一`split=4,D=256`模型profile还必须保留上游launch�
 - Qwen2VL、Flash forward/full backward已有部分Gate1 no-closure或未完成round；
 - Linear、one-col和SplitK只在停止过程中短暂启动，均不构成能力证据。
 
-### 1.4 当前正式进度：20/28
+### 1.4 当前正式进度：22/28
 
 `/tmp/intentir-task15-v12-owned-realization-linear-splitkfwd-sol-high-b3k5-20260730-01`中的
 Flash Linear branch 2在formal round 3取得Gate1 v12 closure并完成三边Gate2：Source--Replay两输出
@@ -115,6 +115,23 @@ indexed store一一对应、运行时证明非concat轴恒等、concat轴零起�
 Source--Replay q/k误差均为0，Source--J与Replay--J q/k最大误差均为`0.00048828125`，三边全部通过，
 `status=scrc_certified`。当前剩余八项为Liger/Llama4 RoPE、Flash forward/one-column/full backward与
 SplitK forward/reduce/backward。
+
+随后Liger RoPE fresh candidate 1在formal round 2取得Gate1 closure并完成三边Gate2，
+`/tmp/intentir-task15-semantic-probe-qwen-liger-v29-sol-xhigh-b3k5-20260730-01/liger_rope/fanout-001/candidate-01/report.json`
+记录`main_status=SCRC_CERTIFIED`。SplitK reduce的`split=4/vararg_arity=4` exact artifact也以零模型
+current-capability recheck同时通过Gate1/Gate2，证据位于
+`/tmp/intentir-task15-v12-splitk-reduce-exact-current-gate1-gate2-20260730-01/xformers_ops_fmha_triton_splitk_kernels_splitk_reduce_varargs/gate2-recheck-001/recheck.json`。
+因此正式进度为22/28，剩余六项是Llama4 RoPE、Flash forward/one-column/full backward与SplitK
+forward/backward。
+
+Flash full backward exact evidence进一步给出一个旧π合同无法表达的反例：选定specialization的
+Source只读取`tl.program_id(1)`，而旧公共合同按distinct domain声明顺序把唯一coordinate生成成
+`tl.program_id(0)`，导致全部address-base/addptr dataflow改变。artifact v12新增π-owned closed
+`program_axes{domain_ref,axis}`；Lift从Source/TTIR完整作者化，Decode/TypeCheck只检查domain/axis唯一、
+与program-region domain-to-address_base拓扑完备，Replay/SourceReconcile按literal TTIR axis reject-only
+核对。它不把program_id放入J，不读取grid/C猜axis，也不携带地址公式或Source/API文本。保存的旧
+full-backward artifact内存升级诊断验证：Source axis `[1]`通过，原Replay axis `[0]`以
+`compiled_program_id_axes`精确拒绝；旧v11证书保持原bytes与合同，不被静默升级。
 
 同批Llama4 RoPE的三个branch已各完成5个TypeCheck-valid formal rounds，最终仍分别硬失败于
 `op_multiset/dataflow`（其中一支另含`predicate_effect`），正式记为本配置下`NO_CLOSURE_(3,5)`；

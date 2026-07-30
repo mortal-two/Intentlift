@@ -747,7 +747,12 @@ def recheck_prepared_workload_gate1(
 
     canonical = canonicalize_gate1_artifact(artifact)
     digest = canonical_artifact_digest(canonical)
-    checked = type_check(canonical.j, canonical.c, canonical.pi)
+    checked = type_check(
+        canonical.j,
+        canonical.c,
+        canonical.pi,
+        require_program_axes=canonical.wire_schema == canonical.SCHEMA,
+    )
     if not checked.passed:
         return WorkloadGate1Recheck(
             canonical,

@@ -17,13 +17,14 @@ inputs 中声明，`mode=output` 要求只在 J outputs 中声明；同一 handl
 时必须显式写 `mode=inout`。Decode/TypeCheck 不得把 input/output 自动升级为 inout，也不得让
 Harness 或 Gate2 为错误 overlap 伪造输入值。
 
-当前 fresh-run wire 是 `intentir.scrc.artifact.v11`，固定 Decode 是
-`intentir.scrc.decode.v16`。Lift LLM 必须一次性显式写出完整 `(J,C,π)`，包括当前版本要求的空数组；
+当前 fresh-run wire 是 `intentir.scrc.artifact.v12`，固定 Decode 是
+`intentir.scrc.decode.v17`。Lift LLM 必须一次性显式写出完整 `(J,C,π)`，包括当前版本要求的空数组；
 固定代码不从 Source、Harness valuation、C、π、Replay 或 Gate 结果补造 artifact 字段。`artifact.v4`
 引入 J-owned `value_dimension_relations` 与 `boundary.consumer_extensions`；`artifact.v5` 再引入
 J-owned `boundary.access_guard_relations`；v6/v7 增加 typed control，v8 增加 π-owned physical-only
 time relations，v9 增加 π-owned terminal-control topology，v10 增加下述 closed
-route-local extent transform，v11增加J-owned closed dimension definition。旧 v1-v10 wire 仍按各自字段集合读取，
+route-local extent transform，v11增加J-owned closed dimension definition，v12增加π-owned closed
+program-axis identity。旧 v1-v11 wire 仍按各自字段集合读取，
 不通过附加空数组或新 relation 静默升级。
 
 `opaque(mode=value,dtype=none)` 是一个精确的缺席 ABI carrier：它只证明调用位置必须原样接收
@@ -233,7 +234,7 @@ C 只包含在不改变 J denotation 时可替换的匿名 slot、binding kind�
 valuation 与必要的 source-neutral selection metadata。C 不得包含 operator、predicate、formula、
 logical shape、result semantics、source topology、frontend API 或 per-kernel executable policy。
 
-`artifact.v2` 引入、当前 `artifact.v11` 保留的 slot 字段为
+`artifact.v2` 引入、当前 `artifact.v12` 保留的 slot 字段为
 `name/kind/role/value_type/required`，其中 `role` 必填，并增加两个可选 attachment：
 
 ```text
@@ -321,9 +322,11 @@ affine address stage。
 
 该 generic relation 的机械区分是：program region 中锚定相应 J domain 的 `realize` instance，其
 scalar dependency path 先进入 `address_base` 再进入 transfer，表示 program-coordinate stage；进入
-`address_lane` 的 domain/C dependency path 表示 lane-varying stage。Replay 必须保持 base/lane
-区分，`U_f` 再把它映射到公共前端 API。该规则不在 π 中保存 `program_id`、axis 公式或前端文本，
-也不增加 mechanism enum。
+`address_lane` 的 domain/C dependency path 表示 lane-varying stage。`pi.program_axes` 再以闭合
+`{domain_ref,axis}` 把每个 distinct program-coordinate domain 绑定到物理 launch axis `0..2`；
+domain 与 axis 均唯一。Replay 必须保持 base/lane 区分并消费该 axis identity，`U_f` 只负责映射到
+公共前端 API。π 不保存 grid extent、地址公式、Source 文本或前端 API，也不增加 mechanism enum；
+axis 不得从 declaration order、grid、C 或 instance multiplicity 推断。
 
 `address_base/address_lane` 标记 address contribution 角色；pointer/address operation 的次数由
 `J.signature` carrier kind 与 π route 共同决定，不能只看 base-to-lane edge。若 pointer/tensor 的
@@ -385,7 +388,7 @@ extent_step:  for k in [0, Trip(J.loop)) step Tile(C.slot)
 tile_ordinal: for q in [0, ceil_div(Trip(J.loop), Tile(C.slot))) step 1
 ```
 
-因此 `artifact.v3` 引入、当前 `artifact.v11` 继续要求 π 包含 closed `iterations` 数组。每项只有：
+因此 `artifact.v3` 引入、当前 `artifact.v12` 继续要求 π 包含 closed `iterations` 数组。每项只有：
 
 ```text
 {region, loop_instance, tile_instance, induction_basis}
@@ -532,8 +535,8 @@ TypeCheck(J,C,pi) -> FreshLogicalSemDecl(C,pi | J) = empty
 
 上述 C attachment、numeric-cast、result-relation compatibility、rank-0 closed signature、Layer-A total
 typing 与显式 non-trailing broadcast 合同已由早期 TypeCheck 版本逐步建立。当前
-`decode.v16/typecheck.v28` 在v15/v27上新增closed dimension relation的引用、唯一性、grammar与
-acyclic dependent check，并拒绝同一tensor多个不同却都无consumer锚点的node-less load views；它不从
+`decode.v17/typecheck.v29` 继承v16/v28的closed dimension relation引用、唯一性、grammar与
+acyclic dependent check，并增加program-axis completeness检查；同时拒绝同一tensor多个不同却都无consumer锚点的node-less load views；它不从
 任一valuation/compiler observation生成relation，也不替access猜consumer。v27只新增 route extent transform 的 existing-route、required positive-int C、
 matching J-domain attachment/axis 与 realize-anchor dependent checks；它不生成 relation、divisor 或
 attachment。v26 只把 J 直接写出的 `x* == 1` 或 `1 == x*` 当作该 symbolic extent 的
@@ -547,9 +550,9 @@ wire/decode 窄升为 `artifact.v3 / decode.v3`；v4 随后增加 dimension cons
 `value_dimension_relations`、`consumer_extensions` 和 typed loop-carrier wire，v5 再增加
 `access_guard_relations`，v6/v7 增加 typed control，v8 增加 physical-only time，v9 增加
 terminal-control topology，v10 增加上述 closed route-local extent transform，v11增加closed
-dimension relations。当前 active 合同为
-`artifact.v11 / decode.v16 / typecheck.v28 / candidate-check.v1`；v28新增上述dimension relation
-dependent check，v27新增route extent dependent check。v26 继承 v25，并新增上述 direct
+dimension relations，v12增加closed program-axis identity。当前 active 合同为
+`artifact.v12 / decode.v17 / typecheck.v29 / candidate-check.v1`；v29新增program-axis completeness
+dependent check，v28新增上述dimension relation dependent check，v27新增route extent dependent check。v26 继承 v25，并新增上述 direct
 singleton equality 的 source-free broadcast dependent check。v25 继承 v24，并新增
 `reduction_linearization` 的 closed topology check：该 global-safe refinement 不带 authorization，
 只能修饰一个 `realize` instance，且必须经唯一 slot-0 route 进入一个 J `reduce` 的 `realize`
@@ -571,4 +574,4 @@ select、精确 inout/pre-state 与 loop/non-loop observable merge。`candidate-
 另执行 source-identifier privacy、receipt/provenance，并在提交后重新运行该 core。receipt 必须记录
 这些版本；`artifact.v1`、`artifact.v2` 仍按各自旧 wire 读取且不得携带 `pi.iterations`，其中 v1
 也不能携带 v2 引入的 C attachment；v1-v3 禁止 v4 字段，v1-v4 禁止 v5 access guard。旧
-receipt/证书不由新 wire 静默重写、追认或刷新；v8/v9/v10/v11 的新增字段同样不附加到旧 wire。
+receipt/证书不由新 wire 静默重写、追认或刷新；v8/v9/v10/v11/v12 的新增字段同样不附加到旧 wire。

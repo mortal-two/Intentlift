@@ -30,7 +30,7 @@ from .scrc_schema import scrc_lift_core_json_schema, scrc_lift_core_text_format
 
 
 SCRC_RELIFT_PROTOCOL = "llm_direct_pi_structured_source_aware_relift_v2"
-SCRC_DECODE_PROTOCOL = "intentir.scrc.decode.v16"
+SCRC_DECODE_PROTOCOL = "intentir.scrc.decode.v17"
 CANDIDATE_CHECK_PROTOCOL = "intentir.scrc.candidate-check.v1"
 _CANDIDATE_DIAGNOSTIC_LIMIT = 20
 _CANDIDATE_DIAGNOSTIC_TEXT_LIMIT = 2048
@@ -1390,7 +1390,12 @@ def check_scrc_lift_candidate(
     # This is the same callable used by the formal Runner.  CandidateCheck does
     # not retain or return the canonical artifact and therefore cannot become a
     # second acceptance path.
-    report = type_check(artifact.j, artifact.c, artifact.pi)
+    report = type_check(
+        artifact.j,
+        artifact.c,
+        artifact.pi,
+        require_program_axes=artifact.wire_schema == artifact.SCHEMA,
+    )
     return {
         "protocol": CANDIDATE_CHECK_PROTOCOL,
         "status": "pass" if report.passed else "fail",

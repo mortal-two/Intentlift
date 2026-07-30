@@ -19,7 +19,10 @@
 
 Source 用于判断逻辑语义，compiler view用于观察def-use、control、loop、address、materialization与sharing。
 brief和查询只是现有Source/Harness/observer事实的有界投影；Schema工具只列出真实合法的section/op并按名返回原始closed schema。工具不映射IntentOp、不生成字段、不补全J/C/π。
-`program_id`只作为π可表达的program-coordinate/address/transfer拓扑锚点；只服务调度或地址offset的纯算术公式按Gate1 v12收缩为保类型与carrier-origin的representation edge，不进入J、π或Replay隐藏答案。
+`program_id`只作为π可表达的program-coordinate/address/transfer拓扑锚点；π以closed
+`program_axes{domain_ref,axis}`保存物理axis identity，不把它放入J，也不从grid/C猜测。只服务调度或
+地址offset的纯算术公式按Gate1 v12收缩为保类型与carrier-origin的representation edge，不进入J、π
+或Replay隐藏答案。
 
 新 frontend 仍只需已有的：
 

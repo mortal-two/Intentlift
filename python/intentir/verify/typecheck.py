@@ -53,7 +53,7 @@ from intentir.verify.gate1.model import (
 from intentir.verify.gate1.pi import RealizationWitness
 
 
-TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v28"
+TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v29"
 GLOBAL_SAFE_REFINEMENTS = frozenset(
     {"identity_materialization", "reduction_linearization"}
 )
@@ -120,6 +120,7 @@ class TypeCheckErrorCode(str, Enum):
     ROUTE_SLOT_OUT_OF_RANGE = "route_slot_out_of_range"
     ROUTE_TYPE_MISMATCH = "route_type_mismatch"
     ROUTE_EXTENT_TRANSFORM_INVALID = "route_extent_transform_invalid"
+    PROGRAM_AXIS_BINDING_INVALID = "program_axis_binding_invalid"
     TRANSFER_ADDRESS_ROUTE_MISSING = "transfer_address_route_missing"
     INVALID_SHARING = "invalid_sharing"
     ITERATION_WITNESS_INVALID = "iteration_witness_invalid"
@@ -4581,10 +4582,108 @@ def _check_transfer_address_routes(
         )
 
 
+def _check_program_axes(
+    j: SemanticArchive,
+    pi: RealizationWitness,
+    diagnostics: list[TypeCheckDiagnostic],
+    *,
+    required: bool,
+) -> None:
+    """Check the closed pi domain-to-launch-axis realization identity."""
+
+    domains = set(j.boundary.domains)
+    regions = {
+        str(item["id"]): item for item in pi.regions
+    }
+    program_regions = {
+        region_id
+        for region_id, item in regions.items()
+        if item.get("placement") == "program"
+    }
+    instances = {
+        str(item["id"]): item for item in pi.instances
+    }
+    address_bases = {
+        instance_id
+        for instance_id, item in instances.items()
+        if item.get("mechanism") == "address_base"
+    }
+    outgoing: dict[str, set[str]] = {instance_id: set() for instance_id in instances}
+    for route in pi.routes:
+        outgoing.setdefault(str(route["source"]), set()).add(str(route["target"]))
+
+    def reaches_address_base(source: str) -> bool:
+        pending = [source]
+        visited: set[str] = set()
+        while pending:
+            current = pending.pop()
+            if current in address_bases:
+                return True
+            if current in visited:
+                continue
+            visited.add(current)
+            pending.extend(outgoing.get(current, ()))
+        return False
+
+    authorized = {
+        str(item["semantic_ref"])
+        for instance_id, item in instances.items()
+        if item.get("mechanism") == "realize"
+        and item.get("region") in program_regions
+        and item.get("semantic_ref") in domains
+        and reaches_address_base(instance_id)
+    }
+    bound = {str(item["domain_ref"]) for item in pi.program_axes}
+    for index, item in enumerate(pi.program_axes):
+        domain_ref = str(item["domain_ref"])
+        if domain_ref not in domains:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.PROGRAM_AXIS_BINDING_INVALID,
+                    f"pi.program_axes[{index}].domain_ref",
+                    "program-axis binding must name a declared J boundary domain",
+                    domain_ref,
+                )
+            )
+        elif domain_ref not in authorized:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.PROGRAM_AXIS_BINDING_INVALID,
+                    f"pi.program_axes[{index}].domain_ref",
+                    "program-axis binding requires a program-region domain realize "
+                    "path that reaches address_base",
+                    domain_ref,
+                )
+            )
+    if required:
+        for domain_ref in sorted(authorized - bound):
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.PROGRAM_AXIS_BINDING_INVALID,
+                    "pi.program_axes",
+                    "every authored program-coordinate domain requires one explicit "
+                    "physical launch-axis binding",
+                    domain_ref,
+                )
+            )
+        for domain_ref in sorted(bound - authorized):
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.PROGRAM_AXIS_BINDING_INVALID,
+                    "pi.program_axes",
+                    "program-axis bindings must equal the authored program-coordinate "
+                    "domain set",
+                    domain_ref,
+                )
+            )
+
+
 def type_check(
     j: SemanticArchive,
     c: ImplementationConfig,
     pi: RealizationWitness,
+    *,
+    require_program_axes: bool = False,
 ) -> TypeCheckReport:
     """Mechanically check ``Gamma_(J,C) |- pi : RealizationWitness(J,C)``."""
 
@@ -4850,6 +4949,12 @@ def type_check(
     )
     _check_physical_loop_carriers(
         pi, node_operations, instance_anchors, diagnostics
+    )
+    _check_program_axes(
+        j,
+        pi,
+        diagnostics,
+        required=require_program_axes,
     )
 
     route_edges = {

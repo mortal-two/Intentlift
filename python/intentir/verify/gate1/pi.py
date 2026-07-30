@@ -148,7 +148,12 @@ def render_realization_witness_wire_grammar() -> str:
         "region: a loop-region instance stays lexically inside its loop even when "
         "its operands are loop invariant, and a parent-region instance stays "
         "outside. Replay never hoists, sinks, clones, or folds a stage across a "
-        "region boundary. route_extent_transforms qualifies one existing route slot: "
+        "region boundary. program_axes binds each distinct J-domain program "
+        "coordinate to one physical launch axis 0, 1, or 2. It is authored by "
+        "Lift from the compiler-visible Source realization, is unique by both "
+        "domain_ref and axis, and carries no grid extent, Source spelling, or "
+        "frontend API. Repeated coordinate instances anchored to the same d* use "
+        "that same bound axis. route_extent_transforms qualifies one existing route slot: "
         "a required positive-integer C extent reaches its attached J domain as "
         "floor_div/ceil_div by a literal divisor greater than one. It is "
         "representation-only and creates no J fact or Source/API spelling. Each iterations "
@@ -238,10 +243,11 @@ def render_realization_mechanism_grammar() -> str:
         "path enters address_base before transfer; a domain/C dependency path "
         "entering address_lane is lane-varying instead. Replay must preserve this "
         "base-versus-lane distinction and U_f maps it to public frontend APIs. "
-        "Program-axis identity follows the J domain semantic_ref, not instance "
-        "multiplicity: repeated program-coordinate instances on one d* remain "
-        "distinct stages of the same axis, and only a distinct domain anchor may "
-        "allocate another axis. "
+        "Program-axis identity follows the closed pi.program_axes binding of the "
+        "J domain semantic_ref, not instance multiplicity: repeated "
+        "program-coordinate instances on one d* remain distinct stages of the "
+        "same bound axis. Replay must not infer an axis from declaration order, "
+        "grid extent, instance multiplicity, or C. "
         "Integer coordinate arithmetic is a realize stage; address_base and "
         "address_lane classify where its program-uniform and lane-varying paths "
         "enter address formation rather than relabeling every arithmetic op. If "
@@ -288,6 +294,7 @@ class RealizationWitness:
     regions: list[dict[str, JsonValue]] = field(default_factory=list)
     instances: list[dict[str, JsonValue]] = field(default_factory=list)
     routes: list[dict[str, JsonValue]] = field(default_factory=list)
+    program_axes: list[dict[str, JsonValue]] = field(default_factory=list)
     route_extent_transforms: list[dict[str, JsonValue]] = field(default_factory=list)
     order: list[dict[str, JsonValue]] = field(default_factory=list)
     sharing: list[dict[str, JsonValue]] = field(default_factory=list)
@@ -386,6 +393,38 @@ class RealizationWitness:
         if len(instance_ids) != len(set(instance_ids)):
             raise RealizationWitnessError("pi instance ids must be unique")
         known_instances = set(instance_ids)
+
+        checked_program_axes: list[dict[str, JsonValue]] = []
+        bound_domains: set[str] = set()
+        bound_axes: set[int] = set()
+        for index, raw in enumerate(self.program_axes):
+            path = f"pi.program_axes[{index}]"
+            item = _record(
+                raw,
+                path=path,
+                required=frozenset({"domain_ref", "axis"}),
+            )
+            domain_ref = _name(item["domain_ref"], f"{path}.domain_ref")
+            if re.fullmatch(r"d[0-9]+", domain_ref) is None:
+                raise RealizationWitnessError(
+                    f"{path}.domain_ref must be a J boundary domain handle d*"
+                )
+            axis = item["axis"]
+            if isinstance(axis, bool) or not isinstance(axis, int) or not 0 <= axis <= 2:
+                raise RealizationWitnessError(
+                    f"{path}.axis must be an integer launch axis in [0, 2]"
+                )
+            if domain_ref in bound_domains:
+                raise RealizationWitnessError(
+                    "pi program-axis domain bindings must be unique"
+                )
+            if axis in bound_axes:
+                raise RealizationWitnessError(
+                    "pi program-axis physical axes must be unique"
+                )
+            bound_domains.add(domain_ref)
+            bound_axes.add(axis)
+            checked_program_axes.append({"domain_ref": domain_ref, "axis": axis})
 
         checked_terminal_controls: list[dict[str, JsonValue]] = []
         terminal_control_instances: set[str] = set()
@@ -838,6 +877,7 @@ class RealizationWitness:
         self.regions = checked_regions
         self.instances = checked_instances
         self.routes = checked_routes
+        self.program_axes = checked_program_axes
         self.route_extent_transforms = checked_route_extent_transforms
         self.order = checked_order
         self.sharing = checked_sharing
@@ -868,6 +908,7 @@ class RealizationWitness:
                     "regions",
                     "instances",
                     "routes",
+                    "program_axes",
                     "route_extent_transforms",
                     "order",
                     "sharing",
@@ -884,6 +925,7 @@ class RealizationWitness:
             "regions",
             "instances",
             "routes",
+            "program_axes",
             "route_extent_transforms",
             "order",
             "sharing",
@@ -900,6 +942,7 @@ class RealizationWitness:
             regions=copy.deepcopy(data["regions"]),
             instances=copy.deepcopy(data["instances"]),
             routes=copy.deepcopy(data["routes"]),
+            program_axes=copy.deepcopy(data.get("program_axes", [])),
             route_extent_transforms=copy.deepcopy(
                 data.get("route_extent_transforms", [])
             ),
@@ -923,6 +966,7 @@ class RealizationWitness:
         include_physical_time: bool = True,
         include_terminal_controls: bool = True,
         include_route_extent_transforms: bool = True,
+        include_program_axes: bool = True,
     ) -> dict[str, Any]:
         result = {
             "regions": copy.deepcopy(self.regions),
@@ -936,6 +980,8 @@ class RealizationWitness:
             result["route_extent_transforms"] = copy.deepcopy(
                 self.route_extent_transforms
             )
+        if include_program_axes:
+            result["program_axes"] = copy.deepcopy(self.program_axes)
         if include_iterations:
             result["iterations"] = copy.deepcopy(self.iterations)
         if include_loop_carriers:

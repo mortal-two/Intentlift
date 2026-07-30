@@ -327,15 +327,14 @@ or the route must be a validated representation-only path.
 该 generic relation 必须有机械可解释的 base/lane 区分：在 program region 中锚定对应 J domain
 的 `realize` instance，若其 scalar dependency path 先进入 `address_base` 再进入 transfer，则表示
 program-coordinate stage；若 domain/C dependency path 进入 `address_lane`，则表示 lane-varying
-stage。Replay 保持该拓扑区分，公共前端上下文 (U_f) 再决定使用何种公开 API。π 本身仍不保存
-`program_id`、axis 公式、前端文本或新的 mechanism tag。
+stage。`pi.program_axes` 以 `{domain_ref,axis}` 将每个 distinct program-coordinate domain 显式绑定
+到物理 launch axis `0..2`，domain 与 axis 均唯一。Replay 保持该拓扑并消费 axis identity，公共前端
+上下文 (U_f) 只决定公开 API spelling。π 不保存 grid extent、地址公式、Source 文本或新的 mechanism tag。
 
-program axis 的 identity 来自 J domain anchor，不来自 instance 数量。公共 Triton `U_f` 按 distinct
-domain `semantic_ref` 的首次声明顺序分配 axis；同一 `d*` 上的多个 realization instance 仍是多个
-compiler-visible stage，必须分别 materialize，但都读取同一 program axis，不能把第二个 instance
-擅自解释为 `program_id(1)`。只有 distinct domain anchor 才能分配下一条 axis。这个规则不合并
-instance，也不替 Lift 修复错误 multiplicity；若 Source 只有一次 coordinate stage，下一轮 Lift 仍
-必须只声明一次并将其共享到全部消费者。
+program axis 的 identity 来自 Lift 作者化的 J-domain binding，不来自 instance 数量、声明顺序、grid
+extent 或 C。同一 `d*` 上的多个 realization instance 仍是多个 compiler-visible stage，必须分别
+materialize，但都读取 `program_axes` 绑定的同一 axis。这个规则不合并 instance，也不替 Lift 修复
+错误 multiplicity；若 Source 只有一次 coordinate stage，Lift 仍只声明一次并共享到全部消费者。
 
 更一般地，一个 Source SSA coordinate/address intermediate 只定义一次、被多个 access 使用时，π
 必须声明一个 producer、多个 routed consumers 与 one-producer sharing。多个语法 use 不构成多个
@@ -942,10 +941,10 @@ rank、reshape、tile 或 spelling。它不能生成或省略 relation。v7 的
 推导 schedule、生成 source 或访问 Source/Harness/Gate；因此不改变 Replay 的 source-blind LLM-first
 所有权。
 
-当前新 Lift wire/decode 为 `intentir.scrc.artifact.v11 / intentir.scrc.decode.v16`；v3 历史上把上述
+当前新 Lift wire/decode 为 `intentir.scrc.artifact.v12 / intentir.scrc.decode.v17`；v3 历史上把上述
 `pi.iterations` 变为 required closed field，v4-v7 再增加前述 J-owned typed relations/control，v8
 增加 physical-only time，v9 增加 terminal-control topology，v10 增加 closed route extent transform，
-v11增加J-owned closed dimension relations。v1-v10 历史
+v11增加J-owned closed dimension relations，v12增加π-owned closed program-axis identity。v1-v11 历史
 artifact 保持原始序列化、digest 与字段集合，禁止静默附加空数组、重标或刷新证书。
 
 固定代码仍只做：
@@ -958,7 +957,7 @@ artifact 保持原始序列化、digest 与字段集合，禁止静默附加空�
 
 固定代码不把 π 解码成源码，不建立 deterministic composer。
 
-`replay-check.v13` 可以在公共、source-blind synthetic compile 后核对 π 已作者化的
+`replay-check.v14` 可以在公共、source-blind synthetic compile 后核对 π 已作者化的
 `transfer_direct` occurrence 与 compiled load/store multiplicity；它只拒绝 compiler 已经折叠的
 作者化 event，不补 transfer、不决定保留它的源码写法。它同时将 structured J loop 数与
 `pi.physical_iterations` 数之和作为已作者化的 compiled `scf.for` 必要 occurrence；

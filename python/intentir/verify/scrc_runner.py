@@ -1329,7 +1329,7 @@ class SCRCRunDependencies:
     lift: LiftAdapter
     gate1_factory: Callable[[int], Gate1AttemptAdapter]
     gate2: Gate2ExecutionAdapter
-    type_checker: Callable[[Any, Any, Any], TypeCheckReport] = type_check
+    type_checker: Callable[..., TypeCheckReport] = type_check
 
 
 class SCRCGateRunner:
@@ -1793,7 +1793,10 @@ class SCRCGateRunner:
                 "started",
             )
             report = self.dependencies.type_checker(
-                artifact.j, artifact.c, artifact.pi
+                artifact.j,
+                artifact.c,
+                artifact.pi,
+                require_program_axes=artifact.wire_schema == artifact.SCHEMA,
             )
             _notify_progress(
                 progress_callback,

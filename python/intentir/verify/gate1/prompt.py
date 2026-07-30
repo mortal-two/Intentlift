@@ -56,11 +56,11 @@ PUBLIC_FRONTEND_CONTEXT = {
             "Region placement='program' alone never authorizes "
             "tl.program_id. A domain-anchored realize stage in a program region "
             "whose scalar dependency path enters address_base is a program "
-            "coordinate. Assign axes by first declaration of each distinct J "
-            "domain semantic_ref: distinct stages anchored to the same d* remain "
-            "distinct materializations of the same program axis and never allocate "
-            "another axis. Only a distinct domain anchor may allocate the next "
-            "tl.program_id(axis). A domain/C stage whose path enters address_lane "
+            "coordinate. Read its exact physical axis from pi.program_axes: each "
+            "domain_ref binds one distinct J domain to axis 0, 1, or 2. Distinct "
+            "stages anchored to the same d* remain distinct materializations of "
+            "that same bound axis. Never infer or renumber the axis from declaration "
+            "order, grid extent, C, or instance multiplicity. A domain/C stage whose path enters address_lane "
             "is lane-varying and may use tl.arange. Do not vectorize a program "
             "coordinate or turn a lane coordinate into tl.program_id. Preserve "
             "every address_base -> address_lane route, then determine pointer "
@@ -273,6 +273,7 @@ _REPLAY_COMPONENT_KEYS = {
             "regions",
             "instances",
             "routes",
+            "program_axes",
             "route_extent_transforms",
             "order",
             "sharing",
@@ -291,6 +292,9 @@ _HISTORICAL_J_KEY_SETS = frozenset(
         _REPLAY_COMPONENT_KEYS["j"]
         - {"dimension_relations", "value_dimension_relations"},
     }
+)
+_HISTORICAL_PI_KEY_SETS = frozenset(
+    {_REPLAY_COMPONENT_KEYS["pi"] - {"program_axes"}}
 )
 _U_F_KEYS = frozenset(
     {
@@ -335,8 +339,12 @@ def _validate_source_isolated_payload(
             and component == "j"
             and frozenset(actual) in _HISTORICAL_J_KEY_SETS
         )
+        historical_pi = (
+            component == "pi"
+            and frozenset(actual) in _HISTORICAL_PI_KEY_SETS
+        )
         if not isinstance(value, Mapping) or (
-            actual != expected and not historical_j
+            actual != expected and not historical_j and not historical_pi
         ):
             raise SchemaError(
                 f"Replay payload {component} must contain exactly "
@@ -452,7 +460,12 @@ def build_rewriter_packet(
     from intentir.verify.typecheck import type_check
 
     artifact = canonicalize_gate1_artifact(artifact)
-    report = type_check(artifact.j, artifact.c, artifact.pi)
+    report = type_check(
+        artifact.j,
+        artifact.c,
+        artifact.pi,
+        require_program_axes=artifact.wire_schema == artifact.SCHEMA,
+    )
     if not report.passed:
         summary = ", ".join(
             f"{item.code.value}@{item.path}" for item in report.diagnostics

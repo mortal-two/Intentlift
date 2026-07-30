@@ -172,7 +172,11 @@ the artifact schema or external TypeCheck.
    bypasses it and enters `address_lane` or the final address stage. Never decide
    from the base-to-lane edge alone. Never replace the program path with constant
    zero. Repeated occurrences anchored to the same `d*` are repeated realizations
-   of the same program-axis identity, not evidence for another axis. Use a distinct
+   of the same program-axis identity, not evidence for another axis. Author exactly
+   one `pi.program_axes {domain_ref, axis}` binding for every such distinct `d*`,
+   using the literal compiler-visible Source/TTIR launch axis 0, 1, or 2. Axes and
+   domain refs are each unique. Never infer or renumber an axis from declaration
+   order, grid extent, C, or instance multiplicity. Use a distinct
    J domain anchor only when Source really contains a distinct program coordinate.
    If one Source SSA coordinate/address intermediate is defined once and reused by
    several accesses, emit one producer with routed consumers and one-producer
