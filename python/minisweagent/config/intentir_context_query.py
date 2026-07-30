@@ -559,10 +559,54 @@ def _source_brief(input_root: Path) -> None:
             )
         compiler_sections[name] = preview
 
+    source_outline = _source_outline_value(input_root, 1, 16)
+    source_outline["items"] = [
+        {
+            key: item[key]
+            for key in (
+                "ordinal",
+                "kind",
+                "line",
+                "end_line",
+                "depth",
+                "header",
+                "contains_return",
+                "loop_target_names",
+                "lexically_preexisting_writes",
+            )
+            if key in item
+        }
+        | {
+            "ordered_memory_call_count": len(item["ordered_memory_calls"]),
+            "exact_query": f"{QUERY_COMMAND} source-outline --start {item['ordinal']} --count 1",
+        }
+        for item in source_outline["items"]
+        if isinstance(item, dict) and isinstance(item.get("ordered_memory_calls"), list)
+    ] + [
+        {
+            key: item[key]
+            for key in (
+                "ordinal",
+                "kind",
+                "line",
+                "end_line",
+                "depth",
+                "header",
+                "contains_return",
+                "loop_target_names",
+                "lexically_preexisting_writes",
+            )
+            if key in item
+        }
+        for item in source_outline["items"]
+        if isinstance(item, dict) and "ordered_memory_calls" not in item
+    ]
+    source_outline["items"].sort(key=lambda item: int(item["ordinal"]))
+
     value = {
         "protocol": "intentir.lift-source-brief.v1",
-        "source": _source_outline_value(input_root, 1, 16),
-        "harness_abi": _harness_abi_value(input_root, 1, 24),
+        "source": source_outline,
+        "harness_abi": _harness_abi_value(input_root, 1, 16),
         "compiler": {
             "status": observation.get("status"),
             "ttir_lines": len(str(observation.get("ttir", "")).splitlines()),
@@ -579,26 +623,40 @@ def _source_brief(input_root: Path) -> None:
             "decides their J/C/pi meaning and authors every artifact field."
         ),
     }
-    try:
-        _emit_json(value)
-    except ValueError:
-        # Preserve the same exact kinds of evidence with smaller prefixes.  This
-        # fallback changes only navigation volume, never a semantic classification.
-        value["source"] = _source_outline_value(input_root, 1, 8)
-        value["harness_abi"] = _harness_abi_value(input_root, 1, 12)
+    # Enforce a hard transport budget through exact-prefix degradation.  Each
+    # removed preview retains its total and exact query, so no fact changes owner.
+    def rendered_chars() -> int:
+        return len(json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False))
+
+    if rendered_chars() > MAX_OUTPUT_CHARS:
         for name, preview in compiler_sections.items():
-            current = preview.get("value")
-            if isinstance(current, list):
-                preview["value"] = current[:2]
-                preview["truncated"] = preview["total"] > len(preview["value"])
-            elif isinstance(current, dict):
-                preview["value"] = dict(list(current.items())[:2])
-                preview["truncated"] = preview["total"] > len(preview["value"])
+            preview["value"] = [] if preview["kind"] == "array" else {}
+            preview["truncated"] = bool(preview["total"])
             if preview["truncated"]:
                 preview["exact_query"] = (
                     f"{QUERY_COMMAND} source-observer --path fingerprint.{name}"
                 )
-        _emit_json(value)
+    if rendered_chars() > MAX_OUTPUT_CHARS:
+        value["source"]["items"] = value["source"]["items"][:6]
+        value["source"]["next_start"] = 7
+        value["source"]["next_command"] = (
+            f"{QUERY_COMMAND} source-outline --start 7 --count 16"
+        )
+        value["harness_abi"]["parameters"] = value["harness_abi"]["parameters"][:8]
+        value["harness_abi"]["parameter_next_command"] = (
+            f"{QUERY_COMMAND} harness-abi --start 9 --count 16"
+        )
+    if rendered_chars() > MAX_OUTPUT_CHARS:
+        value["source"]["items"] = value["source"]["items"][:3]
+        value["source"]["next_start"] = 4
+        value["source"]["next_command"] = (
+            f"{QUERY_COMMAND} source-outline --start 4 --count 16"
+        )
+        value["harness_abi"]["parameters"] = value["harness_abi"]["parameters"][:4]
+        value["harness_abi"]["parameter_next_command"] = (
+            f"{QUERY_COMMAND} harness-abi --start 5 --count 16"
+        )
+    _emit_json(value)
 
 
 def _source_find(input_root: Path, query: str, context: int) -> None:
