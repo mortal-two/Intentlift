@@ -36,6 +36,7 @@ from .scrc import (
     SCRCProvenance,
     SCRCReliftRecord,
     SourceIdentifierPrivacyError,
+    build_scrc_lift_instructions,
     check_scrc_lift_candidate,
     decode_scrc_lift_artifact,
     prepare_scrc_lift,
@@ -45,8 +46,8 @@ from .prompt import SCHEMA as _INTENTIR_OPERATION_REFERENCE
 from .scrc_schema import scrc_lift_core_json_schema
 
 
-CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v24"
-CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v82"
+CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v25"
+CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v83"
 CODEX_CLI_TURN_TIMEOUT_SECONDS = 900.0
 
 _FEEDBACK_CATEGORY_NAMES = (
@@ -67,7 +68,10 @@ input/source.ttir. input/artifact_contract.json is the complete high-density clo
 wire reference projected from the host Schema, and input/intent_ops.md gives exact
 IntentOp spelling. Query only `.object_shapes` and the leaf `.sections.NAME` values
 you actually need; do not pretty-print the whole contract or read the entire op
-catalog into the thread. Do not search for another schema, tutorial, or tool source.
+catalog into the thread. When ownership or the denotation of a named relation is
+unclear, search that exact field/mechanism in input/lift_contract.md and read only
+the surrounding lines. Do not read that reference wholesale or search for another
+schema, tutorial, or tool source.
 
 You alone author the complete output/candidate.json. J owns all logical semantics;
 C owns only implementation choices; pi owns only source-realization relations for
@@ -354,6 +358,7 @@ def _codex_input_files(
         )
         + "\n",
         "intent_ops.md": _compact_intent_op_reference() + "\n",
+        "lift_contract.md": build_scrc_lift_instructions().rstrip() + "\n",
         "candidate_check.json": "null\n",
         "source_reconcile.json": "null\n",
     }
@@ -372,7 +377,8 @@ file contains the exact differences for the named category.
 input/feedback_detail.json contains exact non-observer diagnostics. The previous
 artifact already exists at output/candidate.json and is never duplicated in input.
 Inspect Source/TTIR only where needed, then revise the complete model-authored
-J/C/pi in place. Treat feedback as a compiler counterexample, not as a semantic patch.
+J/C/pi in place. If a named relation's ownership is unclear, search only that name
+in input/lift_contract.md. Treat feedback as a compiler counterexample, not as a semantic patch.
 Run `python .agents/intentir_agent_tool.py submit_candidate` and finish immediately
 after the current exact candidate passes. The host alone reruns the checks and gates.
 """
@@ -381,7 +387,8 @@ _CANDIDATE_CHECK_CONTINUATION_PROMPT = """The host submission preflight rejected
 Read input/candidate_check.json and repair output/candidate.json in this same
 thread. Make coordinated J/C/pi changes when required. Rerun
 `python .agents/intentir_agent_tool.py submit_candidate` and finish immediately
-after the complete candidate passes. The transaction is diagnostic-only.
+after the complete candidate passes. Search a rejected relation's exact field name
+in input/lift_contract.md when its ownership is unclear. The transaction is diagnostic-only.
 """
 
 _SOURCE_RECONCILE_CONTINUATION_PROMPT = """The source-aware occurrence preflight rejected the current exact candidate bytes.
@@ -405,6 +412,7 @@ def _source_aware_startup_context(workspace: Any, *, fresh_owner: bool) -> dict[
             "source_ttir": "input/source.ttir",
             "artifact_contract": "input/artifact_contract.json",
             "intent_ops": "input/intent_ops.md",
+            "lift_contract": "input/lift_contract.md",
             "feedback_frontier": "input/feedback_frontier.json",
             "feedback_detail": "input/feedback_detail.json",
             "feedback_categories": [
