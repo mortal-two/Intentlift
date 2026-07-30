@@ -1,6 +1,6 @@
 # Task 22：阶段二新增 8 个 J 的 Production Backend 闭合
 
-> 状态：已建立，待执行
+> 状态：已完成；5090D/H100/RVV 均为 8/8，完整结果见 `doc/results/stage2-new8-production-backend-22/README.md`
 >
 > 类型：阶段二后端能力建设、真实 C++/MLIR lowering、5090D/H100/RVV 性能解耦
 >
@@ -408,4 +408,3 @@ traversal/materialization/index/stage/reduction/MMA evidence
 5. 阶段一14项保持已完成状态，必要regression无系统性回退；
 6. 达到第8节目标，或在真实实现结构后如实记录未达到的原因；
 7. 代码、Task、结果提交，工作区干净。
-
