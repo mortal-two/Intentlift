@@ -227,9 +227,9 @@ def _set_dynamic_shared_memory(func, shared: int) -> bool:
 
 
 # --------------------------------------------------------------------------- #
-# Cached (Triton-style) launcher (R-FLASH-1).                                  #
+# Prepared (Triton-style) launcher (R-FLASH-1).                                #
 # --------------------------------------------------------------------------- #
-class CachedLauncher:
+class PreparedLauncher:
     """Pre-marshalled kernel launcher: builds the ctypes argument array ONCE and
     updates only the pointer/scalar slots in place per call, then invokes
     ``cuLaunchKernel`` directly with NO per-call Python arg rebuild and NO
@@ -239,7 +239,8 @@ class CachedLauncher:
     array, and blocks on ``torch.cuda.synchronize()`` every call -- fine for
     correctness harnesses but it inflates sub-30us kernels (the small-shape flash
     gap in R4). Triton's launcher caches its arg buffer and does not sync per
-    call; this mirrors that so flash-fwd reaches parity at ALL shapes, not just
+    call; this mirrors that prepared launch closure so flash-fwd reaches parity
+    at ALL shapes, not just
     the GPU-bound large ones.
 
     ``plan`` is the same launch-arg plan the flash kernels already build:
@@ -261,6 +262,7 @@ class CachedLauncher:
         self._cells: list = []
         self._ptr_slots: list[tuple[int, int]] = []  # (cell_index, input_index)
         self._scale_slots: list[int] = []
+        self._input_scalar_slots: list[tuple[int, int, str]] = []
         for entry in plan:
             kind = entry[0]
             if kind == "ptr":
@@ -281,13 +283,53 @@ class CachedLauncher:
                 self._cells.append(ctypes.c_int64(int(entry[1])))
             elif kind == "i32":
                 self._cells.append(ctypes.c_int32(int(entry[1])))
+            elif kind.startswith("input_"):
+                scalar_kind = kind.removeprefix("input_")
+                cells = {
+                    "i32": ctypes.c_int32,
+                    "i64": ctypes.c_int64,
+                    "f16": ctypes.c_uint16,
+                    "bf16": ctypes.c_uint16,
+                    "f32": ctypes.c_float,
+                    "f64": ctypes.c_double,
+                }
+                if scalar_kind not in cells:
+                    raise RuntimeError(
+                        f"PreparedLauncher: unsupported input scalar {kind!r}"
+                    )
+                self._input_scalar_slots.append(
+                    (len(self._cells), int(entry[1]), scalar_kind)
+                )
+                self._cells.append(cells[scalar_kind](0))
             else:
-                raise RuntimeError(f"CachedLauncher: unhandled plan entry {entry!r}")
+                raise RuntimeError(f"PreparedLauncher: unhandled plan entry {entry!r}")
         # Build the pointer array ONCE; the cells' addresses are stable.
         self._arg_ptrs = (ctypes.c_void_p * len(self._cells))()
         for i, cv in enumerate(self._cells):
             self._arg_ptrs[i] = ctypes.cast(ctypes.byref(cv), ctypes.c_void_p)
         self._arg_addr = int(ctypes.addressof(self._arg_ptrs))
+
+    def bind_input_scalars(self, inputs) -> None:
+        """Snapshot dynamic scalar ABI values outside the timed launch closure."""
+
+        for cell_i, in_i, kind in self._input_scalar_slots:
+            value = inputs[in_i]
+            if not hasattr(value, "numel") or int(value.numel()) != 1:
+                raise ValueError(
+                    "PreparedLauncher: dynamic scalar input must contain one value"
+                )
+            if kind in {"f16", "bf16"}:
+                import torch
+
+                expected = torch.float16 if kind == "f16" else torch.bfloat16
+                if value.dtype != expected:
+                    raise ValueError(
+                        f"PreparedLauncher: input {in_i} must have dtype {expected}"
+                    )
+                scalar = int(value.reshape(()).view(torch.uint16).item())
+            else:
+                scalar = value.item()
+            self._cells[cell_i].value = scalar
 
     def launch(self, inputs, scale: float | None = None) -> None:
         import torch
@@ -307,6 +349,44 @@ class CachedLauncher:
         err = ret[0] if isinstance(ret, tuple) else ret
         if int(err) != 0:
             raise RuntimeError(f"cuLaunchKernel: CUDA driver error {int(err)}")
+
+
+@dataclass(frozen=True)
+class PreparedGraphRecord:
+    """Allocation-free timed-launch counts for one compiled CUDA graph."""
+
+    launch_count: int
+    kernel_count: int
+    intermediate_buffer_count: int
+    output_count: int
+
+    def to_dict(self) -> dict[str, int]:
+        return {
+            "launch_count": self.launch_count,
+            "kernel_count": self.kernel_count,
+            "intermediate_buffer_count": self.intermediate_buffer_count,
+            "output_count": self.output_count,
+        }
+
+
+class PreparedGraphProgram:
+    """Persistent tensors plus prepared no-sync launchers for a whole MLIR graph."""
+
+    def __init__(self, sites, outputs, record: PreparedGraphRecord):
+        self._sites = tuple(sites)
+        self.outputs = dict(outputs)
+        self.record = record
+
+    def thunk(self):
+        """Return an allocation-free, synchronization-free whole-graph closure."""
+
+        sites = self._sites
+
+        def launch() -> None:
+            for launcher, tensors in sites:
+                launcher.launch(tensors)
+
+        return launch
 
 
 # --------------------------------------------------------------------------- #
@@ -479,8 +559,8 @@ class _HostModule:
     aligned_ptr_blockargs: dict[str, int]     # aligned-ptr block-arg ssa -> input index
     destination_aligned_ptrs: list[str]       # destination-passing result ptrs
     destination_result_indices: list[int]     # declared result index per destination
-    malloc_buffers: dict[str, "_Buffer"]      # aligned-ptr ssa (inttoptr result) -> buffer
-    loose_buffers: dict[str, "_LooseBuffer"]  # inttoptr ssa -> loose intermediate buffer
+    malloc_buffers: dict[str, "_Buffer"]      # normalized aligned-ptr ssa -> buffer
+    loose_buffers: dict[str, "_LooseBuffer"]  # normalized ptr ssa -> intermediate buffer
     launches: list[_LaunchSite]
     return_aligned_ptrs: list[str]            # aligned-ptr ssa per result, in order
     body_text: str = field(default="", repr=False)
@@ -498,15 +578,19 @@ class _Buffer:
 @dataclass
 class _LooseBuffer:
     """A malloc'd intermediate buffer passed to kernels as the raw aligned
-    ``llvm.inttoptr`` pointer, never packed into a memref-descriptor struct.
+    pointer, never packed into a memref-descriptor struct.
 
     Such buffers carry no struct shape in the host IR, only an element count
     (from the ``getelementptr`` that computes the malloc byte size). We allocate
     a flat 1-D tensor of ``n_elems`` of ``elem`` dtype — enough storage for the
     kernel's bare-ptr writes; torch's allocator is >=256-byte aligned, which
     satisfies the 64-byte alignment the host computes for the kernel pointer.
+
+    ``aligned_ssa`` is either the legacy ``llvm.inttoptr`` result or, with
+    opaque-pointer LLVM lowering, the direct ``malloc !llvm.ptr`` result.
     """
-    aligned_ssa: str        # the inttoptr result (the kernel-arg pointer)
+
+    aligned_ssa: str        # normalized kernel-arg pointer identity
     malloc_ssa: str         # the llvm.call @malloc result
     n_elems: int            # element count (from getelementptr %null[N])
     elem: str               # element type (from the same getelementptr)
@@ -606,25 +690,41 @@ def _map_input_aligned_ptrs(ptr_blockargs: list[str]) -> dict[str, int]:
 
 
 def _parse_constants(func_text: str) -> dict[str, tuple[str, str]]:
-    """ssa -> (raw_value, mlir_type) for every ``llvm.mlir.constant``."""
+    """ssa -> (raw_value, result_type) for every ``llvm.mlir.constant``.
+
+    LLVM dialect printing changed from ``constant(4 : index) : i64`` to forms
+    such as ``constant(true) : i1`` for already-typed attributes.  Parse the
+    operation structurally enough to accept both without coupling runtime ABI
+    handling to one MLIR printer version.
+    """
+
     consts: dict[str, tuple[str, str]] = {}
     for m in re.finditer(
-        r"(%\w+)\s*=\s*llvm\.mlir\.constant\(([^:)]+?)\s*:\s*[^)]+\)\s*:\s*(\S+)",
+        r"(%\w+)\s*=\s*llvm\.mlir\.constant\(([^)]*)\)\s*:\s*(\S+)",
         func_text,
     ):
-        consts[m.group(1)] = (m.group(2).strip(), m.group(3).strip())
+        body = m.group(2).strip()
+        # The optional inner type is an attribute type, while the trailing type
+        # is the actual SSA result type consumed by grid/launch/prelude code.
+        raw = body.rsplit(":", 1)[0].strip() if ":" in body else body
+        if raw == "true":
+            raw = "1"
+        elif raw == "false":
+            raw = "0"
+        consts[m.group(1)] = (raw, m.group(3).strip())
     return consts
 
 
 def _parse_malloc_buffers(func_text: str) -> dict[str, _Buffer]:
-    """Identify each malloc'd buffer by its aligned-pointer ``inttoptr`` result.
+    """Identify each struct-packed malloc buffer by its aligned-pointer SSA.
 
     A buffer descriptor is built by a chain of ``insertvalue``s into an
-    ``llvm.struct``. The aligned pointer (struct field [1]) is the
-    ``llvm.inttoptr`` result; the sizes are inserted at ``[3, i]``. We group
-    insertvalues by their struct-SSA lineage to recover each buffer's shape.
+    ``llvm.struct``. The aligned pointer (struct field [1]) can be either a
+    legacy ``llvm.inttoptr`` result or a direct opaque-pointer ``malloc`` result;
+    the sizes are inserted at ``[3, i]``. We group insertvalues by their
+    struct-SSA chain to recover each buffer's shape.
     """
-    # Map each undef-struct lineage: chase insertvalue dst<-src to a root undef.
+    # Map each undef-struct chain: chase insertvalue dst<-src to a root undef.
     # value_inserted[ssa_result] = (src_ssa, inserted_ssa, position)
     inserts: list[tuple[str, str, str, str]] = []  # (result, src, inserted, pos)
     for m in re.finditer(
@@ -670,16 +770,14 @@ def _parse_malloc_buffers(func_text: str) -> dict[str, _Buffer]:
     allocation_info = _parse_loose_buffers(func_text)
 
     buffers: dict[str, _Buffer] = {}
-    # Only roots that descend from an undef AND whose aligned ptr is an inttoptr
-    # (a malloc buffer) are buffers; the input descriptors are not rebuilt here.
-    inttoptr_results = set(
-        re.findall(r"(%\w+)\s*=\s*llvm\.inttoptr", func_text)
-    )
+    # Only roots that descend from an undef AND whose aligned ptr resolves to a
+    # malloc allocation are buffers; input descriptors are not rebuilt here.
+    allocation_ptrs = set(allocation_info)
     for r, d in by_root.items():
         if r not in undefs:
             continue
         aligned = d["aligned"]
-        if aligned is None or aligned not in inttoptr_results:
+        if aligned is None or aligned not in allocation_ptrs:
             continue
         sizes: list[int] = []
         if d["sizes"]:
@@ -704,16 +802,21 @@ def _parse_loose_buffers(func_text: str) -> dict[str, _LooseBuffer]:
     """Identify malloc'd *intermediate* buffers passed as loose aligned pointers.
 
     Unlike the returned output (which is packed into an ``insertvalue`` struct),
-    intermediate buffers between kernels are handed to ``gpu.launch_func`` as the
-    bare ``llvm.inttoptr`` aligned pointer straight off ``malloc``. Each such
-    buffer is recovered as::
+    intermediate buffers between kernels are handed to ``gpu.launch_func`` as a
+    bare pointer. Legacy lowering emits an alignment chain ending in
+    ``llvm.inttoptr``; opaque-pointer lowering can pass the malloc result directly::
 
         %m = llvm.call @malloc(%s)          # %s = byte size
         ... %a = ptrtoint %m ; alignment arithmetic ...
         %p = llvm.inttoptr %q : i64 to !llvm.ptr   # the kernel-arg pointer
 
-    Returns ``{inttoptr_ssa -> _LooseBuffer}`` keyed by the pointer the kernel
-    actually receives.
+    or::
+
+        %p = llvm.call @malloc(%s) : (i64) -> !llvm.ptr
+        gpu.launch_func ... args(%p : !llvm.ptr, ...)
+
+    Returns ``{pointer_ssa -> _LooseBuffer}`` keyed by the normalized pointer the
+    kernel actually receives.
 
     Size is taken by *tracing the malloc's size operand*, NOT by source-order
     proximity to a getelementptr: the size geps are CSE-shared across mallocs
@@ -721,22 +824,37 @@ def _parse_loose_buffers(func_text: str) -> dict[str, _LooseBuffer]:
     preceding gep is unreliable and can mis-size. We chase
     ``malloc(%s)`` -> ``%s = add %p, 64`` -> ``%p = ptrtoint %g``
     -> ``%g = getelementptr %null[N] ..., <elem>`` to read N and elem per buffer.
-    The malloc->inttoptr pairing, by contrast, *is* source-order safe: the
-    alignment chain is emitted fresh per malloc.
+    Legacy malloc->inttoptr pairing is recovered by SSA def-use, not by source
+    order. This matters when several allocations coexist or a direct opaque
+    malloc precedes an unrelated inttoptr.
     """
     # defs[ssa] = the verbatim RHS of its single defining op (SSA is unique).
     defs: dict[str, str] = {}
     for m in re.finditer(r"(%\w+)\s*=\s*([^\n]+)", func_text):
         defs.setdefault(m.group(1), m.group(2).strip())
 
-    # getelementptr def -> (N, elem). Matches "llvm.getelementptr %x[N] : (...) , elem".
+    # getelementptr def -> (N, elem).  LLVM may spell the static element count
+    # either as a literal ``[N]`` or as an SSA constant ``[%n]`` after CSE.
     def _gep_info(rhs: str):
         gm = re.match(
-            r"llvm\.getelementptr\s+%\w+\[(\d+)\][^,]*,\s*([A-Za-z0-9_!.<>]+)", rhs
+            r"llvm\.getelementptr\s+%\w+\[(%\w+|\d+)\]\s*:\s*"
+            r"\([^)]*\)\s*->\s*!llvm\.ptr\s*,\s*"
+            r"([A-Za-z0-9_!.<>]+)",
+            rhs,
         )
         if not gm:
             return None
-        return int(gm.group(1)), gm.group(2).strip()
+        count = gm.group(1)
+        if count.startswith("%"):
+            definition = defs.get(count, "")
+            constant = re.match(
+                r"llvm\.mlir\.constant\((-?\d+)\s*:\s*[^)]+\)\s*:\s*i64",
+                definition,
+            )
+            if constant is None:
+                return None
+            count = constant.group(1)
+        return int(count), gm.group(2).strip()
 
     def _trace_size(size_ssa: str):
         """size_ssa -> (n_elems, elem) by walking add/ptrtoint/getelementptr."""
@@ -767,26 +885,40 @@ def _parse_loose_buffers(func_text: str) -> dict[str, _LooseBuffer]:
             break
         return None
 
-    # Mallocs and inttoptrs in source order.
+    # Mallocs and inttoptrs.  Match aliases to allocations through their SSA
+    # dependencies; source-order pairing silently aliases distinct allocations.
     mallocs = [(m.start(), m.group(1), m.group(2))
                for m in re.finditer(
                    r"(%\w+)\s*=\s*llvm\.call\s+@malloc\((%\w+)\)", func_text)]
-    inttoptrs = [(m.start(), m.group(1))
+    inttoptrs = [m.group(1)
                  for m in re.finditer(r"(%\w+)\s*=\s*llvm\.inttoptr", func_text)]
+
+    def _depends_on(ssa: str, allocation_ssa: str, seen: set[str]) -> bool:
+        if ssa == allocation_ssa:
+            return True
+        if ssa in seen or ssa not in defs:
+            return False
+        seen.add(ssa)
+        return any(
+            _depends_on(operand, allocation_ssa, seen)
+            for operand in re.findall(r"%\w+", defs[ssa])
+        )
 
     loose: dict[str, _LooseBuffer] = {}
     for _pos, malloc_ssa, size_ssa in mallocs:
-        # pair with the first inttoptr that appears after this malloc in source.
-        aligned = None
-        for ipos, issa in inttoptrs:
-            if ipos > _pos:
-                aligned = issa
-                break
-        if aligned is None:
+        aliases = [
+            issa
+            for issa in inttoptrs
+            if _depends_on(issa, malloc_ssa, set())
+        ]
+        if len(aliases) > 1:
             raise NotImplementedError(
-                f"orchestrate: malloc {malloc_ssa} has no following llvm.inttoptr "
-                "(cannot recover its aligned device pointer)"
+                f"orchestrate: malloc {malloc_ssa} has multiple dependent "
+                f"llvm.inttoptr aliases {aliases}; aligned pointer is ambiguous"
             )
+        # New opaque-pointer lowering needs no ptr->int->ptr alignment roundtrip;
+        # the malloc result is already the exact !llvm.ptr launch operand.
+        aligned = aliases[0] if aliases else malloc_ssa
         info = _trace_size(size_ssa)
         if info is None:
             raise NotImplementedError(
@@ -918,12 +1050,16 @@ def _parse_const_globals(binary_mlir: str, func_text: str) -> dict[str, _ConstGl
     """Resolve scalar and dense-splat globals plus zero-offset GEP aliases."""
 
     def parse_value(text: str, elem: str) -> int | float:
+        if elem == "i1" and text in {"true", "false"}:
+            return int(text == "true")
         return _parse_f32(text) if elem.startswith("f") else int(text, 0)
 
     globals_: dict[str, _ConstGlobal] = {}
     for match in re.finditer(
         r"llvm\.mlir\.global\s+[^@]*@(\w+)\(\s*"
-        r"([-+0-9.eExXa-fA-F]+)\s*:\s*([fi]\d+)\s*\)",
+        r"(true|false|[-+0-9.eExXa-fA-F]+)"
+        r"(?:\s*:\s*[fi]\d+)?\s*\)\s*"
+        r"(?:\{[^}\n]*\}\s*)?:\s*([fi]\d+)",
         binary_mlir,
     ):
         name, raw, elem = match.group(1), match.group(2), match.group(3)
@@ -1204,6 +1340,22 @@ def _execute_host_scalar_prelude(
                 value = lhs != rhs_value
             cache[ssa] = value
             return value
+
+        select = re.match(
+            r"llvm\.select\s+(%\w+),\s*(%\w+),\s*(%\w+)\s*:",
+            rhs,
+        )
+        if select:
+            condition = evaluate(select.group(1))
+            true_value = evaluate(select.group(2))
+            false_value = evaluate(select.group(3))
+            if condition.numel() != 1:
+                raise NotImplementedError(
+                    "orchestrate: scalar prelude select condition is not rank-0"
+                )
+            value = torch.where(condition.to(dtype=torch.bool), true_value, false_value)
+            cache[ssa] = value
+            return value
         raise NotImplementedError(
             f"orchestrate: unsupported scalar prelude definition {ssa} = {rhs}"
         )
@@ -1224,6 +1376,7 @@ def run_program(
     inputs,
     compile_all=compile_all_kernels,
     output_aliases=None,
+    _prepare_only: bool = False,
 ):
     """Compile *intent_mlir_path* and execute its whole kernel graph on the GPU.
 
@@ -1468,14 +1621,14 @@ def run_program(
     scalar_load_inputs: dict[str, int] = {}
     for match in re.finditer(
         r"(%\w+)\s*=\s*llvm\.load\s+(%\w+)\s*:\s*!llvm\.ptr\s*->\s*"
-        r"(f16|bf16|f32|f64)",
+        r"(i32|i64|f16|bf16|f32|f64)",
         host.body_text,
     ):
         result_ssa, pointer_ssa = match.group(1), match.group(2)
         if pointer_ssa in host.aligned_ptr_blockargs:
             scalar_load_inputs[result_ssa] = host.aligned_ptr_blockargs[pointer_ssa]
 
-    def _loaded_input_scalar(ssa: str, expected_dtype) -> float:
+    def _loaded_input_scalar(ssa: str, expected_dtype):
         if ssa not in scalar_load_inputs:
             raise NotImplementedError(
                 f"orchestrate: scalar launch arg {ssa} is neither a constant "
@@ -1489,7 +1642,7 @@ def run_program(
                 f"index={input_index}, shape={tuple(tensor.shape)}, "
                 f"dtype={tensor.dtype}, expected={expected_dtype}"
             )
-        return float(tensor.item())
+        return tensor.item()
 
     def _loaded_input_scalar_bits(ssa: str, expected_dtype) -> int:
         if ssa not in scalar_load_inputs:
@@ -1507,6 +1660,7 @@ def run_program(
             )
         return int(tensor.reshape(()).view(torch.uint16).item())
 
+    prepared_sites = []
     for site in host.launches:
         ck = by_binary.get(site.binary_module)
         if ck is None:
@@ -1529,58 +1683,64 @@ def run_program(
             shared = int(host.constants[site.dynamic_shared_ssa][0])
             _set_dynamic_shared_memory(func, shared)
 
-        call_args = []
+        launch_tensors = []
+        plan = []
         for op in site.args:
             ty = op.ty
             if ty.startswith("!llvm.ptr"):
                 t = _resolve_ptr(op.ssa)
-                call_args.append(_PtrArg(t.data_ptr()))
+                plan.append(("ptr", len(launch_tensors)))
+                launch_tensors.append(t)
             elif ty in ("i64", "index"):
-                if op.ssa not in host.constants:
-                    raise NotImplementedError(
-                        f"orchestrate: integer scalar arg {op.ssa} is not a constant"
-                    )
-                call_args.append(_I64Arg(int(host.constants[op.ssa][0])))
+                value = (
+                    int(host.constants[op.ssa][0])
+                    if op.ssa in host.constants
+                    else int(_loaded_input_scalar(op.ssa, torch.int64))
+                )
+                plan.append(("i64", value))
             elif ty == "i32":
-                if op.ssa not in host.constants:
-                    raise NotImplementedError(
-                        f"orchestrate: i32 scalar arg {op.ssa} is not a constant"
-                    )
-                call_args.append(_I32Arg(int(host.constants[op.ssa][0])))
+                value = (
+                    int(host.constants[op.ssa][0])
+                    if op.ssa in host.constants
+                    else int(_loaded_input_scalar(op.ssa, torch.int32))
+                )
+                plan.append(("i32", value))
             elif ty == "f16":
                 bits = (
                     _parse_f16_bits(host.constants[op.ssa][0])
                     if op.ssa in host.constants
                     else _loaded_input_scalar_bits(op.ssa, torch.float16)
                 )
-                call_args.append(_F16Arg(bits))
+                plan.append(("f16", bits))
             elif ty == "bf16":
                 bits = (
                     _parse_bf16_bits(host.constants[op.ssa][0])
                     if op.ssa in host.constants
                     else _loaded_input_scalar_bits(op.ssa, torch.bfloat16)
                 )
-                call_args.append(_BF16Arg(bits))
+                plan.append(("bf16", bits))
             elif ty == "f32":
                 value = (
                     _parse_f32(host.constants[op.ssa][0])
                     if op.ssa in host.constants
                     else _loaded_input_scalar(op.ssa, torch.float32)
                 )
-                call_args.append(_F32Arg(value))
+                plan.append(("f32", value))
             elif ty == "f64":
                 value = (
                     _parse_f64(host.constants[op.ssa][0])
                     if op.ssa in host.constants
                     else _loaded_input_scalar(op.ssa, torch.float64)
                 )
-                call_args.append(_F64Arg(value))
+                plan.append(("f64", value))
             else:
                 raise NotImplementedError(
                     f"orchestrate: unhandled launch-arg type {ty!r} (operand {op.ssa})"
                 )
 
-        _launch(func, grid, block, call_args, shared=shared)
+        launcher = PreparedLauncher(func, grid, block, plan, shared=shared)
+        launcher.bind_input_scalars(launch_tensors)
+        prepared_sites.append((launcher, tuple(launch_tensors)))
 
     # --- collect outputs --------------------------------------------------- #
     # One ``out{i}`` per function result, in return order (multi-result programs,
@@ -1630,7 +1790,46 @@ def run_program(
                     f"declared shape {shape} requires {expected_numel}"
                 )
             outputs[key] = tensor.reshape(shape)
+    prepared = PreparedGraphProgram(
+        prepared_sites,
+        outputs,
+        PreparedGraphRecord(
+            launch_count=len(host.launches),
+            kernel_count=len(kernels),
+            intermediate_buffer_count=len(host.loose_buffers),
+            output_count=len(outputs),
+        ),
+    )
+    if _prepare_only:
+        return prepared
+    prepared.thunk()()
+    torch.cuda.synchronize()
     return outputs
 
 
-__all__ = ["run_program"]
+def prepare_program(
+    intent_mlir_path,
+    inputs,
+    compile_all=compile_all_kernels,
+    output_aliases=None,
+) -> PreparedGraphProgram:
+    """Compile/bind once and return a no-allocation whole-graph launcher."""
+
+    result = run_program(
+        intent_mlir_path,
+        inputs,
+        compile_all=compile_all,
+        output_aliases=output_aliases,
+        _prepare_only=True,
+    )
+    if not isinstance(result, PreparedGraphProgram):
+        raise RuntimeError("orchestrate did not return a prepared graph")
+    return result
+
+
+__all__ = [
+    "PreparedGraphProgram",
+    "PreparedGraphRecord",
+    "prepare_program",
+    "run_program",
+]

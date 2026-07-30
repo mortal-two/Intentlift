@@ -9,7 +9,13 @@
 2. [π：依赖类型实现见证与 Replay 安全](IntentIR_pi_依赖类型实现见证与Replay安全设计_2026-07-22.md)：确定 realization witness、`TypeCheck(J,C,π)`、授权规则与 Replay 安全边界。
 3. [Lift、Replay、Gate1、Gate2 最终执行流程](IntentIR_Lift_Replay_Gate1_Gate2_实验与系统改进最终执行流程_2026-07-22.md)：确定实验轮次、relift、失败停止、Gate2 与实验结束后的系统改进流程。
 4. [IntentIR / SCRC 最终数学、执行流程与论文表述](IntentIR_SCRC_最终数学与执行流程_2026-07-22.md)：是上述三份 SCRC 设计的数学与 claim 总述，统一 `TypeCheck` 所有权结论、observer-relative Gate1、外部比较政策 Q、Gate2 三条直接比较、instance-wise `c0` 与概率声明边界。它不增加第四个设计对象或新的运行阶段；若对象/schema/API 细节发生歧义，仍回到对应的三份核心设计修订。
-5. [Contract-Preserving Multi-Lowering 后端最终设计](IntentIR_Contract_Preserving_Multi_Lowering_后端最终设计_2026-07-24.md)：定义 accepted J+C 的 production 消费边界、Intent MLIR materialization、A/B/C 后端作用、generic implementation families、pass contracts、搜索与实验设计；它不修改 SCRC 接受谓词。
+5. [J-Grounded、Q/D-Certified Lowering-State Search 后端最终设计](IntentIR_Contract_Preserving_Multi_Lowering_后端最终设计_2026-07-24.md)：定义 accepted J+C 的 pure core lowerer、Intent MLIR materialization、hard verifier、统一 Q/D search-and-closure controller、concrete lowering-state search 与实验设计；它不修改 SCRC 接受谓词或 J。文件名为保持既有链接稳定而保留旧名称。
+
+对应的 production 实现与实测记录：
+
+- [Accepted J+C production backend](production-backend-jc-search.md)：当前 16-certified + 2-provisional J_dev + 2-canary 分账下的真实 C++ MLIR lowering、J/B 驱动 state search、统一 Q/D controller 与证据边界。
+- [历史 16-certified + 2-canary production backend regression](results/production-backend-closed-18/README.md)：目录名保留旧链接；其中 RTX 5090D/H100/RVV 数字不得重标为18-certified aggregate。
+- [16 项 backend implementation smoke](results/production-backend-closed-16/backend-implementation-smoke-2026-07-26.md)与 [12 个闭合 Kernel 历史报告](results/production-backend-closed-12/production-backend-report.md)：只用于追溯。
 
 前四份 SCRC 文档共同规定：
 
@@ -31,8 +37,10 @@ accepted J
 optional C
   -> S_C = Attach_C(M0,C,t) after M0
   -> erasable search seed / candidate ordering
-  -> contract-preserving multi-lowering
-  -> performance-only selection
+  -> hard-safe structural/numeric lowering-state search
+  -> generic Q/D candidate filter
+  -> performance selection among passing states
+  -> held-out final-winner backend closure
 ```
 
 任何实现文档或派生 spec 若与这五份文档冲突，应修订派生材料，而不是增加额外证明对象、

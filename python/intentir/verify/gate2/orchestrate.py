@@ -32,7 +32,7 @@ from .triton import TritonExecutionSpec, TritonRunner
 GATE2_EXECUTION_PROTOCOL = "source_replay_j_three_edges_q_v5"
 
 
-def _input_digest(values: Mapping[str, Any]) -> str:
+def gate2_input_digest(values: Mapping[str, Any]) -> str:
     """Hash exact trial inputs without lossy JSON float serialization."""
 
     digest = hashlib.sha256()
@@ -58,7 +58,7 @@ def _input_digest(values: Mapping[str, Any]) -> str:
     return digest.hexdigest()
 
 
-def _clone_values(values: Mapping[str, Any]) -> dict[str, Any]:
+def clone_gate2_values(values: Mapping[str, Any]) -> dict[str, Any]:
     """Give every Gate2 leg an isolated view of the committed pre-state."""
 
     result: dict[str, Any] = {}
@@ -141,7 +141,7 @@ class Gate2Runner:
         replay: KernelSource,
         case: Gate2Case,
     ) -> Gate2Result:
-        input_digest = _input_digest(case.values)
+        input_digest = gate2_input_digest(case.values)
         q_metadata = {
             "protocol": GATE2_EXECUTION_PROTOCOL,
             "comparison_policy": self.comparison_policy.to_json(),
@@ -190,16 +190,16 @@ class Gate2Runner:
                 )
 
         source_result = self.source_runner.run(
-            "source", source, case.triton, _clone_values(case.values)
+            "source", source, case.triton, clone_gate2_values(case.values)
         )
         replay_result = self.replay_runner.run(
-            "replay", replay, case.triton, _clone_values(case.values)
+            "replay", replay, case.triton, clone_gate2_values(case.values)
         )
         reference_result = (
             case.refeval.execution_result()
             if isinstance(case.refeval, ScalarLoweringUnavailable)
             else self.refeval_runner.run(
-                case.refeval, _clone_values(case.values)
+                case.refeval, clone_gate2_values(case.values)
             )
         )
         comparison_kwargs = (
@@ -295,8 +295,10 @@ class Gate2Runner:
 
 
 __all__ = [
+    "clone_gate2_values",
     "GATE2_EXECUTION_PROTOCOL",
     "Gate2Case",
     "Gate2Runner",
     "Gate2Suite",
+    "gate2_input_digest",
 ]

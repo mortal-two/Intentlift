@@ -8,7 +8,7 @@ dependencies = []
 [project.optional-dependencies]
 # Heavier deps (numpy for the reference interpreter, http client for the LLM
 # provider) are opt-in so the core model stays import-light.
-verify = ["numpy", "jsonschema>=3.2"]
+verify = ["numpy", "ml_dtypes>=0.5", "jsonschema>=3.2"]
 lift-agent = [
     "jinja2>=3.1",
     # Exact versions below are exercised by the local CPA /responses packet test.

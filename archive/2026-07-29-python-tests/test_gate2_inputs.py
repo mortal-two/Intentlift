@@ -74,6 +74,18 @@ def test_gate2_integer_and_boolean_generation_uses_declared_dtype() -> None:
     assert booleans.dtype == np.bool_
 
 
+def test_gate2_bf16_generation_rounds_into_declared_storage() -> None:
+    values = generate_tensor_input(
+        TensorInputSpec((32,), "bf16", InputDistribution.NORMAL, 0.5),
+        seed=43,
+    )
+
+    assert values.dtype.name == "bfloat16"
+    assert values.dtype.itemsize == 2
+    assert values.view(np.uint16).dtype == np.uint16
+    assert np.isfinite(values).all()
+
+
 def test_gate2_integer_boundary_distribution_is_explicit_and_repeatable() -> None:
     values = generate_tensor_input(
         TensorInputSpec(

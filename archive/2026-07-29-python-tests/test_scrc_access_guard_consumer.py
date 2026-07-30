@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import copy
+from dataclasses import replace
 
 import numpy as np
 import pytest
 
 import intentir.backend.cuda.program as cuda_program
 from intentir.backend.protocol import LoweringRequest
+from intentir.ir.contract_materialization import project_contract_materialization
 from intentir.ir.functional_boundary import (
     FUNCTIONAL_BOUNDARY_PROTOCOL,
     project_functional_boundary,
@@ -121,7 +123,7 @@ def _guarded_select_j(
 def test_access_guard_projects_authored_relation_and_unique_broadcast() -> None:
     projection = project_functional_boundary(_guarded_select_j())
 
-    assert FUNCTIONAL_BOUNDARY_PROTOCOL == "intentir.j-functional-boundary.v20"
+    assert FUNCTIONAL_BOUNDARY_PROTOCOL == "intentir.j-functional-boundary.v15"
     assert projection.emitter_broadcast_axes() == {"v0": {"Guard": (1,)}}
     assert projection.to_json()["access_guard_relations"] == [
         {
@@ -308,9 +310,45 @@ def test_access_guard_refeval_api_has_no_c_or_pi_authority() -> None:
     assert not hasattr(spec, "pi")
 
 
-def test_cuda_fails_closed_before_codegen_for_access_guard(monkeypatch) -> None:
+def test_cuda_consumes_shared_access_guard_projection() -> None:
     j = _guarded_select_j()
     analysis = cuda_program.analyze_j_for_cuda(j)
+
+    assert analysis["supported"] is True
+    assert analysis["boundary_projection"]["access_guard_relations"]
+    assert any(
+        item.startswith("access_guard:a3:Guard:")
+        for item in analysis["consumed"]
+    )
+
+
+def test_cuda_fails_closed_when_access_guard_receipt_is_missing(monkeypatch) -> None:
+    j = _guarded_select_j()
+    projection = project_contract_materialization(j)
+    incomplete = replace(
+        projection,
+        consumed=tuple(
+            item
+            for item in projection.consumed
+            if not item.startswith("access_guard:")
+        ),
+    )
+    monkeypatch.setattr(
+        cuda_program,
+        "_contract_projection",
+        lambda unused_j: incomplete,
+    )
+    analysis = cuda_program.analyze_j_for_cuda(j)
+    materialized = cuda_program.materialize_j(j, {})
+    incomplete_materialization = replace(
+        materialized,
+        boundary_projection=incomplete,
+    )
+    monkeypatch.setattr(
+        cuda_program,
+        "materialize_j",
+        lambda unused_j, unused_extents: incomplete_materialization,
+    )
     called = False
 
     def forbidden_lower(*args, **kwargs):

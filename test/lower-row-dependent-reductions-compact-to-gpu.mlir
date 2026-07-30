@@ -1,5 +1,7 @@
 // RUN: intent-opt -convert-intent-row-reduction-to-gpu=block-threads=64 %s | FileCheck %s
 // RUN: intent-opt '-convert-intent-row-reduction-to-gpu=block-threads=64 fuse-fma=true' %s | FileCheck %s --check-prefix=FMA
+// RUN: intent-opt '-convert-intent-row-reduction-to-gpu=block-threads=4 tile-cols=2' %s | FileCheck %s --check-prefix=TILED
+// RUN: intent-opt '-convert-intent-row-reduction-to-gpu=block-threads=64 tile-cols=1' %s | FileCheck %s --check-prefix=WARP-TILED
 
 // Centered LayerNorm has two dependent row reductions: variance consumes the
 // mean.  At production warp counts each dependency level must still use the
@@ -7,7 +9,11 @@
 // gpu.all_reduce buffers.  The graph and centered-variance arithmetic remain
 // unchanged; only Layer-C synchronization/storage is retuned.
 // CHECK-LABEL: func.func @dependent_centered_variance(
-// CHECK-SAME: attributes {intent.launch_plan = {{.*}}smem = 16 : i64
+// CHECK-SAME: intent.backend.fma_count = 0 : i64
+// CHECK-SAME: intent.backend.host_value_capture_count = 1 : i64
+// CHECK-SAME: intent.backend.reduction_topology = "workgroup_hierarchical"
+// CHECK-SAME: intent.backend.transformation_trace = ["cuda.row_reduction.read_once.v1", "cuda.reduction.workgroup_hierarchical.v1", "cuda.b.rank0_host_value_capture.v1"]
+// CHECK-SAME: intent.launch_plan = {{.*}}smem = 16 : i64
 // CHECK: gpu.launch
 // CHECK-SAME: dynamic_shared_memory_size
 // CHECK: gpu.dynamic_shared_memory
@@ -16,6 +22,30 @@
 // CHECK: memref.store
 // CHECK: gpu.terminator
 // CHECK-NOT: intent.
+// TILED-LABEL: func.func @dependent_centered_variance(
+// TILED-SAME: intent.backend.reduction_topology = "tiled_shared_multi_reduce"
+// TILED-SAME: intent.backend.transformation_trace = ["cuda.row_reduction.read_once.v1", "cuda.reduction.tiled_shared_multi_reduce.v1"]
+// First dependency level caches the row while accumulating the mean.
+// TILED: scf.for %{{.*}} iter_args(%{{.*}}) -> (f32) {
+// TILED: memref.store %{{.*}} : memref<128xf32, #gpu.address_space<workgroup>>
+// TILED: arith.divf
+// The dependent variance traverses the shared frontier, not global X.
+// TILED: scf.for %{{.*}} iter_args(%{{.*}}) -> (f32) {
+// TILED: memref.load %{{.*}} : memref<128xf32, #gpu.address_space<workgroup>>
+// TILED: math.rsqrt
+// TILED-NOT: gpu.all_reduce
+// TILED: gpu.terminator
+// TILED-NOT: intent.
+// WARP-TILED-LABEL: func.func @dependent_centered_variance(
+// WARP-TILED-SAME: intent.backend.barrier_count = 2
+// WARP-TILED-SAME: intent.backend.reduction_topology = "tiled_frontier_warp_multi_reduce"
+// WARP-TILED-SAME: intent.backend.shuffle_count = 20
+// WARP-TILED-SAME: intent.backend.transformation_trace = ["cuda.row_reduction.read_once.v1", "cuda.reduction.tiled_frontier_warp_multi_reduce.v1"]
+// WARP-TILED: gpu.shuffle
+// WARP-TILED-COUNT-2: gpu.barrier
+// WARP-TILED-NOT: gpu.all_reduce
+// WARP-TILED: gpu.terminator
+// WARP-TILED-NOT: intent.
 func.func @dependent_centered_variance(
     %X: tensor<2x128xf32>, %B: tensor<128xf32>, %eps: tensor<f32>)
     -> (tensor<2x128xf32>, tensor<2x1xf32>, tensor<2x1xf32>) {
@@ -42,5 +72,7 @@ func.func @dependent_centered_variance(
 }
 
 // FMA-LABEL: func.func @dependent_centered_variance(
+// FMA-SAME: intent.backend.fma_count = 4 : i64
+// FMA-SAME: intent.backend.transformation_trace = ["cuda.row_reduction.read_once.v1", "cuda.reduction.workgroup_hierarchical.v1", "cuda.numeric.fma.f32.v1", "cuda.b.rank0_host_value_capture.v1"]
 // FMA: math.fma
 // FMA-NOT: intent.

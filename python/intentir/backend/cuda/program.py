@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
@@ -13,12 +11,17 @@ from intentir.backend.protocol import (
     ComparisonEvidence,
     LoweringRequest,
 )
-from intentir.frontend import emit_j_module
-from intentir.ir.canonical_j import elaborate_j, j_elaboration
-from intentir.ir.functional_boundary import (
-    FunctionalBoundaryProjection,
-    project_functional_boundary,
+from intentir.backend.materialize import MaterializedJ, materialize_j
+from intentir.frontend.canonical_j import LOGICAL_FULL_AXIS_STEP_MATERIALIZATION
+from intentir.ir.dense_predicate_materialization import (
+    BoundaryMaterializationProjection,
 )
+from intentir.ir.canonical_j import elaborate_j, j_elaboration
+from intentir.ir.contract_materialization import (
+    ContractMaterializationProjection,
+    project_contract_materialization,
+)
+from intentir.ir.canonical_j import elaborate_j, j_elaboration
 from intentir.ir.model import IntentOp
 from intentir.ir.value_dimension import validate_value_dimension_instantiation
 from intentir.verify.gate1.model import (
@@ -41,11 +44,22 @@ class CudaJExecutionError(ValueError):
     pass
 
 
+def _child_regions(op: IntentOp) -> tuple[Sequence[IntentOp], ...]:
+    regions: list[Sequence[IntentOp]] = [op.body]
+    if op.op in {"effect_if", "value_if"}:
+        if op.positive is not None:
+            regions.append(op.positive.body)
+        if op.negative is not None:
+            regions.append(op.negative.body)
+    return tuple(regions)
+
+
 def _walk_ops(body: Sequence[IntentOp]) -> tuple[IntentOp, ...]:
     result: list[IntentOp] = []
     for op in body:
         result.append(op)
-        result.extend(_walk_ops(op.body))
+        for region in _child_regions(op):
+            result.extend(_walk_ops(region))
     return tuple(result)
 
 
@@ -57,6 +71,11 @@ def _nodes(j: SemanticArchive) -> dict[str, IntentOp]:
             path = f"{prefix}[{index}]"
             by_path[path] = op
             visit(op.body, f"{path}.body")
+            if op.op in {"effect_if", "value_if"}:
+                if op.positive is not None:
+                    visit(op.positive.body, f"{path}.positive.body")
+                if op.negative is not None:
+                    visit(op.negative.body, f"{path}.negative.body")
 
     visit(j.intent.body)
     result = dict(by_path)
@@ -66,21 +85,25 @@ def _nodes(j: SemanticArchive) -> dict[str, IntentOp]:
     return result
 
 
-def _functional_projection(
+def _contract_projection(
     j: SemanticArchive,
-) -> FunctionalBoundaryProjection:
+) -> ContractMaterializationProjection:
     """Derive CUDA's ephemeral Layer-B view from the one accepted J."""
 
     try:
-        return project_functional_boundary(j)
+        return project_contract_materialization(j)
     except (TypeError, ValueError, NotImplementedError) as exc:
         raise CudaJLoweringError(
-            "functional boundary projection failed: "
+            "typed contract projection failed: "
             f"{type(exc).__name__}: {exc}"
         ) from exc
 
 
-def analyze_j_for_cuda(j: SemanticArchive) -> dict[str, Any]:
+def analyze_j_for_cuda(
+    j: SemanticArchive,
+    *,
+    materialization: MaterializedJ | None = None,
+) -> dict[str, Any]:
     """Check or consume every active Layer-B collection before emission."""
 
     if not isinstance(j, SemanticArchive):
@@ -88,25 +111,60 @@ def analyze_j_for_cuda(j: SemanticArchive) -> dict[str, Any]:
     j = elaborate_j(j)
     unsupported: list[str] = []
     consumed: list[str] = []
-    projection: FunctionalBoundaryProjection | None = None
-    try:
-        projection = _functional_projection(j)
-    except CudaJLoweringError as exc:
-        unsupported.append(str(exc))
-    else:
+    projection: (
+        ContractMaterializationProjection | BoundaryMaterializationProjection | None
+    ) = (
+        materialization.boundary_projection
+        if materialization is not None
+        else None
+    )
+    if projection is None:
+        try:
+            projection = _contract_projection(j)
+        except CudaJLoweringError as exc:
+            unsupported.append(str(exc))
+    if projection is not None:
         consumed.extend(projection.consumed)
+        unsupported.extend(projection.unsupported_lowering)
+    projected_consumed = set(projection.consumed) if projection is not None else set()
     if j.boundary.access_guard_relations:
-        # The backend may inspect the shared J-only receipt, but its current
-        # target path has no general access-local guard materializer.  An
-        # explicit Layer-A select is sufficient for RefEval value semantics;
-        # it is not permission to erase the authored boundary relation here.
-        unsupported.append("access_guard_materialization_not_implemented")
+        guards_consumed = all(
+            any(
+                ref.startswith(
+                    f"access_guard:{item.access_ref}:{item.value_ref}:"
+                )
+                and ref.endswith(f":{item.polarity.value}")
+                for ref in projected_consumed
+            )
+            for item in j.boundary.access_guard_relations
+        )
+        if not guards_consumed:
+            # Fail closed unless the shared J-only functional projection has
+            # consumed every authored access-local guard.  The projection is
+            # the existing generic consumer; CUDA does not invent a second
+            # access recipe or infer permission from the surrounding select.
+            unsupported.append("access_guard_materialization_not_implemented")
     if j.boundary.aliases:
         unsupported.append("alias_relation")
-    if any(item.mutability.value == "mutable" for item in j.storage):
-        unsupported.append("general_mutable_storage")
-    else:
-        consumed.extend(f"storage:{item.storage_id}" for item in j.storage)
+    consumed.extend(
+        f"effect:{item.effect_id or index}:{item.kind.value}"
+        for index, item in enumerate(j.boundary.effects)
+    )
+    for item in j.storage:
+        storage_ref = f"storage:{item.storage_id}"
+        if item.mutability.value != "mutable":
+            consumed.append(storage_ref)
+        elif (
+            materialization is not None
+            and materialization.form == LOGICAL_FULL_AXIS_STEP_MATERIALIZATION
+            and storage_ref in projected_consumed
+        ):
+            # The registered full-axis-step materialization consumes the exact
+            # structured carry/storage relation before the flat CUDA path is
+            # considered.  Arbitrary mutable storage remains unsupported.
+            consumed.append(storage_ref)
+        else:
+            unsupported.append(f"general_mutable_storage:{item.storage_id}")
 
     operations = _walk_ops(j.intent.body)
     op_names = {op.op for op in operations}
@@ -177,13 +235,25 @@ def analyze_j_for_cuda(j: SemanticArchive) -> dict[str, Any]:
             f"{item.node_ref}:{item.combiner.value}:"
             f"{item.duplicate_policy.value}:{item.order.value}"
         )
-    if "loop" in op_names:
+    if (
+        "loop" in op_names
+        and (
+            materialization is None
+            or materialization.form != LOGICAL_FULL_AXIS_STEP_MATERIALIZATION
+        )
+    ):
         unsupported.append("semantic_recurrence_not_lowered_by_flat_cuda_path")
+    elif "loop" in op_names:
+        consumed.extend(materialization.consumed_structures)
 
     for item in j.boundary.reductions:
         op = nodes.get(item.node_ref)
-        if op is None or op.op != "reduce":
+        if op is None or op.op not in {"reduce", "scan"}:
             unsupported.append(f"invalid_reduction:{item.node_ref}")
+            continue
+        reduction_ref = f"reduction:{item.node_ref}"
+        if reduction_ref in projected_consumed:
+            consumed.append(reduction_ref)
             continue
         fn = op.attrs.get("fn")
         declared = item.identity if item.identity is not None else item.masked_contribution
@@ -193,8 +263,8 @@ def analyze_j_for_cuda(j: SemanticArchive) -> dict[str, Any]:
             "prod": {1, "ONE"},
             "any": {False, "false"},
             "all": {True, "true"},
-            "max": {"NEG_INF"},
-            "min": {"POS_INF"},
+            "max": {"NEG_INF", "-inf", float("-inf")},
+            "min": {"POS_INF", "inf", "+inf", float("inf")},
         }.get(fn)
         if neutral is None or declared not in neutral:
             unsupported.append(f"non_neutral_reduction_boundary:{item.node_ref}")
@@ -208,20 +278,10 @@ def analyze_j_for_cuda(j: SemanticArchive) -> dict[str, Any]:
     else:
         consumed.extend(f"output:{name}" for name in observable_values)
     consumed.extend(f"scope:{item.scope_id}" for item in j.scopes)
-    boundary_digest = (
-        projection.boundary_digest
-        if projection is not None
-        else hashlib.sha256(
-            json.dumps(
-                j.boundary.to_json(), sort_keys=True, separators=(",", ":")
-            ).encode()
-        ).hexdigest()
-    )
     return {
         "supported": not unsupported,
         "consumed": sorted(set(consumed)),
         "unsupported": sorted(set(unsupported)),
-        "boundary_sha256": boundary_digest,
         "boundary_projection": (
             projection.to_json() if projection is not None else None
         ),
@@ -235,17 +295,12 @@ class CudaJLowering:
     intent_mlir: str
     artifact: LoweredProgram
     concrete_extents: tuple[tuple[str, int], ...]
+    materializer_version: str
+    materialization_form: str
 
     def __post_init__(self) -> None:
         if not self.boundary_consumption.get("supported", False):
             raise CudaJLoweringError("CUDA lowering left Layer-B relations unsupported")
-        digest = hashlib.sha256(self.intent_mlir.encode()).hexdigest()
-        if self.artifact.source_mlir_sha256 != digest:
-            raise CudaJLoweringError("compiled CUDA artifact differs from emitted MLIR")
-
-    @property
-    def mlir_sha256(self) -> str:
-        return hashlib.sha256(self.intent_mlir.encode()).hexdigest()
 
     @property
     def concrete_extents_map(self) -> dict[str, int]:
@@ -258,8 +313,6 @@ class CudaJLowering:
         comparisons: Sequence[ComparisonEvidence],
     ) -> BackendConformanceRecord:
         return BackendConformanceRecord(
-            j_digest=self.request.j_digest,
-            c_digest=self.request.c_digest,
             target=self.request.target,
             variant=self.request.variant,
             boundary_consumption=dict(self.boundary_consumption),
@@ -269,12 +322,11 @@ class CudaJLowering:
 
     def to_record(self) -> dict[str, Any]:
         return {
-            "j_digest": self.request.j_digest,
-            "c_digest": self.request.c_digest,
             "target": self.request.target.to_dict(),
             "variant": self.request.variant,
             "concrete_extents": self.concrete_extents_map,
-            "mlir_sha256": self.mlir_sha256,
+            "materializer_version": self.materializer_version,
+            "materialization_form": self.materialization_form,
             "boundary_consumption": dict(self.boundary_consumption),
             "cuda": self.artifact.to_record(),
         }
@@ -290,19 +342,20 @@ def lower_j_to_cuda(
         raise CudaJLoweringError("CUDA backend requires a CUDA target")
     if request.variant not in {"generic", "auto"}:
         raise CudaJLoweringError("CUDA lowering accepts generic or auto variant")
-    consumption = analyze_j_for_cuda(request.j)
+    try:
+        materialized = materialize_j(request.j, concrete_extents)
+    except (TypeError, ValueError) as exc:
+        raise CudaJLoweringError(str(exc)) from exc
+    consumption = analyze_j_for_cuda(
+        request.j,
+        materialization=materialized,
+    )
     if not consumption["supported"]:
         raise CudaJLoweringError(
             "CUDA cannot consume complete Layer B: "
             + ", ".join(consumption["unsupported"])
         )
-    projection = _functional_projection(request.j)
-    mlir = emit_j_module(
-        request.j,
-        dict(concrete_extents),
-        broadcast_axes=projection.emitter_broadcast_axes(),
-        proven_index_bounds=projection.proven_index_bounds,
-    )
+    mlir = materialized.intent_mlir
     target = LoweringTarget(
         backend="cuda",
         chip=request.target.architecture,
@@ -319,6 +372,8 @@ def lower_j_to_cuda(
         mlir,
         artifact,
         tuple(sorted(concrete_extents.items())),
+        materialized.materializer_version,
+        materialized.form,
     )
 
 

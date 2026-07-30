@@ -5,12 +5,10 @@ from __future__ import annotations
 import copy
 import json
 
-import numpy as np
 import pytest
 from jsonschema import Draft202012Validator
 
 from direct_fixtures import make_reduce_artifact
-from intentir.backend.cpu.structured_reference import execute_structured_reference
 from intentir.extraction.lifters.scrc import (
     SCRC_DECODE_PROTOCOL,
     SCRCCandidateCheckContext,
@@ -218,11 +216,6 @@ def _effect_if_payload() -> dict:
         "refinements": [],
         "iterations": [],
         "loop_carriers": [],
-        "physical_iterations": [],
-        "unit_iterations": [],
-        "physical_loop_carriers": [],
-        "terminal_controls": [],
-        "route_extent_transforms": [],
     }
     return payload
 
@@ -243,16 +236,16 @@ def _request() -> SCRCLiftRequest:
     )
 
 
-def test_v9_effect_if_schema_decode_round_trip_and_digest() -> None:
+def test_v6_effect_if_schema_decode_round_trip_and_digest() -> None:
     payload = _effect_if_payload()
     validator = Draft202012Validator(scrc_lift_core_json_schema())
     assert not list(validator.iter_errors(payload))
 
     artifact = Gate1Artifact.from_json(payload)
     assert artifact.to_json() == payload
-    assert Gate1Artifact.SCHEMA == "intentir.scrc.artifact.v10"
-    assert SCRC_DECODE_PROTOCOL == "intentir.scrc.decode.v15"
-    assert TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v27"
+    assert Gate1Artifact.SCHEMA == "intentir.scrc.artifact.v7"
+    assert SCRC_DECODE_PROTOCOL == "intentir.scrc.decode.v9"
+    assert TYPECHECK_PROTOCOL == "intentir.scrc.typecheck.v16"
     decoded = decode_scrc_lift_artifact(json.dumps(payload), _request())
     decoded_json = decoded.to_json()
     assert Gate1Artifact.from_json(decoded_json).to_json() == decoded_json
@@ -308,75 +301,6 @@ def test_effect_if_typecheck_and_candidate_check_share_acceptance() -> None:
     assert checked["status"] == "pass", checked
 
 
-def test_v9_terminal_control_is_closed_and_v8_remains_readable() -> None:
-    payload = _effect_if_payload()
-    payload["pi"]["terminal_controls"] = [
-        {"terminal_instance": "i1", "continuation_instance": "i0"}
-    ]
-    artifact = Gate1Artifact.from_json(payload)
-    assert artifact.to_json()["pi"]["terminal_controls"] == [
-        {"terminal_instance": "i1", "continuation_instance": "i0"}
-    ]
-    assert type_check(artifact.j, artifact.c, artifact.pi).passed
-
-    legacy = _effect_if_payload()
-    legacy["schema"] = "intentir.scrc.artifact.v8"
-    del legacy["pi"]["unit_iterations"]
-    del legacy["pi"]["terminal_controls"]
-    del legacy["pi"]["route_extent_transforms"]
-    assert Gate1Artifact.from_json(legacy).wire_schema == (
-        "intentir.scrc.artifact.v8"
-    )
-    legacy["pi"]["terminal_controls"] = []
-    with pytest.raises(SchemaError, match="v1-v8 do not contain pi terminal_controls"):
-        Gate1Artifact.from_json(legacy)
-
-
-def test_terminal_control_typecheck_requires_sibling_final_effect_if() -> None:
-    unrelated = _effect_if_payload()
-    unrelated["pi"]["instances"].append(
-        {
-            "id": "i2",
-            "semantic_ref": "p0",
-            "region": "r0",
-            "mechanism": "realize",
-        }
-    )
-    unrelated["pi"]["terminal_controls"] = [
-        {"terminal_instance": "i1", "continuation_instance": "i2"}
-    ]
-    artifact = Gate1Artifact.from_json(unrelated)
-    report = type_check(artifact.j, artifact.c, artifact.pi)
-    assert any(
-        item.code is TypeCheckErrorCode.EFFECT_CONDITIONAL_INVALID
-        and "sibling arms" in item.detail
-        for item in report.diagnostics
-    )
-
-    non_final = _effect_if_payload()
-    non_final["pi"]["terminal_controls"] = [
-        {"terminal_instance": "i1", "continuation_instance": "i0"}
-    ]
-    non_final["j"]["intent"]["intent_function"]["body"].append(
-        {
-            "id": "n3",
-            "op": "const",
-            "result": "v2",
-            "attrs": {"value": 0.0},
-            "type": {"dtype": "f32", "shape": []},
-        }
-    )
-    non_final["j"]["node_ids"]["n3"] = "body[1]"
-    non_final["j"]["scopes"][0]["definitions"].append("v2")
-    artifact = Gate1Artifact.from_json(non_final)
-    report = type_check(artifact.j, artifact.c, artifact.pi)
-    assert any(
-        item.code is TypeCheckErrorCode.EFFECT_CONDITIONAL_INVALID
-        and "final operation" in item.detail
-        for item in report.diagnostics
-    )
-
-
 def test_functional_boundary_resolves_effect_if_arm_node_paths() -> None:
     payload = _effect_if_payload()
     function = payload["j"]["intent"]["intent_function"]
@@ -410,136 +334,6 @@ def test_functional_boundary_resolves_effect_if_arm_node_paths() -> None:
 
     assert "access:a0" in projection.consumed
     assert "access:a1" in projection.consumed
-
-
-def test_functional_boundary_executes_authored_effect_if_full_store() -> None:
-    artifact = Gate1Artifact.from_json(_effect_if_payload())
-    projection = project_functional_boundary(artifact.j)
-
-    assert [
-        item.to_json() for item in projection.conditional_effect_stores
-    ] == [
-        {
-            "proof": "authored_effect_if_full_store",
-            "access_id": "a1",
-            "node_ref": "n2",
-            "output": "t2",
-            "value_ref": "v1",
-        }
-    ]
-    value = np.asarray([[1, 2, 3], [4, 5, 6]], dtype=np.float32)
-    result = execute_structured_reference(
-        artifact.j,
-        {"x0": 2, "x1": 3},
-        [value, np.asarray(True)],
-        broadcast_axes=projection.emitter_broadcast_axes(),
-        conditional_effect_stores=projection.conditional_effect_stores,
-    )
-
-    np.testing.assert_array_equal(
-        result.outputs["t2"],
-        np.asarray([14, 77], dtype=np.float32),
-    )
-    assert result.metadata["conditional_effect_store_count"] == 1
-
-
-def test_functional_boundary_executes_sibling_effect_if_full_stores() -> None:
-    payload = _effect_if_payload()
-    conditional = payload["j"]["intent"]["intent_function"]["body"][0]
-    conditional["negative"]["body"] = [
-        {
-            "id": "n3",
-            "op": "map_binary",
-            "result": "v2",
-            "operands": ["t0", "t0"],
-            "attrs": {"fn": "sub"},
-            "type": {"dtype": "f32", "shape": ["x0", "x1"]},
-        },
-        {
-            "id": "n4",
-            "op": "reduce",
-            "result": "v3",
-            "operands": ["v2"],
-            "attrs": {
-                "fn": "sum",
-                "axes": [1],
-                "assoc": "float_nondeterministic",
-            },
-            "type": {"dtype": "f32", "shape": ["x0"]},
-        },
-    ]
-    payload["j"]["node_ids"]["n3"] = "body[0].negative.body[0]"
-    payload["j"]["node_ids"]["n4"] = "body[0].negative.body[1]"
-    payload["j"]["boundary"]["accesses"].append(
-        {
-            "access_id": "a2",
-            "kind": "store",
-            "tensor": "t2",
-            "node_ref": "n4",
-            "index_expression": "k0",
-        }
-    )
-    payload["j"]["boundary"]["effects"].append(
-        {
-            "effect_id": "e2",
-            "kind": "write",
-            "target": "t2",
-            "node_ref": "n4",
-            "access_ref": "a2",
-        }
-    )
-    payload["j"]["boundary"]["reductions"].append(
-        {"node_ref": "n4", "tile_axis": 0, "identity": 0}
-    )
-    payload["j"]["scopes"][2]["captures"] = ["t0"]
-    payload["j"]["scopes"][2]["definitions"] = ["v2", "v3"]
-    payload["j"]["scopes"][2]["effects"] = ["e2"]
-    artifact = Gate1Artifact.from_json(payload)
-
-    projection = project_functional_boundary(artifact.j)
-
-    assert {item.access_id for item in projection.conditional_effect_stores} == {
-        "a1",
-        "a2",
-    }
-    value = np.asarray([[1, 2, 3], [4, 5, 6]], dtype=np.float32)
-    positive = execute_structured_reference(
-        artifact.j,
-        {"x0": 2, "x1": 3},
-        [value, np.asarray(True)],
-        broadcast_axes=projection.emitter_broadcast_axes(),
-        conditional_effect_stores=projection.conditional_effect_stores,
-    )
-    negative = execute_structured_reference(
-        artifact.j,
-        {"x0": 2, "x1": 3},
-        [value, np.asarray(False)],
-        broadcast_axes=projection.emitter_broadcast_axes(),
-        conditional_effect_stores=projection.conditional_effect_stores,
-    )
-
-    np.testing.assert_array_equal(
-        positive.outputs["t2"],
-        np.asarray([14, 77], dtype=np.float32),
-    )
-    np.testing.assert_array_equal(
-        negative.outputs["t2"], np.zeros(2, dtype=np.float32)
-    )
-
-
-def test_structured_reference_rejects_unproduced_conditional_output() -> None:
-    artifact = Gate1Artifact.from_json(_effect_if_payload())
-    projection = project_functional_boundary(artifact.j)
-    value = np.asarray([[1, 2, 3], [4, 5, 6]], dtype=np.float32)
-
-    with pytest.raises(ValueError, match="did not produce output 't2'"):
-        execute_structured_reference(
-            artifact.j,
-            {"x0": 2, "x1": 3},
-            [value, np.asarray(False)],
-            broadcast_axes=projection.emitter_broadcast_axes(),
-            conditional_effect_stores=projection.conditional_effect_stores,
-        )
 
 
 def test_effect_if_normal_and_masked_views_preserve_binary_structure() -> None:
@@ -643,48 +437,6 @@ def scrc_k0(p0, p1, p2, c0: tl.constexpr):
     assert missing_negative_result.to_check_response()["diagnostics"][0][
         "rule_code"
     ] == "effect_if_explicit_negative_arm"
-
-
-def test_terminal_effect_if_replay_check_requires_return_and_continuation() -> None:
-    payload = _effect_if_payload()
-    payload["pi"]["terminal_controls"] = [
-        {"terminal_instance": "i1", "continuation_instance": "i0"}
-    ]
-    artifact = Gate1Artifact.from_json(payload)
-    accepted = """import triton
-import triton.language as tl
-
-@triton.jit
-def scrc_k0(p0, p1, p2, c0: tl.constexpr):
-    if not p2:
-        return
-    value = tl.load(p0)
-    tl.store(p1, value)
-"""
-    wrong_polarity = accepted.replace("if not p2:", "if p2:")
-    missing_return = accepted.replace("        return\n", "        pass\n")
-    with_else = accepted.replace(
-        "        return\n",
-        "        return\n    else:\n        pass\n",
-    )
-    missing_continuation = accepted.replace(
-        "    value = tl.load(p0)\n    tl.store(p1, value)\n", ""
-    )
-
-    assert replay_source_ingress(
-        accepted, artifact=artifact, frontend=Frontend.TRITON
-    ).status == "pass"
-    expected_codes = {
-        wrong_polarity: "terminal_effect_if_polarity",
-        missing_return: "terminal_effect_if_bare_return",
-        with_else: "terminal_effect_if_forbids_else",
-        missing_continuation: "terminal_effect_if_continuation",
-    }
-    for source, code in expected_codes.items():
-        result = replay_source_ingress(
-            source, artifact=artifact, frontend=Frontend.TRITON
-        )
-        assert result.to_check_response()["diagnostics"][0]["rule_code"] == code
 
 
 def test_effect_if_replay_check_does_not_guess_control_kind_from_arm_shape() -> None:
@@ -893,21 +645,11 @@ def test_multiple_sequential_effect_if_regions_are_typed() -> None:
 def test_v1_through_v5_cannot_claim_v6_control_or_rounded_basis() -> None:
     conditional = _effect_if_payload()
     conditional["schema"] = "intentir.scrc.artifact.v5"
-    del conditional["pi"]["unit_iterations"]
-    del conditional["pi"]["physical_iterations"]
-    del conditional["pi"]["physical_loop_carriers"]
-    del conditional["pi"]["terminal_controls"]
-    del conditional["pi"]["route_extent_transforms"]
     with pytest.raises(SchemaError, match="v1-v5 do not contain J effect_if"):
         Gate1Artifact.from_json(conditional)
 
     rounded = _tiled_loop_artifact(basis="rounded_extent_step").to_json()
     rounded["schema"] = "intentir.scrc.artifact.v5"
-    del rounded["pi"]["unit_iterations"]
-    del rounded["pi"]["physical_iterations"]
-    del rounded["pi"]["physical_loop_carriers"]
-    del rounded["pi"]["terminal_controls"]
-    del rounded["pi"]["route_extent_transforms"]
     with pytest.raises(SchemaError, match="v1-v5 do not contain rounded"):
         Gate1Artifact.from_json(rounded)
 

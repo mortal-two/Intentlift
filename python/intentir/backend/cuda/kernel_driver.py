@@ -75,8 +75,18 @@ class RowReductionKernel:
         for ``name`` is emitted instead.
         """
         src = mlir_text if mlir_text is not None else _intent_mlir(name, dims)
+        pass_options = f"block-threads={block_threads}"
+        if pass_name == "convert-intent-row-reduction-to-gpu":
+            # This low-level PK driver launches the outlined cubin directly and
+            # therefore supplies pointer arguments only; it intentionally
+            # bypasses the compiled host stub that performs rank-0 capture.
+            # Production search exercises both capture states through
+            # execute_cuda_artifact, while this harness retains the compatible
+            # device-load state explicitly instead of depending on a pass
+            # default it cannot execute.
+            pass_options += " promote-rank0-scalars=false"
         rr = _run(
-            [INTENT_OPT, f"-{pass_name}=block-threads={block_threads}"],
+            [INTENT_OPT, f"-{pass_name}={pass_options}"],
             stdin=src,
         )
         kernels = lower_memref_module_to_kernels(rr)

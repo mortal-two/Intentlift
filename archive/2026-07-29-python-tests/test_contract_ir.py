@@ -153,3 +153,4 @@ def test_contract_ir_fails_closed_on_cross_program_sort_conflict() -> None:
 
     with pytest.raises(ContractIRProjectionError, match="conflicting sorts"):
         project_contract_ir(j)
+

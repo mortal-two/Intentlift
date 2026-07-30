@@ -6,14 +6,15 @@
 
 // CHECK-LABEL: func.func @softmax_f16(
 // CHECK-SAME:    {{.*}}memref<4x32xf16>{{.*}}memref<4x32xf16>)
+// CHECK-SAME:    intent.backend.reduction_topology = "subgroup_shuffle"
 // CHECK:         gpu.launch
 // CHECK:         %[[LOAD:.*]] = memref.load {{.*}} : memref<4x32xf16>
 // CHECK-NEXT:    %[[WIDE:.*]] = arith.extf %[[LOAD]] : f16 to f32
-// CHECK:         gpu.all_reduce maxnumf
-// CHECK-NEXT:    } : (f32) -> f32
+// CHECK:         arith.maxnumf
+// CHECK-COUNT-5: gpu.shuffle xor
 // CHECK:         math.exp {{.*}} : f32
-// CHECK:         gpu.all_reduce add
-// CHECK-NEXT:    } : (f32) -> f32
+// CHECK-COUNT-5: gpu.shuffle xor
+// CHECK:         arith.addf
 // CHECK:         %[[NARROW:.*]] = arith.truncf {{.*}} : f32 to f16
 // CHECK:         memref.store %[[NARROW]], {{.*}} : memref<4x32xf16>
 // CHECK-NOT:     intent.
@@ -34,14 +35,15 @@ func.func @softmax_f16(%x: tensor<4x32xf16>) -> tensor<4x32xf16> {
 
 // CHECK-LABEL: func.func @softmax_bf16(
 // CHECK-SAME:    {{.*}}memref<4x32xbf16>{{.*}}memref<4x32xbf16>)
+// CHECK-SAME:    intent.backend.reduction_topology = "subgroup_shuffle"
 // CHECK:         gpu.launch
 // CHECK:         %[[LOAD:.*]] = memref.load {{.*}} : memref<4x32xbf16>
 // CHECK-NEXT:    %[[WIDE:.*]] = arith.extf %[[LOAD]] : bf16 to f32
-// CHECK:         gpu.all_reduce maxnumf
-// CHECK-NEXT:    } : (f32) -> f32
+// CHECK:         arith.maxnumf
+// CHECK-COUNT-5: gpu.shuffle xor
 // CHECK:         math.exp {{.*}} : f32
-// CHECK:         gpu.all_reduce add
-// CHECK-NEXT:    } : (f32) -> f32
+// CHECK-COUNT-5: gpu.shuffle xor
+// CHECK:         arith.addf
 // CHECK:         %[[NARROW:.*]] = arith.truncf {{.*}} : f32 to bf16
 // CHECK:         memref.store %[[NARROW]], {{.*}} : memref<4x32xbf16>
 // CHECK-NOT:     intent.

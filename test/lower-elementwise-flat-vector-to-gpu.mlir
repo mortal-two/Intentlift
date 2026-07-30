@@ -25,3 +25,33 @@ func.func @arbitrary_activation(
       (tensor<4x256xf32>, tensor<4x256xf32>) -> tensor<4x256xf32>
   return %C : tensor<4x256xf32>
 }
+
+// -----
+
+// A flat packet domain remains legal with ordinary column and scalar
+// broadcasts. The absolute packet address indexes X/Y, while remui recovers the
+// logical feature column before gamma/beta loads.
+// CHECK-LABEL: func.func @row_col_scalar_activation(
+// CHECK-SAME: %{{[^:]+}}: memref<1024xvector<4xf32>>
+// CHECK-SAME: %{{[^:]+}}: memref<1xf32>
+// CHECK-SAME: %{{[^:]+}}: memref<256xf32>
+// CHECK-SAME: %{{[^:]+}}: memref<256xf32>
+// CHECK-SAME: %{{[^:]+}}: memref<1024xvector<4xf32>>)
+// CHECK: arith.remui
+// CHECK: memref.load %{{.*}}[%{{.*}}] : memref<256xf32>
+// CHECK: vector.from_elements
+// CHECK: memref.store %{{.*}}, %{{.*}}[%{{.*}}] : memref<1024xvector<4xf32>>
+func.func @row_col_scalar_activation(
+    %X: tensor<16x256xf32>, %alpha: tensor<1xf32>,
+    %gamma: tensor<256xf32>, %beta: tensor<256xf32>)
+    -> tensor<16x256xf32> {
+  %scaled = intent.map_binary %X, %alpha {fn = "mul"} :
+      (tensor<16x256xf32>, tensor<1xf32>) -> tensor<16x256xf32>
+  %activated = intent.map_unary %scaled {fn = "tanh"} :
+      (tensor<16x256xf32>) -> tensor<16x256xf32>
+  %weighted = intent.map_binary %activated, %gamma {fn = "mul"} :
+      (tensor<16x256xf32>, tensor<256xf32>) -> tensor<16x256xf32>
+  %Y = intent.map_binary %weighted, %beta {fn = "add"} :
+      (tensor<16x256xf32>, tensor<256xf32>) -> tensor<16x256xf32>
+  return %Y : tensor<16x256xf32>
+}

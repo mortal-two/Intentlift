@@ -1,0 +1,72 @@
+{
+  "entries": {
+    "dyt": {
+      "gate1_status": "replay_closed",
+      "j_digest": "8dbb6521afc6a196f525c9a22c2638bce97f0ad3aaea360d6f6ff174d6578980",
+      "lineage": "certified DYT accepted attempt-02; production export applies deterministic J normalization",
+      "origin": ".trellis/tasks/archive/2026-07/07-23-gate2-dense-refeval-05/runs/liger_dyt/fanout-001/candidate-01/attempt-02"
+    },
+    "flash_bwd_preprocess": {
+      "gate1_status": "replay_closed",
+      "j_digest": "86bec5aba8abe8a920f1ccea8689867efc89410a51d7ceb490c42c58b90c33bf"
+    },
+    "flash_layer_norm_1pass": {
+      "gate1_status": "replay_closed",
+      "j_digest": "487a74d65e5310306e5d76be73d483366382cdcb7baae8ac6440244acbbe5fcb"
+    },
+    "fused_add_rms_norm": {
+      "gate1_status": "replay_closed",
+      "j_digest": "1b04e15b1ad654aa5f53b887ad6fa2f72ab2f5203038ab9cad9b454424a046c6"
+    },
+    "geglu": {
+      "gate1_status": "replay_closed",
+      "j_digest": "2680448c50b7182cea98be8e02077919c3458baaa0cc8289f871bf14a222e113"
+    },
+    "jsd": {
+      "gate1_status": "replay_closed",
+      "j_digest": "a7994be9613f28c7881dbbd4a58ea59339808278fc4ff37a7737efd1057c52d9"
+    },
+    "kl_div": {
+      "gate1_status": "replay_closed",
+      "j_digest": "c6a97697fe8cd731290282896915002f5616f1176213adf748c8c3f077159027"
+    },
+    "layer_norm": {
+      "gate1_status": "replay_closed",
+      "j_digest": "ae12f222aada0330be5a0250e0cee363633bcae633c1786ef69f674c03b350cb"
+    },
+    "liger_rms_norm": {
+      "gate1_status": "replay_closed",
+      "j_digest": "1ccd7281e8b311777f6735f3321b5999ffaca64cf281d0d8eabe8015a122867f"
+    },
+    "poly_norm": {
+      "gate1_status": "replay_closed",
+      "j_digest": "703f9ae471bda733cb0e3c6f39657904876e8d20f9fad51e3b53aba368c65514"
+    },
+    "softmax": {
+      "gate1_status": "replay_closed",
+      "j_digest": "610f239b6fb6135d2e71851cc02cd45a6e9da06f4ac12356cef2bbc13e55e2ab",
+      "lineage": "SCRC task11 wave-20260725-b3-v7-v15-affected4-xhigh-01, liger_softmax candidate-01 attempt-03; replay copied into the content-addressed production manifest"
+    },
+    "sparsemax": {
+      "gate1_status": "replay_closed",
+      "j_digest": "0c5138202bb3efdfee48e6a3fcc2a8417024707206fbf21baf90b32770d80483"
+    },
+    "swiglu": {
+      "gate1_status": "replay_closed",
+      "j_digest": "2b42aa01a36542d0c3145189f4618e773cb335f8abf0bb599415a3b6b14e66ca"
+    },
+    "tvd": {
+      "gate1_status": "replay_closed",
+      "j_digest": "916004acc7766bf05cc29e0eb7f4f7f110bbfeae1db19a2741896bbbb57fb563"
+    },
+    "xformers_rms_norm": {
+      "gate1_status": "replay_closed",
+      "j_digest": "bfdcfc65fec384b6e1489a123136da7bbef35830ee726abde0141833d6a6850f"
+    },
+    "xformers_rms_norm_add": {
+      "gate1_status": "replay_closed",
+      "j_digest": "e89066867f5918fbeb11126307d3b1b1fa53043ac0ced956f19e0c589abe340c"
+    }
+  },
+  "protocol": "intentir.production.replay-provenance.v1"
+}

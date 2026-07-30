@@ -28,7 +28,8 @@ LogicalResult MapBinaryOp::verify() {
   // logical family (logical_and/or/xor) and isclose, which likewise yield i1.
   static constexpr llvm::StringRef kCmpFns[] = {
       "gt",          "ge",         "lt",          "le",      "eq", "ne",
-      "logical_and", "logical_or", "logical_xor", "isclose"};
+      "logical_and", "logical_or", "logical_xor", "and", "or", "xor",
+      "isclose"};
   bool isCmp = false;
   for (llvm::StringRef f : kCmpFns)
     if (getFn() == f)
@@ -74,7 +75,7 @@ LogicalResult IotaOp::verify() {
 LogicalResult MapUnaryOp::verify() {
   // Element-type-preserving fns: result type == input type.
   static constexpr llvm::StringRef kFns[] = {
-      "identity", "exp", "log", "log2", "neg", "abs", "sqrt", "rsqrt", "recip",
+      "identity", "exp",  "log", "log2", "neg",  "abs", "sqrt", "rsqrt",   "recip",
       "tanh", "sigmoid", "cos", "sin", "tan",  "exp2", "erf", "atan",
       // logical_not is i1->i1, still element-type-preserving.
       "logical_not"};

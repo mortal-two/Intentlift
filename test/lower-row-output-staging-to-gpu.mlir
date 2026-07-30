@@ -1,4 +1,5 @@
 // RUN: intent-opt -convert-intent-row-reduction-to-gpu=block-threads=128 %s | FileCheck %s
+// RUN: intent-opt -convert-intent-row-reduction-to-gpu='block-threads=128 materialize-shared-row-output=false' %s | FileCheck %s --check-prefix=LIVE
 
 // A required RowOut that feeds both the single reduction and a later RowOut is
 // stored before the compact block collective, then reloaded for the epilogue.
@@ -13,6 +14,14 @@
 // CHECK-NOT: memref.store {{.*}}, %arg6
 // CHECK: gpu.terminator
 // CHECK-NOT: intent.
+// LIVE-LABEL: func.func @out_of_place_add_rms(
+// LIVE: gpu.shuffle
+// LIVE: gpu.barrier
+// LIVE: gpu.barrier
+// LIVE-NOT: memref.load %arg6
+// LIVE-COUNT-2: memref.store {{.*}}, %arg6
+// LIVE: gpu.terminator
+// LIVE-NOT: intent.
 func.func @out_of_place_add_rms(
     %X: tensor<2x1024xf32>, %R: tensor<2x1024xf32>,
     %W: tensor<1024xf32>, %eps: tensor<f32>, %offset: tensor<f32>)
@@ -52,6 +61,14 @@ func.func @out_of_place_add_rms(
 // CHECK-NOT: memref.store {{.*}}, %arg0
 // CHECK: gpu.terminator
 // CHECK-NOT: intent.
+// LIVE-LABEL: func.func @in_place_add_rms(
+// LIVE: gpu.shuffle
+// LIVE: gpu.barrier
+// LIVE: gpu.barrier
+// LIVE-NOT: memref.load %arg0
+// LIVE-COUNT-2: memref.store {{.*}}, %arg0
+// LIVE: gpu.terminator
+// LIVE-NOT: intent.
 func.func @in_place_add_rms(
     %X: tensor<2x1024xf32>, %Y: tensor<2x1024xf32>,
     %W: tensor<1024xf32>, %eps: tensor<f32>)

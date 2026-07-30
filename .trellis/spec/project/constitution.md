@@ -27,8 +27,9 @@ Replay = W_f(J,pi,MaskC(C);U_f)
 10. masked-J 只报告 J 的操作性必要性，不自动推翻主认证。
 11. 当前 Gate2 主线覆盖 deterministic / contract-deterministic Kernel，并直接检查 Source–Replay、
     Source–J 与 Replay–J 三条对称 `Close_Q` 边。
-12. production backend 对 accepted J 做 deterministic Intent MLIR materialization，并只在 generic
-    pass contracts 保持 `Impl(J)` 的 derivation 空间中搜索；C 只排序，性能不裁决合法性。
+12. production core 对 accepted J 做 deterministic Intent MLIR materialization，并只生成 generic
+    pass contracts 保持 hard boundary 的 concrete states；C 只排序。post-SCRC 通用 controller 用冻结
+    Q/D 裁决 observation-changing candidate，性能只在通过者中选择。
 
 ## 固定代码可以做什么
 
@@ -54,15 +55,15 @@ Replay = W_f(J,pi,MaskC(C);U_f)
 
 在 Lift/Replay/SCRC 路径中，固定代码不得识别 Kernel family、从规则库构造实现、补写遗漏语义、
 从 compiler diff 修补 Replay，或把历史候选转换成新的证明输入。production backend 可以根据 A
-的通用 op/region/graph pattern 识别 generic implementation family，但不得读取 kernel name、Source、π
-或使用 per-kernel RuleCard。
+的通用 op/region/graph pattern 应用 registered source-neutral transformations 并扩展具体 MLIR
+lowering derivations，但不得读取 kernel name、Source、π 或使用 per-kernel RuleCard。
 
 ## 明确禁止
 
 - 独立 interface/ABI 语义对象、BindingMap 或 source-conditioned sidecar 进入 Replay；
 - Lift/Replay/SCRC 中的 deterministic composer、per-kernel RuleCard/RuleRegistry、`C.strategy` 或
-  per-kernel construction policy；production 只允许以 typed A pattern、B precondition 与 target
-  capability 为 key 的 generic compiler pass/family registration；
+  per-kernel construction policy；production 只允许以 typed A pattern、B/current-state precondition
+  与 target capability 为 key 的 generic compiler transformation registration；
 - 以 hash、digest、commitment、epoch 或所谓冻结门决定候选是否合法；
 - 让 Lift 自定义任意 comparator、任意 tolerance 或“所有输出均可接受”；
 - Gate1 失败后 patch Replay，或 Gate2 失败后在同一次实验中继续修补候选；

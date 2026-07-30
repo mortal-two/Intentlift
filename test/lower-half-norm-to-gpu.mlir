@@ -7,9 +7,10 @@
 
 // CHECK-LABEL: func.func @rms_norm_f16(
 // CHECK-SAME:    {{.*}}memref<4x32xf16>{{.*}}memref<32xf16>{{.*}}memref<f32>{{.*}}memref<4x32xf16>)
+// CHECK-SAME:    intent.backend.reduction_topology = "subgroup_shuffle"
 // CHECK:         memref.load {{.*}} : memref<4x32xf16>
 // CHECK:         arith.extf {{.*}} : f16 to f32
-// CHECK:         gpu.all_reduce add
+// CHECK-COUNT-5: gpu.shuffle xor
 // CHECK:         math.rsqrt {{.*}} : f32
 // CHECK-NOT:     math.sqrt
 // CHECK:         memref.load {{.*}} : memref<32xf16>
@@ -46,9 +47,10 @@ func.func @rms_norm_f16(%X: tensor<4x32xf16>, %W: tensor<32xf16>,
 // CHECK-LABEL: func.func @layer_norm_bf16(
 // CHECK-SAME:    {{.*}}memref<4x32xbf16>{{.*}}memref<32xbf16>{{.*}}memref<32xbf16>{{.*}}memref<f32>
 // CHECK-SAME:    {{.*}}memref<4x32xbf16>{{.*}}memref<4xf32>{{.*}}memref<4xf32>)
+// CHECK-SAME:     intent.backend.reduction_topology = "subgroup_shuffle"
 // CHECK:         memref.load {{.*}} : memref<4x32xbf16>
 // CHECK:         arith.extf {{.*}} : bf16 to f32
-// CHECK-COUNT-2: gpu.all_reduce add
+// CHECK-COUNT-10: gpu.shuffle xor
 // CHECK:         math.rsqrt {{.*}} : f32
 // CHECK:         memref.load {{.*}} : memref<32xbf16>
 // CHECK:         arith.extf {{.*}} : bf16 to f32

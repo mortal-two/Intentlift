@@ -92,6 +92,24 @@ def test_parse_and_marshal_half_launch_constants_as_raw_bits() -> None:
     assert len(pointers) == 2
 
 
+def test_parse_llvm_constants_across_typed_attribute_spellings() -> None:
+    from intentir.backend.cuda.orchestrate import _parse_constants
+
+    host = """
+      %old = llvm.mlir.constant(32 : index) : i64
+      %yes = llvm.mlir.constant(true) : i1
+      %no = llvm.mlir.constant(false) : i1
+      %fp = llvm.mlir.constant(1.250000e+00 : f32) : f32
+    """
+
+    assert _parse_constants(host) == {
+        "%old": ("32", "i64"),
+        "%yes": ("1", "i1"),
+        "%no": ("0", "i1"),
+        "%fp": ("1.250000e+00", "f32"),
+    }
+
+
 def test_parse_typed_inplace_result_contract() -> None:
     from intentir.backend.cuda.orchestrate import _parse_intent_inplace
 
@@ -131,16 +149,103 @@ def test_parse_returned_malloc_uses_its_own_element_type() -> None:
     assert buffers["%aligned"].elem == "f16"
 
 
+def test_parse_direct_opaque_malloc_as_struct_buffer() -> None:
+    from intentir.backend.cuda.orchestrate import _parse_malloc_buffers
+
+    host = """
+      %c4 = llvm.mlir.constant(4 : i64) : i64
+      %null = llvm.mlir.zero : !llvm.ptr
+      %g = llvm.getelementptr %null[4] : (!llvm.ptr) -> !llvm.ptr, f32
+      %size = llvm.ptrtoint %g : !llvm.ptr to i64
+      %malloc = llvm.call @malloc(%size) : (i64) -> !llvm.ptr
+      %undef = llvm.mlir.undef : !llvm.struct<(ptr, ptr, i64, array<1 x i64>, array<1 x i64>)>
+      %desc0 = llvm.insertvalue %malloc, %undef[1]
+      %desc1 = llvm.insertvalue %c4, %desc0[3, 0]
+    """
+
+    buffers = _parse_malloc_buffers(host)
+
+    assert buffers["%malloc"].shape == (4,)
+    assert buffers["%malloc"].elem == "f32"
+
+
+def test_parse_direct_opaque_malloc_as_loose_scratch() -> None:
+    from intentir.backend.cuda.orchestrate import _parse_loose_buffers
+
+    host = """
+      %null = llvm.mlir.zero : !llvm.ptr
+      %g = llvm.getelementptr %null[32] : (!llvm.ptr) -> !llvm.ptr, f32
+      %size = llvm.ptrtoint %g : !llvm.ptr to i64
+      %scratch = llvm.call @malloc(%size) : (i64) -> !llvm.ptr
+      gpu.launch_func @kernels::@stage1 blocks in (%c1, %c1, %c1)
+          threads in (%c128, %c1, %c1)
+          args(%scratch : !llvm.ptr)
+    """
+
+    buffers = _parse_loose_buffers(host)
+
+    assert buffers["%scratch"].malloc_ssa == "%scratch"
+    assert buffers["%scratch"].n_elems == 32
+    assert buffers["%scratch"].elem == "f32"
+
+
+def test_parse_loose_scratch_with_ssa_gep_element_count() -> None:
+    from intentir.backend.cuda.orchestrate import _parse_loose_buffers
+
+    host = """
+      %null = llvm.mlir.zero : !llvm.ptr
+      %count = llvm.mlir.constant(360710144 : index) : i64
+      %align = llvm.mlir.constant(64 : index) : i64
+      %g = llvm.getelementptr %null[%count] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+      %bytes = llvm.ptrtoint %g : !llvm.ptr to i64
+      %size = llvm.add %bytes, %align : i64
+      %malloc = llvm.call @malloc(%size) : (i64) -> !llvm.ptr
+      %raw = llvm.ptrtoint %malloc : !llvm.ptr to i64
+      %aligned_i = llvm.add %raw, %align : i64
+      %aligned = llvm.inttoptr %aligned_i : i64 to !llvm.ptr
+    """
+
+    buffers = _parse_loose_buffers(host)
+
+    assert buffers["%aligned"].n_elems == 360710144
+    assert buffers["%aligned"].elem == "f32"
+
+
+def test_parse_malloc_aliases_by_def_use_not_source_order() -> None:
+    from intentir.backend.cuda.orchestrate import _parse_loose_buffers
+
+    host = """
+      %null = llvm.mlir.zero : !llvm.ptr
+      %g0 = llvm.getelementptr %null[8] : (!llvm.ptr) -> !llvm.ptr, f16
+      %s0 = llvm.ptrtoint %g0 : !llvm.ptr to i64
+      %m0 = llvm.call @malloc(%s0) : (i64) -> !llvm.ptr
+      %raw0 = llvm.ptrtoint %m0 : !llvm.ptr to i64
+      %p0 = llvm.inttoptr %raw0 : i64 to !llvm.ptr
+      %g1 = llvm.getelementptr %null[16] : (!llvm.ptr) -> !llvm.ptr, f32
+      %s1 = llvm.ptrtoint %g1 : !llvm.ptr to i64
+      %m1 = llvm.call @malloc(%s1) : (i64) -> !llvm.ptr
+    """
+
+    buffers = _parse_loose_buffers(host)
+
+    assert set(buffers) == {"%p0", "%m1"}
+    assert (buffers["%p0"].n_elems, buffers["%p0"].elem) == (8, "f16")
+    assert (buffers["%m1"].n_elems, buffers["%m1"].elem) == (16, "f32")
+
+
 def test_parse_scalar_and_splat_constant_globals() -> None:
     from intentir.backend.cuda.orchestrate import _parse_const_globals
 
     module = """
       llvm.mlir.global private constant @zero(0 : i64) : i64
+      llvm.mlir.global private constant @enabled(true)
+          {addr_space = 0 : i32, alignment = 64 : i64} : i1
       llvm.mlir.global private constant @ones(dense<1.000000e+00> :
           tensor<4xf32>) : !llvm.array<4 x f32>
     """
     host = """
       %z = llvm.mlir.addressof @zero : !llvm.ptr
+      %e = llvm.mlir.addressof @enabled : !llvm.ptr
       %o = llvm.mlir.addressof @ones : !llvm.ptr
       %op = llvm.getelementptr %o[0, 0] : (!llvm.ptr) -> !llvm.ptr,
           !llvm.array<4 x f32>
@@ -151,6 +256,9 @@ def test_parse_scalar_and_splat_constant_globals() -> None:
     assert constants["%z"].shape == ()
     assert constants["%z"].elem == "i64"
     assert constants["%z"].value == 0
+    assert constants["%e"].shape == ()
+    assert constants["%e"].elem == "i1"
+    assert constants["%e"].value == 1
     assert constants["%op"].shape == (4,)
     assert constants["%op"].elem == "f32"
     assert constants["%op"].value == 1.0

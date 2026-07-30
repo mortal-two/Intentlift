@@ -11,14 +11,18 @@ from typing import Any, Callable, Mapping
 
 import numpy as np
 
+from intentir.runtime_dtype import numpy_bfloat16_dtype
+
 from intentir.ir.canonical_j import canonicalize_gate1_artifact
 from intentir.verify.candidate_fanout import CandidateFanoutSearchReport
 from intentir.verify.gate1.model import (
     Frontend,
     Gate1Artifact,
+    ImplementationConfig,
     ParameterKind,
     ParameterMode,
     ScheduleSlotKind,
+    SemanticArchive,
 )
 from intentir.extraction.lifters.miniswe import MiniSWELiftAdapter
 from intentir.extraction.lifters.codex_cli import CodexCLILiftAdapter
@@ -207,9 +211,7 @@ def _numpy_dtype(dtype: str) -> np.dtype[Any]:
     }
     normalized = aliases.get(dtype.removeprefix("torch."), dtype)
     if normalized == "bf16":
-        # NumPy has no portable bfloat16; Gate2's torch leg performs the final
-        # dtype conversion from finite float32 Harness inputs.
-        normalized = "float32"
+        return numpy_bfloat16_dtype()
     try:
         return np.dtype(normalized)
     except TypeError as exc:
@@ -223,6 +225,8 @@ def _input_value(
     dtype = _numpy_dtype(buffer.dtype)
     if buffer.initializer is BufferInitializer.ZEROS:
         return np.zeros(buffer.shape, dtype=dtype)
+    if buffer.initializer is BufferInitializer.STANDARD_NORMAL:
+        return rng.standard_normal(size=buffer.shape).astype(dtype)
     if buffer.initializer is not BufferInitializer.RANDOM:
         raise ValueError("input/inout buffer lacks a supported initializer")
     if dtype.kind == "b":
@@ -287,15 +291,26 @@ def _bind_logical_scalar_input(
         raise ValueError("scalar dimension is inconsistent")
 
 
-def _build_workload_execution_case(
+def _build_workload_jc_case(
     prepared: PreparedTritonWorkload,
-    artifact: Gate1Artifact,
+    j: SemanticArchive,
+    c: ImplementationConfig,
     *,
     seed: int,
     case_id: str,
     test_mode: str,
 ) -> Gate2Case:
-    """Bind one explicit execution valuation without assigning it gate authority."""
+    """Bind explicit canonical J+C to one finite Harness valuation.
+
+    This is shared infrastructure for Gate2, Lift's public diagnostic, and
+    post-acceptance backend reporting.  It performs no proof or authorization
+    check and never consumes pi.
+    """
+
+    if not isinstance(j, SemanticArchive):
+        raise TypeError("workload execution requires canonical J")
+    if not isinstance(c, ImplementationConfig):
+        raise TypeError("workload execution requires canonical C")
 
     adapter = prepared.adapter
     mapping = dict(prepared.source_to_opaque)
@@ -307,8 +322,8 @@ def _build_workload_execution_case(
     semantics = {
         mapping[name]: value for name, value in adapter.semantic_constexprs
     }
-    j_inputs = {item.name: item for item in artifact.j.intent.inputs}
-    j_outputs = {item.name: item for item in artifact.j.intent.outputs}
+    j_inputs = {item.name: item for item in j.intent.inputs}
+    j_outputs = {item.name: item for item in j.intent.outputs}
     rng = np.random.default_rng(seed)
     values: dict[str, Any] = {}
     dimensions: dict[str, int] = {}
@@ -316,7 +331,7 @@ def _build_workload_execution_case(
     output_bindings: dict[str, str] = {}
     arguments: list[TritonArgument] = []
 
-    for parameter in artifact.j.signature.parameters:
+    for parameter in j.signature.parameters:
         if parameter.kind is ParameterKind.CONSTEXPR:
             if parameter.name not in semantics:
                 raise ValueError(
@@ -459,13 +474,13 @@ def _build_workload_execution_case(
     if set(output_bindings) != set(j_outputs):
         raise ValueError("Harness output bindings differ from accepted J outputs")
     refeval = ScalarLoweringSpec.create(
-        artifact.j,
+        j,
         dims=dimensions,
         input_bindings=input_bindings,
         output_bindings=output_bindings,
     )
     schedule: dict[str, Any] = {}
-    for slot in artifact.c.slots:
+    for slot in c.slots:
         launch_name = (
             slot.role
             if slot.kind is ScheduleSlotKind.COMPILER
@@ -473,14 +488,14 @@ def _build_workload_execution_case(
         )
         if launch_name in schedule:
             raise ValueError("C slots collide at one Triton launch option")
-        schedule[launch_name] = artifact.c.values[slot.name]
+        schedule[launch_name] = c.values[slot.name]
     execution = TritonExecutionSpec(
         tuple(arguments),
         adapter.grid,
         schedule,
     )
     output_keys = tuple(
-        output_bindings[item.name] for item in artifact.j.intent.outputs
+        output_bindings[item.name] for item in j.intent.outputs
     )
     case = Gate2Case(
         case_id,
@@ -498,15 +513,37 @@ def _build_workload_execution_case(
     return case
 
 
-def build_workload_gate2_suite(
+def _build_workload_execution_case(
     prepared: PreparedTritonWorkload,
     artifact: Gate1Artifact,
-) -> Gate2Suite:
-    """Generate the hidden finite case only after Gate1 accepts the Replay."""
+    *,
+    seed: int,
+    case_id: str,
+    test_mode: str,
+) -> Gate2Case:
+    """Bind one artifact valuation without assigning it gate authority."""
 
-    case = _build_workload_execution_case(
+    return _build_workload_jc_case(
         prepared,
-        artifact,
+        artifact.j,
+        artifact.c,
+        seed=seed,
+        case_id=case_id,
+        test_mode=test_mode,
+    )
+
+
+def build_workload_jc_suite(
+    prepared: PreparedTritonWorkload,
+    j: SemanticArchive,
+    c: ImplementationConfig,
+) -> Gate2Suite:
+    """Build the backend/reporting suite directly from canonical J+C."""
+
+    case = _build_workload_jc_case(
+        prepared,
+        j,
+        c,
         seed=prepared.adapter.seed,
         case_id="finite-hidden-1",
         test_mode="finite_hidden_after_gate1",
@@ -516,6 +553,15 @@ def build_workload_gate2_suite(
         (case,),
         prepared.request.binding.c_values,
     )
+
+
+def build_workload_gate2_suite(
+    prepared: PreparedTritonWorkload,
+    artifact: Gate1Artifact,
+) -> Gate2Suite:
+    """Generate the hidden finite case only after Gate1 accepts the Replay."""
+
+    return build_workload_jc_suite(prepared, artifact.j, artifact.c)
 
 
 def run_workload_lift_semantic_probe(
@@ -2021,6 +2067,7 @@ __all__ = [
     "WorkloadGate1Search",
     "WorkloadGate1Recheck",
     "build_workload_gate2_suite",
+    "build_workload_jc_suite",
     "classify_scrc_report",
     "complete_prepared_workload_gate2",
     "execute_prepared_workload",

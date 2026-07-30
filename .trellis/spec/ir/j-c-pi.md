@@ -259,7 +259,7 @@ attachment 只定位 source-neutral prior，不授权 transformation。Lift 必�
 Decode/Elaborate、CandidateCheck 与 TypeCheck 不得推断或补造。TypeCheck 只检查
 `axis_ref in AxisRefs_v1(J,subject_ref)` 与 `axis_ref => subject_ref`。全局 prior 可以没有 attachment；
 局部 prior 缺失、含混或 consumer 不支持时必须安全忽略，不能读取 Source/π 猜测。具体 legal
-domain 属于 implementation family/target capability，不在 C 中增加
+domain 属于 transformation/schedule/target contract，不在 C 中增加
 `legal_domain/strength/retunable/fixed`。
 
 `tile_extent` 与 `reduction_tile_extent` 是触发 iteration missing-totality 的保留 role。它们只让
@@ -410,7 +410,8 @@ J-loop/slot pair 至少存在一条合法 relation；untiled J loop 不被迫制
 由 Gate1 对 Source observer 检出；不得把局部 missing-totality 夸写成“每 Source region 完整”。
 
 该 relation 只消除 Replay 的 source-realization 欠定，不给 production backend 增加输入：SCRC 后
-production 仍只消费 J+C，自行确定性 materialize/search `Impl(J)`，不得读取 π 来选择 loop basis。
+production core 仍只消费 J+C，自行确定性 materialize/search `HardImpl_t(J)`，不得读取 π 来选择 loop
+basis。外层 Q/D controller 同样不得用 π 生成 candidate。
 
 ### J 外物理 tile time
 
@@ -523,6 +524,18 @@ contract。`reduce` attrs 必须
 拒绝，fixed checker/emitter 不得翻译、补齐或修复 `fn/assoc/axes`。`contraction` 只接受 canonical
 `subscripts`，并按显式 operand/result rank 校验其输入项、reduction labels 与输出 orientation；
 `lhs_contract_axes`、`rhs_contract_axes` 等别名不能由 fixed code 翻译成 `subscripts`。
+
+当前二值 `assoc` vocabulary 不能被 production backend 静默重解释成完整的、全执行域静态
+reduction-order permission：`float_nondeterministic`/tolerance 不区分 fixed parenthesization、ordered
+tree 与 leaf permutation，也不能单独授权 FMA、approximation 或 accumulator precision 改变。
+
+这不等于 execution-domain backend 只能枚举一种实现。保持 dtype/shape/effect/alias/output carrier 等
+hard boundary 后，改变 reduction tree、FMA 或内部精度的 concrete post-pass MLIR state 必须标记为
+`observation_changing`，由统一 controller 先在冻结 `D_search` 上直接比较 Target--RefJ，性能选择后的
+固定 winner 再在不相交 `D_cert` 上直接比较 Target--Source/Replay/RefJ。它们只能支持相对于该 Q/D、
+observer 与执行域的 claim，不能反向写成 B 的静态权限或全输入域 theorem；缺少 Q/D/controller 时才
+必须退回保守 lowering。未来若需要脱离 Q/D 的静态 deployment theorem，再增加有真实 consumer 的
+versioned closed B numeric relation。上述规则不修改既有 SCRC verdict，也不要求为每个候选改写 J。
 
 准确的 TypeCheck claim 是：
 

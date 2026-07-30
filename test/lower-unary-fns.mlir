@@ -44,6 +44,15 @@ func.func @uexp2(%a: tensor<256xf32>) -> tensor<256xf32> {
 
 // -----
 
+// CHECK-LABEL: func.func @ulog2
+// CHECK: math.log2
+func.func @ulog2(%a: tensor<256xf32>) -> tensor<256xf32> {
+  %r = intent.map_unary %a {fn = "log2"} : (tensor<256xf32>) -> tensor<256xf32>
+  return %r : tensor<256xf32>
+}
+
+// -----
+
 // erf via the accurate math.erf on the CPU/linalg path; the direct GPU emitter
 // now preserves the same semantic op for the shared libdevice-free target pass.
 // CHECK-LABEL: func.func @uerf

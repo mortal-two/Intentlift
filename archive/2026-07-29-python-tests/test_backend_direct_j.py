@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import hashlib
-
 import numpy as np
 import pytest
 
 import intentir.backend.cuda.program as cuda_program
 from direct_fixtures import make_copy_artifact, make_reduce_artifact
 from intentir.ir.canonical_j import canonicalize_gate1_artifact
+from intentir.ir.contract_ir import project_contract_ir
 from intentir.ir.model import IntentReturn
 from intentir.backend.protocol import (
     BackendProtocolError,
@@ -32,10 +31,10 @@ from intentir.verify.gate2.scalar import ScalarLoweringRunner, ScalarLoweringSpe
 
 class _FakeCudaArtifact:
     def __init__(self, source: str) -> None:
-        self.source_mlir_sha256 = hashlib.sha256(source.encode()).hexdigest()
+        self.source = source
 
     def to_record(self) -> dict[str, object]:
-        return {"source_mlir_sha256": self.source_mlir_sha256, "kernel_count": 1}
+        return {"source": self.source, "kernel_count": 1}
 
 
 def _attach_dense_copy_boundary(artifact, index_expression: str = "i0") -> None:
@@ -173,13 +172,12 @@ def test_cuda_lowering_consumes_the_same_j_and_separate_c(monkeypatch) -> None:
             ComparisonEvidence(
                 ComparisonKind.INTENT_TO_LOWERING,
                 True,
-                "1" * 64,
             ),
         ),
     )
     record.assert_conformant()
-    assert record.j_digest == request.j_digest
-    assert record.c_digest == request.c_digest
+    assert record.target == request.target
+    assert record.variant == request.variant
 
 
 def test_cuda_materializer_consumes_mapping_only_canonical_output(
@@ -213,7 +211,7 @@ def test_cuda_materializer_consumes_mapping_only_canonical_output(
     assert "intent.map_unary" in lowered.intent_mlir
 
 
-def test_cuda_and_refeval_consume_the_same_explicit_boundary_projection(
+def test_cuda_and_refeval_consume_the_same_canonical_j_contract(
     monkeypatch,
 ) -> None:
     artifact = make_copy_artifact()
@@ -244,11 +242,14 @@ def test_cuda_and_refeval_consume_the_same_explicit_boundary_projection(
 
     assert reference.ok, reference.error
     assert lowered.boundary_consumption["supported"] is True
-    assert lowered.boundary_consumption["boundary_projection"] == (
-        reference.metadata["boundary_projection"]
+    projection = lowered.boundary_consumption["boundary_projection"]
+    assert projection["protocol"] == (
+        "intentir.typed-contract-materialization-projection.v1"
     )
-    assert "access:a0" in lowered.boundary_consumption["consumed"]
-    assert "effect:e1" in lowered.boundary_consumption["consumed"]
+    assert projection["contract_ir"] == project_contract_ir(request.j).to_json()
+    assert reference.metadata["boundary_projection"]["predicated_access_count"] == 0
+    assert "access:a0:typed" in lowered.boundary_consumption["consumed"]
+    assert "effect:e1:write" in lowered.boundary_consumption["consumed"]
 
 
 @pytest.mark.parametrize(
@@ -257,13 +258,13 @@ def test_cuda_and_refeval_consume_the_same_explicit_boundary_projection(
         (
             _make_masked_pointwise_artifact,
             {"x0": 8},
-            "logical_domain_mask_erasure_v1",
+            "typed_contract_ir_logical_graph",
             "intent.map_unary",
         ),
         (
             _make_masked_sum_artifact,
             {"x0": 2, "x1": 4},
-            "logical_domain_reduction_padding_v3",
+            "typed_contract_ir_logical_graph",
             "intent.reduce",
         ),
     ],
@@ -291,6 +292,8 @@ def test_cuda_projects_supported_mask_profiles_before_codegen(
     projection = lowered.boundary_consumption["boundary_projection"]
     assert lowered.boundary_consumption["supported"] is True
     assert projection["profile"] == profile
+    assert projection["predicated_access_count"] > 0
+    assert projection["contract_ir"]
     assert operation in lowered.intent_mlir
 
 
@@ -385,7 +388,7 @@ def test_cuda_fails_before_codegen_for_non_projectable_boundary(
     assert called is False
 
 
-def test_c_can_change_without_changing_j_identity() -> None:
+def test_c_can_change_without_changing_j() -> None:
     artifact = make_reduce_artifact(explicit_accesses=False)
     changed_c = ImplementationConfig.from_json(
         {
@@ -402,5 +405,6 @@ def test_c_can_change_without_changing_j_identity() -> None:
         artifact.j, BackendTarget("cuda", "sm_120a"), "generic", changed_c
     )
     assert left.j is right.j
-    assert left.j_digest == right.j_digest
-    assert left.c_digest != right.c_digest
+    assert left.j.to_json() == right.j.to_json()
+    assert left.c is not None and right.c is not None
+    assert left.c.to_json() != right.c.to_json()

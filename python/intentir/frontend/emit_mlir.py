@@ -620,6 +620,24 @@ def _infer_op(
                 f"conflicts with declared shape {declared}"
             )
         return inferred
+    if op.op == "value_if":
+        if op.positive is None or op.negative is None:
+            raise ValueError("value_if requires two explicit arms")
+        if op.predicate in env and env[op.predicate] != []:
+            raise ValueError("value_if predicate must be a rank-0 tensor")
+        declared = _op_declared_shape(op, fold, extents)
+        yields = [op.positive.yield_value, op.negative.yield_value]
+        known = [env[name] for name in yields if name in env]
+        if any(shape != known[0] for shape in known[1:]):
+            raise ValueError("value_if arm yields have different shapes")
+        if declared is not None and any(shape != declared for shape in known):
+            raise ValueError(
+                f"value_if result {op.result!r} shape {declared} differs "
+                "from an arm yield"
+            )
+        return list(declared if declared is not None else known[0]) if (
+            declared is not None or known
+        ) else None
     if op.op == "concat":
         if any(o not in env for o in op.operands):
             return None
@@ -700,7 +718,8 @@ def _infer_op(
 
 
 _CMP_FNS = {"gt", "ge", "lt", "le", "eq", "ne",
-            "logical_and", "logical_or", "logical_xor", "isclose"}
+            "logical_and", "logical_or", "logical_xor", "and", "or", "xor",
+            "isclose"}
 # map_unary fns whose result is an i1 (finiteness predicates + i1 complement).
 _U_TO_I1 = {"isnan", "isinf", "isfinite", "logical_not"}
 
@@ -882,6 +901,17 @@ def _infer_op_dtypes(op: IntentOp, dtypes: dict[str, str]) -> dict[str, str]:
         ]
     elif op.op == "select":
         inferred = [_merge_operand_dtypes(op, dtypes, start=1)]
+    elif op.op == "value_if":
+        if op.positive is None or op.negative is None:
+            raise ValueError("value_if requires two explicit arms")
+        arm_dtypes = [
+            dtypes.get(op.positive.yield_value),
+            dtypes.get(op.negative.yield_value),
+        ]
+        known = [dtype for dtype in arm_dtypes if dtype is not None]
+        if len(set(known)) > 1:
+            raise ValueError("value_if arm yields have different dtypes")
+        inferred = [_declared_op_dtype(op) or (known[0] if known else None)]
     elif op.op in {
         "scan", "transpose", "gather", "scatter", "masked_select",
         "masked_scatter", "concat", "pad", "tile", "flip", "triu",
@@ -945,6 +975,9 @@ def _infer_body_dtypes(
 ) -> bool:
     changed = False
     for op in body:
+        for arm in (op.positive, op.negative):
+            if arm is not None:
+                changed |= _infer_body_dtypes(arm.body, dtypes)
         for name, dtype in _infer_op_dtypes(op, dtypes).items():
             changed |= _record_dtype(dtypes, name, dtype, op.op)
     return changed
@@ -962,7 +995,9 @@ def _flat_dtypes(fn: IntentFunction) -> dict[str, str]:
             _normalize_dtype(tensor.dtype, f"output {tensor.name!r}"),
             "function output ABI",
         )
-    _infer_body_dtypes(fn.body, dtypes)
+    for _ in range(len(fn.body) + 3):
+        if not _infer_body_dtypes(fn.body, dtypes):
+            break
     for tensor in fn.outputs:
         declared = _normalize_dtype(tensor.dtype, f"output {tensor.name!r}")
         actual = dtypes.get(tensor.name)
@@ -1080,6 +1115,41 @@ def _mlir_f(v, dtype: str = "f64") -> str:
     return s
 
 
+def _mlir_dense_float(v, dtype: str) -> str:
+    """Format one dense floating literal, including IEEE non-finite values."""
+
+    value = float(v)
+    if math.isfinite(value):
+        return _mlir_f(value)
+    normalized = dtype.removeprefix("torch.").lower()
+    encodings = {
+        "f16": ("0x7C00", "0xFC00", "0x7E00"),
+        "float16": ("0x7C00", "0xFC00", "0x7E00"),
+        "bf16": ("0x7F80", "0xFF80", "0x7FC0"),
+        "bfloat16": ("0x7F80", "0xFF80", "0x7FC0"),
+        "f32": ("0x7F800000", "0xFF800000", "0x7FC00000"),
+        "float32": ("0x7F800000", "0xFF800000", "0x7FC00000"),
+        "f64": (
+            "0x7FF0000000000000",
+            "0xFFF0000000000000",
+            "0x7FF8000000000000",
+        ),
+        "float64": (
+            "0x7FF0000000000000",
+            "0xFFF0000000000000",
+            "0x7FF8000000000000",
+        ),
+    }
+    if normalized not in encodings:
+        raise ValueError(
+            f"emit_mlir: non-finite dense literal has unsupported dtype {dtype!r}"
+        )
+    positive_inf, negative_inf, quiet_nan = encodings[normalized]
+    if math.isnan(value):
+        return quiet_nan
+    return negative_inf if value < 0 else positive_inf
+
+
 def _infer_body(
     body: list[IntentOp],
     env: dict[str, list[int]],
@@ -1137,6 +1207,17 @@ def _infer_body(
                     f"with result constraint {inferred_operand}"
                 )
         for op in body:
+            for arm in (op.positive, op.negative):
+                if arm is not None:
+                    before = dict(env)
+                    _infer_body(
+                        arm.body,
+                        env,
+                        fold,
+                        extents,
+                        broadcast_axes,
+                    )
+                    changed |= env != before
             sh = _infer_op(op, env, fold, extents, broadcast_axes)
             if sh is None:
                 continue
@@ -1268,6 +1349,81 @@ class _Printer:
                 extents: dict[str, int] | None = None,
                 node_ref: str | None = None) -> None:
         a = op.attrs
+        if op.op == "value_if":
+            if (
+                not isinstance(op.result, str)
+                or op.positive is None
+                or op.negative is None
+                or not isinstance(op.predicate, str)
+            ):
+                raise ValueError(
+                    "emit_mlir: value_if requires one result, predicate, and two arms"
+                )
+            if env.get(op.predicate) != []:
+                raise ValueError(
+                    "emit_mlir: value_if predicate must be a rank-0 tensor"
+                )
+            if self.dtypes.get(op.predicate) != "i1":
+                raise ValueError("emit_mlir: value_if predicate must have i1 dtype")
+
+            condition_tensor = self.ssa[op.predicate]
+            self._n += 1
+            condition = f"%{op.result}_condition_{self._n}"
+            self.lines.append(
+                f"{indent}{condition} = tensor.extract {condition_tensor}[] : "
+                f"{self._ttn(op.predicate, env)}"
+            )
+            self._n += 1
+            result = f"%{op.result}_{self._n}"
+            result_type = self._ttn(op.result, env)
+            self.lines.append(
+                f"{indent}{result} = scf.if {condition} -> ({result_type}) {{"
+            )
+
+            outer_ssa = dict(self.ssa)
+
+            def emit_arm(arm, arm_name: str) -> None:
+                self.ssa = dict(outer_ssa)
+                for child_index, child in enumerate(arm.body):
+                    self.emit_op(
+                        child,
+                        env,
+                        fold,
+                        indent=indent + "  ",
+                        extents=extents,
+                        node_ref=(
+                            f"{node_ref}.{arm_name}[{child_index}]"
+                            if node_ref is not None
+                            else None
+                        ),
+                    )
+                yielded = arm.yield_value
+                if yielded not in self.ssa:
+                    raise ValueError(
+                        f"emit_mlir: value_if {arm_name} arm yield "
+                        f"{yielded!r} is unavailable"
+                    )
+                if env.get(yielded) != env[op.result]:
+                    raise ValueError(
+                        f"emit_mlir: value_if {arm_name} arm yield shape "
+                        "differs from its result"
+                    )
+                if self.dtypes.get(yielded) != self.dtypes.get(op.result):
+                    raise ValueError(
+                        f"emit_mlir: value_if {arm_name} arm yield dtype "
+                        "differs from its result"
+                    )
+                self.lines.append(
+                    f"{indent}  scf.yield {self.ssa[yielded]} : {result_type}"
+                )
+
+            emit_arm(op.positive, "positive")
+            self.lines.append(f"{indent}}} else {{")
+            emit_arm(op.negative, "negative")
+            self.lines.append(f"{indent}}}")
+            self.ssa = outer_ssa
+            self.ssa[op.result] = result
+            return
         if op.op == "cast":
             to = _cast_target_dtype(a)
             operand = op.operands[0]
@@ -1682,10 +1838,10 @@ class _Printer:
                     dense = f"dense<{int(val)}>"
             elif isinstance(val, (list, tuple)):
                 dense = "dense<[" + ", ".join(
-                    _mlir_f(v, dt) for v in val
+                    _mlir_dense_float(v, dt) for v in val
                 ) + "]>"
             else:
-                dense = f"dense<{_mlir_f(val, dt)}>"
+                dense = f"dense<{_mlir_dense_float(val, dt)}>"
             self.lines.append(
                 f'{indent}{r} = arith.constant {dense} : {self._ttn(op.result, env)}')
         else:

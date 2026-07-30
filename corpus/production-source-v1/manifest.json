@@ -1,0 +1,15 @@
+{
+  "masked_copy": {
+    "case_id": "scrc_canary:masked_copy",
+    "path": "corpus/production-source-v1/masked_copy.py",
+    "sha256": "ca4e66848f392915288672ea2ebece2e06fb3c57fbe772738bef11eddb9eb7f4",
+    "symbol": "source_masked_copy"
+  },
+  "masked_row_square_sum": {
+    "case_id": "scrc_canary:masked_row_square_sum",
+    "path": "corpus/production-source-v1/masked_row_square_sum.py",
+    "sha256": "78c00ce9850656b0311ce8748ce103e3927a9b5b930ed0c20f19676126e1d761",
+    "symbol": "source_masked_row_square_sum"
+  },
+  "protocol": "intentir.production.source-sidecar.v1"
+}

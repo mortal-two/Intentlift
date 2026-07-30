@@ -1,10 +1,13 @@
 // RUN: intent-opt -convert-intent-row-reduction-to-gpu=block-threads=128 %s | FileCheck %s
 // RUN: intent-opt '-convert-intent-row-reduction-to-gpu=block-threads=128 defer-epilogue-col-loads=false' %s | FileCheck %s --check-prefix=PRELOAD
+// RUN: intent-opt '-convert-intent-row-reduction-to-gpu=block-threads=128 approximate-div=true' %s | FileCheck %s --check-prefix=APPROX
 
 // Centered LayerNorm uses W/B only in its pointwise epilogue.  Their vec4 loads
 // must occur after both block collectives so the column tiles do not stay live
 // across the mean and variance reductions.
 // CHECK-LABEL: func.func @centered_layer_deferred_cols(
+// CHECK-SAME: intent.backend.epilogue_load_motion_count = 2 : i64
+// CHECK-SAME: "cuda.b.epilogue_readonly_load_motion.v1"
 // CHECK: gpu.launch
 // CHECK-NOT: memref.load %arg1
 // CHECK-NOT: memref.load %arg2
@@ -16,10 +19,14 @@
 // CHECK: memref.load %arg2
 // CHECK-NOT: intent.
 // PRELOAD-LABEL: func.func @centered_layer_deferred_cols(
+// PRELOAD-SAME: intent.backend.epilogue_load_motion_count = 0 : i64
 // PRELOAD: gpu.launch
 // PRELOAD: memref.load %arg1
 // PRELOAD: memref.load %arg2
 // PRELOAD: gpu.barrier
+// APPROX-LABEL: func.func @centered_layer_deferred_cols(
+// APPROX-SAME: intent.backend.approximate_div_count = 2 : i64
+// APPROX-SAME: "cuda.numeric.div_reciprocal_approx.f32.v1"
 func.func @centered_layer_deferred_cols(
     %X: tensor<2x1024xf32>, %W: tensor<1024xf32>,
     %B: tensor<1024xf32>, %eps: tensor<f32>)

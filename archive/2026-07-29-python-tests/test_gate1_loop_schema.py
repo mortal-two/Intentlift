@@ -290,7 +290,6 @@ def test_structured_refeval_executes_one_full_logical_axis_step() -> None:
     assert "storage:storage0" in result.metadata["boundary_projection"]["consumed"]
     assert set(inspect.signature(execute_structured_reference).parameters) == {
         "j", "dims", "inputs", "broadcast_axes", "access_guard_relations",
-        "conditional_effect_stores",
     }
 
 
@@ -555,281 +554,9 @@ def _tiled_loop_artifact(*, basis: str = "extent_step") -> Gate1Artifact:
                     }
                 ],
                 "loop_carriers": [],
-                "physical_iterations": [],
-                "unit_iterations": [],
-                "physical_loop_carriers": [],
-                "terminal_controls": [],
-                "route_extent_transforms": [],
             },
         }
     )
-
-
-def _physical_reduce_artifact(
-    *,
-    basis: str = "extent_step",
-    direction: str = "forward",
-    with_carrier: bool = False,
-) -> Gate1Artifact:
-    """One ordinary logical reduce with an explicitly authored physical loop."""
-
-    artifact = make_reduce_artifact()
-    artifact.c.slots[0].subject_ref = "n1"
-    artifact.c.slots[0].axis_ref = 1
-    artifact.c.slots[0].required = True
-    artifact.pi.regions.extend(
-        [
-            {"id": "r1", "parent": "r0", "placement": "program"},
-            {"id": "r2", "parent": "r1", "placement": "loop"},
-        ]
-    )
-    artifact.pi.instances.append(
-        {
-            "id": "i4",
-            "semantic_ref": "c0",
-            "region": "r1",
-            "mechanism": "realize",
-        }
-    )
-    artifact.pi.physical_iterations = [
-        {
-            "region": "r2",
-            "body_instance": "i2",
-            "tile_instance": "i4",
-            "induction_basis": basis,
-            "direction": direction,
-        }
-    ]
-    if with_carrier:
-        artifact.pi.instances.extend(
-            [
-                {
-                    "id": "i5",
-                    "semantic_ref": "t1",
-                    "region": "r1",
-                    "mechanism": "realize",
-                },
-                {
-                    "id": "i6",
-                    "semantic_ref": "t1",
-                    "region": "r2",
-                    "mechanism": "realize",
-                },
-                {
-                    "id": "i7",
-                    "semantic_ref": "t1",
-                    "region": "r2",
-                    "mechanism": "realize",
-                },
-                {
-                    "id": "i8",
-                    "semantic_ref": "t1",
-                    "region": "r1",
-                    "mechanism": "realize",
-                },
-                {
-                    "id": "i9",
-                    "semantic_ref": "a1",
-                    "region": "r2",
-                    "mechanism": "transfer_direct",
-                },
-                {
-                    "id": "i10",
-                    "semantic_ref": "p1",
-                    "region": "r1",
-                    "mechanism": "realize",
-                },
-            ]
-        )
-        artifact.pi.routes.extend(
-            [
-                {"source": "i5", "target": "i6", "slots": [0]},
-                {"source": "i6", "target": "i7", "slots": [0]},
-                {"source": "i6", "target": "i9", "slots": [0]},
-                {"source": "i10", "target": "i9", "slots": [1]},
-            ]
-        )
-        artifact.pi.physical_loop_carriers = [
-            {
-                "region": "r2",
-                "init": "i5",
-                "state": "i6",
-                "next": "i7",
-                "result": "i8",
-            }
-        ]
-    return Gate1Artifact.from_json(artifact.to_json())
-
-
-def _unit_reduce_artifact(*, direction: str = "forward") -> Gate1Artifact:
-    """One logical reduce traversed by a physical unit-step loop without C."""
-
-    artifact = _physical_reduce_artifact()
-    artifact.pi.physical_iterations = []
-    artifact.pi.unit_iterations = [
-        {
-            "region": "r2",
-            "body_instance": "i2",
-            "axis_ref": 1,
-            "direction": direction,
-        }
-    ]
-    return Gate1Artifact.from_json(artifact.to_json())
-
-
-@pytest.mark.parametrize("direction", ["forward", "reverse"])
-def test_unit_reduce_iteration_is_typed_and_round_trips(direction: str) -> None:
-    artifact = _unit_reduce_artifact(direction=direction)
-
-    report = type_check(artifact.j, artifact.c, artifact.pi)
-
-    assert report.passed, [item.to_json() for item in report.diagnostics]
-    assert Gate1Artifact.from_json(artifact.to_json()) == artifact
-    assert artifact.pi.unit_iterations == [
-        {
-            "region": "r2",
-            "body_instance": "i2",
-            "axis_ref": 1,
-            "direction": direction,
-        }
-    ]
-    assert all(item.op != "loop" for item in artifact.j.intent.body)
-
-
-def test_unit_iteration_rejects_wrong_axis_body_and_region() -> None:
-    wrong_axis = _unit_reduce_artifact()
-    wrong_axis.pi.unit_iterations[0]["axis_ref"] = 0
-    wrong_body = _unit_reduce_artifact()
-    wrong_body.pi.unit_iterations[0]["body_instance"] = "i1"
-    wrong_region = _unit_reduce_artifact()
-    wrong_region.pi.regions[-1]["placement"] = "program"
-
-    for artifact in (wrong_axis, wrong_body, wrong_region):
-        assert TypeCheckErrorCode.UNIT_ITERATION_INVALID in {
-            item.code
-            for item in type_check(artifact.j, artifact.c, artifact.pi).diagnostics
-        }
-
-
-def test_unit_iteration_shares_physical_carrier_protocol_without_c_tile() -> None:
-    artifact = _physical_reduce_artifact(with_carrier=True)
-    artifact.pi.physical_iterations = []
-    artifact.pi.unit_iterations = [
-        {
-            "region": "r2",
-            "body_instance": "i2",
-            "axis_ref": 1,
-            "direction": "forward",
-        }
-    ]
-
-    report = type_check(artifact.j, artifact.c, artifact.pi)
-
-    assert report.passed, [item.to_json() for item in report.diagnostics]
-
-
-@pytest.mark.parametrize(
-    ("basis", "direction"),
-    [
-        ("extent_step", "forward"),
-        ("rounded_extent_step", "forward"),
-        ("tile_ordinal", "reverse"),
-    ],
-)
-def test_physical_reduce_iteration_is_typed_and_round_trips(
-    basis: str,
-    direction: str,
-) -> None:
-    artifact = _physical_reduce_artifact(basis=basis, direction=direction)
-
-    report = type_check(artifact.j, artifact.c, artifact.pi)
-
-    assert report.passed, [item.to_json() for item in report.diagnostics]
-    assert Gate1Artifact.from_json(artifact.to_json()) == artifact
-    assert artifact.j.intent.body[1].op == "reduce"
-    assert all(item.op != "loop" for item in artifact.j.intent.body)
-
-
-def test_physical_access_traversal_is_typed_without_adding_j_loop() -> None:
-    artifact = _physical_reduce_artifact()
-    artifact.c.slots[0].subject_ref = "a0"
-    artifact.c.slots[0].axis_ref = 1
-    artifact.pi.physical_iterations[0]["body_instance"] = "i0"
-
-    report = type_check(artifact.j, artifact.c, artifact.pi)
-
-    assert report.passed, [item.to_json() for item in report.diagnostics]
-    assert artifact.pi.physical_iterations[0]["body_instance"] == "i0"
-    assert all(item.op != "loop" for item in artifact.j.intent.body)
-
-
-def test_physical_reduce_carrier_is_typed_without_adding_j_semantics() -> None:
-    artifact = _physical_reduce_artifact(with_carrier=True)
-
-    report = type_check(artifact.j, artifact.c, artifact.pi)
-
-    assert report.passed, [item.to_json() for item in report.diagnostics]
-    assert artifact.pi.physical_loop_carriers[0]["state"] == "i6"
-    assert all(item.op != "loop" for item in artifact.j.intent.body)
-
-
-def test_physical_iteration_rejects_wrong_body_or_tile_dependency() -> None:
-    wrong_body = _physical_reduce_artifact()
-    wrong_body.pi.physical_iterations[0]["body_instance"] = "i1"
-    wrong_tile = _physical_reduce_artifact()
-    wrong_tile.c.slots[0].axis_ref = 0
-
-    assert TypeCheckErrorCode.PHYSICAL_ITERATION_INVALID in {
-        item.code for item in type_check(
-            wrong_body.j, wrong_body.c, wrong_body.pi
-        ).diagnostics
-    }
-    assert TypeCheckErrorCode.PHYSICAL_ITERATION_INVALID in {
-        item.code for item in type_check(
-            wrong_tile.j, wrong_tile.c, wrong_tile.pi
-        ).diagnostics
-    }
-
-
-def test_physical_time_is_explicit_not_inferred_from_a_c_tile() -> None:
-    artifact = _physical_reduce_artifact()
-    artifact.pi.physical_iterations = []
-
-    report = type_check(artifact.j, artifact.c, artifact.pi)
-
-    assert TypeCheckErrorCode.PHYSICAL_ITERATION_INVALID not in {
-        item.code for item in report.diagnostics
-    }
-
-
-def test_artifact_v8_requires_and_v7_rejects_physical_time_fields() -> None:
-    payload = _physical_reduce_artifact().to_json()
-    missing = copy.deepcopy(payload)
-    del missing["pi"]["physical_iterations"]
-    with pytest.raises(SchemaError, match="missing required field: physical_iterations"):
-        Gate1Artifact.from_json(missing)
-
-    legacy = copy.deepcopy(payload)
-    legacy["schema"] = "intentir.scrc.artifact.v7"
-    with pytest.raises(SchemaError, match="v1-v7 do not contain pi physical time"):
-        Gate1Artifact.from_json(legacy)
-
-
-def test_artifact_v10_requires_and_v9_rejects_unit_iterations_field() -> None:
-    payload = _unit_reduce_artifact().to_json()
-    missing = copy.deepcopy(payload)
-    del missing["pi"]["unit_iterations"]
-    with pytest.raises(SchemaError, match="missing required field: unit_iterations"):
-        Gate1Artifact.from_json(missing)
-
-    legacy = copy.deepcopy(payload)
-    legacy["schema"] = "intentir.scrc.artifact.v9"
-    with pytest.raises(SchemaError, match="v1-v9 do not contain pi unit_iterations"):
-        Gate1Artifact.from_json(legacy)
-
-    legacy["pi"].pop("unit_iterations")
-    legacy["pi"].pop("route_extent_transforms")
-    assert Gate1Artifact.from_json(legacy).to_json() == legacy
 
 
 def test_closed_loop_state_round_trips_as_typed_intentir() -> None:
@@ -1157,10 +884,7 @@ def test_access_effect_identity_scope_and_write_once_are_cross_checked() -> None
 def test_storage_lifetime_and_loop_state_membership_are_fail_closed() -> None:
     missing_member = _loop_archive()
     missing_member["storage"][0]["members"].remove("acc_next")
-    with pytest.raises(
-        SchemaError,
-        match=r"storage 'storage0' is missing required member\(s\) \['acc_next'\]",
-    ):
+    with pytest.raises(SchemaError, match="must bind init, body argument"):
         SemanticArchive.from_json(missing_member)
 
     wrong_event_namespace = _loop_archive()
@@ -1176,15 +900,8 @@ def test_storage_lifetime_and_loop_state_membership_are_fail_closed() -> None:
         "kind": "state",
         "ref": "state0",
     }
-    with pytest.raises(SchemaError) as rejected_lifetime:
+    with pytest.raises(SchemaError, match="use outside declared lifetime"):
         SemanticArchive.from_json(truncated_lifetime)
-    assert (
-        "member(s) ['acc_iter', 'acc_next'] use node event "
-        "'body[0].body[1]'"
-    ) in str(rejected_lifetime.value)
-    assert "outside declared lifetime [state:'state0', state:'state0']" in str(
-        rejected_lifetime.value
-    )
 
     unrelated_last = _loop_archive_with_store_effect()
     unrelated_last["storage"][0]["last_use_event"] = {
@@ -1236,11 +953,6 @@ def test_scope_state_effect_and_storage_ids_are_opaque_in_writer_payload() -> No
                     "refinements": [],
                     "iterations": [],
                     "loop_carriers": [],
-                    "physical_iterations": [],
-                    "unit_iterations": [],
-                    "physical_loop_carriers": [],
-                    "terminal_controls": [],
-                    "route_extent_transforms": [],
                 },
         }
     )

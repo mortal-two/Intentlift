@@ -68,31 +68,11 @@ def test_direct_pi_artifact_roundtrip_and_legacy_interface_break() -> None:
         Gate1Artifact.from_json(legacy)
 
 
-def test_artifact_v10_preserves_v9_through_v1_legacy_contracts() -> None:
+def test_artifact_v7_preserves_v6_through_v1_legacy_contracts() -> None:
     current = make_reduce_artifact().to_json()
-    assert current["schema"] == "intentir.scrc.artifact.v10"
+    assert current["schema"] == "intentir.scrc.artifact.v7"
 
-    legacy_v9 = copy.deepcopy(current)
-    legacy_v9["schema"] = "intentir.scrc.artifact.v9"
-    del legacy_v9["pi"]["unit_iterations"]
-    del legacy_v9["pi"]["route_extent_transforms"]
-    parsed_v9 = Gate1Artifact.from_json(legacy_v9)
-    assert parsed_v9.to_json() == legacy_v9
-
-    legacy_v8 = copy.deepcopy(legacy_v9)
-    legacy_v8["schema"] = "intentir.scrc.artifact.v8"
-    del legacy_v8["pi"]["terminal_controls"]
-    parsed_v8 = Gate1Artifact.from_json(legacy_v8)
-    assert parsed_v8.to_json() == legacy_v8
-
-    legacy_v7 = copy.deepcopy(legacy_v8)
-    legacy_v7["schema"] = "intentir.scrc.artifact.v7"
-    del legacy_v7["pi"]["physical_iterations"]
-    del legacy_v7["pi"]["physical_loop_carriers"]
-    parsed_v7 = Gate1Artifact.from_json(legacy_v7)
-    assert parsed_v7.to_json() == legacy_v7
-
-    legacy_v6 = copy.deepcopy(legacy_v7)
+    legacy_v6 = copy.deepcopy(current)
     legacy_v6["schema"] = "intentir.scrc.artifact.v6"
     parsed_v6 = Gate1Artifact.from_json(legacy_v6)
     assert parsed_v6.to_json() == legacy_v6
@@ -189,11 +169,6 @@ def test_every_artifact_wire_version_requires_explicit_pi_refinements(
 ) -> None:
     payload = make_reduce_artifact().to_json()
     payload["schema"] = wire_schema
-    del payload["pi"]["unit_iterations"]
-    del payload["pi"]["terminal_controls"]
-    del payload["pi"]["route_extent_transforms"]
-    del payload["pi"]["physical_iterations"]
-    del payload["pi"]["physical_loop_carriers"]
     if wire_schema in {
         "intentir.scrc.artifact.v1",
         "intentir.scrc.artifact.v2",
@@ -392,8 +367,6 @@ def _row_stride_pi() -> RealizationWitness:
                 {"id": "i4", "semantic_ref": "a0", "region": "r1", "mechanism": "transfer_direct"},
                 {"id": "i5", "semantic_ref": "a1", "region": "r1", "mechanism": "realize"},
                 {"id": "i6", "semantic_ref": "a1", "region": "r1", "mechanism": "transfer_direct"},
-                {"id": "i7", "semantic_ref": "p0", "region": "r1", "mechanism": "realize"},
-                {"id": "i8", "semantic_ref": "p1", "region": "r1", "mechanism": "realize"},
             ],
             "routes": [
                 {"source": "i0", "target": "i1", "slots": [0]},
@@ -402,8 +375,6 @@ def _row_stride_pi() -> RealizationWitness:
                 {"source": "i3", "target": "i4", "slots": [0]},
                 {"source": "i2", "target": "i5", "slots": [0]},
                 {"source": "i5", "target": "i6", "slots": [0]},
-                {"source": "i7", "target": "i4", "slots": [1]},
-                {"source": "i8", "target": "i6", "slots": [1]},
             ],
             "order": [],
             "sharing": [{"source": "i2", "consumers": ["i3", "i5"]}],
@@ -750,98 +721,6 @@ def _historical_triton_v6_payload() -> dict[str, object]:
     u_f["context_policy"] = "public_frontend_context_v6"
     contract = u_f["compile_entry_contract"]
     contract = contract.replace(
-        "Each J.boundary.broadcasts item is an explicit consumer-local rank "
-        "projection. Preserve the operand's closed J type at its producer and "
-        "boundary access, then materialize exactly the declared axes at the "
-        "named consumer with public explicit rank-lift operations. Never "
-        "pre-expand an access index or load shape, and never rely on implicit "
-        "broadcasting that erases the authored consumer stage. ",
-        "",
-    )
-    contract = contract.replace(
-        " Every pi.unit_iterations entry is mandatory physical topology over "
-        "one already-authored non-loop J subject and axis. Materialize exactly "
-        "the logical points [0, extent) with unit step, or the same points in "
-        "descending order for direction=reverse. It has no C tile and never "
-        "authorizes a new semantic J loop, rounded bound, launch-derived bound, "
-        "formula, or operator.",
-        "",
-    )
-    contract = contract.replace(
-        " Within each region, physical_loop_carriers declaration order is the "
-        "exact common carrier-tuple ordinal across init/state/next/result; "
-        "preserve it in frontend loop arguments, yields, and results, and never "
-        "sort by dtype, semantic ref, or mechanism. This tuple order is not "
-        "event execution order; pi.order remains its only authority.",
-        "",
-    )
-    contract = contract.replace(
-        "Every J.signature p* is one already-existing callable ABI carrier. "
-        "All pi instances anchored to the same p* scope or route uses of that "
-        "single carrier; they never create another external value or program "
-        "coordinate. Duplicate p* instances therefore never authorize duplicate "
-        "carrier reads or tl.program_id calls. ",
-        "",
-    )
-    contract = contract.replace(
-        " A reduction_linearization refinement is the exact source-neutral "
-        "full-axis materialization immediately before its uniquely routed J "
-        "reduce. For Triton, emit `tl.reshape(value, (value.numel,), "
-        "can_reorder=True)` at that stage, then reduce on local axis 0. Never "
-        "infer it from reduction kind or shape, apply it to another consumer, "
-        "or omit it because the current carrier is already rank one.",
-        "",
-    )
-    contract = contract.replace(
-        " When pi.terminal_controls relates the two authored arm instances of "
-        "that effect_if, emit the terminal arm as the sole body of a runtime "
-        "`if` followed by a bare return, then emit the continuation arm after "
-        "the `if` without an `else`. Use the authored predicate unchanged when "
-        "the positive arm is terminal and its logical negation when the negative "
-        "arm is terminal. Resolve both roles only through the typed pi relation; "
-        "never infer termination from empty arms, effects, values, names, or "
-        "frontend conventions.",
-        "",
-    )
-    contract = contract.replace(
-        " Every pi.physical_iterations entry is mandatory realization "
-        "topology for a Source-visible physical loop around an existing "
-        "non-loop J reduce/contraction or boundary access/domain; it never "
-        "creates a semantic J loop. Resolve body_instance to that authored "
-        "subject and tile_instance to the required positive C slot attached "
-        "to the same closed dependent axis. The "
-        "axis attachment determines the logical extent, and induction_basis "
-        "has the same extent_step, rounded_extent_step, or tile_ordinal "
-        "denotation as pi.iterations. direction=forward visits that closed "
-        "basis in ascending order; direction=reverse visits exactly the same "
-        "basis points in descending order. Never infer the extent or direction "
-        "from Source names, current shapes, C values, grid conventions, or "
-        "frontend APIs. Every pi.physical_loop_carriers entry preserves the "
-        "declared init/state/next/result temporal stages for its physical "
-        "iteration region; do not collapse the loop-carried accumulator into "
-        "one stateless reduction or invent an update formula absent from J.",
-        "",
-    )
-    contract = contract.replace(
-        " A J const with value '-inf', 'inf', or 'nan' is the exact typed IEEE "
-        "special authored by J. Materialize it directly at its declared dtype; "
-        "never approximate it with a finite literal or promote it through an "
-        "undeclared wider floating type."
-        " A J.signature constexpr p* with logical_ref=x* is the callable "
-        "carrier of that exact semantic dimension. Use that same p* directly "
-        "where the authored pi lane/iteration realization requires x*; never "
-        "replace it with a current-shape literal or an arbitrary unit extent.",
-        "",
-    )
-    contract = contract.replace(
-        " A J.signature constexpr p* with logical_ref=null is only a "
-        "Harness-fixed JIT-specialization carrier: preserve its constexpr "
-        "ABI, emit the already-authored active graph, and never read it, "
-        "reconstruct inactive control, or invent a dummy use. Its concrete "
-        "value is absent from the Replay packet.",
-        "",
-    )
-    contract = contract.replace(
         " Every J value_if is mandatory pure value control. Emit one real "
         "runtime `if` with explicit positive and negative arms in authored "
         "polarity and lexical order. Each arm may compute pure local "
@@ -880,7 +759,7 @@ def _historical_triton_v6_payload() -> dict[str, object]:
         "shares a dtype or address expression. Signature dtypes are otherwise "
         "authoritative: do not guess a stride/index widening or emit `.to` for "
         "a p* carrier without its own routed refinement or an explicit J cast."
-        " A scalar J.signature p* with logical_ref=null has no logical denotation. It "
+        " A J.signature p* with logical_ref=null has no logical denotation. It "
         "may affect the body only through an instance anchored to that p* and "
         "a declared route to its realization consumer; if no such route exists, "
         "keep the ABI parameter but do not read it in the kernel body.",
@@ -898,13 +777,13 @@ def test_public_frontend_context_history_is_read_only_and_exact() -> None:
         PUBLIC_FRONTEND_CONTEXT["triton"]
     )
 
-    assert current_digest == history["public_frontend_context_v18"]
+    assert current_digest == history["public_frontend_context_v9"]
     current_receipt_digest = PUBLIC_FRONTEND_CONTEXT_RECEIPT_HISTORY[
         "triton"
-    ]["public_frontend_context_v18"]["context_sha256"]
+    ]["public_frontend_context_v9"]["context_sha256"]
     current_receipt = audit_public_frontend_context_receipt(
         frontend="triton",
-        context_policy="public_frontend_context_v18",
+        context_policy="public_frontend_context_v9",
         context_sha256=current_receipt_digest,
     )
     assert current_receipt["status"] == "current"
@@ -936,42 +815,6 @@ def test_public_frontend_context_history_is_read_only_and_exact() -> None:
         context_policy="public_frontend_context_v6",
         public_context_sha256=history["public_frontend_context_v6"],
     )["status"] == "historical"
-    for digest in (
-        "0fa2e4823267dcec5601c4f805ac91301a411efbb7479e5cc9c48b208a8d7510",
-        "7d68b5a2f77f614c952966c1b94a8eac052f6ebcad77412cd7db6af9ffbed8e6",
-    ):
-        assert audit_public_frontend_context_payload(
-            frontend="triton",
-            context_policy="public_frontend_context_v15",
-            public_context_sha256=digest,
-        )["status"] == "historical"
-    for digest in (
-        "c7706c0d986a883cb30f703f67238885d9395b5fb9fa0251c443989edfce4b7e",
-        "bd3175a91b8dfc0de729b5a7ba7c6dbb15ceab6238cc573f5c5c4c98632053f4",
-    ):
-        assert audit_public_frontend_context_receipt(
-            frontend="triton",
-            context_policy="public_frontend_context_v15",
-            context_sha256=digest,
-        )["status"] == "historical"
-    for digest in (
-        "67845810703e1c0906950e4008d975fdab0167d17a8106ced006f0fdf627d402",
-        "57371c0c62fc68ca1f8f9b45a80144766ddf1416778f05f91b1c9c115173e165",
-    ):
-        assert audit_public_frontend_context_payload(
-            frontend="triton",
-            context_policy="public_frontend_context_v16",
-            public_context_sha256=digest,
-        )["status"] == "historical"
-    for digest in (
-        "31f39b26af2782660286f7f8de87e40114cfdc45c0082c7a40ab31a7d69abce4",
-        "1dfa8eb068dc1491011dec5163299a6a4f6d4001dddc0411838cbbc9c445370d",
-    ):
-        assert audit_public_frontend_context_receipt(
-            frontend="triton",
-            context_policy="public_frontend_context_v16",
-            context_sha256=digest,
-        )["status"] == "historical"
     with pytest.raises(TypeError):
         history["public_frontend_context_v7"] = "mutated"  # type: ignore[index]
     with pytest.raises(TypeError):
@@ -1038,7 +881,7 @@ def test_historical_packet_has_read_only_audit_but_cannot_be_fresh_replay() -> N
         audit_replay_packet_digest(payload, expected_digest="0" * 64)
     assert build_rewriter_packet(make_reduce_artifact()).u_f[
         "context_policy"
-    ] == "public_frontend_context_v18"
+    ] == "public_frontend_context_v9"
 
 
 def test_real_v6_u_f_uses_the_historical_full_u_f_receipt_basis() -> None:
@@ -1066,7 +909,7 @@ def test_real_v6_u_f_uses_the_historical_full_u_f_receipt_basis() -> None:
     [
         (
             Frontend.TRITON,
-            "69f8902436392087b548d3679a9730a2460f3ef2581d07d44e7801c390aea471",
+            "9becf7924f26d695fc4390c6709a81fc729e12244c241482525ca44e5156d67b",
         ),
         (
             Frontend.CUTE,
@@ -1074,11 +917,11 @@ def test_real_v6_u_f_uses_the_historical_full_u_f_receipt_basis() -> None:
         ),
         (
             Frontend.TILELANG,
-            "390ab1b9f16fc802c6a84c431fd14e101bc1bb9097b5ae6551efd8fafd6c7657",
+            "b54d1d1e65f5ad35a39b47aa43b7bee9eb68e4067c82d32e1b7739bc99c2660e",
         ),
         (
             Frontend.CUDA,
-            "729b22b514f3d999f4d58aff577cda463fcdd7e7ddb97912b44e44c1334cec2a",
+            "83d5c95bd2c9bc28329e42987c4eb9628395990a5b2bb8c4d07aad81fb13a530",
         ),
     ],
 )
@@ -1161,9 +1004,9 @@ def test_replay_contract_accepts_an_explicit_strict_integer_widen() -> None:
 
     report = type_check(artifact.j, artifact.c, artifact.pi)
     assert report.passed
-    assert report.protocol == "intentir.scrc.typecheck.v27"
+    assert report.protocol == "intentir.scrc.typecheck.v16"
     assert build_rewriter_packet(artifact).u_f["context_policy"] == (
-        "public_frontend_context_v18"
+        "public_frontend_context_v9"
     )
 
 
@@ -1182,7 +1025,7 @@ def test_typecheck_rejects_non_widening_or_untyped_signed_widen(
 
     report = type_check(artifact.j, artifact.c, artifact.pi)
     assert not report.passed
-    assert report.protocol == "intentir.scrc.typecheck.v27"
+    assert report.protocol == "intentir.scrc.typecheck.v16"
     assert "refinement_auth_invalid_widen" in {
         item.code.value for item in report.diagnostics
     }
@@ -1195,7 +1038,7 @@ def test_triton_u_f_preserves_constexpr_and_projects_coordinate_roles() -> None:
     context = payload["u_f"]
     contract = context["compile_entry_contract"]
 
-    assert context["context_policy"] == "public_frontend_context_v18"
+    assert context["context_policy"] == "public_frontend_context_v9"
     assert "pass a c* handle directly to tl.arange" in contract
     assert "never copy it to a local first" in contract
     assert "satisfied by the parameter binding" in contract
@@ -1205,15 +1048,6 @@ def test_triton_u_f_preserves_constexpr_and_projects_coordinate_roles() -> None:
     assert "not the whole-tensor logical ordinal" in contract
     assert "when predicate is absent" in contract
     assert "never synthesize a defensive or redundant mask" in contract
-    assert "Each J.boundary.broadcasts item" in contract
-    assert "Preserve the operand's closed J type" in contract
-    assert "Never pre-expand an access index or load shape" in contract
-    assert (
-        "Every J.signature p* is one already-existing callable ABI carrier" in contract
-    )
-    assert (
-        "Duplicate p* instances therefore never authorize duplicate" in contract
-    )
     assert "placement='program' alone never authorizes tl.program_id" in contract
     assert "path enters address_base" in contract
     assert "path enters address_lane" in contract
@@ -1224,8 +1058,6 @@ def test_triton_u_f_preserves_constexpr_and_projects_coordinate_roles() -> None:
     assert "even if its grid extent is one" in contract
     assert "pointer/tensor p* carrier directly enters address_base" in contract
     assert "requires a second pointer/address operation" in contract
-    assert "A reduction_linearization refinement" in contract
-    assert "tl.reshape(value, (value.numel,), can_reorder=True)" in contract
     assert "carrier bypasses address_base" in contract
     assert "before exactly one pointer/address operation" in contract
     assert "edge alone" in contract
@@ -1233,16 +1065,12 @@ def test_triton_u_f_preserves_constexpr_and_projects_coordinate_roles() -> None:
     assert "canonical binary J contraction" in contract
     assert "one pi realize instance" in contract
     assert "maps to one direct tl.dot realization" in contract
-    assert "pi.terminal_controls relates the two authored arm instances" in contract
-    assert "continuation arm after the `if` without an `else`" in contract
     assert "Do not replace that single stage" in contract
     assert "broadcasted outer-product multiplication plus tl.sum" in contract
     assert "does not apply to outer products" in contract
     assert "unsupported tile/dtype contracts" in contract
     assert "pi chain that explicitly declares multiple" in contract
     assert "Every pi.iterations entry is mandatory" in contract
-    assert "physical_loop_carriers declaration order" in contract
-    assert "never sort by dtype, semantic ref, or mechanism" in contract
     assert "induction_basis=extent_step" in contract
     assert "induction_basis=tile_ordinal" in contract
     assert "never insert or remove the trip-count ceiling division" in contract
@@ -1260,37 +1088,6 @@ def test_triton_u_f_preserves_constexpr_and_projects_coordinate_roles() -> None:
     assert_source_isolated_payload(payload)
 
 
-def test_tilelang_u_f_materializes_only_authored_expression_boundaries() -> None:
-    context = build_normal_rewriter_view(
-        make_reduce_artifact(), frontend=Frontend.TILELANG
-    )["u_f"]
-    contract = context["compile_entry_contract"]
-
-    assert context["context_policy"] == "public_frontend_context_v9"
-    assert "pure single-consumer load/value chain" in contract
-    assert "do not add an annotated scalar merely to name an instance" in contract
-    assert "fan-out, region/order/control placement" in contract
-    assert "J.storage owns semantic alias/destination/state lifetime only" in contract
-    assert "refined by `identity_materialization`" in contract
-    assert "emit one `T.alloc_fragment`" in contract
-    assert "only when its exact boundary access and routed participant slice are shaped" in contract
-    assert "per-program scalar load/store remains a direct expression/assignment" in contract
-    assert "Never replace an authored shaped-copy topology" in contract
-
-
-def test_cuda_u_f_keeps_launch_slots_in_the_external_harness_binding() -> None:
-    context = build_normal_rewriter_view(
-        make_reduce_artifact(), frontend=Frontend.CUDA
-    )["u_f"]
-    contract = context["compile_entry_contract"]
-
-    assert context["context_policy"] == "public_frontend_context_v4"
-    assert "bound by the external Harness launch" in contract
-    assert "never reference its c* identifier in the kernel body" in contract
-    assert "use public `blockDim`" in contract
-    assert "never a macro use" in contract
-
-
 @pytest.mark.parametrize("frontend", list(Frontend))
 def test_every_frontend_receives_the_same_closed_iteration_denotation(
     frontend: Frontend,
@@ -1304,15 +1101,6 @@ def test_every_frontend_receives_the_same_closed_iteration_denotation(
     assert "step equal to the matching C tile" in instructions
     assert "tile_ordinal means lower zero" in instructions
     assert "ceil_div of that J trip extent by that matching C tile" in instructions
-
-
-def test_replay_prompt_preserves_exact_lexical_pi_region_scope() -> None:
-    instructions, _ = build_normal_rewriter_prompt(make_reduce_artifact())
-
-    assert "Region placement is exact lexical scope" in instructions
-    assert "loop-region instance lexically inside that loop" in instructions
-    assert "never hoist, sink, clone, or fold it across a region boundary" in instructions
-    assert "An instance region is exact lexical realization scope" in instructions
 
 
 
@@ -1358,7 +1146,7 @@ def test_lift_instruction_assigns_only_comparison_class_not_thresholds() -> None
     normalized = " ".join(instructions.split())
 
     assert "supplied Responses schema is authoritative" in normalized
-    assert len(instructions) < 20_000
+    assert len(instructions) < 18_500
     assert "Floating transcendentals" in normalized
     assert "must use `tolerance`" in normalized
     assert "external Gate2 policy Q supplies all atol" in normalized
@@ -1372,22 +1160,15 @@ def test_lift_instruction_assigns_only_comparison_class_not_thresholds() -> None
     assert "reuse that same t* in the predicate and arithmetic dataflow" in normalized
     assert "never split one Source value" in normalized
     assert "an extent-only scalar binds x* directly" in normalized
-    assert "constexprness alone never makes one a graph selector" in normalized
-    assert "every semantic use is exclusively compile-time control" in normalized
-    assert "fixed code checks only the authored wire/type contract" in normalized
     assert "explicit Source `reduce(sum)` followed by division" in normalized
     assert "generated `reduce(sum)` over ones" in normalized
     assert "never propagate one conversion to sibling parameters" in normalized
     assert "strictly wider target_dtype" in normalized
     assert "local tile axis after program/grid axes" in normalized
     assert "not the whole-tensor logical axis number" in normalized
-    assert "effect-controlling binary Source branch whose predicate is an already-visible Layer-A scalar i1 is one Layer-A `effect_if`" in normalized
+    assert "effect-controlling binary Source branch is one Layer-A `effect_if`" in normalized
     assert "value-yielding Source `scf.if` is one Layer-A `value_if`" in normalized
     assert "scope.effects plus matching EffectSpec/access_ref is sole membership" in normalized
-    assert "Boundary domains only quantify the logical iteration set" in normalized
-    assert "coordinate/access-validity condition is copied exactly" in normalized
-    assert 'Never call it "domain-owned"' in normalized
-    assert "no distinct Source branch event" in normalized
     assert "`rounded_extent_step` uses the same lower/step" in normalized
 
 
@@ -1513,11 +1294,6 @@ def test_lift_schema_requires_direct_pi_and_no_embedded_c_channel() -> None:
         "refinements",
         "iterations",
         "loop_carriers",
-            "physical_iterations",
-            "unit_iterations",
-            "physical_loop_carriers",
-        "terminal_controls",
-        "route_extent_transforms",
     }
     assert "consumer_extensions" in (
         properties["j"]["properties"]["boundary"]["required"]
@@ -1592,20 +1368,23 @@ def test_lift_prompt_keeps_runtime_extent_symbolic_and_out_of_ssa_scopes() -> No
     assert "fixed code and Replay never add or repair it" in instructions
 
 
-def test_lift_prompt_and_schema_admit_harness_specialization_constexpr() -> None:
+def test_lift_prompt_and_schema_forbid_pi_only_bound_constexpr() -> None:
     instructions = " ".join(scrc.build_scrc_lift_instructions().split())
 
-    assert "Harness-owned, non-C JIT bindings" in instructions
-    assert "its value stays only in Harness" in instructions
-    assert "never selects or repairs the graph" in instructions
-    assert "every semantic use is exclusively compile-time control" in instructions
+    assert "They already have logical semantic ownership" in instructions
+    assert (
+        "Never serialize a bound constexpr as a representation-only pi carrier"
+        in instructions
+    )
+    assert "runtime-scalar logical_ref=null form" in instructions
+    assert "matching pure-C constexpr slot" in instructions
 
     payload = make_reduce_artifact().to_json()
     parameter = payload["j"]["signature"]["parameters"][2]
     parameter["kind"] = "constexpr"
-    parameter["rank"] = 0
-    parameter.pop("logical_ref")
-    assert Gate1Artifact.from_json(payload).to_json() == payload
+    parameter["logical_ref"] = None
+    with pytest.raises(SchemaError, match="logical_ref"):
+        Gate1Artifact.from_json(payload)
 
 
 def test_one_pi_graph_grammar_is_projected_to_schema_lift_and_replay() -> None:
@@ -1702,19 +1481,6 @@ def selected_kernel(X, Y, N, BLOCK_SIZE: tl.constexpr):
     _anonymous, binding, _mapping = anonymize_source(source)
     artifact = make_reduce_artifact()
     artifact.j.boundary.accesses[0].index_expression = "[k0, k1]"
-
-    scrc._validate_source_identifier_privacy(artifact, binding)
-
-
-def test_source_privacy_does_not_confuse_einsum_label_with_private_name() -> None:
-    source = """@triton.jit
-def selected_kernel(X, Y, N, BLOCK_SIZE: tl.constexpr):
-    k = tl.arange(0, BLOCK_SIZE)
-    tl.store(Y + k, tl.load(X + k))
-"""
-    _anonymous, binding, _mapping = anonymize_source(source)
-    artifact = make_reduce_artifact()
-    artifact.j.intent.body[0].attrs["subscripts"] = "k,abhsq->abhsqk"
 
     scrc._validate_source_identifier_privacy(artifact, binding)
 

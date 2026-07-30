@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 import re
-from typing import Iterable
+from typing import Any, Iterable, Mapping
 
 from intentir.verify.gate1.model import ResultRelationKind, SemanticArchive
 
@@ -107,6 +107,44 @@ class ComparisonPolicy:
         tolerances: Iterable[tuple[str, NumericTolerance]],
     ) -> "ComparisonPolicy":
         return cls(policy_id, tuple(sorted(tolerances, key=lambda item: item[0])))
+
+    @classmethod
+    def from_json(cls, value: Mapping[str, Any]) -> "ComparisonPolicy":
+        if not isinstance(value, Mapping) or set(value) != {
+            "protocol",
+            "policy_id",
+            "tolerances",
+        }:
+            raise ComparisonPolicyError(
+                "Gate2 Q JSON must contain protocol, policy_id, and tolerances"
+            )
+        if value["protocol"] != GATE2_POLICY_PROTOCOL:
+            raise ComparisonPolicyError("unsupported Gate2 Q protocol")
+        tolerances = value["tolerances"]
+        if not isinstance(tolerances, Mapping):
+            raise ComparisonPolicyError("Gate2 Q tolerances must be an object")
+        parsed = []
+        for dtype, record in tolerances.items():
+            if not isinstance(dtype, str) or not isinstance(record, Mapping):
+                raise ComparisonPolicyError("Gate2 Q tolerance entry is invalid")
+            if set(record) != {"rtol", "atol", "equal_nan"}:
+                raise ComparisonPolicyError(
+                    "Gate2 Q tolerance requires rtol, atol, and equal_nan"
+                )
+            parsed.append(
+                (
+                    dtype,
+                    NumericTolerance(
+                        record["rtol"],
+                        record["atol"],
+                        record["equal_nan"],
+                    ),
+                )
+            )
+        return cls.create(
+            str(value["policy_id"]),
+            parsed,
+        )
 
     def rule_for(
         self,

@@ -1,7 +1,17 @@
 {
   "schema_version": "intentir.lowering.high-performance.v1",
-  "updated_on": "2026-07-20",
+  "updated_on": "2026-07-27",
   "scope": "lowering_only",
+  "backend_interpretation": {
+    "role": "source-workload identity and historical executable-capability inventory only",
+    "mechanism_labels": "taxonomy and historical evidence labels; they are not compiler objects, legality keys, candidate identities, or emitter selectors",
+    "fast_path_ids": "historical pass/receipt identifiers only; production J search derives concrete post-pass MLIR states from A/B/current-state/target contracts",
+    "forbidden": [
+      "selecting a production lowering by kernel_id, source symbol, provider, or fast_path_id",
+      "treating this 28-kernel inventory as the production J candidate universe",
+      "using family_tests or exact-variant labels as an implementation-family abstraction"
+    ]
+  },
   "counting": {
     "direct_jit_kernels": 28,
     "host_orchestration_scenarios": 1,
@@ -11,7 +21,7 @@
   "status_definitions": {
     "automatic_executed": "unchanged canonical graph is selected structurally and executes a persisted CUDA artifact",
     "explicit_pass_executed": "canonical handwritten MLIR executes through the named production C++ pass; exact live extraction remains separate",
-    "exact_variant_gap": "related family lowering exists, but this exact counted source symbol and captured variant have no execution closure"
+    "exact_variant_gap": "related structural lowering evidence exists, but this exact counted source symbol and captured variant have no execution closure"
   },
   "mechanisms": {
     "elementwise": {

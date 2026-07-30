@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import re
 from dataclasses import dataclass
 from enum import Enum
@@ -21,12 +19,6 @@ def _identifier(value: Any, context: str) -> str:
     if not isinstance(value, str) or re.fullmatch(r"[A-Za-z0-9_.:+-]+", value) is None:
         raise BackendProtocolError(f"{context} must be a non-empty identifier")
     return value
-
-
-def _sha(value: Mapping[str, Any]) -> str:
-    return hashlib.sha256(
-        json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -68,15 +60,6 @@ class LoweringRequest:
         if self.c is not None and not isinstance(self.c, ImplementationConfig):
             raise BackendProtocolError("C must use the canonical pure schedule schema")
 
-    @property
-    def j_digest(self) -> str:
-        return _sha(self.j.to_json())
-
-    @property
-    def c_digest(self) -> str | None:
-        return _sha(self.c.to_json()) if self.c is not None else None
-
-
 class ComparisonKind(str, Enum):
     SOURCE_TO_LOWERING = "source_to_lowering"
     REPLAY_TO_LOWERING = "replay_to_lowering"
@@ -88,28 +71,22 @@ class ComparisonKind(str, Enum):
 class ComparisonEvidence:
     kind: ComparisonKind
     passed: bool
-    evidence_digest: str
 
     def __post_init__(self) -> None:
         if not isinstance(self.kind, ComparisonKind):
             object.__setattr__(self, "kind", ComparisonKind(self.kind))
         if not isinstance(self.passed, bool):
             raise BackendProtocolError("comparison passed must be boolean")
-        if re.fullmatch(r"[0-9a-f]{64}", self.evidence_digest) is None:
-            raise BackendProtocolError("comparison evidence requires SHA-256")
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "kind": self.kind.value,
             "passed": self.passed,
-            "evidence_digest": self.evidence_digest,
         }
 
 
 @dataclass(frozen=True)
 class BackendConformanceRecord:
-    j_digest: str
-    c_digest: str | None
     target: BackendTarget
     variant: str
     boundary_consumption: Mapping[str, Any]
@@ -117,10 +94,6 @@ class BackendConformanceRecord:
     comparisons: tuple[ComparisonEvidence, ...]
 
     def __post_init__(self) -> None:
-        if re.fullmatch(r"[0-9a-f]{64}", self.j_digest) is None:
-            raise BackendProtocolError("conformance J digest is invalid")
-        if self.c_digest is not None and re.fullmatch(r"[0-9a-f]{64}", self.c_digest) is None:
-            raise BackendProtocolError("conformance C digest is invalid")
         if not self.comparisons:
             raise BackendProtocolError("backend conformance requires comparison evidence")
         if not bool(self.boundary_consumption.get("supported", False)):
@@ -133,8 +106,6 @@ class BackendConformanceRecord:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "j_digest": self.j_digest,
-            "c_digest": self.c_digest,
             "target": self.target.to_dict(),
             "variant": self.variant,
             "boundary_consumption": dict(self.boundary_consumption),

@@ -3,13 +3,13 @@
 This module is deliberately independent of every verification pipeline.  Its
 input is already-accepted Intent dialect MLIR; selection probes the registered
 C++ conversion passes and chooses a specialized path only when one pass
-consumes the complete graph into exactly one ``gpu.launch``.  Otherwise the
-generic Intent -> Linalg -> CUDA path remains the mandatory fallback.
+consumes the complete graph into one or more compiler-emitted ``gpu.launch``
+operations. Otherwise the generic Intent -> Linalg -> CUDA path remains the
+mandatory fallback.
 """
 
 from __future__ import annotations
 
-import hashlib
 import os
 import re
 from dataclasses import dataclass, field
@@ -61,6 +61,7 @@ _INTENT_OPERATION = re.compile(
 _GPU_LAUNCH = re.compile(
     r"(?<![A-Za-z0-9_.$])gpu\.launch(?![A-Za-z0-9_.$])"
 )
+_PORTABLE_BLOCK_CUDA_CHIPS = ("sm_90a", "sm_120a")
 
 
 def residual_intent_ops(mlir: str) -> tuple[str, ...]:
@@ -123,7 +124,6 @@ class ProbeAttempt:
     direct_hit: bool
     residual_ops: tuple[str, ...] = ()
     gpu_launch_count: int = 0
-    probe_output_sha256: str | None = None
     reason: str = ""
 
     def to_dict(self) -> dict[str, object]:
@@ -135,7 +135,6 @@ class ProbeAttempt:
             "direct_hit": self.direct_hit,
             "residual_ops": list(self.residual_ops),
             "gpu_launch_count": self.gpu_launch_count,
-            "probe_output_sha256": self.probe_output_sha256,
             "reason": self.reason,
         }
 
@@ -144,11 +143,9 @@ class ProbeAttempt:
 class VariantSelection:
     pipeline_kind: str
     target: LoweringTarget
-    input_sha256: str
     fast_path_id: str | None
     pass_argument: str | None
     scf_to_cf: bool
-    probe_output_sha256: str | None
     attempts: tuple[ProbeAttempt, ...]
     generic_fallback: bool = True
 
@@ -158,8 +155,6 @@ class VariantSelection:
         if self.pipeline_kind == "specialized":
             if not self.fast_path_id or not self.pass_argument:
                 raise ValueError("specialized selection requires an id and pass")
-            if not self.probe_output_sha256:
-                raise ValueError("specialized selection requires a probe hash")
         elif self.fast_path_id is not None or self.pass_argument is not None:
             raise ValueError("generic selection cannot carry a specialized pass")
 
@@ -167,11 +162,9 @@ class VariantSelection:
         return {
             "pipeline_kind": self.pipeline_kind,
             "target": self.target.to_dict(),
-            "input_sha256": self.input_sha256,
             "fast_path_id": self.fast_path_id,
             "pass_argument": self.pass_argument,
             "scf_to_cf": self.scf_to_cf,
-            "probe_output_sha256": self.probe_output_sha256,
             "attempts": [attempt.to_dict() for attempt in self.attempts],
             "generic_fallback": self.generic_fallback,
         }
@@ -216,7 +209,7 @@ DEFAULT_PASSES: tuple[PassDescriptor, ...] = (
     PassDescriptor(
         fast_path_id="cuda.splitk.reduce-varargs.v1",
         pass_argument="-convert-intent-splitk-reduce-varargs-to-gpu",
-        supported_chips=("sm_120a",),
+        supported_chips=_PORTABLE_BLOCK_CUDA_CHIPS,
         description="xFormers split-K varargs reduction",
         scf_to_cf=True,
     ),
@@ -282,8 +275,11 @@ DEFAULT_PASSES: tuple[PassDescriptor, ...] = (
     ),
     PassDescriptor(
         fast_path_id="cuda.row_scan.sparsemax.sorted_prefix.v1",
-        pass_argument="-convert-intent-row-reduction-to-gpu=block-threads=256",
-        supported_chips=("sm_120a",),
+        pass_argument=(
+            "-convert-intent-row-reduction-to-gpu=block-threads=256 "
+            "require-sorted-prefix=true"
+        ),
+        supported_chips=_PORTABLE_BLOCK_CUDA_CHIPS,
         description="sorted-prefix Sparsemax row scan",
         scf_to_cf=True,
         required_markers=(
@@ -292,16 +288,47 @@ DEFAULT_PASSES: tuple[PassDescriptor, ...] = (
         ),
     ),
     PassDescriptor(
+        fast_path_id="cuda.padded_row_reduction.masked_short_dot.v1",
+        pass_argument=(
+            "-convert-intent-padded-row-reduction-to-gpu="
+            "block-threads=64 vectorize-full-features=false "
+            "promote-rank0-scalars=true reduction-topology=serial-row"
+        ),
+        supported_chips=_PORTABLE_BLOCK_CUDA_CHIPS,
+        description="masked short row dot with authored zero padding",
+    ),
+    PassDescriptor(
         fast_path_id="cuda.elementwise.row.vectorized.v1",
-        pass_argument="-convert-intent-elementwise-to-gpu=block-threads=64",
-        supported_chips=("sm_120a",),
+        pass_argument=(
+            "-convert-intent-elementwise-to-gpu=block-threads=64 "
+            "tanh-approximation=stable-ex2"
+        ),
+        supported_chips=_PORTABLE_BLOCK_CUDA_CHIPS,
         description="complete static row-elementwise graph",
     ),
     PassDescriptor(
         fast_path_id="cuda.row_reduction.normalization_loss.read_once.v1",
-        pass_argument="-convert-intent-row-reduction-to-gpu=block-threads=1024",
-        supported_chips=("sm_120a",),
+        pass_argument=(
+            "-convert-intent-row-reduction-to-gpu=block-threads=1024 "
+            "promote-rank0-scalars=true rows-per-block=1"
+        ),
+        supported_chips=_PORTABLE_BLOCK_CUDA_CHIPS,
         description="row normalization/loss reduction graph",
+    ),
+    PassDescriptor(
+        fast_path_id=(
+            "cuda.row_scan.sparsemax.sorted_prefix.execution_domain.v1"
+        ),
+        pass_argument=(
+            "-convert-intent-row-reduction-to-gpu=block-threads=256 "
+            "allow-execution-domain-sorted-prefix=true "
+            "require-sorted-prefix=true"
+        ),
+        supported_chips=_PORTABLE_BLOCK_CUDA_CHIPS,
+        description=(
+            "graph-structural Sparsemax sorted-prefix execution-domain state"
+        ),
+        scf_to_cf=True,
     ),
     PassDescriptor(
         fast_path_id="cuda.gather-scatter.block.v1",
@@ -402,7 +429,7 @@ def select_variant(
 ) -> VariantSelection:
     """Select a CUDA lowering variant by target capability and C++ probe.
 
-    No receipt, verifier result, provider response, dataset identity, function
+    No verifier result, provider response, dataset tag, function
     name, or source path is accepted by this API.  ``pass_overrides`` is the
     explicit schedule/tuning seam; every override is still required to pass the
     same whole-graph structural probe before it can be selected.
@@ -410,16 +437,13 @@ def select_variant(
 
     text = read_intent_module(intent_module)
     selected_target = target or LoweringTarget()
-    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
     if not allow_specialized:
         return VariantSelection(
             pipeline_kind="generic",
             target=selected_target,
-            input_sha256=digest,
             fast_path_id=None,
             pass_argument=None,
             scf_to_cf=False,
-            probe_output_sha256=None,
             attempts=(),
         )
 
@@ -483,8 +507,7 @@ def select_variant(
             continue
         residuals = residual_intent_ops(probe)
         launch_count = gpu_launch_count(probe)
-        direct_hit = not residuals and launch_count == 1
-        probe_digest = hashlib.sha256(probe.encode("utf-8")).hexdigest()
+        direct_hit = not residuals and launch_count >= 1
         attempt = ProbeAttempt(
             fast_path_id=descriptor.fast_path_id,
             pass_argument=pass_argument,
@@ -493,9 +516,8 @@ def select_variant(
             direct_hit=direct_hit,
             residual_ops=residuals,
             gpu_launch_count=launch_count,
-            probe_output_sha256=probe_digest,
             reason=(
-                "single-launch whole-graph structural match"
+                "compiler-launch-graph whole-graph structural match"
                 if direct_hit
                 else "specialized pass did not consume the complete graph"
             ),
@@ -505,22 +527,18 @@ def select_variant(
             return VariantSelection(
                 pipeline_kind="specialized",
                 target=selected_target,
-                input_sha256=digest,
                 fast_path_id=descriptor.fast_path_id,
                 pass_argument=pass_argument,
                 scf_to_cf=descriptor.scf_to_cf,
-                probe_output_sha256=probe_digest,
                 attempts=tuple(attempts),
             )
 
     return VariantSelection(
         pipeline_kind="generic",
         target=selected_target,
-        input_sha256=digest,
         fast_path_id=None,
         pass_argument=None,
         scf_to_cf=False,
-        probe_output_sha256=None,
         attempts=tuple(attempts),
     )
 

@@ -24,7 +24,6 @@ roadmap R5) does not bite here.
 
 from __future__ import annotations
 
-import functools
 import os
 import re
 import subprocess
@@ -38,7 +37,7 @@ CUDA_BIN = os.environ.get("CUDA_BIN", "/usr/local/cuda-12.8/bin")
 CHIP = os.environ.get("INTENT_GPU_CHIP", "sm_120a")
 
 # Bare MLIR symbols may contain ``.`` and ``$`` after their first character.
-# Live paper-pipeline functions preserve readable dotted source provenance, so
+# Live paper-pipeline functions preserve readable dotted source names, so
 # artifact parsing must use the MLIR grammar instead of the narrower ``\w+``.
 _MLIR_BARE_SYMBOL_RE = r"[A-Za-z_][A-Za-z0-9_.$]*"
 
@@ -50,6 +49,7 @@ _FRONT_PASSES = [
     "-convert-parallel-loops-to-gpu",
     "-gpu-kernel-outlining",
     "-canonicalize",  # folds grid extents to literal constants
+    "-cse",  # share identical typed producers before NVVM lowering
 ]
 
 # NVIDIA-target preparation on the outlined device module: rewrites scalar f32
@@ -146,6 +146,7 @@ def _fused_front_passes(tile: tuple[int, ...]) -> list[str]:
         "-convert-parallel-loops-to-gpu",
         "-gpu-kernel-outlining",
         "-canonicalize",
+        "-cse",
     ]
 
 
@@ -161,27 +162,15 @@ def lower_to_binary_mlir_fused(
     return _run([MLIR_OPT, _device_pipeline()], stdin=prepped)
 
 
-@functools.lru_cache(maxsize=None)
-def _compile_fused_cached(
-    path: str, mtime: float, tile: tuple[int, ...]
-) -> tuple[CompiledKernel, ...]:
-    return tuple(_extract_kernels(lower_to_binary_mlir_fused(path, tile)))
-
-
 def compile_all_kernels_fused(
     intent_mlir: str | os.PathLike, tile: tuple[int, ...] = (1, 256)
 ) -> list[CompiledKernel]:
-    """All kernels of an intent module compiled through the fused+tiled pipeline.
+    """Compile every kernel through the fused+tiled pipeline for this call.
 
-    Memoized on (path, mtime, tile) so a warm launch reuses the cubin. For a
-    pointwise chain this returns exactly ONE kernel (the fusion collapses the
-    whole chain); the caller may assert ``len(...) == 1`` to certify fusion.
+    For a pointwise chain this returns exactly one kernel; callers retain that
+    returned executable explicitly for repeated launch timing.
     """
-    p = Path(intent_mlir)
-    try:
-        return list(_compile_fused_cached(str(p), p.stat().st_mtime, tuple(tile)))
-    except OSError:
-        return _extract_kernels(lower_to_binary_mlir_fused(intent_mlir, tuple(tile)))
+    return _extract_kernels(lower_to_binary_mlir_fused(intent_mlir, tuple(tile)))
 
 
 # Device-side leg only (scf.parallel + scf.for + memref already in hand): maps
@@ -194,6 +183,7 @@ _DEVICE_FRONT_PASSES = [
     "-convert-parallel-loops-to-gpu",
     "-gpu-kernel-outlining",
     "-canonicalize",
+    "-cse",
 ]
 
 
@@ -262,25 +252,9 @@ def _extract_kernels(binary: str) -> list[CompiledKernel]:
     return kernels
 
 
-@functools.lru_cache(maxsize=None)
-def _compile_all_cached(path: str, mtime: float) -> tuple[CompiledKernel, ...]:
-    return tuple(_extract_kernels(lower_to_binary_mlir(path)))
-
-
 def compile_all_kernels(intent_mlir: str | os.PathLike) -> list[CompiledKernel]:
-    """All outlined kernels (in host launch order), each as a loadable cubin.
-
-    Memoized on (path, mtime): the intent->cubin compile (intent-opt + mlir-opt
-    + ptxas, once per kernel) is expensive, so repeated launches of the same
-    module reuse the cubins. This makes warm-launch timing meaningful — without
-    it every run_program call recompiles the whole graph. Edit the file and the
-    mtime change invalidates the entry.
-    """
-    p = Path(intent_mlir)
-    try:
-        return list(_compile_all_cached(str(p), p.stat().st_mtime))
-    except OSError:
-        return _extract_kernels(lower_to_binary_mlir(intent_mlir))
+    """Compile all outlined kernels in host launch order for this call."""
+    return _extract_kernels(lower_to_binary_mlir(intent_mlir))
 
 
 def compile_intent_to_cubin(intent_mlir: str | os.PathLike) -> CompiledKernel:

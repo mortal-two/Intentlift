@@ -11,7 +11,6 @@ from intentir.ir.functional_boundary import (
     FUNCTIONAL_BOUNDARY_PROTOCOL,
     RUNTIME_PREDICATE_PROOF_PROTOCOL,
     functional_reduction_padding_issues,
-    predicate_dominated_contraction_load,
     predicate_dominated_pointwise_load,
     project_functional_boundary,
     project_functional_boundary_for_refeval,
@@ -80,51 +79,6 @@ def _attach_dense_copy_boundary(artifact, *, domains=None) -> None:
     ]
 
 
-def _mixed_radix_copy_j() -> SemanticArchive:
-    artifact = make_copy_artifact()
-    # ``identity`` is sufficient for Gate1 fixtures but is intentionally not a
-    # production Intent lowering recipe.  Use a supported unary while this test
-    # exercises the real scalar/MLIR consumer end to end.
-    artifact.j.intent.body[0].attrs["fn"] = "abs"
-    for tensor in [*artifact.j.intent.inputs, *artifact.j.intent.outputs]:
-        tensor.shape = ["x0", "x1", "x2"]
-    artifact.j.signature.parameters[0].rank = 3
-    artifact.j.signature.parameters[1].rank = 3
-    artifact.j.signature.parameters.extend(
-        [
-            SignatureParameter(
-                "p3", ParameterKind.SCALAR, ParameterMode.VALUE,
-                "i32", logical_ref="x1",
-            ),
-            SignatureParameter(
-                "p4", ParameterKind.SCALAR, ParameterMode.VALUE,
-                "i32", logical_ref="x2",
-            ),
-        ]
-    )
-    coordinate = (
-        "[k0 // (x1 * x2), (k0 // x2) % x1, k0 % x2]"
-    )
-    artifact.j.boundary = Boundary(
-        domains={"d0": "0 <= k0 and k0 < ((x0 * x1) * x2)"},
-        accesses=[
-            BoundaryAccess(
-                "a0", AccessKind.LOAD, "t0", node_ref="n0",
-                index_expression=coordinate,
-            ),
-            BoundaryAccess(
-                "a1", AccessKind.STORE, "t1", node_ref="n0",
-                index_expression=coordinate,
-            ),
-        ],
-        effects=[
-            EffectSpec(EffectKind.READ, "t0", "n0", "e0", "a0"),
-            EffectSpec(EffectKind.WRITE, "t1", "n0", "e1", "a1"),
-        ],
-    )
-    return artifact.j
-
-
 def test_functional_boundary_allows_semantically_unused_tensor_abi_input() -> None:
     artifact = make_copy_artifact()
     _attach_dense_copy_boundary(
@@ -151,106 +105,6 @@ def test_functional_boundary_allows_semantically_unused_tensor_abi_input() -> No
 
     assert "access:a0" in projection.consumed
     assert not any("unused" in item for item in projection.consumed)
-
-
-def test_functional_boundary_preserves_context_only_domain_without_evaluating_it() -> None:
-    artifact = make_copy_artifact()
-    _attach_dense_copy_boundary(
-        artifact,
-        domains={
-            "d0": "0 <= i0 and i0 < x0",
-            "d1": "0 <= i1 and i1 < x0",
-        },
-    )
-
-    projection = project_functional_boundary(artifact.j)
-
-    assert projection.context_domains == (("i1", "x0"),)
-    assert projection.profile == "context_dense_functional_v1"
-    assert "context_domain:i1:x0" in projection.consumed
-    assert projection.to_json()["context_domains"] == [
-        {"axis": "i1", "extent": "x0"}
-    ]
-
-
-def test_functional_boundary_accepts_canonical_node_less_identity_return() -> None:
-    artifact = make_copy_artifact()
-    artifact.j.intent.body = []
-    artifact.j.intent.returns = [IntentReturn("t1", "t0")]
-    artifact.j.node_ids = {}
-    artifact.j.boundary = Boundary(
-        domains={"d0": "0 <= i0 and i0 < x0"},
-        accesses=[
-            BoundaryAccess(
-                "a0",
-                AccessKind.LOAD,
-                "t0",
-                node_ref=None,
-                index_expression="[i0]",
-            ),
-            BoundaryAccess(
-                "a1",
-                AccessKind.STORE,
-                "t1",
-                node_ref=None,
-                index_expression="[i0]",
-            ),
-        ],
-        effects=[
-            EffectSpec(EffectKind.READ, "t0", None, "e0", "a0"),
-            EffectSpec(EffectKind.WRITE, "t1", None, "e1", "a1"),
-        ],
-    )
-
-    projection = project_functional_boundary(artifact.j)
-
-    assert "access:a0" in projection.consumed
-    assert "access:a1" in projection.consumed
-
-    nonidentity = make_copy_artifact()
-    nonidentity.j.boundary = artifact.j.boundary
-    with pytest.raises(NotImplementedError, match="direct identity J"):
-        project_functional_boundary(nonidentity.j)
-
-
-def test_functional_boundary_consumes_complete_mixed_radix_bijection() -> None:
-    j = _mixed_radix_copy_j()
-
-    projection = project_functional_boundary(j)
-    receipts = projection.to_json()["mixed_radix_accesses"]
-
-    assert projection.domains == (("k0", "((x0 * x1) * x2)"),)
-    assert len(receipts) == 2
-    assert receipts[0]["proof"] == "complete_mixed_radix_bijection"
-    assert receipts[0]["flat_axis"] == "k0"
-    assert receipts[0]["domain_factors"] == ["x0", "x1", "x2"]
-    assert [item["stride_factors"] for item in receipts[0]["digits"]] == [
-        ["x1", "x2"],
-        ["x2"],
-        [],
-    ]
-
-    spec = ScalarLoweringSpec.create(
-        j,
-        dims={"x0": 2, "x1": 3, "x2": 4},
-        input_bindings={"t0": "input"},
-        output_bindings={"t1": "output"},
-    )
-    value = np.arange(24, dtype=np.float32).reshape(2, 3, 4)
-    result = ScalarLoweringRunner().run(spec, {"input": value})
-
-    assert result.ok, result.error
-    np.testing.assert_array_equal(result.outputs["output"], value)
-
-
-def test_functional_boundary_rejects_incomplete_mixed_radix_digits() -> None:
-    j = _mixed_radix_copy_j()
-    j.boundary.accesses[0].index_expression = (
-        "[k0 // (x1 * x2), k0 % x1, k0 % x2]"
-    )
-
-    with pytest.raises(NotImplementedError, match="mixed-radix bijection"):
-        project_functional_boundary(j)
 
 
 def _constant_gather_boundary_j() -> SemanticArchive:
@@ -566,7 +420,6 @@ def test_gate2_checks_all_three_pairwise_edges(monkeypatch) -> None:
     assert result.source_j is not None and result.source_j.passed
     assert result.replay_j is not None and result.replay_j.passed
     assert j_elaboration(spec.j).value_type_by_name["t1"].dtype == "f32"
-    assert result.reference.metadata["boundary_digest"]
     report = result.to_json()
     assert report["source_replay"]["passed"]
     assert report["source_j"]["passed"]
@@ -640,151 +493,6 @@ def _make_masked_sum_reduction_artifact():
         )
     ]
     return artifact
-
-
-def test_masked_padding_provenance_is_scoped_to_its_load_edge() -> None:
-    artifact = _make_masked_sum_reduction_artifact()
-    artifact.j.boundary.accesses[0].node_ref = None
-    artifact.j.boundary.effects[0].node_ref = None
-    payload = artifact.j.intent.to_json()["intent_function"]
-    payload["body"] = [
-        {
-            "id": "n2",
-            "op": "const",
-            "result": "v2",
-            "attrs": {"value": 0, "dtype": "i64", "shape": []},
-            "type": {"dtype": "i64", "shape": []},
-        },
-        {
-            "id": "n3",
-            "op": "gather",
-            "result": "v3",
-            "operands": ["t0", "v2"],
-            "attrs": {"axis": 1, "mode": "take"},
-            "type": {"dtype": "f32", "shape": ["x0"]},
-        },
-        *payload["body"],
-    ]
-    artifact.j.intent = IntentFunction.from_json(payload)
-    artifact.j.node_ids = {
-        "n2": "body[0]",
-        "n3": "body[1]",
-        "n0": "body[2]",
-        "n1": "body[3]",
-    }
-    artifact.j.boundary.accesses.append(
-        BoundaryAccess(
-            "a2",
-            AccessKind.LOAD,
-            "t0",
-            node_ref="n3",
-            index_expression="[i0, i1]",
-        )
-    )
-    artifact.j.boundary.effects.append(
-        EffectSpec(EffectKind.READ, "t0", "n3", "e2", "a2")
-    )
-    artifact.j.boundary.index_bounds.append(
-        IndexBoundsSpec("n3", "t0", "v2", 1)
-    )
-
-    projection = project_functional_boundary(artifact.j)
-
-    assert projection.consumer_extensions[0].access_ref == "a0"
-    assert "index_bounds:n3" in projection.consumed
-
-
-def test_index_bounded_gather_projects_dynamic_consumer_footprint() -> None:
-    function = IntentFunction.from_json(
-        {
-            "name": "bounded_gather",
-            "inputs": [
-                {"name": "t0", "dtype": "f32", "shape": ["x1"]},
-                {"name": "t1", "dtype": "i32", "shape": []},
-            ],
-            "outputs": [
-                {"name": "t2", "dtype": "f32", "shape": ["x0"]},
-            ],
-            "body": [
-                {
-                    "id": "n0",
-                    "op": "iota",
-                    "result": "v0",
-                    "attrs": {"n": "x0", "dtype": "i32"},
-                    "type": {"dtype": "i32", "shape": ["x0"]},
-                },
-                {
-                    "id": "n1",
-                    "op": "map_binary",
-                    "result": "v1",
-                    "operands": ["v0", "t1"],
-                    "attrs": {"fn": "mul"},
-                    "type": {"dtype": "i32", "shape": ["x0"]},
-                },
-                {
-                    "id": "n2",
-                    "op": "gather",
-                    "result": "t2",
-                    "operands": ["t0", "v1"],
-                    "attrs": {"axis": 0, "mode": "take"},
-                    "type": {"dtype": "f32", "shape": ["x0"]},
-                },
-            ],
-        }
-    )
-    archive = SemanticArchive(
-        kernel_id="bounded_gather",
-        intent=function,
-        node_ids={f"n{index}": f"body[{index}]" for index in range(3)},
-        boundary=Boundary(
-            domains={"d0": "0 <= k0 and k0 < x0"},
-            accesses=[
-                BoundaryAccess(
-                    "a0", AccessKind.LOAD, "t0", predicate="k0 < x0",
-                    node_ref="n2", index_expression="[(k0 * t1)]",
-                ),
-                BoundaryAccess(
-                    "a1", AccessKind.STORE, "t2", predicate="k0 < x0",
-                    node_ref="n2", index_expression="[k0]",
-                ),
-            ],
-            effects=[
-                EffectSpec(EffectKind.READ, "t0", "n2", "e0", "a0"),
-                EffectSpec(EffectKind.WRITE, "t2", "n2", "e1", "a1"),
-            ],
-            index_bounds=[IndexBoundsSpec("n2", "t0", "v1", 0)],
-        ),
-        signature=LogicalSignature(
-            [
-                SignatureParameter(
-                    "p0", ParameterKind.POINTER, ParameterMode.INPUT,
-                    "f32", 1, logical_ref="t0",
-                ),
-                SignatureParameter(
-                    "p1", ParameterKind.SCALAR, ParameterMode.VALUE,
-                    "i32", 0, logical_ref="t1",
-                ),
-                SignatureParameter(
-                    "p2", ParameterKind.POINTER, ParameterMode.OUTPUT,
-                    "f32", 1, logical_ref="t2",
-                ),
-            ]
-        ),
-    )
-
-    projection = project_functional_boundary(archive)
-
-    assert [item.to_json() for item in projection.index_bounded_gathers] == [
-        {
-            "proof": "index_bounded_gather",
-            "access_id": "a0",
-            "node_ref": "n2",
-            "tensor": "t0",
-            "axis": 0,
-            "index_ref": "v1",
-            "consumer_axes": ["k0"],
-        }
-    ]
 
 
 def _make_shared_access_sum_max_artifact():
@@ -1404,7 +1112,7 @@ def test_scalar_e_j_consumes_general_masked_softmax_graph() -> None:
     expected /= np.sum(expected, axis=1, keepdims=True)
     assert result.ok, result.error
     np.testing.assert_allclose(result.outputs["output"], expected, rtol=1e-6)
-    assert result.metadata["protocol"] == "j_scalar_cpu_mlir_v22"
+    assert result.metadata["protocol"] == "j_scalar_cpu_mlir_v16"
     assert (
         result.metadata["boundary_profile"]
         == "logical_domain_reduction_padding_v2"
@@ -1624,21 +1332,21 @@ def test_refeval_runtime_proves_rank_zero_logical_bound_tautology(limit: int) ->
     assert result.ok, result.error
     np.testing.assert_array_equal(result.outputs["output"], value)
     projection = result.metadata["boundary_projection"]
-    assert projection["protocol"] == "intentir.j-functional-boundary.v20"
+    assert projection["protocol"] == "intentir.j-functional-boundary.v15"
     assert FUNCTIONAL_BOUNDARY_PROTOCOL == projection["protocol"]
     assert result.metadata["boundary_profile"] == (
         "logical_domain_runtime_mask_erasure_v1"
     )
     assert result.metadata["runtime_predicate_proof_count"] == 2
-    receipts = projection["runtime_predicate_proofs"]
-    assert [item["access_id"] for item in receipts] == ["a0", "a1"]
+    records = projection["runtime_predicate_proofs"]
+    assert [item["access_id"] for item in records] == ["a0", "a1"]
     assert all(
         item["protocol"] == RUNTIME_PREDICATE_PROOF_PROTOCOL
         and item["proof"] == "closed_domain_tautology"
         and item["logical_input_refs"] == ["limit"]
         and item["domain_axes"] == ["i0"]
         and "value" not in item
-        for item in receipts
+        for item in records
     )
 
 
@@ -1690,12 +1398,12 @@ def test_refeval_runtime_guard_polarity_is_proved_not_erased(
 
     assert result.ok is accepted
     if accepted:
-        receipts = result.metadata["boundary_projection"][
+        records = result.metadata["boundary_projection"][
             "runtime_predicate_proofs"
         ]
         assert all(
             item["logical_input_refs"] == ["flag", "limit"]
-            for item in receipts
+            for item in records
         )
     else:
         assert result.unsupported
@@ -1842,7 +1550,7 @@ def test_refeval_runtime_rejects_predicate_axis_outside_direct_access() -> None:
     assert "cross-axis logical access predicates" in (result.error or "")
 
 
-def test_runtime_predicate_receipt_does_not_disclose_hidden_value() -> None:
+def test_runtime_predicate_record_does_not_disclose_hidden_value() -> None:
     artifact = _make_runtime_logical_mask_artifact()
     spec = _runtime_logical_mask_spec(artifact)
     hidden_value = 13
@@ -1855,18 +1563,18 @@ def test_runtime_predicate_receipt_does_not_disclose_hidden_value() -> None:
     )
 
     assert result.ok, result.error
-    receipts = result.metadata["boundary_projection"][
+    records = result.metadata["boundary_projection"][
         "runtime_predicate_proofs"
     ]
-    assert receipts
-    assert all("value" not in receipt for receipt in receipts)
+    assert records
+    assert all("value" not in record for record in records)
     assert all(
-        hidden_value not in receipt.values()
-        for receipt in receipts
+        hidden_value not in record.values()
+        for record in records
     )
 
 
-def test_runtime_predicate_receipt_and_compile_identity_are_value_independent() -> None:
+def test_runtime_predicate_structure_is_value_independent() -> None:
     artifact = _make_runtime_logical_mask_artifact()
     spec = _runtime_logical_mask_spec(artifact)
     runner = ScalarLoweringRunner()
@@ -1884,9 +1592,6 @@ def test_runtime_predicate_receipt_and_compile_identity_are_value_independent() 
     assert all(result.ok for result in results)
     assert results[0].metadata["scalar_spec_digest"] == results[1].metadata[
         "scalar_spec_digest"
-    ]
-    assert results[0].metadata["boundary_digest"] == results[1].metadata[
-        "boundary_digest"
     ]
     assert results[0].metadata["boundary_projection"][
         "runtime_predicate_proofs"
@@ -1993,7 +1698,7 @@ def test_scalar_e_j_erases_tail_mask_for_general_pointwise_j() -> None:
 
     assert result.ok, result.error
     assert result.metadata["protocol"] == SCALAR_LOWERING_PROTOCOL
-    assert SCALAR_LOWERING_PROTOCOL == "j_scalar_cpu_mlir_v22"
+    assert SCALAR_LOWERING_PROTOCOL == "j_scalar_cpu_mlir_v16"
     np.testing.assert_allclose(result.outputs["output"], np.tanh(value))
 
 
@@ -2047,384 +1752,6 @@ def test_scalar_e_j_erases_unobservable_pointwise_masked_load_fill() -> None:
     )
 
 
-def _make_free_axis_predicated_contraction_artifact():
-    artifact = make_copy_artifact()
-    artifact.j.intent = IntentFunction.from_json(
-        {
-            "name": "scrc_j0",
-            "inputs": [
-                {"name": "t0", "dtype": "f32", "shape": ["x0", "x1"]},
-                {"name": "t1", "dtype": "f32", "shape": ["x1", "x2"]},
-            ],
-            "outputs": [
-                {"name": "t2", "dtype": "f32", "shape": ["x0", "x2"]},
-            ],
-            "body": [
-                {
-                    "id": "n0",
-                    "op": "contraction",
-                    "result": "t2",
-                    "operands": ["t0", "t1"],
-                    "attrs": {"subscripts": "ab,bc->ac"},
-                    "type": {"dtype": "f32", "shape": ["x0", "x2"]},
-                }
-            ],
-        }
-    )
-    artifact.j.node_ids = {"n0": "body[0]"}
-    artifact.j.signature = LogicalSignature(
-        [
-            SignatureParameter(
-                "p0", ParameterKind.POINTER, ParameterMode.INPUT,
-                "f32", 2, logical_ref="t0",
-            ),
-            SignatureParameter(
-                "p1", ParameterKind.POINTER, ParameterMode.INPUT,
-                "f32", 2, logical_ref="t1",
-            ),
-            SignatureParameter(
-                "p2", ParameterKind.POINTER, ParameterMode.OUTPUT,
-                "f32", 2, logical_ref="t2",
-            ),
-            SignatureParameter(
-                "p3", ParameterKind.SCALAR, ParameterMode.VALUE,
-                "i32", logical_ref="x0",
-            ),
-            SignatureParameter(
-                "p4", ParameterKind.SCALAR, ParameterMode.VALUE,
-                "i32", logical_ref="x2",
-            ),
-            SignatureParameter(
-                "p5", ParameterKind.SCALAR, ParameterMode.VALUE,
-                "i32", logical_ref="x1",
-            ),
-        ]
-    )
-    artifact.j.boundary = Boundary(
-        domains={
-            "d0": "0 <= k0 and k0 < x0",
-            "d1": "0 <= k1 and k1 < x2",
-            "d2": "0 <= k2 and k2 < x1",
-        },
-        accesses=[
-            BoundaryAccess(
-                "a0", AccessKind.LOAD, "t0", node_ref="n0",
-                predicate="k0 < x0", index_expression="[k0, k2]",
-            ),
-            BoundaryAccess(
-                "a1", AccessKind.LOAD, "t1", node_ref="n0",
-                predicate="k1 < x2", index_expression="[k2, k1]",
-            ),
-            BoundaryAccess(
-                "a2", AccessKind.STORE, "t2", node_ref="n0",
-                predicate="(k0 < x0) and (k1 < x2)",
-                index_expression="[k0, k1]",
-            ),
-        ],
-        effects=[
-            EffectSpec(EffectKind.READ, "t0", "n0", "e0", "a0"),
-            EffectSpec(EffectKind.READ, "t1", "n0", "e1", "a1"),
-            EffectSpec(EffectKind.WRITE, "t2", "n0", "e2", "a2"),
-        ],
-    )
-    return artifact
-
-
-def test_scalar_e_j_consumes_free_axis_predicated_contraction_loads() -> None:
-    artifact = _make_free_axis_predicated_contraction_artifact()
-
-    assert predicate_dominated_contraction_load(artifact.j, "a0")
-    assert predicate_dominated_contraction_load(artifact.j, "a1")
-    projection = project_functional_boundary(artifact.j)
-    assert projection.runtime_predicate_proofs == ()
-    assert {
-        item
-        for item in projection.consumed
-        if item.startswith("predicate_dominated_load:")
-    } == {
-        "predicate_dominated_load:a0:k0 < x0",
-        "predicate_dominated_load:a1:k1 < x2",
-    }
-
-    lhs = np.arange(6, dtype=np.float32).reshape(2, 3) / 7.0
-    rhs = np.arange(12, dtype=np.float32).reshape(3, 4) / 11.0
-    result = ScalarLoweringRunner().run(
-        ScalarLoweringSpec.create(
-            artifact.j,
-            dims={"x0": 2, "x1": 3, "x2": 4},
-            input_bindings={"t0": "lhs", "t1": "rhs"},
-            output_bindings={"t2": "output"},
-        ),
-        {"lhs": lhs, "rhs": rhs},
-    )
-
-    assert result.ok, result.error
-    np.testing.assert_allclose(result.outputs["output"], lhs @ rhs, rtol=1e-6)
-    assert result.metadata["boundary_profile"] == "logical_domain_mask_erasure_v1"
-
-
-@pytest.mark.parametrize(
-    "mutation",
-    ["reduction_axis_predicate", "store_does_not_dominate_load"],
-)
-def test_scalar_e_j_contraction_no_fill_proof_fails_closed(mutation: str) -> None:
-    artifact = _make_free_axis_predicated_contraction_artifact()
-    if mutation == "reduction_axis_predicate":
-        artifact.j.boundary.accesses[0].predicate = "k2 < x1"
-    elif mutation == "store_does_not_dominate_load":
-        artifact.j.boundary.accesses[2].predicate = "k1 < x2"
-    else:  # pragma: no cover - parametrization is closed above
-        raise AssertionError(mutation)
-
-    assert not predicate_dominated_contraction_load(artifact.j, "a0")
-    with pytest.raises(
-        NotImplementedError,
-        match="requires an explicit masked-load fill",
-    ):
-        project_functional_boundary(artifact.j)
-
-
-def test_scalar_e_j_erases_mask_through_exact_terminal_transpose() -> None:
-    artifact = make_copy_artifact()
-    payload = artifact.j.intent.to_json()["intent_function"]
-    payload["inputs"][0]["shape"] = ["x0", "x1"]
-    payload["outputs"][0]["shape"] = ["x1", "x0"]
-    payload["body"] = [
-        {
-            "id": "n0",
-            "op": "map_unary",
-            "result": "v0",
-            "operands": ["t0"],
-            "attrs": {"fn": "tanh"},
-            "type": {"dtype": "f32", "shape": ["x0", "x1"]},
-        },
-        {
-            "id": "n1",
-            "op": "transpose",
-            "result": "t1",
-            "operands": ["v0"],
-            "attrs": {"perm": [1, 0]},
-            "type": {"dtype": "f32", "shape": ["x1", "x0"]},
-        },
-    ]
-    artifact.j.intent = IntentFunction.from_json(payload)
-    artifact.j.node_ids = {"n0": "body[0]", "n1": "body[1]"}
-    artifact.j.signature.parameters[0].rank = 2
-    artifact.j.signature.parameters[1].rank = 2
-    artifact.j.signature.parameters.append(
-        SignatureParameter(
-            "p3", ParameterKind.SCALAR, ParameterMode.VALUE,
-            "i32", logical_ref="x1",
-        )
-    )
-    artifact.j.boundary = Boundary(
-        domains={
-            "d0": "0 <= i0 and i0 < x0",
-            "d1": "0 <= i1 and i1 < x1",
-        },
-        accesses=[
-            BoundaryAccess(
-                "a0", AccessKind.LOAD, "t0", node_ref="n0",
-                predicate="i1 < x1", index_expression="[i0, i1]",
-            ),
-            BoundaryAccess(
-                "a1", AccessKind.STORE, "t1", node_ref="n1",
-                predicate="i1 < x1", index_expression="[i1, i0]",
-            ),
-        ],
-        effects=[
-            EffectSpec(EffectKind.READ, "t0", "n0", "e0", "a0"),
-            EffectSpec(EffectKind.WRITE, "t1", "n1", "e1", "a1"),
-        ],
-    )
-
-    assert predicate_dominated_pointwise_load(artifact.j, "a0")
-    projection = project_functional_boundary(artifact.j)
-    assert "predicate_dominated_load:a0:i1 < x1" in projection.consumed
-
-    value = np.arange(6, dtype=np.float32).reshape(2, 3)
-    result = ScalarLoweringRunner().run(
-        ScalarLoweringSpec.create(
-            artifact.j,
-            dims={"x0": 2, "x1": 3},
-            input_bindings={"t0": "input"},
-            output_bindings={"t1": "output"},
-        ),
-        {"input": value},
-    )
-    assert result.ok, result.error
-    np.testing.assert_allclose(result.outputs["output"], np.tanh(value).T)
-
-    artifact.j.boundary.accesses[1].index_expression = "[i0, i1]"
-    assert not predicate_dominated_pointwise_load(artifact.j, "a0")
-
-
-def test_scalar_e_j_erases_mask_through_closed_pointwise_broadcast() -> None:
-    artifact = make_copy_artifact()
-    artifact.j.intent = IntentFunction.from_json(
-        {
-            "name": "scrc_j0",
-            "inputs": [
-                {"name": "t0", "dtype": "f32", "shape": ["x1"]},
-                {"name": "t2", "dtype": "f32", "shape": ["x0", "x1"]},
-            ],
-            "outputs": [
-                {"name": "t1", "dtype": "f32", "shape": ["x0", "x1"]}
-            ],
-            "body": [
-                {
-                    "id": "n0",
-                    "op": "map_unary",
-                    "result": "v0",
-                    "operands": ["t0"],
-                    "attrs": {"fn": "abs"},
-                    "type": {"dtype": "f32", "shape": ["x1"]},
-                },
-                {
-                    "id": "n1",
-                    "op": "map_binary",
-                    "result": "t1",
-                    "operands": ["t2", "v0"],
-                    "attrs": {"fn": "mul"},
-                    "type": {"dtype": "f32", "shape": ["x0", "x1"]},
-                },
-            ],
-        }
-    )
-    artifact.j.node_ids = {"n0": "body[0]", "n1": "body[1]"}
-    artifact.j.signature = LogicalSignature(
-        [
-            SignatureParameter(
-                "p0", ParameterKind.POINTER, ParameterMode.INPUT,
-                "f32", 1, logical_ref="t0",
-            ),
-            SignatureParameter(
-                "p1", ParameterKind.POINTER, ParameterMode.OUTPUT,
-                "f32", 2, logical_ref="t1",
-            ),
-            SignatureParameter(
-                "p2", ParameterKind.POINTER, ParameterMode.INPUT,
-                "f32", 2, logical_ref="t2",
-            ),
-            SignatureParameter(
-                "p3", ParameterKind.SCALAR, ParameterMode.VALUE,
-                "i32", logical_ref="x0",
-            ),
-            SignatureParameter(
-                "p4", ParameterKind.SCALAR, ParameterMode.VALUE,
-                "i32", logical_ref="x1",
-            ),
-        ]
-    )
-    artifact.j.boundary = Boundary(
-        domains={
-            "d0": "0 <= i0 and i0 < x0",
-            "d1": "0 <= i1 and i1 < x1",
-        },
-        accesses=[
-            BoundaryAccess(
-                "a0", AccessKind.LOAD, "t0", node_ref="n0",
-                predicate="i1 < x1", index_expression="[i1]",
-            ),
-            BoundaryAccess(
-                "a1", AccessKind.LOAD, "t2", node_ref="n1",
-                predicate="i1 < x1", fill_value=0.0,
-                index_expression="[i0, i1]",
-            ),
-            BoundaryAccess(
-                "a2", AccessKind.STORE, "t1", node_ref="n1",
-                predicate="i1 < x1", index_expression="[i0, i1]",
-            ),
-        ],
-        effects=[
-            EffectSpec(EffectKind.READ, "t0", "n0", "e0", "a0"),
-            EffectSpec(EffectKind.READ, "t2", "n1", "e1", "a1"),
-            EffectSpec(EffectKind.WRITE, "t1", "n1", "e2", "a2"),
-        ],
-    )
-
-    assert predicate_dominated_pointwise_load(artifact.j, "a0")
-    projection = project_functional_boundary(artifact.j)
-    assert "predicate_dominated_load:a0:i1 < x1" in projection.consumed
-
-    first = np.array([-1.0, 2.0, -3.0], dtype=np.float32)
-    second = np.arange(6, dtype=np.float32).reshape(2, 3)
-    result = ScalarLoweringRunner().run(
-        ScalarLoweringSpec.create(
-            artifact.j,
-            dims={"x0": 2, "x1": 3},
-            input_bindings={"t0": "input0", "t2": "input1"},
-            output_bindings={"t1": "output"},
-        ),
-        {"input0": first, "input1": second},
-    )
-    assert result.ok, result.error
-    np.testing.assert_allclose(result.outputs["output"], second * np.abs(first))
-
-    # The predicate-bearing load may itself enter the first pointwise consumer
-    # through a closed trailing broadcast; it need not pass through a same-rank
-    # unary node before that broadcast becomes visible.
-    broadcast = artifact.j.intent.body[1]
-    broadcast.operands = ["t2", "t0"]
-    artifact.j.intent.body = [broadcast]
-    artifact.j.node_ids = {"n1": "body[0]"}
-    artifact.j.boundary.accesses[0].node_ref = "n1"
-    artifact.j.boundary.effects[0].node_ref = "n1"
-    assert predicate_dominated_pointwise_load(artifact.j, "a0")
-    direct_projection = project_functional_boundary(artifact.j)
-    assert "predicate_dominated_load:a0:i1 < x1" in direct_projection.consumed
-    direct = ScalarLoweringRunner().run(
-        ScalarLoweringSpec.create(
-            artifact.j,
-            dims={"x0": 2, "x1": 3},
-            input_bindings={"t0": "input0", "t2": "input1"},
-            output_bindings={"t1": "output"},
-        ),
-        {"input0": first, "input1": second},
-    )
-    assert direct.ok, direct.error
-    np.testing.assert_allclose(direct.outputs["output"], second * first)
-
-    # A canonical whole-input load may omit node_ref.  Its consumer is still
-    # closed when the same tensor has one load and one direct J consumer; the
-    # consumer must be recovered from J dataflow, not filled in by RefEval.
-    artifact.j.boundary.accesses[0].node_ref = None
-    artifact.j.boundary.effects[0].node_ref = None
-    assert predicate_dominated_pointwise_load(artifact.j, "a0")
-    node_less_projection = project_functional_boundary(artifact.j)
-    assert (
-        "predicate_dominated_load:a0:i1 < x1"
-        in node_less_projection.consumed
-    )
-    node_less = ScalarLoweringRunner().run(
-        ScalarLoweringSpec.create(
-            artifact.j,
-            dims={"x0": 2, "x1": 3},
-            input_bindings={"t0": "input0", "t2": "input1"},
-            output_bindings={"t1": "output"},
-        ),
-        {"input0": first, "input1": second},
-    )
-    assert node_less.ok, node_less.error
-    np.testing.assert_allclose(node_less.outputs["output"], second * first)
-
-    artifact.j.boundary.accesses.insert(
-        1,
-        BoundaryAccess(
-            "a3",
-            AccessKind.LOAD,
-            "t0",
-            predicate="i1 < x1",
-            index_expression="[i1]",
-        ),
-    )
-    artifact.j.boundary.effects.insert(
-        1,
-        EffectSpec(EffectKind.READ, "t0", effect_id="e3", access_ref="a3"),
-    )
-    assert not predicate_dominated_pointwise_load(artifact.j, "a0")
-
-
 def _make_node_less_input_load_artifact():
     artifact = _make_masked_identity_artifact()
     operation = make_copy_artifact().j.intent.body[0]
@@ -2456,6 +1783,29 @@ def test_scalar_e_j_consumes_node_less_input_load_in_nonidentity_graph() -> None
 
     assert result.ok, result.error
     np.testing.assert_allclose(result.outputs["output"], np.tanh(value))
+
+
+def test_scalar_e_j_proves_unique_node_less_masked_input_without_fill() -> None:
+    artifact = _make_node_less_input_load_artifact()
+    artifact.j.boundary.accesses[0].fill_value = None
+    value = np.arange(8, dtype=np.float32)
+
+    assert predicate_dominated_pointwise_load(artifact.j, "a0")
+    result = ScalarLoweringRunner().run(
+        ScalarLoweringSpec.create(
+            artifact.j,
+            dims={"x0": 8},
+            input_bindings={"t0": "input"},
+            output_bindings={"t1": "output"},
+        ),
+        {"input": value},
+    )
+
+    assert result.ok, result.error
+    np.testing.assert_allclose(result.outputs["output"], np.tanh(value))
+    assert "predicate_dominated_load:a0:i0 < x0" in result.metadata[
+        "boundary_projection"
+    ]["consumed"]
 
 
 def test_scalar_e_j_rejects_ambiguous_node_less_input_load() -> None:
@@ -2760,64 +2110,7 @@ def test_singleton_zero_keeps_legacy_axis_receipt_and_typed_coordinate() -> None
     projection = project_functional_boundary(artifact.j)
 
     assert projection.access_axes_map == {"a0": ("0",), "a1": ("0",)}
-
-
-def test_direct_authored_singleton_constraint_closes_constant_coordinate() -> None:
-    artifact = make_copy_artifact()
-    artifact.j.intent.inputs[0].shape = ["x5"]
-    artifact.j.intent.outputs[0].shape = ["x5"]
-    artifact.j.intent.body[0].type = {"dtype": "f32", "shape": ["x5"]}
-    artifact.j.signature.parameters[0].rank = 1
-    artifact.j.signature.parameters[1].rank = 1
-    artifact.j.signature.parameters[2].logical_ref = "x5"
-    artifact.j.dimension_constraints = ["x5 == 1"]
-    artifact.j.boundary.accesses = [
-        BoundaryAccess(
-            "a0", AccessKind.LOAD, "t0", node_ref="n0",
-            index_expression="[0]",
-        ),
-        BoundaryAccess(
-            "a1", AccessKind.STORE, "t1", node_ref="n0",
-            index_expression="[0]",
-        ),
-    ]
-    artifact.j.boundary.effects = [
-        EffectSpec(EffectKind.READ, "t0", "n0", "e0", "a0"),
-        EffectSpec(EffectKind.WRITE, "t1", "n0", "e1", "a1"),
-    ]
-
-    projection = project_functional_boundary(artifact.j)
-
     assert projection.access_coordinates_map == {"a0": (0,), "a1": (0,)}
-
-
-def test_conflicting_singleton_constraint_does_not_authorize_constant_coordinate() -> None:
-    artifact = make_copy_artifact()
-    artifact.j.intent.inputs[0].shape = ["x5"]
-    artifact.j.intent.outputs[0].shape = ["x5"]
-    artifact.j.intent.body[0].type = {"dtype": "f32", "shape": ["x5"]}
-    artifact.j.signature.parameters[2].logical_ref = "x5"
-    artifact.j.dimension_constraints = ["x5 == 1", "x5 == 2"]
-    artifact.j.boundary.accesses = [
-        BoundaryAccess(
-            "a0", AccessKind.LOAD, "t0", node_ref="n0",
-            index_expression="[0]",
-        ),
-        BoundaryAccess(
-            "a1", AccessKind.STORE, "t1", node_ref="n0",
-            index_expression="[0]",
-        ),
-    ]
-    artifact.j.boundary.effects = [
-        EffectSpec(EffectKind.READ, "t0", "n0", "e0", "a0"),
-        EffectSpec(EffectKind.WRITE, "t1", "n0", "e1", "a1"),
-    ]
-
-    with pytest.raises(
-        NotImplementedError,
-        match="constant access requires a static tensor extent",
-    ):
-        project_functional_boundary(artifact.j)
 
 
 def test_constant_gather_boundary_coordinate_mismatch_fails_closed() -> None:
@@ -3180,26 +2473,9 @@ def test_scalar_e_j_dense_inout_consumes_prestate_and_returns_poststate() -> Non
         "boundary_projection"
     ]["consumed"]
 
-    canonical_returns = list(artifact.j.intent.returns)
-    artifact.j.intent.returns = []
-    mapping_only = ScalarLoweringRunner().run(
-        ScalarLoweringSpec.create(
-            artifact.j,
-            dims={"x0": 8},
-            input_bindings={"t0": "prestate", "t1": "delta"},
-            output_bindings={"t0": "poststate", "t2": "derived"},
-        ),
-        {"prestate": prestate, "delta": delta},
-    )
-    assert mapping_only.ok, mapping_only.error
-    np.testing.assert_array_equal(mapping_only.outputs["poststate"], prestate + delta)
-    np.testing.assert_array_equal(mapping_only.outputs["derived"], -(prestate + delta))
-    artifact.j.intent.returns = canonical_returns
-
-    # The J return is the authoritative Layer-A output binding.  A redundant
-    # Layer-B output_mapping may restate it, but is not required to recover the
-    # already-authored post-state SSA edge.
-    artifact.j.boundary.output_mappings = []
+    artifact.j.boundary.output_mappings = [
+        OutputMapping("t2", "v1", "n1"),
+    ]
     return_only = ScalarLoweringRunner().run(
         ScalarLoweringSpec.create(
             artifact.j,
@@ -3210,41 +2486,13 @@ def test_scalar_e_j_dense_inout_consumes_prestate_and_returns_poststate() -> Non
         {"prestate": prestate, "delta": delta},
     )
     assert return_only.ok, return_only.error
-    np.testing.assert_array_equal(return_only.outputs["poststate"], prestate + delta)
-    np.testing.assert_array_equal(return_only.outputs["derived"], -(prestate + delta))
-    assert "inout_poststate_reload:a3:t0:v0" in return_only.metadata[
-        "boundary_projection"
-    ]["consumed"]
-
-    for access in artifact.j.boundary.accesses:
-        access.predicate = "i0 < x0"
-    artifact.j.boundary.accesses[0].fill_value = 0.0
-    artifact.j.boundary.accesses[2].fill_value = 0.0
-    artifact.j.boundary.domains = {"d0": "(0 <= i0) and (i0 < x0)"}
-    masked_poststate = ScalarLoweringRunner().run(
-        ScalarLoweringSpec.create(
-            artifact.j,
-            dims={"x0": 8},
-            input_bindings={"t0": "prestate", "t1": "delta"},
-            output_bindings={"t0": "poststate", "t2": "derived"},
-        ),
-        {"prestate": prestate, "delta": delta},
-    )
-    assert masked_poststate.ok, masked_poststate.error
     np.testing.assert_array_equal(
-        masked_poststate.outputs["poststate"], prestate + delta
+        return_only.outputs["poststate"], prestate + delta
     )
     np.testing.assert_array_equal(
-        masked_poststate.outputs["derived"], -(prestate + delta)
+        return_only.outputs["derived"], -(prestate + delta)
     )
-    consumed = set(masked_poststate.metadata["boundary_projection"]["consumed"])
-    assert "inout_poststate_reload:a3:t0:v0" in consumed
-    assert "predicate_dominated_load:a3:i0 < x0" in consumed
 
-    for access in artifact.j.boundary.accesses:
-        access.predicate = None
-        access.fill_value = None
-    artifact.j.boundary.domains = {}
     artifact.j.boundary.effects[2], artifact.j.boundary.effects[3] = (
         artifact.j.boundary.effects[3],
         artifact.j.boundary.effects[2],
@@ -3260,129 +2508,3 @@ def test_scalar_e_j_dense_inout_consumes_prestate_and_returns_poststate() -> Non
     )
     assert not rejected.ok
     assert "not a direct J operand" in (rejected.error or "")
-
-
-def test_scalar_e_j_consumes_multiple_closed_inout_store_reload_stages() -> None:
-    artifact = make_copy_artifact()
-    artifact.j.intent = IntentFunction.from_json(
-        {
-            "name": "scrc_j0",
-            "inputs": [
-                {"name": "t0", "dtype": "f32", "shape": ["x0"]},
-                {"name": "t1", "dtype": "f32", "shape": ["x0"]},
-            ],
-            "outputs": [
-                {"name": "t0", "dtype": "f32", "shape": ["x0"]},
-                {"name": "t2", "dtype": "f32", "shape": ["x0"]},
-            ],
-            "returns": [
-                {"output": "t0", "value": "v2"},
-                {"output": "t2", "value": "v3"},
-            ],
-            "body": [
-                {
-                    "id": "n0", "op": "map_binary", "result": "v0",
-                    "operands": ["t0", "t1"], "attrs": {"fn": "add"},
-                },
-                {
-                    "id": "n1", "op": "map_unary", "result": "v1",
-                    "operands": ["v0"], "attrs": {"fn": "neg"},
-                },
-                {
-                    "id": "n2", "op": "map_binary", "result": "v2",
-                    "operands": ["v1", "t1"], "attrs": {"fn": "add"},
-                },
-                {
-                    "id": "n3", "op": "map_unary", "result": "v3",
-                    "operands": ["v2"], "attrs": {"fn": "neg"},
-                },
-            ],
-        }
-    )
-    artifact.j.node_ids = {
-        "n0": "body[0]", "n1": "body[1]", "n2": "body[2]", "n3": "body[3]",
-    }
-    artifact.j.signature = LogicalSignature(
-        [
-            SignatureParameter(
-                "p0", ParameterKind.POINTER, ParameterMode.INOUT,
-                "f32", 1, logical_ref="t0",
-            ),
-            SignatureParameter(
-                "p1", ParameterKind.POINTER, ParameterMode.INPUT,
-                "f32", 1, logical_ref="t1",
-            ),
-            SignatureParameter(
-                "p2", ParameterKind.POINTER, ParameterMode.OUTPUT,
-                "f32", 1, logical_ref="t2",
-            ),
-            SignatureParameter(
-                "p3", ParameterKind.SCALAR, ParameterMode.VALUE, "i32",
-                logical_ref="x0",
-            ),
-        ]
-    )
-    artifact.j.boundary = Boundary(
-        accesses=[
-            BoundaryAccess(
-                "a0", AccessKind.LOAD, "t0", node_ref="n0",
-                index_expression="[i0]",
-            ),
-            BoundaryAccess(
-                "a1", AccessKind.LOAD, "t1", node_ref="n0",
-                index_expression="[i0]",
-            ),
-            BoundaryAccess(
-                "a2", AccessKind.STORE, "t0", node_ref="n0",
-                index_expression="[i0]",
-            ),
-            BoundaryAccess(
-                "a3", AccessKind.LOAD, "t0", node_ref="n1",
-                index_expression="[i0]",
-            ),
-            BoundaryAccess(
-                "a4", AccessKind.STORE, "t0", node_ref="n2",
-                index_expression="[i0]",
-            ),
-            BoundaryAccess(
-                "a5", AccessKind.LOAD, "t0", node_ref="n3",
-                index_expression="[i0]",
-            ),
-            BoundaryAccess(
-                "a6", AccessKind.STORE, "t2", node_ref="n3",
-                index_expression="[i0]",
-            ),
-        ],
-        effects=[
-            EffectSpec(EffectKind.READ, "t0", "n0", "e0", "a0"),
-            EffectSpec(EffectKind.READ, "t1", "n0", "e1", "a1"),
-            EffectSpec(EffectKind.WRITE, "t0", "n0", "e2", "a2"),
-            EffectSpec(EffectKind.READ, "t0", "n1", "e3", "a3"),
-            EffectSpec(EffectKind.WRITE, "t0", "n2", "e4", "a4"),
-            EffectSpec(EffectKind.READ, "t0", "n3", "e5", "a5"),
-            EffectSpec(EffectKind.WRITE, "t2", "n3", "e6", "a6"),
-        ],
-        output_mappings=[
-            OutputMapping("t0", "v2", "n2"),
-            OutputMapping("t2", "v3", "n3"),
-        ],
-    )
-    spec = ScalarLoweringSpec.create(
-        artifact.j,
-        dims={"x0": 8},
-        input_bindings={"t0": "prestate", "t1": "delta"},
-        output_bindings={"t0": "poststate", "t2": "derived"},
-    )
-    prestate = np.arange(8, dtype=np.float32)
-    delta = np.full(8, 0.5, dtype=np.float32)
-
-    result = ScalarLoweringRunner().run(
-        spec, {"prestate": prestate, "delta": delta}
-    )
-
-    assert result.ok, result.error
-    np.testing.assert_array_equal(result.outputs["poststate"], -prestate)
-    np.testing.assert_array_equal(result.outputs["derived"], prestate)
-    consumed = set(result.metadata["boundary_projection"]["consumed"])
-    assert "inout_poststate_reload:a3:t0:v0" in consumed
-    assert "inout_poststate_reload:a5:t0:v2" in consumed

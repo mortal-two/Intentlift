@@ -98,6 +98,8 @@ inline mlir::Value emitScalarUnary(mlir::OpBuilder &b, mlir::Location loc,
     // 2^x directly on the `ex2.approx.ftz.f` hardware op (no log2(e) prescale,
     // unlike exp) via the math.exp2 peephole.
     return b.create<math::Exp2Op>(loc, x);
+  if (fn == "log2")
+    return b.create<math::Log2Op>(loc, x);
   if (fn == "atan")
     return b.create<math::AtanOp>(loc, x);
   if (fn == "erf")
@@ -209,7 +211,16 @@ inline mlir::Value emitScalarCmpI(mlir::OpBuilder &b, mlir::Location loc,
 ///               general over any affine-broadcast Col — NOT a per-kernel branch.
 ///   ParamVector[P] — a small parameter vector addressed only through a
 ///                    structurally validated scalar/per-column intent.gather.
-enum class Role { Row, Col, Scalar, RowInt, PerRow, ColSeg, ParamVector };
+enum class Role {
+  Row,
+  Col,
+  Scalar,
+  RowInt,
+  PerRow,
+  ColSeg,
+  ParamVector,
+  Unused,
+};
 
 /// Default block size over the feature dim: largest power-of-two <= min(N,256)
 /// dividing-friendly. The PK harness passes the library kernel's geometry.

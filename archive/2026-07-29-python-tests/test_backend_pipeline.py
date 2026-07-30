@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import hashlib
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -9,6 +9,7 @@ import intentir.backend.cuda.compile as backend_compile
 import intentir.backend.cuda.pipeline as backend_pipeline
 from intentir.backend.cuda.pipeline import (
     LoweredProgram,
+    _transformation_record,
     execute_cuda_artifact,
     lower_to_cuda,
 )
@@ -30,19 +31,15 @@ def _kernel(*, cubin: bytes = b"\x7fELFfake") -> backend_compile.CompiledKernel:
 
 
 def _selection(kind: str) -> VariantSelection:
-    source_digest = hashlib.sha256(_SOURCE.encode("utf-8")).hexdigest()
     if kind == "generic":
         return VariantSelection(
             pipeline_kind="generic",
             target=LoweringTarget(),
-            input_sha256=source_digest,
             fast_path_id=None,
             pass_argument=None,
             scf_to_cf=False,
-            probe_output_sha256=None,
             attempts=(),
         )
-    specialized_digest = hashlib.sha256(_SPECIALIZED.encode("utf-8")).hexdigest()
     attempt = ProbeAttempt(
         fast_path_id="cuda.test.v1",
         pass_argument="-convert-intent-test-to-gpu",
@@ -50,16 +47,13 @@ def _selection(kind: str) -> VariantSelection:
         status="selected",
         direct_hit=True,
         gpu_launch_count=1,
-        probe_output_sha256=specialized_digest,
     )
     return VariantSelection(
         pipeline_kind="specialized",
         target=LoweringTarget(),
-        input_sha256=source_digest,
         fast_path_id="cuda.test.v1",
         pass_argument="-convert-intent-test-to-gpu",
         scf_to_cf=True,
-        probe_output_sha256=specialized_digest,
         attempts=(attempt,),
     )
 
@@ -87,8 +81,90 @@ def test_specialized_pipeline_replays_the_exact_probe_before_codegen(
 
     assert result.selection.pipeline_kind == "specialized"
     assert observed == {"module": _SPECIALIZED, "scf_to_cf": True}
-    assert result.specialized_mlir_sha256 == selection.probe_output_sha256
     assert result.to_record()["kernels"][0]["cubin_is_elf"] is True
+
+
+def test_cpp_authored_concrete_state_record_is_decoded_without_name_rules() -> None:
+    record = _transformation_record(
+        """
+        func.func @opaque() attributes {
+          intent.backend.all_reduce_count = 0 : i64,
+          intent.backend.barrier_count = 2 : i64,
+          intent.backend.block_threads = 64 : i64,
+          intent.backend.rows_per_block = 2 : i64,
+          intent.backend.d_partitions = 4 : i64,
+          intent.backend.accumulator_chains = 2 : i64,
+          intent.backend.stage_count = 3 : i64,
+          intent.backend.reduction_parts = 16 : i64,
+          intent.backend.fma_count = 4 : i64,
+          intent.backend.approximate_div_count = 1 : i64,
+          intent.backend.folded_constexpr_select_count = 0 : i64,
+          intent.backend.predicated_value_if_count = 0 : i64,
+          intent.backend.lowering_path_kind = "row_reduction",
+          intent.backend.reduction_topology = "workgroup_hierarchical",
+          intent.backend.shuffle_count = 20 : i64,
+          intent.backend.transformation_trace = [
+            "cuda.row_reduction.read_once.v1",
+            "cuda.reduction.workgroup_hierarchical.v1",
+            "cuda.numeric.fma.f32.v1",
+            "cuda.numeric.div_reciprocal_approx.f32.v1"
+          ],
+          intent.launch_plan = {block = [64, 1, 1], grid = [7, 1, 1],
+            per_thread_tile = 8 : i64, pipeline_depth = 1 : i64,
+            smem = 32 : i64, split_factor = 1 : i64,
+            vector_width = 4 : i64}
+        } { return }
+        """
+    )
+
+    assert record is not None
+    assert record.fma_count == 4
+    assert record.approximate_div_count == 1
+    assert record.predicated_value_if_count == 0
+    assert record.folded_constexpr_select_count == 0
+    assert record.rows_per_block == 2
+    assert record.to_dict()["rows_per_block"] == 2
+    assert record.warps_per_row == 1
+    assert record.d_partitions == 4
+    assert record.to_dict()["d_partitions"] == 4
+    assert record.accumulator_chains == 2
+    assert record.to_dict()["accumulator_chains"] == 2
+    assert record.stage_count == 3
+    assert record.reduction_parts == 16
+    assert record.observation_changing
+    assert record.reduction_topology == "workgroup_hierarchical"
+    canonical_collective = replace(
+        record,
+        reduction_topology="gpu_all_reduce",
+        fma_count=0,
+        approximate_div_count=0,
+        approximation_mode="none",
+        accumulator_chains=1,
+    )
+    assert not canonical_collective.observation_changing
+    multirow_prefix = replace(
+        canonical_collective,
+        reduction_topology="sorted_prefix_multirow_warp_early_stop",
+    )
+    assert multirow_prefix.observation_changing
+    wide_prefix = replace(
+        canonical_collective,
+        reduction_topology=(
+            "sorted_prefix_warp_scan_wide_epilogue_cross_multiply"
+        ),
+    )
+    assert wide_prefix.observation_changing
+    assert [item.to_dict() for item in record.launch_plans] == [
+        {
+            "grid": [7, 1, 1],
+            "block": [64, 1, 1],
+            "smem_bytes": 32,
+            "per_thread_tile": 8,
+            "vector_width": 4,
+            "pipeline_depth": 1,
+            "split_factor": 1,
+        }
+    ]
 
 
 def test_generic_pipeline_uses_the_real_generic_compiler_entrypoint(
@@ -153,7 +229,6 @@ def test_lowered_program_rejects_non_elf_device_artifacts() -> None:
         LoweredProgram(
             selection=selection,
             kernels=(_kernel(cubin=b"not-elf"),),
-            source_mlir_sha256=selection.input_sha256,
         )
 
 
@@ -165,7 +240,6 @@ def test_execute_artifact_reuses_persisted_kernels_without_compiling(
     program = LoweredProgram(
         selection=selection,
         kernels=(kernel,),
-        source_mlir_sha256=selection.input_sha256,
     )
     observed: dict[str, object] = {}
 
@@ -192,37 +266,6 @@ def test_execute_artifact_reuses_persisted_kernels_without_compiling(
         "kernels": [kernel],
         "aliases": {"out0": "x"},
     }
-
-
-def test_execute_artifact_rejects_a_different_source_before_launch() -> None:
-    selection = _selection("generic")
-    program = LoweredProgram(
-        selection=selection,
-        kernels=(_kernel(),),
-        source_mlir_sha256=selection.input_sha256,
-    )
-
-    with pytest.raises(ValueError, match="differs from the compiled"):
-        execute_cuda_artifact(
-            program,
-            "module { func.func @different() { return } }\n",
-            {},
-        )
-
-
-def test_specialized_pipeline_fails_if_replay_differs_from_probe(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    selection = _selection("specialized")
-    monkeypatch.setattr(backend_pipeline, "select_variant", lambda *a, **k: selection)
-    monkeypatch.setattr(
-        backend_compile,
-        "_run",
-        lambda command, stdin=None: _SPECIALIZED + "// changed\n",
-    )
-
-    with pytest.raises(RuntimeError, match="changed between selection"):
-        lower_to_cuda(_SOURCE)
 
 
 @pytest.mark.skipif(

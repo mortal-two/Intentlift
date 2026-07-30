@@ -1,4 +1,5 @@
 // RUN: intent-opt -convert-intent-row-reduction-to-gpu=block-threads=4 %s | FileCheck %s
+// RUN: intent-opt '-convert-intent-row-reduction-to-gpu=block-threads=4 approximate-div=true' %s | FileCheck %s --check-prefix=APPROX
 
 // softmax: two sequential last-axis reduces (max then sum) with a max-shift exp
 // between them, lowered to ONE read-once gpu.launch. Two cooperative passes ->
@@ -16,6 +17,9 @@
 // CHECK:         gpu.all_reduce{{.*}}add
 // CHECK:         gpu.terminator
 // CHECK-NOT:     intent.
+// APPROX-LABEL: func.func @softmax(
+// APPROX-SAME: intent.backend.approximate_div_count = 1 : i64
+// APPROX-COUNT-1: arith.divf {{.*}} {intent.cuda.approximate_div}
 func.func @softmax(%x: tensor<4x8xf32>) -> tensor<4x8xf32> {
   %m = intent.reduce %x {fn = "max", axes = [1], assoc = "associative"} : (tensor<4x8xf32>) -> tensor<4x1xf32>
   %s = intent.map_binary %x, %m {fn = "sub"} : (tensor<4x8xf32>, tensor<4x1xf32>) -> tensor<4x8xf32>

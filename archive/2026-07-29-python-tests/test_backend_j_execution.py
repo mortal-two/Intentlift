@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 
 import numpy as np
@@ -15,7 +14,7 @@ from intentir.verify.gate2.scalar import ScalarLoweringRunner, ScalarLoweringSpe
 
 class _FakeCudaArtifact:
     def __init__(self, source: str) -> None:
-        self.source_mlir_sha256 = hashlib.sha256(source.encode()).hexdigest()
+        self.source = source
 
 
 def _add_artifact():

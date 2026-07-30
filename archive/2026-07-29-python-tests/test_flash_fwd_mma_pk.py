@@ -141,8 +141,8 @@ class _FlashKernel:
         # This kills the small-shape launch-overhead gap so flash-fwd reaches
         # parity at ALL shapes, not just the GPU-bound large ones. Correctness
         # harnesses synchronize explicitly after run().
-        from intentir.backend.cuda.orchestrate import CachedLauncher
-        self._cached = CachedLauncher(self.func, self.grid, self.block,
+        from intentir.backend.cuda.orchestrate import PreparedLauncher
+        self._cached = PreparedLauncher(self.func, self.grid, self.block,
                                       self.plan, shared=self.shared)
 
     def run(self, q, k, v, scale: float, o):

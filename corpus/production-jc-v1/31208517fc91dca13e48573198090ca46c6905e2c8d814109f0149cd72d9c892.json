@@ -1,0 +1,242 @@
+{
+  "c": {
+    "slots": [
+      {
+        "kind": "constexpr",
+        "name": "c0",
+        "required": true,
+        "role": "constexpr",
+        "value_type": "i32"
+      }
+    ],
+    "values": {
+      "c0": 1024
+    }
+  },
+  "c_digest": "d154dee698722aaea05fe8a0e8ea507895182551614ee686415cd5b66e877e93",
+  "j": {
+    "boundary": {
+      "access_guard_relations": [],
+      "accesses": [
+        {
+          "access_id": "a0",
+          "fill_value": 0.0,
+          "index_expression": "[idx0, idx1]",
+          "kind": "load",
+          "node_ref": "n0",
+          "predicate": "idx1 < x0",
+          "tensor": "t0"
+        },
+        {
+          "access_id": "a1",
+          "index_expression": "[idx0]",
+          "kind": "store",
+          "node_ref": "n1",
+          "tensor": "t1"
+        }
+      ],
+      "aliases": [],
+      "broadcasts": [],
+      "consumer_extensions": [],
+      "domains": {
+        "d0": "(0 <= idx0) and (idx0 < 2)",
+        "d1": "(0 <= idx1) and (idx1 < x0)"
+      },
+      "effects": [
+        {
+          "access_ref": "a0",
+          "effect_id": "e0",
+          "kind": "read",
+          "node_ref": "n0",
+          "target": "t0"
+        },
+        {
+          "access_ref": "a1",
+          "effect_id": "e1",
+          "kind": "write",
+          "node_ref": "n1",
+          "target": "t1"
+        }
+      ],
+      "index_bounds": [],
+      "output_mappings": [
+        {
+          "node_ref": "n1",
+          "output": "t1",
+          "value": "v1"
+        }
+      ],
+      "realization_authorizations": [
+        {
+          "auth_id": "u0",
+          "kind": "reassociation",
+          "source_dtype": "f32",
+          "subject_ref": "n1",
+          "target_dtype": "f32"
+        }
+      ],
+      "reductions": [
+        {
+          "identity": 0.0,
+          "masked_contribution": 0.0,
+          "node_ref": "n1",
+          "tile_axis": 0
+        }
+      ],
+      "result_relations": [
+        {
+          "kind": "tolerance",
+          "output": "t1"
+        }
+      ],
+      "updates": []
+    },
+    "dimension_constraints": [],
+    "intent": {
+      "intent_function": {
+        "body": [
+          {
+            "attrs": {
+              "fn": "mul"
+            },
+            "id": "n0",
+            "op": "map_binary",
+            "operands": [
+              "t0",
+              "t0"
+            ],
+            "result": "v0",
+            "type": {
+              "dtype": "f32",
+              "shape": [
+                2,
+                "x0"
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "assoc": "float_nondeterministic",
+              "axes": [
+                1
+              ],
+              "fn": "sum"
+            },
+            "id": "n1",
+            "op": "reduce",
+            "operands": [
+              "v0"
+            ],
+            "result": "v1",
+            "type": {
+              "dtype": "f32",
+              "shape": [
+                2
+              ]
+            }
+          }
+        ],
+        "inputs": [
+          {
+            "dtype": "f32",
+            "name": "t0",
+            "shape": [
+              2,
+              "x0"
+            ]
+          }
+        ],
+        "name": "scrc_j0",
+        "outputs": [
+          {
+            "dtype": "f32",
+            "name": "t1",
+            "shape": [
+              2
+            ]
+          }
+        ],
+        "returns": [
+          {
+            "output": "t1",
+            "value": "v1"
+          }
+        ]
+      }
+    },
+    "kernel_id": "scrc_k0",
+    "node_ids": {
+      "n0": "body[0]",
+      "n1": "body[1]"
+    },
+    "scopes": [
+      {
+        "captures": [],
+        "definitions": [
+          "t0",
+          "v0",
+          "v1"
+        ],
+        "effects": [
+          "e0",
+          "e1"
+        ],
+        "kind": "function",
+        "parent_scope": null,
+        "scope_id": "q0"
+      }
+    ],
+    "signature": {
+      "parameters": [
+        {
+          "dtype": "f32",
+          "kind": "tensor",
+          "logical_ref": "t0",
+          "mode": "input",
+          "name": "p0",
+          "rank": 2
+        },
+        {
+          "dtype": "f32",
+          "kind": "tensor",
+          "logical_ref": "t1",
+          "mode": "output",
+          "name": "p1",
+          "rank": 1
+        },
+        {
+          "dtype": "i32",
+          "kind": "scalar",
+          "logical_ref": "x0",
+          "mode": "value",
+          "name": "p2",
+          "rank": 0
+        }
+      ]
+    },
+    "storage": [
+      {
+        "crosses_iteration": false,
+        "escapes": true,
+        "init_event": {
+          "kind": "effect",
+          "ref": "e1"
+        },
+        "last_use_event": {
+          "kind": "scope_exit",
+          "ref": "q0"
+        },
+        "members": [
+          "t1"
+        ],
+        "mutability": "write_once",
+        "scope_id": "q0",
+        "storage_id": "b0"
+      }
+    ],
+    "value_dimension_relations": []
+  },
+  "j_digest": "9e3e5a9d43a833a4ec52a385314f0faa60c982dfa9ece0f2e70396b5c3d8a464",
+  "schema_version": "intentir.production.jc-snapshot.v1",
+  "snapshot_digest": "31208517fc91dca13e48573198090ca46c6905e2c8d814109f0149cd72d9c892"
+}

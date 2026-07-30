@@ -1,0 +1,722 @@
+{
+  "c": {
+    "slots": [
+      {
+        "axis_ref": 1,
+        "kind": "constexpr",
+        "name": "c0",
+        "required": true,
+        "role": "reduction_tile_extent",
+        "subject_ref": "n2",
+        "value_type": "int"
+      }
+    ],
+    "values": {
+      "c0": 128
+    }
+  },
+  "c_digest": "1837e4c5e61f3fe5f5f0fc40fd3c8a86066cf9c237ec2b42f150d7a229e8da5d",
+  "j": {
+    "boundary": {
+      "access_guard_relations": [],
+      "accesses": [
+        {
+          "access_id": "a0",
+          "fill_value": 0,
+          "index_expression": "[k0, k1]",
+          "kind": "load",
+          "node_ref": "n0",
+          "predicate": "k1 < t3",
+          "tensor": "t0"
+        },
+        {
+          "access_id": "a1",
+          "fill_value": 0,
+          "index_expression": "[k0, k1]",
+          "kind": "load",
+          "node_ref": "n0",
+          "predicate": "k1 < t3",
+          "tensor": "t1"
+        },
+        {
+          "access_id": "a2",
+          "index_expression": "[k0, k1]",
+          "kind": "store",
+          "node_ref": "n0",
+          "predicate": "k1 < t3",
+          "tensor": "t8"
+        },
+        {
+          "access_id": "a3",
+          "fill_value": 0,
+          "index_expression": "[k1]",
+          "kind": "load",
+          "node_ref": "n11",
+          "predicate": "k1 < t3",
+          "tensor": "t2"
+        },
+        {
+          "access_id": "a4",
+          "index_expression": "[k0]",
+          "kind": "store",
+          "node_ref": "n9",
+          "tensor": "t9"
+        },
+        {
+          "access_id": "a5",
+          "index_expression": "[k0, k1]",
+          "kind": "store",
+          "node_ref": "n12",
+          "predicate": "k1 < t3",
+          "tensor": "t7"
+        }
+      ],
+      "aliases": [],
+      "broadcasts": [
+        {
+          "axes": [
+            0
+          ],
+          "node_ref": "n4",
+          "operand": "v2"
+        },
+        {
+          "axes": [
+            0
+          ],
+          "node_ref": "n8",
+          "operand": "v6"
+        },
+        {
+          "axes": [
+            1
+          ],
+          "node_ref": "n10",
+          "operand": "t9"
+        },
+        {
+          "axes": [
+            0
+          ],
+          "node_ref": "n11",
+          "operand": "t5"
+        },
+        {
+          "axes": [
+            0
+          ],
+          "node_ref": "n12",
+          "operand": "v9"
+        }
+      ],
+      "consumer_extensions": [
+        {
+          "access_ref": "a0",
+          "consumer_ref": "n2",
+          "identity_law": "two_sided",
+          "operand_index": 0,
+          "outside": {
+            "dtype": "f32",
+            "value": 0
+          },
+          "tile_axis": 0
+        },
+        {
+          "access_ref": "a1",
+          "consumer_ref": "n2",
+          "identity_law": "two_sided",
+          "operand_index": 0,
+          "outside": {
+            "dtype": "f32",
+            "value": 0
+          },
+          "tile_axis": 0
+        }
+      ],
+      "domains": {
+        "d0": "(0 <= k0) and (k0 < 2)",
+        "d1": "(0 <= k1) and (k1 < x0)"
+      },
+      "effects": [
+        {
+          "access_ref": "a0",
+          "effect_id": "e0",
+          "kind": "read",
+          "node_ref": "n0",
+          "target": "t0"
+        },
+        {
+          "access_ref": "a1",
+          "effect_id": "e1",
+          "kind": "read",
+          "node_ref": "n0",
+          "target": "t1"
+        },
+        {
+          "access_ref": "a2",
+          "effect_id": "e2",
+          "kind": "write",
+          "node_ref": "n0",
+          "target": "t8"
+        },
+        {
+          "access_ref": "a3",
+          "effect_id": "e3",
+          "kind": "read",
+          "node_ref": "n11",
+          "target": "t2"
+        },
+        {
+          "access_ref": "a4",
+          "effect_id": "e4",
+          "kind": "write",
+          "node_ref": "n9",
+          "target": "t9"
+        },
+        {
+          "access_ref": "a5",
+          "effect_id": "e5",
+          "kind": "write",
+          "node_ref": "n12",
+          "target": "t7"
+        }
+      ],
+      "index_bounds": [],
+      "output_mappings": [],
+      "realization_authorizations": [
+        {
+          "auth_id": "u0",
+          "kind": "numeric_cast",
+          "source_dtype": "i32",
+          "subject_ref": "n3",
+          "target_dtype": "f32"
+        },
+        {
+          "auth_id": "u1",
+          "kind": "signed_widen",
+          "source_dtype": "i32",
+          "subject_ref": "d0",
+          "target_dtype": "i64"
+        }
+      ],
+      "reductions": [
+        {
+          "identity": 0,
+          "node_ref": "n2",
+          "tile_axis": 0
+        }
+      ],
+      "result_relations": [
+        {
+          "kind": "tolerance",
+          "output": "t7"
+        },
+        {
+          "kind": "exact",
+          "output": "t8"
+        },
+        {
+          "kind": "tolerance",
+          "output": "t9"
+        }
+      ],
+      "updates": []
+    },
+    "dimension_constraints": [],
+    "intent": {
+      "intent_function": {
+        "body": [
+          {
+            "attrs": {
+              "fn": "add"
+            },
+            "id": "n0",
+            "op": "map_binary",
+            "operands": [
+              "t0",
+              "t1"
+            ],
+            "result": "t8",
+            "type": {
+              "dtype": "f32",
+              "shape": [
+                2,
+                "x0"
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "fn": "mul"
+            },
+            "id": "n1",
+            "op": "map_binary",
+            "operands": [
+              "t8",
+              "t8"
+            ],
+            "result": "v0",
+            "type": {
+              "dtype": "f32",
+              "shape": [
+                2,
+                "x0"
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "assoc": "float_nondeterministic",
+              "axes": [
+                1
+              ],
+              "fn": "sum"
+            },
+            "id": "n2",
+            "op": "reduce",
+            "operands": [
+              "v0"
+            ],
+            "result": "v1",
+            "type": {
+              "dtype": "f32",
+              "shape": [
+                2
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "to_dtype": "f32"
+            },
+            "id": "n3",
+            "op": "cast",
+            "operands": [
+              "t3"
+            ],
+            "result": "v2",
+            "type": {
+              "dtype": "f32",
+              "shape": []
+            }
+          },
+          {
+            "attrs": {
+              "fn": "div"
+            },
+            "id": "n4",
+            "op": "map_binary",
+            "operands": [
+              "v1",
+              "v2"
+            ],
+            "result": "v3",
+            "type": {
+              "dtype": "f32",
+              "shape": [
+                2
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "dtype": "i32",
+              "shape": [],
+              "value": -1
+            },
+            "id": "n5",
+            "op": "const",
+            "result": "v4",
+            "type": {
+              "dtype": "i32",
+              "shape": []
+            }
+          },
+          {
+            "attrs": {
+              "fn": "eq"
+            },
+            "id": "n6",
+            "op": "map_binary",
+            "operands": [
+              "t6",
+              "v4"
+            ],
+            "result": "v5",
+            "type": {
+              "dtype": "i1",
+              "shape": []
+            }
+          },
+          {
+            "id": "n7",
+            "op": "select",
+            "operands": [
+              "v5",
+              "t4",
+              "t4"
+            ],
+            "result": "v6",
+            "type": {
+              "dtype": "f32",
+              "shape": []
+            }
+          },
+          {
+            "attrs": {
+              "fn": "add"
+            },
+            "id": "n8",
+            "op": "map_binary",
+            "operands": [
+              "v3",
+              "v6"
+            ],
+            "result": "v7",
+            "type": {
+              "dtype": "f32",
+              "shape": [
+                2
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "fn": "rsqrt"
+            },
+            "id": "n9",
+            "op": "map_unary",
+            "operands": [
+              "v7"
+            ],
+            "result": "t9",
+            "type": {
+              "dtype": "f32",
+              "shape": [
+                2
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "fn": "mul"
+            },
+            "id": "n10",
+            "op": "map_binary",
+            "operands": [
+              "t8",
+              "t9"
+            ],
+            "result": "v8",
+            "type": {
+              "dtype": "f32",
+              "shape": [
+                2,
+                "x0"
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "fn": "add"
+            },
+            "id": "n11",
+            "op": "map_binary",
+            "operands": [
+              "t5",
+              "t2"
+            ],
+            "result": "v9",
+            "type": {
+              "dtype": "f32",
+              "shape": [
+                "x0"
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "fn": "mul"
+            },
+            "id": "n12",
+            "op": "map_binary",
+            "operands": [
+              "v8",
+              "v9"
+            ],
+            "result": "t7",
+            "type": {
+              "dtype": "f32",
+              "shape": [
+                2,
+                "x0"
+              ]
+            }
+          }
+        ],
+        "inputs": [
+          {
+            "dtype": "f32",
+            "name": "t0",
+            "shape": [
+              2,
+              "x0"
+            ]
+          },
+          {
+            "dtype": "f32",
+            "name": "t1",
+            "shape": [
+              2,
+              "x0"
+            ]
+          },
+          {
+            "dtype": "f32",
+            "name": "t2",
+            "shape": [
+              "x0"
+            ]
+          },
+          {
+            "dtype": "i32",
+            "name": "t3",
+            "shape": []
+          },
+          {
+            "dtype": "f32",
+            "name": "t4",
+            "shape": []
+          },
+          {
+            "dtype": "f32",
+            "name": "t5",
+            "shape": []
+          },
+          {
+            "dtype": "i32",
+            "name": "t6",
+            "shape": []
+          }
+        ],
+        "name": "scrc_j0",
+        "outputs": [
+          {
+            "dtype": "f32",
+            "name": "t7",
+            "shape": [
+              2,
+              "x0"
+            ]
+          },
+          {
+            "dtype": "f32",
+            "name": "t8",
+            "shape": [
+              2,
+              "x0"
+            ]
+          },
+          {
+            "dtype": "f32",
+            "name": "t9",
+            "shape": [
+              2
+            ]
+          }
+        ]
+      }
+    },
+    "kernel_id": "scrc_k0",
+    "node_ids": {
+      "n0": "body[0]",
+      "n1": "body[1]",
+      "n10": "body[10]",
+      "n11": "body[11]",
+      "n12": "body[12]",
+      "n2": "body[2]",
+      "n3": "body[3]",
+      "n4": "body[4]",
+      "n5": "body[5]",
+      "n6": "body[6]",
+      "n7": "body[7]",
+      "n8": "body[8]",
+      "n9": "body[9]"
+    },
+    "scopes": [
+      {
+        "captures": [],
+        "definitions": [
+          "t0",
+          "t1",
+          "t2",
+          "t3",
+          "t4",
+          "t5",
+          "t6",
+          "t7",
+          "t8",
+          "t9",
+          "v0",
+          "v1",
+          "v2",
+          "v3",
+          "v4",
+          "v5",
+          "v6",
+          "v7",
+          "v8",
+          "v9"
+        ],
+        "effects": [
+          "e0",
+          "e1",
+          "e2",
+          "e3",
+          "e4",
+          "e5"
+        ],
+        "kind": "function",
+        "parent_scope": null,
+        "scope_id": "q0"
+      }
+    ],
+    "signature": {
+      "parameters": [
+        {
+          "dtype": "f32",
+          "kind": "pointer",
+          "logical_ref": "t7",
+          "mode": "output",
+          "name": "p0",
+          "rank": 2
+        },
+        {
+          "dtype": "i64",
+          "kind": "scalar",
+          "mode": "value",
+          "name": "p1",
+          "rank": 0
+        },
+        {
+          "dtype": "f32",
+          "kind": "pointer",
+          "logical_ref": "t8",
+          "mode": "output",
+          "name": "p2",
+          "rank": 2
+        },
+        {
+          "dtype": "i64",
+          "kind": "scalar",
+          "mode": "value",
+          "name": "p3",
+          "rank": 0
+        },
+        {
+          "dtype": "f32",
+          "kind": "pointer",
+          "logical_ref": "t0",
+          "mode": "input",
+          "name": "p4",
+          "rank": 2
+        },
+        {
+          "dtype": "i64",
+          "kind": "scalar",
+          "mode": "value",
+          "name": "p5",
+          "rank": 0
+        },
+        {
+          "dtype": "f32",
+          "kind": "pointer",
+          "logical_ref": "t1",
+          "mode": "input",
+          "name": "p6",
+          "rank": 2
+        },
+        {
+          "dtype": "i64",
+          "kind": "scalar",
+          "mode": "value",
+          "name": "p7",
+          "rank": 0
+        },
+        {
+          "dtype": "f32",
+          "kind": "pointer",
+          "logical_ref": "t2",
+          "mode": "input",
+          "name": "p8",
+          "rank": 1
+        },
+        {
+          "dtype": "i64",
+          "kind": "scalar",
+          "mode": "value",
+          "name": "p9",
+          "rank": 0
+        },
+        {
+          "dtype": "f32",
+          "kind": "pointer",
+          "logical_ref": "t9",
+          "mode": "output",
+          "name": "p10",
+          "rank": 1
+        },
+        {
+          "dtype": "i64",
+          "kind": "scalar",
+          "mode": "value",
+          "name": "p11",
+          "rank": 0
+        },
+        {
+          "dtype": "i32",
+          "kind": "scalar",
+          "logical_ref": "t3",
+          "mode": "value",
+          "name": "p12",
+          "rank": 0
+        },
+        {
+          "dtype": "f32",
+          "kind": "scalar",
+          "logical_ref": "t4",
+          "mode": "value",
+          "name": "p13",
+          "rank": 0
+        },
+        {
+          "dtype": "f32",
+          "kind": "scalar",
+          "logical_ref": "t5",
+          "mode": "value",
+          "name": "p14",
+          "rank": 0
+        },
+        {
+          "dtype": "i32",
+          "kind": "constexpr",
+          "logical_ref": "t6",
+          "mode": "value",
+          "name": "p15",
+          "rank": 0
+        }
+      ]
+    },
+    "storage": [],
+    "value_dimension_relations": [
+      {
+        "dimension_ref": "x0",
+        "relation": "eq",
+        "value_ref": "t3"
+      }
+    ]
+  },
+  "j_digest": "1b04e15b1ad654aa5f53b887ad6fa2f72ab2f5203038ab9cad9b454424a046c6",
+  "schema_version": "intentir.production.jc-snapshot.v1",
+  "snapshot_digest": "bcc2f3f275fd00b249a9623c6db80da1570310b20d46ff60fcd20d823728b5e7"
+}

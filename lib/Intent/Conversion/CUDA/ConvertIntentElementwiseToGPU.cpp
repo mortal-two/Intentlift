@@ -1,11 +1,10 @@
 //===- ConvertIntentElementwiseToGPU.cpp - elementwise -> gpu.launch ------===//
 //
 // Lowers a PURE-elementwise intent func (a straight-line map_unary/map_binary
-// graph with NO reduce) to ONE read-once, block-cooperative `gpu.launch`: one
-// block per row, the feature dim split over the block's threads, each thread
-// caching its columns once in SSA registers (NOT a memref.alloca), per-row
-// uniform scalars hoisted once, and a multi-output epilogue writing each result
-// from the register tile. There is NO `gpu.all_reduce` — nothing is reduced.
+// graph with NO reduce) to ONE block-cooperative `gpu.launch`. Small rows use a
+// read-once per-thread SSA register tile; large tensors switch to a bounded-size
+// flat grid-stride loop so compiler IR does not grow with the element count.
+// There is NO `gpu.all_reduce` — nothing is reduced.
 //
 // This is the sibling of `convert-intent-row-reduction-to-gpu`: that pass owns
 // the funcs with >=1 reduce; this pass owns the pure-map funcs. The two match()
@@ -49,6 +48,8 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 
+#include <string>
+
 namespace intent {
 #define GEN_PASS_DEF_CONVERTINTENTELEMENTWISETOGPU
 #include "Intent/Conversion/CUDA/Passes.h.inc"
@@ -82,6 +83,74 @@ static Value emitSplatScalarConstant(OpBuilder &b, Location loc,
       loc, b.getIntegerAttr(intTy, dense.getSplatValue<APInt>()));
 }
 
+static void attachElementwiseStateReceipt(func::FuncOp lowered, int64_t threads,
+                                          int64_t gridBlocks,
+                                          bool gridStrideFlat,
+                                          int64_t gridStrideUnroll,
+                                          int64_t logicalTileElements,
+                                          int64_t vectorWidth,
+                                          StringRef approximationMode,
+                                          bool oneDimensionalResults,
+                                          unsigned hostValueCaptureCount) {
+  MLIRContext *context = lowered.getContext();
+  SmallVector<Attribute> trace{
+      StringAttr::get(context, "cuda.elementwise.row.vectorized.v1")};
+  if (oneDimensionalResults)
+    trace.push_back(
+        StringAttr::get(context, "cuda.elementwise.rank1.output.v1"));
+  if (gridStrideFlat)
+    trace.push_back(
+        StringAttr::get(context, "cuda.elementwise.flat_grid_stride.v1"));
+  if (gridStrideFlat && gridStrideUnroll > 1)
+    trace.push_back(StringAttr::get(
+        context, "cuda.elementwise.flat_grid_stride.unroll.v1"));
+  if (logicalTileElements > 0)
+    trace.push_back(
+        StringAttr::get(context, "cuda.elementwise.flat_logical_tile.v1"));
+  if (approximationMode == "native_tanh")
+    trace.push_back(
+        StringAttr::get(context, "cuda.numeric.tanh_native_ptx.f32.v1"));
+  else if (approximationMode == "stable_tanh")
+    trace.push_back(
+        StringAttr::get(context, "cuda.numeric.tanh_stable_ex2.f32.v1"));
+  if (hostValueCaptureCount != 0)
+    trace.push_back(
+        StringAttr::get(context, "cuda.b.uniform_host_value_capture.v1"));
+  auto i64 = IntegerType::get(context, 64);
+  lowered->setAttr("intent.backend.lowering_path_kind",
+                   StringAttr::get(context, "elementwise"));
+  lowered->setAttr("intent.backend.reduction_topology",
+                   StringAttr::get(context, "none"));
+  lowered->setAttr("intent.backend.approximation_mode",
+                   StringAttr::get(context, approximationMode));
+  lowered->setAttr("intent.backend.transformation_trace",
+                   ArrayAttr::get(context, trace));
+  lowered->setAttr("intent.backend.fma_count", IntegerAttr::get(i64, 0));
+  lowered->setAttr("intent.backend.shuffle_count", IntegerAttr::get(i64, 0));
+  lowered->setAttr("intent.backend.barrier_count", IntegerAttr::get(i64, 0));
+  lowered->setAttr("intent.backend.all_reduce_count", IntegerAttr::get(i64, 0));
+  lowered->setAttr("intent.backend.block_threads",
+                   IntegerAttr::get(i64, threads));
+  lowered->setAttr("intent.backend.grid_blocks",
+                   IntegerAttr::get(i64, gridBlocks));
+  lowered->setAttr("intent.backend.grid_stride_loop_count",
+                   IntegerAttr::get(i64, gridStrideFlat ? 1 : 0));
+  lowered->setAttr("intent.backend.grid_stride_unroll",
+                   IntegerAttr::get(i64, gridStrideUnroll));
+  lowered->setAttr("intent.backend.logical_tile_elements",
+                   IntegerAttr::get(i64, logicalTileElements));
+  lowered->setAttr("intent.backend.vector_width",
+                   IntegerAttr::get(i64, vectorWidth));
+  lowered->setAttr("intent.backend.predicated_value_if_count",
+                   IntegerAttr::get(i64, 0));
+  lowered->setAttr("intent.backend.folded_constexpr_select_count",
+                   IntegerAttr::get(i64, 0));
+  lowered->setAttr("intent.backend.host_value_capture_count",
+                   IntegerAttr::get(i64, hostValueCaptureCount));
+  lowered->setAttr("intent.backend.epilogue_load_motion_count",
+                   IntegerAttr::get(i64, 0));
+}
+
 /// One func's pure-elementwise lowering. Reads the original (tensor) func body,
 /// builds a new memref+gpu.launch func with the same name, erases the old.
 struct ElementwiseLowering {
@@ -89,6 +158,11 @@ struct ElementwiseLowering {
   unsigned blockThreads;
   bool requestFlattenContiguous;
   unsigned requestFlatVectorWidth;
+  unsigned requestGridStrideUnroll;
+  unsigned requestLogicalTileElements;
+  unsigned requestRowVectorWidth;
+  bool requestPromoteUniformScalars;
+  std::string requestTanhApproximation;
 
   // The 2-D logical layout of one register-tile access. A Row/result arg is
   // accessed at element (row*rowStride + col*colStride) of its bare pointer; the
@@ -104,7 +178,10 @@ struct ElementwiseLowering {
 
   // populated by match()
   int64_t M = 0, N = 0, T = 0, K = 0, gridBlocks = 0;
+  bool oneDimensionalResults = false;
   bool flattenContiguous = false;
+  bool gridStrideFlat = false;
+  bool tailMasked = false;
   // Contiguous vectorization (N3/N4): prefer float4 when K is divisible by 4,
   // otherwise use float2 when K is divisible by 2. Every Row arg/result must
   // be contiguous and the body must have no iota/select scalar gather. This
@@ -114,6 +191,7 @@ struct ElementwiseLowering {
   int64_t numVectorTiles = 0;
   Type storageType;
   Type computeType;
+  bool containsTanh = false;
   SmallVector<Role> argRoles;        // per func arg
   SmallVector<Type> argElementTypes; // per func arg storage/broadcast type
   SmallVector<int64_t> argRowDiv;    // per arg: 1, or M/d0 for a broadcast Row
@@ -123,9 +201,18 @@ struct ElementwiseLowering {
   SmallVector<Value> outputVals;     // the returned values (>=1, all [M,N])
 
   ElementwiseLowering(func::FuncOp fn, unsigned bt, bool flatten,
-                      unsigned flatWidth)
+                      unsigned flatWidth, unsigned gridUnroll,
+                      unsigned logicalTileElements,
+                      unsigned rowVectorWidth,
+                      bool promoteUniformScalars,
+                      StringRef tanhApproximation)
       : fn(fn), blockThreads(bt), requestFlattenContiguous(flatten),
-        requestFlatVectorWidth(flatWidth) {}
+        requestFlatVectorWidth(flatWidth),
+        requestGridStrideUnroll(gridUnroll),
+        requestLogicalTileElements(logicalTileElements),
+        requestRowVectorWidth(rowVectorWidth),
+        requestPromoteUniformScalars(promoteUniformScalars),
+        requestTanhApproximation(tanhApproximation.str()) {}
 
   /// Memref type for a Row/result view in the function's storage type.
   /// `memref<d0 x N x storage>` uses identity layout when contiguous, otherwise
@@ -152,34 +239,70 @@ struct ElementwiseLowering {
                            VectorType::get({vectorWidth}, storageType));
   }
 
+  /// Destination-passing ABI for a result.  Public rank-1 tensors remain
+  /// rank-1 memrefs; they are not silently reshaped to [1,N], because that
+  /// would make the compiler ABI disagree with the accepted J shape.
+  MemRefType resultMemref(MLIRContext *ctx, Strides s) {
+    if (oneDimensionalResults)
+      return MemRefType::get({N}, storageType);
+    return rowMemref(ctx, M, s);
+  }
+
+  MemRefType resultVecMemref(MLIRContext *ctx) {
+    if (oneDimensionalResults)
+      return MemRefType::get({N / vectorWidth},
+                             VectorType::get({vectorWidth}, storageType));
+    return rowVecMemref(ctx, M);
+  }
+
   // ---- recognition ------------------------------------------------------- //
   LogicalResult match() {
+    if (requestTanhApproximation != "stable-ex2" &&
+        requestTanhApproximation != "native-ptx")
+      return failure();
+    if (requestGridStrideUnroll != 1 && requestGridStrideUnroll != 2 &&
+        requestGridStrideUnroll != 4 && requestGridStrideUnroll != 8)
+      return failure();
+    if (requestRowVectorWidth != 0 && requestRowVectorWidth != 1 &&
+        requestRowVectorWidth != 2 && requestRowVectorWidth != 4)
+      return failure();
+    if (requestLogicalTileElements != 0 &&
+        (requestLogicalTileElements < 32 || requestLogicalTileElements > 8192 ||
+         (requestLogicalTileElements & (requestLogicalTileElements - 1)) != 0))
+      return failure();
     auto fty = fn.getFunctionType();
     unsigned nRes = fty.getNumResults();
     if (nRes < 1)
       return failure();
-    // Every result is one full rank-2 static floating [M,N] row output.  f16
-    // and bf16 are storage types; scalar computation is promoted to f32.
-    // Anchor (M,N,storage) from the first; all results must agree.
-    int64_t anchorM = -1, anchorN = -1;
+    // Every result is either a static floating [N] vector or a full rank-2
+    // floating [M,N] row output.  Rank-1 is represented as one logical row for
+    // launch geometry only; its public destination-passing ABI remains [N].
+    // f16 and bf16 are storage types; scalar computation is promoted to f32.
+    // Anchor (rank,M,N,storage) from the first; all results must agree.
+    int64_t anchorRank = -1, anchorM = -1, anchorN = -1;
     for (Type rt : fty.getResults()) {
       auto t = dyn_cast<RankedTensorType>(rt);
-      if (!t || t.getRank() != 2 || !t.hasStaticShape())
+      if (!t || (t.getRank() != 1 && t.getRank() != 2) ||
+          !t.hasStaticShape())
         return failure();
       Type elementType = t.getElementType();
       if (!isa<Float16Type, BFloat16Type, Float32Type>(elementType))
         return failure();
       if (anchorN < 0) {
-        anchorM = t.getDimSize(0);
-        anchorN = t.getDimSize(1);
+        anchorRank = t.getRank();
+        anchorM = anchorRank == 1 ? 1 : t.getDimSize(0);
+        anchorN = t.getDimSize(anchorRank - 1);
         storageType = elementType;
-      } else if (t.getDimSize(0) != anchorM || t.getDimSize(1) != anchorN)
+      } else if (t.getRank() != anchorRank ||
+                 (anchorRank == 2 && t.getDimSize(0) != anchorM) ||
+                 t.getDimSize(anchorRank - 1) != anchorN)
         return failure();
       else if (elementType != storageType)
         return failure();
     }
     M = anchorM;
     N = anchorN;
+    oneDimensionalResults = anchorRank == 1;
     computeType = Float32Type::get(fn.getContext());
 
     // Single basic block, terminated by a return of the output values.
@@ -196,6 +319,10 @@ struct ElementwiseLowering {
     // half-views of a fresh [M,hd] buffer (rowStride hd = 2N).
     resStrides.assign(nRes, Strides{N, 1});
     if (auto a = fn->getAttrOfType<DenseI64ArrayAttr>("intent.result_strides")) {
+      // The registered relation currently defines row/column strides only for
+      // rank-2 views.  Fail closed instead of inventing rank-1 semantics.
+      if (oneDimensionalResults)
+        return failure();
       if ((unsigned)a.size() != 2 * nRes)
         return failure();
       for (unsigned j = 0; j < nRes; ++j)
@@ -209,6 +336,13 @@ struct ElementwiseLowering {
     // before any store, so writing back through an input view is safe.
     inplaceArg.assign(nRes, -1);
     if (auto a = fn->getAttrOfType<DenseI64ArrayAttr>("intent.inplace")) {
+      // Rank-2 Row aliases are loaded into the complete register tile before
+      // any output store.  Rank-1 inputs are Col operands and are loaded on
+      // demand, so accepting an alias could make one result overwrite a value
+      // subsequently consumed by another result.  Keep this case conservative
+      // until a rank-1 read-once tile is represented explicitly.
+      if (oneDimensionalResults)
+        return failure();
       if ((unsigned)a.size() != nRes)
         return failure();
       for (unsigned j = 0; j < nRes; ++j)
@@ -217,14 +351,16 @@ struct ElementwiseLowering {
 
     // Args: Row inputs use the result storage type. Col/Scalar broadcasts may
     // additionally be f32 (the common mixed-precision scale/bias contract).
+    // A singleton rank-1 tensor is also a scalar broadcast: the public ABI
+    // remains memref<1xT>, while the kernel reads element zero once.  Closed J
+    // artifacts use this spelling for scalar-like learned parameters.
     // A 2-D arg whose first dim d0 < M but DIVIDES M is a "broadcast Row": one
     // row is shared by M/d0 consecutive blocks (rope's cos/sin: one per token,
     // shared by the token's n_head blocks). An `intent.strides` arg-attr makes
     // the Row a strided view of a larger buffer (half / even-odd partner views).
     for (unsigned i = 0; i < fty.getNumInputs(); ++i) {
       auto t = dyn_cast<RankedTensorType>(fty.getInput(i));
-      if (!t || !t.hasStaticShape() ||
-          !isa<Float16Type, BFloat16Type, Float32Type>(t.getElementType()))
+      if (!t || !t.hasStaticShape())
         return failure();
       ArrayRef<int64_t> s = t.getShape();
       Strides st{N, 1};
@@ -235,7 +371,16 @@ struct ElementwiseLowering {
       }
       int64_t div = 1;
       Role role;
-      if (s.size() == 2 && s[1] == N) {
+      bool floating =
+          isa<Float16Type, BFloat16Type, Float32Type>(t.getElementType());
+      if (body.getArgument(i).use_empty() &&
+          isa<FloatType, IntegerType>(t.getElementType())) {
+        // Constexpr control specialization can make a branch-only ABI input
+        // dead (for example an optional label vector). Preserve the public
+        // memref ABI, but do not force an unused tensor into a Row/Col/Scalar
+        // execution role or synthesize a device load.
+        role = Role::Unused;
+      } else if (s.size() == 2 && s[1] == N && floating) {
         if (s[0] == M)
           div = 1;
         else if (s[0] > 0 && M % s[0] == 0)
@@ -243,9 +388,10 @@ struct ElementwiseLowering {
         else
           return failure();
         role = Role::Row;
-      } else if (s.size() == 1 && s[0] == N) {
+      } else if (s.size() == 1 && s[0] == N && floating) {
         role = Role::Col;
-      } else if (s.size() == 0) {
+      } else if ((s.empty() || (s.size() == 1 && s[0] == 1)) &&
+                 isa<FloatType, IntegerType>(t.getElementType())) {
         role = Role::Scalar;
       } else {
         return failure();
@@ -272,28 +418,41 @@ struct ElementwiseLowering {
           return failure();
         continue;
       }
-      if (!isa<MapUnaryOp, MapBinaryOp, SelectOp, IotaOp>(&op))
+      if (auto unary = dyn_cast<MapUnaryOp>(&op))
+        containsTanh |= unary.getFn() == "tanh";
+      if (!isa<MapUnaryOp, MapBinaryOp, SelectOp, IotaOp, CastOp>(&op))
         return failure();
     }
+    if (requestTanhApproximation == "native-ptx" && !containsTanh)
+      return failure();
 
-    // A flattened schedule is admitted only for a fully contiguous Row-only
-    // graph. It deliberately rejects Col/scalar parameters, broadcast rows,
-    // strided views and indexed/select bodies rather than inventing a mixed
-    // linear/row mapping. Each thread owns exactly one vec4 packet.
+    // A flattened schedule is admitted for fully contiguous Row values plus
+    // ordinary Col/Scalar broadcasts.  The flat packet address is used for Row
+    // loads/stores, while `flat_index % N` recovers the logical column for Col
+    // operands.  Broadcast rows, strided views and indexed/select bodies remain
+    // fail-closed. Each thread owns exactly one vec2/vec4 packet.
     if (requestFlattenContiguous) {
+      if (requestGridStrideUnroll != 1 || requestLogicalTileElements != 0)
+        return failure();
       T = blockThreads ? (int64_t)blockThreads : 256;
       int64_t flatWidth = static_cast<int64_t>(requestFlatVectorWidth);
       bool eligible = T >= 32 && T % 32 == 0 &&
                       (flatWidth == 2 || flatWidth == 4);
-      for (unsigned i = 0; i < argRoles.size(); ++i)
-        eligible &= argRoles[i] == Role::Row && argRowDiv[i] == 1 &&
-                    argStrides[i].isDefault(N);
+      for (unsigned i = 0; i < argRoles.size(); ++i) {
+        if (argRoles[i] == Role::Row)
+          eligible &= argRowDiv[i] == 1 && argStrides[i].isDefault(N);
+        else
+          eligible &= argRoles[i] == Role::Col ||
+                      argRoles[i] == Role::Scalar ||
+                      argRoles[i] == Role::Unused;
+      }
       for (Strides strides : resStrides)
         eligible &= strides.isDefault(N);
       for (Operation &op : body.without_terminator())
         eligible &= !isa<IotaOp, SelectOp>(&op);
       int64_t totalElements = M * N;
-      eligible &= totalElements % (T * flatWidth) == 0;
+      eligible &= N % flatWidth == 0 &&
+                  totalElements % (T * flatWidth) == 0;
       if (!eligible)
         return failure();
       flattenContiguous = true;
@@ -304,12 +463,58 @@ struct ElementwiseLowering {
       return success();
     }
 
+    // Preserve an authored logical C tile as a logical block domain.  Thread
+    // mapping remains an independent target coordinate.  The common
+    // tile=4096,T=128 state therefore emits one 32-element register strip per
+    // thread instead of pretending that the source tile means 4096 CUDA lanes.
+    if (requestLogicalTileElements != 0) {
+      if (requestGridStrideUnroll != 1)
+        return failure();
+      T = blockThreads ? static_cast<int64_t>(blockThreads) : 128;
+      int64_t tile = static_cast<int64_t>(requestLogicalTileElements);
+      if (T < 32 || T > 1024 || T % 32 != 0 || tile < T || tile % T != 0)
+        return failure();
+      K = tile / T;
+      if (K <= 0 || K > 32)
+        return failure();
+      for (int64_t alias : inplaceArg)
+        if (alias >= 0)
+          return failure();
+      gridStrideFlat = true;
+      tailMasked = K > 1;
+      vectorWidth = 1;
+      numVectorTiles = 0;
+      gridBlocks = (M * N + tile - 1) / tile;
+      return success();
+    }
+
     // Default geometry: T threads over the feature dim, K columns per thread.
     T = blockThreads ? (int64_t)blockThreads : autoThreads(N);
-    if (T <= 0 || N % T != 0)
-      return failure(); // tail-mask (non-divisible) is a documented follow-up
-    K = N / T;
+    if (T <= 0 || T > 1024)
+      return failure();
+    tailMasked = N % T != 0;
+    K = (N + T - 1) / T;
     gridBlocks = M;
+
+    // Keep the read-once register tile for the small rows it was designed for,
+    // but never materialize O(N/T) copies of the map DAG in compiler IR.  A
+    // flat grid-stride loop emits one scalar body and covers the complete M*N
+    // domain with coalesced lanes.  In-place states remain on the historical
+    // full-register path because that path's read-before-write proof is stronger;
+    // reject an excessively large in-place tile instead of weakening it.
+    constexpr int64_t maxUnrolledValuesPerThread = 32;
+    if (K > maxUnrolledValuesPerThread) {
+      for (int64_t alias : inplaceArg)
+        if (alias >= 0)
+          return failure();
+      gridStrideFlat = true;
+      K = requestGridStrideUnroll;
+      tailMasked = K > 1;
+      vectorWidth = 1;
+      numVectorTiles = 0;
+      gridBlocks = flatGridBlocks((M * N + K - 1) / K, T);
+      return success();
+    }
 
     // Vector gate: K a multiple of 4 (preferred) or 2, every Row arg + every
     // result view fully
@@ -318,8 +523,18 @@ struct ElementwiseLowering {
     // and no iota/select in the body (those index a per-column scalar, not a
     // vectorizable lane). Col/Scalar args stay scalar-loaded at col[k]/once —
     // the vector column layout keeps cols[k] pointing at the right scalar column.
-    int64_t candidateVectorWidth =
-        T >= 32 ? (K % 4 == 0 ? 4 : (K % 2 == 0 ? 2 : 1)) : 1;
+    int64_t candidateVectorWidth = 1;
+    if (!tailMasked && T >= 32) {
+      if (requestRowVectorWidth != 0) {
+        candidateVectorWidth = requestRowVectorWidth;
+        if (candidateVectorWidth > 1 && K % candidateVectorWidth != 0)
+          return failure();
+      } else {
+        candidateVectorWidth = K % 4 == 0 ? 4 : (K % 2 == 0 ? 2 : 1);
+      }
+    } else if (requestRowVectorWidth > 1) {
+      return failure();
+    }
     if (candidateVectorWidth > 1) {
       bool ok = true;
       for (unsigned i = 0; i < argRoles.size(); ++i)
@@ -334,8 +549,14 @@ struct ElementwiseLowering {
       if (ok) {
         vectorWidth = candidateVectorWidth;
         numVectorTiles = K / vectorWidth;
+      } else if (requestRowVectorWidth > 1) {
+        return failure();
       }
     }
+    if (requestGridStrideUnroll != 1)
+      return failure();
+    if (requestRowVectorWidth == 1)
+      vectorWidth = 1;
     return success();
   }
 
@@ -389,7 +610,21 @@ struct ElementwiseLowering {
     if (isa<Float16Type, BFloat16Type>(input.getType()) ||
         isa<Float16Type, BFloat16Type>(resultType))
       input = toCompute(b, loc, input);
-    Value result = emitScalarUnary(b, loc, op.getFn(), input);
+    Value result;
+    if (op.getFn() == "tanh" &&
+        requestTanhApproximation == "native-ptx") {
+      // Keep the semantic math op intact until the outlined NVIDIA device
+      // module.  emitScalarUnary's default tanh is already an ex2/reciprocal
+      // expansion, so tagging its final arith.subf cannot possibly recover a
+      // native tanh instruction later in the target pipeline.
+      auto tanh = b.create<math::TanhOp>(loc, input);
+      tanh->setAttr(
+          "intent.backend.tanh_approximation",
+          StringAttr::get(b.getContext(), "native-ptx"));
+      result = tanh;
+    } else {
+      result = emitScalarUnary(b, loc, op.getFn(), input);
+    }
     return result ? castFloatTo(b, loc, result, resultType) : Value();
   }
 
@@ -427,6 +662,8 @@ struct ElementwiseLowering {
       if (role == Role::Col)
         return b.create<memref::LoadOp>(loc, argMemref[v],
                                        ValueRange{cols[k]});
+      if (role == Role::Unused)
+        return nullptr;
       return b.create<memref::LoadOp>(loc, argMemref[v], ValueRange{});
     }
     Operation *def = v.getDefiningOp();
@@ -438,6 +675,11 @@ struct ElementwiseLowering {
       Type elt =
           cast<RankedTensorType>(io.getResult().getType()).getElementType();
       return b.create<arith::IndexCastOp>(loc, elt, cols[k]);
+    }
+    if (auto castOp = dyn_cast<CastOp>(def)) {
+      Type target = tensorElementType(castOp.getResult());
+      return castFloatTo(
+          b, loc, emitAt(b, loc, castOp.getInput(), k), target);
     }
     if (auto mu = dyn_cast<MapUnaryOp>(def))
       return emitMappedUnary(b, loc, mu, emitAt(b, loc, mu.getInput(), k));
@@ -476,6 +718,13 @@ struct ElementwiseLowering {
         if (auto cst = dyn_cast<arith::ConstantOp>(&op)) {
           uniform[res] = emitSplatScalarConstant(b, loc, cst);
           changed = true;
+        } else if (auto castOp = dyn_cast<CastOp>(&op)) {
+          if (isUniform(castOp.getInput())) {
+            uniform[res] = castFloatTo(
+                b, loc, emitAt(b, loc, castOp.getInput(), 0),
+                tensorElementType(castOp.getResult()));
+            changed = true;
+          }
         } else if (auto mu = dyn_cast<MapUnaryOp>(&op)) {
           if (isUniform(mu.getInput())) {
             uniform[res] = emitMappedUnary(
@@ -506,6 +755,11 @@ struct ElementwiseLowering {
       return rowMemref(ctx, M / argRowDiv[i], argStrides[i]);
     if (role == Role::Col)
       return MemRefType::get({N}, argElementTypes[i]);
+    auto original = cast<RankedTensorType>(fn.getFunctionType().getInput(i));
+    if (role == Role::Unused)
+      return MemRefType::get(original.getShape(), argElementTypes[i]);
+    if (original.getRank() == 1)
+      return MemRefType::get({1}, argElementTypes[i]);
     return MemRefType::get({}, argElementTypes[i]);
   }
 
@@ -514,8 +768,8 @@ struct ElementwiseLowering {
     Location loc = fn.getLoc();
     OpBuilder b(ctx);
 
-    // New signature: original args (as memrefs) ++ one [M,N] output memref per
-    // result (destination-passing).
+    // New signature: original args (as memrefs) ++ one shape-preserving output
+    // memref per result (destination-passing).
     SmallVector<Type> inTys;
     for (unsigned i = 0; i < argRoles.size(); ++i) {
       if (flattenContiguous && argRoles[i] == Role::Row)
@@ -530,8 +784,8 @@ struct ElementwiseLowering {
         inTys.push_back(
             flattenContiguous
                 ? flatVecMemref(ctx)
-                : (vectorWidth > 1 ? rowVecMemref(ctx, M)
-                                   : rowMemref(ctx, M, resStrides[j])));
+                : (vectorWidth > 1 ? resultVecMemref(ctx)
+                                   : resultMemref(ctx, resStrides[j])));
     auto newFty = FunctionType::get(ctx, inTys, {});
 
     std::string name = fn.getName().str();
@@ -556,6 +810,29 @@ struct ElementwiseLowering {
     Value cT = b.create<arith::ConstantIndexOp>(loc, T);
     Value c1 = b.create<arith::ConstantIndexOp>(loc, 1);
 
+    // A read-only, non-alias B capability may admit host-by-value capture for
+    // uniform invocation inputs.  This is a real search arm: the false arm
+    // below retains the historical device-side load in every launched lane.
+    unsigned hostValueCaptureCount = 0;
+    if (requestPromoteUniformScalars) {
+      for (unsigned i = 0; i < argRoles.size(); ++i) {
+        if (argRoles[i] != Role::Scalar)
+          continue;
+        Value arg = srcBlock.getArgument(i);
+        auto original = cast<RankedTensorType>(
+            fn.getFunctionType().getInput(i));
+        if (original.getRank() == 1) {
+          Value zero = b.create<arith::ConstantIndexOp>(loc, 0);
+          uniform[arg] = b.create<memref::LoadOp>(
+              loc, argMemref[arg], ValueRange{zero});
+        } else {
+          uniform[arg] =
+              b.create<memref::LoadOp>(loc, argMemref[arg], ValueRange{});
+        }
+        ++hostValueCaptureCount;
+      }
+    }
+
     auto launch = b.create<gpu::LaunchOp>(loc, cGrid, c1, c1, cT, c1, c1);
     b.setInsertionPointToStart(&launch.getBody().front());
 
@@ -573,11 +850,55 @@ struct ElementwiseLowering {
     //    args still index cols[k]/once, so they need no retype.
     cols.clear();
     cols.resize(K);
+    SmallVector<Value> logicalRows(K, bx);
+    SmallVector<Value> columnActive(K);
+    scf::ForOp gridStrideLoop;
     Type vectorTy = VectorType::get({vectorWidth}, storageType);
     SmallVector<Value> vecIdx; // vector tile index tx+vt*T (reused by store)
-    if (vectorWidth > 1) {
+    if (gridStrideFlat) {
+      // One iteration covers U coalesced lane waves:
+      //   flat[k] = block*(T*U) + tx + k*T
+      // and advances by grid*(T*U).  U is a real schedule coordinate.  The
+      // first lane-wave is protected by the scf.for upper bound; later waves
+      // use explicit tail predicates when the flattened domain is ragged.
+      Value cBlockSpan =
+          b.create<arith::ConstantIndexOp>(loc, T * K);
+      Value first = b.create<arith::AddIOp>(
+          loc, b.create<arith::MulIOp>(loc, bx, cBlockSpan), tx);
+      Value upper = b.create<arith::ConstantIndexOp>(loc, M * N);
+      Value step =
+          b.create<arith::ConstantIndexOp>(loc, gridBlocks * T * K);
+      gridStrideLoop = b.create<scf::ForOp>(loc, first, upper, step);
+      b.setInsertionPointToStart(gridStrideLoop.getBody());
+      Value flatBase = gridStrideLoop.getInductionVar();
+      Value cN = b.create<arith::ConstantIndexOp>(loc, N);
+      Value cTotal = b.create<arith::ConstantIndexOp>(loc, M * N);
+      Value cZero = b.create<arith::ConstantIndexOp>(loc, 0);
+      for (int64_t k = 0; k < K; ++k) {
+        Value flatIndex = flatBase;
+        if (k != 0) {
+          Value offset = b.create<arith::ConstantIndexOp>(loc, k * T);
+          flatIndex = b.create<arith::AddIOp>(loc, flatBase, offset);
+        }
+        if (tailMasked) {
+          columnActive[k] = b.create<arith::CmpIOp>(
+              loc, arith::CmpIPredicate::ult, flatIndex, cTotal);
+          flatIndex = b.create<arith::SelectOp>(
+              loc, columnActive[k], flatIndex, cZero);
+        }
+        cols[k] = b.create<arith::RemUIOp>(loc, flatIndex, cN);
+        logicalRows[k] =
+            M == 1
+                ? cZero
+                : b.create<arith::DivUIOp>(loc, flatIndex, cN).getResult();
+      }
+    } else if (vectorWidth > 1) {
       vecIdx.resize(numVectorTiles);
       Value cWidth = b.create<arith::ConstantIndexOp>(loc, vectorWidth);
+      Value cLogicalColumns =
+          flattenContiguous
+              ? b.create<arith::ConstantIndexOp>(loc, N).getResult()
+              : Value();
       Value flatBlockBase;
       if (flattenContiguous) {
         Value flatBlockThreads =
@@ -595,8 +916,13 @@ struct ElementwiseLowering {
         Value base = b.create<arith::MulIOp>(loc, vecIdx[vt], cWidth);
         for (int64_t j = 0; j < vectorWidth; ++j) {
           Value cj = b.create<arith::ConstantIndexOp>(loc, j);
+          Value absoluteColumn = b.create<arith::AddIOp>(loc, base, cj);
           cols[vt * vectorWidth + j] =
-              b.create<arith::AddIOp>(loc, base, cj);
+              flattenContiguous
+                  ? b.create<arith::RemUIOp>(loc, absoluteColumn,
+                                             cLogicalColumns)
+                        .getResult()
+                  : absoluteColumn;
         }
       }
     } else {
@@ -605,18 +931,31 @@ struct ElementwiseLowering {
         cols[k] = b.create<arith::AddIOp>(loc, tx, off);
       }
     }
+    if (tailMasked && !gridStrideFlat) {
+      Value cN = b.create<arith::ConstantIndexOp>(loc, N);
+      Value c0 = b.create<arith::ConstantIndexOp>(loc, 0);
+      for (int64_t k = 0; k < K; ++k) {
+        columnActive[k] = b.create<arith::CmpIOp>(
+            loc, arith::CmpIPredicate::ult, cols[k], cN);
+        // Use an in-bounds address for the inactive tail lane. Its value is
+        // observationally dead because the result store is guarded below.
+        // This lowers to one predicated select + ordinary coalesced load,
+        // avoiding a divergent scf.if around every input load.
+        cols[k] = b.create<arith::SelectOp>(loc, columnActive[k], cols[k], c0);
+      }
+    }
     for (unsigned i = 0; i < argRoles.size(); ++i) {
       Value arg = srcBlock.getArgument(i);
       if (argRoles[i] == Role::Row) {
         // Broadcast Row (div>1): one source row shared by `div` consecutive
         // blocks -> source row index = bx / div (rope cos: token = bx/n_head).
-        Value ridx = bx;
-        if (argRowDiv[i] != 1) {
-          Value d = b.create<arith::ConstantIndexOp>(loc, argRowDiv[i]);
-          ridx = b.create<arith::DivUIOp>(loc, bx, d);
-        }
         SmallVector<Value> vals(K);
         if (vectorWidth > 1) {
+          Value ridx = logicalRows[0];
+          if (argRowDiv[i] != 1) {
+            Value d = b.create<arith::ConstantIndexOp>(loc, argRowDiv[i]);
+            ridx = b.create<arith::DivUIOp>(loc, ridx, d);
+          }
           // One coalesced vector load per tile; the flattened schedule uses a
           // rank-1 packet memref, while the row schedule keeps [row, packet].
           for (int64_t vt = 0; vt < numVectorTiles; ++vt) {
@@ -632,14 +971,30 @@ struct ElementwiseLowering {
                                               ArrayRef<int64_t>{j});
           }
         } else {
-          for (int64_t k = 0; k < K; ++k)
+          for (int64_t k = 0; k < K; ++k) {
+            Value ridx = logicalRows[k];
+            if (argRowDiv[i] != 1) {
+              Value d = b.create<arith::ConstantIndexOp>(loc, argRowDiv[i]);
+              ridx = b.create<arith::DivUIOp>(loc, ridx, d);
+            }
             vals[k] = b.create<memref::LoadOp>(
                 loc, argMemref[arg], ValueRange{ridx, cols[k]});
+          }
         }
         rowVals[arg] = vals;
       } else if (argRoles[i] == Role::Scalar) {
-        uniform[arg] =
-            b.create<memref::LoadOp>(loc, argMemref[arg], ValueRange{});
+        if (uniform.count(arg))
+          continue;
+        auto original = cast<RankedTensorType>(
+            fn.getFunctionType().getInput(i));
+        if (original.getRank() == 1) {
+          Value zero = b.create<arith::ConstantIndexOp>(loc, 0);
+          uniform[arg] = b.create<memref::LoadOp>(
+              loc, argMemref[arg], ValueRange{zero});
+        } else {
+          uniform[arg] =
+              b.create<memref::LoadOp>(loc, argMemref[arg], ValueRange{});
+        }
       }
     }
     hoistUniforms(b, loc);
@@ -660,23 +1015,58 @@ struct ElementwiseLowering {
           if (flattenContiguous)
             b.create<memref::StoreOp>(loc, vec, outMems[j],
                                       ValueRange{vecIdx[vt]});
+          else if (oneDimensionalResults)
+            b.create<memref::StoreOp>(loc, vec, outMems[j],
+                                      ValueRange{vecIdx[vt]});
           else
             b.create<memref::StoreOp>(loc, vec, outMems[j],
-                                      ValueRange{bx, vecIdx[vt]});
+                                      ValueRange{logicalRows[0], vecIdx[vt]});
         }
       } else {
         for (int64_t k = 0; k < K; ++k) {
-          Value out = toStorage(b, loc, emitAt(b, loc, outputVals[j], k));
-          b.create<memref::StoreOp>(loc, out, outMems[j],
-                                    ValueRange{bx, cols[k]});
+          if (!tailMasked) {
+            Value out =
+                toStorage(b, loc, emitAt(b, loc, outputVals[j], k));
+            if (oneDimensionalResults)
+              b.create<memref::StoreOp>(loc, out, outMems[j],
+                                        ValueRange{cols[k]});
+            else
+              b.create<memref::StoreOp>(loc, out, outMems[j],
+                                        ValueRange{logicalRows[k], cols[k]});
+            continue;
+          }
+          auto guarded = b.create<scf::IfOp>(
+              loc, columnActive[k], /*withElseRegion=*/false);
+          OpBuilder thenBuilder = guarded.getThenBodyBuilder();
+          Value out = toStorage(
+              thenBuilder, loc,
+              emitAt(thenBuilder, loc, outputVals[j], k));
+          if (oneDimensionalResults)
+            thenBuilder.create<memref::StoreOp>(
+                loc, out, outMems[j], ValueRange{cols[k]});
+          else
+            thenBuilder.create<memref::StoreOp>(
+                loc, out, outMems[j], ValueRange{logicalRows[k], cols[k]});
         }
       }
     }
 
+    if (gridStrideLoop)
+      b.setInsertionPointAfter(gridStrideLoop);
     b.create<gpu::TerminatorOp>(loc);
     b.setInsertionPointAfter(launch);
     b.create<func::ReturnOp>(loc);
 
+    attachElementwiseStateReceipt(
+        gpuFn, T, gridBlocks, gridStrideFlat,
+        gridStrideFlat ? static_cast<int64_t>(requestGridStrideUnroll) : 1,
+        static_cast<int64_t>(requestLogicalTileElements),
+        vectorWidth,
+        containsTanh
+            ? (requestTanhApproximation == "native-ptx" ? "native_tanh"
+                                                         : "stable_tanh")
+            : "none",
+        oneDimensionalResults, hostValueCaptureCount);
     fn.erase();
     return success();
   }
@@ -692,13 +1082,19 @@ struct ConvertIntentElementwiseToGPUPass
     SmallVector<func::FuncOp> targets;
     for (auto fn : mod.getOps<func::FuncOp>()) {
       ElementwiseLowering probe(fn, blockThreads, flattenContiguous,
-                                flatVectorWidth);
+                                flatVectorWidth, gridStrideUnroll,
+                                logicalTileElements, rowVectorWidth,
+                                promoteUniformScalars,
+                                tanhApproximation);
       if (succeeded(probe.match()))
         targets.push_back(fn);
     }
     for (func::FuncOp fn : targets) {
       ElementwiseLowering low(fn, blockThreads, flattenContiguous,
-                              flatVectorWidth);
+                              flatVectorWidth, gridStrideUnroll,
+                              logicalTileElements, rowVectorWidth,
+                              promoteUniformScalars,
+                              tanhApproximation);
       if (failed(low.match()) || failed(low.rewrite())) {
         fn.emitError("elementwise lowering failed after match");
         return signalPassFailure();

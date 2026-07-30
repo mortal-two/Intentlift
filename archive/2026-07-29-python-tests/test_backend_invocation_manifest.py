@@ -6,7 +6,6 @@ import pytest
 
 from intentir.backend.cuda.runtime_contract import RuntimeContract, RuntimePredicate
 from intentir.backend.cuda.variant_manifest import (
-    ArtifactProvenance,
     DeviceLaunchStep,
     ExecutableLaunchPlan,
     InvocationSlot,
@@ -14,17 +13,6 @@ from intentir.backend.cuda.variant_manifest import (
     VariantManifestError,
     VariantRecord,
 )
-
-
-def _artifact(name: str) -> ArtifactProvenance:
-    return ArtifactProvenance(
-        intent_mlir_paths=(f"variants/{name}/intent.mlir",),
-        binary_paths=(f"variants/{name}/kernel.cubin",),
-        binary_modules=(name,),
-        entry_points=(f"{name}_kernel",),
-        target="sm_120a",
-        compiler_pipeline="IntentIR->GPU->NVVM->cubin",
-    )
 
 
 def _variant(
@@ -38,7 +26,6 @@ def _variant(
         variant_id=name,
         role=role,
         schedule={"tile": 128},
-        artifact=_artifact(name),
         launch_plan=ExecutableLaunchPlan(
             steps=(
                 DeviceLaunchStep(

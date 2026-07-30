@@ -52,6 +52,7 @@ class BufferRole(str, Enum):
 class BufferInitializer(str, Enum):
     RANDOM = "random"
     ZEROS = "zeros"
+    STANDARD_NORMAL = "standard_normal"
 
 
 @dataclass(frozen=True)
@@ -206,8 +207,10 @@ class TritonWorkloadAdapter:
     protocol: str = TRITON_WORKLOAD_ADAPTER_PROTOCOL
 
     def __post_init__(self) -> None:
-        if not self.case_id.startswith("high_performance:"):
-            raise ValueError("adapter case_id must reference the active registry")
+        if not self.case_id.startswith(("high_performance:", "scrc_canary:")):
+            raise ValueError(
+                "adapter case_id must reference the active registry or a certified canary"
+            )
         buffers = tuple(
             item if isinstance(item, BufferBinding) else BufferBinding(*item)
             for item in self.buffers
@@ -506,29 +509,21 @@ def _runtime_argument(argument: SCRCCompilerArgument) -> RuntimeArgument:
     raise ValueError("real workload adapter supports tensor/scalar/none runtime ABI")
 
 
-def prepare_triton_workload(
+def _prepare_triton_source(
     adapter: TritonWorkloadAdapter,
+    entry: SCRCWorkloadEntry,
     *,
-    dataset_root: str | Path | None = None,
+    source: str,
+    source_location: str,
+    search_roots: tuple[Path, ...],
 ) -> PreparedTritonWorkload:
-    manifest = build_workload_manifest()
-    entry = manifest.by_id.get(adapter.case_id)
-    if entry is None:
-        raise ValueError("adapter case is absent from the active 28-kernel registry")
-    resolution = entry.resolve_source(dataset_root=dataset_root)
-    if not resolution.resolved or resolution.path is None:
-        raise ValueError(
-            f"real source is unavailable for {entry.case_id}: {resolution.diagnostic}"
-        )
-    source = resolution.path.read_text(encoding="utf-8")
+    """Build the one current v6 preparation path for an already-resolved Source."""
+
     source_slice = build_triton_source_slice(
         source, source_symbol=entry.symbol
     )
-    module_root = resolution.path
-    for _component in entry.source_module.split("."):
-        module_root = module_root.parent
     source_slice = inline_imported_triton_helpers(
-        source_slice, search_roots=(module_root,)
+        source_slice, search_roots=search_roots
     )
     requires_varargs = requires_triton_vararg_expansion(source_slice)
     if requires_varargs != (adapter.vararg_arity is not None):
@@ -600,11 +595,73 @@ def prepare_triton_workload(
     return PreparedTritonWorkload(
         adapter,
         entry,
-        resolution.location,
+        source_location,
         source_slice,
         view,
         request,
         dict(mapping),
+    )
+
+
+def prepare_triton_workload(
+    adapter: TritonWorkloadAdapter,
+    *,
+    dataset_root: str | Path | None = None,
+) -> PreparedTritonWorkload:
+    manifest = build_workload_manifest()
+    entry = manifest.by_id.get(adapter.case_id)
+    if entry is None:
+        raise ValueError("adapter case is absent from the active 28-kernel registry")
+    resolution = entry.resolve_source(dataset_root=dataset_root)
+    if not resolution.resolved or resolution.path is None:
+        raise ValueError(
+            f"real source is unavailable for {entry.case_id}: {resolution.diagnostic}"
+        )
+    module_root = resolution.path
+    for _component in entry.source_module.split("."):
+        module_root = module_root.parent
+    return _prepare_triton_source(
+        adapter,
+        entry,
+        source=resolution.path.read_text(encoding="utf-8"),
+        source_location=resolution.location,
+        search_roots=(module_root,),
+    )
+
+
+def prepare_triton_source_workload(
+    adapter: TritonWorkloadAdapter,
+    source_path: str | Path,
+    *,
+    source_symbol: str,
+    source_location: str | None = None,
+) -> PreparedTritonWorkload:
+    """Prepare one exact certified Source outside the active registry."""
+
+    if not adapter.case_id.startswith("scrc_canary:"):
+        raise ValueError(
+            "explicit Source preparation is reserved for certified canaries"
+        )
+    path = Path(source_path).resolve()
+    entry = SCRCWorkloadEntry(
+        ordinal=0,
+        case_id=adapter.case_id,
+        suite="scrc_canary",
+        symbol=source_symbol,
+        mechanisms=("certified_source_reuse",),
+        source_module="intentir.certified_canary",
+        source_alignment="exact archived accepted Source",
+        lowering_status="certified",
+        evidence_refs=(),
+        representative_tier="certified_canary",
+        adapter_readiness="declared",
+    )
+    return _prepare_triton_source(
+        adapter,
+        entry,
+        source=path.read_text(encoding="utf-8"),
+        source_location=source_location or str(path),
+        search_roots=(path.parent,),
     )
 
 
@@ -2231,5 +2288,6 @@ __all__ = [
     "TRITON_WORKLOAD_ADAPTERS",
     "ScalarBinding",
     "TritonWorkloadAdapter",
+    "prepare_triton_source_workload",
     "prepare_triton_workload",
 ]

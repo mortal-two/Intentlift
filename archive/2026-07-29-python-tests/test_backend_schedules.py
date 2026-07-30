@@ -78,7 +78,7 @@ def test_small_rmsnorm_preserves_the_measured_preload_policy() -> None:
     assert decision.optimization["policy_id"] == (
         "cuda.row.small-register-rmsnorm.preload-col.v1"
     )
-    assert decision.pass_argument.endswith("defer-epilogue-col-loads=false")
+    assert "defer-epilogue-col-loads=false" in decision.pass_argument
 
 
 def test_explicit_row_candidate_retains_all_ablation_axes() -> None:
@@ -87,6 +87,7 @@ def test_explicit_row_candidate_retains_all_ablation_axes() -> None:
         tile_cols=64,
         vector_width=1,
         fuse_fma=True,
+        approximate_div=True,
         defer_epilogue_col_loads=False,
     )
 
