@@ -260,7 +260,7 @@ class CuteGate1Runner:
             return Gate1ExecutionResult(
                 Gate1Status.COMPILE_FAILED,
                 digest,
-                source_compile,  # type: ignore[arg-type]
+                source_compile,
                 None,
                 empty,
                 None,
@@ -284,7 +284,7 @@ class CuteGate1Runner:
             return Gate1ExecutionResult(
                 Gate1Status.NO_CLOSURE,
                 digest,
-                source_compile,  # type: ignore[arg-type]
+                source_compile,
                 None,
                 normal,
                 None,
@@ -299,8 +299,8 @@ class CuteGate1Runner:
             return Gate1ExecutionResult(
                 Gate1Status.NO_CLOSURE,
                 digest,
-                source_compile,  # type: ignore[arg-type]
-                source_fingerprint,  # type: ignore[arg-type]
+                source_compile,
+                source_fingerprint,
                 normal,
                 None,
                 1,
@@ -318,8 +318,8 @@ class CuteGate1Runner:
         return Gate1ExecutionResult(
             status,
             digest,
-            source_compile,  # type: ignore[arg-type]
-            source_fingerprint,  # type: ignore[arg-type]
+            source_compile,
+            source_fingerprint,
             normal,
             masked_evidence,
             1,

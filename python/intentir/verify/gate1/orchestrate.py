@@ -6,9 +6,9 @@ from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any, Mapping, Protocol
 
-from .compare import TTIRComparator, TTIRComparison
+from .compare import TTIRComparator
 from .compiler import CompileCase, CompileResult, KernelSource, TritonCompiler
 from .model import (
     Gate1Artifact,
@@ -39,13 +39,36 @@ class Gate1Config:
             raise ValueError("the active strong Gate1 paths require observer level 2")
 
 
+class Gate1CompileResult(Protocol):
+    """Frontend-neutral compile evidence consumed by the shared SCRC lifecycle."""
+
+    ok: bool
+    diagnostic: str
+
+    def to_payload(self) -> dict[str, Any]: ...
+
+
+class Gate1Fingerprint(Protocol):
+    """Frontend-neutral normalized compiler observation."""
+
+    def to_dict(self) -> dict[str, Any]: ...
+
+
+class Gate1Comparison(Protocol):
+    """Frontend-neutral hard comparison consumed by shared Gate1/SCRC code."""
+
+    hard_pass: bool
+
+    def to_dict(self) -> dict[str, Any]: ...
+
+
 @dataclass(frozen=True)
 class Gate1ArmEvidence:
     mode: str
     generation: ReplayGeneration | None
-    compile_result: CompileResult | None
-    fingerprint: TTIRFingerprint | None
-    comparison: TTIRComparison | None
+    compile_result: Gate1CompileResult | None
+    fingerprint: Gate1Fingerprint | None
+    comparison: Gate1Comparison | None
     diagnostic: str | None = None
     physical_calls: int = 0
 
@@ -58,8 +81,8 @@ class Gate1ArmEvidence:
 class Gate1ExecutionResult:
     status: Gate1Status
     artifact_digest: str
-    source_compile: CompileResult
-    source_fingerprint: TTIRFingerprint | None
+    source_compile: Gate1CompileResult
+    source_fingerprint: Gate1Fingerprint | None
     normal: Gate1ArmEvidence
     masked_j: Gate1ArmEvidence | None
     normal_calls: int
@@ -412,6 +435,8 @@ def _replay_case(
 
 
 class Gate1Runner:
+    """Concrete Triton/TTIR runner implementing the frontend-neutral result contract."""
+
     def __init__(
         self,
         *,
@@ -676,8 +701,9 @@ class Gate1Runner:
 
 
 __all__ = [
-    "GATE1_PROTOCOL", "Gate1ArmEvidence", "Gate1Config",
-    "Gate1ExecutionResult", "Gate1Runner",
+    "GATE1_PROTOCOL", "Gate1ArmEvidence", "Gate1Comparison",
+    "Gate1CompileResult", "Gate1Config", "Gate1ExecutionResult",
+    "Gate1Fingerprint", "Gate1Runner",
     "SOURCE_OBSERVER_UNSUPPORTED_DIAGNOSTIC_PREFIX",
     "canonical_artifact_digest",
 ]

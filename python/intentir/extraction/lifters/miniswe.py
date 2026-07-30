@@ -44,6 +44,7 @@ MINISWE_LIFT_XHIGH_TURN_TIMEOUT_SECONDS = 900.0
 MAX_RELIFT_CHECK_FEEDBACK_ITEMS = 20
 MAX_RELIFT_CHECK_FEEDBACK_CHARS = 2048
 MAX_FEEDBACK_FRONTIER_EXAMPLES = 6
+REPLAY_COMPILER_ARTIFACT_KINDS = ("ttir", "tir", "mlir", "ptx")
 _FEEDBACK_CATEGORY_PRIORITY = {
     "interface": 0,
     "reduction": 1,
@@ -366,6 +367,29 @@ def _last_candidate_check_feedback(
     return None
 
 
+def _replay_compiler_artifacts(
+    counterexample: Mapping[str, Any],
+) -> dict[str, str]:
+    """Extract only declared exact compiler artifacts, with legacy TTIR support."""
+
+    result: dict[str, str] = {}
+    observation = counterexample.get("replay_compiler_observation")
+    artifacts = (
+        observation.get("artifacts")
+        if isinstance(observation, Mapping)
+        else None
+    )
+    if isinstance(artifacts, Mapping):
+        for kind in REPLAY_COMPILER_ARTIFACT_KINDS:
+            value = artifacts.get(kind)
+            if isinstance(value, str) and value:
+                result[kind] = value
+    legacy_ttir = counterexample.get("replay_ttir")
+    if "ttir" not in result and isinstance(legacy_ttir, str) and legacy_ttir:
+        result["ttir"] = legacy_ttir
+    return result
+
+
 def _input_files(
     request: SCRCLiftRequest,
     *,
@@ -379,7 +403,7 @@ def _input_files(
     feedback = packet.get("relift")
     feedback_for_mount = copy.deepcopy(feedback)
     replay_counterexample_source = ""
-    replay_counterexample_ttir = ""
+    replay_compiler_artifacts: dict[str, str] = {}
     feedback_frontier = None
     if isinstance(feedback, Mapping):
         feedback_frontier = _feedback_frontier(
@@ -414,19 +438,32 @@ def _input_files(
         )
         if isinstance(counterexample, dict):
             source_value = counterexample.pop("replay_source", None)
-            ttir_value = counterexample.pop("replay_ttir", None)
             if isinstance(source_value, str):
                 replay_counterexample_source = source_value
-            if isinstance(ttir_value, str):
-                replay_counterexample_ttir = ttir_value
+            replay_compiler_artifacts = _replay_compiler_artifacts(counterexample)
+            counterexample.pop("replay_ttir", None)
+            observation = counterexample.get("replay_compiler_observation")
+            if isinstance(observation, Mapping):
+                observation_metadata = {
+                    str(key): copy.deepcopy(value)
+                    for key, value in observation.items()
+                    if key != "artifacts"
+                }
+            elif replay_compiler_artifacts:
+                observation_metadata = {
+                    "protocol": "intentir.gate1-replay-compiler-observation.legacy-v1"
+                }
+            else:
+                observation_metadata = None
+            if observation_metadata is not None:
+                observation_metadata["artifact_paths"] = {
+                    kind: f"/input/gate1_counterexample/replay.{kind}"
+                    for kind in replay_compiler_artifacts
+                }
+                counterexample["replay_compiler_observation"] = observation_metadata
             counterexample["replay_source_path"] = (
                 "/input/gate1_counterexample/replay.py"
                 if replay_counterexample_source
-                else None
-            )
-            counterexample["replay_ttir_path"] = (
-                "/input/gate1_counterexample/replay.ttir"
-                if replay_counterexample_ttir
                 else None
             )
     from minisweagent import package_dir
@@ -465,10 +502,11 @@ continuations for the same Source; Replay remains a separate fresh process.
   feedback. Read this first; it orders already-labelled hard categories and
   omits bulk recursive witnesses without inferring a cause or repair. Query the
   exact `feedback.json` only for a named unresolved category/path.
-- `gate1_counterexample/replay.py` and `replay.ttir`: exact read-only outputs of
-  the immediately preceding formal Replay/compiler when available. Feedback
-  stores only these paths, so compare them with `source.py`/`source_ttir.json`
-    on demand instead of loading duplicate bulk strings into the conversation.
+- `gate1_counterexample/replay.py` and the compiler-stage files selected by the
+  Gate1 observer profile (`replay.ttir`, `replay.tir`, `replay.mlir`, or
+  `replay.ptx`): exact read-only outputs of the immediately preceding formal
+  Replay/compiler when available. Feedback stores only these paths, so inspect
+  them on demand instead of loading duplicate bulk strings into the conversation.
 - `inspect_lift_context(view="feedback_category", query="CATEGORY")` (or the
   matching `context_query.py feedback-category CATEGORY`) returns just that
   exact bounded category, including local/effect-order witnesses when present.
@@ -666,7 +704,12 @@ summarizes or interprets J/C/pi semantics during compaction.
         )
         + "\n",
         "gate1_counterexample/replay.py": replay_counterexample_source,
-        "gate1_counterexample/replay.ttir": replay_counterexample_ttir,
+        **{
+            f"gate1_counterexample/replay.{kind}": replay_compiler_artifacts.get(
+                kind, ""
+            )
+            for kind in REPLAY_COMPILER_ARTIFACT_KINDS
+        },
         "schema/artifact.schema.json": json.dumps(
             scrc_lift_core_json_schema(),
             indent=2,
@@ -1154,7 +1197,10 @@ class MiniSWELiftAdapter:
                         "feedback.json",
                         "feedback_frontier.json",
                         "gate1_counterexample/replay.py",
-                        "gate1_counterexample/replay.ttir",
+                        *{
+                            f"gate1_counterexample/replay.{kind}"
+                            for kind in REPLAY_COMPILER_ARTIFACT_KINDS
+                        },
                     }
                 ),
             )

@@ -252,6 +252,12 @@ Codex Lift v20 同时删除与普通文件读取重复的 `feedback_frontier` ho
 文件是唯一入口。当前特殊 bridge 只保留无法由本地文件操作替代的CandidateCheck、SourceReconcile，
 以及上述显式调用、非认证的public SemanticProbe。
 
+`gate1-replay-counterexample.v2`不再假设所有前端都有TTIR。共享SCRC按Gate1已声明的
+`observer_profile.compiler_stage`机械投影前一formal Replay的exact只读compiler artifact：Triton为
+TTIR、TileLang为TIR、CUDA为PTX、CuTe为MLIR+PTX。Lift workspace只挂载对应文件并在feedback中保存
+路径；fixed code不解释compiler IR、不生成J/C/π字段或repair。该counterexample只服务同一
+source-aware Lift owner的下一轮诊断，不进入fresh Replay、Gate verdict或certificate。
+
 Codex Lift v11 / knowledge v68 将同一 exact Harness ABI ledger 与 syntax-only
 `source-outline.v2` 直接放入首次 owner prompt，并将
 后续 closed feedback frontier 中已有的 interface、reduction、predicate/effect 与 op-multiset 直接

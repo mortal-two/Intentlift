@@ -22,7 +22,13 @@ from intentir.extraction.providers.codex_cli import (
 from intentir.extraction.providers.provider import ProviderConfig, get_provider
 from intentir.verify.scrc_runner import CandidateLiftError
 
-from .miniswe import MiniSWELiftAdapter, _input_files, _trajectory_bytes
+from .miniswe import (
+    REPLAY_COMPILER_ARTIFACT_KINDS,
+    MiniSWELiftAdapter,
+    _input_files,
+    _replay_compiler_artifacts,
+    _trajectory_bytes,
+)
 from .compiler_observation import (
     SOURCE_TTIR_RECONCILE_PROTOCOL,
     observe_anonymous_source_ttir,
@@ -202,10 +208,10 @@ def _codex_feedback_files(feedback_text: str) -> dict[str, str]:
         if isinstance(replay_counterexample, Mapping)
         else None
     )
-    replay_ttir = (
-        replay_counterexample.get("replay_ttir")
+    replay_compiler_artifacts = (
+        _replay_compiler_artifacts(replay_counterexample)
         if isinstance(replay_counterexample, Mapping)
-        else None
+        else {}
     )
     replay_metadata = (
         {
@@ -216,6 +222,42 @@ def _codex_feedback_files(feedback_text: str) -> dict[str, str]:
         if isinstance(replay_counterexample, Mapping)
         else None
     )
+    if isinstance(replay_metadata, dict):
+        observation = replay_metadata.get("replay_compiler_observation")
+        if isinstance(observation, Mapping):
+            raw_paths = observation.get("artifact_paths")
+            existing_paths = (
+                {
+                    kind: value
+                    for kind, value in raw_paths.items()
+                    if kind in REPLAY_COMPILER_ARTIFACT_KINDS
+                    and isinstance(value, str)
+                    and value
+                }
+                if isinstance(raw_paths, Mapping)
+                else {}
+            )
+            replay_metadata["replay_compiler_observation"] = {
+                **{
+                    str(key): value
+                    for key, value in observation.items()
+                    if key != "artifacts"
+                },
+                "artifact_paths": {
+                    kind: f"input/feedback_replay.{kind}"
+                    for kind in (
+                        replay_compiler_artifacts.keys() or existing_paths.keys()
+                    )
+                },
+            }
+        elif replay_compiler_artifacts:
+            replay_metadata["replay_compiler_observation"] = {
+                "protocol": "intentir.gate1-replay-compiler-observation.legacy-v1",
+                "artifact_paths": {
+                    kind: f"input/feedback_replay.{kind}"
+                    for kind in replay_compiler_artifacts
+                },
+            }
     values: dict[str, Any] = {
         "feedback_detail.json": detail,
         "feedback_replay.json": replay_metadata,
@@ -242,11 +284,13 @@ def _codex_feedback_files(feedback_text: str) -> dict[str, str]:
         if isinstance(replay_source, str) and replay_source
         else "# No formal Replay source is available before a Gate1 counterexample.\n"
     )
-    rendered["feedback_replay.ttir"] = (
-        replay_ttir.rstrip() + "\n"
-        if isinstance(replay_ttir, str) and replay_ttir
-        else "// No formal Replay TTIR is available before a Gate1 counterexample.\n"
-    )
+    for kind in REPLAY_COMPILER_ARTIFACT_KINDS:
+        value = replay_compiler_artifacts.get(kind)
+        rendered[f"feedback_replay.{kind}"] = (
+            value.rstrip() + "\n"
+            if isinstance(value, str) and value
+            else f"// No formal Replay {kind.upper()} counterexample is available.\n"
+        )
     return rendered
 
 
@@ -305,17 +349,18 @@ def _codex_input_files(
     }
     files.update(_codex_feedback_files(complete["feedback.json"]))
     replay_source = complete.get("gate1_counterexample/replay.py", "")
-    replay_ttir = complete.get("gate1_counterexample/replay.ttir", "")
     files["feedback_replay.py"] = (
         replay_source.rstrip() + "\n"
         if replay_source
         else "# No formal Replay source is available before a Gate1 counterexample.\n"
     )
-    files["feedback_replay.ttir"] = (
-        replay_ttir.rstrip() + "\n"
-        if replay_ttir
-        else "// No formal Replay TTIR is available before a Gate1 counterexample.\n"
-    )
+    for kind in REPLAY_COMPILER_ARTIFACT_KINDS:
+        value = complete.get(f"gate1_counterexample/replay.{kind}", "")
+        files[f"feedback_replay.{kind}"] = (
+            value.rstrip() + "\n"
+            if value
+            else f"// No formal Replay {kind.upper()} counterexample is available.\n"
+        )
     if "source_ttir.json" in complete:
         files["source_ttir.json"] = complete["source_ttir.json"]
     return files
@@ -326,9 +371,10 @@ input/feedback_category_NAME.json when its bounded frontier is insufficient; tha
 file contains the exact differences for the named category.
 input/feedback_detail.json contains exact non-observer diagnostics. The previous
 artifact already exists at output/candidate.json and is never duplicated in input.
-After a formal Gate1 failure, input/feedback_replay.py and
-input/feedback_replay.ttir contain the exact preceding source-blind Replay output;
-use them only as read-only counterexample evidence.
+After a formal Gate1 failure, input/feedback_replay.py and the compiler-stage path
+listed in input/feedback_replay.json (`feedback_replay.ttir`, `.tir`, `.mlir`, or
+`.ptx`) contain the exact preceding source-blind Replay/compiler output; use them
+only as read-only counterexample evidence.
 Your own prior formal candidates are immutable under work/candidate_history/;
 consult or restore them when a repair regresses, but decide every edit yourself.
 Use the compact source query only where the named feedback needs exact Source or
@@ -383,7 +429,10 @@ def _source_aware_startup_context(workspace: Any, *, fresh_owner: bool) -> dict[
             "feedback_frontier": "input/feedback_frontier.json",
             "feedback_detail": "input/feedback_detail.json",
             "feedback_replay_source": "input/feedback_replay.py",
-            "feedback_replay_ttir": "input/feedback_replay.ttir",
+            "feedback_replay_compiler_artifacts": {
+                kind: f"input/feedback_replay.{kind}"
+                for kind in REPLAY_COMPILER_ARTIFACT_KINDS
+            },
             "feedback_replay_metadata": "input/feedback_replay.json",
             "feedback_categories": [
                 f"input/feedback_category_{name}.json"
@@ -610,7 +659,10 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                         "feedback_frontier.json",
                         "feedback_detail.json",
                         "feedback_replay.py",
-                        "feedback_replay.ttir",
+                        *{
+                            f"feedback_replay.{kind}"
+                            for kind in REPLAY_COMPILER_ARTIFACT_KINDS
+                        },
                         "feedback_replay.json",
                         *{
                             f"feedback_category_{name}.json"

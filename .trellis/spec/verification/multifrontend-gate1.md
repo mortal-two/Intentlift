@@ -129,6 +129,13 @@ new host grammar. Normal and Mask-J arms use distinct writer/workspace/session/
 Composer instances; neither arm receives the other's source, diagnostics or
 checkpoint.
 
+If a normal arm does not close, shared relift feedback selects the exact prior
+Replay compiler artifact from `observer_profile.compiler_stage`, rather than
+dereferencing a Triton-specific field: TTIR for Triton, TIR for TileLang, PTX for
+CUDA, and MLIR plus PTX for CuTe. This is read-only counterexample transport to
+the source-aware Lift owner; it does not reinterpret one IR as another or expose
+the artifact to the next source-blind Replay.
+
 ## Gate2 execution
 
 The shared three-edge Gate2 judge can receive native CUDA or TileLang runners.

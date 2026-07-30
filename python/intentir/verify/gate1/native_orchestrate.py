@@ -234,7 +234,7 @@ class CudaGate1Runner:
             return Gate1ArmEvidence(
                 mode,
                 generation,
-                compiled,  # type: ignore[arg-type]
+                compiled,
                 None,
                 None,
                 compiled.diagnostic or "CUDA Replay compilation failed",
@@ -246,7 +246,7 @@ class CudaGate1Runner:
             return Gate1ArmEvidence(
                 mode,
                 generation,
-                compiled,  # type: ignore[arg-type]
+                compiled,
                 None,
                 None,
                 f"Replay observation failed: {type(exc).__name__}: {exc}",
@@ -256,9 +256,9 @@ class CudaGate1Runner:
         return Gate1ArmEvidence(
             mode,
             generation,
-            compiled,  # type: ignore[arg-type]
-            replay_fingerprint,  # type: ignore[arg-type]
-            comparison,  # type: ignore[arg-type]
+            compiled,
+            replay_fingerprint,
+            comparison,
             physical_calls=generation.attempts,
         )
 
@@ -276,7 +276,7 @@ class CudaGate1Runner:
             return Gate1ExecutionResult(
                 Gate1Status.COMPILE_FAILED,
                 digest,
-                source_compile,  # type: ignore[arg-type]
+                source_compile,
                 None,
                 empty,
                 None,
@@ -295,7 +295,7 @@ class CudaGate1Runner:
             return Gate1ExecutionResult(
                 Gate1Status.NO_CLOSURE,
                 digest,
-                source_compile,  # type: ignore[arg-type]
+                source_compile,
                 None,
                 normal,
                 None,
@@ -312,8 +312,8 @@ class CudaGate1Runner:
             return Gate1ExecutionResult(
                 Gate1Status.NO_CLOSURE,
                 digest,
-                source_compile,  # type: ignore[arg-type]
-                source_fingerprint,  # type: ignore[arg-type]
+                source_compile,
+                source_fingerprint,
                 normal,
                 None,
                 len(normal_candidates),
@@ -337,8 +337,8 @@ class CudaGate1Runner:
         return Gate1ExecutionResult(
             Gate1Status.REPLAY_CLOSED,
             digest,
-            source_compile,  # type: ignore[arg-type]
-            source_fingerprint,  # type: ignore[arg-type]
+            source_compile,
+            source_fingerprint,
             normal,
             masked_evidence,
             len(normal_candidates),
@@ -425,7 +425,7 @@ class TileLangGate1Runner:
         compiled = self.compiler.compile(replay_source, case)
         if not compiled.ok:
             return Gate1ArmEvidence(
-                mode, generation, compiled, None, None,  # type: ignore[arg-type]
+                mode, generation, compiled, None, None,
                 compiled.diagnostic or "TileLang Replay compilation failed",
                 generation.attempts,
             )
@@ -433,7 +433,7 @@ class TileLangGate1Runner:
             replay_fingerprint = self._fingerprint(artifact, compiled, case)
         except Exception as exc:
             return Gate1ArmEvidence(
-                mode, generation, compiled, None, None,  # type: ignore[arg-type]
+                mode, generation, compiled, None, None,
                 f"Replay observation failed: {type(exc).__name__}: {exc}",
                 generation.attempts,
             )
@@ -441,9 +441,9 @@ class TileLangGate1Runner:
         return Gate1ArmEvidence(
             mode,
             generation,
-            compiled,  # type: ignore[arg-type]
-            replay_fingerprint,  # type: ignore[arg-type]
-            comparison,  # type: ignore[arg-type]
+            compiled,
+            replay_fingerprint,
+            comparison,
             physical_calls=generation.attempts,
         )
 
@@ -461,7 +461,7 @@ class TileLangGate1Runner:
             return Gate1ExecutionResult(
                 Gate1Status.COMPILE_FAILED,
                 digest,
-                source_compile,  # type: ignore[arg-type]
+                source_compile,
                 None,
                 empty,
                 None,
@@ -480,7 +480,7 @@ class TileLangGate1Runner:
             return Gate1ExecutionResult(
                 Gate1Status.NO_CLOSURE,
                 digest,
-                source_compile,  # type: ignore[arg-type]
+                source_compile,
                 None,
                 normal,
                 None,
@@ -497,8 +497,8 @@ class TileLangGate1Runner:
             return Gate1ExecutionResult(
                 Gate1Status.NO_CLOSURE,
                 digest,
-                source_compile,  # type: ignore[arg-type]
-                source_fingerprint,  # type: ignore[arg-type]
+                source_compile,
+                source_fingerprint,
                 normal,
                 None,
                 len(normal_candidates),
@@ -522,8 +522,8 @@ class TileLangGate1Runner:
         return Gate1ExecutionResult(
             Gate1Status.REPLAY_CLOSED,
             digest,
-            source_compile,  # type: ignore[arg-type]
-            source_fingerprint,  # type: ignore[arg-type]
+            source_compile,
+            source_fingerprint,
             normal,
             masked_evidence,
             len(normal_candidates),

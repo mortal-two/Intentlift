@@ -1,6 +1,6 @@
 # Task 24：J 主导的 π_min 与三前端 Episode-Local Composer Replay
 
-> 状态：`P1_P4_IMPLEMENTED_P5_REAL_PROVIDER_PENDING`（2026-07-31）。
+> 状态：`P5_ACTIVE_FIRST_NATIVE_INFRA_FIXED`（2026-07-31）。
 >
 > 定位：Task 15/Task 11 的 Replay 构造机制升级，以及 Task 23 多前端实证的真实 closure 执行线。
 > 本任务不接管 production backend；backend 仍在 SCRC 后只消费 accepted `J+C`。
@@ -79,6 +79,22 @@ Composer只存在于`FreshAgent_f`内部；最终提交物仍是完整`replay.so
   Gate bypass；
 - 真实TileLang/CUDA provider closure与Composer/direct-source效率比较尚未运行，因此本检查点不声称
   Gate1、Gate2或SCRC closure。
+
+### 2.4 P5真实运行日志
+
+`tilelang:add2d / run-001`（Codex Lift + Codex Replay，`gpt-5.6-sol high`，Mask-J配置开启）：
+
+- real Lift产生`artifact.v12`，normal Codex Replay在一个CLI turn内生成完整TileLang source，并通过
+  `replay-check.v15`与source-blind construction compile；
+- 本例agent选择direct-source raw escape，Composer telemetry为`installed=true, used=false`；这是真实
+  行为，不能重标为Composer成功；
+- 进入共享Gate1 non-closure feedback时，`SCRCGateRunner`错误读取
+  `TileLangCompileResult.ttir`，以`AttributeError`终止；masked臂和Gate2均未运行，故无closure claim；
+- 根因不是Lift信息丢失或Replay无法消费J，而是共享feedback的Triton-specific result contract；CUDA
+  也有同类潜伏错误；
+- 修复采用`observer_profile.compiler_stage`驱动的通用compiler-counterexample合同，并把共享
+  `Gate1ArmEvidence`的compile/fingerprint/comparison类型改为frontend-neutral Protocol；没有给TileLang
+  伪造TTIR或增加case特判。fresh rerun待执行。
 
 ## 3. 交付物
 

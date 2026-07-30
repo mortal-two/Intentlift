@@ -41,8 +41,12 @@ MAX_GATE1_REPAIR_CHANGED_PATHS = 48
 GATE1_REPAIR_PROGRESS_PROTOCOL = "intentir.gate1-relift-progress.v1"
 GATE1_LOCAL_FRONTIER_PROTOCOL = "intentir.gate1-local-frontier.v1"
 GATE1_REPLAY_COUNTEREXAMPLE_PROTOCOL = (
-    "intentir.gate1-replay-counterexample.v1"
+    "intentir.gate1-replay-counterexample.v2"
 )
+GATE1_REPLAY_COMPILER_OBSERVATION_PROTOCOL = (
+    "intentir.gate1-replay-compiler-observation.v1"
+)
+_REPLAY_COMPILER_ARTIFACT_KINDS = frozenset({"ttir", "tir", "mlir", "ptx"})
 _OBSERVER_NODE_FINGERPRINT = re.compile(
     r"(?<=[\[:])[0-9a-f]{12,64}(?=\])"
 )
@@ -1338,6 +1342,46 @@ class SCRCGateRunner:
     def __init__(self, dependencies: SCRCRunDependencies) -> None:
         self.dependencies = dependencies
 
+    @staticmethod
+    def _replay_compiler_observation(
+        result: Gate1ExecutionResult,
+    ) -> dict[str, Any] | None:
+        """Project exact Replay compiler IR through the declared observer profile."""
+
+        compiled = result.normal.compile_result
+        to_payload = getattr(compiled, "to_payload", None)
+        if compiled is None or not callable(to_payload):
+            return None
+        payload = to_payload()
+        if not isinstance(payload, Mapping):
+            return None
+        stages = tuple(
+            stage.strip()
+            for stage in result.observer_profile.compiler_stage.split("+")
+            if stage.strip()
+        )
+        if not stages or any(
+            stage not in _REPLAY_COMPILER_ARTIFACT_KINDS for stage in stages
+        ):
+            return None
+        artifacts = {
+            stage: payload[stage]
+            for stage in stages
+            if isinstance(payload.get(stage), str) and payload[stage]
+        }
+        if set(artifacts) != set(stages):
+            return None
+        return {
+            "protocol": GATE1_REPLAY_COMPILER_OBSERVATION_PROTOCOL,
+            "observer_profile": result.observer_profile.to_json(),
+            "artifacts": artifacts,
+            "authority": (
+                "exact read-only compiler output of the preceding formal Replay "
+                "at the observer profile's declared compiler stage; relift "
+                "counterexample only, never a J/C/pi field, repair, or gate verdict"
+            ),
+        }
+
     @classmethod
     def _gate1_feedback(
         cls,
@@ -1364,14 +1408,8 @@ class SCRCGateRunner:
             and normal.generation.code
             else None
         )
-        replay_ttir = (
-            normal.compile_result.ttir
-            if normal.compile_result is not None
-            and isinstance(normal.compile_result.ttir, str)
-            and normal.compile_result.ttir
-            else None
-        )
-        if replay_source is not None or replay_ttir is not None:
+        replay_compiler_observation = cls._replay_compiler_observation(result)
+        if replay_source is not None or replay_compiler_observation is not None:
             diagnostics["replay_counterexample"] = {
                 "protocol": GATE1_REPLAY_COUNTEREXAMPLE_PROTOCOL,
                 "formal_round": formal_round,
@@ -1383,7 +1421,7 @@ class SCRCGateRunner:
                     else None
                 ),
                 "replay_source": replay_source,
-                "replay_ttir": replay_ttir,
+                "replay_compiler_observation": replay_compiler_observation,
                 "authority": (
                     "read-only exact output of the preceding formal source-blind "
                     "Replay and compiler; it is relift evidence only, supplies no "
