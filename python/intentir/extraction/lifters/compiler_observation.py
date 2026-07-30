@@ -9,6 +9,7 @@ stored in the branch-local read-only Lift input tree for focused queries.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Mapping
 
 from intentir.verify.gate1.compiler import (
@@ -210,6 +211,10 @@ def reconcile_candidate_source_ttir(
             ttir,
             path_prefix="<source-ttir-obligation>",
         )
+        diagnostics = (
+            *diagnostics,
+            *_unowned_source_runtime_carrier_diagnostics(packet, ttir),
+        )
     except Exception as exc:
         return {
             **base,
@@ -231,6 +236,74 @@ def reconcile_candidate_source_ttir(
         "applicable": True,
         "diagnostics": [dict(item) for item in diagnostics],
     }
+
+
+def _unowned_source_runtime_carrier_diagnostics(
+    packet: Mapping[str, Any],
+    ttir: str,
+) -> tuple[Mapping[str, Any], ...]:
+    """Reject Source-used ABI carriers that have no authored semantic owner.
+
+    A null ``logical_ref`` says that a callable carrier is not a J logical value;
+    it does not authorize Replay to guess whether or where that carrier participates
+    in Source realization.  If the exact Source specialization still uses such an
+    argument, the Lift owner must expose its role through authored pi occurrences
+    (or revise the J ownership).  This check observes only occurrence/non-occurrence:
+    it does not choose either ownership or construct a route.
+    """
+
+    j = packet.get("j")
+    pi = packet.get("pi")
+    if not isinstance(j, Mapping) or not isinstance(pi, Mapping):
+        return ()
+    signature = j.get("signature")
+    parameters = (
+        signature.get("parameters") if isinstance(signature, Mapping) else None
+    )
+    instances = pi.get("instances")
+    if not isinstance(parameters, list) or not isinstance(instances, list):
+        return ()
+
+    pi_refs = {
+        item.get("semantic_ref")
+        for item in instances
+        if isinstance(item, Mapping) and isinstance(item.get("semantic_ref"), str)
+    }
+    diagnostics: list[Mapping[str, Any]] = []
+    for parameter in parameters:
+        if not isinstance(parameter, Mapping):
+            continue
+        name = parameter.get("name")
+        kind = parameter.get("kind")
+        logical_ref = parameter.get("logical_ref")
+        if (
+            not isinstance(name, str)
+            or kind not in {"pointer", "scalar"}
+            or logical_ref is not None
+            or name in pi_refs
+        ):
+            continue
+        # The function signature contributes exactly one occurrence.  A second
+        # exact SSA-token occurrence means the compiled specialization consumes
+        # this runtime argument in its body.  The token boundary excludes derived
+        # names such as %p11_3.
+        token = re.compile(rf"%{re.escape(name)}(?![A-Za-z0-9_.$])")
+        if len(token.findall(ttir)) <= 1:
+            continue
+        diagnostics.append(
+            {
+                "rule_code": "source_runtime_carrier_without_owner",
+                "path": (
+                    "<source-ttir-obligation> j.signature.parameters: "
+                    f"Source-used runtime carrier {name} has logical_ref=null "
+                    "and no pi instance occurrence"
+                ),
+                "anonymous_handles": [name],
+                "observed_refs_or_types": ["source-ttir-runtime-use"],
+                "line": None,
+            }
+        )
+    return tuple(diagnostics[:20])
 
 
 __all__ = [
