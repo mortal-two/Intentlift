@@ -35,6 +35,7 @@ def ConvertIntentRowReductionToGPU
     "::mlir::math::MathDialect",
     "::mlir::func::FuncDialect",
     "::mlir::vector::VectorDialect",
+    "::mlir::NVVM::NVVMDialect",
   ];
   let options = [
     Option<"blockThreads", "block-threads", "unsigned", "0",
@@ -136,6 +137,14 @@ def ConvertIntentRowReductionToGPU
            "keep those packets live until the epilogue. This overlaps the full-"
            "row input fetch with the serial prefix state at the cost of register "
            "pressure. Unsupported graphs fail closed.">,
+    Option<"frontierBallotSupport", "frontier-ballot-support", "bool", "false",
+           "For the exact descending sorted-prefix graph, replace the pairwise "
+           "XOR reduction of every lane's best (rank,sum) with a warp ballot of "
+           "threads containing supported values, followed by indexed broadcasts "
+           "of the last supported frontier pair. The warp leader then computes "
+           "tau once and broadcasts that live scalar instead of repeating the "
+           "same division in every lane. Descending order proves support is a "
+           "prefix; unsupported graphs fail closed.">,
     Option<"crossRowFinalize", "cross-row-finalize", "bool", "false",
            "For one float-nondeterministic axis-0 sum of row statistics, write "
            "one contribution per row to compiler-owned scratch and finalize it "

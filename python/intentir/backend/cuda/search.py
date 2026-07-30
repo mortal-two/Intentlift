@@ -2185,9 +2185,12 @@ def enumerate_cuda_candidates(
             (512, 2, 16, 32, True),
         )
         prefix_geometries = tuple(
-            (*geometry, prefetch_epilogue_input)
+            (*geometry, prefetch_epilogue_input, frontier_ballot)
             for prefetch_epilogue_input in (False, True)
             for geometry in base_prefix_geometries
+            for frontier_ballot in (
+                (False, True) if geometry[1] == 1 else (False,)
+            )
         )
         for descriptor in DEFAULT_PASSES:
             if descriptor.fast_path_id not in sorted_prefix_ids:
@@ -2204,6 +2207,7 @@ def enumerate_cuda_candidates(
                 prefix_threads,
                 cross_multiply,
                 prefetch_epilogue_input,
+                frontier_ballot,
             ) in prefix_geometries:
                 options = [
                     f"block-threads={threads_per_row}",
@@ -2222,6 +2226,8 @@ def enumerate_cuda_candidates(
                     options.insert(
                         -1, "prefetch-epilogue-input-before-summary=true"
                     )
+                if frontier_ballot:
+                    options.insert(-1, "frontier-ballot-support=true")
                 if execution_domain:
                     options.insert(
                         -1, "allow-execution-domain-sorted-prefix=true"
@@ -2243,6 +2249,26 @@ def enumerate_cuda_candidates(
                     values["cross_multiply_support_predicate"] = True
                 if prefetch_epilogue_input:
                     values["prefetch_epilogue_input_before_summary"] = True
+                if frontier_ballot:
+                    values["frontier_ballot_support"] = True
+                topology_trace = (
+                    "cuda.reduction.sorted_prefix_multirow_warp_scan_wide_epilogue_cross_multiply.v1"
+                    if rows_per_block > 1 and cross_multiply
+                    else "cuda.reduction.sorted_prefix_multirow_warp_scan_wide_epilogue.v1"
+                    if rows_per_block > 1 and prefix_threads
+                    else "cuda.reduction.sorted_prefix_multirow_warp_early_stop.v1"
+                    if rows_per_block > 1
+                    else "cuda.reduction.sorted_prefix_warp_scan_wide_epilogue_cross_multiply.v1"
+                    if cross_multiply
+                    else "cuda.reduction.sorted_prefix_warp_scan_wide_epilogue.v1"
+                    if prefix_threads
+                    else "cuda.reduction.sorted_prefix_early_stop.v1"
+                )
+                if frontier_ballot:
+                    topology_trace = (
+                        topology_trace.removesuffix(".v1")
+                        + "_frontier_ballot.v1"
+                    )
                 specialized.append(
                     CudaSearchCandidate(
                         _candidate_id(
@@ -2256,19 +2282,7 @@ def enumerate_cuda_candidates(
                         values,
                         _c_score(values, priors),
                         requested_trace=(
-                            (
-                                "cuda.reduction.sorted_prefix_multirow_warp_scan_wide_epilogue_cross_multiply.v1"
-                                if rows_per_block > 1 and cross_multiply
-                                else "cuda.reduction.sorted_prefix_multirow_warp_scan_wide_epilogue.v1"
-                                if rows_per_block > 1 and prefix_threads
-                                else "cuda.reduction.sorted_prefix_multirow_warp_early_stop.v1"
-                                if rows_per_block > 1
-                                else "cuda.reduction.sorted_prefix_warp_scan_wide_epilogue_cross_multiply.v1"
-                                if cross_multiply
-                                else "cuda.reduction.sorted_prefix_warp_scan_wide_epilogue.v1"
-                                if prefix_threads
-                                else "cuda.reduction.sorted_prefix_early_stop.v1"
-                            ),
+                            topology_trace,
                             *(
                                 (
                                     "cuda.memory.prefetch_epilogue_input_before_summary.v1",
@@ -2297,8 +2311,9 @@ def enumerate_cuda_candidates(
             (1024, 8),
         )
         replicated_prefix_geometries = tuple(
-            (*geometry, prefetch_epilogue_input)
+            (*geometry, prefetch_epilogue_input, frontier_ballot)
             for prefetch_epilogue_input in (False, True)
+            for frontier_ballot in (False, True)
             for geometry in base_replicated_prefix_geometries
         )
         for descriptor in DEFAULT_PASSES:
@@ -2313,6 +2328,7 @@ def enumerate_cuda_candidates(
                 threads_per_row,
                 tile_cols,
                 prefetch_epilogue_input,
+                frontier_ballot,
             ) in replicated_prefix_geometries:
                 for cross_multiply in (False, True):
                     options = [
@@ -2332,6 +2348,8 @@ def enumerate_cuda_candidates(
                         options.insert(
                             -1, "prefetch-epilogue-input-before-summary=true"
                         )
+                    if frontier_ballot:
+                        options.insert(-1, "frontier-ballot-support=true")
                     if execution_domain:
                         options.insert(
                             -1, "allow-execution-domain-sorted-prefix=true"
@@ -2355,6 +2373,18 @@ def enumerate_cuda_candidates(
                         values[
                             "prefetch_epilogue_input_before_summary"
                         ] = True
+                    if frontier_ballot:
+                        values["frontier_ballot_support"] = True
+                    topology_trace = (
+                        "cuda.reduction.sorted_prefix_replicated_warp_cross_multiply.v1"
+                        if cross_multiply
+                        else "cuda.reduction.sorted_prefix_replicated_warp.v1"
+                    )
+                    if frontier_ballot:
+                        topology_trace = (
+                            topology_trace.removesuffix(".v1")
+                            + "_frontier_ballot.v1"
+                        )
                     specialized.append(
                         CudaSearchCandidate(
                             _candidate_id(
@@ -2368,11 +2398,7 @@ def enumerate_cuda_candidates(
                             values,
                             _c_score(values, priors),
                             requested_trace=(
-                                (
-                                    "cuda.reduction.sorted_prefix_replicated_warp_cross_multiply.v1"
-                                    if cross_multiply
-                                    else "cuda.reduction.sorted_prefix_replicated_warp.v1"
-                                ),
+                                topology_trace,
                                 *(
                                     (
                                         "cuda.memory.prefetch_epilogue_input_before_summary.v1",

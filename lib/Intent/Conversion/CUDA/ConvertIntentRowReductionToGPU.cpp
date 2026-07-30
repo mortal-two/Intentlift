@@ -37,6 +37,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
+#include "mlir/Dialect/LLVMIR/NVVMDialect.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -869,6 +870,7 @@ struct RowReductionLowering {
   bool crossMultiplySupportPredicate;
   bool replicatePrefixPerWarp;
   bool prefetchEpilogueInputBeforeSummary;
+  bool frontierBallotSupport;
   bool crossRowFinalize;
   bool requestRawMomentVariance;
   bool enableCompactReductionTopology;
@@ -972,7 +974,7 @@ struct RowReductionLowering {
                        unsigned rowsPerBlock, unsigned reductionParts,
                        unsigned prefixThreads,
                        bool crossMultiplySupport, bool replicatePrefix,
-                       bool prefetchEpilogueInput)
+                       bool prefetchEpilogueInput, bool enableFrontierBallot)
       : fn(fn), blockThreads(bt), tileColsMax(tc),
         requestedVectorWidth(vw),
         enableFmaFusion(fuseFma),
@@ -988,6 +990,7 @@ struct RowReductionLowering {
         crossMultiplySupportPredicate(crossMultiplySupport),
         replicatePrefixPerWarp(replicatePrefix),
         prefetchEpilogueInputBeforeSummary(prefetchEpilogueInput),
+        frontierBallotSupport(enableFrontierBallot),
         crossRowFinalize(enableCrossRowFinalize),
         requestRawMomentVariance(enableRawMomentVariance),
         enableCompactReductionTopology(compactReductionTopology),
@@ -1990,6 +1993,9 @@ struct RowReductionLowering {
     if (requestedPrefixThreads != 0 && !sortedPrefixArgs)
       return failure();
     if (crossMultiplySupportPredicate && !sortedPrefixArgs)
+      return failure();
+    if (frontierBallotSupport &&
+        (!sortedPrefixArgs || requestedRowsPerBlock != 1))
       return failure();
     if (crossRowFinalize) {
       if (sched.kind != KRegister || requestedRowsPerBlock != 1 ||
@@ -4219,24 +4225,58 @@ struct RowReductionLowering {
               loc, supported, prefix, threadBestSum);
         }
 
-        // Pair all-reduce by maximum supported rank.  The selected prefix sum
-        // travels with its rank, first within each warp and then through two
-        // compact shared arrays across warps.
-        for (int32_t delta = 1; delta < 32; delta <<= 1) {
-          Value otherRank = tb.create<gpu::ShuffleOp>(
-                                  loc, threadBestRank, delta, 32,
-                                  gpu::ShuffleMode::XOR)
-                                .getShuffleResult();
-          Value otherSum = tb.create<gpu::ShuffleOp>(
-                                 loc, threadBestSum, delta, 32,
-                                 gpu::ShuffleMode::XOR)
-                               .getShuffleResult();
-          Value takeOther = tb.create<arith::CmpIOp>(
-              loc, arith::CmpIPredicate::sgt, otherRank, threadBestRank);
+        // Descending z makes the support predicate monotone: if rank k is not
+        // supported, no larger rank can be.  The frontier-ballot state therefore
+        // finds the last thread containing any supported scalar and broadcasts
+        // only that (rank,sum) pair.  It replaces ten XOR shuffles with one
+        // ballot, count-leading-zeros, and two indexed shuffles.  The fallback
+        // retains the generic pair max reduction and requires no order theorem.
+        if (frontierBallotSupport) {
+          Value hasThreadSupport = tb.create<arith::CmpIOp>(
+              loc, arith::CmpIPredicate::sgt, threadBestRank, zeroI);
+          Value fullWarpMask =
+              tb.create<arith::ConstantIntOp>(loc, -1, 32);
+          Value supportMask = tb.create<NVVM::VoteBallotOp>(
+              loc, i32, fullWarpMask, hasThreadSupport);
+          Value hasWarpSupport = tb.create<arith::CmpIOp>(
+              loc, arith::CmpIPredicate::ne, supportMask, zeroI);
+          Value safeMask = tb.create<arith::SelectOp>(
+              loc, hasWarpSupport, supportMask,
+              tb.create<arith::ConstantIntOp>(loc, 1, 32));
+          Value leadingZeros =
+              tb.create<math::CountLeadingZerosOp>(loc, safeMask);
+          Value frontierLane = tb.create<arith::SubIOp>(
+              loc, tb.create<arith::ConstantIntOp>(loc, 31, 32),
+              leadingZeros);
+          Value frontierRank = tb.create<gpu::ShuffleOp>(
+                                   loc, threadBestRank, frontierLane, width32,
+                                   gpu::ShuffleMode::IDX)
+                                   .getShuffleResult();
+          Value frontierSum = tb.create<gpu::ShuffleOp>(
+                                  loc, threadBestSum, frontierLane, width32,
+                                  gpu::ShuffleMode::IDX)
+                                  .getShuffleResult();
           threadBestRank = tb.create<arith::SelectOp>(
-              loc, takeOther, otherRank, threadBestRank);
+              loc, hasWarpSupport, frontierRank, zeroI);
           threadBestSum = tb.create<arith::SelectOp>(
-              loc, takeOther, otherSum, threadBestSum);
+              loc, hasWarpSupport, frontierSum, zeroF);
+        } else {
+          for (int32_t delta = 1; delta < 32; delta <<= 1) {
+            Value otherRank = tb.create<gpu::ShuffleOp>(
+                                    loc, threadBestRank, delta, 32,
+                                    gpu::ShuffleMode::XOR)
+                                  .getShuffleResult();
+            Value otherSum = tb.create<gpu::ShuffleOp>(
+                                   loc, threadBestSum, delta, 32,
+                                   gpu::ShuffleMode::XOR)
+                                 .getShuffleResult();
+            Value takeOther = tb.create<arith::CmpIOp>(
+                loc, arith::CmpIPredicate::sgt, otherRank, threadBestRank);
+            threadBestRank = tb.create<arith::SelectOp>(
+                loc, takeOther, otherRank, threadBestRank);
+            threadBestSum = tb.create<arith::SelectOp>(
+                loc, takeOther, otherSum, threadBestSum);
+          }
         }
         Value chunkBestRank = threadBestRank;
         Value chunkBestSum = threadBestSum;
@@ -4336,11 +4376,44 @@ struct RowReductionLowering {
     b.setInsertionPointAfter(chunkLoop);
     Value bestRank = chunkLoop.getResult(1);
     Value bestSum = chunkLoop.getResult(2);
-    Value clampedRank = b.create<arith::MaxSIOp>(
-        loc, bestRank, b.create<arith::ConstantIntOp>(loc, 1, 32));
-    Value rankF = b.create<arith::SIToFPOp>(loc, f32Ty, clampedRank);
-    Value tauNumerator = b.create<arith::SubFOp>(loc, bestSum, oneF);
-    Value tau = b.create<arith::DivFOp>(loc, tauNumerator, rankF);
+    auto emitTau = [&](OpBuilder &builder) -> Value {
+      Value clampedRank = builder.create<arith::MaxSIOp>(
+          loc, bestRank, builder.create<arith::ConstantIntOp>(loc, 1, 32));
+      Value rankF =
+          builder.create<arith::SIToFPOp>(loc, f32Ty, clampedRank);
+      Value tauNumerator =
+          builder.create<arith::SubFOp>(loc, bestSum, oneF);
+      return builder.create<arith::DivFOp>(loc, tauNumerator, rankF);
+    };
+    Value tau;
+    if (frontierBallotSupport) {
+      // The frontier pair is uniform within each scan warp.  Compute the
+      // identical tau division only in its leader.  A decoupled wide epilogue
+      // already publishes leader tau through shared memory; other mappings use
+      // one indexed shuffle to broadcast the live scalar within each warp.
+      Value tauLeader = decoupledWideEpilogue
+                            ? b.create<arith::CmpIOp>(
+                                  loc, arith::CmpIPredicate::eq, rowThread, c0)
+                            : b.create<arith::CmpIOp>(
+                                  loc, arith::CmpIPredicate::eq, lane, zeroI);
+      auto leaderTau = b.create<scf::IfOp>(
+          loc, TypeRange{f32Ty}, tauLeader, /*withElseRegion=*/true);
+      {
+        OpBuilder tb(leaderTau.thenBlock(), leaderTau.thenBlock()->begin());
+        tb.create<scf::YieldOp>(loc, ValueRange{emitTau(tb)});
+        OpBuilder eb(leaderTau.elseBlock(), leaderTau.elseBlock()->begin());
+        eb.create<scf::YieldOp>(loc, ValueRange{zeroF});
+      }
+      tau = leaderTau.getResult(0);
+      if (!decoupledWideEpilogue) {
+        Value width32 = b.create<arith::ConstantIntOp>(loc, 32, 32);
+        tau = b.create<gpu::ShuffleOp>(loc, tau, zeroI, width32,
+                                       gpu::ShuffleMode::IDX)
+                  .getShuffleResult();
+      }
+    } else {
+      tau = emitTau(b);
+    }
     if (decoupledWideEpilogue) {
       Value isLeader = b.create<arith::CmpIOp>(
           loc, arith::CmpIPredicate::eq, rowThread,
@@ -4392,27 +4465,35 @@ struct RowReductionLowering {
     b.create<gpu::TerminatorOp>(loc);
     b.setInsertionPointAfter(launch);
     b.create<func::ReturnOp>(loc);
+    std::string sortedPrefixTopology;
+    if (replicatedWarpPrefix)
+      sortedPrefixTopology =
+          crossMultiplySupportPredicate
+              ? "sorted_prefix_replicated_warp_cross_multiply"
+              : "sorted_prefix_replicated_warp";
+    else if (decoupledWideEpilogue && warpRows)
+      sortedPrefixTopology =
+          crossMultiplySupportPredicate
+              ? "sorted_prefix_multirow_warp_scan_wide_epilogue_cross_multiply"
+              : "sorted_prefix_multirow_warp_scan_wide_epilogue";
+    else if (decoupledWideEpilogue)
+      sortedPrefixTopology =
+          crossMultiplySupportPredicate
+              ? "sorted_prefix_warp_scan_wide_epilogue_cross_multiply"
+              : "sorted_prefix_warp_scan_wide_epilogue";
+    else if (warpRows)
+      sortedPrefixTopology = "sorted_prefix_multirow_warp_early_stop";
+    else
+      sortedPrefixTopology =
+          crossMultiplySupportPredicate
+              ? "sorted_prefix_early_stop_cross_multiply"
+              : "sorted_prefix_early_stop";
+    if (frontierBallotSupport)
+      sortedPrefixTopology += "_frontier_ballot";
     attachConcreteStateAttributes(gpuFn, threadsPerRow, predicatedValueIfCount,
                                   foldedConstexprSelectCount, rowsPerBlock,
                                   emittedApproximateDivCount, 0, 0, false,
-                                  false,
-                                  replicatedWarpPrefix
-                                      ? (crossMultiplySupportPredicate
-                                             ? "sorted_prefix_replicated_warp_cross_multiply"
-                                             : "sorted_prefix_replicated_warp")
-                                  : decoupledWideEpilogue
-                                      ? (warpRows
-                                             ? (crossMultiplySupportPredicate
-                                                    ? "sorted_prefix_multirow_warp_scan_wide_epilogue_cross_multiply"
-                                                    : "sorted_prefix_multirow_warp_scan_wide_epilogue")
-                                         : crossMultiplySupportPredicate
-                                             ? "sorted_prefix_warp_scan_wide_epilogue_cross_multiply"
-                                             : "sorted_prefix_warp_scan_wide_epilogue")
-                                  : warpRows
-                                      ? "sorted_prefix_multirow_warp_early_stop"
-                                  : crossMultiplySupportPredicate
-                                      ? "sorted_prefix_early_stop_cross_multiply"
-                                      : "sorted_prefix_early_stop",
+                                  false, sortedPrefixTopology,
                                   1, 1,
                                   prefetchEpilogueInputBeforeSummary);
     fn.erase();
@@ -5177,6 +5258,8 @@ struct RowReductionLowering {
   LogicalResult rewrite() {
     // Dispatch on the Schedule's fork decision (set in match()).
     if (prefetchEpilogueInputBeforeSummary && sched.kind != KScan)
+      return failure();
+    if (frontierBallotSupport && sched.kind != KScan)
       return failure();
     if (sched.kind == KMultiStage)
       return rewriteMultiStage();
@@ -6237,7 +6320,8 @@ struct ConvertIntentRowReductionToGPUPass
                                  reductionParts, prefixThreads,
                                  crossMultiplySupportPredicate,
                                  replicatePrefixPerWarp,
-                                 prefetchEpilogueInputBeforeSummary);
+                                 prefetchEpilogueInputBeforeSummary,
+                                 frontierBallotSupport);
       if (succeeded(probe.match()))
         targets.push_back(
             {fn, predicatedValueIfs, foldedConstexprSelects});
@@ -6260,7 +6344,8 @@ struct ConvertIntentRowReductionToGPUPass
                                reductionParts, prefixThreads,
                                crossMultiplySupportPredicate,
                                replicatePrefixPerWarp,
-                               prefetchEpilogueInputBeforeSummary);
+                               prefetchEpilogueInputBeforeSummary,
+                               frontierBallotSupport);
       if (failed(low.match()) || failed(low.rewrite())) {
         target.fn.emitError("row-reduction lowering failed after match");
         return signalPassFailure();

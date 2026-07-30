@@ -1,4 +1,5 @@
 // RUN: intent-opt '-convert-intent-row-reduction-to-gpu=block-threads=32 require-sorted-prefix=true' %s | FileCheck %s
+// RUN: intent-opt '-convert-intent-row-reduction-to-gpu=block-threads=32 require-sorted-prefix=true frontier-ballot-support=true' %s | FileCheck %s --check-prefix=BALLOT
 // RUN: intent-opt '-convert-intent-row-reduction-to-gpu=block-threads=32 enable-sorted-prefix=false' %s | FileCheck %s --check-prefix=GENERIC
 
 // The specialized path is legal only because P4 materialized the validated
@@ -23,6 +24,17 @@
 // CHECK-NOT: gpu.dynamic_shared_memory
 // CHECK-NOT: gpu.barrier
 // CHECK-NOT: intent.
+// BALLOT-LABEL: func.func @certified_prefix_graph(
+// BALLOT-SAME: intent.backend.reduction_topology = "sorted_prefix_early_stop_frontier_ballot"
+// BALLOT: gpu.launch
+// BALLOT: gpu.shuffle up
+// BALLOT: nvvm.vote.ballot.sync
+// BALLOT: math.ctlz
+// BALLOT: gpu.shuffle idx
+// BALLOT-NOT: gpu.shuffle xor
+// BALLOT: memref.store
+// BALLOT: gpu.terminator
+// BALLOT-NOT: intent.
 // GENERIC-LABEL: func.func @certified_prefix_graph(
 // GENERIC-NOT: intent.fast_path_id
 // GENERIC: gpu.launch

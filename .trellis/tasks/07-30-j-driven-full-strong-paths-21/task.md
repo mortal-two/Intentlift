@@ -161,24 +161,28 @@ Full 批次为 `190.560--191.264 us`，H100 后六批稳定在 `117.728--123.200
 变换集合，再由目标测量选择不同的具体执行图。Schedule-Only 仍只搜索 serial-row direct-lowering spine，
 多行 interleaved 状态只存在于 Full 的 subgroup-feature 结构中。
 
-### 3.5 Sparsemax prefix/epilogue live-state 八批结果
+### 3.5 Sparsemax prefix/frontier/epilogue live-state 八批结果
 
-Sorted-prefix Full 新增了一个独立 live-state：每个输出线程在 prefix/support/tau 之前发起其 coalesced X packet
-读取，并把 packet 保存在 SSA/register 中；tau 就绪后直接执行 `max(X-tau,0)`。这使完整 X 读取与串行
-active-prefix 延迟重叠，不改变字节数，也不从运行样本推导排序语义。该状态只能由精确的 typed
-`scan -> support -> (k,s) -> tau -> epilogue` matcher 准入，post-pass 必须记录
-`prefetched_epilogue_input_count=1` 和实际 transformation trace。
+Sorted-prefix Full 现在包含两个可组合的独立 live-state。第一项在 prefix/support/tau 之前发起每个输出线程的
+coalesced X packet 读取，并把 packet 保存在 SSA/register 中；tau 就绪后直接执行 `max(X-tau,0)`，使完整 X
+读取与串行 active-prefix 延迟重叠。第二项消费 descending typed precondition：support 必然是一个前缀，因此
+用 `nvvm.vote.ballot.sync + ctlz + indexed shuffle` 直接取得最后 supported `(rank,sum)`，替代逐 lane pair 的
+XOR tree；随后每个 warp 只由 leader 计算一次 tau，再广播 live scalar。该状态把实际 shuffle 从 16 降为 9，
+并把每行/warp 的重复 tau division 从 32 次降为 1 次。两项都只能由精确的 typed
+`scan -> support -> (k,s) -> tau -> epilogue` matcher 准入，不读取 kernel 名；缺少 descending 证据时只可
+作为 execution-domain candidate 进入 Q/D，不能转写成 B hard fact。
 
 | Target | C-Fixed | Schedule | Full | `G_schedule` | `G_full` | Source | Source/Full |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| 5090D | 76.256 | 70.656 | 49.056 | 1.079x | 1.439x | 82.752 | 1.687x |
-| H100 | 53.440 | 48.224 | 32.560 | 1.108x | 1.466x | 57.664 | 1.771x |
+| 5090D | 76.320 | 71.680 | 49.088 | 1.065x | 1.460x | 84.368 | 1.719x |
+| H100 | 54.048 | 48.352 | 32.864 | 1.118x | 1.471x | 57.216 | 1.771x |
 
-两卡均为 5 samples/batch、8 个交替确认批次；5090D 的 Full 批次为 `48.672--49.280 us`，H100 为
-`32.288--32.832 us`。5090D 选择 `256-thread replicated-prefix + prefetched X`，H100 选择
-`32-thread single-warp prefix + prefetched X`。相对旧 Full 的 `51.168/36.608 us`，绝对延迟分别继续下降
-约 `4.1%/11.1%`。当前稳定 `G_full` 仍是 `1.439x/1.466x`，因此不能宣称跨过 1.50x；下一步针对的是真实
-残余开销——support 很短时，固定 chunk loop 在 `done` 后仍执行空迭代——而不是削弱 Schedule。
+两卡均为 5 samples/batch、8 个交替确认批次。5090D 的 Full 确认批次为 `48.928--49.312 us`；其目标更适合
+`256-thread wide epilogue + prefetched X`，因此自动拒绝 ballot 状态的性能。H100 则选择
+`32-thread single-warp + prefetched X + frontier ballot + leader tau`，确认批次为 `32.096--32.448 us`，
+中位数 `32.304 us`。同一个候选并集因目标不同选择了不同 executable；所有获胜状态都通过两次 canary Q。
+当前同轮三柱的稳定 `G_full` 是 `1.460x/1.471x`，仍不能宣称跨过 1.50x，但比旧 prefix-only 状态继续扩大，
+且增益可直接归因于被删除的 pair-reduction shuffle 与重复 tau division，而不是削弱 Schedule。
 
 ## 4. 本任务实现的四条强路径
 

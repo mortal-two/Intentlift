@@ -838,6 +838,7 @@ def test_full_enumerates_multirow_warp_sorted_prefix_as_structural_state() -> No
         == "cuda.row_scan.sparsemax.sorted_prefix.execution_domain.v1"
         and int(item.schedule.get("rows_per_block", 1)) > 1
         and int(item.schedule.get("prefix_threads", 0)) == 0
+        and item.schedule.get("frontier_ballot_support") is not True
         and item.schedule.get("prefetch_epilogue_input_before_summary")
         is not True
     ]
@@ -929,6 +930,28 @@ def test_full_enumerates_multirow_warp_sorted_prefix_as_structural_state() -> No
         "cuda.memory.prefetch_epilogue_input_before_summary.v1"
         in item.requested_trace
         for item in prefetched
+    )
+
+    ballot = [
+        item
+        for item in candidates
+        if item.fast_path_id
+        == "cuda.row_scan.sparsemax.sorted_prefix.execution_domain.v1"
+        and item.schedule.get("frontier_ballot_support") is True
+    ]
+    assert ballot
+    assert any(
+        item.schedule.get("replicate_prefix_per_warp") is True
+        and item.schedule.get("prefetch_epilogue_input_before_summary") is True
+        for item in ballot
+    )
+    assert all(
+        "frontier-ballot-support=true" in (item.pass_argument or "")
+        for item in ballot
+    )
+    assert all(
+        any(trace.endswith("_frontier_ballot.v1") for trace in item.requested_trace)
+        for item in ballot
     )
 
 
