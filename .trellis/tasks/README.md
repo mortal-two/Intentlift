@@ -9,10 +9,12 @@ Task 11 继续作为不停止的28-Kernel闭合主线；当前保留18份参数�
 模型级输入审计、adapter v6与十项active queue识别后归档，其长批次只保留历史/诊断evidence。
 Task 15先统一规划输入、匿名Compiler观察、持久Codex Lift owner、closed J能力、source-blind Replay
 agent、Gate反馈和最终十项闭合；当前只做设计与能力建设准备，不启动formal closure。production backend
-仍只在SCRC后消费J+C，并与本任务分离。
+仍只在SCRC后消费J+C，并与本任务分离。Task 23 是独立的论文最小实证线，只采集多前端接入、
+分层差异与 source-independent lowering 的有限真实数据，不接管 28-Kernel 闭合主线。
 
 - [Task 11：SCRC v4 的 28-Kernel 有界并行全闭合](07-24-scrc-v4-full-closure-11/task.md)（执行中；闭合主线）
 - [Task 15：模型级输入到 Compiler-Observed Lift / Closed J / Source-Blind Replay 的最终闭合系统](07-29-compiler-observed-scrc-closure-15/task.md)（设计已建立；formal closure尚未启动）
+- [Task 23：论文多前端接入与可复用 Lowering 最小实证](07-31-paper-multifrontend-evidence-23/task.md)（执行中；最多六次 fresh episode）
 
 ## 本轮已归档任务
 
