@@ -10,7 +10,7 @@ from __future__ import annotations
 import math
 import re
 import statistics
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Mapping
 
 from intentir.backend.materialize import BackendSearchState, CPrior
@@ -21,7 +21,7 @@ from intentir.backend.riscv.compile import (
 )
 
 
-RVV_SEARCH_PLAN_PROTOCOL = "intentir.backend.riscv.search-plan.v6"
+RVV_SEARCH_PLAN_PROTOCOL = "intentir.backend.riscv.search-plan.v7"
 RVV_C_PROJECTION_PROTOCOL = "intentir.backend.riscv.c-projection.v1"
 
 _PARALLEL_TILES = (1, 2, 4, 8, 16, 32, 64, 128)
@@ -66,7 +66,9 @@ def _schedule_universe() -> tuple[RiscvSchedule, ...]:
             *_JOINT_TILES,
         )
     )
-    unique: dict[tuple[int, bool, int, int, int, int, bool], RiscvSchedule] = {}
+    unique: dict[
+        tuple[int, bool, int, int, int, int, bool, int], RiscvSchedule
+    ] = {}
     for item in schedules:
         key = (
             item.opt_level,
@@ -76,6 +78,7 @@ def _schedule_universe() -> tuple[RiscvSchedule, ...]:
             item.reduction_tile,
             item.thread_count,
             item.scalable_vectorization,
+            item.vector_lanes,
         )
         unique.setdefault(key, item)
     return tuple(unique[key] for key in sorted(unique))
@@ -98,16 +101,38 @@ def enumerate_riscv_candidates(
             transformations.append(RiscvTransformationState(True, True, False))
             transformations.append(RiscvTransformationState(True, True, True))
             transformations.append(RiscvTransformationState(True, True, True, True))
+            transformations.append(
+                RiscvTransformationState(False, True, False, False, True)
+            )
     schedules = _schedule_universe()
-    return tuple(
-        RiscvLoweringCandidate(transformation, schedule)
-        for transformation in transformations
-        for schedule in schedules
-        if (
-            not transformation.explicit_vector_reduction
-            or schedule.scalable_vectorization
-        )
-    )
+    candidates: list[RiscvLoweringCandidate] = []
+    for transformation in transformations:
+        for base_schedule in schedules:
+            if (
+                transformation.explicit_vector_reduction
+                and not base_schedule.scalable_vectorization
+            ):
+                continue
+            if transformation.fused_softmax and (
+                not base_schedule.vectorize
+                or base_schedule.parallel_tile != 0
+                or base_schedule.reduction_tile != 0
+            ):
+                continue
+            lane_values = (
+                (4,)
+                if not transformation.fused_softmax
+                or base_schedule.scalable_vectorization
+                else (2, 4, 8, 16)
+            )
+            candidates.extend(
+                RiscvLoweringCandidate(
+                    transformation,
+                    replace(base_schedule, vector_lanes=lanes),
+                )
+                for lanes in lane_values
+            )
+    return tuple(candidates)
 
 
 @dataclass(frozen=True)
@@ -336,6 +361,7 @@ def _erase_schedule_key(schedule: RiscvSchedule) -> tuple[Any, ...]:
         schedule.scalable_vectorization,
         -schedule.opt_level,
         schedule.thread_count,
+        abs(schedule.vector_lanes - 4),
     )
 
 
@@ -502,6 +528,7 @@ def plan_riscv_search(
                 item.transformation.reassociate_reductions,
                 item.transformation.explicit_vector_reduction,
                 item.transformation.joint_vector_reduction,
+                item.transformation.fused_softmax,
             )
             for item in universe
             if item not in canonical
@@ -516,6 +543,7 @@ def plan_riscv_search(
                 item.transformation.reassociate_reductions,
                 item.transformation.explicit_vector_reduction,
                 item.transformation.joint_vector_reduction,
+                item.transformation.fused_softmax,
             )
             == state_key
         )

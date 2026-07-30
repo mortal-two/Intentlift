@@ -75,8 +75,25 @@ def test_rvv_transformation_and_schedule_are_separate_search_axes() -> None:
         joint.transformation.transformation_trace
     )
     assert joint.candidate_id != explicit.candidate_id
+    fused_softmax = rvv.RiscvLoweringCandidate(
+        rvv.RiscvTransformationState(False, True, False, False, True),
+        explicit.schedule,
+    )
+    assert (
+        fused_softmax.transformation.lowering_path_kind
+        == "fused_softmax_hybrid"
+    )
+    assert "fused_softmax_hybrid" in " ".join(
+        fused_softmax.transformation.transformation_trace
+    )
+    assert fused_softmax.transformation.required_b_capabilities == (
+        B_CAP_READONLY_INPUTS,
+    )
+    assert fused_softmax.candidate_id != explicit.candidate_id
     with pytest.raises(ValueError, match="requires producer fusion"):
         rvv.RiscvTransformationState(False, True, True, True)
+    with pytest.raises(ValueError, match="requires the admitted reduction"):
+        rvv.RiscvTransformationState(False, False, False, False, True)
 
 
 def test_rvv_explicit_reduction_only_enumerates_scalable_schedules() -> None:
@@ -90,7 +107,18 @@ def test_rvv_explicit_reduction_only_enumerates_scalable_schedules() -> None:
     assert all(item.schedule.vectorize for item in explicit)
     joint = [item for item in explicit if item.transformation.joint_vector_reduction]
     assert len(joint) == 13
-    assert len(universe) == 195
+    fused_softmax = [item for item in universe if item.transformation.fused_softmax]
+    assert len(fused_softmax) == 9
+    assert sum(item.schedule.scalable_vectorization for item in fused_softmax) == 1
+    assert {
+        item.schedule.vector_lanes
+        for item in fused_softmax
+        if not item.schedule.scalable_vectorization
+    } == {2, 4, 8, 16}
+    assert all(item.schedule.vectorize for item in fused_softmax)
+    assert all(item.schedule.parallel_tile == 0 for item in fused_softmax)
+    assert all(item.schedule.reduction_tile == 0 for item in fused_softmax)
+    assert len(universe) == 204
 
 
 def test_rvv_retile_schedule_is_an_explicit_search_axis() -> None:
@@ -111,6 +139,9 @@ def test_rvv_retile_schedule_is_an_explicit_search_axis() -> None:
         3, True, 0, parallel_tile=16, scalable_vectorization=True
     )
     assert scalable.to_dict()["vector_policy"] == "scalable"
+    assert scalable.to_dict()["vector_lanes"] == 4
+    with pytest.raises(ValueError, match="vector_lanes"):
+        rvv.RiscvSchedule(3, True, 128, vector_lanes=3)
     with pytest.raises(ValueError, match="reserved for scalable"):
         rvv.RiscvSchedule(3, True, 0)
     with pytest.raises(ValueError, match="requires vectorize=true"):
@@ -472,7 +503,7 @@ def test_rvv_c_reorders_but_does_not_change_retile_universe() -> None:
     record = with_c.to_record()
     assert record["same_universe_for_erase_c_and_c_prior"] is True
     assert record["c_controls_admission"] is False
-    assert record["candidate_universe_count"] == 195
+    assert record["candidate_universe_count"] == 204
     assert {
         item.schedule.thread_count for item in with_c.universe
     } == {1}

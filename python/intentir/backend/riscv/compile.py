@@ -29,6 +29,7 @@ TRIPLE = os.environ.get("INTENT_RISCV_TRIPLE", "riscv64-unknown-linux-gnu")
 MATTR = os.environ.get("INTENT_RISCV_MATTR", "+v,+zfh")
 
 RVV_B_FUSION = "riscv.b.readonly_producer_consumer_fusion.v2"
+RVV_B_FUSED_SOFTMAX = "riscv.b.readonly_fused_softmax.v1"
 
 
 def _run_text(command: list[str], *, stdin: str) -> str:
@@ -68,6 +69,7 @@ class RiscvTransformationState:
     reassociate_reductions: bool = False
     explicit_vector_reduction: bool = False
     joint_vector_reduction: bool = False
+    fused_softmax: bool = False
 
     def __post_init__(self) -> None:
         if type(self.fuse_producers) is not bool:
@@ -78,6 +80,8 @@ class RiscvTransformationState:
             raise TypeError("explicit_vector_reduction must be bool")
         if type(self.joint_vector_reduction) is not bool:
             raise TypeError("joint_vector_reduction must be bool")
+        if type(self.fused_softmax) is not bool:
+            raise TypeError("fused_softmax must be bool")
         if self.explicit_vector_reduction and not self.reassociate_reductions:
             raise ValueError(
                 "explicit float vector reduction requires the admitted "
@@ -92,9 +96,25 @@ class RiscvTransformationState:
                 "joint RVV vector reduction requires producer fusion, "
                 "reassociation, and explicit vector reduction"
             )
+        if self.fused_softmax and not self.reassociate_reductions:
+            raise ValueError(
+                "fused RVV Softmax requires the admitted reduction "
+                "reassociation state"
+            )
+        if self.fused_softmax and (
+            self.fuse_producers
+            or self.explicit_vector_reduction
+            or self.joint_vector_reduction
+        ):
+            raise ValueError(
+                "fused RVV Softmax is a complete structural state and cannot "
+                "be combined with generic fusion or row-reduction states"
+            )
 
     @property
     def lowering_path_kind(self) -> str:
+        if self.fused_softmax:
+            return "fused_softmax_hybrid"
         if self.joint_vector_reduction:
             return "producer_consumer_fused_joint_vector_reduction"
         if self.explicit_vector_reduction:
@@ -108,7 +128,9 @@ class RiscvTransformationState:
     @property
     def transformation_trace(self) -> tuple[str, ...]:
         structural = (
-            "rvv.linalg.producer_consumer_fusion.v2"
+            "rvv.vector.fused_softmax_hybrid.v1"
+            if self.fused_softmax
+            else "rvv.linalg.producer_consumer_fusion.v2"
             if self.fuse_producers
             else "rvv.linalg.materialized.v1"
         )
@@ -131,11 +153,17 @@ class RiscvTransformationState:
 
     @property
     def b_transformations(self) -> tuple[str, ...]:
+        if self.fused_softmax:
+            return (RVV_B_FUSED_SOFTMAX,)
         return (RVV_B_FUSION,) if self.fuse_producers else ()
 
     @property
     def required_b_capabilities(self) -> tuple[str, ...]:
-        return (B_CAP_READONLY_INPUTS,) if self.fuse_producers else ()
+        return (
+            (B_CAP_READONLY_INPUTS,)
+            if self.fuse_producers or self.fused_softmax
+            else ()
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -144,6 +172,7 @@ class RiscvTransformationState:
             "reassociate_reductions": self.reassociate_reductions,
             "explicit_vector_reduction": self.explicit_vector_reduction,
             "joint_vector_reduction": self.joint_vector_reduction,
+            "fused_softmax": self.fused_softmax,
             "transformation_trace": list(self.transformation_trace),
             "b_transformations": list(self.b_transformations),
             "required_b_capabilities": list(self.required_b_capabilities),
@@ -159,6 +188,7 @@ class RiscvSchedule:
     reduction_tile: int = 0
     thread_count: int = 1
     scalable_vectorization: bool = False
+    vector_lanes: int = 4
 
     def __post_init__(self) -> None:
         if self.opt_level not in {2, 3}:
@@ -180,6 +210,13 @@ class RiscvSchedule:
             raise ValueError(
                 "RVV vector_bits=0 is reserved for scalable vectorization"
             )
+        if (
+            type(self.vector_lanes) is not int
+            or self.vector_lanes < 1
+            or self.vector_lanes > 16
+            or self.vector_lanes & (self.vector_lanes - 1)
+        ):
+            raise ValueError("RVV vector_lanes must be a power of two in [1, 16]")
         if self.thread_count != 1:
             raise ValueError("RVV production search is single-thread only")
         for name, value in (
@@ -209,6 +246,7 @@ class RiscvSchedule:
             "parallel_tile": self.parallel_tile,
             "reduction_tile": self.reduction_tile,
             "thread_count": self.thread_count,
+            "vector_lanes": self.vector_lanes,
         }
 
 
@@ -225,11 +263,13 @@ class RiscvLoweringCandidate:
             f"rvv.{path}.o{schedule.opt_level}."
             f"vec{int(schedule.vectorize)}.vlen{schedule.vector_bits}."
             f"scalable{int(schedule.scalable_vectorization)}."
+            f"lanes{schedule.vector_lanes}."
             f"pt{schedule.parallel_tile}.rt{schedule.reduction_tile}."
             f"thr{schedule.thread_count}."
             f"reassoc{int(self.transformation.reassociate_reductions)}."
             f"explicitvec{int(self.transformation.explicit_vector_reduction)}."
             f"jointvec{int(self.transformation.joint_vector_reduction)}"
+            f".fusedsoftmax{int(self.transformation.fused_softmax)}"
         )
 
     def _content(self) -> dict[str, Any]:
@@ -266,6 +306,14 @@ class RiscvTransformationRecord:
     joint_vector_reductions: int = 0
     joint_vector_reduction_root_loads: int = 0
     joint_raw_moment_variances: int = 0
+    fused_softmax_count: int = 0
+    fused_softmax_input_traversals: int = 0
+    fused_softmax_full_row_traversals: int = 0
+    fused_softmax_removed_materializations: int = 0
+    fused_softmax_vector_reductions: int = 0
+    fused_softmax_scalar_reductions: int = 0
+    fused_softmax_vector_width: int = 0
+    fused_softmax_scalable: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -295,6 +343,24 @@ class RiscvTransformationRecord:
                 self.joint_vector_reduction_root_loads
             ),
             "joint_raw_moment_variances": self.joint_raw_moment_variances,
+            "fused_softmax_count": self.fused_softmax_count,
+            "fused_softmax_input_traversals": (
+                self.fused_softmax_input_traversals
+            ),
+            "fused_softmax_full_row_traversals": (
+                self.fused_softmax_full_row_traversals
+            ),
+            "fused_softmax_removed_materializations": (
+                self.fused_softmax_removed_materializations
+            ),
+            "fused_softmax_vector_reductions": (
+                self.fused_softmax_vector_reductions
+            ),
+            "fused_softmax_scalar_reductions": (
+                self.fused_softmax_scalar_reductions
+            ),
+            "fused_softmax_vector_width": self.fused_softmax_vector_width,
+            "fused_softmax_scalable": self.fused_softmax_scalable,
         }
 
 
@@ -382,7 +448,7 @@ def _lower_to_llvm_ir(
         and not schedule.scalable_vectorization
     ):
         raise ValueError(
-            "explicit RVV vector reduction requires a scalable-vector schedule"
+            "explicit RVV vector lowering requires a scalable-vector schedule"
         )
     linalg = _run_text(
         [
@@ -396,7 +462,22 @@ def _lower_to_llvm_ir(
         ],
         stdin=source,
     )
-    if candidate.transformation.fuse_producers:
+    if candidate.transformation.fused_softmax:
+        fused_structured = _run_text(
+            [
+                INTENT_OPT,
+                (
+                    "-fuse-linalg-softmax="
+                    f"vector-width={schedule.vector_lanes} scalable-vector="
+                    f"{'true' if schedule.scalable_vectorization else 'false'} "
+                    "require-fusion=true"
+                ),
+                "-canonicalize",
+                "-cse",
+            ],
+            stdin=linalg,
+        )
+    elif candidate.transformation.fuse_producers:
         fused_structured = _run_text(
             [MLIR_OPT, "--linalg-fuse-elementwise-ops", "--canonicalize"],
             stdin=linalg,
@@ -429,7 +510,7 @@ def _lower_to_llvm_ir(
                 INTENT_OPT,
                 (
                     "-vectorize-linalg-row-reduction="
-                    "vector-width=4 scalable-vector=true "
+                    f"vector-width={schedule.vector_lanes} scalable-vector=true "
                     f"require-vectorization=true{joint_options}"
                 ),
                 "-canonicalize",
@@ -521,6 +602,30 @@ def _lower_to_llvm_ir(
         joint_raw_moment_variances=_module_i64_attr(
             structured, "intent.rvv.joint_raw_moment_variance_count"
         ),
+        fused_softmax_count=_module_i64_attr(
+            structured, "intent.rvv.fused_softmax_count"
+        ),
+        fused_softmax_input_traversals=_module_i64_attr(
+            structured, "intent.rvv.fused_softmax_input_traversal_count"
+        ),
+        fused_softmax_full_row_traversals=_module_i64_attr(
+            structured, "intent.rvv.fused_softmax_full_row_traversal_count"
+        ),
+        fused_softmax_removed_materializations=_module_i64_attr(
+            structured, "intent.rvv.fused_softmax_removed_materialization_count"
+        ),
+        fused_softmax_vector_reductions=_module_i64_attr(
+            structured, "intent.rvv.fused_softmax_vector_reduction_count"
+        ),
+        fused_softmax_scalar_reductions=_module_i64_attr(
+            structured, "intent.rvv.fused_softmax_scalar_reduction_count"
+        ),
+        fused_softmax_vector_width=_module_i64_attr(
+            structured, "intent.rvv.fused_softmax_vector_width"
+        ),
+        fused_softmax_scalable=_module_i64_attr(
+            structured, "intent.rvv.fused_softmax_scalable_count"
+        ),
     )
     if (
         candidate.transformation.reassociate_reductions
@@ -552,6 +657,21 @@ def _lower_to_llvm_ir(
         raise RuntimeError(
             "requested joint RVV vector reduction produced no valid "
             "same-root statistics group"
+        )
+    if candidate.transformation.fused_softmax and (
+        record.fused_softmax_count != 1
+        or record.fused_softmax_input_traversals != 2
+        or record.fused_softmax_full_row_traversals != 3
+        or record.fused_softmax_removed_materializations < 4
+        or record.fused_softmax_vector_reductions != 1
+        or record.fused_softmax_scalar_reductions != 1
+        or record.fused_softmax_vector_width != schedule.vector_lanes
+        or record.fused_softmax_scalable
+        != int(schedule.scalable_vectorization)
+    ):
+        raise RuntimeError(
+            "requested fused RVV Softmax produced no valid hybrid "
+            "three-traversal vector state"
         )
     parallel_runtime = schedule.thread_count > 1
     front = [
@@ -611,12 +731,15 @@ def _lower_to_llvm_ir(
             "--expand-strided-metadata",
             "--lower-affine",
             "--convert-scf-to-cf",
+            "--convert-math-to-libm",
             *(
                 ["--convert-vector-to-llvm"]
-                if candidate.transformation.explicit_vector_reduction
+                if (
+                    candidate.transformation.explicit_vector_reduction
+                    or candidate.transformation.fused_softmax
+                )
                 else []
             ),
-            "--convert-math-to-libm",
             "--convert-arith-to-llvm",
             "--convert-index-to-llvm",
             "--finalize-memref-to-llvm",
@@ -702,6 +825,22 @@ def compile_riscv_object(
             "requested joint RVV vector reduction produced no valid "
             "same-root statistics group"
         )
+    if candidate.transformation.fused_softmax and (
+        transformation_record.fused_softmax_count != 1
+        or transformation_record.fused_softmax_input_traversals != 2
+        or transformation_record.fused_softmax_full_row_traversals != 3
+        or transformation_record.fused_softmax_removed_materializations < 4
+        or transformation_record.fused_softmax_vector_reductions != 1
+        or transformation_record.fused_softmax_scalar_reductions != 1
+        or transformation_record.fused_softmax_vector_width
+        != candidate.schedule.vector_lanes
+        or transformation_record.fused_softmax_scalable
+        != int(candidate.schedule.scalable_vectorization)
+    ):
+        raise RuntimeError(
+            "requested fused RVV Softmax produced no valid hybrid "
+            "three-traversal vector state"
+        )
     schedule = candidate.schedule
     vector_shape_flags = (
         [
@@ -757,12 +896,18 @@ def compile_riscv_object(
         )
     )
     if (
-        candidate.transformation.explicit_vector_reduction
-        and rvv_reduction_instruction_count == 0
+        (
+            candidate.transformation.explicit_vector_reduction
+            and rvv_reduction_instruction_count == 0
+        )
+        or (
+            candidate.transformation.fused_softmax
+            and rvv_reduction_instruction_count < 1
+        )
     ):
         raise RuntimeError(
-            "requested explicit RVV vector reduction produced no RVV "
-            "floating-point reduction instruction"
+            "requested explicit RVV vector state produced insufficient RVV "
+            "floating-point reduction instructions"
         )
     scalable_vector_ir_count = len(re.findall(r"<vscale\s+x\s+", optimized))
     if schedule.scalable_vectorization and scalable_vector_ir_count == 0:
@@ -796,6 +941,7 @@ def compile_riscv_object(
 
 __all__ = [
     "MATTR",
+    "RVV_B_FUSED_SOFTMAX",
     "RVV_B_FUSION",
     "RiscvCompiledObject",
     "RiscvLoweringCandidate",

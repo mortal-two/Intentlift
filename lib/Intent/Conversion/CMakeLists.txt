@@ -3,6 +3,7 @@ add_mlir_library(MLIRIntentConversionCommon
   ExpandRsqrtForLibm.cpp
   TileLinalgByIteratorKind.cpp
   VectorizeLinalgRowReduction.cpp
+  FuseLinalgSoftmax.cpp
   ForwardBufferResultsToOutParams.cpp
   LowerDisjointMemrefCopyToLoops.cpp
 
@@ -22,6 +23,7 @@ add_mlir_library(MLIRIntentConversionCommon
   MLIRLinalgTransforms
   MLIRTensorDialect
   MLIRArithDialect
+  MLIRFuncDialect
   MLIRMathDialect
   MLIRMathTransforms
   MLIRMemRefDialect

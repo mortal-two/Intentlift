@@ -119,6 +119,38 @@ def VectorizeLinalgRowReduction : Pass<
   ];
 }
 
+def FuseLinalgSoftmax : Pass<
+    "fuse-linalg-softmax", "::mlir::ModuleOp"> {
+  let summary = "Lower canonical stable row Softmax to one fused vector state.";
+  let description = [{
+    Structurally matches a rank-2 f32 stable Softmax graph lowered through
+    Linalg: row max, broadcast subtract, exp, reassociable row sum, and
+    broadcast divide. The fused hybrid state emits one vector max traversal,
+    one scalar exp+live-sum traversal that writes directly into the final tensor
+    scratch, and one vector in-place normalization traversal. This target-
+    appropriate split avoids pretending libm exp is a native RVV vector op.
+    Matching rejects ordered sums, extra users, non-canonical maps, and
+    unsupported shapes.
+  }];
+  let dependentDialects = [
+    "::mlir::arith::ArithDialect",
+    "::mlir::func::FuncDialect",
+    "::mlir::linalg::LinalgDialect",
+    "::mlir::math::MathDialect",
+    "::mlir::scf::SCFDialect",
+    "::mlir::tensor::TensorDialect",
+    "::mlir::vector::VectorDialect",
+  ];
+  let options = [
+    Option<"vectorWidth", "vector-width", "unsigned", "4",
+           "Fixed lanes, or minimum scalable lanes, in each row packet">,
+    Option<"scalableVector", "scalable-vector", "bool", "false",
+           "Use scalable vector packets and a vector.vscale-derived strip size">,
+    Option<"requireFusion", "require-fusion", "bool", "false",
+           "Fail the pass if no canonical stable row Softmax is fused">,
+  ];
+}
+
 def ForwardBufferResultsToOutParams : Pass<
     "forward-buffer-results-to-out-params", "::mlir::ModuleOp"> {
   let summary = "Forward bufferized tensor results into explicit out params.";
