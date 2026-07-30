@@ -359,6 +359,56 @@ def test_rvv_contract_consumes_only_materialized_typed_access_guards() -> None:
         derive_riscv_contract_view(attach_c(stripped, snapshot.c, target))
 
 
+def test_rvv_contract_consumes_typed_materialized_internal_storage() -> None:
+    snapshot, _path = load_production_snapshot(
+        _ROOT / "corpus" / "production-jc-v3",
+        "cross_entropy",
+    )
+    assert snapshot.c is not None
+    prepared = prepare_production_workload(
+        "cross_entropy", profile="natural-headline-v1"
+    )
+    case = build_workload_jc_suite(prepared, snapshot.j, snapshot.c).cases[0]
+    constexpr = constexpr_input_bindings(
+        snapshot.j,
+        case.refeval.input_binding_map,
+        case.values,
+    )
+    materialized = materialize_j(
+        snapshot.j,
+        case.refeval.dims_map,
+        constexpr_bindings=constexpr,
+    )
+    target = BackendTarget("riscv", "rv64gcv_zfh", ("vlen128",))
+
+    view = derive_riscv_contract_view(
+        attach_c(materialized, snapshot.c, target)
+    )
+
+    assert view.supported
+    assert "storage:b0" in view.consumed
+    assert "storage:b1" in view.consumed
+
+    stripped_logical_projection = replace(
+        materialized.boundary_projection.logical_projection,
+        consumed=tuple(
+            item
+            for item in materialized.boundary_projection.consumed
+            if item != "storage:b0"
+        ),
+    )
+    stripped_projection = replace(
+        materialized.boundary_projection,
+        logical_projection=stripped_logical_projection,
+    )
+    stripped = replace(materialized, boundary_projection=stripped_projection)
+    with pytest.raises(
+        RiscvContractError,
+        match="general_mutable_storage:b0",
+    ):
+        derive_riscv_contract_view(attach_c(stripped, snapshot.c, target))
+
+
 def test_unused_abi_inputs_do_not_suppress_readonly_graph_fusion() -> None:
     snapshot, _path = load_production_snapshot(
         _ROOT / "corpus" / "production-jc-v1",
@@ -420,7 +470,7 @@ def test_rvv_c_reorders_but_does_not_change_retile_universe() -> None:
     c_fixed = by_id[with_c.c_fixed_candidate_id]
     assert not c_fixed.transformation.fuse_producers
     assert c_fixed.schedule.thread_count == 1
-    assert c_fixed.schedule.parallel_tile == 2
+    assert c_fixed.schedule.parallel_tile == 0
     assert c_fixed.schedule.reduction_tile == 8
     assert with_c.schedule_only_c_prior_order[0] == c_fixed.candidate_id
     c_schedule_t1 = [
@@ -464,8 +514,7 @@ def test_rvv_c_reorders_but_does_not_change_retile_universe() -> None:
         (True, True, True, False),
         (True, True, True, True),
     ]
-    assert all(item.schedule.parallel_tile == 2 for item in first_seven)
-    assert all(item.schedule.reduction_tile == 8 for item in first_seven)
+    assert first_seven[0].schedule == c_fixed.schedule
     assert all(
         item.schedule.scalable_vectorization
         == item.transformation.explicit_vector_reduction
@@ -507,3 +556,37 @@ def test_rvv_c_reorders_but_does_not_change_retile_universe() -> None:
     assert {
         item.schedule.thread_count for item in with_c.universe
     } == {1}
+
+
+def test_rvv_c_fixed_does_not_activate_an_unmentioned_tile_axis() -> None:
+    snapshot, _path = load_production_snapshot(
+        _ROOT / "corpus" / "production-jc-v3",
+        "tvd",
+    )
+    assert snapshot.c is not None
+    prepared = prepare_production_workload("tvd", profile="natural-headline-v1")
+    case = build_workload_jc_suite(prepared, snapshot.j, snapshot.c).cases[0]
+    constexpr = constexpr_input_bindings(
+        snapshot.j,
+        case.refeval.input_binding_map,
+        case.values,
+    )
+    materialized = materialize_j(
+        snapshot.j,
+        case.refeval.dims_map,
+        constexpr_bindings=constexpr,
+    )
+    target = BackendTarget("riscv", "rv64gcv_zfh", ("vlen128",))
+
+    plan = rvv_search.plan_riscv_search(
+        attach_c(materialized, snapshot.c, target)
+    )
+    by_id = {item.candidate_id: item for item in plan.universe}
+    c_fixed = by_id[plan.c_fixed_candidate_id]
+
+    assert c_fixed.schedule.parallel_tile == 4
+    assert c_fixed.schedule.reduction_tile == 0
+    assert {
+        item["schedule_dimension"]
+        for item in plan.c_projection["projected_priors"]
+    } == {"parallel_tile"}

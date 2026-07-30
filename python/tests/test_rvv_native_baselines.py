@@ -24,9 +24,20 @@ FRESH14 = {
     "xformers_rms_norm_add",
 }
 
+STAGE2 = {
+    "cross_entropy",
+    "flash_linear",
+    "group_norm",
+    "jsd",
+    "liger_rope",
+    "qwen2vl_mrope",
+    "tvd",
+    "xformers_rms_norm",
+}
+
 
 def test_fresh14_has_independent_native_rvv_sources() -> None:
-    for kernel in sorted(FRESH14):
+    for kernel in sorted(FRESH14 | STAGE2):
         record = native_rvv_baseline_record(kernel)
         assert record["protocol"] == NATIVE_RVV_BASELINE_PROTOCOL
         assert record["symbol"] == NATIVE_RVV_SYMBOL

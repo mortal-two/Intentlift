@@ -383,6 +383,21 @@ def _c_ranked_with_robust_anchors(
         return tuple(sorted(candidates, key=lambda item: _erase_schedule_key(item.schedule)))
 
     ranked_groups: list[tuple[RiscvLoweringCandidate, ...]] = []
+    projected_dimensions = {item.schedule_dimension for item in priors}
+
+    def unprojected_tile_count(candidate: RiscvLoweringCandidate) -> int:
+        # C-Fixed is the mechanical projection of the authored C, not an
+        # opportunity to silently activate another schedule axis.  A tied
+        # candidate therefore keeps every unmentioned tile dimension at its
+        # canonical zero value.  Schedule-Only still contains the complete
+        # target-independent universe and may subsequently explore it.
+        schedule = candidate.schedule
+        return sum(
+            int(getattr(schedule, dimension) != 0)
+            for dimension in ("parallel_tile", "reduction_tile")
+            if dimension not in projected_dimensions
+        )
+
     for thread_count in sorted({item.schedule.thread_count for item in candidates}):
         group = tuple(
             item for item in candidates if item.schedule.thread_count == thread_count
@@ -392,6 +407,7 @@ def _c_ranked_with_robust_anchors(
                 group,
                 key=lambda item: (
                     _c_score(item.schedule, priors),
+                    unprojected_tile_count(item),
                     _erase_schedule_key(item.schedule),
                 ),
             )

@@ -258,6 +258,140 @@ def _flash_layer_norm() -> str:
     )
 
 
+def _jsd() -> str:
+    return _source(
+        "M2 *logp_d, M2 *logq_d, M1 *labels_d, M0 *denom_d, M2 *loss_d, M2 *dx_d",
+        r"""
+  float *logp=DATA(logp_d,float),*logq=DATA(logq_d,float);
+  float *loss=DATA(loss_d,float),*dx=DATA(dx_d,float);
+  int32_t denom_i=DATA(denom_d,int32_t)[0];float denom=(float)denom_i;
+  int64_t m=logp_d->sizes[0],n=logp_d->sizes[1];(void)labels_d;
+  #pragma omp parallel for schedule(static)
+  for(int64_t i=0;i<m;i++){float mx=-INFINITY;
+    for(int64_t j=0;j<n;j++){int64_t k=i*n+j;mx=fmaxf(mx,fmaxf(logp[k],logq[k]));}
+    for(int64_t j=0;j<n;j++){int64_t k=i*n+j;float p=expf(logp[k]-mx)*expf(mx);float q=expf(logq[k]-mx)*expf(mx);
+      float wp=0.5f*p,wq=0.5f*q,mix=wp+wq,logmix=logf(mix);
+      loss[k]=(wq*logq[k]+wp*logp[k]-mix*logmix)/denom;
+      dx[k]=wp*(logp[k]-logmix)/denom;}}
+""",
+    )
+
+
+def _tvd() -> str:
+    return _source(
+        "M2 *a_d, M2 *b_d, M1 *labels_d, M0 *scale_d, M2 *loss_d, M2 *grad_d",
+        r"""
+  float *a=DATA(a_d,float),*b=DATA(b_d,float),scale=DATA(scale_d,float)[0];
+  float *loss=DATA(loss_d,float),*grad=DATA(grad_d,float);(void)labels_d;
+  int64_t total=a_d->sizes[0]*a_d->sizes[1];
+  #pragma omp parallel for schedule(static)
+  for(int64_t k=0;k<total;k++){loss[k]=0.5f*fabsf(a[k]-b[k]);grad[k]=(a[k]>b[k]?0.5f:-0.5f)*scale;}
+""",
+    )
+
+
+def _xformers_rms_norm() -> str:
+    return _source(
+        "M2 *x_d, M1 *w_d, M0 *eps_d, M2 *y_d",
+        r"""
+  float *x=DATA(x_d,float),*w=DATA(w_d,float),eps=DATA(eps_d,float)[0],*y=DATA(y_d,float);
+  int64_t m=x_d->sizes[0],n=x_d->sizes[1];
+  #pragma omp parallel for schedule(static)
+  for(int64_t i=0;i<m;i++){float sumsq=0.0f;for(int64_t j=0;j<n;j++){float v=x[i*n+j];sumsq+=v*v;}
+    float r=1.0f/sqrtf(sumsq/(float)n+eps);for(int64_t j=0;j<n;j++)y[i*n+j]=x[i*n+j]*r*w[j];}
+""",
+    )
+
+
+def _cross_entropy() -> str:
+    return _source(
+        "M2 *logits_d, M1 *labels_d, M1 *weight_d, M1 *zloss_d, M1 *accuracy_d, M1 *predicted_d, M0 *denom_d, M0 *ignore_d, M2 *logits_out_d, M1 *loss_d",
+        r"""
+  float *x=DATA(logits_d,float),*out=DATA(logits_out_d,float),*loss=DATA(loss_d,float);
+  int64_t *labels=DATA(labels_d,int64_t);float denom=DATA(denom_d,float)[0];int64_t ignore=DATA(ignore_d,int64_t)[0];
+  int64_t m=logits_d->sizes[0],n=logits_d->sizes[1];
+  (void)weight_d;(void)zloss_d;(void)accuracy_d;(void)predicted_d;
+  #pragma omp parallel for schedule(static)
+  for(int64_t i=0;i<m;i++){int64_t label=labels[i];
+    if(label==ignore){for(int64_t j=0;j<n;j++)out[i*n+j]=0.0f;loss[i]=0.0f;continue;}
+    float mx=-INFINITY;for(int64_t j=0;j<n;j++){float v=x[i*n+j];out[i*n+j]=v;if(v>mx)mx=v;}
+    float sum=0.0f;for(int64_t j=0;j<n;j++)sum+=expf(x[i*n+j]-mx);
+    loss[i]=(mx+logf(sum)-x[i*n+label])/denom;}
+""",
+    )
+
+
+def _group_norm() -> str:
+    return _source(
+        "M3 *x_d, M1 *weight_d, M1 *bias_d, M0 *hidden_d, M0 *channels_d, M0 *eps_d, M3 *y_d, M2 *mean_d, M2 *rstd_d",
+        r"""
+  float *x=DATA(x_d,float),*w=DATA(weight_d,float),*bias=DATA(bias_d,float),*y=DATA(y_d,float);
+  float *mean=DATA(mean_d,float),*rstd=DATA(rstd_d,float),eps=DATA(eps_d,float)[0];
+  int32_t hidden_i=DATA(hidden_d,int32_t)[0],channels_i=DATA(channels_d,int32_t)[0];
+  int64_t batch=x_d->sizes[0],groups=x_d->sizes[1],width=x_d->sizes[2];
+  int64_t hidden=hidden_i<width?hidden_i:width,channels=channels_i,spatial=hidden/channels;
+  #pragma omp parallel for schedule(static)
+  for(int64_t row=0;row<batch*groups;row++){float sum=0.0f,sumsq=0.0f;
+    for(int64_t j=0;j<hidden;j++){float v=x[row*width+j];sum+=v;sumsq+=v*v;}
+    float mu=sum/(float)hidden,var=sumsq/(float)hidden-mu*mu,rr=1.0f/sqrtf(var+eps);mean[row]=mu;rstd[row]=rr;
+    int64_t group=row%groups;for(int64_t j=0;j<hidden;j++){int64_t channel=group*channels+j/spatial;
+      y[row*width+j]=(x[row*width+j]-mu)*rr*w[channel]+bias[channel];}
+    for(int64_t j=hidden;j<width;j++)y[row*width+j]=0.0f;}
+""",
+    )
+
+
+def _liger_rope() -> str:
+    return _source(
+        "M4 *q_d, M4 *k_d, M3 *cos_d, M3 *sin_d, M4 *qout_d, M4 *kout_d",
+        r"""
+  _Float16 *q=DATA(q_d,_Float16),*k=DATA(k_d,_Float16),*c=DATA(cos_d,_Float16),*s=DATA(sin_d,_Float16);
+  _Float16 *qo=DATA(qout_d,_Float16),*ko=DATA(kout_d,_Float16);
+  int64_t b=q_d->sizes[0],seq=q_d->sizes[1],hq=q_d->sizes[2],hk=k_d->sizes[2],d=q_d->sizes[3],half=d/2;
+  #pragma omp parallel for schedule(static)
+  for(int64_t row=0;row<b*seq;row++){int64_t token=row%seq;
+    for(int64_t h=0;h<hq;h++)for(int64_t j=0;j<half;j++){int64_t base=(row*hq+h)*d;float cv=(float)c[token*d+j],sv=(float)s[token*d+j];
+      float a=(float)q[base+j],z=(float)q[base+half+j];qo[base+j]=(_Float16)(a*cv-z*sv);qo[base+half+j]=(_Float16)(z*cv+a*sv);}
+    for(int64_t h=0;h<hk;h++)for(int64_t j=0;j<half;j++){int64_t base=(row*hk+h)*d;float cv=(float)c[token*d+j],sv=(float)s[token*d+j];
+      float a=(float)k[base+j],z=(float)k[base+half+j];ko[base+j]=(_Float16)(a*cv-z*sv);ko[base+half+j]=(_Float16)(z*cv+a*sv);}}
+""",
+    )
+
+
+def _qwen2vl_mrope() -> str:
+    return _source(
+        "M4 *q_d, M4 *k_d, M4 *cos_d, M4 *sin_d, M4 *qout_d, M4 *kout_d",
+        r"""
+  _Float16 *q=DATA(q_d,_Float16),*k=DATA(k_d,_Float16),*c=DATA(cos_d,_Float16),*s=DATA(sin_d,_Float16);
+  _Float16 *qo=DATA(qout_d,_Float16),*ko=DATA(kout_d,_Float16);
+  int64_t b=q_d->sizes[0],seq=q_d->sizes[1],hq=q_d->sizes[2],hk=k_d->sizes[2],d=q_d->sizes[3],half=d/2;
+  #pragma omp parallel for schedule(static)
+  for(int64_t row=0;row<b*seq;row++){int64_t batch=row/seq,token=row%seq;
+    for(int64_t j=0;j<half;j++){int64_t plane=j<16?0:(j<40?1:2);int64_t ci=((plane*b+batch)*seq+token)*d+j;
+      float cv=(float)c[ci],sv=(float)s[ci];
+      for(int64_t h=0;h<hq;h++){int64_t base=(row*hq+h)*d;float a=(float)q[base+j],z=(float)q[base+half+j];
+        qo[base+j]=(_Float16)(a*cv-z*sv);qo[base+half+j]=(_Float16)(z*cv+a*sv);}
+      for(int64_t h=0;h<hk;h++){int64_t base=(row*hk+h)*d;float a=(float)k[base+j],z=(float)k[base+half+j];
+        ko[base+j]=(_Float16)(a*cv-z*sv);ko[base+half+j]=(_Float16)(z*cv+a*sv);}}}
+""",
+    )
+
+
+def _flash_linear() -> str:
+    return _source(
+        "M2 *a_d, M2 *b_d, M1 *bias_d, M2 *out_d, M2 *act_d",
+        r"""
+  _Float16 *a=DATA(a_d,_Float16),*b=DATA(b_d,_Float16),*bias=DATA(bias_d,_Float16);
+  _Float16 *out=DATA(out_d,_Float16),*act=DATA(act_d,_Float16);
+  int64_t m=a_d->sizes[0],kdim=a_d->sizes[1],n=b_d->sizes[0];
+  #pragma omp parallel for schedule(static)
+  for(int64_t i=0;i<m;i++)for(int64_t j=0;j<n;j++){float acc=(float)bias[j];
+    for(int64_t k=0;k<kdim;k++)acc+=(float)a[i*kdim+k]*(float)b[j*kdim+k];
+    _Float16 value=(_Float16)acc;out[i*n+j]=value;act[i*n+j]=value;}
+""",
+    )
+
+
 _SOURCES = {
     "dyt": _dyt,
     "swiglu": _swiglu,
@@ -273,6 +407,14 @@ _SOURCES = {
     "flash_bwd_preprocess": _flash_bwd_preprocess,
     "splitk_reduce_varargs": _splitk,
     "flash_layer_norm_1pass": _flash_layer_norm,
+    "jsd": _jsd,
+    "tvd": _tvd,
+    "xformers_rms_norm": _xformers_rms_norm,
+    "cross_entropy": _cross_entropy,
+    "group_norm": _group_norm,
+    "liger_rope": _liger_rope,
+    "qwen2vl_mrope": _qwen2vl_mrope,
+    "flash_linear": _flash_linear,
 }
 
 

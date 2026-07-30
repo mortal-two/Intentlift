@@ -7,7 +7,6 @@ from typing import Any, Mapping
 
 from intentir.backend.contract_capabilities import derive_search_capabilities
 from intentir.backend.materialize import BackendSearchState
-from intentir.frontend.canonical_j import LOGICAL_FULL_AXIS_STEP_MATERIALIZATION
 
 
 CONTRACT_VIEW_VERSION = "intentir.backend.riscv.contract-view.v1"
@@ -75,9 +74,9 @@ def derive_riscv_contract_view(
             unsupported.append("access_guard_materialization_not_implemented")
     for storage in j.storage:
         reference = f"storage:{storage.storage_id}"
-        if storage.mutability.value == "mutable" and not (
-            state.base.form == LOGICAL_FULL_AXIS_STEP_MATERIALIZATION
-            and reference in set(projection.consumed)
+        if (
+            storage.mutability.value == "mutable"
+            and reference not in projected_consumed
         ):
             unsupported.append(
                 f"general_mutable_storage:{storage.storage_id}"
