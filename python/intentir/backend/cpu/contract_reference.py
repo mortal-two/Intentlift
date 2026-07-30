@@ -39,6 +39,7 @@ from intentir.ir.canonical_j import (
     ContractExpr,
     ContractSort,
     canonical_broadcast_axes,
+    direct_unit_dimension_refs,
     elaborate_j,
     j_elaboration,
 )
@@ -182,13 +183,30 @@ class IndexedStoreProjection:
 
 
 @dataclass(frozen=True)
+class IndexedResultLoadProjection:
+    """One gather result whose exact masked access view is authored in Layer B."""
+
+    access: ContractAccessIR
+    result_ref: str
+    result_axes: tuple[str, ...]
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "proof": "typed_indexed_result_view",
+            "access": self.access.to_json(),
+            "result_ref": self.result_ref,
+            "result_axes": list(self.result_axes),
+        }
+
+
+@dataclass(frozen=True)
 class ContractReferencePlan:
     """Ephemeral source-free lowering plan derived one-to-one from J."""
 
     contract_ir: CanonicalContractIR
     domains: tuple[tuple[str, int | str], ...]
     loads: tuple[IndexedLoadProjection, ...]
-    graph_native_loads: tuple[str, ...]
+    result_loads: tuple[IndexedResultLoadProjection, ...]
     stores: tuple[IndexedStoreProjection, ...]
     broadcast_axes: tuple[
         tuple[str, tuple[tuple[str, tuple[int, ...]], ...]], ...
@@ -204,6 +222,10 @@ class ContractReferencePlan:
             (item.result_ref, item.operand_index): item
             for item in self.loads
         }
+
+    @property
+    def result_load_map(self) -> dict[str, IndexedResultLoadProjection]:
+        return {item.result_ref: item for item in self.result_loads}
 
     @property
     def stores_by_output(self) -> dict[str, tuple[IndexedStoreProjection, ...]]:
@@ -225,7 +247,7 @@ class ContractReferencePlan:
             "contract_ir_digest": self.contract_ir.digest,
             "domains": [list(item) for item in self.domains],
             "loads": [item.to_json() for item in self.loads],
-            "graph_native_loads": list(self.graph_native_loads),
+            "result_loads": [item.to_json() for item in self.result_loads],
             "stores": [item.to_json() for item in self.stores],
             "broadcast_axes": [
                 [
@@ -299,6 +321,7 @@ def project_contract_reference(j: "SemanticArchive") -> ContractReferencePlan:
     }
     value_types = j_elaboration(canonical).value_type_by_name
     domains = _rectangular_domains(canonical)
+    unit_dimensions = direct_unit_dimension_refs(canonical.dimension_constraints)
     result_axes: dict[str, tuple[str, ...]] = {}
 
     def axes_for_result(
@@ -320,6 +343,72 @@ def project_contract_reference(j: "SemanticArchive") -> ContractReferencePlan:
         result_axes[result_ref] = axes
         return axes
 
+    def axes_for_gather_result(
+        operation: IntentOp,
+        node_ref: str,
+        access: ContractAccessIR,
+        gather_axis: int,
+    ) -> tuple[str, ...]:
+        """Bind a gather result to the axes explicitly used by its J access."""
+
+        result_ref = _result_names(operation)[0]
+        data_type = value_types.get(access.tensor)
+        index_type = value_types.get(operation.operands[1])
+        result_type = value_types.get(result_ref)
+        if data_type is None or index_type is None or result_type is None:
+            raise ValueError("contract gather lacks a closed J type")
+        if len(access.index) != len(data_type.shape):
+            raise ContractReferenceUnsupportedError(
+                "contract gather access rank differs from its data tensor"
+            )
+        if not 0 <= gather_axis < len(data_type.shape):
+            raise ValueError("contract gather axis is outside its data rank")
+        if len(index_type.shape) > 1:
+            raise ContractReferenceUnsupportedError(
+                "contract indexed result currently requires a scalar or rank-1 index"
+            )
+
+        axes: list[str] = []
+        for dimension, (program, extent) in enumerate(
+            zip(access.index, data_type.shape, strict=True)
+        ):
+            referenced_axes = [
+                axis
+                for axis in domains
+                if axis in program.expression.references
+            ]
+            if dimension == gather_axis and not index_type.shape:
+                if referenced_axes:
+                    raise ContractReferenceUnsupportedError(
+                        "scalar contract gather index unexpectedly carries a domain axis"
+                    )
+                continue
+            if len(referenced_axes) == 1:
+                axes.append(referenced_axes[0])
+                continue
+            if len(referenced_axes) > 1:
+                raise ContractReferenceUnsupportedError(
+                    "one contract gather result dimension uses multiple domain axes"
+                )
+            if dimension == gather_axis:
+                raise ContractReferenceUnsupportedError(
+                    "rank-1 contract gather index lacks its result domain axis"
+                )
+            if not (
+                (isinstance(extent, int) and extent == 1)
+                or (isinstance(extent, str) and extent in unit_dimensions)
+            ):
+                raise ContractReferenceUnsupportedError(
+                    "constant contract gather coordinate requires a J-proved unit extent"
+                )
+            axes.append(f"@unit:{result_ref}:{dimension}")
+        if len(axes) != len(result_type.shape) or len(set(axes)) != len(axes):
+            raise ContractReferenceUnsupportedError(
+                f"J node {node_ref!r} gather result axes are not uniquely closed"
+            )
+        result_axes[result_ref] = tuple(axes)
+        return tuple(axes)
+
     try:
         contract_ir = project_contract_ir(canonical)
     except ContractIRProjectionError as exc:
@@ -329,7 +418,7 @@ def project_contract_reference(j: "SemanticArchive") -> ContractReferencePlan:
     input_names = {item.name for item in canonical.intent.inputs}
     output_names = {item.name for item in canonical.intent.outputs}
     loads: list[IndexedLoadProjection] = []
-    graph_native_loads: list[str] = []
+    result_loads: list[IndexedResultLoadProjection] = []
     stores: list[IndexedStoreProjection] = []
     seen_load_edges: set[tuple[str, int]] = set()
     seen_accesses: set[str] = set()
@@ -374,20 +463,22 @@ def project_contract_reference(j: "SemanticArchive") -> ContractReferencePlan:
             ]
             if len(matching_bounds) != 1:
                 raise ContractReferenceUnsupportedError(
-                    "graph-native contract gather requires one exact index bound"
+                    "contract indexed result gather requires one exact index bound"
                 )
-            if access.predicate is not None:
-                predicate = project_predicate_text(
-                    access.predicate.expression.to_text()
+            if access.predicate is not None and access.fill_value is None:
+                raise ValueError("contract predicated gather load lacks its authored fill")
+            result_loads.append(
+                IndexedResultLoadProjection(
+                    access,
+                    result_ref,
+                    axes_for_gather_result(
+                        operation,
+                        node_ref,
+                        access,
+                        axis,
+                    ),
                 )
-                if predicate.guards or any(
-                    domains.get(bound_axis) != extent
-                    for bound_axis, extent in predicate.upper_bounds
-                ):
-                    raise ContractReferenceUnsupportedError(
-                        "graph-native contract gather requires a full-domain predicate"
-                    )
-            graph_native_loads.append(access.access_id)
+            )
             consumed_index_bounds.add(bound_key)
             seen_accesses.add(access.access_id)
             continue
@@ -472,7 +563,7 @@ def project_contract_reference(j: "SemanticArchive") -> ContractReferencePlan:
     }
     if consumed_index_bounds != authored_index_bounds:
         raise ContractReferenceUnsupportedError(
-            "contract reference v2 consumes index bounds only through graph-native gathers"
+            "contract reference v2 consumes index bounds only through indexed gathers"
         )
     stores_by_output = {item.access.tensor for item in stores}
     if stores_by_output != output_names:
@@ -505,7 +596,7 @@ def project_contract_reference(j: "SemanticArchive") -> ContractReferencePlan:
         contract_ir=contract_ir,
         domains=tuple(sorted(domains.items())),
         loads=tuple(loads),
-        graph_native_loads=tuple(sorted(graph_native_loads)),
+        result_loads=tuple(result_loads),
         stores=tuple(stores),
         broadcast_axes=tuple(
             sorted(
@@ -780,8 +871,67 @@ class _ContractEvaluator(_Evaluator):
     ) -> None:
         super().__init__(j, dims, plan.broadcast_map)
         self.contract_loads = plan.load_map
+        self.contract_result_loads = plan.result_load_map
         self.contract_scalar_bindings = dict(scalar_bindings)
         self.indexed_load_materialization_count = 0
+
+    def _materialize_indexed_load(
+        self,
+        projection: IndexedLoadProjection | IndexedResultLoadProjection,
+        source: np.ndarray,
+        op: IntentOp,
+    ) -> np.ndarray:
+        """Execute one complete J-authored Layer-B load view.
+
+        Both consumer-local operand views and graph-native gather results have
+        the same denotation: evaluate the typed access programs over the
+        producer/result domain, read selected source indices, and place the
+        authored fill everywhere the predicate is false.  The distinction is
+        only where the resulting tensor enters Layer A.
+        """
+
+        declared = self._declared_type(projection.result_ref, op)
+        if declared is None:
+            raise ValueError("contract indexed load lacks a closed result type")
+        result_shape = declared[1]
+        if len(result_shape) != len(projection.result_axes):
+            raise ValueError("contract indexed load result axes differ from result rank")
+        fill: np.ndarray | None = None
+        if projection.access.predicate is not None:
+            try:
+                fill = np.asarray(
+                    projection.access.fill_value,
+                    dtype=source.dtype,
+                )
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise ContractReferenceUnsupportedError(
+                    "contract indexed load fill has no typed NumPy denotation"
+                ) from exc
+            if fill.shape != ():
+                raise ContractReferenceUnsupportedError(
+                    "contract indexed load v1 requires a scalar fill"
+                )
+        predicate, source_index = _vectorized_access(
+            projection.access,
+            shape=result_shape,
+            axes=projection.result_axes,
+            scalar_bindings=self.contract_scalar_bindings,
+        )
+        if len(source_index) != source.ndim or any(
+            bool(np.any((item[predicate] < 0) | (item[predicate] >= source.shape[axis])))
+            for axis, item in enumerate(source_index)
+        ):
+            raise ValueError("contract indexed load is outside its J tensor")
+        result = (
+            np.full(result_shape, fill, dtype=source.dtype)
+            if fill is not None
+            else np.empty(result_shape, dtype=source.dtype)
+        )
+        result[predicate] = source[
+            tuple(item[predicate] for item in source_index)
+        ]
+        self.indexed_load_materialization_count += 1
+        return result
 
     def _operand(
         self,
@@ -825,47 +975,25 @@ class _ContractEvaluator(_Evaluator):
             raise ValueError("contract indexed load has an unavailable operand") from exc
         if operand_name != projection.access.tensor:
             raise ValueError("contract indexed load names a different operand")
-        declared = self._declared_type(projection.result_ref, op)
-        if declared is None:
-            raise ValueError("contract indexed load lacks a closed result type")
-        result_shape = declared[1]
-        if len(result_shape) != len(projection.result_axes):
-            raise ValueError("contract indexed load result axes differ from result rank")
-        fill: np.ndarray | None = None
-        if projection.access.predicate is not None:
-            try:
-                fill = np.asarray(
-                    projection.access.fill_value,
-                    dtype=source.dtype,
-                )
-            except (TypeError, ValueError, OverflowError) as exc:
-                raise ContractReferenceUnsupportedError(
-                    "contract indexed load fill has no typed NumPy denotation"
-                ) from exc
-            if fill.shape != ():
-                raise ContractReferenceUnsupportedError(
-                    "contract indexed load v1 requires a scalar fill"
-                )
-        predicate, source_index = _vectorized_access(
-            projection.access,
-            shape=result_shape,
-            axes=projection.result_axes,
-            scalar_bindings=self.contract_scalar_bindings,
-        )
-        if len(source_index) != source.ndim or any(
-            bool(np.any((item[predicate] < 0) | (item[predicate] >= source.shape[axis])))
-            for axis, item in enumerate(source_index)
-        ):
-            raise ValueError("contract indexed load is outside its J tensor")
-        result = (
-            np.full(result_shape, fill, dtype=source.dtype)
-            if fill is not None else np.empty(result_shape, dtype=source.dtype)
-        )
-        result[predicate] = source[
-            tuple(item[predicate] for item in source_index)
-        ]
-        self.indexed_load_materialization_count += 1
-        return result
+        return self._materialize_indexed_load(projection, source, op)
+
+    def _ordinary(
+        self,
+        op: IntentOp,
+        env: Mapping[str, np.ndarray],
+    ) -> np.ndarray:
+        projection = self.contract_result_loads.get(self._result_name(op))
+        if projection is None:
+            return super()._ordinary(op, env)
+        if op.op != "gather" or not op.operands:
+            raise ValueError("contract indexed result does not name one gather")
+        try:
+            source = np.asarray(env[op.operands[0]])
+        except KeyError as exc:
+            raise ValueError("contract indexed result source is unavailable") from exc
+        if op.operands[0] != projection.access.tensor:
+            raise ValueError("contract indexed result names a different source")
+        return self._materialize_indexed_load(projection, source, op)
 
 
 def execute_contract_reference(

@@ -151,6 +151,28 @@ def _walk_ops(body: Sequence[IntentOp]) -> tuple[IntentOp, ...]:
     return tuple(result)
 
 
+def _walk_op_paths(
+    body: Sequence[IntentOp],
+    prefix: str = "body",
+) -> tuple[tuple[str, IntentOp], ...]:
+    """Walk operations using the canonical paths named by ``J.node_ids``."""
+
+    result: list[tuple[str, IntentOp]] = []
+    for index, op in enumerate(body):
+        path = f"{prefix}[{index}]"
+        result.append((path, op))
+        result.extend(_walk_op_paths(op.body, f"{path}.body"))
+        if op.op in {"effect_if", "value_if"}:
+            assert op.positive is not None and op.negative is not None
+            result.extend(
+                _walk_op_paths(op.positive.body, f"{path}.positive.body")
+            )
+            result.extend(
+                _walk_op_paths(op.negative.body, f"{path}.negative.body")
+            )
+    return tuple(result)
+
+
 def _result_names(operation: IntentOp) -> tuple[str, ...]:
     if isinstance(operation.result, str):
         return (operation.result,)
@@ -247,11 +269,28 @@ class _Evaluator:
                     "structured guarded-load receipts duplicate one operand edge"
                 )
             self.access_guard_loads[key] = relation
-        nodes = {
-            operation.node_id: operation
-            for operation in _walk_ops(j.intent.body)
-            if operation.node_id is not None
-        }
+        refs_by_path: dict[str, str] = {}
+        for node_ref, path in j.node_ids.items():
+            previous = refs_by_path.setdefault(path, node_ref)
+            if previous != node_ref:
+                raise ValueError("structured reference has duplicate node paths")
+        nodes: dict[str, IntentOp] = {}
+        self.node_refs_by_operation: dict[int, str] = {}
+        for path, operation in _walk_op_paths(j.intent.body):
+            authored_ref = refs_by_path.get(path)
+            if (
+                operation.node_id is not None
+                and authored_ref is not None
+                and operation.node_id != authored_ref
+            ):
+                raise ValueError("structured inline and authored node refs disagree")
+            node_ref = operation.node_id or authored_ref
+            if node_ref is None:
+                continue
+            previous = nodes.setdefault(node_ref, operation)
+            if previous is not operation:
+                raise ValueError("structured reference has duplicate node refs")
+            self.node_refs_by_operation[id(operation)] = node_ref
         output_names = {tensor.name for tensor in j.intent.outputs}
         self.conditional_effect_stores: dict[str, list[Any]] = {}
         seen_accesses: set[str] = set()
@@ -294,9 +333,10 @@ class _Evaluator:
         operation: IntentOp,
         env: Mapping[str, np.ndarray],
     ) -> None:
-        if operation.node_id is None:
+        node_ref = self.node_refs_by_operation.get(id(operation), operation.node_id)
+        if node_ref is None:
             return
-        for relation in self.conditional_effect_stores.get(operation.node_id, ()):
+        for relation in self.conditional_effect_stores.get(node_ref, ()):
             try:
                 value = env[relation.value_ref]
             except KeyError as exc:
@@ -373,7 +413,8 @@ class _Evaluator:
             raise ValueError(
                 f"structured op {op.op!r} has an unavailable operand"
             ) from exc
-        materialization = self.access_guard_loads.get((op.node_id, index))
+        node_ref = self.node_refs_by_operation.get(id(op), op.node_id)
+        materialization = self.access_guard_loads.get((node_ref, index))
         if materialization is not None:
             if name != materialization.tensor:
                 raise ValueError(

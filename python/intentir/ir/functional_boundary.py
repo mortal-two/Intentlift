@@ -564,31 +564,48 @@ def _walk_ops(body: Sequence[IntentOp]) -> tuple[IntentOp, ...]:
     return tuple(result)
 
 
-def _effect_if_arm_node_refs(body: Sequence[IntentOp]) -> frozenset[str]:
+def _effect_if_arm_node_refs(j: Any) -> frozenset[str]:
     """Return nodes lexically controlled by at least one authored effect arm."""
 
-    return frozenset(_effect_if_arm_memberships(body))
+    return frozenset(_effect_if_arm_memberships(j))
 
 
 def _effect_if_arm_memberships(
-    body: Sequence[IntentOp],
+    j: Any,
 ) -> dict[str, tuple[tuple[str, str], ...]]:
     """Index node refs by enclosing authored effect-if and arm polarity."""
 
     result: dict[str, tuple[tuple[str, str], ...]] = {}
+    refs_by_path: dict[str, str] = {}
+    for node_ref, path in j.node_ids.items():
+        previous = refs_by_path.setdefault(path, node_ref)
+        if previous != node_ref:
+            raise ValueError("effect-if membership has duplicate authored node paths")
 
     def visit(
         sequence: Sequence[IntentOp],
+        prefix: str,
         memberships: tuple[tuple[str, str], ...],
     ) -> None:
-        for operation in sequence:
-            if memberships and operation.node_id is not None:
-                result[operation.node_id] = memberships
-            visit(operation.body, memberships)
+        for index, operation in enumerate(sequence):
+            path = f"{prefix}[{index}]"
+            authored_ref = refs_by_path.get(path)
+            if (
+                operation.node_id is not None
+                and authored_ref is not None
+                and operation.node_id != authored_ref
+            ):
+                raise ValueError("inline and authored effect-if node refs disagree")
+            node_ref = operation.node_id or authored_ref
+            if memberships and node_ref is not None:
+                previous = result.setdefault(node_ref, memberships)
+                if previous != memberships:
+                    raise ValueError("effect-if node has ambiguous lexical memberships")
+            visit(operation.body, f"{path}.body", memberships)
             if operation.op in {"effect_if", "value_if"}:
                 assert operation.positive is not None
                 assert operation.negative is not None
-                control_ref = operation.node_id
+                control_ref = node_ref
                 positive_memberships = memberships
                 negative_memberships = memberships
                 if operation.op == "effect_if" and control_ref is not None:
@@ -596,14 +613,16 @@ def _effect_if_arm_memberships(
                     negative_memberships += ((control_ref, "negative"),)
                 visit(
                     operation.positive.body,
+                    f"{path}.positive.body",
                     positive_memberships,
                 )
                 visit(
                     operation.negative.body,
+                    f"{path}.negative.body",
                     negative_memberships,
                 )
 
-    visit(body, ())
+    visit(j.intent.body, "body", ())
     return result
 
 
@@ -4375,8 +4394,8 @@ def _project_functional_boundary(
         )
 
     nodes = _node_table(j)
-    effect_if_arm_nodes = _effect_if_arm_node_refs(j.intent.body)
-    effect_if_arm_memberships = _effect_if_arm_memberships(j.intent.body)
+    effect_if_arm_nodes = _effect_if_arm_node_refs(j)
+    effect_if_arm_memberships = _effect_if_arm_memberships(j)
     conditional_effect_stores: list[ConditionalEffectStoreProjection] = []
     direct_unit_dimensions = direct_unit_dimension_refs(
         j.dimension_constraints
