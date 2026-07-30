@@ -98,6 +98,12 @@ Flash Linear branch 2在formal round 3取得Gate1 v12 closure并完成三边Gate
 `main_status=SCRC_CERTIFIED`。因此当前为18项历史保留+1项fresh闭合，剩余九项为三种RoPE、Flash
 forward/one-column backward/full backward与SplitK forward/reduce/backward。
 
+随后SplitK forward fresh round暴露并已修复一个通用compiler-C ABI矛盾：`kind=compiler` 的
+`num_warps/num_stages`已经由正式Gate1/Gate2按role绑定到frontend compiler invocation，但Replay公开
+合同与ingress仍曾把全部MaskC slot误列为kernel `tl.constexpr`形参。现统一为只有
+`kind=constexpr`进入Replay callable ABI；`kind=compiler`保留在MaskC中、无J attachment/π route，
+由外部CompileCase消费。修复前启动的SplitK Replay只作诊断，必须fresh rerun才能形成证据。
+
 ## 2. 从真实输入到证书的完整数据流
 
 ```text

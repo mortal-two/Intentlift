@@ -481,6 +481,11 @@ BindingMap、独立 interface sidecar、source/compiler fingerprint、旧候选�
 旧模型 conversation context 或 per-kernel RuleCard。`MaskC(C)` 只暴露 C 的匿名 schema/slot
 视图，不暴露 valuation 与私有 provenance。
 
+`MaskC(C)` 中只有 `kind=constexpr` 的 slot 进入 Replay callable ABI 并保持 frontend constexpr
+annotation；`kind=compiler` 的 slot 只声明由外部 compiler invocation 消费的匿名 role，不得出现在
+Replay 函数签名、body 或 π route 中。正式 Gate1/Gate2 在 Replay 提交后以与 Source 相同的 C value
+绑定该 role；source-blind construction compile 不读取其 value，也不能把它伪装成公开代表值。
+
 Replay 必须生成完整、可独立构建的当前前端源码；固定代码只做绑定和检查，不根据 π 或 compiler
 diff 施工。
 

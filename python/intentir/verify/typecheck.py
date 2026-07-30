@@ -4752,6 +4752,18 @@ def type_check(
     _check_result_relations(j, diagnostics)
     c_subject_kinds = {"node", "domain", "access", "scope", "storage"}
     for index, slot in enumerate(c.slots):
+        if slot.kind is ScheduleSlotKind.COMPILER:
+            if slot.subject_ref is not None or slot.axis_ref is not None:
+                diagnostics.append(
+                    TypeCheckDiagnostic(
+                        TypeCheckErrorCode.INVALID_C_SLOT,
+                        f"c.slots[{index}]",
+                        "compiler C slot is an external compiler-invocation "
+                        "option and cannot attach to a J subject or axis",
+                        slot.name,
+                    )
+                )
+            continue
         if slot.subject_ref is None:
             continue
         subject = anchors.get(slot.subject_ref)
@@ -4783,8 +4795,23 @@ def type_check(
             )
     instances = {str(item["id"]): item for item in pi.instances}
     instance_anchors: dict[str, _Anchor] = {}
+    compiler_slot_refs = {
+        slot.name for slot in c.slots
+        if slot.kind is ScheduleSlotKind.COMPILER
+    }
     for index, item in enumerate(pi.instances):
         ref = str(item["semantic_ref"])
+        if ref in compiler_slot_refs:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.INVALID_C_SLOT,
+                    f"pi.instances[{index}].semantic_ref",
+                    "compiler C slot is consumed only by the external compiler "
+                    "invocation and cannot own a pi realization instance",
+                    ref,
+                )
+            )
+            continue
         if ref in absent_signature_refs:
             diagnostics.append(
                 TypeCheckDiagnostic(

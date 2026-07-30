@@ -154,7 +154,11 @@ def _check_triton_exact_abi(
         if isinstance(node, ast.FunctionDef) and node.name == function_name
     )
     j_parameters = packet["j"]["signature"]["parameters"]
-    c_slots = packet["c"]["slots"]
+    c_slots = [
+        item
+        for item in packet["c"]["slots"]
+        if item.get("kind") == "constexpr"
+    ]
     expected_names = [
         *(str(item["name"]) for item in j_parameters),
         *(str(item["name"]) for item in c_slots),
@@ -545,7 +549,11 @@ def _check_triton_typed_control_contract(
         str(item["name"])
         for item in j_parameters
         if item.get("kind") == "constexpr"
-    } | {str(item["name"]) for item in packet["c"]["slots"]}
+    } | {
+        str(item["name"])
+        for item in packet["c"]["slots"]
+        if item.get("kind") == "constexpr"
+    }
     actual = _runtime_if_nodes(
         function,
         runtime_parameters=runtime_parameters,
@@ -763,7 +771,7 @@ def _packet_rounded_iteration_contracts(
     c_slots = {
         str(item.get("name"))
         for item in packet.get("c", {}).get("slots", [])
-        if isinstance(item, Mapping)
+        if isinstance(item, Mapping) and item.get("kind") == "constexpr"
     }
     result: list[tuple[str, str, str]] = []
     for index, relation in enumerate(pi.get("iterations", [])):
@@ -2424,7 +2432,8 @@ After writing a meaningful complete source, run
 against one public synthetic profile: every pointer has one element,
 dtype-declared scalar and constexpr representatives are bool=true, integer=16,
 float=1.0, and the grid is (1,1,1). C values are never read; constexpr C slots
-use the same public type representatives. This probe must pass before the exact
+use the same public type representatives. Compiler C slots are external compiler
+invocation options, never callable parameters or kernel-body values. This probe must pass before the exact
 Replay bytes leave the authoring episode, but it is not a semantic membership
 oracle and has no Gate or certification authority. Formal Gate1 recompiles the
 exact submitted bytes at c0.

@@ -894,7 +894,9 @@ The trusted harness_compiler_view is byte-authoritative plumbing. Put logical
 p* in J.signature and implementation-selection c* in the single C; source
 positions stay private. C values/compiler_slots equal the anonymous inputs and
 each compiler slot uses compiler_roles exactly. Never rename c* to p* or infer
-strategy names from roles.
+strategy names from roles. A compiler slot is consumed only by the external
+frontend compiler invocation: give it no subject_ref/axis_ref and no pi instance
+or route; it is not a Source constexpr, callable parameter, or kernel-body value.
 
 For every tensor, `shape` is only the current Harness binding and is never
 permission to specialize J. In `shape_contract`, an

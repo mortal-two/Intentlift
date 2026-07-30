@@ -42,6 +42,13 @@ logical data/predicate/result 必须绑定 dtype-compatible rank-0 J input，若
 必须绑定 declared `x*`。只影响 implementation selection 的 constexpr 进入 C；无法归入 J/C 的
 bound constexpr 是 Harness invalid，不得留成 representation-only π carrier。
 
+C 的 `kind=constexpr` slot 是 Source/Replay callable ABI 中的匿名编译期参数；`kind=compiler` slot
+则是同一 C valuation 中由 Harness 在 frontend compile invocation 上绑定的外部 compiler option。
+后者仍以 role-preserving MaskC slot 对 Replay 可见，但不进入 Replay 函数签名、kernel body 或 π
+realization route；Replay 不读取其 concrete value。Gate1 与 Gate2 必须把同一 C value 按该 slot 的
+public role 同时绑定到 Source 与 Replay 的 compiler invocation，不能把它降格成 `tl.constexpr` 或
+runtime carrier。
+
 反之，scalar 一旦以 `logical_ref=t*` 创建 rank-0 J input，`typecheck.v7` 要求该 t* 到达 observable
 output 的反向 value dependency，或出现在显式 J-owned boundary/shape semantic relation。direct
 identity、function `returns`、`output_mapping` 以及合法 boundary-only use 都算贡献；dead A node、

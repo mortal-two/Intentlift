@@ -568,6 +568,11 @@ def _c_schema() -> dict[str, Any]:
             "kind": {
                 "type": "string",
                 "enum": ["constexpr", "compiler"],
+                "description": (
+                    "constexpr is a callable frontend compile-time parameter; "
+                    "compiler is an external compiler-invocation option and never "
+                    "a callable/body/pi carrier."
+                ),
             },
             "role": {
                 "type": "string",
@@ -580,7 +585,8 @@ def _c_schema() -> dict[str, Any]:
                 "description": (
                     "Optional source-neutral attachment to one declared J "
                     "node/domain/access/scope/storage subject. It is not a "
-                    "transformation permission or source binding."
+                    "transformation permission or source binding. Compiler-kind "
+                    "slots must omit subject_ref and axis_ref."
                 ),
             },
             "axis_ref": {
