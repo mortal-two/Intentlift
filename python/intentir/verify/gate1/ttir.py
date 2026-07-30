@@ -637,6 +637,18 @@ class TTIRFingerprint:
         repr=False,
         compare=False,
     )
+    # Diagnostic-only closed classification of compiler-visible ``scf.for``
+    # bounds.  Each row is ``(block_arity, basis, extent_handle, tile)``.
+    # It is intentionally excluded from equality, ``to_dict`` and ``digest``;
+    # source-aware Lift and source-blind Replay preflight may only reject an
+    # authored induction basis that contradicts the compiled loop.
+    diagnostic_iteration_bases: tuple[
+        tuple[int, str, str, int], ...
+    ] = field(
+        default=(),
+        repr=False,
+        compare=False,
+    )
     # Diagnostic-only expansion of each synthetic ``effect.trace`` node.
     # Keeping the ordered event spellings beside the opaque trace digest lets
     # SCRC explain *which* lexical effect sequence diverged.  Like node
@@ -731,6 +743,173 @@ class _FunctionParts:
     results: tuple[str, ...]
     body: str
     attributes: tuple[tuple[str, str], ...] = ()
+
+
+def _diagnostic_iteration_bases(
+    function: _FunctionParts,
+    operations: list[_Operation],
+    result_to_node: Mapping[str, int],
+) -> tuple[tuple[int, str, str, int], ...]:
+    """Classify only the three closed pi induction bases from exact TTIR SSA.
+
+    The classifier recognizes direct zero-to-extent tile steps and the exact
+    ceil-div forms used by ``rounded_extent_step`` and ``tile_ordinal``.  It
+    deliberately returns no row for an ambiguous or different expression.
+    """
+
+    nodes = {operation.node_id: operation for operation in operations}
+    arguments = {
+        name: name.removeprefix("%")
+        for name, _type, _attrs in function.arguments
+    }
+    passthrough = {
+        "arith.extsi", "arith.extui", "arith.index_cast", "arith.index_castui",
+        "arith.trunci",
+    }
+
+    def producer(value: str) -> _Operation | None:
+        node_id = result_to_node.get(value)
+        return nodes.get(node_id) if node_id is not None else None
+
+    def integer_constant(value: str, active: frozenset[str] = frozenset()) -> int | None:
+        if value in active:
+            return None
+        operation = producer(value)
+        if operation is None:
+            return None
+        if operation.name in passthrough and len(operation.operands) == 1:
+            return integer_constant(operation.operands[0], active | {value})
+        constant = operation.constant_value
+        if (
+            operation.name != "arith.constant"
+            or constant is None
+            or not float(constant).is_integer()
+        ):
+            return None
+        return int(constant)
+
+    def argument_index(
+        value: str, active: frozenset[str] = frozenset()
+    ) -> str | None:
+        if value in arguments:
+            return arguments[value]
+        if value in active:
+            return None
+        operation = producer(value)
+        if operation is None or operation.name not in passthrough:
+            return None
+        if len(operation.operands) != 1:
+            return None
+        return argument_index(operation.operands[0], active | {value})
+
+    def ceil_div_extent(
+        value: str, tile: int, active: frozenset[str] = frozenset()
+    ) -> str | None:
+        if value in active:
+            return None
+        operation = producer(value)
+        if operation is None:
+            return None
+        if operation.name in {"arith.ceildivsi", "arith.ceildivui"}:
+            if len(operation.operands) != 2:
+                return None
+            if integer_constant(operation.operands[1]) != tile:
+                return None
+            return argument_index(operation.operands[0])
+        if operation.name not in {"arith.divsi", "arith.divui", "arith.floordivsi"}:
+            return None
+        if len(operation.operands) != 2 or integer_constant(operation.operands[1]) != tile:
+            return None
+        numerator = producer(operation.operands[0])
+        if numerator is None:
+            return None
+        if numerator.name == "arith.addi" and len(numerator.operands) == 2:
+            for extent, offset in (
+                (numerator.operands[0], numerator.operands[1]),
+                (numerator.operands[1], numerator.operands[0]),
+            ):
+                if integer_constant(offset) == tile - 1:
+                    index = argument_index(extent)
+                    if index is not None:
+                        return index
+        if numerator.name == "arith.subi" and len(numerator.operands) == 2:
+            if integer_constant(numerator.operands[1]) != 1:
+                return None
+            summed = producer(numerator.operands[0])
+            if summed is not None and summed.name == "arith.addi" and len(summed.operands) == 2:
+                for extent, offset in (
+                    (summed.operands[0], summed.operands[1]),
+                    (summed.operands[1], summed.operands[0]),
+                ):
+                    if integer_constant(offset) == tile:
+                        index = argument_index(extent)
+                        if index is not None:
+                            return index
+        return None
+
+    def rounded_extent(value: str, tile: int) -> str | None:
+        operation = producer(value)
+        if operation is None or operation.name != "arith.muli":
+            return None
+        if len(operation.operands) != 2:
+            return None
+        for quotient, factor in (
+            (operation.operands[0], operation.operands[1]),
+            (operation.operands[1], operation.operands[0]),
+        ):
+            if integer_constant(factor) == tile:
+                index = ceil_div_extent(quotient, tile)
+                if index is not None:
+                    return index
+        return None
+
+    result: list[tuple[int, str, str, int]] = []
+    for loop in operations:
+        if loop.name != "scf.for" or loop.header_operand_count < 3:
+            continue
+        lower, upper, step = loop.operands[:3]
+        if integer_constant(lower) != 0:
+            continue
+        step_value = integer_constant(step)
+        if step_value is None or step_value <= 0:
+            continue
+        extent = argument_index(upper)
+        if extent is not None:
+            result.append(
+                (len(loop.region_block_args), "extent_step", extent, step_value)
+            )
+            continue
+        if step_value > 1:
+            extent = rounded_extent(upper, step_value)
+            if extent is not None:
+                result.append(
+                    (
+                        len(loop.region_block_args),
+                        "rounded_extent_step",
+                        extent,
+                        step_value,
+                    )
+                )
+                continue
+        if step_value == 1:
+            upper_operation = producer(upper)
+            if upper_operation is not None and upper_operation.name in {
+                "arith.ceildivsi", "arith.ceildivui", "arith.divsi",
+                "arith.divui", "arith.floordivsi",
+            } and len(upper_operation.operands) == 2:
+                tile = integer_constant(upper_operation.operands[1])
+                if tile is not None and tile > 1:
+                    extent = ceil_div_extent(upper, tile)
+                    if extent is not None:
+                        result.append(
+                            (
+                                len(loop.region_block_args),
+                                "tile_ordinal",
+                                extent,
+                                tile,
+                            )
+                        )
+    return tuple(sorted(result))
 
 
 _FUNCTION_RE = re.compile(
@@ -5212,6 +5391,11 @@ class TTIRParser:
                         for name, reference in representation_ref_cache.items()
                     }
                 )
+            ),
+            diagnostic_iteration_bases=_diagnostic_iteration_bases(
+                function,
+                operations,
+                result_to_node,
             ),
             diagnostic_effect_traces=tuple(
                 sorted(diagnostic_effect_traces)

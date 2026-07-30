@@ -745,6 +745,294 @@ def _packet_intent_ops_by_path(packet: Mapping[str, Any]) -> dict[str, Mapping[s
     return result
 
 
+@dataclass(frozen=True)
+class _CompiledIterationContract:
+    block_arity: int
+    basis: str
+    extent: str
+    tile: str
+    tile_value: int
+    path: str
+
+
+def _packet_compiled_iteration_contracts(
+    packet: Mapping[str, Any],
+) -> tuple[_CompiledIterationContract, ...]:
+    """Resolve authored loop bases to anonymous ABI handles when unambiguous."""
+
+    j = packet.get("j")
+    c = packet.get("c")
+    pi = packet.get("pi")
+    if not all(isinstance(value, Mapping) for value in (j, c, pi)):
+        return ()
+    assert isinstance(j, Mapping) and isinstance(c, Mapping) and isinstance(pi, Mapping)
+    operations = _packet_intent_ops_by_path(packet)
+    node_paths = j.get("node_ids")
+    node_paths = node_paths if isinstance(node_paths, Mapping) else {}
+    operation_by_node: dict[str, Mapping[str, Any]] = {}
+    for node, raw_path in node_paths.items():
+        if not isinstance(raw_path, str):
+            continue
+        path = raw_path.removeprefix("intent_function.")
+        operation = operations.get(path)
+        if operation is not None:
+            operation_by_node[str(node)] = operation
+
+    intent = j.get("intent")
+    intent = intent if isinstance(intent, Mapping) else {}
+    intent_function = intent.get("intent_function")
+    intent_function = (
+        intent_function if isinstance(intent_function, Mapping) else {}
+    )
+    value_shapes: dict[str, tuple[int | str, ...]] = {}
+    for key in ("inputs", "outputs"):
+        for item in intent_function.get(key, []):
+            if not isinstance(item, Mapping):
+                continue
+            name = item.get("name")
+            shape = item.get("shape")
+            if isinstance(name, str) and isinstance(shape, list):
+                value_shapes[name] = tuple(
+                    value for value in shape if isinstance(value, (int, str))
+                )
+    for operation in operations.values():
+        result = operation.get("result")
+        result_type = operation.get("type")
+        shape = result_type.get("shape") if isinstance(result_type, Mapping) else None
+        if isinstance(result, str) and isinstance(shape, list):
+            value_shapes[result] = tuple(
+                value for value in shape if isinstance(value, (int, str))
+            )
+
+    boundary = j.get("boundary")
+    boundary = boundary if isinstance(boundary, Mapping) else {}
+    accesses = {
+        str(item.get("access_id")): item
+        for item in boundary.get("accesses", [])
+        if isinstance(item, Mapping) and isinstance(item.get("access_id"), str)
+    }
+    signature = j.get("signature")
+    parameters = (
+        signature.get("parameters", []) if isinstance(signature, Mapping) else []
+    )
+    value_dimension_relations = j.get("value_dimension_relations")
+    dimension_relations = j.get("dimension_relations")
+
+    def extent_parameter(dimension: str) -> str | None:
+        extent_refs = {dimension}
+        sources = {
+            str(item.get("result")): str(item.get("expr", {}).get("arg"))
+            for item in (
+                dimension_relations if isinstance(dimension_relations, list) else []
+            )
+            if isinstance(item, Mapping)
+            and isinstance(item.get("result"), str)
+            and isinstance(item.get("expr"), Mapping)
+            and isinstance(item.get("expr", {}).get("arg"), str)
+        }
+        frontier = [dimension]
+        while frontier:
+            source = sources.get(frontier.pop())
+            if source is not None and source not in extent_refs:
+                extent_refs.add(source)
+                frontier.append(source)
+        value_refs = {
+            str(item.get("value_ref"))
+            for item in (
+                value_dimension_relations
+                if isinstance(value_dimension_relations, list)
+                else []
+            )
+            if isinstance(item, Mapping)
+            and item.get("relation") == "eq"
+            and item.get("dimension_ref") in extent_refs
+            and isinstance(item.get("value_ref"), str)
+        }
+        logical_refs = extent_refs | value_refs
+        matches = [
+            str(item.get("name"))
+            for item in parameters
+            if isinstance(item, Mapping)
+            and item.get("kind") in {"scalar", "constexpr"}
+            and item.get("logical_ref") in logical_refs
+            and isinstance(item.get("name"), str)
+        ]
+        return matches[0] if len(matches) == 1 else None
+
+    def subject_dimension(subject: str, axis: int | str | None) -> str | None:
+        if isinstance(axis, str) and re.fullmatch(r"x[0-9]+", axis):
+            return axis
+        if not isinstance(axis, int) or isinstance(axis, bool) or axis < 0:
+            return None
+        access = accesses.get(subject)
+        if access is not None:
+            tensor = access.get("tensor")
+            shape = value_shapes.get(str(tensor))
+            if shape is not None and axis < len(shape) and isinstance(shape[axis], str):
+                return shape[axis]
+            return None
+        operation = operation_by_node.get(subject)
+        if operation is None:
+            return None
+        operands = operation.get("operands")
+        if not isinstance(operands, list) or not operands:
+            return None
+        if operation.get("op") == "reduce":
+            shape = value_shapes.get(str(operands[0]))
+            attrs = operation.get("attrs")
+            axes = attrs.get("axes") if isinstance(attrs, Mapping) else None
+            if (
+                shape is not None
+                and isinstance(axes, list)
+                and axis in axes
+                and axis < len(shape)
+                and isinstance(shape[axis], str)
+            ):
+                return shape[axis]
+            return None
+        if operation.get("op") != "contraction":
+            return None
+        attrs = operation.get("attrs")
+        subscripts = attrs.get("subscripts") if isinstance(attrs, Mapping) else None
+        if not isinstance(subscripts, str) or "->" not in subscripts:
+            return None
+        inputs_text, output_text = subscripts.split("->", 1)
+        input_terms = inputs_text.split(",")
+        if len(input_terms) != len(operands):
+            return None
+        contracted: list[str] = []
+        for term in input_terms:
+            for label in term:
+                if label not in output_text and label not in contracted:
+                    contracted.append(label)
+        if axis >= len(contracted):
+            return None
+        label = contracted[axis]
+        dimensions: set[str] = set()
+        for term, operand in zip(input_terms, operands, strict=True):
+            shape = value_shapes.get(str(operand))
+            if shape is None or len(shape) != len(term):
+                continue
+            for current, extent in zip(term, shape, strict=True):
+                if current == label and isinstance(extent, str):
+                    dimensions.add(extent)
+        return next(iter(dimensions)) if len(dimensions) == 1 else None
+
+    instances = {
+        str(item.get("id")): item
+        for item in pi.get("instances", [])
+        if isinstance(item, Mapping) and isinstance(item.get("id"), str)
+    }
+    slots = {
+        str(item.get("name")): item
+        for item in c.get("slots", [])
+        if isinstance(item, Mapping) and isinstance(item.get("name"), str)
+    }
+    values = c.get("values")
+    values = values if isinstance(values, Mapping) else {}
+    logical_carriers = [
+        item for item in pi.get("loop_carriers", []) if isinstance(item, Mapping)
+    ]
+    physical_carriers = [
+        item
+        for item in pi.get("physical_loop_carriers", [])
+        if isinstance(item, Mapping)
+    ]
+    result: list[_CompiledIterationContract] = []
+
+    def append(
+        *,
+        basis: Any,
+        dimension: str | None,
+        tile_ref: str | None,
+        block_arity: int,
+        path: str,
+    ) -> None:
+        if basis not in {"extent_step", "rounded_extent_step", "tile_ordinal"}:
+            return
+        if dimension is None or tile_ref is None:
+            return
+        slot = slots.get(tile_ref)
+        tile_value = values.get(tile_ref)
+        if (
+            slot is None
+            or slot.get("kind") != "constexpr"
+            or not isinstance(tile_value, int)
+            or isinstance(tile_value, bool)
+            or tile_value <= 0
+        ):
+            return
+        extent = extent_parameter(dimension)
+        if extent is None:
+            return
+        result.append(
+            _CompiledIterationContract(
+                block_arity=block_arity,
+                basis=str(basis),
+                extent=extent,
+                tile=tile_ref,
+                tile_value=tile_value,
+                path=path,
+            )
+        )
+
+    for index, relation in enumerate(pi.get("iterations", [])):
+        if not isinstance(relation, Mapping):
+            continue
+        loop_instance = instances.get(str(relation.get("loop_instance")))
+        tile_instance = instances.get(str(relation.get("tile_instance")))
+        loop_ref = (
+            str(loop_instance.get("semantic_ref")) if loop_instance is not None else None
+        )
+        tile_ref = (
+            str(tile_instance.get("semantic_ref")) if tile_instance is not None else None
+        )
+        operation = operation_by_node.get(loop_ref or "")
+        trip = operation.get("trip") if isinstance(operation, Mapping) else None
+        dimension = trip.get("axis") if isinstance(trip, Mapping) else None
+        carrier_count = sum(
+            item.get("loop_instance") == relation.get("loop_instance")
+            for item in logical_carriers
+        )
+        append(
+            basis=relation.get("induction_basis"),
+            dimension=dimension if isinstance(dimension, str) else None,
+            tile_ref=tile_ref,
+            block_arity=1 + carrier_count,
+            path=f"pi.iterations[{index}]",
+        )
+
+    for index, relation in enumerate(pi.get("physical_iterations", [])):
+        if not isinstance(relation, Mapping) or relation.get("direction") != "forward":
+            continue
+        body_instance = instances.get(str(relation.get("body_instance")))
+        tile_instance = instances.get(str(relation.get("tile_instance")))
+        body_ref = (
+            str(body_instance.get("semantic_ref")) if body_instance is not None else None
+        )
+        tile_ref = (
+            str(tile_instance.get("semantic_ref")) if tile_instance is not None else None
+        )
+        slot = slots.get(tile_ref or "")
+        dimension = (
+            subject_dimension(body_ref, slot.get("axis_ref"))
+            if body_ref is not None and slot is not None
+            else None
+        )
+        region = relation.get("region")
+        carrier_count = sum(
+            item.get("region") == region for item in physical_carriers
+        )
+        append(
+            basis=relation.get("induction_basis"),
+            dimension=dimension,
+            tile_ref=tile_ref,
+            block_arity=1 + carrier_count,
+            path=f"pi.physical_iterations[{index}]",
+        )
+    return tuple(result)
+
+
 def _packet_rounded_iteration_contracts(
     packet: Mapping[str, Any],
 ) -> list[tuple[str, str, str]]:
@@ -2068,6 +2356,7 @@ def compiled_packet_obligation_diagnostics(
 
     expected_transfers, transfer_refs = _packet_transfer_direct_counts(packet)
     expected_iteration_arities = _packet_required_compiled_iteration_arities(packet)
+    expected_iteration_contracts = _packet_compiled_iteration_contracts(packet)
     expected_reduction_linearizations, linearization_refs = (
         _packet_required_compiled_reduction_linearizations(packet)
     )
@@ -2162,6 +2451,45 @@ def compiled_packet_obligation_diagnostics(
                     f"actual={list(actual_iteration_arities)}"
                 ),
                 "anonymous_handles": [],
+                "line": None,
+            }
+        )
+
+    available_iteration_bases = list(observed.diagnostic_iteration_bases)
+    for contract in expected_iteration_contracts:
+        compatible = [
+            (index, row)
+            for index, row in enumerate(available_iteration_bases)
+            if row[0] == contract.block_arity
+            and row[2] == contract.extent
+            and row[3] == contract.tile_value
+        ]
+        exact = next(
+            (
+                (index, row)
+                for index, row in compatible
+                if row[1] == contract.basis
+            ),
+            None,
+        )
+        if exact is not None:
+            available_iteration_bases.pop(exact[0])
+            continue
+        # An unclassified loop cannot prove a contradiction.  Keep the formal
+        # observer responsible for it rather than guessing from a concrete
+        # extent.  A classified loop over the same authored extent/tile can,
+        # however, reject the wrong closed basis before a formal Gate1 round.
+        if not compatible:
+            continue
+        actual_bases = sorted({row[1] for _, row in compatible})
+        diagnostics.append(
+            {
+                "rule_code": "compiled_iteration_basis",
+                "path": (
+                    f"{path_prefix} {contract.path}.induction_basis: "
+                    f"expected={contract.basis}, actual={actual_bases}"
+                ),
+                "anonymous_handles": [contract.extent, contract.tile],
                 "line": None,
             }
         )
