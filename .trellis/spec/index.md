@@ -29,7 +29,8 @@ closed signature、Layer-A total typing、显式 broadcast、canonical reduce/co
 control/inout/output-binding/terminal-control 关系，并检查 v10 authored route-local extent transform 的
 existing-route、C/J attachment 与 closed divisor/rounding。fixed code只诊断，不翻译别名、补齐 attrs、生成 handle/relation、
 改图或修复 artifact；历史 wire/receipt 继续按自身版本读取，不静默升级或重判。当前 Agent execution
-receipt 为 `intentir.lift-knowledge.v89 / intentir.lift-knowledge.v67 / minisweagent.intentir-replay.v31 / openai.codex-cli.intentir-replay.v33`；
+receipt 为 `intentir.lift-knowledge.v89 / intentir.lift-knowledge.v67 / minisweagent.intentir-replay.v31 / openai.codex-cli.intentir-replay.v34`；Codex Replay v34的syntax-composer.v2增加agent-owned builder与
+`off/available/preferred`诊断模式，但不改变Replay输入或接受集合；
 artifact.v11 的 `dimension_relations`只接受identity、常数加/乘、常数ceil-div与round-up的acyclic closed grammar；
 relation由Lift从Source作者化，所有J消费者只能验证/求值，不能从Harness valuation、grid、C、π或TTIR生成。
 artifact.v10+ 的 `physical_iterations/physical_loop_carriers` 表达 structured J loop 外、由已作者化

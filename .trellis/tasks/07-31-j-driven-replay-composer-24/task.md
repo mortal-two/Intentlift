@@ -66,9 +66,12 @@ Composer只存在于`FreshAgent_f`内部；最终提交物仍是完整`replay.so
 - `python/intentir/verify/gate1/replay_composer.py`已实现共享stdlib-only core：closed
   `line/block/raw_block`、stable ID、局部insert/replace/delete/move、Python/C-like render、source map、
   bounded state/audit以及plan/source/map一致的checkpoint/rollback；
-- Codex Replay backend已升为`openai.codex-cli.intentir-replay.v33`，每个fresh workspace安装自己的
-  Composer；agent仍可直接作者化完整source，两条路径都进入原有exact ingress/compile/submit；
+- Codex Replay backend现升为`openai.codex-cli.intentir-replay.v34`，Composer protocol为v2；每个
+  fresh workspace安装自己的通用builder/plan/editor；agent仍可直接作者化完整source，两条路径都进入
+  原有exact ingress/compile/submit；
 - Composer失败或未使用不改变Replay接受集合；host checkpoint/diagnostic map只作非权威辅助；
+- `off/available/preferred`只控制episode作者体验并写入proof-irrelevant evidence；`preferred`优先使用
+  `work/build_replay.py`，仍保留raw escape。telemetry区分offer、成功/失败action与最终source路径；
 - Triton/TileLang/CUDA共享同一core，profile只选择Python-like或C-like排版；
 - normal与Mask-J由不同writer对象发起，正式workload runtime会为每个formal round另外创建masked
   writer，证据按normal candidate与masked物理角色分开保存；

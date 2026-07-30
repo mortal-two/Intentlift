@@ -29,6 +29,8 @@ from intentir.verify.gate1.ttir import fingerprint_ttir
 
 from .model import Frontend, Gate1Artifact
 from .replay_composer import (
+    REPLAY_COMPOSER_BUILDER,
+    REPLAY_COMPOSER_MODES,
     REPLAY_COMPOSER_PLAN,
     REPLAY_COMPOSER_NODE_DRAFT,
     REPLAY_COMPOSER_PROTOCOL,
@@ -55,7 +57,7 @@ from .replay import (
 )
 
 
-CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v33"
+CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v34"
 PI_MIN_OWNERSHIP_RECEIPT_PROTOCOL = "intentir.pi-min.ownership-receipt.v1"
 
 _INITIAL_PROMPT = """You are the sole writer for one fresh source-blind IntentIR Replay episode.
@@ -132,20 +134,35 @@ complete source yourself, and rerun submit_replay. The
 diagnostic is rejection-only. Finish only when both pass.
 """
 
-_COMPOSER_PROMPT = """
+_COMPOSER_AVAILABLE_PROMPT = """
 
 This fresh episode also provides a tiny syntax-only composer. It never reads
-input/packet.json and contains no J/pi-to-target mapping. For a structured Replay,
-edit work/replay.composer.json and run
-`python work/replay_composer.py render`; it atomically renders your line/block/
-raw_block nodes to output/replay.source and records stable node-to-line spans. For
-local edits, put one node in work/replay.composer.node.json and use insert-before,
-insert-after, append-child, or replace; delete/move commands need no node draft.
+input/packet.json and contains no J/pi-to-target mapping. The lowest-friction path
+is to author work/build_replay.py with its generic line/block/raw_block constructors
+and run it; this atomically renders output/replay.source and records stable
+node-to-line spans. You may instead edit work/replay.composer.json and run
+`python work/replay_composer.py render`. For local edits, put one node in
+work/replay.composer.node.json and use insert-before, insert-after, append-child, or
+replace; delete/move commands need no node draft.
 Use `checkpoint`, `rollback`, or `status` on the same helper when useful. Directly
 authoring output/replay.source remains a valid raw escape. Do not spend a turn
 reimplementing the composer or treating it as a semantic planner: you still choose
 every target API, expression, control structure, and realization from exact J/pi.
 See input/TOOL.md for the compact plan grammar.
+"""
+
+_COMPOSER_PREFERRED_PROMPT = """
+
+This episode is the composer-preferred efficiency arm. Start the first complete
+Replay by editing work/build_replay.py with the provided generic
+line/block/raw_block constructors and run it. Keep stable IDs for regions you may
+repair, then use the local edit commands when diagnostics identify a node. This is
+only an authoring treatment: it receives no extra semantic information and changes
+no ingress, compile, Gate1, or Gate2 rule. Unknown target syntax belongs in
+raw_block. Direct output/replay.source authoring remains a last-resort raw escape;
+use it when the syntax helper would genuinely add friction, not merely by default.
+You still derive every API, expression, control structure, and realization from
+exact J/pi yourself.
 """
 
 
@@ -204,7 +221,7 @@ def _pi_min_ownership_receipt(
         ),
     }
 def _replay_startup_context(
-    packet: Mapping[str, Any], *, composer_available: bool
+    packet: Mapping[str, Any], *, composer_mode: str
 ) -> dict[str, Any]:
     """Return paths plus a proof-irrelevant index of the exact local packet."""
 
@@ -229,18 +246,20 @@ def _replay_startup_context(
             **(
                 {
                     "composer_tool": f"work/{REPLAY_COMPOSER_TOOL}",
+                    "composer_builder": f"work/{REPLAY_COMPOSER_BUILDER}",
                     "composer_plan": f"work/{REPLAY_COMPOSER_PLAN}",
                     "composer_node_draft": f"work/{REPLAY_COMPOSER_NODE_DRAFT}",
                     "composer_state": f"work/{REPLAY_COMPOSER_STATE}",
                     "composer_source_map": f"work/{REPLAY_COMPOSER_SOURCE_MAP}",
                 }
-                if composer_available
+                if composer_mode != "off"
                 else {}
             ),
         },
         "syntax_composer": {
-            "available": composer_available,
-            "protocol": REPLAY_COMPOSER_PROTOCOL if composer_available else None,
+            "available": composer_mode != "off",
+            "offer_mode": composer_mode,
+            "protocol": REPLAY_COMPOSER_PROTOCOL if composer_mode != "off" else None,
             "authority": (
                 "episode-local syntax rendering of agent-authored nodes only; "
                 "no packet read, semantic mapping, target recipe, or Gate authority"
@@ -271,7 +290,7 @@ class CodexCLIReplayWriter:
     context_rollover_input_tokens: int = 0
     repair_effort: str | None = None
     compile_checker: Callable[[str, Gate1Artifact, str], Any] | None = None
-    enable_composer: bool = True
+    composer_mode: str = "available"
     stop_requested: Callable[[], int | None] | None = field(
         default=None, repr=False
     )
@@ -294,8 +313,8 @@ class CodexCLIReplayWriter:
     ) -> ReplayGeneration:
         if self.context_rollover_input_tokens < 0:
             raise ValueError("Replay context rollover token threshold cannot be negative")
-        if not isinstance(self.enable_composer, bool):
-            raise TypeError("enable_composer must be boolean")
+        if self.composer_mode not in REPLAY_COMPOSER_MODES:
+            raise ValueError("composer_mode must be off/available/preferred")
         if self.frontend not in {
             Frontend.TRITON,
             Frontend.CUDA,
@@ -345,10 +364,12 @@ class CodexCLIReplayWriter:
 
         workspace = IntentIRReplayWorkspace.create(files)
         composer_installation: Mapping[str, Any] | None = None
-        if self.enable_composer:
+        if self.composer_mode != "off":
             try:
                 composer_installation = install_episode_composer(
-                    workspace.scratch_dir, self.frontend.value
+                    workspace.scratch_dir,
+                    self.frontend.value,
+                    offer_mode=self.composer_mode,
                 )
             except Exception:
                 workspace.cleanup()
@@ -366,7 +387,7 @@ class CodexCLIReplayWriter:
         formal_compile = None
         last_checked_good: str | None = None
         startup_context = _replay_startup_context(
-            packet, composer_available=composer_installation is not None
+            packet, composer_mode=self.composer_mode
         )
         pi_min_ownership = _pi_min_ownership_receipt(
             packet,
@@ -389,7 +410,13 @@ class CodexCLIReplayWriter:
         ttir_observations: dict[str, dict[str, Any]] = {}
         prompt = (
             _INITIAL_PROMPT
-            + (_COMPOSER_PROMPT if composer_installation is not None else "")
+            + (
+                _COMPOSER_PREFERRED_PROMPT
+                if self.composer_mode == "preferred"
+                else _COMPOSER_AVAILABLE_PROMPT
+                if composer_installation is not None
+                else ""
+            )
             + "\n\n<source-blind-startup>\n"
             + json.dumps(
                 startup_context,
@@ -416,7 +443,10 @@ class CodexCLIReplayWriter:
                     "protocol": REPLAY_COMPOSER_PROTOCOL,
                     "status": "disabled",
                     "installed": False,
+                    "builder_installed": False,
+                    "offer_mode": "off",
                     "used": False,
+                    "selected_path": "raw_escape",
                 }
             evidence = dict(
                 load_episode_composer_evidence(

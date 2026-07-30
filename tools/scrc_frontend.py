@@ -61,6 +61,15 @@ def _parser() -> argparse.ArgumentParser:
         default="miniswe",
     )
     parser.add_argument(
+        "--replay-composer-mode",
+        choices=("off", "available", "preferred"),
+        default=None,
+        help=(
+            "Codex-only syntax authoring treatment; defaults to available for "
+            "Codex and off for other Replay backends"
+        ),
+    )
+    parser.add_argument(
         "--no-masked-j",
         action="store_true",
         help="diagnostic mode: skip the J-necessity masked Replay arm",
@@ -131,6 +140,15 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     assert args.case is not None
+    composer_mode = args.replay_composer_mode or (
+        "available" if args.replay_backend == "codex" else "off"
+    )
+    if args.replay_backend != "codex" and composer_mode != "off":
+        print(
+            "--replay-composer-mode available/preferred requires --replay-backend codex",
+            file=sys.stderr,
+        )
+        return 2
     run_dir: Path | None = None
     try:
         prepared = prepare_registered_scrc_workload(
@@ -147,6 +165,7 @@ def main(argv: list[str] | None = None) -> int:
             run_masked_j=not args.no_masked_j,
             lift_backend=args.lift_backend,
             replay_backend=args.replay_backend,
+            replay_composer_mode=composer_mode,
         )
         execution = execute_prepared_workload(
             prepared,
@@ -155,6 +174,7 @@ def main(argv: list[str] | None = None) -> int:
             run_masked_j=not args.no_masked_j,
             lift_backend=args.lift_backend,
             replay_backend=args.replay_backend,
+            replay_composer_mode=composer_mode,
         )
         save_workload_execution(run_dir, prepared, execution)
     except Exception as exc:
@@ -196,6 +216,7 @@ def main(argv: list[str] | None = None) -> int:
         "evidence_path": str(run_dir),
         "lift_backend": args.lift_backend,
         "replay_backend": args.replay_backend,
+        "replay_composer_mode": composer_mode,
     }
     _emit(payload, json_mode=args.json)
     return 0 if execution.report.main_status is MainStatus.SCRC_CERTIFIED else 1

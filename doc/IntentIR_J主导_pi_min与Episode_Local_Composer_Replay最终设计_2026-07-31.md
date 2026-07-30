@@ -172,7 +172,8 @@ trajectory 都不进入 `(J,C,π)`、Replay packet、Gate verdict、Gate2、cert
 
 ### 3.2 最小实现，不造第二个前端
 
-首版 Composer 只提供一个很小的 structured-text core：
+Composer v2 只提供一个很小的 structured-text core。agent可以直接作者化严格JSON plan，也可以在
+本次episode自己的`work/build_replay.py`中调用同一组通用构造器；两者产生同一plan/render结果：
 
 ```text
 document
@@ -231,6 +232,21 @@ select_cuda_reduction_strategy(...)
 
 Replay agent 在自己的 episode 中临时写 `emit_online_step()` 或任何 helper 完全允许；它是模型阅读
 当前 exact J 后的本次作者行为，episode 结束即销毁。
+
+### 3.5 `off / available / preferred`只控制作者体验
+
+为做同artifact效率实验，Codex Replay显式记录三种proof-irrelevant模式：
+
+```text
+off        不安装Composer，agent直接作者化完整source
+available  安装builder/plan/editor，agent自行选择是否使用
+preferred  要求agent优先从build_replay.py开始；遇到语法摩擦仍可raw escape
+```
+
+三种模式获得完全相同的`J+π_min+MaskC(C)+U_f`，使用相同模型、effort、时间预算、ReplayCheck、compile、
+Gate1和Gate2。`preferred`不能删除raw escape，也不能增加semantic scaffold。telemetry必须分别记录
+`offer_mode`、成功/失败action与最终`selected_path=composer|raw_escape`；仅安装不算使用，失败的edit也
+不算使用。
 
 ## 4. Fresh episode 与 exact J 绑定
 
@@ -351,7 +367,7 @@ collective、ABI 与 target hard evidence。
 exact typed artifact
   -> build source-blind packet
   -> create fresh isolated Replay workspace
-  -> install immutable packet / U_f / composer API
+  -> install immutable packet / U_f / syntax composer API + writable builder scaffold
   -> start one source-blind Codex owner
   -> agent authors plan or build_replay script
   -> composer renders candidate bytes
@@ -385,9 +401,9 @@ fresh run生效，历史证书不重判。
 
 每个 episode 记录 proof-irrelevant telemetry：
 
-- frontend profile 与 Composer protocol；
+- frontend profile、Composer protocol与`off/available/preferred` offer mode；
 - node/edit/render/compile/rollback 次数；
-- raw escape 使用量；
+- 成功/失败action、最终Composer/raw escape选择；
 - time-to-first-render、first-compile 与 exact submit；
 - 最终 source bytes与 source map；
 - workspace fresh/cleanup 状态；
@@ -444,7 +460,8 @@ cross-frontend shared composer LoC vs thin adapter LoC
 raw escape rate
 ```
 
-若 Composer 只增加工具调用、token或固定规则而不提高 first-compilable/closure，应删除或继续收缩，
+同artifact A/B必须通过diagnostic-only fresh Gate1 recheck运行，不重跑Lift、不复用Replay会话、不进入
+Gate2，也不改变parent verdict。若 Composer 只增加工具调用、token或固定规则而不提高 first-compilable/closure，应删除或继续收缩，
 不能因已经实现而保留。
 
 ## 10. 实施顺序
@@ -500,4 +517,3 @@ raw escape rate
 ## 12. 最终一句话
 
 > **π_min 告诉 Replay“实现必须满足什么物理约束”，J 告诉 Replay“程序计算什么”，fresh source-blind agent 在本次 episode 内用 syntax-only Composer决定“具体怎样写”；Composer只放大 agent 的编辑能力，不获得从 J/π 生成答案的语义权力。**
-

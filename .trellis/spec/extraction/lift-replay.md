@@ -392,7 +392,7 @@ ReplayLLM(J,pi,MaskC(C);U_f) -> complete source R_f
 当前 packet protocol 为 `intentir.scrc.replay-input.v2`；Triton 公共上下文直接由当前固定字段给出，
 不再附带 context version、SHA 或 receipt 门禁。source-aware Codex/MiniSWE Lift 的当前 knowledge receipt 分别为
 `intentir.lift-knowledge.v89 / intentir.lift-knowledge.v67`，source-blind MiniSWE/Codex Replay backend 为
-`minisweagent.intentir-replay.v31 / openai.codex-cli.intentir-replay.v33`。这些版本必须随 fresh run 原样记录；旧 packet/context/knowledge
+`minisweagent.intentir-replay.v31 / openai.codex-cli.intentir-replay.v34`。这些版本必须随 fresh run 原样记录；旧 packet/context/knowledge
 evidence 不因实现升级而被重判；fresh Replay 只做当前字段的结构和 source-isolation 检查。
 
 Replay v28把一个formal round保持为同一个fresh、单writer、source-blind coding episode，总active
@@ -402,12 +402,15 @@ Replay源码查询其自身TTIR/fingerprint。累计provider上下文超过阈�
 diagnostic，不接收语义摘要、旧episode、Source或Gate。该rollover不复用跨round Replay，也不增加
 认证输入。
 
-Codex Replay v33在v32的packet-first coding-agent入口上增加proof-irrelevant、episode-local
-syntax composer：共享core只渲染agent作者化的`line/block/raw_block`，支持stable ID局部
+Codex Replay v34继承v33的packet-first、proof-irrelevant episode-local syntax composer，并增加
+agent-owned `work/build_replay.py`快速路径与`off/available/preferred`实验模式。共享core只渲染agent
+作者化的`line/block/raw_block`，支持stable ID局部
 insert/replace/delete/move、source map与plan/source/map一致的checkpoint/rollback；Triton、TileLang、
 CUDA profile只决定Python-like或C-like排版。Composer不读取packet，不含J/π到API、算法或kernel
 template的映射，也不进入TypeCheck、Gate或backend。normal与Mask-J使用不同writer；fresh session的
-最终证据仍由各自Replay backend trajectory记录，而不是由Composer自报。
+最终证据仍由各自Replay backend trajectory记录，而不是由Composer自报。三种模式不改变输入或接受
+集合，`preferred`仍保留raw escape；evidence区分offer mode、成功/失败action和最终source path，安装或
+失败edit不计为Composer使用。
 
 Replay v30/v26 完整执行 v10 `route_extent_transforms` 的 exact packet、critical ledger、obligation audit 与
 source-blind static ingress；它只拒绝缺失 closed floor/ceil-div spelling，不判断 target-local Gate1
@@ -502,7 +505,9 @@ Replay 函数签名、body 或 π route 中。正式 Gate1/Gate2 在 Replay 提�
 Replay 必须生成完整、可独立构建的当前前端源码；固定代码只做绑定和检查，不根据 π 或 compiler
 diff 施工。fresh Replay owner 可以使用 episode-local syntax composer，对自己给出的 line/block/raw
 syntax nodes 做稳定ID、局部编辑、render、source-map与rollback；Composer不得读取J/π选择API或算法，
-不得跨episode复用，最终仍只提交完整exact source并经过同一ReplayCheck/compile/Gate。
+不得跨episode复用，最终仍只提交完整exact source并经过同一ReplayCheck/compile/Gate。固定artifact的
+Composer A/B只能走diagnostic-only Gate1 recheck：fresh Replay、不调用Lift/masked-J/Gate2、不改变parent
+verdict。
 
 Replay instruction 的共享前缀只能陈述 frontend-neutral 的 J/C/π ownership、拓扑保持、拒绝与输出
 合同。`tl.dot`、`tl.sum`、Triton program-axis 以及 base/lane 到具体 pointer operation 的拼写，只能在

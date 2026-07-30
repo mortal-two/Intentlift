@@ -3230,15 +3230,17 @@ own TTIR/fingerprint for focused debugging. These callbacks take no host path an
 never expose Source, Source TTIR, Harness values, or Gate evidence. Read this file
 for usage instead of probing the fixed client with an unrecognized tool name.
 
-Codex Replay episodes also install `work/replay_composer.py` and an empty
-`work/replay.composer.json`. The helper is optional and syntax-only: it does not
-read `input/`, J, C, pi, compiler output, or Gate evidence. Edit the plan and run
-`python work/replay_composer.py render` to atomically write
-`output/replay.source`. Its closed plan grammar is:
+Codex Replay composer episodes install `work/replay_composer.py`, an agent-owned
+`work/build_replay.py` scaffold, and an empty `work/replay.composer.json`. The
+helper is syntax-only: it does not read `input/`, J, C, pi, compiler output, or Gate
+evidence. The low-friction path is to edit `work/build_replay.py` with its generic
+`line`, `block`, and `raw_block` constructors and run it. The equivalent JSON path
+is to edit the plan and run `python work/replay_composer.py render`. Both atomically
+write `output/replay.source` with the same closed grammar:
 
 ```json
 {
-  "protocol": "intentir.replay.syntax-composer.v1",
+  "protocol": "intentir.replay.syntax-composer.v2",
   "frontend": "triton",
   "nodes": [
     {"id": "import0", "kind": "line", "text": "import triton"},

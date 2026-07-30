@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Episode-local, syntax-only source composition for source-blind Replay.
 
 The composer deliberately knows nothing about IntentIR artifacts.  It receives
@@ -21,10 +22,11 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 
-REPLAY_COMPOSER_PROTOCOL = "intentir.replay.syntax-composer.v1"
-REPLAY_COMPOSER_STATE_PROTOCOL = "intentir.replay.syntax-composer-state.v1"
-REPLAY_COMPOSER_AUDIT_PROTOCOL = "intentir.replay.syntax-composer-audit.v1"
+REPLAY_COMPOSER_PROTOCOL = "intentir.replay.syntax-composer.v2"
+REPLAY_COMPOSER_STATE_PROTOCOL = "intentir.replay.syntax-composer-state.v2"
+REPLAY_COMPOSER_AUDIT_PROTOCOL = "intentir.replay.syntax-composer-audit.v2"
 REPLAY_COMPOSER_TOOL = "replay_composer.py"
+REPLAY_COMPOSER_BUILDER = "build_replay.py"
 REPLAY_COMPOSER_PLAN = "replay.composer.json"
 REPLAY_COMPOSER_NODE_DRAFT = "replay.composer.node.json"
 REPLAY_COMPOSER_STATE = "replay.composer.state.json"
@@ -50,6 +52,7 @@ _FRONTEND_PROFILE = {
     "tilelang": "python",
     "cuda": "c_like",
 }
+REPLAY_COMPOSER_MODES = frozenset({"off", "available", "preferred"})
 _EDIT_OPERATIONS = frozenset(
     {
         "insert_before",
@@ -76,6 +79,37 @@ class RenderedReplay:
     node_kinds: Mapping[str, int]
     frontend: str
     layout_profile: str
+
+
+def line(node_id: str, text: str) -> dict[str, Any]:
+    """Create one generic agent-authored source line node."""
+
+    return {"id": node_id, "kind": "line", "text": text}
+
+
+def raw_block(node_id: str, lines: Sequence[str]) -> dict[str, Any]:
+    """Create an exact multi-line syntax escape without interpreting its text."""
+
+    if isinstance(lines, (str, bytes)):
+        raise ReplayComposerError("raw_block lines must be a sequence of lines")
+    return {"id": node_id, "kind": "raw_block", "lines": list(lines)}
+
+
+def block(
+    node_id: str,
+    header: str,
+    children: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Create one generic indentation/braced block node."""
+
+    if isinstance(children, (str, bytes)):
+        raise ReplayComposerError("block children must be a sequence of nodes")
+    return {
+        "id": node_id,
+        "kind": "block",
+        "header": header,
+        "children": [dict(child) for child in children],
+    }
 
 
 def _exact_keys(value: Mapping[str, Any], expected: set[str], path: str) -> None:
@@ -319,17 +353,28 @@ def _read_json(path: Path, limit: int = MAX_COMPOSER_PLAN_BYTES) -> Mapping[str,
 
 
 def _paths(work_dir: Path, output_path: Path | None = None) -> dict[str, Path]:
-    work = Path(work_dir).resolve(strict=True)
-    if not work.is_dir() or work.is_symlink():
+    raw_work = Path(work_dir)
+    if raw_work.is_symlink():
+        raise ReplayComposerError("composer work directory may not be a symlink")
+    work = raw_work.resolve(strict=True)
+    if not work.is_dir():
         raise ReplayComposerError("composer work directory must be a real directory")
+    expected_output = (work.parent / "output" / "replay.source").resolve(
+        strict=False
+    )
+    if output_path is not None and Path(output_path).is_symlink():
+        raise ReplayComposerError("composer output may not be a symlink")
     output = (
         Path(output_path).resolve(strict=False)
         if output_path is not None
-        else work.parent / "output" / "replay.source"
+        else expected_output
     )
+    if output != expected_output:
+        raise ReplayComposerError("composer output must be this episode's replay.source")
     return {
         "work": work,
         "tool": work / REPLAY_COMPOSER_TOOL,
+        "builder": work / REPLAY_COMPOSER_BUILDER,
         "plan": work / REPLAY_COMPOSER_PLAN,
         "node_draft": work / REPLAY_COMPOSER_NODE_DRAFT,
         "state": work / REPLAY_COMPOSER_STATE,
@@ -350,6 +395,8 @@ def _load_state(paths: Mapping[str, Path]) -> dict[str, Any]:
     revision = state.get("revision")
     if not isinstance(revision, int) or isinstance(revision, bool) or revision < 0:
         raise ReplayComposerError("composer state revision is invalid")
+    if state.get("offer_mode") not in REPLAY_COMPOSER_MODES - {"off"}:
+        raise ReplayComposerError("composer state offer mode is invalid")
     return state
 
 
@@ -380,16 +427,42 @@ def _append_audit(paths: Mapping[str, Path], value: Mapping[str, Any]) -> None:
     _atomic_write_bytes(audit, existing + row)
 
 
-def install_episode_composer(work_dir: Path, frontend: str) -> Mapping[str, Any]:
+def _builder_scaffold(frontend: str) -> str:
+    return f'''"""Agent-owned syntax composition for this one fresh Replay episode."""
+
+from replay_composer import block, compose, line, raw_block
+
+
+# Author target source text from the exact packet yourself.  These constructors
+# only manage syntax layout and stable IDs; they do not select an API or algorithm.
+nodes = [
+    # line("imports", "..."),
+    # block("function", "def ...:", [line("body", "...")]),
+    # raw_block("escape", ["..."]),
+]
+
+compose({frontend!r}, nodes)
+'''
+
+
+def install_episode_composer(
+    work_dir: Path, frontend: str, *, offer_mode: str = "available"
+) -> Mapping[str, Any]:
     """Install one source-neutral helper and empty plan in a fresh workspace."""
 
     if frontend not in _FRONTEND_PROFILE:
         raise ReplayComposerError(f"frontend {frontend!r} has no composer profile")
+    if offer_mode not in REPLAY_COMPOSER_MODES - {"off"}:
+        raise ReplayComposerError("installed composer mode must be available/preferred")
     paths = _paths(work_dir)
-    if any(paths[name].exists() for name in {"tool", "plan", "state", "audit"}):
+    if any(
+        paths[name].exists()
+        for name in {"tool", "builder", "plan", "state", "audit"}
+    ):
         raise ReplayComposerError("fresh Replay composer paths are unexpectedly occupied")
     module_source = Path(__file__).read_text(encoding="utf-8")
     _atomic_write_text(paths["tool"], module_source, mode=0o500)
+    _atomic_write_text(paths["builder"], _builder_scaffold(frontend))
     _atomic_write_text(
         paths["plan"],
         _json_text(
@@ -404,6 +477,7 @@ def install_episode_composer(work_dir: Path, frontend: str) -> Mapping[str, Any]
         "protocol": REPLAY_COMPOSER_STATE_PROTOCOL,
         "frontend": frontend,
         "layout_profile": _FRONTEND_PROFILE[frontend],
+        "offer_mode": offer_mode,
         "revision": 0,
         "last_action": "install",
         "node_count": 0,
@@ -420,6 +494,7 @@ def install_episode_composer(work_dir: Path, frontend: str) -> Mapping[str, Any]
             "action": "install",
             "revision": 0,
             "frontend": frontend,
+            "offer_mode": offer_mode,
             "node_count": 0,
         },
     )
@@ -428,8 +503,10 @@ def install_episode_composer(work_dir: Path, frontend: str) -> Mapping[str, Any]
         "status": "pass",
         "frontend": frontend,
         "layout_profile": _FRONTEND_PROFILE[frontend],
+        "offer_mode": offer_mode,
         "paths": {
             "tool": f"work/{REPLAY_COMPOSER_TOOL}",
+            "builder": f"work/{REPLAY_COMPOSER_BUILDER}",
             "plan": f"work/{REPLAY_COMPOSER_PLAN}",
             "node_draft": f"work/{REPLAY_COMPOSER_NODE_DRAFT}",
             "state": f"work/{REPLAY_COMPOSER_STATE}",
@@ -459,6 +536,7 @@ def _commit_render(
         "protocol": REPLAY_COMPOSER_STATE_PROTOCOL,
         "frontend": rendered.frontend,
         "layout_profile": rendered.layout_profile,
+        "offer_mode": state["offer_mode"],
         "revision": revision,
         "last_action": action,
         "node_count": rendered.node_count,
@@ -492,6 +570,34 @@ def render_episode_composer(
     plan = _read_json(paths["plan"])
     rendered = render_replay_plan(plan, expected_frontend=str(state["frontend"]))
     return _commit_render(paths, state, rendered, action="render")
+
+
+def compose(
+    frontend: str,
+    nodes: Sequence[Mapping[str, Any]],
+    *,
+    work_dir: Path | None = None,
+    output_path: Path | None = None,
+) -> Mapping[str, Any]:
+    """Validate and render an agent-owned builder script's generic syntax nodes."""
+
+    if isinstance(nodes, (str, bytes)):
+        raise ReplayComposerError("composer nodes must be a sequence of node objects")
+    selected_work_dir = (
+        Path(__file__).resolve().parent if work_dir is None else Path(work_dir)
+    )
+    paths = _paths(selected_work_dir, output_path)
+    state = _load_state(paths)
+    plan = {
+        "protocol": REPLAY_COMPOSER_PROTOCOL,
+        "frontend": frontend,
+        "nodes": [dict(node) for node in nodes],
+    }
+    rendered = render_replay_plan(
+        plan, expected_frontend=str(state["frontend"])
+    )
+    _atomic_write_text(paths["plan"], _json_text(plan))
+    return _commit_render(paths, state, rendered, action="compose")
 
 
 def _find_syntax_node(
@@ -619,7 +725,10 @@ def checkpoint_episode_composer(
     """Checkpoint exact composer plan/source only when they still correspond."""
 
     paths = _paths(work_dir, output_path)
-    if not paths["rendered"].is_file() or not paths["source_map"].is_file():
+    if any(
+        not paths[name].is_file()
+        for name in ("output", "rendered", "source_map")
+    ):
         return False
     state = _load_state(paths)
     plan_bytes = _read_bounded(paths["plan"], MAX_COMPOSER_PLAN_BYTES)
@@ -732,6 +841,8 @@ def restore_episode_composer_checkpoint(
         or map_revision < 1
     ):
         raise ReplayComposerError("composer checkpoint source-map revision is invalid")
+    if map_revision > state["revision"]:
+        raise ReplayComposerError("composer checkpoint revision is from the future")
     _atomic_write_bytes(paths["plan"], plan_bytes)
     _atomic_write_text(paths["output"], source)
     _atomic_write_text(paths["rendered"], source)
@@ -824,7 +935,16 @@ def load_episode_composer_evidence(
         paths = _paths(work_dir, output_path)
         state = _load_state(paths)
         rows = _audit_rows(paths["audit"])
-        actions = Counter(str(row.get("action", "unknown")) for row in rows)
+        actions = Counter(
+            str(row.get("action", "unknown"))
+            for row in rows
+            if row.get("status") == "pass"
+        )
+        failed_actions = Counter(
+            str(row.get("action", "unknown"))
+            for row in rows
+            if row.get("status") != "pass"
+        )
         current_matches = False
         if paths["output"].is_file() and paths["rendered"].is_file():
             current_matches = (
@@ -839,13 +959,24 @@ def load_episode_composer_evidence(
                 and source_map.get("frontend") == state.get("frontend")
                 and source_map.get("revision") == state.get("revision")
             )
+        used = any(
+            actions.get(action, 0) > 0
+            for action in {"compose", "render", *_EDIT_OPERATIONS}
+        )
+        output_exists = paths["output"].is_file()
         return {
             "protocol": REPLAY_COMPOSER_PROTOCOL,
             "status": "pass",
             "installed": paths["tool"].is_file(),
-            "used": any(
-                actions.get(action, 0) > 0
-                for action in {"render", *_EDIT_OPERATIONS}
+            "builder_installed": paths["builder"].is_file(),
+            "offer_mode": state.get("offer_mode"),
+            "used": used,
+            "selected_path": (
+                "composer"
+                if used and current_matches
+                else "raw_escape"
+                if output_exists
+                else "none"
             ),
             "frontend": state.get("frontend"),
             "layout_profile": state.get("layout_profile"),
@@ -855,6 +986,7 @@ def load_episode_composer_evidence(
             "node_kinds": state.get("node_kinds", {}),
             "source_map_nodes": state.get("source_map_nodes", 0),
             "actions": dict(actions),
+            "failed_actions": dict(failed_actions),
             "output_matches_last_render": current_matches,
             "source_map_revision_matches_state": source_map_revision_matches,
             "checkpoint_available": all(
@@ -890,12 +1022,14 @@ def composer_diagnostic_map(
         if rendered.source != source:
             return []
         source_map = _read_json(paths["source_map"])
+        state = _load_state(paths)
         nodes = source_map.get("nodes")
         if (
             source_map.get("protocol") != REPLAY_COMPOSER_PROTOCOL
             or source_map.get("frontend") != rendered.frontend
             or not isinstance(nodes, Mapping)
             or nodes != rendered.source_map
+            or source_map.get("revision") != state.get("revision")
         ):
             return []
     except Exception:
@@ -1035,6 +1169,8 @@ if __name__ == "__main__":
 
 __all__ = [
     "REPLAY_COMPOSER_PROTOCOL",
+    "REPLAY_COMPOSER_BUILDER",
+    "REPLAY_COMPOSER_MODES",
     "REPLAY_COMPOSER_PLAN",
     "REPLAY_COMPOSER_NODE_DRAFT",
     "REPLAY_COMPOSER_SOURCE_MAP",
@@ -1042,12 +1178,16 @@ __all__ = [
     "REPLAY_COMPOSER_TOOL",
     "RenderedReplay",
     "ReplayComposerError",
+    "block",
     "checkpoint_episode_composer",
     "composer_diagnostic_map",
     "composer_status",
+    "compose",
     "edit_episode_composer",
     "install_episode_composer",
     "load_episode_composer_evidence",
+    "line",
+    "raw_block",
     "render_episode_composer",
     "render_replay_plan",
     "restore_episode_composer_checkpoint",

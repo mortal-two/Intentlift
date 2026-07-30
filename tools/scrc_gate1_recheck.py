@@ -58,6 +58,15 @@ def _parser() -> argparse.ArgumentParser:
         default="responses",
     )
     parser.add_argument(
+        "--replay-composer-mode",
+        choices=("off", "available", "preferred"),
+        default=None,
+        help=(
+            "Codex-only proof-irrelevant authoring treatment; use off/preferred "
+            "for fixed-artifact Composer A/B"
+        ),
+    )
+    parser.add_argument(
         "--run-root",
         type=Path,
         default=Path("/tmp/intentir-scrc-task11/fixed-gate1-rechecks"),
@@ -112,6 +121,15 @@ def _load_parented_artifact(
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(sys.argv[1:] if argv is None else argv)
+    composer_mode = args.replay_composer_mode or (
+        "available" if args.replay_backend == "codex" else "off"
+    )
+    if args.replay_backend != "codex" and composer_mode != "off":
+        print(
+            "--replay-composer-mode available/preferred requires --replay-backend codex",
+            file=sys.stderr,
+        )
+        return 2
     try:
         artifact, artifact_file, parent = _load_parented_artifact(
             args.artifact, args.parent_evidence
@@ -146,6 +164,7 @@ def main(argv: list[str] | None = None) -> int:
             effort=args.effort,
             parent_evidence=parent,
             replay_backend=args.replay_backend,
+            replay_composer_mode=composer_mode,
         )
         result = recheck_prepared_workload_gate1(
             prepared,
@@ -153,6 +172,7 @@ def main(argv: list[str] | None = None) -> int:
             provider=provider,
             effort=args.effort,
             replay_backend=args.replay_backend,
+            replay_composer_mode=composer_mode,
         )
         save_workload_gate1_recheck(recheck_dir, prepared, result)
     except Exception as exc:
@@ -190,6 +210,7 @@ def main(argv: list[str] | None = None) -> int:
         "artifact_digest": result.artifact_digest,
         "typecheck_status": result.typecheck.status.value,
         "replay_backend": args.replay_backend,
+        "replay_composer_mode": composer_mode,
         "status": status,
     }
     _emit(payload, output=args.output, json_mode=args.json)

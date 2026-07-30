@@ -52,6 +52,7 @@ from intentir.verify.gate1.replay import (
     ResponsesReplayWriter,
 )
 from intentir.verify.gate1.codex_replay import CodexCLIReplayWriter
+from intentir.verify.gate1.replay_composer import REPLAY_COMPOSER_MODES
 from intentir.verify.gate2.model import Gate2Status
 from intentir.verify.gate2.compare import compare_outputs
 from intentir.verify.gate2.orchestrate import (
@@ -143,6 +144,7 @@ def _new_replay_writer(
     provider: ProviderConfig,
     effort: str | None,
     frontend: Frontend = Frontend.TRITON,
+    composer_mode: str = "off",
     stop_requested: Callable[[], int | None] | None = None,
 ) -> RecordedReplayWriter:
     """Create one writer for exactly one formal Gate1 round."""
@@ -160,8 +162,18 @@ def _new_replay_writer(
     if replay_backend == "miniswe":
         return MiniSWEReplayWriter(**writer_kwargs)
     if replay_backend == "codex":
+        writer_kwargs["composer_mode"] = composer_mode
         return CodexCLIReplayWriter(**writer_kwargs)
     raise ValueError(f"unknown Replay backend: {replay_backend!r}")
+
+
+def _resolved_composer_mode(replay_backend: str, requested: str | None) -> str:
+    mode = requested or ("available" if replay_backend == "codex" else "off")
+    if mode not in REPLAY_COMPOSER_MODES:
+        raise ValueError("Replay composer mode must be off/available/preferred")
+    if replay_backend != "codex" and mode != "off":
+        raise ValueError("Replay composer is available only with the Codex backend")
+    return mode
 
 
 def _new_frontend_compiler(frontend: Frontend) -> Any:
@@ -883,6 +895,7 @@ def recheck_prepared_workload_gate1(
     provider: ProviderConfig,
     effort: str | None = None,
     replay_backend: str = "responses",
+    replay_composer_mode: str | None = None,
 ) -> WorkloadGate1Recheck:
     """Re-run normal Gate1 for one fixed artifact without Lift or Gate2.
 
@@ -910,11 +923,15 @@ def recheck_prepared_workload_gate1(
         )
 
     frontend = _prepared_frontend(prepared)
+    composer_mode = _resolved_composer_mode(
+        replay_backend, replay_composer_mode
+    )
     writer = _new_replay_writer(
         replay_backend,
         provider=provider,
         effort=effort,
         frontend=frontend,
+        composer_mode=composer_mode,
     )
     gate1 = BoundGate1Adapter(
         _build_frontend_gate1_runner(
@@ -949,6 +966,7 @@ def _build_workload_runtime(
     lift_backend: str = "responses",
     lift_workflow: str = "single",
     replay_backend: str = "responses",
+    replay_composer_mode: str | None = None,
     replay_width: int = 1,
     stop_requested: Callable[[], int | None] | None = None,
 ) -> tuple[
@@ -996,6 +1014,9 @@ def _build_workload_runtime(
     )
     effective_replay_provider = replay_provider or provider
     effective_replay_effort = effort if replay_effort is None else replay_effort
+    effective_composer_mode = _resolved_composer_mode(
+        replay_backend, replay_composer_mode
+    )
     writers: list[RecordedReplayEvidenceWriter] = []
     compiler = _new_frontend_compiler(frontend)
 
@@ -1006,6 +1027,7 @@ def _build_workload_runtime(
                 provider=effective_replay_provider,
                 effort=effective_replay_effort,
                 frontend=frontend,
+                composer_mode=effective_composer_mode,
                 stop_requested=stop_requested,
             )
             for _ in range(replay_width)
@@ -1016,6 +1038,7 @@ def _build_workload_runtime(
                 provider=effective_replay_provider,
                 effort=effective_replay_effort,
                 frontend=frontend,
+                composer_mode=effective_composer_mode,
                 stop_requested=stop_requested,
             )
             if run_masked_j
@@ -1088,6 +1111,7 @@ def search_prepared_workload_gate1(
     lift_backend: str = "responses",
     lift_workflow: str = "single",
     replay_backend: str = "responses",
+    replay_composer_mode: str | None = None,
     replay_width: int = 1,
     retry_initial_artifact: bool = False,
     max_gate1_rounds: int | None = None,
@@ -1107,6 +1131,7 @@ def search_prepared_workload_gate1(
         lift_backend=lift_backend,
         lift_workflow=lift_workflow,
         replay_backend=replay_backend,
+        replay_composer_mode=replay_composer_mode,
         replay_width=replay_width,
         stop_requested=stop_requested,
     )
@@ -1165,6 +1190,7 @@ def execute_prepared_workload(
     lift_backend: str = "responses",
     lift_workflow: str = "single",
     replay_backend: str = "responses",
+    replay_composer_mode: str | None = None,
     progress_callback: SCRCProgressCallback | None = None,
 ) -> WorkloadExecution:
     """Run one independent real case through the canonical full lifecycle."""
@@ -1179,6 +1205,7 @@ def execute_prepared_workload(
         lift_backend=lift_backend,
         lift_workflow=lift_workflow,
         replay_backend=replay_backend,
+        replay_composer_mode=replay_composer_mode,
         progress_callback=progress_callback,
     )
     if search.report.closed:
@@ -1376,6 +1403,7 @@ def initialize_workload_gate1_recheck_evidence(
     effort: str | None,
     parent_evidence: str | Path,
     replay_backend: str = "responses",
+    replay_composer_mode: str | None = None,
 ) -> None:
     """Initialize an immutable diagnostic recheck directory.
 
@@ -1390,6 +1418,9 @@ def initialize_workload_gate1_recheck_evidence(
         raise ValueError("Gate1 recheck evidence directory was not allocated")
     if any(recheck_dir.iterdir()):
         raise ValueError("Gate1 recheck evidence directory must be empty")
+    composer_mode = _resolved_composer_mode(
+        replay_backend, replay_composer_mode
+    )
 
     (recheck_dir / "source.py").write_text(
         prepared.source_slice.code, encoding="utf-8"
@@ -1415,6 +1446,7 @@ def initialize_workload_gate1_recheck_evidence(
             "model": provider.model,
             "reasoning_effort": effort or provider.reasoning_effort,
             "replay_backend": replay_backend,
+            "replay_composer_mode": composer_mode,
             "frontend": prepared.entry.frontend,
             "observer_profile": prepared.entry.observer_profile,
             "c0": prepared.request.binding.values,
@@ -1437,8 +1469,12 @@ def initialize_workload_evidence(
     lift_backend: str = "responses",
     lift_workflow: str = "single",
     replay_backend: str = "responses",
+    replay_composer_mode: str | None = None,
     search_metadata: Mapping[str, Any] | None = None,
 ) -> None:
+    composer_mode = _resolved_composer_mode(
+        replay_backend, replay_composer_mode
+    )
     effective_replay_provider = replay_provider or provider
     effective_replay_effort = effort if replay_effort is None else replay_effort
     (run_dir / "source.py").write_text(
@@ -1465,6 +1501,7 @@ def initialize_workload_evidence(
         "lift_backend": lift_backend,
         "lift_workflow": lift_workflow,
         "replay_backend": replay_backend,
+        "replay_composer_mode": composer_mode,
         "frontend": prepared.entry.frontend,
         "observer_profile": prepared.entry.observer_profile,
         "q_policy": prepared.entry.q_policy,
