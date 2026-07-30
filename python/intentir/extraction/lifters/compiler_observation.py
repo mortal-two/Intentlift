@@ -269,6 +269,19 @@ def _unowned_source_runtime_carrier_diagnostics(
         for item in instances
         if isinstance(item, Mapping) and isinstance(item.get("semantic_ref"), str)
     }
+    instance_refs = {
+        str(item.get("id")): item.get("semantic_ref")
+        for item in instances
+        if isinstance(item, Mapping)
+        and isinstance(item.get("id"), str)
+        and isinstance(item.get("semantic_ref"), str)
+    }
+    routes = pi.get("routes")
+    routed_source_refs = {
+        instance_refs.get(str(item.get("source")))
+        for item in routes
+        if isinstance(routes, list) and isinstance(item, Mapping)
+    } if isinstance(routes, list) else set()
     diagnostics: list[Mapping[str, Any]] = []
     for parameter in parameters:
         if not isinstance(parameter, Mapping):
@@ -297,6 +310,20 @@ def _unowned_source_runtime_carrier_diagnostics(
                         "<source-ttir-obligation> j.signature.parameters: "
                         f"Source-used runtime carrier {name} has logical_ref=null "
                         "and no pi instance occurrence"
+                    ),
+                    "anonymous_handles": [name],
+                    "observed_refs_or_types": ["source-ttir-runtime-use"],
+                    "line": None,
+                }
+            )
+        elif source_used and name not in routed_source_refs:
+            diagnostics.append(
+                {
+                    "rule_code": "source_runtime_carrier_unwired",
+                    "path": (
+                        "<source-ttir-obligation> pi.routes: "
+                        f"Source-used runtime carrier {name} has logical_ref=null "
+                        "and pi occurrence(s), but no authored outgoing route"
                     ),
                     "anonymous_handles": [name],
                     "observed_refs_or_types": ["source-ttir-runtime-use"],
