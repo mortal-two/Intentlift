@@ -49,6 +49,7 @@ _FRONT_PASSES = [
     "-convert-parallel-loops-to-gpu",
     "-gpu-kernel-outlining",
     "-canonicalize",  # folds grid extents to literal constants
+    "-cse",  # share identical typed producers before NVVM lowering
 ]
 
 # NVIDIA-target preparation on the outlined device module: rewrites scalar f32
@@ -145,6 +146,7 @@ def _fused_front_passes(tile: tuple[int, ...]) -> list[str]:
         "-convert-parallel-loops-to-gpu",
         "-gpu-kernel-outlining",
         "-canonicalize",
+        "-cse",
     ]
 
 
@@ -181,6 +183,7 @@ _DEVICE_FRONT_PASSES = [
     "-convert-parallel-loops-to-gpu",
     "-gpu-kernel-outlining",
     "-canonicalize",
+    "-cse",
 ]
 
 
