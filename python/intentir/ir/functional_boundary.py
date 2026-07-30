@@ -2359,6 +2359,39 @@ def _full_domains(j: Any) -> dict[str, int | str]:
     return result
 
 
+def access_predicates_are_logical_domain_total(j: Any) -> bool:
+    """Prove the narrow case where every access predicate is domain-total.
+
+    This uses only authored J domains and predicates.  It does not infer an
+    access mapping or erase a consumer-local guard; indexed J evaluators use it
+    only when gather/scatter already carry the complete typed index semantics.
+    """
+
+    try:
+        domains = _full_domains(j)
+        logical_guards = _logical_boolean_guards(j)
+        for access in j_elaboration(j).accesses:
+            if access.predicate is None:
+                continue
+            projection = _j_predicate_projection(
+                j,
+                access.predicate,
+                logical_guards=logical_guards,
+            )
+            if projection.guards:
+                return False
+            if any(
+                domains.get(axis) != extent
+                for axis, extent in projection.upper_bounds
+            ):
+                return False
+            if not set(projection.lower_axes).issubset(domains):
+                return False
+    except (NotImplementedError, ValueError):
+        return False
+    return True
+
+
 def functional_boundary_closure_issues(
     j: Any,
 ) -> tuple[FunctionalBoundaryClosureIssue, ...]:
@@ -5309,6 +5342,7 @@ __all__ = [
     "functional_boundary_closure_issues",
     "functional_consumer_extension_requirements",
     "functional_reduction_padding_issues",
+    "access_predicates_are_logical_domain_total",
     "direct_logical_operand_sources",
     "explicit_inout_poststate_reload_value",
     "predicate_dominated_pointwise_load",

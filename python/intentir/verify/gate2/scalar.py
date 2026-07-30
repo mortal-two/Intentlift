@@ -33,6 +33,7 @@ from intentir.ir.contract_ir import project_contract_ir
 from intentir.ir.dim_expr import validate_dimension_instantiation
 from intentir.ir.dimension_relation import resolve_dimension_relations
 from intentir.ir.functional_boundary import (
+    access_predicates_are_logical_domain_total,
     direct_logical_operand_sources,
     explicit_inout_poststate_reload_value,
     parse_direct_axes,
@@ -883,10 +884,10 @@ def validate_index_bounds_inputs(
         ):
             continue
         if item.data not in values or item.indices not in values:
-            raise NotImplementedError(
-                "E_J runtime bounds checking currently requires data and indices "
-                "to be function inputs"
-            )
+            # Internal indexed values are checked at the exact gather/scatter
+            # operation by the J-only structured/contract evaluator.  The
+            # runner forces that checked path below; no precondition is assumed.
+            continue
         data = np.asarray(values[item.data])
         indices = np.asarray(values[item.indices])
         if item.axis >= data.ndim:
@@ -1001,6 +1002,31 @@ def _contract_ir_indexed_graph_fallback(j: SemanticArchive) -> bool:
         or access.node_ref in bounded_nodes
         for access in boundary.accesses
     )
+
+
+def _structured_indexed_update_fallback(j: SemanticArchive) -> bool:
+    """Recognize closed gather/scatter J graphs for structured J-only execution."""
+
+    boundary = j.boundary
+    if (
+        not boundary.updates
+        or boundary.aliases
+        or boundary.reductions
+        or boundary.consumer_extensions
+        or boundary.access_guard_relations
+        or any(item.alias_of is not None for item in j.signature.parameters)
+        or not access_predicates_are_logical_domain_total(j)
+    ):
+        return False
+    operations = _walk_ops(j.intent.body)
+    scatter_refs = {
+        operation.node_id
+        for operation in operations
+        if operation.op == "scatter" and operation.node_id is not None
+    }
+    return bool(scatter_refs) and scatter_refs == {
+        item.node_ref for item in boundary.updates
+    }
 
 
 @dataclass(frozen=True)
@@ -1161,6 +1187,7 @@ class ScalarLoweringRunner:
             )
             projection = None
             contract_reference_plan = None
+            structured_update_fallback = False
             try:
                 projection = project_functional_boundary_for_refeval(
                     spec.j,
@@ -1175,7 +1202,13 @@ class ScalarLoweringRunner:
                     # membership test.  Preserve the complete typed contract and
                     # retain the older pure indexed-A fallback for its already
                     # closed capability class.
-                    if not _contract_ir_indexed_graph_fallback(spec.j):
+                    indexed_graph_fallback = _contract_ir_indexed_graph_fallback(
+                        spec.j
+                    )
+                    structured_update_fallback = _structured_indexed_update_fallback(
+                        spec.j
+                    )
+                    if not indexed_graph_fallback and not structured_update_fallback:
                         raise capability_error
                     contract_ir = project_contract_ir(spec.j)
                     boundary_digest = contract_ir.digest
@@ -1185,7 +1218,11 @@ class ScalarLoweringRunner:
                         spec.j.node_ids.get(item.node_ref, item.node_ref)
                         for item in spec.j.boundary.index_bounds
                     )
-                    boundary_profile = "canonical_contract_ir_a_graph_v1"
+                    boundary_profile = (
+                        "canonical_contract_ir_indexed_updates_v1"
+                        if structured_update_fallback
+                        else "canonical_contract_ir_a_graph_v1"
+                    )
                     boundary_projection_record = {
                         **contract_ir.to_json(),
                         "fallback_from": str(capability_error),
@@ -1225,8 +1262,15 @@ class ScalarLoweringRunner:
                 runtime_predicate_proof_count = len(
                     projection.runtime_predicate_proofs
                 )
-            structured = requires_structured_reference(spec.j) or bool(
-                guarded_loads
+            deferred_index_bounds = any(
+                item.data not in inputs_by_ref or item.indices not in inputs_by_ref
+                for item in spec.j.boundary.index_bounds
+            )
+            structured = (
+                requires_structured_reference(spec.j)
+                or bool(guarded_loads)
+                or bool(spec.j.boundary.updates)
+                or deferred_index_bounds
             )
             execution = (
                 execute_contract_reference(

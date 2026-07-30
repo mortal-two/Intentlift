@@ -50,6 +50,7 @@ _ORDINARY_OPS = frozenset(
         "pad",
         "reduce",
         "scan",
+        "scatter",
         "select",
         "tile",
         "transpose",
@@ -203,6 +204,7 @@ def requires_structured_reference(j: SemanticArchive) -> bool:
             "tile",
             "effect_if",
             "value_if",
+            "scatter",
         }
         for op in operations
     )
@@ -291,6 +293,18 @@ class _Evaluator:
             if previous is not operation:
                 raise ValueError("structured reference has duplicate node refs")
             self.node_refs_by_operation[id(operation)] = node_ref
+        self.logical_updates: dict[str, Any] = {}
+        for update in j.boundary.updates:
+            operation = nodes.get(update.node_ref)
+            if operation is None or operation.op != "scatter":
+                raise ValueError(
+                    "structured logical update does not name one scatter node"
+                )
+            if update.node_ref in self.logical_updates:
+                raise ValueError(
+                    "structured logical updates duplicate one scatter node"
+                )
+            self.logical_updates[update.node_ref] = update
         output_names = {tensor.name for tensor in j.intent.outputs}
         self.conditional_effect_stores: dict[str, list[Any]] = {}
         seen_accesses: set[str] = set()
@@ -322,6 +336,7 @@ class _Evaluator:
         self.executed_conditional_effect_store_count = 0
         self.operation_count = 0
         self.scan_count = 0
+        self.scatter_count = 0
         self.loop_count = 0
         self.effect_if_count = 0
         self.value_if_count = 0
@@ -676,6 +691,99 @@ class _Evaluator:
             f"structured gather has unsupported mode {mode!r}"
         )
 
+    def _scatter(
+        self,
+        op: IntentOp,
+        env: Mapping[str, np.ndarray],
+    ) -> np.ndarray:
+        if (
+            set(op.attrs) != {"axis", "mode", "reduce"}
+            or len(op.operands) != 3
+        ):
+            raise StructuredReferenceUnsupportedError(
+                "structured scatter requires axis/mode/reduce and three operands"
+            )
+        node_ref = self.node_refs_by_operation.get(id(op), op.node_id)
+        update = self.logical_updates.get(node_ref)
+        if update is None:
+            raise StructuredReferenceUnsupportedError(
+                "structured scatter requires one typed logical update"
+            )
+        data = self._operand(op, env, 0)
+        index = self._operand(op, env, 1)
+        source = self._operand(op, env, 2)
+        axis = op.attrs.get("axis")
+        if isinstance(axis, bool) or not isinstance(axis, int):
+            raise StructuredReferenceUnsupportedError(
+                "structured scatter axis must be a closed integer"
+            )
+        if not 0 <= axis < data.ndim:
+            raise ValueError("structured scatter axis is outside data rank")
+        if op.attrs.get("mode") != "along_axis":
+            raise StructuredReferenceUnsupportedError(
+                "structured scatter implements only canonical along_axis mode"
+            )
+        if index.dtype.kind not in {"i", "u"}:
+            raise ValueError("structured scatter index must have an integer dtype")
+        if index.shape != source.shape or index.ndim != data.ndim:
+            raise ValueError(
+                "structured scatter index/source must have one common data rank"
+            )
+        if any(
+            index.shape[dimension] > data.shape[dimension]
+            for dimension in range(data.ndim)
+            if dimension != axis
+        ):
+            raise ValueError(
+                "structured scatter index exceeds one non-axis data extent"
+            )
+        if index.size and (
+            bool(np.any(index < 0))
+            or bool(np.any(index >= data.shape[axis]))
+        ):
+            raise ValueError("structured scatter index is outside the data extent")
+
+        if (
+            update.base != op.operands[0]
+            or update.indices != op.operands[1]
+            or update.values != op.operands[2]
+            or update.axis != axis
+        ):
+            raise ValueError(
+                "structured scatter operands disagree with its logical update"
+            )
+        reduce = op.attrs.get("reduce")
+        expected_combiner = "overwrite" if reduce == "none" else reduce
+        if update.combiner.value != expected_combiner:
+            raise ValueError(
+                "structured scatter reduce mode disagrees with its logical update"
+            )
+        if update.duplicate_policy.value == "forbid" and index.shape[axis] > 1:
+            ordered = np.sort(index, axis=axis)
+            if bool(np.any(np.diff(ordered, axis=axis) == 0)):
+                raise ValueError(
+                    "structured scatter violates duplicate_policy='forbid'"
+                )
+        if update.duplicate_policy.value == "one_of":
+            raise StructuredReferenceUnsupportedError(
+                "structured scatter cannot choose one member of an authored "
+                "one_of update result set"
+            )
+
+        result = np.array(data, copy=True)
+        if reduce == "none":
+            np.put_along_axis(result, index, source, axis=axis)
+        elif reduce == "add":
+            coordinates = np.indices(index.shape, sparse=False)
+            coordinates[axis] = index
+            np.add.at(result, tuple(coordinates), source)
+        else:
+            raise StructuredReferenceUnsupportedError(
+                f"structured scatter has unsupported reduce mode {reduce!r}"
+            )
+        self.scatter_count += 1
+        return result
+
     def _tile(
         self,
         op: IntentOp,
@@ -945,6 +1053,8 @@ class _Evaluator:
             return self._concat(op, env)
         if op.op == "gather":
             return self._gather(op, env)
+        if op.op == "scatter":
+            return self._scatter(op, env)
         if op.op == "iota":
             return self._iota(op)
         if op.op == "map_binary":
@@ -1369,6 +1479,7 @@ def execute_structured_reference(
             "execution_mode": "full_logical_axis_conservative",
             "operation_count": evaluator.operation_count,
             "scan_count": evaluator.scan_count,
+            "scatter_count": evaluator.scatter_count,
             "loop_count": evaluator.loop_count,
             "effect_if_count": evaluator.effect_if_count,
             "value_if_count": evaluator.value_if_count,
