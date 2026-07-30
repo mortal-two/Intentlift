@@ -509,7 +509,10 @@ class IntentIRLiftEnvironment:
             return self._structured_tool_error("unknown context-inspection argument")
         view = action.get("view")
         if view not in {
-            "source", "source_outline", "source_find", "source_brief", "harness", "harness_abi", "feedback",
+            "source", "source_outline", "source_find", "source_brief",
+            "source_ttir", "source_ttir_outline", "source_ttir_find",
+            "source_ttir_def_use", "source_observer",
+            "harness", "harness_abi", "feedback",
             "feedback_category",
             "candidate", "candidate_find", "candidate_nodes", "candidate_node",
             "candidate_abi", "candidate_control", "candidate_diff", "knowledge",
@@ -547,7 +550,8 @@ class IntentIRLiftEnvironment:
                 "query",
                 required=view
                 in {
-                    "source_find", "feedback_category", "candidate_find",
+                    "source_find", "source_ttir_find", "source_ttir_def_use",
+                    "feedback_category", "candidate_find",
                     "candidate_node", "knowledge",
                 },
             )
@@ -566,6 +570,20 @@ class IntentIRLiftEnvironment:
             command += ["source-find", str(query), "--context", str(context)]
         elif view == "source_brief":
             command.append("source-brief")
+        elif view == "source_ttir":
+            command += ["source-ttir", "--start", str(start), "--lines", str(count)]
+        elif view == "source_ttir_outline":
+            command += [
+                "source-ttir-outline", "--start", str(start), "--count", str(count)
+            ]
+        elif view == "source_ttir_find":
+            command += ["source-ttir-find", str(query), "--context", str(context)]
+        elif view == "source_ttir_def_use":
+            command += ["source-ttir-def-use", str(query), "--context", str(context)]
+        elif view == "source_observer":
+            command.append("source-observer")
+            if path is not None:
+                command += ["--path", path]
         elif view in {"harness", "feedback", "candidate"}:
             command.append(view)
             if path is not None:
