@@ -145,7 +145,14 @@ Decode/TypeCheck；工具 `PASS`
 agent 内部多步和 CandidateCheck 不增加正式 Gate round，也不削弱门禁。报告必须分别记录外部
 Lift invocation、owner session id/累计 active wall time、agent model turns、实际 provider calls、
 CandidateCheck 调用次数与诊断类别。
-Replay、compiler observer、Gate1、Gate2 与 RefEval 在 session 内仍然绝对不可调用。
+Replay、Gate1、Gate2与hidden input在session内仍然绝对不可调用。
+
+source-aware owner可以在CandidateCheck/SourceReconcile通过后，独立调用一次非认证的public
+`SemanticProbe(Source,RefEval(J))`。它使用与hidden Gate2不同的预先固定seed；Source腿使用当前候选C，
+RefEval腿只接收J与logical inputs，π和Replay均不进入。工具只返回逐输出差异与外部Q的当前诊断，
+不得生成、修改、接受或拒绝artifact。大差异由LLM自行回读Source/J并修改；unsupported或小幅浮点
+归约差异不能成为membership verdict。该probe调用与结果作为proof-irrelevant telemetry保存，正式
+TypeCheck、fresh Replay、Gate1和hidden Gate2仍由外部Runner独立执行。
 
 当前 active single-owner 路径默认每 branch 累计 3600 秒 active Lift wall time；`step_limit=0` 与
 CandidateCheck count limit 0 都表示不按次数截断，而不是无资源约束。model/tool/check 调用全部作为
@@ -193,7 +200,7 @@ presence、literal memory-call 顺序，以及“loop 前已有 lexical binding 
 semantic outline、摘要、operator、binding、π 或修改建议；目的是让首个高 effort 回合直接做语义
 工作，而不是决定下一条读取命令。
 
-`intentir.scrc.triton-workload-adapter.v5` 把 tensor shape 的**参数恒等关系**与本次 concrete
+`intentir.scrc.triton-workload-adapter.v6` 把 tensor shape 的**参数恒等关系**与本次 concrete
 valuation 分开：`shape` 仍是本次可执行值；`shape_contract` 每个轴只能是正整数或匿名 Harness-only
 `h*`，相同 `h*` 表示跨 buffer 的同一 source-grounded logical extent；可选 scalar
 `shape_coordinate=h*` 或 explicit `bound_constexpr_shape_coordinates` 表示 runtime scalar/semantic
@@ -204,13 +211,13 @@ CandidateCheck/Runner 只核对完整映射，不能从 concrete `1/2/33/16/64`�
 relation 或 J shape。整数 contract 仍必须保持静态。`h*`、grid 与本次 valuation 都不进入 J/C/π、
 Replay 或 production；production 只消费最终已作者化的 `x*`。不同 `h*`（例如 valid sequence 与
 rounded capacity）保持独立，除非 Source-aware Lift 在现有 J/B vocabulary 中另行作者化其语义关系；
-Harness 不按数值猜 `ceil_div`、容量或有效域公式。
+Harness 不按数值猜 `ceil_div`、容量或有效域公式。v6的`input_profile`只进入Harness/evidence receipt，
+用于区分capture、model/upstream与direct-tile valuation；它不进入J/C/π、Replay或Gate，也不向Lift
+提供operator/shape公式。
 
 持久 Lift owner 还可使用四个等合同的只读投影：`harness-abi` 将匿名 Harness view 中已经声明的
 `p*/c*` 顺序、bound non-C constexpr membership、compiler role 与 `h*` shape-coordinate ledger
-并置；`source-outline` 只分页上述 syntax-only navigation facts：Python AST 可解析时提供
-control/memory ledger，native CUDA/C++ 或其他不可解析语法退化为 exact non-empty source lines，
-不引入 C++ parser 或 fixed semantic inference；`candidate-control` 只分页当前 LLM
+并置；`source-outline` 只分页上述 syntax-only navigation facts；`candidate-control` 只分页当前 LLM
 已写出的 J control/reduction nodes、branch arms、boundary
 output/effect/guard、以及 π regions/instances/iterations/carriers/terminal/routes/order；
 `feedback-category` 只投影 closed frontier 已命名的一个 Gate1 类别。它们是 attention/transport
@@ -219,17 +226,43 @@ output/effect/guard、以及 π regions/instances/iterations/carriers/terminal/r
 字段投影，任何缺失仍由 Lift 自己从 Source 作者化，任何冲突仍由 CandidateCheck/TypeCheck
 fail closed。
 
-Codex Lift v12 / knowledge v68 将同一 exact Harness ABI ledger 与 syntax-only
+Codex Lift v12另在owner创建时，以同一匿名Source和冻结匿名compiler view执行一次
+`intentir.lift-source-ttir.v1`。成功结果只在该branch的immutable input中保存exact TTIR与现有Gate1
+observer fingerprint；owner可分页读取TTIR、按token或单个`%SSA`查看局部上下文、读取syntax
+outline或一个fingerprint path。该工具不解释Source、不决定J/C/π所有权、不生成relation或patch；
+raw TTIR/fingerprint不写入模型trajectory，更不得进入Replay、证书或production。
+
+Codex Lift v18 在 source-free `CandidateCheck` 之后增加独立的
+`intentir.lift-source-reconcile.v1`。它只把模型当前完整候选可确定投影出的 compiler obligations
+（direct transfer multiplicity、structured/physical iteration 与 carrier arity、已声明 reduction
+linearization、闭合时的 pointer-address operation、program-coordinate occurrence，以及无歧义的
+ordered transfer）同该 owner 已冻结的 Source TTIR observer 比较。FAIL 只返回匿名 handle、rule 与
+expected/actual count/order；模型仍须自行修改完整 J/C/π。该工具不生成字段、关系、源码或 patch，
+不读取 Replay/Gate feedback，不形成 TypeCheck/Gate/证书结论；投影不能唯一确定时跳过该项，最终
+一致性仍由 fresh Replay + Gate1 裁决。v18 的 host submission preflight 要求当前 exact bytes 依次
+通过 CandidateCheck 与 SourceReconcile，并分别记录调用与诊断。
+
+Codex Lift v19 不再把整份 relift `feedback.json` 暴露给持久 owner。前一 artifact 已存在于同一
+workspace 的 `output/candidate.json`；closed Gate1 diff 只按既有 protocol label 分成固定的
+`feedback_category_NAME.json`，frontier 仍是首读入口，非 observer 诊断另存一个小 detail 文件。
+这是 exact bytes 的机械分区，不选择类别、不生成修复。首次 contract 也只要求读取 top-level shape
+与当前需要的 leaf section，禁止把整份 schema/op catalog pretty-print 进线程；最终 artifact 与所有
+字段仍完全由同一 LLM owner 作者化。
+Codex Lift v20 同时删除与普通文件读取重复的 `feedback_frontier` host tool；workspace 中 exact frontier
+文件是唯一入口。当前特殊 bridge 只保留无法由本地文件操作替代的CandidateCheck、SourceReconcile，
+以及上述显式调用、非认证的public SemanticProbe。
+
+Codex Lift v11 / knowledge v68 将同一 exact Harness ABI ledger 与 syntax-only
 `source-outline.v2` 直接放入首次 owner prompt，并将
 后续 closed feedback frontier 中已有的 interface、reduction、predicate/effect 与 op-multiset 直接
 类别一次并列展开到同一持久 owner continuation；recursive dataflow 保持按一个命名类别分页。
 representation-only op 差异只要求 owner 对照 Source 重新审查已有 π refinement grammar，fixed code
 不选择 refinement、不写 π，也不把 compiler op 复制成 J semantics；
 `lift_harness_abi`、`lift_candidate_control` 与 `lift_feedback_category` 保留为可选的局部自读，不再是
-提交前的强制串行协议。MiniSWE knowledge v65 暴露同一 outline/checklist 合同。该 transport 不生成
+提交前的强制串行协议。MiniSWE knowledge v64 暴露同一 outline/checklist 合同。该 transport 不生成
 `logical_ref`、J/C/π 字段或修复。
 
-当前持久 owner 使用 `artifact.v10 / decode.v15 / typecheck.v27 / candidate-check.v1` 实现上述
+当前持久 owner 使用 `artifact.v12 / decode.v17 / typecheck.v29 / candidate-check.v1` 实现上述
 CandidateCheck、C attachment、numeric-cast dependent typing 与 result-relation compatibility。v7
 继承 v6，v6 继承 v5；v5 继承 v4 的
 rank-0 closed signature、Layer-A graph value typing total 与显式 NumPy broadcast 合同；它只消费 Lift
@@ -260,6 +293,8 @@ transfer traversal 等不改变 `[[J]]` 的物理时间；tile instance 仍必�
 positive-integer C slot。后者只绑定 typed init/state/next/result 时间拓扑。两者都不携带
 bound/formula/value/API，也不让 fixed code创建 J loop、选择锚点或推导 traversal。真实性和遗漏继续
 由 fresh Replay/Gate1 检查。
+每条 physical carrier 是一个 tuple slot：slot 内四个 stage 类型一致；不同 slot 可异构、无需匹配
+body instance 类型，因此 pointer/address recurrence 与 accumulator 都由 Lift 分别作者化。
 `artifact.v9` 再加入 `pi.terminal_controls`，只在 J 已有 `effect_if` 的 sibling arm scopes 上指定
 terminal/continuation topology；不复制 predicate、return、Source 或 frontend spelling。
 `artifact.v10` 再加入 `pi.route_extent_transforms`：只允许 attached required positive-int C extent
@@ -267,14 +302,10 @@ terminal/continuation topology；不复制 predicate、return、Source 或 front
 作者化 source/target/slot/divisor/rounding 与 C attachment；checker 不从 Source、J domain 或 valuation
 推导。它只约束 Source realization，不能创建 J shape/domain/predicate，production 仍不读取 π。
 
-`artifact.v10` 加入 `pi.unit_iterations`，表达没有 C tile 的既有非 loop J axis 单位步物理遍历。
-其上下界由 J axis 唯一闭合，forward/reverse 只改变访问顺序；它不携带 bound/formula/launch/API，
-也不能把 participant-parallel coordinate 或 realization loop 升格成 J loop。
-
-同一 v10 wire 的 closed refinement vocabulary 现包含 `reduction_linearization`。它只表示 Source 已有的
+同一 v9 wire 的 closed refinement vocabulary 现包含 `reduction_linearization`。它只表示 Source 已有的
 全轴线性化表示阶段：`auth_ref=null`，refined instance 必须是 `realize`，且恰有一条 slot-0 route
 进入一个 J `reduce` 的 `realize` instance。逻辑 axes 和 reducer 仍只在 J；π 不携带 axis、API 或
-Source text。Lift 必须从 Source 显式作者化，TypeCheck v26 只验证 topology，不能因 Gate1 缺
+Source text。Lift 必须从 Source 显式作者化，TypeCheck v25 只验证 topology，不能因 Gate1 缺
 `tt.reshape` 而自动补造。
 
 Lift receipt 分别记录 artifact/decode/typecheck version，以及 CandidateCheck 调用次数与 closed
@@ -341,67 +372,73 @@ TypeCheck 不做 SMT、range proof 或一般语义等价证明。检查失败时
 不进入 Replay。它只支撑 `FreshLogicalSemDecl(C,pi | J)=empty` 的显式所有权结论，不证明 π
 没有统计语义线索，也不证明 realization 行为正确。
 
+因此，Lift 对 closed ContractExpr grammar 已能表示的 Source index/domain/predicate，必须作者化保留
+原始整数算子树（如 `//`、`%`、`ceil_div`、`+`、`-`、`*`），不得擅自改写为代数等价式。
+这是对 compiler-observed realization topology 的保真要求，不是 TypeCheck 增加等价证明，也不由
+固定代码替模型补造表达式。
+
 ## Replay
 
 ```text
 ReplayLLM(J,pi,MaskC(C);U_f) -> complete source R_f
 ```
 
-当前 packet protocol 为 `intentir.scrc.replay-input.v1`，Triton 公共上下文为
-`public_frontend_context_v18`，TileLang/CUDA 公共上下文为
-`public_frontend_context_v9/v4`；source-aware Codex/MiniSWE Lift 的当前 knowledge receipt 分别为
-`intentir.lift-knowledge.v69 / intentir.lift-knowledge.v66`，source-blind MiniSWE/Codex Replay backend 为
-`minisweagent.intentir-replay.v35 / openai.codex-cli.intentir-replay.v31`。这些版本必须随 fresh run 原样记录；旧 packet/context/knowledge
-evidence 不因实现升级而被重判。
+当前 packet protocol 为 `intentir.scrc.replay-input.v2`；Triton 公共上下文直接由当前固定字段给出，
+不再附带 context version、SHA 或 receipt 门禁。source-aware Codex/MiniSWE Lift 的当前 knowledge receipt 分别为
+`intentir.lift-knowledge.v70 / intentir.lift-knowledge.v65`，source-blind MiniSWE/Codex Replay backend 为
+`minisweagent.intentir-replay.v30 / openai.codex-cli.intentir-replay.v28`。这些版本必须随 fresh run 原样记录；旧 packet/context/knowledge
+evidence 不因实现升级而被重判；fresh Replay 只做当前字段的结构和 source-isolation 检查。
 
-Lift knowledge v69/v66 进一步明确：J domain 只量化逻辑迭代集，不能擦除 Source 中编译器可见的
-runtime condition。已有 Layer-A scalar-i1 的 effect guard 进入 typed control；物理 coordinate/access
-validity 必须逐 access 保留 exact predicate。只有具备完整 full-logical-domain proof、且 Source 没有
-独立 branch event 的纯 lane-padding mask 才可擦除；grid、C、Harness valuation 与当前 concrete value
-均不构成该证明。
+Replay v28把一个formal round保持为同一个fresh、单writer、source-blind coding episode，总active
+wall time默认3600秒。它可重复编辑、运行`replay-check.v14`和public synthetic compile，并只对当前
+Replay源码查询其自身TTIR/fingerprint。累计provider上下文超过阈值或有draft的turn timeout时，可以在
+同一workspace内更换transport thread；新thread只重读exact packet、当前Replay bytes与closed host
+diagnostic，不接收语义摘要、旧episode、Source或Gate。该rollover不复用跨round Replay，也不增加
+认证输入。
 
-Replay v35/v31 把 v10 `route_extent_transforms` 纳入 exact packet、critical ledger、obligation audit 与
+Replay v30/v26 完整执行 v10 `route_extent_transforms` 的 exact packet、critical ledger、obligation audit 与
 source-blind static ingress；它只拒绝缺失 closed floor/ceil-div spelling，不判断 target-local Gate1
-同构，也不生成代码。Lift knowledge v69/v66 仍要求同一 owner 显式作者化 relation 与 attachment。
+同构，也不生成代码。即使没有其他 complex obligation，单独存在该 relation 也要求审阅当前 exact
+Replay bytes。Codex v26 的单 turn 仍上限 900 秒，但 fresh Replay owner episode 总预算为 1800 秒；
+首个 turn 超时只可沿原 resumable thread 继续，不允许跨 episode 恢复。Lift knowledge v69/v65 在
+v68/v64 上只明确已有 access 的 consumer-local 所有权：同 tensor 在 sibling consumer 使用不同
+index/predicate/fill/sub-domain 时，由 owner 分别作者化；fixed code不复制或推荐 relation。只读
+`candidate-control.v2 operands` 仅并置当前草稿 node operand 与该 node 已有 access，空项不构造事实。
+v29/v25 历史 evidence 不重判。
 
-同一 region 的
+Replay v28/v24 与 Lift knowledge v66/v62 只把现有 ordered relation 的含义显式化：同一 region 的
 `physical_loop_carriers` declaration order 是 init/state/next/result 共用的 carrier-tuple ordinal，Lift
 从 Source frontend loop tuple作者化，Replay原样消费；不得按 dtype/ref/mechanism排序。它不是 event
-execution order，后者仍只由 `pi.order` 声明。Replay v35/v31 进一步明确消费 π region 的原有闭合
-含义：region 是 compiler-visible instance 的
+execution order，后者仍只由 `pi.order` 声明；`replay-check.v14` 只在 authored route 与 Replay
+自身 TTIR occurrence 均可唯一对应时提前拒绝顺序反转，歧义时不猜。Replay v28/v24 继承 v27/v23；v27/v23 又继承 v26/v22 对 π region 的原有闭合含义：region 是 compiler-visible instance 的
 精确词法 realization scope，不是优化提示或 consumer membership。声明在 loop region 的 instance
 即使只依赖 loop-invariant operands，也必须在该 loop 内 materialize；Replay 不得把它 hoist 到父
 region，也不得跨 region sink、clone 或 fold。该规则只消费 Lift 已作者化 placement，不从 Source、
 Gate diff 或常见优化推导新的 instance；ReplayCheck 不据此猜 op↔instance 映射，最终一致性仍由正式
 Gate1 observer 判定。
 
-Replay v35/v31 对不超过 64 KiB 的匿名 packet 采用一次性 exact startup embedding；当前难核实测
+Replay v28/v24 继承 v27/v23 对不超过 64 KiB 的匿名 packet 一次性 exact startup embedding；当前六个难核实测
 packet 最大约 47 KiB，因此正常路径不再强制调用 manifest、requirements、ABI、graph、realization 或
-obligations。startup 另带一个由同一 packet 精确投影的 bounded `critical_facts.v5`：只列 semantic
-dimension carrier、IEEE special typed constant、`physical_iterations|unit_iterations`、每个 transfer
-occurrence 的 route/order、`reduction_linearization + consumer route`、按 loop/branch region 分组的
-instance membership、跨 region order 与 route-local extent transforms，并把每条
-`J.boundary.broadcasts` 与其原 operand type、
-matching boundary access、named consumer/operand ordinal，以及每个
-`identity_materialization` 相邻 transfer 的方向、exact boundary access 与 tensor type 无损并置，
-使 Replay 能按 U_f 区分 shaped participant copy 与 per-program scalar load/store，而不必在大图中重新
+obligations。startup 另带一个由同一 packet 精确投影的 bounded `critical_facts.v4`：只列 semantic
+dimension carrier、IEEE special typed constant、`physical_iterations`、
+`reduction_linearization + consumer route`、按 loop/branch region 分组的 instance membership 与
+跨 region order、route-local extent transforms、`pi.sharing` source/consumers，并把每条 `J.boundary.broadcasts` 与其原 operand type、matching boundary access、
+named consumer/operand ordinal 无损并置，使 Replay 不必在大图中重新
 寻找这些易漏的已作者化事实；它不推断、补齐或推荐实现。超过上限时，首次 manifest 自带 bounded authored-requirements：J op/boundary 与 π
 instance mechanism、route/order/time/control 的 exact 重索引，并只为被明确截断的页提供 focused
 query。完整 `/input/packet.json` 仍是 immutable authority；embedding/manifest/query 都不摘要、补齐、
 推断或推荐 schedule/code。Replay LLM仍完整作者化 source，host只对 exact bytes 做 ReplayCheck 和
 public synthetic compile。旧 v20/v16 的强制 requirements 查询 receipt 保持原 verdict。
 
-当 `critical_facts.v5` 含 broadcast obligation、identity materialization、lexical region、cross-region
-order 或 route extent transform 时，Replay
-v35/v31 在 construction compile 前要求同一 owner 对当前 exact source bytes 调用一次
-`replay-obligation-audit.v4`。返回值只把上述 J/π ledger 与该 owner 自己源码的带行号非空行并置；
+当 `critical_facts.v4` 含 broadcast obligation、lexical region、cross-region order 或 route extent
+transform 时，Replay
+v30/v26 为同一 owner 提供可选的 `replay-obligation-audit.v3`，用于把当前 exact source bytes 与 ledger 并置。返回值只把上述 J/π ledger 与该 owner 自己源码的带行号非空行并置；
 它不建立 `source statement ↔ relation/i*` 映射，不判断
-满足与否，也不建议或执行修复。owner 修改任一 byte 后必须重新审阅新 digest。该事务约束只保证模型
-在提交前实际看到约束和当前代码，既不是 Replay 输入 artifact，也不进入 TypeCheck/Gate1 membership。
+满足与否，也不建议或执行修复。该视图只帮助模型审阅当前代码，既不是 Replay 输入 artifact，也不是 ReplayCheck、compile 或 Gate1 的前置条件。
 
 v50/v8 只升级 proof-irrelevant Agent execution transport：活动 staged writer 被移除，MiniSWE 使用
 一个持久 Lift owner 和每轮一个 exact Replay packet；首轮 exact allowlisted workspace mirror 在
-模型收到一次后可于后续无状态 provider packet 中替换为 hash/length receipt；旧 response/tool group
+模型收到一次后可于后续无状态 provider packet 中按路径重读 exact 文件；旧 response/tool group
 只保留最近窗口，完整本地 trajectory 与 workspace 文件不变。Lift 可把多个显式 schema lookup 合并为
 一个只读 bundle；Replay 可把完整 LLM-authored source 直接原样提交，或对自己的当前 source 做唯一
 exact-text replacement 后在同一 action 触发既有 ReplayCheck preflight。固定代码不得据此解释、生成、
@@ -414,7 +451,7 @@ Lift、MiniSWE Replay 或 Codex CLI provider turn 中的 sibling 可被终止并
 伪装成 transient retry，也不丢弃已经完成的 winner evidence。这些版本都不改变 artifact、packet、
 TypeCheck、ReplayCheck、Gate1 或 Gate2 接受集合。
 
-`replay-check.v15` 在 v9 的 transfer、iteration、carrier 与 pointer-address guard 之外，按 π 中
+`replay-check.v10` 在 v9 的 transfer、iteration、carrier 与 pointer-address guard 之外，按 π 中
 `reduction_linearization` 的作者化数量要求 synthetic TTIR 至少出现相同数量的 distinct
 `tt.reshape -> tt.reduce(axis=0)` dataflow；额外
 表示 stage 留给正式 Gate1 精确比较，避免这个非认证 probe 误当 membership oracle。它不从 J reduce、
@@ -444,6 +481,11 @@ BindingMap、独立 interface sidecar、source/compiler fingerprint、旧候选�
 旧模型 conversation context 或 per-kernel RuleCard。`MaskC(C)` 只暴露 C 的匿名 schema/slot
 视图，不暴露 valuation 与私有 provenance。
 
+`MaskC(C)` 中只有 `kind=constexpr` 的 slot 进入 Replay callable ABI 并保持 frontend constexpr
+annotation；`kind=compiler` 的 slot 只声明由外部 compiler invocation 消费的匿名 role，不得出现在
+Replay 函数签名、body 或 π route 中。正式 Gate1/Gate2 在 Replay 提交后以与 Source 相同的 C value
+绑定该 role；source-blind construction compile 不读取其 value，也不能把它伪装成公开代表值。
+
 Replay 必须生成完整、可独立构建的当前前端源码；固定代码只做绑定和检查，不根据 π 或 compiler
 diff 施工。
 
@@ -462,10 +504,10 @@ J.signature `p*` 同样不会因位于 program region 或拥有多个 π instanc
 
 现有关系的机械解释是：锚定 J domain、位于 program region 且 scalar dependency path 进入
 `address_base` 的 `realize` stage 是 program coordinate；进入 `address_lane` 的 domain/C path 是
-lane coordinate。Triton `U_f` 按 distinct J domain `semantic_ref` 的首次声明顺序分配
-`tl.program_id(axis)`；锚定同一 `d*` 的多个 instance 仍分别 materialize，但共享同一 program-axis
-identity，instance multiplicity 绝不自动产生下一条 axis。只有 distinct domain anchor 才能分配
-下一条 axis。lane path 才使用 `tl.arange` 等 lane realization；placement 单独出现时两者都不能
+lane coordinate。`pi.program_axes` 为每个 distinct coordinate domain 作者化精确 axis `0..2`；
+Triton `U_f` 必须按该 binding 生成 `tl.program_id(axis)`。锚定同一 `d*` 的多个 instance 仍分别
+materialize，但共享同一 bound axis；instance multiplicity、声明顺序、grid extent 与 C 均不能分配
+或重编号 axis。lane path 才使用 `tl.arange` 等 lane realization；placement 单独出现时两者都不能
 推断。Triton 的 `tl.arange` 等
 compile-time-only API 必须直接读取仍带 `tl.constexpr` 注解的匿名 `c*` 参数，不得先复制到普通
 Python local 再传入。单个锚定 `c*` 的 `realize` instance 由参数 binding 和直接 routed use 即可
@@ -523,7 +565,7 @@ relift diagnostic view 必须明确区分。
 禁止把 diff 交给 Replay、patch 旧 Replay、只输出 artifact 增量，或跨候选复用 Replay。
 
 协议允许独立的 `intentir.scrc.gate1-diagnostic-recheck.v1` 对一份已落盘 artifact 做只读诊断：
-保持 artifact bytes/digest 不变，执行当前 canonical Decode、`typecheck.v27`、一个 fresh normal Replay
+保持 artifact bytes/digest 不变，执行当前 canonical Decode、`typecheck.v29`、一个 fresh normal Replay
 与 Gate1，并写入独立 `recheck-NNN` evidence。它不调用 Lift、不运行 masked-J 或 Gate2、不参与
 candidate/winner 选择，也不改变 parent run 的 verdict 或 certificate；因此只用于定位固定 consumer/
 observer/context 改动，不能冒充 fresh SCRC rerun。provider 调用前必须把 selected case/current prepared

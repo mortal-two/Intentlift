@@ -13,6 +13,8 @@ import ast
 import hashlib
 import json
 from pathlib import Path
+import shlex
+import sys
 from typing import Any
 
 
@@ -146,6 +148,7 @@ def _bootstrap(input_root: Path, output_root: Path) -> None:
     files = {}
     for relative in (
         "source.py",
+        "source_ttir.json",
         "harness_view.json",
         "feedback_frontier.json",
         "feedback.json",
@@ -158,6 +161,7 @@ def _bootstrap(input_root: Path, output_root: Path) -> None:
             "bytes": path.stat().st_size,
             "read_command": {
                 "source.py": f"{QUERY_COMMAND} source --start 1 --lines 160",
+                "source_ttir.json": f"{QUERY_COMMAND} source-observer",
                 "harness_view.json": f"{QUERY_COMMAND} harness",
                 "feedback_frontier.json": f"{QUERY_COMMAND} feedback-frontier",
                 "feedback.json": f"{QUERY_COMMAND} feedback",
@@ -191,6 +195,7 @@ def _bootstrap(input_root: Path, output_root: Path) -> None:
             f"Use `{QUERY_COMMAND} harness-abi` for the exact compact p*/c*/shape-coordinate ledger.",
             f"Use `{QUERY_COMMAND} source-find TEXT --context 3` for literal Source lookup.",
             f"Use `{QUERY_COMMAND} source-outline --start 1 --count 32` to locate syntax-level control before paging a long Source.",
+            f"When available, use `{QUERY_COMMAND} source-observer` and `{QUERY_COMMAND} source-ttir-outline` before paging exact TTIR.",
             f"After drafting, run `{QUERY_COMMAND} candidate-abi` for a read-only ABI diff.",
             f"Run `{QUERY_COMMAND} candidate-control` to audit authored control, time, effects, and outputs before CandidateCheck.",
             f"Inspect a draft with `{QUERY_COMMAND} candidate --path j.PATH` or `candidate-find HANDLE`.",
@@ -328,6 +333,329 @@ def _source(input_root: Path, start: int, line_count: int) -> None:
             f"\n[source continues: run `{QUERY_COMMAND} source --start "
             f"{next_line} --lines {line_count}`]"
         )
+
+
+def _source_ttir_observation(input_root: Path) -> dict[str, Any]:
+    path = input_root / "source_ttir.json"
+    if not path.is_file() or path.is_symlink():
+        raise FileNotFoundError("source_ttir.json is unavailable for this Lift input")
+    value = _load_json(path)
+    if not isinstance(value, dict):
+        raise TypeError("source_ttir.json must contain one object")
+    return value
+
+
+def _source_ttir_text(input_root: Path) -> str:
+    value = _source_ttir_observation(input_root)
+    if value.get("status") != "pass":
+        diagnostic = value.get("diagnostic", "Source TTIR observation did not pass")
+        raise ValueError(str(diagnostic))
+    text = value.get("ttir")
+    if not isinstance(text, str) or not text:
+        raise ValueError("passing source_ttir.json contains no TTIR text")
+    return text
+
+
+def _source_ttir(input_root: Path, start: int, line_count: int) -> None:
+    if start < 1 or line_count < 1:
+        raise ValueError("Source TTIR start and lines must be positive")
+    lines = _source_ttir_text(input_root).splitlines()
+    selected: list[str] = []
+    used = 0
+    for ordinal, line in enumerate(lines[start - 1 :], start=start):
+        rendered = f"{ordinal:5d} | {line}"
+        if selected and used + len(rendered) + 1 > MAX_OUTPUT_CHARS - 300:
+            break
+        selected.append(rendered)
+        used += len(rendered) + 1
+        if len(selected) >= line_count:
+            break
+    print("\n".join(selected))
+    next_line = start + len(selected)
+    if next_line <= len(lines):
+        print(
+            f"\n[TTIR continues: run `{QUERY_COMMAND} source-ttir --start "
+            f"{next_line} --lines {line_count}`]"
+        )
+
+
+def _source_ttir_find(
+    input_root: Path, query: str, context: int, *, exact_token: bool = False
+) -> None:
+    if not query or len(query) > 256 or any(character.isspace() for character in query):
+        raise ValueError("Source TTIR query must be one bounded non-whitespace token")
+    if context < 0 or context > 20:
+        raise ValueError("Source TTIR context must be in [0, 20]")
+    if exact_token and not query.startswith("%"):
+        raise ValueError("Source TTIR def-use query must name one %SSA value")
+    lines = _source_ttir_text(input_root).splitlines()
+    needle = query if exact_token else query.casefold()
+    matches = [
+        index
+        for index, line in enumerate(lines)
+        if (needle in line if exact_token else needle in line.casefold())
+    ]
+    if not matches:
+        raise KeyError(f"no Source TTIR lines match {query!r}")
+    ranges: list[tuple[int, int]] = []
+    for index in matches:
+        begin = max(0, index - context)
+        end = min(len(lines), index + context + 1)
+        if ranges and begin <= ranges[-1][1]:
+            ranges[-1] = (ranges[-1][0], max(ranges[-1][1], end))
+        else:
+            ranges.append((begin, end))
+    rendered_blocks: list[str] = []
+    used = 0
+    for begin, end in ranges:
+        block = "\n".join(
+            f"{ordinal + 1:5d} | {lines[ordinal]}"
+            for ordinal in range(begin, end)
+        )
+        if rendered_blocks and used + len(block) + 2 > MAX_OUTPUT_CHARS - 200:
+            break
+        rendered_blocks.append(block)
+        used += len(block) + 2
+    print("\n\n".join(rendered_blocks))
+    if len(rendered_blocks) < len(ranges):
+        print("\n[more TTIR matches omitted; use a narrower token]")
+
+
+def _source_ttir_outline(input_root: Path, start: int, count: int) -> None:
+    if start < 1 or count < 1 or count > 200:
+        raise ValueError("Source TTIR outline start/count must be positive and count <= 200")
+    interesting = (
+        "module ", "tt.func", "func.func", "^bb", "scf.for", "scf.if",
+        "scf.while", "cf.br", "cf.cond_br", "tt.load", "tt.store",
+        "tt.atomic", "tt.reduce", "tt.scan", "tt.dot", "scf.yield",
+        "tt.return", "func.return",
+    )
+    rows = [
+        {"line": ordinal, "text": line.strip()}
+        for ordinal, line in enumerate(
+            _source_ttir_text(input_root).splitlines(), start=1
+        )
+        if any(token in line for token in interesting)
+    ]
+    selected = rows[start - 1 : start - 1 + count]
+    _emit_json(
+        {
+            "protocol": "intentir.lift-source-ttir-outline.v1",
+            "start": start,
+            "returned": len(selected),
+            "total": len(rows),
+            "rows": selected,
+            "next_start": start + len(selected) if start - 1 + len(selected) < len(rows) else None,
+            "authority": "syntax navigation over exact Source TTIR; no semantic classification or J/C/pi inference",
+        }
+    )
+
+
+def _source_observer_value(input_root: Path) -> dict[str, Any]:
+    value = _source_ttir_observation(input_root)
+    ttir = value.get("ttir")
+    summary = {
+        key: item
+        for key, item in value.items()
+        if key not in {"ttir", "fingerprint"}
+    }
+    summary["ttir_lines"] = len(ttir.splitlines()) if isinstance(ttir, str) else 0
+    fingerprint = value.get("fingerprint")
+    summary["fingerprint_sections"] = (
+        list(fingerprint) if isinstance(fingerprint, dict) else []
+    )
+    summary["queries"] = [
+        f"{QUERY_COMMAND} source-ttir-outline --start 1 --count 80",
+        f"{QUERY_COMMAND} source-ttir-find TOKEN --context 3",
+        f"{QUERY_COMMAND} source-ttir-def-use %SSA --context 2",
+        f"{QUERY_COMMAND} source-observer --path fingerprint.loops",
+        f"{QUERY_COMMAND} source-observer --path fingerprint.structured_ifs",
+        f"{QUERY_COMMAND} source-observer --path fingerprint.memory_effects",
+        f"{QUERY_COMMAND} source-observer --path fingerprint.dataflow_edges",
+    ]
+    return summary
+
+
+def _source_observer(input_root: Path, path: str | None) -> None:
+    value = _source_ttir_observation(input_root)
+    if path is not None:
+        _emit_json(_resolve_json_path(value, path))
+        return
+    _emit_json(_source_observer_value(input_root))
+
+
+def _bounded_preview(value: Any, *, item_limit: int, char_limit: int) -> dict[str, Any]:
+    """Return an exact prefix plus a receipt, without interpreting its meaning."""
+
+    if isinstance(value, dict):
+        items = list(value.items())
+        selected: dict[str, Any] = {}
+        for key, item in items[:item_limit]:
+            trial = {**selected, str(key): item}
+            if len(json.dumps(trial, sort_keys=True, ensure_ascii=False)) > char_limit:
+                break
+            selected[str(key)] = item
+        return {
+            "kind": "object",
+            "total": len(items),
+            "value": selected,
+            "truncated": len(selected) < len(items),
+        }
+    if isinstance(value, list):
+        selected: list[Any] = []
+        for item in value[:item_limit]:
+            trial = [*selected, item]
+            if len(json.dumps(trial, sort_keys=True, ensure_ascii=False)) > char_limit:
+                break
+            selected.append(item)
+        return {
+            "kind": "array",
+            "total": len(value),
+            "value": selected,
+            "truncated": len(selected) < len(value),
+        }
+    return {"kind": type(value).__name__, "total": 1, "value": value, "truncated": False}
+
+
+def _source_brief(input_root: Path) -> None:
+    """Expose one compact, exact navigation surface for the Lift owner.
+
+    This is deliberately a projection of already-public Source, Harness, and
+    compiler-observer facts.  It neither maps those facts to IntentIR nor authors
+    any J/C/pi field.  Every truncated section remains available through the exact
+    focused queries named in the receipt.
+    """
+
+    observation = _source_ttir_observation(input_root)
+    fingerprint = observation.get("fingerprint")
+    fingerprint = fingerprint if isinstance(fingerprint, dict) else {}
+    section_names = (
+        "interface",
+        "op_multiset",
+        "reductions",
+        "memory_effects",
+        "mask_predicates",
+        "effect_multiset",
+        "dots",
+        "loops",
+        "structured_ifs",
+        "terminal_forks",
+        "schedule_view",
+        "dataflow_edges",
+    )
+    compiler_sections: dict[str, Any] = {}
+    for name in section_names:
+        if name not in fingerprint:
+            continue
+        preview = _bounded_preview(
+            fingerprint[name],
+            item_limit=12 if name == "dataflow_edges" else 6,
+            char_limit=1400,
+        )
+        if preview["truncated"]:
+            preview["exact_query"] = (
+                f"{QUERY_COMMAND} source-observer --path fingerprint.{name}"
+            )
+        compiler_sections[name] = preview
+
+    source_outline = _source_outline_value(input_root, 1, 16)
+    source_outline["items"] = [
+        {
+            key: item[key]
+            for key in (
+                "ordinal",
+                "kind",
+                "line",
+                "end_line",
+                "depth",
+                "header",
+                "contains_return",
+                "loop_target_names",
+                "lexically_preexisting_writes",
+            )
+            if key in item
+        }
+        | {
+            "ordered_memory_call_count": len(item["ordered_memory_calls"]),
+            "exact_query": f"{QUERY_COMMAND} source-outline --start {item['ordinal']} --count 1",
+        }
+        for item in source_outline["items"]
+        if isinstance(item, dict) and isinstance(item.get("ordered_memory_calls"), list)
+    ] + [
+        {
+            key: item[key]
+            for key in (
+                "ordinal",
+                "kind",
+                "line",
+                "end_line",
+                "depth",
+                "header",
+                "contains_return",
+                "loop_target_names",
+                "lexically_preexisting_writes",
+            )
+            if key in item
+        }
+        for item in source_outline["items"]
+        if isinstance(item, dict) and "ordered_memory_calls" not in item
+    ]
+    source_outline["items"].sort(key=lambda item: int(item["ordinal"]))
+
+    value = {
+        "protocol": "intentir.lift-source-brief.v1",
+        "source": source_outline,
+        "harness_abi": _harness_abi_value(input_root, 1, 16),
+        "compiler": {
+            "status": observation.get("status"),
+            "ttir_lines": len(str(observation.get("ttir", "")).splitlines()),
+            "sections": compiler_sections,
+            "exact_ttir_queries": [
+                f"{QUERY_COMMAND} source-ttir-outline --start 1 --count 80",
+                f"{QUERY_COMMAND} source-ttir-find TOKEN --context 3",
+                f"{QUERY_COMMAND} source-ttir-def-use %SSA --context 2",
+            ],
+        },
+        "authority": (
+            "Exact bounded projection only. Source syntax, Harness ABI declarations, "
+            "and compiler-observer records remain separate evidence; Lift alone "
+            "decides their J/C/pi meaning and authors every artifact field."
+        ),
+    }
+    # Enforce a hard transport budget through exact-prefix degradation.  Each
+    # removed preview retains its total and exact query, so no fact changes owner.
+    def rendered_chars() -> int:
+        return len(json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False))
+
+    if rendered_chars() > MAX_OUTPUT_CHARS:
+        for name, preview in compiler_sections.items():
+            preview["value"] = [] if preview["kind"] == "array" else {}
+            preview["truncated"] = bool(preview["total"])
+            if preview["truncated"]:
+                preview["exact_query"] = (
+                    f"{QUERY_COMMAND} source-observer --path fingerprint.{name}"
+                )
+    if rendered_chars() > MAX_OUTPUT_CHARS:
+        value["source"]["items"] = value["source"]["items"][:6]
+        value["source"]["next_start"] = 7
+        value["source"]["next_command"] = (
+            f"{QUERY_COMMAND} source-outline --start 7 --count 16"
+        )
+        value["harness_abi"]["parameters"] = value["harness_abi"]["parameters"][:8]
+        value["harness_abi"]["parameter_next_command"] = (
+            f"{QUERY_COMMAND} harness-abi --start 9 --count 16"
+        )
+    if rendered_chars() > MAX_OUTPUT_CHARS:
+        value["source"]["items"] = value["source"]["items"][:3]
+        value["source"]["next_start"] = 4
+        value["source"]["next_command"] = (
+            f"{QUERY_COMMAND} source-outline --start 4 --count 16"
+        )
+        value["harness_abi"]["parameters"] = value["harness_abi"]["parameters"][:4]
+        value["harness_abi"]["parameter_next_command"] = (
+            f"{QUERY_COMMAND} harness-abi --start 5 --count 16"
+        )
+    _emit_json(value)
 
 
 def _source_find(input_root: Path, query: str, context: int) -> None:
@@ -1277,14 +1605,75 @@ _CONTROL_PI_FIELDS = (
     "iterations",
     "loop_carriers",
     "physical_iterations",
-    "unit_iterations",
     "physical_loop_carriers",
     "terminal_controls",
     "routes",
+    "program_axes",
     "route_extent_transforms",
     "order",
     "sharing",
 )
+
+
+def _candidate_operand_access_records(
+    candidate: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Join only exact candidate node operands with their authored accesses."""
+
+    j = candidate.get("j")
+    boundary = j.get("boundary") if isinstance(j, dict) else None
+    accesses = boundary.get("accesses", []) if isinstance(boundary, dict) else []
+    authored = [item for item in accesses if isinstance(item, dict)]
+    records: list[dict[str, Any]] = []
+    for path, node in _iter_candidate_nodes(candidate):
+        node_ref = node.get("id")
+        operands = node.get("operands", [])
+        if not isinstance(node_ref, str) or not isinstance(operands, list):
+            continue
+        attached = [item for item in authored if item.get("node_ref") == node_ref]
+        operand_accesses = []
+        for ordinal, operand in enumerate(operands):
+            matches = [
+                {
+                    key: access.get(key)
+                    for key in (
+                        "access_id", "kind", "tensor", "index_expression",
+                        "predicate", "fill_value",
+                    )
+                    if key in access
+                }
+                for access in attached
+                if access.get("kind") == "load" and access.get("tensor") == operand
+            ]
+            operand_accesses.append(
+                {
+                    "ordinal": ordinal,
+                    "operand": operand,
+                    "authored_load_accesses": matches,
+                }
+            )
+        stores = [
+            {
+                key: access.get(key)
+                for key in (
+                    "access_id", "kind", "tensor", "index_expression", "predicate",
+                )
+                if key in access
+            }
+            for access in attached
+            if access.get("kind") in {"store", "update"}
+        ]
+        records.append(
+            {
+                "path": path,
+                "node_ref": node_ref,
+                "op": node.get("op"),
+                "result": node.get("result"),
+                "operand_accesses": operand_accesses,
+                "authored_store_or_update_accesses": stores,
+            }
+        )
+    return records
 
 
 def _candidate_control_records(
@@ -1294,6 +1683,8 @@ def _candidate_control_records(
     boundary = j.get("boundary") if isinstance(j, dict) else None
     pi = candidate.get("pi")
     records: list[dict[str, Any]] = []
+    if section == "operands":
+        return _candidate_operand_access_records(candidate)
     if section == "boundary":
         owner = boundary if isinstance(boundary, dict) else {}
         fields = _CONTROL_BOUNDARY_FIELDS
@@ -1303,7 +1694,10 @@ def _candidate_control_records(
         fields = _CONTROL_PI_FIELDS
         prefix = "pi"
     else:
-        raise ValueError("candidate-control section must be overview, outputs, boundary, or pi")
+        raise ValueError(
+            "candidate-control section must be overview, outputs, operands, "
+            "boundary, or pi"
+        )
     for field in fields:
         value = owner.get(field, [])
         if isinstance(value, list):
@@ -1334,7 +1728,7 @@ def _candidate_control_value(
     candidate_path = output_root / "candidate.json"
     if not candidate_path.is_file():
         return {
-            "protocol": "intentir.lift-candidate-control-view.v1",
+            "protocol": "intentir.lift-candidate-control-view.v2",
             "candidate_found": False,
             "authority": "read-only; no artifact field was inferred or edited",
         }
@@ -1357,7 +1751,8 @@ def _candidate_control_value(
     authority = (
         "Read-only projection of the current LLM-authored candidate. Counts and "
         "pages preserve authored multiplicity/order; no missing control, effect, "
-        "output, carrier, route, or relation was inferred or repaired."
+        "output, operand/access edge, carrier, route, or relation was inferred "
+        "or repaired."
     )
     if section == "overview":
         control_nodes = [
@@ -1366,7 +1761,7 @@ def _candidate_control_value(
             if node.get("op") in _CONTROL_NODE_OPS
         ]
         return {
-            "protocol": "intentir.lift-candidate-control-view.v1",
+            "protocol": "intentir.lift-candidate-control-view.v2",
             "candidate_found": True,
             "section": section,
             "intent_outputs": function.get("outputs", []),
@@ -1390,6 +1785,7 @@ def _candidate_control_value(
             },
             "next_queries": [
                 f"{QUERY_COMMAND} candidate-control --section outputs",
+                f"{QUERY_COMMAND} candidate-control --section operands --start 1 --count 20",
                 f"{QUERY_COMMAND} candidate-control --section boundary --start 1 --count 20",
                 f"{QUERY_COMMAND} candidate-control --section pi --start 1 --count 20",
             ],
@@ -1412,7 +1808,7 @@ def _candidate_control_value(
             )
         ] if isinstance(effects, list) else []
         return {
-            "protocol": "intentir.lift-candidate-control-view.v1",
+            "protocol": "intentir.lift-candidate-control-view.v2",
             "candidate_found": True,
             "section": section,
             "intent_outputs": function.get("outputs", []),
@@ -1432,7 +1828,7 @@ def _candidate_control_value(
         selected = trial
     next_start = start + len(selected)
     return {
-        "protocol": "intentir.lift-candidate-control-view.v1",
+        "protocol": "intentir.lift-candidate-control-view.v2",
         "candidate_found": True,
         "section": section,
         "start": start,
@@ -1794,6 +2190,7 @@ def _knowledge(input_root: Path, query: str, context: int) -> None:
 
 
 def main() -> int:
+    global QUERY_COMMAND
     parser = argparse.ArgumentParser()
     parser.add_argument("--input-root", type=Path, default=Path("/input"))
     parser.add_argument("--output-root", type=Path, default=Path("/output"))
@@ -1813,6 +2210,21 @@ def main() -> int:
     source_outline = subparsers.add_parser("source-outline")
     source_outline.add_argument("--start", type=int, default=1)
     source_outline.add_argument("--count", type=int, default=32)
+    source_ttir = subparsers.add_parser("source-ttir")
+    source_ttir.add_argument("--start", type=int, default=1)
+    source_ttir.add_argument("--lines", type=int, default=160)
+    source_ttir_find = subparsers.add_parser("source-ttir-find")
+    source_ttir_find.add_argument("query")
+    source_ttir_find.add_argument("--context", type=int, default=3)
+    source_ttir_def_use = subparsers.add_parser("source-ttir-def-use")
+    source_ttir_def_use.add_argument("value")
+    source_ttir_def_use.add_argument("--context", type=int, default=2)
+    source_ttir_outline = subparsers.add_parser("source-ttir-outline")
+    source_ttir_outline.add_argument("--start", type=int, default=1)
+    source_ttir_outline.add_argument("--count", type=int, default=80)
+    source_observer = subparsers.add_parser("source-observer")
+    source_observer.add_argument("--path")
+    subparsers.add_parser("source-brief")
     harness = subparsers.add_parser("harness")
     harness.add_argument("--path")
     harness_abi = subparsers.add_parser("harness-abi")
@@ -1832,7 +2244,9 @@ def main() -> int:
     subparsers.add_parser("candidate-abi")
     candidate_control = subparsers.add_parser("candidate-control")
     candidate_control.add_argument(
-        "--section", choices=("overview", "outputs", "boundary", "pi"), default="overview"
+        "--section",
+        choices=("overview", "outputs", "operands", "boundary", "pi"),
+        default="overview",
     )
     candidate_control.add_argument("--start", type=int, default=1)
     candidate_control.add_argument("--count", type=int, default=20)
@@ -1841,6 +2255,17 @@ def main() -> int:
     knowledge.add_argument("--context", type=int, default=3)
     subparsers.add_parser("copy-previous")
     args = parser.parse_args()
+    if args.input_root != Path("/input") or args.output_root != Path("/output"):
+        QUERY_COMMAND = " ".join(
+            (
+                "python",
+                shlex.quote(sys.argv[0]),
+                "--input-root",
+                shlex.quote(str(args.input_root)),
+                "--output-root",
+                shlex.quote(str(args.output_root)),
+            )
+        )
 
     if args.command == "bootstrap":
         _bootstrap(args.input_root, args.output_root)
@@ -1856,6 +2281,20 @@ def main() -> int:
         _source_find(args.input_root, args.query, args.context)
     elif args.command == "source-outline":
         _source_outline(args.input_root, args.start, args.count)
+    elif args.command == "source-ttir":
+        _source_ttir(args.input_root, args.start, args.lines)
+    elif args.command == "source-ttir-find":
+        _source_ttir_find(args.input_root, args.query, args.context)
+    elif args.command == "source-ttir-def-use":
+        _source_ttir_find(
+            args.input_root, args.value, args.context, exact_token=True
+        )
+    elif args.command == "source-ttir-outline":
+        _source_ttir_outline(args.input_root, args.start, args.count)
+    elif args.command == "source-observer":
+        _source_observer(args.input_root, args.path)
+    elif args.command == "source-brief":
+        _source_brief(args.input_root)
     elif args.command == "harness":
         _harness(args.input_root, args.path)
     elif args.command == "harness-abi":

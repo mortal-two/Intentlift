@@ -26,11 +26,11 @@ from intentir.verify.gate1.model import (
 )
 from intentir.verify.typecheck import TYPECHECK_PROTOCOL, type_check
 
-from .scrc_schema import scrc_lift_core_text_format
+from .scrc_schema import scrc_lift_core_json_schema, scrc_lift_core_text_format
 
 
 SCRC_RELIFT_PROTOCOL = "llm_direct_pi_structured_source_aware_relift_v2"
-SCRC_DECODE_PROTOCOL = "intentir.scrc.decode.v15"
+SCRC_DECODE_PROTOCOL = "intentir.scrc.decode.v17"
 CANDIDATE_CHECK_PROTOCOL = "intentir.scrc.candidate-check.v1"
 _CANDIDATE_DIAGNOSTIC_LIMIT = 20
 _CANDIDATE_DIAGNOSTIC_TEXT_LIMIT = 2048
@@ -578,6 +578,21 @@ class SCRCLiftError(RuntimeError):
     def __init__(self, attempt: SCRCLiftAttempt) -> None:
         self.attempts = (attempt,)
         super().__init__(f"SCRC Lift response rejected: {attempt.diagnostic}")
+
+
+class SourceIdentifierPrivacyError(ValueError):
+    """A submitted artifact retained a private Source spelling at one JSON path.
+
+    The diagnostic deliberately exposes only the artifact path.  Returning the
+    original spelling to a source-aware owner would defeat the anonymous naming
+    boundary that this check protects.
+    """
+
+    def __init__(self, path: str) -> None:
+        self.path = path
+        super().__init__(
+            f"Lift response retained a source identifier at {path}"
+        )
 
 
 def _annotation_is_constexpr(annotation: ast.expr | None) -> bool:
@@ -1230,7 +1245,9 @@ The trusted harness_compiler_view is byte-authoritative plumbing. Put logical
 p* in J.signature and implementation-selection c* in the single C; source
 positions stay private. C values/compiler_slots equal the anonymous inputs and
 each compiler slot uses compiler_roles exactly. Never rename c* to p* or infer
-strategy names from roles.
+strategy names from roles. A compiler slot is consumed only by the external
+frontend compiler invocation: give it no subject_ref/axis_ref and no pi instance
+or route; it is not a Source constexpr, callable parameter, or kernel-body value.
 
 For every tensor, `shape` is only the current Harness binding and is never
 permission to specialize J. In `shape_contract`, an
@@ -1246,6 +1263,14 @@ form. Never infer h* from values, shape, grid, C, names, or coincident numbers.
 Capacity and active-length coordinates remain distinct: preserve Source padding,
 domains, and required non-negative affine constraints, but do not invent a
 C-dependent roundup equation. Grid/C/pi may realize rounding, not J ownership.
+When Source itself establishes a logical dimension identity, author it in the
+complete J.dimension_relations array. The only legal expressions are identity,
+add_const, mul_const, ceil_div_const, and round_up_const over declared x* handles
+and positive integer constants. Typical examples are a full extent that Source
+defines as twice a half extent or a logical rounded capacity that Source defines
+from an active extent. Never infer such a relation from equal concrete values,
+Harness shapes, grid, C, pi, TTIR layout, or a frontend convention. Emit [] when
+Source establishes no dimension relation; fixed code only validates and consumes.
 
 bound_constexpr_values are Harness-owned, non-C JIT bindings; constexprness alone
 never makes one a graph selector. Across all Source uses, logical
@@ -1267,6 +1292,7 @@ scalar binds x* directly.
 Emit the complete J.value_dimension_relations array, including []; fixed code and
 Replay never add or repair it. Symbolic x* are signature/type handles, not SSA
 values; never list x* in portable scope definitions/captures or storage members.
+Also emit the complete J.dimension_relations array, including [].
 
 Each physical p* has exactly one logical_ref. Dtype/rank/mode must agree; inout binds one tensor
 declared as both input and output, and value parameters never bind outputs merely
@@ -1280,11 +1306,14 @@ contributes no J tensor, node, access, effect, or pi instance.
 For every observable output, J.boundary.result_relations declares only the
 closed semantic comparison class; it never declares numeric thresholds. Use
 `exact` only when cross-backend equality is part of the logical contract (for
-example integer/boolean results or exactly specified copies). Floating
-transcendentals, floating reductions, and contracts that allow reassociation
-must use `tolerance`; the trusted external Gate2 policy Q supplies all atol,
-rtol, ULP, and NaN rules. Never place a Python comparator or a
-candidate-selected tolerance in J, C, or pi.
+example integer/boolean results, bitwise operations, or exactly specified
+copies). Any output reached by floating arithmetic uses `tolerance` unless the
+Source itself establishes cross-backend bitwise equality. This includes ordinary
+f16/bf16/f32 pointwise add/sub/mul/div as well as casts, transcendentals,
+reductions, contraction, and reassociation: target evaluation width and rounding
+may differ even when the logical arithmetic graph is the same. The trusted
+external Gate2 policy Q supplies all atol, rtol, ULP, and NaN rules. Never place
+a Python comparator or a candidate-selected tolerance in J, C, or pi.
 For `exact` and `tolerance`, omit `update_node_ref` entirely: an empty string
 or null is invalid. Only `one_of_updates` carries one non-empty
 `update_node_ref` that names an existing logical update.
@@ -1294,6 +1323,13 @@ kind, target, node_ref (including null), and access_ref must agree exactly with
 the access; never attach an otherwise matching access to a different node. A
 direct logical-input load may use node_ref=null with the matching null effect;
 do not invent map_unary(identity) solely to create an access anchor.
+An access attached to one node is consumer-local: it does not silently change
+the same tensor operand at a sibling node. When Source reuses one physical
+tensor through different logical indices, predicates, fills, or sub-domains at
+different Layer-A consumers, author each distinct consumer-local access/effect
+explicitly at the node that consumes that view. Conversely, do not duplicate an
+access merely because several consumers use the same complete logical tensor.
+Fixed code never copies, propagates, or recommends a sibling access relation.
 
 index_expression uses the closed ContractExpr syntax. For a direct dense
 projection, k0 and [k0] are equivalent one-axis surface forms, while k1,k0 and
@@ -1375,6 +1411,11 @@ an online or loop-carried recurrence with a global contraction/reduction and ask
 Replay to rediscover the missing update algorithm. Pi records only realization
 topology, multiplicity, placement, and routes; it cannot carry, repair, or infer
 an omitted initialization, update formula, yield, or contraction orientation.
+When one authored J transpose is also a distinct compiler-visible stage in the
+anonymous Source TTIR, bind that particular J node to a pi `realize` instance.
+Do not mark every logical transpose by count: select the correspondence from the
+Source/TTIR and authored dataflow. Without that pi instance a source-blind Replay
+has no authority to decide which logical transpose must remain a physical stage.
 Each scan name retains the complete logical tensor type of its `from` source;
 it is not a physical tile and does not remove the trip axis. Pointwise body ops
 retain that axis until an explicit J reduce/scan consumes it. Conversely, a
@@ -1412,6 +1453,11 @@ source stages; fixed code cannot infer an undeclared cast; never propagate one
 conversion to sibling parameters, strides, or instances. Signed/unsigned widen
 states explicit same-signedness source_dtype and a strictly wider target_dtype;
 equal-width or missing dtype pairs are not widening.
+Floating cast placement is part of the typed graph: never commute a cast across
+mul/add/sub or replace a low-precision operation followed by extension with an
+operation performed after extension, even when the result relation is tolerance
+or Source uses a fused primitive. Query the exact TTIR def-use when Source-level
+promotion is ambiguous.
 
 An implementation-only local materialization is not J.storage. Author it as a
 distinct pi `realize` refined by `identity_materialization` (`auth_ref=null`),
@@ -1462,12 +1508,6 @@ state in Source tuple order. `pi.order` alone orders events.
 For a Source C-extent partition on an existing route slot, author source/target/slot,
 divisor>1, floor/ceil, and target-domain/axis attachment. It changes only that use,
 never J or sibling routes.
-
-pi.unit_iterations denotes untiled serial traversal of a non-loop
-J axis: body/axis/direction close [0,J extent) step 1 or reverse, with no
-C/bound/formula/launch/J loop/operator. Parallel coordinates stay domain instances
-routed to address_lane. A J reduce over that path gets reducer from J and
-participants from pi; no collective API in artifacts.
 
 Pi preserves every compiler-visible source realization event not denoted by J
 or pure C. Emit multiple instances with the same semantic_ref when one declared
@@ -1689,6 +1729,22 @@ def check_scrc_lift_candidate(
                 }
             ],
         }
+    schema_diagnostics = _candidate_json_schema_diagnostics(response_text)
+    if schema_diagnostics:
+        occupied_paths = {item["path"] for item in schema_diagnostics}
+        for item in _candidate_surface_diagnostics(response_text, context):
+            if len(schema_diagnostics) >= _CANDIDATE_DIAGNOSTIC_LIMIT:
+                break
+            if item["path"] in occupied_paths:
+                continue
+            schema_diagnostics.append(item)
+            occupied_paths.add(item["path"])
+        return {
+            "protocol": CANDIDATE_CHECK_PROTOCOL,
+            "status": "fail",
+            "diagnostics": schema_diagnostics,
+        }
+
     try:
         artifact = _decode_scrc_lift_artifact_core(
             response_text,
@@ -1715,7 +1771,12 @@ def check_scrc_lift_candidate(
     # This is the same callable used by the formal Runner.  CandidateCheck does
     # not retain or return the canonical artifact and therefore cannot become a
     # second acceptance path.
-    report = type_check(artifact.j, artifact.c, artifact.pi)
+    report = type_check(
+        artifact.j,
+        artifact.c,
+        artifact.pi,
+        require_program_axes=artifact.wire_schema == artifact.SCHEMA,
+    )
     return {
         "protocol": CANDIDATE_CHECK_PROTOCOL,
         "status": "pass" if report.passed else "fail",
@@ -1731,6 +1792,57 @@ def check_scrc_lift_candidate(
             for item in report.diagnostics[:_CANDIDATE_DIAGNOSTIC_LIMIT]
         ],
     }
+
+
+def _candidate_json_schema_diagnostics(
+    response_text: str,
+) -> list[dict[str, Any]]:
+    """Aggregate independent structural errors before dependent Decode.
+
+    This is the same closed wire schema already supplied to every Lift backend.
+    It never fills a field or changes acceptance: an empty result merely allows
+    the existing strict Decode/TypeCheck path to run.
+    """
+
+    try:
+        payload = _json_object(response_text)
+    except Exception:
+        return []
+    try:
+        import jsonschema
+    except ImportError:
+        return []
+
+    schema = scrc_lift_core_json_schema()
+    validator = jsonschema.validators.validator_for(schema)(schema)
+    errors = sorted(
+        validator.iter_errors(payload),
+        key=lambda error: (
+            tuple(str(item) for item in error.absolute_path),
+            tuple(str(item) for item in error.absolute_schema_path),
+            error.message,
+        ),
+    )
+    diagnostics: list[dict[str, Any]] = []
+    for error in errors[:_CANDIDATE_DIAGNOSTIC_LIMIT]:
+        path = ""
+        for item in error.absolute_path:
+            if isinstance(item, int):
+                path += f"[{item}]"
+            else:
+                path += ("." if path else "") + str(item)
+        diagnostics.append(
+            {
+                "rule_code": "schema_rejected",
+                "path": _bounded_candidate_diagnostic_text(
+                    path or "<candidate>"
+                ),
+                "observed_refs_or_types": [
+                    _bounded_candidate_diagnostic_text(error.message)
+                ],
+            }
+        )
+    return diagnostics
 
 
 def _candidate_surface_diagnostics(
@@ -2542,24 +2654,37 @@ def _validate_source_identifier_privacy(
         "c": artifact.c.to_json(),
         "pi": artifact.pi.to_json(),
     }
-    visible_strings: list[str] = []
+    visible_strings: list[tuple[str, str]] = []
     literal_fields = {
         "dtype", "fn", "frontend", "kind", "mechanism", "mode", "op",
         "placement", "producer", "role", "subscripts", "value_type",
     }
 
-    def collect_strings(value: Any, field_name: str | None = None) -> None:
+    def collect_strings(
+        value: Any,
+        *,
+        path: str,
+        field_name: str | None = None,
+    ) -> None:
         if isinstance(value, str):
             if field_name not in literal_fields:
-                visible_strings.append(value)
+                visible_strings.append((path, value))
         elif isinstance(value, Mapping):
             for key, item in value.items():
-                collect_strings(item, key)
+                collect_strings(
+                    item,
+                    path=f"{path}.{key}" if path else str(key),
+                    field_name=key,
+                )
         elif isinstance(value, list):
-            for item in value:
-                collect_strings(item, field_name)
+            for index, item in enumerate(value):
+                collect_strings(
+                    item,
+                    path=f"{path}[{index}]",
+                    field_name=field_name,
+                )
 
-    collect_strings(visible)
+    collect_strings(visible, path="")
     for source_name, opaque in binding.source_to_opaque:
         if source_name == opaque:
             continue
@@ -2571,8 +2696,9 @@ def _validate_source_identifier_privacy(
         ):
             continue
         pattern = rf"(?<![A-Za-z0-9_]){re.escape(source_name)}(?![A-Za-z0-9_])"
-        if any(re.search(pattern, item) for item in visible_strings):
-            raise ValueError("Lift response retained a source identifier")
+        for path, item in visible_strings:
+            if re.search(pattern, item):
+                raise SourceIdentifierPrivacyError(path)
 
 
 def extract_scrc_artifact(
@@ -2809,6 +2935,7 @@ __all__ = [
     "SCRCCandidateCheckContext", "SCRCCompilerArgument",
     "SCRCCompilerView", "SCRCExtraction", "SCRCHarnessBinding",
     "SCRCLiftAttempt", "SCRCLiftError", "SCRCLiftRequest", "SCRCProvenance", "SCRCReliftContext",
+    "SourceIdentifierPrivacyError",
     "SCRCReliftRecord", "anonymize_cuda_source", "anonymize_source", "build_scrc_lift_instructions",
     "check_scrc_lift_candidate", "decode_scrc_lift_artifact", "extract_scrc_artifact", "prepare_scrc_lift", "scrc_candidate_check_context", "scrc_lift_prompt_sha256",
     "scrc_relift_prompt_sha256",

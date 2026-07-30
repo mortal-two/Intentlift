@@ -9,13 +9,14 @@ Gate1 只接收已经通过 `TypeCheck(J,C,π)`、由当前三元组生成的全
 conditions。该 Gate1 claim 只针对这个 c0。
 
 当前 fresh-run artifact/decode/typecheck 组合为
-`intentir.scrc.artifact.v10 / intentir.scrc.decode.v15 / intentir.scrc.typecheck.v27`。Lift LLM 是完整
-artifact 的唯一作者：value/dimension、consumer-extension、access-guard、typed control/inout、
-output binding、tiled/unit physical iteration/carrier、terminal-control 与 route-local extent transform
-都必须由模型显式提交。Decode、
+`intentir.scrc.artifact.v12 / intentir.scrc.decode.v17 / intentir.scrc.typecheck.v29`。Lift LLM 是完整
+artifact 的唯一作者：value/dimension equality、closed dimension definition、consumer-extension、access-guard、typed control/inout、
+output binding、physical iteration/carrier、terminal-control 与 route-local extent transform 都必须由模型显式提交。Decode、
 CandidateCheck 与 TypeCheck 只能做 closed
 解析、检查、拒绝和诊断，不会补 relation、选择 axes/polarity、插入 `select`、创建 pre-state，或把
-相同 concrete extents 当作 axis identity；v27 另检查 route extent transform 只能限定一条已存在
+相同 concrete extents 当作 axis identity；v28验证dimension relation的closed grammar、引用与acyclicity，
+并拒绝同tensor多个不同却都无consumer锚点的node-less load views，但不从Source
+TTIR/Harness/grid/C/π生成relation或猜consumer；v27 另检查 route extent transform 只能限定一条已存在
 route slot，且 source 是 attached required positive-int C、target 是匹配 J domain realization；它不
 生成 divisor/attachment/relation。其余 v26 合同继承 v25；v25 继承 v24，并检查作者化
 `reduction_linearization` 只能经唯一 slot-0 route 进入一个 J reduce；v24 继承 v23 对 canonical output binding 的完整
@@ -37,6 +38,7 @@ Gate1 回答 Replay 是否重建了 Source 对 J 的 realization。它不执行�
 结果，也不通过 composer/RuleCard 构造 Replay。
 
 Replay normal view 必须保留当前 J-owned typed relations；它从 J 读取 value/dimension equality、
+closed dimension definitions、
 consumer-specific outside-domain contract 与 access guard，从 π 读取 realization topology，以及 J
 reduce/contraction 之外已声明的 physical iteration/carrier。logical J axis ordinal 不是 Triton tile
 tensor 的 rank-local reduction axis；Replay 必须从 J/C/π 共同确定 active physical tile，并对一维 tile
@@ -45,8 +47,8 @@ v5 guarded store 的 merge 已经是 Layer A 中显式 `select`，且精确 inou
 通过 TypeCheck；Replay 不得把 relation 解读成允许它自行发明 branch、merge 或 mutation。Gate1
 比较的是 Replay 对这些已声明事实的 source realization，不为缺失 relation 建议或生成答案。
 
-当前 `replay-check.v15` 的 synthetic compile 只消费匿名 packet：核对作者化 `transfer_direct`
-occurrence、structured J loop 加 `pi.physical_iterations|unit_iterations` 的 loop occurrence、对应 carrier arity；并且
+当前 `replay-check.v14` 的 synthetic compile 只消费匿名 packet：核对作者化 `transfer_direct`
+occurrence、structured J loop 加 `pi.physical_iterations` 的 loop occurrence、对应 carrier arity；并且
 只在 signature pointer/tensor kind 与 π address routes 完全闭合时核对 pointer-address operation
 occurrence。完整闭包允许独立 integer base/lane contribution，且不要求 address instance 与 transfer
 使用相同 `semantic_ref` spelling；它要求每个 transfer 从匹配 boundary tensor 的 pointer/tensor
@@ -54,7 +56,10 @@ signature carrier 经作者化 routes 可达，并要求每个 pointer-producing
 transfer；并要求 compiled distinct `tt.reshape -> tt.reduce(axis=0)` dataflow 不少于已作者化
 `reduction_linearization` 数量，并拒绝 authored route extent transform 完全缺失 closed
 floor/ceil-div spelling。精确 target-local topology 仍由 Gate1，而不是 ReplayCheck 裁决。无法闭合的
-address topology 不猜。该 check 只拒绝错误 Replay bytes，不生成 source、
+address topology 不猜。v13 还只在同一 π region 的 ordered `transfer_direct` 可分别经作者化
+routes/carrier 唯一回溯到一个 signature pointer，且 Replay 自身 TTIR 中对应 load/store occurrence
+也唯一并处于同一词法 region 时，核对其词法顺序是否遵守 `pi.order`；任一映射有歧义就不猜，留给
+正式 Gate1。该 check 只拒绝错误 Replay bytes，不生成 source、
 address formula、loop/carrier 或 relation，也没有 Gate1/认证权威。
 
 presentation/alpha canonicalization 只能消除名称、SSA 编号、无关打印顺序等表示噪声。它不得
@@ -67,11 +72,27 @@ J/C/π 拥有的 target cache-policy presentation hint，不改变 J denotation�
 predicate/fill、address/dataflow 或 transfer topology。未知值、load/store 方向不合法的值、eviction
 以及其他 memory attributes 仍参与 hard comparison。
 
-当前 active profile 是 `triton-ttir-3.6-gate1-v11`。v11 保留既有对已建模 op 与 interprocedural
+当前 active profile 是 `triton-ttir-3.6-gate1-v13`。v13 只增加一条全局 closed value-tree
+canonicalization：一个 direct typed `math.fma(a,b,c)` 与使用相同 typed operands 的 direct
+`a*b+c` 等价；若 `c` 是同 region、direct `0-d`/`neg(d)`，则只与 direct `a*b-d` 等价。它不移动
+cast、不改变 operand/type、不重关联更大的树，也不授权 production backend 进行 FMA contraction；
+J 的 typed graph 与 result relation、Gate2/Q 仍各自保持原所有权。
+v13 完整继承 v12。v12 在既有 canonicalization 后作一项全局、
+source-neutral 的 ownership quotient：从 public return 与 store/update value 反向保留完整值流；从
+load/store mask、structured condition 与 terminal condition 保留 comparison/boolean 结构、polarity 和
+直接常量；effect、region、loop/carrier、reduction、`tt.get_program_id`、`tt.addptr` 与 transfer anchor
+始终保留。只有剩余 known-pure、仅服务 program scheduling/address/rank/bound 的子图被压成带结果类型
+与 ABI/region origin 的不透明 representation edge。该规则不读取 J、Source 文本或 kernel family，
+也不把错误 mask/fill、reducer、effect、pointer provenance、program-axis 数量或 transfer topology
+NormalizeAway。v13 保留既有对已建模 op 与 interprocedural
 observation 的 comparison rules：从 public entry 可达、callee 静态已知且 call graph 无环的
 structured `tt.call` 仍按
 formal-to-actual 与 helper return 展开，op/def-use、effect 与已支持 region 继续参与 hard comparison；
 public entry ABI 仍是边界，private helper 名称本身不进入 J/C/π。
+
+Replay/Lift construction compile 对 artifact v12 的π-owned `program_axes{domain_ref,axis}`执行
+reject-only核对：compiled `tt.get_program_id` 的数量与literal axis集合都必须匹配；旧v11 packet仅保留
+原count合同，不被静默升级。该检查不生成program coordinate，也不从grid、C或声明顺序选择axis。
 
 v6 新增 Triton 3.6 quoted-generic `tt.scan` 的 typed、single-block、encodingless observer contract：
 输入/结果必须是同 shape 的 ranked tensor，axis/reverse、`2N` 个有序 combine block arguments、唯一

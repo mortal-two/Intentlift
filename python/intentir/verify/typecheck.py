@@ -19,10 +19,15 @@ from intentir.ir.canonical_j import (
     direct_unit_dimension_refs,
     j_elaboration,
 )
+from intentir.ir.contract_ir import ContractIRProjectionError, project_contract_ir
 from intentir.ir.dim_expr import (
     DimExprError,
     DimensionConstraintSet,
     parse_affine_dim_expr,
+)
+from intentir.ir.dimension_relation import (
+    DimensionRelationError,
+    validate_dimension_relations,
 )
 from intentir.ir.functional_boundary import (
     functional_boundary_closure_issues,
@@ -48,7 +53,7 @@ from intentir.verify.gate1.model import (
 from intentir.verify.gate1.pi import RealizationWitness
 
 
-TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v27"
+TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v29"
 GLOBAL_SAFE_REFINEMENTS = frozenset(
     {"identity_materialization", "reduction_linearization"}
 )
@@ -88,6 +93,7 @@ class TypeCheckStatus(str, Enum):
 class TypeCheckErrorCode(str, Enum):
     J_ELABORATION_FAILED = "j_elaboration_failed"
     J_VALUE_TYPE_INCOMPLETE = "j_value_type_incomplete"
+    OUTPUT_BINDING_INCOMPLETE = "output_binding_incomplete"
     OUTPUT_BINDING_TYPE_MISMATCH = "output_binding_type_mismatch"
     KNOWN_OP_CONTRACT_INVALID = "known_op_contract_invalid"
     DUPLICATE_J_REF = "duplicate_j_ref"
@@ -114,6 +120,7 @@ class TypeCheckErrorCode(str, Enum):
     ROUTE_SLOT_OUT_OF_RANGE = "route_slot_out_of_range"
     ROUTE_TYPE_MISMATCH = "route_type_mismatch"
     ROUTE_EXTENT_TRANSFORM_INVALID = "route_extent_transform_invalid"
+    PROGRAM_AXIS_BINDING_INVALID = "program_axis_binding_invalid"
     TRANSFER_ADDRESS_ROUTE_MISSING = "transfer_address_route_missing"
     INVALID_SHARING = "invalid_sharing"
     ITERATION_WITNESS_INVALID = "iteration_witness_invalid"
@@ -122,12 +129,12 @@ class TypeCheckErrorCode(str, Enum):
     CONSUMER_EXTENSION_MISSING = "consumer_extension_missing"
     DIMENSION_CONSTRAINT_INVALID = "dimension_constraint_invalid"
     VALUE_DIMENSION_RELATION_INVALID = "value_dimension_relation_invalid"
+    DIMENSION_RELATION_INVALID = "dimension_relation_invalid"
     PAD_SHAPE_INVALID = "pad_shape_invalid"
     PAD_SHAPE_CONSTRAINT_MISSING = "pad_shape_constraint_missing"
     TILE_SHAPE_INVALID = "tile_shape_invalid"
     LOOP_CARRIER_INVALID = "loop_carrier_invalid"
     PHYSICAL_ITERATION_INVALID = "physical_iteration_invalid"
-    UNIT_ITERATION_INVALID = "unit_iteration_invalid"
     PHYSICAL_LOOP_CARRIER_INVALID = "physical_loop_carrier_invalid"
     OBSERVABLE_REQUIRES_J_ANCHOR = "observable_requires_j_anchor"
     AUTHORIZATION_SUBJECT_UNKNOWN = "authorization_subject_unknown"
@@ -447,6 +454,22 @@ def _check_value_dimension_relations(
             TypeCheckDiagnostic(
                 TypeCheckErrorCode.VALUE_DIMENSION_RELATION_INVALID,
                 "j.value_dimension_relations",
+                str(exc),
+            )
+        )
+
+
+def _check_dimension_relations(
+    j: SemanticArchive,
+    diagnostics: list[TypeCheckDiagnostic],
+) -> None:
+    try:
+        validate_dimension_relations(j)
+    except DimensionRelationError as exc:
+        diagnostics.append(
+            TypeCheckDiagnostic(
+                TypeCheckErrorCode.DIMENSION_RELATION_INVALID,
+                "j.dimension_relations",
                 str(exc),
             )
         )
@@ -1888,6 +1911,9 @@ def _rank_zero_semantic_live_values(j: SemanticArchive) -> set[str]:
     for relation in j.value_dimension_relations:
         semantic_refs.add(relation.value_ref)
         semantic_refs.add(relation.dimension_ref)
+    for relation in j.dimension_relations:
+        semantic_refs.add(relation.result)
+        semantic_refs.add(relation.expr.arg)
 
     for node_ref in node_seed_refs:
         operation = nodes.get(node_ref)
@@ -2269,7 +2295,37 @@ def _check_output_binding_types(
         item.name: CanonicalValueType(item.dtype, tuple(item.shape))
         for item in j.intent.outputs
     }
+    producible_values = {item.name for item in j.intent.inputs}
+    intent = j.intent.to_json()["intent_function"]
+    for _path, operation in _walk_operations(intent.get("body", [])):
+        producible_values.update(_operation_results(operation.get("result")))
     for binding in elaboration.output_bindings:
+        if binding.value not in producible_values:
+            if binding.output in mapping_positions:
+                path = (
+                    "j.boundary.output_mappings"
+                    f"[{mapping_positions[binding.output]}].value"
+                )
+            elif binding.output in return_positions:
+                path = (
+                    "j.intent.intent_function.returns"
+                    f"[{return_positions[binding.output]}].value"
+                )
+            else:
+                path = (
+                    "j.intent.intent_function.outputs"
+                    f"[{output_positions[binding.output]}]"
+                )
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.OUTPUT_BINDING_INCOMPLETE,
+                    path,
+                    "canonical output binding value is neither a J input nor "
+                    "an authored operation result",
+                    binding.output,
+                )
+            )
+            continue
         expected = outputs[binding.output]
         actual = value_types.get(binding.value)
         if actual is None or actual == expected:
@@ -3333,81 +3389,6 @@ def _check_physical_iteration_witness(
             )
 
 
-def _check_unit_iteration_witness(
-    j: SemanticArchive,
-    pi: RealizationWitness,
-    node_operations: Mapping[str, Mapping[str, Any]],
-    diagnostics: list[TypeCheckDiagnostic],
-) -> None:
-    """Check a unit-step physical traversal over one already-authored J axis."""
-
-    regions = {str(item["id"]): item for item in pi.regions}
-    instances = {str(item["id"]): item for item in pi.instances}
-
-    def visible_from(instance_region: str, relation_region: str) -> bool:
-        current: str | None = relation_region
-        while current is not None:
-            if current == instance_region:
-                return True
-            parent = regions.get(current, {}).get("parent")
-            current = str(parent) if parent is not None else None
-        return False
-
-    for index, relation in enumerate(pi.unit_iterations):
-        base = f"pi.unit_iterations[{index}]"
-        region_ref = str(relation["region"])
-        region = regions.get(region_ref)
-        if region is None or region.get("placement") != "loop":
-            diagnostics.append(
-                TypeCheckDiagnostic(
-                    TypeCheckErrorCode.UNIT_ITERATION_INVALID,
-                    f"{base}.region",
-                    "unit iteration requires one placement=loop region",
-                    region_ref,
-                )
-            )
-
-        body_instance_ref = str(relation["body_instance"])
-        body_instance = instances.get(body_instance_ref)
-        body_ref = (
-            str(body_instance.get("semantic_ref"))
-            if body_instance is not None
-            else ""
-        )
-        body_operation = node_operations.get(body_ref)
-        allowed_axes = _axis_refs_v1(j, body_ref, node_operations)
-        body_valid = (
-            body_instance is not None
-            and bool(allowed_axes)
-            and not (
-                body_operation is not None and body_operation.get("op") == "loop"
-            )
-            and visible_from(str(body_instance.get("region")), region_ref)
-        )
-        if not body_valid:
-            diagnostics.append(
-                TypeCheckDiagnostic(
-                    TypeCheckErrorCode.UNIT_ITERATION_INVALID,
-                    f"{base}.body_instance",
-                    "body_instance must visibly anchor one existing non-loop J "
-                    "reduce/contraction, boundary access, or domain with a closed "
-                    "dependent axis; the relation never creates a semantic J loop",
-                    body_instance_ref,
-                )
-            )
-
-        axis_ref = relation["axis_ref"]
-        if not body_valid or axis_ref not in allowed_axes:
-            diagnostics.append(
-                TypeCheckDiagnostic(
-                    TypeCheckErrorCode.UNIT_ITERATION_INVALID,
-                    f"{base}.axis_ref",
-                    "axis_ref must name one closed J axis of body_instance",
-                    str(axis_ref),
-                )
-            )
-
-
 def _check_route_extent_transforms(
     j: SemanticArchive,
     c: ImplementationConfig,
@@ -3502,7 +3483,7 @@ def _check_physical_loop_carriers(
     instances = {str(item["id"]): item for item in pi.instances}
     physical_bodies = {
         str(item["region"]): str(item["body_instance"])
-        for item in [*pi.physical_iterations, *pi.unit_iterations]
+        for item in pi.physical_iterations
     }
     route_edges = {
         (str(item["source"]), str(item["target"])) for item in pi.routes
@@ -3559,8 +3540,8 @@ def _check_physical_loop_carriers(
                 TypeCheckDiagnostic(
                     TypeCheckErrorCode.PHYSICAL_LOOP_CARRIER_INVALID,
                     f"{base}.region",
-                    "physical carrier requires one declared physical_iterations or "
-                    "unit_iterations placement=loop region",
+                    "physical carrier requires one declared physical_iterations "
+                    "placement=loop region",
                     region_ref,
                 )
             )
@@ -3665,35 +3646,6 @@ def _check_physical_loop_carriers(
                     base,
                     "physical init/state/next/result dtype, rank, and carrier "
                     "class must match",
-                    role_ids["state"],
-                )
-            )
-        body_instance_id = physical_bodies.get(region_ref)
-        body_anchor = (
-            instance_anchors.get(body_instance_id)
-            if body_instance_id is not None
-            else None
-        )
-        body_key = (
-            (
-                body_anchor.value_type.dtype.casefold(),
-                body_anchor.value_type.rank,
-                str(body_anchor.carrier_class),
-            )
-            if body_anchor is not None
-            and body_anchor.value_type is not None
-            and body_anchor.carrier_class in {"pointer", "value"}
-            else None
-        )
-        if typed_keys and body_key is not None and any(
-            key != body_key for key in typed_keys
-        ):
-            diagnostics.append(
-                TypeCheckDiagnostic(
-                    TypeCheckErrorCode.PHYSICAL_LOOP_CARRIER_INVALID,
-                    base,
-                    "physical carrier dtype, rank, and class must match the "
-                    "indexed reduce/contraction result",
                     role_ids["state"],
                 )
             )
@@ -4630,10 +4582,108 @@ def _check_transfer_address_routes(
         )
 
 
+def _check_program_axes(
+    j: SemanticArchive,
+    pi: RealizationWitness,
+    diagnostics: list[TypeCheckDiagnostic],
+    *,
+    required: bool,
+) -> None:
+    """Check the closed pi domain-to-launch-axis realization identity."""
+
+    domains = set(j.boundary.domains)
+    regions = {
+        str(item["id"]): item for item in pi.regions
+    }
+    program_regions = {
+        region_id
+        for region_id, item in regions.items()
+        if item.get("placement") == "program"
+    }
+    instances = {
+        str(item["id"]): item for item in pi.instances
+    }
+    address_bases = {
+        instance_id
+        for instance_id, item in instances.items()
+        if item.get("mechanism") == "address_base"
+    }
+    outgoing: dict[str, set[str]] = {instance_id: set() for instance_id in instances}
+    for route in pi.routes:
+        outgoing.setdefault(str(route["source"]), set()).add(str(route["target"]))
+
+    def reaches_address_base(source: str) -> bool:
+        pending = [source]
+        visited: set[str] = set()
+        while pending:
+            current = pending.pop()
+            if current in address_bases:
+                return True
+            if current in visited:
+                continue
+            visited.add(current)
+            pending.extend(outgoing.get(current, ()))
+        return False
+
+    authorized = {
+        str(item["semantic_ref"])
+        for instance_id, item in instances.items()
+        if item.get("mechanism") == "realize"
+        and item.get("region") in program_regions
+        and item.get("semantic_ref") in domains
+        and reaches_address_base(instance_id)
+    }
+    bound = {str(item["domain_ref"]) for item in pi.program_axes}
+    for index, item in enumerate(pi.program_axes):
+        domain_ref = str(item["domain_ref"])
+        if domain_ref not in domains:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.PROGRAM_AXIS_BINDING_INVALID,
+                    f"pi.program_axes[{index}].domain_ref",
+                    "program-axis binding must name a declared J boundary domain",
+                    domain_ref,
+                )
+            )
+        elif domain_ref not in authorized:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.PROGRAM_AXIS_BINDING_INVALID,
+                    f"pi.program_axes[{index}].domain_ref",
+                    "program-axis binding requires a program-region domain realize "
+                    "path that reaches address_base",
+                    domain_ref,
+                )
+            )
+    if required:
+        for domain_ref in sorted(authorized - bound):
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.PROGRAM_AXIS_BINDING_INVALID,
+                    "pi.program_axes",
+                    "every authored program-coordinate domain requires one explicit "
+                    "physical launch-axis binding",
+                    domain_ref,
+                )
+            )
+        for domain_ref in sorted(bound - authorized):
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.PROGRAM_AXIS_BINDING_INVALID,
+                    "pi.program_axes",
+                    "program-axis bindings must equal the authored program-coordinate "
+                    "domain set",
+                    domain_ref,
+                )
+            )
+
+
 def type_check(
     j: SemanticArchive,
     c: ImplementationConfig,
     pi: RealizationWitness,
+    *,
+    require_program_axes: bool = False,
 ) -> TypeCheckReport:
     """Mechanically check ``Gamma_(J,C) |- pi : RealizationWitness(J,C)``."""
 
@@ -4673,9 +4723,29 @@ def type_check(
     if known_op_diagnostics:
         return TypeCheckReport(TypeCheckStatus.FAIL, known_op_diagnostics)
 
+    # ContractIR is the target-neutral, one-to-one typed projection of every
+    # authored Layer-B domain, index, and predicate.  Failure here is a J type
+    # error, not a RefEval/backend capability decision.  In particular, an x*
+    # dimension already has integer sort and cannot also stand alone as a boolean
+    # domain predicate.  No Source, C value, pi topology, or target is consulted.
+    try:
+        project_contract_ir(j)
+    except ContractIRProjectionError as exc:
+        return TypeCheckReport(
+            TypeCheckStatus.FAIL,
+            (
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.J_ELABORATION_FAILED,
+                    "j.boundary",
+                    str(exc),
+                ),
+            ),
+        )
+
     diagnostics: list[TypeCheckDiagnostic] = []
     _check_dimension_and_pad_contracts(j, diagnostics)
     _check_value_dimension_relations(j, diagnostics)
+    _check_dimension_relations(j, diagnostics)
     _check_total_j_value_typing(j, diagnostics)
     _check_output_binding_types(j, diagnostics)
     _check_rank_zero_logical_input_liveness(j, diagnostics)
@@ -4781,6 +4851,18 @@ def type_check(
     _check_result_relations(j, diagnostics)
     c_subject_kinds = {"node", "domain", "access", "scope", "storage"}
     for index, slot in enumerate(c.slots):
+        if slot.kind is ScheduleSlotKind.COMPILER:
+            if slot.subject_ref is not None or slot.axis_ref is not None:
+                diagnostics.append(
+                    TypeCheckDiagnostic(
+                        TypeCheckErrorCode.INVALID_C_SLOT,
+                        f"c.slots[{index}]",
+                        "compiler C slot is an external compiler-invocation "
+                        "option and cannot attach to a J subject or axis",
+                        slot.name,
+                    )
+                )
+            continue
         if slot.subject_ref is None:
             continue
         subject = anchors.get(slot.subject_ref)
@@ -4812,8 +4894,23 @@ def type_check(
             )
     instances = {str(item["id"]): item for item in pi.instances}
     instance_anchors: dict[str, _Anchor] = {}
+    compiler_slot_refs = {
+        slot.name for slot in c.slots
+        if slot.kind is ScheduleSlotKind.COMPILER
+    }
     for index, item in enumerate(pi.instances):
         ref = str(item["semantic_ref"])
+        if ref in compiler_slot_refs:
+            diagnostics.append(
+                TypeCheckDiagnostic(
+                    TypeCheckErrorCode.INVALID_C_SLOT,
+                    f"pi.instances[{index}].semantic_ref",
+                    "compiler C slot is consumed only by the external compiler "
+                    "invocation and cannot own a pi realization instance",
+                    ref,
+                )
+            )
+            continue
         if ref in absent_signature_refs:
             diagnostics.append(
                 TypeCheckDiagnostic(
@@ -4840,7 +4937,6 @@ def type_check(
 
     _check_iteration_witness(j, c, pi, node_operations, diagnostics)
     _check_physical_iteration_witness(j, c, pi, node_operations, diagnostics)
-    _check_unit_iteration_witness(j, pi, node_operations, diagnostics)
     _check_route_extent_transforms(
         j, c, pi, node_operations, instance_anchors, diagnostics
     )
@@ -4853,6 +4949,12 @@ def type_check(
     )
     _check_physical_loop_carriers(
         pi, node_operations, instance_anchors, diagnostics
+    )
+    _check_program_axes(
+        j,
+        pi,
+        diagnostics,
+        required=require_program_axes,
     )
 
     route_edges = {

@@ -569,7 +569,7 @@ def test_flash_backward_fixed_invocation_materializes_removed_zero_pre_hook() ->
                 "EVEN_M": True,
                 "EVEN_N": True,
                 "EVEN_HEADDIM": True,
-                "BLOCK_M": 128,
+                "BLOCK_M": 64,
                 "BLOCK_N": 64,
             },
             (1,),

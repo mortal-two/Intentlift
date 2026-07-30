@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import ast
-import hashlib
 import json
 import re
 from dataclasses import dataclass, field
@@ -35,10 +34,8 @@ from .cute_codegen import extract_cute_module
 from .model import Frontend, Gate1Artifact
 from .prompt import (
     assert_source_isolated_payload,
-    build_public_frontend_context_receipt,
     build_rewriter_prompt,
     build_rewriter_payload,
-    replay_packet_digest,
 )
 from .tilelang_codegen import (
     UnsafeTileLangReplayCodeError,
@@ -49,7 +46,12 @@ from .tilelang_compiler import (
     TileLangCompiler,
     TileLangKernelSource,
 )
-from .ttir import TTIRParseError, parse_ttir
+from .ttir import (
+    TTIRFingerprint,
+    TTIRParseError,
+    parse_ttir,
+    runtime_argument_names,
+)
 
 
 MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v35"
@@ -67,22 +69,16 @@ class ReplayGeneration:
     function_name: str
     model: str
     response_id: str | None
-    packet_digest: str
-    prompt_digest: str
     context_receipt: Mapping[str, Any] = field(default_factory=dict)
     usage: Mapping[str, int] = field(default_factory=dict)
     response_model: str | None = None
     entry_function_name: str | None = None
-    request_sha256: str = ""
-    response_sha256: str = ""
-    raw_response_sha256: str = ""
     response_text: str = field(default="", repr=False)
     raw_response: bytes = field(default=b"", repr=False)
     attempts: int = 1
     elapsed_ms: float = 0.0
     trajectory: Mapping[str, Any] = field(default_factory=dict, repr=False)
     backend_protocol: str = RESPONSES_REPLAY_BACKEND
-    episode_contract_sha256: str = ""
     physical_provider_calls: int = 0
     transport_retries: int = 0
 
@@ -95,15 +91,11 @@ class ReplayAttempt:
     response_id: str | None = None
     response_model: str | None = None
     usage: Mapping[str, int] = field(default_factory=dict)
-    request_sha256: str = ""
-    response_sha256: str = ""
-    raw_response_sha256: str = ""
     raw_response: bytes = field(default=b"", repr=False)
     attempts: int = 1
     elapsed_ms: float = 0.0
     trajectory: Mapping[str, Any] = field(default_factory=dict, repr=False)
     backend_protocol: str = RESPONSES_REPLAY_BACKEND
-    episode_contract_sha256: str = ""
     physical_provider_calls: int = 0
     transport_retries: int = 0
 
@@ -150,11 +142,15 @@ class _ReplayABIViolation(ValueError):
         path: str,
         handles: tuple[str, ...] = (),
         line: int | None = None,
+        expected: Mapping[str, Any] | None = None,
+        observed: Mapping[str, Any] | None = None,
     ) -> None:
         self.rule_code = rule_code
         self.path = path
         self.handles = handles
         self.line = line
+        self.expected = dict(expected) if expected is not None else None
+        self.observed = dict(observed) if observed is not None else None
         super().__init__(rule_code)
 
 
@@ -172,7 +168,11 @@ def _check_triton_exact_abi(
         if isinstance(node, ast.FunctionDef) and node.name == function_name
     )
     j_parameters = packet["j"]["signature"]["parameters"]
-    c_slots = packet["c"]["slots"]
+    c_slots = [
+        item
+        for item in packet["c"]["slots"]
+        if item.get("kind") == "constexpr"
+    ]
     expected_names = [
         *(str(item["name"]) for item in j_parameters),
         *(str(item["name"]) for item in c_slots),
@@ -430,10 +430,13 @@ def _check_tilelang_schedule_roles(
 
 @dataclass(frozen=True)
 class _TypedControlContract:
+    path: str
     kind: str
     positive_nonempty: bool
     negative_nonempty: bool
     terminal_polarity: str | None = None
+    positive_scope_id: str | None = None
+    negative_scope_id: str | None = None
 
 
 def _packet_typed_controls(packet: Mapping[str, Any]) -> list[_TypedControlContract]:
@@ -464,12 +467,13 @@ def _packet_typed_controls(packet: Mapping[str, Any]) -> list[_TypedControlContr
         else {}
     )
 
-    def visit(body: Any) -> None:
+    def visit(body: Any, prefix: str) -> None:
         if not isinstance(body, list):
             return
-        for operation in body:
+        for index, operation in enumerate(body):
             if not isinstance(operation, Mapping):
                 continue
+            path = f"{prefix}[{index}]"
             positive = operation.get("positive")
             negative = operation.get("negative")
             kind = operation.get("op")
@@ -499,23 +503,37 @@ def _packet_typed_controls(packet: Mapping[str, Any]) -> list[_TypedControlContr
                 )
                 result.append(
                     _TypedControlContract(
+                        path=path,
                         kind=str(kind),
                         positive_nonempty=bool(positive_body),
                         negative_nonempty=bool(negative_body),
                         terminal_polarity=terminal_polarity,
+                        positive_scope_id=(
+                            str(positive.get("scope_id"))
+                            if positive.get("scope_id") is not None
+                            else None
+                        ),
+                        negative_scope_id=(
+                            str(negative.get("scope_id"))
+                            if negative.get("scope_id") is not None
+                            else None
+                        ),
                     )
                 )
                 if terminal_polarity == "negative":
-                    visit(negative_body)
-                    visit(positive_body)
+                    visit(negative_body, f"{path}.negative.body")
+                    visit(positive_body, f"{path}.positive.body")
                 else:
-                    visit(positive_body)
-                    visit(negative_body)
-            visit(operation.get("body"))
+                    visit(positive_body, f"{path}.positive.body")
+                    visit(negative_body, f"{path}.negative.body")
+            visit(operation.get("body"), f"{path}.body")
 
     intent = packet.get("j", {}).get("intent", {})
     function = intent.get("intent_function", {}) if isinstance(intent, Mapping) else {}
-    visit(function.get("body") if isinstance(function, Mapping) else None)
+    visit(
+        function.get("body") if isinstance(function, Mapping) else None,
+        "j.intent.intent_function.body",
+    )
     return result
 
 
@@ -699,7 +717,11 @@ def _check_triton_typed_control_contract(
         str(item["name"])
         for item in j_parameters
         if item.get("kind") == "constexpr"
-    } | {str(item["name"]) for item in packet["c"]["slots"]}
+    } | {
+        str(item["name"])
+        for item in packet["c"]["slots"]
+        if item.get("kind") == "constexpr"
+    }
     actual = _runtime_if_nodes(
         function,
         runtime_parameters=runtime_parameters,
@@ -716,37 +738,14 @@ def _check_triton_typed_control_contract(
             rule_code,
             path="<typed-control>",
             line=(actual[0].node.lineno if actual else function.lineno),
+            expected={"runtime_control_count": len(expected)},
+            observed={"runtime_control_count": len(actual)},
         )
     for index, (site, contract) in enumerate(
         zip(actual, expected, strict=True)
     ):
         node = site.node
         if contract.kind == "effect_if" and contract.terminal_polarity is not None:
-            if node.orelse:
-                raise _ReplayABIViolation(
-                    "terminal_effect_if_forbids_else",
-                    path=f"<effect_if:{index}>",
-                    line=node.lineno,
-                )
-            if (
-                not node.body
-                or not isinstance(node.body[-1], ast.Return)
-                or node.body[-1].value is not None
-            ):
-                raise _ReplayABIViolation(
-                    "terminal_effect_if_bare_return",
-                    path=f"<effect_if:{index}>",
-                    line=node.lineno,
-                )
-            negated = isinstance(node.test, ast.UnaryOp) and isinstance(
-                node.test.op, ast.Not
-            )
-            if negated != (contract.terminal_polarity == "negative"):
-                raise _ReplayABIViolation(
-                    "terminal_effect_if_polarity",
-                    path=f"<effect_if:{index}>",
-                    line=node.lineno,
-                )
             terminal_nonempty = (
                 contract.positive_nonempty
                 if contract.terminal_polarity == "positive"
@@ -757,23 +756,105 @@ def _check_triton_typed_control_contract(
                 if contract.terminal_polarity == "positive"
                 else contract.positive_nonempty
             )
-            if _statements_are_nonempty(node.body[:-1]) != terminal_nonempty:
+            has_bare_return = bool(
+                node.body
+                and isinstance(node.body[-1], ast.Return)
+                and node.body[-1].value is None
+            )
+            terminal_prefix = node.body[:-1] if has_bare_return else node.body
+            predicate_negated = isinstance(node.test, ast.UnaryOp) and isinstance(
+                node.test.op, ast.Not
+            )
+            actual_terminal_nonempty = _statements_are_nonempty(terminal_prefix)
+            actual_continuation_nonempty = _statements_are_nonempty(site.following)
+            expected_shape = {
+                "j_control_path": contract.path,
+                "terminal_polarity": contract.terminal_polarity,
+                "forbids_else": True,
+                "terminal_arm_ends_in_bare_return": True,
+                "terminal_arm_nonempty_before_return": terminal_nonempty,
+                "continuation_nonempty_after_if": continuation_nonempty,
+                "continuation_contains_return": False,
+            }
+            observed_shape = {
+                "has_else": bool(node.orelse),
+                "terminal_arm_ends_in_bare_return": has_bare_return,
+                "predicate_negated": predicate_negated,
+                "terminal_arm_nonempty_before_return": actual_terminal_nonempty,
+                "continuation_nonempty_after_if": actual_continuation_nonempty,
+                "continuation_contains_return": any(
+                    isinstance(item, ast.Return) for item in site.following
+                ),
+                "continuation_statement_kinds": [
+                    type(item).__name__ for item in site.following[:16]
+                ],
+            }
+            diagnostic_path = f"{contract.path} -> <effect_if:{index}>"
+            scope_handles = tuple(
+                item
+                for item in (
+                    contract.positive_scope_id,
+                    contract.negative_scope_id,
+                )
+                if item is not None
+            )
+            if node.orelse:
+                raise _ReplayABIViolation(
+                    "terminal_effect_if_forbids_else",
+                    path=diagnostic_path,
+                    handles=scope_handles,
+                    line=node.lineno,
+                    expected=expected_shape,
+                    observed=observed_shape,
+                )
+            if (
+                not node.body
+                or not isinstance(node.body[-1], ast.Return)
+                or node.body[-1].value is not None
+            ):
+                raise _ReplayABIViolation(
+                    "terminal_effect_if_bare_return",
+                    path=diagnostic_path,
+                    handles=scope_handles,
+                    line=node.lineno,
+                    expected=expected_shape,
+                    observed=observed_shape,
+                )
+            if predicate_negated != (contract.terminal_polarity == "negative"):
+                raise _ReplayABIViolation(
+                    "terminal_effect_if_polarity",
+                    path=diagnostic_path,
+                    handles=scope_handles,
+                    line=node.lineno,
+                    expected=expected_shape,
+                    observed=observed_shape,
+                )
+            if actual_terminal_nonempty != terminal_nonempty:
                 raise _ReplayABIViolation(
                     "terminal_effect_if_terminal_arm",
-                    path=f"<effect_if:{index}>",
+                    path=diagnostic_path,
+                    handles=scope_handles,
                     line=node.lineno,
+                    expected=expected_shape,
+                    observed=observed_shape,
                 )
-            if _statements_are_nonempty(site.following) != continuation_nonempty:
+            if actual_continuation_nonempty != continuation_nonempty:
                 raise _ReplayABIViolation(
                     "terminal_effect_if_continuation",
-                    path=f"<effect_if:{index}>",
+                    path=diagnostic_path,
+                    handles=scope_handles,
                     line=node.lineno,
+                    expected=expected_shape,
+                    observed=observed_shape,
                 )
             if any(isinstance(item, ast.Return) for item in site.following):
                 raise _ReplayABIViolation(
                     "terminal_effect_if_continuation_return",
-                    path=f"<effect_if:{index}>",
+                    path=diagnostic_path,
+                    handles=scope_handles,
                     line=node.lineno,
+                    expected=expected_shape,
+                    observed=observed_shape,
                 )
             continue
         if not node.orelse:
@@ -832,6 +913,294 @@ def _packet_intent_ops_by_path(packet: Mapping[str, Any]) -> dict[str, Mapping[s
     return result
 
 
+@dataclass(frozen=True)
+class _CompiledIterationContract:
+    block_arity: int
+    basis: str
+    extent: str
+    tile: str
+    tile_value: int
+    path: str
+
+
+def _packet_compiled_iteration_contracts(
+    packet: Mapping[str, Any],
+) -> tuple[_CompiledIterationContract, ...]:
+    """Resolve authored loop bases to anonymous ABI handles when unambiguous."""
+
+    j = packet.get("j")
+    c = packet.get("c")
+    pi = packet.get("pi")
+    if not all(isinstance(value, Mapping) for value in (j, c, pi)):
+        return ()
+    assert isinstance(j, Mapping) and isinstance(c, Mapping) and isinstance(pi, Mapping)
+    operations = _packet_intent_ops_by_path(packet)
+    node_paths = j.get("node_ids")
+    node_paths = node_paths if isinstance(node_paths, Mapping) else {}
+    operation_by_node: dict[str, Mapping[str, Any]] = {}
+    for node, raw_path in node_paths.items():
+        if not isinstance(raw_path, str):
+            continue
+        path = raw_path.removeprefix("intent_function.")
+        operation = operations.get(path)
+        if operation is not None:
+            operation_by_node[str(node)] = operation
+
+    intent = j.get("intent")
+    intent = intent if isinstance(intent, Mapping) else {}
+    intent_function = intent.get("intent_function")
+    intent_function = (
+        intent_function if isinstance(intent_function, Mapping) else {}
+    )
+    value_shapes: dict[str, tuple[int | str, ...]] = {}
+    for key in ("inputs", "outputs"):
+        for item in intent_function.get(key, []):
+            if not isinstance(item, Mapping):
+                continue
+            name = item.get("name")
+            shape = item.get("shape")
+            if isinstance(name, str) and isinstance(shape, list):
+                value_shapes[name] = tuple(
+                    value for value in shape if isinstance(value, (int, str))
+                )
+    for operation in operations.values():
+        result = operation.get("result")
+        result_type = operation.get("type")
+        shape = result_type.get("shape") if isinstance(result_type, Mapping) else None
+        if isinstance(result, str) and isinstance(shape, list):
+            value_shapes[result] = tuple(
+                value for value in shape if isinstance(value, (int, str))
+            )
+
+    boundary = j.get("boundary")
+    boundary = boundary if isinstance(boundary, Mapping) else {}
+    accesses = {
+        str(item.get("access_id")): item
+        for item in boundary.get("accesses", [])
+        if isinstance(item, Mapping) and isinstance(item.get("access_id"), str)
+    }
+    signature = j.get("signature")
+    parameters = (
+        signature.get("parameters", []) if isinstance(signature, Mapping) else []
+    )
+    value_dimension_relations = j.get("value_dimension_relations")
+    dimension_relations = j.get("dimension_relations")
+
+    def extent_parameter(dimension: str) -> str | None:
+        extent_refs = {dimension}
+        sources = {
+            str(item.get("result")): str(item.get("expr", {}).get("arg"))
+            for item in (
+                dimension_relations if isinstance(dimension_relations, list) else []
+            )
+            if isinstance(item, Mapping)
+            and isinstance(item.get("result"), str)
+            and isinstance(item.get("expr"), Mapping)
+            and isinstance(item.get("expr", {}).get("arg"), str)
+        }
+        frontier = [dimension]
+        while frontier:
+            source = sources.get(frontier.pop())
+            if source is not None and source not in extent_refs:
+                extent_refs.add(source)
+                frontier.append(source)
+        value_refs = {
+            str(item.get("value_ref"))
+            for item in (
+                value_dimension_relations
+                if isinstance(value_dimension_relations, list)
+                else []
+            )
+            if isinstance(item, Mapping)
+            and item.get("relation") == "eq"
+            and item.get("dimension_ref") in extent_refs
+            and isinstance(item.get("value_ref"), str)
+        }
+        logical_refs = extent_refs | value_refs
+        matches = [
+            str(item.get("name"))
+            for item in parameters
+            if isinstance(item, Mapping)
+            and item.get("kind") in {"scalar", "constexpr"}
+            and item.get("logical_ref") in logical_refs
+            and isinstance(item.get("name"), str)
+        ]
+        return matches[0] if len(matches) == 1 else None
+
+    def subject_dimension(subject: str, axis: int | str | None) -> str | None:
+        if isinstance(axis, str) and re.fullmatch(r"x[0-9]+", axis):
+            return axis
+        if not isinstance(axis, int) or isinstance(axis, bool) or axis < 0:
+            return None
+        access = accesses.get(subject)
+        if access is not None:
+            tensor = access.get("tensor")
+            shape = value_shapes.get(str(tensor))
+            if shape is not None and axis < len(shape) and isinstance(shape[axis], str):
+                return shape[axis]
+            return None
+        operation = operation_by_node.get(subject)
+        if operation is None:
+            return None
+        operands = operation.get("operands")
+        if not isinstance(operands, list) or not operands:
+            return None
+        if operation.get("op") == "reduce":
+            shape = value_shapes.get(str(operands[0]))
+            attrs = operation.get("attrs")
+            axes = attrs.get("axes") if isinstance(attrs, Mapping) else None
+            if (
+                shape is not None
+                and isinstance(axes, list)
+                and axis in axes
+                and axis < len(shape)
+                and isinstance(shape[axis], str)
+            ):
+                return shape[axis]
+            return None
+        if operation.get("op") != "contraction":
+            return None
+        attrs = operation.get("attrs")
+        subscripts = attrs.get("subscripts") if isinstance(attrs, Mapping) else None
+        if not isinstance(subscripts, str) or "->" not in subscripts:
+            return None
+        inputs_text, output_text = subscripts.split("->", 1)
+        input_terms = inputs_text.split(",")
+        if len(input_terms) != len(operands):
+            return None
+        contracted: list[str] = []
+        for term in input_terms:
+            for label in term:
+                if label not in output_text and label not in contracted:
+                    contracted.append(label)
+        if axis >= len(contracted):
+            return None
+        label = contracted[axis]
+        dimensions: set[str] = set()
+        for term, operand in zip(input_terms, operands, strict=True):
+            shape = value_shapes.get(str(operand))
+            if shape is None or len(shape) != len(term):
+                continue
+            for current, extent in zip(term, shape, strict=True):
+                if current == label and isinstance(extent, str):
+                    dimensions.add(extent)
+        return next(iter(dimensions)) if len(dimensions) == 1 else None
+
+    instances = {
+        str(item.get("id")): item
+        for item in pi.get("instances", [])
+        if isinstance(item, Mapping) and isinstance(item.get("id"), str)
+    }
+    slots = {
+        str(item.get("name")): item
+        for item in c.get("slots", [])
+        if isinstance(item, Mapping) and isinstance(item.get("name"), str)
+    }
+    values = c.get("values")
+    values = values if isinstance(values, Mapping) else {}
+    logical_carriers = [
+        item for item in pi.get("loop_carriers", []) if isinstance(item, Mapping)
+    ]
+    physical_carriers = [
+        item
+        for item in pi.get("physical_loop_carriers", [])
+        if isinstance(item, Mapping)
+    ]
+    result: list[_CompiledIterationContract] = []
+
+    def append(
+        *,
+        basis: Any,
+        dimension: str | None,
+        tile_ref: str | None,
+        block_arity: int,
+        path: str,
+    ) -> None:
+        if basis not in {"extent_step", "rounded_extent_step", "tile_ordinal"}:
+            return
+        if dimension is None or tile_ref is None:
+            return
+        slot = slots.get(tile_ref)
+        tile_value = values.get(tile_ref)
+        if (
+            slot is None
+            or slot.get("kind") != "constexpr"
+            or not isinstance(tile_value, int)
+            or isinstance(tile_value, bool)
+            or tile_value <= 0
+        ):
+            return
+        extent = extent_parameter(dimension)
+        if extent is None:
+            return
+        result.append(
+            _CompiledIterationContract(
+                block_arity=block_arity,
+                basis=str(basis),
+                extent=extent,
+                tile=tile_ref,
+                tile_value=tile_value,
+                path=path,
+            )
+        )
+
+    for index, relation in enumerate(pi.get("iterations", [])):
+        if not isinstance(relation, Mapping):
+            continue
+        loop_instance = instances.get(str(relation.get("loop_instance")))
+        tile_instance = instances.get(str(relation.get("tile_instance")))
+        loop_ref = (
+            str(loop_instance.get("semantic_ref")) if loop_instance is not None else None
+        )
+        tile_ref = (
+            str(tile_instance.get("semantic_ref")) if tile_instance is not None else None
+        )
+        operation = operation_by_node.get(loop_ref or "")
+        trip = operation.get("trip") if isinstance(operation, Mapping) else None
+        dimension = trip.get("axis") if isinstance(trip, Mapping) else None
+        carrier_count = sum(
+            item.get("loop_instance") == relation.get("loop_instance")
+            for item in logical_carriers
+        )
+        append(
+            basis=relation.get("induction_basis"),
+            dimension=dimension if isinstance(dimension, str) else None,
+            tile_ref=tile_ref,
+            block_arity=1 + carrier_count,
+            path=f"pi.iterations[{index}]",
+        )
+
+    for index, relation in enumerate(pi.get("physical_iterations", [])):
+        if not isinstance(relation, Mapping) or relation.get("direction") != "forward":
+            continue
+        body_instance = instances.get(str(relation.get("body_instance")))
+        tile_instance = instances.get(str(relation.get("tile_instance")))
+        body_ref = (
+            str(body_instance.get("semantic_ref")) if body_instance is not None else None
+        )
+        tile_ref = (
+            str(tile_instance.get("semantic_ref")) if tile_instance is not None else None
+        )
+        slot = slots.get(tile_ref or "")
+        dimension = (
+            subject_dimension(body_ref, slot.get("axis_ref"))
+            if body_ref is not None and slot is not None
+            else None
+        )
+        region = relation.get("region")
+        carrier_count = sum(
+            item.get("region") == region for item in physical_carriers
+        )
+        append(
+            basis=relation.get("induction_basis"),
+            dimension=dimension,
+            tile_ref=tile_ref,
+            block_arity=1 + carrier_count,
+            path=f"pi.physical_iterations[{index}]",
+        )
+    return tuple(result)
+
+
 def _packet_rounded_iteration_contracts(
     packet: Mapping[str, Any],
 ) -> list[tuple[str, str, str]]:
@@ -854,10 +1223,11 @@ def _packet_rounded_iteration_contracts(
         else []
     )
     relations = packet.get("j", {}).get("value_dimension_relations", [])
+    dimension_relations = packet.get("j", {}).get("dimension_relations", [])
     c_slots = {
         str(item.get("name"))
         for item in packet.get("c", {}).get("slots", [])
-        if isinstance(item, Mapping)
+        if isinstance(item, Mapping) and item.get("kind") == "constexpr"
     }
     result: list[tuple[str, str, str]] = []
     for index, relation in enumerate(pi.get("iterations", [])):
@@ -878,6 +1248,21 @@ def _packet_rounded_iteration_contracts(
             # them from shape, C, or pi; the ablation may then fail Gate1.
             continue
         extent_refs = {axis}
+        dimension_sources = {
+            str(item.get("result")): str(item.get("expr", {}).get("arg"))
+            for item in dimension_relations
+            if isinstance(item, Mapping)
+            and isinstance(item.get("result"), str)
+            and isinstance(item.get("expr"), Mapping)
+            and isinstance(item.get("expr", {}).get("arg"), str)
+        } if isinstance(dimension_relations, list) else {}
+        frontier = [axis]
+        while frontier:
+            current = frontier.pop()
+            source = dimension_sources.get(current)
+            if source is not None and source not in extent_refs:
+                extent_refs.add(source)
+                frontier.append(source)
         for item in relations if isinstance(relations, list) else []:
             if (
                 isinstance(item, Mapping)
@@ -1229,6 +1614,8 @@ def _closed_ingress_diagnostic(exc: Exception) -> dict[str, Any]:
             "path": exc.path,
             "anonymous_handles": list(exc.handles),
             "line": exc.line,
+            **({"expected": exc.expected} if exc.expected is not None else {}),
+            **({"observed": exc.observed} if exc.observed is not None else {}),
         }
     if isinstance(exc, UnsafeTileLangReplayCodeError):
         return {
@@ -1527,14 +1914,201 @@ def _packet_transfer_direct_counts(
     return counts, tuple(dict.fromkeys(refs))
 
 
+def _packet_transfer_order_constraints(
+    packet: Mapping[str, Any],
+) -> tuple[
+    tuple[str, str, str, str, str, str, str, str],
+    ...,
+]:
+    """Project unambiguous, same-region transfer order already authored in pi.
+
+    Each row is ``(before_instance, after_instance, before_access,
+    after_access, before_operation, after_operation, before_pointer,
+    after_pointer)``.  Pointer
+    roots are discovered only by walking authored pi routes and carrier edges
+    back to pointer/tensor signature instances.  Ambiguous or incomplete
+    topology is ignored here and remains the responsibility of formal Gate1.
+    """
+
+    j = packet.get("j")
+    pi = packet.get("pi")
+    if not isinstance(j, Mapping) or not isinstance(pi, Mapping):
+        return ()
+    signature = j.get("signature")
+    boundary = j.get("boundary")
+    parameters = (
+        signature.get("parameters") if isinstance(signature, Mapping) else None
+    )
+    accesses_value = (
+        boundary.get("accesses") if isinstance(boundary, Mapping) else None
+    )
+    instances_value = pi.get("instances")
+    routes_value = pi.get("routes")
+    order_value = pi.get("order")
+    if not all(
+        isinstance(value, list)
+        for value in (
+            parameters,
+            accesses_value,
+            instances_value,
+            routes_value,
+            order_value,
+        )
+    ):
+        return ()
+
+    pointer_parameters = {
+        str(item.get("name"))
+        for item in parameters
+        if isinstance(item, Mapping)
+        and item.get("kind") in {"pointer", "tensor"}
+        and isinstance(item.get("name"), str)
+    }
+    accesses = {
+        str(item.get("access_id")): item
+        for item in accesses_value
+        if isinstance(item, Mapping)
+        and isinstance(item.get("access_id"), str)
+    }
+    instances = {
+        str(item.get("id")): item
+        for item in instances_value
+        if isinstance(item, Mapping) and isinstance(item.get("id"), str)
+    }
+    if not pointer_parameters or not instances:
+        return ()
+
+    incoming: dict[str, set[str]] = {instance_id: set() for instance_id in instances}
+    for route in routes_value:
+        if not isinstance(route, Mapping):
+            continue
+        source = route.get("source")
+        target = route.get("target")
+        if isinstance(source, str) and isinstance(target, str) and target in incoming:
+            incoming[target].add(source)
+    for key in ("loop_carriers", "physical_loop_carriers"):
+        relations = pi.get(key)
+        if not isinstance(relations, list):
+            continue
+        for relation in relations:
+            if not isinstance(relation, Mapping):
+                continue
+            init = relation.get("init")
+            state = relation.get("state")
+            next_value = relation.get("next")
+            result = relation.get("result")
+            if all(
+                isinstance(value, str) and value in instances
+                for value in (init, state, next_value, result)
+            ):
+                assert isinstance(init, str)
+                assert isinstance(state, str)
+                assert isinstance(next_value, str)
+                assert isinstance(result, str)
+                incoming[state].update((init, next_value))
+                incoming[result].add(state)
+
+    transfer_ids = {
+        instance_id
+        for instance_id, instance in instances.items()
+        if instance.get("mechanism") == "transfer_direct"
+        and str(instance.get("semantic_ref")) in accesses
+    }
+
+    def unique_pointer_root(instance_id: str) -> str | None:
+        pending = [instance_id]
+        visited: set[str] = set()
+        roots: set[str] = set()
+        while pending:
+            current = pending.pop()
+            if current in visited:
+                continue
+            visited.add(current)
+            instance = instances.get(current)
+            if instance is None:
+                continue
+            semantic_ref = instance.get("semantic_ref")
+            if semantic_ref in pointer_parameters:
+                roots.add(str(semantic_ref))
+            pending.extend(incoming.get(current, ()))
+        return next(iter(roots)) if len(roots) == 1 else None
+
+    order_outgoing: dict[str, set[str]] = {
+        instance_id: set() for instance_id in instances
+    }
+    for item in order_value:
+        if not isinstance(item, Mapping):
+            continue
+        before = item.get("before")
+        after = item.get("after")
+        if isinstance(before, str) and isinstance(after, str):
+            order_outgoing.setdefault(before, set()).add(after)
+
+    constraints: list[
+        tuple[str, str, str, str, str, str, str, str]
+    ] = []
+    for before in sorted(transfer_ids):
+        before_region = instances[before].get("region")
+        reachable: set[str] = set()
+        pending = list(order_outgoing.get(before, ()))
+        while pending:
+            current = pending.pop()
+            if current in reachable:
+                continue
+            current_instance = instances.get(current)
+            if current_instance is None or current_instance.get(
+                "region"
+            ) != before_region:
+                continue
+            reachable.add(current)
+            pending.extend(order_outgoing.get(current, ()))
+        for after in sorted(reachable & transfer_ids):
+            before_instance = instances[before]
+            after_instance = instances[after]
+            before_root = unique_pointer_root(before)
+            after_root = unique_pointer_root(after)
+            if before_root is None or after_root is None:
+                continue
+            before_access_id = str(before_instance.get("semantic_ref"))
+            after_access_id = str(after_instance.get("semantic_ref"))
+            before_access = accesses[before_access_id]
+            after_access = accesses[after_access_id]
+            before_kind = before_access.get("kind")
+            after_kind = after_access.get("kind")
+            if before_kind not in {"load", "store"} or after_kind not in {
+                "load",
+                "store",
+            }:
+                continue
+            before_operation = f"tt.{before_kind}"
+            after_operation = f"tt.{after_kind}"
+            if before_access.get("predicate") is not None:
+                before_operation += ".masked"
+            if after_access.get("predicate") is not None:
+                after_operation += ".masked"
+            constraints.append(
+                (
+                    before,
+                    after,
+                    before_access_id,
+                    after_access_id,
+                    before_operation,
+                    after_operation,
+                    before_root,
+                    after_root,
+                )
+            )
+    return tuple(constraints)
+
+
 def _packet_required_compiled_iteration_arities(
     packet: Mapping[str, Any],
 ) -> tuple[int, ...]:
     """Return compiler-visible loop block arities authored by J and pi.
 
     A structured J ``loop`` denotes one logical loop.  A
-    ``pi.physical_iterations`` or ``pi.unit_iterations`` row denotes one
-    additional physical loop around an otherwise ordinary J subject.
+    A ``pi.physical_iterations`` row denotes one additional physical loop around
+    an otherwise ordinary J subject.
     ``pi.iterations`` realizes its
     existing J loop and therefore is not counted a second time.  The induction
     variable contributes one block argument; only explicitly authored
@@ -1579,10 +2153,7 @@ def _packet_required_compiled_iteration_arities(
             for item in loop_carriers
         )
         arities.append(1 + carrier_count)
-    for item in [
-        *pi.get("physical_iterations", []),
-        *pi.get("unit_iterations", []),
-    ]:
+    for item in pi.get("physical_iterations", []):
         if not isinstance(item, Mapping):
             continue
         region = item.get("region")
@@ -1615,6 +2186,38 @@ def _packet_required_compiled_reduction_linearizations(
     return len(refs), refs
 
 
+def _packet_required_compiled_transposes(
+    packet: Mapping[str, Any],
+) -> tuple[int, tuple[str, ...]]:
+    """Return explicit transpose stages authored by J and pi."""
+
+    j = packet.get("j")
+    pi = packet.get("pi")
+    if not isinstance(j, Mapping) or not isinstance(pi, Mapping):
+        return 0, ()
+    operations = _packet_intent_ops_by_path(packet)
+    node_ids = j.get("node_ids")
+    transpose_nodes = {
+        str(node)
+        for node, raw_path in node_ids.items()
+        if isinstance(node_ids, Mapping)
+        and isinstance(raw_path, str)
+        and (
+            operations.get(raw_path.removeprefix("intent_function."), {}).get("op")
+            == "transpose"
+        )
+    } if isinstance(node_ids, Mapping) else set()
+    refs = tuple(
+        str(item.get("id"))
+        for item in pi.get("instances", [])
+        if isinstance(item, Mapping)
+        and item.get("mechanism") == "realize"
+        and item.get("semantic_ref") in transpose_nodes
+        and isinstance(item.get("id"), str)
+    )
+    return len(refs), refs
+
+
 def _packet_required_compiled_address_operations(
     packet: Mapping[str, Any],
 ) -> tuple[int | None, tuple[str, ...]]:
@@ -1624,9 +2227,13 @@ def _packet_required_compiled_address_operations(
     contributions or pointer-producing stages.  The pi grammar makes the latter
     distinction closed: a stage is a pointer operation exactly when a routed
     pointer/tensor signature carrier, or an earlier pointer-producing address
-    stage, enters it.  Packets whose address topology does not expose a
-    pointer-producing stage for every authored access are outside this narrow
-    construction check; no missing final address operation is inferred.
+    stage, enters it.  Loop-carrier ``state`` and ``result`` instances are
+    compiler block plumbing rather than address operations; their authored
+    ``init -> state``, ``next -> state`` and ``state -> result`` temporal edges
+    are nevertheless part of pointer reachability.  Packets whose resulting
+    address topology does not expose a pointer-producing stage for every
+    authored access are outside this narrow construction check; no missing
+    final address operation is inferred.
     """
 
     j = packet.get("j")
@@ -1689,21 +2296,65 @@ def _packet_required_compiled_address_operations(
         if isinstance(source, str) and isinstance(target, str) and target in incoming:
             incoming[target].add(source)
 
-    pointer_outputs = {
+    carrier_relations = [
+        item
+        for key in ("loop_carriers", "physical_loop_carriers")
+        for item in pi.get(key, [])
+        if isinstance(item, Mapping)
+    ]
+    carrier_state_ids: set[str] = set()
+    carrier_result_ids: set[str] = set()
+    carrier_derived_ids: set[str] = set()
+    for relation in carrier_relations:
+        init = relation.get("init")
+        state = relation.get("state")
+        next_value = relation.get("next")
+        result = relation.get("result")
+        if not all(
+            isinstance(value, str) and value in instances
+            for value in (init, state, next_value, result)
+        ):
+            return None, ()
+        assert isinstance(init, str)
+        assert isinstance(state, str)
+        assert isinstance(next_value, str)
+        assert isinstance(result, str)
+        # These are the closed temporal edges of the authored carrier.  They do
+        # not invent a route or an update; they make the relation already present
+        # in pi visible to this source-blind occurrence projection.
+        incoming[state].update((init, next_value))
+        incoming[result].add(state)
+        carrier_state_ids.add(state)
+        carrier_result_ids.add(result)
+        carrier_derived_ids.update((state, next_value, result))
+
+    # A pointer/tensor signature instance is already rooted in its callable ABI
+    # carrier even when that same instance is an ``address_base`` receiving
+    # integer offset routes.  Requiring ``mechanism=realize`` (or no incoming
+    # routes) would incorrectly make such a closed pointer stage invisible and
+    # silently disable the address-occurrence check.
+    pointer_roots = {
         instance_id
         for instance_id, item in instances.items()
         if item.get("semantic_ref") in pointer_parameters
+        and instance_id not in carrier_derived_ids
     }
-    pointer_roots = set(pointer_outputs)
+    pointer_outputs = set(pointer_roots)
+    pointer_passthrough_ids = address_ids | carrier_state_ids | carrier_result_ids
     changed = True
     while changed:
         changed = False
-        for instance_id in address_ids - pointer_outputs:
+        for instance_id in pointer_passthrough_ids - pointer_outputs:
             if incoming[instance_id] & pointer_outputs:
                 pointer_outputs.add(instance_id)
                 changed = True
 
-    pointer_address_ids = address_ids & pointer_outputs
+    # A carrier state is a block argument and a carrier result is a block result;
+    # neither is a compiled pointer-add operation even if its typed instance uses
+    # an address mechanism.  Authored init/next address stages remain counted.
+    pointer_address_ids = (
+        address_ids & pointer_outputs
+    ) - carrier_state_ids - carrier_result_ids
     transfer_refs = {
         str(item.get("semantic_ref"))
         for item in memory_instances
@@ -1746,7 +2397,7 @@ def _packet_required_compiled_address_operations(
 
 def _packet_required_compiled_program_ids(
     packet: Mapping[str, Any],
-) -> tuple[int | None, tuple[str, ...]]:
+) -> tuple[int | None, tuple[str, ...], tuple[int, ...] | None]:
     """Project the exact number of packet-authorized program coordinates.
 
     A program-region placement is only lexical scope.  Under the public Triton
@@ -1755,13 +2406,15 @@ def _packet_required_compiled_program_ids(
     stage.  Repeated pi instances of the same domain share that coordinate, and
     signature ``p*`` instances always share their already-existing callable ABI
     carrier.  This projection rejects extra compiled coordinates but never
-    invents a coordinate or chooses an axis for Replay.
+    invents a coordinate.  In artifact v12 the authored ``pi.program_axes``
+    relation supplies the exact physical axis; legacy packets retain count-only
+    diagnostics and are never silently upgraded.
     """
 
     j = packet.get("j")
     pi = packet.get("pi")
     if not isinstance(j, Mapping) or not isinstance(pi, Mapping):
-        return None, ()
+        return None, (), None
     boundary = j.get("boundary")
     domains_value = (
         boundary.get("domains") if isinstance(boundary, Mapping) else None
@@ -1770,12 +2423,12 @@ def _packet_required_compiled_program_ids(
     instances_value = pi.get("instances")
     routes_value = pi.get("routes")
     if not isinstance(domains_value, Mapping):
-        return None, ()
+        return None, (), None
     if not all(
         isinstance(value, list)
         for value in (regions_value, instances_value, routes_value)
     ):
-        return None, ()
+        return None, (), None
 
     domain_refs = {str(name) for name in domains_value}
     program_regions = {
@@ -1827,7 +2480,352 @@ def _packet_required_compiled_program_ids(
         and item.get("semantic_ref") in domain_refs
         and reaches_address_base(instance_id)
     }
-    return len(authorized), tuple(sorted(authorized))
+    ordered_domains = tuple(sorted(authorized))
+    program_axes_value = pi.get("program_axes")
+    if program_axes_value is None:
+        return len(authorized), ordered_domains, None
+    if not isinstance(program_axes_value, list):
+        return None, (), None
+    axes_by_domain = {
+        str(item.get("domain_ref")): int(item["axis"])
+        for item in program_axes_value
+        if isinstance(item, Mapping)
+        and isinstance(item.get("domain_ref"), str)
+        and isinstance(item.get("axis"), int)
+        and not isinstance(item.get("axis"), bool)
+    }
+    if set(axes_by_domain) != authorized:
+        return len(authorized), ordered_domains, None
+    return (
+        len(authorized),
+        ordered_domains,
+        tuple(sorted(axes_by_domain[domain] for domain in ordered_domains)),
+    )
+
+
+def _compiled_program_id_axes(ttir: str) -> tuple[int, ...] | None:
+    """Read the literal Triton launch-axis multiset from pinned TTIR."""
+
+    axes: list[int] = []
+    axis_names = {"x": 0, "y": 1, "z": 2}
+    for line in ttir.splitlines():
+        if "tt.get_program_id" not in line:
+            continue
+        named = re.search(r"\btt\.get_program_id\s+([xyz])(?:\s|:)", line)
+        if named is not None:
+            axes.append(axis_names[named.group(1)])
+            continue
+        generic = re.search(r"\baxis\s*=\s*([0-2])(?:\s*:\s*i32)?", line)
+        if generic is not None:
+            axes.append(int(generic.group(1)))
+            continue
+        return None
+    return tuple(sorted(axes))
+
+
+def _compiled_transfer_order_diagnostic(
+    packet: Mapping[str, Any],
+    ttir: str,
+    fingerprint: TTIRFingerprint,
+    *,
+    path_prefix: str = "<synthetic-frontend-compile>",
+) -> Mapping[str, Any] | None:
+    """Reject a Replay whose own TTIR reverses an unambiguous pi order edge."""
+
+    constraints = _packet_transfer_order_constraints(packet)
+    if not constraints:
+        return None
+    argument_names = runtime_argument_names(ttir)
+    pointer_parameters = {
+        pointer
+        for constraint in constraints
+        for pointer in constraint[-2:]
+    }
+    events: list[tuple[int, str, str, tuple[str, ...]]] = []
+    for index, (operation, origins, context) in enumerate(
+        fingerprint.diagnostic_memory_effect_origins
+    ):
+        roots = {
+            argument_names[position]
+            for position in origins
+            if position < len(argument_names)
+            and argument_names[position] in pointer_parameters
+        }
+        if len(roots) != 1:
+            continue
+        events.append((index, operation, next(iter(roots)), context))
+
+    for (
+        before_instance,
+        after_instance,
+        before_access,
+        after_access,
+        before_operation,
+        after_operation,
+        before_pointer,
+        after_pointer,
+    ) in constraints:
+        before_matches = [
+            event
+            for event in events
+            if event[1] == before_operation and event[2] == before_pointer
+        ]
+        after_matches = [
+            event
+            for event in events
+            if event[1] == after_operation and event[2] == after_pointer
+        ]
+        # Repeated accesses through one carrier cannot be assigned to individual
+        # pi occurrences without inventing identity.  Leave those cases to the
+        # formal observer instead of guessing.
+        if len(before_matches) != 1 or len(after_matches) != 1:
+            continue
+        before_event = before_matches[0]
+        after_event = after_matches[0]
+        if before_event[3] != after_event[3]:
+            continue
+        if before_event[0] < after_event[0]:
+            continue
+        return {
+            "rule_code": "compiled_transfer_order",
+            "path": (
+                f"{path_prefix} pi.order: "
+                f"{before_access}({before_pointer}) before "
+                f"{after_access}({after_pointer}); compiled lexical positions="
+                f"{before_event[0]},{after_event[0]}"
+            ),
+            "anonymous_handles": [
+                before_instance,
+                after_instance,
+                before_access,
+                after_access,
+                before_pointer,
+                after_pointer,
+            ],
+            "line": None,
+        }
+    return None
+
+
+def compiled_packet_obligation_diagnostics(
+    packet: Mapping[str, Any],
+    ttir: str,
+    *,
+    fingerprint: TTIRFingerprint | None = None,
+    path_prefix: str = "<compiled-obligation>",
+) -> tuple[Mapping[str, Any], ...]:
+    """Compare closed packet obligations with one compiled TTIR observation.
+
+    The projection is source-neutral and reject-only.  It does not choose an
+    operation, address, loop, relation, or repair; callers decide whether the
+    observed TTIR belongs to source-aware Lift or source-blind Replay.
+    """
+
+    observed = fingerprint if fingerprint is not None else parse_ttir(ttir)
+    actual_ops = dict(observed.op_multiset)
+    diagnostics: list[Mapping[str, Any]] = []
+
+    expected_transfers, transfer_refs = _packet_transfer_direct_counts(packet)
+    expected_iteration_arities = _packet_required_compiled_iteration_arities(packet)
+    expected_iteration_contracts = _packet_compiled_iteration_contracts(packet)
+    expected_reduction_linearizations, linearization_refs = (
+        _packet_required_compiled_reduction_linearizations(packet)
+    )
+    expected_transposes, transpose_refs = _packet_required_compiled_transposes(packet)
+    expected_address_operations, address_refs = (
+        _packet_required_compiled_address_operations(packet)
+    )
+    expected_program_ids, program_domain_refs, expected_program_axes = (
+        _packet_required_compiled_program_ids(packet)
+    )
+
+    if expected_program_ids is not None:
+        actual_program_ids = actual_ops.get("tt.get_program_id", 0)
+        if expected_program_ids != actual_program_ids:
+            diagnostics.append(
+                {
+                    "rule_code": "compiled_program_id_count",
+                    "path": (
+                        f"{path_prefix} tt.get_program_id: "
+                        f"expected={expected_program_ids}, "
+                        f"actual={actual_program_ids}"
+                    ),
+                    "anonymous_handles": list(program_domain_refs[:32]),
+                    "line": None,
+                }
+            )
+
+    if expected_program_axes is not None:
+        actual_program_axes = _compiled_program_id_axes(ttir)
+        if actual_program_axes is None or expected_program_axes != actual_program_axes:
+            diagnostics.append(
+                {
+                    "rule_code": "compiled_program_id_axes",
+                    "path": (
+                        f"{path_prefix} tt.get_program_id axes: "
+                        f"expected={list(expected_program_axes)}, "
+                        f"actual={list(actual_program_axes) if actual_program_axes is not None else 'unrecognized'}"
+                    ),
+                    "anonymous_handles": list(program_domain_refs[:32]),
+                    "line": None,
+                }
+            )
+
+    linearized_reduce_producers = {
+        producer
+        for producer, consumer, role in observed.dataflow_edges
+        if producer.startswith("tt.reshape[")
+        and consumer.startswith("tt.reduce[")
+        and role == "operand[0]"
+    }
+    actual_reduction_linearizations = min(
+        len(linearized_reduce_producers),
+        sum(reduction.axis == 0 for reduction in observed.reductions),
+    )
+    if actual_reduction_linearizations < expected_reduction_linearizations:
+        diagnostics.append(
+            {
+                "rule_code": "compiled_reduction_linearization_count",
+                "path": (
+                    f"{path_prefix} tt.reshape->tt.reduce(axis=0): "
+                    "expected-at-least="
+                    f"{expected_reduction_linearizations}, "
+                    f"actual={actual_reduction_linearizations}"
+                ),
+                "anonymous_handles": list(linearization_refs[:32]),
+                "line": None,
+            }
+        )
+
+    actual_transposes = actual_ops.get("tt.trans", 0)
+    if actual_transposes < expected_transposes:
+        diagnostics.append(
+            {
+                "rule_code": "compiled_transpose_realization_count",
+                "path": (
+                    f"{path_prefix} tt.trans: expected-at-least="
+                    f"{expected_transposes}, actual={actual_transposes}"
+                ),
+                "anonymous_handles": list(transpose_refs[:32]),
+                "line": None,
+            }
+        )
+
+    if expected_address_operations is not None:
+        actual_address_operations = actual_ops.get("tt.addptr", 0)
+        if expected_address_operations != actual_address_operations:
+            diagnostics.append(
+                {
+                    "rule_code": "compiled_address_operation_count",
+                    "path": (
+                        f"{path_prefix} tt.addptr: expected="
+                        f"{expected_address_operations}, "
+                        f"actual={actual_address_operations}"
+                    ),
+                    "anonymous_handles": list(address_refs[:32]),
+                    "line": None,
+                }
+            )
+
+    actual_iteration_arities = tuple(
+        sorted(loop.block_argument_count for loop in observed.loops)
+    )
+    if len(expected_iteration_arities) != len(actual_iteration_arities):
+        diagnostics.append(
+            {
+                "rule_code": "compiled_iteration_count",
+                "path": (
+                    f"{path_prefix} scf.for: "
+                    f"expected={len(expected_iteration_arities)}, "
+                    f"actual={len(actual_iteration_arities)}"
+                ),
+                "anonymous_handles": [],
+                "line": None,
+            }
+        )
+    elif expected_iteration_arities != actual_iteration_arities:
+        diagnostics.append(
+            {
+                "rule_code": "compiled_iteration_carrier_arity",
+                "path": (
+                    f"{path_prefix} scf.for block-arguments: expected="
+                    f"{list(expected_iteration_arities)}, "
+                    f"actual={list(actual_iteration_arities)}"
+                ),
+                "anonymous_handles": [],
+                "line": None,
+            }
+        )
+
+    available_iteration_bases = list(observed.diagnostic_iteration_bases)
+    for contract in expected_iteration_contracts:
+        compatible = [
+            (index, row)
+            for index, row in enumerate(available_iteration_bases)
+            if row[0] == contract.block_arity
+            and row[2] == contract.extent
+            and row[3] == contract.tile_value
+        ]
+        exact = next(
+            (
+                (index, row)
+                for index, row in compatible
+                if row[1] == contract.basis
+            ),
+            None,
+        )
+        if exact is not None:
+            available_iteration_bases.pop(exact[0])
+            continue
+        # An unclassified loop cannot prove a contradiction.  Keep the formal
+        # observer responsible for it rather than guessing from a concrete
+        # extent.  A classified loop over the same authored extent/tile can,
+        # however, reject the wrong closed basis before a formal Gate1 round.
+        if not compatible:
+            continue
+        actual_bases = sorted({row[1] for _, row in compatible})
+        diagnostics.append(
+            {
+                "rule_code": "compiled_iteration_basis",
+                "path": (
+                    f"{path_prefix} {contract.path}.induction_basis: "
+                    f"expected={contract.basis}, actual={actual_bases}"
+                ),
+                "anonymous_handles": [contract.extent, contract.tile],
+                "line": None,
+            }
+        )
+
+    for operation in (
+        "tt.load",
+        "tt.load.masked",
+        "tt.store",
+        "tt.store.masked",
+    ):
+        expected = expected_transfers.get(operation, 0)
+        actual = actual_ops.get(operation, 0)
+        if expected != actual:
+            diagnostics.append(
+                {
+                    "rule_code": "compiled_transfer_direct_count",
+                    "path": (
+                        f"{path_prefix} {operation}: "
+                        f"expected={expected}, actual={actual}"
+                    ),
+                    "anonymous_handles": list(transfer_refs[:32]),
+                    "line": None,
+                }
+            )
+
+    transfer_order_diagnostic = _compiled_transfer_order_diagnostic(
+        packet,
+        ttir,
+        observed,
+        path_prefix=path_prefix,
+    )
+    if transfer_order_diagnostic is not None:
+        diagnostics.append(transfer_order_diagnostic)
+    return tuple(diagnostics[:20])
 
 
 def source_blind_replay_compile_check(
@@ -1912,34 +2910,31 @@ def source_blind_replay_compile_check(
         )
     if not result.ok:
         return _source_blind_compile_failure(result)
-    expected_transfers, transfer_refs = _packet_transfer_direct_counts(
-        selected_packet
-    )
-    expected_iteration_arities = _packet_required_compiled_iteration_arities(
-        selected_packet
-    )
-    expected_reduction_linearizations, linearization_refs = (
-        _packet_required_compiled_reduction_linearizations(selected_packet)
-    )
-    expected_address_operations, address_refs = (
-        _packet_required_compiled_address_operations(selected_packet)
-    )
-    expected_program_ids, program_domain_refs = (
-        _packet_required_compiled_program_ids(selected_packet)
-    )
-    if (
-        selected_frontend is Frontend.TRITON
-        and (
-            expected_transfers
-            or expected_iteration_arities
-            or expected_reduction_linearizations
-            or expected_address_operations is not None
-            or expected_program_ids is not None
-        )
-        and result.ttir is not None
-    ):
+    # Only Triton produces TTIR.  TileLang's authoritative structural evidence is
+    # TIR and CUDA's PTX is diagnostic; their full comparisons remain in the
+    # native Gate1 observers instead of being misparsed as Triton IR here.
+    if selected_frontend is Frontend.TRITON:
+        ttir = getattr(result, "ttir", None)
+        if not isinstance(ttir, str):
+            return ReplayIngressResult(
+                "fail",
+                diagnostics=(
+                    {
+                        "rule_code": "synthetic_replay_observer_failed",
+                        "path": "<synthetic-frontend-compile>",
+                        "anonymous_handles": [],
+                        "line": None,
+                    },
+                ),
+            )
         try:
-            fingerprint = parse_ttir(result.ttir)
+            fingerprint = parse_ttir(ttir)
+            obligation_diagnostics = compiled_packet_obligation_diagnostics(
+                selected_packet,
+                ttir,
+                fingerprint=fingerprint,
+                path_prefix="<synthetic-frontend-compile>",
+            )
         except TTIRParseError:
             return ReplayIngressResult(
                 "fail",
@@ -1952,131 +2947,10 @@ def source_blind_replay_compile_check(
                     },
                 ),
             )
-        actual_ops = dict(fingerprint.op_multiset)
-        if expected_program_ids is not None:
-            actual_program_ids = actual_ops.get("tt.get_program_id", 0)
-            if expected_program_ids != actual_program_ids:
-                return ReplayIngressResult(
-                    "fail",
-                    diagnostics=(
-                        {
-                            "rule_code": "compiled_program_id_count",
-                            "path": (
-                                "<synthetic-frontend-compile> tt.get_program_id: "
-                                f"expected={expected_program_ids}, "
-                                f"actual={actual_program_ids}"
-                            ),
-                            "anonymous_handles": list(program_domain_refs[:32]),
-                            "line": None,
-                        },
-                    ),
-                )
-        linearized_reduce_producers = {
-            producer
-            for producer, consumer, role in fingerprint.dataflow_edges
-            if producer.startswith("tt.reshape[")
-            and consumer.startswith("tt.reduce[")
-            and role == "operand[0]"
-        }
-        actual_reduction_linearizations = min(
-            len(linearized_reduce_producers),
-            sum(reduction.axis == 0 for reduction in fingerprint.reductions),
-        )
-        if actual_reduction_linearizations < expected_reduction_linearizations:
+        if obligation_diagnostics:
             return ReplayIngressResult(
                 "fail",
-                diagnostics=(
-                    {
-                        "rule_code": "compiled_reduction_linearization_count",
-                        "path": (
-                            "<synthetic-frontend-compile> "
-                            "tt.reshape->tt.reduce(axis=0): expected-at-least="
-                            f"{expected_reduction_linearizations}, "
-                            f"actual={actual_reduction_linearizations}"
-                        ),
-                        "anonymous_handles": list(linearization_refs[:32]),
-                        "line": None,
-                    },
-                ),
-            )
-        if expected_address_operations is not None:
-            actual_address_operations = actual_ops.get("tt.addptr", 0)
-            if expected_address_operations != actual_address_operations:
-                return ReplayIngressResult(
-                    "fail",
-                    diagnostics=(
-                        {
-                            "rule_code": "compiled_address_operation_count",
-                            "path": (
-                                "<synthetic-frontend-compile> tt.addptr: expected="
-                                f"{expected_address_operations}, actual="
-                                f"{actual_address_operations}"
-                            ),
-                            "anonymous_handles": list(address_refs[:32]),
-                            "line": None,
-                        },
-                    ),
-                )
-        if expected_iteration_arities:
-            actual_iteration_arities = tuple(
-                sorted(loop.block_argument_count for loop in fingerprint.loops)
-            )
-            if len(expected_iteration_arities) != len(actual_iteration_arities):
-                return ReplayIngressResult(
-                    "fail",
-                    diagnostics=(
-                        {
-                            "rule_code": "compiled_iteration_count",
-                            "path": (
-                                "<synthetic-frontend-compile> scf.for: "
-                                f"expected={len(expected_iteration_arities)}, "
-                                f"actual={len(actual_iteration_arities)}"
-                            ),
-                            "anonymous_handles": [],
-                            "line": None,
-                        },
-                    ),
-                )
-            if expected_iteration_arities != actual_iteration_arities:
-                return ReplayIngressResult(
-                    "fail",
-                    diagnostics=(
-                        {
-                            "rule_code": "compiled_iteration_carrier_arity",
-                            "path": (
-                                "<synthetic-frontend-compile> scf.for "
-                                f"block-arguments: expected="
-                                f"{list(expected_iteration_arities)}, actual="
-                                f"{list(actual_iteration_arities)}"
-                            ),
-                            "anonymous_handles": [],
-                            "line": None,
-                        },
-                    ),
-                )
-        for operation in (
-            "tt.load",
-            "tt.load.masked",
-            "tt.store",
-            "tt.store.masked",
-        ):
-            expected = expected_transfers.get(operation, 0)
-            actual = actual_ops.get(operation, 0)
-            if expected == actual:
-                continue
-            return ReplayIngressResult(
-                "fail",
-                diagnostics=(
-                    {
-                        "rule_code": "compiled_transfer_direct_count",
-                        "path": (
-                            "<synthetic-frontend-compile> "
-                            f"{operation}: expected={expected}, actual={actual}"
-                        ),
-                        "anonymous_handles": list(transfer_refs[:32]),
-                        "line": None,
-                    },
-                ),
+                diagnostics=obligation_diagnostics,
             )
     return ReplayIngressResult(
         "pass",
@@ -2117,10 +2991,8 @@ def _context_receipt(raw: Mapping[str, Any], context: Mapping[str, Any]) -> dict
                         "id": item.get("id") if isinstance(item.get("id"), str) else "",
                     }
                 )
-    receipt = build_public_frontend_context_receipt(context)
     return {
         "replay_input_protocol": str(context.get("protocol", "")),
-        **receipt,
         "retrieval_trace": trace,
     }
 
@@ -2231,30 +3103,23 @@ CompileCase/grid, Gate diff/TTIR, previous Replay, sibling trajectory, or
 network is available. Generate the entire source yourself. Fixed code only
 checks and rejects; it never generates, patches, or certifies source.
 
-The startup message embeds the complete exact packet once whenever it is within
-the fixed byte bound. Consume that packet directly and write Replay without a
-mandatory overview/requirements/query sequence. An oversized packet instead
-receives one exact manifest containing the authored-requirements checklist and
-explicit continuation paths; use `section PATH`, `obligation HANDLE`, or
-`find HANDLE` only for a named omitted fact. These views expose only authored
-packet facts and never add an edge or lowering decision.
+The startup message gives only local paths. Read `packet.json` with ordinary
+coding-agent file tools and inspect only the sections needed for the current
+construction step. The complete exact packet remains available throughout the
+fresh episode; no host summary, planner, or hidden lowering decision replaces it.
 
 After writing a complete first source, use `intentir_replay_inspect` only when a
 focused own-source inventory would resolve uncertainty. The tool reports only
 your syntax and never declares a semantic mismatch or recommends a repair.
 
-When the startup critical ledger contains lexical regions, cross-region order,
-or route extent transforms,
-run `intentir_replay_obligation_audit /output/replay.source` on the complete current
-bytes before the construction compile. It only colocates the exact authored ledger
-with numbered lines from your own source. Compare them yourself; the tool maps no
-instance, diagnoses no mismatch, and prescribes no edit. Any later byte change
-requires another audit. After mandatory ReplayCheck, run
+After writing a meaningful complete source, run
+`intentir_replay_check /output/replay.source`, then
 `intentir_replay_compile_check /output/replay.source` for a construction compile
 against one public synthetic profile: every pointer has one element,
 dtype-declared scalar and constexpr representatives are bool=true, integer=16,
 float=1.0, and the grid is (1,1,1). C values are never read; constexpr C slots
-use the same public type representatives. This probe must pass before the exact
+use the same public type representatives. Compiler C slots are external compiler
+invocation options, never callable parameters or kernel-body values. This probe must pass before the exact
 Replay bytes leave the authoring episode, but it is not a semantic membership
 oracle and has no Gate or certification authority. Formal Gate1 recompiles the
 exact submitted bytes at c0.
@@ -2339,12 +3204,7 @@ eviction-policy spelling; the observer erases that spelling but not the event.
 """
     tool = """# Replay tool contract
 
-Write exactly `/output/replay.source`. You may run the bounded, diagnostic-only
-`intentir_replay_inspect /output/replay.source overview`, `statements START COUNT`,
-or `find NAME` views over your own current bytes; none enters submission or Gate
-authority. Run
-`intentir_replay_obligation_audit /output/replay.source` when lexical/cross-region
-critical facts exist, then
+Write exactly `/output/replay.source`. Run
 `intentir_replay_check /output/replay.source` for diagnostic ingress, then
 `intentir_replay_compile_check /output/replay.source` for the public synthetic
 construction-compile profile. Calls are audited telemetry and governed by the
@@ -2363,10 +3223,12 @@ independently reruns the same
 compiler-free ingress callable after submission, and formal Gate1 compiles c0.
 
 In the isolated Codex workspace, invoke the equivalent closed callbacks as
-`python .agents/intentir_agent_tool.py replay_realization_view`, `replay_check`,
-or `replay_compile_check`; these callbacks take no path argument and never expose
-Source, Harness values, or Gate evidence. Read this file for usage instead of
-probing the fixed client with an unrecognized tool name.
+`python .agents/intentir_agent_tool.py replay_check` or
+`replay_compile_check`. After a successful public synthetic compile,
+`replay_ttir_inspect summary|raw|find|observer` exposes only the current Replay's
+own TTIR/fingerprint for focused debugging. These callbacks take no host path and
+never expose Source, Source TTIR, Harness values, or Gate evidence. Read this file
+for usage instead of probing the fixed client with an unrecognized tool name.
 """
     return (
         {
@@ -2420,9 +3282,6 @@ class ResponsesReplayWriter:
             provider=self.provider,
             effort=self.effort,
         )
-        prompt_digest = hashlib.sha256(
-            (instructions + "\0" + user).encode()
-        ).hexdigest()
         try:
             code, entry_function_name = _extract_replay_code(
                 reply.text,
@@ -2445,12 +3304,6 @@ class ResponsesReplayWriter:
                     else None
                 ),
                 usage=_usage(reply.raw),
-                request_sha256=reply.request_sha256,
-                response_sha256=(
-                    reply.response_sha256
-                    or hashlib.sha256(reply.text.encode()).hexdigest()
-                ),
-                raw_response_sha256=reply.raw_response_sha256,
                 raw_response=reply.raw_response,
                 attempts=reply.attempts,
                 physical_provider_calls=reply.attempts,
@@ -2467,8 +3320,6 @@ class ResponsesReplayWriter:
                 reply.raw.get("id")
                 if isinstance(reply.raw.get("id"), str) else None
             ),
-            packet_digest=replay_packet_digest(packet),
-            prompt_digest=prompt_digest,
             context_receipt=_context_receipt(
                 reply.raw, packet.get("u_f", {})
             ),
@@ -2479,12 +3330,6 @@ class ResponsesReplayWriter:
                 else None
             ),
             entry_function_name=entry_function_name,
-            request_sha256=reply.request_sha256,
-            response_sha256=(
-                reply.response_sha256
-                or hashlib.sha256(reply.text.encode()).hexdigest()
-            ),
-            raw_response_sha256=reply.raw_response_sha256,
             response_text=reply.text,
             raw_response=reply.raw_response,
             attempts=reply.attempts,
@@ -2548,20 +3393,7 @@ class MiniSWEReplayWriter:
             frontend=self.frontend,
             masked=masked,
         )
-        packet_digest = replay_packet_digest(packet)
         function_name = str(packet["u_f"]["replay_function"])
-        prompt_digest = hashlib.sha256(
-            (
-                instructions
-                + "\0"
-                + json.dumps(
-                    packet,
-                    sort_keys=True,
-                    ensure_ascii=False,
-                    allow_nan=False,
-                )
-            ).encode()
-        ).hexdigest()
         try:
             from minisweagent.environments.intentir_replay import (
                 IntentIRReplayWorkspace,
@@ -2569,7 +3401,6 @@ class MiniSWEReplayWriter:
             from minisweagent.run.intentir_replay import (
                 IntentIRReplayRunError,
                 create_intentir_replay_model,
-                intentir_replay_episode_contract_sha256,
                 run_intentir_replay,
                 validated_intentir_replay_config,
             )
@@ -2581,11 +3412,6 @@ class MiniSWEReplayWriter:
         effective_worker_config = validated_intentir_replay_config(
             self.worker_config
         )
-        episode_contract_sha256 = intentir_replay_episode_contract_sha256(
-            files,
-            effective_worker_config,
-        )
-
         # This exact callable is used by every virtual ingress check and once
         # again by the writer after submission. It has no compiler or Source
         # dependency.
@@ -2638,9 +3464,6 @@ class MiniSWEReplayWriter:
                 api_key=provider.api_key,
                 reasoning_effort=effective_effort,
                 timeout_seconds=timeout,
-                prompt_cache_key=(
-                    "intentir-replay-" + packet_digest[:48]
-                ),
             )
             set_cancel_requested = getattr(model, "set_cancel_requested", None)
             if callable(set_cancel_requested):
@@ -2675,13 +3498,6 @@ class MiniSWEReplayWriter:
                 response_id=response_id,
                 response_model=response_model,
                 usage=usage,
-                request_sha256=prompt_digest,
-                response_sha256=(
-                    hashlib.sha256((result.source_text or "").encode()).hexdigest()
-                    if result.source_text is not None
-                    else ""
-                ),
-                raw_response_sha256=hashlib.sha256(raw_trajectory).hexdigest(),
                 raw_response=raw_trajectory,
                 attempts=result.model_calls,
                 physical_provider_calls=result.physical_provider_calls,
@@ -2689,7 +3505,6 @@ class MiniSWEReplayWriter:
                 elapsed_ms=result.elapsed_ms,
                 trajectory=safe_trajectory,
                 backend_protocol=MINISWE_REPLAY_BACKEND,
-                episode_contract_sha256=episode_contract_sha256,
             )
             self._records.append(attempt)
             raise ReplayGenerationError(attempt) from exc
@@ -2713,13 +3528,6 @@ class MiniSWEReplayWriter:
                     if result is not None and result.source_text is not None
                     else ""
                 ),
-                request_sha256=prompt_digest,
-                response_sha256=(
-                    hashlib.sha256(result.source_text.encode()).hexdigest()
-                    if result is not None and result.source_text is not None
-                    else ""
-                ),
-                raw_response_sha256=hashlib.sha256(raw_trajectory).hexdigest(),
                 raw_response=raw_trajectory,
                 attempts=result.model_calls if result is not None else 0,
                 physical_provider_calls=(
@@ -2731,7 +3539,6 @@ class MiniSWEReplayWriter:
                 elapsed_ms=result.elapsed_ms if result is not None else 0.0,
                 trajectory=infrastructure_trajectory,
                 backend_protocol=MINISWE_REPLAY_BACKEND,
-                episode_contract_sha256=episode_contract_sha256,
             )
             self._records.append(attempt)
             raise
@@ -2757,11 +3564,6 @@ class MiniSWEReplayWriter:
                 response_id=response_id,
                 response_model=response_model,
                 usage=usage,
-                request_sha256=prompt_digest,
-                response_sha256=hashlib.sha256(
-                    result.source_text.encode()
-                ).hexdigest(),
-                raw_response_sha256=hashlib.sha256(raw_trajectory).hexdigest(),
                 raw_response=raw_trajectory,
                 attempts=result.model_calls,
                 physical_provider_calls=result.physical_provider_calls,
@@ -2769,7 +3571,6 @@ class MiniSWEReplayWriter:
                 elapsed_ms=result.elapsed_ms,
                 trajectory=safe_trajectory,
                 backend_protocol=MINISWE_REPLAY_BACKEND,
-                episode_contract_sha256=episode_contract_sha256,
             )
             self._records.append(attempt)
             raise ReplayGenerationError(attempt)
@@ -2794,7 +3595,6 @@ class MiniSWEReplayWriter:
                 "physical_provider_calls": result.physical_provider_calls,
                 "transport_retries": result.transport_retries,
                 "termination_status": result.exit_status,
-                "packet_digest": packet_digest,
                 "replay_check": (
                     dict(replay_check)
                     if isinstance(replay_check, Mapping)
@@ -2813,7 +3613,6 @@ class MiniSWEReplayWriter:
                 "formal_ingress_recheck": True,
                 "formal_ingress_protocol": REPLAY_CHECK_PROTOCOL,
                 "source_blind_synthetic_compile_probe": True,
-                "episode_contract_sha256": episode_contract_sha256,
             }
         )
         generation = ReplayGeneration(
@@ -2821,17 +3620,10 @@ class MiniSWEReplayWriter:
             function_name=function_name,
             model=provider.model,
             response_id=response_id,
-            packet_digest=packet_digest,
-            prompt_digest=prompt_digest,
             context_receipt=context_receipt,
             usage=usage,
             response_model=response_model,
             entry_function_name=formal_ingress.entry_function_name,
-            request_sha256=prompt_digest,
-            response_sha256=hashlib.sha256(
-                result.source_text.encode()
-            ).hexdigest(),
-            raw_response_sha256=hashlib.sha256(raw_trajectory).hexdigest(),
             response_text=result.source_text,
             raw_response=raw_trajectory,
             attempts=result.model_calls,
@@ -2840,7 +3632,6 @@ class MiniSWEReplayWriter:
             elapsed_ms=result.elapsed_ms,
             trajectory=safe_trajectory,
             backend_protocol=MINISWE_REPLAY_BACKEND,
-            episode_contract_sha256=episode_contract_sha256,
         )
         self._records.append(generation)
         return generation
@@ -2856,7 +3647,7 @@ class StaticReplayWriter:
     def generate(
         self, artifact: Gate1Artifact, *, masked: bool = False
     ) -> ReplayGeneration:
-        instructions, user = build_rewriter_prompt(
+        _instructions, user = build_rewriter_prompt(
             artifact, frontend=self.frontend, masked=masked
         )
         packet = json.loads(user)
@@ -2875,10 +3666,6 @@ class StaticReplayWriter:
             model=self.model,
             response_id=None,
             entry_function_name=entry_function_name,
-            packet_digest=replay_packet_digest(packet),
-            prompt_digest=hashlib.sha256(
-                (instructions + "\0" + user).encode()
-            ).hexdigest(),
             context_receipt=_context_receipt({}, packet.get("u_f", {})),
             backend_protocol=STATIC_REPLAY_BACKEND,
         )
@@ -2890,5 +3677,6 @@ __all__ = [
     "ReplayAttempt", "ReplayGeneration", "ReplayGenerationError",
     "ReplayIngressResult", "ReplayWriter", "ResponsesReplayWriter",
     "StaticReplayWriter", "build_source_blind_replay_compile_case",
-    "replay_source_ingress", "source_blind_replay_compile_check",
+    "compiled_packet_obligation_diagnostics", "replay_source_ingress",
+    "source_blind_replay_compile_check",
 ]

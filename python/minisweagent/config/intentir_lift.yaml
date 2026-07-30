@@ -69,6 +69,9 @@ agent:
     needs use one `inspect_lift_schema` bundle. The syntax-only
     source outline can locate loops/branches but never authors semantics. Do not
     page the raw schema or repeatedly query unchanged content.
+    For exact compiler facts, query only the needed `source_ttir_outline`,
+    `source_ttir_find`, `source_ttir_def_use`, or `source_observer` view. These are
+    anonymous read-only Source observations; they never author a J/C/pi field.
 
     Submit exactly one complete `/output/candidate.json` and create no other file
     under `/output`. A failed submission returns short closed diagnostics to this

@@ -1405,14 +1405,18 @@ def _bind_shape(
 def build_frontend_dataset_gate2_suite(
     prepared: PreparedFrontendDatasetWorkload,
     artifact: Gate1Artifact,
+    *,
+    seed: int | None = None,
+    case_id: str = "finite-hidden-1",
+    test_mode: str = "finite_hidden_after_gate1",
 ) -> Gate2Suite:
-    """Create the finite native Source/Replay/J case after Gate1 closure."""
+    """Create one finite native Source/Replay/J case from an explicit valuation."""
 
     mapping = dict(prepared.source_to_opaque)
     runtime = {mapping[item.source_name]: item for item in prepared.runtime_parameters}
     j_inputs = {item.name: item for item in artifact.j.intent.inputs}
     j_outputs = {item.name: item for item in artifact.j.intent.outputs}
-    rng = np.random.default_rng(prepared.adapter.seed)
+    rng = np.random.default_rng(prepared.adapter.seed if seed is None else seed)
     values: dict[str, Any] = {}
     dimensions: dict[str, int] = {}
     input_bindings: dict[str, str] = {}
@@ -1541,14 +1545,14 @@ def build_frontend_dataset_gate2_suite(
     )
     output_keys = tuple(output_bindings[item.name] for item in artifact.j.intent.outputs)
     case = Gate2Case(
-        "finite-hidden-1",
+        case_id,
         refeval.j,
         values,
         execution,  # Gate2Case retains the historical field name `triton`.
         refeval,
         output_keys,
         {
-            "test_mode": "finite_hidden_after_gate1",
+            "test_mode": test_mode,
             "adapter_protocol": prepared.adapter.protocol,
             "frontend": prepared.adapter.frontend,
         },

@@ -10,13 +10,6 @@ import tempfile
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping
 
-from minisweagent.config.intentir_context_query import (
-    _candidate_control_value,
-    _feedback_category_value,
-    _harness_abi_value,
-    _source_outline_value,
-)
-
 from intentir.extraction.providers.codex_cli import (
     CODEX_CLI_AGENT_RUNTIME,
     CODEX_CLI_TOOL_BRIDGE_ROOT_NAME,
@@ -30,177 +23,381 @@ from intentir.extraction.providers.provider import ProviderConfig, get_provider
 from intentir.verify.scrc_runner import CandidateLiftError
 
 from .miniswe import MiniSWELiftAdapter, _input_files, _trajectory_bytes
+from .compiler_observation import (
+    SOURCE_TTIR_RECONCILE_PROTOCOL,
+    observe_anonymous_source_ttir,
+    reconcile_candidate_source_ttir,
+)
 from .scrc import (
     CANDIDATE_CHECK_PROTOCOL,
     SCRCExtraction,
     SCRCProvenance,
     SCRCReliftRecord,
+    SourceIdentifierPrivacyError,
     check_scrc_lift_candidate,
     decode_scrc_lift_artifact,
     prepare_scrc_lift,
     scrc_candidate_check_context,
 )
-
-
-CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v12"
-CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v69"
+CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v30"
+CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v89"
 CODEX_CLI_TURN_TIMEOUT_SECONDS = 900.0
 
-_EAGER_DIRECT_FEEDBACK_CATEGORIES = frozenset(
-    {"interface", "reduction", "predicate_effect", "op_multiset"}
+_FEEDBACK_CATEGORY_NAMES = (
+    "interface",
+    "predicate_effect",
+    "op_multiset",
+    "dataflow",
+    "reduction",
 )
 
 _INITIAL_PROMPT = """You are the sole source-aware IntentIR Lift owner for this branch.
-The outer runtime exposes only this isolated workspace. Work only under /workspace:
-input/ is immutable; work/, output/, and tmp/ are writable. Never inspect any
-other path and never use network tools.
+Work only under the isolated /workspace; input/ is immutable and output/, work/,
+and tmp/ are writable. There is no repository or network.
 
-The startup files already contain the exact Source, Harness view, feedback,
-minimal example and focused lookup tools. The final `<source-aware-startup>`
-block directly contains the compact exact Harness ABI ledger; consume it without
-a mandatory tool call. Read Source and only the additional files you need. Author
-every field of one complete output/candidate.json containing exactly J, C, and
-pi. You may keep proof-irrelevant notes or a model-authored build script under
-work/.
+Act like a coding agent, not a staged JSON generator. Start with the one compact
+`source-brief` command in input/README.md, then read input/source.py. The brief is
+only exact Source/Harness/compiler navigation; you decide all meaning. Query an
+exact compiler-observer section, TTIR slice, schema leaf, operation, or contract
+term only when the current draft needs it. Do not dump input/source_ttir.json, the
+whole Schema, the whole operation catalog, or the whole Lift contract into the
+thread.
 
-Treat Harness `shape` as one valuation: map every `shape_contract` h* to a
-distinct/repeated symbolic J dimension as declared, preserve scalar and bound
-constexpr shape-coordinate equality in authored J, and keep integer contract axes
-literal. Trace predicated loads to every sum/max/min consumer and author each
-required per-consumer outside-domain relation; fills are not a substitute.
-Logical domains never erase compiler-visible Source runtime conditions. Preserve
-a semantic scalar-i1 effect guard as typed control, or preserve an exact
-coordinate/access-validity condition on every governed boundary access. Only a
-proved pure lane-padding mask with no distinct Source branch event may disappear;
-grid, C, Harness values and the current valuation are not proofs.
-Before CandidateCheck, reconcile every loop, if, and return in the syntax-only
-Source control-flow outline with the complete candidate. Decide from Source and
-the selected specialization whether each item belongs to logical J control,
-pi-owned physical time/control, C-owned compile-time choice, or has no
-compiler-visible event. Do not treat a loop region, a large route set, or syntax
-alone as evidence that the corresponding control/time obligation was authored;
-and do not invent an obligation merely because it appears in the outline. Treat
-each `lexically_preexisting_writes` row only as a checklist: inspect the Source
-and decide every real loop carrier yourself, then author the complete carrier
-set and frontend tuple order. For each selected reachable helper, preserve the
-literal Source statement order of writes in J scope.effects and pi transfer/order
-topology; J node declaration order is not a substitute for effect order.
-After the first meaningful complete edit run:
+You alone author the complete output/candidate.json. J owns all logical semantics;
+C owns only implementation choices; pi owns only source-realization relations for
+the authored J+C. Fixed code must not choose or fill any field, handle, relation,
+operation, shape, or topology. Preserve anonymous ABI order, parametric shape
+identities, control/time, effects, and realization structure visible in Source and
+the selected anonymous specialization. Use dense declaration-ordered opaque
+handles and never copy Source identifiers into the artifact.
 
-python .agents/intentir_agent_tool.py candidate_check
-
-Use `lift_candidate_control overview|outputs|boundary|pi` only when a focused
-self-read of your current candidate would resolve a named uncertainty; it is not
-a mandatory pre-check phase. These tools only project exact Harness facts or
-your current authored candidate; they never infer or edit J/C/pi.
-
-This invokes the same diagnostic-only CandidateCheck used by the host over your
-exact current bytes. It never edits or generates a field. Repair the current
-complete file yourself until it reports PASS, then end this Codex turn. The host
-independently reruns CandidateCheck after the turn and may resume this same
-thread with closed diagnostics. Do not claim TypeCheck, Replay, Gate1, Gate2, or
-certification. Do not create any other file under output/.
+Write a meaningful complete output/candidate.json early, then inspect and patch
+that persistent file in place; do not postpone all authoring until after exhaustive
+reading. Organize scratch under work/ however useful. The final J/C/pi and every
+semantic field remain entirely your work. Run
+`python .agents/intentir_agent_tool.py submit_candidate` after a meaningful complete
+draft. This transaction first runs the source-free CandidateCheck and then the
+reject-only SourceReconcile on the same exact bytes. Repair the returned diagnostics
+and invoke it again. The host then runs the public Source-vs-J semantic probe on
+those exact passing bytes and returns a same-thread diagnostic if they diverge.
+That probe never certifies or edits the candidate: repair only when the evidence
+shows your J is wrong, rerun submit_candidate, and leave small floating deltas or
+unsupported execution as diagnostics. The host independently reruns Decode and
+TypeCheck, then starts fresh source-blind Replay and the formal gates. Do not claim
+certification.
 """
+
+
+def _observer_diff_from_diagnostics(
+    diagnostics: Mapping[str, Any] | None,
+) -> Mapping[str, Any] | None:
+    if not isinstance(diagnostics, Mapping):
+        return None
+    observer = diagnostics.get("observer_diff")
+    if isinstance(observer, Mapping):
+        return observer
+    unresolved = diagnostics.get("unresolved_gate1")
+    nested = (
+        unresolved.get("diagnostics")
+        if isinstance(unresolved, Mapping)
+        else None
+    )
+    observer = nested.get("observer_diff") if isinstance(nested, Mapping) else None
+    return observer if isinstance(observer, Mapping) else None
+
+
+def _replay_counterexample_from_diagnostics(
+    diagnostics: Mapping[str, Any] | None,
+) -> Mapping[str, Any] | None:
+    """Find the exact prior Replay evidence through retained Gate1 wrappers."""
+
+    if not isinstance(diagnostics, Mapping):
+        return None
+    evidence = diagnostics.get("replay_counterexample")
+    if isinstance(evidence, Mapping):
+        return evidence
+    unresolved = diagnostics.get("unresolved_gate1")
+    nested = (
+        unresolved.get("diagnostics")
+        if isinstance(unresolved, Mapping)
+        else None
+    )
+    evidence = (
+        nested.get("replay_counterexample")
+        if isinstance(nested, Mapping)
+        else None
+    )
+    return evidence if isinstance(evidence, Mapping) else None
+
+
+def _codex_feedback_files(feedback_text: str) -> dict[str, str]:
+    """Partition exact closed feedback without exposing one bulk relift object.
+
+    Category names already belong to the Gate1 diagnostic protocol.  This only
+    separates bytes by that existing label and removes the duplicate previous
+    artifact, which the persistent owner already has in output/candidate.json.
+    """
+
+    feedback = json.loads(feedback_text)
+    categories: dict[str, Any] = {}
+    replay_counterexample: Mapping[str, Any] | None = None
+    if isinstance(feedback, Mapping):
+        diagnostics = (
+            feedback.get("diagnostics")
+            if isinstance(feedback.get("diagnostics"), Mapping)
+            else None
+        )
+        replay_counterexample = _replay_counterexample_from_diagnostics(
+            diagnostics
+        )
+        observer = _observer_diff_from_diagnostics(
+            diagnostics
+        )
+        raw_categories = observer.get("categories") if isinstance(observer, Mapping) else None
+        if isinstance(raw_categories, list):
+            for category in raw_categories:
+                if not isinstance(category, Mapping):
+                    continue
+                name = category.get("category")
+                if isinstance(name, str) and name in _FEEDBACK_CATEGORY_NAMES:
+                    categories[name] = dict(category)
+
+    detail: Any = None
+    if isinstance(feedback, Mapping):
+        detail = {
+            str(key): value
+            for key, value in feedback.items()
+            if key not in {"previous_artifact", "diagnostics"}
+        }
+        diagnostics = feedback.get("diagnostics")
+        if isinstance(diagnostics, Mapping):
+            pruned = {
+                str(key): value
+                for key, value in diagnostics.items()
+                if key not in {
+                    "observer_diff",
+                    "replay_counterexample",
+                    "unresolved_gate1",
+                }
+            }
+            unresolved = diagnostics.get("unresolved_gate1")
+            if isinstance(unresolved, Mapping):
+                unresolved_copy = dict(unresolved)
+                nested = unresolved_copy.get("diagnostics")
+                if isinstance(nested, Mapping):
+                    unresolved_copy["diagnostics"] = {
+                        str(key): value
+                        for key, value in nested.items()
+                        if key not in {
+                            "observer_diff",
+                            "replay_counterexample",
+                        }
+                    }
+                pruned["unresolved_gate1"] = unresolved_copy
+            if pruned:
+                detail["diagnostics"] = pruned
+
+    replay_source = (
+        replay_counterexample.get("replay_source")
+        if isinstance(replay_counterexample, Mapping)
+        else None
+    )
+    replay_ttir = (
+        replay_counterexample.get("replay_ttir")
+        if isinstance(replay_counterexample, Mapping)
+        else None
+    )
+    replay_metadata = (
+        {
+            str(key): value
+            for key, value in replay_counterexample.items()
+            if key not in {"replay_source", "replay_ttir"}
+        }
+        if isinstance(replay_counterexample, Mapping)
+        else None
+    )
+    values: dict[str, Any] = {
+        "feedback_detail.json": detail,
+        "feedback_replay.json": replay_metadata,
+    }
+    values.update(
+        {
+            f"feedback_category_{name}.json": categories.get(name)
+            for name in _FEEDBACK_CATEGORY_NAMES
+        }
+    )
+    rendered = {
+        name: json.dumps(
+            value,
+            sort_keys=True,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+        )
+        + "\n"
+        for name, value in values.items()
+    }
+    rendered["feedback_replay.py"] = (
+        replay_source.rstrip() + "\n"
+        if isinstance(replay_source, str) and replay_source
+        else "# No formal Replay source is available before a Gate1 counterexample.\n"
+    )
+    rendered["feedback_replay.ttir"] = (
+        replay_ttir.rstrip() + "\n"
+        if isinstance(replay_ttir, str) and replay_ttir
+        else "// No formal Replay TTIR is available before a Gate1 counterexample.\n"
+    )
+    return rendered
+
+
+
+def _codex_input_files(
+    request: Any,
+    *,
+    source_ttir_observation: Mapping[str, Any] | None,
+) -> dict[str, str]:
+    """Build a small ordinary coding workspace for the source-aware owner."""
+
+    complete = _input_files(
+        request,
+        source_ttir_observation=source_ttir_observation,
+    )
+    compiler_observer_note = (
+        "For an exact compiler fact, use the same tool with "
+        "`source-observer --path fingerprint.NAME`, `source-ttir-outline`, "
+        "`source-ttir-find`, or `source-ttir-def-use`. "
+        if source_ttir_observation is not None
+        else "This frontend has no TTIR compiler-observation channel; read the "
+        "anonymous Source and harness view directly, and rely on the public "
+        "frontend semantic probe after CandidateCheck. "
+    )
+    files = {
+        "source.py": complete["source.py"],
+        "harness_view.json": complete["harness_view.json"],
+        "feedback_frontier.json": complete["feedback_frontier.json"],
+        "README.md": (
+            "# IntentIR Lift workspace\n\n"
+            "J owns logical semantics, C only implementation choices, and pi only "
+            "anonymous Source realization of the authored J+C. You author every "
+            "semantic field; fixed code only projects evidence, checks, and rejects.\n\n"
+            "Start once with:\n"
+            "`python input/tools/context_query.py --input-root input --output-root output source-brief`\n\n"
+            "Then read `input/source.py`. "
+            + compiler_observer_note
+            + "For wire syntax, query only "
+            "the needed leaves, for example:\n"
+            "`python input/tools/schema_query.py authoring-brief`\n"
+            "Then request only the exact `section NAME` or `op NAME` needed by the draft.\n\n"
+            "Search one exact term in `input/knowledge/lift_contract.md` only when its "
+            "ownership is unclear. Write `output/candidate.json` early and patch it in "
+            "place. Run `python .agents/intentir_agent_tool.py submit_candidate`; the "
+            "host supplies the public semantic probe after a mechanically passing draft.\n"
+        ),
+        "schema/artifact.schema.json": complete["schema/artifact.schema.json"],
+        "knowledge/lift_contract.md": complete["knowledge/lift_contract.md"],
+        "knowledge/intent_ops.md": complete["knowledge/intent_ops.md"],
+        "knowledge/preflight.md": complete["knowledge/preflight.md"],
+        "tools/context_query.py": complete["tools/context_query.py"],
+        "tools/schema_query.py": complete["tools/schema_query.py"],
+        "candidate_check.json": "null\n",
+        "source_reconcile.json": "null\n",
+        "semantic_probe.json": "null\n",
+    }
+    files.update(_codex_feedback_files(complete["feedback.json"]))
+    replay_source = complete.get("gate1_counterexample/replay.py", "")
+    replay_ttir = complete.get("gate1_counterexample/replay.ttir", "")
+    files["feedback_replay.py"] = (
+        replay_source.rstrip() + "\n"
+        if replay_source
+        else "# No formal Replay source is available before a Gate1 counterexample.\n"
+    )
+    files["feedback_replay.ttir"] = (
+        replay_ttir.rstrip() + "\n"
+        if replay_ttir
+        else "// No formal Replay TTIR is available before a Gate1 counterexample.\n"
+    )
+    if "source_ttir.json" in complete:
+        files["source_ttir.json"] = complete["source_ttir.json"]
+    return files
 
 _EXTERNAL_CONTINUATION_PROMPT = """The same branch-local source-aware Lift task continues in the same workspace and thread.
-The final `<source-aware-startup>` block contains the exact bounded feedback
-frontier and eagerly expands every available direct interface, reduction,
-predicate/effect, and op-multiset category. Inspect the current
-output/candidate.json and resolve those direct categories together before paging
-recursive dataflow witnesses. A compiler-visible representation-only operation
-in op-multiset feedback is a reason to recheck the existing pi representation
-refinement grammar and Source realization, not permission for fixed code to add
-a field or for you to copy a non-semantic compiler operation into J. Use
-`lift_feedback_category CATEGORY` only for one named omitted category. Use
-the Source control-flow outline again when the frontier names a loop, branch,
-terminal, or carrier difference; reconcile the complete J/C/pi ownership rather
-than only adding routes around the existing flat graph. When an effect-order or
-terminal-fork witness appears, reread the selected reachable helper bodies and
-compare their literal memory-call sequence with each branch scope.effects and pi
-transfer/order edges; do not infer effect order from J node declaration order. Use
-the bounded exact category/path query only when the frontier names an unresolved
-section. Repair the complete model-authored (J,C,pi) against the closed external
-feedback and Source, run `python .agents/intentir_agent_tool.py candidate_check`,
-and end only after it
-passes for the complete current output/candidate.json. This is not a new writer
-and not a patch-only artifact. The host alone will rerun CandidateCheck and the
-formal SCRC gates.
+Read input/feedback_frontier.json first. Open only a named
+input/feedback_category_NAME.json when its bounded frontier is insufficient; that
+file contains the exact differences for the named category.
+input/feedback_detail.json contains exact non-observer diagnostics. The previous
+artifact already exists at output/candidate.json and is never duplicated in input.
+After a formal Gate1 failure, input/feedback_replay.py and
+input/feedback_replay.ttir contain the exact preceding source-blind Replay output;
+use them only as read-only counterexample evidence.
+Your own prior formal candidates are immutable under work/candidate_history/;
+consult or restore them when a repair regresses, but decide every edit yourself.
+Use the compact source query only where the named feedback needs exact Source or
+compiler evidence, then revise the complete model-authored J/C/pi in place. If a
+named relation's ownership is unclear, search only that name in
+input/knowledge/lift_contract.md. Treat feedback as a compiler counterexample, not
+as a semantic patch. Run `python .agents/intentir_agent_tool.py submit_candidate`;
+the host automatically probes the exact passing J and returns any public divergence
+to this same thread. The host alone runs formal gates.
 """
 
-_CANDIDATE_CHECK_CONTINUATION_PROMPT = """The host CandidateCheck rejected the current exact candidate bytes.
-Read input/candidate_check.json, then repair output/candidate.json yourself in
-this same thread. Make coordinated J/C/pi changes when required; do not merely
-silence the first path. Rerun `python .agents/intentir_agent_tool.py candidate_check`
-and end only after the
-complete candidate passes. CandidateCheck is
-diagnostic-only and has no certification authority.
+_CANDIDATE_CHECK_CONTINUATION_PROMPT = """The host submission preflight rejected the current exact candidate bytes.
+Read input/candidate_check.json and repair output/candidate.json in this same
+thread. Make coordinated J/C/pi changes when required. Rerun
+`python .agents/intentir_agent_tool.py submit_candidate` and finish immediately
+after the complete candidate passes. Search a rejected relation's exact field name
+in input/knowledge/lift_contract.md when its ownership is unclear. The transaction is diagnostic-only.
+"""
+
+_SOURCE_RECONCILE_CONTINUATION_PROMPT = """The source-aware occurrence preflight rejected the current exact candidate bytes.
+Read input/source_reconcile.json and revise only the model-authored J/C/pi facts whose
+closed compiled obligations disagree with the immutable Source TTIR observation.
+This diagnostic supplies no artifact field or repair. Rerun
+`python .agents/intentir_agent_tool.py submit_candidate` and finish immediately
+after it passes. Formal TypeCheck, Replay, and Gate1 remain external.
+"""
+
+_SEMANTIC_PROBE_CONTINUATION_PROMPT = """The current exact candidate passed CandidateCheck and SourceReconcile, and the host ran the public Source-vs-J semantic probe.
+Read input/semantic_probe.json in this same thread. It is diagnostic-only and does
+not accept, reject, certify, or edit J. If the observed divergence exposes an error
+in your authored J, patch output/candidate.json and rerun submit_candidate. If the
+probe is unsupported or the remaining delta is only an expected floating reduction
+difference, leave the candidate unchanged and finish. Do not claim Gate membership.
 """
 
 
 def _source_aware_startup_context(workspace: Any, *, fresh_owner: bool) -> dict[str, Any]:
-    """Return exact existing ABI or closed-feedback facts without a tool round."""
+    """Return a path-only receipt; exact task state stays in ordinary files."""
 
-    if fresh_owner:
-        return {
-            "protocol": "intentir.codex-lift-startup-view.v1",
-            "fresh_owner": True,
-            "harness_abi": _harness_abi_value(workspace.input_dir, 1, 80),
-            "source_outline": _source_outline_value(workspace.input_dir, 1, 32),
-            "authority": (
-                "exact Harness-owned projection only; no logical_ref, J/C/pi "
-                "field, semantic classification, or repair is generated"
-            ),
-        }
-
-    frontier = json.loads(
-        (workspace.input_dir / "feedback_frontier.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    primary: str | None = None
-    if isinstance(frontier, Mapping):
-        candidate = frontier.get("primary_difference_category")
-        if isinstance(candidate, str):
-            primary = candidate
-        elif isinstance(frontier.get("categories"), list):
-            for item in frontier["categories"]:
-                if isinstance(item, Mapping) and isinstance(
-                    item.get("category"), str
-                ):
-                    primary = str(item["category"])
-                    break
-    direct_category_views: dict[str, Any] = {}
-    deferred_categories: list[str] = []
-    categories = frontier.get("categories") if isinstance(frontier, Mapping) else None
-    if isinstance(categories, list):
-        for item in categories:
-            if not isinstance(item, Mapping) or not isinstance(
-                item.get("category"), str
-            ):
-                continue
-            name = str(item["category"])
-            if name not in _EAGER_DIRECT_FEEDBACK_CATEGORIES:
-                deferred_categories.append(name)
-                continue
-            try:
-                direct_category_views[name] = _feedback_category_value(
-                    workspace.input_dir, name
-                )
-            except (KeyError, TypeError, ValueError):
-                # The bounded frontier remains authoritative and visible even if
-                # an older feedback envelope cannot serve the focused view.
-                continue
     return {
-        "protocol": "intentir.codex-lift-continuation-view.v2",
-        "fresh_owner": False,
-        "feedback_frontier": frontier,
-        "primary_category": primary,
-        "direct_category_views": direct_category_views,
-        "deferred_categories": deferred_categories,
-        "candidate_path": "/output/candidate.json",
+        "protocol": "intentir.codex-lift-startup-view.v2",
+        "fresh_owner": fresh_owner,
+        "paths": {
+            "source": "input/source.py",
+            "harness": "input/harness_view.json",
+            "source_observer": "input/source_ttir.json",
+            "source_query": "input/tools/context_query.py",
+            "schema_query": "input/tools/schema_query.py",
+            "artifact_schema": "input/schema/artifact.schema.json",
+            "intent_ops": "input/knowledge/intent_ops.md",
+            "lift_contract": "input/knowledge/lift_contract.md",
+            "feedback_frontier": "input/feedback_frontier.json",
+            "feedback_detail": "input/feedback_detail.json",
+            "feedback_replay_source": "input/feedback_replay.py",
+            "feedback_replay_ttir": "input/feedback_replay.ttir",
+            "feedback_replay_metadata": "input/feedback_replay.json",
+            "feedback_categories": [
+                f"input/feedback_category_{name}.json"
+                for name in _FEEDBACK_CATEGORY_NAMES
+            ],
+            "candidate_check": "input/candidate_check.json",
+            "source_reconcile": "input/source_reconcile.json",
+            "semantic_probe": "input/semantic_probe.json",
+            "candidate": "output/candidate.json",
+            "candidate_history": "work/candidate_history/",
+        },
         "authority": (
-            "exact bounded closed-feedback projection only; no semantic "
-            "inference, artifact field, or repair is generated"
+            "path manifest only; exact bytes remain in files and no artifact "
+            "field, semantic classification, or repair is generated"
         ),
     }
 
@@ -255,13 +452,25 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
         repr=False,
     )
     repair_effort: str | None = None
+    semantic_probe: Callable[[Any], Mapping[str, Any]] | None = field(
+        default=None,
+        repr=False,
+    )
     _codex_session: Any = field(default=None, init=False, repr=False)
+    _source_ttir_observation: dict[str, Any] | None = field(
+        default=None, init=False, repr=False
+    )
+    _source_observation_initialized: bool = field(
+        default=False, init=False, repr=False
+    )
 
     def close(self) -> None:
         session = self._codex_session
         self._codex_session = None
         if session is not None:
             session.close()
+        self._source_ttir_observation = None
+        self._source_observation_initialized = False
         super().close()
 
     def _remaining_seconds(self) -> float:
@@ -316,6 +525,45 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
             ],
         }
 
+    @staticmethod
+    def _archive_formal_candidate(workspace: Any, feedback: Any) -> None:
+        """Preserve this owner's exact formal candidates without selecting one."""
+
+        formal_round = getattr(feedback, "formal_round", None)
+        artifact = getattr(feedback, "previous_artifact", None)
+        kind = getattr(getattr(feedback, "kind", None), "value", None)
+        if (
+            kind != "gate1"
+            or not isinstance(formal_round, int)
+            or isinstance(formal_round, bool)
+            or formal_round < 1
+            or artifact is None
+        ):
+            return
+        payload = getattr(artifact, "to_json", None)
+        if not callable(payload):
+            return
+        encoded = (
+            json.dumps(
+                payload(),
+                indent=2,
+                sort_keys=True,
+                ensure_ascii=False,
+                allow_nan=False,
+            )
+            + "\n"
+        )
+        history_dir = workspace.scratch_dir / "candidate_history"
+        history_dir.mkdir(parents=True, exist_ok=True)
+        destination = history_dir / f"gate1_round_{formal_round:03d}.json"
+        if destination.exists():
+            if destination.read_text(encoding="utf-8") != encoded:
+                raise ValueError(
+                    "branch-local formal candidate history changed for one round"
+                )
+            return
+        _atomic_write_text(destination, encoded)
+
     def lift(self, request: Any, feedback: Any) -> Any:
         if self.workflow != "single":
             raise ValueError("Codex CLI Lift supports only the single-owner workflow")
@@ -340,19 +588,37 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
         )
         candidate_check_context = scrc_candidate_check_context(prepared)
         round_index = len(self._records) + 1
-        files = {
-            **_input_files(prepared),
-            "candidate_check.json": "null\n",
-        }
-
+        if not self._source_observation_initialized:
+            self._source_observation_initialized = True
+            if str(self.frontend).casefold() == "triton":
+                prepared_packet = json.loads(prepared.user_input)
+                anonymous_source = prepared_packet.get("anonymous_source")
+                anonymous_view = prepared_packet.get("harness_compiler_view")
+                self._source_ttir_observation = observe_anonymous_source_ttir(
+                    anonymous_source,
+                    anonymous_view,
+                )
+        files = _codex_input_files(
+            prepared,
+            source_ttir_observation=self._source_ttir_observation,
+        )
         try:
             fresh_workspace = self._create_or_refresh_session_workspace(
                 files,
                 mutable_paths=frozenset(
                     {
-                        "feedback.json",
                         "feedback_frontier.json",
+                        "feedback_detail.json",
+                        "feedback_replay.py",
+                        "feedback_replay.ttir",
+                        "feedback_replay.json",
+                        *{
+                            f"feedback_category_{name}.json"
+                            for name in _FEEDBACK_CATEGORY_NAMES
+                        },
                         "candidate_check.json",
+                        "source_reconcile.json",
+                        "semantic_probe.json",
                     }
                 ),
             )
@@ -364,9 +630,16 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                 evidence={"backend": CODEX_CLI_LIFT_BACKEND},
             ) from exc
         workspace = self._session_workspace
+        if workspace is None:
+            raise RuntimeError("Codex Lift workspace was not created")
+        self._archive_formal_candidate(workspace, feedback)
         fresh_owner = self._codex_session is None
         call_turns: list[CodexCLITurn] = []
         check_results: list[dict[str, Any]] = []
+        source_reconcile_results: list[dict[str, Any]] = []
+        semantic_probe_results: list[dict[str, Any]] = []
+        semantic_probe_by_candidate: dict[str, dict[str, Any]] = {}
+        semantic_probe_feedback_delivered: set[str] = set()
         timeout_events: list[dict[str, Any]] = []
         candidate_text: str | None = None
         last_checked_good: str | None = None
@@ -374,7 +647,7 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
         timed_out_elapsed_ms = 0.0
 
         def check_current_candidate(*, trigger: str) -> dict[str, Any]:
-            nonlocal candidate_text, last_checked_good
+            nonlocal candidate_text
             try:
                 candidate_text = workspace.read_candidate()
             except Exception as exc:
@@ -387,6 +660,28 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                     candidate_text,
                     candidate_check_context,
                 )
+                if check["status"] == "pass":
+                    try:
+                        # CandidateCheck intentionally remains source-free.  The
+                        # adjacent submission boundary additionally enforces
+                        # anonymity before a passing draft may leave this owner.
+                        decode_scrc_lift_artifact(candidate_text, prepared)
+                    except SourceIdentifierPrivacyError as exc:
+                        check = {
+                            "protocol": CANDIDATE_CHECK_PROTOCOL,
+                            "status": "fail",
+                            "diagnostics": [
+                                {
+                                    "rule_code": "source_identifier_privacy",
+                                    "path": exc.path,
+                                    "observed_refs_or_types": [
+                                        "replace this free-form Source spelling "
+                                        "with the correct anonymous handle or a "
+                                        "source-neutral closed protocol value"
+                                    ],
+                                }
+                            ],
+                        }
             check_results.append(
                 {
                     "trigger": trigger,
@@ -401,120 +696,183 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                     ),
                 }
             )
-            if (
-                trigger == "agent_tool"
-                and check["status"] == "pass"
-                and candidate_text is not None
-            ):
-                # Exact LLM-authored bytes only.  This is a transactional
-                # checkpoint for this one Lift invocation, never a previous
-                # formal-round parent and never a synthesized artifact.
-                last_checked_good = candidate_text
             return check
 
-        def candidate_check_tool() -> Mapping[str, Any]:
-            return check_current_candidate(trigger="agent_tool")
-
-        def harness_abi_tool(arguments: tuple[str, ...]) -> Mapping[str, Any]:
-            try:
-                if len(arguments) > 2:
-                    raise ValueError("lift_harness_abi accepts [START [COUNT]]")
-                start = int(arguments[0]) if arguments else 1
-                count = int(arguments[1]) if len(arguments) >= 2 else 24
-                view = _harness_abi_value(workspace.input_dir, start, count)
-                if view.get("parameter_next_command") is not None:
-                    next_start = start + len(view["parameters"])
-                    view["parameter_next_command"] = (
-                        "python .agents/intentir_agent_tool.py "
-                        f"lift_harness_abi {next_start} {count}"
+        def reconcile_current_candidate(
+            *, trigger: str, checkpoint_allowed: bool = True
+        ) -> dict[str, Any]:
+            nonlocal candidate_text, last_checked_good
+            if candidate_text is None:
+                try:
+                    candidate_text = workspace.read_candidate()
+                except Exception as exc:
+                    result = {
+                        "protocol": SOURCE_TTIR_RECONCILE_PROTOCOL,
+                        "status": "fail",
+                        "applicable": False,
+                        "diagnostics": [
+                            {
+                                "rule_code": "candidate_unavailable",
+                                "path": "<candidate>",
+                                "anonymous_handles": [],
+                                "observed_refs_or_types": [type(exc).__name__],
+                                "line": None,
+                            }
+                        ],
+                    }
+                else:
+                    result = reconcile_candidate_source_ttir(
+                        candidate_text,
+                        self._source_ttir_observation,
                     )
-            except (TypeError, ValueError) as exc:
-                return {
-                    "protocol": "intentir.lift-harness-abi-view.v1",
-                    "status": "fail",
-                    "diagnostic": str(exc),
-                }
-            return {"status": "pass", **view}
-
-        def candidate_control_tool(
-            arguments: tuple[str, ...],
-        ) -> Mapping[str, Any]:
-            try:
-                if len(arguments) > 3:
-                    raise ValueError(
-                        "lift_candidate_control accepts SECTION [START [COUNT]]"
-                    )
-                section = arguments[0] if arguments else "overview"
-                if section not in {"overview", "outputs", "boundary", "pi"}:
-                    raise ValueError(
-                        "SECTION must be overview, outputs, boundary, or pi"
-                    )
-                start = int(arguments[1]) if len(arguments) >= 2 else 1
-                count = int(arguments[2]) if len(arguments) >= 3 else 20
-                view = _candidate_control_value(
-                    workspace.output_dir, section, start, count
+            else:
+                result = reconcile_candidate_source_ttir(
+                    candidate_text,
+                    self._source_ttir_observation,
                 )
-                if section == "overview" and view.get("candidate_found"):
-                    view["next_queries"] = [
-                        "python .agents/intentir_agent_tool.py "
-                        f"lift_candidate_control {name} 1 20"
-                        for name in ("outputs", "boundary", "pi")
-                    ]
-                elif view.get("next_command") is not None:
-                    next_start = start + int(view.get("returned", 0))
-                    view["next_command"] = (
-                        "python .agents/intentir_agent_tool.py "
-                        f"lift_candidate_control {section} {next_start} {count}"
-                    )
-            except (TypeError, ValueError) as exc:
-                return {
-                    "protocol": "intentir.lift-candidate-control-view.v1",
-                    "status": "fail",
-                    "diagnostic": str(exc),
+            source_reconcile_results.append(
+                {
+                    "trigger": trigger,
+                    "status": result["status"],
+                    "applicable": result.get("applicable"),
+                    "diagnostics": [
+                        dict(item) for item in result.get("diagnostics", [])
+                    ],
+                    "candidate_sha256": (
+                        hashlib.sha256(candidate_text.encode()).hexdigest()
+                        if candidate_text is not None
+                        else None
+                    ),
                 }
-            return {"status": "pass", **view}
+            )
+            if (
+                checkpoint_allowed
+                and result["status"] == "pass"
+                and candidate_text is not None
+            ):
+                # Exact LLM-authored bytes only.  This checkpoint has passed both
+                # source-free CandidateCheck (enforced by callers) and the
+                # source-aware reject-only occurrence preflight.
+                last_checked_good = candidate_text
+            return result
 
-        def feedback_category_tool(
-            arguments: tuple[str, ...],
-        ) -> Mapping[str, Any]:
-            try:
-                if len(arguments) != 1:
-                    raise ValueError("lift_feedback_category accepts exactly CATEGORY")
-                view = _feedback_category_value(workspace.input_dir, arguments[0])
-            except (KeyError, TypeError, ValueError) as exc:
-                return {
-                    "protocol": "intentir.lift-feedback-category-view.v1",
-                    "status": "fail",
-                    "diagnostic": str(exc),
-                }
+        def submit_candidate_tool() -> Mapping[str, Any]:
+            """Run both reject-only preflights as one exact-byte transaction.
+
+            CandidateCheck and SourceReconcile retain separate authority and
+            diagnostics.  This wrapper only removes the model-facing sequencing
+            overhead; the host still reruns both checks after the CLI turn.
+            """
+
+            candidate_check = check_current_candidate(trigger="submit_candidate")
+            source_reconcile = reconcile_current_candidate(
+                trigger="submit_candidate",
+                checkpoint_allowed=candidate_check["status"] == "pass",
+            )
+            passed = (
+                candidate_check["status"] == "pass"
+                and source_reconcile["status"] == "pass"
+            )
             return {
-                "protocol": "intentir.lift-feedback-category-view.v1",
-                "status": "pass",
-                "category": view,
+                "protocol": "intentir.codex-cli.lift-submit.v1",
+                "status": "pass" if passed else "fail",
+                "phase": (
+                    "complete"
+                    if passed
+                    else (
+                        "candidate_check"
+                        if candidate_check["status"] != "pass"
+                        else "source_reconcile"
+                    )
+                ),
+                "candidate_check": candidate_check,
+                "source_reconcile": source_reconcile,
                 "authority": (
-                    "exact bounded projection of closed external feedback; "
-                    "diagnostic-only, no semantic inference or artifact repair"
+                    "diagnostic-only independent phase results over the same exact "
+                    "candidate bytes; no artifact field is generated or repaired"
                 ),
             }
+
+        def host_preflight(
+            *, trigger: str
+        ) -> tuple[dict[str, Any], dict[str, Any] | None]:
+            candidate_check = check_current_candidate(trigger=trigger)
+            if candidate_check["status"] != "pass" or candidate_text is None:
+                return candidate_check, None
+            source_reconcile = reconcile_current_candidate(trigger=trigger)
+            return candidate_check, source_reconcile
+
+        def semantic_probe_tool() -> Mapping[str, Any]:
+            """Execute one public Source-vs-J diagnostic over exact candidate bytes."""
+
+            candidate_check, source_reconcile = host_preflight(
+                trigger="semantic_probe"
+            )
+            if candidate_check["status"] != "pass":
+                result: dict[str, Any] = {
+                    "protocol": "intentir.lift.public-semantic-probe.v1",
+                    "status": "unavailable",
+                    "phase": "candidate_check",
+                    "diagnostic": "current candidate has not passed CandidateCheck",
+                }
+            elif source_reconcile is None or source_reconcile["status"] != "pass":
+                result = {
+                    "protocol": "intentir.lift.public-semantic-probe.v1",
+                    "status": "unavailable",
+                    "phase": "source_reconcile",
+                    "diagnostic": "current candidate has not passed SourceReconcile",
+                }
+            elif candidate_text is None or self.semantic_probe is None:
+                result = {
+                    "protocol": "intentir.lift.public-semantic-probe.v1",
+                    "status": "unavailable",
+                    "phase": "execution",
+                    "diagnostic": "this Lift invocation has no public probe runner",
+                }
+            else:
+                artifact = decode_scrc_lift_artifact(candidate_text, prepared)
+                result = dict(self.semantic_probe(artifact))
+            result.setdefault(
+                "authority",
+                "public diagnostic only; not CandidateCheck or certification",
+            )
+            candidate_sha256 = (
+                hashlib.sha256(candidate_text.encode()).hexdigest()
+                if candidate_text is not None
+                else None
+            )
+            result["candidate_sha256"] = candidate_sha256
+            semantic_probe_results.append(dict(result))
+            if candidate_sha256 is not None:
+                semantic_probe_by_candidate[candidate_sha256] = dict(result)
+            _atomic_write_json(
+                workspace.input_dir / "semantic_probe.json",
+                result,
+            )
+            return result
+
+        def semantic_probe_needs_owner_turn() -> bool:
+            """Run one public probe per exact passing draft and surface divergence."""
+
+            if candidate_text is None:
+                return False
+            candidate_sha256 = hashlib.sha256(candidate_text.encode()).hexdigest()
+            result = semantic_probe_by_candidate.get(candidate_sha256)
+            if result is None:
+                result = dict(semantic_probe_tool())
+            if (
+                result.get("status") == "diverged"
+                and candidate_sha256 not in semantic_probe_feedback_delivered
+            ):
+                semantic_probe_feedback_delivered.add(candidate_sha256)
+                return True
+            return False
 
         bridge = CodexCLIToolBridge(
             workspace.scratch_dir / CODEX_CLI_TOOL_BRIDGE_ROOT_NAME,
             {
-                "feedback_frontier": lambda: {
-                    "protocol": "intentir.codex-feedback-frontier.v1",
-                    "status": "pass",
-                    "frontier": json.loads(
-                        (workspace.input_dir / "feedback_frontier.json").read_text(
-                            encoding="utf-8"
-                        )
-                    ),
-                },
-                "candidate_check": candidate_check_tool,
-            },
-            argument_handlers={
-                "lift_harness_abi": harness_abi_tool,
-                "lift_candidate_control": candidate_control_tool,
-                "lift_feedback_category": feedback_category_tool,
+                "submit_candidate": submit_candidate_tool,
+                "semantic_probe": semantic_probe_tool,
             },
         )
         try:
@@ -577,6 +935,8 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                         "cancelled_stderr_sha256": exc.stderr_sha256,
                         "turns": [item.to_evidence() for item in call_turns],
                         "candidate_check": list(check_results),
+                        "source_reconcile": list(source_reconcile_results),
+                        "semantic_probe": list(semantic_probe_results),
                         "tool_bridge": bridge.evidence,
                     }
                     self._records.append(
@@ -614,26 +974,44 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                         }
                         timeout_events.append(timeout_event)
 
-                        check = check_current_candidate(
+                        check, source_reconcile = host_preflight(
                             trigger="host_timeout_recheck"
                         )
                         if (
                             check["status"] == "pass"
+                            and source_reconcile is not None
+                            and source_reconcile["status"] == "pass"
                             and candidate_text is not None
                         ):
+                            if semantic_probe_needs_owner_turn():
+                                timeout_event["recovery"] = (
+                                    "current_exact_candidate_semantic_probe"
+                                )
+                                prompt = _SEMANTIC_PROBE_CONTINUATION_PROMPT
+                                selected_effort = self.repair_effort or effective_effort
+                                continue
                             timeout_event["recovery"] = "current_exact_candidate"
                             break
                         if last_checked_good is not None:
                             _atomic_write_text(
                                 workspace.candidate_path, last_checked_good
                             )
-                            check = check_current_candidate(
+                            check, source_reconcile = host_preflight(
                                 trigger="host_timeout_checkpoint_restore"
                             )
                             if (
                                 check["status"] == "pass"
+                                and source_reconcile is not None
+                                and source_reconcile["status"] == "pass"
                                 and candidate_text is not None
                             ):
+                                if semantic_probe_needs_owner_turn():
+                                    timeout_event["recovery"] = (
+                                        "checkpoint_semantic_probe"
+                                    )
+                                    prompt = _SEMANTIC_PROBE_CONTINUATION_PROMPT
+                                    selected_effort = self.repair_effort or effective_effort
+                                    continue
                                 timeout_event["recovery"] = (
                                     "same_invocation_checked_checkpoint"
                                 )
@@ -649,12 +1027,20 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                                 "initial Codex Lift turn timed out without a "
                                 "resumable thread or checked candidate"
                             ) from exc
-                        _atomic_write_json(
-                            workspace.input_dir / "candidate_check.json",
-                            check,
-                        )
+                        if check["status"] != "pass":
+                            _atomic_write_json(
+                                workspace.input_dir / "candidate_check.json",
+                                check,
+                            )
+                            prompt = _CANDIDATE_CHECK_CONTINUATION_PROMPT
+                        else:
+                            assert source_reconcile is not None
+                            _atomic_write_json(
+                                workspace.input_dir / "source_reconcile.json",
+                                source_reconcile,
+                            )
+                            prompt = _SOURCE_RECONCILE_CONTINUATION_PROMPT
                         timeout_event["recovery"] = "same_thread_continuation"
-                        prompt = _CANDIDATE_CHECK_CONTINUATION_PROMPT
                         selected_effort = self.repair_effort or effective_effort
                         continue
                     raise
@@ -663,14 +1049,31 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                 self._session_model_turns += 1
                 self._session_physical_provider_calls += turn.model_segments
 
-                check = check_current_candidate(trigger="host_post_turn")
-                if check["status"] == "pass" and candidate_text is not None:
+                check, source_reconcile = host_preflight(trigger="host_post_turn")
+                if (
+                    check["status"] == "pass"
+                    and source_reconcile is not None
+                    and source_reconcile["status"] == "pass"
+                    and candidate_text is not None
+                ):
+                    if semantic_probe_needs_owner_turn():
+                        prompt = _SEMANTIC_PROBE_CONTINUATION_PROMPT
+                        selected_effort = self.repair_effort or effective_effort
+                        continue
                     break
-                _atomic_write_json(
-                    workspace.input_dir / "candidate_check.json",
-                    check,
-                )
-                prompt = _CANDIDATE_CHECK_CONTINUATION_PROMPT
+                if check["status"] != "pass":
+                    _atomic_write_json(
+                        workspace.input_dir / "candidate_check.json",
+                        check,
+                    )
+                    prompt = _CANDIDATE_CHECK_CONTINUATION_PROMPT
+                else:
+                    assert source_reconcile is not None
+                    _atomic_write_json(
+                        workspace.input_dir / "source_reconcile.json",
+                        source_reconcile,
+                    )
+                    prompt = _SOURCE_RECONCILE_CONTINUATION_PROMPT
                 selected_effort = self.repair_effort or effective_effort
         except Exception as exc:
             if isinstance(exc, CandidateLiftError):
@@ -685,6 +1088,8 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                 "fresh_session": fresh_owner,
                 "turns": [turn.to_evidence() for turn in call_turns],
                 "candidate_check": list(check_results),
+                "source_reconcile": list(source_reconcile_results),
+                "semantic_probe": list(semantic_probe_results),
                 "timeout_events": list(timeout_events),
                 "tool_bridge": bridge.evidence,
             }
@@ -718,8 +1123,15 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
             "thread_id": self._codex_session.thread_id,
             "turns": [turn.to_evidence() for turn in call_turns],
             "candidate_check": list(check_results),
+            "source_reconcile": list(source_reconcile_results),
+            "semantic_probe": list(semantic_probe_results),
             "timeout_events": list(timeout_events),
             "tool_bridge": bridge.evidence,
+            "source_ttir_observation": {
+                key: value
+                for key, value in (self._source_ttir_observation or {}).items()
+                if key not in {"ttir", "fingerprint"}
+            },
             "isolation": {
                 "outer": "bubblewrap-host-fs-v1",
                 "input": "read-only",
@@ -748,7 +1160,7 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
             attempts=len(call_turns) + timed_out_calls,
             elapsed_ms=elapsed_ms,
             backend=CODEX_CLI_LIFT_BACKEND,
-            termination_status="CandidateCheckPass",
+            termination_status="CandidateCheckAndSourceReconcilePass",
             trajectory=trajectory,
         )
         extraction = SCRCExtraction(
@@ -773,6 +1185,8 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
             "elapsed_ms": elapsed_ms,
             "usage": usage,
             "candidate_check": list(check_results),
+            "source_reconcile": list(source_reconcile_results),
+            "semantic_probe": list(semantic_probe_results),
             "timeout_events": list(timeout_events),
             "tool_bridge": bridge.evidence,
             "trajectory": trajectory,

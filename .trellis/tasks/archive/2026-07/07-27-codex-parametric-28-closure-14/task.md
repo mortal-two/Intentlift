@@ -1,11 +1,11 @@
 # Task 14：Source-Grounded Certification Profile 下的 Codex 28-Kernel Fresh SCRC 最终闭合
 
-> 状态：执行中（2026-07-28）；六组已横向 fresh 覆盖，当前 20/28 已取得可用闭合 evidence
->（15 个原运行直接认证，另 5 个复用各自 exact Gate1-closed artifact/Replay 经零模型 Gate2-only
-> capability recheck 认证）；下一步按 Gate1 frontier 修复通用 Lift/Replay 消费并继续复跑未闭合项
+> 状态：已结束并归档（2026-07-29）。model-input审计保留18个参数化完整的accepted J；旧SplitK
+> reduce/backward固定`vararg_arity=2`，不能代表正式`split=4`模型调用，降为历史evidence。8个未闭合
+> case与这2个SplitK case共10项，连同尚未完成的通用agent/J/Replay能力建设，统一移交Task 15。
 >
-> 类型：Task 11 的最终 fresh corpus执行波；不是 production backend、`J_dev`能力建设、性能搜索、
-> 论文实验或历史证书重判。
+> 类型：Task 11 的历史 fresh corpus执行波；不是 production backend、`J_dev`能力建设、性能搜索、
+> 论文实验或历史证书重判。本文只作为历史轨迹，不再调度新运行。
 >
 > 历史基线：18/28只说明旧版本各自曾取得证书；本任务对active registry的28个direct symbols全部
 > fresh运行，不用旧证书替代当前参数化/runtime版本。
@@ -103,17 +103,18 @@ Harness不得把`f32` J改成BF16，也不得把FP32 internal accumulator误写�
 type variable，所以每种额外boundary dtype都是另一份Source specialization与fresh certificate，不是同一J的
 Harness valuation。
 
-### 2.2 capture valuation、参数化J与natural workload分账
+### 2.2 参数化J与正式模型级valuation
 
-- `capture seed`可以小，但必须source-grounded、非退化并真正执行selected variant的关键路径；
-- tensor `shape`只是本次valuation；Source/launcher唯一确定的logical identity由Harness-only `h*`表达，
+- tensor `shape`是本次valuation；Source/launcher唯一确定的logical identity由Harness-only `h*`表达，
   最终`x*`/value-dimension equality仍由Lift作者化；
-- 一个parametric J说明其logical shape identity，不把本次Gate2自动推广为所有natural/paper shapes的
-  动态测试证书；
-- backend capability/natural/paper config若没有对应fresh accepted J，只能是独立`J_dev`/backend
-  evidence，不计入Task14；
-- 每个direct symbol先确定一个primary certification specialization。额外dtype/compile-time variant可以
-  独立认证，但不改变28项主分母。
+- 已认证artifact若所有Source-grounded logical extent均已作者化为`x*`/合法equality，且dtype、ABI与
+  selected variant正确，则保留，不因旧Gate2使用较小valuation而机械重跑；
+- 2026-07-29之后的新Lift与需要替换的旧artifact直接使用上游/model headline profile，不再以
+  `2x127`、singleton-head或`16/32`等capture seed作为primary certification input；
+- direct-tile symbol（当前Flash one-col backward）使用其上游direct-tile调用，不虚构完整模型tensor；
+- compile-time vararg family不是普通symbol valuation。`split=4`相对旧`vararg_arity=2`必须fresh Lift，
+  不能继承旧证书；
+- 一个parametric J说明logical shape identity，但单次Gate2仍只证明所记录execution-domain valuation。
 
 每个P_cert还必须列出逐coordinate shape ledger：
 
@@ -188,14 +189,14 @@ fixed code不得替Lift修成`x*`。
 
 - frontend commit起点：`460aaed1c6af0b267a4a9da9ca497aea6e66ad40`；
 - artifact/decode/typecheck：`artifact.v10 / decode.v15 / typecheck.v27`；
-- Lift：Codex `openai.codex-cli.intentir-lift.v11 / intentir.lift-knowledge.v68`，MiniSWE `minisweagent.intentir-lift.v3 / intentir.lift-knowledge.v64`；
-- Replay：Codex `openai.codex-cli.intentir-replay.v25`，MiniSWE `minisweagent.intentir-replay.v29`；
+- Lift：Codex `openai.codex-cli.intentir-lift.v11 / intentir.lift-knowledge.v69`，MiniSWE `minisweagent.intentir-lift.v3 / intentir.lift-knowledge.v65`；
+- Replay：Codex `openai.codex-cli.intentir-replay.v26`，MiniSWE `minisweagent.intentir-replay.v30`；
 - Replay packet/check：`replay-input.v1 / public_frontend_context_v17 / replay-check.v11`；
-- Harness：Triton workload adapter v5；
+- Harness：Triton workload adapter v6（显式`input_profile`）；
 - Gate1 observer：`triton-ttir-3.6-gate1-v11`；outer batch：`intentir.scrc.batch.v3`；
   candidate fan-out：v4 `first_observed_gate1_closure_cooperative_stop`；
 - Gate2：三条直接比较，threshold只来自外部Q。
-- Gate2 RefEval：`j_scalar_cpu_mlir_v20 / intentir.j-functional-boundary.v19`。
+- Gate2 RefEval：`j_scalar_cpu_mlir_v22 / intentir.j-functional-boundary.v20 / intentir.j-contract-indexed-cpu-reference.v1`。
 
 ### 4.1 当前 fresh closure 账本
 
@@ -350,9 +351,32 @@ fixed code不得替Lift修成`x*`。
   J half-domain/shape/predicate、不读取 concrete value、不传播 sibling use；Replay v29/v25 将 relation
   放入 exact critical/audit/ingress，production仍在π前停止。修复后 RoPE 必须 fresh relift，旧 artifact
   不得由 fixed code 补 relation，也尚未新增认证。
-- 当前可用闭合总计 `20/28`：Wave32 将 GroupNorm 从 exact-artifact capability evidence 升级为 fresh
-  直接认证后，现为 16 个原运行直接认证、4 个 exact-artifact capability recheck 认证。
-  TypeCheck PASS 不计进度；只有 Gate1 已闭合且当前 Gate2 三边通过才计入。
+- Wave 38（clean commit `483bf697`，两核 `B=3,K=3`）中，one-col backward 使用 Lift Sol-max、
+  Replay Sol-xhigh，由 branch 2 formal round 2 fresh Gate1 closure；Liger RoPE 同配置由 branch 1
+  round 2 fresh Gate1 closure。one-col 的 Source 与 Replay 在 Gate2 同时因 shared memory
+  `108544 > 101376` 无法执行，不能把共同 OOR 记成数值认证；RoPE 的 Source--Replay q/k 均为 0
+  误差，但旧 RefEval 先停在 symbolic singleton/half-domain consumer capability。
+- Wave 39/40 对上述 exact artifact/Replay 做零模型诊断 recheck。v21/v20 已以 J direct `x5==1`
+  消费 constant coordinate 0，并以 sibling `effect_if` full-store control partition 修通 one-col 的 J leg；
+  one-col 仍只剩共同 OOR。v22 的通用 ContractIR indexed pointwise reference 随后完整执行 RoPE J
+  已写出的 index/predicate/fill/store：Source--Replay 仍为 0，而 Source--J/Replay--J 在 q/k 上分别
+  出现约 `0.248206 / 0.206278` 最大绝对误差。这证明旧 RoPE J 缺 consumer-local half-view access，
+  不是继续修 Gate2 的理由，必须 fresh relift。
+- one-col 的 reviewed P_cert/C valuation 已把 `BLOCK_M` 从 128 改为 64。Source 内部 loop 仍遍历完整
+  `Sq=128`，grid、logical shape 与算法不变；实机 Source 可执行，相对独立 PyTorch 梯度参考的
+  dQ/dK/dV 相对误差约 `2.46e-6 / 2.01e-6 / 3.62e-6`。旧 C=128 artifact 不追认，下一轮在 C=64
+  profile fresh SCRC。RoPE/one-col 下一轮默认 Sol-xhigh；若同一明确语义 frontier 稳定重复，再升
+  Sol-max，不能把 effort 升级替代系统能力判断。
+- 2026-07-29 model-input审计逐份读取accepted J，而不是从adapter concrete shape推断。以下18项的
+  logical extents均已使用`x*`及必要value-dimension/constexpr binding，保留现有认证：SwiGLU、RMSNorm、
+  fused-add RMSNorm、GeGLU、LayerNorm、Softmax、DYT、Sparsemax、KLDiv、PolyNorm、JSD、TVD、
+  xFormers RMSNorm、xFormers RMSNorm-add、Flash backward preprocess、CrossEntropy、GroupNorm、
+  Flash one-pass LayerNorm。`[1]`、`[3]`等剩余literal是scalar/static coefficient axis，不是rows/cols固化。
+- 旧SplitK reduce/backward虽逻辑shape大体参数化，但证书ABI固定两个vararg chunk；正式decode profile为
+  `B=1,Mq=1,G=1,H=16,D=256,split=4`，因此二者必须与SplitK forward一起在adapter v6 fresh Lift。
+- 其余未闭合项为Liger RoPE、Qwen2VL mRoPE、Llama4 RoPE、Linear、Flash forward、Flash one-col
+  backward、Flash full backward、SplitK forward。它们连同上述两个SplitK case构成10项active queue。
+  TypeCheck PASS不计进度；只有Gate1闭合且Gate2三边通过才计入。
 
 对Wave12六核的Source/J/π/Replay横向审查得到以下责任边界：Linear缺K-loop/physical-carrier
 realization作者化；Liger RoPE缺旋转分解与分支内effect拓扑；Qwen2VL MRoPE缺共享位置组合到q/k
@@ -613,7 +637,8 @@ Gate1-closed但待Gate2数量、各未闭合主因与活跃W/B/K；不能用Type
 5. 28项均为`SCRC_CERTIFIED`；历史18/28、diagnostic recheck和任何`J_dev`只保留为独立对照；
 6. evidence按registry ordinal稳定汇总，first-winner、sibling stop、formal K、fresh Replay、provider/
    runtime receipts及失败修复谱系完整；
-7. 代码、四权威文档、spec、Task11状态与最终corpus事实一致，测试通过，提交后工作区干净。
+7. 代码、四权威文档、spec、Task11状态与最终corpus事实一致；不新增/恢复mock测试，以真实closure
+   artifact验证，提交后工作区干净。
 
 ## 11. 非目标
 

@@ -194,9 +194,9 @@ INSPECT_LIFT_CONTEXT_TOOL_RESPONSE_API = {
     "type": "function",
     "name": "inspect_lift_context",
     "description": (
-        "Read one bounded exact Source/Harness/feedback-category/current-candidate or "
-        "source-neutral knowledge view without guessing filesystem paths. The "
-        "tool is read-only and never classifies or repairs J/C/pi."
+        "Read one bounded exact Source/anonymous-TTIR/observer/Harness/feedback-category/"
+        "current-candidate or source-neutral knowledge view without guessing filesystem "
+        "paths. The tool is read-only and never classifies or repairs J/C/pi."
     ),
     "parameters": {
         "type": "object",
@@ -208,6 +208,12 @@ INSPECT_LIFT_CONTEXT_TOOL_RESPONSE_API = {
                     "source",
                     "source_outline",
                     "source_find",
+                    "source_brief",
+                    "source_ttir",
+                    "source_ttir_outline",
+                    "source_ttir_find",
+                    "source_ttir_def_use",
+                    "source_observer",
                     "harness",
                     "harness_abi",
                     "feedback",
@@ -526,7 +532,9 @@ def parse_toolcall_actions_response(
                 not isinstance(args, dict)
                 or not set(args).issubset(allowed)
                 or args.get("view") not in {
-                    "source", "source_outline", "source_find", "harness", "harness_abi",
+                    "source", "source_outline", "source_find", "source_brief",
+                    "source_ttir", "source_ttir_outline", "source_ttir_find",
+                    "source_ttir_def_use", "source_observer", "harness", "harness_abi",
                     "feedback", "feedback_category", "candidate", "candidate_find",
                     "candidate_nodes", "candidate_node", "candidate_abi", "candidate_control",
                     "candidate_diff", "knowledge",

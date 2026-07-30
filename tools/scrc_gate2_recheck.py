@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Re-run Gate2 for one exact Gate1-closed artifact without any model call."""
+"""Re-run current Gate1 and Gate2 over one exact artifact/Replay without a model."""
 
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 from pathlib import Path
 import re
@@ -16,8 +15,12 @@ PYTHON_ROOT = ROOT / "python"
 if str(PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(PYTHON_ROOT))
 
-from intentir.verify.gate1.compiler import KernelSource
+from intentir.ir.canonical_j import canonicalize_gate1_artifact
+from intentir.verify.adapters import BoundGate1Adapter
+from intentir.verify.gate1.compiler import KernelSource, TritonCompiler
 from intentir.verify.gate1.model import Gate1Artifact
+from intentir.verify.gate1.orchestrate import Gate1Config, Gate1Runner
+from intentir.verify.gate1.replay import StaticReplayWriter
 from intentir.verify.gate2.orchestrate import Gate2Runner
 from intentir.verify.scrc_workload_run import (
     build_workload_gate2_suite,
@@ -27,6 +30,7 @@ from intentir.verify.workload_adapters import (
     TRITON_WORKLOAD_ADAPTERS,
     prepare_triton_workload,
 )
+from intentir.verify.typecheck import type_check
 
 
 GATE2_CAPABILITY_RECHECK_PROTOCOL = (
@@ -41,7 +45,7 @@ def _parser() -> argparse.ArgumentParser:
         "--artifact",
         required=True,
         type=Path,
-        help="artifact.json from the exact Gate1-closed attempt",
+        help="artifact.json from the exact parent attempt",
     )
     parser.add_argument(
         "--parent-evidence",
@@ -97,32 +101,25 @@ def _load_parented_artifact(
     return artifact, artifact_file, parent
 
 
-def _load_closed_replay(parent: Path) -> tuple[KernelSource, str]:
-    gate1 = _read_object(parent / "gate1.json", "gate1.json")
-    if gate1.get("status") != "replay_closed":
-        raise ValueError("Gate2-only recheck requires replay_closed parent Gate1")
+def _load_exact_replay(parent: Path) -> tuple[KernelSource, str]:
+    _read_object(parent / "gate1.json", "gate1.json")
     receipt = _read_object(parent / "replay_receipt.json", "replay_receipt.json")
     function_name = receipt.get("function_name")
-    response_digest = receipt.get("response_sha256")
     if not isinstance(function_name, str) or not function_name:
         raise ValueError("parent replay receipt lacks function_name")
-    if not isinstance(response_digest, str) or len(response_digest) != 64:
-        raise ValueError("parent replay receipt lacks response_sha256")
     replay_path = parent / "replay.py"
     try:
-        replay_bytes = replay_path.read_bytes()
+        replay_code = replay_path.read_text(encoding="utf-8")
     except OSError as exc:
         raise ValueError(f"parent replay.py is unreadable: {exc}") from exc
-    actual_digest = hashlib.sha256(replay_bytes).hexdigest()
-    if actual_digest != response_digest:
-        raise ValueError("parent replay.py differs from replay receipt")
     try:
         replay = KernelSource.from_replay(
-            replay_bytes.decode("utf-8"), function_name
+            replay_code,
+            function_name,
         )
-    except (UnicodeDecodeError, ValueError) as exc:
+    except ValueError as exc:
         raise ValueError(f"parent Replay is invalid: {exc}") from exc
-    return replay, actual_digest
+    return replay, replay_code
 
 
 def _case_slug(case_id: str) -> str:
@@ -181,7 +178,8 @@ def main(argv: list[str] | None = None) -> int:
         artifact, artifact_file, parent = _load_parented_artifact(
             args.artifact, args.parent_evidence
         )
-        replay, replay_digest = _load_closed_replay(parent)
+        artifact = canonicalize_gate1_artifact(artifact)
+        replay, replay_code = _load_exact_replay(parent)
         adapter = TRITON_WORKLOAD_ADAPTERS.get(args.case)
         if adapter is None:
             raise ValueError("case has no active Triton workload adapter")
@@ -190,39 +188,71 @@ def main(argv: list[str] | None = None) -> int:
             dataset_root=args.dataset_root,
         )
         validate_workload_gate1_recheck_parent(parent, prepared, artifact)
-        suite = build_workload_gate2_suite(prepared, artifact)
-        result = Gate2Runner().run_suite(
-            prepared.request.source.gate_source,
-            replay,
-            suite,
-        )
         recheck_dir = _next_recheck_dir(args.run_root, args.case)
-        gate2_payload = result.to_json()
         request_payload = {
             "protocol": GATE2_CAPABILITY_RECHECK_PROTOCOL,
             "capability_recheck": True,
             "model_calls": 0,
+            "reruns_current_gate1": True,
             "reuses_exact_gate1_artifact": True,
             "reuses_exact_gate1_replay": True,
             "changes_parent_verdict": False,
             "case_id": args.case,
             "artifact": str(artifact_file),
             "parent_evidence": str(parent),
-            "replay_sha256": replay_digest,
         }
         _write_json(recheck_dir / "request.json", request_payload)
-        _write_json(recheck_dir / "gate2.json", gate2_payload)
-        status = "scrc_certified" if result.passed else "gate2_failed"
+        _write_json(recheck_dir / "artifact.json", artifact.to_json())
+        (recheck_dir / "replay.py").write_text(replay_code, encoding="utf-8")
+
+        checked = type_check(
+            artifact.j,
+            artifact.c,
+            artifact.pi,
+            require_program_axes=artifact.wire_schema == artifact.SCHEMA,
+        )
+        _write_json(recheck_dir / "typecheck.json", checked.to_json())
+        if not checked.passed:
+            raise ValueError("exact artifact no longer passes current TypeCheck")
+        gate1 = BoundGate1Adapter(
+            Gate1Runner(
+                compiler=TritonCompiler(timeout=240.0),
+                writer=StaticReplayWriter(
+                    replay_code,
+                    model="exact-parent-replay",
+                ),
+                config=Gate1Config(run_masked_j=False),
+            )
+        ).run(artifact, prepared.request)
+        _write_json(recheck_dir / "gate1.json", gate1.to_json())
+
+        gate2_passed = False
+        status_counts: dict[str, int] = {}
+        if gate1.passed:
+            suite = build_workload_gate2_suite(prepared, artifact)
+            result = Gate2Runner().run_suite(
+                prepared.request.source.gate_source,
+                replay,
+                suite,
+            )
+            gate2_payload = result.to_json()
+            _write_json(recheck_dir / "gate2.json", gate2_payload)
+            gate2_passed = bool(result.passed)
+            status_counts = dict(result.status_counts)
+            status = "scrc_certified" if result.passed else "gate2_failed"
+        else:
+            status = "gate1_no_closure"
         summary = {
             **request_payload,
             "evidence_path": str(recheck_dir),
             "status": status,
-            "gate2_passed": bool(result.passed),
-            "status_counts": dict(result.status_counts),
+            "gate1_passed": bool(gate1.passed),
+            "gate2_passed": gate2_passed,
+            "status_counts": status_counts,
         }
         _write_json(recheck_dir / "recheck.json", summary)
         (recheck_dir / "SUMMARY.md").write_text(
-            "# Gate2 capability recheck\n\n"
+            "# Exact current Gate1/Gate2 capability recheck\n\n"
             f"- case: `{args.case}`\n"
             f"- status: `{status}`\n"
             "- model calls: `0`\n"
@@ -237,7 +267,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     _emit(summary, output=args.output, json_mode=args.json)
-    return 0 if result.passed else 1
+    return 0 if summary["status"] == "scrc_certified" else 1
 
 
 if __name__ == "__main__":

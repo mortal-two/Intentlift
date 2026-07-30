@@ -24,9 +24,11 @@ the artifact schema or external TypeCheck.
    rank-0 `t*` and authoring its `value_dimension_relations` equality to that
    `x*`. The checker never creates either representation. Do not infer any
    coordinate from concrete values, grid, C, names, or positions. Keep a
-   capacity coordinate distinct from active length; author Source-visible pad
-   semantics and non-negative affine constraints, never a C-dependent roundup
-   equation in J.
+   capacity coordinate distinct from active length. If Source defines one logical
+   dimension from another, author the exact closed `J.dimension_relations` item
+   (`identity|add_const|mul_const|ceil_div_const|round_up_const`); never infer it
+   from the current valuation, grid, C, pi, or compiler output. Emit this complete
+   array, including `[]`.
 4. Every `J.signature.logical_ref` names only a declared J input/output `t*`
    or symbolic dimension `x*`, never a `p*` or body/local `v*`. A scalar or semantic
    constexpr used as logical data gets a dtype-matching rank-0 J input with
@@ -179,7 +181,11 @@ the artifact schema or external TypeCheck.
    bypasses it and enters `address_lane` or the final address stage. Never decide
    from the base-to-lane edge alone. Never replace the program path with constant
    zero. Repeated occurrences anchored to the same `d*` are repeated realizations
-   of the same program-axis identity, not evidence for another axis. Use a distinct
+   of the same program-axis identity, not evidence for another axis. Author exactly
+   one `pi.program_axes {domain_ref, axis}` binding for every such distinct `d*`,
+   using the literal compiler-visible Source/TTIR launch axis 0, 1, or 2. Axes and
+   domain refs are each unique. Never infer or renumber an axis from declaration
+   order, grid extent, C, or instance multiplicity. Use a distinct
    J domain anchor only when Source really contains a distinct program coordinate.
    If one Source SSA coordinate/address intermediate is defined once and reused by
    several accesses, emit one producer with routed consumers and one-producer
@@ -321,9 +327,13 @@ the artifact schema or external TypeCheck.
    boundary access/domain traversal uses `physical_iterations`, not a synthetic J
    loop: bind the existing body instance, the same-subject/same-axis required
    positive C tile, the authored induction basis, and forward/reverse direction.
-   When compiler-visible accumulator stages exist,
-   author `physical_loop_carriers` in that region. These are temporal topology,
-   never an initialization/update formula, and fixed code never creates them.
+   When compiler-visible loop-carried stages exist, author every tuple member as
+   one ordered `physical_loop_carriers` relation in that region, including
+   pointer/address recurrences as well as accumulators. Each relation's own
+   init/state/next/result types must agree; different tuple slots may be
+   heterogeneous and need not match the body instance type. These are temporal
+   topology, never an initialization/update formula, and fixed code never creates
+   them.
    The syntax-only Source outline lists names that were lexically bound before a
    loop and written inside it. Treat every listed name as a required inspection
    point, not an inferred carrier; decide the complete carrier set from Source.
@@ -332,6 +342,11 @@ the artifact schema or external TypeCheck.
    iter-argument/yield/result tuple; never sort carriers by dtype, semantic ref,
    mechanism, or convenience. This tuple order is not execution order; use
    `pi.order` for compiler-visible event ordering.
+   For each Source index, domain, or predicate expression already representable
+   by the closed ContractExpr grammar, preserve the exact integer operator tree
+   (`//`, `%`, `ceil_div`, `+`, `-`, `*`). Do not replace it with an
+   algebraically equivalent formula: Gate1 observes the realized topology and
+   fixed checking is not a general algebraic-equivalence prover.
 22. Run the supplied static schema validator and then
    `intentir_candidate_check /output/candidate.json`. CandidateCheck is bounded
    diagnostics only; you must make every edit, and the external Runner still

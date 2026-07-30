@@ -501,22 +501,22 @@ def _packet_requirements(packet: Mapping[str, Any]) -> dict[str, Any]:
     topology_limit = 24
 
     relation_names = (
+        "program_axes",
         "route_extent_transforms",
         "iterations",
         "loop_carriers",
         "physical_iterations",
-        "unit_iterations",
         "physical_loop_carriers",
         "terminal_controls",
     )
     relation_views: dict[str, Any] = {}
     referenced_instances: set[str] = set()
     relation_instance_fields = {
+        "program_axes": (),
         "route_extent_transforms": ("source", "target"),
         "iterations": ("loop_instance", "tile_instance"),
         "loop_carriers": ("loop_instance", "init", "state", "next", "result"),
         "physical_iterations": ("body_instance", "tile_instance"),
-        "unit_iterations": ("body_instance",),
         "physical_loop_carriers": ("init", "state", "next", "result"),
         "terminal_controls": ("terminal_instance", "continuation_instance"),
     }
@@ -575,7 +575,6 @@ def _packet_requirements(packet: Mapping[str, Any]) -> dict[str, Any]:
     }
     for name in (
         "physical_iterations",
-        "unit_iterations",
         "physical_loop_carriers",
     ):
         rows = pi.get(name, [])
@@ -774,11 +773,12 @@ def _packet_critical_facts(packet: Mapping[str, Any]) -> dict[str, Any]:
     """Return a tiny exact index of easy-to-miss authored packet facts.
 
     The normal startup already transports the whole packet.  This index does not
-    summarize its graph or recommend a lowering; it merely colocates ten
+    summarize its graph or recommend a lowering; it merely colocates the
     closed fact classes whose distant cross-references are otherwise easy to
     overlook in a large ABI: semantic dimension carriers, typed IEEE-special
-    constants, explicit broadcast obligations, physical- and unit-iteration
-    relations, transfer occurrences, identity materializations, reduction
+    constants, explicit broadcast and sharing obligations, physical-iteration
+    relations, transfer occurrences, identity materializations,
+    explicit program-axis bindings and route-extent transforms, reduction
     linearizations, exact lexical-region membership, and cross-region order.
     """
 
@@ -837,12 +837,12 @@ def _packet_critical_facts(packet: Mapping[str, Any]) -> dict[str, Any]:
     physical_iterations = pi.get("physical_iterations", [])
     if not isinstance(physical_iterations, list):
         raise TypeError("packet pi physical_iterations must be an array")
-    unit_iterations = pi.get("unit_iterations", [])
-    if not isinstance(unit_iterations, list):
-        raise TypeError("packet pi unit_iterations must be an array")
     route_extent_transforms = pi.get("route_extent_transforms", [])
     if not isinstance(route_extent_transforms, list):
         raise TypeError("packet pi route_extent_transforms must be an array")
+    program_axes = pi.get("program_axes", [])
+    if not isinstance(program_axes, list):
+        raise TypeError("packet pi program_axes must be an array")
     instances_value = pi.get("instances", [])
     regions_value = pi.get("regions", [])
     order_value = pi.get("order", [])
@@ -922,8 +922,31 @@ def _packet_critical_facts(packet: Mapping[str, Any]) -> dict[str, Any]:
         )
     routes = pi.get("routes", [])
     refinements = pi.get("refinements", [])
-    if not isinstance(routes, list) or not isinstance(refinements, list):
-        raise TypeError("packet pi routes/refinements must be arrays")
+    sharing_value = pi.get("sharing", [])
+    if (
+        not isinstance(routes, list)
+        or not isinstance(refinements, list)
+        or not isinstance(sharing_value, list)
+    ):
+        raise TypeError("packet pi routes/refinements/sharing must be arrays")
+    sharing_obligations = []
+    for relation in sharing_value:
+        if not isinstance(relation, Mapping):
+            continue
+        source = relation.get("source")
+        consumers = relation.get("consumers")
+        if not isinstance(source, str) or source not in instances:
+            continue
+        if not isinstance(consumers, list) or not all(
+            isinstance(item, str) and item in instances for item in consumers
+        ):
+            continue
+        sharing_obligations.append(
+            {
+                "source": instance_scope(source),
+                "consumers": [instance_scope(item) for item in consumers],
+            }
+        )
     reduction_linearizations = []
     for refinement in refinements:
         if not isinstance(refinement, Mapping) or refinement.get(
@@ -1103,10 +1126,11 @@ def _packet_critical_facts(packet: Mapping[str, Any]) -> dict[str, Any]:
         "semantic_dimension_carriers": dimension_carriers,
         "typed_ieee_special_constants": special_constants,
         "broadcast_obligations": broadcast_obligations,
+        "sharing_obligations": sharing_obligations,
         "physical_iterations": physical_iterations,
-        "unit_iterations": unit_iterations,
         "transfer_occurrences": transfer_occurrences,
         "identity_materializations": identity_materializations,
+        "program_axes": program_axes,
         "route_extent_transforms": route_extent_transforms,
         "reduction_linearizations": reduction_linearizations,
         "lexical_regions": lexical_regions,
@@ -1132,22 +1156,18 @@ def _replay_obligation_audit_view(
     identity_materializations = facts["identity_materializations"]
     lexical_regions = facts["lexical_regions"]
     cross_region_order = facts["cross_region_order"]
+    program_axes = facts["program_axes"]
     route_extent_transforms = facts["route_extent_transforms"]
     return {
         "protocol": "intentir.replay-obligation-audit.v4",
         "status": "pass",
         "source_sha256": hashlib.sha256(source_text.encode("utf-8")).hexdigest(),
-        "audit_required": bool(
-            broadcast_obligations
-            or identity_materializations
-            or lexical_regions
-            or cross_region_order
-            or route_extent_transforms
-        ),
+        "audit_required": _replay_obligation_audit_required(facts),
         "broadcast_obligations": broadcast_obligations,
         "identity_materializations": identity_materializations,
         "lexical_regions": lexical_regions,
         "cross_region_order": cross_region_order,
+        "program_axes": program_axes,
         "route_extent_transforms": route_extent_transforms,
         "source_nonempty_lines": [
             {
@@ -1164,6 +1184,24 @@ def _replay_obligation_audit_view(
             "acceptance decision"
         ),
     }
+
+
+def _replay_obligation_audit_required(
+    critical_facts: Mapping[str, Any],
+) -> bool:
+    """Return whether exact Replay bytes need the proof-irrelevant ledger audit."""
+
+    return any(
+        bool(critical_facts[name])
+        for name in (
+            "broadcast_obligations",
+            "identity_materializations",
+            "lexical_regions",
+            "cross_region_order",
+            "program_axes",
+            "route_extent_transforms",
+        )
+    )
 
 
 def _packet_edges(
@@ -1508,7 +1546,6 @@ def _packet_obligation_records(packet: Mapping[str, Any]) -> list[dict[str, Any]
         "iterations",
         "loop_carriers",
         "physical_iterations",
-        "unit_iterations",
         "physical_loop_carriers",
     )
     values: dict[str, list[Any]] = {}
@@ -1624,10 +1661,6 @@ def _packet_obligation_records(packet: Mapping[str, Any]) -> list[dict[str, Any]
         (
             "physical_iterations",
             ("body_instance", "tile_instance"),
-        ),
-        (
-            "unit_iterations",
-            ("body_instance",),
         ),
         (
             "physical_loop_carriers",
@@ -3130,7 +3163,7 @@ class IntentIRReplayEnvironment:
             result = _closed_failure("replay_check_unavailable")
         else:
             try:
-                source_bytes, source_text = self._read_check_target(arguments[1])
+                _source_bytes, source_text = self._read_check_target(arguments[1])
             except Exception:
                 result = _closed_failure("replay_check_read_failed")
             else:
@@ -3216,12 +3249,7 @@ class IntentIRReplayEnvironment:
             else:
                 source_digest = hashlib.sha256(source_bytes).hexdigest()
                 facts = _packet_critical_facts(self._read_closed_packet())
-                audit_required = bool(
-                    facts["broadcast_obligations"]
-                    or facts["identity_materializations"]
-                    or facts["lexical_regions"]
-                    or facts["cross_region_order"]
-                )
+                audit_required = _replay_obligation_audit_required(facts)
                 if (
                     audit_required
                     and source_digest not in self._obligation_audited_source_digests
@@ -3315,6 +3343,10 @@ class IntentIRReplayEnvironment:
                 ),
                 "lexical_region_count": len(value["lexical_regions"]),
                 "cross_region_order_count": len(value["cross_region_order"]),
+                "program_axis_count": len(value["program_axes"]),
+                "route_extent_transform_count": len(
+                    value["route_extent_transforms"]
+                ),
             }
         )
         return {
@@ -3703,6 +3735,16 @@ class IntentIRReplayEnvironment:
                     "evaluations": self._compile_check_evaluations,
                     "limit": self.config.replay_compile_check_limit,
                     "results": list(self._compile_check_audit),
+                },
+                "replay_obligation_audit": {
+                    "protocol": "intentir.replay-obligation-audit.v3",
+                    "authority": (
+                        "exact current Replay bytes plus exact source-isolated "
+                        "J/pi ledger only; no mapping, diagnosis, repair, Gate, "
+                        "or acceptance authority"
+                    ),
+                    "calls": len(self._obligation_audit_log),
+                    "results": list(self._obligation_audit_log),
                 },
                 "replay_source_inspect": {
                     "protocol": "intentir.replay-own-source-inventory.v1",

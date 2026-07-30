@@ -1,5 +1,5 @@
 {
-  "schema": "intentir.scrc.artifact.v10",
+  "schema": "intentir.scrc.artifact.v12",
   "j": {
     "kernel_id": "scrc_k0",
     "intent": {
@@ -48,6 +48,7 @@
     "value_dimension_relations": [
       {"value_ref": "t1", "dimension_ref": "x0", "relation": "eq"}
     ],
+    "dimension_relations": [],
     "boundary": {
       "domains": {"d0": "0 <= k0 and k0 < x0"},
       "accesses": [
@@ -222,6 +223,7 @@
       {"source": "i3", "target": "i4", "slots": [0]},
       {"source": "i6", "target": "i4", "slots": [0]}
     ],
+    "program_axes": [],
     "order": [
       {"before": "i0", "after": "i1"},
       {"before": "i1", "after": "i3"},
@@ -237,7 +239,6 @@
     "iterations": [],
     "loop_carriers": [],
     "physical_iterations": [],
-    "unit_iterations": [],
     "physical_loop_carriers": [],
     "terminal_controls": [],
     "route_extent_transforms": []

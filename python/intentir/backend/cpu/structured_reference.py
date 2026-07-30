@@ -17,12 +17,12 @@ import numpy as np
 
 from intentir.backend.cpu.abi import (
     CPUBackendUnsupportedError,
-    mlir_element_type,
     numpy_dtype,
     validate_array,
 )
 from intentir.backend.cpu.pipeline import CPUExecutionResult
 from intentir.ir.canonical_j import elaborate_j, j_elaboration
+from intentir.ir.dimension_relation import resolve_dimension_relations
 from intentir.ir.value_dimension import validate_value_dimension_instantiation
 from intentir.ir.model import IntentOp, LoopStateBinding
 
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from intentir.verify.gate1.model import SemanticArchive
 
 
-STRUCTURED_CPU_REFERENCE_PROTOCOL = "intentir.j-structured-cpu-reference.v9"
+STRUCTURED_CPU_REFERENCE_PROTOCOL = "intentir.j-structured-cpu-reference.v10"
 
 
 class StructuredReferenceUnsupportedError(CPUBackendUnsupportedError):
@@ -50,14 +50,13 @@ _ORDINARY_OPS = frozenset(
         "pad",
         "reduce",
         "scan",
+        "scatter",
         "select",
         "tile",
         "transpose",
     }
 )
 
-_FLOAT_ELEMENT_TYPES = frozenset({"f16", "bf16", "f32", "f64"})
-_INTEGER_ELEMENT_TYPES = frozenset({"i1", "i8", "i16", "i32", "i64"})
 _EINSUM_TERM = re.compile(r"^[A-Za-z]*$")
 
 _BINARY = {
@@ -82,6 +81,30 @@ _BINARY = {
     "logical_or": np.logical_or,
     "logical_xor": np.logical_xor,
 }
+
+
+def _integer_divide(
+    left: np.ndarray,
+    right: np.ndarray,
+    dtype: np.dtype[Any],
+) -> np.ndarray:
+    """Implement MLIR ``arith.divsi/divui`` without a float round-trip."""
+
+    lhs, rhs = np.broadcast_arrays(
+        np.asarray(left, dtype=dtype),
+        np.asarray(right, dtype=dtype),
+    )
+    if bool(np.any(rhs == 0)):
+        raise ValueError("structured integer division by zero")
+    if np.issubdtype(dtype, np.signedinteger):
+        info = np.iinfo(dtype)
+        if bool(np.any((lhs == info.min) & (rhs == -1))):
+            raise ValueError("structured signed integer division overflows")
+        quotient = np.floor_divide(lhs, rhs)
+        remainder = np.remainder(lhs, rhs)
+        adjust = ((lhs < 0) != (rhs < 0)) & (remainder != 0)
+        return np.asarray(quotient + adjust.astype(dtype), dtype=dtype)
+    return np.asarray(np.floor_divide(lhs, rhs), dtype=dtype)
 
 _UNARY = {
     "identity": lambda value: value,
@@ -129,6 +152,28 @@ def _walk_ops(body: Sequence[IntentOp]) -> tuple[IntentOp, ...]:
     return tuple(result)
 
 
+def _walk_op_paths(
+    body: Sequence[IntentOp],
+    prefix: str = "body",
+) -> tuple[tuple[str, IntentOp], ...]:
+    """Walk operations using the canonical paths named by ``J.node_ids``."""
+
+    result: list[tuple[str, IntentOp]] = []
+    for index, op in enumerate(body):
+        path = f"{prefix}[{index}]"
+        result.append((path, op))
+        result.extend(_walk_op_paths(op.body, f"{path}.body"))
+        if op.op in {"effect_if", "value_if"}:
+            assert op.positive is not None and op.negative is not None
+            result.extend(
+                _walk_op_paths(op.positive.body, f"{path}.positive.body")
+            )
+            result.extend(
+                _walk_op_paths(op.negative.body, f"{path}.negative.body")
+            )
+    return tuple(result)
+
+
 def _result_names(operation: IntentOp) -> tuple[str, ...]:
     if isinstance(operation.result, str):
         return (operation.result,)
@@ -139,89 +184,29 @@ def _result_names(operation: IntentOp) -> tuple[str, ...]:
     return ()
 
 
-def _element_class(dtype: str) -> str | None:
-    """Mirror the element classes consumed by ContractionLowering."""
-
-    try:
-        element_type = mlir_element_type(dtype)
-    except CPUBackendUnsupportedError:
-        return None
-    if element_type in _FLOAT_ELEMENT_TYPES:
-        return "float"
-    if element_type in _INTEGER_ELEMENT_TYPES:
-        return "integer"
-    return None
-
-
-def _scalar_cpu_lowers_contraction(
-    op: IntentOp,
-    value_types: Mapping[str, Any],
-) -> bool:
-    """Return the exact typed subset eliminated by ContractionLowering.
-
-    This mirrors ``ConvertIntentToLinalg`` rather than predicting whether a
-    target compiler might happen to accept an unlowered ``intent`` op.  The
-    common lowering accepts arbitrary widths within the floating class, but it
-    rejects mixed integer/float operands and mixed-width integer contractions.
-    Malformed or incompletely typed contractions are conservatively outside
-    the scalar capability and will fail closed in the structured evaluator.
-    """
-
-    if (
-        set(op.attrs) != {"subscripts"}
-        or len(op.operands) != 2
-        or not isinstance(op.result, str)
-    ):
-        return False
-    operand_types = [value_types.get(name) for name in op.operands]
-    result_type = value_types.get(op.result)
-    if result_type is None or any(value is None for value in operand_types):
-        return False
-    operand_dtypes = [str(value.dtype) for value in operand_types]
-    result_dtype = str(result_type.dtype)
-    try:
-        operand_element_types = [
-            mlir_element_type(dtype) for dtype in operand_dtypes
-        ]
-        result_element_type = mlir_element_type(result_dtype)
-    except CPUBackendUnsupportedError:
-        return False
-    operand_classes = [_element_class(dtype) for dtype in operand_dtypes]
-    result_class = _element_class(result_dtype)
-    if result_class is None or any(kind is None for kind in operand_classes):
-        return False
-    if any(kind != result_class for kind in operand_classes):
-        return False
-    if result_class == "integer" and any(
-        element_type != result_element_type
-        for element_type in operand_element_types
-    ):
-        return False
-    return True
-
-
 def requires_structured_reference(j: SemanticArchive) -> bool:
     """Return whether J needs the J-only typed reference denotation.
 
-    ``tile`` selects this path because the scalar Intent-to-Linalg executor does
-    not lower it.  A typed contraction selects the same path only when the
-    common scalar lowering cannot eliminate that contraction.  The structured
-    evaluator consequently owns a closed ordinary op table as well as
-    loops/scans; it never falls back into a second consumer halfway through a
-    graph.
+    Structured control/tile/scan and every contraction select one closed
+    evaluator for the complete J graph.  In particular, a dense contraction is
+    not sent through the scalar native loop executor merely because that
+    lowering is technically legal; the structured path preserves the same J
+    denotation while using bounded NumPy/BLAS implementations for model extents.
     """
 
     accepted = elaborate_j(j)
     operations = _walk_ops(accepted.intent.body)
-    if any(
-        op.op in {"loop", "scan", "tile", "effect_if", "value_if"}
-        for op in operations
-    ):
-        return True
-    value_types = j_elaboration(accepted).value_type_by_name
     return any(
-        op.op == "contraction"
-        and not _scalar_cpu_lowers_contraction(op, value_types)
+        op.op in {
+            "contraction",
+            "loop",
+            "scan",
+            "tile",
+            "effect_if",
+            "value_if",
+            "gather",
+            "scatter",
+        }
         for op in operations
     )
 
@@ -287,11 +272,40 @@ class _Evaluator:
                     "structured guarded-load receipts duplicate one operand edge"
                 )
             self.access_guard_loads[key] = relation
-        nodes = {
-            operation.node_id: operation
-            for operation in _walk_ops(j.intent.body)
-            if operation.node_id is not None
-        }
+        refs_by_path: dict[str, str] = {}
+        for node_ref, path in j.node_ids.items():
+            previous = refs_by_path.setdefault(path, node_ref)
+            if previous != node_ref:
+                raise ValueError("structured reference has duplicate node paths")
+        nodes: dict[str, IntentOp] = {}
+        self.node_refs_by_operation: dict[int, str] = {}
+        for path, operation in _walk_op_paths(j.intent.body):
+            authored_ref = refs_by_path.get(path)
+            if (
+                operation.node_id is not None
+                and authored_ref is not None
+                and operation.node_id != authored_ref
+            ):
+                raise ValueError("structured inline and authored node refs disagree")
+            node_ref = operation.node_id or authored_ref
+            if node_ref is None:
+                continue
+            previous = nodes.setdefault(node_ref, operation)
+            if previous is not operation:
+                raise ValueError("structured reference has duplicate node refs")
+            self.node_refs_by_operation[id(operation)] = node_ref
+        self.logical_updates: dict[str, Any] = {}
+        for update in j.boundary.updates:
+            operation = nodes.get(update.node_ref)
+            if operation is None or operation.op != "scatter":
+                raise ValueError(
+                    "structured logical update does not name one scatter node"
+                )
+            if update.node_ref in self.logical_updates:
+                raise ValueError(
+                    "structured logical updates duplicate one scatter node"
+                )
+            self.logical_updates[update.node_ref] = update
         output_names = {tensor.name for tensor in j.intent.outputs}
         self.conditional_effect_stores: dict[str, list[Any]] = {}
         seen_accesses: set[str] = set()
@@ -323,6 +337,7 @@ class _Evaluator:
         self.executed_conditional_effect_store_count = 0
         self.operation_count = 0
         self.scan_count = 0
+        self.scatter_count = 0
         self.loop_count = 0
         self.effect_if_count = 0
         self.value_if_count = 0
@@ -334,9 +349,10 @@ class _Evaluator:
         operation: IntentOp,
         env: Mapping[str, np.ndarray],
     ) -> None:
-        if operation.node_id is None:
+        node_ref = self.node_refs_by_operation.get(id(operation), operation.node_id)
+        if node_ref is None:
             return
-        for relation in self.conditional_effect_stores.get(operation.node_id, ()):
+        for relation in self.conditional_effect_stores.get(node_ref, ()):
             try:
                 value = env[relation.value_ref]
             except KeyError as exc:
@@ -413,7 +429,8 @@ class _Evaluator:
             raise ValueError(
                 f"structured op {op.op!r} has an unavailable operand"
             ) from exc
-        materialization = self.access_guard_loads.get((op.node_id, index))
+        node_ref = self.node_refs_by_operation.get(id(op), op.node_id)
+        materialization = self.access_guard_loads.get((node_ref, index))
         if materialization is not None:
             if name != materialization.tensor:
                 raise ValueError(
@@ -675,6 +692,99 @@ class _Evaluator:
             f"structured gather has unsupported mode {mode!r}"
         )
 
+    def _scatter(
+        self,
+        op: IntentOp,
+        env: Mapping[str, np.ndarray],
+    ) -> np.ndarray:
+        if (
+            set(op.attrs) != {"axis", "mode", "reduce"}
+            or len(op.operands) != 3
+        ):
+            raise StructuredReferenceUnsupportedError(
+                "structured scatter requires axis/mode/reduce and three operands"
+            )
+        node_ref = self.node_refs_by_operation.get(id(op), op.node_id)
+        update = self.logical_updates.get(node_ref)
+        if update is None:
+            raise StructuredReferenceUnsupportedError(
+                "structured scatter requires one typed logical update"
+            )
+        data = self._operand(op, env, 0)
+        index = self._operand(op, env, 1)
+        source = self._operand(op, env, 2)
+        axis = op.attrs.get("axis")
+        if isinstance(axis, bool) or not isinstance(axis, int):
+            raise StructuredReferenceUnsupportedError(
+                "structured scatter axis must be a closed integer"
+            )
+        if not 0 <= axis < data.ndim:
+            raise ValueError("structured scatter axis is outside data rank")
+        if op.attrs.get("mode") != "along_axis":
+            raise StructuredReferenceUnsupportedError(
+                "structured scatter implements only canonical along_axis mode"
+            )
+        if index.dtype.kind not in {"i", "u"}:
+            raise ValueError("structured scatter index must have an integer dtype")
+        if index.shape != source.shape or index.ndim != data.ndim:
+            raise ValueError(
+                "structured scatter index/source must have one common data rank"
+            )
+        if any(
+            index.shape[dimension] > data.shape[dimension]
+            for dimension in range(data.ndim)
+            if dimension != axis
+        ):
+            raise ValueError(
+                "structured scatter index exceeds one non-axis data extent"
+            )
+        if index.size and (
+            bool(np.any(index < 0))
+            or bool(np.any(index >= data.shape[axis]))
+        ):
+            raise ValueError("structured scatter index is outside the data extent")
+
+        if (
+            update.base != op.operands[0]
+            or update.indices != op.operands[1]
+            or update.values != op.operands[2]
+            or update.axis != axis
+        ):
+            raise ValueError(
+                "structured scatter operands disagree with its logical update"
+            )
+        reduce = op.attrs.get("reduce")
+        expected_combiner = "overwrite" if reduce == "none" else reduce
+        if update.combiner.value != expected_combiner:
+            raise ValueError(
+                "structured scatter reduce mode disagrees with its logical update"
+            )
+        if update.duplicate_policy.value == "forbid" and index.shape[axis] > 1:
+            ordered = np.sort(index, axis=axis)
+            if bool(np.any(np.diff(ordered, axis=axis) == 0)):
+                raise ValueError(
+                    "structured scatter violates duplicate_policy='forbid'"
+                )
+        if update.duplicate_policy.value == "one_of":
+            raise StructuredReferenceUnsupportedError(
+                "structured scatter cannot choose one member of an authored "
+                "one_of update result set"
+            )
+
+        result = np.array(data, copy=True)
+        if reduce == "none":
+            np.put_along_axis(result, index, source, axis=axis)
+        elif reduce == "add":
+            coordinates = np.indices(index.shape, sparse=False)
+            coordinates[axis] = index
+            np.add.at(result, tuple(coordinates), source)
+        else:
+            raise StructuredReferenceUnsupportedError(
+                f"structured scatter has unsupported reduce mode {reduce!r}"
+            )
+        self.scatter_count += 1
+        return result
+
     def _tile(
         self,
         op: IntentOp,
@@ -849,12 +959,42 @@ class _Evaluator:
             value.astype(result_dtype, copy=False) for value in operands
         ]
         try:
-            value = np.einsum(
-                compact,
-                cast_operands[0],
-                cast_operands[1],
-                optimize=False,
+            contracted = (
+                set(lhs_labels).intersection(rhs_labels).difference(output_labels)
             )
+            lhs_free = [label for label in lhs_labels if label not in contracted]
+            rhs_free = [label for label in rhs_labels if label not in contracted]
+            direct_matrix_product = (
+                len(lhs_labels) == 2
+                and len(rhs_labels) == 2
+                and len(output_labels) == 2
+                and len(contracted) == 1
+                and len(lhs_free) == 1
+                and len(rhs_free) == 1
+                and set(output_labels) == {lhs_free[0], rhs_free[0]}
+            )
+            if direct_matrix_product:
+                contraction_label = next(iter(contracted))
+                lhs_matrix = (
+                    cast_operands[0]
+                    if lhs_labels == lhs_free[0] + contraction_label
+                    else cast_operands[0].T
+                )
+                rhs_matrix = (
+                    cast_operands[1]
+                    if rhs_labels == contraction_label + rhs_free[0]
+                    else cast_operands[1].T
+                )
+                value = np.matmul(lhs_matrix, rhs_matrix)
+                if output_labels == rhs_free[0] + lhs_free[0]:
+                    value = value.T
+            else:
+                value = np.einsum(
+                    compact,
+                    cast_operands[0],
+                    cast_operands[1],
+                    optimize=False,
+                )
         except (TypeError, ValueError) as exc:
             raise StructuredReferenceUnsupportedError(
                 "structured contraction dtype is unsupported by the closed "
@@ -914,6 +1054,8 @@ class _Evaluator:
             return self._concat(op, env)
         if op.op == "gather":
             return self._gather(op, env)
+        if op.op == "scatter":
+            return self._scatter(op, env)
         if op.op == "iota":
             return self._iota(op)
         if op.op == "map_binary":
@@ -927,9 +1069,14 @@ class _Evaluator:
                 raise StructuredReferenceUnsupportedError(
                     f"structured map_binary has unsupported fn {fn!r}"
                 )
-            return np.asarray(
-                implementation(self._operand(op, env, 0), self._operand(op, env, 1))
-            )
+            left = self._operand(op, env, 0)
+            right = self._operand(op, env, 1)
+            declared = self._declared_type(self._result_name(op), op)
+            if fn == "div" and declared is not None:
+                result_dtype = np.dtype(numpy_dtype(declared[0]))
+                if np.issubdtype(result_dtype, np.integer):
+                    return _integer_divide(left, right, result_dtype)
+            return np.asarray(implementation(left, right))
         if op.op == "map_unary":
             if set(op.attrs) != {"fn"} or len(op.operands) != 1:
                 raise StructuredReferenceUnsupportedError(
@@ -1277,6 +1424,7 @@ def execute_structured_reference(
         raise ValueError(
             "structured reference dims must be non-negative integer bindings"
         )
+    checked_dims = resolve_dimension_relations(j, checked_dims)
     checked_inputs = {
         tensor.name: validate_array(
             np.asarray(value),
@@ -1332,6 +1480,7 @@ def execute_structured_reference(
             "execution_mode": "full_logical_axis_conservative",
             "operation_count": evaluator.operation_count,
             "scan_count": evaluator.scan_count,
+            "scatter_count": evaluator.scatter_count,
             "loop_count": evaluator.loop_count,
             "effect_if_count": evaluator.effect_if_count,
             "value_if_count": evaluator.value_if_count,

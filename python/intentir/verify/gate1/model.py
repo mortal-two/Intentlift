@@ -54,6 +54,7 @@ SEMANTIC_ARCHIVE_WIRE_FIELDS = (
     *SEMANTIC_ARCHIVE_LEGACY_WIRE_FIELDS,
     "dimension_constraints",
     "value_dimension_relations",
+    "dimension_relations",
 )
 BOUNDARY_LEGACY_WIRE_FIELDS = (
     "domains",
@@ -3085,6 +3086,88 @@ class ValueDimensionRelation(StrictJSONMixin):
         }
 
 
+_DIMENSION_RELATION_OPS = frozenset(
+    {"identity", "add_const", "mul_const", "ceil_div_const", "round_up_const"}
+)
+
+
+@dataclass(frozen=True)
+class DimensionRelationExpr(StrictJSONMixin):
+    """One closed J-authored expression over a declared logical dimension."""
+
+    op: str
+    arg: str
+    value: int | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "op", _string(self.op, "DimensionRelationExpr.op"))
+        object.__setattr__(
+            self, "arg", _string(self.arg, "DimensionRelationExpr.arg")
+        )
+        if self.op not in _DIMENSION_RELATION_OPS:
+            raise SchemaError("DimensionRelationExpr.op is not in the closed grammar")
+        if re.fullmatch(r"x[0-9]+", self.arg) is None:
+            raise SchemaError("DimensionRelationExpr.arg must be a dimension handle x*")
+        if self.op == "identity":
+            if self.value is not None:
+                raise SchemaError("identity dimension expression forbids value")
+            return
+        if (
+            isinstance(self.value, bool)
+            or not isinstance(self.value, int)
+            or self.value <= 0
+        ):
+            raise SchemaError(
+                f"{self.op} dimension expression requires a positive integer value"
+            )
+
+    @classmethod
+    def from_json(cls, value: dict[str, Any]) -> "DimensionRelationExpr":
+        data = _strict_object(
+            value,
+            path="DimensionRelationExpr",
+            allowed={"op", "arg", "value"},
+            required={"op", "arg"},
+        )
+        return cls(data["op"], data["arg"], data.get("value"))
+
+    def to_json(self) -> dict[str, Any]:
+        result: dict[str, Any] = {"op": self.op, "arg": self.arg}
+        if self.value is not None:
+            result["value"] = self.value
+        return result
+
+
+@dataclass(frozen=True)
+class DimensionRelation(StrictJSONMixin):
+    """One J-owned definition of a logical dimension from another dimension."""
+
+    result: str
+    expr: DimensionRelationExpr
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "result", _string(self.result, "DimensionRelation.result"))
+        if re.fullmatch(r"x[0-9]+", self.result) is None:
+            raise SchemaError("DimensionRelation.result must be a dimension handle x*")
+        if not isinstance(self.expr, DimensionRelationExpr):
+            object.__setattr__(
+                self, "expr", DimensionRelationExpr.from_json(self.expr)
+            )
+
+    @classmethod
+    def from_json(cls, value: dict[str, Any]) -> "DimensionRelation":
+        data = _strict_object(
+            value,
+            path="DimensionRelation",
+            allowed={"result", "expr"},
+            required={"result", "expr"},
+        )
+        return cls(data["result"], DimensionRelationExpr.from_json(data["expr"]))
+
+    def to_json(self) -> dict[str, Any]:
+        return {"result": self.result, "expr": self.expr.to_json()}
+
+
 def _validate_access_guard_reference_closure(
     archive: "SemanticArchive",
 ) -> None:
@@ -3146,6 +3229,7 @@ class SemanticArchive(StrictJSONMixin):
     value_dimension_relations: list[ValueDimensionRelation] = field(
         default_factory=list
     )
+    dimension_relations: list[DimensionRelation] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.kernel_id = _string(self.kernel_id, "SemanticArchive.kernel_id")
@@ -3242,6 +3326,14 @@ class SemanticArchive(StrictJSONMixin):
             else ValueDimensionRelation.from_json(item)
             for item in self.value_dimension_relations
         ]
+        if not isinstance(self.dimension_relations, list):
+            raise SchemaError("SemanticArchive.dimension_relations must be an array")
+        self.dimension_relations = [
+            item
+            if isinstance(item, DimensionRelation)
+            else DimensionRelation.from_json(item)
+            for item in self.dimension_relations
+        ]
         _validate_logical_signature(self)
         _validate_typed_boundary_relations(self)
         _validate_access_guard_reference_closure(self)
@@ -3275,6 +3367,10 @@ class SemanticArchive(StrictJSONMixin):
                 ValueDimensionRelation.from_json(item)
                 for item in data.get("value_dimension_relations", [])
             ],
+            dimension_relations=[
+                DimensionRelation.from_json(item)
+                for item in data.get("dimension_relations", [])
+            ],
         )
 
     def to_json(self) -> dict[str, Any]:
@@ -3289,6 +3385,9 @@ class SemanticArchive(StrictJSONMixin):
             "dimension_constraints": list(self.dimension_constraints),
             "value_dimension_relations": [
                 item.to_json() for item in self.value_dimension_relations
+            ],
+            "dimension_relations": [
+                item.to_json() for item in self.dimension_relations
             ],
         }
 
@@ -4023,7 +4122,7 @@ class ProvenanceRecord(StrictJSONMixin):
 class Gate1Artifact(StrictJSONMixin):
     """The complete proof-relevant Lift result: exactly ``(J, C, pi)``."""
 
-    SCHEMA: ClassVar[str] = "intentir.scrc.artifact.v10"
+    SCHEMA: ClassVar[str] = "intentir.scrc.artifact.v12"
     LEGACY_SCHEMAS: ClassVar[frozenset[str]] = frozenset(
         {
             "intentir.scrc.artifact.v1",
@@ -4035,6 +4134,8 @@ class Gate1Artifact(StrictJSONMixin):
             "intentir.scrc.artifact.v7",
             "intentir.scrc.artifact.v8",
             "intentir.scrc.artifact.v9",
+            "intentir.scrc.artifact.v10",
+            "intentir.scrc.artifact.v11",
         }
     )
 
@@ -4103,6 +4204,17 @@ class Gate1Artifact(StrictJSONMixin):
             raise SchemaError(
                 "Gate1 artifact v1-v3 do not contain J value_dimension_relations"
             )
+        if self.wire_schema not in {
+            "intentir.scrc.artifact.v11",
+            self.SCHEMA,
+        } and self.j.dimension_relations:
+            raise SchemaError(
+                "Gate1 artifact v1-v10 do not contain J dimension_relations"
+            )
+        if self.wire_schema != self.SCHEMA and self.pi.program_axes:
+            raise SchemaError(
+                "Gate1 artifact v1-v11 do not contain pi program_axes"
+            )
         if self.wire_schema in {
             "intentir.scrc.artifact.v4",
             "intentir.scrc.artifact.v5",
@@ -4110,6 +4222,8 @@ class Gate1Artifact(StrictJSONMixin):
             "intentir.scrc.artifact.v7",
             "intentir.scrc.artifact.v8",
             "intentir.scrc.artifact.v9",
+            "intentir.scrc.artifact.v10",
+            "intentir.scrc.artifact.v11",
             self.SCHEMA,
         } and any(
             item.masked_contribution is not None
@@ -4179,6 +4293,8 @@ class Gate1Artifact(StrictJSONMixin):
         if self.wire_schema not in {
             "intentir.scrc.artifact.v8",
             "intentir.scrc.artifact.v9",
+            "intentir.scrc.artifact.v10",
+            "intentir.scrc.artifact.v11",
             self.SCHEMA,
         } and (
             self.pi.physical_iterations or self.pi.physical_loop_carriers
@@ -4188,16 +4304,18 @@ class Gate1Artifact(StrictJSONMixin):
             )
         if self.wire_schema not in {
             "intentir.scrc.artifact.v9",
+            "intentir.scrc.artifact.v10",
+            "intentir.scrc.artifact.v11",
             self.SCHEMA,
         } and self.pi.terminal_controls:
             raise SchemaError(
                 "Gate1 artifact v1-v8 do not contain pi terminal_controls"
             )
-        if self.wire_schema != self.SCHEMA and self.pi.unit_iterations:
-            raise SchemaError(
-                "Gate1 artifact v1-v9 do not contain pi unit_iterations"
-            )
-        if self.wire_schema != self.SCHEMA and self.pi.route_extent_transforms:
+        if self.wire_schema not in {
+            "intentir.scrc.artifact.v10",
+            "intentir.scrc.artifact.v11",
+            self.SCHEMA,
+        } and self.pi.route_extent_transforms:
             raise SchemaError(
                 "Gate1 artifact v1-v9 do not contain pi route_extent_transforms"
             )
@@ -4265,6 +4383,8 @@ class Gate1Artifact(StrictJSONMixin):
             "intentir.scrc.artifact.v7",
             "intentir.scrc.artifact.v8",
             "intentir.scrc.artifact.v9",
+            "intentir.scrc.artifact.v10",
+            "intentir.scrc.artifact.v11",
             cls.SCHEMA,
         } and (
             pi_value is not None and "iterations" not in pi_value
@@ -4286,6 +4406,8 @@ class Gate1Artifact(StrictJSONMixin):
             "intentir.scrc.artifact.v7",
             "intentir.scrc.artifact.v8",
             "intentir.scrc.artifact.v9",
+            "intentir.scrc.artifact.v10",
+            "intentir.scrc.artifact.v11",
             cls.SCHEMA,
         }:
             if j_value is not None and "dimension_constraints" not in j_value:
@@ -4332,9 +4454,20 @@ class Gate1Artifact(StrictJSONMixin):
                 raise SchemaError(
                     "Gate1 artifact v1-v3 do not contain J consumer_extensions"
                 )
+        if schema in {"intentir.scrc.artifact.v11", cls.SCHEMA}:
+            if j_value is not None and "dimension_relations" not in j_value:
+                raise SchemaError(
+                    "Gate1Artifact.j is missing required field: dimension_relations"
+                )
+        elif j_value is not None and "dimension_relations" in j_value:
+            raise SchemaError(
+                "Gate1 artifact v1-v10 do not contain J dimension_relations"
+            )
         if schema in {
             "intentir.scrc.artifact.v8",
             "intentir.scrc.artifact.v9",
+            "intentir.scrc.artifact.v10",
+            "intentir.scrc.artifact.v11",
             cls.SCHEMA,
         }:
             if pi_value is not None and "physical_iterations" not in pi_value:
@@ -4353,7 +4486,12 @@ class Gate1Artifact(StrictJSONMixin):
             raise SchemaError(
                 "Gate1 artifact v1-v7 do not contain pi physical time relations"
             )
-        if schema in {"intentir.scrc.artifact.v9", cls.SCHEMA}:
+        if schema in {
+            "intentir.scrc.artifact.v9",
+            "intentir.scrc.artifact.v10",
+            "intentir.scrc.artifact.v11",
+            cls.SCHEMA,
+        }:
             if pi_value is not None and "terminal_controls" not in pi_value:
                 raise SchemaError(
                     "Gate1Artifact.pi is missing required field: terminal_controls"
@@ -4362,23 +4500,28 @@ class Gate1Artifact(StrictJSONMixin):
             raise SchemaError(
                 "Gate1 artifact v1-v8 do not contain pi terminal_controls"
             )
-        if schema == cls.SCHEMA:
-            if pi_value is not None and "unit_iterations" not in pi_value:
-                raise SchemaError(
-                    "Gate1Artifact.pi is missing required field: unit_iterations"
-                )
+        if schema in {
+            "intentir.scrc.artifact.v10",
+            "intentir.scrc.artifact.v11",
+            cls.SCHEMA,
+        }:
             if pi_value is not None and "route_extent_transforms" not in pi_value:
                 raise SchemaError(
                     "Gate1Artifact.pi is missing required field: "
                     "route_extent_transforms"
                 )
-        elif pi_value is not None and (
-            "unit_iterations" in pi_value
-            or "route_extent_transforms" in pi_value
-        ):
+        elif pi_value is not None and "route_extent_transforms" in pi_value:
             raise SchemaError(
-                "Gate1 artifact v1-v9 do not contain pi unit_iterations or "
-                "route_extent_transforms"
+                "Gate1 artifact v1-v9 do not contain pi route_extent_transforms"
+            )
+        if schema == cls.SCHEMA:
+            if pi_value is not None and "program_axes" not in pi_value:
+                raise SchemaError(
+                    "Gate1Artifact.pi is missing required field: program_axes"
+                )
+        elif pi_value is not None and "program_axes" in pi_value:
+            raise SchemaError(
+                "Gate1 artifact v1-v11 do not contain pi program_axes"
             )
         if schema in {
             "intentir.scrc.artifact.v5",
@@ -4386,6 +4529,8 @@ class Gate1Artifact(StrictJSONMixin):
             "intentir.scrc.artifact.v7",
             "intentir.scrc.artifact.v8",
             "intentir.scrc.artifact.v9",
+            "intentir.scrc.artifact.v10",
+            "intentir.scrc.artifact.v11",
             cls.SCHEMA,
         }:
             if (
@@ -4424,6 +4569,11 @@ class Gate1Artifact(StrictJSONMixin):
             j_value["boundary"].pop("consumer_extensions", None)
             j_value.pop("dimension_constraints", None)
             j_value.pop("value_dimension_relations", None)
+        if self.wire_schema not in {
+            "intentir.scrc.artifact.v11",
+            self.SCHEMA,
+        }:
+            j_value.pop("dimension_relations", None)
         if self.wire_schema in {
             "intentir.scrc.artifact.v1",
             "intentir.scrc.artifact.v2",
@@ -4445,6 +4595,8 @@ class Gate1Artifact(StrictJSONMixin):
                     "intentir.scrc.artifact.v7",
                     "intentir.scrc.artifact.v8",
                     "intentir.scrc.artifact.v9",
+                    "intentir.scrc.artifact.v10",
+                    "intentir.scrc.artifact.v11",
                     self.SCHEMA,
                 },
                 include_loop_carriers=self.wire_schema
@@ -4455,18 +4607,32 @@ class Gate1Artifact(StrictJSONMixin):
                     "intentir.scrc.artifact.v7",
                     "intentir.scrc.artifact.v8",
                     "intentir.scrc.artifact.v9",
+                    "intentir.scrc.artifact.v10",
+                    "intentir.scrc.artifact.v11",
                     self.SCHEMA,
                 },
                 include_physical_time=self.wire_schema
                 in {
                     "intentir.scrc.artifact.v8",
                     "intentir.scrc.artifact.v9",
+                    "intentir.scrc.artifact.v10",
+                    "intentir.scrc.artifact.v11",
                     self.SCHEMA,
                 },
-                include_unit_iterations=self.wire_schema == self.SCHEMA,
                 include_terminal_controls=self.wire_schema
-                in {"intentir.scrc.artifact.v9", self.SCHEMA},
-                include_route_extent_transforms=self.wire_schema == self.SCHEMA,
+                in {
+                    "intentir.scrc.artifact.v9",
+                    "intentir.scrc.artifact.v10",
+                    "intentir.scrc.artifact.v11",
+                    self.SCHEMA,
+                },
+                include_route_extent_transforms=self.wire_schema
+                in {
+                    "intentir.scrc.artifact.v10",
+                    "intentir.scrc.artifact.v11",
+                    self.SCHEMA,
+                },
+                include_program_axes=self.wire_schema == self.SCHEMA,
             ),
         }
 
@@ -4968,11 +5134,14 @@ def _opaque_storage_json(
 
 
 def _opaque_pi_json(
-    witness: RealizationWitness, aliases: dict[str, str]
+    witness: RealizationWitness,
+    aliases: dict[str, str],
+    *,
+    include_program_axes: bool,
 ) -> dict[str, Any]:
     """Alpha-rename only pi's opaque J/C references; topology is unchanged."""
 
-    result = witness.to_json()
+    result = witness.to_json(include_program_axes=include_program_axes)
     for instance in result["instances"]:
         instance["semantic_ref"] = _opaque_reference(
             instance["semantic_ref"], aliases
@@ -4982,11 +5151,10 @@ def _opaque_pi_json(
             refinement["auth_ref"] = _opaque_reference(
                 refinement["auth_ref"], aliases
             )
-    for iteration in result["unit_iterations"]:
-        if isinstance(iteration.get("axis_ref"), str):
-            iteration["axis_ref"] = _opaque_reference(
-                iteration["axis_ref"], aliases
-            )
+    for binding in result.get("program_axes", []):
+        binding["domain_ref"] = _opaque_reference(
+            binding["domain_ref"], aliases
+        )
     return result
 
 
@@ -5275,9 +5443,23 @@ def _opaque_normal_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
                 }
                 for item in artifact.j.value_dimension_relations
             ],
+            "dimension_relations": [
+                {
+                    "result": _opaque_reference(item.result, aliases),
+                    "expr": {
+                        **item.expr.to_json(),
+                        "arg": _opaque_reference(item.expr.arg, aliases),
+                    },
+                }
+                for item in artifact.j.dimension_relations
+            ],
         },
         "c": c_view,
-        "pi": _opaque_pi_json(artifact.pi, aliases),
+        "pi": _opaque_pi_json(
+            artifact.pi,
+            aliases,
+            include_program_axes=artifact.wire_schema == artifact.SCHEMA,
+        ),
     }
 
 
@@ -5656,9 +5838,28 @@ def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
                 }
                 for item in artifact.j.value_dimension_relations
             ],
+            "dimension_relations": [
+                {
+                    "result": opaque_reference(item.result),
+                    "expr": {
+                        "op": "<masked>",
+                        "arg": opaque_reference(item.expr.arg),
+                        **(
+                            {"value": "<masked>"}
+                            if item.expr.value is not None
+                            else {}
+                        ),
+                    },
+                }
+                for item in artifact.j.dimension_relations
+            ],
         },
         "c": opaque_c,
-        "pi": _opaque_pi_json(artifact.pi, normal_aliases),
+        "pi": _opaque_pi_json(
+            artifact.pi,
+            normal_aliases,
+            include_program_axes=artifact.wire_schema == artifact.SCHEMA,
+        ),
     }
 
 
@@ -5686,6 +5887,7 @@ __all__ = [
     "ScheduleSlot", "ScheduleSlotKind", "SchemaError", "SignatureParameter",
     "ScopeKind", "SEMANTIC_ARCHIVE_LEGACY_WIRE_FIELDS",
     "SEMANTIC_ARCHIVE_WIRE_FIELDS", "SemanticArchive", "ValueDimensionRelation",
+    "DimensionRelation", "DimensionRelationExpr",
     "SemanticEventKind",
     "SemanticEventRef", "SourceSpan", "StorageMutability", "StorageObject",
     "StrictJSONMixin", "UpdateCombiner", "UpdateOrder",

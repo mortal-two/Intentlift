@@ -49,7 +49,7 @@ __all__ = [
 ]
 
 
-TTIR_FINGERPRINT_SCHEMA = "triton-ttir-3.6-gate1-v11"
+TTIR_FINGERPRINT_SCHEMA = "triton-ttir-3.6-gate1-v13"
 _SCHEMA_VERSION = TTIR_FINGERPRINT_SCHEMA
 _SSA_RE = re.compile(r"%[A-Za-z0-9_.$-]+(?:#[0-9]+)?")
 _LOC_START_RE = re.compile(r"loc\s*\(")
@@ -625,6 +625,30 @@ class TTIRFingerprint:
         repr=False,
         compare=False,
     )
+    # Diagnostic-only expansion of representation carriers contracted by the
+    # v12 hard observer.  It exposes only the carrier result contract and its
+    # normalized anonymous origins, never the discarded arithmetic formula.
+    # This lets source-aware Lift repair an authored route whose dependency set
+    # was incomplete without turning Gate1 feedback into a hidden Source trace.
+    diagnostic_representation_profiles: tuple[
+        tuple[str, str, tuple[str, ...]], ...
+    ] = field(
+        default=(),
+        repr=False,
+        compare=False,
+    )
+    # Diagnostic-only closed classification of compiler-visible ``scf.for``
+    # bounds.  Each row is ``(block_arity, basis, extent_handle, tile)``.
+    # It is intentionally excluded from equality, ``to_dict`` and ``digest``;
+    # source-aware Lift and source-blind Replay preflight may only reject an
+    # authored induction basis that contradicts the compiled loop.
+    diagnostic_iteration_bases: tuple[
+        tuple[int, str, str, int], ...
+    ] = field(
+        default=(),
+        repr=False,
+        compare=False,
+    )
     # Diagnostic-only expansion of each synthetic ``effect.trace`` node.
     # Keeping the ordered event spellings beside the opaque trace digest lets
     # SCRC explain *which* lexical effect sequence diverged.  Like node
@@ -632,6 +656,18 @@ class TTIRFingerprint:
     # the digest; it can diagnose a rejection but can never accept a candidate.
     diagnostic_effect_traces: tuple[
         tuple[str, str, tuple[str, ...]], ...
+    ] = field(
+        default=(),
+        repr=False,
+        compare=False,
+    )
+    # Diagnostic-only lexical memory events with the function-argument
+    # positions that may supply each pointer operand.  Replay's source-blind
+    # compile preflight uses this sidecar to check ordering already authored in
+    # pi.  It is deliberately excluded from equality, serialization and the
+    # digest, so it cannot change Gate1 membership.
+    diagnostic_memory_effect_origins: tuple[
+        tuple[str, tuple[int, ...], tuple[str, ...]], ...
     ] = field(
         default=(),
         repr=False,
@@ -707,6 +743,173 @@ class _FunctionParts:
     results: tuple[str, ...]
     body: str
     attributes: tuple[tuple[str, str], ...] = ()
+
+
+def _diagnostic_iteration_bases(
+    function: _FunctionParts,
+    operations: list[_Operation],
+    result_to_node: Mapping[str, int],
+) -> tuple[tuple[int, str, str, int], ...]:
+    """Classify only the three closed pi induction bases from exact TTIR SSA.
+
+    The classifier recognizes direct zero-to-extent tile steps and the exact
+    ceil-div forms used by ``rounded_extent_step`` and ``tile_ordinal``.  It
+    deliberately returns no row for an ambiguous or different expression.
+    """
+
+    nodes = {operation.node_id: operation for operation in operations}
+    arguments = {
+        name: name.removeprefix("%")
+        for name, _type, _attrs in function.arguments
+    }
+    passthrough = {
+        "arith.extsi", "arith.extui", "arith.index_cast", "arith.index_castui",
+        "arith.trunci",
+    }
+
+    def producer(value: str) -> _Operation | None:
+        node_id = result_to_node.get(value)
+        return nodes.get(node_id) if node_id is not None else None
+
+    def integer_constant(value: str, active: frozenset[str] = frozenset()) -> int | None:
+        if value in active:
+            return None
+        operation = producer(value)
+        if operation is None:
+            return None
+        if operation.name in passthrough and len(operation.operands) == 1:
+            return integer_constant(operation.operands[0], active | {value})
+        constant = operation.constant_value
+        if (
+            operation.name != "arith.constant"
+            or constant is None
+            or not float(constant).is_integer()
+        ):
+            return None
+        return int(constant)
+
+    def argument_index(
+        value: str, active: frozenset[str] = frozenset()
+    ) -> str | None:
+        if value in arguments:
+            return arguments[value]
+        if value in active:
+            return None
+        operation = producer(value)
+        if operation is None or operation.name not in passthrough:
+            return None
+        if len(operation.operands) != 1:
+            return None
+        return argument_index(operation.operands[0], active | {value})
+
+    def ceil_div_extent(
+        value: str, tile: int, active: frozenset[str] = frozenset()
+    ) -> str | None:
+        if value in active:
+            return None
+        operation = producer(value)
+        if operation is None:
+            return None
+        if operation.name in {"arith.ceildivsi", "arith.ceildivui"}:
+            if len(operation.operands) != 2:
+                return None
+            if integer_constant(operation.operands[1]) != tile:
+                return None
+            return argument_index(operation.operands[0])
+        if operation.name not in {"arith.divsi", "arith.divui", "arith.floordivsi"}:
+            return None
+        if len(operation.operands) != 2 or integer_constant(operation.operands[1]) != tile:
+            return None
+        numerator = producer(operation.operands[0])
+        if numerator is None:
+            return None
+        if numerator.name == "arith.addi" and len(numerator.operands) == 2:
+            for extent, offset in (
+                (numerator.operands[0], numerator.operands[1]),
+                (numerator.operands[1], numerator.operands[0]),
+            ):
+                if integer_constant(offset) == tile - 1:
+                    index = argument_index(extent)
+                    if index is not None:
+                        return index
+        if numerator.name == "arith.subi" and len(numerator.operands) == 2:
+            if integer_constant(numerator.operands[1]) != 1:
+                return None
+            summed = producer(numerator.operands[0])
+            if summed is not None and summed.name == "arith.addi" and len(summed.operands) == 2:
+                for extent, offset in (
+                    (summed.operands[0], summed.operands[1]),
+                    (summed.operands[1], summed.operands[0]),
+                ):
+                    if integer_constant(offset) == tile:
+                        index = argument_index(extent)
+                        if index is not None:
+                            return index
+        return None
+
+    def rounded_extent(value: str, tile: int) -> str | None:
+        operation = producer(value)
+        if operation is None or operation.name != "arith.muli":
+            return None
+        if len(operation.operands) != 2:
+            return None
+        for quotient, factor in (
+            (operation.operands[0], operation.operands[1]),
+            (operation.operands[1], operation.operands[0]),
+        ):
+            if integer_constant(factor) == tile:
+                index = ceil_div_extent(quotient, tile)
+                if index is not None:
+                    return index
+        return None
+
+    result: list[tuple[int, str, str, int]] = []
+    for loop in operations:
+        if loop.name != "scf.for" or loop.header_operand_count < 3:
+            continue
+        lower, upper, step = loop.operands[:3]
+        if integer_constant(lower) != 0:
+            continue
+        step_value = integer_constant(step)
+        if step_value is None or step_value <= 0:
+            continue
+        extent = argument_index(upper)
+        if extent is not None:
+            result.append(
+                (len(loop.region_block_args), "extent_step", extent, step_value)
+            )
+            continue
+        if step_value > 1:
+            extent = rounded_extent(upper, step_value)
+            if extent is not None:
+                result.append(
+                    (
+                        len(loop.region_block_args),
+                        "rounded_extent_step",
+                        extent,
+                        step_value,
+                    )
+                )
+                continue
+        if step_value == 1:
+            upper_operation = producer(upper)
+            if upper_operation is not None and upper_operation.name in {
+                "arith.ceildivsi", "arith.ceildivui", "arith.divsi",
+                "arith.divui", "arith.floordivsi",
+            } and len(upper_operation.operands) == 2:
+                tile = integer_constant(upper_operation.operands[1])
+                if tile is not None and tile > 1:
+                    extent = ceil_div_extent(upper, tile)
+                    if extent is not None:
+                        result.append(
+                            (
+                                len(loop.region_block_args),
+                                "tile_ordinal",
+                                extent,
+                                tile,
+                            )
+                        )
+    return tuple(sorted(result))
 
 
 _FUNCTION_RE = re.compile(
@@ -1578,8 +1781,9 @@ def _bounded_normalize_operations(
     """Apply the registered bounded rewrites after lexical SSA resolution.
 
     Gate1 deliberately keeps these false-reject normalizations narrow: neutral
-    ``x + 0``, ``1 / sqrt(x)`` versus ``rsqrt(x)``, and Triton's exact
-    libdevice-rsqrt spelling versus ``math.rsqrt``.  Applying them to the
+    ``x + 0``, ``1 / sqrt(x)`` versus ``rsqrt(x)``, Triton's exact
+    libdevice-rsqrt spelling versus ``math.rsqrt``, and a direct typed FMA versus
+    its direct typed multiply-add/subtract expansion.  Applying them to the
     parsed graph is essential: MLIR SSA spellings are region-scoped, so a
     textual whole-function substitution would otherwise depend on whether
     sibling or nested regions happened to reuse the same local name.
@@ -1714,6 +1918,83 @@ def _bounded_normalize_operations(
         if original_uses[denominator] == 1:
             removed_nodes.add(sqrt_node_id)
 
+    # Rule N3: one direct typed ``fma(a,b,c)`` has the same observer-level value
+    # tree as ``a*b+c``.  A direct ``c = 0-d``/``neg(d)`` is represented as
+    # ``a*b-d``.  Operand identities and their already-compiled types remain
+    # untouched; no cast motion, reassociation, contraction of a larger tree, or
+    # shared producer is hidden by this rewrite.  Floating rounding remains the
+    # responsibility of the predeclared Gate2 comparison relation/Q.
+    expanded_operations: list[_Operation] = []
+    next_node_id = max((item.node_id for item in operations), default=-1) + 1
+    for operation in operations:
+        if (
+            operation.node_id in removed_nodes
+            or operation.name != "math.fma"
+            or len(operation.result_names) != 1
+            or len(operation.operands) != 3
+        ):
+            expanded_operations.append(operation)
+            continue
+        left, right, addend = operation.operands
+        result_type = _normalize_space(operation.local_signature.rsplit(":", 1)[-1])
+        multiply_result = f"{operation.result_names[0]}$fma_mul"
+        while multiply_result in result_to_node:
+            multiply_result += "$"
+        multiply = _Operation(
+            node_id=next_node_id,
+            name="arith.mulf",
+            result_names=(multiply_result,),
+            operands=[left, right],
+            local_signature=_normalize_space(
+                f"arith.mulf %, % : {result_type}"
+            ),
+            context=operation.context,
+            header_operand_count=2,
+            fork_id=operation.fork_id,
+            fork_arm=operation.fork_arm,
+            structured_if_id=operation.structured_if_id,
+            structured_if_arm=operation.structured_if_arm,
+        )
+        next_node_id += 1
+        result_to_node[multiply_result] = multiply.node_id
+        node_by_id[multiply.node_id] = multiply
+
+        addend_node_id = result_to_node.get(addend)
+        addend_operation = (
+            node_by_id.get(addend_node_id) if addend_node_id is not None else None
+        )
+        subtract_operand: str | None = None
+        if (
+            addend_operation is not None
+            and addend_operation.name == "arith.subf"
+            and len(addend_operation.operands) == 2
+            and direct_constant(addend_operation.operands[0]) == 0.0
+        ):
+            subtract_operand = addend_operation.operands[1]
+            normalization_constant_nodes.add(
+                result_to_node[addend_operation.operands[0]]
+            )
+        elif (
+            addend_operation is not None
+            and addend_operation.name == "arith.negf"
+            and len(addend_operation.operands) == 1
+        ):
+            subtract_operand = addend_operation.operands[0]
+        if subtract_operand is not None:
+            operation.name = "arith.subf"
+            operation.operands = [multiply_result, subtract_operand]
+            if original_uses[addend] == 1 and addend_node_id is not None:
+                removed_nodes.add(addend_node_id)
+        else:
+            operation.name = "arith.addf"
+            operation.operands = [multiply_result, addend]
+        operation.local_signature = _normalize_space(
+            f"{operation.name} %, % : {result_type}"
+        )
+        operation.header_operand_count = 2
+        expanded_operations.extend((multiply, operation))
+    operations = expanded_operations
+
     remaining_uses: Counter[str] = Counter()
     for operation in operations:
         if operation.node_id in removed_nodes:
@@ -1736,6 +2017,160 @@ def _bounded_normalize_operations(
         for result in operation.result_names
     }
     return normalized, normalized_result_to_node, terminal_forks
+
+
+_PREDICATE_VIEW_OPS = {
+    "arith.cmpi",
+    "arith.cmpf",
+    "arith.andi",
+    "arith.ori",
+    "arith.xori",
+    "arith.select",
+    "tt.broadcast",
+    "tt.expand_dims",
+    "tt.reshape",
+    "tt.trans",
+}
+
+_REPRESENTATION_ANCHOR_OPS = {
+    # These stages have an owner in the closed realization topology.  Their
+    # existence remains hard evidence even though the pure formula between
+    # them is quotiented below.
+    "tt.get_program_id",
+    "tt.get_num_programs",
+    "tt.addptr",
+}
+
+
+def _representation_only_nodes(
+    operations: Sequence[_Operation],
+    result_to_node: Mapping[str, int],
+    terminal_forks: Sequence[_TerminalFork],
+) -> frozenset[int]:
+    """Find pure compiler scaffolding with no independent artifact owner.
+
+    The observer keeps three hard slices intact:
+
+    * values contributing to public returns or stored/updated values;
+    * the boolean structure and exact constants of observable predicates;
+    * effects, structured regions, transfers, and explicit address/program
+      anchors.
+
+    Remaining known-pure operations are representation-only when they merely
+    spell a program schedule, address offset, rank lift, or loop bound.  Their
+    concrete arithmetic tree is not present in J/C/pi and therefore cannot be
+    a source-blind hidden answer.  The fingerprint contracts that tree to a
+    typed carrier-origin edge; it does not erase the surviving predicate,
+    pointer, transfer, region, or effect that consumes it.
+    """
+
+    node_by_id = {operation.node_id: operation for operation in operations}
+    value_nodes: set[int] = set()
+    predicate_nodes: set[int] = set()
+
+    def mark_value(name: str, active: frozenset[int] = frozenset()) -> None:
+        node_id = result_to_node.get(name)
+        if node_id is None or node_id in value_nodes or node_id in active:
+            return
+        operation = node_by_id[node_id]
+        value_nodes.add(node_id)
+
+        # A load is the semantic value boundary.  Its pointer, mask, and fill
+        # are observed by the address/predicate/effect slices instead of being
+        # folded into the data-value computation.
+        if operation.name == "tt.load":
+            return
+        if operation.name in _REPRESENTATION_ANCHOR_OPS:
+            return
+        if operation.name == "scf.for":
+            try:
+                slot = operation.result_names.index(name)
+            except ValueError as error:  # pragma: no cover - map is co-built
+                raise TTIRParseError(
+                    f"loop result {name!r} is absent from its producer"
+                ) from error
+            names = [
+                operation.operands[3 + slot],
+                operation.region_results[slot],
+            ]
+        elif operation.name == "scf.if":
+            names = list(operation.region_results)
+        else:
+            names = [*operation.operands, *operation.region_results]
+        for operand in names:
+            mark_value(operand, active | {node_id})
+
+    def mark_predicate(name: str, active: frozenset[int] = frozenset()) -> None:
+        node_id = result_to_node.get(name)
+        if node_id is None or node_id in predicate_nodes or node_id in active:
+            return
+        operation = node_by_id[node_id]
+        if operation.name == "arith.constant":
+            predicate_nodes.add(node_id)
+            return
+        if operation.name not in _PREDICATE_VIEW_OPS:
+            # Numeric index/address construction below the comparison is a
+            # representation carrier.  The comparison itself, its polarity,
+            # exact direct constants, and boolean composition remain hard.
+            return
+        predicate_nodes.add(node_id)
+        for operand in [*operation.operands, *operation.region_results]:
+            producer_id = result_to_node.get(operand)
+            if producer_id is None:
+                continue
+            producer = node_by_id[producer_id]
+            if (
+                producer.name == "arith.constant"
+                or producer.name in _PREDICATE_VIEW_OPS
+            ):
+                mark_predicate(operand, active | {node_id})
+
+    for operation in operations:
+        if operation.name == "tt.store" and len(operation.operands) >= 2:
+            mark_value(operation.operands[1])
+        elif operation.name == "tt.return":
+            for operand in operation.operands:
+                mark_value(operand)
+        elif operation.name.startswith("tt.atomic"):
+            # Pointer operand zero belongs to the address slice.  All remaining
+            # authored update operands are observable values or predicates and
+            # stay conservative hard evidence.
+            for operand in operation.operands[1:]:
+                mark_value(operand)
+
+        if operation.name == "tt.load" and operation.header_operand_count >= 2:
+            mark_predicate(operation.operands[1])
+        elif (
+            operation.name == "tt.store"
+            and operation.header_operand_count >= 3
+        ):
+            mark_predicate(operation.operands[2])
+        elif operation.name == "scf.if" and operation.operands:
+            mark_predicate(operation.operands[0])
+        elif (
+            operation.name in {"tt.assert", "tt.device_assert"}
+            and operation.operands
+        ):
+            mark_predicate(operation.operands[0])
+    for terminal_fork in terminal_forks:
+        mark_predicate(terminal_fork.predicate)
+
+    representation: set[int] = set()
+    for operation in operations:
+        if operation.node_id in value_nodes or operation.node_id in predicate_nodes:
+            continue
+        if operation.name in _REPRESENTATION_ANCHOR_OPS:
+            continue
+        if operation.name in _REGION_OWNERS or operation.name in _TERMINATORS:
+            continue
+        if _operation_has_effect(operation):
+            continue
+        # Unknown operations never become presentation noise merely because
+        # they happen not to reach the current output slice.
+        if operation.name not in _KNOWN_PURE_OPS:
+            continue
+        representation.add(operation.node_id)
+    return frozenset(representation)
 
 
 def _cmp_info(name: str, tail: str) -> tuple[str | None, bool]:
@@ -3873,14 +4308,123 @@ class TTIRParser:
         effect_occurrences = _effect_occurrence_identities(
             operations, terminal_forks
         )
+        representation_only = _representation_only_nodes(
+            operations, result_to_node, terminal_forks
+        )
         structural_cache: dict[int, str] = {}
         semantic_cache: dict[int, str] = {}
+        representation_atom_cache: dict[str, tuple[str, ...]] = {}
+        representation_ref_cache: dict[str, str] = {}
+
+        def result_contract(operation: _Operation) -> str:
+            """Return a bounded result-type view without retaining its formula."""
+
+            signature = _trailing_type_signature(operation.local_signature)
+            if signature is None:
+                return f"results={len(operation.result_names)}"
+            arrow = _find_top_level_token(signature, "->", last=True)
+            if arrow is not None:
+                result_text = signature[arrow + 2 :]
+            else:
+                conversion = _find_top_level_token(signature, " to ", last=True)
+                result_text = (
+                    signature[conversion + 4 :]
+                    if conversion is not None
+                    else signature
+                )
+            return _normalize_space(result_text)
+
+        def hard_local_signature(operation: _Operation) -> str:
+            if operation.name != "tt.addptr":
+                return operation.local_signature
+            signature = _trailing_type_signature(operation.local_signature)
+            pointer_type: str | None = None
+            if signature is not None:
+                arrow = _find_top_level_token(signature, "->", last=True)
+                declared = _declared_types(
+                    signature[arrow + 2 :] if arrow is not None else signature
+                )
+                pointer_type = next(
+                    (
+                        item
+                        for item in declared
+                        if _pointer_dtype(item) is not None
+                    ),
+                    None,
+                )
+            if pointer_type is None:
+                return "tt.addptr pointer=unknown"
+            tensor = _ranked_tensor_contract(pointer_type)
+            rank = len(tensor[0]) if tensor is not None else 0
+            return (
+                f"tt.addptr pointer_dtype={_pointer_dtype(pointer_type)} "
+                f"pointer_rank={rank}"
+            )
+
+        def representation_atoms(
+            name: str, active: frozenset[int] = frozenset()
+        ) -> tuple[str, ...]:
+            cached = representation_atom_cache.get(name)
+            if cached is not None:
+                return cached
+            leaf = leaf_labels.get(name)
+            if leaf is not None:
+                cached = (leaf,)
+                representation_atom_cache[name] = cached
+                return cached
+            node_id = result_to_node[name]
+            if node_id not in representation_only:
+                cached = (operand_ref(name, semantic=True),)
+                representation_atom_cache[name] = cached
+                return cached
+            if node_id in active:
+                raise TTIRParseError(
+                    "cyclic representation-only SSA dependency"
+                )
+            operation = node_by_id[node_id]
+            atoms: set[str] = set()
+            if operation.name == "tt.make_range":
+                atoms.add(f"lane:{result_contract(operation)}")
+            for operand in [*operation.operands, *operation.region_results]:
+                atoms.update(
+                    representation_atoms(operand, active | {node_id})
+                )
+            if not atoms:
+                # Constants specialized from C and other closed literal-only
+                # scaffolding retain their type but not a formula/value already
+                # owned by the schedule binding or a surviving predicate.
+                atoms.add(f"literal:{result_contract(operation)}")
+            cached = tuple(sorted(atoms))
+            representation_atom_cache[name] = cached
+            return cached
+
+        def representation_ref(name: str) -> str:
+            cached = representation_ref_cache.get(name)
+            if cached is not None:
+                return cached
+            node_id = result_to_node[name]
+            operation = node_by_id[node_id]
+            slot = (
+                operation.result_names.index(name)
+                if len(operation.result_names) > 1
+                else 0
+            )
+            payload = {
+                "contract": result_contract(operation),
+                "origins": representation_atoms(name),
+                "slot": slot,
+            }
+            cached = f"representation[{_digest(payload)[:20]}]"
+            representation_ref_cache[name] = cached
+            return cached
 
         def operand_ref(name: str, *, semantic: bool) -> str:
             if name in leaf_labels:
                 return leaf_labels[name]
             node_id = result_to_node[name]
             producer = node_by_id[node_id]
+            if node_id in representation_only:
+                return representation_ref(name)
             base = node_ref(node_id, semantic=semantic)
             if len(producer.result_names) <= 1:
                 return base
@@ -3915,7 +4459,7 @@ class TTIRParser:
             operation = node_by_id[node_id]
             refs = normalized_operand_refs(operation, semantic=semantic)
             if semantic:
-                local = operation.local_signature
+                local = hard_local_signature(operation)
             else:
                 # Producer/consumer topology deliberately uses operation kinds,
                 # while predicates, fill values, dot attributes and reductions
@@ -3932,13 +4476,17 @@ class TTIRParser:
             _semantic_op_name(operation, node_by_id, result_to_node)
             for operation in operations
             if operation.name not in _TERMINATORS
+            and operation.node_id not in representation_only
         )
         if terminal_forks:
             op_counts["control.conditional"] += len(terminal_forks)
 
         edges: list[tuple[str, str, str]] = []
         for operation in operations:
-            if operation.name in _TERMINATORS:
+            if (
+                operation.name in _TERMINATORS
+                or operation.node_id in representation_only
+            ):
                 continue
             # Hard dataflow labels include normalized operation attributes and
             # constants, not just graph topology.  Otherwise an unchanged op
@@ -4097,7 +4645,10 @@ class TTIRParser:
                     direct_sequence.setdefault(parent, []).append(operation)
                 if operation.node_id in region_ids:
                     direct_children.setdefault(parent, []).append(operation.node_id)
-                elif operation.name not in _TERMINATORS:
+                elif (
+                    operation.name not in _TERMINATORS
+                    and operation.node_id not in representation_only
+                ):
                     direct_members.setdefault(parent, []).append(operation)
 
             restricted_ancestor = next(
@@ -4177,6 +4728,7 @@ class TTIRParser:
                 for operation in direct
                 if operation.node_id not in region_ids
                 and operation.name not in _TERMINATORS
+                and operation.node_id not in representation_only
             )
             structured_regions = sorted(
                 region_ref(operation.node_id)
@@ -4279,6 +4831,7 @@ class TTIRParser:
                 for operation in direct
                 if operation.node_id not in region_ids
                 and operation.name not in _TERMINATORS
+                and operation.node_id not in representation_only
             )
             structured_regions = sorted(
                 region_ref(operation.node_id)
@@ -4657,7 +5210,11 @@ class TTIRParser:
                 inside_structured_if = (
                     nested.structured_if_id in nested_structured_if_ids
                 )
-                if nested.name not in _TERMINATORS and not inside_structured_if:
+                if (
+                    nested.name not in _TERMINATORS
+                    and not inside_structured_if
+                    and nested.node_id not in representation_only
+                ):
                     body_ops[
                         _semantic_op_name(
                             nested, node_by_id, result_to_node
@@ -4731,7 +5288,7 @@ class TTIRParser:
                 )
             )
 
-        access = self._infer_access(
+        access, diagnostic_memory_effect_origins = self._infer_access(
             function, operations, result_to_node, leaf_labels, node_by_id
         )
         interface_arguments: list[InterfaceArgument] = []
@@ -4901,9 +5458,27 @@ class TTIRParser:
                     if operation.name not in _TERMINATORS
                 )
             ),
+            diagnostic_representation_profiles=tuple(
+                sorted(
+                    {
+                        (
+                            reference,
+                            result_contract(node_by_id[result_to_node[name]]),
+                            representation_atoms(name),
+                        )
+                        for name, reference in representation_ref_cache.items()
+                    }
+                )
+            ),
+            diagnostic_iteration_bases=_diagnostic_iteration_bases(
+                function,
+                operations,
+                result_to_node,
+            ),
             diagnostic_effect_traces=tuple(
                 sorted(diagnostic_effect_traces)
             ),
+            diagnostic_memory_effect_origins=diagnostic_memory_effect_origins,
         )
 
     def _infer_access(
@@ -4913,7 +5488,10 @@ class TTIRParser:
         result_to_node: dict[str, int],
         leaf_labels: dict[str, str],
         node_by_id: dict[int, _Operation],
-    ) -> dict[int, str]:
+    ) -> tuple[
+        dict[int, str],
+        tuple[tuple[str, tuple[int, ...], tuple[str, ...]], ...],
+    ]:
         arg_position = {
             name: index for index, (name, _, _) in enumerate(function.arguments)
         }
@@ -5047,6 +5625,9 @@ class TTIRParser:
             acyclic.add(name)
 
         modes: dict[int, set[str]] = {}
+        diagnostic_memory_effect_origins: list[
+            tuple[str, tuple[int, ...], tuple[str, ...]]
+        ] = []
         for operation in operations:
             if not operation.operands:
                 continue
@@ -5059,14 +5640,38 @@ class TTIRParser:
             else:
                 continue
             validate_acyclic(operation.operands[0])
-            for position in dependencies[operation.operands[0]]:
+            pointer_origins = tuple(sorted(dependencies[operation.operands[0]]))
+            for position in pointer_origins:
                 modes.setdefault(position, set()).add(mode)
+            if operation.name in {"tt.load", "tt.store"}:
+                # The numeric suffix is used only to distinguish two sibling
+                # regions inside this one compiled fingerprint.  It is never
+                # serialized or compared across Source and Replay.
+                context = tuple(
+                    f"{node_by_id[owner].name}@{owner}"
+                    for owner in operation.context
+                )
+                if operation.structured_if_arm is not None:
+                    context += (
+                        f"structured_if_arm={operation.structured_if_arm}",
+                    )
+                if operation.fork_arm is not None:
+                    context += (f"terminal_fork_arm={operation.fork_arm}",)
+                diagnostic_memory_effect_origins.append(
+                    (
+                        _semantic_op_name(
+                            operation, node_by_id, result_to_node
+                        ),
+                        pointer_origins,
+                        context,
+                    )
+                )
         access: dict[int, str] = {}
         for position, seen in modes.items():
             read = bool(seen & {"read", "readwrite"})
             write = bool(seen & {"write", "readwrite"})
             access[position] = "inout" if read and write else "input" if read else "output"
-        return access
+        return access, tuple(diagnostic_memory_effect_origins)
 
 
 def _semantic_op_name(

@@ -40,7 +40,7 @@ from intentir.verify.workload_manifest import (
 )
 
 
-TRITON_WORKLOAD_ADAPTER_PROTOCOL = "intentir.scrc.triton-workload-adapter.v5"
+TRITON_WORKLOAD_ADAPTER_PROTOCOL = "intentir.scrc.triton-workload-adapter.v6"
 
 
 class BufferRole(str, Enum):
@@ -197,6 +197,8 @@ class TritonWorkloadAdapter:
     grid: tuple[int, ...]
     grid_contract: tuple[str, ...]
     seed: int
+    compiler_options: tuple[tuple[str, Any], ...] = ()
+    input_profile: str = "capture-seed-v1"
     none_arguments: tuple[NoneBinding, ...] = ()
     vararg_arity: int | None = None
     grid_shape_coordinates: tuple[str | None, ...] = ()
@@ -225,13 +227,19 @@ class TritonWorkloadAdapter:
             self.semantic_constexprs, label="semantic constexpr"
         )
         c_values = _pairs(self.c_values, label="C")
+        compiler_options = _pairs(
+            self.compiler_options, label="compiler option"
+        )
         object.__setattr__(self, "semantic_constexprs", semantics)
         object.__setattr__(self, "c_values", c_values)
+        object.__setattr__(self, "compiler_options", compiler_options)
         names = [item.formal for item in buffers] + [
             item.formal for item in scalars
         ] + [item.formal for item in none_arguments] + [
             name for name, _ in semantics
-        ] + [name for name, _ in c_values]
+        ] + [name for name, _ in c_values] + [
+            name for name, _ in compiler_options
+        ]
         if len(names) != len(set(names)):
             raise ValueError("adapter formals must be globally unique")
         grid = tuple(int(dim) for dim in self.grid)
@@ -336,6 +344,10 @@ class TritonWorkloadAdapter:
         )
         if not isinstance(self.seed, int) or self.seed < 0:
             raise ValueError("adapter seed must be a non-negative integer")
+        if not self.input_profile or any(
+            character.isspace() for character in self.input_profile
+        ):
+            raise ValueError("adapter input profile must be a non-empty token")
         if self.vararg_arity is not None and (
             isinstance(self.vararg_arity, bool)
             or not isinstance(self.vararg_arity, int)
@@ -401,14 +413,16 @@ class TritonWorkloadAdapter:
             )
         semantics = dict(self.semantic_constexprs)
         c_values = dict(self.c_values)
+        compiler_options = dict(self.compiler_options)
         if set(constexpr_parameters) != set(semantics) | set(c_values):
             raise ValueError("adapter constexpr ABI differs from source")
         return SCRCCompilerView(
-            schedule_values=c_values,
+            schedule_values={**c_values, **compiler_options},
             bound_constexpr_values=semantics,
             bound_constexpr_shape_coordinates=dict(
                 self.semantic_constexpr_shape_coordinates
             ),
+            compiler_slots=tuple(compiler_options),
             arguments=tuple(runtime[name] for name in expected_runtime),
             grid=self.grid,
             grid_contract=self.grid_contract,
@@ -459,10 +473,12 @@ class TritonWorkloadAdapter:
                 self.semantic_constexpr_shape_coordinates
             ),
             "c_values": dict(self.c_values),
+            "compiler_options": dict(self.compiler_options),
             "grid": list(self.grid),
             "grid_contract": list(self.grid_contract),
             "grid_shape_coordinates": list(self.grid_shape_coordinates),
             "seed": self.seed,
+            "input_profile": self.input_profile,
             "vararg_arity": self.vararg_arity,
         }
 
@@ -538,6 +554,13 @@ def prepare_triton_workload(
             name for name, _value in adapter.semantic_constexprs
         ),
     )
+    used_opaque_names = set(mapping.values())
+    next_c = 0
+    for name, _value in adapter.compiler_options:
+        while f"c{next_c}" in used_opaque_names:
+            next_c += 1
+        mapping[name] = f"c{next_c}"
+        used_opaque_names.add(mapping[name])
     arguments = {
         mapping[item.name]: _runtime_argument(item)
         for item in view.arguments
@@ -550,9 +573,13 @@ def prepare_triton_workload(
         mapping[name]: all_constexprs[name]
         for name in source_slice.constexpr_parameters
     }
+    schedule.update(dict(adapter.compiler_options))
     c0 = {
         mapping[name]: value for name, value in adapter.c_values
     }
+    c0.update(
+        (mapping[name], value) for name, value in adapter.compiler_options
+    )
     gate_source = KernelSource.from_code(
         anonymous, "scrc_k0", trusted=True
     )
@@ -565,6 +592,7 @@ def prepare_triton_workload(
                 "test_mode": "finite",
                 "seed": adapter.seed,
                 "adapter_protocol": adapter.protocol,
+                "input_profile": adapter.input_profile,
             },
         ),
         "triton",
@@ -774,37 +802,40 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
         "high_performance:flash_attn.ops.triton.linear.kernel_fwd",
         buffers=(
             _buffer(
-                "C", BufferRole.OUTPUT, "f16", (32, 32), "c",
+                "C", BufferRole.OUTPUT, "f16", (4096, 4096), "c",
                 shape_contract=("h0", "h1"),
             ),
             _buffer(
-                "ACT_INPUT", BufferRole.OUTPUT, "f16", (32, 32), "act_input",
+                "ACT_INPUT", BufferRole.OUTPUT, "f16", (4096, 4096), "act_input",
                 shape_contract=("h0", "h1"),
             ),
             _buffer(
-                "A", BufferRole.INPUT, "f16", (32, 32),
+                "A", BufferRole.INPUT, "f16", (4096, 4096),
                 shape_contract=("h0", "h2"),
             ),
             _buffer(
-                "B", BufferRole.INPUT, "f16", (32, 32),
-                shape_contract=("h2", "h1"),
+                "B", BufferRole.INPUT, "f16", (4096, 4096),
+                # The selected B_COLMAJOR specialization indexes the flat
+                # buffer as B[n, k] (k + n * stride_bn).  Equal model extents
+                # must not hide that logical ABI orientation from Lift.
+                shape_contract=("h1", "h2"),
             ),
             _buffer(
-                "bias", BufferRole.INPUT, "f16", (32,),
+                "bias", BufferRole.INPUT, "f16", (4096,),
                 shape_contract=("h1",),
             ),
         ),
         scalars=(
-            _scalar("M", "i32", 32, shape_coordinate="h0"),
-            _scalar("N", "i32", 32, shape_coordinate="h1"),
-            _scalar("K", "i32", 32, shape_coordinate="h2"),
-            _scalar("CACHE_KEY_M", "i32", 32),
-            _scalar("CACHE_KEY_N", "i32", 32),
-            _scalar("CACHE_KEY_K", "i32", 32),
-            _scalar("stride_cm", "i64", 32),
-            _scalar("stride_am", "i64", 32),
+            _scalar("M", "i32", 4096, shape_coordinate="h0"),
+            _scalar("N", "i32", 4096, shape_coordinate="h1"),
+            _scalar("K", "i32", 4096, shape_coordinate="h2"),
+            _scalar("CACHE_KEY_M", "i32", 4096),
+            _scalar("CACHE_KEY_N", "i32", 4096),
+            _scalar("CACHE_KEY_K", "i32", 4096),
+            _scalar("stride_cm", "i64", 4096),
+            _scalar("stride_am", "i64", 4096),
             _scalar("stride_ak", "i64", 1),
-            _scalar("stride_bn", "i64", 32),
+            _scalar("stride_bn", "i64", 4096),
             _scalar("stride_bk", "i64", 1),
         ),
         semantic_constexprs=(
@@ -822,9 +853,10 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
             ("A_ROWMAJOR", True),
             ("B_COLMAJOR", True),
         ),
-        grid=(1,),
+        grid=(16384,),
         grid_contract=("ceil_div(M,BLOCK_M)*ceil_div(N,BLOCK_N)",),
         seed=127,
+        input_profile="flash-linear-M4096-N4096-K4096-f16-v1",
     ),
     (
         "high_performance:flash_attn.flash_attn_triton._fwd_kernel"
@@ -832,76 +864,77 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
         "high_performance:flash_attn.flash_attn_triton._fwd_kernel",
         buffers=(
             _buffer(
-                "Q", BufferRole.INPUT, "f16", (1, 128, 1, 64),
+                "Q", BufferRole.INPUT, "f16", (4, 8192, 16, 128),
                 shape_contract=("h0", "h1", "h2", "h3"),
             ),
             _buffer(
-                "K", BufferRole.INPUT, "f16", (1, 128, 1, 64),
+                "K", BufferRole.INPUT, "f16", (4, 8192, 16, 128),
                 shape_contract=("h0", "h4", "h2", "h3"),
             ),
             _buffer(
-                "V", BufferRole.INPUT, "f16", (1, 128, 1, 64),
+                "V", BufferRole.INPUT, "f16", (4, 8192, 16, 128),
                 shape_contract=("h0", "h4", "h2", "h3"),
             ),
             # BIAS_TYPE=none makes this ABI carrier intentionally unread.
             _buffer("Bias", BufferRole.INPUT, "f16", (1,)),
             _buffer(
-                "Out", BufferRole.OUTPUT, "f16", (1, 128, 1, 64), "out",
+                "Out", BufferRole.OUTPUT, "f16", (4, 8192, 16, 128), "out",
                 shape_contract=("h0", "h1", "h2", "h3"),
             ),
             _buffer(
-                "Lse", BufferRole.OUTPUT, "f32", (1, 1, 128), "lse",
+                "Lse", BufferRole.OUTPUT, "f32", (4, 16, 8192), "lse",
                 shape_contract=("h0", "h2", "h5"),
             ),
             # TMP is explicit source-ABI scratch storage. The captured symbol
             # stores and reloads it, so its compiler-visible access is inout.
             _buffer(
-                "TMP", BufferRole.INOUT, "f32", (1, 1, 128), "tmp",
+                "TMP", BufferRole.INOUT, "f32", (4, 16, 8192), "tmp",
                 shape_contract=("h0", "h2", "h5"),
             ),
         ),
         scalars=(
-            _scalar("softmax_scale", "f32", 0.125),
-            _scalar("stride_qb", "i64", 8192),
-            _scalar("stride_qh", "i64", 64),
-            _scalar("stride_qm", "i64", 64),
-            _scalar("stride_kb", "i64", 8192),
-            _scalar("stride_kh", "i64", 64),
-            _scalar("stride_kn", "i64", 64),
-            _scalar("stride_vb", "i64", 8192),
-            _scalar("stride_vh", "i64", 64),
-            _scalar("stride_vn", "i64", 64),
+            _scalar("softmax_scale", "f32", 0.08838834764831845),
+            _scalar("stride_qb", "i64", 16777216),
+            _scalar("stride_qh", "i64", 128),
+            _scalar("stride_qm", "i64", 2048),
+            _scalar("stride_kb", "i64", 16777216),
+            _scalar("stride_kh", "i64", 128),
+            _scalar("stride_kn", "i64", 2048),
+            _scalar("stride_vb", "i64", 16777216),
+            _scalar("stride_vh", "i64", 128),
+            _scalar("stride_vn", "i64", 2048),
             _scalar("stride_bb", "i64", 0),
             _scalar("stride_bh", "i64", 0),
             _scalar("stride_bm", "i64", 0),
-            _scalar("stride_ob", "i64", 8192),
-            _scalar("stride_oh", "i64", 64),
-            _scalar("stride_om", "i64", 64),
-            _scalar("nheads", "i32", 1, shape_coordinate="h2"),
-            _scalar("seqlen_q", "i32", 128, shape_coordinate="h1"),
-            _scalar("seqlen_k", "i32", 128, shape_coordinate="h4"),
+            _scalar("stride_ob", "i64", 16777216),
+            _scalar("stride_oh", "i64", 128),
+            _scalar("stride_om", "i64", 2048),
+            _scalar("nheads", "i32", 16, shape_coordinate="h2"),
+            _scalar("seqlen_q", "i32", 8192, shape_coordinate="h1"),
+            _scalar("seqlen_k", "i32", 8192, shape_coordinate="h4"),
             _scalar(
-                "seqlen_q_rounded", "i32", 128, shape_coordinate="h5"
+                "seqlen_q_rounded", "i32", 8192, shape_coordinate="h5"
             ),
-            _scalar("headdim", "i32", 64, shape_coordinate="h3"),
-            _scalar("CACHE_KEY_SEQLEN_Q", "i32", 4),
-            _scalar("CACHE_KEY_SEQLEN_K", "i32", 4),
+            _scalar("headdim", "i32", 128, shape_coordinate="h3"),
+            _scalar("CACHE_KEY_SEQLEN_Q", "i32", 256),
+            _scalar("CACHE_KEY_SEQLEN_K", "i32", 256),
         ),
         semantic_constexprs=(
             ("BIAS_TYPE", "none"),
             ("IS_CAUSAL", False),
         ),
         c_values=(
-            ("BLOCK_HEADDIM", 64),
+            ("BLOCK_HEADDIM", 128),
             ("EVEN_M", True),
             ("EVEN_N", True),
             ("EVEN_HEADDIM", True),
             ("BLOCK_M", 128),
             ("BLOCK_N", 128),
         ),
-        grid=(1, 1),
+        grid=(64, 64),
         grid_contract=("ceil_div(seqlen_q,BLOCK_M)", "batch*nheads"),
         seed=131,
+        input_profile="flashattention-B4-H16-S8192-D128-f16-v1",
     ),
     (
         "high_performance:flash_attn.flash_attn_triton._bwd_kernel"
@@ -909,91 +942,91 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
         "high_performance:flash_attn.flash_attn_triton._bwd_kernel",
         buffers=(
             _buffer(
-                "Q", BufferRole.INPUT, "f16", (1, 128, 1, 64),
+                "Q", BufferRole.INPUT, "f16", (4, 8192, 16, 128),
                 shape_contract=("h0", "h1", "h2", "h3"),
             ),
             _buffer(
-                "K", BufferRole.INPUT, "f16", (1, 128, 1, 64),
+                "K", BufferRole.INPUT, "f16", (4, 8192, 16, 128),
                 shape_contract=("h0", "h4", "h2", "h3"),
             ),
             _buffer(
-                "V", BufferRole.INPUT, "f16", (1, 128, 1, 64),
+                "V", BufferRole.INPUT, "f16", (4, 8192, 16, 128),
                 shape_contract=("h0", "h4", "h2", "h3"),
             ),
             # BIAS_TYPE=none makes this ABI carrier intentionally unread.
             _buffer("Bias", BufferRole.INPUT, "f16", (1,)),
             _buffer(
-                "DO", BufferRole.INPUT, "f16", (1, 128, 1, 64),
+                "DO", BufferRole.INPUT, "f16", (4, 8192, 16, 128),
                 shape_contract=("h0", "h1", "h2", "h3"),
             ),
             _buffer(
                 "DQ",
                 BufferRole.INOUT,
                 "f32",
-                (1, 128, 1, 64),
+                (4, 8192, 16, 128),
                 "dq",
                 BufferInitializer.ZEROS,
                 shape_contract=("h0", "h1", "h2", "h3"),
             ),
             _buffer(
-                "DK", BufferRole.OUTPUT, "f32", (1, 128, 1, 64), "dk",
+                "DK", BufferRole.OUTPUT, "f32", (4, 8192, 16, 128), "dk",
                 shape_contract=("h0", "h4", "h2", "h3"),
             ),
             _buffer(
-                "DV", BufferRole.OUTPUT, "f32", (1, 128, 1, 64), "dv",
+                "DV", BufferRole.OUTPUT, "f32", (4, 8192, 16, 128), "dv",
                 shape_contract=("h0", "h4", "h2", "h3"),
             ),
             _buffer(
-                "LSE", BufferRole.INPUT, "f32", (1, 1, 128),
+                "LSE", BufferRole.INPUT, "f32", (4, 16, 8192),
                 shape_contract=("h0", "h2", "h5"),
             ),
             _buffer(
-                "D", BufferRole.INPUT, "f32", (1, 1, 128),
+                "D", BufferRole.INPUT, "f32", (4, 16, 8192),
                 shape_contract=("h0", "h2", "h5"),
             ),
         ),
         scalars=(
-            _scalar("softmax_scale", "f32", 0.125),
-            _scalar("stride_qb", "i64", 8192),
-            _scalar("stride_qh", "i64", 64),
-            _scalar("stride_qm", "i64", 64),
-            _scalar("stride_kb", "i64", 8192),
-            _scalar("stride_kh", "i64", 64),
-            _scalar("stride_kn", "i64", 64),
-            _scalar("stride_vb", "i64", 8192),
-            _scalar("stride_vh", "i64", 64),
-            _scalar("stride_vn", "i64", 64),
+            _scalar("softmax_scale", "f32", 0.08838834764831845),
+            _scalar("stride_qb", "i64", 16777216),
+            _scalar("stride_qh", "i64", 128),
+            _scalar("stride_qm", "i64", 2048),
+            _scalar("stride_kb", "i64", 16777216),
+            _scalar("stride_kh", "i64", 128),
+            _scalar("stride_kn", "i64", 2048),
+            _scalar("stride_vb", "i64", 16777216),
+            _scalar("stride_vh", "i64", 128),
+            _scalar("stride_vn", "i64", 2048),
             _scalar("stride_bb", "i64", 0),
             _scalar("stride_bh", "i64", 0),
             _scalar("stride_bm", "i64", 0),
-            _scalar("stride_dob", "i64", 8192),
-            _scalar("stride_doh", "i64", 64),
-            _scalar("stride_dom", "i64", 64),
-            _scalar("stride_dqb", "i64", 8192),
-            _scalar("stride_dqh", "i64", 64),
-            _scalar("stride_dqm", "i64", 64),
-            _scalar("stride_dkb", "i64", 8192),
-            _scalar("stride_dkh", "i64", 64),
-            _scalar("stride_dkn", "i64", 64),
-            _scalar("stride_dvb", "i64", 8192),
-            _scalar("stride_dvh", "i64", 64),
-            _scalar("stride_dvn", "i64", 64),
-            _scalar("nheads", "i32", 1, shape_coordinate="h2"),
-            _scalar("seqlen_q", "i32", 128, shape_coordinate="h1"),
-            _scalar("seqlen_k", "i32", 128, shape_coordinate="h4"),
+            _scalar("stride_dob", "i64", 16777216),
+            _scalar("stride_doh", "i64", 128),
+            _scalar("stride_dom", "i64", 2048),
+            _scalar("stride_dqb", "i64", 16777216),
+            _scalar("stride_dqh", "i64", 128),
+            _scalar("stride_dqm", "i64", 2048),
+            _scalar("stride_dkb", "i64", 16777216),
+            _scalar("stride_dkh", "i64", 128),
+            _scalar("stride_dkn", "i64", 2048),
+            _scalar("stride_dvb", "i64", 16777216),
+            _scalar("stride_dvh", "i64", 128),
+            _scalar("stride_dvn", "i64", 2048),
+            _scalar("nheads", "i32", 16, shape_coordinate="h2"),
+            _scalar("seqlen_q", "i32", 8192, shape_coordinate="h1"),
+            _scalar("seqlen_k", "i32", 8192, shape_coordinate="h4"),
             _scalar(
-                "seqlen_q_rounded", "i32", 128, shape_coordinate="h5"
+                "seqlen_q_rounded", "i32", 8192, shape_coordinate="h5"
             ),
-            _scalar("headdim", "i32", 64, shape_coordinate="h3"),
-            _scalar("CACHE_KEY_SEQLEN_Q", "i32", 4),
-            _scalar("CACHE_KEY_SEQLEN_K", "i32", 4),
+            _scalar("headdim", "i32", 128, shape_coordinate="h3"),
+            _scalar("CACHE_KEY_SEQLEN_Q", "i32", 256),
+            _scalar("CACHE_KEY_SEQLEN_K", "i32", 256),
         ),
         semantic_constexprs=(
             ("BIAS_TYPE", "none"),
             ("IS_CAUSAL", False),
         ),
         c_values=(
-            ("BLOCK_HEADDIM", 64),
+            ("BLOCK_HEADDIM", 128),
             ("SEQUENCE_PARALLEL", False),
             ("EVEN_M", True),
             ("EVEN_N", True),
@@ -1001,9 +1034,10 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
             ("BLOCK_M", 128),
             ("BLOCK_N", 128),
         ),
-        grid=(1, 1),
+        grid=(1, 64),
         grid_contract=("1", "batch*nheads"),
         seed=137,
+        input_profile="flashattention-B4-H16-S8192-D128-f16-v1",
     ),
     "high_performance:liger_fused_add_rms_norm": TritonWorkloadAdapter(
         "high_performance:liger_fused_add_rms_norm",
@@ -1157,41 +1191,47 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
             ("EVEN_M", True),
             ("EVEN_N", True),
             ("EVEN_HEADDIM", True),
-            ("BLOCK_M", 128),
+            # The one-col kernel traverses all query rows in its internal
+            # BLOCK_M loop, so 64 preserves the selected Sq=128 program while
+            # avoiding the 108544-byte shared-memory image produced by 128 on
+            # the certification GPU (101376-byte limit).  This is a reviewed
+            # Harness/C valuation, not a J relation or backend repair.
+            ("BLOCK_M", 64),
             ("BLOCK_N", 64),
         ),
         grid=(1,),
         grid_contract=("1",),
         seed=151,
+        input_profile="flashattention-direct-tile-Sq128-Sk64-D64-f16-v1",
     ),
     "high_performance:liger_qwen2vl_mrope": TritonWorkloadAdapter(
         "high_performance:liger_qwen2vl_mrope",
         buffers=(
             _buffer(
-                "q_ptr", BufferRole.INOUT, "f32", (1, 4, 2, 16), "q",
+                "q_ptr", BufferRole.INOUT, "f16", (1, 2048, 28, 128), "q",
                 shape_contract=("h0", "h1", "h2", "h3"),
             ),
             _buffer(
-                "k_ptr", BufferRole.INOUT, "f32", (1, 4, 1, 16), "k",
+                "k_ptr", BufferRole.INOUT, "f16", (1, 2048, 4, 128), "k",
                 shape_contract=("h0", "h1", "h4", "h3"),
             ),
             _buffer(
-                "cos", BufferRole.INPUT, "f32", (3, 1, 4, 16),
+                "cos", BufferRole.INPUT, "f16", (3, 1, 2048, 128),
                 shape_contract=(3, "h0", "h1", "h3"),
             ),
             _buffer(
-                "sin", BufferRole.INPUT, "f32", (3, 1, 4, 16),
+                "sin", BufferRole.INPUT, "f16", (3, 1, 2048, 128),
                 shape_contract=(3, "h0", "h1", "h3"),
             ),
         ),
-        scalars=(_scalar("sl", "i32", 4, shape_coordinate="h1"),),
+        scalars=(_scalar("sl", "i32", 2048, shape_coordinate="h1"),),
         semantic_constexprs=(
             ("bs", 1),
-            ("n_qh", 2),
-            ("n_kh", 1),
-            ("hd", 16),
-            ("mrope_section_t", 3),
-            ("mrope_section_h", 3),
+            ("n_qh", 28),
+            ("n_kh", 4),
+            ("hd", 128),
+            ("mrope_section_t", 16),
+            ("mrope_section_h", 24),
             ("BACKWARD_PASS", False),
         ),
         semantic_constexpr_shape_coordinates=(
@@ -1201,14 +1241,15 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
             ("hd", "h3"),
         ),
         c_values=(
-            ("pad_n_qh", 2),
-            ("pad_n_kh", 1),
-            ("pad_hd", 16),
-            ("BLOCK_SIZE", 2),
+            ("pad_n_qh", 32),
+            ("pad_n_kh", 4),
+            ("pad_hd", 128),
+            ("BLOCK_SIZE", 32),
         ),
-        grid=(4,),
+        grid=(2048,),
         grid_contract=("bs*sl",),
         seed=157,
+        input_profile="qwen2.5-7b-mrope-B1-T2048-Hq28-Hkv4-D128-f16-v1",
     ),
     "high_performance:liger_group_norm": TritonWorkloadAdapter(
         "high_performance:liger_group_norm",
@@ -1435,42 +1476,43 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
         "high_performance:liger_llama4_rope",
         buffers=(
             _buffer(
-                "q_ptr", BufferRole.INOUT, "f32", (1, 4, 2, 32), "q",
-                shape_contract=("h0", "h1", "h2", 32),
+                "q_ptr", BufferRole.INOUT, "f16", (1, 2048, 32, 128), "q",
+                shape_contract=("h0", "h1", "h2", 128),
             ),
             _buffer(
-                "k_ptr", BufferRole.INOUT, "f32", (1, 4, 1, 32), "k",
-                shape_contract=("h0", "h1", "h3", 32),
+                "k_ptr", BufferRole.INOUT, "f16", (1, 2048, 8, 128), "k",
+                shape_contract=("h0", "h1", "h3", 128),
             ),
             _buffer(
-                "freqs_complex_ptr", BufferRole.INPUT, "f32", (4, 16, 2),
+                "freqs_complex_ptr", BufferRole.INPUT, "f16", (2048, 64, 2),
                 shape_contract=("h1", "h4", 2),
             ),
         ),
         scalars=(
-            _scalar("q_row_stride", "i64", 64),
-            _scalar("k_row_stride", "i64", 32),
-            _scalar("q_head_stride", "i64", 32),
-            _scalar("k_head_stride", "i64", 32),
-            _scalar("freqs_row_stride", "i64", 32),
-            _scalar("seq_len", "i32", 4, shape_coordinate="h1"),
+            _scalar("q_row_stride", "i64", 4096),
+            _scalar("k_row_stride", "i64", 1024),
+            _scalar("q_head_stride", "i64", 128),
+            _scalar("k_head_stride", "i64", 128),
+            _scalar("freqs_row_stride", "i64", 128),
+            _scalar("seq_len", "i32", 2048, shape_coordinate="h1"),
             _scalar("batch_size", "i32", 1, shape_coordinate="h0"),
             _scalar("imag_sign", "f32", 1.0),
         ),
         semantic_constexprs=(
-            ("head_dim_half", 16),
-            ("n_q_heads", 2),
-            ("n_k_heads", 1),
+            ("head_dim_half", 64),
+            ("n_q_heads", 32),
+            ("n_k_heads", 8),
         ),
         semantic_constexpr_shape_coordinates=(
             ("head_dim_half", "h4"),
             ("n_q_heads", "h2"),
             ("n_k_heads", "h3"),
         ),
-        c_values=(("BLOCK_SIZE", 16),),
-        grid=(4, 2),
+        c_values=(("BLOCK_SIZE", 64),),
+        grid=(2048, 32),
         grid_contract=("batch_size*seq_len", "max(n_q_heads,n_k_heads)"),
         seed=191,
+        input_profile="llama4-rope-B1-T2048-Hq32-Hkv8-D128-f16-v1",
     ),
     (
         "high_performance:flash_attn.ops.triton.layer_norm."
@@ -1586,35 +1628,35 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
         "high_performance:liger_rope",
         buffers=(
             _buffer(
-                "q_ptr", BufferRole.INOUT, "f32", (1, 4, 2, 16), "q",
+                "q_ptr", BufferRole.INOUT, "f16", (1, 2048, 32, 128), "q",
                 shape_contract=("h0", "h1", "h2", "h3"),
             ),
             _buffer(
-                "k_ptr", BufferRole.INOUT, "f32", (1, 4, 1, 16), "k",
+                "k_ptr", BufferRole.INOUT, "f16", (1, 2048, 8, 128), "k",
                 shape_contract=("h0", "h1", "h4", "h3"),
             ),
             _buffer(
-                "cos", BufferRole.INPUT, "f32", (1, 4, 16),
+                "cos", BufferRole.INPUT, "f16", (1, 2048, 128),
                 shape_contract=("h5", "h1", "h3"),
             ),
             _buffer(
-                "sin", BufferRole.INPUT, "f32", (1, 4, 16),
+                "sin", BufferRole.INPUT, "f16", (1, 2048, 128),
                 shape_contract=("h5", "h1", "h3"),
             ),
         ),
         scalars=(
-            _scalar("q_row_stride", "i32", 32),
-            _scalar("k_row_stride", "i32", 16),
-            _scalar("cos_row_stride", "i32", 16),
-            _scalar("sin_row_stride", "i32", 16),
-            _scalar("sl", "i32", 4, shape_coordinate="h1"),
+            _scalar("q_row_stride", "i32", 4096),
+            _scalar("k_row_stride", "i32", 1024),
+            _scalar("cos_row_stride", "i32", 128),
+            _scalar("sin_row_stride", "i32", 128),
+            _scalar("sl", "i32", 2048, shape_coordinate="h1"),
         ),
         semantic_constexprs=(
             ("bs", 1),
             ("cos_bs", 1),
-            ("n_qh", 2),
-            ("n_kh", 1),
-            ("hd", 16),
+            ("n_qh", 32),
+            ("n_kh", 8),
+            ("hd", 128),
             ("BACKWARD_PASS", False),
         ),
         semantic_constexpr_shape_coordinates=(
@@ -1625,14 +1667,15 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
             ("hd", "h3"),
         ),
         c_values=(
-            ("pad_n_qh", 2),
-            ("pad_n_kh", 1),
-            ("pad_hd", 16),
-            ("BLOCK_SIZE", 2),
+            ("pad_n_qh", 32),
+            ("pad_n_kh", 8),
+            ("pad_hd", 128),
+            ("BLOCK_SIZE", 32),
         ),
-        grid=(4,),
+        grid=(2048,),
         grid_contract=("bs*sl",),
         seed=197,
+        input_profile="llama-3-8b-rope-B1-T2048-Hq32-Hkv8-D128-f16-v1",
     ),
     "high_performance:liger_layer_norm": TritonWorkloadAdapter(
         "high_performance:liger_layer_norm",
@@ -1843,54 +1886,65 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
             "_fwd_kernel_splitK"
         ),
         buffers=(
-            _buffer("Q", BufferRole.INPUT, "f16", (1, 16, 1, 1, 16)),
-            _buffer("K", BufferRole.INPUT, "f16", (1, 16, 1, 1, 16)),
-            _buffer("V", BufferRole.INPUT, "f16", (1, 16, 1, 1, 16)),
+            _buffer(
+                "Q", BufferRole.INPUT, "f16", (1, 1, 1, 16, 256),
+                shape_contract=("h0", "h1", "h2", "h3", "h4"),
+            ),
+            _buffer(
+                "K", BufferRole.INPUT, "f16", (1, 4096, 1, 16, 256),
+                shape_contract=("h0", "h5", "h2", "h3", "h4"),
+            ),
+            _buffer(
+                "V", BufferRole.INPUT, "f16", (1, 4096, 1, 16, 256),
+                shape_contract=("h0", "h5", "h2", "h3", "h4"),
+            ),
             _buffer(
                 "Out_splitK",
                 BufferRole.OUTPUT,
                 "f32",
-                (1, 1, 1, 2, 16, 16),
+                (1, 1, 16, 4, 32, 256),
                 "out_splitk",
+                shape_contract=("h0", "h2", "h3", 4, 32, "h4"),
             ),
             _buffer(
                 "LSE_splitk",
                 BufferRole.OUTPUT,
                 "f32",
-                (1, 1, 1, 2, 16),
+                (1, 1, 16, 4, 1),
                 "lse_splitk",
+                shape_contract=("h0", "h2", "h3", 4, "h1"),
             ),
         ),
         scalars=(
-            _scalar("sm_scale", "f32", 0.25),
+            _scalar("sm_scale", "f32", 0.0625),
             *(
                 _scalar(name, "i64", value)
                 for name, value in (
-                    ("stride_qz", 256),
-                    ("stride_qm", 16),
-                    ("stride_qg", 16),
-                    ("stride_qh", 16),
+                    ("stride_qz", 4096),
+                    ("stride_qm", 4096),
+                    ("stride_qg", 4096),
+                    ("stride_qh", 256),
                     ("stride_qk", 1),
-                    ("stride_kz", 256),
-                    ("stride_kn", 16),
-                    ("stride_kg", 16),
-                    ("stride_kh", 16),
+                    ("stride_kz", 16777216),
+                    ("stride_kn", 4096),
+                    ("stride_kg", 4096),
+                    ("stride_kh", 256),
                     ("stride_kk", 1),
-                    ("stride_vz", 256),
-                    ("stride_vn", 16),
-                    ("stride_vg", 16),
-                    ("stride_vh", 16),
+                    ("stride_vz", 16777216),
+                    ("stride_vn", 4096),
+                    ("stride_vg", 4096),
+                    ("stride_vh", 256),
                     ("stride_vk", 1),
-                    ("stride_osk_z", 512),
-                    ("stride_osk_g", 512),
-                    ("stride_osk_h", 512),
-                    ("stride_osk_s", 256),
-                    ("stride_osk_m", 16),
+                    ("stride_osk_z", 524288),
+                    ("stride_osk_g", 524288),
+                    ("stride_osk_h", 32768),
+                    ("stride_osk_s", 8192),
+                    ("stride_osk_m", 256),
                     ("stride_osk_k", 1),
-                    ("stride_lsek_z", 32),
-                    ("stride_lsek_g", 32),
-                    ("stride_lsek_h", 32),
-                    ("stride_lsek_s", 16),
+                    ("stride_lsek_z", 64),
+                    ("stride_lsek_g", 64),
+                    ("stride_lsek_h", 4),
+                    ("stride_lsek_s", 1),
                     ("stride_lsek_m", 1),
                     ("stride_blocktablesz", 0),
                     ("stride_blocktablesl", 0),
@@ -1904,12 +1958,12 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
         ),
         semantic_constexprs=(
             ("Z", 1),
-            ("N_CTX_Q", 16),
-            ("N_CTX_K", 16),
-            ("BLOCK_N_PER_SPLIT", 8),
-            ("H", 1),
+            ("N_CTX_Q", 1),
+            ("N_CTX_K", 4096),
+            ("BLOCK_N_PER_SPLIT", 1024),
+            ("H", 16),
             ("G", 1),
-            ("BLOCK_DMODEL", 16),
+            ("BLOCK_DMODEL", 256),
             ("USE_SEQ_LEN", False),
             ("PACKED_PER_VAL", 1),
             ("N_GROUPS", 1),
@@ -1917,13 +1971,21 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
             ("SPLIT_K_EARLY_EXIT", False),
             ("IS_CAUSAL", False),
             ("IS_LOCAL", False),
-            ("NUM_QUERIES_CAUSAL", 16),
+            ("NUM_QUERIES_CAUSAL", 1),
             ("USE_PAGED_ATTENTION", False),
             ("PAGE_SIZE", 0),
             ("WINDOW_LEFT", -1),
             ("WINDOW_RIGHT", -1),
             ("WRITE_LSE", True),
             ("HAS_ADDITIVE_BIAS", False),
+        ),
+        semantic_constexpr_shape_coordinates=(
+            ("Z", "h0"),
+            ("N_CTX_Q", "h1"),
+            ("G", "h2"),
+            ("H", "h3"),
+            ("BLOCK_DMODEL", "h4"),
+            ("N_CTX_K", "h5"),
         ),
         c_values=(
             ("stride_k_fp8_scale_shift_z", 0),
@@ -1937,13 +1999,18 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
             ("kv_cache_blocks_per_row", 0),
             ("BOUNDS_CHECKS_N", True),
             ("BLOCK_M", 16),
-            ("BLOCK_N", 16),
-            ("NUM_PROGRAMS_DIM2_CONST", 2),
+            ("BLOCK_N", 64),
+            ("NUM_PROGRAMS_DIM2_CONST", 4),
             ("IS_HIP", False),
         ),
-        grid=(1, 1, 2),
+        grid=(1, 16, 4),
         grid_contract=("ceil_div(N_CTX_Q,BLOCK_M)", "Z*G*H", "split_k"),
         seed=241,
+        compiler_options=(("num_warps", 2), ("num_stages", 1)),
+        input_profile=(
+            "xformers-decode-B1-Mq1-G1-H16-KV4096-D256-"
+            "split4-bm16-bn64-w2-s1-f16-v2"
+        ),
         none_arguments=tuple(
             NoneBinding(name)
             for name in (
@@ -1968,56 +2035,76 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
             "_splitK_reduce_varargs"
         ),
         buffers=(
-            _buffer("Out_splitK0", BufferRole.INPUT, "f32", (1, 1, 1, 2, 16)),
-            _buffer("Out_splitK1", BufferRole.INPUT, "f32", (1, 1, 1, 2, 16)),
-            _buffer("LSE_splitK0", BufferRole.INPUT, "f32", (1, 1, 1, 2)),
-            _buffer("LSE_splitK1", BufferRole.INPUT, "f32", (1, 1, 1, 2)),
-            _buffer("Out", BufferRole.OUTPUT, "f32", (1, 1, 1, 2, 16), "out"),
-            _buffer("LSE", BufferRole.OUTPUT, "f32", (1, 1, 1, 2), "lse"),
+            *(
+                _buffer(
+                    f"Out_splitK{index}", BufferRole.INPUT, "f32",
+                    (1, 1, 16, 1, 256),
+                    shape_contract=("h0", "h1", "h2", "h3", "h4"),
+                )
+                for index in range(4)
+            ),
+            *(
+                _buffer(
+                    f"LSE_splitK{index}", BufferRole.INPUT, "f32",
+                    (1, 1, 16, 1),
+                    shape_contract=("h0", "h1", "h2", "h3"),
+                )
+                for index in range(4)
+            ),
+            _buffer(
+                "Out", BufferRole.OUTPUT, "f32", (1, 1, 16, 1, 256), "out",
+                shape_contract=("h0", "h1", "h2", "h3", "h4"),
+            ),
+            _buffer(
+                "LSE", BufferRole.OUTPUT, "f32", (1, 1, 16, 1), "lse",
+                shape_contract=("h0", "h1", "h2", "h3"),
+            ),
         ),
         scalars=tuple(
+            _scalar(f"stride_{family}{index}", "i64", value)
+            for family, value in (
+                ("osk_z", 4096),
+                ("osk_g", 4096),
+                ("osk_h", 256),
+                ("osk_m", 256),
+                ("osk_k", 1),
+                ("lsek_z", 16),
+                ("lsek_g", 16),
+                ("lsek_h", 1),
+                ("lsek_m", 1),
+            )
+            for index in range(4)
+        ) + tuple(
             _scalar(name, "i64", value)
             for name, value in (
-                ("stride_osk_z0", 32),
-                ("stride_osk_z1", 32),
-                ("stride_osk_g0", 32),
-                ("stride_osk_g1", 32),
-                ("stride_osk_h0", 32),
-                ("stride_osk_h1", 32),
-                ("stride_osk_m0", 16),
-                ("stride_osk_m1", 16),
-                ("stride_osk_k0", 1),
-                ("stride_osk_k1", 1),
-                ("stride_lsek_z0", 2),
-                ("stride_lsek_z1", 2),
-                ("stride_lsek_g0", 2),
-                ("stride_lsek_g1", 2),
-                ("stride_lsek_h0", 2),
-                ("stride_lsek_h1", 2),
-                ("stride_lsek_m0", 1),
-                ("stride_lsek_m1", 1),
-                ("stride_oz", 32),
-                ("stride_og", 16),
-                ("stride_oh", 16),
-                ("stride_om", 16),
+                ("stride_oz", 4096),
+                ("stride_og", 4096),
+                ("stride_oh", 256),
+                ("stride_om", 256),
                 ("stride_ok", 1),
-                ("stride_lse_z", 2),
-                ("stride_lse_g", 2),
-                ("stride_lse_h", 2),
+                ("stride_lse_z", 16),
+                ("stride_lse_g", 16),
+                ("stride_lse_h", 1),
                 ("stride_lse_m", 1),
             )
         ),
         semantic_constexprs=(
-            ("head_dim", 16),
-            ("H", 1),
+            ("head_dim", 256),
+            ("H", 16),
             ("G", 1),
             ("WRITE_LSE", True),
         ),
-        c_values=(("head_dim_pow_2", 16),),
-        grid=(2, 1, 1),
+        semantic_constexpr_shape_coordinates=(
+            ("G", "h1"),
+            ("H", "h2"),
+            ("head_dim", "h4"),
+        ),
+        c_values=(("head_dim_pow_2", 256),),
+        grid=(1, 16, 1),
         grid_contract=("M", "B*G*H", "1"),
         seed=233,
-        vararg_arity=2,
+        input_profile="xformers-decode-B1-Mq1-G1-H16-D256-split4-f32-v1",
+        vararg_arity=4,
     ),
     (
         "high_performance:xformers.ops.fmha._triton.splitk_kernels."
@@ -2028,74 +2115,108 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
             "_splitK_reduce_varargs_backward"
         ),
         buffers=(
-            _buffer("Out_splitK0", BufferRole.INPUT, "f32", (1, 1, 1, 2, 16)),
-            _buffer("Out_splitK1", BufferRole.INPUT, "f32", (1, 1, 1, 2, 16)),
-            _buffer("LSE_splitK0", BufferRole.INPUT, "f32", (1, 1, 1, 2)),
-            _buffer("LSE_splitK1", BufferRole.INPUT, "f32", (1, 1, 1, 2)),
-            _buffer(
-                "Dout_splitK0", BufferRole.OUTPUT, "f32", (1, 1, 1, 2, 16), "dout0"
+            *(
+                _buffer(
+                    f"Out_splitK{index}", BufferRole.INPUT, "f32",
+                    (1, 1, 16, 1, 256),
+                    shape_contract=("h0", "h1", "h2", "h3", "h4"),
+                )
+                for index in range(4)
+            ),
+            *(
+                _buffer(
+                    f"LSE_splitK{index}", BufferRole.INPUT, "f32",
+                    (1, 1, 16, 1),
+                    shape_contract=("h0", "h1", "h2", "h3"),
+                )
+                for index in range(4)
+            ),
+            *(
+                _buffer(
+                    f"Dout_splitK{index}", BufferRole.OUTPUT, "f32",
+                    (1, 1, 16, 1, 256), f"dout{index}",
+                    shape_contract=("h0", "h1", "h2", "h3", "h4"),
+                )
+                for index in range(4)
+            ),
+            *(
+                _buffer(
+                    f"DLSE_splitK{index}", BufferRole.OUTPUT, "f32",
+                    (1, 1, 16, 1), f"dlse{index}",
+                    shape_contract=("h0", "h1", "h2", "h3"),
+                )
+                for index in range(4)
             ),
             _buffer(
-                "Dout_splitK1", BufferRole.OUTPUT, "f32", (1, 1, 1, 2, 16), "dout1"
+                "Out", BufferRole.INPUT, "f32", (1, 1, 16, 1, 256),
+                shape_contract=("h0", "h1", "h2", "h3", "h4"),
             ),
-            _buffer("DLSE_splitK0", BufferRole.OUTPUT, "f32", (1, 1, 1, 2), "dlse0"),
-            _buffer("DLSE_splitK1", BufferRole.OUTPUT, "f32", (1, 1, 1, 2), "dlse1"),
-            _buffer("Out", BufferRole.INPUT, "f32", (1, 1, 1, 2, 16)),
-            _buffer("LSE", BufferRole.INPUT, "f32", (1, 1, 1, 2)),
-            _buffer("DOut", BufferRole.INPUT, "f32", (1, 1, 1, 2, 16)),
-            _buffer("DLSE", BufferRole.INPUT, "f32", (1, 1, 1, 2)),
+            _buffer(
+                "LSE", BufferRole.INPUT, "f32", (1, 1, 16, 1),
+                shape_contract=("h0", "h1", "h2", "h3"),
+            ),
+            _buffer(
+                "DOut", BufferRole.INPUT, "f32", (1, 1, 16, 1, 256),
+                shape_contract=("h0", "h1", "h2", "h3", "h4"),
+            ),
+            _buffer(
+                "DLSE", BufferRole.INPUT, "f32", (1, 1, 16, 1),
+                shape_contract=("h0", "h1", "h2", "h3"),
+            ),
         ),
         scalars=tuple(
+            _scalar(f"stride_{family}{index}", "i64", value)
+            for family, value in (
+                ("osk_z", 4096),
+                ("osk_g", 4096),
+                ("osk_h", 256),
+                ("osk_m", 256),
+                ("osk_k", 1),
+                ("lsek_z", 16),
+                ("lsek_g", 16),
+                ("lsek_h", 1),
+                ("lsek_m", 1),
+            )
+            for index in range(4)
+        ) + tuple(
             _scalar(name, "i64", value)
             for name, value in (
-                ("stride_osk_z0", 32),
-                ("stride_osk_z1", 32),
-                ("stride_osk_g0", 32),
-                ("stride_osk_g1", 32),
-                ("stride_osk_h0", 32),
-                ("stride_osk_h1", 32),
-                ("stride_osk_m0", 16),
-                ("stride_osk_m1", 16),
-                ("stride_osk_k0", 1),
-                ("stride_osk_k1", 1),
-                ("stride_lsek_z0", 2),
-                ("stride_lsek_z1", 2),
-                ("stride_lsek_g0", 2),
-                ("stride_lsek_g1", 2),
-                ("stride_lsek_h0", 2),
-                ("stride_lsek_h1", 2),
-                ("stride_lsek_m0", 1),
-                ("stride_lsek_m1", 1),
-                ("stride_oz", 32),
-                ("stride_og", 16),
-                ("stride_oh", 16),
-                ("stride_om", 16),
+                ("stride_oz", 4096),
+                ("stride_og", 4096),
+                ("stride_oh", 256),
+                ("stride_om", 256),
                 ("stride_ok", 1),
-                ("stride_lse_z", 2),
-                ("stride_lse_g", 2),
-                ("stride_lse_h", 2),
+                ("stride_lse_z", 16),
+                ("stride_lse_g", 16),
+                ("stride_lse_h", 1),
                 ("stride_lse_m", 1),
-                ("stride_doz", 32),
-                ("stride_dog", 16),
-                ("stride_doh", 16),
-                ("stride_dom", 16),
+                ("stride_doz", 4096),
+                ("stride_dog", 4096),
+                ("stride_doh", 256),
+                ("stride_dom", 256),
                 ("stride_dok", 1),
-                ("stride_dlse_z", 2),
-                ("stride_dlse_g", 2),
-                ("stride_dlse_h", 2),
+                ("stride_dlse_z", 16),
+                ("stride_dlse_g", 16),
+                ("stride_dlse_h", 1),
                 ("stride_dlse_m", 1),
             )
         ),
         semantic_constexprs=(
-            ("BLOCK_SIZE", 16),
-            ("H", 1),
+            ("BLOCK_SIZE", 256),
+            ("H", 16),
             ("G", 1),
         ),
+        semantic_constexpr_shape_coordinates=(
+            ("G", "h1"),
+            ("H", "h2"),
+            ("BLOCK_SIZE", "h4"),
+        ),
         c_values=(),
-        grid=(2, 1, 1),
+        grid=(1, 16, 1),
         grid_contract=("M", "B*G*H", "1"),
         seed=239,
-        vararg_arity=2,
+        input_profile="xformers-decode-B1-Mq1-G1-H16-D256-split4-f32-v1",
+        vararg_arity=4,
     ),
 }
 

@@ -162,6 +162,45 @@ def _value_dimension_relation_schema() -> dict[str, Any]:
     )
 
 
+def _dimension_relation_schema() -> dict[str, Any]:
+    dimension = {"type": "string", "pattern": r"^x[0-9]+$"}
+    identity = _closed_object(
+        {
+            "op": {"type": "string", "enum": ["identity"]},
+            "arg": dimension,
+        },
+        ("op", "arg"),
+    )
+    const_expr = _closed_object(
+        {
+            "op": {
+                "type": "string",
+                "enum": [
+                    "add_const",
+                    "mul_const",
+                    "ceil_div_const",
+                    "round_up_const",
+                ],
+            },
+            "arg": dimension,
+            "value": {"type": "integer", "minimum": 1},
+        },
+        ("op", "arg", "value"),
+    )
+    return _closed_object(
+        {
+            "result": dimension,
+            "expr": {"oneOf": [identity, const_expr]},
+        },
+        ("result", "expr"),
+        description=(
+            "LLM-authored closed definition of one declared logical dimension "
+            "from another. Fixed code validates and consumes it but never infers "
+            "the relation from Harness values, grid, C, pi, or compiler output."
+        ),
+    )
+
+
 def _intent_schema() -> dict[str, Any]:
     logical_return = _closed_object(
         {"output": _STRING, "value": _STRING},
@@ -207,6 +246,8 @@ def _boundary_schema() -> dict[str, Any]:
             "to the same structured ordered axes. General non-direct affine "
             "relations remain typed expressions but can be unsupported by a "
             "particular RefEval capability profile. "
+            "A node_ref makes the access consumer-local: the relation is not "
+            "implicitly inherited by sibling uses of the same tensor. "
             "fill_value is legal only on a load with a non-null predicate. An "
             "unconditional access uses the unique canonical spelling with both "
             "predicate and fill_value absent/null; consumers reject rather than "
@@ -527,6 +568,11 @@ def _c_schema() -> dict[str, Any]:
             "kind": {
                 "type": "string",
                 "enum": ["constexpr", "compiler"],
+                "description": (
+                    "constexpr is a callable frontend compile-time parameter; "
+                    "compiler is an external compiler-invocation option and never "
+                    "a callable/body/pi carrier."
+                ),
             },
             "role": {
                 "type": "string",
@@ -539,7 +585,8 @@ def _c_schema() -> dict[str, Any]:
                 "description": (
                     "Optional source-neutral attachment to one declared J "
                     "node/domain/access/scope/storage subject. It is not a "
-                    "transformation permission or source binding."
+                    "transformation permission or source binding. Compiler-kind "
+                    "slots must omit subject_ref and axis_ref."
                 ),
             },
             "axis_ref": {
@@ -636,6 +683,33 @@ def _pi_schema() -> dict[str, Any]:
             },
         },
         ("source", "target", "slots"),
+    )
+    program_axis = _closed_object(
+        {
+            "domain_ref": {
+                "type": "string",
+                "pattern": "^d[0-9]+$",
+                "description": (
+                    "J boundary domain anchoring one compiler-visible program "
+                    "coordinate."
+                ),
+            },
+            "axis": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 2,
+                "description": (
+                    "Exact physical launch-axis identity; never inferred from "
+                    "grid extent, declaration order, C, or instance multiplicity."
+                ),
+            },
+        },
+        ("domain_ref", "axis"),
+        description=(
+            "A closed pi-owned binding from one J domain program-coordinate "
+            "identity to physical launch axis 0, 1, or 2. It carries no grid "
+            "extent, Source spelling, frontend API, or logical J semantics."
+        ),
     )
     route_extent_transform = _closed_object(
         {
@@ -806,41 +880,6 @@ def _pi_schema() -> dict[str, Any]:
             "bound formula, numeric value, operator, source text, or frontend API."
         ),
     )
-    unit_iteration = _closed_object(
-        {
-            "region": {"type": "string", "pattern": "^r[0-9]+$"},
-            "body_instance": {
-                "type": "string",
-                "pattern": "^i[0-9]+$",
-                "description": (
-                    "Instance anchored to one existing non-loop J "
-                    "reduce/contraction or boundary access/domain traversed by "
-                    "this unit-step physical loop region."
-                ),
-            },
-            "axis_ref": {
-                "oneOf": [
-                    {"type": "integer", "minimum": 0},
-                    {"type": "string", "pattern": "^x[0-9]+$"},
-                ],
-                "description": (
-                    "One closed J axis of body_instance: a non-negative logical "
-                    "axis ordinal or an anonymous J dimension handle."
-                ),
-            },
-            "direction": {
-                "type": "string",
-                "enum": list(PHYSICAL_ITERATION_DIRECTIONS),
-            },
-        },
-        ("region", "body_instance", "axis_ref", "direction"),
-        description=(
-            "A source-neutral unit-step physical traversal over one existing J "
-            "axis. Its closed denotation is [0, logical_extent) with step one, or "
-            "the same points reversed. It adds no J loop, C tile, bound formula, "
-            "numeric value, operator, source text, grid fact, or frontend API."
-        ),
-    )
     physical_loop_carrier = _closed_object(
         {
             "region": {"type": "string", "pattern": "^r[0-9]+$"},
@@ -851,8 +890,7 @@ def _pi_schema() -> dict[str, Any]:
         },
         ("region", "init", "state", "next", "result"),
         description=(
-            "One typed physical carrier in a physical_iterations or "
-            "unit_iterations region. "
+            "One typed physical carrier in a physical_iterations region. "
             "Temporal edges carry no initialization/update formula or frontend spelling."
         ),
     )
@@ -881,6 +919,7 @@ def _pi_schema() -> dict[str, Any]:
             "regions": _array(region),
             "instances": _array(instance),
             "routes": _array(route),
+            "program_axes": _array(program_axis),
             "route_extent_transforms": _array(route_extent_transform),
             "order": _array(order),
             "sharing": _array(sharing),
@@ -888,7 +927,6 @@ def _pi_schema() -> dict[str, Any]:
             "iterations": _array(iteration),
             "loop_carriers": _array(loop_carrier),
             "physical_iterations": _array(physical_iteration),
-            "unit_iterations": _array(unit_iteration),
             "physical_loop_carriers": _array(physical_loop_carrier),
             "terminal_controls": _array(terminal_control),
         },
@@ -896,6 +934,7 @@ def _pi_schema() -> dict[str, Any]:
             "regions",
             "instances",
             "routes",
+            "program_axes",
             "route_extent_transforms",
             "order",
             "sharing",
@@ -903,7 +942,6 @@ def _pi_schema() -> dict[str, Any]:
             "iterations",
             "loop_carriers",
             "physical_iterations",
-            "unit_iterations",
             "physical_loop_carriers",
             "terminal_controls",
         ),
@@ -1051,6 +1089,7 @@ def scrc_lift_core_json_schema() -> dict[str, Any]:
             "value_dimension_relations": _array(
                 _value_dimension_relation_schema()
             ),
+            "dimension_relations": _array(_dimension_relation_schema()),
         },
         SEMANTIC_ARCHIVE_WIRE_FIELDS,
         description=render_semantic_archive_wire_grammar(),
