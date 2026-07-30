@@ -14,6 +14,7 @@ from intentir.ir.production_snapshot import (
 _ROOT = Path(__file__).resolve().parents[2]
 _CATALOG_DIR = _ROOT / "corpus" / "production-jc-v1"
 _FRESH14_CATALOG_DIR = _ROOT / "corpus" / "production-jc-v2"
+_STAGE2_CATALOG_DIR = _ROOT / "corpus" / "production-jc-v3"
 
 
 def test_frozen_production_catalog_contains_exactly_the_closed_eighteen() -> None:
@@ -66,7 +67,29 @@ def test_fresh14_catalog_contains_exactly_the_new_backend_intake() -> None:
     }
 
 
-@pytest.mark.parametrize("catalog_dir", (_CATALOG_DIR, _FRESH14_CATALOG_DIR))
+def test_stage2_catalog_extends_fresh14_with_exactly_eight_new_j() -> None:
+    catalog = json.loads((_STAGE2_CATALOG_DIR / "catalog.json").read_text())
+    fresh14 = json.loads((_FRESH14_CATALOG_DIR / "catalog.json").read_text())
+
+    assert catalog["protocol"] == "intentir.production.jc-catalog.v1"
+    assert catalog["entry_count"] == 22
+    assert {item["name"] for item in catalog["entries"]} - {
+        item["name"] for item in fresh14["entries"]
+    } == {
+        "cross_entropy",
+        "flash_linear",
+        "group_norm",
+        "jsd",
+        "liger_rope",
+        "qwen2vl_mrope",
+        "tvd",
+        "xformers_rms_norm",
+    }
+
+
+@pytest.mark.parametrize(
+    "catalog_dir", (_CATALOG_DIR, _FRESH14_CATALOG_DIR, _STAGE2_CATALOG_DIR)
+)
 def test_catalog_snapshots_are_content_addressed_j_plus_optional_c_only(
     catalog_dir: Path,
 ) -> None:
@@ -90,7 +113,9 @@ def test_catalog_snapshots_are_content_addressed_j_plus_optional_c_only(
         }
 
 
-@pytest.mark.parametrize("catalog_dir", (_CATALOG_DIR, _FRESH14_CATALOG_DIR))
+@pytest.mark.parametrize(
+    "catalog_dir", (_CATALOG_DIR, _FRESH14_CATALOG_DIR, _STAGE2_CATALOG_DIR)
+)
 def test_frozen_catalog_is_directly_consumable_by_stable_name(
     catalog_dir: Path,
 ) -> None:

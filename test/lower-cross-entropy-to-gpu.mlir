@@ -1,4 +1,5 @@
 // RUN: intent-opt -convert-intent-row-reduction-to-gpu=block-threads=4 %s | FileCheck %s
+// RUN: intent-opt -convert-intent-row-reduction-to-gpu=block-threads=4 %s | FileCheck %s --check-prefix=UNIFORM
 
 // cross_entropy (liger forward: per-row loss + in-place gradient), the common
 // config (reduction='mean', no label_smoothing / z-loss / weight / ignore_index).
@@ -29,7 +30,7 @@
 // CHECK:         memref.store %{{.*}}, %{{.*}}[%{{.*}}] : memref<4xf32>
 // CHECK:         memref.store %{{.*}}, %{{.*}}[%{{.*}}, %{{.*}}] : memref<4x8xf32>
 // CHECK:         gpu.terminator
-// CHECK-NOT:     intent.
+// CHECK-NOT:      = intent.
 func.func @cross_entropy(%X: tensor<4x8xf32>, %Y: tensor<4xi32>,
                          %zero: tensor<f32>, %one: tensor<f32>,
                          %ninv: tensor<f32>)
@@ -62,4 +63,40 @@ func.func @cross_entropy(%X: tensor<4x8xf32>, %Y: tensor<4xi32>,
   %grad = intent.map_binary %gnum, %ninv {fn = "mul"} : (tensor<4x8xf32>, tensor<f32>) -> tensor<4x8xf32>
 
   return %loss, %grad : tensor<4x1xf32>, tensor<4x8xf32>
+}
+
+// A typed boundary can preserve a launch-uniform label selector instead of
+// normalizing it to Y[bx].  Both scalar take gathers remain contract-visible,
+// but they still belong to the same one-block-per-row implementation.
+// UNIFORM-LABEL: func.func @uniform_index_cross(
+// UNIFORM:       gpu.launch
+// UNIFORM:       memref.load %{{.*}}[%{{.*}}] : memref<2xi64>
+// UNIFORM:       memref.load %{{.*}}[%{{.*}}, %{{.*}}] : memref<2x8xf32>
+// UNIFORM:       gpu.all_reduce{{.*}}maxnumf
+// UNIFORM-NOT:    = intent.
+func.func @uniform_index_cross(
+    %X: tensor<2x8xf32>, %Y: tensor<2xi64>, %ignore: tensor<i64>)
+    -> (tensor<2x8xf32>, tensor<2xf32>) {
+  %zero_i = arith.constant dense<0> : tensor<i64>
+  %zero_f = arith.constant dense<0.0> : tensor<f32>
+  %label = intent.gather %Y, %zero_i
+      {axis = 0 : i64, mode = "take", intent.index_bounds_proven = true}
+      : (tensor<2xi64>, tensor<i64>) -> tensor<i64>
+  %ignored = intent.map_binary %label, %ignore {fn = "eq"}
+      : (tensor<i64>, tensor<i64>) -> tensor<i1>
+  %valid = intent.map_unary %ignored {fn = "logical_not"}
+      : (tensor<i1>) -> tensor<i1>
+  %safe = intent.select %valid, %label, %zero_i
+      : (tensor<i1>, tensor<i64>, tensor<i64>) -> tensor<i64>
+  %target = intent.gather %X, %safe
+      {axis = 1 : i64, mode = "take", intent.index_bounds_proven = true}
+      : (tensor<2x8xf32>, tensor<i64>) -> tensor<2xf32>
+  %row_max = intent.reduce %X
+      {fn = "max", axes = [1], assoc = "associative"}
+      : (tensor<2x8xf32>) -> tensor<2xf32>
+  %loss = intent.map_binary %row_max, %target {fn = "sub"}
+      : (tensor<2xf32>, tensor<2xf32>) -> tensor<2xf32>
+  %grad = intent.select %ignored, %zero_f, %X
+      : (tensor<i1>, tensor<f32>, tensor<2x8xf32>) -> tensor<2x8xf32>
+  return %grad, %loss : tensor<2x8xf32>, tensor<2xf32>
 }

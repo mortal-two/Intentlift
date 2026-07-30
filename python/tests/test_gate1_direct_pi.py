@@ -1010,6 +1010,28 @@ def test_replay_contract_accepts_an_explicit_strict_integer_widen() -> None:
     )
 
 
+def test_replay_contract_accepts_global_safe_reduction_linearization() -> None:
+    payload = make_reduce_artifact().to_json()
+    payload["pi"]["refinements"].append(
+        {
+            "instance": "i2",
+            "kind": "reduction_linearization",
+            "auth_ref": None,
+        }
+    )
+
+    artifact = Gate1Artifact.from_json(payload)
+    report = type_check(artifact.j, artifact.c, artifact.pi)
+
+    assert report.passed
+    assert artifact.pi.refinements == [
+        {
+            "instance": "i2",
+            "kind": "reduction_linearization",
+            "auth_ref": None,
+        }
+    ]
+
 @pytest.mark.parametrize(
     ("source_dtype", "target_dtype"),
     [("i32", "i32"), (None, None), ("u32", "u64")],

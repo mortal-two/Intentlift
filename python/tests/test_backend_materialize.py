@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
 
 import numpy as np
 import pytest
@@ -23,6 +24,7 @@ from intentir.verify.scrc_workload_run import build_workload_jc_suite
 
 
 _ROOT = Path(__file__).resolve().parents[2]
+_INTENT_OPT = _ROOT / "build" / "tools" / "intent-opt" / "intent-opt"
 _V1_CASE_NAMES = (
     "dyt",
     "flash_bwd_preprocess",
@@ -58,6 +60,16 @@ _FRESH14_CASE_NAMES = (
     "flash_layer_norm_1pass",
     "xformers_rms_norm_add",
     "splitk_reduce_varargs",
+)
+_STAGE2_CASE_NAMES = (
+    "jsd",
+    "tvd",
+    "xformers_rms_norm",
+    "cross_entropy",
+    "group_norm",
+    "liger_rope",
+    "qwen2vl_mrope",
+    "flash_linear",
 )
 
 
@@ -106,6 +118,88 @@ def test_every_fresh14_j_materializes_to_real_mlir(name: str) -> None:
     assert logical_projection["contract_ir"]
     if name == "splitk_reduce_varargs":
         assert "dense<0xFF800000>" in materialized.intent_mlir
+
+
+@pytest.mark.parametrize("name", _STAGE2_CASE_NAMES)
+def test_every_stage2_j_materializes_to_real_mlir(name: str) -> None:
+    snapshot, _case, materialized = _materialize_closed_case(
+        name, "production-jc-v3"
+    )
+
+    assert materialized.j.to_json() == snapshot.j.to_json()
+    assert materialized.materializer_version == "intentir.production.materializer.v2"
+    assert "\nmodule {\n" in materialized.intent_mlir
+    assert materialized.boundary_projection.to_json()
+
+
+@pytest.mark.skipif(not _INTENT_OPT.exists(), reason="intent-opt is not built")
+@pytest.mark.parametrize("name", _STAGE2_CASE_NAMES)
+def test_every_stage2_j_reaches_standard_mlir(name: str) -> None:
+    _snapshot, _case, materialized = _materialize_closed_case(
+        name, "production-jc-v3"
+    )
+
+    lowered = subprocess.run(
+        [str(_INTENT_OPT), "-convert-intent-to-linalg"],
+        input=materialized.intent_mlir,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert lowered.returncode == 0, lowered.stderr
+    assert " = intent." not in lowered.stdout
+    assert "intent.yield" not in lowered.stdout
+
+
+@pytest.mark.skipif(not _INTENT_OPT.exists(), reason="intent-opt is not built")
+@pytest.mark.parametrize("name", ("cross_entropy", "group_norm"))
+def test_stage2_row_graphs_lower_as_one_cuda_launch(name: str) -> None:
+    _snapshot, _case, materialized = _materialize_closed_case(
+        name, "production-jc-v3"
+    )
+
+    lowered = subprocess.run(
+        [
+            str(_INTENT_OPT),
+            "-convert-intent-row-reduction-to-gpu=block-threads=64",
+        ],
+        input=materialized.intent_mlir,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert lowered.returncode == 0, lowered.stderr
+    assert lowered.stdout.count("gpu.launch") == 1
+    assert 'intent.backend.lowering_path_kind = "row_reduction"' in lowered.stdout
+    assert " = intent." not in lowered.stdout
+
+
+@pytest.mark.skipif(not _INTENT_OPT.exists(), reason="intent-opt is not built")
+@pytest.mark.parametrize("name", ("liger_rope", "qwen2vl_mrope"))
+def test_stage2_paired_rotations_lower_as_one_cuda_launch(name: str) -> None:
+    _snapshot, _case, materialized = _materialize_closed_case(
+        name, "production-jc-v3"
+    )
+
+    assert "intent.paired_rotation_version" in materialized.intent_mlir
+    assert "intent.inplace = array<i64: 0, 1>" in materialized.intent_mlir
+    lowered = subprocess.run(
+        [
+            str(_INTENT_OPT),
+            "-convert-intent-elementwise-to-gpu=block-threads=64",
+        ],
+        input=materialized.intent_mlir,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert lowered.returncode == 0, lowered.stderr
+    assert lowered.stdout.count("gpu.launch") == 1
+    assert "cuda.elementwise.paired_last_axis_rotation.v1" in lowered.stdout
+    assert " = intent." not in lowered.stdout
 
 
 @pytest.mark.parametrize(

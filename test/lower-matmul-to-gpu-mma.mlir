@@ -112,7 +112,7 @@ func.func @linear_live_saved(%A: tensor<128x256xf16>,
       : (tensor<128x256xf16>) -> tensor<128x256xf32>
   %Wf = intent.cast %W {to_dtype = "f32"}
       : (tensor<512x256xf16>) -> tensor<512x256xf32>
-  %Y = intent.contraction %Af, %Wf {subscripts = "mk,nk->mn"}
+  %Y = intent.contraction %Af, %Wf {subscripts = "ik,jk->ij"}
       : (tensor<128x256xf32>, tensor<512x256xf32>) -> tensor<128x512xf32>
   %bf = intent.cast %bias {to_dtype = "f32"}
       : (tensor<512xf16>) -> tensor<512xf32>

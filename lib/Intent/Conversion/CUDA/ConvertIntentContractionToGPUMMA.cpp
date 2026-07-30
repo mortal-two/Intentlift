@@ -73,6 +73,24 @@ namespace {
 static constexpr int64_t MMA_M = 16, MMA_N = 8, MMA_K = 16;
 static constexpr int64_t GROUP_M = 8; // L2 swizzle group width (= tl.dot GROUP_M)
 
+/// Recognize a rank-2 row-by-row contraction independently of the author's
+/// choice of einsum letters.  ``mk,nk->mn`` and ``ik,jk->ij`` describe the same
+/// implementation space; treating the spelling as a lowering precondition
+/// would make otherwise identical J graphs take different backend paths.
+static bool isRowByRowContraction(StringRef subscripts) {
+  auto arrow = subscripts.split("->");
+  if (arrow.second.empty())
+    return false;
+  auto inputs = arrow.first.split(',');
+  StringRef lhs = inputs.first.trim();
+  StringRef rhs = inputs.second.trim();
+  StringRef out = arrow.second.trim();
+  if (lhs.size() != 2 || rhs.size() != 2 || out.size() != 2)
+    return false;
+  return lhs[0] != lhs[1] && rhs[0] != rhs[1] && lhs[0] != rhs[0] &&
+         lhs[1] == rhs[1] && out[0] == lhs[0] && out[1] == rhs[0];
+}
+
 struct ContractionMMALowering {
   func::FuncOp fn;
   int numStages;
@@ -127,7 +145,7 @@ struct ContractionMMALowering {
       return failure();
     retVals.assign(ret.getOperands().begin(), ret.getOperands().end());
     hasEpilogue = retVals.size() != 1 || retVals.front() != c.getResult();
-    if (c.getSubscripts() != "mk,nk->mn")
+    if (!isRowByRowContraction(c.getSubscripts()))
       return failure();
 
     // Canonical live-linear graphs make an exact f16/bf16->f32 widening

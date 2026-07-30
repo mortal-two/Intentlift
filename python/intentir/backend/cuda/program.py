@@ -21,6 +21,9 @@ from intentir.ir.contract_materialization import (
     ContractMaterializationProjection,
     project_contract_materialization,
 )
+from intentir.ir.typed_boundary_materialization import (
+    TypedBoundaryMaterializationProjection,
+)
 from intentir.ir.model import IntentOp
 from intentir.ir.value_dimension import validate_value_dimension_instantiation
 from intentir.verify.gate1.model import (
@@ -111,7 +114,10 @@ def analyze_j_for_cuda(
     unsupported: list[str] = []
     consumed: list[str] = []
     projection: (
-        ContractMaterializationProjection | BoundaryMaterializationProjection | None
+        ContractMaterializationProjection
+        | BoundaryMaterializationProjection
+        | TypedBoundaryMaterializationProjection
+        | None
     ) = (
         materialization.boundary_projection
         if materialization is not None
@@ -155,7 +161,6 @@ def analyze_j_for_cuda(
             consumed.append(storage_ref)
         elif (
             materialization is not None
-            and materialization.form == LOGICAL_FULL_AXIS_STEP_MATERIALIZATION
             and storage_ref in projected_consumed
         ):
             # The registered full-axis-step materialization consumes the exact
@@ -234,16 +239,23 @@ def analyze_j_for_cuda(
             f"{item.node_ref}:{item.combiner.value}:"
             f"{item.duplicate_policy.value}:{item.order.value}"
         )
-    if (
-        "loop" in op_names
-        and (
-            materialization is None
-            or materialization.form != LOGICAL_FULL_AXIS_STEP_MATERIALIZATION
+    if "loop" in op_names:
+        loop_nodes = {
+            node_ref for node_ref, operation in nodes.items()
+            if node_ref in j.node_ids and operation.op == "loop"
+        }
+        typed_loops_consumed = all(
+            f"loop:{node_ref}" in projected_consumed for node_ref in loop_nodes
         )
-    ):
-        unsupported.append("semantic_recurrence_not_lowered_by_flat_cuda_path")
-    elif "loop" in op_names:
-        consumed.extend(materialization.consumed_structures)
+        logical_loop_consumed = (
+            materialization is not None
+            and materialization.form == LOGICAL_FULL_AXIS_STEP_MATERIALIZATION
+        )
+        if not (typed_loops_consumed or logical_loop_consumed):
+            unsupported.append("semantic_recurrence_not_lowered_by_flat_cuda_path")
+        elif materialization is not None:
+            consumed.extend(materialization.consumed_structures)
+            consumed.extend(f"loop:{node_ref}" for node_ref in loop_nodes)
 
     for item in j.boundary.reductions:
         op = nodes.get(item.node_ref)

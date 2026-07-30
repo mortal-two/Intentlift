@@ -41,12 +41,14 @@
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/STLExtras.h"
 
 #include <string>
 
@@ -91,7 +93,8 @@ static void attachElementwiseStateReceipt(func::FuncOp lowered, int64_t threads,
                                           int64_t vectorWidth,
                                           StringRef approximationMode,
                                           bool oneDimensionalResults,
-                                          unsigned hostValueCaptureCount) {
+                                          unsigned hostValueCaptureCount,
+                                          bool pairedLastAxisRotation = false) {
   MLIRContext *context = lowered.getContext();
   SmallVector<Attribute> trace{
       StringAttr::get(context, "cuda.elementwise.row.vectorized.v1")};
@@ -116,6 +119,9 @@ static void attachElementwiseStateReceipt(func::FuncOp lowered, int64_t threads,
   if (hostValueCaptureCount != 0)
     trace.push_back(
         StringAttr::get(context, "cuda.b.uniform_host_value_capture.v1"));
+  if (pairedLastAxisRotation)
+    trace.push_back(StringAttr::get(
+        context, "cuda.elementwise.paired_last_axis_rotation.v1"));
   auto i64 = IntegerType::get(context, 64);
   lowered->setAttr("intent.backend.lowering_path_kind",
                    StringAttr::get(context, "elementwise"));
@@ -1072,6 +1078,360 @@ struct ElementwiseLowering {
   }
 };
 
+/// A contract-projected paired last-axis rotation.  Each GPU lane owns one
+/// (low, high) pair and loads both source elements before either in-place store,
+/// so the lowering preserves the J-owned read-before-write relation without
+/// splitting a full-rank tensor into frontend-specific view arguments.
+struct PairedRotationLowering {
+  func::FuncOp fn;
+  unsigned requestedThreads;
+  bool requestFlattenContiguous;
+  unsigned requestGridStrideUnroll;
+  unsigned requestLogicalTileElements;
+  unsigned requestRowVectorWidth;
+  std::string requestTanhApproximation;
+
+  enum class Layout { SharedPosition, ThreePlane };
+  Layout layout = Layout::SharedPosition;
+  unsigned qArg = 0, kArg = 0, cosineArg = 0, sineArg = 0;
+  int64_t B = 0, S = 0, HQ = 0, HK = 0, D = 0, half = 0;
+  int64_t qPairs = 0, kPairs = 0, totalPairs = 0;
+  int64_t T = 0, gridBlocks = 0;
+  SmallVector<int64_t> sections;
+  Type storageType;
+  Type computeType;
+
+  PairedRotationLowering(func::FuncOp fn, unsigned threads, bool flatten,
+                         unsigned gridStrideUnroll,
+                         unsigned logicalTileElements,
+                         unsigned rowVectorWidth,
+                         StringRef tanhApproximation)
+      : fn(fn), requestedThreads(threads),
+        requestFlattenContiguous(flatten),
+        requestGridStrideUnroll(gridStrideUnroll),
+        requestLogicalTileElements(logicalTileElements),
+        requestRowVectorWidth(rowVectorWidth),
+        requestTanhApproximation(tanhApproximation.str()) {}
+
+  LogicalResult match() {
+    auto version = fn->getAttrOfType<StringAttr>("intent.paired_rotation_version");
+    auto layoutAttr = fn->getAttrOfType<StringAttr>("intent.paired_rotation");
+    auto inputs =
+        fn->getAttrOfType<DenseI64ArrayAttr>("intent.paired_rotation_inputs");
+    auto inplace = fn->getAttrOfType<DenseI64ArrayAttr>("intent.inplace");
+    if (!version || version.getValue() !=
+                        "intentir.paired-last-axis-rotation.v1" ||
+        !layoutAttr || !inputs || inputs.size() != 4 || !inplace ||
+        inplace.size() != 2)
+      return failure();
+    if (requestFlattenContiguous || requestGridStrideUnroll != 1 ||
+        requestLogicalTileElements != 0 || requestRowVectorWidth > 1 ||
+        requestTanhApproximation != "stable-ex2")
+      return failure();
+
+    auto fty = fn.getFunctionType();
+    if (fty.getNumResults() != 2)
+      return failure();
+    SmallVector<unsigned> mapped;
+    for (int64_t raw : inputs.asArrayRef()) {
+      if (raw < 0 || raw >= fty.getNumInputs())
+        return failure();
+      unsigned index = static_cast<unsigned>(raw);
+      if (llvm::is_contained(mapped, index))
+        return failure();
+      mapped.push_back(index);
+    }
+    qArg = mapped[0];
+    kArg = mapped[1];
+    cosineArg = mapped[2];
+    sineArg = mapped[3];
+    if (inplace[0] != static_cast<int64_t>(qArg) ||
+        inplace[1] != static_cast<int64_t>(kArg))
+      return failure();
+
+    auto qType = dyn_cast<RankedTensorType>(fty.getInput(qArg));
+    auto kType = dyn_cast<RankedTensorType>(fty.getInput(kArg));
+    auto cosineType = dyn_cast<RankedTensorType>(fty.getInput(cosineArg));
+    auto sineType = dyn_cast<RankedTensorType>(fty.getInput(sineArg));
+    if (!qType || !kType || !cosineType || !sineType ||
+        !qType.hasStaticShape() || !kType.hasStaticShape() ||
+        !cosineType.hasStaticShape() || !sineType.hasStaticShape() ||
+        qType.getRank() != 4 || kType.getRank() != 4 ||
+        qType.getElementType() != kType.getElementType() ||
+        qType.getElementType() != cosineType.getElementType() ||
+        qType.getElementType() != sineType.getElementType() ||
+        !isa<Float16Type, BFloat16Type, Float32Type>(qType.getElementType()) ||
+        fty.getResult(0) != qType || fty.getResult(1) != kType)
+      return failure();
+    B = qType.getDimSize(0);
+    S = qType.getDimSize(1);
+    HQ = qType.getDimSize(2);
+    D = qType.getDimSize(3);
+    HK = kType.getDimSize(2);
+    if (B <= 0 || S <= 0 || HQ <= 0 || HK <= 0 || D <= 0 || D % 2 != 0 ||
+        kType.getDimSize(0) != B || kType.getDimSize(1) != S ||
+        kType.getDimSize(3) != D)
+      return failure();
+    half = D / 2;
+
+    if (layoutAttr.getValue() == "shared_position") {
+      layout = Layout::SharedPosition;
+      if (cosineType.getRank() != 3 ||
+          cosineType.getShape() != ArrayRef<int64_t>({1, S, D}) ||
+          sineType.getShape() != cosineType.getShape() ||
+          fn->hasAttr("intent.paired_rotation_sections"))
+        return failure();
+    } else if (layoutAttr.getValue() == "three_plane") {
+      layout = Layout::ThreePlane;
+      if (cosineType.getRank() != 4 ||
+          cosineType.getShape() != ArrayRef<int64_t>({3, B, S, D}) ||
+          sineType.getShape() != cosineType.getShape())
+        return failure();
+      auto sectionAttr = fn->getAttrOfType<DenseI64ArrayAttr>(
+          "intent.paired_rotation_sections");
+      if (!sectionAttr || sectionAttr.size() != 3)
+        return failure();
+      sections.assign(sectionAttr.asArrayRef().begin(),
+                      sectionAttr.asArrayRef().end());
+      if (llvm::any_of(sections, [](int64_t value) { return value <= 0; }) ||
+          sections[0] + sections[1] + sections[2] != half)
+        return failure();
+    } else {
+      return failure();
+    }
+
+    // The attribute is produced only after fixed code proves the exact A/B
+    // pattern.  Still reject side-effecting or structurally foreign bodies so a
+    // hand-authored marker cannot turn an unrelated function into a rotation.
+    if (!fn.getBody().hasOneBlock())
+      return failure();
+    bool sawGather = false, sawSub = false, sawAdd = false;
+    for (Operation &operation : fn.getBody().front().without_terminator()) {
+      sawGather |= isa<GatherOp>(operation);
+      if (auto binary = dyn_cast<MapBinaryOp>(operation)) {
+        sawSub |= binary.getFn() == "sub";
+        sawAdd |= binary.getFn() == "add";
+      }
+      if (!isa<arith::ConstantOp, GatherOp, MapUnaryOp, MapBinaryOp, SelectOp,
+               IotaOp, CastOp, ContractionOp, tensor::ExpandShapeOp>(operation))
+        return failure();
+    }
+    auto returned =
+        dyn_cast<func::ReturnOp>(fn.getBody().front().getTerminator());
+    if (!returned || returned.getNumOperands() != 2 || !sawGather || !sawSub ||
+        !sawAdd)
+      return failure();
+
+    T = requestedThreads ? static_cast<int64_t>(requestedThreads) : 256;
+    if (T < 32 || T > 1024 || T % 32 != 0)
+      return failure();
+    qPairs = B * S * HQ * half;
+    kPairs = B * S * HK * half;
+    totalPairs = qPairs + kPairs;
+    if (qPairs <= 0 || kPairs <= 0 || totalPairs < qPairs)
+      return failure();
+    gridBlocks = (totalPairs + T - 1) / T;
+    storageType = qType.getElementType();
+    computeType = Float32Type::get(fn.getContext());
+    return success();
+  }
+
+  Value toCompute(OpBuilder &builder, Location location, Value value) const {
+    if (value.getType() == computeType)
+      return value;
+    if (isa<Float16Type, BFloat16Type>(value.getType()))
+      return builder.create<arith::ExtFOp>(location, computeType, value);
+    return value;
+  }
+
+  Value toStorage(OpBuilder &builder, Location location, Value value) const {
+    if (value.getType() == storageType)
+      return value;
+    if (value.getType() == computeType &&
+        isa<Float16Type, BFloat16Type>(storageType))
+      return builder.create<arith::TruncFOp>(location, storageType, value);
+    return value;
+  }
+
+  Value typedMul(OpBuilder &builder, Location location, Value lhs,
+                 Value rhs) const {
+    Value product = builder.create<arith::MulFOp>(
+        location, toCompute(builder, location, lhs),
+        toCompute(builder, location, rhs));
+    return toStorage(builder, location, product);
+  }
+
+  Value typedAddSub(OpBuilder &builder, Location location, Value lhs, Value rhs,
+                    bool subtract) const {
+    lhs = toCompute(builder, location, lhs);
+    rhs = toCompute(builder, location, rhs);
+    Value result = subtract
+                       ? Value(builder.create<arith::SubFOp>(location, lhs, rhs))
+                       : Value(builder.create<arith::AddFOp>(location, lhs, rhs));
+    return toStorage(builder, location, result);
+  }
+
+  Value storageZero(OpBuilder &builder, Location location) const {
+    return builder.create<arith::ConstantOp>(
+        location, builder.getFloatAttr(cast<FloatType>(storageType), 0.0));
+  }
+
+  std::pair<Value, Value>
+  loadAngles(OpBuilder &builder, Location location, Value cosine, Value sine,
+             Value batch, Value sequence, Value pair) const {
+    if (layout == Layout::SharedPosition) {
+      Value zero = builder.create<arith::ConstantIndexOp>(location, 0);
+      Value c = builder.create<memref::LoadOp>(
+          location, cosine, ValueRange{zero, sequence, pair});
+      Value s = builder.create<memref::LoadOp>(
+          location, sine, ValueRange{zero, sequence, pair});
+      return {c, s};
+    }
+
+    Value c0 = builder.create<arith::ConstantIndexOp>(location, 0);
+    Value c1 = builder.create<arith::ConstantIndexOp>(location, 1);
+    Value c2 = builder.create<arith::ConstantIndexOp>(location, 2);
+    Value first = builder.create<arith::ConstantIndexOp>(location, sections[0]);
+    Value second = builder.create<arith::ConstantIndexOp>(
+        location, sections[0] + sections[1]);
+    Value inFirst = builder.create<arith::CmpIOp>(
+        location, arith::CmpIPredicate::ult, pair, first);
+    Value inSecond = builder.create<arith::CmpIOp>(
+        location, arith::CmpIPredicate::ult, pair, second);
+    Value zero = storageZero(builder, location);
+
+    auto maskedPlaneSum = [&](Value source) -> Value {
+      Value v0 = builder.create<memref::LoadOp>(
+          location, source, ValueRange{c0, batch, sequence, pair});
+      Value v1 = builder.create<memref::LoadOp>(
+          location, source, ValueRange{c1, batch, sequence, pair});
+      Value v2 = builder.create<memref::LoadOp>(
+          location, source, ValueRange{c2, batch, sequence, pair});
+      Value notFirst = builder.create<arith::XOrIOp>(
+          location, inFirst,
+          builder.create<arith::ConstantIntOp>(location, 1, 1));
+      Value inMiddle = builder.create<arith::AndIOp>(location, notFirst, inSecond);
+      Value notSecond = builder.create<arith::XOrIOp>(
+          location, inSecond,
+          builder.create<arith::ConstantIntOp>(location, 1, 1));
+      v0 = builder.create<arith::SelectOp>(location, inFirst, v0, zero);
+      v1 = builder.create<arith::SelectOp>(location, inMiddle, v1, zero);
+      v2 = builder.create<arith::SelectOp>(location, notSecond, v2, zero);
+      return typedAddSub(builder, location,
+                         typedAddSub(builder, location, v0, v1, false), v2,
+                         false);
+    };
+    return {maskedPlaneSum(cosine), maskedPlaneSum(sine)};
+  }
+
+  void emitTensorRotation(OpBuilder &builder, Location location, Value data,
+                          Value cosine, Value sine, Value local,
+                          int64_t heads) const {
+    Value cHalf = builder.create<arith::ConstantIndexOp>(location, half);
+    Value cHeads = builder.create<arith::ConstantIndexOp>(location, heads);
+    Value cSequence = builder.create<arith::ConstantIndexOp>(location, S);
+    Value pair = builder.create<arith::RemUIOp>(location, local, cHalf);
+    Value outer = builder.create<arith::DivUIOp>(location, local, cHalf);
+    Value head = builder.create<arith::RemUIOp>(location, outer, cHeads);
+    outer = builder.create<arith::DivUIOp>(location, outer, cHeads);
+    Value sequence =
+        builder.create<arith::RemUIOp>(location, outer, cSequence);
+    Value batch = builder.create<arith::DivUIOp>(location, outer, cSequence);
+    Value high = builder.create<arith::AddIOp>(location, pair, cHalf);
+
+    // Both source values are in SSA before either store: this is the essential
+    // in-place safety property opened by the paired B store partition.
+    Value lowValue = builder.create<memref::LoadOp>(
+        location, data, ValueRange{batch, sequence, head, pair});
+    Value highValue = builder.create<memref::LoadOp>(
+        location, data, ValueRange{batch, sequence, head, high});
+    auto [cosineValue, sineValue] =
+        loadAngles(builder, location, cosine, sine, batch, sequence, pair);
+    Value lowProduct =
+        typedMul(builder, location, lowValue, cosineValue);
+    Value highSin = typedMul(builder, location, highValue, sineValue);
+    Value rotatedLow =
+        typedAddSub(builder, location, lowProduct, highSin, true);
+    Value highProduct =
+        typedMul(builder, location, highValue, cosineValue);
+    Value lowSin = typedMul(builder, location, lowValue, sineValue);
+    Value rotatedHigh =
+        typedAddSub(builder, location, highProduct, lowSin, false);
+    builder.create<memref::StoreOp>(
+        location, rotatedLow, data, ValueRange{batch, sequence, head, pair});
+    builder.create<memref::StoreOp>(
+        location, rotatedHigh, data, ValueRange{batch, sequence, head, high});
+  }
+
+  LogicalResult rewrite() {
+    MLIRContext *context = fn.getContext();
+    Location location = fn.getLoc();
+    OpBuilder builder(context);
+    auto sourceType = fn.getFunctionType();
+    SmallVector<Type> argumentTypes;
+    for (Type type : sourceType.getInputs()) {
+      auto tensor = cast<RankedTensorType>(type);
+      argumentTypes.push_back(
+          MemRefType::get(tensor.getShape(), tensor.getElementType()));
+    }
+    auto loweredType = FunctionType::get(context, argumentTypes, {});
+    std::string name = fn.getName().str();
+    fn.setName(name + "_intent_src");
+    builder.setInsertionPoint(fn);
+    auto lowered = builder.create<func::FuncOp>(location, name, loweredType);
+    Block *entry = lowered.addEntryBlock();
+    builder.setInsertionPointToStart(entry);
+
+    Value grid = builder.create<arith::ConstantIndexOp>(location, gridBlocks);
+    Value threads = builder.create<arith::ConstantIndexOp>(location, T);
+    Value one = builder.create<arith::ConstantIndexOp>(location, 1);
+    auto launch = builder.create<gpu::LaunchOp>(location, grid, one, one, threads,
+                                                one, one);
+    builder.setInsertionPointToStart(&launch.getBody().front());
+    Value block = launch.getBlockIds().x;
+    Value thread = launch.getThreadIds().x;
+    Value cThreads = builder.create<arith::ConstantIndexOp>(location, T);
+    Value flat = builder.create<arith::AddIOp>(
+        location, builder.create<arith::MulIOp>(location, block, cThreads),
+        thread);
+    Value total =
+        builder.create<arith::ConstantIndexOp>(location, totalPairs);
+    Value active = builder.create<arith::CmpIOp>(
+        location, arith::CmpIPredicate::ult, flat, total);
+    auto guarded = builder.create<scf::IfOp>(location, active,
+                                             /*withElseRegion=*/false);
+    OpBuilder bodyBuilder = guarded.getThenBodyBuilder();
+    Value qLimit =
+        bodyBuilder.create<arith::ConstantIndexOp>(location, qPairs);
+    Value isQ = bodyBuilder.create<arith::CmpIOp>(
+        location, arith::CmpIPredicate::ult, flat, qLimit);
+    auto choose = bodyBuilder.create<scf::IfOp>(location, isQ,
+                                                /*withElseRegion=*/true);
+    OpBuilder qBuilder = choose.getThenBodyBuilder();
+    emitTensorRotation(qBuilder, location, entry->getArgument(qArg),
+                       entry->getArgument(cosineArg),
+                       entry->getArgument(sineArg), flat, HQ);
+    OpBuilder kBuilder = choose.getElseBodyBuilder();
+    Value local =
+        kBuilder.create<arith::SubIOp>(location, flat, qLimit);
+    emitTensorRotation(kBuilder, location, entry->getArgument(kArg),
+                       entry->getArgument(cosineArg),
+                       entry->getArgument(sineArg), local, HK);
+
+    builder.setInsertionPointAfter(guarded);
+    builder.create<gpu::TerminatorOp>(location);
+    builder.setInsertionPointAfter(launch);
+    builder.create<func::ReturnOp>(location);
+    attachElementwiseStateReceipt(
+        lowered, T, gridBlocks, /*gridStrideFlat=*/false,
+        /*gridStrideUnroll=*/1, /*logicalTileElements=*/0,
+        /*vectorWidth=*/1, "none", /*oneDimensionalResults=*/false,
+        /*hostValueCaptureCount=*/0, /*pairedLastAxisRotation=*/true);
+    fn.erase();
+    return success();
+  }
+};
+
 struct ConvertIntentElementwiseToGPUPass
     : ::intent::impl::ConvertIntentElementwiseToGPUBase<
           ConvertIntentElementwiseToGPUPass> {
@@ -1080,6 +1440,7 @@ struct ConvertIntentElementwiseToGPUPass
   void runOnOperation() override {
     ModuleOp mod = getOperation();
     SmallVector<func::FuncOp> targets;
+    SmallVector<func::FuncOp> pairedTargets;
     for (auto fn : mod.getOps<func::FuncOp>()) {
       ElementwiseLowering probe(fn, blockThreads, flattenContiguous,
                                 flatVectorWidth, gridStrideUnroll,
@@ -1088,6 +1449,13 @@ struct ConvertIntentElementwiseToGPUPass
                                 tanhApproximation);
       if (succeeded(probe.match()))
         targets.push_back(fn);
+      else {
+        PairedRotationLowering paired(
+            fn, blockThreads, flattenContiguous, gridStrideUnroll,
+            logicalTileElements, rowVectorWidth, tanhApproximation);
+        if (succeeded(paired.match()))
+          pairedTargets.push_back(fn);
+      }
     }
     for (func::FuncOp fn : targets) {
       ElementwiseLowering low(fn, blockThreads, flattenContiguous,
@@ -1097,6 +1465,15 @@ struct ConvertIntentElementwiseToGPUPass
                               tanhApproximation);
       if (failed(low.match()) || failed(low.rewrite())) {
         fn.emitError("elementwise lowering failed after match");
+        return signalPassFailure();
+      }
+    }
+    for (func::FuncOp fn : pairedTargets) {
+      PairedRotationLowering low(
+          fn, blockThreads, flattenContiguous, gridStrideUnroll,
+          logicalTileElements, rowVectorWidth, tanhApproximation);
+      if (failed(low.match()) || failed(low.rewrite())) {
+        fn.emitError("paired last-axis rotation lowering failed after match");
         return signalPassFailure();
       }
     }

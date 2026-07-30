@@ -463,6 +463,7 @@ def _project_explicit_broadcast_shape(
     shape: tuple[Any, ...],
     axes: Sequence[int],
     target_shape: tuple[Any, ...] | None,
+    unit_dimensions: frozenset[str] = frozenset(),
 ) -> tuple[Any, ...]:
     """Project one operand using only broadcast axes explicitly present in J."""
 
@@ -473,6 +474,7 @@ def _project_explicit_broadcast_shape(
             list(shape),
             axes,
             list(target_shape) if target_shape is not None else None,
+            unit_dimensions=unit_dimensions,
         )
     except (NotImplementedError, ValueError) as exc:
         raise CanonicalJError(str(exc)) from exc
@@ -485,6 +487,7 @@ def _infer_shape(
     op: IntentOp,
     known: Mapping[str, CanonicalValueType],
     broadcast_axes: Mapping[str, Mapping[str, tuple[int, ...]]] | None = None,
+    unit_dimensions: frozenset[str] = frozenset(),
 ) -> tuple[Any, ...] | None:
     operand_shapes = [known[name].shape for name in op.operands if name in known]
     if op.op in {"map_unary", "cast", "scan", "flip"} and operand_shapes:
@@ -514,6 +517,7 @@ def _infer_shape(
                 shape,
                 explicit.get(operand, ()),
                 target_shape,
+                unit_dimensions,
             )
             for operand, shape in zip(op.operands, operand_shapes, strict=True)
         )
@@ -636,6 +640,7 @@ def _merge_type(
 def _elaborate_function_types(
     fn: IntentFunction,
     broadcast_axes: Mapping[str, Mapping[str, tuple[int, ...]]] | None = None,
+    unit_dimensions: frozenset[str] = frozenset(),
 ) -> dict[str, CanonicalValueType]:
     known: dict[str, CanonicalValueType] = {
         tensor.name: CanonicalValueType(tensor.dtype, tuple(tensor.shape))
@@ -738,7 +743,12 @@ def _elaborate_function_types(
                     )
 
             inferred_dtypes = _infer_dtypes(op, known)
-            inferred_shape = _infer_shape(op, known, broadcast_axes)
+            inferred_shape = _infer_shape(
+                op,
+                known,
+                broadcast_axes,
+                unit_dimensions,
+            )
             for name in names:
                 previous = known.get(name)
                 dtype = inferred_dtypes.get(name) or (
@@ -930,6 +940,50 @@ def _remove_redundant_identity_mappings(j: Any, payload: dict[str, Any]) -> None
     boundary["output_mappings"] = retained
 
 
+def direct_unit_dimension_refs(
+    constraints: Sequence[str],
+) -> frozenset[str]:
+    """Return dimensions that J directly and unambiguously equates to one."""
+
+    direct_values: dict[str, set[int]] = {}
+    for index, constraint in enumerate(constraints):
+        expression = parse_contract_expr(
+            constraint,
+            expected=ContractSort.BOOLEAN,
+            context=f"J.dimension_constraints[{index}]",
+        )
+        if expression.op != "eq" or len(expression.args) != 2:
+            continue
+        left, right = expression.args
+        reference: str | None = None
+        literal: int | None = None
+        if (
+            left.op == "ref"
+            and isinstance(left.value, str)
+            and right.op == "int"
+            and isinstance(right.value, int)
+            and not isinstance(right.value, bool)
+        ):
+            reference = left.value
+            literal = right.value
+        elif (
+            right.op == "ref"
+            and isinstance(right.value, str)
+            and left.op == "int"
+            and isinstance(left.value, int)
+            and not isinstance(left.value, bool)
+        ):
+            reference = right.value
+            literal = left.value
+        if reference is not None and literal is not None:
+            direct_values.setdefault(reference, set()).add(literal)
+    return frozenset(
+        reference
+        for reference, values in direct_values.items()
+        if values == {1}
+    )
+
+
 def _snapshot(value: Mapping[str, Any]) -> str:
     return json.dumps(
         value,
@@ -994,7 +1048,11 @@ def _elaborate_j(j: "SemanticArchive") -> tuple["SemanticArchive", JElaboration]
 
     payload = copy.deepcopy(source_payload)
     function = IntentFunction.from_json(payload["intent"])
-    _elaborate_function_types(function, _declared_broadcast_axes(j))
+    _elaborate_function_types(
+        function,
+        _declared_broadcast_axes(j),
+        direct_unit_dimension_refs(j.dimension_constraints),
+    )
     payload["intent"] = function.to_json()
 
     boundary = payload["boundary"]
@@ -1064,6 +1122,9 @@ def _elaborate_j(j: "SemanticArchive") -> tuple["SemanticArchive", JElaboration]
             _elaborate_function_types(
                 typed_function,
                 _declared_broadcast_axes(canonical_archive),
+                direct_unit_dimension_refs(
+                    canonical_archive.dimension_constraints
+                ),
             ).items()
         )
     )
@@ -1132,6 +1193,7 @@ __all__ = [
     "JElaboration",
     "canonicalize_gate1_artifact",
     "canonicalize_semantic_archive",
+    "direct_unit_dimension_refs",
     "elaborate_j",
     "j_elaboration",
     "parse_contract_expr",

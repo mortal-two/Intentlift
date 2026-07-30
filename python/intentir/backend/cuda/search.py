@@ -58,6 +58,8 @@ B_TRANSFORM_RANK0_HOST_CAPTURE = "cuda.b.rank0_host_value_capture.v1"
 B_TRANSFORM_UNIFORM_HOST_CAPTURE = "cuda.b.uniform_host_value_capture.v1"
 LINALG_FUSED_FAST_PATH_ID = "cuda.linalg.elementwise-fused.v1"
 SPLITK_VARARGS_FAST_PATH_ID = "cuda.splitk.reduce-varargs.v1"
+DIRECT_CONTRACTION_FAST_PATH_ID = "cuda.contraction.tiled.v1"
+_PAIRED_ROTATION_MARKER = "intent.paired_rotation_version"
 SEARCH_PARTITION_UNPARTITIONED = "unpartitioned"
 SEARCH_PARTITION_SCHEDULE_SPINE = "schedule_spine"
 SEARCH_PARTITION_EXPANDED = "expanded"
@@ -124,8 +126,33 @@ def schedule_only_cuda_path_identity(
     compact shuffle/shared topology without changing the read-once graph.
     """
 
+    # The paired rotation pass removes the materialized gather/index/partition
+    # graph and is therefore a Full structural state, not the deterministic
+    # direct lowering held fixed by C-Fixed/Schedule-Only.
+    if _PAIRED_ROTATION_MARKER in state.base_ir:
+        return "generic", None
+
     fast_path_id = derive_default_fast_path_id(state)
     if fast_path_id is None:
+        return "generic", None
+    # Tensor-core substitution changes the contraction implementation.  The
+    # direct contraction is the registered SIMT tiled path; Schedule-Only may
+    # tune that structure, while Full additionally opens MMA/Split-K states.
+    if fast_path_id.startswith("cuda.linear.") or ".mma" in fast_path_id:
+        selection = select_variant(
+            state.base_ir,
+            target=LoweringTarget(
+                backend="cuda",
+                chip=state.target.architecture,
+                features=frozenset(state.target.features),
+            ),
+            only_fast_path=DIRECT_CONTRACTION_FAST_PATH_ID,
+        )
+        if selection.fast_path_id is not None:
+            return (
+                _lowering_path_kind_for_fast_path(selection.fast_path_id),
+                selection.fast_path_id,
+            )
         return "generic", None
     return _lowering_path_kind_for_fast_path(fast_path_id), fast_path_id
 
@@ -835,15 +862,8 @@ def canonical_cuda_candidate(state: BackendSearchState) -> CudaSearchCandidate:
     """
 
     derive_cuda_contract_view(state)
-    selection = select_variant(
-        state.base_ir,
-        target=LoweringTarget(
-            backend="cuda",
-            chip=state.target.architecture,
-            features=frozenset(state.target.features),
-        ),
-    )
-    if selection.fast_path_id is None:
+    path_kind, fast_path_id = schedule_only_cuda_path_identity(state)
+    if fast_path_id is None:
         return CudaSearchCandidate(
             _candidate_id("generic", None, None),
             "generic",
@@ -854,20 +874,31 @@ def canonical_cuda_candidate(state: BackendSearchState) -> CudaSearchCandidate:
             requested_trace=("cuda.generic.intent_to_linalg.v1",),
             compiler_pipeline="generic_materialized",
         )
-    assert selection.pass_argument is not None
-    path_kind = _lowering_path_kind_for_fast_path(selection.fast_path_id)
+    descriptor = next(
+        (
+            item
+            for item in DEFAULT_PASSES
+            if item.fast_path_id == fast_path_id
+            and state.target.architecture in item.supported_chips
+        ),
+        None,
+    )
+    if descriptor is None:
+        raise CudaContractError(
+            f"canonical CUDA path {fast_path_id!r} is not registered for target"
+        )
     return CudaSearchCandidate(
         _candidate_id(
             path_kind,
-            selection.fast_path_id,
-            selection.pass_argument,
+            fast_path_id,
+            descriptor.pass_argument,
         ),
         path_kind,
-        selection.fast_path_id,
-        selection.pass_argument,
+        fast_path_id,
+        descriptor.pass_argument,
         {},
         0.0,
-        requested_trace=(selection.fast_path_id,),
+        requested_trace=(fast_path_id,),
         requested_observation_class=ObservationClass.OBSERVATION_CHANGING,
     )
 

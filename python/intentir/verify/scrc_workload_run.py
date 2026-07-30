@@ -353,14 +353,36 @@ def build_workload_jc_suite(
             values[key] = runtime_input_values[buffer.formal]
             if input_bindings.setdefault(logical_ref, key) != key:
                 raise ValueError("multiple Harness inputs bind one J tensor")
-            arguments.append(
-                TritonArgument(
-                    parameter.name,
-                    ArgumentRole.INPUT,
-                    value_key=key,
-                    dtype=buffer.dtype,
+            # Some launchers expose an optional in-place update through an
+            # ordinary input carrier: when that option is disabled the source
+            # still receives the same initialized pointer, while the accepted J
+            # deliberately models its post-state.  Parameter mode and J
+            # membership, rather than the launcher adapter's allocation role,
+            # determine whether that post-state is observable.
+            if parameter.mode is ParameterMode.INOUT:
+                if logical_ref not in j_outputs:
+                    raise ValueError("J inout parameter lacks an output tensor")
+                output_key = buffer.output_key or f"output_{parameter.name}"
+                if output_bindings.setdefault(logical_ref, output_key) != output_key:
+                    raise ValueError("multiple Harness outputs bind one J tensor")
+                arguments.append(
+                    TritonArgument(
+                        parameter.name,
+                        ArgumentRole.INOUT,
+                        value_key=key,
+                        dtype=buffer.dtype,
+                        output_key=output_key,
+                    )
                 )
-            )
+            else:
+                arguments.append(
+                    TritonArgument(
+                        parameter.name,
+                        ArgumentRole.INPUT,
+                        value_key=key,
+                        dtype=buffer.dtype,
+                    )
+                )
         elif buffer.role is BufferRole.OUTPUT:
             if logical_ref not in j_outputs or parameter.mode is ParameterMode.INPUT:
                 raise ValueError("Harness output buffer is not a J output")

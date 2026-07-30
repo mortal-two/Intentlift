@@ -30,6 +30,7 @@ import ast
 import math
 import operator
 import re
+from typing import AbstractSet
 
 from intentir.ir.model import IntentFunction, IntentOp
 
@@ -191,10 +192,12 @@ def _broadcast_checked(
 
 
 def _broadcast_projection(
-    shape: list[int] | None,
+    shape: list[object] | None,
     axes: Sequence[int],
-    target_shape: Sequence[int] | None = None,
-) -> tuple[list[int] | None, tuple[int, ...]]:
+    target_shape: Sequence[object] | None = None,
+    *,
+    unit_dimensions: AbstractSet[str] = frozenset(),
+) -> tuple[list[object] | None, tuple[int, ...]]:
     """Project one operand onto the consumer rank using Layer-B axes.
 
     A broadcast axis may already exist as a size-one dimension (``[M, 1]``
@@ -255,6 +258,14 @@ def _broadcast_projection(
     axis_set = set(normalized)
     memo: dict[tuple[int, int], tuple[int, ...] | None] = {}
 
+    def is_unit(extent: object) -> bool:
+        return extent == 1 or (
+            isinstance(extent, str) and extent in unit_dimensions
+        )
+
+    def same_extent(left: object, right: object) -> bool:
+        return left == right or (is_unit(left) and is_unit(right))
+
     def align(source_index: int, target_index: int) -> tuple[int, ...] | None:
         key = (source_index, target_index)
         if key in memo:
@@ -268,7 +279,7 @@ def _broadcast_projection(
             # Prefer retaining an already-present singleton at the same target
             # position.  If that cannot complete the alignment, treat this
             # declared broadcast axis as the missing rank dimension.
-            if source_index < len(shape) and shape[source_index] == 1:
+            if source_index < len(shape) and is_unit(shape[source_index]):
                 suffix = align(source_index + 1, target_index + 1)
                 if suffix is not None:
                     memo[key] = suffix
@@ -280,7 +291,7 @@ def _broadcast_projection(
                 return result
         elif (
             source_index < len(shape)
-            and shape[source_index] == target[target_index]
+            and same_extent(shape[source_index], target[target_index])
         ):
             suffix = align(source_index + 1, target_index + 1)
             if suffix is not None:
@@ -726,10 +737,10 @@ def _normalize_dtype(value: object, context: str) -> str:
     return dtype
 
 
-def _value_dimension_function_attr(
+def _value_dimension_attribute(
     fn: IntentFunction,
     equalities: Sequence[tuple[int, int]],
-) -> str:
+) -> str | None:
     """Render the closed J-derived rank-0 scalar equality contract.
 
     The pair index is an ``IntentFunction.inputs`` index, which is exactly the
@@ -788,17 +799,93 @@ def _value_dimension_function_attr(
         seen.add(argument_index)
         checked.append((argument_index, value))
     if not checked:
-        return ""
+        return None
     flattened = ", ".join(
         str(item)
         for equality in sorted(checked)
         for item in equality
     )
-    return (
-        " attributes {intent.scalar_equalities = array<i64: "
-        + flattened
-        + ">}"
-    )
+    return "intent.scalar_equalities = array<i64: " + flattened + ">"
+
+
+def _function_attributes(
+    fn: IntentFunction,
+    *,
+    value_dimension_equalities: Sequence[tuple[int, int]],
+    inplace_outputs: Sequence[int],
+    paired_rotation: tuple[str, tuple[int, int, int, int], tuple[int, ...]]
+    | None,
+) -> str:
+    attributes: list[str] = []
+    equality = _value_dimension_attribute(fn, value_dimension_equalities)
+    if equality is not None:
+        attributes.append(equality)
+
+    if inplace_outputs:
+        if len(inplace_outputs) != len(fn.outputs):
+            raise ValueError(
+                "emit_mlir: inplace output mapping must cover every result"
+            )
+        checked: list[int] = []
+        for output_index, argument_index in enumerate(inplace_outputs):
+            if (
+                isinstance(argument_index, bool)
+                or not isinstance(argument_index, int)
+                or argument_index < -1
+                or argument_index >= len(fn.inputs)
+            ):
+                raise ValueError("emit_mlir: invalid inplace input index")
+            if argument_index >= 0:
+                source = fn.inputs[argument_index]
+                output = fn.outputs[output_index]
+                if source.dtype != output.dtype or source.shape != output.shape:
+                    raise ValueError(
+                        "emit_mlir: inplace source/result tensor types differ"
+                    )
+            checked.append(argument_index)
+        flattened = ", ".join(str(item) for item in checked)
+        attributes.append(f"intent.inplace = array<i64: {flattened}>")
+
+    if paired_rotation is not None:
+        layout, input_indices, sections = paired_rotation
+        if layout not in {"shared_position", "three_plane"}:
+            raise ValueError("emit_mlir: unknown paired rotation layout")
+        if (
+            len(input_indices) != 4
+            or len(set(input_indices)) != 4
+            or any(
+                isinstance(index, bool)
+                or not isinstance(index, int)
+                or index < 0
+                or index >= len(fn.inputs)
+                for index in input_indices
+            )
+        ):
+            raise ValueError("emit_mlir: invalid paired rotation input mapping")
+        if layout == "three_plane":
+            if len(sections) != 3 or any(
+                isinstance(item, bool) or not isinstance(item, int) or item <= 0
+                for item in sections
+            ):
+                raise ValueError("emit_mlir: invalid three-plane sections")
+        elif sections:
+            raise ValueError("emit_mlir: shared-position rotation has no sections")
+        arguments = ", ".join(str(item) for item in input_indices)
+        attributes.extend(
+            (
+                'intent.paired_rotation_version = '
+                '"intentir.paired-last-axis-rotation.v1"',
+                f'intent.paired_rotation = "{layout}"',
+                f"intent.paired_rotation_inputs = array<i64: {arguments}>",
+            )
+        )
+        if sections:
+            values = ", ".join(str(item) for item in sections)
+            attributes.append(
+                f"intent.paired_rotation_sections = array<i64: {values}>"
+            )
+
+    return "" if not attributes else " attributes {" + ", ".join(attributes) + "}"
 
 
 def _promote_dtype(lhs: str | None, rhs: str | None) -> str | None:
@@ -964,6 +1051,58 @@ def _infer_body_dtypes(
 ) -> bool:
     changed = False
     for op in body:
+        if op.op == "loop":
+            # A semantic loop is a region operation.  Its scan block arguments
+            # inherit the source element type; carry block arguments and results
+            # inherit the authored state type (or, for older artifacts, the
+            # initializer/yield type).  Seed those region values before walking
+            # the body so nested loops use the same inference as top-level ones.
+            for scan in op.scan:
+                source_dtype = dtypes.get(scan.source)
+                if source_dtype is not None:
+                    changed |= _record_dtype(
+                        dtypes, scan.name, source_dtype, "loop scan slice"
+                    )
+            for state in op.carry:
+                declared = (
+                    _normalize_dtype(
+                        state.type.dtype, "loop carry result type"
+                    )
+                    if state.type is not None
+                    else None
+                )
+                state_dtype = declared or dtypes.get(state.init_value)
+                if state_dtype is not None:
+                    changed |= _record_dtype(
+                        dtypes,
+                        state.body_argument,
+                        state_dtype,
+                        "loop carry block argument",
+                    )
+                    changed |= _record_dtype(
+                        dtypes,
+                        state.result_value,
+                        state_dtype,
+                        "loop carry result",
+                    )
+            changed |= _infer_body_dtypes(op.body, dtypes)
+            for state in op.carry:
+                yielded_dtype = dtypes.get(state.next_value)
+                if yielded_dtype is None:
+                    continue
+                changed |= _record_dtype(
+                    dtypes,
+                    state.body_argument,
+                    yielded_dtype,
+                    "loop yielded carry",
+                )
+                changed |= _record_dtype(
+                    dtypes,
+                    state.result_value,
+                    yielded_dtype,
+                    "loop result",
+                )
+            continue
         for arm in (op.positive, op.negative):
             if arm is not None:
                 changed |= _infer_body_dtypes(arm.body, dtypes)
@@ -1159,6 +1298,70 @@ def _infer_body(
                     f"with result constraint {inferred_operand}"
                 )
         for op in body:
+            if op.op == "loop":
+                if op.trip is None:
+                    raise ValueError("emit_mlir: loop requires a semantic trip axis")
+                tile = _tile(op, extents or {}, None)
+                for scan in op.scan:
+                    source_shape = env.get(scan.source)
+                    if source_shape is None:
+                        continue
+                    axis = int(scan.axis) - fold
+                    if axis < 0 or axis >= len(source_shape):
+                        raise ValueError(
+                            "emit_mlir: loop scan axis is outside its source rank"
+                        )
+                    slice_shape = list(source_shape)
+                    slice_shape[axis] = tile
+                    if env.get(scan.name) != slice_shape:
+                        env[scan.name] = slice_shape
+                        changed = True
+                for state in op.carry:
+                    declared = None
+                    if state.type is not None:
+                        declared = _resolve(
+                            state.type.shape, extents or {}
+                        )[fold:]
+                    init_shape = env.get(state.init_value)
+                    state_shape = declared or init_shape
+                    if state_shape is not None:
+                        if init_shape is not None and declared is not None and (
+                            init_shape != declared
+                        ):
+                            raise ValueError(
+                                "emit_mlir: loop carry initializer shape differs "
+                                "from its authored state type"
+                            )
+                        if env.get(state.body_argument) != state_shape:
+                            env[state.body_argument] = list(state_shape)
+                            changed = True
+                before = dict(env)
+                _infer_body(
+                    op.body,
+                    env,
+                    fold,
+                    extents,
+                    broadcast_axes,
+                )
+                changed |= env != before
+                for state in op.carry:
+                    state_shape = env.get(state.body_argument)
+                    yielded_shape = env.get(state.next_value)
+                    if (
+                        state_shape is not None
+                        and yielded_shape is not None
+                        and state_shape != yielded_shape
+                    ):
+                        raise ValueError(
+                            "emit_mlir: loop yielded value shape differs from carry"
+                        )
+                    result_shape = yielded_shape or state_shape
+                    if result_shape is not None and (
+                        env.get(state.result_value) != result_shape
+                    ):
+                        env[state.result_value] = list(result_shape)
+                        changed = True
+                continue
             for arm in (op.positive, op.negative):
                 if arm is not None:
                     before = dict(env)
@@ -1301,6 +1504,91 @@ class _Printer:
                 extents: dict[str, int] | None = None,
                 node_ref: str | None = None) -> None:
         a = op.attrs
+        if op.op == "loop":
+            if op.trip is None or not op.carry or not op.scan:
+                raise ValueError(
+                    "emit_mlir: loop requires trip, scan inputs, and carry state"
+                )
+            if len(op.yields) != len(op.carry):
+                raise ValueError("emit_mlir: loop carry/yield arity mismatch")
+            resolved_extents = dict(extents or {})
+            tile = _tile(op, resolved_extents, None)
+            scan_values: list[str] = []
+            scan_types: list[str] = []
+            scan_axes: list[str] = []
+            for scan in op.scan:
+                if scan.source not in self.ssa:
+                    raise ValueError(
+                        f"emit_mlir: loop scan source {scan.source!r} is unavailable"
+                    )
+                scan_values.append(self.ssa[scan.source])
+                scan_types.append(self._ttn(scan.source, env))
+                scan_axes.append(f"{int(scan.axis) - fold} : i64")
+
+            init_values: list[str] = []
+            init_types: list[str] = []
+            result_types: list[str] = []
+            for state in op.carry:
+                if state.init_value not in self.ssa:
+                    raise ValueError(
+                        f"emit_mlir: loop carry init {state.init_value!r} is unavailable"
+                    )
+                init_values.append(self.ssa[state.init_value])
+                init_types.append(self._ttn(state.init_value, env))
+                result_types.append(self._ttn(state.result_value, env))
+
+            self._n += 1
+            loop_value = f"%intentir_loop_{self._n}"
+            self.lines.append(
+                f"{indent}{loop_value}:{len(op.carry)} = intent.loop "
+                f"scan({', '.join(scan_values)} : {', '.join(scan_types)}) "
+                f"init({', '.join(init_values)} : {', '.join(init_types)}) "
+                f"{{scan_axes = [{', '.join(scan_axes)}], "
+                f"tile_hint = {tile} : i64}} -> {', '.join(result_types)} do {{"
+            )
+
+            outer_ssa = dict(self.ssa)
+            block_args: list[str] = []
+            for scan in op.scan:
+                block = self.fresh(scan.name)
+                block_args.append(f"{block}: {self._ttn(scan.name, env)}")
+            for state in op.carry:
+                block = self.fresh(state.body_argument)
+                block_args.append(
+                    f"{block}: {self._ttn(state.body_argument, env)}"
+                )
+            self.lines.append(f"{indent}^bb0({', '.join(block_args)}):")
+            for child_index, child in enumerate(op.body):
+                self.emit_op(
+                    child,
+                    env,
+                    fold,
+                    indent=indent + "  ",
+                    extents=resolved_extents,
+                    node_ref=(
+                        f"{node_ref}.body[{child_index}]"
+                        if node_ref is not None
+                        else None
+                    ),
+                )
+            yielded_values = []
+            yielded_types = []
+            for yielded in op.yields:
+                if yielded not in self.ssa:
+                    raise ValueError(
+                        f"emit_mlir: loop yield {yielded!r} is unavailable"
+                    )
+                yielded_values.append(self.ssa[yielded])
+                yielded_types.append(self._ttn(yielded, env))
+            self.lines.append(
+                f"{indent}  intent.yield {', '.join(yielded_values)} : "
+                f"{', '.join(yielded_types)}"
+            )
+            self.lines.append(f"{indent}}}")
+            self.ssa = outer_ssa
+            for index, state in enumerate(op.carry):
+                self.ssa[state.result_value] = f"{loop_value}#{index}"
+            return
         if op.op == "value_if":
             if (
                 not isinstance(op.result, str)
@@ -2006,6 +2294,9 @@ def emit_module(
     proven_index_bounds: IndexBoundsProjection | None = None,
     value_dimension_equalities: Sequence[tuple[int, int]] = (),
     output_values: Mapping[str, str] | None = None,
+    inplace_outputs: Sequence[int] = (),
+    paired_rotation: tuple[str, tuple[int, int, int, int], tuple[int, ...]]
+    | None = None,
 ) -> str:
     """A flat (loop-free) IntentFunction as an executable ``func.func``.
 
@@ -2014,8 +2305,6 @@ def emit_module(
     are returned. Covers softmax / layernorm / rmsnorm / silu / gelu / matmul /
     elementwise — every kernel whose body is a straight-line tensor graph.
     """
-    if any(o.op == "loop" for o in fn.body):
-        raise ValueError("emit_module: function has a loop; use emit_loop_module")
     extents = dict(dims)
     env: dict[str, list[int]] = {}
     for t in fn.inputs:
@@ -2094,8 +2383,11 @@ def emit_module(
     # function signature matches the value actually produced.
     otys = ", ".join(p._ttn(output, env) for output, _value in outs)
     name = _sanitize_mlir_symbol(fn.name if func_name is None else func_name)
-    function_attrs = _value_dimension_function_attr(
-        fn, value_dimension_equalities
+    function_attrs = _function_attributes(
+        fn,
+        value_dimension_equalities=value_dimension_equalities,
+        inplace_outputs=inplace_outputs,
+        paired_rotation=paired_rotation,
     )
 
     head = (f"// Generated by intentir.frontend.emit_mlir from {fn.name} "
