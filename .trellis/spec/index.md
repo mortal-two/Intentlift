@@ -63,9 +63,9 @@ Codex Lift v20 删除重复的 feedback host tool，特殊回调只保留两个 
 
 Task16 的 source-blind `requirements` view 按 declaration order 原样列出每个 J node 的
 `id/op/operands/attrs/result`，并 exact join program-domain branch；它只重索引当前 packet，不生成
-target code。当前 π 还可作者化 closed `program_linearizations` 与 `program_partitions`，分别引用 J
-已有 dimensions 表示 mixed-radix decode 与 program block interval，不携带公式文本、值、Source/API
-或 target recipe。
+target code。当前 π 还可作者化 closed `program_linearizations`，引用 J 已有 dimensions 表示
+mixed-radix decode，不携带公式文本、值、Source/API 或 target recipe。logical block interval/mask
+必须显式属于 J，π 不复制 partition formula。
 
 含 broadcast/lexical/cross-region/route-extent critical facts 的 Replay 在 construction compile 前还必须对当前 exact bytes
 完成 `replay-obligation-audit.v3`；该工具只并置 J/π ledger 与 Replay 自己的编号源码，不映射 relation/instance、

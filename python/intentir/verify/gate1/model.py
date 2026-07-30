@@ -5167,16 +5167,6 @@ def _opaque_pi_json(
             _opaque_reference(item, aliases)
             for item in relation["dimension_refs"]
         ]
-    for relation in result.get("program_partitions", []):
-        relation["domain_ref"] = _opaque_reference(
-            relation["domain_ref"], aliases
-        )
-        relation["target_dimension_ref"] = _opaque_reference(
-            relation["target_dimension_ref"], aliases
-        )
-        relation["block_dimension_ref"] = _opaque_reference(
-            relation["block_dimension_ref"], aliases
-        )
     return result
 
 

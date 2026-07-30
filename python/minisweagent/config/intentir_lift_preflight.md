@@ -183,11 +183,10 @@ the artifact schema or external TypeCheck.
    of J and author one `program_linearizations` row with the exact outer-to-inner
    J `x*` dimension order. Its denotation is the fixed row-major mixed-radix
    projection; it contains no formula, constant, predicate, Source/API, or target
-   recipe. When that coordinate selects a block of a larger J axis, author one
-   `program_partitions` row naming the declared global J target dimension and its
-   declared J block dimension. The target must equal or depend on the block through
-   closed J.dimension_relations. Its interval is fixed by the relation; never guess a literal block
-   from the current valuation and never introduce a J program-coordinate node.
+   recipe. Any block interval, comparison, mask, or selection that affects values
+   remains explicit typed J; pi must not duplicate it as a partition formula. Never
+   guess a literal block from the current valuation and never introduce a J
+   program-coordinate node.
    If one Source SSA coordinate/address intermediate is defined once and reused by
    several accesses, emit one producer with routed consumers and one-producer
    sharing; syntactic uses do not create repeated producer instances. Repeat a

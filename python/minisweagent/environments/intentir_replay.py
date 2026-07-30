@@ -615,7 +615,6 @@ def _packet_requirements(packet: Mapping[str, Any]) -> dict[str, Any]:
     relation_names = (
         "program_axes",
         "program_linearizations",
-        "program_partitions",
         "route_extent_transforms",
         "iterations",
         "loop_carriers",
@@ -633,7 +632,6 @@ def _packet_requirements(packet: Mapping[str, Any]) -> dict[str, Any]:
     relation_instance_fields = {
         "program_axes": (),
         "program_linearizations": (),
-        "program_partitions": (),
         "route_extent_transforms": ("source", "target"),
         "iterations": ("loop_instance", "tile_instance"),
         "loop_carriers": ("loop_instance", "init", "state", "next", "result"),
@@ -999,9 +997,6 @@ def _packet_critical_facts(packet: Mapping[str, Any]) -> dict[str, Any]:
     program_linearizations = pi.get("program_linearizations", [])
     if not isinstance(program_linearizations, list):
         raise TypeError("packet pi program_linearizations must be an array")
-    program_partitions = pi.get("program_partitions", [])
-    if not isinstance(program_partitions, list):
-        raise TypeError("packet pi program_partitions must be an array")
     instances_value = pi.get("instances", [])
     regions_value = pi.get("regions", [])
     order_value = pi.get("order", [])
@@ -1137,7 +1132,6 @@ def _packet_critical_facts(packet: Mapping[str, Any]) -> dict[str, Any]:
         "physical_iterations": physical_iterations,
         "program_axes": program_axes,
         "program_linearizations": program_linearizations,
-        "program_partitions": program_partitions,
         "route_extent_transforms": route_extent_transforms,
         "reduction_linearizations": reduction_linearizations,
         "lexical_regions": lexical_regions,
@@ -1164,7 +1158,6 @@ def _replay_obligation_audit_view(
     cross_region_order = facts["cross_region_order"]
     program_axes = facts["program_axes"]
     program_linearizations = facts["program_linearizations"]
-    program_partitions = facts["program_partitions"]
     route_extent_transforms = facts["route_extent_transforms"]
     return {
         "protocol": "intentir.replay-obligation-audit.v3",
@@ -1175,7 +1168,6 @@ def _replay_obligation_audit_view(
         "cross_region_order": cross_region_order,
         "program_axes": program_axes,
         "program_linearizations": program_linearizations,
-        "program_partitions": program_partitions,
         "route_extent_transforms": route_extent_transforms,
         "source_nonempty_lines": [
             {
@@ -1207,7 +1199,6 @@ def _replay_obligation_audit_required(
             "cross_region_order",
             "program_axes",
             "program_linearizations",
-            "program_partitions",
             "route_extent_transforms",
         )
     )
@@ -3345,7 +3336,6 @@ class IntentIRReplayEnvironment:
                 "program_linearization_count": len(
                     value["program_linearizations"]
                 ),
-                "program_partition_count": len(value["program_partitions"]),
                 "route_extent_transform_count": len(
                     value["route_extent_transforms"]
                 ),

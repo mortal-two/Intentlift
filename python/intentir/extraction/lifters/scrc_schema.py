@@ -736,36 +736,6 @@ def _pi_schema() -> dict[str, Any]:
             "frontend API, or target recipe."
         ),
     )
-    program_partition = _closed_object(
-        {
-            "domain_ref": {
-                "type": "string",
-                "pattern": "^d[0-9]+$",
-                "description": "The J domain owning the bound physical program coordinate.",
-            },
-            "target_dimension_ref": {
-                "type": "string",
-                "pattern": "^x[0-9]+$",
-                "description": "Declared global J dimension partitioned by the coordinate.",
-            },
-            "block_dimension_ref": {
-                "type": "string",
-                "pattern": "^x[0-9]+$",
-                "description": "Declared J dimension supplying the logical block extent.",
-            },
-        },
-        (
-            "domain_ref",
-            "target_dimension_ref",
-            "block_dimension_ref",
-        ),
-        description=(
-            "A closed program-block realization over J dimensions. Its fixed denotation is the "
-            "half-open target-axis interval [coordinate*block_extent, "
-            "min((coordinate+1)*block_extent, target_extent)). It contains no formula, "
-            "predicate, value, Source spelling, frontend API, or target recipe."
-        ),
-    )
     route_extent_transform = _closed_object(
         {
             "source": {
@@ -976,7 +946,6 @@ def _pi_schema() -> dict[str, Any]:
             "routes": _array(route),
             "program_axes": _array(program_axis),
             "program_linearizations": _array(program_linearization),
-            "program_partitions": _array(program_partition),
             "route_extent_transforms": _array(route_extent_transform),
             "order": _array(order),
             "sharing": _array(sharing),

@@ -65,18 +65,15 @@ Replay := Render_f(K)
 独立 branch region，并由 program-region d* instance 的 empty-slot route 控制。J domain 是唯一条件，
 π 只保存共享 axis 与 branch topology，不保存比较式或 extent。
 
-当 Source 的一个 program ordinal 还要经过 mixed-radix 解码或选择一个逻辑轴的连续 block 时，仅靠
-`program_axes` 与 route 并不能唯一重建 realization。π_min 因而允许两种 closed typed relation：
+当 Source 的一个 program ordinal 还要经过 mixed-radix 解码时，仅靠 `program_axes` 与 route 不能
+唯一重建 realization。π_min 因而允许 closed
+`program_linearizations{domain_ref,dimension_refs}`：按 outer-to-inner 的 J `x*` 顺序，唯一表示
+row-major quotient/remainder projection。它只引用 J 已作者化的 opaque dimensions，不携带公式
+文本、具体 extent、grid、predicate、Source/API 或 target spelling；删除 J 后不能恢复计算语义。
+`program_id` 及其物理解码树不进入 J，J 只描述解码后的逻辑坐标。
 
-- `program_linearizations{domain_ref,dimension_refs}`：按 outer-to-inner 的 J `x*` 顺序，唯一表示
-  row-major quotient/remainder projection；
-- `program_partitions{domain_ref,target_dimension_ref,block_dimension_ref}`：直接引用 J 声明的全局与
-  block dimensions；target 必须等于 block，或通过 closed J dimension relation 依赖 block；唯一表示
-  `[coord*block_extent,min((coord+1)*block_extent,target_extent))`。
-
-两者只引用 J 已经作者化的 opaque dimensions，不携带公式文本、具体 extent、grid、
-predicate、Source/API 或 target spelling；删除 J 后没有可独立执行的 denotation。`program_id` 及其
-物理整数树不进入 J，J 仍只描述解码后的逻辑 access/index。
+相反，任何 block interval、comparison、mask 或 select 若会改变 logical value，就必须留在 J 的
+typed graph/domain 中。π 不得另写 partition relation；否则 Mask-J 后仍可能从 π 恢复这段语义。
 
 π 禁止携带：
 

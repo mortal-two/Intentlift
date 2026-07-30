@@ -3393,12 +3393,10 @@ from pi, and do not invent another predicate or program coordinate.
 
 A pi.program_linearizations row decodes the bound coordinate of its domain into the
 listed outer-to-inner J dimensions by the unique row-major mixed-radix quotient and
-remainder projection. A pi.program_partitions row applies that coordinate to the
-named global J target dimension using its named J block dimension: lower is coordinate times block
-extent and upper is min((coordinate+1) times block extent, target extent). These are
-closed realization relations, not permission to guess another formula, grid extent,
-constant, predicate, or target recipe. Preserve their integer dataflow before the
-named target realization.
+remainder projection. It is a closed realization relation, not permission to guess
+another formula, grid extent, constant, predicate, or target recipe. Preserve its
+integer dataflow before the routed address realization. Any interval, mask, selection,
+or block formula that affects values belongs in J and must not be reconstructed from pi.
 """
     readme = """# IntentIR source-blind Replay input
 

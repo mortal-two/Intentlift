@@ -499,11 +499,10 @@ agent 选择并由 construction compile/Gate 拒绝，`U_f` 不再提供 relatio
 
 若该 coordinate 在 Source realization 中还执行 row-major mixed-radix decode，
 `pi.program_linearizations{domain_ref,dimension_refs}` 以 outer-to-inner J `x*` 顺序给出唯一 closed
-projection；若 coordinate 选择一个 J target axis 的连续 block，
-`pi.program_partitions{domain_ref,target_dimension_ref,block_dimension_ref}` 给出唯一半开区间；target
-必须等于 block，或通过 closed `J.dimension_relations` 依赖 block。二者只引用已存在的 J dimensions，不携带 concrete extent、公式文本、
-predicate、grid、Source/API 或 target recipe。Replay 必须消费其整数 dataflow，fixed code只检查引用、
-闭合与可观察的最低结构，不生成实现。
+projection。它只引用已存在的 J dimensions，不携带 concrete extent、公式文本、predicate、grid、
+Source/API 或 target recipe。Replay 必须消费其整数 dataflow，fixed code只检查引用与闭合，不生成
+实现。若 coordinate 还参与 logical block interval/mask，相关 mul/add/compare/select 必须显式在 J；
+π 不得复制一条 partition relation。
 
 `pi.iterations` 是必须消费的 source-realization topology，不是可选 schedule hint。对
 `extent_step`，Replay 使用 J trip extent 为 upper、匹配 C tile 为 step；对 `tile_ordinal`，Replay

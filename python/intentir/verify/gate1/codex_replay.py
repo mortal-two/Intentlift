@@ -200,11 +200,6 @@ _PI_ROW_COLUMNS: dict[str, tuple[str, ...]] = {
     "refinements": ("instance", "kind", "auth_ref"),
     "program_axes": ("domain_ref", "axis"),
     "program_linearizations": ("domain_ref", "dimension_refs"),
-    "program_partitions": (
-        "domain_ref",
-        "target_dimension_ref",
-        "block_dimension_ref",
-    ),
 }
 
 

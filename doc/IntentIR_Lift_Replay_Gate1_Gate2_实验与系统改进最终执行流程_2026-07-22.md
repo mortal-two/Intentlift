@@ -967,11 +967,11 @@ transform，v11引入J-owned closed dimension relations，v12引入π-owned clos
 grid、C或instance multiplicity生成axis。domain_ref保持唯一；Source用一个physical coordinate
 multiplex多个logical consumer domain时，不同d*可以共享axis，并以empty-slot domain route到
 branch region表达consumer-local physical control，π不保存predicate。
-当一个 bound coordinate 还需要 row-major mixed-radix decode 或连续 block selection 时，当前
-dependent π 可分别作者化 closed `program_linearizations` 与 `program_partitions`。字段只引用 J 已有
-dimensions，固定 denotation 由协议给出；它们不携带公式文本、concrete extent、grid、
-Source/API、predicate 或 target recipe。Replay agent 选择目标语法，fixed checker 只拒绝非法引用和
-最低可观察结构。
+当一个 bound coordinate 还需要 row-major mixed-radix decode 时，当前 dependent π 可作者化 closed
+`program_linearizations`。字段只引用 J 已有 dimensions，固定 denotation 由协议给出；它不携带
+公式文本、concrete extent、grid、Source/API、predicate 或 target recipe。会影响 value 的 block
+interval/mask 必须显式在 J，不得由 π 复制。Replay agent 选择目标语法，fixed checker 只拒绝非法
+引用和最低可观察结构。
 每次 fresh response 必须完整作者当前 wire，fixed code 不构造新增字段。`artifact.v1-v7` 保持各自
 wire bytes/digest 与字段集合，不静默升级、刷新或追认；v8/v9 同样保持各自字段集合。
 

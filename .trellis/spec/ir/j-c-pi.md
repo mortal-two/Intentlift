@@ -359,23 +359,10 @@ denotation 是对该物理 coordinate 按所列 extents 作 row-major mixed-radi
 它不保存公式文本、常量、predicate、grid extent、Source/API 或 target recipe。若 Source 使用另一种
 非 row-major 映射，不能滥用该 relation，必须先增加另一种 closed typed relation 或 fail closed。
 
-若同一 program coordinate 选择一个全局 J axis 的连续 block，则 Lift 可进一步作者化：
-
-```text
-program_partitions = {
-  domain_ref,
-  target_dimension_ref,
-  block_dimension_ref
-}
-```
-
-两个 x* 都必须是已声明 J dimensions，且 target 必须等于 block，或通过 closed
-`J.dimension_relations` 依赖 block。program-domain occurrence 到 address realization 的连接仍由普通 π
-routes 表达。relation 的唯一
-denotation 是半开区间
-`[coord*BlockExtent, min((coord+1)*BlockExtent, TargetExtent))`。因此 target/block extent 都由 J 拥有，
-π 不携带值或公式；它只保存 Source physical program-to-block realization。固定 Replay
-工具不能从 output shape、C、grid 或当前 valuation 猜该关系，也不能把 program_id 塞进 J。
+若 program coordinate 对一个逻辑轴选择连续 block，且该 interval/mask 会影响 value，则乘加、比较、
+mask 与 select 必须由 J 自己表达；π 只通过 program domain occurrence 与 routes 保留它的物理
+realization，禁止另写可独立恢复该 interval 的 partition formula。固定 Replay 也不能从 output shape、
+C、grid 或当前 valuation 猜出缺失 J。
 
 `address_base/address_lane` 标记 address contribution 角色；pointer/address operation 的次数由
 `J.signature` carrier kind 与 π route 共同决定，不能只看 base-to-lane edge。若 pointer/tensor 的
@@ -600,8 +587,8 @@ wire/decode 窄升为 `artifact.v3 / decode.v3`；v4 随后增加 dimension cons
 `access_guard_relations`，v6/v7 增加 typed control，v8 增加 physical-only time，v9 增加
 terminal-control topology，v10 增加上述 closed route-local extent transform，v11增加closed
 dimension relations，v12增加closed program-axis identity；Task16 的当前 pre-freeze v12 wire 另允许
-上述可选 `program_linearizations/program_partitions`，缺失时均为空且不改写历史 evidence。当前 active 合同为
-`artifact.v12 / decode.v17 / typecheck.v30 / candidate-check.v1`；当前 pre-freeze checker 对两种
+上述可选 `program_linearizations`，缺失时为空且不改写历史 evidence。当前 active 合同为
+`artifact.v12 / decode.v17 / typecheck.v30 / candidate-check.v1`；当前 pre-freeze checker 对该
 program-coordinate relation 额外检查 J dimension/axis、program binding、instance ownership 与从 owning
 domain realization 到 target 的 route reachability，只拒绝不补造；v30只接受同一authored
 `effect_if`两臂各唯一完整store所定义的conditional post-state output，不生成select/mapping；v29新增program-axis completeness

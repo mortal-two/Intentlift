@@ -159,12 +159,7 @@ def render_realization_witness_wire_grammar() -> str:
         "Source spelling, or frontend API. program_linearizations gives the "
         "outer-to-inner J dimension handles of one mixed-radix decode of that "
         "coordinate; its denotation is the unique row-major quotient/remainder "
-        "projection and it carries no formula. program_partitions relates one "
-        "program coordinate, one global J target dimension, and one J block dimension. "
-        "The target equals or has a closed J dimension-relation dependency on the block. "
-        "Its denotation is the half-open interval "
-        "[coordinate*block_extent,min((coordinate+1)*block_extent,target_extent)); it carries no "
-        "bound expression, predicate, value, operator, Source spelling, or API. "
+        "projection and it carries no formula. "
         "route_extent_transforms qualifies one existing route slot: "
         "a required positive-integer C extent reaches its attached J domain as "
         "floor_div/ceil_div by a literal divisor greater than one. It is "
@@ -308,7 +303,6 @@ class RealizationWitness:
     routes: list[dict[str, JsonValue]] = field(default_factory=list)
     program_axes: list[dict[str, JsonValue]] = field(default_factory=list)
     program_linearizations: list[dict[str, JsonValue]] = field(default_factory=list)
-    program_partitions: list[dict[str, JsonValue]] = field(default_factory=list)
     route_extent_transforms: list[dict[str, JsonValue]] = field(default_factory=list)
     order: list[dict[str, JsonValue]] = field(default_factory=list)
     sharing: list[dict[str, JsonValue]] = field(default_factory=list)
@@ -474,58 +468,6 @@ class RealizationWitness:
             linearized_domains.add(domain_ref)
             checked_program_linearizations.append(
                 {"domain_ref": domain_ref, "dimension_refs": dimension_refs}
-            )
-
-        checked_program_partitions: list[dict[str, JsonValue]] = []
-        partition_keys: set[tuple[str, str, str]] = set()
-        for index, raw in enumerate(self.program_partitions):
-            path = f"pi.program_partitions[{index}]"
-            item = _record(
-                raw,
-                path=path,
-                required=frozenset(
-                    {
-                        "domain_ref",
-                        "target_dimension_ref",
-                        "block_dimension_ref",
-                    }
-                ),
-            )
-            domain_ref = _name(item["domain_ref"], f"{path}.domain_ref")
-            if re.fullmatch(r"d[0-9]+", domain_ref) is None:
-                raise RealizationWitnessError(
-                    f"{path}.domain_ref must be a J boundary domain handle d*"
-                )
-            target_dimension_ref = _name(
-                item["target_dimension_ref"], f"{path}.target_dimension_ref"
-            )
-            block_dimension_ref = _name(
-                item["block_dimension_ref"], f"{path}.block_dimension_ref"
-            )
-            if re.fullmatch(r"x[0-9]+", target_dimension_ref) is None:
-                raise RealizationWitnessError(
-                    f"{path}.target_dimension_ref must be a J dimension handle x*"
-                )
-            if re.fullmatch(r"x[0-9]+", block_dimension_ref) is None:
-                raise RealizationWitnessError(
-                    f"{path}.block_dimension_ref must be a J dimension handle x*"
-                )
-            partition_key = (
-                domain_ref,
-                target_dimension_ref,
-                block_dimension_ref,
-            )
-            if partition_key in partition_keys:
-                raise RealizationWitnessError(
-                    "pi program partition rows must be unique"
-                )
-            partition_keys.add(partition_key)
-            checked_program_partitions.append(
-                {
-                    "domain_ref": domain_ref,
-                    "target_dimension_ref": target_dimension_ref,
-                    "block_dimension_ref": block_dimension_ref,
-                }
             )
 
         checked_terminal_controls: list[dict[str, JsonValue]] = []
@@ -981,7 +923,6 @@ class RealizationWitness:
         self.routes = checked_routes
         self.program_axes = checked_program_axes
         self.program_linearizations = checked_program_linearizations
-        self.program_partitions = checked_program_partitions
         self.route_extent_transforms = checked_route_extent_transforms
         self.order = checked_order
         self.sharing = checked_sharing
@@ -1014,7 +955,6 @@ class RealizationWitness:
                     "routes",
                     "program_axes",
                     "program_linearizations",
-                    "program_partitions",
                     "route_extent_transforms",
                     "order",
                     "sharing",
@@ -1033,7 +973,6 @@ class RealizationWitness:
             "routes",
             "program_axes",
             "program_linearizations",
-            "program_partitions",
             "route_extent_transforms",
             "order",
             "sharing",
@@ -1054,7 +993,6 @@ class RealizationWitness:
             program_linearizations=copy.deepcopy(
                 data.get("program_linearizations", [])
             ),
-            program_partitions=copy.deepcopy(data.get("program_partitions", [])),
             route_extent_transforms=copy.deepcopy(
                 data.get("route_extent_transforms", [])
             ),
@@ -1099,7 +1037,6 @@ class RealizationWitness:
             result["program_linearizations"] = copy.deepcopy(
                 self.program_linearizations
             )
-            result["program_partitions"] = copy.deepcopy(self.program_partitions)
         if include_iterations:
             result["iterations"] = copy.deepcopy(self.iterations)
         if include_loop_carriers:

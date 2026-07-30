@@ -335,11 +335,10 @@ logical consumer domain，不同 d* 可共享 axis，并复用一次 compiled co
 当一个 Source program ordinal 在进入 tensor address 前显式经过整数 `//`/`%` 解码时，program-id
 及其物理整数树不进入 J；J 只拥有解码后的 logical access/index。Lift 用 closed
 `program_linearizations{domain_ref,dimension_refs}` 以 outer-to-inner J `x*` 顺序作者化唯一 row-major
-mixed-radix projection。若该 coordinate 还选择一个全局 J axis 的连续 block，则用 closed
-`program_partitions{domain_ref,target_dimension_ref,block_dimension_ref}` 表示唯一
-`[coord*block_extent,min((coord+1)*block_extent,target_extent))`；两个 x* 均由 J 声明，且 target
-必须等于 block 或通过 closed J dimension relation 依赖 block。两者只引用 J 已有 opaque dimensions；不保存公式文本、具体值、predicate、grid、Source/API 或 target recipe，
-Replay 也不得从当前 valuation 或 kernel 惯例猜出替代关系。
+mixed-radix projection。它只引用 J 已有 opaque dimensions，不保存公式文本、具体值、predicate、
+grid、Source/API 或 target recipe。若 coordinate 参与会改变 value 的 block interval/mask，则相关
+mul/add/compare/select 必须保留在 J；π 不得复制 partition formula，Replay 也不得从当前 valuation
+或 kernel 惯例猜出缺失 J。
 
 program axis 的 identity 来自 Lift 作者化的 J-domain binding，不来自 instance 数量、声明顺序、grid
 extent 或 C。同一 `d*` 上的多个 realization instance 仍是多个 compiler-visible stage，必须分别

@@ -70,9 +70,9 @@ artifact 的独立 Gate2 recheck 冒充最终 28/28 交付。
 - [ ] 只有可由 typed graph 唯一恢复的 identity/default 才允许省略；
 - [x] compact codec 只移除重复 JSON object keys，不能自动发明或删除 artifact 字段；
 - [x] 旧 accepted π 原样复用，不静默重写旧证书，也不因 packet serialization relift。
-- [x] 对 program ordinal 的 mixed-radix decode 与连续 block selection 增加最小 closed
-  `program_linearizations/program_partitions`；两者只引用 J-owned dimensions，不携带 Source、值、
-  predicate、公式文本或 target recipe。
+- [x] 对 program ordinal 的 mixed-radix decode 增加最小 closed `program_linearizations`；它只引用
+  J-owned dimensions，不携带 Source、值、predicate、公式文本或 target recipe。会改变 value 的
+  block interval/mask 明确保留在 J，禁止 π partition relation。
 
 ## 4. P2：Replay 内部 Composer
 
@@ -124,10 +124,10 @@ Llama4 首轮又定位到 consumer-context 的通用 overconstraint：Q/K 两个
 当前改为 domain_ref 唯一、axis 可 many-to-one；empty-slot d* route 到 branch region 表达
 domain-owned physical consumer control。它不新增 J op、π predicate 字段或 per-kernel recipe。
 
-旧 SplitK-forward Replay 的首个确定性偏差也已定位：accepted J 已显式包含 `exp2` 与 `log2`，但
-Replay 写成 `exp/log`；同时 Source 的 program-axis mixed-radix decode 与 split block selection 只靠
-旧 `program_axes/routes` 无法唯一表达。前者由 exact J-node requirements 解决注意力/消费问题，后者
-由上述两种 closed π relation 补齐，不向 Replay 泄漏 Source recipe。
+旧 SplitK-forward Replay 的首个确定性偏差也已定位：一类 J 自身误写 `exp/log`，Gate1 正确反馈；
+另一类 J 已显式包含 `exp2/log2`，新 Replay 已跟随写出对应调用。Source 的 program-axis
+mixed-radix decode 由 closed `program_linearizations` 补齐；split block 的 mul/add/compare/select 已在 J，
+不得复制到 π，以免形成 Mask-J 泄漏。
 
 Llama 的 fresh frontier 还证明普通 `scf.if` 会错误冒充 π 已声明的 terminal/continuation CFG；当前
 source-blind construction compile 对每条 `terminal_controls` 只做最低 `control.conditional` presence
