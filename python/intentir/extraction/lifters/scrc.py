@@ -1085,7 +1085,7 @@ terminal_instance/continuation_instance pair over arm `realize` instances.
 When the return is instead exactly the complement of an authored J program domain,
 do not fabricate an effect_if. Keep the existing empty-slot domain route into the
 continuation branch region and add one terminal_controls
-`{domain_ref,continuation_region}` row. Both forms name topology only, never a
+`{{domain_ref,continuation_region}}` row. Both forms name topology only, never a
 predicate/polarity/return/Source/API.
 Preserve selected-helper literal memory order in scope.effects/pi; node order is
 not effect order. Outline loop-preexisting writes are only a carrier checklist.
