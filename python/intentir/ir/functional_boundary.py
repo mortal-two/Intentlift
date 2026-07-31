@@ -4984,8 +4984,13 @@ def _project_functional_boundary(
         | canonical_output_input_refs
         | access_guard_input_refs
     )
-    if boundary.accesses and (
-        loaded | access_guard_input_refs != live_tensor_inputs
+    # ``loaded`` also legitimately contains authored rank-0 logical scalars and
+    # inout post-state reloads.  Those accesses were validated individually above
+    # and must not make coverage of ordinary live tensor inputs fail.  Coverage is
+    # therefore one-way: every live tensor input needs a load/guard, while extra
+    # already-validated authored loads remain legal.
+    if boundary.accesses and not live_tensor_inputs.issubset(
+        loaded | access_guard_input_refs
     ):
         raise NotImplementedError(
             "functional boundary must cover every live logical tensor input"

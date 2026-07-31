@@ -126,6 +126,11 @@ recheck，可立即接受该 bytes，不再消耗剩余 episode 时间；Gate1 �
 现在获得其 index refs 覆盖的全部 J-authored domain 约束，而不是对普通多轴 access 错误返回空集；
 这只是 exact J 的确定性重索引，不新增 domain、target mapping 或 Source/π 信息。
 
+Flash forward 还暴露出 RefJ functional boundary 把合法 rank-0/inout reload 误当成“多余 tensor
+load”的覆盖判断错误；现改为只要求所有 live tensor input 被覆盖，额外 access 仍须逐项通过原有
+access/effect检查。公开 Source–J probe 只是 Lift feedback：模型级 buffers 总量超过 64 MiB 时立即
+报告 unavailable，避免在每个候选上执行数 GiB 诊断；正式模型输入、Gate1 与隐藏 Gate2 完全不变。
+
 ## 7. P5：多前端与实验
 
 - [ ] Triton 纵切稳定后，CuTe/TileLang/CUDA 分别定义自己的 raw observer、J/C projection 与最小

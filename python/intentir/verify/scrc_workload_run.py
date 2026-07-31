@@ -89,6 +89,7 @@ GATE1_DIAGNOSTIC_RECHECK_PROTOCOL = (
 )
 LIFT_SEMANTIC_PROBE_PROTOCOL = "intentir.lift.public-semantic-probe.v1"
 LIFT_SEMANTIC_PROBE_SEED = 2026073001
+LIFT_SEMANTIC_PROBE_MAX_BUFFER_BYTES = 64 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -483,6 +484,27 @@ def run_workload_lift_semantic_probe(
             "status": "unavailable",
             "diagnostic": "candidate C values differ from the frozen Harness binding",
             "authority": "public diagnostic only; not CandidateCheck or certification",
+        }
+    public_buffer_bytes = sum(
+        int(np.prod(binding.shape, dtype=np.int64))
+        * _numpy_dtype(binding.dtype).itemsize
+        for binding in prepared.adapter.buffers
+    )
+    if public_buffer_bytes > LIFT_SEMANTIC_PROBE_MAX_BUFFER_BYTES:
+        return {
+            "protocol": LIFT_SEMANTIC_PROBE_PROTOCOL,
+            "status": "unavailable",
+            "diagnostic": (
+                "public Source-vs-J diagnostic skipped because model-level buffers "
+                "exceed the bounded Lift feedback budget"
+            ),
+            "buffer_bytes": public_buffer_bytes,
+            "buffer_budget_bytes": LIFT_SEMANTIC_PROBE_MAX_BUFFER_BYTES,
+            "formal_gate2_input_unchanged": True,
+            "authority": (
+                "public diagnostic only; the model-level Harness and hidden Gate2 "
+                "remain unchanged and this skip cannot accept or certify a candidate"
+            ),
         }
     seed = LIFT_SEMANTIC_PROBE_SEED
     if seed == prepared.adapter.seed:
