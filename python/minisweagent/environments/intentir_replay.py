@@ -309,6 +309,10 @@ def _packet_overview(packet: Mapping[str, Any]) -> dict[str, Any]:
             "sharing, temporal roles, and refinements. Use "
             f"`{INTENTIR_PACKET_QUERY} obligation HANDLE` to inspect one i* "
             "instance or all instances anchored to one anonymous J/C handle.",
+            f"For source authoring, prefer `{INTENTIR_PACKET_QUERY} requirements` "
+            "and follow its exact `region_worksets[*].query` paths. Each page joins "
+            "one lexical region's full J semantic records with existing pi topology "
+            "without supplying target syntax or a lowering choice.",
             f"Use `{INTENTIR_PACKET_QUERY} routes 0 16`, "
             f"`{INTENTIR_PACKET_QUERY} order 0 12`, or "
             f"`{INTENTIR_PACKET_QUERY} edges 0 24` only to cross-check a named "
@@ -836,6 +840,24 @@ def _packet_requirements(packet: Mapping[str, Any]) -> dict[str, Any]:
         },
         "referenced_instances": selected_instances,
         "referenced_regions": selected_regions,
+        "region_worksets": [
+            {
+                "id": item.get("id"),
+                "parent": item.get("parent"),
+                "placement": item.get("placement"),
+                "instance_total": sum(
+                    1
+                    for instance in instances
+                    if isinstance(instance, Mapping)
+                    and instance.get("region") == item.get("id")
+                ),
+                "query": (
+                    f"{INTENTIR_PACKET_QUERY} region {item.get('id')} 0 8"
+                ),
+            }
+            for item in regions
+            if isinstance(item, Mapping) and isinstance(item.get("id"), str)
+        ],
         "authority": (
             "exact source-isolated packet projection only; no Source, Harness "
             "value, Gate evidence, inference, generation, repair, or schedule"
@@ -1277,10 +1299,36 @@ def _packet_semantic_index(packet: Mapping[str, Any]) -> dict[str, dict[str, Any
         if isinstance(node_id, str):
             result[node_id] = {
                 "semantic_kind": "intent_op",
-                "op": operation.get("op"),
-                "scope_id": operation.get("scope_id"),
-                "path": operation.get("path"),
+                **dict(operation),
             }
+        produced = operation.get("result")
+        produced_values = (
+            [produced]
+            if isinstance(produced, str)
+            else produced
+            if isinstance(produced, list)
+            else []
+        )
+        for value_ref in produced_values:
+            if isinstance(value_ref, str):
+                result[value_ref] = {
+                    "semantic_kind": "intent_value",
+                    "producer": node_id,
+                    "producer_op": operation.get("op"),
+                    "producer_path": operation.get("path"),
+                    "type": operation.get("type"),
+                }
+    for role in ("inputs", "outputs"):
+        values = function.get(role, []) if isinstance(function, Mapping) else []
+        if not isinstance(values, list):
+            raise TypeError(f"packet J intent {role} must be an array")
+        for value in values:
+            if isinstance(value, Mapping) and isinstance(value.get("name"), str):
+                result[str(value["name"])] = {
+                    "semantic_kind": "intent_value",
+                    "io_role": role[:-1],
+                    **dict(value),
+                }
     boundary = j.get("boundary", {})
     if isinstance(boundary, Mapping):
         accesses = boundary.get("accesses", [])
@@ -1293,8 +1341,7 @@ def _packet_semantic_index(packet: Mapping[str, Any]) -> dict[str, dict[str, Any
                     result[access_id] = {
                         "semantic_kind": "boundary_access",
                         "access_kind": access.get("kind"),
-                        "tensor": access.get("tensor"),
-                        "node_ref": access.get("node_ref"),
+                        **dict(access),
                     }
         effects = boundary.get("effects", [])
         if isinstance(effects, list):
@@ -1306,15 +1353,16 @@ def _packet_semantic_index(packet: Mapping[str, Any]) -> dict[str, dict[str, Any
                     result[effect_id] = {
                         "semantic_kind": "boundary_effect",
                         "effect_kind": effect.get("kind"),
-                        "target": effect.get("target"),
-                        "node_ref": effect.get("node_ref"),
-                        "access_ref": effect.get("access_ref"),
+                        **dict(effect),
                     }
         domains = boundary.get("domains", {})
         if isinstance(domains, Mapping):
-            for domain_id in domains:
+            for domain_id, expression in domains.items():
                 if isinstance(domain_id, str):
-                    result[domain_id] = {"semantic_kind": "domain"}
+                    result[domain_id] = {
+                        "semantic_kind": "domain",
+                        "expression": expression,
+                    }
     signature = j.get("signature", {})
     parameters = (
         signature.get("parameters", [])
@@ -1329,11 +1377,134 @@ def _packet_semantic_index(packet: Mapping[str, Any]) -> dict[str, dict[str, Any
             if isinstance(name, str):
                 result[name] = {
                     "semantic_kind": "signature_parameter",
-                    "kind": parameter.get("kind"),
-                    "mode": parameter.get("mode"),
-                    "logical_ref": parameter.get("logical_ref"),
+                    **dict(parameter),
                 }
+    c = packet.get("c", {})
+    slots = c.get("slots", []) if isinstance(c, Mapping) else []
+    if not isinstance(slots, list):
+        raise TypeError("packet C slots must be an array")
+    for slot in slots:
+        if isinstance(slot, Mapping) and isinstance(slot.get("name"), str):
+            result[str(slot["name"])] = {
+                "semantic_kind": "c_slot",
+                **dict(slot),
+            }
     return result
+
+
+def _packet_region(
+    packet: Mapping[str, Any], region_ref: str, start: int, count: int
+) -> dict[str, Any]:
+    """Join exact J/pi facts for one authored lexical region.
+
+    This is an on-demand relational reindex of the immutable packet.  It does not
+    select a target construct, map an Intent op to an API, infer an occurrence, or
+    generate source.  The Replay owner remains the sole author of every expression
+    and control form.
+    """
+
+    if count > 12:
+        raise ValueError("region page COUNT must be <= 12")
+    pi = packet.get("pi", {})
+    if not isinstance(pi, Mapping):
+        raise TypeError("packet pi must be an object")
+    regions_value = pi.get("regions", [])
+    instances_value = pi.get("instances", [])
+    terminal_controls = pi.get("terminal_controls", [])
+    if not all(
+        isinstance(value, list)
+        for value in (regions_value, instances_value, terminal_controls)
+    ):
+        raise TypeError("packet pi region/control relations must be arrays")
+    regions = {
+        str(item.get("id")): dict(item)
+        for item in regions_value
+        if isinstance(item, Mapping) and isinstance(item.get("id"), str)
+    }
+    region = regions.get(region_ref)
+    if region is None:
+        raise KeyError(f"unknown pi region {region_ref!r}")
+
+    records = [
+        item
+        for item in _packet_obligation_records(packet)
+        if isinstance(item.get("region"), Mapping)
+        and item["region"].get("id") == region_ref
+    ]
+    items, next_start = _bounded_page(records, start=start, count=count)
+    instance_region = {
+        str(item.get("id")): str(item.get("region"))
+        for item in instances_value
+        if isinstance(item, Mapping)
+        and isinstance(item.get("id"), str)
+        and isinstance(item.get("region"), str)
+    }
+
+    ancestors: list[dict[str, Any]] = []
+    parent = region.get("parent")
+    seen: set[str] = set()
+    while isinstance(parent, str) and parent not in seen:
+        seen.add(parent)
+        parent_region = regions.get(parent)
+        if parent_region is None:
+            break
+        ancestors.append(parent_region)
+        parent = parent_region.get("parent")
+    children = [
+        {
+            **item,
+            "instance_total": sum(
+                1
+                for instance in instances_value
+                if isinstance(instance, Mapping)
+                and instance.get("region") == item.get("id")
+            ),
+            "query": f"{INTENTIR_PACKET_QUERY} region {item.get('id')} 0 8",
+        }
+        for item in regions_value
+        if isinstance(item, Mapping) and item.get("parent") == region_ref
+    ]
+    control_rows = [
+        dict(item)
+        for item in terminal_controls
+        if isinstance(item, Mapping)
+        and (
+            item.get("continuation_region") == region_ref
+            or instance_region.get(str(item.get("terminal_instance"))) == region_ref
+            or instance_region.get(str(item.get("continuation_instance"))) == region_ref
+        )
+    ]
+    program_branches = [
+        item
+        for item in _packet_program_domain_branches(packet)
+        if item.get("branch_region") == region_ref
+    ]
+    return {
+        "protocol": "intentir.replay-region-workset.v1",
+        "meaning": (
+            "Exact packet-local join for one pi lexical region. Semantic records, "
+            "routes, order, sharing, time and control are copied from J/pi only; "
+            "no target spelling, lowering choice, source statement or repair is inferred."
+        ),
+        "region": region,
+        "ancestors_nearest_first": ancestors,
+        "children": children,
+        "instance_total": len(records),
+        "start": start,
+        "items": items,
+        "terminal_controls": control_rows,
+        "program_domain_branches": program_branches,
+        "next_start": next_start,
+        "next": (
+            f"{INTENTIR_PACKET_QUERY} region {region_ref} {next_start} {count}"
+            if next_start is not None
+            else None
+        ),
+        "authority": (
+            "exact source-isolated J/pi reindex only; no Source, Harness value, "
+            "Gate evidence, target recipe, inference, generation, or repair"
+        ),
+    }
 
 
 def _packet_instance_endpoint(
@@ -1969,6 +2140,13 @@ def _query_packet(packet: Mapping[str, Any], arguments: list[str]) -> Any:
         return _packet_obligations(
             packet, int(arguments[2]), int(arguments[3])
         )
+    if len(arguments) == 5 and arguments[:2] == [
+        INTENTIR_PACKET_QUERY,
+        "region",
+    ]:
+        return _packet_region(
+            packet, arguments[2], int(arguments[3]), int(arguments[4])
+        )
     if len(arguments) == 3 and arguments[:2] == [
         INTENTIR_PACKET_QUERY,
         "obligation",
@@ -1999,7 +2177,7 @@ def _query_packet(packet: Mapping[str, Any], arguments: list[str]) -> Any:
     raise ValueError(
         "usage: intentir_packet_query overview | abi START COUNT | graph START COUNT | "
         "requirements | realization | routes START COUNT | order START COUNT | obligations START COUNT | "
-        "obligation HANDLE | edges START COUNT | section PATH | find HANDLE"
+        "obligation HANDLE | region REGION START COUNT | edges START COUNT | section PATH | find HANDLE"
     )
 
 

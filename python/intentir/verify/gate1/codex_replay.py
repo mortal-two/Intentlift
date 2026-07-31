@@ -60,7 +60,11 @@ input/packet.json by file path and inspect only the sections you need. Begin wit
 `python .agents/intentir_agent_tool.py packet_query requirements`; it is an exact,
 bounded declaration-order view of J nodes and pi control/time relations, not a plan
 or lowering rule. Preserve every listed J node's operands, attrs and result before
-choosing target syntax. Do not infer a
+choosing target syntax. For every lexical region you author, query
+`python .agents/intentir_agent_tool.py packet_query region REGION 0 8`; this is the
+small exact workset joining that region's complete J semantic records with its pi
+routes/order/time/control. Page only when `next` is non-null. It contains no target
+spelling or realization choice. Do not infer a
 Source recipe or invent a missing fact. input/REPLAY_CONTRACT.md defines the compact
 ownership boundary; input/TOOL.md defines the exact tools.
 
