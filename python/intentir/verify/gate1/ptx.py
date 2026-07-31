@@ -19,7 +19,7 @@ import re
 from typing import Any, Mapping
 
 
-PTX_FINGERPRINT_SCHEMA = "cuda-ptx-semantic-effects-v5"
+PTX_FINGERPRINT_SCHEMA = "cuda-ptx-semantic-effects-v6"
 
 
 class PTXObservationError(ValueError):
@@ -394,23 +394,140 @@ def _instruction_parts(
 
 def _semantic_memory_opcode(opcode: str) -> str:
     parts = opcode.split(".")
-    return ".".join(
-        part for index, part in enumerate(parts) if index == 0 or part not in _CACHE_HINTS
-    )
+    parts = [
+        part
+        for index, part in enumerate(parts)
+        if index == 0 or part not in _CACHE_HINTS
+    ]
+    # A non-atomic load/store transfers bits; signedness and float/integer register
+    # class become semantic only through downstream value operations, which the
+    # value def-use projection retains independently.  Normalize only an exact
+    # scalar bit width and preserve address space, vector width, volatility and
+    # every atomic/reduction opcode.
+    if parts and parts[0] in {"ld", "st", "suld", "sust"}:
+        dtype = re.fullmatch(r"[bsuf](8|16|32|64|128)", parts[-1])
+        if dtype is not None:
+            parts[-1] = f"b{dtype.group(1)}"
+    return ".".join(parts)
+
+
+_NO_DESTINATION_PREFIXES = (
+    "st.", "sust.", "red.", "bra", "brx", "ret", "exit", "bar.",
+    "barrier.", "mbarrier.", "fence.", "membar.",
+)
+
+
+def _destination_registers(
+    opcode: str,
+    operands: tuple[str, ...],
+) -> tuple[str, ...]:
+    if not operands or opcode.startswith(_NO_DESTINATION_PREFIXES):
+        return ()
+    destination = operands[0]
+    if destination.startswith("["):
+        return ()
+    # Vector loads and tuple-producing instructions define every register in the
+    # first operand.  Treating only a singleton destination leaves a preceding
+    # zero-initialization spuriously observable after an unconditional vector load.
+    return tuple(_REGISTER_RE.findall(destination))
+
+
+def _instruction_predicate_truths(
+    instructions: tuple[str, ...],
+) -> tuple[bool | None, ...]:
+    """Prove straight-line constant predicates without inferring a source guard.
+
+    ``True`` includes an unpredicated instruction or a predicate proven true;
+    ``False`` is a proven-disabled instruction; ``None`` retains an unknown
+    predicate.  Constants are discarded at control boundaries and on every
+    unsupported write, so absence of a proof remains fail-closed.
+    """
+
+    records = [_instruction_parts(item) for item in instructions]
+    constants: dict[str, int] = {}
+    truths: list[bool | None] = []
+
+    def operand_constant(operand: str) -> int | None:
+        literal = _ptx_integer_literal(operand)
+        if literal is not None:
+            return literal
+        register = _REGISTER_RE.fullmatch(operand.strip())
+        return constants.get(register.group(0)) if register is not None else None
+
+    for instruction, record in zip(instructions, records):
+        if record is None:
+            truths.append(None)
+            if instruction.endswith(":"):
+                constants.clear()
+            continue
+        predicate, opcode, operands = record
+        predicate_truth: bool | None = True
+        if predicate:
+            registers = _REGISTER_RE.findall(predicate)
+            raw = constants.get(registers[0]) if len(registers) == 1 else None
+            predicate_truth = None if raw is None else bool(raw)
+            if predicate.startswith("@!") and predicate_truth is not None:
+                predicate_truth = not predicate_truth
+        truths.append(predicate_truth)
+
+        destinations = _destination_registers(opcode, operands)
+        if predicate_truth is not False and destinations:
+            produced: tuple[int, ...] | None = None
+            if (
+                predicate_truth is True
+                and opcode.split(".", 1)[0] == "mov"
+                and len(destinations) == 1
+                and len(operands) == 2
+            ):
+                source = operand_constant(operands[1])
+                if source is not None:
+                    produced = (source,)
+            comparison = re.fullmatch(r"setp\.(eq|ne)\.[bsu][0-9]+", opcode)
+            if (
+                predicate_truth is True
+                and comparison is not None
+                and len(destinations) == 1
+                and len(operands) >= 3
+            ):
+                left = operand_constant(operands[1])
+                right = operand_constant(operands[2])
+                if left is not None and right is not None:
+                    equal = left == right
+                    produced = (
+                        int(equal if comparison.group(1) == "eq" else not equal),
+                    )
+            for index, destination in enumerate(destinations):
+                if produced is not None and index < len(produced):
+                    constants[destination] = produced[index]
+                else:
+                    constants.pop(destination, None)
+
+        if opcode.startswith(("bra", "brx", "call", "ret", "exit")):
+            constants.clear()
+    return tuple(truths)
 
 
 def _semantic_memory_effects(
     instructions: tuple[str, ...],
 ) -> tuple[tuple[str, int], ...]:
     effects: Counter[str] = Counter()
-    for instruction in instructions:
+    predicate_truths = _instruction_predicate_truths(instructions)
+    for instruction, predicate_truth in zip(instructions, predicate_truths):
         parts = _instruction_parts(instruction)
         if parts is None:
             continue
         predicate, opcode, _operands = parts
         if not opcode.startswith(("ld.", "st.", "atom.", "red.", "suld.", "sust.")):
             continue
-        polarity = "not_predicated:" if predicate.startswith("@!") else "predicated:" if predicate else ""
+        if predicate and predicate_truth is False:
+            continue
+        polarity = (
+            ""
+            if not predicate or predicate_truth is True
+            else "not_predicated:"
+            if predicate.startswith("@!")
+            else "predicated:"
+        )
         effects[polarity + _semantic_memory_opcode(opcode)] += 1
     return tuple(sorted(effects.items()))
 
@@ -426,30 +543,35 @@ def _semantic_value_opcodes(
     """
 
     records = [_instruction_parts(item) for item in instructions]
-    definitions: dict[str, int] = {}
-    no_destination = (
-        "st.", "sust.", "red.", "bra", "brx", "ret", "exit", "bar.",
-        "barrier.", "mbarrier.", "fence.", "membar.",
-    )
+    predicate_truths = _instruction_predicate_truths(instructions)
+    definitions: dict[str, tuple[int, ...]] = {}
     for index, record in enumerate(records):
         if record is None:
             continue
-        _predicate, opcode, operands = record
-        if not operands or opcode.startswith(no_destination):
-            continue
-        destination = operands[0]
-        if destination.startswith("["):
-            continue
-        registers = _REGISTER_RE.findall(destination)
-        if len(registers) == 1:
-            definitions[registers[0]] = index
+        predicate, opcode, operands = record
+        destinations = _destination_registers(opcode, operands)
+        truth = predicate_truths[index]
+        for destination in destinations:
+            if predicate and truth is False:
+                continue
+            if predicate and truth is None:
+                definitions[destination] = (*definitions.get(destination, ()), index)
+            else:
+                definitions[destination] = (index,)
 
     roots: set[str] = set()
-    for record in records:
+    for index, record in enumerate(records):
         if record is None:
             continue
         predicate, opcode, operands = record
-        roots.update(_REGISTER_RE.findall(predicate))
+        memory_opcode = opcode.startswith(
+            ("ld.", "st.", "atom.", "red.", "suld.", "sust.")
+        )
+        truth = predicate_truths[index]
+        if predicate and not (memory_opcode and truth is not None):
+            roots.update(_REGISTER_RE.findall(predicate))
+        if memory_opcode and predicate and truth is False:
+            continue
         if opcode.startswith(("st.", "sust.")) and operands:
             roots.update(_REGISTER_RE.findall(operands[-1]))
         elif opcode.startswith(("atom.", "red.")):
@@ -462,22 +584,26 @@ def _semantic_value_opcodes(
     selected: set[int] = set()
 
     def select(register: str) -> None:
-        index = definitions.get(register)
-        if index is None or index in selected:
-            return
-        selected.add(index)
-        record = records[index]
-        assert record is not None
-        predicate, opcode, operands = record
-        for dependency in _REGISTER_RE.findall(predicate):
-            select(dependency)
-        # A load's address is not value dataflow. Its space/type/predicate is
-        # already retained by the semantic memory-effect projection.
-        if opcode.startswith(("ld.", "suld.")):
-            return
-        for operand in operands[1:]:
-            for dependency in _REGISTER_RE.findall(operand):
-                select(dependency)
+        for index in definitions.get(register, ()):
+            if index in selected:
+                continue
+            selected.add(index)
+            record = records[index]
+            assert record is not None
+            predicate, opcode, operands = record
+            truth = predicate_truths[index]
+            if predicate and not (
+                opcode.startswith(("ld.", "suld.")) and truth is not None
+            ):
+                for dependency in _REGISTER_RE.findall(predicate):
+                    select(dependency)
+            # A load's address is not value dataflow. Its space/type/predicate is
+            # already retained by the semantic memory-effect projection.
+            if opcode.startswith(("ld.", "suld.")):
+                continue
+            for operand in operands[1:]:
+                for dependency in _REGISTER_RE.findall(operand):
+                    select(dependency)
 
     for root in roots:
         select(root)
@@ -683,15 +809,21 @@ def _semantic_address_coordinate_folds(
         return result
 
     folds: Counter[str] = Counter()
+    predicate_truths = _instruction_predicate_truths(instructions)
     for instruction_index, record in enumerate(records):
         if record is None:
             continue
         predicate, opcode, operands = record
         if not opcode.startswith(("ld.", "st.", "atom.", "red.", "suld.", "sust.")):
             continue
+        predicate_truth = predicate_truths[instruction_index]
+        if predicate and predicate_truth is False:
+            continue
         address_operands = [operand for operand in operands if operand.startswith("[")]
         polarity = (
-            "not_predicated:"
+            ""
+            if not predicate or predicate_truth is True
+            else "not_predicated:"
             if predicate.startswith("@!")
             else "predicated:"
             if predicate

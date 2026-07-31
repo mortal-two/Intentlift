@@ -65,14 +65,19 @@ routes/carrier 唯一回溯到一个 signature pointer，且 Replay 自身 TTIR 
 正式 Gate1。该 check 只拒绝错误 Replay bytes，不生成 source、
 address formula、loop/carrier 或 relation，也没有 Gate1/认证权威。
 
-CUDA hard observer `cuda-ptx-semantic-effects-v5`继续放松register/label/cache与ordinary affine address
-spelling，但沿每个memory address的reaching definitions保留information-losing participant fold。v5
-把纯power-of-two byte scale后的low-bit `and`或positive `rem`除回logical coordinate domain，只有mask/
-divisor整除scale、conversion为同signedness非窄化integer且路径不跨predicated/control/opaque mixing时
-才归一为cyclic projection；其他bitmask/remainder保持原类别。
+CUDA hard observer `cuda-ptx-semantic-effects-v6`继续放松register/label/cache与ordinary affine address
+spelling，并完整继承v5沿memory-address reaching definitions保留information-losing participant fold的
+规则。v5把纯power-of-two byte scale后的low-bit `and`或positive `rem`除回logical coordinate domain，
+只有mask/divisor整除scale、conversion为同signedness非窄化integer且路径不跨predicated/control/
+opaque mixing时才归一为cyclic projection；其他bitmask/remainder保持原类别。v6另只对非atomic纯
+`ld/st/suld/sust`把terminal `b/s/u/f` carrier归一为相同bit width，并用在label/control boundary清空、
+unknown write失效的straight-line propagation判定memory predicate：proven true消去polarity，proven
+false不计effect，unknown仍按`predicated/not_predicated`hard保留。vector/tuple load的每个destination
+都进入observable def-use；算术类型、atomic/reduction、address space与vector width不被该规则删除。
 Source有fold而Replay直接使用raw participant coordinate时，`address_coordinate_folds`必须hard fail。
 该观察器不把PTX、fold tag或差异交给source-blind Replay；它只在Gate1比较最终exact Source/Replay，
-也不替Lift生成`participant_mappings`。TileLang的hard closure仍是结构TIR，PTX仅作diagnostic。
+也不替Lift生成`participant_mappings`。raw instruction/opcode/memory差异继续保留为diagnostic；历史
+v3--v5 verdict不由v6重判。TileLang的hard closure仍是结构TIR，PTX仅作diagnostic。
 
 presentation/alpha canonicalization 只能消除名称、SSA 编号、无关打印顺序等表示噪声。它不得
 删除会改变必要 realization closure 的 op、def-use、predicate/fill、effect、region、order、

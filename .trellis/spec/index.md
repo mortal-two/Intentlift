@@ -100,10 +100,14 @@ valuation 猜测。它继承 v25；v25 继承 v24 的 pointer route 与 floating
 `reduction_linearization` 限定为一个 `realize` stage 经唯一 slot-0 route 进入一个 J
 `reduce` realize stage；fixed code只检查 Lift 已作者化的事实。
 
-当前CUDA hard observer为`cuda-ptx-semantic-effects-v5`。它在v4的address reaching-definition观察上
-只增加严格scale-aware cyclic fold归一：power-of-two byte scale、可整除mask/remainder与精确非窄化
-integer conversion可以等价；predicated/control/opaque conversion路径保守不归一。TileLang仍以结构
-TIR为hard closure，PTX只作diagnostic。
+当前CUDA hard observer为`cuda-ptx-semantic-effects-v6`。它完整继承v5的严格scale-aware cyclic
+fold归一，并只增加两条closed transfer canonicalization：非atomic纯load/store的signed/unsigned/
+float register carrier在相同bit width时归一为bit transfer；memory predicate只有在straight-line
+constant propagation证明恒真时才消去，证明恒假时不计effect，unknown polarity仍hard保留。vector/
+tuple load的所有destination都进入observable def-use。算术opcode类型、atomic/reduction、address
+space、vector width、control、coordinate、collective、ABI与target继续hard；raw PTX topology仍作
+diagnostic。历史v3--v5 evidence不被v6静默重判。TileLang仍以结构TIR为hard closure，PTX只作
+diagnostic。
 
 当前 Gate1 observer profile 是 `triton-ttir-3.6-gate1-v13`。v13 只把 direct typed FMA 与相同
 typed operands 的 direct mul+add（或 direct negated addend 对应的 mul-sub）规范为同一 value tree；

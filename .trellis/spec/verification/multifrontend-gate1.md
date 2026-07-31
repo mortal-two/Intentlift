@@ -44,8 +44,10 @@ PTX and builds the following hard views:
    memory/control predicates. Integer value arithmetic remains hard; pointer
    arithmetic used only to form an address does not.
 3. Memory-effect summaries retaining load/store/atomic/reduction kind, address
-   space, width/type, multiplicity and predication while erasing cache/eviction
-   hints and exact virtual-register address expressions.
+   space, bit width, multiplicity and predication while erasing cache/eviction
+   hints and exact virtual-register address expressions. In the active v6
+   profile, only non-atomic pure transfers normalize signed/unsigned/float
+   register carriers of the same width; arithmetic types remain hard.
 5. Collective and synchronization topology: barriers, `mbarrier`, async copy,
    fences, shuffle/vote/match, MMA/WGMMA and election operations.
 6. Control topology: labels, conditional/unconditional branches, calls,
@@ -75,6 +77,15 @@ raw opcode and raw memory strings remain evidence but do not force equivalent
 CUDA programs to reproduce cache policy or address-strength reduction. This
 makes PTX a compiler observation of public CUDA semantics, not a backend-support
 test and not a source-text similarity metric.
+
+The active `cuda-ptx-semantic-effects-v6` profile removes a memory predicate
+only when a closed straight-line propagation proves it true, suppresses a proven
+false effect, and retains every unknown predicate polarity. Constants are
+discarded at labels and control transfers and invalidated by unknown writes.
+Vector/tuple loads define every destination register for observable def-use.
+Atomic/reduction opcodes, arithmetic type, address space and vector width are
+outside this quotient. Historical v3--v5 artifacts keep their original schema
+and verdict; v6 does not retrospectively recertify them.
 
 ## TileLang semantic fingerprint
 
