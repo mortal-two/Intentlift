@@ -1,8 +1,10 @@
 # Task 18：J SemanticMaterializer 与 π 约束 Replay Compiler Agent
 
-> 状态：`IMPLEMENTATION_ACTIVE_REAL_GATE1_RUNNING`（2026-07-31）
+> 状态：`ARCHIVED_SUPERSEDED_BY_TASK19`（2026-07-31）
 > 接管已归档的 Task 16/17。Task 16 的 grouped composer 与 Task 17 的 hole/binding/structural
 > renderer 都没有显著降低 Replay 编译负担；它们只作为历史证据保留。
+> Task 18 证明 J-only `S_J` 有效，但让同一 Replay Agent 同时解释完整 π 并手写最终目标源码，
+> 仍在 FlashAttention forward 的 dataflow 上形成 112 项硬差异；该直接编译路线由 Task 19 取代。
 
 ## 0. 唯一目标
 

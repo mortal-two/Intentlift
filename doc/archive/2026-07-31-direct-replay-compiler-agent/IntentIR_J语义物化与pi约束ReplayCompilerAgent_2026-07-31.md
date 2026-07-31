@@ -1,8 +1,8 @@
 # IntentIR：J 语义物化与 π 约束的 Replay Compiler Agent
 
 > 日期：2026-07-31
-> 状态：Task 18 的活动方法设计；取代 Task 16/17 的 fragment、hole、binding 与 fixed structural
-> renderer 路线。本文不增加 artifact、认证 Gate 或 production backend 输入。
+> 状态：历史失败方案；Task 19 保留 J-only `S_J`，但停止让一个 Agent 同时消费完整 π 并手写
+> 最终目标源码。本文不再约束活动实现。
 
 ## 1. 裁决
 
