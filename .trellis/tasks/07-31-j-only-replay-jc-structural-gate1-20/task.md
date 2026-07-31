@@ -154,6 +154,12 @@ v40/v4 还纠正了一条与设计文档相反的实现通道：旧 continuation
 Replay 实现；外部 run evidence 仍完整保存 comparison。该修改不改变 J/C/π、Gate1 verdict 或 Gate2，
 但减少 continuation 输入并阻止 artifact 追随一次偶然 Replay realization。
 
+v32 TypeCheck 进一步把权威文档既有的 logical inout 合同前移为 active fresh-wire 的 source-free
+必要条件：`mode=inout` 必须由 Lift 显式写出 pre-state load、post-state store、配对 read/write effect
+与 canonical output binding；fixed checker 只拒绝，不从 mode 推导字段。普通 output 仍可由
+return/output mapping 闭合，不增加重复 effect 负担。对应 Codex/MiniSWE knowledge 分别升为
+v101/v70；旧协议证书不重判。
+
 ## 7. P5：多前端与实验
 
 - [ ] Triton 纵切稳定后，CuTe/TileLang/CUDA 分别定义自己的 raw observer、J/C projection 与最小
