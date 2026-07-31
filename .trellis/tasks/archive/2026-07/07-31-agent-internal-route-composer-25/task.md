@@ -1,9 +1,12 @@
 # Task 25：J主导π_min与Replay Agent内部Route Composer重构
 
-> 状态：`P0_DESIGN_AND_DIRECTORY_READY`（2026-07-31）。
+> 历史状态：`ARCHIVED_AFTER_P0_SUPERSEDED_BY_TASK26`（2026-07-31；未开始运行时代码迁移）。
 >
-> 权威设计：
-> `doc/IntentIR_J主导_最小约束pi与Replay内部Composer重构设计_2026-07-31.md`。
+> Task 25时期设计：
+> `doc/archive/2026-07-31-pre-shared-j-semantic-replay-compiler/IntentIR_J主导_最小约束pi与Replay内部Composer重构设计_2026-07-31.md`。
+>
+> 当前权威设计：
+> `doc/IntentIR_共享J语义物化与pi约束Replay编译Agent最终设计_2026-07-31.md`。
 >
 > 前驱：Task 24保留9项`SCRC_CERTIFIED`、1项`NO_CLOSURE`及Composer成本轨迹，但其固定
 > line/block Composer不再扩建。Task 25不接管production backend；backend继续只消费accepted `J+C`。

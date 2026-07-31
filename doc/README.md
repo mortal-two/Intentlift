@@ -12,11 +12,11 @@
 5. [J-Grounded、Q/D-Certified Lowering-State Search 后端最终设计](IntentIR_Contract_Preserving_Multi_Lowering_后端最终设计_2026-07-24.md)：定义 accepted J+C 的 pure core lowerer、Intent MLIR materialization、hard verifier、统一 Q/D search-and-closure controller、concrete lowering-state search 与实验设计；它不修改 SCRC 接受谓词或 J。文件名为保持既有链接稳定而保留旧名称。
 
 Replay子系统的当前权威增补为
-[J主导的最小约束π与Replay内部Composer重构](IntentIR_J主导_最小约束pi与Replay内部Composer重构设计_2026-07-31.md)。
-它不增加第六个数学对象，而是在上述前四份SCRC设计内严格区分：固定宿主只提供syntax、显式route
-linking、exact重索引、编译与隔离；fresh source-blind agent在本episode内作者化并销毁composer
-scratch、target binding和helper。Triton、TileLang、CUDA共享机械core，normal/masked使用独立episode；
-宿主不得持久化semantic lowerer或kernel template。
+[共享J语义物化与π约束Replay编译Agent](IntentIR_共享J语义物化与pi约束Replay编译Agent最终设计_2026-07-31.md)。
+它不增加第六个数学对象：固定SemanticMaterializer把exact J确定性物化为只读、参数化的`S_J`；
+fresh source-blind Replay agent作为π约束下的完整编译器，自由编写、编译和重构一份完整Triton、CUDA
+或TileLang源码。宿主不填holes、不拼route、不提供target recipe；normal/masked分别从各自J物化，
+最终仍由TypeCheck、Gate1与三边Gate2认证。
 
 对应的 production 实现与实测记录：
 

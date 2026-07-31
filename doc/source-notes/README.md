@@ -14,6 +14,17 @@
 
 前四份定义 SCRC，第五份只定义 SCRC 之后的 production backend。
 
+Replay子系统的当前权威增补是
+[共享J语义物化与π约束Replay编译Agent](../IntentIR_共享J语义物化与pi约束Replay编译Agent最终设计_2026-07-31.md)；
+它不增加第六个数学对象。
+
+## 2026-07-31：共享J语义物化与Replay编译Agent来源
+
+| 材料 | 性质 | 主要吸收位置 |
+|---|---|---|
+| [最终Composer思想（第一份AI反馈）](最终composer思想_2026-07-31.md) | 提出确定性`J -> S_J`、只读semantic program和π约束realization；其中早期holes/assembly措辞未直接采纳 | Task 26与Replay权威增补 |
+| [最终Composer思想（第二份收紧反馈）](最终composer思想2_2026-07-31.md) | 明确Replay agent是完整编译器而非填洞器、宿主不拼源码、Mask-J必须重新物化、Replay不能忽略π | Task 26与Replay权威增补 |
+
 ## 2026-07-26：Agent execution 自省来源
 
 | 材料 | 性质 | 主要吸收位置 |

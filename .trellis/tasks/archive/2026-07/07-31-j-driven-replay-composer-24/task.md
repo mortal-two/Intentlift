@@ -1,6 +1,9 @@
 # Task 24：J 主导的 π_min 与三前端 Episode-Local Composer Replay
 
-> 状态：`P5_HORIZONTAL_CHECKPOINT_9_CERTIFIED_1_NO_CLOSURE`（2026-07-31；执行线已冻结，后继为 Task 25）。
+> 历史状态：`ARCHIVED_P5_9_CERTIFIED_1_NO_CLOSURE`（2026-07-31；后继Task 25亦已归档，当前为Task 26）。
+>
+> 本文和run metadata中的原`.trellis/tasks/07-31-j-driven-replay-composer-24/...`路径保留执行时身份；
+> 当前文件整体位于本归档目录，历史artifact内容不因移动而重写。
 >
 > 定位：Task 15/Task 11 的 Replay 构造机制升级，以及 Task 23 多前端实证的真实 closure 执行线。
 > 本任务不接管 production backend；backend 仍在 SCRC 后只消费 accepted `J+C`。
@@ -26,7 +29,7 @@ Task 24时期的历史设计增补（已由Task 25权威设计取代）：
 
 当前Replay作者化权威设计：
 
-- `doc/IntentIR_J主导_最小约束pi与Replay内部Composer重构设计_2026-07-31.md`
+- `doc/IntentIR_共享J语义物化与pi约束Replay编译Agent最终设计_2026-07-31.md`
 
 上位数学与对象边界继续由原四份SCRC设计和第五份backend设计决定。
 

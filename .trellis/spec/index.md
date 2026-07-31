@@ -14,11 +14,11 @@ lowering 和测试要求，不形成另一套设计。上位文档按作用域�
   统一 SCRC 数学与 claim；
 - [Contract-Preserving Multi-Lowering 后端最终设计](../../doc/IntentIR_Contract_Preserving_Multi_Lowering_后端最终设计_2026-07-24.md)
   在服从前四份对象边界的条件下，权威定义 post-SCRC production backend；
-- [J主导的最小约束π与Replay内部Composer重构](../../doc/IntentIR_J主导_最小约束pi与Replay内部Composer重构设计_2026-07-31.md)
-  在不改变上述对象和认证公式的前提下，权威细化Replay作者化：固定宿主只提供syntax/route
-  linking、exact packet重索引、编译与隔离；fresh source-blind agent在本episode内作者化并销毁
-  composer scratch、target binding和helper。宿主不得持久化`J op -> target API`或
-  `π relation -> source fragment`规则，normal/masked必须物理独立；
+- [共享J语义物化与π约束Replay编译Agent](../../doc/IntentIR_共享J语义物化与pi约束Replay编译Agent最终设计_2026-07-31.md)
+  在不改变上述对象和认证公式的前提下，权威细化Replay作者化：固定SemanticMaterializer只把exact J
+  物化为只读、参数化、前端无关的`S_J`；fresh source-blind Replay agent完整理解`S_J+π`并自由编写
+  一份完整target source。宿主不做per-node hole/binding、route assembly或target recipe；normal与
+  masked分别从各自J fresh物化并物理隔离；
 - 本目录只做上述权威文档的派生投影；Replay增补不增加新的数学对象。
 
 若派生规范与上位设计冲突，应修订派生规范；不得通过增加 interface artifact、hash gate、

@@ -8,24 +8,24 @@ Trellis CLI、自动 session 或 workflow phase。
 Task 11 继续作为不停止的28-Kernel闭合主线；当前保留18份参数化、ABI正确的accepted J。Task 14完成
 模型级输入审计、adapter v6与十项active queue识别后归档，其长批次只保留历史/诊断evidence。
 Task 15先统一规划输入、匿名Compiler观察、持久Codex Lift owner、closed J能力、source-blind Replay
-agent、Gate反馈和最终十项闭合。Task 24已冻结为真实Composer纵切证据基线：TileLang/CUDA代表矩阵
-有9项`SCRC_CERTIFIED`与1项真实`NO_CLOSURE`，但现有line/block Composer仍让agent重复消费扁平J/π和
-手工维护occurrence/route。Task 25据此重置Replay作者化：J仍是唯一语义，π只含最小realization
-约束，fresh agent在episode内建立并销毁自己的composer/binding；固定宿主只做syntax与显式route
-linking，不沉淀semantic lowerer。production backend仍只在SCRC后消费J+C。Task 23是独立的论文
-最小实证线，只采集多前端接入、分层差异与source-independent lowering的有限真实数据。
+agent、Gate反馈和最终十项闭合。Task 24保留9项`SCRC_CERTIFIED`与1项真实`NO_CLOSURE`的Composer
+实证，Task 25只完成route/binding方案文档；二者现均归档。Task 26采用新Replay作者化：固定Core把
+exact J物化为只读、参数化`S_J`，fresh agent作为π约束下的完整编译器生成整份target source；宿主
+不填holes、不拼route，也不维护target recipe。production backend仍只在SCRC后消费J+C。Task 23是
+独立论文最小实证线，只采集多前端接入、分层差异与source-independent lowering的有限真实数据。
 
 - [Task 11：SCRC v4 的 28-Kernel 有界并行全闭合](07-24-scrc-v4-full-closure-11/task.md)（执行中；闭合主线）
 - [Task 15：模型级输入到 Compiler-Observed Lift / Closed J / Source-Blind Replay 的最终闭合系统](07-29-compiler-observed-scrc-closure-15/task.md)（设计已建立；formal closure尚未启动）
 - [Task 23：论文多前端接入与可复用 Lowering 最小实证](07-31-paper-multifrontend-evidence-23/task.md)（执行中；最多六次 fresh episode）
-- [Task 24：J 主导的 π_min 与三前端 Episode-Local Composer Replay](07-31-j-driven-replay-composer-24/task.md)（已冻结；9项认证、1项真实未闭合的历史证据基线）
-- [Task 25：J主导π_min与Replay Agent内部Route Composer重构](07-31-agent-internal-route-composer-25/task.md)（P0完成；准备实施）
+- [Task 26：共享J语义物化与π约束Replay编译Agent](07-31-shared-j-semantic-replay-compiler-26/task.md)（P0完成；准备实施）
 
 ## 本轮已归档任务
 
-Task 01–10、Task 12、Task 13 与 Task 14 均已结束并迁入 `archive/2026-07/`。其中任务正文与 evidence 是历史记录，不再作为
+Task 01–10、Task 12、Task 13、Task 14、Task 24与Task 25均已结束并迁入 `archive/2026-07/`。其中任务正文与 evidence 是历史记录，不再作为
 当前执行状态或后继调度的权威来源。
 
+- [Task 25：J主导π_min与Replay Agent内部Route Composer重构（P0后被Task 26取代）](archive/2026-07/07-31-agent-internal-route-composer-25/task.md)
+- [Task 24：J主导π_min与三前端Episode-Local Composer Replay（9项认证、1项未闭合）](archive/2026-07/07-31-j-driven-replay-composer-24/task.md)
 - [Task 14：Source-Grounded Certification Profile 与 Codex 28-Kernel Fresh SCRC（已结束）](archive/2026-07/07-27-codex-parametric-28-closure-14/task.md)
 - [Task 13：Lightweight Single-Owner MiniSWE / Codex Agent Runtime（工程完成）](archive/2026-07/07-27-lightweight-miniswe-codex-runtime-13/task.md)
 - [Task 12：Persistent Single-Owner Transactional Agent Runtime（验收未通过）](archive/2026-07/07-26-single-owner-agent-runtime-12/task.md)
