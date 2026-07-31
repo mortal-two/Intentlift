@@ -11,7 +11,7 @@ conditions。该 Gate1 claim 只针对这个 c0。
 
 当前 fresh-run artifact/decode/typecheck 组合为
 `intentir.scrc.artifact.v12 + intentir.pi.normalization-witness.v1 /
-intentir.scrc.decode.v18 / intentir.scrc.typecheck.v31`。Lift LLM 是完整
+intentir.scrc.decode.v18 / intentir.scrc.typecheck.v32`。Lift LLM 是完整
 artifact 的唯一作者：value/dimension equality、closed dimension definition、consumer-extension、access-guard、typed control/inout、
 output binding 都必须在 J/C 中显式提交；active π 只含 program-axis rows。Decode、
 CandidateCheck 与 TypeCheck 只能做 closed

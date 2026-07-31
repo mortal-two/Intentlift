@@ -606,7 +606,8 @@ TypeCheck(J,C,pi) -> FreshLogicalSemDecl(C,pi | J) = empty
 线索，也不证明 J 或 realization 的行为正确。
 
 当前 active 合同为 `artifact.v12 + pi.normalization-witness.v1 / decode.v18 /
-typecheck.v31 / candidate-check.v1`。v31 对 compact π 只检查 direct J anchors；所有旧 graph checks
+typecheck.v32 / candidate-check.v1`。v32 继承 v31 对 compact π 的 direct J anchor 检查，并拒绝
+active fresh J 中未显式闭合 pre-load/store/effect/output-binding 的 inout；所有旧 graph checks
 仅在解析旧 π subwire 时运行。CandidateCheck 与正式 Runner 共享相同 parser/Decode/TypeCheck core，
 均只拒绝和诊断，不补造 artifact。
 
@@ -631,7 +632,11 @@ wire/decode 窄升为 `artifact.v3 / decode.v3`；v4 随后增加 dimension cons
 terminal-control topology，v10 增加上述 closed route-local extent transform，v11增加closed
 dimension relations，v12增加closed program-axis identity；Task16 的当前 pre-freeze v12 wire 另允许
 上述可选 `program_linearizations`，缺失时为空且不改写历史 evidence。当前 active 合同为
-`artifact.v12 / decode.v17 / typecheck.v30 / candidate-check.v1`；该 pre-freeze checker 对该
+`artifact.v12 / decode.v18 / typecheck.v32 / candidate-check.v1`；v32 对 active compact wire
+新增 source-free inout 完整性拒绝：每个显式 `mode=inout` 必须由 J 自己给出 pre-state load、
+post-state store、分别配对的 read/write effect 与 canonical output binding；checker 不从 ABI mode
+推导或补写这些事实。纯 `mode=output` 仍可只由 function return/output mapping 闭合，不被迫重复
+序列化物理 effect。该 pre-freeze checker 对该
 program-coordinate relation 额外检查 J dimension/axis、program binding、instance ownership 与从 owning
 domain realization 到 target 的 route reachability，只拒绝不补造；v30只接受同一authored
 `effect_if`两臂各唯一完整store所定义的conditional post-state output，不生成select/mapping；v29新增program-axis completeness

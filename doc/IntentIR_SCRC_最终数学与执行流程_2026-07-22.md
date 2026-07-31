@@ -415,8 +415,9 @@ TypeCheck 还检查 closed comparison class 与 output dtype、A 依赖图和 B 
 见最终执行流程第 6.1 节。v1 中 `RequiresTolerance=true` 即拒绝显式或默认 `exact`，没有自由文本
 或“更强合同”例外；阈值仍完全由外部 Q 决定。该 reassociation fact 只约束 SCRC comparison class，
 不是 production backend permission。
-Task 20 当前取 `artifact.v12 + pi.normalization-witness.v1 / decode.v18 / typecheck.v31`。
-v31 对 compact π 只检查 direct J domain/dimension anchors；active Lift 不再承担旧
+Task 20 当前取 `artifact.v12 + pi.normalization-witness.v1 / decode.v18 / typecheck.v32`。
+v32 继承 v31 对 compact π 的 direct J domain/dimension anchors 检查，并对 active fresh J
+拒绝未显式闭合 pre-state load、post-state store、配对 effect 与 output binding 的 inout；active Lift 不再承担旧
 region/instance/route/carrier/refinement graph 的序列化或 totality。迁移前 `typecheck.v30` 新增上述
 双臂完整store的conditional post-state output binding，并继承v29的
 program-axis completeness dependent check及v28的J dimension relation
@@ -654,7 +655,9 @@ artifact 语义，不增加 acceptance path，正式 Runner 仍独立执行 Deco
 扩充 TypeCheck judgement 必须提升 `v_TC`，CandidateCheck 与正式 Runner 必须记录并使用同一版本；
 新版本不静默重判历史证书。
 
-当前 fresh-run 取 `v_TC = typecheck.v31`；其 compact π 合同见第 4 节。以下为迁移前历史：v30增加
+当前 fresh-run 取 `v_TC = typecheck.v32`；v32 只新增上述 source-free inout 完整性拒绝，不从
+signature mode 推导 access/effect，也不强迫普通 output 重复写物理 effect；其 compact π 合同见第 4 节。
+以下为迁移前历史：v31 只对 compact π 检查 direct J anchors；v30增加
 上述J-only conditional post-state output binding；
 v29增加program-axis completeness dependent check；v28增加上述dimension relation dependent check；v27增加route extent transform dependent check；
 v26 增加上述 direct singleton broadcast dependent check；

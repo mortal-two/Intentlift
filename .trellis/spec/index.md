@@ -24,7 +24,7 @@ lowering 和测试要求，不形成另一套设计。上位文档按作用域�
 若派生规范与上位设计冲突，应修订派生规范；不得通过增加 interface artifact、hash gate、
 epoch、commitment、额外认证 Gate 或兼容旁路来调和冲突。
 
-当前 fresh-run 栈为 `artifact.v12 + pi.normalization-witness.v1 / decode.v18 / typecheck.v31 / candidate-check.v1 / replay-check.v15`。
+当前 fresh-run 栈为 `artifact.v12 + pi.normalization-witness.v1 / decode.v18 / typecheck.v32 / candidate-check.v1 / replay-check.v15`。
 J/C 继续验证 rank-0 closed signature、Layer-A total typing、显式 broadcast、canonical
 reduce/contraction、functional-domain closure、value/dimension、consumer-extension、access-guard、typed
 control/inout/output-binding 等全部语义事实。active π 只作者化 closed
@@ -95,8 +95,9 @@ placement 本身不产生 program coordinate。domain-owned branch 至少要求 
 终止，它只计 terminal、不能再重复计普通 branch。上述检查都只拒绝最低结构，不选择条件、arm 或
 目标写法。
 且每个 pointer-producing address stage 必须流向至少一个 transfer。无法闭合的 topology 不猜，不读取
-Source，也不生成地址公式。当前 `typecheck.v31` 只对 compact π 检查 direct J
-program-axis/dimension anchors；迁移前 `typecheck.v30` 新增双臂完整store的J-only conditional post-state
+Source，也不生成地址公式。当前 `typecheck.v32` 继承 v31 对 compact π 的 direct J
+program-axis/dimension anchor 检查，并拒绝 active fresh J 中未完整作者化 state boundary 的 inout；
+迁移前 `typecheck.v30` 新增双臂完整store的J-only conditional post-state
 output binding，v29新增program-axis completeness dependent check，v28新增closed
 dimension relation check；`typecheck.v27` 只新增 route extent transform 的 closed dependent check；
 `typecheck.v26` 只新增 direct `x* == 1`/`1 == x*` 对显式 broadcast

@@ -57,7 +57,7 @@ from intentir.verify.gate1.pi import (
 )
 
 
-TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v31"
+TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v32"
 GLOBAL_SAFE_REFINEMENTS = frozenset(
     {"identity_materialization", "reduction_linearization"}
 )
@@ -4687,6 +4687,78 @@ def _check_signature_mode_partition(
     return tuple(diagnostics)
 
 
+def _check_fresh_inout_boundary_closure(
+    j: SemanticArchive,
+    diagnostics: list[TypeCheckDiagnostic],
+) -> None:
+    """Require every fresh logical inout to author its complete state boundary.
+
+    ``mode=inout`` is not permission for fixed code to infer memory effects from
+    the ABI.  The active compact-wire contract therefore requires the Lift owner
+    to name a pre-state load, a post-state store, their matching read/write
+    effects, and one canonical output binding.  This is a source-free dependent
+    check: it rejects an incomplete J but never creates an access, effect, or
+    binding.  Pure output parameters remain governed by ordinary return/output
+    binding and are intentionally not forced to duplicate functional semantics as
+    boundary effects.
+    """
+
+    returns = {item.output for item in j.intent.returns}
+    mappings = {item.output for item in j.boundary.output_mappings}
+    for index, parameter in enumerate(j.signature.parameters):
+        logical_ref = parameter.logical_ref
+        if parameter.mode is not ParameterMode.INOUT or logical_ref is None:
+            continue
+
+        loads = {
+            access.access_id
+            for access in j.boundary.accesses
+            if access.tensor == logical_ref and access.kind is AccessKind.LOAD
+        }
+        stores = {
+            access.access_id
+            for access in j.boundary.accesses
+            if access.tensor == logical_ref and access.kind is AccessKind.STORE
+        }
+        read_effects = {
+            effect.access_ref
+            for effect in j.boundary.effects
+            if effect.target == logical_ref
+            and effect.kind.value == "read"
+            and effect.access_ref in loads
+        }
+        write_effects = {
+            effect.access_ref
+            for effect in j.boundary.effects
+            if effect.target == logical_ref
+            and effect.kind.value == "write"
+            and effect.access_ref in stores
+        }
+
+        missing: list[str] = []
+        if not loads:
+            missing.append("pre-state load")
+        elif not read_effects:
+            missing.append("load-bound read effect")
+        if not stores:
+            missing.append("post-state store")
+        elif not write_effects:
+            missing.append("store-bound write effect")
+        if logical_ref not in returns and logical_ref not in mappings:
+            missing.append("canonical output binding")
+        if not missing:
+            continue
+        diagnostics.append(
+            TypeCheckDiagnostic(
+                TypeCheckErrorCode.FUNCTIONAL_BOUNDARY_INCOMPLETE,
+                f"j.signature.parameters[{index}].logical_ref",
+                "fresh logical inout must explicitly close its state boundary; "
+                "missing " + ", ".join(missing),
+                logical_ref,
+            )
+        )
+
+
 def _check_transfer_address_routes(
     j: SemanticArchive,
     pi: RealizationWitness,
@@ -5018,6 +5090,8 @@ def type_check(
         )
 
     diagnostics: list[TypeCheckDiagnostic] = []
+    if pi.wire_schema == NORMALIZATION_WITNESS_SCHEMA:
+        _check_fresh_inout_boundary_closure(j, diagnostics)
     _check_dimension_and_pad_contracts(j, diagnostics)
     _check_value_dimension_relations(j, diagnostics)
     _check_dimension_relations(j, diagnostics)

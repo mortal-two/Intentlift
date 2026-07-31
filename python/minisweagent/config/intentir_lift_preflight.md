@@ -19,6 +19,8 @@ constructs or repairs semantic fields.
 4. Every boundary access has one matching effect. Predicate-bearing loads keep
    their actual Source `other` value and all required consumer extensions;
    guarded writes use the real inout tensor and explicit select/carry semantics.
+   Every `mode=inout` handle explicitly closes a pre-state load, post-state
+   store, their read/write effects, and one canonical output binding.
 5. C contains scheduling slots and values only. Optional attachments name only
    declared J subjects/axes and never add semantics, Source topology, or target
    recipes.

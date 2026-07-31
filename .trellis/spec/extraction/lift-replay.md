@@ -268,8 +268,9 @@ representation-only op 差异只要求 owner 对照 Source 重新审查已有 π
 提交前的强制串行协议。MiniSWE knowledge v64 暴露同一 outline/checklist 合同。该 transport 不生成
 `logical_ref`、J/C/π 字段或修复。
 
-当前持久 owner 使用 `artifact.v12 + pi.normalization-witness.v1 / decode.v18 / typecheck.v31 / candidate-check.v1` 实现上述
-CandidateCheck、C attachment、numeric-cast dependent typing 与 result-relation compatibility。v31
+当前持久 owner 使用 `artifact.v12 + pi.normalization-witness.v1 / decode.v18 / typecheck.v32 / candidate-check.v1` 实现上述
+CandidateCheck、C attachment、numeric-cast dependent typing 与 result-relation compatibility。v32
+继承 v31 的 compact π direct-anchor 检查，并拒绝 active fresh J 中未闭合 state boundary 的 inout；v31
 对 active compact π 只检查 direct J anchors；迁移前 v30
 只接受同一authored `effect_if`两臂各唯一完整store定义的conditional post-state output；不补
 `select`、mapping或新字段。v7
@@ -579,7 +580,7 @@ relift diagnostic view 必须明确区分。
 禁止把 diff 交给 Replay、patch 旧 Replay、只输出 artifact 增量，或跨候选复用 Replay。
 
 协议允许独立的 `intentir.scrc.gate1-diagnostic-recheck.v1` 对一份已落盘 artifact 做只读诊断：
-保持 artifact bytes/digest 不变，执行当前 canonical Decode、`typecheck.v31`、一个 fresh normal Replay
+保持 artifact bytes/digest 不变，执行当前 canonical Decode、`typecheck.v32`、一个 fresh normal Replay
 与 Gate1，并写入独立 `recheck-NNN` evidence。它不调用 Lift、不运行 masked-J 或 Gate2、不参与
 candidate/winner 选择，也不改变 parent run 的 verdict 或 certificate；因此只用于定位固定 consumer/
 observer/context 改动，不能冒充 fresh SCRC rerun。provider 调用前必须把 selected case/current prepared

@@ -635,7 +635,9 @@ Gate round 的定义。
 version receipt 的 fresh run 生效，不得静默重判历史 artifact。
 
 Task 20 当前 fresh-run 版本为 `artifact.v12 + pi.normalization-witness.v1 / decode.v18 /
-typecheck.v31`。v31 对 compact π 只检查 direct J domain/dimension anchors；旧 graph-dependent checks
+typecheck.v32`。v32 继承 v31 对 compact π 的 direct J domain/dimension anchors 检查，并拒绝
+active fresh J 中未显式闭合 pre-state load、post-state store、配对 effect 与 canonical output binding
+的 inout；普通 output 仍可只由 return/output mapping 闭合。旧 graph-dependent checks
 仅在读取历史 π subwire 时运行，不再要求 Lift 作者化 route/carrier/refinement totality。
 
 迁移前 `typecheck.v30` 只新增一条J-only conditional post-state规则：同一个
@@ -1195,7 +1197,7 @@ Source/当前 J 的 writer。Runner 更新 branch-local feedback view 并追加�
 ### 10.1.1 固定 artifact 的 diagnostic recheck
 
 `intentir.scrc.gate1-diagnostic-recheck.v1` 可以对 parent evidence 中一份已落盘 artifact 做独立只读
-诊断：保持 artifact bytes/digest 不变，以当前 canonical Decode、`typecheck.v31`、一个 fresh normal
+诊断：保持 artifact bytes/digest 不变，以当前 canonical Decode、`typecheck.v32`、一个 fresh normal
 Replay 与 Gate1 写入单独的原子 `recheck-NNN` 目录。该路径不调用 Lift、不运行 masked-J 或 Gate2、
 不参加 candidate/winner 选择，并显式记录 `diagnostic_only=true`、`enters_gate2=false`、
 `changes_prior_verdict=false`。它只能判断当前固定 consumer/context 如何消费旧 artifact，不能把
