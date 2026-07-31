@@ -29,7 +29,7 @@
   兼容 fallback 已从活动 schema/API 删除。
 - dependent `TypeCheck(J,C,π)` 已成为 Replay 的生产前置条件，并 fail closed 地检查 refs、route、
   observable ownership 与 sensitive authorization。
-- Replay packet 已收敛为 typed `J + π + MaskC(C) + U_f`；Source/Harness/C values/diff/旧对话等
+- Task 20 目标 Replay packet 收敛为 typed `J + MaskC(C) + U_f`；π 与 Source/Harness/C values/diff/旧对话等
   嵌套旁路由闭合 allowlist 拒绝。
 - Gate2 已使用外部 Q 的对称 `Close_Q`，并保存 Source–Replay、Source–J、Replay–J 三条直接边；
   J wire 不再携带 tolerance 数值。
@@ -47,7 +47,7 @@
 2. 删除 formal runner 中的旧 hash/epoch/commitment gate 与对应 schema/tests。
 3. 将 logical signature 收入 J，删除独立 interface 输入；需要时只计算 `InterfaceView(J)`。
 4. 建立最小 `TypeCheck(J,C,π)`：refs、slot/type、observable J anchor、泄漏禁令、authorization。
-5. 将 Replay packet 收紧为 `J + π + MaskC(C) + U_f`。
+5. 将 Replay packet 收紧为 `J + MaskC(C) + U_f`；π 只进入 Gate1 profile-local canonicalizer。
 6. 重写 runner：每轮完整 relift、全新盲 Replay、每次运行显式声明正有限 `K`；Gate2失败结束实验。
 7. Gate2 接入外部 Q，并直接比较 Source–Replay、Source–J 与 Replay–J 三条 `Close_Q` 边；当前
    只覆盖 deterministic / contract-deterministic Kernel。
@@ -67,7 +67,7 @@
 
 ```text
 proof artifact = (J,C,pi)
-Replay inputs  = J + pi + MaskC(C) + U_f
+Replay inputs  = J + MaskC(C) + U_f
 pre-Replay     = TypeCheck(J,C,pi)
 main verdict   = TypeCheck and Gate1 and Gate2
 Gate2          = pairwise Close_Q(Source, Replay, RefEval(J)) under observed c0

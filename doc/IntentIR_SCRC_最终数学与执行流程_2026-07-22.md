@@ -3,6 +3,14 @@
 > **文档定位：数学与论文 claim 总述。** 对象边界分别以 C、π 和最终执行流程三份核心设计为准；
 > 本文统一它们的数学记号、证书谓词和可宣称范围，不引入新的 artifact、Gate 或运行阶段。
 >
+> **2026-07-31 Task 20 窄化修订（规范性覆盖）：** Figure 3 外部拓扑、`(J,C,π)`、TypeCheck、
+> relift 与 Gate2 三边均不变；本文凡把 π 列为 Replay 输入或把 Gate1 写成未参数化 raw observer
+> equality 的公式，均由
+> [J-only Replay 与 typed π-relative Gate1 Observer](method/IntentIR_J-only_Replay与pi参数化Observer_Gate1_2026-07-31.md)
+> 覆盖。当前设计为 `R=Replay(J,MaskC(C);U_f)`，Gate1 在固定 `(f,p,ν,c0)` 下检查 typed
+> π-relative `CanonPair` 的 residual 为空。历史 runtime/receipt 仍按原版本解释；此修订不声称
+> 新 runtime 已完成。
+>
 > 核心设计：[C 所有权](IntentIR_C_所有权_绑定_消费与三方验证设计_2026-07-22.md)、
 > [π 实现见证](IntentIR_pi_依赖类型实现见证与Replay安全设计_2026-07-22.md)、
 > [最终执行流程](IntentIR_Lift_Replay_Gate1_Gate2_实验与系统改进最终执行流程_2026-07-22.md)。

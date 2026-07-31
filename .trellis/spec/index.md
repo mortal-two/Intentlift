@@ -1,6 +1,8 @@
 # IntentIR 当前派生规范
 
-> 状态：2026-07-31 当前派生规范。
+> 状态：2026-07-31 Task 20 设计迁移中。本文入口与系统数据流已切换到 J-only Replay / typed
+> π-relative Gate1；详细 Replay、Gate1、multi-frontend runtime 条款在 Task 20 实现时同步，当前旧
+> runtime 文字不得被解释为新路径已经完成。
 
 `.trellis/spec` 只把四份 SCRC 设计与第五份 production backend 设计投影为 schema、API、runner、
 lowering 和测试要求，不形成另一套设计。上位文档按作用域组合，不构成一条让旧 SCRC 文档覆盖
@@ -14,8 +16,9 @@ lowering 和测试要求，不形成另一套设计。上位文档按作用域�
   统一 SCRC 数学与 claim；
 - [Contract-Preserving Multi-Lowering 后端最终设计](../../doc/IntentIR_Contract_Preserving_Multi_Lowering_后端最终设计_2026-07-24.md)
   在服从前四份对象边界的条件下，权威定义 post-SCRC production backend；
-- [J 语义物化与 π 约束的 Replay Compiler Agent](../../doc/method/IntentIR_J语义物化与pi约束ReplayCompilerAgent_2026-07-31.md)
-  窄化 Replay 作者化接口：允许 J-only 的只读 `S_J=M(J)`，禁止 target skeleton/hole/binding/composer；
+- [J-only Replay 与 typed π 参数化 Gate1 Observer](../../doc/method/IntentIR_J-only_Replay与pi参数化Observer_Gate1_2026-07-31.md)
+  窄化 Replay/Gate1 接口：Replay 只读 `J+MaskC(C)`；π 只实例化 frontend/profile 预定义的
+  canonicalization relation，不进入 Replay 或 production backend；
 - 本目录只做上述文档的派生投影。
 
 若派生规范与上位设计冲突，应修订派生规范；不得通过增加 interface artifact、hash gate、
@@ -47,10 +50,10 @@ loop 的 argument/yield/result tuple 作者化该顺序，Replay 不按 dtype/re
 仍由 carrier relation 自身表示。slot 顺序不是 event execution order，后者仍只由 `pi.order` 拥有。
 `replay-check.v14` 仅在 packet route
 和 Replay 自身 TTIR 都提供唯一对应时检查 ordered transfer 的词法先后，不从 Source 或 Gate 构造
-对应。当前 Replay 不再向首次模型上下文嵌入完整 packet、critical-facts ledger 或 compact manifest；
-启动消息只给 immutable 文件路径和字节数。Agent 先读取 typed-SSA `semantic-program.intent` 与按
-region/occurrence交叉索引、逐关系无损的 `pi.intent`，再按需查询
-一个 exact J/S_J/π 局部事实。normal 与 MaskJ 各自从本轮可见 J fresh materialize，禁止 full-J
+对应。当前 Replay 不再向首次模型上下文嵌入完整 packet、critical-facts ledger、π 或 compact manifest；
+启动消息只给 immutable J/S_J、MaskC schema、frontend knowledge 的文件路径和字节数。Agent 读取
+typed-SSA `semantic-program.intent`，但不能读取 `pi.intent` 或查询 π 局部事实。normal 与 MaskJ
+各自从本轮可见 J fresh materialize，禁止 full-J
 `S_J` 泄漏到 masked episode。Codex Lift v12 / knowledge v70 同样直接嵌入 exact Harness ABI
 与 relift frontier，并一次并列展开非递归 direct hard categories；此外以
 `intentir.lift-source-ttir.v1`在同一匿名specialization上编译一次Source，TTIR与observer fingerprint只在

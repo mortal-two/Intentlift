@@ -2,6 +2,13 @@
 
 > 状态：最终执行设计（2026-07-22）
 >
+> **2026-07-31 Task 20 窄化修订（规范性覆盖）：** 外部流程、三对象、TypeCheck、relift 与 Gate2
+> 保持不变；凡把 π 列为 Replay 输入、要求 Replay 消费 π，或把 Gate1 写成未参数化 raw observer
+> equality 的条款，均由
+> [J-only Replay 与 typed π-relative Gate1 Observer](method/IntentIR_J-only_Replay与pi参数化Observer_Gate1_2026-07-31.md)
+> 覆盖。当前设计是 `Replay(J,MaskC(C);U_f)`，π 只参数化固定 Gate1 `CanonPair`。历史
+> runtime/receipt 仍按原版本解释；此修订不声称新 runtime 已完成。
+>
 > 前置设计：[IntentIR C：所有权、绑定、消费与三方验证设计](IntentIR_C_所有权_绑定_消费与三方验证设计_2026-07-22.md)
 >
 > 前置设计：[IntentIR π：依赖类型实现见证与 Replay 安全设计](IntentIR_pi_依赖类型实现见证与Replay安全设计_2026-07-22.md)

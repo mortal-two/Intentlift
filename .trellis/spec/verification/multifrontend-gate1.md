@@ -9,13 +9,14 @@ compiler artifacts to any proof object. The shared lifecycle is:
 ```text
 Source_f ──compile(profile_f)──> Observation_f(Source)
    │
-   └──Lift──> J + C + pi ──source-blind Replay_f──> Replay_f
+   └──Lift──> J + C + pi ──source-blind Replay_f(J,MaskC)──> Replay_f
                                                 │
                      compile(profile_f)─────────┘
                                                 v
                                Observation_f(Replay)
                                                 │
-                                  strict Gate1 comparison
+                         profile-scoped π-relative Canon
+                                  and Gate1 equality
 ```
 
 The active registry contains four audited public frontends:
@@ -136,3 +137,44 @@ exports plus four handwritten kernels) for `sm_120`. Compile readiness is still
 not an SCRC closure claim: an individual Source↔Replay result additionally
 requires its accepted `J + C + pi`, Harness binding and strict Gate1/Gate2
 evidence.
+
+## π-relative observer boundary (Task 20)
+
+The common π wire syntax, relation-kind names and ownership labels remain closed.
+Their applicability and observer denotation are profile-relative rather than
+frontend-independent. Each observer profile may implement a versioned,
+deterministic `CanonPair_pi` for only a declared subset of π relation kinds:
+
+```text
+CanonPair_pi(profile, source_observation, replay_observation, J, C, pi)
+    -> canonical_source + canonical_replay + coverage_receipt
+```
+
+`CanonPair_pi` is symmetric for Source and Replay, idempotent, and fail-closed on
+ambiguous anchors or unsupported relations. Its fixed profile rules cannot be
+extended by a candidate or by a per-kernel prompt. J-owned value/dataflow,
+predicate/fill, reduction, effect, control/post-state and output facts remain hard
+observation; π cannot normalize them. A receipt may report the shorthand
+`realization_diff ⊆ Denote_pi`, but the formal Gate1 verdict is equality of the two
+canonical observations.
+
+A candidate relation is not effective merely because it is well typed. The
+profile must recognize its exact typed anchor and fixed local pattern on both
+observations, and every rewrite must preserve the profile's J-owned hard
+projection. A failed or one-sided match leaves the raw residual intact.
+
+Every relation kind is `witness_only` by default for a new profile. Promotion
+requires a profile-wide rule specification with a closed erasable-atom allowlist;
+all other and all unknown observation atoms remain hard. Rule selection cannot
+inspect a kernel identity, benchmark ordinal or source path. Generic typed
+rank/dtype and J-authored symbolic-shape premises are permitted, but equality of
+the current concrete fixture alone is not a relation premise.
+
+The four profiles need not share the same raw diff serialization. They must each
+record the supported π relation subset, observer/canonicalizer versions and
+unsupported cases. A relation unsupported by a profile remains hard or produces
+`observer_unsupported`; it is never borrowed from another frontend. This keeps
+multi-frontend work per observer profile rather than per kernel, without claiming
+that the four profiles have identical observation strength. The common wire is a
+serialization and ownership contract only; an identically named relation kind is
+not the same observer function across profiles, and certificates do not transfer.

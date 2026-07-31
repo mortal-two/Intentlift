@@ -403,8 +403,9 @@ extent。例如 Source 接收 `pad_hd=16`，J 可声明 `k < ceil_div(head_dim,2
 physical domain route 使用 `c_pad_hd // 2`。不得把 C 改存 8、从 valuation 猜 `/2`、让 Replay
 从 J 反推 transform，或把 transform 传播到 sibling C uses。
 
-Replay 读取 MaskC 的匿名 slot 与 authored relation，并在 named route use 消费；ReplayCheck 只检查
-closed spelling 是否存在，最终 target-local topology 仍由 Gate1 observer 裁决。SCRC 后 production
+Task 20 中 Replay 只读取 MaskC 的匿名 slot，不读取 authored relation；route-local transform 只由
+TypeCheck 与声明支持该 relation 的 Gate1 π-relative normalizer消费。最终 target-local topology 由
+Gate1 observer 裁决。SCRC 后 production
 projection 在 π 前停止，只消费 J+C，因此该 relation 不是 backend permission，也不改变 `Impl(J)`。
 
 π 不能补足 J 中缺失的 semantic recurrence。若 Source 的 compiler-visible value dataflow 是
@@ -445,7 +446,8 @@ J-loop/slot pair 至少存在一条合法 relation；untiled J loop 不被迫制
 没有任何 handle 的 Source physical region，所以 Source topology completeness 仍由 Lift 完整提出并
 由 Gate1 对 Source observer 检出；不得把局部 missing-totality 夸写成“每 Source region 完整”。
 
-该 relation 只消除 Replay 的 source-realization 欠定，不给 production backend 增加输入：SCRC 后
+该 relation 只描述 Source realization，并为 Gate1 π-relative canonicalization 提供 typed witness，
+不给 Replay 或 production backend 增加输入：SCRC 后
 production 仍只消费 J+C，自行确定性 materialize/search `Impl(J)`，不得读取 π 来选择 loop basis。
 
 ### J 外物理 tile time
@@ -466,8 +468,8 @@ body 可以锚定具有 closed axis 的 J reduce/contraction，也可以锚定 b
 traversal 的物理时间，不把 realization loop 伪装成 Layer-A recurrence。carrier 只保存 typed temporal
 topology。字段不含 bound/formula/value/API，不在 J 中创建 loop。TypeCheck 只验证 closed
 reference/type/scope/axis/totality，不选择锚点或推导 traversal；Source 的真实方向、数量与完整性仍由
-Gate1 判断。Replay 必须由 J+C+π 得到 active physical tile rank，不能把 logical axis ordinal 直接当
-frontend tensor-rank axis。
+Gate1 判断。Replay只从J与MaskC独立选择physical tile；若与Source不同，只能由冻结profile支持的
+π-relative canonicalization处理，不能把logical axis ordinal直接当frontend tensor-rank axis。
 
 每条 carrier relation 是一个 tuple slot；该 slot 内 init/state/next/result 的 dtype、rank 与
 pointer/value class 必须一致，但不同 slot 可以异构，也不要求等于 `body_instance` 的类型。由此可同时
@@ -478,7 +480,8 @@ pointer/value class 必须一致，但不同 slot 可以异构，也不要求等
 
 同一 `region` 的 `physical_loop_carriers` 按数组 declaration order 定义唯一 carrier-tuple ordinal；
 该 ordinal 同时用于 init/state/next/result 的对应 slot。Lift 必须按 Source frontend loop 的
-argument/yield/result tuple作者化，Replay 原样保持，不得按 dtype、semantic ref 或 mechanism 重排。
+argument/yield/result tuple作者化；Replay不读取该ordinal。只有支持该relation的Gate1 normalizer可以
+在保留J-owned value recurrence后处理相应physical tuple residual。
 这只是 tuple slot identity，不是 event execution order；后者仍只由显式 `pi.order` 拥有。fixed code
 不替旧 artifact 重排，错误顺序由 Gate1 暴露后 fresh relift。
 
@@ -494,8 +497,9 @@ J `effect_if` 拥有 predicate、positive/negative arm 及臂内 value/effect。
 两个 handle 必须是同一个 `effect_if` 的 sibling arm-scope `realize` instances；该 `effect_if` 必须是
 lexical parent 的 final operation，所有后续工作位于 continuation arm。relation 只声明 roles，不包含
 predicate、polarity、return/value/formula、Source 或 frontend API。无 relation 的 `effect_if` 是普通
-显式双臂 control。TypeCheck 不从空臂、effect 或名称推导 relation；Replay 只按 authored relation
-materialize terminal CFG；production backend 不读取 π。
+显式双臂 control。TypeCheck 不从空臂、effect 或名称推导 relation；Replay不读取该relation。
+`terminal_controls`默认是Gate1 `witness_only`，除非profile具有保留predicate/effect/post-state的窄
+normalization rule；production backend 不读取 π。
 
 若 terminal 条件恰是一个 authored J program domain 的补集，Lift 不得为此伪造 `effect_if`，而写：
 
@@ -506,6 +510,29 @@ materialize terminal CFG；production backend 不读取 π。
 该 branch region 必须已由同一 domain realization 的 empty-slot route 控制；relation 只补充“域外终止”。
 domain predicate、extent、polarity 与 continuation 内容仍分别由 J 和既有 π topology 拥有。同一 pair 在
 Replay 最低结构检查中只计为 terminal fork，不再计作普通 program-domain branch。
+
+## Gate1 normalization capability
+
+π schema定义 typed realization facts，但不自动赋予所有 relation 擦除 Gate1 difference 的权限。
+每个新 observer profile 中所有 relation 默认 `witness_only`。profile/version 必须在候选外冻结一张
+capability table，把 relation kind 标成：
+
+```text
+normalizable | conditional | witness_only | unsupported
+```
+
+只有同时发布 anchor sorts、J/B/C 前提、二侧 recognizer、closed erasable-atom allowlist、canonical
+replacement、scope/overlap/composition 与 receipt 的 profile-wide rule，才能把 exact kind 窄升为
+`normalizable/conditional`；候选不能新增 matcher 或选择 `normalize_to`。完整 observation 默认全
+hard，rule 只能改写 allowlist 中的 exact matched atoms。J-owned operator/operand、logical domain、
+predicate/fill、reducer、value recurrence、observable effect/control/post-state/output mapping 与 C 的
+identity/type/valuation/attachment始终 hard；未知 alias、memory-order、numeric、address-provenance atom
+也默认保留。`order`、carrier、terminal control 与 sensitive numeric/update refinement 默认
+`witness_only`。任何 unsupported、单侧或歧义 occurrence 保持 hard，不能因 π clause 存在而通过。
+
+TypeCheck 只验证 relation 的 schema、引用、scope、依赖与 authorization，不读取 Source/Replay
+observation。Gate1 normalizer另记录具体 clause 是否被使用及其coverage receipt；未使用clause不获得
+额外权限，也不要求为了当前 Replay 与 diff 做 equality/minimality证明。
 
 ## Authorization 与 parametricity
 

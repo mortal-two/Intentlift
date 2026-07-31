@@ -3,7 +3,7 @@
 ## 当前权威设计
 
 当前规范性设计由五份相互约束的权威文档共同组成。前四份定义 SCRC，
-第五份定义 SCRC 之后的 production backend。另有一份窄化修订规定 Replay 内部分解，但不增加
+第五份定义 SCRC 之后的 production backend。另有一份窄化修订规定 Replay 与 Gate1 observer 的内部边界，但不增加
 新的证明对象或权威层级：
 
 1. [C：所有权、绑定、消费与三方验证](IntentIR_C_所有权_绑定_消费与三方验证设计_2026-07-22.md)：确定信息归属、组件可见范围、Harness/RefEval/lowering 边界与三对象因子化。
@@ -11,13 +11,13 @@
 3. [Lift、Replay、Gate1、Gate2 最终执行流程](IntentIR_Lift_Replay_Gate1_Gate2_实验与系统改进最终执行流程_2026-07-22.md)：确定实验轮次、relift、失败停止、Gate2 与实验结束后的系统改进流程。
 4. [IntentIR / SCRC 最终数学、执行流程与论文表述](IntentIR_SCRC_最终数学与执行流程_2026-07-22.md)：是上述三份 SCRC 设计的数学与 claim 总述，统一 `TypeCheck` 所有权结论、observer-relative Gate1、外部比较政策 Q、Gate2 三条直接比较、instance-wise `c0` 与概率声明边界。它不增加第四个设计对象或新的运行阶段；若对象/schema/API 细节发生歧义，仍回到对应的三份核心设计修订。
 5. [Contract-Preserving Multi-Lowering 后端最终设计](IntentIR_Contract_Preserving_Multi_Lowering_后端最终设计_2026-07-24.md)：定义 accepted J+C 的 production 消费边界、Intent MLIR materialization、A/B/C 后端作用、generic implementation families、pass contracts、搜索与实验设计；它不修改 SCRC 接受谓词。
-6. [J-only Target-Normal IR 与 π 约束的确定性 Composer](method/IntentIR_J-only_Target-NormalIR与pi约束确定性Composer_2026-07-31.md)：固定代码把 J 物化为只读 `S_J`；fresh source-blind Agent 只从 J/`S_J` 生成完整 Target-Normal IR 实例；固定 target Composer 再用 π/MaskC 约束物化目标源码。该内部 IR 不是第四 artifact，π 不是 executable plan，Composer 不得发明 J 语义。
+6. [J-only Replay 与 typed π 参数化 Gate1 Observer](method/IntentIR_J-only_Replay与pi参数化Observer_Gate1_2026-07-31.md)：Replay 只消费 `J+MaskC(C)`；π 不进入 Replay，而只实例化 frontend/profile 预先冻结的 Gate1 canonicalization algebra。Gate1 仍以规范化 observation equality 裁决，Gate2 三边保持不变。
 
 前四份 SCRC 文档共同规定：
 
 ```text
 Lift_H(S) -> (J,C,pi)
-Replay = W_f(J,pi,MaskC(C);U_f)
+Replay = W_f(J,MaskC(C);U_f)
 SCRC_CERTIFIED iff TypeCheck(J,C,pi) and Gate1 and Gate2
 ```
 

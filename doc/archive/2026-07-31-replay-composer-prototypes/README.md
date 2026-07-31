@@ -10,7 +10,7 @@
 Replay，正式 Gate1 仍有 232 项 dataflow 差异，且 Agent 仍需手写大部分目标语义源码。
 
 该目录描述的后继 Task 18 路线也已在真实 Flash-forward 上证明仍然过重，并另行归档到
-`../2026-07-31-direct-replay-compiler-agent/`。当前活动路线见 Task 19。
+`../2026-07-31-direct-replay-compiler-agent/`。Task 19 的确定性 Composer 路线亦已归档；当前活动路线见 Task 20。
 
 历史实现由 Git 提交 `81b873aa`、`a0fbddea`、`e3e9ff7b`、`7590f753` 以及 Task 17 交接提交保留，
 不复制成活动代码的第二份真值。归档材料不得被当前实现或 spec 当作规范输入。

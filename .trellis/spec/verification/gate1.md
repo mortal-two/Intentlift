@@ -4,7 +4,8 @@
 
 ## 前置条件
 
-Gate1 只接收已经通过 `TypeCheck(J,C,π)`、由当前三元组生成的全新盲 Replay。Source 与 Replay
+Gate1 只接收已经通过 `TypeCheck(J,C,π)`、由 `J+MaskC(C)` 生成的全新盲 Replay；π 不进入
+Replay request、workspace 或工具。Source 与 Replay
 使用同一个 C 对象、同一份实际 valuation `c0 = Bind_H(C)` 与相同 specialization/runtime
 conditions。该 Gate1 claim 只针对这个 c0。
 
@@ -28,28 +29,70 @@ output 改成 inout。CandidateCheck 的 PASS 也不是 Gate1 前置证书；外
 
 ## 裁决关系
 
-对前端 f 和声明的 observer profile p：
+对前端 f、声明的 observer profile p、π schema `Σπ` 与 π-normalizer version ν：
 
 ```text
-G1 = [F_(f,p)(Compile_H(Source,c0)) == F_(f,p)(Compile_H(Replay,c0))]
+(OS_bar, OR_bar, receipt)
+  = CanonPair^pi_(f,p,nu)(Observe(Compile_H(Source,c0)),
+                          Observe(Compile_H(Replay,c0)); J,C,pi)
+G1 = [Delta_(f,p)(OS_bar, OR_bar) == empty]
 ```
 
-Gate1 回答 Replay 是否重建了 Source 对 J 的 realization。它不执行数值语义、不读取 Gate2
-结果，也不通过 host semantic composer/RuleCard 构造 Replay。fresh Replay agent 默认直接维护完整
-source；可选 syntax composer 只拼接它自己写出的 exact fragments，不读 Source/Gate、不生成语义，
-且不进入裁决关系。
+Gate1 回答 J-only Replay 与 Source 的 compiler-visible residual 是否在冻结 typed π-relative
+observer quotient 下闭合。它不执行数值语义、不读取 Gate2结果，也不通过 host semantic
+composer/RuleCard 构造 Replay。fresh Replay agent 直接维护并提交完整 source。
 
 Replay normal view 必须保留当前 J-owned typed relations；它从 J 读取 value/dimension equality、
-closed dimension definitions、
-consumer-specific outside-domain contract 与 access guard，从 π 读取 realization topology，以及 J
-reduce/contraction 之外已声明的 physical iteration/carrier。logical J axis ordinal 不是 Triton tile
-tensor 的 rank-local reduction axis；Replay 必须从 J/C/π 共同确定 active physical tile，并对一维 tile
-使用 local axis 0，不能机械复制 logical axis。特别地，
+closed dimension definitions、consumer-specific outside-domain contract 与 access guard，但不读取 π。
+logical J axis ordinal 不是 frontend active tile 的 rank-local reduction axis；Replay 只能根据 J、
+MaskC schema 与公共 frontend knowledge 独立选择实现，不能机械复制 logical axis。特别地，
 v5 guarded store 的 merge 已经是 Layer A 中显式 `select`，且精确 inout/pre-state、polarity 与 axes 已
 通过 TypeCheck；Replay 不得把 relation 解读成允许它自行发明 branch、merge 或 mutation。Gate1
-比较的是 Replay 对这些已声明事实的 source realization，不为缺失 relation 建议或生成答案。
+比较的是 J-only Replay 与 Source 的 π-relative canonical observations，不为缺失 relation建议或生成答案。
 
-当前 `replay-check.v14` 的 synthetic compile 只消费匿名 packet：核对作者化 `transfer_direct`
+### π-relative canonicalization
+
+π relation 的 grammar、字段和 observer denotation 由冻结 `Σπ` 与 `(f,p,ν)` 预先定义。Lift只能提交
+typed relation instances，不能提交 wildcard、任意 `allowed_diff` 或 free-text equivalence。canonicalizer
+对 Source/Replay 对称调用，必须 deterministic、idempotent、hard-preserving 且 fail closed；任何匹配
+歧义、缺少 typed anchor 或 profile 未支持的 relation 都不得 normalize。
+
+新 profile 中所有 π relation 默认 `witness_only`。只有 profile-wide capability table 已发布完整
+rule spec（anchor sorts、J/B/C 前提、二侧 recognizer、closed erasable-atom allowlist、canonical
+replacement、scope/overlap/composition 与 receipt）的 exact relation kind 才可窄升；candidate 不能选择
+rule、改 denotation 或提交 `normalize_to`。规则可读取通用 typed rank/dtype、J-authored relation 与 C
+attachment，不得读取 Kernel identity、Source 路径或仅凭当前 concrete extents 相等发明关系。
+
+每个可 normalize relation `q` 都实现一个冻结的 partial pair recognizer：
+
+```text
+Apply_(f,p,nu)^q(OS, OR; J,C) -> (OS', OR', local_receipt) | undefined
+```
+
+只有 `q` 唯一锚定已有 J/C occurrence、两侧 exact scope 均满足该 profile 的固定局部前提、作用域
+不歧义且 hard projection 不变时才应用。`undefined` 不会变成 PASS 权限：两侧原始原子继续进入
+residual。TypeCheck 只证明 `q` 是 closed typed instance；本二侧 applicability check 才决定它在这次
+Gate1 中是否被记作 `used`。该检查不搜索或补造 π，也不是完整 Source→π extractor。
+
+J-owned operator/operand、logical domain、predicate/fill、reducer、value recurrence、observable
+effect/control/post-state 与 output binding 始终保持 hard。program-coordinate/address spelling、placement、
+materialization 或 physical-iteration wrapper 只有在 profile 声明支持且 J/B 前置条件满足时才可
+normalize。order、sharing、carrier、terminal control 与 sensitive numeric/update refinement 默认只是
+`witness_only`，不能单凭 π 放宽 Gate1。
+
+完整 observation 默认全 hard；rule `q` 只能改写其 closed `erasable_atom_kinds(q)` 中 exact matched
+atoms，补集 `H^q_(J,C)` 必须逐侧不变。上述 J-owned observation、C identity/type/valuation/attachment
+始终 hard；未知 alias、memory-order、numeric、address-provenance atom 也因默认规则保留。多个 relation
+不得通过重叠 scope 或候选指定顺序扩大可擦除范围。
+交换 Source/Replay 只允许交换输出与 receipt 角色，不得改变适用性或 verdict。
+
+normalizer 保存 base diff、used/unused π relations、covered atoms、uncovered residual 与 hard-preserved
+atoms。`Diff_realization subseteq Denote(pi)` 只是在 matcher 对该 profile 已证明双向精确时的 coverage
+receipt；正式 verdict 始终是 `Delta(OS_bar,OR_bar)=empty`，即两侧 normalized observation equality。
+
+以下 `replay-check.v14` 条款记录 Task 20 迁移前的 π-consuming Replay runtime；新 J-only Replay
+路径不得调用这些 π packet checks。它们在 Task 20 完成 runtime/spec 同步后归档，不得作为新路径
+已经实现的证据。迁移前 `replay-check.v14` 的 synthetic compile 只消费匿名 packet：核对作者化 `transfer_direct`
 occurrence、structured J loop 加 `pi.physical_iterations` 的 loop occurrence、对应 carrier arity；并且
 只在 signature pointer/tensor kind 与 π address routes 完全闭合时核对 pointer-address operation
 occurrence。完整闭包允许独立 integer base/lane contribution，且不要求 address instance 与 transfer
@@ -151,16 +194,23 @@ Gate1 失败产生完整结构化 diff，只返回产生它的 source-aware Lift
 Source + previous complete (J,C,pi) + accumulated Gate1 diff
   -> complete new (J,C,pi)
   -> TypeCheck
-  -> new blind Replay
+  -> J/C changed: fresh J-only Replay
+  -> pi-only changed: exact-R witness recheck is permitted
   -> Gate1
 ```
 
-diff/frontier 不进入 Replay。禁止 patch 旧 Replay、复用旧 Replay 或把局部 patch 当成新的 proof
-artifact；owner 可以用 exact-text patch 编辑自己的 working file，但每轮必须提交完整新三元组。当前
+diff/frontier 不进入 Replay。禁止 patch 旧 Replay 或把局部 patch 当成新的 proof artifact；owner
+可以用 exact-text patch 编辑自己的 working file，但每轮必须提交完整新三元组。只有 J、MaskC、
+Replay request policy 与 exact Replay bytes 均不变的 π-only witness 修订可以复用 R，并必须重跑
+TypeCheck/Gate1；任何 J/C 改动都要求 fresh Replay。当前
 同一 Source/c0 可启动 `1<=B<=5` 个独立 branch，并显式声明正有限 `K`（CLI为`1<=K<=12`，
 Task14默认5）；每 branch最多 `K` 个正式候选，feedback只返回
 产生它的 branch。首个被观察到并已完整落盘的 Gate1 closure 原子成为 winner，sibling cooperative
 stop 并保存 receipt；该调度不读取 hidden Gate2，只有 winner 进入 Gate2。
+
+Gate1 的适应性 relift 是固定 relation algebra 内的确定性 witness search，不是统计检验，因而不要求
+π precommit；正式报告必须保留 first-pass/closure@k 与搜索成本。证书只认证 Gate1 receipt 中实际
+`used` 的 clauses；proposed/unused relation 不获得 Source 真值或跨 profile 有效性的结论。
 
 若 Gate1 已闭合而失败只发生在 Gate2 的 J reference consumer，保留这份精确 artifact 与 Replay；
 修复通用 RefEval 能力后走 Gate2-only exact-artifact recheck，不重新 Lift 或重新 Gate1。该复查的

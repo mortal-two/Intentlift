@@ -35,10 +35,10 @@ anonymous-view consistency + TypeCheck(J,C,pi)
 deterministic J-only M(J) -> read-only parameterized S_J
         |
         v
-fresh Replay Compiler Agent reads S_J+pi+MaskC(C)+U_f -> complete R
+fresh Replay Compiler Agent reads S_J+MaskC(C)+U_f -> complete R
         |
         v
-Gate1(Source,R,C)
+Gate1_pi(Source,R,J,C,pi)
    | fail                         | pass
    v                              v
 bounded feedback frontier + exact diff -> same owner  Gate2(Source,R,RefEval(J))
@@ -62,8 +62,10 @@ bounded feedback frontier + exact diff -> same owner  Gate2(Source,R,RefEval(J))
 ```
 
 Decode/Elaborate、TypeCheck 与 `S_J=M(J)` 是 Replay 前的确定性 closed-IR 前端，不是新的证明对象或
-额外 Gate。`S_J` 只在当前 Replay episode 内作为 J 的 proof-irrelevant 编译视图；外部数学接口仍是
-`W_f(J,pi,MaskC(C);U_f)`，证书和 production backend 都不新增 `S_J` 输入。
+额外 Gate。`S_J` 只在当前 Replay episode 内作为 J 的 proof-irrelevant 编译视图；外部 Replay 接口为
+`W_f(J,MaskC(C);U_f)`。π 不进入 Replay，而由 Gate1 的 frontend/profile-specific typed
+canonicalizer 对 Source/Replay observations 作对称规范化；证书和 production backend 都不新增
+`S_J` 输入。
 接受后的 typed/canonical archive 就是唯一 J；响应 JSON 不叫另一份 J。只有二者通过并
 进入一次全新 Replay 的候选才计为正式实验轮次；每次运行显式声明正有限的 `K`，每 branch 最多
 执行 `K` 轮，之后才能报告 branch-local `NO_CLOSURE`。当前 CLI限制 `1<=K<=12`，Task 14默认
@@ -86,9 +88,9 @@ production search 在 `SCRC_CERTIFIED` 之后独立发生，不改变该状态�
 |---|---|---|
 | Lift | 同一 branch 持久 conversation/workspace 中的 Source、H 的最小匿名机械坐标、当前完整 artifact、bounded feedback frontier 与可按需读取的 exact Gate1 diff；对当前 candidate 的只读 CandidateCheck；LLM 明示 old/new 的 exact-text patch | sibling/Replay/Gate2 状态；第四个 proof artifact；由 checker/runtime 推断、推荐或补写语义/corrected patch |
 | Decode/Elaborate | Lift response 的 closed J/C/π grammar | H/C values、Gate output、语义猜测或修复 |
-| Replay | exact J、J-only 只读 `S_J=M(J)`、π、`MaskC(C)`、版本化公共 `U_f`；Agent 全局编译完整 `S_J`，并从 π 消费已声明的 physical iteration/carrier 与 active tile-local axis | Source、H、C values、source name/position、BindingMap、target skeleton/hole、interface sidecar、compiler diff/fingerprint、旧 Replay/conversation、per-kernel RuleCard |
+| Replay | exact J、J-only 只读 `S_J=M(J)`、`MaskC(C)`、版本化公共 `U_f`；Agent 全局编译完整 `S_J` | π、Source、H、C values、source name/position、BindingMap、target skeleton/hole、interface sidecar、compiler diff/fingerprint、旧 Replay/conversation、per-kernel RuleCard |
 | Harness | 调用坐标、inputs、C valuation、device/grid/toolchain | 语义分类、实现构造 |
-| Gate1 | Source/Replay 的 compiler observation、同一 c0 与 observer profile | 数值语义裁决、Replay 修补 |
+| Gate1 | Source/Replay 的 compiler observation、同一 c0、J/C/π、冻结的 observer/π-normalizer profile | 数值语义裁决、Replay 修补、动态扩张 π relation algebra |
 | RefEval | J 与 logical inputs | 未接受的响应文本、C、π、Source、Replay |
 | Gate2 | 三腿输出、外部 Q 及三条直接 `Close_Q` 比较 | 候选自定义及格线、真正集合值全行为证明 |
 | Production lowerer | J（由 orchestration 仅在 SCRC acceptance 后交付）、可选 C、target、generic pass/cost library | 未接受的响应文本、π、Gate verdict、源码身份、per-kernel RuleCard |

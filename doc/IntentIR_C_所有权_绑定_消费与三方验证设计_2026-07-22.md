@@ -2,6 +2,13 @@
 
 > 状态：新架构核心设计（2026-07-22）
 >
+> **2026-07-31 Task 20 窄化修订（规范性覆盖）：** 本文关于 J/C/Harness/RefEval/production
+> 的所有权仍有效；凡把 π 列为 Replay 输入、要求 Replay 复刻 π topology，或把 Gate1 写成未参数化
+> 的 raw observer equality 的条款，均由
+> [J-only Replay 与 typed π-relative Gate1 Observer](method/IntentIR_J-only_Replay与pi参数化Observer_Gate1_2026-07-31.md)
+> 覆盖。当前设计是 `Replay(J,MaskC(C);U_f)`；π 只进入固定、profile-scoped 的 Gate1
+> `CanonPair`，不进入 Replay。历史 runtime/receipt 仍按原版本解释；此修订不声称新 runtime 已完成。
+>
 > 修订依据：[高级 AI 对 C 设计的纠正](source-notes/高级ai对c的纠正.md)、[高级 AI 对 C 设计的自省](source-notes/高级ai对c的自省.md)
 >
 > 联合复审：[三份核心设计复审与四项修正](source-notes/高级ai对三份核心设计的复审与四项修正_2026-07-22.md)

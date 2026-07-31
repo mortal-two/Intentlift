@@ -5,17 +5,17 @@ Trellis CLI、自动 session 或 workflow phase。
 
 ## 当前任务
 
-Task 11 继续作为不停止的 28-Kernel 闭合主线。Task 19 在当前 24/28 严格基线上保留
-`J -> read-only S_J`，但将 Replay 拆成 J-only Target-Normal IR Agent 与 π 约束的确定性 target
-Composer。Task 16–18 的 fragment、hole、binding、fixed renderer 与直接完整源码 Agent 路线均已归档。
+Task 11 继续作为不停止的 28-Kernel 闭合主线。Task 20 在当前严格基线上把 Replay 改为只消费
+`J + MaskC(C)`，并把 typed π 限定为 Gate1 frontend observer 的版本化 canonicalization witness。
+Task 16–19 的 fragment、hole、binding、Composer 与直接完整源码 Agent 路线均已归档。
 production backend 仍只在 SCRC 后消费 J+C，不读取 π。
 
 - [Task 11：SCRC v4 的 28-Kernel 有界并行全闭合](07-24-scrc-v4-full-closure-11/task.md)（执行中；闭合主线）
-- [Task 19：J-only Target-Normal IR Agent / π 约束确定性 Composer](07-31-j-only-target-normal-composer-19/task.md)（执行中）
+- [Task 20：J-only Replay / typed π-relative Gate1 Observer](07-31-j-only-replay-pi-relative-gate1-20/task.md)（设计与执行中）
 
 ## 本轮已归档任务
 
-Task 01–10、Task 12–18 均已结束并迁入 `archive/2026-07/`。其中任务正文与 evidence 是历史记录，不再作为
+Task 01–10、Task 12–19 均已结束并迁入 `archive/2026-07/`。其中任务正文与 evidence 是历史记录，不再作为
 当前执行状态或后继调度的权威来源。
 
 - [Task 17：Typed Skeleton / LLM Target Binding Composer（已由 Task 18 取代）](archive/2026-07/07-31-typed-skeleton-llm-binding-composer-17/task.md)
@@ -60,3 +60,4 @@ Task 11 的历史输入，不得因正文中的旧“执行中”或“后续”
 此前所有活动任务已原样归档到
 [07-21 reset 快照](archive/2026-07/07-21-pre-llm-first-reset/README.md)。
 - [Task 18：J SemanticMaterializer / 直接 Replay Compiler Agent（已由 Task 19 取代）](archive/2026-07/07-31-j-semantic-materializer-replay-compiler-agent-18/task.md)
+- [Task 19：J-only Target-Normal IR / 确定性 Composer（已由 Task 20 取代）](archive/2026-07/07-31-j-only-target-normal-composer-19/task.md)

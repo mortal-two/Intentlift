@@ -9,7 +9,7 @@ IntentIR 让 Lift 负责从 Source 提出完整 `(J,C,π)`，让 source-blind Re
 
 ```text
 Lift_H(S) -> (J,C,pi)
-Replay = W_f(J,pi,MaskC(C);U_f)
+Replay = W_f(J,MaskC(C);U_f)
 ```
 
 ## 不可破坏的边界
@@ -20,7 +20,7 @@ Replay = W_f(J,pi,MaskC(C);U_f)
    使用同一个 C 对象和实际 valuation `c0`。主证书只覆盖该 c0，不自动覆盖所有 admissible C。
 4. π 是依赖 J/C 才有意义的 source-realization witness，没有独立语义权威。
 5. 工程接口只能是 `InterfaceView(J)` 的确定性投影，不是第四对象、额外命名空间或 Replay 输入。
-6. Replay 只接收 `J + π + MaskC(C) + U_f`；U_f 是与当前源码无关的公共前端上下文。
+6. Replay 只接收 `J + MaskC(C) + U_f`；π、Gate1 observation/diff 与 Source 均不进入 Replay；U_f 是与当前源码无关的公共前端上下文。
 7. Harness 只保存和绑定调用事实，不构造 J、C、π 或 Replay。
 8. `RefEval` 只读取 J；production lowering 读取 J/C，不读取 π。
 9. 主认证严格是 `TypeCheck(J,C,π) ∧ Gate1 ∧ Gate2`。

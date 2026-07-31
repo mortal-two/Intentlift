@@ -1,7 +1,7 @@
 # Task 19：J-only Target-Normal IR Agent / π 约束确定性 Composer 与最终闭合
 
-> 状态：`IMPLEMENTATION_ACTIVE`（2026-07-31）  
-> 接管已归档 Task 18；Task 11 继续是不停止的 28-Kernel 总闭合主线。
+> 状态：`ARCHIVED_SUPERSEDED_BY_TASK20`（2026-07-31）
+> 本任务的 Target-Normal/确定性 Composer 路线已停止；Task 20 改为 J-only Replay 与 typed π-relative Gate1 observer。Task 11 继续是不停止的 28-Kernel 总闭合主线。
 
 ## 0. 唯一目标
 

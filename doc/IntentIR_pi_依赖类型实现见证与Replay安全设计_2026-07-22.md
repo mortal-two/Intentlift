@@ -2,6 +2,14 @@
 
 > 状态：新架构核心设计（2026-07-22）
 >
+> **2026-07-31 Task 20 窄化修订（规范性覆盖）：** 本文关于 π 的 closed schema、dependent
+> typing、无语义原子与 production 不消费 π 的边界仍有效；凡把 π 列为 Replay 输入、要求 Replay
+> 按 π 重建 topology，或以 π-consuming Replay 解释 masked-J 的条款，均由
+> [J-only Replay 与 typed π-relative Gate1 Observer](method/IntentIR_J-only_Replay与pi参数化Observer_Gate1_2026-07-31.md)
+> 覆盖。π 现在是 Gate1 的 typed realization-quotient witness：候选 relation 只有通过固定二侧
+> applicability/hard-projection 检查才可参与 `CanonPair`；π 不进入 Replay。历史 runtime/receipt
+> 仍按原版本解释；此修订不声称新 runtime 已完成。
+>
 > 思想来源：[高级 AI 对 π 的思想](source-notes/高级ai对于π的思想.md)
 >
 > 联合复审：[三份核心设计复审与四项修正](source-notes/高级ai对三份核心设计的复审与四项修正_2026-07-22.md)

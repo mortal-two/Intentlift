@@ -1,7 +1,7 @@
 # IntentIR：J-only Target-Normal IR 与 π 约束的确定性 Composer
 
 > 日期：2026-07-31  
-> 状态：Task 19 活动方法设计；取代 Task 18 的 `S_J+π -> Agent -> target source` 直接编译路线。
+> 状态：历史方案；Task 19 已归档并由 Task 20 的 J-only Replay / typed π-relative Gate1 observer 路线取代。本文只用于追溯，不再约束当前实现。
 
 ## 1. 裁决
 
