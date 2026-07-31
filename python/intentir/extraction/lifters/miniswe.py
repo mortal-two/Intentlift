@@ -38,7 +38,7 @@ from .prompt import SCHEMA as INTENTIR_OPERATION_REFERENCE
 
 
 MINISWE_LIFT_BACKEND = "minisweagent.intentir-lift.v3"
-MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v68"
+MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v69"
 MINISWE_LIFT_TURN_TIMEOUT_SECONDS = 300.0
 MINISWE_LIFT_XHIGH_TURN_TIMEOUT_SECONDS = 900.0
 MAX_RELIFT_CHECK_FEEDBACK_ITEMS = 20
@@ -390,6 +390,36 @@ def _replay_compiler_artifacts(
     return result
 
 
+def _replay_counterexample_from_diagnostics(
+    diagnostics: Mapping[str, Any] | None,
+) -> Mapping[str, Any] | None:
+    """Find prior Replay evidence through the closed Gate1 wrapper shapes.
+
+    A failed formal round can expose the counterexample directly or retain it
+    under ``unresolved_gate1``.  Both Lift backends must extract the same object
+    before mounting feedback, otherwise the nested form silently leaves large
+    compiler artifacts in the generic feedback envelope.
+    """
+
+    if not isinstance(diagnostics, Mapping):
+        return None
+    evidence = diagnostics.get("replay_counterexample")
+    if isinstance(evidence, Mapping):
+        return evidence
+    unresolved = diagnostics.get("unresolved_gate1")
+    nested = (
+        unresolved.get("diagnostics")
+        if isinstance(unresolved, Mapping)
+        else None
+    )
+    evidence = (
+        nested.get("replay_counterexample")
+        if isinstance(nested, Mapping)
+        else None
+    )
+    return evidence if isinstance(evidence, Mapping) else None
+
+
 def _input_files(
     request: SCRCLiftRequest,
     *,
@@ -431,11 +461,7 @@ def _input_files(
         # Removing this transport copy does not alter or derive artifact bytes.
         feedback_for_mount.pop("previous_artifact", None)
         diagnostics = feedback_for_mount.get("diagnostics")
-        counterexample = (
-            diagnostics.get("replay_counterexample")
-            if isinstance(diagnostics, dict)
-            else None
-        )
+        counterexample = _replay_counterexample_from_diagnostics(diagnostics)
         if isinstance(counterexample, dict):
             source_value = counterexample.pop("replay_source", None)
             if isinstance(source_value, str):

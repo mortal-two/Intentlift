@@ -182,7 +182,7 @@ provenance 进入未知 op 均显式 consumer-unsupported。v11 继承 v10 的�
 guard/runtime-bound 例外；fixed code 不补写 count、domain、predicate 或 reduction contract。
 
 当前 shared projection receipt 为 `intentir.j-functional-boundary.v22`，scalar RefEval 为
-`j_scalar_cpu_mlir_v24`，closed structured reference 为
+`j_scalar_cpu_mlir_v25`，closed structured reference 为
 `intentir.j-structured-cpu-reference.v10`，typed relation-indexed reference 为
 `intentir.j-contract-indexed-cpu-reference.v2`。v22 完整继承既有唯一 node-less logical-input load、
 通用 multi-reduction padding closure、当前 Gate2 invocation 的 runtime predicate tautology proof、
@@ -219,6 +219,9 @@ structured reference v9 还与既有 JSON/Intent MLIR gather 合同对齐：当
 非 gather-axis extent 时，consumer 只机械插入 unit gather axis，执行同一 `take_along_axis` 后再
 squeeze；bounds 仍来自 J 已有 `index_bounds`。它不从 Source、Harness 或 π 构造 index、axis 或
 shape relation，rank-0 compressed form 与任一非轴 shape 不一致继续 fail closed。
+scalar RefEval v25只让上述既有typed gather executor接收一种此前被capability guard误拒的混合边界：
+domain-total direct index-array access无需伪造predicate/fill，真正的间接data load必须有J-owned
+`index_bounds`，predicated load仍必须有fill。该检查不匹配Kernel或index公式，不扩大production lower。
 同一版本的 Gate2 input precondition range analysis 只对 closed integer subgraph 增加两条保守规则：
 `iota(n=x*)` 使用当前 closed dimension，signed integer `div` 仅在 divisor interval 不含零时按
 `arith.divsi` 的 toward-zero 语义传播端点区间；随后 `add/mul/gather` 仍逐 dtype overflow 与

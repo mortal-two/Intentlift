@@ -57,7 +57,7 @@ from intentir.verify.gate1.model import (
 from .model import ExecutionResult
 
 
-SCALAR_LOWERING_PROTOCOL = "j_scalar_cpu_mlir_v24"
+SCALAR_LOWERING_PROTOCOL = "j_scalar_cpu_mlir_v25"
 
 
 def _digest(value: Mapping[str, Any]) -> str:
@@ -910,10 +910,10 @@ def _contract_ir_indexed_graph_fallback(j: SemanticArchive) -> bool:
     """Recognize one relation capability class, never an index formula shape.
 
     This migration slice covers flat, pure indexed A graphs whose physical
-    predicates are completely authored and whose non-direct internal loads are
-    guarded by already-validated J index-bounds relations.  Stateful, padded
-    reduction, runtime-guard, alias, and update semantics retain their dedicated
-    consumers until they move to ContractIR as typed relations.
+    predicates are completely authored and attached to already-validated J
+    index-bounds relations.  Stateful, padded-reduction, free runtime-guard,
+    alias, and update semantics retain their dedicated consumers until they move
+    to ContractIR as typed relations.
     """
 
     boundary = j.boundary
@@ -943,14 +943,7 @@ def _contract_ir_indexed_graph_fallback(j: SemanticArchive) -> bool:
         for operation in walk(j.intent.body)
     ):
         return False
-    if not boundary.accesses or any(
-        access.predicate is None for access in boundary.accesses
-    ):
-        return False
-    if any(
-        access.kind is AccessKind.LOAD and access.fill_value is None
-        for access in boundary.accesses
-    ):
+    if not boundary.accesses:
         return False
 
     scalar_inputs = {
@@ -994,14 +987,30 @@ def _contract_ir_indexed_graph_fallback(j: SemanticArchive) -> bool:
         ):
             return False
 
+    # SemanticArchive construction has already run
+    # ``_validate_typed_boundary_relations``: every item targets the exact
+    # gather/scatter op and matches its data, indices, and axis; every gather is
+    # covered exactly once.  Reuse that canonical invariant here instead of
+    # growing a second, potentially divergent relation validator in RefEval.
     bounded_nodes = {item.node_ref for item in boundary.index_bounds}
     parsed = elaboration.access_by_id
-    return all(
-        access.kind is not AccessKind.LOAD
-        or parsed[access.access_id].index.direct_coordinates is not None
-        or access.node_ref in bounded_nodes
-        for access in boundary.accesses
-    )
+    for access in boundary.accesses:
+        if access.kind is not AccessKind.LOAD:
+            continue
+        direct = parsed[access.access_id].index.direct_coordinates is not None
+        if not direct and access.node_ref not in bounded_nodes:
+            return False
+        if access.predicate is not None:
+            # The only newly admitted non-domain-total predicate class is the
+            # physical access attached to a typed indexed J node.  A free guard
+            # on an unrelated direct load would be semantics not consumed by the
+            # structured J executor and therefore remains fail-closed.
+            if (
+                access.fill_value is None
+                or access.node_ref not in bounded_nodes
+            ):
+                return False
+    return True
 
 
 def _structured_indexed_update_fallback(j: SemanticArchive) -> bool:

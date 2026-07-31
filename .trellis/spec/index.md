@@ -31,7 +31,7 @@ existing-route、C/J attachment 与 closed divisor/rounding。fixed code只诊�
 改图或修复 artifact；v13只新增J/C-dependent closed `participant_mappings`，把物理participant axis
 循环投影到exact J lane domain，wire不含logical extent/formula/API/target recipe/C value；历史
 wire/receipt继续按自身版本读取，不静默升级或重判。当前 Agent execution
-receipt 为 `intentir.lift-knowledge.v90 / intentir.lift-knowledge.v68 / minisweagent.intentir-replay.v36 / openai.codex-cli.intentir-replay.v36`；Codex Replay v36的syntax-composer.v2增加agent-owned builder与
+receipt 为 `intentir.lift-knowledge.v91 / intentir.lift-knowledge.v69 / minisweagent.intentir-replay.v36 / openai.codex-cli.intentir-replay.v36`；Codex Replay v36的syntax-composer.v2增加agent-owned builder与
 `off/available/preferred`诊断模式，但不改变Replay输入或接受集合；
 artifact.v11 的 `dimension_relations`只接受identity、常数加/乘、常数ceil-div与round-up的acyclic closed grammar；
 relation由Lift从Source作者化，所有J消费者只能验证/求值，不能从Harness valuation、grid、C、π或TTIR生成。
@@ -64,9 +64,11 @@ Codex Lift v18 还用同一公共 obligation 投影对账候选已写出的 real
 Codex Lift v19 将 relift 的 bulk feedback 改成 workspace 内按既有 Gate1 label 分区的 exact 文件，
 不再重复输入上一 artifact；这只缩小 agent 上下文，不改变任何接受集合。
 Codex Lift v20 删除重复的 feedback host tool，特殊回调只保留两个 reject-only checker。
-Codex Lift v31把任意合法Gate1 category（含`ptx.*`）放入首次即存在、每轮原子覆盖的stable exact
-category index；owner仍按label读取单一类别，不接收bulk artifact。固定input文件集合避免persistent
-workspace续轮因新增category path失败，也避免已消失类别残留；该transport不解释diff或选择repair。
+Codex Lift v32把已经删除重复artifact/compiler blob的标准closed `feedback.json`作为canonical本地
+query source，v31 stable category index降为冗余；任意合法Gate1 label（含`ptx.*`）仍按单一category
+读取，超长TIR/PTX string按exact JSON path与UTF-8 byte offset分页，array/object按item offset分页，
+且whole/chunk receipt可机械核验。固定input文件集合避免persistent workspace续轮因
+新增category path失败，也避免已消失类别残留；该transport不解释diff或选择repair。
 两条路径都不生成 artifact/realization，没有 Gate
 或认证权限。
 
@@ -121,7 +123,7 @@ cooperative stop并保存 receipt；hidden Gate2 尚未生成，因此调度次�
 outer batch protocol 是 `intentir.scrc.batch.v3`；其 `observer_unsupported` 只表示 Source observer
 能力缺口，不是候选非法或 `NO_CLOSURE`，历史 batch v2 report 不重判。
 
-当前 scalar RefEval 是 `j_scalar_cpu_mlir_v24`，shared functional-boundary receipt 是
+当前 scalar RefEval 是 `j_scalar_cpu_mlir_v25`，shared functional-boundary receipt 是
 `intentir.j-functional-boundary.v22`；structured与relation-indexed J-only执行receipt分别是
 `intentir.j-structured-cpu-reference.v10 / intentir.j-contract-indexed-cpu-reference.v2`。主 SCRC runner 选定 Gate2 winner 后，才为当前 invocation 调用
 RefEval-only 入口；projection library 不选择 winner。该入口用 J 自身
@@ -129,6 +131,9 @@ rank-0 logical `i1`/integer values 和完整 closed dimensions 逐 access 证明
 domain 恒真；不改 J、不读 Source/C/π、不进入 Lift feedback。invocation-local
 proof subreceipt 不保存 raw value/value digest；这是 audit-data minimization，不是
 confidentiality/privacy proof。
+v25只扩展既有ContractIR indexed-A fallback的closed capability check：domain-total direct access无需
+伪造predicate/fill，间接load必须由typed `index_bounds`锚定，已有predicate的load仍必须有J-owned
+fill。它不生成gather/index/predicate，执行仍由既有typed structured reference完成。
 production projection 仍是 value-free `ProjectFunctionalBoundary(J)`。CPU-only
 `expand-rsqrt-for-libm` 位于共享 Intent-to-Linalg 之后，不改变共享/GPU lowering。
 v18/v19 还完整消费同一 inout handle 上多个 closed store→reload stage：每一对必须由唯一 producer

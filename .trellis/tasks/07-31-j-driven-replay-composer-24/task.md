@@ -1,6 +1,6 @@
 # Task 24：J 主导的 π_min 与三前端 Episode-Local Composer Replay
 
-> 状态：`P5_CUDA_ROW_SUM_CERTIFIED_HORIZONTAL_EXPANSION`（2026-07-31）。
+> 状态：`P5_GATHER_MECHANISMS_IMPLEMENTED_FRESH_RERUN_PENDING`（2026-07-31）。
 >
 > 定位：Task 15/Task 11 的 Replay 构造机制升级，以及 Task 23 多前端实证的真实 closure 执行线。
 > 本任务不接管 production backend；backend 仍在 SCRC 后只消费 accepted `J+C`。
@@ -295,6 +295,58 @@ Replay，`gpt-5.6-sol high`，Mask-J配置开启）：
 - accepted normal Replay为6个provider segments、8个tool actions、146.613秒；masked为7个segments、
   13个tool actions、196.276秒。整轮相对run-002从3轮无闭合收敛为2轮认证，但这里只把改进归因到
   “新机制与fresh agent共同作用”，不把单样本写成统计显著提速。
+
+### Pilot J：CUDA gather前端闭合，暴露J reference consumer边界
+
+`cuda:tilelang_gather2d / .trellis/tasks/07-31-j-driven-replay-composer-24/runs/cuda_tilelang_gather2d/run-001`
+（Codex Lift v31 + Codex Replay v36，`gpt-5.6-sol high`，Composer preferred）：
+
+- accepted attempt 1，`artifact.v13 + typecheck.v31` PASS；normal Replay与masked Replay都实际使用
+  Composer，normal 19 nodes、masked 6 nodes；
+- normal CUDA PTX v5的全部hard categories通过，Source--Replay Gate2也以最大误差0通过；masked臂在
+  value operations与control flow上hard fail，因此`J_NECESSARY=proved`；
+- 主状态仍是`GATE2_FAILED / reference_unsupported`，不能声称SCRC closure。唯一阻塞是
+  `RefEval(J)`返回`NotImplementedError: functional boundary supports only logical-domain predicates`；
+  Source和Replay native执行都成功；
+- J拥有两级typed gather、index bounds、value-dependent合法性predicate、zero-fill select与精确effects；
+  π只有14个realization instances、routes/order/sharing，不复制gather/predicate/index公式。故这不是
+  Replay信息缺失，也不应通过给CUDA Composer加入gather模板解决；
+- 当前RefEval其实已有通用ContractIR/structured gather执行器，阻塞来自fallback capability guard过严：
+  它要求每个boundary access都带predicate/fill，错误拒绝了domain-total的row/column index直接load。
+
+### Pilot K：TileLang gather闭合失败暴露长TIR反馈transport缺口
+
+`tilelang:gather2d / .trellis/tasks/07-31-j-driven-replay-composer-24/runs/tilelang_gather2d/run-001`
+（Codex Lift v31 + Codex Replay v36，`gpt-5.6-sol high`，Composer preferred）：
+
+- 三个formal rounds均TypeCheck PASS且Composer实际使用，最终`NO_CLOSURE`；J/C三轮稳定，只有π的
+  transfer/order topology变化；
+- 前两轮Replay把data load显式保存为typed scalar，Source直接把load写入store，因而
+  `tir_structure/tir_topology/tir_operations` hard fail；第三轮fresh Replay已inline该load，使operations与
+  topology通过，但把row/column index load顺序反转，最终只剩`tir_structure` hard fail；
+- frontier正确列出`tir_structure/tir_topology/tir_operations/ptx.raw_instruction_topology`，但旧Codex
+  continuation的本地`feedback-category`全部得到“no observer-diff categories”；Lift只能看空examples和
+  aggregate component变化，随后无依据地删order/transfer关系；
+- 该问题不是TileLang应改用PTX。修复保持结构TIR为hard observer：Codex Lift v32/knowledge v91始终
+  挂载已经删除previous artifact与compiler blob的标准closed `feedback.json`作为canonical query source，
+  stable category index只作冗余；任意超长TIR/PTX string由通用`feedback-slice`按exact JSON path与
+  UTF-8 byte offset分页，array/object按item offset递归有界分页并携带whole/chunk receipt；frontier与
+  分页工具都不解释语义或建议repair；
+- 同名Dataset的两个前端并不要求J字节一致：两者共享两级gather核心；CUDA Source另有越界mask/
+  zero-fill与runtime M，因此J多出predicate/select/value-dimension facts，π也按各自Source realization
+  不同。这个差异属于真实跨前端语义/实现边界，不是失败或泄漏。
+
+### Pilot L前的通用机制修复
+
+- `j_scalar_cpu_mlir_v25`只放宽既有indexed-A capability guard：domain-total direct access允许无
+  predicate/fill；非direct load必须由J `index_bounds`锚定；任何predicated load仍必须有J-owned fill。
+  执行仍走既有typed structured reference，不生成index/predicate/gather语义；
+- exact CUDA gather artifact的本地J-only执行已与`inp[row,col]`逐元素完全一致；删除typed index-bounds的
+  artifact在canonical schema即fail closed，reduction等其他graph不进入该fallback；
+- exact TileLang run-001 feedback已通过两轮persistent workspace刷新、四个动态category读取和长字符串
+  exact slice回归；合成多字节/恶意path/超大nested container还验证了byte-exact重组、shell quoting与
+  递归有界输出。旧的fixed dataflow repair hint已经删除。上述修改必须fresh rerun两个gather case后
+  才能更新历史verdict。
 
 ## 3. 交付物
 

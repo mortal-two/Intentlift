@@ -28,6 +28,7 @@ from .miniswe import (
     MiniSWELiftAdapter,
     _input_files,
     _replay_compiler_artifacts,
+    _replay_counterexample_from_diagnostics,
     _trajectory_bytes,
 )
 from .compiler_observation import (
@@ -46,8 +47,8 @@ from .scrc import (
     prepare_scrc_lift,
     scrc_candidate_check_context,
 )
-CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v31"
-CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v90"
+CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v32"
+CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v91"
 CODEX_CLI_TURN_TIMEOUT_SECONDS = 900.0
 
 _FEEDBACK_CATEGORY_NAMES = (
@@ -113,30 +114,6 @@ def _observer_diff_from_diagnostics(
     )
     observer = nested.get("observer_diff") if isinstance(nested, Mapping) else None
     return observer if isinstance(observer, Mapping) else None
-
-
-def _replay_counterexample_from_diagnostics(
-    diagnostics: Mapping[str, Any] | None,
-) -> Mapping[str, Any] | None:
-    """Find the exact prior Replay evidence through retained Gate1 wrappers."""
-
-    if not isinstance(diagnostics, Mapping):
-        return None
-    evidence = diagnostics.get("replay_counterexample")
-    if isinstance(evidence, Mapping):
-        return evidence
-    unresolved = diagnostics.get("unresolved_gate1")
-    nested = (
-        unresolved.get("diagnostics")
-        if isinstance(unresolved, Mapping)
-        else None
-    )
-    evidence = (
-        nested.get("replay_counterexample")
-        if isinstance(nested, Mapping)
-        else None
-    )
-    return evidence if isinstance(evidence, Mapping) else None
 
 
 def _codex_feedback_files(feedback_text: str) -> dict[str, str]:
@@ -340,6 +317,11 @@ def _codex_input_files(
     files = {
         "source.py": complete["source.py"],
         "harness_view.json": complete["harness_view.json"],
+        # `_input_files` has already removed the persistent owner's duplicate
+        # previous artifact and moved compiler blobs to closed files.  Keeping
+        # this standard feedback envelope gives the local query tool one robust
+        # canonical source; it is never embedded in the model continuation.
+        "feedback.json": complete["feedback.json"],
         "feedback_frontier.json": complete["feedback_frontier.json"],
         "README.md": (
             "# IntentIR Lift workspace\n\n"
@@ -449,6 +431,7 @@ def _source_aware_startup_context(workspace: Any, *, fresh_owner: bool) -> dict[
             "intent_ops": "input/knowledge/intent_ops.md",
             "lift_contract": "input/knowledge/lift_contract.md",
             "feedback_frontier": "input/feedback_frontier.json",
+            "feedback": "input/feedback.json",
             "feedback_detail": "input/feedback_detail.json",
             "feedback_replay_source": "input/feedback_replay.py",
             "feedback_replay_compiler_artifacts": {
@@ -682,6 +665,7 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                 mutable_paths=frozenset(
                     {
                         "feedback_frontier.json",
+                        "feedback.json",
                         "feedback_detail.json",
                         "feedback_replay.py",
                         *{

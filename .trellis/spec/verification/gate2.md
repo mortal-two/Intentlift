@@ -116,7 +116,7 @@ for every x in T:
 
 ## 当前 RefEval 的标量与 logical-domain 支持边界
 
-当前固定 scalar RefEval protocol 为 `j_scalar_cpu_mlir_v24`，shared functional projection receipt 为
+当前固定 scalar RefEval protocol 为 `j_scalar_cpu_mlir_v25`，shared functional projection receipt 为
 `intentir.j-functional-boundary.v22`，structured reference 为
 `intentir.j-structured-cpu-reference.v10`，relation-indexed pointwise reference 为
 `intentir.j-contract-indexed-cpu-reference.v3`。这些版本在既有 source-neutral multi-reduction 与
@@ -124,6 +124,12 @@ invocation-local predicate proof 之上，消费当前 artifact.v4/v5 typed rela
 partition，并为 common scalar lowering 尚不能消去的 typed contraction 提供闭合 J-only reference。
 旧 RefEval/projection 的 `REFERENCE_UNSUPPORTED`、receipt 和 Gate2 verdict 保持原解释，不由新
 consumer 追认、覆盖或静默刷新。
+
+v25只收紧区分“domain-total direct access”和“typed indexed access”的capability判定：direct logical
+coordinate load/store可以不带predicate/fill；每个非direct load仍必须由该J node的typed
+`index_bounds`锚定；若load作者化了predicate，则fill仍为必需。通过后只调用既有structured gather/
+select executor，fixed code不生成index、predicate、fill或gather op。缺失index bounds、stateful/
+reduction graph与未闭合effect仍显式unsupported。
 
 当 shared functional projection 因一般 affine/sub-domain predicate 无法把 B 擦除为完整 tensor 时，
 v22 只能尝试一个 closed ContractIR profile：flat、acyclic、relation-indexed pointwise/gather A graph；每个

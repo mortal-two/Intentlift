@@ -444,11 +444,14 @@ exact typed artifact
 Composer 不增加新的认证步骤。`render` 只产生候选 bytes；`submit_replay` 仍必须对 exact bytes运行已有
 ingress、ReplayCheck与compile preflight。Gate1始终独立重编译并比较 Source/Replay observation。
 
-同一source-aware Lift owner的relift feedback使用稳定、每轮原子覆盖的exact category index。index的
-文件身份在首次episode即固定，因此新增CUDA/TileLang observer label不会改变persistent workspace文件
-集合；category消失时其旧内容也不会残留。owner先读bounded frontier，再按exact label查询单一category。
-该transport只搬运既有Gate1 comparison，不解释差异、不选择π refinement，也不把feedback送给fresh
-source-blind Replay。
+同一source-aware Lift owner的relift feedback使用标准、每轮原子覆盖的closed `feedback.json`作为
+canonical query source；它在挂载前已经删除重复previous artifact，并把compiler大文本移到单独只读
+counterexample文件。stable category index只作冗余，二者文件身份都在首次episode固定，因此新增
+CUDA/TileLang observer label不会改变persistent workspace文件集合，category消失时旧内容也不会残留。
+owner先读bounded frontier，再按exact label查询单一category；超长TIR/PTX string只按原JSON path与
+UTF-8 byte offset分页，array/object按item offset递归有界分页，并用whole/chunk receipt核验。工具不
+解释差异或建议repair，也不注入固定dataflow repair hint。该transport只搬运既有Gate1 comparison，
+不选择π refinement，也不把feedback送给fresh source-blind Replay。
 
 ## 8. 静态反泄漏与运行审计
 

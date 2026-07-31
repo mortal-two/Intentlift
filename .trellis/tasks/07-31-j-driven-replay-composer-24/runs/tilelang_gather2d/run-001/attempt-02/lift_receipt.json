@@ -1,0 +1,16 @@
+{
+  "attempts": 1,
+  "backend": "openai.codex-cli.intentir-lift.v31",
+  "elapsed_ms": 95844.72123801243,
+  "model": "gpt-5.6-sol",
+  "response_id": "019fb54d-8d8e-7073-b68b-a4e0c82e8e09",
+  "response_model": "gpt-5.6-sol",
+  "termination_status": "CandidateCheckAndSourceReconcilePass",
+  "usage": {
+    "cache_write_input_tokens": 0,
+    "cached_input_tokens": 960768,
+    "input_tokens": 1028031,
+    "output_tokens": 13089,
+    "reasoning_output_tokens": 6410
+  }
+}

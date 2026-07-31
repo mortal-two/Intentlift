@@ -251,10 +251,12 @@ workspace 的 `output/candidate.json`；closed Gate1 diff 只按既有 protocol 
 Codex Lift v20 同时删除与普通文件读取重复的 `feedback_frontier` host tool；workspace 中 exact frontier
 文件是唯一入口。当前特殊 bridge 只保留无法由本地文件操作替代的CandidateCheck、SourceReconcile，
 以及上述显式调用、非认证的public SemanticProbe。
-Codex Lift v31进一步把所有合法Gate1 category写入一个首次即存在、续轮原子覆盖的stable exact
-category index。frontier中的任意label（含CUDA/TileLang的`ptx.*`）都可由同一context query精确读取；
-新增或消失的类别不改变persistent workspace文件集合，也不留下旧轮内容。index只分区既有comparison，
-不解释差异、不选择refinement或repair。
+Codex Lift v32始终挂载已删除previous artifact与compiler blob的标准closed `feedback.json`作为
+canonical本地query source；v31 stable category index保留为冗余。frontier中的任意label（含
+CUDA/TileLang的`ptx.*`）都可由同一context query精确读取；超长TIR/PTX string只通过exact JSON path、
+UTF-8 byte offset与count分页，array/object按item offset分页，每页携带whole/chunk receipt。新增或
+消失的类别不改变persistent workspace文件集合，也不留下旧轮内容；工具只
+搬运既有comparison，不解释差异、不选择refinement或repair。
 
 `gate1-replay-counterexample.v2`不再假设所有前端都有TTIR。共享SCRC按Gate1已声明的
 `observer_profile.compiler_stage`机械投影前一formal Replay的exact只读compiler artifact：Triton为
@@ -395,7 +397,7 @@ ReplayLLM(J,pi,MaskC(C);U_f) -> complete source R_f
 
 当前 packet protocol 为 `intentir.scrc.replay-input.v3`；Triton 公共上下文直接由当前固定字段给出，
 不再附带 context version、SHA 或 receipt 门禁。source-aware Codex/MiniSWE Lift 的当前 knowledge receipt 分别为
-`intentir.lift-knowledge.v90 / intentir.lift-knowledge.v68`，source-blind MiniSWE/Codex Replay backend 为
+`intentir.lift-knowledge.v91 / intentir.lift-knowledge.v69`，source-blind MiniSWE/Codex Replay backend 为
 `minisweagent.intentir-replay.v36 / openai.codex-cli.intentir-replay.v36`。这些版本必须随 fresh run 原样记录；旧 packet/context/knowledge
 evidence 不因实现升级而被重判；fresh Replay 只做当前字段的结构和 source-isolation 检查。
 

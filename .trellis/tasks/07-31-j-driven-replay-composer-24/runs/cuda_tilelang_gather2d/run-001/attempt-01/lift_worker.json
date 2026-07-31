@@ -1,0 +1,205 @@
+{
+  "backend": "openai.codex-cli.intentir-lift.v31",
+  "candidate_check": [
+    {
+      "candidate_sha256": "4634c7fccab426872db09343f879f6688a1dcfd31b56f527df7d1151451a163e",
+      "diagnostics": [
+        {
+          "observed_refs_or_types": [
+            "SchemaError: canonical J gather requires a typed IndexBoundsSpec"
+          ],
+          "path": "<candidate>",
+          "rule_code": "decode_rejected"
+        },
+        {
+          "observed_refs_or_types": [
+            "expected=[\"t0\", \"t1\", \"t2\", \"t3\", \"t4\"]",
+            "actual=[\"t0\", \"t1\", \"t3\", \"t4\", \"t2\"]"
+          ],
+          "path": "j.intent.intent_function.inputs+outputs[*].name",
+          "rule_code": "construction_handle_sequence"
+        },
+        {
+          "observed_refs_or_types": [
+            "expected=[\"q0\"]",
+            "actual=[\"s0\"]"
+          ],
+          "path": "j.scopes[*].scope_id",
+          "rule_code": "construction_handle_sequence"
+        }
+      ],
+      "status": "fail",
+      "trigger": "submit_candidate"
+    },
+    {
+      "candidate_sha256": "770239f9a97a686750c4ead6d83d62c00ca8407d4b24385a06477d9095aac3fe",
+      "diagnostics": [
+        {
+          "observed_refs_or_types": [
+            "SchemaError: boundary access 'a0' requires exactly one matching EffectSpec"
+          ],
+          "path": "<candidate>",
+          "rule_code": "decode_rejected"
+        }
+      ],
+      "status": "fail",
+      "trigger": "submit_candidate"
+    },
+    {
+      "candidate_sha256": "4e0e0e9807e50b404ce12e6db5290e65b6a28c14c506be6308414a6bdf31a782",
+      "diagnostics": [
+        {
+          "observed_refs_or_types": [
+            "a2",
+            "detail: guard shape cannot project to the access target using the authored broadcast axes: operand shape [256] cannot align with consumer shape ['x0', 64] using broadcast axes [0, 1]; existing broadcast dimensions must be size one and missing dimensions must be declared broadcast axes"
+          ],
+          "path": "j.boundary.access_guard_relations[0].axes",
+          "rule_code": "access_guard_relation_invalid"
+        },
+        {
+          "observed_refs_or_types": [
+            "a2",
+            "detail: the relation-bound computed guard must not also appear in the access predicate"
+          ],
+          "path": "j.boundary.access_guard_relations[0].value_ref",
+          "rule_code": "access_guard_relation_invalid"
+        }
+      ],
+      "status": "fail",
+      "trigger": "submit_candidate"
+    },
+    {
+      "candidate_sha256": "ba261b091afda9e51934cd47b0c4a7bb14f9ed1b9e44ea758933716499ba0e86",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "submit_candidate"
+    },
+    {
+      "candidate_sha256": "ba261b091afda9e51934cd47b0c4a7bb14f9ed1b9e44ea758933716499ba0e86",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "host_post_turn"
+    },
+    {
+      "candidate_sha256": "ba261b091afda9e51934cd47b0c4a7bb14f9ed1b9e44ea758933716499ba0e86",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "semantic_probe"
+    }
+  ],
+  "cli_turns": 1,
+  "elapsed_ms": 419881.05897803325,
+  "fresh_session": true,
+  "fresh_workspace": true,
+  "knowledge_profile": "intentir.lift-knowledge.v90",
+  "model_segments_lower_bound": 8,
+  "owner_session_id": "f02f68442a8a47558aa53fec8cfe0ac0",
+  "persistent_owner": true,
+  "persistent_workspace": true,
+  "runtime": "intentir.codex-cli.agent-runtime.v3",
+  "semantic_probe": [
+    {
+      "authority": "public diagnostic only; unsupported execution does not reject or certify the candidate",
+      "candidate_sha256": "ba261b091afda9e51934cd47b0c4a7bb14f9ed1b9e44ea758933716499ba0e86",
+      "diagnostic": "NotImplementedError: functional boundary supports only logical-domain predicates",
+      "failed_leg": "j",
+      "protocol": "intentir.lift.public-semantic-probe.v1",
+      "status": "unavailable",
+      "unsupported": true
+    }
+  ],
+  "source_reconcile": [
+    {
+      "applicable": false,
+      "candidate_sha256": "4634c7fccab426872db09343f879f6688a1dcfd31b56f527df7d1151451a163e",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "submit_candidate"
+    },
+    {
+      "applicable": false,
+      "candidate_sha256": "770239f9a97a686750c4ead6d83d62c00ca8407d4b24385a06477d9095aac3fe",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "submit_candidate"
+    },
+    {
+      "applicable": false,
+      "candidate_sha256": "4e0e0e9807e50b404ce12e6db5290e65b6a28c14c506be6308414a6bdf31a782",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "submit_candidate"
+    },
+    {
+      "applicable": false,
+      "candidate_sha256": "ba261b091afda9e51934cd47b0c4a7bb14f9ed1b9e44ea758933716499ba0e86",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "submit_candidate"
+    },
+    {
+      "applicable": false,
+      "candidate_sha256": "ba261b091afda9e51934cd47b0c4a7bb14f9ed1b9e44ea758933716499ba0e86",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "host_post_turn"
+    },
+    {
+      "applicable": false,
+      "candidate_sha256": "ba261b091afda9e51934cd47b0c4a7bb14f9ed1b9e44ea758933716499ba0e86",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "semantic_probe"
+    }
+  ],
+  "thread_id": "019fb54d-7bd8-7860-9027-40051f4b6313",
+  "timeout_events": [],
+  "tool_actions": 21,
+  "tool_bridge": {
+    "authority": "diagnostic-only callbacks over exact host-read output bytes; no artifact or Replay field is generated or edited",
+    "calls": 4,
+    "protocol": "intentir.codex-cli.tool-bridge.v3",
+    "receipts": [
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 91.52125800028443,
+        "result_sha256": "a5bc7ac6981b926014766d7abfdd09c33e24c6ed037fb79feeb6363891668d65",
+        "status": "fail",
+        "tool": "submit_candidate"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 19.708107109181583,
+        "result_sha256": "52e8559da18a9f8417c7cfaf3d300c7fb084d411e2b9a73886a70307f2e92123",
+        "status": "fail",
+        "tool": "submit_candidate"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 33.33328804001212,
+        "result_sha256": "ef2d8daa60a6d4d903cff101381fabff6e722946875366fd5d1212fb61695704",
+        "status": "fail",
+        "tool": "submit_candidate"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 37.30026003904641,
+        "result_sha256": "f6502359c93a8126d0901bd694cc6d42979e59cd835f24120463c0972f0d8f95",
+        "status": "pass",
+        "tool": "submit_candidate"
+      }
+    ],
+    "transport": "isolated_workspace_file_mailbox"
+  },
+  "usage": {
+    "cache_write_input_tokens": 0,
+    "cached_input_tokens": 588288,
+    "input_tokens": 634688,
+    "output_tokens": 13245,
+    "reasoning_output_tokens": 5312
+  }
+}

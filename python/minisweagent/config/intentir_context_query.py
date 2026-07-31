@@ -57,7 +57,9 @@ def _feedback_without_candidate(input_root: Path) -> dict[str, Any] | None:
                         f"{_FEEDBACK_CATEGORY_INDEX}.{name} category does not match its key"
                     )
                 categories_by_name[name] = category
-        category_name = re.compile(r"^feedback_category_([a-z][a-z0-9_]*)\.json$")
+        category_name = re.compile(
+            r"^feedback_category_([a-z][a-z0-9_.-]{0,127})\.json$"
+        )
         for path in sorted(input_root.glob("feedback_category_*.json")):
             match = category_name.fullmatch(path.name)
             if match is None:
@@ -200,6 +202,24 @@ def _emit_json(value: Any) -> None:
     print(text)
 
 
+def _quoted_json_path(path: str) -> str:
+    """Render one opaque JSON path safely inside a suggested shell command."""
+
+    return shlex.quote(path)
+
+
+def _canonical_json_bytes(value: Any) -> bytes:
+    """Return a stable receipt representation of one already-parsed JSON value."""
+
+    return json.dumps(
+        value,
+        sort_keys=True,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
 def _bootstrap(input_root: Path, output_root: Path) -> None:
     feedback = _feedback_without_candidate(input_root)
     candidate_already_present = (output_root / "candidate.json").is_file()
@@ -290,6 +310,80 @@ def _feedback(input_root: Path, path: str | None = None) -> None:
         _emit_json(reduced)
 
 
+def _bounded_feedback_atom(value: Any, *, path: str) -> Any:
+    """Keep a small exact value or return a source-neutral paging descriptor."""
+
+    rendered = json.dumps(value, sort_keys=True, ensure_ascii=False)
+    if len(rendered) <= 2_000:
+        return value
+    canonical = _canonical_json_bytes(value)
+    page_count = 4_000 if isinstance(value, str) else 8
+    descriptor: dict[str, Any] = {
+        "bounded": True,
+        "canonical_json_sha256": hashlib.sha256(canonical).hexdigest(),
+        "json_chars": len(rendered),
+        "path": path,
+        "slice_query": (
+            f"{QUERY_COMMAND} feedback-slice --path {_quoted_json_path(path)} "
+            f"--start 0 --count {page_count}"
+        ),
+        "value_type": type(value).__name__,
+    }
+    if isinstance(value, str):
+        encoded = value.encode("utf-8")
+        descriptor["slice_unit"] = "utf8_bytes"
+        descriptor["total_utf8_bytes"] = len(encoded)
+        descriptor["utf8_sha256"] = hashlib.sha256(encoded).hexdigest()
+    elif isinstance(value, list):
+        descriptor["slice_unit"] = "array_items"
+        descriptor["total_items"] = len(value)
+    elif isinstance(value, dict):
+        descriptor["slice_unit"] = "object_items"
+        descriptor["total_items"] = len(value)
+        descriptor["exact_key_prefix"] = sorted(str(key) for key in value)[:16]
+    return descriptor
+
+
+def _bounded_feedback_category(
+    category: dict[str, Any], *, category_path: str
+) -> dict[str, Any]:
+    """Bound large parsed values while retaining exact, receipted paging paths."""
+
+    result: dict[str, Any] = {}
+    for key, value in category.items():
+        path = f"{category_path}.{key}"
+        if key == "differences" and isinstance(value, list):
+            if len(value) > 32:
+                result[key] = _bounded_feedback_atom(value, path=path)
+                continue
+            differences: list[Any] = []
+            for index, difference in enumerate(value):
+                if not isinstance(difference, dict):
+                    differences.append(
+                        _bounded_feedback_atom(
+                            difference,
+                            path=f"{path}.{index}",
+                        )
+                    )
+                    continue
+                differences.append(
+                    {
+                        str(field): _bounded_feedback_atom(
+                            field_value,
+                            path=f"{path}.{index}.{field}",
+                        )
+                        for field, field_value in difference.items()
+                    }
+                )
+            result[key] = differences
+        else:
+            result[key] = _bounded_feedback_atom(value, path=path)
+    result["bounded_view"] = (
+        "large exact values are paged without semantic interpretation"
+    )
+    return result
+
+
 def _feedback_category_value(input_root: Path, name: str) -> dict[str, Any]:
     """Return one exact closed Gate1 category as a bounded read-only value."""
 
@@ -318,48 +412,14 @@ def _feedback_category_value(input_root: Path, name: str) -> dict[str, Any]:
     for category_index, category in enumerate(categories):
         if isinstance(category, dict) and category.get("category") == name:
             result = dict(category)
-            rendered = json.dumps(category, sort_keys=True)
             category_path = f"{category_root}.{category_index}"
-            if name == "dataflow" and isinstance(
-                result.get("effect_order_witnesses"), list
-            ):
-                result["effect_order_hint"] = (
-                    "Compare the ordered Source and Replay event sequences, "
-                    "then inspect the LLM-authored J scopes and pi order. The "
-                    "witness is diagnostic only and does not prescribe a repair."
-                )
-                result["effect_order_query"] = (
-                    f"{QUERY_COMMAND} feedback --path {category_path}."
-                    "effect_order_witnesses"
-                )
-            if (
-                name == "dataflow"
-                and "region[root]" in rendered
-                and "region[scf.for:" in rendered
-                and "region.member" in rendered
-            ):
-                result["diagnostic_hint"] = (
-                    "The observer examples cross root/scf.for region membership. "
-                    "Inspect exact Source definition scope and pi instance regions; "
-                    "fixed code has not inferred which producer, if any, must move."
-                )
-                result["knowledge_query"] = (
-                    f"{QUERY_COMMAND} knowledge 'lexical lifetime' --context 5"
-                )
             if len(
                 json.dumps(result, sort_keys=True, ensure_ascii=False)
             ) > MAX_OUTPUT_CHARS:
-                node_witnesses = result.pop("node_witnesses", None)
-                if isinstance(node_witnesses, list):
-                    result["node_witness_count"] = len(node_witnesses)
-                    result["node_witness_query"] = (
-                        f"{QUERY_COMMAND} feedback --path {category_path}."
-                        "node_witnesses"
-                    )
-                    result["bounded_view"] = (
-                        "bulk node witnesses omitted so causal role/effect "
-                        "witnesses remain visible"
-                    )
+                result = _bounded_feedback_category(
+                    result,
+                    category_path=category_path,
+                )
             return result
     available = [
         item.get("category") for item in categories if isinstance(item, dict)
@@ -369,6 +429,129 @@ def _feedback_category_value(input_root: Path, name: str) -> dict[str, Any]:
 
 def _feedback_category(input_root: Path, name: str) -> None:
     _emit_json(_feedback_category_value(input_root, name))
+
+
+def _feedback_slice(
+    input_root: Path,
+    *,
+    path: str,
+    start: int,
+    count: int,
+) -> None:
+    """Page one exact parsed feedback value without interpreting it.
+
+    Strings use offsets in their UTF-8 encoding and return only complete Unicode
+    scalars.  Arrays and objects use item offsets.  Whole-value and chunk receipts
+    make every page mechanically checkable without treating JSON file formatting
+    as semantic data.
+    """
+
+    if start < 0 or count < 1 or count > 6_000:
+        raise ValueError("feedback slice requires start>=0 and 1<=count<=6000")
+    value = _feedback_without_candidate(input_root)
+    selected = _resolve_json_path(value, path)
+    if isinstance(selected, str):
+        encoded = selected.encode("utf-8")
+        if start > len(encoded):
+            raise ValueError("feedback string slice starts beyond its UTF-8 bytes")
+        if start < len(encoded) and encoded[start] & 0xC0 == 0x80:
+            raise ValueError("feedback string slice start must be a UTF-8 boundary")
+        end = min(len(encoded), start + count)
+        while end > start and end < len(encoded) and encoded[end] & 0xC0 == 0x80:
+            end -= 1
+        if end == start and start < len(encoded):
+            end = start + 1
+            while end < len(encoded) and encoded[end] & 0xC0 == 0x80:
+                end += 1
+        chunk = encoded[start:end]
+        result = {
+            "path": path,
+            "value_type": "str",
+            "slice_unit": "utf8_bytes",
+            "start": start,
+            "end": end,
+            "total_utf8_bytes": len(encoded),
+            "utf8_sha256": hashlib.sha256(encoded).hexdigest(),
+            "chunk_sha256": hashlib.sha256(chunk).hexdigest(),
+            "value": chunk.decode("utf-8"),
+            "next": (
+                f"{QUERY_COMMAND} feedback-slice --path {_quoted_json_path(path)} "
+                f"--start {end} --count {count}"
+                if end < len(encoded)
+                else None
+            ),
+        }
+    elif isinstance(selected, list):
+        end = min(len(selected), start + count)
+        chunk = selected[start:end]
+        bounded_chunk = [
+            _bounded_feedback_atom(item, path=f"{path}.{index}")
+            for index, item in enumerate(chunk, start=start)
+        ]
+        result = {
+            "path": path,
+            "value_type": "list",
+            "slice_unit": "array_items",
+            "start": start,
+            "end": end,
+            "total_items": len(selected),
+            "canonical_json_sha256": hashlib.sha256(
+                _canonical_json_bytes(selected)
+            ).hexdigest(),
+            "chunk_canonical_json_sha256": hashlib.sha256(
+                _canonical_json_bytes(chunk)
+            ).hexdigest(),
+            "value": bounded_chunk,
+            "value_contract": (
+                "each item is exact or a receipted descriptor with its own exact path"
+            ),
+            "next": (
+                f"{QUERY_COMMAND} feedback-slice --path {_quoted_json_path(path)} "
+                f"--start {end} --count {count}"
+                if end < len(selected)
+                else None
+            ),
+        }
+    elif isinstance(selected, dict):
+        keys = sorted(selected)
+        end = min(len(keys), start + count)
+        chunk = {key: selected[key] for key in keys[start:end]}
+        bounded_chunk = {
+            key: _bounded_feedback_atom(
+                selected[key],
+                path=f"{path}.{key}",
+            )
+            for key in keys[start:end]
+        }
+        result = {
+            "path": path,
+            "value_type": "dict",
+            "slice_unit": "object_items",
+            "start": start,
+            "end": end,
+            "total_items": len(keys),
+            "canonical_json_sha256": hashlib.sha256(
+                _canonical_json_bytes(selected)
+            ).hexdigest(),
+            "chunk_canonical_json_sha256": hashlib.sha256(
+                _canonical_json_bytes(chunk)
+            ).hexdigest(),
+            "value": bounded_chunk,
+            "value_contract": (
+                "each field is exact or a receipted descriptor with its own exact path"
+            ),
+            "next": (
+                f"{QUERY_COMMAND} feedback-slice --path {_quoted_json_path(path)} "
+                f"--start {end} --count {count}"
+                if end < len(keys)
+                else None
+            ),
+        }
+    else:
+        raise TypeError(
+            "feedback-slice path must resolve to a string, array, or object"
+        )
+    _emit_json(result)
 
 
 def _source(input_root: Path, start: int, line_count: int) -> None:
@@ -1631,7 +1814,7 @@ def _candidate_node(output_root: Path, node_id: str) -> None:
                     if child is not node
                 ][:48],
                 "exact_path_command": (
-                    f"{QUERY_COMMAND} candidate --path {path}"
+                    f"{QUERY_COMMAND} candidate --path {_quoted_json_path(path)}"
                 ),
                 "authority": result["authority"],
             }
@@ -2261,6 +2444,10 @@ def main() -> int:
     subparsers.add_parser("feedback-frontier")
     category = subparsers.add_parser("feedback-category")
     category.add_argument("name")
+    feedback_slice = subparsers.add_parser("feedback-slice")
+    feedback_slice.add_argument("--path", required=True)
+    feedback_slice.add_argument("--start", type=int, default=0)
+    feedback_slice.add_argument("--count", type=int, default=4000)
     source = subparsers.add_parser("source")
     source.add_argument("--start", type=int, default=1)
     source.add_argument("--lines", type=int, default=160)
@@ -2335,6 +2522,13 @@ def main() -> int:
         _feedback_frontier(args.input_root)
     elif args.command == "feedback-category":
         _feedback_category(args.input_root, args.name)
+    elif args.command == "feedback-slice":
+        _feedback_slice(
+            args.input_root,
+            path=args.path,
+            start=args.start,
+            count=args.count,
+        )
     elif args.command == "source":
         _source(args.input_root, args.start, args.lines)
     elif args.command == "source-find":

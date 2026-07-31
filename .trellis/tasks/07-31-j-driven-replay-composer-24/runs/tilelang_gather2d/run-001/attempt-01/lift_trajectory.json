@@ -1,0 +1,822 @@
+{
+  "backend": "openai.codex-cli.intentir-lift.v31",
+  "candidate_check": [
+    {
+      "candidate_sha256": "39c3025af1cd35b97d0401cb3c8fa55af9e0ef67b32a5dc24b1d24ecef9585d0",
+      "diagnostics": [
+        {
+          "observed_refs_or_types": [
+            "a2",
+            "detail: functional axis 'k0' extent 256 differs from J tensor extent 64"
+          ],
+          "path": "j.boundary.accesses[2].index_expression",
+          "rule_code": "functional_boundary_incomplete"
+        },
+        {
+          "observed_refs_or_types": [
+            "a2",
+            "detail: functional axis 'k1' extent 64 differs from J tensor extent 'x0'"
+          ],
+          "path": "j.boundary.accesses[2].index_expression",
+          "rule_code": "functional_boundary_incomplete"
+        },
+        {
+          "observed_refs_or_types": [
+            "i10",
+            "detail: direct/async boundary transfer requires an authored route path from a pointer/tensor signature carrier bound to the same J tensor"
+          ],
+          "path": "pi.instances[10]",
+          "rule_code": "transfer_address_route_missing"
+        },
+        {
+          "observed_refs_or_types": [
+            "i12",
+            "detail: direct/async boundary transfer requires an authored route path from a pointer/tensor signature carrier bound to the same J tensor"
+          ],
+          "path": "pi.instances[12]",
+          "rule_code": "transfer_address_route_missing"
+        },
+        {
+          "observed_refs_or_types": [
+            "i6",
+            "detail: direct/async boundary transfer requires an authored route path from a pointer/tensor signature carrier bound to the same J tensor"
+          ],
+          "path": "pi.instances[6]",
+          "rule_code": "transfer_address_route_missing"
+        },
+        {
+          "observed_refs_or_types": [
+            "i8",
+            "detail: direct/async boundary transfer requires an authored route path from a pointer/tensor signature carrier bound to the same J tensor"
+          ],
+          "path": "pi.instances[8]",
+          "rule_code": "transfer_address_route_missing"
+        }
+      ],
+      "status": "fail",
+      "trigger": "submit_candidate"
+    },
+    {
+      "candidate_sha256": "6957717f54e91585f4f16546d368bba3d2baa2bd6a173da7391abf84cf041fca",
+      "diagnostics": [
+        {
+          "observed_refs_or_types": [
+            "a2",
+            "detail: functional axis 'k0' extent 256 differs from J tensor extent 'x0'"
+          ],
+          "path": "j.boundary.accesses[2].index_expression",
+          "rule_code": "functional_boundary_incomplete"
+        }
+      ],
+      "status": "fail",
+      "trigger": "submit_candidate"
+    },
+    {
+      "candidate_sha256": "99d21ec11ecfdd907918429913dcaf7d518153d5620517085e134071e1630937",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "submit_candidate"
+    },
+    {
+      "candidate_sha256": "99d21ec11ecfdd907918429913dcaf7d518153d5620517085e134071e1630937",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "host_post_turn"
+    },
+    {
+      "candidate_sha256": "99d21ec11ecfdd907918429913dcaf7d518153d5620517085e134071e1630937",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "semantic_probe"
+    }
+  ],
+  "isolation": {
+    "input": "read-only",
+    "outer": "bubblewrap-host-fs-v1",
+    "output_work_tmp": "write-only-scope",
+    "provider_secret_in_tool_env": false,
+    "tool_network": "disabled"
+  },
+  "protocol": "intentir.codex-cli.agent-runtime.v3",
+  "semantic_probe": [
+    {
+      "authority": "public Source-vs-J diagnostic only; no artifact field is generated, repaired, accepted, or certified",
+      "candidate_sha256": "99d21ec11ecfdd907918429913dcaf7d518153d5620517085e134071e1630937",
+      "case_id": "finite-public-lift-probe-1",
+      "comparison": {
+        "left": "source",
+        "outputs": [
+          {
+            "atol": null,
+            "detail": "",
+            "equal_nan": null,
+            "equality_required": true,
+            "max_abs_error": 0.0,
+            "output": "output_p3",
+            "passed": true,
+            "policy_id": "intentir.gate2.default.v1",
+            "relation_kind": "exact",
+            "rtol": null
+          }
+        ],
+        "passed": true,
+        "policy_id": "intentir.gate2.default.v1",
+        "right": "j"
+      },
+      "protocol": "intentir.lift.public-semantic-probe.v1",
+      "seed": 2026073001,
+      "status": "pass"
+    }
+  ],
+  "source_reconcile": [
+    {
+      "applicable": false,
+      "candidate_sha256": "39c3025af1cd35b97d0401cb3c8fa55af9e0ef67b32a5dc24b1d24ecef9585d0",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "submit_candidate"
+    },
+    {
+      "applicable": false,
+      "candidate_sha256": "6957717f54e91585f4f16546d368bba3d2baa2bd6a173da7391abf84cf041fca",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "submit_candidate"
+    },
+    {
+      "applicable": false,
+      "candidate_sha256": "99d21ec11ecfdd907918429913dcaf7d518153d5620517085e134071e1630937",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "submit_candidate"
+    },
+    {
+      "applicable": false,
+      "candidate_sha256": "99d21ec11ecfdd907918429913dcaf7d518153d5620517085e134071e1630937",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "host_post_turn"
+    },
+    {
+      "applicable": false,
+      "candidate_sha256": "99d21ec11ecfdd907918429913dcaf7d518153d5620517085e134071e1630937",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "semantic_probe"
+    }
+  ],
+  "source_ttir_observation": {},
+  "thread_id": "019fb54d-8d8e-7073-b68b-a4e0c82e8e09",
+  "timeout_events": [],
+  "tool_bridge": {
+    "authority": "diagnostic-only callbacks over exact host-read output bytes; no artifact or Replay field is generated or edited",
+    "calls": 3,
+    "protocol": "intentir.codex-cli.tool-bridge.v3",
+    "receipts": [
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 216.24326100572944,
+        "result_sha256": "f709ed7bf1181ba703cbf6ac164650a4dfea4a4de925ebf105a1ccd344ccfc1c",
+        "status": "fail",
+        "tool": "submit_candidate"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 19.925642991438508,
+        "result_sha256": "996d749ade83958aa4079393390860ae038378ca08a7b4a37cd205ffc72be400",
+        "status": "fail",
+        "tool": "submit_candidate"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 26.534514036029577,
+        "result_sha256": "ab3c006c9837a19e860dcaf113333bf13f7804afd3c2b648702c57ae7ac4886e",
+        "status": "pass",
+        "tool": "submit_candidate"
+      }
+    ],
+    "transport": "isolated_workspace_file_mailbox"
+  },
+  "turns": [
+    {
+      "elapsed_ms": 370606.8618330173,
+      "events": [
+        {
+          "thread_id": "019fb54d-8d8e-7073-b68b-a4e0c82e8e09",
+          "type": "thread.started"
+        },
+        {
+          "type": "turn.started"
+        },
+        {
+          "item": {
+            "id": "item_0",
+            "text": "I’ll begin with the prescribed compact source brief, then author an initial complete candidate early and iterate against the transactional checks.",
+            "type": "agent_message"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c \"sed -n '1,220p' input/README.md\"",
+            "exit_code": null,
+            "id": "item_1",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "# IntentIR Lift workspace\n\nJ owns logical semantics, C only implementation choices, and pi only anonymous Source realization of the authored J+C. You author every semantic field; fixed code only projects evidence, checks, and rejects.\n\nStart once with:\n`python input/tools/context_query.py --input-root input --output-root output source-brief`\n\nThen read `input/source.py`. This frontend has no TTIR compiler-observation channel; read the anonymous Source and harness view directly, and rely on the public frontend semantic probe after CandidateCheck. For wire syntax, query only the needed leaves, for example:\n`python input/tools/schema_query.py authoring-brief`\nThen request only the exact `section NAME` or `op NAME` needed by the draft.\n\nSearch one exact term in `input/knowledge/lift_contract.md` only when its ownership is unclear. Write `output/candidate.json` early and patch it in place. Run `python .agents/intentir_agent_tool.py submit_candidate`; the host supplies the public semantic probe after a mechanically passing draft.\n",
+            "command": "/bin/bash -c \"sed -n '1,220p' input/README.md\"",
+            "exit_code": 0,
+            "id": "item_1",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c \"python input/tools/context_query.py --input-root input --output-root output source-brief && sed -n '1,240p' input/source.py\"",
+            "exit_code": null,
+            "id": "item_2",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "Traceback (most recent call last):\n  File \"/workspace/input/tools/context_query.py\", line 2388, in <module>\n    raise SystemExit(main())\n  File \"/workspace/input/tools/context_query.py\", line 2357, in main\n    _source_brief(args.input_root)\n  File \"/workspace/input/tools/context_query.py\", line 588, in _source_brief\n    observation = _source_ttir_observation(input_root)\n  File \"/workspace/input/tools/context_query.py\", line 400, in _source_ttir_observation\n    raise FileNotFoundError(\"source_ttir.json is unavailable for this Lift input\")\nFileNotFoundError: source_ttir.json is unavailable for this Lift input\n",
+            "command": "/bin/bash -c \"python input/tools/context_query.py --input-root input --output-root output source-brief && sed -n '1,240p' input/source.py\"",
+            "exit_code": 1,
+            "id": "item_2",
+            "status": "failed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "id": "item_3",
+            "text": "The required brief command is unavailable for this frontend because `source_ttir.json` does not exist, matching the README’s note that there is no compiler-observation channel. I’m proceeding from the anonymous source and harness directly.",
+            "type": "agent_message"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c \"sed -n '1,260p' input/source.py && sed -n '1,220p' input/harness_view.json\"",
+            "exit_code": null,
+            "id": "item_4",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "import tilelang.language as T\n\n@T.prim_func\ndef scrc_k0(p0: T.handle, p1: T.handle, p2: T.handle, p3: T.handle):\n    v0 = T.int32()\n    v1 = T.match_buffer(p0, (v0, 64), strides=(64, 1))\n    v2 = T.match_buffer(p1, (256,), 'int32', strides=(1,))\n    v3 = T.match_buffer(p2, (256,), 'int32', strides=(1,))\n    v4 = T.match_buffer(p3, (256,), strides=(1,))\n    v5 = T.launch_thread('blockIdx.x', 256)\n    v6 = T.launch_thread('threadIdx.x', 128)\n    v7 = T.launch_thread('threadIdx.y', 1)\n    v8 = T.launch_thread('threadIdx.z', 1)\n    with T.block('tilelang_root'):\n        T.reads(v2[v5], v3[v5], v1[v2[v5], v3[v5]])\n        T.writes(v4[v5])\n        v9: T.int32 = v2[v5]\n        v10: T.int32 = v3[v5]\n        v4[v5] = v1[v9, v10]\n{\n  \"aliases\": [],\n  \"arguments\": [\n    {\n      \"dtype\": \"f32\",\n      \"kind\": \"tensor\",\n      \"mode\": \"input\",\n      \"name\": \"p0\",\n      \"shape\": [\n        64,\n        64\n      ],\n      \"shape_contract\": [\n        \"h0\",\n        64\n      ]\n    },\n    {\n      \"dtype\": \"i32\",\n      \"kind\": \"tensor\",\n      \"mode\": \"input\",\n      \"name\": \"p1\",\n      \"shape\": [\n        256\n      ],\n      \"shape_contract\": [\n        256\n      ]\n    },\n    {\n      \"dtype\": \"i32\",\n      \"kind\": \"tensor\",\n      \"mode\": \"input\",\n      \"name\": \"p2\",\n      \"shape\": [\n        256\n      ],\n      \"shape_contract\": [\n        256\n      ]\n    },\n    {\n      \"dtype\": \"f32\",\n      \"kind\": \"tensor\",\n      \"mode\": \"output\",\n      \"name\": \"p3\",\n      \"shape\": [\n        256\n      ],\n      \"shape_contract\": [\n        256\n      ]\n    }\n  ],\n  \"bound_constexpr_shape_coordinates\": {},\n  \"bound_constexpr_values\": {},\n  \"compiler_roles\": {\n    \"c0\": \"launch_block_x\"\n  },\n  \"compiler_slots\": [\n    \"c0\"\n  ],\n  \"constexpr_parameters\": [],\n  \"grid\": [\n    256,\n    1,\n    1\n  ],\n  \"grid_contract\": [\n    \"256\",\n    \"1\",\n    \"1\"\n  ],\n  \"grid_shape_coordinates\": [\n    null,\n    null,\n    null\n  ],\n  \"parameter_order\": [\n    \"p0\",\n    \"p1\",\n    \"p2\",\n    \"p3\"\n  ],\n  \"schedule_values\": {\n    \"c0\": 128\n  },\n  \"shape_coordinates\": {\n    \"h0\": 64\n  }\n}\n",
+            "command": "/bin/bash -c \"sed -n '1,260p' input/source.py && sed -n '1,220p' input/harness_view.json\"",
+            "exit_code": 0,
+            "id": "item_4",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "id": "item_5",
+            "text": "The source is a four-argument indexed gather: two integer index vectors select one scalar from a parametric-height, width-64 input matrix for each of 256 outputs. I’m querying only the wire-format authoring brief and the likely gather/load-store operation definitions needed for the first full draft.",
+            "type": "agent_message"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c 'python input/tools/schema_query.py authoring-brief'",
+            "exit_code": null,
+            "id": "item_6",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c 'python input/tools/schema_query.py authoring-brief'",
+            "exit_code": 0,
+            "id": "item_6",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c 'python input/tools/schema_query.py op gather && python input/tools/schema_query.py section tensor && python input/tools/schema_query.py section parameter && python input/tools/schema_query.py section scope && python input/tools/schema_query.py section storage && python input/tools/schema_query.py section domain && python input/tools/schema_query.py section access && python input/tools/schema_query.py section effect && python input/tools/schema_query.py section output_mapping'",
+            "exit_code": null,
+            "id": "item_7",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "{\n  \"additionalProperties\": false,\n  \"properties\": {\n    \"dtype\": {\n      \"minLength\": 1,\n      \"type\": \"string\"\n    },\n    \"name\": {\n      \"pattern\": \"^t[0-9]+$\",\n      \"type\": \"string\"\n    },\n    \"shape\": {\n      \"items\": {\n        \"anyOf\": [\n          {\n            \"type\": \"integer\"\n          },\n          {\n            \"minLength\": 1,\n            \"type\": \"string\"\n          }\n        ]\n      },\n      \"type\": \"array\"\n    }\n  },\n  \"required\": [\n    \"name\",\n    \"dtype\",\n    \"shape\"\n  ],\n  \"type\": \"object\"\n}\n{\n  \"additionalProperties\": false,\n  \"description\": \"One J-owned logical callable handle. logical_ref links a pointer/tensor/scalar/semantic-constexpr handle only to a declared J input/output tensor or a symbolic J dimension; it never names a v* SSA value. Logical scalar data and constexpr values used as runtime-like logical data use a dtype-matching rank-0 J input and must contribute to an output dependency or explicit boundary/shape semantics. A runtime scalar used only for representation/address realization is kind=scalar, mode=value, rank=0, has public dtype but no logical_ref/J input, and may be referenced only by pi. Integral extent-only handles instead bind a symbolic dimension. Every trusted compiler-view tensor argument, including one unused by the frozen specialization, keeps a logical_ref whose J tensor dtype, rank and shape exactly match that view. The inactive tensor remains a typed ABI declaration but has no invented operation, access or effect. Implementation-selection constexprs are C slots and never appear in this array. A constexpr used anywhere in the active graph as logical data, extent, shape, index, mask, predicate, or result binds t*/x* even when constant-folded. Only a Harness-fixed constexpr whose Source uses are exclusively compile-time graph discrimination may be a specialization carrier with kind=constexpr, mode=value, rank=0, public dtype and no logical_ref; its concrete value stays only in Harness, while Lift authors the complete active J graph. Lift, not fixed code, owns that semantic classification. The carrier is neither Layer-A data nor a C/backend choice. An opaque parameter is representation-only frontend plumbing such as cute.CopyAtom; it has dtype but no logical_ref and contributes no J semantics.\",\n  \"properties\": {\n    \"alias_of\": {\n      \"anyOf\": [\n        {\n          \"minLength\": 1,\n          \"type\": \"string\"\n        },\n        {\n          \"type\": \"null\"\n        }\n      ]\n    },\n    \"dtype\": {\n      \"anyOf\": [\n        {\n          \"minLength\": 1,\n          \"type\": \"string\"\n        },\n        {\n          \"type\": \"null\"\n        }\n      ]\n    },\n    \"kind\": {\n      \"enum\": [\n        \"tensor\",\n        \"pointer\",\n        \"scalar\",\n        \"opaque\",\n        \"constexpr\"\n      ],\n      \"type\": \"string\"\n    },\n    \"logical_ref\": {\n      \"anyOf\": [\n        {\n          \"minLength\": 1,\n          \"type\": \"string\"\n        },\n        {\n          \"type\": \"null\"\n        }\n      ]\n    },\n    \"mode\": {\n      \"enum\": [\n        \"input\",\n        \"output\",\n        \"inout\",\n        \"value\"\n      ],\n      \"type\": \"string\"\n    },\n    \"name\": {\n      \"pattern\": \"^p[0-9]+$\",\n      \"type\": \"string\"\n    },\n    \"rank\": {\n      \"anyOf\": [\n        {\n          \"minimum\": 0,\n          \"type\": \"integer\"\n        },\n        {\n          \"type\": \"null\"\n        }\n      ]\n    }\n  },\n  \"required\": [\n    \"name\",\n    \"kind\",\n    \"mode\"\n  ],\n  \"type\": \"object\"\n}\n{\n  \"additionalProperties\": false,\n  \"description\": \"Exact portable dominance/capture/effect scope derived from J. definitions/captures/effects must contain neither missing nor extra handles. Contains no source AST, helper name or frontend spelling.\",\n  \"properties\": {\n    \"captures\": {\n      \"items\": {\n        \"minLength\": 1,\n        \"type\": \"string\"\n      },\n      \"type\": \"array\"\n    },\n    \"definitions\": {\n      \"items\": {\n        \"minLength\": 1,\n        \"type\": \"string\"\n      },\n      \"type\": \"array\"\n    },\n    \"effects\": {\n      \"items\": {\n        \"minLength\": 1,\n        \"type\": \"string\"\n      },\n      \"type\": \"array\"\n    },\n    \"kind\": {\n      \"enum\": [\n        \"function\",\n        \"program_instance\",\n        \"loop_region\",\n        \"branch_region\"\n      ],\n      \"type\": \"string\"\n    },\n    \"parent_scope\": {\n      \"anyOf\": [\n        {\n          \"minLength\": 1,\n          \"type\": \"string\"\n        },\n        {\n          \"type\": \"null\"\n        }\n      ]\n    },\n    \"scope_id\": {\n      \"minLength\": 1,\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"scope_id\",\n    \"kind\",\n    \"parent_scope\",\n    \"captures\",\n    \"definitions\",\n    \"effects\"\n  ],\n  \"type\": \"object\"\n}\n{\n  \"additionalProperties\": false,\n  \"description\": \"Optional semantic storage identity/lifetime only; ordinary SSA temporaries require no entry. Physical allocation, register/shared/global placement and double buffering belong to C.\",\n  \"properties\": {\n    \"crosses_iteration\": {\n      \"type\": \"boolean\"\n    },\n    \"escapes\": {\n      \"type\": \"boolean\"\n    },\n    \"init_event\": {\n      \"additionalProperties\": false,\n      \"properties\": {\n        \"kind\": {\n          \"enum\": [\n            \"scope_entry\",\n            \"scope_exit\",\n            \"node\",\n            \"access\",\n            \"state\",\n            \"effect\"\n          ],\n          \"type\": \"string\"\n        },\n        \"ref\": {\n          \"minLength\": 1,\n          \"type\": \"string\"\n        }\n      },\n      \"required\": [\n        \"kind\",\n        \"ref\"\n      ],\n      \"type\": \"object\"\n    },\n    \"last_use_event\": {\n      \"additionalProperties\": false,\n      \"properties\": {\n        \"kind\": {\n          \"enum\": [\n            \"scope_entry\",\n            \"scope_exit\",\n            \"node\",\n            \"access\",\n            \"state\",\n            \"effect\"\n          ],\n          \"type\": \"string\"\n        },\n        \"ref\": {\n          \"minLength\": 1,\n          \"type\": \"string\"\n        }\n      },\n      \"required\": [\n        \"kind\",\n        \"ref\"\n      ],\n      \"type\": \"object\"\n    },\n    \"members\": {\n      \"items\": {\n        \"minLength\": 1,\n        \"type\": \"string\"\n      },\n      \"type\": \"array\"\n    },\n    \"mutability\": {\n      \"enum\": [\n        \"immutable\",\n        \"write_once\",\n        \"mutable\"\n      ],\n      \"type\": \"string\"\n    },\n    \"scope_id\": {\n      \"minLength\": 1,\n      \"type\": \"string\"\n    },\n    \"storage_id\": {\n      \"minLength\": 1,\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"storage_id\",\n    \"members\",\n    \"scope_id\",\n    \"mutability\",\n    \"init_event\",\n    \"last_use_event\",\n    \"escapes\",\n    \"crosses_iteration\"\n  ],\n  \"type\": \"object\"\n}\n{\n  \"additionalProperties\": {\n    \"description\": \"One boolean ContractExpr v1 expression: symbols/literals, arithmetic, comparisons, and/or/not, and only ceil_div/cdiv/min/max calls. No assignment, prose, range notation, frontend calls, attributes, or program/grid/tile/lane coordinate construction.\",\n    \"minLength\": 1,\n    \"type\": \"string\"\n  },\n  \"description\": \"Map each d* handle directly to one ContractExpr string. Never emit an axes/members/domain object here.\",\n  \"propertyNames\": {\n    \"pattern\": \"^d[0-9]+$\"\n  },\n  \"type\": \"object\"\n}\n{\n  \"additionalProperties\": false,\n  \"allOf\": [\n    {\n      \"if\": {\n        \"properties\": {\n          \"fill_value\": {\n            \"not\": {\n              \"type\": \"null\"\n            }\n          }\n        },\n        \"required\": [\n          \"fill_value\"\n        ]\n      },\n      \"then\": {\n        \"properties\": {\n          \"kind\": {\n            \"const\": \"load\"\n          },\n          \"predicate\": {\n            \"minLength\": 1,\n            \"type\": \"string\"\n          }\n        },\n        \"required\": [\n          \"kind\",\n          \"predicate\"\n        ]\n      }\n    }\n  ],\n  \"description\": \"Portable logical access in ContractExpr v1. Direct dense surface forms k0/[k0] and k1,k0/[k1,k0] are deterministically elaborated to the same structured ordered axes. General non-direct affine relations remain typed expressions but can be unsupported by a particular RefEval capability profile. A node_ref makes the access consumer-local: the relation is not implicitly inherited by sibling uses of the same tensor. fill_value is legal only on a load with a non-null predicate. An unconditional access uses the unique canonical spelling with both predicate and fill_value absent/null; consumers reject rather than silently erase an orphan fill_value.\",\n  \"properties\": {\n    \"access_id\": {\n      \"minLength\": 1,\n      \"type\": \"string\"\n    },\n    \"fill_value\": {},\n    \"index_expression\": {\n      \"minLength\": 1,\n      \"type\": \"string\"\n    },\n    \"kind\": {\n      \"enum\": [\n        \"load\",\n        \"store\",\n        \"update\"\n      ],\n      \"type\": \"string\"\n    },\n    \"node_ref\": {\n      \"anyOf\": [\n        {\n          \"minLength\": 1,\n          \"type\": \"string\"\n        },\n        {\n          \"type\": \"null\"\n        }\n      ]\n    },\n    \"predicate\": {\n      \"anyOf\": [\n        {\n          \"description\": \"One boolean ContractExpr v1 expression: symbols/literals, arithmetic, comparisons, and/or/not, and only ceil_div/cdiv/min/max calls. No assignment, prose, range notation, frontend calls, attributes, or program/grid/tile/lane coordinate construction.\",\n          \"minLength\": 1,\n          \"type\": \"string\"\n        },\n        {\n          \"type\": \"null\"\n        }\n      ]\n    },\n    \"tensor\": {\n      \"minLength\": 1,\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"access_id\",\n    \"kind\",\n    \"tensor\",\n    \"index_expression\"\n  ],\n  \"type\": \"object\"\n}\n{\n  \"additionalProperties\": false,\n  \"properties\": {\n    \"access_ref\": {\n      \"anyOf\": [\n        {\n          \"minLength\": 1,\n          \"type\": \"string\"\n        },\n        {\n          \"type\": \"null\"\n        }\n      ]\n    },\n    \"effect_id\": {\n      \"minLength\": 1,\n      \"type\": \"string\"\n    },\n    \"kind\": {\n      \"enum\": [\n        \"read\",\n        \"write\",\n        \"read_write\",\n        \"update\"\n      ],\n      \"type\": \"string\"\n    },\n    \"node_ref\": {\n      \"anyOf\": [\n        {\n          \"minLength\": 1,\n          \"type\": \"string\"\n        },\n        {\n          \"type\": \"null\"\n        }\n      ]\n    },\n    \"target\": {\n      \"minLength\": 1,\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"effect_id\",\n    \"kind\",\n    \"target\",\n    \"access_ref\"\n  ],\n  \"type\": \"object\"\n}\n{\n  \"additionalProperties\": false,\n  \"description\": \"One authored canonical output binding. It may be the sole non-identity destination relation; when IntentFunction.returns also binds this output, both values must agree exactly. When an op directly produces the same output handle, leave output_mappings empty.\",\n  \"properties\": {\n    \"node_ref\": {\n      \"anyOf\": [\n        {\n          \"minLength\": 1,\n          \"type\": \"string\"\n        },\n        {\n          \"type\": \"null\"\n        }\n      ]\n    },\n    \"output\": {\n      \"minLength\": 1,\n      \"type\": \"string\"\n    },\n    \"value\": {\n      \"minLength\": 1,\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"output\",\n    \"value\"\n  ],\n  \"type\": \"object\"\n}\n",
+            "command": "/bin/bash -c 'python input/tools/schema_query.py op gather && python input/tools/schema_query.py section tensor && python input/tools/schema_query.py section parameter && python input/tools/schema_query.py section scope && python input/tools/schema_query.py section storage && python input/tools/schema_query.py section domain && python input/tools/schema_query.py section access && python input/tools/schema_query.py section effect && python input/tools/schema_query.py section output_mapping'",
+            "exit_code": 0,
+            "id": "item_7",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c 'find output work -maxdepth 3 -type f -print | sort && python input/tools/schema_query.py section value_dimension_relation && python input/tools/schema_query.py section dimension_relation && python input/tools/schema_query.py section index_bound && python input/tools/schema_query.py section result_relation && python input/tools/schema_query.py section c_slot'",
+            "exit_code": null,
+            "id": "item_8",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "{\n  \"additionalProperties\": false,\n  \"description\": \"LLM-authored equality between one integral rank-0 logical J input t* and one declared symbolic shape dimension x*. Fixed code checks the equality but never infers or inserts this relation.\",\n  \"properties\": {\n    \"dimension_ref\": {\n      \"pattern\": \"^x[0-9]+$\",\n      \"type\": \"string\"\n    },\n    \"relation\": {\n      \"enum\": [\n        \"eq\"\n      ],\n      \"type\": \"string\"\n    },\n    \"value_ref\": {\n      \"pattern\": \"^t[0-9]+$\",\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"value_ref\",\n    \"dimension_ref\",\n    \"relation\"\n  ],\n  \"type\": \"object\"\n}\n{\n  \"additionalProperties\": false,\n  \"description\": \"LLM-authored closed definition of one declared logical dimension from another. Fixed code validates and consumes it but never infers the relation from Harness values, grid, C, pi, or compiler output.\",\n  \"properties\": {\n    \"expr\": {\n      \"oneOf\": [\n        {\n          \"additionalProperties\": false,\n          \"properties\": {\n            \"arg\": {\n              \"pattern\": \"^x[0-9]+$\",\n              \"type\": \"string\"\n            },\n            \"op\": {\n              \"enum\": [\n                \"identity\"\n              ],\n              \"type\": \"string\"\n            }\n          },\n          \"required\": [\n            \"op\",\n            \"arg\"\n          ],\n          \"type\": \"object\"\n        },\n        {\n          \"additionalProperties\": false,\n          \"properties\": {\n            \"arg\": {\n              \"pattern\": \"^x[0-9]+$\",\n              \"type\": \"string\"\n            },\n            \"op\": {\n              \"enum\": [\n                \"add_const\",\n                \"mul_const\",\n                \"ceil_div_const\",\n                \"round_up_const\"\n              ],\n              \"type\": \"string\"\n            },\n            \"value\": {\n              \"minimum\": 1,\n              \"type\": \"integer\"\n            }\n          },\n          \"required\": [\n            \"op\",\n            \"arg\",\n            \"value\"\n          ],\n          \"type\": \"object\"\n        }\n      ]\n    },\n    \"result\": {\n      \"pattern\": \"^x[0-9]+$\",\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"result\",\n    \"expr\"\n  ],\n  \"type\": \"object\"\n}\n{\n  \"additionalProperties\": false,\n  \"description\": \"Typed precondition 0 <= indices < dim(data, axis), exactly bound to one gather/scatter node. Never use a proof string or proven flag.\",\n  \"properties\": {\n    \"axis\": {\n      \"minimum\": 0,\n      \"type\": \"integer\"\n    },\n    \"data\": {\n      \"minLength\": 1,\n      \"type\": \"string\"\n    },\n    \"indices\": {\n      \"minLength\": 1,\n      \"type\": \"string\"\n    },\n    \"node_ref\": {\n      \"minLength\": 1,\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"node_ref\",\n    \"data\",\n    \"indices\",\n    \"axis\"\n  ],\n  \"type\": \"object\"\n}\n{\n  \"additionalProperties\": false,\n  \"description\": \"Comparison class owned by J. Numeric tolerance values are forbidden and come only from external Gate2 policy Q. one_of_updates requires one non-empty update_node_ref. exact/tolerance must omit the update_node_ref field entirely; empty string or null is invalid.\",\n  \"properties\": {\n    \"kind\": {\n      \"enum\": [\n        \"exact\",\n        \"tolerance\",\n        \"one_of_updates\"\n      ],\n      \"type\": \"string\"\n    },\n    \"output\": {\n      \"minLength\": 1,\n      \"type\": \"string\"\n    },\n    \"update_node_ref\": {\n      \"minLength\": 1,\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"output\",\n    \"kind\"\n  ],\n  \"type\": \"object\"\n}\n{\n  \"additionalProperties\": false,\n  \"properties\": {\n    \"axis_ref\": {\n      \"anyOf\": [\n        {\n          \"minimum\": 0,\n          \"type\": \"integer\"\n        },\n        {\n          \"pattern\": \"^x[0-9]+$\",\n          \"type\": \"string\"\n        }\n      ],\n      \"description\": \"Optional logical axis in AxisRefs_v1(J,subject_ref); requires subject_ref and never names a physical axis.\"\n    },\n    \"kind\": {\n      \"description\": \"constexpr is a callable frontend compile-time parameter; compiler is an external compiler-invocation option and never a callable/body/pi carrier.\",\n      \"enum\": [\n        \"constexpr\",\n        \"compiler\"\n      ],\n      \"type\": \"string\"\n    },\n    \"name\": {\n      \"pattern\": \"^c[0-9]+$\",\n      \"type\": \"string\"\n    },\n    \"required\": {\n      \"type\": \"boolean\"\n    },\n    \"role\": {\n      \"pattern\": \"^[a-z][a-z0-9_]*$\",\n      \"type\": \"string\"\n    },\n    \"subject_ref\": {\n      \"description\": \"Optional source-neutral attachment to one declared J node/domain/access/scope/storage subject. It is not a transformation permission or source binding. Compiler-kind slots must omit subject_ref and axis_ref.\",\n      \"pattern\": \"^[ndaqb][0-9]+$\",\n      \"type\": \"string\"\n    },\n    \"value_type\": {\n      \"minLength\": 1,\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"name\",\n    \"kind\",\n    \"role\"\n  ],\n  \"type\": \"object\"\n}\n",
+            "command": "/bin/bash -c 'find output work -maxdepth 3 -type f -print | sort && python input/tools/schema_query.py section value_dimension_relation && python input/tools/schema_query.py section dimension_relation && python input/tools/schema_query.py section index_bound && python input/tools/schema_query.py section result_relation && python input/tools/schema_query.py section c_slot'",
+            "exit_code": 0,
+            "id": "item_8",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c \"rg -n 'intent_function|node_ids|ordinary_op|\\\"body\\\"|\\\"inputs\\\"|\\\"returns\\\"' input/schema/artifact.schema.json | head -80\"",
+            "exit_code": null,
+            "id": "item_9",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "68:            \"body\": {\n251:            \"body\",\n266:                \"body\": {\n279:                \"body\"\n292:                \"body\": {\n305:                \"body\"\n332:                \"body\": {\n349:                \"body\",\n363:                \"body\": {\n380:                \"body\",\n437:  \"description\": \"The response root is one closed object with exactly these fields: schema, j, c, pi. The j object is one closed object with exactly these fields: kernel_id, intent, node_ids, boundary, signature, scopes, storage, dimension_constraints, value_dimension_relations, dimension_relations. Logical callable facts are declared only by j.signature. The root c object is the single implementation-selection object and pi is indexed by j/c. Do not emit interface, harness, location, source, provenance, binding-map or any other root sibling.\",\n1195:            \"intent_function\": {\n1198:                \"body\": {\n1204:                \"inputs\": {\n1282:                \"returns\": {\n1307:                \"inputs\",\n1309:                \"body\"\n1315:            \"intent_function\"\n1325:        \"node_ids\": {\n1327:            \"pattern\": \"^(intent_function\\\\.)?body\\\\[[0-9]+\\\\]((\\\\.body|\\\\.positive\\\\.body|\\\\.negative\\\\.body)\\\\[[0-9]+\\\\])*$\",\n1623:        \"node_ids\",\n",
+            "command": "/bin/bash -c \"rg -n 'intent_function|node_ids|ordinary_op|\\\"body\\\"|\\\"inputs\\\"|\\\"returns\\\"' input/schema/artifact.schema.json | head -80\"",
+            "exit_code": 0,
+            "id": "item_9",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c \"sed -n '1,440p' input/schema/artifact.schema.json && sed -n '1160,1345p' input/schema/artifact.schema.json\"",
+            "exit_code": null,
+            "id": "item_10",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "{\n  \"$defs\": {\n    \"intent_op\": {\n      \"anyOf\": [\n        {\n          \"additionalProperties\": false,\n          \"properties\": {\n            \"attrs\": {\n              \"type\": \"object\"\n            },\n            \"id\": {\n              \"minLength\": 1,\n              \"type\": \"string\"\n            },\n            \"op\": {\n              \"minLength\": 1,\n              \"pattern\": \"^(?!(?:loop|effect_if|value_if)$).+$\",\n              \"type\": \"string\"\n            },\n            \"operands\": {\n              \"items\": {\n                \"minLength\": 1,\n                \"type\": \"string\"\n              },\n              \"type\": \"array\"\n            },\n            \"result\": {\n              \"anyOf\": [\n                {\n                  \"minLength\": 1,\n                  \"type\": \"string\"\n                },\n                {\n                  \"items\": {\n                    \"minLength\": 1,\n                    \"type\": \"string\"\n                  },\n                  \"type\": \"array\",\n                  \"uniqueItems\": true\n                },\n                {\n                  \"type\": \"null\"\n                }\n              ]\n            },\n            \"type\": {\n              \"anyOf\": [\n                {\n                  \"type\": \"object\"\n                },\n                {\n                  \"type\": \"null\"\n                }\n              ]\n            }\n          },\n          \"required\": [\n            \"op\"\n          ],\n          \"type\": \"object\"\n        },\n        {\n          \"additionalProperties\": false,\n          \"properties\": {\n            \"attrs\": {\n              \"type\": \"object\"\n            },\n            \"body\": {\n              \"items\": {\n                \"$ref\": \"#/$defs/intent_op\"\n              },\n              \"minItems\": 1,\n              \"type\": \"array\"\n            },\n            \"carry\": {\n              \"items\": {\n                \"additionalProperties\": false,\n                \"properties\": {\n                  \"body_argument\": {\n                    \"minLength\": 1,\n                    \"type\": \"string\"\n                  },\n                  \"init_value\": {\n                    \"anyOf\": [\n                      {\n                        \"minLength\": 1,\n                        \"type\": \"string\"\n                      },\n                      {\n                        \"type\": \"number\"\n                      },\n                      {\n                        \"type\": \"boolean\"\n                      },\n                      {\n                        \"type\": \"null\"\n                      }\n                    ]\n                  },\n                  \"next_value\": {\n                    \"minLength\": 1,\n                    \"type\": \"string\"\n                  },\n                  \"result_value\": {\n                    \"minLength\": 1,\n                    \"type\": \"string\"\n                  },\n                  \"state_id\": {\n                    \"minLength\": 1,\n                    \"type\": \"string\"\n                  },\n                  \"type\": {\n                    \"additionalProperties\": false,\n                    \"properties\": {\n                      \"dtype\": {\n                        \"minLength\": 1,\n                        \"type\": \"string\"\n                      },\n                      \"shape\": {\n                        \"items\": {\n                          \"anyOf\": [\n                            {\n                              \"minimum\": 0,\n                              \"type\": \"integer\"\n                            },\n                            {\n                              \"minLength\": 1,\n                              \"type\": \"string\"\n                            }\n                          ]\n                        },\n                        \"type\": \"array\"\n                      }\n                    },\n                    \"required\": [\n                      \"dtype\",\n                      \"shape\"\n                    ],\n                    \"type\": \"object\"\n                  }\n                },\n                \"required\": [\n                  \"state_id\",\n                  \"init_value\",\n                  \"body_argument\",\n                  \"next_value\",\n                  \"result_value\",\n                  \"type\"\n                ],\n                \"type\": \"object\"\n              },\n              \"minItems\": 1,\n              \"type\": \"array\"\n            },\n            \"id\": {\n              \"minLength\": 1,\n              \"type\": \"string\"\n            },\n            \"op\": {\n              \"enum\": [\n                \"loop\"\n              ],\n              \"type\": \"string\"\n            },\n            \"operands\": {\n              \"items\": {\n                \"minLength\": 1,\n                \"type\": \"string\"\n              },\n              \"type\": \"array\"\n            },\n            \"result\": {\n              \"items\": {\n                \"minLength\": 1,\n                \"type\": \"string\"\n              },\n              \"minItems\": 1,\n              \"type\": \"array\",\n              \"uniqueItems\": true\n            },\n            \"scan\": {\n              \"items\": {\n                \"additionalProperties\": false,\n                \"properties\": {\n                  \"axis\": {\n                    \"minimum\": 0,\n                    \"type\": \"integer\"\n                  },\n                  \"from\": {\n                    \"minLength\": 1,\n                    \"type\": \"string\"\n                  },\n                  \"name\": {\n                    \"minLength\": 1,\n                    \"type\": \"string\"\n                  }\n                },\n                \"required\": [\n                  \"name\",\n                  \"from\",\n                  \"axis\"\n                ],\n                \"type\": \"object\"\n              },\n              \"type\": \"array\"\n            },\n            \"scope_id\": {\n              \"minLength\": 1,\n              \"type\": \"string\"\n            },\n            \"trip\": {\n              \"additionalProperties\": false,\n              \"properties\": {\n                \"axis\": {\n                  \"minLength\": 1,\n                  \"type\": \"string\"\n                }\n              },\n              \"required\": [\n                \"axis\"\n              ],\n              \"type\": \"object\"\n            },\n            \"type\": {\n              \"anyOf\": [\n                {\n                  \"type\": \"object\"\n                },\n                {\n                  \"type\": \"null\"\n                }\n              ]\n            },\n            \"yield\": {\n              \"items\": {\n                \"minLength\": 1,\n                \"type\": \"string\"\n              },\n              \"minItems\": 1,\n              \"type\": \"array\",\n              \"uniqueItems\": true\n            }\n          },\n          \"required\": [\n            \"op\",\n            \"result\",\n            \"scope_id\",\n            \"carry\",\n            \"trip\",\n            \"scan\",\n            \"body\",\n            \"yield\"\n          ],\n          \"type\": \"object\"\n        },\n        {\n          \"additionalProperties\": false,\n          \"properties\": {\n            \"id\": {\n              \"minLength\": 1,\n              \"type\": \"string\"\n            },\n            \"negative\": {\n              \"additionalProperties\": false,\n              \"properties\": {\n                \"body\": {\n                  \"items\": {\n                    \"$ref\": \"#/$defs/intent_op\"\n                  },\n                  \"type\": \"array\"\n                },\n                \"scope_id\": {\n                  \"minLength\": 1,\n                  \"type\": \"string\"\n                }\n              },\n              \"required\": [\n                \"scope_id\",\n                \"body\"\n              ],\n              \"type\": \"object\"\n            },\n            \"op\": {\n              \"enum\": [\n                \"effect_if\"\n              ],\n              \"type\": \"string\"\n            },\n            \"positive\": {\n              \"additionalProperties\": false,\n              \"properties\": {\n                \"body\": {\n                  \"items\": {\n                    \"$ref\": \"#/$defs/intent_op\"\n                  },\n                  \"type\": \"array\"\n                },\n                \"scope_id\": {\n                  \"minLength\": 1,\n                  \"type\": \"string\"\n                }\n              },\n              \"required\": [\n                \"scope_id\",\n                \"body\"\n              ],\n              \"type\": \"object\"\n            },\n            \"predicate\": {\n              \"minLength\": 1,\n              \"type\": \"string\"\n            }\n          },\n          \"required\": [\n            \"op\",\n            \"predicate\",\n            \"positive\",\n            \"negative\"\n          ],\n          \"type\": \"object\"\n        },\n        {\n          \"additionalProperties\": false,\n          \"properties\": {\n            \"id\": {\n              \"minLength\": 1,\n              \"type\": \"string\"\n            },\n            \"negative\": {\n              \"additionalProperties\": false,\n              \"properties\": {\n                \"body\": {\n                  \"items\": {\n                    \"$ref\": \"#/$defs/intent_op\"\n                  },\n                  \"type\": \"array\"\n                },\n                \"scope_id\": {\n                  \"minLength\": 1,\n                  \"type\": \"string\"\n                },\n                \"yield_value\": {\n                  \"minLength\": 1,\n                  \"type\": \"string\"\n                }\n              },\n              \"required\": [\n                \"scope_id\",\n                \"body\",\n                \"yield_value\"\n              ],\n              \"type\": \"object\"\n            },\n            \"op\": {\n              \"enum\": [\n                \"value_if\"\n              ],\n              \"type\": \"string\"\n            },\n            \"positive\": {\n              \"additionalProperties\": false,\n              \"properties\": {\n                \"body\": {\n                  \"items\": {\n                    \"$ref\": \"#/$defs/intent_op\"\n                  },\n                  \"type\": \"array\"\n                },\n                \"scope_id\": {\n                  \"minLength\": 1,\n                  \"type\": \"string\"\n                },\n                \"yield_value\": {\n                  \"minLength\": 1,\n                  \"type\": \"string\"\n                }\n              },\n              \"required\": [\n                \"scope_id\",\n                \"body\",\n                \"yield_value\"\n              ],\n              \"type\": \"object\"\n            },\n            \"predicate\": {\n              \"minLength\": 1,\n              \"type\": \"string\"\n            },\n            \"result\": {\n              \"minLength\": 1,\n              \"type\": \"string\"\n            },\n            \"type\": {\n              \"additionalProperties\": false,\n              \"properties\": {\n                \"dtype\": {\n                  \"minLength\": 1,\n                  \"type\": \"string\"\n                },\n                \"shape\": {\n                  \"items\": {\n                    \"anyOf\": [\n                      {\n                        \"minimum\": 0,\n                        \"type\": \"integer\"\n                      },\n                      {\n                        \"minLength\": 1,\n                        \"type\": \"string\"\n                      }\n                    ]\n                  },\n                  \"type\": \"array\"\n                }\n              },\n              \"required\": [\n                \"dtype\",\n                \"shape\"\n              ],\n              \"type\": \"object\"\n            }\n          },\n          \"required\": [\n            \"op\",\n            \"result\",\n            \"type\",\n            \"predicate\",\n            \"positive\",\n            \"negative\"\n          ],\n          \"type\": \"object\"\n        }\n      ]\n    }\n  },\n  \"additionalProperties\": false,\n  \"description\": \"The response root is one closed object with exactly these fields: schema, j, c, pi. The j object is one closed object with exactly these fields: kernel_id, intent, node_ids, boundary, signature, scopes, storage, dimension_constraints, value_dimension_relations, dimension_relations. Logical callable facts are declared only by j.signature. The root c object is the single implementation-selection object and pi is indexed by j/c. Do not emit interface, harness, location, source, provenance, binding-map or any other root sibling.\",\n  \"properties\": {\n    \"c\": {\n      \"additionalProperties\": false,\n                          \"ceil_div_const\",\n                          \"round_up_const\"\n                        ],\n                        \"type\": \"string\"\n                      },\n                      \"value\": {\n                        \"minimum\": 1,\n                        \"type\": \"integer\"\n                      }\n                    },\n                    \"required\": [\n                      \"op\",\n                      \"arg\",\n                      \"value\"\n                    ],\n                    \"type\": \"object\"\n                  }\n                ]\n              },\n              \"result\": {\n                \"pattern\": \"^x[0-9]+$\",\n                \"type\": \"string\"\n              }\n            },\n            \"required\": [\n              \"result\",\n              \"expr\"\n            ],\n            \"type\": \"object\"\n          },\n          \"type\": \"array\"\n        },\n        \"intent\": {\n          \"additionalProperties\": false,\n          \"properties\": {\n            \"intent_function\": {\n              \"additionalProperties\": false,\n              \"properties\": {\n                \"body\": {\n                  \"items\": {\n                    \"$ref\": \"#/$defs/intent_op\"\n                  },\n                  \"type\": \"array\"\n                },\n                \"inputs\": {\n                  \"items\": {\n                    \"additionalProperties\": false,\n                    \"properties\": {\n                      \"dtype\": {\n                        \"minLength\": 1,\n                        \"type\": \"string\"\n                      },\n                      \"name\": {\n                        \"pattern\": \"^t[0-9]+$\",\n                        \"type\": \"string\"\n                      },\n                      \"shape\": {\n                        \"items\": {\n                          \"anyOf\": [\n                            {\n                              \"type\": \"integer\"\n                            },\n                            {\n                              \"minLength\": 1,\n                              \"type\": \"string\"\n                            }\n                          ]\n                        },\n                        \"type\": \"array\"\n                      }\n                    },\n                    \"required\": [\n                      \"name\",\n                      \"dtype\",\n                      \"shape\"\n                    ],\n                    \"type\": \"object\"\n                  },\n                  \"type\": \"array\"\n                },\n                \"name\": {\n                  \"enum\": [\n                    \"scrc_j0\"\n                  ],\n                  \"type\": \"string\"\n                },\n                \"outputs\": {\n                  \"items\": {\n                    \"additionalProperties\": false,\n                    \"properties\": {\n                      \"dtype\": {\n                        \"minLength\": 1,\n                        \"type\": \"string\"\n                      },\n                      \"name\": {\n                        \"pattern\": \"^t[0-9]+$\",\n                        \"type\": \"string\"\n                      },\n                      \"shape\": {\n                        \"items\": {\n                          \"anyOf\": [\n                            {\n                              \"type\": \"integer\"\n                            },\n                            {\n                              \"minLength\": 1,\n                              \"type\": \"string\"\n                            }\n                          ]\n                        },\n                        \"type\": \"array\"\n                      }\n                    },\n                    \"required\": [\n                      \"name\",\n                      \"dtype\",\n                      \"shape\"\n                    ],\n                    \"type\": \"object\"\n                  },\n                  \"type\": \"array\"\n                },\n                \"returns\": {\n                  \"items\": {\n                    \"additionalProperties\": false,\n                    \"description\": \"Layer-A value-to-result binding. Destination aliasing and partial write behavior belong only to the canonical J boundary.\",\n                    \"properties\": {\n                      \"output\": {\n                        \"minLength\": 1,\n                        \"type\": \"string\"\n                      },\n                      \"value\": {\n                        \"minLength\": 1,\n                        \"type\": \"string\"\n                      }\n                    },\n                    \"required\": [\n                      \"output\",\n                      \"value\"\n                    ],\n                    \"type\": \"object\"\n                  },\n                  \"type\": \"array\"\n                }\n              },\n              \"required\": [\n                \"name\",\n                \"inputs\",\n                \"outputs\",\n                \"body\"\n              ],\n              \"type\": \"object\"\n            }\n          },\n          \"required\": [\n            \"intent_function\"\n          ],\n          \"type\": \"object\"\n        },\n        \"kernel_id\": {\n          \"enum\": [\n            \"scrc_k0\"\n          ],\n          \"type\": \"string\"\n        },\n        \"node_ids\": {\n          \"additionalProperties\": {\n            \"pattern\": \"^(intent_function\\\\.)?body\\\\[[0-9]+\\\\]((\\\\.body|\\\\.positive\\\\.body|\\\\.negative\\\\.body)\\\\[[0-9]+\\\\])*$\",\n            \"type\": \"string\"\n          },\n          \"description\": \"Map n0,n1,... to structural paths such as body[0] or body[1].positive.body[0], not to SSA/result handles such as v0.\",\n          \"propertyNames\": {\n            \"pattern\": \"^n[0-9]+$\"\n          },\n          \"type\": \"object\"\n        },\n        \"scopes\": {\n          \"items\": {\n            \"additionalProperties\": false,\n            \"description\": \"Exact portable dominance/capture/effect scope derived from J. definitions/captures/effects must contain neither missing nor extra handles. Contains no source AST, helper name or frontend spelling.\",\n            \"properties\": {\n              \"captures\": {\n                \"items\": {\n                  \"minLength\": 1,\n                  \"type\": \"string\"\n                },\n",
+            "command": "/bin/bash -c \"sed -n '1,440p' input/schema/artifact.schema.json && sed -n '1160,1345p' input/schema/artifact.schema.json\"",
+            "exit_code": 0,
+            "id": "item_10",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c 'python input/tools/schema_query.py section pi_region && python input/tools/schema_query.py section pi_instance && python input/tools/schema_query.py section pi_route && python input/tools/schema_query.py section pi_program_axis && python input/tools/schema_query.py section pi_participant_mapping && python input/tools/schema_query.py section pi_route_extent_transform && python input/tools/schema_query.py section pi_order && python input/tools/schema_query.py section pi_sharing && python input/tools/schema_query.py section pi_refinement && python input/tools/schema_query.py section pi_iteration && python input/tools/schema_query.py section pi_loop_carrier && python input/tools/schema_query.py section pi_physical_iteration && python input/tools/schema_query.py section pi_physical_loop_carrier && python input/tools/schema_query.py section pi_terminal_control'",
+            "exit_code": null,
+            "id": "item_11",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "{\n  \"additionalProperties\": false,\n  \"properties\": {\n    \"id\": {\n      \"description\": \"Declaration-order pi graph-node ID. This is the only ID namespace allowed at route/order/sharing endpoints.\",\n      \"pattern\": \"^i[0-9]+$\",\n      \"type\": \"string\"\n    },\n    \"mechanism\": {\n      \"description\": \"Pi mechanism is one closed source-neutral event class. realize is a generic representation-only stage when no more specific class applies. One realize instance anchored directly to a J.signature handle or C slot may be discharged by that parameter binding and its direct routed use; it does not require an identity assignment. Multiple instances anchored to the same handle still denote distinct routed use-sites/stages. address_base is an independently compiler-visible, program-uniform pointer/base or integer base-address contribution before lane merge; Lift uses it only when that separate source stage exists. address_lane is the compiler-visible stage that forms the lane-varying contribution or final address. When routes contain address_base -> address_lane, Replay must materialize two distinct stages in that order and must not algebraically fold them into one flat vector offset. Pointer-operation count is determined only by source-neutral carrier routing and the carrier kind declared in J.signature. If a pointer/tensor carrier directly enters address_base, that base is a pointer/address operation and its route to address_lane requires a second pointer/address operation for the lane contribution. If the pointer/tensor carrier bypasses address_base and enters address_lane or the final address stage, while address_base receives only integer, domain, or C contributions, Replay merges the integer base and lane contributions before exactly one pointer/address operation. The address_base -> address_lane edge alone never decides between these cases. transfer_direct and transfer_async classify data movement after address formation; update_atomic and update_privatized classify physical update realization; synchronize classifies synchronization. Region placement='program' only scopes an instance to one program; it does not assert that a program/grid coordinate is read. A compiler-visible program/grid coordinate is a separate realization stage and requires its own realize instance and routes. Its source-neutral encoding is a realize instance anchored to the corresponding J domain in a program region whose scalar dependency path enters address_base before transfer; a domain/C dependency path entering address_lane is lane-varying instead. Replay must preserve this base-versus-lane distinction and U_f maps it to public frontend APIs. Program-axis identity follows the closed pi.program_axes binding of the J domain semantic_ref, not instance multiplicity: repeated program-coordinate instances on one d* remain distinct stages of the same bound axis. Replay must not infer an axis from declaration order, grid extent, instance multiplicity, or C. Integer coordinate arithmetic is a realize stage; address_base and address_lane classify where its program-uniform and lane-varying paths enter address formation rather than relabeling every arithmetic op. If Source visibly forms a separable program-uniform integer base and a lane offset, then merges them before its first pointer application, the program path still enters address_base and routes to address_lane while the pointer carrier bypasses address_base. Replay preserves both integer stages and uses one pointer/address operation at the lane/final stage. Only a Source with no separable program-uniform contribution uses a lone address_lane stage. Replay must not invent program_id, a grid offset, or an affine address stage from region placement, grid convention, or C alone. Address classes never carry an index/offset formula, constant, integer width, cast, dtype, shape, vector length, predicate, fill, frontend API, or logical access semantics.\",\n      \"enum\": [\n        \"realize\",\n        \"address_base\",\n        \"address_lane\",\n        \"transfer_direct\",\n        \"transfer_async\",\n        \"update_atomic\",\n        \"update_privatized\",\n        \"synchronize\"\n      ],\n      \"type\": \"string\"\n    },\n    \"region\": {\n      \"pattern\": \"^r[0-9]+$\",\n      \"type\": \"string\"\n    },\n    \"semantic_ref\": {\n      \"description\": \"Anchor into a declared anonymous J/C handle. It is not a pi graph-node ID and never appears directly at route/order/sharing endpoints.\",\n      \"pattern\": \"^(t|n|a|d|e|q|b|s|v|p|c|x)[0-9]+$\",\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"id\",\n    \"semantic_ref\",\n    \"region\",\n    \"mechanism\"\n  ],\n  \"type\": \"object\"\n}\n{\n  \"additionalProperties\": false,\n  \"properties\": {\n    \"slots\": {\n      \"items\": {\n        \"minimum\": 0,\n        \"type\": \"integer\"\n      },\n      \"type\": \"array\",\n      \"uniqueItems\": true\n    },\n    \"source\": {\n      \"description\": \"A previously declared pi instance ID, never a raw anchor handle.\",\n      \"pattern\": \"^i[0-9]+$\",\n      \"type\": \"string\"\n    },\n    \"target\": {\n      \"description\": \"A previously declared pi instance ID, never a raw anchor handle.\",\n      \"pattern\": \"^i[0-9]+$\",\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"source\",\n    \"target\",\n    \"slots\"\n  ],\n  \"type\": \"object\"\n}\n{\n  \"additionalProperties\": false,\n  \"description\": \"A closed pi-owned binding from one J domain program-coordinate identity to physical launch axis 0, 1, or 2. It carries no grid extent, Source spelling, frontend API, or logical J semantics.\",\n  \"properties\": {\n    \"axis\": {\n      \"description\": \"Exact physical launch-axis identity; never inferred from grid extent, declaration order, C, or instance multiplicity.\",\n      \"maximum\": 2,\n      \"minimum\": 0,\n      \"type\": \"integer\"\n    },\n    \"domain_ref\": {\n      \"description\": \"J boundary domain anchoring one compiler-visible program coordinate.\",\n      \"pattern\": \"^d[0-9]+$\",\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"domain_ref\",\n    \"axis\"\n  ],\n  \"type\": \"object\"\n}\n{\n  \"additionalProperties\": false,\n  \"description\": \"A closed J/C-dependent participant projection over one zero-based logical axis. cyclic means the physical participant coordinate covers the exact J domain cyclically. The wire row carries no logical extent, modulo expression, Source spelling, frontend API, target recipe, or C value.\",\n  \"properties\": {\n    \"axis\": {\n      \"description\": \"Public physical participant-axis identity.\",\n      \"maximum\": 2,\n      \"minimum\": 0,\n      \"type\": \"integer\"\n    },\n    \"domain_instance\": {\n      \"description\": \"A declared realize instance anchored to the exact one-axis, zero-based J boundary domain covered by this physical participant axis. Its upper extent is a positive literal or declared J x* dimension.\",\n      \"pattern\": \"^i[0-9]+$\",\n      \"type\": \"string\"\n    },\n    \"extent_slot\": {\n      \"description\": \"Anonymous C launch-extent handle; its concrete value is absent from Replay.\",\n      \"pattern\": \"^c[0-9]+$\",\n      \"type\": \"string\"\n    },\n    \"projection\": {\n      \"enum\": [\n        \"cyclic\"\n      ],\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"domain_instance\",\n    \"axis\",\n    \"extent_slot\",\n    \"projection\"\n  ],\n  \"type\": \"object\"\n}\n{\n  \"additionalProperties\": false,\n  \"description\": \"A closed representation-only extent partition on one existing pi route slot. It does not create J shape/domain/predicate semantics and contains no Source spelling or frontend API.\",\n  \"properties\": {\n    \"divisor\": {\n      \"minimum\": 2,\n      \"type\": \"integer\"\n    },\n    \"rounding\": {\n      \"enum\": [\n        \"floor\",\n        \"ceil\"\n      ],\n      \"type\": \"string\"\n    },\n    \"slot\": {\n      \"minimum\": 0,\n      \"type\": \"integer\"\n    },\n    \"source\": {\n      \"description\": \"Instance anchored to one required positive-integer C extent slot.\",\n      \"pattern\": \"^i[0-9]+$\",\n      \"type\": \"string\"\n    },\n    \"target\": {\n      \"description\": \"Instance anchored to the C-attached J domain realization.\",\n      \"pattern\": \"^i[0-9]+$\",\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"source\",\n    \"target\",\n    \"slot\",\n    \"divisor\",\n    \"rounding\"\n  ],\n  \"type\": \"object\"\n}\n{\n  \"additionalProperties\": false,\n  \"properties\": {\n    \"after\": {\n      \"description\": \"A declared pi instance ID.\",\n      \"pattern\": \"^i[0-9]+$\",\n      \"type\": \"string\"\n    },\n    \"before\": {\n      \"description\": \"A declared pi instance ID.\",\n      \"pattern\": \"^i[0-9]+$\",\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"before\",\n    \"after\"\n  ],\n  \"type\": \"object\"\n}\n{\n  \"additionalProperties\": false,\n  \"properties\": {\n    \"consumers\": {\n      \"items\": {\n        \"description\": \"A declared pi consumer instance ID.\",\n        \"pattern\": \"^i[0-9]+$\",\n        \"type\": \"string\"\n      },\n      \"minItems\": 1,\n      \"type\": \"array\",\n      \"uniqueItems\": true\n    },\n    \"source\": {\n      \"description\": \"The declared pi instance reused by all consumers.\",\n      \"pattern\": \"^i[0-9]+$\",\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"source\",\n    \"consumers\"\n  ],\n  \"type\": \"object\"\n}\n{\n  \"additionalProperties\": false,\n  \"description\": \"A representation refinement. Sensitive kinds cite one J/B-owned authorization; identity materialization uses the verifier's closed global-safe rule.\",\n  \"properties\": {\n    \"auth_ref\": {\n      \"anyOf\": [\n        {\n          \"pattern\": \"^u[0-9]+$\",\n          \"type\": \"string\"\n        },\n        {\n          \"type\": \"null\"\n        }\n      ]\n    },\n    \"instance\": {\n      \"pattern\": \"^i[0-9]+$\",\n      \"type\": \"string\"\n    },\n    \"kind\": {\n      \"enum\": [\n        \"identity_materialization\",\n        \"reduction_linearization\",\n        \"signed_widen\",\n        \"unsigned_widen\",\n        \"numeric_cast\",\n        \"accumulation_dtype\",\n        \"reassociation\",\n        \"native_atomic\",\n        \"privatized_update\"\n      ],\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"instance\",\n    \"kind\",\n    \"auth_ref\"\n  ],\n  \"type\": \"object\"\n}\n{\n  \"additionalProperties\": false,\n  \"description\": \"A source-neutral physical induction-space relation. It contains no bound expression, numeric value, operator, source text, or frontend API.\",\n  \"properties\": {\n    \"induction_basis\": {\n      \"enum\": [\n        \"extent_step\",\n        \"tile_ordinal\",\n        \"rounded_extent_step\"\n      ],\n      \"type\": \"string\"\n    },\n    \"loop_instance\": {\n      \"description\": \"Instance anchored to the J structured loop realized by this physical loop region.\",\n      \"pattern\": \"^i[0-9]+$\",\n      \"type\": \"string\"\n    },\n    \"region\": {\n      \"pattern\": \"^r[0-9]+$\",\n      \"type\": \"string\"\n    },\n    \"tile_instance\": {\n      \"description\": \"Instance anchored to the matching integer C tile slot.\",\n      \"pattern\": \"^i[0-9]+$\",\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"region\",\n    \"loop_instance\",\n    \"tile_instance\",\n    \"induction_basis\"\n  ],\n  \"type\": \"object\"\n}\n{\n  \"additionalProperties\": false,\n  \"description\": \"One declaration-ordered physical loop-carrier slot. Its temporal denotation is state[0]=init, state[k+1]=next[k], and result=state[T], including T=0. Temporal/exit edges are not ordinary pi DAG edges.\",\n  \"properties\": {\n    \"init\": {\n      \"pattern\": \"^i[0-9]+$\",\n      \"type\": \"string\"\n    },\n    \"loop_instance\": {\n      \"pattern\": \"^i[0-9]+$\",\n      \"type\": \"string\"\n    },\n    \"next\": {\n      \"pattern\": \"^i[0-9]+$\",\n      \"type\": \"string\"\n    },\n    \"region\": {\n      \"pattern\": \"^r[0-9]+$\",\n      \"type\": \"string\"\n    },\n    \"result\": {\n      \"pattern\": \"^i[0-9]+$\",\n      \"type\": \"string\"\n    },\n    \"state\": {\n      \"pattern\": \"^i[0-9]+$\",\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"region\",\n    \"loop_instance\",\n    \"init\",\n    \"state\",\n    \"next\",\n    \"result\"\n  ],\n  \"type\": \"object\"\n}\n{\n  \"additionalProperties\": false,\n  \"description\": \"A physical iteration shell for an existing logical operation or boundary traversal with a closed dependent axis. It adds no J loop, bound formula, numeric value, operator, source text, or frontend API.\",\n  \"properties\": {\n    \"body_instance\": {\n      \"description\": \"Instance anchored to one existing non-loop J reduce/contraction or boundary access/domain realized by this physical-only loop region.\",\n      \"pattern\": \"^i[0-9]+$\",\n      \"type\": \"string\"\n    },\n    \"direction\": {\n      \"enum\": [\n        \"forward\",\n        \"reverse\"\n      ],\n      \"type\": \"string\"\n    },\n    \"induction_basis\": {\n      \"enum\": [\n        \"extent_step\",\n        \"tile_ordinal\",\n        \"rounded_extent_step\"\n      ],\n      \"type\": \"string\"\n    },\n    \"region\": {\n      \"pattern\": \"^r[0-9]+$\",\n      \"type\": \"string\"\n    },\n    \"tile_instance\": {\n      \"description\": \"Instance anchored to the required positive integer C tile attached to the same J node and axis.\",\n      \"pattern\": \"^i[0-9]+$\",\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"region\",\n    \"body_instance\",\n    \"tile_instance\",\n    \"induction_basis\",\n    \"direction\"\n  ],\n  \"type\": \"object\"\n}\n{\n  \"additionalProperties\": false,\n  \"description\": \"One typed physical carrier in a physical_iterations region. Temporal edges carry no initialization/update formula or frontend spelling.\",\n  \"properties\": {\n    \"init\": {\n      \"pattern\": \"^i[0-9]+$\",\n      \"type\": \"string\"\n    },\n    \"next\": {\n      \"pattern\": \"^i[0-9]+$\",\n      \"type\": \"string\"\n    },\n    \"region\": {\n      \"pattern\": \"^r[0-9]+$\",\n      \"type\": \"string\"\n    },\n    \"result\": {\n      \"pattern\": \"^i[0-9]+$\",\n      \"type\": \"string\"\n    },\n    \"state\": {\n      \"pattern\": \"^i[0-9]+$\",\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"region\",\n    \"init\",\n    \"state\",\n    \"next\",\n    \"result\"\n  ],\n  \"type\": \"object\"\n}\n{\n  \"additionalProperties\": false,\n  \"description\": \"One source-neutral terminal-control topology relation. The two instances must anchor distinct sibling effect_if arm scopes; the terminal arm ends the current kernel invocation and the continuation arm carries the remaining lexical computation. No predicate, polarity, return value, source spelling, or frontend API is present.\",\n  \"properties\": {\n    \"continuation_instance\": {\n      \"pattern\": \"^i[0-9]+$\",\n      \"type\": \"string\"\n    },\n    \"terminal_instance\": {\n      \"pattern\": \"^i[0-9]+$\",\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"terminal_instance\",\n    \"continuation_instance\"\n  ],\n  \"type\": \"object\"\n}\n",
+            "command": "/bin/bash -c 'python input/tools/schema_query.py section pi_region && python input/tools/schema_query.py section pi_instance && python input/tools/schema_query.py section pi_route && python input/tools/schema_query.py section pi_program_axis && python input/tools/schema_query.py section pi_participant_mapping && python input/tools/schema_query.py section pi_route_extent_transform && python input/tools/schema_query.py section pi_order && python input/tools/schema_query.py section pi_sharing && python input/tools/schema_query.py section pi_refinement && python input/tools/schema_query.py section pi_iteration && python input/tools/schema_query.py section pi_loop_carrier && python input/tools/schema_query.py section pi_physical_iteration && python input/tools/schema_query.py section pi_physical_loop_carrier && python input/tools/schema_query.py section pi_terminal_control'",
+            "exit_code": 0,
+            "id": "item_11",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c \"rg -n 'dimension_constraints|\\\"schema\\\"|\\\"values\\\"|\\\"slots\\\"' input/schema/artifact.schema.json | head -40 && sed -n '440,700p' input/schema/artifact.schema.json && sed -n '1080,1185p' input/schema/artifact.schema.json\"",
+            "exit_code": null,
+            "id": "item_12",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "437:  \"description\": \"The response root is one closed object with exactly these fields: schema, j, c, pi. The j object is one closed object with exactly these fields: kernel_id, intent, node_ids, boundary, signature, scopes, storage, dimension_constraints, value_dimension_relations, dimension_relations. Logical callable facts are declared only by j.signature. The root c object is the single implementation-selection object and pi is indexed by j/c. Do not emit interface, harness, location, source, provenance, binding-map or any other root sibling.\",\n442:        \"slots\": {\n497:        \"values\": {\n521:        \"slots\",\n522:        \"values\"\n528:      \"description\": \"J scopes are an exact derived dominance archive, not a copy of pi regions. Straight-line J uses one parentless function scope. Its definitions are exactly J input handles plus results actually produced by operations in that scope; a declared logical output is not a definition unless an operation really produces that same handle. captures and effects are likewise exact, with no convenience extras. dimension_constraints explicitly declares the closed affine legal domain of symbolic x* dimensions. Shape-dependent operations such as pad must state symbolic lo/hi expressions such as x1-x0 in Layer A; both dimensions remain declared when Source exposes both. Fixed code only parses and proves the authored relation and never reads a Harness dimension to repair it. When one Source scalar is both logical rank-0 data and a shape extent, keep the t* value and x* dimension distinct and explicitly declare their equality in value_dimension_relations; fixed code never creates it. Every semantic loop has exactly one corresponding loop_region scope. Every effect_if has two explicit positive/negative arms bound to distinct sibling branch_region scopes. Either arm body may be empty; the conditional has no result/yield, branch-local SSA never escapes, and scope.effects plus matching EffectSpec/access_ref is the sole effect membership authority. Every value_if has one explicit result/type and two explicit positive/negative {scope_id,body,yield_value} arms bound to distinct sibling branch_region scopes. Either pure body may be empty; both yields match the result type, and only the enclosing result escapes. value_if is neither select nor effect_if and is never reconstructed by fixed code. The storage array may be empty: ordinary SSA temporaries do not have semantic storage or lifetime objects. Add StorageObject only when J semantics requires storage identity, such as an alias/destination or loop-carried state. write_once requires exactly one matching boundary write event; producing an SSA value is not such an event. Every loop state requires one storage object binding its state, body, next and result values plus a non-literal init value, if any, across iterations.\",\n1077:                  \"values\": {\n1086:                  \"values\",\n1114:        \"dimension_constraints\": {\n1628:        \"dimension_constraints\",\n2058:              \"slots\": {\n2080:              \"slots\"\n2155:    \"schema\": {\n2163:    \"schema\",\n      \"additionalProperties\": false,\n      \"properties\": {\n        \"slots\": {\n          \"items\": {\n            \"additionalProperties\": false,\n            \"properties\": {\n              \"axis_ref\": {\n                \"anyOf\": [\n                  {\n                    \"minimum\": 0,\n                    \"type\": \"integer\"\n                  },\n                  {\n                    \"pattern\": \"^x[0-9]+$\",\n                    \"type\": \"string\"\n                  }\n                ],\n                \"description\": \"Optional logical axis in AxisRefs_v1(J,subject_ref); requires subject_ref and never names a physical axis.\"\n              },\n              \"kind\": {\n                \"description\": \"constexpr is a callable frontend compile-time parameter; compiler is an external compiler-invocation option and never a callable/body/pi carrier.\",\n                \"enum\": [\n                  \"constexpr\",\n                  \"compiler\"\n                ],\n                \"type\": \"string\"\n              },\n              \"name\": {\n                \"pattern\": \"^c[0-9]+$\",\n                \"type\": \"string\"\n              },\n              \"required\": {\n                \"type\": \"boolean\"\n              },\n              \"role\": {\n                \"pattern\": \"^[a-z][a-z0-9_]*$\",\n                \"type\": \"string\"\n              },\n              \"subject_ref\": {\n                \"description\": \"Optional source-neutral attachment to one declared J node/domain/access/scope/storage subject. It is not a transformation permission or source binding. Compiler-kind slots must omit subject_ref and axis_ref.\",\n                \"pattern\": \"^[ndaqb][0-9]+$\",\n                \"type\": \"string\"\n              },\n              \"value_type\": {\n                \"minLength\": 1,\n                \"type\": \"string\"\n              }\n            },\n            \"required\": [\n              \"name\",\n              \"kind\",\n              \"role\"\n            ],\n            \"type\": \"object\"\n          },\n          \"type\": \"array\"\n        },\n        \"values\": {\n          \"additionalProperties\": {\n            \"anyOf\": [\n              {\n                \"type\": \"boolean\"\n              },\n              {\n                \"type\": \"integer\"\n              },\n              {\n                \"type\": \"number\"\n              },\n              {\n                \"type\": \"string\"\n              }\n            ]\n          },\n          \"propertyNames\": {\n            \"pattern\": \"^c[0-9]+$\"\n          },\n          \"type\": \"object\"\n        }\n      },\n      \"required\": [\n        \"slots\",\n        \"values\"\n      ],\n      \"type\": \"object\"\n    },\n    \"j\": {\n      \"additionalProperties\": false,\n      \"description\": \"J scopes are an exact derived dominance archive, not a copy of pi regions. Straight-line J uses one parentless function scope. Its definitions are exactly J input handles plus results actually produced by operations in that scope; a declared logical output is not a definition unless an operation really produces that same handle. captures and effects are likewise exact, with no convenience extras. dimension_constraints explicitly declares the closed affine legal domain of symbolic x* dimensions. Shape-dependent operations such as pad must state symbolic lo/hi expressions such as x1-x0 in Layer A; both dimensions remain declared when Source exposes both. Fixed code only parses and proves the authored relation and never reads a Harness dimension to repair it. When one Source scalar is both logical rank-0 data and a shape extent, keep the t* value and x* dimension distinct and explicitly declare their equality in value_dimension_relations; fixed code never creates it. Every semantic loop has exactly one corresponding loop_region scope. Every effect_if has two explicit positive/negative arms bound to distinct sibling branch_region scopes. Either arm body may be empty; the conditional has no result/yield, branch-local SSA never escapes, and scope.effects plus matching EffectSpec/access_ref is the sole effect membership authority. Every value_if has one explicit result/type and two explicit positive/negative {scope_id,body,yield_value} arms bound to distinct sibling branch_region scopes. Either pure body may be empty; both yields match the result type, and only the enclosing result escapes. value_if is neither select nor effect_if and is never reconstructed by fixed code. The storage array may be empty: ordinary SSA temporaries do not have semantic storage or lifetime objects. Add StorageObject only when J semantics requires storage identity, such as an alias/destination or loop-carried state. write_once requires exactly one matching boundary write event; producing an SSA value is not such an event. Every loop state requires one storage object binding its state, body, next and result values plus a non-literal init value, if any, across iterations.\",\n      \"properties\": {\n        \"boundary\": {\n          \"additionalProperties\": false,\n          \"description\": \"The J boundary is one closed object with exactly these fields: domains, accesses, broadcasts, aliases, effects, output_mappings, reductions, index_bounds, updates, result_relations, realization_authorizations, consumer_extensions, access_guard_relations. Every load, store, or update access requires an ordered logical index_expression, including scalar accesses. The bounded ContractExpr elaborator maps k0/[k0] and k1,k0/[k1,k0] to the same structured axes before any consumer runs. predicate, fill_value, and logical domains belong only to J when present in source semantics. Preserve every source logical domain, access predicate, and masked-load fill even when the current bound invocation makes a mask tautological. A fill_value is legal only on a load with a non-null predicate; an unconditional access has neither predicate nor fill_value, and consumers reject an orphan fill rather than silently erasing it. Every access has exactly one EffectSpec whose kind, target, node_ref (including null), and access_ref exactly match that access. Do not move these facts to pi, omit the matching effect, or invent them when the source has none. For a predicated pure-functional boundary, the observable store producer carries an explicit result type equal to the J output. A direct same-handle output needs no output_mapping; otherwise returns or output_mappings may uniquely bind it, and both must agree if present. consumer_extensions is the sole artifact.v4+ authority for a physical outside-domain contribution to one sum/max/min reduce or scan operand. It references the predicate-bearing access instead of copying or promoting that predicate into Layer-A SSA. access_guard_relations is the artifact.v5 J-owned relation between one boundary access and one explicit Layer-A guard value; Lift must author every field and fixed code never infers or inserts the relation.\",\n          \"properties\": {\n            \"access_guard_relations\": {\n              \"items\": {\n                \"additionalProperties\": false,\n                \"description\": \"LLM-authored J relation from one declared boundary access to one declared Layer-A guard value. axes contains only JSON integer access-axis ordinals and polarity is closed. Fixed code never infers or inserts this relation.\",\n                \"properties\": {\n                  \"access_ref\": {\n                    \"minLength\": 1,\n                    \"type\": \"string\"\n                  },\n                  \"axes\": {\n                    \"items\": {\n                      \"minimum\": 0,\n                      \"type\": \"integer\"\n                    },\n                    \"type\": \"array\"\n                  },\n                  \"polarity\": {\n                    \"enum\": [\n                      \"positive\",\n                      \"negative\"\n                    ],\n                    \"type\": \"string\"\n                  },\n                  \"value_ref\": {\n                    \"minLength\": 1,\n                    \"type\": \"string\"\n                  }\n                },\n                \"required\": [\n                  \"access_ref\",\n                  \"value_ref\",\n                  \"axes\",\n                  \"polarity\"\n                ],\n                \"type\": \"object\"\n              },\n              \"type\": \"array\"\n            },\n            \"accesses\": {\n              \"items\": {\n                \"additionalProperties\": false,\n                \"allOf\": [\n                  {\n                    \"if\": {\n                      \"properties\": {\n                        \"fill_value\": {\n                          \"not\": {\n                            \"type\": \"null\"\n                          }\n                        }\n                      },\n                      \"required\": [\n                        \"fill_value\"\n                      ]\n                    },\n                    \"then\": {\n                      \"properties\": {\n                        \"kind\": {\n                          \"const\": \"load\"\n                        },\n                        \"predicate\": {\n                          \"minLength\": 1,\n                          \"type\": \"string\"\n                        }\n                      },\n                      \"required\": [\n                        \"kind\",\n                        \"predicate\"\n                      ]\n                    }\n                  }\n                ],\n                \"description\": \"Portable logical access in ContractExpr v1. Direct dense surface forms k0/[k0] and k1,k0/[k1,k0] are deterministically elaborated to the same structured ordered axes. General non-direct affine relations remain typed expressions but can be unsupported by a particular RefEval capability profile. A node_ref makes the access consumer-local: the relation is not implicitly inherited by sibling uses of the same tensor. fill_value is legal only on a load with a non-null predicate. An unconditional access uses the unique canonical spelling with both predicate and fill_value absent/null; consumers reject rather than silently erase an orphan fill_value.\",\n                \"properties\": {\n                  \"access_id\": {\n                    \"minLength\": 1,\n                    \"type\": \"string\"\n                  },\n                  \"fill_value\": {},\n                  \"index_expression\": {\n                    \"minLength\": 1,\n                    \"type\": \"string\"\n                  },\n                  \"kind\": {\n                    \"enum\": [\n                      \"load\",\n                      \"store\",\n                      \"update\"\n                    ],\n                    \"type\": \"string\"\n                  },\n                  \"node_ref\": {\n                    \"anyOf\": [\n                      {\n                        \"minLength\": 1,\n                        \"type\": \"string\"\n                      },\n                      {\n                        \"type\": \"null\"\n                      }\n                    ]\n                  },\n                  \"predicate\": {\n                    \"anyOf\": [\n                      {\n                        \"description\": \"One boolean ContractExpr v1 expression: symbols/literals, arithmetic, comparisons, and/or/not, and only ceil_div/cdiv/min/max calls. No assignment, prose, range notation, frontend calls, attributes, or program/grid/tile/lane coordinate construction.\",\n                        \"minLength\": 1,\n                        \"type\": \"string\"\n                      },\n                      {\n                        \"type\": \"null\"\n                      }\n                    ]\n                  },\n                  \"tensor\": {\n                    \"minLength\": 1,\n                    \"type\": \"string\"\n                  }\n                },\n                \"required\": [\n                  \"access_id\",\n                  \"kind\",\n                  \"tensor\",\n                  \"index_expression\"\n                ],\n                \"type\": \"object\"\n              },\n              \"type\": \"array\"\n            },\n            \"aliases\": {\n              \"items\": {\n                \"additionalProperties\": false,\n                \"properties\": {\n                  \"kind\": {\n                    \"enum\": [\n                      \"must_alias\",\n                      \"may_alias\",\n                      \"no_alias\"\n                    ],\n                    \"type\": \"string\"\n                  },\n                  \"left\": {\n                    \"minLength\": 1,\n                    \"type\": \"string\"\n                  },\n                  \"right\": {\n                    \"minLength\": 1,\n                    \"type\": \"string\"\n                  }\n                },\n                \"required\": [\n                  \"left\",\n                  \"right\",\n                  \"kind\"\n                ],\n                \"type\": \"object\"\n              },\n              \"type\": \"array\"\n            },\n            \"broadcasts\": {\n              \"items\": {\n                \"additionalProperties\": false,\n                \"properties\": {\n                  \"axes\": {\n                    \"items\": {\n                      \"anyOf\": [\n                        {\n                  }\n                },\n                \"required\": [\n                  \"node_ref\",\n                  \"base\",\n                  \"indices\",\n                  \"values\",\n                  \"axis\",\n                  \"combiner\",\n                  \"duplicate_policy\",\n                  \"order\"\n                ],\n                \"type\": \"object\"\n              },\n              \"type\": \"array\"\n            }\n          },\n          \"required\": [\n            \"domains\",\n            \"accesses\",\n            \"broadcasts\",\n            \"aliases\",\n            \"effects\",\n            \"output_mappings\",\n            \"reductions\",\n            \"index_bounds\",\n            \"updates\",\n            \"result_relations\",\n            \"realization_authorizations\",\n            \"consumer_extensions\",\n            \"access_guard_relations\"\n          ],\n          \"type\": \"object\"\n        },\n        \"dimension_constraints\": {\n          \"items\": {\n            \"description\": \"One boolean affine ContractExpr over declared x* dimensions. The v4 checker accepts integer literals, +/-, constant multiplication, comparisons, and conjunction. It rejects unknown references, non-affine arithmetic, disjunction, and negation. This J-owned legal-domain relation is never filled from a Harness valuation. When Source exposes logical and rounded extents separately, declare both x* handles and their relation instead of substituting the current rounded integer.\",\n            \"minLength\": 1,\n            \"type\": \"string\"\n          },\n          \"type\": \"array\"\n        },\n        \"dimension_relations\": {\n          \"items\": {\n            \"additionalProperties\": false,\n            \"description\": \"LLM-authored closed definition of one declared logical dimension from another. Fixed code validates and consumes it but never infers the relation from Harness values, grid, C, pi, or compiler output.\",\n            \"properties\": {\n              \"expr\": {\n                \"oneOf\": [\n                  {\n                    \"additionalProperties\": false,\n                    \"properties\": {\n                      \"arg\": {\n                        \"pattern\": \"^x[0-9]+$\",\n                        \"type\": \"string\"\n                      },\n                      \"op\": {\n                        \"enum\": [\n                          \"identity\"\n                        ],\n                        \"type\": \"string\"\n                      }\n                    },\n                    \"required\": [\n                      \"op\",\n                      \"arg\"\n                    ],\n                    \"type\": \"object\"\n                  },\n                  {\n                    \"additionalProperties\": false,\n                    \"properties\": {\n                      \"arg\": {\n                        \"pattern\": \"^x[0-9]+$\",\n                        \"type\": \"string\"\n                      },\n                      \"op\": {\n                        \"enum\": [\n                          \"add_const\",\n                          \"mul_const\",\n                          \"ceil_div_const\",\n                          \"round_up_const\"\n                        ],\n                        \"type\": \"string\"\n                      },\n                      \"value\": {\n                        \"minimum\": 1,\n                        \"type\": \"integer\"\n                      }\n                    },\n                    \"required\": [\n                      \"op\",\n                      \"arg\",\n                      \"value\"\n                    ],\n                    \"type\": \"object\"\n                  }\n                ]\n              },\n              \"result\": {\n                \"pattern\": \"^x[0-9]+$\",\n                \"type\": \"string\"\n              }\n            },\n            \"required\": [\n              \"result\",\n",
+            "command": "/bin/bash -c \"rg -n 'dimension_constraints|\\\"schema\\\"|\\\"values\\\"|\\\"slots\\\"' input/schema/artifact.schema.json | head -40 && sed -n '440,700p' input/schema/artifact.schema.json && sed -n '1080,1185p' input/schema/artifact.schema.json\"",
+            "exit_code": 0,
+            "id": "item_12",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c \"sed -n '1980,2180p' input/schema/artifact.schema.json\"",
+            "exit_code": null,
+            "id": "item_13",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "                \"type\": \"string\"\n              },\n              \"parent\": {\n                \"anyOf\": [\n                  {\n                    \"pattern\": \"^r[0-9]+$\",\n                    \"type\": \"string\"\n                  },\n                  {\n                    \"type\": \"null\"\n                  }\n                ]\n              },\n              \"placement\": {\n                \"enum\": [\n                  \"root\",\n                  \"program\",\n                  \"loop\",\n                  \"branch\"\n                ],\n                \"type\": \"string\"\n              }\n            },\n            \"required\": [\n              \"id\",\n              \"parent\",\n              \"placement\"\n            ],\n            \"type\": \"object\"\n          },\n          \"type\": \"array\"\n        },\n        \"route_extent_transforms\": {\n          \"items\": {\n            \"additionalProperties\": false,\n            \"description\": \"A closed representation-only extent partition on one existing pi route slot. It does not create J shape/domain/predicate semantics and contains no Source spelling or frontend API.\",\n            \"properties\": {\n              \"divisor\": {\n                \"minimum\": 2,\n                \"type\": \"integer\"\n              },\n              \"rounding\": {\n                \"enum\": [\n                  \"floor\",\n                  \"ceil\"\n                ],\n                \"type\": \"string\"\n              },\n              \"slot\": {\n                \"minimum\": 0,\n                \"type\": \"integer\"\n              },\n              \"source\": {\n                \"description\": \"Instance anchored to one required positive-integer C extent slot.\",\n                \"pattern\": \"^i[0-9]+$\",\n                \"type\": \"string\"\n              },\n              \"target\": {\n                \"description\": \"Instance anchored to the C-attached J domain realization.\",\n                \"pattern\": \"^i[0-9]+$\",\n                \"type\": \"string\"\n              }\n            },\n            \"required\": [\n              \"source\",\n              \"target\",\n              \"slot\",\n              \"divisor\",\n              \"rounding\"\n            ],\n            \"type\": \"object\"\n          },\n          \"type\": \"array\"\n        },\n        \"routes\": {\n          \"items\": {\n            \"additionalProperties\": false,\n            \"properties\": {\n              \"slots\": {\n                \"items\": {\n                  \"minimum\": 0,\n                  \"type\": \"integer\"\n                },\n                \"type\": \"array\",\n                \"uniqueItems\": true\n              },\n              \"source\": {\n                \"description\": \"A previously declared pi instance ID, never a raw anchor handle.\",\n                \"pattern\": \"^i[0-9]+$\",\n                \"type\": \"string\"\n              },\n              \"target\": {\n                \"description\": \"A previously declared pi instance ID, never a raw anchor handle.\",\n                \"pattern\": \"^i[0-9]+$\",\n                \"type\": \"string\"\n              }\n            },\n            \"required\": [\n              \"source\",\n              \"target\",\n              \"slots\"\n            ],\n            \"type\": \"object\"\n          },\n          \"type\": \"array\"\n        },\n        \"sharing\": {\n          \"items\": {\n            \"additionalProperties\": false,\n            \"properties\": {\n              \"consumers\": {\n                \"items\": {\n                  \"description\": \"A declared pi consumer instance ID.\",\n                  \"pattern\": \"^i[0-9]+$\",\n                  \"type\": \"string\"\n                },\n                \"minItems\": 1,\n                \"type\": \"array\",\n                \"uniqueItems\": true\n              },\n              \"source\": {\n                \"description\": \"The declared pi instance reused by all consumers.\",\n                \"pattern\": \"^i[0-9]+$\",\n                \"type\": \"string\"\n              }\n            },\n            \"required\": [\n              \"source\",\n              \"consumers\"\n            ],\n            \"type\": \"object\"\n          },\n          \"type\": \"array\"\n        },\n        \"terminal_controls\": {\n          \"items\": {\n            \"additionalProperties\": false,\n            \"description\": \"One source-neutral terminal-control topology relation. The two instances must anchor distinct sibling effect_if arm scopes; the terminal arm ends the current kernel invocation and the continuation arm carries the remaining lexical computation. No predicate, polarity, return value, source spelling, or frontend API is present.\",\n            \"properties\": {\n              \"continuation_instance\": {\n                \"pattern\": \"^i[0-9]+$\",\n                \"type\": \"string\"\n              },\n              \"terminal_instance\": {\n                \"pattern\": \"^i[0-9]+$\",\n                \"type\": \"string\"\n              }\n            },\n            \"required\": [\n              \"terminal_instance\",\n              \"continuation_instance\"\n            ],\n            \"type\": \"object\"\n          },\n          \"type\": \"array\"\n        }\n      },\n      \"required\": [\n        \"regions\",\n        \"instances\",\n        \"routes\",\n        \"program_axes\",\n        \"participant_mappings\",\n        \"route_extent_transforms\",\n        \"order\",\n        \"sharing\",\n        \"refinements\",\n        \"iterations\",\n        \"loop_carriers\",\n        \"physical_iterations\",\n        \"physical_loop_carriers\",\n        \"terminal_controls\"\n      ],\n      \"type\": \"object\"\n    },\n    \"schema\": {\n      \"enum\": [\n        \"intentir.scrc.artifact.v13\"\n      ],\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"schema\",\n    \"j\",\n    \"c\",\n    \"pi\"\n  ],\n  \"type\": \"object\"\n}\n",
+            "command": "/bin/bash -c \"sed -n '1980,2180p' input/schema/artifact.schema.json\"",
+            "exit_code": 0,
+            "id": "item_13",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "id": "item_14",
+            "text": "I’m treating the two-dimensional indexed read as two logical gathers—row selection followed by per-row column selection—while keeping the output buffer write as boundary behavior. One ownership point is still ambiguous (whether pure gather operands also need explicit boundary access/effect rows), so I’m checking that exact contract term before committing the first file.",
+            "type": "agent_message"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c \"rg -n -C 3 'boundary access|Every access|pure.*access|gather' input/knowledge/lift_contract.md | head -120\"",
+            "exit_code": null,
+            "id": "item_15",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "93-or null is invalid. Only `one_of_updates` carries one non-empty\n94-`update_node_ref` that names an existing logical update.\n95-\n96:Every J.boundary access must have exactly one matching effect. The effect's\n97-kind, target, node_ref (including null), and access_ref must agree exactly with\n98-the access; never attach an otherwise matching access to a different node. A\n99-direct logical-input load may use node_ref=null with the matching null effect;\n--\n216-A value-yielding Source `scf.if` is one Layer-A `value_if`, never `select`:\n217-author a visible scalar-i1 predicate, one result/type, and two explicit\n218-`{scope_id,body,yield_value}` arms. Bodies may be empty/capture outer values\n219:but admit only known pure ordinary ops, no access/effect/unknown/nested region.\n220-Both yields exactly match the result type and only that result escapes. Arm\n221-scopes and pi branch regions are distinct siblings. Fixed code never fills,\n222-derives from select, or rewrites this structure.\n",
+            "command": "/bin/bash -c \"rg -n -C 3 'boundary access|Every access|pure.*access|gather' input/knowledge/lift_contract.md | head -120\"",
+            "exit_code": 0,
+            "id": "item_15",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c \"sed -n '70,112p' input/knowledge/lift_contract.md && sed -n '1,70p' input/knowledge/lift_contract.md\"",
+            "exit_code": null,
+            "id": "item_16",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "Also emit the complete J.dimension_relations array, including [].\n\nEach physical p* has exactly one logical_ref. Dtype/rank/mode must agree; inout binds one tensor\ndeclared as both input and output, and value parameters never bind outputs merely\nto satisfy existence. A representation/address-only runtime scalar is rank-0\nmode=value with public dtype and null logical_ref; pi may reference that p*.\nClassify only from Source use. Any bound rank-0 t* must reach an observable output\nor explicit J boundary/shape semantic. A compiler-view kind=`none` argument is\nexactly one opaque mode=value dtype=`none` p* with null rank/alias/logical_ref and\ncontributes no J tensor, node, access, effect, or pi instance.\n\nFor every observable output, J.boundary.result_relations declares only the\nclosed semantic comparison class; it never declares numeric thresholds. Use\n`exact` only when cross-backend equality is part of the logical contract (for\nexample integer/boolean results, bitwise operations, or exactly specified\ncopies). Any output reached by floating arithmetic uses `tolerance` unless the\nSource itself establishes cross-backend bitwise equality. This includes ordinary\nf16/bf16/f32 pointwise add/sub/mul/div as well as casts, transcendentals,\nreductions, contraction, and reassociation: target evaluation width and rounding\nmay differ even when the logical arithmetic graph is the same. The trusted\nexternal Gate2 policy Q supplies all atol, rtol, ULP, and NaN rules. Never place\na Python comparator or a candidate-selected tolerance in J, C, or pi.\nFor `exact` and `tolerance`, omit `update_node_ref` entirely: an empty string\nor null is invalid. Only `one_of_updates` carries one non-empty\n`update_node_ref` that names an existing logical update.\n\nEvery J.boundary access must have exactly one matching effect. The effect's\nkind, target, node_ref (including null), and access_ref must agree exactly with\nthe access; never attach an otherwise matching access to a different node. A\ndirect logical-input load may use node_ref=null with the matching null effect;\ndo not invent map_unary(identity) solely to create an access anchor.\nAn access attached to one node is consumer-local: it does not silently change\nthe same tensor operand at a sibling node. When Source reuses one physical\ntensor through different logical indices, predicates, fills, or sub-domains at\ndifferent Layer-A consumers, author each distinct consumer-local access/effect\nexplicitly at the node that consumes that view. Conversely, do not duplicate an\naccess merely because several consumers use the same complete logical tensor.\nFixed code never copies, propagates, or recommends a sibling access relation.\n\nindex_expression uses the closed ContractExpr syntax. For a direct dense\nprojection, k0 and [k0] are equivalent one-axis surface forms, while k1,k0 and\n[k1, k0] are equivalent ordered two-axis forms; deterministic J elaboration\nnormalizes them before TypeCheck and Replay. Do not encode frontend APIs or\nYou are the source-aware Lift LLM for IntentIR.\nReturn one complete JSON object: anonymous J=A+B, independent pure C, and pi.\nThere is no downstream composer or rule catalog.\nThe supplied Responses schema is authoritative for fields, enums, optionality,\ngrammar, and structure; never\nduplicate, rename, or extend it.\n\nUse gap-free declaration-order names: kernel scrc_k0; tensors t*; J nodes n*;\nvalues v*; dimensions x*; domains d*; accesses a*; effects e*; scopes q*;\nstorage b*; parameters p*; C slots c*; pi regions r* and instances i*.\nJ t* numbering follows first declaration across inputs then outputs; inout\nreuses its input handle. Never derive t* from p* position: p0 input, p1 output,\np2 extent bind t0, t1, x0 respectively.\n\nThe semantic IntentFunction is scrc_j0. node_ids maps n* to body paths, never\nv* results. boundary.domains maps d* directly to portable boolean strings,\nnever axes/members objects.\n\nThe trusted harness_compiler_view is byte-authoritative plumbing. Put logical\np* in J.signature and implementation-selection c* in the single C; source\npositions stay private. C values/compiler_slots equal the anonymous inputs and\neach compiler slot uses compiler_roles exactly. Never rename c* to p* or infer\nstrategy names from roles. A compiler slot is consumed only by the external\nfrontend compiler invocation: give it no subject_ref/axis_ref and no pi instance\nor route; it is not a Source constexpr, callable parameter, or kernel-body value.\n\nFor every tensor, `shape` is only the current Harness binding and is never\npermission to specialize J. In `shape_contract`, an\ninteger stays a static J literal and each source-grounded h* becomes a symbolic\nx*: equal h* coordinates share x*, distinct h* remain distinct even when their\nvalues coincide. Choose one x* for each h* and use it in every affected J tensor shape.\nh* is Harness-only. An integral `shape_coordinate:h*` scalar or explicitly bound\nsemantic constexpr\nbinds directly to that x* when extent/index/domain-only; if it also carries\nlogical data, bind one rank-0 t* and author the t*=x*\nvalue_dimension_relations equality. Fixed code checks but never creates either\nform. Never infer h* from values, shape, grid, C, names, or coincident numbers.\nCapacity and active-length coordinates remain distinct: preserve Source padding,\ndomains, and required non-negative affine constraints, but do not invent a\nC-dependent roundup equation. Grid/C/pi may realize rounding, not J ownership.\nWhen Source itself establishes a logical dimension identity, author it in the\ncomplete J.dimension_relations array. The only legal expressions are identity,\nadd_const, mul_const, ceil_div_const, and round_up_const over declared x* handles\nand positive integer constants. Typical examples are a full extent that Source\ndefines as twice a half extent or a logical rounded capacity that Source defines\nfrom an active extent. Never infer such a relation from equal concrete values,\nHarness shapes, grid, C, pi, TTIR layout, or a frontend convention. Emit [] when\nSource establishes no dimension relation; fixed code only validates and consumes.\n\nbound_constexpr_values are Harness-owned, non-C JIT bindings; constexprness alone\nnever makes one a graph selector. Across all Source uses, logical\ndata/predicate/result becomes one dtype-compatible rank-0 t*, while integral\nextent-only becomes x*. A null logical_ref is allowed only when every semantic\nuse is exclusively compile-time control and the active graph has no shape,\nindex, mask, arithmetic, boolean, or result use. Such a pure selector stays a\nconstexpr value carrier: its value stays only in Harness; author only its selected\ncomplete graph. fixed code checks only the authored wire/type contract and never\nselects or repairs the graph. String constexpr is pure-selector-only or unsupported.\n\nA J.signature logical_ref names only a declared t* input/output or x*, never p*,\na Source/local name, or body v*. Runtime or constexpr logical data binds one\nrank-0 t*. If it also controls an active predicate, reuse that same t* in the\npredicate and arithmetic dataflow; never split one Source value across t*, x*,\nor null. The equality value(t*)=x* is explicit. Author it only from exact Source\nidentity, never a valuation, dtype, position, or shape coincidence; an extent-only\nscalar binds x* directly.\nEmit the complete J.value_dimension_relations array, including []; fixed code and\nReplay never add or repair it. Symbolic x* are signature/type handles, not SSA\nvalues; never list x* in portable scope definitions/captures or storage members.\nAlso emit the complete J.dimension_relations array, including [].\n",
+            "command": "/bin/bash -c \"sed -n '70,112p' input/knowledge/lift_contract.md && sed -n '1,70p' input/knowledge/lift_contract.md\"",
+            "exit_code": 0,
+            "id": "item_16",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "id": "item_17",
+            "text": "I’ve resolved the ownership split: the compiler option remains only in C (no pi carrier), the logical gather graph and index bounds stay in J, and pi records the program-axis plus direct address/transfer stages and their visible ordering. I’m writing that complete draft now, including all required empty closed arrays.",
+            "type": "agent_message"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "changes": [
+              {
+                "kind": "add",
+                "path": "/workspace/output/candidate.json"
+              }
+            ],
+            "id": "item_18",
+            "status": "in_progress",
+            "type": "file_change"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "changes": [
+              {
+                "kind": "add",
+                "path": "/workspace/output/candidate.json"
+              }
+            ],
+            "id": "item_18",
+            "status": "completed",
+            "type": "file_change"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "id": "item_19",
+            "text": "The first persistent candidate is complete. I’m submitting those exact bytes now; I’ll use only the returned rejection diagnostics to patch the file.",
+            "type": "agent_message"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py submit_candidate'",
+            "exit_code": null,
+            "id": "item_20",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "{\"authority\": \"diagnostic-only independent phase results over the same exact candidate bytes; no artifact field is generated or repaired\", \"candidate_check\": {\"diagnostics\": [{\"observed_refs_or_types\": [\"a2\", \"detail: functional axis 'k0' extent 256 differs from J tensor extent 64\"], \"path\": \"j.boundary.accesses[2].index_expression\", \"rule_code\": \"functional_boundary_incomplete\"}, {\"observed_refs_or_types\": [\"a2\", \"detail: functional axis 'k1' extent 64 differs from J tensor extent 'x0'\"], \"path\": \"j.boundary.accesses[2].index_expression\", \"rule_code\": \"functional_boundary_incomplete\"}, {\"observed_refs_or_types\": [\"i10\", \"detail: direct/async boundary transfer requires an authored route path from a pointer/tensor signature carrier bound to the same J tensor\"], \"path\": \"pi.instances[10]\", \"rule_code\": \"transfer_address_route_missing\"}, {\"observed_refs_or_types\": [\"i12\", \"detail: direct/async boundary transfer requires an authored route path from a pointer/tensor signature carrier bound to the same J tensor\"], \"path\": \"pi.instances[12]\", \"rule_code\": \"transfer_address_route_missing\"}, {\"observed_refs_or_types\": [\"i6\", \"detail: direct/async boundary transfer requires an authored route path from a pointer/tensor signature carrier bound to the same J tensor\"], \"path\": \"pi.instances[6]\", \"rule_code\": \"transfer_address_route_missing\"}, {\"observed_refs_or_types\": [\"i8\", \"detail: direct/async boundary transfer requires an authored route path from a pointer/tensor signature carrier bound to the same J tensor\"], \"path\": \"pi.instances[8]\", \"rule_code\": \"transfer_address_route_missing\"}], \"protocol\": \"intentir.scrc.candidate-check.v1\", \"status\": \"fail\"}, \"phase\": \"candidate_check\", \"protocol\": \"intentir.codex-cli.lift-submit.v1\", \"source_reconcile\": {\"applicable\": false, \"authority\": \"source-aware diagnostic comparison of model-authored closed pi obligations with the existing Source TTIR observer; reject-only, no artifact construction and no Gate or certification authority\", \"diagnostics\": [], \"protocol\": \"intentir.lift-source-reconcile.v1\", \"status\": \"pass\"}, \"status\": \"fail\"}\n",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py submit_candidate'",
+            "exit_code": 1,
+            "id": "item_20",
+            "status": "failed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "id": "item_21",
+            "text": "The first check found two concrete issues: the matrix access axes were reversed, and pi must route from physical signature carriers (`p*`) rather than logical tensor anchors. I’m correcting just those authored relations.",
+            "type": "agent_message"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "changes": [
+              {
+                "kind": "update",
+                "path": "/workspace/output/candidate.json"
+              }
+            ],
+            "id": "item_22",
+            "status": "in_progress",
+            "type": "file_change"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "changes": [
+              {
+                "kind": "update",
+                "path": "/workspace/output/candidate.json"
+              }
+            ],
+            "id": "item_22",
+            "status": "completed",
+            "type": "file_change"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py submit_candidate'",
+            "exit_code": null,
+            "id": "item_23",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "{\"authority\": \"diagnostic-only independent phase results over the same exact candidate bytes; no artifact field is generated or repaired\", \"candidate_check\": {\"diagnostics\": [{\"observed_refs_or_types\": [\"a2\", \"detail: functional axis 'k0' extent 256 differs from J tensor extent 'x0'\"], \"path\": \"j.boundary.accesses[2].index_expression\", \"rule_code\": \"functional_boundary_incomplete\"}], \"protocol\": \"intentir.scrc.candidate-check.v1\", \"status\": \"fail\"}, \"phase\": \"candidate_check\", \"protocol\": \"intentir.codex-cli.lift-submit.v1\", \"source_reconcile\": {\"applicable\": false, \"authority\": \"source-aware diagnostic comparison of model-authored closed pi obligations with the existing Source TTIR observer; reject-only, no artifact construction and no Gate or certification authority\", \"diagnostics\": [], \"protocol\": \"intentir.lift-source-reconcile.v1\", \"status\": \"pass\"}, \"status\": \"fail\"}\n",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py submit_candidate'",
+            "exit_code": 1,
+            "id": "item_23",
+            "status": "failed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "id": "item_24",
+            "text": "The remaining failure is purely the functional boundary domain: the parametric matrix needs its own first-axis symbol, distinct from the 256-element output axis. I’m adding that symbolic domain and rebinding the dense matrix view to it.",
+            "type": "agent_message"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "changes": [
+              {
+                "kind": "update",
+                "path": "/workspace/output/candidate.json"
+              }
+            ],
+            "id": "item_25",
+            "status": "in_progress",
+            "type": "file_change"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "changes": [
+              {
+                "kind": "update",
+                "path": "/workspace/output/candidate.json"
+              }
+            ],
+            "id": "item_25",
+            "status": "completed",
+            "type": "file_change"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py submit_candidate'",
+            "exit_code": null,
+            "id": "item_26",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "{\"authority\": \"diagnostic-only independent phase results over the same exact candidate bytes; no artifact field is generated or repaired\", \"candidate_check\": {\"diagnostics\": [], \"protocol\": \"intentir.scrc.candidate-check.v1\", \"status\": \"pass\"}, \"phase\": \"complete\", \"protocol\": \"intentir.codex-cli.lift-submit.v1\", \"source_reconcile\": {\"applicable\": false, \"authority\": \"source-aware diagnostic comparison of model-authored closed pi obligations with the existing Source TTIR observer; reject-only, no artifact construction and no Gate or certification authority\", \"diagnostics\": [], \"protocol\": \"intentir.lift-source-reconcile.v1\", \"status\": \"pass\"}, \"status\": \"pass\"}\n",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py submit_candidate'",
+            "exit_code": 0,
+            "id": "item_26",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "id": "item_27",
+            "text": "The candidate now passes both CandidateCheck and the applicable source reconciliation on the same bytes. I’m checking the public semantic-probe result for those bytes before finalizing; any supported divergence will be repaired and resubmitted.",
+            "type": "agent_message"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c \"sed -n '1,240p' input/semantic_probe.json && python -m json.tool output/candidate.json >/dev/null && sha256sum output/candidate.json\"",
+            "exit_code": null,
+            "id": "item_28",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c \"sed -n '1,240p' input/semantic_probe.json && python -m json.tool output/candidate.json >/dev/null && sha256sum output/candidate.json\"",
+            "exit_code": 0,
+            "id": "item_28",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py --help'",
+            "exit_code": null,
+            "id": "item_29",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "usage: intentir_agent_tool.py TOOL [ARG ...]\n",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py --help'",
+            "exit_code": 0,
+            "id": "item_29",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c \"rg -n 'submit_candidate|semantic_probe' .agents/intentir_agent_tool.py | head -80\"",
+            "exit_code": null,
+            "id": "item_30",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c \"rg -n 'submit_candidate|semantic_probe' .agents/intentir_agent_tool.py | head -80\"",
+            "exit_code": 0,
+            "id": "item_30",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "id": "item_31",
+            "text": "Completed [candidate.json](/workspace/output/candidate.json).\n\n- CandidateCheck: passed\n- SourceReconcile: passed/not applicable for this frontend\n- Public semantic probe: no divergence diagnostic returned\n- Final SHA-256: `99d21ec11ecfdd907918429913dcaf7d518153d5620517085e134071e1630937`\n\nNo certification is claimed.",
+            "type": "agent_message"
+          },
+          "type": "item.completed"
+        },
+        {
+          "type": "turn.completed",
+          "usage": {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 568832,
+            "input_tokens": 625672,
+            "output_tokens": 10942,
+            "reasoning_output_tokens": 5465
+          }
+        }
+      ],
+      "model_segments": 10,
+      "protocol": "intentir.codex-cli.agent-runtime.v3",
+      "resumed": false,
+      "stderr": "Reading additional input from stdin...\n",
+      "thread_id": "019fb54d-8d8e-7073-b68b-a4e0c82e8e09",
+      "tool_actions": 22,
+      "usage": {
+        "cache_write_input_tokens": 0,
+        "cached_input_tokens": 568832,
+        "input_tokens": 625672,
+        "output_tokens": 10942,
+        "reasoning_output_tokens": 5465
+      }
+    }
+  ]
+}

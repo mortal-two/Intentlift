@@ -1,0 +1,212 @@
+{
+  "backend": "openai.codex-cli.intentir-lift.v31",
+  "candidate_check": [
+    {
+      "candidate_sha256": "39c3025af1cd35b97d0401cb3c8fa55af9e0ef67b32a5dc24b1d24ecef9585d0",
+      "diagnostics": [
+        {
+          "observed_refs_or_types": [
+            "a2",
+            "detail: functional axis 'k0' extent 256 differs from J tensor extent 64"
+          ],
+          "path": "j.boundary.accesses[2].index_expression",
+          "rule_code": "functional_boundary_incomplete"
+        },
+        {
+          "observed_refs_or_types": [
+            "a2",
+            "detail: functional axis 'k1' extent 64 differs from J tensor extent 'x0'"
+          ],
+          "path": "j.boundary.accesses[2].index_expression",
+          "rule_code": "functional_boundary_incomplete"
+        },
+        {
+          "observed_refs_or_types": [
+            "i10",
+            "detail: direct/async boundary transfer requires an authored route path from a pointer/tensor signature carrier bound to the same J tensor"
+          ],
+          "path": "pi.instances[10]",
+          "rule_code": "transfer_address_route_missing"
+        },
+        {
+          "observed_refs_or_types": [
+            "i12",
+            "detail: direct/async boundary transfer requires an authored route path from a pointer/tensor signature carrier bound to the same J tensor"
+          ],
+          "path": "pi.instances[12]",
+          "rule_code": "transfer_address_route_missing"
+        },
+        {
+          "observed_refs_or_types": [
+            "i6",
+            "detail: direct/async boundary transfer requires an authored route path from a pointer/tensor signature carrier bound to the same J tensor"
+          ],
+          "path": "pi.instances[6]",
+          "rule_code": "transfer_address_route_missing"
+        },
+        {
+          "observed_refs_or_types": [
+            "i8",
+            "detail: direct/async boundary transfer requires an authored route path from a pointer/tensor signature carrier bound to the same J tensor"
+          ],
+          "path": "pi.instances[8]",
+          "rule_code": "transfer_address_route_missing"
+        }
+      ],
+      "status": "fail",
+      "trigger": "submit_candidate"
+    },
+    {
+      "candidate_sha256": "6957717f54e91585f4f16546d368bba3d2baa2bd6a173da7391abf84cf041fca",
+      "diagnostics": [
+        {
+          "observed_refs_or_types": [
+            "a2",
+            "detail: functional axis 'k0' extent 256 differs from J tensor extent 'x0'"
+          ],
+          "path": "j.boundary.accesses[2].index_expression",
+          "rule_code": "functional_boundary_incomplete"
+        }
+      ],
+      "status": "fail",
+      "trigger": "submit_candidate"
+    },
+    {
+      "candidate_sha256": "99d21ec11ecfdd907918429913dcaf7d518153d5620517085e134071e1630937",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "submit_candidate"
+    },
+    {
+      "candidate_sha256": "99d21ec11ecfdd907918429913dcaf7d518153d5620517085e134071e1630937",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "host_post_turn"
+    },
+    {
+      "candidate_sha256": "99d21ec11ecfdd907918429913dcaf7d518153d5620517085e134071e1630937",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "semantic_probe"
+    }
+  ],
+  "cli_turns": 1,
+  "elapsed_ms": 370606.8618330173,
+  "fresh_session": true,
+  "fresh_workspace": true,
+  "knowledge_profile": "intentir.lift-knowledge.v90",
+  "model_segments_lower_bound": 10,
+  "owner_session_id": "3d18a07f422446e79d9abf5ec55dc8a1",
+  "persistent_owner": true,
+  "persistent_workspace": true,
+  "runtime": "intentir.codex-cli.agent-runtime.v3",
+  "semantic_probe": [
+    {
+      "authority": "public Source-vs-J diagnostic only; no artifact field is generated, repaired, accepted, or certified",
+      "candidate_sha256": "99d21ec11ecfdd907918429913dcaf7d518153d5620517085e134071e1630937",
+      "case_id": "finite-public-lift-probe-1",
+      "comparison": {
+        "left": "source",
+        "outputs": [
+          {
+            "atol": null,
+            "detail": "",
+            "equal_nan": null,
+            "equality_required": true,
+            "max_abs_error": 0.0,
+            "output": "output_p3",
+            "passed": true,
+            "policy_id": "intentir.gate2.default.v1",
+            "relation_kind": "exact",
+            "rtol": null
+          }
+        ],
+        "passed": true,
+        "policy_id": "intentir.gate2.default.v1",
+        "right": "j"
+      },
+      "protocol": "intentir.lift.public-semantic-probe.v1",
+      "seed": 2026073001,
+      "status": "pass"
+    }
+  ],
+  "source_reconcile": [
+    {
+      "applicable": false,
+      "candidate_sha256": "39c3025af1cd35b97d0401cb3c8fa55af9e0ef67b32a5dc24b1d24ecef9585d0",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "submit_candidate"
+    },
+    {
+      "applicable": false,
+      "candidate_sha256": "6957717f54e91585f4f16546d368bba3d2baa2bd6a173da7391abf84cf041fca",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "submit_candidate"
+    },
+    {
+      "applicable": false,
+      "candidate_sha256": "99d21ec11ecfdd907918429913dcaf7d518153d5620517085e134071e1630937",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "submit_candidate"
+    },
+    {
+      "applicable": false,
+      "candidate_sha256": "99d21ec11ecfdd907918429913dcaf7d518153d5620517085e134071e1630937",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "host_post_turn"
+    },
+    {
+      "applicable": false,
+      "candidate_sha256": "99d21ec11ecfdd907918429913dcaf7d518153d5620517085e134071e1630937",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "semantic_probe"
+    }
+  ],
+  "thread_id": "019fb54d-8d8e-7073-b68b-a4e0c82e8e09",
+  "timeout_events": [],
+  "tool_actions": 22,
+  "tool_bridge": {
+    "authority": "diagnostic-only callbacks over exact host-read output bytes; no artifact or Replay field is generated or edited",
+    "calls": 3,
+    "protocol": "intentir.codex-cli.tool-bridge.v3",
+    "receipts": [
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 216.24326100572944,
+        "result_sha256": "f709ed7bf1181ba703cbf6ac164650a4dfea4a4de925ebf105a1ccd344ccfc1c",
+        "status": "fail",
+        "tool": "submit_candidate"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 19.925642991438508,
+        "result_sha256": "996d749ade83958aa4079393390860ae038378ca08a7b4a37cd205ffc72be400",
+        "status": "fail",
+        "tool": "submit_candidate"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 26.534514036029577,
+        "result_sha256": "ab3c006c9837a19e860dcaf113333bf13f7804afd3c2b648702c57ae7ac4886e",
+        "status": "pass",
+        "tool": "submit_candidate"
+      }
+    ],
+    "transport": "isolated_workspace_file_mailbox"
+  },
+  "usage": {
+    "cache_write_input_tokens": 0,
+    "cached_input_tokens": 568832,
+    "input_tokens": 625672,
+    "output_tokens": 10942,
+    "reasoning_output_tokens": 5465
+  }
+}
