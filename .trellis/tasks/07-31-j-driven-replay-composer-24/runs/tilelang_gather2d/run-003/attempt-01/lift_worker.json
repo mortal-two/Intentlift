@@ -1,0 +1,187 @@
+{
+  "backend": "openai.codex-cli.intentir-lift.v33",
+  "candidate_check": [
+    {
+      "candidate_sha256": "48c357c209946b5adfc05b3c8e16accc935eaed5091da6542ce1da8319ea6fc2",
+      "diagnostics": [
+        {
+          "observed_refs_or_types": [
+            "ValueError: J q handles are not declaration ordered"
+          ],
+          "path": "<candidate>",
+          "rule_code": "decode_rejected"
+        },
+        {
+          "observed_refs_or_types": [
+            "expected=[\"q0\"]",
+            "actual=[\"s0\"]"
+          ],
+          "path": "j.scopes[*].scope_id",
+          "rule_code": "construction_handle_sequence"
+        }
+      ],
+      "status": "fail",
+      "trigger": "submit_candidate"
+    },
+    {
+      "candidate_sha256": "ad7075ed3c54a7813a6350610882a6eaa285d40d7922786c3f53d50116f22f41",
+      "diagnostics": [
+        {
+          "observed_refs_or_types": [
+            "a1",
+            "detail: functional axis 'k0' extent 256 differs from J tensor extent 'x0'"
+          ],
+          "path": "j.boundary.accesses[1].index_expression",
+          "rule_code": "functional_boundary_incomplete"
+        },
+        {
+          "observed_refs_or_types": [
+            "t4",
+            "detail: Layer-A result has no uniquely determined closed value type"
+          ],
+          "path": "j.intent.intent_function.body[0].result",
+          "rule_code": "j_value_type_incomplete"
+        }
+      ],
+      "status": "fail",
+      "trigger": "submit_candidate"
+    },
+    {
+      "candidate_sha256": "d373e6449199ef72adeffcda391a9e76e06c9ecb6a96f3fbbdf3857c813b66ae",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "submit_candidate"
+    },
+    {
+      "candidate_sha256": "d373e6449199ef72adeffcda391a9e76e06c9ecb6a96f3fbbdf3857c813b66ae",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "host_post_turn"
+    },
+    {
+      "candidate_sha256": "d373e6449199ef72adeffcda391a9e76e06c9ecb6a96f3fbbdf3857c813b66ae",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "semantic_probe"
+    }
+  ],
+  "cli_turns": 1,
+  "elapsed_ms": 310245.66654197406,
+  "fresh_session": true,
+  "fresh_workspace": true,
+  "knowledge_profile": "intentir.lift-knowledge.v92",
+  "model_segments_lower_bound": 7,
+  "owner_session_id": "9469ef9876ee4a4a90e5d08b7598defb",
+  "persistent_owner": true,
+  "persistent_workspace": true,
+  "runtime": "intentir.codex-cli.agent-runtime.v3",
+  "semantic_probe": [
+    {
+      "authority": "public Source-vs-J diagnostic only; no artifact field is generated, repaired, accepted, or certified",
+      "candidate_sha256": "d373e6449199ef72adeffcda391a9e76e06c9ecb6a96f3fbbdf3857c813b66ae",
+      "case_id": "finite-public-lift-probe-1",
+      "comparison": {
+        "left": "source",
+        "outputs": [
+          {
+            "atol": null,
+            "detail": "",
+            "equal_nan": null,
+            "equality_required": true,
+            "max_abs_error": 0.0,
+            "output": "output_p3",
+            "passed": true,
+            "policy_id": "intentir.gate2.default.v1",
+            "relation_kind": "exact",
+            "rtol": null
+          }
+        ],
+        "passed": true,
+        "policy_id": "intentir.gate2.default.v1",
+        "right": "j"
+      },
+      "protocol": "intentir.lift.public-semantic-probe.v1",
+      "seed": 2026073001,
+      "status": "pass"
+    }
+  ],
+  "source_reconcile": [
+    {
+      "applicable": false,
+      "candidate_sha256": "48c357c209946b5adfc05b3c8e16accc935eaed5091da6542ce1da8319ea6fc2",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "submit_candidate"
+    },
+    {
+      "applicable": false,
+      "candidate_sha256": "ad7075ed3c54a7813a6350610882a6eaa285d40d7922786c3f53d50116f22f41",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "submit_candidate"
+    },
+    {
+      "applicable": false,
+      "candidate_sha256": "d373e6449199ef72adeffcda391a9e76e06c9ecb6a96f3fbbdf3857c813b66ae",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "submit_candidate"
+    },
+    {
+      "applicable": false,
+      "candidate_sha256": "d373e6449199ef72adeffcda391a9e76e06c9ecb6a96f3fbbdf3857c813b66ae",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "host_post_turn"
+    },
+    {
+      "applicable": false,
+      "candidate_sha256": "d373e6449199ef72adeffcda391a9e76e06c9ecb6a96f3fbbdf3857c813b66ae",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "semantic_probe"
+    }
+  ],
+  "thread_id": "019fb5a1-8637-76f1-a834-e0b9fe377420",
+  "timeout_events": [],
+  "tool_actions": 20,
+  "tool_bridge": {
+    "authority": "diagnostic-only callbacks over exact host-read output bytes; no artifact or Replay field is generated or edited",
+    "calls": 3,
+    "protocol": "intentir.codex-cli.tool-bridge.v3",
+    "receipts": [
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 137.03961193095893,
+        "result_sha256": "7484974bf452eeb8b4fe595849dea20c83df41cf5c2eeade27815c8fd055f725",
+        "status": "fail",
+        "tool": "submit_candidate"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 18.088323064148426,
+        "result_sha256": "f61f2f8a18b9b782564aa6cd0fa093ae482b5cad50d63cfc1657d4091d4a3958",
+        "status": "fail",
+        "tool": "submit_candidate"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 28.150082915090024,
+        "result_sha256": "22d8371a04dcf363eef61a9907fb49569127eee10c92bdc52c70c2ad4a0510cf",
+        "status": "pass",
+        "tool": "submit_candidate"
+      }
+    ],
+    "transport": "isolated_workspace_file_mailbox"
+  },
+  "usage": {
+    "cache_write_input_tokens": 0,
+    "cached_input_tokens": 439296,
+    "input_tokens": 506737,
+    "output_tokens": 9219,
+    "reasoning_output_tokens": 4279
+  }
+}

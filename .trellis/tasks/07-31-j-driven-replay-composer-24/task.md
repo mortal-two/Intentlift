@@ -1,6 +1,6 @@
 # Task 24：J 主导的 π_min 与三前端 Episode-Local Composer Replay
 
-> 状态：`P5_CUDA_GATHER_CERTIFIED_TILELANG_V33_RERUN_PENDING`（2026-07-31）。
+> 状态：`P5_CUDA_TILELANG_GATHER_CERTIFIED_HORIZONTAL_EXPANSION`（2026-07-31）。
 >
 > 定位：Task 15/Task 11 的 Replay 构造机制升级，以及 Task 23 多前端实证的真实 closure 执行线。
 > 本任务不接管 production backend；backend 仍在 SCRC 后只消费 accepted `J+C`。
@@ -376,6 +376,23 @@ preferred、high）仍为`NO_CLOSURE`：
 - Codex Lift v33/knowledge v92与MiniSWE knowledge v70改为从copied tool自身位置解析paired roots；Codex
   frontier/continuation query显式携带`--input-root input --output-root output`。只改transport identity，
   不改TIR observer、J/π、Gate或Replay；必须fresh run-003验证后才能更新TileLang verdict。
+
+### Pilot O：TileLang gather首轮完整认证
+
+`tilelang:gather2d / runs/tilelang_gather2d/run-003`（fresh Codex Lift v33/knowledge v92、Replay
+v36、Composer preferred、high）：
+
+- accepted attempt 1，TypeCheck v31 PASS；normal与Mask-J为独立fresh session，均选择Composer，分别
+  8/13 nodes；normal Replay只需1个physical provider call；
+- hard observer保持TileLang TIR：`tir_structure/tir_topology/tir_operations`与interface/schema/target全部
+  通过；`ptx.raw_instruction_topology`仍有diagnostic差异但不参与hard verdict；
+- Mask-J在三项TIR hard categories上全部失败，`J_NECESSARY=proved`；Gate2的Source--Replay、
+  Source--J、Replay--J三条边均exact pass，最大误差全部0，主状态`SCRC_CERTIFIED`；
+- π ownership仍为J-only semantics与J/C-dependent realization；13 instances、14 routes、1 sharing、
+  1 program axis、2 regions，未出现operator/index/predicate/target recipe副本；
+- 本run没有formal relift，因此它证明v33/v92首轮可闭合，不单独证明category-query root fix的真实
+  continuation；该fix由copied `/workspace/input/tools`布局回归与独立审计证明，仍需未来自然触发的
+  relift evidence补强，不把未执行路径写成provider认证。
 
 ## 3. 交付物
 
