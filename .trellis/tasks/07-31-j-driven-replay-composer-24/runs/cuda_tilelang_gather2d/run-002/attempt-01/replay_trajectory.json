@@ -1,0 +1,393 @@
+{
+  "backend": "openai.codex-cli.intentir-replay.v36",
+  "formal_ingress_recheck": true,
+  "fresh_session": true,
+  "isolation": {
+    "composer_episode_local": true,
+    "composer_reads_packet": false,
+    "input": "read-only",
+    "output_work_tmp": "write-only-scope",
+    "provider_secret_in_tool_env": false,
+    "source_blind": true,
+    "tool_network": "disabled"
+  },
+  "packet_queries": [],
+  "pi_min_ownership": {
+    "artifact_schema": "intentir.scrc.artifact.v13",
+    "claim_scope": "proof-irrelevant ownership receipt; it neither proves zero statistical information nor changes TypeCheck, Replay, Gate1, or Gate2 acceptance",
+    "masked_j": false,
+    "pi_authority": "J/C-dependent realization constraints only",
+    "pi_closed_fields": [
+      "instances",
+      "iterations",
+      "loop_carriers",
+      "order",
+      "participant_mappings",
+      "physical_iterations",
+      "physical_loop_carriers",
+      "program_axes",
+      "refinements",
+      "regions",
+      "route_extent_transforms",
+      "routes",
+      "sharing",
+      "terminal_controls"
+    ],
+    "protocol": "intentir.pi-min.ownership-receipt.v1",
+    "relation_counts": {
+      "instances": 13,
+      "iterations": 0,
+      "loop_carriers": 0,
+      "order": 3,
+      "participant_mappings": 0,
+      "physical_iterations": 0,
+      "physical_loop_carriers": 0,
+      "program_axes": 1,
+      "refinements": 0,
+      "regions": 2,
+      "route_extent_transforms": 0,
+      "routes": 13,
+      "sharing": 0,
+      "terminal_controls": 0
+    },
+    "semantic_authority": "J only",
+    "status": "pass",
+    "validation_basis": [
+      "canonical Gate1Artifact closed-schema decode",
+      "TypeCheck(J,C,pi)=PASS before Replay packet construction",
+      "closed source-isolated Replay payload grammar"
+    ]
+  },
+  "protocol": "intentir.codex-cli.agent-runtime.v3",
+  "replay_check": [
+    {
+      "diagnostics": [],
+      "source_sha256": "955c680bafa513982ebab4bbe42e40168b20e6a2740fe07f8d6e09dd39059294",
+      "status": "pass",
+      "trigger": "host_post_turn"
+    }
+  ],
+  "replay_compile_check": [
+    {
+      "diagnostics": [],
+      "source_sha256": "955c680bafa513982ebab4bbe42e40168b20e6a2740fe07f8d6e09dd39059294",
+      "status": "pass",
+      "trigger": "host_post_turn"
+    }
+  ],
+  "replay_obligation_audits": [
+    {
+      "broadcast_obligation_count": 0,
+      "cross_region_order_count": 0,
+      "identity_materialization_count": 0,
+      "lexical_region_count": 0,
+      "participant_mapping_count": 0,
+      "program_axis_count": 1,
+      "route_extent_transform_count": 0,
+      "source_sha256": "955c680bafa513982ebab4bbe42e40168b20e6a2740fe07f8d6e09dd39059294"
+    }
+  ],
+  "replay_ttir_inspections": [],
+  "syntax_composer": {
+    "actions": {
+      "checkpoint": 2,
+      "compose": 1,
+      "install": 1
+    },
+    "authority": "proof-irrelevant episode-local syntax telemetry only; it is not trusted for J/pi consumption, Source equivalence, or Gate closure",
+    "builder_installed": true,
+    "checkpoint_available": true,
+    "failed_actions": {},
+    "frontend": "cuda",
+    "host_events": [],
+    "installed": true,
+    "last_action": "checkpoint",
+    "layout_profile": "c_like",
+    "node_count": 19,
+    "node_kinds": {
+      "block": 1,
+      "line": 18
+    },
+    "offer_mode": "preferred",
+    "output_matches_last_render": true,
+    "protocol": "intentir.replay.syntax-composer.v2",
+    "revision": 3,
+    "selected_path": "composer",
+    "source_map_nodes": 19,
+    "source_map_revision_matches_state": true,
+    "status": "pass",
+    "used": true
+  },
+  "thread_id": "019fb58a-b924-7c60-9bec-52b07556c22d",
+  "thread_ids": [
+    "019fb58a-b924-7c60-9bec-52b07556c22d"
+  ],
+  "timeout_events": [],
+  "tool_bridge": {
+    "authority": "diagnostic-only callbacks over exact host-read output bytes; no artifact or Replay field is generated or edited",
+    "calls": 2,
+    "protocol": "intentir.codex-cli.tool-bridge.v3",
+    "receipts": [
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 3.8414610316976905,
+        "result_sha256": "8d6389525a51ff577e4f35d32cc22c34e268f7c63fac700a14c7b4ecfc237d39",
+        "status": "pass",
+        "tool": "replay_obligation_audit"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 357.8841920243576,
+        "result_sha256": "aa9e4d2fc6b84e29c1b05192dd922454bbc1fe744027a7363498a08dc93fca5d",
+        "status": "pass",
+        "tool": "submit_replay"
+      }
+    ],
+    "transport": "isolated_workspace_file_mailbox"
+  },
+  "turns": [
+    {
+      "elapsed_ms": 94168.59433206264,
+      "events": [
+        {
+          "thread_id": "019fb58a-b924-7c60-9bec-52b07556c22d",
+          "type": "thread.started"
+        },
+        {
+          "type": "turn.started"
+        },
+        {
+          "item": {
+            "id": "item_0",
+            "text": "I’ll project the packet into one complete implementation, author it through the provided composer builder, then run the required ledger audit and transactional submission until it passes. I’ll keep the packet read to a single ordinary-file read as requested.",
+            "type": "agent_message"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c \"sed -n '1,240p' input/packet.json && sed -n '1,260p' work/build_replay.py\"",
+            "exit_code": null,
+            "id": "item_1",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "{\"c\": {\"slots\": [{\"kind\": \"compiler\", \"name\": \"c0\", \"required\": true, \"role\": \"launch_block_x\", \"value_type\": \"i32\"}]}, \"j\": {\"boundary\": {\"access_guard_relations\": [], \"accesses\": [{\"access_id\": \"a0\", \"index_expression\": \"[v15]\", \"kind\": \"load\", \"tensor\": \"t2\"}, {\"access_id\": \"a1\", \"index_expression\": \"[v15]\", \"kind\": \"load\", \"tensor\": \"t0\"}, {\"access_id\": \"a2\", \"index_expression\": \"[v16, v17]\", \"kind\": \"load\", \"node_ref\": \"n11\", \"tensor\": \"t1\"}, {\"access_id\": \"a3\", \"index_expression\": \"[v15]\", \"kind\": \"store\", \"node_ref\": \"n14\", \"tensor\": \"t4\"}], \"aliases\": [], \"broadcasts\": [], \"consumer_extensions\": [], \"domains\": {\"d0\": \"(0 <= v15) and (v15 < 256)\", \"d1\": \"(0 <= v16) and (v16 < x0)\", \"d2\": \"(0 <= v17) and (v17 < 64)\"}, \"effects\": [{\"access_ref\": \"a0\", \"effect_id\": \"e0\", \"kind\": \"read\", \"target\": \"t2\"}, {\"access_ref\": \"a1\", \"effect_id\": \"e1\", \"kind\": \"read\", \"target\": \"t0\"}, {\"access_ref\": \"a2\", \"effect_id\": \"e2\", \"kind\": \"read\", \"node_ref\": \"n11\", \"target\": \"t1\"}, {\"access_ref\": \"a3\", \"effect_id\": \"e3\", \"kind\": \"write\", \"node_ref\": \"n14\", \"target\": \"t4\"}], \"index_bounds\": [{\"axis\": 0, \"data\": \"t1\", \"indices\": \"v9\", \"node_ref\": \"n11\"}, {\"axis\": 1, \"data\": \"v11\", \"indices\": \"v10\", \"node_ref\": \"n12\"}], \"output_mappings\": [], \"realization_authorizations\": [], \"reductions\": [], \"result_relations\": [{\"kind\": \"exact\", \"output\": \"t4\"}], \"updates\": []}, \"dimension_constraints\": [\"x0 >= 1\"], \"dimension_relations\": [], \"intent\": {\"intent_function\": {\"body\": [{\"attrs\": {\"dtype\": \"i32\", \"shape\": [], \"value\": 0}, \"id\": \"n0\", \"op\": \"const\", \"result\": \"v0\", \"type\": {\"dtype\": \"i32\", \"shape\": []}}, {\"attrs\": {\"fn\": \"ge\"}, \"id\": \"n1\", \"op\": \"map_binary\", \"operands\": [\"t0\", \"v0\"], \"result\": \"v1\", \"type\": {\"dtype\": \"i1\", \"shape\": [256]}}, {\"attrs\": {\"dtype\": \"i32\", \"shape\": [], \"value\": 64}, \"id\": \"n2\", \"op\": \"const\", \"result\": \"v2\", \"type\": {\"dtype\": \"i32\", \"shape\": []}}, {\"attrs\": {\"fn\": \"lt\"}, \"id\": \"n3\", \"op\": \"map_binary\", \"operands\": [\"t0\", \"v2\"], \"result\": \"v3\", \"type\": {\"dtype\": \"i1\", \"shape\": [256]}}, {\"attrs\": {\"fn\": \"logical_and\"}, \"id\": \"n4\", \"op\": \"map_binary\", \"operands\": [\"v1\", \"v3\"], \"result\": \"v4\", \"type\": {\"dtype\": \"i1\", \"shape\": [256]}}, {\"attrs\": {\"fn\": \"ge\"}, \"id\": \"n5\", \"op\": \"map_binary\", \"operands\": [\"t2\", \"v0\"], \"result\": \"v5\", \"type\": {\"dtype\": \"i1\", \"shape\": [256]}}, {\"attrs\": {\"fn\": \"logical_and\"}, \"id\": \"n6\", \"op\": \"map_binary\", \"operands\": [\"v4\", \"v5\"], \"result\": \"v6\", \"type\": {\"dtype\": \"i1\", \"shape\": [256]}}, {\"attrs\": {\"fn\": \"lt\"}, \"id\": \"n7\", \"op\": \"map_binary\", \"operands\": [\"t2\", \"t3\"], \"result\": \"v7\", \"type\": {\"dtype\": \"i1\", \"shape\": [256]}}, {\"attrs\": {\"fn\": \"logical_and\"}, \"id\": \"n8\", \"op\": \"map_binary\", \"operands\": [\"v6\", \"v7\"], \"result\": \"v8\", \"type\": {\"dtype\": \"i1\", \"shape\": [256]}}, {\"id\": \"n9\", \"op\": \"select\", \"operands\": [\"v8\", \"t2\", \"v0\"], \"result\": \"v9\", \"type\": {\"dtype\": \"i32\", \"shape\": [256]}}, {\"id\": \"n10\", \"op\": \"select\", \"operands\": [\"v8\", \"t0\", \"v0\"], \"result\": \"v10\", \"type\": {\"dtype\": \"i32\", \"shape\": [256]}}, {\"attrs\": {\"axis\": 0, \"mode\": \"take\"}, \"id\": \"n11\", \"op\": \"gather\", \"operands\": [\"t1\", \"v9\"], \"result\": \"v11\", \"type\": {\"dtype\": \"f32\", \"shape\": [256, 64]}}, {\"attrs\": {\"axis\": 1, \"mode\": \"along_axis\"}, \"id\": \"n12\", \"op\": \"gather\", \"operands\": [\"v11\", \"v10\"], \"result\": \"v12\", \"type\": {\"dtype\": \"f32\", \"shape\": [256]}}, {\"attrs\": {\"dtype\": \"f32\", \"shape\": [], \"value\": 0.0}, \"id\": \"n13\", \"op\": \"const\", \"result\": \"v13\", \"type\": {\"dtype\": \"f32\", \"shape\": []}}, {\"id\": \"n14\", \"op\": \"select\", \"operands\": [\"v8\", \"v12\", \"v13\"], \"result\": \"v14\", \"type\": {\"dtype\": \"f32\", \"shape\": [256]}}], \"inputs\": [{\"dtype\": \"i32\", \"name\": \"t0\", \"shape\": [256]}, {\"dtype\": \"f32\", \"name\": \"t1\", \"shape\": [\"x0\", 64]}, {\"dtype\": \"i32\", \"name\": \"t2\", \"shape\": [256]}, {\"dtype\": \"i32\", \"name\": \"t3\", \"shape\": []}], \"name\": \"scrc_intent0\", \"outputs\": [{\"dtype\": \"f32\", \"name\": \"t4\", \"shape\": [256]}]}}, \"kernel_id\": \"scrc_j0\", \"node_ids\": {\"n0\": \"body[0]\", \"n1\": \"body[1]\", \"n10\": \"body[10]\", \"n11\": \"body[11]\", \"n12\": \"body[12]\", \"n13\": \"body[13]\", \"n14\": \"body[14]\", \"n2\": \"body[2]\", \"n3\": \"body[3]\", \"n4\": \"body[4]\", \"n5\": \"body[5]\", \"n6\": \"body[6]\", \"n7\": \"body[7]\", \"n8\": \"body[8]\", \"n9\": \"body[9]\"}, \"scopes\": [{\"captures\": [], \"definitions\": [\"t0\", \"t1\", \"t2\", \"t3\", \"v0\", \"v1\", \"v2\", \"v3\", \"v4\", \"v5\", \"v6\", \"v7\", \"v8\", \"v9\", \"v10\", \"v11\", \"v12\", \"v13\", \"v14\"], \"effects\": [\"e0\", \"e1\", \"e2\", \"e3\"], \"kind\": \"function\", \"parent_scope\": null, \"scope_id\": \"q0\"}], \"signature\": {\"parameters\": [{\"dtype\": \"i32\", \"kind\": \"tensor\", \"logical_ref\": \"t0\", \"mode\": \"input\", \"name\": \"p0\", \"rank\": 1}, {\"dtype\": \"f32\", \"kind\": \"tensor\", \"logical_ref\": \"t1\", \"mode\": \"input\", \"name\": \"p1\", \"rank\": 2}, {\"dtype\": \"f32\", \"kind\": \"tensor\", \"logical_ref\": \"t4\", \"mode\": \"output\", \"name\": \"p2\", \"rank\": 1}, {\"dtype\": \"i32\", \"kind\": \"tensor\", \"logical_ref\": \"t2\", \"mode\": \"input\", \"name\": \"p3\", \"rank\": 1}, {\"dtype\": \"i32\", \"kind\": \"scalar\", \"logical_ref\": \"t3\", \"mode\": \"value\", \"name\": \"p4\", \"rank\": 0}]}, \"storage\": [], \"value_dimension_relations\": [{\"dimension_ref\": \"x0\", \"relation\": \"eq\", \"value_ref\": \"t3\"}]}, \"pi\": {\"instances\": [{\"id\": \"i0\", \"mechanism\": \"realize\", \"region\": \"r1\", \"semantic_ref\": \"d0\"}, {\"id\": \"i1\", \"mechanism\": \"address_base\", \"region\": \"r1\", \"semantic_ref\": \"a0\"}, {\"id\": \"i2\", \"mechanism\": \"transfer_direct\", \"region\": \"r1\", \"semantic_ref\": \"a0\"}, {\"id\": \"i3\", \"mechanism\": \"address_base\", \"region\": \"r1\", \"semantic_ref\": \"a1\"}, {\"id\": \"i4\", \"mechanism\": \"transfer_direct\", \"region\": \"r1\", \"semantic_ref\": \"a1\"}, {\"id\": \"i5\", \"mechanism\": \"address_base\", \"region\": \"r1\", \"semantic_ref\": \"a2\"}, {\"id\": \"i6\", \"mechanism\": \"transfer_direct\", \"region\": \"r1\", \"semantic_ref\": \"a2\"}, {\"id\": \"i7\", \"mechanism\": \"address_base\", \"region\": \"r1\", \"semantic_ref\": \"a3\"}, {\"id\": \"i8\", \"mechanism\": \"transfer_direct\", \"region\": \"r1\", \"semantic_ref\": \"a3\"}, {\"id\": \"i9\", \"mechanism\": \"realize\", \"region\": \"r1\", \"semantic_ref\": \"p3\"}, {\"id\": \"i10\", \"mechanism\": \"realize\", \"region\": \"r1\", \"semantic_ref\": \"p0\"}, {\"id\": \"i11\", \"mechanism\": \"realize\", \"region\": \"r1\", \"semantic_ref\": \"p1\"}, {\"id\": \"i12\", \"mechanism\": \"realize\", \"region\": \"r1\", \"semantic_ref\": \"p2\"}], \"iterations\": [], \"loop_carriers\": [], \"order\": [{\"after\": \"i4\", \"before\": \"i2\"}, {\"after\": \"i6\", \"before\": \"i4\"}, {\"after\": \"i8\", \"before\": \"i6\"}], \"participant_mappings\": [], \"physical_iterations\": [], \"physical_loop_carriers\": [], \"program_axes\": [{\"axis\": 0, \"domain_ref\": \"d0\"}], \"refinements\": [], \"regions\": [{\"id\": \"r0\", \"parent\": null, \"placement\": \"root\"}, {\"id\": \"r1\", \"parent\": \"r0\", \"placement\": \"program\"}], \"route_extent_transforms\": [], \"routes\": [{\"slots\": [0], \"source\": \"i9\", \"target\": \"i1\"}, {\"slots\": [1], \"source\": \"i0\", \"target\": \"i1\"}, {\"slots\": [0], \"source\": \"i1\", \"target\": \"i2\"}, {\"slots\": [0], \"source\": \"i10\", \"target\": \"i3\"}, {\"slots\": [1], \"source\": \"i0\", \"target\": \"i3\"}, {\"slots\": [0], \"source\": \"i3\", \"target\": \"i4\"}, {\"slots\": [0], \"source\": \"i11\", \"target\": \"i5\"}, {\"slots\": [1], \"source\": \"i2\", \"target\": \"i5\"}, {\"slots\": [2], \"source\": \"i4\", \"target\": \"i5\"}, {\"slots\": [0], \"source\": \"i5\", \"target\": \"i6\"}, {\"slots\": [0], \"source\": \"i12\", \"target\": \"i7\"}, {\"slots\": [1], \"source\": \"i0\", \"target\": \"i7\"}, {\"slots\": [0], \"source\": \"i7\", \"target\": \"i8\"}], \"sharing\": [], \"terminal_controls\": []}, \"u_f\": {\"compile_entry_contract\": \"Return one standalone CUDA C++ translation unit containing exactly one `extern \\\"C\\\" __global__` kernel named `scrc_k0`. Its positional runtime parameters follow J.signature; C values are external schedule bindings and are not runtime parameters. A MaskC compiler slot with role `launch_block_x|y|z` is bound by the Harness launch: never name its c* handle in the kernel body or replace public `blockDim.x|y|z` with a guessed value. Use only public CUDA language constructs and intrinsics. Do not emit host code, launch syntax, file I/O, inline PTX, build directives, or `main`. A program-region domain path entering address_base maps to `blockIdx.x|y|z` only through its exact pi.program_axes axis binding; never assign axes by declaration order or instance multiplicity. A lane path maps to the authored participant topology using public `threadIdx`/`blockDim`. Only pi.iterations or pi.physical_iterations authorizes a serial loop. A J reduce fed by a lane-realized reduced domain remains a participant collective using public CUDA intrinsics; never make every thread traverse the whole logical axis. Preserve every distinct transfer, realization, region, sharing, and order stage. A boundary access without a predicate is unconditional and never authorizes an invented lane-leader guard. If an identity_materialization instance has its sole outgoing route into a synchronize instance that resolves to a J reduce, emit one explicit combine of the J-owned reducer identity with its incoming carrier before the downstream collective. Derive reducer, identity, and dtype only from J; do not replace this stage with a barrier or cast. Every pi.participant_mappings item is mandatory. Resolve its domain_instance through pi to the exact J domain; projection=cyclic maps the public threadIdx axis into that J-owned logical extent. extent_slot binds only the matching external blockDim axis: never name c*, guess its value, or replace the J extent with blockDim.\", \"frontend\": \"cuda\", \"protocol\": \"intentir.scrc.replay-input.v3\", \"replay_function\": \"scrc_k0\", \"retrieval_scope\": \"public CUDA C++ programming documentation and examples\", \"tool_access\": [\"public_document_lookup\"]}}\n\"\"\"Agent-owned syntax composition for this one fresh Replay episode.\"\"\"\n\nfrom replay_composer import block, compose, line, raw_block\n\n\n# Author target source text from the exact packet yourself.  These constructors\n# only manage syntax layout and stable IDs; they do not select an API or algorithm.\nnodes = [\n    # line(\"imports\", \"...\"),\n    # block(\"function\", \"def ...:\", [line(\"body\", \"...\")]),\n    # raw_block(\"escape\", [\"...\"]),\n]\n\ncompose('cuda', nodes)\n",
+            "command": "/bin/bash -c \"sed -n '1,240p' input/packet.json && sed -n '1,260p' work/build_replay.py\"",
+            "exit_code": 0,
+            "id": "item_1",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "id": "item_2",
+            "text": "The packet resolves to a CUDA kernel with one program coordinate (`blockIdx.x`) and four unconditional direct transfers. The authored transfer order is input `t2`, input `t0`, gathered `t1`, then output `t4`; there are no lane iterations, predicates, broadcasts, or extra coordinates to realize. I’m encoding every J node explicitly and keeping the two-stage gather semantics at the single rank-2 boundary address.",
+            "type": "agent_message"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "changes": [
+              {
+                "kind": "update",
+                "path": "/workspace/work/build_replay.py"
+              }
+            ],
+            "id": "item_3",
+            "status": "in_progress",
+            "type": "file_change"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "changes": [
+              {
+                "kind": "update",
+                "path": "/workspace/work/build_replay.py"
+              }
+            ],
+            "id": "item_3",
+            "status": "completed",
+            "type": "file_change"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c \"python work/build_replay.py && sed -n '1,220p' output/replay.source && python .agents/intentir_agent_tool.py replay_obligation_audit\"",
+            "exit_code": null,
+            "id": "item_4",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "Traceback (most recent call last):\n  File \"/workspace/work/build_replay.py\", line 9, in <module>\n    block(\"kernel\", 'extern \"C\" __global__ void scrc_k0(', [\nTypeError: block() got an unexpected keyword argument 'footer'\n",
+            "command": "/bin/bash -c \"python work/build_replay.py && sed -n '1,220p' output/replay.source && python .agents/intentir_agent_tool.py replay_obligation_audit\"",
+            "exit_code": 1,
+            "id": "item_4",
+            "status": "failed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "id": "item_5",
+            "text": "The first render exposed one composer-only syntax issue: this local `block` helper does not accept a footer argument. I’m checking its constructor signature and will adjust the node layout without changing the kernel semantics.",
+            "type": "agent_message"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c \"sed -n '1,260p' work/replay_composer.py\"",
+            "exit_code": null,
+            "id": "item_6",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "#!/usr/bin/env python3\n\"\"\"Episode-local, syntax-only source composition for source-blind Replay.\n\nThe composer deliberately knows nothing about IntentIR artifacts.  It receives\nonly model-authored syntax nodes, renders them with a Python-like or C-like\nlayout profile, and writes the model's own Replay bytes.  It is both importable\nby the host runtime and executable as a self-contained helper copied into one\nfresh Replay workspace.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport copy\nimport json\nimport os\nimport re\nimport sys\nimport tempfile\nfrom collections import Counter\nfrom dataclasses import dataclass\nfrom pathlib import Path\nfrom typing import Any, Mapping, Sequence\n\n\nREPLAY_COMPOSER_PROTOCOL = \"intentir.replay.syntax-composer.v2\"\nREPLAY_COMPOSER_STATE_PROTOCOL = \"intentir.replay.syntax-composer-state.v2\"\nREPLAY_COMPOSER_AUDIT_PROTOCOL = \"intentir.replay.syntax-composer-audit.v2\"\nREPLAY_COMPOSER_TOOL = \"replay_composer.py\"\nREPLAY_COMPOSER_BUILDER = \"build_replay.py\"\nREPLAY_COMPOSER_PLAN = \"replay.composer.json\"\nREPLAY_COMPOSER_NODE_DRAFT = \"replay.composer.node.json\"\nREPLAY_COMPOSER_STATE = \"replay.composer.state.json\"\nREPLAY_COMPOSER_SOURCE_MAP = \"replay.composer.source-map.json\"\nREPLAY_COMPOSER_RENDERED = \"replay.composer.rendered\"\nREPLAY_COMPOSER_AUDIT = \"replay.composer.audit.jsonl\"\nREPLAY_COMPOSER_CHECKPOINT_PLAN = \"replay.composer.checkpoint.json\"\nREPLAY_COMPOSER_CHECKPOINT_SOURCE = \"replay.composer.checkpoint.source\"\nREPLAY_COMPOSER_CHECKPOINT_MAP = \"replay.composer.checkpoint.source-map.json\"\n\nMAX_COMPOSER_PLAN_BYTES = 2 * 1024 * 1024\nMAX_COMPOSER_RENDER_BYTES = 1024 * 1024\nMAX_COMPOSER_NODES = 4096\nMAX_COMPOSER_DEPTH = 64\nMAX_COMPOSER_LINE_CHARS = 16 * 1024\nMAX_COMPOSER_RAW_LINES = 65536\nMAX_COMPOSER_AUDIT_ROWS = 4096\nMAX_COMPOSER_AUDIT_BYTES = 4 * 1024 * 1024\n\n_ID = re.compile(r\"[A-Za-z][A-Za-z0-9_.-]{0,63}\")\n_FRONTEND_PROFILE = {\n    \"triton\": \"python\",\n    \"tilelang\": \"python\",\n    \"cuda\": \"c_like\",\n}\nREPLAY_COMPOSER_MODES = frozenset({\"off\", \"available\", \"preferred\"})\n_EDIT_OPERATIONS = frozenset(\n    {\n        \"insert_before\",\n        \"insert_after\",\n        \"append_child\",\n        \"replace\",\n        \"delete\",\n        \"move_before\",\n        \"move_after\",\n        \"move_child\",\n    }\n)\n\n\nclass ReplayComposerError(ValueError):\n    \"\"\"A closed syntax-plan or episode-state violation.\"\"\"\n\n\n@dataclass(frozen=True)\nclass RenderedReplay:\n    source: str\n    source_map: Mapping[str, Mapping[str, Any]]\n    node_count: int\n    node_kinds: Mapping[str, int]\n    frontend: str\n    layout_profile: str\n\n\ndef line(node_id: str, text: str) -> dict[str, Any]:\n    \"\"\"Create one generic agent-authored source line node.\"\"\"\n\n    return {\"id\": node_id, \"kind\": \"line\", \"text\": text}\n\n\ndef raw_block(node_id: str, lines: Sequence[str]) -> dict[str, Any]:\n    \"\"\"Create an exact multi-line syntax escape without interpreting its text.\"\"\"\n\n    if isinstance(lines, (str, bytes)):\n        raise ReplayComposerError(\"raw_block lines must be a sequence of lines\")\n    return {\"id\": node_id, \"kind\": \"raw_block\", \"lines\": list(lines)}\n\n\ndef block(\n    node_id: str,\n    header: str,\n    children: Sequence[Mapping[str, Any]],\n) -> dict[str, Any]:\n    \"\"\"Create one generic indentation/braced block node.\"\"\"\n\n    if isinstance(children, (str, bytes)):\n        raise ReplayComposerError(\"block children must be a sequence of nodes\")\n    return {\n        \"id\": node_id,\n        \"kind\": \"block\",\n        \"header\": header,\n        \"children\": [dict(child) for child in children],\n    }\n\n\ndef _exact_keys(value: Mapping[str, Any], expected: set[str], path: str) -> None:\n    actual = set(value)\n    if actual != expected:\n        missing = sorted(expected - actual)\n        extra = sorted(actual - expected)\n        raise ReplayComposerError(\n            f\"{path} keys differ from the closed grammar \"\n            f\"(missing={missing}, extra={extra})\"\n        )\n\n\ndef _line_text(value: Any, path: str, *, allow_empty: bool) -> str:\n    if not isinstance(value, str):\n        raise ReplayComposerError(f\"{path} must be a string\")\n    if (not allow_empty and not value) or len(value) > MAX_COMPOSER_LINE_CHARS:\n        raise ReplayComposerError(f\"{path} length is outside the closed bound\")\n    if \"\\n\" in value or \"\\r\" in value or \"\\x00\" in value:\n        raise ReplayComposerError(f\"{path} must contain exactly one text line\")\n    return value\n\n\nclass _PlanRenderer:\n    def __init__(self, frontend: str) -> None:\n        try:\n            self.profile = _FRONTEND_PROFILE[frontend]\n        except KeyError as exc:\n            raise ReplayComposerError(\n                f\"frontend {frontend!r} has no syntax-only composer profile\"\n            ) from exc\n        self.frontend = frontend\n        self.lines: list[str] = []\n        self.source_map: dict[str, dict[str, Any]] = {}\n        self.ids: set[str] = set()\n        self.node_kinds: Counter[str] = Counter()\n        self.raw_line_count = 0\n\n    @staticmethod\n    def _indented(text: str, depth: int) -> str:\n        if not text:\n            return \"\"\n        return \"    \" * depth + text\n\n    def _node_id(self, value: Any, path: str) -> str:\n        if not isinstance(value, str) or _ID.fullmatch(value) is None:\n            raise ReplayComposerError(f\"{path}.id is not a closed syntax-node id\")\n        if value in self.ids:\n            raise ReplayComposerError(f\"duplicate syntax-node id {value!r}\")\n        self.ids.add(value)\n        if len(self.ids) > MAX_COMPOSER_NODES:\n            raise ReplayComposerError(\"composer node count exceeds the closed bound\")\n        return value\n\n    def render_nodes(\n        self,\n        values: Any,\n        *,\n        depth: int,\n        parent: str | None,\n        path: str,\n    ) -> None:\n        if depth > MAX_COMPOSER_DEPTH:\n            raise ReplayComposerError(\"composer nesting exceeds the closed bound\")\n        if not isinstance(values, list):\n            raise ReplayComposerError(f\"{path} must be an ordered array\")\n        for index, value in enumerate(values):\n            self.render_node(\n                value,\n                depth=depth,\n                parent=parent,\n                path=f\"{path}[{index}]\",\n            )\n\n    def render_node(\n        self,\n        value: Any,\n        *,\n        depth: int,\n        parent: str | None,\n        path: str,\n    ) -> None:\n        if not isinstance(value, Mapping):\n            raise ReplayComposerError(f\"{path} must be an object\")\n        kind = value.get(\"kind\")\n        if kind not in {\"line\", \"block\", \"raw_block\"}:\n            raise ReplayComposerError(f\"{path}.kind is outside the closed grammar\")\n        node_id = self._node_id(value.get(\"id\"), path)\n        self.node_kinds[str(kind)] += 1\n        start = len(self.lines) + 1\n        header_line: int | None = None\n        footer_line: int | None = None\n\n        if kind == \"line\":\n            _exact_keys(value, {\"id\", \"kind\", \"text\"}, path)\n            text = _line_text(value[\"text\"], f\"{path}.text\", allow_empty=True)\n            self.lines.append(self._indented(text, depth))\n        elif kind == \"raw_block\":\n            _exact_keys(value, {\"id\", \"kind\", \"lines\"}, path)\n            raw_lines = value[\"lines\"]\n            if not isinstance(raw_lines, list) or not raw_lines:\n                raise ReplayComposerError(f\"{path}.lines must be a non-empty array\")\n            self.raw_line_count += len(raw_lines)\n            if self.raw_line_count > MAX_COMPOSER_RAW_LINES:\n                raise ReplayComposerError(\"raw composer line count exceeds the closed bound\")\n            for raw_index, raw in enumerate(raw_lines):\n                text = _line_text(\n                    raw,\n                    f\"{path}.lines[{raw_index}]\",\n                    allow_empty=True,\n                )\n                self.lines.append(self._indented(text, depth))\n        else:\n            _exact_keys(value, {\"id\", \"kind\", \"header\", \"children\"}, path)\n            header = _line_text(\n                value[\"header\"], f\"{path}.header\", allow_empty=False\n            )\n            header_line = len(self.lines) + 1\n            if self.profile == \"python\":\n                if not header.rstrip().endswith(\":\"):\n                    raise ReplayComposerError(\n                        f\"{path}.header must end in ':' for a Python-like profile\"\n                    )\n                self.lines.append(self._indented(header, depth))\n            else:\n                if header.rstrip().endswith(\"{\") or header.rstrip().endswith(\"}\"):\n                    raise ReplayComposerError(\n                        f\"{path}.header must omit C-like block braces\"\n                    )\n                self.lines.append(self._indented(f\"{header} {{\", depth))\n            self.render_nodes(\n                value[\"children\"],\n                depth=depth + 1,\n                parent=node_id,\n                path=f\"{path}.children\",\n            )\n            if self.profile == \"c_like\":\n                footer_line = len(self.lines) + 1\n                self.lines.append(self._indented(\"}\", depth))\n\n        end = len(self.lines)\n        self.source_map[node_id] = {\n            \"kind\": kind,\n            \"parent\": parent,\n            \"start_line\": start,\n            \"end_line\": end,\n            \"header_line\": header_line,\n            \"footer_line\": footer_line,\n",
+            "command": "/bin/bash -c \"sed -n '1,260p' work/replay_composer.py\"",
+            "exit_code": 0,
+            "id": "item_6",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "changes": [
+              {
+                "kind": "update",
+                "path": "/workspace/work/build_replay.py"
+              }
+            ],
+            "id": "item_7",
+            "status": "in_progress",
+            "type": "file_change"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "changes": [
+              {
+                "kind": "update",
+                "path": "/workspace/work/build_replay.py"
+              }
+            ],
+            "id": "item_7",
+            "status": "completed",
+            "type": "file_change"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c \"python work/build_replay.py && sed -n '1,220p' output/replay.source && python .agents/intentir_agent_tool.py replay_obligation_audit\"",
+            "exit_code": null,
+            "id": "item_8",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "{\"audit_required\": true, \"authority\": \"exact current Replay bytes plus exact source-isolated pi projection; no Source, Gate evidence, inference, mapping, diagnosis, repair, or acceptance decision\", \"broadcast_obligations\": [], \"cross_region_order\": [], \"identity_materializations\": [], \"lexical_regions\": [], \"participant_mappings\": [], \"program_axes\": [{\"axis\": 0, \"domain_ref\": \"d0\"}], \"protocol\": \"intentir.replay-obligation-audit.v5\", \"route_extent_transforms\": [], \"source_nonempty_lines\": [{\"indent\": 0, \"line\": 1, \"text\": \"extern \\\"C\\\" __global__ void scrc_k0(const int* p0, const float* p1, float* p2, const int* p3, int p4) {\"}, {\"indent\": 4, \"line\": 2, \"text\": \"const int v15 = static_cast<int>(blockIdx.x);\"}, {\"indent\": 4, \"line\": 3, \"text\": \"const int v0 = 0;\"}, {\"indent\": 4, \"line\": 4, \"text\": \"const int t2_v15 = p3[v15];\"}, {\"indent\": 4, \"line\": 5, \"text\": \"const int t0_v15 = p0[v15];\"}, {\"indent\": 4, \"line\": 6, \"text\": \"const bool v1 = t0_v15 >= v0;\"}, {\"indent\": 4, \"line\": 7, \"text\": \"const int v2 = 64;\"}, {\"indent\": 4, \"line\": 8, \"text\": \"const bool v3 = t0_v15 < v2;\"}, {\"indent\": 4, \"line\": 9, \"text\": \"const bool v4 = v1 && v3;\"}, {\"indent\": 4, \"line\": 10, \"text\": \"const bool v5 = t2_v15 >= v0;\"}, {\"indent\": 4, \"line\": 11, \"text\": \"const bool v6 = v4 && v5;\"}, {\"indent\": 4, \"line\": 12, \"text\": \"const bool v7 = t2_v15 < p4;\"}, {\"indent\": 4, \"line\": 13, \"text\": \"const bool v8 = v6 && v7;\"}, {\"indent\": 4, \"line\": 14, \"text\": \"const int v9 = v8 ? t2_v15 : v0;\"}, {\"indent\": 4, \"line\": 15, \"text\": \"const int v10 = v8 ? t0_v15 : v0;\"}, {\"indent\": 4, \"line\": 16, \"text\": \"const float v12 = p1[v9 * 64 + v10];\"}, {\"indent\": 4, \"line\": 17, \"text\": \"const float v13 = 0.0f;\"}, {\"indent\": 4, \"line\": 18, \"text\": \"const float v14 = v8 ? v12 : v13;\"}, {\"indent\": 4, \"line\": 19, \"text\": \"p2[v15] = v14;\"}, {\"indent\": 0, \"line\": 20, \"text\": \"}\"}], \"source_sha256\": \"955c680bafa513982ebab4bbe42e40168b20e6a2740fe07f8d6e09dd39059294\", \"status\": \"pass\"}\n",
+            "command": "/bin/bash -c \"python work/build_replay.py && sed -n '1,220p' output/replay.source && python .agents/intentir_agent_tool.py replay_obligation_audit\"",
+            "exit_code": 0,
+            "id": "item_8",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "id": "item_9",
+            "text": "The required audit passes on the current 20-line source. Its exact ledger confirms the sole program-axis projection at line 2, with all special construction ledgers empty; the four direct transfers appear in the packet-authored order at lines 4, 5, 16, and 19. I’m submitting these exact bytes to the source-blind ingress and CUDA compile checks now.",
+            "type": "agent_message"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py submit_replay'",
+            "exit_code": null,
+            "id": "item_10",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "{\"authority\": \"diagnostic-only; no Replay source is generated or repaired\", \"compile\": {\"diagnostics\": [], \"protocol\": \"intentir.scrc.replay-check.v16\", \"status\": \"pass\"}, \"ingress\": {\"diagnostic_progress\": {\"authority\": \"mechanical episode-local observation only; it neither edits Replay nor changes ingress or Gate1 membership\", \"replay_source_changed_since_previous_check\": false, \"same_rule_path_streak\": 0}, \"diagnostics\": [], \"protocol\": \"intentir.scrc.replay-check.v16\", \"status\": \"pass\"}, \"phase\": \"compile\", \"protocol\": \"intentir.codex-cli.replay-submit.v1\", \"status\": \"pass\"}\n",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py submit_replay'",
+            "exit_code": 0,
+            "id": "item_10",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "id": "item_11",
+            "text": "Completed [replay.source](/workspace/output/replay.source).\n\n- Obligation audit: passed\n- Source-blind ingress: passed\n- CUDA compile check: passed\n- Transactional submission: passed",
+            "type": "agent_message"
+          },
+          "type": "item.completed"
+        },
+        {
+          "type": "turn.completed",
+          "usage": {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 109568,
+            "input_tokens": 136291,
+            "output_tokens": 2729,
+            "reasoning_output_tokens": 1079
+          }
+        }
+      ],
+      "model_segments": 5,
+      "protocol": "intentir.codex-cli.agent-runtime.v3",
+      "resumed": false,
+      "stderr": "Reading additional input from stdin...\n",
+      "thread_id": "019fb58a-b924-7c60-9bec-52b07556c22d",
+      "tool_actions": 7,
+      "usage": {
+        "cache_write_input_tokens": 0,
+        "cached_input_tokens": 109568,
+        "input_tokens": 136291,
+        "output_tokens": 2729,
+        "reasoning_output_tokens": 1079
+      }
+    }
+  ]
+}

@@ -47,8 +47,8 @@ from .scrc import (
     prepare_scrc_lift,
     scrc_candidate_check_context,
 )
-CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v32"
-CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v91"
+CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v33"
+CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v92"
 CODEX_CLI_TURN_TIMEOUT_SECONDS = 900.0
 
 _FEEDBACK_CATEGORY_NAMES = (
@@ -60,6 +60,9 @@ _FEEDBACK_CATEGORY_NAMES = (
 )
 _FEEDBACK_CATEGORY_NAME_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
 _FEEDBACK_CATEGORY_INDEX = "feedback_observer_categories.json"
+_CODEX_CONTEXT_QUERY_COMMAND = (
+    "python input/tools/context_query.py --input-root input --output-root output"
+)
 
 _INITIAL_PROMPT = """You are the sole source-aware IntentIR Lift owner for this branch.
 Work only under the isolated /workspace; input/ is immutable and output/, work/,
@@ -293,6 +296,45 @@ def _codex_feedback_files(feedback_text: str) -> dict[str, str]:
     return rendered
 
 
+def _codex_feedback_frontier(feedback_frontier_text: str) -> str:
+    """Adapt only frontier transport paths to the Codex workspace mount.
+
+    The shared frontier is also consumed by MiniSWE, where ``/input`` is valid.
+    Codex mounts the same immutable tree at ``/workspace/input``.  Rewrite only
+    the declared query/path metadata keys; diagnostic examples and comparison
+    values remain byte-for-byte authored by the Gate producer.
+    """
+
+    value = json.loads(feedback_frontier_text)
+    if value is None:
+        return "null\n"
+    if not isinstance(value, dict):
+        raise TypeError("feedback frontier must be null or an object")
+
+    prefix = "python /input/tools/context_query.py"
+
+    def adapt_query(container: dict[str, Any], key: str) -> None:
+        query = container.get(key)
+        if isinstance(query, str) and query.startswith(prefix):
+            container[key] = _CODEX_CONTEXT_QUERY_COMMAND + query[len(prefix):]
+
+    if value.get("full_feedback_path") == "/input/feedback.json":
+        value["full_feedback_path"] = "input/feedback.json"
+    adapt_query(value, "unresolved_gate1_query")
+    categories = value.get("categories")
+    if isinstance(categories, list):
+        for category in categories:
+            if isinstance(category, dict):
+                adapt_query(category, "full_query")
+    return json.dumps(
+        value,
+        indent=2,
+        sort_keys=True,
+        ensure_ascii=False,
+        allow_nan=False,
+    ) + "\n"
+
+
 
 def _codex_input_files(
     request: Any,
@@ -322,7 +364,9 @@ def _codex_input_files(
         # this standard feedback envelope gives the local query tool one robust
         # canonical source; it is never embedded in the model continuation.
         "feedback.json": complete["feedback.json"],
-        "feedback_frontier.json": complete["feedback_frontier.json"],
+        "feedback_frontier.json": _codex_feedback_frontier(
+            complete["feedback_frontier.json"]
+        ),
         "README.md": (
             "# IntentIR Lift workspace\n\n"
             "J owns logical semantics, C only implementation choices, and pi only "
@@ -371,7 +415,7 @@ def _codex_input_files(
 
 _EXTERNAL_CONTINUATION_PROMPT = """The same branch-local source-aware Lift task continues in the same workspace and thread.
 Read input/feedback_frontier.json first. When its bounded frontier is insufficient,
-run `python input/tools/context_query.py feedback-category NAME`; it returns the
+run `python input/tools/context_query.py --input-root input --output-root output feedback-category NAME`; it returns the
 exact differences for that named category without exposing one bulk relift object.
 input/feedback_detail.json contains exact non-observer diagnostics. The previous
 artifact already exists at output/candidate.json and is never duplicated in input.

@@ -1,0 +1,313 @@
+{
+  "backend": "openai.codex-cli.intentir-replay.v36",
+  "formal_ingress_recheck": true,
+  "fresh_session": true,
+  "isolation": {
+    "composer_episode_local": true,
+    "composer_reads_packet": false,
+    "input": "read-only",
+    "output_work_tmp": "write-only-scope",
+    "provider_secret_in_tool_env": false,
+    "source_blind": true,
+    "tool_network": "disabled"
+  },
+  "packet_queries": [],
+  "pi_min_ownership": {
+    "artifact_schema": "intentir.scrc.artifact.v13",
+    "claim_scope": "proof-irrelevant ownership receipt; it neither proves zero statistical information nor changes TypeCheck, Replay, Gate1, or Gate2 acceptance",
+    "masked_j": false,
+    "pi_authority": "J/C-dependent realization constraints only",
+    "pi_closed_fields": [
+      "instances",
+      "iterations",
+      "loop_carriers",
+      "order",
+      "participant_mappings",
+      "physical_iterations",
+      "physical_loop_carriers",
+      "program_axes",
+      "refinements",
+      "regions",
+      "route_extent_transforms",
+      "routes",
+      "sharing",
+      "terminal_controls"
+    ],
+    "protocol": "intentir.pi-min.ownership-receipt.v1",
+    "relation_counts": {
+      "instances": 13,
+      "iterations": 0,
+      "loop_carriers": 0,
+      "order": 3,
+      "participant_mappings": 0,
+      "physical_iterations": 0,
+      "physical_loop_carriers": 0,
+      "program_axes": 1,
+      "refinements": 0,
+      "regions": 2,
+      "route_extent_transforms": 0,
+      "routes": 13,
+      "sharing": 0,
+      "terminal_controls": 0
+    },
+    "semantic_authority": "J only",
+    "status": "pass",
+    "validation_basis": [
+      "canonical Gate1Artifact closed-schema decode",
+      "TypeCheck(J,C,pi)=PASS before Replay packet construction",
+      "closed source-isolated Replay payload grammar"
+    ]
+  },
+  "protocol": "intentir.codex-cli.agent-runtime.v3",
+  "replay_check": [
+    {
+      "diagnostics": [],
+      "source_sha256": "c89bf58fe076eff02fca46a6c9ef23743b120c9d7a5d51c9c7d9e148d253305d",
+      "status": "pass",
+      "trigger": "host_post_turn"
+    }
+  ],
+  "replay_compile_check": [
+    {
+      "diagnostics": [],
+      "source_sha256": "c89bf58fe076eff02fca46a6c9ef23743b120c9d7a5d51c9c7d9e148d253305d",
+      "status": "pass",
+      "trigger": "host_post_turn"
+    }
+  ],
+  "replay_obligation_audits": [
+    {
+      "broadcast_obligation_count": 0,
+      "cross_region_order_count": 0,
+      "identity_materialization_count": 0,
+      "lexical_region_count": 0,
+      "participant_mapping_count": 0,
+      "program_axis_count": 1,
+      "route_extent_transform_count": 0,
+      "source_sha256": "c89bf58fe076eff02fca46a6c9ef23743b120c9d7a5d51c9c7d9e148d253305d"
+    }
+  ],
+  "replay_ttir_inspections": [],
+  "syntax_composer": {
+    "actions": {
+      "checkpoint": 2,
+      "compose": 1,
+      "install": 1
+    },
+    "authority": "proof-irrelevant episode-local syntax telemetry only; it is not trusted for J/pi consumption, Source equivalence, or Gate closure",
+    "builder_installed": true,
+    "checkpoint_available": true,
+    "failed_actions": {},
+    "frontend": "cuda",
+    "host_events": [],
+    "installed": true,
+    "last_action": "checkpoint",
+    "layout_profile": "c_like",
+    "node_count": 21,
+    "node_kinds": {
+      "block": 3,
+      "line": 18
+    },
+    "offer_mode": "preferred",
+    "output_matches_last_render": true,
+    "protocol": "intentir.replay.syntax-composer.v2",
+    "revision": 3,
+    "selected_path": "composer",
+    "source_map_nodes": 21,
+    "source_map_revision_matches_state": true,
+    "status": "pass",
+    "used": true
+  },
+  "thread_id": "019fb592-0bae-7741-8322-07a2937f02b9",
+  "thread_ids": [
+    "019fb592-0bae-7741-8322-07a2937f02b9"
+  ],
+  "timeout_events": [],
+  "tool_bridge": {
+    "authority": "diagnostic-only callbacks over exact host-read output bytes; no artifact or Replay field is generated or edited",
+    "calls": 2,
+    "protocol": "intentir.codex-cli.tool-bridge.v3",
+    "receipts": [
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 3.3517919946461916,
+        "result_sha256": "d62d6b9ba8d87647430782fceafead5ebcc786be0484633ad94efdbdcf8afaeb",
+        "status": "pass",
+        "tool": "replay_obligation_audit"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 344.22310208901763,
+        "result_sha256": "a6fd54a3c78e2276ff28850cf13a9958dacd709d42760c0289bc6adbec99389e",
+        "status": "pass",
+        "tool": "submit_replay"
+      }
+    ],
+    "transport": "isolated_workspace_file_mailbox"
+  },
+  "turns": [
+    {
+      "elapsed_ms": 70244.94120699819,
+      "events": [
+        {
+          "thread_id": "019fb592-0bae-7741-8322-07a2937f02b9",
+          "type": "thread.started"
+        },
+        {
+          "type": "turn.started"
+        },
+        {
+          "item": {
+            "id": "item_0",
+            "text": "I’ll project the packet into one complete implementation, author it through the provided composer builder, then run the required ledger audit and transactional submission. I’ll keep any diagnostic-driven repairs in the builder so the generated replay stays coherent.",
+            "type": "agent_message"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c \"sed -n '1,240p' input/packet.json && sed -n '1,260p' work/build_replay.py && sed -n '1,240p' input/TOOL.md\"",
+            "exit_code": null,
+            "id": "item_1",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "{\"c\": {\"slots\": [{\"kind\": \"compiler\", \"name\": \"c0\", \"required\": true, \"role\": \"launch_block_x\", \"value_type\": \"i32\"}]}, \"j\": {\"boundary\": {\"access_guard_relations\": [], \"accesses\": [{\"access_id\": \"a0\", \"index_expression\": \"[v13]\", \"kind\": \"load\", \"tensor\": \"t2\"}, {\"access_id\": \"a1\", \"index_expression\": \"[v13]\", \"kind\": \"load\", \"tensor\": \"t0\"}, {\"access_id\": \"a2\", \"fill_value\": 0.0, \"index_expression\": \"[v14, v15]\", \"kind\": \"load\", \"node_ref\": \"n9\", \"predicate\": \"(0 <= v15) and (v15 < 64) and (0 <= v14) and (v14 < x0)\", \"tensor\": \"t1\"}, {\"access_id\": \"a3\", \"index_expression\": \"[v13]\", \"kind\": \"store\", \"node_ref\": \"n12\", \"tensor\": \"t4\"}], \"aliases\": [], \"broadcasts\": [], \"consumer_extensions\": [], \"domains\": {\"d0\": \"(0 <= v13) and (v13 < 256)\", \"d1\": \"(0 <= v14) and (v14 < x0)\", \"d2\": \"(0 <= v15) and (v15 < 64)\"}, \"effects\": [{\"access_ref\": \"a0\", \"effect_id\": \"e0\", \"kind\": \"read\", \"target\": \"t2\"}, {\"access_ref\": \"a1\", \"effect_id\": \"e1\", \"kind\": \"read\", \"target\": \"t0\"}, {\"access_ref\": \"a2\", \"effect_id\": \"e2\", \"kind\": \"read\", \"node_ref\": \"n9\", \"target\": \"t1\"}, {\"access_ref\": \"a3\", \"effect_id\": \"e3\", \"kind\": \"write\", \"node_ref\": \"n12\", \"target\": \"t4\"}], \"index_bounds\": [{\"axis\": 0, \"data\": \"t1\", \"indices\": \"t2\", \"node_ref\": \"n9\"}, {\"axis\": 1, \"data\": \"v9\", \"indices\": \"t0\", \"node_ref\": \"n10\"}], \"output_mappings\": [], \"realization_authorizations\": [], \"reductions\": [], \"result_relations\": [{\"kind\": \"exact\", \"output\": \"t4\"}], \"updates\": []}, \"dimension_constraints\": [\"x0 >= 1\"], \"dimension_relations\": [], \"intent\": {\"intent_function\": {\"body\": [{\"attrs\": {\"dtype\": \"i32\", \"shape\": [], \"value\": 0}, \"id\": \"n0\", \"op\": \"const\", \"result\": \"v0\", \"type\": {\"dtype\": \"i32\", \"shape\": []}}, {\"attrs\": {\"fn\": \"ge\"}, \"id\": \"n1\", \"op\": \"map_binary\", \"operands\": [\"t0\", \"v0\"], \"result\": \"v1\", \"type\": {\"dtype\": \"i1\", \"shape\": [256]}}, {\"attrs\": {\"dtype\": \"i32\", \"shape\": [], \"value\": 64}, \"id\": \"n2\", \"op\": \"const\", \"result\": \"v2\", \"type\": {\"dtype\": \"i32\", \"shape\": []}}, {\"attrs\": {\"fn\": \"lt\"}, \"id\": \"n3\", \"op\": \"map_binary\", \"operands\": [\"t0\", \"v2\"], \"result\": \"v3\", \"type\": {\"dtype\": \"i1\", \"shape\": [256]}}, {\"attrs\": {\"fn\": \"logical_and\"}, \"id\": \"n4\", \"op\": \"map_binary\", \"operands\": [\"v1\", \"v3\"], \"result\": \"v4\", \"type\": {\"dtype\": \"i1\", \"shape\": [256]}}, {\"attrs\": {\"fn\": \"ge\"}, \"id\": \"n5\", \"op\": \"map_binary\", \"operands\": [\"t2\", \"v0\"], \"result\": \"v5\", \"type\": {\"dtype\": \"i1\", \"shape\": [256]}}, {\"attrs\": {\"fn\": \"logical_and\"}, \"id\": \"n6\", \"op\": \"map_binary\", \"operands\": [\"v4\", \"v5\"], \"result\": \"v6\", \"type\": {\"dtype\": \"i1\", \"shape\": [256]}}, {\"attrs\": {\"fn\": \"lt\"}, \"id\": \"n7\", \"op\": \"map_binary\", \"operands\": [\"t2\", \"t3\"], \"result\": \"v7\", \"type\": {\"dtype\": \"i1\", \"shape\": [256]}}, {\"attrs\": {\"fn\": \"logical_and\"}, \"id\": \"n8\", \"op\": \"map_binary\", \"operands\": [\"v6\", \"v7\"], \"result\": \"v8\", \"type\": {\"dtype\": \"i1\", \"shape\": [256]}}, {\"attrs\": {\"axis\": 0, \"mode\": \"take\"}, \"id\": \"n9\", \"op\": \"gather\", \"operands\": [\"t1\", \"t2\"], \"result\": \"v9\", \"type\": {\"dtype\": \"f32\", \"shape\": [256, 64]}}, {\"attrs\": {\"axis\": 1, \"mode\": \"along_axis\"}, \"id\": \"n10\", \"op\": \"gather\", \"operands\": [\"v9\", \"t0\"], \"result\": \"v10\", \"type\": {\"dtype\": \"f32\", \"shape\": [256]}}, {\"attrs\": {\"dtype\": \"f32\", \"shape\": [], \"value\": 0.0}, \"id\": \"n11\", \"op\": \"const\", \"result\": \"v11\", \"type\": {\"dtype\": \"f32\", \"shape\": []}}, {\"id\": \"n12\", \"op\": \"select\", \"operands\": [\"v8\", \"v10\", \"v11\"], \"result\": \"v12\", \"type\": {\"dtype\": \"f32\", \"shape\": [256]}}], \"inputs\": [{\"dtype\": \"i32\", \"name\": \"t0\", \"shape\": [256]}, {\"dtype\": \"f32\", \"name\": \"t1\", \"shape\": [\"x0\", 64]}, {\"dtype\": \"i32\", \"name\": \"t2\", \"shape\": [256]}, {\"dtype\": \"i32\", \"name\": \"t3\", \"shape\": []}], \"name\": \"scrc_intent0\", \"outputs\": [{\"dtype\": \"f32\", \"name\": \"t4\", \"shape\": [256]}]}}, \"kernel_id\": \"scrc_j0\", \"node_ids\": {\"n0\": \"body[0]\", \"n1\": \"body[1]\", \"n10\": \"body[10]\", \"n11\": \"body[11]\", \"n12\": \"body[12]\", \"n2\": \"body[2]\", \"n3\": \"body[3]\", \"n4\": \"body[4]\", \"n5\": \"body[5]\", \"n6\": \"body[6]\", \"n7\": \"body[7]\", \"n8\": \"body[8]\", \"n9\": \"body[9]\"}, \"scopes\": [{\"captures\": [], \"definitions\": [\"t0\", \"t1\", \"t2\", \"t3\", \"v0\", \"v1\", \"v2\", \"v3\", \"v4\", \"v5\", \"v6\", \"v7\", \"v8\", \"v9\", \"v10\", \"v11\", \"v12\"], \"effects\": [\"e0\", \"e1\", \"e2\", \"e3\"], \"kind\": \"function\", \"parent_scope\": null, \"scope_id\": \"q0\"}], \"signature\": {\"parameters\": [{\"dtype\": \"i32\", \"kind\": \"tensor\", \"logical_ref\": \"t0\", \"mode\": \"input\", \"name\": \"p0\", \"rank\": 1}, {\"dtype\": \"f32\", \"kind\": \"tensor\", \"logical_ref\": \"t1\", \"mode\": \"input\", \"name\": \"p1\", \"rank\": 2}, {\"dtype\": \"f32\", \"kind\": \"tensor\", \"logical_ref\": \"t4\", \"mode\": \"output\", \"name\": \"p2\", \"rank\": 1}, {\"dtype\": \"i32\", \"kind\": \"tensor\", \"logical_ref\": \"t2\", \"mode\": \"input\", \"name\": \"p3\", \"rank\": 1}, {\"dtype\": \"i32\", \"kind\": \"scalar\", \"logical_ref\": \"t3\", \"mode\": \"value\", \"name\": \"p4\", \"rank\": 0}]}, \"storage\": [], \"value_dimension_relations\": [{\"dimension_ref\": \"x0\", \"relation\": \"eq\", \"value_ref\": \"t3\"}]}, \"pi\": {\"instances\": [{\"id\": \"i0\", \"mechanism\": \"realize\", \"region\": \"r1\", \"semantic_ref\": \"d0\"}, {\"id\": \"i1\", \"mechanism\": \"address_base\", \"region\": \"r1\", \"semantic_ref\": \"a0\"}, {\"id\": \"i2\", \"mechanism\": \"transfer_direct\", \"region\": \"r1\", \"semantic_ref\": \"a0\"}, {\"id\": \"i3\", \"mechanism\": \"address_base\", \"region\": \"r1\", \"semantic_ref\": \"a1\"}, {\"id\": \"i4\", \"mechanism\": \"transfer_direct\", \"region\": \"r1\", \"semantic_ref\": \"a1\"}, {\"id\": \"i5\", \"mechanism\": \"address_base\", \"region\": \"r1\", \"semantic_ref\": \"a2\"}, {\"id\": \"i6\", \"mechanism\": \"transfer_direct\", \"region\": \"r1\", \"semantic_ref\": \"a2\"}, {\"id\": \"i7\", \"mechanism\": \"address_base\", \"region\": \"r1\", \"semantic_ref\": \"a3\"}, {\"id\": \"i8\", \"mechanism\": \"transfer_direct\", \"region\": \"r1\", \"semantic_ref\": \"a3\"}, {\"id\": \"i9\", \"mechanism\": \"realize\", \"region\": \"r1\", \"semantic_ref\": \"p3\"}, {\"id\": \"i10\", \"mechanism\": \"realize\", \"region\": \"r1\", \"semantic_ref\": \"p0\"}, {\"id\": \"i11\", \"mechanism\": \"realize\", \"region\": \"r1\", \"semantic_ref\": \"p1\"}, {\"id\": \"i12\", \"mechanism\": \"realize\", \"region\": \"r1\", \"semantic_ref\": \"p2\"}], \"iterations\": [], \"loop_carriers\": [], \"order\": [{\"after\": \"i4\", \"before\": \"i2\"}, {\"after\": \"i6\", \"before\": \"i4\"}, {\"after\": \"i8\", \"before\": \"i6\"}], \"participant_mappings\": [], \"physical_iterations\": [], \"physical_loop_carriers\": [], \"program_axes\": [{\"axis\": 0, \"domain_ref\": \"d0\"}], \"refinements\": [], \"regions\": [{\"id\": \"r0\", \"parent\": null, \"placement\": \"root\"}, {\"id\": \"r1\", \"parent\": \"r0\", \"placement\": \"program\"}], \"route_extent_transforms\": [], \"routes\": [{\"slots\": [0], \"source\": \"i9\", \"target\": \"i1\"}, {\"slots\": [1], \"source\": \"i0\", \"target\": \"i1\"}, {\"slots\": [0], \"source\": \"i1\", \"target\": \"i2\"}, {\"slots\": [0], \"source\": \"i10\", \"target\": \"i3\"}, {\"slots\": [1], \"source\": \"i0\", \"target\": \"i3\"}, {\"slots\": [0], \"source\": \"i3\", \"target\": \"i4\"}, {\"slots\": [0], \"source\": \"i11\", \"target\": \"i5\"}, {\"slots\": [1], \"source\": \"i2\", \"target\": \"i5\"}, {\"slots\": [2], \"source\": \"i4\", \"target\": \"i5\"}, {\"slots\": [0], \"source\": \"i5\", \"target\": \"i6\"}, {\"slots\": [0], \"source\": \"i12\", \"target\": \"i7\"}, {\"slots\": [1], \"source\": \"i0\", \"target\": \"i7\"}, {\"slots\": [0], \"source\": \"i7\", \"target\": \"i8\"}], \"sharing\": [], \"terminal_controls\": []}, \"u_f\": {\"compile_entry_contract\": \"Return one standalone CUDA C++ translation unit containing exactly one `extern \\\"C\\\" __global__` kernel named `scrc_k0`. Its positional runtime parameters follow J.signature; C values are external schedule bindings and are not runtime parameters. A MaskC compiler slot with role `launch_block_x|y|z` is bound by the Harness launch: never name its c* handle in the kernel body or replace public `blockDim.x|y|z` with a guessed value. Use only public CUDA language constructs and intrinsics. Do not emit host code, launch syntax, file I/O, inline PTX, build directives, or `main`. A program-region domain path entering address_base maps to `blockIdx.x|y|z` only through its exact pi.program_axes axis binding; never assign axes by declaration order or instance multiplicity. A lane path maps to the authored participant topology using public `threadIdx`/`blockDim`. Only pi.iterations or pi.physical_iterations authorizes a serial loop. A J reduce fed by a lane-realized reduced domain remains a participant collective using public CUDA intrinsics; never make every thread traverse the whole logical axis. Preserve every distinct transfer, realization, region, sharing, and order stage. A boundary access without a predicate is unconditional and never authorizes an invented lane-leader guard. If an identity_materialization instance has its sole outgoing route into a synchronize instance that resolves to a J reduce, emit one explicit combine of the J-owned reducer identity with its incoming carrier before the downstream collective. Derive reducer, identity, and dtype only from J; do not replace this stage with a barrier or cast. Every pi.participant_mappings item is mandatory. Resolve its domain_instance through pi to the exact J domain; projection=cyclic maps the public threadIdx axis into that J-owned logical extent. extent_slot binds only the matching external blockDim axis: never name c*, guess its value, or replace the J extent with blockDim.\", \"frontend\": \"cuda\", \"protocol\": \"intentir.scrc.replay-input.v3\", \"replay_function\": \"scrc_k0\", \"retrieval_scope\": \"public CUDA C++ programming documentation and examples\", \"tool_access\": [\"public_document_lookup\"]}}\n\"\"\"Agent-owned syntax composition for this one fresh Replay episode.\"\"\"\n\nfrom replay_composer import block, compose, line, raw_block\n\n\n# Author target source text from the exact packet yourself.  These constructors\n# only manage syntax layout and stable IDs; they do not select an API or algorithm.\nnodes = [\n    # line(\"imports\", \"...\"),\n    # block(\"function\", \"def ...:\", [line(\"body\", \"...\")]),\n    # raw_block(\"escape\", [\"...\"]),\n]\n\ncompose('cuda', nodes)\n# Replay tool contract\n\nWrite exactly `/output/replay.source`. Run\n`intentir_replay_check /output/replay.source` for diagnostic ingress, then\n`intentir_replay_compile_check /output/replay.source` for the public synthetic\nconstruction-compile profile. Calls are audited telemetry and governed by the\nReplay episode's active wall time; submission independently rechecks changed\nexact bytes with both checks. Results contain only a closed\nprotocol/status/rule/path plus anonymous handles or line number. No Source,\nHarness value, actual C value, Gate1 observer, or execution oracle is run. The\ncompile profile is the public fixed synthetic profile in README.md. Neither\ncheck has Gate, semantic-membership, or certification authority. After exact\nbytes pass both construction checks, preserve the LLM owner's fallback choice with\n`intentir_replay_commit /output/replay.source`; restore only those bytes with\n`intentir_replay_rollback /output/replay.source`. Submit directly with\n`intentir_replay_submit /output/replay.source` or\n`intentir_replay_submit --committed`; no stdout marker is used. The writer\nindependently reruns the same\ncompiler-free ingress callable after submission, and formal Gate1 compiles c0.\n\nIn the isolated Codex workspace, invoke the equivalent closed callbacks as\n`python .agents/intentir_agent_tool.py replay_check` or\n`replay_compile_check`. After a successful public synthetic compile,\n`replay_ttir_inspect summary|raw|find|observer` exposes only the current Replay's\nown TTIR/fingerprint for focused debugging. These callbacks take no host path and\nnever expose Source, Source TTIR, Harness values, or Gate evidence. Read this file\nfor usage instead of probing the fixed client with an unrecognized tool name.\n\nCodex Replay composer episodes install `work/replay_composer.py`, an agent-owned\n`work/build_replay.py` scaffold, and an empty `work/replay.composer.json`. The\nhelper is syntax-only: it does not read `input/`, J, C, pi, compiler output, or Gate\nevidence. The low-friction path is to edit `work/build_replay.py` with its generic\n`line`, `block`, and `raw_block` constructors and run it. The equivalent JSON path\nis to edit the plan and run `python work/replay_composer.py render`. Both atomically\nwrite `output/replay.source` with the same closed grammar:\n\n```json\n{\n  \"protocol\": \"intentir.replay.syntax-composer.v2\",\n  \"frontend\": \"triton\",\n  \"nodes\": [\n    {\"id\": \"import0\", \"kind\": \"line\", \"text\": \"import triton\"},\n    {\n      \"id\": \"fn0\",\n      \"kind\": \"block\",\n      \"header\": \"def scrc_k0(...):\",\n      \"children\": [\n        {\"id\": \"body0\", \"kind\": \"line\", \"text\": \"...\"}\n      ]\n    },\n    {\n      \"id\": \"raw0\",\n      \"kind\": \"raw_block\",\n      \"lines\": [\"# exact agent-authored escape line\"]\n    }\n  ]\n}\n```\n\nUse frontend `triton`, `tilelang`, or `cuda`. Triton/TileLang blocks require an\nagent-authored header ending in `:`; CUDA blocks omit braces and the composer adds\nthem. Node IDs are stable source-map handles. Full-plan edits are allowed. For a\nsmall insertion or replacement, write exactly one node object to\n`work/replay.composer.node.json`, then run one of:\n\n```text\npython work/replay_composer.py insert-before TARGET\npython work/replay_composer.py insert-after TARGET\npython work/replay_composer.py append-child BLOCK\npython work/replay_composer.py replace TARGET\npython work/replay_composer.py delete TARGET\npython work/replay_composer.py move-before NODE ANCHOR\npython work/replay_composer.py move-after NODE ANCHOR\npython work/replay_composer.py move-child NODE BLOCK\n```\n\nEvery successful edit validates the complete tree and immediately renders exact\nReplay bytes. Replacement preserves the target ID; moves preserve the moved ID.\nUnknown syntax uses `raw_block`; direct editing of `output/replay.source` remains\nthe unrestricted raw escape. `status`, `checkpoint`, and `rollback` are also\navailable. The composer never chooses a target API, algorithm, expression, or\nrealization and has no ReplayCheck, Gate, or certification authority.\n",
+            "command": "/bin/bash -c \"sed -n '1,240p' input/packet.json && sed -n '1,260p' work/build_replay.py && sed -n '1,240p' input/TOOL.md\"",
+            "exit_code": 0,
+            "id": "item_1",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "id": "item_2",
+            "text": "The packet resolves to a CUDA kernel with one program coordinate (`blockIdx.x`) and four ordered direct transfers: index load, column load, guarded data load with zero fill, then unconditional store. There is no authored lane mapping or serial iteration, so I’m not adding thread guards or loops; the scalar lowering keeps the two gather nodes fused into the single authored data access.",
+            "type": "agent_message"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "changes": [
+              {
+                "kind": "update",
+                "path": "/workspace/work/build_replay.py"
+              }
+            ],
+            "id": "item_3",
+            "status": "in_progress",
+            "type": "file_change"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "changes": [
+              {
+                "kind": "update",
+                "path": "/workspace/work/build_replay.py"
+              }
+            ],
+            "id": "item_3",
+            "status": "completed",
+            "type": "file_change"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c 'python work/build_replay.py && nl -ba output/replay.source && python .agents/intentir_agent_tool.py replay_obligation_audit'",
+            "exit_code": null,
+            "id": "item_4",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "{\"audit_required\": true, \"authority\": \"exact current Replay bytes plus exact source-isolated pi projection; no Source, Gate evidence, inference, mapping, diagnosis, repair, or acceptance decision\", \"broadcast_obligations\": [], \"cross_region_order\": [], \"identity_materializations\": [], \"lexical_regions\": [], \"participant_mappings\": [], \"program_axes\": [{\"axis\": 0, \"domain_ref\": \"d0\"}], \"protocol\": \"intentir.replay-obligation-audit.v5\", \"route_extent_transforms\": [], \"source_nonempty_lines\": [{\"indent\": 0, \"line\": 1, \"text\": \"extern \\\"C\\\" __global__ void scrc_k0(const int* p0, const float* p1, float* p2, const int* p3, int p4) {\"}, {\"indent\": 4, \"line\": 2, \"text\": \"const int v13 = static_cast<int>(blockIdx.x);\"}, {\"indent\": 4, \"line\": 3, \"text\": \"const int a0_value = p3[v13];\"}, {\"indent\": 4, \"line\": 4, \"text\": \"const int a1_value = p0[v13];\"}, {\"indent\": 4, \"line\": 5, \"text\": \"const int v0 = 0;\"}, {\"indent\": 4, \"line\": 6, \"text\": \"const bool v1 = a1_value >= v0;\"}, {\"indent\": 4, \"line\": 7, \"text\": \"const int v2 = 64;\"}, {\"indent\": 4, \"line\": 8, \"text\": \"const bool v3 = a1_value < v2;\"}, {\"indent\": 4, \"line\": 9, \"text\": \"const bool v4 = v1 && v3;\"}, {\"indent\": 4, \"line\": 10, \"text\": \"const bool v5 = a0_value >= v0;\"}, {\"indent\": 4, \"line\": 11, \"text\": \"const bool v6 = v4 && v5;\"}, {\"indent\": 4, \"line\": 12, \"text\": \"const bool v7 = a0_value < p4;\"}, {\"indent\": 4, \"line\": 13, \"text\": \"const bool v8 = v6 && v7;\"}, {\"indent\": 4, \"line\": 14, \"text\": \"float v10;\"}, {\"indent\": 4, \"line\": 15, \"text\": \"if ((0 <= a1_value) && (a1_value < 64) && (0 <= a0_value) && (a0_value < p4)) {\"}, {\"indent\": 8, \"line\": 16, \"text\": \"v10 = p1[a0_value * 64 + a1_value];\"}, {\"indent\": 4, \"line\": 17, \"text\": \"}\"}, {\"indent\": 4, \"line\": 18, \"text\": \"else {\"}, {\"indent\": 8, \"line\": 19, \"text\": \"v10 = 0.0f;\"}, {\"indent\": 4, \"line\": 20, \"text\": \"}\"}, {\"indent\": 4, \"line\": 21, \"text\": \"const float v11 = 0.0f;\"}, {\"indent\": 4, \"line\": 22, \"text\": \"const float v12 = v8 ? v10 : v11;\"}, {\"indent\": 4, \"line\": 23, \"text\": \"p2[v13] = v12;\"}, {\"indent\": 0, \"line\": 24, \"text\": \"}\"}], \"source_sha256\": \"c89bf58fe076eff02fca46a6c9ef23743b120c9d7a5d51c9c7d9e148d253305d\", \"status\": \"pass\"}\n",
+            "command": "/bin/bash -c 'python work/build_replay.py && nl -ba output/replay.source && python .agents/intentir_agent_tool.py replay_obligation_audit'",
+            "exit_code": 0,
+            "id": "item_4",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "id": "item_5",
+            "text": "The numbered replay matches the exact obligation audit: axis 0 is the sole program coordinate, the four memory effects occur in authored order, and there are no additional region, broadcast, identity, or route-transform ledger items to realize. I’m submitting these exact bytes now; any ingress or CUDA diagnostic will be repaired in the composer source and re-audited.",
+            "type": "agent_message"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py submit_replay'",
+            "exit_code": null,
+            "id": "item_6",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "{\"authority\": \"diagnostic-only; no Replay source is generated or repaired\", \"compile\": {\"diagnostics\": [], \"protocol\": \"intentir.scrc.replay-check.v16\", \"status\": \"pass\"}, \"ingress\": {\"diagnostic_progress\": {\"authority\": \"mechanical episode-local observation only; it neither edits Replay nor changes ingress or Gate1 membership\", \"replay_source_changed_since_previous_check\": false, \"same_rule_path_streak\": 0}, \"diagnostics\": [], \"protocol\": \"intentir.scrc.replay-check.v16\", \"status\": \"pass\"}, \"phase\": \"compile\", \"protocol\": \"intentir.codex-cli.replay-submit.v1\", \"status\": \"pass\"}\n",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py submit_replay'",
+            "exit_code": 0,
+            "id": "item_6",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "id": "item_7",
+            "text": "Implemented [replay.source](/workspace/output/replay.source).\n\nRequired obligation audit passed, and transactional submission passed both ingress and CUDA compile checks.",
+            "type": "agent_message"
+          },
+          "type": "item.completed"
+        },
+        {
+          "type": "turn.completed",
+          "usage": {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 43264,
+            "input_tokens": 63601,
+            "output_tokens": 2402,
+            "reasoning_output_tokens": 1218
+          }
+        }
+      ],
+      "model_segments": 4,
+      "protocol": "intentir.codex-cli.agent-runtime.v3",
+      "resumed": false,
+      "stderr": "Reading additional input from stdin...\n",
+      "thread_id": "019fb592-0bae-7741-8322-07a2937f02b9",
+      "tool_actions": 4,
+      "usage": {
+        "cache_write_input_tokens": 0,
+        "cached_input_tokens": 43264,
+        "input_tokens": 63601,
+        "output_tokens": 2402,
+        "reasoning_output_tokens": 1218
+      }
+    }
+  ]
+}

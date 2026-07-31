@@ -1,0 +1,154 @@
+{
+  "schema": "intentir.scrc.artifact.v13",
+  "j": {
+    "kernel_id": "scrc_k0",
+    "intent": {
+      "intent_function": {
+        "name": "scrc_j0",
+        "inputs": [
+          {"name": "t0", "dtype": "i32", "shape": [256]},
+          {"name": "t1", "dtype": "f32", "shape": ["x0", 64]},
+          {"name": "t2", "dtype": "i32", "shape": [256]},
+          {"name": "t3", "dtype": "i32", "shape": []}
+        ],
+        "outputs": [
+          {"name": "t4", "dtype": "f32", "shape": [256]}
+        ],
+        "body": [
+          {"id": "n0", "op": "const", "result": "v0", "attrs": {"value": 0, "dtype": "i32", "shape": []}, "type": {"dtype": "i32", "shape": []}},
+          {"id": "n1", "op": "map_binary", "result": "v1", "operands": ["t0", "v0"], "attrs": {"fn": "ge"}, "type": {"dtype": "i1", "shape": [256]}},
+          {"id": "n2", "op": "const", "result": "v2", "attrs": {"value": 64, "dtype": "i32", "shape": []}, "type": {"dtype": "i32", "shape": []}},
+          {"id": "n3", "op": "map_binary", "result": "v3", "operands": ["t0", "v2"], "attrs": {"fn": "lt"}, "type": {"dtype": "i1", "shape": [256]}},
+          {"id": "n4", "op": "map_binary", "result": "v4", "operands": ["v1", "v3"], "attrs": {"fn": "logical_and"}, "type": {"dtype": "i1", "shape": [256]}},
+          {"id": "n5", "op": "map_binary", "result": "v5", "operands": ["t2", "v0"], "attrs": {"fn": "ge"}, "type": {"dtype": "i1", "shape": [256]}},
+          {"id": "n6", "op": "map_binary", "result": "v6", "operands": ["v4", "v5"], "attrs": {"fn": "logical_and"}, "type": {"dtype": "i1", "shape": [256]}},
+          {"id": "n7", "op": "map_binary", "result": "v7", "operands": ["t2", "t3"], "attrs": {"fn": "lt"}, "type": {"dtype": "i1", "shape": [256]}},
+          {"id": "n8", "op": "map_binary", "result": "v8", "operands": ["v6", "v7"], "attrs": {"fn": "logical_and"}, "type": {"dtype": "i1", "shape": [256]}},
+          {"id": "n9", "op": "select", "result": "v9", "operands": ["v8", "t2", "v0"], "type": {"dtype": "i32", "shape": [256]}},
+          {"id": "n10", "op": "select", "result": "v10", "operands": ["v8", "t0", "v0"], "type": {"dtype": "i32", "shape": [256]}},
+          {"id": "n11", "op": "gather", "result": "v11", "operands": ["t1", "v9"], "attrs": {"axis": 0, "mode": "take"}, "type": {"dtype": "f32", "shape": [256, 64]}},
+          {"id": "n12", "op": "gather", "result": "v12", "operands": ["v11", "v10"], "attrs": {"axis": 1, "mode": "along_axis"}, "type": {"dtype": "f32", "shape": [256]}},
+          {"id": "n13", "op": "const", "result": "v13", "attrs": {"value": 0.0, "dtype": "f32", "shape": []}, "type": {"dtype": "f32", "shape": []}},
+          {"id": "n14", "op": "select", "result": "v14", "operands": ["v8", "v12", "v13"], "type": {"dtype": "f32", "shape": [256]}}
+        ],
+        "returns": [
+          {"output": "t4", "value": "v14"}
+        ]
+      }
+    },
+    "node_ids": {
+      "n0": "body[0]", "n1": "body[1]", "n2": "body[2]", "n3": "body[3]", "n4": "body[4]", "n5": "body[5]", "n6": "body[6]", "n7": "body[7]", "n8": "body[8]", "n9": "body[9]", "n10": "body[10]", "n11": "body[11]", "n12": "body[12]", "n13": "body[13]", "n14": "body[14]"
+    },
+    "boundary": {
+      "domains": {
+        "d0": "0 <= k0 and k0 < 256",
+        "d1": "0 <= k1 and k1 < x0",
+        "d2": "0 <= k2 and k2 < 64"
+      },
+      "accesses": [
+        {"access_id": "a0", "kind": "load", "tensor": "t2", "index_expression": "k0", "node_ref": null},
+        {"access_id": "a1", "kind": "load", "tensor": "t0", "index_expression": "k0", "node_ref": null},
+        {"access_id": "a2", "kind": "load", "tensor": "t1", "index_expression": "k1,k2", "node_ref": "n11"},
+        {"access_id": "a3", "kind": "store", "tensor": "t4", "index_expression": "k0", "node_ref": "n14"}
+      ],
+      "broadcasts": [],
+      "aliases": [],
+      "effects": [
+        {"effect_id": "e0", "kind": "read", "target": "t2", "access_ref": "a0", "node_ref": null},
+        {"effect_id": "e1", "kind": "read", "target": "t0", "access_ref": "a1", "node_ref": null},
+        {"effect_id": "e2", "kind": "read", "target": "t1", "access_ref": "a2", "node_ref": "n11"},
+        {"effect_id": "e3", "kind": "write", "target": "t4", "access_ref": "a3", "node_ref": "n14"}
+      ],
+      "output_mappings": [],
+      "reductions": [],
+      "index_bounds": [
+        {"node_ref": "n11", "data": "t1", "indices": "v9", "axis": 0},
+        {"node_ref": "n12", "data": "v11", "indices": "v10", "axis": 1}
+      ],
+      "updates": [],
+      "result_relations": [
+        {"output": "t4", "kind": "exact"}
+      ],
+      "realization_authorizations": [],
+      "consumer_extensions": [],
+      "access_guard_relations": []
+    },
+    "signature": {
+      "parameters": [
+        {"name": "p0", "kind": "tensor", "mode": "input", "dtype": "i32", "rank": 1, "logical_ref": "t0"},
+        {"name": "p1", "kind": "tensor", "mode": "input", "dtype": "f32", "rank": 2, "logical_ref": "t1"},
+        {"name": "p2", "kind": "tensor", "mode": "output", "dtype": "f32", "rank": 1, "logical_ref": "t4"},
+        {"name": "p3", "kind": "tensor", "mode": "input", "dtype": "i32", "rank": 1, "logical_ref": "t2"},
+        {"name": "p4", "kind": "scalar", "mode": "value", "dtype": "i32", "rank": 0, "logical_ref": "t3"}
+      ]
+    },
+    "scopes": [
+      {"scope_id": "q0", "kind": "function", "parent_scope": null, "captures": [], "definitions": ["t0", "t1", "t2", "t3", "v0", "v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", "v9", "v10", "v11", "v12", "v13", "v14"], "effects": ["e0", "e1", "e2", "e3"]}
+    ],
+    "storage": [],
+    "dimension_constraints": ["x0 >= 1"],
+    "value_dimension_relations": [
+      {"value_ref": "t3", "dimension_ref": "x0", "relation": "eq"}
+    ],
+    "dimension_relations": []
+  },
+  "c": {
+    "slots": [
+      {"name": "c0", "kind": "compiler", "role": "launch_block_x", "required": true, "value_type": "i32"}
+    ],
+    "values": {"c0": 128}
+  },
+  "pi": {
+    "regions": [
+      {"id": "r0", "parent": null, "placement": "root"},
+      {"id": "r1", "parent": "r0", "placement": "program"}
+    ],
+    "instances": [
+      {"id": "i0", "semantic_ref": "d0", "region": "r1", "mechanism": "realize"},
+      {"id": "i1", "semantic_ref": "a0", "region": "r1", "mechanism": "address_base"},
+      {"id": "i2", "semantic_ref": "a0", "region": "r1", "mechanism": "transfer_direct"},
+      {"id": "i3", "semantic_ref": "a1", "region": "r1", "mechanism": "address_base"},
+      {"id": "i4", "semantic_ref": "a1", "region": "r1", "mechanism": "transfer_direct"},
+      {"id": "i5", "semantic_ref": "a2", "region": "r1", "mechanism": "address_base"},
+      {"id": "i6", "semantic_ref": "a2", "region": "r1", "mechanism": "transfer_direct"},
+      {"id": "i7", "semantic_ref": "a3", "region": "r1", "mechanism": "address_base"},
+      {"id": "i8", "semantic_ref": "a3", "region": "r1", "mechanism": "transfer_direct"},
+      {"id": "i9", "semantic_ref": "p3", "region": "r1", "mechanism": "realize"},
+      {"id": "i10", "semantic_ref": "p0", "region": "r1", "mechanism": "realize"},
+      {"id": "i11", "semantic_ref": "p1", "region": "r1", "mechanism": "realize"},
+      {"id": "i12", "semantic_ref": "p2", "region": "r1", "mechanism": "realize"}
+    ],
+    "routes": [
+      {"source": "i9", "target": "i1", "slots": [0]},
+      {"source": "i0", "target": "i1", "slots": [1]},
+      {"source": "i1", "target": "i2", "slots": [0]},
+      {"source": "i10", "target": "i3", "slots": [0]},
+      {"source": "i0", "target": "i3", "slots": [1]},
+      {"source": "i3", "target": "i4", "slots": [0]},
+      {"source": "i11", "target": "i5", "slots": [0]},
+      {"source": "i2", "target": "i5", "slots": [1]},
+      {"source": "i4", "target": "i5", "slots": [2]},
+      {"source": "i5", "target": "i6", "slots": [0]},
+      {"source": "i12", "target": "i7", "slots": [0]},
+      {"source": "i0", "target": "i7", "slots": [1]},
+      {"source": "i7", "target": "i8", "slots": [0]}
+    ],
+    "program_axes": [
+      {"domain_ref": "d0", "axis": 0}
+    ],
+    "participant_mappings": [],
+    "route_extent_transforms": [],
+    "order": [
+      {"before": "i2", "after": "i4"},
+      {"before": "i4", "after": "i6"},
+      {"before": "i6", "after": "i8"}
+    ],
+    "sharing": [],
+    "refinements": [],
+    "iterations": [],
+    "loop_carriers": [],
+    "physical_iterations": [],
+    "physical_loop_carriers": [],
+    "terminal_controls": []
+  }
+}

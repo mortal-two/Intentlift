@@ -31,7 +31,7 @@ existing-route、C/J attachment 与 closed divisor/rounding。fixed code只诊�
 改图或修复 artifact；v13只新增J/C-dependent closed `participant_mappings`，把物理participant axis
 循环投影到exact J lane domain，wire不含logical extent/formula/API/target recipe/C value；历史
 wire/receipt继续按自身版本读取，不静默升级或重判。当前 Agent execution
-receipt 为 `intentir.lift-knowledge.v91 / intentir.lift-knowledge.v69 / minisweagent.intentir-replay.v36 / openai.codex-cli.intentir-replay.v36`；Codex Replay v36的syntax-composer.v2增加agent-owned builder与
+receipt 为 `intentir.lift-knowledge.v92 / intentir.lift-knowledge.v70 / minisweagent.intentir-replay.v36 / openai.codex-cli.intentir-replay.v36`；Codex Replay v36的syntax-composer.v2增加agent-owned builder与
 `off/available/preferred`诊断模式，但不改变Replay输入或接受集合；
 artifact.v11 的 `dimension_relations`只接受identity、常数加/乘、常数ceil-div与round-up的acyclic closed grammar；
 relation由Lift从Source作者化，所有J消费者只能验证/求值，不能从Harness valuation、grid、C、π或TTIR生成。
@@ -69,6 +69,9 @@ query source，v31 stable category index降为冗余；任意合法Gate1 label�
 读取，超长TIR/PTX string按exact JSON path与UTF-8 byte offset分页，array/object按item offset分页，
 且whole/chunk receipt可机械核验。固定input文件集合避免persistent workspace续轮因
 新增category path失败，也避免已消失类别残留；该transport不解释diff或选择repair。
+Codex Lift v33让copied context tool从自己的mount位置解析input/output pair，并把Codex frontier/
+continuation query改为显式`input`/`output` roots；MiniSWE的`/input`布局保持不变。不存在的绝对root不再
+退化成空category，该路径适配不读取或解释diagnostic值。
 两条路径都不生成 artifact/realization，没有 Gate
 或认证权限。
 

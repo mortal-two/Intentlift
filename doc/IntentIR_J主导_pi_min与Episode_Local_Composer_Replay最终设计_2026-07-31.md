@@ -453,6 +453,11 @@ UTF-8 byte offset分页，array/object按item offset递归有界分页，并用w
 解释差异或建议repair，也不注入固定dataflow repair hint。该transport只搬运既有Gate1 comparison，
 不选择π refinement，也不把feedback送给fresh source-blind Replay。
 
+这里的“可查询”还要求mount identity闭合：copied query tool必须从自身位置区分MiniSWE的`/input`与
+Codex的`/workspace/input`，并在生成next/full query时回显本次exact roots。否则不存在的绝对path会被
+错误解释成“无category”，使agent在没有exact difference的情况下猜π。Codex Lift v33把frontier与
+continuation命令固定为显式workspace-relative roots；这只是evidence transport，不是语义提示。
+
 ## 8. 静态反泄漏与运行审计
 
 ### 8.1 π 静态审计

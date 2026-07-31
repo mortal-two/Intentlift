@@ -1,0 +1,1031 @@
+{
+  "artifact_digest": "aee9974aaaa35b1a0504ed1d467ebe22ecfbd085c07f2054d439531ab85450b8",
+  "j_necessity_status": "inconclusive",
+  "llm_calls": {
+    "masked_j": 0,
+    "normal": 1
+  },
+  "masked_j": null,
+  "masked_j_isolation": {
+    "fresh_session_evidence": null,
+    "independent_writer": null,
+    "separate_generate_call": null
+  },
+  "normal": {
+    "comparison": {
+      "diagnostic_passes": {
+        "raw_instruction_topology": false,
+        "raw_memory_effects": false,
+        "raw_opcode_multiset": false
+      },
+      "differences": [
+        {
+          "category": "value_operations",
+          "message": "PTX value_operations differs between Source and Replay",
+          "replay": [
+            [
+              "and.pred",
+              2
+            ],
+            [
+              "ld.global.f32",
+              1
+            ],
+            [
+              "ld.global.u32",
+              2
+            ],
+            [
+              "ld.param.u32",
+              1
+            ],
+            [
+              "selp.f32",
+              1
+            ],
+            [
+              "setp.gt.s32",
+              1
+            ],
+            [
+              "setp.lt.s32",
+              1
+            ],
+            [
+              "setp.lt.u32",
+              1
+            ]
+          ],
+          "source": [
+            [
+              "ld.global.f32",
+              1
+            ],
+            [
+              "ld.global.u32",
+              2
+            ],
+            [
+              "ld.param.u32",
+              1
+            ],
+            [
+              "or.pred",
+              2
+            ],
+            [
+              "setp.ge.s32",
+              1
+            ],
+            [
+              "setp.gt.u32",
+              1
+            ],
+            [
+              "setp.lt.s32",
+              1
+            ]
+          ]
+        },
+        {
+          "category": "control_flow",
+          "message": "PTX control_flow differs between Source and Replay",
+          "replay": [
+            "ret;"
+          ],
+          "source": [
+            "@%pred4 bra L0;",
+            "L0:",
+            "ret;"
+          ]
+        },
+        {
+          "category": "raw_instruction_topology",
+          "message": "PTX raw_instruction_topology differs between Source and Replay",
+          "replay": [
+            "ld.param.u64 %b640,[param0];",
+            "ld.param.u64 %b641,[param1];",
+            "ld.param.u64 %b642,[param2];",
+            "ld.param.u64 %b643,[param3];",
+            "ld.param.u32 %b320,[param4];",
+            "cvta.to.global.u64 %b644,%b642;",
+            "cvta.to.global.u64 %b645,%b641;",
+            "cvta.to.global.u64 %b646,%b640;",
+            "cvta.to.global.u64 %b647,%b643;",
+            "mov.u32 %b321,%ctaid.x;",
+            "mul.wide.u32 %b648,%b321,4;",
+            "add.s64 %b649,%b647,%b648;",
+            "ld.global.u32 %b322,[%b649];",
+            "add.s64 %b6410,%b646,%b648;",
+            "ld.global.u32 %b323,[%b6410];",
+            "setp.lt.u32 %pred0,%b323,64;",
+            "setp.gt.s32 %pred1,%b322,-1;",
+            "and.pred %pred2,%pred0,%pred1;",
+            "setp.lt.s32 %pred3,%b322,%b320;",
+            "and.pred %pred4,%pred2,%pred3;",
+            "shl.b32 %b324,%b322,6;",
+            "add.s32 %b325,%b324,%b323;",
+            "cvt.s64.s32 %b6411,%b325;",
+            "selp.b64 %b6412,%b6411,0,%pred4;",
+            "shl.b64 %b6413,%b6412,2;",
+            "add.s64 %b6414,%b645,%b6413;",
+            "ld.global.f32 %f320,[%b6414];",
+            "selp.f32 %f321,%f320,0f00000000,%pred4;",
+            "add.s64 %b6415,%b644,%b648;",
+            "st.global.f32 [%b6415],%f321;",
+            "ret;"
+          ],
+          "source": [
+            "ld.param.u64 %b640,[param0];",
+            "ld.param.u64 %b641,[param1];",
+            "ld.param.u64 %b642,[param2];",
+            "ld.param.u64 %b643,[param3];",
+            "ld.param.u32 %b320,[param4];",
+            "cvta.to.global.u64 %b644,%b640;",
+            "cvta.to.global.u64 %b645,%b643;",
+            "mov.u32 %b321,%ctaid.x;",
+            "cvt.u64.u32 %b646,%b321;",
+            "mul.wide.u32 %b647,%b321,4;",
+            "add.s64 %b648,%b645,%b647;",
+            "ld.global.nc.u32 %b322,[%b648];",
+            "add.s64 %b649,%b644,%b647;",
+            "ld.global.nc.u32 %b323,[%b649];",
+            "setp.gt.u32 %pred0,%b323,63;",
+            "setp.lt.s32 %pred1,%b322,0;",
+            "or.pred %pred2,%pred0,%pred1;",
+            "setp.ge.s32 %pred3,%b322,%b320;",
+            "mov.f32 %f320,0f00000000;",
+            "or.pred %pred4,%pred2,%pred3;",
+            "@%pred4 bra L0;",
+            "cvta.to.global.u64 %b6410,%b641;",
+            "mul.wide.u32 %b6411,%b322,64;",
+            "cvt.u64.u32 %b6412,%b323;",
+            "add.s64 %b6413,%b6411,%b6412;",
+            "shl.b64 %b6414,%b6413,2;",
+            "add.s64 %b6415,%b6410,%b6414;",
+            "ld.global.nc.f32 %f320,[%b6415];",
+            "L0:",
+            "cvta.to.global.u64 %b6416,%b642;",
+            "shl.b64 %b6417,%b646,2;",
+            "add.s64 %b6418,%b6416,%b6417;",
+            "st.global.f32 [%b6418],%f320;",
+            "ret;"
+          ]
+        },
+        {
+          "category": "raw_opcode_multiset",
+          "message": "PTX raw_opcode_multiset differs between Source and Replay",
+          "replay": [
+            [
+              "add.s32",
+              1
+            ],
+            [
+              "add.s64",
+              4
+            ],
+            [
+              "and.pred",
+              2
+            ],
+            [
+              "cvt.s64.s32",
+              1
+            ],
+            [
+              "cvta.to.global.u64",
+              4
+            ],
+            [
+              "ld.global.f32",
+              1
+            ],
+            [
+              "ld.global.u32",
+              2
+            ],
+            [
+              "ld.param.u32",
+              1
+            ],
+            [
+              "ld.param.u64",
+              4
+            ],
+            [
+              "mov.u32",
+              1
+            ],
+            [
+              "mul.wide.u32",
+              1
+            ],
+            [
+              "ret;",
+              1
+            ],
+            [
+              "selp.b64",
+              1
+            ],
+            [
+              "selp.f32",
+              1
+            ],
+            [
+              "setp.gt.s32",
+              1
+            ],
+            [
+              "setp.lt.s32",
+              1
+            ],
+            [
+              "setp.lt.u32",
+              1
+            ],
+            [
+              "shl.b32",
+              1
+            ],
+            [
+              "shl.b64",
+              1
+            ],
+            [
+              "st.global.f32",
+              1
+            ]
+          ],
+          "source": [
+            [
+              "add.s64",
+              5
+            ],
+            [
+              "bra",
+              1
+            ],
+            [
+              "cvt.u64.u32",
+              2
+            ],
+            [
+              "cvta.to.global.u64",
+              4
+            ],
+            [
+              "ld.global.nc.f32",
+              1
+            ],
+            [
+              "ld.global.nc.u32",
+              2
+            ],
+            [
+              "ld.param.u32",
+              1
+            ],
+            [
+              "ld.param.u64",
+              4
+            ],
+            [
+              "mov.f32",
+              1
+            ],
+            [
+              "mov.u32",
+              1
+            ],
+            [
+              "mul.wide.u32",
+              2
+            ],
+            [
+              "or.pred",
+              2
+            ],
+            [
+              "ret;",
+              1
+            ],
+            [
+              "setp.ge.s32",
+              1
+            ],
+            [
+              "setp.gt.u32",
+              1
+            ],
+            [
+              "setp.lt.s32",
+              1
+            ],
+            [
+              "shl.b64",
+              2
+            ],
+            [
+              "st.global.f32",
+              1
+            ]
+          ]
+        },
+        {
+          "category": "raw_memory_effects",
+          "message": "PTX raw_memory_effects differs between Source and Replay",
+          "replay": [
+            "ld.param.u64 %b640,[param0];",
+            "ld.param.u64 %b641,[param1];",
+            "ld.param.u64 %b642,[param2];",
+            "ld.param.u64 %b643,[param3];",
+            "ld.param.u32 %b320,[param4];",
+            "ld.global.u32 %b322,[%b649];",
+            "ld.global.u32 %b323,[%b6410];",
+            "ld.global.f32 %f320,[%b6414];",
+            "st.global.f32 [%b6415],%f321;"
+          ],
+          "source": [
+            "ld.param.u64 %b640,[param0];",
+            "ld.param.u64 %b641,[param1];",
+            "ld.param.u64 %b642,[param2];",
+            "ld.param.u64 %b643,[param3];",
+            "ld.param.u32 %b320,[param4];",
+            "ld.global.nc.u32 %b322,[%b648];",
+            "ld.global.nc.u32 %b323,[%b649];",
+            "ld.global.nc.f32 %f320,[%b6415];",
+            "st.global.f32 [%b6418],%f320;"
+          ]
+        }
+      ],
+      "hard_pass": false,
+      "hard_passes": {
+        "address_coordinate_folds": true,
+        "collectives": true,
+        "control_flow": false,
+        "coordinate_uses": true,
+        "interface": true,
+        "memory_effects": true,
+        "schema": true,
+        "target": true,
+        "value_operations": false
+      },
+      "primary_difference_category": "value_operations",
+      "replay_digest": "0440e007277eac2c84172f7b996a9381de5873309ee847da5a87bdb9e3e4127d",
+      "source_digest": "c1026b2705cfa5d673872b39ffd791b5acdfb909f7b23558494227eabe48cae0"
+    },
+    "compile": {
+      "cache_key": "dd698e8a89a23b4dd972291bec38254bbc6c0c0b39ad2f798191b4cdd17f5abc",
+      "compiler": {
+        "name": "nvcc",
+        "version": "Build cuda_12.8.r12.8/compiler.35404655_0"
+      },
+      "diagnostic": "",
+      "elapsed_ms": 352.1619689418003,
+      "entry": "scrc_k0",
+      "interface": {
+        "grid_rank": 1,
+        "parameters": [
+          {
+            "dtype": "i32",
+            "kind": "pointer",
+            "mode": "input",
+            "rank": 1
+          },
+          {
+            "dtype": "f32",
+            "kind": "pointer",
+            "mode": "input",
+            "rank": 2
+          },
+          {
+            "dtype": "f32",
+            "kind": "pointer",
+            "mode": "output",
+            "rank": 1
+          },
+          {
+            "dtype": "i32",
+            "kind": "pointer",
+            "mode": "input",
+            "rank": 1
+          },
+          {
+            "dtype": "i32",
+            "kind": "scalar",
+            "mode": "value",
+            "rank": 0
+          }
+        ]
+      },
+      "ok": true,
+      "ptx": "//\n// Generated by NVIDIA NVVM Compiler\n//\n// Compiler Build ID: CL-35404655\n// Cuda compilation tools, release 12.8, V12.8.61\n// Based on NVVM 20.0.0\n//\n\n.version 8.7\n.target sm_120\n.address_size 64\n\n\t// .globl\tscrc_k0\n\n.visible .entry scrc_k0(\n\t.param .u64 scrc_k0_param_0,\n\t.param .u64 scrc_k0_param_1,\n\t.param .u64 scrc_k0_param_2,\n\t.param .u64 scrc_k0_param_3,\n\t.param .u32 scrc_k0_param_4\n)\n{\n\t.reg .pred \t%p<6>;\n\t.reg .b32 \t%r<9>;\n\t.reg .f32 \t%f<3>;\n\t.reg .b64 \t%rd<17>;\n\t.loc\t1 1 0\n\n\tld.param.u64 \t%rd1, [scrc_k0_param_0];\n\tld.param.u64 \t%rd2, [scrc_k0_param_1];\n\tld.param.u64 \t%rd3, [scrc_k0_param_2];\n\tld.param.u64 \t%rd4, [scrc_k0_param_3];\n\tld.param.u32 \t%r1, [scrc_k0_param_4];\n\t.loc\t1 2 5\n\tcvta.to.global.u64 \t%rd5, %rd3;\n\tcvta.to.global.u64 \t%rd6, %rd2;\n\tcvta.to.global.u64 \t%rd7, %rd1;\n\tcvta.to.global.u64 \t%rd8, %rd4;\n\tmov.u32 \t%r3, %ctaid.x;\n\t.loc\t1 4 5\n\tmul.wide.u32 \t%rd9, %r3, 4;\n\tadd.s64 \t%rd10, %rd8, %rd9;\n\tld.global.u32 \t%r4, [%rd10];\n\t.loc\t1 5 5\n\tadd.s64 \t%rd11, %rd7, %rd9;\n\tld.global.u32 \t%r6, [%rd11];\n\t.loc\t1 9 5\n\tsetp.lt.u32 \t%p1, %r6, 64;\n\t.loc\t1 10 5\n\tsetp.gt.s32 \t%p2, %r4, -1;\n\t.loc\t1 11 5\n\tand.pred  \t%p3, %p1, %p2;\n\t.loc\t1 12 5\n\tsetp.lt.s32 \t%p4, %r4, %r1;\n\t.loc\t1 13 5\n\tand.pred  \t%p5, %p3, %p4;\n\t.loc\t1 16 5\n\tshl.b32 \t%r7, %r4, 6;\n\tadd.s32 \t%r8, %r7, %r6;\n\tcvt.s64.s32 \t%rd12, %r8;\n\tselp.b64 \t%rd13, %rd12, 0, %p5;\n\tshl.b64 \t%rd14, %rd13, 2;\n\tadd.s64 \t%rd15, %rd6, %rd14;\n\tld.global.f32 \t%f1, [%rd15];\n\t.loc\t1 18 5\n\tselp.f32 \t%f2, %f1, 0f00000000, %p5;\n\t.loc\t1 19 5\n\tadd.s64 \t%rd16, %rd5, %rd9;\n\tst.global.f32 \t[%rd16], %f2;\n\t.loc\t1 20 1\n\tret;\n\n}\n\t.file\t1 \"/tmp/intentir-cuda-gate1-22mnt6ky/kernel.cu\"\n",
+      "target": {
+        "arch": "sm_120"
+      }
+    },
+    "diagnostic": null,
+    "fingerprint": {
+      "collectives": [],
+      "control_flow": [
+        "ret;"
+      ],
+      "coordinate_uses": [
+        "%ctaid.x"
+      ],
+      "digest": "0440e007277eac2c84172f7b996a9381de5873309ee847da5a87bdb9e3e4127d",
+      "instructions": [
+        "ld.param.u64 %b640,[param0];",
+        "ld.param.u64 %b641,[param1];",
+        "ld.param.u64 %b642,[param2];",
+        "ld.param.u64 %b643,[param3];",
+        "ld.param.u32 %b320,[param4];",
+        "cvta.to.global.u64 %b644,%b642;",
+        "cvta.to.global.u64 %b645,%b641;",
+        "cvta.to.global.u64 %b646,%b640;",
+        "cvta.to.global.u64 %b647,%b643;",
+        "mov.u32 %b321,%ctaid.x;",
+        "mul.wide.u32 %b648,%b321,4;",
+        "add.s64 %b649,%b647,%b648;",
+        "ld.global.u32 %b322,[%b649];",
+        "add.s64 %b6410,%b646,%b648;",
+        "ld.global.u32 %b323,[%b6410];",
+        "setp.lt.u32 %pred0,%b323,64;",
+        "setp.gt.s32 %pred1,%b322,-1;",
+        "and.pred %pred2,%pred0,%pred1;",
+        "setp.lt.s32 %pred3,%b322,%b320;",
+        "and.pred %pred4,%pred2,%pred3;",
+        "shl.b32 %b324,%b322,6;",
+        "add.s32 %b325,%b324,%b323;",
+        "cvt.s64.s32 %b6411,%b325;",
+        "selp.b64 %b6412,%b6411,0,%pred4;",
+        "shl.b64 %b6413,%b6412,2;",
+        "add.s64 %b6414,%b645,%b6413;",
+        "ld.global.f32 %f320,[%b6414];",
+        "selp.f32 %f321,%f320,0f00000000,%pred4;",
+        "add.s64 %b6415,%b644,%b648;",
+        "st.global.f32 [%b6415],%f321;",
+        "ret;"
+      ],
+      "interface": [
+        [
+          "parameters",
+          "[{\"dtype\":\"i32\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":0,\"rank\":1},{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":1,\"rank\":2},{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"output\",\"position\":2,\"rank\":1},{\"dtype\":\"i32\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":3,\"rank\":1},{\"dtype\":\"i32\",\"kind\":\"scalar\",\"mode\":\"value\",\"position\":4,\"rank\":0}]",
+          null
+        ],
+        [
+          "ptx_abi",
+          "[[\"\",\"u64\",null],[\"\",\"u64\",null],[\"\",\"u64\",null],[\"\",\"u64\",null],[\"\",\"u32\",null]]",
+          null
+        ]
+      ],
+      "memory_effects": [
+        "ld.param.u64 %b640,[param0];",
+        "ld.param.u64 %b641,[param1];",
+        "ld.param.u64 %b642,[param2];",
+        "ld.param.u64 %b643,[param3];",
+        "ld.param.u32 %b320,[param4];",
+        "ld.global.u32 %b322,[%b649];",
+        "ld.global.u32 %b323,[%b6410];",
+        "ld.global.f32 %f320,[%b6414];",
+        "st.global.f32 [%b6415],%f321;"
+      ],
+      "opcode_multiset": [
+        [
+          "add.s32",
+          1
+        ],
+        [
+          "add.s64",
+          4
+        ],
+        [
+          "and.pred",
+          2
+        ],
+        [
+          "cvt.s64.s32",
+          1
+        ],
+        [
+          "cvta.to.global.u64",
+          4
+        ],
+        [
+          "ld.global.f32",
+          1
+        ],
+        [
+          "ld.global.u32",
+          2
+        ],
+        [
+          "ld.param.u32",
+          1
+        ],
+        [
+          "ld.param.u64",
+          4
+        ],
+        [
+          "mov.u32",
+          1
+        ],
+        [
+          "mul.wide.u32",
+          1
+        ],
+        [
+          "ret;",
+          1
+        ],
+        [
+          "selp.b64",
+          1
+        ],
+        [
+          "selp.f32",
+          1
+        ],
+        [
+          "setp.gt.s32",
+          1
+        ],
+        [
+          "setp.lt.s32",
+          1
+        ],
+        [
+          "setp.lt.u32",
+          1
+        ],
+        [
+          "shl.b32",
+          1
+        ],
+        [
+          "shl.b64",
+          1
+        ],
+        [
+          "st.global.f32",
+          1
+        ]
+      ],
+      "schedule_view": [
+        [
+          "c0",
+          "128"
+        ]
+      ],
+      "schema_version": "cuda-ptx-semantic-effects-v5",
+      "semantic_address_coordinate_folds": [],
+      "semantic_memory_effects": [
+        [
+          "ld.global.f32",
+          1
+        ],
+        [
+          "ld.global.u32",
+          2
+        ],
+        [
+          "ld.param.u32",
+          1
+        ],
+        [
+          "ld.param.u64",
+          4
+        ],
+        [
+          "st.global.f32",
+          1
+        ]
+      ],
+      "semantic_value_opcodes": [
+        [
+          "and.pred",
+          2
+        ],
+        [
+          "ld.global.f32",
+          1
+        ],
+        [
+          "ld.global.u32",
+          2
+        ],
+        [
+          "ld.param.u32",
+          1
+        ],
+        [
+          "selp.f32",
+          1
+        ],
+        [
+          "setp.gt.s32",
+          1
+        ],
+        [
+          "setp.lt.s32",
+          1
+        ],
+        [
+          "setp.lt.u32",
+          1
+        ]
+      ],
+      "target_view": [
+        [
+          "arch",
+          "\"sm_120\""
+        ]
+      ]
+    },
+    "generation": {
+      "attempts": 1,
+      "context_receipt": {
+        "backend_protocol": "openai.codex-cli.intentir-replay.v36",
+        "cli_turns": 1,
+        "context_rollover_input_tokens": 0,
+        "episode_wall_time_limit_seconds": 1200.0,
+        "formal_compile_recheck": true,
+        "formal_ingress_protocol": "intentir.scrc.replay-check.v16",
+        "fresh_session": true,
+        "model_segments_lower_bound": 5,
+        "pi_min_ownership": {
+          "artifact_schema": "intentir.scrc.artifact.v13",
+          "claim_scope": "proof-irrelevant ownership receipt; it neither proves zero statistical information nor changes TypeCheck, Replay, Gate1, or Gate2 acceptance",
+          "masked_j": false,
+          "pi_authority": "J/C-dependent realization constraints only",
+          "pi_closed_fields": [
+            "instances",
+            "iterations",
+            "loop_carriers",
+            "order",
+            "participant_mappings",
+            "physical_iterations",
+            "physical_loop_carriers",
+            "program_axes",
+            "refinements",
+            "regions",
+            "route_extent_transforms",
+            "routes",
+            "sharing",
+            "terminal_controls"
+          ],
+          "protocol": "intentir.pi-min.ownership-receipt.v1",
+          "relation_counts": {
+            "instances": 13,
+            "iterations": 0,
+            "loop_carriers": 0,
+            "order": 3,
+            "participant_mappings": 0,
+            "physical_iterations": 0,
+            "physical_loop_carriers": 0,
+            "program_axes": 1,
+            "refinements": 0,
+            "regions": 2,
+            "route_extent_transforms": 0,
+            "routes": 13,
+            "sharing": 0,
+            "terminal_controls": 0
+          },
+          "semantic_authority": "J only",
+          "status": "pass",
+          "validation_basis": [
+            "canonical Gate1Artifact closed-schema decode",
+            "TypeCheck(J,C,pi)=PASS before Replay packet construction",
+            "closed source-isolated Replay payload grammar"
+          ]
+        },
+        "replay_input_protocol": "intentir.scrc.replay-input.v3",
+        "retrieval_trace": [],
+        "syntax_composer": {
+          "actions": {
+            "checkpoint": 2,
+            "compose": 1,
+            "install": 1
+          },
+          "authority": "proof-irrelevant episode-local syntax telemetry only; it is not trusted for J/pi consumption, Source equivalence, or Gate closure",
+          "builder_installed": true,
+          "checkpoint_available": true,
+          "failed_actions": {},
+          "frontend": "cuda",
+          "host_events": [],
+          "installed": true,
+          "last_action": "checkpoint",
+          "layout_profile": "c_like",
+          "node_count": 19,
+          "node_kinds": {
+            "block": 1,
+            "line": 18
+          },
+          "offer_mode": "preferred",
+          "output_matches_last_render": true,
+          "protocol": "intentir.replay.syntax-composer.v2",
+          "revision": 3,
+          "selected_path": "composer",
+          "source_map_nodes": 19,
+          "source_map_revision_matches_state": true,
+          "status": "pass",
+          "used": true
+        },
+        "thread_id": "019fb58a-b924-7c60-9bec-52b07556c22d",
+        "thread_ids": [
+          "019fb58a-b924-7c60-9bec-52b07556c22d"
+        ],
+        "tool_actions": 7
+      },
+      "elapsed_ms": 94168.59433206264,
+      "entry_function_name": null,
+      "function_name": "scrc_k0",
+      "model": "gpt-5.6-sol",
+      "response_id": "019fb58a-b924-7c60-9bec-52b07556c22d",
+      "response_model": "gpt-5.6-sol",
+      "usage": {
+        "cache_write_input_tokens": 0,
+        "cached_input_tokens": 109568,
+        "input_tokens": 136291,
+        "output_tokens": 2729,
+        "reasoning_output_tokens": 1079
+      }
+    },
+    "mode": "normal",
+    "physical_calls": 1
+  },
+  "normal_fanout": null,
+  "observer_profile": {
+    "canonicalization_version": "cuda-ptx-semantic-effects-v5",
+    "compiler_stage": "ptx",
+    "evidence_class": "semantic_effects_with_raw_topology_diagnostic",
+    "frontend": "cuda",
+    "profile_id": "cuda_ptx_semantic_effects",
+    "profile_version": "cuda-ptx-semantic-effects-v5"
+  },
+  "protocol": "llm_direct_pi_gate1_level2_v1",
+  "source_compile": {
+    "cache_key": "0044b69cf70d552b0e402692d2fa7ae5d34ec65b1b1b72af493cb6e9ffa8810c",
+    "compiler": {
+      "name": "nvcc",
+      "version": "Build cuda_12.8.r12.8/compiler.35404655_0"
+    },
+    "diagnostic": "",
+    "elapsed_ms": 2671.1626080796123,
+    "entry": "main_kernel",
+    "interface": {
+      "grid_rank": 1,
+      "parameters": [
+        {
+          "dtype": "i32",
+          "kind": "pointer",
+          "mode": "input",
+          "rank": 1
+        },
+        {
+          "dtype": "f32",
+          "kind": "pointer",
+          "mode": "input",
+          "rank": 2
+        },
+        {
+          "dtype": "f32",
+          "kind": "pointer",
+          "mode": "output",
+          "rank": 1
+        },
+        {
+          "dtype": "i32",
+          "kind": "pointer",
+          "mode": "input",
+          "rank": 1
+        },
+        {
+          "dtype": "i32",
+          "kind": "scalar",
+          "mode": "value",
+          "rank": 0
+        }
+      ]
+    },
+    "ok": true,
+    "ptx": "//\n// Generated by NVIDIA NVVM Compiler\n//\n// Compiler Build ID: CL-35404655\n// Cuda compilation tools, release 12.8, V12.8.61\n// Based on NVVM 20.0.0\n//\n\n.version 8.7\n.target sm_120\n.address_size 64\n\n\t// .globl\tmain_kernel\n.global .align 1 .b8 _ZN39_INTERNAL_4cfdd129_9_kernel_cu_1b63e0854cute7productE[1];\n.global .align 1 .b8 _ZN39_INTERNAL_4cfdd129_9_kernel_cu_1b63e0854cute1_E[1];\n.global .align 1 .b8 _ZN39_INTERNAL_4cfdd129_9_kernel_cu_1b63e0854cuda3std3__45__cpo5beginE[1];\n.global .align 1 .b8 _ZN39_INTERNAL_4cfdd129_9_kernel_cu_1b63e0854cuda3std3__45__cpo3endE[1];\n.global .align 1 .b8 _ZN39_INTERNAL_4cfdd129_9_kernel_cu_1b63e0854cuda3std3__45__cpo6cbeginE[1];\n.global .align 1 .b8 _ZN39_INTERNAL_4cfdd129_9_kernel_cu_1b63e0854cuda3std3__45__cpo4cendE[1];\n.global .align 1 .b8 _ZN39_INTERNAL_4cfdd129_9_kernel_cu_1b63e0854cuda3std3__419piecewise_constructE[1];\n.global .align 1 .b8 _ZN39_INTERNAL_4cfdd129_9_kernel_cu_1b63e0854cuda3std3__48in_placeE[1];\n.global .align 1 .b8 _ZN39_INTERNAL_4cfdd129_9_kernel_cu_1b63e0854cuda3std6ranges3__45__cpo4swapE[1];\n.global .align 1 .b8 _ZN39_INTERNAL_4cfdd129_9_kernel_cu_1b63e0854cuda3std6ranges3__45__cpo9iter_moveE[1];\n\n.visible .entry main_kernel(\n\t.param .u64 main_kernel_param_0,\n\t.param .u64 main_kernel_param_1,\n\t.param .u64 main_kernel_param_2,\n\t.param .u64 main_kernel_param_3,\n\t.param .u32 main_kernel_param_4\n)\n.maxntid 128, 1, 1\n.minnctapersm 1\n{\n\t.reg .pred \t%p<6>;\n\t.reg .b32 \t%r<7>;\n\t.reg .f32 \t%f<5>;\n\t.reg .b64 \t%rd<20>;\n\t.loc\t1 12 0\n\n\tld.param.u64 \t%rd4, [main_kernel_param_0];\n\tld.param.u64 \t%rd2, [main_kernel_param_1];\n\tld.param.u64 \t%rd3, [main_kernel_param_2];\n\tld.param.u64 \t%rd5, [main_kernel_param_3];\n\tld.param.u32 \t%r3, [main_kernel_param_4];\n\t.loc\t1 13 3\n\tcvta.to.global.u64 \t%rd6, %rd4;\n\tcvta.to.global.u64 \t%rd7, %rd5;\n\tmov.u32 \t%r5, %ctaid.x;\n\tcvt.u64.u32 \t%rd1, %r5;\n\tmul.wide.u32 \t%rd8, %r5, 4;\n\tadd.s64 \t%rd9, %rd7, %rd8;\n\tld.global.nc.u32 \t%r6, [%rd9];\n\t.loc\t1 14 3\n\tadd.s64 \t%rd10, %rd6, %rd8;\n\tld.global.nc.u32 \t%r2, [%rd10];\n\t.loc\t1 16 3\n\tsetp.gt.u32 \t%p1, %r2, 63;\n\tsetp.lt.s32 \t%p2, %r6, 0;\n\tor.pred  \t%p3, %p1, %p2;\n\tsetp.ge.s32 \t%p4, %r6, %r3;\n\tmov.f32 \t%f4, 0f00000000;\n\tor.pred  \t%p5, %p3, %p4;\n\t@%p5 bra \t$L__BB0_2;\n\t.loc\t1 13 3\n\tcvta.to.global.u64 \t%rd11, %rd2;\n\t.loc\t1 17 5\n\tmul.wide.u32 \t%rd12, %r6, 64;\n\tcvt.u64.u32 \t%rd13, %r2;\n\tadd.s64 \t%rd14, %rd12, %rd13;\n\tshl.b64 \t%rd15, %rd14, 2;\n\tadd.s64 \t%rd16, %rd11, %rd15;\n\tld.global.nc.f32 \t%f4, [%rd16];\n$L__BB0_2:\n\t.loc\t1 13 3\n\tcvta.to.global.u64 \t%rd17, %rd3;\n\t.loc\t1 21 3\n\tshl.b64 \t%rd18, %rd1, 2;\n\tadd.s64 \t%rd19, %rd17, %rd18;\n\tst.global.f32 \t[%rd19], %f4;\n\t.loc\t1 22 1\n\tret;\n\n}\n\t.file\t1 \"/tmp/intentir-cuda-gate1-pbr91_so/kernel.cu\"\n",
+    "target": {
+      "arch": "sm_120"
+    }
+  },
+  "source_fingerprint": {
+    "collectives": [],
+    "control_flow": [
+      "@%pred4 bra L0;",
+      "L0:",
+      "ret;"
+    ],
+    "coordinate_uses": [
+      "%ctaid.x"
+    ],
+    "digest": "c1026b2705cfa5d673872b39ffd791b5acdfb909f7b23558494227eabe48cae0",
+    "instructions": [
+      "ld.param.u64 %b640,[param0];",
+      "ld.param.u64 %b641,[param1];",
+      "ld.param.u64 %b642,[param2];",
+      "ld.param.u64 %b643,[param3];",
+      "ld.param.u32 %b320,[param4];",
+      "cvta.to.global.u64 %b644,%b640;",
+      "cvta.to.global.u64 %b645,%b643;",
+      "mov.u32 %b321,%ctaid.x;",
+      "cvt.u64.u32 %b646,%b321;",
+      "mul.wide.u32 %b647,%b321,4;",
+      "add.s64 %b648,%b645,%b647;",
+      "ld.global.nc.u32 %b322,[%b648];",
+      "add.s64 %b649,%b644,%b647;",
+      "ld.global.nc.u32 %b323,[%b649];",
+      "setp.gt.u32 %pred0,%b323,63;",
+      "setp.lt.s32 %pred1,%b322,0;",
+      "or.pred %pred2,%pred0,%pred1;",
+      "setp.ge.s32 %pred3,%b322,%b320;",
+      "mov.f32 %f320,0f00000000;",
+      "or.pred %pred4,%pred2,%pred3;",
+      "@%pred4 bra L0;",
+      "cvta.to.global.u64 %b6410,%b641;",
+      "mul.wide.u32 %b6411,%b322,64;",
+      "cvt.u64.u32 %b6412,%b323;",
+      "add.s64 %b6413,%b6411,%b6412;",
+      "shl.b64 %b6414,%b6413,2;",
+      "add.s64 %b6415,%b6410,%b6414;",
+      "ld.global.nc.f32 %f320,[%b6415];",
+      "L0:",
+      "cvta.to.global.u64 %b6416,%b642;",
+      "shl.b64 %b6417,%b646,2;",
+      "add.s64 %b6418,%b6416,%b6417;",
+      "st.global.f32 [%b6418],%f320;",
+      "ret;"
+    ],
+    "interface": [
+      [
+        "parameters",
+        "[{\"dtype\":\"i32\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":0,\"rank\":1},{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":1,\"rank\":2},{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"output\",\"position\":2,\"rank\":1},{\"dtype\":\"i32\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":3,\"rank\":1},{\"dtype\":\"i32\",\"kind\":\"scalar\",\"mode\":\"value\",\"position\":4,\"rank\":0}]",
+        null
+      ],
+      [
+        "ptx_abi",
+        "[[\"\",\"u64\",null],[\"\",\"u64\",null],[\"\",\"u64\",null],[\"\",\"u64\",null],[\"\",\"u32\",null]]",
+        null
+      ]
+    ],
+    "memory_effects": [
+      "ld.param.u64 %b640,[param0];",
+      "ld.param.u64 %b641,[param1];",
+      "ld.param.u64 %b642,[param2];",
+      "ld.param.u64 %b643,[param3];",
+      "ld.param.u32 %b320,[param4];",
+      "ld.global.nc.u32 %b322,[%b648];",
+      "ld.global.nc.u32 %b323,[%b649];",
+      "ld.global.nc.f32 %f320,[%b6415];",
+      "st.global.f32 [%b6418],%f320;"
+    ],
+    "opcode_multiset": [
+      [
+        "add.s64",
+        5
+      ],
+      [
+        "bra",
+        1
+      ],
+      [
+        "cvt.u64.u32",
+        2
+      ],
+      [
+        "cvta.to.global.u64",
+        4
+      ],
+      [
+        "ld.global.nc.f32",
+        1
+      ],
+      [
+        "ld.global.nc.u32",
+        2
+      ],
+      [
+        "ld.param.u32",
+        1
+      ],
+      [
+        "ld.param.u64",
+        4
+      ],
+      [
+        "mov.f32",
+        1
+      ],
+      [
+        "mov.u32",
+        1
+      ],
+      [
+        "mul.wide.u32",
+        2
+      ],
+      [
+        "or.pred",
+        2
+      ],
+      [
+        "ret;",
+        1
+      ],
+      [
+        "setp.ge.s32",
+        1
+      ],
+      [
+        "setp.gt.u32",
+        1
+      ],
+      [
+        "setp.lt.s32",
+        1
+      ],
+      [
+        "shl.b64",
+        2
+      ],
+      [
+        "st.global.f32",
+        1
+      ]
+    ],
+    "schedule_view": [
+      [
+        "c0",
+        "128"
+      ]
+    ],
+    "schema_version": "cuda-ptx-semantic-effects-v5",
+    "semantic_address_coordinate_folds": [],
+    "semantic_memory_effects": [
+      [
+        "ld.global.f32",
+        1
+      ],
+      [
+        "ld.global.u32",
+        2
+      ],
+      [
+        "ld.param.u32",
+        1
+      ],
+      [
+        "ld.param.u64",
+        4
+      ],
+      [
+        "st.global.f32",
+        1
+      ]
+    ],
+    "semantic_value_opcodes": [
+      [
+        "ld.global.f32",
+        1
+      ],
+      [
+        "ld.global.u32",
+        2
+      ],
+      [
+        "ld.param.u32",
+        1
+      ],
+      [
+        "or.pred",
+        2
+      ],
+      [
+        "setp.ge.s32",
+        1
+      ],
+      [
+        "setp.gt.u32",
+        1
+      ],
+      [
+        "setp.lt.s32",
+        1
+      ]
+    ],
+    "target_view": [
+      [
+        "arch",
+        "\"sm_120\""
+      ]
+    ]
+  },
+  "status": "no_closure"
+}

@@ -1,0 +1,112 @@
+{
+  "backend": "openai.codex-cli.intentir-lift.v32",
+  "candidate_check": [
+    {
+      "candidate_sha256": "098906f3ea4e064eac84bbd2431891425ca4e8f238efacdb974bc87d9cd382ee",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "submit_candidate"
+    },
+    {
+      "candidate_sha256": "098906f3ea4e064eac84bbd2431891425ca4e8f238efacdb974bc87d9cd382ee",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "host_post_turn"
+    },
+    {
+      "candidate_sha256": "098906f3ea4e064eac84bbd2431891425ca4e8f238efacdb974bc87d9cd382ee",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "semantic_probe"
+    }
+  ],
+  "cli_turns": 1,
+  "elapsed_ms": 224266.99313498102,
+  "fresh_session": false,
+  "fresh_workspace": false,
+  "knowledge_profile": "intentir.lift-knowledge.v91",
+  "model_segments_lower_bound": 4,
+  "owner_session_id": "7f76a2c16b9f453797d722c9206244ba",
+  "persistent_owner": true,
+  "persistent_workspace": true,
+  "runtime": "intentir.codex-cli.agent-runtime.v3",
+  "semantic_probe": [
+    {
+      "authority": "public Source-vs-J diagnostic only; no artifact field is generated, repaired, accepted, or certified",
+      "candidate_sha256": "098906f3ea4e064eac84bbd2431891425ca4e8f238efacdb974bc87d9cd382ee",
+      "case_id": "finite-public-lift-probe-1",
+      "comparison": {
+        "left": "source",
+        "outputs": [
+          {
+            "atol": null,
+            "detail": "",
+            "equal_nan": null,
+            "equality_required": true,
+            "max_abs_error": 0.0,
+            "output": "output_p3",
+            "passed": true,
+            "policy_id": "intentir.gate2.default.v1",
+            "relation_kind": "exact",
+            "rtol": null
+          }
+        ],
+        "passed": true,
+        "policy_id": "intentir.gate2.default.v1",
+        "right": "j"
+      },
+      "protocol": "intentir.lift.public-semantic-probe.v1",
+      "seed": 2026073001,
+      "status": "pass"
+    }
+  ],
+  "source_reconcile": [
+    {
+      "applicable": false,
+      "candidate_sha256": "098906f3ea4e064eac84bbd2431891425ca4e8f238efacdb974bc87d9cd382ee",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "submit_candidate"
+    },
+    {
+      "applicable": false,
+      "candidate_sha256": "098906f3ea4e064eac84bbd2431891425ca4e8f238efacdb974bc87d9cd382ee",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "host_post_turn"
+    },
+    {
+      "applicable": false,
+      "candidate_sha256": "098906f3ea4e064eac84bbd2431891425ca4e8f238efacdb974bc87d9cd382ee",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "semantic_probe"
+    }
+  ],
+  "thread_id": "019fb582-cf45-7cf3-8be5-a079629b00ab",
+  "timeout_events": [],
+  "tool_actions": 13,
+  "tool_bridge": {
+    "authority": "diagnostic-only callbacks over exact host-read output bytes; no artifact or Replay field is generated or edited",
+    "calls": 1,
+    "protocol": "intentir.codex-cli.tool-bridge.v3",
+    "receipts": [
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 25.287613039836287,
+        "result_sha256": "8912f936ead2cee11aafee1a9882ba9f4dda231b0adf1be1589a3ac4befe8376",
+        "status": "pass",
+        "tool": "submit_candidate"
+      }
+    ],
+    "transport": "isolated_workspace_file_mailbox"
+  },
+  "usage": {
+    "cache_write_input_tokens": 0,
+    "cached_input_tokens": 1265920,
+    "input_tokens": 1336349,
+    "output_tokens": 14549,
+    "reasoning_output_tokens": 8088
+  }
+}

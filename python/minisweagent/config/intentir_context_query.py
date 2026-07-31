@@ -25,6 +25,23 @@ _FEEDBACK_CATEGORY_INDEX = "feedback_observer_categories.json"
 _FEEDBACK_CATEGORY_NAME_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
 
 
+def _script_workspace_roots() -> tuple[Path, Path]:
+    """Resolve the mounted input/output pair from this copied tool's location.
+
+    MiniSWE installs the tool at ``/input/tools`` while Codex installs the same
+    bytes at ``/workspace/input/tools``.  The old absolute defaults silently read
+    an absent ``/input`` in Codex continuations.  Location-based resolution keeps
+    one source-neutral tool portable across both sandboxes; repository imports
+    retain the historical absolute fallback and tests can still pass explicit
+    roots.
+    """
+
+    candidate_input = Path(__file__).resolve().parent.parent
+    if candidate_input.name == "input":
+        return candidate_input, candidate_input.parent / "output"
+    return Path("/input"), Path("/output")
+
+
 def _load_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -2434,9 +2451,10 @@ def _knowledge(input_root: Path, query: str, context: int) -> None:
 
 def main() -> int:
     global QUERY_COMMAND
+    default_input_root, default_output_root = _script_workspace_roots()
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input-root", type=Path, default=Path("/input"))
-    parser.add_argument("--output-root", type=Path, default=Path("/output"))
+    parser.add_argument("--input-root", type=Path, default=default_input_root)
+    parser.add_argument("--output-root", type=Path, default=default_output_root)
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("bootstrap")
     feedback = subparsers.add_parser("feedback")
@@ -2502,17 +2520,19 @@ def main() -> int:
     knowledge.add_argument("--context", type=int, default=3)
     subparsers.add_parser("copy-previous")
     args = parser.parse_args()
-    if args.input_root != Path("/input") or args.output_root != Path("/output"):
-        QUERY_COMMAND = " ".join(
-            (
-                "python",
-                shlex.quote(sys.argv[0]),
-                "--input-root",
-                shlex.quote(str(args.input_root)),
-                "--output-root",
-                shlex.quote(str(args.output_root)),
-            )
+    # Always emit an executable continuation command with the exact roots used by
+    # this invocation.  A model may call the copied script through a relative path
+    # even when the underlying mount is /workspace/input rather than /input.
+    QUERY_COMMAND = " ".join(
+        (
+            "python",
+            shlex.quote(sys.argv[0]),
+            "--input-root",
+            shlex.quote(str(args.input_root)),
+            "--output-root",
+            shlex.quote(str(args.output_root)),
         )
+    )
 
     if args.command == "bootstrap":
         _bootstrap(args.input_root, args.output_root)

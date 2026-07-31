@@ -1,0 +1,16 @@
+{
+  "constexpr_parameters": [],
+  "frontend": "cuda",
+  "function": "main_kernel",
+  "origin_location": "dataset://TianchenIR-MultiFrontend/cuda/generated/gather2d.cu",
+  "parameters": [
+    "col_idx",
+    "inp",
+    "out",
+    "row_idx",
+    "M"
+  ],
+  "protocol": "intentir.scrc.frontend-source-projection.v1",
+  "source_kind": "module_file",
+  "source_location": "dataset://TianchenIR-MultiFrontend/cuda/generated/gather2d.cu"
+}

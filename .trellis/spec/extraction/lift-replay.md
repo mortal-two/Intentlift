@@ -257,6 +257,10 @@ CUDA/TileLang的`ptx.*`）都可由同一context query精确读取；超长TIR/P
 UTF-8 byte offset与count分页，array/object按item offset分页，每页携带whole/chunk receipt。新增或
 消失的类别不改变persistent workspace文件集合，也不留下旧轮内容；工具只
 搬运既有comparison，不解释差异、不选择refinement或repair。
+Codex Lift v33修复该transport在真实Codex sandbox中的mount identity：同一tool在MiniSWE的
+`/input/tools`与Codex的`/workspace/input/tools`下都从自身位置解析paired input/output roots；Codex
+frontier与continuation命令同时携带显式workspace-relative roots。v33不改变feedback内容、category
+选择或接受集合，只阻止不存在的`/input`被静默当成空feedback。
 
 `gate1-replay-counterexample.v2`不再假设所有前端都有TTIR。共享SCRC按Gate1已声明的
 `observer_profile.compiler_stage`机械投影前一formal Replay的exact只读compiler artifact：Triton为
@@ -397,7 +401,7 @@ ReplayLLM(J,pi,MaskC(C);U_f) -> complete source R_f
 
 当前 packet protocol 为 `intentir.scrc.replay-input.v3`；Triton 公共上下文直接由当前固定字段给出，
 不再附带 context version、SHA 或 receipt 门禁。source-aware Codex/MiniSWE Lift 的当前 knowledge receipt 分别为
-`intentir.lift-knowledge.v91 / intentir.lift-knowledge.v69`，source-blind MiniSWE/Codex Replay backend 为
+`intentir.lift-knowledge.v92 / intentir.lift-knowledge.v70`，source-blind MiniSWE/Codex Replay backend 为
 `minisweagent.intentir-replay.v36 / openai.codex-cli.intentir-replay.v36`。这些版本必须随 fresh run 原样记录；旧 packet/context/knowledge
 evidence 不因实现升级而被重判；fresh Replay 只做当前字段的结构和 source-isolation 检查。
 

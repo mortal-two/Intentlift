@@ -1,6 +1,6 @@
 # Task 24：J 主导的 π_min 与三前端 Episode-Local Composer Replay
 
-> 状态：`P5_GATHER_MECHANISMS_IMPLEMENTED_FRESH_RERUN_PENDING`（2026-07-31）。
+> 状态：`P5_CUDA_GATHER_CERTIFIED_TILELANG_V33_RERUN_PENDING`（2026-07-31）。
 >
 > 定位：Task 15/Task 11 的 Replay 构造机制升级，以及 Task 23 多前端实证的真实 closure 执行线。
 > 本任务不接管 production backend；backend 仍在 SCRC 后只消费 accepted `J+C`。
@@ -327,7 +327,7 @@ Replay，`gpt-5.6-sol high`，Mask-J配置开启）：
 - frontier正确列出`tir_structure/tir_topology/tir_operations/ptx.raw_instruction_topology`，但旧Codex
   continuation的本地`feedback-category`全部得到“no observer-diff categories”；Lift只能看空examples和
   aggregate component变化，随后无依据地删order/transfer关系；
-- 该问题不是TileLang应改用PTX。修复保持结构TIR为hard observer：Codex Lift v32/knowledge v91始终
+- 该问题不是TileLang应改用PTX。第一版修复保持结构TIR为hard observer：Codex Lift v32/knowledge v91
   挂载已经删除previous artifact与compiler blob的标准closed `feedback.json`作为canonical query source，
   stable category index只作冗余；任意超长TIR/PTX string由通用`feedback-slice`按exact JSON path与
   UTF-8 byte offset分页，array/object按item offset递归有界分页并携带whole/chunk receipt；frontier与
@@ -347,6 +347,35 @@ Replay，`gpt-5.6-sol high`，Mask-J配置开启）：
   exact slice回归；合成多字节/恶意path/超大nested container还验证了byte-exact重组、shell quoting与
   递归有界输出。旧的fixed dataflow repair hint已经删除。上述修改必须fresh rerun两个gather case后
   才能更新历史verdict。
+
+### Pilot M：CUDA gather经v25获得完整SCRC认证
+
+`cuda:tilelang_gather2d / runs/cuda_tilelang_gather2d/run-002`（fresh Codex Lift v32、Replay v36、
+Composer preferred、high）：
+
+- accepted attempt 2，TypeCheck v31 PASS；normal与Mask-J Replay是不同thread的fresh session，均选择
+  Composer，分别21/11 nodes；normal CUDA PTX Gate1全部hard pass；
+- Mask-J在`value_operations/control_flow/memory_effects`上hard fail，`J_NECESSARY=proved`；
+- Gate2的Source--Replay、Source--J、Replay--J三条边均exact pass，最大误差全部0，主状态
+  `SCRC_CERTIFIED`；`j_scalar_cpu_mlir_v25`因此把旧run-001的唯一`reference_unsupported`闭合；
+- π receipt仍只有13 instances、13 routes、3 order、1 program axis与2 regions；无iteration/carrier/
+  participant mapping/sharing/refinement，也无gather、predicate、index公式或target recipe。该变化来自
+  通用J reference consumer能力，不是CUDA Composer模板。
+
+### Pilot N：TileLang run-002证明v32真实root适配仍不完整
+
+`tilelang:gather2d / runs/tilelang_gather2d/run-002`（fresh Codex Lift v32、Replay v36、Composer
+preferred、high）仍为`NO_CLOSURE`：
+
+- 三轮TypeCheck PASS、Replay compile PASS且均选择Composer（9/9/8 nodes）；第三轮已令
+  `tir_operations/tir_topology`通过，只剩`tir_structure` hard fail；J/C保持不变，只有π order/instance
+  topology变化，public Source--J probe每轮exact pass；
+- frontier已有四个exact category label，但agent执行相对脚本而未传roots；copied tool的默认root仍写死
+  `/input`，而Codex真实mount是`/workspace/input`，于是查询不存在root并误报“no categories”。这解释了
+  synthetic显式-root回归通过而real continuation失败；
+- Codex Lift v33/knowledge v92与MiniSWE knowledge v70改为从copied tool自身位置解析paired roots；Codex
+  frontier/continuation query显式携带`--input-root input --output-root output`。只改transport identity，
+  不改TIR observer、J/π、Gate或Replay；必须fresh run-003验证后才能更新TileLang verdict。
 
 ## 3. 交付物
 
