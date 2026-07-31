@@ -6,6 +6,7 @@ import json
 import os
 import tempfile
 import threading
+import time
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -48,7 +49,7 @@ from .replay import (
 )
 
 
-CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v59"
+CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v60"
 
 _INITIAL_PROMPT = """You are the sole writer for one fresh source-blind IntentIR Replay episode.
 Work only under the isolated /workspace. input/ is immutable; output/, work/, and
@@ -365,7 +366,10 @@ class CodexCLIReplayWriter:
         semantic_queries: list[dict[str, Any]] = []
         timeout_events: list[dict[str, Any]] = []
         accepted_submission_interrupts: list[dict[str, Any]] = []
+        live_checkpoint_events: list[dict[str, Any]] = []
         accepted_submission_event = threading.Event()
+        live_checkpoint_stop = threading.Event()
+        evaluation_lock = threading.RLock()
         source_text = ""
         formal_ingress = None
         formal_compile = None
@@ -751,21 +755,34 @@ class CodexCLIReplayWriter:
                 ),
             }
 
+        def _locked_tool_call(
+            callback: Callable[..., Mapping[str, Any]],
+            *arguments: Any,
+        ) -> Mapping[str, Any]:
+            with evaluation_lock:
+                return callback(*arguments)
+
         bridge = CodexCLIToolBridge(
             workspace.scratch_dir / CODEX_CLI_TOOL_BRIDGE_ROOT_NAME,
             {
-                "replay_check": replay_check_tool,
-                "replay_compile_check": replay_compile_tool,
-                "submit_replay": submit_replay_tool,
+                "replay_check": lambda: _locked_tool_call(replay_check_tool),
+                "replay_compile_check": lambda: _locked_tool_call(
+                    replay_compile_tool
+                ),
+                "submit_replay": lambda: _locked_tool_call(submit_replay_tool),
             },
             argument_handlers={
                 "packet_query": packet_query_tool,
                 "semantic_query": semantic_query_tool,
-                "replay_ttir_inspect": replay_ttir_inspect_tool,
+                "replay_ttir_inspect": lambda arguments: _locked_tool_call(
+                    replay_ttir_inspect_tool, arguments
+                ),
             },
         )
 
-        def evaluate_current(*, trigger: str) -> tuple[bool, Mapping[str, Any]]:
+        def _evaluate_current_unlocked(
+            *, trigger: str
+        ) -> tuple[bool, Mapping[str, Any]]:
             nonlocal source_text, formal_ingress, formal_compile
             try:
                 source_text = workspace.read_replay()
@@ -834,8 +851,68 @@ class CodexCLIReplayWriter:
             )
             return formal_compile.status == "pass", compile_check
 
+        def evaluate_current(*, trigger: str) -> tuple[bool, Mapping[str, Any]]:
+            with evaluation_lock:
+                return _evaluate_current_unlocked(trigger=trigger)
+
+        try:
+            initial_replay = workspace.read_replay()
+        except Exception:
+            initial_replay = None
+        live_checkpoint_attempted = (
+            {initial_replay} if initial_replay is not None else set()
+        )
+
+        def live_checkpoint_watch() -> None:
+            """Accept only stable exact Replay bytes passing both host checks."""
+
+            nonlocal last_checked_good
+            observed_replay: str | None = None
+            stable_since = 0.0
+            while not live_checkpoint_stop.wait(0.25):
+                try:
+                    observed_text = workspace.read_replay()
+                except Exception:
+                    observed_replay = None
+                    stable_since = 0.0
+                    continue
+                if observed_text in live_checkpoint_attempted:
+                    continue
+                if observed_text != observed_replay:
+                    observed_replay = observed_text
+                    stable_since = time.monotonic()
+                    continue
+                if time.monotonic() - stable_since < 3.0:
+                    continue
+                live_checkpoint_attempted.add(observed_text)
+                passed, check = evaluate_current(trigger="live_checkpoint")
+                with evaluation_lock:
+                    checked_text = source_text
+                    accepted = passed and checked_text == observed_text
+                    if accepted:
+                        last_checked_good = checked_text
+                live_checkpoint_events.append(
+                    {
+                        "replay_bytes": len(checked_text.encode()) if checked_text else 0,
+                        "status": check.get("status", "fail"),
+                        "accepted": accepted,
+                    }
+                )
+                if checked_text != observed_text:
+                    live_checkpoint_attempted.discard(observed_text)
+                if accepted:
+                    accepted_submission_event.set()
+                    return
+
+        live_checkpoint_thread: threading.Thread | None = None
         try:
             bridge.start()
+            live_checkpoint_thread = threading.Thread(
+                target=live_checkpoint_watch,
+                name="intentir-codex-replay-live-checkpoint",
+                daemon=True,
+            )
+            live_checkpoint_thread.start()
             session = new_session()
             while True:
                 remaining = (
@@ -946,7 +1023,7 @@ class CodexCLIReplayWriter:
                     thread_ids.append(thread_id)
                 active_elapsed_ms += turn.elapsed_ms
                 passed, check = evaluate_current(trigger="host_post_turn")
-                if passed and explicit_submission_accepted:
+                if passed:
                     break
                 write_host_check(check)
                 prompt = _REPAIR_PROMPT
@@ -969,6 +1046,7 @@ class CodexCLIReplayWriter:
                 "semantic_queries": semantic_queries,
                 "timeout_events": timeout_events,
                 "accepted_submission_interrupts": accepted_submission_interrupts,
+                "live_checkpoint": live_checkpoint_events,
                 "explicit_submission_accepted": explicit_submission_accepted,
                 "tool_bridge": bridge.evidence,
                 "formal_ingress_recheck": True,
@@ -1054,6 +1132,7 @@ class CodexCLIReplayWriter:
                 "semantic_queries": semantic_queries,
                 "timeout_events": timeout_events,
                 "accepted_submission_interrupts": accepted_submission_interrupts,
+                "live_checkpoint": live_checkpoint_events,
                 "tool_bridge": bridge.evidence,
                 "failure_class": type(exc).__name__,
                 **(
@@ -1092,6 +1171,9 @@ class CodexCLIReplayWriter:
             self._records.append(attempt)
             raise ReplayGenerationError(attempt) from exc
         finally:
+            live_checkpoint_stop.set()
+            if live_checkpoint_thread is not None:
+                live_checkpoint_thread.join()
             bridge.close()
             if session is not None:
                 session.close()

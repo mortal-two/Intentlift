@@ -442,6 +442,11 @@ source-blind Replay。
 checkpoint 已经通过完全相同的独立 host construction recheck，runtime 可立即接受该
 exact bytes，而不必继续消耗剩余 episode wall time。这不接受未检查草稿，不跳过外部
 Gate1，也不将 checkpoint 状态写入 artifact。
+同一原则可在 provider turn 运行期间应用：runtime 只监视 Agent 唯一 output 的稳定
+exact bytes，对它执行与显式 submit 同一的 reject-only transaction；PASS 才请求中止
+本 turn，然后恢复并独立复核同一 bytes。FAIL 不改文件也不反馈修复。持久 Lift
+owner 在本 formal round 开始时已有的 candidate 不能由监视器直接接受；必须先由
+owner 改变 bytes，或由 owner 自己显式 submit。
 
 以下 `replay-check.v10`–v55 与 π realization construction 条款记录迁移前 runtime；Task 20 的
 J-only Replay 不调用它们。它们只用于解释历史 evidence，待 runtime 迁移完成后整体归档。迁移前

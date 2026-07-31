@@ -114,6 +114,10 @@ submit，而不是改变 Gate1 verdict。
 domain/access/effect/output 引用并暴露歧义，不选择 target schedule、program axis 或
 Source recipe。Replay 单回合超时时，若 exact checkpoint 已通过同一独立 host
 recheck，可立即接受该 bytes，不再消耗剩余 episode 时间；Gate1 仍在 episode 外完整执行。
+真实 v60 pilot 还暴露出更直接的时间浪费：多个 Codex owner 在 2–5 分钟已写出完整
+12–14 KiB candidate，却等到 9–14 分钟 turn 结束才交付。因此 Codex Lift v38 / Replay v60
+增加 exact live-checkpoint transaction：稳定字节只在通过既有同一 preflight 后中断 turn，host
+仍恢复并重检原 bytes；无 composer、无字段补全、无 Gate 放宽。
 
 ## 7. P5：多前端与实验
 

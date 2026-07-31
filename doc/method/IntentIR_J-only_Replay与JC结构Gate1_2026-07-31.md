@@ -196,6 +196,11 @@ Agent 执行层可以在不改变上述谓词的情况下提前拒绝明显欠�
 effect control 是否被 J 整体遗漏。它不生成 predicate、trip、carry、update 或 branch；完整正确性仍由
 TypeCheck、fresh Replay 和 Gate1 裁决。closed submit 一旦接受 exact bytes，host 可停止无证明意义的
 结尾 prose，恢复该 checkpoint 并独立重跑同一检查；这只缩短搜索时间，不改变 artifact 或 acceptance。
+实现可对 Agent 正在写的唯一 output 做稳定字节监视；只当同一份 LLM-authored
+exact bytes 已通过与显式 submit 完全相同的 CandidateCheck+SourceReconcile（Replay 为
+ingress+construction compile）后，才能中止当前 provider turn。Host 随后仍恢复并重检
+这份 exact bytes。监视器不修改文件、不产生字段、不读取 Gate，也不把旧 formal-round
+candidate 当作当前新交付。
 
 ## 8. 多前端与实验
 

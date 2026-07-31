@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import tempfile
 import threading
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping
 
@@ -41,7 +42,7 @@ from .scrc import (
     prepare_scrc_lift,
     scrc_candidate_check_context,
 )
-CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v37"
+CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v38"
 CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v99"
 CODEX_CLI_TURN_TIMEOUT_SECONDS = 900.0
 
@@ -69,7 +70,8 @@ thread.
 You alone author the complete output/candidate.json. J owns all logical semantics;
 C owns only implementation choices; pi is only the compact Gate1 normalization
 witness in the supplied schema. It has no realization graph: author only directly
-observed program-axis rows, or an empty array.
+observed, unambiguous program-axis rows, or an empty array. The current profile keeps
+those rows hard; their presence never relaxes Gate1.
 Fixed code must not choose or fill any field, handle, relation, operation, or shape.
 Preserve anonymous ABI order, parametric shape identities, logical control/time and
 effects in J. Use dense declaration-ordered opaque handles and never copy Source
@@ -652,11 +654,21 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
         semantic_probe_feedback_delivered: set[str] = set()
         timeout_events: list[dict[str, Any]] = []
         accepted_submission_interrupts: list[dict[str, Any]] = []
+        live_checkpoint_events: list[dict[str, Any]] = []
         accepted_submission_event = threading.Event()
+        live_checkpoint_stop = threading.Event()
+        evaluation_lock = threading.RLock()
         candidate_text: str | None = None
         last_checked_good: str | None = None
         timed_out_calls = 0
         timed_out_elapsed_ms = 0.0
+        try:
+            initial_candidate = workspace.read_candidate()
+        except Exception:
+            initial_candidate = None
+        live_checkpoint_attempted = (
+            {initial_candidate} if initial_candidate is not None else set()
+        )
 
         def check_current_candidate(*, trigger: str) -> dict[str, Any]:
             nonlocal candidate_text
@@ -776,17 +788,20 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
             overhead; the host still reruns both checks after the CLI turn.
             """
 
-            candidate_check = check_current_candidate(trigger="submit_candidate")
-            source_reconcile = reconcile_current_candidate(
-                trigger="submit_candidate",
-                checkpoint_allowed=candidate_check["status"] == "pass",
-            )
-            passed = (
-                candidate_check["status"] == "pass"
-                and source_reconcile["status"] == "pass"
-            )
-            if passed:
-                accepted_submission_event.set()
+            with evaluation_lock:
+                candidate_check = check_current_candidate(
+                    trigger="submit_candidate"
+                )
+                source_reconcile = reconcile_current_candidate(
+                    trigger="submit_candidate",
+                    checkpoint_allowed=candidate_check["status"] == "pass",
+                )
+                passed = (
+                    candidate_check["status"] == "pass"
+                    and source_reconcile["status"] == "pass"
+                )
+                if passed:
+                    accepted_submission_event.set()
             return {
                 "protocol": "intentir.codex-cli.lift-submit.v1",
                 "status": "pass" if passed else "fail",
@@ -808,20 +823,91 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
             }
 
         def host_preflight(
-            *, trigger: str
+            *, trigger: str, checkpoint_allowed: bool = True
         ) -> tuple[dict[str, Any], dict[str, Any] | None]:
-            candidate_check = check_current_candidate(trigger=trigger)
-            if candidate_check["status"] != "pass" or candidate_text is None:
-                return candidate_check, None
-            source_reconcile = reconcile_current_candidate(trigger=trigger)
-            return candidate_check, source_reconcile
+            with evaluation_lock:
+                candidate_check = check_current_candidate(trigger=trigger)
+                if candidate_check["status"] != "pass" or candidate_text is None:
+                    return candidate_check, None
+                source_reconcile = reconcile_current_candidate(
+                    trigger=trigger,
+                    checkpoint_allowed=checkpoint_allowed,
+                )
+                return candidate_check, source_reconcile
+
+        def live_checkpoint_watch() -> None:
+            """Deliver a stable LLM-authored draft once both preflights pass.
+
+            This watcher never edits or completes a candidate.  It only avoids
+            waiting for the remainder of a provider turn after exact bytes already
+            satisfy the same transaction used by ``submit_candidate``.  A previous
+            formal-round candidate is ignored until the owner changes its bytes.
+            """
+
+            nonlocal candidate_text, last_checked_good
+            observed_candidate: str | None = None
+            stable_since = 0.0
+            while not live_checkpoint_stop.wait(0.25):
+                try:
+                    observed_text = workspace.read_candidate()
+                except Exception:
+                    observed_candidate = None
+                    stable_since = 0.0
+                    continue
+                if observed_text in live_checkpoint_attempted:
+                    continue
+                if observed_text != observed_candidate:
+                    observed_candidate = observed_text
+                    stable_since = time.monotonic()
+                    continue
+                if time.monotonic() - stable_since < 3.0:
+                    continue
+                live_checkpoint_attempted.add(observed_text)
+                candidate_check, source_reconcile = host_preflight(
+                    trigger="live_checkpoint",
+                    checkpoint_allowed=False,
+                )
+                with evaluation_lock:
+                    checked_text = candidate_text
+                    passed = (
+                        candidate_check["status"] == "pass"
+                        and source_reconcile is not None
+                        and source_reconcile["status"] == "pass"
+                        and checked_text is not None
+                        and checked_text == observed_text
+                    )
+                    if passed:
+                        last_checked_good = checked_text
+                live_checkpoint_events.append(
+                    {
+                        "candidate_bytes": (
+                            len(checked_text.encode())
+                            if checked_text is not None
+                            else 0
+                        ),
+                        "candidate_check": candidate_check["status"],
+                        "source_reconcile": (
+                            source_reconcile["status"]
+                            if source_reconcile is not None
+                            else "not_run"
+                        ),
+                        "accepted": passed,
+                    }
+                )
+                if checked_text != observed_text:
+                    live_checkpoint_attempted.discard(observed_text)
+                if passed:
+                    accepted_submission_event.set()
+                    return
 
         def semantic_probe_tool() -> Mapping[str, Any]:
             """Execute one public Source-vs-J diagnostic over exact candidate bytes."""
 
-            candidate_check, source_reconcile = host_preflight(
-                trigger="semantic_probe"
-            )
+            with evaluation_lock:
+                candidate_check, source_reconcile = host_preflight(
+                    trigger="semantic_probe"
+                )
+                probe_candidate_text = candidate_text
             if candidate_check["status"] != "pass":
                 result: dict[str, Any] = {
                     "protocol": "intentir.lift.public-semantic-probe.v1",
@@ -836,7 +922,7 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                     "phase": "source_reconcile",
                     "diagnostic": "current candidate has not passed SourceReconcile",
                 }
-            elif candidate_text is None or self.semantic_probe is None:
+            elif probe_candidate_text is None or self.semantic_probe is None:
                 result = {
                     "protocol": "intentir.lift.public-semantic-probe.v1",
                     "status": "unavailable",
@@ -844,15 +930,17 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                     "diagnostic": "this Lift invocation has no public probe runner",
                 }
             else:
-                artifact = decode_scrc_lift_artifact(candidate_text, prepared)
+                artifact = decode_scrc_lift_artifact(
+                    probe_candidate_text, prepared
+                )
                 result = dict(self.semantic_probe(artifact))
             result.setdefault(
                 "authority",
                 "public diagnostic only; not CandidateCheck or certification",
             )
             candidate_sha256 = (
-                hashlib.sha256(candidate_text.encode()).hexdigest()
-                if candidate_text is not None
+                hashlib.sha256(probe_candidate_text.encode()).hexdigest()
+                if probe_candidate_text is not None
                 else None
             )
             result["candidate_sha256"] = candidate_sha256
@@ -894,8 +982,15 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                 "semantic_probe": semantic_probe_tool,
             },
         )
+        live_checkpoint_thread: threading.Thread | None = None
         try:
             bridge.start()
+            live_checkpoint_thread = threading.Thread(
+                target=live_checkpoint_watch,
+                name="intentir-codex-lift-live-checkpoint",
+                daemon=True,
+            )
+            live_checkpoint_thread.start()
             if self._codex_session is None:
                 self._codex_session = self.session_factory(
                     provider=provider,
@@ -958,6 +1053,7 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                         "candidate_check": list(check_results),
                         "source_reconcile": list(source_reconcile_results),
                         "semantic_probe": list(semantic_probe_results),
+                        "live_checkpoint": list(live_checkpoint_events),
                         "tool_bridge": bridge.evidence,
                     }
                     self._records.append(
@@ -1148,6 +1244,7 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                 "candidate_check": list(check_results),
                 "source_reconcile": list(source_reconcile_results),
                         "semantic_probe": list(semantic_probe_results),
+                        "live_checkpoint": list(live_checkpoint_events),
                         "timeout_events": list(timeout_events),
                         "accepted_submission_interrupts": list(
                             accepted_submission_interrupts
@@ -1173,6 +1270,9 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                 },
             ) from exc
         finally:
+            live_checkpoint_stop.set()
+            if live_checkpoint_thread is not None:
+                live_checkpoint_thread.join()
             bridge.close()
 
         assert candidate_text is not None
@@ -1186,6 +1286,7 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
             "candidate_check": list(check_results),
             "source_reconcile": list(source_reconcile_results),
             "semantic_probe": list(semantic_probe_results),
+            "live_checkpoint": list(live_checkpoint_events),
             "timeout_events": list(timeout_events),
             "accepted_submission_interrupts": list(
                 accepted_submission_interrupts
@@ -1266,6 +1367,7 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
             "candidate_check": list(check_results),
             "source_reconcile": list(source_reconcile_results),
             "semantic_probe": list(semantic_probe_results),
+            "live_checkpoint": list(live_checkpoint_events),
             "timeout_events": list(timeout_events),
             "accepted_submission_interrupts": list(
                 accepted_submission_interrupts
