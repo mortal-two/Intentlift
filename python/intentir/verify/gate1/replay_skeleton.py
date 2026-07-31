@@ -8,6 +8,7 @@ contains no Intent-op-to-target mapping and emits no target source.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
@@ -397,9 +398,376 @@ def build_replay_skeleton(packet: Mapping[str, Any]) -> ReplaySkeleton:
     return ReplaySkeleton(skeleton)
 
 
+def _skeleton_semantic_record(
+    skeleton: Mapping[str, Any], semantic_ref: str
+) -> dict[str, Any] | None:
+    semantic = _object(skeleton.get("semantic"), "skeleton.semantic")
+    for node in _array(semantic.get("nodes", []), "skeleton.semantic.nodes"):
+        if isinstance(node, Mapping) and node.get("id") == semantic_ref:
+            return {"kind": "intent_op", **dict(node)}
+    boundary = _object(semantic.get("boundary", {}), "skeleton.semantic.boundary")
+    for relation_name, id_field, kind in (
+        ("accesses", "access_id", "boundary_access"),
+        ("effects", "effect_id", "boundary_effect"),
+    ):
+        for row in _array(
+            boundary.get(relation_name, []),
+            f"skeleton.semantic.boundary.{relation_name}",
+        ):
+            if isinstance(row, Mapping) and row.get(id_field) == semantic_ref:
+                return {"kind": kind, **dict(row)}
+    domains = _object(
+        boundary.get("domains", {}), "skeleton.semantic.boundary.domains"
+    )
+    if semantic_ref in domains:
+        return {
+            "kind": "domain",
+            "id": semantic_ref,
+            "expression": domains[semantic_ref],
+        }
+    signature = _object(semantic.get("signature", {}), "skeleton.semantic.signature")
+    for parameter in _array(
+        signature.get("parameters", []), "skeleton.semantic.signature.parameters"
+    ):
+        if isinstance(parameter, Mapping) and parameter.get("name") == semantic_ref:
+            return {"kind": "signature_parameter", **dict(parameter)}
+    masked_c = _object(skeleton.get("masked_c", {}), "skeleton.masked_c")
+    for slot in _array(masked_c.get("slots", []), "skeleton.masked_c.slots"):
+        if isinstance(slot, Mapping) and slot.get("name") == semantic_ref:
+            return {"kind": "c_slot", **dict(slot)}
+    return None
+
+
+def query_replay_skeleton(
+    skeleton: Mapping[str, Any], arguments: Sequence[str]
+) -> dict[str, Any]:
+    """Return one bounded exact workset from a normalized Replay skeleton."""
+
+    if skeleton.get("protocol") != REPLAY_SKELETON_PROTOCOL:
+        raise ValueError("unsupported Replay skeleton protocol")
+    holes_value = _object(skeleton.get("holes"), "skeleton.holes")
+    holes = [
+        dict(item)
+        for name in ("semantic", "realization")
+        for item in _array(holes_value.get(name, []), f"skeleton.holes.{name}")
+        if isinstance(item, Mapping)
+    ]
+    realization = _object(skeleton.get("realization"), "skeleton.realization")
+    regions = _array(realization.get("regions", []), "skeleton.realization.regions")
+    occurrences = _array(
+        realization.get("occurrences", []), "skeleton.realization.occurrences"
+    )
+    routes = _array(realization.get("routes", []), "skeleton.realization.routes")
+    order = _array(realization.get("order", []), "skeleton.realization.order")
+
+    if list(arguments) == ["overview"]:
+        return {
+            "protocol": "intentir.replay-typed-skeleton-query.v1",
+            "status": "pass",
+            "view": "overview",
+            "counts": {
+                "semantic_nodes": len(skeleton["semantic"]["nodes"]),
+                "semantic_holes": len(holes_value.get("semantic", [])),
+                "realization_holes": len(holes_value.get("realization", [])),
+                "regions": len(regions),
+                "occurrences": len(occurrences),
+                "routes": len(routes),
+                "order": len(order),
+            },
+            "section_json_chars": {
+                key: len(
+                    json.dumps(
+                        value,
+                        sort_keys=True,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
+                )
+                for key, value in skeleton.items()
+            },
+            "regions": [
+                {
+                    "id": item.get("id"),
+                    "parent": item.get("parent"),
+                    "placement": item.get("placement"),
+                    "query": f"region {item.get('id')}",
+                }
+                for item in regions
+                if isinstance(item, Mapping)
+            ],
+            "first_holes": [
+                {
+                    "id": item.get("id"),
+                    "kind": item.get("kind"),
+                    "semantic_ref": item.get("semantic_ref"),
+                    "occurrence_count": len(item.get("occurrences", []))
+                    if isinstance(item.get("occurrences", []), list)
+                    else 0,
+                }
+                for item in holes[:16]
+            ],
+            "next": "holes 16 16" if len(holes) > 16 else None,
+            "authority": skeleton.get("authority"),
+        }
+    if len(arguments) == 3 and arguments[0] == "holes":
+        start = int(arguments[1])
+        count = int(arguments[2])
+        if start < 0 or count < 1 or count > 24:
+            raise ValueError("skeleton holes START/COUNT is outside the closed bound")
+        selected = holes[start : start + count]
+        return {
+            "protocol": "intentir.replay-typed-skeleton-query.v1",
+            "status": "pass",
+            "view": "holes",
+            "total": len(holes),
+            "start": start,
+            "items": selected,
+            "next": (
+                f"holes {start + len(selected)} {count}"
+                if start + len(selected) < len(holes)
+                else None
+            ),
+        }
+    if len(arguments) == 2 and arguments[0] == "hole":
+        hole_id = arguments[1]
+        matches = [item for item in holes if item.get("id") == hole_id]
+        if len(matches) != 1:
+            raise KeyError(f"unknown skeleton hole {hole_id!r}")
+        hole = matches[0]
+        occurrence_ids = set(hole.get("occurrences", []))
+        local_occurrences = [
+            dict(item)
+            for item in occurrences
+            if isinstance(item, Mapping) and item.get("id") in occurrence_ids
+        ]
+        semantic_ref = hole.get("semantic_ref")
+        return {
+            "protocol": "intentir.replay-typed-skeleton-query.v1",
+            "status": "pass",
+            "view": "hole",
+            "hole": hole,
+            "semantic": (
+                _skeleton_semantic_record(skeleton, str(semantic_ref))
+                if isinstance(semantic_ref, str)
+                else None
+            ),
+            "occurrences": local_occurrences,
+            "routes": [
+                {"index": index, **dict(route)}
+                for index, route in enumerate(routes)
+                if isinstance(route, Mapping)
+                and (
+                    route.get("source") in occurrence_ids
+                    or route.get("target") in occurrence_ids
+                )
+            ],
+        }
+    if len(arguments) == 2 and arguments[0] == "semantic":
+        record = _skeleton_semantic_record(skeleton, arguments[1])
+        if record is None:
+            raise KeyError(f"unknown skeleton semantic ref {arguments[1]!r}")
+        return {
+            "protocol": "intentir.replay-typed-skeleton-query.v1",
+            "status": "pass",
+            "view": "semantic",
+            "semantic": record,
+        }
+    if len(arguments) == 2 and arguments[0] == "region":
+        region_ref = arguments[1]
+        worksets = _array(
+            skeleton.get("region_worksets", []), "skeleton.region_worksets"
+        )
+        matches = [
+            item
+            for item in worksets
+            if isinstance(item, Mapping) and item.get("region_ref") == region_ref
+        ]
+        if len(matches) != 1:
+            raise KeyError(f"unknown skeleton region {region_ref!r}")
+        workset = dict(matches[0])
+        occurrence_ids = set(workset["occurrence_ids"])
+        route_indices = set(workset["route_indices"])
+        order_indices = set(workset["order_indices"])
+        return {
+            "protocol": "intentir.replay-typed-skeleton-query.v1",
+            "status": "pass",
+            "view": "region",
+            "workset": workset,
+            "region": next(
+                dict(item)
+                for item in regions
+                if isinstance(item, Mapping) and item.get("id") == region_ref
+            ),
+            "occurrences": [
+                dict(item)
+                for item in occurrences
+                if isinstance(item, Mapping) and item.get("id") in occurrence_ids
+            ],
+            "routes": [
+                {"index": index, **dict(item)}
+                for index, item in enumerate(routes)
+                if index in route_indices and isinstance(item, Mapping)
+            ],
+            "order": [
+                {"index": index, **dict(item)}
+                for index, item in enumerate(order)
+                if index in order_indices and isinstance(item, Mapping)
+            ],
+            "holes": [
+                item
+                for item in holes
+                if occurrence_ids.intersection(item.get("occurrences", []))
+            ],
+        }
+    if list(arguments) == ["binding_scaffold"]:
+        from .replay_compact_binding import build_replay_compact_plan
+
+        plan = build_replay_compact_plan(skeleton)
+        signature = _object(
+            skeleton.get("semantic", {}).get("signature", {}),
+            "skeleton.semantic.signature",
+        )
+        aliases = {
+            str(item["logical_ref"]): str(item["name"])
+            for item in _array(
+                signature.get("parameters", []),
+                "skeleton.semantic.signature.parameters",
+            )
+            if isinstance(item, Mapping)
+            and isinstance(item.get("logical_ref"), str)
+            and isinstance(item.get("name"), str)
+        }
+        return {
+            "protocol": "intentir.replay-typed-skeleton-query.v1",
+            "status": "pass",
+            "view": "binding_scaffold",
+            "binding": plan.scaffold(),
+            "region_sequences": {
+                name: list(items) for name, items in plan.region_sequences.items()
+            },
+            "control_regions": {
+                region: {
+                    "semantic_ref": value["semantic_ref"],
+                    "op": value["operation"].get("op"),
+                    "trip": value["operation"].get("trip"),
+                    "carry": value["operation"].get("carry", []),
+                    "scan": value["operation"].get("scan", []),
+                }
+                for region, value in plan.control_regions.items()
+            },
+            "stable_names": {
+                "logical_aliases": aliases,
+                "program_coordinates": {
+                    str(item.get("domain_ref")): (
+                        f"_intentir_pid_{item.get('domain_ref')}"
+                    )
+                    for item in _array(
+                        realization.get("program_axes", []),
+                        "skeleton.realization.program_axes",
+                    )
+                    if isinstance(item, Mapping)
+                    and isinstance(item.get("domain_ref"), str)
+                },
+                "linearized_dimensions": {
+                    str(ref): f"_intentir_index_{ref}"
+                    for item in _array(
+                        realization.get("program_linearizations", []),
+                        "skeleton.realization.program_linearizations",
+                    )
+                    if isinstance(item, Mapping)
+                    for ref in item.get("dimension_refs", [])
+                    if isinstance(ref, str)
+                },
+                "semantic_values": "use exact t*/v*/x*/p*/c* handles",
+            },
+            "next": "block b0" if plan.blocks else None,
+            "authority": (
+                "mechanically generated editable block layout only; every block "
+                "source remains empty and no target computation is selected"
+            ),
+        }
+    if len(arguments) == 2 and arguments[0] == "block":
+        from .replay_compact_binding import build_replay_compact_plan
+
+        plan = build_replay_compact_plan(skeleton)
+        matches = [item for item in plan.blocks if item["id"] == arguments[1]]
+        if len(matches) != 1:
+            raise KeyError(f"unknown compact binding block {arguments[1]!r}")
+        block = matches[0]
+        access_rows = _array(
+            _object(skeleton["semantic"].get("boundary", {}), "skeleton.boundary").get(
+                "accesses", []
+            ),
+            "skeleton.boundary.accesses",
+        )
+        realization_holes = _array(
+            holes_value.get("realization", []), "skeleton.holes.realization"
+        )
+        return {
+            "protocol": "intentir.replay-typed-skeleton-query.v1",
+            "status": "pass",
+            "view": "block",
+            "block": {
+                key: list(value) if isinstance(value, tuple) else value
+                for key, value in block.items()
+            },
+            "semantic": [
+                _skeleton_semantic_record(skeleton, ref)
+                for ref in block["semantic_refs"]
+            ],
+            "accesses": [
+                dict(row)
+                for row in access_rows
+                if isinstance(row, Mapping)
+                and any(
+                    ref.startswith(f"access:{row.get('access_id')}@")
+                    for ref in block["realization_refs"]
+                )
+            ],
+            "realization_relations": [
+                dict(hole)
+                for hole in realization_holes
+                if isinstance(hole, Mapping) and hole.get("id") in block["realization_refs"]
+            ],
+            "region": next(
+                dict(item)
+                for item in regions
+                if isinstance(item, Mapping) and item.get("id") == block["region"]
+            ),
+        }
+    if list(arguments) == ["binding_shape"]:
+        return {
+            "protocol": "intentir.replay-typed-skeleton-query.v1",
+            "status": "pass",
+            "view": "binding_shape",
+            "protocol_value": "intentir.replay-compact-binding.v2",
+            "root_fields": ["protocol", "blocks"],
+            "block_fields": [
+                "id",
+                "semantic_refs",
+                "realization_refs",
+                "source_path",
+            ],
+            "editable_fields": ["the files named by blocks[*].source_path"],
+            "source_form": (
+                "dedented Triton Python statements for the fixed block region; "
+                "use exact stable names reported by binding_scaffold"
+            ),
+            "authority": (
+                "the scaffold fixes provenance/placement/order only; source strings "
+                "remain entirely fresh agent-authored target computations"
+            ),
+        }
+    raise ValueError(
+        "usage: overview | holes START COUNT | hole ID | semantic REF | region ID | "
+        "binding_scaffold | block ID | binding_shape"
+    )
+
+
 __all__ = [
     "REPLAY_BINDING_PROTOCOL",
     "REPLAY_SKELETON_PROTOCOL",
     "ReplaySkeleton",
     "build_replay_skeleton",
+    "query_replay_skeleton",
 ]

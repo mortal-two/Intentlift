@@ -1,7 +1,8 @@
 # IntentIR：J 主导的最小约束 π 与 Replay 内部 Composer 重构设计
 
 > 日期：2026-07-31  
-> 状态：Task 16 的实现依据；是现有四份 SCRC 权威文档对 Replay 作者化接口的窄化修订，不增加证明对象、认证 Gate 或 production backend 输入。
+> 状态：历史方案，已由 Task 18 的 `J SemanticMaterializer + Replay Compiler Agent` 设计取代；
+> 仅保留 Task 16 flat/grouped composer 的演化证据，不再作为活动规范。
 
 ## 1. 要解决的真实矛盾
 

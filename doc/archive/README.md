@@ -6,6 +6,7 @@
 
 ## 归档批次
 
+- [2026-07-31：Replay Composer 原型](2026-07-31-replay-composer-prototypes/README.md)
 - [2026-07-22：C、π 与最终执行流程形成之前](2026-07-22-pre-C-pi-execution/README.md)
 - [2026-07-21：LLM-first reset 之前](2026-07-21-pre-llm-first/README.md)
 

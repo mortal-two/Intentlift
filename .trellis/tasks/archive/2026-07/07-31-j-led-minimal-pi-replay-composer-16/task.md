@@ -1,6 +1,6 @@
 # Task 16：J 主导的最小约束 π / Replay 内部 Composer 与 28-Kernel 最终闭合
 
-> 状态：`SUPERSEDED_BY_TASK17`（2026-07-31）
+> 状态：`ARCHIVED_SUPERSEDED`（2026-07-31；先由 Task 17、最终由 Task 18 接管）
 > 接管 Task 15。Task 15 在完成 Compiler-observed Lift、Codex owner 与 23/28 基线后，因 flat-π Replay 作者化接口暴露根本瓶颈而归档；未完成项由本任务继续，不把归档误写成完成。
 >
 > 交接：v2 grouped composer 已验证 route-bound renderer 的机械价值，但仍要求 Replay agent 按

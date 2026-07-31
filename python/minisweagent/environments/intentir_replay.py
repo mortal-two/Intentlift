@@ -39,7 +39,14 @@ REPLAY_APPLY_PATCH_PROTOCOL = "intentir.replay-exact-text-patch.v1"
 REPLAY_DIRECT_SUBMIT_PROTOCOL = "intentir.replay-direct-submit.v1"
 MULTI_ACTION_PROTOCOL = "intentir.agent-multi-action.v1"
 REPLAY_INPUT_FILES = frozenset(
-    {"README.md", "packet.json", "REPLAY_CONTRACT.md", "TOOL.md"}
+    {
+        "README.md",
+        "packet.json",
+        "skeleton.json",
+        "BINDING_CONTRACT.md",
+        "REPLAY_CONTRACT.md",
+        "TOOL.md",
+    }
 )
 REPLAY_SANDBOX_PROTOCOL = "intentir.replay-busybox-empty-root.v1"
 REPLAY_SANDBOX_HOSTNAME = "intentir-replay"
@@ -3208,11 +3215,10 @@ class IntentIRReplayEnvironment:
                 "test ! -e /lib64; test ! -e /usr/local; "
                 "for name in python python3 gcc g++ clang ld as nvcc ptxas "
                 "triton torch intentir; do ! command -v \"$name\"; done; "
-                "test \"$(find /input -type f | wc -l)\" -eq 4; "
-                "test \"$(find /input -type f | sed 's#^/input/##' | sort | "
-                "sha256sum | cut -d' ' -f1)\" = "
-                "$(printf '%s\\n' README.md REPLAY_CONTRACT.md TOOL.md "
-                "packet.json | sort | sha256sum | cut -d' ' -f1)"
+                "test \"$(find /input -type f | wc -l)\" -eq 6; "
+                "for name in README.md packet.json skeleton.json "
+                "BINDING_CONTRACT.md REPLAY_CONTRACT.md TOOL.md; do "
+                "test -f \"/input/$name\" || exit 1; done"
             ),
         ]
         try:

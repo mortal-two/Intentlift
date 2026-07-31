@@ -31,6 +31,7 @@ from .prompt import (
     build_rewriter_prompt,
     build_rewriter_payload,
 )
+from .replay_skeleton import build_replay_skeleton
 from .tilelang_codegen import extract_tilelang_module
 from .ttir import (
     TTIRFingerprint,
@@ -3382,7 +3383,14 @@ def _replay_input_files(
         sort_keys=True,
         ensure_ascii=False,
         allow_nan=False,
-        indent=2,
+        separators=(",", ":"),
+    ) + "\n"
+    skeleton_text = json.dumps(
+        build_replay_skeleton(packet).to_json(),
+        sort_keys=True,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
     ) + "\n"
     instructions = """# Replay ownership contract
 
@@ -3392,15 +3400,16 @@ C is masked and supplies only its declared anonymous slot. Pi is a dependent
 realization witness: it may constrain occurrence, region, route, order, sharing,
 iteration/carrier, program axis, terminal control, materialization, and refinement,
 but it never supplies an operator, formula, predicate, fill value, or target recipe.
-For Codex episodes, pi may use its declared `columns` plus row arrays; this is an
-exact bijective serialization of the same relations, not a summary or inferred plan.
+For Codex episodes, pi uses a nested region/occurrence wire plus closed relation
+tables; this is an exact bijective serialization of the same canonical witness, not a
+summary, dropped relation, semantic inference or target plan.
 
-Realize every explicit pi relation exactly once at its typed endpoints. Omit no
-non-default relation and invent none. When a relation is unclear, inspect its exact
-record and neighboring opaque handles in packet.json. Source code, source TTIR,
-Harness values, Gate evidence, previous Replay, and kernel templates do not exist in
-this episode. The agent chooses all target spelling. Fixed tools only edit syntax,
-compile, inspect this Replay's own TTIR, and reject.
+Realize every explicit pi relation exactly once at its typed endpoints. The generated
+binding scaffold and structural renderer already own signature aliases, program axes,
+row-major program linearization, region nesting, loop bounds and exact loop carriers.
+Do not repeat them. The agent chooses all computations, addresses, masks, loads/stores
+and target APIs inside the editable blocks. Source code, source TTIR, Harness values,
+Gate evidence, previous Replay, and kernel templates do not exist in this episode.
 
 An authored occurrence is not an algebraic equivalence class. Preserve J body
 occurrence order and every explicit pi order edge; do not merge, reorder, hoist, or
@@ -3422,56 +3431,58 @@ init -> state and state -> next routes exactly; the carrier row itself denotes t
 next-to-state temporal edge and loop-exit result. Preserve declaration-order tuple
 ordinals and do not invent an update formula.
 
-A pi.program_linearizations row decodes the bound coordinate of its domain into the
-listed outer-to-inner J dimensions by the unique row-major mixed-radix quotient and
-remainder projection. It is a closed realization relation, not permission to guess
-another formula, grid extent, constant, predicate, or target recipe. Preserve its
-integer dataflow before the routed address realization. Any interval, mask, selection,
-or block formula that affects values belongs in J and must not be reconstructed from pi.
+A pi.program_linearizations row is rendered by the fixed structural shell as its
+unique row-major mixed-radix coordinate projection. It supplies only coordinate
+plumbing. Any interval, mask, selection, block formula, address or value computation
+still belongs in J and must be authored by the Replay agent from J, never guessed from pi.
 """
     readme = """# IntentIR source-blind Replay input
 
 This immutable directory is the complete input allowlist for one fresh episode.
 
 - `packet.json`: exact J + pi + MaskC(C) + public U_f.
+- `skeleton.json`: normalized target-neutral semantic/realization skeleton and holes.
+- `BINDING_CONTRACT.md`: closed episode-local target-binding boundary.
 - `REPLAY_CONTRACT.md`: ownership and no-leak boundary.
 - `TOOL.md`: syntax-only composer, check, compile, own-TTIR, and submit commands.
 
 Read files by path and only page sections needed for the current construction. No
 Source, real C value, CompileCase/grid, Gate result, history, repository, or network
-is available.
+is available. `skeleton.json` is an exact reindex of `packet.json`; it contains no
+target operator, API, source statement, instruction selection, inference, or repair.
+"""
+    binding_contract = """# Replay target-binding contract
+
+`/work/replay.binding.json` already contains the exact immutable
+`intentir.replay-compact-binding.v2` manifest. Edit only the ordinary source files
+named by its `blocks[*].source_path` fields (`/work/binding/b*.source`). Do not edit
+the manifest, add/remove blocks, or change semantic_refs/realization_refs. Query
+`skeleton_query binding_scaffold`, then `block b*` for the bounded J/π facts.
+
+Fixed code renders function/signature aliases, program coordinates, region nesting,
+loop bounds and carrier wiring. It never writes a value expression, address, mask,
+load/store, reduction, predicate or algorithm. Those target statements are authored
+only in the source strings. Binding state is proof-irrelevant and is destroyed after
+this formal Replay episode.
 """
     tool = """# Replay agent tools
 
-For a small packet, author and patch one complete `/output/replay.source`. For a
-route-heavy packet, prefer the grouped route composer: keep a few lexical
-region/block fragments rather than one file per occurrence. Write
-`/work/replay.compose.json` as:
-
-```json
-{"protocol":"intentir.replay-route-composer.v2","bindings":{"i0":"p0"}}
-```
-
-Bindings are allowed only when an instance's semantic_ref is that exact p*/c*
-signature carrier. A bound instance cannot be a pi.order endpoint. Write a small
-number of ordinary `NNN-NAME.source` fragments in exact lexical source order. In
-any fragment, explicitly author target syntax with `{{out:iK}}` for a routed
-source instance, `{{slot:iK:N}}` exactly once for each named target's incoming
-slot N, and `{{dep:iK:N}}` exactly once for its Nth declaration-ordered empty-slot
-route. Multiple instances may appear in one fragment. Fixed code only substitutes
-stable locals and validates exact route/order/sharing; it never chooses an op,
-expression, control form, region, or API. The legacy v1 one-occurrence-per-file
-surface remains readable but should not be used for a new complex Replay. Run:
+The default path is target binding, not hand-written full source. Read
+`skeleton.json` through bounded queries, author `/work/replay.binding.json`, then run:
 
 ```text
-python .agents/intentir_agent_tool.py composer_status
-python .agents/intentir_agent_tool.py composer_render
+python .agents/intentir_agent_tool.py skeleton_query binding_scaffold
+python .agents/intentir_agent_tool.py skeleton_query block ID
+python .agents/intentir_agent_tool.py skeleton_query semantic REF
+python .agents/intentir_agent_tool.py binding_check
+python .agents/intentir_agent_tool.py binding_render
 ```
 
-`composer_render` renders only the agent's exact templates and explicit route
-references into `/output/replay.source`. Without replay.compose.json it performs
-plain lexical concatenation. It is an editing aid, never a completion requirement.
-Then use `replay_check`, `replay_compile_check`, and optionally
+`binding_check` rejects any manifest/provenance edit or empty source file. `binding_render`
+writes `/output/replay.source` and a block-level source map from exact agent-authored
+bytes plus fixed structural plumbing; it performs no computation selection. The legacy
+plain/grouped source composer remains readable for old evidence but is not the fresh
+default. Then use `replay_check`, `replay_compile_check`, and optionally
 `replay_ttir_inspect summary|raw|find|observer`. Finish with `submit_replay`. All
 callbacks are source-blind and diagnostic-only; formal Gate1 runs outside this
 episode.
@@ -3480,6 +3491,8 @@ episode.
         {
             "README.md": readme,
             "packet.json": packet_text,
+            "skeleton.json": skeleton_text,
+            "BINDING_CONTRACT.md": binding_contract,
             "REPLAY_CONTRACT.md": instructions + "\n",
             "TOOL.md": tool,
         },

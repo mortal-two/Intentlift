@@ -28,7 +28,14 @@ from intentir.verify.gate1.compiler import KernelSource, TritonCompiler
 from intentir.verify.gate1.ttir import fingerprint_ttir
 
 from .model import Frontend, Gate1Artifact
+from .pi_nested_wire import encode_pi_nested_wire
+from .replay_compact_binding import (
+    build_replay_compact_plan,
+    parse_replay_compact_binding,
+)
 from .replay_composer import ComposerFragment, render_route_composer
+from .replay_skeleton import build_replay_skeleton, query_replay_skeleton
+from .replay_structural_renderer import render_replay_structural_binding
 from .replay import (
     REPLAY_CHECK_PROTOCOL,
     ReplayAttempt,
@@ -43,9 +50,8 @@ from .replay import (
 )
 
 
-CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v51"
+CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v53"
 REPLAY_COMPOSER_PROTOCOL = "intentir.replay-episode-composer.v2"
-REPLAY_PI_WIRE_PROTOCOL = "intentir.pi-min.relational-column-wire.v1"
 _COMPOSER_FRAGMENT = re.compile(r"[0-9A-Za-z][0-9A-Za-z._-]{0,127}\.source")
 _MAX_COMPOSER_FRAGMENTS = 128
 _MAX_REPLAY_BYTES = 1024 * 1024
@@ -55,40 +61,38 @@ Work only under the isolated /workspace. input/ is immutable; output/, work/, an
 tmp/ are writable. There is no Source, Harness/compiler view, actual C value, Gate
 result, earlier Replay, sibling state, repository, or network.
 
-J is the only semantic authority; pi supplies realization constraints only. Read
-input/packet.json by file path and inspect only the sections you need. Begin with
-`python .agents/intentir_agent_tool.py packet_query requirements`; it is an exact,
-bounded declaration-order view of J nodes and pi control/time relations, not a plan
-or lowering rule. Preserve every listed J node's operands, attrs and result before
-choosing target syntax. For every lexical region you author, query
-`python .agents/intentir_agent_tool.py packet_query region REGION 0 8`; this is the
-small exact workset joining that region's complete J semantic records with its pi
-routes/order/time/control. Page only when `next` is non-null. It contains no target
-spelling or realization choice. Do not infer a
-Source recipe or invent a missing fact. input/REPLAY_CONTRACT.md defines the compact
-ownership boundary; input/TOOL.md defines the exact tools.
+J is the only semantic authority; pi supplies realization constraints only. A valid
+work/replay.binding.json scaffold already exists. Its exact J/pi provenance, three
+region blocks and order were mechanically generated and are immutable. Edit only the
+ordinary work/binding/b*.source files it names. Choose every computation, address,
+mask, load/store and target API in those files yourself. Fixed code owns only function/signature aliases,
+program coordinates, region nesting, loop bounds and exact J/pi carrier wiring.
+Begin with `python .agents/intentir_agent_tool.py skeleton_query binding_scaffold`,
+then query one block or semantic ref only when needed.
+Use input/packet.json or a bounded packet query only for one omitted exact fact. Do
+not infer a Source recipe or invent a missing fact. input/BINDING_CONTRACT.md and
+input/REPLAY_CONTRACT.md define the boundaries; input/TOOL.md defines the tools.
 
-Act like a coding agent. For a route-heavy packet, use the grouped route composer in
-input/TOOL.md so a few lexical region/block fragments can consume opaque pi slots
-without one file per occurrence. For a small packet, one normal complete source is
-still valid. The composer never chooses semantics: you write every expression,
-control form, effect and API spelling.
+Act like a coding agent: edit the three pre-existing source files, run binding_check,
+then binding_render, compile, inspect and patch the responsible block. Do not rewrite
+the scaffold or repeat signature/program-id/loop/carrier plumbing already owned by the
+structural renderer.
 
-After a meaningful complete draft, run
+After a complete binding has rendered, run
 `python .agents/intentir_agent_tool.py submit_replay`. It transactionally runs the
 source-blind ingress and synthetic compile checks on your exact bytes. Repair your
 own source until it passes. If compilation is unclear, use `replay_ttir_inspect`
 only on your current Replay. Fixed code only projects packet facts, checks, and
-rejects; composer_render only renders your exact syntax templates through explicit
-pi route references and never chooses or repairs semantics. Finish only with the
+rejects; binding_render only wraps your exact target block bytes in the fixed
+J/pi-derived structural shell and never chooses or repairs computations. Finish only with the
 transaction passing
 and do not claim Gate1, Gate2, or certification.
 """
 
 _REPAIR_PROMPT = """The same fresh source-blind Replay episode continues in the same thread and workspace.
-Read work/host_replay_check.json and the current output/replay.source, repair the
-complete source or its composer fragments yourself, render again when fragments
-changed, and rerun submit_replay. Diagnostics reject only; they do not supply a
+Read work/host_replay_check.json, the current output/replay.source and its binding
+source map. Repair only the responsible work/binding/b*.source file, rerun binding_check/binding_render, and
+rerun submit_replay. Diagnostics reject only; they do not supply a
 semantic mapping or repair. Finish only when ingress and compile both pass.
 """
 
@@ -195,76 +199,21 @@ def _composer_response(
     }
 
 
-_PI_ROW_COLUMNS: dict[str, tuple[str, ...]] = {
-    "regions": ("id", "parent", "placement"),
-    "instances": ("id", "semantic_ref", "mechanism", "region"),
-    "routes": ("source", "target", "slots"),
-    "order": ("before", "after"),
-    "sharing": ("source", "consumers"),
-    "refinements": ("instance", "kind", "auth_ref"),
-    "program_axes": ("domain_ref", "axis"),
-    "program_linearizations": ("domain_ref", "dimension_refs"),
-}
-
-
-def _pi_min_agent_wire(pi: Mapping[str, Any]) -> dict[str, Any]:
-    """Encode exact pi relations without repeated JSON object keys.
-
-    This is a bijective wire codec, not a semantic projection.  Lists not covered by
-    the fixed row columns remain byte-for-value JSON relations.  A round-trip check
-    below fails closed whenever the canonical pi schema evolves.
-    """
-
-    wire: dict[str, Any] = {
-        "protocol": REPLAY_PI_WIRE_PROTOCOL,
-        "columns": {name: list(columns) for name, columns in _PI_ROW_COLUMNS.items()},
-    }
-    for name, value in pi.items():
-        if name not in _PI_ROW_COLUMNS:
-            wire[name] = value
-            continue
-        if not isinstance(value, list):
-            raise TypeError(f"pi.{name} must be a relation list")
-        columns = _PI_ROW_COLUMNS[name]
-        rows: list[list[Any]] = []
-        for index, item in enumerate(value):
-            if not isinstance(item, Mapping) or set(item) != set(columns):
-                raise ValueError(
-                    f"pi.{name}[{index}] does not match the closed relational columns"
-                )
-            rows.append([item[column] for column in columns])
-        wire[name] = rows
-
-    expanded: dict[str, Any] = {}
-    for name, value in wire.items():
-        if name in {"protocol", "columns"}:
-            continue
-        columns = _PI_ROW_COLUMNS.get(name)
-        if columns is None:
-            expanded[name] = value
-            continue
-        expanded[name] = [
-            {column: row[index] for index, column in enumerate(columns)}
-            for row in value
-        ]
-    if expanded != dict(pi):
-        raise RuntimeError("pi-min relational wire failed exact round-trip")
-    return wire
-
-
 def _agent_replay_packet(packet: Mapping[str, Any]) -> dict[str, Any]:
-    """Return the exact Replay packet with only pi's JSON wire made compact."""
+    """Return the exact Replay packet with pi in its bijective nested wire."""
 
     pi = packet.get("pi")
     if not isinstance(pi, Mapping):
         raise TypeError("Replay packet pi must be an object")
     result = dict(packet)
-    result["pi"] = _pi_min_agent_wire(pi)
+    result["pi"] = encode_pi_nested_wire(pi)
     return result
 
 
 
-def _replay_startup_context(packet: Mapping[str, Any]) -> dict[str, Any]:
+def _replay_startup_context(
+    packet: Mapping[str, Any], skeleton: Mapping[str, Any]
+) -> dict[str, Any]:
     """Return a path-only receipt; Codex reads the exact packet as a local file."""
 
     encoded = json.dumps(
@@ -274,11 +223,24 @@ def _replay_startup_context(packet: Mapping[str, Any]) -> dict[str, Any]:
         allow_nan=False,
         separators=(",", ":"),
     ).encode("utf-8")
+    skeleton_encoded = json.dumps(
+        skeleton,
+        sort_keys=True,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
     return {
-        "protocol": "intentir.scrc.replay-startup-view.v2",
+        "protocol": "intentir.scrc.replay-startup-view.v3",
         "packet_bytes": len(encoded),
+        "skeleton_bytes": len(skeleton_encoded),
         "paths": {
             "packet": "input/packet.json",
+            "skeleton": "input/skeleton.json",
+            "binding_contract": "input/BINDING_CONTRACT.md",
+            "binding": "work/replay.binding.json",
+            "binding_blocks": "work/binding/*.source",
+            "binding_source_map": "work/replay.binding.source-map.json",
             "public_contract": "input/REPLAY_CONTRACT.md",
             "tool_contract": "input/TOOL.md",
             "composer": "work/composer/*.source",
@@ -356,6 +318,7 @@ class CodexCLIReplayWriter:
             masked=masked,
         )
         agent_packet = _agent_replay_packet(packet)
+        skeleton = build_replay_skeleton(packet).to_json()
         files["packet.json"] = json.dumps(
             agent_packet,
             sort_keys=True,
@@ -380,18 +343,46 @@ class CodexCLIReplayWriter:
         composer_dir = workspace.scratch_dir / "composer"
         composer_dir.mkdir()
         composer_manifest = workspace.scratch_dir / "replay.compose.json"
+        binding_path = workspace.scratch_dir / "replay.binding.json"
+        binding_dir = workspace.scratch_dir / "binding"
+        binding_dir.mkdir()
+        binding_source_map_path = workspace.scratch_dir / "replay.binding.source-map.json"
+        compact_plan = build_replay_compact_plan(skeleton)
+        _atomic_write_text(
+            binding_path,
+            json.dumps(
+                compact_plan.scaffold(),
+                indent=2,
+                sort_keys=False,
+                ensure_ascii=False,
+                allow_nan=False,
+            )
+            + "\n",
+        )
+        for block in compact_plan.blocks:
+            _atomic_write_text(
+                binding_dir / f"{block['id']}.source",
+                "# Fill only target statements for this fixed block.\n"
+                + "# J: "
+                + ", ".join(block["semantic_refs"])
+                + "\n# pi: "
+                + ", ".join(block["realization_refs"])
+                + "\n",
+            )
         turns: list[CodexCLITurn] = []
         checks: list[dict[str, Any]] = []
         compile_checks: list[dict[str, Any]] = []
         ttir_inspections: list[dict[str, Any]] = []
         packet_queries: list[dict[str, Any]] = []
+        skeleton_queries: list[dict[str, Any]] = []
         composer_events: list[dict[str, Any]] = []
+        binding_events: list[dict[str, Any]] = []
         timeout_events: list[dict[str, Any]] = []
         source_text = ""
         formal_ingress = None
         formal_compile = None
         last_checked_good: str | None = None
-        startup_context = _replay_startup_context(agent_packet)
+        startup_context = _replay_startup_context(agent_packet, skeleton)
         synthetic_compiler = (
             None
             if self.compile_checker is not None
@@ -552,6 +543,104 @@ class CodexCLIReplayWriter:
                 last_checked_good = current
             return response
 
+        def read_target_binding() -> Any:
+            if binding_path.is_symlink() or not binding_path.is_file():
+                raise ValueError("work/replay.binding.json must be a regular file")
+            raw = binding_path.read_bytes()
+            if not 1 <= len(raw) <= _MAX_REPLAY_BYTES:
+                raise ValueError("Replay target binding is outside the public size bound")
+            value = json.loads(raw.decode("utf-8"))
+            if not isinstance(value, Mapping):
+                raise TypeError("Replay target binding root must be an object")
+            expected_names = {f"{item['id']}.source" for item in compact_plan.blocks}
+            paths = list(binding_dir.iterdir())
+            if {path.name for path in paths} != expected_names:
+                raise ValueError(
+                    "work/binding must contain exactly the generated source blocks"
+                )
+            sources: dict[str, str] = {}
+            total = 0
+            for path in paths:
+                if path.is_symlink() or not path.is_file():
+                    raise ValueError("Replay source blocks must be regular files")
+                source_raw = path.read_bytes()
+                total += len(source_raw)
+                if total > _MAX_REPLAY_BYTES or b"\x00" in source_raw:
+                    raise ValueError("Replay source blocks are outside the public bound")
+                sources[path.stem] = source_raw.decode("utf-8")
+            return parse_replay_compact_binding(skeleton, value, sources=sources)
+
+        def binding_check_tool() -> Mapping[str, Any]:
+            try:
+                binding = read_target_binding()
+                response: dict[str, Any] = {
+                    "protocol": "intentir.replay-compact-binding-check.v2",
+                    "status": "pass",
+                    "block_count": len(binding.blocks),
+                    "semantic_ref_count": sum(
+                        len(item["semantic_refs"]) for item in binding.blocks
+                    ),
+                    "realization_ref_count": sum(
+                        len(item["realization_refs"]) for item in binding.blocks
+                    ),
+                    "authority": (
+                        "exact generated-scaffold validation only; no target choice, "
+                        "source generation, repair, Gate, or certification"
+                    ),
+                }
+            except (OSError, UnicodeError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                response = {
+                    "protocol": "intentir.replay-compact-binding-check.v2",
+                    "status": "fail",
+                    "diagnostic": f"{type(exc).__name__}: {exc}",
+                    "authority": (
+                        "closed target-binding validation only; no target choice, "
+                        "source generation, repair, Gate, or certification"
+                    ),
+                }
+            binding_events.append(
+                {"action": "check", "status": response.get("status")}
+            )
+            return response
+
+        def binding_render_tool() -> Mapping[str, Any]:
+            try:
+                binding = read_target_binding()
+                rendered = render_replay_structural_binding(skeleton, binding)
+                _atomic_write_text(workspace.replay_path, rendered.source)
+                _atomic_write_text(
+                    binding_source_map_path,
+                    json.dumps(
+                        [dict(item) for item in rendered.source_map],
+                        indent=2,
+                        sort_keys=True,
+                        ensure_ascii=False,
+                        allow_nan=False,
+                    )
+                    + "\n",
+                )
+                response = rendered.to_response()
+                response["rendered_path"] = "output/replay.source"
+                response["source_map_path"] = "work/replay.binding.source-map.json"
+            except (OSError, UnicodeError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                response = {
+                    "protocol": "intentir.replay-structural-render.v2",
+                    "status": "fail",
+                    "diagnostic": f"{type(exc).__name__}: {exc}",
+                    "authority": (
+                        "agent-authored target block rendering only; no computation "
+                        "selection, semantic inference, repair, Gate, or certification"
+                    ),
+                }
+            binding_events.append(
+                {
+                    "action": "render",
+                    "status": response.get("status"),
+                    "source_bytes": response.get("source_bytes"),
+                }
+            )
+            return response
+
         def composer_status_tool() -> Mapping[str, Any]:
             try:
                 response = _composer_response(
@@ -666,6 +755,14 @@ class CodexCLIReplayWriter:
                     "exact bounded packet projection only; no Source, semantic "
                     "inference, realization choice, code generation, or Gate authority"
                 ),
+            }
+
+        def skeleton_query_tool(arguments: tuple[str, ...]) -> Mapping[str, Any]:
+            value = query_replay_skeleton(skeleton, arguments)
+            skeleton_queries.append({"query": list(arguments)})
+            return {
+                **value,
+                "authority": value.get("authority", skeleton.get("authority")),
             }
 
         def replay_ttir_inspect_tool(
@@ -827,11 +924,14 @@ class CodexCLIReplayWriter:
                 "replay_check": replay_check_tool,
                 "replay_compile_check": replay_compile_tool,
                 "submit_replay": submit_replay_tool,
+                "binding_check": binding_check_tool,
+                "binding_render": binding_render_tool,
                 "composer_status": composer_status_tool,
                 "composer_render": composer_render_tool,
             },
             argument_handlers={
                 "packet_query": packet_query_tool,
+                "skeleton_query": skeleton_query_tool,
                 "replay_ttir_inspect": replay_ttir_inspect_tool,
             },
         )
@@ -1012,7 +1112,9 @@ class CodexCLIReplayWriter:
                 "replay_compile_check": compile_checks,
                 "replay_ttir_inspections": ttir_inspections,
                 "packet_queries": packet_queries,
+                "skeleton_queries": skeleton_queries,
                 "composer_events": composer_events,
+                "binding_events": binding_events,
                 "timeout_events": timeout_events,
                 "explicit_submission_accepted": explicit_submission_accepted,
                 "tool_bridge": bridge.evidence,
@@ -1086,7 +1188,9 @@ class CodexCLIReplayWriter:
                 "replay_compile_check": compile_checks,
                 "replay_ttir_inspections": ttir_inspections,
                 "packet_queries": packet_queries,
+                "skeleton_queries": skeleton_queries,
                 "composer_events": composer_events,
+                "binding_events": binding_events,
                 "timeout_events": timeout_events,
                 "tool_bridge": bridge.evidence,
                 "failure_class": type(exc).__name__,

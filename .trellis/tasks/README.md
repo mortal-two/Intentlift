@@ -5,18 +5,21 @@ Trellis CLI、自动 session 或 workflow phase。
 
 ## 当前任务
 
-Task 11 继续作为不停止的28-Kernel闭合主线。Task 16 在当前23/28 evidence基线上重构J-led minimal π
-与Replay agent内部composer，闭合剩余五项；若新路径足够轻，再让原先22项统一经过新composer。
-production backend仍只在SCRC后消费J+C，并与本任务分离。
+Task 11 继续作为不停止的 28-Kernel 闭合主线。Task 18 在当前 24/28 严格基线上建立
+`J -> read-only S_J` SemanticMaterializer，并让 fresh Replay Compiler Agent 在 π 约束下编写完整
+目标源码。Task 16/17 的 fragment、hole、binding 与 fixed structural renderer 路线已经归档。
+production backend 仍只在 SCRC 后消费 J+C，不读取 π。
 
 - [Task 11：SCRC v4 的 28-Kernel 有界并行全闭合](07-24-scrc-v4-full-closure-11/task.md)（执行中；闭合主线）
-- [Task 16：J 主导的最小约束 π / Replay 内部 Composer 与 28-Kernel 最终闭合](07-31-j-led-minimal-pi-replay-composer-16/task.md)（执行中）
+- [Task 18：J SemanticMaterializer 与 π 约束 Replay Compiler Agent](07-31-j-semantic-materializer-replay-compiler-agent-18/task.md)（设计完成；待实现）
 
 ## 本轮已归档任务
 
-Task 01–10、Task 12–15 均已结束并迁入 `archive/2026-07/`。其中任务正文与 evidence 是历史记录，不再作为
+Task 01–10、Task 12–17 均已结束并迁入 `archive/2026-07/`。其中任务正文与 evidence 是历史记录，不再作为
 当前执行状态或后继调度的权威来源。
 
+- [Task 17：Typed Skeleton / LLM Target Binding Composer（已由 Task 18 取代）](archive/2026-07/07-31-typed-skeleton-llm-binding-composer-17/task.md)
+- [Task 16：J 主导最小 π / Replay 内部 Composer（已由 Task 18 取代）](archive/2026-07/07-31-j-led-minimal-pi-replay-composer-16/task.md)
 - [Task 15：Compiler-Observed Lift / Closed J / Source-Blind Replay（23/28后由Task 16接管）](archive/2026-07/07-29-compiler-observed-scrc-closure-15/task.md)
 - [Task 14：Source-Grounded Certification Profile 与 Codex 28-Kernel Fresh SCRC（已结束）](archive/2026-07/07-27-codex-parametric-28-closure-14/task.md)
 - [Task 13：Lightweight Single-Owner MiniSWE / Codex Agent Runtime（工程完成）](archive/2026-07/07-27-lightweight-miniswe-codex-runtime-13/task.md)
