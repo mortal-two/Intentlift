@@ -57,6 +57,7 @@ canonicalizer消费。
 - [ ] sensitive numeric/state/control relation必须由 J/B authorization约束，默认不 normalize；
 - [ ] TypeCheck 同步版本化，但不读取 Source observation或自动推导 π；Gate1 另做二侧 applicability receipt；
 - [ ] 记录 proposed/used/unused π 与 exact coverage receipt；证书只认证 used clauses。
+- [x] 第一阶段不改 π wire；normalization capability、recognizer 与 coverage receipt 留在 profile/runtime metadata，只有真实 anchor 缺口才版本化最小 generic 扩展。
 
 ## 5. P3：Frontend-local π-relative Observer
 

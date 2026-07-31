@@ -271,6 +271,19 @@ normalizer 的二侧 applicability receipt 决定。这不是重新 Lift Source�
 完备验证器：它只检查某个已经提交的、窄类型 relation 是否满足该 profile 的局部闭合前提；无法
 局部匹配就保持 residual hard。
 
+### 6.1 当前不改 π wire
+
+Task 20 的第一阶段不新增 π 顶层对象、target recipe、`allowed_diff`、`normalizable` 标记或
+observer-specific 字段。现有 `regions/instances/routes/order/sharing/iterations/carriers/
+terminal_controls` 等关系继续由 Lift 完整作者化；它们从“Replay construction obligation”改为
+“Gate1 candidate witness”，其中绝大多数先保持 `witness_only`。
+
+`normalizable/conditional` 状态、二侧 recognizer、erasable atom allowlist 与 canonical replacement
+属于 profile/version 的固定 metadata，不写进 π。`used/unused/covered/residual` 属于 Gate1
+proof-irrelevant receipt，也不是第四 artifact。只有在真实 vertical slice 证明现有 relation 没有
+稳定 typed anchor/scope 时，才另行提出最小、版本化的 generic anchor 扩展；不得为了预想的 kernel
+或某个 frontend 预先加字段。这样可以改变 π 的消费位置而不改变 Lift 的语义表达或信息边界。
+
 ## 7. π-relative Canonicalizer 的硬性质
 
 每个 `(f,p,ν)` 实现必须满足：
