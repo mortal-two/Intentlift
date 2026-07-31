@@ -211,6 +211,9 @@ def _render_grouped_route_composer(
     seen_slots: dict[tuple[str, int], int] = {}
     seen_dependencies: dict[tuple[str, int], int] = {}
     out_counts: dict[str, int] = {}
+    output_positions: dict[str, int] = {}
+    slot_positions: dict[tuple[str, int], int] = {}
+    dependency_positions: dict[tuple[str, int], int] = {}
     first_positions: dict[str, int] = {}
     rendered: list[ComposerFragment] = []
     absolute_position = 0
@@ -235,6 +238,9 @@ def _render_grouped_route_composer(
                         f"bound signature instance {instance} cannot define an output"
                     )
                 out_counts[instance] = out_counts.get(instance, 0) + 1
+                output_positions.setdefault(
+                    instance, absolute_position + token.start()
+                )
                 symbol = symbols[instance]
             else:
                 if ordinal_text is None:
@@ -250,6 +256,9 @@ def _render_grouped_route_composer(
                         )
                     key = (instance, ordinal)
                     seen_slots[key] = seen_slots.get(key, 0) + 1
+                    slot_positions.setdefault(
+                        key, absolute_position + token.start()
+                    )
                 else:
                     incoming = dependencies.get(instance, [])
                     if ordinal >= len(incoming):
@@ -259,6 +268,9 @@ def _render_grouped_route_composer(
                     source = incoming[ordinal]
                     key = (instance, ordinal)
                     seen_dependencies[key] = seen_dependencies.get(key, 0) + 1
+                    dependency_positions.setdefault(
+                        key, absolute_position + token.start()
+                    )
                 symbol = symbols[source]
             marker = f"_intentir_placeholder_{len(rendered)}_{len(substitutions)}"
             if marker in fragment.text:
@@ -333,6 +345,36 @@ def _render_grouped_route_composer(
     if repeated_outputs:
         raise ValueError(
             f"grouped instance outputs must be unique: {repeated_outputs[:24]}"
+        )
+    late_routes: list[str] = []
+    for target, slots in inbound.items():
+        for slot, source in slots.items():
+            if source in bindings:
+                continue
+            producer_position = output_positions.get(source)
+            consumer_position = slot_positions.get((target, slot))
+            if (
+                producer_position is None
+                or consumer_position is None
+                or producer_position >= consumer_position
+            ):
+                late_routes.append(f"{source}->{target}[slot:{slot}]")
+    for target, sources in dependencies.items():
+        for ordinal, source in enumerate(sources):
+            if source in bindings:
+                continue
+            producer_position = output_positions.get(source)
+            consumer_position = dependency_positions.get((target, ordinal))
+            if (
+                producer_position is None
+                or consumer_position is None
+                or producer_position >= consumer_position
+            ):
+                late_routes.append(f"{source}->{target}[dep:{ordinal}]")
+    if late_routes:
+        raise ValueError(
+            "grouped route source must be defined before its target use: "
+            + ", ".join(late_routes[:24])
         )
     for relation in order:
         before = relation.get("before")

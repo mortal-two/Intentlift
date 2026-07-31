@@ -90,7 +90,8 @@ artifact 的独立 Gate2 recheck 冒充最终 28/28 交付。
 - [x] 资源边界用 wall-time/context/formal round，不用极小工具调用上限打断 coding loop。
 - [x] 小型 packet 可直接维护完整源码；route-heavy packet 使用 v2 grouped route composer，以少量
   lexical region/block fragments 显式消费 `out:iK/slot:iK:N/dep:iK:N`，禁止每个 occurrence 一个文件。
-  renderer 只分配局部名并检查既有 route/order/sharing，不生成 op、表达式、control 或 API。
+  renderer 只分配局部名并检查既有 route 的 definition-before-use/order/sharing，不重排，也不生成
+  op、表达式、control 或 API。
 - [x] 删除 Triton 的 relation/op-to-target 长 RuleCard；`U_f` 只保留短 ABI，避免固定 recipe 与
   12 KiB 无关注意力负担。
 - [x] `requirements` 以 declaration order 原样列出每个 J node 的

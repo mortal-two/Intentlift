@@ -134,7 +134,8 @@ host 只提供通用、syntax-only 的能力：
 `slot` 对应目标 iK 的显式 operand slot，`dep` 只按该 target 的 empty-slot route 声明顺序编号。固定
 renderer 只能沿这些显式、唯一的 route 代入稳定 local ID，并核对 sharing/order。fragment 内调用
 什么 API、写什么表达式、建立何种 control 仍完全由 agent 根据 J 选择。缺 route use、重复 slot、
-未定义 instance 或 order 冲突均 fail closed；renderer 不从 semantic_ref 生成任何 target statement。
+producer 晚于 consumer、未定义 instance 或 order 冲突均 fail closed；renderer 不重排，也不从
+semantic_ref 生成任何 target statement。
 
 host 不得提供：
 
