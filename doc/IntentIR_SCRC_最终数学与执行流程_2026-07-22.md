@@ -506,7 +506,7 @@ Source/Replay observation 可能形成 residual，但 Gate1 不认证 π complet
 
 首版不需要让 TypeCheck 成为 SMT 或完整图证明器。最小可行实现只需 fail closed 地完成上述局部检查。
 
-Task 20 当前活动路径为 `replay-input.v3 / replay-check.v15 / MiniSWE Replay v34 / Codex Replay v64`：
+Task 20 当前活动路径为 `replay-input.v3 / replay-check.v15 / MiniSWE Replay v34 / Codex Replay v65`：
 Replay workspace 只挂载 J-only `S_J`、只并置现有 J/MaskC 引用的 compiler index、MaskC 与 `U_f`；
 compiler index 不推导 schedule 或新语义；π view、π query、obligation audit 和
 π-dependent construction membership 已从活动 Replay 路径删除。Gate1 使用
@@ -514,6 +514,8 @@ compiler index 不推导 schedule 或新语义；π view、π query、obligation
 `intentir.gate1.jc-normalizer.v2`，只在两臂 raw observation 之后执行固定单边 normalization。
 Replay own-TTIR 工具可显示由 J-only `S_J` 直接投影的 typed obligation 与当前 Replay fingerprint；
 它只用于同一 Agent 自修 dtype/axis/carrier，不读取 Source/π/Gate，也不能替代正式 Gate1。
+Codex submit 可对无 alias 歧义且已有显式 J boundary effect 的匿名参数检查 own-TTIR read/write mode；
+这只是 J-only necessary rejection，不能验证地址公式、算法语义或候选 membership。
 当前 v2 保留 `program_axes` hard，因为只折叠物理 axis label 可能掩盖
 logical-domain/physical-axis 交换；新 quotient 必须先建立观察 occurrence 到 J domain 的
 唯一 typed anchor。

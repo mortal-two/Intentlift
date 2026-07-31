@@ -963,7 +963,7 @@ peer observation 或两臂 diff，不能擦除 J/C-owned facts；Gate1 不证明
 也不能作为 J-only path 已实现的证据。历史流程曾要求 Agent 全局消费 π，但该要求已经废止。
 
 Task 20 当前 fresh Replay packet 为 `intentir.scrc.replay-input.v3`，MiniSWE Replay v34、Codex Replay
-v64、`replay-check.v15`；只读 J-only semantic view 为
+v65、`replay-check.v15`；只读 J-only semantic view 为
 `intentir.replay-semantic-program.v3`，另有只并置现有 J/MaskC 引用的
 `intentir.replay-compiler-index.v1`。`replay-input.v2`、MiniSWE v31、Codex v55 与其中的 π view/query
 均为下述历史记录；旧 receipt 保持其原 verdict，不能由

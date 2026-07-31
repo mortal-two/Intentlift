@@ -29,7 +29,7 @@ from intentir.extraction.providers.client import (
 )
 from intentir.extraction.providers.provider import ProviderConfig, get_provider
 from intentir.verify.gate1.compiler import KernelSource, TritonCompiler
-from intentir.verify.gate1.ttir import fingerprint_ttir
+from intentir.verify.gate1.ttir import fingerprint_ttir, runtime_argument_names
 
 from .model import Frontend, Gate1Artifact
 from .replay_semantic_core import (
@@ -50,7 +50,7 @@ from .replay import (
 )
 
 
-CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v64"
+CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v65"
 
 _INITIAL_PROMPT = """You are the sole writer for one fresh source-blind IntentIR Replay episode.
 Work only under the isolated /workspace. input/ is immutable; output/, work/, and
@@ -88,7 +88,9 @@ again when a concrete J obligation remains unclear; use targeted `find`, `raw`, 
 alternatives inside their branch and do not add unmentioned `volatile`, cache,
 eviction, or other target attributes. Then run
 `submit_replay` on the reviewed exact bytes and repair until it
-passes. Fixed code materializes S_J, projects exact packet facts, checks and rejects;
+passes. Submit also rejects an unambiguous read/write-mode contradiction between an
+explicit J boundary effect and your own compiled TTIR. Fixed code materializes S_J,
+projects exact packet facts, checks and rejects;
 it never constructs or repairs target source. Finish only with the transaction passing
 and do not claim Gate1, Gate2, or certification.
 """
@@ -321,6 +323,110 @@ def _j_contract_summary(semantic_program: Mapping[str, Any]) -> dict[str, Any]:
         ),
         "outputs": semantic_program.get("output_bindings", []),
     }
+
+
+def _j_boundary_effect_diagnostics(
+    semantic_program: Mapping[str, Any],
+    fingerprint: Mapping[str, Any],
+    runtime_names: tuple[str, ...],
+) -> list[dict[str, Any]]:
+    """Reject only unambiguous J-boundary read/write contradictions.
+
+    The check consumes this episode's J-only ``S_J`` and Replay's own compiled
+    interface.  It does not inspect Source, pi, Gate state, address formulas, or
+    peer observations, and it cannot accept Replay.  Alias groups and incomplete
+    boundary effect sets remain outside this narrow necessary condition.
+    """
+
+    signature = semantic_program.get("signature", {})
+    raw_parameters = (
+        signature.get("parameters", [])
+        if isinstance(signature, Mapping)
+        else []
+    )
+    parameters = {
+        str(item["name"]): item
+        for item in raw_parameters
+        if isinstance(item, Mapping) and isinstance(item.get("name"), str)
+    }
+    refs: Counter[str] = Counter(
+        str(item.get("logical_ref"))
+        for item in parameters.values()
+        if isinstance(item.get("logical_ref"), str)
+    )
+    boundary = semantic_program.get("boundary", {})
+    raw_effects = (
+        boundary.get("effects", []) if isinstance(boundary, Mapping) else []
+    )
+    effect_modes: dict[str, set[str]] = {}
+    for effect in raw_effects if isinstance(raw_effects, list) else []:
+        if not isinstance(effect, Mapping) or not isinstance(effect.get("target"), str):
+            continue
+        kind = effect.get("kind")
+        modes = effect_modes.setdefault(str(effect["target"]), set())
+        if kind in {"read", "read_write"}:
+            modes.add("read")
+        if kind in {"write", "read_write"}:
+            modes.add("write")
+
+    interface = fingerprint.get("interface", {})
+    raw_arguments = (
+        interface.get("arguments", [])
+        if isinstance(interface, Mapping)
+        else []
+    )
+    arguments = raw_arguments if isinstance(raw_arguments, list) else []
+    if len(runtime_names) != len(arguments):
+        return [
+            {
+                "rule_code": "compiled_j_boundary_interface_unavailable",
+                "path": (
+                    "<synthetic-own-ttir> runtime-name/interface arity differs: "
+                    f"names={len(runtime_names)}, arguments={len(arguments)}"
+                ),
+                "anonymous_handles": [],
+                "line": None,
+            }
+        ]
+
+    diagnostics: list[dict[str, Any]] = []
+    for name, argument in zip(runtime_names, arguments, strict=True):
+        parameter = parameters.get(name)
+        if parameter is None or not isinstance(argument, Mapping):
+            continue
+        logical_ref = parameter.get("logical_ref")
+        if (
+            not isinstance(logical_ref, str)
+            or refs[logical_ref] != 1
+            or parameter.get("alias_of") is not None
+        ):
+            continue
+        modes = effect_modes.get(logical_ref, set())
+        expected = (
+            "inout"
+            if modes == {"read", "write"}
+            else "input"
+            if modes == {"read"}
+            else "output"
+            if modes == {"write"}
+            else None
+        )
+        actual = argument.get("access")
+        if expected is None or actual == expected:
+            continue
+        diagnostics.append(
+            {
+                "rule_code": "compiled_j_boundary_effect_mode",
+                "path": (
+                    f"<synthetic-own-ttir> {name}/{logical_ref}: "
+                    f"expected={expected}, actual={actual}"
+                ),
+                "anonymous_handles": [name, logical_ref],
+                "line": None,
+            }
+        )
+    return diagnostics[:20]
+
 
 @dataclass
 class CodexCLIReplayWriter:
@@ -603,6 +709,23 @@ class CodexCLIReplayWriter:
                     "authority": "diagnostic-only; no Replay source is generated or repaired",
                 }
             compiled = dict(replay_compile_tool())
+            necessary: Mapping[str, Any] | None = None
+            if compiled.get("status") == "pass" and synthetic_compiler is not None:
+                necessary = replay_ttir_inspect_tool(("jc",))
+                diagnostics = necessary.get("j_owned_necessary_diagnostics")
+                if isinstance(diagnostics, list) and diagnostics:
+                    return {
+                        "protocol": "intentir.codex-cli.replay-submit.v2",
+                        "status": "fail",
+                        "phase": "j_owned_necessary",
+                        "ingress": ingress,
+                        "compile": compiled,
+                        "j_owned_necessary": necessary,
+                        "authority": (
+                            "J-only necessary-condition diagnostic; no Replay source "
+                            "is generated or repaired and formal Gate1 remains external"
+                        ),
+                    }
             if compiled.get("status") == "pass":
                 explicit_submission_accepted = True
                 accepted_submission_event.set()
@@ -711,6 +834,13 @@ class CodexCLIReplayWriter:
                         "ttir_lines": len(lines),
                         "j_contract": _j_contract_summary(semantic_program),
                         "jc": _jc_fingerprint_summary(fingerprint),
+                        "j_owned_necessary_diagnostics": (
+                            _j_boundary_effect_diagnostics(
+                                semantic_program,
+                                fingerprint,
+                                runtime_argument_names(ttir),
+                            )
+                        ),
                     }
                 elif mode == "summary":
                     fingerprint = observation.get("fingerprint")

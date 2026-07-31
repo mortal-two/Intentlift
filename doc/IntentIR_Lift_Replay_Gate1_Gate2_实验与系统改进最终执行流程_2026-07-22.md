@@ -948,12 +948,15 @@ Replay 不得：
 π 输入，也不能把旧 construction check 当作当前 J-only path 的正确性证据。
 
 Task 20 当前活动组合是 `intentir.scrc.replay-input.v3`、source-blind MiniSWE Replay v34 / Codex Replay
-v64、`intentir.replay-semantic-program.v3`、`intentir.replay-compiler-index.v1` 与
+v65、`intentir.replay-semantic-program.v3`、`intentir.replay-compiler-index.v1` 与
 `replay-check.v15`。packet 只有 J、MaskC 与 `U_f`；compiler index 只并置两者已有引用，不增加输入；
 construction preflight 只检查当前 packet closure、source isolation、ABI、compile 与 raw-observer definedness。
 Codex 的 own-TTIR `jc` 视图还并置 J-only typed contraction/reduction/loop/cast obligation 与当前 Replay
 fingerprint，供同一 source-blind owner 在提交前发现 dtype、axis 或 carrier 错误；该视图不读取 Source、
 π 或 Gate，也不签发 membership verdict。
+`submit_replay` 只额外拒绝一种闭合的 J-owned 必要条件：若无 alias 歧义且 J boundary 已显式声明某
+logical tensor 的 read/write effect，Replay 自身 TTIR 的对应匿名参数 access mode 必须一致；该检查
+不能接受候选，也不检查地址、算法或 Source 等价。
 下述 v2/v31/v55/v14 组合均为历史，旧版本 run 不能被新组合追认。
 v30/v26 把 authored target-local route extent transform 纳入 exact ledger、audit 与 closed
 floor/ceil-div static ingress；v55 继续该检查，不生成 relation/code，也不替代 Gate1。host launch/grid

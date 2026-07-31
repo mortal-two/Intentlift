@@ -140,6 +140,9 @@ v63 fixed-artifact recheck 进一步区分出两类 residual：Llama Replay 以 
 闭合的物理表示问题；Flash forward Replay 的 `tt.dot` operand dtype 则由 J-authored f16 变成 f32，
 属于必须修 Replay、不能归一化的 J-owned 错误。v64 因此让 own-TTIR `jc` 视图直接并置 J-only typed
 contraction/reduction/loop/cast obligation 与当前 fingerprint，仍不读取 Source、π、Gate 或给出 verdict。
+v64 fixed-artifact 输出随后把 J 中 `p6/t4` 的显式 read+write scratch effect 写成 write-only，正式
+Gate1 在 interface 处正确拒绝。v65 将这一种无 alias 歧义的 J-boundary/own-TTIR access-mode 矛盾
+纳入 submit 前 necessary rejection；它不检查 Source、地址公式或算法等价，仍不能接受候选。
 
 Flash forward 还暴露出 RefJ functional boundary 把合法 rank-0/inout reload 误当成“多余 tensor
 load”的覆盖判断错误；现改为只要求所有 live tensor input 被覆盖，额外 access 仍须逐项通过原有
