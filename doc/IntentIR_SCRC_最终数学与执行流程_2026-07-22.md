@@ -533,7 +533,8 @@ compile 从 program region 中沿作者化 route 到达 `address_base` 或控制
 v3 历史上引入 `pi.iterations`；v4 引入 J-owned `value_dimension_relations`、
 `consumer_extensions` 等 typed relations；v5 引入 J-owned `access_guard_relations`；v6/v7 分别引入
 typed `effect_if/value_if`；v8 增加 π-owned `physical_iterations/physical_loop_carriers`；v9 增加
-π-owned `terminal_controls`，只为 J 已存在的 `effect_if` 指定 terminal/continuation arm topology；
+π-owned `terminal_controls`：它既可为 J 已存在的 `effect_if` 指定 terminal/continuation arm topology，
+也可把 authored program domain 与其 existing continuation region 配对以声明域外终止；
 v10 增加依附既有 C/J/route 的 closed `route_extent_transforms`，v11增加J-owned closed
 `dimension_relations`。后者只含identity、常数加/乘、常数ceil-div与round-up的acyclic grammar，
 consumer只能验证/求值，不从Harness/grid/C/π/TTIR生成。v12增加π-owned closed

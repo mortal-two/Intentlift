@@ -925,8 +925,9 @@ Replay LLM 应遵守以下过程合同：
 9. 按 `iterations` 保留 structured J loop 的物理 induction basis；
 10. 按 `physical_iterations/physical_loop_carriers` 保留 structured J loop 外、由已有
    reduce/contraction 或 boundary access/domain 锚定的物理 tile time；
-11. 按 `terminal_controls` 将已作者化 `effect_if` 的 terminal arm 与 lexical continuation
-    materialize 为 terminal CFG，不从臂内容猜 role；
+11. 按 `terminal_controls` 将已作者化 `effect_if` 的 terminal arm/lexical continuation，或 authored
+    program domain 的 continuation/domain-complement，materialize 为 terminal CFG；不从臂内容猜 role，
+    也不在 π 外另猜 predicate；
 12. 按 representation refinements 保留 source materialization/placement；其中
     `reduction_linearization` 精确保留经唯一 slot-0 route 进入 J reduce 的全轴线性化；
 13. 遇到 J semantic ref 时从 J 查询当前语义 label；

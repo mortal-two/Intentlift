@@ -83,8 +83,9 @@ transfer ref，但每个 transfer 必须从匹配 boundary tensor 的 pointer/te
 compiled `tt.get_program_id` occurrence；artifact v12还按π作者化的`program_axes{domain_ref,axis}`核对
 精确launch axis，不从声明顺序/grid/C猜测；同一 `p*` 的多个 π instance 始终共享一个既有 ABI carrier，
 placement 本身不产生 program coordinate。domain-owned branch 至少要求 compiled structured branch，
-`terminal_controls` 至少要求 compiled terminal conditional；两项都只拒绝最低结构，不选择条件、arm
-或目标写法。
+`terminal_controls` 至少要求 compiled terminal conditional；若同一 `(domain,region)` 被声明为域外
+终止，它只计 terminal、不能再重复计普通 branch。上述检查都只拒绝最低结构，不选择条件、arm 或
+目标写法。
 且每个 pointer-producing address stage 必须流向至少一个 transfer。无法闭合的 topology 不猜，不读取
 Source，也不生成地址公式。`typecheck.v30`新增双臂完整store的J-only conditional post-state
 output binding，v29新增program-axis completeness dependent check，v28新增closed
