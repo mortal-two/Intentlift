@@ -1020,9 +1020,11 @@ def _legacy_pi_schema() -> dict[str, Any]:
 def _pi_schema() -> dict[str, Any]:
     """Active, certification-only pi subwire offered to Lift.
 
-    Every accepted field has a fixed unary Gate1 normalization semantics.  The
-    legacy realization graph is intentionally absent: new Lift candidates do
-    not serialize regions, instances, routes, carriers, or target recipes.
+    Every accepted field has a closed typed meaning.  A profile may normalize it
+    only after implementing a sound unary anchor matcher; the current profile
+    keeps program axes hard.  The legacy realization graph is intentionally
+    absent: new Lift candidates do not serialize regions, instances, routes,
+    carriers, or target recipes.
     """
 
     program_axis = _closed_object(
@@ -1030,7 +1032,7 @@ def _pi_schema() -> dict[str, Any]:
             "domain_ref": {
                 "type": "string",
                 "pattern": "^d[0-9]+$",
-                "description": "Declared J boundary domain whose physical launch-axis label may be normalized.",
+                "description": "Declared J boundary domain directly observed on this physical launch axis; the current profile keeps the binding hard.",
             },
             "axis": {
                 "type": "integer",
@@ -1049,8 +1051,9 @@ def _pi_schema() -> dict[str, Any]:
         ("schema", "program_axes"),
         description=(
             "Compact Gate1-only normalization witness. It never enters Replay. "
-            "Author only observed program-axis labels anchored in J; use an empty "
-            "array when no fixed axis-label quotient applies."
+            "Author only directly observed, unambiguous program-axis labels anchored "
+            "in J; use an empty array otherwise. A row does not itself authorize "
+            "normalization, and the current profile keeps it hard."
         ),
     )
 

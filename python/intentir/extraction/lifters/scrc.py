@@ -1068,10 +1068,12 @@ has no result/yield; arm-local SSA never escapes. scope.effects plus matching
 EffectSpec/access_ref is sole membership and cannot overlap access_guard.
 If Source control only multiplexes one physical program axis across multiple
 already-authored J logical domains, it is realization rather than a new Layer-A
-predicate. Keep the computations/effects in J, bind each distinct d* once in
-pi.program_axes (several d* may share the same physical axis). The J domain
-remains the sole condition; pi carries no comparison, extent, polarity, terminal
-control, or frontend spelling. Do not invent constant true/false effect_if
+predicate. Keep the computations/effects in J. A compact pi.program_axes row may
+record one directly observed, unambiguous d*-to-axis binding (several d* may share
+the same physical axis), but the current Gate1 profile keeps that identity hard and
+does not use it to rewrite observation. The J domain remains the sole condition;
+pi carries no comparison, extent, polarity, terminal control, or frontend spelling.
+Do not invent constant true/false effect_if
 predicates. Source early return driven by an ordinary authored scalar predicate
 must remain explicit J control; compact pi cannot hide or reconstruct it.
 Preserve selected-helper literal memory order in J scope.effects; node order is
@@ -1117,7 +1119,9 @@ a p* parameter, source/local, or J-body v*.
 
 Pi is a compact, certification-only normalization witness and never enters
 Replay. Emit exactly two fields: its fixed schema string and program_axes. Use
-an empty program_axes array when the fixed axis-label quotient does not apply.
+an empty program_axes array unless Source TTIR directly and unambiguously grounds
+a declared J domain to one launch axis. The current profile keeps authored rows
+hard; they do not relax Gate1 until a future profile has a sound typed anchor matcher.
 Each program_axes row binds one declared J domain d* to the physical Source/TTIR
 launch axis 0, 1, or 2. Several domains may share an axis; one domain appears at
 most once. Never infer the axis from grid, C, names, or concrete extents.
