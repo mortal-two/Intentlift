@@ -18,8 +18,18 @@ agent:
     preserving J semantics and every exact pi obligation. Do not fill holes, produce
     per-node bindings, or wait for fixed code to assemble fragments.
 
+    A `program_linearizations` row has the protocol-fixed row-major mixed-radix
+    denotation. Decode every listed logical coordinate before address construction;
+    never substitute the flattened program ordinal for one component.
+    The occurrence ledger colocates exact local S_J anchors. Reconcile each loop's
+    trip/scan/carry/yield and each access's tensor/index order with its exact pi routes;
+    never assign an anonymous p* carrier to an axis by ABI position alone.
+
     Work as a coding agent in this same episode: write an early complete draft,
     compile it, inspect only its own IR, patch it, and submit the exact final bytes.
+    A `route_extent_transforms` row is a target-local physical extent use, not a hidden
+    launch-grid relation; consume it only on its authored route slot. Keep inactive
+    constexpr computations inside their branch.
     ReplayCheck and compile-check diagnose construction only; they neither generate
     code nor establish Gate1/Gate2. Model/tool counts are telemetry; wall time governs
     the episode. Keep prose short and never claim certification.
@@ -41,9 +51,10 @@ agent:
 
     Submit a complete source with `submit_replay(source_text)` or by writing the
     single output file and calling `intentir_replay_submit /output/replay.source`.
-    Use `intentir_replay_compile_check /output/replay.source` and
-    `intentir_replay_inspect` to repair your own program. Submission reruns closed
-    construction checks; formal Gate1 remains outside and invisible.
+    Use `intentir_replay_compile_check /output/replay.source`, then inspect your own
+    TTIR before submission and remove compiler-visible address, predicate, control or
+    arithmetic work or target attributes not authorized by S_J/pi. Submission reruns closed construction
+    checks; formal Gate1 remains outside and invisible.
 
   step_limit: 0
   cost_limit: 0

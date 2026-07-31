@@ -56,8 +56,9 @@ occurrence。完整闭包允许独立 integer base/lane contribution，且不要
 使用相同 `semantic_ref` spelling；它要求每个 transfer 从匹配 boundary tensor 的 pointer/tensor
 signature carrier 经作者化 routes 可达，并要求每个 pointer-producing address stage 最终流向某个
 transfer；并要求 compiled distinct `tt.reshape -> tt.reduce(axis=0)` dataflow 不少于已作者化
-`reduction_linearization` 数量，并拒绝 authored route extent transform 完全缺失 closed
-floor/ceil-div spelling。精确 target-local topology 仍由 Gate1，而不是 ReplayCheck 裁决。无法闭合的
+`reduction_linearization` 数量，并拒绝 authored target-local route extent transform 完全缺失 closed
+floor/ceil-div spelling。launch-grid relation 不属于该字段；精确 target-local topology 仍由 Gate1，
+而不是 ReplayCheck 裁决。无法闭合的
 address topology 不猜。v13 还只在同一 π region 的 ordered `transfer_direct` 可分别经作者化
 routes/carrier 唯一回溯到一个 signature pointer，且 Replay 自身 TTIR 中对应 load/store occurrence
 也唯一并处于同一词法 region 时，核对其词法顺序是否遵守 `pi.order`；任一映射有歧义就不猜，留给

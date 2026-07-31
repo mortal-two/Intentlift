@@ -28,7 +28,7 @@ closed signature、Layer-A total typing、显式 broadcast、canonical reduce/co
 control/inout/output-binding/terminal-control 关系，并检查 v10 authored route-local extent transform 的
 existing-route、C/J attachment 与 closed divisor/rounding。fixed code只诊断，不翻译别名、补齐 attrs、生成 handle/relation、
 改图或修复 artifact；历史 wire/receipt 继续按自身版本读取，不静默升级或重判。当前 Agent execution
-receipt 为 `intentir.lift-knowledge.v89 / intentir.lift-knowledge.v67 / minisweagent.intentir-replay.v31 / openai.codex-cli.intentir-replay.v54`；
+receipt 为 `intentir.lift-knowledge.v89 / intentir.lift-knowledge.v67 / minisweagent.intentir-replay.v31 / openai.codex-cli.intentir-replay.v55`；
 Replay 内部 J-only 视图为 `intentir.replay-semantic-program.v1`，不是 artifact 或新输入权威；
 artifact.v11 的 `dimension_relations`只接受identity、常数加/乘、常数ceil-div与round-up的acyclic closed grammar；
 relation由Lift从Source作者化，所有J消费者只能验证/求值，不能从Harness valuation、grid、C、π或TTIR生成。
@@ -48,8 +48,8 @@ loop 的 argument/yield/result tuple 作者化该顺序，Replay 不按 dtype/re
 `replay-check.v14` 仅在 packet route
 和 Replay 自身 TTIR 都提供唯一对应时检查 ordered transfer 的词法先后，不从 Source 或 Gate 构造
 对应。当前 Replay 不再向首次模型上下文嵌入完整 packet、critical-facts ledger 或 compact manifest；
-启动消息只给 immutable 文件路径和字节数。Agent 先读取参数化 `semantic-program.intent` 与逐关系
-无损 `pi.intent`，再按需查询
+启动消息只给 immutable 文件路径和字节数。Agent 先读取 typed-SSA `semantic-program.intent` 与按
+region/occurrence交叉索引、逐关系无损的 `pi.intent`，再按需查询
 一个 exact J/S_J/π 局部事实。normal 与 MaskJ 各自从本轮可见 J fresh materialize，禁止 full-J
 `S_J` 泄漏到 masked episode。Codex Lift v12 / knowledge v70 同样直接嵌入 exact Harness ABI
 与 relift frontier，并一次并列展开非递归 direct hard categories；此外以

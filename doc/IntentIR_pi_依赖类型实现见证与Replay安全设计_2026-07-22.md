@@ -929,11 +929,12 @@ Replay Compiler Agent 应遵守以下过程合同：
 6. 不从 π 补造 J 的 operator、formula、predicate、fill、effect 或 constant，不从 compiler diff 修补，
    不等待宿主生成 target skeleton、hole、binding、fragment 或 route source。
 
-当前 fresh Replay packet 为 `intentir.scrc.replay-input.v2`；Triton 公共上下文由固定公开字段直接给出，不使用 context version、SHA 或 receipt 作为运行门禁；当前 MiniSWE Replay v31、Codex Replay v54，
+当前 fresh Replay packet 为 `intentir.scrc.replay-input.v2`；Triton 公共上下文由固定公开字段直接给出，不使用 context version、SHA 或 receipt 作为运行门禁；当前 MiniSWE Replay v31、Codex Replay v55，
 J-only semantic view 为 `intentir.replay-semantic-program.v1`；旧 receipt 保持其原 verdict，不能由
-当前 Replay consumer 或 Lift knowledge 静默升级。历史 v30/v26 将 authored route extent transforms
-加入 exact critical ledger、audit 与 static ingress，并在它单独存在时也提供可选的 exact-bytes audit；该 audit 不作为 ReplayCheck、compile 或 Gate1 前置条件；
-它不生成 relation/code，也不替代 Gate1。Codex v26 将 900 秒单 turn 与 1800 秒 fresh episode 分离，
+当前 Replay consumer 或 Lift knowledge 静默升级。v30/v26 将 authored target-local route extent
+transforms 加入 exact ledger、audit 与 floor/ceil-div static ingress；v55 继续该 closed 检查，但不
+生成 relation/code或替代 Gate1。host launch/grid 不属于该字段；错误作者化必须由 Gate1 反馈 relift。
+Codex v26 将 900 秒单 turn 与 1800 秒 fresh episode 分离，
 超时只沿同一 resumable thread 继续，不跨 episode 继承。
 
 v28/v24 与 Lift knowledge v66/v62 明确已有 ordered wire 的 tuple denotation：同一 region 中
@@ -941,7 +942,9 @@ v28/v24 与 Lift knowledge v66/v62 明确已有 ordered wire 的 tuple denotatio
 Lift 从 Source frontend loop tuple 作者化，Replay 不按 dtype/ref/mechanism 重排。该 slot order 不表示
 event execution order，也不替代 `pi.order`。当前默认 transport 不再 exact-embed packet、critical-facts
 ledger 或 manifest，也不要求 `replay-obligation-audit`；启动只给 immutable 文件路径与字节数，Agent
-先完整读取 `S_J` 与逐关系、声明序、无损的 `pi.intent`，再用 exact bounded query 定位一个交叉引用。
+先完整读取 `S_J` 与按 region/occurrence 交叉索引、逐 relation 无损的 `pi.intent`；后者可以并置
+occurrence 已引用的 exact local S_J anchor，等价于既有 bounded lookup，不增加 relation/target mapping。
+随后只在仍有歧义时用 exact bounded query 定位一个交叉引用。
 `pi.intent` 与 query 都不建立 relation-to-statement 映射、
 不选择 spelling/次数，也不生成或修复 Replay，因此只改善注意力与消费成本，不改变 π 的证明地位或
 Replay 的 LLM-first 作者权。

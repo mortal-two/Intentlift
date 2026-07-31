@@ -931,18 +931,17 @@ Replay 不得：
 `U_f` 必须是 source-neutral 的公共前端知识，不能按当前 Kernel、operator 或失败样本选择。
 当前 packet protocol 是 `intentir.scrc.replay-input.v2`；Triton 公共上下文由固定公开字段直接给出，
 不使用 context version、SHA 或 receipt 作为运行门禁。source-aware Codex/MiniSWE Lift `intentir.lift-knowledge.v89/v67`、
-source-blind MiniSWE Replay v31 / Codex Replay v54、`intentir.replay-semantic-program.v1`、
+source-blind MiniSWE Replay v31 / Codex Replay v55、`intentir.replay-semantic-program.v1`、
 `replay-check.v14`；fresh Replay 只检查当前字段、packet closure 和 source isolation，旧版本 run 不能被新组合追认。
-v30/v26 完整执行既有 authored route extent transform 合同：将其纳入 exact `critical_facts.v4`、
-`replay-obligation-audit.v3` 与 source-blind static ingress；只拒绝缺失 closed floor/ceil-div spelling，
-不生成 relation/code，也不替代 Gate1。即使不存在 broadcast/lexical/cross-region obligation，单独存在
-route extent transform 也可用可选 audit 并置当前 exact Replay bytes；audit 不作为 ReplayCheck、compile 或 Gate1 前置条件；Codex v26 另以上述 1800 秒 episode 保留
+v30/v26 把 authored target-local route extent transform 纳入 exact ledger、audit 与 closed
+floor/ceil-div static ingress；v55 继续该检查，不生成 relation/code，也不替代 Gate1。host launch/grid
+不是该 relation；错误作者化由 Gate1 反馈 persistent Lift owner relift。Codex v26 另以上述 1800 秒 episode 保留
 900 秒 turn 超时后的同-thread continuation。v29/v25 历史 receipt 保持原 verdict。
 Codex Replay v28把fresh episode总active预算提升到3600秒，并允许在已有draft且transport context过大或
 turn timeout时，在同一workspace内新建thread重读exact packet/current Replay/closed diagnostic；不做
 语义摘要、不继承跨episode Replay，并只查询自己public synthetic compile得到的TTIR。
-Codex Replay v54 使用 J-only SemanticMaterializer：启动只给 immutable 文件路径与字节数，首轮完整
-读取`semantic-program.intent`与无损、逐关系的`pi.intent`后尽早写完整Replay；不嵌入整份packet或requirements ledger，不再强制
+Codex Replay v55 使用 J-only SemanticMaterializer：启动只给 immutable 文件路径与字节数，首轮完整
+读取`semantic-program.intent`与按region/occurrence交叉索引、逐关系无损的`pi.intent`；后者可并置 occurrence 已引用的 exact local S_J anchor，但不增加 relation/target mapping。随后尽早写完整Replay；不嵌入整份packet或requirements ledger，不再强制
 `overview -> requirements -> realization`逐叶查询；query只用于一个仍不明确的精确path/handle。
 episode仍按时间而非调用次数治理：high默认1200秒，xhigh默认3600秒，episode内工具调用不设语义次数
 上限。该改动只删除proof-irrelevant编排，不摘要、补造或选择J/C/π事实。
@@ -1479,7 +1478,8 @@ reduction obligations；`replay-check.v14` 在 source-blind synthetic compile �
 `transfer_direct` occurrence 的 compiled multiplicity，并核对 structured J loops 加
 `pi.physical_iterations` 所要求的 `scf.for` 数及对应 logical/physical carrier block arity，并要求
 distinct `tt.reshape -> tt.reduce(axis=0)` dataflow 数不少于已作者化
-`reduction_linearization` 数，并对 authored route extent transform 检查 closed floor/ceil-div spelling；同时只在
+`reduction_linearization` 数，并对 authored target-local route extent transform 检查 closed
+floor/ceil-div spelling；同时只在
 signature carrier kind 与 π address routes 完全闭合时核对 compiled `tt.addptr` 数；独立 integer
 base/lane contribution 不算 pointer stage，address 与 transfer 不必复用同一 semantic-ref spelling，
 但每个 transfer 必须从匹配 boundary tensor 的 pointer/tensor signature carrier 可达，每个

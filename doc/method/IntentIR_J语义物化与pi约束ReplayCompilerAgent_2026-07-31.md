@@ -65,6 +65,11 @@ exact J 仍挂载为权威回查；Agent 的主要编译视图是 `S_J`。
 - 不包含 Triton/CUDA/TileLang API、target recipe 或性能选择；
 - 作为只读文件挂载，Replay agent 不能修改。
 
+文件形态分为同一值的两种 view：`semantic-program.json` 保留 exact structured form；
+`semantic-program.intent` 把它确定性排成紧凑 typed SSA，直接显示
+`result = op(operands)`、lexical nesting，以及 loop 的 trip/scan/carry(init/state/next/result)/yield。
+这不是 target lowering；目的只是阻止 Agent 看懂算法名称后用熟悉实现覆盖 J 的真实 operand edge。
+
 第一版直接迁入后端分支已经成熟的 canonical-J、typed-boundary、contract/predicate materialization
 逻辑，放在 Replay 内部作为自包含 core；暂不建设跨仓库共享 API。不得原样复制需要
 `concrete_extents`、constexpr specialization、`Attach_C` 或 backend search state 的 production 入口。
@@ -104,6 +109,18 @@ IR，也不要求每个 J node 对应一条 target statement。
 - 查看局部前驱、后继、order、sharing 与 carrier 关系；
 - 对 flat/nested π wire 做严格无损编解码。
 
+`pi.intent` 采用无损 compiler view：先按 region 列出 occurrence，在每条 exact relation 旁解析其
+opaque instance/region handle，并把 occurrence 已引用的 exact local `S_J` anchor 就地并置。loop anchor
+保留 trip/scan/carry/yield，access anchor 保留 tensor type/index order；这只是把原本允许的
+`semantic_ref -> S_J` 查询文件化，不增加事实，也不把 relation 翻译成 target statement。
+
+还必须区分 π 与 Harness：`program_axes` 约束 device 中读取哪一个 program coordinate；launch-grid
+cardinality 始终是隐藏 Harness state，不进入 π。`route_extent_transforms` 则按权威定义只表示某条
+existing route slot 上的 target-local physical extent partition，Replay 必须消费；不得把 host grid
+关系误作者化为该字段。若 Source device body 没有对应 floor/ceil-div，而 Lift candidate 声明了它，
+TypeCheck 只能证明依赖类型合法，Gate1 必须拒绝并反馈 persistent Lift owner fresh relift，不能放宽
+ReplayCheck 来追认错误 π。
+
 宿主不得：
 
 - 从 π 生成 target skeleton、loop、route source 或 API；
@@ -135,7 +152,7 @@ sharing 或 materialization。若采用 online recurrence 等算法 realization�
 只读 `S_J` 保证语义权威不被 Agent 原地重写，但不能静态证明任意 Agent 源码正确实现了 J；做到后者
 等价于再建设完整 verified compiler。当前 SCRC 的边界仍是生成后认证：
 
-- ReplayCheck 只检查接口、构造和可编译性；
+- ReplayCheck 只检查接口、构造和可编译性，不把某种 target AST 拼写当作 π membership；
 - Gate1 检查 Source 与 Replay 的 realization observation；
 - Gate2 独立比较 Source–Replay、Source–J、Replay–J。
 
@@ -167,7 +184,7 @@ Replay 后确定性绑定。production backend 继续只消费 J+C，不读取 �
 
 ```text
 input/j.json                 exact authoritative J
-input/semantic-program.*     deterministic read-only S_J
+input/semantic-program.*     deterministic read-only S_J（exact JSON + typed SSA text）
 input/pi.json                exact π 或严格无损 wire
 input/pi.intent              同一 π 的逐关系、声明序、无损只读文本视图
 input/mask-c.json
@@ -181,10 +198,12 @@ work/                        Agent 自己的笔记/helper/checkpoint
 output/replay.source         唯一正式输出
 ```
 
-Agent 首次完整读取 `semantic-program.intent` 与 `pi.intent`；后者只把 region/instance/route/order/
-sharing/carrier 等原字段逐行呈现，不建立 relation-to-target 映射。允许工具：普通文件编辑、exact
-J/S_J/π 查询、compile、own-IR/own-TTIR、checkpoint/rollback 和原子
-submit。资源以 episode wall-time 与 formal Gate1 round 管理，不用极小工具调用次数打断 coding loop。
+Agent 首次完整读取 `semantic-program.intent` 与 `pi.intent`；后者把 region/instance/route/order/
+sharing/carrier 等原字段交叉索引，并置其 exact local S_J anchor，但不建立 relation-to-target 映射。允许工具：普通文件编辑、
+exact J/S_J/π 查询、compile、own-IR/own-TTIR、checkpoint/rollback 和原子 submit。construction
+PASS 后应查看自己的 compiler IR，删除没有 J/π 授权的 address/predicate/control/arithmetic，并把
+inactive constexpr 路径的计算留在其分支内。资源以 episode wall-time 与 formal Gate1 round 管理，
+不用极小工具调用次数打断 coding loop。
 
 禁止恢复：
 

@@ -393,9 +393,11 @@ ReplayLLM(J,pi,MaskC(C);U_f) -> complete source R_f
 ```
 
 当前外部 packet protocol 仍为 `intentir.scrc.replay-input.v2`。Codex Replay backend
-`openai.codex-cli.intentir-replay.v54` 只把 packet 中 canonical π 的固定 relation list 编为
-`intentir.pi-min.relational-column-wire.v1`：columns 明示字段顺序，发送前必须精确 round-trip 回原 π；
-它不修改 artifact π、TypeCheck judgement 或证书身份，旧 evidence 也不因 codec 升级而重判。
+`openai.codex-cli.intentir-replay.v55` 从 J-only materializer 提供只读 `S_J`，并把 canonical π 呈现为
+`intentir.replay-realization-view.v2`：region 内 occurrence 与每条 exact relation 的 opaque handles 被
+机械交叉索引；occurrence 可并置它已引用的 exact local S_J anchor，等价于既有 bounded lookup，
+不增加 relation 或 target mapping。`pi.json`仍是权威且 view `to_json` 必须精确等于原 π。它不修改 artifact π、
+TypeCheck judgement 或证书身份，旧 evidence 也不因 view 升级而重判。
 
 每个 formal round 是一个 fresh、single-writer、source-blind coding episode，以 active wall time而非
 极小 tool-call 数治理。固定 `SemanticMaterializer` 先执行：
@@ -409,6 +411,8 @@ semantic program。`M` 只读取本轮 exact J；它不读取 C、π、Source、
 Replay 或 Gate，也不生成 target API、schedule、address、loop spelling 或目标源码。因此 `S_J` 是
 proof-irrelevant 的 J 内部视图，不是第四 artifact、Replay 新权威或 production 输入。正常轮 fresh
 计算 `M(J)`；MaskJ 轮必须 fresh 计算 `M(MaskJ(J))`，禁止先从完整 J 生成 `S_J` 后再遮罩。
+structured JSON 是 exact form；文本 view 只把同一值排成 typed SSA，逐行显示
+`result=op(operands)` 与 loop trip/scan/carry/yield，不改变或补造 edge。
 
 Replay Compiler Agent 直接把完整只读 `S_J` 作为 compiler input，并结合 exact π、`MaskC(C)` 与
 `U_f` 独立编写一份完整 `replay.source`。Agent 可以全局选择 target API、address/program mapping、
@@ -418,8 +422,9 @@ sharing、time/control 与 materialization。Agent 不做 per-node hole/binding�
 target block、route fragment、source scaffold 或固定 source map。
 
 启动上下文只携带 immutable 文件路径和字节数，不嵌入整份 packet、requirements ledger、历史
-Replay 或 Gate frontier。Agent 先完整读取 `semantic-program.intent` 与 `pi.intent`；后者只是 exact π
-各 relation 的 declaration-order 文本视图，不含 target mapping。随后才按当前编译需要用
+Replay 或 Gate frontier。Agent 先完整读取 `semantic-program.intent` 与 `pi.intent`；后者按
+region/occurrence 交叉索引 exact π relation，并可并置 occurrence 已引用的 exact local S_J anchor，
+不含 target mapping。随后才按当前编译需要用
 `semantic_query` 定位一个 J node/value/boundary，或用 `packet_query` 读取一个 exact π
 region/instance/route/order/carrier 局部视图。查询只无损重排当前 `S_J`/packet，不生成 target spelling、
 lowering plan、mapping 或修复。

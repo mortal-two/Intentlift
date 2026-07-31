@@ -493,11 +493,12 @@ dependent checking 夸写成 Source topology 的形式证明。
 
 当前合并协议为 `artifact.v12 / decode.v17 / typecheck.v30 / candidate-check.v1 / replay-check.v14`；
 Replay packet envelope 为 `replay-input.v2`；Triton 公共上下文由当前固定公开字段直接给出，不再使用 context version、SHA 或 receipt 作为运行门禁；
-Codex/MiniSWE Lift knowledge 为 v89/v67，MiniSWE Replay backend 为 v31，Codex Replay backend 为 v54，
+Codex/MiniSWE Lift knowledge 为 v89/v67，MiniSWE Replay backend 为 v31，Codex Replay backend 为 v55，
 J-only Replay semantic view 为 `intentir.replay-semantic-program.v1`。
-v30/v26 完整执行 authored route extent transform 合同：将其纳入 `critical_facts.v4`、
-`replay-obligation-audit.v3` 与 source-blind static ingress；只检查 closed floor/ceil-div spelling，
-不生成 relation/code，也不替代 Gate1；单独存在该 relation 时也可用可选 audit 并置当前 exact Replay bytes；audit 不作为 ReplayCheck、compile 或 Gate1 前置条件。
+v30/v26 把 authored target-local route extent transform 纳入 `critical_facts.v4`、
+`replay-obligation-audit.v3` 与 source-blind static ingress；v55 继续只检查 closed floor/ceil-div
+spelling，不生成 relation/code，也不替代 Gate1。launch grid 仍是隐藏 Harness state，不能被 Lift
+误写为该 relation；若 artifact 声明了 Source device body 不存在的 transform，Gate1 拒绝并要求 relift。
 Codex v26 将每个 provider turn 的 900 秒上限与 fresh owner episode 的 1800 秒总预算分离，使超时后
 只能沿原 resumable thread 继续；不跨 Replay episode 继承。v29/v25 历史 evidence 保持原 verdict。
 v40 为 source-aware Lift worker 增加只读、分页的 Source control-flow
@@ -521,8 +522,8 @@ authored route/carrier 与 Replay 自身 TTIR 都给出唯一同-region occurren
 Source/Harness value/Gate，不改变最终 SCRC 接受谓词。Codex Lift v5 只要求 LLM reconcile
 syntax-only Source control-flow outline，固定代码仍不分类或补 artifact。单次 provider turn wall-time 后只允许同 invocation/episode 的 exact checked
 bytes 或 resumable same thread 继续；禁止跨 formal round/Replay episode 继承候选。
-Replay v30/v26 继承 v29/v25，并完整执行上述 route-local extent relation 的消费合同；Lift knowledge
-保持 v68/v64，继续承担该 relation 的显式作者合同。Replay v28/v24 与 Lift knowledge v66/v62 明确同一 physical region 中 carrier relation 的 declaration
+Replay v55 继续完整执行上述 route-local extent relation 的消费合同；Lift knowledge
+承担该 relation 的显式作者合同。Replay v28/v24 与 Lift knowledge v66/v62 明确同一 physical region 中 carrier relation 的 declaration
 order 是跨 init/state/next/result 共享的 tuple ordinal；Lift 完整作者化，Replay 原样消费，fixed code
 不按 dtype/ref/mechanism 重排。它不表示 event execution order，后者仍由 `pi.order` 拥有。
 v28/v24 继承 v27/v23；v27/v23 继承 v26/v22，并把每条 J-authored broadcast 的 operand closed type、matching access、

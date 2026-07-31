@@ -121,6 +121,25 @@ fragment/route assembler 路线，在不改变 SCRC 外部数学接口的前提�
   多次修订约 3 KB 完整 Triton，ingress/compile PASS；
 - 旧 file-block Gate1：总分 0.7327，dataflow 232 diffs，predicate/effect 2 diffs；
 - Task18 首版 Gate1：总分 0.8142，dataflow 162 diffs，其余 hard categories 全 PASS；
-- 根因不是 J/S_J value semantics 缺失，而是 60+ π instances/routes 的 minified 交叉引用没有被完整
-  消费。当前新增 `pi.intent`（同 artifact 为 11,486 bytes、158 exact rows），逐行保留原 relation 与
-  declaration order，不映射 target statement；第二次 real Gate1 recheck 正在运行。
+- 首轮根因不是 J/S_J value semantics 缺失，而是 60+ π instances/routes 的 minified 交叉引用没有
+  被完整消费。第二版 flat `pi.intent`（11,486 bytes、158 exact rows）已让 Replay loop 的
+  `tt.addptr` 从 8 恢复为与 Source 相同的 2，说明 placement 输入有效；但总差异升至 244。直接根因
+  是当前未闭合 π 把 `c4=BLOCK_M` 错误作者化为 target-local `ceil_div(c4,64)->d1`；checker 按合同
+  迫使 Agent 加入 `tl.cdiv(c4,64)`，而 Source device body 没有该 stage。TypeCheck 只能确认 dependent
+  attachment 合法，Gate1 的新增 9 类 op/235 dataflow differences 才证明 π 不忠实，必须 relift。
+- 当前 v2 `pi.intent` 按 region 聚合 occurrence，并在每条 exact relation 旁无损解析 opaque handle，
+  不映射 target statement；保留 route-extent 的 closed target-local spelling check，并要求 construction
+  PASS 后审查 own TTIR。一次诊断性放宽实验虽让第三次 Flash recheck
+  消除了额外 9 类 op，且 loop body op/effect/carrier/induction profile 与 Source 逐项相同，但 dataflow
+  回到 232、predicate/effect 2。根差异是 Agent 把 axis-1 flattened `x0*x2` coordinate 直接当 batch，
+  没有执行 π 已有 `program_linearizations=[x0,x2]` 的固定 row-major decode，并擅自增加 `volatile`。
+- 当前 v3 view 直接展开上述 closed quotient/remainder denotation，并在每个 occurrence 第一次出现时
+  并置 exact local S_J anchor：loop 保留 trip/scan/carry/yield，access 保留 tensor type/index order；
+  它不增加 target API、公式选择或 relation-to-statement mapping。诊断性 Flash recheck 已把 dataflow
+  从 232 降到 112，interface/op/reduction/predicate-effect/schedule 全 PASS，loop 的 op/effect/capture/
+  induction 全一致；唯一明显根边是 Agent 按标准 online-softmax 先验把 J 的第一、第二 carrier 用法
+  对调，use-count 从 Source `[2,1,1]` 变成 Replay `[1,2,1]`。
+- 当前 `semantic-program.intent` 已从 JSON-record listing 改为 14,386-byte typed SSA：例如明确呈现
+  `n12 v19_1 = max(v18_1, v8)` 与每条 carry 的 init/state/next/result，exact JSON 仍不变。这一通用
+  materialization 直接针对“模型理解算法但覆盖 authored edge”，不增加 Kernel 提示或 target recipe。
+  route-extent checker 已恢复；下一正式动作是让 persistent Lift owner 删除/修正错误 π 后 fresh Replay。

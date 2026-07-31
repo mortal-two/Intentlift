@@ -46,7 +46,7 @@ from .replay import (
 )
 
 
-CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v54"
+CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v55"
 
 _INITIAL_PROMPT = """You are the sole writer for one fresh source-blind IntentIR Replay episode.
 Work only under the isolated /workspace. input/ is immutable; output/, work/, and
@@ -69,14 +69,25 @@ order/sharing/time/control/materialization constraint. Do not edit S_J, infer a 
 recipe, or obtain a missing value semantic from pi. input/REPLAY_CONTRACT.md defines
 the ownership boundary and input/TOOL.md defines the tools.
 
+Treat each pi.program_linearizations row as its protocol-fixed row-major mixed-radix
+decode: derive every listed logical coordinate before address construction and never
+substitute the flattened program ordinal for one component. This expands an existing
+closed pi denotation; it is not permission to guess a J interval or target recipe.
+The occurrence ledger colocates exact local S_J anchors: loop anchors retain
+trip/scan/carry/yield and access anchors retain tensor type/index order. Reconcile these
+with the exact incoming route slots before choosing address or loop code; do not assign
+an anonymous p* carrier to a logical axis by ABI position alone.
+
 Compile, inspect only your own Replay IR, and patch the complete program in this same
-episode. After a meaningful complete draft, run
-`python .agents/intentir_agent_tool.py submit_replay`. It transactionally runs the
-source-blind ingress and synthetic compile checks on your exact bytes. Repair your
-own source until it passes. If compilation is unclear, use `replay_ttir_inspect`
-only on your current Replay. Fixed code materializes S_J, projects exact packet facts,
-checks and rejects; it never constructs or repairs target source. Finish only with the
-transaction passing and do not claim Gate1, Gate2, or certification.
+episode. First run `replay_compile_check`; once construction passes, inspect your own
+TTIR observer view and audit every compiler-visible address, predicate, control and
+arithmetic stage against S_J/pi. Keep computations for inactive constexpr alternatives
+inside their branch. A materialization relation authorizes the distinct transfers/order, not an
+unmentioned `volatile`, cache, eviction or other target attribute. Then run
+`submit_replay` on the reviewed exact bytes and repair until it
+passes. Fixed code materializes S_J, projects exact packet facts, checks and rejects;
+it never constructs or repairs target source. Finish only with the transaction passing
+and do not claim Gate1, Gate2, or certification.
 """
 
 _REPAIR_PROMPT = """The same fresh source-blind Replay episode continues in the same thread and workspace.

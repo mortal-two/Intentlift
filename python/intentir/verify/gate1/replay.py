@@ -1670,7 +1670,7 @@ def _check_triton_rounded_iteration_contract(
 def _packet_route_extent_contracts(
     packet: Mapping[str, Any],
 ) -> list[tuple[str, int, str, str]]:
-    """Resolve authored route-extent partitions to anonymous C handles."""
+    """Resolve authored target-local extent partitions to anonymous C handles."""
 
     pi = packet.get("pi")
     if not isinstance(pi, Mapping):
@@ -3394,7 +3394,9 @@ def _replay_input_files(
         allow_nan=False,
         separators=(",", ":"),
     ) + "\n"
-    realization_view = materialize_replay_realization(packet["pi"])
+    realization_view = materialize_replay_realization(
+        packet["pi"], semantic_program=semantic_program.to_json()
+    )
     pi_text = json.dumps(
         realization_view.to_json(),
         sort_keys=True,
@@ -3431,10 +3433,20 @@ do not edit it or treat pi as a source of missing value semantics. Source code, 
 compiler IR, Harness values, Gate evidence, previous Replay, and kernel templates do
 not exist in this episode.
 
-`pi.intent` is a declaration-order rendering of every exact relation in `pi.json`.
+`pi.intent` is a cross-indexed rendering of every exact relation in `pi.json`; each
+occurrence may colocate its exact local `S_J` anchor to avoid another global lookup.
 Read it completely before choosing region placement, address staging, loop carriers,
 routes, sharing or order. It is a realization constraint IR, not a target plan: no row
-maps to a target statement, and it supplies no J value semantics.
+maps to a target statement, and the attached anchor neither adds nor changes J semantics.
+For a loop occurrence, the anchor retains the authored trip/scan/carry/yield contract.
+For an access occurrence, it retains the tensor type and logical index expression.
+Correlate those exact J facts with pi routes; never assign a flattened coordinate or
+anonymous representation carrier to an access dimension merely by argument position.
+
+`route_extent_transforms` denotes a target-local physical extent use on its exact route
+slot. Consume its anonymous C handle and closed floor/ceil-div denotation in the device
+program. It is not a launch-grid relation; grid remains hidden Harness state and cannot
+be reconstructed from this field.
 
 Realize every explicit pi relation at its typed endpoints. You own the complete target
 program: instruction selection, address expressions, program mapping, control, layout,
@@ -3464,9 +3476,11 @@ next-to-state temporal edge and loop-exit result. Preserve declaration-order tup
 ordinals and do not invent an update formula.
 
 A pi.program_linearizations row supplies a closed row-major mixed-radix realization
-constraint, not source bytes. You choose its target spelling. Any interval, mask,
-selection, block formula, address or value computation still comes from J/S_J and must
-never be guessed from pi.
+constraint, not source bytes. For dimensions `[x0,...,xn]`, one physical ordinal is
+decoded outer-to-inner as `component[i] = (ordinal // product(extent[i+1:])) %
+extent[i]`; never use the flattened ordinal as one component. You choose the target
+spelling. Any interval, mask, selection, block formula, address or value computation
+still comes from J/S_J and must never be guessed from pi.
 """
     readme = """# IntentIR source-blind Replay input
 
@@ -3499,14 +3513,19 @@ python .agents/intentir_agent_tool.py semantic_query node REF
 python .agents/intentir_agent_tool.py packet_query realization
 python .agents/intentir_agent_tool.py packet_query obligation HANDLE
 python .agents/intentir_agent_tool.py replay_compile_check
-python .agents/intentir_agent_tool.py replay_ttir_inspect summary
+python .agents/intentir_agent_tool.py replay_ttir_inspect observer op_multiset
+python .agents/intentir_agent_tool.py replay_ttir_inspect observer loops
 python .agents/intentir_agent_tool.py submit_replay
 ```
 
 Use ordinary file edits and your own helper files under `/work`. You may compile,
 inspect only your current Replay IR, checkpoint and patch repeatedly within this one
-episode. `submit_replay` checks the exact complete bytes but neither generates nor
-repairs them. Formal Gate1 runs outside this episode and is never visible here.
+episode. A construction-check PASS is only the point to inspect your own TTIR: remove
+compiler-visible address, predicate, control, or arithmetic work not authorized by
+S_J/pi, and keep inactive constexpr alternatives lexically inside their branch so the
+specialized compiler never materializes them. `submit_replay` checks the exact complete
+bytes but neither generates nor repairs them. Formal Gate1 runs outside this episode
+and is never visible here.
 """
     return (
         {

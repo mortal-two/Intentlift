@@ -208,6 +208,76 @@ def _boundary_node_refs(
     return {name: rows for name, rows in result.items() if rows}
 
 
+def _value_list(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return "(" + ", ".join(str(item) for item in value) + ")"
+    return "_"
+
+
+def _render_node_ir(node: Mapping[str, Any]) -> list[str]:
+    """Render one exact J node as compact typed SSA, not target source."""
+
+    depth = node.get("depth", 0)
+    depth = depth if isinstance(depth, int) and depth >= 0 else 0
+    indent = "  " + "  " * depth
+    node_id = str(node.get("id", "<anonymous>"))
+    operation = str(node.get("op", "<missing>"))
+    result = _value_list(node.get("result"))
+    operands = node.get("operands", [])
+    operand_text = ", ".join(str(item) for item in operands) if isinstance(operands, list) else _compact(operands)
+    value_type = node.get("type")
+    type_text = " : " + _compact(value_type) if value_type is not None else ""
+    attrs = node.get("attrs")
+    attrs_text = " attrs=" + _compact(attrs) if attrs is not None else ""
+    location = (
+        f" @J.{node.get('path')} role={node.get('lexical_role')}"
+        + (f" parent={node.get('parent_node')}" if node.get("parent_node") is not None else "")
+    )
+    special = {"carry", "scan", "trip", "yield", "scope_id"}
+    ordinary = {
+        "id",
+        "path",
+        "parent_node",
+        "lexical_role",
+        "depth",
+        "op",
+        "operands",
+        "result",
+        "type",
+        "attrs",
+        *special,
+    }
+    extra = {key: copy.deepcopy(value) for key, value in node.items() if key not in ordinary}
+    lines = [
+        f"{indent}{node_id} {result}{type_text} = {operation}({operand_text})"
+        + attrs_text
+        + (" meta=" + _compact(extra) if extra else "")
+        + location
+    ]
+    if "scope_id" in node:
+        lines.append(f"{indent}  scope {_compact(node.get('scope_id'))}")
+    if "trip" in node:
+        lines.append(f"{indent}  trip {_compact(node.get('trip'))}")
+    scans = node.get("scan")
+    for scan in scans if isinstance(scans, list) else []:
+        lines.append(f"{indent}  scan {_compact(scan)}")
+    carries = node.get("carry")
+    for carry in carries if isinstance(carries, list) else []:
+        if not isinstance(carry, Mapping):
+            lines.append(f"{indent}  carry {_compact(carry)}")
+            continue
+        lines.append(
+            f"{indent}  carry {carry.get('state_id')} state={carry.get('body_argument')}"
+            f" init={carry.get('init_value')} next={carry.get('next_value')}"
+            f" result={carry.get('result_value')} type={_compact(carry.get('type'))}"
+        )
+    if "yield" in node:
+        lines.append(f"{indent}  yield {_compact(node.get('yield'))}")
+    return lines
+
+
 def _render_text(value: Mapping[str, Any]) -> str:
     lines = [
         f"semantic_program {value['protocol']}",
@@ -228,10 +298,7 @@ def _render_text(value: Mapping[str, Any]) -> str:
             lines.append(f"  {role[:-1]} " + _compact(tensor))
     for node in _array(value.get("nodes", []), "S_J.nodes"):
         node_object = _object(node, "S_J.nodes[]")
-        depth = node_object.get("depth", 0)
-        indent = "  " + "  " * (depth if isinstance(depth, int) else 0)
-        record = {key: item for key, item in node_object.items() if key != "depth"}
-        lines.append(indent + "node " + _compact(record))
+        lines.extend(_render_node_ir(node_object))
     for binding in _array(value.get("output_bindings", []), "S_J.output_bindings"):
         lines.append("  return " + _compact(binding))
 
