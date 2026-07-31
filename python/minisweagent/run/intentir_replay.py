@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import time
 from dataclasses import dataclass
@@ -14,24 +13,8 @@ import yaml
 from minisweagent import Environment, Model, package_dir
 from minisweagent.agents.default import DefaultAgent
 from minisweagent.environments.intentir_replay import (
-    MAX_ACTION_OUTPUT_BYTES,
-    MAX_REPLAY_BYTES,
-    MAX_WORKSPACE_BYTES,
-    MAX_WORKSPACE_DEPTH,
-    MAX_WORKSPACE_ENTRIES,
-    REPLAY_CHECK_PROTOCOL,
-    REPLAY_BUSYBOX,
-    REPLAY_BWRAP,
-    REPLAY_INPUT_FILES,
-    REPLAY_SANDBOX_HOSTNAME,
-    REPLAY_SANDBOX_PROTOCOL,
-    REPLAY_STARTUP_PACKET_EMBED_LIMIT_BYTES,
-    REPLAY_TOOL_APPLETS,
     IntentIRReplayEnvironment,
     IntentIRReplayWorkspace,
-    _packet_critical_facts,
-    _packet_overview,
-    _packet_requirements,
 )
 from minisweagent.models.litellm_response_model import LitellmResponseModel
 from minisweagent.utils.serialize import recursive_merge
@@ -164,140 +147,36 @@ def validated_intentir_replay_config(
     return config
 
 
-def intentir_replay_episode_contract_sha256(
-    files: Mapping[str, str | bytes],
-    config: Mapping[str, Any],
-) -> str:
-    """Bind exact inputs, prompts, budgets, protocols, and isolation policy."""
-
-    if set(files) != REPLAY_INPUT_FILES:
-        raise ValueError("Replay episode digest requires the exact input allowlist")
-    agent = config.get("agent")
-    environment = config.get("environment")
-    model = config.get("model")
-    if (
-        not isinstance(agent, Mapping)
-        or not isinstance(environment, Mapping)
-        or not isinstance(model, Mapping)
-    ):
-        raise TypeError("Replay episode digest requires a validated config")
-    policy = {
-        "protocol": "intentir.miniswe-replay-episode-contract.v1",
-        "replay_check_protocol": REPLAY_CHECK_PROTOCOL,
-        "sandbox_protocol": REPLAY_SANDBOX_PROTOCOL,
-        "hostname": REPLAY_SANDBOX_HOSTNAME,
-        "network": "new-unshared-namespace",
-        "proc": "not-mounted",
-        "mounted_busybox_entrypoints": list(REPLAY_TOOL_APPLETS),
-        "busybox_sha256": hashlib.sha256(REPLAY_BUSYBOX.read_bytes()).hexdigest(),
-        "bubblewrap_sha256": hashlib.sha256(REPLAY_BWRAP.read_bytes()).hexdigest(),
-        "environment": {
-            "HOME": "/tmp",
-            "LANG": "C",
-            "LC_ALL": "C",
-            "PATH": "/bin",
-            "TMPDIR": "/tmp",
-        },
-        "output": {
-            "path": "/output/replay.source",
-            "max_bytes": MAX_REPLAY_BYTES,
-            "max_action_output_bytes": MAX_ACTION_OUTPUT_BYTES,
-        },
-        "workspace": {
-            "max_bytes": MAX_WORKSPACE_BYTES,
-            "max_entries": MAX_WORKSPACE_ENTRIES,
-            "max_depth": MAX_WORKSPACE_DEPTH,
-        },
-        "system_template": agent.get("system_template"),
-        "instance_template": agent.get("instance_template"),
-        "budgets": {
-            "step_limit": agent.get("step_limit"),
-            "wall_time_limit_seconds": agent.get("wall_time_limit_seconds"),
-            "action_timeout_seconds": environment.get("timeout"),
-            "replay_check_limit": environment.get("replay_check_limit"),
-            "replay_submission_check_limit": environment.get(
-                "replay_submission_check_limit"
-            ),
-            "replay_compile_check_limit": environment.get(
-                "replay_compile_check_limit"
-            ),
-            "replay_source_inspect_limit": environment.get(
-                "replay_source_inspect_limit"
-            ),
-            "transport_attempts_per_turn": model.get("retry_attempts"),
-            "max_tool_calls_per_response": model.get(
-                "max_tool_calls_per_response"
-            ),
-            "parallel_tool_calls": (
-                model.get("model_kwargs", {}).get("parallel_tool_calls")
-                if isinstance(model.get("model_kwargs"), Mapping)
-                else None
-            ),
-        },
-    }
-    hasher = hashlib.sha256()
-
-    def frame(label: bytes, payload: bytes) -> None:
-        hasher.update(len(label).to_bytes(8, "big"))
-        hasher.update(label)
-        hasher.update(len(payload).to_bytes(8, "big"))
-        hasher.update(payload)
-
-    frame(
-        b"policy.json",
-        json.dumps(
-            policy,
-            sort_keys=True,
-            ensure_ascii=False,
-            allow_nan=False,
-            separators=(",", ":"),
-        ).encode("utf-8"),
-    )
-    for name in sorted(files):
-        content = files[name]
-        payload = content if isinstance(content, bytes) else content.encode("utf-8")
-        frame(name.encode("utf-8"), payload)
-    return hasher.hexdigest()
-
-
 def _replay_startup_context(workspace: IntentIRReplayWorkspace) -> str:
-    """Embed one exact normal-size packet or one exact oversized-packet index."""
+    """Return only immutable paths and byte counts; the agent reads files itself."""
 
-    packet_bytes = (workspace.input_dir / "packet.json").read_bytes()
-    packet = json.loads(packet_bytes)
-    if not isinstance(packet, Mapping):
-        raise TypeError("Replay packet root must be an object")
-    encoded = json.dumps(
-        packet,
-        sort_keys=True,
-        ensure_ascii=False,
-        allow_nan=False,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    embedded = len(encoded) <= REPLAY_STARTUP_PACKET_EMBED_LIMIT_BYTES
+    packet_bytes = (workspace.input_dir / "packet.json").stat().st_size
+    semantic_bytes = (
+        workspace.input_dir / "semantic-program.intent"
+    ).stat().st_size
+    realization_bytes = (workspace.input_dir / "pi.intent").stat().st_size
     exact: dict[str, Any] = {
-        "protocol": "intentir.replay-startup-context.v4",
+        "protocol": "intentir.replay-startup-context.v5",
         "authority": (
-            "exact immutable source-blind J/C/pi/U_f transport only; no Source, "
-            "Gate feedback, actual C values, inference, repair, schedule, or "
-            "Replay generation"
+            "path and byte-count receipt only; immutable exact inputs remain in "
+            "/input and no semantic or target program is embedded here"
         ),
-        "packet_sha256": hashlib.sha256(packet_bytes).hexdigest(),
-        "packet_bytes": len(encoded),
-        "embed_limit_bytes": REPLAY_STARTUP_PACKET_EMBED_LIMIT_BYTES,
-        "root_sections": sorted(str(key) for key in packet),
-        "exact_packet_embedded": embedded,
-        "critical_facts": _packet_critical_facts(packet),
+        "packet_bytes": packet_bytes,
+        "semantic_program_bytes": semantic_bytes,
+        "realization_view_bytes": realization_bytes,
+        "paths": {
+            "semantic_program": "/input/semantic-program.intent",
+            "semantic_program_json": "/input/semantic-program.json",
+            "packet": "/input/packet.json",
+            "realization": "/input/pi.intent",
+            "pi": "/input/pi.json",
+            "mask_c": "/input/mask-c.json",
+            "frontend": "/input/frontend.json",
+            "contract": "/input/REPLAY_CONTRACT.md",
+            "tools": "/input/TOOL.md",
+            "replay": "/output/replay.source",
+        },
     }
-    if embedded:
-        exact["packet"] = packet
-        exact["bootstrap_command"] = None
-    else:
-        exact["manifest"] = {
-            "overview": _packet_overview(packet),
-            "authored_requirements": _packet_requirements(packet),
-        }
-        exact["bootstrap_command"] = None
     return json.dumps(
         exact,
         sort_keys=True,
@@ -395,7 +274,6 @@ __all__ = [
     "IntentIRReplayRunError",
     "IntentIRReplayRunResult",
     "create_intentir_replay_model",
-    "intentir_replay_episode_contract_sha256",
     "load_intentir_replay_config",
     "run_intentir_replay",
     "validated_intentir_replay_config",

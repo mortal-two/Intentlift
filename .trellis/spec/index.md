@@ -1,6 +1,6 @@
 # IntentIR 当前派生规范
 
-> 状态：2026-07-29 当前派生规范。
+> 状态：2026-07-31 当前派生规范。
 
 `.trellis/spec` 只把四份 SCRC 设计与第五份 production backend 设计投影为 schema、API、runner、
 lowering 和测试要求，不形成另一套设计。上位文档按作用域组合，不构成一条让旧 SCRC 文档覆盖
@@ -14,7 +14,9 @@ lowering 和测试要求，不形成另一套设计。上位文档按作用域�
   统一 SCRC 数学与 claim；
 - [Contract-Preserving Multi-Lowering 后端最终设计](../../doc/IntentIR_Contract_Preserving_Multi_Lowering_后端最终设计_2026-07-24.md)
   在服从前四份对象边界的条件下，权威定义 post-SCRC production backend；
-- 本目录只做上述五份文档的派生投影。
+- [J 语义物化与 π 约束的 Replay Compiler Agent](../../doc/method/IntentIR_J语义物化与pi约束ReplayCompilerAgent_2026-07-31.md)
+  窄化 Replay 作者化接口：允许 J-only 的只读 `S_J=M(J)`，禁止 target skeleton/hole/binding/composer；
+- 本目录只做上述文档的派生投影。
 
 若派生规范与上位设计冲突，应修订派生规范；不得通过增加 interface artifact、hash gate、
 epoch、commitment、额外认证 Gate 或兼容旁路来调和冲突。
@@ -26,7 +28,8 @@ closed signature、Layer-A total typing、显式 broadcast、canonical reduce/co
 control/inout/output-binding/terminal-control 关系，并检查 v10 authored route-local extent transform 的
 existing-route、C/J attachment 与 closed divisor/rounding。fixed code只诊断，不翻译别名、补齐 attrs、生成 handle/relation、
 改图或修复 artifact；历史 wire/receipt 继续按自身版本读取，不静默升级或重判。当前 Agent execution
-receipt 为 `intentir.lift-knowledge.v89 / intentir.lift-knowledge.v67 / minisweagent.intentir-replay.v31 / openai.codex-cli.intentir-replay.v32`；
+receipt 为 `intentir.lift-knowledge.v89 / intentir.lift-knowledge.v67 / minisweagent.intentir-replay.v31 / openai.codex-cli.intentir-replay.v54`；
+Replay 内部 J-only 视图为 `intentir.replay-semantic-program.v1`，不是 artifact 或新输入权威；
 artifact.v11 的 `dimension_relations`只接受identity、常数加/乘、常数ceil-div与round-up的acyclic closed grammar；
 relation由Lift从Source作者化，所有J消费者只能验证/求值，不能从Harness valuation、grid、C、π或TTIR生成。
 artifact.v10+ 的 `physical_iterations/physical_loop_carriers` 表达 structured J loop 外、由已作者化
@@ -44,14 +47,11 @@ loop 的 argument/yield/result tuple 作者化该顺序，Replay 不按 dtype/re
 仍由 carrier relation 自身表示。slot 顺序不是 event execution order，后者仍只由 `pi.order` 拥有。
 `replay-check.v14` 仅在 packet route
 和 Replay 自身 TTIR 都提供唯一对应时检查 ordered transfer 的词法先后，不从 Source 或 Gate 构造
-对应。v28/v24 继承 v27/v23；v27/v23 对不超过
-64 KiB 的完整匿名 J/C/π/U_f 只在首次上下文 exact embedding 一次，并额外
-并置一个只重索引 semantic dimension carrier、IEEE special typed constant、physical iteration、
-`reduction_linearization + consumer route`、loop/branch lexical region membership、cross-region
-order、route-local extent transform 与 `pi.sharing` source/consumers，以及 authored broadcast 的 operand type/access/named consumer
-的 exact `critical_facts.v4`；超限
-packet 才接收一个自带 authored op/boundary、π instance mechanism 与 time/control/terminal 清单的
-compact manifest，并只查询明确遗漏页。Codex Lift v12 / knowledge v70 同样直接嵌入 exact Harness ABI
+对应。当前 Replay 不再向首次模型上下文嵌入完整 packet、critical-facts ledger 或 compact manifest；
+启动消息只给 immutable 文件路径和字节数。Agent 先读取参数化 `semantic-program.intent` 与逐关系
+无损 `pi.intent`，再按需查询
+一个 exact J/S_J/π 局部事实。normal 与 MaskJ 各自从本轮可见 J fresh materialize，禁止 full-J
+`S_J` 泄漏到 masked episode。Codex Lift v12 / knowledge v70 同样直接嵌入 exact Harness ABI
 与 relift frontier，并一次并列展开非递归 direct hard categories；此外以
 `intentir.lift-source-ttir.v1`在同一匿名specialization上编译一次Source，TTIR与observer fingerprint只在
 source-aware owner workspace中按需查询，不进入Replay或artifact。原有只读工具退为可选局部自读。
@@ -63,15 +63,14 @@ Codex Lift v20 删除重复的 feedback host tool，特殊回调只保留两个 
 两条路径都不生成 artifact/realization，没有 Gate
 或认证权限。
 
-Task16 的 source-blind `requirements` view 按 declaration order 原样列出每个 J node 的
-`id/op/operands/attrs/result`，并 exact join program-domain branch；它只重索引当前 packet，不生成
-target code。当前 π 还可作者化 closed `program_linearizations`，引用 J 已有 dimensions 表示
+当前 `S_J=M(J)` 按 declaration order 保存每个 J node 的 typed
+`id/op/operands/attrs/result`、structured control、boundary 与 output binding，并保留 J handle；它不读取
+π，也不生成 target code。当前 π 还可作者化 closed `program_linearizations`，引用 J 已有 dimensions 表示
 mixed-radix decode，不携带公式文本、值、Source/API 或 target recipe。logical block interval/mask
 必须显式属于 J，π 不复制 partition formula。
 
-含 broadcast/lexical/cross-region/route-extent critical facts 的 Replay 在 construction compile 前还必须对当前 exact bytes
-完成 `replay-obligation-audit.v3`；该工具只并置 J/π ledger 与 Replay 自己的编号源码，不映射 relation/instance、
-不诊断、不修复，也不参与 Gate 接受。
+旧 `replay-obligation-audit.v3` 不再是默认 construction compile 前置步骤；必要的 exact relation 由
+Agent 从 π 查询并自行消费，正式正确性仍由 fresh Replay 后的 Gate1/Gate2 裁决。
 `replay-check.v14` 还要求 synthetic TTIR 至少包含 π 已作者化 `reduction_linearization` 数量的
 distinct `tt.reshape -> tt.reduce(axis=0)` dataflow，避免无关 reshape 冒充，但不从 reduction/shape
 生成 relation；地址检查只在 J.signature carrier kind 与 π

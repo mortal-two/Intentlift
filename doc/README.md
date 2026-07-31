@@ -11,7 +11,7 @@
 3. [Lift、Replay、Gate1、Gate2 最终执行流程](IntentIR_Lift_Replay_Gate1_Gate2_实验与系统改进最终执行流程_2026-07-22.md)：确定实验轮次、relift、失败停止、Gate2 与实验结束后的系统改进流程。
 4. [IntentIR / SCRC 最终数学、执行流程与论文表述](IntentIR_SCRC_最终数学与执行流程_2026-07-22.md)：是上述三份 SCRC 设计的数学与 claim 总述，统一 `TypeCheck` 所有权结论、observer-relative Gate1、外部比较政策 Q、Gate2 三条直接比较、instance-wise `c0` 与概率声明边界。它不增加第四个设计对象或新的运行阶段；若对象/schema/API 细节发生歧义，仍回到对应的三份核心设计修订。
 5. [Contract-Preserving Multi-Lowering 后端最终设计](IntentIR_Contract_Preserving_Multi_Lowering_后端最终设计_2026-07-24.md)：定义 accepted J+C 的 production 消费边界、Intent MLIR materialization、A/B/C 后端作用、generic implementation families、pass contracts、搜索与实验设计；它不修改 SCRC 接受谓词。
-6. [J 主导的最小约束 π 与 Replay 内部 Composer 重构](IntentIR_J主导_最小约束pi与Replay内部Composer重构设计_2026-07-31.md)：窄化 π wire 与 Replay coding-agent 的作者化接口；composer 只是一轮内的 proof-irrelevant scratch，固定代码不从 J/π 生成目标语义。
+6. [J 语义物化与 π 约束的 Replay Compiler Agent](method/IntentIR_J语义物化与pi约束ReplayCompilerAgent_2026-07-31.md)：允许固定代码把 J 确定性物化为只读、参数化、可回指的 `S_J`；fresh source-blind Agent 直接消费 `S_J+π+MaskC(C)+U_f` 并独立编写完整目标源码。该内部视图不是第四 artifact，宿主不得从 π 生成 target skeleton、binding、hole 或源码片段。
 
 前四份 SCRC 文档共同规定：
 

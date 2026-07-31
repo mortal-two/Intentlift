@@ -93,6 +93,10 @@ Replay = W_f(J,pi,MaskC(C);U_f)
 - Harness 不进入 Replay；
 - π 可以引用匿名 C slot，但不能包含 C value。
 
+实现内部可以从当前可见 J fresh 派生只读 `S_J=M(J)`，供 Replay Agent 作为 canonical typed compiler
+view。`M` 不读取 π/C/Source/Harness/target/Gate，`S_J` 不增加新的 Kernel-conditioned 信息，因此不
+改变上述输入公式，也不是第四 artifact。MaskJ 轮只能从 masked J 自身 fresh materialize。
+
 ### 2.3 Gate 边界不变，Gate2 谓词收紧
 
 Gate1：
@@ -207,8 +211,8 @@ mu : Instances -> Ids(J) union Ids(C)
 ```
 
 本设计优先要求每个 instance 都具有 opaque anchor。region、order、sharing 等纯关系无需伪造
-新的 semantic node。如果工程实现需要接口视图，只能使用 `InterfaceView(J)`；它是 J 的确定性
-投影，不增加新的 anchor namespace，也不是 Replay 的额外输入。
+新的 semantic node。如果工程实现需要接口或编译视图，只能使用 `InterfaceView(J)` 或只读
+`S_J=M(J)`；它们都是 J 的确定性投影，不增加新的 anchor namespace，也不是 Replay 的额外输入。
 
 ## 4. π 的硬安全条件
 
@@ -912,31 +916,22 @@ LLM 选择 C.strategy
 
 ## 7. Replay 如何消费完整 π
 
-Replay LLM 应遵守以下过程合同：
+Replay Compiler Agent 应遵守以下过程合同：
 
-1. 从 J 读取所有 operator、predicate、fill、index、effect 和 result semantics；
+1. 把完整只读 `S_J=M(J)` 作为 canonical typed semantic program；exact J 仍是唯一语义权威；
 2. 从 `MaskC(C)` 声明参数化 C slots，不读取 values；
-3. 按 π regions 建立源码结构；
-4. 为每个 π instance 建立一次 source realization；
-5. 按 routes 和 operand slots 连接 producer/consumer；
-6. 按 `route_extent_transforms` 只在 named route slot 消费 closed C-extent partition；
-7. 按 sharing 复用 producer，不得擅自复制或折叠；
-8. 按 order 保留必要偏序；
-9. 按 `iterations` 保留 structured J loop 的物理 induction basis；
-10. 按 `physical_iterations/physical_loop_carriers` 保留 structured J loop 外、由已有
-   reduce/contraction 或 boundary access/domain 锚定的物理 tile time；
-11. 按 `terminal_controls` 将已作者化 `effect_if` 的 terminal arm/lexical continuation，或 authored
-    program domain 的 continuation/domain-complement，materialize 为 terminal CFG；不从臂内容猜 role，
-    也不在 π 外另猜 predicate；
-12. 按 representation refinements 保留 source materialization/placement；其中
-    `reduction_linearization` 精确保留经唯一 slot-0 route 进入 J reduce 的全轴线性化；
-13. 遇到 J semantic ref 时从 J 查询当前语义 label；
-14. 使用固定公共 frontend 知识 `U_f` 选择合法 API spelling；
-15. 输出完整、参数化、source-blind frontend source；
-16. 不从 π 猜出后覆盖 J，也不从 compiler diff 修补。
+3. 全局消费 π 的 occurrence、region、route/slot、sharing、order、iteration/carrier、terminal control、
+   extent transform 与 representation refinement；这些关系约束 realization，但不要求 target source 与
+   J node 或 π instance 一一对应；
+4. 使用固定公共 frontend 知识 `U_f` 自主选择 API、address/program mapping、layout、memory、loop、
+   control、synchronization、fusion 与整体源码结构；
+5. 输出一份完整、参数化、source-blind frontend source，并在同一 fresh episode 内编译和修正；
+6. 不从 π 补造 J 的 operator、formula、predicate、fill、effect 或 constant，不从 compiler diff 修补，
+   不等待宿主生成 target skeleton、hole、binding、fragment 或 route source。
 
-当前 fresh Replay packet 为 `intentir.scrc.replay-input.v2`；Triton 公共上下文由固定公开字段直接给出，不使用 context version、SHA 或 receipt 作为运行门禁；Codex/MiniSWE Lift `intentir.lift-knowledge.v69/v65`、MiniSWE Replay v30 与 Codex Replay v26；旧 receipt 保持其原 verdict，不能由
-当前 Replay consumer 或 Lift knowledge 静默升级。v30/v26 将 authored route extent transforms
+当前 fresh Replay packet 为 `intentir.scrc.replay-input.v2`；Triton 公共上下文由固定公开字段直接给出，不使用 context version、SHA 或 receipt 作为运行门禁；当前 MiniSWE Replay v31、Codex Replay v54，
+J-only semantic view 为 `intentir.replay-semantic-program.v1`；旧 receipt 保持其原 verdict，不能由
+当前 Replay consumer 或 Lift knowledge 静默升级。历史 v30/v26 将 authored route extent transforms
 加入 exact critical ledger、audit 与 static ingress，并在它单独存在时也提供可选的 exact-bytes audit；该 audit 不作为 ReplayCheck、compile 或 Gate1 前置条件；
 它不生成 relation/code，也不替代 Gate1。Codex v26 将 900 秒单 turn 与 1800 秒 fresh episode 分离，
 超时只沿同一 resumable thread 继续，不跨 episode 继承。
@@ -944,16 +939,11 @@ Replay LLM 应遵守以下过程合同：
 v28/v24 与 Lift knowledge v66/v62 明确已有 ordered wire 的 tuple denotation：同一 region 中
 `physical_loop_carriers` 的 declaration order 是 init/state/next/result 共享的 carrier-tuple ordinal；
 Lift 从 Source frontend loop tuple 作者化，Replay 不按 dtype/ref/mechanism 重排。该 slot order 不表示
-event execution order，也不替代 `pi.order`。v28/v24 继承 v27/v23；v27/v23 继承 v26/v22：对正常大小匿名 packet 只做一次 exact startup embedding，并将 semantic dimension carrier、
-IEEE special typed constant、physical iteration 与 `reduction_linearization + consumer route` 作一次
-bounded exact `critical_facts.v4` 重索引；v27/v23 另把 J-authored broadcast 与 operand closed type、matching
-access、named consumer/ordinal 无损并置，并要求有该 obligation 的 owner 对当前源码运行
-`replay-obligation-audit.v3`。它不建立 relation-to-statement 映射、不选择 rank-lift spelling/次数，
-也不生成或修复 Replay。超限时
-manifest 才将 J 中已声明
-的 op/boundary 与 π 中已声明的 instance mechanism、time/control/terminal obligation 重新索引为
-有界清单。它不新增 relation，不从 Source/Gate 取值，也不选择 realization、schedule、frontend
-spelling 或 repair，因此只增强 Replay owner 对现有 π/J 的消费可靠性，不改变 π 的证明地位或
+event execution order，也不替代 `pi.order`。当前默认 transport 不再 exact-embed packet、critical-facts
+ledger 或 manifest，也不要求 `replay-obligation-audit`；启动只给 immutable 文件路径与字节数，Agent
+先完整读取 `S_J` 与逐关系、声明序、无损的 `pi.intent`，再用 exact bounded query 定位一个交叉引用。
+`pi.intent` 与 query 都不建立 relation-to-statement 映射、
+不选择 spelling/次数，也不生成或修复 Replay，因此只改善注意力与消费成本，不改变 π 的证明地位或
 Replay 的 LLM-first 作者权。
 v26/v22 已明确 ABI-carrier multiplicity：一个 `J.signature p*` 始终是一个既有 callable
 carrier，同一 `p*` 的多个 π instance 只声明多处 placement/use，不产生第二个值或
@@ -981,10 +971,12 @@ artifact 保持原始序列化、digest 与字段集合，禁止静默附加空�
 - schema/type/reference validation；
 - graph closure/acyclicity；
 - `TypeCheck(J,C,pi)`；
+- J-only `S_J=M(J)` semantic materialization 与 exact/bounded query；
 - Replay code policy；
 - compiler observation 与 Gate verdict。
 
-固定代码不把 π 解码成源码，不建立 deterministic composer。
+固定代码不把 π 解码成 target skeleton、binding、fragment 或源码，不建立 `(J,π)->target source` 的
+deterministic composer。J-only `S_J=M(J)` 不在此禁令内。
 
 `replay-check.v14` 可以在公共、source-blind synthetic compile 后核对 π 已作者化的
 `transfer_direct` occurrence 与 compiled load/store multiplicity；它只拒绝 compiler 已经折叠的

@@ -31,7 +31,8 @@ from .prompt import (
     build_rewriter_prompt,
     build_rewriter_payload,
 )
-from .replay_skeleton import build_replay_skeleton
+from .replay_realization_view import materialize_replay_realization
+from .replay_semantic_core import materialize_replay_semantics
 from .tilelang_codegen import extract_tilelang_module
 from .ttir import (
     TTIRFingerprint,
@@ -3385,12 +3386,35 @@ def _replay_input_files(
         allow_nan=False,
         separators=(",", ":"),
     ) + "\n"
-    skeleton_text = json.dumps(
-        build_replay_skeleton(packet).to_json(),
+    semantic_program = materialize_replay_semantics(packet["j"])
+    semantic_program_text = json.dumps(
+        semantic_program.to_json(),
         sort_keys=True,
         ensure_ascii=False,
         allow_nan=False,
         separators=(",", ":"),
+    ) + "\n"
+    realization_view = materialize_replay_realization(packet["pi"])
+    pi_text = json.dumps(
+        realization_view.to_json(),
+        sort_keys=True,
+        ensure_ascii=False,
+        allow_nan=False,
+        indent=2,
+    ) + "\n"
+    mask_c_text = json.dumps(
+        packet["c"],
+        sort_keys=True,
+        ensure_ascii=False,
+        allow_nan=False,
+        indent=2,
+    ) + "\n"
+    frontend_text = json.dumps(
+        packet["u_f"],
+        sort_keys=True,
+        ensure_ascii=False,
+        allow_nan=False,
+        indent=2,
     ) + "\n"
     instructions = """# Replay ownership contract
 
@@ -3400,16 +3424,24 @@ C is masked and supplies only its declared anonymous slot. Pi is a dependent
 realization witness: it may constrain occurrence, region, route, order, sharing,
 iteration/carrier, program axis, terminal control, materialization, and refinement,
 but it never supplies an operator, formula, predicate, fill value, or target recipe.
-For Codex episodes, pi uses a nested region/occurrence wire plus closed relation
-tables; this is an exact bijective serialization of the same canonical witness, not a
-summary, dropped relation, semantic inference or target plan.
+`semantic-program.intent` and `semantic-program.json` are deterministic, read-only,
+parameterized materializations of this episode's J. They are compiler input IR, not a
+target-source skeleton or a fourth artifact. Compile the complete semantic program;
+do not edit it or treat pi as a source of missing value semantics. Source code, source
+compiler IR, Harness values, Gate evidence, previous Replay, and kernel templates do
+not exist in this episode.
 
-Realize every explicit pi relation exactly once at its typed endpoints. The generated
-binding scaffold and structural renderer already own signature aliases, program axes,
-row-major program linearization, region nesting, loop bounds and exact loop carriers.
-Do not repeat them. The agent chooses all computations, addresses, masks, loads/stores
-and target APIs inside the editable blocks. Source code, source TTIR, Harness values,
-Gate evidence, previous Replay, and kernel templates do not exist in this episode.
+`pi.intent` is a declaration-order rendering of every exact relation in `pi.json`.
+Read it completely before choosing region placement, address staging, loop carriers,
+routes, sharing or order. It is a realization constraint IR, not a target plan: no row
+maps to a target statement, and it supplies no J value semantics.
+
+Realize every explicit pi relation at its typed endpoints. You own the complete target
+program: instruction selection, address expressions, program mapping, control, layout,
+memory, loops/carriers, synchronization, target API and whole-program restructuring.
+Your freedom is constrained by pi's occurrence, region, route, order, sharing, time,
+control and materialization witness; this is Replay reconstruction, not unconstrained
+production optimization.
 
 An authored occurrence is not an algebraic equivalence class. Preserve J body
 occurrence order and every explicit pi order edge; do not merge, reorder, hoist, or
@@ -3431,68 +3463,61 @@ init -> state and state -> next routes exactly; the carrier row itself denotes t
 next-to-state temporal edge and loop-exit result. Preserve declaration-order tuple
 ordinals and do not invent an update formula.
 
-A pi.program_linearizations row is rendered by the fixed structural shell as its
-unique row-major mixed-radix coordinate projection. It supplies only coordinate
-plumbing. Any interval, mask, selection, block formula, address or value computation
-still belongs in J and must be authored by the Replay agent from J, never guessed from pi.
+A pi.program_linearizations row supplies a closed row-major mixed-radix realization
+constraint, not source bytes. You choose its target spelling. Any interval, mask,
+selection, block formula, address or value computation still comes from J/S_J and must
+never be guessed from pi.
 """
     readme = """# IntentIR source-blind Replay input
 
 This immutable directory is the complete input allowlist for one fresh episode.
 
 - `packet.json`: exact J + pi + MaskC(C) + public U_f.
-- `skeleton.json`: normalized target-neutral semantic/realization skeleton and holes.
-- `BINDING_CONTRACT.md`: closed episode-local target-binding boundary.
+- `semantic-program.intent`: compact, typed, parameterized read-only S_J.
+- `semantic-program.json`: exact structured form of the same S_J.
+- `pi.intent`: complete declaration-order read-only pi relation view.
+- `pi.json`: exact canonical pi behind that view.
+- `mask-c.json`: exact anonymous MaskC(C), with no valuation.
+- `frontend.json`: public source-neutral U_f and required callable entry.
 - `REPLAY_CONTRACT.md`: ownership and no-leak boundary.
-- `TOOL.md`: syntax-only composer, check, compile, own-TTIR, and submit commands.
+- `TOOL.md`: coding, query, compile, own-IR, checkpoint, and submit commands.
 
 Read files by path and only page sections needed for the current construction. No
 Source, real C value, CompileCase/grid, Gate result, history, repository, or network
-is available. `skeleton.json` is an exact reindex of `packet.json`; it contains no
-target operator, API, source statement, instruction selection, inference, or repair.
-"""
-    binding_contract = """# Replay target-binding contract
-
-`/work/replay.binding.json` already contains the exact immutable
-`intentir.replay-compact-binding.v2` manifest. Edit only the ordinary source files
-named by its `blocks[*].source_path` fields (`/work/binding/b*.source`). Do not edit
-the manifest, add/remove blocks, or change semantic_refs/realization_refs. Query
-`skeleton_query binding_scaffold`, then `block b*` for the bounded J/π facts.
-
-Fixed code renders function/signature aliases, program coordinates, region nesting,
-loop bounds and carrier wiring. It never writes a value expression, address, mask,
-load/store, reduction, predicate or algorithm. Those target statements are authored
-only in the source strings. Binding state is proof-irrelevant and is destroyed after
-this formal Replay episode.
+is available. S_J is derived only from this episode's J and contains no pi, C value,
+target operator, API, source statement, instruction selection, or repair.
 """
     tool = """# Replay agent tools
 
-The default path is target binding, not hand-written full source. Read
-`skeleton.json` through bounded queries, author `/work/replay.binding.json`, then run:
+Act like a compiler coding agent. Read `semantic-program.intent`, `pi.intent`,
+`frontend.json`, and `mask-c.json` completely before drafting. Query exact J/S_J/pi
+only for a named cross-reference, and write one complete `/output/replay.source`.
 
 ```text
-python .agents/intentir_agent_tool.py skeleton_query binding_scaffold
-python .agents/intentir_agent_tool.py skeleton_query block ID
-python .agents/intentir_agent_tool.py skeleton_query semantic REF
-python .agents/intentir_agent_tool.py binding_check
-python .agents/intentir_agent_tool.py binding_render
+python .agents/intentir_agent_tool.py semantic_query overview
+python .agents/intentir_agent_tool.py semantic_query node REF
+python .agents/intentir_agent_tool.py packet_query realization
+python .agents/intentir_agent_tool.py packet_query obligation HANDLE
+python .agents/intentir_agent_tool.py replay_compile_check
+python .agents/intentir_agent_tool.py replay_ttir_inspect summary
+python .agents/intentir_agent_tool.py submit_replay
 ```
 
-`binding_check` rejects any manifest/provenance edit or empty source file. `binding_render`
-writes `/output/replay.source` and a block-level source map from exact agent-authored
-bytes plus fixed structural plumbing; it performs no computation selection. The legacy
-plain/grouped source composer remains readable for old evidence but is not the fresh
-default. Then use `replay_check`, `replay_compile_check`, and optionally
-`replay_ttir_inspect summary|raw|find|observer`. Finish with `submit_replay`. All
-callbacks are source-blind and diagnostic-only; formal Gate1 runs outside this
-episode.
+Use ordinary file edits and your own helper files under `/work`. You may compile,
+inspect only your current Replay IR, checkpoint and patch repeatedly within this one
+episode. `submit_replay` checks the exact complete bytes but neither generates nor
+repairs them. Formal Gate1 runs outside this episode and is never visible here.
 """
     return (
         {
             "README.md": readme,
             "packet.json": packet_text,
-            "skeleton.json": skeleton_text,
-            "BINDING_CONTRACT.md": binding_contract,
+            "semantic-program.json": semantic_program_text,
+            "semantic-program.intent": semantic_program.text,
+            "pi.json": pi_text,
+            "pi.intent": realization_view.text,
+            "mask-c.json": mask_c_text,
+            "frontend.json": frontend_text,
             "REPLAY_CONTRACT.md": instructions + "\n",
             "TOOL.md": tool,
         },

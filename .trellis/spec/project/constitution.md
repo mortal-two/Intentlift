@@ -34,6 +34,9 @@ Replay = W_f(J,pi,MaskC(C);U_f)
 
 - closed schema、引用、类型、授权和隔离检查；
 - `MaskC(C)`、`InterfaceView(J)` 等确定性投影；
+- 将 closed J 确定性物化为只读、参数化、anchor-preserving 的语义程序
+  `S_J=M(J)`，供 Replay Agent 作为编译器输入；`M` 不读取 C、π、Source、Harness valuation、target
+  或 Gate，也不生成目标源码；
 - build、bind、run、observe、compare 和结构化诊断；
 - 将正式 Runner 的同一 source-free parser/Decode/anonymous-view/TypeCheck callable core 以时间治理、
   只读、非认证的 CandidateCheck 暴露给持久 source-aware Lift owner；Runner 另做 privacy/provenance
@@ -60,9 +63,11 @@ Replay = W_f(J,pi,MaskC(C);U_f)
 ## 明确禁止
 
 - 独立 interface/ABI 语义对象、BindingMap 或 source-conditioned sidecar 进入 Replay；
-- Lift/Replay/SCRC 中的 deterministic composer、per-kernel RuleCard/RuleRegistry、`C.strategy` 或
-  per-kernel construction policy；production 只允许以 typed A pattern、B precondition 与 target
-  capability 为 key 的 generic compiler pass/family registration；
+- Lift/Replay/SCRC 中从 `(J,π)` 生成 target skeleton、binding、hole、fragment 或完整目标源码的
+  deterministic composer，以及 per-kernel RuleCard/RuleRegistry、`C.strategy` 或 per-kernel
+  construction policy；J-only 的 `S_J=M(J)` 语义物化不在此禁令内，因为它不读取 π、不选择 target
+  realization、也不产生可执行目标程序；production 只允许以 typed A pattern、B precondition 与
+  target capability 为 key 的 generic compiler pass/family registration；
 - 以 hash、digest、commitment、epoch 或所谓冻结门决定候选是否合法；
 - 让 Lift 自定义任意 comparator、任意 tolerance 或“所有输出均可接受”；
 - Gate1 失败后 patch Replay，或 Gate2 失败后在同一次实验中继续修补候选；

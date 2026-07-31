@@ -160,14 +160,12 @@ telemetry；每个响应最多四个独立只读 query 只是原子工具 envelo
 fresh Replay/Gate1 后才消耗本次显式声明的正式 `K`。submission `PASS` 仍非认证，外部 Runner 必须重跑
 TypeCheck。
 
-MiniSWE 的无状态 provider transport 可以把旧 response/tool 大字段替换成可重读 exact bytes 的
-hash/length receipt；正式 continuation 不再重复嵌入同一 workspace 中已经存在的完整 candidate，
-owner 按路径读取 exact bytes，同时保留最新 closed feedback、完整本地 trajectory 与
-persistent workspace。Codex 可以通过隔离的 allowlisted host bridge 调用同一
-CandidateCheck/ReplayCheck/public synthetic compile。bridge 不得写 artifact 或选择/修复语义；
-Replay episode 的 syntax-only composer 可以把该 agent 自己写入的有序 source fragments 原样拼成
-`replay.source`，这不是 J/π 到目标代码的映射。两条路径均保持 configured reasoning effort，不把 repair/continuation 从 `xhigh`
-自动降级。
+MiniSWE 的无状态 provider transport 将 exact 文件保留在可重读的 persistent workspace，正式
+continuation 不再重复嵌入同一 candidate；owner 按路径读取 exact bytes，同时保留最新 closed
+feedback 与完整本地 trajectory。Codex 可以通过隔离的 allowlisted host bridge 调用同一
+CandidateCheck/ReplayCheck/public synthetic compile。bridge 不得写 artifact、选择/修复语义，或把
+J/π 拼成 Replay；完整 `replay.source` 始终由当前 Agent 单独作者化。两条路径均保持 configured
+reasoning effort，不把 repair/continuation 从 `xhigh` 自动降级。
 
 每个持久 Lift owner 在创建时固定自己的 Source/Harness/schema/knowledge/tool 私有输入快照；后续
 invocation 只刷新该 branch 的 closed feedback（Codex 另刷新 CandidateCheck 结果）。仓库中并行发生的
@@ -395,52 +393,42 @@ ReplayLLM(J,pi,MaskC(C);U_f) -> complete source R_f
 ```
 
 当前外部 packet protocol 仍为 `intentir.scrc.replay-input.v2`。Codex Replay backend
-`openai.codex-cli.intentir-replay.v51` 只把 packet 中 canonical π 的固定 relation list 编为
+`openai.codex-cli.intentir-replay.v54` 只把 packet 中 canonical π 的固定 relation list 编为
 `intentir.pi-min.relational-column-wire.v1`：columns 明示字段顺序，发送前必须精确 round-trip 回原 π；
 它不修改 artifact π、TypeCheck judgement 或证书身份，旧 evidence 也不因 codec 升级而重判。
 
 每个 formal round 是一个 fresh、single-writer、source-blind coding episode，以 active wall time而非
-极小 tool-call 数治理。默认由 agent 直接维护一份完整 `replay.source` 并做局部 patch/compile；不得
-为了 host 协议把几 KB 源码强制拆成每 occurrence 一个文件。只有 agent 自己判断有利时，才把源码拆为
-本轮 `work/composer/*.source` fragments；plain mode只按词法文件名拼接 exact UTF-8 bytes，或另写
-episode-local
-`work/replay.compose.json` 与 `NNN-iK.source`：fragment 中的 `{{out}}`、显式 operand
-`{{slot:N}}` 和按同 target empty-slot route 声明序编号的 `{{dep:N}}` 都是 agent 作者化目标语法的
-一部分，host 只按 accepted π 中已经显式、唯一的 route 替换 stable local ID，并
-检查 closed source/target、slot、sharing 与 order。host 不选择 target op/expression/control/API，
-不把 π relation 翻译成 code fragment；歧义、缺 occurrence、重复 slot 或错误顺序立即拒绝。direct
-完整 `replay.source` 是首选 coding 路径。agent 可反复 render、ReplayCheck、public synthetic compile 与
-查看自己 Replay 的 TTIR；任何 manifest、fragment、checkpoint 或 helper 都不得跨 formal round 保留。
-\nv50/v8 只升级 proof-irrelevant Agent execution transport：活动 staged writer 被移除，MiniSWE 使用
-一个持久 Lift owner 和每轮一个 exact Replay packet；首轮 exact allowlisted workspace mirror 在
-模型收到一次后可于后续无状态 provider packet 中按路径重读 exact 文件；旧 response/tool group
-只保留最近窗口，完整本地 trajectory 与 workspace 文件不变。Lift 可把多个显式 schema lookup 合并为
-一个只读 bundle；Replay 可把完整 LLM-authored source 直接原样提交，或对自己的当前 source 做唯一
-exact-text replacement 后在同一 action 触发既有 ReplayCheck preflight。固定代码不得据此解释、生成、
-重排或修复 J/C/π/Replay 语义。每个 formal round 的 Replay conversation/workspace 仍全新；transport
-receipt、startup packet view 与 transaction audit 都不是 Replay 输入 artifact 或 acceptance oracle。
-v51/v9 只增加上述 exact stagnation fail-fast 和分离的 Replay/Gate1 progress telemetry。v52/v10
-再只增加 first-winner cooperative cancellation：同 case 首个已完成 Gate1 closure 被记录后，正在
-Lift、MiniSWE Replay 或 Codex CLI provider turn 中的 sibling 可被终止并保存
-`candidate_superseded + winner_branch_id` receipt；取消检查位于 transport retry 之外，不能把取消
-伪装成 transient retry，也不丢弃已经完成的 winner evidence。这些版本都不改变 artifact、packet、
-TypeCheck、ReplayCheck、Gate1 或 Gate2 接受集合。
+极小 tool-call 数治理。固定 `SemanticMaterializer` 先执行：
 
-MiniSWE 的 `intentir.replay-authored-requirements.v2` 只是对 immutable packet 中既有事实的
-有界 exact 重排：除 π time/control/route 外，它可列出 J/B 的 accesses、aliases、
-output mappings、physical reduction tile axes、index bounds、updates、consumer extensions、
-access guards 与 result relations；超过上限的行保留精确 section query。Codex 启动只收到 packet/
-contract/tool 的路径和字节数，自己按需读文件，不再重复注入该 projection。两者都不读取 Source、
-Harness value 或 Gate，也不把 J op/relation 映射成 target code。普通 effort 的 fresh Replay episode
-默认可用三个 provider wall-time window，xhigh 可用两个长 window；到最终截止点时，只有当前
-LLM-authored exact bytes 已重新通过 Replay ingress 与 synthetic compile 两项固定检查，host 才可在
-缺少最后一次 submit 调用的情况下保留它进入正式 Gate1。任一检查未通过仍以 infrastructure failure
-结束，host 不补写或修复源码。
+```text
+S_J = M(J)
+```
 
-该 requirements view 还按 declaration order 原样列出每个 J node 的
-`id/op/operands/attrs/result`，并把 empty-slot program-domain route 与其 branch region 作 exact join。
-这些行只是在同一 packet 内重索引，防止 coding agent 漏读或改写已有 J；它们不映射 target API、
-不生成源码，也不能成为 Gate1 membership oracle。
+`S_J` 使用 `intentir.replay-semantic-program.v1`，是 canonical、typed、参数化且保留 J handle 的只读
+semantic program。`M` 只读取本轮 exact J；它不读取 C、π、Source、Harness valuation、target、旧
+Replay 或 Gate，也不生成 target API、schedule、address、loop spelling 或目标源码。因此 `S_J` 是
+proof-irrelevant 的 J 内部视图，不是第四 artifact、Replay 新权威或 production 输入。正常轮 fresh
+计算 `M(J)`；MaskJ 轮必须 fresh 计算 `M(MaskJ(J))`，禁止先从完整 J 生成 `S_J` 后再遮罩。
+
+Replay Compiler Agent 直接把完整只读 `S_J` 作为 compiler input，并结合 exact π、`MaskC(C)` 与
+`U_f` 独立编写一份完整 `replay.source`。Agent 可以全局选择 target API、address/program mapping、
+layout、memory、loop/carrier/control、synchronization、fusion 与源码结构，但输出必须属于
+`Realize_f(S_J,π;U_f)`：J 决定全部 value semantics，π 只约束 occurrence、region、route、order、
+sharing、time/control 与 materialization。Agent 不做 per-node hole/binding，也不接受 host 生成的
+target block、route fragment、source scaffold 或固定 source map。
+
+启动上下文只携带 immutable 文件路径和字节数，不嵌入整份 packet、requirements ledger、历史
+Replay 或 Gate frontier。Agent 先完整读取 `semantic-program.intent` 与 `pi.intent`；后者只是 exact π
+各 relation 的 declaration-order 文本视图，不含 target mapping。随后才按当前编译需要用
+`semantic_query` 定位一个 J node/value/boundary，或用 `packet_query` 读取一个 exact π
+region/instance/route/order/carrier 局部视图。查询只无损重排当前 `S_J`/packet，不生成 target spelling、
+lowering plan、mapping 或修复。
+
+同一 episode 内 Agent 可维护 helper、反复修改完整源码、运行 ReplayCheck、public synthetic compile、
+查看自己 Replay 的 TTIR、checkpoint/rollback 和 exact submit。只有 Agent 作者化的完整 exact bytes 在
+episode 外重新通过 ingress 与 construction compile 后才进入 formal Gate1；这些检查只拒绝，不签发
+Gate membership 或认证。所有 workspace/helper 在 formal round 后销毁，下一轮仍启动 fresh
+source-blind Replay。
 
 `replay-check.v10` 在 v9 的 transfer、iteration、carrier 与 pointer-address guard 之外，按 π 中
 `reduction_linearization` 的作者化数量要求 synthetic TTIR 至少出现相同数量的 distinct
@@ -477,8 +465,9 @@ annotation；`kind=compiler` 的 slot 只声明由外部 compiler invocation 消
 Replay 函数签名、body 或 π route 中。正式 Gate1/Gate2 在 Replay 提交后以与 Source 相同的 C value
 绑定该 role；source-blind construction compile 不读取其 value，也不能把它伪装成公开代表值。
 
-Replay 必须生成完整、可独立构建的当前前端源码；固定代码只做 syntax-byte composition、绑定和
-reject-only 检查，不根据 J、π 或 compiler diff 选择目标语义、修复或施工。
+Replay 必须生成完整、可独立构建的当前前端源码；固定代码只做 J-only semantic materialization、
+exact/bounded 查询、隔离、compile/own-IR、原子保存与 reject-only 检查，不根据 π 或 compiler diff
+生成 target skeleton、binding、fragment、目标语义、修复或施工。
 
 Replay instruction 的共享前缀只能陈述 frontend-neutral 的 J/C/π ownership、拓扑保持、拒绝与输出
 合同。`U_f` 只声明 callable/import ABI 与公共文档入口，不再列举 `J/π relation -> tl.dot/tl.sum/

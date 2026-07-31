@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -29,13 +28,10 @@ from intentir.verify.gate1.ttir import fingerprint_ttir
 
 from .model import Frontend, Gate1Artifact
 from .pi_nested_wire import encode_pi_nested_wire
-from .replay_compact_binding import (
-    build_replay_compact_plan,
-    parse_replay_compact_binding,
+from .replay_semantic_core import (
+    materialize_replay_semantics,
+    query_replay_semantics,
 )
-from .replay_composer import ComposerFragment, render_route_composer
-from .replay_skeleton import build_replay_skeleton, query_replay_skeleton
-from .replay_structural_renderer import render_replay_structural_binding
 from .replay import (
     REPLAY_CHECK_PROTOCOL,
     ReplayAttempt,
@@ -50,50 +46,44 @@ from .replay import (
 )
 
 
-CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v53"
-REPLAY_COMPOSER_PROTOCOL = "intentir.replay-episode-composer.v2"
-_COMPOSER_FRAGMENT = re.compile(r"[0-9A-Za-z][0-9A-Za-z._-]{0,127}\.source")
-_MAX_COMPOSER_FRAGMENTS = 128
-_MAX_REPLAY_BYTES = 1024 * 1024
+CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v54"
 
 _INITIAL_PROMPT = """You are the sole writer for one fresh source-blind IntentIR Replay episode.
 Work only under the isolated /workspace. input/ is immutable; output/, work/, and
 tmp/ are writable. There is no Source, Harness/compiler view, actual C value, Gate
 result, earlier Replay, sibling state, repository, or network.
 
-J is the only semantic authority; pi supplies realization constraints only. A valid
-work/replay.binding.json scaffold already exists. Its exact J/pi provenance, three
-region blocks and order were mechanically generated and are immutable. Edit only the
-ordinary work/binding/b*.source files it names. Choose every computation, address,
-mask, load/store and target API in those files yourself. Fixed code owns only function/signature aliases,
-program coordinates, region nesting, loop bounds and exact J/pi carrier wiring.
-Begin with `python .agents/intentir_agent_tool.py skeleton_query binding_scaffold`,
-then query one block or semantic ref only when needed.
-Use input/packet.json or a bounded packet query only for one omitted exact fact. Do
-not infer a Source recipe or invent a missing fact. input/BINDING_CONTRACT.md and
-input/REPLAY_CONTRACT.md define the boundaries; input/TOOL.md defines the tools.
+J is the only semantic authority; pi supplies realization constraints only. Read the
+complete read-only input/semantic-program.intent and input/pi.intent before drafting,
+then read input/frontend.json and input/mask-c.json for the callable ABI. S_J is a
+deterministic parameterized compiler IR derived only from this J; pi.intent renders
+the exact authored realization relations without target spelling. Neither is a
+target-source skeleton. Use `semantic_query` or `packet_query` only to cross-reference
+one named handle after reading those complete small views.
 
-Act like a coding agent: edit the three pre-existing source files, run binding_check,
-then binding_render, compile, inspect and patch the responsible block. Do not rewrite
-the scaffold or repeat signature/program-id/loop/carrier plumbing already owned by the
-structural renderer.
+Act as the complete Replay compiler. Write one full target program to
+output/replay.source yourself. You own instruction selection, addressing, program
+mapping, control, loops/carriers, layout, memory, synchronization, target APIs and
+whole-program restructuring, while satisfying every exact pi occurrence/region/route/
+order/sharing/time/control/materialization constraint. Do not edit S_J, infer a Source
+recipe, or obtain a missing value semantic from pi. input/REPLAY_CONTRACT.md defines
+the ownership boundary and input/TOOL.md defines the tools.
 
-After a complete binding has rendered, run
+Compile, inspect only your own Replay IR, and patch the complete program in this same
+episode. After a meaningful complete draft, run
 `python .agents/intentir_agent_tool.py submit_replay`. It transactionally runs the
 source-blind ingress and synthetic compile checks on your exact bytes. Repair your
 own source until it passes. If compilation is unclear, use `replay_ttir_inspect`
-only on your current Replay. Fixed code only projects packet facts, checks, and
-rejects; binding_render only wraps your exact target block bytes in the fixed
-J/pi-derived structural shell and never chooses or repairs computations. Finish only with the
-transaction passing
-and do not claim Gate1, Gate2, or certification.
+only on your current Replay. Fixed code materializes S_J, projects exact packet facts,
+checks and rejects; it never constructs or repairs target source. Finish only with the
+transaction passing and do not claim Gate1, Gate2, or certification.
 """
 
 _REPAIR_PROMPT = """The same fresh source-blind Replay episode continues in the same thread and workspace.
-Read work/host_replay_check.json, the current output/replay.source and its binding
-source map. Repair only the responsible work/binding/b*.source file, rerun binding_check/binding_render, and
-rerun submit_replay. Diagnostics reject only; they do not supply a
-semantic mapping or repair. Finish only when ingress and compile both pass.
+Read work/host_replay_check.json and the current output/replay.source. Repair the
+complete program using the same read-only S_J and pi, then rerun submit_replay.
+Diagnostics reject only; they do not supply a semantic mapping or repair. Finish only
+when ingress and compile both pass.
 """
 
 
@@ -121,84 +111,6 @@ def _aggregate_usage(turns: list[CodexCLITurn]) -> dict[str, int]:
     return usage
 
 
-def _composer_fragments(composer_dir: Path) -> list[dict[str, Any]]:
-    """Read an episode-local, syntax-only source-fragment workspace.
-
-    Fragment names and bytes are entirely model-authored.  The host only checks a
-    closed filesystem shape and concatenates exact UTF-8 bytes in lexical order.
-    """
-
-    if composer_dir.is_symlink() or not composer_dir.is_dir():
-        raise ValueError("work/composer must be a real directory")
-    paths = sorted(composer_dir.iterdir(), key=lambda path: path.name)
-    if not 1 <= len(paths) <= _MAX_COMPOSER_FRAGMENTS:
-        raise ValueError(
-            "composer needs between 1 and "
-            f"{_MAX_COMPOSER_FRAGMENTS} source fragments"
-        )
-    result: list[dict[str, Any]] = []
-    total = 0
-    for path in paths:
-        if (
-            path.is_symlink()
-            or not path.is_file()
-            or _COMPOSER_FRAGMENT.fullmatch(path.name) is None
-        ):
-            raise ValueError(
-                "composer entries must be regular NAME.source fragments"
-            )
-        raw = path.read_bytes()
-        if not raw or not raw.endswith(b"\n") or b"\x00" in raw:
-            raise ValueError(
-                f"composer fragment {path.name} must be non-empty UTF-8 text "
-                "ending in one newline"
-            )
-        text = raw.decode("utf-8")
-        total += len(raw)
-        if total > _MAX_REPLAY_BYTES:
-            raise ValueError("composed Replay exceeds the public source-size bound")
-        result.append({"name": path.name, "bytes": len(raw), "text": text})
-    return result
-
-
-def _composer_response(
-    composer_dir: Path,
-    *,
-    manifest_path: Path | None = None,
-    pi: Mapping[str, Any] | None = None,
-) -> dict[str, Any]:
-    fragments = _composer_fragments(composer_dir)
-    if manifest_path is not None and manifest_path.exists():
-        if pi is None:
-            raise ValueError("route-bound composer requires canonical pi")
-        rendered = render_route_composer(
-            tuple(
-                ComposerFragment(
-                    str(item["name"]),
-                    str(item["text"]),
-                    int(item["bytes"]),
-                )
-                for item in fragments
-            ),
-            manifest_path=manifest_path,
-            pi=pi,
-        )
-        return rendered.to_response()
-    return {
-        "protocol": REPLAY_COMPOSER_PROTOCOL,
-        "status": "pass",
-        "fragments": [
-            {"name": item["name"], "bytes": item["bytes"]}
-            for item in fragments
-        ],
-        "total_bytes": sum(int(item["bytes"]) for item in fragments),
-        "authority": (
-            "episode-local syntax bytes only; no packet read, semantic mapping, "
-            "lowering rule, repair, Gate, or certification"
-        ),
-    }
-
-
 def _agent_replay_packet(packet: Mapping[str, Any]) -> dict[str, Any]:
     """Return the exact Replay packet with pi in its bijective nested wire."""
 
@@ -212,7 +124,7 @@ def _agent_replay_packet(packet: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _replay_startup_context(
-    packet: Mapping[str, Any], skeleton: Mapping[str, Any]
+    packet: Mapping[str, Any], files: Mapping[str, str]
 ) -> dict[str, Any]:
     """Return a path-only receipt; Codex reads the exact packet as a local file."""
 
@@ -223,28 +135,26 @@ def _replay_startup_context(
         allow_nan=False,
         separators=(",", ":"),
     ).encode("utf-8")
-    skeleton_encoded = json.dumps(
-        skeleton,
-        sort_keys=True,
-        ensure_ascii=False,
-        allow_nan=False,
-        separators=(",", ":"),
-    ).encode("utf-8")
     return {
-        "protocol": "intentir.scrc.replay-startup-view.v3",
+        "protocol": "intentir.scrc.replay-startup-view.v5",
         "packet_bytes": len(encoded),
-        "skeleton_bytes": len(skeleton_encoded),
+        "semantic_program_text_bytes": len(
+            files["semantic-program.intent"].encode("utf-8")
+        ),
+        "semantic_program_json_bytes": len(
+            files["semantic-program.json"].encode("utf-8")
+        ),
+        "realization_view_bytes": len(files["pi.intent"].encode("utf-8")),
         "paths": {
             "packet": "input/packet.json",
-            "skeleton": "input/skeleton.json",
-            "binding_contract": "input/BINDING_CONTRACT.md",
-            "binding": "work/replay.binding.json",
-            "binding_blocks": "work/binding/*.source",
-            "binding_source_map": "work/replay.binding.source-map.json",
+            "semantic_program": "input/semantic-program.intent",
+            "semantic_program_json": "input/semantic-program.json",
+            "realization": "input/pi.intent",
+            "pi": "input/pi.json",
+            "mask_c": "input/mask-c.json",
+            "frontend": "input/frontend.json",
             "public_contract": "input/REPLAY_CONTRACT.md",
             "tool_contract": "input/TOOL.md",
-            "composer": "work/composer/*.source",
-            "composer_manifest": "work/replay.compose.json",
             "replay": "output/replay.source",
             "host_check": "work/host_replay_check.json",
         },
@@ -318,7 +228,7 @@ class CodexCLIReplayWriter:
             masked=masked,
         )
         agent_packet = _agent_replay_packet(packet)
-        skeleton = build_replay_skeleton(packet).to_json()
+        semantic_program = materialize_replay_semantics(packet["j"]).to_json()
         files["packet.json"] = json.dumps(
             agent_packet,
             sort_keys=True,
@@ -340,49 +250,18 @@ class CodexCLIReplayWriter:
             ) from exc
 
         workspace = IntentIRReplayWorkspace.create(files)
-        composer_dir = workspace.scratch_dir / "composer"
-        composer_dir.mkdir()
-        composer_manifest = workspace.scratch_dir / "replay.compose.json"
-        binding_path = workspace.scratch_dir / "replay.binding.json"
-        binding_dir = workspace.scratch_dir / "binding"
-        binding_dir.mkdir()
-        binding_source_map_path = workspace.scratch_dir / "replay.binding.source-map.json"
-        compact_plan = build_replay_compact_plan(skeleton)
-        _atomic_write_text(
-            binding_path,
-            json.dumps(
-                compact_plan.scaffold(),
-                indent=2,
-                sort_keys=False,
-                ensure_ascii=False,
-                allow_nan=False,
-            )
-            + "\n",
-        )
-        for block in compact_plan.blocks:
-            _atomic_write_text(
-                binding_dir / f"{block['id']}.source",
-                "# Fill only target statements for this fixed block.\n"
-                + "# J: "
-                + ", ".join(block["semantic_refs"])
-                + "\n# pi: "
-                + ", ".join(block["realization_refs"])
-                + "\n",
-            )
         turns: list[CodexCLITurn] = []
         checks: list[dict[str, Any]] = []
         compile_checks: list[dict[str, Any]] = []
         ttir_inspections: list[dict[str, Any]] = []
         packet_queries: list[dict[str, Any]] = []
-        skeleton_queries: list[dict[str, Any]] = []
-        composer_events: list[dict[str, Any]] = []
-        binding_events: list[dict[str, Any]] = []
+        semantic_queries: list[dict[str, Any]] = []
         timeout_events: list[dict[str, Any]] = []
         source_text = ""
         formal_ingress = None
         formal_compile = None
         last_checked_good: str | None = None
-        startup_context = _replay_startup_context(agent_packet, skeleton)
+        startup_context = _replay_startup_context(agent_packet, files)
         synthetic_compiler = (
             None
             if self.compile_checker is not None
@@ -543,177 +422,6 @@ class CodexCLIReplayWriter:
                 last_checked_good = current
             return response
 
-        def read_target_binding() -> Any:
-            if binding_path.is_symlink() or not binding_path.is_file():
-                raise ValueError("work/replay.binding.json must be a regular file")
-            raw = binding_path.read_bytes()
-            if not 1 <= len(raw) <= _MAX_REPLAY_BYTES:
-                raise ValueError("Replay target binding is outside the public size bound")
-            value = json.loads(raw.decode("utf-8"))
-            if not isinstance(value, Mapping):
-                raise TypeError("Replay target binding root must be an object")
-            expected_names = {f"{item['id']}.source" for item in compact_plan.blocks}
-            paths = list(binding_dir.iterdir())
-            if {path.name for path in paths} != expected_names:
-                raise ValueError(
-                    "work/binding must contain exactly the generated source blocks"
-                )
-            sources: dict[str, str] = {}
-            total = 0
-            for path in paths:
-                if path.is_symlink() or not path.is_file():
-                    raise ValueError("Replay source blocks must be regular files")
-                source_raw = path.read_bytes()
-                total += len(source_raw)
-                if total > _MAX_REPLAY_BYTES or b"\x00" in source_raw:
-                    raise ValueError("Replay source blocks are outside the public bound")
-                sources[path.stem] = source_raw.decode("utf-8")
-            return parse_replay_compact_binding(skeleton, value, sources=sources)
-
-        def binding_check_tool() -> Mapping[str, Any]:
-            try:
-                binding = read_target_binding()
-                response: dict[str, Any] = {
-                    "protocol": "intentir.replay-compact-binding-check.v2",
-                    "status": "pass",
-                    "block_count": len(binding.blocks),
-                    "semantic_ref_count": sum(
-                        len(item["semantic_refs"]) for item in binding.blocks
-                    ),
-                    "realization_ref_count": sum(
-                        len(item["realization_refs"]) for item in binding.blocks
-                    ),
-                    "authority": (
-                        "exact generated-scaffold validation only; no target choice, "
-                        "source generation, repair, Gate, or certification"
-                    ),
-                }
-            except (OSError, UnicodeError, TypeError, ValueError, json.JSONDecodeError) as exc:
-                response = {
-                    "protocol": "intentir.replay-compact-binding-check.v2",
-                    "status": "fail",
-                    "diagnostic": f"{type(exc).__name__}: {exc}",
-                    "authority": (
-                        "closed target-binding validation only; no target choice, "
-                        "source generation, repair, Gate, or certification"
-                    ),
-                }
-            binding_events.append(
-                {"action": "check", "status": response.get("status")}
-            )
-            return response
-
-        def binding_render_tool() -> Mapping[str, Any]:
-            try:
-                binding = read_target_binding()
-                rendered = render_replay_structural_binding(skeleton, binding)
-                _atomic_write_text(workspace.replay_path, rendered.source)
-                _atomic_write_text(
-                    binding_source_map_path,
-                    json.dumps(
-                        [dict(item) for item in rendered.source_map],
-                        indent=2,
-                        sort_keys=True,
-                        ensure_ascii=False,
-                        allow_nan=False,
-                    )
-                    + "\n",
-                )
-                response = rendered.to_response()
-                response["rendered_path"] = "output/replay.source"
-                response["source_map_path"] = "work/replay.binding.source-map.json"
-            except (OSError, UnicodeError, TypeError, ValueError, json.JSONDecodeError) as exc:
-                response = {
-                    "protocol": "intentir.replay-structural-render.v2",
-                    "status": "fail",
-                    "diagnostic": f"{type(exc).__name__}: {exc}",
-                    "authority": (
-                        "agent-authored target block rendering only; no computation "
-                        "selection, semantic inference, repair, Gate, or certification"
-                    ),
-                }
-            binding_events.append(
-                {
-                    "action": "render",
-                    "status": response.get("status"),
-                    "source_bytes": response.get("source_bytes"),
-                }
-            )
-            return response
-
-        def composer_status_tool() -> Mapping[str, Any]:
-            try:
-                response = _composer_response(
-                    composer_dir,
-                    manifest_path=composer_manifest,
-                    pi=packet["pi"],
-                )
-            except (OSError, UnicodeError, ValueError) as exc:
-                response = {
-                    "protocol": REPLAY_COMPOSER_PROTOCOL,
-                    "status": "fail",
-                    "diagnostic": f"{type(exc).__name__}: {exc}",
-                    "authority": (
-                        "syntax-workspace validation only; no packet read, semantic "
-                        "mapping, repair, Gate, or certification"
-                    ),
-                }
-            composer_events.append(
-                {
-                    "action": "status",
-                    "status": response.get("status"),
-                    "mode": response.get("mode", "plain"),
-                    "consumed_routes": response.get("consumed_routes"),
-                    "total_routes": response.get("total_routes"),
-                }
-            )
-            return response
-
-        def composer_render_tool() -> Mapping[str, Any]:
-            try:
-                fragments = _composer_fragments(composer_dir)
-                if composer_manifest.exists():
-                    rendered = render_route_composer(
-                        tuple(
-                            ComposerFragment(
-                                str(item["name"]),
-                                str(item["text"]),
-                                int(item["bytes"]),
-                            )
-                            for item in fragments
-                        ),
-                        manifest_path=composer_manifest,
-                        pi=packet["pi"],
-                    )
-                    source = rendered.source
-                    response = rendered.to_response()
-                else:
-                    source = "".join(str(item["text"]) for item in fragments)
-                    response = _composer_response(composer_dir)
-                _atomic_write_text(workspace.replay_path, source)
-                response["rendered_path"] = "output/replay.source"
-            except (OSError, UnicodeError, ValueError) as exc:
-                response = {
-                    "protocol": REPLAY_COMPOSER_PROTOCOL,
-                    "status": "fail",
-                    "diagnostic": f"{type(exc).__name__}: {exc}",
-                    "authority": (
-                        "syntax-only concatenation; no packet read, semantic mapping, "
-                        "repair, Gate, or certification"
-                    ),
-                }
-            composer_events.append(
-                {
-                    "action": "render",
-                    "status": response.get("status"),
-                    "mode": response.get("mode", "plain"),
-                    "total_bytes": response.get("total_bytes"),
-                    "consumed_routes": response.get("consumed_routes"),
-                    "total_routes": response.get("total_routes"),
-                }
-            )
-            return response
-
         def submit_replay_tool() -> Mapping[str, Any]:
             """Run both construction checks as one exact-source transaction."""
 
@@ -757,12 +465,14 @@ class CodexCLIReplayWriter:
                 ),
             }
 
-        def skeleton_query_tool(arguments: tuple[str, ...]) -> Mapping[str, Any]:
-            value = query_replay_skeleton(skeleton, arguments)
-            skeleton_queries.append({"query": list(arguments)})
+        def semantic_query_tool(arguments: tuple[str, ...]) -> Mapping[str, Any]:
+            value = query_replay_semantics(semantic_program, arguments)
+            semantic_queries.append({"query": list(arguments)})
             return {
                 **value,
-                "authority": value.get("authority", skeleton.get("authority")),
+                "authority": value.get(
+                    "authority", semantic_program.get("authority")
+                ),
             }
 
         def replay_ttir_inspect_tool(
@@ -924,14 +634,10 @@ class CodexCLIReplayWriter:
                 "replay_check": replay_check_tool,
                 "replay_compile_check": replay_compile_tool,
                 "submit_replay": submit_replay_tool,
-                "binding_check": binding_check_tool,
-                "binding_render": binding_render_tool,
-                "composer_status": composer_status_tool,
-                "composer_render": composer_render_tool,
             },
             argument_handlers={
                 "packet_query": packet_query_tool,
-                "skeleton_query": skeleton_query_tool,
+                "semantic_query": semantic_query_tool,
                 "replay_ttir_inspect": replay_ttir_inspect_tool,
             },
         )
@@ -1112,9 +818,7 @@ class CodexCLIReplayWriter:
                 "replay_compile_check": compile_checks,
                 "replay_ttir_inspections": ttir_inspections,
                 "packet_queries": packet_queries,
-                "skeleton_queries": skeleton_queries,
-                "composer_events": composer_events,
-                "binding_events": binding_events,
+                "semantic_queries": semantic_queries,
                 "timeout_events": timeout_events,
                 "explicit_submission_accepted": explicit_submission_accepted,
                 "tool_bridge": bridge.evidence,
@@ -1188,9 +892,7 @@ class CodexCLIReplayWriter:
                 "replay_compile_check": compile_checks,
                 "replay_ttir_inspections": ttir_inspections,
                 "packet_queries": packet_queries,
-                "skeleton_queries": skeleton_queries,
-                "composer_events": composer_events,
-                "binding_events": binding_events,
+                "semantic_queries": semantic_queries,
                 "timeout_events": timeout_events,
                 "tool_bridge": bridge.evidence,
                 "failure_class": type(exc).__name__,

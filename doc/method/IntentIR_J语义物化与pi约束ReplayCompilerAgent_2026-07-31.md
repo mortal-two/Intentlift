@@ -169,6 +169,7 @@ Replay 后确定性绑定。production backend 继续只消费 J+C，不读取 �
 input/j.json                 exact authoritative J
 input/semantic-program.*     deterministic read-only S_J
 input/pi.json                exact π 或严格无损 wire
+input/pi.intent              同一 π 的逐关系、声明序、无损只读文本视图
 input/mask-c.json
 input/frontend.md            U_f
 ```
@@ -180,7 +181,9 @@ work/                        Agent 自己的笔记/helper/checkpoint
 output/replay.source         唯一正式输出
 ```
 
-允许工具：普通文件编辑、exact J/S_J/π 查询、compile、own-IR/own-TTIR、checkpoint/rollback 和原子
+Agent 首次完整读取 `semantic-program.intent` 与 `pi.intent`；后者只把 region/instance/route/order/
+sharing/carrier 等原字段逐行呈现，不建立 relation-to-target 映射。允许工具：普通文件编辑、exact
+J/S_J/π 查询、compile、own-IR/own-TTIR、checkpoint/rollback 和原子
 submit。资源以 episode wall-time 与 formal Gate1 round 管理，不用极小工具调用次数打断 coding loop。
 
 禁止恢复：

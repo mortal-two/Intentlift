@@ -21,6 +21,7 @@ from typing import Any, Callable, Mapping
 from pydantic import BaseModel, ConfigDict
 
 from minisweagent.exceptions import Submitted
+from intentir.verify.gate1.replay_semantic_core import query_replay_semantics
 
 
 INTENTIR_REPLAY_SUBMIT = "INTENTIR_REPLAY_SUBMIT"
@@ -31,7 +32,7 @@ INTENTIR_REPLAY_CHECK = "intentir_replay_check"
 INTENTIR_REPLAY_COMPILE_CHECK = "intentir_replay_compile_check"
 INTENTIR_REPLAY_OBLIGATION_AUDIT = "intentir_replay_obligation_audit"
 INTENTIR_PACKET_QUERY = "intentir_packet_query"
-REPLAY_STARTUP_PACKET_EMBED_LIMIT_BYTES = 64 * 1024
+INTENTIR_SEMANTIC_QUERY = "intentir_semantic_query"
 INTENTIR_REPLAY_INSPECT = "intentir_replay_inspect"
 REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v13"
 REPLAY_TRANSACTION_PROTOCOL = "intentir.replay-transaction.v1"
@@ -42,8 +43,12 @@ REPLAY_INPUT_FILES = frozenset(
     {
         "README.md",
         "packet.json",
-        "skeleton.json",
-        "BINDING_CONTRACT.md",
+        "semantic-program.json",
+        "semantic-program.intent",
+        "pi.json",
+        "pi.intent",
+        "mask-c.json",
+        "frontend.json",
         "REPLAY_CONTRACT.md",
         "TOOL.md",
     }
@@ -2714,7 +2719,7 @@ class IntentIRReplayEnvironment:
         self._probe()
 
     def validate_actions(self, actions: list[dict[str, Any]]) -> str | None:
-        """Permit a batch only when every call is a source-blind packet query."""
+        """Permit a batch only for independent immutable-input queries."""
 
         if len(actions) <= 1:
             return None
@@ -2722,7 +2727,7 @@ class IntentIRReplayEnvironment:
             self._multi_action_rejections += 1
             return (
                 f"{MULTI_ACTION_PROTOCOL}: at most four independent source-blind "
-                "packet queries are allowed; no action in this response was executed"
+                "input queries are allowed; no action in this response was executed"
             )
         allowed = True
         for action in actions:
@@ -2738,7 +2743,10 @@ class IntentIRReplayEnvironment:
             except ValueError:
                 allowed = False
                 break
-            if not arguments or arguments[0] != INTENTIR_PACKET_QUERY:
+            if not arguments or arguments[0] not in {
+                INTENTIR_PACKET_QUERY,
+                INTENTIR_SEMANTIC_QUERY,
+            }:
                 allowed = False
                 break
         if allowed:
@@ -2746,7 +2754,8 @@ class IntentIRReplayEnvironment:
         self._multi_action_rejections += 1
         return (
             f"{MULTI_ACTION_PROTOCOL}: multiple Replay calls are allowed only "
-            "for independent intentir_packet_query actions; no action in this "
+            "for independent intentir_packet_query/intentir_semantic_query actions; "
+            "no action in this "
             "response was executed"
         )
 
@@ -3215,9 +3224,10 @@ class IntentIRReplayEnvironment:
                 "test ! -e /lib64; test ! -e /usr/local; "
                 "for name in python python3 gcc g++ clang ld as nvcc ptxas "
                 "triton torch intentir; do ! command -v \"$name\"; done; "
-                "test \"$(find /input -type f | wc -l)\" -eq 6; "
-                "for name in README.md packet.json skeleton.json "
-                "BINDING_CONTRACT.md REPLAY_CONTRACT.md TOOL.md; do "
+                "test \"$(find /input -type f | wc -l)\" -eq 10; "
+                "for name in README.md packet.json semantic-program.json "
+                "semantic-program.intent pi.json pi.intent mask-c.json "
+                "frontend.json REPLAY_CONTRACT.md TOOL.md; do "
                 "test -f \"/input/$name\" || exit 1; done"
             ),
         ]
@@ -3499,6 +3509,16 @@ class IntentIRReplayEnvironment:
             raise ValueError("Replay packet has an invalid closed root")
         return packet
 
+    def _read_closed_semantic_program(self) -> Mapping[str, Any]:
+        value = json.loads(
+            (self.config.input_dir / "semantic-program.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        if not isinstance(value, Mapping):
+            raise ValueError("Replay semantic program has an invalid root")
+        return value
+
     def _execute_replay_obligation_audit(
         self, arguments: list[str]
     ) -> dict[str, Any]:
@@ -3566,6 +3586,31 @@ class IntentIRReplayEnvironment:
         except Exception as exc:
             return {
                 "output": f"packet query rejected: {type(exc).__name__}: {exc}\n",
+                "returncode": 1,
+                "exception_info": "",
+            }
+        return {
+            "output": rendered + "\n",
+            "returncode": 0,
+            "exception_info": "",
+        }
+
+    def _execute_semantic_query(self, arguments: list[str]) -> dict[str, Any]:
+        try:
+            value = query_replay_semantics(
+                self._read_closed_semantic_program(), arguments[1:]
+            )
+            rendered = json.dumps(
+                value, indent=2, sort_keys=True, ensure_ascii=False
+            )
+            if len(rendered.encode("utf-8")) > MAX_PACKET_QUERY_OUTPUT_BYTES:
+                raise ValueError("query result is too large; use a narrower view")
+        except Exception as exc:
+            return {
+                "output": (
+                    "semantic query rejected: "
+                    f"{type(exc).__name__}: {exc}\n"
+                ),
                 "returncode": 1,
                 "exception_info": "",
             }
@@ -3664,6 +3709,8 @@ class IntentIRReplayEnvironment:
             check_arguments = []
         if check_arguments and check_arguments[0] == INTENTIR_PACKET_QUERY:
             return self._execute_packet_query(check_arguments)
+        if check_arguments and check_arguments[0] == INTENTIR_SEMANTIC_QUERY:
+            return self._execute_semantic_query(check_arguments)
         if check_arguments and check_arguments[0] == INTENTIR_REPLAY_INSPECT:
             return self._execute_replay_inspect(check_arguments)
         if (
@@ -3973,7 +4020,7 @@ class IntentIRReplayEnvironment:
                     "max_actions": 4,
                     "authority": "whole-response fail-before-execute",
                     "allowed": (
-                        "independent source-blind intentir_packet_query actions"
+                        "independent source-blind packet/semantic query actions"
                     ),
                     "rejections": self._multi_action_rejections,
                 },
@@ -3983,6 +4030,7 @@ class IntentIRReplayEnvironment:
 
 __all__ = [
     "INTENTIR_PACKET_QUERY",
+    "INTENTIR_SEMANTIC_QUERY",
     "INTENTIR_REPLAY_COMMIT",
     "INTENTIR_REPLAY_CHECK",
     "INTENTIR_REPLAY_COMPILE_CHECK",

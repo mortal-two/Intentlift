@@ -912,7 +912,8 @@ J + π + MaskC(C) + U_f
 
 Replay 必须：
 
-1. 从 J 读取 operator、predicate、fill、index、effect 和 result semantics；
+1. 从 J-only、只读、参数化的 `S_J=M(J)` 读取完整 typed semantic program；exact J 仍是唯一语义
+   权威，`S_J` 不是第四 artifact；
 2. 从 π 读取 instance multiplicity、route、slot、order、sharing、placement、physical time、
    terminal-control topology、route-local extent transform 和 representation；
 3. 从 `MaskC(C)` 读取匿名 slot schema，不读取 concrete values；
@@ -930,7 +931,7 @@ Replay 不得：
 `U_f` 必须是 source-neutral 的公共前端知识，不能按当前 Kernel、operator 或失败样本选择。
 当前 packet protocol 是 `intentir.scrc.replay-input.v2`；Triton 公共上下文由固定公开字段直接给出，
 不使用 context version、SHA 或 receipt 作为运行门禁。source-aware Codex/MiniSWE Lift `intentir.lift-knowledge.v89/v67`、
-source-blind MiniSWE Replay v31 / Codex Replay v32、
+source-blind MiniSWE Replay v31 / Codex Replay v54、`intentir.replay-semantic-program.v1`、
 `replay-check.v14`；fresh Replay 只检查当前字段、packet closure 和 source isolation，旧版本 run 不能被新组合追认。
 v30/v26 完整执行既有 authored route extent transform 合同：将其纳入 exact `critical_facts.v4`、
 `replay-obligation-audit.v3` 与 source-blind static ingress；只拒绝缺失 closed floor/ceil-div spelling，
@@ -940,8 +941,9 @@ route extent transform 也可用可选 audit 并置当前 exact Replay bytes；a
 Codex Replay v28把fresh episode总active预算提升到3600秒，并允许在已有draft且transport context过大或
 turn timeout时，在同一workspace内新建thread重读exact packet/current Replay/closed diagnostic；不做
 语义摘要、不继承跨episode Replay，并只查询自己public synthetic compile得到的TTIR。
-Codex Replay v32恢复coding-agent的路径优先入口：首轮直接读取一次`packet.json`并尽早写完整Replay，
-不再强制`overview -> requirements -> realization`逐叶查询；query只用于一个仍不明确的精确path/handle。
+Codex Replay v54 使用 J-only SemanticMaterializer：启动只给 immutable 文件路径与字节数，首轮完整
+读取`semantic-program.intent`与无损、逐关系的`pi.intent`后尽早写完整Replay；不嵌入整份packet或requirements ledger，不再强制
+`overview -> requirements -> realization`逐叶查询；query只用于一个仍不明确的精确path/handle。
 episode仍按时间而非调用次数治理：high默认1200秒，xhigh默认3600秒，episode内工具调用不设语义次数
 上限。该改动只删除proof-irrelevant编排，不摘要、补造或选择J/C/π事实。
 v28/v24 只明确现有 ordered carrier relation：同一 region 的 `physical_loop_carriers` declaration
@@ -950,7 +952,8 @@ order 是 init/state/next/result 共享的 carrier-tuple ordinal；Lift 从 Sour
 `pi.order` 拥有；`replay-check.v14` 只在 packet route 与 Replay 自身 TTIR occurrence 都唯一时拒绝
 ordered transfer 的词法反序，不读取 Source/Gate，也不生成映射。v28/v24 继承 v27/v23；v27/v23 继承 v26/v22，并把每条 J-authored `boundary.broadcasts` 与 operand closed type、matching
 boundary access、named consumer/operand ordinal 作 exact source-blind 重索引；存在该 obligation 时，
-owner 必须用 `replay-obligation-audit.v2` 将 ledger 与自己的当前编号源码并置自审。工具不建立
+历史 owner 可用 `replay-obligation-audit.v2` 将 ledger 与自己的当前编号源码并置自审；它不再是默认
+construction 前置。工具不建立
 relation-to-statement 映射、不选择 rank-lift spelling/次数、不生成或修复 Replay，也不读取 Source/Gate。
 同一 `J.signature p*` 的多个 π instance 只能共享该唯一 callable ABI carrier，不能因
 `placement=program` 或 instance multiplicity 生成额外 `tl.program_id`。construction compile 可从
@@ -1373,9 +1376,9 @@ TypeCheck(J,C,π) + Gate1 + Gate2
 - Replay prompt；
 - π 消费顺序说明；
 - instance/route/order/sharing 的公共解释。
-- 对正常大小匿名 packet 只做一次 exact startup embedding；超限时才使用自带 requirements 的
-  manifest。requirements 只重索引 J op/boundary 与 π instance mechanism、time/control/terminal
-  obligations，不推导语义、lowering、schedule、代码或修复建议，也不形成强制查询阶段。
+- 从当前 exact J fresh 生成只读、参数化、anchor-preserving `S_J=M(J)`；normal/MaskJ 分别物化；
+- 启动只给 immutable 文件路径与字节数，Agent 首读 `S_J`，再按需 query 一个 exact π
+  region/instance/route/order/carrier；query 不推导 target lowering、schedule、代码或修复建议。
 
 不把旧 Replay 代码提供给下一次 Replay。
 

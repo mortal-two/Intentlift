@@ -97,6 +97,8 @@ GPU Kernel 生态具有开放、碎片化和快速变化的特点：
 
 - schema、类型、引用和所有权检查；
 - Replay 输入隔离；
+- 将 closed J 确定性物化为只读、参数化、保留 J handle 的语义程序 `S_J=M(J)`；该视图不读取
+  C、π、Source、Harness valuation、target 或 Gate，也不产生目标源码；
 - C 的机械绑定；
 - 编译与 compiler observation；
 - 确定性比较；
@@ -108,7 +110,8 @@ GPU Kernel 生态具有开放、碎片化和快速变化的特点：
 - 把 J 翻译成 Triton/TileLang/CUDA API；
 - 根据 kernel family 选择 RuleCard；
 - 为每种 source topology 增加 StrategyFamily；
-- 从 \(J,\pi\) deterministic 地拼装 Replay 源码。
+- 从 \(J,\pi\) deterministic 地拼装 target skeleton、binding、fragment 或 Replay 源码。仅对 J 做
+  `S_J=M(J)` 的 semantic materialization 不在此禁令内，因为它没有 target realization 内容。
 
 ---
 
@@ -490,7 +493,8 @@ dependent checking 夸写成 Source topology 的形式证明。
 
 当前合并协议为 `artifact.v12 / decode.v17 / typecheck.v30 / candidate-check.v1 / replay-check.v14`；
 Replay packet envelope 为 `replay-input.v2`；Triton 公共上下文由当前固定公开字段直接给出，不再使用 context version、SHA 或 receipt 作为运行门禁；
-Codex/MiniSWE Lift knowledge 为 v89/v67，MiniSWE Replay backend 为 v31，Codex Replay backend 为 v32。
+Codex/MiniSWE Lift knowledge 为 v89/v67，MiniSWE Replay backend 为 v31，Codex Replay backend 为 v54，
+J-only Replay semantic view 为 `intentir.replay-semantic-program.v1`。
 v30/v26 完整执行 authored route extent transform 合同：将其纳入 `critical_facts.v4`、
 `replay-obligation-audit.v3` 与 source-blind static ingress；只检查 closed floor/ceil-div spelling，
 不生成 relation/code，也不替代 Gate1；单独存在该 relation 时也可用可选 audit 并置当前 exact Replay bytes；audit 不作为 ReplayCheck、compile 或 Gate1 前置条件。
@@ -793,6 +797,17 @@ Replay 的唯一 Kernel-conditioned 输入为：
 \bigl(J,\pi,\operatorname{MaskC}(C),U_f\bigr).
 }
 \]
+
+实现内部允许 fresh 计算：
+
+\[
+S_J=M(J),
+\]
+
+并把只读 `S_J` 作为 Agent 对同一 J 的主要 compiler view。因为 `M` 是 J-only、确定性且
+proof-irrelevant，`S_J` 不增加 `View_f(A)` 的 Kernel-conditioned 信息，不是第四 artifact、独立语义
+权威或 production 输入。Agent 仍以完整编译器身份全局生成目标源码，不对 `S_J` 逐节点填洞。
+MaskJ 消融必须由 masked J fresh 计算 `M(MaskJ(J))`；禁止先物化完整 J 再遮罩。
 
 实际生成：
 

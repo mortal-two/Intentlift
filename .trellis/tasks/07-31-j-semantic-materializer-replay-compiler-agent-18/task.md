@@ -1,6 +1,6 @@
 # Task 18：J SemanticMaterializer 与 π 约束 Replay Compiler Agent
 
-> 状态：`DESIGN_READY_IMPLEMENTATION_PENDING`（2026-07-31）
+> 状态：`IMPLEMENTATION_ACTIVE_REAL_GATE1_RUNNING`（2026-07-31）
 > 接管已归档的 Task 16/17。Task 16 的 grouped composer 与 Task 17 的 hole/binding/structural
 > renderer 都没有显著降低 Replay 编译负担；它们只作为历史证据保留。
 
@@ -29,57 +29,61 @@ fragment/route assembler 路线，在不改变 SCRC 外部数学接口的前提�
 - [x] Task 16/17 迁入 `.trellis/tasks/archive/2026-07/`；
 - [x] 两份旧 Composer 方法文档迁入 `doc/archive/2026-07-31-replay-composer-prototypes/`；
 - [x] Git 历史与归档 README 记录 grouped、binding、file-block 原型及真实失败证据；
-- [ ] 默认 Codex Replay 移除 binding/block/structural-renderer 工具与 prompt；
-- [ ] 退役未使用的 target-AST binding renderer，不保留活动第二实现；
-- [ ] 保留 packet query、source-blind sandbox、compile/own-TTIR、checkpoint 与 submit；
-- [ ] 不新增、恢复或生成 `python/tests`。
+- [x] 默认 Codex Replay 移除 binding/block/structural-renderer 工具与 prompt；
+- [x] 退役未使用的 target-AST binding renderer，不保留活动第二实现；
+- [x] 保留 packet query、source-blind sandbox、compile/own-TTIR、checkpoint 与 submit；
+- [x] 不新增、恢复或生成 `python/tests`。
 
 ## 3. P1：Replay SemanticMaterializer Core
 
-- [ ] 从后端分支选择性迁入 canonical-J、typed-boundary、contract/predicate 逻辑；
-- [ ] Core 直接消费 exact canonical J，不建立跨仓库接口依赖；
-- [ ] 生成参数化、只读、anchor-preserving `S_J`；
-- [ ] 保留 symbolic extents，不读取 concrete Harness valuation；
-- [ ] 不做 constexpr specialization、production structural search 或 `Attach_C`；
-- [ ] 每个 node/domain/access/effect/output binding 可回指 exact J handle；
-- [ ] structured loop/control 不得因 materialization 删除 π 所引用的 anchor；
-- [ ] normal 与 MaskJ 分别 fresh materialize，禁止 full-J `S_J` 泄漏到 masked episode。
+- [x] 对照后端分支选择 J-only canonical/typed-boundary 能力；主仓现有 `canonical_j` 已包含更新的
+      dimension/broadcast 语义，直接复用并避免迁入 concrete-extents production materializer；
+- [x] Core 直接消费 exact canonical J，不建立跨仓库接口依赖；
+- [x] 生成参数化、只读、anchor-preserving `S_J`；
+- [x] 保留 symbolic extents，不读取 concrete Harness valuation；
+- [x] 不做 constexpr specialization、production structural search 或 `Attach_C`；
+- [x] 每个 node/domain/access/effect/output binding 可回指 exact J handle；
+- [x] structured loop/control 不得因 materialization 删除 π 所引用的 anchor；
+- [x] normal 与 MaskJ 分别 fresh materialize，禁止 full-J `S_J` 泄漏到 masked episode。
 
 ## 4. P2：完整 Replay Compiler Agent
 
-- [ ] 每个 formal Gate1 round 只启动一个 fresh、persistent、source-blind Agent；
-- [ ] 启动 prompt 只给文件路径、边界和提交条件，不内嵌大段 artifact/手册；
-- [ ] Agent 读取完整 `S_J` 与 exact/queryable π，自由生成一份完整 target source；
-- [ ] 不要求 per-node mapping、target binding、block manifest 或固定 source map；
-- [ ] Agent 可自行创建 helper/笔记、编译、查看 own IR、checkpoint、rollback、局部 patch；
-- [ ] 资源按 wall-time/formal Gate1 round 管理，不硬限制正常工具调用；
-- [ ] exact submitted bytes 在 Agent 外重新 ingress/compile 后才进入 Gate1。
+- [x] 每个 formal Gate1 round 只启动一个 fresh、persistent、source-blind Agent；
+- [x] 启动 prompt 只给文件路径、边界和提交条件，不内嵌大段 artifact/手册；
+- [x] Agent 读取完整 `S_J` 与 exact/queryable π，自由生成一份完整 target source；
+- [x] 不要求 per-node mapping、target binding、block manifest 或固定 source map；
+- [x] Agent 可自行创建 helper/笔记、编译、查看 own IR、checkpoint、rollback、局部 patch；
+- [x] 资源按 wall-time/formal Gate1 round 管理，不硬限制正常工具调用；
+- [x] exact submitted bytes 在 Agent 外重新 ingress/compile 后才进入 Gate1。
 
 ## 5. P3：π 直接消费与开放世界前端
 
-- [ ] exact π 或严格无损 nested wire 作为只读输入；
-- [ ] query 只做 region/instance/route/order/sharing/carrier 的无损局部索引；
-- [ ] query 可将 semantic_ref 定位到 `S_J`，但不生成 target spelling 或 lowering plan；
-- [ ] 删除 fixed `π relation -> source`、program/loop/carrier renderer；
-- [ ] π 继续拒绝 operator、formula、predicate、fill、Source/API、C value 与 Kernel recipe；
+- [x] exact π 或严格无损 nested wire 作为只读输入；
+- [x] query 只做 region/instance/route/order/sharing/carrier 的无损局部索引；
+- [x] query 可将 semantic_ref 定位到 `S_J`，但不生成 target spelling 或 lowering plan；
+- [x] 删除 fixed `π relation -> source`、program/loop/carrier renderer；
+- [x] π 继续拒绝 operator、formula、predicate、fill、Source/API、C value 与 Kernel recipe；
 - [ ] Triton 首先落地；CUDA/TileLang 只增加 `U_f`、编译工具与 Agent 能力，不增加完整 deterministic
       J→frontend compiler。
 
 ## 6. P4：形式边界与文档同步
 
-- [ ] spec 明确允许 `S_J=M(J)` 的 deterministic、J-only、proof-irrelevant 派生；
-- [ ] 原“禁止 deterministic composer”窄化为禁止 `(J,π)->完整 target source` 与 π executable plan；
-- [ ] Replay 正式输入/输出、TypeCheck、Gate1、Gate2 三边和 production `J+C` 保持不变；
-- [ ] production 不读取 π，Replay Core 不读取 C value/ν/target search；
-- [ ] Gate1 diff 只反馈 persistent Lift owner，fresh Replay 不看 diff；
-- [ ] 不用 hash/banner/receipt identity、mock tests 或全量无关审查替代真实闭合。
+- [x] spec 明确允许 `S_J=M(J)` 的 deterministic、J-only、proof-irrelevant 派生；
+- [x] 原“禁止 deterministic composer”窄化为禁止 `(J,π)->完整 target source` 与 π executable plan；
+- [x] Replay 正式输入/输出、TypeCheck、Gate1、Gate2 三边和 production `J+C` 保持不变；
+- [x] production 不读取 π，Replay Core 不读取 C value/ν/target search；
+- [x] Gate1 diff 只反馈 persistent Lift owner，fresh Replay 不看 diff；
+- [x] 启动 transport 已移除 packet digest/嵌入；不用 mock tests 或全量无关审查替代真实闭合。
 
 ## 7. P5：真实纵切与能力修正
 
-- [ ] 首核 FlashAttention forward：同一 accepted `(J,C,π)` 对比旧 file-block frontier；
-- [ ] 记录 `S_J` 大小、首次完整源码时间、首次可编译时间、compile/tool 次数、Gate1 frontier、wall-time；
-- [ ] 若失败，严格区分 SemanticMaterializer、J、π、Replay consumption、observer；
-- [ ] SemanticMaterializer 缺口直接修 Core；J/π 缺口才反馈 Lift owner；
+- [x] 首核 FlashAttention forward：同一 accepted `(J,C,π)` 对比旧 file-block frontier；
+- [x] 记录 `S_J` 大小、首次完整源码时间、首次可编译时间、compile/tool 次数、Gate1 frontier、wall-time；
+- [x] 若失败，严格区分 SemanticMaterializer、J、π、Replay consumption、observer；
+- [x] 首轮定位为 Replay 对 π placement 的消费缺口：`S_J` 已令 interface/op/reduction/effect 全闭合，
+      dataflow 从 232 降到 162；Replay 将 program-region address base 错放入 loop，触发 8 vs 2
+      `tt.addptr` 与 15 vs 8 captured values。新增完整逐关系 `pi.intent`，不增加 target recipe；
+- [x] SemanticMaterializer 缺口直接修 Core；J/π 缺口才反馈 Lift owner；
 - [ ] 至少同时保持两个真实 Kernel 推进，winner-first，不等待无效败者；
 - [ ] 需要时从 Terra 升级 Sol high/xhigh/max，但模型升级不替代能力修复。
 
@@ -109,3 +113,14 @@ fragment/route assembler 路线，在不改变 SCRC 外部数学接口的前提�
 
 > **SemanticMaterializer 确定性解释 closed J；Replay Compiler Agent 在 π 约束下承担完整开放世界
 > target compilation；宿主只提供只读语义输入、查询、编译、隔离与提交，不再施工目标程序。**
+
+## 10. 首个真实纵切记录（2026-07-31）
+
+- exact parent artifact：Task17 Flash-forward `attempt-01`，TypeCheck PASS；
+- 首版 `S_J`：17,578 bytes、38 nodes、53 typed values；Agent 一次 provider turn 在 600 秒内写出并
+  多次修订约 3 KB 完整 Triton，ingress/compile PASS；
+- 旧 file-block Gate1：总分 0.7327，dataflow 232 diffs，predicate/effect 2 diffs；
+- Task18 首版 Gate1：总分 0.8142，dataflow 162 diffs，其余 hard categories 全 PASS；
+- 根因不是 J/S_J value semantics 缺失，而是 60+ π instances/routes 的 minified 交叉引用没有被完整
+  消费。当前新增 `pi.intent`（同 artifact 为 11,486 bytes、158 exact rows），逐行保留原 relation 与
+  declaration order，不映射 target statement；第二次 real Gate1 recheck 正在运行。
