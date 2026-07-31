@@ -33,9 +33,9 @@ program-axis relation；当前 profile 在无 sound anchor matcher 时将它保�
 仅供历史 artifact 按原版本读取。fixed code只诊断，不翻译别名、补齐 attrs、生成语义
 handle/relation、改图或修复 artifact；历史 wire/receipt 不静默升级或重判。当前 Agent execution
 receipt 为 `openai.codex-cli.intentir-lift.v38 / intentir.lift-knowledge.v99 /
-minisweagent.intentir-replay.v32 / openai.codex-cli.intentir-replay.v60`；Codex runtime v4 在
+minisweagent.intentir-replay.v33 / openai.codex-cli.intentir-replay.v61`；Codex runtime v4 在
 closed submit 工具接受 exact bytes 后恢复并复核 checkpoint，不等待 proof-irrelevant 的结尾 prose；
-Replay 内部 J-only 视图为 `intentir.replay-semantic-program.v1`，不是 artifact 或新输入权威；
+Replay 内部 J-only 视图为 `intentir.replay-semantic-program.v2`，不是 artifact 或新输入权威；
 artifact.v11 的 `dimension_relations`只接受identity、常数加/乘、常数ceil-div与round-up的acyclic closed grammar；
 relation由Lift从Source作者化，所有J消费者只能验证/求值，不能从Harness valuation、grid、C、π或TTIR生成。
 迁移前 artifact.v10 的 `physical_iterations/physical_loop_carriers` 曾表达 structured J loop 外的物理时间；

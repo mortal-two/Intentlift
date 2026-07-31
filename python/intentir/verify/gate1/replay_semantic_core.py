@@ -19,8 +19,8 @@ from intentir.ir.canonical_j import elaborate_j, j_elaboration
 from .model import SemanticArchive
 
 
-REPLAY_SEMANTIC_PROGRAM_PROTOCOL = "intentir.replay-semantic-program.v1"
-REPLAY_SEMANTIC_QUERY_PROTOCOL = "intentir.replay-semantic-query.v1"
+REPLAY_SEMANTIC_PROGRAM_PROTOCOL = "intentir.replay-semantic-program.v2"
+REPLAY_SEMANTIC_QUERY_PROTOCOL = "intentir.replay-semantic-query.v2"
 
 
 def _object(value: Any, path: str) -> Mapping[str, Any]:
@@ -301,19 +301,15 @@ def _boundary_ownership_view(
         covering_domains = {
             name: refs
             for name, refs in domain_axis_refs.items()
-            if axis_set and axis_set.issubset(refs)
+            if refs and refs.issubset(axis_set)
         }
-        # Keep every equally minimal authored domain.  Ambiguity remains visible;
-        # fixed code never chooses one based on Source or target conventions.
-        minimal_covering_domains = sorted(
-            name
-            for name, refs in covering_domains.items()
-            if not any(
-                other_refs < refs
-                for other_name, other_refs in covering_domains.items()
-                if other_name != name
-            )
-        )
+        # A domain constrains this access exactly when all of the domain's authored
+        # logical index refs occur in the authored access index.  Keep every such
+        # domain: overlapping predicates are conjunctive J facts, not alternatives
+        # from which fixed code may choose.  The previous containment direction
+        # incorrectly made ordinary multi-axis accesses lose their one-axis domain
+        # bounds and forced Replay to guess those bounds from target conventions.
+        applicable_domains = sorted(covering_domains)
         axes_by_target.setdefault(target, []).append(axis_set)
         if raw.get("kind") == "store":
             write_axis_sets.append(axis_set)
@@ -327,7 +323,7 @@ def _boundary_ownership_view(
             # remain available in ``canonical_boundary`` on demand.
             "index": copy.deepcopy(raw.get("index_expression")),
             "axis_refs": axis_refs,
-            "domain_candidates": minimal_covering_domains,
+            "domain_candidates": applicable_domains,
             "predicate": copy.deepcopy(raw.get("predicate")),
             "effects": copy.deepcopy(
                 effects_by_access.get(str(access_id), [])

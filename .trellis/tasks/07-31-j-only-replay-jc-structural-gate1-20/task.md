@@ -65,7 +65,9 @@ Gate2: Source-Replay / Source-J / Replay-J
 
 - [x] raw `Compile/Observe/Canon` 不读取 π；
 - [x] 实现 profile-scoped、确定性、单臂、幂等、fail-closed 的 `N^pi(observation)`；
-- [x] 固定 `H^(J,C)` hard projection；候选 π 不得选择 rule/scope/erasable fields；
+- [ ] 完成真正 artifact-aware 的固定 `H^(J,C)` hard projection；当前 raw TTIR exact fingerprint
+  仍把部分物理 program/address/packing/control spelling 当作 hard，不能把它误写成已完成；候选 π
+  不得选择 rule/scope/erasable fields；
 - [x] 实现候选外 `ProfileOK` 发布合同：H覆盖所有当前 profile 可观察的 J/C-owned categories，未知
   atom 默认 hard；每条 N_pi rule 具有机械 hard-preservation check 或独立 rule audit；
 - [x] 撤销不 sound 的 Triton `x/y/z -> x` label quotient；`jc-normalizer.v2`对
@@ -117,7 +119,10 @@ recheck，可立即接受该 bytes，不再消耗剩余 episode 时间；Gate1 �
 真实 v60 pilot 还暴露出更直接的时间浪费：多个 Codex owner 在 2–5 分钟已写出完整
 12–14 KiB candidate，却等到 9–14 分钟 turn 结束才交付。因此 Codex Lift v38 / Replay v60
 增加 exact live-checkpoint transaction：稳定字节只在通过既有同一 preflight 后中断 turn，host
-仍恢复并重检原 bytes；无 composer、无字段补全、无 Gate 放宽。
+仍恢复并重检原 bytes；无 composer、无字段补全、无 Gate 放宽。随后 v61/v33 的 J-only
+`semantic-program.v2` 修正 `boundary_ownership.domain_candidates` 的集合包含方向：每个 access
+现在获得其 index refs 覆盖的全部 J-authored domain 约束，而不是对普通多轴 access 错误返回空集；
+这只是 exact J 的确定性重索引，不新增 domain、target mapping 或 Source/π 信息。
 
 ## 7. P5：多前端与实验
 

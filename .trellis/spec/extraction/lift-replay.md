@@ -408,7 +408,7 @@ Task 20 的 Replay packet 只包含 exact J/J-only `S_J`、MaskC schema 与公�
 S_J = M(J)
 ```
 
-`S_J` 使用 `intentir.replay-semantic-program.v1`，是 canonical、typed、参数化且保留 J handle 的只读
+`S_J` 使用 `intentir.replay-semantic-program.v2`，是 canonical、typed、参数化且保留 J handle 的只读
 semantic program。`M` 只读取本轮 exact J；它不读取 C、π、Source、Harness valuation、target、旧
 Replay 或 Gate，也不生成 target API、schedule、address、loop spelling 或目标源码。因此 `S_J` 是
 proof-irrelevant 的 J 内部视图，不是第四 artifact、Replay 新权威或 production 输入。正常轮 fresh
@@ -417,10 +417,10 @@ structured JSON 是 exact form；文本 view 只把同一值排成 typed SSA，�
 `result=op(operands)` 与 loop trip/scan/carry/yield，不改变或补造 edge。
 为减少 Agent 在大 JSON 间重复追引用，`M(J)` 还可生成
 `boundary_ownership` 索引：它只对 exact J 中已有的 domain/access/effect/output
-引用做确定性联合、解析 ContractExpr 并保留所有歧义候选。它不把 access
-绑定到某个候选 domain，不选择 program axis/loop/schedule，不读取 Source 或 π，
-也不成为新 artifact。出现多个 `domain_candidates` 时，Replay owner 必须继续按 J
-全局合同判断，fixed view 不得代替它选一个。
+引用做确定性联合并解析 ContractExpr。对于一个 access，`domain_candidates` 精确列出其
+authored index refs 覆盖的全部 authored domain refs；这些 domain 是并存的逻辑约束，不是由 fixed
+code 选择其一的 schedule 候选。该索引不选择 program axis/loop/schedule，不读取 Source 或 π，
+也不成为新 artifact。
 
 Replay Compiler Agent 直接把完整只读 `S_J` 作为 compiler input，并结合 `MaskC(C)` 与 `U_f` 独立
 编写一份完整 `replay.source`。Agent 可以全局选择 target API、address/program mapping、layout、
