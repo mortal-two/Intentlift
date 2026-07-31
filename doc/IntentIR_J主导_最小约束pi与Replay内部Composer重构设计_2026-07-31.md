@@ -114,9 +114,9 @@ work/replay.compose.json      # 可选
 work/composer/*.source       # 可选
 ```
 
-默认路径是像普通 Codex 一样直接维护一份完整源码，并在同一 episode 中局部 patch、编译和修正。
-route-bound fragments 只在 agent 自己判断交叉引用确实难维护时使用；系统不得要求“每个 π occurrence
-一个文件”。否则几 KB 目标源码会膨胀成上百个机械 fragment，内部 Composer 反而成为新的协议负担。
+小型 packet 可以像普通 Codex 一样直接维护一份完整源码。交叉引用密集的 packet 则使用 grouped
+route composer：按 lexical region/block 保持少量 fragment，而不是“每个 π occurrence 一个文件”。
+两条路径都在同一 episode 中局部 patch、编译和修正；选择编辑粒度不改变 Replay 输入或认证谓词。
 
 host 只提供通用、syntax-only 的能力：
 
@@ -129,12 +129,12 @@ host 只提供通用、syntax-only 的能力：
 公开 `U_f` 只保留短 ABI 约束，不再携带按 relation/op 罗列的 target spelling RuleCard。relation 的
 含义来自版本化 schema/J/π 自身，目标写法由 agent 选择；编译和 construction diagnostics 只拒绝。
 
-对交叉引用密集的 Replay，通用 editor 允许 agent 在每个 occurrence fragment 中作者化
-`{{out}}`、`{{slot:N}}` 与 `{{dep:N}}` 占位符；`slot` 对应 π 显式 operand slot，`dep` 只按同一
-target 的 empty-slot route 声明顺序编号。固定 renderer 只能沿这些已显式、唯一的 route 代入稳定
-local ID，并核对 sharing/order。fragment 内调用什么 API、写什么表达式、建立何种 control 仍完全由
-agent 根据 J 选择。缺 fragment、同一 slot 多 source、未定义 source、region/order 冲突均 fail
-closed；renderer 不从 semantic_ref 生成任何 target statement。
+对交叉引用密集的 Replay，通用 editor 允许 agent 在任意 region/block fragment 中作者化
+`{{out:iK}}`、`{{slot:iK:N}}` 与 `{{dep:iK:N}}` 占位符；一个 fragment 可以含多个 occurrence。
+`slot` 对应目标 iK 的显式 operand slot，`dep` 只按该 target 的 empty-slot route 声明顺序编号。固定
+renderer 只能沿这些显式、唯一的 route 代入稳定 local ID，并核对 sharing/order。fragment 内调用
+什么 API、写什么表达式、建立何种 control 仍完全由 agent 根据 J 选择。缺 route use、重复 slot、
+未定义 instance 或 order 冲突均 fail closed；renderer 不从 semantic_ref 生成任何 target statement。
 
 host 不得提供：
 

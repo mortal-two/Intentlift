@@ -88,8 +88,9 @@ artifact 的独立 Gate2 recheck 冒充最终 28/28 交付。
 - [x] host 不提供 J-op/π-relation 到 target code 的映射、kernel helper 或模板库；
 - [x] prompt 文件化、按需读取，禁止反复内嵌几十 KB J/π/手册；
 - [x] 资源边界用 wall-time/context/formal round，不用极小工具调用上限打断 coding loop。
-- [x] 完整源码与局部 patch 是默认 coding 路径；route-bound fragment 仅为可选编辑辅助，禁止每个
-  occurrence 强制一个 fragment。
+- [x] 小型 packet 可直接维护完整源码；route-heavy packet 使用 v2 grouped route composer，以少量
+  lexical region/block fragments 显式消费 `out:iK/slot:iK:N/dep:iK:N`，禁止每个 occurrence 一个文件。
+  renderer 只分配局部名并检查既有 route/order/sharing，不生成 op、表达式、control 或 API。
 - [x] 删除 Triton 的 relation/op-to-target 长 RuleCard；`U_f` 只保留短 ABI，避免固定 recipe 与
   12 KiB 无关注意力负担。
 - [x] `requirements` 以 declaration order 原样列出每个 J node 的

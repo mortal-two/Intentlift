@@ -64,11 +64,11 @@ choosing target syntax. Do not infer a
 Source recipe or invent a missing fact. input/REPLAY_CONTRACT.md defines the compact
 ownership boundary; input/TOOL.md defines the exact tools.
 
-Act like a coding agent. The primary path is to author one normal complete source
-file and repair it locally after checks. Use the optional route-bound fragment
-composer in input/TOOL.md only when it genuinely makes a cross-reference-heavy edit
-easier; do not split a small kernel into one file per occurrence merely to satisfy a
-host convention. The composer never chooses semantics.
+Act like a coding agent. For a route-heavy packet, use the grouped route composer in
+input/TOOL.md so a few lexical region/block fragments can consume opaque pi slots
+without one file per occurrence. For a small packet, one normal complete source is
+still valid. The composer never chooses semantics: you write every expression,
+control form, effect and API spelling.
 
 After a meaningful complete draft, run
 `python .agents/intentir_agent_tool.py submit_replay`. It transactionally runs the

@@ -3443,26 +3443,25 @@ is available.
 """
     tool = """# Replay agent tools
 
-The shortest path is to author and patch one complete `/output/replay.source`, then
-run the checks below. If a route-heavy program is easier to maintain as fragments,
-you may instead use the optional route-bound composer. Write
+For a small packet, author and patch one complete `/output/replay.source`. For a
+route-heavy packet, prefer the grouped route composer: keep a few lexical
+region/block fragments rather than one file per occurrence. Write
 `/work/replay.compose.json` as:
 
 ```json
-{"protocol":"intentir.replay-route-composer.v1","bindings":{"i0":"p0"}}
+{"protocol":"intentir.replay-route-composer.v2","bindings":{"i0":"p0"}}
 ```
 
 Bindings are allowed only when an instance's semantic_ref is that exact p*/c*
-signature carrier. A bound instance has no occurrence fragment and cannot be a
-pi.order endpoint; an ordered use must remain an authored occurrence instead of
-being erased into a direct binding. Write raw scaffold fragments normally. Name each routed occurrence fragment
-`NNN-iK.source`; within it, author all target syntax using
-`{{out}}` for that occurrence's stable local and `{{slot:N}}` exactly once for
-each explicit incoming pi route slot. For an incoming route whose `slots` is
-empty, use `{{dep:N}}` exactly once in that target, where N is its zero-based
-declaration order among that target's empty-slot routes. Fixed code substitutes names and validates
-route/order/sharing; it never chooses an op, expression, control form, or API.
-Lexical filename order is exact source order. Run:
+signature carrier. A bound instance cannot be a pi.order endpoint. Write a small
+number of ordinary `NNN-NAME.source` fragments in exact lexical source order. In
+any fragment, explicitly author target syntax with `{{out:iK}}` for a routed
+source instance, `{{slot:iK:N}}` exactly once for each named target's incoming
+slot N, and `{{dep:iK:N}}` exactly once for its Nth declaration-ordered empty-slot
+route. Multiple instances may appear in one fragment. Fixed code only substitutes
+stable locals and validates exact route/order/sharing; it never chooses an op,
+expression, control form, region, or API. The legacy v1 one-occurrence-per-file
+surface remains readable but should not be used for a new complex Replay. Run:
 
 ```text
 python .agents/intentir_agent_tool.py composer_status
