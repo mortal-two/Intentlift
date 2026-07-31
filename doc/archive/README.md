@@ -6,6 +6,7 @@
 
 ## 归档批次
 
+- [2026-07-31：Task 25 agent-internal route Composer之前](2026-07-31-pre-agent-internal-route-composer/README.md)
 - [2026-07-22：C、π 与最终执行流程形成之前](2026-07-22-pre-C-pi-execution/README.md)
 - [2026-07-21：LLM-first reset 之前](2026-07-21-pre-llm-first/README.md)
 

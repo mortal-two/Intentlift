@@ -20,9 +20,13 @@
    kernel模板；
 4. 最终仍由exact TypeCheck、各前端Gate1和三边Gate2认证，Composer不改变数学或信任边界。
 
-权威设计增补：
+Task 24时期的历史设计增补（已由Task 25权威设计取代）：
 
-- `doc/IntentIR_J主导_pi_min与Episode_Local_Composer_Replay最终设计_2026-07-31.md`
+- `doc/archive/2026-07-31-pre-agent-internal-route-composer/IntentIR_J主导_pi_min与Episode_Local_Composer_Replay最终设计_2026-07-31.md`
+
+当前Replay作者化权威设计：
+
+- `doc/IntentIR_J主导_最小约束pi与Replay内部Composer重构设计_2026-07-31.md`
 
 上位数学与对象边界继续由原四份SCRC设计和第五份backend设计决定。
 

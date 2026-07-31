@@ -11,11 +11,12 @@
 4. [IntentIR / SCRC 最终数学、执行流程与论文表述](IntentIR_SCRC_最终数学与执行流程_2026-07-22.md)：是上述三份 SCRC 设计的数学与 claim 总述，统一 `TypeCheck` 所有权结论、observer-relative Gate1、外部比较政策 Q、Gate2 三条直接比较、instance-wise `c0` 与概率声明边界。它不增加第四个设计对象或新的运行阶段；若对象/schema/API 细节发生歧义，仍回到对应的三份核心设计修订。
 5. [J-Grounded、Q/D-Certified Lowering-State Search 后端最终设计](IntentIR_Contract_Preserving_Multi_Lowering_后端最终设计_2026-07-24.md)：定义 accepted J+C 的 pure core lowerer、Intent MLIR materialization、hard verifier、统一 Q/D search-and-closure controller、concrete lowering-state search 与实验设计；它不修改 SCRC 接受谓词或 J。文件名为保持既有链接稳定而保留旧名称。
 
-Replay 子系统的当前权威增补为
-[J 主导的 π_min 与 Episode-Local Composer Replay 最终设计](IntentIR_J主导_pi_min与Episode_Local_Composer_Replay最终设计_2026-07-31.md)。
-它不增加第六个数学对象，而是在上述前四份 SCRC 设计内严格区分：被禁止的 deterministic semantic
-composer，与被允许的 fresh-episode syntax-only editing composer；同时定义 Triton、TileLang、CUDA
-共享 Composer core 和 normal/masked 独立 episode 的运行边界。
+Replay子系统的当前权威增补为
+[J主导的最小约束π与Replay内部Composer重构](IntentIR_J主导_最小约束pi与Replay内部Composer重构设计_2026-07-31.md)。
+它不增加第六个数学对象，而是在上述前四份SCRC设计内严格区分：固定宿主只提供syntax、显式route
+linking、exact重索引、编译与隔离；fresh source-blind agent在本episode内作者化并销毁composer
+scratch、target binding和helper。Triton、TileLang、CUDA共享机械core，normal/masked使用独立episode；
+宿主不得持久化semantic lowerer或kernel template。
 
 对应的 production 实现与实测记录：
 
