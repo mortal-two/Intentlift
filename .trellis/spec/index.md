@@ -1,7 +1,7 @@
 # IntentIR 当前派生规范
 
-> 状态：2026-07-31 Task 20 设计迁移中。本文入口与系统数据流已切换到 J-only Replay / typed
-> π-relative Gate1；详细 Replay、Gate1、multi-frontend runtime 条款在 Task 20 实现时同步，当前旧
+> 状态：2026-07-31 Task 20 设计迁移中。本文入口与系统数据流已切换到 J-only Replay / J/C
+> Structural Gate1；详细 Replay、Gate1、multi-frontend runtime 条款在 Task 20 实现时同步，当前旧
 > runtime 文字不得被解释为新路径已经完成。
 
 `.trellis/spec` 只把四份 SCRC 设计与第五份 production backend 设计投影为 schema、API、runner、
@@ -16,9 +16,9 @@ lowering 和测试要求，不形成另一套设计。上位文档按作用域�
   统一 SCRC 数学与 claim；
 - [Contract-Preserving Multi-Lowering 后端最终设计](../../doc/IntentIR_Contract_Preserving_Multi_Lowering_后端最终设计_2026-07-24.md)
   在服从前四份对象边界的条件下，权威定义 post-SCRC production backend；
-- [J-only Replay 与 typed π 参数化 Gate1 Observer](../../doc/method/IntentIR_J-only_Replay与pi参数化Observer_Gate1_2026-07-31.md)
-  窄化 Replay/Gate1 接口：Replay 只读 `J+MaskC(C)`；π 只实例化 frontend/profile 预定义的
-  canonicalization relation，不进入 Replay 或 production backend；
+- [J-only Replay 与 J/C Structural Gate1](../../doc/method/IntentIR_J-only_Replay与JC结构Gate1_2026-07-31.md)
+  窄化 Replay/Gate1 接口：Replay 只读 `J+MaskC(C)`；π 只进入 frontend/profile 预定义的窄
+  normalizer，Gate1 结论只谈 J/C，不把 π 作为认证目标；
 - 本目录只做上述文档的派生投影。
 
 若派生规范与上位设计冲突，应修订派生规范；不得通过增加 interface artifact、hash gate、
@@ -72,9 +72,9 @@ Codex Lift v20 删除重复的 feedback host tool，特殊回调只保留两个 
 mixed-radix decode，不携带公式文本、值、Source/API 或 target recipe。logical block interval/mask
 必须显式属于 J，π 不复制 partition formula。
 
-旧 `replay-obligation-audit.v3` 不再是默认 construction compile 前置步骤；必要的 exact relation 由
-Agent 从 π 查询并自行消费，正式正确性仍由 fresh Replay 后的 Gate1/Gate2 裁决。
-`replay-check.v14` 还要求 synthetic TTIR 至少包含 π 已作者化 `reduction_linearization` 数量的
+旧 `replay-obligation-audit.v3` 与 π-consuming `replay-check.v14` 只用于解释历史 evidence；Task 20
+新 Replay 不查询或消费 π，必要的 realization noise 只由 Gate1 的固定 normalizer处理。历史
+`replay-check.v14` 曾要求 synthetic TTIR 至少包含 π 已作者化 `reduction_linearization` 数量的
 distinct `tt.reshape -> tt.reduce(axis=0)` dataflow，避免无关 reshape 冒充，但不从 reduction/shape
 生成 relation；地址检查只在 J.signature carrier kind 与 π
 address routes 能完全决定时，沿作者化 route

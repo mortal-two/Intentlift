@@ -5,8 +5,9 @@
 > **2026-07-31 Task 20 窄化修订（规范性覆盖）：** 外部流程、三对象、TypeCheck、relift 与 Gate2
 > 保持不变；凡把 π 列为 Replay 输入、要求 Replay 消费 π，或把 Gate1 写成未参数化 raw observer
 > equality 的条款，均由
-> [J-only Replay 与 typed π-relative Gate1 Observer](method/IntentIR_J-only_Replay与pi参数化Observer_Gate1_2026-07-31.md)
-> 覆盖。当前设计是 `Replay(J,MaskC(C);U_f)`，π 只参数化固定 Gate1 `CanonPair`。历史
+> [J-only Replay 与 J/C Structural Gate1](method/IntentIR_J-only_Replay与JC结构Gate1_2026-07-31.md)
+> 覆盖。当前设计是 `Replay(J,MaskC(C);U_f)`；π 只参数化固定单臂 Gate1 normalizer，Gate1
+> 结论只谈 J/C。历史
 > runtime/receipt 仍按原版本解释；此修订不声称新 runtime 已完成。
 >
 > 前置设计：[IntentIR C：所有权、绑定、消费与三方验证设计](IntentIR_C_所有权_绑定_消费与三方验证设计_2026-07-22.md)
@@ -116,15 +117,17 @@ physical time、terminal/continuation arm topology 和受约束 representation r
 Replay 是全新的 source-blind 生成：
 
 ```text
-Replay = W_f(J, π, MaskC(C); U_f)
+Replay = W_f(J, MaskC(C); U_f)
 ```
 
 它只能看到：
 
 - J；
-- π；
 - 去掉具体值后的 `MaskC(C)`；
 - 与当前 Source 无关的公共前端知识 `U_f`。
+
+π 只在 Replay 提交后进入固定 Gate1 normalizer；它不进入 Replay request、workspace、工具、
+continuation 或 cache key。
 
 它不能看到 Source、Harness、C 的具体值、source parameter name/position、BindingMap、独立
 interface sidecar、Gate1 diff、source/compiler fingerprint、旧 Replay、旧候选代码、旧模型
@@ -174,7 +177,7 @@ Harness 不负责：
 一次实验结束后，才分析失败属于哪一层：
 
 1. Lift 没有使用已有表达能力；
-2. Replay 没有正确消费已有 J/C/π；
+2. Replay 没有根据已有 J/MaskC 忠实生成实现；
 3. J 的语义表达能力不足；
 4. π 的 realization 表达能力不足；
 5. C 的所有权或绑定规则不足；
@@ -714,8 +717,9 @@ first-winner cooperative cancellation：首个完整 Gate1 closure 被 coordinat
 进行的 MiniSWE/Codex transport turn 可停止并保存 `candidate_superseded` receipt；取消检查在 retry
 之外，不会被当成 transient failure 重烧。v53/v54 分别加入 exact material-progress 治理、Harness
 shape-coordinate 与 artifact.v8 physical-time 作者合同；v55 把 Gate1 continuation 改成上述 bounded
-feedback frontier，并要求 Replay 先由 J+C+π 的 active physical tile rank 决定 frontend local axis，
-不得把逻辑轴编号直接抄成 `tl.sum/max/min/dot` 的 tensor-rank axis。v56 将 adapter 已显式声明且
+feedback frontier。历史 v55 曾要求 Replay 消费 J+C+π 来决定 frontend local axis；Task 20 已取消
+该输入通道，Replay 只从 J/MaskC 独立选择实现，Gate1 以固定 normalizer处理支持的 realization
+差异。v56 将 adapter 已显式声明且
 valuation 相等的 semantic constexpr ↔ Harness `h*` 关系暴露为 closed
 `bound_constexpr_shape_coordinates`；Lift 必须直接把 extent-only carrier 绑定到对应 `x*`，或自行写
 rank-0 `t*=x*`。Harness 只检查这两种 authored 结果，不从名称、数值、grid 或 Source 补 relation。
@@ -914,28 +918,31 @@ contraction 强用 `tl.dot`；旧 v3/v11 run 保持原 verdict。
 TypeCheck 通过后，Replay 只接收：
 
 ```text
-J + π + MaskC(C) + U_f
+J + MaskC(C) + U_f
 ```
 
 Replay 必须：
 
 1. 从 J-only、只读、参数化的 `S_J=M(J)` 读取完整 typed semantic program；exact J 仍是唯一语义
    权威，`S_J` 不是第四 artifact；
-2. 从 π 读取 instance multiplicity、route、slot、order、sharing、placement、physical time、
-   terminal-control topology、route-local extent transform 和 representation；
-3. 从 `MaskC(C)` 读取匿名 slot schema，不读取 concrete values；
-4. 根据 `U_f` 选择合法的 frontend API spelling；
-5. 输出完整、参数化、source-blind 的 frontend source。
+2. 从 `MaskC(C)` 读取匿名 slot schema，不读取 concrete values；
+3. 根据 `U_f` 选择合法的 frontend API spelling；
+4. 输出完整、参数化、source-blind 的 frontend source。
 
 Replay 不得：
 
 - 根据自己的猜测覆盖 J 语义；
-- 丢弃 π 中的显式 stage；
-- 折叠 π 要求保留的 materialization 或 sharing；
+- 读取 π、`pi.intent`、π query、π-derived ledger 或 obligation；
 - 从旧 Replay 或 Gate1 diff 推断修补方案；
 - 等待 Harness 在生成后补出新的 use-site。
 
 `U_f` 必须是 source-neutral 的公共前端知识，不能按当前 Kernel、operator 或失败样本选择。
+
+### 7.1 历史 π-consuming Replay runtime（非当前规范）
+
+下列 packet/protocol/ledger/replay-check 版本只解释旧 evidence。Task 20 fresh Replay 不得恢复这些
+π 输入，也不能把旧 construction check 当作当前 J-only path 的正确性证据。
+
 当前 packet protocol 是 `intentir.scrc.replay-input.v2`；Triton 公共上下文由固定公开字段直接给出，
 不使用 context version、SHA 或 receipt 作为运行门禁。source-aware Codex/MiniSWE Lift `intentir.lift-knowledge.v89/v67`、
 source-blind MiniSWE Replay v31 / Codex Replay v55、`intentir.replay-semantic-program.v1`、
@@ -969,6 +976,8 @@ unique physical-axis occurrence 数并
 runner 可以保存实际 request/output 和 compiler metadata 供追溯，但这些内容不能回流 Replay packet；
 不需要为此增加 hash、commitment 或签名门。
 
+### 7.2 当前 artifact wire 与 Gate1 witness
+
 当前新 Lift response 使用 `intentir.scrc.artifact.v12`，固定 decode 使用
 `intentir.scrc.decode.v17`。v3 历史上引入 required closed `pi.iterations`；v4 引入
 `value_dimension_relations`、`consumer_extensions` 等 typed relations；v5 引入
@@ -976,21 +985,21 @@ runner 可以保存实际 request/output 和 compiler metadata 供追溯，但�
 v9 引入 π-owned terminal-control topology，v10 引入依附既有 C/J/route 的 closed route-local extent
 transform，v11引入J-owned closed dimension relations，v12引入π-owned closed
 `program_axes{domain_ref,axis}`。后者只保存Source-visible program-coordinate domain到物理axis
-`0..2`的identity，不保存grid extent、地址公式或前端文本；fixed code只验证并消费，不从声明顺序、
+`0..2`的identity，不保存grid extent、地址公式或前端文本；fixed code只验证，不从声明顺序、
 grid、C或instance multiplicity生成axis。domain_ref保持唯一；Source用一个physical coordinate
 multiplex多个logical consumer domain时，不同d*可以共享axis，并以empty-slot domain route到
 branch region表达consumer-local physical control，π不保存predicate。
 当一个 bound coordinate 还需要 row-major mixed-radix decode 时，当前 dependent π 可作者化 closed
 `program_linearizations`。字段只引用 J 已有 dimensions，固定 denotation 由协议给出；它不携带
 公式文本、concrete extent、grid、Source/API、predicate 或 target recipe。会影响 value 的 block
-interval/mask 必须显式在 J，不得由 π 复制。Replay agent 选择目标语法，fixed checker 只拒绝非法
-引用和最低可观察结构。
+interval/mask 必须显式在 J，不得由 π 复制。Replay agent 不读取这些 relation；TypeCheck 只拒绝
+非法引用，支持它们的固定 Gate1 normalizer才可消除窄 realization noise。
 每次 fresh response 必须完整作者当前 wire，fixed code 不构造新增字段。`artifact.v1-v7` 保持各自
 wire bytes/digest 与字段集合，不静默升级、刷新或追认；v8/v9 同样保持各自字段集合。
 
 除v10的route-local physical transform、v11的J-owned closed dimension relation与v12的program-axis
 identity外，当前
-`replay-input.v2`不包含general pad-discharge hint。若J缺少dependent equality，U_f不能读取Harness
+J-only Replay request 不包含 general pad-discharge hint。若J缺少dependent equality，U_f不能读取Harness
 valuation猜等式；fresh Lift必须作者化closed relation或保留完整逻辑阶段。fixed consumer只求值
 J已有relation，不为旧artifact建立shape/slot theorem prover。
 
@@ -1015,8 +1024,8 @@ Harness 可以把同一个 C slot 绑定到 Source 和 Replay 的不同参数名
 
 ## 9. 第五步：Gate1
 
-设当前 frontend 与 observer profile 为 `(f,p)`，其中 p 固定 observer/version、compiler/dump stage
-与 canonicalization version：
+设当前 frontend 与 observer profile 为 `(f,p)`，其中 p 固定 observer/version、compiler/dump stage、
+raw canonicalization 与 π-normalizer version。raw observer 不读取 π：
 
 ```text
 F_source = F_(f,p)(Compile_H(Source,c0))
@@ -1026,17 +1035,23 @@ F_replay = F_(f,p)(Compile_H(Replay,c0))
 Gate1 为：
 
 ```text
-G1 = [F_source == F_replay]
+G1 = defined(N_pi(F_source))
+     and defined(N_pi(F_replay))
+     and [N_pi(F_source) == N_pi(F_replay)]
 ```
 
-Gate1 的职责是检查 source-blind Replay 是否恢复了当前 observer 要求的 frontend realization。
+`N_pi` 是固定 profile 的单臂 normalizer；每次调用不读取另一臂或当前 diff，并保持固定
+J/C-owned hard projection。Gate1 的职责是检查 source-blind Replay 与 Source 是否在当前 observer 的
+J/C-owned compiler structure 上闭合。π 只是 certification-only nuisance witness，不是 Gate1 要证明
+正确、完整或最小的对象。
 
 Gate1 不负责：
 
 - 运行语义等价证明；
 - 在当前 Kernel 上临时判断某个 op 能否忽略；
 - 用范围分析或 SMT 临时放宽比较；
-- 判断 J 是否正确；
+- 声称 J 与 Source 全域语义等价；
+- 认证 π 的真实性、完整性或最小性；
 - 替 Lift 做语义分类。
 
 ### 9.1 canonicalization 的规则
@@ -1055,8 +1070,9 @@ Gate1 可以使用协议中已经确定的全局 canonicalization，例如：
 `cacheModifier in {ca,cg,cv}` 与 `tt.store` 上的 `{wb,cg,cs,wt}` 是 target cache-policy hint，不改变 J denotation、memory
 effect、predicate/fill、address/dataflow 或 transfer topology，且 closed J/C/π 不携带 frontend cache
 spelling，因此自 `triton-ttir-3.6-gate1-v4` 起统一 NormalizeAway。v8 同样归一 closed
-`evictionPolicy in {evict_first,evict_last}`：π 仍严格拥有 transfer 数量与顺序，Replay 只可把 closed
-eviction spelling 当作防止 compiler CSE 的 public frontend mechanism；具体 spelling 不进入 hard
+`evictionPolicy in {evict_first,evict_last}`：π 可以记录 Source transfer 数量与顺序 witness，但 Replay
+不读取它；Replay 可独立把 closed eviction spelling 当作防止自身 compiler CSE 的 public frontend
+mechanism，具体 spelling 不进入 hard
 fingerprint。未知或方向不合法的 cache/eviction policy、mask、fill、type、volatility 及其他 operation
 attributes 仍被观察；不得借此归一任意 memory difference。
 
@@ -1092,7 +1108,8 @@ observer 完备性或整个 TTIR 的形式证明，
 因此，Gate1 的准确含义是：
 
 ```text
-在当前 observer 和当前 canonicalization 规则下精确比较。
+在固定 f,p,c0 与 normalizer 下，比较 Source/Replay 的 normalized observation，
+并只推出固定 J/C-owned hard projection 的 structural closure。
 ```
 
 每份证书必须记录 `frontend`、observer profile/version、compiler/dump stage 和 canonicalization
@@ -1340,9 +1357,10 @@ TypeCheck(J,C,π) + Gate1 + Gate2
 2. 不新增 `extsi_count` 之类的 Kernel 专用字段；
 3. 将结构化 diff 返回 source-aware Lift；
 4. Lift 检查 J 是否已经表达对应的 typed conversion relation；
-5. 如果 J 已经授权该 relation，π 表达显式 materialization、placement、order 和 sharing；
-6. Replay 根据 J、π 和公共 frontend 知识生成相应实现；
-7. 再次执行 TypeCheck、Replay 和 Gate1。
+5. 如果 J 已经授权该 relation，π 可以表达 certification-only materialization/placement witness；
+6. Replay 仍只根据 J、MaskC 和公共 frontend 知识生成相应实现；
+7. 固定 Gate1 normalizer若支持该 relation则消除窄 realization noise，否则 residual 保持 hard；
+8. 再次执行 TypeCheck、Replay 和 Gate1。
 
 如果整数宽度、signedness 或 overflow 可能改变 J 的允许结果，那么这些内容必须由 J/B 拥有，π 只能表达 realization 关系。
 
@@ -1352,7 +1370,7 @@ TypeCheck(J,C,π) + Gate1 + Gate2
 
 - 扩充 J 的 typed index/conversion 能力；
 - 扩充 π 的 generic representation relation；
-- 修改 Replay 对 representation relation 的消费方式；
+- 修改 Gate1 对 representation relation 的通用、单臂 normalization 能力；
 - 或通过跨案例证据决定该 compiler difference 是否应由 Gate1 全局归一。
 
 不能在同一实验里临时改变其中任何一项。
@@ -1539,7 +1557,7 @@ SCRC_CERTIFIED rate
 ```text
 1 <= B <= 5 个独立 branch 并行：
   一个持久 source-aware Lift owner：response → Decode/Elaborate → (J,C,π) → TypeCheck(J,C,π)
-       → source-blind Replay(J,π,MaskC(C);U_f)
+       → source-blind Replay(J,MaskC(C);U_f)
        → Harness 绑定同一 c0 → Gate1
        → Gate1 diff 只返回本 branch 的同一 Lift owner 并继续修改完整 candidate
 → 首个完整 Gate1 closure 原子成为 winner；sibling cooperative stop 并只收集终止 receipt

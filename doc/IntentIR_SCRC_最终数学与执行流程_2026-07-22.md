@@ -6,9 +6,9 @@
 > **2026-07-31 Task 20 窄化修订（规范性覆盖）：** Figure 3 外部拓扑、`(J,C,π)`、TypeCheck、
 > relift 与 Gate2 三边均不变；本文凡把 π 列为 Replay 输入或把 Gate1 写成未参数化 raw observer
 > equality 的公式，均由
-> [J-only Replay 与 typed π-relative Gate1 Observer](method/IntentIR_J-only_Replay与pi参数化Observer_Gate1_2026-07-31.md)
-> 覆盖。当前设计为 `R=Replay(J,MaskC(C);U_f)`，Gate1 在固定 `(f,p,ν,c0)` 下检查 typed
-> π-relative `CanonPair` 的 residual 为空。历史 runtime/receipt 仍按原版本解释；此修订不声称
+> [J-only Replay 与 J/C Structural Gate1](method/IntentIR_J-only_Replay与JC结构Gate1_2026-07-31.md)
+> 覆盖。当前设计为 `R=Replay(J,MaskC(C);U_f)`，Gate1 在固定 `(f,p,ν,c0)` 下检查两臂独立
+> π-normalized observation equality，并只推出 J/C-owned structural closure。历史 runtime/receipt 仍按原版本解释；此修订不声称
 > 新 runtime 已完成。
 >
 > 核心设计：[C 所有权](IntentIR_C_所有权_绑定_消费与三方验证设计_2026-07-22.md)、
@@ -32,7 +32,7 @@
 
 - \(J\)：artifact 中唯一允许**显式声明程序语义**的对象；
 - \(C\)：实现选择与调度参数；
-- \(\pi\)：依赖于 \(J,C\) 的 source-realization witness；
+- \(\pi\)：依赖于 \(J,C\) 的 certification-only source-realization witness；
 - \(H\)：外部调用、绑定与执行环境，不是第四个 artifact。
 
 Replay LLM 看不到 Source，只接收：
@@ -40,7 +40,7 @@ Replay LLM 看不到 Source，只接收：
 \[
 \operatorname{View}_f(A)
 =
-\bigl(J,\pi,\operatorname{MaskC}(C),U_f\bigr),
+\bigl(J,\operatorname{MaskC}(C),U_f\bigr),
 \]
 
 并实际生成一份 Replay：
@@ -59,7 +59,7 @@ R=
 =
 \underbrace{\mathsf{TypeCheck}(J,C,\pi)}_{\text{所有权与引用合法}}
 \land
-\underbrace{\mathsf{Gate1}}_{\text{source-blind 构造闭合}}
+\underbrace{\mathsf{Gate1}}_{\text{J/C structural closure}}
 \land
 \underbrace{\mathsf{Gate2}}_{\text{测试域行为与语义闭合}}
 }
@@ -67,7 +67,9 @@ R=
 
 因此，SCRC 认证的准确含义是：
 
-> **在声明的前端观察器、比较政策、实际 C 绑定和测试域下，一份显式语义所有权受约束的 \((J,C,\pi)\) 能够在 Source 隔离条件下重建一个与 Source 编译观察闭合的 Replay；Source、Replay 与 J 的可执行语义进一步在测试域内一致。**
+> **在声明的前端观察器、比较政策、实际 C 绑定和测试域下，Replay 仅由 J 与 MaskC 接口生成；
+> TypeCheck 与 Gate1 给出固定 observer 下的 J/C-owned structural closure，Source、Replay 与 J 的
+> 可执行语义再由 Gate2 在测试域内三边锚定。π 只在 Gate1 内部消除窄 realization 噪声。**
 
 它是一种 **formalized validation protocol / hybrid certification framework**，不是对任意 GPU Kernel 的全输入域形式等价证明。
 
@@ -97,7 +99,7 @@ GPU Kernel 生态具有开放、碎片化和快速变化的特点：
 ### LLM 负责开放世界任务
 
 - 从任意前端 Source 中 Lift 出 \(J,C,\pi\)；
-- 根据 \(J,\pi,\operatorname{MaskC}(C)\) 直接生成任意前端的完整 Replay；
+- 根据 \(J,\operatorname{MaskC}(C)\) 直接生成任意前端的完整 Replay；
 - 理解新 API、新 DSL、新 source realization；
 - 在 Gate1 差异反馈后重新 Lift 完整 artifact。
 
@@ -118,7 +120,7 @@ GPU Kernel 生态具有开放、碎片化和快速变化的特点：
 - 把 J 翻译成 Triton/TileLang/CUDA API；
 - 根据 kernel family 选择 RuleCard；
 - 为每种 source topology 增加 StrategyFamily；
-- 从 \(J,\pi\) deterministic 地拼装 target skeleton、binding、fragment 或 Replay 源码。仅对 J 做
+- 从 J deterministic 地拼装 target skeleton、binding、fragment 或 Replay 源码。仅对 J 做
   `S_J=M(J)` 的 semantic materialization 不在此禁令内，因为它没有 target realization 内容。
 
 ---
@@ -137,7 +139,7 @@ GPU Kernel 生态具有开放、碎片化和快速变化的特点：
 其中：
 
 - \(f\)：当前 Source/Replay 前端；
-- \(p\)：observer profile，包括 observer 版本、compiler/dump stage 与 canonicalization 版本；
+- \(p\)：observer profile，包括 observer 版本、compiler/dump stage、raw Canon 与 π-normalizer 版本；
 - \(H\)：Harness，持有实际输入、C 值、semantic-constexpr 调用绑定和调用坐标；
 - \(U_f\)：公共、与当前 Source 无关的前端知识；
 - \(\Phi_{f,p}\)：Gate1 在 profile \(p\) 下的 frontend observer；
@@ -376,14 +378,16 @@ operator。它只区分同一 J loop/C tile 下不同的 Source realization，�
 `{terminal_instance,continuation_instance}` 关系区分“当前 invocation 在该臂终止”与“另一臂承载
 lexical continuation”。两项只能引用同一 `effect_if` 的两个 sibling arm-scope `realize` instance；
 relation 不复制 predicate/polarity，不包含 return、value、formula、Source spelling 或 frontend API。
-因此 control semantics 仍在 J，π 只补足 Source-realization 的 terminal CFG topology。
+因此 control semantics 仍在 J，π 只记录 Source-realization terminal CFG 的 candidate witness；当前
+profile 未实现保守单臂 normalization 时该差异保持 hard。
 
 `artifact.v10` 还允许一项严格封闭的 `route_extent_transforms` relation：它只能把 required
 positive-integer C slot 在一条已存在 route 的 target-local slot 上按 literal `divisor>1` 作
 `floor|ceil` partition；source 必须锚定该 C slot，target 必须锚定该 slot 通过
 `subject_ref/axis_ref` attached 的 J domain。它不创建 J dimension/domain/predicate/value/operator，
-不修改 C raw valuation，也不传播到 sibling route；Lift 显式作者化，Replay 原样消费，最终
-target-local topology 仍由 Gate1 裁决。SCRC 后 production 不读取 π。
+不修改 C raw valuation，也不传播到 sibling route；Lift 显式作者化，Replay 不读取。只有固定
+Gate1 profile 支持该 relation 时才可规范化 target-local spelling，否则 residual 保持 hard。SCRC 后
+production 不读取 π。
 
 ---
 
@@ -494,12 +498,15 @@ type `Ts` 与 result type `Tt`；不能把二者都与 node result carrier 比�
 只有这些 role 对应的 attachment-closed J-loop/slot pair 在完全缺 relation 时由 TypeCheck 报
 `iteration_witness_missing`；custom role 不使一个已经显式写出的 relation 非法。若 role 被误标且
 relation 完全遗漏，或 Lift 完全遗漏 Source region、因而无 handle，fixed checker 都没有可量化对象；
-该 completeness 由 source-aware Lift 提出、Gate1 observer 比较检查。这个边界必须保留，不能把局部
-dependent checking 夸写成 Source topology 的形式证明。
+Source/Replay observation 可能形成 residual，但 Gate1 不认证 π completeness。这个边界必须保留，
+不能把局部 dependent checking 夸写成 Source topology 的形式证明。
 
 首版不需要让 TypeCheck 成为 SMT 或完整图证明器。最小可行实现只需 fail closed 地完成上述局部检查。
 
-当前合并协议为 `artifact.v12 / decode.v17 / typecheck.v30 / candidate-check.v1 / replay-check.v14`；
+以下是 Task 20 P1 迁移前的 π-consuming runtime 记录，只解释历史/当前旧实现，不是 J-only Replay
+规范或新 evidence。旧 runtime 完成移除前不得运行新的正式 Task 20 closure。
+
+迁移前合并协议为 `artifact.v12 / decode.v17 / typecheck.v30 / candidate-check.v1 / replay-check.v14`；
 Replay packet envelope 为 `replay-input.v2`；Triton 公共上下文由当前固定公开字段直接给出，不再使用 context version、SHA 或 receipt 作为运行门禁；
 Codex/MiniSWE Lift knowledge 为 v89/v67，MiniSWE Replay backend 为 v31，Codex Replay backend 为 v55，
 J-only Replay semantic view 为 `intentir.replay-semantic-program.v1`。
@@ -803,7 +810,7 @@ Replay 的唯一 Kernel-conditioned 输入为：
 \boxed{
 \operatorname{View}_f(A)
 =
-\bigl(J,\pi,\operatorname{MaskC}(C),U_f\bigr).
+\bigl(J,\operatorname{MaskC}(C),U_f\bigr).
 }
 \]
 
@@ -830,6 +837,7 @@ R=
 
 Replay 不接收：
 
+- π 或任何 π-derived view/query/ledger；
 - Source；
 - Harness；
 - C 具体值；
@@ -919,57 +927,83 @@ J reference 的接口必须是：
 
 - Compile：前端已有编译器；
 - Observe：读取当前前端可提供的稳定 compiler artifact；
-- Canon：一次实验开始前由协议确定的全局规范化。
+- Canon：一次实验开始前由协议确定、完全 π-blind 的 presentation normalization。
 
 Gate1 不需要所有前端 lower 到一个公共 IR。每个前端只需提供自己的 \(\Phi_{f,p}\)，证书强度
 显式参数化于 observer profile。
 
 ## 7.2 Gate1 公式
 
+π 只参数化固定 profile 的单臂、可能未定义的 normalizer：
+
+\[
+\Phi^{\pi}_{f,p}(P,c)
+=
+\mathcal N^{\pi}_{f,p}(\Phi_{f,p}(P,c)).
+\]
+
+`N^π` 对 Source 与 Replay 独立调用，不读取另一臂、两臂 diff、Kernel identity 或 Source 文本。
+
 \[
 \boxed{
-G_1^{f,p}(S,R,c_0)
+G_1^{f,p}(S,R,J,C,\pi,c_0)
 =
 \mathbf 1
 \left[
-\Phi_{f,p}(S,c_0)=\Phi_{f,p}(R,c_0)
+\Phi^{\pi}_{f,p}(S,c_0)\downarrow
+\land
+\Phi^{\pi}_{f,p}(R,c_0)\downarrow
+\land
+\Phi^{\pi}_{f,p}(S,c_0)=\Phi^{\pi}_{f,p}(R,c_0)
 \right].
 }
 \]
 
-等价地定义 observer-relative 类：
+令 \(H^{J,C}_{f,p}\) 是两臂共同的匿名 profile vocabulary 与 J/C typed contracts 预先固定的
+J/C-owned projection；候选 π 不能选择该 projection 或 normalization rule。H 必须覆盖该 profile
+声称可观察的全部 J/C-owned atom classes，未知 atom 默认 hard；无法建立唯一 anchor 时返回
+`observer_unsupported`，不能形成空/弱投影。每个 defined normalizer 必须满足：
 
 \[
-P_1\sim_{\Phi_{f,p},c_0}P_2
-\iff
-\Phi_{f,p}(P_1,c_0)=\Phi_{f,p}(P_2,c_0).
+H^{J,C}_{f,p}(\mathcal N^{\pi}_{f,p}(O))
+=H^{J,C}_{f,p}(O).
 \]
 
-Gate1 通过意味着：
+这一性质属于候选外的 `ProfileOK(f,p,ν,J,C)` 发布条件：rule allowlist、recognizer、scope 与
+canonical replacement 全部冻结，每条启用 rewrite 有机械 hard-preservation check 或独立 rule
+audit。TypeCheck 只验证 π instance well typed，不证明 `ProfileOK`。
+
+因此 Gate1 的结构结论只谈 J/C：
 
 \[
 \boxed{
-[S]_{\Phi_{f,p},c_0}=[R]_{\Phi_{f,p},c_0}.
+\mathsf{ProfileOK}_{f,p,\nu}(J,C)
+\land\mathsf{TypeCheck}(J,C,\pi)\land G_1
+\Longrightarrow
+H^{J,C}_{f,p}(\Phi_{f,p}(S,c_0))
+=H^{J,C}_{f,p}(\Phi_{f,p}(R,c_0)).
 }
 \]
 
-即本次实际 Replay 在 Source 隔离条件下，被构造成与 Source 落在同一 frontend-observer 等价类中。
+π 从结论中消失。该结论限定到固定 `(f,p,c0)`，是 deterministic、runtime-input-independent、
+observer-relative 的 J/C structural closure，不是全输入域语义等价。
 
 ## 7.3 Gate1 支撑什么
 
 Gate1 支撑：
 
-- artifact 是否足以重建 compiler-visible realization；
-- typed artifact 是否足以承载 observer 所要求的 source-specific realization 信息；若要隔离
-  \(\pi\) 的独立贡献，必须另做消融，不能由一次 Gate1 closure 单独推出；
-- LLM 是否能够直接生成目标前端代码，而无需 J→frontend lowerer；
-- operator/dataflow/predicate/effect/representation 等 observer 能看到的差异是否闭合。
+- J/C 因子化是否在 observer 可见结构上闭合；
+- profile 已覆盖的 wrong operator/dataflow/predicate/fill/access/recurrence/effect 等错误能否在 Gate2
+  前被拒绝；
+- 是否能给 source-aware relift 返回结构化 counterexample；
+- LLM 是否能仅根据 J/MaskC 生成完整目标前端代码。
 
 Gate1 不支撑：
 
 - 所有输入上的语义等价；
 - observer 未观察部分的相等；
 - LLM 内部究竟“相信”J 还是根据 topology 猜测；
+- π 的正确性、完整性、最小性或 Source realization 全量恢复；
 - TypeCheck 自身的完备性。
 
 ## 7.4 Observer 强度
@@ -1002,11 +1036,12 @@ canonicalization version。mutation test 可以评估 observer 的经验敏感�
 进一步按唯一所有权作compiler图切片：完整保留observable value slice、predicate/boolean树、直接
 常量、reduction/control/effect、region/loop/carrier及program/pointer/transfer anchors；只将不进入
 上述切片的known-pure physical scheduling/address/rank/bound公式收缩为typed、carrier-origin-preserving
-edge。该quotient不改变`G1=[F_source==F_replay]`，而是定义当前`F`不观察J/C/π均不拥有的具体公式
+edge。该 raw quotient 是 π-blind `Canon` 的一部分，定义当前 `F` 不观察 J/C 均不拥有的具体公式
 拼写；错误语义、predicate/fill、reducer、effect、carrier/route/stage数量仍导致不等。
 它将 closed cache modifier 与 closed
-eviction spelling 统一视为不由 J/C/π 拥有的 frontend presentation noise；π 仍严格拥有 distinct
-transfer instance 的数量、顺序与 route，Replay 只可用 public spelling 防止 compiler CSE。它保留
+eviction spelling 统一视为不由 J/C 拥有的 frontend presentation noise；π 可记录 distinct transfer
+instance 数量、顺序与 route witness，但 Replay 不读取它，只可独立用 public spelling 防止自身
+compiler CSE。它保留
 既有对已建模 op 的 closed load/store policy 规则，以及从 public entry 可达、静态已知、structured 且无环 `tt.call` 的
 interprocedural comparison：call graph 仍 interprocedurally 展开，formal-to-actual、helper return
 SSA、op/def-use、effect 与已支持
@@ -1153,7 +1188,7 @@ receipt；新结果只是在记录的当前 evaluator/Q/test/environment 下对 
 ## 9.1 Factorized Intensional Closure（FIC）
 
 以下定义的论域已经要求
-\(R=\operatorname{Replay}_{\theta,f}(J,\pi,\operatorname{MaskC}(C),U_f)\)，即 R 确实由第 5 节
+\(R=\operatorname{Replay}_{\theta,f}(J,\operatorname{MaskC}(C);U_f)\)，即 R 确实由第 5 节
 规定的 source-isolated View 生成；request isolation 是运行前提，不是第四个 Gate。
 
 \[
@@ -1170,7 +1205,7 @@ FIC 表示：
 
 1. artifact 的显式语义所有权合法；
 2. Replay request 不包含第四个 Source 通道；
-3. typed artifact 能构造出一个与 Source 落在同一 observer class 的 Replay。
+3. J-conditioned Replay 与 Source 在固定 observer 的 J/C-owned structure 上闭合。
 
 ## 9.2 Extensional Semantic Closure（ESC）
 
@@ -1194,7 +1229,8 @@ ESC 表示 Source、Replay 和 J 可执行语义在测试域和 Q 下直接闭�
 }
 \]
 
-反例一：J 错了，但 \(\pi\) 或模型先验使 Replay 恢复 Source，可能 FIC 通过、ESC 失败。
+反例一：J 错了，但模型先验使 Replay 恢复 Source，或 observer/profile 存在盲区，可能 FIC 通过、
+ESC 仍通过 Source–Replay 却在 Source–J/Replay–J 边失败。
 
 反例二：Source、Replay、J 在测试域行为一致，但 Replay 使用不同 compiler realization，可能 ESC 通过、严格 FIC 失败。
 
@@ -1429,13 +1465,13 @@ A_r=(J_r,C_r,\pi_r),
 \[
 R_r=
 \operatorname{Replay}
-\bigl(J_r,\pi_r,\operatorname{MaskC}(C_r);U_f\bigr),
+\bigl(J_r,\operatorname{MaskC}(C_r);U_f\bigr),
 \]
 
 \[
 D_r=
 \operatorname{Diff}
-\bigl(\Phi_{f,p}(S,c_r),\Phi_{f,p}(R_r,c_r)\bigr).
+\bigl(\Phi^{\pi_r}_{f,p}(S,c_r),\Phi^{\pi_r}_{f,p}(R_r,c_r)\bigr).
 \]
 
 Gate1 失败后：
@@ -1450,16 +1486,17 @@ A_{r+1}
 candidate 与 closed diff 进入真实 user continuation，owner 继续修改并重新提交完整三元组。该
 conversation 是 proof-irrelevant search state，不跨 branch、不进入 Replay，也不改变上述数学映射。
 
-然后必须重新启动一份全新的 source-blind Replay：
+若 J 或 `MaskC(C)` structure/attachment 改变，必须重新启动一份全新的 source-blind Replay：
 
 \[
 R_{r+1}
 =
 \operatorname{Replay}
-\bigl(J_{r+1},\pi_{r+1},\operatorname{MaskC}(C_{r+1});U_f\bigr).
+\bigl(J_{r+1},\operatorname{MaskC}(C_{r+1});U_f\bigr).
 \]
 
-差异、旧 Replay 和旧候选代码只进入 source-aware Lift，不进入下一轮 Replay。
+π-only 修改可以复用 exact Replay bytes，但必须重跑 TypeCheck 与 Gate1。差异、旧 Replay 和旧候选
+代码只进入 source-aware Lift，不进入下一轮 Replay request。
 
 因此 Relift 是：
 
@@ -1510,9 +1547,10 @@ masked-J 不属于主认证条件。
 
 它只表示：
 
-> 在当前模型、当前 \(\pi\) 与当前 topology 下，删除 J 后不足以恢复 Source。
+> 在当前模型、解码配置与 masked-J Replay 输入下，删除 J 后不足以恢复 Source。
 
-若 masked-J hard-close，但 \(\pi\) 通过 TypeCheck，只能说明 topology 对语义有较强预测力；不能自动推翻 TypeCheck + Gate1 + Gate2。
+若 masked-J hard-close，只能说明当前生成条件仍足以产生闭合结构；它不能自动推翻
+TypeCheck + Gate1 + Gate2，也不能用 π 解释，因为 normal 与 masked-J Replay 均看不到 π。
 
 因此状态应分离：
 
@@ -1535,12 +1573,12 @@ J mutation / J-authority challenge 不进入主在线 Gate。若研究需要，�
 | 最初版本倾向 | 最终版本 |
 |---|---|
 | C.strategy 承载 source realization | C 恢复为纯 implementation selection；realization 进入 \(\pi\) |
-| RuleCard / RuleRegistry / deterministic composer 持续扩张 | Replay LLM 直接消费 typed relational \(\pi\) 与公共 \(U_f\) |
+| RuleCard / RuleRegistry / deterministic composer 持续扩张 | Replay LLM 只消费 J、MaskC 与公共 \(U_f\)；π 仅进入固定 Gate1 normalizer |
 | Lift 输出 J/C/π 外还有 interface、BindingMap、Resolver 等 | proof artifact 严格只有 \((J,C,\pi)\) |
-| Replay 可能看到 Harness、真实名字或额外 context | Replay 只看 J + \(\pi\) + MaskC(C) + 公共 \(U_f\) |
+| Replay 可能看到 Harness、真实名字或额外 context | Replay 只看 J + MaskC(C) + 公共 \(U_f\) |
 | \(\pi\) 是机制/施工 opcode 列表 | \(\pi\) 是 anonymous relational witness |
 | masked-J hard-close 直接 leakage reject | masked-J 单列 J 的操作性必要性 |
-| Gate1 被泛称为“证明语义住在 J” | Gate1 精确定义为 observer-relative source-blind replay closure |
+| Gate1 被泛称为“证明语义住在 J” | Gate1 精确定义为固定 `(f,p,c0)` 下的 observer-relative J/C structural closure |
 | Gate2 只模糊写“三方一致” | Q 外置；确定性主线直接比较 Source、Replay、J 三条边 |
 | 认证被包装为全域形式等价 | 定义为 observer-relative、test-domain-bounded certificate |
 | 实验失败时边跑边增加字段 | 实验内只改候选；实验后才修改系统 |
@@ -1659,34 +1697,30 @@ Source S + external Harness H
        TypeCheck(A)
               │
               ▼
-View(A) = J + π + MaskC(C) + U_f
+View(A) = J + MaskC(C) + U_f
               │
               ▼
  source-isolated Replay LLM
               │
               ▼
           Replay R
+[Source S, Replay R, π (Gate1-only)] ──> Gate1: N_pi
+[Source S, Replay R, RefEval(J)] ──────> Gate2
               │
-        ┌─────┴─────┐
-        ▼           ▼
-      Gate1       Gate2
-        │           │
-        └─────┬─────┘
-              ▼
        SCRC_CERTIFIED
 ```
 
-在 Replay 旁边用红色叉号标明不可见：Source、Harness、C values、Gate1 diff、old Replay。
+在 Replay 旁边用红色叉号标明不可见：π、Source、Harness、C values、Gate1 diff、old Replay。
 
 ## 图 2：Gate1
 
 ```text
-Source S ─ Bind same c0 ─ Compile_f ─ Observe/Canon Φ_(f,p) ─┐
-                                                        ├─ exact equality ─ G1
-Replay R ─ Bind same c0 ─ Compile_f ─ Observe/Canon Φ_(f,p) ─┘
+Source S ─ Bind c0 ─ Compile/Observe/Canon Φ_(f,p) ─ N_pi ─┐
+                                                           ├─ exact equality ─ G1
+Replay R ─ Bind c0 ─ Compile/Observe/Canon Φ_(f,p) ─ N_pi ─┘
 ```
 
-标题：**Static, Observer-Relative Replay Closure**。
+标题：**J/C Structural Closure under a Fixed Observer**。
 
 ## 图 3：Gate2
 
@@ -1737,11 +1771,11 @@ NO_CLOSURE or GATE2_FAILED
 
 英文：
 
-> **SCRC is a frontend-parametric certification protocol for open-world GPU kernels. An LLM factors a source kernel into an explicit semantic carrier J, an implementation-selection object C, and a (J,C)-indexed realization witness π. A replay model, isolated from the source, reconstructs a frontend program solely from the typed artifact. A small deterministic core then checks artifact-level semantic ownership, equality under a declared compiler observer, and pairwise behavioral agreement among the source, replay, and the executable semantics of J over a fixed test domain. The resulting certificate is observer-relative and test-domain bounded; it does not require a formal semantics or a dedicated verifier for each frontend.**
+> **SCRC is a frontend-parametric certification protocol for open-world GPU kernels. An LLM factors a source kernel into a reusable semantic carrier J, an implementation-selection object C, and a (J,C)-indexed certification witness π. A replay model, isolated from the source and π, reconstructs a frontend program solely from J and the masked C interface. Gate1 uses π only to normalize a narrow, predeclared class of realization noise and deterministically checks J/C-owned compiler structure; Gate2 then checks pairwise behavioral agreement among the source, replay, and the executable semantics of J over a fixed test domain. The resulting certificate is observer-relative and test-domain bounded; it is not a proof of π completeness or universal semantic equivalence.**
 
 中文：
 
-> **SCRC 是一种面向开放世界 GPU Kernel 的前端参数化认证协议。LLM 将 Source 因子化为显式语义载体 J、实现选择对象 C 和依赖于 (J,C) 的 realization witness π；一个与 Source 隔离的 Replay 模型仅依据 typed artifact 重建前端程序。随后，小型确定性核心检查 artifact 级语义所有权、声明 compiler observer 下的结构闭合，以及 Source、Replay 和 J 可执行语义在固定测试域上的两两行为一致性。该证书相对于明确的 observer、比较政策和执行环境成立，不要求为每个前端重新定义完整形式语义或专用验证器。**
+> **SCRC 是一种面向开放世界 GPU Kernel 的前端参数化认证协议。LLM 将 Source 因子化为可复用语义载体 J、实现选择对象 C 和依赖于 (J,C) 的 certification witness π；一个同时与 Source 和 π 隔离的 Replay 模型只依据 J 与匿名 MaskC 接口重建前端程序。Gate1 只用 π 消除预先冻结的窄 realization 噪声，并确定性检查 J/C-owned compiler structure；Gate2 再检查 Source、Replay 和 J 可执行语义在固定测试域上的三边行为闭合。该证书相对于明确的 observer、比较政策和执行环境成立，不证明 π 完整或全输入域语义等价。**
 
 ---
 
@@ -1750,8 +1784,8 @@ NO_CLOSURE or GATE2_FAILED
 ## 能宣称
 
 - Artifact 的显式语义声明被限制在 J；
-- Replay 请求不包含 Source、diff 或 C values；
-- Source 与本次 Replay 在声明 observer 下闭合；
+- Replay 请求不包含 π、Source、diff 或 C values；
+- Source 与本次 Replay 在声明 observer 的 J/C-owned structure 上闭合；
 - Source、Replay、J evaluator 在测试域和 Q 下行为一致；
 - 若采用隐藏独立测试，可给出条件错误接受上界；
 - 新前端不需要新的 J→frontend lowerer 或完整形式语义。
@@ -1759,7 +1793,7 @@ NO_CLOSURE or GATE2_FAILED
 ## 不能宣称
 
 - 对所有输入的全域形式等价；
-- TypeCheck 排除了所有 \(\pi\) 隐写通道；
+- Gate1 证明 π 正确、完整、最小或其 relation 全域语义保持；
 - \(I(\pi;\operatorname{Sem}(S))=0\)；
 - masked-J 对所有 Kernel 必须失败；
 - 当前证书证明所有 admissible C 都纯；
@@ -1774,7 +1808,7 @@ NO_CLOSURE or GATE2_FAILED
 \boxed{
 \text{开放世界生成，封闭核心认证；}
 \quad
-\text{TypeCheck 管信息归属，Gate1 管能否重建，Gate2 管表达是否正确。}
+\text{TypeCheck 管信息归属，Gate1 管 J/C 结构闭合，Gate2 管声明执行域行为闭合。}
 }
 \]
 

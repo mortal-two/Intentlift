@@ -16,8 +16,9 @@ Lower_target: J x C x target      -> executable
 `RefEval` 是简单、无优化、J-only 的语义路径。其函数类型不存在 C 或 π；它不能从 implementation
 selection、source realization、Harness 或历史 artifact 补语义。
 
-production lowerer 必须消费完整 J，并可消费或安全忽略 C。它不读取 π，因为 π 只证明 Source
-realization 与 Replay closure，不是目标 backend 的施工输入。
+production lowerer 必须消费完整 J，并可消费或安全忽略 C。它不读取 π，因为 π 只是 Gate1
+certification-time normalization witness，Gate1 的结论只谈 J/C structural closure；π 不是目标
+backend 的施工输入。
 system orchestration 只把 SCRC-accepted artifact 的 J+C 交给 production；backend API 不读取 Gate
 verdict，也不能自行接受未通过上游协议的 response。
 

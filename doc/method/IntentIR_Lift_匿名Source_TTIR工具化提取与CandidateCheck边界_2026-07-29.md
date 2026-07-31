@@ -30,7 +30,7 @@ brief和查询只是现有Source/Harness/observer事实的有界投影；Schema�
 Compile_f + Run_f + Observe_f
 ```
 
-不新增每 frontend 的 CFG/DFG extractor、Source-to-J/π parser 或 RuleCard。按 Task 20 的当前设计，Replay 永远看不到 Source、TTIR、Harness、C values、π 或 Gate diff，只看 `J + MaskC(C) + U_f`；π 只由 Gate1 的固定 profile-local observer canonicalizer 消费。
+不新增每 frontend 的 CFG/DFG extractor、Source-to-J/π parser 或 RuleCard。按 Task 20 的当前设计，Replay 永远看不到 Source、TTIR、Harness、C values、π 或 Gate diff，只看 `J + MaskC(C) + U_f`；π 只由 Gate1 的固定 profile-local 单臂 normalizer 消费，Gate1 结论只谈 J/C structural closure。
 
 ## CandidateCheck
 

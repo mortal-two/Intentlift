@@ -289,11 +289,10 @@ Gamma_(J,C) |- pi : RealizationWitness(J,C)
 mu : Instances -> Ids(J) union Ids(C)
 ```
 
-accepted artifact 中的 π 始终是上述 canonical dependent object。fresh Codex Replay packet 可以使用
-`intentir.pi-min.relational-column-wire.v1` 对固定 relation list 做 columns + row 的一一可逆编码；
-codec 必须在发送前 round-trip 得到完全相等的 canonical π，字段集合变化即 fail closed。它只消除
-JSON key 重复，不省略 multiplicity、route/order/sharing、time/control、program axis/coordinate map 或 refinement，
-也不要求旧 artifact relift。
+accepted artifact 中的 π 始终是上述 canonical dependent object。历史
+`intentir.pi-min.relational-column-wire.v1` 只是对 canonical π 的一一可逆存储编码；Task 20 的 fresh
+Replay packet、workspace、工具和 cache key 均不得包含该编码或任何 π-derived view。历史 evidence
+保持原解释，不被新边界静默升级。
 
 不存在 `Ids(interface)`。需要接口信息时读取 `InterfaceView(J)`，但该投影不增加命名空间、
 不序列化成独立 artifact，也不作为 Replay 的额外输入。
@@ -315,27 +314,26 @@ producer instance、多个 routed consumers 与 one-producer sharing 表达。�
 producer；只有不同 compiler-visible definition/stage 才能重复同一 semantic ref。反过来，若 Source
 确有多个 stage，也不能为了减少 Replay 工作而把它们折叠成一次。
 
-每个 instance 的 `region` 是精确词法 realization scope，不是优化提示或 consumer membership。
-Lift 按 Source 中 compiler-visible definition 的实际词法位置作者化它；Replay 必须在同一 region
-materialize。尤其，`placement=loop` 的 instance 即使对 induction variable 不变，也不得被 hoist 到
-parent；parent instance 也不得因仅由 loop consumer 使用而 sink 入 loop。跨 region 的 hoist、sink、
-clone 或 fold 都会改变 π 所声明的 realization topology，不能以“值等价”替代。
+每个 instance 的 `region` 是 Source 中的精确词法 realization scope，不是优化提示或 consumer
+membership。Lift 按 compiler-visible definition 的实际位置作者化它；支持该 relation 的 Gate1
+normalizer只能识别预先冻结的局部 canonical form，不能擦除 J/C-owned value、effect 或 control。
+Replay 不读取该 region，也没有按 π 复刻 hoist/sink/clone/fold 的 construction obligation。
 
 `region.placement=program` 只说明 instance 位于单个 program 的 region 中，不表示 Source 读取了
 program/grid coordinate。若 Source 的确存在 `program_id`、grid offset 等 compiler-visible stage，
 Lift 必须用一个独立 `realize` instance 及 routes 记录；无需新增 mechanism enum。没有该独立
-instance 时，Replay 不得因 placement、常见前端写法或 C 自行发明 program coordinate、乘加或
-affine address stage。
+instance 时，π 本身不声明 program coordinate、乘加或 affine address stage；Replay 只能根据 J、
+MaskC 与公共 frontend knowledge 独立生成实现，不能从 π 获得这些信息。
 
 该 generic relation 的机械区分是：program region 中锚定相应 J domain 的 `realize` instance，其
 scalar dependency path 先进入 `address_base` 再进入 transfer，表示 program-coordinate stage；进入
 `address_lane` 的 domain/C dependency path 表示 lane-varying stage。`pi.program_axes` 再以闭合
 `{domain_ref,axis}` 把每个 distinct program-coordinate domain 绑定到物理 launch axis `0..2`；
 domain_ref 唯一，但 Source 以一个物理 coordinate multiplex 多个 logical consumer domain 时，不同
-d* 可以共享同一 axis，并共同复用一次 compiled program-coordinate occurrence。Replay 必须保持
-base/lane 区分并消费该 axis identity，`U_f` 只负责映射到
-公共前端 API。π 不保存 grid extent、地址公式、Source 文本或前端 API，也不增加 mechanism enum；
-axis 不得从 declaration order、grid、C 或 instance multiplicity 推断。
+d* 可以共享同一 axis，并共同复用一次 compiler-visible program-coordinate occurrence。该 relation
+只供 TypeCheck 与声明支持它的 Gate1 normalizer使用；Replay 不读取 axis identity。π 不保存 grid
+extent、地址公式、Source 文本或前端 API，也不增加 mechanism enum；Lift 不得从 declaration
+order、grid、C 或 instance multiplicity 推断 axis。
 
 若某个 Source branch 只表达“该 shared physical coordinate 位于某个已声明 J domain 时才 realization
 这一组 consumer occurrences”，不应为此在 J 发明常量真假 `effect_if`。Lift 将这些 occurrences 放入
@@ -361,17 +359,15 @@ denotation 是对该物理 coordinate 按所列 extents 作 row-major mixed-radi
 
 若 program coordinate 对一个逻辑轴选择连续 block，且该 interval/mask 会影响 value，则乘加、比较、
 mask 与 select 必须由 J 自己表达；π 只通过 program domain occurrence 与 routes 保留它的物理
-realization，禁止另写可独立恢复该 interval 的 partition formula。固定 Replay 也不能从 output shape、
+realization，禁止另写可独立恢复该 interval 的 partition formula。Replay 也不能从 output shape、
 C、grid 或当前 valuation 猜出缺失 J。
 
-`address_base/address_lane` 标记 address contribution 角色；pointer/address operation 的次数由
-`J.signature` carrier kind 与 π route 共同决定，不能只看 base-to-lane edge。若 pointer/tensor 的
-`p*` instance 直接进入 `address_base`，该 base 已经是一次 pointer/address operation；其 pointer
-结果再 route 到 `address_lane` 时，Replay 必须保留第二次 lane pointer/address operation。若
-`address_base` 只接收 integer/domain/C contribution，而 pointer carrier 绕过 base、直到
-`address_lane` 或最终 address stage 才进入，则 Replay 保留两个 integer stage、先合并 base/lane，
-再执行唯一 pointer add。两种情况都不能因当前 grid extent 为 1 将 program path 常量化；只有不
-存在可分离 program-uniform contribution 时才允许 lone `address_lane`。
+`address_base/address_lane` 标记 Source address contribution 的 typed realization 角色；它不向 Replay
+传递 pointer-operation 数量或 target construction recipe。支持该 relation 的 Gate1 profile 可以在固定
+局部规则中识别 pointer/tensor carrier 直接进入 base、或只在 lane/final stage 进入的不同 realization，
+但必须保留 J/C-owned access、predicate、effect 与 pointer provenance。Replay 独立从 J、MaskC 与
+公共 frontend knowledge生成完整地址实现；若 observer 无法保守归一化两种合法 spelling，Gate1
+fail closed，而不是让 π 指挥 Replay。
 
 单个直接锚定 J signature handle 或 C slot 的 `realize` instance，可以由对应参数 binding 及其直接
 routed use 满足，不要求为了“显式 materialize”增加恒等赋值。尤其 `c*` 为 constexpr 时，前端
@@ -400,11 +396,12 @@ extent use 等于 `floor_div(C[source],divisor)` 或 `ceil_div(C[source],divisor
 relation 不能脱离已有 C instance、J domain attachment 与 route 独立存在。J 仍独立拥有 active
 logical domain、shape、predicate 与 half/split 语义；C 仍保存 Source/Replay 共同绑定的 raw physical
 extent。例如 Source 接收 `pad_hd=16`，J 可声明 `k < ceil_div(head_dim,2)`，relation 只声明某条
-physical domain route 使用 `c_pad_hd // 2`。不得把 C 改存 8、从 valuation 猜 `/2`、让 Replay
-从 J 反推 transform，或把 transform 传播到 sibling C uses。
+physical domain route 使用 `c_pad_hd // 2`。不得把 C 改存 8、从 valuation 猜 `/2`，或把 transform
+传播到 sibling C uses。Replay 不读取该 relation；若 J+MaskC 不足以独立生成一份可闭合实现，
+Gate1 应暴露 residual，而不是向 Replay 泄漏 transform。
 
 Task 20 中 Replay 只读取 MaskC 的匿名 slot，不读取 authored relation；route-local transform 只由
-TypeCheck 与声明支持该 relation 的 Gate1 π-relative normalizer消费。最终 target-local topology 由
+TypeCheck 与声明支持该 relation 的 Gate1 certification-time unary normalizer消费。最终 target-local topology 由
 Gate1 observer 裁决。SCRC 后 production
 projection 在 π 前停止，只消费 J+C，因此该 relation 不是 backend permission，也不改变 `Impl(J)`。
 
@@ -412,7 +409,7 @@ projection 在 π 前停止，只消费 J+C，因此该 relation 不是 backend 
 loop-carried recurrence，J 必须用现有 structured `loop` 完整声明 trip/scan、carry/init、body update
 以及对应 next/yield/result；contraction 的 canonical subscripts 与 result-axis orientation 必须和
 update 实际消费的值一致。π 只记录这些 J carrier 的 placement/multiplicity/routes，不能携带或让
-Replay 猜 initialization、update formula、yield 或 transpose/orientation。
+normalizer 擦除 initialization、update formula、yield 或 transpose/orientation 差异。
 
 ### 物理迭代基底
 
@@ -446,7 +443,7 @@ J-loop/slot pair 至少存在一条合法 relation；untiled J loop 不被迫制
 没有任何 handle 的 Source physical region，所以 Source topology completeness 仍由 Lift 完整提出并
 由 Gate1 对 Source observer 检出；不得把局部 missing-totality 夸写成“每 Source region 完整”。
 
-该 relation 只描述 Source realization，并为 Gate1 π-relative canonicalization 提供 typed witness，
+该 relation 只描述 Source realization，并为 Gate1 certification-time normalization 提供 typed witness，
 不给 Replay 或 production backend 增加输入：SCRC 后
 production 仍只消费 J+C，自行确定性 materialize/search `Impl(J)`，不得读取 π 来选择 loop basis。
 
@@ -469,7 +466,7 @@ traversal 的物理时间，不把 realization loop 伪装成 Layer-A recurrence
 topology。字段不含 bound/formula/value/API，不在 J 中创建 loop。TypeCheck 只验证 closed
 reference/type/scope/axis/totality，不选择锚点或推导 traversal；Source 的真实方向、数量与完整性仍由
 Gate1 判断。Replay只从J与MaskC独立选择physical tile；若与Source不同，只能由冻结profile支持的
-π-relative canonicalization处理，不能把logical axis ordinal直接当frontend tensor-rank axis。
+单臂 π normalization处理，不能把logical axis ordinal直接当frontend tensor-rank axis。
 
 每条 carrier relation 是一个 tuple slot；该 slot 内 init/state/next/result 的 dtype、rank 与
 pointer/value class 必须一致，但不同 slot 可以异构，也不要求等于 `body_instance` 的类型。由此可同时
@@ -508,31 +505,24 @@ normalization rule；production backend 不读取 π。
 ```
 
 该 branch region 必须已由同一 domain realization 的 empty-slot route 控制；relation 只补充“域外终止”。
-domain predicate、extent、polarity 与 continuation 内容仍分别由 J 和既有 π topology 拥有。同一 pair 在
-Replay 最低结构检查中只计为 terminal fork，不再计作普通 program-domain branch。
+domain predicate、extent、polarity 与 continuation 内容仍分别由 J 和既有 π topology 拥有。Replay
+不读取该 pair；当前 profile 未实现保守 unary normalization 时，terminal-control residual 保持 hard。
 
 ## Gate1 normalization capability
 
-π schema定义 typed realization facts，但不自动赋予所有 relation 擦除 Gate1 difference 的权限。
-每个新 observer profile 中所有 relation 默认 `witness_only`。profile/version 必须在候选外冻结一张
-capability table，把 relation kind 标成：
+π schema 只定义 typed certification witnesses，不自动赋予任何 relation 擦除 Gate1 difference 的
+权限。每个新 observer profile 中所有 relation 默认不参与 normalization。只有候选外冻结、对单个
+observation 独立适用的局部 canonical form，并能机械检查固定 J/C hard projection 不变时，exact
+relation kind 才可启用。候选不能新增 matcher、选择 `normalize_to` 或改变 scope。
 
-```text
-normalizable | conditional | witness_only | unsupported
-```
-
-只有同时发布 anchor sorts、J/B/C 前提、二侧 recognizer、closed erasable-atom allowlist、canonical
-replacement、scope/overlap/composition 与 receipt 的 profile-wide rule，才能把 exact kind 窄升为
-`normalizable/conditional`；候选不能新增 matcher 或选择 `normalize_to`。完整 observation 默认全
-hard，rule 只能改写 allowlist 中的 exact matched atoms。J-owned operator/operand、logical domain、
-predicate/fill、reducer、value recurrence、observable effect/control/post-state/output mapping 与 C 的
-identity/type/valuation/attachment始终 hard；未知 alias、memory-order、numeric、address-provenance atom
-也默认保留。`order`、carrier、terminal control 与 sensitive numeric/update refinement 默认
-`witness_only`。任何 unsupported、单侧或歧义 occurrence 保持 hard，不能因 π clause 存在而通过。
+J-owned operator/operand、logical domain/access/index、predicate/fill、reducer、value recurrence、
+observable effect/control/post-state/output mapping 与 C identity/type/valuation/attachment 始终 hard；
+未知 alias、memory-order、numeric、address-provenance atom 也默认保留。carrier、terminal control、
+sharing/order 与 sensitive numeric/update relation 第一阶段均不 normalize。
 
 TypeCheck 只验证 relation 的 schema、引用、scope、依赖与 authorization，不读取 Source/Replay
-observation。Gate1 normalizer另记录具体 clause 是否被使用及其coverage receipt；未使用clause不获得
-额外权限，也不要求为了当前 Replay 与 diff 做 equality/minimality证明。
+observation，也不证明 π 的真实性、完整性或最小性。debug telemetry 可以记录 applied/unsupported
+relation，但不形成 `Diff subset π` acceptance、第四 artifact 或 π correctness claim。
 
 ## Authorization 与 parametricity
 

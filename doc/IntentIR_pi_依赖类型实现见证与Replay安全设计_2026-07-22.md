@@ -5,9 +5,9 @@
 > **2026-07-31 Task 20 窄化修订（规范性覆盖）：** 本文关于 π 的 closed schema、dependent
 > typing、无语义原子与 production 不消费 π 的边界仍有效；凡把 π 列为 Replay 输入、要求 Replay
 > 按 π 重建 topology，或以 π-consuming Replay 解释 masked-J 的条款，均由
-> [J-only Replay 与 typed π-relative Gate1 Observer](method/IntentIR_J-only_Replay与pi参数化Observer_Gate1_2026-07-31.md)
-> 覆盖。π 现在是 Gate1 的 typed realization-quotient witness：候选 relation 只有通过固定二侧
-> applicability/hard-projection 检查才可参与 `CanonPair`；π 不进入 Replay。历史 runtime/receipt
+> [J-only Replay 与 J/C Structural Gate1](method/IntentIR_J-only_Replay与JC结构Gate1_2026-07-31.md)
+> 覆盖。π 现在是 certification-only normalization witness：只可实例化固定单臂 normalizer，
+> 不进入 Replay，Gate1 也不认证其正确、完整或最小。历史 runtime/receipt
 > 仍按原版本解释；此修订不声称新 runtime 已完成。
 >
 > 思想来源：[高级 AI 对 π 的思想](source-notes/高级ai对于π的思想.md)
@@ -20,9 +20,11 @@
 >
 > Claim 收紧复审：[最终数学与三份设计的局部收紧建议](source-notes/高级ai对最终数学与三份设计的局部收紧建议_2026-07-22.md)
 >
-> 范围：在 artifact 严格只有 `(J,C,pi)`、Replay 不接收额外 per-kernel 输入的约束下，定义足以闭合 Replay、但没有显式语义副本和独立语义权威的 π
+> 范围：在 artifact 严格只有 `(J,C,pi)`、Replay 只接收 `J+MaskC(C)` 的约束下，定义供
+> TypeCheck 与 Gate1 certification-only normalizer使用、但没有显式语义副本和独立语义权威的 π
 >
-> 核心结论：**π 可以完整，但不能语义闭合；masked-J 测量 J 的操作性必要性，不再独自裁决 artifact 的语义合法性。**
+> 核心结论：**π 只提交 closed typed realization witness；Gate1 不认证其正确、完整或最小。masked-J
+> 测量 J 的操作性必要性，不再独自裁决 artifact 的语义合法性。**
 
 ## 1. 问题与最终判断
 
@@ -31,20 +33,20 @@
 ```text
 Lift_H(Source) = (J,C,pi)
 
-Replay = W_f(J,pi,MaskC(C);U_f)
+Replay = W_f(J,MaskC(C);U_f)
 ```
 
 Replay 不再接收 RuleCard、BindingMap、Harness、source diff、旧候选或其他 source-conditioned
 输入；同样不得接收 source parameter name/position、interface sidecar、source/compiler
-fingerprint、旧模型 conversation context 或 per-kernel frontend context。此时，所有不属于
-J/C、但 strict Gate1 要求恢复的 source realization topology，只能由 π 表达。
+fingerprint、旧模型 conversation context 或 per-kernel frontend context。π 只在 Replay 提交后供
+TypeCheck 与固定 Gate1 normalizer解释，不向 Replay 传递 Source topology。
 
 因此：
 
 ```text
-π 太弱  -> Replay topology 在信息上欠定；
-π 完整  -> Replay 可以按 witness 恢复 source realization；
-π 复制 J -> 形成非法第二语义权威。
+π relation 不受支持 -> Gate1 residual 保持 hard / observer_unsupported；
+π 复制 J             -> 形成非法第二语义权威；
+normalizer 过宽       -> 擦除 J/C hard fact，是 Gate1 TCB 缺陷。
 ```
 
 正确方向不是继续零散增加 kernel/mechanism rule，而是把 π 定义为：
@@ -88,10 +90,10 @@ Artifact = (J,C,pi)
 - 新 Agent 输出；
 - 第四 proof-relevant sidecar。
 
-### 2.2 Replay 输入不变
+### 2.2 Replay 输入为 J-only
 
 ```text
-Replay = W_f(J,pi,MaskC(C);U_f)
+Replay = W_f(J,MaskC(C);U_f)
 ```
 
 其中：
@@ -99,7 +101,7 @@ Replay = W_f(J,pi,MaskC(C);U_f)
 - `MaskC(C)` 只有匿名 slot schema，无具体值与 source binding；
 - `U_f` 是版本化、公共、与当前源码无关的 frontend 上下文，不能按 Kernel/op/失败样本选择；
 - Harness 不进入 Replay；
-- π 可以引用匿名 C slot，但不能包含 C value。
+- π 可以引用匿名 C slot，但不进入 Replay，也不能包含 C value。
 
 实现内部可以从当前可见 J fresh 派生只读 `S_J=M(J)`，供 Replay Agent 作为 canonical typed compiler
 view。`M` 不读取 π/C/Source/Harness/target/Gate，`S_J` 不增加新的 Kernel-conditioned 信息，因此不
@@ -110,8 +112,15 @@ view。`M` 不读取 π/C/Source/Harness/target/Gate，`S_J` 不增加新的 Ker
 Gate1：
 
 ```text
-F_f(Compile_H(Source,C)) == F_f(Compile_H(Replay,C))
+defined(N_pi(F_(f,p)(Compile_H(Source,c0))))
+and defined(N_pi(F_(f,p)(Compile_H(Replay,c0))))
+and N_pi(F_(f,p)(Compile_H(Source,c0)))
+    == N_pi(F_(f,p)(Compile_H(Replay,c0)))
 ```
+
+`N_pi` 是固定 profile 的单臂 normalizer，不读取另一臂或 diff。正式 profile 必须由候选外
+`ProfileOK` 确认 J/C hard projection 覆盖及每条 rewrite 的 preservation；TypeCheck 不承担该证明。
+Gate1 的结论只谈 J/C structural closure，不证明 π。
 
 Gate2：
 
@@ -135,8 +144,8 @@ K_t = Lower_t(J,C)
 该式是 production orchestration 的抽象签名；其内部必须先执行 J-only 的
 `M0 = Emit_v(J)`，再让 C 仅初始化搜索，具体合同由第五份后端权威文档定义。
 
-π 只证明 source realization 与 Replay closure。production lowerer 读取 π 会使 backend 退化为
-模仿 source frontend，违反 J/C 与 π 的所有权边界。
+π 只作为 Gate1 normalization 的 certification witness；Gate1 不单独证明 π 或 Source realization。
+production lowerer 读取 π 会使 backend 退化为模仿 source frontend，违反 J/C 与 π 的所有权边界。
 
 ## 3. π 的数学身份：依赖类型
 
@@ -411,8 +420,8 @@ update formula、yield 或 transpose/orientation。把 recurrence 压成最终 g
 
 RoPE 反例给出另一类严格欠定：Harness/Source 绑定 raw physical capacity `pad_hd=16`，J 已独立声明
 active half-domain `k < ceil_div(head_dim,2)`，但 Source realization 的某条 lane-domain route 使用
-`pad_hd // 2`。若把 C 改存 8，Source 与 Replay 不再共享同一 C valuation；若 Replay 从 J 猜 `/2`，
-则 π 没有完整表达 Source realization。
+`pad_hd // 2`。若把 C 改存 8，Source 与 Replay 不再共享同一 C valuation。Task 20 不把该 transform
+交给 Replay；它只作为 certification witness，当前 profile不能保守归一化时 Gate1 fail closed。
 
 `artifact.v10` 因此增加：
 
@@ -438,9 +447,9 @@ ceil  -> ceil_div(C[source], divisor)
 
 它不创建 J dimension/domain/predicate/value/operator，不改变 C 中的 raw value，也不传播到 sibling
 routes。Lift 必须从 Source 显式作者化 relation 与 attachment；Decode、CandidateCheck、TypeCheck、
-Replay 或 Gate 都不能按 valuation、名字或 J half-domain补造。Replay 从 MaskC 的匿名 c* 与该 relation
-作者化 public frontend spelling；ReplayCheck 只拒绝完全未消费的 closed spelling，精确 target-local
-topology 仍由正式 Gate1 裁决。SCRC 后 π 停止，production backend 不读取该 relation。
+Replay 或 Gate 都不能按 valuation、名字或 J half-domain补造。Replay 只从 J/MaskC 独立生成实现；
+支持该 relation 的固定 Gate1 normalizer可以处理其窄 target-local spelling，否则 residual 保持 hard。
+SCRC 后 π 停止，production backend 不读取该 relation。
 
 这不是 general expression language：wire 没有 expression AST、任意 operator、source fragment 或
 frontend API；只存在二值 rounding enum 与大于一的 literal divisor，并且没有既有 C/J/route 就无
@@ -455,8 +464,8 @@ extent_step:  lower=0, upper=Trip(J.loop),                 step=Tile(C.slot)
 tile_ordinal: lower=0, upper=ceil_div(Trip(J.loop),Tile), step=1
 ```
 
-两者可以实现同一 logical loop，却在 compiler observer 中具有不同 induction topology。旧 π 没有该
-区分时，Replay 选择任一写法都不是“消费 artifact”，而是在猜 Source。`artifact.v3` 因此引入、当前
+两者可以实现同一 logical loop，却在 compiler observer 中具有不同 induction topology。π relation
+只为 Gate1 提供 typed normalization witness，不要求 Replay 复刻 Source。`artifact.v3` 引入、当前
 `artifact.v10` 继续要求：
 
 ```text
@@ -475,8 +484,8 @@ required positive-integer C tile slot，且该 slot 的 `subject_ref/axis_ref` �
 role：custom role 只要满足同一 dependent type 也可被引用。
 两个 instance 必须在 relation region 或其 lexical ancestor 可见，relation region 必须
 `placement=loop`。wire 不包含 lower/upper/step 字段、公式、concrete tile、Source 文本、operator 或
-frontend API；上述两种 basis 的 denotation 是全局协议，而非 Triton 私有约定。各 `U_f` 只能把同一
-relation 映射到自己的公开构造。
+frontend API；上述两种 basis 的 denotation 是全局 typed witness contract，而非 Triton 私有约定。
+各 frontend profile 决定是否具有保守单臂 normalizer；`U_f` 与 Replay 不读取该 relation。
 
 parser 对每个 declared physical region 至多一条 relation。若 Source 确有多个 physical loop region
 复用同一 logical loop/tile pair，Lift 可以声明多个 region 与多条 relation。`tile_extent` 与
@@ -484,11 +493,11 @@ parser 对每个 declared physical region 至多一条 relation。若 Source 确
 两个 role 的 C-tiled J-loop/slot pair，`typecheck.v7` 才能在 relation 完全缺失时要求至少一条合法
 relation；没有 C tile 的 loop 不必制造 relation。custom role 不使已经显式写出的 relation 非法，但
 若 Lift 误标 role 并完全遗漏 relation，fixed checker 没有 missing-totality trigger。一个 Source
-region 若被 Lift 整体遗漏，也不存在可供 fixed checker 量化的 handle。这两类 completeness 缺口仍
-由 Lift 的完整性责任与 Gate1 的 Source/Replay topology comparison 检出，不能把局部 totality 写成
-对所有 Source physical regions 的形式证明。
+region 若被 Lift 整体遗漏，也不存在可供 fixed checker 量化的 handle。Source/Replay structural
+observation可能暴露相应 residual，但 Gate1 不认证 π completeness；不能把局部 totality 写成对所有
+Source physical regions 的形式证明。
 
-该字段只服务 SCRC Replay fidelity。SCRC 结束后 π 停止，production backend 仍只读 J+C；它不得用
+该字段只服务 Gate1 certification-time normalization。SCRC 结束后 π 停止，production backend 仍只读 J+C；它不得用
 `pi.iterations` 限制或选择自己的 `Impl(J)` lowering/search。
 
 后续落地的 wire 仍遵守这条版本纪律：artifact.v4 增加 J-owned
@@ -501,7 +510,8 @@ value/dimension、consumer context 或 access-control 语义。旧 v1-v4 wire/re
 
 J 中的 structured `loop` 表示逻辑 recurrence；但已有 J reduce/contraction，或 boundary
 access/domain 对应的 epilogue/transfer traversal，也可能在 Source 中由一个或多个物理 tile loop
-实现。把后者伪装成 J loop会改变 `[[J]]`，完全省略又让 Replay 猜测 Source。
+实现。把后者伪装成 J loop会改变 `[[J]]`；π 只能把它记录为 certification witness，不能将其泄漏给
+Replay。
 `artifact.v8` 因此增加：
 
 ```text
@@ -530,11 +540,11 @@ routes 必须闭合 `init -> state -> next`。`next[k] -> state[k+1]` 与 loop-e
 自身的时间语义，不另写普通 DAG edge。
 一个 region 至多一条 physical iteration，不能与 structured `pi.iterations` 重叠。TypeCheck 验证 closed
 引用、类型、作用域、basis/direction vocabulary 和必要 totality；它不从 Source 推导 relation，也不证明
-Source 的真实方向/loop 数量。遗漏或错误仍由 source-blind Replay 后的 Gate1 检出。
+Source 的真实方向/loop 数量。遗漏或错误可能形成 Gate1 residual，但不由 Gate1 认证 π completeness。
 
-logical J axis ordinal 与 frontend active tile 的 tensor-rank axis 不同。Replay 必须由 J node、C attachment
-与 π realization 得到物理 tile rank；若 logical axis 被实现成一维 lane tile，`tl.sum/max/min/dot` 使用
-tile-local axis 0，而不是机械照抄 J 原轴号。该消费规则不生成新的 relation。
+logical J axis ordinal 与 frontend active tile 的 tensor-rank axis 不同。Replay 只由 J、MaskC 与公共
+frontend knowledge 独立选择物理 tile rank；若 logical axis 被实现成一维 lane tile，frontend local
+reduction axis 可与 J logical ordinal 不同。支持该差异的 Gate1 profile才可归一化，π 不指挥 Replay。
 
 ### 4.3.4 Consumer context 与 access guard 仍属于 J
 
@@ -552,8 +562,8 @@ non-loop 的 tensor pre-state/return/output mapping 必须精确闭合。relatio
 的唯一 authority，不能由 `boundary.broadcasts` 或 π 重复。TypeCheck/CandidateCheck 只拒绝、诊断，
 不插入 select、不升级 inout、不选择 axes/polarity，也不接受仅同 dtype/shape 的替代 pre-state。
 
-Replay 从 J 读取这些 relation，从 π 读取 realization；Gate2 RefEval 对每个 relation 必须消费或明确
-unsupported。当前 RefEval 可执行 A 中已有 select 的 guarded store，但 guarded load/update 的
+Replay 只从 J 读取这些 relation，并从 MaskC 接收匿名实现参数接口；π 不进入 Replay。Gate2 RefEval
+对每个 J relation 必须消费或明确 unsupported。当前 RefEval 可执行 A 中已有 select 的 guarded store，但 guarded load/update 的
 access-local pre-execution materialization 仍 unsupported。production backend 仍只读 J+C，且当前对
 任何 access guard 显式 fail closed；它不得借 π 或 RefEval receipt 补 target materialization。
 
@@ -575,9 +585,10 @@ pi.terminal_controls[*] = {
 两个引用必须是同一 J `effect_if` 的 sibling arm-scope `realize` instances，且该 `effect_if` 是其
 lexical parent 的 final operation；后续工作已经完整位于 continuing arm 中。relation 只声明 arm
 roles，不包含 predicate、polarity、return value/operation、formula、Source spelling 或 frontend API。
-Replay 从 J 读取 predicate 与两臂内容，从该 relation 读取 terminal CFG topology；无 relation 的
-`effect_if` 仍按普通显式双臂 control 消费。顺序 early returns 通过 continuation arm 内嵌套相同结构
-表达，不增加 kernel-specific mechanism。SCRC 后 π 停止，production backend 不消费该 relation。
+Replay 只从 J 读取 predicate 与两臂内容，不读取该 relation。terminal CFG topology 只作为
+certification-only witness；当前 profile 没有保守单臂 normalizer 时相关 residual 保持 hard。顺序
+early returns 通过 continuation arm 内嵌套相同结构表达，不增加 kernel-specific mechanism。SCRC 后
+π 停止，production backend 不消费该 relation。
 
 若 Source 的 terminal 条件恰是 authored J program domain 的补集，则不为它发明 `effect_if`，而允许：
 
@@ -587,8 +598,8 @@ pi.terminal_controls[*] = { domain_ref, continuation_region }
 
 该 continuation region 必须已由同一 domain realization 的 empty-slot route 控制；relation 仅补充
 “domain complement terminates current invocation”。predicate、extent、polarity、return 与 Source/API
-均不进入 π。同一 `(domain,region)` 在 Replay construction check 中只形成 terminal obligation，不再
-重复形成普通 branch obligation；最终 CFG 真实性仍由 source-blind Replay 与 Gate1 判断。
+均不进入 π。Replay 不读取同一 `(domain,region)` relation；最终 CFG structural closure 由固定
+Gate1 observer/normalizer判断，不能把该 witness 转换成 Replay construction obligation。
 
 ### 4.4 对 semantic labels 参数化
 
@@ -616,7 +627,7 @@ semantic label 是：
 - 某个合法 fill 的具体值；
 - 某个 predicate 的具体表达式。
 
-Replay 必须从当前 J 读取语义，而不是服从 π 中的历史 source 语义。
+Replay 必须只从当前 J 读取语义；它看不到 π 中的历史 source realization。
 
 ### 4.5 所有标识符完全不透明
 
@@ -661,7 +672,8 @@ C value 仅由 Harness 在 Replay source 生成完成后绑定。
 
 ### 5.1 设计原则
 
-π 必须完整描述关系，但不能重新命名 J 的语义类别。核心不应持续增加：
+π 中每条已提交 relation 必须 typed/self-contained，但不要求枚举完整 Source realization，也不能重新
+命名 J 的语义类别。核心不应持续增加：
 
 ```text
 native_reduce
@@ -674,7 +686,7 @@ softmax_stage
 
 否则 π 会再次演化成第二套 RuleCard、compiler IR 或 frontend-independent lowerer ontology。
 
-推荐核心只包含：
+当前 versioned wire 包含：
 
 ```text
 regions
@@ -696,6 +708,10 @@ terminal_controls
 “generic”仍表示封闭的 typed constructors 与 opaque J/C refs，不能接受任意 formula、自由文本或
 可执行 relation。新增前端或 operator 应优先组合这些关系；不得用一个可表达任意语义的
 `generic_relation` 逃避 SemDecl 与 authorization 检查。
+
+Task 20 完成首个真实 normalizer vertical slice 后，必须区分
+`normalizer_required / typed_anchor_only / legacy_replay_only`；只服务历史 Replay construction 的字段
+与 totality obligation 应在新 wire version 中 optionalize/retire，而不是继续增加 Lift 负担。
 
 ### 5.2 示意 schema
 
@@ -917,25 +933,31 @@ LLM 选择 C.strategy
 ```text
 旧：Replay(J,C,selected_plan,RuleRegistry)
 
-新：Replay(J,pi,MaskC(C);U_f)
+新：Replay(J,MaskC(C);U_f)
 ```
 
-π 必须 self-describing 到足以恢复关系结构，但不携带 RuleCard codebook 或语义文本。
+π 必须 self-describing 到足以让 TypeCheck 与 Gate1 normalizer解释其 typed relation，但不携带
+RuleCard codebook、语义文本或 target construction recipe。
 
-## 7. Replay 如何消费完整 π
+## 7. 当前边界：π 不由 Replay 消费
 
-Replay Compiler Agent 应遵守以下过程合同：
+Replay Compiler Agent 的过程合同只有：
 
 1. 把完整只读 `S_J=M(J)` 作为 canonical typed semantic program；exact J 仍是唯一语义权威；
 2. 从 `MaskC(C)` 声明参数化 C slots，不读取 values；
-3. 全局消费 π 的 occurrence、region、route/slot、sharing、order、iteration/carrier、terminal control、
-   extent transform 与 representation refinement；这些关系约束 realization，但不要求 target source 与
-   J node 或 π instance 一一对应；
-4. 使用固定公共 frontend 知识 `U_f` 自主选择 API、address/program mapping、layout、memory、loop、
+3. 使用固定公共 frontend 知识 `U_f` 自主选择 API、address/program mapping、layout、memory、loop、
    control、synchronization、fusion 与整体源码结构；
-5. 输出一份完整、参数化、source-blind frontend source，并在同一 fresh episode 内编译和修正；
-6. 不从 π 补造 J 的 operator、formula、predicate、fill、effect 或 constant，不从 compiler diff 修补，
-   不等待宿主生成 target skeleton、hole、binding、fragment 或 route source。
+4. 输出一份完整、参数化、source-blind frontend source，并在同一 fresh episode 内编译和修正；
+5. 不读取 π、Source 或 Gate1 diff，不等待宿主生成 target skeleton、hole、binding、fragment 或 route
+   source。
+
+π 只在 Replay 完整提交后进入 Gate1 的固定、profile-scoped 单臂 normalizer。该 normalizer不读取
+peer observation 或两臂 diff，不能擦除 J/C-owned facts；Gate1 不证明 π 正确、完整或最小。
+
+### 7.1 历史 π-consuming runtime 记录（非当前规范）
+
+下述 packet、ledger、query 与 replay-check 版本只解释既有 evidence，不得进入 Task 20 fresh Replay，
+也不能作为 J-only path 已实现的证据。历史流程曾要求 Agent 全局消费 π，但该要求已经废止。
 
 当前 fresh Replay packet 为 `intentir.scrc.replay-input.v2`；Triton 公共上下文由固定公开字段直接给出，不使用 context version、SHA 或 receipt 作为运行门禁；当前 MiniSWE Replay v31、Codex Replay v55，
 J-only semantic view 为 `intentir.replay-semantic-program.v1`；旧 receipt 保持其原 verdict，不能由
@@ -1012,16 +1034,15 @@ episode/workspace中继续；若已有draft，可以让新thread重读exact pack
 diagnostic。不得提供语义摘要，不得跨episode继承Replay、Source或Gate evidence。Replay可查询的TTIR
 只来自自己当前源码的public synthetic compile。
 
-## 8. Gate1 completeness：没有第四个事实来源
+## 8. Gate1 structural ownership：不认证 π completeness
 
-对 Gate1 observer 检查的每个 feature，必须建立唯一所有权：
+Gate1 的 required hard facts 必须具有固定所有权：
 
 ```text
-feature belongs to
-    Derive(J)
-    or Derive(C)
-    or Derive(pi)
-    or NormalizeAway
+J/C-owned fact       -> fixed hard projection
+presentation noise   -> pi-blind raw Canon
+supported realization noise -> fixed unary N_pi
+everything else      -> hard / undefined / observer_unsupported
 ```
 
 示意：
@@ -1030,21 +1051,20 @@ feature belongs to
 |---|---|
 | operator、reducer、predicate、fill、logical index | J |
 | C slot 与编译时 concrete value | C/Harness binding |
-| instance count、route、slot、order、sharing、placement | π |
-| 一条既有 route slot 上的 closed physical C-extent partition | π，依赖 C attachment 与 J domain |
-| source materialization 与 representation staging | π，受 J/B 约束 |
-| frontend API spelling | 固定 `U_f`，不是 per-kernel 输入 |
-| compiler 偶然 SSA 名/无意义临时差异 | normalize away |
+| instance/route/placement 等 supported realization spelling | π 只提供 typed witness；固定 `N_pi` 决定是否可局部规范化 |
+| frontend API spelling | raw profile / public `U_f`，不是 per-kernel 输入或 π rule |
+| compiler 偶然 SSA 名/无意义临时差异 | π-blind raw Canon |
 
-若 strict Gate1 检查某个 source-specific topology，而 J/C/π 都不表达它，也不归一化，那么 Replay
-失败是数学欠定，不是模型能力不足。
+若 profile 检查某个 source-specific topology，但没有固定、保守的单臂 normalization，相关 observation
+保持 hard 或 `observer_unsupported`。不得把 π clause 的存在直接解释为 PASS，也不因此要求 Replay
+读取 π 去复刻 Source。
 
 当前 Triton observer 将 `tt.load` 的 closed `cacheModifier {ca,cg,cv}` 与 `tt.store` 的
 `{wb,cg,cs,wt}` 归为 `NormalizeAway`：这些值是 target cache-policy hint，不改变 J
 denotation、memory effect、predicate/fill、address/dataflow 或 transfer topology，且 J/C/π 都不拥有
 frontend cache spelling。`triton-ttir-3.6-gate1-v8` 进一步把 closed
-`evictionPolicy in {evict_first,evict_last}` 归入同一类 NormalizeAway：π 负责同址 transfer instance
-的数量与顺序，Replay 可用 public eviction spelling 防止 compiler CSE，但具体 spelling 不由 J/C/π
+`evictionPolicy in {evict_first,evict_last}` 归入同一类 NormalizeAway：π 可记录同址 transfer instance
+的数量与顺序 witness，但 Replay 不读取；Replay 可独立用 public eviction spelling 防止 compiler CSE，具体 spelling 不由 J/C/π
 拥有，也不得成为 source-blind reconstruction 的隐含答案。未知或方向不合法的 policy、mask、fill、
 type、volatility 与其他 attributes 仍是 hard evidence。这一决策不在 π 中新增假装的 frontend API
 mechanism，也不把 cache hint 当作 J 语义。
@@ -1075,13 +1095,16 @@ evidence 保持原解释；这不声称 v5→v6 acceptance 单调。上述只是
 合同，不是 call graph/TTIR observer
 完备性的形式证明。
 
-完整性目标是：
+Gate1 目标是：
 
 ```text
-Obs_f(Source,C)
-=
-Obs_f(Replay_f(J,pi,MaskC(C)),C)
+defined(N_pi(Obs_f(Source,c0)))
+and defined(N_pi(Obs_f(Replay_f(J,MaskC(C)),c0)))
+and N_pi(Obs_f(Source,c0))
+    = N_pi(Obs_f(Replay_f(J,MaskC(C)),c0))
 ```
+
+该式只推出固定 J/C-owned projection 的 structural closure，不推出 π completeness 或全域语义等价。
 
 ## 9. 三类“泄漏”必须分开
 
@@ -1093,8 +1116,8 @@ route extent constructor 除外）。这是静态非法，
 
 ### 9.2 语义权威泄漏
 
-π 覆盖 J 的语义。例如 J 将 `n2` 定义为 sum，Replay 却因 π 中的暗示继续实现 max。这是非法，
-需要 dependent typing 与 J-authority challenge 检出。
+π 覆盖 J 的语义。例如 J 将 `n2` 定义为 sum，Gate1 normalizer 却因 π clause 擦除 sum/max
+residual。这是 observer/normalizer TCB 缺陷；固定 J/C hard projection 必须使该行为不可定义。
 
 ### 9.3 结构推断泄漏
 
@@ -1130,11 +1153,11 @@ SCRC_CERTIFIED = TypeCheck(J,C,pi) and Gate1 and Gate2
 不能拼接成一个 witness。并行只扩大 adaptive witness search 的预算，不改变 TypeCheck 或证书
 谓词；Gate2 只检查在任何隐藏输入产生前按固定规则选中的一个 Gate1-closed witness。
 
-它证明：
+它提供的证据是：
 
-- π 满足 `(J,C)` dependent ownership contract；
-- `J + pi + MaskC(C)` 可以 source-blind 构造 Replay；
-- Source/Replay strict observer closure；
+- π 通过 `(J,C)` dependent TypeCheck；这不是 π 的 Source 真值或 completeness 证明；
+- `J + MaskC(C)` 可以 source-blind 构造 Replay；
+- Source/Replay 在固定 profile 下取得 J/C structural closure；
 - Source、Replay 与 J-only RefEval 在 Gate2 relation 下闭合。
 
 这是主系统结论。
@@ -1150,7 +1173,7 @@ J_NECESSARY = masked-J hard mismatch
 它额外说明：
 
 ```text
-在当前模型、当前 π 与当前 topology 下，删除 J 后不足以恢复 source。
+在当前模型、解码配置与 masked-J Replay 输入下，删除 J 后不足以恢复 source。
 ```
 
 该证书更强，但不要求每个 kernel 都获得。
@@ -1159,34 +1182,17 @@ J_NECESSARY = masked-J hard mismatch
 
 ### 10.3 为什么 masked-J 不能继续绝对否决
 
-若 π 足够完整，使：
-
-```text
-Topology(Source) = g(pi)
-```
-
-而低熵 kernel 的语义又可能满足：
-
-```text
-Semantics(Source) = h(Topology(Source))
-```
-
-则即使 π 没有非法字段，masked-J 也可能闭合。此时：
-
-```text
-Semantics(Source) = h(g(pi))
-```
-
-masked-J hard-close 只能否定“J 对此样本的操作性必要”，不能自动否定 `Source equivalent J`。
-后者由 Gate2 的 Source–J 边认证。
+normal 与 masked-J Replay 都看不到 π，因此 masked-J hard-close 不能归因于 π topology。它仍可能来自
+模型先验、低熵 Kernel、公共 frontend knowledge 或 MaskC interface。该结果只能否定“J 对本次生成
+设置的操作性必要”，不能自动否定主认证；J 的行为锚定仍由 Gate2 的 Source–J 与 Replay–J 边承担。
 
 ### 10.4 masked-J 结果解释
 
 | masked-J 结果 | 解释 | 主认证处理 |
 |---|---|---|
 | hard mismatch | 支持 J 对 Replay 的操作性必要性 | 主认证可通过，并附 `J_NECESSARY` |
-| hard close 且 `TypeCheck(J,C,pi)` 失败 | π 存在显式/权威泄漏 | FAIL |
-| hard close 且 `TypeCheck(J,C,pi)` 通过 | topology 对语义具有预测力；J 必要性未证明 | 不自动否定主认证；报告，必要时另行运行离线挑战 |
+| hard close 且 `TypeCheck(J,C,pi)` 失败 | 当前 artifact 非法，与 masked-J 结果无关 | FAIL |
+| hard close 且 `TypeCheck(J,C,pi)` 通过 | 当前生成设置下 J 必要性未证明 | 不自动否定主认证；报告，必要时另行运行离线挑战 |
 | generation/compiler/tool failure | inconclusive | 不颁发 J 必要性证书 |
 
 这要求修改当前：
@@ -1215,7 +1221,7 @@ and masked-J hard-closed
 保持不变：
 
 ```text
-pi, C, RealSig(J)
+MaskC(C), InterfaceSig(J)
 ```
 
 改变一个 realization-signature-compatible semantic atom：
@@ -1234,7 +1240,7 @@ J -> J'
 然后：
 
 ```text
-R' = Replay(J',pi,MaskC(C))
+R' = Replay(J',MaskC(C))
 ```
 
 不要求 R' 与原 Source 一致，只验证：
@@ -1245,14 +1251,15 @@ Exec(R',C,x) equivalent_(B') RefEval(J',x)
 
 ### 11.2 解释
 
-- R' 跟随 J'：π 没有覆盖 J；masked-J closure 主要来自 topology prediction；
-- R' 仍实现原 source semantics：非 J 通道具有语义权威，是真泄漏；
-- J' 与 π signature 不兼容：换一个同 signature atom或记录 uninformative；
+- R' 跟随 J'：支持 J 的操作性权威；
+- R' 仍碰巧实现原 Source：只能说明当前模型先验/MaskC/U_f 仍有预测力；除非发现额外输入通道，
+  不能把它自动称为 π 泄漏，因为 Replay 看不到 π；
+- J' 与 interface signature 不兼容：换一个同 signature atom或记录 uninformative；
 - generation/tool failure：inconclusive。
 
 该挑战使用现有 RefEval(J') 作为 oracle，不新增 frontend lowerer、RuleCard 或 source repair。
 
-## 12. Gate2 对完整 π 的 soundness
+## 12. Gate2：独立于 π 的行为锚点
 
 当前主认证域是 deterministic / contract-deterministic Kernel：内部执行顺序可以变化，但 J/B
 在协议可观察层面给出唯一合同结果。真正集合值的语义留给未来 `Accept_{J,Q}(x,o)` 的逐观察
@@ -1264,7 +1271,7 @@ Gate2 的 J-only reference 边不读取 π：
 O_J = RefEval(J,x)
 ```
 
-因此，即使 π 对 source semantics 有很强统计预测能力，也无法绕过错误 J 的 Source–J 边。若采用
+π 不进入 Replay 或 RefEval；即使它与 source semantics 统计相关，也无法绕过错误 J 的 Source–J 边。若采用
 隐藏随机输入模式，Gate1 首次通过的完整候选 `a*=(J,C,pi,Replay)` 先选定且在本次 Gate2 中不再
 修改，随后才从预先声明的分布 D 独立同分布地抽取 m 个对 Lift/Replay 隐藏的测试输入，且 Gate2
 结果不回流本次实验。在预先确定的 Q 下定义完整三边谓词 `g2_Q(a*,x)` 及其错误质量：
@@ -1317,7 +1324,7 @@ Gate2：semantic soundness
 - sharing uniqueness；
 - source text/API/arbitrary formula 不进入 π；route extent 仅有 closed divisor/rounding；
 - multiple instances 可以锚定同一个 semantic ref；
-- Replay 使用 J/C/pi source-blind packet。
+- Replay 使用 J/MaskC source-blind packet；π 只在提交后进入固定 Gate1 normalizer。
 
 这些部分应保留并扩展，而不是恢复 composer。
 
@@ -1583,9 +1590,10 @@ RuleCard/C.strategy 膨胀路径。
 ### 14.3 Opaque subterm granularity 不足
 
 当前已有 `q*` handle 能力，但需明确它们是否覆盖 J index/predicate/value expression 的稳定
-canonical subterms。若不能，π 无法在不复制 formula 的情况下表达 source decomposition。
+canonical subterms。若不能，对应 π relation 不能获得保守 normalization 能力并保持 hard；不得为了
+覆盖 Source decomposition 把 formula 复制进 π。
 
-### 14.4 masked-J 状态机与完整 π 冲突
+### 14.4 masked-J 状态机与主认证分离
 
 旧 Triton/CuTe orchestrator 曾在 normal closure 后执行：
 
@@ -1807,7 +1815,7 @@ J 与 Source 不等价
 6. sharing 与 recomputation 如何在不携带 operator 的情况下完整表达？
 7. compiler observer 哪些 incidental topology 应 normalize away，而不是继续扩 π？
 8. `SCRC_CERTIFIED` 与 `J_NECESSARY` 在当前 receipt schema 中如何分离？
-9. masked-J hard-close + legal π 是否默认只报告，还是必须触发一次条件 J-authority challenge？
+9. masked-J hard-close + TypeCheck pass 是否默认只报告，还是必须触发一次条件 J-authority challenge？
 10. 旧 `LEAKAGE_REJECTED` receipts 如何保留历史口径，避免静默重判？
 
 这些问题必须通过全局、source-neutral 合同解决，不能按 Swiglu、LayerNorm、CuTe 或 kernel family
@@ -1820,11 +1828,13 @@ Gamma_(J,C) |- pi : RealizationWitness(J,C)
 
 Lift_H(S) = (J,C,pi)
 
-Replay = W_f(J,pi,MaskC(C);U_f)
+Replay = W_f(J,MaskC(C);U_f)
 
 SCRC_CERTIFIED = TypeCheck(J,C,pi) and Gate1 and Gate2
 
 J_NECESSARY = masked-J hard mismatch
 ```
 
-> **π 应完整描述 source realization 的关系结构，但不得保存语义原子或取得语义裁决权。硬 schema 与 dependent typing 负责阻止显式复制和权威泄漏；masked-J 只测量在当前模型与 topology 下 J 是否具有操作性必要，而不再独自否定 Gate1+Gate2 已认证的 artifact。**
+> **π 可以记录 closed typed source-realization relations，但不进入 Replay，Gate1 也不认证其正确、
+> 完整或最小。硬 schema 与 dependent typing 阻止显式语义复制，固定单臂 normalizer 只消除窄
+> realization 噪声并保持 J/C hard projection；masked-J 只测量当前生成设置下 J 的操作性必要性。**

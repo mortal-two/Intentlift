@@ -5,9 +5,9 @@
 > **2026-07-31 Task 20 窄化修订（规范性覆盖）：** 本文关于 J/C/Harness/RefEval/production
 > 的所有权仍有效；凡把 π 列为 Replay 输入、要求 Replay 复刻 π topology，或把 Gate1 写成未参数化
 > 的 raw observer equality 的条款，均由
-> [J-only Replay 与 typed π-relative Gate1 Observer](method/IntentIR_J-only_Replay与pi参数化Observer_Gate1_2026-07-31.md)
-> 覆盖。当前设计是 `Replay(J,MaskC(C);U_f)`；π 只进入固定、profile-scoped 的 Gate1
-> `CanonPair`，不进入 Replay。历史 runtime/receipt 仍按原版本解释；此修订不声称新 runtime 已完成。
+> [J-only Replay 与 J/C Structural Gate1](method/IntentIR_J-only_Replay与JC结构Gate1_2026-07-31.md)
+> 覆盖。当前设计是 `Replay(J,MaskC(C);U_f)`；π 只进入固定、profile-scoped 的单臂 Gate1
+> normalizer，不进入 Replay，Gate1 结论只谈 J/C。历史 runtime/receipt 仍按原版本解释；此修订不声称新 runtime 已完成。
 >
 > 修订依据：[高级 AI 对 C 设计的纠正](source-notes/高级ai对c的纠正.md)、[高级 AI 对 C 设计的自省](source-notes/高级ai对c的自省.md)
 >
@@ -19,7 +19,7 @@
 >
 > 范围：定义 C 在 Lift、Replay、Gate1、Gate2、reference semantics 与直接 production lowering 中的最小合同
 >
-> 核心不变量：**证明相关 artifact 严格只有 `(J,C,pi)`；Replay 只看 `J + pi + MaskC(C)`。**
+> 核心不变量：**证明相关 artifact 严格只有 `(J,C,pi)`；Replay 只看 `J + MaskC(C)`，π 只进入 Gate1 normalizer。**
 
 ## 1. 最终判断
 
@@ -37,15 +37,14 @@ TypeCheck(J,C,pi)
 
 Replay = ReplayLLM(
     J,
-    pi,
     MaskC(C),
     public frontend context
 )
 
 Gate1:
-    Observe(Compile_H(Source, C))
+    Normalize_pi(Observe(Compile_H(Source, C)))
     ==
-    Observe(Compile_H(Replay, C))
+    Normalize_pi(Observe(Compile_H(Replay, C)))
 
 Gate2:
     Close_Q(Source(c0), Replay(c0))
@@ -91,7 +90,7 @@ Lift(S,H) -> (J,C,pi,binding_map,hints,resolver_output,...)
 对 frontend `f`，Replay 定义为：
 
 ```text
-R = W_f(J, pi, MaskC(C); U_f)
+R = W_f(J, MaskC(C); U_f)
 ```
 
 其中 `U_f` 是固定、公共、与当前源码无关的 frontend 文档和工具上下文。
@@ -100,10 +99,10 @@ R = W_f(J, pi, MaskC(C); U_f)
 
 ```text
 Z = phi(Source, Harness)
-R = W(J,pi,MaskC(C),Z)
+R = W(J,MaskC(C),Z)
 ```
 
-除非可以证明 `Z` 是 `J/pi/MaskC(C)` 的确定性函数，否则它就是未受约束的第四信息通道。
+除非可以证明 `Z` 是 `J/MaskC(C)` 的确定性函数，否则它就是未受约束的第四信息通道。
 
 ### 2.3 条件信息隔离
 
@@ -117,7 +116,6 @@ R independent of
     source/replay binding
 given
     J,
-    pi,
     MaskC(C),
     fixed public frontend context U_f.
 ```
@@ -125,7 +123,9 @@ given
 也就是说：
 
 ```text
-Source -> (J,C,pi) -> Replay
+Source -> (J,C,pi)
+              |-- J + MaskC(C) -> Replay
+              `-- pi -> Gate1 normalizer
 ```
 
 是当前研究必须保住的因子化命题。
@@ -592,8 +592,8 @@ bound 或 permission。TypeCheck 只能检查 closed vocabulary、引用、可�
 拓扑；它不读取 Source，因而不能证明 direction 的事实真实性或发现一条完全未作者化的 Source loop。
 四个 role 必须是 distinct physical occurrence，即使引用同一 J semantic value；ordinary route 闭合
 `init -> state -> next`，跨迭代和 loop-exit 时间边仍由 relation 自身表示。
-这些真实性/完整性义务仍由 fresh Replay 消费和 Gate1 observer comparison承担。SCRC 后 π 停止，
-production backend 不读取上述字段。
+这些真实性/完整性义务不进入 Replay；它们只由 TypeCheck 与固定 Gate1 observer/normalizer处理。
+SCRC 后 π 停止，production backend 不读取上述字段。
 
 当前 wire 示意（假设 `n3` 是显式 `axes=[3]` 的 reduce node）：
 
@@ -785,7 +785,7 @@ rho_H^R(c0) = Replay.c0       := 128
                        |
                     (J,C,pi)
                        |
-           ReplayView(J,MaskC(C),pi)
+             ReplayView(J,MaskC(C))
                        |
                        v
                   ReplayLLM
@@ -870,7 +870,7 @@ Lift_H(S) = (J,C,pi)
 Replay 的当前 kernel 条件化输入严格是：
 
 ```text
-J + pi + MaskC(C)
+J + MaskC(C)
 ```
 
 另有固定、公共、与当前源码无关的 frontend context `U_f`。
@@ -900,7 +900,8 @@ def scrc_k0(..., c0: tl.constexpr):
 
 它知道存在 `c0`，但不知道 source 名、source position 和具体 value。
 
-pi 负责表达 C slot 在 source realization topology 中的 use；Injector 不得在生成后补 use-site。
+π 可以记录 C slot 在 Source realization topology 中的 certification witness，但 Replay 不读取它；
+Injector 也不得在生成后补 use-site。
 
 ### 8.3 生成后绑定
 
@@ -915,18 +916,25 @@ Injector 只允许 argument/option binding，禁止修改 Replay AST。
 
 ## 9. Gate1
 
-设 frontend observer 为 `F_f`：
+设 π-blind raw frontend observer 为 `F_(f,p)`：
 
 ```text
-F_source = F_f(Compile_H(Source,C))
-F_replay = F_f(Compile_H(Replay,C))
+F_source = F_(f,p)(Compile_H(Source,c0))
+F_replay = F_(f,p)(Compile_H(Replay,c0))
 ```
 
 Gate1：
 
 ```text
-G1 = [F_source == F_replay]
+G1 = defined(N_pi(F_source))
+     and defined(N_pi(F_replay))
+     and [N_pi(F_source) == N_pi(F_replay)]
 ```
+
+`N_pi` 是固定 profile 的单臂 normalizer；它不读取另一臂或 diff。只有候选外 `ProfileOK` 已保证
+J/C hard projection 覆盖与每条 rewrite 的 preservation 时，该 profile 才能用于正式 Gate1。Gate1
+的结论只是在同一 `(f,p,c0)` 下 J/C structural closure，不认证 π 的真实性、
+完整性或最小性。
 
 Source 与 Replay 使用同一个完整 C，因为 constexpr 和 compiler option 会改变 IR shape、address
 topology、reduction tree 与浮点 realization。
@@ -935,12 +943,13 @@ Gate1 不能从额外 binding artifact、RuleCard 或 source-conditioned sidecar
 
 当前 active Triton profile 是 `triton-ttir-3.6-gate1-v12`。v12以全局图切片保留observable value、
 predicate/boolean、reduction/control/effect、region/loop/carrier及program/pointer/transfer anchors，
-仅将无J/C/π所有者、只服务physical scheduling/address/rank/bound的known-pure公式收缩成typed、
+仅将无J/C所有者、只服务physical scheduling/address/rank/bound的known-pure公式收缩成typed、
 carrier-origin-preserving representation edge。C concrete values仍作为同一Harness schedule binding
 比较；quotient不吞掉C carrier使用、program-axis/transfer数量、predicate/fill或effect topology。
 closed cache modifier 与 closed eviction
-spelling 均作为不由 J/C/π 拥有的 frontend presentation noise 归一；π 仍拥有 distinct transfer
-instance 的数量、顺序与 route，Replay 可用 public spelling 防止同址 transfer 被 compiler CSE。
+spelling 均作为不由 J/C 拥有的 frontend presentation noise 归一；π 只记录 distinct transfer
+instance 的数量、顺序与 route witness，并仅在支持它的 Gate1 normalizer中使用。Replay 可独立采用
+public spelling 防止自己生成的同址 transfer 被 compiler CSE，但看不到 Source witness。
 它保留既有对已建模 op 与 reachable
 static structured acyclic `tt.call` graph 的 interprocedural comparison rules，并新增 typed
 single-block、encodingless
@@ -1242,7 +1251,7 @@ Replay 生成后，由 Harness 使用同一 C 编译 Source 与 Replay。这正�
 2. Lift 是否被要求复述 Harness 已分类的 schedule values；
 3. 当前 anonymous coordinate 是否足以让 Lift 直接在 C 中采用 handle，而不生成 BindingMap；
 4. 任意 binding/private provenance 是否在 Replay view 中被确定性擦除；
-5. Replay packet 是否严格只有 `J + pi + MaskC(C) + fixed U_f`；
+5. Replay packet 是否严格只有 `J + MaskC(C) + fixed U_f`；
 6. Gate2 RefEval 类型是否机械禁止 C；
 7. production lowerer是否仍保持直接 `Lower_t(J,C)`，且不读取 pi；
 8. production 对含混或未消费 C attachment 的 receipt 是否始终保持安全 ignore/fail-closed，而不由
@@ -1267,8 +1276,8 @@ Replay 生成后，由 Harness 使用同一 C 编译 Source 与 Replay。这正�
 
 ```text
 Lift_H(S) = (J,C,pi)
-Replay(J,pi,MaskC(C))
-Gate1(Source(C),Replay(C))
+Replay(J,MaskC(C))
+Gate1_pi: normalized J/C structural closure(Source(C),Replay(C))
 Gate2(Source(C),Replay(C),RefEval(J))
 ```
 
@@ -1311,6 +1320,7 @@ Gate2(Source(C),Replay(C),RefEval(J))
 - Replay 在 value-free C 下生成；
 - compile 前才注入完整 C；
 - source/replay observer 在同一 specialization 下比较；
+- π 只进入固定单臂 normalizer；Gate1 只推出 J/C-owned structural closure，不认证 π；
 - Gate1 不读取额外 BindingMap、RuleCard 或 source-conditioned sidecar。
 
 ### 17.4 Gate2
@@ -1350,10 +1360,12 @@ Lift_H(S) = (J,C,pi)
 
 TypeCheck(J,C,pi)
 
-Replay = W_f(J,pi,MaskC(C);U_f)
+Replay = W_f(J,MaskC(C);U_f)
 
 Gate1:
-    F_f(Compile_H(S,C)) == F_f(Compile_H(R,C))
+    defined(N_pi(F_f(Compile_H(S,c0))))
+    and defined(N_pi(F_f(Compile_H(R,c0))))
+    and N_pi(F_f(Compile_H(S,c0))) == N_pi(F_f(Compile_H(R,c0)))
 
 Gate2:
     Close_Q(Obs_H(S,c0,x), Obs_H(R,c0,x))
@@ -1364,4 +1376,4 @@ Production:
     K_t = Lower_t(J,C)
 ```
 
-> **Harness 负责给既有符号赋值，不负责产生新的符号系统；Replay 只看 `J + pi + MaskC(C)`。当前证明相关 artifact 始终只有 `(J,C,pi)`；production multi-lowering、retune 与 cost model 不属于 SCRC，并由第五份后端文档单独约束。**
+> **Harness 负责给既有符号赋值，不负责产生新的符号系统；Replay 只看 `J + MaskC(C)`，π 只进入固定 Gate1 normalizer。当前证明相关 artifact 始终只有 `(J,C,pi)`，但 Gate1 的结构结论只谈 J/C；production multi-lowering、retune 与 cost model 不属于 SCRC，并由第五份后端文档单独约束。**

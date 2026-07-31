@@ -29,18 +29,20 @@ output 改成 inout。CandidateCheck 的 PASS 也不是 Gate1 前置证书；外
 
 ## 裁决关系
 
-对前端 f、声明的 observer profile p、π schema `Σπ` 与 π-normalizer version ν：
+对前端 `f`、声明的 observer profile `p`、同一个 `c0`：
 
 ```text
-(OS_bar, OR_bar, receipt)
-  = CanonPair^pi_(f,p,nu)(Observe(Compile_H(Source,c0)),
-                          Observe(Compile_H(Replay,c0)); J,C,pi)
-G1 = [Delta_(f,p)(OS_bar, OR_bar) == empty]
+Phi(P,c)    = Canon_(f,p)(Observe_(f,p)(Compile_f(P,c)))
+Phi_pi(P,c) = Normalize^pi_(f,p)(Phi(P,c))
+G1 = defined(Phi_pi(Source,c0))
+     and defined(Phi_pi(Replay,c0))
+     and Phi_pi(Source,c0) == Phi_pi(Replay,c0)
 ```
 
-Gate1 回答 J-only Replay 与 Source 的 compiler-visible residual 是否在冻结 typed π-relative
-observer quotient 下闭合。它不执行数值语义、不读取 Gate2结果，也不通过 host semantic
-composer/RuleCard 构造 Replay。fresh Replay agent 直接维护并提交完整 source。
+raw `Compile/Observe/Canon` 不读取 π。`Normalize^pi` 是 profile 预先冻结的、可能未定义的单臂
+normalizer；它对 Source 与 Replay 独立调用，不得读取另一臂、当前 diff、Kernel identity、Source
+文本或历史失败。Gate1 回答 J-only Replay 与 Source 是否在 J/C-owned compiler-visible structure 上
+闭合。它不执行数值语义、不读取 Gate2，也不通过 host composer/RuleCard 构造 Replay。
 
 Replay normal view 必须保留当前 J-owned typed relations；它从 J 读取 value/dimension equality、
 closed dimension definitions、consumer-specific outside-domain contract 与 access guard，但不读取 π。
@@ -48,31 +50,30 @@ logical J axis ordinal 不是 frontend active tile 的 rank-local reduction axis
 MaskC schema 与公共 frontend knowledge 独立选择实现，不能机械复制 logical axis。特别地，
 v5 guarded store 的 merge 已经是 Layer A 中显式 `select`，且精确 inout/pre-state、polarity 与 axes 已
 通过 TypeCheck；Replay 不得把 relation 解读成允许它自行发明 branch、merge 或 mutation。Gate1
-比较的是 J-only Replay 与 Source 的 π-relative canonical observations，不为缺失 relation建议或生成答案。
+比较的是 J-only Replay 与 Source 的 normalized observations，不为缺失 relation建议或生成答案。
 
-### π-relative canonicalization
+### certification-only π normalization
 
-π relation 的 grammar、字段和 observer denotation 由冻结 `Σπ` 与 `(f,p,ν)` 预先定义。Lift只能提交
-typed relation instances，不能提交 wildcard、任意 `allowed_diff` 或 free-text equivalence。canonicalizer
-对 Source/Replay 对称调用，必须 deterministic、idempotent、hard-preserving 且 fail closed；任何匹配
+π relation 的 grammar、字段和 observer denotation 由冻结 schema 与 `(f,p,ν)` 预先定义。Lift只能
+提交 typed relation instances，不能提交 wildcard、任意 `allowed_diff`、normalization rule 或 free-text
+equivalence。单臂 normalizer 必须 deterministic、idempotent、hard-preserving 且 fail closed；任何匹配
 歧义、缺少 typed anchor 或 profile 未支持的 relation 都不得 normalize。
 
-新 profile 中所有 π relation 默认 `witness_only`。只有 profile-wide capability table 已发布完整
-rule spec（anchor sorts、J/B/C 前提、二侧 recognizer、closed erasable-atom allowlist、canonical
-replacement、scope/overlap/composition 与 receipt）的 exact relation kind 才可窄升；candidate 不能选择
-rule、改 denotation 或提交 `normalize_to`。规则可读取通用 typed rank/dtype、J-authored relation 与 C
-attachment，不得读取 Kernel identity、Source 路径或仅凭当前 concrete extents 相等发明关系。
+新 profile 中所有 π relation 默认不放宽 Gate1。只有 profile-wide 实现了独立于 peer observation/diff
+的局部 canonical form，并固定 typed anchor、前置条件、scope 与 hard-preservation 的 exact relation
+kind 才可使用；candidate 不能选择 rule、改 denotation 或提交 `normalize_to`。规则可读取通用 typed
+rank/dtype、J-authored relation 与 C attachment，不得读取 Kernel identity、Source 路径或仅凭当前
+concrete extents 相等发明关系。
 
-每个可 normalize relation `q` 都实现一个冻结的 partial pair recognizer：
+每个可 normalize relation `q` 都实现一个冻结的 partial unary normalizer：
 
 ```text
-Apply_(f,p,nu)^q(OS, OR; J,C) -> (OS', OR', local_receipt) | undefined
+Normalize_(f,p,nu)^q(O; J,C,pi_q) -> O' | undefined
 ```
 
-只有 `q` 唯一锚定已有 J/C occurrence、两侧 exact scope 均满足该 profile 的固定局部前提、作用域
-不歧义且 hard projection 不变时才应用。`undefined` 不会变成 PASS 权限：两侧原始原子继续进入
-residual。TypeCheck 只证明 `q` 是 closed typed instance；本二侧 applicability check 才决定它在这次
-Gate1 中是否被记作 `used`。该检查不搜索或补造 π，也不是完整 Source→π extractor。
+只有 `q` 唯一锚定已有 J/C occurrence、当前 observation 的 exact scope 满足固定局部前提、作用域
+不歧义且固定 J/C hard projection 不变时才应用。`undefined` 不会变成 PASS 权限。TypeCheck 只证明
+`q` 是 closed typed instance；normalizer 不搜索或补造 π，也不是完整 Source→π extractor。
 
 J-owned operator/operand、logical domain、predicate/fill、reducer、value recurrence、observable
 effect/control/post-state 与 output binding 始终保持 hard。program-coordinate/address spelling、placement、
@@ -80,15 +81,30 @@ materialization 或 physical-iteration wrapper 只有在 profile 声明支持且
 normalize。order、sharing、carrier、terminal control 与 sensitive numeric/update refinement 默认只是
 `witness_only`，不能单凭 π 放宽 Gate1。
 
-完整 observation 默认全 hard；rule `q` 只能改写其 closed `erasable_atom_kinds(q)` 中 exact matched
-atoms，补集 `H^q_(J,C)` 必须逐侧不变。上述 J-owned observation、C identity/type/valuation/attachment
-始终 hard；未知 alias、memory-order、numeric、address-provenance atom 也因默认规则保留。多个 relation
-不得通过重叠 scope 或候选指定顺序扩大可擦除范围。
-交换 Source/Replay 只允许交换输出与 receipt 角色，不得改变适用性或 verdict。
+完整 observation 默认全 hard。固定 `H^(J,C)_(f,p)` 投影由两臂共同的匿名 profile vocabulary 与
+J/C typed contracts决定，候选 π 无权选择它。H 必须覆盖该 profile 可观察的 interface、
+operator/operand/dataflow、logical domain/access/index、predicate/fill、reducer/recurrence、result
+relation、observable effect/control/post-state/output 与 C identity/type/valuation/attachment；未知 atom
+默认 hard。无法建立唯一 anchor 时 `observer_unsupported`，不能形成空/弱投影。每次 defined
+normalization 必须满足 `H(Normalize^pi(O)) = H(O)`；未知 alias、memory-order、numeric、
+address-provenance atom 默认保留。多个 relation 不得通过重叠 scope 或候选指定顺序扩大可擦除范围。
 
-normalizer 保存 base diff、used/unused π relations、covered atoms、uncovered residual 与 hard-preserved
-atoms。`Diff_realization subseteq Denote(pi)` 只是在 matcher 对该 profile 已证明双向精确时的 coverage
-receipt；正式 verdict 始终是 `Delta(OS_bar,OR_bar)=empty`，即两侧 normalized observation equality。
+正式 profile 必须在候选外满足 `ProfileOK(f,p,nu,J,C)`：rule allowlist、recognizer、scope 与 canonical
+replacement 全部冻结，每条启用 rule 都有机械 hard-preservation check 或独立 rule audit。TypeCheck
+只验证 π instance well typed，不证明 `ProfileOK`；无法满足的 relation 保持 unsupported。
+`ProfileOK` 只是 TCB release contract 的简写，不是新 Gate、artifact、receipt 或候选字段。
+
+实现可以保存 applied/unsupported relation 作为 proof-irrelevant debug telemetry；它不进入正式谓词，
+不形成 `Diff subset pi` acceptance，也不认证 π 的 completeness、minimality 或 Source 真值。
+
+因此只在固定 `(f,p,ν,c0)` 下有：
+
+```text
+ProfileOK(f,p,nu,J,C) and TypeCheck(J,C,pi) and G1
+  => H^(J,C)(Phi(Source,c0)) == H^(J,C)(Phi(Replay,c0))
+```
+
+π 从结论中消失。该结论不等于 raw observation equality、全输入域语义等价或完整 Source→J verifier。
 
 以下 `replay-check.v14` 条款记录 Task 20 迁移前的 π-consuming Replay runtime；新 J-only Replay
 路径不得调用这些 π packet checks。它们在 Task 20 完成 runtime/spec 同步后归档，不得作为新路径
@@ -208,9 +224,9 @@ Task14默认5）；每 branch最多 `K` 个正式候选，feedback只返回
 产生它的 branch。首个被观察到并已完整落盘的 Gate1 closure 原子成为 winner，sibling cooperative
 stop 并保存 receipt；该调度不读取 hidden Gate2，只有 winner 进入 Gate2。
 
-Gate1 的适应性 relift 是固定 relation algebra 内的确定性 witness search，不是统计检验，因而不要求
-π precommit；正式报告必须保留 first-pass/closure@k 与搜索成本。证书只认证 Gate1 receipt 中实际
-`used` 的 clauses；proposed/unused relation 不获得 Source 真值或跨 profile 有效性的结论。
+Gate1 的适应性 relift 是固定 normalizer contract 下的候选搜索，不是统计检验；正式报告必须保留
+first-pass/closure@k 与搜索成本。Gate1 不认证 π clause 的 Source 真值、完整性或跨 profile
+有效性，只裁决本次 normalized J/C structural closure。
 
 若 Gate1 已闭合而失败只发生在 Gate2 的 J reference consumer，保留这份精确 artifact 与 Replay；
 修复通用 RefEval 能力后走 Gate2-only exact-artifact recheck，不重新 Lift 或重新 Gate1。该复查的

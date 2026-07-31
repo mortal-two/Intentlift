@@ -15,8 +15,8 @@ Source_f ──compile(profile_f)──> Observation_f(Source)
                                                 v
                                Observation_f(Replay)
                                                 │
-                         profile-scoped π-relative Canon
-                                  and Gate1 equality
+                         profile-scoped pi normalization
+                           and J/C structural equality
 ```
 
 The active registry contains four audited public frontends:
@@ -138,33 +138,40 @@ not an SCRC closure claim: an individual Source↔Replay result additionally
 requires its accepted `J + C + pi`, Harness binding and strict Gate1/Gate2
 evidence.
 
-## π-relative observer boundary (Task 20)
+## J/C structural observer boundary (Task 20)
 
 The common π wire syntax, relation-kind names and ownership labels remain closed.
 Their applicability and observer denotation are profile-relative rather than
 frontend-independent. Each observer profile may implement a versioned,
-deterministic `CanonPair_pi` for only a declared subset of π relation kinds:
+deterministic partial unary normalizer for only a declared subset of π relation kinds:
 
 ```text
-CanonPair_pi(profile, source_observation, replay_observation, J, C, pi)
-    -> canonical_source + canonical_replay + coverage_receipt
+Normalize_pi(profile, observation, J, C, pi)
+    -> normalized_observation | undefined
 ```
 
-`CanonPair_pi` is symmetric for Source and Replay, idempotent, and fail-closed on
-ambiguous anchors or unsupported relations. Its fixed profile rules cannot be
+The same `Normalize_pi` is called independently on Source and Replay; one call
+cannot inspect the peer observation or their diff. It is idempotent and fail-closed
+on ambiguous anchors or unsupported relations. Its fixed profile rules cannot be
 extended by a candidate or by a per-kernel prompt. J-owned value/dataflow,
 predicate/fill, reduction, effect, control/post-state and output facts remain hard
 observation; π cannot normalize them. A receipt may report the shorthand
-`realization_diff ⊆ Denote_pi`, but the formal Gate1 verdict is equality of the two
-canonical observations.
+applied/unsupported relation list for debugging, but the formal Gate1 verdict is
+definedness and equality of the two normalized observations.
 
-A candidate relation is not effective merely because it is well typed. The
-profile must recognize its exact typed anchor and fixed local pattern on both
-observations, and every rewrite must preserve the profile's J-owned hard
-projection. A failed or one-sided match leaves the raw residual intact.
+A candidate relation is not effective merely because it is well typed. Each
+observation must independently match the exact typed anchor and fixed local canonical
+form, and every rewrite must preserve the profile's fixed J/C-owned hard projection.
+A failed match leaves the observation hard or returns `undefined`.
 
-Every relation kind is `witness_only` by default for a new profile. Promotion
-requires a profile-wide rule specification with a closed erasable-atom allowlist;
+An active profile must publish a candidate-independent `ProfileOK` contract: its hard
+projection covers every J/C-owned atom class the profile claims to observe, unknown
+atoms remain hard, and each enabled unary rewrite has a mechanical hard-preservation
+check or an independently audited rule. TypeCheck only checks the candidate π
+instance; it does not establish this profile property.
+
+Every relation kind is non-normalizing by default for a new profile. Promotion
+requires a profile-wide unary canonical form and hard-preservation contract;
 all other and all unknown observation atoms remain hard. Rule selection cannot
 inspect a kernel identity, benchmark ordinal or source path. Generic typed
 rank/dtype and J-authored symbolic-shape premises are permitted, but equality of

@@ -18,7 +18,8 @@ Replay = W_f(J,MaskC(C);U_f)
 2. J 是唯一 denotational semantic object，并拥有 logical signature。
 3. C 是不改变 J denotation 的 implementation-selection 对象；一个实验中的 Source 与 Replay
    使用同一个 C 对象和实际 valuation `c0`。主证书只覆盖该 c0，不自动覆盖所有 admissible C。
-4. π 是依赖 J/C 才有意义的 source-realization witness，没有独立语义权威。
+4. π 是依赖 J/C 才有意义的 certification-only source-realization witness，没有独立语义权威；
+   Gate1 不证明其正确、完整或最小，最终结构闭合结论只谈 J/C。
 5. 工程接口只能是 `InterfaceView(J)` 的确定性投影，不是第四对象、额外命名空间或 Replay 输入。
 6. Replay 只接收 `J + MaskC(C) + U_f`；π、Gate1 observation/diff 与 Source 均不进入 Replay；U_f 是与当前源码无关的公共前端上下文。
 7. Harness 只保存和绑定调用事实，不构造 J、C、π 或 Replay。
@@ -38,6 +39,11 @@ Replay = W_f(J,MaskC(C);U_f)
   `S_J=M(J)`，供 Replay Agent 作为编译器输入；`M` 不读取 C、π、Source、Harness valuation、target
   或 Gate，也不生成目标源码；
 - build、bind、run、observe、compare 和结构化诊断；
+- 用候选外冻结、profile-scoped、单臂且 hard-preserving 的 `N^pi` 规范化 Source/Replay observation；
+  `N^pi` 不得读取 peer observation、两臂 diff、Kernel identity 或按候选定义规则；
+- 只发布满足 `ProfileOK` 的 observer/normalizer profile：J/C hard projection 覆盖该 profile 声称可观察
+  的全部 J/C-owned atom classes，未知 atom 默认 hard，每条启用 rewrite 有机械 preservation check 或
+  独立 rule audit；
 - 将正式 Runner 的同一 source-free parser/Decode/anonymous-view/TypeCheck callable core 以时间治理、
   只读、非认证的 CandidateCheck 暴露给持久 source-aware Lift owner；Runner 另做 privacy/provenance
   并重跑 core；
@@ -78,8 +84,8 @@ Replay = W_f(J,MaskC(C);U_f)
 
 实验期间规则、prompt、模型配置、TypeCheck、observer profile 和比较政策 Q 保持不变，只修改
 候选 artifact。Gate1 失败的 bounded frontier 与 exact diff 只反馈给同一 branch 的持久 source-aware
-Lift owner；owner 继续修改
-自己刚提交的完整 artifact，relift 必须产生完整新三元组，
-随后生成全新的盲 Replay。三轮仍未闭合则报告 `NO_CLOSURE`。
+Lift owner；owner 继续修改自己刚提交的完整 artifact，relift 必须产生完整新三元组。J 或
+`MaskC(C)` structure/attachment 改变时生成全新的盲 Replay；π-only 修改可复用 exact Replay bytes，
+但必须重跑 TypeCheck/Gate1。三轮仍未闭合则报告 `NO_CLOSURE`。
 
 Gate2 失败结束本次实验。此后才允许根据跨样本失败修改系统，再从新的实验开始运行。

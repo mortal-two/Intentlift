@@ -89,8 +89,8 @@ Gate verdict。backend 禁止读取：
 
 ### 2.2 π 到此停止
 
-π 只证明 Source realization 能被 source-blind Replay 重建。目标后端的任务不是模仿 Source
-realization，因此：
+π 只是 Gate1 certification-time normalization witness；Gate1 的结构结论只谈 J/C，并不证明 π 或
+要求 Replay 重建 π。目标后端的任务更不是模仿 Source realization，因此：
 
 \[
 \pi\notin\operatorname{BackendInput}.
