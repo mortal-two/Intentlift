@@ -1,0 +1,52 @@
+semantic_program scrc_intent0 mode=normal
+schema intentir.replay.semantic-program.v1
+parameterized true
+
+dimensions:
+  x0: symbolic
+
+signature:
+  p0: input tensor dtype=f32 rank=2 logical_ref=t0
+  p1: output tensor dtype=f32 rank=1 logical_ref=t1
+  p2: value scalar dtype=i32 rank=0 logical_ref=x0
+
+inputs:
+  t0: tensor<f32["x0",16]>
+
+operations (declaration order):
+  [0] n0 @ body[0] in function: t1 = reduce(t0)
+      type {"dtype":"f32","shape":["x0"]}
+      attrs {"assoc":"float_nondeterministic","axes":[1],"fn":"sum"}
+
+outputs:
+  t1: tensor<f32["x0"]> <- t1
+
+boundary (exact J relations):
+  access_guard_relations [0]
+  accesses [2]
+    [0] {"access_id":"a0","index_expression":"[v1, v2]","kind":"load","node_ref":"n0","tensor":"t0"}
+    [1] {"access_id":"a1","index_expression":"[v1]","kind":"store","node_ref":"n0","tensor":"t1"}
+  aliases [0]
+  broadcasts [0]
+  consumer_extensions [0]
+  domains [2]
+    d0 = "(0 <= v1) and (v1 < x0)"
+    d1 = "(0 <= v2) and (v2 < 16)"
+  effects [2]
+    [0] {"access_ref":"a0","effect_id":"e0","kind":"read","node_ref":"n0","target":"t0"}
+    [1] {"access_ref":"a1","effect_id":"e1","kind":"write","node_ref":"n0","target":"t1"}
+  index_bounds [0]
+  output_mappings [0]
+  realization_authorizations [0]
+  reductions [1]
+    [0] {"identity":0.0,"node_ref":"n0","tile_axis":1}
+  result_relations [1]
+    [0] {"kind":"tolerance","output":"t1"}
+  updates [0]
+
+J-only contracts:
+  dimension_constraints ["x0 >= 1"]
+  value_dimension_relations []
+  dimension_relations []
+  scopes [{"captures":[],"definitions":["t0","t1"],"effects":["e0","e1"],"kind":"function","parent_scope":null,"scope_id":"q0"}]
+  storage []

@@ -1,6 +1,6 @@
 # Task 26：共享J语义物化与π约束Replay编译Agent
 
-> 状态：`P0_AUTHORITY_ARCHIVE_AND_CLEAN_START`（2026-07-31）。
+> 状态：`P1_SEMANTIC_MATERIALIZER_CORE_REAL_ARTIFACT_PASS`（2026-07-31）。
 >
 > 权威设计：
 > `doc/IntentIR_共享J语义物化与pi约束Replay编译Agent最终设计_2026-07-31.md`。
@@ -92,6 +92,17 @@ python/intentir/replay_compiler/
 
 P1不改Replay agent、不删旧Composer；先在真实Task 24 accepted artifact的formal workflow中生成`S_J`
 evidence，确认J-only、参数化和当前RefEval/Gate2语义一致。
+
+P1完成证据（2026-07-31）：
+
+- 新增`intentir.replay_compiler`的不可变`SemanticProgram`、严格J-only materializer、bounded query与
+  read-only mount receipt；Core API只接收exact source-isolated J mapping；
+- normal/masked入口具有方向性拒绝：normal J不能进入masked物化，MaskJ view不能进入normal物化；
+- 使用Task 24真实`SCRC_CERTIFIED`的`cuda:tilelang_row_sum` run-003/attempt-02 exact artifact运行当前
+  `TypeCheck(J,C,pi)`，得到`intentir.scrc.typecheck.v31=pass`；
+- fresh normal `S_J`保留symbolic `x0`、typed signature、reduce dataflow、boundary access/effect/domain/
+  reduction/result relation，并明确排除π、C valuation、Source、Gate、frontend、target API与历史Replay；
+- 证据位于`runs/p1_tilelang_row_sum/run-001/`。本阶段未修改Replay writer、Gate或旧Composer路径。
 
 ### P2：normal/masked materialization与packet接入
 
