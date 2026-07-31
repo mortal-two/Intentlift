@@ -15,7 +15,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
-from intentir.ir.canonical_j import canonicalize_gate1_artifact
+from intentir.ir.canonical_j import (
+    canonicalize_gate1_artifact,
+    canonicalize_semantic_archive,
+)
 from intentir.ir.production_snapshot import (
     PRODUCTION_CATALOG_SCHEMA,
     ProductionCatalogEntry,
@@ -23,8 +26,15 @@ from intentir.ir.production_snapshot import (
     content_digest,
     load_production_snapshot,
 )
-from intentir.verify.gate1.model import Gate1Artifact
-from intentir.verify.gate1.orchestrate import canonical_artifact_digest
+from intentir.verify.gate1.model import (
+    Gate1Artifact,
+    ImplementationConfig,
+    SemanticArchive,
+)
+from intentir.verify.gate1.orchestrate import (
+    GATE1_PROTOCOL,
+    canonical_artifact_digest,
+)
 
 
 EXPORT_RECEIPT_SCHEMA = "intentir.production.snapshot-export.v1"
@@ -32,6 +42,29 @@ EXPORT_RECEIPT_SCHEMA = "intentir.production.snapshot-export.v1"
 
 class ProductionExportError(ValueError):
     """Raised when evidence is not sufficient for a production export."""
+
+
+@dataclass(frozen=True)
+class _CertifiedArtifactProjection:
+    """The certified J+C projection plus its wire/canonical identities.
+
+    Production never consumes pi.  Keeping this projection local lets the
+    backend accept a newer proof-witness schema without teaching the backend
+    how to interpret that witness or weakening the accepted-report checks.
+    """
+
+    j: SemanticArchive
+    c: ImplementationConfig
+    wire_digest: str
+    canonical_digest: str
+
+
+_JC_PROJECTION_SCHEMAS = frozenset(
+    {
+        "intentir.scrc.artifact.v12",
+        "intentir.scrc.artifact.v13",
+    }
+)
 
 
 def _read_object(path: Path, *, context: str) -> dict[str, Any]:
@@ -74,14 +107,59 @@ def _write_atomic(path: Path, payload: str) -> None:
             temporary.unlink()
 
 
-def _artifact(value: Mapping[str, Any]) -> Gate1Artifact:
+def _wire_artifact_digest(value: Mapping[str, Any]) -> str:
+    payload = {
+        **dict(value),
+        "observer_level": 2,
+        "protocol": GATE1_PROTOCOL,
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def _artifact(value: Mapping[str, Any]) -> _CertifiedArtifactProjection:
+    schema = value.get("schema")
+    if schema in _JC_PROJECTION_SCHEMAS:
+        if set(value) != {"schema", "j", "c", "pi"}:
+            raise ProductionExportError(
+                "certified artifact root must contain exactly schema, j, c, pi"
+            )
+        if not all(isinstance(value.get(name), Mapping) for name in ("j", "c", "pi")):
+            raise ProductionExportError("certified artifact J, C, and pi must be objects")
+        try:
+            j = canonicalize_semantic_archive(
+                SemanticArchive.from_json(dict(value["j"]))
+            )
+            c = ImplementationConfig.from_json(dict(value["c"]))
+        except (TypeError, ValueError) as exc:
+            raise ProductionExportError(f"certified artifact is invalid: {exc}") from exc
+        canonical_payload = {
+            "schema": schema,
+            "j": j.to_json(),
+            "c": c.to_json(),
+            "pi": dict(value["pi"]),
+        }
+        return _CertifiedArtifactProjection(
+            j=j,
+            c=c,
+            wire_digest=_wire_artifact_digest(value),
+            canonical_digest=_wire_artifact_digest(canonical_payload),
+        )
     try:
-        return Gate1Artifact.from_json(dict(value))
+        wire_artifact = Gate1Artifact.from_json(dict(value))
     except (TypeError, ValueError) as exc:
         raise ProductionExportError(f"certified artifact is invalid: {exc}") from exc
+    canonical_artifact = canonicalize_gate1_artifact(wire_artifact)
+    return _CertifiedArtifactProjection(
+        j=canonical_artifact.j,
+        c=canonical_artifact.c,
+        wire_digest=canonical_artifact_digest(wire_artifact),
+        canonical_digest=canonical_artifact_digest(canonical_artifact),
+    )
 
 
-def _accepted_report_artifact(report: Mapping[str, Any]) -> Gate1Artifact:
+def _accepted_report_artifact(report: Mapping[str, Any]) -> _CertifiedArtifactProjection:
     if report.get("main_status") != "SCRC_CERTIFIED":
         raise ProductionExportError("run report is not SCRC_CERTIFIED")
     if not isinstance(report.get("accepted_attempt"), int):
@@ -114,17 +192,15 @@ def _accepted_report_artifact(report: Mapping[str, Any]) -> Gate1Artifact:
     if not isinstance(artifact_payload, Mapping):
         raise ProductionExportError("accepted attempt has no embedded artifact")
     certified_artifact = _artifact(artifact_payload)
-    if gate1.get("artifact_digest") != canonical_artifact_digest(
-        certified_artifact
-    ):
+    if gate1.get("artifact_digest") != certified_artifact.wire_digest:
         raise ProductionExportError("accepted Gate1 artifact digest mismatch")
-    return canonicalize_gate1_artifact(certified_artifact)
+    return certified_artifact
 
 
 def _recheck_artifact(
     evidence_path: Path,
     recheck: Mapping[str, Any],
-) -> Gate1Artifact:
+) -> _CertifiedArtifactProjection:
     if recheck.get("status") != "scrc_certified" or recheck.get("gate2_passed") is not True:
         raise ProductionExportError("Gate2 recheck is not scrc_certified")
     for field_name in (
@@ -150,11 +226,9 @@ def _recheck_artifact(
     gate1 = _read_object(parent / "gate1.json", context="parent Gate1 evidence")
     if gate1.get("status") != "replay_closed":
         raise ProductionExportError("Gate2 recheck parent is not replay_closed")
-    if gate1.get("artifact_digest") != canonical_artifact_digest(
-        certified_artifact
-    ):
+    if gate1.get("artifact_digest") != certified_artifact.wire_digest:
         raise ProductionExportError("Gate2 recheck parent artifact digest mismatch")
-    return canonicalize_gate1_artifact(certified_artifact)
+    return certified_artifact
 
 
 @dataclass(frozen=True)
@@ -201,7 +275,7 @@ def export_production_snapshot(
     snapshot = ProductionSnapshot(artifact.j, artifact.c)
     receipt = ProductionExportReceipt(
         evidence_sha256=_sha256_file(path),
-        canonical_artifact_digest=canonical_artifact_digest(artifact),
+        canonical_artifact_digest=artifact.canonical_digest,
         j_digest=snapshot.j_digest,
         c_digest=snapshot.c_digest,
         snapshot_digest=snapshot.snapshot_digest,

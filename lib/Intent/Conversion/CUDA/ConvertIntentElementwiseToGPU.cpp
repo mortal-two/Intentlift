@@ -345,6 +345,7 @@ struct ElementwiseLowering {
   unsigned requestLogicalTileElements;
   unsigned requestRowVectorWidth;
   bool requestPromoteUniformScalars;
+  bool requestRowMaskZeroFill;
   std::string requestTanhApproximation;
 
   // The 2-D logical layout of one register-tile access. A Row/result arg is
@@ -388,6 +389,7 @@ struct ElementwiseLowering {
                       unsigned logicalTileElements,
                       unsigned rowVectorWidth,
                       bool promoteUniformScalars,
+                      bool rowMaskZeroFill,
                       StringRef tanhApproximation)
       : fn(fn), blockThreads(bt), requestFlattenContiguous(flatten),
         requestFlatVectorWidth(flatWidth),
@@ -395,6 +397,7 @@ struct ElementwiseLowering {
         requestLogicalTileElements(logicalTileElements),
         requestRowVectorWidth(rowVectorWidth),
         requestPromoteUniformScalars(promoteUniformScalars),
+        requestRowMaskZeroFill(rowMaskZeroFill),
         requestTanhApproximation(tanhApproximation.str()) {}
 
   /// Memref type for a Row/result view in the function's storage type.
@@ -436,6 +439,83 @@ struct ElementwiseLowering {
       return MemRefType::get({N / vectorWidth},
                              VectorType::get({vectorWidth}, storageType));
     return rowVecMemref(ctx, M);
+  }
+
+  /// A contraction with no label eliminated by the result is an elementwise
+  /// multiply with typed broadcasting, not a reduction or matrix product.
+  bool isPointwiseContraction(ContractionOp op) const {
+    StringRef subscripts = op.getSubscripts();
+    size_t comma = subscripts.find(',');
+    size_t arrow = subscripts.find("->");
+    if (comma == StringRef::npos || arrow == StringRef::npos || comma > arrow)
+      return false;
+    StringRef lhs = subscripts.take_front(comma);
+    StringRef rhs = subscripts.slice(comma + 1, arrow);
+    StringRef output = subscripts.drop_front(arrow + 2);
+    auto lhsTy = dyn_cast<RankedTensorType>(op.getA().getType());
+    auto rhsTy = dyn_cast<RankedTensorType>(op.getB().getType());
+    auto outTy = dyn_cast<RankedTensorType>(op.getResult().getType());
+    if (!lhsTy || !rhsTy || !outTy ||
+        lhs.size() != static_cast<size_t>(lhsTy.getRank()) ||
+        rhs.size() != static_cast<size_t>(rhsTy.getRank()) ||
+        output.size() != static_cast<size_t>(outTy.getRank()))
+      return false;
+    auto uniqueLabels = [](StringRef labels) {
+      for (char label : labels)
+        if (labels.count(label) != 1)
+          return false;
+      return true;
+    };
+    if (!uniqueLabels(lhs) || !uniqueLabels(rhs) || !uniqueLabels(output))
+      return false;
+    for (char label : lhs)
+      if (!output.contains(label))
+        return false;
+    for (char label : rhs)
+      if (!output.contains(label))
+        return false;
+    for (char label : output)
+      if (!lhs.contains(label) && !rhs.contains(label))
+        return false;
+    return true;
+  }
+
+  bool isRowMaskGraph(Block &body, func::ReturnOp ret) const {
+    SmallVector<Operation *> operations;
+    for (Operation &operation : body.without_terminator())
+      operations.push_back(&operation);
+    if (operations.size() != 2 || ret.getNumOperands() != 1)
+      return false;
+    auto castOp = dyn_cast<CastOp>(operations[0]);
+    auto product = dyn_cast<ContractionOp>(operations[1]);
+    if (!castOp || !product || ret.getOperand(0) != product.getResult() ||
+        !isPointwiseContraction(product))
+      return false;
+    auto maskArg = dyn_cast<BlockArgument>(castOp.getInput());
+    Value dataValue = product.getA() == castOp.getResult()
+                          ? product.getB()
+                          : product.getB() == castOp.getResult()
+                                ? product.getA()
+                                : Value();
+    auto dataArg = dyn_cast_or_null<BlockArgument>(dataValue);
+    auto maskTy = dyn_cast<RankedTensorType>(castOp.getInput().getType());
+    auto castTy = dyn_cast<RankedTensorType>(castOp.getResult().getType());
+    auto dataTy = dataValue ? dyn_cast<RankedTensorType>(dataValue.getType())
+                            : RankedTensorType();
+    auto resultTy = dyn_cast<RankedTensorType>(product.getResult().getType());
+    if (!maskArg || !dataArg || !maskTy || !castTy || !dataTy || !resultTy ||
+        maskArg.getArgNumber() == dataArg.getArgNumber() ||
+        maskTy.getShape() != ArrayRef<int64_t>({M}) ||
+        !maskTy.getElementType().isInteger(1) ||
+        castTy.getShape() != ArrayRef<int64_t>({M}) ||
+        !castTy.getElementType().isF32() ||
+        dataTy.getShape() != ArrayRef<int64_t>({M, N}) ||
+        resultTy.getShape() != ArrayRef<int64_t>({M, N}) ||
+        dataTy.getElementType() != resultTy.getElementType() ||
+        !dataTy.getElementType().isF32())
+      return false;
+    StringRef expected = product.getA() == dataValue ? "ab,a->ab" : "a,ab->ab";
+    return product.getSubscripts() == expected;
   }
 
   // ---- recognition ------------------------------------------------------- //
@@ -573,6 +653,13 @@ struct ElementwiseLowering {
         role = Role::Row;
       } else if (s.size() == 1 && s[0] == N && floating) {
         role = Role::Col;
+      } else if (s.size() == 1 && s[0] == M &&
+                 isa<FloatType, IntegerType>(t.getElementType())) {
+        // A rank-1 value indexed by the logical row is a typed row broadcast.
+        // The integer form is what the row-mask J uses; floating [M] values are
+        // also admitted when the surrounding pointwise graph makes that role
+        // unambiguous.
+        role = Role::PerRow;
       } else if ((s.empty() || (s.size() == 1 && s[0] == 1)) &&
                  isa<FloatType, IntegerType>(t.getElementType())) {
         role = Role::Scalar;
@@ -603,9 +690,16 @@ struct ElementwiseLowering {
       }
       if (auto unary = dyn_cast<MapUnaryOp>(&op))
         containsTanh |= unary.getFn() == "tanh";
+      if (auto contraction = dyn_cast<ContractionOp>(&op)) {
+        if (!isPointwiseContraction(contraction))
+          return failure();
+        continue;
+      }
       if (!isa<MapUnaryOp, MapBinaryOp, SelectOp, IotaOp, CastOp>(&op))
         return failure();
     }
+    if (requestRowMaskZeroFill && !isRowMaskGraph(body, ret))
+      return failure();
     if (requestTanhApproximation == "native-ptx" && !containsTanh)
       return failure();
 
@@ -613,19 +707,22 @@ struct ElementwiseLowering {
     // ordinary Col/Scalar broadcasts.  The flat packet address is used for Row
     // loads/stores, while `flat_index % N` recovers the logical column for Col
     // operands.  Broadcast rows, strided views and indexed/select bodies remain
-    // fail-closed. Each thread owns exactly one vec2/vec4 packet.
+    // fail-closed. Each thread owns exactly one vec2/vec4/vec8 packet. Wider
+    // packets are still lowered by the target pipeline, so this remains a
+    // schedule coordinate rather than a Python-side code generator.
     if (requestFlattenContiguous) {
-      if (requestGridStrideUnroll != 1 || requestLogicalTileElements != 0)
+      if (requestGridStrideUnroll != 1)
         return failure();
       T = blockThreads ? (int64_t)blockThreads : 256;
       int64_t flatWidth = static_cast<int64_t>(requestFlatVectorWidth);
       bool eligible = T >= 32 && T % 32 == 0 &&
-                      (flatWidth == 2 || flatWidth == 4);
+                      (flatWidth == 2 || flatWidth == 4 || flatWidth == 8);
       for (unsigned i = 0; i < argRoles.size(); ++i) {
         if (argRoles[i] == Role::Row)
           eligible &= argRowDiv[i] == 1 && argStrides[i].isDefault(N);
         else
           eligible &= argRoles[i] == Role::Col ||
+                      argRoles[i] == Role::PerRow ||
                       argRoles[i] == Role::Scalar ||
                       argRoles[i] == Role::Unused;
       }
@@ -634,15 +731,23 @@ struct ElementwiseLowering {
       for (Operation &op : body.without_terminator())
         eligible &= !isa<IotaOp, SelectOp>(&op);
       int64_t totalElements = M * N;
+      int64_t defaultBlockElements = T * flatWidth;
+      int64_t logicalBlockElements =
+          requestLogicalTileElements == 0
+              ? defaultBlockElements
+              : static_cast<int64_t>(requestLogicalTileElements);
       eligible &= N % flatWidth == 0 &&
-                  totalElements % (T * flatWidth) == 0;
+                  totalElements % defaultBlockElements == 0 &&
+                  logicalBlockElements >= defaultBlockElements &&
+                  logicalBlockElements % defaultBlockElements == 0;
       if (!eligible)
         return failure();
       flattenContiguous = true;
       vectorWidth = flatWidth;
       K = flatWidth;
       numVectorTiles = 1;
-      gridBlocks = totalElements / (T * vectorWidth);
+      gridBlocks =
+          (totalElements + logicalBlockElements - 1) / logicalBlockElements;
       return success();
     }
 
@@ -752,6 +857,7 @@ struct ElementwiseLowering {
   DenseMap<Value, SmallVector<Value>> rowVals; // Row arg -> K loaded SSA values
   DenseMap<Value, SmallVector<Value>> pointVals; // shared per-column DAG values
   SmallVector<Value> cols;                     // K column indices (tx + k*T)
+  SmallVector<Value> logicalRows;              // row index for each emitted point
 
   Value toCompute(OpBuilder &b, Location loc, Value value) const {
     if (value.getType() == computeType || !isa<FloatType>(value.getType()))
@@ -875,8 +981,8 @@ struct ElementwiseLowering {
     auto remember = [&](Value result) -> Value {
       if (result) {
         auto &values = pointVals[v];
-        if (values.size() < K)
-          values.resize(K);
+        if (values.size() < static_cast<size_t>(K))
+          values.resize(static_cast<size_t>(K));
         values[k] = result;
       }
       return result;
@@ -888,6 +994,9 @@ struct ElementwiseLowering {
       if (role == Role::Col)
         return b.create<memref::LoadOp>(loc, argMemref[v],
                                        ValueRange{cols[k]});
+      if (role == Role::PerRow)
+        return b.create<memref::LoadOp>(loc, argMemref[v],
+                                       ValueRange{logicalRows[k]});
       if (role == Role::Unused)
         return nullptr;
       return b.create<memref::LoadOp>(loc, argMemref[v], ValueRange{});
@@ -914,6 +1023,21 @@ struct ElementwiseLowering {
       Value lhs = emitAt(b, loc, mb.getLhs(), k);
       Value rhs = emitAt(b, loc, mb.getRhs(), k);
       return remember(emitMappedBinary(b, loc, mb, lhs, rhs));
+    }
+    if (auto contraction = dyn_cast<ContractionOp>(def)) {
+      if (!isPointwiseContraction(contraction))
+        return nullptr;
+      Value lhs = emitAt(b, loc, contraction.getA(), k);
+      Value rhs = emitAt(b, loc, contraction.getB(), k);
+      Type resultType = tensorElementType(contraction.getResult());
+      if (isa<FloatType>(lhs.getType()) &&
+          (lhs.getType() != computeType || rhs.getType() != computeType ||
+           resultType != computeType)) {
+        lhs = toCompute(b, loc, lhs);
+        rhs = toCompute(b, loc, rhs);
+      }
+      Value result = emitScalarBinary(b, loc, "mul", lhs, rhs);
+      return remember(result ? castFloatTo(b, loc, result, resultType) : Value());
     }
     if (auto sel = dyn_cast<SelectOp>(def))
       return remember(b.create<arith::SelectOp>(
@@ -982,6 +1106,8 @@ struct ElementwiseLowering {
       return rowMemref(ctx, M / argRowDiv[i], argStrides[i]);
     if (role == Role::Col)
       return MemRefType::get({N}, argElementTypes[i]);
+    if (role == Role::PerRow)
+      return MemRefType::get({M}, argElementTypes[i]);
     auto original = cast<RankedTensorType>(fn.getFunctionType().getInput(i));
     if (role == Role::Unused)
       return MemRefType::get(original.getShape(), argElementTypes[i]);
@@ -990,7 +1116,169 @@ struct ElementwiseLowering {
     return MemRefType::get({}, argElementTypes[i]);
   }
 
+  LogicalResult rewriteRowMaskZeroFill() {
+    MLIRContext *ctx = fn.getContext();
+    Location loc = fn.getLoc();
+    OpBuilder b(ctx);
+    Block &source = fn.getBody().front();
+    auto castOp = dyn_cast<CastOp>(&*source.without_terminator().begin());
+    auto product = dyn_cast<ContractionOp>(
+        &*std::next(source.without_terminator().begin()));
+    if (!castOp || !product)
+      return failure();
+    auto maskArg = cast<BlockArgument>(castOp.getInput());
+    Value dataValue = product.getA() == castOp.getResult()
+                          ? product.getB()
+                          : product.getA();
+    auto dataArg = cast<BlockArgument>(dataValue);
+
+    SmallVector<Type> inputTypes;
+    for (unsigned i = 0; i < argRoles.size(); ++i)
+      inputTypes.push_back(flattenContiguous && argRoles[i] == Role::Row
+                               ? Type(flatVecMemref(ctx))
+                               : Type(memrefOfArg(ctx, i)));
+    inputTypes.push_back(flattenContiguous
+                             ? Type(flatVecMemref(ctx))
+                             : Type(resultMemref(ctx, resStrides.front())));
+    auto newType = FunctionType::get(ctx, inputTypes, {});
+    std::string name = fn.getName().str();
+    fn.setName(name + "_intent_src");
+    b.setInsertionPoint(fn);
+    auto lowered = b.create<func::FuncOp>(loc, name, newType);
+    Block *entry = lowered.addEntryBlock();
+    b.setInsertionPointToStart(entry);
+    Value dataMem = entry->getArgument(dataArg.getArgNumber());
+    Value maskMem = entry->getArgument(maskArg.getArgNumber());
+    Value outMem = entry->getArguments().back();
+
+    if (flattenContiguous) {
+      Value cGrid = b.create<arith::ConstantIndexOp>(loc, gridBlocks);
+      Value cThreads = b.create<arith::ConstantIndexOp>(loc, T);
+      Value c1 = b.create<arith::ConstantIndexOp>(loc, 1);
+      auto launch =
+          b.create<gpu::LaunchOp>(loc, cGrid, c1, c1, cThreads, c1, c1);
+      b.setInsertionPointToStart(&launch.getBody().front());
+      Value bx = launch.getBlockIds().x;
+      Value tx = launch.getThreadIds().x;
+      Value cBlockSpan = b.create<arith::ConstantIndexOp>(loc, T);
+      Value first = b.create<arith::AddIOp>(
+          loc, b.create<arith::MulIOp>(loc, bx, cBlockSpan), tx);
+      int64_t packetCount = M * N / vectorWidth;
+      Value upper = b.create<arith::ConstantIndexOp>(loc, packetCount);
+      Value step = b.create<arith::ConstantIndexOp>(loc, gridBlocks * T);
+      auto loop = b.create<scf::ForOp>(loc, first, upper, step);
+      b.setInsertionPointToStart(loop.getBody());
+      Value packet = loop.getInductionVar();
+      Value cPacketsPerRow =
+          b.create<arith::ConstantIndexOp>(loc, N / vectorWidth);
+      Value row = b.create<arith::DivUIOp>(loc, packet, cPacketsPerRow);
+      Value mask = b.create<memref::LoadOp>(loc, maskMem, ValueRange{row});
+      auto branch = b.create<scf::IfOp>(loc, mask, /*withElseRegion=*/true);
+      OpBuilder thenBuilder = branch.getThenBodyBuilder();
+      Value input = thenBuilder.create<memref::LoadOp>(
+          loc, dataMem, ValueRange{packet});
+      thenBuilder.create<memref::StoreOp>(loc, input, outMem,
+                                          ValueRange{packet});
+      OpBuilder elseBuilder = branch.getElseBodyBuilder();
+      Value zeroScalar = elseBuilder.create<arith::ConstantOp>(
+          loc, elseBuilder.getF32FloatAttr(0.0));
+      Value zero = elseBuilder.create<vector::SplatOp>(
+          loc, VectorType::get({vectorWidth}, storageType), zeroScalar);
+      elseBuilder.create<memref::StoreOp>(loc, zero, outMem,
+                                          ValueRange{packet});
+      b.setInsertionPointAfter(loop);
+      b.create<gpu::TerminatorOp>(loc);
+      b.setInsertionPointAfter(launch);
+      b.create<func::ReturnOp>(loc);
+      attachElementwiseStateReceipt(
+          lowered, T, gridBlocks, /*gridStrideFlat=*/true,
+          /*gridStrideUnroll=*/1,
+          /*logicalTileElements=*/requestLogicalTileElements,
+          /*vectorWidth=*/vectorWidth, "rowmask_zero_fill",
+          /*oneDimensionalResults=*/false, /*hostValueCaptureCount=*/0);
+      lowered->setAttr(
+          "intent.backend.transformation_trace",
+          ArrayAttr::get(
+              ctx,
+              {StringAttr::get(ctx, "cuda.elementwise.row.vectorized.v1"),
+               StringAttr::get(ctx,
+                               "cuda.elementwise.rowmask.zero-fill.v1"),
+               StringAttr::get(ctx,
+                               "cuda.elementwise.rowmask.flat-grid.v1")}));
+      fn.erase();
+      return success();
+    }
+
+    Value cM = b.create<arith::ConstantIndexOp>(loc, M);
+    Value cT = b.create<arith::ConstantIndexOp>(loc, T);
+    Value c1 = b.create<arith::ConstantIndexOp>(loc, 1);
+    auto launch = b.create<gpu::LaunchOp>(loc, cM, c1, c1, cT, c1, c1);
+    b.setInsertionPointToStart(&launch.getBody().front());
+    Value bx = launch.getBlockIds().x;
+    Value tx = launch.getThreadIds().x;
+    Value mask = b.create<memref::LoadOp>(loc, maskMem, ValueRange{bx});
+    auto branch = b.create<scf::IfOp>(loc, mask, /*withElseRegion=*/true);
+
+    auto emitRow = [&](OpBuilder &rowBuilder, bool copyInput) {
+      Value zero = copyInput
+                       ? Value()
+                       : rowBuilder.create<arith::ConstantOp>(
+                             loc, rowBuilder.getF32FloatAttr(0.0));
+      Value cN = rowBuilder.create<arith::ConstantIndexOp>(loc, N);
+      for (int64_t k = 0; k < K; ++k) {
+        Value col = tx;
+        if (k != 0) {
+          Value offset =
+              rowBuilder.create<arith::ConstantIndexOp>(loc, k * T);
+          col = rowBuilder.create<arith::AddIOp>(loc, tx, offset);
+        }
+        auto emitPoint = [&](OpBuilder &pointBuilder) {
+          Value value = copyInput
+                            ? pointBuilder.create<memref::LoadOp>(
+                                  loc, dataMem, ValueRange{bx, col})
+                                  .getResult()
+                            : zero;
+          pointBuilder.create<memref::StoreOp>(loc, value, outMem,
+                                               ValueRange{bx, col});
+        };
+        if (N % T == 0 || (k + 1) * T <= N) {
+          emitPoint(rowBuilder);
+          continue;
+        }
+        Value active = rowBuilder.create<arith::CmpIOp>(
+            loc, arith::CmpIPredicate::ult, col, cN);
+        auto guarded = rowBuilder.create<scf::IfOp>(
+            loc, active, /*withElseRegion=*/false);
+        OpBuilder pointBuilder = guarded.getThenBodyBuilder();
+        emitPoint(pointBuilder);
+      }
+    };
+    OpBuilder thenBuilder = branch.getThenBodyBuilder();
+    emitRow(thenBuilder, /*copyInput=*/true);
+    OpBuilder elseBuilder = branch.getElseBodyBuilder();
+    emitRow(elseBuilder, /*copyInput=*/false);
+
+    b.create<gpu::TerminatorOp>(loc);
+    b.setInsertionPointAfter(launch);
+    b.create<func::ReturnOp>(loc);
+    attachElementwiseStateReceipt(
+        lowered, T, M, /*gridStrideFlat=*/false, /*gridStrideUnroll=*/1,
+        /*logicalTileElements=*/0, /*vectorWidth=*/1, "rowmask_zero_fill",
+        /*oneDimensionalResults=*/false, /*hostValueCaptureCount=*/0);
+    lowered->setAttr(
+        "intent.backend.transformation_trace",
+        ArrayAttr::get(
+            ctx,
+            {StringAttr::get(ctx, "cuda.elementwise.row.vectorized.v1"),
+             StringAttr::get(ctx,
+                             "cuda.elementwise.rowmask.zero-fill.v1")}));
+    fn.erase();
+    return success();
+  }
+
   LogicalResult rewrite() {
+    if (requestRowMaskZeroFill)
+      return rewriteRowMaskZeroFill();
     MLIRContext *ctx = fn.getContext();
     Location loc = fn.getLoc();
     OpBuilder b(ctx);
@@ -1081,7 +1369,7 @@ struct ElementwiseLowering {
     //    args still index cols[k]/once, so they need no retype.
     cols.clear();
     cols.resize(K);
-    SmallVector<Value> logicalRows(K, bx);
+    logicalRows.assign(K, bx);
     SmallVector<Value> columnActive(K);
     scf::ForOp gridStrideLoop;
     Type vectorTy = VectorType::get({vectorWidth}, storageType);
@@ -1148,12 +1436,14 @@ struct ElementwiseLowering {
         for (int64_t j = 0; j < vectorWidth; ++j) {
           Value cj = b.create<arith::ConstantIndexOp>(loc, j);
           Value absoluteColumn = b.create<arith::AddIOp>(loc, base, cj);
-          cols[vt * vectorWidth + j] =
-              flattenContiguous
-                  ? b.create<arith::RemUIOp>(loc, absoluteColumn,
-                                             cLogicalColumns)
-                        .getResult()
-                  : absoluteColumn;
+          if (flattenContiguous) {
+            cols[vt * vectorWidth + j] = b.create<arith::RemUIOp>(
+                loc, absoluteColumn, cLogicalColumns);
+            logicalRows[vt * vectorWidth + j] = b.create<arith::DivUIOp>(
+                loc, absoluteColumn, cLogicalColumns);
+          } else {
+            cols[vt * vectorWidth + j] = absoluteColumn;
+          }
         }
       }
     } else {
@@ -1958,7 +2248,7 @@ struct ConvertIntentElementwiseToGPUPass
         ElementwiseLowering transformed(
             fn, blockThreads, flattenContiguous, flatVectorWidth,
             gridStrideUnroll, logicalTileElements, rowVectorWidth,
-            promoteUniformScalars, tanhApproximation);
+            promoteUniformScalars, rowMaskZeroFill, tanhApproximation);
         if (failed(transformed.match())) {
           fn.emitError("shifted-exp cancellation did not produce a complete "
                        "elementwise lowering state");
@@ -1970,7 +2260,7 @@ struct ConvertIntentElementwiseToGPUPass
       ElementwiseLowering probe(fn, blockThreads, flattenContiguous,
                                 flatVectorWidth, gridStrideUnroll,
                                 logicalTileElements, rowVectorWidth,
-                                promoteUniformScalars,
+                                promoteUniformScalars, rowMaskZeroFill,
                                 tanhApproximation);
       if (succeeded(probe.match()))
         targets.push_back(fn);
@@ -1987,7 +2277,7 @@ struct ConvertIntentElementwiseToGPUPass
       ElementwiseLowering low(fn, blockThreads, flattenContiguous,
                               flatVectorWidth, gridStrideUnroll,
                               logicalTileElements, rowVectorWidth,
-                              promoteUniformScalars,
+                              promoteUniformScalars, rowMaskZeroFill,
                               tanhApproximation);
       if (failed(low.match()) || failed(low.rewrite())) {
         fn.emitError("elementwise lowering failed after match");

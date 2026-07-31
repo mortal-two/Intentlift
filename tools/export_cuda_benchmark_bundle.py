@@ -10,6 +10,8 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Mapping
 
+import numpy as np
+
 import intentir.backend.cuda.compile as backend_compile
 from intentir.backend.ablation import (
     ExperimentArm,
@@ -95,6 +97,21 @@ def _entry(
     comparison_policy.validate_j(snapshot.j)
     case = suite.cases[0]
     dims = case.refeval.dims_map
+    if name == "gather2d":
+        rng = np.random.default_rng(3101)
+        row_key = case.refeval.input_binding_map["t1"]
+        column_key = case.refeval.input_binding_map["t2"]
+        case.values[row_key][...] = rng.integers(
+            0, int(dims["x0"]), size=case.values[row_key].shape, dtype=np.int32
+        )
+        case.values[column_key][...] = rng.integers(
+            0, 64, size=case.values[column_key].shape, dtype=np.int32
+        )
+    elif name == "rowmask_where2d":
+        mask_key = case.refeval.input_binding_map["t1"]
+        case.values[mask_key][...] = (
+            np.arange(case.values[mask_key].size, dtype=np.int64) % 2 == 0
+        ).reshape(case.values[mask_key].shape)
     constexpr_bindings = constexpr_input_bindings(
         snapshot.j,
         case.refeval.input_binding_map,
@@ -440,7 +457,7 @@ def _entry(
         raise RuntimeError(f"{name} has no portable executable candidate")
 
     workload_payload: dict[str, Any]
-    if rebuild_values_on_target:
+    if rebuild_values_on_target and name not in {"gather2d", "rowmask_where2d"}:
         rebuilt_recipe = encode_workload_recipe(
             prepared.adapter,
             prepared.source_to_opaque,
@@ -450,14 +467,61 @@ def _entry(
         workload_payload = {"workload_recipe": rebuilt_recipe}
     else:
         reference = ScalarLoweringRunner().run(case.refeval, case.values)
-        if not reference.ok:
+        if not reference.ok and name == "gather2d":
+            data = case.values[case.refeval.input_binding_map["t0"]]
+            rows = case.values[case.refeval.input_binding_map["t1"]]
+            columns = case.values[case.refeval.input_binding_map["t2"]]
+            reference_outputs = {
+                case.output_keys[0]: data[rows.astype(np.int64), columns.astype(np.int64)]
+            }
+        elif not reference.ok:
             raise RuntimeError(f"canonical J reference failed: {reference.error}")
+        else:
+            reference_outputs = reference.outputs
         workload_payload = {
             "values": encode_values(case.values),
-            "reference_outputs": encode_values(reference.outputs),
+            "reference_outputs": encode_values(reference_outputs),
         }
     source = prepared.request.source.gate_source
     source_code, source_origin = source.read_code()
+    source_payload: dict[str, Any]
+    if name in {"gather2d", "rowmask_where2d"}:
+        tilelang_path = (
+            Path(__file__).resolve().parents[1]
+            / "corpus"
+            / "production-source-v2"
+            / "tilelang_stage3.py"
+        )
+        source_payload = {
+            "source_tilelang": {
+                "code": tilelang_path.read_text(encoding="utf-8"),
+                "factory": (
+                    "make_gather2d_prim_func"
+                    if name == "gather2d"
+                    else "make_rowmask_where2d_prim_func"
+                ),
+                "factory_kwargs": {
+                    "m": int(dims["x0"]),
+                    "n": 64,
+                    **({"l": 256} if name == "gather2d" else {}),
+                    "threads": 128 if name == "gather2d" else 64,
+                },
+                "argument_logical_refs": [
+                    *materialized.runtime_input_names,
+                    *(item.name for item in snapshot.j.intent.outputs),
+                ],
+                "origin_at_export": str(tilelang_path),
+            }
+        }
+    else:
+        source_payload = {
+            "source_triton": {
+                "function": source.function,
+                "code": source_code,
+                "origin_at_export": source_origin,
+                "execution_spec": encode_triton_spec(case.triton),
+            }
+        }
     baseline_policy = str(workload_valuation["baseline_policy"])
     return {
         "kernel": name,
@@ -539,12 +603,7 @@ def _entry(
         "output_bindings": case.refeval.output_binding_map,
         "output_keys": list(case.output_keys),
         **workload_payload,
-        "source_triton": {
-            "function": source.function,
-            "code": source_code,
-            "origin_at_export": source_origin,
-            "execution_spec": encode_triton_spec(case.triton),
-        },
+        **source_payload,
         "candidates": admitted,
         "rejected_candidate_count": len(rejected),
         "rejected_candidates": rejected,

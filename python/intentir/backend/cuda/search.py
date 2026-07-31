@@ -64,6 +64,9 @@ TUNED_LINEAR_FAST_PATH_ID = "cuda.linear.f16_f32.bias_saved.mma_sync.v1"
 SHIFTED_EXP_CANCELLATION_FAST_PATH_ID = (
     "cuda.algebra.exp_shift_product_cancellation.v1"
 )
+GATHER_FAST_PATH_ID = "cuda.gather-scatter.block.v1"
+GATHER_COMPOSED_FAST_PATH_ID = "cuda.gather-chain.composed-index.v1"
+ROWMASK_ZERO_FILL_FAST_PATH_ID = "cuda.elementwise.rowmask.zero-fill.v1"
 SEARCH_PARTITION_UNPARTITIONED = "unpartitioned"
 SEARCH_PARTITION_SCHEDULE_SPINE = "schedule_spine"
 SEARCH_PARTITION_EXPANDED = "expanded"
@@ -87,6 +90,9 @@ def _lowering_path_kind_for_fast_path(fast_path_id: str) -> str:
         "cuda.row_scan.sparsemax.sorted_prefix.v1": "row_scan",
         "cuda.row_scan.sparsemax.sorted_prefix.execution_domain.v1": "row_scan",
         SPLITK_VARARGS_FAST_PATH_ID: "splitk_weighted_merge",
+        GATHER_FAST_PATH_ID: "gather",
+        GATHER_COMPOSED_FAST_PATH_ID: "gather_composed",
+        ROWMASK_ZERO_FILL_FAST_PATH_ID: "elementwise_rowmask_zero_fill",
     }
     # Unknown registered paths keep their exact compiler identity.  This avoids
     # inventing a semantic "family" or a kernel-name recipe merely to group
@@ -918,6 +924,7 @@ _CUDA_ORDERING_PRIOR_ROLES = frozenset(
         "tile_output_axis0",
         "tile_output_axis1",
         "tile_contraction_axis",
+        "launch_block_x",
     }
 )
 
@@ -1015,6 +1022,8 @@ def project_cuda_c_fixed_candidate(
         }
     elif projection_kind == "linalg_fused":
         fixed_default = {"tile_width": 128}
+    elif projection_kind in {"gather", "gather_composed"}:
+        fixed_default = {"block_threads": 64}
     elif projection_kind == DIRECT_CONTRACTION_FAST_PATH_ID:
         fixed_default = {
             "tile_rows": 64,
@@ -1053,6 +1062,8 @@ def project_cuda_c_fixed_candidate(
             elif "block_threads" in available_keys:
                 coordinate = "block_threads"
                 projected_value *= 32.0
+        elif prior.role == "launch_block_x" and "block_threads" in available_keys:
+            coordinate = "block_threads"
         elif prior.role == "tile_output_axis0" and "tile_rows" in available_keys:
             coordinate = "tile_rows"
         elif prior.role == "tile_output_axis1" and "tile_cols" in available_keys:
@@ -1856,6 +1867,60 @@ def enumerate_cuda_candidates(
                 ),
             )
         )
+
+    # Full-only execution-domain row-mask topology.  The C++ matcher requires
+    # the exact cast(i1[M])->f32 and pointwise X[M,N]*mask[M] graph.  Skipping X
+    # loads on a false row changes NaN/Inf*0 behavior, so Q/D remains mandatory.
+    if axes is None or axes.search_structural_states:
+        for threads in (32, 64, 128, 256):
+            for flat_width in (0, 2, 4, 8):
+                flatten = flat_width > 0
+                logical_tiles = (0, 4096, 8192) if flatten else (0,)
+                for logical_tile in logical_tiles:
+                    pass_argument = (
+                        "-convert-intent-elementwise-to-gpu="
+                        f"block-threads={threads} row-vector-width=1 "
+                        "row-mask-zero-fill=true tanh-approximation=stable-ex2"
+                        + (
+                            " flatten-contiguous=true "
+                            f"flat-vector-width={flat_width} "
+                            f"logical-tile-elements={logical_tile}"
+                            if flatten
+                            else ""
+                        )
+                    )
+                    schedule = {
+                        "block_threads": threads,
+                        "vector_width": flat_width if flatten else 1,
+                        "row_mask_zero_fill": True,
+                        "flatten_contiguous": flatten,
+                        "logical_tile_elements": logical_tile,
+                    }
+                    specialized.append(
+                        CudaSearchCandidate(
+                            _candidate_id(
+                                "elementwise_rowmask_zero_fill",
+                                ROWMASK_ZERO_FILL_FAST_PATH_ID,
+                                pass_argument,
+                            ),
+                            "elementwise_rowmask_zero_fill",
+                            ROWMASK_ZERO_FILL_FAST_PATH_ID,
+                            pass_argument,
+                            schedule,
+                            _c_score(
+                                schedule,
+                                priors,
+                                elementwise_thread_hint=elementwise_thread_hint,
+                            ),
+                            requested_trace=(
+                                "cuda.elementwise.rowmask.zero-fill.v1",
+                                *(("cuda.elementwise.rowmask.flat-grid.v1",) if flatten else ()),
+                            ),
+                            requested_observation_class=(
+                                ObservationClass.OBSERVATION_CHANGING
+                            ),
+                        )
+                    )
 
     # Full-only algebraic implementation state.  The C++ pass proves the exact
     # exp(x-shift)*exp(shift) graph and requires cancellation to remove every
@@ -2932,6 +2997,51 @@ def enumerate_cuda_candidates(
             )
         )
 
+    # Runtime-index schedules.  The canonical descriptor evaluates a typed
+    # gather graph in its authored order; the composed descriptor is a distinct
+    # Full-only index/materialization topology admitted only when the C++ matcher
+    # consumes the complete two-level chain.
+    gather_descriptors = tuple(
+        item
+        for item in DEFAULT_PASSES
+        if item.fast_path_id in {GATHER_FAST_PATH_ID, GATHER_COMPOSED_FAST_PATH_ID}
+        and state.target.architecture in item.supported_chips
+    )
+    for descriptor in gather_descriptors:
+        composed = descriptor.fast_path_id == GATHER_COMPOSED_FAST_PATH_ID
+        if composed and axes is not None and not axes.search_structural_states:
+            continue
+        for threads in (32, 64, 128, 256):
+            pass_argument = (
+                "-convert-intent-gather-to-gpu="
+                f"block-threads={threads}"
+                + (" compose-gather-chain=true" if composed else "")
+            )
+            schedule = {
+                "block_threads": threads,
+                "compose_gather_chain": composed,
+            }
+            specialized.append(
+                CudaSearchCandidate(
+                    _candidate_id(
+                        _lowering_path_kind_for_fast_path(descriptor.fast_path_id),
+                        descriptor.fast_path_id,
+                        pass_argument,
+                    ),
+                    _lowering_path_kind_for_fast_path(descriptor.fast_path_id),
+                    descriptor.fast_path_id,
+                    pass_argument,
+                    schedule,
+                    _c_score(schedule, priors),
+                    requested_trace=(
+                        "cuda.gather-chain.composed-index.v1"
+                        if composed
+                        else "cuda.gather-chain.materialized-row.v1",
+                    ),
+                    requested_observation_class=ObservationClass.HARD_PRESERVING,
+                )
+            )
+
     # Every target-compatible C++ whole-graph pass is a real structural search
     # path.  The three high-volume paths above own schedule grids; all other
     # registered passes enter with their compiler default exactly once.  The
@@ -2946,6 +3056,9 @@ def enumerate_cuda_candidates(
         MMA_CONTRACTION_FAST_PATH_ID,
         TUNED_LINEAR_FAST_PATH_ID,
         SHIFTED_EXP_CANCELLATION_FAST_PATH_ID,
+        GATHER_FAST_PATH_ID,
+        GATHER_COMPOSED_FAST_PATH_ID,
+        ROWMASK_ZERO_FILL_FAST_PATH_ID,
         *sorted_prefix_ids,
     }
     for descriptor in DEFAULT_PASSES:

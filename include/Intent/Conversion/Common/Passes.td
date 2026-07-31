@@ -151,6 +151,34 @@ def FuseLinalgSoftmax : Pass<
   ];
 }
 
+def LowerRowMaskToLoops : Pass<
+    "lower-row-mask-to-loops", "::mlir::ModuleOp"> {
+  let summary = "Lower a typed row-mask broadcast graph to row-hoisted loops.";
+  let description = [{
+    Structurally matches the bufferized form of cast(i1[M])->f32 followed by
+    pointwise data[M,N] * mask[M].  The replacement loads the mask once per row
+    and keeps the feature traversal contiguous.  With zero-fill enabled, false
+    rows write zero without reading data; that mode changes NaN/Inf multiplied
+    by zero and therefore belongs only to an execution-domain checked search
+    state.  Matching is source-name and target-name blind.
+  }];
+  let dependentDialects = [
+    "::mlir::arith::ArithDialect",
+    "::mlir::linalg::LinalgDialect",
+    "::mlir::memref::MemRefDialect",
+    "::mlir::scf::SCFDialect",
+    "::mlir::vector::VectorDialect",
+  ];
+  let options = [
+    Option<"zeroFill", "zero-fill", "bool", "false",
+           "For false rows, write zero without loading the data tensor">,
+    Option<"requireLowering", "require-lowering", "bool", "false",
+           "Fail when no exact typed row-mask graph is lowered">,
+    Option<"vectorWidth", "vector-width", "unsigned", "1",
+           "Explicit contiguous packet width for each inner-row iteration">,
+  ];
+}
+
 def ForwardBufferResultsToOutParams : Pass<
     "forward-buffer-results-to-out-params", "::mlir::ModuleOp"> {
   let summary = "Forward bufferized tensor results into explicit out params.";

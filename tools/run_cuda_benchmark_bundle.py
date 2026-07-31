@@ -24,6 +24,7 @@ from intentir.backend.cuda.benchmark import (
     do_bench_us,
     portable_launch_from_dict,
 )
+from intentir.backend.cuda.tilelang_source import PreparedTileLangInvocation
 from intentir.backend.cuda.portable_bundle import (
     cuda_compute_capability_for_chip,
     decode_triton_spec,
@@ -506,6 +507,12 @@ def _one_kernel(
             if baseline_policy != "source_and_refj":
                 raise RuntimeError(
                     "target-side canonical J reference failed: "
+                    f"{reference_result.error}"
+                )
+            if "source_triton" not in entry:
+                raise RuntimeError(
+                    "target-side canonical J reference failed before the bundled "
+                    "TileLang tensor ABI was prepared: "
                     f"{reference_result.error}"
                 )
             source_record = entry["source_triton"]
@@ -1105,16 +1112,22 @@ def _one_kernel(
     paired_batches: list[dict[str, Any]] = []
     confirmation_warmup_rounds = 0
     if baseline_policy == "source_and_refj":
-        source_record = entry["source_triton"]
-        source_program = KernelSource.from_code(
-            source_record["code"],
-            source_record["function"],
-            trusted=True,
-        )
-        source_spec = decode_triton_spec(source_record["execution_spec"])
-        with PreparedTritonInvocation(
-            source_program, source_spec, values
-        ) as source:
+        if "source_tilelang" in entry:
+            source_context = PreparedTileLangInvocation(
+                entry["source_tilelang"], entry, inputs
+            )
+        else:
+            source_record = entry["source_triton"]
+            source_program = KernelSource.from_code(
+                source_record["code"],
+                source_record["function"],
+                trusted=True,
+            )
+            source_spec = decode_triton_spec(source_record["execution_spec"])
+            source_context = PreparedTritonInvocation(
+                source_program, source_spec, values
+            )
+        with source_context as source:
             source.reset_mutable_inputs()
             source.launch()
             torch.cuda.synchronize()
@@ -1131,7 +1144,7 @@ def _one_kernel(
                 )
                 if not source_agreement.passed:
                     raise KernelFailure(
-                        "source Triton baseline differs from canonical J",
+                        "Source baseline differs from canonical J",
                         {
                             "candidates": candidate_records,
                             "source_correctness": source_agreement.to_json(),

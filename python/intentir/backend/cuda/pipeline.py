@@ -254,7 +254,7 @@ def _transformation_record(mlir: str) -> MLIRTransformationRecord | None:
         or grid_stride_loop_count not in {0, 1}
         or grid_stride_unroll not in {1, 2, 4, 8}
         or logical_tile_elements < 0
-        or vector_width not in {1, 2, 4}
+        or vector_width not in {1, 2, 4, 8}
         or warps_n not in {1, 2, 4, 8}
         or group_m not in {1, 2, 4, 8, 16, 32}
         or prefix_packet_width not in {0, 1, 2, 4}

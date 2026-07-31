@@ -13,7 +13,7 @@ from intentir.backend.riscv.native_baselines import (
 )
 
 
-FRESH14 = (
+DEFAULT_KERNELS = (
     "dyt",
     "flash_bwd_preprocess",
     "flash_layer_norm_1pass",
@@ -28,19 +28,21 @@ FRESH14 = (
     "splitk_reduce_varargs",
     "swiglu",
     "xformers_rms_norm_add",
+    "gather2d",
+    "rowmask_where2d",
 )
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, required=True)
-    parser.add_argument("--kernels", nargs="*", choices=FRESH14)
+    parser.add_argument("--kernels", nargs="*", choices=DEFAULT_KERNELS)
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    kernels = tuple(args.kernels or FRESH14)
+    kernels = tuple(args.kernels or DEFAULT_KERNELS)
     payload = {
         "protocol": NATIVE_RVV_BASELINE_SIDECAR_PROTOCOL,
         "baselines": {

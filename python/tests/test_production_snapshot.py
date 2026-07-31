@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 
 import pytest
@@ -14,7 +15,7 @@ from intentir.ir.production_snapshot import (
     ProductionSnapshotError,
     load_production_snapshot,
 )
-from intentir.verify.gate1.orchestrate import canonical_artifact_digest
+from intentir.verify.gate1.orchestrate import GATE1_PROTOCOL, canonical_artifact_digest
 from intentir.verify.gate1.model import Gate1Artifact
 from intentir.verify.production_export import (
     ProductionExportError,
@@ -47,6 +48,24 @@ def _certified_report() -> dict:
         "j_necessity_status": None,
         "call_budget": {},
     }
+
+
+def _v13_certified_report() -> dict:
+    report = _certified_report()
+    accepted = report["attempts"][1]
+    artifact = accepted["artifact"]
+    artifact["schema"] = "intentir.scrc.artifact.v13"
+    artifact["pi"]["program_axes"] = []
+    artifact["pi"]["participant_mappings"] = []
+    payload = {
+        **artifact,
+        "observer_level": 2,
+        "protocol": GATE1_PROTOCOL,
+    }
+    accepted["gate1"]["artifact_digest"] = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return report
 
 
 def test_snapshot_round_trip_contains_only_j_c_and_content_identity() -> None:
@@ -101,6 +120,20 @@ def test_exporter_selects_exact_accepted_attempt_and_strips_evidence(tmp_path) -
     assert snapshot.c.to_json() == accepted["c"]
     assert receipt.evidence_kind == "certified_run_report"
     assert receipt.snapshot_digest == snapshot.snapshot_digest
+    assert "pi" not in snapshot.to_dict()
+
+
+def test_exporter_projects_v13_j_c_without_decoding_new_pi(tmp_path) -> None:
+    report = _v13_certified_report()
+    report_path = tmp_path / "report-v13.json"
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+
+    snapshot, receipt = export_production_snapshot(report_path)
+
+    accepted = report["attempts"][1]["artifact"]
+    assert snapshot.j.to_json() == accepted["j"]
+    assert snapshot.c.to_json() == accepted["c"]
+    assert receipt.evidence_kind == "certified_run_report"
     assert "pi" not in snapshot.to_dict()
 
 

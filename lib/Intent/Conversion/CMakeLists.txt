@@ -4,6 +4,7 @@ add_mlir_library(MLIRIntentConversionCommon
   TileLinalgByIteratorKind.cpp
   VectorizeLinalgRowReduction.cpp
   FuseLinalgSoftmax.cpp
+  LowerRowMaskToLoops.cpp
   ForwardBufferResultsToOutParams.cpp
   LowerDisjointMemrefCopyToLoops.cpp
 

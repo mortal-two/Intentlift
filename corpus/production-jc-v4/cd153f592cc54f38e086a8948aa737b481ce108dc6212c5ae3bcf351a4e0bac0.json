@@ -1,0 +1,358 @@
+{
+  "c": {
+    "slots": [
+      {
+        "axis_ref": "x1",
+        "kind": "constexpr",
+        "name": "c0",
+        "required": true,
+        "role": "tile_extent",
+        "subject_ref": "d0",
+        "value_type": "int"
+      }
+    ],
+    "values": {
+      "c0": 128
+    }
+  },
+  "c_digest": "36f33da73e590664adfb1c6095bb33bf2cfc2ce8dc8cfd5ac2cd9f8cadc5f87e",
+  "j": {
+    "boundary": {
+      "access_guard_relations": [],
+      "accesses": [
+        {
+          "access_id": "a0",
+          "index_expression": "[0]",
+          "kind": "load",
+          "node_ref": "n0",
+          "tensor": "t1"
+        },
+        {
+          "access_id": "a1",
+          "fill_value": 0.0,
+          "index_expression": "[k0]",
+          "kind": "load",
+          "node_ref": "n2",
+          "predicate": "k0 < x1",
+          "tensor": "t2"
+        },
+        {
+          "access_id": "a2",
+          "fill_value": 0.0,
+          "index_expression": "[k1, k0]",
+          "kind": "load",
+          "node_ref": "n0",
+          "predicate": "k0 < x1",
+          "tensor": "t0"
+        },
+        {
+          "access_id": "a3",
+          "fill_value": 0.0,
+          "index_expression": "[k0]",
+          "kind": "load",
+          "node_ref": "n3",
+          "predicate": "k0 < x1",
+          "tensor": "t3"
+        },
+        {
+          "access_id": "a4",
+          "index_expression": "[k1, k0]",
+          "kind": "store",
+          "node_ref": "n3",
+          "predicate": "k0 < x1",
+          "tensor": "t4"
+        }
+      ],
+      "aliases": [],
+      "broadcasts": [],
+      "consumer_extensions": [],
+      "domains": {
+        "d0": "(0 <= k0) and (k0 < x1)",
+        "d1": "(0 <= k1) and (k1 < x0)"
+      },
+      "effects": [
+        {
+          "access_ref": "a0",
+          "effect_id": "e0",
+          "kind": "read",
+          "node_ref": "n0",
+          "target": "t1"
+        },
+        {
+          "access_ref": "a1",
+          "effect_id": "e1",
+          "kind": "read",
+          "node_ref": "n2",
+          "target": "t2"
+        },
+        {
+          "access_ref": "a2",
+          "effect_id": "e2",
+          "kind": "read",
+          "node_ref": "n0",
+          "target": "t0"
+        },
+        {
+          "access_ref": "a3",
+          "effect_id": "e3",
+          "kind": "read",
+          "node_ref": "n3",
+          "target": "t3"
+        },
+        {
+          "access_ref": "a4",
+          "effect_id": "e4",
+          "kind": "write",
+          "node_ref": "n3",
+          "target": "t4"
+        }
+      ],
+      "index_bounds": [],
+      "output_mappings": [],
+      "realization_authorizations": [
+        {
+          "auth_id": "u0",
+          "kind": "signed_widen",
+          "source_dtype": "i32",
+          "subject_ref": "d0",
+          "target_dtype": "i64"
+        },
+        {
+          "auth_id": "u1",
+          "kind": "signed_widen",
+          "source_dtype": "i32",
+          "subject_ref": "d1",
+          "target_dtype": "i64"
+        }
+      ],
+      "reductions": [],
+      "result_relations": [
+        {
+          "kind": "tolerance",
+          "output": "t4"
+        }
+      ],
+      "updates": []
+    },
+    "dimension_constraints": [],
+    "intent": {
+      "intent_function": {
+        "body": [
+          {
+            "attrs": {
+              "fn": "mul"
+            },
+            "id": "n0",
+            "op": "map_binary",
+            "operands": [
+              "t0",
+              "t1"
+            ],
+            "result": "v0",
+            "type": {
+              "dtype": "f32",
+              "shape": [
+                "x0",
+                "x1"
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "fn": "tanh"
+            },
+            "id": "n1",
+            "op": "map_unary",
+            "operands": [
+              "v0"
+            ],
+            "result": "v1",
+            "type": {
+              "dtype": "f32",
+              "shape": [
+                "x0",
+                "x1"
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "fn": "mul"
+            },
+            "id": "n2",
+            "op": "map_binary",
+            "operands": [
+              "v1",
+              "t2"
+            ],
+            "result": "v2",
+            "type": {
+              "dtype": "f32",
+              "shape": [
+                "x0",
+                "x1"
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "fn": "add"
+            },
+            "id": "n3",
+            "op": "map_binary",
+            "operands": [
+              "v2",
+              "t3"
+            ],
+            "result": "t4",
+            "type": {
+              "dtype": "f32",
+              "shape": [
+                "x0",
+                "x1"
+              ]
+            }
+          }
+        ],
+        "inputs": [
+          {
+            "dtype": "f32",
+            "name": "t0",
+            "shape": [
+              "x0",
+              "x1"
+            ]
+          },
+          {
+            "dtype": "f32",
+            "name": "t1",
+            "shape": [
+              1
+            ]
+          },
+          {
+            "dtype": "f32",
+            "name": "t2",
+            "shape": [
+              "x1"
+            ]
+          },
+          {
+            "dtype": "f32",
+            "name": "t3",
+            "shape": [
+              "x1"
+            ]
+          }
+        ],
+        "name": "scrc_j0",
+        "outputs": [
+          {
+            "dtype": "f32",
+            "name": "t4",
+            "shape": [
+              "x0",
+              "x1"
+            ]
+          }
+        ]
+      }
+    },
+    "kernel_id": "scrc_k0",
+    "node_ids": {
+      "n0": "body[0]",
+      "n1": "body[1]",
+      "n2": "body[2]",
+      "n3": "body[3]"
+    },
+    "scopes": [
+      {
+        "captures": [],
+        "definitions": [
+          "t0",
+          "t1",
+          "t2",
+          "t3",
+          "t4",
+          "v0",
+          "v1",
+          "v2"
+        ],
+        "effects": [
+          "e0",
+          "e1",
+          "e2",
+          "e3",
+          "e4"
+        ],
+        "kind": "function",
+        "parent_scope": null,
+        "scope_id": "q0"
+      }
+    ],
+    "signature": {
+      "parameters": [
+        {
+          "dtype": "f32",
+          "kind": "pointer",
+          "logical_ref": "t0",
+          "mode": "input",
+          "name": "p0",
+          "rank": 2
+        },
+        {
+          "dtype": "f32",
+          "kind": "pointer",
+          "logical_ref": "t4",
+          "mode": "output",
+          "name": "p1",
+          "rank": 2
+        },
+        {
+          "dtype": "f32",
+          "kind": "pointer",
+          "logical_ref": "t1",
+          "mode": "input",
+          "name": "p2",
+          "rank": 1
+        },
+        {
+          "dtype": "f32",
+          "kind": "pointer",
+          "logical_ref": "t2",
+          "mode": "input",
+          "name": "p3",
+          "rank": 1
+        },
+        {
+          "dtype": "f32",
+          "kind": "pointer",
+          "logical_ref": "t3",
+          "mode": "input",
+          "name": "p4",
+          "rank": 1
+        },
+        {
+          "dtype": "i1",
+          "kind": "constexpr",
+          "mode": "value",
+          "name": "p5",
+          "rank": 0
+        },
+        {
+          "dtype": "i32",
+          "kind": "constexpr",
+          "logical_ref": "x1",
+          "mode": "value",
+          "name": "p6",
+          "rank": 0
+        }
+      ]
+    },
+    "storage": [],
+    "value_dimension_relations": []
+  },
+  "j_digest": "8282e69b36f9d16c0afa3a0b55290fa9c60f26abde4439bab8707adeb8ba1238",
+  "schema_version": "intentir.production.jc-snapshot.v1",
+  "snapshot_digest": "cd153f592cc54f38e086a8948aa737b481ce108dc6212c5ae3bcf351a4e0bac0"
+}

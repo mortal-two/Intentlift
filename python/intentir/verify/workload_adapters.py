@@ -186,7 +186,9 @@ class TritonWorkloadAdapter:
     protocol: str = TRITON_WORKLOAD_ADAPTER_PROTOCOL
 
     def __post_init__(self) -> None:
-        if not self.case_id.startswith(("high_performance:", "scrc_canary:")):
+        if not self.case_id.startswith(
+            ("high_performance:", "scrc_canary:", "tilelang:")
+        ):
             raise ValueError(
                 "adapter case_id must reference the active or certified-canary "
                 "registry"
@@ -506,14 +508,17 @@ def prepare_triton_source_workload(
 ) -> PreparedTritonWorkload:
     """Prepare one exact certified Source outside the active 28-kernel registry."""
 
-    if not adapter.case_id.startswith("scrc_canary:"):
-        raise ValueError("explicit Source preparation is reserved for certified canaries")
+    if not adapter.case_id.startswith(("scrc_canary:", "tilelang:")):
+        raise ValueError(
+            "explicit Source preparation is reserved for certified canaries "
+            "and accepted TileLang workload adapters"
+        )
     path = Path(source_path).resolve()
     source = path.read_text(encoding="utf-8")
     entry = SCRCWorkloadEntry(
         ordinal=0,
         case_id=adapter.case_id,
-        suite="scrc_canary",
+        suite=("tilelang" if adapter.case_id.startswith("tilelang:") else "scrc_canary"),
         symbol=source_symbol,
         mechanisms=("certified_source_reuse",),
         source_module="intentir.certified_canary",

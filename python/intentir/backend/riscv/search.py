@@ -21,7 +21,7 @@ from intentir.backend.riscv.compile import (
 )
 
 
-RVV_SEARCH_PLAN_PROTOCOL = "intentir.backend.riscv.search-plan.v7"
+RVV_SEARCH_PLAN_PROTOCOL = "intentir.backend.riscv.search-plan.v8"
 RVV_C_PROJECTION_PROTOCOL = "intentir.backend.riscv.c-projection.v1"
 
 _PARALLEL_TILES = (1, 2, 4, 8, 16, 32, 64, 128)
@@ -88,12 +88,17 @@ def enumerate_riscv_candidates(
     *,
     enable_b_transformations: bool = True,
     enable_reassociation: bool = True,
+    enable_rowmask_zero_fill: bool = False,
 ) -> tuple[RiscvLoweringCandidate, ...]:
     """Build the target schedule/structure universe without reading C."""
 
     transformations = [RiscvTransformationState(False, False, False)]
     if enable_b_transformations:
         transformations.append(RiscvTransformationState(True, False, False))
+    if enable_rowmask_zero_fill:
+        transformations.append(
+            RiscvTransformationState(False, rowmask_zero_fill=True)
+        )
     if enable_reassociation:
         transformations.append(RiscvTransformationState(False, True, False))
         transformations.append(RiscvTransformationState(False, True, True))
@@ -108,6 +113,12 @@ def enumerate_riscv_candidates(
     candidates: list[RiscvLoweringCandidate] = []
     for transformation in transformations:
         for base_schedule in schedules:
+            if transformation.rowmask_zero_fill and (
+                base_schedule.parallel_tile != 0
+                or base_schedule.reduction_tile != 0
+                or base_schedule.scalable_vectorization
+            ):
+                continue
             if (
                 transformation.explicit_vector_reduction
                 and not base_schedule.scalable_vectorization
@@ -204,6 +215,78 @@ def _operation_facts(
         float_bits,
         has_reassociable_float_reduction,
         has_contraction,
+    )
+
+
+def _has_typed_rowmask_graph(value: Mapping[str, Any]) -> bool:
+    intent = value.get("intent")
+    if not isinstance(intent, Mapping):
+        return False
+    function = intent.get("intent_function")
+    if not isinstance(function, Mapping):
+        return False
+    inputs = function.get("inputs")
+    body = function.get("body")
+    outputs = function.get("outputs")
+    if not isinstance(inputs, list) or not isinstance(body, list) or not isinstance(outputs, list):
+        return False
+    input_by_name = {
+        item.get("name"): item
+        for item in inputs
+        if isinstance(item, Mapping) and isinstance(item.get("name"), str)
+    }
+    if len(body) != 2 or len(outputs) != 1:
+        return False
+    cast, product = body
+    if not isinstance(cast, Mapping) or not isinstance(product, Mapping):
+        return False
+    cast_operands = cast.get("operands")
+    product_operands = product.get("operands")
+    cast_type = cast.get("type")
+    product_type = product.get("type")
+    attrs = product.get("attrs")
+    if (
+        cast.get("op") != "cast"
+        or not isinstance(cast_operands, list)
+        or len(cast_operands) != 1
+        or not isinstance(cast_type, Mapping)
+        or cast_type.get("dtype") != "f32"
+        or cast.get("result") is None
+        or product.get("op") != "map_binary"
+        or not isinstance(attrs, Mapping)
+        or attrs.get("fn", "mul") != "mul"
+        or not isinstance(product_operands, list)
+        or len(product_operands) != 2
+        or cast.get("result") not in product_operands
+        or not isinstance(product_type, Mapping)
+        or product_type.get("dtype") != "f32"
+    ):
+        return False
+    mask = input_by_name.get(cast_operands[0])
+    data_name = next(
+        (operand for operand in product_operands if operand != cast.get("result")),
+        None,
+    )
+    data = input_by_name.get(data_name)
+    mask_shape = mask.get("shape") if isinstance(mask, Mapping) else None
+    data_shape = data.get("shape") if isinstance(data, Mapping) else None
+    result_shape = product_type.get("shape")
+    output = outputs[0]
+    return bool(
+        isinstance(mask, Mapping)
+        and mask.get("dtype") == "i1"
+        and isinstance(mask_shape, list)
+        and len(mask_shape) == 1
+        and isinstance(data, Mapping)
+        and data.get("dtype") == "f32"
+        and isinstance(data_shape, list)
+        and len(data_shape) == 2
+        and data_shape[0] == mask_shape[0]
+        and result_shape == data_shape
+        and isinstance(output, Mapping)
+        and output.get("name") == product.get("result")
+        and output.get("dtype") == "f32"
+        and output.get("shape") == data_shape
     )
 
 
@@ -522,13 +605,16 @@ def plan_riscv_search(
 ) -> RiscvSearchPlan:
     if not isinstance(state, BackendSearchState):
         raise TypeError("RVV search planning requires BackendSearchState")
-    _axes, _has_scan, _float_bits, has_reassociation, has_contraction = _operation_facts(
-        state.base.j.to_json()
+    j_payload = state.base.j.to_json()
+    _axes, _has_scan, _float_bits, has_reassociation, has_contraction = (
+        _operation_facts(j_payload)
     )
+    has_typed_rowmask = _has_typed_rowmask_graph(j_payload)
     projected_priors, ignored_priors, projection = _project_c_priors(state)
     raw_universe = enumerate_riscv_candidates(
         enable_b_transformations=enable_b_transformations,
         enable_reassociation=has_reassociation,
+        enable_rowmask_zero_fill=has_typed_rowmask,
     )
     minimum_reduction_tile = int(projection["vector_lanes"])
     subvector_reduction_schedules_rejected = sum(
@@ -572,6 +658,7 @@ def plan_riscv_search(
         for item in universe
         if not item.transformation.fuse_producers
         and not item.transformation.reassociate_reductions
+        and not item.transformation.rowmask_zero_fill
     )
     alternative_states = tuple(
         dict.fromkeys(
@@ -581,6 +668,7 @@ def plan_riscv_search(
                 item.transformation.explicit_vector_reduction,
                 item.transformation.joint_vector_reduction,
                 item.transformation.fused_softmax,
+                item.transformation.rowmask_zero_fill,
             )
             for item in universe
             if item not in canonical
@@ -596,6 +684,7 @@ def plan_riscv_search(
                 item.transformation.explicit_vector_reduction,
                 item.transformation.joint_vector_reduction,
                 item.transformation.fused_softmax,
+                item.transformation.rowmask_zero_fill,
             )
             == state_key
         )

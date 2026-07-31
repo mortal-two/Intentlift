@@ -392,6 +392,33 @@ def _flash_linear() -> str:
     )
 
 
+def _gather2d() -> str:
+    return _source(
+        "M2 *x_d, M1 *row_d, M1 *col_d, M1 *out_d",
+        r"""
+  float *x=DATA(x_d,float),*out=DATA(out_d,float);
+  int32_t *row=DATA(row_d,int32_t),*col=DATA(col_d,int32_t);
+  int64_t count=out_d->sizes[0],width=x_d->sizes[1];
+  #pragma omp parallel for schedule(static)
+  for(int64_t k=0;k<count;k++)out[k]=x[(int64_t)row[k]*width+(int64_t)col[k]];
+""",
+    )
+
+
+def _rowmask_where2d() -> str:
+    return _source(
+        "M2 *x_d, M1 *mask_d, M2 *out_d",
+        r"""
+  float *x=DATA(x_d,float),*out=DATA(out_d,float);
+  uint8_t *mask=DATA(mask_d,uint8_t);
+  int64_t rows=x_d->sizes[0],width=x_d->sizes[1];
+  #pragma omp parallel for schedule(static)
+  for(int64_t i=0;i<rows;i++){float factor=mask[i]?1.0f:0.0f;
+    for(int64_t j=0;j<width;j++){int64_t k=i*width+j;out[k]=x[k]*factor;}}
+""",
+    )
+
+
 _SOURCES = {
     "dyt": _dyt,
     "swiglu": _swiglu,
@@ -415,6 +442,8 @@ _SOURCES = {
     "liger_rope": _liger_rope,
     "qwen2vl_mrope": _qwen2vl_mrope,
     "flash_linear": _flash_linear,
+    "gather2d": _gather2d,
+    "rowmask_where2d": _rowmask_where2d,
 }
 
 

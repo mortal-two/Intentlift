@@ -1,4 +1,4 @@
-  ## 已通过的 22 个 Kernel
+  ## 已通过的 24 个 Kernel
 
      #    Kernel                            正式证据 JSON
   ━━━━━  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -53,6 +53,12 @@
   ─────  ────────────────────────────────  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
     22    SplitK reduce，split=4/arity=4    /tmp/intentir-task15-v12-splitk-reduce-exact-current-gate1-gate2-20260730-01/
                                             xformers_ops_fmha_triton_splitk_kernels_splitk_reduce_varargs/gate2-recheck-001/recheck.json
+  ─────  ────────────────────────────────  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    23    Gather2D                          /home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/archive/2026-07/
+                                            07-31-j-driven-replay-composer-24/runs/tilelang_gather2d/run-003/report.json
+  ─────  ────────────────────────────────  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    24    RowMask Where2D                   /home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/archive/2026-07/
+                                            07-31-j-driven-replay-composer-24/runs/tilelang_rowmask_where2d/run-001/report.json
 
   Linear 有一份容易混淆的旧 artifact recheck，它是 gate2_failed，且明确写着 changes_parent_verdict=false，不能拿它代替上表的正式 winner：/tmp/intentir-task15-
   v12-linear-exact-current-gate1-gate2-20260730-01/flash_attn_ops_triton_linear_kernel_fwd/gate2-recheck-001/recheck.json。

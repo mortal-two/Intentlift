@@ -307,6 +307,18 @@ DEFAULT_PASSES: tuple[PassDescriptor, ...] = (
         description="complete static row-elementwise graph",
     ),
     PassDescriptor(
+        fast_path_id="cuda.elementwise.rowmask.zero-fill.v1",
+        pass_argument=(
+            "-convert-intent-elementwise-to-gpu=block-threads=64 "
+            "row-vector-width=1 row-mask-zero-fill=true "
+            "tanh-approximation=stable-ex2"
+        ),
+        supported_chips=_PORTABLE_BLOCK_CUDA_CHIPS,
+        description=(
+            "uniform row-mask branch that skips data loads for false rows"
+        ),
+    ),
+    PassDescriptor(
         fast_path_id="cuda.row_reduction.normalization_loss.read_once.v1",
         pass_argument=(
             "-convert-intent-row-reduction-to-gpu=block-threads=1024 "
@@ -345,8 +357,22 @@ DEFAULT_PASSES: tuple[PassDescriptor, ...] = (
     PassDescriptor(
         fast_path_id="cuda.gather-scatter.block.v1",
         pass_argument="-convert-intent-gather-to-gpu",
-        supported_chips=("sm_120a",),
-        description="data-dependent gather/scatter lowering",
+        supported_chips=_PORTABLE_BLOCK_CUDA_CHIPS,
+        description=(
+            "data-dependent gather/scatter lowering, including deterministic "
+            "eager evaluation of an admitted two-level gather"
+        ),
+    ),
+    PassDescriptor(
+        fast_path_id="cuda.gather-chain.composed-index.v1",
+        pass_argument=(
+            "-convert-intent-gather-to-gpu=compose-gather-chain=true"
+        ),
+        supported_chips=_PORTABLE_BLOCK_CUDA_CHIPS,
+        description=(
+            "compose two typed runtime gather index maps and eliminate the "
+            "intermediate gathered row"
+        ),
     ),
     PassDescriptor(
         fast_path_id="cuda.layout.block.v1",

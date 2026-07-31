@@ -306,7 +306,7 @@ def ConvertIntentElementwiseToGPU
            "Map an admitted equal-shape contiguous Row-only graph over one "
            "linear vec4 domain instead of launching one block per row.">,
     Option<"flatVectorWidth", "flat-vector-width", "unsigned", "4",
-           "Vector width for flatten-contiguous (2 or 4). Ignored by the "
+           "Vector width for flatten-contiguous (2, 4, or 8). Ignored by the "
            "default row schedule.">,
     Option<"rowVectorWidth", "row-vector-width", "unsigned", "0",
            "Vector width for the ordinary row elementwise schedule. 0 lets "
@@ -353,6 +353,12 @@ def ConvertIntentElementwiseToGPU
            "only when the whole live graph becomes a pure elementwise graph and "
            "the backend Q/D correctness policy accepts the resulting numeric "
            "evaluation. The default is false.">,
+    Option<"rowMaskZeroFill", "row-mask-zero-fill", "bool", "false",
+           "For the exact typed graph cast(mask[M]:i1)->f32 followed by the "
+           "pointwise contraction X[M,N]*mask[M], emit a uniform row branch. "
+           "False preserves cast-and-multiply; true skips X loads for false rows "
+           "and writes zero. The latter is an execution-domain Full state and "
+           "must pass Q/D because NaN/Inf times zero is observably different.">,
     Option<"tanhApproximation", "tanh-approximation", "std::string",
            "\"stable-ex2\"",
            "Concrete f32 tanh evaluation state. stable-ex2 uses the existing "
@@ -364,8 +370,8 @@ def ConvertIntentElementwiseToGPU
 
 def ConvertIntentGatherToGPU
     : Pass<"convert-intent-gather-to-gpu", "::mlir::ModuleOp"> {
-  let summary = "Lower a single intent.gather / intent.scatter (data-dependent "
-                "addressing) to one block-cooperative gpu.launch.";
+  let summary = "Lower intent.gather / intent.scatter data-dependent addressing "
+                "and an admitted two-level gather chain to gpu.launch.";
   let description = [{
     The C3 data-dependent-addressing pass. Recognizes a `func.func` whose body is
     exactly one `intent.gather` or one `intent.scatter` over rank-2 data producing
@@ -403,6 +409,11 @@ def ConvertIntentGatherToGPU
     Option<"blockThreads", "block-threads", "unsigned", "0",
            "Threads per block (block size over the free/column axis); 0 = auto "
            "(largest power-of-two <= min(cols,256) dividing cols).">,
+    Option<"composeGatherChain", "compose-gather-chain", "bool", "false",
+           "For an exact take(axis=0) -> along_axis(axis=1) gather chain, "
+           "compose the two runtime index maps and load only the final scalar. "
+           "False keeps the deterministic eager first-gather row topology. "
+           "This structural state is searched only by Full.">,
   ];
 }
 

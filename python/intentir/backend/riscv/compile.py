@@ -70,6 +70,7 @@ class RiscvTransformationState:
     explicit_vector_reduction: bool = False
     joint_vector_reduction: bool = False
     fused_softmax: bool = False
+    rowmask_zero_fill: bool = False
 
     def __post_init__(self) -> None:
         if type(self.fuse_producers) is not bool:
@@ -82,6 +83,8 @@ class RiscvTransformationState:
             raise TypeError("joint_vector_reduction must be bool")
         if type(self.fused_softmax) is not bool:
             raise TypeError("fused_softmax must be bool")
+        if type(self.rowmask_zero_fill) is not bool:
+            raise TypeError("rowmask_zero_fill must be bool")
         if self.explicit_vector_reduction and not self.reassociate_reductions:
             raise ValueError(
                 "explicit float vector reduction requires the admitted "
@@ -110,9 +113,22 @@ class RiscvTransformationState:
                 "fused RVV Softmax is a complete structural state and cannot "
                 "be combined with generic fusion or row-reduction states"
             )
+        if self.rowmask_zero_fill and (
+            self.fuse_producers
+            or self.reassociate_reductions
+            or self.explicit_vector_reduction
+            or self.joint_vector_reduction
+            or self.fused_softmax
+        ):
+            raise ValueError(
+                "row-mask zero-fill is a complete structural state and cannot "
+                "be combined with other RVV transformations"
+            )
 
     @property
     def lowering_path_kind(self) -> str:
+        if self.rowmask_zero_fill:
+            return "rowmask_zero_fill"
         if self.fused_softmax:
             return "fused_softmax_hybrid"
         if self.joint_vector_reduction:
@@ -128,7 +144,9 @@ class RiscvTransformationState:
     @property
     def transformation_trace(self) -> tuple[str, ...]:
         structural = (
-            "rvv.vector.fused_softmax_hybrid.v1"
+            "rvv.elementwise.rowmask.zero_fill.v1"
+            if self.rowmask_zero_fill
+            else "rvv.vector.fused_softmax_hybrid.v1"
             if self.fused_softmax
             else "rvv.linalg.producer_consumer_fusion.v2"
             if self.fuse_producers
@@ -173,6 +191,7 @@ class RiscvTransformationState:
             "explicit_vector_reduction": self.explicit_vector_reduction,
             "joint_vector_reduction": self.joint_vector_reduction,
             "fused_softmax": self.fused_softmax,
+            "rowmask_zero_fill": self.rowmask_zero_fill,
             "transformation_trace": list(self.transformation_trace),
             "b_transformations": list(self.b_transformations),
             "required_b_capabilities": list(self.required_b_capabilities),
@@ -270,6 +289,7 @@ class RiscvLoweringCandidate:
             f"explicitvec{int(self.transformation.explicit_vector_reduction)}."
             f"jointvec{int(self.transformation.joint_vector_reduction)}"
             f".fusedsoftmax{int(self.transformation.fused_softmax)}"
+            + (".rowmaskzero1" if self.transformation.rowmask_zero_fill else "")
         )
 
     def _content(self) -> dict[str, Any]:
@@ -314,6 +334,10 @@ class RiscvTransformationRecord:
     fused_softmax_scalar_reductions: int = 0
     fused_softmax_vector_width: int = 0
     fused_softmax_scalable: int = 0
+    rowmask_lowerings: int = 0
+    rowmask_zero_fills: int = 0
+    rowmask_mask_hoists: int = 0
+    rowmask_vector_width: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -361,6 +385,10 @@ class RiscvTransformationRecord:
             ),
             "fused_softmax_vector_width": self.fused_softmax_vector_width,
             "fused_softmax_scalable": self.fused_softmax_scalable,
+            "rowmask_lowerings": self.rowmask_lowerings,
+            "rowmask_zero_fills": self.rowmask_zero_fills,
+            "rowmask_mask_hoists": self.rowmask_mask_hoists,
+            "rowmask_vector_width": self.rowmask_vector_width,
         }
 
 
@@ -674,7 +702,7 @@ def _lower_to_llvm_ir(
             "three-traversal vector state"
         )
     parallel_runtime = schedule.thread_count > 1
-    front = [
+    buffer_front = [
         # Intent functions expose logical tensor values.  This backend owns the
         # target ABI and the benchmark/runtime binds those values to dense
         # row-major buffers, so use the same identity-layout boundary
@@ -687,15 +715,66 @@ def _lower_to_llvm_ir(
             "function-boundary-type-conversion=identity-layout-map"
         ),
         "--buffer-results-to-out-params",
-        (
-            "--convert-linalg-to-parallel-loops"
-            if parallel_runtime
-            else "--convert-linalg-to-loops"
-        ),
         "--canonicalize",
         "--cse",
     ]
-    memref = _run_text([MLIR_OPT, *front], stdin=structured)
+    bufferized = _run_text([MLIR_OPT, *buffer_front], stdin=structured)
+    if candidate.transformation.rowmask_zero_fill:
+        rowmask_vector_width = 4 if schedule.vectorize else 1
+        specialized_buffer = _run_text(
+            [
+                INTENT_OPT,
+                (
+                    "-lower-row-mask-to-loops="
+                    "zero-fill=true require-lowering=true "
+                    f"vector-width={rowmask_vector_width}"
+                ),
+                "-canonicalize",
+                "-cse",
+            ],
+            stdin=bufferized,
+        )
+    else:
+        specialized_buffer = bufferized
+    memref = _run_text(
+        [
+            MLIR_OPT,
+            (
+                "--convert-linalg-to-parallel-loops"
+                if parallel_runtime
+                else "--convert-linalg-to-loops"
+            ),
+            "--canonicalize",
+            "--cse",
+        ],
+        stdin=specialized_buffer,
+    )
+    record = replace(
+        record,
+        linalg_ops_after=_linalg_op_count(specialized_buffer),
+        rowmask_lowerings=_module_i64_attr(
+            specialized_buffer, "intent.rvv.rowmask_lowering_count"
+        ),
+        rowmask_zero_fills=_module_i64_attr(
+            specialized_buffer, "intent.rvv.rowmask_zero_fill_count"
+        ),
+        rowmask_mask_hoists=_module_i64_attr(
+            specialized_buffer, "intent.rvv.rowmask_mask_hoist_count"
+        ),
+        rowmask_vector_width=_module_i64_attr(
+            specialized_buffer, "intent.rvv.rowmask_vector_width"
+        ),
+    )
+    if candidate.transformation.rowmask_zero_fill and (
+        record.rowmask_lowerings != 1
+        or record.rowmask_zero_fills != 1
+        or record.rowmask_mask_hoists != 1
+        or record.rowmask_vector_width != (4 if schedule.vectorize else 1)
+    ):
+        raise RuntimeError(
+            "requested RVV row-mask zero-fill produced no valid hoisted "
+            "typed-broadcast loop"
+        )
     forwarded = _run_text(
         [
             INTENT_OPT,
@@ -737,6 +816,10 @@ def _lower_to_llvm_ir(
                 if (
                     candidate.transformation.explicit_vector_reduction
                     or candidate.transformation.fused_softmax
+                    or (
+                        candidate.transformation.rowmask_zero_fill
+                        and schedule.vectorize
+                    )
                 )
                 else []
             ),
@@ -840,6 +923,17 @@ def compile_riscv_object(
         raise RuntimeError(
             "requested fused RVV Softmax produced no valid hybrid "
             "three-traversal vector state"
+        )
+    if candidate.transformation.rowmask_zero_fill and (
+        transformation_record.rowmask_lowerings != 1
+        or transformation_record.rowmask_zero_fills != 1
+        or transformation_record.rowmask_mask_hoists != 1
+        or transformation_record.rowmask_vector_width
+        != (4 if candidate.schedule.vectorize else 1)
+    ):
+        raise RuntimeError(
+            "requested RVV row-mask zero-fill produced no valid hoisted "
+            "typed-broadcast loop"
         )
     schedule = candidate.schedule
     vector_shape_flags = (

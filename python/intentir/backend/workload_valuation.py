@@ -54,6 +54,8 @@ PRODUCTION_CASE_IDS: dict[str, str] = {
         "high_performance:xformers.ops._triton.rmsnorm_kernels."
         "_rms_norm_add_kernel"
     ),
+    "gather2d": "tilelang:gather2d",
+    "rowmask_where2d": "tilelang:rowmask_where2d",
 }
 
 PRODUCTION_WORKLOAD_PROFILE_CLOSED = "closed-v1"
@@ -158,6 +160,8 @@ _NATURAL_HEADLINE_EXTENTS: dict[str, dict[str, int]] = {
         _MROPE_SECTION_H: 24,
     },
     "flash_linear": {_M: 1024, _N: 1024, _K: 8192},
+    "gather2d": {_ROW: 64},
+    "rowmask_where2d": {_ROW: 65536},
 }
 
 
@@ -224,6 +228,27 @@ def _preserve_grid(count: int = 1) -> tuple[GridBinding, ...]:
 
 
 _HARNESS_BINDINGS: dict[str, HarnessBindingSpec] = {
+    "gather2d": HarnessBindingSpec(
+        buffer_axes=(
+            ("p0", _axes(_ROW, None)),
+            ("p1", _axes(None)),
+            ("p2", _axes(None)),
+            ("p3", _axes(None)),
+        ),
+        c_values=(),
+        grid=_preserve_grid(),
+        literal_constraints=("N=64", "L=256"),
+    ),
+    "rowmask_where2d": HarnessBindingSpec(
+        buffer_axes=(
+            ("p0", _axes(_ROW, None)),
+            ("p1", _axes(_ROW)),
+            ("p2", _axes(_ROW, None)),
+        ),
+        c_values=(),
+        grid=(GridBinding("extent", _ROW),),
+        literal_constraints=("N=64",),
+    ),
     "cross_entropy": HarnessBindingSpec(
         buffer_axes=(
             ("X_ptr", _axes(_ROW, _FEATURE)),
@@ -679,6 +704,8 @@ _HARNESS_BINDINGS: dict[str, HarnessBindingSpec] = {
 
 
 _NATURAL_HARNESS_BINDINGS: dict[str, HarnessBindingSpec] = {
+    "gather2d": _HARNESS_BINDINGS["gather2d"],
+    "rowmask_where2d": _HARNESS_BINDINGS["rowmask_where2d"],
     "jsd": HarnessBindingSpec(
         buffer_axes=(
             ("X_ptr", _axes(_ROW, _FEATURE)),
