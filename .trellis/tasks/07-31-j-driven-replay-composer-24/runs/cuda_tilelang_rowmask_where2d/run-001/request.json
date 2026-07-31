@@ -1,0 +1,31 @@
+{
+  "c0": {
+    "c0": 64
+  },
+  "case_id": "cuda:tilelang_rowmask_where2d",
+  "frontend": "cuda",
+  "grid": [
+    16,
+    1,
+    1
+  ],
+  "lift_backend": "codex",
+  "lift_workflow": "single",
+  "model": "gpt-5.6-sol",
+  "observer_profile": "cuda_ptx_semantic_effects@cuda-ptx-semantic-effects-v5",
+  "provider": "gpt-5.6-sol",
+  "q_policy": "intentir.gate2.default.v1",
+  "reasoning_effort": "high",
+  "replay_backend": "codex",
+  "replay_composer_mode": "preferred",
+  "replay_model": "gpt-5.6-sol",
+  "replay_provider": "gpt-5.6-sol",
+  "replay_reasoning_effort": "high",
+  "run_masked_j": true,
+  "source_to_opaque": {
+    "M": "p3",
+    "inp": "p0",
+    "out": "p1",
+    "row_mask": "p2"
+  }
+}

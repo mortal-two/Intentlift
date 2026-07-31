@@ -1,6 +1,6 @@
 # Task 24：J 主导的 π_min 与三前端 Episode-Local Composer Replay
 
-> 状态：`P5_CUDA_TILELANG_GATHER_CERTIFIED_HORIZONTAL_EXPANSION`（2026-07-31）。
+> 状态：`P5_HORIZONTAL_CHECKPOINT_9_CERTIFIED_1_NO_CLOSURE`（2026-07-31；执行线已冻结，后继为 Task 25）。
 >
 > 定位：Task 15/Task 11 的 Replay 构造机制升级，以及 Task 23 多前端实证的真实 closure 执行线。
 > 本任务不接管 production backend；backend 仍在 SCRC 后只消费 accepted `J+C`。
@@ -81,8 +81,10 @@ Composer只存在于`FreshAgent_f`内部；最终提交物仍是完整`replay.so
 - 已完成不调用provider的三前端render、全部八种局部edit、source-map、checkpoint/rollback、copied CLI、
   stdlib-only import与writer identity smoke；独立只读审计未发现J/π读取、target recipe、kernel template或
   Gate bypass；
-- 真实TileLang `add2d` provider纵切已达到`SCRC_CERTIFIED`；CUDA纵切和Composer/direct-source效率
-  比较尚未完成，因此当前只对该单个TileLang case声称closure，不外推三前端或Composer提速。
+- 已形成TileLang/CUDA五类代表case的真实横向矩阵：`add2d/row_sum/gather2d/rowmask_where2d`
+  双前端及TileLang `transpose2d`共9项达到`SCRC_CERTIFIED`；CUDA `transpose2d`在历史PTX v5
+  profile下为真实`NO_CLOSURE`。这些证据证明现有Composer不妨碍闭合，并有一组同artifact A/B
+  显示单样本成本下降；它们不证明当前syntax-only Composer已解决复杂J/π消费成本。
 
 ### 2.4 P5真实运行日志
 
@@ -394,6 +396,62 @@ v36、Composer preferred、high）：
   continuation；该fix由copied `/workspace/input/tools`布局回归与独立审计证明，仍需未来自然触发的
   relift evidence补强，不把未执行路径写成provider认证。
 
+### Pilot P：rowmask双前端横向认证与真实root continuation
+
+`cuda:tilelang_rowmask_where2d / runs/cuda_tilelang_rowmask_where2d/run-001`与
+`tilelang:rowmask_where2d / runs/tilelang_rowmask_where2d/run-001`均使用fresh Codex Lift/Replay、
+Composer preferred、Mask-J与`high` effort：
+
+- 两项均在accepted attempt 2达到`SCRC_CERTIFIED`；两轮artifact均通过strict decode与dependent
+  TypeCheck，accepted normal/masked臂使用不同writer/workspace/session并实际选择Composer；
+- CUDA normal的PTX semantic hard categories全部通过，masked臂在observable value/memory上hard
+  mismatch；TileLang normal以结构TIR闭合，masked臂同样hard mismatch，因此两项均为
+  `J_NECESSARY=proved`；
+- 两项Gate2的Source--Replay、Source--J、Replay--J三边均真实执行并通过，最大误差全部为0；
+- TileLang attempt 2发生真实formal relift，Lift trajectory中的`feedback-category tir_structure`、
+  `tir_topology`、`tir_operations`与PTX diagnostic查询均携带显式`--input-root input --output-root
+  output`并返回exact payload。这是Codex Lift v33 root修复第一次由真实provider continuation验证；
+- π仍只含opaque instance/route/order/sharing/program-axis/region关系；没有rowmask predicate、select、
+  target API或kernel recipe副本。
+
+### Pilot Q：transpose横向结果揭示CUDA observer表示商边界
+
+`tilelang:transpose2d / runs/tilelang_transpose2d/run-001`与
+`cuda:tilelang_transpose2d / runs/cuda_tilelang_transpose2d/run-001`：
+
+- TileLang在accepted attempt 2达到`SCRC_CERTIFIED`。attempt 1 Replay发明了Source不存在的逐scalar
+  participant loop，导致TIR structure/topology/operations hard fail；Lift通过v33 exact rooted category
+  query获得差异，fresh attempt 2删除该额外stage后结构TIR闭合；masked-J hard fail，Gate2三边最大误差
+  全部为0；
+- CUDA完成3个TypeCheck-valid formal rounds后仍为`NO_CLOSURE`，未运行masked-J或Gate2，不能重标为
+  closure。三轮J稳定表达`[x0,16] -> [16,x0]` transpose，Source--J public probe每轮exact pass；
+- 最终v5 hard差异集中在`value_operations/memory_effects`：Source wrapper使用恒真predicated
+  `ld.global.v4.u32`及zero-init，Replay使用unpredicated `ld.global.v4.f32`，两侧均执行4次32-bit
+  vector load与16次32-bit store。该记录只支持“需要审查observer表示商”，不在没有fresh Gate1/Gate2
+  的情况下宣称二者已经认证等价。
+
+### Pilot R：CUDA PTX v6机制检查点，尚无fresh closure claim
+
+- `cuda-ptx-semantic-effects-v6`只把非atomic纯`ld/st/suld/sust`的terminal
+  `b/s/u/f{8,16,32,64,128}`归一为相同bit width，并只消去由straight-line closed propagation证明
+  恒真的memory predicate；proven-false effect被删除，unknown predicate保持hard polarity；
+- vector/tuple load的所有destination进入def-use；unknown predicated write保留旧/新definition alternatives。
+  算术opcode类型、atomic/reduction、address space、vector width、control、coordinate、collective、ABI与
+  target继续为hard evidence，raw instruction/opcode/memory始终保留diagnostic；
+- 两路独立只读审计未发现会把unknown predicate、算术类型或atomic差异误认证的阻塞项。对Pilot Q
+  exact历史PTX的本地重新观察使九项semantic hard view一致而raw diagnostic仍不同；这只是当前实现
+  的机制证据，绝不重判v5历史artifact；
+- 在新的权威Replay设计重构完成前不启动CUDA transpose fresh v6 provider rerun。Task 25若恢复该项，
+  必须从fresh episode重新生成exact Replay并完整运行Gate1、Mask-J与三边Gate2。
+
+### Task 24冻结与Task 25迁移裁决
+
+Task 24保留上述真实成功、失败和成本证据，但不再继续给现有line/block Composer追加局部功能。真实
+轨迹说明主要剩余成本是agent反复遍历扁平J/π、按physical occurrence维护route/local/region并重写完整
+源码，而不是缺少更多宿主semantic template。后继Task 25以“fresh agent自建episode-local composer、
+固定宿主只做syntax/route linking”为唯一新执行线；Task 24所有run目录保持历史verdict，不迁移、不
+重判，也不作为新设计已经提速的证据。
+
 ## 3. 交付物
 
 1. 权威设计增补、spec与任务索引更新；
@@ -403,7 +461,7 @@ v36、Composer preferred、high）：
 5. Composer接入fresh Codex Replay workspace/tool bridge；
 6. normal/masked独立writer/workspace/thread/composer；
 7. π静态ownership/leakage audit复用同一TypeCheck事实，不维护第二套宽松validator；
-8. add2d、row_sum、gather2d/masked等真实三前端纵切evidence；
+8. add2d、row_sum、gather2d/masked、rowmask与transpose等真实多前端纵切evidence；
 9. 至少一个sharing/physical-loop与一个effect/control纵切（前端能力允许时）；
 10. 对Task 15 Triton难例或已闭合代表项的fresh A/B，证明Composer确实降低构造成本；
 11. 干净提交与可追溯真实运行记录。

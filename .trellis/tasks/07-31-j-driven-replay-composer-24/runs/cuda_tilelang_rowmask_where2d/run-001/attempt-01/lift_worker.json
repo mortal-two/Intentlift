@@ -1,0 +1,216 @@
+{
+  "backend": "openai.codex-cli.intentir-lift.v33",
+  "candidate_check": [
+    {
+      "candidate_sha256": "bc902bf6ba1ff187d7a87d3f6673e995c187a7fd9df779c156df550ade1538b6",
+      "diagnostics": [
+        {
+          "observed_refs_or_types": [
+            "SchemaError: portable scope 's0' definitions must exactly match derived J values; missing=[], extra=['t2']"
+          ],
+          "path": "<candidate>",
+          "rule_code": "decode_rejected"
+        },
+        {
+          "observed_refs_or_types": [
+            "expected=[\"e0\", \"e1\", \"e2\"]",
+            "actual=[\"q0\", \"q1\", \"q2\"]"
+          ],
+          "path": "j.effects[*].effect_id",
+          "rule_code": "construction_handle_sequence"
+        },
+        {
+          "observed_refs_or_types": [
+            "expected=[\"q0\"]",
+            "actual=[\"s0\"]"
+          ],
+          "path": "j.scopes[*].scope_id",
+          "rule_code": "construction_handle_sequence"
+        }
+      ],
+      "status": "fail",
+      "trigger": "submit_candidate"
+    },
+    {
+      "candidate_sha256": "d922b8b1de16269ae292a95c59d969e9c76bcd38b033bf86f4ba0062c20d7401",
+      "diagnostics": [
+        {
+          "observed_refs_or_types": [
+            "detail: functional domain axis 'k0' has conflicting extents"
+          ],
+          "path": "j.boundary.domains",
+          "rule_code": "functional_boundary_incomplete"
+        }
+      ],
+      "status": "fail",
+      "trigger": "submit_candidate"
+    },
+    {
+      "candidate_sha256": "c979fdd519f23a1351e41c7c1408cf454fa0fb95677390a6a7cb23d693d059f1",
+      "diagnostics": [
+        {
+          "observed_refs_or_types": [
+            "a0",
+            "detail: functional axis 'k0' extent 64 differs from J tensor extent 'x0'"
+          ],
+          "path": "j.boundary.accesses[0].index_expression",
+          "rule_code": "functional_boundary_incomplete"
+        }
+      ],
+      "status": "fail",
+      "trigger": "submit_candidate"
+    },
+    {
+      "candidate_sha256": "abe718e921474cad30a66ba68059e2497022aa0789aba5e46b704ad5ead6479a",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "submit_candidate"
+    },
+    {
+      "candidate_sha256": "abe718e921474cad30a66ba68059e2497022aa0789aba5e46b704ad5ead6479a",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "host_post_turn"
+    },
+    {
+      "candidate_sha256": "abe718e921474cad30a66ba68059e2497022aa0789aba5e46b704ad5ead6479a",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "semantic_probe"
+    }
+  ],
+  "cli_turns": 1,
+  "elapsed_ms": 370235.7409700053,
+  "fresh_session": true,
+  "fresh_workspace": true,
+  "knowledge_profile": "intentir.lift-knowledge.v92",
+  "model_segments_lower_bound": 10,
+  "owner_session_id": "0112930d4c264eb1883dee3b48819411",
+  "persistent_owner": true,
+  "persistent_workspace": true,
+  "runtime": "intentir.codex-cli.agent-runtime.v3",
+  "semantic_probe": [
+    {
+      "authority": "public Source-vs-J diagnostic only; no artifact field is generated, repaired, accepted, or certified",
+      "candidate_sha256": "abe718e921474cad30a66ba68059e2497022aa0789aba5e46b704ad5ead6479a",
+      "case_id": "finite-public-lift-probe-1",
+      "comparison": {
+        "left": "source",
+        "outputs": [
+          {
+            "atol": null,
+            "detail": "",
+            "equal_nan": null,
+            "equality_required": true,
+            "max_abs_error": 0.0,
+            "output": "output_p1",
+            "passed": true,
+            "policy_id": "intentir.gate2.default.v1",
+            "relation_kind": "exact",
+            "rtol": null
+          }
+        ],
+        "passed": true,
+        "policy_id": "intentir.gate2.default.v1",
+        "right": "j"
+      },
+      "protocol": "intentir.lift.public-semantic-probe.v1",
+      "seed": 2026073001,
+      "status": "pass"
+    }
+  ],
+  "source_reconcile": [
+    {
+      "applicable": false,
+      "candidate_sha256": "bc902bf6ba1ff187d7a87d3f6673e995c187a7fd9df779c156df550ade1538b6",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "submit_candidate"
+    },
+    {
+      "applicable": false,
+      "candidate_sha256": "d922b8b1de16269ae292a95c59d969e9c76bcd38b033bf86f4ba0062c20d7401",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "submit_candidate"
+    },
+    {
+      "applicable": false,
+      "candidate_sha256": "c979fdd519f23a1351e41c7c1408cf454fa0fb95677390a6a7cb23d693d059f1",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "submit_candidate"
+    },
+    {
+      "applicable": false,
+      "candidate_sha256": "abe718e921474cad30a66ba68059e2497022aa0789aba5e46b704ad5ead6479a",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "submit_candidate"
+    },
+    {
+      "applicable": false,
+      "candidate_sha256": "abe718e921474cad30a66ba68059e2497022aa0789aba5e46b704ad5ead6479a",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "host_post_turn"
+    },
+    {
+      "applicable": false,
+      "candidate_sha256": "abe718e921474cad30a66ba68059e2497022aa0789aba5e46b704ad5ead6479a",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "semantic_probe"
+    }
+  ],
+  "thread_id": "019fb5ad-8f61-7231-979f-4fdbd5e7b376",
+  "timeout_events": [],
+  "tool_actions": 52,
+  "tool_bridge": {
+    "authority": "diagnostic-only callbacks over exact host-read output bytes; no artifact or Replay field is generated or edited",
+    "calls": 4,
+    "protocol": "intentir.codex-cli.tool-bridge.v3",
+    "receipts": [
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 67.06896296236664,
+        "result_sha256": "12b7c33e546809612dec78237902048385e32479a961a7c6a14d5cdf9de290e7",
+        "status": "fail",
+        "tool": "submit_candidate"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 21.632535965181887,
+        "result_sha256": "e78cd54a79b294dcb430b5d14ebde85776dec7441a2f03a3f6f92d7c6414245f",
+        "status": "fail",
+        "tool": "submit_candidate"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 20.450777956284583,
+        "result_sha256": "f726cb7163ae8f769e081cc83bd0488204c034a0e99ed7be91819158e8221eb8",
+        "status": "fail",
+        "tool": "submit_candidate"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 24.507052032276988,
+        "result_sha256": "7771c51a010d9851fdd7fe61bc4f059df1b6b4e156aa8b962675c15a7d120f46",
+        "status": "pass",
+        "tool": "submit_candidate"
+      }
+    ],
+    "transport": "isolated_workspace_file_mailbox"
+  },
+  "usage": {
+    "cache_write_input_tokens": 0,
+    "cached_input_tokens": 508416,
+    "input_tokens": 562052,
+    "output_tokens": 11166,
+    "reasoning_output_tokens": 5476
+  }
+}

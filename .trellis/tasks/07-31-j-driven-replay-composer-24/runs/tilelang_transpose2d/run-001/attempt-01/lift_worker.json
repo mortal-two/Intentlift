@@ -1,0 +1,154 @@
+{
+  "backend": "openai.codex-cli.intentir-lift.v33",
+  "candidate_check": [
+    {
+      "candidate_sha256": "d6e0efaae5c7d913554279925414ccb8694b15b01294b9d0a253ff2af992942e",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "submit_candidate"
+    },
+    {
+      "candidate_sha256": "9be24a176aa56ac35747edf139d3d127b811d3bd22c01f283d734182e24c86c5",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "submit_candidate"
+    },
+    {
+      "candidate_sha256": "10b1490b742d426354c51a59949e343105b0ddd82ee243453451b90d898fb769",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "submit_candidate"
+    },
+    {
+      "candidate_sha256": "10b1490b742d426354c51a59949e343105b0ddd82ee243453451b90d898fb769",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "host_post_turn"
+    },
+    {
+      "candidate_sha256": "10b1490b742d426354c51a59949e343105b0ddd82ee243453451b90d898fb769",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "semantic_probe"
+    }
+  ],
+  "cli_turns": 1,
+  "elapsed_ms": 383620.23451400455,
+  "fresh_session": true,
+  "fresh_workspace": true,
+  "knowledge_profile": "intentir.lift-knowledge.v92",
+  "model_segments_lower_bound": 8,
+  "owner_session_id": "32a75dedc86648d29bcad62027f011f6",
+  "persistent_owner": true,
+  "persistent_workspace": true,
+  "runtime": "intentir.codex-cli.agent-runtime.v3",
+  "semantic_probe": [
+    {
+      "authority": "public Source-vs-J diagnostic only; no artifact field is generated, repaired, accepted, or certified",
+      "candidate_sha256": "10b1490b742d426354c51a59949e343105b0ddd82ee243453451b90d898fb769",
+      "case_id": "finite-public-lift-probe-1",
+      "comparison": {
+        "left": "source",
+        "outputs": [
+          {
+            "atol": null,
+            "detail": "",
+            "equal_nan": null,
+            "equality_required": true,
+            "max_abs_error": 0.0,
+            "output": "output_p1",
+            "passed": true,
+            "policy_id": "intentir.gate2.default.v1",
+            "relation_kind": "exact",
+            "rtol": null
+          }
+        ],
+        "passed": true,
+        "policy_id": "intentir.gate2.default.v1",
+        "right": "j"
+      },
+      "protocol": "intentir.lift.public-semantic-probe.v1",
+      "seed": 2026073001,
+      "status": "pass"
+    }
+  ],
+  "source_reconcile": [
+    {
+      "applicable": false,
+      "candidate_sha256": "d6e0efaae5c7d913554279925414ccb8694b15b01294b9d0a253ff2af992942e",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "submit_candidate"
+    },
+    {
+      "applicable": false,
+      "candidate_sha256": "9be24a176aa56ac35747edf139d3d127b811d3bd22c01f283d734182e24c86c5",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "submit_candidate"
+    },
+    {
+      "applicable": false,
+      "candidate_sha256": "10b1490b742d426354c51a59949e343105b0ddd82ee243453451b90d898fb769",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "submit_candidate"
+    },
+    {
+      "applicable": false,
+      "candidate_sha256": "10b1490b742d426354c51a59949e343105b0ddd82ee243453451b90d898fb769",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "host_post_turn"
+    },
+    {
+      "applicable": false,
+      "candidate_sha256": "10b1490b742d426354c51a59949e343105b0ddd82ee243453451b90d898fb769",
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "semantic_probe"
+    }
+  ],
+  "thread_id": "019fb5ad-9c9b-7580-8730-ba7919eda72c",
+  "timeout_events": [],
+  "tool_actions": 53,
+  "tool_bridge": {
+    "authority": "diagnostic-only callbacks over exact host-read output bytes; no artifact or Replay field is generated or edited",
+    "calls": 3,
+    "protocol": "intentir.codex-cli.tool-bridge.v3",
+    "receipts": [
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 166.9537170091644,
+        "result_sha256": "70041542b06238b1d008fab1a49eeb51a731b2dc2238d9bffcd05119fea6eedc",
+        "status": "pass",
+        "tool": "submit_candidate"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 19.45984095800668,
+        "result_sha256": "bdab8cbb0eec21e952cd60b810d508db2047c8f1a0b32e0724f88f215315feff",
+        "status": "pass",
+        "tool": "submit_candidate"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 18.791180104017258,
+        "result_sha256": "72d70bcc13a86627b3539adc6440f893ec72181c3a3464a90e1e55e624b732f2",
+        "status": "pass",
+        "tool": "submit_candidate"
+      }
+    ],
+    "transport": "isolated_workspace_file_mailbox"
+  },
+  "usage": {
+    "cache_write_input_tokens": 0,
+    "cached_input_tokens": 696576,
+    "input_tokens": 750434,
+    "output_tokens": 11454,
+    "reasoning_output_tokens": 5046
+  }
+}

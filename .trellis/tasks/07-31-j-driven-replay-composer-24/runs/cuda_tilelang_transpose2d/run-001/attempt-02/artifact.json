@@ -1,0 +1,1244 @@
+{
+  "c": {
+    "slots": [
+      {
+        "kind": "compiler",
+        "name": "c0",
+        "required": true,
+        "role": "launch_block_x",
+        "value_type": "i32"
+      }
+    ],
+    "values": {
+      "c0": 128
+    }
+  },
+  "j": {
+    "boundary": {
+      "access_guard_relations": [],
+      "accesses": [
+        {
+          "access_id": "a0",
+          "index_expression": "[k0, k1]",
+          "kind": "load",
+          "node_ref": "n0",
+          "tensor": "t0"
+        },
+        {
+          "access_id": "a1",
+          "index_expression": "[k1, k0]",
+          "kind": "store",
+          "node_ref": "n0",
+          "tensor": "t1"
+        }
+      ],
+      "aliases": [],
+      "broadcasts": [],
+      "consumer_extensions": [],
+      "domains": {
+        "d0": "(0 <= k0) and (k0 < x0)",
+        "d1": "(0 <= k1) and (k1 < 16)"
+      },
+      "effects": [
+        {
+          "access_ref": "a0",
+          "effect_id": "e0",
+          "kind": "read",
+          "node_ref": "n0",
+          "target": "t0"
+        },
+        {
+          "access_ref": "a1",
+          "effect_id": "e1",
+          "kind": "write",
+          "node_ref": "n0",
+          "target": "t1"
+        }
+      ],
+      "index_bounds": [],
+      "output_mappings": [],
+      "realization_authorizations": [],
+      "reductions": [],
+      "result_relations": [
+        {
+          "kind": "exact",
+          "output": "t1"
+        }
+      ],
+      "updates": []
+    },
+    "dimension_constraints": [
+      "x0 > 0"
+    ],
+    "dimension_relations": [],
+    "intent": {
+      "intent_function": {
+        "body": [
+          {
+            "attrs": {
+              "perm": [
+                1,
+                0
+              ]
+            },
+            "id": "n0",
+            "op": "transpose",
+            "operands": [
+              "t0"
+            ],
+            "result": "t1",
+            "type": {
+              "dtype": "f32",
+              "shape": [
+                16,
+                "x0"
+              ]
+            }
+          }
+        ],
+        "inputs": [
+          {
+            "dtype": "f32",
+            "name": "t0",
+            "shape": [
+              "x0",
+              16
+            ]
+          }
+        ],
+        "name": "scrc_j0",
+        "outputs": [
+          {
+            "dtype": "f32",
+            "name": "t1",
+            "shape": [
+              16,
+              "x0"
+            ]
+          }
+        ],
+        "returns": [
+          {
+            "output": "t1",
+            "value": "t1"
+          }
+        ]
+      }
+    },
+    "kernel_id": "scrc_k0",
+    "node_ids": {
+      "n0": "body[0]"
+    },
+    "scopes": [
+      {
+        "captures": [],
+        "definitions": [
+          "t0",
+          "t1"
+        ],
+        "effects": [
+          "e0",
+          "e1"
+        ],
+        "kind": "function",
+        "parent_scope": null,
+        "scope_id": "q0"
+      }
+    ],
+    "signature": {
+      "parameters": [
+        {
+          "dtype": "f32",
+          "kind": "tensor",
+          "logical_ref": "t0",
+          "mode": "input",
+          "name": "p0",
+          "rank": 2
+        },
+        {
+          "dtype": "f32",
+          "kind": "tensor",
+          "logical_ref": "t1",
+          "mode": "output",
+          "name": "p1",
+          "rank": 2
+        },
+        {
+          "dtype": "i32",
+          "kind": "scalar",
+          "logical_ref": "x0",
+          "mode": "value",
+          "name": "p2",
+          "rank": 0
+        }
+      ]
+    },
+    "storage": [],
+    "value_dimension_relations": []
+  },
+  "pi": {
+    "instances": [
+      {
+        "id": "i0",
+        "mechanism": "realize",
+        "region": "r1",
+        "semantic_ref": "p0"
+      },
+      {
+        "id": "i1",
+        "mechanism": "realize",
+        "region": "r1",
+        "semantic_ref": "d0"
+      },
+      {
+        "id": "i2",
+        "mechanism": "address_base",
+        "region": "r1",
+        "semantic_ref": "a0"
+      },
+      {
+        "id": "i3",
+        "mechanism": "transfer_direct",
+        "region": "r1",
+        "semantic_ref": "a0"
+      },
+      {
+        "id": "i4",
+        "mechanism": "address_lane",
+        "region": "r1",
+        "semantic_ref": "a0"
+      },
+      {
+        "id": "i5",
+        "mechanism": "transfer_direct",
+        "region": "r1",
+        "semantic_ref": "a0"
+      },
+      {
+        "id": "i6",
+        "mechanism": "address_lane",
+        "region": "r1",
+        "semantic_ref": "a0"
+      },
+      {
+        "id": "i7",
+        "mechanism": "transfer_direct",
+        "region": "r1",
+        "semantic_ref": "a0"
+      },
+      {
+        "id": "i8",
+        "mechanism": "address_lane",
+        "region": "r1",
+        "semantic_ref": "a0"
+      },
+      {
+        "id": "i9",
+        "mechanism": "transfer_direct",
+        "region": "r1",
+        "semantic_ref": "a0"
+      },
+      {
+        "id": "i10",
+        "mechanism": "realize",
+        "region": "r1",
+        "semantic_ref": "p1"
+      },
+      {
+        "id": "i11",
+        "mechanism": "realize",
+        "region": "r1",
+        "semantic_ref": "p2"
+      },
+      {
+        "id": "i12",
+        "mechanism": "address_base",
+        "region": "r1",
+        "semantic_ref": "a1"
+      },
+      {
+        "id": "i13",
+        "mechanism": "transfer_direct",
+        "region": "r1",
+        "semantic_ref": "a1"
+      },
+      {
+        "id": "i14",
+        "mechanism": "address_lane",
+        "region": "r1",
+        "semantic_ref": "a1"
+      },
+      {
+        "id": "i15",
+        "mechanism": "transfer_direct",
+        "region": "r1",
+        "semantic_ref": "a1"
+      },
+      {
+        "id": "i16",
+        "mechanism": "address_lane",
+        "region": "r1",
+        "semantic_ref": "a1"
+      },
+      {
+        "id": "i17",
+        "mechanism": "transfer_direct",
+        "region": "r1",
+        "semantic_ref": "a1"
+      },
+      {
+        "id": "i18",
+        "mechanism": "address_lane",
+        "region": "r1",
+        "semantic_ref": "a1"
+      },
+      {
+        "id": "i19",
+        "mechanism": "transfer_direct",
+        "region": "r1",
+        "semantic_ref": "a1"
+      },
+      {
+        "id": "i20",
+        "mechanism": "address_lane",
+        "region": "r1",
+        "semantic_ref": "a1"
+      },
+      {
+        "id": "i21",
+        "mechanism": "transfer_direct",
+        "region": "r1",
+        "semantic_ref": "a1"
+      },
+      {
+        "id": "i22",
+        "mechanism": "address_lane",
+        "region": "r1",
+        "semantic_ref": "a1"
+      },
+      {
+        "id": "i23",
+        "mechanism": "transfer_direct",
+        "region": "r1",
+        "semantic_ref": "a1"
+      },
+      {
+        "id": "i24",
+        "mechanism": "address_lane",
+        "region": "r1",
+        "semantic_ref": "a1"
+      },
+      {
+        "id": "i25",
+        "mechanism": "transfer_direct",
+        "region": "r1",
+        "semantic_ref": "a1"
+      },
+      {
+        "id": "i26",
+        "mechanism": "address_lane",
+        "region": "r1",
+        "semantic_ref": "a1"
+      },
+      {
+        "id": "i27",
+        "mechanism": "transfer_direct",
+        "region": "r1",
+        "semantic_ref": "a1"
+      },
+      {
+        "id": "i28",
+        "mechanism": "address_lane",
+        "region": "r1",
+        "semantic_ref": "a1"
+      },
+      {
+        "id": "i29",
+        "mechanism": "transfer_direct",
+        "region": "r1",
+        "semantic_ref": "a1"
+      },
+      {
+        "id": "i30",
+        "mechanism": "address_lane",
+        "region": "r1",
+        "semantic_ref": "a1"
+      },
+      {
+        "id": "i31",
+        "mechanism": "transfer_direct",
+        "region": "r1",
+        "semantic_ref": "a1"
+      },
+      {
+        "id": "i32",
+        "mechanism": "address_lane",
+        "region": "r1",
+        "semantic_ref": "a1"
+      },
+      {
+        "id": "i33",
+        "mechanism": "transfer_direct",
+        "region": "r1",
+        "semantic_ref": "a1"
+      },
+      {
+        "id": "i34",
+        "mechanism": "address_lane",
+        "region": "r1",
+        "semantic_ref": "a1"
+      },
+      {
+        "id": "i35",
+        "mechanism": "transfer_direct",
+        "region": "r1",
+        "semantic_ref": "a1"
+      },
+      {
+        "id": "i36",
+        "mechanism": "address_lane",
+        "region": "r1",
+        "semantic_ref": "a1"
+      },
+      {
+        "id": "i37",
+        "mechanism": "transfer_direct",
+        "region": "r1",
+        "semantic_ref": "a1"
+      },
+      {
+        "id": "i38",
+        "mechanism": "address_lane",
+        "region": "r1",
+        "semantic_ref": "a1"
+      },
+      {
+        "id": "i39",
+        "mechanism": "transfer_direct",
+        "region": "r1",
+        "semantic_ref": "a1"
+      },
+      {
+        "id": "i40",
+        "mechanism": "address_lane",
+        "region": "r1",
+        "semantic_ref": "a1"
+      },
+      {
+        "id": "i41",
+        "mechanism": "transfer_direct",
+        "region": "r1",
+        "semantic_ref": "a1"
+      },
+      {
+        "id": "i42",
+        "mechanism": "address_lane",
+        "region": "r1",
+        "semantic_ref": "a1"
+      },
+      {
+        "id": "i43",
+        "mechanism": "transfer_direct",
+        "region": "r1",
+        "semantic_ref": "a1"
+      }
+    ],
+    "iterations": [],
+    "loop_carriers": [],
+    "order": [
+      {
+        "after": "i5",
+        "before": "i3"
+      },
+      {
+        "after": "i7",
+        "before": "i5"
+      },
+      {
+        "after": "i9",
+        "before": "i7"
+      },
+      {
+        "after": "i13",
+        "before": "i9"
+      },
+      {
+        "after": "i14",
+        "before": "i13"
+      },
+      {
+        "after": "i16",
+        "before": "i15"
+      },
+      {
+        "after": "i18",
+        "before": "i17"
+      },
+      {
+        "after": "i20",
+        "before": "i19"
+      },
+      {
+        "after": "i22",
+        "before": "i21"
+      },
+      {
+        "after": "i24",
+        "before": "i23"
+      },
+      {
+        "after": "i26",
+        "before": "i25"
+      },
+      {
+        "after": "i28",
+        "before": "i27"
+      },
+      {
+        "after": "i30",
+        "before": "i29"
+      },
+      {
+        "after": "i32",
+        "before": "i31"
+      },
+      {
+        "after": "i34",
+        "before": "i33"
+      },
+      {
+        "after": "i36",
+        "before": "i35"
+      },
+      {
+        "after": "i38",
+        "before": "i37"
+      },
+      {
+        "after": "i40",
+        "before": "i39"
+      },
+      {
+        "after": "i42",
+        "before": "i41"
+      }
+    ],
+    "participant_mappings": [],
+    "physical_iterations": [],
+    "physical_loop_carriers": [],
+    "program_axes": [
+      {
+        "axis": 0,
+        "domain_ref": "d0"
+      }
+    ],
+    "refinements": [],
+    "regions": [
+      {
+        "id": "r0",
+        "parent": null,
+        "placement": "root"
+      },
+      {
+        "id": "r1",
+        "parent": "r0",
+        "placement": "program"
+      }
+    ],
+    "route_extent_transforms": [],
+    "routes": [
+      {
+        "slots": [
+          0
+        ],
+        "source": "i0",
+        "target": "i2"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i1",
+        "target": "i2"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i2",
+        "target": "i3"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i2",
+        "target": "i4"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i4",
+        "target": "i5"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i2",
+        "target": "i6"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i6",
+        "target": "i7"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i2",
+        "target": "i8"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i8",
+        "target": "i9"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i10",
+        "target": "i12"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i1",
+        "target": "i12"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i12",
+        "target": "i13"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i3",
+        "target": "i13"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i12",
+        "target": "i14"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i11",
+        "target": "i14"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i14",
+        "target": "i15"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i3",
+        "target": "i15"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i14",
+        "target": "i16"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i11",
+        "target": "i16"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i16",
+        "target": "i17"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i3",
+        "target": "i17"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i16",
+        "target": "i18"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i11",
+        "target": "i18"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i18",
+        "target": "i19"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i3",
+        "target": "i19"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i18",
+        "target": "i20"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i11",
+        "target": "i20"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i20",
+        "target": "i21"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i5",
+        "target": "i21"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i20",
+        "target": "i22"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i11",
+        "target": "i22"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i22",
+        "target": "i23"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i5",
+        "target": "i23"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i22",
+        "target": "i24"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i11",
+        "target": "i24"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i24",
+        "target": "i25"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i5",
+        "target": "i25"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i24",
+        "target": "i26"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i11",
+        "target": "i26"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i26",
+        "target": "i27"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i5",
+        "target": "i27"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i26",
+        "target": "i28"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i11",
+        "target": "i28"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i28",
+        "target": "i29"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i7",
+        "target": "i29"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i28",
+        "target": "i30"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i11",
+        "target": "i30"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i30",
+        "target": "i31"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i7",
+        "target": "i31"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i30",
+        "target": "i32"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i11",
+        "target": "i32"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i32",
+        "target": "i33"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i7",
+        "target": "i33"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i32",
+        "target": "i34"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i11",
+        "target": "i34"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i34",
+        "target": "i35"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i7",
+        "target": "i35"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i34",
+        "target": "i36"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i11",
+        "target": "i36"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i36",
+        "target": "i37"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i9",
+        "target": "i37"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i36",
+        "target": "i38"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i11",
+        "target": "i38"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i38",
+        "target": "i39"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i9",
+        "target": "i39"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i38",
+        "target": "i40"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i11",
+        "target": "i40"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i40",
+        "target": "i41"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i9",
+        "target": "i41"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i40",
+        "target": "i42"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i11",
+        "target": "i42"
+      },
+      {
+        "slots": [
+          0
+        ],
+        "source": "i42",
+        "target": "i43"
+      },
+      {
+        "slots": [
+          1
+        ],
+        "source": "i9",
+        "target": "i43"
+      }
+    ],
+    "sharing": [
+      {
+        "consumers": [
+          "i2",
+          "i12"
+        ],
+        "source": "i1"
+      },
+      {
+        "consumers": [
+          "i3",
+          "i4",
+          "i6",
+          "i8"
+        ],
+        "source": "i2"
+      },
+      {
+        "consumers": [
+          "i13",
+          "i15",
+          "i17",
+          "i19"
+        ],
+        "source": "i3"
+      },
+      {
+        "consumers": [
+          "i21",
+          "i23",
+          "i25",
+          "i27"
+        ],
+        "source": "i5"
+      },
+      {
+        "consumers": [
+          "i29",
+          "i31",
+          "i33",
+          "i35"
+        ],
+        "source": "i7"
+      },
+      {
+        "consumers": [
+          "i37",
+          "i39",
+          "i41",
+          "i43"
+        ],
+        "source": "i9"
+      },
+      {
+        "consumers": [
+          "i14",
+          "i16",
+          "i18",
+          "i20",
+          "i22",
+          "i24",
+          "i26",
+          "i28",
+          "i30",
+          "i32",
+          "i34",
+          "i36",
+          "i38",
+          "i40",
+          "i42"
+        ],
+        "source": "i11"
+      },
+      {
+        "consumers": [
+          "i13",
+          "i14"
+        ],
+        "source": "i12"
+      },
+      {
+        "consumers": [
+          "i15",
+          "i16"
+        ],
+        "source": "i14"
+      },
+      {
+        "consumers": [
+          "i17",
+          "i18"
+        ],
+        "source": "i16"
+      },
+      {
+        "consumers": [
+          "i19",
+          "i20"
+        ],
+        "source": "i18"
+      },
+      {
+        "consumers": [
+          "i21",
+          "i22"
+        ],
+        "source": "i20"
+      },
+      {
+        "consumers": [
+          "i23",
+          "i24"
+        ],
+        "source": "i22"
+      },
+      {
+        "consumers": [
+          "i25",
+          "i26"
+        ],
+        "source": "i24"
+      },
+      {
+        "consumers": [
+          "i27",
+          "i28"
+        ],
+        "source": "i26"
+      },
+      {
+        "consumers": [
+          "i29",
+          "i30"
+        ],
+        "source": "i28"
+      },
+      {
+        "consumers": [
+          "i31",
+          "i32"
+        ],
+        "source": "i30"
+      },
+      {
+        "consumers": [
+          "i33",
+          "i34"
+        ],
+        "source": "i32"
+      },
+      {
+        "consumers": [
+          "i35",
+          "i36"
+        ],
+        "source": "i34"
+      },
+      {
+        "consumers": [
+          "i37",
+          "i38"
+        ],
+        "source": "i36"
+      },
+      {
+        "consumers": [
+          "i39",
+          "i40"
+        ],
+        "source": "i38"
+      },
+      {
+        "consumers": [
+          "i41",
+          "i42"
+        ],
+        "source": "i40"
+      }
+    ],
+    "terminal_controls": []
+  },
+  "schema": "intentir.scrc.artifact.v13"
+}

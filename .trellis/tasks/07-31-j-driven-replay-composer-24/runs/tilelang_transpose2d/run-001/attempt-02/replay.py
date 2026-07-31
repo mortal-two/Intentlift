@@ -1,0 +1,9 @@
+import tilelang.language as T
+X0 = T.dynamic("x0")
+@T.prim_func
+def scrc_k0(p0: T.Tensor((X0, 16), "float32"), p1: T.Tensor((16, X0), "float32")):
+    with T.Kernel(X0, threads=c0) as v1:
+        transpose_value = T.alloc_fragment((16,), "float32")
+        T.copy(p0[v1, 0:16], transpose_value)
+        for v2 in T.Parallel(16):
+            p1[v2, v1] = transpose_value[v2]

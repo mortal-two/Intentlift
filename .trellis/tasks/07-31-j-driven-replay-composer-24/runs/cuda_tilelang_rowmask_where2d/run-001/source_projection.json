@@ -1,0 +1,15 @@
+{
+  "constexpr_parameters": [],
+  "frontend": "cuda",
+  "function": "main_kernel",
+  "origin_location": "dataset://TianchenIR-MultiFrontend/cuda/generated/rowmask_where2d.cu",
+  "parameters": [
+    "inp",
+    "out",
+    "row_mask",
+    "M"
+  ],
+  "protocol": "intentir.scrc.frontend-source-projection.v1",
+  "source_kind": "module_file",
+  "source_location": "dataset://TianchenIR-MultiFrontend/cuda/generated/rowmask_where2d.cu"
+}
