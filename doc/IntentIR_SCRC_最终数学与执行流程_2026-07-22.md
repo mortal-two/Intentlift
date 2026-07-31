@@ -8,8 +8,8 @@
 > equality 的公式，均由
 > [J-only Replay 与 J/C Structural Gate1](method/IntentIR_J-only_Replay与JC结构Gate1_2026-07-31.md)
 > 覆盖。当前设计为 `R=Replay(J,MaskC(C);U_f)`，Gate1 在固定 `(f,p,ν,c0)` 下检查两臂独立
-> π-normalized observation equality，并只推出 J/C-owned structural closure。历史 runtime/receipt 仍按原版本解释；此修订不声称
-> 新 runtime 已完成。
+> π-normalized observation equality，并只推出 J/C-owned structural closure。历史 runtime/receipt 仍按原版本解释；
+> Task 20 当前 runtime 已切换到 J-only packet 与外部单臂 normalizer，真实四核纵切结果另见 Task 20 evidence。
 >
 > 核心设计：[C 所有权](IntentIR_C_所有权_绑定_消费与三方验证设计_2026-07-22.md)、
 > [π 实现见证](IntentIR_pi_依赖类型实现见证与Replay安全设计_2026-07-22.md)、
@@ -503,11 +503,16 @@ Source/Replay observation 可能形成 residual，但 Gate1 不认证 π complet
 
 首版不需要让 TypeCheck 成为 SMT 或完整图证明器。最小可行实现只需 fail closed 地完成上述局部检查。
 
-以下是 Task 20 P1 迁移前的 π-consuming runtime 记录，只解释历史/当前旧实现，不是 J-only Replay
-规范或新 evidence。旧 runtime 完成移除前不得运行新的正式 Task 20 closure。
+Task 20 当前活动路径为 `replay-input.v3 / replay-check.v15 / MiniSWE Replay v32 / Codex Replay v56`：
+Replay workspace 只挂载 J-only `S_J`、MaskC 与 `U_f`；π view、π query、obligation audit 和
+π-dependent construction membership 已从活动 Replay 路径删除。Gate1 使用
+`intentir.j-only-replay.jc-structural-gate1.v1` 与
+`intentir.gate1.jc-normalizer.v1`，只在两臂 raw observation 之后执行固定单边 normalization。
+
+以下是迁移前的 π-consuming runtime 记录，只解释历史 evidence，不是 J-only Replay 规范或新 evidence。
 
 迁移前合并协议为 `artifact.v12 / decode.v17 / typecheck.v30 / candidate-check.v1 / replay-check.v14`；
-Replay packet envelope 为 `replay-input.v2`；Triton 公共上下文由当前固定公开字段直接给出，不再使用 context version、SHA 或 receipt 作为运行门禁；
+Replay packet envelope 为 `replay-input.v2`；Triton 公共上下文由固定公开字段直接给出，不使用 context version、SHA 或 receipt 作为运行门禁；
 Codex/MiniSWE Lift knowledge 为 v89/v67，MiniSWE Replay backend 为 v31，Codex Replay backend 为 v55，
 J-only Replay semantic view 为 `intentir.replay-semantic-program.v1`。
 v30/v26 把 authored target-local route extent transform 纳入 `critical_facts.v4`、

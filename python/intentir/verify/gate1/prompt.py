@@ -11,8 +11,10 @@ from intentir.ir.canonical_j import canonicalize_gate1_artifact
 from .model import Frontend, Gate1Artifact, SchemaError
 
 
-REPLAY_PACKET_SCHEMA = "intentir.scrc.replay-input.v2"
-LEGACY_REPLAY_PACKET_SCHEMAS = frozenset({"intentir.scrc.replay-input.v1"})
+REPLAY_PACKET_SCHEMA = "intentir.scrc.replay-input.v3"
+LEGACY_REPLAY_PACKET_SCHEMAS = frozenset(
+    {"intentir.scrc.replay-input.v1", "intentir.scrc.replay-input.v2"}
+)
 PUBLIC_FRONTEND_CONTEXT = {
     "triton": {
         "retrieval_scope": "public Triton documentation and public examples",
@@ -23,7 +25,8 @@ PUBLIC_FRONTEND_CONTEXT = {
             "J.signature handles, followed in order by MaskC(C) slots whose kind "
             "is constexpr and which remain annotated tl.constexpr; kind=compiler "
             "slots belong only to the external invocation. J alone supplies "
-            "semantics and pi alone supplies realization topology."
+            "semantics. Physical realization remains the Replay compiler's "
+            "source-blind target choice and is checked only outside this packet."
         ),
     },
     "cute": {
@@ -94,36 +97,30 @@ _REPLAY_COMPONENT_KEYS = {
         }
     ),
     "c": frozenset({"slots"}),
-    "pi": frozenset(
-        {
-            "regions",
-            "instances",
-            "routes",
-            "program_axes",
-            "program_linearizations",
-            "route_extent_transforms",
-            "order",
-            "sharing",
-            "refinements",
-            "iterations",
-            "loop_carriers",
-            "physical_iterations",
-            "physical_loop_carriers",
-            "terminal_controls",
-        }
-    ),
 }
+_LEGACY_PI_KEYS = frozenset(
+    {
+        "regions",
+        "instances",
+        "routes",
+        "program_axes",
+        "program_linearizations",
+        "route_extent_transforms",
+        "order",
+        "sharing",
+        "refinements",
+        "iterations",
+        "loop_carriers",
+        "physical_iterations",
+        "physical_loop_carriers",
+        "terminal_controls",
+    }
+)
 _HISTORICAL_J_KEY_SETS = frozenset(
     {
         _REPLAY_COMPONENT_KEYS["j"] - {"dimension_relations"},
         _REPLAY_COMPONENT_KEYS["j"]
         - {"dimension_relations", "value_dimension_relations"},
-    }
-)
-_HISTORICAL_PI_KEY_SETS = frozenset(
-    {
-        _REPLAY_COMPONENT_KEYS["pi"] - {"program_linearizations"},
-        _REPLAY_COMPONENT_KEYS["pi"] - {"program_axes", "program_linearizations"},
     }
 )
 _U_F_KEYS = frozenset(
@@ -157,9 +154,14 @@ def _validate_source_isolated_payload(
 ) -> None:
     if not isinstance(payload, Mapping):
         raise SchemaError("Replay payload must be an object")
-    if set(payload) != {"j", "c", "pi", "u_f"}:
+    root = set(payload)
+    active_root = {"j", "c", "u_f"}
+    historical_root = {"j", "c", "pi", "u_f"}
+    if root != active_root and not (
+        not require_active_context and root == historical_root
+    ):
         raise SchemaError(
-            "Replay payload root must contain exactly j, c, pi, and u_f"
+            "Replay payload root must contain exactly j, c, and u_f"
         )
     for component, expected in _REPLAY_COMPONENT_KEYS.items():
         value = payload[component]
@@ -169,17 +171,23 @@ def _validate_source_isolated_payload(
             and component == "j"
             and frozenset(actual) in _HISTORICAL_J_KEY_SETS
         )
-        historical_pi = (
-            component == "pi"
-            and frozenset(actual) in _HISTORICAL_PI_KEY_SETS
-        )
         if not isinstance(value, Mapping) or (
-            actual != expected and not historical_j and not historical_pi
+            actual != expected and not historical_j
         ):
             raise SchemaError(
                 f"Replay payload {component} must contain exactly "
                 + ", ".join(sorted(expected))
             )
+    if "pi" in payload:
+        pi = payload["pi"]
+        actual_pi = set(pi) if isinstance(pi, Mapping) else set()
+        historical_pi_sets = {
+            _LEGACY_PI_KEYS,
+            _LEGACY_PI_KEYS - {"program_linearizations"},
+            _LEGACY_PI_KEYS - {"program_axes", "program_linearizations"},
+        }
+        if not isinstance(pi, Mapping) or frozenset(actual_pi) not in historical_pi_sets:
+            raise SchemaError("historical Replay payload pi has an invalid closed root")
     u_f = payload["u_f"]
     if not isinstance(u_f, Mapping):
         raise SchemaError("Replay payload u_f must be an object")
@@ -224,11 +232,15 @@ def _validate_source_isolated_payload(
     for path, value in _walk(dict(payload)):
         if isinstance(value, dict):
             forbidden = sorted(set(value) & _FORBIDDEN_KEYS)
-            if "source" in value and not (
-                path.startswith("$.pi.routes[")
-                or path.startswith("$.pi.route_extent_transforms[")
-                or path.startswith("$.pi.sharing[")
-            ):
+            legacy_pi_source = (
+                not require_active_context
+                and (
+                    path.startswith("$.pi.routes[")
+                    or path.startswith("$.pi.route_extent_transforms[")
+                    or path.startswith("$.pi.sharing[")
+                )
+            )
+            if "source" in value and not legacy_pi_source:
                 forbidden.append("source")
             if forbidden:
                 raise SchemaError(
@@ -257,7 +269,6 @@ class ReplayPacket:
 
     j: Mapping[str, Any]
     c: Mapping[str, Any]
-    pi: Mapping[str, Any]
     u_f: Mapping[str, Any]
 
     def __post_init__(self) -> None:
@@ -267,7 +278,6 @@ class ReplayPacket:
         payload = {
             "j": copy.deepcopy(dict(self.j)),
             "c": copy.deepcopy(dict(self.c)),
-            "pi": copy.deepcopy(dict(self.pi)),
             "u_f": copy.deepcopy(dict(self.u_f)),
         }
         if validate:
@@ -283,7 +293,7 @@ def build_rewriter_packet(
     frontend: Frontend | str = Frontend.TRITON,
     masked: bool = False,
 ) -> ReplayPacket:
-    """Build the one canonical ``J + pi + MaskC(C) + U_f`` packet."""
+    """Build the one canonical ``J + MaskC(C) + U_f`` Replay packet."""
 
     # Local import avoids a package initialization cycle: TypeCheck depends on
     # the Gate1 data model, while this builder is its first production consumer.
@@ -311,7 +321,7 @@ def build_rewriter_packet(
             "replay_function": "scrc_k0",
         }
     )
-    return ReplayPacket(view["j"], view["c"], view["pi"], context)
+    return ReplayPacket(view["j"], view["c"], context)
 
 
 def build_rewriter_payload(
@@ -320,7 +330,7 @@ def build_rewriter_payload(
     frontend: Frontend | str = Frontend.TRITON,
     masked: bool = False,
 ) -> dict[str, Any]:
-    """Build exactly ``J + pi + MaskC(C) + U_f``."""
+    """Build exactly ``J + MaskC(C) + U_f``."""
 
     return build_rewriter_packet(
         artifact, frontend=frontend, masked=masked
@@ -361,10 +371,10 @@ def _concise_instructions(*, frontend: Frontend, masked: bool) -> str:
     return (
         "You are one fresh source-blind Replay coding agent. Return one complete "
         f"self-contained {output} source module and no prose. J is the sole semantic "
-        "authority; C exposes only anonymous slots; pi is exact realization topology, "
-        "not a target recipe. Preserve every authored occurrence, route, region, "
-        "order, sharing, iteration/carrier, control and refinement relation, and "
-        "invent no missing fact. Use only public frontend APIs and the canonical "
+        "authority and C exposes only anonymous slots. Compile the whole typed J "
+        "without adding value semantics. Physical layout, program mapping, loops, "
+        "control and target APIs are your source-blind compiler choices, not extra "
+        "semantic inputs. Use only public frontend APIs and the canonical "
         "J.signature/MaskC(C) handles. Source, Gate feedback, previous Replay and "
         "kernel templates are unavailable. The packet's U_f gives only the callable "
         "ABI."

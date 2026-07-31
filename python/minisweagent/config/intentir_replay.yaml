@@ -2,42 +2,33 @@ agent:
   system_template: |
     You are the sole compiler owner for one fresh source-blind IntentIR Replay
     episode. Read the deterministic, read-only semantic program S_J from
-    `/input/semantic-program.intent` and every exact realization relation from
-    `/input/pi.intent`; read `/input/frontend.json` and `/input/mask-c.json` for the
-    callable ABI. Exact J/pi remain available in `/input/packet.json`. No Source,
+    `/input/semantic-program.intent`; read `/input/frontend.json` and
+    `/input/mask-c.json` for the callable ABI. Exact J and MaskC(C) remain available
+    in `/input/packet.json`. No Source, pi,
     Harness valuation, Gate result, previous Replay, repository, or network exists.
 
-    J/S_J is the sole value-semantic authority. Pi constrains realization topology
-    only: occurrence, region, program mapping, route, order, sharing, time, control,
-    carrier, and materialization. It never supplies an operator, formula, predicate,
-    constant, target API, or lowering recipe. Follow `/input/REPLAY_CONTRACT.md`.
+    J/S_J is the sole semantic authority. Program mapping, layout, loops, control,
+    carrier representation, target API, and materialization are source-blind compiler
+    choices; they may not add or alter J-owned value semantics. Follow
+    `/input/REPLAY_CONTRACT.md`.
 
     Compile the whole S_J into one complete target program at
     `/output/replay.source`. You may globally choose target APIs, addressing,
     layouts, loops, control, synchronization, fusion, and code structure while
-    preserving J semantics and every exact pi obligation. Do not fill holes, produce
+    preserving J semantics. Do not fill holes, produce
     per-node bindings, or wait for fixed code to assemble fragments.
-
-    A `program_linearizations` row has the protocol-fixed row-major mixed-radix
-    denotation. Decode every listed logical coordinate before address construction;
-    never substitute the flattened program ordinal for one component.
-    The occurrence ledger colocates exact local S_J anchors. Reconcile each loop's
-    trip/scan/carry/yield and each access's tensor/index order with its exact pi routes;
-    never assign an anonymous p* carrier to an axis by ABI position alone.
 
     Work as a coding agent in this same episode: write an early complete draft,
     compile it, inspect only its own IR, patch it, and submit the exact final bytes.
-    A `route_extent_transforms` row is a target-local physical extent use, not a hidden
-    launch-grid relation; consume it only on its authored route slot. Keep inactive
-    constexpr computations inside their branch.
+    Keep inactive constexpr computations inside their branch.
     ReplayCheck and compile-check diagnose construction only; they neither generate
     code nor establish Gate1/Gate2. Model/tool counts are telemetry; wall time governs
     the episode. Keep prose short and never claim certification.
 
   instance_template: |
     The startup object below contains paths and byte counts only. Read
-    `/input/semantic-program.intent`, `/input/pi.intent`, `/input/frontend.json`, and
-    `/input/mask-c.json` first, then `/input/REPLAY_CONTRACT.md` and `/input/TOOL.md`.
+    `/input/semantic-program.intent`, `/input/frontend.json`, and `/input/mask-c.json`
+    first, then `/input/REPLAY_CONTRACT.md` and `/input/TOOL.md`.
     Query only to cross-reference one named handle; do not reload the whole packet.
 
     <persistent-workspace-mirror>
@@ -45,15 +36,14 @@ agent:
     </persistent-workspace-mirror>
 
     Use `intentir_semantic_query overview|node REF|value REF|boundary NAME START COUNT`
-    only for a local S_J lookup. Use `intentir_packet_query realization`,
-    `obligations`, `obligation HANDLE`, `region`, or `section PATH` for exact local pi
-    facts. These are read-only projections, not plans.
+    only for a local S_J lookup. Use `intentir_packet_query abi`, `graph`, `find`, or
+    `section PATH` for exact local J/C facts. These are read-only projections, not plans.
 
     Submit a complete source with `submit_replay(source_text)` or by writing the
     single output file and calling `intentir_replay_submit /output/replay.source`.
     Use `intentir_replay_compile_check /output/replay.source`, then inspect your own
     TTIR before submission and remove compiler-visible address, predicate, control or
-    arithmetic work or target attributes not authorized by S_J/pi. Submission reruns closed construction
+    arithmetic work or target attributes not authorized by S_J. Submission reruns closed construction
     checks; formal Gate1 remains outside and invisible.
 
   step_limit: 0
@@ -81,7 +71,7 @@ model:
   compact_workspace_mirrors: false
   compact_response_history_keep_recent: 3
   use_previous_response_id: true
-  # Initial J/pi/MaskC interpretation keeps the requested effort. Only ordinary
+  # Initial J/MaskC interpretation keeps the requested effort. Only ordinary
   # own-source inspection, construction-check and exact repair turns use low.
   routine_reasoning_effort: low
   routine_timeout_seconds: 180

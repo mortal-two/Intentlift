@@ -1,6 +1,6 @@
 # Task 20：J-only Replay 与 J/C Structural Gate1
 
-> 状态：`DESIGN_ACTIVE`（2026-07-31）
+> 状态：`IMPLEMENTATION_ACTIVE`（2026-07-31）
 > Task 11 继续是不停止的 28-Kernel 闭合主线；本任务先纠正 Replay/Gate1 内部边界，再恢复闭合。
 
 ## 0. 唯一目标
@@ -35,38 +35,39 @@ Gate2: Source-Replay / Source-J / Replay-J
 
 - [x] 四份权威 SCRC 文档删除 Replay 消费 π 的活动公式与义务；
 - [x] `.trellis/spec` 统一为 J-only Replay / J/C Structural Gate1；
-- [ ] π grammar 中的 “Replay must preserve/materialize” 改为 certification witness denotation；
+- [x] π grammar 中的 “Replay must preserve/materialize” 改为 certification witness denotation；
 - [ ] Figure 3 保持拓扑，只在论文阶段改 Replay 输入与 Gate1 内部标签；
 - [x] production backend 继续只消费 accepted J+C。
 
 ## 3. P1：删除 π→Replay 通道
 
-- [ ] Replay request/workspace/cache key/continuation/tool allowlist 删除 canonical π、`pi.intent`、π query、
+- [x] Replay request/workspace/cache key/continuation/tool allowlist 删除 canonical π、`pi.intent`、π query、
   obligation ledger 与任何 π-derived view；
-- [ ] `S_J=M(J)` 继续是只读 J-only 编译视图，不生成 target skeleton；
-- [ ] Replay compiler diagnostics 只能来自自己的 source/compile，不含 Source/Gate1 diff；
-- [ ] 历史 π-consuming packet/checker 显式归档，不能作为新路径 evidence。
+- [x] `S_J=M(J)` 继续是只读 J-only 编译视图，不生成 target skeleton；
+- [x] Replay compiler diagnostics 只能来自自己的 source/compile，不含 Source/Gate1 diff；
+- [x] 历史 π-consuming view/nested wire 显式归档，旧 packet/checker 只作历史解释，不能作为新路径 evidence。
 
 ## 4. P2：最小 J/C Structural Gate1
 
-- [ ] raw `Compile/Observe/Canon` 不读取 π；
-- [ ] 实现 profile-scoped、确定性、单臂、幂等、fail-closed 的 `N^pi(observation)`；
-- [ ] 固定 `H^(J,C)` hard projection；候选 π 不得选择 rule/scope/erasable fields；
-- [ ] 实现候选外 `ProfileOK` 发布检查：H覆盖所有当前 profile 可观察的 J/C-owned categories，未知
+- [x] raw `Compile/Observe/Canon` 不读取 π；
+- [x] 实现 profile-scoped、确定性、单臂、幂等、fail-closed 的 `N^pi(observation)`；
+- [x] 固定 `H^(J,C)` hard projection；候选 π 不得选择 rule/scope/erasable fields；
+- [x] 实现候选外 `ProfileOK` 发布合同：H覆盖所有当前 profile 可观察的 J/C-owned categories，未知
   atom 默认 hard；每条 N_pi rule 具有机械 hard-preservation check 或独立 rule audit；
-- [ ] 第一纵切仅支持 Triton program-axis / mixed-radix linearization；
+- [x] 第一纵切仅支持 Triton program-axis / mixed-radix linearization；
 - [ ] simple placement/materialization 只在真实 residual 需要且 hard preservation 可局部判定时加入；
-- [ ] carrier/control/sharing/order/numeric/update 默认不 normalize；
-- [ ] 不实现 `Diff subset pi` acceptance、π completeness/minimality、used/unused π 认证或 per-kernel matcher。
-- [ ] 真实纵切后逐 relation 分类 `normalizer_required / typed_anchor_only / legacy_replay_only`；仅服务旧
+- [x] carrier/control/sharing/order/numeric/update 默认不 normalize；
+- [x] 不实现 `Diff subset pi` acceptance、π completeness/minimality、used/unused π 认证或 per-kernel matcher。
+- [x] 首轮分类：`program_axes/program_linearizations=normalizer_required`；其余 relation 当前仅
+  `typed_anchor_only` 或 `legacy_replay_only`，均无 Gate1 放宽权限；仅服务旧
   Replay construction 的字段与 totality obligation 在新 wire 版本中 optionalize/retire，减少 Lift
   序列化负担，不静默重写旧 artifact；
 - [ ] 记录 candidate 中 J/C/π 的 bytes、Lift time-to-TypeCheck 与 relation rejection，验证简化确实减负。
 
 ## 5. P3：失败路由与 freshness
 
-- [ ] Replay compile/API 错误只反馈 Replay Agent，在同一 source-blind episode 修复；
-- [ ] Gate1 完整 diff/有限 frontier 只返回同 branch source-aware Lift owner；
+- [x] Replay compile/API 错误只反馈 Replay Agent，在同一 source-blind episode 修复；
+- [x] Gate1 完整 diff/有限 frontier 只返回同 branch source-aware Lift owner；
 - [ ] owner 区分 Replay 忠实性、J/C hard residual、合法 normalization 缺口与 observer unsupported；
 - [ ] π-only 修改复用 exact R 并重跑 TypeCheck/Gate1；
 - [ ] J 或 MaskC structure/attachment 修改触发 fresh Replay；
@@ -92,9 +93,9 @@ Gate2: Source-Replay / Source-J / Replay-J
 
 ## 8. 完成条件
 
-- [ ] Replay runtime、spec、论文均不读取 π；
-- [ ] Gate1 的主定义只有 `Phi`、`N^pi`、definedness/equality 与固定 J/C hard-preservation；
-- [ ] π 不出现在 Gate1 的结论中，也没有 wildcard/allowed-diff/comparator 权限；
+- [x] Replay runtime、spec、活动方法文档均不读取 π；
+- [x] Gate1 的主定义只有 `Phi`、`N^pi`、definedness/equality 与固定 J/C hard-preservation；
+- [x] π 不出现在 Gate1 的结论中，也没有 wildcard/allowed-diff/comparator 权限；
 - [ ] 至少 Triton 的真实纵切通过 Gate1/Gate2；其他 frontend 准确报告 capability；
 - [ ] 28/28 current-version SCRC 完成，或剩余项给出真实 observer/J/Replay capability 边界；
 - [ ] 不以 mock/test/hash/banner 替代真实闭合；提交后工作区干净。

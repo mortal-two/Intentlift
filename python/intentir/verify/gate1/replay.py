@@ -31,7 +31,6 @@ from .prompt import (
     build_rewriter_prompt,
     build_rewriter_payload,
 )
-from .replay_realization_view import materialize_replay_realization
 from .replay_semantic_core import materialize_replay_semantics
 from .tilelang_codegen import extract_tilelang_module
 from .ttir import (
@@ -42,12 +41,12 @@ from .ttir import (
 )
 
 
-MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v31"
+MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v32"
 MINISWE_REPLAY_TURN_TIMEOUT_SECONDS = 300.0
 MINISWE_REPLAY_XHIGH_TURN_TIMEOUT_SECONDS = 900.0
 RESPONSES_REPLAY_BACKEND = "openai.responses.intentir-replay.v1"
 STATIC_REPLAY_BACKEND = "intentir.static-replay-test.v1"
-REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v14"
+REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v15"
 _ANONYMOUS_HANDLE = re.compile(r"^[pc][0-9]+$")
 
 
@@ -1931,9 +1930,9 @@ def replay_source_ingress(
                 ),
             )
         _check_triton_program_id_axes(code, function_name)
-        _check_triton_typed_control_contract(code, packet, function_name)
-        _check_triton_rounded_iteration_contract(code, packet, function_name)
-        _check_triton_route_extent_contract(code, packet, function_name)
+        # Replay construction preflight owns syntax and the exact J/C ABI only.
+        # Pi is deliberately absent from the Replay packet; realization
+        # differences are handled later by Gate1's fixed normalizer.
     except Exception as exc:
         return ReplayIngressResult(
             "fail", diagnostics=(_closed_ingress_diagnostic(exc),)
@@ -3215,9 +3214,6 @@ def source_blind_replay_compile_check(
         )
     if not result.ok:
         return _source_blind_compile_failure(result)
-    selected_packet = (
-        packet if packet is not None else artifact.rewriter_view(masked=False)
-    )
     if result.ttir is None:
         return ReplayIngressResult(
             "fail",
@@ -3231,13 +3227,10 @@ def source_blind_replay_compile_check(
             ),
         )
     try:
-        fingerprint = parse_ttir(result.ttir)
-        obligation_diagnostics = compiled_packet_obligation_diagnostics(
-            selected_packet,
-            result.ttir,
-            fingerprint=fingerprint,
-            path_prefix="<synthetic-frontend-compile>",
-        )
+        # This is a construction compile probe, not a semantic-membership oracle.
+        # Parsing proves only that the submitted source reaches the supported raw
+        # observer. Formal J/C closure remains exclusively outside the episode.
+        parse_ttir(result.ttir)
     except TTIRParseError:
         return ReplayIngressResult(
             "fail",
@@ -3249,11 +3242,6 @@ def source_blind_replay_compile_check(
                     "line": None,
                 },
             ),
-        )
-    if obligation_diagnostics:
-        return ReplayIngressResult(
-            "fail",
-            diagnostics=obligation_diagnostics,
         )
     return ReplayIngressResult(
         "pass",
@@ -3394,16 +3382,6 @@ def _replay_input_files(
         allow_nan=False,
         separators=(",", ":"),
     ) + "\n"
-    realization_view = materialize_replay_realization(
-        packet["pi"], semantic_program=semantic_program.to_json()
-    )
-    pi_text = json.dumps(
-        realization_view.to_json(),
-        sort_keys=True,
-        ensure_ascii=False,
-        allow_nan=False,
-        indent=2,
-    ) + "\n"
     mask_c_text = json.dumps(
         packet["c"],
         sort_keys=True,
@@ -3422,75 +3400,28 @@ def _replay_input_files(
 
 J is the sole semantic authority: operators, operands, constants, predicates,
 domains, effects, result relations, and boundary index expressions come only from J.
-C is masked and supplies only its declared anonymous slot. Pi is a dependent
-realization witness: it may constrain occurrence, region, route, order, sharing,
-iteration/carrier, program axis, terminal control, materialization, and refinement,
-but it never supplies an operator, formula, predicate, fill value, or target recipe.
+C is masked and supplies only its declared anonymous slot.
 `semantic-program.intent` and `semantic-program.json` are deterministic, read-only,
 parameterized materializations of this episode's J. They are compiler input IR, not a
 target-source skeleton or a fourth artifact. Compile the complete semantic program;
-do not edit it or treat pi as a source of missing value semantics. Source code, source
+do not edit it. Source code, source
 compiler IR, Harness values, Gate evidence, previous Replay, and kernel templates do
 not exist in this episode.
 
-`pi.intent` is a cross-indexed rendering of every exact relation in `pi.json`; each
-occurrence may colocate its exact local `S_J` anchor to avoid another global lookup.
-Read it completely before choosing region placement, address staging, loop carriers,
-routes, sharing or order. It is a realization constraint IR, not a target plan: no row
-maps to a target statement, and the attached anchor neither adds nor changes J semantics.
-For a loop occurrence, the anchor retains the authored trip/scan/carry/yield contract.
-For an access occurrence, it retains the tensor type and logical index expression.
-Correlate those exact J facts with pi routes; never assign a flattened coordinate or
-anonymous representation carrier to an access dimension merely by argument position.
-
-`route_extent_transforms` denotes a target-local physical extent use on its exact route
-slot. Consume its anonymous C handle and closed floor/ceil-div denotation in the device
-program. It is not a launch-grid relation; grid remains hidden Harness state and cannot
-be reconstructed from this field.
-
-Realize every explicit pi relation at its typed endpoints. You own the complete target
-program: instruction selection, address expressions, program mapping, control, layout,
-memory, loops/carriers, synchronization, target API and whole-program restructuring.
-Your freedom is constrained by pi's occurrence, region, route, order, sharing, time,
-control and materialization witness; this is Replay reconstruction, not unconstrained
-production optimization.
-
-An authored occurrence is not an algebraic equivalence class. Preserve J body
-occurrence order and every explicit pi order edge; do not merge, reorder, hoist, or
-sink compiler-visible occurrences merely because values are equivalent. Distinct pi
-instances remain distinct, each route is an exact producer-to-slot edge, and only an
-explicit sharing relation authorizes one local realization to serve several consumers.
-Distinct J domains may share one pi.program_axes axis. An empty-slot route from a
-program-region d* realization into a placement=branch region means that region is
-realized only inside that authored J domain; read the condition from J and the axis
-from pi, and do not invent another predicate or program coordinate.
-A terminal_controls row with domain_ref/continuation_region further states that the
-complement terminates this invocation, while that already-controlled region is the
-lexical continuation. It does not provide another predicate or authorize a fake
-J effect_if. An instance-pair row retains the authored effect_if arm meaning.
-
-Each pi.loop_carriers or pi.physical_loop_carriers row names four distinct physical
-occurrences even when several anchor the same J semantic value. Consume the ordinary
-init -> state and state -> next routes exactly; the carrier row itself denotes the
-next-to-state temporal edge and loop-exit result. Preserve declaration-order tuple
-ordinals and do not invent an update formula.
-
-A pi.program_linearizations row supplies a closed row-major mixed-radix realization
-constraint, not source bytes. For dimensions `[x0,...,xn]`, one physical ordinal is
-decoded outer-to-inner as `component[i] = (ordinal // product(extent[i+1:])) %
-extent[i]`; never use the flattened ordinal as one component. You choose the target
-spelling. Any interval, mask, selection, block formula, address or value computation
-still comes from J/S_J and must never be guessed from pi.
+You own the complete target program: instruction selection, address expressions,
+program mapping, control, layout, memory, loops/carriers, synchronization, target API
+and whole-program restructuring. Those choices may reorganize the program but may not
+add, remove, or alter J-owned values, predicates, domains, accesses, effects, results,
+or relations. Physical realization is not an extra semantic input. It will be compared
+outside this episode after fixed normalization; no Gate observation is available here.
 """
     readme = """# IntentIR source-blind Replay input
 
 This immutable directory is the complete input allowlist for one fresh episode.
 
-- `packet.json`: exact J + pi + MaskC(C) + public U_f.
+- `packet.json`: exact J + MaskC(C) + public U_f.
 - `semantic-program.intent`: compact, typed, parameterized read-only S_J.
 - `semantic-program.json`: exact structured form of the same S_J.
-- `pi.intent`: complete declaration-order read-only pi relation view.
-- `pi.json`: exact canonical pi behind that view.
 - `mask-c.json`: exact anonymous MaskC(C), with no valuation.
 - `frontend.json`: public source-neutral U_f and required callable entry.
 - `REPLAY_CONTRACT.md`: ownership and no-leak boundary.
@@ -3503,15 +3434,15 @@ target operator, API, source statement, instruction selection, or repair.
 """
     tool = """# Replay agent tools
 
-Act like a compiler coding agent. Read `semantic-program.intent`, `pi.intent`,
-`frontend.json`, and `mask-c.json` completely before drafting. Query exact J/S_J/pi
-only for a named cross-reference, and write one complete `/output/replay.source`.
+Act like a compiler coding agent. Read `semantic-program.intent`, `frontend.json`, and
+`mask-c.json` completely before drafting. Query exact J/S_J only for a named
+cross-reference, and write one complete `/output/replay.source`.
 
 ```text
 python .agents/intentir_agent_tool.py semantic_query overview
 python .agents/intentir_agent_tool.py semantic_query node REF
-python .agents/intentir_agent_tool.py packet_query realization
-python .agents/intentir_agent_tool.py packet_query obligation HANDLE
+python .agents/intentir_agent_tool.py packet_query abi 0 48
+python .agents/intentir_agent_tool.py packet_query graph 0 12
 python .agents/intentir_agent_tool.py replay_compile_check
 python .agents/intentir_agent_tool.py replay_ttir_inspect observer op_multiset
 python .agents/intentir_agent_tool.py replay_ttir_inspect observer loops
@@ -3522,7 +3453,7 @@ Use ordinary file edits and your own helper files under `/work`. You may compile
 inspect only your current Replay IR, checkpoint and patch repeatedly within this one
 episode. A construction-check PASS is only the point to inspect your own TTIR: remove
 compiler-visible address, predicate, control, or arithmetic work not authorized by
-S_J/pi, and keep inactive constexpr alternatives lexically inside their branch so the
+S_J, and keep inactive constexpr alternatives lexically inside their branch so the
 specialized compiler never materializes them. `submit_replay` checks the exact complete
 bytes but neither generates nor repairs them. Formal Gate1 runs outside this episode
 and is never visible here.
@@ -3533,8 +3464,6 @@ and is never visible here.
             "packet.json": packet_text,
             "semantic-program.json": semantic_program_text,
             "semantic-program.intent": semantic_program.text,
-            "pi.json": pi_text,
-            "pi.intent": realization_view.text,
             "mask-c.json": mask_c_text,
             "frontend.json": frontend_text,
             "REPLAY_CONTRACT.md": instructions + "\n",

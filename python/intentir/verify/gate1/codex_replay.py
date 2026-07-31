@@ -27,7 +27,6 @@ from intentir.verify.gate1.compiler import KernelSource, TritonCompiler
 from intentir.verify.gate1.ttir import fingerprint_ttir
 
 from .model import Frontend, Gate1Artifact
-from .pi_nested_wire import encode_pi_nested_wire
 from .replay_semantic_core import (
     materialize_replay_semantics,
     query_replay_semantics,
@@ -46,44 +45,33 @@ from .replay import (
 )
 
 
-CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v55"
+CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v56"
 
 _INITIAL_PROMPT = """You are the sole writer for one fresh source-blind IntentIR Replay episode.
 Work only under the isolated /workspace. input/ is immutable; output/, work/, and
 tmp/ are writable. There is no Source, Harness/compiler view, actual C value, Gate
 result, earlier Replay, sibling state, repository, or network.
 
-J is the only semantic authority; pi supplies realization constraints only. Read the
-complete read-only input/semantic-program.intent and input/pi.intent before drafting,
-then read input/frontend.json and input/mask-c.json for the callable ABI. S_J is a
-deterministic parameterized compiler IR derived only from this J; pi.intent renders
-the exact authored realization relations without target spelling. Neither is a
-target-source skeleton. Use `semantic_query` or `packet_query` only to cross-reference
-one named handle after reading those complete small views.
+J is the only semantic authority. Read the complete read-only
+input/semantic-program.intent before drafting, then read input/frontend.json and
+input/mask-c.json for the callable ABI. S_J is a deterministic parameterized compiler
+IR derived only from this J, not a target-source skeleton. Use `semantic_query` or
+`packet_query` only to cross-reference one named J/C handle after reading those complete
+small views. Pi, Source realization, Gate observations, and prior Replay are absent.
 
 Act as the complete Replay compiler. Write one full target program to
 output/replay.source yourself. You own instruction selection, addressing, program
 mapping, control, loops/carriers, layout, memory, synchronization, target APIs and
-whole-program restructuring, while satisfying every exact pi occurrence/region/route/
-order/sharing/time/control/materialization constraint. Do not edit S_J, infer a Source
-recipe, or obtain a missing value semantic from pi. input/REPLAY_CONTRACT.md defines
+whole-program restructuring while preserving all J-owned value semantics. Do not edit
+S_J or infer a Source recipe. input/REPLAY_CONTRACT.md defines
 the ownership boundary and input/TOOL.md defines the tools.
-
-Treat each pi.program_linearizations row as its protocol-fixed row-major mixed-radix
-decode: derive every listed logical coordinate before address construction and never
-substitute the flattened program ordinal for one component. This expands an existing
-closed pi denotation; it is not permission to guess a J interval or target recipe.
-The occurrence ledger colocates exact local S_J anchors: loop anchors retain
-trip/scan/carry/yield and access anchors retain tensor type/index order. Reconcile these
-with the exact incoming route slots before choosing address or loop code; do not assign
-an anonymous p* carrier to a logical axis by ABI position alone.
 
 Compile, inspect only your own Replay IR, and patch the complete program in this same
 episode. First run `replay_compile_check`; once construction passes, inspect your own
 TTIR observer view and audit every compiler-visible address, predicate, control and
-arithmetic stage against S_J/pi. Keep computations for inactive constexpr alternatives
-inside their branch. A materialization relation authorizes the distinct transfers/order, not an
-unmentioned `volatile`, cache, eviction or other target attribute. Then run
+arithmetic stage against S_J. Keep computations for inactive constexpr alternatives
+inside their branch and do not add unmentioned `volatile`, cache, eviction, or other
+target attributes. Then run
 `submit_replay` on the reviewed exact bytes and repair until it
 passes. Fixed code materializes S_J, projects exact packet facts, checks and rejects;
 it never constructs or repairs target source. Finish only with the transaction passing
@@ -92,7 +80,7 @@ and do not claim Gate1, Gate2, or certification.
 
 _REPAIR_PROMPT = """The same fresh source-blind Replay episode continues in the same thread and workspace.
 Read work/host_replay_check.json and the current output/replay.source. Repair the
-complete program using the same read-only S_J and pi, then rerun submit_replay.
+complete program using the same read-only S_J, then rerun submit_replay.
 Diagnostics reject only; they do not supply a semantic mapping or repair. Finish only
 when ingress and compile both pass.
 """
@@ -122,18 +110,6 @@ def _aggregate_usage(turns: list[CodexCLITurn]) -> dict[str, int]:
     return usage
 
 
-def _agent_replay_packet(packet: Mapping[str, Any]) -> dict[str, Any]:
-    """Return the exact Replay packet with pi in its bijective nested wire."""
-
-    pi = packet.get("pi")
-    if not isinstance(pi, Mapping):
-        raise TypeError("Replay packet pi must be an object")
-    result = dict(packet)
-    result["pi"] = encode_pi_nested_wire(pi)
-    return result
-
-
-
 def _replay_startup_context(
     packet: Mapping[str, Any], files: Mapping[str, str]
 ) -> dict[str, Any]:
@@ -147,7 +123,7 @@ def _replay_startup_context(
         separators=(",", ":"),
     ).encode("utf-8")
     return {
-        "protocol": "intentir.scrc.replay-startup-view.v5",
+        "protocol": "intentir.scrc.replay-startup-view.v6",
         "packet_bytes": len(encoded),
         "semantic_program_text_bytes": len(
             files["semantic-program.intent"].encode("utf-8")
@@ -155,13 +131,10 @@ def _replay_startup_context(
         "semantic_program_json_bytes": len(
             files["semantic-program.json"].encode("utf-8")
         ),
-        "realization_view_bytes": len(files["pi.intent"].encode("utf-8")),
         "paths": {
             "packet": "input/packet.json",
             "semantic_program": "input/semantic-program.intent",
             "semantic_program_json": "input/semantic-program.json",
-            "realization": "input/pi.intent",
-            "pi": "input/pi.json",
             "mask_c": "input/mask-c.json",
             "frontend": "input/frontend.json",
             "public_contract": "input/REPLAY_CONTRACT.md",
@@ -238,7 +211,7 @@ class CodexCLIReplayWriter:
             frontend=self.frontend,
             masked=masked,
         )
-        agent_packet = _agent_replay_packet(packet)
+        agent_packet = dict(packet)
         semantic_program = materialize_replay_semantics(packet["j"]).to_json()
         files["packet.json"] = json.dumps(
             agent_packet,

@@ -943,10 +943,10 @@ Replay 不得：
 下列 packet/protocol/ledger/replay-check 版本只解释旧 evidence。Task 20 fresh Replay 不得恢复这些
 π 输入，也不能把旧 construction check 当作当前 J-only path 的正确性证据。
 
-当前 packet protocol 是 `intentir.scrc.replay-input.v2`；Triton 公共上下文由固定公开字段直接给出，
-不使用 context version、SHA 或 receipt 作为运行门禁。source-aware Codex/MiniSWE Lift `intentir.lift-knowledge.v89/v67`、
-source-blind MiniSWE Replay v31 / Codex Replay v55、`intentir.replay-semantic-program.v1`、
-`replay-check.v14`；fresh Replay 只检查当前字段、packet closure 和 source isolation，旧版本 run 不能被新组合追认。
+Task 20 当前活动组合是 `intentir.scrc.replay-input.v3`、source-blind MiniSWE Replay v32 / Codex Replay
+v56、`intentir.replay-semantic-program.v1` 与 `replay-check.v15`。packet 只有 J、MaskC 与 `U_f`；
+construction preflight 只检查当前 packet closure、source isolation、ABI、compile 与 raw-observer definedness。
+下述 v2/v31/v55/v14 组合均为历史，旧版本 run 不能被新组合追认。
 v30/v26 把 authored target-local route extent transform 纳入 exact ledger、audit 与 closed
 floor/ceil-div static ingress；v55 继续该检查，不生成 relation/code，也不替代 Gate1。host launch/grid
 不是该 relation；错误作者化由 Gate1 反馈 persistent Lift owner relift。Codex v26 另以上述 1800 秒 episode 保留
@@ -954,7 +954,7 @@ floor/ceil-div static ingress；v55 继续该检查，不生成 relation/code，
 Codex Replay v28把fresh episode总active预算提升到3600秒，并允许在已有draft且transport context过大或
 turn timeout时，在同一workspace内新建thread重读exact packet/current Replay/closed diagnostic；不做
 语义摘要、不继承跨episode Replay，并只查询自己public synthetic compile得到的TTIR。
-Codex Replay v55 使用 J-only SemanticMaterializer：启动只给 immutable 文件路径与字节数，首轮完整
+历史 Codex Replay v55 使用 J-only SemanticMaterializer：启动只给 immutable 文件路径与字节数，首轮完整
 读取`semantic-program.intent`与按region/occurrence交叉索引、逐关系无损的`pi.intent`；后者可并置 occurrence 已引用的 exact local S_J anchor，但不增加 relation/target mapping。随后尽早写完整Replay；不嵌入整份packet或requirements ledger，不再强制
 `overview -> requirements -> realization`逐叶查询；query只用于一个仍不明确的精确path/handle。
 episode仍按时间而非调用次数治理：high默认1200秒，xhigh默认3600秒，episode内工具调用不设语义次数

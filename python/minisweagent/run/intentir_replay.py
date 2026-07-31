@@ -154,22 +154,18 @@ def _replay_startup_context(workspace: IntentIRReplayWorkspace) -> str:
     semantic_bytes = (
         workspace.input_dir / "semantic-program.intent"
     ).stat().st_size
-    realization_bytes = (workspace.input_dir / "pi.intent").stat().st_size
     exact: dict[str, Any] = {
-        "protocol": "intentir.replay-startup-context.v5",
+        "protocol": "intentir.replay-startup-context.v6",
         "authority": (
             "path and byte-count receipt only; immutable exact inputs remain in "
             "/input and no semantic or target program is embedded here"
         ),
         "packet_bytes": packet_bytes,
         "semantic_program_bytes": semantic_bytes,
-        "realization_view_bytes": realization_bytes,
         "paths": {
             "semantic_program": "/input/semantic-program.intent",
             "semantic_program_json": "/input/semantic-program.json",
             "packet": "/input/packet.json",
-            "realization": "/input/pi.intent",
-            "pi": "/input/pi.json",
             "mask_c": "/input/mask-c.json",
             "frontend": "/input/frontend.json",
             "contract": "/input/REPLAY_CONTRACT.md",

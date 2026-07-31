@@ -1,7 +1,7 @@
 # IntentIR：J-only Replay 与 J/C Structural Gate1
 
 > 日期：2026-07-31
-> 状态：Task 20 规范性方法；取代 π-centered `CanonPair/coverage` 草案。
+> 状态：Task 20 活动实现规范；取代 π-centered `CanonPair/coverage` 草案。
 > 范围：只窄化 Replay 与 Gate1 的内部定义，不改变 Figure 3 的阶段、三对象或 Gate2。
 
 ## 1. 核心定位
