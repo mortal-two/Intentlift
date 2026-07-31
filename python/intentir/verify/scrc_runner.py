@@ -40,9 +40,6 @@ MAX_GATE1_FEEDBACK_LOCAL_FRONTIER_EXAMPLES = 10
 MAX_GATE1_REPAIR_CHANGED_PATHS = 48
 GATE1_REPAIR_PROGRESS_PROTOCOL = "intentir.gate1-relift-progress.v1"
 GATE1_LOCAL_FRONTIER_PROTOCOL = "intentir.gate1-local-frontier.v1"
-GATE1_REPLAY_COUNTEREXAMPLE_PROTOCOL = (
-    "intentir.gate1-replay-counterexample.v1"
-)
 _OBSERVER_NODE_FINGERPRINT = re.compile(
     r"(?<=[\[:])[0-9a-f]{12,64}(?=\])"
 )
@@ -1357,39 +1354,6 @@ class SCRCGateRunner:
                 source_fingerprint=result.source_fingerprint,
                 replay_fingerprint=normal.fingerprint,
             )
-        replay_source = (
-            normal.generation.code
-            if normal.generation is not None
-            and isinstance(normal.generation.code, str)
-            and normal.generation.code
-            else None
-        )
-        replay_ttir = (
-            normal.compile_result.ttir
-            if normal.compile_result is not None
-            and isinstance(normal.compile_result.ttir, str)
-            and normal.compile_result.ttir
-            else None
-        )
-        if replay_source is not None or replay_ttir is not None:
-            diagnostics["replay_counterexample"] = {
-                "protocol": GATE1_REPLAY_COUNTEREXAMPLE_PROTOCOL,
-                "formal_round": formal_round,
-                "mode": normal.mode,
-                "selected_normal_index": result.selected_normal_index,
-                "entry_function_name": (
-                    normal.generation.entry_function_name
-                    if normal.generation is not None
-                    else None
-                ),
-                "replay_source": replay_source,
-                "replay_ttir": replay_ttir,
-                "authority": (
-                    "read-only exact output of the preceding formal source-blind "
-                    "Replay and compiler; it is relift evidence only, supplies no "
-                    "J/C/pi field or repair, and never participates in a gate verdict"
-                ),
-            }
         progress = cls._gate1_repair_progress(
             artifact,
             diagnostics,

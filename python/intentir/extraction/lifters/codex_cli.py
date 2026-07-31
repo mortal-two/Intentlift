@@ -43,8 +43,8 @@ from .scrc import (
     prepare_scrc_lift,
     scrc_candidate_check_context,
 )
-CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v39"
-CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v99"
+CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v40"
+CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v100"
 CODEX_CLI_TURN_TIMEOUT_SECONDS = 900.0
 
 _FEEDBACK_CATEGORY_NAMES = (
@@ -114,30 +114,6 @@ def _observer_diff_from_diagnostics(
     return observer if isinstance(observer, Mapping) else None
 
 
-def _replay_counterexample_from_diagnostics(
-    diagnostics: Mapping[str, Any] | None,
-) -> Mapping[str, Any] | None:
-    """Find the exact prior Replay evidence through retained Gate1 wrappers."""
-
-    if not isinstance(diagnostics, Mapping):
-        return None
-    evidence = diagnostics.get("replay_counterexample")
-    if isinstance(evidence, Mapping):
-        return evidence
-    unresolved = diagnostics.get("unresolved_gate1")
-    nested = (
-        unresolved.get("diagnostics")
-        if isinstance(unresolved, Mapping)
-        else None
-    )
-    evidence = (
-        nested.get("replay_counterexample")
-        if isinstance(nested, Mapping)
-        else None
-    )
-    return evidence if isinstance(evidence, Mapping) else None
-
-
 def _codex_feedback_files(feedback_text: str) -> dict[str, str]:
     """Partition exact closed feedback without exposing one bulk relift object.
 
@@ -148,15 +124,11 @@ def _codex_feedback_files(feedback_text: str) -> dict[str, str]:
 
     feedback = json.loads(feedback_text)
     categories: dict[str, Any] = {}
-    replay_counterexample: Mapping[str, Any] | None = None
     if isinstance(feedback, Mapping):
         diagnostics = (
             feedback.get("diagnostics")
             if isinstance(feedback.get("diagnostics"), Mapping)
             else None
-        )
-        replay_counterexample = _replay_counterexample_from_diagnostics(
-            diagnostics
         )
         observer = _observer_diff_from_diagnostics(
             diagnostics
@@ -205,28 +177,8 @@ def _codex_feedback_files(feedback_text: str) -> dict[str, str]:
             if pruned:
                 detail["diagnostics"] = pruned
 
-    replay_source = (
-        replay_counterexample.get("replay_source")
-        if isinstance(replay_counterexample, Mapping)
-        else None
-    )
-    replay_ttir = (
-        replay_counterexample.get("replay_ttir")
-        if isinstance(replay_counterexample, Mapping)
-        else None
-    )
-    replay_metadata = (
-        {
-            str(key): value
-            for key, value in replay_counterexample.items()
-            if key not in {"replay_source", "replay_ttir"}
-        }
-        if isinstance(replay_counterexample, Mapping)
-        else None
-    )
     values: dict[str, Any] = {
         "feedback_detail.json": detail,
-        "feedback_replay.json": replay_metadata,
     }
     values.update(
         {
@@ -245,16 +197,6 @@ def _codex_feedback_files(feedback_text: str) -> dict[str, str]:
         + "\n"
         for name, value in values.items()
     }
-    rendered["feedback_replay.py"] = (
-        replay_source.rstrip() + "\n"
-        if isinstance(replay_source, str) and replay_source
-        else "# No formal Replay source is available before a Gate1 counterexample.\n"
-    )
-    rendered["feedback_replay.ttir"] = (
-        replay_ttir.rstrip() + "\n"
-        if isinstance(replay_ttir, str) and replay_ttir
-        else "// No formal Replay TTIR is available before a Gate1 counterexample.\n"
-    )
     return rendered
 
 
@@ -304,18 +246,6 @@ def _codex_input_files(
         "semantic_probe.json": "null\n",
     }
     files.update(_codex_feedback_files(complete["feedback.json"]))
-    replay_source = complete.get("gate1_counterexample/replay.py", "")
-    replay_ttir = complete.get("gate1_counterexample/replay.ttir", "")
-    files["feedback_replay.py"] = (
-        replay_source.rstrip() + "\n"
-        if replay_source
-        else "# No formal Replay source is available before a Gate1 counterexample.\n"
-    )
-    files["feedback_replay.ttir"] = (
-        replay_ttir.rstrip() + "\n"
-        if replay_ttir
-        else "// No formal Replay TTIR is available before a Gate1 counterexample.\n"
-    )
     if "source_ttir.json" in complete:
         files["source_ttir.json"] = complete["source_ttir.json"]
     return files
@@ -326,14 +256,17 @@ input/feedback_category_NAME.json when its bounded frontier is insufficient; tha
 file contains the exact differences for the named category.
 input/feedback_detail.json contains exact non-observer diagnostics. The previous
 artifact already exists at output/candidate.json and is never duplicated in input.
-After a formal Gate1 failure, input/feedback_replay.py and
-input/feedback_replay.ttir contain the exact preceding source-blind Replay output;
-use them only as read-only counterexample evidence.
+After a formal Gate1 failure, only the bounded typed observer diff is returned.
+The preceding Replay source, Replay TTIR, agent context, and implementation choices
+remain hidden; repair J/C only when Source plus the typed frontier proves that the
+current artifact is incomplete. Otherwise resubmit the unchanged artifact for a fresh
+source-blind Replay.
 Your own prior formal candidates are immutable under work/candidate_history/;
 consult or restore them when a repair regresses, but decide every edit yourself.
-Treat the first exact missing/extra operation only as an entry point: compare its
-typed Source-TTIR and Replay-TTIR def-use neighborhood with the current J node and
-boundary. Preserve cast order and operation spelling when they are semantic. If J
+Treat the first exact missing/extra operation only as an entry point: inspect its
+typed Source-TTIR neighborhood and the bounded anonymous local frontier against the
+current J node and boundary. The frontier describes a mismatch but does not expose
+the Replay implementation that produced it. Preserve cast order and operation spelling when they are semantic. If J
 already states the complete logical fact but Replay failed to realize it, do not add a
 pi escape hatch; resubmit the unchanged artifact for a fresh source-blind Replay.
 Before editing local operations, check whether one omitted Source-visible loop,
@@ -402,9 +335,6 @@ def _source_aware_startup_context(workspace: Any, *, fresh_owner: bool) -> dict[
             "lift_contract": "input/knowledge/lift_contract.md",
             "feedback_frontier": "input/feedback_frontier.json",
             "feedback_detail": "input/feedback_detail.json",
-            "feedback_replay_source": "input/feedback_replay.py",
-            "feedback_replay_ttir": "input/feedback_replay.ttir",
-            "feedback_replay_metadata": "input/feedback_replay.json",
             "feedback_categories": [
                 f"input/feedback_category_{name}.json"
                 for name in _FEEDBACK_CATEGORY_NAMES
@@ -622,9 +552,6 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                     {
                         "feedback_frontier.json",
                         "feedback_detail.json",
-                        "feedback_replay.py",
-                        "feedback_replay.ttir",
-                        "feedback_replay.json",
                         *{
                             f"feedback_category_{name}.json"
                             for name in _FEEDBACK_CATEGORY_NAMES

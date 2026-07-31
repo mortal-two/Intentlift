@@ -85,6 +85,8 @@ Gate2: Source-Replay / Source-J / Replay-J
 
 - [x] Replay compile/API 错误只反馈 Replay Agent，在同一 source-blind episode 修复；
 - [x] Gate1 完整 diff/有限 frontier 只返回同 branch source-aware Lift owner；
+- [x] Relift 输入删除上一轮 Replay source/TTIR/metadata；完整 comparison 只留外部审计，owner 仅消费
+  bounded typed frontier，防止为偶然 Replay 改写 J；
 - [ ] owner 区分 Replay 忠实性、J/C hard residual、合法 normalization 缺口与 observer unsupported；
 - [ ] π-only 修改复用 exact R 并重跑 TypeCheck/Gate1；
 - [ ] J 或 MaskC structure/attachment 修改触发 fresh Replay；
@@ -130,6 +132,11 @@ Flash forward 还暴露出 RefJ functional boundary 把合法 rank-0/inout reloa
 load”的覆盖判断错误；现改为只要求所有 live tensor input 被覆盖，额外 access 仍须逐项通过原有
 access/effect检查。公开 Source–J probe 只是 Lift feedback：模型级 buffers 总量超过 64 MiB 时立即
 报告 unavailable，避免在每个候选上执行数 GiB 诊断；正式模型输入、Gate1 与隐藏 Gate2 完全不变。
+
+v40/v4 还纠正了一条与设计文档相反的实现通道：旧 continuation 曾把上一 formal round 的完整 Replay
+源码与 TTIR 挂载给 Lift。现在 runner 只生成 bounded typed Gate1 frontier，Codex/MiniSWE 均不再挂载
+Replay 实现；外部 run evidence 仍完整保存 comparison。该修改不改变 J/C/π、Gate1 verdict 或 Gate2，
+但减少 continuation 输入并阻止 artifact 追随一次偶然 Replay realization。
 
 ## 7. P5：多前端与实验
 

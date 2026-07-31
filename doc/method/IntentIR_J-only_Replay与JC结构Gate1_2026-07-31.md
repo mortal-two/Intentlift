@@ -183,7 +183,10 @@ Gate2 是声明执行域内的最终行为锚点；Gate1 不是其替代品，�
 | J/C-owned hard mismatch | source-aware owner 判断 J/C 缺失或 Replay 未忠实；J/MaskC 改变后 fresh Replay |
 | observer/profile 不支持或歧义 | fail closed / `observer_unsupported`，不得临时放宽 |
 
-完整 Source–Replay diff 只返回同一 branch 的 source-aware Lift owner，绝不进入 Replay。
+完整 Gate1 comparison 保存在外部审计 evidence；同一 branch 的 source-aware Lift owner 只收到它的
+确定性、有限 typed frontier。上一轮 Replay source、Replay TTIR、agent context 与私有 realization
+metadata 均不返回 Lift，也绝不进入 Replay。这样 Lift 不能为了某次 Replay 的偶然实现改写 J；若
+Source 与当前 J/C 已完整，而 frontier 只表明 Replay 未忠实，则保持 artifact 不变并启动 fresh Replay。
 
 - π-only 改变：复用 exact R，重跑 TypeCheck 与 Gate1；
 - J 或 `MaskC(C)` 的结构/attachment 改变：fresh Replay；

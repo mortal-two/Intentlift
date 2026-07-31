@@ -250,6 +250,10 @@ workspace 的 `output/candidate.json`；closed Gate1 diff 只按既有 protocol 
 这是 exact bytes 的机械分区，不选择类别、不生成修复。首次 contract 也只要求读取 top-level shape
 与当前需要的 leaf section，禁止把整份 schema/op catalog pretty-print 进线程；最终 artifact 与所有
 字段仍完全由同一 LLM owner 作者化。
+Codex Lift v40 与 MiniSWE Lift v4 进一步删除上一 formal round 的 Replay source、Replay TTIR 与
+Replay metadata 挂载。Relift 只接收同一 Gate1 verdict 的 bounded typed frontier；完整 Replay/TTIR
+仍保存在外部 run evidence 中，但不进入 source-aware owner。这样既避免 Lift 为一次偶然 Replay
+实现改写 J，也缩短 continuation context；Gate1 verdict、fresh Replay 与 Gate2 均不改变。
 Codex Lift v20 同时删除与普通文件读取重复的 `feedback_frontier` host tool；workspace 中 exact frontier
 文件是唯一入口。当前特殊 bridge 只保留无法由本地文件操作替代的CandidateCheck、SourceReconcile，
 以及上述显式调用、非认证的public SemanticProbe。
@@ -553,6 +557,10 @@ pointer add，且即使当前 grid extent 为 1 也不能用常量替换 program
 Gate1 的结构化 diff 只返回同一 branch 的持久 source-aware Lift owner。owner 保留自己的 Source
 上下文，并读取刚提交的完整 `(J,C,π)` 与本轮闭合 Gate1 diff，继续修改后重新输出完整新三元组。
 随后使用新三元组发起全新的盲 Replay；Replay conversation 不续接。
+
+该反馈不包含上一轮 Replay 源码、Replay TTIR、agent trajectory 或私有实现 metadata。它们只保留在
+runner 的完整审计 evidence 中。Lift 必须仅凭 Source、自己已作者化的 artifact 与 typed diff 判断是
+J/C 缺失还是一次 Replay 未忠实；后一种情况保持 artifact 不变并请求 fresh Replay。
 
 runner 必须完整保存 observer comparison 作为审计 evidence；返回 Lift 的可以是该 comparison
 的确定性、有限、可行动诊断投影，例如 hard category、op-count 差异、关键 topology 差异与每类

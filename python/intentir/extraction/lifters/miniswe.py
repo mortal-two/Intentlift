@@ -37,8 +37,8 @@ from .scrc_schema import scrc_lift_core_json_schema
 from .prompt import SCHEMA as INTENTIR_OPERATION_REFERENCE
 
 
-MINISWE_LIFT_BACKEND = "minisweagent.intentir-lift.v3"
-MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v68"
+MINISWE_LIFT_BACKEND = "minisweagent.intentir-lift.v4"
+MINISWE_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v69"
 MINISWE_LIFT_TURN_TIMEOUT_SECONDS = 300.0
 MINISWE_LIFT_XHIGH_TURN_TIMEOUT_SECONDS = 900.0
 MAX_RELIFT_CHECK_FEEDBACK_ITEMS = 20
@@ -378,8 +378,6 @@ def _input_files(
     harness_view = packet.get("harness_compiler_view", {})
     feedback = packet.get("relift")
     feedback_for_mount = copy.deepcopy(feedback)
-    replay_counterexample_source = ""
-    replay_counterexample_ttir = ""
     feedback_frontier = None
     if isinstance(feedback, Mapping):
         feedback_frontier = _feedback_frontier(
@@ -407,28 +405,19 @@ def _input_files(
         # Removing this transport copy does not alter or derive artifact bytes.
         feedback_for_mount.pop("previous_artifact", None)
         diagnostics = feedback_for_mount.get("diagnostics")
-        counterexample = (
-            diagnostics.get("replay_counterexample")
-            if isinstance(diagnostics, dict)
-            else None
-        )
-        if isinstance(counterexample, dict):
-            source_value = counterexample.pop("replay_source", None)
-            ttir_value = counterexample.pop("replay_ttir", None)
-            if isinstance(source_value, str):
-                replay_counterexample_source = source_value
-            if isinstance(ttir_value, str):
-                replay_counterexample_ttir = ttir_value
-            counterexample["replay_source_path"] = (
-                "/input/gate1_counterexample/replay.py"
-                if replay_counterexample_source
+        # Relift consumes the bounded typed Gate1 frontier, never the previous
+        # source-blind implementation.  Strip legacy nested payloads as well so
+        # old retained feedback cannot reopen a Replay -> Lift information path.
+        if isinstance(diagnostics, dict):
+            diagnostics.pop("replay_counterexample", None)
+            unresolved = diagnostics.get("unresolved_gate1")
+            nested = (
+                unresolved.get("diagnostics")
+                if isinstance(unresolved, dict)
                 else None
             )
-            counterexample["replay_ttir_path"] = (
-                "/input/gate1_counterexample/replay.ttir"
-                if replay_counterexample_ttir
-                else None
-            )
+            if isinstance(nested, dict):
+                nested.pop("replay_counterexample", None)
     from minisweagent import package_dir
 
     validator = (
@@ -465,10 +454,10 @@ continuations for the same Source; Replay remains a separate fresh process.
   feedback. Read this first; it orders already-labelled hard categories and
   omits bulk recursive witnesses without inferring a cause or repair. Query the
   exact `feedback.json` only for a named unresolved category/path.
-- `gate1_counterexample/replay.py` and `replay.ttir`: exact read-only outputs of
-  the immediately preceding formal Replay/compiler when available. Feedback
-  stores only these paths, so compare them with `source.py`/`source_ttir.json`
-    on demand instead of loading duplicate bulk strings into the conversation.
+- Formal Gate1 continuations expose only bounded typed observer differences.
+  Replay source, Replay TTIR, Replay context, and physical implementation choices
+  remain unavailable to Lift; use Source plus the typed frontier to decide whether
+  J/C is incomplete, otherwise request a fresh source-blind Replay unchanged.
 - `inspect_lift_context(view="feedback_category", query="CATEGORY")` (or the
   matching `context_query.py feedback-category CATEGORY`) returns just that
   exact bounded category, including local/effect-order witnesses when present.
@@ -665,8 +654,6 @@ summarizes or interprets J/C/pi semantics during compaction.
             feedback_frontier, indent=2, sort_keys=True, ensure_ascii=False
         )
         + "\n",
-        "gate1_counterexample/replay.py": replay_counterexample_source,
-        "gate1_counterexample/replay.ttir": replay_counterexample_ttir,
         "schema/artifact.schema.json": json.dumps(
             scrc_lift_core_json_schema(),
             indent=2,
@@ -1151,8 +1138,6 @@ class MiniSWELiftAdapter:
                     {
                         "feedback.json",
                         "feedback_frontier.json",
-                        "gate1_counterexample/replay.py",
-                        "gate1_counterexample/replay.ttir",
                     }
                 ),
             )
