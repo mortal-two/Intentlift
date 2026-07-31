@@ -1,4 +1,5 @@
 // RUN: intent-opt -convert-intent-row-reduction-to-gpu=block-threads=3 %s | FileCheck %s
+// RUN: intent-opt -convert-intent-row-reduction-to-gpu='block-threads=32 rows-per-block=2 compact-reduction-topology=true' %s | FileCheck %s --check-prefix=MULTI
 
 // group_norm: layer_norm's mean+var (here the NON-centered E[X^2]-E[X]^2 form
 // liger uses) over rows flattened as (batch, group) -> M = B*G, each row of
@@ -27,6 +28,16 @@
 // CHECK:         memref.store %{{.*}}, %{{.*}}[%{{.*}}] : memref<4xf32>
 // CHECK:         gpu.terminator
 // CHECK-NOT:     intent.
+// MULTI-LABEL:   func.func @group_norm(
+// MULTI-SAME:    intent.backend.block_threads = 64
+// MULTI-SAME:    intent.backend.rows_per_block = 2
+// MULTI-SAME:    "cuda.reduction.subgroup_rows.v1"
+// MULTI:         gpu.launch
+// MULTI:         arith.divui
+// MULTI:         arith.remui
+// MULTI:         gpu.shuffle
+// MULTI-NOT:     gpu.all_reduce
+// MULTI-NOT:     intent.
 func.func @group_norm(
     %X: tensor<4x6xf32>,
     %W: tensor<4xf32> {intent.col_index_map = affine_map<(d0, d1) -> (d1 floordiv 3 + d0 * 2)>},

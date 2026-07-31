@@ -201,6 +201,97 @@ def test_stage2_paired_rotations_lower_as_one_cuda_launch(name: str) -> None:
     assert "cuda.elementwise.paired_last_axis_rotation.v1" in lowered.stdout
     assert " = intent." not in lowered.stdout
 
+    reused = subprocess.run(
+        [
+            str(_INTENT_OPT),
+            "-convert-intent-elementwise-to-gpu=block-threads=64 paired-head-reuse=true",
+        ],
+        input=materialized.intent_mlir,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert reused.returncode == 0, reused.stderr
+    assert reused.stdout.count("gpu.launch") == 1
+    assert "cuda.elementwise.paired_head_angle_reuse.v1" in reused.stdout
+    assert "intent.backend.paired_head_reuse_count = 1" in reused.stdout
+    assert "intent.backend.paired_head_group_size = 4" in reused.stdout
+    # Full head reuse is a grouped pair-domain traversal: the angle is loaded
+    # once and the statically bounded head group is expanded directly in MLIR,
+    # so the target does not pay a dynamic loop for every rotary pair.
+    assert "scf.for" not in reused.stdout
+    assert " = intent." not in reused.stdout
+
+    regrouped = subprocess.run(
+        [
+            str(_INTENT_OPT),
+            "-convert-intent-elementwise-to-gpu=block-threads=64 paired-head-reuse=true paired-head-group-size=8",
+        ],
+        input=materialized.intent_mlir,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert regrouped.returncode == 0, regrouped.stderr
+    assert "intent.backend.paired_head_group_size = 8" in regrouped.stdout
+
+    if name == "liger_rope":
+        packetized = subprocess.run(
+            [
+                str(_INTENT_OPT),
+                "-convert-intent-elementwise-to-gpu=block-threads=64 row-vector-width=2 paired-head-reuse=true paired-head-group-size=4",
+            ],
+            input=materialized.intent_mlir,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert packetized.returncode == 0, packetized.stderr
+        assert "vector.load" in packetized.stdout
+        assert "vector.store" in packetized.stdout
+        assert "intent.backend.vector_width = 2" in packetized.stdout
+
+    if name == "qwen2vl_mrope":
+        direct = subprocess.run(
+            [
+                str(_INTENT_OPT),
+                "-convert-intent-elementwise-to-gpu=block-threads=64 paired-direct-plane=true",
+            ],
+            input=materialized.intent_mlir,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert direct.returncode == 0, direct.stderr
+        assert direct.stdout.count("gpu.launch") == 1
+        assert "cuda.elementwise.paired_direct_plane.v1" in direct.stdout
+        assert "intent.backend.paired_direct_plane_count = 1" in direct.stdout
+        assert " = intent." not in direct.stdout
+
+
+def test_stage2_jsd_shifted_exp_cancellation_opens_elementwise_lowering() -> None:
+    _snapshot, _case, materialized = _materialize_closed_case(
+        "jsd", "production-jc-v3"
+    )
+
+    lowered = subprocess.run(
+        [
+            str(_INTENT_OPT),
+            "-convert-intent-elementwise-to-gpu=block-threads=256 cancel-shifted-exp=true",
+        ],
+        input=materialized.intent_mlir,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert lowered.returncode == 0, lowered.stderr
+    assert lowered.stdout.count("gpu.launch") == 1
+    assert " = intent." not in lowered.stdout
+    assert "cuda.algebra.exp_shift_product_cancellation.v1" in lowered.stdout
+    assert "intent.backend.shifted_exp_cancellation_count = 2" in lowered.stdout
+    assert 'intent.backend.approximation_mode = "reassociated_exp"' in lowered.stdout
+
 
 @pytest.mark.skipif(not _INTENT_OPT.exists(), reason="intent-opt is not built")
 def test_stage2_flash_linear_enters_canonical_wmma_and_full_mma_states() -> None:
@@ -231,6 +322,58 @@ def test_stage2_flash_linear_enters_canonical_wmma_and_full_mma_states() -> None
         assert lowered.stdout.count("memref.store") >= 2
         assert expected_op in lowered.stdout
         assert " = intent." not in lowered.stdout
+
+
+@pytest.mark.skipif(not _INTENT_OPT.exists(), reason="intent-opt is not built")
+def test_stage2_flash_linear_splitk_is_two_stage_real_mlir() -> None:
+    _snapshot, _case, materialized = _materialize_closed_case(
+        "flash_linear", "production-jc-v3"
+    )
+    lowered = subprocess.run(
+        [
+            str(_INTENT_OPT),
+            "-convert-intent-contraction-to-gpu-mma=block-m=16 block-n=32 block-k=16 num-stages=2 smem-pad-k=8 split-k-parts=2",
+        ],
+        input=materialized.intent_mlir,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert lowered.returncode == 0, lowered.stderr
+    assert lowered.stdout.count("gpu.launch") == 2
+    assert "memref.alloc" in lowered.stdout
+    assert "cuda.contraction.split_k_partial_finalize.v1" in lowered.stdout
+    assert "intent.backend.stage_count = 2" in lowered.stdout
+    assert "intent.backend.reduction_parts = 2" in lowered.stdout
+    assert lowered.stdout.count("memref.store") >= 3
+    assert " = intent." not in lowered.stdout
+
+
+@pytest.mark.skipif(not _INTENT_OPT.exists(), reason="intent-opt is not built")
+def test_stage2_flash_linear_uses_real_2d_warp_and_packed_epilogue() -> None:
+    _snapshot, _case, materialized = _materialize_closed_case(
+        "flash_linear", "production-jc-v3"
+    )
+    lowered = subprocess.run(
+        [
+            str(_INTENT_OPT),
+            "-convert-intent-contraction-to-gpu-mma=block-m=16 block-n=32 block-k=32 num-stages=1 smem-pad-k=8 warps-n=2 group-m=2",
+        ],
+        input=materialized.intent_mlir,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert lowered.returncode == 0, lowered.stderr
+    assert lowered.stdout.count("gpu.launch") == 1
+    assert "cuda.contraction.mma-sync.warp-n-partition.v1" in lowered.stdout
+    assert "cuda.contraction.packed_bias_dual_output.v1" in lowered.stdout
+    assert "intent.backend.block_threads = 64" in lowered.stdout
+    assert "intent.backend.warps_n = 2" in lowered.stdout
+    assert "intent.backend.group_m = 2" in lowered.stdout
+    assert "intent.backend.vector_width = 2" in lowered.stdout
+    assert "vector<2xf16>" in lowered.stdout
+    assert " = intent." not in lowered.stdout
 
 
 @pytest.mark.parametrize(

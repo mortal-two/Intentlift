@@ -330,6 +330,29 @@ def ConvertIntentElementwiseToGPU
            "Capture rank-0 or singleton broadcast inputs by value from the "
            "host launch stub. False retains the historical per-thread device "
            "load as the schedule-only control.">,
+    Option<"pairedHeadReuse", "paired-head-reuse", "bool", "false",
+           "For an admitted paired last-axis rotation, map threads over "
+           "(batch, sequence, head-group, rotary pair), load the shared angle "
+           "once, and reuse it for the Q/K outputs in that bounded head group. "
+           "This Full-only traversal preserves pair-contiguous memory access "
+           "and each output's arithmetic order.">,
+    Option<"pairedHeadGroupSize", "paired-head-group-size", "unsigned", "4",
+           "Number of Q/K heads visited by one admitted paired-head-reuse "
+           "lane. Legal values are 2, 4, 8, or 16. This changes the traversal/"
+           "reuse topology and is searched only by Full; it is ignored when "
+           "paired-head-reuse is false.">,
+    Option<"pairedDirectPlane", "paired-direct-plane", "bool", "false",
+           "For an admitted three-plane paired rotation, derive the selected "
+           "plane index from the certified static sections and load only that "
+           "plane. The original select/add arithmetic is retained, while "
+           "unobserved read-only plane loads are eliminated.">,
+    Option<"cancelShiftedExp", "cancel-shifted-exp", "bool", "false",
+           "Recognize the typed execution-domain pattern exp(x-s)*exp(s) and "
+           "replace it with exp(x) before the ordinary elementwise lowering. "
+           "This is an observation-changing algebraic candidate: it is admitted "
+           "only when the whole live graph becomes a pure elementwise graph and "
+           "the backend Q/D correctness policy accepts the resulting numeric "
+           "evaluation. The default is false.">,
     Option<"tanhApproximation", "tanh-approximation", "std::string",
            "\"stable-ex2\"",
            "Concrete f32 tanh evaluation state. stable-ex2 uses the existing "
@@ -931,6 +954,21 @@ def ConvertIntentContractionToGPUMMA
            "(swizzle-free bank-conflict avoidance for the ldmatrix reads). "
            "Must be a multiple of 8 (16-byte cp.async alignment) or 0 to "
            "disable. Autotuner knob.">,
+    Option<"warpsN", "warps-n", "unsigned", /*default=*/"1",
+           "Warp partitions along the block N tile. 1 keeps one 16-row warp "
+           "responsible for the full block-N span. 2, 4, or 8 split that span "
+           "between more warps, reducing accumulator registers per lane while "
+           "preserving the same mma.sync and output tile.">,
+    Option<"groupM", "group-m", "unsigned", /*default=*/"8",
+           "Consecutive M tiles in the flat block-id L2 swizzle. This is a "
+           "target schedule coordinate: larger groups retain one W/N tile "
+           "across more M blocks, while smaller groups shorten A-tile reuse "
+           "distance.">,
+    Option<"splitKParts", "split-k-parts", "unsigned", /*default=*/"1",
+           "Number of independent K partitions for the mma.sync contraction. "
+           "1 emits the single-stage kernel. 2 or 4 emit an f32 partial "
+           "scratch kernel followed by an ordered additive finalize/epilogue "
+           "kernel; admitted only for the exact bias-plus-dual-output graph.">,
   ];
 }
 

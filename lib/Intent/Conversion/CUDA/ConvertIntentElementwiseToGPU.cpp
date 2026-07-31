@@ -47,9 +47,11 @@
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/STLExtras.h"
 
+#include <algorithm>
 #include <string>
 
 namespace intent {
@@ -94,7 +96,11 @@ static void attachElementwiseStateReceipt(func::FuncOp lowered, int64_t threads,
                                           StringRef approximationMode,
                                           bool oneDimensionalResults,
                                           unsigned hostValueCaptureCount,
-                                          bool pairedLastAxisRotation = false) {
+                                          unsigned shiftedExpCancellationCount = 0,
+                                          bool pairedLastAxisRotation = false,
+                                          bool pairedHeadAngleReuse = false,
+                                          bool pairedDirectPlane = false,
+                                          int64_t pairedHeadGroupSize = 1) {
   MLIRContext *context = lowered.getContext();
   SmallVector<Attribute> trace{
       StringAttr::get(context, "cuda.elementwise.row.vectorized.v1")};
@@ -119,9 +125,18 @@ static void attachElementwiseStateReceipt(func::FuncOp lowered, int64_t threads,
   if (hostValueCaptureCount != 0)
     trace.push_back(
         StringAttr::get(context, "cuda.b.uniform_host_value_capture.v1"));
+  if (shiftedExpCancellationCount != 0)
+    trace.push_back(StringAttr::get(
+        context, "cuda.algebra.exp_shift_product_cancellation.v1"));
   if (pairedLastAxisRotation)
     trace.push_back(StringAttr::get(
         context, "cuda.elementwise.paired_last_axis_rotation.v1"));
+  if (pairedHeadAngleReuse)
+    trace.push_back(StringAttr::get(
+        context, "cuda.elementwise.paired_head_angle_reuse.v1"));
+  if (pairedDirectPlane)
+    trace.push_back(StringAttr::get(
+        context, "cuda.elementwise.paired_direct_plane.v1"));
   auto i64 = IntegerType::get(context, 64);
   lowered->setAttr("intent.backend.lowering_path_kind",
                    StringAttr::get(context, "elementwise"));
@@ -155,6 +170,168 @@ static void attachElementwiseStateReceipt(func::FuncOp lowered, int64_t threads,
                    IntegerAttr::get(i64, hostValueCaptureCount));
   lowered->setAttr("intent.backend.epilogue_load_motion_count",
                    IntegerAttr::get(i64, 0));
+  lowered->setAttr("intent.backend.shifted_exp_cancellation_count",
+                   IntegerAttr::get(i64, shiftedExpCancellationCount));
+  lowered->setAttr("intent.backend.paired_head_reuse_count",
+                   IntegerAttr::get(i64, pairedHeadAngleReuse ? 1 : 0));
+  lowered->setAttr("intent.backend.paired_head_group_size",
+                   IntegerAttr::get(i64, pairedHeadAngleReuse
+                                             ? pairedHeadGroupSize
+                                             : 1));
+  lowered->setAttr("intent.backend.paired_direct_plane_count",
+                   IntegerAttr::get(i64, pairedDirectPlane ? 1 : 0));
+}
+
+struct ShiftedExpProduct {
+  Operation *product;
+  Value base;
+};
+
+/// Match the real-arithmetic identity exp(x - shift) * exp(shift) = exp(x).
+/// The transform is deliberately not part of the hard-preserving path: target
+/// rounding and overflow behavior may differ, so callers expose it only as an
+/// observation-changing candidate guarded by the ordinary backend Q/D policy.
+static Value matchShiftedExpProduct(MapUnaryOp shiftedExp,
+                                    MapUnaryOp shiftExp) {
+  if (!shiftedExp || !shiftExp || shiftedExp.getFn() != "exp" ||
+      shiftExp.getFn() != "exp")
+    return {};
+  auto subtract = shiftedExp.getInput().getDefiningOp<MapBinaryOp>();
+  if (!subtract || subtract.getFn() != "sub")
+    return {};
+  Value shift = subtract.getRhs();
+  while (auto expand = shift.getDefiningOp<tensor::ExpandShapeOp>())
+    shift = expand.getSrc();
+  if (shift != shiftExp.getInput())
+    return {};
+  return subtract.getLhs();
+}
+
+static Value matchShiftedExpProduct(ContractionOp product) {
+  auto lhsExp = product.getA().getDefiningOp<MapUnaryOp>();
+  auto rhsExp = product.getB().getDefiningOp<MapUnaryOp>();
+  Value shiftedBase = matchShiftedExpProduct(lhsExp, rhsExp);
+  if (!shiftedBase)
+    shiftedBase = matchShiftedExpProduct(rhsExp, lhsExp);
+  if (!shiftedBase)
+    return {};
+
+  auto lhsType = dyn_cast<RankedTensorType>(product.getA().getType());
+  auto rhsType = dyn_cast<RankedTensorType>(product.getB().getType());
+  auto resultType = dyn_cast<RankedTensorType>(product.getResult().getType());
+  if (!lhsType || !rhsType || !resultType || resultType.getRank() != 2 ||
+      !((lhsType.getRank() == 2 && rhsType.getRank() == 1) ||
+        (lhsType.getRank() == 1 && rhsType.getRank() == 2)) ||
+      shiftedBase.getType() != product.getResult().getType())
+    return {};
+  auto pieces = product.getSubscripts().split("->");
+  if (pieces.second.empty())
+    return {};
+  auto inputs = pieces.first.split(",");
+  StringRef lhsLabels = inputs.first.trim();
+  StringRef rhsLabels = inputs.second.trim();
+  StringRef outputLabels = pieces.second.trim();
+  if (!((lhsLabels.size() == 2 && rhsLabels.size() == 1 &&
+         outputLabels == lhsLabels && rhsLabels[0] == lhsLabels[0]) ||
+        (lhsLabels.size() == 1 && rhsLabels.size() == 2 &&
+         outputLabels == rhsLabels && lhsLabels[0] == rhsLabels[0])))
+    return {};
+  return shiftedBase;
+}
+
+/// Rewrite only when cancellation removes every live reduction from the graph.
+/// That makes the result an ordinary pure-elementwise Intent function consumed
+/// by the existing MLIR emitter; no Python implementation or kernel-name recipe
+/// is involved.
+static unsigned rewriteShiftedExpProducts(func::FuncOp fn) {
+  if (!fn.getBody().hasOneBlock())
+    return 0;
+  Block &body = fn.getBody().front();
+  auto returned = dyn_cast<func::ReturnOp>(body.getTerminator());
+  if (!returned)
+    return 0;
+
+  SmallVector<ShiftedExpProduct> matches;
+  DenseMap<Value, Value> replacementBases;
+  for (Operation &operation : body.without_terminator()) {
+    Operation *product = &operation;
+    Value base;
+    if (auto map = dyn_cast<MapBinaryOp>(&operation)) {
+      if (map.getFn() != "mul")
+        continue;
+      auto lhsExp = map.getLhs().getDefiningOp<MapUnaryOp>();
+      auto rhsExp = map.getRhs().getDefiningOp<MapUnaryOp>();
+      base = matchShiftedExpProduct(lhsExp, rhsExp);
+      if (!base)
+        base = matchShiftedExpProduct(rhsExp, lhsExp);
+    } else if (auto contraction = dyn_cast<ContractionOp>(&operation)) {
+      base = matchShiftedExpProduct(contraction);
+    } else {
+      continue;
+    }
+    if (!base || base.getType() != operation.getResult(0).getType())
+      continue;
+    matches.push_back({product, base});
+    replacementBases[operation.getResult(0)] = base;
+  }
+  if (matches.empty())
+    return 0;
+
+  // Check liveness with the proposed products treated as direct exp(base)
+  // nodes. Any remaining reachable reduction means this candidate does not
+  // actually open an elementwise implementation and must fail closed.
+  SmallVector<Value> worklist(returned.getOperands().begin(),
+                              returned.getOperands().end());
+  DenseSet<Value> visited;
+  while (!worklist.empty()) {
+    Value value = worklist.pop_back_val();
+    if (!visited.insert(value).second)
+      continue;
+    if (Value base = replacementBases.lookup(value)) {
+      worklist.push_back(base);
+      continue;
+    }
+    if (isa<BlockArgument>(value))
+      continue;
+    Operation *definition = value.getDefiningOp();
+    if (!definition)
+      return 0;
+    if (isa<ReduceOp>(definition))
+      return 0;
+    worklist.append(definition->operand_begin(), definition->operand_end());
+  }
+
+  for (ShiftedExpProduct match : matches) {
+    OpBuilder builder(match.product);
+    auto directExp = builder.create<MapUnaryOp>(
+        match.product->getLoc(), match.product->getResult(0).getType(), match.base,
+        "exp");
+    match.product->getResult(0).replaceAllUsesWith(directExp.getResult());
+  }
+
+  // Erase only the known-pure Intent/constant operations that became dead. The
+  // newly created direct exp nodes stay live through the original return DAG.
+  bool changed = true;
+  while (changed) {
+    changed = false;
+    SmallVector<Operation *> operations;
+    for (Operation &operation : body.without_terminator())
+      operations.push_back(&operation);
+    for (Operation *operation : llvm::reverse(operations)) {
+      if (!isa<ReduceOp, ContractionOp, MapUnaryOp, MapBinaryOp, SelectOp,
+               IotaOp, CastOp, tensor::ExpandShapeOp,
+               arith::ConstantOp>(operation) ||
+          !llvm::all_of(operation->getResults(),
+                        [](Value result) { return result.use_empty(); }))
+        continue;
+      operation->erase();
+      changed = true;
+    }
+  }
+  fn->setAttr("intent.cuda.shifted_exp_cancellation_count",
+              IntegerAttr::get(IntegerType::get(fn.getContext(), 64),
+                               matches.size()));
+  return matches.size();
 }
 
 /// One func's pure-elementwise lowering. Reads the original (tensor) func body,
@@ -573,6 +750,7 @@ struct ElementwiseLowering {
   DenseMap<Value, Value> uniform;              // value -> hoisted per-row scalar
   DenseMap<Value, Value> argMemref;            // arg -> memref arg
   DenseMap<Value, SmallVector<Value>> rowVals; // Row arg -> K loaded SSA values
+  DenseMap<Value, SmallVector<Value>> pointVals; // shared per-column DAG values
   SmallVector<Value> cols;                     // K column indices (tx + k*T)
 
   Value toCompute(OpBuilder &b, Location loc, Value value) const {
@@ -598,16 +776,45 @@ struct ElementwiseLowering {
 
   Value castFloatTo(OpBuilder &b, Location loc, Value value,
                     Type targetType) const {
-    if (value.getType() == targetType || !isa<FloatType>(value.getType()) ||
-        !isa<FloatType>(targetType))
+    Type sourceType = value.getType();
+    if (sourceType == targetType)
       return value;
-    if (targetType == computeType &&
-        isa<Float16Type, BFloat16Type>(value.getType()))
-      return b.create<arith::ExtFOp>(loc, targetType, value);
-    if (value.getType() == computeType &&
-        isa<Float16Type, BFloat16Type>(targetType))
-      return b.create<arith::TruncFOp>(loc, targetType, value);
-    return value;
+    auto sourceFloat = dyn_cast<FloatType>(sourceType);
+    auto targetFloat = dyn_cast<FloatType>(targetType);
+    auto sourceInteger = dyn_cast<IntegerType>(sourceType);
+    auto targetInteger = dyn_cast<IntegerType>(targetType);
+    if (targetType.isInteger(1)) {
+      if (sourceInteger) {
+        Value zero = b.create<arith::ConstantOp>(
+            loc, b.getIntegerAttr(sourceInteger, 0));
+        return b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ne, value,
+                                      zero);
+      }
+      if (sourceFloat) {
+        Value zero =
+            b.create<arith::ConstantOp>(loc, b.getFloatAttr(sourceFloat, 0.0));
+        return b.create<arith::CmpFOp>(loc, arith::CmpFPredicate::UNE, value,
+                                      zero);
+      }
+    }
+    if (sourceFloat && targetFloat)
+      return sourceFloat.getWidth() < targetFloat.getWidth()
+                 ? b.create<arith::ExtFOp>(loc, targetType, value).getResult()
+                 : b.create<arith::TruncFOp>(loc, targetType, value).getResult();
+    if (sourceFloat && targetInteger)
+      return b.create<arith::FPToSIOp>(loc, targetType, value);
+    if (sourceInteger && targetFloat)
+      return sourceInteger.getWidth() == 1
+                 ? b.create<arith::UIToFPOp>(loc, targetType, value).getResult()
+                 : b.create<arith::SIToFPOp>(loc, targetType, value).getResult();
+    if (sourceInteger && targetInteger) {
+      if (sourceInteger.getWidth() < targetInteger.getWidth())
+        return sourceInteger.getWidth() == 1
+                   ? b.create<arith::ExtUIOp>(loc, targetType, value).getResult()
+                   : b.create<arith::ExtSIOp>(loc, targetType, value).getResult();
+      return b.create<arith::TruncIOp>(loc, targetType, value);
+    }
+    return nullptr;
   }
 
   Value emitMappedUnary(OpBuilder &b, Location loc, MapUnaryOp op,
@@ -661,6 +868,19 @@ struct ElementwiseLowering {
   Value emitAt(OpBuilder &b, Location loc, Value v, unsigned k) {
     if (Value u = uniform.lookup(v))
       return u;
+    auto cacheIt = pointVals.find(v);
+    if (cacheIt != pointVals.end() && k < cacheIt->second.size() &&
+        cacheIt->second[k])
+      return cacheIt->second[k];
+    auto remember = [&](Value result) -> Value {
+      if (result) {
+        auto &values = pointVals[v];
+        if (values.size() < K)
+          values.resize(K);
+        values[k] = result;
+      }
+      return result;
+    };
     if (auto barg = dyn_cast<BlockArgument>(v)) {
       Role role = argRoles[barg.getArgNumber()];
       if (role == Role::Row)
@@ -674,30 +894,31 @@ struct ElementwiseLowering {
     }
     Operation *def = v.getDefiningOp();
     if (auto cst = dyn_cast<arith::ConstantOp>(def))
-      return emitSplatScalarConstant(b, loc, cst);
+      return remember(emitSplatScalarConstant(b, loc, cst));
     if (auto io = dyn_cast<IotaOp>(def)) {
       // iota at column col[k] is the column index itself, cast to the op's
       // integer width (no materialized vector).
       Type elt =
           cast<RankedTensorType>(io.getResult().getType()).getElementType();
-      return b.create<arith::IndexCastOp>(loc, elt, cols[k]);
+      return remember(b.create<arith::IndexCastOp>(loc, elt, cols[k]));
     }
     if (auto castOp = dyn_cast<CastOp>(def)) {
       Type target = tensorElementType(castOp.getResult());
-      return castFloatTo(
-          b, loc, emitAt(b, loc, castOp.getInput(), k), target);
+      return remember(castFloatTo(
+          b, loc, emitAt(b, loc, castOp.getInput(), k), target));
     }
     if (auto mu = dyn_cast<MapUnaryOp>(def))
-      return emitMappedUnary(b, loc, mu, emitAt(b, loc, mu.getInput(), k));
+      return remember(
+          emitMappedUnary(b, loc, mu, emitAt(b, loc, mu.getInput(), k)));
     if (auto mb = dyn_cast<MapBinaryOp>(def)) {
       Value lhs = emitAt(b, loc, mb.getLhs(), k);
       Value rhs = emitAt(b, loc, mb.getRhs(), k);
-      return emitMappedBinary(b, loc, mb, lhs, rhs);
+      return remember(emitMappedBinary(b, loc, mb, lhs, rhs));
     }
     if (auto sel = dyn_cast<SelectOp>(def))
-      return b.create<arith::SelectOp>(loc, emitAt(b, loc, sel.getCond(), k),
-                                       emitAt(b, loc, sel.getX(), k),
-                                       emitAt(b, loc, sel.getY(), k));
+      return remember(b.create<arith::SelectOp>(
+          loc, emitAt(b, loc, sel.getCond(), k),
+          emitAt(b, loc, sel.getX(), k), emitAt(b, loc, sel.getY(), k)));
     return nullptr;
   }
 
@@ -773,6 +994,10 @@ struct ElementwiseLowering {
     MLIRContext *ctx = fn.getContext();
     Location loc = fn.getLoc();
     OpBuilder b(ctx);
+    unsigned shiftedExpCancellationCount = 0;
+    if (auto count = fn->getAttrOfType<IntegerAttr>(
+            "intent.cuda.shifted_exp_cancellation_count"))
+      shiftedExpCancellationCount = static_cast<unsigned>(count.getInt());
 
     // New signature: original args (as memrefs) ++ one shape-preserving output
     // memref per result (destination-passing).
@@ -1009,6 +1234,11 @@ struct ElementwiseLowering {
     // reduction, no all_reduce, no thread-0 guard — every thread writes its own
     // columns for every output.
     for (unsigned j = 0; j < outputVals.size(); ++j) {
+      // Tail-masked outputs live in distinct scf.if regions; values defined in
+      // one result's region cannot dominate the next.  Divisible row/flat paths
+      // stay in one block and retain cross-output DAG reuse.
+      if (tailMasked)
+        pointVals.clear();
       if (vectorWidth > 1) {
         // Group the contiguous lanes of each tile into one vector store.
         for (int64_t vt = 0; vt < numVectorTiles; ++vt) {
@@ -1068,11 +1298,14 @@ struct ElementwiseLowering {
         gridStrideFlat ? static_cast<int64_t>(requestGridStrideUnroll) : 1,
         static_cast<int64_t>(requestLogicalTileElements),
         vectorWidth,
-        containsTanh
-            ? (requestTanhApproximation == "native-ptx" ? "native_tanh"
-                                                         : "stable_tanh")
-            : "none",
-        oneDimensionalResults, hostValueCaptureCount);
+        shiftedExpCancellationCount != 0
+            ? "reassociated_exp"
+            : containsTanh
+                  ? (requestTanhApproximation == "native-ptx" ? "native_tanh"
+                                                               : "stable_tanh")
+                  : "none",
+        oneDimensionalResults, hostValueCaptureCount,
+        shiftedExpCancellationCount);
     fn.erase();
     return success();
   }
@@ -1089,13 +1322,16 @@ struct PairedRotationLowering {
   unsigned requestGridStrideUnroll;
   unsigned requestLogicalTileElements;
   unsigned requestRowVectorWidth;
+  bool requestPairedHeadReuse;
+  unsigned requestPairedHeadGroupSize;
+  bool requestPairedDirectPlane;
   std::string requestTanhApproximation;
 
   enum class Layout { SharedPosition, ThreePlane };
   Layout layout = Layout::SharedPosition;
   unsigned qArg = 0, kArg = 0, cosineArg = 0, sineArg = 0;
   int64_t B = 0, S = 0, HQ = 0, HK = 0, D = 0, half = 0;
-  int64_t qPairs = 0, kPairs = 0, totalPairs = 0;
+  int64_t qPairs = 0, kPairs = 0, totalPairs = 0, headReusePairs = 0;
   int64_t T = 0, gridBlocks = 0;
   SmallVector<int64_t> sections;
   Type storageType;
@@ -1105,12 +1341,18 @@ struct PairedRotationLowering {
                          unsigned gridStrideUnroll,
                          unsigned logicalTileElements,
                          unsigned rowVectorWidth,
+                         bool pairedHeadReuse,
+                         unsigned pairedHeadGroupSize,
+                         bool pairedDirectPlane,
                          StringRef tanhApproximation)
       : fn(fn), requestedThreads(threads),
         requestFlattenContiguous(flatten),
         requestGridStrideUnroll(gridStrideUnroll),
         requestLogicalTileElements(logicalTileElements),
         requestRowVectorWidth(rowVectorWidth),
+        requestPairedHeadReuse(pairedHeadReuse),
+        requestPairedHeadGroupSize(pairedHeadGroupSize),
+        requestPairedDirectPlane(pairedDirectPlane),
         requestTanhApproximation(tanhApproximation.str()) {}
 
   LogicalResult match() {
@@ -1125,8 +1367,20 @@ struct PairedRotationLowering {
         inplace.size() != 2)
       return failure();
     if (requestFlattenContiguous || requestGridStrideUnroll != 1 ||
-        requestLogicalTileElements != 0 || requestRowVectorWidth > 1 ||
+        requestLogicalTileElements != 0 ||
+        (requestRowVectorWidth != 0 && requestRowVectorWidth != 1 &&
+         requestRowVectorWidth != 2) ||
         requestTanhApproximation != "stable-ex2")
+      return failure();
+    // A zero option means "let the lowering choose its canonical scalar
+    // packetization".  The paired path has only one explicitly supported
+    // non-scalar packet (two adjacent rotary pairs), so normalize the default
+    // before using it in the geometry below.
+    if (requestRowVectorWidth == 0)
+      requestRowVectorWidth = 1;
+    if (requestPairedHeadReuse && requestPairedHeadGroupSize != 2 &&
+        requestPairedHeadGroupSize != 4 && requestPairedHeadGroupSize != 8 &&
+        requestPairedHeadGroupSize != 16)
       return failure();
 
     auto fty = fn.getFunctionType();
@@ -1199,6 +1453,12 @@ struct PairedRotationLowering {
     } else {
       return failure();
     }
+    if (requestRowVectorWidth == 2 &&
+        (layout != Layout::SharedPosition || half % 2 != 0 ||
+         !isa<Float16Type, BFloat16Type>(qType.getElementType())))
+      return failure();
+    if (requestPairedDirectPlane && layout != Layout::ThreePlane)
+      return failure();
 
     // The attribute is produced only after fixed code proves the exact A/B
     // pattern.  Still reject side-effecting or structurally foreign bodies so a
@@ -1225,12 +1485,23 @@ struct PairedRotationLowering {
     T = requestedThreads ? static_cast<int64_t>(requestedThreads) : 256;
     if (T < 32 || T > 1024 || T % 32 != 0)
       return failure();
-    qPairs = B * S * HQ * half;
-    kPairs = B * S * HK * half;
+    int64_t pairGroups = half / requestRowVectorWidth;
+    qPairs = B * S * HQ * pairGroups;
+    kPairs = B * S * HK * pairGroups;
     totalPairs = qPairs + kPairs;
-    if (qPairs <= 0 || kPairs <= 0 || totalPairs < qPairs)
+    // Full-only grouped head reuse owns one logical rotary pair and a bounded
+    // head group per lane.  Four heads amortize the angle/index work without
+    // serializing all HQ/HK memory operations behind one lane (the all-head
+    // form exposes too little memory-level parallelism on large RoPE tensors).
+    int64_t headGroups =
+        (std::max(HQ, HK) + requestPairedHeadGroupSize - 1) /
+        requestPairedHeadGroupSize;
+    headReusePairs = B * S * headGroups * pairGroups;
+    if (qPairs <= 0 || kPairs <= 0 || totalPairs < qPairs ||
+        headReusePairs <= 0)
       return failure();
-    gridBlocks = (totalPairs + T - 1) / T;
+    int64_t launchPairs = requestPairedHeadReuse ? headReusePairs : totalPairs;
+    gridBlocks = (launchPairs + T - 1) / T;
     storageType = qType.getElementType();
     computeType = Float32Type::get(fn.getContext());
     return success();
@@ -1300,6 +1571,34 @@ struct PairedRotationLowering {
         location, arith::CmpIPredicate::ult, pair, second);
     Value zero = storageZero(builder, location);
 
+    if (requestPairedDirectPlane) {
+      Value plane = builder.create<arith::SelectOp>(
+          location, inFirst, c0,
+          builder.create<arith::SelectOp>(location, inSecond, c1, c2));
+      Value notFirst = builder.create<arith::XOrIOp>(
+          location, inFirst,
+          builder.create<arith::ConstantIntOp>(location, 1, 1));
+      Value inMiddle =
+          builder.create<arith::AndIOp>(location, notFirst, inSecond);
+      Value notSecond = builder.create<arith::XOrIOp>(
+          location, inSecond,
+          builder.create<arith::ConstantIntOp>(location, 1, 1));
+      auto selectedPlaneSum = [&](Value source) -> Value {
+        Value selected = builder.create<memref::LoadOp>(
+            location, source, ValueRange{plane, batch, sequence, pair});
+        Value v0 =
+            builder.create<arith::SelectOp>(location, inFirst, selected, zero);
+        Value v1 =
+            builder.create<arith::SelectOp>(location, inMiddle, selected, zero);
+        Value v2 = builder.create<arith::SelectOp>(location, notSecond,
+                                                   selected, zero);
+        return typedAddSub(
+            builder, location,
+            typedAddSub(builder, location, v0, v1, false), v2, false);
+      };
+      return {selectedPlaneSum(cosine), selectedPlaneSum(sine)};
+    }
+
     auto maskedPlaneSum = [&](Value source) -> Value {
       Value v0 = builder.create<memref::LoadOp>(
           location, source, ValueRange{c0, batch, sequence, pair});
@@ -1328,15 +1627,60 @@ struct PairedRotationLowering {
                           Value cosine, Value sine, Value local,
                           int64_t heads) const {
     Value cHalf = builder.create<arith::ConstantIndexOp>(location, half);
+    Value cPairGroups = builder.create<arith::ConstantIndexOp>(
+        location, half / requestRowVectorWidth);
     Value cHeads = builder.create<arith::ConstantIndexOp>(location, heads);
     Value cSequence = builder.create<arith::ConstantIndexOp>(location, S);
-    Value pair = builder.create<arith::RemUIOp>(location, local, cHalf);
-    Value outer = builder.create<arith::DivUIOp>(location, local, cHalf);
+    Value pairGroup =
+        builder.create<arith::RemUIOp>(location, local, cPairGroups);
+    Value pair = pairGroup;
+    if (requestRowVectorWidth == 2)
+      pair = builder.create<arith::MulIOp>(
+          location, pairGroup,
+          builder.create<arith::ConstantIndexOp>(location, 2));
+    Value outer = builder.create<arith::DivUIOp>(location, local, cPairGroups);
     Value head = builder.create<arith::RemUIOp>(location, outer, cHeads);
     outer = builder.create<arith::DivUIOp>(location, outer, cHeads);
     Value sequence =
         builder.create<arith::RemUIOp>(location, outer, cSequence);
     Value batch = builder.create<arith::DivUIOp>(location, outer, cSequence);
+    if (requestRowVectorWidth == 2) {
+      SmallVector<Value, 2> cosineValues;
+      SmallVector<Value, 2> sineValues;
+      for (int64_t lane = 0; lane < 2; ++lane) {
+        Value lanePair = pair;
+        if (lane != 0)
+          lanePair = builder.create<arith::AddIOp>(
+              location, pair,
+              builder.create<arith::ConstantIndexOp>(location, lane));
+        auto angles = loadAngles(builder, location, cosine, sine, batch,
+                                 sequence, lanePair);
+        cosineValues.push_back(angles.first);
+        sineValues.push_back(angles.second);
+      }
+      emitRotationVector2(builder, location, data, batch, sequence, head, pair,
+                          cosineValues, sineValues);
+      return;
+    }
+    Value high = builder.create<arith::AddIOp>(location, pair, cHalf);
+
+    // Keep the canonical direct lowering's original operation order exactly:
+    // data pair first, then angle loads.  Full-only reuse must not manufacture
+    // a gain by perturbing the Schedule-Only spine.
+    Value lowValue = builder.create<memref::LoadOp>(
+        location, data, ValueRange{batch, sequence, head, pair});
+    Value highValue = builder.create<memref::LoadOp>(
+        location, data, ValueRange{batch, sequence, head, high});
+    auto [cosineValue, sineValue] =
+        loadAngles(builder, location, cosine, sine, batch, sequence, pair);
+    emitRotationValues(builder, location, data, batch, sequence, head, pair,
+                       high, lowValue, highValue, cosineValue, sineValue);
+  }
+
+  void emitRotationAt(OpBuilder &builder, Location location, Value data,
+                      Value batch, Value sequence, Value head, Value pair,
+                      Value cosineValue, Value sineValue) const {
+    Value cHalf = builder.create<arith::ConstantIndexOp>(location, half);
     Value high = builder.create<arith::AddIOp>(location, pair, cHalf);
 
     // Both source values are in SSA before either store: this is the essential
@@ -1345,8 +1689,14 @@ struct PairedRotationLowering {
         location, data, ValueRange{batch, sequence, head, pair});
     Value highValue = builder.create<memref::LoadOp>(
         location, data, ValueRange{batch, sequence, head, high});
-    auto [cosineValue, sineValue] =
-        loadAngles(builder, location, cosine, sine, batch, sequence, pair);
+    emitRotationValues(builder, location, data, batch, sequence, head, pair,
+                       high, lowValue, highValue, cosineValue, sineValue);
+  }
+
+  std::pair<Value, Value>
+  computeRotationValues(OpBuilder &builder, Location location, Value lowValue,
+                        Value highValue, Value cosineValue,
+                        Value sineValue) const {
     Value lowProduct =
         typedMul(builder, location, lowValue, cosineValue);
     Value highSin = typedMul(builder, location, highValue, sineValue);
@@ -1357,10 +1707,56 @@ struct PairedRotationLowering {
     Value lowSin = typedMul(builder, location, lowValue, sineValue);
     Value rotatedHigh =
         typedAddSub(builder, location, highProduct, lowSin, false);
+    return {rotatedLow, rotatedHigh};
+  }
+
+  void emitRotationVector2(OpBuilder &builder, Location location, Value data,
+                           Value batch, Value sequence, Value head,
+                           Value pairBase, ArrayRef<Value> cosineValues,
+                           ArrayRef<Value> sineValues) const {
+    auto vectorType = VectorType::get({2}, storageType);
+    Value cHalf = builder.create<arith::ConstantIndexOp>(location, half);
+    Value highBase =
+        builder.create<arith::AddIOp>(location, pairBase, cHalf);
+    SmallVector<Value, 4> lowIndices{batch, sequence, head, pairBase};
+    SmallVector<Value, 4> highIndices{batch, sequence, head, highBase};
+    Value lowPacket = builder.create<vector::LoadOp>(
+        location, vectorType, data, lowIndices);
+    Value highPacket = builder.create<vector::LoadOp>(
+        location, vectorType, data, highIndices);
+    SmallVector<Value, 2> rotatedLow;
+    SmallVector<Value, 2> rotatedHigh;
+    for (int64_t lane = 0; lane < 2; ++lane) {
+      Value lowValue = builder.create<vector::ExtractOp>(
+          location, lowPacket, ArrayRef<int64_t>{lane});
+      Value highValue = builder.create<vector::ExtractOp>(
+          location, highPacket, ArrayRef<int64_t>{lane});
+      auto rotated = computeRotationValues(
+          builder, location, lowValue, highValue, cosineValues[lane],
+          sineValues[lane]);
+      rotatedLow.push_back(rotated.first);
+      rotatedHigh.push_back(rotated.second);
+    }
+    Value lowResult =
+        builder.create<vector::FromElementsOp>(location, vectorType, rotatedLow);
+    Value highResult = builder.create<vector::FromElementsOp>(
+        location, vectorType, rotatedHigh);
+    builder.create<vector::StoreOp>(location, lowResult, data, lowIndices);
+    builder.create<vector::StoreOp>(location, highResult, data, highIndices);
+  }
+
+  void emitRotationValues(OpBuilder &builder, Location location, Value data,
+                          Value batch, Value sequence, Value head, Value pair,
+                          Value high, Value lowValue, Value highValue,
+                          Value cosineValue, Value sineValue) const {
+    auto rotated = computeRotationValues(builder, location, lowValue, highValue,
+                                         cosineValue, sineValue);
     builder.create<memref::StoreOp>(
-        location, rotatedLow, data, ValueRange{batch, sequence, head, pair});
+        location, rotated.first, data,
+        ValueRange{batch, sequence, head, pair});
     builder.create<memref::StoreOp>(
-        location, rotatedHigh, data, ValueRange{batch, sequence, head, high});
+        location, rotated.second, data,
+        ValueRange{batch, sequence, head, high});
   }
 
   LogicalResult rewrite() {
@@ -1394,29 +1790,137 @@ struct PairedRotationLowering {
     Value flat = builder.create<arith::AddIOp>(
         location, builder.create<arith::MulIOp>(location, block, cThreads),
         thread);
-    Value total =
-        builder.create<arith::ConstantIndexOp>(location, totalPairs);
+    int64_t launchPairs = requestPairedHeadReuse ? headReusePairs : totalPairs;
+    Value total = builder.create<arith::ConstantIndexOp>(location, launchPairs);
     Value active = builder.create<arith::CmpIOp>(
         location, arith::CmpIPredicate::ult, flat, total);
     auto guarded = builder.create<scf::IfOp>(location, active,
                                              /*withElseRegion=*/false);
     OpBuilder bodyBuilder = guarded.getThenBodyBuilder();
-    Value qLimit =
-        bodyBuilder.create<arith::ConstantIndexOp>(location, qPairs);
-    Value isQ = bodyBuilder.create<arith::CmpIOp>(
-        location, arith::CmpIPredicate::ult, flat, qLimit);
-    auto choose = bodyBuilder.create<scf::IfOp>(location, isQ,
-                                                /*withElseRegion=*/true);
-    OpBuilder qBuilder = choose.getThenBodyBuilder();
-    emitTensorRotation(qBuilder, location, entry->getArgument(qArg),
-                       entry->getArgument(cosineArg),
-                       entry->getArgument(sineArg), flat, HQ);
-    OpBuilder kBuilder = choose.getElseBodyBuilder();
-    Value local =
-        kBuilder.create<arith::SubIOp>(location, flat, qLimit);
-    emitTensorRotation(kBuilder, location, entry->getArgument(kArg),
-                       entry->getArgument(cosineArg),
-                       entry->getArgument(sineArg), local, HK);
+    if (requestPairedHeadReuse) {
+      int64_t pairGroups = half / requestRowVectorWidth;
+      Value cPairGroups =
+          bodyBuilder.create<arith::ConstantIndexOp>(location, pairGroups);
+      int64_t headGroups =
+          (std::max(HQ, HK) + requestPairedHeadGroupSize - 1) /
+          requestPairedHeadGroupSize;
+      Value cHeadGroups =
+          bodyBuilder.create<arith::ConstantIndexOp>(location, headGroups);
+      Value cSequence = bodyBuilder.create<arith::ConstantIndexOp>(location, S);
+      Value pairGroup =
+          bodyBuilder.create<arith::RemUIOp>(location, flat, cPairGroups);
+      Value pair = pairGroup;
+      if (requestRowVectorWidth == 2)
+        pair = bodyBuilder.create<arith::MulIOp>(
+            location, pairGroup,
+            bodyBuilder.create<arith::ConstantIndexOp>(location, 2));
+      Value outer =
+          bodyBuilder.create<arith::DivUIOp>(location, flat, cPairGroups);
+      Value headGroup =
+          bodyBuilder.create<arith::RemUIOp>(location, outer, cHeadGroups);
+      outer = bodyBuilder.create<arith::DivUIOp>(location, outer, cHeadGroups);
+      Value sequence =
+          bodyBuilder.create<arith::RemUIOp>(location, outer, cSequence);
+      Value batch =
+          bodyBuilder.create<arith::DivUIOp>(location, outer, cSequence);
+      SmallVector<Value, 2> cosineValues;
+      SmallVector<Value, 2> sineValues;
+      for (unsigned lane = 0; lane < requestRowVectorWidth; ++lane) {
+        Value lanePair = pair;
+        if (lane != 0)
+          lanePair = bodyBuilder.create<arith::AddIOp>(
+              location, pair,
+              bodyBuilder.create<arith::ConstantIndexOp>(location, lane));
+        auto angles = loadAngles(
+            bodyBuilder, location, entry->getArgument(cosineArg),
+            entry->getArgument(sineArg), batch, sequence, lanePair);
+        cosineValues.push_back(angles.first);
+        sineValues.push_back(angles.second);
+      }
+
+      // Keep the angle in SSA while expanding the small, statically bounded head
+      // group directly in the compiler graph.  A dynamic scf.for hid the fixed
+      // trip count from NVVM and left loop/index overhead in every rotary pair;
+      // the J shapes and the selected group size are both static here, so the
+      // direct expansion preserves exactly the same accesses while exposing the
+      // independent head operations to instruction scheduling.
+      auto emitHeadGroup = [&](Value data, int64_t heads) {
+        Value cGroupSize = bodyBuilder.create<arith::ConstantIndexOp>(
+            location, requestPairedHeadGroupSize);
+        Value lower =
+            bodyBuilder.create<arith::MulIOp>(location, headGroup, cGroupSize);
+        Value headUpper =
+            bodyBuilder.create<arith::ConstantIndexOp>(location, heads);
+        auto emitHead = [&](OpBuilder &targetBuilder, Value head) {
+          if (requestRowVectorWidth == 2)
+            emitRotationVector2(targetBuilder, location, data, batch, sequence,
+                                head, pair, cosineValues, sineValues);
+          else
+            emitRotationAt(targetBuilder, location, data, batch, sequence, head,
+                           pair, cosineValues.front(), sineValues.front());
+        };
+        auto emitStaticHeads = [&](OpBuilder &targetBuilder) {
+          for (unsigned offset = 0; offset < requestPairedHeadGroupSize;
+               ++offset) {
+            Value head = lower;
+            if (offset != 0)
+              head = targetBuilder.create<arith::AddIOp>(
+                  location, lower,
+                  targetBuilder.create<arith::ConstantIndexOp>(location,
+                                                                offset));
+            emitHead(targetBuilder, head);
+          }
+        };
+
+        if (heads % requestPairedHeadGroupSize == 0) {
+          if (heads == std::max(HQ, HK)) {
+            emitStaticHeads(bodyBuilder);
+            return;
+          }
+          Value activeGroup = bodyBuilder.create<arith::CmpIOp>(
+              location, arith::CmpIPredicate::ult, lower, headUpper);
+          auto guardedGroup = bodyBuilder.create<scf::IfOp>(
+              location, activeGroup, /*withElseRegion=*/false);
+          OpBuilder groupBuilder = guardedGroup.getThenBodyBuilder();
+          emitStaticHeads(groupBuilder);
+          return;
+        }
+
+        for (unsigned offset = 0; offset < requestPairedHeadGroupSize;
+             ++offset) {
+          Value head = lower;
+          if (offset != 0)
+            head = bodyBuilder.create<arith::AddIOp>(
+                location, lower,
+                bodyBuilder.create<arith::ConstantIndexOp>(location, offset));
+          Value activeHead = bodyBuilder.create<arith::CmpIOp>(
+              location, arith::CmpIPredicate::ult, head, headUpper);
+          auto guardedHead = bodyBuilder.create<scf::IfOp>(
+              location, activeHead, /*withElseRegion=*/false);
+          OpBuilder headBuilder = guardedHead.getThenBodyBuilder();
+          emitHead(headBuilder, head);
+        }
+      };
+      emitHeadGroup(entry->getArgument(qArg), HQ);
+      emitHeadGroup(entry->getArgument(kArg), HK);
+    } else {
+      Value qLimit =
+          bodyBuilder.create<arith::ConstantIndexOp>(location, qPairs);
+      Value isQ = bodyBuilder.create<arith::CmpIOp>(
+          location, arith::CmpIPredicate::ult, flat, qLimit);
+      auto choose = bodyBuilder.create<scf::IfOp>(location, isQ,
+                                                  /*withElseRegion=*/true);
+      OpBuilder qBuilder = choose.getThenBodyBuilder();
+      emitTensorRotation(qBuilder, location, entry->getArgument(qArg),
+                         entry->getArgument(cosineArg),
+                         entry->getArgument(sineArg), flat, HQ);
+      OpBuilder kBuilder = choose.getElseBodyBuilder();
+      Value local =
+          kBuilder.create<arith::SubIOp>(location, flat, qLimit);
+      emitTensorRotation(kBuilder, location, entry->getArgument(kArg),
+                         entry->getArgument(cosineArg),
+                         entry->getArgument(sineArg), local, HK);
+    }
 
     builder.setInsertionPointAfter(guarded);
     builder.create<gpu::TerminatorOp>(location);
@@ -1425,8 +1929,14 @@ struct PairedRotationLowering {
     attachElementwiseStateReceipt(
         lowered, T, gridBlocks, /*gridStrideFlat=*/false,
         /*gridStrideUnroll=*/1, /*logicalTileElements=*/0,
-        /*vectorWidth=*/1, "none", /*oneDimensionalResults=*/false,
-        /*hostValueCaptureCount=*/0, /*pairedLastAxisRotation=*/true);
+        /*vectorWidth=*/requestRowVectorWidth, "none",
+        /*oneDimensionalResults=*/false,
+        /*hostValueCaptureCount=*/0,
+        /*shiftedExpCancellationCount=*/0,
+        /*pairedLastAxisRotation=*/true,
+        /*pairedHeadAngleReuse=*/requestPairedHeadReuse,
+        /*pairedDirectPlane=*/requestPairedDirectPlane,
+        /*pairedHeadGroupSize=*/requestPairedHeadGroupSize);
     fn.erase();
     return success();
   }
@@ -1442,6 +1952,21 @@ struct ConvertIntentElementwiseToGPUPass
     SmallVector<func::FuncOp> targets;
     SmallVector<func::FuncOp> pairedTargets;
     for (auto fn : mod.getOps<func::FuncOp>()) {
+      if (cancelShiftedExp) {
+        if (rewriteShiftedExpProducts(fn) == 0)
+          continue;
+        ElementwiseLowering transformed(
+            fn, blockThreads, flattenContiguous, flatVectorWidth,
+            gridStrideUnroll, logicalTileElements, rowVectorWidth,
+            promoteUniformScalars, tanhApproximation);
+        if (failed(transformed.match())) {
+          fn.emitError("shifted-exp cancellation did not produce a complete "
+                       "elementwise lowering state");
+          return signalPassFailure();
+        }
+        targets.push_back(fn);
+        continue;
+      }
       ElementwiseLowering probe(fn, blockThreads, flattenContiguous,
                                 flatVectorWidth, gridStrideUnroll,
                                 logicalTileElements, rowVectorWidth,
@@ -1452,7 +1977,8 @@ struct ConvertIntentElementwiseToGPUPass
       else {
         PairedRotationLowering paired(
             fn, blockThreads, flattenContiguous, gridStrideUnroll,
-            logicalTileElements, rowVectorWidth, tanhApproximation);
+            logicalTileElements, rowVectorWidth, pairedHeadReuse,
+            pairedHeadGroupSize, pairedDirectPlane, tanhApproximation);
         if (succeeded(paired.match()))
           pairedTargets.push_back(fn);
       }
@@ -1471,7 +1997,8 @@ struct ConvertIntentElementwiseToGPUPass
     for (func::FuncOp fn : pairedTargets) {
       PairedRotationLowering low(
           fn, blockThreads, flattenContiguous, gridStrideUnroll,
-          logicalTileElements, rowVectorWidth, tanhApproximation);
+          logicalTileElements, rowVectorWidth, pairedHeadReuse,
+          pairedHeadGroupSize, pairedDirectPlane, tanhApproximation);
       if (failed(low.match()) || failed(low.rewrite())) {
         fn.emitError("paired last-axis rotation lowering failed after match");
         return signalPassFailure();

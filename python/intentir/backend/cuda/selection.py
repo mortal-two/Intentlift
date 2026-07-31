@@ -316,6 +316,18 @@ DEFAULT_PASSES: tuple[PassDescriptor, ...] = (
         description="row normalization/loss reduction graph",
     ),
     PassDescriptor(
+        fast_path_id="cuda.algebra.exp_shift_product_cancellation.v1",
+        pass_argument=(
+            "-convert-intent-elementwise-to-gpu=block-threads=256 "
+            "cancel-shifted-exp=true tanh-approximation=stable-ex2"
+        ),
+        supported_chips=_PORTABLE_BLOCK_CUDA_CHIPS,
+        description=(
+            "execution-domain exp(x-shift)*exp(shift) cancellation followed by "
+            "the ordinary elementwise MLIR lowering"
+        ),
+    ),
+    PassDescriptor(
         fast_path_id=(
             "cuda.row_scan.sparsemax.sorted_prefix.execution_domain.v1"
         ),

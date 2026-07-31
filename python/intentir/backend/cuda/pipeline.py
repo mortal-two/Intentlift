@@ -65,6 +65,8 @@ class MLIRTransformationRecord:
     prefix_packet_width: int
     approximation_mode: str
     vector_width: int = 1
+    warps_n: int = 1
+    group_m: int = 8
     launch_plans: tuple[KernelLaunchConfig, ...] = ()
 
     @property
@@ -126,6 +128,8 @@ class MLIRTransformationRecord:
             "prefix_packet_width": self.prefix_packet_width,
             "approximation_mode": self.approximation_mode,
             "vector_width": self.vector_width,
+            "warps_n": self.warps_n,
+            "group_m": self.group_m,
             "launch_plans": [item.to_dict() for item in self.launch_plans],
             "observation_changing": self.observation_changing,
         }
@@ -209,6 +213,12 @@ def _transformation_record(mlir: str) -> MLIRTransformationRecord | None:
     vector_width = integer_attr("intent.backend.vector_width")
     if vector_width is None:
         vector_width = 1
+    warps_n = integer_attr("intent.backend.warps_n")
+    if warps_n is None:
+        warps_n = 1
+    group_m = integer_attr("intent.backend.group_m")
+    if group_m is None:
+        group_m = 8
     approximate_div_count = integer_attr(
         "intent.backend.approximate_div_count"
     )
@@ -245,6 +255,8 @@ def _transformation_record(mlir: str) -> MLIRTransformationRecord | None:
         or grid_stride_unroll not in {1, 2, 4, 8}
         or logical_tile_elements < 0
         or vector_width not in {1, 2, 4}
+        or warps_n not in {1, 2, 4, 8}
+        or group_m not in {1, 2, 4, 8, 16, 32}
         or prefix_packet_width not in {0, 1, 2, 4}
         or prefetched_epilogue_input_count < 0
         or any(value is None or value < 0 for value in counts.values())
@@ -281,6 +293,8 @@ def _transformation_record(mlir: str) -> MLIRTransformationRecord | None:
         prefix_packet_width=prefix_packet_width,
         approximation_mode=approximation_mode,
         vector_width=vector_width,
+        warps_n=warps_n,
+        group_m=group_m,
         launch_plans=tuple(parse_launch_configs(mlir)),
     )
 

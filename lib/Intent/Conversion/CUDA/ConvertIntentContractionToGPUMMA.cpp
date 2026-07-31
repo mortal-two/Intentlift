@@ -71,7 +71,6 @@ namespace {
 
 // mma.sync m16n8k16 tile geometry.
 static constexpr int64_t MMA_M = 16, MMA_N = 8, MMA_K = 16;
-static constexpr int64_t GROUP_M = 8; // L2 swizzle group width (= tl.dot GROUP_M)
 
 /// Recognize a rank-2 row-by-row contraction independently of the author's
 /// choice of einsum letters.  ``mk,nk->mn`` and ``ik,jk->ij`` describe the same
@@ -96,6 +95,9 @@ struct ContractionMMALowering {
   int numStages;
   int64_t reqBM, reqBN, reqBK;
   int64_t padK; // 16-bit padding on the smem K-tile leading dim.
+  int64_t warpsN;
+  int64_t groupM;
+  int64_t splitKParts;
 
   int64_t BM = 64, BN = 128;
   int64_t BK = 32; // K staging step (= 2 k16 mma sub-tiles); autotuner knob.
@@ -112,9 +114,12 @@ struct ContractionMMALowering {
   DenseMap<Value, Value> argMemref;
 
   ContractionMMALowering(func::FuncOp fn, int numStages, int64_t reqBM,
-                         int64_t reqBN, int64_t reqBK, int64_t padK)
+                         int64_t reqBN, int64_t reqBK, int64_t padK,
+                         int64_t warpsN, int64_t groupM,
+                         int64_t splitKParts)
       : fn(fn), numStages(numStages), reqBM(reqBM), reqBN(reqBN),
-        reqBK(reqBK), padK(padK) {}
+        reqBK(reqBK), padK(padK), warpsN(warpsN),
+        groupM(groupM), splitKParts(splitKParts) {}
 
   // ---- recognition ------------------------------------------------------- //
   LogicalResult match() {
@@ -252,7 +257,7 @@ struct ContractionMMALowering {
                                : RankedTensorType();
           if (biasArg && biasArg.getOwner() == &body && biasTy && widenedTy &&
               biasTy.hasStaticShape() && biasTy.getRank() == 1 &&
-              biasTy.getDimSize(0) == N &&
+              biasTy.getDimSize(0) == N && (N % 2) == 0 &&
               biasTy.getElementType() == inputStorageType &&
               widenedTy.getShape() == biasTy.getShape() &&
               isa<Float32Type>(widenedTy.getElementType())) {
@@ -287,10 +292,26 @@ struct ContractionMMALowering {
     // Each thread issues complete 128-bit cp.async packets. A's packet count
     // is integral because BK is a multiple of MMA_K; require the same for W
     // rather than silently leaving a suffix of the staged tile uncopied.
-    int64_t copyThreads = (BM / MMA_M) * 32;
-    if (((BN * BK) / 8) % copyThreads != 0)
+    if (warpsN != 1 && warpsN != 2 && warpsN != 4 && warpsN != 8)
       return failure();
-
+    if (groupM < 1 || groupM > 32 || (groupM & (groupM - 1)) != 0)
+      return failure();
+    if (BN % (MMA_N * warpsN) != 0 ||
+        (BM / MMA_M) * warpsN * 32 > 1024)
+      return failure();
+    int64_t copyThreads = (BM / MMA_M) * warpsN * 32;
+    int64_t aPackets = (BM * BK) / 8;
+    int64_t wPackets = (BN * BK) / 8;
+    bool hasPacketTail = aPackets % copyThreads != 0 ||
+                         wPackets % copyThreads != 0;
+    if (hasPacketTail && !(padK >= 8 && padK % 8 == 0))
+      return failure();
+    if (splitKParts != 1 && splitKParts != 2 && splitKParts != 4)
+      return failure();
+    if (K % (BK * splitKParts) != 0)
+      return failure();
+    if (splitKParts > 1 && !hasRegisterBiasSavedEpilogue)
+      return failure();
     // Padded smem leading dim: shift each K-tile row by padK 16-bit elements so
     // ldmatrix reads land on distinct shared-memory banks. padK must be a
     // multiple of 8 (one 128-bit cp.async packet); an illegal knob disables
@@ -387,21 +408,452 @@ struct ContractionMMALowering {
     return nullptr;
   }
 
+  /// Split the K reduction into independent mma.sync CTAs, materialize exact
+  /// f32 partials in device scratch, then launch an ordered additive finalize
+  /// that applies the certified bias/cast epilogue and writes both observables.
+  LogicalResult rewriteSplitK() {
+    MLIRContext *ctx = fn.getContext();
+    Location loc = fn.getLoc();
+    OpBuilder b(ctx);
+    auto wgSpace = gpu::AddressSpaceAttr::get(ctx, gpu::AddressSpace::Workgroup);
+
+    SmallVector<Type> argumentTypes;
+    for (Type type : fn.getFunctionType().getInputs()) {
+      auto tensor = cast<RankedTensorType>(type);
+      argumentTypes.push_back(
+          MemRefType::get(tensor.getShape(), tensor.getElementType()));
+    }
+    for (Type type : fn.getFunctionType().getResults()) {
+      auto tensor = cast<RankedTensorType>(type);
+      argumentTypes.push_back(
+          MemRefType::get(tensor.getShape(), tensor.getElementType()));
+    }
+    auto loweredType = FunctionType::get(ctx, argumentTypes, {});
+
+    std::string name = fn.getName().str();
+    fn.setName(name + "_intent_src");
+    b.setInsertionPoint(fn);
+    auto lowered = b.create<func::FuncOp>(loc, name, loweredType);
+    Block *entry = lowered.addEntryBlock();
+    b.setInsertionPointToStart(entry);
+
+    Value aMem = entry->getArgument(aArgIdx);
+    Value wMem = entry->getArgument(wArgIdx);
+    Value biasMem = entry->getArgument(biasArgIdx);
+    unsigned outputBase = fn.getFunctionType().getNumInputs();
+    SmallVector<Value> outputMems;
+    for (unsigned index = 0; index < fn.getFunctionType().getNumResults();
+         ++index)
+      outputMems.push_back(entry->getArgument(outputBase + index));
+
+    auto partialType = MemRefType::get({splitKParts, M, N}, f32);
+    Value partials = b.create<memref::AllocOp>(loc, partialType);
+
+    int64_t numWarpsM = BM / MMA_M;
+    int64_t numWarps = numWarpsM * warpsN;
+    int64_t blockThreads = numWarps * 32;
+    int64_t warpTileN = BN / warpsN;
+    int64_t nFrag = warpTileN / MMA_N;
+    int64_t gridN = N / BN;
+    int64_t gridM = M / BM;
+    int64_t tileBlocks = gridM * gridN;
+    int64_t partialGrid = tileBlocks * splitKParts;
+    int64_t localK = K / splitKParts;
+    int64_t numK = localK / BK;
+    int nStages = std::min<int64_t>(static_cast<int64_t>(numStages), numK);
+    if (nStages < 1)
+      nStages = 1;
+
+    int64_t aBytes = BM * BKs * 2;
+    int64_t wBytes = BN * BKs * 2;
+    int64_t aAllBytes = nStages * aBytes;
+    int64_t wAllBytes = nStages * wBytes;
+    int64_t sharedBytes = aAllBytes + wAllBytes;
+
+    Schedule schedule;
+    schedule.gridX = partialGrid;
+    schedule.blockX = blockThreads;
+    schedule.smemBytes = sharedBytes;
+    schedule.pipelineDepth = nStages;
+    schedule.perThreadTile = nFrag;
+    schedule.splitFactor = splitKParts;
+    ::intent::attachLaunchPlan(lowered, schedule);
+
+    Value cPartialGrid =
+        b.create<arith::ConstantIndexOp>(loc, partialGrid);
+    Value cBlockThreads =
+        b.create<arith::ConstantIndexOp>(loc, blockThreads);
+    Value c1 = b.create<arith::ConstantIndexOp>(loc, 1);
+    Value cSharedBytes = b.create<arith::ConstantOp>(
+        loc, b.getI32IntegerAttr(static_cast<int32_t>(sharedBytes)));
+    auto partialLaunch = b.create<gpu::LaunchOp>(
+        loc, cPartialGrid, c1, c1, cBlockThreads, c1, c1, cSharedBytes);
+    b.setInsertionPointToStart(&partialLaunch.getBody().front());
+
+    Value bx = partialLaunch.getBlockIds().x;
+    Value tx = partialLaunch.getThreadIds().x;
+    Value c0 = b.create<arith::ConstantIndexOp>(loc, 0);
+    Value c2 = b.create<arith::ConstantIndexOp>(loc, 2);
+    Value c4 = b.create<arith::ConstantIndexOp>(loc, 4);
+    Value c8 = b.create<arith::ConstantIndexOp>(loc, 8);
+    Value c16 = b.create<arith::ConstantIndexOp>(loc, 16);
+    Value c32 = b.create<arith::ConstantIndexOp>(loc, 32);
+    Value cWarpsN = b.create<arith::ConstantIndexOp>(loc, warpsN);
+    Value cWarpTileN = b.create<arith::ConstantIndexOp>(loc, warpTileN);
+    Value cBK = b.create<arith::ConstantIndexOp>(loc, BK);
+    Value cParts = b.create<arith::ConstantIndexOp>(loc, splitKParts);
+    Value split = b.create<arith::RemUIOp>(loc, bx, cParts);
+    Value tileBlock = b.create<arith::DivUIOp>(loc, bx, cParts);
+    Value cLocalK = b.create<arith::ConstantIndexOp>(loc, localK);
+    Value kOrigin = b.create<arith::MulIOp>(loc, split, cLocalK);
+
+    Value cGroupM = b.create<arith::ConstantIndexOp>(loc, groupM);
+    Value cGridM = b.create<arith::ConstantIndexOp>(loc, gridM);
+    Value cWidth = b.create<arith::ConstantIndexOp>(loc, groupM * gridN);
+    Value groupId = b.create<arith::DivUIOp>(loc, tileBlock, cWidth);
+    Value pidInW = b.create<arith::RemUIOp>(loc, tileBlock, cWidth);
+    Value gmStart = b.create<arith::MulIOp>(loc, groupId, cGroupM);
+    Value remM = b.create<arith::SubIOp>(loc, cGridM, gmStart);
+    Value groupSize = b.create<arith::MinUIOp>(loc, remM, cGroupM);
+    Value pidM = b.create<arith::AddIOp>(
+        loc, gmStart, b.create<arith::RemUIOp>(loc, tileBlock, groupSize));
+    Value pidN = b.create<arith::DivUIOp>(loc, pidInW, groupSize);
+    Value cBM = b.create<arith::ConstantIndexOp>(loc, BM);
+    Value cBN = b.create<arith::ConstantIndexOp>(loc, BN);
+    Value rowBlock = b.create<arith::MulIOp>(loc, pidM, cBM);
+    Value colBlock = b.create<arith::MulIOp>(loc, pidN, cBN);
+
+    Value warp = b.create<arith::DivUIOp>(loc, tx, c32);
+    Value warpM = b.create<arith::DivUIOp>(loc, warp, cWarpsN);
+    Value warpN = b.create<arith::RemUIOp>(loc, warp, cWarpsN);
+    Value lane = b.create<arith::RemUIOp>(loc, tx, c32);
+    Value warpRowBase = b.create<arith::MulIOp>(loc, warpM, c16);
+    Value warpColBase = b.create<arith::MulIOp>(loc, warpN, cWarpTileN);
+    Value laneMod16 = b.create<arith::RemUIOp>(loc, lane, c16);
+    Value laneDiv16 = b.create<arith::DivUIOp>(loc, lane, c16);
+    Value aColLane = b.create<arith::MulIOp>(loc, laneDiv16, c8);
+    Value aRow = b.create<arith::AddIOp>(loc, warpRowBase, laneMod16);
+    Value laneMod8 = b.create<arith::RemUIOp>(loc, lane, c8);
+    Value laneDiv8 = b.create<arith::DivUIOp>(loc, lane, c8);
+    Value wColLane = b.create<arith::MulIOp>(loc, laneDiv8, c8);
+    Value laneDiv4 = b.create<arith::DivUIOp>(loc, lane, c4);
+    Value laneMod4 = b.create<arith::RemUIOp>(loc, lane, c4);
+    Value storeCol = b.create<arith::MulIOp>(loc, laneMod4, c2);
+
+    auto rawType = MemRefType::get({ShapedType::kDynamic}, b.getI8Type(),
+                                   nullptr, wgSpace);
+    Value raw = b.create<gpu::DynamicSharedMemoryOp>(loc, rawType);
+    auto aSharedType =
+        MemRefType::get({nStages, BM, BKs}, inputStorageType, nullptr, wgSpace);
+    auto wSharedType =
+        MemRefType::get({nStages, BN, BKs}, inputStorageType, nullptr, wgSpace);
+    Value aShared =
+        b.create<memref::ViewOp>(loc, aSharedType, raw, c0, ValueRange{});
+    Value wOffset = b.create<arith::ConstantIndexOp>(loc, aAllBytes);
+    Value wShared = b.create<memref::ViewOp>(loc, wSharedType, raw, wOffset,
+                                             ValueRange{});
+
+    auto aFragmentType = VectorType::get({4, 2}, inputStorageType);
+    auto wFragmentType = VectorType::get({2, 2}, inputStorageType);
+    auto accumulatorType = VectorType::get({2, 2}, f32);
+    auto mmaShape = b.getI64ArrayAttr({MMA_M, MMA_N, MMA_K});
+    Value zeroAccumulator = b.create<arith::ConstantOp>(
+        loc, DenseElementsAttr::get(accumulatorType,
+                                    b.getF32FloatAttr(0.0).getValue()));
+    SmallVector<Value> initialAccumulators(nFrag, zeroAccumulator);
+
+    auto tokenType = nvgpu::DeviceAsyncTokenType::get(ctx);
+    IntegerAttr destinationElements = b.getIndexAttr(8);
+    UnitAttr bypassL1 = b.getUnitAttr();
+    int64_t columnsPerRow = BK / 8;
+    int64_t vectorsPerThreadA = (BM * BK) / 8 / blockThreads;
+    int64_t vectorsPerThreadW = (BN * BK) / 8 / blockThreads;
+    Value cColumnsPerRow =
+        b.create<arith::ConstantIndexOp>(loc, columnsPerRow);
+    Value cNStages = b.create<arith::ConstantIndexOp>(loc, nStages);
+    Value cNStagesMinusOne =
+        b.create<arith::ConstantIndexOp>(loc, nStages - 1);
+
+    auto loadTile = [&](OpBuilder &nested, Location nestedLoc, Value localKTile,
+                        Value stage) -> Value {
+      SmallVector<Value> tokens;
+      for (int64_t iteration = 0; iteration < vectorsPerThreadA; ++iteration) {
+        Value base = nested.create<arith::ConstantIndexOp>(
+            nestedLoc, iteration * blockThreads);
+        Value vectorIndex =
+            nested.create<arith::AddIOp>(nestedLoc, tx, base);
+        Value row = nested.create<arith::DivUIOp>(nestedLoc, vectorIndex,
+                                                   cColumnsPerRow);
+        Value columnGroup = nested.create<arith::RemUIOp>(
+            nestedLoc, vectorIndex, cColumnsPerRow);
+        Value column =
+            nested.create<arith::MulIOp>(nestedLoc, columnGroup, c8);
+        Value globalK = nested.create<arith::AddIOp>(
+            nestedLoc, kOrigin,
+            nested.create<arith::AddIOp>(nestedLoc, localKTile, column));
+        Value globalRow =
+            nested.create<arith::AddIOp>(nestedLoc, rowBlock, row);
+        tokens.push_back(nested.create<nvgpu::DeviceAsyncCopyOp>(
+            nestedLoc, tokenType, aShared, ValueRange{stage, row, column}, aMem,
+            ValueRange{globalRow, globalK}, destinationElements,
+            /*srcElements=*/Value(), bypassL1));
+      }
+      for (int64_t iteration = 0; iteration < vectorsPerThreadW; ++iteration) {
+        Value base = nested.create<arith::ConstantIndexOp>(
+            nestedLoc, iteration * blockThreads);
+        Value vectorIndex =
+            nested.create<arith::AddIOp>(nestedLoc, tx, base);
+        Value row = nested.create<arith::DivUIOp>(nestedLoc, vectorIndex,
+                                                   cColumnsPerRow);
+        Value columnGroup = nested.create<arith::RemUIOp>(
+            nestedLoc, vectorIndex, cColumnsPerRow);
+        Value column =
+            nested.create<arith::MulIOp>(nestedLoc, columnGroup, c8);
+        Value globalK = nested.create<arith::AddIOp>(
+            nestedLoc, kOrigin,
+            nested.create<arith::AddIOp>(nestedLoc, localKTile, column));
+        Value globalRow =
+            nested.create<arith::AddIOp>(nestedLoc, colBlock, row);
+        tokens.push_back(nested.create<nvgpu::DeviceAsyncCopyOp>(
+            nestedLoc, tokenType, wShared, ValueRange{stage, row, column}, wMem,
+            ValueRange{globalRow, globalK}, destinationElements,
+            /*srcElements=*/Value(), bypassL1));
+      }
+      return nested.create<nvgpu::DeviceAsyncCreateGroupOp>(nestedLoc,
+                                                             tokenType, tokens);
+    };
+
+    auto computeTile = [&](OpBuilder &nested, Location nestedLoc, Value stage,
+                           ValueRange accumulators) -> SmallVector<Value> {
+      SmallVector<Value> current(accumulators.begin(), accumulators.end());
+      for (int64_t kStep = 0; kStep < BK / MMA_K; ++kStep) {
+        Value kConstant =
+            nested.create<arith::ConstantIndexOp>(nestedLoc, kStep * MMA_K);
+        Value aKColumn =
+            nested.create<arith::AddIOp>(nestedLoc, kConstant, aColLane);
+        Value aFragment = nested.create<nvgpu::LdMatrixOp>(
+            nestedLoc, aFragmentType, aShared,
+            ValueRange{stage, aRow, aKColumn}, /*transpose=*/false,
+            /*numTiles=*/4);
+        Value wKColumn =
+            nested.create<arith::AddIOp>(nestedLoc, kConstant, wColLane);
+        for (int fragment = 0; fragment < nFrag; ++fragment) {
+          Value nBase = nested.create<arith::AddIOp>(
+              nestedLoc, warpColBase,
+              nested.create<arith::ConstantIndexOp>(nestedLoc,
+                                                     fragment * MMA_N));
+          Value wRow =
+              nested.create<arith::AddIOp>(nestedLoc, nBase, laneMod8);
+          Value wFragment = nested.create<nvgpu::LdMatrixOp>(
+              nestedLoc, wFragmentType, wShared,
+              ValueRange{stage, wRow, wKColumn}, /*transpose=*/false,
+              /*numTiles=*/2);
+          current[fragment] = nested.create<nvgpu::MmaSyncOp>(
+              nestedLoc, aFragment, wFragment, current[fragment], mmaShape);
+        }
+      }
+      return current;
+    };
+
+    Value prologueToken;
+    for (int stageIndex = 0; stageIndex < nStages - 1; ++stageIndex) {
+      Value localKTile =
+          b.create<arith::ConstantIndexOp>(loc, stageIndex * BK);
+      Value stage = b.create<arith::ConstantIndexOp>(loc, stageIndex);
+      prologueToken = loadTile(b, loc, localKTile, stage);
+    }
+    int64_t steadyTrips = numK - nStages + 1;
+    Value cSteadyTrips = b.create<arith::ConstantIndexOp>(loc, steadyTrips);
+    IntegerAttr waitCount = b.getI32IntegerAttr(nStages - 1);
+    auto mainLoop = b.create<scf::ForOp>(
+        loc, c0, cSteadyTrips, c1, initialAccumulators,
+        [&](OpBuilder &nested, Location nestedLoc, Value iteration,
+            ValueRange accumulators) {
+          Value nextTile = nested.create<arith::AddIOp>(
+              nestedLoc, iteration, cNStagesMinusOne);
+          Value nextK =
+              nested.create<arith::MulIOp>(nestedLoc, nextTile, cBK);
+          Value writeStage =
+              nested.create<arith::RemUIOp>(nestedLoc, nextTile, cNStages);
+          Value group = loadTile(nested, nestedLoc, nextK, writeStage);
+          nested.create<nvgpu::DeviceAsyncWaitOp>(nestedLoc, group, waitCount);
+          nested.create<gpu::BarrierOp>(nestedLoc);
+          Value readStage =
+              nested.create<arith::RemUIOp>(nestedLoc, iteration, cNStages);
+          SmallVector<Value> current =
+              computeTile(nested, nestedLoc, readStage, accumulators);
+          nested.create<gpu::BarrierOp>(nestedLoc);
+          nested.create<scf::YieldOp>(nestedLoc, current);
+        });
+    SmallVector<Value> finalAccumulators(mainLoop.getResults().begin(),
+                                         mainLoop.getResults().end());
+    for (int tail = 0; tail < nStages - 1; ++tail) {
+      int64_t tile = numK - nStages + 1 + tail;
+      Value readStage =
+          b.create<arith::ConstantIndexOp>(loc, tile % nStages);
+      b.create<nvgpu::DeviceAsyncWaitOp>(
+          loc, prologueToken, b.getI32IntegerAttr(nStages - 2 - tail));
+      b.create<gpu::BarrierOp>(loc);
+      finalAccumulators =
+          computeTile(b, loc, readStage, finalAccumulators);
+    }
+
+    Value globalWarpRow =
+        b.create<arith::AddIOp>(loc, rowBlock, warpRowBase);
+    for (int fragment = 0; fragment < nFrag; ++fragment) {
+      Value nBase = b.create<arith::AddIOp>(
+          loc, warpColBase,
+          b.create<arith::ConstantIndexOp>(loc, fragment * MMA_N));
+      Value columnBase = b.create<arith::AddIOp>(loc, colBlock, nBase);
+      for (int rowIndex = 0; rowIndex < 2; ++rowIndex) {
+        Value rowOffset =
+            b.create<arith::ConstantIndexOp>(loc, rowIndex * 8);
+        Value row = b.create<arith::AddIOp>(
+            loc, globalWarpRow,
+            b.create<arith::AddIOp>(loc, laneDiv4, rowOffset));
+        for (int columnIndex = 0; columnIndex < 2; ++columnIndex) {
+          Value columnOffset =
+              b.create<arith::ConstantIndexOp>(loc, columnIndex);
+          Value column = b.create<arith::AddIOp>(
+              loc, columnBase,
+              b.create<arith::AddIOp>(loc, storeCol, columnOffset));
+          Value value = b.create<vector::ExtractOp>(
+              loc, finalAccumulators[fragment],
+              ArrayRef<int64_t>{static_cast<int64_t>(rowIndex),
+                                static_cast<int64_t>(columnIndex)});
+          b.create<memref::StoreOp>(loc, value, partials,
+                                    ValueRange{split, row, column});
+        }
+      }
+    }
+    b.create<gpu::TerminatorOp>(loc);
+
+    b.setInsertionPointAfter(partialLaunch);
+    constexpr int64_t finalizeThreads = 256;
+    int64_t finalizeElements = M * N;
+    int64_t finalizeGrid =
+        (finalizeElements + finalizeThreads - 1) / finalizeThreads;
+    Value cFinalizeGrid =
+        b.create<arith::ConstantIndexOp>(loc, finalizeGrid);
+    Value cFinalizeThreads =
+        b.create<arith::ConstantIndexOp>(loc, finalizeThreads);
+    auto finalizeLaunch = b.create<gpu::LaunchOp>(
+        loc, cFinalizeGrid, c1, c1, cFinalizeThreads, c1, c1);
+    b.setInsertionPointToStart(&finalizeLaunch.getBody().front());
+    Value finalBlock = finalizeLaunch.getBlockIds().x;
+    Value finalThread = finalizeLaunch.getThreadIds().x;
+    Value cFinalizeStride =
+        b.create<arith::ConstantIndexOp>(loc, finalizeThreads);
+    Value flat = b.create<arith::AddIOp>(
+        loc, b.create<arith::MulIOp>(loc, finalBlock, cFinalizeStride),
+        finalThread);
+    Value cFinalizeElements =
+        b.create<arith::ConstantIndexOp>(loc, finalizeElements);
+    Value active = b.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::ult, flat, cFinalizeElements);
+    auto guarded = b.create<scf::IfOp>(loc, active,
+                                       /*withElseRegion=*/false);
+    OpBuilder bodyBuilder = guarded.getThenBodyBuilder();
+    Value cN = bodyBuilder.create<arith::ConstantIndexOp>(loc, N);
+    Value row = bodyBuilder.create<arith::DivUIOp>(loc, flat, cN);
+    Value column = bodyBuilder.create<arith::RemUIOp>(loc, flat, cN);
+    Value partialZero =
+        bodyBuilder.create<arith::ConstantIndexOp>(loc, 0);
+    Value sum = bodyBuilder.create<memref::LoadOp>(
+        loc, partials, ValueRange{partialZero, row, column});
+    for (int64_t part = 1; part < splitKParts; ++part) {
+      Value partIndex =
+          bodyBuilder.create<arith::ConstantIndexOp>(loc, part);
+      Value next = bodyBuilder.create<memref::LoadOp>(
+          loc, partials, ValueRange{partIndex, row, column});
+      sum = bodyBuilder.create<arith::AddFOp>(loc, sum, next);
+    }
+    Value biasStorage =
+        bodyBuilder.create<memref::LoadOp>(loc, biasMem, ValueRange{column});
+    Value bias =
+        bodyBuilder.create<arith::ExtFOp>(loc, f32, biasStorage);
+    Value preactivation =
+        bodyBuilder.create<arith::AddFOp>(loc, sum, bias);
+    Value stored = bodyBuilder.create<arith::TruncFOp>(
+        loc, inputStorageType, preactivation);
+    for (Value output : outputMems)
+      bodyBuilder.create<memref::StoreOp>(loc, stored, output,
+                                          ValueRange{row, column});
+    b.setInsertionPointAfter(guarded);
+    b.create<gpu::TerminatorOp>(loc);
+
+    b.setInsertionPointAfter(finalizeLaunch);
+    b.create<memref::DeallocOp>(loc, partials);
+    b.create<func::ReturnOp>(loc);
+
+    auto i64 = IntegerType::get(ctx, 64);
+    lowered->setAttr("intent.backend.lowering_path_kind",
+                     StringAttr::get(ctx, "contraction"));
+    lowered->setAttr("intent.backend.reduction_topology",
+                     StringAttr::get(ctx, "multi_stage_partial_finalize"));
+    lowered->setAttr("intent.backend.approximation_mode",
+                     StringAttr::get(ctx, "none"));
+    SmallVector<Attribute> splitTrace{
+        StringAttr::get(ctx, "cuda.contraction.mma-sync.v1")};
+    if (warpsN > 1)
+      splitTrace.push_back(StringAttr::get(
+          ctx, "cuda.contraction.mma-sync.warp-n-partition.v1"));
+    splitTrace.push_back(StringAttr::get(
+        ctx, "cuda.contraction.split_k_partial_finalize.v1"));
+    lowered->setAttr("intent.backend.transformation_trace",
+                     ArrayAttr::get(ctx, splitTrace));
+    lowered->setAttr("intent.backend.stage_count", IntegerAttr::get(i64, 2));
+    lowered->setAttr("intent.backend.reduction_parts",
+                     IntegerAttr::get(i64, splitKParts));
+    lowered->setAttr("intent.backend.warps_n",
+                     IntegerAttr::get(i64, warpsN));
+    lowered->setAttr("intent.backend.group_m",
+                     IntegerAttr::get(i64, groupM));
+    int64_t barrierCount = 0;
+    lowered.walk([&](gpu::BarrierOp) { ++barrierCount; });
+    lowered->setAttr("intent.backend.fma_count", IntegerAttr::get(i64, 0));
+    lowered->setAttr("intent.backend.shuffle_count", IntegerAttr::get(i64, 0));
+    lowered->setAttr("intent.backend.barrier_count",
+                     IntegerAttr::get(i64, barrierCount));
+    lowered->setAttr("intent.backend.all_reduce_count",
+                     IntegerAttr::get(i64, 0));
+    lowered->setAttr("intent.backend.block_threads",
+                     IntegerAttr::get(i64, blockThreads));
+    lowered->setAttr("intent.backend.grid_blocks",
+                     IntegerAttr::get(i64, partialGrid));
+    lowered->setAttr("intent.backend.predicated_value_if_count",
+                     IntegerAttr::get(i64, 0));
+    lowered->setAttr("intent.backend.folded_constexpr_select_count",
+                     IntegerAttr::get(i64, 0));
+    lowered->setAttr("intent.backend.vector_width", IntegerAttr::get(i64, 1));
+    fn.erase();
+    return success();
+  }
+
   // ---- emission ---------------------------------------------------------- //
   LogicalResult rewrite() {
+    if (splitKParts > 1)
+      return rewriteSplitK();
     MLIRContext *ctx = fn.getContext();
     Location loc = fn.getLoc();
     OpBuilder b(ctx);
     auto wgSpace = gpu::AddressSpaceAttr::get(ctx, gpu::AddressSpace::Workgroup);
 
     SmallVector<Type> inTys;
-    for (Type at : fn.getFunctionType().getInputs()) {
+    Type outputPairType = VectorType::get({2}, inputStorageType);
+    for (auto [index, at] : llvm::enumerate(fn.getFunctionType().getInputs())) {
       auto t = cast<RankedTensorType>(at);
-      inTys.push_back(MemRefType::get(t.getShape(), t.getElementType()));
+      if (hasRegisterBiasSavedEpilogue && index == biasArgIdx)
+        inTys.push_back(MemRefType::get({N / 2}, outputPairType));
+      else
+        inTys.push_back(MemRefType::get(t.getShape(), t.getElementType()));
     }
     for (Type resultType : fn.getFunctionType().getResults()) {
       auto t = cast<RankedTensorType>(resultType);
-      inTys.push_back(MemRefType::get(t.getShape(), t.getElementType()));
+      if (hasRegisterBiasSavedEpilogue)
+        inTys.push_back(MemRefType::get({M, N / 2}, outputPairType));
+      else
+        inTys.push_back(MemRefType::get(t.getShape(), t.getElementType()));
     }
     auto newFty = FunctionType::get(ctx, inTys, {});
 
@@ -425,13 +877,16 @@ struct ContractionMMALowering {
     for (unsigned i = 0; i < argRoles.size(); ++i)
       argMemref[srcBlock.getArgument(i)] = entry->getArgument(i);
 
-    int64_t numWarps = BM / MMA_M;
-    int64_t kBlock = numWarps * 32;
-    int64_t nFrag = BN / MMA_N; // n8 column tiles per warp
+    int64_t numWarpsM = BM / MMA_M;
+    int64_t numWarps = numWarpsM * warpsN;
+    int64_t groupThreads = numWarps * 32;
+    int64_t blockThreads = groupThreads;
+    int64_t warpTileN = BN / warpsN;
+    int64_t nFrag = warpTileN / MMA_N; // n8 column tiles per warp
 
     int64_t gridN = N / BN, gridM = M / BM;
     Value cGrid = b.create<arith::ConstantIndexOp>(loc, gridM * gridN);
-    Value cBlk = b.create<arith::ConstantIndexOp>(loc, kBlock);
+    Value cBlk = b.create<arith::ConstantIndexOp>(loc, blockThreads);
     Value c1 = b.create<arith::ConstantIndexOp>(loc, 1);
 
     int64_t numK = K / BK;
@@ -440,9 +895,11 @@ struct ContractionMMALowering {
       nStages = 1;
 
     int64_t aBytes = BM * BKs * 2, wBytes = BN * BKs * 2;
-    int64_t aAllBytes = nStages * aBytes, wAllBytes = nStages * wBytes;
-    int64_t cBytes =
-        hasEpilogue && !hasRegisterBiasSavedEpilogue ? BM * BN * 4 : 0;
+    int64_t aAllBytes = nStages * aBytes;
+    int64_t wAllBytes = nStages * wBytes;
+    int64_t cBytes = hasEpilogue && !hasRegisterBiasSavedEpilogue
+                         ? BM * BN * 4
+                         : 0;
     Value shBytes = b.create<arith::ConstantOp>(
         loc, b.getI32IntegerAttr((int32_t)(aAllBytes + wAllBytes + cBytes)));
 
@@ -451,10 +908,11 @@ struct ContractionMMALowering {
     // Schedule instead of regex-scraping the lowered mma.sync host module.
     Schedule sched;
     sched.gridX = gridM * gridN;
-    sched.blockX = kBlock;
+    sched.blockX = blockThreads;
     sched.smemBytes = aAllBytes + wAllBytes + cBytes;
     sched.pipelineDepth = nStages;
     sched.perThreadTile = nFrag;
+    sched.vectorWidth = hasRegisterBiasSavedEpilogue ? 2 : 1;
     ::intent::attachLaunchPlan(gpuFn, sched);
 
     auto launch =
@@ -464,17 +922,21 @@ struct ContractionMMALowering {
     Value bx = launch.getBlockIds().x;
     Value tx = launch.getThreadIds().x;
     Value c0 = b.create<arith::ConstantIndexOp>(loc, 0);
+    Value localTx = tx;
+    Value partitionBase = c0;
     Value cBK = b.create<arith::ConstantIndexOp>(loc, BK);
     Value c8 = b.create<arith::ConstantIndexOp>(loc, 8);
     Value c16 = b.create<arith::ConstantIndexOp>(loc, 16);
     Value c32 = b.create<arith::ConstantIndexOp>(loc, 32);
     Value c4 = b.create<arith::ConstantIndexOp>(loc, 4);
     Value c2 = b.create<arith::ConstantIndexOp>(loc, 2);
+    Value cWarpsN = b.create<arith::ConstantIndexOp>(loc, warpsN);
+    Value cWarpTileN = b.create<arith::ConstantIndexOp>(loc, warpTileN);
 
     // Flat pid -> (pid_m, pid_n) with the GROUP_M L2 swizzle.
-    Value cGroupM = b.create<arith::ConstantIndexOp>(loc, GROUP_M);
+    Value cGroupM = b.create<arith::ConstantIndexOp>(loc, groupM);
     Value cGridM = b.create<arith::ConstantIndexOp>(loc, gridM);
-    Value cWidth = b.create<arith::ConstantIndexOp>(loc, GROUP_M * gridN);
+    Value cWidth = b.create<arith::ConstantIndexOp>(loc, groupM * gridN);
     Value groupId = b.create<arith::DivUIOp>(loc, bx, cWidth);
     Value pidInW = b.create<arith::RemUIOp>(loc, bx, cWidth);
     Value gmStart = b.create<arith::MulIOp>(loc, groupId, cGroupM);
@@ -489,9 +951,13 @@ struct ContractionMMALowering {
     Value colBlk = b.create<arith::MulIOp>(loc, pidN, cBNv);
 
     // Per-thread lane/warp decomposition + the ldmatrix/store lane offsets.
-    Value warp = b.create<arith::DivUIOp>(loc, tx, c32);
-    Value lane = b.create<arith::RemUIOp>(loc, tx, c32);
-    Value warpRowBase = b.create<arith::MulIOp>(loc, warp, c16); // 16-row strip
+    Value warp = b.create<arith::DivUIOp>(loc, localTx, c32);
+    Value warpM = b.create<arith::DivUIOp>(loc, warp, cWarpsN);
+    Value warpN = b.create<arith::RemUIOp>(loc, warp, cWarpsN);
+    Value lane = b.create<arith::RemUIOp>(loc, localTx, c32);
+    Value warpRowBase =
+        b.create<arith::MulIOp>(loc, warpM, c16); // 16-row strip
+    Value warpColBase = b.create<arith::MulIOp>(loc, warpN, cWarpTileN);
     Value laneMod16 = b.create<arith::RemUIOp>(loc, lane, c16);
     Value laneDiv16 = b.create<arith::DivUIOp>(loc, lane, c16);
     Value aColLane = b.create<arith::MulIOp>(loc, laneDiv16, c8); // (lane/16)*8
@@ -507,10 +973,10 @@ struct ContractionMMALowering {
     auto rawTy = MemRefType::get({ShapedType::kDynamic}, b.getI8Type(), nullptr,
                                  wgSpace);
     Value raw = b.create<gpu::DynamicSharedMemoryOp>(loc, rawTy);
-    auto aShTy =
-        MemRefType::get({nStages, BM, BKs}, inputStorageType, nullptr, wgSpace);
-    auto wShTy =
-        MemRefType::get({nStages, BN, BKs}, inputStorageType, nullptr, wgSpace);
+    auto aShTy = MemRefType::get({nStages, BM, BKs}, inputStorageType, nullptr,
+                                 wgSpace);
+    auto wShTy = MemRefType::get({nStages, BN, BKs}, inputStorageType, nullptr,
+                                 wgSpace);
     Value aSh = b.create<memref::ViewOp>(loc, aShTy, raw, c0, ValueRange{});
     Value wOff = b.create<arith::ConstantIndexOp>(loc, aAllBytes);
     Value wSh = b.create<memref::ViewOp>(loc, wShTy, raw, wOff, ValueRange{});
@@ -536,9 +1002,13 @@ struct ContractionMMALowering {
     IntegerAttr dstElems = b.getIndexAttr(8);
     UnitAttr bypassL1 = b.getUnitAttr();
     int64_t colsPerRow = BK / 8;
-    int64_t vPerThreadA = (BM * BK) / 8 / kBlock;
-    int64_t vPerThreadW = (BN * BK) / 8 / kBlock;
+    int64_t aPackets = (BM * BK) / 8;
+    int64_t wPackets = (BN * BK) / 8;
+    int64_t vPerThreadA = (aPackets + groupThreads - 1) / groupThreads;
+    int64_t vPerThreadW = (wPackets + groupThreads - 1) / groupThreads;
     Value cCPR = b.create<arith::ConstantIndexOp>(loc, colsPerRow);
+    Value cAPackets = b.create<arith::ConstantIndexOp>(loc, aPackets);
+    Value cWPackets = b.create<arith::ConstantIndexOp>(loc, wPackets);
     Value c8b = c8;
     Value cNStages = b.create<arith::ConstantIndexOp>(loc, nStages);
     Value cNm1 = b.create<arith::ConstantIndexOp>(loc, nStages - 1);
@@ -547,28 +1017,62 @@ struct ContractionMMALowering {
                         Value stageVal) -> Value {
       SmallVector<Value> toks;
       for (int64_t it = 0; it < vPerThreadA; ++it) {
-        Value base = nb.create<arith::ConstantIndexOp>(nl, it * kBlock);
-        Value vt = nb.create<arith::AddIOp>(nl, tx, base);
+        Value base = nb.create<arith::ConstantIndexOp>(nl, it * groupThreads);
+        Value vt = nb.create<arith::AddIOp>(nl, localTx, base);
         Value r = nb.create<arith::DivUIOp>(nl, vt, cCPR);
         Value colg = nb.create<arith::RemUIOp>(nl, vt, cCPR);
         Value cc = nb.create<arith::MulIOp>(nl, colg, c8b);
-        Value gk = nb.create<arith::AddIOp>(nl, ktVal, cc);
+        Value localK = nb.create<arith::AddIOp>(nl, ktVal, cc);
+        Value gk = nb.create<arith::AddIOp>(nl, partitionBase, localK);
         Value ar = nb.create<arith::AddIOp>(nl, rowBlk, r);
+        Value safeR = r, safeCc = cc, safeAr = ar, safeGk = gk;
+        Value srcElements;
+        if (aPackets % groupThreads != 0) {
+          Value inRange = nb.create<arith::CmpIOp>(
+              nl, arith::CmpIPredicate::ult, vt, cAPackets);
+          safeR = nb.create<arith::SelectOp>(
+              nl, inRange, r,
+              nb.create<arith::RemUIOp>(nl, vt, cBMv));
+          safeCc = nb.create<arith::SelectOp>(nl, inRange, cc, cBK);
+          safeAr = nb.create<arith::SelectOp>(nl, inRange, ar, rowBlk);
+          safeGk = nb.create<arith::SelectOp>(nl, inRange, gk, partitionBase);
+          Value c8Elems = nb.create<arith::ConstantIndexOp>(nl, 8);
+          Value c0Elems = nb.create<arith::ConstantIndexOp>(nl, 0);
+          srcElements = nb.create<arith::SelectOp>(nl, inRange, c8Elems,
+                                                   c0Elems);
+        }
         toks.push_back(nb.create<nvgpu::DeviceAsyncCopyOp>(
-            nl, tokTy, aSh, ValueRange{stageVal, r, cc}, aMem,
-            ValueRange{ar, gk}, dstElems, /*srcElements=*/Value(), bypassL1));
+            nl, tokTy, aSh, ValueRange{stageVal, safeR, safeCc}, aMem,
+            ValueRange{safeAr, safeGk}, dstElems, srcElements, bypassL1));
       }
       for (int64_t it = 0; it < vPerThreadW; ++it) {
-        Value base = nb.create<arith::ConstantIndexOp>(nl, it * kBlock);
-        Value vt = nb.create<arith::AddIOp>(nl, tx, base);
+        Value base = nb.create<arith::ConstantIndexOp>(nl, it * groupThreads);
+        Value vt = nb.create<arith::AddIOp>(nl, localTx, base);
         Value r = nb.create<arith::DivUIOp>(nl, vt, cCPR);
         Value colg = nb.create<arith::RemUIOp>(nl, vt, cCPR);
         Value cc = nb.create<arith::MulIOp>(nl, colg, c8b);
-        Value gk = nb.create<arith::AddIOp>(nl, ktVal, cc);
+        Value localK = nb.create<arith::AddIOp>(nl, ktVal, cc);
+        Value gk = nb.create<arith::AddIOp>(nl, partitionBase, localK);
         Value wr = nb.create<arith::AddIOp>(nl, colBlk, r);
+        Value safeR = r, safeCc = cc, safeWr = wr, safeGk = gk;
+        Value srcElements;
+        if (wPackets % groupThreads != 0) {
+          Value inRange = nb.create<arith::CmpIOp>(
+              nl, arith::CmpIPredicate::ult, vt, cWPackets);
+          safeR = nb.create<arith::SelectOp>(
+              nl, inRange, r,
+              nb.create<arith::RemUIOp>(nl, vt, cBNv));
+          safeCc = nb.create<arith::SelectOp>(nl, inRange, cc, cBK);
+          safeWr = nb.create<arith::SelectOp>(nl, inRange, wr, colBlk);
+          safeGk = nb.create<arith::SelectOp>(nl, inRange, gk, partitionBase);
+          Value c8Elems = nb.create<arith::ConstantIndexOp>(nl, 8);
+          Value c0Elems = nb.create<arith::ConstantIndexOp>(nl, 0);
+          srcElements = nb.create<arith::SelectOp>(nl, inRange, c8Elems,
+                                                   c0Elems);
+        }
         toks.push_back(nb.create<nvgpu::DeviceAsyncCopyOp>(
-            nl, tokTy, wSh, ValueRange{stageVal, r, cc}, wMem,
-            ValueRange{wr, gk}, dstElems, /*srcElements=*/Value(), bypassL1));
+            nl, tokTy, wSh, ValueRange{stageVal, safeR, safeCc}, wMem,
+            ValueRange{safeWr, safeGk}, dstElems, srcElements, bypassL1));
       }
       return nb.create<nvgpu::DeviceAsyncCreateGroupOp>(nl, tokTy, toks);
     };
@@ -585,7 +1089,9 @@ struct ContractionMMALowering {
             /*transpose=*/false, /*numTiles=*/4);
         Value wKcol = nb.create<arith::AddIOp>(nl, ksc, wColLane);
         for (int j = 0; j < nFrag; ++j) {
-          Value nbase = nb.create<arith::ConstantIndexOp>(nl, j * MMA_N);
+          Value nbase = nb.create<arith::AddIOp>(
+              nl, warpColBase,
+              nb.create<arith::ConstantIndexOp>(nl, j * MMA_N));
           Value wRow = nb.create<arith::AddIOp>(nl, nbase, laneMod8);
           Value wFrag = nb.create<nvgpu::LdMatrixOp>(
               nl, wFragTy, wSh, ValueRange{stageVal, wRow, wKcol},
@@ -658,9 +1164,52 @@ struct ContractionMMALowering {
     };
 
     Value warpRowGlobal = b.create<arith::AddIOp>(loc, rowBlk, warpRowBase);
+    auto emitRegisterBiasSavedEpilogue =
+        [&](OpBuilder &nb, Location nl, ValueRange accumulators) {
+          Value biasMem = entry->getArgument(biasArgIdx);
+          for (int j = 0; j < nFrag; ++j) {
+            Value nbase = nb.create<arith::AddIOp>(
+                nl, warpColBase,
+                nb.create<arith::ConstantIndexOp>(nl, j * MMA_N));
+            Value colBase = nb.create<arith::AddIOp>(nl, colBlk, nbase);
+            Value firstCol = nb.create<arith::AddIOp>(nl, colBase, stCol);
+            Value colPair = nb.create<arith::DivUIOp>(nl, firstCol, c2);
+            Value biasPair =
+                nb.create<memref::LoadOp>(nl, biasMem, ValueRange{colPair});
+            for (int i = 0; i < 2; ++i) {
+              Value ic = nb.create<arith::ConstantIndexOp>(nl, i * 8);
+              Value row = nb.create<arith::AddIOp>(
+                  nl, warpRowGlobal,
+                  nb.create<arith::AddIOp>(nl, laneDiv4, ic));
+              SmallVector<Value> storedLanes;
+              for (int laneIndex = 0; laneIndex < 2; ++laneIndex) {
+                Value value = nb.create<vector::ExtractOp>(
+                    nl, accumulators[j],
+                    ArrayRef<int64_t>{static_cast<int64_t>(i),
+                                      static_cast<int64_t>(laneIndex)});
+                Value biasStorage = nb.create<vector::ExtractOp>(
+                    nl, biasPair, ArrayRef<int64_t>{laneIndex});
+                Value biasF32 =
+                    nb.create<arith::ExtFOp>(nl, f32, biasStorage);
+                Value preactivation =
+                    nb.create<arith::AddFOp>(nl, value, biasF32);
+                storedLanes.push_back(nb.create<arith::TruncFOp>(
+                    nl, inputStorageType, preactivation));
+              }
+              Value storedPair = nb.create<vector::FromElementsOp>(
+                  nl, cast<VectorType>(outputPairType), storedLanes);
+              for (Value output : outputMems)
+                nb.create<memref::StoreOp>(nl, storedPair, output,
+                                           ValueRange{row, colPair});
+            }
+          }
+        };
+
     if (!hasEpilogue) {
       for (int j = 0; j < nFrag; ++j) {
-        Value nbase = b.create<arith::ConstantIndexOp>(loc, j * MMA_N);
+        Value nbase = b.create<arith::AddIOp>(
+            loc, warpColBase,
+            b.create<arith::ConstantIndexOp>(loc, j * MMA_N));
         Value colBase = b.create<arith::AddIOp>(loc, colBlk, nbase);
         storeAcc(b, loc, finalAcc[j], warpRowGlobal, colBase,
                  [&](OpBuilder &nb, Location nl, Value v, Value row, Value col) {
@@ -668,33 +1217,15 @@ struct ContractionMMALowering {
                  });
       }
     } else if (hasRegisterBiasSavedEpilogue) {
-      Value biasMem = entry->getArgument(biasArgIdx);
-      for (int j = 0; j < nFrag; ++j) {
-        Value nbase = b.create<arith::ConstantIndexOp>(loc, j * MMA_N);
-        Value colBase = b.create<arith::AddIOp>(loc, colBlk, nbase);
-        storeAcc(b, loc, finalAcc[j], warpRowGlobal, colBase,
-                 [&](OpBuilder &nb, Location nl, Value v, Value row,
-                     Value col) {
-                   Value biasStorage = nb.create<memref::LoadOp>(
-                       nl, biasMem, ValueRange{col});
-                   Value biasF32 =
-                       nb.create<arith::ExtFOp>(nl, f32, biasStorage);
-                   Value preactivation =
-                       nb.create<arith::AddFOp>(nl, v, biasF32);
-                   Value stored =
-                       nb.create<arith::TruncFOp>(nl, inputStorageType,
-                                                  preactivation);
-                   for (Value output : outputMems)
-                     nb.create<memref::StoreOp>(nl, stored, output,
-                                                ValueRange{row, col});
-                 });
-      }
+      emitRegisterBiasSavedEpilogue(b, loc, finalAcc);
     } else {
       // Spill the accumulators to the [BM,BN] shared tile, then cooperatively
       // reload + evaluate the bias/activation epilogue + write Y.
       Value warpRowLocal = warpRowBase; // block-local row
       for (int j = 0; j < nFrag; ++j) {
-        Value nbase = b.create<arith::ConstantIndexOp>(loc, j * MMA_N);
+        Value nbase = b.create<arith::AddIOp>(
+            loc, warpColBase,
+            b.create<arith::ConstantIndexOp>(loc, j * MMA_N));
         storeAcc(b, loc, finalAcc[j], warpRowLocal, nbase,
                  [&](OpBuilder &nb, Location nl, Value v, Value row, Value col) {
                    nb.create<memref::StoreOp>(nl, v, cSh, ValueRange{row, col});
@@ -702,10 +1233,10 @@ struct ContractionMMALowering {
       }
       b.create<gpu::BarrierOp>(loc);
       Value cBN = b.create<arith::ConstantIndexOp>(loc, BN);
-      int64_t epIters = (BM * BN) / kBlock;
+      int64_t epIters = (BM * BN) / groupThreads;
       for (int64_t it = 0; it < epIters; ++it) {
-        Value base = b.create<arith::ConstantIndexOp>(loc, it * kBlock);
-        Value i = b.create<arith::AddIOp>(loc, tx, base);
+        Value base = b.create<arith::ConstantIndexOp>(loc, it * groupThreads);
+        Value i = b.create<arith::AddIOp>(loc, localTx, base);
         Value r = b.create<arith::DivUIOp>(loc, i, cBN);
         Value cc = b.create<arith::RemUIOp>(loc, i, cBN);
         Value cScalar = b.create<memref::LoadOp>(loc, cSh, ValueRange{r, cc});
@@ -728,6 +1259,48 @@ struct ContractionMMALowering {
     b.setInsertionPointAfter(launch);
     b.create<func::ReturnOp>(loc);
 
+    SmallVector<Attribute> trace{
+        StringAttr::get(ctx, "cuda.contraction.mma-sync.v1")};
+    if (warpsN > 1)
+      trace.push_back(StringAttr::get(
+          ctx, "cuda.contraction.mma-sync.warp-n-partition.v1"));
+    if (hasRegisterBiasSavedEpilogue)
+      trace.push_back(StringAttr::get(
+          ctx, "cuda.contraction.packed_bias_dual_output.v1"));
+    auto i64 = IntegerType::get(ctx, 64);
+    gpuFn->setAttr("intent.backend.lowering_path_kind",
+                   StringAttr::get(ctx, "contraction"));
+    gpuFn->setAttr("intent.backend.reduction_topology",
+                   StringAttr::get(ctx, "single_stage_mma_sync"));
+    gpuFn->setAttr("intent.backend.approximation_mode",
+                   StringAttr::get(ctx, "none"));
+    gpuFn->setAttr("intent.backend.transformation_trace",
+                   ArrayAttr::get(ctx, trace));
+    gpuFn->setAttr("intent.backend.warps_n",
+                   IntegerAttr::get(i64, warpsN));
+    gpuFn->setAttr("intent.backend.group_m",
+                   IntegerAttr::get(i64, groupM));
+    gpuFn->setAttr("intent.backend.stage_count", IntegerAttr::get(i64, 1));
+    gpuFn->setAttr("intent.backend.reduction_parts", IntegerAttr::get(i64, 1));
+    int64_t barrierCount = 0;
+    gpuFn.walk([&](gpu::BarrierOp) { ++barrierCount; });
+    gpuFn->setAttr("intent.backend.fma_count", IntegerAttr::get(i64, 0));
+    gpuFn->setAttr("intent.backend.shuffle_count", IntegerAttr::get(i64, 0));
+    gpuFn->setAttr("intent.backend.barrier_count",
+                   IntegerAttr::get(i64, barrierCount));
+    gpuFn->setAttr("intent.backend.all_reduce_count", IntegerAttr::get(i64, 0));
+    gpuFn->setAttr("intent.backend.block_threads",
+                   IntegerAttr::get(i64, blockThreads));
+    gpuFn->setAttr("intent.backend.grid_blocks",
+                   IntegerAttr::get(i64, gridM * gridN));
+    gpuFn->setAttr("intent.backend.predicated_value_if_count",
+                   IntegerAttr::get(i64, 0));
+    gpuFn->setAttr("intent.backend.folded_constexpr_select_count",
+                   IntegerAttr::get(i64, 0));
+    gpuFn->setAttr("intent.backend.vector_width",
+                   IntegerAttr::get(i64,
+                                    hasRegisterBiasSavedEpilogue ? 2 : 1));
+
     fn.erase();
     return success();
   }
@@ -745,14 +1318,20 @@ struct ConvertIntentContractionToGPUMMAPass
     for (auto fn : mod.getOps<func::FuncOp>()) {
       ContractionMMALowering probe(fn, (int)numStages, (int64_t)blockM,
                                    (int64_t)blockN, (int64_t)blockK,
-                                   (int64_t)smemPadK);
+                                   (int64_t)smemPadK,
+                                   (int64_t)warpsN,
+                                   (int64_t)groupM,
+                                   (int64_t)splitKParts);
       if (succeeded(probe.match()))
         targets.push_back(fn);
     }
     for (func::FuncOp fn : targets) {
       ContractionMMALowering low(fn, (int)numStages, (int64_t)blockM,
                                  (int64_t)blockN, (int64_t)blockK,
-                                 (int64_t)smemPadK);
+                                 (int64_t)smemPadK,
+                                 (int64_t)warpsN,
+                                 (int64_t)groupM,
+                                 (int64_t)splitKParts);
       if (failed(low.match()) || failed(low.rewrite())) {
         fn.emitError("contraction-mma lowering failed after match");
         return signalPassFailure();

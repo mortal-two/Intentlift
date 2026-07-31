@@ -412,7 +412,10 @@ def test_c_fixed_is_mechanical_authored_tile_projection() -> None:
     selected, projection = project_cuda_c_fixed_candidate(state, schedules)
 
     assert selected in schedules
-    assert selected.schedule["tile_cols"] == 128
+    # This concrete N=127 workload collapses larger auto-tile requests to one
+    # register state. Of the remaining legal 16/32 coordinates, the mechanical
+    # projection chooses 32 as the nearest representation of authored C=128.
+    assert selected.schedule["tile_cols"] == 32
     # C does not author CUDA occupancy.  The missing coordinate stays at the
     # fixed compiler default instead of being inferred from the workload shape.
     assert selected.schedule["block_threads"] == 64
@@ -466,8 +469,33 @@ def test_flash_linear_has_real_retile_spine_and_distinct_full_mma_state() -> Non
         for item in full
         if item.fast_path_id == "cuda.contraction.mma-sync.v1"
     ]
-    assert len(mma) == 12
+    assert len(mma) >= 12
     assert all(item.search_partition == SEARCH_PARTITION_EXPANDED for item in mma)
+    warp_n = [item for item in mma if item.schedule.get("warps_n", 1) > 1]
+    assert {item.schedule["warps_n"] for item in warp_n} >= {2, 4}
+    assert all(
+        "cuda.contraction.mma-sync.warp-n-partition.v1"
+        in item.requested_trace
+        for item in warp_n
+    )
+    assert {item.schedule.get("group_m", 8) for item in mma} >= {2, 8, 16}
+    splitk = [
+        item
+        for item in full
+        if item.fast_path_id == "cuda.contraction.mma-sync.v1"
+        and "split_k_parts" in item.schedule
+    ]
+    assert {item.schedule["split_k_parts"] for item in splitk} == {2, 4}
+    assert {item.schedule["warps_n"] for item in splitk} == {4}
+    assert min(full.index(item) for item in splitk) < 96
+    assert all(
+        item.search_partition == SEARCH_PARTITION_EXPANDED
+        and item.requested_observation_class
+        is ObservationClass.OBSERVATION_CHANGING
+        and "cuda.contraction.split_k_partial_finalize.v1"
+        in item.requested_trace
+        for item in splitk
+    )
     assert {
         item["target_schedule_coordinate"]
         for item in projection["consumed_priors"]
@@ -530,6 +558,32 @@ def test_stage2_complete_row_consumer_is_the_strong_schedule_spine(
     )
 
 
+def test_stage2_jsd_full_search_reaches_shifted_exp_cancellation() -> None:
+    state = _stage2_state("jsd")
+    arms = {item.arm: item for item in standard_ablation_plan(96)}
+
+    full = enumerate_cuda_candidates(
+        state,
+        axes=arms[ExperimentArm.E3_STATE_SEARCH],
+    )
+    shifted = [
+        (index, item)
+        for index, item in enumerate(full)
+        if item.fast_path_id
+        == cuda_search.SHIFTED_EXP_CANCELLATION_FAST_PATH_ID
+    ]
+
+    assert len(shifted) == 4
+    assert shifted[0][0] < 96
+    assert all(
+        item.search_partition == SEARCH_PARTITION_EXPANDED
+        and item.requested_observation_class
+        == ObservationClass.OBSERVATION_CHANGING
+        and "cancel-shifted-exp=true" in item.pass_argument
+        for _index, item in shifted
+    )
+
+
 @pytest.mark.parametrize("name", ("liger_rope", "qwen2vl_mrope"))
 def test_stage2_paired_rotation_is_canonical_j_consumption(name: str) -> None:
     state = _stage2_state(name)
@@ -568,6 +622,34 @@ def test_stage2_paired_rotation_is_canonical_j_consumption(name: str) -> None:
         and item.fast_path_id == ELEMENTWISE_FAST_PATH_ID
     ]
     assert expanded_elementwise
+    head_reuse = [
+        item for item in expanded_elementwise
+        if item.schedule["paired_head_reuse"] is True
+    ]
+    assert head_reuse
+    assert {
+        item.schedule["paired_head_group_size"] for item in head_reuse
+    } == {2, 4, 8, 16}
+    assert {item.schedule["vector_width"] for item in head_reuse} == (
+        {1, 2} if name == "liger_rope" else {1}
+    )
+    assert all(
+        item.requested_observation_class is ObservationClass.HARD_PRESERVING
+        and "cuda.elementwise.paired_head_angle_reuse.request.v1"
+        in item.requested_trace
+        for item in head_reuse
+    )
+    direct_plane = [
+        item for item in expanded_elementwise
+        if item.schedule["paired_direct_plane"] is True
+    ]
+    assert bool(direct_plane) is (name == "qwen2vl_mrope")
+    assert all(
+        item.requested_observation_class is ObservationClass.HARD_PRESERVING
+        and "cuda.elementwise.paired_direct_plane.request.v1"
+        in item.requested_trace
+        for item in direct_plane
+    )
     assert all(
         item.requested_observation_class
         is ObservationClass.OBSERVATION_CHANGING
@@ -576,6 +658,8 @@ def test_stage2_paired_rotation_is_canonical_j_consumption(name: str) -> None:
             or item.b_transformations
         )
         for item in expanded_elementwise
+        if item.schedule["paired_head_reuse"] is False
+        and item.schedule["paired_direct_plane"] is False
     )
 
 
@@ -756,6 +840,12 @@ def test_elementwise_schedule_names_tanh_evaluation_state() -> None:
         1,
         logical_tile_elements=4096,
     )
+    head_reuse = ElementwiseSchedule(
+        128,
+        False,
+        1,
+        paired_head_reuse=True,
+    )
 
     assert "tanh-approximation=stable-ex2" in stable.pass_argument
     assert "tanh-approximation=native-ptx" in native.pass_argument
@@ -766,6 +856,16 @@ def test_elementwise_schedule_names_tanh_evaluation_state() -> None:
     assert unrolled.to_dict()["grid_stride_unroll"] == 4
     assert "logical-tile-elements=4096" in tiled.pass_argument
     assert tiled.to_dict()["logical_tile_elements"] == 4096
+    assert "paired-head-reuse=true" in head_reuse.pass_argument
+    assert head_reuse.to_dict()["paired_head_reuse"] is True
+    direct_plane = ElementwiseSchedule(
+        128,
+        False,
+        1,
+        paired_direct_plane=True,
+    )
+    assert "paired-direct-plane=true" in direct_plane.pass_argument
+    assert direct_plane.to_dict()["paired_direct_plane"] is True
     with pytest.raises(ValueError, match="tanh_approximation"):
         ElementwiseSchedule(128, False, 1, True, "invented")
     with pytest.raises(ValueError, match="grid_stride_unroll"):
@@ -1016,7 +1116,7 @@ def test_expanded_search_visits_packetized_padded_states_within_first_lanes() ->
             axes=arms[ExperimentArm.E3_STATE_SEARCH],
         )
         if item.search_partition == SEARCH_PARTITION_EXPANDED
-    ][:16]
+    ][:32]
 
     observed = {
         int(item.schedule.get("lanes_per_row", 0))

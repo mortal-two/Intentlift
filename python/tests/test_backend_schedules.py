@@ -140,7 +140,7 @@ def test_flat_override_must_be_structurally_eligible() -> None:
     [
         lambda: RowSchedule(96, 32),
         lambda: RowSchedule(128, 48),
-        lambda: ElementwiseSchedule(128, False, 4),
+        lambda: ElementwiseSchedule(128, False, 3),
         lambda: ElementwiseSchedule(128, True, 1),
     ],
 )

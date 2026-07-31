@@ -195,6 +195,9 @@ class ElementwiseSchedule:
     tanh_approximation: str = "stable-ex2"
     grid_stride_unroll: int = 1
     logical_tile_elements: int = 0
+    paired_head_reuse: bool = False
+    paired_head_group_size: int = 4
+    paired_direct_plane: bool = False
 
     def __post_init__(self) -> None:
         if type(self.block_threads) is not int or self.block_threads not in _BLOCK_THREADS:
@@ -207,6 +210,15 @@ class ElementwiseSchedule:
             raise ValueError("elementwise vector_width must be 1, 2, or 4")
         if type(self.promote_uniform_scalars) is not bool:
             raise ValueError("promote_uniform_scalars must be boolean")
+        if type(self.paired_head_reuse) is not bool:
+            raise ValueError("paired_head_reuse must be boolean")
+        if (
+            type(self.paired_head_group_size) is not int
+            or self.paired_head_group_size not in {2, 4, 8, 16}
+        ):
+            raise ValueError("paired_head_group_size must be 2, 4, 8, or 16")
+        if type(self.paired_direct_plane) is not bool:
+            raise ValueError("paired_direct_plane must be boolean")
         if self.tanh_approximation not in {"stable-ex2", "native-ptx"}:
             raise ValueError(
                 "elementwise tanh_approximation must be stable-ex2 or native-ptx"
@@ -232,6 +244,18 @@ class ElementwiseSchedule:
             raise ValueError("flattened elementwise schedule requires unroll=1")
         if self.flatten_contiguous and self.logical_tile_elements != 0:
             raise ValueError("flattened elementwise schedule requires logical tile=0")
+        if (self.paired_head_reuse or self.paired_direct_plane) and (
+            self.flatten_contiguous
+            or self.vector_width not in {1, 2}
+            or self.grid_stride_unroll != 1
+            or self.logical_tile_elements != 0
+            or self.tanh_approximation != "stable-ex2"
+        ):
+            raise ValueError(
+                "paired structural states require width 1/2, non-flattened, stable elementwise schedule"
+            )
+        if self.paired_direct_plane and self.vector_width != 1:
+            raise ValueError("paired direct-plane lowering requires vector_width=1")
 
     @property
     def pass_argument(self) -> str:
@@ -250,6 +274,13 @@ class ElementwiseSchedule:
             argument += " promote-uniform-scalars=true"
         argument += f" grid-stride-unroll={self.grid_stride_unroll}"
         argument += f" logical-tile-elements={self.logical_tile_elements}"
+        if self.paired_head_reuse:
+            argument += (
+                " paired-head-reuse=true"
+                f" paired-head-group-size={self.paired_head_group_size}"
+            )
+        if self.paired_direct_plane:
+            argument += " paired-direct-plane=true"
         argument += f" tanh-approximation={self.tanh_approximation}"
         return argument
 
@@ -262,6 +293,9 @@ class ElementwiseSchedule:
             "tanh_approximation": self.tanh_approximation,
             "grid_stride_unroll": self.grid_stride_unroll,
             "logical_tile_elements": self.logical_tile_elements,
+            "paired_head_reuse": self.paired_head_reuse,
+            "paired_head_group_size": self.paired_head_group_size,
+            "paired_direct_plane": self.paired_direct_plane,
         }
 
 

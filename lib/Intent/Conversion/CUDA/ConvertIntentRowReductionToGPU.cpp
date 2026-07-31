@@ -2114,8 +2114,7 @@ struct RowReductionLowering {
            (requestedPrefixThreads == 32 && T >= 64 &&
             T * static_cast<int64_t>(requestedRowsPerBlock) <= 1024));
       if (M % requestedRowsPerBlock != 0 || !crossReduces.empty() ||
-          groupedBatch != 0 || numGroups != 0 || flatSingletonRank4 ||
-          hasUnsupportedOutput || hasInplaceOutput ||
+          flatSingletonRank4 || hasUnsupportedOutput || hasInplaceOutput ||
           requestedReductionParts != 1)
         return failure();
       if (sortedPrefixWarpRows) {
@@ -2131,6 +2130,26 @@ struct RowReductionLowering {
       sched.blockX = T * requestedRowsPerBlock;
     }
 
+    // A conditional in-place RowOut (for example, preserve the aliased logits
+    // unless a scalar ignore predicate is true) needs scalar branch values at
+    // the write boundary.  The register-vector path packetizes the destination
+    // ABI and cannot currently represent that conditional alias store as one
+    // vector without changing the branch semantics.  Keep the row computation
+    // on the scalar packetization instead of admitting an IR that later fails
+    // verification with vector/scalar select operands.
+    bool hasConditionalInplaceRowOutput = false;
+    for (unsigned index = 0; index < outputVals.size(); ++index) {
+      if (inplaceArg[index] < 0 || outRoles[index] != ResultRole::RowOut)
+        continue;
+      Value value = outputVals[index];
+      while (auto transpose = value.getDefiningOp<TransposeOp>())
+        value = transpose.getInput();
+      if (value.getDefiningOp<SelectOp>()) {
+        hasConditionalInplaceRowOutput = true;
+        break;
+      }
+    }
+
     // Contiguous vector gate (register-tile path only): vector<4xf32> for
     // native f32 graphs, vector<4xf16/bf16> for mixed-precision storage.
     // Vectorization changes only the packetization of in-bounds Row/Col loads
@@ -2139,7 +2158,8 @@ struct RowReductionLowering {
     // lane, so column-varying control is not a reason to suppress packet I/O.
     // The no-tail/no-inactive-thread guards above are the memory-safety proof.
     // Every Row/Col ABI value and RowOut must share the selected storage type.
-    if (requestedVectorWidth != 1 && sched.kind == KRegister &&
+    if (requestedVectorWidth != 1 && !hasConditionalInplaceRowOutput &&
+        sched.kind == KRegister &&
         !hasInactiveFeatureThreads && !hasFeatureTail && numGroups == 0) {
       bool allVectorABIValuesF32 = true;
       for (unsigned index = 0; index < argRoles.size(); ++index)
@@ -5440,6 +5460,7 @@ struct RowReductionLowering {
     fn.erase();
     return success();
   }
+
 
   LogicalResult rewrite() {
     // Dispatch on the Schedule's fork decision (set in match()).
