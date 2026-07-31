@@ -16,6 +16,7 @@ from intentir.extraction.providers.codex_cli import (
     CODEX_CLI_AGENT_RUNTIME,
     CODEX_CLI_TOOL_BRIDGE_ROOT_NAME,
     CodexCLICancelled,
+    CodexCLIDiagnosticReady,
     CodexCLIError,
     CodexCLISubmissionAccepted,
     CodexCLISession,
@@ -49,7 +50,7 @@ from .replay import (
 )
 
 
-CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v61"
+CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v62"
 
 _INITIAL_PROMPT = """You are the sole writer for one fresh source-blind IntentIR Replay episode.
 Work only under the isolated /workspace. input/ is immutable; output/, work/, and
@@ -366,8 +367,10 @@ class CodexCLIReplayWriter:
         semantic_queries: list[dict[str, Any]] = []
         timeout_events: list[dict[str, Any]] = []
         accepted_submission_interrupts: list[dict[str, Any]] = []
+        diagnostic_ready_interrupts: list[dict[str, Any]] = []
         live_checkpoint_events: list[dict[str, Any]] = []
         accepted_submission_event = threading.Event()
+        diagnostic_ready_event = threading.Event()
         live_checkpoint_stop = threading.Event()
         evaluation_lock = threading.RLock()
         source_text = ""
@@ -903,6 +906,16 @@ class CodexCLIReplayWriter:
                 if accepted:
                     accepted_submission_event.set()
                     return
+                if checked_text == observed_text:
+                    write_host_check(check)
+                    diagnostic_ready_event.set()
+                    while (
+                        diagnostic_ready_event.is_set()
+                        and not live_checkpoint_stop.wait(0.25)
+                    ):
+                        pass
+                    observed_replay = None
+                    stable_since = 0.0
 
         live_checkpoint_thread: threading.Thread | None = None
         try:
@@ -929,11 +942,14 @@ class CodexCLIReplayWriter:
                         effort=selected_effort,
                         stop_requested=self.stop_requested,
                         submission_accepted=accepted_submission_event.is_set,
+                        diagnostic_ready=diagnostic_ready_event.is_set,
                     )
                     accepted_submission_event.clear()
+                    diagnostic_ready_event.clear()
                 except CodexCLISubmissionAccepted as exc:
                     active_elapsed_ms += exc.elapsed_ms
                     accepted_submission_event.clear()
+                    diagnostic_ready_event.clear()
                     thread_id = exc.thread_id
                     if thread_id not in thread_ids:
                         thread_ids.append(thread_id)
@@ -960,6 +976,29 @@ class CodexCLIReplayWriter:
                         "exact_checkpoint_restored"
                     )
                     break
+                except CodexCLIDiagnosticReady as exc:
+                    active_elapsed_ms += exc.elapsed_ms
+                    diagnostic_ready_event.clear()
+                    accepted_submission_event.clear()
+                    thread_id = exc.thread_id
+                    if thread_id not in thread_ids:
+                        thread_ids.append(thread_id)
+                    diagnostic_ready_interrupts.append(
+                        {
+                            "elapsed_ms": exc.elapsed_ms,
+                            "thread_id": exc.thread_id,
+                            "recovery": "same_thread_closed_diagnostic",
+                        }
+                    )
+                    passed, check = evaluate_current(
+                        trigger="host_live_diagnostic_recheck"
+                    )
+                    if passed:
+                        break
+                    write_host_check(check)
+                    prompt = _REPAIR_PROMPT
+                    selected_effort = self.repair_effort or effective_effort
+                    continue
                 except CodexCLIError as exc:
                     if "wall-time limit" not in str(exc):
                         raise
@@ -1046,6 +1085,7 @@ class CodexCLIReplayWriter:
                 "semantic_queries": semantic_queries,
                 "timeout_events": timeout_events,
                 "accepted_submission_interrupts": accepted_submission_interrupts,
+                "diagnostic_ready_interrupts": diagnostic_ready_interrupts,
                 "live_checkpoint": live_checkpoint_events,
                 "explicit_submission_accepted": explicit_submission_accepted,
                 "tool_bridge": bridge.evidence,
@@ -1076,10 +1116,14 @@ class CodexCLIReplayWriter:
                         len(turns)
                         + timed_out_calls
                         + len(accepted_submission_interrupts)
+                        + len(diagnostic_ready_interrupts)
                     ),
-                    "model_segments_lower_bound": sum(
-                        turn.model_segments for turn in turns
-                    ) + timed_out_calls + len(accepted_submission_interrupts),
+                    "model_segments_lower_bound": (
+                        sum(turn.model_segments for turn in turns)
+                        + timed_out_calls
+                        + len(accepted_submission_interrupts)
+                        + len(diagnostic_ready_interrupts)
+                    ),
                     "tool_actions": sum(turn.tool_actions for turn in turns),
                     "formal_ingress_protocol": REPLAY_CHECK_PROTOCOL,
                     "formal_compile_recheck": True,
@@ -1100,11 +1144,13 @@ class CodexCLIReplayWriter:
                     len(turns)
                     + timed_out_calls
                     + len(accepted_submission_interrupts)
+                    + len(diagnostic_ready_interrupts)
                 ),
                 physical_provider_calls=(
                     sum(turn.model_segments for turn in turns)
                     + timed_out_calls
                     + len(accepted_submission_interrupts)
+                    + len(diagnostic_ready_interrupts)
                 ),
                 transport_retries=0,
                 elapsed_ms=active_elapsed_ms,
@@ -1132,6 +1178,7 @@ class CodexCLIReplayWriter:
                 "semantic_queries": semantic_queries,
                 "timeout_events": timeout_events,
                 "accepted_submission_interrupts": accepted_submission_interrupts,
+                "diagnostic_ready_interrupts": diagnostic_ready_interrupts,
                 "live_checkpoint": live_checkpoint_events,
                 "tool_bridge": bridge.evidence,
                 "failure_class": type(exc).__name__,
@@ -1157,6 +1204,7 @@ class CodexCLIReplayWriter:
                     len(turns)
                     + timed_out_calls
                     + len(accepted_submission_interrupts)
+                    + len(diagnostic_ready_interrupts)
                 ),
                 elapsed_ms=active_elapsed_ms,
                 trajectory=trajectory,
@@ -1165,7 +1213,7 @@ class CodexCLIReplayWriter:
                     turn.model_segments for turn in turns
                 ) + cancelled_calls + timed_out_calls + len(
                     accepted_submission_interrupts
-                ),
+                ) + len(diagnostic_ready_interrupts),
                 transport_retries=0,
             )
             self._records.append(attempt)

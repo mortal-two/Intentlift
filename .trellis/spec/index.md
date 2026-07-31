@@ -32,9 +32,10 @@ program-axis relation；当前 profile 在无 sound anchor matcher 时将它保�
 `regions/instances/routes/iterations/carriers/refinements`
 仅供历史 artifact 按原版本读取。fixed code只诊断，不翻译别名、补齐 attrs、生成语义
 handle/relation、改图或修复 artifact；历史 wire/receipt 不静默升级或重判。当前 Agent execution
-receipt 为 `openai.codex-cli.intentir-lift.v38 / intentir.lift-knowledge.v99 /
-minisweagent.intentir-replay.v33 / openai.codex-cli.intentir-replay.v61`；Codex runtime v4 在
-closed submit 工具接受 exact bytes 后恢复并复核 checkpoint，不等待 proof-irrelevant 的结尾 prose；
+receipt 为 `openai.codex-cli.intentir-lift.v39 / intentir.lift-knowledge.v99 /
+minisweagent.intentir-replay.v33 / openai.codex-cli.intentir-replay.v62`；Codex runtime v5 在
+closed submit 工具接受 exact bytes 后恢复并复核 checkpoint；稳定但被同一 preflight 拒绝的 exact
+bytes 也可立即中断当前 turn、保留同一 thread 并用 closed diagnostics 续修，不等待 turn deadline；
 Replay 内部 J-only 视图为 `intentir.replay-semantic-program.v2`，不是 artifact 或新输入权威；
 artifact.v11 的 `dimension_relations`只接受identity、常数加/乘、常数ceil-div与round-up的acyclic closed grammar；
 relation由Lift从Source作者化，所有J消费者只能验证/求值，不能从Harness valuation、grid、C、π或TTIR生成。

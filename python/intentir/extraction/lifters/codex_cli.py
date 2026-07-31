@@ -16,6 +16,7 @@ from intentir.extraction.providers.codex_cli import (
     CODEX_CLI_AGENT_RUNTIME,
     CODEX_CLI_TOOL_BRIDGE_ROOT_NAME,
     CodexCLICancelled,
+    CodexCLIDiagnosticReady,
     CodexCLIError,
     CodexCLISubmissionAccepted,
     CodexCLISession,
@@ -42,7 +43,7 @@ from .scrc import (
     prepare_scrc_lift,
     scrc_candidate_check_context,
 )
-CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v38"
+CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v39"
 CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v99"
 CODEX_CLI_TURN_TIMEOUT_SECONDS = 900.0
 
@@ -654,8 +655,10 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
         semantic_probe_feedback_delivered: set[str] = set()
         timeout_events: list[dict[str, Any]] = []
         accepted_submission_interrupts: list[dict[str, Any]] = []
+        diagnostic_ready_interrupts: list[dict[str, Any]] = []
         live_checkpoint_events: list[dict[str, Any]] = []
         accepted_submission_event = threading.Event()
+        diagnostic_ready_event = threading.Event()
         live_checkpoint_stop = threading.Event()
         evaluation_lock = threading.RLock()
         candidate_text: str | None = None
@@ -899,6 +902,25 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                 if passed:
                     accepted_submission_event.set()
                     return
+                if checked_text == observed_text:
+                    if candidate_check["status"] != "pass":
+                        _atomic_write_json(
+                            workspace.input_dir / "candidate_check.json",
+                            candidate_check,
+                        )
+                    elif source_reconcile is not None:
+                        _atomic_write_json(
+                            workspace.input_dir / "source_reconcile.json",
+                            source_reconcile,
+                        )
+                    diagnostic_ready_event.set()
+                    while (
+                        diagnostic_ready_event.is_set()
+                        and not live_checkpoint_stop.wait(0.25)
+                    ):
+                        pass
+                    observed_candidate = None
+                    stable_since = 0.0
 
         def semantic_probe_tool() -> Mapping[str, Any]:
             """Execute one public Source-vs-J diagnostic over exact candidate bytes."""
@@ -1032,8 +1054,10 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                         effort=selected_effort,
                         stop_requested=self.stop_requested,
                         submission_accepted=accepted_submission_event.is_set,
+                        diagnostic_ready=diagnostic_ready_event.is_set,
                     )
                     accepted_submission_event.clear()
+                    diagnostic_ready_event.clear()
                 except CodexCLICancelled as exc:
                     self._session_active_elapsed_ms += exc.elapsed_ms
                     self._session_model_turns += 1
@@ -1079,6 +1103,7 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                     self._session_model_turns += 1
                     self._session_physical_provider_calls += exc.physical_calls
                     accepted_submission_event.clear()
+                    diagnostic_ready_event.clear()
                     accepted_submission_interrupts.append(
                         {
                             "elapsed_ms": exc.elapsed_ms,
@@ -1111,6 +1136,48 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                         selected_effort = self.repair_effort or effective_effort
                         continue
                     break
+                except CodexCLIDiagnosticReady as exc:
+                    self._session_active_elapsed_ms += exc.elapsed_ms
+                    self._session_model_turns += 1
+                    self._session_physical_provider_calls += exc.physical_calls
+                    diagnostic_ready_event.clear()
+                    accepted_submission_event.clear()
+                    diagnostic_ready_interrupts.append(
+                        {
+                            "elapsed_ms": exc.elapsed_ms,
+                            "thread_id": exc.thread_id,
+                            "recovery": "same_thread_closed_diagnostic",
+                        }
+                    )
+                    check, source_reconcile = host_preflight(
+                        trigger="host_live_diagnostic_recheck"
+                    )
+                    if (
+                        check["status"] == "pass"
+                        and source_reconcile is not None
+                        and source_reconcile["status"] == "pass"
+                        and candidate_text is not None
+                    ):
+                        if semantic_probe_needs_owner_turn():
+                            prompt = _SEMANTIC_PROBE_CONTINUATION_PROMPT
+                            selected_effort = self.repair_effort or effective_effort
+                            continue
+                        break
+                    if check["status"] != "pass":
+                        _atomic_write_json(
+                            workspace.input_dir / "candidate_check.json",
+                            check,
+                        )
+                        prompt = _CANDIDATE_CHECK_CONTINUATION_PROMPT
+                    else:
+                        assert source_reconcile is not None
+                        _atomic_write_json(
+                            workspace.input_dir / "source_reconcile.json",
+                            source_reconcile,
+                        )
+                        prompt = _SOURCE_RECONCILE_CONTINUATION_PROMPT
+                    selected_effort = self.repair_effort or effective_effort
+                    continue
                 except CodexCLIError as exc:
                     if "wall-time limit" in str(exc):
                         elapsed = turn_timeout * 1000.0
@@ -1249,6 +1316,9 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                         "accepted_submission_interrupts": list(
                             accepted_submission_interrupts
                         ),
+                        "diagnostic_ready_interrupts": list(
+                            diagnostic_ready_interrupts
+                        ),
                         "tool_bridge": bridge.evidence,
             }
             self._records.append(
@@ -1291,6 +1361,9 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
             "accepted_submission_interrupts": list(
                 accepted_submission_interrupts
             ),
+            "diagnostic_ready_interrupts": list(
+                diagnostic_ready_interrupts
+            ),
             "tool_bridge": bridge.evidence,
             "source_ttir_observation": {
                 key: value
@@ -1313,11 +1386,16 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                 float(item["elapsed_ms"])
                 for item in accepted_submission_interrupts
             )
+            + sum(
+                float(item["elapsed_ms"])
+                for item in diagnostic_ready_interrupts
+            )
         )
         physical_calls = (
             sum(turn.model_segments for turn in call_turns)
             + timed_out_calls
             + len(accepted_submission_interrupts)
+            + len(diagnostic_ready_interrupts)
         )
         provenance = SCRCProvenance(
             model=provider.model,
@@ -1333,6 +1411,7 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                 len(call_turns)
                 + timed_out_calls
                 + len(accepted_submission_interrupts)
+                + len(diagnostic_ready_interrupts)
             ),
             elapsed_ms=elapsed_ms,
             backend=CODEX_CLI_LIFT_BACKEND,
@@ -1359,6 +1438,7 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                 len(call_turns)
                 + timed_out_calls
                 + len(accepted_submission_interrupts)
+                + len(diagnostic_ready_interrupts)
             ),
             "model_segments_lower_bound": physical_calls,
             "tool_actions": sum(turn.tool_actions for turn in call_turns),
@@ -1371,6 +1451,9 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
             "timeout_events": list(timeout_events),
             "accepted_submission_interrupts": list(
                 accepted_submission_interrupts
+            ),
+            "diagnostic_ready_interrupts": list(
+                diagnostic_ready_interrupts
             ),
             "tool_bridge": bridge.evidence,
             "trajectory": trajectory,

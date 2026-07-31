@@ -948,7 +948,7 @@ Replay 不得：
 π 输入，也不能把旧 construction check 当作当前 J-only path 的正确性证据。
 
 Task 20 当前活动组合是 `intentir.scrc.replay-input.v3`、source-blind MiniSWE Replay v33 / Codex Replay
-v61、`intentir.replay-semantic-program.v2` 与 `replay-check.v15`。packet 只有 J、MaskC 与 `U_f`；
+v62、`intentir.replay-semantic-program.v2` 与 `replay-check.v15`。packet 只有 J、MaskC 与 `U_f`；
 construction preflight 只检查当前 packet closure、source isolation、ABI、compile 与 raw-observer definedness。
 下述 v2/v31/v55/v14 组合均为历史，旧版本 run 不能被新组合追认。
 v30/v26 把 authored target-local route extent transform 纳入 exact ledger、audit 与 closed

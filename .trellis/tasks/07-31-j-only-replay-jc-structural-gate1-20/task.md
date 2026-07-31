@@ -119,7 +119,9 @@ recheck，可立即接受该 bytes，不再消耗剩余 episode 时间；Gate1 �
 真实 v60 pilot 还暴露出更直接的时间浪费：多个 Codex owner 在 2–5 分钟已写出完整
 12–14 KiB candidate，却等到 9–14 分钟 turn 结束才交付。因此 Codex Lift v38 / Replay v60
 增加 exact live-checkpoint transaction：稳定字节只在通过既有同一 preflight 后中断 turn，host
-仍恢复并重检原 bytes；无 composer、无字段补全、无 Gate 放宽。随后 v61/v33 的 J-only
+仍恢复并重检原 bytes；无 composer、无字段补全、无 Gate 放宽。v39/v62/runtime v5 进一步把稳定但
+被同一 preflight 拒绝的 exact bytes 作为 closed diagnostic checkpoint：立即结束当前 provider turn，
+保留同一 thread 并局部续修，避免等满 15 分钟；失败 bytes 不能进入 TypeCheck/Gate。随后 v61/v33 的 J-only
 `semantic-program.v2` 修正 `boundary_ownership.domain_candidates` 的集合包含方向：每个 access
 现在获得其 index refs 覆盖的全部 J-authored domain 约束，而不是对普通多轴 access 错误返回空集；
 这只是 exact J 的确定性重索引，不新增 domain、target mapping 或 Source/π 信息。
