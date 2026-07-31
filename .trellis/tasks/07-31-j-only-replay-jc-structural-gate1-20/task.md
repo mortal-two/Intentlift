@@ -55,8 +55,10 @@ Gate2: Source-Replay / Source-J / Replay-J
 - [x] SourceReconcile 只增加三类保守 one-bit 必要条件：masked access 整体缺失、含非线性算子的
   multi-state recurrence 整体缺失、terminal effect control 整体缺失。它不生成 predicate、trip、carry、
   update、branch 或 π relation，正式 Gate1 仍检查完整结构；
-- [x] `source-brief.v2` 在固定预算内始终列出匿名顶层函数与 compiler-observed control/time index；只给
-  loop carrier/yield 数、body op/effect kind 与 terminal 两臂 effect 数，公式与 J/C/π 归属仍由 Lift 决定；
+- [x] `source-brief.v3` 在 10KB 固定预算内一次给出完整紧凑 Harness ABI、匿名顶层函数与
+  compiler-observed control/time index；只压缩已声明的 kind/mode/dtype/rank/shape contract，并只给
+  loop carrier/yield 数、body op/effect kind 与 terminal 两臂 effect 数。`logical_ref`、公式及
+  J/C/π 归属仍完全由 Lift 决定，精确字段可按 ordinal 回查；
 - [x] 历史 π-consuming view/nested wire 显式归档，旧 packet/checker 只作历史解释，不能作为新路径 evidence。
 
 ## 4. P2：最小 J/C Structural Gate1

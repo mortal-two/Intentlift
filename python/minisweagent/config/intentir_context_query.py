@@ -141,6 +141,22 @@ def _emit_json(value: Any) -> None:
     print(text)
 
 
+def _emit_compact_json(value: Any) -> None:
+    """Emit one machine-readable compact ledger under the same hard byte bound."""
+
+    text = json.dumps(
+        value,
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    if len(text) > MAX_OUTPUT_CHARS:
+        raise ValueError(
+            f"query result is {len(text)} characters; use a narrower command"
+        )
+    print(text)
+
+
 def _bootstrap(input_root: Path, output_root: Path) -> None:
     feedback = _feedback_without_candidate(input_root)
     candidate_already_present = (output_root / "candidate.json").is_file()
@@ -585,6 +601,7 @@ def _source_brief(input_root: Path) -> None:
             else None
         ),
         "top_level_functions": top_level_functions,
+        "item_query": f"{QUERY_COMMAND} source-outline --start ORDINAL --count 1",
     }
     source_outline["items"] = [
         {
@@ -602,10 +619,7 @@ def _source_brief(input_root: Path) -> None:
             )
             if key in item
         }
-        | {
-            "ordered_memory_call_count": len(item["ordered_memory_calls"]),
-            "exact_query": f"{QUERY_COMMAND} source-outline --start {item['ordinal']} --count 1",
-        }
+        | {"ordered_memory_call_count": len(item["ordered_memory_calls"])}
         for item in source_outline["items"]
         if isinstance(item, dict) and isinstance(item.get("ordered_memory_calls"), list)
     ] + [
@@ -630,13 +644,18 @@ def _source_brief(input_root: Path) -> None:
     source_outline["items"].sort(key=lambda item: int(item["ordinal"]))
 
     value = {
-        "protocol": "intentir.lift-source-brief.v2",
+        "protocol": "intentir.lift-source-brief.v3",
         "source": source_outline,
-        "harness_abi": _harness_abi_value(input_root, 1, 16),
+        "harness_abi": _compact_harness_abi_value(input_root),
         "compiler": {
             "status": observation.get("status"),
             "ttir_lines": len(str(observation.get("ttir", "")).splitlines()),
-            "sections": compiler_sections,
+            "section_counts": {
+                name: preview["total"] for name, preview in compiler_sections.items()
+            },
+            "section_query": (
+                f"{QUERY_COMMAND} source-observer --path fingerprint.SECTION"
+            ),
             "control_time_index": {
                 "loops": [
                     {
@@ -666,10 +685,6 @@ def _source_brief(input_root: Path) -> None:
                         "body_effect_kinds": sorted(
                             str(name) for name in item.get("body_effects", {})
                         ),
-                        "exact_query": (
-                            f"{QUERY_COMMAND} source-observer --path "
-                            f"fingerprint.loops.{ordinal}"
-                        ),
                     }
                     for ordinal, item in enumerate(fingerprint.get("loops", []))
                     if isinstance(item, dict)
@@ -684,10 +699,6 @@ def _source_brief(input_root: Path) -> None:
                             item.get("false_arm", {}).get("effect_order", [])
                         ),
                         "region_depth": len(item.get("region_context", [])),
-                        "exact_query": (
-                            f"{QUERY_COMMAND} source-observer --path "
-                            f"fingerprint.terminal_forks.{ordinal}"
-                        ),
                     }
                     for ordinal, item in enumerate(
                         fingerprint.get("terminal_forks", [])
@@ -699,6 +710,14 @@ def _source_brief(input_root: Path) -> None:
                 "authority": (
                     "exact compiler-observer index only; counts and operation names "
                     "do not classify J ownership or construct recurrence/control"
+                ),
+                "loop_query": (
+                    f"{QUERY_COMMAND} source-observer --path "
+                    "fingerprint.loops.ORDINAL"
+                ),
+                "terminal_fork_query": (
+                    f"{QUERY_COMMAND} source-observer --path "
+                    "fingerprint.terminal_forks.ORDINAL"
                 ),
             },
             "exact_ttir_queries": [
@@ -716,25 +735,20 @@ def _source_brief(input_root: Path) -> None:
     # Enforce a hard transport budget through exact-prefix degradation.  Each
     # removed preview retains its total and exact query, so no fact changes owner.
     def rendered_chars() -> int:
-        return len(json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False))
+        return len(
+            json.dumps(
+                value,
+                sort_keys=True,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        )
 
-    if rendered_chars() > MAX_OUTPUT_CHARS:
-        for name, preview in compiler_sections.items():
-            preview["value"] = [] if preview["kind"] == "array" else {}
-            preview["truncated"] = bool(preview["total"])
-            if preview["truncated"]:
-                preview["exact_query"] = (
-                    f"{QUERY_COMMAND} source-observer --path fingerprint.{name}"
-                )
     if rendered_chars() > MAX_OUTPUT_CHARS:
         value["source"]["items"] = value["source"]["items"][:6]
         value["source"]["next_start"] = 7
         value["source"]["next_command"] = (
             f"{QUERY_COMMAND} source-outline --start 7 --count 16"
-        )
-        value["harness_abi"]["parameters"] = value["harness_abi"]["parameters"][:8]
-        value["harness_abi"]["parameter_next_command"] = (
-            f"{QUERY_COMMAND} harness-abi --start 9 --count 16"
         )
     if rendered_chars() > MAX_OUTPUT_CHARS:
         value["source"]["items"] = value["source"]["items"][:3]
@@ -742,21 +756,34 @@ def _source_brief(input_root: Path) -> None:
         value["source"]["next_command"] = (
             f"{QUERY_COMMAND} source-outline --start 4 --count 16"
         )
-        value["harness_abi"]["parameters"] = value["harness_abi"]["parameters"][:4]
-        value["harness_abi"]["parameter_next_command"] = (
-            f"{QUERY_COMMAND} harness-abi --start 5 --count 16"
-        )
     if rendered_chars() > MAX_OUTPUT_CHARS:
         value["source"]["items"] = []
         value["source"]["next_start"] = 1
         value["source"]["next_command"] = (
             f"{QUERY_COMMAND} source-outline --start 1 --count 16"
         )
-        value["harness_abi"]["parameters"] = value["harness_abi"]["parameters"][:1]
+    if rendered_chars() > MAX_OUTPUT_CHARS:
+        value["harness_abi"]["parameter_rows"] = value["harness_abi"][
+            "parameter_rows"
+        ][:24]
         value["harness_abi"]["parameter_next_command"] = (
-            f"{QUERY_COMMAND} harness-abi --start 2 --count 16"
+            f"{QUERY_COMMAND} harness-abi --start 25 --count 24"
         )
-    _emit_json(value)
+    if rendered_chars() > MAX_OUTPUT_CHARS:
+        value["harness_abi"]["parameter_rows"] = value["harness_abi"][
+            "parameter_rows"
+        ][:16]
+        value["harness_abi"]["parameter_next_command"] = (
+            f"{QUERY_COMMAND} harness-abi --start 17 --count 24"
+        )
+    if rendered_chars() > MAX_OUTPUT_CHARS:
+        value["harness_abi"]["parameter_rows"] = value["harness_abi"][
+            "parameter_rows"
+        ][:8]
+        value["harness_abi"]["parameter_next_command"] = (
+            f"{QUERY_COMMAND} harness-abi --start 9 --count 24"
+        )
+    _emit_compact_json(value)
 
 
 def _source_find(input_root: Path, query: str, context: int) -> None:
@@ -1310,6 +1337,88 @@ def _harness_abi_value(
     }
 
 
+def _compact_harness_abi_value(input_root: Path) -> dict[str, Any]:
+    """Return the complete public ABI ledger without verbose per-row wrappers.
+
+    Every value is copied from ``harness_view.json`` through
+    :func:`_harness_abi_value`.  The projection deliberately omits concrete tensor
+    shapes when a parametric ``shape_contract`` is present and records only rank;
+    it never chooses a J tensor/dimension, ``logical_ref``, C attachment, or pi
+    relation.  The ordinary paged ``harness-abi`` query remains the exact verbose
+    source for any row that needs inspection.
+    """
+
+    verbose = _harness_abi_value(input_root, 1, 80)
+    rows: list[list[Any]] = []
+    for entry in verbose["parameters"]:
+        name = entry["name"]
+        classification = entry.get("classification")
+        declared = entry.get("declared")
+        if isinstance(declared, dict):
+            shape = declared.get("shape")
+            kind = declared.get("kind")
+            if kind == "tensor":
+                row = [
+                    name,
+                    "tensor",
+                    declared.get("mode"),
+                    declared.get("dtype"),
+                    len(shape) if isinstance(shape, list) else None,
+                    declared.get("shape_contract"),
+                ]
+            elif kind == "scalar":
+                row = [
+                    name,
+                    "scalar",
+                    declared.get("mode"),
+                    declared.get("dtype"),
+                ]
+                if declared.get("shape_coordinate") is not None:
+                    row.append(declared["shape_coordinate"])
+            else:
+                row = [name, kind, declared.get("mode"), declared.get("dtype")]
+                while row and row[-1] is None:
+                    row.pop()
+        elif "bound_valuation" in entry:
+            row = [name, "bound", entry["bound_valuation"]]
+        elif "c_value" in entry:
+            row = [name, "c_value", entry["c_value"]]
+        elif "compiler_role" in entry:
+            row = [name, "compiler", entry["compiler_role"]]
+        else:
+            row = [name, classification or "unresolved"]
+        rows.append(row)
+    return {
+        "protocol": "intentir.lift-harness-abi-compact.v1",
+        "row_grammar": {
+            "ownership": "p*=J.signature; c*=C",
+            "tensor": [
+                "name", "tensor", "mode", "dtype", "rank", "shape_contract",
+            ],
+            "scalar": ["name", "scalar", "mode", "dtype", "shape_coordinate?"],
+            "bound": ["name", "bound", "bound_valuation"],
+            "c_value": ["name", "c_value", "value"],
+            "compiler": ["name", "compiler", "role"],
+        },
+        "parameter_rows": rows,
+        "parameter_total": verbose["parameter_total"],
+        "parameter_next_command": None,
+        "shape_coordinates": verbose["shape_coordinates"],
+        "bound_constexpr_shape_coordinates": verbose[
+            "bound_constexpr_shape_coordinates"
+        ],
+        "grid_shape_coordinates": verbose["grid_shape_coordinates"],
+        "aliases": verbose["aliases"],
+        "agent_owned_not_inferred": verbose["agent_owned_not_inferred"],
+        "exact_row_query": f"{QUERY_COMMAND} harness-abi --start START --count COUNT",
+        "authority": (
+            "Lossless selection of public Harness ABI fields except that concrete "
+            "tensor shape is represented by rank plus the exact parametric "
+            "shape_contract. No J/C/pi field or semantic binding is inferred."
+        ),
+    }
+
+
 def _harness_abi(
     input_root: Path, start: int = 1, count: int = 24
 ) -> None:
@@ -1678,20 +1787,7 @@ _CONTROL_BOUNDARY_FIELDS = (
     "access_guard_relations",
     "result_relations",
 )
-_CONTROL_PI_FIELDS = (
-    "regions",
-    "instances",
-    "iterations",
-    "loop_carriers",
-    "physical_iterations",
-    "physical_loop_carriers",
-    "terminal_controls",
-    "routes",
-    "program_axes",
-    "route_extent_transforms",
-    "order",
-    "sharing",
-)
+_CONTROL_PI_FIELDS = ("program_axes",)
 
 
 def _candidate_operand_access_records(
@@ -1895,7 +1991,7 @@ def _candidate_control_value(
             "output_mappings": boundary.get("output_mappings", []),
             "write_or_update_effects": write_effects,
             "access_guard_relations": boundary.get("access_guard_relations", []),
-            "pi_order": pi.get("order", []),
+            "pi_program_axes": pi.get("program_axes", []),
             "authority": authority,
         }
     records = _candidate_control_records(candidate, section)

@@ -42,7 +42,7 @@ from .scrc import (
     scrc_candidate_check_context,
 )
 CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v37"
-CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v97"
+CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v98"
 CODEX_CLI_TURN_TIMEOUT_SECONDS = 900.0
 
 _FEEDBACK_CATEGORY_NAMES = (
@@ -58,8 +58,9 @@ Work only under the isolated /workspace; input/ is immutable and output/, work/,
 and tmp/ are writable. There is no repository or network.
 
 Act like a coding agent, not a staged JSON generator. Start with the one compact
-`source-brief` command in input/README.md, then read input/source.py. The brief is
-only exact Source/Harness/compiler navigation; you decide all meaning. Query an
+`source-brief` command in input/README.md, then read input/source.py. The brief includes
+the complete compact Harness ABI ledger and exact Source/compiler navigation; you
+decide all meaning. Query an
 exact compiler-observer section, TTIR slice, schema leaf, operation, or contract
 term only when the current draft needs it. Do not dump input/source_ttir.json, the
 whole Schema, the whole operation catalog, or the whole Lift contract into the

@@ -31,7 +31,7 @@ control/inout/output-binding 等全部语义事实。active π 只作者化已�
 program-axis relation；旧 `regions/instances/routes/iterations/carriers/refinements`
 仅供历史 artifact 按原版本读取。fixed code只诊断，不翻译别名、补齐 attrs、生成语义
 handle/relation、改图或修复 artifact；历史 wire/receipt 不静默升级或重判。当前 Agent execution
-receipt 为 `openai.codex-cli.intentir-lift.v37 / intentir.lift-knowledge.v97 /
+receipt 为 `openai.codex-cli.intentir-lift.v37 / intentir.lift-knowledge.v98 /
 minisweagent.intentir-replay.v32 / openai.codex-cli.intentir-replay.v58`；Codex runtime v4 在
 closed submit 工具接受 exact bytes 后恢复并复核 checkpoint，不等待 proof-irrelevant 的结尾 prose；
 Replay 内部 J-only 视图为 `intentir.replay-semantic-program.v1`，不是 artifact 或新输入权威；
