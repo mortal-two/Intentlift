@@ -393,9 +393,10 @@ select、不升级 inout、不选择 polarity/axes，也不修 candidate。
 - `physical_loop_carriers` 是否只在对应 physical iteration region 中声明 typed
   `init/state/next/result` temporal topology，四个 role 是否为 distinct physical occurrence，普通
   route 是否闭合 `init -> state -> next`，且没有初始化/update/bound 或 frontend formula；
-- `terminal_controls` 是否只连接同一 authored J `effect_if` 的两个 sibling arm-scope `realize`
-  instances，该 control 是否为 lexical parent 的 final operation，且 relation 没有复制
-  predicate/polarity/return/Source/API；
+- `terminal_controls` 是否只采用两种 closed 形式：连接同一 authored J `effect_if` 的两个 sibling
+  arm-scope `realize` instances（且 control 为 lexical parent 的 final operation），或将 authored J
+  program domain 与已由同一 domain empty-route 控制的 continuation region 配对以表示域外终止；两种
+  relation 都不得复制 predicate/extent/polarity/return/Source/API；
 - `route_extent_transforms` 是否只限定一条已存在 route slot，source 是否锚定 required
   positive-integer C slot，target 是否锚定该 slot attached 的 J domain，且 divisor/rounding 属于
   closed vocabulary；

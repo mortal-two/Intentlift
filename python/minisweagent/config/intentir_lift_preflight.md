@@ -237,7 +237,8 @@ the artifact schema or external TypeCheck.
    an empty-slot route from the program-region d* realize instance into that
    region. The J domain owns the condition; pi owns only branch topology and
    carries no comparison, extent, polarity, or frontend API.
-   For a Source one-arm early return, preserve control without inventing a return
+   For a Source one-arm early return controlled by an ordinary authored scalar
+   predicate, preserve control without inventing a return
    op: the returning arm contains exactly its pre-return computations/effects,
    the sibling arm contains the entire lexical continuation that Source executes
    only when it does not return, and no copy of that continuation remains after
@@ -249,6 +250,12 @@ the artifact schema or external TypeCheck.
    `realize` instances for those two sibling arm scopes. Do not copy the
    predicate/polarity or add a return op, value, formula, Source spelling, or
    frontend API to pi. An ordinary two-arm conditional has no such relation.
+   If the early-return condition is exactly the complement of an authored J
+   program domain, do not invent an `effect_if`. Keep the empty-slot route from
+   that domain realization into its existing continuation branch region, then
+   author the alternative closed row
+   `{domain_ref, continuation_region}`. It says only that the domain complement
+   terminates this invocation. The predicate remains solely in J.
    Follow every selected reachable helper body when authoring an arm. Preserve
    its literal load/store/atomic statement order in that scope's `effects` and
    in pi transfer/order topology. Independent J node declaration order is not

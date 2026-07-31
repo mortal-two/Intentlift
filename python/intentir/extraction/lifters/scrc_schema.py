@@ -923,7 +923,7 @@ def _pi_schema() -> dict[str, Any]:
             "semantic value and carry no update formula or frontend spelling."
         ),
     )
-    terminal_control = _closed_object(
+    effect_terminal_control = _closed_object(
         {
             "terminal_instance": {
                 "type": "string",
@@ -943,6 +943,35 @@ def _pi_schema() -> dict[str, Any]:
             "polarity, return value, source spelling, or frontend API is present."
         ),
     )
+    domain_terminal_control = _closed_object(
+        {
+            "domain_ref": {
+                "type": "string",
+                "pattern": "^d[0-9]+$",
+            },
+            "continuation_region": {
+                "type": "string",
+                "pattern": "^r[0-9]+$",
+            },
+        },
+        ("domain_ref", "continuation_region"),
+        description=(
+            "One source-neutral program-domain terminal relation. The named "
+            "placement=branch continuation region must already be controlled by "
+            "an empty-slot route from the same J domain realization. Coordinates "
+            "outside that J domain terminate the current invocation. The relation "
+            "contains no predicate, polarity, return value, source spelling, or "
+            "frontend API."
+        ),
+    )
+    terminal_control = {
+        "oneOf": [effect_terminal_control, domain_terminal_control],
+        "description": (
+            "Either terminal-versus-continuation topology for an authored J "
+            "effect_if, or the terminal complement of an existing J-domain-owned "
+            "continuation region. Both forms depend on J and carry no condition."
+        ),
+    }
     return _closed_object(
         {
             "regions": _array(region),

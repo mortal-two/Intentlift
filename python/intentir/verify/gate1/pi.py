@@ -205,10 +205,13 @@ def render_realization_witness_wire_grammar() -> str:
         "the common carrier-tuple ordinal across init/state/next/result and must be "
         "preserved by Replay. It is not event execution order and does not replace "
         "explicit pi.order edges."
-        " terminal_controls has exactly terminal_instance and continuation_instance: "
-        "distinct realize instances on sibling J effect_if arm scopes. It names "
-        "which arm terminates and which continues; it carries no predicate, "
-        "polarity, return, Source spelling, or API. Each reduction_linearization "
+        " terminal_controls has one of two exact row shapes. An effect row has "
+        "terminal_instance and continuation_instance: distinct realize instances "
+        "on sibling J effect_if arm scopes. A program-domain row has domain_ref and "
+        "continuation_region: that existing branch region executes inside the same "
+        "J domain and its complement terminates the invocation. Neither form "
+        "carries a predicate, polarity, return, Source spelling, or API. Each "
+        "reduction_linearization "
         "refinement has null auth_ref and refines one realize instance whose sole "
         "slot-0 route enters a J reduce realize instance. It denotes full-axis "
         "linearization before that consumer without carrying an axis, operator, "
@@ -478,15 +481,59 @@ class RealizationWitness:
 
         checked_terminal_controls: list[dict[str, JsonValue]] = []
         terminal_control_instances: set[str] = set()
+        terminal_control_domains: set[str] = set()
+        terminal_continuation_regions: set[str] = set()
         for index, raw in enumerate(self.terminal_controls):
             path = f"pi.terminal_controls[{index}]"
             item = _record(
                 raw,
                 path=path,
-                required=frozenset(
-                    {"terminal_instance", "continuation_instance"}
+                required=frozenset(),
+                allowed=frozenset(
+                    {
+                        "terminal_instance",
+                        "continuation_instance",
+                        "domain_ref",
+                        "continuation_region",
+                    }
                 ),
             )
+            fields = set(item)
+            if fields == {"domain_ref", "continuation_region"}:
+                domain_ref = _name(item["domain_ref"], f"{path}.domain_ref")
+                if re.fullmatch(r"d[0-9]+", domain_ref) is None:
+                    raise RealizationWitnessError(
+                        f"{path}.domain_ref must be a J boundary domain handle d*"
+                    )
+                continuation_region = _name(
+                    item["continuation_region"], f"{path}.continuation_region"
+                )
+                if continuation_region not in known_regions:
+                    raise RealizationWitnessError(
+                        "pi program-domain terminal names an unknown continuation region"
+                    )
+                if domain_ref in terminal_control_domains:
+                    raise RealizationWitnessError(
+                        "one J domain may have at most one terminal complement"
+                    )
+                if continuation_region in terminal_continuation_regions:
+                    raise RealizationWitnessError(
+                        "one continuation region may have at most one terminal complement"
+                    )
+                terminal_control_domains.add(domain_ref)
+                terminal_continuation_regions.add(continuation_region)
+                checked_terminal_controls.append(
+                    {
+                        "domain_ref": domain_ref,
+                        "continuation_region": continuation_region,
+                    }
+                )
+                continue
+            if fields != {"terminal_instance", "continuation_instance"}:
+                raise RealizationWitnessError(
+                    f"{path} must be exactly an effect-arm pair or a "
+                    "program-domain continuation pair"
+                )
             terminal_instance = _declared_instance_ref(
                 item["terminal_instance"],
                 path=f"{path}.terminal_instance",

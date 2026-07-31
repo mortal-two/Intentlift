@@ -465,9 +465,16 @@ def _packet_program_domain_branches(packet: Mapping[str, Any]) -> list[dict[str,
     instances_value = pi.get("instances", [])
     routes_value = pi.get("routes", [])
     axes_value = pi.get("program_axes", [])
+    terminal_controls_value = pi.get("terminal_controls", [])
     if not isinstance(domains, Mapping) or not all(
         isinstance(value, list)
-        for value in (regions_value, instances_value, routes_value, axes_value)
+        for value in (
+            regions_value,
+            instances_value,
+            routes_value,
+            axes_value,
+            terminal_controls_value,
+        )
     ):
         raise TypeError("packet program-domain branch relations are malformed")
     regions = {
@@ -489,6 +496,13 @@ def _packet_program_domain_branches(packet: Mapping[str, Any]) -> list[dict[str,
         region_ref
         for region_ref, item in regions.items()
         if item.get("placement") == "program"
+    }
+    domain_terminals = {
+        (str(item.get("domain_ref")), str(item.get("continuation_region")))
+        for item in terminal_controls_value
+        if isinstance(item, Mapping)
+        and isinstance(item.get("domain_ref"), str)
+        and isinstance(item.get("continuation_region"), str)
     }
 
     def owning_branch(region_ref: str) -> str | None:
@@ -534,6 +548,9 @@ def _packet_program_domain_branches(packet: Mapping[str, Any]) -> list[dict[str,
                 "source_instance": source_ref,
                 "target_instance": target_ref,
                 "branch_region": branch_ref,
+                "terminal_outside_domain": (
+                    (domain_ref, branch_ref) in domain_terminals
+                ),
             }
         )
     return result
@@ -697,6 +714,12 @@ def _packet_requirements(packet: Mapping[str, Any]) -> dict[str, Any]:
         for row in rows if isinstance(rows, list) else []:
             if isinstance(row, Mapping) and isinstance(row.get("region"), str):
                 referenced_regions.add(str(row["region"]))
+    terminal_rows = pi.get("terminal_controls", [])
+    for row in terminal_rows if isinstance(terminal_rows, list) else []:
+        if isinstance(row, Mapping) and isinstance(
+            row.get("continuation_region"), str
+        ):
+            referenced_regions.add(str(row["continuation_region"]))
     region_index = {
         str(item.get("id")): item
         for item in regions

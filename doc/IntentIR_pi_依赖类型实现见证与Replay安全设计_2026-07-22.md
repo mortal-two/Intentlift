@@ -567,6 +567,17 @@ Replay 从 J 读取 predicate 与两臂内容，从该 relation 读取 terminal 
 `effect_if` 仍按普通显式双臂 control 消费。顺序 early returns 通过 continuation arm 内嵌套相同结构
 表达，不增加 kernel-specific mechanism。SCRC 后 π 停止，production backend 不消费该 relation。
 
+若 Source 的 terminal 条件恰是 authored J program domain 的补集，则不为它发明 `effect_if`，而允许：
+
+```text
+pi.terminal_controls[*] = { domain_ref, continuation_region }
+```
+
+该 continuation region 必须已由同一 domain realization 的 empty-slot route 控制；relation 仅补充
+“domain complement terminates current invocation”。predicate、extent、polarity、return 与 Source/API
+均不进入 π。同一 `(domain,region)` 在 Replay construction check 中只形成 terminal obligation，不再
+重复形成普通 branch obligation；最终 CFG 真实性仍由 source-blind Replay 与 Gate1 判断。
+
 ### 4.4 对 semantic labels 参数化
 
 必须满足：

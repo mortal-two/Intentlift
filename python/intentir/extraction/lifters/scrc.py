@@ -1079,9 +1079,14 @@ route from that domain's program-region realize instance into the region. The J
 domain remains the sole condition; pi carries no comparison, extent, polarity, or
 frontend spelling. Do not invent constant true/false effect_if predicates for this
 case.
-Source early return: final `effect_if`; later work in its continuation arm; one
-pi.terminal_controls pair over arm `realize` instances. It names only
-terminal/continuation, never predicate/polarity/return/Source/API.
+Source early return driven by an ordinary authored scalar predicate: final
+`effect_if`; later work in its continuation arm; one pi.terminal_controls
+terminal_instance/continuation_instance pair over arm `realize` instances.
+When the return is instead exactly the complement of an authored J program domain,
+do not fabricate an effect_if. Keep the existing empty-slot domain route into the
+continuation branch region and add one terminal_controls
+`{domain_ref,continuation_region}` row. Both forms name topology only, never a
+predicate/polarity/return/Source/API.
 Preserve selected-helper literal memory order in scope.effects/pi; node order is
 not effect order. Outline loop-preexisting writes are only a carrier checklist.
 

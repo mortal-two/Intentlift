@@ -458,8 +458,10 @@ transformation permission，也不改变 `Reach_t(J)`。
 - `physical_loop_carriers` 只保存对应 region 内 typed `init/state/next/result` 时间拓扑；四个 role 为
   distinct physical occurrence，普通 route 闭合 `init -> state -> next`，relation 自身表示跨迭代与
   loop-exit 时间边，不含公式/value；
-- `terminal_controls` 只连接同一 J `effect_if` 的两个 sibling arm instance，且该 `effect_if` 在当前
-  lexical parent 中为 final；terminal/continuation role 不携带 predicate、polarity 或 return 语义；
+- `terminal_controls` 或连接同一 J `effect_if` 的两个 sibling arm instance，且该 `effect_if` 在当前
+  lexical parent 中为 final；或将 authored J program domain 与已由同一 domain empty-route 控制的
+  continuation region 配对，表示 domain complement 终止 invocation；两种形式均不携带 predicate、
+  extent、polarity、return 或 Source/API；
 - `route_extent_transforms` 只限定一条既有 route slot，并依赖 required positive-int C 与匹配的
   J-domain attachment/axis；divisor/rounding 属于 closed vocabulary，不形成一般表达式；
 - observable instance 锚定 J；

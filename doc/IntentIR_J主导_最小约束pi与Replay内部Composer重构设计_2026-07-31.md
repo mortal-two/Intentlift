@@ -70,6 +70,14 @@ loop carrier 的 `init/state/next/result` 是四个 physical occurrence，而不
 独立 branch region，并由 program-region d* instance 的 empty-slot route 控制。J domain 是唯一条件，
 π 只保存共享 axis 与 branch topology，不保存比较式或 extent。
 
+若 Source 恰在某个 authored J program domain 的补集上终止当前 invocation，则继续使用同一条
+domain-to-branch empty route，并以 closed
+`terminal_controls{domain_ref,continuation_region}` 声明“域内进入该 continuation、域外终止”。它不
+复制 domain predicate、polarity、return 或 Source/API，也不要求 Lift 发明假的 `effect_if`。若终止
+由普通 scalar predicate 控制，则仍使用 J `effect_if` 两臂 instance 的 terminal/continuation 形式。
+两种 row 都只增加 control topology；同一个 domain-controlled region 在 Replay 最低结构检查中只能
+计作 terminal fork，不能再重复计作普通 branch。
+
 当 Source 的一个 program ordinal 还要经过 mixed-radix 解码时，仅靠 `program_axes` 与 route 不能
 唯一重建 realization。π_min 因而允许 closed
 `program_linearizations{domain_ref,dimension_refs}`：按 outer-to-inner 的 J `x*` 顺序，唯一表示

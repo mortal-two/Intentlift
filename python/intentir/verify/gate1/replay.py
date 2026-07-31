@@ -2740,9 +2740,15 @@ def _packet_required_compiled_program_branches(
     regions_value = pi.get("regions")
     instances_value = pi.get("instances")
     routes_value = pi.get("routes")
+    terminal_controls_value = pi.get("terminal_controls")
     if not isinstance(domains, Mapping) or not all(
         isinstance(value, list)
-        for value in (regions_value, instances_value, routes_value)
+        for value in (
+            regions_value,
+            instances_value,
+            routes_value,
+            terminal_controls_value,
+        )
     ):
         return 0, ()
     regions = {
@@ -2797,11 +2803,19 @@ def _packet_required_compiled_program_branches(
             and branch_ref is not None
         ):
             branch_by_domain.add((domain_ref, branch_ref))
+    domain_terminals = {
+        (str(item.get("domain_ref")), str(item.get("continuation_region")))
+        for item in terminal_controls_value
+        if isinstance(item, Mapping)
+        and isinstance(item.get("domain_ref"), str)
+        and isinstance(item.get("continuation_region"), str)
+    }
+    ordinary_branches = branch_by_domain - domain_terminals
     handles = tuple(
         f"{domain_ref}:{branch_ref}"
-        for domain_ref, branch_ref in sorted(branch_by_domain)
+        for domain_ref, branch_ref in sorted(ordinary_branches)
     )
-    return len(branch_by_domain), handles
+    return len(ordinary_branches), handles
 
 
 def _packet_required_terminal_controls(
@@ -2815,14 +2829,21 @@ def _packet_required_terminal_controls(
     relations = pi.get("terminal_controls")
     if not isinstance(relations, list):
         return 0, ()
-    handles = tuple(
-        f"{item.get('terminal_instance')}:{item.get('continuation_instance')}"
-        for item in relations
-        if isinstance(item, Mapping)
-        and isinstance(item.get("terminal_instance"), str)
-        and isinstance(item.get("continuation_instance"), str)
-    )
-    return len(handles), handles
+    handles: list[str] = []
+    for item in relations:
+        if not isinstance(item, Mapping):
+            continue
+        if isinstance(item.get("terminal_instance"), str) and isinstance(
+            item.get("continuation_instance"), str
+        ):
+            handles.append(
+                f"{item['terminal_instance']}:{item['continuation_instance']}"
+            )
+        elif isinstance(item.get("domain_ref"), str) and isinstance(
+            item.get("continuation_region"), str
+        ):
+            handles.append(f"{item['domain_ref']}:{item['continuation_region']}")
+    return len(handles), tuple(handles)
 
 
 def _compiled_transfer_order_diagnostic(
@@ -3390,6 +3411,10 @@ Distinct J domains may share one pi.program_axes axis. An empty-slot route from 
 program-region d* realization into a placement=branch region means that region is
 realized only inside that authored J domain; read the condition from J and the axis
 from pi, and do not invent another predicate or program coordinate.
+A terminal_controls row with domain_ref/continuation_region further states that the
+complement terminates this invocation, while that already-controlled region is the
+lexical continuation. It does not provide another predicate or authorize a fake
+J effect_if. An instance-pair row retains the authored effect_if arm meaning.
 
 Each pi.loop_carriers or pi.physical_loop_carriers row names four distinct physical
 occurrences even when several anchor the same J semantic value. Consume the ordinary

@@ -5167,6 +5167,11 @@ def _opaque_pi_json(
             _opaque_reference(item, aliases)
             for item in relation["dimension_refs"]
         ]
+    for relation in result.get("terminal_controls", []):
+        if "domain_ref" in relation:
+            relation["domain_ref"] = _opaque_reference(
+                relation["domain_ref"], aliases
+            )
     return result
 
 

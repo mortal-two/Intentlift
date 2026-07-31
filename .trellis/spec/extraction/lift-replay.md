@@ -301,10 +301,13 @@ body instance 类型，因此 pointer/address recurrence 与 accumulator 都由 
 四个 stage 是不同 physical occurrence，即使它们可锚定同一 J semantic value；ordinary routes 必须
 闭合 `init -> state -> next`。跨迭代 next-to-state 与 loop-exit result 仍由 carrier relation 本身表示，
 不携带 update formula。
-`artifact.v9` 再加入 `pi.terminal_controls`，只在 J 已有 `effect_if` 的 sibling arm scopes 上指定
-terminal/continuation topology；不复制 predicate、return、Source 或 frontend spelling。
-source-blind construction compile 对每条 relation 只要求至少一个 compiled terminal conditional，拒绝
-用普通 structured value/effect `if` 冒充 early-return CFG；它不生成 predicate、arm 或 return。
+`artifact.v9` 再加入 `pi.terminal_controls`。普通 scalar predicate 的 early return 只在 J 已有
+`effect_if` 的 sibling arm scopes 上指定 terminal/continuation topology；J program domain 补集上的
+early return 则以 `{domain_ref,continuation_region}` 标记已有 empty-slot domain continuation 的域外终止，
+不得伪造 `effect_if`。两种 row 都不复制 predicate、return、Source 或 frontend spelling。
+source-blind construction compile 对每条 relation 只要求至少一个 compiled terminal conditional，且
+domain-terminal pair 不重复计作普通 branch；它拒绝用普通 structured value/effect `if` 冒充
+early-return CFG，但不生成 predicate、arm 或 return。
 `artifact.v10` 再加入 `pi.route_extent_transforms`：只允许 attached required positive-int C extent
 在一条已存在 route 的一个 target slot 上按 literal divisor>1 做 floor/ceil partition。Lift 必须显式
 作者化 source/target/slot/divisor/rounding 与 C attachment；checker 不从 Source、J domain 或 valuation

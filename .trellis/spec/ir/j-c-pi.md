@@ -497,6 +497,16 @@ predicate、polarity、return/value/formula、Source 或 frontend API。无 rela
 显式双臂 control。TypeCheck 不从空臂、effect 或名称推导 relation；Replay 只按 authored relation
 materialize terminal CFG；production backend 不读取 π。
 
+若 terminal 条件恰是一个 authored J program domain 的补集，Lift 不得为此伪造 `effect_if`，而写：
+
+```json
+{"domain_ref": "d0", "continuation_region": "r1"}
+```
+
+该 branch region 必须已由同一 domain realization 的 empty-slot route 控制；relation 只补充“域外终止”。
+domain predicate、extent、polarity 与 continuation 内容仍分别由 J 和既有 π topology 拥有。同一 pair 在
+Replay 最低结构检查中只计为 terminal fork，不再计作普通 program-domain branch。
+
 ## Authorization 与 parametricity
 
 ```text

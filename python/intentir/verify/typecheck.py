@@ -112,6 +112,7 @@ class TypeCheckErrorCode(str, Enum):
     ACCESS_GUARD_RELATION_INVALID = "access_guard_relation_invalid"
     EFFECT_CONDITIONAL_INVALID = "effect_conditional_invalid"
     VALUE_CONDITIONAL_INVALID = "value_conditional_invalid"
+    TERMINAL_CONTROL_INVALID = "terminal_control_invalid"
     REPRESENTATION_CARRIER_J_USE_FORBIDDEN = (
         "representation_carrier_j_use_forbidden"
     )
@@ -2412,29 +2413,30 @@ def _program_domain_branch_regions(
     }
     bound_domains = {str(item["domain_ref"]) for item in pi.program_axes}
 
-    def region_is_within(region_ref: str, ancestor_ref: str) -> bool:
+    def owning_branch(region_ref: str) -> str | None:
         current: str | None = region_ref
         seen: set[str] = set()
         while current is not None and current not in seen:
-            if current == ancestor_ref:
-                return True
+            if current in branch_regions:
+                return current
             seen.add(current)
             parent = regions.get(current, {}).get("parent")
             current = str(parent) if parent is not None else None
-        return False
+        return None
 
     controlled: dict[str, str] = {}
-    for region_ref in sorted(branch_regions):
-        guard_domains = {
-            domain_sources[str(route["source"])]
-            for route in pi.routes
-            if not route["slots"]
-            and str(route["source"]) in domain_sources
-            and str(route["target"]) in instances
-            and region_is_within(
-                str(instances[str(route["target"])]["region"]), region_ref
+    guards_by_region: dict[str, set[str]] = {}
+    for route in pi.routes:
+        source_ref = str(route["source"])
+        target = instances.get(str(route["target"]))
+        if route["slots"] or source_ref not in domain_sources or target is None:
+            continue
+        region_ref = owning_branch(str(target["region"]))
+        if region_ref is not None:
+            guards_by_region.setdefault(region_ref, set()).add(
+                domain_sources[source_ref]
             )
-        }
+    for region_ref, guard_domains in sorted(guards_by_region.items()):
         if not guard_domains:
             continue
         if len(guard_domains) != 1:
@@ -2464,6 +2466,37 @@ def _program_domain_branch_regions(
     return controlled
 
 
+def _check_program_domain_terminals(
+    pi: RealizationWitness,
+    controlled_regions: Mapping[str, str],
+    diagnostics: list[TypeCheckDiagnostic],
+) -> None:
+    """Check only the terminal complement of an existing J-domain branch.
+
+    The empty-slot route already states that ``continuation_region`` is realized
+    inside ``domain_ref``.  This relation adds only that the domain complement
+    terminates the current invocation; it never introduces or copies a predicate.
+    """
+
+    for index, relation in enumerate(pi.terminal_controls):
+        if "domain_ref" not in relation:
+            continue
+        base = f"pi.terminal_controls[{index}]"
+        domain_ref = str(relation["domain_ref"])
+        continuation_region = str(relation["continuation_region"])
+        if controlled_regions.get(continuation_region) == domain_ref:
+            continue
+        diagnostics.append(
+            TypeCheckDiagnostic(
+                TypeCheckErrorCode.TERMINAL_CONTROL_INVALID,
+                base,
+                "program-domain terminal must annotate an existing branch region "
+                "controlled by an empty-slot route from that exact J domain",
+                f"{domain_ref}:{continuation_region}",
+            )
+        )
+
+
 def _check_effect_conditionals(
     j: SemanticArchive,
     pi: RealizationWitness,
@@ -2482,6 +2515,11 @@ def _check_effect_conditionals(
 
     intent = j.intent.to_json()["intent_function"]
     conditionals: list[tuple[str, Mapping[str, Any], bool]] = []
+    effect_terminal_controls = [
+        (index, relation)
+        for index, relation in enumerate(pi.terminal_controls)
+        if "terminal_instance" in relation
+    ]
 
     def collect_conditionals(body: Any, prefix: str) -> None:
         if not isinstance(body, list):
@@ -2502,7 +2540,7 @@ def _check_effect_conditionals(
 
     collect_conditionals(intent.get("body", []), "body")
     if not conditionals:
-        if pi.terminal_controls:
+        if effect_terminal_controls:
             diagnostics.append(
                 TypeCheckDiagnostic(
                     TypeCheckErrorCode.EFFECT_CONDITIONAL_INVALID,
@@ -2870,7 +2908,7 @@ def _check_effect_conditionals(
             )
 
     terminal_paths: set[str] = set()
-    for index, relation in enumerate(pi.terminal_controls):
+    for index, relation in effect_terminal_controls:
         base = f"pi.terminal_controls[{index}]"
         terminal_instance = str(relation["terminal_instance"])
         continuation_instance = str(relation["continuation_instance"])
@@ -4959,9 +4997,9 @@ def type_check(
     _check_rank_zero_logical_input_liveness(j, diagnostics)
     _check_boundary_value_dominance(j, diagnostics)
     _check_access_guard_relations(j, diagnostics)
-    program_domain_regions = set(
-        _program_domain_branch_regions(j, pi, diagnostics)
-    )
+    program_domain_region_map = _program_domain_branch_regions(j, pi, diagnostics)
+    _check_program_domain_terminals(pi, program_domain_region_map, diagnostics)
+    program_domain_regions = set(program_domain_region_map)
     _check_effect_conditionals(j, pi, diagnostics, program_domain_regions)
     _check_value_conditionals(j, pi, diagnostics, program_domain_regions)
     diagnostics.extend(

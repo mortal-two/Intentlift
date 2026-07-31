@@ -1,6 +1,6 @@
 # Task 16：J 主导的最小约束 π / Replay 内部 Composer 与 28-Kernel 最终闭合
 
-> 状态：`P1_P2_ACTIVE`（2026-07-31）
+> 状态：`P4_ACTIVE`（2026-07-31）
 > 接管 Task 15。Task 15 在完成 Compiler-observed Lift、Codex owner 与 23/28 基线后，因 flat-π Replay 作者化接口暴露根本瓶颈而归档；未完成项由本任务继续，不把归档误写成完成。
 
 ## 0. 唯一目标
@@ -75,6 +75,9 @@ artifact 的独立 Gate2 recheck 冒充最终 28/28 交付。
   block interval/mask 明确保留在 J，禁止 π partition relation。
 - [x] 收紧 logical/physical loop carrier：四个 role 为 distinct occurrences，ordinary routes 闭合
   `init -> state -> next`；跨迭代与 loop-exit 仍由 relation 自身表示，不向 π 加 update formula。
+- [x] 以 `terminal_controls{domain_ref,continuation_region}` 表达 authored J program domain 的 terminal
+  complement；它必须复用同一 domain 的 empty-slot continuation route，不复制 predicate，也不发明
+  `effect_if`。普通 scalar predicate 的 early return 继续使用 effect-if sibling-arm 形式。
 
 ## 4. P2：Replay 内部 Composer
 
@@ -137,9 +140,11 @@ mixed-radix decode 由 closed `program_linearizations` 补齐；split block 的 
 route 闭合 `init -> state -> next`。它们仍可锚定同一 J semantic value；next-to-state、loop exit 仍由
 carrier relation 自身表达，所以该修复没有向 π 加 formula 或 target recipe。
 
-Llama 的 fresh frontier 还证明普通 `scf.if` 会错误冒充 π 已声明的 terminal/continuation CFG；当前
-source-blind construction compile 对每条 `terminal_controls` 只做最低 `control.conditional` presence
-拒绝，不选择 predicate、arm 或 return，精确 topology 仍交给 Gate1。
+Llama 的 fresh frontier 还证明普通 `scf.if` 会错误冒充 π 已声明的 terminal/continuation CFG。真实
+artifact 上新增的 domain-terminal 形式已经过正反 TypeCheck：只有精确 J domain 的 existing empty-route
+continuation 才成立；换成其他 domain 会以 `terminal_control_invalid` 拒绝。source-blind construction
+compile 对两种 `terminal_controls` 都只做最低 `control.conditional` presence 拒绝，不选择 predicate、
+arm 或 return；domain-terminal 不再重复计作普通 branch，精确 CFG 仍交给 Gate1。
 
 pre-change Llama 三分支三轮结果保留为 `NO_CLOSURE` 诊断，不计新增闭合：
 
