@@ -962,9 +962,10 @@ peer observation 或两臂 diff，不能擦除 J/C-owned facts；Gate1 不证明
 下述 packet、ledger、query 与 replay-check 版本只解释既有 evidence，不得进入 Task 20 fresh Replay，
 也不能作为 J-only path 已实现的证据。历史流程曾要求 Agent 全局消费 π，但该要求已经废止。
 
-Task 20 当前 fresh Replay packet 为 `intentir.scrc.replay-input.v3`，MiniSWE Replay v33、Codex Replay
-v62、`replay-check.v15`；只读 J-only semantic view 为
-`intentir.replay-semantic-program.v2`。`replay-input.v2`、MiniSWE v31、Codex v55 与其中的 π view/query
+Task 20 当前 fresh Replay packet 为 `intentir.scrc.replay-input.v3`，MiniSWE Replay v34、Codex Replay
+v63、`replay-check.v15`；只读 J-only semantic view 为
+`intentir.replay-semantic-program.v3`，另有只并置现有 J/MaskC 引用的
+`intentir.replay-compiler-index.v1`。`replay-input.v2`、MiniSWE v31、Codex v55 与其中的 π view/query
 均为下述历史记录；旧 receipt 保持其原 verdict，不能由
 当前 Replay consumer 或 Lift knowledge 静默升级。v30/v26 将 authored target-local route extent
 transforms 加入 exact ledger、audit 与 floor/ceil-div static ingress；v55 继续该 closed 检查，但不

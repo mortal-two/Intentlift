@@ -412,7 +412,7 @@ Task 20 的 Replay packet 只包含 exact J/J-only `S_J`、MaskC schema 与公�
 S_J = M(J)
 ```
 
-`S_J` 使用 `intentir.replay-semantic-program.v2`，是 canonical、typed、参数化且保留 J handle 的只读
+`S_J` 使用 `intentir.replay-semantic-program.v3`，是 canonical、typed、参数化且保留 J handle 的只读
 semantic program。`M` 只读取本轮 exact J；它不读取 C、π、Source、Harness valuation、target、旧
 Replay 或 Gate，也不生成 target API、schedule、address、loop spelling 或目标源码。因此 `S_J` 是
 proof-irrelevant 的 J 内部视图，不是第四 artifact、Replay 新权威或 production 输入。正常轮 fresh
@@ -426,13 +426,21 @@ authored index refs 覆盖的全部 authored domain refs；这些 domain 是并�
 code 选择其一的 schedule 候选。该索引不选择 program axis/loop/schedule，不读取 Source 或 π，
 也不成为新 artifact。
 
+v3 不再用 `k*` 前缀识别 logical index。normal J 先由 canonical elaboration 给出完整 value table；
+ContractExpr 中不属于已声明 semantic value、也不是 `x*` dimension 的 bound ref 才是 logical index。
+因此 Replay-facing alpha-renaming 把 `k*` 改成 `v*` 后，`domain_candidates`、shared refs 与 access axes
+仍保持正确。`intentir.replay-compiler-index.v1` 进一步只把该 J-only dependency index 与
+`MaskC(C).slots` 的匿名 attachment 并置，形成一个 proof-irrelevant 小文件；它不读取 C value、π、
+Source 或 Gate，且明确不推导 domain containment、program mapping、loop/lane/guard 或 target recipe。
+
 Replay Compiler Agent 直接把完整只读 `S_J` 作为 compiler input，并结合 `MaskC(C)` 与 `U_f` 独立
 编写一份完整 `replay.source`。Agent 可以全局选择 target API、address/program mapping、layout、
 memory、loop/carrier/control、synchronization、fusion 与源码结构，但全部 logical value、predicate、
 effect、state 与 output semantics 必须来自 J。Agent 不做 per-node hole/binding，也不接受 host 生成的
 target block、route fragment、source scaffold、固定 source map 或 π realization plan。
 
-启动上下文只携带 immutable J/S_J、MaskC schema 与 frontend knowledge 的文件路径和字节数，不嵌入
+启动上下文只携带 immutable J/S_J、上述 S_J+MaskC cross-reference、MaskC schema 与 frontend
+knowledge 的文件路径和字节数，不嵌入
 整份 packet、π、requirements ledger、历史 Replay 或 Gate frontier。Agent 先完整读取
 `semantic-program.intent`，随后才按当前编译需要用 `semantic_query` 定位一个 J
 node/value/boundary；不存在 π query、realization ledger 或 relation-to-target mapping。

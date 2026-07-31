@@ -506,8 +506,9 @@ Source/Replay observation 可能形成 residual，但 Gate1 不认证 π complet
 
 首版不需要让 TypeCheck 成为 SMT 或完整图证明器。最小可行实现只需 fail closed 地完成上述局部检查。
 
-Task 20 当前活动路径为 `replay-input.v3 / replay-check.v15 / MiniSWE Replay v33 / Codex Replay v62`：
-Replay workspace 只挂载 J-only `S_J`、MaskC 与 `U_f`；π view、π query、obligation audit 和
+Task 20 当前活动路径为 `replay-input.v3 / replay-check.v15 / MiniSWE Replay v34 / Codex Replay v63`：
+Replay workspace 只挂载 J-only `S_J`、只并置现有 J/MaskC 引用的 compiler index、MaskC 与 `U_f`；
+compiler index 不推导 schedule 或新语义；π view、π query、obligation audit 和
 π-dependent construction membership 已从活动 Replay 路径删除。Gate1 使用
 `intentir.j-only-replay.jc-structural-gate1.v2` 与
 `intentir.gate1.jc-normalizer.v2`，只在两臂 raw observation 之后执行固定单边 normalization。

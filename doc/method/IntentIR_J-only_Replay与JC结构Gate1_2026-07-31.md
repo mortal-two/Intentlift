@@ -31,6 +31,11 @@ Replay request、workspace、工具、continuation 与 cache key 均不得包含
 Gate1 observation/diff、旧 Replay 或 sibling 状态。`S_J=M(J)` 可以作为 J-only、只读、
 proof-irrelevant 的编译视图；它不能读取 π 或生成 target skeleton。
 
+实现可另给出 `V(S_J,MaskC(C))` 的只读 cross-reference，以并置已存在的 domain dependency refs、
+access/effect ownership 与匿名 C slot attachment。`V` 不读取 C valuation、π、Source 或 Gate，也不
+推导 domain containment、program axis、loop/lane/guard 或 target API；它只是避免 Agent 反复追引用，
+不是第四 artifact、语义输入或 schedule。
+
 ## 3. Gate1 的最小数学
 
 固定 frontend `f`、observer profile `p` 和 Harness valuation `c₀`。raw observer 完全不读取 π：

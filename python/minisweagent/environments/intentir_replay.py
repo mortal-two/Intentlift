@@ -44,6 +44,8 @@ REPLAY_INPUT_FILES = frozenset(
         "packet.json",
         "semantic-program.json",
         "semantic-program.intent",
+        "compiler-index.json",
+        "compiler-index.intent",
         "mask-c.json",
         "frontend.json",
         "REPLAY_CONTRACT.md",
@@ -1515,9 +1517,10 @@ class IntentIRReplayEnvironment:
                 "test ! -e /lib64; test ! -e /usr/local; "
                 "for name in python python3 gcc g++ clang ld as nvcc ptxas "
                 "triton torch intentir; do ! command -v \"$name\"; done; "
-                "test \"$(find /input -type f | wc -l)\" -eq 8; "
+                "test \"$(find /input -type f | wc -l)\" -eq 10; "
                 "for name in README.md packet.json semantic-program.json "
-                "semantic-program.intent mask-c.json "
+                "semantic-program.intent compiler-index.json "
+                "compiler-index.intent mask-c.json "
                 "frontend.json REPLAY_CONTRACT.md TOOL.md; do "
                 "test -f \"/input/$name\" || exit 1; done"
             ),

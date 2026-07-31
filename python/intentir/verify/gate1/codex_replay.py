@@ -50,16 +50,16 @@ from .replay import (
 )
 
 
-CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v62"
+CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v63"
 
 _INITIAL_PROMPT = """You are the sole writer for one fresh source-blind IntentIR Replay episode.
 Work only under the isolated /workspace. input/ is immutable; output/, work/, and
 tmp/ are writable. There is no Source, Harness/compiler view, actual C value, Gate
 result, earlier Replay, sibling state, repository, or network.
 
-J is the only semantic authority. Read the complete read-only
-input/semantic-program.intent before drafting, then read input/frontend.json and
-input/mask-c.json for the callable ABI. S_J is a deterministic parameterized compiler
+J is the only semantic authority. Read input/compiler-index.intent and the complete
+read-only input/semantic-program.intent before drafting, then read input/frontend.json
+and input/mask-c.json for the callable ABI. S_J is a deterministic parameterized compiler
 IR derived only from this J, not a target-source skeleton. Use `semantic_query` or
 `packet_query` only to cross-reference one named J/C handle after reading those complete
 small views. Pi, Source realization, Gate observations, and prior Replay are absent.
@@ -71,24 +71,12 @@ whole-program restructuring while preserving all J-owned value semantics. Do not
 S_J or infer a Source recipe. input/REPLAY_CONTRACT.md defines
 the ownership boundary and input/TOOL.md defines the tools.
 
-Compile `boundary_ownership` as one whole-program contract before selecting a
-physical schedule. Preserve every authored logical access/effect, co-plan axes shared
-by multiple outputs, and cross-reference anonymous C attachments before deciding
-which logical axes become program coordinates, lanes, or loops. Do not independently
-serialize every symbolic output extent by default. When J-only `domain_candidates`
-show write domains with shared context axes and one differing output axis, compile them
-as one guarded domain family where the frontend permits. Treat an attached C
-`tile_extent` as a blocked traversal axis, not automatically as another launch axis.
-This view contains only J facts;
-it is not a hidden Source recipe.
-
-Do not merge J ownership classes. `domain_candidates` supplies logical execution-domain
-bounds; an access row's `predicate` is its access-local mask. For a scalar coordinate
-selecting one output-domain member, use scalar structured control for `coord < extent`
-around that effect group and keep only the authored access predicate on its loads and
-stores. Shared outer domain bounds may use one outer guard or early return. Do not
-replace these domain guards with wider lane masks unless J explicitly authors an
-access-guard relation.
+`compiler-index.intent` is only a compact cross-reference of facts already present in
+S_J and MaskC. Its dependency subsets are syntactic and neither select nor authorize a
+program axis, loop, lane, guard, or target API. Use it to avoid repeated JSON joins,
+then compile `boundary_ownership` as one whole-program contract. Preserve every
+authored access/effect and keep logical domain guards distinct from access-local
+predicates; you still own every target realization choice.
 
 Compile, inspect only your own Replay IR, and patch the complete program in this same
 episode. First run `replay_compile_check`; once construction passes, call
@@ -156,10 +144,18 @@ def _replay_startup_context(
         "semantic_program_json_bytes": len(
             files["semantic-program.json"].encode("utf-8")
         ),
+        "compiler_index_text_bytes": len(
+            files["compiler-index.intent"].encode("utf-8")
+        ),
+        "compiler_index_json_bytes": len(
+            files["compiler-index.json"].encode("utf-8")
+        ),
         "paths": {
             "packet": "input/packet.json",
             "semantic_program": "input/semantic-program.intent",
             "semantic_program_json": "input/semantic-program.json",
+            "compiler_index": "input/compiler-index.intent",
+            "compiler_index_json": "input/compiler-index.json",
             "mask_c": "input/mask-c.json",
             "frontend": "input/frontend.json",
             "public_contract": "input/REPLAY_CONTRACT.md",

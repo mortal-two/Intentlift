@@ -32,7 +32,10 @@ from .prompt import (
     build_rewriter_prompt,
     build_rewriter_payload,
 )
-from .replay_semantic_core import materialize_replay_semantics
+from .replay_semantic_core import (
+    materialize_replay_compiler_index,
+    materialize_replay_semantics,
+)
 from .tilelang_codegen import extract_tilelang_module
 from .ttir import (
     TTIRFingerprint,
@@ -42,7 +45,7 @@ from .ttir import (
 )
 
 
-MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v33"
+MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v34"
 MINISWE_REPLAY_TURN_TIMEOUT_SECONDS = 300.0
 MINISWE_REPLAY_XHIGH_TURN_TIMEOUT_SECONDS = 900.0
 RESPONSES_REPLAY_BACKEND = "openai.responses.intentir-replay.v1"
@@ -3412,6 +3415,16 @@ def _replay_input_files(
         allow_nan=False,
         separators=(",", ":"),
     ) + "\n"
+    compiler_index = materialize_replay_compiler_index(
+        semantic_program.to_json(), packet["c"]
+    )
+    compiler_index_text = json.dumps(
+        compiler_index.to_json(),
+        sort_keys=True,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+    ) + "\n"
     mask_c_text = json.dumps(
         packet["c"],
         sort_keys=True,
@@ -3445,28 +3458,12 @@ add, remove, or alter J-owned values, predicates, domains, accesses, effects, re
 or relations. Physical realization is not an extra semantic input. It will be compared
 outside this episode after fixed normalization; no Gate observation is available here.
 
-Before choosing physical loops or program axes, compile `boundary_ownership` as one
-whole-program contract. Cross-reference shared logical axes with anonymous C
-attachments, preserve every authored access/effect exactly once at the logical level,
-and account for all output domains together. `domain_candidates` is a deterministic
-J-only containment index; when several write domains share context axes but differ in
-one output axis, co-plan one domain family and preserve each domain with a guard rather
-than defaulting to independent whole-output loops. A C `tile_extent` attachment marks
-a blocked logical traversal axis; do not automatically spend a launch axis on it when
-the public frontend can traverse the block locally. Do not independently serialize each
-output tensor into a whole-tensor loop merely because its extent is symbolic. Preserve
-the authored access rank and paired coordinates unless a target restriction requires a
-split; any such split must jointly realize the one authored logical access. These are
-source-neutral compiler obligations derived only from J, not a target recipe.
-
-Keep J ownership classes separate in target control. A `domain_candidates` bound is a
-logical execution-domain condition, while the `predicate` inside an access row is the
-only access-local mask for that access. Do not silently conjoin a missing domain bound
-into every load/store mask. When a scalar program coordinate selects one member of a
-write-domain family, realize each `coord < extent` domain as scalar structured control
-around that effect group; keep the authored access predicate as its lane mask. Shared
-outer context-domain bounds may use one outer guard or early return. Only an explicit
-J access-guard relation may move a logical value guard into access-local masking.
+`compiler-index.intent` merely puts existing J domain-dependency sets beside anonymous
+MaskC attachments. A dependency subset is syntactic, not a schedule or proof of domain
+containment. Use it to avoid reconstructing cross-references, then compile the complete
+`boundary_ownership` contract. Preserve every authored access/effect and keep logical
+domain guards distinct from access-local predicates; choose all target realization
+yourself from S_J and public frontend capabilities.
 """
     readme = """# IntentIR source-blind Replay input
 
@@ -3475,6 +3472,8 @@ This immutable directory is the complete input allowlist for one fresh episode.
 - `packet.json`: exact J + MaskC(C) + public U_f.
 - `semantic-program.intent`: compact, typed, parameterized read-only S_J.
 - `semantic-program.json`: exact structured form of the same S_J.
+- `compiler-index.intent` / `.json`: compact exact S_J+MaskC cross-reference;
+  syntactic dependency index only, never a schedule.
 - `mask-c.json`: exact anonymous MaskC(C), with no valuation.
 - `frontend.json`: public source-neutral U_f and required callable entry.
 - `REPLAY_CONTRACT.md`: ownership and no-leak boundary.
@@ -3487,8 +3486,9 @@ target operator, API, source statement, instruction selection, or repair.
 """
     tool = """# Replay agent tools
 
-Act like a compiler coding agent. Read `semantic-program.intent`, `frontend.json`, and
-`mask-c.json` completely before drafting. Query exact J/S_J only for a named
+Act like a compiler coding agent. Read `compiler-index.intent`,
+`semantic-program.intent`, `frontend.json`, and `mask-c.json` completely before
+drafting. Query exact J/S_J only for a named
 cross-reference, and write one complete `/output/replay.source`.
 
 ```text
@@ -3519,6 +3519,8 @@ and is never visible here.
             "packet.json": packet_text,
             "semantic-program.json": semantic_program_text,
             "semantic-program.intent": semantic_program.text,
+            "compiler-index.json": compiler_index_text,
+            "compiler-index.intent": compiler_index.text,
             "mask-c.json": mask_c_text,
             "frontend.json": frontend_text,
             "REPLAY_CONTRACT.md": instructions + "\n",

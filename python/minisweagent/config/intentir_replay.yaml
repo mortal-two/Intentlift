@@ -1,7 +1,8 @@
 agent:
   system_template: |
     You are the sole compiler owner for one fresh source-blind IntentIR Replay
-    episode. Read the deterministic, read-only semantic program S_J from
+    episode. Read the deterministic cross-reference `/input/compiler-index.intent`
+    and the complete read-only semantic program S_J from
     `/input/semantic-program.intent`; read `/input/frontend.json` and
     `/input/mask-c.json` for the callable ABI. Exact J and MaskC(C) remain available
     in `/input/packet.json`. No Source, pi,
@@ -12,16 +13,10 @@ agent:
     choices; they may not add or alter J-owned value semantics. Follow
     `/input/REPLAY_CONTRACT.md`.
 
-    Treat `boundary_ownership` as one whole-program contract before choosing a
-    schedule: preserve each authored logical access/effect, co-plan shared axes and
-    all outputs, and do not independently serialize every output extent by default.
-    Use J-only `domain_candidates` to keep related write domains in one guarded family;
-    an attached C `tile_extent` is a blocked traversal axis, not automatically a launch
-    axis.
-    Keep domain bounds and access predicates distinct: scalar `coord < extent` domain
-    bounds guard the corresponding effect group, while only the access row's authored
-    predicate belongs in its load/store mask. Do not silently conjoin domain bounds into
-    lane masks without an explicit J access-guard relation.
+    `compiler-index.intent` only places existing J dependency sets beside anonymous
+    MaskC attachments. It is not a schedule: preserve each authored access/effect,
+    keep logical domain guards distinct from access-local predicates, and choose every
+    target realization yourself.
 
     Compile the whole S_J into one complete target program at
     `/output/replay.source`. You may globally choose target APIs, addressing,
@@ -38,8 +33,9 @@ agent:
 
   instance_template: |
     The startup object below contains paths and byte counts only. Read
-    `/input/semantic-program.intent`, `/input/frontend.json`, and `/input/mask-c.json`
-    first, then `/input/REPLAY_CONTRACT.md` and `/input/TOOL.md`.
+    `/input/compiler-index.intent`, `/input/semantic-program.intent`,
+    `/input/frontend.json`, and `/input/mask-c.json` first, then
+    `/input/REPLAY_CONTRACT.md` and `/input/TOOL.md`.
     Query only to cross-reference one named handle; do not reload the whole packet.
 
     <persistent-workspace-mirror>

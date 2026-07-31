@@ -19,8 +19,9 @@ from intentir.ir.canonical_j import elaborate_j, j_elaboration
 from .model import SemanticArchive
 
 
-REPLAY_SEMANTIC_PROGRAM_PROTOCOL = "intentir.replay-semantic-program.v2"
-REPLAY_SEMANTIC_QUERY_PROTOCOL = "intentir.replay-semantic-query.v2"
+REPLAY_SEMANTIC_PROGRAM_PROTOCOL = "intentir.replay-semantic-program.v3"
+REPLAY_SEMANTIC_QUERY_PROTOCOL = "intentir.replay-semantic-query.v3"
+REPLAY_COMPILER_INDEX_PROTOCOL = "intentir.replay-compiler-index.v1"
 
 
 def _object(value: Any, path: str) -> Mapping[str, Any]:
@@ -238,6 +239,7 @@ def _boundary_ownership_view(
     *,
     structured_boundary: Mapping[str, Any] | None,
     output_bindings: Sequence[Any],
+    known_value_refs: frozenset[str] | None,
 ) -> dict[str, Any]:
     """Re-index exact J boundary facts for whole-program Replay compilation.
 
@@ -274,12 +276,30 @@ def _boundary_ownership_view(
         else:
             orphan_effects.append(effect)
 
-    domain_axis_refs = {
-        name: {
+    def logical_index_refs(expression: Any) -> tuple[str, ...]:
+        refs = _expression_refs(expression)
+        if known_value_refs is None:
+            # MaskJ cannot be elaborated into a complete value table.  Retain the
+            # historical source spelling only for that non-semantic audit view.
+            return tuple(
+                ref
+                for ref in refs
+                if ref.startswith("k") and ref[1:].isdigit()
+            )
+        # Normal Replay first elaborates canonical J.  Every authored tensor,
+        # scalar semantic value and node result is therefore in value_types;
+        # dimensions remain x*.  ContractExpr refs outside both sets are exactly
+        # the bound logical index variables, regardless of opaque spelling.  This
+        # avoids assuming that the Replay-facing alpha-renamer preserves k*.
+        return tuple(
             ref
-            for ref in _expression_refs(expression)
-            if ref.startswith("k") and ref[1:].isdigit()
-        }
+            for ref in refs
+            if ref not in known_value_refs
+            and not (ref.startswith("x") and ref[1:].isdigit())
+        )
+
+    domain_axis_refs = {
+        name: set(logical_index_refs(expression))
         for name, expression in parsed_domains.items()
     }
     accesses: list[dict[str, Any]] = []
@@ -295,7 +315,7 @@ def _boundary_ownership_view(
             else {}
         )
         parsed_axes = copy.deepcopy(parsed.get("axes", raw.get("index_expression")))
-        axis_refs = list(_expression_refs(parsed_axes))
+        axis_refs = list(logical_index_refs(parsed_axes))
         target = str(raw.get("tensor", "<missing>"))
         axis_set = set(axis_refs)
         covering_domains = {
@@ -349,6 +369,21 @@ def _boundary_ownership_view(
         for name in access.get("domain_candidates", [])
         if name in domain_axis_refs
     ]
+    domain_dependency_subsets = [
+        {
+            "subset_domain": subset_name,
+            "superset_domain": superset_name,
+            "shared_refs": sorted(subset_refs),
+            "additional_refs": sorted(superset_refs - subset_refs),
+        }
+        for subset_name, subset_refs in sorted(domain_axis_refs.items())
+        for superset_name, superset_refs in sorted(domain_axis_refs.items())
+        if (
+            subset_name != superset_name
+            and subset_refs
+            and subset_refs < superset_refs
+        )
+    ]
     return {
         "authority": (
             "deterministic re-indexing of exact J boundary/domain/effect/output "
@@ -358,6 +393,10 @@ def _boundary_ownership_view(
         "domain_axis_refs": {
             name: sorted(refs) for name, refs in sorted(domain_axis_refs.items())
         },
+        # This is only a syntactic dependency-set relation between authored
+        # ContractExprs.  It does not claim logical set containment and does not
+        # choose which domain becomes a program axis, loop, lane, or guard.
+        "domain_dependency_subsets": domain_dependency_subsets,
         "access_effects": accesses,
         "shared_axis_refs_by_tensor": shared_by_target,
         "shared_write_axis_refs": shared_writes,
@@ -469,6 +508,11 @@ def _render_text(value: Mapping[str, Any]) -> str:
         "S_J.boundary_ownership.domain_axis_refs",
     ).items():
         lines.append(f"  domain_axes {name} = " + _compact(refs))
+    for relation in _array(
+        ownership.get("domain_dependency_subsets", []),
+        "S_J.boundary_ownership.domain_dependency_subsets",
+    ):
+        lines.append("  domain_dependency_subset " + _compact(relation))
     lines.append(
         "  shared_write_axis_refs "
         + _compact(ownership.get("shared_write_axis_refs", []))
@@ -560,6 +604,89 @@ class ReplaySemanticProgram:
         return copy.deepcopy(self.value)
 
 
+@dataclass(frozen=True)
+class ReplayCompilerIndex:
+    """Compact cross-reference over the already-authorized Replay inputs.
+
+    This is not a schedule and contains no fact beyond ``S_J`` and ``MaskC(C)``.
+    It only places existing domain dependencies and anonymous C attachments next
+    to each other so a coding agent need not reconstruct those joins repeatedly.
+    """
+
+    value: dict[str, Any]
+    text: str
+
+    def to_json(self) -> dict[str, Any]:
+        return copy.deepcopy(self.value)
+
+
+def materialize_replay_compiler_index(
+    semantic_program: Mapping[str, Any],
+    masked_c: Mapping[str, Any],
+) -> ReplayCompilerIndex:
+    """Materialize a source-neutral, proof-irrelevant ``S_J + MaskC`` index."""
+
+    if semantic_program.get("protocol") != REPLAY_SEMANTIC_PROGRAM_PROTOCOL:
+        raise ValueError("unsupported Replay semantic-program protocol")
+    ownership = _object(
+        semantic_program.get("boundary_ownership", {}),
+        "S_J.boundary_ownership",
+    )
+    domain_axis_refs = _object(
+        ownership.get("domain_axis_refs", {}),
+        "S_J.boundary_ownership.domain_axis_refs",
+    )
+    slots = _array(masked_c.get("slots", []), "MaskC.slots")
+    attachments: list[dict[str, Any]] = []
+    for raw in slots:
+        slot = _object(raw, "MaskC.slots[]")
+        subject = slot.get("subject_ref")
+        attachments.append(
+            {
+                "slot": copy.deepcopy(dict(slot)),
+                "subject_domain_refs": copy.deepcopy(
+                    domain_axis_refs.get(subject)
+                    if isinstance(subject, str)
+                    else None
+                ),
+            }
+        )
+    value = {
+        "protocol": REPLAY_COMPILER_INDEX_PROTOCOL,
+        "domain_dependency_subsets": copy.deepcopy(
+            ownership.get("domain_dependency_subsets", [])
+        ),
+        "shared_write_axis_refs": copy.deepcopy(
+            ownership.get("shared_write_axis_refs", [])
+        ),
+        "shared_write_domain_axis_refs": copy.deepcopy(
+            ownership.get("shared_write_domain_axis_refs", [])
+        ),
+        "anonymous_c_attachments": attachments,
+        "authority": (
+            "deterministic cross-reference of exact S_J and MaskC(C) declarations "
+            "only; dependency subsets are syntactic and no program mapping, loop, "
+            "lane, guard, target API, value, Source, pi, or Gate fact is inferred"
+        ),
+    }
+    lines = [
+        f"compiler_index {REPLAY_COMPILER_INDEX_PROTOCOL}",
+        "authority exact_S_J_plus_MaskC_cross_reference; not_schedule; no_values; no_pi",
+    ]
+    for relation in value["domain_dependency_subsets"]:
+        lines.append("domain_dependency_subset " + _compact(relation))
+    lines.append(
+        "shared_write_axis_refs " + _compact(value["shared_write_axis_refs"])
+    )
+    lines.append(
+        "shared_write_domain_axis_refs "
+        + _compact(value["shared_write_domain_axis_refs"])
+    )
+    for attachment in attachments:
+        lines.append("anonymous_c_attachment " + _compact(attachment))
+    return ReplayCompilerIndex(value, "\n".join(lines) + "\n")
+
+
 def materialize_replay_semantics(j_value: Mapping[str, Any]) -> ReplaySemanticProgram:
     """Materialize one normal or MaskJ source-blind J view without valuation."""
 
@@ -591,6 +718,11 @@ def materialize_replay_semantics(j_value: Mapping[str, Any]) -> ReplaySemanticPr
         boundary,
         structured_boundary=structured_boundary,
         output_bindings=output_bindings,
+        known_value_refs=(
+            frozenset(canonical_types)
+            if canonical_types is not None
+            else None
+        ),
     )
     value: dict[str, Any] = {
         "protocol": REPLAY_SEMANTIC_PROGRAM_PROTOCOL,
@@ -743,9 +875,12 @@ def query_replay_semantics(
 
 
 __all__ = [
+    "REPLAY_COMPILER_INDEX_PROTOCOL",
     "REPLAY_SEMANTIC_PROGRAM_PROTOCOL",
     "REPLAY_SEMANTIC_QUERY_PROTOCOL",
+    "ReplayCompilerIndex",
     "ReplaySemanticProgram",
+    "materialize_replay_compiler_index",
     "materialize_replay_semantics",
     "query_replay_semantics",
 ]

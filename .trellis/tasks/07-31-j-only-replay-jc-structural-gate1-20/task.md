@@ -128,6 +128,13 @@ recheck，可立即接受该 bytes，不再消耗剩余 episode 时间；Gate1 �
 现在获得其 index refs 覆盖的全部 J-authored domain 约束，而不是对普通多轴 access 错误返回空集；
 这只是 exact J 的确定性重索引，不新增 domain、target mapping 或 Source/π 信息。
 
+真实 Replay packet 随后暴露第二层同类错误：canonical alpha-renaming 已把 `k*` index 改成 `v*`，而
+v2 ownership 仍按名字前缀筛选，导致实际 `domain_axis_refs/domain_candidates` 再次为空。v63/v34 的
+`semantic-program.v3` 改为依据 canonical value table 区分 semantic value、`x*` dimension 与 bound
+logical index，不再依赖 index 拼写；Llama real artifact 的 `a0` 现得到 `d2`，`a1` 得到
+`d0,d3,d4`。新增 `replay-compiler-index.v1` 只并置这些 exact J refs 与匿名 MaskC attachment，显式
+标注 dependency subset 不是 domain containment 或 schedule；J、C、π 与 Gate 均未改变。
+
 Flash forward 还暴露出 RefJ functional boundary 把合法 rank-0/inout reload 误当成“多余 tensor
 load”的覆盖判断错误；现改为只要求所有 live tensor input 被覆盖，额外 access 仍须逐项通过原有
 access/effect检查。公开 Source–J probe 只是 Lift feedback：模型级 buffers 总量超过 64 MiB 时立即

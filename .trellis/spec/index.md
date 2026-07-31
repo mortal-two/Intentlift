@@ -36,7 +36,8 @@ receipt 为 `openai.codex-cli.intentir-lift.v39 / intentir.lift-knowledge.v99 /
 minisweagent.intentir-replay.v33 / openai.codex-cli.intentir-replay.v62`；Codex runtime v5 在
 closed submit 工具接受 exact bytes 后恢复并复核 checkpoint；稳定但被同一 preflight 拒绝的 exact
 bytes 也可立即中断当前 turn、保留同一 thread 并用 closed diagnostics 续修，不等待 turn deadline；
-Replay 内部 J-only 视图为 `intentir.replay-semantic-program.v2`，不是 artifact 或新输入权威；
+Replay 内部 J-only 视图为 `intentir.replay-semantic-program.v3`，另有只并置现有 J/MaskC refs 的
+`intentir.replay-compiler-index.v1`；二者都不是 artifact、新语义或 target schedule；
 artifact.v11 的 `dimension_relations`只接受identity、常数加/乘、常数ceil-div与round-up的acyclic closed grammar；
 relation由Lift从Source作者化，所有J消费者只能验证/求值，不能从Harness valuation、grid、C、π或TTIR生成。
 迁移前 artifact.v10 的 `physical_iterations/physical_loop_carriers` 曾表达 structured J loop 外的物理时间；
