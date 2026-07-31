@@ -43,7 +43,7 @@ from .scrc import (
     prepare_scrc_lift,
     scrc_candidate_check_context,
 )
-CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v40"
+CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v41"
 CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v101"
 CODEX_CLI_TURN_TIMEOUT_SECONDS = 900.0
 
@@ -840,14 +840,11 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                             workspace.input_dir / "source_reconcile.json",
                             source_reconcile,
                         )
-                    diagnostic_ready_event.set()
-                    while (
-                        diagnostic_ready_event.is_set()
-                        and not live_checkpoint_stop.wait(0.25)
-                    ):
-                        pass
-                    observed_candidate = None
-                    stable_since = 0.0
+                    # A failing passive checkpoint must not split one coding-agent
+                    # tool loop into a new provider turn.  The owner receives the
+                    # same closed diagnostics synchronously through its explicit
+                    # ``submit_candidate`` tool and can patch/recheck in the current
+                    # turn.  Only a passing checkpoint may interrupt early.
 
         def semantic_probe_tool() -> Mapping[str, Any]:
             """Execute one public Source-vs-J diagnostic over exact candidate bytes."""

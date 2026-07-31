@@ -160,6 +160,13 @@ v32 TypeCheck 进一步把权威文档既有的 logical inout 合同前移为 ac
 return/output mapping 闭合，不增加重复 effect 负担。对应 Codex/MiniSWE knowledge 分别升为
 v101/v70；旧协议证书不重判。
 
+上一 one-col 3B 的长首次 Lift 中，16/20/18 次 passive diagnostic-ready interrupt 分别占总墙钟
+约 97.7%/97.4%/96.7%；Source TTIR 编译约 5 秒，bridge 本身为毫秒级。Codex Lift v41 因此保留
+“PASS checkpoint 可提前中断并独立复核”，但 FAIL checkpoint 只记录诊断、不再终止当前 provider
+turn。owner 通过既有 `submit_candidate` 工具在同一 coding-agent turn 内同步获得完全相同的
+CandidateCheck/SourceReconcile 结果并继续 patch。该调度修改不改变 checker、artifact、正式轮次或
+Gate 接受集合。
+
 ## 7. P5：多前端与实验
 
 - [ ] Triton 纵切稳定后，CuTe/TileLang/CUDA 分别定义自己的 raw observer、J/C projection 与最小
