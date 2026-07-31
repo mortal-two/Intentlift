@@ -135,6 +135,12 @@ logical index，不再依赖 index 拼写；Llama real artifact 的 `a0` 现得�
 `d0,d3,d4`。新增 `replay-compiler-index.v1` 只并置这些 exact J refs 与匿名 MaskC attachment，显式
 标注 dependency subset 不是 domain containment 或 schedule；J、C、π 与 Gate 均未改变。
 
+v63 fixed-artifact recheck 进一步区分出两类 residual：Llama Replay 以 111 秒、一次 provider call
+完成可编译 J-only 实现，但其 3-axis/head-loop realization 与 Source 不同，属于 Gate1 normalizer 尚未
+闭合的物理表示问题；Flash forward Replay 的 `tt.dot` operand dtype 则由 J-authored f16 变成 f32，
+属于必须修 Replay、不能归一化的 J-owned 错误。v64 因此让 own-TTIR `jc` 视图直接并置 J-only typed
+contraction/reduction/loop/cast obligation 与当前 fingerprint，仍不读取 Source、π、Gate 或给出 verdict。
+
 Flash forward 还暴露出 RefJ functional boundary 把合法 rank-0/inout reload 误当成“多余 tensor
 load”的覆盖判断错误；现改为只要求所有 live tensor input 被覆盖，额外 access 仍须逐项通过原有
 access/effect检查。公开 Source–J probe 只是 Lift feedback：模型级 buffers 总量超过 64 MiB 时立即

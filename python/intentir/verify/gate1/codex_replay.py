@@ -50,7 +50,7 @@ from .replay import (
 )
 
 
-CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v63"
+CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v64"
 
 _INITIAL_PROMPT = """You are the sole writer for one fresh source-blind IntentIR Replay episode.
 Work only under the isolated /workspace. input/ is immutable; output/, work/, and
@@ -80,7 +80,9 @@ predicates; you still own every target realization choice.
 
 Compile, inspect only your own Replay IR, and patch the complete program in this same
 episode. First run `replay_compile_check`; once construction passes, call
-`replay_ttir_inspect jc` for the bounded J/C structural summary. Inspect your own IR
+`replay_ttir_inspect jc` for the bounded J/C structural summary. Compare its exact
+typed J obligations against your own dot/reduction/loop/cast signatures before submit;
+matching only operation counts is insufficient. Inspect your own IR
 again when a concrete J obligation remains unclear; use targeted `find`, `raw`, or
 `observer` queries instead of dumping the whole fingerprint. Keep computations for inactive constexpr
 alternatives inside their branch and do not add unmentioned `volatile`, cache,
@@ -222,6 +224,55 @@ def _j_contract_summary(semantic_program: Mapping[str, Any]) -> dict[str, Any]:
         for item in nodes
         if isinstance(item, Mapping) and isinstance(item.get("op"), str)
     ) if isinstance(nodes, list) else Counter()
+    value_types_value = semantic_program.get("value_types", [])
+    value_types = {
+        str(item["value"]): {
+            "dtype": item.get("dtype"),
+            "shape": item.get("shape"),
+        }
+        for item in value_types_value
+        if isinstance(item, Mapping) and isinstance(item.get("value"), str)
+    } if isinstance(value_types_value, list) else {}
+
+    # These operations are exactly the places where a superficially plausible
+    # target program most often changes a J-owned type, axis, temporal state, or
+    # representation boundary.  The list is a read-only projection of S_J; it is
+    # not a target recipe and it neither accepts nor rejects Replay.
+    typed_kinds = {
+        "cast",
+        "contraction",
+        "gather",
+        "loop",
+        "reduce",
+        "scan",
+        "transpose",
+    }
+    typed_obligations: list[dict[str, Any]] = []
+    for item in nodes if isinstance(nodes, list) else []:
+        if not isinstance(item, Mapping) or item.get("op") not in typed_kinds:
+            continue
+        raw_operands = item.get("operands", [])
+        operands = raw_operands if isinstance(raw_operands, list) else []
+        raw_result = item.get("result")
+        results = raw_result if isinstance(raw_result, list) else [raw_result]
+        record = {
+            "id": item.get("id"),
+            "op": item.get("op"),
+            "operands": [
+                {"value": value, **value_types.get(str(value), {})}
+                for value in operands
+            ],
+            "results": [
+                {"value": value, **value_types.get(str(value), {})}
+                for value in results
+                if value is not None
+            ],
+        }
+        for key in ("attrs", "trip", "carry", "scan", "yield"):
+            if key in item:
+                record[key] = item[key]
+        typed_obligations.append(record)
+
     ownership = semantic_program.get("boundary_ownership", {})
     accesses = (
         ownership.get("access_effects", [])
@@ -248,6 +299,8 @@ def _j_contract_summary(semantic_program: Mapping[str, Any]) -> dict[str, Any]:
             "occurrence requirements and do not accept or reject Replay"
         ),
         "node_ops": dict(sorted(node_ops.items())),
+        "typed_obligations": typed_obligations[:96],
+        "typed_obligations_omitted": max(0, len(typed_obligations) - 96),
         "access_kinds": dict(sorted(access_kinds.items())),
         "effect_kinds": dict(sorted(effect_kinds.items())),
         "accesses_by_tensor": dict(sorted(accesses_by_tensor.items())),
