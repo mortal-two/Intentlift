@@ -23,6 +23,8 @@ from intentir.backend.cuda.production_cases import (
     prepare_production_workload,
 )
 from intentir.backend.cuda.schedules import (
+    ELEMENTWISE_FAST_PATH_ID,
+    ROW_FAST_PATH_ID,
     ElementwiseSchedule,
     PaddedRowSchedule,
     RowSchedule,
@@ -162,6 +164,31 @@ def _stage2_flash_linear_state():
         "flash_linear",
         profile=PRODUCTION_WORKLOAD_PROFILE_NATURAL_HEADLINE,
     )
+    case = build_workload_jc_suite(prepared, snapshot.j, snapshot.c).cases[0]
+    constexpr = constexpr_input_bindings(
+        snapshot.j,
+        case.refeval.input_binding_map,
+        case.values,
+    )
+    base = materialize_j(
+        snapshot.j,
+        case.refeval.dims_map,
+        constexpr_bindings=constexpr,
+    )
+    return attach_c(
+        base,
+        snapshot.c,
+        BackendTarget("cuda", "sm_120a"),
+    )
+
+
+def _stage2_state(name: str):
+    root = Path(__file__).parents[2]
+    snapshot, _path = load_production_snapshot(
+        root / "corpus" / "production-jc-v3",
+        name,
+    )
+    prepared = prepare_production_workload(name)
     case = build_workload_jc_suite(prepared, snapshot.j, snapshot.c).cases[0]
     constexpr = constexpr_input_bindings(
         snapshot.j,
@@ -445,6 +472,111 @@ def test_flash_linear_has_real_retile_spine_and_distinct_full_mma_state() -> Non
         item["target_schedule_coordinate"]
         for item in projection["consumed_priors"]
     } >= {"tile_rows", "tile_cols", "tile_k"}
+
+
+@pytest.mark.parametrize(
+    "name", ("jsd", "xformers_rms_norm", "cross_entropy", "group_norm")
+)
+def test_stage2_complete_row_consumer_is_the_strong_schedule_spine(
+    name: str,
+) -> None:
+    state = _stage2_state(name)
+    arms = {item.arm: item for item in standard_ablation_plan(96)}
+
+    path_kind, fast_path_id = schedule_only_cuda_path_identity(state)
+    assert path_kind == "row_reduction"
+    assert fast_path_id == ROW_FAST_PATH_ID
+
+    schedule_only = enumerate_cuda_candidates(
+        state,
+        axes=arms[ExperimentArm.E2_SCHEDULE],
+        fixed_fast_path_id=fast_path_id,
+    )
+    assert schedule_only
+    assert {item.fast_path_id for item in schedule_only} == {ROW_FAST_PATH_ID}
+    assert all(not item.b_transformations for item in schedule_only)
+    assert all(
+        item.schedule["compact_reduction_topology"] is False
+        and item.schedule["accumulator_chains"] == 1
+        and item.schedule["rows_per_block"] == 1
+        and item.schedule["reduction_parts"] == 1
+        and item.schedule["promote_rank0_scalars"] is False
+        and item.schedule["defer_epilogue_col_loads"] is False
+        for item in schedule_only
+    )
+
+    full = enumerate_cuda_candidates(
+        state,
+        axes=arms[ExperimentArm.E3_STATE_SEARCH],
+    )
+    full_spine = [
+        item
+        for item in full
+        if item.search_partition == SEARCH_PARTITION_SCHEDULE_SPINE
+    ]
+    assert [item.candidate_id for item in full_spine] == [
+        item.candidate_id for item in schedule_only
+    ]
+    assert any(
+        item.search_partition == SEARCH_PARTITION_EXPANDED
+        and item.fast_path_id == ROW_FAST_PATH_ID
+        and (
+            item.schedule["compact_reduction_topology"] is True
+            or item.schedule["accumulator_chains"] > 1
+            or item.schedule["rows_per_block"] > 1
+            or item.schedule["reduction_parts"] > 1
+        )
+        for item in full
+    )
+
+
+@pytest.mark.parametrize("name", ("liger_rope", "qwen2vl_mrope"))
+def test_stage2_paired_rotation_is_canonical_j_consumption(name: str) -> None:
+    state = _stage2_state(name)
+    arms = {item.arm: item for item in standard_ablation_plan(96)}
+
+    path_kind, fast_path_id = schedule_only_cuda_path_identity(state)
+    assert path_kind == "elementwise"
+    assert fast_path_id == ELEMENTWISE_FAST_PATH_ID
+
+    schedule_only = enumerate_cuda_candidates(
+        state,
+        axes=arms[ExperimentArm.E2_SCHEDULE],
+        fixed_fast_path_id=fast_path_id,
+    )
+    assert schedule_only
+    assert {item.fast_path_id for item in schedule_only} == {
+        ELEMENTWISE_FAST_PATH_ID
+    }
+
+    full = enumerate_cuda_candidates(
+        state,
+        axes=arms[ExperimentArm.E3_STATE_SEARCH],
+    )
+    full_spine = [
+        item
+        for item in full
+        if item.search_partition == SEARCH_PARTITION_SCHEDULE_SPINE
+    ]
+    assert [item.candidate_id for item in full_spine] == [
+        item.candidate_id for item in schedule_only
+    ]
+    expanded_elementwise = [
+        item
+        for item in full
+        if item.search_partition == SEARCH_PARTITION_EXPANDED
+        and item.fast_path_id == ELEMENTWISE_FAST_PATH_ID
+    ]
+    assert expanded_elementwise
+    assert all(
+        item.requested_observation_class
+        is ObservationClass.OBSERVATION_CHANGING
+        and (
+            item.schedule["tanh_approximation"] == "native-ptx"
+            or item.b_transformations
+        )
+        for item in expanded_elementwise
+    )
 
 
 def test_elementwise_c_fixed_preserves_logical_tile_not_thread_count() -> None:

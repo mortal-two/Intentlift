@@ -48,7 +48,7 @@ from .program import analyze_j_for_cuda
 from .selection import DEFAULT_PASSES, LoweringTarget, select_variant
 
 
-SEARCH_PROTOCOL = "intentir.backend.cuda.measured-search.v4"
+SEARCH_PROTOCOL = "intentir.backend.cuda.measured-search.v5"
 CONTRACT_VIEW_VERSION = "intentir.backend.cuda.contract-view.v2"
 
 B_TRANSFORM_EPILOGUE_LOAD_MOTION = (
@@ -61,7 +61,6 @@ SPLITK_VARARGS_FAST_PATH_ID = "cuda.splitk.reduce-varargs.v1"
 DIRECT_CONTRACTION_FAST_PATH_ID = "cuda.contraction.tiled.v1"
 MMA_CONTRACTION_FAST_PATH_ID = "cuda.contraction.mma-sync.v1"
 TUNED_LINEAR_FAST_PATH_ID = "cuda.linear.f16_f32.bias_saved.mma_sync.v1"
-_PAIRED_ROTATION_MARKER = "intent.paired_rotation_version"
 SEARCH_PARTITION_UNPARTITIONED = "unpartitioned"
 SEARCH_PARTITION_SCHEDULE_SPINE = "schedule_spine"
 SEARCH_PARTITION_EXPANDED = "expanded"
@@ -122,35 +121,22 @@ def schedule_only_cuda_path_identity(
 ) -> tuple[str, str | None]:
     """Choose the production canonical structure held fixed by CF/E2.
 
-    The fixed structure is the first compiler-admitted production path for the
-    graph.  For row reductions its standard collective is kept as
-    ``gpu.all_reduce``; IntentIR may later replace that collective with the
-    compact shuffle/shared topology without changing the read-once graph.
-    """
+    The fixed structure is the first complete, compiler-admitted production
+    lowering of J.  Complete N-D/index/broadcast consumption and the standard
+    read-once row graph belong to DirectLower rather than Full.  Optional host
+    capture, numeric evaluation, materialization, reduction topology and stage
+    changes remain disabled by the Schedule-Only axes and are opened by Full.
 
-    # The paired rotation pass removes the materialized gather/index/partition
-    # graph and is therefore a Full structural state, not the deterministic
-    # direct lowering held fixed by C-Fixed/Schedule-Only.
-    if _PAIRED_ROTATION_MARKER in state.base_ir:
-        return "generic", None
+    For row reductions the canonical collective remains ``gpu.all_reduce``;
+    Full may replace it with compact shuffle/shared, multi-accumulator,
+    multi-row or multi-stage states.  For paired rotation the canonical
+    elementwise pass is the direct consumer of the typed J graph; merely
+    avoiding the generic materialized fallback is not a Full contribution.
+    """
 
     fast_path_id = derive_default_fast_path_id(state)
     if fast_path_id is None:
         return "generic", None
-    # A row pass that only consumes the graph after capturing a referenced
-    # runtime rank-0 value is already performing a B-conditioned structural/ABI
-    # specialization.  Keep DirectLower(J) materialized for C-Fixed and
-    # Schedule-Only; Full may admit the captured one-launch row state.
-    if fast_path_id == ROW_FAST_PATH_ID:
-        runtime_names = set(state.base.runtime_input_names)
-        referenced_inputs = _referenced_intent_inputs(state)
-        if any(
-            item.name in runtime_names
-            and item.name in referenced_inputs
-            and not item.shape
-            for item in state.base.j.intent.inputs
-        ):
-            return "generic", None
     # Tensor-core substitution changes the contraction implementation.  The
     # direct contraction is the registered SIMT tiled path; Schedule-Only may
     # tune that structure, while Full additionally opens MMA/Split-K states.

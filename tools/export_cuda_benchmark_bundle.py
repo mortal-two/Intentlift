@@ -210,10 +210,6 @@ def _entry(
     )
 
     candidates_by_id = {item.candidate_id: item for item in seeded_candidates}
-    c_fixed_candidate, c_fixed_projection = project_cuda_c_fixed_candidate(
-        state,
-        tuple(candidates_by_id[item] for item in seeded_schedule_spine),
-    )
     compiled: dict[str, dict[str, Any]] = {}
 
     def compile_once(candidate: Any) -> dict[str, Any]:
@@ -253,6 +249,35 @@ def _entry(
             }
         compiled[candidate.candidate_id] = result
         return result
+
+    # Path admission proves that the registered C++ matcher recognizes J, but
+    # an exact schedule can still fail the hard target limits of that matcher.
+    # C-Fixed must therefore project C over the compiler-formed canonical
+    # schedules, not over requested states that never become executables.  This
+    # is hard admission only: no workload cost, profiler or timing participates.
+    concrete_schedule_spine = []
+    c_fixed_schedule_rejections: list[dict[str, Any]] = []
+    for candidate_id in seeded_schedule_spine:
+        candidate = candidates_by_id[candidate_id]
+        outcome = compile_once(candidate)
+        if outcome["status"] == "compiled_state":
+            concrete_schedule_spine.append(candidate)
+        else:
+            c_fixed_schedule_rejections.append(outcome["rejection"])
+    if not concrete_schedule_spine:
+        raise RuntimeError(f"{name} has no compiler-formed canonical schedule")
+    c_fixed_candidate, c_fixed_projection = project_cuda_c_fixed_candidate(
+        state,
+        tuple(concrete_schedule_spine),
+    )
+    c_fixed_projection = {
+        **c_fixed_projection,
+        "exact_target_schedule_admission": True,
+        "rejected_requested_schedule_count": len(c_fixed_schedule_rejections),
+        "rejected_requested_schedule_ids": [
+            item["candidate_id"] for item in c_fixed_schedule_rejections
+        ],
+    }
 
     visit_budget = axes.candidate_budget if axes is not None else budget
 
