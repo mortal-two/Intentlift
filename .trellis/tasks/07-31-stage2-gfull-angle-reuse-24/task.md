@@ -67,7 +67,9 @@ code-warm/data-cold，不能与旧的不同机器状态下的分母混用。
 
 ### 不能偷换的结论
 
-按八项阶段二的完整强 canonical 几何均值，5090D 目前仍约 `1.03x`，不是 `1.1x`。JSD、TVD、
+按全部 22 项的完整强 canonical 几何均值，5090D 最新约为 `1.0545x`，不是 `1.1x`。
+但三项确实打开不同 lowering structure 的适用子集——Sparsemax `1.489x`、Flash backward
+preprocess `1.626x`、Flash Linear `1.169x`——几何均值为约 `1.415x`。JSD、TVD、
 xFormers RMSNorm 等已达到约 1.3--1.5 TB/s 的 boundary-memory 实现，GroupNorm/CrossEntropy
 受 launch floor 约束；Flash preprocess 的 Full 已接近 logical Roofline。把这些物理负例改名、
 退回 generic materialization 或削弱 C-Fixed 都不属于真实提升。
