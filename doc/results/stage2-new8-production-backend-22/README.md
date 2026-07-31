@@ -1,5 +1,9 @@
 # Stage 2 新增 8 个 J：Production Backend 结果
 
+> **历史结果，内部三柱已被替代。** 本文的最终 Full/Source executable 与早期后端能力记录仍可追溯，但
+> `G_full=52.201×/89.373×` 将 generic fallback 到完整 J consumer 错算成 Full 额外收益。修正后的强 canonical
+> baseline 与正式三柱见 `doc/results/stage2-strong-canonical-baseline-23/README.md`。
+
 本目录记录 Task 22 的直接实验结果。固定名称如下：
 
 ```text
