@@ -3,8 +3,11 @@ add_mlir_library(MLIRIntentConversionCommon
   ExpandRsqrtForLibm.cpp
   TileLinalgByIteratorKind.cpp
   VectorizeLinalgRowReduction.cpp
+  VectorizeLinalgMixedPrecisionDotReduction.cpp
   FuseLinalgSoftmax.cpp
   LowerRowMaskToLoops.cpp
+  LowerGatherChainToLoops.cpp
+  FuseLinalgSiblingOutputs.cpp
   ForwardBufferResultsToOutParams.cpp
   LowerDisjointMemrefCopyToLoops.cpp
 

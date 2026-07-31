@@ -43,7 +43,7 @@ from intentir.verify.scrc_workload_run import build_workload_jc_suite
 
 
 BUNDLE_PROTOCOL = "intentir.production.rvv-search-bundle.v4"
-TARGET = BackendTarget("riscv", "rv64gcv_zfh", ("vlen128",))
+TARGET = BackendTarget("riscv", "rv64gcv_zfh_zvfh", ("vlen128",))
 
 
 def _shape(shape: list[int | str], dims: dict[str, int]) -> list[int]:

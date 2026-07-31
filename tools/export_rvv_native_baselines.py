@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export the small independent Native baseline source map for RVV runs."""
+"""Export independent LLVM-RVV C and Expert RVV baseline source maps."""
 
 from __future__ import annotations
 
@@ -8,9 +8,10 @@ import json
 from pathlib import Path
 
 from intentir.backend.riscv.native_baselines import (
-    NATIVE_RVV_BASELINE_SIDECAR_PROTOCOL,
-    native_rvv_baseline_record,
+    EXTERNAL_RVV_BASELINE_SIDECAR_PROTOCOL,
+    external_rvv_baseline_records,
 )
+from intentir.backend.riscv.ggml_baselines import maybe_ggml_rvv_baseline_records
 
 
 DEFAULT_KERNELS = (
@@ -28,6 +29,14 @@ DEFAULT_KERNELS = (
     "splitk_reduce_varargs",
     "swiglu",
     "xformers_rms_norm_add",
+    "cross_entropy",
+    "flash_linear",
+    "group_norm",
+    "jsd",
+    "liger_rope",
+    "qwen2vl_mrope",
+    "tvd",
+    "xformers_rms_norm",
     "gather2d",
     "rowmask_where2d",
 )
@@ -44,14 +53,22 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     kernels = tuple(args.kernels or DEFAULT_KERNELS)
     payload = {
-        "protocol": NATIVE_RVV_BASELINE_SIDECAR_PROTOCOL,
+        "protocol": EXTERNAL_RVV_BASELINE_SIDECAR_PROTOCOL,
         "baselines": {
-            kernel: native_rvv_baseline_record(kernel) for kernel in kernels
+            kernel: [
+                *external_rvv_baseline_records(kernel),
+                *maybe_ggml_rvv_baseline_records(kernel),
+            ]
+            for kernel in kernels
         },
     }
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    print(f"wrote {len(kernels)} Native RVV baselines to {args.out}")
+    baseline_count = sum(len(items) for items in payload["baselines"].values())
+    print(
+        f"wrote {baseline_count} external RVV baselines for "
+        f"{len(kernels)} kernels to {args.out}"
+    )
     return 0
 
 

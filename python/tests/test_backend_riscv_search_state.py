@@ -90,6 +90,46 @@ def test_rvv_transformation_and_schedule_are_separate_search_axes() -> None:
         B_CAP_READONLY_INPUTS,
     )
     assert fused_softmax.candidate_id != explicit.candidate_id
+    approximate_softmax = rvv.RiscvLoweringCandidate(
+        rvv.RiscvTransformationState(
+            False,
+            True,
+            fused_softmax=True,
+            approximate_exp=True,
+        ),
+        rvv.RiscvSchedule(3, True, 128, vector_lanes=4),
+    )
+    assert (
+        approximate_softmax.transformation.lowering_path_kind
+        == "fused_softmax_vector_approximate_exp"
+    )
+    assert "execution_domain_approximate_exp" in " ".join(
+        approximate_softmax.transformation.transformation_trace
+    )
+    assert approximate_softmax.candidate_id != fused_softmax.candidate_id
+    mixed_dot = rvv.RiscvLoweringCandidate(
+        rvv.RiscvTransformationState(
+            True,
+            True,
+            mixed_precision_dot_reduction=True,
+        ),
+        rvv.RiscvSchedule(3, True, 0, scalable_vectorization=True),
+    )
+    assert (
+        mixed_dot.transformation.lowering_path_kind
+        == "mixed_precision_dot_vector_reduction"
+    )
+    assert "mixed_precision_dot_reduction" in " ".join(
+        mixed_dot.transformation.transformation_trace
+    )
+    with pytest.raises(ValueError, match="requires producer fusion"):
+        rvv.RiscvTransformationState(
+            False,
+            True,
+            mixed_precision_dot_reduction=True,
+        )
+    with pytest.raises(ValueError, match="only defined inside"):
+        rvv.RiscvTransformationState(False, approximate_exp=True)
     with pytest.raises(ValueError, match="requires producer fusion"):
         rvv.RiscvTransformationState(False, True, True, True)
     with pytest.raises(ValueError, match="requires the admitted reduction"):
@@ -108,8 +148,13 @@ def test_rvv_explicit_reduction_only_enumerates_scalable_schedules() -> None:
     joint = [item for item in explicit if item.transformation.joint_vector_reduction]
     assert len(joint) == 13
     fused_softmax = [item for item in universe if item.transformation.fused_softmax]
-    assert len(fused_softmax) == 9
+    assert len(fused_softmax) == 17
     assert sum(item.schedule.scalable_vectorization for item in fused_softmax) == 1
+    approximate_softmax = [
+        item for item in fused_softmax if item.transformation.approximate_exp
+    ]
+    assert len(approximate_softmax) == 8
+    assert all(not item.schedule.scalable_vectorization for item in approximate_softmax)
     assert {
         item.schedule.vector_lanes
         for item in fused_softmax
@@ -118,7 +163,17 @@ def test_rvv_explicit_reduction_only_enumerates_scalable_schedules() -> None:
     assert all(item.schedule.vectorize for item in fused_softmax)
     assert all(item.schedule.parallel_tile == 0 for item in fused_softmax)
     assert all(item.schedule.reduction_tile == 0 for item in fused_softmax)
-    assert len(universe) == 204
+    mixed_dot = [
+        item
+        for item in universe
+        if item.transformation.mixed_precision_dot_reduction
+    ]
+    assert len(mixed_dot) == 3
+    assert {
+        (item.schedule.scalable_vectorization, item.schedule.vector_lanes)
+        for item in mixed_dot
+    } == {(False, 16), (True, 4)}
+    assert len(universe) == 215
 
 
 def test_rvv_retile_schedule_is_an_explicit_search_axis() -> None:
@@ -496,53 +551,65 @@ def test_rvv_c_reorders_but_does_not_change_retile_universe() -> None:
         for item in with_c.c_prior_order
         if by_id[item].schedule.thread_count == 1
     ]
-    first_seven = [by_id[item] for item in c_order_t1[:7]]
+    first_ten = [by_id[item] for item in c_order_t1[:10]]
     assert [
         (
             item.transformation.fuse_producers,
             item.transformation.reassociate_reductions,
             item.transformation.explicit_vector_reduction,
             item.transformation.joint_vector_reduction,
+            item.transformation.fused_softmax,
+            item.transformation.approximate_exp,
+            item.transformation.mixed_precision_dot_reduction,
         )
-        for item in first_seven
+        for item in first_ten
     ] == [
-        (False, False, False, False),
-        (True, False, False, False),
-        (False, True, False, False),
-        (False, True, True, False),
-        (True, True, False, False),
-        (True, True, True, False),
-        (True, True, True, True),
+        (False, False, False, False, False, False, False),
+        (True, False, False, False, False, False, False),
+        (False, True, False, False, False, False, False),
+        (True, True, False, False, False, False, True),
+        (False, True, True, False, False, False, False),
+        (False, True, False, False, True, True, False),
+        (False, True, False, False, True, False, False),
+        (True, True, False, False, False, False, False),
+        (True, True, True, False, False, False, False),
+        (True, True, True, True, False, False, False),
     ]
-    assert first_seven[0].schedule == c_fixed.schedule
+    assert first_ten[0].schedule == c_fixed.schedule
     assert all(
         item.schedule.scalable_vectorization
         == item.transformation.explicit_vector_reduction
-        for item in first_seven
+        for item in first_ten
     )
     c_anchor_states = [
-        by_id[item] for item in c_order_t1[7:14]
+        by_id[item] for item in c_order_t1[10:20]
     ]
     assert all(item.schedule.vectorize for item in c_anchor_states)
     assert all(item.schedule.parallel_tile == 0 for item in c_anchor_states)
     assert all(item.schedule.reduction_tile == 0 for item in c_anchor_states)
-    erase_first_seven = [by_id[item] for item in with_c.erase_c_order[:7]]
+    erase_first_ten = [by_id[item] for item in with_c.erase_c_order[:10]]
     assert {
         (
             item.transformation.fuse_producers,
             item.transformation.reassociate_reductions,
             item.transformation.explicit_vector_reduction,
             item.transformation.joint_vector_reduction,
+            item.transformation.fused_softmax,
+            item.transformation.approximate_exp,
+            item.transformation.mixed_precision_dot_reduction,
         )
-        for item in erase_first_seven
+        for item in erase_first_ten
     } == {
-        (False, False, False, False),
-        (True, False, False, False),
-        (False, True, False, False),
-        (False, True, True, False),
-        (True, True, False, False),
-        (True, True, True, False),
-        (True, True, True, True),
+        (False, False, False, False, False, False, False),
+        (True, False, False, False, False, False, False),
+        (False, True, False, False, False, False, False),
+        (True, True, False, False, False, False, True),
+        (False, True, True, False, False, False, False),
+        (False, True, False, False, True, True, False),
+        (False, True, False, False, True, False, False),
+        (True, True, False, False, False, False, False),
+        (True, True, True, False, False, False, False),
+        (True, True, True, True, False, False, False),
     }
     assert with_c.c_projection["raw_c_value_used_as_target_tile"] is False
     assert with_c.c_projection["projected_priors"][0][
@@ -552,7 +619,7 @@ def test_rvv_c_reorders_but_does_not_change_retile_universe() -> None:
     record = with_c.to_record()
     assert record["same_universe_for_erase_c_and_c_prior"] is True
     assert record["c_controls_admission"] is False
-    assert record["candidate_universe_count"] == 196
+    assert record["candidate_universe_count"] == 207
     assert with_c.c_projection["minimum_reduction_tile"] == 4
     assert with_c.c_projection["subvector_reduction_schedules_rejected"] == 8
     assert all(

@@ -46,6 +46,10 @@ rvv_externalize = _load_tool(
     "intentir_rvv_externalize_payloads_tool",
     "tools/externalize_rvv_bundle_payloads.py",
 )
+rvv_figure_table = _load_tool(
+    "intentir_rvv_figure_table_tool",
+    "tools/export_rvv_figure_table.py",
+)
 cuda_runner = _load_tool(
     "intentir_cuda_target_runner_tool",
     "tools/run_cuda_benchmark_bundle.py",
@@ -368,6 +372,103 @@ def test_rvv_native_sidecar_rejects_missing_kernel_baseline():
         )
 
 
+def test_rvv_external_sidecar_attaches_multiple_strict_baselines(tmp_path):
+    path = tmp_path / "external.json"
+
+    def baseline(baseline_id: str, kind: str) -> dict:
+        return {
+            "protocol": rvv_runner.EXTERNAL_BASELINE_PROTOCOL,
+            "baseline_id": baseline_id,
+            "display_name": baseline_id,
+            "kind": kind,
+            "symbol": "intentir_native_baseline",
+            "source": "void intentir_native_baseline(void) {}",
+            "language": "c",
+            "build_profile": "clang-rvv-c-strict",
+            "implementation": f"independent-{baseline_id}",
+            "strict_match": True,
+        }
+
+    records = [
+        baseline("llvm_rvv_c", "portable_compiler"),
+        baseline("expert_rvv", "expert_intrinsic"),
+    ]
+    path.write_text(
+        json.dumps(
+            {
+                "protocol": rvv_runner.EXTERNAL_BASELINE_SIDECAR_PROTOCOL,
+                "baselines": {"dyt": records},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    sidecar = rvv_runner._load_external_baseline_sidecar(path)
+    entries = rvv_runner._attach_external_baselines(
+        [{"kernel": "dyt", "baseline_policy": "target_refj_only"}], sidecar
+    )
+
+    assert entries[0]["external_baselines"] == records
+    assert entries[0]["baseline_policy"] == "external_rvv_and_refj"
+
+
+def test_rvv_external_sidecar_rejects_duplicate_baseline_ids(tmp_path):
+    path = tmp_path / "external.json"
+    record = {
+        "protocol": rvv_runner.EXTERNAL_BASELINE_PROTOCOL,
+        "baseline_id": "same",
+        "display_name": "same",
+        "kind": "portable_compiler",
+        "symbol": "run",
+        "source": "void run(void) {}",
+        "language": "c",
+        "build_profile": "clang-rvv-c-strict",
+        "implementation": "independent-test",
+        "strict_match": True,
+    }
+    path.write_text(
+        json.dumps(
+            {
+                "protocol": rvv_runner.EXTERNAL_BASELINE_SIDECAR_PROTOCOL,
+                "baselines": {"dyt": [record, record]},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="duplicated"):
+        rvv_runner._load_external_baseline_sidecar(path)
+
+
+def test_best_native_excludes_the_portability_compiler_bar() -> None:
+    records = [
+        {
+            "baseline_id": "llvm_rvv_c",
+            "kind": "portable_compiler",
+            "status": "measured",
+            "latency_us": 1.0,
+        },
+        {
+            "baseline_id": "ggml_rvv",
+            "kind": "mature_library",
+            "status": "measured",
+            "latency_us": 3.0,
+        },
+        {
+            "baseline_id": "expert_rvv",
+            "kind": "expert_intrinsic",
+            "status": "measured",
+            "latency_us": 2.0,
+        },
+    ]
+
+    selected = rvv_runner._select_best_native(records)
+
+    assert selected is not None
+    assert selected["baseline_id"] == "expert_rvv"
+    assert rvv_runner._select_best_native(records[:1]) is None
+
+
 def test_rvv_external_payload_preserves_bytes_and_logical_size(tmp_path: Path):
     payload = struct.pack("<4f", 1.0, 2.0, 3.0, 4.0)
     encoded = {
@@ -467,9 +568,9 @@ def test_rvv_bounded_candidate_union_makes_budget_executable() -> None:
             ],
             "c_prior_order": [
                 "c-fixed",
+                "fused",
                 "no-retile",
-                "erase-only",
-                "fused"
+                "erase-only"
             ],
             "erase_c_order": ["no-retile", "erase-only", "c-fixed", "fused"],
             "c_fixed_candidate_id": "c-fixed",
@@ -496,6 +597,10 @@ def test_rvv_bounded_candidate_union_makes_budget_executable() -> None:
         "erase-only",
     ]
     assert orders["schedule_only_retiled"] == ["c-fixed", "erase-only"]
+    assert orders["lowering_state_orders"] == [
+        ["c-fixed", "no-retile", "erase-only"],
+        ["fused"],
+    ]
     assert orders["timed"] == ["no-retile", "c-fixed", "fused", "erase-only"]
 
     oracle = rvv_runner._bounded_candidate_orders(
@@ -526,6 +631,43 @@ def test_rvv_finalists_include_each_arm_winner_and_global_best() -> None:
 
     assert {"cf", "e2", "e3", "erase"} <= set(finalists)
     assert "other" in finalists
+
+
+def test_rvv_finalists_preserve_a_noisy_specialized_lowering_state() -> None:
+    measured = [
+        {"candidate": {"candidate_id": "generic-a"}, "latency_us": 2.0},
+        {"candidate": {"candidate_id": "generic-b"}, "latency_us": 2.1},
+        {"candidate": {"candidate_id": "specialized"}, "latency_us": 2.2},
+    ]
+
+    finalists = rvv_runner._finalist_candidate_ids(
+        measured,
+        [
+            ["generic-a", "generic-b", "specialized"],
+            ["generic-a", "generic-b"],
+            ["specialized"],
+        ],
+        2,
+    )
+
+    assert finalists == ["generic-a", "specialized"]
+
+
+def test_rvv_state_finalist_orders_preserve_two_coarse_winners() -> None:
+    measured = [
+        {"candidate": {"candidate_id": "a"}, "latency_us": 3.0},
+        {"candidate": {"candidate_id": "b"}, "latency_us": 1.0},
+        {"candidate": {"candidate_id": "c"}, "latency_us": 2.0},
+        {"candidate": {"candidate_id": "d"}, "latency_us": 4.0},
+    ]
+
+    orders = rvv_runner._provisional_group_finalist_orders(
+        measured,
+        [["a", "b", "c"], ["d"]],
+        per_group=2,
+    )
+
+    assert orders == [["b"], ["c"], ["d"]]
 
 
 def test_rvv_native_comparator_applies_declared_tolerance_to_all_values(
@@ -561,3 +703,85 @@ def test_rvv_native_comparator_applies_declared_tolerance_to_all_values(
     )
     assert not passed
     assert maximum > 1e-7
+
+
+def test_rvv_figure_table_emits_measured_bars_and_failed_coverage() -> None:
+    report = {
+        "kernels": [
+            {
+                "kernel": "gather2d",
+                "performance": {
+                    "c_fixed_us": 90.0,
+                    "schedule_only_us": 80.0,
+                    "full_us": 50.0,
+                    "g_schedule": 1.125,
+                    "g_full": 1.6,
+                },
+                "external_baselines": [
+                    {
+                        "baseline_id": "expert_rvv",
+                        "display_name": "Expert RVV",
+                        "status": "measured",
+                        "latency_us": 49.0,
+                        "full_paired_us": 50.5,
+                        "intentir_speedup": 0.97,
+                    },
+                    {
+                        "baseline_id": "ggml_rvv",
+                        "display_name": "ggml CPU/RVV",
+                        "status": "failed",
+                        "error": "not an applicable graph",
+                    },
+                ],
+                "best_native_baseline": {
+                    "baseline_id": "expert_rvv",
+                    "display_name": "Expert RVV",
+                    "status": "measured",
+                    "latency_us": 49.0,
+                    "full_paired_us": 50.5,
+                    "intentir_speedup": 0.97,
+                },
+            }
+        ]
+    }
+
+    table = rvv_figure_table.build_figure_table((("report.json", report),))
+
+    assert table["kernel_count"] == 1
+    assert table["coverage_counts"]["expert_rvv"] == {"measured": 1}
+    assert table["coverage_counts"]["ggml_rvv"] == {"failed": 1}
+    assert table["coverage_counts"]["best_native_rvv"] == {"measured": 1}
+    assert {item["bar_id"] for item in table["bars"]} == {
+        "c_fixed",
+        "schedule_only",
+        "full",
+        "expert_rvv",
+        "best_native_rvv",
+    }
+    expert = next(
+        item for item in table["bars"] if item["bar_id"] == "expert_rvv"
+    )
+    assert expert["full_speedup_vs_bar"] == pytest.approx(0.98)
+    best_native = next(
+        item for item in table["bars"] if item["bar_id"] == "best_native_rvv"
+    )
+    assert best_native["selected_baseline_id"] == "expert_rvv"
+
+
+def test_rvv_figure_table_rejects_cross_report_kernel_selection() -> None:
+    record = {
+        "kernels": [
+            {
+                "kernel": "softmax",
+                "performance": {
+                    "c_fixed_us": 3.0,
+                    "schedule_only_us": 2.0,
+                    "full_us": 1.0,
+                },
+                "external_baselines": [],
+            }
+        ]
+    }
+
+    with pytest.raises(ValueError, match="occurs in multiple reports"):
+        rvv_figure_table.build_figure_table((("a.json", record), ("b.json", record)))

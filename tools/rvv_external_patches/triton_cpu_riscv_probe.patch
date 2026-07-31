@@ -1,0 +1,40 @@
+diff --git a/setup.py b/setup.py
+index 7ba1d1f..2025a89 100644
+--- a/setup.py
++++ b/setup.py
+@@ -375,7 +375,9 @@ class CMakeBuild(build_ext):
+         subprocess.check_call(["cmake", "--build", ".", "--target", "mlir-doc"], cwd=cmake_dir)
+ 
+ 
+-backends = [*BackendInstaller.copy(["nvidia", "amd", "cpu"]), *BackendInstaller.copy_externals()]
++# RVV portability probe: build only the upstream CPU backend.  GPU plugins and
++# their platform toolchains are irrelevant (and unavailable) on riscv64.
++backends = [*BackendInstaller.copy(["cpu"]), *BackendInstaller.copy_externals()]
+ 
+ 
+ def get_package_dirs():
+diff --git a/third_party/cpu/backend/compiler.py b/third_party/cpu/backend/compiler.py
+index 7b0e144..8ce6c7c 100644
+--- a/third_party/cpu/backend/compiler.py
++++ b/third_party/cpu/backend/compiler.py
+@@ -216,7 +216,7 @@ class CPUBackend(BaseBackend):
+             cpu.passes.ttcpuir.add_convert_dot_to_ukernels(pm, ukernels)
+             passes.common.add_canonicalizer(pm)
+             passes.common.add_cse(pm)
+-        else:
++        elif self.cpu_arch == "x86_64":
+             cpu.passes.ttcpuir.add_convert_dot_to_nanokernel(pm, ",".join(self.cpu_features))
+         convert_bf16_dot_product = ((self.cpu_arch == "aarch64" or self.cpu_arch == "armv8")
+                                     and 'fp-armv8' in self.cpu_features and 'neon' in self.cpu_features)
+@@ -333,7 +333,10 @@ class CPUBackend(BaseBackend):
+             asm_path = os.path.join(tmpdir, "kernel.s")
+             Path(asm_path).write_text(src)
+             lib_dirs = cpu_driver.library_dirs
+-            libs = ["m", "TritonCPURuntime", "sleef"]
++            # The generic/RVV path does not select a SLEEF vector mapping.
++            # Linking it unconditionally makes otherwise generic CPU kernels
++            # unavailable on platforms without a SLEEF package.
++            libs = ["m", "TritonCPURuntime"]
+             ccflags = []
+             so = _build("kernel", asm_path, tmpdir, lib_dirs, cpu_driver.include_dirs, libs, ccflags)
+             with open(so, "rb") as f:

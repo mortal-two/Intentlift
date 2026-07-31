@@ -96,6 +96,16 @@ def main(argv: list[str] | None = None) -> int:
     full = [
         item["performance"]["g_full"] for item in successful
     ]
+    llvm_rvv_c = [
+        item["performance"]["g_native"]
+        for item in successful
+        if item["performance"].get("g_native") is not None
+    ]
+    best_native = [
+        item["performance"]["g_best_native"]
+        for item in successful
+        if item["performance"].get("g_best_native") is not None
+    ]
     c_prior = [
         item["c_prior_efficiency"]["best_at_budget_c_over_erase_c_speedup"]
         for item in successful
@@ -140,6 +150,10 @@ def main(argv: list[str] | None = None) -> int:
             "failed": len(failures),
             "geomean_g_schedule": _geomean(schedule),
             "geomean_g_full": _geomean(full),
+            "geomean_g_native": _geomean(llvm_rvv_c),
+            "geomean_g_llvm_rvv_c": _geomean(llvm_rvv_c),
+            "geomean_g_best_native": _geomean(best_native),
+            "best_native_applicable_kernel_count": len(best_native),
         },
         "c_prior_efficiency_summary": {
             "geomean_best_at_budget_c_over_erase_c_speedup": _geomean(c_prior),

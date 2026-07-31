@@ -21,7 +21,7 @@ from intentir.backend.riscv.compile import (
 )
 
 
-RVV_SEARCH_PLAN_PROTOCOL = "intentir.backend.riscv.search-plan.v8"
+RVV_SEARCH_PLAN_PROTOCOL = "intentir.backend.riscv.search-plan.v9"
 RVV_C_PROJECTION_PROTOCOL = "intentir.backend.riscv.c-projection.v1"
 
 _PARALLEL_TILES = (1, 2, 4, 8, 16, 32, 64, 128)
@@ -89,6 +89,8 @@ def enumerate_riscv_candidates(
     enable_b_transformations: bool = True,
     enable_reassociation: bool = True,
     enable_rowmask_zero_fill: bool = False,
+    enable_composed_gather: bool = False,
+    enable_sibling_output_fusion: bool = False,
 ) -> tuple[RiscvLoweringCandidate, ...]:
     """Build the target schedule/structure universe without reading C."""
 
@@ -99,16 +101,44 @@ def enumerate_riscv_candidates(
         transformations.append(
             RiscvTransformationState(False, rowmask_zero_fill=True)
         )
+    if enable_composed_gather:
+        transformations.append(
+            RiscvTransformationState(False, composed_indexed_gather=True)
+        )
+    if enable_sibling_output_fusion and enable_b_transformations:
+        transformations.append(
+            RiscvTransformationState(True, fuse_sibling_outputs=True)
+        )
     if enable_reassociation:
         transformations.append(RiscvTransformationState(False, True, False))
+        if enable_b_transformations:
+            transformations.append(
+                RiscvTransformationState(
+                    True,
+                    True,
+                    mixed_precision_dot_reduction=True,
+                )
+            )
         transformations.append(RiscvTransformationState(False, True, True))
         if enable_b_transformations:
+            # The two Softmax states are placed before the generic fused
+            # reduction states so a practical round-robin budget observes both
+            # the execution-domain checked vector-exp path and the exact-exp
+            # fallback.  This is ordering only; C never admits either state.
+            transformations.append(
+                RiscvTransformationState(
+                    False,
+                    True,
+                    fused_softmax=True,
+                    approximate_exp=True,
+                )
+            )
+            transformations.append(
+                RiscvTransformationState(False, True, fused_softmax=True)
+            )
             transformations.append(RiscvTransformationState(True, True, False))
             transformations.append(RiscvTransformationState(True, True, True))
             transformations.append(RiscvTransformationState(True, True, True, True))
-            transformations.append(
-                RiscvTransformationState(False, True, False, False, True)
-            )
     schedules = _schedule_universe()
     candidates: list[RiscvLoweringCandidate] = []
     for transformation in transformations:
@@ -119,23 +149,45 @@ def enumerate_riscv_candidates(
                 or base_schedule.scalable_vectorization
             ):
                 continue
+            if transformation.composed_indexed_gather and (
+                not base_schedule.vectorize
+                or base_schedule.scalable_vectorization
+                or base_schedule.parallel_tile != 0
+                or base_schedule.reduction_tile != 0
+            ):
+                continue
             if (
                 transformation.explicit_vector_reduction
                 and not base_schedule.scalable_vectorization
+            ):
+                continue
+            if transformation.mixed_precision_dot_reduction and (
+                not base_schedule.vectorize
+                or base_schedule.parallel_tile != 0
+                or base_schedule.reduction_tile != 0
             ):
                 continue
             if transformation.fused_softmax and (
                 not base_schedule.vectorize
                 or base_schedule.parallel_tile != 0
                 or base_schedule.reduction_tile != 0
+                or (
+                    transformation.approximate_exp
+                    and base_schedule.scalable_vectorization
+                )
             ):
                 continue
-            lane_values = (
-                (4,)
-                if not transformation.fused_softmax
-                or base_schedule.scalable_vectorization
-                else (2, 4, 8, 16)
-            )
+            if transformation.mixed_precision_dot_reduction:
+                lane_values = (
+                    (4,) if base_schedule.scalable_vectorization else (16,)
+                )
+            else:
+                lane_values = (
+                    (4,)
+                    if not transformation.fused_softmax
+                    or base_schedule.scalable_vectorization
+                    else (2, 4, 8, 16)
+                )
             candidates.extend(
                 RiscvLoweringCandidate(
                     transformation,
@@ -287,6 +339,95 @@ def _has_typed_rowmask_graph(value: Mapping[str, Any]) -> bool:
         and output.get("name") == product.get("result")
         and output.get("dtype") == "f32"
         and output.get("shape") == data_shape
+    )
+
+
+def _has_typed_gather_chain(value: Mapping[str, Any]) -> bool:
+    intent = value.get("intent")
+    if not isinstance(intent, Mapping):
+        return False
+    function = intent.get("intent_function")
+    if not isinstance(function, Mapping):
+        return False
+    inputs = function.get("inputs")
+    body = function.get("body")
+    outputs = function.get("outputs")
+    if (
+        not isinstance(inputs, list)
+        or not isinstance(body, list)
+        or not isinstance(outputs, list)
+        or len(body) != 2
+        or len(outputs) != 1
+    ):
+        return False
+    first, second = body
+    if not isinstance(first, Mapping) or not isinstance(second, Mapping):
+        return False
+    first_operands = first.get("operands")
+    second_operands = second.get("operands")
+    first_attrs = first.get("attrs")
+    second_attrs = second.get("attrs")
+    first_type = first.get("type")
+    second_type = second.get("type")
+    output = outputs[0]
+    input_by_name = {
+        item.get("name"): item
+        for item in inputs
+        if isinstance(item, Mapping) and isinstance(item.get("name"), str)
+    }
+    if (
+        first.get("op") != "gather"
+        or second.get("op") != "gather"
+        or not isinstance(first_operands, list)
+        or len(first_operands) != 2
+        or not isinstance(second_operands, list)
+        or len(second_operands) != 2
+        or second_operands[0] != first.get("result")
+        or not isinstance(first_attrs, Mapping)
+        or first_attrs.get("mode") != "take"
+        or first_attrs.get("axis") != 0
+        or not isinstance(second_attrs, Mapping)
+        or second_attrs.get("mode") != "along_axis"
+        or second_attrs.get("axis") != 1
+        or not isinstance(first_type, Mapping)
+        or first_type.get("dtype") != "f32"
+        or not isinstance(second_type, Mapping)
+        or second_type.get("dtype") != "f32"
+        or not isinstance(output, Mapping)
+        or output.get("name") != second.get("result")
+    ):
+        return False
+    data = input_by_name.get(first_operands[0])
+    rows = input_by_name.get(first_operands[1])
+    columns = input_by_name.get(second_operands[1])
+    return bool(
+        isinstance(data, Mapping)
+        and data.get("dtype") == "f32"
+        and isinstance(data.get("shape"), list)
+        and len(data["shape"]) == 2
+        and isinstance(rows, Mapping)
+        and rows.get("dtype") == "i32"
+        and isinstance(rows.get("shape"), list)
+        and len(rows["shape"]) == 1
+        and isinstance(columns, Mapping)
+        and columns.get("dtype") == "i32"
+        and columns.get("shape") == rows.get("shape")
+        and second_type.get("shape") == rows.get("shape")
+    )
+
+
+def _has_two_public_outputs(value: Mapping[str, Any]) -> bool:
+    intent = value.get("intent")
+    if not isinstance(intent, Mapping):
+        return False
+    function = intent.get("intent_function")
+    if not isinstance(function, Mapping):
+        return False
+    outputs = function.get("outputs")
+    return bool(
+        isinstance(outputs, list)
+        and len(outputs) == 2
+        and all(isinstance(output, Mapping) for output in outputs)
     )
 
 
@@ -606,15 +747,19 @@ def plan_riscv_search(
     if not isinstance(state, BackendSearchState):
         raise TypeError("RVV search planning requires BackendSearchState")
     j_payload = state.base.j.to_json()
-    _axes, _has_scan, _float_bits, has_reassociation, has_contraction = (
+    reduction_axes, _has_scan, _float_bits, has_reassociation, has_contraction = (
         _operation_facts(j_payload)
     )
     has_typed_rowmask = _has_typed_rowmask_graph(j_payload)
+    has_typed_gather_chain = _has_typed_gather_chain(j_payload)
+    has_sibling_outputs = _has_two_public_outputs(j_payload) and not reduction_axes
     projected_priors, ignored_priors, projection = _project_c_priors(state)
     raw_universe = enumerate_riscv_candidates(
         enable_b_transformations=enable_b_transformations,
         enable_reassociation=has_reassociation,
         enable_rowmask_zero_fill=has_typed_rowmask,
+        enable_composed_gather=has_typed_gather_chain,
+        enable_sibling_output_fusion=has_sibling_outputs,
     )
     minimum_reduction_tile = int(projection["vector_lanes"])
     subvector_reduction_schedules_rejected = sum(
@@ -659,6 +804,8 @@ def plan_riscv_search(
         if not item.transformation.fuse_producers
         and not item.transformation.reassociate_reductions
         and not item.transformation.rowmask_zero_fill
+        and not item.transformation.composed_indexed_gather
+        and not item.transformation.fuse_sibling_outputs
     )
     alternative_states = tuple(
         dict.fromkeys(
@@ -669,6 +816,10 @@ def plan_riscv_search(
                 item.transformation.joint_vector_reduction,
                 item.transformation.fused_softmax,
                 item.transformation.rowmask_zero_fill,
+                item.transformation.composed_indexed_gather,
+                item.transformation.fuse_sibling_outputs,
+                item.transformation.approximate_exp,
+                item.transformation.mixed_precision_dot_reduction,
             )
             for item in universe
             if item not in canonical
@@ -685,6 +836,10 @@ def plan_riscv_search(
                 item.transformation.joint_vector_reduction,
                 item.transformation.fused_softmax,
                 item.transformation.rowmask_zero_fill,
+                item.transformation.composed_indexed_gather,
+                item.transformation.fuse_sibling_outputs,
+                item.transformation.approximate_exp,
+                item.transformation.mixed_precision_dot_reduction,
             )
             == state_key
         )

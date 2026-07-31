@@ -119,6 +119,35 @@ def VectorizeLinalgRowReduction : Pass<
   ];
 }
 
+def VectorizeLinalgMixedPrecisionDotReduction : Pass<
+    "vectorize-linalg-mixed-precision-dot-reduction", "::mlir::ModuleOp"> {
+  let summary = "Vectorize f16-input, f32-accumulating last-axis dot reductions.";
+  let description = [{
+    Structurally matches a tensor-semantics Linalg reduction with two identity-
+    mapped f16 inputs, leading parallel iterators, one final reduction iterator,
+    explicit f16-to-f32 extension, multiplication, and a reassociable f32 add.
+    It emits strip-mined vector f16 loads, vector widening conversions, an f32
+    vector accumulator, and one horizontal finalize per row.  The pass is
+    source-name blind and preserves the original output tensor, including any
+    downstream padding operation.
+  }];
+  let dependentDialects = [
+    "::mlir::arith::ArithDialect",
+    "::mlir::linalg::LinalgDialect",
+    "::mlir::scf::SCFDialect",
+    "::mlir::tensor::TensorDialect",
+    "::mlir::vector::VectorDialect",
+  ];
+  let options = [
+    Option<"vectorWidth", "vector-width", "unsigned", "4",
+           "Fixed lanes, or minimum scalable lanes, in the widening accumulator">,
+    Option<"scalableVector", "scalable-vector", "bool", "true",
+           "Use scalable vectors and a vector.vscale-derived strip size">,
+    Option<"requireVectorization", "require-vectorization", "bool", "false",
+           "Fail when no structurally supported mixed-precision dot is transformed">,
+  ];
+}
+
 def FuseLinalgSoftmax : Pass<
     "fuse-linalg-softmax", "::mlir::ModuleOp"> {
   let summary = "Lower canonical stable row Softmax to one fused vector state.";
@@ -148,6 +177,8 @@ def FuseLinalgSoftmax : Pass<
            "Use scalable vector packets and a vector.vscale-derived strip size">,
     Option<"requireFusion", "require-fusion", "bool", "false",
            "Fail the pass if no canonical stable row Softmax is fused">,
+    Option<"approximateExp", "approximate-exp", "bool", "false",
+           "Use a vector range-reduced polynomial exp and vector sum">,
   ];
 }
 
@@ -176,6 +207,57 @@ def LowerRowMaskToLoops : Pass<
            "Fail when no exact typed row-mask graph is lowered">,
     Option<"vectorWidth", "vector-width", "unsigned", "1",
            "Explicit contiguous packet width for each inner-row iteration">,
+  ];
+}
+
+def LowerGatherChainToLoops : Pass<
+    "lower-gather-chain-to-loops", "::mlir::ModuleOp"> {
+  let summary = "Compose a typed two-level gather into direct indexed loads.";
+  let description = [{
+    Matches the target-neutral tensor graph
+      take(data, row_index, axis=0) -> along_axis(tmp, col_index, axis=1)
+    with the exact expand/collapse adapters emitted by Intent materialization.
+    It replaces the materialized intermediate row tensor with direct
+    data[row_index[i], col_index[i]] loads.  Vector mode emits vector.gather,
+    which LLVM can lower to an RVV indexed load.  The matcher is source-name
+    blind and rejects dynamic, non-contiguous, non-i32-index, or tailed shapes.
+  }];
+  let dependentDialects = [
+    "::mlir::arith::ArithDialect",
+    "::mlir::func::FuncDialect",
+    "::mlir::memref::MemRefDialect",
+    "::mlir::scf::SCFDialect",
+    "::mlir::tensor::TensorDialect",
+    "::mlir::vector::VectorDialect",
+  ];
+  let options = [
+    Option<"vectorWidth", "vector-width", "unsigned", "1",
+           "Indexed elements issued by each loop iteration">,
+    Option<"requireLowering", "require-lowering", "bool", "false",
+           "Fail when no exact typed two-level gather is present">,
+  ];
+}
+
+def FuseLinalgSiblingOutputs : Pass<
+    "fuse-linalg-sibling-outputs", "::mlir::ModuleOp"> {
+  let summary = "Fuse returned elementwise siblings that share an iteration domain.";
+  let description = [{
+    Matches two pure tensor-semantics linalg.generic operations returned as
+    distinct public outputs.  When both have the same all-parallel iteration
+    domain, write-only identity outputs, and compatible indexing maps, their
+    input lists and scalar bodies are merged into one multi-output generic.
+    Shared input tensors are consequently loaded once per element.  Matching is
+    source-name blind and does not cross reductions, updates, or observable
+    intermediates.
+  }];
+  let dependentDialects = [
+    "::mlir::func::FuncDialect",
+    "::mlir::linalg::LinalgDialect",
+    "::mlir::tensor::TensorDialect",
+  ];
+  let options = [
+    Option<"requireFusion", "require-fusion", "bool", "false",
+           "Fail if no exact returned sibling pair is fused">,
   ];
 }
 

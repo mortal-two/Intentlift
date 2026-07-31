@@ -23,6 +23,7 @@ from intentir.ir.production_snapshot import load_production_snapshot
 _ROOT = Path(__file__).resolve().parents[2]
 _CATALOG = _ROOT / "corpus" / "production-jc-v4"
 _INTENT_OPT = _ROOT / "build" / "tools" / "intent-opt" / "intent-opt"
+_MLIR_OPT = Path("/usr/lib/llvm-20/bin/mlir-opt")
 
 
 def _state(name: str, dims: dict[str, int]):
@@ -91,6 +92,30 @@ def test_gather_chain_has_materialized_and_composed_real_mlir() -> None:
 
 
 @pytest.mark.skipif(not _INTENT_OPT.exists(), reason="intent-opt is not built")
+def test_gather_chain_has_direct_rvv_indexed_vector_mlir() -> None:
+    _snapshot, materialized, _state_value = _state("gather2d", {"x0": 64})
+    result = subprocess.run(
+        [
+            str(_INTENT_OPT),
+            (
+                "-lower-gather-chain-to-loops=require-lowering=true "
+                "vector-width=4"
+            ),
+        ],
+        input=materialized.intent_mlir,
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout
+
+    assert "intent.gather" not in result
+    assert "vector.gather" in result
+    assert "memref<64x64xf32>" in result
+    assert "intent.rvv.composed_gather_count = 1 : i64" in result
+    assert "intent.rvv.composed_gather_vector_width = 4 : i64" in result
+
+
+@pytest.mark.skipif(not _INTENT_OPT.exists(), reason="intent-opt is not built")
 def test_rowmask_rank1_broadcast_and_full_zero_fill_lower_to_real_mlir() -> None:
     _snapshot, materialized, _state_value = _state(
         "rowmask_where2d", {"x0": 16}
@@ -127,6 +152,138 @@ def test_rowmask_rank1_broadcast_and_full_zero_fill_lower_to_real_mlir() -> None
     assert "scf.if" in full
     assert "vector<4xf32>" in full
     assert "arith.mulf" not in full
+
+
+@pytest.mark.skipif(not _INTENT_OPT.exists(), reason="intent-opt is not built")
+def test_softmax_approximate_exp_is_a_real_vector_mlir_state() -> None:
+    snapshot, _path = load_production_snapshot(_CATALOG, "softmax")
+    assert snapshot.c is not None
+    materialized = materialize_j(snapshot.j, {"x0": 4, "x1": 16})
+    converted = subprocess.run(
+        [
+            str(_INTENT_OPT),
+            "-convert-intent-to-linalg=reassociate-float-reductions=true",
+            "-expand-rsqrt-for-libm",
+        ],
+        input=materialized.intent_mlir,
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout
+    approximate = subprocess.run(
+        [
+            str(_INTENT_OPT),
+            (
+                "-fuse-linalg-softmax=vector-width=4 scalable-vector=false "
+                "approximate-exp=true require-fusion=true"
+            ),
+            "-canonicalize",
+            "-cse",
+        ],
+        input=converted,
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout
+
+    assert "math.exp" not in approximate
+    assert "math.roundeven" not in approximate
+    assert "arith.fptosi" in approximate
+    assert "arith.sitofp" in approximate
+    assert "vector.reduction" in approximate
+    assert "vector<4xf32>" in approximate
+    assert "intent.rvv.fused_softmax_approximate_exp_count = 1 : i64" in approximate
+    assert "intent.rvv.fused_softmax_vector_reduction_count = 2 : i64" in approximate
+
+    state = attach_c(
+        materialized,
+        snapshot.c,
+        BackendTarget("riscv", "rv64gcv_zfh", ("vlen128",)),
+    )
+    plan = plan_riscv_search(state, enable_b_transformations=True)
+    candidates = tuple(
+        item for item in plan.universe if item.transformation.approximate_exp
+    )
+    assert candidates
+    assert not set(item.candidate_id for item in candidates) & set(
+        plan.schedule_only_c_prior_order
+    )
+    assert set(item.candidate_id for item in candidates) <= set(plan.c_prior_order)
+
+
+@pytest.mark.skipif(
+    not _INTENT_OPT.exists() or not _MLIR_OPT.exists(),
+    reason="Intent/MLIR tools are not built",
+)
+def test_mixed_precision_dot_is_a_real_widening_vector_mlir_state() -> None:
+    snapshot, _path = load_production_snapshot(
+        _CATALOG, "flash_bwd_preprocess"
+    )
+    assert snapshot.c is not None
+    materialized = materialize_j(
+        snapshot.j,
+        {"x0": 1, "x1": 32, "x2": 33, "x3": 16, "x4": 64},
+    )
+    converted = subprocess.run(
+        [
+            str(_INTENT_OPT),
+            "-convert-intent-to-linalg=reassociate-float-reductions=true",
+            "-expand-rsqrt-for-libm",
+        ],
+        input=materialized.intent_mlir,
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout
+    fused = subprocess.run(
+        [str(_MLIR_OPT), "--linalg-fuse-elementwise-ops", "--canonicalize"],
+        input=converted,
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout
+    vectorized = subprocess.run(
+        [
+            str(_INTENT_OPT),
+            (
+                "-vectorize-linalg-mixed-precision-dot-reduction="
+                "vector-width=4 scalable-vector=true require-vectorization=true"
+            ),
+            "-canonicalize",
+            "-cse",
+        ],
+        input=fused,
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout
+
+    assert "vector<[4]xf16>" in vectorized
+    assert "vector<[4]xf32>" in vectorized
+    assert "arith.extf" in vectorized
+    assert "vector.reduction <add>" in vectorized
+    assert "intent.rvv.mixed_dot_reduction_count = 1 : i64" in vectorized
+
+    state = attach_c(
+        materialized,
+        snapshot.c,
+        BackendTarget("riscv", "rv64gcv_zfh_zvfh", ("vlen128",)),
+    )
+    plan = plan_riscv_search(state, enable_b_transformations=True)
+    candidates = tuple(
+        item
+        for item in plan.universe
+        if item.transformation.mixed_precision_dot_reduction
+    )
+    assert len(candidates) == 3
+    assert {
+        (item.schedule.scalable_vectorization, item.schedule.vector_lanes)
+        for item in candidates
+    } == {(False, 16), (True, 4)}
+    assert not set(item.candidate_id for item in candidates) & set(
+        plan.schedule_only_c_prior_order
+    )
+    assert set(item.candidate_id for item in candidates) <= set(plan.c_prior_order)
 
 
 @pytest.mark.parametrize(
@@ -189,6 +346,101 @@ def test_rowmask_rvv_zero_fill_is_full_only_structural_state() -> None:
         item.transformation.lowering_path_kind == "rowmask_zero_fill"
         for item in expanded
     )
+    assert not set(item.candidate_id for item in expanded) & set(
+        plan.schedule_only_c_prior_order
+    )
+    assert set(item.candidate_id for item in expanded) <= set(plan.c_prior_order)
+
+
+def test_gather_rvv_composition_is_full_only_structural_state() -> None:
+    snapshot, materialized, _cuda_state = _state("gather2d", {"x0": 64})
+    assert snapshot.c is not None
+    state = attach_c(
+        materialized,
+        snapshot.c,
+        BackendTarget("riscv", "rv64gcv_zfh", ("vlen128",)),
+    )
+    plan = plan_riscv_search(state, enable_b_transformations=True)
+    expanded = tuple(
+        item
+        for item in plan.universe
+        if item.transformation.composed_indexed_gather
+    )
+
+    assert expanded
+    assert all(
+        item.transformation.lowering_path_kind == "composed_indexed_gather"
+        for item in expanded
+    )
+    assert all(item.schedule.vectorize for item in expanded)
+    assert all(not item.schedule.scalable_vectorization for item in expanded)
+    assert not set(item.candidate_id for item in expanded) & set(
+        plan.schedule_only_c_prior_order
+    )
+    assert set(item.candidate_id for item in expanded) <= set(plan.c_prior_order)
+
+
+@pytest.mark.skipif(
+    not _INTENT_OPT.exists() or not _MLIR_OPT.exists(),
+    reason="Intent/MLIR tools are not built",
+)
+def test_tvd_sibling_outputs_fuse_into_one_multi_output_linalg() -> None:
+    snapshot, _path = load_production_snapshot(_CATALOG, "tvd")
+    materialized = materialize_j(snapshot.j, {"x0": 16, "x1": 16})
+    converted = subprocess.run(
+        [
+            str(_INTENT_OPT),
+            "-convert-intent-to-linalg=reassociate-float-reductions=false",
+            "-expand-rsqrt-for-libm",
+        ],
+        input=materialized.intent_mlir,
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout
+    producer_fused = subprocess.run(
+        [str(_MLIR_OPT), "--linalg-fuse-elementwise-ops", "--canonicalize", "--cse"],
+        input=converted,
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout
+    sibling_fused = subprocess.run(
+        [
+            str(_INTENT_OPT),
+            "-fuse-linalg-sibling-outputs=require-fusion=true",
+            "-canonicalize",
+            "-cse",
+        ],
+        input=producer_fused,
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout
+
+    assert producer_fused.count("linalg.generic") == 2
+    assert sibling_fused.count("linalg.generic") == 1
+    assert "linalg.yield" in sibling_fused
+    assert "intent.rvv.sibling_output_fusion_count = 1 : i64" in sibling_fused
+    assert sibling_fused.count("intent.sibling_output_slot") == 2
+
+
+def test_tvd_rvv_sibling_fusion_is_full_only_structural_state() -> None:
+    snapshot, _path = load_production_snapshot(_CATALOG, "tvd")
+    assert snapshot.c is not None
+    materialized = materialize_j(snapshot.j, {"x0": 16, "x1": 16})
+    state = attach_c(
+        materialized,
+        snapshot.c,
+        BackendTarget("riscv", "rv64gcv_zfh", ("vlen128",)),
+    )
+    plan = plan_riscv_search(state, enable_b_transformations=True)
+    expanded = tuple(
+        item for item in plan.universe if item.transformation.fuse_sibling_outputs
+    )
+
+    assert expanded
+    assert all(item.transformation.fuse_producers for item in expanded)
     assert not set(item.candidate_id for item in expanded) & set(
         plan.schedule_only_c_prior_order
     )

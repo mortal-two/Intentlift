@@ -280,9 +280,80 @@ static std::optional<SoftmaxMatch> matchSoftmax(linalg::GenericOp divide) {
                       inputType};
 }
 
+static Value splatFloat(OpBuilder &builder, Location location,
+                        VectorType vectorType, double value) {
+  Value scalar = builder.create<arith::ConstantOp>(
+      location, builder.getF32FloatAttr(value));
+  return builder.create<vector::SplatOp>(location, vectorType, scalar);
+}
+
+static Value splatInteger(OpBuilder &builder, Location location,
+                          VectorType vectorType, int32_t value) {
+  Value scalar = builder.create<arith::ConstantIntOp>(location, value, 32);
+  return builder.create<vector::SplatOp>(location, vectorType, scalar);
+}
+
+/// Range-reduced fifth-degree exp approximation over a vector packet.
+/// Softmax inputs have already been shifted by the row maximum, so clamping the
+/// negligible lower tail to -80 keeps exponent-bit construction in range.  The
+/// candidate is execution-domain checked and is never used by the fixed or
+/// schedule-only paths.
+static Value emitApproximateExp(OpBuilder &builder, Location location,
+                                VectorType vectorType, Value input) {
+  VectorType integerVectorType = VectorType::get(
+      vectorType.getShape(), builder.getI32Type(),
+      vectorType.getScalableDims());
+  Value lower = splatFloat(builder, location, vectorType, -80.0);
+  Value clamped =
+      builder.create<arith::MaxNumFOp>(location, input, lower).getResult();
+  Value log2e = splatFloat(builder, location, vectorType,
+                           1.4426950408889634074);
+  Value scaled =
+      builder.create<arith::MulFOp>(location, clamped, log2e).getResult();
+  // Stable Softmax guarantees input <= 0 after subtracting the row maximum.
+  // For a non-positive value, trunc(x - 0.5) implements nearest-integer range
+  // reduction without a vector roundeven libcall.  LLVM otherwise scalarizes
+  // math.roundeven on RVV and calls libm once per lane, defeating the concrete
+  // vector state this candidate is meant to expose.
+  Value negativeHalf = splatFloat(builder, location, vectorType, -0.5);
+  Value roundedForConversion = builder.create<arith::AddFOp>(
+      location, scaled, negativeHalf);
+  Value exponentInteger = builder.create<arith::FPToSIOp>(
+      location, integerVectorType, roundedForConversion);
+  Value exponentFloat = builder.create<arith::SIToFPOp>(
+      location, vectorType, exponentInteger);
+  Value bias = splatInteger(builder, location, integerVectorType, 127);
+  Value shift = splatInteger(builder, location, integerVectorType, 23);
+  Value exponentBits = builder.create<arith::ShLIOp>(
+      location,
+      builder.create<arith::AddIOp>(location, exponentInteger, bias), shift);
+  Value powerOfTwo = builder.create<arith::BitcastOp>(
+      location, vectorType, exponentBits);
+
+  Value ln2 = splatFloat(builder, location, vectorType,
+                         0.6931471805599453094);
+  Value remainder = builder.create<arith::SubFOp>(
+      location, clamped,
+      builder.create<arith::MulFOp>(location, exponentFloat, ln2));
+  auto horner = [&](Value accumulator, double coefficient) {
+    return builder.create<arith::AddFOp>(
+        location,
+        builder.create<arith::MulFOp>(location, accumulator, remainder),
+        splatFloat(builder, location, vectorType, coefficient));
+  };
+  Value polynomial = splatFloat(builder, location, vectorType, 1.0 / 120.0);
+  polynomial = horner(polynomial, 1.0 / 24.0);
+  polynomial = horner(polynomial, 1.0 / 6.0);
+  polynomial = horner(polynomial, 0.5);
+  polynomial = horner(polynomial, 1.0);
+  polynomial = horner(polynomial, 1.0);
+  return builder.create<arith::MulFOp>(location, powerOfTwo, polynomial);
+}
+
 static Value emitHybridFusedSoftmax(IRRewriter &rewriter, SoftmaxMatch &match,
                                      unsigned vectorWidth,
-                                     bool scalableVector) {
+                                     bool scalableVector,
+                                     bool approximateExp) {
   rewriter.setInsertionPoint(match.divide);
   Location location = match.divide.getLoc();
   FloatType elementType = cast<FloatType>(match.inputType.getElementType());
@@ -333,29 +404,65 @@ static Value emitHybridFusedSoftmax(IRRewriter &rewriter, SoftmaxMatch &match,
         Value maximum = rowBuilder.create<vector::ReductionOp>(
             rowLocation, vector::CombiningKind::MAXNUMF,
             maximumLoop.getResult(0), negativeInfinity);
-        auto exponentLoop = rowBuilder.create<scf::ForOp>(
-            rowLocation, zeroIndex, columns, oneIndex,
-            ValueRange{rowArgs[0], zero},
-            [&](OpBuilder &columnBuilder, Location columnLocation, Value column,
-                ValueRange columnArgs) {
-              Value scalar = columnBuilder.create<tensor::ExtractOp>(
-                  columnLocation, match.input, ValueRange{row, column});
-              Value shifted = columnBuilder.create<arith::SubFOp>(
-                  columnLocation, scalar, maximum,
-                  match.subtractScalar.getFastmath());
-              Value exponent =
-                  columnBuilder.create<math::ExpOp>(columnLocation, shifted);
-              Value accumulated = columnBuilder.create<arith::AddFOp>(
-                  columnLocation, columnArgs[1], exponent,
-                  match.sumCombine.getFastmath());
-              Value written = columnBuilder.create<tensor::InsertOp>(
-                  columnLocation, exponent, columnArgs[0],
-                  ValueRange{row, column});
-              columnBuilder.create<scf::YieldOp>(
-                  columnLocation, ValueRange{written, accumulated});
-            });
-        Value exponentOutput = exponentLoop.getResult(0);
-        Value denominator = exponentLoop.getResult(1);
+        Value exponentOutput;
+        Value denominator;
+        if (approximateExp) {
+          Value zeroVector = rowBuilder.create<vector::SplatOp>(
+              rowLocation, vectorType, zero);
+          Value maximumPacket = rowBuilder.create<vector::SplatOp>(
+              rowLocation, vectorType, maximum);
+          auto exponentLoop = rowBuilder.create<scf::ForOp>(
+              rowLocation, zeroIndex, columns, step,
+              ValueRange{rowArgs[0], zeroVector},
+              [&](OpBuilder &columnBuilder, Location columnLocation,
+                  Value column, ValueRange columnArgs) {
+                Value packet = columnBuilder.create<vector::TransferReadOp>(
+                    columnLocation, vectorType, match.input,
+                    ValueRange{row, column}, negativeInfinity);
+                Value shifted = columnBuilder.create<arith::SubFOp>(
+                    columnLocation, packet, maximumPacket,
+                    match.subtractScalar.getFastmath());
+                Value exponent = emitApproximateExp(
+                    columnBuilder, columnLocation, vectorType, shifted);
+                Value accumulated = columnBuilder.create<arith::AddFOp>(
+                    columnLocation, columnArgs[1], exponent,
+                    match.sumCombine.getFastmath());
+                auto write = columnBuilder.create<vector::TransferWriteOp>(
+                    columnLocation, exponent, columnArgs[0],
+                    ValueRange{row, column});
+                columnBuilder.create<scf::YieldOp>(
+                    columnLocation,
+                    ValueRange{write->getResult(0), accumulated});
+              });
+          exponentOutput = exponentLoop.getResult(0);
+          denominator = rowBuilder.create<vector::ReductionOp>(
+              rowLocation, vector::CombiningKind::ADD,
+              exponentLoop.getResult(1), zero);
+        } else {
+          auto exponentLoop = rowBuilder.create<scf::ForOp>(
+              rowLocation, zeroIndex, columns, oneIndex,
+              ValueRange{rowArgs[0], zero},
+              [&](OpBuilder &columnBuilder, Location columnLocation,
+                  Value column, ValueRange columnArgs) {
+                Value scalar = columnBuilder.create<tensor::ExtractOp>(
+                    columnLocation, match.input, ValueRange{row, column});
+                Value shifted = columnBuilder.create<arith::SubFOp>(
+                    columnLocation, scalar, maximum,
+                    match.subtractScalar.getFastmath());
+                Value exponent =
+                    columnBuilder.create<math::ExpOp>(columnLocation, shifted);
+                Value accumulated = columnBuilder.create<arith::AddFOp>(
+                    columnLocation, columnArgs[1], exponent,
+                    match.sumCombine.getFastmath());
+                Value written = columnBuilder.create<tensor::InsertOp>(
+                    columnLocation, exponent, columnArgs[0],
+                    ValueRange{row, column});
+                columnBuilder.create<scf::YieldOp>(
+                    columnLocation, ValueRange{written, accumulated});
+              });
+          exponentOutput = exponentLoop.getResult(0);
+          denominator = exponentLoop.getResult(1);
+        }
         Value denominatorPacket = rowBuilder.create<vector::SplatOp>(
             rowLocation, vectorType, denominator);
 
@@ -407,8 +514,14 @@ struct FuseLinalgSoftmaxPass
       std::optional<SoftmaxMatch> match = matchSoftmax(candidate);
       if (!match)
         continue;
+      if (approximateExp &&
+          (scalableVector ||
+           match->inputType.getDimSize(1) %
+                   static_cast<int64_t>(vectorWidth) !=
+               0))
+        continue;
       Value replacement = emitHybridFusedSoftmax(
-          rewriter, *match, vectorWidth, scalableVector);
+          rewriter, *match, vectorWidth, scalableVector, approximateExp);
       rewriter.replaceOp(candidate, replacement);
       ++fusedCount;
     }
@@ -423,13 +536,18 @@ struct FuseLinalgSoftmaxPass
     module->setAttr("intent.rvv.fused_softmax_removed_materialization_count",
                     builder.getI64IntegerAttr(4 * fusedCount));
     module->setAttr("intent.rvv.fused_softmax_vector_reduction_count",
-                    builder.getI64IntegerAttr(fusedCount));
+                    builder.getI64IntegerAttr(
+                        (approximateExp ? 2 : 1) * fusedCount));
     module->setAttr("intent.rvv.fused_softmax_scalar_reduction_count",
-                    builder.getI64IntegerAttr(fusedCount));
+                    builder.getI64IntegerAttr(
+                        approximateExp ? 0 : fusedCount));
     module->setAttr("intent.rvv.fused_softmax_vector_width",
                     builder.getI64IntegerAttr(fusedCount ? vectorWidth : 0));
     module->setAttr("intent.rvv.fused_softmax_scalable_count",
                     builder.getI64IntegerAttr(scalableVector ? fusedCount : 0));
+    module->setAttr("intent.rvv.fused_softmax_approximate_exp_count",
+                    builder.getI64IntegerAttr(
+                        approximateExp ? fusedCount : 0));
     if (requireFusion && fusedCount == 0) {
       module.emitError("required fused Softmax matched no canonical stable graph");
       signalPassFailure();

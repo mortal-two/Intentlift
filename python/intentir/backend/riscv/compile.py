@@ -26,10 +26,11 @@ from intentir.backend.toolchain.tools import (
 OPT = os.environ.get("LLVM_OPT", str(LLVM_BIN / "opt"))
 LLC = os.environ.get("LLC", str(LLVM_BIN / "llc"))
 TRIPLE = os.environ.get("INTENT_RISCV_TRIPLE", "riscv64-unknown-linux-gnu")
-MATTR = os.environ.get("INTENT_RISCV_MATTR", "+v,+zfh")
+MATTR = os.environ.get("INTENT_RISCV_MATTR", "+v,+zfh,+zvfh")
 
 RVV_B_FUSION = "riscv.b.readonly_producer_consumer_fusion.v2"
 RVV_B_FUSED_SOFTMAX = "riscv.b.readonly_fused_softmax.v1"
+RVV_B_GATHER_COMPOSITION = "riscv.b.readonly_gather_composition.v1"
 
 
 def _run_text(command: list[str], *, stdin: str) -> str:
@@ -71,6 +72,10 @@ class RiscvTransformationState:
     joint_vector_reduction: bool = False
     fused_softmax: bool = False
     rowmask_zero_fill: bool = False
+    composed_indexed_gather: bool = False
+    fuse_sibling_outputs: bool = False
+    approximate_exp: bool = False
+    mixed_precision_dot_reduction: bool = False
 
     def __post_init__(self) -> None:
         if type(self.fuse_producers) is not bool:
@@ -85,6 +90,14 @@ class RiscvTransformationState:
             raise TypeError("fused_softmax must be bool")
         if type(self.rowmask_zero_fill) is not bool:
             raise TypeError("rowmask_zero_fill must be bool")
+        if type(self.composed_indexed_gather) is not bool:
+            raise TypeError("composed_indexed_gather must be bool")
+        if type(self.fuse_sibling_outputs) is not bool:
+            raise TypeError("fuse_sibling_outputs must be bool")
+        if type(self.approximate_exp) is not bool:
+            raise TypeError("approximate_exp must be bool")
+        if type(self.mixed_precision_dot_reduction) is not bool:
+            raise TypeError("mixed_precision_dot_reduction must be bool")
         if self.explicit_vector_reduction and not self.reassociate_reductions:
             raise ValueError(
                 "explicit float vector reduction requires the admitted "
@@ -113,6 +126,29 @@ class RiscvTransformationState:
                 "fused RVV Softmax is a complete structural state and cannot "
                 "be combined with generic fusion or row-reduction states"
             )
+        if self.approximate_exp and not self.fused_softmax:
+            raise ValueError(
+                "approximate RVV exp is only defined inside the fused Softmax state"
+            )
+        if self.mixed_precision_dot_reduction and not (
+            self.fuse_producers and self.reassociate_reductions
+        ):
+            raise ValueError(
+                "mixed-precision RVV dot reduction requires producer fusion "
+                "and admitted reduction reassociation"
+            )
+        if self.mixed_precision_dot_reduction and (
+            self.explicit_vector_reduction
+            or self.joint_vector_reduction
+            or self.fused_softmax
+            or self.rowmask_zero_fill
+            or self.composed_indexed_gather
+            or self.fuse_sibling_outputs
+        ):
+            raise ValueError(
+                "mixed-precision RVV dot reduction is a complete structural "
+                "state and cannot be combined with another specialized state"
+            )
         if self.rowmask_zero_fill and (
             self.fuse_producers
             or self.reassociate_reductions
@@ -124,13 +160,48 @@ class RiscvTransformationState:
                 "row-mask zero-fill is a complete structural state and cannot "
                 "be combined with other RVV transformations"
             )
+        if self.composed_indexed_gather and (
+            self.fuse_producers
+            or self.reassociate_reductions
+            or self.explicit_vector_reduction
+            or self.joint_vector_reduction
+            or self.fused_softmax
+            or self.rowmask_zero_fill
+        ):
+            raise ValueError(
+                "composed indexed gather is a complete structural state and "
+                "cannot be combined with other RVV transformations"
+            )
+        if self.fuse_sibling_outputs and not self.fuse_producers:
+            raise ValueError(
+                "sibling-output fusion requires producer fusion within each root"
+            )
+        if self.fuse_sibling_outputs and (
+            self.fused_softmax
+            or self.rowmask_zero_fill
+            or self.composed_indexed_gather
+        ):
+            raise ValueError(
+                "sibling-output fusion cannot be combined with a complete "
+                "specialized structural state"
+            )
 
     @property
     def lowering_path_kind(self) -> str:
+        if self.composed_indexed_gather:
+            return "composed_indexed_gather"
         if self.rowmask_zero_fill:
             return "rowmask_zero_fill"
         if self.fused_softmax:
-            return "fused_softmax_hybrid"
+            return (
+                "fused_softmax_vector_approximate_exp"
+                if self.approximate_exp
+                else "fused_softmax_hybrid"
+            )
+        if self.mixed_precision_dot_reduction:
+            return "mixed_precision_dot_vector_reduction"
+        if self.fuse_sibling_outputs:
+            return "producer_consumer_sibling_fused"
         if self.joint_vector_reduction:
             return "producer_consumer_fused_joint_vector_reduction"
         if self.explicit_vector_reduction:
@@ -144,7 +215,9 @@ class RiscvTransformationState:
     @property
     def transformation_trace(self) -> tuple[str, ...]:
         structural = (
-            "rvv.elementwise.rowmask.zero_fill.v1"
+            "rvv.gather.composed_indexed.v1"
+            if self.composed_indexed_gather
+            else "rvv.elementwise.rowmask.zero_fill.v1"
             if self.rowmask_zero_fill
             else "rvv.vector.fused_softmax_hybrid.v1"
             if self.fused_softmax
@@ -157,6 +230,11 @@ class RiscvTransformationState:
             if self.reassociate_reductions
             else ()
         )
+        approximation = (
+            ("rvv.numeric.execution_domain_approximate_exp.v1",)
+            if self.approximate_exp
+            else ()
+        )
         vector = (
             ("rvv.vector.explicit_row_reduction.v1",)
             if self.explicit_vector_reduction
@@ -167,10 +245,30 @@ class RiscvTransformationState:
             if self.joint_vector_reduction
             else ()
         )
-        return (structural, *numeric, *vector, *joint)
+        mixed_dot = (
+            ("rvv.vector.mixed_precision_dot_reduction.v1",)
+            if self.mixed_precision_dot_reduction
+            else ()
+        )
+        sibling = (
+            ("rvv.linalg.sibling_output_fusion.v1",)
+            if self.fuse_sibling_outputs
+            else ()
+        )
+        return (
+            structural,
+            *numeric,
+            *approximation,
+            *vector,
+            *joint,
+            *mixed_dot,
+            *sibling,
+        )
 
     @property
     def b_transformations(self) -> tuple[str, ...]:
+        if self.composed_indexed_gather:
+            return (RVV_B_GATHER_COMPOSITION,)
         if self.fused_softmax:
             return (RVV_B_FUSED_SOFTMAX,)
         return (RVV_B_FUSION,) if self.fuse_producers else ()
@@ -179,7 +277,11 @@ class RiscvTransformationState:
     def required_b_capabilities(self) -> tuple[str, ...]:
         return (
             (B_CAP_READONLY_INPUTS,)
-            if self.fuse_producers or self.fused_softmax
+            if (
+                self.fuse_producers
+                or self.fused_softmax
+                or self.composed_indexed_gather
+            )
             else ()
         )
 
@@ -192,6 +294,10 @@ class RiscvTransformationState:
             "joint_vector_reduction": self.joint_vector_reduction,
             "fused_softmax": self.fused_softmax,
             "rowmask_zero_fill": self.rowmask_zero_fill,
+            "composed_indexed_gather": self.composed_indexed_gather,
+            "fuse_sibling_outputs": self.fuse_sibling_outputs,
+            "approximate_exp": self.approximate_exp,
+            "mixed_precision_dot_reduction": self.mixed_precision_dot_reduction,
             "transformation_trace": list(self.transformation_trace),
             "b_transformations": list(self.b_transformations),
             "required_b_capabilities": list(self.required_b_capabilities),
@@ -289,7 +395,19 @@ class RiscvLoweringCandidate:
             f"explicitvec{int(self.transformation.explicit_vector_reduction)}."
             f"jointvec{int(self.transformation.joint_vector_reduction)}"
             f".fusedsoftmax{int(self.transformation.fused_softmax)}"
+            f".approxexp{int(self.transformation.approximate_exp)}"
+            f".mixeddot{int(self.transformation.mixed_precision_dot_reduction)}"
             + (".rowmaskzero1" if self.transformation.rowmask_zero_fill else "")
+            + (
+                ".composedgather1"
+                if self.transformation.composed_indexed_gather
+                else ""
+            )
+            + (
+                ".siblingfuse1"
+                if self.transformation.fuse_sibling_outputs
+                else ""
+            )
         )
 
     def _content(self) -> dict[str, Any]:
@@ -334,10 +452,19 @@ class RiscvTransformationRecord:
     fused_softmax_scalar_reductions: int = 0
     fused_softmax_vector_width: int = 0
     fused_softmax_scalable: int = 0
+    fused_softmax_approximate_exp: int = 0
+    mixed_dot_reductions: int = 0
+    mixed_dot_reduction_width: int = 0
+    mixed_dot_reduction_scalable: int = 0
     rowmask_lowerings: int = 0
     rowmask_zero_fills: int = 0
     rowmask_mask_hoists: int = 0
     rowmask_vector_width: int = 0
+    composed_gather_lowerings: int = 0
+    composed_gather_chain_depth: int = 0
+    composed_gather_vector_width: int = 0
+    sibling_output_fusions: int = 0
+    sibling_output_eliminated_traversals: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -385,10 +512,23 @@ class RiscvTransformationRecord:
             ),
             "fused_softmax_vector_width": self.fused_softmax_vector_width,
             "fused_softmax_scalable": self.fused_softmax_scalable,
+            "fused_softmax_approximate_exp": (
+                self.fused_softmax_approximate_exp
+            ),
+            "mixed_dot_reductions": self.mixed_dot_reductions,
+            "mixed_dot_reduction_width": self.mixed_dot_reduction_width,
+            "mixed_dot_reduction_scalable": self.mixed_dot_reduction_scalable,
             "rowmask_lowerings": self.rowmask_lowerings,
             "rowmask_zero_fills": self.rowmask_zero_fills,
             "rowmask_mask_hoists": self.rowmask_mask_hoists,
             "rowmask_vector_width": self.rowmask_vector_width,
+            "composed_gather_lowerings": self.composed_gather_lowerings,
+            "composed_gather_chain_depth": self.composed_gather_chain_depth,
+            "composed_gather_vector_width": self.composed_gather_vector_width,
+            "sibling_output_fusions": self.sibling_output_fusions,
+            "sibling_output_eliminated_traversals": (
+                self.sibling_output_eliminated_traversals
+            ),
         }
 
 
@@ -471,6 +611,24 @@ def _lower_to_llvm_ir(
 ) -> tuple[str, str, RiscvTransformationRecord]:
     source = state.base.intent_mlir
     schedule = candidate.schedule
+    if candidate.transformation.composed_indexed_gather:
+        if not schedule.vectorize or schedule.scalable_vectorization:
+            raise ValueError(
+                "composed indexed gather requires a fixed-width vector schedule"
+            )
+        source = _run_text(
+            [
+                INTENT_OPT,
+                (
+                    "-lower-gather-chain-to-loops="
+                    "require-lowering=true "
+                    f"vector-width={schedule.vector_lanes}"
+                ),
+                "-canonicalize",
+                "-cse",
+            ],
+            stdin=source,
+        )
     if (
         candidate.transformation.explicit_vector_reduction
         and not schedule.scalable_vectorization
@@ -498,6 +656,8 @@ def _lower_to_llvm_ir(
                     "-fuse-linalg-softmax="
                     f"vector-width={schedule.vector_lanes} scalable-vector="
                     f"{'true' if schedule.scalable_vectorization else 'false'} "
+                    "approximate-exp="
+                    f"{'true' if candidate.transformation.approximate_exp else 'false'} "
                     "require-fusion=true"
                 ),
                 "-canonicalize",
@@ -516,7 +676,38 @@ def _lower_to_llvm_ir(
         candidate.transformation.fuse_producers
         and _linalg_op_count(fused_structured) < _linalg_op_count(linalg)
     )
+    if candidate.transformation.fuse_sibling_outputs:
+        before_sibling_fusion = fused_structured
+        fused_structured = _run_text(
+            [
+                INTENT_OPT,
+                "-fuse-linalg-sibling-outputs=require-fusion=true",
+                "-canonicalize",
+                "-cse",
+            ],
+            stdin=fused_structured,
+        )
+        fusion_changed_ir = fusion_changed_ir or (
+            _linalg_op_count(fused_structured)
+            < _linalg_op_count(before_sibling_fusion)
+        )
     pre_schedule_structured = fused_structured
+    if candidate.transformation.mixed_precision_dot_reduction:
+        pre_schedule_structured = _run_text(
+            [
+                INTENT_OPT,
+                (
+                    "-vectorize-linalg-mixed-precision-dot-reduction="
+                    f"vector-width={schedule.vector_lanes} "
+                    "scalable-vector="
+                    f"{'true' if schedule.scalable_vectorization else 'false'} "
+                    "require-vectorization=true"
+                ),
+                "-canonicalize",
+                "-cse",
+            ],
+            stdin=pre_schedule_structured,
+        )
     if candidate.transformation.joint_vector_reduction:
         pre_schedule_structured = _run_text(
             [
@@ -654,6 +845,24 @@ def _lower_to_llvm_ir(
         fused_softmax_scalable=_module_i64_attr(
             structured, "intent.rvv.fused_softmax_scalable_count"
         ),
+        fused_softmax_approximate_exp=_module_i64_attr(
+            structured, "intent.rvv.fused_softmax_approximate_exp_count"
+        ),
+        mixed_dot_reductions=_module_i64_attr(
+            structured, "intent.rvv.mixed_dot_reduction_count"
+        ),
+        mixed_dot_reduction_width=_module_i64_attr(
+            structured, "intent.rvv.mixed_dot_reduction_width"
+        ),
+        mixed_dot_reduction_scalable=_module_i64_attr(
+            structured, "intent.rvv.mixed_dot_reduction_scalable_count"
+        ),
+        sibling_output_fusions=_module_i64_attr(
+            structured, "intent.rvv.sibling_output_fusion_count"
+        ),
+        sibling_output_eliminated_traversals=_module_i64_attr(
+            structured, "intent.rvv.sibling_output_eliminated_traversals"
+        ),
     )
     if (
         candidate.transformation.reassociate_reductions
@@ -667,6 +876,14 @@ def _lower_to_llvm_ir(
         raise RuntimeError(
             "requested RVV producer-consumer fusion produced no fused Linalg "
             "operation"
+        )
+    if candidate.transformation.fuse_sibling_outputs and (
+        record.sibling_output_fusions != 1
+        or record.sibling_output_eliminated_traversals != 1
+    ):
+        raise RuntimeError(
+            "requested RVV sibling-output fusion produced no valid multi-output "
+            "elementwise operation"
         )
     if (
         candidate.transformation.explicit_vector_reduction
@@ -691,15 +908,28 @@ def _lower_to_llvm_ir(
         or record.fused_softmax_input_traversals != 2
         or record.fused_softmax_full_row_traversals != 3
         or record.fused_softmax_removed_materializations < 4
-        or record.fused_softmax_vector_reductions != 1
-        or record.fused_softmax_scalar_reductions != 1
+        or record.fused_softmax_vector_reductions
+        != (2 if candidate.transformation.approximate_exp else 1)
+        or record.fused_softmax_scalar_reductions
+        != (0 if candidate.transformation.approximate_exp else 1)
         or record.fused_softmax_vector_width != schedule.vector_lanes
         or record.fused_softmax_scalable
         != int(schedule.scalable_vectorization)
+        or record.fused_softmax_approximate_exp
+        != int(candidate.transformation.approximate_exp)
     ):
         raise RuntimeError(
             "requested fused RVV Softmax produced no valid hybrid "
             "three-traversal vector state"
+        )
+    if candidate.transformation.mixed_precision_dot_reduction and (
+        record.mixed_dot_reductions != 1
+        or record.mixed_dot_reduction_width != schedule.vector_lanes
+        or record.mixed_dot_reduction_scalable
+        != int(schedule.scalable_vectorization)
+    ):
+        raise RuntimeError(
+            "requested mixed-precision RVV dot produced no widening vector reduction"
         )
     parallel_runtime = schedule.thread_count > 1
     buffer_front = [
@@ -764,6 +994,15 @@ def _lower_to_llvm_ir(
         rowmask_vector_width=_module_i64_attr(
             specialized_buffer, "intent.rvv.rowmask_vector_width"
         ),
+        composed_gather_lowerings=_module_i64_attr(
+            specialized_buffer, "intent.rvv.composed_gather_count"
+        ),
+        composed_gather_chain_depth=_module_i64_attr(
+            specialized_buffer, "intent.rvv.composed_gather_chain_depth"
+        ),
+        composed_gather_vector_width=_module_i64_attr(
+            specialized_buffer, "intent.rvv.composed_gather_vector_width"
+        ),
     )
     if candidate.transformation.rowmask_zero_fill and (
         record.rowmask_lowerings != 1
@@ -774,6 +1013,15 @@ def _lower_to_llvm_ir(
         raise RuntimeError(
             "requested RVV row-mask zero-fill produced no valid hoisted "
             "typed-broadcast loop"
+        )
+    if candidate.transformation.composed_indexed_gather and (
+        record.composed_gather_lowerings != 1
+        or record.composed_gather_chain_depth != 2
+        or record.composed_gather_vector_width != schedule.vector_lanes
+    ):
+        raise RuntimeError(
+            "requested composed RVV gather produced no valid direct indexed "
+            "vector state"
         )
     forwarded = _run_text(
         [
@@ -816,10 +1064,12 @@ def _lower_to_llvm_ir(
                 if (
                     candidate.transformation.explicit_vector_reduction
                     or candidate.transformation.fused_softmax
+                    or candidate.transformation.mixed_precision_dot_reduction
                     or (
                         candidate.transformation.rowmask_zero_fill
                         and schedule.vectorize
                     )
+                    or candidate.transformation.composed_indexed_gather
                 )
                 else []
             ),
@@ -890,6 +1140,14 @@ def compile_riscv_object(
             "requested RVV producer-consumer fusion produced no fused Linalg "
             "operation"
         )
+    if candidate.transformation.fuse_sibling_outputs and (
+        transformation_record.sibling_output_fusions != 1
+        or transformation_record.sibling_output_eliminated_traversals != 1
+    ):
+        raise RuntimeError(
+            "requested RVV sibling-output fusion produced no multi-output "
+            "elementwise state"
+        )
     if (
         candidate.transformation.explicit_vector_reduction
         and transformation_record.explicit_vector_reductions == 0
@@ -913,16 +1171,30 @@ def compile_riscv_object(
         or transformation_record.fused_softmax_input_traversals != 2
         or transformation_record.fused_softmax_full_row_traversals != 3
         or transformation_record.fused_softmax_removed_materializations < 4
-        or transformation_record.fused_softmax_vector_reductions != 1
-        or transformation_record.fused_softmax_scalar_reductions != 1
+        or transformation_record.fused_softmax_vector_reductions
+        != (2 if candidate.transformation.approximate_exp else 1)
+        or transformation_record.fused_softmax_scalar_reductions
+        != (0 if candidate.transformation.approximate_exp else 1)
         or transformation_record.fused_softmax_vector_width
         != candidate.schedule.vector_lanes
         or transformation_record.fused_softmax_scalable
         != int(candidate.schedule.scalable_vectorization)
+        or transformation_record.fused_softmax_approximate_exp
+        != int(candidate.transformation.approximate_exp)
     ):
         raise RuntimeError(
             "requested fused RVV Softmax produced no valid hybrid "
             "three-traversal vector state"
+        )
+    if candidate.transformation.mixed_precision_dot_reduction and (
+        transformation_record.mixed_dot_reductions != 1
+        or transformation_record.mixed_dot_reduction_width
+        != candidate.schedule.vector_lanes
+        or transformation_record.mixed_dot_reduction_scalable
+        != int(candidate.schedule.scalable_vectorization)
+    ):
+        raise RuntimeError(
+            "requested mixed-precision RVV dot produced no widening vector reduction"
         )
     if candidate.transformation.rowmask_zero_fill and (
         transformation_record.rowmask_lowerings != 1
@@ -934,6 +1206,16 @@ def compile_riscv_object(
         raise RuntimeError(
             "requested RVV row-mask zero-fill produced no valid hoisted "
             "typed-broadcast loop"
+        )
+    if candidate.transformation.composed_indexed_gather and (
+        transformation_record.composed_gather_lowerings != 1
+        or transformation_record.composed_gather_chain_depth != 2
+        or transformation_record.composed_gather_vector_width
+        != candidate.schedule.vector_lanes
+    ):
+        raise RuntimeError(
+            "requested composed RVV gather produced no direct indexed vector "
+            "state"
         )
     schedule = candidate.schedule
     vector_shape_flags = (
@@ -996,6 +1278,10 @@ def compile_riscv_object(
         )
         or (
             candidate.transformation.fused_softmax
+            and rvv_reduction_instruction_count < 1
+        )
+        or (
+            candidate.transformation.mixed_precision_dot_reduction
             and rvv_reduction_instruction_count < 1
         )
     ):
