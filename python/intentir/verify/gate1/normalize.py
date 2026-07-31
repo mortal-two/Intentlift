@@ -2,31 +2,20 @@
 
 The normalizer consumes one raw compiler observation and the already typed pi
 witness.  It never sees the peer observation and never decides whether a pair
-matches.  Its only active quotient removes the physical spelling of a Triton
-program axis, which is absent from J/C, while preserving the number of program
-coordinate operations and every downstream dataflow edge.
+matches.  A typed relation remains hard until the profile can independently map
+each observed physical occurrence back to its J/C anchor.  In particular, merely
+having a ``program_axes`` row does not authorize collapsing x/y/z identities.
 """
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from typing import Any
 
 from .model import Gate1Artifact
 
 
-NORMALIZER_PROTOCOL = "intentir.gate1.jc-normalizer.v1"
-
-_PROGRAM_COORDINATE = re.compile(
-    r"\btt\.get_(?:program_id|num_programs)\b"
-)
-_CUSTOM_AXIS = re.compile(
-    r"(\btt\.get_(?:program_id|num_programs)\s+)([xyz])(\s*:)"
-)
-_GENERIC_AXIS = re.compile(
-    r"(\baxis\s*=\s*)[0-2](?P<suffix>\s*:\s*i32\b|\b)"
-)
+NORMALIZER_PROTOCOL = "intentir.gate1.jc-normalizer.v2"
 
 
 @dataclass(frozen=True)
@@ -36,6 +25,7 @@ class NormalizedTTIR:
     text: str
     transformed_occurrences: int
     active_rules: tuple[str, ...]
+    hard_relations: tuple[str, ...] = ()
 
     def evidence(self) -> dict[str, Any]:
         return {
@@ -45,6 +35,7 @@ class NormalizedTTIR:
             "peer_observation_visible": False,
             "transformed_occurrences": self.transformed_occurrences,
             "active_rules": list(self.active_rules),
+            "hard_relations": list(self.hard_relations),
             "hard_preservation_check": "passed",
             "idempotence_check": "passed",
             "preserved_jc_atom_classes": [
@@ -58,50 +49,21 @@ class NormalizedTTIR:
             "unknown_atoms": "hard",
         }
 
-
-def _normalize_program_axis_line(line: str) -> tuple[str, bool]:
-    if _PROGRAM_COORDINATE.search(line) is None:
-        return line, False
-    normalized = _CUSTOM_AXIS.sub(r"\1x\3", line)
-    normalized = _GENERIC_AXIS.sub(r"\g<1>0\g<suffix>", normalized)
-    return normalized, normalized != line
-
-
 def normalize_ttir_for_gate1(ttir: str, artifact: Gate1Artifact) -> NormalizedTTIR:
     """Return ``N^pi(ttir)`` without consulting another observation.
 
-    ``program_axes`` authorizes only removal of the physical x/y/z (or 0/1/2)
-    label.  It does not erase the coordinate operation, its multiplicity, its
-    result type, any user, or any arithmetic/access/effect reached from it.
-    No relation is exposed in active pi unless this function implements its
-    fixed unary quotient.  Mixed-radix relations remain hard until such a
-    normalizer exists.
+    The current profile keeps ``program_axes`` hard.  The old label-only quotient
+    was not sufficient: collapsing x/y/z could hide a swapped logical-domain
+    mapping even while preserving operation counts.  A future rule must first
+    establish a unique observation-to-J-domain mapping; until then raw axis
+    identity, multiplicity, users and downstream dataflow all remain visible.
     """
 
-    active_rules: list[str] = []
-    transformed = 0
-    text = ttir
-    if artifact.pi.program_axes:
-        active_rules.append("physical_program_axis_label")
-        lines: list[str] = []
-        for line in text.splitlines(keepends=True):
-            normalized, changed = _normalize_program_axis_line(line)
-            if changed:
-                if (
-                    len(_PROGRAM_COORDINATE.findall(line))
-                    != len(_PROGRAM_COORDINATE.findall(normalized))
-                    or _normalize_program_axis_line(normalized)[0] != normalized
-                ):
-                    raise ValueError(
-                        "program-axis normalization failed its fixed preservation audit"
-                    )
-            lines.append(normalized)
-            transformed += int(changed)
-        text = "".join(lines)
     return NormalizedTTIR(
-        text=text,
-        transformed_occurrences=transformed,
-        active_rules=tuple(active_rules),
+        text=ttir,
+        transformed_occurrences=0,
+        active_rules=(),
+        hard_relations=("program_axes",) if artifact.pi.program_axes else (),
     )
 
 

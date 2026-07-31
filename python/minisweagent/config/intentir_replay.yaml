@@ -12,6 +12,17 @@ agent:
     choices; they may not add or alter J-owned value semantics. Follow
     `/input/REPLAY_CONTRACT.md`.
 
+    Treat `boundary_ownership` as one whole-program contract before choosing a
+    schedule: preserve each authored logical access/effect, co-plan shared axes and
+    all outputs, and do not independently serialize every output extent by default.
+    Use J-only `domain_candidates` to keep related write domains in one guarded family;
+    an attached C `tile_extent` is a blocked traversal axis, not automatically a launch
+    axis.
+    Keep domain bounds and access predicates distinct: scalar `coord < extent` domain
+    bounds guard the corresponding effect group, while only the access row's authored
+    predicate belongs in its load/store mask. Do not silently conjoin domain bounds into
+    lane masks without an explicit J access-guard relation.
+
     Compile the whole S_J into one complete target program at
     `/output/replay.source`. You may globally choose target APIs, addressing,
     layouts, loops, control, synchronization, fusion, and code structure while
@@ -35,16 +46,16 @@ agent:
     {{ replay_startup_context }}
     </persistent-workspace-mirror>
 
-    Use `intentir_semantic_query overview|node REF|value REF|boundary NAME START COUNT`
+    Use `intentir_semantic_query overview|ownership|node REF|value REF|boundary NAME START COUNT`
     only for a local S_J lookup. Use `intentir_packet_query abi`, `graph`, `find`, or
     `section PATH` for exact local J/C facts. These are read-only projections, not plans.
 
     Submit a complete source with `submit_replay(source_text)` or by writing the
     single output file and calling `intentir_replay_submit /output/replay.source`.
     Use `intentir_replay_compile_check /output/replay.source`, then call the
-    `replay_ttir_inspect jc` command documented in TOOL.md once. Use a targeted
-    raw/find/observer lookup only for one concrete issue; never enumerate the full
-    fingerprint. Remove work not authorized by S_J. Submission reruns closed
+    `replay_ttir_inspect jc` command documented in TOOL.md. Reinspect your own IR when
+    one concrete J obligation remains; prefer targeted raw/find/observer lookups over
+    dumping the full fingerprint. Remove work not authorized by S_J. Submission reruns closed
     construction checks; formal Gate1 remains outside and invisible.
 
   step_limit: 0
@@ -76,7 +87,10 @@ model:
   # own-source inspection, construction-check and exact repair turns use low.
   routine_reasoning_effort: low
   routine_timeout_seconds: 180
-  semantic_initial_turns: 1
+  # Turn 1 reads immutable J files; turn 2 is the first turn that can actually
+  # compile them.  Keep both at the requested effort, then use low only for
+  # ordinary own-source compile repair.
+  semantic_initial_turns: 2
   observation_template: |
     {%- if output.output | length < 8000 -%}
     {"returncode": {{ output.returncode }}, "output": {{ output.output | tojson }}{% if output.exception_info %}, "exception": {{ output.exception_info | tojson }}{% endif %}{% if wall_time_limit_seconds > 0 and wall_time_limit_seconds - elapsed_seconds <= 180 %}, "remaining_seconds": {{ wall_time_limit_seconds - elapsed_seconds }}, "directive": "Replay wall time is nearly exhausted; submit a checked complete source."{% endif %}}

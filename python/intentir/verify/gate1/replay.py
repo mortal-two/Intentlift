@@ -3444,6 +3444,29 @@ and whole-program restructuring. Those choices may reorganize the program but ma
 add, remove, or alter J-owned values, predicates, domains, accesses, effects, results,
 or relations. Physical realization is not an extra semantic input. It will be compared
 outside this episode after fixed normalization; no Gate observation is available here.
+
+Before choosing physical loops or program axes, compile `boundary_ownership` as one
+whole-program contract. Cross-reference shared logical axes with anonymous C
+attachments, preserve every authored access/effect exactly once at the logical level,
+and account for all output domains together. `domain_candidates` is a deterministic
+J-only containment index; when several write domains share context axes but differ in
+one output axis, co-plan one domain family and preserve each domain with a guard rather
+than defaulting to independent whole-output loops. A C `tile_extent` attachment marks
+a blocked logical traversal axis; do not automatically spend a launch axis on it when
+the public frontend can traverse the block locally. Do not independently serialize each
+output tensor into a whole-tensor loop merely because its extent is symbolic. Preserve
+the authored access rank and paired coordinates unless a target restriction requires a
+split; any such split must jointly realize the one authored logical access. These are
+source-neutral compiler obligations derived only from J, not a target recipe.
+
+Keep J ownership classes separate in target control. A `domain_candidates` bound is a
+logical execution-domain condition, while the `predicate` inside an access row is the
+only access-local mask for that access. Do not silently conjoin a missing domain bound
+into every load/store mask. When a scalar program coordinate selects one member of a
+write-domain family, realize each `coord < extent` domain as scalar structured control
+around that effect group; keep the authored access predicate as its lane mask. Shared
+outer context-domain bounds may use one outer guard or early return. Only an explicit
+J access-guard relation may move a logical value guard into access-local masking.
 """
     readme = """# IntentIR source-blind Replay input
 
@@ -3470,6 +3493,7 @@ cross-reference, and write one complete `/output/replay.source`.
 
 ```text
 python .agents/intentir_agent_tool.py semantic_query overview
+python .agents/intentir_agent_tool.py semantic_query ownership
 python .agents/intentir_agent_tool.py semantic_query node REF
 python .agents/intentir_agent_tool.py packet_query abi 0 48
 python .agents/intentir_agent_tool.py packet_query graph 0 12
@@ -3480,8 +3504,9 @@ python .agents/intentir_agent_tool.py submit_replay
 
 Use ordinary file edits and your own helper files under `/work`. You may compile,
 inspect only your current Replay IR, checkpoint and patch repeatedly within this one
-episode. After construction PASS, use the single bounded `jc` view; use raw/find or one
-observer path only to resolve a concrete issue, never to enumerate the full fingerprint.
+episode. After construction PASS, use the bounded `jc` view; revisit your own IR when
+a concrete J obligation remains, and use targeted raw/find/observer queries rather than
+dumping the full fingerprint.
 Remove work not authorized by S_J, and keep inactive constexpr alternatives lexically
 inside their branch so the specialized compiler never materializes them.
 `submit_replay` checks the exact complete

@@ -506,11 +506,14 @@ Source/Replay observation 可能形成 residual，但 Gate1 不认证 π complet
 
 首版不需要让 TypeCheck 成为 SMT 或完整图证明器。最小可行实现只需 fail closed 地完成上述局部检查。
 
-Task 20 当前活动路径为 `replay-input.v3 / replay-check.v15 / MiniSWE Replay v32 / Codex Replay v56`：
+Task 20 当前活动路径为 `replay-input.v3 / replay-check.v15 / MiniSWE Replay v32 / Codex Replay v59`：
 Replay workspace 只挂载 J-only `S_J`、MaskC 与 `U_f`；π view、π query、obligation audit 和
 π-dependent construction membership 已从活动 Replay 路径删除。Gate1 使用
-`intentir.j-only-replay.jc-structural-gate1.v1` 与
-`intentir.gate1.jc-normalizer.v1`，只在两臂 raw observation 之后执行固定单边 normalization。
+`intentir.j-only-replay.jc-structural-gate1.v2` 与
+`intentir.gate1.jc-normalizer.v2`，只在两臂 raw observation 之后执行固定单边 normalization。
+当前 v2 保留 `program_axes` hard，因为只折叠物理 axis label 可能掩盖
+logical-domain/physical-axis 交换；新 quotient 必须先建立观察 occurrence 到 J domain 的
+唯一 typed anchor。
 
 以下是迁移前的 π-consuming runtime 记录，只解释历史 evidence，不是 J-only Replay 规范或新 evidence。
 
@@ -1041,7 +1044,9 @@ G_1^{\Phi_1}=1.
 canonicalization version。mutation test 可以评估 observer 的经验敏感性，但不构成 observer
 完备性定理，也不进入主认证谓词。
 
-当前 Triton active profile 是 `triton-ttir-3.6-gate1-v12`。除closed cache/eviction spelling外，v12
+当前 Triton active profile 是 `triton-ttir-3.6-gate1-v14`。v14 撤销不 sound 的
+program-axis label quotient；raw fingerprint 继承 v13。v13 在 v12 上增加 direct typed
+FMA/value-tree canonicalization。除 closed cache/eviction spelling外，v12
 进一步按唯一所有权作compiler图切片：完整保留observable value slice、predicate/boolean树、直接
 常量、reduction/control/effect、region/loop/carrier及program/pointer/transfer anchors；只将不进入
 上述切片的known-pure physical scheduling/address/rank/bound公式收缩为typed、carrier-origin-preserving
@@ -1271,7 +1276,7 @@ c_0=\operatorname{Bind}_H(C).
 \\
 &\land
 \left[
-\Phi_{f,p}(S,c_0)=\Phi_{f,p}(R,c_0)
+\Phi^{\pi}_{f,p}(S,c_0)=\Phi^{\pi}_{f,p}(R,c_0)
 \right]
 \\
 &\land
@@ -1313,16 +1318,18 @@ c_0=\operatorname{Bind}_H(C).
 
 不声称 \(\pi\) 完全没有可推断的语义信息，也不声称不存在所有 covert channel。
 
-## 11.2 Observer-relative Replay closure
+## 11.2 Observer-relative J/C structural closure
 
 \[
-\Phi_{f,p}(S,c_0)=\Phi_{f,p}(R,c_0).
+H^{J,C}_{f,p}(\Phi_{f,p}(S,c_0))
+=H^{J,C}_{f,p}(\Phi_{f,p}(R,c_0)).
 \]
 
 即：
 
 \[
-[S]_{\Phi_{f,p},c_0}=[R]_{\Phi_{f,p},c_0}.
+[S]_{H^{J,C}_{f,p}\circ\Phi_{f,p},c_0}
+=[R]_{H^{J,C}_{f,p}\circ\Phi_{f,p},c_0}.
 \]
 
 结论强度由 \(\Phi_{f,p}\) 明确限定。

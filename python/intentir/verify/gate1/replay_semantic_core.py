@@ -208,6 +208,174 @@ def _boundary_node_refs(
     return {name: rows for name, rows in result.items() if rows}
 
 
+def _expression_refs(value: Any) -> tuple[str, ...]:
+    """Return first-occurrence refs from one already parsed ContractExpr JSON.
+
+    This is a presentation-only walk over J-authored expressions.  It neither
+    solves a domain nor assigns a physical program axis.
+    """
+
+    refs: list[str] = []
+
+    def visit(item: Any) -> None:
+        if isinstance(item, Mapping):
+            if item.get("op") == "ref" and isinstance(item.get("value"), str):
+                ref = str(item["value"])
+                if ref not in refs:
+                    refs.append(ref)
+            for child in item.values():
+                visit(child)
+        elif isinstance(item, list):
+            for child in item:
+                visit(child)
+
+    visit(value)
+    return tuple(refs)
+
+
+def _boundary_ownership_view(
+    boundary: Mapping[str, Any],
+    *,
+    structured_boundary: Mapping[str, Any] | None,
+    output_bindings: Sequence[Any],
+) -> dict[str, Any]:
+    """Re-index exact J boundary facts for whole-program Replay compilation.
+
+    The raw boundary remains present in ``S_J.boundary``.  This view only joins
+    an authored access with its authored effect and parsed expression, so a
+    Replay owner need not rediscover those cross references in a large JSON
+    object.  The shared-axis receipts are plain set intersections of authored
+    index refs; they are not a schedule, launch mapping, or new J relation.
+    """
+
+    parsed_accesses: dict[str, Mapping[str, Any]] = {}
+    parsed_domains: dict[str, Mapping[str, Any]] = {}
+    if isinstance(structured_boundary, Mapping):
+        raw_domains = structured_boundary.get("domains", {})
+        if isinstance(raw_domains, Mapping):
+            parsed_domains = {
+                str(name): value
+                for name, value in raw_domains.items()
+                if isinstance(value, Mapping)
+            }
+        for raw in structured_boundary.get("accesses", []):
+            if isinstance(raw, Mapping) and isinstance(raw.get("access_id"), str):
+                parsed_accesses[str(raw["access_id"])] = raw
+
+    effects_by_access: dict[str, list[dict[str, Any]]] = {}
+    orphan_effects: list[dict[str, Any]] = []
+    for raw in boundary.get("effects", []):
+        if not isinstance(raw, Mapping):
+            continue
+        effect = copy.deepcopy(dict(raw))
+        access_ref = effect.get("access_ref")
+        if isinstance(access_ref, str):
+            effects_by_access.setdefault(access_ref, []).append(effect)
+        else:
+            orphan_effects.append(effect)
+
+    domain_axis_refs = {
+        name: {
+            ref
+            for ref in _expression_refs(expression)
+            if ref.startswith("k") and ref[1:].isdigit()
+        }
+        for name, expression in parsed_domains.items()
+    }
+    accesses: list[dict[str, Any]] = []
+    axes_by_target: dict[str, list[set[str]]] = {}
+    write_axis_sets: list[set[str]] = []
+    for raw in boundary.get("accesses", []):
+        if not isinstance(raw, Mapping):
+            continue
+        access_id = raw.get("access_id")
+        parsed = (
+            parsed_accesses.get(str(access_id), {})
+            if isinstance(access_id, str)
+            else {}
+        )
+        parsed_axes = copy.deepcopy(parsed.get("axes", raw.get("index_expression")))
+        axis_refs = list(_expression_refs(parsed_axes))
+        target = str(raw.get("tensor", "<missing>"))
+        axis_set = set(axis_refs)
+        covering_domains = {
+            name: refs
+            for name, refs in domain_axis_refs.items()
+            if axis_set and axis_set.issubset(refs)
+        }
+        # Keep every equally minimal authored domain.  Ambiguity remains visible;
+        # fixed code never chooses one based on Source or target conventions.
+        minimal_covering_domains = sorted(
+            name
+            for name, refs in covering_domains.items()
+            if not any(
+                other_refs < refs
+                for other_name, other_refs in covering_domains.items()
+                if other_name != name
+            )
+        )
+        axes_by_target.setdefault(target, []).append(axis_set)
+        if raw.get("kind") == "store":
+            write_axis_sets.append(axis_set)
+        access = {
+            "access_id": copy.deepcopy(access_id),
+            "kind": copy.deepcopy(raw.get("kind")),
+            "tensor": copy.deepcopy(raw.get("tensor")),
+            "node_ref": copy.deepcopy(raw.get("node_ref")),
+            # The accepted J already stores the canonical wire spelling.  Keep
+            # that compact spelling in the first-screen view; exact parsed ASTs
+            # remain available in ``canonical_boundary`` on demand.
+            "index": copy.deepcopy(raw.get("index_expression")),
+            "axis_refs": axis_refs,
+            "domain_candidates": minimal_covering_domains,
+            "predicate": copy.deepcopy(raw.get("predicate")),
+            "effects": copy.deepcopy(
+                effects_by_access.get(str(access_id), [])
+                if isinstance(access_id, str)
+                else []
+            ),
+        }
+        if "fill_value" in raw:
+            access["fill_value"] = copy.deepcopy(raw.get("fill_value"))
+        accesses.append(access)
+
+    shared_by_target = {
+        target: sorted(set.intersection(*sets)) if sets else []
+        for target, sets in axes_by_target.items()
+    }
+    shared_writes = (
+        sorted(set.intersection(*write_axis_sets)) if write_axis_sets else []
+    )
+    write_domain_sets = [
+        domain_axis_refs[name]
+        for access in accesses
+        if access.get("kind") == "store"
+        for name in access.get("domain_candidates", [])
+        if name in domain_axis_refs
+    ]
+    return {
+        "authority": (
+            "deterministic re-indexing of exact J boundary/domain/effect/output "
+            "facts; shared refs are set intersections only, not target mapping"
+        ),
+        "domains": copy.deepcopy(boundary.get("domains", {})),
+        "domain_axis_refs": {
+            name: sorted(refs) for name, refs in sorted(domain_axis_refs.items())
+        },
+        "access_effects": accesses,
+        "shared_axis_refs_by_tensor": shared_by_target,
+        "shared_write_axis_refs": shared_writes,
+        "shared_write_domain_axis_refs": (
+            sorted(set.intersection(*write_domain_sets))
+            if write_domain_sets
+            else []
+        ),
+        "output_bindings": copy.deepcopy(list(output_bindings)),
+        "result_relations": copy.deepcopy(boundary.get("result_relations", [])),
+        "orphan_effects": orphan_effects,
+    }
+
+
 def _value_list(value: Any) -> str:
     if isinstance(value, str):
         return value
@@ -290,6 +458,55 @@ def _render_text(value: Mapping[str, Any]) -> str:
     for parameter in _array(signature.get("parameters", []), "S_J.signature.parameters"):
         lines.append("  parameter " + _compact(parameter))
 
+    ownership = _object(
+        value.get("boundary_ownership", {}), "S_J.boundary_ownership"
+    )
+    lines.append("")
+    lines.append("boundary_ownership:")
+    lines.append("  authority " + str(ownership.get("authority", "")))
+    for name, expression in _object(
+        ownership.get("domains", {}), "S_J.boundary_ownership.domains"
+    ).items():
+        lines.append(f"  domain {name} = " + _compact(expression))
+    for name, refs in _object(
+        ownership.get("domain_axis_refs", {}),
+        "S_J.boundary_ownership.domain_axis_refs",
+    ).items():
+        lines.append(f"  domain_axes {name} = " + _compact(refs))
+    lines.append(
+        "  shared_write_axis_refs "
+        + _compact(ownership.get("shared_write_axis_refs", []))
+    )
+    lines.append(
+        "  shared_write_domain_axis_refs "
+        + _compact(ownership.get("shared_write_domain_axis_refs", []))
+    )
+    for target, refs in _object(
+        ownership.get("shared_axis_refs_by_tensor", {}),
+        "S_J.boundary_ownership.shared_axis_refs_by_tensor",
+    ).items():
+        lines.append(f"  tensor_axes {target} = " + _compact(refs))
+    for access in _array(
+        ownership.get("access_effects", []),
+        "S_J.boundary_ownership.access_effects",
+    ):
+        lines.append("  access_effect " + _compact(access))
+    for binding in _array(
+        ownership.get("output_bindings", []),
+        "S_J.boundary_ownership.output_bindings",
+    ):
+        lines.append("  output " + _compact(binding))
+    for relation in _array(
+        ownership.get("result_relations", []),
+        "S_J.boundary_ownership.result_relations",
+    ):
+        lines.append("  result_relation " + _compact(relation))
+    for effect in _array(
+        ownership.get("orphan_effects", []),
+        "S_J.boundary_ownership.orphan_effects",
+    ):
+        lines.append("  effect " + _compact(effect))
+
     function = _object(value.get("function", {}), "S_J.function")
     lines.append("")
     lines.append(f"function {function.get('name', '<masked>')}:")
@@ -304,8 +521,10 @@ def _render_text(value: Mapping[str, Any]) -> str:
 
     boundary = _object(value.get("boundary", {}), "S_J.boundary")
     lines.append("")
-    lines.append("boundary:")
+    lines.append("remaining_boundary_relations:")
     for name, rows in boundary.items():
+        if name in {"domains", "accesses", "effects", "result_relations"}:
+            continue
         if isinstance(rows, Mapping):
             for ref, item in rows.items():
                 lines.append(f"  {name} {ref} = " + _compact(item))
@@ -372,6 +591,11 @@ def materialize_replay_semantics(j_value: Mapping[str, Any]) -> ReplaySemanticPr
         if structured_boundary is not None
         else copy.deepcopy(function.get("returns", []))
     )
+    boundary_ownership = _boundary_ownership_view(
+        boundary,
+        structured_boundary=structured_boundary,
+        output_bindings=output_bindings,
+    )
     value: dict[str, Any] = {
         "protocol": REPLAY_SEMANTIC_PROGRAM_PROTOCOL,
         "status": "masked" if masked else "normal",
@@ -387,6 +611,7 @@ def materialize_replay_semantics(j_value: Mapping[str, Any]) -> ReplaySemanticPr
             canonical_types=canonical_types,
         ),
         "boundary": boundary,
+        "boundary_ownership": boundary_ownership,
         "boundary_refs_by_node": _boundary_node_refs(boundary, node_ids),
         "output_bindings": output_bindings,
         "node_ids": copy.deepcopy(j.get("node_ids", {})),
@@ -414,6 +639,10 @@ def query_replay_semantics(
         raise ValueError("unsupported Replay semantic-program protocol")
     nodes = _array(semantic_program.get("nodes", []), "S_J.nodes")
     boundary = _object(semantic_program.get("boundary", {}), "S_J.boundary")
+    boundary_ownership = _object(
+        semantic_program.get("boundary_ownership", {}),
+        "S_J.boundary_ownership",
+    )
     value_types = _array(semantic_program.get("value_types", []), "S_J.value_types")
     if list(arguments) == ["overview"]:
         return {
@@ -428,7 +657,20 @@ def query_replay_semantics(
                 for name, value in boundary.items()
             },
             "outputs": semantic_program.get("output_bindings", []),
-            "next": "node REF | value REF | boundary NAME START COUNT",
+            "shared_write_axis_refs": boundary_ownership.get(
+                "shared_write_axis_refs", []
+            ),
+            "shared_write_domain_axis_refs": boundary_ownership.get(
+                "shared_write_domain_axis_refs", []
+            ),
+            "next": "ownership | node REF | value REF | boundary NAME START COUNT",
+        }
+    if list(arguments) == ["ownership"]:
+        return {
+            "protocol": REPLAY_SEMANTIC_QUERY_PROTOCOL,
+            "status": "pass",
+            "view": "boundary_ownership",
+            "boundary_ownership": copy.deepcopy(dict(boundary_ownership)),
         }
     if len(arguments) == 2 and arguments[0] == "node":
         ref = arguments[1]
@@ -499,7 +741,8 @@ def query_replay_semantics(
             ),
         }
     raise ValueError(
-        "usage: overview | node REF | value REF | boundary NAME START COUNT"
+        "usage: overview | ownership | node REF | value REF | "
+        "boundary NAME START COUNT"
     )
 
 

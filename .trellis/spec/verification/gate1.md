@@ -77,8 +77,9 @@ Normalize_(f,p,nu)^q(O; J,C,pi_q) -> O' | undefined
 `q` 是 closed typed instance；normalizer 不搜索或补造 π，也不是完整 Source→π extractor。
 
 J-owned operator/operand、logical domain、predicate/fill、reducer、value recurrence、observable
-effect/control/post-state 与 output binding 始终保持 hard。当前 active π 只允许物理 launch-axis
-label 的窄 canonicalization。mixed-radix、address、placement、
+effect/control/post-state 与 output binding 始终保持 hard。当前 active π 可携带 typed
+`program_axes`，但 `jc-normalizer.v2` 不因此折叠物理 axis label：在观察 occurrence
+无法唯一回指 J domain 前，axis identity 保持 hard。mixed-radix、address、placement、
 materialization、physical iteration、order、sharing、carrier、terminal control 与 sensitive
 numeric/update residual 均保持 hard；它们没有可由候选选择的 `witness_only` 通道。
 
@@ -135,7 +136,8 @@ J/C/π 拥有的 target cache-policy presentation hint，不改变 J denotation�
 predicate/fill、address/dataflow 或 transfer topology。未知值、load/store 方向不合法的值、eviction
 以及其他 memory attributes 仍参与 hard comparison。
 
-当前 active profile 是 `triton-ttir-3.6-gate1-v13`。v13 只增加一条全局 closed value-tree
+当前 active profile 是 `triton-ttir-3.6-gate1-v14`。v14 保留 v13 raw fingerprint，但撤销
+不 sound 的 program-axis label quotient。v13 只增加一条全局 closed value-tree
 canonicalization：一个 direct typed `math.fma(a,b,c)` 与使用相同 typed operands 的 direct
 `a*b+c` 等价；若 `c` 是同 region、direct `0-d`/`neg(d)`，则只与 direct `a*b-d` 等价。它不移动
 cast、不改变 operand/type、不重关联更大的树，也不授权 production backend 进行 FMA contraction；
@@ -156,8 +158,8 @@ public entry ABI 仍是边界，private helper 名称本身不进入 J/C/π。
 Replay construction compile 不读取 π，因此不执行任何 π-derived occurrence、branch 或 terminal
 obligation。Source-aware Lift 可以用 exact anonymous Source TTIR 对模型已提交的 program-axis row 做
 reject-only 诊断，但该诊断不生成 row，也不是 certification。正式 Gate1 的 raw observation始终保留
-program-coordinate operation 数量、所有 downstream dataflow、predicate/control/effect；`N^π` 只擦除
-已声明物理 axis label。mixed-radix 与旧 empty-slot route、branch、
+program-coordinate operation 数量、axis identity、所有 downstream dataflow、predicate/control/effect；
+当前 `N^π` 对 `program_axes` 不作变换。mixed-radix 与旧 empty-slot route、branch、
 terminal-control construction checks 仅解释迁移前 evidence，不属于当前 J-only Replay。
 
 v6 新增 Triton 3.6 quoted-generic `tt.scan` 的 typed、single-block、encodingless observer contract：

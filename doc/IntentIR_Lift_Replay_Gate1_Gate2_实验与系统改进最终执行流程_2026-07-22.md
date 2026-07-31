@@ -1080,7 +1080,9 @@ mechanism，具体 spelling 不进入 hard
 fingerprint。未知或方向不合法的 cache/eviction policy、mask、fill、type、volatility 及其他 operation
 attributes 仍被观察；不得借此归一任意 memory difference。
 
-当前 active profile 是 `triton-ttir-3.6-gate1-v13`。v13只增加 direct typed FMA 与相同 typed
+当前 active profile 是 `triton-ttir-3.6-gate1-v14`。v14 保留 v13 raw fingerprint，但撤销
+了不 sound 的 `x/y/z -> x` program-axis label quotient；`program_axes` 在观察 occurrence
+无法唯一回指 J domain 时保持 hard。v13只增加 direct typed FMA 与相同 typed
 operands 的 direct mul+add/sub value-tree canonicalization；不移动cast、不重关联更大的树，也不授权
 production backend执行FMA contraction。v13继承v12；v12只增加一项全局ownership quotient：完整保留
 输出值反向切片、predicate/boolean结构与直接常量、reduction/control/effect、region/loop/carrier、
@@ -1397,16 +1399,18 @@ TypeCheck(J,C,π) + Gate1 + Gate2
 - Replay 的额外输入；
 - Harness AST 修补逻辑。
 
-### 14.2 π 能表达但 Replay 没有消费
+### 14.2 J 信息完整但 Replay 没有忠实消费
 
 修改：
 
 - Replay prompt；
-- π 消费顺序说明；
-- instance/route/order/sharing 的公共解释。
 - 从当前 exact J fresh 生成只读、参数化、anchor-preserving `S_J=M(J)`；normal/MaskJ 分别物化；
-- 启动只给 immutable 文件路径与字节数，Agent 首读 `S_J`，再按需 query 一个 exact π
-  region/instance/route/order/carrier；query 不推导 target lowering、schedule、代码或修复建议。
+- 启动只给 immutable J-only 文件路径与字节数，Agent 首读 `S_J`，再按需
+  query exact J/MaskC 事实与自己的 target IR；query 不推导 target lowering、schedule、
+  代码或修复建议。
+
+π 不得因 Replay 实现困难重新进入 request；合法 realization residual 只能由
+固定一元 Gate1 normalizer 处理，无 sound rule 时继续 hard/fail closed。
 
 不把旧 Replay 代码提供给下一次 Replay。
 

@@ -28,8 +28,8 @@ Gate2: Source-Replay / Source-J / Replay-J
 - [x] 归档旧 π-centered `CanonPair/coverage/used-pi` Task 20 草案；
 - [x] 冻结 `Replay(J,MaskC(C);U_f)`；
 - [x] 定义 π-blind raw observer、固定单臂 `N^pi`、Gate1 equality 与 J/C-only 结论；
-- [x] active π wire 压成 versioned normalization witness，只保留已有固定一元语义的
-  `program_axes`；旧 realization graph 只读兼容；
+- [x] active π wire 压成 versioned normalization witness，只保留 closed `program_axes`；
+  旧 realization graph 只读兼容；当前 profile 在无 sound anchor matcher 时保持它 hard；
 - [x] 不新增/恢复 `python/tests`，只用真实 Kernel closure 验证。
 
 ## 2. P0：文档与活动协议收敛
@@ -68,11 +68,14 @@ Gate2: Source-Replay / Source-J / Replay-J
 - [x] 固定 `H^(J,C)` hard projection；候选 π 不得选择 rule/scope/erasable fields；
 - [x] 实现候选外 `ProfileOK` 发布合同：H覆盖所有当前 profile 可观察的 J/C-owned categories，未知
   atom 默认 hard；每条 N_pi rule 具有机械 hard-preservation check 或独立 rule audit；
-- [x] 第一纵切仅支持 Triton program-axis label normalization；
+- [x] 撤销不 sound 的 Triton `x/y/z -> x` label quotient；`jc-normalizer.v2`对
+  `program_axes` 保持 hard，不会掩盖 domain–axis 交换；
+- [ ] 只在 physical occurrence 可唯一回指 J domain 时，实现 Kernel-无关的
+  program-axis unary normalization 并升新 profile；
 - [ ] simple placement/materialization 只在真实 residual 需要且 hard preservation 可局部判定时加入；
 - [x] carrier/control/sharing/order/numeric/update 默认不 normalize；
 - [x] 不实现 `Diff subset pi` acceptance、π completeness/minimality、used/unused π 认证或 per-kernel matcher。
-- [x] `program_axes=normalizer_required`；尚无一元实现的 `program_linearizations` 与其余旧 relation 全部退出 active
+- [x] 尚无一元实现的 `program_linearizations` 与其余旧 relation 全部退出 active
   schema，不再让 Lift 序列化不可消费的 graph，也不静默重写旧 artifact；
 - [ ] 记录 candidate 中 J/C/π 的 bytes、Lift time-to-TypeCheck 与 relation rejection，验证简化确实减负。
 
@@ -99,6 +102,18 @@ SourceReconcile 会把 compact π 误读成零 occurrence，现已删除。Flash
 Gate1 没有被 π 放过：前者暴露 terminal control/非线性 recurrence 整体遗漏，后者暴露五状态 online
 recurrence 被错误压成 global max/sum。上述 one-bit preflight 的目的正是把这类真实硬错误提前到首次
 submit，而不是改变 Gate1 verdict。
+
+2026-08-01 的真实 Liger/Flash 纵切还确认了两件事：
+
+- J-only Replay 可以稳定到达 TypeCheck 和 Gate1，但主要 residual 仍在
+  op/dataflow/predicate-effect，不能用 π 擦除；
+- 旧 program-axis label quotient 可能掩盖 swapped domain–axis binding，已改为 hard identity
+  normalizer 并升级 Gate1/profile evidence 版本。
+
+`S_J` 现在增加只由 exact J 决定的 `boundary_ownership` 索引：它联合已有
+domain/access/effect/output 引用并暴露歧义，不选择 target schedule、program axis 或
+Source recipe。Replay 单回合超时时，若 exact checkpoint 已通过同一独立 host
+recheck，可立即接受该 bytes，不再消耗剩余 episode 时间；Gate1 仍在 episode 外完整执行。
 
 ## 7. P5：多前端与实验
 

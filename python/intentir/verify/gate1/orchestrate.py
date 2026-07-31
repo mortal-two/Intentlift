@@ -24,7 +24,7 @@ from .profile import ObserverProfile, TRITON_OBSERVER_PROFILE
 from .ttir import TTIRFingerprint, TTIRParseError, fingerprint_ttir
 
 
-GATE1_PROTOCOL = "intentir.j-only-replay.jc-structural-gate1.v1"
+GATE1_PROTOCOL = "intentir.j-only-replay.jc-structural-gate1.v2"
 SOURCE_OBSERVER_UNSUPPORTED_DIAGNOSTIC_PREFIX = (
     "observer unsupported: source TTIR"
 )

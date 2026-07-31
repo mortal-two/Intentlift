@@ -292,7 +292,10 @@ active π 的 closed wire 恰为：
 
 它只供 TypeCheck 与 Gate1 的固定 unary normalizer读取，绝不进入 Replay、production backend 或 C。
 `program_axes` 的每一行把一个已声明 J domain 绑定到 Source/TTIR 中直接观察到的物理 axis 0..2。
-当前没有 sound unary normalizer 的 mixed-radix、placement、carrier 等 relation 不暴露在 active wire；
+它是 closed typed witness，但不因存在就自动获得 normalization 权限；当前
+`jc-normalizer.v2` 在无法将 physical occurrence 唯一回指 J domain 时保持 axis identity
+hard。空数组合法，compact TypeCheck 也不声称 program-coordinate totality。当前没有
+sound unary normalizer 的 mixed-radix、placement、carrier 等 relation 不暴露在 active wire；
 它们在 Gate1 中保持 hard residual，不能先让 Lift 填字段再决定含义。
 
 π 禁止携带：

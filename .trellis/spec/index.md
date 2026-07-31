@@ -27,12 +27,13 @@ epoch、commitment、额外认证 Gate 或兼容旁路来调和冲突。
 当前 fresh-run 栈为 `artifact.v12 + pi.normalization-witness.v1 / decode.v18 / typecheck.v31 / candidate-check.v1 / replay-check.v15`。
 J/C 继续验证 rank-0 closed signature、Layer-A total typing、显式 broadcast、canonical
 reduce/contraction、functional-domain closure、value/dimension、consumer-extension、access-guard、typed
-control/inout/output-binding 等全部语义事实。active π 只作者化已有固定 unary normalizer 的
-program-axis relation；旧 `regions/instances/routes/iterations/carriers/refinements`
+control/inout/output-binding 等全部语义事实。active π 只作者化 closed
+program-axis relation；当前 profile 在无 sound anchor matcher 时将它保持 hard。旧
+`regions/instances/routes/iterations/carriers/refinements`
 仅供历史 artifact 按原版本读取。fixed code只诊断，不翻译别名、补齐 attrs、生成语义
 handle/relation、改图或修复 artifact；历史 wire/receipt 不静默升级或重判。当前 Agent execution
 receipt 为 `openai.codex-cli.intentir-lift.v37 / intentir.lift-knowledge.v98 /
-minisweagent.intentir-replay.v32 / openai.codex-cli.intentir-replay.v58`；Codex runtime v4 在
+minisweagent.intentir-replay.v32 / openai.codex-cli.intentir-replay.v59`；Codex runtime v4 在
 closed submit 工具接受 exact bytes 后恢复并复核 checkpoint，不等待 proof-irrelevant 的结尾 prose；
 Replay 内部 J-only 视图为 `intentir.replay-semantic-program.v1`，不是 artifact 或新输入权威；
 artifact.v11 的 `dimension_relations`只接受identity、常数加/乘、常数ceil-div与round-up的acyclic closed grammar；
@@ -70,7 +71,8 @@ Codex Lift v20 删除重复的 feedback host tool，特殊回调只保留两个 
 
 当前 `S_J=M(J)` 按 declaration order 保存每个 J node 的 typed
 `id/op/operands/attrs/result`、structured control、boundary 与 output binding，并保留 J handle；它不读取
-π，也不生成 target code。当前 compact π 只作者化已有固定一元 normalizer 的 `program_axes`；
+π，也不生成 target code。当前 compact π 只作者化 closed `program_axes`；
+当前 profile 在无唯一 J-domain anchor 时将 axis identity 保持 hard；
 mixed-radix decode 在有 sound normalizer 与新 schema 版本前保持 hard。logical block interval/mask
 必须显式属于 J，π 不复制 partition formula。
 
@@ -101,7 +103,9 @@ valuation 猜测。它继承 v25；v25 继承 v24 的 pointer route 与 floating
 `reduction_linearization` 限定为一个 `realize` stage 经唯一 slot-0 route 进入一个 J
 `reduce` realize stage；fixed code只检查 Lift 已作者化的事实。
 
-当前 Gate1 observer profile 是 `triton-ttir-3.6-gate1-v13`。v13 只把 direct typed FMA 与相同
+当前 Gate1 observer profile 是 `triton-ttir-3.6-gate1-v14`。v14 保留 v13 的 raw
+fingerprint，但撤销不 sound 的 program-axis label quotient；`program_axes` 在能唯一
+回指 J domain 之前保持 hard。v13 只把 direct typed FMA 与相同
 typed operands 的 direct mul+add（或 direct negated addend 对应的 mul-sub）规范为同一 value tree；
 不移动 cast、不重关联更大表达式，也不是 production FMA permission。v13 继承 v12；v12 对 compiler 图先作通用 ownership
 切片：所有进入返回值、store/update value 的计算，完整 predicate/boolean 树及其直接常量，以及
@@ -115,7 +119,7 @@ reachable、static、structured、acyclic `tt.call` 的 interprocedural comparis
 single-block、encodingless `tt.scan`、closed structured `scf.if` 与 exact terminal binary fork observation。
 operation/effect classification 是全局 closed profile；unknown op、malformed generic/body line、超出
 closed profile 的 multi-block CFG/structured region 与未支持 control/region fail closed。历史
-v5–v12 evidence 不由 v13 静默重判；该 profile 只是当前 compiler
+v5–v13 evidence 不由 v14 静默重判；该 profile 只是当前 compiler
 contract，不是形式完备性证明。同 case fan-out 协议是
 `intentir.scrc.candidate-fanout.v4`：首个被观察到的完整 Gate1 closure 成为 winner，sibling
 cooperative stop并保存 receipt；hidden Gate2 尚未生成，因此调度次序不进入认证谓词。

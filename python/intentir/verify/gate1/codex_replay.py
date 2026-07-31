@@ -6,6 +6,7 @@ import json
 import os
 import tempfile
 import threading
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -47,7 +48,7 @@ from .replay import (
 )
 
 
-CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v58"
+CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v59"
 
 _INITIAL_PROMPT = """You are the sole writer for one fresh source-blind IntentIR Replay episode.
 Work only under the isolated /workspace. input/ is immutable; output/, work/, and
@@ -68,11 +69,30 @@ whole-program restructuring while preserving all J-owned value semantics. Do not
 S_J or infer a Source recipe. input/REPLAY_CONTRACT.md defines
 the ownership boundary and input/TOOL.md defines the tools.
 
+Compile `boundary_ownership` as one whole-program contract before selecting a
+physical schedule. Preserve every authored logical access/effect, co-plan axes shared
+by multiple outputs, and cross-reference anonymous C attachments before deciding
+which logical axes become program coordinates, lanes, or loops. Do not independently
+serialize every symbolic output extent by default. When J-only `domain_candidates`
+show write domains with shared context axes and one differing output axis, compile them
+as one guarded domain family where the frontend permits. Treat an attached C
+`tile_extent` as a blocked traversal axis, not automatically as another launch axis.
+This view contains only J facts;
+it is not a hidden Source recipe.
+
+Do not merge J ownership classes. `domain_candidates` supplies logical execution-domain
+bounds; an access row's `predicate` is its access-local mask. For a scalar coordinate
+selecting one output-domain member, use scalar structured control for `coord < extent`
+around that effect group and keep only the authored access predicate on its loads and
+stores. Shared outer domain bounds may use one outer guard or early return. Do not
+replace these domain guards with wider lane masks unless J explicitly authors an
+access-guard relation.
+
 Compile, inspect only your own Replay IR, and patch the complete program in this same
 episode. First run `replay_compile_check`; once construction passes, call
-`replay_ttir_inspect jc` once for the bounded J/C structural summary. Use a targeted
-`find`, `raw`, or `observer` query only when that summary exposes one concrete issue;
-never enumerate every fingerprint section. Keep computations for inactive constexpr
+`replay_ttir_inspect jc` for the bounded J/C structural summary. Inspect your own IR
+again when a concrete J obligation remains unclear; use targeted `find`, `raw`, or
+`observer` queries instead of dumping the whole fingerprint. Keep computations for inactive constexpr
 alternatives inside their branch and do not add unmentioned `volatile`, cache,
 eviction, or other target attributes. Then run
 `submit_replay` on the reviewed exact bytes and repair until it
@@ -188,6 +208,68 @@ def _jc_fingerprint_summary(fingerprint: Mapping[str, Any]) -> dict[str, Any]:
         if isinstance(value, (list, tuple, dict)):
             result[f"{key}_count"] = len(value)
     return result
+
+
+def _j_contract_summary(semantic_program: Mapping[str, Any]) -> dict[str, Any]:
+    """Return a compact J-only checklist beside Replay's own TTIR summary.
+
+    Counts here are logical authored facts, not required raw TTIR multiplicities:
+    target lowering may fuse or split representation.  The view gives the coding
+    agent a bounded omission checklist without reading Source, pi, or Gate state.
+    """
+
+    nodes = semantic_program.get("nodes", [])
+    node_ops = Counter(
+        str(item.get("op"))
+        for item in nodes
+        if isinstance(item, Mapping) and isinstance(item.get("op"), str)
+    ) if isinstance(nodes, list) else Counter()
+    ownership = semantic_program.get("boundary_ownership", {})
+    accesses = (
+        ownership.get("access_effects", [])
+        if isinstance(ownership, Mapping)
+        else []
+    )
+    access_kinds: Counter[str] = Counter()
+    effect_kinds: Counter[str] = Counter()
+    accesses_by_tensor: Counter[str] = Counter()
+    for item in accesses if isinstance(accesses, list) else []:
+        if not isinstance(item, Mapping):
+            continue
+        if isinstance(item.get("kind"), str):
+            access_kinds[str(item["kind"])] += 1
+        if isinstance(item.get("tensor"), str):
+            accesses_by_tensor[str(item["tensor"])] += 1
+        effects = item.get("effects", [])
+        for effect in effects if isinstance(effects, list) else []:
+            if isinstance(effect, Mapping) and isinstance(effect.get("kind"), str):
+                effect_kinds[str(effect["kind"])] += 1
+    return {
+        "authority": (
+            "J-only authored-fact checklist; logical counts are not raw TTIR "
+            "occurrence requirements and do not accept or reject Replay"
+        ),
+        "node_ops": dict(sorted(node_ops.items())),
+        "access_kinds": dict(sorted(access_kinds.items())),
+        "effect_kinds": dict(sorted(effect_kinds.items())),
+        "accesses_by_tensor": dict(sorted(accesses_by_tensor.items())),
+        "shared_write_axis_refs": (
+            ownership.get("shared_write_axis_refs", [])
+            if isinstance(ownership, Mapping)
+            else []
+        ),
+        "shared_write_domain_axis_refs": (
+            ownership.get("shared_write_domain_axis_refs", [])
+            if isinstance(ownership, Mapping)
+            else []
+        ),
+        "domain_axis_refs": (
+            ownership.get("domain_axis_refs", {})
+            if isinstance(ownership, Mapping)
+            else {}
+        ),
+        "outputs": semantic_program.get("output_bindings", []),
+    }
 
 @dataclass
 class CodexCLIReplayWriter:
@@ -571,6 +653,7 @@ class CodexCLIReplayWriter:
                         "protocol": observation["protocol"],
                         "status": "pass",
                         "ttir_lines": len(lines),
+                        "j_contract": _j_contract_summary(semantic_program),
                         "jc": _jc_fingerprint_summary(fingerprint),
                     }
                 elif mode == "summary":
@@ -820,14 +903,11 @@ class CodexCLIReplayWriter:
                         episode_limit
                         - active_elapsed_ms / 1000.0
                     )
-                    if passed and (
-                        explicit_submission_accepted
-                        or remaining_after_timeout <= 0
-                    ):
+                    if passed:
                         timeout_event["recovery"] = (
                             "current_exact_replay"
                             if explicit_submission_accepted
-                            else "deadline_host_validated_current_exact_replay"
+                            else "turn_deadline_host_validated_current_exact_replay"
                         )
                         break
                     if last_checked_good is not None:
@@ -837,14 +917,11 @@ class CodexCLIReplayWriter:
                         passed, check = evaluate_current(
                             trigger="host_timeout_checkpoint_restore"
                         )
-                        if passed and (
-                            explicit_submission_accepted
-                            or remaining_after_timeout <= 0
-                        ):
+                        if passed:
                             timeout_event["recovery"] = (
                                 "same_episode_checked_checkpoint"
                                 if explicit_submission_accepted
-                                else "deadline_host_validated_checked_checkpoint"
+                                else "turn_deadline_host_validated_checked_checkpoint"
                             )
                             break
                     if remaining_after_timeout <= 0:

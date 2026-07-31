@@ -415,6 +415,12 @@ proof-irrelevant 的 J 内部视图，不是第四 artifact、Replay 新权威�
 计算 `M(J)`；MaskJ 轮必须 fresh 计算 `M(MaskJ(J))`，禁止先从完整 J 生成 `S_J` 后再遮罩。
 structured JSON 是 exact form；文本 view 只把同一值排成 typed SSA，逐行显示
 `result=op(operands)` 与 loop trip/scan/carry/yield，不改变或补造 edge。
+为减少 Agent 在大 JSON 间重复追引用，`M(J)` 还可生成
+`boundary_ownership` 索引：它只对 exact J 中已有的 domain/access/effect/output
+引用做确定性联合、解析 ContractExpr 并保留所有歧义候选。它不把 access
+绑定到某个候选 domain，不选择 program axis/loop/schedule，不读取 Source 或 π，
+也不成为新 artifact。出现多个 `domain_candidates` 时，Replay owner 必须继续按 J
+全局合同判断，fixed view 不得代替它选一个。
 
 Replay Compiler Agent 直接把完整只读 `S_J` 作为 compiler input，并结合 `MaskC(C)` 与 `U_f` 独立
 编写一份完整 `replay.source`。Agent 可以全局选择 target API、address/program mapping、layout、
@@ -432,6 +438,10 @@ node/value/boundary；不存在 π query、realization ledger 或 relation-to-ta
 episode 外重新通过 ingress 与 construction compile 后才进入 formal Gate1；这些检查只拒绝，不签发
 Gate membership 或认证。所有 workspace/helper 在 formal round 后销毁，下一轮仍启动 fresh
 source-blind Replay。
+若单个 provider turn 到达时间上限时，当前 exact source 或同 episode 的 last-known-good
+checkpoint 已经通过完全相同的独立 host construction recheck，runtime 可立即接受该
+exact bytes，而不必继续消耗剩余 episode wall time。这不接受未检查草稿，不跳过外部
+Gate1，也不将 checkpoint 状态写入 artifact。
 
 以下 `replay-check.v10`–v55 与 π realization construction 条款记录迁移前 runtime；Task 20 的
 J-only Replay 不调用它们。它们只用于解释历史 evidence，待 runtime 迁移完成后整体归档。迁移前

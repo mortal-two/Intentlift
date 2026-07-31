@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from .cute import CUTE_FINGERPRINT_SCHEMA
 from .model import Frontend
+from .normalize import NORMALIZER_PROTOCOL
 from .ptx import PTX_FINGERPRINT_SCHEMA
 from .tilelang import TILELANG_FINGERPRINT_SCHEMA
 from .ttir import TTIR_FINGERPRINT_SCHEMA
@@ -34,9 +35,9 @@ class ObserverProfile:
 TRITON_OBSERVER_PROFILE = ObserverProfile(
     Frontend.TRITON,
     "triton_ttir_structural",
-    TTIR_FINGERPRINT_SCHEMA,
+    "triton-ttir-3.6-gate1-v14",
     "ttir",
-    TTIR_FINGERPRINT_SCHEMA,
+    f"{TTIR_FINGERPRINT_SCHEMA}+{NORMALIZER_PROTOCOL}",
     "strong_structural",
 )
 

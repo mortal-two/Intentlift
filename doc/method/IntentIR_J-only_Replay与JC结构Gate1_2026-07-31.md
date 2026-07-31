@@ -129,8 +129,10 @@ active π schema 不暴露尚无固定单臂 normalization 的 relation；它们
 Task 20 先只实现 corpus 真实需要且能保守定义的纵切：
 
 1. π 无关的 alpha/SSA 名称与纯打印顺序规范化继续由 raw `Canon` 负责；
-2. π-aware P0 只实现 program-axis label 的局部 canonical form；mixed-radix 保持 hard，直到有
-   Kernel 无关且通过 hard-preservation audit 的一元 normalizer；
+2. `program_axes` 继续作为 typed witness 保留，但当前 profile 将其保持 hard。旧的
+   `x/y/z -> x` 标签折叠无法证明 logical-domain/physical-axis 绑定不变，因而撤销；
+   只有当 observer 能将每个 physical occurrence 唯一回指到 J domain，并通过
+   hard-preservation audit 后，新 profile 才可启用对应一元 canonical form；
 3. simple placement/materialization 只有在 observer 能独立证明 J/C hard projection 不变时才加入；
 4. carrier、terminal control、sharing/order、numeric reassociation、atomic/update 与一般 loop quotient
    默认不 normalize。
@@ -142,6 +144,11 @@ Lift 填字段、以后再决定它表示什么。
 任何规则必须按 `(f,p,version)` 全局定义并满足上述 `ProfileOK`；禁止按 Kernel、benchmark ordinal
 或某次 diff 加规则。
 false negative 可以通过后续通用 profile 升级解决，false positive 不接受。
+
+当前 `jc-normalizer.v2` 因此是 identity/fail-closed 基线：π 非空仍被记录，但不
+改变 observation。这不表示 π 永久无效，而是禁止在没有 sound consumer 前先声称
+已有消融能力。后续 π ablation 只在启用已审计 rule 的 profile 上报告，不用当前
+identity 基线伪造收益。
 
 ## 6. Gate1 与 Gate2 的分工
 
