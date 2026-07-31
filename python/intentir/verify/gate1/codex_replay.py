@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -14,6 +15,7 @@ from intentir.extraction.providers.codex_cli import (
     CODEX_CLI_TOOL_BRIDGE_ROOT_NAME,
     CodexCLICancelled,
     CodexCLIError,
+    CodexCLISubmissionAccepted,
     CodexCLISession,
     CodexCLIToolBridge,
     CodexCLITurn,
@@ -45,7 +47,7 @@ from .replay import (
 )
 
 
-CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v56"
+CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v58"
 
 _INITIAL_PROMPT = """You are the sole writer for one fresh source-blind IntentIR Replay episode.
 Work only under the isolated /workspace. input/ is immutable; output/, work/, and
@@ -67,11 +69,12 @@ S_J or infer a Source recipe. input/REPLAY_CONTRACT.md defines
 the ownership boundary and input/TOOL.md defines the tools.
 
 Compile, inspect only your own Replay IR, and patch the complete program in this same
-episode. First run `replay_compile_check`; once construction passes, inspect your own
-TTIR observer view and audit every compiler-visible address, predicate, control and
-arithmetic stage against S_J. Keep computations for inactive constexpr alternatives
-inside their branch and do not add unmentioned `volatile`, cache, eviction, or other
-target attributes. Then run
+episode. First run `replay_compile_check`; once construction passes, call
+`replay_ttir_inspect jc` once for the bounded J/C structural summary. Use a targeted
+`find`, `raw`, or `observer` query only when that summary exposes one concrete issue;
+never enumerate every fingerprint section. Keep computations for inactive constexpr
+alternatives inside their branch and do not add unmentioned `volatile`, cache,
+eviction, or other target attributes. Then run
 `submit_replay` on the reviewed exact bytes and repair until it
 passes. Fixed code materializes S_J, projects exact packet facts, checks and rejects;
 it never constructs or repairs target source. Finish only with the transaction passing
@@ -147,6 +150,44 @@ def _replay_startup_context(
             "remain in input/packet.json and no code or schedule is generated"
         ),
     }
+
+
+def _jc_fingerprint_summary(fingerprint: Mapping[str, Any]) -> dict[str, Any]:
+    """Project one bounded, source-blind structural view of Replay's own TTIR."""
+
+    result: dict[str, Any] = {}
+    for key in (
+        "interface",
+        "op_multiset",
+        "effect_multiset",
+        "reductions",
+        "dots",
+        "structured_ifs",
+        "terminal_forks",
+    ):
+        if key in fingerprint:
+            result[key] = fingerprint[key]
+
+    loops = fingerprint.get("loops")
+    if isinstance(loops, list):
+        kept = {
+            "block_argument_count",
+            "body_effects",
+            "body_op_multiset",
+            "carried_operand_count",
+            "result_count",
+        }
+        result["loops"] = [
+            {key: row[key] for key in kept if key in row}
+            for row in loops
+            if isinstance(row, Mapping)
+        ]
+
+    for key in ("dataflow_edges", "memory_effects", "mask_predicates"):
+        value = fingerprint.get(key)
+        if isinstance(value, (list, tuple, dict)):
+            result[f"{key}_count"] = len(value)
+    return result
 
 @dataclass
 class CodexCLIReplayWriter:
@@ -241,6 +282,8 @@ class CodexCLIReplayWriter:
         packet_queries: list[dict[str, Any]] = []
         semantic_queries: list[dict[str, Any]] = []
         timeout_events: list[dict[str, Any]] = []
+        accepted_submission_interrupts: list[dict[str, Any]] = []
+        accepted_submission_event = threading.Event()
         source_text = ""
         formal_ingress = None
         formal_compile = None
@@ -424,6 +467,7 @@ class CodexCLIReplayWriter:
             compiled = dict(replay_compile_tool())
             if compiled.get("status") == "pass":
                 explicit_submission_accepted = True
+                accepted_submission_event.set()
             return {
                 "protocol": "intentir.codex-cli.replay-submit.v2",
                 "status": compiled.get("status", "fail"),
@@ -508,16 +552,28 @@ class CodexCLIReplayWriter:
                 ttir_observations[current] = observation
 
             mode = arguments[0] if arguments else "summary"
-            if mode not in {"summary", "raw", "find", "observer"}:
+            if mode not in {"jc", "summary", "raw", "find", "observer"}:
                 raise ValueError(
-                    "replay_ttir_inspect mode must be summary/raw/find/observer"
+                    "replay_ttir_inspect mode must be jc/summary/raw/find/observer"
                 )
             if observation.get("status") != "pass":
                 result_view = dict(observation)
             else:
                 ttir = str(observation["ttir"])
                 lines = ttir.splitlines()
-                if mode == "summary":
+                if mode == "jc":
+                    if len(arguments) != 1:
+                        raise ValueError("jc accepts no additional arguments")
+                    fingerprint = observation.get("fingerprint")
+                    if not isinstance(fingerprint, Mapping):
+                        raise ValueError("compiled Replay exposes no fingerprint")
+                    result_view = {
+                        "protocol": observation["protocol"],
+                        "status": "pass",
+                        "ttir_lines": len(lines),
+                        "jc": _jc_fingerprint_summary(fingerprint),
+                    }
+                elif mode == "summary":
                     fingerprint = observation.get("fingerprint")
                     result_view = {
                         key: value
@@ -712,7 +768,38 @@ class CodexCLIReplayWriter:
                         timeout_seconds=turn_timeout,
                         effort=selected_effort,
                         stop_requested=self.stop_requested,
+                        submission_accepted=accepted_submission_event.is_set,
                     )
+                    accepted_submission_event.clear()
+                except CodexCLISubmissionAccepted as exc:
+                    active_elapsed_ms += exc.elapsed_ms
+                    accepted_submission_event.clear()
+                    thread_id = exc.thread_id
+                    if thread_id not in thread_ids:
+                        thread_ids.append(thread_id)
+                    accepted_submission_interrupts.append(
+                        {
+                            "elapsed_ms": exc.elapsed_ms,
+                            "thread_id": exc.thread_id,
+                            "recovery": "pending_exact_checkpoint_recheck",
+                        }
+                    )
+                    if last_checked_good is None:
+                        raise CodexCLIError(
+                            "accepted Replay submission has no exact checked checkpoint"
+                        ) from exc
+                    _atomic_write_text(workspace.replay_path, last_checked_good)
+                    passed, _ = evaluate_current(
+                        trigger="host_accepted_submission_restore"
+                    )
+                    if not passed:
+                        raise CodexCLIError(
+                            "accepted Replay failed independent host recheck"
+                        ) from exc
+                    accepted_submission_interrupts[-1]["recovery"] = (
+                        "exact_checkpoint_restored"
+                    )
+                    break
                 except CodexCLIError as exc:
                     if "wall-time limit" not in str(exc):
                         raise
@@ -804,6 +891,7 @@ class CodexCLIReplayWriter:
                 "packet_queries": packet_queries,
                 "semantic_queries": semantic_queries,
                 "timeout_events": timeout_events,
+                "accepted_submission_interrupts": accepted_submission_interrupts,
                 "explicit_submission_accepted": explicit_submission_accepted,
                 "tool_bridge": bridge.evidence,
                 "formal_ingress_recheck": True,
@@ -829,10 +917,14 @@ class CodexCLIReplayWriter:
                     "episode_wall_time_limit_seconds": (
                         episode_limit
                     ),
-                    "cli_turns": len(turns) + timed_out_calls,
+                    "cli_turns": (
+                        len(turns)
+                        + timed_out_calls
+                        + len(accepted_submission_interrupts)
+                    ),
                     "model_segments_lower_bound": sum(
                         turn.model_segments for turn in turns
-                    ) + timed_out_calls,
+                    ) + timed_out_calls + len(accepted_submission_interrupts),
                     "tool_actions": sum(turn.tool_actions for turn in turns),
                     "formal_ingress_protocol": REPLAY_CHECK_PROTOCOL,
                     "formal_compile_recheck": True,
@@ -849,9 +941,15 @@ class CodexCLIReplayWriter:
                 entry_function_name=formal_ingress.entry_function_name,
                 response_text=source_text,
                 raw_response=raw_trajectory,
-                attempts=len(turns) + timed_out_calls,
+                attempts=(
+                    len(turns)
+                    + timed_out_calls
+                    + len(accepted_submission_interrupts)
+                ),
                 physical_provider_calls=(
-                    sum(turn.model_segments for turn in turns) + timed_out_calls
+                    sum(turn.model_segments for turn in turns)
+                    + timed_out_calls
+                    + len(accepted_submission_interrupts)
                 ),
                 transport_retries=0,
                 elapsed_ms=active_elapsed_ms,
@@ -878,6 +976,7 @@ class CodexCLIReplayWriter:
                 "packet_queries": packet_queries,
                 "semantic_queries": semantic_queries,
                 "timeout_events": timeout_events,
+                "accepted_submission_interrupts": accepted_submission_interrupts,
                 "tool_bridge": bridge.evidence,
                 "failure_class": type(exc).__name__,
                 **(
@@ -898,13 +997,19 @@ class CodexCLIReplayWriter:
                 response_model=provider.model,
                 usage=_aggregate_usage(turns),
                 raw_response=raw_trajectory,
-                attempts=len(turns) + timed_out_calls,
+                attempts=(
+                    len(turns)
+                    + timed_out_calls
+                    + len(accepted_submission_interrupts)
+                ),
                 elapsed_ms=active_elapsed_ms,
                 trajectory=trajectory,
                 backend_protocol=CODEX_CLI_REPLAY_BACKEND,
                 physical_provider_calls=sum(
                     turn.model_segments for turn in turns
-                ) + cancelled_calls + timed_out_calls,
+                ) + cancelled_calls + timed_out_calls + len(
+                    accepted_submission_interrupts
+                ),
                 transport_retries=0,
             )
             self._records.append(attempt)

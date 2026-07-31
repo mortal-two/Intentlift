@@ -10,9 +10,10 @@ Replay request、workspace 或工具。Source 与 Replay
 conditions。该 Gate1 claim 只针对这个 c0。
 
 当前 fresh-run artifact/decode/typecheck 组合为
-`intentir.scrc.artifact.v12 / intentir.scrc.decode.v17 / intentir.scrc.typecheck.v30`。Lift LLM 是完整
+`intentir.scrc.artifact.v12 + intentir.pi.normalization-witness.v1 /
+intentir.scrc.decode.v18 / intentir.scrc.typecheck.v31`。Lift LLM 是完整
 artifact 的唯一作者：value/dimension equality、closed dimension definition、consumer-extension、access-guard、typed control/inout、
-output binding、physical iteration/carrier、terminal-control 与 route-local extent transform 都必须由模型显式提交。Decode、
+output binding 都必须在 J/C 中显式提交；active π 只含 program-axis rows。Decode、
 CandidateCheck 与 TypeCheck 只能做 closed
 解析、检查、拒绝和诊断，不会补 relation、选择 axes/polarity、插入 `select`、创建 pre-state，或把
 相同 concrete extents 当作 axis identity；v28验证dimension relation的closed grammar、引用与acyclicity，
@@ -76,10 +77,10 @@ Normalize_(f,p,nu)^q(O; J,C,pi_q) -> O' | undefined
 `q` 是 closed typed instance；normalizer 不搜索或补造 π，也不是完整 Source→π extractor。
 
 J-owned operator/operand、logical domain、predicate/fill、reducer、value recurrence、observable
-effect/control/post-state 与 output binding 始终保持 hard。program-coordinate/address spelling、placement、
-materialization 或 physical-iteration wrapper 只有在 profile 声明支持且 J/B 前置条件满足时才可
-normalize。order、sharing、carrier、terminal control 与 sensitive numeric/update refinement 默认只是
-`witness_only`，不能单凭 π 放宽 Gate1。
+effect/control/post-state 与 output binding 始终保持 hard。当前 active π 只允许物理 launch-axis
+label 的窄 canonicalization。mixed-radix、address、placement、
+materialization、physical iteration、order、sharing、carrier、terminal control 与 sensitive
+numeric/update residual 均保持 hard；它们没有可由候选选择的 `witness_only` 通道。
 
 完整 observation 默认全 hard。固定 `H^(J,C)_(f,p)` 投影由两臂共同的匿名 profile vocabulary 与
 J/C typed contracts决定，候选 π 无权选择它。H 必须覆盖该 profile 可观察的 interface、
@@ -91,7 +92,7 @@ address-provenance atom 默认保留。多个 relation 不得通过重叠 scope 
 
 正式 profile 必须在候选外满足 `ProfileOK(f,p,nu,J,C)`：rule allowlist、recognizer、scope 与 canonical
 replacement 全部冻结，每条启用 rule 都有机械 hard-preservation check 或独立 rule audit。TypeCheck
-只验证 π instance well typed，不证明 `ProfileOK`；无法满足的 relation 保持 unsupported。
+只验证 compact π row well typed，不证明 `ProfileOK`；无法满足的 relation 不进入 active schema。
 `ProfileOK` 只是 TCB release contract 的简写，不是新 Gate、artifact、receipt 或候选字段。
 
 实现可以保存 applied/unsupported relation 作为 proof-irrelevant debug telemetry；它不进入正式谓词，
@@ -152,18 +153,12 @@ structured `tt.call` 仍按
 formal-to-actual 与 helper return 展开，op/def-use、effect 与已支持 region 继续参与 hard comparison；
 public entry ABI 仍是边界，private helper 名称本身不进入 J/C/π。
 
-Replay/Lift construction compile 对 artifact v12 的π-owned `program_axes{domain_ref,axis}`执行
-reject-only核对：compiled `tt.get_program_id` 的数量与literal axis集合都必须匹配；旧v11 packet仅保留
-原count合同，不被静默升级。该检查不生成program coordinate，也不从grid、C或声明顺序选择axis。
-若 accepted π 还以 empty-slot program-domain route 控制 branch region，construction compile 只要求
-compiled structured branch 数不小于这些 distinct `(domain,region)` obligations；它不选择条件、分支
-内容或 target spelling。若该 exact pair 又由
-`terminal_controls{domain_ref,continuation_region}` 声明为域外终止，则它从普通 branch obligations 中
-排除，并只要求一个 compiled `control.conditional` terminal fork，不能双重计数。effect-if arm 形式的
-terminal control 使用同一最低 terminal fork 检查。普通 `scf.if` 不能冒充 early-return/continuation
-topology；checker 不选择 predicate、polarity、arm body 或 return spelling，精确 CFG 仍由 Gate1 比较。
-`program_linearizations` 的具体 def-use 仍由 agent 作者化并由正式 Gate1 精确比较，不能把这些最低
-结构拒绝器写成固定 lowering 或候选合法性 oracle。
+Replay construction compile 不读取 π，因此不执行任何 π-derived occurrence、branch 或 terminal
+obligation。Source-aware Lift 可以用 exact anonymous Source TTIR 对模型已提交的 program-axis row 做
+reject-only 诊断，但该诊断不生成 row，也不是 certification。正式 Gate1 的 raw observation始终保留
+program-coordinate operation 数量、所有 downstream dataflow、predicate/control/effect；`N^π` 只擦除
+已声明物理 axis label。mixed-radix 与旧 empty-slot route、branch、
+terminal-control construction checks 仅解释迁移前 evidence，不属于当前 J-only Replay。
 
 v6 新增 Triton 3.6 quoted-generic `tt.scan` 的 typed、single-block、encodingless observer contract：
 输入/结果必须是同 shape 的 ranked tensor，axis/reverse、`2N` 个有序 combine block arguments、唯一

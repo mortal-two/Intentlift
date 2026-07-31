@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import threading
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping
 
@@ -15,6 +16,7 @@ from intentir.extraction.providers.codex_cli import (
     CODEX_CLI_TOOL_BRIDGE_ROOT_NAME,
     CodexCLICancelled,
     CodexCLIError,
+    CodexCLISubmissionAccepted,
     CodexCLISession,
     CodexCLIToolBridge,
     CodexCLITurn,
@@ -39,8 +41,8 @@ from .scrc import (
     prepare_scrc_lift,
     scrc_candidate_check_context,
 )
-CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v34"
-CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v93"
+CODEX_CLI_LIFT_BACKEND = "openai.codex-cli.intentir-lift.v37"
+CODEX_CLI_LIFT_KNOWLEDGE = "intentir.lift-knowledge.v97"
 CODEX_CLI_TURN_TIMEOUT_SECONDS = 900.0
 
 _FEEDBACK_CATEGORY_NAMES = (
@@ -64,20 +66,22 @@ whole Schema, the whole operation catalog, or the whole Lift contract into the
 thread.
 
 You alone author the complete output/candidate.json. J owns all logical semantics;
-C owns only implementation choices; pi owns only source-realization relations for
-the authored J+C. Fixed code must not choose or fill any field, handle, relation,
-operation, shape, or topology. Preserve anonymous ABI order, parametric shape
-identities, control/time, effects, and realization structure visible in Source and
-the selected anonymous specialization. Use dense declaration-ordered opaque
-handles and never copy Source identifiers into the artifact.
+C owns only implementation choices; pi is only the compact Gate1 normalization
+witness in the supplied schema. It has no realization graph: author only directly
+observed program-axis rows, or an empty array.
+Fixed code must not choose or fill any field, handle, relation, operation, or shape.
+Preserve anonymous ABI order, parametric shape identities, logical control/time and
+effects in J. Use dense declaration-ordered opaque handles and never copy Source
+identifiers into the artifact.
 
 Write a meaningful complete output/candidate.json early, then inspect and patch
 that persistent file in place; do not postpone all authoring until after exhaustive
-reading. Organize scratch under work/ however useful. The final J/C/pi and every
-semantic field remain entirely your work. Run
-`python .agents/intentir_agent_tool.py submit_candidate` after a meaningful complete
-draft. This transaction first runs the source-free CandidateCheck and then the
-reject-only SourceReconcile on the same exact bytes. Repair the returned diagnostics
+reading. As soon as the first complete JSON exists, run
+`python .agents/intentir_agent_tool.py submit_candidate` before manual rereading or
+broad TTIR/schema inspection. Let its closed diagnostics drive focused patches.
+Organize scratch under work/ however useful. The final J/C/pi and every semantic
+field remain entirely your work. This transaction first runs the source-free CandidateCheck and then the
+reject-only necessary-condition SourceReconcile on the same exact bytes. Repair the returned diagnostics
 and invoke it again. The host then runs the public Source-vs-J semantic probe on
 those exact passing bytes and returns a same-thread diagnostic if they diverge.
 That probe never certifies or edits the candidate: repair only when the evidence
@@ -268,8 +272,9 @@ def _codex_input_files(
         "feedback_frontier.json": complete["feedback_frontier.json"],
         "README.md": (
             "# IntentIR Lift workspace\n\n"
-            "J owns logical semantics, C only implementation choices, and pi only "
-            "anonymous Source realization of the authored J+C. You author every "
+            "J owns logical semantics, C only implementation choices, and compact pi "
+            "only names observed program-axis normalization rows. "
+            "You author every "
             "semantic field; fixed code only projects evidence, checks, and rejects.\n\n"
             "Start once with:\n"
             "`python input/tools/context_query.py --input-root input --output-root output source-brief`\n\n"
@@ -324,15 +329,15 @@ Your own prior formal candidates are immutable under work/candidate_history/;
 consult or restore them when a repair regresses, but decide every edit yourself.
 Treat the first exact missing/extra operation only as an entry point: compare its
 typed Source-TTIR and Replay-TTIR def-use neighborhood with the current J node and
-pi instances. Preserve cast order and operation spelling when they are semantic;
-when a logical J node already exists but its compiler-visible realization is absent,
-check whether pi actually realizes that authored handle. Patch the smallest complete
-source-grounded relation set instead of regenerating unrelated artifact sections.
+boundary. Preserve cast order and operation spelling when they are semantic. If J
+already states the complete logical fact but Replay failed to realize it, do not add a
+pi escape hatch; resubmit the unchanged artifact for a fresh source-blind Replay.
 Before editing local operations, check whether one omitted Source-visible loop,
 effect_if, early terminal branch, continuation, or effect region explains the
-downstream op/dataflow/predicate differences; if so, repair that complete J scope and
-its pi region/time/control topology rather than its symptoms. Conversely, when the
-current J/B/pi already authors the exact logical fact and Source-local boundary fact
+downstream op/dataflow/predicate differences; if so, repair that complete J scope
+rather than its symptoms. Compact pi changes only when the residual is exactly an
+observed program-axis label. Mixed-radix residuals remain hard in this schema. Conversely, when
+the current J/B/C already authors the exact logical fact and Source-local boundary fact
 but the preceding Replay alone failed to consume it, do not mutate the artifact to
 imitate that Replay: resubmit the unchanged artifact for a fresh source-blind Replay.
 Use the compact source query only where the named feedback needs exact Source or
@@ -352,12 +357,14 @@ after the complete candidate passes. Search a rejected relation's exact field na
 in input/knowledge/lift_contract.md when its ownership is unclear. The transaction is diagnostic-only.
 """
 
-_SOURCE_RECONCILE_CONTINUATION_PROMPT = """The source-aware occurrence preflight rejected the current exact candidate bytes.
+_SOURCE_RECONCILE_CONTINUATION_PROMPT = """The source-aware necessary-condition preflight rejected the current exact candidate bytes.
 Read input/source_reconcile.json and revise only the model-authored J/C/pi facts whose
-closed realization obligations disagree with the immutable anonymous Source syntax
-or Source TTIR observation. For a Source-used runtime carrier, trace its existing
-anonymous Source expression and author its complete pi occurrence/route topology;
-do not change J semantics or guess from the concrete value.
+closed obligations disagree with the immutable anonymous Source syntax or Source TTIR
+observation. A recurrence/control/mask presence diagnostic states only that the whole
+J-owned construct is absent: recover its complete trip/carries/body/control/predicate
+from Source yourself; the host has not supplied a formula or patch. Compact pi has no
+occurrence/route graph: correct only an observed program-axis row, or revise J when
+your authorship was wrong. Never invent a pi carrier, route, control, or materialization.
 This diagnostic supplies no artifact field or repair. Rerun
 `python .agents/intentir_agent_tool.py submit_candidate` and finish immediately
 after it passes. Formal TypeCheck, Replay, and Gate1 remain external.
@@ -366,12 +373,11 @@ after it passes. Formal TypeCheck, Replay, and Gate1 remain external.
 _SEMANTIC_PROBE_CONTINUATION_PROMPT = """The current exact candidate passed CandidateCheck and SourceReconcile, and the host ran the public Source-vs-J semantic probe.
 Read input/semantic_probe.json in this same thread. It is diagnostic-only and does
 not accept, reject, certify, or edit J. If the observed divergence exposes an error
-in your authored J, patch output/candidate.json and rerun submit_candidate. A failed
-J reference construction/execution is also actionable: check authored loops, carries,
-branch-local stores, output mappings, and result types before deciding that the fixed
-consumer is genuinely unsupported. If it is genuinely unsupported or the remaining
-delta is only an expected floating reduction difference, leave the candidate unchanged
-and finish. Do not claim Gate membership.
+in your authored J, patch output/candidate.json and rerun submit_candidate. An unavailable
+J reference construction/execution is a fixed-consumer capability diagnostic, not a J
+counterexample; leave the already checked candidate unchanged. If the remaining delta is
+only an expected floating reduction difference, also leave it unchanged and finish. Do
+not claim Gate membership.
 """
 
 
@@ -644,6 +650,8 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
         semantic_probe_by_candidate: dict[str, dict[str, Any]] = {}
         semantic_probe_feedback_delivered: set[str] = set()
         timeout_events: list[dict[str, Any]] = []
+        accepted_submission_interrupts: list[dict[str, Any]] = []
+        accepted_submission_event = threading.Event()
         candidate_text: str | None = None
         last_checked_good: str | None = None
         timed_out_calls = 0
@@ -776,6 +784,8 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                 candidate_check["status"] == "pass"
                 and source_reconcile["status"] == "pass"
             )
+            if passed:
+                accepted_submission_event.set()
             return {
                 "protocol": "intentir.codex-cli.lift-submit.v1",
                 "status": "pass" if passed else "fail",
@@ -863,13 +873,11 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
             result = semantic_probe_by_candidate.get(candidate_sha256)
             if result is None:
                 result = dict(semantic_probe_tool())
-            actionable = result.get("status") == "diverged" or (
-                result.get("status") == "unavailable"
-                and (
-                    result.get("failed_leg") == "j"
-                    or result.get("phase") == "j_reference_construction"
-                )
-            )
+            # Only an executed Source-vs-J mismatch is a counterexample for the
+            # Lift owner.  RefJ construction ``unavailable`` reports a consumer
+            # capability gap; feeding it back makes J conform to an incomplete
+            # evaluator and can overwrite an already well-typed semantic artifact.
+            actionable = result.get("status") == "diverged"
             if (
                 actionable
                 and candidate_sha256 not in semantic_probe_feedback_delivered
@@ -927,7 +935,9 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                         timeout_seconds=turn_timeout,
                         effort=selected_effort,
                         stop_requested=self.stop_requested,
+                        submission_accepted=accepted_submission_event.is_set,
                     )
+                    accepted_submission_event.clear()
                 except CodexCLICancelled as exc:
                     self._session_active_elapsed_ms += exc.elapsed_ms
                     self._session_model_turns += 1
@@ -967,6 +977,43 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                         },
                         physical_calls=exc.physical_calls,
                     ) from exc
+                except CodexCLISubmissionAccepted as exc:
+                    self._session_active_elapsed_ms += exc.elapsed_ms
+                    self._session_model_turns += 1
+                    self._session_physical_provider_calls += exc.physical_calls
+                    accepted_submission_event.clear()
+                    accepted_submission_interrupts.append(
+                        {
+                            "elapsed_ms": exc.elapsed_ms,
+                            "thread_id": exc.thread_id,
+                            "recovery": "pending_exact_checkpoint_recheck",
+                        }
+                    )
+                    if last_checked_good is None:
+                        raise CodexCLIError(
+                            "accepted submission has no exact checked checkpoint"
+                        ) from exc
+                    _atomic_write_text(workspace.candidate_path, last_checked_good)
+                    check, source_reconcile = host_preflight(
+                        trigger="host_accepted_submission_restore"
+                    )
+                    if (
+                        check["status"] != "pass"
+                        or source_reconcile is None
+                        or source_reconcile["status"] != "pass"
+                        or candidate_text is None
+                    ):
+                        raise CodexCLIError(
+                            "accepted submission failed independent host recheck"
+                        ) from exc
+                    accepted_submission_interrupts[-1]["recovery"] = (
+                        "exact_checkpoint_restored"
+                    )
+                    if semantic_probe_needs_owner_turn():
+                        prompt = _SEMANTIC_PROBE_CONTINUATION_PROMPT
+                        selected_effort = self.repair_effort or effective_effort
+                        continue
+                    break
                 except CodexCLIError as exc:
                     if "wall-time limit" in str(exc):
                         elapsed = turn_timeout * 1000.0
@@ -1099,9 +1146,12 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                 "turns": [turn.to_evidence() for turn in call_turns],
                 "candidate_check": list(check_results),
                 "source_reconcile": list(source_reconcile_results),
-                "semantic_probe": list(semantic_probe_results),
-                "timeout_events": list(timeout_events),
-                "tool_bridge": bridge.evidence,
+                        "semantic_probe": list(semantic_probe_results),
+                        "timeout_events": list(timeout_events),
+                        "accepted_submission_interrupts": list(
+                            accepted_submission_interrupts
+                        ),
+                        "tool_bridge": bridge.evidence,
             }
             self._records.append(
                 SCRCReliftRecord(
@@ -1136,6 +1186,9 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
             "source_reconcile": list(source_reconcile_results),
             "semantic_probe": list(semantic_probe_results),
             "timeout_events": list(timeout_events),
+            "accepted_submission_interrupts": list(
+                accepted_submission_interrupts
+            ),
             "tool_bridge": bridge.evidence,
             "source_ttir_observation": {
                 key: value
@@ -1152,10 +1205,17 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
         }
         raw_trajectory = _trajectory_bytes(trajectory)
         elapsed_ms = (
-            sum(turn.elapsed_ms for turn in call_turns) + timed_out_elapsed_ms
+            sum(turn.elapsed_ms for turn in call_turns)
+            + timed_out_elapsed_ms
+            + sum(
+                float(item["elapsed_ms"])
+                for item in accepted_submission_interrupts
+            )
         )
         physical_calls = (
-            sum(turn.model_segments for turn in call_turns) + timed_out_calls
+            sum(turn.model_segments for turn in call_turns)
+            + timed_out_calls
+            + len(accepted_submission_interrupts)
         )
         provenance = SCRCProvenance(
             model=provider.model,
@@ -1167,7 +1227,11 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
             raw_response_sha256=hashlib.sha256(raw_trajectory).hexdigest(),
             response_text=candidate_text,
             raw_response=raw_trajectory,
-            attempts=len(call_turns) + timed_out_calls,
+            attempts=(
+                len(call_turns)
+                + timed_out_calls
+                + len(accepted_submission_interrupts)
+            ),
             elapsed_ms=elapsed_ms,
             backend=CODEX_CLI_LIFT_BACKEND,
             termination_status="CandidateCheckAndSourceReconcilePass",
@@ -1189,7 +1253,11 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
             "persistent_workspace": True,
             "owner_session_id": self._session_id,
             "thread_id": self._codex_session.thread_id,
-            "cli_turns": len(call_turns) + timed_out_calls,
+            "cli_turns": (
+                len(call_turns)
+                + timed_out_calls
+                + len(accepted_submission_interrupts)
+            ),
             "model_segments_lower_bound": physical_calls,
             "tool_actions": sum(turn.tool_actions for turn in call_turns),
             "elapsed_ms": elapsed_ms,
@@ -1198,6 +1266,9 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
             "source_reconcile": list(source_reconcile_results),
             "semantic_probe": list(semantic_probe_results),
             "timeout_events": list(timeout_events),
+            "accepted_submission_interrupts": list(
+                accepted_submission_interrupts
+            ),
             "tool_bridge": bridge.evidence,
             "trajectory": trajectory,
         }

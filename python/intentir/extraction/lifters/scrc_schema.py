@@ -24,6 +24,7 @@ from intentir.verify.gate1.model import (
 )
 from intentir.verify.gate1.pi import (
     ITERATION_BASES,
+    NORMALIZATION_WITNESS_SCHEMA,
     PHYSICAL_ITERATION_DIRECTIONS,
     REALIZATION_MECHANISMS,
     REPRESENTATION_REFINEMENTS,
@@ -474,7 +475,7 @@ def _boundary_schema() -> dict[str, Any]:
         ("auth_id", "kind", "subject_ref"),
         description=(
             "J/B-owned authorization for one sensitive representation choice. "
-            "Pi may cite auth_id but may not redefine its semantic contract."
+            "Compact pi cannot cite, extend, or redefine this semantic contract."
         ),
     )
     return _closed_object(
@@ -534,7 +535,8 @@ def _signature_schema() -> dict[str, Any]:
             "contribute to an output dependency or explicit boundary/shape "
             "semantics. A runtime scalar used only for representation/address "
             "realization is kind=scalar, mode=value, rank=0, has public dtype "
-            "but no logical_ref/J input, and may be referenced only by pi. "
+            "but no logical_ref/J input; it remains an explicit ABI carrier and "
+            "compact pi never assigns it semantic ownership. "
             "Integral "
             "extent-only handles instead bind a symbolic dimension. Every trusted "
             "compiler-view tensor argument, including one unused by the frozen "
@@ -571,7 +573,7 @@ def _c_schema() -> dict[str, Any]:
                 "description": (
                     "constexpr is a callable frontend compile-time parameter; "
                     "compiler is an external compiler-invocation option and never "
-                    "a callable/body/pi carrier."
+                    "a callable or kernel-body carrier."
                 ),
             },
             "role": {
@@ -622,7 +624,7 @@ def _c_schema() -> dict[str, Any]:
     )
 
 
-def _pi_schema() -> dict[str, Any]:
+def _legacy_pi_schema() -> dict[str, Any]:
     opaque_ref = {
         "type": "string",
         "pattern": "^(t|n|a|d|e|q|b|s|v|p|c|x)[0-9]+$",
@@ -1013,6 +1015,46 @@ def _pi_schema() -> dict[str, Any]:
             "predicate, dtype, frontend API, rule identity or source text."
         ),
     )
+
+
+def _pi_schema() -> dict[str, Any]:
+    """Active, certification-only pi subwire offered to Lift.
+
+    Every accepted field has a fixed unary Gate1 normalization semantics.  The
+    legacy realization graph is intentionally absent: new Lift candidates do
+    not serialize regions, instances, routes, carriers, or target recipes.
+    """
+
+    program_axis = _closed_object(
+        {
+            "domain_ref": {
+                "type": "string",
+                "pattern": "^d[0-9]+$",
+                "description": "Declared J boundary domain whose physical launch-axis label may be normalized.",
+            },
+            "axis": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 2,
+                "description": "Observed Triton launch axis; it does not enter Replay.",
+            },
+        },
+        ("domain_ref", "axis"),
+    )
+    return _closed_object(
+        {
+            "schema": {"const": NORMALIZATION_WITNESS_SCHEMA},
+            "program_axes": _array(program_axis),
+        },
+        ("schema", "program_axes"),
+        description=(
+            "Compact Gate1-only normalization witness. It never enters Replay. "
+            "Author only observed program-axis labels anchored in J; use an empty "
+            "array when no fixed axis-label quotient applies."
+        ),
+    )
+
+
 def _portable_scope_schema() -> dict[str, Any]:
     return _closed_object(
         {

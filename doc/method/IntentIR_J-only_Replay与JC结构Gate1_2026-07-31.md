@@ -108,13 +108,10 @@ observer-relative 的 J/C structural closure；它不是全输入域语义等价
 
 ## 4. π 与 TypeCheck 的边界
 
-现有 closed π wire 第一阶段不改。Lift 仍完整作者化 typed instances；TypeCheck 只验证 schema、引用、
-scope、依赖、唯一性与 authorization，不证明 π 对 Source 为真、完整或最小。
-
-这不是永久保留旧 π 复杂度的承诺。完成第一个真实 normalizer vertical slice 后，必须逐 relation
-区分 `normalizer_required / typed_anchor_only / legacy_replay_only`。只服务旧 π-consuming Replay、且
-不参与 TypeCheck 安全或任何已支持 normalization 的字段/totality obligation，应在新的 versioned wire
-中降为 optional 或 retire；不能继续让 Lift 为不可消费的施工图付出序列化成本。
+新 Lift 只作者化 versioned compact π：`schema` 与 `program_axes`。TypeCheck 验证 relation 只引用
+已声明的 J domain，并且不证明 π 对
+Source 为真、完整或最小。旧 artifact 的 regions/instances/routes/carriers/refinements 等 realization
+graph 仍可只读解析和审计，但不再进入活动 Lift schema，也不再形成新候选的 totality obligation。
 
 π 不得携带：
 
@@ -124,7 +121,7 @@ scope、依赖、唯一性与 authorization，不证明 π 对 Source 为真、�
   observable effect/control/post-state/output；
 - C 的 identity、type、valuation 或 attachment 的替代定义。
 
-profile 中未实现固定单臂 normalization 的 relation 只保留为 typed witness；它不能放宽 Gate1。
+active π schema 不暴露尚无固定单臂 normalization 的 relation；它们不能放宽 Gate1。
 调试日志可以记录 applied/unsupported relation，但这不是第四 artifact、主公式或 π correctness claim。
 
 ## 5. 最小 normalizer，而不是 π 证明系统
@@ -132,10 +129,15 @@ profile 中未实现固定单臂 normalization 的 relation 只保留为 typed w
 Task 20 先只实现 corpus 真实需要且能保守定义的纵切：
 
 1. π 无关的 alpha/SSA 名称与纯打印顺序规范化继续由 raw `Canon` 负责；
-2. π-aware P0 只尝试 program-axis / mixed-radix linearization 的局部 canonical form；
+2. π-aware P0 只实现 program-axis label 的局部 canonical form；mixed-radix 保持 hard，直到有
+   Kernel 无关且通过 hard-preservation audit 的一元 normalizer；
 3. simple placement/materialization 只有在 observer 能独立证明 J/C hard projection 不变时才加入；
 4. carrier、terminal control、sharing/order、numeric reassociation、atomic/update 与一般 loop quotient
    默认不 normalize。
+
+因此 compact π 不是被压缩编码的旧 realization graph，而是更窄的 relation language。新增 relation
+必须先有 Kernel 无关的一元 normalizer 与 hard-preservation argument，再进入下一版 schema；不能先让
+Lift 填字段、以后再决定它表示什么。
 
 任何规则必须按 `(f,p,version)` 全局定义并满足上述 `ProfileOK`；禁止按 Kernel、benchmark ordinal
 或某次 diff 加规则。
@@ -181,6 +183,12 @@ Gate2 是声明执行域内的最终行为锚点；Gate1 不是其替代品，�
 - 仅 `c₀` 改变：可复用 Replay source，但必须重新 Bind/Compile/Observe/Gate；
 - observer/normalizer profile 改变：属于新实验；可复用 Replay source bytes 作为输入，但旧 Gate1
   evidence 不升级，必须重新 Bind/Compile/Observe/Gate。
+
+Agent 执行层可以在不改变上述谓词的情况下提前拒绝明显欠完整的草稿。当前 SourceReconcile 只检查
+三种 one-bit 必要条件：Source-visible masked access、含非线性算子的 multi-state recurrence、terminal
+effect control 是否被 J 整体遗漏。它不生成 predicate、trip、carry、update 或 branch；完整正确性仍由
+TypeCheck、fresh Replay 和 Gate1 裁决。closed submit 一旦接受 exact bytes，host 可停止无证明意义的
+结尾 prose，恢复该 checkpoint 并独立重跑同一检查；这只缩短搜索时间，不改变 artifact 或 acceptance。
 
 ## 8. 多前端与实验
 

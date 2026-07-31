@@ -218,7 +218,7 @@ Harness 不按数值猜 `ceil_div`、容量或有效域公式。v6的`input_prof
 `p*/c*` 顺序、bound non-C constexpr membership、compiler role 与 `h*` shape-coordinate ledger
 并置；`source-outline` 只分页上述 syntax-only navigation facts；`candidate-control` 只分页当前 LLM
 已写出的 J control/reduction nodes、branch arms、boundary
-output/effect/guard、以及 π regions/instances/iterations/carriers/terminal/routes/order；
+output/effect/guard，以及 compact π program-axis rows；
 `feedback-category` 只投影 closed frontier 已命名的一个 Gate1 类别。它们是 attention/transport
 工具，不是第三份 IR：不选择 `logical_ref`、`x*`、operator、predicate、effect、output mapping 或
 π relation，也不读取 Source/Gate/Replay。MiniSWE 的 `context_query.py` 与 Codex bridge 提供同一
@@ -231,15 +231,18 @@ observer fingerprint；owner可分页读取TTIR、按token或单个`%SSA`查看�
 outline或一个fingerprint path。该工具不解释Source、不决定J/C/π所有权、不生成relation或patch；
 raw TTIR/fingerprint不写入模型trajectory，更不得进入Replay、证书或production。
 
-Codex Lift v18 在 source-free `CandidateCheck` 之后增加独立的
-`intentir.lift-source-reconcile.v1`。它只把模型当前完整候选可确定投影出的 compiler obligations
-（direct transfer multiplicity、structured/physical iteration 与 carrier arity、已声明 reduction
-linearization、闭合时的 pointer-address operation、program-coordinate occurrence，以及无歧义的
-ordered transfer）同该 owner 已冻结的 Source TTIR observer 比较。FAIL 只返回匿名 handle、rule 与
-expected/actual count/order；模型仍须自行修改完整 J/C/π。该工具不生成字段、关系、源码或 patch，
-不读取 Replay/Gate feedback，不形成 TypeCheck/Gate/证书结论；投影不能唯一确定时跳过该项，最终
-一致性仍由 fresh Replay + Gate1 裁决。v18 的 host submission preflight 要求当前 exact bytes 依次
-通过 CandidateCheck 与 SourceReconcile，并分别记录调用与诊断。
+source-free `CandidateCheck` 之后还有独立的 `intentir.lift-source-reconcile.v1`。当前 compact π 路径
+核对 typed `program_axes` 的必要投影，并只增加三种 one-bit J 必要条件：Source-visible masked access、
+含非线性算子的 multi-state recurrence、两臂均有 observable effect 的 terminal control 不能从 J 中
+整体缺失。它不比较 exact transfer/loop 数，不分类 carry，不生成 predicate/trip/update/branch；不存在
+旧 occurrence graph 时，direct transfer multiplicity、physical loop/carrier arity、address/route/order
+一律为不适用，不能把缺失误解释为零，也不能要求高层 J 与优化后 TTIR 指令一一对应。迁移前 full-π
+artifact 仍可按原版本作历史诊断。FAIL 只返回匿名 handle、rule 与有限 observed kind；模型仍须自行修改完整 J/C/π。该工具
+不生成字段、关系、源码或 patch，不读取 Replay/Gate feedback，不形成 TypeCheck/Gate/证书结论；
+最终一致性仍由 fresh Replay + Gate1 裁决。host submission preflight 要求当前 exact bytes 依次
+通过 CandidateCheck 与所有实际 applicable 的 SourceReconcile 投影，并分别记录调用与诊断。
+closed submit 一旦接受 exact bytes，host 可以在短 grace 后停止 proof-irrelevant 的模型尾部输出，恢复
+该 checkpoint 并独立重跑同一两项检查；这不生成 artifact、跳过检查或改变正式 Gate round。
 
 Codex Lift v19 不再把整份 relift `feedback.json` 暴露给持久 owner。前一 artifact 已存在于同一
 workspace 的 `output/candidate.json`；closed Gate1 diff 只按既有 protocol label 分成固定的
@@ -261,8 +264,9 @@ representation-only op 差异只要求 owner 对照 Source 重新审查已有 π
 提交前的强制串行协议。MiniSWE knowledge v64 暴露同一 outline/checklist 合同。该 transport 不生成
 `logical_ref`、J/C/π 字段或修复。
 
-当前持久 owner 使用 `artifact.v12 / decode.v17 / typecheck.v30 / candidate-check.v1` 实现上述
-CandidateCheck、C attachment、numeric-cast dependent typing 与 result-relation compatibility。v30
+当前持久 owner 使用 `artifact.v12 + pi.normalization-witness.v1 / decode.v18 / typecheck.v31 / candidate-check.v1` 实现上述
+CandidateCheck、C attachment、numeric-cast dependent typing 与 result-relation compatibility。v31
+对 active compact π 只检查 direct J anchors；迁移前 v30
 只接受同一authored `effect_if`两臂各唯一完整store定义的conditional post-state output；不补
 `select`、mapping或新字段。v7
 继承 v6，v6 继承 v5；v5 继承 v4 的
@@ -544,7 +548,7 @@ relift diagnostic view 必须明确区分。
 禁止把 diff 交给 Replay、patch 旧 Replay、只输出 artifact 增量，或跨候选复用 Replay。
 
 协议允许独立的 `intentir.scrc.gate1-diagnostic-recheck.v1` 对一份已落盘 artifact 做只读诊断：
-保持 artifact bytes/digest 不变，执行当前 canonical Decode、`typecheck.v30`、一个 fresh normal Replay
+保持 artifact bytes/digest 不变，执行当前 canonical Decode、`typecheck.v31`、一个 fresh normal Replay
 与 Gate1，并写入独立 `recheck-NNN` evidence。它不调用 Lift、不运行 masked-J 或 Gate2、不参与
 candidate/winner 选择，也不改变 parent run 的 verdict 或 certificate；因此只用于定位固定 consumer/
 observer/context 改动，不能冒充 fresh SCRC rerun。provider 调用前必须把 selected case/current prepared

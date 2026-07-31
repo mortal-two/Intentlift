@@ -28,7 +28,8 @@ Gate2: Source-Replay / Source-J / Replay-J
 - [x] 归档旧 π-centered `CanonPair/coverage/used-pi` Task 20 草案；
 - [x] 冻结 `Replay(J,MaskC(C);U_f)`；
 - [x] 定义 π-blind raw observer、固定单臂 `N^pi`、Gate1 equality 与 J/C-only 结论；
-- [x] 明确现有 π wire 第一阶段不改，不新增 normalization/allowed-diff 字段；
+- [x] active π wire 压成 versioned normalization witness，只保留已有固定一元语义的
+  `program_axes`；旧 realization graph 只读兼容；
 - [x] 不新增/恢复 `python/tests`，只用真实 Kernel closure 验证。
 
 ## 2. P0：文档与活动协议收敛
@@ -45,6 +46,17 @@ Gate2: Source-Replay / Source-J / Replay-J
   obligation ledger 与任何 π-derived view；
 - [x] `S_J=M(J)` 继续是只读 J-only 编译视图，不生成 target skeleton；
 - [x] Replay compiler diagnostics 只能来自自己的 source/compile，不含 Source/Gate1 diff；
+- [x] Replay 自检默认只调用一次 bounded `jc` TTIR 摘要；不得枚举全部 fingerprint，只有具体问题
+  才允许一次 targeted raw/find/observer 查询；
+- [x] Codex Lift 写出第一份 complete JSON 后立即 submit/check，禁止先做全量 schema/TTIR 自审；
+  同一 owner 只按 closed diagnostics 局部 patch；
+- [x] closed submit 接受 exact candidate/Replay 后，由 host 恢复并独立复核同一 checkpoint，跳过无证明
+  意义的结尾 prose；模型仍负责全部语义与源码，Gate/接受集合不变；
+- [x] SourceReconcile 只增加三类保守 one-bit 必要条件：masked access 整体缺失、含非线性算子的
+  multi-state recurrence 整体缺失、terminal effect control 整体缺失。它不生成 predicate、trip、carry、
+  update、branch 或 π relation，正式 Gate1 仍检查完整结构；
+- [x] `source-brief.v2` 在固定预算内始终列出匿名顶层函数与 compiler-observed control/time index；只给
+  loop carrier/yield 数、body op/effect kind 与 terminal 两臂 effect 数，公式与 J/C/π 归属仍由 Lift 决定；
 - [x] 历史 π-consuming view/nested wire 显式归档，旧 packet/checker 只作历史解释，不能作为新路径 evidence。
 
 ## 4. P2：最小 J/C Structural Gate1
@@ -54,14 +66,12 @@ Gate2: Source-Replay / Source-J / Replay-J
 - [x] 固定 `H^(J,C)` hard projection；候选 π 不得选择 rule/scope/erasable fields；
 - [x] 实现候选外 `ProfileOK` 发布合同：H覆盖所有当前 profile 可观察的 J/C-owned categories，未知
   atom 默认 hard；每条 N_pi rule 具有机械 hard-preservation check 或独立 rule audit；
-- [x] 第一纵切仅支持 Triton program-axis / mixed-radix linearization；
+- [x] 第一纵切仅支持 Triton program-axis label normalization；
 - [ ] simple placement/materialization 只在真实 residual 需要且 hard preservation 可局部判定时加入；
 - [x] carrier/control/sharing/order/numeric/update 默认不 normalize；
 - [x] 不实现 `Diff subset pi` acceptance、π completeness/minimality、used/unused π 认证或 per-kernel matcher。
-- [x] 首轮分类：`program_axes/program_linearizations=normalizer_required`；其余 relation 当前仅
-  `typed_anchor_only` 或 `legacy_replay_only`，均无 Gate1 放宽权限；仅服务旧
-  Replay construction 的字段与 totality obligation 在新 wire 版本中 optionalize/retire，减少 Lift
-  序列化负担，不静默重写旧 artifact；
+- [x] `program_axes=normalizer_required`；尚无一元实现的 `program_linearizations` 与其余旧 relation 全部退出 active
+  schema，不再让 Lift 序列化不可消费的 graph，也不静默重写旧 artifact；
 - [ ] 记录 candidate 中 J/C/π 的 bytes、Lift time-to-TypeCheck 与 relation rejection，验证简化确实减负。
 
 ## 5. P3：失败路由与 freshness
@@ -81,6 +91,12 @@ Gate2: Source-Replay / Source-J / Replay-J
 - [ ] 恢复 Task 11 横向闭合：至少两个 Kernel 同时运行、同 Kernel 多 branch、首个 Gate1 winner；
 - [ ] Gate1 closure 后 Gate2 失败先按 Source-Replay / Source-J / Replay-J 三边分流，不盲目 relift；
 - [ ] 稳定后 fresh 运行 28 项，报告 current-version closure，不继承旧 evidence。
+
+当前真实 pilot 已确认：compact π 候选可以稳定通过 Decode/TypeCheck；旧 exact transfer-count
+SourceReconcile 会把 compact π 误读成零 occurrence，现已删除。Flash backward 与 Split-K 的首轮
+Gate1 没有被 π 放过：前者暴露 terminal control/非线性 recurrence 整体遗漏，后者暴露五状态 online
+recurrence 被错误压成 global max/sum。上述 one-bit preflight 的目的正是把这类真实硬错误提前到首次
+submit，而不是改变 Gate1 verdict。
 
 ## 7. P5：多前端与实验
 

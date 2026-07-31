@@ -52,7 +52,7 @@ feedback，不复制、重排或覆盖当前 candidate，也不因 host 仓库�
 提交 candidate，同一 branch 的持久 owner 可以在下一真实 user continuation 中接收最后一次实际 source-free evaluation 的至多 20 条
 `rule_code/path`；不得包含 observed value、patch、hidden/sibling 信息。Source 仅作为该 owner 原有
 source-aware conversation 的上下文保留。Harness 不应用摘要修补 artifact，submission `PASS` 也不能
-替代正式 Runner 的 `typecheck.v30`。
+替代正式 Runner 的 `typecheck.v31`。
 
 generic exact-text patch 不是 Harness semantic construction：LLM 必须同时提供唯一 old/new 字符串，
 runtime 只原子替换并使旧 PASS 失效；Harness 不解析字段、不推荐修改、不生成 corrected artifact。

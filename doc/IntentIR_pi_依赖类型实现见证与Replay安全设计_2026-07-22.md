@@ -2,13 +2,15 @@
 
 > 状态：新架构核心设计（2026-07-22）
 >
-> **2026-07-31 Task 20 窄化修订（规范性覆盖）：** 本文关于 π 的 closed schema、dependent
-> typing、无语义原子与 production 不消费 π 的边界仍有效；凡把 π 列为 Replay 输入、要求 Replay
+> **2026-07-31 Task 20 窄化修订（规范性覆盖）：** 本文关于 dependent typing、无语义原子与
+> production 不消费 π 的原则仍有效；旧 regions/instances/routes/iteration/carrier/control/refinement
+> graph 仅按原版本只读解释，不是 fresh Lift 合同。active `pi.normalization-witness.v1` 只包含
+> `schema + program_axes`。凡把 π 列为 Replay 输入、要求 Replay
 > 按 π 重建 topology，或以 π-consuming Replay 解释 masked-J 的条款，均由
 > [J-only Replay 与 J/C Structural Gate1](method/IntentIR_J-only_Replay与JC结构Gate1_2026-07-31.md)
 > 覆盖。π 现在是 certification-only normalization witness：只可实例化固定单臂 normalizer，
 > 不进入 Replay，Gate1 也不认证其正确、完整或最小。历史 runtime/receipt
-> 仍按原版本解释；此修订不声称新 runtime 已完成。
+> 仍按原版本解释；当前 runtime 已按这一窄边界实现，真实纵切结果以 Task 20 evidence 为准。
 >
 > 思想来源：[高级 AI 对 π 的思想](source-notes/高级ai对于π的思想.md)
 >
@@ -23,7 +25,7 @@
 > 范围：在 artifact 严格只有 `(J,C,pi)`、Replay 只接收 `J+MaskC(C)` 的约束下，定义供
 > TypeCheck 与 Gate1 certification-only normalizer使用、但没有显式语义副本和独立语义权威的 π
 >
-> 核心结论：**π 只提交 closed typed realization witness；Gate1 不认证其正确、完整或最小。masked-J
+> 核心结论：**π 只提交 active schema 允许的 closed typed normalization witness；Gate1 不认证其正确、完整或最小。masked-J
 > 测量 J 的操作性必要性，不再独自裁决 artifact 的语义合法性。**
 
 ## 1. 问题与最终判断
@@ -52,7 +54,7 @@ normalizer 过宽       -> 擦除 J/C hard fact，是 Gate1 TCB 缺陷。
 正确方向不是继续零散增加 kernel/mechanism rule，而是把 π 定义为：
 
 ```text
-一个由 (J,C) 索引的、typed、anonymous、relational realization witness
+一个由 (J,C) 索引的、typed、anonymous、closed normalization witness
 ```
 
 它可以接近：
@@ -354,9 +356,10 @@ logical consumer domain，不同 d* 可共享 axis，并复用一次 compiled co
 上下文 (U_f) 只决定公开 API spelling。π 不保存 grid extent、地址公式、Source 文本或新的 mechanism tag。
 
 当一个 Source program ordinal 在进入 tensor address 前显式经过整数 `//`/`%` 解码时，program-id
-及其物理整数树不进入 J；J 只拥有解码后的 logical access/index。Lift 用 closed
-`program_linearizations{domain_ref,dimension_refs}` 以 outer-to-inner J `x*` 顺序作者化唯一 row-major
-mixed-radix projection。它只引用 J 已有 opaque dimensions，不保存公式文本、具体值、predicate、
+及其物理整数树不进入 J；J 只拥有解码后的 logical access/index。迁移前曾设计 closed
+`program_linearizations{domain_ref,dimension_refs}`；Task 20 active v1 暂不暴露它，因为尚无固定
+unary normalizer 能安全 quotient 这棵 dataflow。该 residual 当前保持 hard；未来必须先实现并审计
+Kernel 无关 normalizer，再以新 schema 加入。它不得保存公式文本、具体值、predicate、
 grid、Source/API 或 target recipe。若 coordinate 参与会改变 value 的 block interval/mask，则相关
 mul/add/compare/select 必须保留在 J；π 不得复制 partition formula，Replay 也不得从当前 valuation
 或 kernel 惯例猜出缺失 J。
@@ -995,16 +998,21 @@ rank、reshape、tile 或 spelling。它不能生成或省略 relation。v7 的
 推导 schedule、生成 source 或访问 Source/Harness/Gate；因此不改变 Replay 的 source-blind LLM-first
 所有权。
 
-当前新 Lift wire/decode 为 `intentir.scrc.artifact.v12 / intentir.scrc.decode.v17`；v3 历史上把上述
+Task 20 当前新 Lift wire/decode 为 `intentir.scrc.artifact.v12 +
+intentir.pi.normalization-witness.v1 / intentir.scrc.decode.v18`。active π 只有
+`program_axes`；旧 full-graph v12 与 v1-v11 artifact 保持原始序列化、digest、
+语义和只读解析，不被静默压缩或追认。
+
+历史 v3 曾把上述
 `pi.iterations` 变为 required closed field，v4-v7 再增加前述 J-owned typed relations/control，v8
 增加 physical-only time，v9 增加 terminal-control topology，v10 增加 closed route extent transform，
 v11增加J-owned closed dimension relations，v12增加π-owned closed program-axis identity。v1-v11 历史
 artifact 保持原始序列化、digest 与字段集合，禁止静默附加空数组、重标或刷新证书。
 
-固定代码仍只做：
+active 路径中的固定代码仍只做：
 
 - schema/type/reference validation；
-- graph closure/acyclicity；
+- compact π row 的 closed schema/reference checking（旧 graph closure 仅用于历史 subwire）；
 - `TypeCheck(J,C,pi)`；
 - J-only `S_J=M(J)` semantic materialization 与 exact/bounded query；
 - Replay code policy；
@@ -1013,7 +1021,8 @@ artifact 保持原始序列化、digest 与字段集合，禁止静默附加空�
 固定代码不把 π 解码成 target skeleton、binding、fragment 或源码，不建立 `(J,π)->target source` 的
 deterministic composer。J-only `S_J=M(J)` 不在此禁令内。
 
-`replay-check.v14` 可以在公共、source-blind synthetic compile 后核对 π 已作者化的
+以下 `replay-check.v14` 是迁移前 π-consuming runtime 的历史记录，不属于 J-only Replay。
+它曾在公共、source-blind synthetic compile 后核对 π 已作者化的
 `transfer_direct` occurrence 与 compiled load/store multiplicity；它只拒绝 compiler 已经折叠的
 作者化 event，不补 transfer、不决定保留它的源码写法。它同时将 structured J loop 数与
 `pi.physical_iterations` 数之和作为已作者化的 compiled `scf.for` 必要 occurrence；

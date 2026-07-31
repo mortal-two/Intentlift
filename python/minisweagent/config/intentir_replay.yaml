@@ -41,10 +41,11 @@ agent:
 
     Submit a complete source with `submit_replay(source_text)` or by writing the
     single output file and calling `intentir_replay_submit /output/replay.source`.
-    Use `intentir_replay_compile_check /output/replay.source`, then inspect your own
-    TTIR before submission and remove compiler-visible address, predicate, control or
-    arithmetic work or target attributes not authorized by S_J. Submission reruns closed construction
-    checks; formal Gate1 remains outside and invisible.
+    Use `intentir_replay_compile_check /output/replay.source`, then call the
+    `replay_ttir_inspect jc` command documented in TOOL.md once. Use a targeted
+    raw/find/observer lookup only for one concrete issue; never enumerate the full
+    fingerprint. Remove work not authorized by S_J. Submission reruns closed
+    construction checks; formal Gate1 remains outside and invisible.
 
   step_limit: 0
   cost_limit: 0

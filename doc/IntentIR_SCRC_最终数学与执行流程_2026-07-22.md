@@ -415,7 +415,10 @@ TypeCheck 还检查 closed comparison class 与 output dtype、A 依赖图和 B 
 见最终执行流程第 6.1 节。v1 中 `RequiresTolerance=true` 即拒绝显式或默认 `exact`，没有自由文本
 或“更强合同”例外；阈值仍完全由外部 Q 决定。该 reassociation fact 只约束 SCRC comparison class，
 不是 production backend permission。
-当前 `typecheck.v30`新增上述双臂完整store的conditional post-state output binding，并继承v29的
+Task 20 当前取 `artifact.v12 + pi.normalization-witness.v1 / decode.v18 / typecheck.v31`。
+v31 对 compact π 只检查 direct J domain/dimension anchors；active Lift 不再承担旧
+region/instance/route/carrier/refinement graph 的序列化或 totality。迁移前 `typecheck.v30` 新增上述
+双臂完整store的conditional post-state output binding，并继承v29的
 program-axis completeness dependent check及v28的J dimension relation
 closed grammar、引用、唯一性与acyclic检查；同时拒绝
 同tensor多个不同却都无consumer锚点的node-less load views；不从valuation、Harness或compiler
@@ -567,9 +570,9 @@ consumer只能验证/求值，不从Harness/grid/C/π/TTIR生成。v12增加π-o
 地址公式或前端文本。domain_ref 唯一，但多个 logical consumer domain 可以按 Source realization
 共享同一物理 axis；其 domain-owned consumer branch 以 empty-slot d* route + branch region 表达，
 π 不复制 predicate。若 Source program ordinal 在地址前显式经过整数 `//`/`%` 解码，该
-物理整数树不属于 J；J 只保存解码后的 logical access/index。π 以 closed
-`program_linearizations` 引用 J 的 outer-to-inner dimensions，唯一表达 row-major mixed-radix
-projection，不携带公式文本、具体值、predicate、grid、Source/API 或 target recipe。会影响 value
+物理整数树不属于 J；J 只保存解码后的 logical access/index。Task 20 active compact π 暂不暴露
+`program_linearizations`：在固定 unary normalizer 尚未实现前，该 mixed-radix residual 保持 hard，
+不能用一个 inert typed row 假装已经 quotient。会影响 value
 的连续 block interval/mask 仍由 J typed graph 拥有，π 不复制；Replay 不能从当前 valuation、C 或
 常见 delinearization 约定猜出替代关系。
 每个当前字段都由Lift LLM 作为完整 `(J,C,π)` 的一部分显式作者，
@@ -643,7 +646,8 @@ artifact 语义，不增加 acceptance path，正式 Runner 仍独立执行 Deco
 扩充 TypeCheck judgement 必须提升 `v_TC`，CandidateCheck 与正式 Runner 必须记录并使用同一版本；
 新版本不静默重判历史证书。
 
-当前 fresh-run 取 `v_TC = typecheck.v30`。v30增加上述J-only conditional post-state output binding；
+当前 fresh-run 取 `v_TC = typecheck.v31`；其 compact π 合同见第 4 节。以下为迁移前历史：v30增加
+上述J-only conditional post-state output binding；
 v29增加program-axis completeness dependent check；v28增加上述dimension relation dependent check；v27增加route extent transform dependent check；
 v26 增加上述 direct singleton broadcast dependent check；
 v25 增加上述 reduction-linearization topology check；v24 增加上述 special-constant 与 transfer pointer-route

@@ -7,7 +7,8 @@
 > 的 raw observer equality 的条款，均由
 > [J-only Replay 与 J/C Structural Gate1](method/IntentIR_J-only_Replay与JC结构Gate1_2026-07-31.md)
 > 覆盖。当前设计是 `Replay(J,MaskC(C);U_f)`；π 只进入固定、profile-scoped 的单臂 Gate1
-> normalizer，不进入 Replay，Gate1 结论只谈 J/C。历史 runtime/receipt 仍按原版本解释；此修订不声称新 runtime 已完成。
+> normalizer，不进入 Replay，Gate1 结论只谈 J/C。旧 full-graph π 只读兼容，不是 fresh Lift
+> 合同；历史 runtime/receipt 仍按原版本解释，当前 runtime 状态以 Task 20 为准。
 >
 > 修订依据：[高级 AI 对 C 设计的纠正](source-notes/高级ai对c的纠正.md)、[高级 AI 对 C 设计的自省](source-notes/高级ai对c的自省.md)
 >

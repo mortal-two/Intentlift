@@ -7,8 +7,8 @@
 > equality 的条款，均由
 > [J-only Replay 与 J/C Structural Gate1](method/IntentIR_J-only_Replay与JC结构Gate1_2026-07-31.md)
 > 覆盖。当前设计是 `Replay(J,MaskC(C);U_f)`；π 只参数化固定单臂 Gate1 normalizer，Gate1
-> 结论只谈 J/C。历史
-> runtime/receipt 仍按原版本解释；此修订不声称新 runtime 已完成。
+> 结论只谈 J/C。旧 full-graph π 的构造、Replay 消费与 checker 条款均为历史版本快照，不能用于
+> fresh candidate。历史 runtime/receipt 仍按原版本解释；当前 runtime 状态以 Task 20 为准。
 >
 > 前置设计：[IntentIR C：所有权、绑定、消费与三方验证设计](IntentIR_C_所有权_绑定_消费与三方验证设计_2026-07-22.md)
 >
@@ -634,7 +634,11 @@ Gate round 的定义。
 权威错误列表有界展开、不改变接受集合时，`candidate-check.v1` 无需升版。任何新规则都只对带新
 version receipt 的 fresh run 生效，不得静默重判历史 artifact。
 
-当前 fresh-run 版本为 `typecheck.v30`。v30只新增一条J-only conditional post-state规则：同一个
+Task 20 当前 fresh-run 版本为 `artifact.v12 + pi.normalization-witness.v1 / decode.v18 /
+typecheck.v31`。v31 对 compact π 只检查 direct J domain/dimension anchors；旧 graph-dependent checks
+仅在读取历史 π subwire 时运行，不再要求 Lift 作者化 route/carrier/refinement totality。
+
+迁移前 `typecheck.v30` 只新增一条J-only conditional post-state规则：同一个
 authored `effect_if` 的正/负 sibling arm 对同一output各有唯一、类型一致的完整store时，该output可由
 effect定义而无需伪造单一SSA binding；缺臂、多写、嵌套或部分store仍fail closed，checker不生成
 `select`、mapping或J字段。v29增加program-axis completeness dependent check并继承v28的
@@ -979,7 +983,7 @@ runner 可以保存实际 request/output 和 compiler metadata 供追溯，但�
 ### 7.2 当前 artifact wire 与 Gate1 witness
 
 当前新 Lift response 使用 `intentir.scrc.artifact.v12`，固定 decode 使用
-`intentir.scrc.decode.v17`。v3 历史上引入 required closed `pi.iterations`；v4 引入
+`intentir.scrc.decode.v18`。v3 历史上引入 required closed `pi.iterations`；v4 引入
 `value_dimension_relations`、`consumer_extensions` 等 typed relations；v5 引入
 `access_guard_relations`；v6/v7 引入 typed control；v8 引入上述 π-owned physical-only time relations；
 v9 引入 π-owned terminal-control topology，v10 引入依附既有 C/J/route 的 closed route-local extent
@@ -989,9 +993,9 @@ transform，v11引入J-owned closed dimension relations，v12引入π-owned clos
 grid、C或instance multiplicity生成axis。domain_ref保持唯一；Source用一个physical coordinate
 multiplex多个logical consumer domain时，不同d*可以共享axis，并以empty-slot domain route到
 branch region表达consumer-local physical control，π不保存predicate。
-当一个 bound coordinate 还需要 row-major mixed-radix decode 时，当前 dependent π 可作者化 closed
-`program_linearizations`。字段只引用 J 已有 dimensions，固定 denotation 由协议给出；它不携带
-公式文本、concrete extent、grid、Source/API、predicate 或 target recipe。会影响 value 的 block
+迁移前曾草拟 closed `program_linearizations` 表达 row-major mixed-radix decode；Task 20 active
+compact π 不再暴露它，因为当前没有实现对应的一元 Gate1 quotient。该差异暂时保持 hard，只有在
+Kernel 无关 normalizer 与 hard-preservation audit 完成后才能以新 schema 加回。会影响 value 的 block
 interval/mask 必须显式在 J，不得由 π 复制。Replay agent 不读取这些 relation；TypeCheck 只拒绝
 非法引用，支持它们的固定 Gate1 normalizer才可消除窄 realization noise。
 每次 fresh response 必须完整作者当前 wire，fixed code 不构造新增字段。`artifact.v1-v7` 保持各自
@@ -1182,7 +1186,7 @@ Source/当前 J 的 writer。Runner 更新 branch-local feedback view 并追加�
 ### 10.1.1 固定 artifact 的 diagnostic recheck
 
 `intentir.scrc.gate1-diagnostic-recheck.v1` 可以对 parent evidence 中一份已落盘 artifact 做独立只读
-诊断：保持 artifact bytes/digest 不变，以当前 canonical Decode、`typecheck.v30`、一个 fresh normal
+诊断：保持 artifact bytes/digest 不变，以当前 canonical Decode、`typecheck.v31`、一个 fresh normal
 Replay 与 Gate1 写入单独的原子 `recheck-NNN` 目录。该路径不调用 Lift、不运行 masked-J 或 Gate2、
 不参加 candidate/winner 选择，并显式记录 `diagnostic_only=true`、`enters_gate2=false`、
 `changes_prior_verdict=false`。它只能判断当前固定 consumer/context 如何消费旧 artifact，不能把

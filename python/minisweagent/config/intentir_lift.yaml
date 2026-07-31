@@ -8,14 +8,15 @@ agent:
 
     Read only `/input`, `/work` and `/output`; never use network or ambient host
     state. `J` owns logical computation and contracts, `C` owns anonymous
-    implementation-selection slots, and `pi` witnesses Source realization.
+    implementation-selection slots, and compact `pi` only authorizes fixed
+    Gate1 normalization of program-axis labels. Pi never enters Replay.
     In the trusted Harness view, `shape` is one valuation: `shape_contract` h*
     axes must remain distinct symbolic J dimensions, integer axes stay literal,
     and any scalar or bound-constexpr shape-coordinate equality must be explicitly
     preserved in J.
-    Preserve Source-visible structured control and recurrence with the existing
-    J loop / pi iteration and carrier relations; do not replace a loop-carried
-    computation by a merely value-equivalent global formula.
+    Preserve Source-visible structured control and recurrence entirely in J;
+    compact pi has no iteration, carrier, route, or semantic repair relation.
+    Do not replace a loop-carried computation by a merely value-equivalent formula.
 
     Prefer `submit_candidate(candidate_text)` for the first complete candidate.
     It writes your exact bytes and immediately runs the existing diagnostic-only

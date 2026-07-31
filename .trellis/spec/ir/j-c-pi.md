@@ -17,15 +17,16 @@ inputs 中声明，`mode=output` 要求只在 J outputs 中声明；同一 handl
 时必须显式写 `mode=inout`。Decode/TypeCheck 不得把 input/output 自动升级为 inout，也不得让
 Harness 或 Gate2 为错误 overlap 伪造输入值。
 
-当前 fresh-run wire 是 `intentir.scrc.artifact.v12`，固定 Decode 是
-`intentir.scrc.decode.v17`。Lift LLM 必须一次性显式写出完整 `(J,C,π)`，包括当前版本要求的空数组；
+当前 fresh-run 顶层 wire 是 `intentir.scrc.artifact.v12`，固定 Decode 是
+`intentir.scrc.decode.v18`。其 active π 子对象必须显式声明
+`intentir.pi.normalization-witness.v1`。Lift LLM 一次性写出完整 `(J,C,π)`；
 固定代码不从 Source、Harness valuation、C、π、Replay 或 Gate 结果补造 artifact 字段。`artifact.v4`
 引入 J-owned `value_dimension_relations` 与 `boundary.consumer_extensions`；`artifact.v5` 再引入
 J-owned `boundary.access_guard_relations`；v6/v7 增加 typed control，v8 增加 π-owned physical-only
 time relations，v9 增加 π-owned terminal-control topology，v10 增加下述 closed
 route-local extent transform，v11增加J-owned closed dimension definition，v12增加π-owned closed
-program-axis identity。旧 v1-v11 wire 仍按各自字段集合读取，
-不通过附加空数组或新 relation 静默升级。
+program-axis identity。旧 v1-v11 wire 与此前生成的 full-graph v12 π 仍按原字段集合只读解析，
+不通过附加空数组或新 relation 静默升级；它们不再是 fresh Lift 的生成合同。
 
 `opaque(mode=value,dtype=none)` 是一个精确的缺席 ABI carrier：它只证明调用位置必须原样接收
 `None`，没有 logical denotation。Lift 必须显式生成这个 signature handle，并且不得把它作为 π
@@ -36,12 +37,13 @@ dtype 的普通 opaque handle 仍可按其明确合同参与 realization。
 
 public-dtype runtime scalar 还可显式表示 representation-only ABI carrier，但唯一 wire form 是
 `kind=scalar, mode=value, rank=0, logical_ref=null`：它不创建 J input，不得出现在 J
-output/boundary/shape semantics，却可由 π 以 p* handle 引用来保留 address/representation realization。
+output/boundary/shape semantics。compact π 不引用 p*，也不为该 carrier 发明 semantic owner；
+它的 compiler-visible 使用若与 Replay 不闭合，仍由 Gate1 hard observation 暴露。
 这不是 C slot；C 仍只承载 implementation selection。Lift 必须按 Source use 自行分类，fixed code
 不得按参数名/位置猜测或自动解绑。该 null form 只允许 runtime scalar；bound constexpr 若是
 logical data/predicate/result 必须绑定 dtype-compatible rank-0 J input，若是 integral extent-only
 必须绑定 declared `x*`。只影响 implementation selection 的 constexpr 进入 C；无法归入 J/C 的
-bound constexpr 是 Harness invalid，不得留成 representation-only π carrier。
+bound constexpr 是 Harness invalid，不得伪装成 representation-only carrier。
 
 C 的 `kind=constexpr` slot 是 Source/Replay callable ABI 中的匿名编译期参数；`kind=compiler` slot
 则是同一 C valuation 中由 Harness 在 frontend compile invocation 上绑定的外部 compiler option。
@@ -262,11 +264,8 @@ Decode/Elaborate、CandidateCheck 与 TypeCheck 不得推断或补造。TypeChec
 domain 属于 implementation family/target capability，不在 C 中增加
 `legal_domain/strength/retunable/fixed`。
 
-`tile_extent` 与 `reduction_tile_extent` 是触发 iteration missing-totality 的保留 role。它们只让
-TypeCheck 能够在 attachment-closed J-loop/slot pair 完全缺 relation 时机械拒绝，不是显式
-`pi.iterations` relation 的 hidden validity tag；custom-role slot 只要满足同一 dependent type 也可
-被显式引用。custom/misclassified role 导致 relation 整体遗漏时，固定 checker 无法从 role 推断，
-仍由 Gate1 topology 检出。
+`tile_extent` 与 `reduction_tile_extent` 只是匿名 schedule role；active compact π 不再要求或承载
+iteration witness。它们不能让 TypeCheck 推导 loop basis，也不能授权 Replay 或 backend 改变 J。
 
 ```text
 MaskC(C) = erase(concrete values, private provenance)
@@ -276,38 +275,45 @@ Replay 只读取 `MaskC(C)`；Harness 将同一 C valuation 绑定给 Source 与
 `C_source`、binding map、portable hints 或其他顶层对象。
 `MaskC(C)` 保留 `subject_ref/axis_ref`，因为它们只引用 J；source invocation provenance 仍被擦除。
 
-## π：依赖类型实现见证
+## π：Gate1-only compact normalization witness
 
 ```text
 Gamma_(J,C) |- pi : RealizationWitness(J,C)
 ```
 
-π 可以表达 region、instance、route、operand slot、order、sharing、placement、materialization 与
-受约束 representation refinement。其锚定关系为：
+active π 的 closed wire 恰为：
 
-```text
-mu : Instances -> Ids(J) union Ids(C)
+```json
+{
+  "schema": "intentir.pi.normalization-witness.v1",
+  "program_axes": []
+}
 ```
 
-accepted artifact 中的 π 始终是上述 canonical dependent object。历史
-`intentir.pi-min.relational-column-wire.v1` 只是对 canonical π 的一一可逆存储编码；Task 20 的 fresh
-Replay packet、workspace、工具和 cache key 均不得包含该编码或任何 π-derived view。历史 evidence
-保持原解释，不被新边界静默升级。
+它只供 TypeCheck 与 Gate1 的固定 unary normalizer读取，绝不进入 Replay、production backend 或 C。
+`program_axes` 的每一行把一个已声明 J domain 绑定到 Source/TTIR 中直接观察到的物理 axis 0..2。
+当前没有 sound unary normalizer 的 mixed-radix、placement、carrier 等 relation 不暴露在 active wire；
+它们在 Gate1 中保持 hard residual，不能先让 Lift 填字段再决定含义。
 
-不存在 `Ids(interface)`。需要接口信息时读取 `InterfaceView(J)`，但该投影不增加命名空间、
-不序列化成独立 artifact，也不作为 Replay 的额外输入。
-
-除下述 v10 closed route-local extent divisor/rounding 外，π 禁止携带：
+π 禁止携带：
 
 - operator/function/reducer、predicate/fill/index formula 或 semantic constant；
 - 可独立解释的 logical shape、result relation、destination/conflict semantics；closed program-coordinate
   relation 只能引用 J 已声明的 opaque x*/subject-axis，不能复制 shape/value；
 - Source text/name/path/span、Kernel/rule/family ID；
 - frontend API、C concrete value 或可执行自由文本；
-- 任何能在删除 J/C 后获得独立 denotation 的结构。
+- 任何能在删除 J/C 后获得独立 denotation 的结构；
+- region、instance、route、order、sharing、iteration/carrier、terminal control、materialization、
+  refinement、numeric permission、comparator、wildcard 或 allowed-diff。
 
-所有 observable realization instance 必须锚定 J-owned node/access/effect。representation-only
-scaffolding 折叠后，π 不得增加、删除或改写 J carrier 的逻辑边。
+compact π 没有 instance namespace，也不增加、删除或改写 J carrier 的逻辑边。
+
+### 旧 full-graph π（只读兼容，不是 active Lift 合同）
+
+以下 realization graph、route、physical-time 与 refinement 叙述只解释历史 artifact。它们不能出现在
+fresh Lift response，不能进入 Replay，也不能为当前 Gate1 提供 normalization 权限。
+本节直至“Gate1 normalization capability”为止保留的是原版本语义快照；其中“当前继续要求”之类
+时态只指当时的 full-graph wire，不是 `pi.normalization-witness.v1` 的活动要求。
 
 一个 Source SSA coordinate/address intermediate 若只定义一次并被多个 access 使用，π 必须用一个
 producer instance、多个 routed consumers 与 one-producer sharing 表达。多个语法 use 不是多个
@@ -342,20 +348,10 @@ order、grid、C 或 instance multiplicity 推断 axis。
 topology；π 不保存比较式、extent、polarity、Source spelling 或 target API。Mask-J 后 d* 仍是不透明
 handle，不能据此恢复计算语义。
 
-若一个 Source program ordinal 在进入 tensor address 前显式经过整数 `//`/`%` 解码，program_id 与
-这棵物理整数树都不进入 J。J 只保存解码后逻辑坐标上的 access/index。Lift 另写 closed relation：
-
-```text
-program_linearizations = {
-  domain_ref,
-  dimension_refs: [outermost_x, ..., innermost_x]
-}
-```
-
-`domain_ref` 必须已有 `program_axes` binding；每个 x* 必须由该 J domain 引用。relation 的唯一全局
-denotation 是对该物理 coordinate 按所列 extents 作 row-major mixed-radix quotient/remainder projection。
-它不保存公式文本、常量、predicate、grid extent、Source/API 或 target recipe。若 Source 使用另一种
-非 row-major 映射，不能滥用该 relation，必须先增加另一种 closed typed relation 或 fail closed。
+迁移前曾草拟 `program_linearizations` 来描述 program ordinal 的 row-major mixed-radix decode；当前
+v1 不暴露该字段，因为还没有一元 normalizer 能在保留 J/C hard projection 的同时消除整棵
+quotient/remainder dataflow。真实 residual 若证明需要它，应先实现并审计 Kernel 无关的 normalizer，
+再以新 π schema 版本加入，而不是保留一个只被 TypeCheck 接受却不改变 Gate1 的 inert relation。
 
 若 program coordinate 对一个逻辑轴选择连续 block，且该 interval/mask 会影响 value，则乘加、比较、
 mask 与 select 必须由 J 自己表达；π 只通过 program domain occurrence 与 routes 保留它的物理
@@ -531,7 +527,13 @@ RealSig(J) = (Carrier(J), Capabilities(J,B))
 ```
 
 `Capabilities(J,B)` 只包含 realization authorization，不复制 operator、predicate、fill、reducer
-等 semantic labels。在相同 `RealSig(J)` 下，替换 semantic label 不得改变 π 的 TypeCheck 结果。
+等 semantic labels。active compact π 没有 refinement/auth_ref；authorization 完整留在 J，并由
+TypeCheck 按对应 J node/operand/result 的 closed type contract 检查。它不成为 Replay 输入或 backend
+permission。
+
+### 旧 π refinement coupling（只读历史）
+
+以下 instance/refinement coupling 仅解释旧 full-graph artifact；fresh Lift 不生成这些字段。
 
 对 integer width、numeric cast、accumulation dtype、reassociation、atomic form 等 sensitive
 refinement：
@@ -568,14 +570,15 @@ refinement.auth_ref == u.auth_id
 ```
 
 不能将 `source_dtype` 与 cast result carrier 比较，也不能要求 subject 改绑 cast 前的 tensor。
-authorization 和 refinement 都由 Lift 显式声明；decoder/TypeCheck 不得自动生成缺失项。
+旧 authorization/refinement 都由 Lift 显式声明；decoder/TypeCheck 不得自动生成缺失项。
 每个 π instance 至多一个 refinement；重复项 fail closed，不由 parser/tool/Replay 选择。
 
 ## 最小 TypeCheck
 
-`TypeCheck(J,C,π)` 接收已经构造完成的唯一 J，并至少检查 J access 的 canonical fill 合同、refs、route slot/type、observable
-J anchor、语义/API/Source/C-value 隔离以及 sensitive authorization。自闭合 `Parse(π)` 只能作为
-语法解析器，不能冒充 dependent TypeCheck。
+`TypeCheck(J,C,π)` 接收已经构造完成的唯一 J，并至少检查 J access 的 canonical fill 合同、J/C
+refs/types/attachments、semantic isolation、sensitive J authorization，以及 compact π 的 domain/dimension
+anchors。它不再要求 active π route、carrier、iteration 或 refinement totality。自闭合 `Parse(π)`
+只能作为语法解析器，不能冒充 dependent TypeCheck。
 
 TypeCheck 的结构化错误可以返回 source-aware Lift；检查结果和 sidecar 不得进入 Replay 作为
 新的信息通道。schema 为 closed-world：未知字段、未知 relation 与自由文本扩展均 fail closed。
@@ -599,9 +602,16 @@ TypeCheck(J,C,pi) -> FreshLogicalSemDecl(C,pi | J) = empty
 在合法引用解析回 J 后，可简写为 `SemDecl(J,C,pi)=SemDecl(J)`；这不等于 π 没有统计语义
 线索，也不证明 J 或 realization 的行为正确。
 
+当前 active 合同为 `artifact.v12 + pi.normalization-witness.v1 / decode.v18 /
+typecheck.v31 / candidate-check.v1`。v31 对 compact π 只检查 direct J anchors；所有旧 graph checks
+仅在解析旧 π subwire 时运行。CandidateCheck 与正式 Runner 共享相同 parser/Decode/TypeCheck core，
+均只拒绝和诊断，不补造 artifact。
+
+### 版本历史（旧 full-graph π，仅用于 evidence 审计）
+
 上述 C attachment、numeric-cast、result-relation compatibility、rank-0 closed signature、Layer-A total
-typing 与显式 non-trailing broadcast 合同已由早期 TypeCheck 版本逐步建立。当前
-`decode.v17/typecheck.v30` 继承v16/v28的closed dimension relation引用、唯一性、grammar与
+typing 与显式 non-trailing broadcast 合同由早期 TypeCheck 版本逐步建立。`typecheck.v30` 曾继承
+v16/v28 的 closed dimension relation引用、唯一性、grammar与
 acyclic dependent check，并增加program-axis completeness检查；同时拒绝同一tensor多个不同却都无consumer锚点的node-less load views；它不从
 任一valuation/compiler observation生成relation，也不替access猜consumer。v27只新增 route extent transform 的 existing-route、required positive-int C、
 matching J-domain attachment/axis 与 realize-anchor dependent checks；它不生成 relation、divisor 或
@@ -618,7 +628,7 @@ wire/decode 窄升为 `artifact.v3 / decode.v3`；v4 随后增加 dimension cons
 terminal-control topology，v10 增加上述 closed route-local extent transform，v11增加closed
 dimension relations，v12增加closed program-axis identity；Task16 的当前 pre-freeze v12 wire 另允许
 上述可选 `program_linearizations`，缺失时为空且不改写历史 evidence。当前 active 合同为
-`artifact.v12 / decode.v17 / typecheck.v30 / candidate-check.v1`；当前 pre-freeze checker 对该
+`artifact.v12 / decode.v17 / typecheck.v30 / candidate-check.v1`；该 pre-freeze checker 对该
 program-coordinate relation 额外检查 J dimension/axis、program binding、instance ownership 与从 owning
 domain realization 到 target 的 route reachability，只拒绝不补造；v30只接受同一authored
 `effect_if`两臂各唯一完整store所定义的conditional post-state output，不生成select/mapping；v29新增program-axis completeness

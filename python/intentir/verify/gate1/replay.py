@@ -26,6 +26,7 @@ from .compiler import (
 from .cuda_codegen import extract_cuda_module
 from .cute_codegen import extract_cute_module
 from .model import Frontend, Gate1Artifact
+from .pi import NORMALIZATION_WITNESS_SCHEMA
 from .prompt import (
     assert_source_isolated_payload,
     build_rewriter_prompt,
@@ -2040,11 +2041,11 @@ def _source_blind_compile_failure(result: CompileResult) -> ReplayIngressResult:
 
 def _packet_transfer_direct_counts(
     packet: Mapping[str, Any],
-) -> tuple[dict[str, int], tuple[str, ...]]:
-    """Count only pi-authored direct boundary transfer occurrences.
+) -> tuple[dict[str, int] | None, tuple[str, ...]]:
+    """Count only legacy-pi-authored direct boundary transfer occurrences.
 
-    This is a source-blind lookup over exact packet declarations.  It neither
-    creates a missing transfer nor decides how Replay should retain one.
+    This historical projection is available only when the old occurrence graph
+    is actually present.  Compact pi absence is not a zero-transfer claim.
     """
 
     j = packet.get("j")
@@ -2053,7 +2054,11 @@ def _packet_transfer_direct_counts(
     accesses = boundary.get("accesses") if isinstance(boundary, Mapping) else None
     instances = pi.get("instances") if isinstance(pi, Mapping) else None
     if not isinstance(accesses, list) or not isinstance(instances, list):
-        return {}, ()
+        # The active compact pi intentionally has no occurrence graph.  Missing
+        # legacy ``instances`` therefore means that direct-transfer multiplicity
+        # is not projectable, not that the compiled program must contain zero
+        # loads/stores.  Formal Gate1 remains responsible for those hard facts.
+        return None, ()
     access_by_id = {
         str(item.get("access_id")): item
         for item in accesses
@@ -2270,7 +2275,7 @@ def _packet_transfer_order_constraints(
 
 def _packet_required_compiled_iteration_arities(
     packet: Mapping[str, Any],
-) -> tuple[int, ...]:
+) -> tuple[int, ...] | None:
     """Return compiler-visible loop block arities authored by J and pi.
 
     A structured J ``loop`` denotes one logical loop.  A
@@ -2293,8 +2298,11 @@ def _packet_required_compiled_iteration_arities(
         else {}
     )
     pi = packet.get("pi")
-    if not isinstance(pi, Mapping):
-        pi = {}
+    if not isinstance(pi, Mapping) or pi.get("schema") == NORMALIZATION_WITNESS_SCHEMA:
+        # A compact normalization witness contains no physical carrier graph.
+        # Assuming one induction argument per J loop would turn absence of old
+        # metadata into a false exact arity claim about compiled TTIR.
+        return None
     instances = {
         str(item.get("id")): str(item.get("semantic_ref"))
         for item in pi.get("instances", [])
@@ -2591,6 +2599,26 @@ def _packet_required_compiled_program_ids(
     routes_value = pi.get("routes")
     if not isinstance(domains_value, Mapping):
         return None, (), None
+    if pi.get("schema") == "intentir.pi.normalization-witness.v1":
+        program_axes_value = pi.get("program_axes")
+        if not isinstance(program_axes_value, list):
+            return None, (), None
+        domain_refs = {str(name) for name in domains_value}
+        axes_by_domain = {
+            str(item.get("domain_ref")): int(item["axis"])
+            for item in program_axes_value
+            if isinstance(item, Mapping)
+            and isinstance(item.get("domain_ref"), str)
+            and item.get("domain_ref") in domain_refs
+            and isinstance(item.get("axis"), int)
+            and not isinstance(item.get("axis"), bool)
+            and 0 <= int(item["axis"]) <= 2
+        }
+        if len(axes_by_domain) != len(program_axes_value):
+            return None, (), None
+        ordered_domains = tuple(sorted(axes_by_domain))
+        expected_axes = tuple(sorted(set(axes_by_domain.values())))
+        return len(expected_axes), ordered_domains, expected_axes
     if not all(
         isinstance(value, list)
         for value in (regions_value, instances_value, routes_value)
@@ -3085,35 +3113,36 @@ def compiled_packet_obligation_diagnostics(
                 }
             )
 
-    actual_iteration_arities = tuple(
-        sorted(loop.block_argument_count for loop in observed.loops)
-    )
-    if len(expected_iteration_arities) != len(actual_iteration_arities):
-        diagnostics.append(
-            {
-                "rule_code": "compiled_iteration_count",
-                "path": (
-                    f"{path_prefix} scf.for: "
-                    f"expected={len(expected_iteration_arities)}, "
-                    f"actual={len(actual_iteration_arities)}"
-                ),
-                "anonymous_handles": [],
-                "line": None,
-            }
+    if expected_iteration_arities is not None:
+        actual_iteration_arities = tuple(
+            sorted(loop.block_argument_count for loop in observed.loops)
         )
-    elif expected_iteration_arities != actual_iteration_arities:
-        diagnostics.append(
-            {
-                "rule_code": "compiled_iteration_carrier_arity",
-                "path": (
-                    f"{path_prefix} scf.for block-arguments: expected="
-                    f"{list(expected_iteration_arities)}, "
-                    f"actual={list(actual_iteration_arities)}"
-                ),
-                "anonymous_handles": [],
-                "line": None,
-            }
-        )
+        if len(expected_iteration_arities) != len(actual_iteration_arities):
+            diagnostics.append(
+                {
+                    "rule_code": "compiled_iteration_count",
+                    "path": (
+                        f"{path_prefix} scf.for: "
+                        f"expected={len(expected_iteration_arities)}, "
+                        f"actual={len(actual_iteration_arities)}"
+                    ),
+                    "anonymous_handles": [],
+                    "line": None,
+                }
+            )
+        elif expected_iteration_arities != actual_iteration_arities:
+            diagnostics.append(
+                {
+                    "rule_code": "compiled_iteration_carrier_arity",
+                    "path": (
+                        f"{path_prefix} scf.for block-arguments: expected="
+                        f"{list(expected_iteration_arities)}, "
+                        f"actual={list(actual_iteration_arities)}"
+                    ),
+                    "anonymous_handles": [],
+                    "line": None,
+                }
+            )
 
     available_iteration_bases = list(observed.diagnostic_iteration_bases)
     for contract in expected_iteration_contracts:
@@ -3154,26 +3183,27 @@ def compiled_packet_obligation_diagnostics(
             }
         )
 
-    for operation in (
-        "tt.load",
-        "tt.load.masked",
-        "tt.store",
-        "tt.store.masked",
-    ):
-        expected = expected_transfers.get(operation, 0)
-        actual = actual_ops.get(operation, 0)
-        if expected != actual:
-            diagnostics.append(
-                {
-                    "rule_code": "compiled_transfer_direct_count",
-                    "path": (
-                        f"{path_prefix} {operation}: "
-                        f"expected={expected}, actual={actual}"
-                    ),
-                    "anonymous_handles": list(transfer_refs[:32]),
-                    "line": None,
-                }
-            )
+    if expected_transfers is not None:
+        for operation in (
+            "tt.load",
+            "tt.load.masked",
+            "tt.store",
+            "tt.store.masked",
+        ):
+            expected = expected_transfers.get(operation, 0)
+            actual = actual_ops.get(operation, 0)
+            if expected != actual:
+                diagnostics.append(
+                    {
+                        "rule_code": "compiled_transfer_direct_count",
+                        "path": (
+                            f"{path_prefix} {operation}: "
+                            f"expected={expected}, actual={actual}"
+                        ),
+                        "anonymous_handles": list(transfer_refs[:32]),
+                        "line": None,
+                    }
+                )
 
     transfer_order_diagnostic = _compiled_transfer_order_diagnostic(
         packet,
@@ -3444,17 +3474,17 @@ python .agents/intentir_agent_tool.py semantic_query node REF
 python .agents/intentir_agent_tool.py packet_query abi 0 48
 python .agents/intentir_agent_tool.py packet_query graph 0 12
 python .agents/intentir_agent_tool.py replay_compile_check
-python .agents/intentir_agent_tool.py replay_ttir_inspect observer op_multiset
-python .agents/intentir_agent_tool.py replay_ttir_inspect observer loops
+python .agents/intentir_agent_tool.py replay_ttir_inspect jc
 python .agents/intentir_agent_tool.py submit_replay
 ```
 
 Use ordinary file edits and your own helper files under `/work`. You may compile,
 inspect only your current Replay IR, checkpoint and patch repeatedly within this one
-episode. A construction-check PASS is only the point to inspect your own TTIR: remove
-compiler-visible address, predicate, control, or arithmetic work not authorized by
-S_J, and keep inactive constexpr alternatives lexically inside their branch so the
-specialized compiler never materializes them. `submit_replay` checks the exact complete
+episode. After construction PASS, use the single bounded `jc` view; use raw/find or one
+observer path only to resolve a concrete issue, never to enumerate the full fingerprint.
+Remove work not authorized by S_J, and keep inactive constexpr alternatives lexically
+inside their branch so the specialized compiler never materializes them.
+`submit_replay` checks the exact complete
 bytes but neither generates nor repairs them. Formal Gate1 runs outside this episode
 and is never visible here.
 """

@@ -24,19 +24,21 @@ lowering 和测试要求，不形成另一套设计。上位文档按作用域�
 若派生规范与上位设计冲突，应修订派生规范；不得通过增加 interface artifact、hash gate、
 epoch、commitment、额外认证 Gate 或兼容旁路来调和冲突。
 
-当前 fresh-run 栈为 `artifact.v12 / decode.v17 / typecheck.v30 / candidate-check.v1 / replay-check.v14`。它继承 rank-0
-closed signature、Layer-A total typing、显式 broadcast、canonical reduce/contraction、absent carrier
-拒绝、functional-domain closure、rank-0 liveness、padded-mean necessary condition 与 closed
-`pi.iterations`，并验证 Lift 已作者化的 value/dimension、closed dimension definition、consumer-extension、access-guard、typed
-control/inout/output-binding/terminal-control 关系，并检查 v10 authored route-local extent transform 的
-existing-route、C/J attachment 与 closed divisor/rounding。fixed code只诊断，不翻译别名、补齐 attrs、生成 handle/relation、
-改图或修复 artifact；历史 wire/receipt 继续按自身版本读取，不静默升级或重判。当前 Agent execution
-receipt 为 `intentir.lift-knowledge.v89 / intentir.lift-knowledge.v67 / minisweagent.intentir-replay.v31 / openai.codex-cli.intentir-replay.v55`；
+当前 fresh-run 栈为 `artifact.v12 + pi.normalization-witness.v1 / decode.v18 / typecheck.v31 / candidate-check.v1 / replay-check.v15`。
+J/C 继续验证 rank-0 closed signature、Layer-A total typing、显式 broadcast、canonical
+reduce/contraction、functional-domain closure、value/dimension、consumer-extension、access-guard、typed
+control/inout/output-binding 等全部语义事实。active π 只作者化已有固定 unary normalizer 的
+program-axis relation；旧 `regions/instances/routes/iterations/carriers/refinements`
+仅供历史 artifact 按原版本读取。fixed code只诊断，不翻译别名、补齐 attrs、生成语义
+handle/relation、改图或修复 artifact；历史 wire/receipt 不静默升级或重判。当前 Agent execution
+receipt 为 `openai.codex-cli.intentir-lift.v37 / intentir.lift-knowledge.v97 /
+minisweagent.intentir-replay.v32 / openai.codex-cli.intentir-replay.v58`；Codex runtime v4 在
+closed submit 工具接受 exact bytes 后恢复并复核 checkpoint，不等待 proof-irrelevant 的结尾 prose；
 Replay 内部 J-only 视图为 `intentir.replay-semantic-program.v1`，不是 artifact 或新输入权威；
 artifact.v11 的 `dimension_relations`只接受identity、常数加/乘、常数ceil-div与round-up的acyclic closed grammar；
 relation由Lift从Source作者化，所有J消费者只能验证/求值，不能从Harness valuation、grid、C、π或TTIR生成。
-artifact.v10+ 的 `physical_iterations/physical_loop_carriers` 表达 structured J loop 外、由已作者化
-reduce/contraction 或 boundary access/domain 锚定的物理时间，
+迁移前 artifact.v10 的 `physical_iterations/physical_loop_carriers` 曾表达 structured J loop 外的物理时间；
+这些旧 relation 不属于 fresh compact π。当前
 feedback frontier/category、candidate-control 与 Replay local-axis 合同只改 agent 消费，不改变接受
 集合。持久 Lift owner 固定使用创建时的私有 Source/Harness/schema/knowledge/tool 快照；续轮只刷新
 closed feedback，host 仓库并发升级不得改变既有 owner。Harness adapter v6 另把 concrete
@@ -68,8 +70,8 @@ Codex Lift v20 删除重复的 feedback host tool，特殊回调只保留两个 
 
 当前 `S_J=M(J)` 按 declaration order 保存每个 J node 的 typed
 `id/op/operands/attrs/result`、structured control、boundary 与 output binding，并保留 J handle；它不读取
-π，也不生成 target code。当前 π 还可作者化 closed `program_linearizations`，引用 J 已有 dimensions 表示
-mixed-radix decode，不携带公式文本、值、Source/API 或 target recipe。logical block interval/mask
+π，也不生成 target code。当前 compact π 只作者化已有固定一元 normalizer 的 `program_axes`；
+mixed-radix decode 在有 sound normalizer 与新 schema 版本前保持 hard。logical block interval/mask
 必须显式属于 J，π 不复制 partition formula。
 
 旧 `replay-obligation-audit.v3` 与 π-consuming `replay-check.v14` 只用于解释历史 evidence；Task 20
@@ -89,7 +91,8 @@ placement 本身不产生 program coordinate。domain-owned branch 至少要求 
 终止，它只计 terminal、不能再重复计普通 branch。上述检查都只拒绝最低结构，不选择条件、arm 或
 目标写法。
 且每个 pointer-producing address stage 必须流向至少一个 transfer。无法闭合的 topology 不猜，不读取
-Source，也不生成地址公式。`typecheck.v30`新增双臂完整store的J-only conditional post-state
+Source，也不生成地址公式。当前 `typecheck.v31` 只对 compact π 检查 direct J
+program-axis/dimension anchors；迁移前 `typecheck.v30` 新增双臂完整store的J-only conditional post-state
 output binding，v29新增program-axis completeness dependent check，v28新增closed
 dimension relation check；`typecheck.v27` 只新增 route extent transform 的 closed dependent check；
 `typecheck.v26` 只新增 direct `x* == 1`/`1 == x*` 对显式 broadcast

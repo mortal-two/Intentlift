@@ -266,7 +266,8 @@ def _feedback_category_value(input_root: Path, name: str) -> dict[str, Any]:
             ):
                 result["effect_order_hint"] = (
                     "Compare the ordered Source and Replay event sequences, "
-                    "then inspect the LLM-authored J scopes and pi order. The "
+                    "then inspect the LLM-authored J scopes, loop/control, and effects. "
+                    "Compact pi has no effect order. The "
                     "witness is diagnostic only and does not prescribe a repair."
                 )
                 result["effect_order_query"] = (
@@ -281,7 +282,7 @@ def _feedback_category_value(input_root: Path, name: str) -> dict[str, Any]:
             ):
                 result["diagnostic_hint"] = (
                     "The observer examples cross root/scf.for region membership. "
-                    "Inspect exact Source definition scope and pi instance regions; "
+                    "Inspect exact Source definition scope and the authored J loop/control; "
                     "fixed code has not inferred which producer, if any, must move."
                 )
                 result["knowledge_query"] = (
@@ -558,7 +559,33 @@ def _source_brief(input_root: Path) -> None:
             )
         compiler_sections[name] = preview
 
-    source_outline = _source_outline_value(input_root, 1, 16)
+    complete_source_outline = _source_outline_value(input_root, 1, 48)
+    top_level_functions = [
+        {
+            "ordinal": item["ordinal"],
+            "line": item["line"],
+            "end_line": item["end_line"],
+            "header": str(item["header"])[:120],
+            "ordered_memory_call_count": len(item.get("ordered_memory_calls", [])),
+        }
+        for item in complete_source_outline["items"]
+        if isinstance(item, dict)
+        and item.get("depth") == 0
+        and item.get("kind") in {"function", "async_function"}
+    ]
+    source_outline = {
+        **complete_source_outline,
+        "items": complete_source_outline["items"][:16],
+        "next_start": (
+            17 if len(complete_source_outline["items"]) > 16 else None
+        ),
+        "next_command": (
+            f"{QUERY_COMMAND} source-outline --start 17 --count 16"
+            if len(complete_source_outline["items"]) > 16
+            else None
+        ),
+        "top_level_functions": top_level_functions,
+    }
     source_outline["items"] = [
         {
             key: item[key]
@@ -603,13 +630,77 @@ def _source_brief(input_root: Path) -> None:
     source_outline["items"].sort(key=lambda item: int(item["ordinal"]))
 
     value = {
-        "protocol": "intentir.lift-source-brief.v1",
+        "protocol": "intentir.lift-source-brief.v2",
         "source": source_outline,
         "harness_abi": _harness_abi_value(input_root, 1, 16),
         "compiler": {
             "status": observation.get("status"),
             "ttir_lines": len(str(observation.get("ttir", "")).splitlines()),
             "sections": compiler_sections,
+            "control_time_index": {
+                "loops": [
+                    {
+                        "ordinal": ordinal,
+                        "block_argument_count": item.get("block_argument_count"),
+                        "carried_value_count": len(
+                            item.get("carried_argument_use_counts", [])
+                        ),
+                        "yielded_value_count": len(item.get("yielded_values", [])),
+                        "body_op_kind_count": len(
+                            item.get("body_op_multiset", {})
+                        ),
+                        "body_signal_ops": sorted(
+                            str(name)
+                            for name in item.get("body_op_multiset", {})
+                            if str(name).startswith("math.")
+                            or str(name)
+                            in {
+                                "tt.dot",
+                                "tt.reduce",
+                                "tt.scan",
+                                "control.conditional",
+                                "arith.maxnumf",
+                                "arith.addf",
+                            }
+                        ),
+                        "body_effect_kinds": sorted(
+                            str(name) for name in item.get("body_effects", {})
+                        ),
+                        "exact_query": (
+                            f"{QUERY_COMMAND} source-observer --path "
+                            f"fingerprint.loops.{ordinal}"
+                        ),
+                    }
+                    for ordinal, item in enumerate(fingerprint.get("loops", []))
+                    if isinstance(item, dict)
+                ][:6],
+                "terminal_forks": [
+                    {
+                        "ordinal": ordinal,
+                        "true_effect_count": len(
+                            item.get("true_arm", {}).get("effect_order", [])
+                        ),
+                        "false_effect_count": len(
+                            item.get("false_arm", {}).get("effect_order", [])
+                        ),
+                        "region_depth": len(item.get("region_context", [])),
+                        "exact_query": (
+                            f"{QUERY_COMMAND} source-observer --path "
+                            f"fingerprint.terminal_forks.{ordinal}"
+                        ),
+                    }
+                    for ordinal, item in enumerate(
+                        fingerprint.get("terminal_forks", [])
+                    )
+                    if isinstance(item, dict)
+                    and isinstance(item.get("true_arm"), dict)
+                    and isinstance(item.get("false_arm"), dict)
+                ][:6],
+                "authority": (
+                    "exact compiler-observer index only; counts and operation names "
+                    "do not classify J ownership or construct recurrence/control"
+                ),
+            },
             "exact_ttir_queries": [
                 f"{QUERY_COMMAND} source-ttir-outline --start 1 --count 80",
                 f"{QUERY_COMMAND} source-ttir-find TOKEN --context 3",
@@ -654,6 +745,16 @@ def _source_brief(input_root: Path) -> None:
         value["harness_abi"]["parameters"] = value["harness_abi"]["parameters"][:4]
         value["harness_abi"]["parameter_next_command"] = (
             f"{QUERY_COMMAND} harness-abi --start 5 --count 16"
+        )
+    if rendered_chars() > MAX_OUTPUT_CHARS:
+        value["source"]["items"] = []
+        value["source"]["next_start"] = 1
+        value["source"]["next_command"] = (
+            f"{QUERY_COMMAND} source-outline --start 1 --count 16"
+        )
+        value["harness_abi"]["parameters"] = value["harness_abi"]["parameters"][:1]
+        value["harness_abi"]["parameter_next_command"] = (
+            f"{QUERY_COMMAND} harness-abi --start 2 --count 16"
         )
     _emit_json(value)
 
@@ -1199,7 +1300,7 @@ def _harness_abi_value(
         "agent_owned_not_inferred": [
             "p* logical_ref and t*/x* ownership",
             "logical operators, control, accesses, effects, and outputs",
-            "all pi instances, routes, order, and time/control relations",
+            "each compact pi program-axis row",
         ],
         "authority": (
             "Exact read-only projection of harness_view.json. p*/c* ownership, "

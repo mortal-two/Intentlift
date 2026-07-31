@@ -51,10 +51,13 @@ from intentir.verify.gate1.model import (
     ScheduleSlotKind,
     SemanticArchive,
 )
-from intentir.verify.gate1.pi import RealizationWitness
+from intentir.verify.gate1.pi import (
+    NORMALIZATION_WITNESS_SCHEMA,
+    RealizationWitness,
+)
 
 
-TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v30"
+TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v31"
 GLOBAL_SAFE_REFINEMENTS = frozenset(
     {"identity_materialization", "reduction_linearization"}
 )
@@ -2759,6 +2762,11 @@ def _check_effect_conditionals(
             )
         )
 
+    if pi.wire_schema == NORMALIZATION_WITNESS_SCHEMA:
+        # J owns the complete conditional.  Compact pi has no branch-region or
+        # terminal-control graph, so the remaining checks are legacy-only.
+        return
+
     regions = {str(region["id"]): region for region in pi.regions}
     branch_regions = {
         region_id
@@ -3217,6 +3225,11 @@ def _check_value_conditionals(
                         yield_value if isinstance(yield_value, str) else None,
                     )
                 )
+
+            if pi.wire_schema == NORMALIZATION_WITNESS_SCHEMA:
+                # All semantic/purity/yield checks above are J-owned.  New pi
+                # intentionally carries no arm-region realization graph.
+                continue
 
             matches = [
                 instance
@@ -4754,6 +4767,22 @@ def _check_program_axes(
     """Check the closed pi domain-to-launch-axis realization identity."""
 
     domains = set(j.boundary.domains)
+    if pi.wire_schema == NORMALIZATION_WITNESS_SCHEMA:
+        for index, item in enumerate(pi.program_axes):
+            domain_ref = str(item["domain_ref"])
+            if domain_ref not in domains:
+                diagnostics.append(
+                    TypeCheckDiagnostic(
+                        TypeCheckErrorCode.PROGRAM_AXIS_BINDING_INVALID,
+                        f"pi.program_axes[{index}].domain_ref",
+                        "compact program-axis binding must name a declared J boundary domain",
+                        domain_ref,
+                    )
+                )
+        # Compact pi is a normalization witness, not a complete realization
+        # graph.  Missing rows remain hard at Gate1; TypeCheck never invents
+        # them or requires a legacy instance/route proof.
+        return
     regions = {
         str(item["id"]): item for item in pi.regions
     }
@@ -5184,21 +5213,22 @@ def type_check(
             continue
         instance_anchors[str(item["id"])] = anchor
 
-    _check_iteration_witness(j, c, pi, node_operations, diagnostics)
-    _check_physical_iteration_witness(j, c, pi, node_operations, diagnostics)
-    _check_route_extent_transforms(
-        j, c, pi, node_operations, instance_anchors, diagnostics
-    )
-    _check_loop_carriers(
-        pi,
-        node_operations,
-        anchors,
-        instance_anchors,
-        diagnostics,
-    )
-    _check_physical_loop_carriers(
-        pi, node_operations, instance_anchors, diagnostics
-    )
+    if pi.wire_schema != NORMALIZATION_WITNESS_SCHEMA:
+        _check_iteration_witness(j, c, pi, node_operations, diagnostics)
+        _check_physical_iteration_witness(j, c, pi, node_operations, diagnostics)
+        _check_route_extent_transforms(
+            j, c, pi, node_operations, instance_anchors, diagnostics
+        )
+        _check_loop_carriers(
+            pi,
+            node_operations,
+            anchors,
+            instance_anchors,
+            diagnostics,
+        )
+        _check_physical_loop_carriers(
+            pi, node_operations, instance_anchors, diagnostics
+        )
     _check_program_axes(
         j,
         pi,

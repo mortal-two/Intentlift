@@ -30,7 +30,7 @@ from .scrc_schema import scrc_lift_core_json_schema, scrc_lift_core_text_format
 
 
 SCRC_RELIFT_PROTOCOL = "llm_direct_pi_structured_source_aware_relift_v2"
-SCRC_DECODE_PROTOCOL = "intentir.scrc.decode.v17"
+SCRC_DECODE_PROTOCOL = "intentir.scrc.decode.v18"
 CANDIDATE_CHECK_PROTOCOL = "intentir.scrc.candidate-check.v1"
 _CANDIDATE_DIAGNOSTIC_LIMIT = 20
 _CANDIDATE_DIAGNOSTIC_TEXT_LIMIT = 2048
@@ -881,7 +881,7 @@ Do not duplicate, rename, or extend it with convenience fields.
 
 Use gap-free declaration-order names: kernel scrc_k0; tensors t*; J nodes n*;
 values v*; dimensions x*; domains d*; accesses a*; effects e*; scopes q*;
-storage b*; parameters p*; C slots c*; pi regions r* and instances i*.
+storage b*; parameters p*; C slots c*. Pi has no identifier graph.
 J t* numbering follows first declaration across inputs then outputs; inout
 reuses its input handle. Never derive t* from p* position: p0 input, p1 output,
 p2 extent bind t0, t1, x0 respectively.
@@ -895,8 +895,8 @@ p* in J.signature and implementation-selection c* in the single C; source
 positions stay private. C values/compiler_slots equal the anonymous inputs and
 each compiler slot uses compiler_roles exactly. Never rename c* to p* or infer
 strategy names from roles. A compiler slot is consumed only by the external
-frontend compiler invocation: give it no subject_ref/axis_ref and no pi instance
-or route; it is not a Source constexpr, callable parameter, or kernel-body value.
+frontend compiler invocation: give it no subject_ref/axis_ref; it is not a Source
+constexpr, callable parameter, kernel-body value, or pi row.
 
 For every tensor, `shape` is only the current Harness binding and is never
 permission to specialize J. In `shape_contract`, an
@@ -911,7 +911,8 @@ value_dimension_relations equality. Fixed code checks but never creates either
 form. Never infer h* from values, shape, grid, C, names, or coincident numbers.
 Capacity and active-length coordinates remain distinct: preserve Source padding,
 domains, and required non-negative affine constraints, but do not invent a
-C-dependent roundup equation. Grid/C/pi may realize rounding, not J ownership.
+C-dependent roundup equation. Physical realization may round capacity, but that
+does not change J ownership and compact pi has no rounding relation.
 When Source itself establishes a logical dimension identity, author it in the
 complete J.dimension_relations array. The only legal expressions are identity,
 add_const, mul_const, ceil_div_const, and round_up_const over declared x* handles
@@ -946,11 +947,12 @@ Also emit the complete J.dimension_relations array, including [].
 Each physical p* has exactly one logical_ref. Dtype/rank/mode must agree; inout binds one tensor
 declared as both input and output, and value parameters never bind outputs merely
 to satisfy existence. A representation/address-only runtime scalar is rank-0
-mode=value with public dtype and null logical_ref; pi may reference that p*.
+mode=value with public dtype and null logical_ref. It remains explicit only in
+the ABI signature; compact pi never assigns it invented semantic ownership.
 Classify only from Source use. Any bound rank-0 t* must reach an observable output
 or explicit J boundary/shape semantic. A compiler-view kind=`none` argument is
 exactly one opaque mode=value dtype=`none` p* with null rank/alias/logical_ref and
-contributes no J tensor, node, access, effect, or pi instance.
+contributes no J tensor, node, access, effect, or pi relation.
 
 For every observable output, J.boundary.result_relations declares only the
 closed semantic comparison class; it never declares numeric thresholds. Use
@@ -988,7 +990,7 @@ free prose as an index expression. For the rectangular functional-domain
 profile, explicitly declare every logical axis bound in boundary.domains. If an
 access uses a physical padding predicate such as k0 < x0, its direct index must
 contain k0 and one domain must declare exactly 0 <= k0 and k0 < x0. A tensor
-shape, Source fact, C value, pi route, or runtime value never fills a missing or
+shape, Source fact, C value, pi row, or runtime value never fills a missing or
 different domain relation. General logical predicates remain legal J; do not
 delete them merely to satisfy this rectangular profile. A fill_value is legal
 only on a load with an authored predicate or access_guard_relation.
@@ -1047,19 +1049,15 @@ matching next/yield/result values. Keep each contraction's canonical subscripts
 and result-axis orientation consistent with the values consumed by that update;
 insert a transpose only when it is a real logical transformation. Do not replace
 an online or loop-carried recurrence with a global contraction/reduction and ask
-Replay to rediscover the missing update algorithm. Pi records only realization
-topology, multiplicity, placement, and routes; it cannot carry, repair, or infer
-an omitted initialization, update formula, yield, or contraction orientation.
-When one authored J transpose is also a distinct compiler-visible stage in the
-anonymous Source TTIR, bind that particular J node to a pi `realize` instance.
-Do not mark every logical transpose by count: select the correspondence from the
-Source/TTIR and authored dataflow. Without that pi instance a source-blind Replay
-has no authority to decide which logical transpose must remain a physical stage.
+Replay to rediscover the missing update algorithm. Compact pi cannot carry,
+repair, or infer an omitted initialization, update formula, yield, contraction
+orientation, transpose, or physical stage. All such semantic structure belongs
+in J and remains hard in Gate1.
 Each scan name retains the complete logical tensor type of its `from` source;
 it is not a physical tile and does not remove the trip axis. Pointwise body ops
 retain that axis until an explicit J reduce/scan consumes it. Conversely, a
 physical strip-mined loop implementing an otherwise ordinary reduction is
-Layer C/pi realization rather than evidence for a semantic loop. A
+not evidence for a semantic loop. A
 boundary.reductions entry describes an existing J reduce/scan and cannot attach
 to a loop to manufacture the missing semantic contraction.
 
@@ -1067,44 +1065,32 @@ An effect-controlling binary Source branch is one Layer-A `effect_if`: one
 visible scalar-i1 predicate and explicit positive/negative `{{scope_id,body}}`
 arms (either may be empty) bound to distinct sibling branch_region scopes. It
 has no result/yield; arm-local SSA never escapes. scope.effects plus matching
-EffectSpec/access_ref is sole membership and cannot overlap access_guard. Pi
-only realizes each arm scope in sibling placement=branch regions; it never
-copies predicate/polarity or turns the branch into select.
+EffectSpec/access_ref is sole membership and cannot overlap access_guard.
 If Source control only multiplexes one physical program axis across multiple
 already-authored J logical domains, it is realization rather than a new Layer-A
 predicate. Keep the computations/effects in J, bind each distinct d* once in
-pi.program_axes (several d* may share the same physical axis), place each
-consumer's occurrences in its own placement=branch region, and add an empty-slot
-route from that domain's program-region realize instance into the region. The J
-domain remains the sole condition; pi carries no comparison, extent, polarity, or
-frontend spelling. Do not invent constant true/false effect_if predicates for this
-case.
-Source early return driven by an ordinary authored scalar predicate: final
-`effect_if`; later work in its continuation arm; one pi.terminal_controls
-terminal_instance/continuation_instance pair over arm `realize` instances.
-When the return is instead exactly the complement of an authored J program domain,
-do not fabricate an effect_if. Keep the existing empty-slot domain route into the
-continuation branch region and add one terminal_controls
-`{{domain_ref,continuation_region}}` row. Both forms name topology only, never a
-predicate/polarity/return/Source/API.
-Preserve selected-helper literal memory order in scope.effects/pi; node order is
-not effect order. Outline loop-preexisting writes are only a carrier checklist.
+pi.program_axes (several d* may share the same physical axis). The J domain
+remains the sole condition; pi carries no comparison, extent, polarity, terminal
+control, or frontend spelling. Do not invent constant true/false effect_if
+predicates. Source early return driven by an ordinary authored scalar predicate
+must remain explicit J control; compact pi cannot hide or reconstruct it.
+Preserve selected-helper literal memory order in J scope.effects; node order is
+not effect order.
 
 A value-yielding Source `scf.if` is one Layer-A `value_if`, never `select`:
 author a visible scalar-i1 predicate, one result/type, and two explicit
 `{{scope_id,body,yield_value}}` arms. Bodies may be empty/capture outer values
 but admit only known pure ordinary ops, no access/effect/unknown/nested region.
 Both yields exactly match the result type and only that result escapes. Arm
-scopes and pi branch regions are distinct siblings. Fixed code never fills,
-derives from select, or rewrites this structure.
+scopes are distinct siblings. Fixed code never fills, derives from select, or
+rewrites this structure.
 
-Preserve every compiler-visible sensitive representation event in Source. J owns
-its typed realization_authorization; pi attaches the matching refinement and
-auth_ref to the exact instance. Use distinct instances/refinements for distinct
-source stages; fixed code cannot infer an undeclared cast; never propagate one
-conversion to sibling parameters, strides, or instances. Signed/unsigned widen
-states explicit same-signedness source_dtype and a strictly wider target_dtype;
-equal-width or missing dtype pairs are not widening.
+Preserve every compiler-visible sensitive numeric event in J. J owns its typed
+realization_authorization; compact pi has no refinements and cannot authorize a
+cast, reassociation, atomic, or precision change. Fixed code cannot infer an
+undeclared cast or propagate one conversion to sibling parameters or strides.
+Signed/unsigned widen states explicit same-signedness source_dtype and a strictly
+wider target_dtype; equal-width or missing dtype pairs are not widening.
 Floating cast placement is part of the typed graph: never commute a cast across
 mul/add/sub or replace a low-precision operation followed by extension with an
 operation performed after extension, even when the result relation is tolerance
@@ -1116,9 +1102,8 @@ Source frontend's local tile axis after program/grid axes select the program ins
 is not the whole-tensor logical axis number from reduce.attrs.axes. Preserve the
 observed local axis; do not copy a logical rank axis or add program axes to it.
 For a Source reduction with omitted frontend axis and a compiler-visible flatten,
-keep logical axes in J; add a distinct pi `realize` refined as
-`reduction_linearization` (`auth_ref=null`) with one slot-0 route to the reduce
-instance. Never use it for an explicit axis or put frontend text/API in pi.
+keep the complete logical reduction axes in J. Compact pi cannot turn one
+reduction into another or waive a missing compiler-visible semantic stage.
 
 J `const` is exact: finite JSON number, or only `"-inf"`/`"inf"`/`"nan"`
 with floating dtype. Never approximate it or move it to C/pi.
@@ -1130,86 +1115,16 @@ reduction/loop/contraction/domain/index/x* axis; never infer it from role, names
 pi, or hardware axes. Global priors may omit both. A C attachment never names
 a p* parameter, source/local, or J-body v*.
 
-Pi is non-semantic, non-executable anonymous topology. Except for the closed
-route-extent divisor/rounding below, it contains no operator/value and never a
-predicate, dtype, logical shape, frontend API, Source spelling, prose, or rule ID.
-
-For a tiled physical realization of a structured J `loop`, author exactly one
-pi.iterations relation: loop_instance anchors that loop and tile_instance a
-required positive-integer C slot on its trip axis. `extent_step` is zero to trip
-by tile; `rounded_extent_step` uses the same lower/step and upper
-ceil_div(trip,tile)*tile; `tile_ordinal` is zero-based unit-step tile ordinals.
-Preserve the Source basis even if unused. Any C role is valid when the explicit
-dependent anchors match; reserved tile roles only expose a wholly missing
-relation to TypeCheck. The tag has no formula/value/API and never denotes an
-untiled loop.
-
-For a physical tiled loop around an existing non-loop J reduce/contraction/access/
-domain, author physical_iterations with its same-subject/axis positive-int C tile
-and Source basis/direction; structured J loops use iterations. Add physical carriers
-only for visible state, in Source tuple order. Each carrier uses four distinct physical
-instances for init/state/next/result, even when they anchor the same J semantic value,
-and ordinary routes close init -> state -> next. The carrier relation itself denotes
-the next-to-state temporal edge and loop-exit result. It contains no update formula.
-`pi.order` alone orders events.
-
-For a Source C-extent partition at one existing route slot, author exact
-source/target/slot, divisor>1, floor/ceil, and target-domain/axis attachment.
-It changes only that representation use, never J or sibling routes.
-
-Pi preserves every compiler-visible source realization event not denoted by J
-or pure C. Emit multiple instances with the same semantic_ref when one declared
-handle has multiple observable realization stages. Every anonymous J.signature
-or C handle materially used by address, transfer, synchronization, placement,
-or sharing realization must anchor an instance; dependencies then route only
-between the declared i* instance IDs.
-One Source SSA coordinate or address intermediate that is defined once and
-reused by several accesses remains one producer instance with routed consumers
-and an explicit one-producer sharing relation. Multiple syntactic uses never
-justify recomputing or duplicating that producer. Repeat a semantic_ref instance
-only for distinct compiler-visible definitions/stages in Source, not once per
-consumer and not to restate an already routed coordinate algebraically.
-Every source program-coordinate occurrence must remain a distinct
-domain-anchored realization path entering an address_base instance, even when
-the current concrete grid extent on that axis is one. One logical domain may
-therefore have both a program-coordinate path into address_base and a separate
-lane-coordinate path into address_lane; never collapse the former into a loop
-or erase it as constant-degenerate topology. Emit exactly one
-pi.program_axes{{domain_ref,axis}} binding for every distinct program-coordinate
-domain, using the physical axis observed in Source/TTIR; multiple realization
-instances of the same domain share that one binding. Distinct logical consumer
-domains may bind the same axis when Source multiplexes that coordinate; the
-domain_ref is unique but the physical axis need not be. Never derive axis from grid,
-instance order, C, or placement alone.
-When one Source program ordinal is decoded by integer // or % before tensor
-addressing, do not put program_id or its physical arithmetic in J. Keep J access
-indices logical. Author one program_linearizations row whose outer-to-inner x*
-dimension order gives the closed row-major mixed-radix decode of that d* coordinate,
-then route its realization occurrence to the affected address stages. This pi row is
-physical coordinate topology only: no formula string, value, predicate, Source/API,
-or target recipe. program_axes still supplies only physical axis identity.
-Any block interval, comparison, mask, or selection that changes logical values belongs
-in J as normal typed operations and domains. Pi must not duplicate it as a program
-partition recipe. The owning d* program occurrence remains connected to physical
-address realization through normal pi routes. Do not replace J semantics with a
-literal current block, a C-only guess, or a J program_id node.
-Encode the pointer-carrier boundary
-without adding fields: when a Source pointer/tensor carrier is applied at the
-program-uniform base stage and that pointer result then receives the lane
-contribution, route its p* instance directly into address_base and route
-address_base to address_lane; this denotes two source pointer/address operations.
-When Source instead forms program-uniform base and lane contributions as integers,
-merges them, and only then applies the pointer carrier once, route the integer/
-domain/C paths through address_base to address_lane while the pointer p* bypasses
-address_base and enters address_lane or the final address stage. Do not choose
-between these encodings from a base-to-lane edge alone. A lone address_lane is
-legal only when Source has no separable program-uniform contribution. Every
-transfer_direct/async must be route-reachable from a p* pointer/tensor carrier
-bound to that access's J tensor.
-Preserve source event multiplicity, def-use routes, partial order, regions, and
-one-producer sharing exactly; do not use duplicate instances as an undocumented
-code. Logical operators, predicates, fills, constants, index formulas, shapes,
-and effects remain exclusively in J.
+Pi is a compact, certification-only normalization witness and never enters
+Replay. Emit exactly two fields: its fixed schema string and program_axes. Use
+an empty program_axes array when the fixed axis-label quotient does not apply.
+Each program_axes row binds one declared J domain d* to the physical Source/TTIR
+launch axis 0, 1, or 2. Several domains may share an axis; one domain appears at
+most once. Never infer the axis from grid, C, names, or concrete extents.
+Pi cannot encode regions, instances, routes, order, sharing, iteration, carrier,
+terminal control, materialization, refinement, numeric permission, or semantic
+exceptions. Those facts remain explicit in J/C or hard in Gate1. Never add any
+field not present in the supplied closed schema.
 
 The source is already alpha-renamed. Do not invent or recover original names.
 Output JSON only.

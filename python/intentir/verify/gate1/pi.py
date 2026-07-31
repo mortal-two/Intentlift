@@ -1,8 +1,8 @@
-"""Strict LLM-direct realization witness (pi).
+"""Typed Gate1 normalization witness with legacy pi compatibility.
 
-Pi is not an executable plan.  It carries only anonymous source-realization
-topology and opaque references into J/C.  Closed record schemas deliberately
-reject semantic atoms, source text and frontend API spellings.
+The active subwire contains only closed program-axis rows.  The
+older source-realization graph remains parseable for historical evidence, but is
+not exposed to fresh Lift or Replay.
 """
 
 from __future__ import annotations
@@ -18,6 +18,8 @@ class RealizationWitnessError(ValueError):
 
 
 JsonValue = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
+
+NORMALIZATION_WITNESS_SCHEMA = "intentir.pi.normalization-witness.v1"
 
 REALIZATION_MECHANISMS: tuple[str, ...] = (
     "realize",
@@ -306,8 +308,15 @@ def _require_acyclic(
 
 @dataclass
 class RealizationWitness:
-    """Minimal direct-pi schema for source-realization relations."""
+    """Typed Gate1 normalization witness with legacy artifact compatibility.
 
+    New Lift episodes author only the compact ``normalization-witness.v1``
+    subwire.  The older realization graph remains readable so already closed
+    artifacts can still be audited; it is no longer part of the active Lift
+    contract.
+    """
+
+    wire_schema: str | None = None
     regions: list[dict[str, JsonValue]] = field(default_factory=list)
     instances: list[dict[str, JsonValue]] = field(default_factory=list)
     routes: list[dict[str, JsonValue]] = field(default_factory=list)
@@ -336,6 +345,32 @@ class RealizationWitness:
     )
 
     def __post_init__(self) -> None:
+        if self.wire_schema not in {None, NORMALIZATION_WITNESS_SCHEMA}:
+            raise RealizationWitnessError(
+                f"unsupported pi subwire schema {self.wire_schema!r}"
+            )
+        if self.wire_schema == NORMALIZATION_WITNESS_SCHEMA:
+            legacy_fields = {
+                "program_linearizations": self.program_linearizations,
+                "regions": self.regions,
+                "instances": self.instances,
+                "routes": self.routes,
+                "route_extent_transforms": self.route_extent_transforms,
+                "order": self.order,
+                "sharing": self.sharing,
+                "refinements": self.refinements,
+                "iterations": self.iterations,
+                "loop_carriers": self.loop_carriers,
+                "physical_iterations": self.physical_iterations,
+                "physical_loop_carriers": self.physical_loop_carriers,
+                "terminal_controls": self.terminal_controls,
+            }
+            present = sorted(name for name, rows in legacy_fields.items() if rows)
+            if present:
+                raise RealizationWitnessError(
+                    "compact pi may contain only program_axes; "
+                    f"found unsupported fields {present}"
+                )
         checked_regions: list[dict[str, JsonValue]] = []
         for index, raw in enumerate(self.regions):
             item = _record(
@@ -997,6 +1032,23 @@ class RealizationWitness:
 
     @classmethod
     def from_json(cls, value: Any) -> "RealizationWitness":
+        if isinstance(value, dict) and "schema" in value:
+            data = _record(
+                value,
+                path="pi",
+                required=frozenset({"schema", "program_axes"}),
+            )
+            schema = _name(data["schema"], "pi.schema")
+            if schema != NORMALIZATION_WITNESS_SCHEMA:
+                raise RealizationWitnessError(
+                    f"unsupported pi subwire schema {schema!r}"
+                )
+            if not isinstance(data["program_axes"], list):
+                raise RealizationWitnessError("pi.program_axes must be an array")
+            return cls(
+                wire_schema=schema,
+                program_axes=copy.deepcopy(data["program_axes"]),
+            )
         data = _record(
             value,
             path="pi",
@@ -1081,6 +1133,11 @@ class RealizationWitness:
         include_program_axes: bool = True,
         include_program_coordinate_maps: bool = True,
     ) -> dict[str, Any]:
+        if self.wire_schema == NORMALIZATION_WITNESS_SCHEMA:
+            return {
+                "schema": NORMALIZATION_WITNESS_SCHEMA,
+                "program_axes": copy.deepcopy(self.program_axes),
+            }
         result = {
             "regions": copy.deepcopy(self.regions),
             "instances": copy.deepcopy(self.instances),
@@ -1114,6 +1171,7 @@ class RealizationWitness:
 
 
 __all__ = [
+    "NORMALIZATION_WITNESS_SCHEMA",
     "RealizationWitness",
     "RealizationWitnessError",
     "REALIZATION_MECHANISMS",

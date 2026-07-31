@@ -73,10 +73,9 @@ def normalize_ttir_for_gate1(ttir: str, artifact: Gate1Artifact) -> NormalizedTT
     ``program_axes`` authorizes only removal of the physical x/y/z (or 0/1/2)
     label.  It does not erase the coordinate operation, its multiplicity, its
     result type, any user, or any arithmetic/access/effect reached from it.
-    Mixed-radix arithmetic between a coordinate anchor and an address anchor is
-    already handled by the versioned TTIR representation quotient; declaring a
-    ``program_linearizations`` row therefore activates no additional text
-    rewrite here.
+    No relation is exposed in active pi unless this function implements its
+    fixed unary quotient.  Mixed-radix relations remain hard until such a
+    normalizer exists.
     """
 
     active_rules: list[str] = []
@@ -99,8 +98,6 @@ def normalize_ttir_for_gate1(ttir: str, artifact: Gate1Artifact) -> NormalizedTT
             lines.append(normalized)
             transformed += int(changed)
         text = "".join(lines)
-    if artifact.pi.program_linearizations:
-        active_rules.append("mixed_radix_representation_quotient_v13")
     return NormalizedTTIR(
         text=text,
         transformed_occurrences=transformed,
