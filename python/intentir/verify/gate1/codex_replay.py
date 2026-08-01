@@ -50,7 +50,7 @@ from .replay import (
 )
 
 
-CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v69"
+CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v70"
 
 _INITIAL_PROMPT = """You are the sole writer for one fresh source-blind IntentIR Replay episode.
 Work only under the isolated /workspace. input/ is immutable; output/, work/, and
@@ -88,7 +88,9 @@ formal compilation. Never guess, copy, shadow, or reconstruct a hidden value. Th
 formal judgment is for the Harness-held valuation, so unknown C is not permission to
 add J-absent predicates, carriers, or effects. Prefer the smallest direct lowering of
 the complete J contract and add target control only when J or the chosen public target
-construct actually requires it.
+construct actually requires it. When frontend.json declares a fixed canonical domain
+mapping for its structural observer, follow that J-derived mapping exactly; do not swap
+it for a schedule-equivalent loop/program decomposition.
 
 Compile, inspect only your own Replay IR when the frontend supports that tool, and patch
 the complete program in this same episode. First run `replay_compile_check`, then follow

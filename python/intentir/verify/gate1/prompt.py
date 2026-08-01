@@ -60,8 +60,14 @@ PUBLIC_FRONTEND_CONTEXT = {
             "grid. Lower J-owned bounded logical domains directly with public "
             "structured TileLang iteration when possible; do not invent a "
             "carrier or runtime guard merely to defend against the hidden C "
-            "valuation. The formal run binds that same parameterized source at "
-            "the Harness-held valuation."
+            "valuation. This structural-TIR profile uses one source-neutral "
+            "canonical program mapping: derive the leading output-covering J "
+            "domain from the output store axes and domain dependencies, and map "
+            "it directly to the leading `T.Kernel` grid/program id in J axis "
+            "order. Do not replace that program domain with a singleton grid plus "
+            "`T.Parallel`; use structured iteration only for remaining logical "
+            "axes. The formal run binds that same parameterized source at the "
+            "Harness-held valuation."
         ),
     },
     "cuda": {
