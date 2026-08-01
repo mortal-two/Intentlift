@@ -182,14 +182,42 @@ add2d 通过后，第二对使用 `tilelang:gather2d` / `cuda:tilelang_gather2d`
 `M=64`、block `[128,1,1]`、grid `[256,1,1]`，但包含 data-dependent row/column 间接寻址，用来检验
 两种 observer 对合法 address realization 的误拒率。
 
+该pair已经完成。两份artifact都由主代理对当前Source重新作者化，Lift调用为0；它们共享valid-index
+关系`out[k]=input[row[k],col[k]]`、两个typed gather与两个index-bounds，但full J不强迫一致：TileLang
+Source是无显式guard的TIR访问，CUDA Source明确保留四个bounds、zero fill、predicated input access与
+select，ABI也分别是4个tensor和4个pointer加scalar `M`。canonical full artifact为2696/4381 B，J为
+2422/4109 B，compact π均为95 B。
+
+TileLang先后暴露两个通用编译缺口：`T.Kernel(1)+T.Parallel(256)`不满足当前TIR profile的canonical
+program mapping，以及无storage/effect的pure single-consumer gather intermediate被不必要物化。
+将首个output-covering domain直接映射program grid、并默认SSA融合纯中间值后，fresh run-003只生成
+12 display lines/297 B，Replay episode 161.91 s；TIR hard全部PASS，三边Gate2 exact、误差0。其生成
+PTX仍有5项diagnostic差异，但PTX不反向支配TileLang Gate1。
+
+CUDA run-001正确恢复guard/gather/effect，却擅自用
+`blockIdx.x*blockDim.x+threadIdx.x`枚举只有program-owned output coordinate的域；真实launch会多枚举
+128倍坐标，因此`coordinate_uses` hard拒绝不是合法realization false reject。固定CUDA `U_f`明确“没有
+distinct J-owned lane axis时launch block slot不授权thread coordinate进入J地址”后，fresh run-002生成
+18行/426 B，Replay episode 120.78 s；semantic PTX全部hard PASS，3项raw差异只diagnostic，Gate2三边
+exact、误差0。三个gather闭合机制commit共+47/-10 production Python（net +37），kernel-specific
+production lowering仍为0 LoC。
+
+随后对两份accepted add2d Replay执行controlled mutation sensitivity。该实验不调用Lift/provider，fixed
+writer只传输exact mutated bytes；Source与mutation仍经过真实native compiler/fingerprint/comparator。
+两个baseline均重新闭合；TileLang/CUDA各自wrong-op、wrong-index、wrong-effect共6项全部compile后被
+Gate1 hard拒绝，平均6.15 s，Gate2调用为0。额外CUDA `p1[index+1]` probe暴露一个必须公开的边界：
+semantic-effects v6尚未把普通constant address displacement纳入hard affine projection，因此该probe
+漏检。不能把6/6主表外推为完备wrong-index检测，也不能为补数字把raw PTX文本临时升级为hard。
+
 ## 7. 论文只证明四件事
 
 1. **J-only sufficiency**：Replay没有π/Source/Gate仍能闭合，说明计算实现由J与匿名C接口驱动。
 2. **跨前端可复用因子化**：同一数学 kernel 的TileLang/CUDA作者化结果具有可对应的J/C核心，而工程差异限制在
    frontend profile与Replay target code。
-3. **Gate1的提前结构价值**：正确Replay通过；wrong op/index/mask/effect mutation在Gate2前被对应profile
-   拒绝。Gate1不替代Gate2。
-4. **保守性**：报告合法 realization false reject与`observer_unsupported`；π identity基线不伪造收益。
+3. **Gate1的提前结构价值**：正确Replay通过；6个预定义coarse wrong-op/index/effect mutation在Gate2前
+   被对应profile拒绝。Gate1不替代Gate2，也不声称完备。
+4. **保守性与覆盖边界**：报告合法 realization false reject、`observer_unsupported`与已知false negative；
+   当前CUDA constant address displacement probe漏检，π identity基线也不伪造收益。
 
 最小表格字段：artifact作者化wall time、candidate bytes、人工修订次数、TypeCheck、Replay wall time/segments/
 compile-fix cycles、Gate1 verdict/primary category、Gate2三边、π bytes、Replay π-visible=false、observer
@@ -202,6 +230,10 @@ profile、persistent kernel-specific LoC（目标0）。
 - add2d Gate1失败：先区分J/C错误、Replay不忠实、observer unsupported，不增加provider预算碰运气；
 - Gate1通过而Gate2失败：按三边定位，不盲目relift；
 - 只有add2d两前端都完成fresh Gate1+Gate2，才进入gather2d与mutation实验。
+
+上述前置条件现已满足；Task27在add2d/gather2d两对与最小mutation表完成后停止，不再用更多简单kernel
+扩大样本。机器指标与claim boundary分别见Task27的`pair_metrics.json`、`gather_pair_metrics.json`、
+`mutations/add2d-v1/mutation_metrics.json`及三份实验报告。
 
 最终原则：
 
