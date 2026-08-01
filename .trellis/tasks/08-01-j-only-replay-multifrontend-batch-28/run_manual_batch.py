@@ -6,10 +6,12 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import hashlib
 import json
+import multiprocessing
 from pathlib import Path
 import threading
 import time
 import traceback
+from types import SimpleNamespace
 from typing import Any, Mapping
 
 from manual_g1_artifacts import (
@@ -128,27 +130,172 @@ def _replay_record(record: ReplayGeneration | ReplayAttempt) -> dict[str, Any]:
     return common
 
 
-def _execute_gate2(
+def _execute_gate2_inline(
     prepared: Any,
     artifact: Gate1Artifact,
     gate1: Any,
-    semaphore: threading.Semaphore,
 ) -> Any:
-    with semaphore:
-        if prepared.request.frontend == "cuda":
-            source_runner: Any = CudaRunner(CudaCompiler(timeout=240.0))
-            replay_runner: Any = CudaRunner(CudaCompiler(timeout=240.0))
-        else:
-            source_runner = TileLangRunner()
-            replay_runner = TileLangRunner()
-        adapter = NativeGate2ExecutionAdapter(
-            prepared.request.frontend,
-            Gate2Runner(source_runner=source_runner, replay_runner=replay_runner),
-            lambda accepted, _gate1, _binding: build_frontend_dataset_gate2_suite(
-                prepared, accepted
-            ),
+    if prepared.request.frontend == "cuda":
+        source_runner: Any = CudaRunner(CudaCompiler(timeout=240.0))
+        replay_runner: Any = CudaRunner(CudaCompiler(timeout=240.0))
+    else:
+        source_runner = TileLangRunner()
+        replay_runner = TileLangRunner()
+    adapter = NativeGate2ExecutionAdapter(
+        prepared.request.frontend,
+        Gate2Runner(source_runner=source_runner, replay_runner=replay_runner),
+        lambda accepted, _gate1, _binding: build_frontend_dataset_gate2_suite(
+            prepared, accepted
+        ),
+    )
+    return adapter.execute(artifact, gate1, prepared.request)
+
+
+class _Gate2JsonResult:
+    """Small parent-side view of a child Gate2 JSON certificate."""
+
+    def __init__(self, payload: Mapping[str, Any]) -> None:
+        self.payload = dict(payload)
+
+    @property
+    def passed(self) -> bool:
+        return bool(self.payload.get("passed", False))
+
+    @property
+    def status_counts(self) -> dict[str, int]:
+        raw = self.payload.get("status_counts", {})
+        return dict(raw) if isinstance(raw, Mapping) else {}
+
+    def to_json(self) -> dict[str, Any]:
+        return dict(self.payload)
+
+
+def _gate2_child_entry(
+    connection: Any,
+    case_id: str,
+    artifact_json: Mapping[str, Any],
+    replay_code: str,
+    replay_function_name: str,
+) -> None:
+    """Execute one real Gate2 suite in a clean spawned interpreter.
+
+    The child intentionally reconstructs the registered Source/Harness from the
+    case id and receives only the exact J artifact plus the Gate1-accepted Replay
+    text.  No Gate2 result, compiler context, or CUDA runtime is shared with the
+    parent or another case.
+    """
+
+    try:
+        artifact = Gate1Artifact.from_json(dict(artifact_json))
+        prepared = prepare_registered_scrc_workload(case_id)
+        generation = SimpleNamespace(
+            code=replay_code,
+            function_name=replay_function_name,
         )
-        return adapter.execute(artifact, gate1, prepared.request)
+        gate1 = SimpleNamespace(normal=SimpleNamespace(generation=generation))
+        result = _execute_gate2_inline(prepared, artifact, gate1)
+        connection.send({"ok": True, "result": result.to_json()})
+    except BaseException as exc:  # propagate process failures as evidence
+        connection.send(
+            {
+                "ok": False,
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+                "traceback": traceback.format_exc(),
+            }
+        )
+    finally:
+        connection.close()
+
+
+def _execute_gate2(
+    case_id: str,
+    artifact: Gate1Artifact,
+    gate1: Any,
+    semaphore: threading.Semaphore,
+) -> _Gate2JsonResult:
+    """Run Gate2 in an isolated ``spawn`` process per experiment case.
+
+    A CUDA illegal-address event poisons the owning context.  Sharing the old
+    inline context made all later cases report driver error 700, so the formal
+    batch must isolate cases at the process boundary.  ``spawn`` is deliberate:
+    ``fork`` can inherit a partially initialized CUDA runtime.
+    """
+
+    generation = getattr(getattr(gate1, "normal", None), "generation", None)
+    if generation is None:
+        raise ValueError("Gate2 isolation requires the exact Gate1-accepted Replay")
+    with semaphore:
+        context = multiprocessing.get_context("spawn")
+        receive, send = context.Pipe(False)
+        process = context.Process(
+            target=_gate2_child_entry,
+            args=(
+                send,
+                case_id,
+                artifact.to_json(),
+                generation.code,
+                generation.function_name,
+            ),
+            name=f"intentir-gate2-{case_id.replace(':', '-')}",
+        )
+        process.start()
+        send.close()
+        timeout = 600.0
+        message: Mapping[str, Any]
+        try:
+            if not receive.poll(timeout):
+                process.terminate()
+                process.join(10.0)
+                return _Gate2JsonResult(
+                    {
+                        "suite_id": case_id,
+                        "passed": False,
+                        "failed_case_ids": ["gate2_process_timeout"],
+                        "status_counts": {"process_timeout": 1},
+                        "cases": [],
+                        "metadata": {"error": f"child exceeded {timeout:.1f}s"},
+                    }
+                )
+            try:
+                received = receive.recv()
+            except EOFError:
+                received = {
+                    "ok": False,
+                    "error_type": "Gate2ChildExited",
+                    "error": "Gate2 child closed its evidence pipe without a result",
+                    "traceback": "",
+                }
+            if not isinstance(received, Mapping):
+                received = {
+                    "ok": False,
+                    "error_type": "Gate2ChildProtocolError",
+                    "error": "Gate2 child returned a non-object message",
+                    "traceback": "",
+                }
+            message = received
+        finally:
+            receive.close()
+            process.join(30.0)
+            if process.is_alive():
+                process.terminate()
+                process.join(5.0)
+        if message.get("ok"):
+            return _Gate2JsonResult(message["result"])
+        return _Gate2JsonResult(
+            {
+                "suite_id": case_id,
+                "passed": False,
+                "failed_case_ids": ["gate2_process_failure"],
+                "status_counts": {"process_failure": 1},
+                "cases": [],
+                "metadata": {
+                    "error_type": message.get("error_type"),
+                    "error": message.get("error"),
+                    "traceback": message.get("traceback"),
+                },
+            }
+        )
 
 
 def _cohort_memberships(case_id: str) -> list[str]:
@@ -263,7 +410,7 @@ def _run_one(
         if recheck.passed:
             gate2_started = time.time()
             gate2 = _execute_gate2(
-                prepared, recheck.artifact, recheck.gate1, gate2_semaphore
+                case_id, recheck.artifact, recheck.gate1, gate2_semaphore
             )
             gate2_elapsed_ms = (time.time() - gate2_started) * 1000.0
             _write_json(run_dir / "gate2.json", gate2.to_json())
