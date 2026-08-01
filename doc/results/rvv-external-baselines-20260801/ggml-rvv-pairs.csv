@@ -1,0 +1,9 @@
+kernel,extents,bar_id,display_name,latency_us,full_speedup_vs_bar
+swiglu,"{""x0"": 16384, ""x1"": 11008}",full,IntentIR Full,5405342.727,1.0
+swiglu,"{""x0"": 16384, ""x1"": 11008}",ggml_rvv,ggml CPU/RVV,1274646.074,0.2358122580522173
+dyt,"{""x0"": 4096, ""x1"": 4096}",full,IntentIR Full,993034.8744999999,1.0
+dyt,"{""x0"": 4096, ""x1"": 4096}",ggml_rvv,ggml CPU/RVV,1042566.4695,1.049879008554397
+softmax,"{""x0"": 2048, ""x1"": 4096}",full,IntentIR Full,31626.379,1.0
+softmax,"{""x0"": 2048, ""x1"": 4096}",ggml_rvv,ggml CPU/RVV,51139.091,1.6169758479148055
+xformers_rms_norm,"{""x0"": 4096, ""x1"": 12288}",full,IntentIR Full,101944.4805,1.0
+xformers_rms_norm,"{""x0"": 4096, ""x1"": 12288}",ggml_rvv,ggml CPU/RVV,266051.8735,2.6097722230287883

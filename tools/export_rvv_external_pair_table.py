@@ -27,6 +27,7 @@ def build_table(reports: list[dict[str, Any]]) -> dict[str, Any]:
     rows = []
     bars = []
     seen = set()
+    external_names = set()
     for report in reports:
         if report.get("protocol") != PAIR_PROTOCOL:
             raise ValueError("unsupported RVV external-pair report")
@@ -36,6 +37,7 @@ def build_table(reports: list[dict[str, Any]]) -> dict[str, Any]:
         seen.add(kernel)
         full = report["full"]
         external = report["external"]
+        external_names.add(str(external["display_name"]))
         full_us = float(full["latency_us"])
         external_us = float(external["latency_us"])
         if not math.isfinite(full_us) or not math.isfinite(external_us):
@@ -70,10 +72,14 @@ def build_table(reports: list[dict[str, Any]]) -> dict[str, Any]:
     geomean = math.exp(
         sum(math.log(row["external_over_full"]) for row in rows) / len(rows)
     )
+    if len(external_names) == 1:
+        comparison = f"{next(iter(external_names))} versus IntentIR Full"
+    else:
+        comparison = "External RVV baselines versus IntentIR Full"
     return {
         "protocol": TABLE_PROTOCOL,
         "kernel_count": len(rows),
-        "comparison": "Triton-CPU/RVV versus IntentIR Full",
+        "comparison": comparison,
         "geomean_external_over_full": geomean,
         "rows": rows,
         "bars": bars,
@@ -98,6 +104,7 @@ def main(argv: list[str] | None = None) -> int:
                 "latency_us",
                 "full_speedup_vs_bar",
             ),
+            lineterminator="\n",
         )
         writer.writeheader()
         for bar in table["bars"]:

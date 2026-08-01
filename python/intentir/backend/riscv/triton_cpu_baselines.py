@@ -259,3 +259,219 @@ void {NATIVE_RVV_SYMBOL}(M4 *out_d, M4 *do_d, M3 *delta_d) {{
         source_identity=source_identity,
         specialization={"block_m": block_m, "block_head_dim": block_head_dim},
     )
+
+
+def geglu_triton_cpu_rvv_record(
+    shared_object: Path | str,
+    *,
+    columns: int,
+    source_identity: str,
+) -> dict[str, object]:
+    """Bridge the accepted GeGLU Source without reimplementing GELU."""
+
+    if columns <= 0:
+        raise ValueError("Triton-CPU GeGLU columns must be positive")
+    source = rf"""
+#include <stdint.h>
+#include <stdlib.h>
+typedef struct {{
+  void *allocated, *aligned;
+  int64_t offset, sizes[2], strides[2];
+}} M2;
+#define DATA(D, T) (((T *)((D)->aligned)) + (D)->offset)
+extern void _geglu_tanh_forward_kernel(
+    float *, float *, float *, int64_t,
+    uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);
+void {NATIVE_RVV_SYMBOL}(M2 *a_d, M2 *b_d, M2 *out_d) {{
+  const int64_t rows = a_d->sizes[0], cols = a_d->sizes[1];
+  if (rows > UINT32_MAX || cols != {columns} ||
+      b_d->sizes[0] != rows || b_d->sizes[1] != cols ||
+      out_d->sizes[0] != rows || out_d->sizes[1] != cols ||
+      a_d->strides[1] != 1 || b_d->strides[1] != 1 ||
+      out_d->strides[1] != 1) abort();
+  float *a = DATA(a_d, float), *b = DATA(b_d, float);
+  float *out = DATA(out_d, float);
+  for (uint32_t row = 0; row < (uint32_t)rows; ++row)
+    _geglu_tanh_forward_kernel(
+        a, b, out, out_d->strides[0], row, 0, 0, (uint32_t)rows, 1, 1);
+}}
+"""
+    return _record(
+        shared_object,
+        source=source,
+        source_identity=source_identity,
+        specialization={
+            "columns": columns,
+            "block_size": 1 << (columns - 1).bit_length(),
+        },
+    )
+
+
+def dyt_triton_cpu_rvv_record(
+    shared_object: Path | str,
+    *,
+    columns: int,
+    block_size: int,
+    source_identity: str,
+) -> dict[str, object]:
+    """Bridge the accepted DYT Source and its two-dimensional launch grid."""
+
+    if columns <= 0 or block_size <= 0:
+        raise ValueError("Triton-CPU DYT specialization is invalid")
+    source = rf"""
+#include <stdint.h>
+#include <stdlib.h>
+typedef struct {{
+  void *allocated, *aligned;
+  int64_t offset, sizes[1], strides[1];
+}} M1;
+typedef struct {{
+  void *allocated, *aligned;
+  int64_t offset, sizes[2], strides[2];
+}} M2;
+#define DATA(D, T) (((T *)((D)->aligned)) + (D)->offset)
+extern void _dyt_fwd_kernel(
+    float *, float *, float *, float *, float *,
+    uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);
+void {NATIVE_RVV_SYMBOL}(
+    M2 *x_d, M1 *alpha_d, M1 *gamma_d, M1 *beta_d, M2 *y_d) {{
+  const int64_t rows = x_d->sizes[0], cols = x_d->sizes[1];
+  const int64_t grid_x = (cols + {block_size} - 1) / {block_size};
+  if (rows > UINT32_MAX || grid_x > UINT32_MAX || cols != {columns} ||
+      alpha_d->sizes[0] != 1 || gamma_d->sizes[0] != cols ||
+      beta_d->sizes[0] != cols || y_d->sizes[0] != rows ||
+      y_d->sizes[1] != cols) abort();
+  float *x = DATA(x_d, float), *alpha = DATA(alpha_d, float);
+  float *gamma = DATA(gamma_d, float), *beta = DATA(beta_d, float);
+  float *y = DATA(y_d, float);
+  for (uint32_t row = 0; row < (uint32_t)rows; ++row)
+    for (uint32_t tile = 0; tile < (uint32_t)grid_x; ++tile)
+      _dyt_fwd_kernel(
+          x, y, alpha, gamma, beta, tile, row, 0,
+          (uint32_t)grid_x, (uint32_t)rows, 1);
+}}
+"""
+    return _record(
+        shared_object,
+        source=source,
+        source_identity=source_identity,
+        specialization={"columns": columns, "block_size": block_size},
+    )
+
+
+def rms_norm_triton_cpu_rvv_record(
+    shared_object: Path | str,
+    *,
+    columns: int,
+    source_identity: str,
+) -> dict[str, object]:
+    """Bridge Liger RMSNorm while preserving its Y and RSTD outputs."""
+
+    if columns <= 0:
+        raise ValueError("Triton-CPU RMSNorm columns must be positive")
+    source = rf"""
+#include <stdint.h>
+#include <stdlib.h>
+typedef struct {{ void *allocated, *aligned; int64_t offset; }} M0;
+typedef struct {{
+  void *allocated, *aligned;
+  int64_t offset, sizes[1], strides[1];
+}} M1;
+typedef struct {{
+  void *allocated, *aligned;
+  int64_t offset, sizes[2], strides[2];
+}} M2;
+#define DATA(D, T) (((T *)((D)->aligned)) + (D)->offset)
+extern void _rms_norm_forward_kernel(
+    float *, int64_t, float *, int64_t, float *, int64_t,
+    float *, int64_t, int32_t, float, float,
+    uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);
+void {NATIVE_RVV_SYMBOL}(
+    M2 *x_d, M1 *w_d, M0 *n_d, M0 *eps_d, M0 *off_d,
+    M2 *y_d, M1 *rstd_d) {{
+  const int64_t rows = x_d->sizes[0], cols = x_d->sizes[1];
+  const int32_t n = DATA(n_d, int32_t)[0];
+  if (rows > UINT32_MAX || cols != {columns} || cols > INT32_MAX ||
+      n != cols || w_d->sizes[0] != cols || y_d->sizes[0] != rows ||
+      y_d->sizes[1] != cols || rstd_d->sizes[0] != rows) abort();
+  for (uint32_t row = 0; row < (uint32_t)rows; ++row)
+    _rms_norm_forward_kernel(
+        DATA(y_d, float), y_d->strides[0],
+        DATA(x_d, float), x_d->strides[0],
+        DATA(w_d, float), w_d->strides[0],
+        DATA(rstd_d, float), rstd_d->strides[0],
+        n, DATA(eps_d, float)[0], DATA(off_d, float)[0],
+        row, 0, 0, (uint32_t)rows, 1, 1);
+}}
+"""
+    return _record(
+        shared_object,
+        source=source,
+        source_identity=source_identity,
+        specialization={
+            "columns": columns,
+            "block_size": 1 << (columns - 1).bit_length(),
+            "casting_mode": 0,
+            "elementwise_affine": True,
+        },
+    )
+
+
+def layer_norm_triton_cpu_rvv_record(
+    shared_object: Path | str,
+    *,
+    columns: int,
+    source_identity: str,
+) -> dict[str, object]:
+    """Bridge Liger LayerNorm while preserving Y, mean and RSTD outputs."""
+
+    if columns <= 0:
+        raise ValueError("Triton-CPU LayerNorm columns must be positive")
+    source = rf"""
+#include <stdint.h>
+#include <stdlib.h>
+typedef struct {{ void *allocated, *aligned; int64_t offset; }} M0;
+typedef struct {{
+  void *allocated, *aligned;
+  int64_t offset, sizes[1], strides[1];
+}} M1;
+typedef struct {{
+  void *allocated, *aligned;
+  int64_t offset, sizes[2], strides[2];
+}} M2;
+#define DATA(D, T) (((T *)((D)->aligned)) + (D)->offset)
+extern void _layer_norm_forward_kernel(
+    float *, int64_t, float *, int64_t, float *, int64_t,
+    float *, int64_t, float *, int64_t, float *, int64_t,
+    int32_t, float,
+    uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);
+void {NATIVE_RVV_SYMBOL}(
+    M2 *x_d, M1 *w_d, M1 *b_d, M0 *n_d, M0 *eps_d,
+    M2 *y_d, M1 *mean_d, M1 *rstd_d) {{
+  const int64_t rows = x_d->sizes[0], cols = x_d->sizes[1];
+  const int32_t n = DATA(n_d, int32_t)[0];
+  if (rows > UINT32_MAX || cols != {columns} || cols > INT32_MAX ||
+      n != cols || w_d->sizes[0] != cols || b_d->sizes[0] != cols ||
+      y_d->sizes[0] != rows || y_d->sizes[1] != cols ||
+      mean_d->sizes[0] != rows || rstd_d->sizes[0] != rows) abort();
+  for (uint32_t row = 0; row < (uint32_t)rows; ++row)
+    _layer_norm_forward_kernel(
+        DATA(y_d, float), y_d->strides[0],
+        DATA(x_d, float), x_d->strides[0],
+        DATA(w_d, float), w_d->strides[0],
+        DATA(b_d, float), b_d->strides[0],
+        DATA(mean_d, float), mean_d->strides[0],
+        DATA(rstd_d, float), rstd_d->strides[0],
+        n, DATA(eps_d, float)[0],
+        row, 0, 0, (uint32_t)rows, 1, 1);
+}}
+"""
+    return _record(
+        shared_object,
+        source=source,
+        source_identity=source_identity,
+        specialization={
+            "columns": columns,
+            "block_size": 1 << (columns - 1).bit_length(),
+        },
+    )

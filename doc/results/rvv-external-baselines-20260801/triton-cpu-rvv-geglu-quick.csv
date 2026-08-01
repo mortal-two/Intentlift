@@ -1,0 +1,3 @@
+kernel,extents,bar_id,display_name,latency_us,full_speedup_vs_bar
+geglu,"{""x0"": 32768, ""x1"": 11008}",full,IntentIR Full,23279733.644,1.0
+geglu,"{""x0"": 32768, ""x1"": 11008}",triton_cpu_rvv,Triton-CPU/RVV,36593096.951,1.5718864103254597

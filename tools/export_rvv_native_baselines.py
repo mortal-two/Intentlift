@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export independent LLVM-RVV C and Expert RVV baseline source maps."""
+"""Export strict LLVM, Expert, ggml and optional Triton-CPU RVV baselines."""
 
 from __future__ import annotations
 
@@ -13,8 +13,12 @@ from intentir.backend.riscv.native_baselines import (
 )
 from intentir.backend.riscv.ggml_baselines import maybe_ggml_rvv_baseline_records
 from intentir.backend.riscv.triton_cpu_baselines import (
+    dyt_triton_cpu_rvv_record,
     flash_preprocess_triton_cpu_rvv_record,
+    geglu_triton_cpu_rvv_record,
     kldiv_triton_cpu_rvv_record,
+    layer_norm_triton_cpu_rvv_record,
+    rms_norm_triton_cpu_rvv_record,
     softmax_triton_cpu_rvv_record,
     swiglu_triton_cpu_rvv_record,
 )
@@ -66,6 +70,19 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--triton-cpu-flash-preprocess-block-m", type=int, default=128)
     parser.add_argument("--triton-cpu-flash-preprocess-block-d", type=int, default=128)
     parser.add_argument("--triton-cpu-flash-preprocess-source", type=str)
+    parser.add_argument("--triton-cpu-geglu-library", type=Path)
+    parser.add_argument("--triton-cpu-geglu-columns", type=int, default=11008)
+    parser.add_argument("--triton-cpu-geglu-source", type=str)
+    parser.add_argument("--triton-cpu-dyt-library", type=Path)
+    parser.add_argument("--triton-cpu-dyt-columns", type=int, default=4096)
+    parser.add_argument("--triton-cpu-dyt-block-size", type=int, default=128)
+    parser.add_argument("--triton-cpu-dyt-source", type=str)
+    parser.add_argument("--triton-cpu-rms-norm-library", type=Path)
+    parser.add_argument("--triton-cpu-rms-norm-columns", type=int, default=4096)
+    parser.add_argument("--triton-cpu-rms-norm-source", type=str)
+    parser.add_argument("--triton-cpu-layer-norm-library", type=Path)
+    parser.add_argument("--triton-cpu-layer-norm-columns", type=int, default=4096)
+    parser.add_argument("--triton-cpu-layer-norm-source", type=str)
     return parser
 
 
@@ -133,6 +150,63 @@ def main(argv: list[str] | None = None) -> int:
                     block_m=args.triton_cpu_flash_preprocess_block_m,
                     block_head_dim=args.triton_cpu_flash_preprocess_block_d,
                     source_identity=args.triton_cpu_flash_preprocess_source,
+                )
+            )
+        if kernel == "geglu" and args.triton_cpu_geglu_library is not None:
+            if not args.triton_cpu_geglu_source:
+                raise ValueError(
+                    "--triton-cpu-geglu-library requires --triton-cpu-geglu-source"
+                )
+            result.append(
+                geglu_triton_cpu_rvv_record(
+                    args.triton_cpu_geglu_library,
+                    columns=args.triton_cpu_geglu_columns,
+                    source_identity=args.triton_cpu_geglu_source,
+                )
+            )
+        if kernel == "dyt" and args.triton_cpu_dyt_library is not None:
+            if not args.triton_cpu_dyt_source:
+                raise ValueError(
+                    "--triton-cpu-dyt-library requires --triton-cpu-dyt-source"
+                )
+            result.append(
+                dyt_triton_cpu_rvv_record(
+                    args.triton_cpu_dyt_library,
+                    columns=args.triton_cpu_dyt_columns,
+                    block_size=args.triton_cpu_dyt_block_size,
+                    source_identity=args.triton_cpu_dyt_source,
+                )
+            )
+        if (
+            kernel == "liger_rms_norm"
+            and args.triton_cpu_rms_norm_library is not None
+        ):
+            if not args.triton_cpu_rms_norm_source:
+                raise ValueError(
+                    "--triton-cpu-rms-norm-library requires "
+                    "--triton-cpu-rms-norm-source"
+                )
+            result.append(
+                rms_norm_triton_cpu_rvv_record(
+                    args.triton_cpu_rms_norm_library,
+                    columns=args.triton_cpu_rms_norm_columns,
+                    source_identity=args.triton_cpu_rms_norm_source,
+                )
+            )
+        if (
+            kernel == "layer_norm"
+            and args.triton_cpu_layer_norm_library is not None
+        ):
+            if not args.triton_cpu_layer_norm_source:
+                raise ValueError(
+                    "--triton-cpu-layer-norm-library requires "
+                    "--triton-cpu-layer-norm-source"
+                )
+            result.append(
+                layer_norm_triton_cpu_rvv_record(
+                    args.triton_cpu_layer_norm_library,
+                    columns=args.triton_cpu_layer_norm_columns,
+                    source_identity=args.triton_cpu_layer_norm_source,
                 )
             )
         return result

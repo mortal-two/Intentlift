@@ -506,8 +506,14 @@ def test_rvv_external_pair_table_preserves_bars_and_geomean() -> None:
     )
 
     assert table["kernel_count"] == 2
+    assert table["comparison"] == "Triton-CPU/RVV versus IntentIR Full"
     assert table["geomean_external_over_full"] == pytest.approx(8.0**0.5)
     assert len(table["bars"]) == 4
+
+    ggml_report = report("ggml", 2.0, 3.0)
+    ggml_report["external"]["display_name"] = "ggml CPU/RVV"
+    ggml_table = rvv_pair_table.build_table([ggml_report])
+    assert ggml_table["comparison"] == "ggml CPU/RVV versus IntentIR Full"
 
 
 def test_triton_cpu_rvv_baseline_requires_a_prebuilt_kernel_object() -> None:

@@ -12,8 +12,12 @@ from intentir.backend.riscv.ggml_baselines import (
     maybe_ggml_rvv_baseline_records,
 )
 from intentir.backend.riscv.triton_cpu_baselines import (
+    dyt_triton_cpu_rvv_record,
     flash_preprocess_triton_cpu_rvv_record,
+    geglu_triton_cpu_rvv_record,
     kldiv_triton_cpu_rvv_record,
+    layer_norm_triton_cpu_rvv_record,
+    rms_norm_triton_cpu_rvv_record,
     softmax_triton_cpu_rvv_record,
     swiglu_triton_cpu_rvv_record,
 )
@@ -113,17 +117,21 @@ def test_ggml_baseline_exists_only_for_strict_graph_boundaries() -> None:
 
 def test_ggml_elementwise_graphs_preserve_the_public_j_boundary() -> None:
     dyt = ggml_rvv_baseline_record("dyt")
+    geglu = ggml_rvv_baseline_record("geglu")
     swiglu = ggml_rvv_baseline_record("swiglu")
 
     assert "ggml_tanh" in dyt["source"]
     assert "M1 *alpha_d, M1 *gamma_d, M1 *beta_d" in dyt["source"]
     assert "ggml_silu" in swiglu["source"]
     assert "M0 *multiplier_d" in swiglu["source"]
+    assert "ggml_sqr(context, a_tensor)" in geglu["source"]
+    assert "ggml_tanh(context, tanh_arg)" in geglu["source"]
+    assert "ggml_geglu_split" not in geglu["source"]
     assert all(
         record["strict_match"] is True
-        for record in (dyt, swiglu)
+        for record in (dyt, geglu, swiglu)
     )
-    assert maybe_ggml_rvv_baseline_records("geglu") == ()
+    assert maybe_ggml_rvv_baseline_records("kl_div") == ()
 
 
 def test_triton_cpu_swiglu_adapter_only_bridges_the_raw_kernel_abi() -> None:
@@ -168,3 +176,30 @@ def test_triton_cpu_reduction_adapters_do_not_reimplement_the_math() -> None:
         assert "expf(" not in record["source"]
         assert "logf(" not in record["source"]
         assert record["specialization"]
+
+
+def test_triton_cpu_extended_adapters_preserve_all_public_outputs() -> None:
+    geglu = geglu_triton_cpu_rvv_record(
+        "/tmp/geglu.so", columns=11008, source_identity="geglu.py::kernel"
+    )
+    dyt = dyt_triton_cpu_rvv_record(
+        "/tmp/dyt.so",
+        columns=4096,
+        block_size=128,
+        source_identity="dyt.py::kernel",
+    )
+    rms = rms_norm_triton_cpu_rvv_record(
+        "/tmp/rms.so", columns=4096, source_identity="rms.py::kernel"
+    )
+    layer = layer_norm_triton_cpu_rvv_record(
+        "/tmp/layer.so", columns=4096, source_identity="layer.py::kernel"
+    )
+
+    assert "extern void _geglu_tanh_forward_kernel" in geglu["source"]
+    assert "extern void _dyt_fwd_kernel" in dyt["source"]
+    assert "M2 *y_d, M1 *rstd_d" in rms["source"]
+    assert "M2 *y_d, M1 *mean_d, M1 *rstd_d" in layer["source"]
+    for record in (geglu, dyt, rms, layer):
+        assert record["baseline_id"] == "triton_cpu_rvv"
+        assert "sqrtf(" not in record["source"]
+        assert "tanhf(" not in record["source"]

@@ -201,6 +201,77 @@ extern "C" void intentir_native_baseline(
     )
 
 
+def _geglu() -> str:
+    return (
+        _PREAMBLE
+        + r"""
+static struct ggml_context *context;
+static struct ggml_cgraph *graph;
+static struct ggml_cplan plan;
+static struct ggml_tensor *a_tensor;
+static struct ggml_tensor *b_tensor;
+static struct ggml_tensor *output_tensor;
+static int64_t configured_rows;
+static int64_t configured_width;
+
+static void initialize(int64_t rows, int64_t width) {
+  struct ggml_init_params params = {
+    .mem_size = 16 * 1024 * 1024,
+    .mem_buffer = NULL,
+    .no_alloc = true,
+  };
+  context = ggml_init(params);
+  if (context == NULL) abort();
+  a_tensor = ggml_new_tensor_2d(context, GGML_TYPE_F32, width, rows);
+  b_tensor = ggml_new_tensor_2d(context, GGML_TYPE_F32, width, rows);
+  size_t bytes = (size_t)rows * (size_t)width * sizeof(float);
+
+  // Match the accepted Triton Source operation order exactly.  ggml's fused
+  // GEGLU op factors x*(1+c*x*x), which is mathematically equivalent but can
+  // exceed this J's floating-point comparison contract.
+  struct ggml_tensor *a_squared = ggml_sqr(context, a_tensor);
+  struct ggml_tensor *a_cubed = ggml_mul(context, a_squared, a_tensor);
+  struct ggml_tensor *scaled_cube = ggml_scale(context, a_cubed, 0.044715f);
+  struct ggml_tensor *inner = ggml_add(context, a_tensor, scaled_cube);
+  struct ggml_tensor *tanh_arg = ggml_scale(context, inner, 0.7978845608028654f);
+  struct ggml_tensor *activated = ggml_tanh(context, tanh_arg);
+  struct ggml_tensor *one = ggml_new_tensor_1d(context, GGML_TYPE_F32, 1);
+  one->data = checked_alloc(sizeof(float));
+  ((float *)one->data)[0] = 1.0f;
+  struct ggml_tensor *one_plus = ggml_add1(context, activated, one);
+  struct ggml_tensor *half_a = ggml_scale(context, a_tensor, 0.5f);
+  struct ggml_tensor *gelu = ggml_mul(context, half_a, one_plus);
+  output_tensor = ggml_mul(context, gelu, b_tensor);
+  struct ggml_tensor *intermediates[] = {
+      a_squared, a_cubed, scaled_cube, inner, tanh_arg,
+      activated, one_plus, half_a, gelu,
+  };
+  for (size_t index = 0; index < sizeof(intermediates) / sizeof(intermediates[0]);
+       ++index)
+    intermediates[index]->data = checked_alloc(bytes);
+  graph = ggml_new_graph(context);
+  ggml_build_forward_expand(graph, output_tensor);
+  plan = ggml_graph_plan(graph, 1, NULL);
+  if (plan.work_size) plan.work_data = (uint8_t *)checked_alloc(plan.work_size);
+  configured_rows = rows;
+  configured_width = width;
+}
+
+extern "C" void intentir_native_baseline(M2 *a_d, M2 *b_d, M2 *output_d) {
+  int64_t rows = a_d->sizes[0], width = a_d->sizes[1];
+  if (b_d->sizes[0] != rows || b_d->sizes[1] != width ||
+      output_d->sizes[0] != rows || output_d->sizes[1] != width) abort();
+  if (context == NULL) initialize(rows, width);
+  if (rows != configured_rows || width != configured_width) abort();
+  a_tensor->data = DATA(a_d, float);
+  b_tensor->data = DATA(b_d, float);
+  output_tensor->data = DATA(output_d, float);
+  run_plan(graph, &plan);
+}
+"""
+    )
+
+
 def _xformers_rms_norm() -> str:
     return (
         _PREAMBLE
@@ -257,6 +328,7 @@ extern "C" void intentir_native_baseline(M2 *x_d, M1 *w_d, M0 *eps_d, M2 *y_d) {
 
 _SOURCES = {
     "dyt": _dyt,
+    "geglu": _geglu,
     "softmax": _softmax,
     "swiglu": _swiglu,
     "xformers_rms_norm": _xformers_rms_norm,

@@ -83,12 +83,61 @@
       "kernel_symbol": "_bwd_preprocess_do_o_dot",
       "rvv_vector_instruction_count": 68796,
       "shared_object_bytes": 1226528
+    },
+    {
+      "name": "dyt",
+      "status": "passed",
+      "same_source": true,
+      "shape": [2, 127],
+      "dtype": "f32",
+      "maximum_absolute_error": 1.0885398027404847e-08,
+      "kernel_symbol": "_dyt_fwd_kernel",
+      "rvv_vector_instruction_count": 270,
+      "shared_object_bytes": 13016
+    },
+    {
+      "name": "geglu",
+      "status": "passed",
+      "same_source": true,
+      "shape": [2, 127],
+      "dtype": "f32",
+      "maximum_absolute_error": 4.6712127360626354e-09,
+      "kernel_symbol": "_geglu_tanh_forward_kernel",
+      "rvv_vector_instruction_count": 223,
+      "shared_object_bytes": 13000
+    },
+    {
+      "name": "liger_rms_norm",
+      "status": "passed",
+      "same_source": true,
+      "shape": [2, 127],
+      "dtype": "f32",
+      "observable_outputs": ["Y", "RSTD"],
+      "maximum_absolute_error": 5.668155820259813e-07,
+      "kernel_symbol": "_rms_norm_forward_kernel",
+      "rvv_vector_instruction_count": 80,
+      "shared_object_bytes": 8872
+    },
+    {
+      "name": "layer_norm",
+      "status": "passed",
+      "same_source": true,
+      "shape": [2, 127],
+      "dtype": "f32",
+      "observable_outputs": ["Y", "mean", "RSTD"],
+      "maximum_absolute_error": 2.262343603121053e-06,
+      "kernel_symbol": "_layer_norm_forward_kernel",
+      "rvv_vector_instruction_count": 141,
+      "shared_object_bytes": 8872
     }
   ],
   "performance_bar_status": "measured",
-  "measured_kernel_count": 4,
+  "correctness_kernel_count": 8,
+  "measured_kernel_count": 7,
+  "formal_measured_kernel_count": 7,
+  "additional_natural_shape_quick_count": 1,
   "accepted_kernel_count": 24,
-  "geomean_triton_over_full": 7.259296591935288,
+  "geomean_triton_over_full": 4.34928102871569,
   "performance_table": "doc/results/rvv-external-baselines-20260801/triton-cpu-rvv-pairs.json",
   "performance": {
     "kernel": "swiglu",

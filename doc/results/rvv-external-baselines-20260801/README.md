@@ -18,8 +18,14 @@ RV64GCV、VLEN=128，当前浮点工具链为 Clang/LLVM 17。CSV 一行对应�
 交替配对后的 `external / Full`，大于 1 表示 IntentIR 更快。六项几何平均分别为 `G_schedule=1.651×`、
 `G_full=4.940×`、`LLVM-RVV C / Full=1.859×`、`Best Native / Full=1.178×`。
 
-同目录的 `triton-cpu-rvv-portability.json` 是迁移覆盖结果；`triton-cpu-rvv-pairs.{json,csv}` 是四项可直接
-作图的正式配对数据。Triton-CPU/RVV 当前 correctness 与 latency 均覆盖 4/24：SwiGLU、Softmax、KLDiv、
-Flash backward preprocess。四项 `Triton-CPU/RVV / IntentIR Full` 分别为 `2.008× / 11.647× /
-1.369× / 86.736×`，几何平均 `7.259×`；大于 1 表示 IntentIR 更快。旧的
-`triton-cpu-rvv-swiglu-pair.{json,csv}` 继续保留单项细节，其余 20 项为 N/A。
+同目录的 `triton-cpu-rvv-portability.json` 是迁移覆盖结果；`triton-cpu-rvv-pairs.{json,csv}` 是七项可直接
+作图的正式配对数据。Triton-CPU/RVV 当前 correctness 覆盖 8/24，formal latency 覆盖 7/24：SwiGLU、
+Softmax、KLDiv、Flash backward preprocess、DYT、Liger RMSNorm 与 LayerNorm；七项比值分别为
+`2.008× / 11.647× / 1.369× / 86.736× / 1.242× / 4.907× / 1.740×`，几何平均 `4.349×`。
+GeGLU 是第八个通过同源 Q 的算子，natural-shape 1×1 数据单列于 `triton-cpu-rvv-geglu-quick.{json,csv}`，
+不进入 formal 聚合。
+
+`ggml-rvv-pairs.{json,csv}` 保存四项同协议 formal 数据：SwiGLU、DYT、Softmax、xFormers RMSNorm，
+`ggml / Full` 分别为 `0.236× / 1.050× / 1.617× / 2.610×`，几何平均 `1.011×`。GeGLU 的精确公共
+primitive graph 已通过 Q，natural-shape 1×1 数据单列于 `ggml-rvv-geglu-quick.{json,csv}`。所有比值均为
+`external / Full`；大于 1 表示 IntentIR 更快，小于 1 表示外部实现更快。
