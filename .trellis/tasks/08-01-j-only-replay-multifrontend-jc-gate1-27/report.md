@@ -128,5 +128,6 @@ CUDA，并完成 Gate1/Gate2。
 
 `gather2d` pair现已完成：TileLang run-003与CUDA run-002均通过各自Gate1和三边Gate2。完整机器指标、
 共享间接寻址核心、真实guard/ABI delta与三次机制失败归因见`gather_pair_metrics.json`和
-`gather_report.md`。剩余最小实验是wrong-op、wrong-index、wrong-effect mutation sensitivity，用于量化
-Gate1在Gate2前的拒绝价值；不再扩张更多简单kernel。
+`gather_report.md`。wrong-op、wrong-index、wrong-effect mutation sensitivity也已完成：6个主mutation
+全部compile后被Gate1提前拒绝，Gate2调用为0；一个CUDA constant-offset probe暴露已知漏检。详情见
+`mutation_report.md`。本Task不再扩张更多简单kernel。

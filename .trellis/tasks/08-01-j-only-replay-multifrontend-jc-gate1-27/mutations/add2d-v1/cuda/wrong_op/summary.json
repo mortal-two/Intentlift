@@ -1,0 +1,21 @@
+{
+  "case": "cuda:tilelang_add2d",
+  "description": "replace the J-owned add with subtract",
+  "failed_hard_fields": [
+    "value_operations"
+  ],
+  "frontend": "cuda",
+  "gate1_elapsed_ms": 2186.9961540214717,
+  "gate1_status": "no_closure",
+  "gate2_run": false,
+  "hard_pass": false,
+  "lift_agent_calls": 0,
+  "mutation": "wrong_op",
+  "parent_accepted_run": "runs/cuda_tilelang_add2d/run-002",
+  "primary_difference_category": "value_operations",
+  "replay_compile_ok": true,
+  "replay_provider_calls": 0,
+  "role": "mutation",
+  "typecheck": "pass",
+  "writer": "exact controlled mutation transport"
+}

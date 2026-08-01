@@ -1,0 +1,10 @@
+extern "C" __global__ void scrc_k0(const float* p0,
+                                    const float* p1,
+                                    float* p2,
+                                    int p3) {
+  const unsigned long long index =
+      static_cast<unsigned long long>(blockIdx.x) * 16ULL +
+      static_cast<unsigned long long>(threadIdx.x);
+
+  p2[index] = p0[index] + p1[index + 1ULL];
+}

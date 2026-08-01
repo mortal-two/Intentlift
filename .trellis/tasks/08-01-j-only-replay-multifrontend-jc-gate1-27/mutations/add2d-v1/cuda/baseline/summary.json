@@ -1,0 +1,19 @@
+{
+  "case": "cuda:tilelang_add2d",
+  "description": null,
+  "failed_hard_fields": [],
+  "frontend": "cuda",
+  "gate1_elapsed_ms": 2354.5858800644055,
+  "gate1_status": "replay_closed",
+  "gate2_run": false,
+  "hard_pass": true,
+  "lift_agent_calls": 0,
+  "mutation": "baseline",
+  "parent_accepted_run": "runs/cuda_tilelang_add2d/run-002",
+  "primary_difference_category": null,
+  "replay_compile_ok": true,
+  "replay_provider_calls": 0,
+  "role": "baseline",
+  "typecheck": "pass",
+  "writer": "exact controlled mutation transport"
+}

@@ -1,0 +1,21 @@
+{
+  "case": "tilelang:add2d",
+  "description": "rewire the second input from the current column to column zero",
+  "failed_hard_fields": [
+    "tir_structure"
+  ],
+  "frontend": "tilelang",
+  "gate1_elapsed_ms": 10209.195404080674,
+  "gate1_status": "no_closure",
+  "gate2_run": false,
+  "hard_pass": false,
+  "lift_agent_calls": 0,
+  "mutation": "wrong_index",
+  "parent_accepted_run": "runs/tilelang_add2d/run-002",
+  "primary_difference_category": "tir_structure",
+  "replay_compile_ok": true,
+  "replay_provider_calls": 0,
+  "role": "mutation",
+  "typecheck": "pass",
+  "writer": "exact controlled mutation transport"
+}

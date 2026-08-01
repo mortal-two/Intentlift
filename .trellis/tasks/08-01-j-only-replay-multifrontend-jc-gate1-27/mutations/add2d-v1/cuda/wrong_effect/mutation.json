@@ -1,0 +1,9 @@
+{
+  "description": "change a pure output write into read-modify-write",
+  "diagnostic_only": true,
+  "enters_gate2": false,
+  "mutation": "wrong_effect",
+  "parent_accepted_run": "runs/cuda_tilelang_add2d/run-002",
+  "protocol": "intentir.experiment.controlled-replay-mutation.v1",
+  "role": "mutation"
+}

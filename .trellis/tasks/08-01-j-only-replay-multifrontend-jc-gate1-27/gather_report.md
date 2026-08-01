@@ -120,5 +120,6 @@ production lowering为0 LoC，也没有`gather2d` case matcher。522行手工作
 - 任意新frontend或任意kernel都能零修改接入；目前主表是add2d和gather2d两对；
 - 手工作者化耗时优于某个Lift baseline；本轮没有记录可比wall time。
 
-下一项最小而足够的实验是对已accepted Replay做wrong-op、wrong-index、wrong-effect受控mutation，使用
-同一真实compiler/observer确认Gate1提前拒绝，并且在拒绝后不运行Gate2。
+该最小mutation实验现已完成：两个frontend的6个主mutation均compile PASS后被Gate1 hard拒绝，Gate2
+调用为0；同时发现CUDA semantic-effects v6对单元素constant address displacement存在已知漏检。机器
+证据与不外推边界见`mutations/add2d-v1/mutation_metrics.json`和`mutation_report.md`。

@@ -1,0 +1,9 @@
+{
+  "description": null,
+  "diagnostic_only": true,
+  "enters_gate2": false,
+  "mutation": "baseline",
+  "parent_accepted_run": "runs/tilelang_add2d/run-002",
+  "protocol": "intentir.experiment.controlled-replay-mutation.v1",
+  "role": "baseline"
+}

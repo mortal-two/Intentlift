@@ -1,0 +1,19 @@
+{
+  "case": "cuda:tilelang_add2d",
+  "description": "probe whether the current semantic PTX observer retains a one-element address offset",
+  "failed_hard_fields": [],
+  "frontend": "cuda",
+  "gate1_elapsed_ms": 2604.48043292854,
+  "gate1_status": "replay_closed",
+  "gate2_run": false,
+  "hard_pass": true,
+  "lift_agent_calls": 0,
+  "mutation": "address_offset_probe",
+  "parent_accepted_run": "runs/cuda_tilelang_add2d/run-002",
+  "primary_difference_category": null,
+  "replay_compile_ok": true,
+  "replay_provider_calls": 0,
+  "role": "coverage_probe",
+  "typecheck": "pass",
+  "writer": "exact controlled mutation transport"
+}

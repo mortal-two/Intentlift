@@ -1,0 +1,9 @@
+{
+  "description": "probe whether the current semantic PTX observer retains a one-element address offset",
+  "diagnostic_only": true,
+  "enters_gate2": false,
+  "mutation": "address_offset_probe",
+  "parent_accepted_run": "runs/cuda_tilelang_add2d/run-002",
+  "protocol": "intentir.experiment.controlled-replay-mutation.v1",
+  "role": "coverage_probe"
+}

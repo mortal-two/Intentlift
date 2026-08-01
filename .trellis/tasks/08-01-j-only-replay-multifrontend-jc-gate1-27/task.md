@@ -1,6 +1,6 @@
 # Task 27：J-only Replay 与 CUDA/TileLang J/C Structural Gate1
 
-> 状态：`P4_GATHER_PAIR_CLOSED`（2026-08-01）
+> 状态：`P4_EXPERIMENT_COMPLETE_WITH_KNOWN_PTX_OFFSET_GAP`（2026-08-01）
 > 权威实施文档：
 > `doc/method/IntentIR_J-only_Replay与多前端JC结构Gate1最终实施_2026-08-01.md`。  
 > 前序 Task 26 已归档；其 π-fed Replay 代码与运行只作反例证据。
@@ -105,9 +105,9 @@ Gate2(Source,R,RefEval(J))                # 三边
 
 - [x] add2d双闭合后运行TileLang/CUDA gather2d（TileLang run-003、CUDA run-002均全闭合）；
 - [x] 报告间接寻址下两个observer的hard/diagnostic差异与合法realization false reject；
-- [ ] 对add2d做最小wrong-op、wrong-index、wrong-effect mutation sensitivity；
-- [ ] mutation只改受控Replay副本并重新compile/observe，不进入正式certificate；
-- [ ] Gate1拒绝后不运行Gate2，统计提前拒绝成本。
+- [x] 对add2d做最小wrong-op、wrong-index、wrong-effect mutation sensitivity；
+- [x] mutation只改受控Replay副本并重新compile/observe，不进入正式certificate；
+- [x] Gate1拒绝后不运行Gate2，统计提前拒绝成本。
 
 ### 6.1 gather2d 手工作者化 checkpoint
 
@@ -172,6 +172,27 @@ Gate2(Source,R,RefEval(J))                # 三边
 - receipt为Replay backend v72，visible root仅`j,c,u_f`，`pi_visible_to_replay=false`，全程
   `lift_agent_calls=0`；Gate1在run-001提前拒绝了真实错误坐标，run-002没有通过放松observer获得PASS。
 - gather pair机器指标见`gather_pair_metrics.json`，论文解释与claim boundary见`gather_report.md`。
+
+### 6.7 add2d controlled mutation sensitivity
+
+- 对TileLang/CUDA各自accepted exact Replay重跑一个baseline与wrong-op、wrong-index、wrong-effect；
+- mutation writer只传输明确受控的源码字节，不调用provider/Lift，不生成或修复Replay；实际Source和mutation
+  均重新经过当前native compiler、fingerprint和comparator；
+- 两个baseline均重新`replay_closed`；6个主mutation全部compile PASS后被Gate1 hard拒绝，Gate2调用为0；
+- TileLang三项均由`tir_structure`拒绝，耗时分别10.63/10.21/8.88 s；
+- CUDA wrong-op由`value_operations`拒绝（2.19 s），wrong-index由`coordinate_uses`拒绝（2.48 s），
+  wrong-effect由`memory_effects + value_operations`拒绝（2.54 s）；
+- 6个主mutation平均Gate1提前拒绝耗时6.15 s；机器证据见`mutations/add2d-v1/mutation_metrics.json`，
+  解释与限制见`mutation_report.md`。
+
+### 6.8 已知coverage gap：CUDA constant address displacement
+
+- 额外probe将第二输入改为`p1[index + 1]`；编译后的PTX明确出现`[%reg+4]`；
+- 当前CUDA semantic-effects v6只把cyclic/bitmask coordinate fold作为hard address projection，非零常量
+  displacement仍只出现在raw topology/memory diagnostic，因此该probe Gate1通过；
+- 该probe不计入6个主mutation，也没有执行Gate2；论文不能声称当前Gate1覆盖所有wrong-index；
+- 本Task不临时把raw字符串升级为hard以制造完美数据，后续应以typed affine memory-access projection
+  扩展observer并单独重新认证，而不是加入case-specific `+4` matcher。
 
 ## 7. 最小实验输出
 

@@ -1,0 +1,21 @@
+{
+  "case": "cuda:tilelang_add2d",
+  "description": "rewire the element coordinate from the x lane to the y lane",
+  "failed_hard_fields": [
+    "coordinate_uses"
+  ],
+  "frontend": "cuda",
+  "gate1_elapsed_ms": 2476.7479250440374,
+  "gate1_status": "no_closure",
+  "gate2_run": false,
+  "hard_pass": false,
+  "lift_agent_calls": 0,
+  "mutation": "wrong_index",
+  "parent_accepted_run": "runs/cuda_tilelang_add2d/run-002",
+  "primary_difference_category": "coordinate_uses",
+  "replay_compile_ok": true,
+  "replay_provider_calls": 0,
+  "role": "mutation",
+  "typecheck": "pass",
+  "writer": "exact controlled mutation transport"
+}

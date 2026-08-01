@@ -1,0 +1,21 @@
+{
+  "case": "tilelang:add2d",
+  "description": "replace the J-owned add with subtract",
+  "failed_hard_fields": [
+    "tir_structure"
+  ],
+  "frontend": "tilelang",
+  "gate1_elapsed_ms": 10627.981755998917,
+  "gate1_status": "no_closure",
+  "gate2_run": false,
+  "hard_pass": false,
+  "lift_agent_calls": 0,
+  "mutation": "wrong_op",
+  "parent_accepted_run": "runs/tilelang_add2d/run-002",
+  "primary_difference_category": "tir_structure",
+  "replay_compile_ok": true,
+  "replay_provider_calls": 0,
+  "role": "mutation",
+  "typecheck": "pass",
+  "writer": "exact controlled mutation transport"
+}
