@@ -185,6 +185,14 @@ def main() -> int:
     _write_json(run_dir / "typecheck.json", recheck.typecheck.to_json())
     if recheck.gate1 is not None:
         _write_json(run_dir / "gate1.json", recheck.gate1.to_json())
+    _write_json(
+        run_dir / "timing.json",
+        {
+            "gate1_elapsed_ms": gate1_elapsed_ms,
+            "gate2_elapsed_ms": 0.0,
+            "total_elapsed_ms": (time.time() - started) * 1000.0,
+        },
+    )
 
     records = recheck.replay_writer.records if recheck.replay_writer else ()
     _write_json(run_dir / "replay_records.json", [_replay_record(row) for row in records])
@@ -209,6 +217,20 @@ def main() -> int:
         gate2 = _execute_gate2(prepared, recheck.artifact, recheck.gate1)
         gate2_elapsed_ms = (time.time() - gate2_started) * 1000.0
         _write_json(run_dir / "gate2.json", gate2.to_json())
+        _write_json(
+            run_dir / "timing.json",
+            {
+                "gate1_elapsed_ms": gate1_elapsed_ms,
+                "gate2_elapsed_ms": gate2_elapsed_ms,
+                "total_elapsed_ms": (time.time() - started) * 1000.0,
+            },
+        )
+
+    gate2_status = None
+    gate2_status_counts: dict[str, int] = {}
+    if gate2 is not None:
+        gate2_status = "gate2_pass" if gate2.passed else "gate2_fail"
+        gate2_status_counts = dict(gate2.status_counts)
 
     summary = {
         "protocol": "intentir.experiment.manual-add2d-j-only.v1",
@@ -216,7 +238,9 @@ def main() -> int:
         "frontend": frontend.value,
         "typecheck": recheck.typecheck.status.value,
         "gate1": recheck.gate1.status.value if recheck.gate1 else None,
-        "gate2": gate2.status.value if gate2 is not None else None,
+        "gate2": gate2_status,
+        "gate2_passed": gate2.passed if gate2 is not None else None,
+        "gate2_status_counts": gate2_status_counts,
         "pi_visible_to_replay": False,
         "lift_agent_calls": 0,
         "replay_provider_calls": sum(row.physical_provider_calls for row in records),

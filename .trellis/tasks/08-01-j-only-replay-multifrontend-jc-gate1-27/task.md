@@ -57,7 +57,7 @@ Gate2(Source,R,RefEval(J))                # 三边
 
 ## 5. P3：主代理直接作者化 add2d pair
 
-- [ ] `tilelang:add2d`：主代理作者化→TypeCheck→fresh J-only Replay→Gate1→Gate2（run-001 已完成到 Gate1，因 Replay 重绑/猜测隐藏 `c0` 被 identity TIR 拒绝；通用 ABI 契约修正后 fresh 重跑）；
+- [x] `tilelang:add2d`：主代理作者化→TypeCheck→fresh J-only Replay→Gate1→Gate2（run-002 全闭合）；
 - [ ] `cuda:tilelang_add2d`：同一完整流程；
 - [ ] 保存Source、Harness、candidate、作者化记录、Replay trajectory、compiler observation、Gate1、Gate2；
 - [ ] canonical比较两份accepted J/C：共同数学结构与真实frontend差异分别报告；
@@ -71,6 +71,17 @@ Gate2(Source,R,RefEval(J))                # 三边
 - 现有 worker 本来会在 module exec 前注入 `case.schedule[c0]`，无需新增替换器；
 - 修正 `U_f`：公开 host-global binding convention；修正 ingress：禁止定义/shadow compiler slot；
 - 不改变 artifact、observer、normalizer、C valuation visibility 或 Gate acceptance。
+
+### 5.2 run-002 TileLang 真实闭合
+
+- fresh `gpt-5.6-sol/xhigh`，1次 provider call，Replay episode 158.57 s；
+- 直接生成14行/323 bytes TileLang，正确引用 host-injected `c0`，无猜值、carrier或额外 guard；
+- construction tool calls 从 run-001 的18次降为3次，live checkpoint 从15个降为2个；
+- TypeCheck PASS；TileLang TIR structure/topology/operation multiset全部 hard PASS；
+- Gate2 的 Source–Replay、Source–J、Replay–J 三边全部 PASS，f32 max abs error均为0；
+- receipt：`replay-input.v4`、`replay-check.v17`、`pi_visible_to_replay=false`；
+- 首版实验 runner 在 Gate2 已落盘后误读 suite `.status` 而抛异常；run-002 summary 对 wall time 明确标成
+  filesystem-mtime approximation，runner 已改用 `.passed/.status_counts` 并增量保存 timing，未重跑或改写 Gate。
 
 ## 6. P4：gather2d与Gate1价值
 

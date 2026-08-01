@@ -1,0 +1,20 @@
+{
+  "case": "tilelang:add2d",
+  "frontend": "tilelang",
+  "gate1": "replay_closed",
+  "gate1_elapsed_ms": 176331.57011,
+  "gate2": "gate2_pass",
+  "gate2_elapsed_ms": 669.986938,
+  "gate2_passed": true,
+  "gate2_status_counts": {
+    "gate2_pass": 1
+  },
+  "lift_agent_calls": 0,
+  "pi_visible_to_replay": false,
+  "protocol": "intentir.experiment.manual-add2d-j-only.v1",
+  "replay_provider_calls": 1,
+  "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-jc-gate1-27/runs/tilelang_add2d/run-002",
+  "timing_measurement": "filesystem_mtime_approximation_after_summary_field_exception",
+  "total_elapsed_ms": 177001.557048,
+  "typecheck": "pass"
+}
