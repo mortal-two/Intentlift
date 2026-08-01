@@ -419,7 +419,9 @@ def _value_list(value: Any) -> str:
     return "_"
 
 
-def _render_node_ir(node: Mapping[str, Any]) -> list[str]:
+def _render_node_ir(
+    node: Mapping[str, Any], value_types: Mapping[str, Mapping[str, Any]]
+) -> list[str]:
     """Render one exact J node as compact typed SSA, not target source."""
 
     depth = node.get("depth", 0)
@@ -429,7 +431,19 @@ def _render_node_ir(node: Mapping[str, Any]) -> list[str]:
     operation = str(node.get("op", "<missing>"))
     result = _value_list(node.get("result"))
     operands = node.get("operands", [])
-    operand_text = ", ".join(str(item) for item in operands) if isinstance(operands, list) else _compact(operands)
+    if isinstance(operands, list):
+        rendered_operands: list[str] = []
+        for item in operands:
+            item_name = str(item)
+            item_type = value_types.get(item_name)
+            rendered_operands.append(
+                item_name
+                if item_type is None
+                else f"{item_name}:{_compact(item_type)}"
+            )
+        operand_text = ", ".join(rendered_operands)
+    else:
+        operand_text = _compact(operands)
     value_type = node.get("type")
     type_text = " : " + _compact(value_type) if value_type is not None else ""
     attrs = node.get("attrs")
@@ -547,6 +561,15 @@ def _render_text(value: Mapping[str, Any]) -> str:
     ):
         lines.append("  effect " + _compact(effect))
 
+    value_types = {
+        str(item["value"]): {
+            key: copy.deepcopy(field)
+            for key, field in item.items()
+            if key != "value"
+        }
+        for item in _array(value.get("value_types", []), "S_J.value_types")
+        if isinstance(item, Mapping) and isinstance(item.get("value"), str)
+    }
     function = _object(value.get("function", {}), "S_J.function")
     lines.append("")
     lines.append(f"function {function.get('name', '<masked>')}:")
@@ -555,7 +578,7 @@ def _render_text(value: Mapping[str, Any]) -> str:
             lines.append(f"  {role[:-1]} " + _compact(tensor))
     for node in _array(value.get("nodes", []), "S_J.nodes"):
         node_object = _object(node, "S_J.nodes[]")
-        lines.extend(_render_node_ir(node_object))
+        lines.extend(_render_node_ir(node_object, value_types))
     for binding in _array(value.get("output_bindings", []), "S_J.output_bindings"):
         lines.append("  return " + _compact(binding))
 

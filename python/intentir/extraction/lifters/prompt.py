@@ -42,6 +42,16 @@ Atomic ops (each is one JSON object in a "body" list):
                lattice and the result type must be declared consistently;
                this op-internal promotion is distinct from an explicit source
                cast stage, which must remain a `cast` node.
+               A compiler-visible scalar fused multiply-add has no dedicated
+               Layer-A op: inspect its exact compiler def-use, author explicit
+               casts to the fused operand/result width before the primary mul,
+               and keep a separately computed addend at its observed producer
+               width until it enters the final add/sub. Do not infer the fused
+               product width from unfused source operand declarations.
+               For a fused addend that is one direct negation or zero-minus
+               value, use the canonical final sub(primary_product, positive)
+               rather than const-zero + neg/sub + add; do not apply this to a
+               shared or non-direct addend producer.
                (atan2(y,x): the complex angle primitive, angle=atan2(imag,real);
                 the comparison fns gt/ge/lt/le/eq/ne produce an i1 tensor ->
                 feeds select; count_nonzero = sum(cast(x!=0, i64)).)
@@ -64,6 +74,8 @@ Atomic ops (each is one JSON object in a "body" list):
                express affine arange(start,step). Never substitute a sampled
                runtime value, C tile size, program id, block base or lane
                decomposition into Layer A.
+               Preserve the exact Source/compiler integer width; an unrelated
+               i64 stride/address carrier never widens an i32 logical index.
      {"op":"iota","result":R,"attrs":{"n":<int-or-symbol>,"dtype":"i32"|"i64"}}
   const      : a typed literal value, splat over an optional shape (default scalar []).
                Finite values are JSON numbers. IEEE floating specials use only the
@@ -266,6 +278,12 @@ Hard rules:
   duplicate policy and observable order. Atomic/CAS/thread ownership belongs to
   pi/backend realization. Result tolerance or one-of winners belong only to
   `boundary.result_relations`, never to the runtime harness.
+- Use semantic `scatter` only when the index is itself a data-dependent J value
+  and its closed shape equals the source shape at the data rank. A store to a
+  statically authored affine boundary index is already represented by its
+  access/effect; do not invent scatter/update nodes merely to rebuild an inout
+  tensor. Bind such an observable inout through its closed store effects and
+  identity output instead.
 - Output STRICT JSON only. No markdown fence, no prose, no trailing commas.\
 """
 

@@ -63,6 +63,8 @@ and input/mask-c.json for the callable ABI. S_J is a deterministic parameterized
 IR derived only from this J, not a target-source skeleton. Use `semantic_query` or
 `packet_query` only to cross-reference one named J/C handle after reading those complete
 small views. Pi, Source realization, Gate observations, and prior Replay are absent.
+For Triton Python, annotate only constexpr parameters with `tl.constexpr`; leave runtime
+pointer and scalar parameters unannotated.
 
 Act as the complete Replay compiler. Write one full target program to
 output/replay.source yourself. You own instruction selection, addressing, program
@@ -75,19 +77,55 @@ the ownership boundary and input/TOOL.md defines the tools.
 S_J and MaskC. Its dependency subsets are syntactic and neither select nor authorize a
 program axis, loop, lane, guard, or target API. Use it to avoid repeated JSON joins,
 then compile `boundary_ownership` as one whole-program contract. Preserve every
-authored access/effect and keep logical domain guards distinct from access-local
-predicates; you still own every target realization choice. Factor the exact J effect
-axes before choosing that realization: distinguish axes shared across affected tensors,
-tensor-specific alternatives, and axes with anonymous C tile attachments. A tile
-attachment permits local tiling but supplies no launch cardinality; never infer
-`program_id * tile` or an extra program axis from that attachment alone.
+authored access/effect as a distinct logical occurrence and keep logical domain guards
+distinct from access-local predicates; you still own every target realization choice.
+One authored access with a multi-axis index is one target transfer whose tensor result may
+then be split; never replace it with one load/store per component. Do not implement a
+finite J domain by a Python/Triton serial loop unless J itself authors that loop:
+specialization may unroll the loop and silently change the authored access/effect
+multiplicity. An anonymous C tile authorizes a local tensor range, not such a serial loop.
+Factor the exact J effect axes before choosing a realization:
+distinguish axes shared across affected tensors, tensor-specific alternatives, and axes
+with anonymous C tile attachments. The conservative source-blind Triton lowering is to
+product-linearize all non-tiled shared axes into one program coordinate, share one guarded
+program coordinate across mutually exclusive tensor-specific axes, and use local ranges
+only for C-tiled axes. Introduce another program coordinate only when J exposes a separate
+non-alternative effect-axis group that cannot participate in either mapping. A tile
+attachment permits local tiling but supplies no launch
+cardinality; never infer `program_id * tile` or an extra program axis from that attachment
+alone.
+When product-linearizing J axes, decode every authored logical coordinate. A lower bound
+that follows statically from public target semantics (`program_id`, nonnegative div/rem,
+or `arange`) is already discharged and must not be emitted as a redundant runtime
+comparison. Preserve every remaining authored upper bound. For a terminal complement of
+their positive conjunction, emit the direct disjunction of the individual upper-bound
+violations; do not replace it with either `not(combined_positive)` or one product-extent
+comparison. The J domain owns those predicate edges even when an arithmetic shortcut is
+extensionally equivalent for one launch.
+A `tile_extent` slot never authorizes guard elimination, a `c0 == logical_extent`
+specialization branch, or an unmasked transfer. Only a J-authored predicate or a
+separate anonymous C slot explicitly attached as guard specialization can do that.
+When one shared domain predicate guards all effects and failure has no continuation,
+lower it as a terminal early return. Keep tensor-specific effect guards as sibling
+root-level branches; do not nest them under a shared positive arm and do not fold them
+into memory masks. Only each access's authored local predicate becomes its transfer mask.
 
 Compile, inspect only your own Replay IR, and patch the complete program in this same
 episode. First run `replay_compile_check`; once construction passes, call
 `replay_ttir_inspect jc` for the bounded J/C structural summary. Compare its exact
-typed J obligations against your own dot/reduction/loop/cast signatures before submit;
-matching only operation counts is insufficient. Inspect your own IR
-again when a concrete J obligation remains unclear; use targeted `find`, `raw`, or
+typed J obligations against your own arithmetic, dot, reduction, loop, and cast
+signatures before submit. Every operand and result dtype printed in S_J is authoritative:
+preserve intermediate result dtypes at the corresponding operation boundary and insert
+an explicit target cast when implicit promotion would skip that boundary. In particular,
+an f16 intermediate later consumed by an f32 operation must remain f16 before that
+consumer; matching only final store dtype is insufficient. Compare these typed edges;
+matching only operation counts is insufficient.
+When exact J directly spells `add(primary, neg(value))` or
+`add(primary, sub(zero,value))` and that negated producer has no other J consumer,
+lower the target expression as the direct subtraction `primary - value`; do not retain
+an extra target zero/neg/add chain. This is local instruction selection, not a general
+algebraic rewrite. Inspect your own IR again when a concrete J obligation remains
+unclear; use targeted `find`, `raw`, or
 `observer` queries instead of dumping the whole fingerprint. Keep computations for inactive constexpr
 alternatives inside their branch and do not add unmentioned `volatile`, cache,
 eviction, or other target attributes. In particular, when an anonymous constexpr
@@ -253,11 +291,17 @@ def _j_contract_summary(semantic_program: Mapping[str, Any]) -> dict[str, Any]:
     # not a target recipe and it neither accepts nor rejects Replay.
     typed_kinds = {
         "cast",
+        "const",
         "contraction",
         "gather",
+        "iota",
         "loop",
+        "map_binary",
+        "map_unary",
         "reduce",
         "scan",
+        "scatter",
+        "select",
         "transpose",
     }
     typed_obligations: list[dict[str, Any]] = []
@@ -627,7 +671,7 @@ class CodexCLIReplayWriter:
             try:
                 current = workspace.read_replay()
                 response = dict(ingress_current().to_check_response())
-            except Exception:
+            except Exception as exc:
                 current = None
                 response = {
                     "protocol": REPLAY_CHECK_PROTOCOL,
@@ -637,6 +681,9 @@ class CodexCLIReplayWriter:
                             "rule_code": "replay_unavailable",
                             "path": "<replay>",
                             "anonymous_handles": [],
+                            "observed_refs_or_types": [
+                                f"{type(exc).__name__}: {str(exc)[:2048]}"
+                            ],
                             "line": None,
                         }
                     ],
@@ -834,19 +881,30 @@ class CodexCLIReplayWriter:
                         "diagnostic": result.diagnostic or "compiler returned no TTIR",
                     }
                 else:
-                    fingerprint = fingerprint_ttir(
-                        result.ttir,
-                        python_interface=result.python_interface,
-                        schedule=case.schedule,
-                    )
-                    observation = {
-                        "protocol": "intentir.scrc.replay-own-ttir-view.v1",
-                        "status": "pass",
-                        "ttir": result.ttir,
-                        "fingerprint": fingerprint.to_dict(),
-                        "compiler": dict(result.compiler),
-                        "target": dict(result.target),
-                    }
+                    try:
+                        fingerprint = fingerprint_ttir(
+                            result.ttir,
+                            python_interface=result.python_interface,
+                            schedule=case.schedule,
+                        )
+                    except Exception as exc:
+                        observation = {
+                            "protocol": "intentir.scrc.replay-own-ttir-view.v1",
+                            "status": "fail",
+                            "diagnostic": (
+                                "own Replay TTIR observer rejected the compiled program: "
+                                f"{type(exc).__name__}: {str(exc)[:2048]}"
+                            ),
+                        }
+                    else:
+                        observation = {
+                            "protocol": "intentir.scrc.replay-own-ttir-view.v1",
+                            "status": "pass",
+                            "ttir": result.ttir,
+                            "fingerprint": fingerprint.to_dict(),
+                            "compiler": dict(result.compiler),
+                            "target": dict(result.target),
+                        }
                 ttir_observations[current] = observation
 
             mode = arguments[0] if arguments else "summary"

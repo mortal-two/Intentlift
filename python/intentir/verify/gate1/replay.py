@@ -15,7 +15,7 @@ from intentir.extraction.providers.client import (
 from intentir.extraction.providers.client import call_responses
 from intentir.extraction.providers.provider import ProviderConfig, get_provider
 
-from .codegen import extract_python_module
+from .codegen import CodeExtractionError, UnsafeReplayCodeError, extract_python_module
 from .compiler import (
     CompileCase,
     CompileResult,
@@ -1818,12 +1818,19 @@ def _closed_ingress_diagnostic(exc: Exception) -> dict[str, Any]:
         }
     line_match = re.search(r"\bline\s+(\d+)\b", str(exc))
     line = int(line_match.group(1)) if line_match is not None else None
-    return {
+    diagnostic = {
         "rule_code": "replay_static_policy_rejected",
         "path": f"<line:{line}>" if line is not None else "<replay>",
         "anonymous_handles": [],
         "line": line,
     }
+    if isinstance(exc, (CodeExtractionError, UnsafeReplayCodeError)):
+        # This is a diagnostic about Replay's own submitted bytes, not Source or
+        # Gate evidence.  Preserve the bounded policy reason so the same coding
+        # agent can repair a mechanical ingress error instead of guessing from a
+        # line number alone.
+        diagnostic["detail"] = str(exc)[:512]
+    return diagnostic
 
 
 def _extract_replay_code(
@@ -3488,13 +3495,39 @@ outside this episode after fixed normalization; no Gate observation is available
 `compiler-index.intent` merely puts existing J domain-dependency sets beside anonymous
 MaskC attachments. A dependency subset is syntactic, not a schedule or proof of domain
 containment. Use it to avoid reconstructing cross-references, then compile the complete
-`boundary_ownership` contract. Preserve every authored access/effect and keep logical
-domain guards distinct from access-local predicates; choose all target realization
-yourself from S_J and public frontend capabilities. Before choosing program coordinates,
-factor the exact J effect axes into axes shared across affected tensors, tensor-specific
-alternatives, and axes carrying an anonymous C tile attachment. A tile attachment permits
-local tiling only; it does not reveal launch cardinality and by itself never justifies
-`program_id * tile`. Do not invent an extra program axis merely to place a tiled axis.
+`boundary_ownership` contract. Preserve every authored access/effect as a distinct logical
+occurrence and keep logical domain guards distinct from access-local predicates; choose
+all target realization yourself from S_J and public frontend capabilities. One authored
+access with a multi-axis index is one target transfer whose tensor result may then be
+split; never replace it with one load/store per component. Do not realize a finite J
+domain with a Python/Triton serial loop unless J itself authors that loop: specialization
+may unroll it and change the authored access/effect multiplicity. An anonymous C tile
+authorizes a local tensor range, not such a serial loop.
+Before choosing program coordinates, factor the exact J effect axes into axes shared
+across affected tensors, tensor-specific alternatives, and axes carrying an anonymous C
+tile attachment. The conservative source-blind Triton lowering is to product-linearize
+all non-tiled shared axes into one program coordinate, share one guarded program
+coordinate across mutually exclusive tensor-specific axes, and use local ranges only for
+C-tiled axes. Introduce another program coordinate only when J exposes a separate
+non-alternative effect-axis group that cannot participate in either mapping. A tile
+attachment permits local tiling only; it does not reveal launch
+cardinality and by itself never justifies `program_id * tile`. Do not invent an extra
+program axis merely to place a tiled axis.
+When product-linearizing J axes, decode every authored logical coordinate. A lower bound
+that follows statically from public target semantics (`program_id`, nonnegative div/rem,
+or `arange`) is already discharged and must not be emitted as a redundant runtime
+comparison. Preserve every remaining authored upper bound. For a terminal complement of
+their positive conjunction, emit the direct disjunction of the individual upper-bound
+violations; do not replace it with either `not(combined_positive)` or one product-extent
+comparison. The J domain owns those predicate edges even when an arithmetic shortcut is
+extensionally equivalent for one launch.
+A `tile_extent` slot never authorizes guard elimination, a `c0 == logical_extent`
+specialization branch, or an unmasked transfer. Only a J-authored predicate or a
+separate anonymous C slot explicitly attached as guard specialization can do that.
+When one shared domain predicate guards all effects and failure has no continuation,
+lower it as a terminal early return. Keep tensor-specific effect guards as sibling
+root-level branches; do not nest them under a shared positive arm and do not fold them
+into memory masks. Only each access's authored local predicate becomes its transfer mask.
 If an anonymous constexpr controls
 optional guard elision, keep the guarded and unguarded memory operations lexically
 inside their respective alternatives. An always-true comparison or mask is not an
@@ -3540,7 +3573,16 @@ python .agents/intentir_agent_tool.py submit_replay
 Use ordinary file edits and your own helper files under `/work`. You may compile,
 inspect only your current Replay IR, checkpoint and patch repeatedly within this one
 episode. After construction PASS, use the bounded `jc` view; revisit your own IR when
-a concrete J obligation remains, and use targeted raw/find/observer queries rather than
+a concrete J obligation remains. Every operand and result dtype printed in S_J is
+authoritative: preserve intermediate result dtypes at the corresponding operation
+boundary and insert an explicit target cast when implicit promotion would skip it. In
+particular, an f16 intermediate later consumed by an f32 operation must remain f16 before
+that consumer; matching only final store dtype or operation counts is insufficient.
+When exact J directly spells `add(primary, neg(value))` or
+`add(primary, sub(zero,value))` and that negated producer has no other J consumer,
+lower the target expression as the direct subtraction `primary - value`; do not retain
+an extra target zero/neg/add chain. This is local instruction selection, not a general
+algebraic rewrite. Use targeted raw/find/observer queries rather than
 dumping the full fingerprint.
 Remove work not authorized by S_J, and keep inactive constexpr alternatives lexically
 inside their branch so the specialized compiler never materializes them.

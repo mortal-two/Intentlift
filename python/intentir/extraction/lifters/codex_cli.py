@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import tempfile
 import threading
 import time
@@ -25,6 +26,7 @@ from intentir.extraction.providers.codex_cli import (
 )
 from intentir.extraction.providers.provider import ProviderConfig, get_provider
 from intentir.verify.scrc_runner import CandidateLiftError
+from minisweagent.config.intentir_schema_query import schema_sections
 
 from .miniswe import MiniSWELiftAdapter, _input_files, _trajectory_bytes
 from .compiler_observation import (
@@ -62,11 +64,14 @@ and tmp/ are writable. There is no repository or network.
 Act like a coding agent, not a staged JSON generator. Start with the one compact
 `source-brief` command in input/README.md, then read input/source.py. The brief includes
 the complete compact Harness ABI ledger and exact Source/compiler navigation; you
-decide all meaning. Query an
-exact compiler-observer section, TTIR slice, schema leaf, operation, or contract
-term only when the current draft needs it. Do not dump input/source_ttir.json, the
-whole Schema, the whole operation catalog, or the whole Lift contract into the
-thread.
+decide all meaning. Query an exact compiler-observer section or TTIR slice only when
+the current draft needs it. When Source or the brief exposes a fused operation or
+explicit numeric extension/truncation, its focused TTIR query is mandatory before
+authoring that typed numeric subgraph; never guess fused operand width from surface
+operand declarations. Query schema leaves, operation contracts and ownership
+terms through `python .agents/intentir_agent_tool.py lift_reference ...`; complete
+references are deliberately not mounted as readable workspace files. Do not dump
+input/source_ttir.json or broad reference material into the thread.
 
 You alone author the complete output/candidate.json. J owns all logical semantics;
 C owns only implementation choices; pi is only the typed Gate1 normalization
@@ -81,14 +86,22 @@ effects in J. Use dense declaration-ordered opaque handles and never copy Source
 identifiers into the artifact.
 
 Every inout tensor requires explicit pre-state access/effect, post-state access/effect,
-and output_mapping. Treat the Harness grid as fixed U_f: do not move a logical program
-coordinate to an absent launch axis. Preserve J access multiplicity; address recompute
+and output_mapping. A static affine inout store is owned by that boundary access/effect
+and an identity output mapping; do not invent semantic scatter/update nodes merely to
+rebuild the full tensor. Use scatter only for a data-dependent J index whose closed
+index/source shapes agree at the data rank. Treat the Harness grid as fixed U_f: do not
+move a logical program coordinate to an absent launch axis. Preserve J access multiplicity; address recompute
 relations may change pointer construction but never tensor, logical index, mask, value,
-or effect.
+or effect. After J accesses exist, compare the ordered raw memory ledger with
+`candidate-attachments`: when tensor root, transfer kind, ordinal, logical index,
+predicate, and effect give a unique one-to-one correspondence, author the closed
+`address_recomputed` row for that access instead of forcing one pointer spelling.
 
-Write a meaningful complete output/candidate.json early, then inspect and patch
-that persistent file in place; do not postpone all authoring until after exhaustive
-reading. As soon as the first complete JSON exists, run
+If output/candidate.json already exists, it is the exact preceding model-authored
+candidate: read input/feedback_frontier.json and input/feedback_detail.json first, then
+inspect and patch that candidate rather than recreating it. Otherwise write one meaningful
+complete candidate early. Do not postpone authoring until after exhaustive reading. As
+soon as the first complete JSON exists, run
 `python .agents/intentir_agent_tool.py submit_candidate` before manual rereading or
 broad TTIR/schema inspection. Let its closed diagnostics drive focused patches.
 Organize scratch under work/ however useful. The final J/C/pi and every semantic
@@ -213,7 +226,7 @@ def _codex_input_files(
     request: Any,
     *,
     source_ttir_observation: Mapping[str, Any] | None,
-) -> dict[str, str]:
+) -> tuple[dict[str, str], dict[str, str]]:
     """Build a small ordinary coding workspace for the source-aware owner."""
 
     complete = _input_files(
@@ -232,26 +245,25 @@ def _codex_input_files(
             "semantic field; fixed code only projects evidence, checks, and rejects.\n\n"
             "Start once with:\n"
             "`python input/tools/context_query.py --input-root input --output-root output source-brief`\n\n"
+            "If that brief reports any compiler.sensitive_numeric_index operation, "
+            "query each exact operation in Source TTIR before authoring the typed "
+            "arithmetic graph; fused-operation operand promotion and cast placement "
+            "must not be guessed from Source surface operand dtypes.\n\n"
             "Then read `input/source.py`. For an exact compiler fact, use the same tool "
             "with `source-observer --path fingerprint.NAME`, `source-ttir-outline`, "
-            "`source-ttir-find`, or `source-ttir-def-use`. For wire syntax, query only "
-            "the needed leaves, for example:\n"
-            "`python input/tools/schema_query.py authoring-brief`\n"
-            "Then request only the exact `section NAME` or `op NAME` needed by the draft.\n\n"
+            "`source-ttir-find`, or `source-ttir-def-use`. For wire syntax, use:\n"
+            "`python .agents/intentir_agent_tool.py lift_reference authoring-brief`\n"
+            "Then request only `section NAME`, `op NAME`, or `contract TERM` needed by "
+            "the current draft. Complete references are not readable files.\n\n"
             "After J/C exists, run `python input/tools/context_query.py --input-root input "
             "--output-root output realization-ledger` and `candidate-attachments` before "
             "authoring pi. These are read-only raw facts and never choose a relation.\n\n"
-            "Search one exact term in `input/knowledge/lift_contract.md` only when its "
-            "ownership is unclear. Write `output/candidate.json` early and patch it in "
+            "Use `lift_reference contract TERM` only when ownership is unclear. Write "
+            "`output/candidate.json` early and patch it in "
             "place. Run `python .agents/intentir_agent_tool.py submit_candidate`; the "
             "host supplies the public semantic probe after a mechanically passing draft.\n"
         ),
-        "schema/artifact.schema.json": complete["schema/artifact.schema.json"],
-        "knowledge/lift_contract.md": complete["knowledge/lift_contract.md"],
-        "knowledge/intent_ops.md": complete["knowledge/intent_ops.md"],
-        "knowledge/preflight.md": complete["knowledge/preflight.md"],
         "tools/context_query.py": complete["tools/context_query.py"],
-        "tools/schema_query.py": complete["tools/schema_query.py"],
         "candidate_check.json": "null\n",
         "source_reconcile.json": "null\n",
         "semantic_probe.json": "null\n",
@@ -259,7 +271,168 @@ def _codex_input_files(
     files.update(_codex_feedback_files(complete["feedback.json"]))
     if "source_ttir.json" in complete:
         files["source_ttir.json"] = complete["source_ttir.json"]
-    return files
+    references = {
+        "schema": complete["schema/artifact.schema.json"],
+        "contract": complete["knowledge/lift_contract.md"],
+        "operations": complete["knowledge/intent_ops.md"],
+        "preflight": complete["knowledge/preflight.md"],
+    }
+    return files, references
+
+
+_REFERENCE_OP_HEADING = re.compile(r"^  ([a-z][a-z0-9_]*)\s*:")
+
+
+def _reference_operation_sections(reference: str) -> dict[str, str]:
+    lines = reference.splitlines()
+    starts: list[tuple[int, str]] = []
+    for index, line in enumerate(lines):
+        match = _REFERENCE_OP_HEADING.match(line)
+        if match:
+            starts.append((index, match.group(1)))
+    return {
+        name: "\n".join(
+            lines[
+                start : (
+                    starts[position + 1][0]
+                    if position + 1 < len(starts)
+                    else len(lines)
+                )
+            ]
+        ).rstrip()
+        for position, (start, name) in enumerate(starts)
+    }
+
+
+def _lift_reference_query(
+    references: Mapping[str, str], arguments: tuple[str, ...]
+) -> Mapping[str, Any]:
+    """Return one bounded exact reference fragment without mounting bulk files."""
+
+    if not arguments:
+        raise ValueError(
+            "lift_reference requires authoring-brief, section NAME, op NAME, or contract TERM"
+        )
+    schema = json.loads(references["schema"])
+    if not isinstance(schema, Mapping):
+        raise TypeError("Lift schema root must be an object")
+    sections = schema_sections(dict(schema))
+    root_properties = schema["properties"]
+    j_schema = root_properties["j"]
+    j_properties = j_schema["properties"]
+    intent_schema = j_properties["intent"]
+    intent_properties = intent_schema["properties"]
+    intent_function_schema = intent_properties["intent_function"]
+    boundary_schema = j_properties["boundary"]
+    signature_schema = j_properties["signature"]
+    c_schema = root_properties["c"]
+    pi_schema = root_properties["pi"]
+    sections.update(
+        {
+            "node_ids": j_properties["node_ids"],
+            "dimension_constraint": j_properties["dimension_constraints"]["items"],
+        }
+    )
+    operations = _reference_operation_sections(references["operations"])
+    command = arguments[0]
+    result: Any
+    if command == "authoring-brief" and len(arguments) == 1:
+        def object_shape(value: Mapping[str, Any]) -> dict[str, Any]:
+            return {
+                "required": value.get("required", []),
+                "fields": list(value.get("properties", {})),
+            }
+
+        result = {
+            "object_shapes": {
+                "root": object_shape(schema),
+                "j": object_shape(j_schema),
+                "j.intent": object_shape(intent_schema),
+                "j.intent.intent_function": object_shape(intent_function_schema),
+                "j.boundary": object_shape(boundary_schema),
+                "j.signature": object_shape(signature_schema),
+                "c": object_shape(c_schema),
+                "pi": object_shape(pi_schema),
+            },
+            "closed_field_schemas": {
+                "root.schema": root_properties["schema"],
+                "j.kernel_id": j_properties["kernel_id"],
+                "j.node_ids": j_properties["node_ids"],
+                "pi.schema": pi_schema["properties"]["schema"],
+            },
+            "sections": sorted(sections),
+            "ordinary_operations": sorted(operations),
+            "structured_operations": ["loop", "effect_if", "value_if"],
+            "mandatory_numeric_authoring": [
+                "Treat Source-TTIR math.fma as one typed fused event. Query its exact "
+                "def-use and operand/result types before decomposing it into available J ops.",
+                "When J has no scalar fma op, explicit cast nodes must reproduce the "
+                "observed fused operand width before the primary mul; do not infer that "
+                "mul width from the unfused source operand dtypes.",
+                "Keep a separately computed addend producer at its observed dtype and "
+                "placement before its conversion into the fused event.",
+                "If the fused addend is one direct negation or zero-minus value, author "
+                "the final J arithmetic as sub(primary_product, positive_value), not "
+                "const-zero + neg + add. This is the canonical direct fma expansion.",
+                "Keep iota/index arithmetic at the exact Source-TTIR integer width. "
+                "Never widen logical indices merely because an unrelated ABI stride "
+                "carrier or pointer representation uses i64.",
+            ],
+        }
+    elif command == "section" and len(arguments) == 2:
+        name = arguments[1]
+        if name not in sections:
+            raise ValueError(f"unknown schema section {name!r}; choose {sorted(sections)}")
+        result = sections[name]
+    elif command == "op" and len(arguments) == 2:
+        name = arguments[1]
+        if name in {"loop", "effect_if", "value_if"}:
+            variants = schema["$defs"]["intent_op"]["anyOf"]
+            result = next(
+                variant
+                for variant in variants
+                if name in variant.get("properties", {}).get("op", {}).get("enum", [])
+            )
+        elif name in operations:
+            result = operations[name]
+        else:
+            raise ValueError(f"unknown Intent operation {name!r}")
+    elif command == "contract" and len(arguments) >= 2:
+        needle = " ".join(arguments[1:]).casefold()
+        matches: list[dict[str, Any]] = []
+        for label in ("contract", "preflight"):
+            lines = references[label].splitlines()
+            for index, line in enumerate(lines):
+                if needle not in line.casefold():
+                    continue
+                start = max(0, index - 3)
+                end = min(len(lines), index + 4)
+                matches.append(
+                    {
+                        "source": label,
+                        "line_start": start + 1,
+                        "text": "\n".join(lines[start:end]),
+                    }
+                )
+                if len(matches) >= 8:
+                    break
+            if len(matches) >= 8:
+                break
+        result = matches
+    else:
+        raise ValueError(
+            "lift_reference accepts authoring-brief, section NAME, op NAME, or contract TERM"
+        )
+    encoded = json.dumps(result, ensure_ascii=False, sort_keys=True)
+    if len(encoded) > 12_000:
+        raise ValueError("reference result exceeds 12000 characters; request a narrower item")
+    return {
+        "status": "pass",
+        "query": list(arguments),
+        "result": result,
+        "authority": "exact source-neutral reference fragment; no J/C/pi field is generated",
+    }
+
 
 _EXTERNAL_CONTINUATION_PROMPT = """The same branch-local source-aware Lift task continues in the same workspace and thread.
 Read input/feedback_frontier.json first. Open only a named
@@ -280,6 +453,11 @@ current J node and boundary. The frontier describes a mismatch but does not expo
 the Replay implementation that produced it. Preserve cast order and operation spelling when they are semantic. If J
 already states the complete logical fact but Replay failed to realize it, do not add a
 pi escape hatch; resubmit the unchanged artifact for a fresh source-blind Replay.
+If independent fresh Replays vary only in addptr/address topology while the Source raw
+memory ledger and current J access attachments have a unique tensor/kind/ordinal/index/
+predicate/effect correspondence, that is precisely the closed
+`access_representation_bindings.address_recomputed` case. Bind the existing accesses;
+do not edit J semantics or encode a Source pointer recipe in pi.
 Before editing local operations, check whether one omitted Source-visible loop,
 effect_if, early terminal branch, continuation, or effect region explains the
 downstream op/dataflow/predicate differences; if so, repair that complete J scope
@@ -291,8 +469,8 @@ but the preceding Replay alone failed to consume it, do not mutate the artifact 
 imitate that Replay: resubmit the unchanged artifact for a fresh source-blind Replay.
 Use the compact source query only where the named feedback needs exact Source or
 compiler evidence, then revise the complete model-authored J/C/pi in place. If a
-named relation's ownership is unclear, search only that name in
-input/knowledge/lift_contract.md. Treat feedback as a compiler counterexample, not
+named relation's ownership is unclear, query only that term through
+`python .agents/intentir_agent_tool.py lift_reference contract TERM`. Treat feedback as a compiler counterexample, not
 as a semantic patch. Run `python .agents/intentir_agent_tool.py submit_candidate`;
 the host automatically probes the exact passing J and returns any public divergence
 to this same thread. The host alone runs formal gates.
@@ -302,8 +480,8 @@ _CANDIDATE_CHECK_CONTINUATION_PROMPT = """The host submission preflight rejected
 Read input/candidate_check.json and repair output/candidate.json in this same
 thread. Make coordinated J/C/pi changes when required. Rerun
 `python .agents/intentir_agent_tool.py submit_candidate` and finish immediately
-after the complete candidate passes. Search a rejected relation's exact field name
-in input/knowledge/lift_contract.md when its ownership is unclear. The transaction is diagnostic-only.
+after the complete candidate passes. Query a rejected relation's exact field name with
+`lift_reference contract TERM` when its ownership is unclear. The transaction is diagnostic-only.
 """
 
 _SOURCE_RECONCILE_CONTINUATION_PROMPT = """The source-aware necessary-condition preflight rejected the current exact candidate bytes.
@@ -342,10 +520,9 @@ def _source_aware_startup_context(workspace: Any, *, fresh_owner: bool) -> dict[
             "harness": "input/harness_view.json",
             "source_observer": "input/source_ttir.json",
             "source_query": "input/tools/context_query.py",
-            "schema_query": "input/tools/schema_query.py",
-            "artifact_schema": "input/schema/artifact.schema.json",
-            "intent_ops": "input/knowledge/intent_ops.md",
-            "lift_contract": "input/knowledge/lift_contract.md",
+            "bounded_reference_query": (
+                "python .agents/intentir_agent_tool.py lift_reference"
+            ),
             "feedback_frontier": "input/feedback_frontier.json",
             "feedback_detail": "input/feedback_detail.json",
             "feedback_categories": [
@@ -554,7 +731,7 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                 anonymous_source,
                 anonymous_view,
             )
-        files = _codex_input_files(
+        files, references = _codex_input_files(
             prepared,
             source_ttir_observation=self._source_ttir_observation,
         )
@@ -587,6 +764,24 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
             raise RuntimeError("Codex Lift workspace was not created")
         self._archive_formal_candidate(workspace, feedback)
         fresh_owner = self._codex_session is None
+        previous_artifact = getattr(feedback, "previous_artifact", None)
+        candidate_path = workspace.output_dir / "candidate.json"
+        if fresh_owner and previous_artifact is not None and not candidate_path.exists():
+            # Cross-process continuation still starts a fresh isolated coding
+            # session, but it must not force the model to reserialize the last
+            # complete artifact from prose.  This is an exact copy of the prior
+            # model-authored candidate; fixed code neither edits nor completes it.
+            _atomic_write_text(
+                candidate_path,
+                json.dumps(
+                    previous_artifact.to_json(),
+                    indent=2,
+                    sort_keys=True,
+                    ensure_ascii=False,
+                    allow_nan=False,
+                )
+                + "\n",
+            )
         call_turns: list[CodexCLITurn] = []
         check_results: list[dict[str, Any]] = []
         source_reconcile_results: list[dict[str, Any]] = []
@@ -939,6 +1134,11 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
             {
                 "submit_candidate": submit_candidate_tool,
                 "semantic_probe": semantic_probe_tool,
+            },
+            argument_handlers={
+                "lift_reference": lambda arguments: _lift_reference_query(
+                    references, arguments
+                )
             },
         )
         live_checkpoint_thread: threading.Thread | None = None

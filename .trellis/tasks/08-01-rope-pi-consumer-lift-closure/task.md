@@ -1,6 +1,6 @@
 # Final Task 子任务：RoPE π Consumer 与自动 Lift 闭合
 
-> 状态：`ACTIVE`
+> 状态：`COMPLETE`
 > 性质：唯一活动执行记录；先完成 Llama4 RoPE 纵切，再将同一能力横向用于剩余 Kernel。
 > 方法依据：`doc/method/IntentIR_四核Lift瓶颈与pi归一化重构诊断.md`。
 
@@ -109,27 +109,31 @@ ledger 不判断这些事实属于 J/C/π，不建议 relation 或 target；LLM 
 
 ### B. 精简 Lift 并自动作者化 π
 
-- [ ] 只保留 Source/Harness/working candidate/bounded feedback 与按需查询入口；
-- [ ] 完整 schema、IntentOps、preflight 和示例不再重复无条件挂载；
-- [ ] 提供 raw realization ledger 与 J/C attachment query；
-- [ ] 同一 persistent Lift owner 作者化完整 `(J,C,π)`；
-- [ ] fresh Replay、Gate1 和三边 Gate2；
-- [ ] 只有自动路径再次全部通过，RoPE 才计入最终闭合 corpus。
+- [x] 只保留 Source/Harness/working candidate/bounded feedback 与按需查询入口；
+- [x] 完整 schema、IntentOps、preflight 和示例不再重复无条件挂载；
+- [x] 提供 raw realization ledger 与 J/C attachment query；
+- [x] 同一 persistent Lift owner 作者化完整 `(J,C,π)`；
+- [x] fresh Replay、Gate1 和三边 Gate2；
+- [x] 自动路径再次全部通过，RoPE 计入最终闭合 corpus。
 
 ## 7. 当前阻塞
 
-1. RoPE 所需 access/address consumer 已闭合；program/iteration/control relation 在本次
-   Source/Replay 无对应 residual，仍保持 hard/unused，不能宣称已有通用 quotient；
-2. Lift Agent 尚未自动作者化新的直接绑定 π 与显式 inout output mapping；
-3. Lift workspace 仍承担重复上下文与 dependent JSON 机械成本；
-4. fresh 自动 Lift/Replay 尚未给出 Gate1/Gate2 证据。
+RoPE 子任务无未解决阻塞。自动路径保留以下边界：program/iteration/control relation
+在本次 Source/Replay 没有可消费 residual，仍为 hard/unused；本任务只证明
+`address_recomputed` fixed unary consumer 与该 RoPE artifact 的闭合，不外推为通用 quotient。
 
 ## 8. 真实证据
 
 | 阶段 | Gate1 | Source–Replay | Source–J | Replay–J | evidence |
 |---|---|---|---|---|---|
 | 手工 π 纵切 | pass | pass（误差 0） | pass（最大误差 4.8828125e-4） | pass（最大误差 4.8828125e-4） | `/tmp/intentir-rope-pi-consumer-20260801/manual-closure/liger_llama4_rope/recheck-001` |
-| 自动 Lift 闭合 | pending | pending | pending | pending | pending |
+| 自动 Lift 闭合 | pass | pass（Q/K 误差 0） | pass（Q/K 误差 0） | pass（Q/K 误差 0） | `/tmp/intentir-rope-auto-certified-20260801-final/liger_llama4_rope/gate2-recheck-001` |
+
+自动 Lift 的模型作者化与 fresh Replay 证据位于
+`/tmp/intentir-rope-local-patch-20260801/liger_llama4_rope/run-001/attempt-02`。
+最终 recheck 复用其 exact artifact 与 Replay，模型调用数为 0；Gate1 的唯一 active
+normalization rule 为 `jc_access_address_representation`，Source/Replay 分别归一 10/5 个
+`tt.addptr` occurrence，所有 J/C-owned hard categories 保持 exact pass。
 
 ## 9. 完成条件
 

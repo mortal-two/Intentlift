@@ -507,7 +507,8 @@ def _check_known_operation_contracts(
     ):
         op_name = operation.get("op")
         if op_name not in {
-            "const", "map_unary", "map_binary", "reduce", "contraction", "tile"
+            "const", "map_unary", "map_binary", "reduce", "contraction", "tile",
+            "scatter",
         }:
             continue
         base = f"j.intent.intent_function.{operation_path}"
@@ -515,6 +516,117 @@ def _check_known_operation_contracts(
         ref = ref_value if isinstance(ref_value, str) else operation_path
         attrs_value = operation.get("attrs")
         attrs = attrs_value if isinstance(attrs_value, Mapping) else {}
+
+        if op_name == "scatter":
+            operands = operation.get("operands")
+            operand_refs = operands if isinstance(operands, list) else []
+            result = operation.get("result")
+            valid_arity = (
+                len(operand_refs) == 3
+                and all(isinstance(item, str) and item for item in operand_refs)
+                and isinstance(result, str)
+                and bool(result)
+            )
+            if not valid_arity:
+                diagnostics.append(
+                    TypeCheckDiagnostic(
+                        TypeCheckErrorCode.KNOWN_OP_CONTRACT_INVALID,
+                        f"{base}.operands",
+                        "scatter requires base, index, source, and one result",
+                        ref,
+                    )
+                )
+                continue
+
+            axis = attrs.get("axis")
+            if (
+                set(attrs) != {"axis", "mode", "reduce"}
+                or type(axis) is not int
+                or attrs.get("mode") != "along_axis"
+                or attrs.get("reduce") not in {"none", "add"}
+            ):
+                diagnostics.append(
+                    TypeCheckDiagnostic(
+                        TypeCheckErrorCode.KNOWN_OP_CONTRACT_INVALID,
+                        f"{base}.attrs",
+                        "scatter requires closed axis, mode='along_axis', and "
+                        "reduce='none' or 'add'",
+                        ref,
+                    )
+                )
+
+            assert isinstance(result, str)
+            data_type = value_types.get(operand_refs[0])
+            index_type = value_types.get(operand_refs[1])
+            source_type = value_types.get(operand_refs[2])
+            result_type = value_types.get(result)
+            if any(
+                item is None
+                for item in (data_type, index_type, source_type, result_type)
+            ):
+                diagnostics.append(
+                    TypeCheckDiagnostic(
+                        TypeCheckErrorCode.KNOWN_OP_CONTRACT_INVALID,
+                        f"{base}.type",
+                        "scatter operands and result require closed J value types",
+                        ref,
+                    )
+                )
+                continue
+            assert data_type is not None
+            assert index_type is not None
+            assert source_type is not None
+            assert result_type is not None
+            if _INTEGER_DTYPE.fullmatch(index_type.dtype) is None:
+                diagnostics.append(
+                    TypeCheckDiagnostic(
+                        TypeCheckErrorCode.KNOWN_OP_CONTRACT_INVALID,
+                        f"{base}.operands[1]",
+                        "scatter index must have an integer dtype",
+                        ref,
+                    )
+                )
+            if (
+                index_type.shape != source_type.shape
+                or len(index_type.shape) != len(data_type.shape)
+            ):
+                diagnostics.append(
+                    TypeCheckDiagnostic(
+                        TypeCheckErrorCode.KNOWN_OP_CONTRACT_INVALID,
+                        f"{base}.operands[1]",
+                        "scatter index and source must have one common shape and "
+                        "the data rank",
+                        ref,
+                    )
+                )
+            if source_type.dtype != data_type.dtype:
+                diagnostics.append(
+                    TypeCheckDiagnostic(
+                        TypeCheckErrorCode.KNOWN_OP_CONTRACT_INVALID,
+                        f"{base}.operands[2]",
+                        "scatter source dtype must equal the data dtype",
+                        ref,
+                    )
+                )
+            if result_type != data_type:
+                diagnostics.append(
+                    TypeCheckDiagnostic(
+                        TypeCheckErrorCode.KNOWN_OP_CONTRACT_INVALID,
+                        f"{base}.type",
+                        "scatter result type must equal the data type",
+                        ref,
+                    )
+                )
+            if type(axis) is int and not 0 <= axis < len(data_type.shape):
+                diagnostics.append(
+                    TypeCheckDiagnostic(
+                        TypeCheckErrorCode.KNOWN_OP_CONTRACT_INVALID,
+                        f"{base}.attrs.axis",
+                        "scatter axis is outside the data rank",
+                        ref,
+                    )
+                )
+            continue
 
         if op_name == "const":
             value = attrs.get("value")

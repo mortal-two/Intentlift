@@ -1097,6 +1097,24 @@ mul/add/sub or replace a low-precision operation followed by extension with an
 operation performed after extension, even when the result relation is tolerance
 or Source uses a fused primitive. Query the exact TTIR def-use when Source-level
 promotion is ambiguous.
+A compiler-visible `math.fma(a,b,c)` is one typed fused event, not an ordinary
+low-precision multiply followed by later promotion. Query its exact Source-TTIR
+operand/result def-use. Because Layer A has no scalar fma operation, decompose it
+with explicit casts that reproduce the observed fused operand width, then one
+map_binary mul and the matching add/sub at the fused result width. A separately
+computed addend keeps its own observed producer dtype and cast placement before
+entering the fused event. Never infer the primary product dtype only from the
+unfused Source operand declarations.
+When the fused addend is one direct `neg(d)` or `0-d`, author the canonical final
+J node as `sub(primary_product,d)` rather than preserving a separate zero,
+negation/subtraction and add. This is the closed direct expansion of that one
+fused event; it does not authorize general reassociation or eliminate a shared
+addend producer.
+Logical iota and integer index arithmetic keep their exact Source-TTIR width.
+Do not widen an i32 arange/index graph to i64 merely because a representation-only
+ABI stride carrier or pointer address uses i64; pointer formation is not permission
+to change the J index graph. Query the exact TTIR def-use if Source surface typing
+does not settle the width.
 
 For each J `reduce` or inclusive `scan`, boundary.reductions.tile_axis is the
 Source frontend's local tile axis after program/grid axes select the program instance. It

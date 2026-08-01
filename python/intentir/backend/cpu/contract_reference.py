@@ -51,7 +51,10 @@ from intentir.ir.contract_ir import (
 )
 from intentir.ir.contract_semantics import ContractSemanticsError, TypedContractProgram
 from intentir.ir.dimension_relation import resolve_dimension_relations
-from intentir.ir.functional_boundary import project_predicate_text
+from intentir.ir.functional_boundary import (
+    access_predicates_are_logical_domain_total,
+    project_predicate_text,
+)
 from intentir.ir.value_dimension import validate_value_dimension_instantiation
 from intentir.ir.model import IntentOp
 
@@ -473,6 +476,42 @@ def project_contract_reference(j: "SemanticArchive") -> ContractReferencePlan:
         ) from exc
     input_names = {item.name for item in canonical.intent.inputs}
     output_names = {item.name for item in canonical.intent.outputs}
+    graph_operands = {
+        operand for operation in operations for operand in operation.operands
+    }
+    input_load_counts: dict[str, int] = {}
+    for access in contract_ir.accesses:
+        if access.kind == "load":
+            input_load_counts[access.tensor] = input_load_counts.get(access.tensor, 0) + 1
+    predicates_are_domain_total = access_predicates_are_logical_domain_total(canonical)
+
+    def is_closed_whole_input_load(access: ContractAccessIR) -> bool:
+        """Recognize one complete logical input already present in the J env."""
+
+        value_type = value_types.get(access.tensor)
+        if (
+            access.kind != "load"
+            or access.node_ref is not None
+            or access.tensor not in input_names
+            or access.tensor not in graph_operands
+            or input_load_counts.get(access.tensor) != 1
+            or value_type is None
+            or len(access.index) != len(value_type.shape)
+            or (access.predicate is not None and access.fill_value is None)
+            or not predicates_are_domain_total
+        ):
+            return False
+        axes: list[str] = []
+        for program, extent in zip(access.index, value_type.shape, strict=True):
+            expression = program.expression
+            if expression.op != "ref" or not isinstance(expression.value, str):
+                return False
+            axis = expression.value
+            if axis in axes or domains.get(axis) != extent:
+                return False
+            axes.append(axis)
+        return True
+
     loads: list[IndexedLoadProjection] = []
     result_loads: list[IndexedResultLoadProjection] = []
     stores: list[IndexedStoreProjection] = []
@@ -483,6 +522,9 @@ def project_contract_reference(j: "SemanticArchive") -> ContractReferencePlan:
         node_ref = access.node_ref
         operation = nodes.get(node_ref)
         if operation is None or node_ref is None:
+            if is_closed_whole_input_load(access):
+                seen_accesses.add(access.access_id)
+                continue
             raise ContractReferenceUnsupportedError(
                 "contract reference v1 requires every access to name one flat J node"
             )

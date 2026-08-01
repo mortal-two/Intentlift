@@ -1018,11 +1018,17 @@ def _structured_indexed_update_fallback(j: SemanticArchive) -> bool:
         or not access_predicates_are_logical_domain_total(j)
     ):
         return False
-    operations = _walk_ops(j.intent.body)
+    # Canonical J keeps authored node handles in ``j.node_ids``.  IntentOp
+    # objects need not retain the pre-canonical ``node_id`` field, so looking at
+    # the operation alone silently loses every scatter handle.  Resolve the
+    # authored handles through the same canonical node table used by the other
+    # boundary consumers.
+    nodes = _node_table(j)
     scatter_refs = {
-        operation.node_id
-        for operation in operations
-        if operation.op == "scatter" and operation.node_id is not None
+        node_ref
+        for node_ref in j.node_ids
+        if (operation := nodes.get(node_ref)) is not None
+        and operation.op == "scatter"
     }
     return bool(scatter_refs) and scatter_refs == {
         item.node_ref for item in boundary.updates

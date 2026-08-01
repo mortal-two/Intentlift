@@ -446,7 +446,7 @@ def _source_ttir_outline(input_root: Path, start: int, count: int) -> None:
         "module ", "tt.func", "func.func", "^bb", "scf.for", "scf.if",
         "scf.while", "cf.br", "cf.cond_br", "tt.load", "tt.store",
         "tt.atomic", "tt.reduce", "tt.scan", "tt.dot", "scf.yield",
-        "tt.return", "func.return",
+        "math.fma", "arith.extf", "arith.truncf", "tt.return", "func.return",
     )
     rows = [
         {"line": ordinal, "text": line.strip()}
@@ -644,6 +644,29 @@ def _source_brief(input_root: Path) -> None:
     ]
     source_outline["items"].sort(key=lambda item: int(item["ordinal"]))
 
+    raw_ttir_lines = str(observation.get("ttir", "")).splitlines()
+    sensitive_numeric_names = (
+        "math.fma",
+        "tt.dot",
+        "tt.reduce",
+        "tt.scan",
+        "arith.extf",
+        "arith.truncf",
+        "arith.sitofp",
+        "arith.uitofp",
+        "arith.fptosi",
+        "arith.fptoui",
+        "arith.extsi",
+        "arith.extui",
+        "arith.trunci",
+        "arith.index_cast",
+    )
+    sensitive_numeric_ops = {
+        name: count
+        for name in sensitive_numeric_names
+        if (count := sum(line.count(name) for line in raw_ttir_lines)) > 0
+    }
+
     value = {
         "protocol": "intentir.lift-source-brief.v3",
         "source": source_outline,
@@ -657,6 +680,16 @@ def _source_brief(input_root: Path) -> None:
             "section_query": (
                 f"{QUERY_COMMAND} source-observer --path fingerprint.SECTION"
             ),
+            "sensitive_numeric_index": {
+                "operations": sensitive_numeric_ops,
+                "exact_query": (
+                    f"{QUERY_COMMAND} source-ttir-find OPERATION --context 4"
+                ),
+                "authority": (
+                    "exact Source-TTIR operation counts only; this index does not "
+                    "choose an Intent op, cast placement, dtype, or result relation"
+                ),
+            },
             "control_time_index": {
                 "loops": [
                     {

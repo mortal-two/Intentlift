@@ -929,11 +929,17 @@ class IntentIRReplayWorkspace:
 
     def read_replay(self) -> str:
         entries = tuple(self.output_dir.iterdir())
-        if entries != (self.replay_path,):
-            names = sorted(path.name for path in entries)
+        unexpected = tuple(
+            path
+            for path in entries
+            if path != self.replay_path
+            and not (path.name == "__pycache__" and path.is_dir())
+        )
+        if unexpected or self.replay_path not in entries:
+            names = sorted(path.name for path in unexpected)
             raise ValueError(
-                "Replay output must contain exactly replay.source; "
-                f"found {names}"
+                "Replay output must contain replay.source and no additional semantic "
+                f"outputs; unexpected={names}"
             )
         if self.replay_path.is_symlink() or not self.replay_path.is_file():
             raise ValueError("replay.source must be a regular file")

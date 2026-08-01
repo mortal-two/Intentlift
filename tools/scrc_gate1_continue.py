@@ -155,9 +155,15 @@ def _load_seed(parent_path: Path, prepared: Any) -> LiftFeedback:
         require_program_axes=artifact.wire_schema == artifact.SCHEMA,
     )
     if not checked.passed:
-        raise ValueError(
-            "parent artifact no longer passes current TypeCheck: "
-            + json.dumps(checked.to_json(), sort_keys=True)
+        # A strengthened closed checker can invalidate an older formal parent.
+        # Preserve the exact model-authored artifact as the working draft and
+        # let the Lift owner repair it before any new Replay/Gate execution.
+        return LiftFeedback(
+            FeedbackKind.TYPECHECK,
+            {"typecheck": checked.to_json()},
+            None,
+            artifact,
+            None,
         )
 
     gate1 = _read_object(parent / "gate1.json", "gate1.json")
