@@ -54,6 +54,22 @@ Replay request、只读文件、query、prompt、continuation、cache identity �
 `S_J=M(J)` 与只读 cross-reference `V(S_J,MaskC(C))` 可以保留，但必须是 J-only/MaskC-only 的
 确定性重索引。它们不能生成 target skeleton、program axis、loop/lane/guard 或 target API。
 
+### 2.1 MaskC 是参数化绑定，不是待猜答案
+
+隐藏 C valuation 不等于要求 Replay 猜一个常数。compiler-kind slot 是参数化 Replay source 与固定
+Harness compile/launch 之间的接口：
+
+- TileLang worker 在加载 Replay module 前，以 exact `c*` 名称注入本轮 compile valuation；Replay 只
+  直接引用该 host global，不得定义、shadow 或猜值；
+- CUDA 的 launch slot 只由外部 Harness 设置 grid/block，`c*` 不得成为 kernel runtime parameter 或
+  kernel-body value；
+- source-blind construction compile 可以注入类型正确的 representative valuation，但没有 Gate 权限；
+- formal Gate1/Gate2 对同一份 exact Replay source 重新绑定 accepted Harness valuation `c₀`。
+
+因此 `MaskC(C)` 隐藏的是 valuation，不是 binding convention。`U_f` 必须公开该前端如何引用或外部消费
+匿名 slot，否则 agent 会把“未知值”误解为需要自己作者化的常数，既破坏隔离，也产生无意义的搜索。
+固定 ingress 必须拒绝 Replay 对 compiler slot 的重绑定。
+
 ## 3. π 与 normalizer
 
 fresh artifact 作者化只记录当前 profile 已有固定单臂 consumer 的 compact π。第一纵切采用：
@@ -136,6 +152,13 @@ SourceReconcile 与 TypeCheck 的机械拒绝。
 4. TileLang TIR profile 与 CUDA PTX profile各自 Gate1；
 5. 各自三边 Gate2；
 6. 两个 accepted J/C 的 canonical comparison：报告共同语义与真实前端差异，不强迫字节一致。
+
+首个 `tilelang:add2d` baseline（`run-001`）已经给出协议反例：手工 J/C/π TypeCheck PASS，Replay
+输入机械证明无 π，fresh Codex 也生成并编译了两读、一加、一写的正确数值程序；但它不知道 TileLang
+既有的 host-global C binding convention，先后猜测并重绑 `c0`，最终选择 `128`，加入 carrier 与两个
+J-absent guard。identity TIR Gate1 因而正确地拒绝，而不是为闭合临时放松 observer。修复面只限于
+公开 `U_f`/ingress：明确 `c0` 由 host 注入并禁止重绑，同时要求直接 lower J-owned logical domain；
+不修改 J，不向 Replay 暴露 `C=16`、Source、π 或 Gate diff，也不添加 kernel-specific matcher。
 
 add2d 通过后，第二对使用 `tilelang:gather2d` / `cuda:tilelang_gather2d`。它们共享
 `M=64`、block `[128,1,1]`、grid `[256,1,1]`，但包含 data-dependent row/column 间接寻址，用来检验

@@ -62,7 +62,7 @@ MINISWE_REPLAY_TURN_TIMEOUT_SECONDS = 300.0
 MINISWE_REPLAY_XHIGH_TURN_TIMEOUT_SECONDS = 900.0
 RESPONSES_REPLAY_BACKEND = "openai.responses.intentir-replay.v1"
 STATIC_REPLAY_BACKEND = "intentir.static-replay-test.v1"
-REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v16"
+REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v17"
 _ANONYMOUS_HANDLE = re.compile(r"^[pc][0-9]+$")
 
 
@@ -385,6 +385,25 @@ def _check_tilelang_schedule_roles(
         and node.func.attr == "Kernel"
     ]
     handles = tuple(launch_slots[index] for index in sorted(launch_slots))
+    rebound = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Name)
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+        and node.id in handles
+    ]
+    if rebound:
+        node = min(rebound, key=lambda item: (item.lineno, item.col_offset))
+        raise _ReplayABIViolation(
+            "tilelang_launch_slot_rebind_forbidden",
+            path=f"<schedule:{node.id}>",
+            handles=(node.id,),
+            line=node.lineno,
+            expected={
+                "binding": f"host-injected module global {node.id}",
+                "authored_assignment": False,
+            },
+        )
     if len(kernel_calls) != 1:
         raise _ReplayABIViolation(
             "tilelang_kernel_count",
@@ -413,6 +432,10 @@ def _check_tilelang_schedule_roles(
             path="<T.Kernel:threads>",
             handles=handles,
             line=call.lineno,
+            expected={
+                "binding": "reference each host-injected c* slot by exact name",
+                "authored_assignment": False,
+            },
         )
     threads = thread_values[0]
     components = list(threads.elts) if isinstance(threads, (ast.List, ast.Tuple)) else [threads]
@@ -427,6 +450,11 @@ def _check_tilelang_schedule_roles(
                 path=f"<T.Kernel:threads[{axis}]>",
                 handles=(name,),
                 line=call.lineno,
+                expected={
+                    "binding": name,
+                    "origin": "host-injected module global",
+                    "authored_assignment": False,
+                },
             )
     return ()
 
@@ -3126,6 +3154,12 @@ add, remove, or alter J-owned values, predicates, domains, accesses, effects, re
 or relations. Physical realization is not an extra semantic input. It will be compared
 outside this episode after fixed normalization; no Gate observation is available here.
 
+Compiler-kind C slots are parameterized host bindings, not holes that Replay must fill.
+Use only the public binding mechanism declared in `frontend.json`; never guess, define,
+shadow, or recover their hidden valuation. Construction may use a representative value,
+while the same exact Replay source is rebound and compiled at the Harness-held formal
+valuation outside this episode.
+
 `compiler-index.intent` merely puts existing J domain-dependency sets beside anonymous
 MaskC attachments. A dependency subset is syntactic, not a schedule or proof of domain
 containment. Use it to avoid reconstructing cross-references, then compile the complete
@@ -3155,7 +3189,26 @@ Source, real C value, CompileCase/grid, Gate result, history, repository, or net
 is available. S_J is derived only from this episode's J and contains no pi, C value,
 target operator, API, source statement, instruction selection, or repair.
 """
-    tool = """# Replay agent tools
+    inspection_command = (
+        "python .agents/intentir_agent_tool.py replay_ttir_inspect jc"
+        if frontend is Frontend.TRITON
+        else "# replay_ttir_inspect is unavailable for this native frontend"
+    )
+    inspection_guidance = (
+        "After construction PASS, use the bounded `jc` view; revisit your own IR "
+        "when a concrete J obligation remains, and use targeted raw/find/observer "
+        "queries rather than dumping the full fingerprint."
+        if frontend is Frontend.TRITON
+        else "For this native frontend, construction compile is the only private "
+        "IR check. The formal frontend observer runs outside the episode and is "
+        "never visible here."
+    )
+    review_guidance = (
+        "Review your own TTIR"
+        if frontend is Frontend.TRITON
+        else "Review the complete compiled source"
+    )
+    tool = f"""# Replay agent tools
 
 Act like a compiler coding agent. Read `compiler-index.intent`,
 `semantic-program.intent`, `frontend.json`, and `mask-c.json` completely before
@@ -3169,22 +3222,20 @@ python .agents/intentir_agent_tool.py semantic_query node REF
 python .agents/intentir_agent_tool.py packet_query abi 0 48
 python .agents/intentir_agent_tool.py packet_query graph 0 12
 python .agents/intentir_agent_tool.py replay_compile_check
-python .agents/intentir_agent_tool.py replay_ttir_inspect jc
+{inspection_command}
 python .agents/intentir_agent_tool.py submit_replay
 ```
 
 Use ordinary file edits and your own helper files under `/work`. You may compile,
 inspect only your current Replay IR, checkpoint and patch repeatedly within this one
-episode. After construction PASS, use the bounded `jc` view; revisit your own IR when
-a concrete J obligation remains, and use targeted raw/find/observer queries rather than
-dumping the full fingerprint.
+episode. {inspection_guidance}
 Remove work not authorized by S_J, and keep inactive constexpr alternatives lexically
 inside their branch so the specialized compiler never materializes them.
 `submit_replay` checks the exact complete
 bytes but neither generates nor repairs them. Formal Gate1 runs outside this episode
 and is never visible here. Merely writing source that compiles creates at most a
-recoverable checkpoint; it does not submit or terminate the episode. Review your own
-TTIR and explicitly call `submit_replay`.
+recoverable checkpoint; it does not submit or terminate the episode. {review_guidance}
+and explicitly call `submit_replay`.
 """
     return (
         {

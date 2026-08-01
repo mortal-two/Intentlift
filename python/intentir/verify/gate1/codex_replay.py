@@ -50,7 +50,7 @@ from .replay import (
 )
 
 
-CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v67"
+CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v68"
 
 _INITIAL_PROMPT = """You are the sole writer for one fresh source-blind IntentIR Replay episode.
 Work only under the isolated /workspace. input/ is immutable; output/, work/, and
@@ -78,13 +78,21 @@ then compile `boundary_ownership` as one whole-program contract. Preserve every
 authored access/effect and keep logical domain guards distinct from access-local
 predicates; you still own every target realization choice.
 
-Compile, inspect only your own Replay IR, and patch the complete program in this same
-episode. First run `replay_compile_check`; once construction passes, call
-`replay_ttir_inspect jc` for the bounded J/C structural summary. Compare its exact
-typed J obligations against your own dot/reduction/loop/cast signatures before submit;
-matching only operation counts is insufficient. Inspect your own IR
-again when a concrete J obligation remains unclear; use targeted `find`, `raw`, or
-`observer` queries instead of dumping the whole fingerprint. Keep computations for inactive constexpr
+Compiler-kind MaskC values are intentionally absent. Follow the binding mechanism in
+frontend.json exactly: the host supplies those anonymous slots during construction and
+formal compilation. Never guess, copy, shadow, or reconstruct a hidden value. The
+formal judgment is for the Harness-held valuation, so unknown C is not permission to
+add J-absent predicates, carriers, or effects. Prefer the smallest direct lowering of
+the complete J contract and add target control only when J or the chosen public target
+construct actually requires it.
+
+Compile, inspect only your own Replay IR when the frontend supports that tool, and patch
+the complete program in this same episode. First run `replay_compile_check`, then follow
+the frontend-specific inspection instructions in `TOOL.md`. Where a bounded own-IR view
+is available, compare its exact typed J obligations against your own
+dot/reduction/loop/cast signatures before submit; matching only operation counts is
+insufficient. Use targeted `find`, `raw`, or `observer` queries instead of dumping the
+whole fingerprint. Keep computations for inactive constexpr
 alternatives inside their branch and do not add unmentioned `volatile`, cache,
 eviction, or other target attributes. In particular, when an anonymous constexpr
 selects whether an already-authored logical-domain guard is elided, put the unguarded

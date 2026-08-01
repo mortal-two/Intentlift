@@ -11,9 +11,13 @@ from intentir.ir.canonical_j import canonicalize_gate1_artifact
 from .model import Frontend, Gate1Artifact, SchemaError
 
 
-REPLAY_PACKET_SCHEMA = "intentir.scrc.replay-input.v3"
+REPLAY_PACKET_SCHEMA = "intentir.scrc.replay-input.v4"
 LEGACY_REPLAY_PACKET_SCHEMAS = frozenset(
-    {"intentir.scrc.replay-input.v1", "intentir.scrc.replay-input.v2"}
+    {
+        "intentir.scrc.replay-input.v1",
+        "intentir.scrc.replay-input.v2",
+        "intentir.scrc.replay-input.v3",
+    }
 )
 PUBLIC_FRONTEND_CONTEXT = {
     "triton": {
@@ -47,8 +51,17 @@ PUBLIC_FRONTEND_CONTEXT = {
             "`import tilelang.language as T` and one `@T.prim_func` named "
             "`scrc_k0`. Express tensor ABI through public `T.Tensor` annotations, "
             "device launch through `T.Kernel`, and realization topology through "
-            "public TileLang operations. C values are compile-time schedule "
-            "constants, never additional logical runtime parameters."
+            "public TileLang operations. Every compiler-kind MaskC slot is a "
+            "host-injected module global under its exact anonymous c* name for "
+            "both construction and formal compilation: reference that name "
+            "directly, never declare, rebind, guess, or expose its value as a "
+            "logical runtime parameter. A launch_block_{x,y,z} slot belongs only "
+            "in the matching `T.Kernel(..., threads=...)` component, never in its "
+            "grid. Lower J-owned bounded logical domains directly with public "
+            "structured TileLang iteration when possible; do not invent a "
+            "carrier or runtime guard merely to defend against the hidden C "
+            "valuation. The formal run binds that same parameterized source at "
+            "the Harness-held valuation."
         ),
     },
     "cuda": {
@@ -57,10 +70,15 @@ PUBLIC_FRONTEND_CONTEXT = {
         "compile_entry_contract": (
             "Return one standalone CUDA C++ translation unit containing exactly "
             "one `extern \"C\" __global__` kernel named `scrc_k0`. Its positional "
-            "runtime parameters follow J.signature; C values are compiled "
-            "schedule constants and are not runtime parameters. Use only public "
-            "CUDA language constructs and intrinsics. Do not emit host code, "
-            "launch syntax, file I/O, inline PTX, build directives, or `main`."
+            "runtime parameters follow J.signature. Compiler-kind MaskC slots "
+            "are Harness-owned external launch constants: never declare, use, "
+            "guess, or expose their c* names inside the kernel. The formal run "
+            "launches the parameterized kernel at the hidden accepted valuation. "
+            "Preserve exactly the predicates and logical domains owned by J; do "
+            "not add a runtime guard or carrier solely to defend against an "
+            "unknown C valuation. Use only public CUDA language constructs and "
+            "intrinsics. Do not emit host code, launch syntax, file I/O, inline "
+            "PTX, build directives, or `main`."
         ),
     },
 }
