@@ -1,0 +1,45 @@
+extern "C" __global__ void scrc_k0(
+    const float* p0,
+    float* p1,
+    const float* p2,
+    const float* p3,
+    const float* p4,
+    const float* p5,
+    int p6,
+    int p7,
+    int p8,
+    int p9) {
+  __shared__ float k_values[1024];
+
+  const int k = (int)threadIdx.x;
+
+  for (int m = (int)blockIdx.x; m < p8; m += (int)gridDim.x) {
+    for (int n = (int)blockIdx.y; n < p9; n += (int)gridDim.y) {
+      float output_value = 0.0f;
+
+      for (int h = 0; h < p6; ++h) {
+        float k_value = 0.0f;
+        if (k < p7) {
+          k_value += p0[m * p7 + k] * p2[k * p6 + h];
+        }
+        k_values[k] = k_value;
+        __syncthreads();
+
+        if (k == 0) {
+          float contraction_value = 0.0f;
+          for (int reduction_k = 0; reduction_k < p7; ++reduction_k) {
+            contraction_value += k_values[reduction_k];
+          }
+          const float activated =
+              fmaxf(contraction_value + p4[h], 0.0f);
+          output_value += activated * p3[h * p9 + n];
+        }
+        __syncthreads();
+      }
+
+      if (k == 0) {
+        p1[m * p9 + n] = output_value + p5[n];
+      }
+    }
+  }
+}

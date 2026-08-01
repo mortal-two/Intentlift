@@ -1,0 +1,41 @@
+extern "C" __global__ void scrc_k0(
+    const float* p0,
+    const float* p1,
+    float* p2,
+    const float* p3,
+    int p4,
+    int p5,
+    int p6) {
+  __shared__ float reduction_values[1024];
+
+  const int v6 = static_cast<int>(threadIdx.x);
+
+  for (int v4 = static_cast<int>(blockIdx.x); v4 < p5;
+       v4 += static_cast<int>(gridDim.x)) {
+    for (int v5 = static_cast<int>(blockIdx.y); v5 < p6;
+         v5 += static_cast<int>(gridDim.y)) {
+      float reduction_value = 0.0f;
+      if (v6 < p4) {
+        reduction_value +=
+            p0[v4 * p4 + v6] * p1[v6 * p6 + v5];
+      }
+      reduction_values[v6] = reduction_value;
+      __syncthreads();
+
+      for (int reduction_stride = 1; reduction_stride < p4;
+           reduction_stride *= 2) {
+        const int reduction_index = 2 * reduction_stride * v6;
+        if (reduction_index + reduction_stride < p4) {
+          reduction_values[reduction_index] +=
+              reduction_values[reduction_index + reduction_stride];
+        }
+        __syncthreads();
+      }
+
+      if (v6 == 0) {
+        const float biased = reduction_values[0] + p3[v5];
+        p2[v4 * p6 + v5] = fmaxf(biased, 0.0f);
+      }
+    }
+  }
+}

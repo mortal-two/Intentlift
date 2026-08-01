@@ -1,0 +1,417 @@
+{
+  "c0": {
+    "c0": 128
+  },
+  "cases": [
+    {
+      "case_id": "finite-hidden-1",
+      "input_digest": "46ee5e2f0160763d1a0081d8c51bcd0920a10f8a5dfbf46244deb837a7cacecf",
+      "metadata": {
+        "adapter_protocol": "intentir.scrc.frontend-dataset-harness.v4",
+        "comparison_policy": {
+          "policy_id": "intentir.gate2.default.v1",
+          "protocol": "intentir.scrc.gate2-q.v1",
+          "tolerances": {
+            "bf16": {
+              "atol": 0.002,
+              "equal_nan": false,
+              "rtol": 0.02
+            },
+            "f16": {
+              "atol": 0.001,
+              "equal_nan": false,
+              "rtol": 0.01
+            },
+            "f32": {
+              "atol": 1e-06,
+              "equal_nan": false,
+              "rtol": 1e-05
+            },
+            "f64": {
+              "atol": 1e-12,
+              "equal_nan": false,
+              "rtol": 1e-12
+            }
+          }
+        },
+        "frontend": "cuda",
+        "protocol": "source_replay_j_three_edges_q_v5",
+        "test_mode": "finite_hidden_after_gate1"
+      },
+      "reference": {
+        "error": "",
+        "leg": "j",
+        "metadata": {
+          "access_relation_count": 6,
+          "boundary_digest": "6b63d67c36ca497534112db27eb3b5b619561a8ff7abe79e5ea843ed47b5348a",
+          "boundary_profile": "dense_functional_v1",
+          "boundary_projection": {
+            "access_axes": [
+              [
+                "a0",
+                [
+                  "k0",
+                  "k2"
+                ]
+              ],
+              [
+                "a1",
+                [
+                  "k2",
+                  "k1"
+                ]
+              ],
+              [
+                "a2",
+                [
+                  "k1"
+                ]
+              ],
+              [
+                "a3",
+                [
+                  "k0"
+                ]
+              ],
+              [
+                "a4",
+                [
+                  "k1"
+                ]
+              ],
+              [
+                "a5",
+                [
+                  "k0",
+                  "k1"
+                ]
+              ]
+            ],
+            "access_coordinates": [
+              [
+                "a0",
+                [
+                  "k0",
+                  "k2"
+                ]
+              ],
+              [
+                "a1",
+                [
+                  "k2",
+                  "k1"
+                ]
+              ],
+              [
+                "a2",
+                [
+                  "k1"
+                ]
+              ],
+              [
+                "a3",
+                [
+                  "k0"
+                ]
+              ],
+              [
+                "a4",
+                [
+                  "k1"
+                ]
+              ],
+              [
+                "a5",
+                [
+                  "k0",
+                  "k1"
+                ]
+              ]
+            ],
+            "access_guard_relations": [],
+            "boundary_digest": "6b63d67c36ca497534112db27eb3b5b619561a8ff7abe79e5ea843ed47b5348a",
+            "broadcast_axes": [
+              [
+                "vbiased",
+                [
+                  [
+                    "t2",
+                    [
+                      0
+                    ]
+                  ]
+                ]
+              ],
+              [
+                "vcondition",
+                [
+                  [
+                    "vcol",
+                    [
+                      0
+                    ]
+                  ],
+                  [
+                    "vrow",
+                    [
+                      1
+                    ]
+                  ]
+                ]
+              ]
+            ],
+            "concat_store_partitions": [],
+            "conditional_effect_stores": [],
+            "constant_gathers": [],
+            "consumed": [
+              "access:a0",
+              "access:a1",
+              "access:a2",
+              "access:a3",
+              "access:a4",
+              "access:a5",
+              "broadcast:n1:t2",
+              "broadcast:n4:vcol",
+              "broadcast:n4:vrow",
+              "domain:d0",
+              "domain:d1",
+              "domain:d2",
+              "effect:e0",
+              "effect:e1",
+              "effect:e2",
+              "effect:e3",
+              "effect:e4",
+              "effect:e5",
+              "result_relation:t5"
+            ],
+            "consumer_extensions": [],
+            "context_domains": [],
+            "dimension_relations": [],
+            "direct_store_partitions": [],
+            "domains": [
+              [
+                "k0",
+                32
+              ],
+              [
+                "k1",
+                32
+              ],
+              [
+                "k2",
+                32
+              ]
+            ],
+            "erased_fill_count": 0,
+            "index_bounded_gathers": [],
+            "mixed_radix_accesses": [],
+            "predicated_access_count": 0,
+            "predicates": [
+              [
+                "a0",
+                null
+              ],
+              [
+                "a1",
+                null
+              ],
+              [
+                "a2",
+                null
+              ],
+              [
+                "a3",
+                null
+              ],
+              [
+                "a4",
+                null
+              ],
+              [
+                "a5",
+                null
+              ]
+            ],
+            "profile": "dense_functional_v1",
+            "protocol": "intentir.j-functional-boundary.v22",
+            "proven_index_bounds": [],
+            "runtime_predicate_proofs": [],
+            "value_dimension_relations": []
+          },
+          "broadcast_consumer_count": 2,
+          "domain_relation_count": 3,
+          "effect_relation_count": 6,
+          "erased_fill_count": 0,
+          "execution_evidence": {
+            "access_guard_load_materialization_count": 0,
+            "authority": "canonical_J_only",
+            "conditional_effect_store_count": 0,
+            "effect_if_count": 0,
+            "execution_mode": "full_logical_axis_conservative",
+            "input_count": 5,
+            "logical_loop_step_count": 0,
+            "loop_count": 0,
+            "operation_count": 7,
+            "output_count": 1,
+            "protocol": "intentir.j-structured-cpu-reference.v10",
+            "scan_count": 0,
+            "scatter_count": 0,
+            "value_if_count": 0,
+            "zero_trip_loop_count": 0
+          },
+          "function": "scrc_j0",
+          "index_bounds_count": 0,
+          "j_digest": "751417e00c6a1f082a069c5b78a855bcb70c56199284471e91035ae51736b7a9",
+          "path": "canonical J -> typed structured CPU reference",
+          "predicated_access_count": 0,
+          "protocol": "j_scalar_cpu_mlir_v25",
+          "result_relation_count": 1,
+          "runtime_predicate_proof_count": 0,
+          "scalar_spec_digest": "26fb6f6ac1ed018f6abce73d032e9a4e118a7c26f8ba594ab2979756732c7cb1"
+        },
+        "ok": true,
+        "outputs": {
+          "output_p2": {
+            "dtype": "float32",
+            "shape": [
+              32,
+              32
+            ]
+          }
+        },
+        "unsupported": false
+      },
+      "replay": {
+        "error": "",
+        "leg": "replay",
+        "metadata": {
+          "adapter_protocol": "intentir.scrc.frontend-dataset-harness.v4",
+          "block": [
+            128,
+            1,
+            1
+          ],
+          "dataset_case_id": "cuda:tilelang_matmul_fused_epilogue2d",
+          "entry": "scrc_k0",
+          "frontend": "cuda",
+          "grid": [
+            1,
+            1,
+            1
+          ]
+        },
+        "ok": true,
+        "outputs": {
+          "output_p2": {
+            "dtype": "float32",
+            "shape": [
+              32,
+              32
+            ]
+          }
+        },
+        "unsupported": false
+      },
+      "replay_j": {
+        "left": "replay",
+        "outputs": [
+          {
+            "atol": 1e-06,
+            "detail": "",
+            "equal_nan": false,
+            "equality_required": true,
+            "max_abs_error": 3.5762786865234375e-07,
+            "output": "output_p2",
+            "passed": true,
+            "policy_id": "intentir.gate2.default.v1",
+            "relation_kind": "tolerance",
+            "rtol": 1e-05
+          }
+        ],
+        "passed": true,
+        "policy_id": "intentir.gate2.default.v1",
+        "right": "j"
+      },
+      "source": {
+        "error": "",
+        "leg": "source",
+        "metadata": {
+          "adapter_protocol": "intentir.scrc.frontend-dataset-harness.v4",
+          "block": [
+            256,
+            1,
+            1
+          ],
+          "dataset_case_id": "cuda:tilelang_matmul_fused_epilogue2d",
+          "entry": "main_kernel",
+          "frontend": "cuda",
+          "grid": [
+            1,
+            1,
+            1
+          ]
+        },
+        "ok": true,
+        "outputs": {
+          "output_p2": {
+            "dtype": "float32",
+            "shape": [
+              32,
+              32
+            ]
+          }
+        },
+        "unsupported": false
+      },
+      "source_j": {
+        "left": "source",
+        "outputs": [
+          {
+            "atol": 1e-06,
+            "detail": "",
+            "equal_nan": false,
+            "equality_required": true,
+            "max_abs_error": 0.0008794069290161133,
+            "output": "output_p2",
+            "passed": false,
+            "policy_id": "intentir.gate2.default.v1",
+            "relation_kind": "tolerance",
+            "rtol": 1e-05
+          }
+        ],
+        "passed": false,
+        "policy_id": "intentir.gate2.default.v1",
+        "right": "j"
+      },
+      "source_replay": {
+        "left": "source",
+        "outputs": [
+          {
+            "atol": 1e-06,
+            "detail": "",
+            "equal_nan": false,
+            "equality_required": true,
+            "max_abs_error": 0.0008794069290161133,
+            "output": "output_p2",
+            "passed": false,
+            "policy_id": "intentir.gate2.default.v1",
+            "relation_kind": "tolerance",
+            "rtol": 1e-05
+          }
+        ],
+        "passed": false,
+        "policy_id": "intentir.gate2.default.v1",
+        "right": "replay"
+      },
+      "status": "pairwise_diverged"
+    }
+  ],
+  "failed_case_ids": [
+    "finite-hidden-1"
+  ],
+  "passed": false,
+  "status_counts": {
+    "pairwise_diverged": 1
+  },
+  "suite_id": "cuda:tilelang_matmul_fused_epilogue2d"
+}

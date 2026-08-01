@@ -1,0 +1,41 @@
+{
+  "block": [
+    128,
+    1,
+    1
+  ],
+  "case_id": "tilelang:matmul_relu2d",
+  "cuda_arch": "sm_120",
+  "descriptor_sha256": "12122faf4628b28d048a8b69500335774fb312a9b08550de42800212856f6e01",
+  "dimensions": {
+    "K": 32,
+    "M": 32,
+    "N": 32
+  },
+  "dynamic_shared_memory_bytes": 0,
+  "factory_kwargs": {
+    "block_k": 32,
+    "block_m": 64,
+    "block_n": 64,
+    "num_stages": 2,
+    "threads": 128
+  },
+  "frontend": "tilelang",
+  "grid": [
+    1,
+    1,
+    1
+  ],
+  "grid_contract": [
+    "(N + 63) // 64",
+    "(M + 63) // 64",
+    "1"
+  ],
+  "physical_block": null,
+  "protocol": "intentir.scrc.frontend-dataset-harness.v4",
+  "scalar_values": {},
+  "seed": 768871579,
+  "source_sha256": "f35d981771ea2e56fbfb1f6eb6770abe50ac624b819eb57f1f4d272f2aad1562",
+  "tensor_map_descriptors": [],
+  "tensor_map_sidecar_sha256": "a97af6e812ea6bc5ebbf7dda682c4aac7eac61eb96154ac453da37d86ace09e3"
+}

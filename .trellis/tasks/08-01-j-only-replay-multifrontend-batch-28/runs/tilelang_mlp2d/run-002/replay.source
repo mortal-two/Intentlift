@@ -1,0 +1,42 @@
+import tilelang.language as T
+
+X0 = T.dynamic("x0")
+X1_1 = T.dynamic("x1_1")
+X2_1 = T.dynamic("x2_1")
+X3_1 = T.dynamic("x3_1")
+
+
+@T.prim_func
+def scrc_k0(
+    p0: T.Tensor((X0, X1_1), "float32"),
+    p1: T.Tensor((X1_1, X2_1), "float32"),
+    p2: T.Tensor((X2_1,), "float32"),
+    p3: T.Tensor((X2_1, X3_1), "float32"),
+    p4: T.Tensor((X3_1,), "float32"),
+    p5: T.Tensor((X0, X3_1), "float32"),
+):
+    with T.Kernel(X0, X3_1, threads=c0) as (v6, v7):
+        outer_terms = T.alloc_fragment((1, 2), "float32")
+        outer_sum = T.alloc_fragment((1,), "float32")
+        output_bias: T.float32 = T.float32(p4[v7])
+        T.fill(outer_sum, 0.0)
+
+        for v9 in T.serial(X2_1):
+            inner_terms = T.alloc_fragment((1, 2), "float32")
+            inner_sum = T.alloc_fragment((1,), "float32")
+            hidden_bias: T.float32 = T.float32(p2[v9])
+            T.fill(inner_sum, 0.0)
+
+            for v8 in T.serial(X1_1):
+                inner_terms[0, 0] = inner_sum[0]
+                inner_terms[0, 1] = p0[v6, v8] * p1[v8, v9]
+                T.reduce_sum(inner_terms, inner_sum, dim=1)
+
+            biased: T.float32 = inner_sum[0] + hidden_bias
+            activated: T.float32 = T.max(biased, T.float32(0.0))
+            outer_terms[0, 0] = outer_sum[0]
+            outer_terms[0, 1] = activated * p3[v9, v7]
+            T.reduce_sum(outer_terms, outer_sum, dim=1)
+
+        result: T.float32 = outer_sum[0] + output_bias
+        p5[v6, v7] = result

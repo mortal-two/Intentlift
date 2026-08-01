@@ -1,6 +1,6 @@
 # Task 28：J-only 多前端七组各十个闭合实验
 
-> 状态：`P0_REFROZEN`（2026-08-01）
+> 状态：`COMPLETE`（2026-08-01，31/31 pair；62/62 frontend runs；7×10 memberships）
 >
 > 上游正式证据：Task27 的 `add2d` / `gather2d` 两个 pair；本 Task 在统一批量协议下重新计量。
 
@@ -137,15 +137,27 @@ same-origin stem；任何成员变化必须先修改并提交本冻结文档，�
 
 ## 3. 执行顺序
 
-- [ ] 生成并校验七组矩阵：每组10、组内唯一、并集31；
-- [ ] 为31个unique stem建立Source/ABI/J-feature清单；
-- [ ] 手工构造62份frontend-specific artifact并全部 Decode/TypeCheck；
-- [ ] 建立artifact-only、no-Lift批量runner；run目录必须原子分配；
-- [ ] provider episode有界并行且每case fresh；GPU/Gate2单独限流；
-- [ ] 先闭合G1十个pair，验证批量机制与简单语义覆盖；
-- [ ] 按G2至G7推进尚未闭合的unique pair，不重复运行已闭合pair；
-- [ ] 每个失败保存exact artifact/candidate/compiler observation/hard category；
-- [ ] 生成31-pair唯一结果表、7×10 cohort表、前端delta表与论文claim boundary。
+- [x] 生成并校验七组矩阵：每组10、组内唯一、并集31；
+- [x] 为31个unique stem建立Source/ABI/J-feature清单；
+- [x] 手工构造62份frontend-specific artifact并全部 Decode/TypeCheck；
+- [x] 建立artifact-only、no-Lift批量runner；run目录必须原子分配；
+- [x] provider episode有界并行且每case fresh；GPU/Gate2单独限流；
+- [x] 先闭合G1十个pair，验证批量机制与简单语义覆盖；
+- [x] 按G2至G7推进尚未闭合的unique pair，不重复运行已闭合pair；
+- [x] 每个失败保存exact artifact/candidate/compiler observation/hard category；
+- [x] 生成31-pair唯一结果表、7×10 cohort表、前端delta表与论文claim boundary。
+
+## 3.1 最终机器结果
+
+- `results_current.json/md`：31/31 unique pair、62/62 unique frontend run；
+- G1--G7：每组均 10/10，因此 70/70 cohort membership；
+- descriptor remainder：5/5 pair、10/10 frontend run，TypeCheck 与 Gate1 均一次 fresh
+  Codex episode 闭合；
+- `gate2_isolated_latest.json`：10/10 exact Gate1 Replay 在独立 spawn 进程中通过三边
+  Gate2，重检 `replay_agent_calls=0`；
+- CUDA TensorMap/TMA 只存在于 Source execution sidecar；J 与 Replay 使用逻辑 pointer ABI；
+- f32 tensor-core Source 由 sidecar 显式选择外部
+  `intentir.gate2.tf32-tensorcore.v1`，三条边使用同一对称 Q；J 不携带阈值。
 
 ## 4. 每个正式 run 的最小记录
 

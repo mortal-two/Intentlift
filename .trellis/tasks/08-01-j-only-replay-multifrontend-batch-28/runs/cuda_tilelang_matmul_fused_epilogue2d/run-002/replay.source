@@ -1,0 +1,60 @@
+extern "C" __global__
+void scrc_k0(const float* p0,
+             const float* p1,
+             float* p2,
+             const float* p3,
+             const signed char* p4,
+             const signed char* p5,
+             int p6,
+             int p7,
+             int p8) {
+  __shared__ float reduction_values[1024];
+
+  const unsigned int reduction_lane = threadIdx.x;
+
+  for (int v7 = static_cast<int>(blockIdx.x);
+       v7 < p7;
+       v7 += static_cast<int>(gridDim.x)) {
+    for (int v8 = static_cast<int>(blockIdx.y);
+         v8 < p8;
+         v8 += static_cast<int>(gridDim.y)) {
+      float lane_value = 0.0f;
+      if (reduction_lane < static_cast<unsigned int>(p6)) {
+        const long long lhs_offset =
+            static_cast<long long>(v7) * static_cast<long long>(p6) +
+            static_cast<long long>(reduction_lane);
+        const long long rhs_offset =
+            static_cast<long long>(reduction_lane) * static_cast<long long>(p8) +
+            static_cast<long long>(v8);
+        lane_value += p0[lhs_offset] * p1[rhs_offset];
+      }
+
+      reduction_values[reduction_lane] = lane_value;
+      __syncthreads();
+
+      unsigned int active_lanes = blockDim.x;
+      while (active_lanes > 1u) {
+        const unsigned int next_active = (active_lanes + 1u) >> 1;
+        const unsigned int paired_lanes = active_lanes - next_active;
+        if (reduction_lane < paired_lanes) {
+          reduction_values[reduction_lane] +=
+              reduction_values[reduction_lane + next_active];
+        }
+        __syncthreads();
+        active_lanes = next_active;
+      }
+
+      if (reduction_lane == 0u) {
+        const bool row_enabled = p5[v7] != 0;
+        const bool column_enabled = p4[v8] != 0;
+        const bool output_enabled = row_enabled && column_enabled;
+        const float output_scale = output_enabled ? 1.0f : 0.0f;
+        const float biased_value = reduction_values[0] + p3[v8];
+        const long long output_offset =
+            static_cast<long long>(v7) * static_cast<long long>(p8) +
+            static_cast<long long>(v8);
+        p2[output_offset] = biased_value * output_scale;
+      }
+    }
+  }
+}

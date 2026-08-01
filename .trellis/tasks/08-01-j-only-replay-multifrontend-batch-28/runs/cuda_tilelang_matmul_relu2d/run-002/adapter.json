@@ -1,0 +1,72 @@
+{
+  "block": [
+    128,
+    1,
+    1
+  ],
+  "case_id": "cuda:tilelang_matmul_relu2d",
+  "cuda_arch": "sm_120a",
+  "descriptor_sha256": "12122faf4628b28d048a8b69500335774fb312a9b08550de42800212856f6e01",
+  "dimensions": {
+    "K": 32,
+    "M": 32,
+    "N": 32
+  },
+  "dynamic_shared_memory_bytes": 32768,
+  "factory_kwargs": {},
+  "frontend": "cuda",
+  "grid": [
+    1,
+    1,
+    1
+  ],
+  "grid_contract": [
+    "(N + 63) // 64",
+    "(M + 63) // 64",
+    "1"
+  ],
+  "physical_block": [
+    256,
+    1,
+    1
+  ],
+  "protocol": "intentir.scrc.frontend-dataset-harness.v4",
+  "scalar_values": {
+    "K": 32,
+    "M": 32,
+    "N": 32
+  },
+  "seed": 1062932955,
+  "source_sha256": "5e93ae69a23474c7f06e124910b0d2e15ec48f5795b71a3de22ec3abc69713c9",
+  "tensor_map_descriptors": [
+    {
+      "box_dim": [
+        32,
+        64
+      ],
+      "logical_dtype": "f32",
+      "parameter": "A_desc",
+      "semantic_name": "A",
+      "shape": [
+        "M",
+        "K"
+      ],
+      "swizzle": "128b"
+    },
+    {
+      "box_dim": [
+        32,
+        32
+      ],
+      "logical_dtype": "f32",
+      "parameter": "B_desc",
+      "semantic_name": "B",
+      "shape": [
+        "K",
+        "N"
+      ],
+      "swizzle": "128b"
+    }
+  ],
+  "tensor_map_sidecar_sha256": "a97af6e812ea6bc5ebbf7dda682c4aac7eac61eb96154ac453da37d86ace09e3"
+}

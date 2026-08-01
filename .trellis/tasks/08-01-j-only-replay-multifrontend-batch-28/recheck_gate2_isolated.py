@@ -19,6 +19,7 @@ from typing import Any
 from intentir.verify.gate1.model import Gate1Artifact
 from intentir.verify.gate1.orchestrate import canonical_artifact_digest
 
+from manual_descriptor_artifacts import CASE_IDS as DESCRIPTOR_CASE_IDS
 from manual_g2_artifacts import CASE_IDS as G2_CASE_IDS
 from run_manual_batch import CASE_IDS, TASK_ROOT, _execute_gate2, _write_json
 
@@ -129,6 +130,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--case", action="append", choices=sorted(CASE_IDS))
     parser.add_argument("--all-g2", action="store_true")
+    parser.add_argument("--all-descriptor", action="store_true")
     parser.add_argument("--all-authored", action="store_true")
     parser.add_argument("--gate2-workers", type=int, default=1)
     args = parser.parse_args()
@@ -136,12 +138,14 @@ def main() -> int:
         parser.error("--gate2-workers must be positive")
     if args.all_authored:
         selected = list(CASE_IDS)
+    elif args.all_descriptor:
+        selected = list(DESCRIPTOR_CASE_IDS)
     elif args.all_g2:
         selected = list(G2_CASE_IDS)
     else:
         selected = list(dict.fromkeys(args.case or ()))
     if not selected:
-        parser.error("select --case, --all-g2, or --all-authored")
+        parser.error("select --case, --all-g2, --all-descriptor, or --all-authored")
     semaphore = threading.Semaphore(args.gate2_workers)
     rows: list[dict[str, Any]] = []
     for case_id in selected:
@@ -154,14 +158,23 @@ def main() -> int:
     report = {
         "protocol": "intentir.experiment.gate2-isolated-recheck.v2",
         "selected": selected,
+        "selected_count": len(selected),
         "case_count": len(rows),
         "passed_count": sum(row["gate2_passed"] is True for row in rows),
+        "missing_cases": [
+            case_id
+            for case_id in selected
+            if case_id not in {str(row["case"]) for row in rows}
+        ],
         "process_isolated": True,
         "replay_agent_calls": 0,
         "results": rows,
     }
     _write_json(TASK_ROOT / "gate2_isolated_latest.json", report)
-    if selected == list(G2_CASE_IDS):
+    if not report["missing_cases"] and selected in (
+        list(G2_CASE_IDS),
+        list(DESCRIPTOR_CASE_IDS),
+    ):
         summaries = [
             json.loads(
                 Path(row["run_dir"]).joinpath("summary.json").read_text(
@@ -187,7 +200,8 @@ def main() -> int:
         }
         batch["accepted_count"] = len(batch["accepted"])
         _write_json(TASK_ROOT / "batch_latest.json", batch)
-    return 0 if report["passed_count"] == report["case_count"] else 2
+    complete = report["case_count"] == report["selected_count"]
+    return 0 if complete and report["passed_count"] == report["case_count"] else 2
 
 
 if __name__ == "__main__":

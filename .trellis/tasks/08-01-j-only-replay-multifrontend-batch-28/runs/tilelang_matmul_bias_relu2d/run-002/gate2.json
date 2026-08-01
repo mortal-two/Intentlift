@@ -1,0 +1,371 @@
+{
+  "c0": {
+    "c0": 128
+  },
+  "cases": [
+    {
+      "case_id": "finite-hidden-1",
+      "input_digest": "1c31413db8bdc8c410073ff62fb63299cd25d243fcc8d1b91fdc43481ed8fecc",
+      "metadata": {
+        "adapter_protocol": "intentir.scrc.frontend-dataset-harness.v5",
+        "comparison_policy": {
+          "policy_id": "intentir.gate2.tf32-tensorcore.v1",
+          "protocol": "intentir.scrc.gate2-q.v1",
+          "tolerances": {
+            "bf16": {
+              "atol": 0.002,
+              "equal_nan": false,
+              "rtol": 0.02
+            },
+            "f16": {
+              "atol": 0.001,
+              "equal_nan": false,
+              "rtol": 0.01
+            },
+            "f32": {
+              "atol": 0.003,
+              "equal_nan": false,
+              "rtol": 0.02
+            },
+            "f64": {
+              "atol": 1e-12,
+              "equal_nan": false,
+              "rtol": 1e-12
+            }
+          }
+        },
+        "frontend": "tilelang",
+        "protocol": "source_replay_j_three_edges_q_v5",
+        "test_mode": "finite_hidden_after_gate1"
+      },
+      "reference": {
+        "error": "",
+        "leg": "j",
+        "metadata": {
+          "access_relation_count": 4,
+          "boundary_digest": "6a9cd579d9f42a355b44fdb6050c1498ac75f6c2cf2056551e5ec43993154f18",
+          "boundary_profile": "dense_functional_v1",
+          "boundary_projection": {
+            "access_axes": [
+              [
+                "a0",
+                [
+                  "k0",
+                  "k2"
+                ]
+              ],
+              [
+                "a1",
+                [
+                  "k2",
+                  "k1"
+                ]
+              ],
+              [
+                "a2",
+                [
+                  "k1"
+                ]
+              ],
+              [
+                "a3",
+                [
+                  "k0",
+                  "k1"
+                ]
+              ]
+            ],
+            "access_coordinates": [
+              [
+                "a0",
+                [
+                  "k0",
+                  "k2"
+                ]
+              ],
+              [
+                "a1",
+                [
+                  "k2",
+                  "k1"
+                ]
+              ],
+              [
+                "a2",
+                [
+                  "k1"
+                ]
+              ],
+              [
+                "a3",
+                [
+                  "k0",
+                  "k1"
+                ]
+              ]
+            ],
+            "access_guard_relations": [],
+            "boundary_digest": "6a9cd579d9f42a355b44fdb6050c1498ac75f6c2cf2056551e5ec43993154f18",
+            "broadcast_axes": [
+              [
+                "t3",
+                [
+                  [
+                    "vzero",
+                    [
+                      0,
+                      1
+                    ]
+                  ]
+                ]
+              ],
+              [
+                "vbiased",
+                [
+                  [
+                    "t2",
+                    [
+                      0
+                    ]
+                  ]
+                ]
+              ]
+            ],
+            "concat_store_partitions": [],
+            "conditional_effect_stores": [],
+            "constant_gathers": [],
+            "consumed": [
+              "access:a0",
+              "access:a1",
+              "access:a2",
+              "access:a3",
+              "broadcast:n1:t2",
+              "broadcast:n3:vzero",
+              "domain:d0",
+              "domain:d1",
+              "domain:d2",
+              "effect:e0",
+              "effect:e1",
+              "effect:e2",
+              "effect:e3",
+              "result_relation:t3"
+            ],
+            "consumer_extensions": [],
+            "context_domains": [],
+            "dimension_relations": [],
+            "direct_store_partitions": [],
+            "domains": [
+              [
+                "k0",
+                32
+              ],
+              [
+                "k1",
+                32
+              ],
+              [
+                "k2",
+                32
+              ]
+            ],
+            "erased_fill_count": 0,
+            "index_bounded_gathers": [],
+            "mixed_radix_accesses": [],
+            "predicated_access_count": 0,
+            "predicates": [
+              [
+                "a0",
+                null
+              ],
+              [
+                "a1",
+                null
+              ],
+              [
+                "a2",
+                null
+              ],
+              [
+                "a3",
+                null
+              ]
+            ],
+            "profile": "dense_functional_v1",
+            "protocol": "intentir.j-functional-boundary.v22",
+            "proven_index_bounds": [],
+            "runtime_predicate_proofs": [],
+            "value_dimension_relations": []
+          },
+          "broadcast_consumer_count": 2,
+          "domain_relation_count": 3,
+          "effect_relation_count": 4,
+          "erased_fill_count": 0,
+          "execution_evidence": {
+            "access_guard_load_materialization_count": 0,
+            "authority": "canonical_J_only",
+            "conditional_effect_store_count": 0,
+            "effect_if_count": 0,
+            "execution_mode": "full_logical_axis_conservative",
+            "input_count": 3,
+            "logical_loop_step_count": 0,
+            "loop_count": 0,
+            "operation_count": 4,
+            "output_count": 1,
+            "protocol": "intentir.j-structured-cpu-reference.v10",
+            "scan_count": 0,
+            "scatter_count": 0,
+            "value_if_count": 0,
+            "zero_trip_loop_count": 0
+          },
+          "function": "scrc_j0",
+          "index_bounds_count": 0,
+          "j_digest": "c3f4424e795f8a7e11064b8b5ff11b46c0534d13677b138f874726467f82cb12",
+          "path": "canonical J -> typed structured CPU reference",
+          "predicated_access_count": 0,
+          "protocol": "j_scalar_cpu_mlir_v25",
+          "result_relation_count": 1,
+          "runtime_predicate_proof_count": 0,
+          "scalar_spec_digest": "8abf0f0c443d5095d3da59511ad03d78069318771560043bf5ba104db28ec1a6"
+        },
+        "ok": true,
+        "outputs": {
+          "output_p3": {
+            "dtype": "float32",
+            "shape": [
+              32,
+              32
+            ]
+          }
+        },
+        "unsupported": false
+      },
+      "replay": {
+        "error": "",
+        "leg": "replay",
+        "metadata": {
+          "adapter_protocol": "intentir.scrc.frontend-dataset-harness.v5",
+          "block": [
+            128,
+            1,
+            1
+          ],
+          "dataset_case_id": "tilelang:matmul_bias_relu2d",
+          "frontend": "tilelang",
+          "grid": [
+            1,
+            1,
+            1
+          ]
+        },
+        "ok": true,
+        "outputs": {
+          "output_p3": {
+            "dtype": "float32",
+            "shape": [
+              32,
+              32
+            ]
+          }
+        },
+        "unsupported": false
+      },
+      "replay_j": {
+        "left": "replay",
+        "outputs": [
+          {
+            "atol": 0.003,
+            "detail": "",
+            "equal_nan": false,
+            "equality_required": true,
+            "max_abs_error": 1.7881393432617188e-07,
+            "output": "output_p3",
+            "passed": true,
+            "policy_id": "intentir.gate2.tf32-tensorcore.v1",
+            "relation_kind": "tolerance",
+            "rtol": 0.02
+          }
+        ],
+        "passed": true,
+        "policy_id": "intentir.gate2.tf32-tensorcore.v1",
+        "right": "j"
+      },
+      "source": {
+        "error": "",
+        "leg": "source",
+        "metadata": {
+          "adapter_protocol": "intentir.scrc.frontend-dataset-harness.v5",
+          "block": [
+            128,
+            1,
+            1
+          ],
+          "dataset_case_id": "tilelang:matmul_bias_relu2d",
+          "frontend": "tilelang",
+          "grid": [
+            1,
+            1,
+            1
+          ]
+        },
+        "ok": true,
+        "outputs": {
+          "output_p3": {
+            "dtype": "float32",
+            "shape": [
+              32,
+              32
+            ]
+          }
+        },
+        "unsupported": false
+      },
+      "source_j": {
+        "left": "source",
+        "outputs": [
+          {
+            "atol": 0.003,
+            "detail": "",
+            "equal_nan": false,
+            "equality_required": true,
+            "max_abs_error": 0.0009856224060058594,
+            "output": "output_p3",
+            "passed": true,
+            "policy_id": "intentir.gate2.tf32-tensorcore.v1",
+            "relation_kind": "tolerance",
+            "rtol": 0.02
+          }
+        ],
+        "passed": true,
+        "policy_id": "intentir.gate2.tf32-tensorcore.v1",
+        "right": "j"
+      },
+      "source_replay": {
+        "left": "source",
+        "outputs": [
+          {
+            "atol": 0.003,
+            "detail": "",
+            "equal_nan": false,
+            "equality_required": true,
+            "max_abs_error": 0.0009856224060058594,
+            "output": "output_p3",
+            "passed": true,
+            "policy_id": "intentir.gate2.tf32-tensorcore.v1",
+            "relation_kind": "tolerance",
+            "rtol": 0.02
+          }
+        ],
+        "passed": true,
+        "policy_id": "intentir.gate2.tf32-tensorcore.v1",
+        "right": "replay"
+      },
+      "status": "gate2_pass"
+    }
+  ],
+  "failed_case_ids": [],
+  "passed": true,
+  "status_counts": {
+    "gate2_pass": 1
+  },
+  "suite_id": "tilelang:matmul_bias_relu2d"
+}

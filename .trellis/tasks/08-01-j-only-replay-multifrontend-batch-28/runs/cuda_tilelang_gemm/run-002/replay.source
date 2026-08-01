@@ -1,0 +1,57 @@
+#include <cuda_fp16.h>
+#include <math.h>
+
+extern "C" __global__ void scrc_k0(
+    const __half* p0,
+    const __half* p1,
+    __half* p2,
+    int p3,
+    int p4,
+    int p5) {
+  __shared__ float reduction_values[1024];
+
+  const unsigned int reduction_lane = threadIdx.x;
+  for (int v6 = static_cast<int>(blockIdx.x);
+       v6 < p4;
+       v6 += static_cast<int>(gridDim.x)) {
+    for (int v7 = static_cast<int>(blockIdx.y);
+         v7 < p5;
+         v7 += static_cast<int>(gridDim.y)) {
+      float lane_value = 0.0f;
+      if (reduction_lane < static_cast<unsigned int>(p3)) {
+        const long long lhs_offset =
+            static_cast<long long>(v6) * static_cast<long long>(p3) +
+            static_cast<long long>(reduction_lane);
+        const long long rhs_offset =
+            static_cast<long long>(reduction_lane) * static_cast<long long>(p5) +
+            static_cast<long long>(v7);
+        const float lhs = __half2float(p0[lhs_offset]);
+        const float rhs = __half2float(p1[rhs_offset]);
+        lane_value += lhs * rhs;
+      }
+
+      reduction_values[reduction_lane] = lane_value;
+      __syncthreads();
+
+      unsigned int active = blockDim.x;
+      while (active > 1u) {
+        const unsigned int retained = (active + 1u) >> 1;
+        if (reduction_lane < active - retained) {
+          reduction_values[reduction_lane] +=
+              reduction_values[reduction_lane + retained];
+        }
+        __syncthreads();
+        active = retained;
+      }
+
+      const float contraction = reduction_values[0];
+      if (reduction_lane == 0u) {
+        const float activated = fmaxf(contraction, 0.0f);
+        const long long output_offset =
+            static_cast<long long>(v6) * static_cast<long long>(p5) +
+            static_cast<long long>(v7);
+        p2[output_offset] = __float2half_rn(activated);
+      }
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "cases": [],
+  "failed_case_ids": [
+    "gate2_process_failure"
+  ],
+  "metadata": {
+    "error": "accepted J tensor dtype differs from Dataset ABI",
+    "error_type": "ValueError",
+    "traceback": "Traceback (most recent call last):\n  File \"/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/run_manual_batch.py\", line 216, in _gate2_child_entry\n    result = _execute_gate2_inline(prepared, artifact, gate1)\n  File \"/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/run_manual_batch.py\", line 171, in _execute_gate2_inline\n    return adapter.execute(artifact, gate1, prepared.request)\n  File \"/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/python/intentir/verify/adapters.py\", line 115, in execute\n    suite = self.suite_factory(artifact, gate1, request.binding)\n  File \"/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/run_manual_batch.py\", line 167, in <lambda>\n    lambda accepted, _gate1, _binding: build_frontend_dataset_gate2_suite(\n  File \"/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/python/intentir/verify/frontend_workloads.py\", line 1704, in build_frontend_dataset_gate2_suite\n    raise ValueError(\"accepted J tensor dtype differs from Dataset ABI\")\nValueError: accepted J tensor dtype differs from Dataset ABI\n"
+  },
+  "passed": false,
+  "status_counts": {
+    "process_failure": 1
+  },
+  "suite_id": "tilelang:matmul_bias_relu2d"
+}

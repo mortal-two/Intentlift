@@ -1,18 +1,18 @@
 # Task28 current results
 
-- accepted unique pairs: 26/31
-- accepted unique frontend runs: 52/62
+- accepted unique pairs: 31/31
+- accepted unique frontend runs: 62/62
 - counting: 70 cohort memberships / 31 unique pairs / 62 unique frontend runs
 
 | Cohort | Accepted | Complete |
 |---|---:|---|
 | `g1_pointwise_selection` | 10/10 | yes |
 | `g2_reduction_statistics_normalization` | 10/10 | yes |
-| `g3_contraction_epilogue` | 5/10 | no |
+| `g3_contraction_epilogue` | 10/10 | yes |
 | `g4_attention_masking` | 10/10 | yes |
 | `g5_indexing_layout_image` | 10/10 | yes |
-| `g6_fusion_composition` | 6/10 | no |
-| `g7_cross_feature_stress` | 8/10 | no |
+| `g6_fusion_composition` | 10/10 | yes |
+| `g7_cross_feature_stress` | 10/10 | yes |
 
 | Stem | TileLang | CUDA | Pair |
 |---|---|---|---|
@@ -26,17 +26,17 @@
 | `flash_attention2d` | PASS | PASS | PASS |
 | `floor2d` | PASS | PASS | PASS |
 | `gather2d` | PASS | PASS | PASS |
-| `gemm` | — | — | — |
+| `gemm` | PASS | PASS | PASS |
 | `grouped_row_sum2d` | PASS | PASS | PASS |
 | `groupnorm` | PASS | PASS | PASS |
 | `layer_norm_residual2d` | PASS | PASS | PASS |
 | `layernorm` | PASS | PASS | PASS |
 | `masked_attention2d` | PASS | PASS | PASS |
 | `masked_softmax2d` | PASS | PASS | PASS |
-| `matmul_bias_relu2d` | — | — | — |
-| `matmul_fused_epilogue2d` | — | — | — |
-| `matmul_relu2d` | — | — | — |
-| `mlp2d` | — | — | — |
+| `matmul_bias_relu2d` | PASS | PASS | PASS |
+| `matmul_fused_epilogue2d` | PASS | PASS | PASS |
+| `matmul_relu2d` | PASS | PASS | PASS |
+| `mlp2d` | PASS | PASS | PASS |
 | `relu2d` | PASS | PASS | PASS |
 | `rms_norm2d` | PASS | PASS | PASS |
 | `rms_norm_residual2d` | PASS | PASS | PASS |

@@ -1,0 +1,13 @@
+{
+  "case": "cuda:tilelang_matmul_fused_epilogue2d",
+  "comparison_policy_ids": [
+    "intentir.gate2.tf32-tensorcore.v1"
+  ],
+  "elapsed_ms": 6915.559530258179,
+  "exact_gate1_replay_reused": true,
+  "gate2_feedback_visible_to_replay": false,
+  "one_process_per_case": true,
+  "protocol": "intentir.experiment.gate2-process-isolation.v2",
+  "replay_agent_calls": 0,
+  "start_method": "spawn"
+}

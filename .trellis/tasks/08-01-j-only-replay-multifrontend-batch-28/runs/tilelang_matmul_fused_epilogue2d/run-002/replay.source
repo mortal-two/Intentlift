@@ -1,0 +1,30 @@
+import tilelang.language as T
+
+X0 = T.dynamic("x0")
+X1_1 = T.dynamic("x1_1")
+X2_1 = T.dynamic("x2_1")
+
+
+@T.prim_func
+def scrc_k0(
+    p0: T.Tensor((X0, X1_1), "float32"),
+    p1: T.Tensor((X1_1, X2_1), "float32"),
+    p2: T.Tensor((X2_1,), "float32"),
+    p3: T.Tensor((X0,), "bool"),
+    p4: T.Tensor((X2_1,), "bool"),
+    p5: T.Tensor((X0, X2_1), "float32"),
+):
+    with T.Kernel(X0, X2_1, threads=c0) as (v5, v6):
+        bias = p2[v6]
+        row_mask = p3[v5]
+        column_mask = p4[v6]
+
+        product = T.alloc_fragment((1,), "float32")
+        contraction = T.alloc_fragment((1,), "float32")
+
+        T.clear(contraction)
+        for v7 in T.serial(X1_1):
+            product[0] = p0[v5, v7] * p1[v7, v6]
+            T.reduce(product, contraction, dim=0, reduce_type="sum", clear=False)
+        mask_value = T.float32(row_mask and column_mask)
+        p5[v5, v6] = (contraction[0] + bias) * mask_value

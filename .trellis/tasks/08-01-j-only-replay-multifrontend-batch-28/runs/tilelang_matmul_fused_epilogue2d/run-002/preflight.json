@@ -1,0 +1,17 @@
+{
+  "case": "tilelang:matmul_fused_epilogue2d",
+  "cohort_memberships": [
+    "g3_contraction_epilogue",
+    "g6_fusion_composition"
+  ],
+  "diagnostics": [],
+  "frontend": "tilelang",
+  "lift_agent_calls": 0,
+  "packet_root": [
+    "c",
+    "j",
+    "u_f"
+  ],
+  "pi_visible_to_replay": false,
+  "typecheck": "pass"
+}
