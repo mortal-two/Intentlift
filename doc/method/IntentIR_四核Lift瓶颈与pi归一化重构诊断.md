@@ -1,30 +1,32 @@
 # IntentIR 四核 Lift 瓶颈与 π 归一化重构诊断
 
 > 性质：当前方法诊断，不是证书、实验结论或修改流水账。
-> 范围：最后四个未闭合 Kernel，以及 one-col 辅助样本暴露的共性问题。
+> 范围：原最后四个 Kernel 的纵向诊断；RoPE 已闭合，当前剩余三个 Kernel，以及 one-col 辅助样本暴露的共性问题。
 
 ## 1. 结论
 
-最后四项是：
+原最后四项是：
 
 1. `high_performance:liger_llama4_rope`；
 2. `high_performance:xformers.ops.fmha._triton.splitk_kernels._fwd_kernel_splitK`；
 3. `high_performance:flash_attn.flash_attn_triton._fwd_kernel`；
 4. `high_performance:flash_attn.flash_attn_triton._bwd_kernel`。
 
-它们当前均没有 Gate1 closure，也均未进入 Gate2。TypeCheck 通过只说明 JSON 与
-dependent contract 机械合法，不构成进展，也不能证明 J 正确。
+其中 Llama4 RoPE 已由自动 Lift 路径完成 Gate1 与 Gate2 三边闭合；当前剩余
+SplitK forward、FlashAttention forward 和 FlashAttention full backward 三项。
+TypeCheck 通过只说明 JSON 与 dependent contract 机械合法，不构成进展，也不能证明 J 正确。
 
-当前主要矛盾不是 Source 编译慢，也不是 compact π 太大，而是：
+RoPE 闭合前的主要矛盾不是 Source 编译慢，也不是 compact π 太大，而是：
 
 - Lift Agent 仍手工作者化一份 30--46 KiB、跨字段强依赖的完整 `(J,C,π)`；
 - 输入工作区重复提供完整 schema、contract、IntentOps、preflight、示例与工具说明；
 - 工作轨迹和历史工具输出常比 candidate 大一个数量级；
-- 当前 π 只表达 program-axis binding，而固定 normalizer 实际是 identity；
+- 当时 π 只表达 program-axis binding，而固定 normalizer 实际是 identity；
 - Gate1 因而继续比较物理 loop、carrier、address、control 与 program topology；
 - 即便 Source 和 Replay 都实现同一个正确 J，不同合法 TTIR realization 也会被拒绝。
 
-因此，需要同时修复两件事：
+RoPE 已完成轻量 workspace、persistent owner、精确 TTIR、typed diagnostics 与
+`address_recomputed` fixed unary consumer，证明这条改造有效。剩余三核仍需逐核完成两件事：
 
 1. source-aware Lift 必须正确作者化 J/C，特别是 logical loop 与 C tile attachment；
 2. π 必须恢复少量、closed、typed realization bindings，让固定 unary normalizer
@@ -38,7 +40,7 @@ dependent contract 机械合法，不构成进展，也不能证明 J 正确。
 
 | Kernel | 三个首次 Lift 的量级 | 后续 relift 量级 | 代表 artifact 大小 | 当前结果 |
 |---|---:|---:|---:|---|
-| Llama4 RoPE | 654--706 s | 112--269 s | 29--40 KiB | Gate1 0 closure |
+| Llama4 RoPE | 654--706 s | 112--269 s | 29--40 KiB | Gate1 与 Gate2 三边已闭合 |
 | FlashAttention forward | 872--1516 s | 35--174 s | 约 35 KiB | Gate1 0 closure |
 | FlashAttention full backward | 1438--1785 s | 20--246 s | 约 46 KiB | Gate1 0 closure；另有基础设施失败 |
 | SplitK forward | 646--900 s | 80--832 s | 约 46 KiB | Gate1 0 closure |
@@ -47,7 +49,7 @@ dependent contract 机械合法，不构成进展，也不能证明 J 正确。
 十几分钟至半小时的首次 Lift 主要消耗在模型回合、上下文处理、完整 artifact 生成和反复修复，
 不是编译器执行。
 
-### 2.2 机械修复占用了大量回合
+### 2.2 闭合前机械修复占用了大量回合
 
 真实失败反复集中在：
 
@@ -65,9 +67,9 @@ dependent contract 机械合法，不构成进展，也不能证明 J 正确。
 某些首次 Lift 在最终提交前产生十余个 working checkpoint，并触发数十次 CandidateCheck；
 Source 编译与 checker 时间相对于总墙钟可以忽略。
 
-### 2.3 输入与历史上下文过重
+### 2.3 闭合前输入与历史上下文过重
 
-当前 Lift 工作区通常同时挂载：
+原 Lift 工作区通常同时挂载：
 
 - 匿名 Source；
 - Harness/compiler view；
@@ -88,20 +90,22 @@ candidate 本身通常只有几十 KiB，但历史 trajectory 可达到数百 Ki
 4. 历史工具输出虽被部分压缩，仍持续占据长生命周期 session 的注意力；
 5. 失败诊断混合机械错误、J/C semantic error、Replay fidelity 与 Gate realization residual。
 
-### 2.4 compact π 不是当前耗时来源
+### 2.4 compact π 不是当时耗时来源
 
-当前空 π 只有 schema 与空 `program_axes`，体积不足百字节。每条 axis row 也只是几十字节。
+当时的空 π 只有 schema 与空 `program_axes`，体积不足百字节。每条 axis row 也只是几十字节。
 它不会解释十几分钟的 Lift 时间。
 
 真正的问题相反：π 被压缩到几乎没有消费能力，导致本来应由 normalization 处理的物理差异，
-最终全部回到 Replay 猜测和 Gate1 hard comparison。
+最终全部回到 Replay 猜测和 Gate1 hard comparison。RoPE 现已补上保守的 address
+representation consumer；iteration、materialization、program-linearization 与 terminal-control
+仍必须由剩余 Kernel 的真实 residual 驱动实现，不能预先放宽。
 
 ## 3. 四个 J/C/π 的静态判断
 
 以下判断只基于 Source、adapter 与 artifact 的直接对应。没有 Gate2 的对象不能称为正确，
 因此使用“核心图合理”“存在明确缺口”“无法判定”三种表述。
 
-### 3.1 Llama4 RoPE
+### 3.1 Llama4 RoPE：已闭合纵切
 
 J 已表达：
 
@@ -112,23 +116,24 @@ J 已表达：
 - Q/K inout read/write effects；
 - 两个输出及 exact result relation。
 
-静态判断：核心 J 很可能合理。目前没有直接证据表明 rotary 公式或 output ownership 错误。
+最终自动闭合证明：核心 J、C attachment 与结果关系在本次执行域内成立。可复用闭环为：
 
-当前主要缺口：
+1. 用精确 Source TTIR 区分 J-owned 数值语义与纯 realization；
+2. 只局部修正 J 中的 FMA、cast、sub 与 static affine inout store 表达，不重写已正确部分；
+3. J 或 MaskC 改变后执行 fresh source-blind Replay；
+4. Gate1 residual 先分流：额外 program axis、错误 cast/dataflow 属于 Replay fidelity，不能由 π 掩盖；
+   唯一可证明的 address recomputation 才由直接绑定 J/C 的 `address_recomputed` relation 归一；
+5. Gate1 通过后运行 Source–Replay、Source–J、Replay–J 三边 Gate2；
+6. Source–J 暴露的 RefJ store/post-state 缺口作为 J-only consumer bug 修复，禁止回灌 Source、Replay、π 或 C 值；
+7. 最后让轻量、persistent 的同一 Lift owner 从 Source/TTIR 与局部 checker 反馈重新作者化完整
+   `(J,C,π)`，fresh Replay 后复现全部闭合，排除手写 oracle 依赖。
 
-- Source 使用两个 program axes，Replay 候选曾生成额外 program coordinate；
-- 当前唯一 C slot `c0` 是 `BLOCK_SIZE=64`，已以 `tile_extent`
-  正确绑定到 rotary feature domain `d4/x4`，不是 C 缺失或错绑；
-- batch/sequence 分解、Q/K head guard、program-axis mapping 都不是新 C slot：前两者必须由
-  J 的 domain/predicate/access 拥有，后者是 π realization binding；
-- π 即使记录 domain-to-axis rows，当前 normalizer 也不消费它；
-- Gate1 因而把 `get_program_id`、`addptr` 数量与完整 address dataflow 当成 hard；
-- Gate1 还观测到 Source/Replay 的 cast 数量与 pointer dataflow 差异，这是 J/Replay
-  fidelity 问题，不能用扩张 C 消除。
-
-本核的 C 应原样保留。它更像“J 核心基本合理，Replay fidelity 与 Gate
-normalization 未闭合”，但仍需 Gate2 证明数值结果，尤其是 casts 与 exact
-relation。
+这次闭环没有依靠 per-Kernel matcher、allowed diff、Gate 放宽或 π→Replay 信息通道。Gate1
+实际只启用了 `jc_access_address_representation`；Source/Replay 分别归一 10/5 个
+`tt.addptr` occurrence，所有 J/C-owned hard categories 保持 exact。最终自动证据为
+`/tmp/intentir-rope-auto-certified-20260801-final/liger_llama4_rope/gate2-recheck-001`，
+Q/K 三边最大误差均为 0；Lift/fresh Replay 父证据为
+`/tmp/intentir-rope-local-patch-20260801/liger_llama4_rope/run-001/attempt-02`。
 
 ### 3.2 FlashAttention forward
 
@@ -247,7 +252,7 @@ C 的修复不是增加 source recipe，而是把纯 implementation-selection co
 
 | Kernel | C 现状 | 最小修复 | 是否改 J | Replay 处理 |
 |---|---|---|---|---|
-| Llama4 RoPE | `c0=BLOCK_SIZE -> d4/x4` 正确 | C 不改；修 Replay cast/address fidelity 与 π program binding | 仅在 J 确实缺 cast/predicate 时改 | π-only 可复用 R；J 改则 fresh |
+| Llama4 RoPE | `c0=BLOCK_SIZE -> d0/axis 3` 正确 | 已完成；C 未扩张 | 已局部修正 FMA/cast/static affine store 表达 | 已 fresh Replay 并完成三边 Gate2 |
 | Flash forward | feature/query tile 正确；key tile role 错；三个 EVEN slot 无 attachment | `c5` 改为 loop `tile_extent`；EVEN slots 附着 query/key/feature domains | 暂不改 recurrence J | C schema/attachment 改变后 fresh |
 | Flash full backward | tile/mode 值基本对；没有可附着的 inner loop，也没有 `SEQUENCE_PARALLEL` consumer | 先补 J inner recurrence anchor，再将 query tile 绑到该 loop；π 以 `c1+d4` 区分 serial/program realization | **需要** | fresh Lift + fresh Replay |
 | SplitK forward | 最新运行无可审 artifact；历史归类混合 split 语义与 tile | 只将 `BLOCK_M/BLOCK_N` 作 C；`split_k` 与 observable chunk partition 收回 J | **需要 boundary 参数化** | fresh Lift + fresh Replay |
@@ -288,15 +293,15 @@ one-col 不属于最后四项，但它给出了清晰的分层证据：
 
 不能将五类问题统一反馈成“重新 Lift J”。
 
-## 5. π 被过度压缩
+## 5. 诊断起点：π 被过度压缩
 
-当前 π 只包含 `program_axes`，而固定 normalizer返回原 observation：
+诊断开始时 π 只包含 `program_axes`，而固定 normalizer 返回原 observation：
 
 ```text
 N^π(O) = O
 ```
 
-所以 π 当前：
+所以该起点下的 π：
 
 - 不帮助合法 TTIR realization 闭合；
 - 不能支撑有/无 π 的有效消融；
@@ -411,18 +416,19 @@ materialization binding；不得预先恢复旧 graph。
 
 因此 π 是 typed realization witness，不是 comparator permission。
 
-## 8. 下一步重构顺序
+## 8. 剩余三核执行顺序
 
-在再次运行最后四核前，应按以下顺序推进：
+RoPE 已证明轻量 persistent Lift、精确 TTIR、局部修 J、fresh Replay、Gate1 residual 分流、
+π-only normalization 与 J-only RefJ consumer 修复可以形成完整闭环。剩余 Kernel 不再并行散开，
+而是逐核复用同一纵向流程：
 
-1. 精简 Lift workspace：Source、Harness view、唯一 working candidate、bounded feedback 与按需查询入口
-   保留；完整 schema/ops/preflight/example 改为查询，不再重复无条件挂载。
-2. 提供只做机械引用维护的 typed artifact editor；LLM 仍决定所有 J/C/π 语义、relation kind 与 handles，
-   固定工具不得补语义。
-3. 修复四核已发现的 C attachment 与 boundary 参数化问题，特别是 loop/domain/tile ownership。
-4. 实现上述最小 π grammar、dependent checks 与每前端固定 unary normalizer。
-5. 完成 artifact-aware J/C hard projection；未知或歧义 atom fail closed。
-6. fresh 运行四核。只有 Gate1 closure 后才进入三边 Gate2；Gate2 失败按三边定位，不能盲目重新 Lift。
+1. FlashAttention forward：先修 key tile 与 EVEN attachments，再判断 online recurrence J、Replay fidelity、
+   iteration/materialization normalization 和 RefJ consumer；完成 Gate1 与三边 Gate2 后再进入下一核。
+2. FlashAttention full backward：先补 J-owned inner query recurrence，再重绑 C，fresh Replay；不得用 π
+   替代 recurrence、conditional post-state 或多输出语义。
+3. xFormers SplitK forward：先闭合 split output/partition 的 J-owned boundary 参数化，只把
+   `BLOCK_M/BLOCK_N` 留在 C，再处理 mixed-radix program、iteration 与 terminal control realization。
 
-完成前，不应继续通过增加 Agent预算、重复 Replay 或增加 branch 数碰运气。当前失败首先是系统输入、
-artifact ownership 与 normalization 能力未闭合。
+每核都保留 best exact candidate，但 J/MaskC 改变必须 fresh Replay；π-only 或 normalizer 修复可以复用
+Replay 源码并重算 Gate1。Gate1 通过后才运行三边 Gate2；Gate2 按三边归因，禁止把所有失败盲目送回 Lift。
+未知或歧义 relation 一律 fail closed，不通过增加预算、branch 或重复 Replay 碰运气。
