@@ -782,7 +782,7 @@ def test_rvv_figure_table_emits_measured_bars_and_failed_coverage() -> None:
     report = {
         "kernels": [
             {
-                "kernel": "gather2d",
+                "kernel": "example_kernel",
                 "performance": {
                     "c_fixed_us": 90.0,
                     "schedule_only_us": 80.0,

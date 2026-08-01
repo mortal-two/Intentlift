@@ -61,16 +61,6 @@
       "snapshot_file": "1839be464bb683b229219dac128a7fcc93ed2034aa75542bb4e2304d81ddb17e.json"
     },
     {
-      "c_digest": "1ba74b1c943821ee444b268a3615943718a6e09caca77d7c15f578149e295be4",
-      "case_id": "tilelang:gather2d",
-      "evidence_kind": "certified_run_report",
-      "j_digest": "4782f0702fe2e1581b9febb78e211008fa758a7ea7a699c7db8c14dc741cb625",
-      "name": "gather2d",
-      "receipt_digest": "fe505ae9b4b74b4d31adb2a4e815235f0de8ca597122925a2f696cd2e0d0556e",
-      "snapshot_digest": "e57bef0212867aed54027654b5f88ca694c0ee8b21b54c4ef0181bc623e6f6a8",
-      "snapshot_file": "e57bef0212867aed54027654b5f88ca694c0ee8b21b54c4ef0181bc623e6f6a8.json"
-    },
-    {
       "c_digest": "6771bcee09142d76695391724c388a46c35659bb2ddbe154a2428a7707cc7308",
       "case_id": "high_performance:liger_geglu",
       "evidence_kind": "certified_run_report",
@@ -161,16 +151,6 @@
       "snapshot_file": "b294afd5495fb52547c37741cd849964e4e854ae2614fc5d3b61d57010135fff.json"
     },
     {
-      "c_digest": "7cb3e1fb660b5360105e82380ed13492a9827608c8203357412d6ded4e08f1a0",
-      "case_id": "tilelang:rowmask_where2d",
-      "evidence_kind": "certified_run_report",
-      "j_digest": "55d29dc211c2df682d8e61d9c3ec2fdd446b65dc8a086d84c446886362f039fe",
-      "name": "rowmask_where2d",
-      "receipt_digest": "012676165d33602f610ffe6b0eea7ba832de205a4676969564420c00d312aa5a",
-      "snapshot_digest": "6474843f858e8218d4888747c9993085aa8004a2caa73b358ab484533ccc7d26",
-      "snapshot_file": "6474843f858e8218d4888747c9993085aa8004a2caa73b358ab484533ccc7d26.json"
-    },
-    {
       "c_digest": "b961285f7dbc9c145dfe2d9c12983ef649c070696bb9bf90d9f3861185ca4d7c",
       "case_id": "high_performance:liger_softmax",
       "evidence_kind": "certified_run_report",
@@ -241,6 +221,6 @@
       "snapshot_file": "0c0899b170d29634a32460db8ea820d17285b7b65325bce3f52f4b095cb9528f.json"
     }
   ],
-  "entry_count": 24,
+  "entry_count": 22,
   "protocol": "intentir.production.jc-catalog.v1"
 }

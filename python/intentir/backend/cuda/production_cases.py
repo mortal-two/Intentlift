@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from intentir.backend.workload_valuation import (
+    FORMAL_PRODUCTION_CASE_IDS,
     PRODUCTION_CASE_IDS,
     PRODUCTION_WORKLOAD_PROFILE_CLOSED,
     PRODUCTION_WORKLOAD_PROFILE_NATURAL_HEADLINE,
@@ -45,60 +46,7 @@ _REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
 _SOURCE_MANIFEST = (
     _REPOSITORY_ROOT / "corpus" / "production-source-v1" / "manifest.json"
 )
-_STAGE3_WORKLOAD_SOURCE = (
-    _REPOSITORY_ROOT
-    / "corpus"
-    / "production-source-v2"
-    / "stage3_workload_adapter.py"
-)
 _CERTIFIED_CANARY_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
-    "tilelang:gather2d": TritonWorkloadAdapter(
-        case_id="tilelang:gather2d",
-        buffers=(
-            BufferBinding(
-                "p0",
-                BufferRole.INPUT,
-                "f32",
-                (64, 64),
-                initializer=BufferInitializer.STANDARD_NORMAL,
-            ),
-            BufferBinding(
-                "p1", BufferRole.INPUT, "i32", (256,),
-                initializer=BufferInitializer.ZEROS,
-            ),
-            BufferBinding(
-                "p2", BufferRole.INPUT, "i32", (256,),
-                initializer=BufferInitializer.ZEROS,
-            ),
-            BufferBinding("p3", BufferRole.OUTPUT, "f32", (256,), "output_p3"),
-        ),
-        scalars=(),
-        semantic_constexprs=(),
-        c_values=(("BLOCK", 128),),
-        grid=(2,),
-        grid_contract=("ceil_div(256,BLOCK)",),
-        seed=3101,
-    ),
-    "tilelang:rowmask_where2d": TritonWorkloadAdapter(
-        case_id="tilelang:rowmask_where2d",
-        buffers=(
-            BufferBinding(
-                "p0",
-                BufferRole.INPUT,
-                "f32",
-                (16, 64),
-                initializer=BufferInitializer.STANDARD_NORMAL,
-            ),
-            BufferBinding("p1", BufferRole.INPUT, "i1", (16,)),
-            BufferBinding("p2", BufferRole.OUTPUT, "f32", (16, 64), "output_p2"),
-        ),
-        scalars=(),
-        semantic_constexprs=(),
-        c_values=(("BLOCK", 64),),
-        grid=(16,),
-        grid_contract=("M",),
-        seed=3102,
-    ),
     "scrc_canary:masked_copy": TritonWorkloadAdapter(
         case_id="scrc_canary:masked_copy",
         buffers=(
@@ -230,18 +178,6 @@ def prepare_production_workload(
     adapter = _CERTIFIED_CANARY_ADAPTERS.get(case_id)
     if adapter is None:
         raise KeyError(f"production case {name!r} has no Source adapter")
-    if case_id.startswith("tilelang:"):
-        symbols = {
-            "gather2d": "gather2d_workload_adapter",
-            "rowmask_where2d": "rowmask_where2d_workload_adapter",
-        }
-        profiled_adapter = _apply_workload_profile(name, adapter, profile)
-        return prepare_triton_source_workload(
-            profiled_adapter,
-            _STAGE3_WORKLOAD_SOURCE,
-            source_symbol=symbols[name],
-            source_location="corpus://production-source-v2/stage3-workload-adapter",
-        )
     payload = json.loads(_SOURCE_MANIFEST.read_text(encoding="utf-8"))
     record = payload.get(name)
     if not isinstance(record, dict) or not {
@@ -311,6 +247,7 @@ def constexpr_input_bindings(
 
 
 __all__ = [
+    "FORMAL_PRODUCTION_CASE_IDS",
     "PRODUCTION_CASE_IDS",
     "PRODUCTION_WORKLOAD_PROFILE_CLOSED",
     "PRODUCTION_WORKLOAD_PROFILE_NATURAL_HEADLINE",

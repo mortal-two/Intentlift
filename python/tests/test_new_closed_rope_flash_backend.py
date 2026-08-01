@@ -7,6 +7,8 @@ import pytest
 
 from intentir.backend.ablation import ExperimentArm, SearchAxes
 from intentir.backend.cuda.production_cases import (
+    FORMAL_PRODUCTION_CASE_IDS,
+    PRODUCTION_CASE_IDS,
     PRODUCTION_WORKLOAD_PROFILE_NATURAL_HEADLINE,
     constexpr_input_bindings,
     prepare_production_workload,
@@ -28,6 +30,21 @@ _ROOT = Path(__file__).resolve().parents[2]
 _CATALOG = _ROOT / "corpus" / "production-jc-v4"
 _INTENT_OPT = _ROOT / "build" / "tools" / "intent-opt" / "intent-opt"
 _MLIR_OPT = Path("/usr/lib/llvm-20/bin/mlir-opt")
+
+
+def test_v4_formal_set_is_exactly_twenty_four_triton_j() -> None:
+    assert len(FORMAL_PRODUCTION_CASE_IDS) == 24
+    assert all(
+        case_id.startswith("high_performance:")
+        for case_id in FORMAL_PRODUCTION_CASE_IDS.values()
+    )
+    assert set(PRODUCTION_CASE_IDS) - set(FORMAL_PRODUCTION_CASE_IDS) == {
+        "masked_copy",
+        "masked_row_square_sum",
+    }
+    for name in FORMAL_PRODUCTION_CASE_IDS:
+        snapshot, _path = load_production_snapshot(_CATALOG, name)
+        assert snapshot.j is not None
 
 
 def _profiled_materialization(name: str):

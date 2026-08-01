@@ -56,7 +56,7 @@ RoPE/GEMM；graph/plan 在计时外创建，主数字只计重复 compute。若�
 ### D. Triton-CPU/RVV
 
 从上游实验 CPU backend 的最小 vector-add/elementwise 路径开始，处理非 x86 nanokernel、unroll、vector math
-library 与 host-target 代码生成阻塞。在真实 RVV4 上成功构建、执行并通过 Q/D 后，才扩到 24 项中可直接表达的
+library 与 host-target 代码生成阻塞。在真实 RVV4 上成功构建、执行并通过 Q/D 后，才扩到正式 J 中可直接表达的
 elementwise/reduction 子集。构建失败本身只说明当前工具链不支持，不能作为性能柱。
 
 ## 3. 测量口径
@@ -80,11 +80,9 @@ elementwise/reduction 子集。构建失败本身只说明当前工具链不支�
 ## 5. 当前进展
 
 - [x] runner 支持一个 kernel 的多条 external baseline、逐输出检查、交替配对计时与 Best Native；
-- [x] 24 项 LLVM-RVV C、6 项 Expert RVV、4 项 ggml CPU/RVV adapter 已导出；
+- [x] 23 项 LLVM-RVV C、4 项 Expert RVV、5 项 ggml CPU/RVV adapter 已导出；FlashAttention forward 当前 N/A；
 - [x] ggml 单线程 graph/plan adapter 与 RVV4 浮点构建已完成；
 - [x] plot-ready JSON/CSV exporter 已完成；
-- [x] Gather2D 新增真实 MLIR `vector.gather` Full 状态，RVV4 正式结果为
-  `C-Fixed 90.74 / Schedule-Only 82.24 / Full 51.14 us`，Full/Schedule = 1.608×，达到 Expert RVV 的 97.2%；
 - [x] TVD 新增通用 multi-output sibling fusion，RVV4 正式结果为
   `C-Fixed 494062.57 / Schedule-Only 301694.86 / Full 46255.39 us`，Full/Schedule = 6.522×，达到 Expert RVV 的 95.4%；
 - [x] Softmax 新增 fused vector + execution-domain checked approximate-exp MLIR path，正式结果为
@@ -92,7 +90,7 @@ elementwise/reduction 子集。构建失败本身只说明当前工具链不支�
 - [x] Flash backward preprocess 新增 mixed-precision widening-dot RVV MLIR path，natural shape 正式结果为
   `C-Fixed 1913189.67 / Schedule-Only 1286453.22 / Full 44713.90 us`，Full/Schedule = 28.771×，相对 Expert RVV 为 1.634×；
 - [x] xFormers RMSNorm 正式结果 Full/Schedule = 4.888×，相对 Expert RVV 为 1.109×、相对 ggml 为 2.465×；
-- [x] 六项正式作图子集已生成 JSON/CSV；几何平均 G_schedule=1.651×、G_full=4.940×、相对 Best Native=1.178×；
+- [x] 删除误混入正式分母的两个 TileLang 输入；其结果不再进入任何 aggregate，通用 gather/row-mask pass 保留；
 - [x] Triton-CPU/RVV 锁定版本 LLVM/MLIR 已在 RVV4 构建；vector-add 与 accepted SwiGLU 原始 Source 均真实生成 RVV shared object 并通过 Q；
 - [x] runner 新增 strict prebuilt Triton object + ABI bridge 路径，并增加只重测既有 Full winner 与指定 external 的 paired runner；
 - [x] accepted SwiGLU 自然 shape 的 Triton-CPU/RVV 正式结果为 `10.849 s`，配对 Full 为 `5.403 s`，IntentIR 快 `2.008×`；

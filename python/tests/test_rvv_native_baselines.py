@@ -66,16 +66,16 @@ def test_fresh14_has_independent_native_rvv_sources() -> None:
 
 
 def test_external_baselines_distinguish_portable_c_from_explicit_intrinsics() -> None:
-    portable, expert = external_rvv_baseline_records("gather2d")
+    portable, expert = external_rvv_baseline_records("tvd")
 
     assert portable["protocol"] == EXTERNAL_RVV_BASELINE_PROTOCOL
     assert portable["baseline_id"] == "llvm_rvv_c"
     assert portable["kind"] == "portable_compiler"
-    assert "__riscv_vluxei32" not in portable["source"]
+    assert "__riscv_vmflt_vv_f32m1_b32" not in portable["source"]
     assert expert["baseline_id"] == "expert_rvv"
     assert expert["kind"] == "expert_intrinsic"
     assert "__riscv_vsetvl_e32m1" in expert["source"]
-    assert "__riscv_vluxei32_v_f32m1" in expert["source"]
+    assert "__riscv_vmflt_vv_f32m1_b32" in expert["source"]
 
 
 def test_external_baseline_subset_keeps_full_llvm_rvv_coverage() -> None:
@@ -112,7 +112,7 @@ def test_ggml_baseline_exists_only_for_strict_graph_boundaries() -> None:
     assert softmax["build_profile"] == "ggml-rvv-strict"
     assert "ggml_soft_max" in softmax["source"]
     assert "ggml_graph_plan" in softmax["source"]
-    assert maybe_ggml_rvv_baseline_records("gather2d") == ()
+    assert maybe_ggml_rvv_baseline_records("kl_div") == ()
 
 
 def test_ggml_elementwise_graphs_preserve_the_public_j_boundary() -> None:

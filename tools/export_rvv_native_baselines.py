@@ -48,8 +48,6 @@ DEFAULT_KERNELS = (
     "qwen2vl_mrope",
     "tvd",
     "xformers_rms_norm",
-    "gather2d",
-    "rowmask_where2d",
 )
 
 

@@ -438,72 +438,6 @@ def _flash_linear() -> str:
     )
 
 
-def _gather2d() -> str:
-    return _source(
-        "M2 *x_d, M1 *row_d, M1 *col_d, M1 *out_d",
-        r"""
-  float *x=DATA(x_d,float),*out=DATA(out_d,float);
-  int32_t *row=DATA(row_d,int32_t),*col=DATA(col_d,int32_t);
-  int64_t count=out_d->sizes[0],width=x_d->sizes[1];
-  #pragma omp parallel for schedule(static)
-  for(int64_t k=0;k<count;k++)out[k]=x[(int64_t)row[k]*width+(int64_t)col[k]];
-""",
-    )
-
-
-def _rowmask_where2d() -> str:
-    return _source(
-        "M2 *x_d, M1 *mask_d, M2 *out_d",
-        r"""
-  float *x=DATA(x_d,float),*out=DATA(out_d,float);
-  uint8_t *mask=DATA(mask_d,uint8_t);
-  int64_t rows=x_d->sizes[0],width=x_d->sizes[1];
-  #pragma omp parallel for schedule(static)
-  for(int64_t i=0;i<rows;i++){float factor=mask[i]?1.0f:0.0f;
-    for(int64_t j=0;j<width;j++){int64_t k=i*width+j;out[k]=x[k]*factor;}}
-""",
-    )
-
-
-def _expert_rowmask_where2d() -> str:
-    return _source(
-        "M2 *x_d, M1 *mask_d, M2 *out_d",
-        r"""
-  float *x=DATA(x_d,float),*out=DATA(out_d,float);
-  uint8_t *mask=DATA(mask_d,uint8_t);
-  int64_t rows=x_d->sizes[0],width=x_d->sizes[1];
-  for(int64_t i=0;i<rows;i++){
-    float factor=mask[i]?1.0f:0.0f; int64_t j=0;
-    while(j<width){size_t vl=__riscv_vsetvl_e32m1((size_t)(width-j));
-      vfloat32m1_t value=__riscv_vle32_v_f32m1(x+i*width+j,vl);
-      value=__riscv_vfmul_vf_f32m1(value,factor,vl);
-      __riscv_vse32_v_f32m1(out+i*width+j,value,vl);j+=(int64_t)vl;}
-  }
-""",
-    )
-
-
-def _expert_gather2d() -> str:
-    return _source(
-        "M2 *x_d, M1 *row_d, M1 *col_d, M1 *out_d",
-        r"""
-  float *x=DATA(x_d,float),*out=DATA(out_d,float);
-  uint32_t *row=DATA(row_d,uint32_t),*col=DATA(col_d,uint32_t);
-  int64_t count=out_d->sizes[0];uint32_t width=(uint32_t)x_d->sizes[1];
-  int64_t k=0;
-  while(k<count){size_t vl=__riscv_vsetvl_e32m1((size_t)(count-k));
-    vuint32m1_t vr=__riscv_vle32_v_u32m1(row+k,vl);
-    vuint32m1_t vc=__riscv_vle32_v_u32m1(col+k,vl);
-    vuint32m1_t offsets=__riscv_vmul_vx_u32m1(vr,width,vl);
-    offsets=__riscv_vadd_vv_u32m1(offsets,vc,vl);
-    offsets=__riscv_vsll_vx_u32m1(offsets,2,vl);
-    vfloat32m1_t value=__riscv_vluxei32_v_f32m1(x,offsets,vl);
-    __riscv_vse32_v_f32m1(out+k,value,vl);k+=(int64_t)vl;
-  }
-""",
-    )
-
-
 def _expert_xformers_rms_norm() -> str:
     return _source(
         "M2 *x_d, M1 *w_d, M0 *eps_d, M2 *y_d",
@@ -639,15 +573,11 @@ _SOURCES = {
     "llama4_rope": _llama4_rope,
     "qwen2vl_mrope": _qwen2vl_mrope,
     "flash_linear": _flash_linear,
-    "gather2d": _gather2d,
-    "rowmask_where2d": _rowmask_where2d,
 }
 
 _EXPERT_SOURCES = {
     "flash_bwd_preprocess": _expert_flash_bwd_preprocess,
-    "gather2d": _expert_gather2d,
     "layer_norm": _expert_layer_norm,
-    "rowmask_where2d": _expert_rowmask_where2d,
     "tvd": _expert_tvd,
     "xformers_rms_norm": _expert_xformers_rms_norm,
 }
