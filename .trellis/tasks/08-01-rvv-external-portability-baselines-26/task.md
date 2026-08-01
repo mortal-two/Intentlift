@@ -93,5 +93,6 @@ elementwise/reduction 子集。构建失败本身只说明当前工具链不支�
   `C-Fixed 1913189.67 / Schedule-Only 1286453.22 / Full 44713.90 us`，Full/Schedule = 28.771×，相对 Expert RVV 为 1.634×；
 - [x] xFormers RMSNorm 正式结果 Full/Schedule = 4.888×，相对 Expert RVV 为 1.109×、相对 ggml 为 2.465×；
 - [x] 六项正式作图子集已生成 JSON/CSV；几何平均 G_schedule=1.651×、G_full=4.940×、相对 Best Native=1.178×；
-- [ ] Triton-CPU/RVV 锁定版本 LLVM/MLIR 构建与最小 Source 执行；
+- [x] Triton-CPU/RVV 锁定版本 LLVM/MLIR 已在 RVV4 构建；vector-add 与 accepted SwiGLU 原始 Source 均真实生成 RVV shared object 并通过 Q；
+- [x] runner 新增 strict prebuilt Triton object + ABI bridge 路径；Triton 不参与 Best Native，未配对测量前不产生 latency 柱；
 - [ ] 用新 external runner 继续补齐其余 accepted-J 主表并提交。

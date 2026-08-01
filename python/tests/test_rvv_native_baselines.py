@@ -11,6 +11,9 @@ from intentir.backend.riscv.ggml_baselines import (
     ggml_rvv_baseline_record,
     maybe_ggml_rvv_baseline_records,
 )
+from intentir.backend.riscv.triton_cpu_baselines import (
+    swiglu_triton_cpu_rvv_record,
+)
 
 
 FRESH14 = {
@@ -118,3 +121,20 @@ def test_ggml_elementwise_graphs_preserve_the_public_j_boundary() -> None:
         for record in (dyt, swiglu)
     )
     assert maybe_ggml_rvv_baseline_records("geglu") == ()
+
+
+def test_triton_cpu_swiglu_adapter_only_bridges_the_raw_kernel_abi() -> None:
+    record = swiglu_triton_cpu_rvv_record(
+        "/tmp/triton-swiglu.so",
+        columns=11008,
+        source_identity="accepted/source.py::_swiglu_forward_kernel",
+    )
+
+    assert record["baseline_id"] == "triton_cpu_rvv"
+    assert record["kind"] == "source_portability"
+    assert record["build_profile"] == "triton-cpu-rvv-prebuilt-strict"
+    assert record["prebuilt_library"] == "/tmp/triton-swiglu.so"
+    assert "extern void _swiglu_forward_kernel" in record["source"]
+    assert "expf(" not in record["source"]
+    assert "tanhf(" not in record["source"]
+    assert "cols != 11008" in record["source"]

@@ -1,0 +1,57 @@
+{
+  "protocol": "intentir.rvv.triton-cpu-portability.v1",
+  "target": {
+    "host": "rvv4",
+    "arch": "riscv64",
+    "vlen_bits": 128,
+    "thread_count": 1,
+    "system_compiler": "clang 17.0.6"
+  },
+  "toolchain": {
+    "triton_cpu_commit": "a00d6c44ec55906cf2e66107621265d410b5f6a0",
+    "llvm_commit": "62b7cf9623fc310525f39ed69aaecc318a909731",
+    "llvm_version": "23.0.0git",
+    "patch": "tools/rvv_external_patches/triton_cpu_riscv_probe.patch"
+  },
+  "probes": [
+    {
+      "name": "vector_add",
+      "status": "passed",
+      "same_source": true,
+      "shape": [64],
+      "dtype": "f32",
+      "maximum_absolute_error": 0.0,
+      "kernel_symbol": "vector_add",
+      "rvv_vector_instruction_count": 10,
+      "shared_object_bytes": 8520
+    },
+    {
+      "name": "swiglu",
+      "status": "passed",
+      "same_source": true,
+      "source": ".trellis/tasks/archive/2026-07/07-22-scrc-real-kernel-batch-03/runs/liger_swiglu/run-001/source.py::_swiglu_forward_kernel",
+      "shape": [2, 128],
+      "dtype": "f32",
+      "maximum_absolute_error": 8.235020040880947e-09,
+      "kernel_symbol": "_swiglu_forward_kernel",
+      "rvv_vector_instruction_count": 199,
+      "shared_object_bytes": 13376
+    },
+    {
+      "name": "swiglu_natural_columns",
+      "status": "passed",
+      "same_source": true,
+      "specialized_columns": 11008,
+      "block_size": 16384,
+      "correctness_shape": [2, 11008],
+      "dtype": "f32",
+      "maximum_absolute_error": 1.410154254477547e-08,
+      "kernel_symbol": "_swiglu_forward_kernel",
+      "rvv_vector_instruction_count": 19819,
+      "shared_object_bytes": 544240,
+      "adapter": "strict memref-to-raw-kernel ABI bridge"
+    }
+  ],
+  "performance_bar_status": "not_measured",
+  "performance_bar_reason": "Same-source compilation and execution are established; no Triton latency is inserted until the natural-shape object is measured by the paired code-warm/data-cold runner."
+}

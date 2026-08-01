@@ -15,7 +15,7 @@ import triton.language as tl
 from triton.compiler import ASTSource
 
 
-BLOCK = 64
+BLOCK = tl.constexpr(64)
 
 
 @triton.jit
@@ -28,7 +28,7 @@ def vector_add(a, b, out, n: tl.constexpr):
 
 
 def main() -> int:
-    count = BLOCK
+    count = int(BLOCK.value)
     array_type = ctypes.c_float * count
     lhs = array_type(*(float(index) for index in range(count)))
     rhs = array_type(*(float(2 * index + 1) for index in range(count)))
@@ -43,10 +43,19 @@ def main() -> int:
     if target.backend != "cpu":
         raise RuntimeError(f"Triton portability probe selected {target.backend!r}, not CPU")
     compiled = triton.compile(src=source, target=target)
+    assembly = compiled.asm["asm"]
+    vector_instruction_count = sum(
+        1
+        for line in assembly.splitlines()
+        if line.strip() and line.strip().split()[0].startswith("v")
+    )
+    if vector_instruction_count == 0:
+        raise RuntimeError("Triton-CPU produced no RVV vector instruction")
     compiled[(1, 1, 1)](
         ctypes.addressof(lhs),
         ctypes.addressof(rhs),
         ctypes.addressof(out),
+        count,
     )
 
     maximum_error = max(
@@ -66,6 +75,8 @@ def main() -> int:
                 },
                 "elements": count,
                 "maximum_absolute_error": maximum_error,
+                "kernel_symbol": compiled.name,
+                "rvv_vector_instruction_count": vector_instruction_count,
                 "assembly_products": sorted(compiled.asm),
                 "shared_object_bytes": len(compiled.asm["so"]),
             },

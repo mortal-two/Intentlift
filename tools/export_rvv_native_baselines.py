@@ -12,6 +12,9 @@ from intentir.backend.riscv.native_baselines import (
     external_rvv_baseline_records,
 )
 from intentir.backend.riscv.ggml_baselines import maybe_ggml_rvv_baseline_records
+from intentir.backend.riscv.triton_cpu_baselines import (
+    swiglu_triton_cpu_rvv_record,
+)
 
 
 DEFAULT_KERNELS = (
@@ -46,19 +49,40 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--kernels", nargs="*", choices=DEFAULT_KERNELS)
+    parser.add_argument("--triton-cpu-swiglu-library", type=Path)
+    parser.add_argument("--triton-cpu-swiglu-columns", type=int, default=11008)
+    parser.add_argument("--triton-cpu-swiglu-source", type=str)
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     kernels = tuple(args.kernels or DEFAULT_KERNELS)
+
+    def records(kernel: str) -> list[dict[str, object]]:
+        result = [
+            *external_rvv_baseline_records(kernel),
+            *maybe_ggml_rvv_baseline_records(kernel),
+        ]
+        if kernel == "swiglu" and args.triton_cpu_swiglu_library is not None:
+            if not args.triton_cpu_swiglu_source:
+                raise ValueError(
+                    "--triton-cpu-swiglu-library requires "
+                    "--triton-cpu-swiglu-source"
+                )
+            result.append(
+                swiglu_triton_cpu_rvv_record(
+                    args.triton_cpu_swiglu_library,
+                    columns=args.triton_cpu_swiglu_columns,
+                    source_identity=args.triton_cpu_swiglu_source,
+                )
+            )
+        return result
+
     payload = {
         "protocol": EXTERNAL_RVV_BASELINE_SIDECAR_PROTOCOL,
         "baselines": {
-            kernel: [
-                *external_rvv_baseline_records(kernel),
-                *maybe_ggml_rvv_baseline_records(kernel),
-            ]
+            kernel: records(kernel)
             for kernel in kernels
         },
     }

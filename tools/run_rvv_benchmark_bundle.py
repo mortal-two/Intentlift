@@ -501,10 +501,22 @@ def _validated_external_baseline(record: Any) -> Mapping[str, Any]:
         "clang-rvv-c-strict",
         "clang-rvv-intrinsic-strict",
         "ggml-rvv-strict",
+        "triton-cpu-rvv-prebuilt-strict",
     }:
         raise RuntimeError(f"RVV external baseline {baseline_id!r} has invalid build profile")
     if record.get("strict_match") is not True:
         raise RuntimeError(f"RVV external baseline {baseline_id!r} is not a strict match")
+    if record.get("build_profile") == "triton-cpu-rvv-prebuilt-strict":
+        library = record.get("prebuilt_library")
+        if not isinstance(library, str) or not library:
+            raise RuntimeError(
+                f"RVV external baseline {baseline_id!r} lacks prebuilt_library"
+            )
+        source_identity = record.get("source_identity")
+        if not isinstance(source_identity, str) or not source_identity:
+            raise RuntimeError(
+                f"RVV external baseline {baseline_id!r} lacks source_identity"
+            )
     return record
 
 
@@ -673,7 +685,31 @@ def _compile_external_baseline(
     library_path = directory / f"external_{baseline_id}.so"
     source.write_text(str(record["source"]), encoding="utf-8")
     profile = str(record["build_profile"])
-    if profile == "ggml-rvv-strict":
+    if profile == "triton-cpu-rvv-prebuilt-strict":
+        compiler = shutil.which("clang") or shutil.which("cc")
+        if compiler is None:
+            raise RuntimeError("Triton-CPU/RVV adapter requires target clang or cc")
+        prebuilt_library = Path(str(record["prebuilt_library"]))
+        if not prebuilt_library.is_file():
+            raise RuntimeError(
+                f"Triton-CPU/RVV object does not exist: {prebuilt_library}"
+            )
+        command = [
+            compiler,
+            "-shared",
+            "-O3",
+            "-fPIC",
+            f"-march={RVV_TARGET_MARCH}",
+            "-fno-fast-math",
+            "-ffp-contract=off",
+            str(source),
+            str(prebuilt_library),
+            f"-Wl,-rpath,{prebuilt_library.parent}",
+            "-lm",
+            "-o",
+            str(library_path),
+        ]
+    elif profile == "ggml-rvv-strict":
         if ggml_root is None or ggml_lib_dir is None:
             raise RuntimeError("ggml RVV baseline requires --ggml-root and --ggml-lib-dir")
         compiler = shutil.which("clang++") or shutil.which("c++")
@@ -738,6 +774,8 @@ def _compile_external_baseline(
         "flags": command[1:-3],
         "strict_match": True,
         "shares_intentir_candidate_or_object": False,
+        "source_identity": record.get("source_identity"),
+        "specialized_columns": record.get("specialized_columns"),
     }
 
 

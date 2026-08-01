@@ -469,6 +469,32 @@ def test_best_native_excludes_the_portability_compiler_bar() -> None:
     assert rvv_runner._select_best_native(records[:1]) is None
 
 
+def test_triton_cpu_rvv_baseline_requires_a_prebuilt_kernel_object() -> None:
+    record = {
+        "protocol": rvv_runner.EXTERNAL_BASELINE_PROTOCOL,
+        "baseline_id": "triton_cpu_rvv",
+        "display_name": "Triton-CPU/RVV",
+        "kind": "source_portability",
+        "symbol": "intentir_native_baseline",
+        "source": "void intentir_native_baseline(void) {}",
+        "language": "c",
+        "build_profile": "triton-cpu-rvv-prebuilt-strict",
+        "implementation": "same-source-triton-cpu-rvv",
+        "strict_match": True,
+    }
+
+    with pytest.raises(RuntimeError, match="prebuilt_library"):
+        rvv_runner._validated_external_baseline(record)
+
+    record["prebuilt_library"] = "/tmp/triton-swiglu.so"
+    with pytest.raises(RuntimeError, match="source_identity"):
+        rvv_runner._validated_external_baseline(record)
+    record["source_identity"] = "accepted/source.py::kernel"
+    assert rvv_runner._validated_external_baseline(record) == record
+    measured = {**record, "status": "measured", "latency_us": 0.5}
+    assert rvv_runner._select_best_native([measured]) is None
+
+
 def test_rvv_external_payload_preserves_bytes_and_logical_size(tmp_path: Path):
     payload = struct.pack("<4f", 1.0, 2.0, 3.0, 4.0)
     encoded = {
