@@ -1,8 +1,9 @@
 """Typed Gate1 normalization witness with legacy pi compatibility.
 
-The active subwire contains only closed program-axis rows.  The
-older source-realization graph remains parseable for historical evidence, but is
-not exposed to fresh Lift or Replay.
+The active subwire is a small algebra of direct J/C-bound realization
+relations.  It contains neither source/replay operation identities nor a graph
+that can encode a target recipe.  The older realization graph remains parseable
+for historical evidence, but is not exposed to fresh Lift or Replay.
 """
 
 from __future__ import annotations
@@ -20,6 +21,32 @@ class RealizationWitnessError(ValueError):
 JsonValue = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
 
 NORMALIZATION_WITNESS_SCHEMA = "intentir.pi.normalization-witness.v1"
+
+PROGRAM_BINDING_RELATIONS: tuple[str, ...] = (
+    "direct",
+    "product_linearized",
+    "guarded_union",
+)
+
+ITERATION_BINDING_RELATIONS: tuple[str, ...] = (
+    "tiled_domain",
+    "tiled_recurrence",
+)
+
+CONTROL_BINDING_RELATIONS: tuple[str, ...] = (
+    "terminal_domain_guard",
+    "terminal_effect_guard",
+)
+
+MATERIALIZATION_BINDING_RELATIONS: tuple[str, ...] = (
+    "scratch_roundtrip",
+    "recompute",
+)
+
+ACCESS_REPRESENTATION_BINDING_RELATIONS: tuple[str, ...] = (
+    "address_recomputed",
+    "pointer_advanced",
+)
 
 REALIZATION_MECHANISMS: tuple[str, ...] = (
     "realize",
@@ -322,6 +349,13 @@ class RealizationWitness:
     instances: list[dict[str, JsonValue]] = field(default_factory=list)
     routes: list[dict[str, JsonValue]] = field(default_factory=list)
     program_axes: list[dict[str, JsonValue]] = field(default_factory=list)
+    program_bindings: list[dict[str, JsonValue]] = field(default_factory=list)
+    iteration_bindings: list[dict[str, JsonValue]] = field(default_factory=list)
+    control_bindings: list[dict[str, JsonValue]] = field(default_factory=list)
+    materialization_bindings: list[dict[str, JsonValue]] = field(default_factory=list)
+    access_representation_bindings: list[dict[str, JsonValue]] = field(
+        default_factory=list
+    )
     program_linearizations: list[dict[str, JsonValue]] = field(default_factory=list)
     route_extent_transforms: list[dict[str, JsonValue]] = field(default_factory=list)
     order: list[dict[str, JsonValue]] = field(default_factory=list)
@@ -369,9 +403,12 @@ class RealizationWitness:
             present = sorted(name for name, rows in legacy_fields.items() if rows)
             if present:
                 raise RealizationWitnessError(
-                    "compact pi may contain only program_axes; "
+                    "normalization-witness pi may not contain the legacy "
+                    "realization graph; "
                     f"found unsupported fields {present}"
                 )
+            self._check_normalization_bindings()
+            return
         checked_regions: list[dict[str, JsonValue]] = []
         for index, raw in enumerate(self.regions):
             item = _record(
@@ -1031,6 +1068,231 @@ class RealizationWitness:
         self.physical_loop_carriers = checked_physical_loop_carriers
         self.terminal_controls = checked_terminal_controls
 
+    def _check_normalization_bindings(self) -> None:
+        """Validate only the closed active subwire, without deriving relations."""
+
+        checked_program_axes: list[dict[str, JsonValue]] = []
+        bound_domains: set[str] = set()
+        for index, raw in enumerate(self.program_axes):
+            path = f"pi.program_axes[{index}]"
+            item = _record(
+                raw,
+                path=path,
+                required=frozenset({"domain_ref", "axis"}),
+            )
+            domain_ref = _name(item["domain_ref"], f"{path}.domain_ref")
+            if re.fullmatch(r"d[0-9]+", domain_ref) is None:
+                raise RealizationWitnessError(
+                    f"{path}.domain_ref must be a J boundary domain handle d*"
+                )
+            axis = item["axis"]
+            if isinstance(axis, bool) or not isinstance(axis, int) or not 0 <= axis <= 2:
+                raise RealizationWitnessError(
+                    f"{path}.axis must be an integer launch axis in [0, 2]"
+                )
+            if domain_ref in bound_domains:
+                raise RealizationWitnessError(
+                    "pi program-axis domain bindings must be unique"
+                )
+            bound_domains.add(domain_ref)
+            checked_program_axes.append({"domain_ref": domain_ref, "axis": axis})
+
+        def axis_ref(value: Any, path: str) -> int | str:
+            if isinstance(value, bool):
+                raise RealizationWitnessError(
+                    f"{path} must be a non-negative integer or J dimension x*"
+                )
+            if isinstance(value, int) and value >= 0:
+                return value
+            if isinstance(value, str) and re.fullmatch(r"x[0-9]+", value):
+                return value
+            raise RealizationWitnessError(
+                f"{path} must be a non-negative integer or J dimension x*"
+            )
+
+        def logical_axes(
+            value: Any,
+            *,
+            path: str,
+            subject_field: str,
+            subject_pattern: str,
+        ) -> list[dict[str, JsonValue]]:
+            if not isinstance(value, list) or not value:
+                raise RealizationWitnessError(f"{path} must be a non-empty array")
+            result: list[dict[str, JsonValue]] = []
+            seen: set[tuple[str, int | str]] = set()
+            for ordinal, raw_axis in enumerate(value):
+                axis_path = f"{path}[{ordinal}]"
+                item = _record(
+                    raw_axis,
+                    path=axis_path,
+                    required=frozenset({subject_field, "axis_ref"}),
+                )
+                subject = _name(item[subject_field], f"{axis_path}.{subject_field}")
+                if re.fullmatch(subject_pattern, subject) is None:
+                    raise RealizationWitnessError(
+                        f"{axis_path}.{subject_field} has an unsupported J handle"
+                    )
+                logical_axis = axis_ref(item["axis_ref"], f"{axis_path}.axis_ref")
+                key = (subject, logical_axis)
+                if key in seen:
+                    raise RealizationWitnessError(
+                        f"{path} must not repeat a logical J axis"
+                    )
+                seen.add(key)
+                result.append({subject_field: subject, "axis_ref": logical_axis})
+            return result
+
+        checked_program_bindings: list[dict[str, JsonValue]] = []
+        used_program_axes: set[tuple[str, int | str]] = set()
+        for index, raw in enumerate(self.program_bindings):
+            path = f"pi.program_bindings[{index}]"
+            item = _record(
+                raw,
+                path=path,
+                required=frozenset({"relation", "logical_axes"}),
+            )
+            relation = _name(item["relation"], f"{path}.relation")
+            if relation not in PROGRAM_BINDING_RELATIONS:
+                raise RealizationWitnessError(
+                    f"{path}.relation is not a closed program binding relation"
+                )
+            axes = logical_axes(
+                item["logical_axes"],
+                path=f"{path}.logical_axes",
+                subject_field="domain_ref",
+                subject_pattern=r"d[0-9]+",
+            )
+            if relation == "direct" and len(axes) != 1:
+                raise RealizationWitnessError(
+                    f"{path}.logical_axes must contain exactly one axis for direct"
+                )
+            if relation != "direct" and len(axes) < 2:
+                raise RealizationWitnessError(
+                    f"{path}.logical_axes must contain at least two axes for {relation}"
+                )
+            keys = {
+                (str(axis["domain_ref"]), axis["axis_ref"])
+                for axis in axes
+            }
+            if used_program_axes & keys:
+                raise RealizationWitnessError(
+                    "pi program bindings must not claim one logical J axis twice"
+                )
+            used_program_axes.update(keys)
+            checked_program_bindings.append(
+                {"relation": relation, "logical_axes": axes}
+            )
+        if checked_program_axes and checked_program_bindings:
+            raise RealizationWitnessError(
+                "legacy-hard program_axes and active program_bindings are mutually exclusive"
+            )
+
+        checked_iteration_bindings: list[dict[str, JsonValue]] = []
+        used_iteration_axes: set[tuple[str, int | str]] = set()
+        for index, raw in enumerate(self.iteration_bindings):
+            path = f"pi.iteration_bindings[{index}]"
+            item = _record(
+                raw,
+                path=path,
+                required=frozenset(
+                    {"relation", "logical_axes", "tile_slot", "mode_slot"}
+                ),
+            )
+            relation = _name(item["relation"], f"{path}.relation")
+            if relation not in ITERATION_BINDING_RELATIONS:
+                raise RealizationWitnessError(
+                    f"{path}.relation is not a closed iteration relation"
+                )
+            axes = logical_axes(
+                item["logical_axes"],
+                path=f"{path}.logical_axes",
+                subject_field="subject_ref",
+                subject_pattern=r"(?:d|n)[0-9]+",
+            )
+            keys = {
+                (str(axis["subject_ref"]), axis["axis_ref"])
+                for axis in axes
+            }
+            if used_iteration_axes & keys:
+                raise RealizationWitnessError(
+                    "pi iteration bindings must not claim one logical J axis twice"
+                )
+            used_iteration_axes.update(keys)
+            tile_slot = _name(item["tile_slot"], f"{path}.tile_slot")
+            if re.fullmatch(r"c[0-9]+", tile_slot) is None:
+                raise RealizationWitnessError(f"{path}.tile_slot must be a C slot c*")
+            mode_slot = item["mode_slot"]
+            if mode_slot is not None:
+                mode_slot = _name(mode_slot, f"{path}.mode_slot")
+                if re.fullmatch(r"c[0-9]+", mode_slot) is None:
+                    raise RealizationWitnessError(
+                        f"{path}.mode_slot must be null or a C slot c*"
+                    )
+            checked_iteration_bindings.append(
+                {
+                    "relation": relation,
+                    "logical_axes": axes,
+                    "tile_slot": tile_slot,
+                    "mode_slot": mode_slot,
+                }
+            )
+
+        def closed_anchor_rows(
+            rows: list[dict[str, JsonValue]],
+            *,
+            field: str,
+            relations: tuple[str, ...],
+            path_name: str,
+        ) -> list[dict[str, JsonValue]]:
+            result: list[dict[str, JsonValue]] = []
+            seen: set[tuple[str, str]] = set()
+            for index, raw in enumerate(rows):
+                path = f"pi.{path_name}[{index}]"
+                item = _record(
+                    raw,
+                    path=path,
+                    required=frozenset({"relation", field}),
+                )
+                relation = _name(item["relation"], f"{path}.relation")
+                if relation not in relations:
+                    raise RealizationWitnessError(
+                        f"{path}.relation is not supported by this closed relation family"
+                    )
+                anchor = _opaque_anchor_ref(item[field], f"{path}.{field}")
+                key = (relation, anchor)
+                if key in seen:
+                    raise RealizationWitnessError(f"{path_name} rows must be unique")
+                seen.add(key)
+                result.append({"relation": relation, field: anchor})
+            return result
+
+        checked_control_bindings = closed_anchor_rows(
+            self.control_bindings,
+            field="subject_ref",
+            relations=CONTROL_BINDING_RELATIONS,
+            path_name="control_bindings",
+        )
+        checked_materialization_bindings = closed_anchor_rows(
+            self.materialization_bindings,
+            field="value_ref",
+            relations=MATERIALIZATION_BINDING_RELATIONS,
+            path_name="materialization_bindings",
+        )
+        checked_access_bindings = closed_anchor_rows(
+            self.access_representation_bindings,
+            field="access_ref",
+            relations=ACCESS_REPRESENTATION_BINDING_RELATIONS,
+            path_name="access_representation_bindings",
+        )
+
+        self.program_axes = checked_program_axes
+        self.program_bindings = checked_program_bindings
+        self.iteration_bindings = checked_iteration_bindings
+        self.control_bindings = checked_control_bindings
+        self.materialization_bindings = checked_materialization_bindings
+        self.access_representation_bindings = checked_access_bindings
+
     @classmethod
     def from_json(cls, value: Any) -> "RealizationWitness":
         if isinstance(value, dict) and "schema" in value:
@@ -1038,6 +1300,17 @@ class RealizationWitness:
                 value,
                 path="pi",
                 required=frozenset({"schema", "program_axes"}),
+                allowed=frozenset(
+                    {
+                        "schema",
+                        "program_axes",
+                        "program_bindings",
+                        "iteration_bindings",
+                        "control_bindings",
+                        "materialization_bindings",
+                        "access_representation_bindings",
+                    }
+                ),
             )
             schema = _name(data["schema"], "pi.schema")
             if schema != NORMALIZATION_WITNESS_SCHEMA:
@@ -1046,9 +1319,27 @@ class RealizationWitness:
                 )
             if not isinstance(data["program_axes"], list):
                 raise RealizationWitnessError("pi.program_axes must be an array")
+            for key in (
+                "program_bindings",
+                "iteration_bindings",
+                "control_bindings",
+                "materialization_bindings",
+                "access_representation_bindings",
+            ):
+                if key in data and not isinstance(data[key], list):
+                    raise RealizationWitnessError(f"pi.{key} must be an array")
             return cls(
                 wire_schema=schema,
                 program_axes=copy.deepcopy(data["program_axes"]),
+                program_bindings=copy.deepcopy(data.get("program_bindings", [])),
+                iteration_bindings=copy.deepcopy(data.get("iteration_bindings", [])),
+                control_bindings=copy.deepcopy(data.get("control_bindings", [])),
+                materialization_bindings=copy.deepcopy(
+                    data.get("materialization_bindings", [])
+                ),
+                access_representation_bindings=copy.deepcopy(
+                    data.get("access_representation_bindings", [])
+                ),
             )
         data = _record(
             value,
@@ -1135,10 +1426,21 @@ class RealizationWitness:
         include_program_coordinate_maps: bool = True,
     ) -> dict[str, Any]:
         if self.wire_schema == NORMALIZATION_WITNESS_SCHEMA:
-            return {
+            result = {
                 "schema": NORMALIZATION_WITNESS_SCHEMA,
                 "program_axes": copy.deepcopy(self.program_axes),
             }
+            for name in (
+                "program_bindings",
+                "iteration_bindings",
+                "control_bindings",
+                "materialization_bindings",
+                "access_representation_bindings",
+            ):
+                rows = getattr(self, name)
+                if rows:
+                    result[name] = copy.deepcopy(rows)
+            return result
         result = {
             "regions": copy.deepcopy(self.regions),
             "instances": copy.deepcopy(self.instances),
@@ -1173,6 +1475,11 @@ class RealizationWitness:
 
 __all__ = [
     "NORMALIZATION_WITNESS_SCHEMA",
+    "PROGRAM_BINDING_RELATIONS",
+    "ITERATION_BINDING_RELATIONS",
+    "CONTROL_BINDING_RELATIONS",
+    "MATERIALIZATION_BINDING_RELATIONS",
+    "ACCESS_REPRESENTATION_BINDING_RELATIONS",
     "RealizationWitness",
     "RealizationWitnessError",
     "REALIZATION_MECHANISMS",

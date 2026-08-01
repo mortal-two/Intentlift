@@ -69,14 +69,22 @@ whole Schema, the whole operation catalog, or the whole Lift contract into the
 thread.
 
 You alone author the complete output/candidate.json. J owns all logical semantics;
-C owns only implementation choices; pi is only the compact Gate1 normalization
-witness in the supplied schema. It has no realization graph: author only directly
-observed, unambiguous program-axis rows, or an empty array. The current profile keeps
-those rows hard; their presence never relaxes Gate1.
+C owns only implementation choices; pi is only the typed Gate1 normalization
+witness in the supplied schema. It has no realization graph. Author only closed direct
+program/iteration/control/materialization/access-representation relations bound to
+existing J axes, values, accesses and C slots. Query `realization-ledger` and the exact
+pi schema leaves when needed; never copy a physical Source SSA id or target recipe into
+pi. A relation whose fixed unary recognizer cannot prove remains hard.
 Fixed code must not choose or fill any field, handle, relation, operation, or shape.
 Preserve anonymous ABI order, parametric shape identities, logical control/time and
 effects in J. Use dense declaration-ordered opaque handles and never copy Source
 identifiers into the artifact.
+
+Every inout tensor requires explicit pre-state access/effect, post-state access/effect,
+and output_mapping. Treat the Harness grid as fixed U_f: do not move a logical program
+coordinate to an absent launch axis. Preserve J access multiplicity; address recompute
+relations may change pointer construction but never tensor, logical index, mask, value,
+or effect.
 
 Write a meaningful complete output/candidate.json early, then inspect and patch
 that persistent file in place; do not postpone all authoring until after exhaustive
@@ -218,8 +226,8 @@ def _codex_input_files(
         "feedback_frontier.json": complete["feedback_frontier.json"],
         "README.md": (
             "# IntentIR Lift workspace\n\n"
-            "J owns logical semantics, C only implementation choices, and compact pi "
-            "only names observed program-axis normalization rows. "
+            "J owns logical semantics, C only implementation choices, and pi only "
+            "contains closed direct normalization relations bound to J/C. "
             "You author every "
             "semantic field; fixed code only projects evidence, checks, and rejects.\n\n"
             "Start once with:\n"
@@ -230,6 +238,9 @@ def _codex_input_files(
             "the needed leaves, for example:\n"
             "`python input/tools/schema_query.py authoring-brief`\n"
             "Then request only the exact `section NAME` or `op NAME` needed by the draft.\n\n"
+            "After J/C exists, run `python input/tools/context_query.py --input-root input "
+            "--output-root output realization-ledger` and `candidate-attachments` before "
+            "authoring pi. These are read-only raw facts and never choose a relation.\n\n"
             "Search one exact term in `input/knowledge/lift_contract.md` only when its "
             "ownership is unclear. Write `output/candidate.json` early and patch it in "
             "place. Run `python .agents/intentir_agent_tool.py submit_candidate`; the "
@@ -272,8 +283,9 @@ pi escape hatch; resubmit the unchanged artifact for a fresh source-blind Replay
 Before editing local operations, check whether one omitted Source-visible loop,
 effect_if, early terminal branch, continuation, or effect region explains the
 downstream op/dataflow/predicate differences; if so, repair that complete J scope
-rather than its symptoms. Compact pi changes only when the residual is exactly an
-observed program-axis label. Mixed-radix residuals remain hard in this schema. Conversely, when
+rather than its symptoms. Change pi only when Source evidence and an existing J/C
+anchor select one closed normalization relation; a row never licenses an arbitrary
+diff. Conversely, when
 the current J/B/C already authors the exact logical fact and Source-local boundary fact
 but the preceding Replay alone failed to consume it, do not mutate the artifact to
 imitate that Replay: resubmit the unchanged artifact for a fresh source-blind Replay.
@@ -299,9 +311,10 @@ Read input/source_reconcile.json and revise only the model-authored J/C/pi facts
 closed obligations disagree with the immutable anonymous Source syntax or Source TTIR
 observation. A recurrence/control/mask presence diagnostic states only that the whole
 J-owned construct is absent: recover its complete trip/carries/body/control/predicate
-from Source yourself; the host has not supplied a formula or patch. Compact pi has no
-occurrence/route graph: correct only an observed program-axis row, or revise J when
-your authorship was wrong. Never invent a pi carrier, route, control, or materialization.
+from Source yourself; the host has not supplied a formula or patch. Pi has no
+occurrence/route graph: correct only a closed direct relation bound to existing J/C
+handles, or revise J when your authorship was wrong. Never invent a source recipe or
+allowed diff.
 This diagnostic supplies no artifact field or repair. Rerun
 `python .agents/intentir_agent_tool.py submit_candidate` and finish immediately
 after it passes. Formal TypeCheck, Replay, and Gate1 remain external.

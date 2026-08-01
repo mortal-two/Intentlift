@@ -166,21 +166,16 @@ def _sections(schema: dict[str, Any]) -> dict[str, dict[str, Any]]:
             boundary["realization_authorizations"]
         ),
         "c_slot": _array_item(c["slots"]),
-        "pi_region": _array_item(pi["regions"]),
-        "pi_instance": _array_item(pi["instances"]),
-        "pi_route": _array_item(pi["routes"]),
         "pi_program_axis": _array_item(pi["program_axes"]),
-        "pi_route_extent_transform": _array_item(
-            pi["route_extent_transforms"]
+        "pi_program_binding": _array_item(pi["program_bindings"]),
+        "pi_iteration_binding": _array_item(pi["iteration_bindings"]),
+        "pi_control_binding": _array_item(pi["control_bindings"]),
+        "pi_materialization_binding": _array_item(
+            pi["materialization_bindings"]
         ),
-        "pi_order": _array_item(pi["order"]),
-        "pi_sharing": _array_item(pi["sharing"]),
-        "pi_iteration": _array_item(pi["iterations"]),
-        "pi_loop_carrier": _array_item(pi["loop_carriers"]),
-        "pi_physical_iteration": _array_item(pi["physical_iterations"]),
-        "pi_physical_loop_carrier": _array_item(pi["physical_loop_carriers"]),
-        "pi_terminal_control": _array_item(pi["terminal_controls"]),
-        "pi_refinement": _array_item(pi["refinements"]),
+        "pi_access_representation_binding": _array_item(
+            pi["access_representation_bindings"]
+        ),
     }
 
 

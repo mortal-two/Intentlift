@@ -2046,6 +2046,8 @@ def _representation_only_nodes(
     operations: Sequence[_Operation],
     result_to_node: Mapping[str, int],
     terminal_forks: Sequence[_TerminalFork],
+    *,
+    anchor_exemptions: frozenset[str] = frozenset(),
 ) -> frozenset[int]:
     """Find pure compiler scaffolding with no independent artifact owner.
 
@@ -2159,7 +2161,10 @@ def _representation_only_nodes(
     for operation in operations:
         if operation.node_id in value_nodes or operation.node_id in predicate_nodes:
             continue
-        if operation.name in _REPRESENTATION_ANCHOR_OPS:
+        if (
+            operation.name in _REPRESENTATION_ANCHOR_OPS
+            and operation.name not in anchor_exemptions
+        ):
             continue
         if operation.name in _REGION_OWNERS or operation.name in _TERMINATORS:
             continue
@@ -2670,6 +2675,8 @@ class TTIRParser:
         *,
         python_interface: Mapping[str, Any] | None = None,
         schedule: Mapping[str, Any] | None = None,
+        representation_anchor_exemptions: frozenset[str] = frozenset(),
+        runtime_values: Mapping[str, int | bool] | None = None,
     ) -> TTIRFingerprint:
         cleaned = _strip_locations(text)
         # Module type aliases are definitions, while proof-relevant use sites
@@ -2705,6 +2712,8 @@ class TTIRParser:
             terminal_forks,
             python_interface=python_interface,
             schedule=schedule,
+            representation_anchor_exemptions=representation_anchor_exemptions,
+            runtime_values=runtime_values,
         )
 
     def _parse_operations(
@@ -4283,6 +4292,8 @@ class TTIRParser:
         *,
         python_interface: Mapping[str, Any] | None,
         schedule: Mapping[str, Any] | None,
+        representation_anchor_exemptions: frozenset[str],
+        runtime_values: Mapping[str, int | bool] | None,
     ) -> TTIRFingerprint:
         node_by_id = {operation.node_id: operation for operation in operations}
         value_if_ids = {
@@ -4309,7 +4320,10 @@ class TTIRParser:
             operations, terminal_forks
         )
         representation_only = _representation_only_nodes(
-            operations, result_to_node, terminal_forks
+            operations,
+            result_to_node,
+            terminal_forks,
+            anchor_exemptions=representation_anchor_exemptions,
         )
         structural_cache: dict[int, str] = {}
         semantic_cache: dict[int, str] = {}
@@ -4333,6 +4347,172 @@ class TTIRParser:
                     else signature
                 )
             return _normalize_space(result_text)
+
+        runtime_constants = {
+            f"%{name.removeprefix('%')}": int(value)
+            for name, value in (runtime_values or {}).items()
+            if isinstance(value, (bool, int))
+        }
+        polynomial_cache: dict[
+            str, dict[tuple[str, ...], int] | None
+        ] = {}
+
+        def polynomial_add(
+            left: Mapping[tuple[str, ...], int],
+            right: Mapping[tuple[str, ...], int],
+            *,
+            sign: int = 1,
+        ) -> dict[tuple[str, ...], int]:
+            result = dict(left)
+            for monomial, coefficient in right.items():
+                result[monomial] = result.get(monomial, 0) + sign * coefficient
+                if result[monomial] == 0:
+                    del result[monomial]
+            return result
+
+        def polynomial_mul(
+            left: Mapping[tuple[str, ...], int],
+            right: Mapping[tuple[str, ...], int],
+        ) -> dict[tuple[str, ...], int] | None:
+            if len(left) * len(right) > 128:
+                return None
+            result: dict[tuple[str, ...], int] = {}
+            for left_terms, left_coefficient in left.items():
+                for right_terms, right_coefficient in right.items():
+                    monomial = tuple(sorted((*left_terms, *right_terms)))
+                    result[monomial] = result.get(monomial, 0) + (
+                        left_coefficient * right_coefficient
+                    )
+                    if result[monomial] == 0:
+                        del result[monomial]
+            return result
+
+        def polynomial_payload(
+            value: Mapping[tuple[str, ...], int]
+        ) -> tuple[tuple[tuple[str, ...], int], ...]:
+            return tuple(sorted(value.items()))
+
+        def integer_polynomial(
+            name: str,
+            active: frozenset[str] = frozenset(),
+        ) -> dict[tuple[str, ...], int] | None:
+            if name in polynomial_cache:
+                cached = polynomial_cache[name]
+                return None if cached is None else dict(cached)
+            if name in active:
+                raise TTIRParseError("cyclic integer representation expression")
+            if name in leaf_labels:
+                if name in runtime_constants:
+                    result = {(): runtime_constants[name]}
+                else:
+                    result = {(leaf_labels[name],): 1}
+                polynomial_cache[name] = result
+                return dict(result)
+            node_id = result_to_node.get(name)
+            if node_id is None:
+                polynomial_cache[name] = None
+                return None
+            operation = node_by_id[node_id]
+            next_active = active | {name}
+            result: dict[tuple[str, ...], int] | None
+            if operation.name == "arith.constant":
+                constant = operation.constant_value
+                result = (
+                    {(): int(constant)}
+                    if constant is not None
+                    and float(constant).is_integer()
+                    else None
+                )
+            elif operation.name == "tt.get_program_id":
+                match = re.search(
+                    r"\btt\.get_program_id\s+([xyz])\b",
+                    operation.local_signature,
+                )
+                result = (
+                    {(f"program_axis:{match.group(1)}",): 1}
+                    if match is not None
+                    else None
+                )
+            elif operation.name == "tt.make_range":
+                result = {(f"lane:{operation.local_signature}",): 1}
+            elif operation.name in {
+                "arith.extsi", "arith.extui", "arith.index_cast",
+                "arith.index_castui", "arith.trunci", "tt.splat",
+                "tt.broadcast", "tt.expand_dims", "tt.reshape", "tt.trans",
+            } and len(operation.operands) == 1:
+                result = integer_polynomial(operation.operands[0], next_active)
+            elif operation.name in {"arith.addi", "arith.subi", "arith.muli"} and len(operation.operands) == 2:
+                left = integer_polynomial(operation.operands[0], next_active)
+                right = integer_polynomial(operation.operands[1], next_active)
+                if left is None or right is None:
+                    result = None
+                elif operation.name == "arith.addi":
+                    result = polynomial_add(left, right)
+                elif operation.name == "arith.subi":
+                    result = polynomial_add(left, right, sign=-1)
+                else:
+                    result = polynomial_mul(left, right)
+            elif operation.name in {"arith.divsi", "arith.divui", "arith.remsi", "arith.remui"} and len(operation.operands) == 2:
+                numerator = integer_polynomial(operation.operands[0], next_active)
+                denominator = integer_polynomial(operation.operands[1], next_active)
+                denominator_value = (
+                    denominator.get(())
+                    if denominator is not None and set(denominator) == {()}
+                    else None
+                )
+                if numerator is None or denominator_value in {None, 0}:
+                    result = None
+                else:
+                    atom = _stable_json(
+                        [
+                            operation.name,
+                            polynomial_payload(numerator),
+                            denominator_value,
+                        ]
+                    )
+                    result = {(f"integer_relation:{atom}",): 1}
+            else:
+                result = None
+            polynomial_cache[name] = None if result is None else dict(result)
+            return None if result is None else dict(result)
+
+        pointer_cache: dict[
+            str, tuple[str, dict[tuple[str, ...], int]] | None
+        ] = {}
+
+        def pointer_form(
+            name: str,
+            active: frozenset[str] = frozenset(),
+        ) -> tuple[str, dict[tuple[str, ...], int]] | None:
+            if name in pointer_cache:
+                cached = pointer_cache[name]
+                return None if cached is None else (cached[0], dict(cached[1]))
+            if name in active:
+                raise TTIRParseError("cyclic pointer representation expression")
+            if name in leaf_labels:
+                result = (leaf_labels[name], {})
+                pointer_cache[name] = result
+                return result[0], dict(result[1])
+            node_id = result_to_node.get(name)
+            if node_id is None:
+                pointer_cache[name] = None
+                return None
+            operation = node_by_id[node_id]
+            next_active = active | {name}
+            result: tuple[str, dict[tuple[str, ...], int]] | None = None
+            if operation.name == "tt.addptr" and len(operation.operands) >= 2:
+                base = pointer_form(operation.operands[0], next_active)
+                offset = integer_polynomial(operation.operands[1], next_active)
+                if base is not None and offset is not None:
+                    result = (base[0], polynomial_add(base[1], offset))
+            elif operation.name in {
+                "tt.splat", "tt.broadcast", "tt.expand_dims", "tt.reshape",
+            } and len(operation.operands) == 1:
+                result = pointer_form(operation.operands[0], next_active)
+            pointer_cache[name] = (
+                None if result is None else (result[0], dict(result[1]))
+            )
+            return None if result is None else (result[0], dict(result[1]))
 
         def hard_local_signature(operation: _Operation) -> str:
             if operation.name != "tt.addptr":
@@ -4409,11 +4589,27 @@ class TTIRParser:
                 if len(operation.result_names) > 1
                 else 0
             )
-            payload = {
-                "contract": result_contract(operation),
-                "origins": representation_atoms(name),
-                "slot": slot,
-            }
+            pointer = pointer_form(name)
+            polynomial = integer_polynomial(name)
+            if pointer is not None:
+                payload = {
+                    "contract": result_contract(operation),
+                    "pointer_base": pointer[0],
+                    "offset": polynomial_payload(pointer[1]),
+                    "slot": slot,
+                }
+            elif polynomial is not None:
+                payload = {
+                    "contract": result_contract(operation),
+                    "integer_polynomial": polynomial_payload(polynomial),
+                    "slot": slot,
+                }
+            else:
+                payload = {
+                    "contract": result_contract(operation),
+                    "origins": representation_atoms(name),
+                    "slot": slot,
+                }
             cached = f"representation[{_digest(payload)[:20]}]"
             representation_ref_cache[name] = cached
             return cached
@@ -5693,11 +5889,17 @@ def parse_ttir(
     *,
     python_interface: Mapping[str, Any] | None = None,
     schedule: Mapping[str, Any] | None = None,
+    representation_anchor_exemptions: frozenset[str] = frozenset(),
+    runtime_values: Mapping[str, int | bool] | None = None,
 ) -> TTIRFingerprint:
     """Parse TTIR and return its normalized Gate1 fingerprint."""
 
     return TTIRParser().parse(
-        text, python_interface=python_interface, schedule=schedule
+        text,
+        python_interface=python_interface,
+        schedule=schedule,
+        representation_anchor_exemptions=representation_anchor_exemptions,
+        runtime_values=runtime_values,
     )
 
 
@@ -5720,8 +5922,16 @@ def fingerprint_ttir(
     *,
     python_interface: Mapping[str, Any] | None = None,
     schedule: Mapping[str, Any] | None = None,
+    representation_anchor_exemptions: frozenset[str] = frozenset(),
+    runtime_values: Mapping[str, int | bool] | None = None,
 ) -> TTIRFingerprint:
-    return parse_ttir(text, python_interface=python_interface, schedule=schedule)
+    return parse_ttir(
+        text,
+        python_interface=python_interface,
+        schedule=schedule,
+        representation_anchor_exemptions=representation_anchor_exemptions,
+        runtime_values=runtime_values,
+    )
 
 
 extract_ttir_fingerprint = fingerprint_ttir

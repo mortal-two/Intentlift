@@ -910,6 +910,16 @@ def _remove_redundant_identity_mappings(j: Any, payload: dict[str, Any]) -> None
     if not mappings:
         return
     outputs = {tensor.name for tensor in j.intent.outputs}
+    # An inout identity mapping is not redundant metadata: it is the authored
+    # statement that the post-state of this logical tensor is the observable
+    # output.  Active TypeCheck deliberately requires that statement rather
+    # than deriving it from the ABI, so canonicalization must preserve it.
+    inout_outputs = {
+        parameter.logical_ref
+        for parameter in j.signature.parameters
+        if getattr(parameter.mode, "value", parameter.mode) == "inout"
+        and parameter.logical_ref is not None
+    }
     node_results = _node_results(j)
     stores = [
         access for access in j.boundary.accesses
@@ -927,6 +937,7 @@ def _remove_redundant_identity_mappings(j: Any, payload: dict[str, Any]) -> None
         proven_identity = (
             output == value
             and output in outputs
+            and output not in inout_outputs
             and (
                 node_ref is None
                 or (

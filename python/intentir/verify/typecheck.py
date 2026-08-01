@@ -126,6 +126,7 @@ class TypeCheckErrorCode(str, Enum):
     ROUTE_TYPE_MISMATCH = "route_type_mismatch"
     ROUTE_EXTENT_TRANSFORM_INVALID = "route_extent_transform_invalid"
     PROGRAM_AXIS_BINDING_INVALID = "program_axis_binding_invalid"
+    PI_NORMALIZATION_BINDING_INVALID = "pi_normalization_binding_invalid"
     PROGRAM_LINEARIZATION_INVALID = "program_linearization_invalid"
     TRANSFER_ADDRESS_ROUTE_MISSING = "transfer_address_route_missing"
     INVALID_SHARING = "invalid_sharing"
@@ -4976,6 +4977,175 @@ def _check_program_axes(
             )
 
 
+def _check_normalization_bindings(
+    j: SemanticArchive,
+    c: ImplementationConfig,
+    pi: RealizationWitness,
+    anchors: Mapping[str, _Anchor],
+    node_operations: Mapping[str, Mapping[str, Any]],
+    diagnostics: list[TypeCheckDiagnostic],
+) -> None:
+    """Dependently check the active direct J/C-bound pi relations.
+
+    This checker never discovers or completes a relation.  It only rejects rows
+    whose authored J/C handles cannot denote the closed relation selected by
+    Lift.
+    """
+
+    if pi.wire_schema != NORMALIZATION_WITNESS_SCHEMA:
+        return
+
+    def reject(path: str, detail: str, ref: str | None = None) -> None:
+        diagnostics.append(
+            TypeCheckDiagnostic(
+                TypeCheckErrorCode.PI_NORMALIZATION_BINDING_INVALID,
+                path,
+                detail,
+                ref,
+            )
+        )
+
+    def check_axis(subject_ref: str, axis_ref: int | str, path: str) -> bool:
+        anchor = anchors.get(subject_ref)
+        if anchor is None or anchor.owner != "j" or anchor.kind not in {"domain", "node"}:
+            reject(path, "pi logical axis must name a declared J domain or node", subject_ref)
+            return False
+        allowed = _axis_refs_v1(j, subject_ref, node_operations)
+        if axis_ref not in allowed:
+            reject(
+                path,
+                "pi axis_ref is outside AxisRefs_v1(J,subject_ref)",
+                str(axis_ref),
+            )
+            return False
+        return True
+
+    claimed_program_axes: set[tuple[str, int | str]] = set()
+    for binding_index, binding in enumerate(pi.program_bindings):
+        relation = str(binding["relation"])
+        axes = binding["logical_axes"]
+        if relation == "direct" and len(axes) != 1:
+            reject(
+                f"pi.program_bindings[{binding_index}].logical_axes",
+                "direct program binding requires exactly one logical axis",
+            )
+        if relation in {"product_linearized", "guarded_union"} and len(axes) < 2:
+            reject(
+                f"pi.program_bindings[{binding_index}].logical_axes",
+                f"{relation} requires at least two logical axes",
+            )
+        for axis_index, axis in enumerate(axes):
+            domain_ref = str(axis["domain_ref"])
+            axis_ref = axis["axis_ref"]
+            path = (
+                f"pi.program_bindings[{binding_index}].logical_axes"
+                f"[{axis_index}]"
+            )
+            anchor = anchors.get(domain_ref)
+            if anchor is None or anchor.owner != "j" or anchor.kind != "domain":
+                reject(path, "program binding must name a declared J domain", domain_ref)
+                continue
+            check_axis(domain_ref, axis_ref, f"{path}.axis_ref")
+            key = (domain_ref, axis_ref)
+            if key in claimed_program_axes:
+                reject(path, "one logical J axis cannot have two program bindings", domain_ref)
+            claimed_program_axes.add(key)
+
+    slots = {slot.name: slot for slot in c.slots}
+    for binding_index, binding in enumerate(pi.iteration_bindings):
+        path = f"pi.iteration_bindings[{binding_index}]"
+        relation = str(binding["relation"])
+        axes = binding["logical_axes"]
+        valid_axis_keys: set[tuple[str, int | str]] = set()
+        for axis_index, axis in enumerate(axes):
+            subject_ref = str(axis["subject_ref"])
+            axis_ref = axis["axis_ref"]
+            axis_path = f"{path}.logical_axes[{axis_index}]"
+            if check_axis(subject_ref, axis_ref, f"{axis_path}.axis_ref"):
+                valid_axis_keys.add((subject_ref, axis_ref))
+            anchor = anchors.get(subject_ref)
+            if relation == "tiled_domain" and (
+                anchor is None or anchor.kind != "domain"
+            ):
+                reject(
+                    f"{axis_path}.subject_ref",
+                    "tiled_domain may bind only J boundary domains",
+                    subject_ref,
+                )
+            if relation == "tiled_recurrence":
+                operation = node_operations.get(subject_ref)
+                if anchor is None or anchor.kind != "node" or operation is None or operation.get("op") != "loop":
+                    reject(
+                        f"{axis_path}.subject_ref",
+                        "tiled_recurrence may bind only an authored J loop node",
+                        subject_ref,
+                    )
+
+        tile_slot_ref = str(binding["tile_slot"])
+        tile_slot = slots.get(tile_slot_ref)
+        if tile_slot is None:
+            reject(f"{path}.tile_slot", "iteration tile_slot is not declared by C", tile_slot_ref)
+        else:
+            if tile_slot.role not in _ITERATION_TILE_ROLES:
+                reject(
+                    f"{path}.tile_slot",
+                    "iteration tile_slot must have a closed tile_extent role",
+                    tile_slot_ref,
+                )
+            attachment = (tile_slot.subject_ref, tile_slot.axis_ref)
+            if attachment not in valid_axis_keys:
+                reject(
+                    f"{path}.tile_slot",
+                    "iteration tile_slot must be attached to one authored logical axis",
+                    tile_slot_ref,
+                )
+        mode_slot_ref = binding["mode_slot"]
+        if mode_slot_ref is not None and str(mode_slot_ref) not in slots:
+            reject(
+                f"{path}.mode_slot",
+                "iteration mode_slot is not declared by C",
+                str(mode_slot_ref),
+            )
+
+    for index, binding in enumerate(pi.control_bindings):
+        subject_ref = str(binding["subject_ref"])
+        relation = str(binding["relation"])
+        anchor = anchors.get(subject_ref)
+        allowed_kinds = (
+            {"domain"}
+            if relation == "terminal_domain_guard"
+            else {"node", "effect"}
+        )
+        if anchor is None or anchor.owner != "j" or anchor.kind not in allowed_kinds:
+            reject(
+                f"pi.control_bindings[{index}].subject_ref",
+                f"{relation} requires a J-owned {sorted(allowed_kinds)} anchor",
+                subject_ref,
+            )
+
+    for index, binding in enumerate(pi.materialization_bindings):
+        value_ref = str(binding["value_ref"])
+        anchor = anchors.get(value_ref)
+        if anchor is None or anchor.owner != "j" or anchor.kind not in {
+            "tensor", "value", "loop_state", "node"
+        }:
+            reject(
+                f"pi.materialization_bindings[{index}].value_ref",
+                "materialization binding must name a J value-producing anchor",
+                value_ref,
+            )
+
+    for index, binding in enumerate(pi.access_representation_bindings):
+        access_ref = str(binding["access_ref"])
+        anchor = anchors.get(access_ref)
+        if anchor is None or anchor.owner != "j" or anchor.kind != "access":
+            reject(
+                f"pi.access_representation_bindings[{index}].access_ref",
+                "access representation binding must name a declared J access",
+                access_ref,
+            )
+
+
 def _check_program_coordinate_maps(
     j: SemanticArchive,
     pi: RealizationWitness,
@@ -5041,6 +5211,14 @@ def type_check(
     if not isinstance(pi, RealizationWitness):
         raise TypeError("type_check requires parsed RealizationWitness pi")
 
+    # This contract is about explicit authorship on the submitted wire.  The
+    # canonicalizer intentionally removes redundant identity output mappings,
+    # so inspect the raw authored J before canonicalization rather than
+    # accidentally rejecting the same mapping after it has been normalized.
+    authored_boundary_diagnostics: list[TypeCheckDiagnostic] = []
+    if pi.wire_schema == NORMALIZATION_WITNESS_SCHEMA:
+        _check_fresh_inout_boundary_closure(j, authored_boundary_diagnostics)
+
     signature_diagnostics = _check_signature_mode_partition(j)
     if signature_diagnostics:
         return TypeCheckReport(TypeCheckStatus.FAIL, signature_diagnostics)
@@ -5089,9 +5267,7 @@ def type_check(
             ),
         )
 
-    diagnostics: list[TypeCheckDiagnostic] = []
-    if pi.wire_schema == NORMALIZATION_WITNESS_SCHEMA:
-        _check_fresh_inout_boundary_closure(j, diagnostics)
+    diagnostics: list[TypeCheckDiagnostic] = list(authored_boundary_diagnostics)
     _check_dimension_and_pad_contracts(j, diagnostics)
     _check_value_dimension_relations(j, diagnostics)
     _check_dimension_relations(j, diagnostics)
@@ -5303,6 +5479,14 @@ def type_check(
         _check_physical_loop_carriers(
             pi, node_operations, instance_anchors, diagnostics
         )
+    _check_normalization_bindings(
+        j,
+        c,
+        pi,
+        anchors,
+        node_operations,
+        diagnostics,
+    )
     _check_program_axes(
         j,
         pi,

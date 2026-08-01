@@ -39,7 +39,8 @@ Gate2: Source-Replay && Source-J && Replay-J
 当前静态判断：
 
 - J 已包含 Q/K rotary、gather/scatter、cos/sin、casts、inout effects 与两个 outputs；
-- C 的 `BLOCK_SIZE=64 -> d4/x4` attachment 正确，手工纵切不改 C；
+- C 的 `BLOCK_SIZE=64 -> d0/axis 3` attachment 与 Q feature domain 一致；
+  手工纵切先冻结 C，并要求 iteration binding 同时覆盖 Q/K 对应的同一逻辑 feature 轴；
 - 当前 Gate1 同时混有 program/address realization residual 和 Replay cast/dataflow fidelity residual；
 - 只有前者可由 π consumer 归一；后者必须修 Replay，若 J 本身缺失才返回 relift。
 
@@ -63,8 +64,8 @@ Gate2: Source-Replay && Source-J && Replay-J
 RoPE 纵切至少需要：
 
 - batch×sequence domain 的 product-linearized program binding；
-- head domain 的 direct program binding；
-- `d4/x4 + c0` 的 feature-domain tiling binding；
+- Q/K guarded head domains 的 shared/guarded-union program binding；
+- `d0/axis 3 + c0` 为主锚点、并显式覆盖 `d1/axis 3` 的 feature-domain tiling binding；
 - 只在观测确有 terminal/address/materialization residual 且 fixed consumer 能保守证明时，
   加入对应直接 binding。
 
@@ -99,12 +100,12 @@ ledger 不判断这些事实属于 J/C/π，不建议 relation 或 target；LLM 
 
 ### A. 手工 RoPE 纵切
 
-- [ ] 选定一份 exact RoPE J/C/Replay 并复制到新 evidence root；不改旧 evidence；
-- [ ] 手工作者化直接绑定的 RoPE π；
-- [ ] 实现对应 schema/Decode/dependent checks；
-- [ ] 实现 Triton fixed unary consumer 与 J/C hard-preservation；
-- [ ] 运行真实 Gate1，逐类处理 normalization、Replay fidelity 与 J-hard residual；
-- [ ] Gate1 closure 后运行 Source–Replay、Source–J、Replay–J 三边 Gate2。
+- [x] 选定 RoPE J/C 并复制到新 evidence root；旧 evidence 未改；
+- [x] 手工作者化直接绑定的 RoPE π；
+- [x] 实现对应 schema/Decode/dependent checks；
+- [x] 实现 access/address 的 Triton fixed unary consumer 与仿射 hard-preservation；
+- [x] 真实 Gate1 将错误第三 program axis 判为 Replay fidelity，而非用 π 掩盖；修复后闭合；
+- [x] Gate1 closure 后完成 Source–Replay、Source–J、Replay–J 三边 Gate2。
 
 ### B. 精简 Lift 并自动作者化 π
 
@@ -117,16 +118,17 @@ ledger 不判断这些事实属于 J/C/π，不建议 relation 或 target；LLM 
 
 ## 7. 当前阻塞
 
-1. active π 过度压缩，normalizer 对 program axes 仍是 hard identity；
-2. 尚无 product-linearization 与 domain-tiling 的 fixed unary recognizer；
-3. 尚未将 RoPE Gate1 residual 分成可归一 realization 与必须修 Replay/J 的 hard 类；
-4. Lift Agent 仍承担重复上下文与 dependent JSON 机械成本。
+1. RoPE 所需 access/address consumer 已闭合；program/iteration/control relation 在本次
+   Source/Replay 无对应 residual，仍保持 hard/unused，不能宣称已有通用 quotient；
+2. Lift Agent 尚未自动作者化新的直接绑定 π 与显式 inout output mapping；
+3. Lift workspace 仍承担重复上下文与 dependent JSON 机械成本；
+4. fresh 自动 Lift/Replay 尚未给出 Gate1/Gate2 证据。
 
 ## 8. 真实证据
 
 | 阶段 | Gate1 | Source–Replay | Source–J | Replay–J | evidence |
 |---|---|---|---|---|---|
-| 手工 π 纵切 | pending | pending | pending | pending | pending |
+| 手工 π 纵切 | pass | pass（误差 0） | pass（最大误差 4.8828125e-4） | pass（最大误差 4.8828125e-4） | `/tmp/intentir-rope-pi-consumer-20260801/manual-closure/liger_llama4_rope/recheck-001` |
 | 自动 Lift 闭合 | pending | pending | pending | pending | pending |
 
 ## 9. 完成条件

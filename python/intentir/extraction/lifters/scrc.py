@@ -1036,10 +1036,11 @@ redundant fill to an unconditional access. For a pure-functional boundary with
 any access predicate/fill,
 the observable store-producing op's result type must be uniquely determined by
 the closed op signature and J value graph; an explicit type is optional but, if
-present, must agree. A direct same-handle output needs no identity
-output_mapping. Otherwise author `returns` or `output_mapping`; one suffices and
-both must agree. Deterministic J elaboration checks this binding but never
-chooses its value.
+present, must agree. Every mode=inout logical tensor must explicitly author its
+identity or post-state output_mapping; fixed code never derives it from the ABI.
+For a non-inout direct same-handle output, no identity mapping is needed.
+Otherwise author `returns` or `output_mapping`; one suffices and both must agree.
+Deterministic J elaboration checks this binding but never chooses its value.
 
 When Source contains a compiler-visible semantic recurrence, J must state that
 recurrence rather than only an algebraically equivalent final tensor formula.
@@ -1066,13 +1067,11 @@ visible scalar-i1 predicate and explicit positive/negative `{{scope_id,body}}`
 arms (either may be empty) bound to distinct sibling branch_region scopes. It
 has no result/yield; arm-local SSA never escapes. scope.effects plus matching
 EffectSpec/access_ref is sole membership and cannot overlap access_guard.
-If Source control only multiplexes one physical program axis across multiple
+If Source control only multiplexes one physical program coordinate across multiple
 already-authored J logical domains, it is realization rather than a new Layer-A
-predicate. Keep the computations/effects in J. A compact pi.program_axes row may
-record one directly observed, unambiguous d*-to-axis binding (several d* may share
-the same physical axis), but the current Gate1 profile keeps that identity hard and
-does not use it to rewrite observation. The J domain remains the sole condition;
-pi carries no comparison, extent, polarity, terminal control, or frontend spelling.
+predicate. Keep the computations/effects in J and use only a closed guarded_union
+program binding over those J domain axes. The J domains remain the sole conditions;
+pi carries no comparison, extent, polarity, or frontend spelling.
 Do not invent constant true/false effect_if
 predicates. Source early return driven by an ordinary authored scalar predicate
 must remain explicit J control; compact pi cannot hide or reconstruct it.
@@ -1117,18 +1116,19 @@ reduction/loop/contraction/domain/index/x* axis; never infer it from role, names
 pi, or hardware axes. Global priors may omit both. A C attachment never names
 a p* parameter, source/local, or J-body v*.
 
-Pi is a compact, certification-only normalization witness and never enters
-Replay. Emit exactly two fields: its fixed schema string and program_axes. Use
-an empty program_axes array unless Source TTIR directly and unambiguously grounds
-a declared J domain to one launch axis. The current profile keeps authored rows
-hard; they do not relax Gate1 until a future profile has a sound typed anchor matcher.
-Each program_axes row binds one declared J domain d* to the physical Source/TTIR
-launch axis 0, 1, or 2. Several domains may share an axis; one domain appears at
-most once. Never infer the axis from grid, C, names, or concrete extents.
-Pi cannot encode regions, instances, routes, order, sharing, iteration, carrier,
-terminal control, materialization, refinement, numeric permission, or semantic
-exceptions. Those facts remain explicit in J/C or hard in Gate1. Never add any
-field not present in the supplied closed schema.
+Pi is a certification-only typed normalization witness and never enters Replay.
+Keep required program_axes empty on the active direct-binding path. Author only
+the closed supplied relation families: program_bindings over J domain axes;
+iteration_bindings over J loop/domain axes plus an already attached C tile/mode;
+terminal control or materialization rows over existing J anchors; and access
+representation rows over existing J accesses. Program bindings name logical J
+axes, never physical x/y/z labels; the fixed unary recognizer discovers a unique
+arm-local realization or fails hard. Access representation may change only pointer
+construction and preserves tensor, index polynomial, multiplicity, mask, value and
+effect. Pi cannot encode Source/Replay SSA ids, regions, instances, routes, order,
+sharing, numeric permission, target recipes, free text, allowed diffs or semantic
+exceptions. Query the exact pi schema leaves and raw realization ledger rather than
+guessing fields. Never add a relation that is not directly grounded and bound.
 
 The source is already alpha-renamed. Do not invent or recover original names.
 Output JSON only.

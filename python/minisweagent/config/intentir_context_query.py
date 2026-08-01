@@ -1327,7 +1327,7 @@ def _harness_abi_value(
         "agent_owned_not_inferred": [
             "p* logical_ref and t*/x* ownership",
             "logical operators, control, accesses, effects, and outputs",
-            "each compact pi program-axis row",
+            "each typed pi relation and every J/C handle bound by it",
         ],
         "authority": (
             "Exact read-only projection of harness_view.json. p*/c* ownership, "
@@ -1787,7 +1787,14 @@ _CONTROL_BOUNDARY_FIELDS = (
     "access_guard_relations",
     "result_relations",
 )
-_CONTROL_PI_FIELDS = ("program_axes",)
+_CONTROL_PI_FIELDS = (
+    "program_axes",
+    "program_bindings",
+    "iteration_bindings",
+    "control_bindings",
+    "materialization_bindings",
+    "access_representation_bindings",
+)
 
 
 def _candidate_operand_access_records(
@@ -1991,7 +1998,7 @@ def _candidate_control_value(
             "output_mappings": boundary.get("output_mappings", []),
             "write_or_update_effects": write_effects,
             "access_guard_relations": boundary.get("access_guard_relations", []),
-            "pi_program_axes": pi.get("program_axes", []),
+            "pi": {field: pi.get(field, []) for field in _CONTROL_PI_FIELDS},
             "authority": authority,
         }
     records = _candidate_control_records(candidate, section)
@@ -2024,6 +2031,132 @@ def _candidate_control(
     output_root: Path, section: str, start: int, count: int
 ) -> None:
     _emit_json(_candidate_control_value(output_root, section, start, count))
+
+
+def _realization_ledger(input_root: Path) -> None:
+    """Expose bounded raw physical facts without assigning J/C/pi ownership."""
+
+    observation = _source_ttir_observation(input_root)
+    text = _source_ttir_text(input_root)
+    lines = text.splitlines()
+    program_pattern = re.compile(
+        r'^\s*(?P<result>%[A-Za-z0-9_.$-]+)\s*=\s*'
+        r'(?:"tt\.get_program_id"|tt\.get_program_id)\s+(?P<axis>[xyz])\b'
+    )
+    operation_pattern = re.compile(
+        r'^\s*(?:%[^=]+?\s*=\s*)?(?:"(?P<quoted>[A-Za-z0-9_.-]+)"|'
+        r'(?P<plain>[A-Za-z][A-Za-z0-9_.-]*))\b'
+    )
+    programs: list[dict[str, Any]] = []
+    for line_number, line in enumerate(lines, start=1):
+        match = program_pattern.search(line)
+        if match is None:
+            continue
+        result = match.group("result")
+        users: list[dict[str, Any]] = []
+        token = re.compile(rf'(?<![A-Za-z0-9_.$-]){re.escape(result)}(?![A-Za-z0-9_.$-])')
+        for user_line_number, user_line in enumerate(lines, start=1):
+            if user_line_number == line_number or token.search(user_line) is None:
+                continue
+            operation = operation_pattern.search(user_line)
+            if operation is None:
+                continue
+            users.append(
+                {
+                    "line": user_line_number,
+                    "op": operation.group("quoted") or operation.group("plain"),
+                }
+            )
+        programs.append(
+            {
+                "physical_axis": "xyz".index(match.group("axis")),
+                "result": result,
+                "line": line_number,
+                "direct_users": users[:16],
+                "direct_user_count": len(users),
+            }
+        )
+    fingerprint = observation.get("fingerprint")
+    fingerprint = fingerprint if isinstance(fingerprint, dict) else {}
+    harness = _load_json(input_root / "harness_view.json")
+    memory_counts = {
+        "load": len(re.findall(r'(?m)^\s*(?:%[^=]+?=\s*)?(?:"tt\.load"|tt\.load)\b', text)),
+        "store": len(re.findall(r'(?m)^\s*(?:"tt\.store"|tt\.store)\b', text)),
+        "atomic": len(re.findall(r'(?m)^\s*(?:%[^=]+?=\s*)?(?:"tt\.atomic[^\"]*"|tt\.atomic[A-Za-z0-9_.-]*)\b', text)),
+        "addptr": len(re.findall(r'(?m)^\s*%[^=]+?=\s*(?:"tt\.addptr"|tt\.addptr)\b', text)),
+    }
+    _emit_json(
+        {
+            "protocol": "intentir.lift-realization-ledger",
+            "program_coordinates": programs,
+            "loops": fingerprint.get("loops", []),
+            "terminal_forks": fingerprint.get("terminal_forks", []),
+            "memory_operation_counts": memory_counts,
+            "harness_grid": {
+                key: harness.get(key)
+                for key in ("grid", "grid_contract", "grid_shape_coordinates")
+                if key in harness
+            },
+            "authority": (
+                "Read-only raw Source/TTIR/Harness facts. This ledger does not "
+                "classify semantics, choose J/C/pi ownership, suggest a relation, "
+                "or author any candidate field."
+            ),
+        }
+    )
+
+
+def _candidate_attachments(output_root: Path) -> None:
+    """List only already-authored anchors available for C/pi binding."""
+
+    candidate_path = output_root / "candidate.json"
+    if not candidate_path.is_file():
+        raise FileNotFoundError("/output/candidate.json does not exist")
+    candidate = _load_json(candidate_path)
+    j = candidate.get("j") if isinstance(candidate, dict) else None
+    j = j if isinstance(j, dict) else {}
+    boundary = j.get("boundary")
+    boundary = boundary if isinstance(boundary, dict) else {}
+    c = candidate.get("c") if isinstance(candidate, dict) else None
+    c = c if isinstance(c, dict) else {}
+    pi = candidate.get("pi") if isinstance(candidate, dict) else None
+    pi = pi if isinstance(pi, dict) else {}
+    structured_nodes = [
+        {
+            "node_ref": node.get("id"),
+            "op": node.get("op"),
+            "trip": node.get("trip"),
+        }
+        for _path, node in _iter_candidate_nodes(candidate)
+        if node.get("op") in {"loop", "effect_if", "value_if", "reduce", "scan"}
+    ]
+    accesses = [
+        {
+            key: item.get(key)
+            for key in (
+                "access_id", "kind", "tensor", "node_ref", "index_expression",
+                "predicate", "fill_value",
+            )
+            if key in item
+        }
+        for item in boundary.get("accesses", [])
+        if isinstance(item, dict)
+    ]
+    _emit_json(
+        {
+            "protocol": "intentir.lift-candidate-attachments",
+            "domains": boundary.get("domains", {}),
+            "structured_nodes": structured_nodes,
+            "accesses": accesses,
+            "c_slots": c.get("slots", []),
+            "pi": {field: pi.get(field, []) for field in _CONTROL_PI_FIELDS},
+            "authority": (
+                "Read-only projection of the current LLM-authored candidate. It "
+                "does not derive AxisRefs, add attachments, choose relations, or "
+                "repair any field."
+            ),
+        }
+    )
 
 
 def _candidate_abi(input_root: Path, output_root: Path) -> None:
@@ -2400,6 +2533,7 @@ def main() -> int:
     source_observer = subparsers.add_parser("source-observer")
     source_observer.add_argument("--path")
     subparsers.add_parser("source-brief")
+    subparsers.add_parser("realization-ledger")
     harness = subparsers.add_parser("harness")
     harness.add_argument("--path")
     harness_abi = subparsers.add_parser("harness-abi")
@@ -2417,6 +2551,7 @@ def main() -> int:
     candidate_node = subparsers.add_parser("candidate-node")
     candidate_node.add_argument("node_id")
     subparsers.add_parser("candidate-abi")
+    subparsers.add_parser("candidate-attachments")
     candidate_control = subparsers.add_parser("candidate-control")
     candidate_control.add_argument(
         "--section",
@@ -2470,6 +2605,8 @@ def main() -> int:
         _source_observer(args.input_root, args.path)
     elif args.command == "source-brief":
         _source_brief(args.input_root)
+    elif args.command == "realization-ledger":
+        _realization_ledger(args.input_root)
     elif args.command == "harness":
         _harness(args.input_root, args.path)
     elif args.command == "harness-abi":
@@ -2486,6 +2623,8 @@ def main() -> int:
         _candidate_node(args.output_root, args.node_id)
     elif args.command == "candidate-abi":
         _candidate_abi(args.input_root, args.output_root)
+    elif args.command == "candidate-attachments":
+        _candidate_attachments(args.output_root)
     elif args.command == "candidate-control":
         _candidate_control(
             args.output_root, args.section, args.start, args.count

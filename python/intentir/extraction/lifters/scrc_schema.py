@@ -23,9 +23,14 @@ from intentir.verify.gate1.model import (
     render_gate1_artifact_envelope_grammar,
 )
 from intentir.verify.gate1.pi import (
+    ACCESS_REPRESENTATION_BINDING_RELATIONS,
+    CONTROL_BINDING_RELATIONS,
     ITERATION_BASES,
+    ITERATION_BINDING_RELATIONS,
+    MATERIALIZATION_BINDING_RELATIONS,
     NORMALIZATION_WITNESS_SCHEMA,
     PHYSICAL_ITERATION_DIRECTIONS,
+    PROGRAM_BINDING_RELATIONS,
     REALIZATION_MECHANISMS,
     REPRESENTATION_REFINEMENTS,
     render_realization_mechanism_grammar,
@@ -1020,11 +1025,10 @@ def _legacy_pi_schema() -> dict[str, Any]:
 def _pi_schema() -> dict[str, Any]:
     """Active, certification-only pi subwire offered to Lift.
 
-    Every accepted field has a closed typed meaning.  A profile may normalize it
-    only after implementing a sound unary anchor matcher; the current profile
-    keeps program axes hard.  The legacy realization graph is intentionally
-    absent: new Lift candidates do not serialize regions, instances, routes,
-    carriers, or target recipes.
+    Every accepted field has a closed typed meaning and binds directly to J/C.
+    The legacy realization graph is intentionally absent: new Lift candidates do
+    not serialize regions, instances, routes, carriers, source nodes, or target
+    recipes.
     """
 
     program_axis = _closed_object(
@@ -1043,17 +1047,119 @@ def _pi_schema() -> dict[str, Any]:
         },
         ("domain_ref", "axis"),
     )
+    axis_ref = {
+        "oneOf": [
+            {"type": "integer", "minimum": 0},
+            {"type": "string", "pattern": "^x[0-9]+$"},
+        ]
+    }
+    program_logical_axis = _closed_object(
+        {
+            "domain_ref": {"type": "string", "pattern": "^d[0-9]+$"},
+            "axis_ref": axis_ref,
+        },
+        ("domain_ref", "axis_ref"),
+    )
+    program_binding = _closed_object(
+        {
+            "relation": {
+                "type": "string",
+                "enum": list(PROGRAM_BINDING_RELATIONS),
+            },
+            "logical_axes": {
+                "type": "array",
+                "minItems": 1,
+                "items": program_logical_axis,
+            },
+        },
+        ("relation", "logical_axes"),
+        description=(
+            "Closed program-coordinate realization class over J domain axes. "
+            "No physical Source/Replay axis or coordinate formula is authored."
+        ),
+    )
+    iteration_logical_axis = _closed_object(
+        {
+            "subject_ref": {
+                "type": "string",
+                "pattern": "^(?:d|n)[0-9]+$",
+            },
+            "axis_ref": axis_ref,
+        },
+        ("subject_ref", "axis_ref"),
+    )
+    iteration_binding = _closed_object(
+        {
+            "relation": {
+                "type": "string",
+                "enum": list(ITERATION_BINDING_RELATIONS),
+            },
+            "logical_axes": {
+                "type": "array",
+                "minItems": 1,
+                "items": iteration_logical_axis,
+            },
+            "tile_slot": {"type": "string", "pattern": "^c[0-9]+$"},
+            "mode_slot": _nullable(
+                {"type": "string", "pattern": "^c[0-9]+$"}
+            ),
+        },
+        ("relation", "logical_axes", "tile_slot", "mode_slot"),
+        description=(
+            "Closed equivalence between serial/program tiled realization and "
+            "the named J logical axes under one explicitly attached C tile."
+        ),
+    )
+
+    def anchor_binding(
+        *, relation_values: tuple[str, ...], field: str, pattern: str, description: str
+    ) -> dict[str, Any]:
+        return _closed_object(
+            {
+                "relation": {"type": "string", "enum": list(relation_values)},
+                field: {"type": "string", "pattern": pattern},
+            },
+            ("relation", field),
+            description=description,
+        )
+
+    control_binding = anchor_binding(
+        relation_values=CONTROL_BINDING_RELATIONS,
+        field="subject_ref",
+        pattern="^(?:d|n|e)[0-9]+$",
+        description="Closed terminal-control representation bound to J control/domain/effect.",
+    )
+    materialization_binding = anchor_binding(
+        relation_values=MATERIALIZATION_BINDING_RELATIONS,
+        field="value_ref",
+        pattern="^(?:t|n|s|v)[0-9]+$",
+        description="Closed scratch/recompute representation bound to one J value.",
+    )
+    access_binding = anchor_binding(
+        relation_values=ACCESS_REPRESENTATION_BINDING_RELATIONS,
+        field="access_ref",
+        pattern="^a[0-9]+$",
+        description=(
+            "Closed pointer/address representation bound to one J access; tensor, "
+            "logical index, predicate and effect remain hard."
+        ),
+    )
     return _closed_object(
         {
             "schema": {"const": NORMALIZATION_WITNESS_SCHEMA},
             "program_axes": _array(program_axis),
+            "program_bindings": _array(program_binding),
+            "iteration_bindings": _array(iteration_binding),
+            "control_bindings": _array(control_binding),
+            "materialization_bindings": _array(materialization_binding),
+            "access_representation_bindings": _array(access_binding),
         },
         ("schema", "program_axes"),
         description=(
-            "Compact Gate1-only normalization witness. It never enters Replay. "
-            "Author only directly observed, unambiguous program-axis labels anchored "
-            "in J; use an empty array otherwise. A row does not itself authorize "
-            "normalization, and the current profile keeps it hard."
+            "Gate1-only typed normalization witness. It never enters Replay. "
+            "Author only closed relation kinds directly bound to existing J/C "
+            "handles. Rows contain no source/replay node, target recipe, free-text "
+            "equivalence or allowed diff. Unknown relations remain hard."
         ),
     )
 

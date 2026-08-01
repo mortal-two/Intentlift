@@ -473,6 +473,15 @@ class Gate1Runner:
                     artifact, compile_result.python_interface
                 ),
                 schedule=artifact.c.values,
+                representation_anchor_exemptions=(
+                    normalized.representation_anchor_exemptions
+                ),
+                runtime_values={
+                    name: argument.value
+                    for name, argument in replay_case.arguments.items()
+                    if argument.kind == "scalar"
+                    and isinstance(argument.value, (bool, int))
+                },
             )
         except Exception as exc:
             return Gate1ArmEvidence(
@@ -584,6 +593,15 @@ class Gate1Runner:
                     artifact, source_compile.python_interface
                 ),
                 schedule=artifact.c.values,
+                representation_anchor_exemptions=(
+                    normalized_source.representation_anchor_exemptions
+                ),
+                runtime_values={
+                    name: argument.value
+                    for name, argument in source_case.arguments.items()
+                    if argument.kind == "scalar"
+                    and isinstance(argument.value, (bool, int))
+                },
             )
         except TTIRParseError as exc:
             normal = Gate1ArmEvidence(

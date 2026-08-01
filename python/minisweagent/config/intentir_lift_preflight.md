@@ -24,13 +24,12 @@ constructs or repairs semantic fields.
 5. C contains scheduling slots and values only. Optional attachments name only
    declared J subjects/axes and never add semantics, Source topology, or target
    recipes.
-6. Pi is only:
-   `{"schema":"intentir.pi.normalization-witness.v1","program_axes":[]}`.
-   Add a program-axis row only from an observed Source/TTIR launch axis for one
-   declared J domain. Mixed-radix and other relations remain hard until a fixed
-   unary normalizer is implemented. Pi never contains regions, instances,
-   routes, order, sharing, carriers, terminal
-   control, materialization, refinements, numeric permission, or exceptions.
+6. Pi keeps required `program_axes: []` and may add only supplied closed direct
+   bindings. Every program/iteration/control/materialization/access row names
+   existing J axes/values/accesses and any required attached C slot. It never
+   contains physical SSA ids, formulas, regions, instances, routes, target recipes,
+   numeric permission, free text, allowed diffs, or semantic exceptions. A row
+   whose fixed unary recognizer cannot prove remains hard.
 7. Floating arithmetic outputs normally use `result_relation=tolerance`; exact
    is reserved for contracts that truly require cross-backend exact equality.
 8. Run the static schema validator and `intentir_candidate_check` on the exact

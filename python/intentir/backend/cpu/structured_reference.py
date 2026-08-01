@@ -1076,7 +1076,31 @@ class _Evaluator:
                 result_dtype = np.dtype(numpy_dtype(declared[0]))
                 if np.issubdtype(result_dtype, np.integer):
                     return _integer_divide(left, right, result_dtype)
-            return np.asarray(implementation(left, right))
+            arithmetic = {
+                "add", "sub", "mul", "div", "max", "min", "pow", "atan2"
+            }
+            logical = {
+                "and", "or", "xor", "logical_and", "logical_or", "logical_xor"
+            }
+            if fn in arithmetic and declared is not None:
+                # NumPy's scalar/0-D weak-promotion rules can retain the array's
+                # lower precision (for example f16-array * f32-scalar).  J has
+                # already closed the result dtype, so execute the pointwise op
+                # in that dtype rather than discovering a second type rule here.
+                compute_dtype = np.dtype(numpy_dtype(declared[0]))
+                left_value = np.asarray(left, dtype=compute_dtype)
+                right_value = np.asarray(right, dtype=compute_dtype)
+            elif fn in logical:
+                left_value = np.asarray(left, dtype=np.bool_)
+                right_value = np.asarray(right, dtype=np.bool_)
+            else:
+                promoted = np.result_type(np.asarray(left).dtype, np.asarray(right).dtype)
+                left_value = np.asarray(left, dtype=promoted)
+                right_value = np.asarray(right, dtype=promoted)
+            result = np.asarray(implementation(left_value, right_value))
+            if declared is not None:
+                result = np.asarray(result, dtype=numpy_dtype(declared[0]))
+            return result
         if op.op == "map_unary":
             if set(op.attrs) != {"fn"} or len(op.operands) != 1:
                 raise StructuredReferenceUnsupportedError(
