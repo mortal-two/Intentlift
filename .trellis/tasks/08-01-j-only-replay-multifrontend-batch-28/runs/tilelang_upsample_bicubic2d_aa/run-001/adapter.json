@@ -1,0 +1,29 @@
+{
+  "block": [
+    128,
+    1,
+    1
+  ],
+  "case_id": "tilelang:upsample_bicubic2d_aa",
+  "cuda_arch": "sm_120",
+  "descriptor_sha256": "8247cdab3e2918ba6312828a756224cdd72f38b55c207b3c11e172eef90e5bb8",
+  "dimensions": {},
+  "factory_kwargs": {
+    "threads": 128
+  },
+  "frontend": "tilelang",
+  "grid": [
+    8,
+    8,
+    1
+  ],
+  "grid_contract": [
+    "8",
+    "8",
+    "1"
+  ],
+  "protocol": "intentir.scrc.frontend-dataset-harness.v3",
+  "scalar_values": {},
+  "seed": 344710529,
+  "source_sha256": "b65057ee88c9e1a1bd26adaf92a03e725e903b49c88b3e5f87c14bb3e2c38723"
+}

@@ -1,0 +1,32 @@
+{
+  "block": [
+    1,
+    1,
+    1
+  ],
+  "case_id": "tilelang:masked_attention2d",
+  "cuda_arch": "sm_120",
+  "descriptor_sha256": "37cf85fbd31bb5af1c0e844815a5a83d8e10a43d5b1fd382a62274c72a6f567e",
+  "dimensions": {},
+  "factory_kwargs": {
+    "head_dim": 16,
+    "kv_ctx": 16,
+    "q_ctx": 16,
+    "threads": 128
+  },
+  "frontend": "tilelang",
+  "grid": [
+    16,
+    1,
+    1
+  ],
+  "grid_contract": [
+    "16",
+    "1",
+    "1"
+  ],
+  "protocol": "intentir.scrc.frontend-dataset-harness.v3",
+  "scalar_values": {},
+  "seed": 269842970,
+  "source_sha256": "108290f1fa271e413e33e16c615aeddbfb6f7357e71cb108a01928ffe95fd496"
+}

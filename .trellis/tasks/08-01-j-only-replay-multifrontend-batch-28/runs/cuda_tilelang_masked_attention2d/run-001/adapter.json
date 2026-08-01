@@ -1,0 +1,27 @@
+{
+  "block": [
+    1,
+    1,
+    1
+  ],
+  "case_id": "cuda:tilelang_masked_attention2d",
+  "cuda_arch": "sm_120",
+  "descriptor_sha256": "37cf85fbd31bb5af1c0e844815a5a83d8e10a43d5b1fd382a62274c72a6f567e",
+  "dimensions": {},
+  "factory_kwargs": {},
+  "frontend": "cuda",
+  "grid": [
+    16,
+    1,
+    1
+  ],
+  "grid_contract": [
+    "16",
+    "1",
+    "1"
+  ],
+  "protocol": "intentir.scrc.frontend-dataset-harness.v3",
+  "scalar_values": {},
+  "seed": 281918345,
+  "source_sha256": "0b74db665f65d19ccc6a12456614df90be684361dd733eed004da82c13ef7352"
+}

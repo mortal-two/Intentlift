@@ -1,0 +1,33 @@
+{
+  "block": [
+    128,
+    1,
+    1
+  ],
+  "case_id": "tilelang:gather2d",
+  "cuda_arch": "sm_120",
+  "descriptor_sha256": "aa903b67ea2170c11111f20d713be5d478cb78ae18b4af3e273b48716fb1471d",
+  "dimensions": {
+    "M": 64
+  },
+  "factory_kwargs": {
+    "l": 256,
+    "n": 64,
+    "threads": 128
+  },
+  "frontend": "tilelang",
+  "grid": [
+    256,
+    1,
+    1
+  ],
+  "grid_contract": [
+    "256",
+    "1",
+    "1"
+  ],
+  "protocol": "intentir.scrc.frontend-dataset-harness.v3",
+  "scalar_values": {},
+  "seed": 1415890676,
+  "source_sha256": "a020504d7f07a4a70d1d2af627d3c1e7a73c67e9f5a87504bd6d8f0f9b5a455d"
+}

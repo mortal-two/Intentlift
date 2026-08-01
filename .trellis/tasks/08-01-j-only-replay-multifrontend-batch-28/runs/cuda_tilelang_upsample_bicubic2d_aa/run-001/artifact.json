@@ -1,0 +1,319 @@
+{
+  "c": {
+    "slots": [
+      {
+        "kind": "compiler",
+        "name": "c0",
+        "required": true,
+        "role": "launch_block_x",
+        "value_type": "i32"
+      }
+    ],
+    "values": {
+      "c0": 128
+    }
+  },
+  "j": {
+    "boundary": {
+      "access_guard_relations": [],
+      "accesses": [
+        {
+          "access_id": "a0",
+          "index_expression": "[0, 0, k0, k1]",
+          "kind": "load",
+          "node_ref": "n5",
+          "tensor": "t0"
+        },
+        {
+          "access_id": "a1",
+          "index_expression": "[0, 0, k2, k3]",
+          "kind": "store",
+          "node_ref": "n6",
+          "tensor": "t1"
+        }
+      ],
+      "aliases": [],
+      "broadcasts": [
+        {
+          "axes": [
+            0
+          ],
+          "node_ref": "n2",
+          "operand": "vtwo"
+        },
+        {
+          "axes": [
+            0
+          ],
+          "node_ref": "n4",
+          "operand": "vtwo"
+        }
+      ],
+      "consumer_extensions": [],
+      "domains": {
+        "d0": "(0 <= k0) and (k0 < 4)",
+        "d1": "(0 <= k1) and (k1 < 4)",
+        "d2": "(0 <= k2) and (k2 < 8)",
+        "d3": "(0 <= k3) and (k3 < 8)"
+      },
+      "effects": [
+        {
+          "access_ref": "a0",
+          "effect_id": "e0",
+          "kind": "read",
+          "node_ref": "n5",
+          "target": "t0"
+        },
+        {
+          "access_ref": "a1",
+          "effect_id": "e1",
+          "kind": "write",
+          "node_ref": "n6",
+          "target": "t1"
+        }
+      ],
+      "index_bounds": [
+        {
+          "axis": 2,
+          "data": "t0",
+          "indices": "vih",
+          "node_ref": "n5"
+        },
+        {
+          "axis": 3,
+          "data": "vheight",
+          "indices": "viw",
+          "node_ref": "n6"
+        }
+      ],
+      "output_mappings": [],
+      "realization_authorizations": [],
+      "reductions": [],
+      "result_relations": [
+        {
+          "kind": "exact",
+          "output": "t1"
+        }
+      ],
+      "updates": []
+    },
+    "dimension_constraints": [],
+    "dimension_relations": [],
+    "intent": {
+      "intent_function": {
+        "body": [
+          {
+            "attrs": {
+              "dtype": "i32",
+              "n": 8
+            },
+            "op": "iota",
+            "result": "voh",
+            "type": {
+              "dtype": "i32",
+              "shape": [
+                8
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "dtype": "i32",
+              "shape": [],
+              "value": 2
+            },
+            "op": "const",
+            "result": "vtwo",
+            "type": {
+              "dtype": "i32",
+              "shape": []
+            }
+          },
+          {
+            "attrs": {
+              "fn": "div"
+            },
+            "op": "map_binary",
+            "operands": [
+              "voh",
+              "vtwo"
+            ],
+            "result": "vih",
+            "type": {
+              "dtype": "i32",
+              "shape": [
+                8
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "dtype": "i32",
+              "n": 8
+            },
+            "op": "iota",
+            "result": "vow",
+            "type": {
+              "dtype": "i32",
+              "shape": [
+                8
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "fn": "div"
+            },
+            "op": "map_binary",
+            "operands": [
+              "vow",
+              "vtwo"
+            ],
+            "result": "viw",
+            "type": {
+              "dtype": "i32",
+              "shape": [
+                8
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "axis": 2,
+              "mode": "take"
+            },
+            "op": "gather",
+            "operands": [
+              "t0",
+              "vih"
+            ],
+            "result": "vheight",
+            "type": {
+              "dtype": "f32",
+              "shape": [
+                1,
+                1,
+                8,
+                4
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "axis": 3,
+              "mode": "take"
+            },
+            "op": "gather",
+            "operands": [
+              "vheight",
+              "viw"
+            ],
+            "result": "t1",
+            "type": {
+              "dtype": "f32",
+              "shape": [
+                1,
+                1,
+                8,
+                8
+              ]
+            }
+          }
+        ],
+        "inputs": [
+          {
+            "dtype": "f32",
+            "name": "t0",
+            "shape": [
+              1,
+              1,
+              4,
+              4
+            ]
+          }
+        ],
+        "name": "scrc_j0",
+        "outputs": [
+          {
+            "dtype": "f32",
+            "name": "t1",
+            "shape": [
+              1,
+              1,
+              8,
+              8
+            ]
+          }
+        ]
+      }
+    },
+    "kernel_id": "scrc_k0",
+    "node_ids": {
+      "n0": "body[0]",
+      "n1": "body[1]",
+      "n2": "body[2]",
+      "n3": "body[3]",
+      "n4": "body[4]",
+      "n5": "body[5]",
+      "n6": "body[6]"
+    },
+    "scopes": [
+      {
+        "captures": [],
+        "definitions": [
+          "t0",
+          "t1",
+          "voh",
+          "vtwo",
+          "vih",
+          "vow",
+          "viw",
+          "vheight"
+        ],
+        "effects": [
+          "e0",
+          "e1"
+        ],
+        "kind": "function",
+        "parent_scope": null,
+        "scope_id": "q0"
+      }
+    ],
+    "signature": {
+      "parameters": [
+        {
+          "dtype": "f32",
+          "kind": "pointer",
+          "logical_ref": "t0",
+          "mode": "input",
+          "name": "p0",
+          "rank": 4
+        },
+        {
+          "dtype": "f32",
+          "kind": "pointer",
+          "logical_ref": "t1",
+          "mode": "output",
+          "name": "p1",
+          "rank": 4
+        }
+      ]
+    },
+    "storage": [],
+    "value_dimension_relations": []
+  },
+  "pi": {
+    "program_axes": [
+      {
+        "axis": 0,
+        "domain_ref": "d2"
+      },
+      {
+        "axis": 1,
+        "domain_ref": "d3"
+      }
+    ],
+    "schema": "intentir.pi.normalization-witness.v1"
+  },
+  "schema": "intentir.scrc.artifact.v13"
+}

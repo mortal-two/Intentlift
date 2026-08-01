@@ -1,0 +1,17 @@
+{
+  "case": "cuda:tilelang__attn_fwd",
+  "cohort_memberships": [
+    "g4_attention_masking",
+    "g6_fusion_composition"
+  ],
+  "diagnostics": [],
+  "frontend": "cuda",
+  "lift_agent_calls": 0,
+  "packet_root": [
+    "c",
+    "j",
+    "u_f"
+  ],
+  "pi_visible_to_replay": false,
+  "typecheck": "pass"
+}

@@ -1,0 +1,18 @@
+{
+  "case": "tilelang:transpose2d",
+  "cohort_memberships": [
+    "g3_contraction_epilogue",
+    "g4_attention_masking",
+    "g5_indexing_layout_image"
+  ],
+  "diagnostics": [],
+  "frontend": "tilelang",
+  "lift_agent_calls": 0,
+  "packet_root": [
+    "c",
+    "j",
+    "u_f"
+  ],
+  "pi_visible_to_replay": false,
+  "typecheck": "pass"
+}

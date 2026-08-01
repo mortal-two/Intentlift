@@ -1,0 +1,41 @@
+extern "C" __global__ void scrc_k0(
+    const float* p0,
+    float* p1,
+    const float* p2,
+    const float* p3,
+    const float* p4) {
+  const int v13 = static_cast<int>(blockIdx.x);
+  const float scale = p4[0];
+
+  float masked_logits[16];
+  float row_max = -__builtin_inff();
+
+  for (int v14 = 0; v14 < 16; ++v14) {
+    float dot = 0.0f;
+    for (int v15 = 0; v15 < 16; ++v15) {
+      dot += p2[v13 * 16 + v15] * p0[v14 * 16 + v15];
+    }
+
+    const float scaled = dot * scale;
+    const float masked = (v14 <= v13) ? scaled : -1000000000.0f;
+    masked_logits[v14] = masked;
+    row_max = fmaxf(row_max, masked);
+  }
+
+  float exponentials[16];
+  float row_sum = 0.0f;
+  for (int v14 = 0; v14 < 16; ++v14) {
+    const float value = expf(masked_logits[v14] - row_max);
+    exponentials[v14] = value;
+    row_sum += value;
+  }
+
+  for (int v15 = 0; v15 < 16; ++v15) {
+    float result = 0.0f;
+    for (int v14 = 0; v14 < 16; ++v14) {
+      result += (exponentials[v14] / row_sum) *
+                p3[v14 * 16 + v15];
+    }
+    p1[v13 * 16 + v15] = result;
+  }
+}

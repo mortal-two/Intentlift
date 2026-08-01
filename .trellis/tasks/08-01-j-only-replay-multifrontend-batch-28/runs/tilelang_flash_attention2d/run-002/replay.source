@@ -1,0 +1,56 @@
+import tilelang.language as T
+
+
+@T.prim_func
+def scrc_k0(
+    p0: T.Tensor((64, 64), "float32"),
+    p1: T.Tensor((64, 64), "float32"),
+    p2: T.Tensor((64, 64), "float32"),
+    p3: T.Tensor((1,), "float32"),
+    p4: T.Tensor((64, 64), "float32"),
+):
+    with T.Kernel(64, 64) as (v13, v15):
+        products = T.alloc_fragment((64,), "float32")
+        contraction = T.alloc_fragment((1,), "float32")
+        scores = T.alloc_fragment((64,), "float32")
+        row_max = T.alloc_fragment((1,), "float32")
+        exponentials = T.alloc_fragment((64,), "float32")
+        row_sum = T.alloc_fragment((1,), "float32")
+        output_terms = T.alloc_fragment((64,), "float32")
+        output_sum = T.alloc_fragment((1,), "float32")
+
+        scale = T.float32(p3[0])
+        causal_fill = T.float32(-1000000000.0)
+
+        for v14 in T.serial(64):
+            for v15_inner in T.Parallel(64):
+                lhs = T.float32(p0[v13, v15_inner])
+                rhs = T.float32(p1[v14, v15_inner])
+                products[v15_inner] = lhs * rhs
+            T.fill(contraction, 0.0)
+            T.reduce_sum(products, contraction, dim=0, clear=False)
+            selected_true = T.float32(contraction[0] * scale)
+            selected_false = causal_fill
+            scores[v14] = T.if_then_else(
+                v13 >= v14, selected_true, selected_false
+            )
+
+        T.fill(row_max, -T.infinity("float32"))
+        T.reduce_max(scores, row_max, dim=0, clear=False)
+
+        maximum = T.float32(row_max[0])
+        for v14 in T.Parallel(64):
+            exponentials[v14] = T.exp(scores[v14] - maximum)
+
+        T.fill(row_sum, 0.0)
+        T.reduce_sum(exponentials, row_sum, dim=0, clear=False)
+
+        denominator = T.float32(row_sum[0])
+        for v14 in T.Parallel(64):
+            probability = T.float32(exponentials[v14] / denominator)
+            value = T.float32(p2[v14, v15])
+            output_terms[v14] = probability * value
+
+        T.fill(output_sum, 0.0)
+        T.reduce_sum(output_terms, output_sum, dim=0, clear=False)
+        p4[v13, v15] = output_sum[0]

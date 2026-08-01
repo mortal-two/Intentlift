@@ -1,0 +1,39 @@
+extern "C" __global__ void scrc_k0(
+    const float* p0,
+    float* p1,
+    const float* p2,
+    const float* p3,
+    const float* p4) {
+  const int q = (int)blockIdx.x;
+  const float scale = p4[0];
+
+  float row[64];
+  float row_max = -__int_as_float(0x7f800000);
+
+  for (int k = 0; k < 64; ++k) {
+    float dot = 0.0f;
+    for (int d = 0; d < 64; ++d) {
+      dot += p2[q * 64 + d] * p0[k * 64 + d];
+    }
+
+    const float scaled = dot * scale;
+    const float selected = (k <= q) ? scaled : -1000000000.0f;
+    row[k] = selected;
+    row_max = fmaxf(row_max, selected);
+  }
+
+  float row_sum = 0.0f;
+  for (int k = 0; k < 64; ++k) {
+    const float value = expf(row[k] - row_max);
+    row[k] = value;
+    row_sum += value;
+  }
+
+  for (int d = 0; d < 64; ++d) {
+    float result = 0.0f;
+    for (int k = 0; k < 64; ++k) {
+      result += (row[k] / row_sum) * p3[k * 64 + d];
+    }
+    p1[q * 64 + d] = result;
+  }
+}

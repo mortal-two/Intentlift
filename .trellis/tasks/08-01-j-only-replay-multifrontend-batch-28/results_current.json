@@ -1,6 +1,6 @@
 {
-  "accepted_unique_frontend_run_count": 40,
-  "accepted_unique_pair_count": 20,
+  "accepted_unique_frontend_run_count": 52,
+  "accepted_unique_pair_count": 26,
   "all_lift_agent_calls_zero": true,
   "cohorts": {
     "g1_pointwise_selection": {
@@ -65,10 +65,11 @@
       "accepted": [
         "add_bias2d",
         "relu2d",
+        "transpose2d",
         "copy2d_divmod",
         "where2d"
       ],
-      "accepted_count": 4,
+      "accepted_count": 5,
       "complete": false,
       "member_count": 10,
       "members": [
@@ -86,15 +87,19 @@
     },
     "g4_attention_masking": {
       "accepted": [
+        "_attn_fwd",
+        "flash_attention2d",
+        "masked_attention2d",
         "masked_softmax2d",
         "softmax_inner",
         "row_sum",
         "row_max",
+        "transpose2d",
         "rowmask_where2d",
         "any_kernel_dim"
       ],
-      "accepted_count": 6,
-      "complete": false,
+      "accepted_count": 10,
+      "complete": true,
       "member_count": 10,
       "members": [
         "_attn_fwd",
@@ -111,7 +116,10 @@
     },
     "g5_indexing_layout_image": {
       "accepted": [
+        "gather2d",
+        "transpose2d",
         "copy2d_divmod",
+        "upsample_bicubic2d_aa",
         "any_kernel_dim",
         "rowmask_where2d",
         "where2d",
@@ -119,8 +127,8 @@
         "add_bias2d",
         "clamp2d"
       ],
-      "accepted_count": 7,
-      "complete": false,
+      "accepted_count": 10,
+      "complete": true,
       "member_count": 10,
       "members": [
         "gather2d",
@@ -139,9 +147,12 @@
       "accepted": [
         "layer_norm_residual2d",
         "rms_norm_residual2d",
-        "groupnorm"
+        "groupnorm",
+        "masked_attention2d",
+        "_attn_fwd",
+        "flash_attention2d"
       ],
-      "accepted_count": 3,
+      "accepted_count": 6,
       "complete": false,
       "member_count": 10,
       "members": [
@@ -161,11 +172,14 @@
       "accepted": [
         "floor2d",
         "exp2d",
+        "gather2d",
         "grouped_row_sum2d",
         "layernorm",
-        "rms_norm2d"
+        "rms_norm2d",
+        "masked_attention2d",
+        "upsample_bicubic2d_aa"
       ],
-      "accepted_count": 5,
+      "accepted_count": 8,
       "complete": false,
       "member_count": 10,
       "members": [
@@ -193,26 +207,107 @@
   },
   "pairs": {
     "_attn_fwd": {
-      "accepted": false,
+      "accepted": true,
       "cohort_memberships": [
         "g4_attention_masking",
         "g6_fusion_composition"
       ],
       "cuda": {
-        "accepted": false,
-        "accepted_attempt_count": 0,
-        "attempt_count": 0,
-        "attempts": [],
+        "accepted": true,
+        "accepted_attempt_count": 1,
+        "attempt_count": 1,
+        "attempts": [
+          {
+            "accepted": true,
+            "gate1": "replay_closed",
+            "gate2": "gate2_pass",
+            "run": "run-001",
+            "total_elapsed_ms": 231151.66687965393,
+            "typecheck": "pass"
+          }
+        ],
         "case": "cuda:tilelang__attn_fwd",
-        "selected": null
+        "selected": {
+          "case": "cuda:tilelang__attn_fwd",
+          "cohort_memberships": [
+            "g4_attention_masking",
+            "g6_fusion_composition"
+          ],
+          "frontend": "cuda",
+          "gate1": "replay_closed",
+          "gate1_elapsed_ms": 225356.05144500732,
+          "gate2": "gate2_pass",
+          "gate2_elapsed_ms": 7777.067184448242,
+          "gate2_passed": true,
+          "gate2_process_isolated": true,
+          "gate2_status_counts": {
+            "gate2_pass": 1
+          },
+          "lift_agent_calls": 0,
+          "pi_visible_to_replay": false,
+          "protocol": "intentir.experiment.manual-batch-j-only.v3",
+          "replay_provider_calls": 1,
+          "run": "run-001",
+          "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/cuda_tilelang__attn_fwd/run-001",
+          "total_elapsed_ms": 231151.66687965393,
+          "typecheck": "pass"
+        }
       },
       "tilelang": {
-        "accepted": false,
-        "accepted_attempt_count": 0,
-        "attempt_count": 0,
-        "attempts": [],
+        "accepted": true,
+        "accepted_attempt_count": 1,
+        "attempt_count": 3,
+        "attempts": [
+          {
+            "accepted": false,
+            "gate1": "no_closure",
+            "gate2": null,
+            "run": "run-001",
+            "total_elapsed_ms": 316874.4685649872,
+            "typecheck": "pass"
+          },
+          {
+            "accepted": false,
+            "gate1": "no_closure",
+            "gate2": null,
+            "run": "run-002",
+            "total_elapsed_ms": 269732.94472694397,
+            "typecheck": "pass"
+          },
+          {
+            "accepted": true,
+            "gate1": "replay_closed",
+            "gate2": "gate2_pass",
+            "run": "run-003",
+            "total_elapsed_ms": 336730.2565574646,
+            "typecheck": "pass"
+          }
+        ],
         "case": "tilelang:_attn_fwd",
-        "selected": null
+        "selected": {
+          "case": "tilelang:_attn_fwd",
+          "cohort_memberships": [
+            "g4_attention_masking",
+            "g6_fusion_composition"
+          ],
+          "frontend": "tilelang",
+          "gate1": "replay_closed",
+          "gate1_elapsed_ms": 332157.8776836395,
+          "gate2": "gate2_pass",
+          "gate2_elapsed_ms": 3182.9066276550293,
+          "gate2_passed": true,
+          "gate2_status_counts": {
+            "gate2_pass": 1
+          },
+          "lift_agent_calls": 0,
+          "pi_visible_to_replay": false,
+          "protocol": "intentir.experiment.manual-batch-j-only.v3",
+          "replay_provider_calls": 1,
+          "run": "run-003",
+          "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/tilelang__attn_fwd/run-003",
+          "total_elapsed_ms": 336730.2565574646,
+          "typecheck": "pass"
+        }
       }
     },
     "add2d": {
@@ -875,26 +970,122 @@
       }
     },
     "flash_attention2d": {
-      "accepted": false,
+      "accepted": true,
       "cohort_memberships": [
         "g4_attention_masking",
         "g6_fusion_composition"
       ],
       "cuda": {
-        "accepted": false,
-        "accepted_attempt_count": 0,
-        "attempt_count": 0,
-        "attempts": [],
+        "accepted": true,
+        "accepted_attempt_count": 1,
+        "attempt_count": 3,
+        "attempts": [
+          {
+            "accepted": false,
+            "gate1": "no_closure",
+            "gate2": null,
+            "run": "run-001",
+            "total_elapsed_ms": 2662.428140640259,
+            "typecheck": "pass"
+          },
+          {
+            "accepted": false,
+            "gate1": "no_closure",
+            "gate2": null,
+            "run": "run-002",
+            "total_elapsed_ms": 214098.0191230774,
+            "typecheck": "pass"
+          },
+          {
+            "accepted": true,
+            "gate1": "replay_closed",
+            "gate2": "gate2_pass",
+            "run": "run-003",
+            "total_elapsed_ms": 197337.32438087463,
+            "typecheck": "pass"
+          }
+        ],
         "case": "cuda:tilelang_flash_attention2d",
-        "selected": null
+        "selected": {
+          "case": "cuda:tilelang_flash_attention2d",
+          "cohort_memberships": [
+            "g4_attention_masking",
+            "g6_fusion_composition"
+          ],
+          "frontend": "cuda",
+          "gate1": "replay_closed",
+          "gate1_elapsed_ms": 190498.1575012207,
+          "gate2": "gate2_pass",
+          "gate2_elapsed_ms": 5767.999887466431,
+          "gate2_passed": true,
+          "gate2_status_counts": {
+            "gate2_pass": 1
+          },
+          "lift_agent_calls": 0,
+          "pi_visible_to_replay": false,
+          "protocol": "intentir.experiment.manual-batch-j-only.v3",
+          "replay_provider_calls": 1,
+          "run": "run-003",
+          "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/cuda_tilelang_flash_attention2d/run-003",
+          "total_elapsed_ms": 197337.32438087463,
+          "typecheck": "pass"
+        }
       },
       "tilelang": {
-        "accepted": false,
-        "accepted_attempt_count": 0,
-        "attempt_count": 0,
-        "attempts": [],
+        "accepted": true,
+        "accepted_attempt_count": 1,
+        "attempt_count": 3,
+        "attempts": [
+          {
+            "accepted": false,
+            "gate1": "no_closure",
+            "gate2": null,
+            "run": "run-001",
+            "total_elapsed_ms": 4791.175365447998,
+            "typecheck": "pass"
+          },
+          {
+            "accepted": false,
+            "gate1": "no_closure",
+            "gate2": null,
+            "run": "run-002",
+            "total_elapsed_ms": 333455.0881385803,
+            "typecheck": "pass"
+          },
+          {
+            "accepted": true,
+            "gate1": "replay_closed",
+            "gate2": "gate2_pass",
+            "run": "run-003",
+            "total_elapsed_ms": 185816.41626358032,
+            "typecheck": "pass"
+          }
+        ],
         "case": "tilelang:flash_attention2d",
-        "selected": null
+        "selected": {
+          "case": "tilelang:flash_attention2d",
+          "cohort_memberships": [
+            "g4_attention_masking",
+            "g6_fusion_composition"
+          ],
+          "frontend": "tilelang",
+          "gate1": "replay_closed",
+          "gate1_elapsed_ms": 180518.57948303223,
+          "gate2": "gate2_pass",
+          "gate2_elapsed_ms": 4048.887252807617,
+          "gate2_passed": true,
+          "gate2_status_counts": {
+            "gate2_pass": 1
+          },
+          "lift_agent_calls": 0,
+          "pi_visible_to_replay": false,
+          "protocol": "intentir.experiment.manual-batch-j-only.v3",
+          "replay_provider_calls": 1,
+          "run": "run-003",
+          "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/tilelang_flash_attention2d/run-003",
+          "total_elapsed_ms": 185816.41626358032,
+          "typecheck": "pass"
+        }
       }
     },
     "floor2d": {
@@ -1017,26 +1208,98 @@
       }
     },
     "gather2d": {
-      "accepted": false,
+      "accepted": true,
       "cohort_memberships": [
         "g5_indexing_layout_image",
         "g7_cross_feature_stress"
       ],
       "cuda": {
-        "accepted": false,
-        "accepted_attempt_count": 0,
-        "attempt_count": 0,
-        "attempts": [],
+        "accepted": true,
+        "accepted_attempt_count": 1,
+        "attempt_count": 2,
+        "attempts": [
+          {
+            "accepted": false,
+            "gate1": "no_closure",
+            "gate2": null,
+            "run": "run-001",
+            "total_elapsed_ms": 128741.85514450073,
+            "typecheck": "pass"
+          },
+          {
+            "accepted": true,
+            "gate1": "replay_closed",
+            "gate2": "gate2_pass",
+            "run": "run-002",
+            "total_elapsed_ms": 62082.600355148315,
+            "typecheck": "pass"
+          }
+        ],
         "case": "cuda:tilelang_gather2d",
-        "selected": null
+        "selected": {
+          "case": "cuda:tilelang_gather2d",
+          "cohort_memberships": [
+            "g5_indexing_layout_image",
+            "g7_cross_feature_stress"
+          ],
+          "frontend": "cuda",
+          "gate1": "replay_closed",
+          "gate1_elapsed_ms": 55756.1936378479,
+          "gate2": "gate2_pass",
+          "gate2_elapsed_ms": 5217.948198318481,
+          "gate2_passed": true,
+          "gate2_status_counts": {
+            "gate2_pass": 1
+          },
+          "lift_agent_calls": 0,
+          "pi_visible_to_replay": false,
+          "protocol": "intentir.experiment.manual-batch-j-only.v3",
+          "replay_provider_calls": 1,
+          "run": "run-002",
+          "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/cuda_tilelang_gather2d/run-002",
+          "total_elapsed_ms": 62082.600355148315,
+          "typecheck": "pass"
+        }
       },
       "tilelang": {
-        "accepted": false,
-        "accepted_attempt_count": 0,
-        "attempt_count": 0,
-        "attempts": [],
+        "accepted": true,
+        "accepted_attempt_count": 1,
+        "attempt_count": 1,
+        "attempts": [
+          {
+            "accepted": true,
+            "gate1": "replay_closed",
+            "gate2": "gate2_pass",
+            "run": "run-001",
+            "total_elapsed_ms": 130349.60341453552,
+            "typecheck": "pass"
+          }
+        ],
         "case": "tilelang:gather2d",
-        "selected": null
+        "selected": {
+          "case": "tilelang:gather2d",
+          "cohort_memberships": [
+            "g5_indexing_layout_image",
+            "g7_cross_feature_stress"
+          ],
+          "frontend": "tilelang",
+          "gate1": "replay_closed",
+          "gate1_elapsed_ms": 126345.60132026672,
+          "gate2": "gate2_pass",
+          "gate2_elapsed_ms": 3088.6571407318115,
+          "gate2_passed": true,
+          "gate2_status_counts": {
+            "gate2_pass": 1
+          },
+          "lift_agent_calls": 0,
+          "pi_visible_to_replay": false,
+          "protocol": "intentir.experiment.manual-batch-j-only.v3",
+          "replay_provider_calls": 1,
+          "run": "run-001",
+          "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/tilelang_gather2d/run-001",
+          "total_elapsed_ms": 130349.60341453552,
+          "typecheck": "pass"
+        }
       }
     },
     "gemm": {
@@ -1515,27 +1778,125 @@
       }
     },
     "masked_attention2d": {
-      "accepted": false,
+      "accepted": true,
       "cohort_memberships": [
         "g4_attention_masking",
         "g6_fusion_composition",
         "g7_cross_feature_stress"
       ],
       "cuda": {
-        "accepted": false,
-        "accepted_attempt_count": 0,
-        "attempt_count": 0,
-        "attempts": [],
+        "accepted": true,
+        "accepted_attempt_count": 1,
+        "attempt_count": 3,
+        "attempts": [
+          {
+            "accepted": false,
+            "gate1": "no_closure",
+            "gate2": null,
+            "run": "run-001",
+            "total_elapsed_ms": 2541.372537612915,
+            "typecheck": "pass"
+          },
+          {
+            "accepted": false,
+            "gate1": "no_closure",
+            "gate2": null,
+            "run": "run-002",
+            "total_elapsed_ms": 182022.6457118988,
+            "typecheck": "pass"
+          },
+          {
+            "accepted": true,
+            "gate1": "replay_closed",
+            "gate2": "gate2_pass",
+            "run": "run-003",
+            "total_elapsed_ms": 155673.49314689636,
+            "typecheck": "pass"
+          }
+        ],
         "case": "cuda:tilelang_masked_attention2d",
-        "selected": null
+        "selected": {
+          "case": "cuda:tilelang_masked_attention2d",
+          "cohort_memberships": [
+            "g4_attention_masking",
+            "g6_fusion_composition",
+            "g7_cross_feature_stress"
+          ],
+          "frontend": "cuda",
+          "gate1": "replay_closed",
+          "gate1_elapsed_ms": 148937.5455379486,
+          "gate2": "gate2_pass",
+          "gate2_elapsed_ms": 5661.220073699951,
+          "gate2_passed": true,
+          "gate2_status_counts": {
+            "gate2_pass": 1
+          },
+          "lift_agent_calls": 0,
+          "pi_visible_to_replay": false,
+          "protocol": "intentir.experiment.manual-batch-j-only.v3",
+          "replay_provider_calls": 1,
+          "run": "run-003",
+          "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/cuda_tilelang_masked_attention2d/run-003",
+          "total_elapsed_ms": 155673.49314689636,
+          "typecheck": "pass"
+        }
       },
       "tilelang": {
-        "accepted": false,
-        "accepted_attempt_count": 0,
-        "attempt_count": 0,
-        "attempts": [],
+        "accepted": true,
+        "accepted_attempt_count": 1,
+        "attempt_count": 3,
+        "attempts": [
+          {
+            "accepted": false,
+            "gate1": "no_closure",
+            "gate2": null,
+            "run": "run-001",
+            "total_elapsed_ms": 6107.665538787842,
+            "typecheck": "pass"
+          },
+          {
+            "accepted": false,
+            "gate1": "no_closure",
+            "gate2": null,
+            "run": "run-002",
+            "total_elapsed_ms": 233225.91495513916,
+            "typecheck": "pass"
+          },
+          {
+            "accepted": true,
+            "gate1": "replay_closed",
+            "gate2": "gate2_pass",
+            "run": "run-003",
+            "total_elapsed_ms": 204196.57039642334,
+            "typecheck": "pass"
+          }
+        ],
         "case": "tilelang:masked_attention2d",
-        "selected": null
+        "selected": {
+          "case": "tilelang:masked_attention2d",
+          "cohort_memberships": [
+            "g4_attention_masking",
+            "g6_fusion_composition",
+            "g7_cross_feature_stress"
+          ],
+          "frontend": "tilelang",
+          "gate1": "replay_closed",
+          "gate1_elapsed_ms": 198700.60396194458,
+          "gate2": "gate2_pass",
+          "gate2_elapsed_ms": 4264.452934265137,
+          "gate2_passed": true,
+          "gate2_status_counts": {
+            "gate2_pass": 1
+          },
+          "lift_agent_calls": 0,
+          "pi_visible_to_replay": false,
+          "protocol": "intentir.experiment.manual-batch-j-only.v3",
+          "replay_provider_calls": 1,
+          "run": "run-003",
+          "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/tilelang_masked_attention2d/run-003",
+          "total_elapsed_ms": 204196.57039642334,
+          "typecheck": "pass"
+        }
       }
     },
     "masked_softmax2d": {
@@ -2463,50 +2824,212 @@
       }
     },
     "transpose2d": {
-      "accepted": false,
+      "accepted": true,
       "cohort_memberships": [
         "g3_contraction_epilogue",
         "g4_attention_masking",
         "g5_indexing_layout_image"
       ],
       "cuda": {
-        "accepted": false,
-        "accepted_attempt_count": 0,
-        "attempt_count": 0,
-        "attempts": [],
+        "accepted": true,
+        "accepted_attempt_count": 1,
+        "attempt_count": 1,
+        "attempts": [
+          {
+            "accepted": true,
+            "gate1": "replay_closed",
+            "gate2": "gate2_pass",
+            "run": "run-001",
+            "total_elapsed_ms": 70053.77721786499,
+            "typecheck": "pass"
+          }
+        ],
         "case": "cuda:tilelang_transpose2d",
-        "selected": null
+        "selected": {
+          "case": "cuda:tilelang_transpose2d",
+          "cohort_memberships": [
+            "g3_contraction_epilogue",
+            "g4_attention_masking",
+            "g5_indexing_layout_image"
+          ],
+          "frontend": "cuda",
+          "gate1": "replay_closed",
+          "gate1_elapsed_ms": 63217.63324737549,
+          "gate2": "gate2_pass",
+          "gate2_elapsed_ms": 5833.8470458984375,
+          "gate2_passed": true,
+          "gate2_status_counts": {
+            "gate2_pass": 1
+          },
+          "lift_agent_calls": 0,
+          "pi_visible_to_replay": false,
+          "protocol": "intentir.experiment.manual-batch-j-only.v3",
+          "replay_provider_calls": 1,
+          "run": "run-001",
+          "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/cuda_tilelang_transpose2d/run-001",
+          "total_elapsed_ms": 70053.77721786499,
+          "typecheck": "pass"
+        }
       },
       "tilelang": {
-        "accepted": false,
-        "accepted_attempt_count": 0,
-        "attempt_count": 0,
-        "attempts": [],
+        "accepted": true,
+        "accepted_attempt_count": 1,
+        "attempt_count": 1,
+        "attempts": [
+          {
+            "accepted": true,
+            "gate1": "replay_closed",
+            "gate2": "gate2_pass",
+            "run": "run-001",
+            "total_elapsed_ms": 142608.05869102478,
+            "typecheck": "pass"
+          }
+        ],
         "case": "tilelang:transpose2d",
-        "selected": null
+        "selected": {
+          "case": "tilelang:transpose2d",
+          "cohort_memberships": [
+            "g3_contraction_epilogue",
+            "g4_attention_masking",
+            "g5_indexing_layout_image"
+          ],
+          "frontend": "tilelang",
+          "gate1": "replay_closed",
+          "gate1_elapsed_ms": 137804.68082427979,
+          "gate2": "gate2_pass",
+          "gate2_elapsed_ms": 3668.898820877075,
+          "gate2_passed": true,
+          "gate2_status_counts": {
+            "gate2_pass": 1
+          },
+          "lift_agent_calls": 0,
+          "pi_visible_to_replay": false,
+          "protocol": "intentir.experiment.manual-batch-j-only.v3",
+          "replay_provider_calls": 1,
+          "run": "run-001",
+          "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/tilelang_transpose2d/run-001",
+          "total_elapsed_ms": 142608.05869102478,
+          "typecheck": "pass"
+        }
       }
     },
     "upsample_bicubic2d_aa": {
-      "accepted": false,
+      "accepted": true,
       "cohort_memberships": [
         "g5_indexing_layout_image",
         "g7_cross_feature_stress"
       ],
       "cuda": {
-        "accepted": false,
-        "accepted_attempt_count": 0,
-        "attempt_count": 0,
-        "attempts": [],
+        "accepted": true,
+        "accepted_attempt_count": 1,
+        "attempt_count": 4,
+        "attempts": [
+          {
+            "accepted": false,
+            "gate1": "no_closure",
+            "gate2": null,
+            "run": "run-001",
+            "total_elapsed_ms": 111460.76250076294,
+            "typecheck": "pass"
+          },
+          {
+            "accepted": false,
+            "gate1": "no_closure",
+            "gate2": null,
+            "run": "run-002",
+            "total_elapsed_ms": 114283.09798240662,
+            "typecheck": "pass"
+          },
+          {
+            "accepted": false,
+            "gate1": "no_closure",
+            "gate2": null,
+            "run": "run-003",
+            "total_elapsed_ms": 91425.705909729,
+            "typecheck": "pass"
+          },
+          {
+            "accepted": true,
+            "gate1": "replay_closed",
+            "gate2": "gate2_pass",
+            "run": "run-004",
+            "total_elapsed_ms": 175579.58316802979,
+            "typecheck": "pass"
+          }
+        ],
         "case": "cuda:tilelang_upsample_bicubic2d_aa",
-        "selected": null
+        "selected": {
+          "case": "cuda:tilelang_upsample_bicubic2d_aa",
+          "cohort_memberships": [
+            "g5_indexing_layout_image",
+            "g7_cross_feature_stress"
+          ],
+          "frontend": "cuda",
+          "gate1": "replay_closed",
+          "gate1_elapsed_ms": 169664.81113433838,
+          "gate2": "gate2_pass",
+          "gate2_elapsed_ms": 5635.5719566345215,
+          "gate2_passed": true,
+          "gate2_status_counts": {
+            "gate2_pass": 1
+          },
+          "lift_agent_calls": 0,
+          "pi_visible_to_replay": false,
+          "protocol": "intentir.experiment.manual-batch-j-only.v3",
+          "replay_provider_calls": 1,
+          "run": "run-004",
+          "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/cuda_tilelang_upsample_bicubic2d_aa/run-004",
+          "total_elapsed_ms": 175579.58316802979,
+          "typecheck": "pass"
+        }
       },
       "tilelang": {
-        "accepted": false,
-        "accepted_attempt_count": 0,
-        "attempt_count": 0,
-        "attempts": [],
+        "accepted": true,
+        "accepted_attempt_count": 2,
+        "attempt_count": 2,
+        "attempts": [
+          {
+            "accepted": true,
+            "gate1": "replay_closed",
+            "gate2": "gate2_pass",
+            "run": "run-001",
+            "total_elapsed_ms": 105724.39002990723,
+            "typecheck": "pass"
+          },
+          {
+            "accepted": true,
+            "gate1": "replay_closed",
+            "gate2": "gate2_pass",
+            "run": "run-002",
+            "total_elapsed_ms": 129025.56848526001,
+            "typecheck": "pass"
+          }
+        ],
         "case": "tilelang:upsample_bicubic2d_aa",
-        "selected": null
+        "selected": {
+          "case": "tilelang:upsample_bicubic2d_aa",
+          "cohort_memberships": [
+            "g5_indexing_layout_image",
+            "g7_cross_feature_stress"
+          ],
+          "frontend": "tilelang",
+          "gate1": "replay_closed",
+          "gate1_elapsed_ms": 124600.28147697449,
+          "gate2": "gate2_pass",
+          "gate2_elapsed_ms": 4101.898193359375,
+          "gate2_passed": true,
+          "gate2_status_counts": {
+            "gate2_pass": 1
+          },
+          "lift_agent_calls": 0,
+          "pi_visible_to_replay": false,
+          "protocol": "intentir.experiment.manual-batch-j-only.v3",
+          "replay_provider_calls": 1,
+          "run": "run-002",
+          "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/tilelang_upsample_bicubic2d_aa/run-002",
+          "total_elapsed_ms": 129025.56848526001,
+          "typecheck": "pass"
+        }
       }
     },
     "where2d": {

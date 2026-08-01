@@ -1,0 +1,55 @@
+extern "C" __global__ void scrc_k0(
+    const float* p0,
+    float* p1,
+    const float* p2,
+    const float* p3,
+    const float* p4) {
+  const int q = (int)blockIdx.x;
+  const int d = (int)blockIdx.y;
+  const int k = (int)threadIdx.x;
+
+  __shared__ float reduction[64];
+
+  float dot = 0.0f;
+  for (int r = 0; r < 64; ++r) {
+    dot += p2[q * 64 + r] * p0[k * 64 + r];
+  }
+
+  const float scaled = dot * p4[0];
+  const float selected = (k <= q) ? scaled : -1000000000.0f;
+
+  reduction[k] = fmaxf(-__int_as_float(0x7f800000), selected);
+  __syncthreads();
+  for (int offset = 32; offset > 0; offset >>= 1) {
+    if (k < offset) {
+      reduction[k] = fmaxf(reduction[k], reduction[k + offset]);
+    }
+    __syncthreads();
+  }
+  const float row_max = reduction[0];
+
+  const float numerator = expf(selected - row_max);
+  reduction[k] = 0.0f + numerator;
+  __syncthreads();
+  for (int offset = 32; offset > 0; offset >>= 1) {
+    if (k < offset) {
+      reduction[k] += reduction[k + offset];
+    }
+    __syncthreads();
+  }
+  const float denominator = reduction[0];
+
+  const float weighted = (numerator / denominator) * p3[k * 64 + d];
+  reduction[k] = 0.0f + weighted;
+  __syncthreads();
+  for (int offset = 32; offset > 0; offset >>= 1) {
+    if (k < offset) {
+      reduction[k] += reduction[k + offset];
+    }
+    __syncthreads();
+  }
+
+  if (k == 0) {
+    p1[q * 64 + d] = reduction[0];
+  }
+}

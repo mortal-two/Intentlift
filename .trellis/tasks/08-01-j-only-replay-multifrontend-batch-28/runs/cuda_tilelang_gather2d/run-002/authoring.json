@@ -1,0 +1,139 @@
+{
+  "cases": [
+    "tilelang:gather2d",
+    "cuda:tilelang_gather2d"
+  ],
+  "claim_scope": "Shared sections are measured equality after independent Source audit. The historical upsample name does not override its observed nearest neighbor computation.",
+  "frontend_deltas": {
+    "cuda": {
+      "c": {
+        "slots": [
+          {
+            "kind": "compiler",
+            "name": "c0",
+            "required": true,
+            "role": "launch_block_x",
+            "value_type": "i32"
+          }
+        ],
+        "values": {
+          "c0": 128
+        }
+      },
+      "signature": {
+        "parameters": [
+          {
+            "dtype": "i32",
+            "kind": "pointer",
+            "logical_ref": "t0",
+            "mode": "input",
+            "name": "p0",
+            "rank": 1
+          },
+          {
+            "dtype": "f32",
+            "kind": "pointer",
+            "logical_ref": "t1",
+            "mode": "input",
+            "name": "p1",
+            "rank": 2
+          },
+          {
+            "dtype": "f32",
+            "kind": "pointer",
+            "logical_ref": "t4",
+            "mode": "output",
+            "name": "p2",
+            "rank": 1
+          },
+          {
+            "dtype": "i32",
+            "kind": "pointer",
+            "logical_ref": "t2",
+            "mode": "input",
+            "name": "p3",
+            "rank": 1
+          },
+          {
+            "dtype": "i32",
+            "kind": "scalar",
+            "logical_ref": "t3",
+            "mode": "value",
+            "name": "p4",
+            "rank": 0
+          }
+        ]
+      }
+    },
+    "tilelang": {
+      "c": {
+        "slots": [
+          {
+            "kind": "compiler",
+            "name": "c0",
+            "required": true,
+            "role": "launch_block_x",
+            "value_type": "i32"
+          }
+        ],
+        "values": {
+          "c0": 128
+        }
+      },
+      "signature": {
+        "parameters": [
+          {
+            "dtype": "f32",
+            "kind": "tensor",
+            "logical_ref": "t0",
+            "mode": "input",
+            "name": "p0",
+            "rank": 2
+          },
+          {
+            "dtype": "i32",
+            "kind": "tensor",
+            "logical_ref": "t1",
+            "mode": "input",
+            "name": "p1",
+            "rank": 1
+          },
+          {
+            "dtype": "i32",
+            "kind": "tensor",
+            "logical_ref": "t2",
+            "mode": "input",
+            "name": "p2",
+            "rank": 1
+          },
+          {
+            "dtype": "f32",
+            "kind": "tensor",
+            "logical_ref": "t3",
+            "mode": "output",
+            "name": "p3",
+            "rank": 1
+          }
+        ]
+      }
+    }
+  },
+  "lift_agent_calls": 0,
+  "pi": {
+    "program_axes": [
+      {
+        "axis": 0,
+        "domain_ref": "d0"
+      }
+    ],
+    "schema": "intentir.pi.normalization-witness.v1"
+  },
+  "protocol": "intentir.experiment.manual-paired-authoring.v2",
+  "shared_sections": [
+    "storage",
+    "dimension_constraints",
+    "dimension_relations"
+  ],
+  "source_aware_author": "primary Codex agent",
+  "stem": "gather2d"
+}

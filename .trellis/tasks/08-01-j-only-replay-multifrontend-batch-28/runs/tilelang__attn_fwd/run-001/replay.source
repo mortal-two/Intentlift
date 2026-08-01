@@ -1,0 +1,46 @@
+import tilelang.language as T
+
+
+@T.prim_func
+def scrc_k0(
+    p0: T.Tensor((1, 1, 16, 16), "float32"),
+    p1: T.Tensor((1, 1, 16, 16), "float32"),
+    p2: T.Tensor((1, 1, 16, 16), "float32"),
+    p3: T.Tensor((1, 1, 16, 16), "float32"),
+    p4: T.Tensor((1,), "float32"),
+    p5: T.Tensor((1, 1, 16, 16), "float32"),
+):
+    with T.Kernel(1, 1, 16, threads=c0) as (v9, v10, v11):
+        scale = T.alloc_local((1,), "float32")
+        scores = T.alloc_fragment((16,), "float32")
+        row_max = T.alloc_fragment((1,), "float32")
+        row_sum = T.alloc_fragment((1,), "float32")
+        probabilities = T.alloc_shared((16,), "float32")
+        output_value = T.alloc_local((1,), "float32")
+
+        scale[0] = T.float32(p4[0])
+
+        for v12 in T.Parallel(16):
+            scores[v12] = T.float32(0.0)
+            for v13 in T.serial(16):
+                scores[v12] += p0[v9, v10, v11, v13] * p1[v9, v10, v12, v13]
+            scores[v12] = (scores[v12] + p3[v9, v10, v11, v12]) * scale[0]
+
+        T.reduce_max(scores, row_max, dim=0, clear=True)
+
+        for v12 in T.Parallel(16):
+            scores[v12] = T.exp(scores[v12] - row_max[0])
+
+        T.reduce_sum(scores, row_sum, dim=0, clear=True)
+
+        for v12 in T.Parallel(16):
+            scores[v12] = scores[v12] / row_sum[0]
+
+        T.copy(scores, probabilities)
+        T.sync_threads()
+
+        for v13 in T.Parallel(16):
+            output_value[0] = T.float32(0.0)
+            for v12 in T.serial(16):
+                output_value[0] += probabilities[v12] * p2[v9, v10, v12, v13]
+            p5[v9, v10, v11, v13] = output_value[0]

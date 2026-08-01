@@ -1,0 +1,33 @@
+{
+  "block": [
+    1,
+    1,
+    1
+  ],
+  "case_id": "tilelang:flash_attention2d",
+  "cuda_arch": "sm_120",
+  "descriptor_sha256": "ff1d58a824edcc91311dafd347667b249fda8b5d92ffb58f672fd8cb4b75f99a",
+  "dimensions": {},
+  "factory_kwargs": {
+    "block_kv": 16,
+    "head_dim": 64,
+    "kv_ctx": 64,
+    "q_ctx": 64,
+    "threads": 128
+  },
+  "frontend": "tilelang",
+  "grid": [
+    64,
+    1,
+    1
+  ],
+  "grid_contract": [
+    "64",
+    "1",
+    "1"
+  ],
+  "protocol": "intentir.scrc.frontend-dataset-harness.v3",
+  "scalar_values": {},
+  "seed": 2076129787,
+  "source_sha256": "57e89999287b4a6b2a897cbbdbe8a7fa6ed89402bff5b81b3676a9a5880e8ccf"
+}

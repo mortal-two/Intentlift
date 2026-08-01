@@ -1,0 +1,10 @@
+import tilelang.language as T
+
+
+@T.prim_func
+def scrc_k0(
+    p0: T.Tensor((1, 1, 4, 4), "float32"),
+    p1: T.Tensor((1, 1, 8, 8), "float32"),
+):
+    with T.Kernel(8, 8, threads=c0) as (v9, v10):
+        p1[0, 0, v9, v10] = p0[0, 0, v9 // 2, v10 // 2]

@@ -1,13 +1,30 @@
 {
   "all_j_only": true,
   "all_typecheck_passed": true,
-  "case_count": 1,
+  "case_count": 2,
   "cases": [
     {
-      "case": "cuda:tilelang_groupnorm",
+      "case": "tilelang:upsample_bicubic2d_aa",
       "cohort_memberships": [
-        "g2_reduction_statistics_normalization",
-        "g6_fusion_composition"
+        "g5_indexing_layout_image",
+        "g7_cross_feature_stress"
+      ],
+      "diagnostics": [],
+      "frontend": "tilelang",
+      "lift_agent_calls": 0,
+      "packet_root": [
+        "c",
+        "j",
+        "u_f"
+      ],
+      "pi_visible_to_replay": false,
+      "typecheck": "pass"
+    },
+    {
+      "case": "cuda:tilelang_upsample_bicubic2d_aa",
+      "cohort_memberships": [
+        "g5_indexing_layout_image",
+        "g7_cross_feature_stress"
       ],
       "diagnostics": [],
       "frontend": "cuda",

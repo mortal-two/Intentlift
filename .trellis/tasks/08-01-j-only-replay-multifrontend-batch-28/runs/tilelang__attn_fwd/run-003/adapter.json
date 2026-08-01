@@ -1,0 +1,38 @@
+{
+  "block": [
+    128,
+    1,
+    1
+  ],
+  "case_id": "tilelang:_attn_fwd",
+  "cuda_arch": "sm_120",
+  "descriptor_sha256": "77bfaf85aaca4441c54c12821bfdda5ca983a014308703ab34108dedfe404d0a",
+  "dimensions": {},
+  "factory_kwargs": {
+    "accum_dtype": "float32",
+    "head_dim": 16,
+    "in_dtype": "float16",
+    "kv_ctx": 16,
+    "kv_numhead": 1,
+    "out_dtype": "float16",
+    "q_ctx": 16,
+    "q_numhead": 1,
+    "threads": 128,
+    "z": 1
+  },
+  "frontend": "tilelang",
+  "grid": [
+    16,
+    1,
+    1
+  ],
+  "grid_contract": [
+    "16",
+    "1",
+    "1"
+  ],
+  "protocol": "intentir.scrc.frontend-dataset-harness.v3",
+  "scalar_values": {},
+  "seed": 1317222727,
+  "source_sha256": "fc77e17c245f18251ea3261943ee74c4c10d94589f6f2e0226c47316c201ba8d"
+}

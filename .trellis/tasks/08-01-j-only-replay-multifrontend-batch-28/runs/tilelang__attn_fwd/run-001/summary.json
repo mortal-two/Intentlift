@@ -1,0 +1,21 @@
+{
+  "case": "tilelang:_attn_fwd",
+  "cohort_memberships": [
+    "g4_attention_masking",
+    "g6_fusion_composition"
+  ],
+  "frontend": "tilelang",
+  "gate1": "no_closure",
+  "gate1_elapsed_ms": 316577.94761657715,
+  "gate2": null,
+  "gate2_elapsed_ms": 0.0,
+  "gate2_passed": null,
+  "gate2_status_counts": {},
+  "lift_agent_calls": 0,
+  "pi_visible_to_replay": false,
+  "protocol": "intentir.experiment.manual-batch-j-only.v3",
+  "replay_provider_calls": 1,
+  "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/tilelang__attn_fwd/run-001",
+  "total_elapsed_ms": 316874.4685649872,
+  "typecheck": "pass"
+}

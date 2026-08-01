@@ -1,0 +1,48 @@
+import tilelang.language as T
+
+
+@T.prim_func
+def scrc_k0(
+    p0: T.Tensor((1, 1, 16, 16), "float32"),
+    p1: T.Tensor((1, 1, 16, 16), "float32"),
+    p2: T.Tensor((1, 1, 16, 16), "float32"),
+    p3: T.Tensor((1, 1, 16, 16), "float32"),
+    p4: T.Tensor((1,), "float32"),
+    p5: T.Tensor((1, 1, 16, 16), "float32"),
+):
+    with T.Kernel(16, 16, threads=c0) as (v11, v13):
+        logits = T.alloc_fragment((16,), "float32")
+        maximum = T.alloc_fragment((1,), "float32")
+        exponentials = T.alloc_fragment((16,), "float32")
+        denominator = T.alloc_fragment((1,), "float32")
+        result = T.alloc_fragment((1,), "float32")
+
+        for v9 in T.serial(1):
+            for v10 in T.serial(1):
+                scale = T.float32(p4[0])
+
+                T.clear(logits)
+                for v12 in T.serial(16):
+                    for v14 in T.serial(16):
+                        logits[v12] += (
+                            p0[v9, v10, v11, v14]
+                            * p1[v9, v10, v12, v14]
+                        )
+                for v12 in T.Parallel(16):
+                    logits[v12] = (
+                        logits[v12] + p3[v9, v10, v11, v12]
+                    ) * scale
+
+                T.reduce_max(logits, maximum, dim=0, clear=True)
+                for v12 in T.Parallel(16):
+                    exponentials[v12] = T.exp(logits[v12] - maximum[0])
+                T.reduce_sum(exponentials, denominator, dim=0, clear=True)
+
+                T.clear(result)
+                for v12 in T.serial(16):
+                    result[0] += (
+                        exponentials[v12]
+                        / denominator[0]
+                        * p2[v9, v10, v12, v13]
+                    )
+                p5[v9, v10, v11, v13] = result[0]

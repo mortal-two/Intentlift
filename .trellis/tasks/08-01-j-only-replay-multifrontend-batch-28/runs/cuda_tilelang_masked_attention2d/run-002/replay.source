@@ -1,0 +1,49 @@
+extern "C" __global__ void scrc_k0(
+    const float* p0,
+    float* p1,
+    const float* p2,
+    const float* p3,
+    const float* p4) {
+  const int q = (int)blockIdx.x;
+  const int d = (int)blockIdx.y;
+  const int k = (int)(threadIdx.x % 16);
+
+  float dot = 0.0f;
+  for (int inner_d = 0; inner_d < 16; ++inner_d) {
+    dot += p2[q * 16 + inner_d] * p0[k * 16 + inner_d];
+  }
+
+  const float scaled = dot * p4[0];
+  const float selected = (k <= q) ? scaled : -1000000000.0f;
+
+  float row_max = -__builtin_inff();
+  row_max = fmaxf(row_max, selected);
+  row_max = fmaxf(row_max,
+                  __shfl_xor_sync(0xffffffffu, row_max, 8));
+  row_max = fmaxf(row_max,
+                  __shfl_xor_sync(0xffffffffu, row_max, 4));
+  row_max = fmaxf(row_max,
+                  __shfl_xor_sync(0xffffffffu, row_max, 2));
+  row_max = fmaxf(row_max,
+                  __shfl_xor_sync(0xffffffffu, row_max, 1));
+
+  const float numerator = expf(selected - row_max);
+  float denominator = 0.0f;
+  denominator += numerator;
+  denominator += __shfl_xor_sync(0xffffffffu, denominator, 8);
+  denominator += __shfl_xor_sync(0xffffffffu, denominator, 4);
+  denominator += __shfl_xor_sync(0xffffffffu, denominator, 2);
+  denominator += __shfl_xor_sync(0xffffffffu, denominator, 1);
+
+  const float weighted = (numerator / denominator) * p3[k * 16 + d];
+  float output = 0.0f;
+  output += weighted;
+  output += __shfl_xor_sync(0xffffffffu, output, 8);
+  output += __shfl_xor_sync(0xffffffffu, output, 4);
+  output += __shfl_xor_sync(0xffffffffu, output, 2);
+  output += __shfl_xor_sync(0xffffffffu, output, 1);
+
+  if (threadIdx.x == 0) {
+    p1[q * 16 + d] = output;
+  }
+}

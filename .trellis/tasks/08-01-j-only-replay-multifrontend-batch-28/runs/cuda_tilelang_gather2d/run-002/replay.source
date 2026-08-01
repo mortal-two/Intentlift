@@ -1,0 +1,24 @@
+extern "C" __global__ void scrc_k0(
+    const int* p0,
+    const float* p1,
+    float* p2,
+    const int* p3,
+    int p4) {
+  const int v13 = static_cast<int>(blockIdx.x);
+  const int v15 = p0[v13];
+  const int v14 = p3[v13];
+
+  const bool v1 = 0 <= v15;
+  const bool v2 = 0 <= v14;
+  const bool v4 = v15 < 64;
+  const bool v5 = v14 < p4;
+  const bool v6 = v1 && v4;
+  const bool v7 = v2 && v5;
+  const bool v8 = v6 && v7;
+
+  float v10 = 0.0f;
+  if (v8) {
+    v10 = p1[v14 * 64 + v15];
+  }
+  p2[v13] = v8 ? v10 : 0.0f;
+}

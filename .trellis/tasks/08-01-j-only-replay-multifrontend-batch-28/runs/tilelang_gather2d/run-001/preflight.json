@@ -1,0 +1,17 @@
+{
+  "case": "tilelang:gather2d",
+  "cohort_memberships": [
+    "g5_indexing_layout_image",
+    "g7_cross_feature_stress"
+  ],
+  "diagnostics": [],
+  "frontend": "tilelang",
+  "lift_agent_calls": 0,
+  "packet_root": [
+    "c",
+    "j",
+    "u_f"
+  ],
+  "pi_visible_to_replay": false,
+  "typecheck": "pass"
+}

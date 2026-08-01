@@ -1,0 +1,16 @@
+{
+  "artifact_author": "primary Codex agent",
+  "case": "tilelang:upsample_bicubic2d_aa",
+  "cohort_memberships": [
+    "g5_indexing_layout_image",
+    "g7_cross_feature_stress"
+  ],
+  "effort": "xhigh",
+  "frontend": "tilelang",
+  "lift_agent_calls": 0,
+  "model": "gpt-5.6-sol",
+  "provider": "gpt-5.6-sol",
+  "replay_backend": "codex",
+  "replay_composer_mode": "off",
+  "run_masked_j": false
+}

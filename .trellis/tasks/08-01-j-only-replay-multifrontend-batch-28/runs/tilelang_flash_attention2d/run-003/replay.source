@@ -1,0 +1,45 @@
+import tilelang.language as T
+
+
+@T.prim_func
+def scrc_k0(
+    p0: T.Tensor((64, 64), "float32"),
+    p1: T.Tensor((64, 64), "float32"),
+    p2: T.Tensor((64, 64), "float32"),
+    p3: T.Tensor((1,), "float32"),
+    p4: T.Tensor((64, 64), "float32"),
+):
+    with T.Kernel(64) as q:
+        dot_terms = T.alloc_fragment((64,), "float32")
+        dot_value = T.alloc_fragment((1,), "float32")
+        scores = T.alloc_fragment((64,), "float32")
+        row_max = T.alloc_fragment((1,), "float32")
+        exponentials = T.alloc_fragment((64,), "float32")
+        row_sum = T.alloc_fragment((1,), "float32")
+        output_terms = T.alloc_fragment((64,), "float32")
+        output_value = T.alloc_fragment((1,), "float32")
+
+        scale = T.float32(p3[0])
+
+        for k in T.serial(64):
+            for d in T.serial(64):
+                lhs = T.float32(p0[q, d])
+                rhs = T.float32(p1[k, d])
+                dot_terms[d] = lhs * rhs
+            T.reduce_sum(dot_terms, dot_value, dim=0, clear=True)
+            scaled_dot = T.float32(dot_value[0]) * scale
+            masked_value = T.float32(-1000000000.0)
+            scores[k] = T.if_then_else(q >= k, scaled_dot, masked_value)
+
+        T.reduce_max(scores, row_max, dim=0, clear=True)
+
+        for k in T.serial(64):
+            exponentials[k] = T.exp(scores[k] - row_max[0])
+
+        T.reduce_sum(exponentials, row_sum, dim=0, clear=True)
+
+        for d in T.serial(64):
+            for k in T.serial(64):
+                output_terms[k] = (exponentials[k] / row_sum[0]) * p2[k, d]
+            T.reduce_sum(output_terms, output_value, dim=0, clear=True)
+            p4[q, d] = output_value[0]

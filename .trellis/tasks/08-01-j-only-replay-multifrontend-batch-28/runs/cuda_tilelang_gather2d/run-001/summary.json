@@ -1,0 +1,21 @@
+{
+  "case": "cuda:tilelang_gather2d",
+  "cohort_memberships": [
+    "g5_indexing_layout_image",
+    "g7_cross_feature_stress"
+  ],
+  "frontend": "cuda",
+  "gate1": "no_closure",
+  "gate1_elapsed_ms": 127587.5084400177,
+  "gate2": null,
+  "gate2_elapsed_ms": 0.0,
+  "gate2_passed": null,
+  "gate2_status_counts": {},
+  "lift_agent_calls": 0,
+  "pi_visible_to_replay": false,
+  "protocol": "intentir.experiment.manual-batch-j-only.v3",
+  "replay_provider_calls": 1,
+  "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/cuda_tilelang_gather2d/run-001",
+  "total_elapsed_ms": 128741.85514450073,
+  "typecheck": "pass"
+}

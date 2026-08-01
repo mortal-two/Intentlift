@@ -1,0 +1,47 @@
+#include <cuda_runtime.h>
+#include <math.h>
+
+extern "C" __global__ void scrc_k0(const float* p0,
+                                     float* p1,
+                                     const float* p2,
+                                     const float* p3,
+                                     const float* p4,
+                                     const float* p5) {
+  const int q = static_cast<int>(blockIdx.x);
+  const int lane = static_cast<int>(threadIdx.x) % 16;
+
+  float score = 0.0f;
+  for (int reduction_d = 0; reduction_d < 16; ++reduction_d) {
+    score += p2[q * 16 + reduction_d] *
+             p0[lane * 16 + reduction_d];
+  }
+  score = (score + p4[q * 16 + lane]) * p5[0];
+
+  float row_max = fmaxf(-INFINITY, score);
+  row_max = fmaxf(row_max,
+                  __shfl_xor_sync(0xffffffffu, row_max, 8));
+  row_max = fmaxf(row_max,
+                  __shfl_xor_sync(0xffffffffu, row_max, 4));
+  row_max = fmaxf(row_max,
+                  __shfl_xor_sync(0xffffffffu, row_max, 2));
+  row_max = fmaxf(row_max,
+                  __shfl_xor_sync(0xffffffffu, row_max, 1));
+
+  const float numerator = expf(score - row_max);
+  float denominator = 0.0f;
+  denominator += numerator;
+  denominator += __shfl_xor_sync(0xffffffffu, denominator, 8);
+  denominator += __shfl_xor_sync(0xffffffffu, denominator, 4);
+  denominator += __shfl_xor_sync(0xffffffffu, denominator, 2);
+  denominator += __shfl_xor_sync(0xffffffffu, denominator, 1);
+  const float probability = numerator / denominator;
+
+  float output = 0.0f;
+  for (int reduction_k = 0; reduction_k < 16; ++reduction_k) {
+    const float weight =
+        __shfl_sync(0xffffffffu, probability, reduction_k);
+    output += weight * p3[reduction_k * 16 + lane];
+  }
+
+  p1[q * 16 + lane] = output;
+}

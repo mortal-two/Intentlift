@@ -1,0 +1,9 @@
+extern "C" __global__ void scrc_k0(const float* p0, float* p1) {
+    const int out_y = static_cast<int>(blockIdx.x);
+    const int out_x = static_cast<int>(threadIdx.x);
+
+    const int in_y = out_y / 2;
+    const int in_x = out_x / 2;
+
+    p1[out_y * 8 + out_x] = p0[in_y * 4 + in_x];
+}
