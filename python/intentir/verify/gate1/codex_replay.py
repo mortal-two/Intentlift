@@ -50,7 +50,7 @@ from .replay import (
 )
 
 
-CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v68"
+CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v69"
 
 _INITIAL_PROMPT = """You are the sole writer for one fresh source-blind IntentIR Replay episode.
 Work only under the isolated /workspace. input/ is immutable; output/, work/, and
@@ -76,7 +76,11 @@ S_J and MaskC. Its dependency subsets are syntactic and neither select nor autho
 program axis, loop, lane, guard, or target API. Use it to avoid repeated JSON joins,
 then compile `boundary_ownership` as one whole-program contract. Preserve every
 authored access/effect and keep logical domain guards distinct from access-local
-predicates; you still own every target realization choice.
+predicates; you still own every target realization choice. A boundary domain defines
+the set an iteration/launch must enumerate. Its inequalities are not themselves runtime
+memory predicates. Only an authored access predicate, access-guard relation, or
+value/effect control authorizes a guarded access. Do not duplicate an exactly enumerated
+domain as an extra target `if`.
 
 Compiler-kind MaskC values are intentionally absent. Follow the binding mechanism in
 frontend.json exactly: the host supplies those anonymous slots during construction and
