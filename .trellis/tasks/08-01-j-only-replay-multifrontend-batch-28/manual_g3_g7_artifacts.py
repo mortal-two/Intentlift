@@ -462,6 +462,21 @@ def build_artifact(case_id: str) -> dict[str, Any]:
             }
         )
         c_values["c0"] = block_x
+    if stem == "upsample_bicubic2d_aa":
+        # The leading grid-x mapping is the profile default.  This anonymous
+        # boolean records only the non-default decision to expose grid-y; its
+        # held value is masked from Replay and its logical extent remains in J.
+        grid_slot = f"c{len(c_slots)}"
+        c_slots.append(
+            {
+                "name": grid_slot,
+                "kind": "compiler",
+                "value_type": "i1",
+                "role": "launch_grid_y",
+                "required": True,
+            }
+        )
+        c_values[grid_slot] = True
     return {
         "schema": ARTIFACT_SCHEMA,
         "j": j,

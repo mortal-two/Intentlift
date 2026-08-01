@@ -12,7 +12,7 @@ from .cuda_compiler import (
     CudaKernelSource,
     FrontendParameter,
 )
-from .model import Gate1Artifact, Gate1Status, ParameterKind
+from .model import Gate1Artifact, Gate1Status, ParameterKind, ScheduleSlotKind
 from .normalize import NORMALIZER_PROTOCOL
 from .native_semantic import (
     compare_cuda_jc,
@@ -205,8 +205,35 @@ def _validate_compiled_interface(
                 )
 
 
-def _validate_schedule(artifact: Gate1Artifact, schedule: Mapping[str, Any]) -> None:
-    if artifact.c.values != dict(schedule):
+def _validate_schedule(
+    artifact: Gate1Artifact,
+    case: CudaCompileCase | TileLangCompileCase,
+) -> None:
+    """Bind C to native Harness schedule and explicit grid-enable slots.
+
+    Native compile cases historically expose non-unit block extents as their
+    opaque schedule.  A J-only Replay sometimes also needs to know that the
+    Harness enables a non-leading grid coordinate, without learning its held
+    extent.  ``launch_grid_{x,y,z}`` is that pure implementation-selection bit;
+    its value is checked against the real Harness grid and remains MaskC-hidden.
+    """
+
+    observed = dict(case.schedule)
+    grid_roles = {
+        "launch_grid_x": 0,
+        "launch_grid_y": 1,
+        "launch_grid_z": 2,
+    }
+    for slot in artifact.c.slots:
+        axis = grid_roles.get(slot.role)
+        if axis is None:
+            continue
+        if slot.kind is not ScheduleSlotKind.COMPILER:
+            raise ValueError("native launch-grid C slot must be compiler-kind")
+        if slot.value_type.casefold() not in {"i1", "bool", "boolean"}:
+            raise ValueError("native launch-grid C slot must be boolean")
+        observed[slot.name] = bool(case.grid[axis] != 1)
+    if artifact.c.values != observed:
         raise ValueError("frontend Harness schedule differs from the accepted C")
 
 
@@ -303,7 +330,7 @@ class CudaGate1Runner:
             entry=result.entry,
             interface=interface,
             target={"arch": case.arch},
-            schedule=case.schedule,
+            schedule=artifact.c.values,
         )
 
     def _arm(
@@ -409,7 +436,7 @@ class CudaGate1Runner:
                 observer_profile=CUDA_OBSERVER_PROFILE,
             )
         try:
-            _validate_schedule(artifact, source_case.schedule)
+            _validate_schedule(artifact, source_case)
             source_fingerprint = self._fingerprint(artifact, source_compile, source_case)
         except Exception as exc:
             normal = Gate1ArmEvidence(
@@ -528,7 +555,7 @@ class TileLangGate1Runner:
             result.ptx,
             interface=interface,
             target={"name": case.target},
-            schedule=case.schedule,
+            schedule=artifact.c.values,
         )
 
     def _arm(
@@ -618,7 +645,7 @@ class TileLangGate1Runner:
                 observer_profile=TILELANG_OBSERVER_PROFILE,
             )
         try:
-            _validate_schedule(artifact, source_case.schedule)
+            _validate_schedule(artifact, source_case)
             source_fingerprint = self._fingerprint(artifact, source_compile, source_case)
         except Exception as exc:
             normal = Gate1ArmEvidence(
