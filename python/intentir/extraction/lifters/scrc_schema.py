@@ -1074,8 +1074,9 @@ def _pi_schema() -> dict[str, Any]:
         },
         ("relation", "logical_axes"),
         description=(
-            "Closed program-coordinate realization class over J domain axes. "
-            "No physical Source/Replay axis or coordinate formula is authored."
+            "One observed physical program coordinate, classified by a closed "
+            "relation over the named J domain axes. No physical Source/Replay "
+            "axis identity or coordinate formula is authored."
         ),
     )
     iteration_logical_axis = _closed_object(

@@ -2584,9 +2584,11 @@ def _packet_required_compiled_program_ids(
     and distinct domains bound to the same physical axis, share that coordinate;
     signature ``p*`` instances always share their already-existing callable ABI
     carrier.  This projection rejects extra compiled coordinates but never
-    invents a coordinate.  In artifact v12 the authored ``pi.program_axes``
-    relation supplies the exact physical axis; legacy packets retain count-only
-    diagnostics and are never silently upgraded.
+    invents a coordinate.  On the active normalization-witness path, one
+    ``program_bindings`` row denotes one observed physical coordinate while its
+    named logical axes state only the closed J-side relation.  It deliberately
+    carries no physical axis identity, so source-aware reconciliation may check
+    the coordinate count but must leave axis identity hard for formal Gate1.
     """
 
     j = packet.get("j")
@@ -2604,9 +2606,34 @@ def _packet_required_compiled_program_ids(
         return None, (), None
     if pi.get("schema") == "intentir.pi.normalization-witness.v1":
         program_axes_value = pi.get("program_axes")
-        if not isinstance(program_axes_value, list):
+        program_bindings_value = pi.get("program_bindings", [])
+        if not isinstance(program_axes_value, list) or not isinstance(
+            program_bindings_value, list
+        ):
             return None, (), None
         domain_refs = {str(name) for name in domains_value}
+        if program_bindings_value:
+            if program_axes_value:
+                return None, (), None
+            claimed_domains: set[str] = set()
+            for binding in program_bindings_value:
+                if not isinstance(binding, Mapping):
+                    return None, (), None
+                logical_axes = binding.get("logical_axes")
+                if not isinstance(logical_axes, list) or not logical_axes:
+                    return None, (), None
+                for logical_axis in logical_axes:
+                    if not isinstance(logical_axis, Mapping):
+                        return None, (), None
+                    domain_ref = logical_axis.get("domain_ref")
+                    if not isinstance(domain_ref, str) or domain_ref not in domain_refs:
+                        return None, (), None
+                    claimed_domains.add(domain_ref)
+            return (
+                len(program_bindings_value),
+                tuple(sorted(claimed_domains)),
+                None,
+            )
         axes_by_domain = {
             str(item.get("domain_ref")): int(item["axis"])
             for item in program_axes_value

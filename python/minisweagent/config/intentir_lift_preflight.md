@@ -25,7 +25,9 @@ constructs or repairs semantic fields.
    declared J subjects/axes and never add semantics, Source topology, or target
    recipes.
 6. Pi keeps required `program_axes: []` and may add only supplied closed direct
-   bindings. Every program/iteration/control/materialization/access row names
+   bindings. Each `program_bindings` row represents one observed program
+   coordinate while naming only its J-side logical axes; it never records the
+   physical axis identity or formula. Every program/iteration/control/materialization/access row names
    existing J axes/values/accesses and any required attached C slot. It never
    contains physical SSA ids, formulas, regions, instances, routes, target recipes,
    numeric permission, free text, allowed diffs, or semantic exceptions. A row
