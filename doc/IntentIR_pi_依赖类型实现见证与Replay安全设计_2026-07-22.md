@@ -963,7 +963,7 @@ peer observation 或两臂 diff，不能擦除 J/C-owned facts；Gate1 不证明
 也不能作为 J-only path 已实现的证据。历史流程曾要求 Agent 全局消费 π，但该要求已经废止。
 
 Task 20 当前 fresh Replay packet 为 `intentir.scrc.replay-input.v3`，MiniSWE Replay v34、Codex Replay
-v65、`replay-check.v15`；只读 J-only semantic view 为
+v67、`replay-check.v15`；只读 J-only semantic view 为
 `intentir.replay-semantic-program.v3`，另有只并置现有 J/MaskC 引用的
 `intentir.replay-compiler-index.v1`。`replay-input.v2`、MiniSWE v31、Codex v55 与其中的 π view/query
 均为下述历史记录；旧 receipt 保持其原 verdict，不能由
@@ -972,6 +972,10 @@ transforms 加入 exact ledger、audit 与 floor/ceil-div static ingress；v55 �
 生成 relation/code或替代 Gate1。host launch/grid 不属于该字段；错误作者化必须由 Gate1 反馈 relift。
 Codex v26 将 900 秒单 turn 与 1800 秒 fresh episode 分离，
 超时只沿同一 resumable thread 继续，不跨 episode 继承。
+Codex v66 还把 passive compile 结果降为同 episode 的 exact recovery checkpoint：它既不构成提交，
+也不提前终止 source-blind owner；只有显式 `submit_replay` 可结束，使 Agent 能先检查自己的 TTIR。
+v67 要求当前 exact source 在接受显式 submit 前至少消费一次该 J-only own-TTIR `jc` view；view 不读
+Source、π、C value 或 Gate，也不提供 target repair。
 
 历史 v28/v24 与 Lift knowledge v66/v62 明确已有 ordered wire 的 tuple denotation：同一 region 中
 `physical_loop_carriers` 的 declaration order 是 init/state/next/result 共享的 carrier-tuple ordinal；

@@ -167,6 +167,21 @@ turn。owner 通过既有 `submit_candidate` 工具在同一 coding-agent turn �
 CandidateCheck/SourceReconcile 结果并继续 patch。该调度修改不改变 checker、artifact、正式轮次或
 Gate 接受集合。
 
+v41/v32 one-col 真实 3B×3K 运行随后在 1978.7 秒内得到 9 个 TypeCheck-valid formal rounds，但均被
+Gate1 的 `op_multiset/dataflow/predicate_effect` 正确拒绝。三个 Replay receipt 共同显示
+`tool_actions=0`、`explicit_submission_accepted=false`：旧 Replay passive watcher 在第一份可编译源码
+出现后就终止 Agent，导致 prompt 要求的 own-TTIR `jc` review 与显式 submit 根本没有机会执行；各
+Replay 还把 C-controlled guard elision 写成 branch 后的 always-true mask，正式 specialization 因而仍
+保留额外 `cmp/and + masked load/store`。Codex Replay v66 改为 passive PASS/FAIL 只保存 exact
+checkpoint/diagnostic，不结束 turn；只有显式 `submit_replay` 可提前终止。J-only `jc` view 另并列
+显示 guarded/unguarded access counts，公共合同要求 C-controlled guarded/unguarded memory op 保持在
+各自 lexical branch，禁止用恒真 mask 冒充 unguarded access。该修改不读取 Source、π、C value 或
+Gate，不改变 Replay 输入、Gate1/Gate2、checker verdict，也不生成 target code。
+v67 再把 own-TTIR review 变成 source-blind episode 内的显式事务：第一次 submit 若当前 exact bytes 尚未
+读取 `jc` view，只返回该 J/C+own-TTIR view 并要求复核，不接受候选；相同或修订 bytes 经 review 后
+再次显式 submit 才可提前终止。若模型正常结束但未 submit，host 保留可编译 checkpoint并沿同 thread
+续一条 protocol-only 提示；只有 wall-time exhaustion 仍允许按既有 exact checkpoint recovery 兜底。
+
 ## 7. P5：多前端与实验
 
 - [ ] Triton 纵切稳定后，CuTe/TileLang/CUDA 分别定义自己的 raw observer、J/C projection 与最小

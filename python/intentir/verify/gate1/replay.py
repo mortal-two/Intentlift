@@ -3463,7 +3463,10 @@ MaskC attachments. A dependency subset is syntactic, not a schedule or proof of 
 containment. Use it to avoid reconstructing cross-references, then compile the complete
 `boundary_ownership` contract. Preserve every authored access/effect and keep logical
 domain guards distinct from access-local predicates; choose all target realization
-yourself from S_J and public frontend capabilities.
+yourself from S_J and public frontend capabilities. If an anonymous constexpr controls
+optional guard elision, keep the guarded and unguarded memory operations lexically
+inside their respective alternatives. An always-true comparison or mask is not an
+unguarded access: do not hoist one masked operation out of those alternatives.
 """
     readme = """# IntentIR source-blind Replay input
 
@@ -3511,7 +3514,9 @@ Remove work not authorized by S_J, and keep inactive constexpr alternatives lexi
 inside their branch so the specialized compiler never materializes them.
 `submit_replay` checks the exact complete
 bytes but neither generates nor repairs them. Formal Gate1 runs outside this episode
-and is never visible here.
+and is never visible here. Merely writing source that compiles creates at most a
+recoverable checkpoint; it does not submit or terminate the episode. Review your own
+TTIR and explicitly call `submit_replay`.
 """
     return (
         {

@@ -50,7 +50,7 @@ from .replay import (
 )
 
 
-CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v65"
+CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v67"
 
 _INITIAL_PROMPT = """You are the sole writer for one fresh source-blind IntentIR Replay episode.
 Work only under the isolated /workspace. input/ is immutable; output/, work/, and
@@ -86,13 +86,20 @@ matching only operation counts is insufficient. Inspect your own IR
 again when a concrete J obligation remains unclear; use targeted `find`, `raw`, or
 `observer` queries instead of dumping the whole fingerprint. Keep computations for inactive constexpr
 alternatives inside their branch and do not add unmentioned `volatile`, cache,
-eviction, or other target attributes. Then run
+eviction, or other target attributes. In particular, when an anonymous constexpr
+selects whether an already-authored logical-domain guard is elided, put the unguarded
+and guarded memory operations in their respective lexical branches. Never encode the
+unguarded arm as an always-true comparison or mask and then issue one masked operation
+outside the branch: target IR may retain that predicate and turn an unconditional J
+access/effect into a masked one. Then run
 `submit_replay` on the reviewed exact bytes and repair until it
 passes. Submit also rejects an unambiguous read/write-mode contradiction between an
 explicit J boundary effect and your own compiled TTIR. Fixed code materializes S_J,
 projects exact packet facts, checks and rejects;
 it never constructs or repairs target source. Finish only with the transaction passing
-and do not claim Gate1, Gate2, or certification.
+and do not claim Gate1, Gate2, or certification. A passive host watcher may checkpoint
+stable compilable bytes, but it never submits them and never ends this coding turn;
+only your explicit `submit_replay` can finish early.
 """
 
 _REPAIR_PROMPT = """The same fresh source-blind Replay episode continues in the same thread and workspace.
@@ -284,11 +291,18 @@ def _j_contract_summary(semantic_program: Mapping[str, Any]) -> dict[str, Any]:
     access_kinds: Counter[str] = Counter()
     effect_kinds: Counter[str] = Counter()
     accesses_by_tensor: Counter[str] = Counter()
+    guarded_access_kinds: Counter[str] = Counter()
+    unguarded_access_kinds: Counter[str] = Counter()
     for item in accesses if isinstance(accesses, list) else []:
         if not isinstance(item, Mapping):
             continue
         if isinstance(item.get("kind"), str):
-            access_kinds[str(item["kind"])] += 1
+            kind = str(item["kind"])
+            access_kinds[kind] += 1
+            if item.get("predicate") is None:
+                unguarded_access_kinds[kind] += 1
+            else:
+                guarded_access_kinds[kind] += 1
         if isinstance(item.get("tensor"), str):
             accesses_by_tensor[str(item["tensor"])] += 1
         effects = item.get("effects", [])
@@ -304,6 +318,8 @@ def _j_contract_summary(semantic_program: Mapping[str, Any]) -> dict[str, Any]:
         "typed_obligations": typed_obligations[:96],
         "typed_obligations_omitted": max(0, len(typed_obligations) - 96),
         "access_kinds": dict(sorted(access_kinds.items())),
+        "guarded_access_kinds": dict(sorted(guarded_access_kinds.items())),
+        "unguarded_access_kinds": dict(sorted(unguarded_access_kinds.items())),
         "effect_kinds": dict(sorted(effect_kinds.items())),
         "accesses_by_tensor": dict(sorted(accesses_by_tensor.items())),
         "shared_write_axis_refs": (
@@ -542,6 +558,7 @@ class CodexCLIReplayWriter:
             )
         )
         ttir_observations: dict[str, dict[str, Any]] = {}
+        reviewed_jc_sources: set[str] = set()
         prompt = (
             _INITIAL_PROMPT
             + "\n\n<source-blind-startup>\n"
@@ -711,7 +728,23 @@ class CodexCLIReplayWriter:
             compiled = dict(replay_compile_tool())
             necessary: Mapping[str, Any] | None = None
             if compiled.get("status") == "pass" and synthetic_compiler is not None:
+                current_source = workspace.read_replay()
+                reviewed_before_submit = current_source in reviewed_jc_sources
                 necessary = replay_ttir_inspect_tool(("jc",))
+                if not reviewed_before_submit:
+                    return {
+                        "protocol": "intentir.codex-cli.replay-submit.v2",
+                        "status": "fail",
+                        "phase": "j_owned_review_required",
+                        "ingress": ingress,
+                        "compile": compiled,
+                        "j_owned_review": necessary,
+                        "authority": (
+                            "source-blind own-TTIR review checkpoint only; inspect the "
+                            "returned J/C facts and current Replay TTIR, then explicitly "
+                            "submit the same or revised exact bytes"
+                        ),
+                    }
                 diagnostics = necessary.get("j_owned_necessary_diagnostics")
                 if isinstance(diagnostics, list) and diagnostics:
                     return {
@@ -922,6 +955,8 @@ class CodexCLIReplayWriter:
                         "path": arguments[1],
                         "value": value,
                     }
+            if mode == "jc" and result_view.get("status") == "pass":
+                reviewed_jc_sources.add(current)
             ttir_inspections.append(
                 {
                     "query": list(arguments) if arguments else ["summary"],
@@ -1046,7 +1081,13 @@ class CodexCLIReplayWriter:
         )
 
         def live_checkpoint_watch() -> None:
-            """Accept only stable exact Replay bytes passing both host checks."""
+            """Checkpoint stable exact Replay bytes without ending the agent turn.
+
+            The watcher is deliberately not a submission path. It preserves a
+            last-known-good exact source for timeout recovery, while the Replay
+            owner remains free to inspect its own TTIR, patch, and explicitly call
+            ``submit_replay`` in the same Codex turn.
+            """
 
             nonlocal last_checked_good
             observed_replay: str | None = None
@@ -1078,21 +1119,22 @@ class CodexCLIReplayWriter:
                         "replay_bytes": len(checked_text.encode()) if checked_text else 0,
                         "status": check.get("status", "fail"),
                         "accepted": accepted,
+                        "checkpoint_only": True,
                     }
                 )
                 if checked_text != observed_text:
                     live_checkpoint_attempted.discard(observed_text)
                 if accepted:
-                    accepted_submission_event.set()
-                    return
+                    # A compilable checkpoint is not a reviewed submission. Do
+                    # not interrupt Codex before it can run its J/C own-IR review.
+                    observed_replay = None
+                    stable_since = 0.0
+                    continue
                 if checked_text == observed_text:
                     write_host_check(check)
-                    diagnostic_ready_event.set()
-                    while (
-                        diagnostic_ready_event.is_set()
-                        and not live_checkpoint_stop.wait(0.25)
-                    ):
-                        pass
+                    # The same closed diagnostic is available through the explicit
+                    # tools. A passive failed draft must not split one native
+                    # write-check-patch loop into another provider turn.
                     observed_replay = None
                     stable_since = 0.0
 
@@ -1241,8 +1283,31 @@ class CodexCLIReplayWriter:
                     thread_ids.append(thread_id)
                 active_elapsed_ms += turn.elapsed_ms
                 passed, check = evaluate_current(trigger="host_post_turn")
-                if passed:
+                if passed and explicit_submission_accepted:
                     break
+                if passed:
+                    last_checked_good = source_text
+                    write_host_check(
+                        {
+                            "protocol": REPLAY_CHECK_PROTOCOL,
+                            "status": "fail",
+                            "diagnostics": [
+                                {
+                                    "rule_code": "explicit_replay_submission_required",
+                                    "path": "<replay>",
+                                    "anonymous_handles": [],
+                                    "line": None,
+                                }
+                            ],
+                            "authority": (
+                                "protocol-only continuation; exact compilable bytes are "
+                                "checkpointed but not submitted or certified"
+                            ),
+                        }
+                    )
+                    prompt = _REPAIR_PROMPT
+                    selected_effort = self.repair_effort or effective_effort
+                    continue
                 write_host_check(check)
                 prompt = _REPAIR_PROMPT
                 selected_effort = self.repair_effort or effective_effort

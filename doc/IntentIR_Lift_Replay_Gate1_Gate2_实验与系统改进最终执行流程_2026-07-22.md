@@ -950,7 +950,7 @@ Replay 不得：
 π 输入，也不能把旧 construction check 当作当前 J-only path 的正确性证据。
 
 Task 20 当前活动组合是 `intentir.scrc.replay-input.v3`、source-blind MiniSWE Replay v34 / Codex Replay
-v65、`intentir.replay-semantic-program.v3`、`intentir.replay-compiler-index.v1` 与
+v67、`intentir.replay-semantic-program.v3`、`intentir.replay-compiler-index.v1` 与
 `replay-check.v15`。packet 只有 J、MaskC 与 `U_f`；compiler index 只并置两者已有引用，不增加输入；
 construction preflight 只检查当前 packet closure、source isolation、ABI、compile 与 raw-observer definedness。
 Codex 的 own-TTIR `jc` 视图还并置 J-only typed contraction/reduction/loop/cast obligation 与当前 Replay
@@ -959,6 +959,12 @@ fingerprint，供同一 source-blind owner 在提交前发现 dtype、axis 或 c
 `submit_replay` 只额外拒绝一种闭合的 J-owned 必要条件：若无 alias 歧义且 J boundary 已显式声明某
 logical tensor 的 read/write effect，Replay 自身 TTIR 的对应匿名参数 access mode 必须一致；该检查
 不能接受候选，也不检查地址、算法或 Source 等价。
+Codex v66 的 passive watcher 只保存可恢复的 exact compile checkpoint，不再把“第一份能编译的源码”
+当作提交并终止 Agent；owner 必须先检查自己的 J/C TTIR view，再显式调用 `submit_replay`。当匿名 C
+slot 控制 guard elision 时，guarded/unguarded memory op 必须留在各自 constexpr lexical branch；恒真
+mask 不等于 unguarded access。以上均是 J+MaskC+U_f 内部 authoring 合同，不读取 C value/Source/π/Gate。
+v67 将该检查落实为 episode-local transaction：未读当前 exact source 的 `jc` view 时，首次 submit
+只返回 own-TTIR review，不接受；review 后的显式 submit 才能提前终止。该 review 仍无 Gate verdict。
 下述 v2/v31/v55/v14 组合均为历史，旧版本 run 不能被新组合追认。
 v30/v26 把 authored target-local route extent transform 纳入 exact ledger、audit 与 closed
 floor/ceil-div static ingress；v55 继续该检查，不生成 relation/code，也不替代 Gate1。host launch/grid

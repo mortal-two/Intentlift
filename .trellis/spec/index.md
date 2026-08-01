@@ -33,9 +33,11 @@ program-axis relation；当前 profile 在无 sound anchor matcher 时将它保�
 仅供历史 artifact 按原版本读取。fixed code只诊断，不翻译别名、补齐 attrs、生成语义
 handle/relation、改图或修复 artifact；历史 wire/receipt 不静默升级或重判。当前 Agent execution
 receipt 为 `openai.codex-cli.intentir-lift.v41 / intentir.lift-knowledge.v101 /
-minisweagent.intentir-replay.v34 / openai.codex-cli.intentir-replay.v65`；Codex runtime v5 在
-closed submit 工具接受 exact bytes 后恢复并复核 checkpoint；稳定但被同一 preflight 拒绝的 exact
-bytes 也可立即中断当前 turn、保留同一 thread 并用 closed diagnostics 续修，不等待 turn deadline；
+minisweagent.intentir-replay.v34 / openai.codex-cli.intentir-replay.v67`；Codex runtime v5 在
+closed submit 工具接受 exact bytes 后恢复并复核 checkpoint。Lift v41 的 passive FAIL 只写 closed
+diagnostic，不再切断 native coding turn；Replay v66 的 passive PASS/FAIL 都只维护 exact checkpoint，
+Replay v67 进一步要求当前 exact source 至少完成一次 own-TTIR `jc` review，并由 Agent 显式
+`submit_replay` 后才可提前结束；
 Replay 内部 J-only 视图为 `intentir.replay-semantic-program.v3`，另有只并置现有 J/MaskC refs 的
 `intentir.replay-compiler-index.v1`；二者都不是 artifact、新语义或 target schedule；
 artifact.v11 的 `dimension_relations`只接受identity、常数加/乘、常数ceil-div与round-up的acyclic closed grammar；
