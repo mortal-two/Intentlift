@@ -1,6 +1,6 @@
 # Task 27：J-only Replay 与 CUDA/TileLang J/C Structural Gate1
 
-> 状态：`P3_ADD2D_PAIR_CLOSED`（2026-08-01）
+> 状态：`P4_TILELANG_GATHER_CLOSED`（2026-08-01）
 > 权威实施文档：
 > `doc/method/IntentIR_J-only_Replay与多前端JC结构Gate1最终实施_2026-08-01.md`。  
 > 前序 Task 26 已归档；其 π-fed Replay 代码与运行只作反例证据。
@@ -103,7 +103,7 @@ Gate2(Source,R,RefEval(J))                # 三边
 
 ## 6. P4：gather2d与Gate1价值
 
-- [ ] add2d双闭合后运行TileLang/CUDA gather2d（两份手工 artifact 已 TypeCheck PASS，fresh Replay待运行）；
+- [ ] add2d双闭合后运行TileLang/CUDA gather2d（TileLang run-003已全闭合；CUDA fresh Replay待运行）；
 - [ ] 报告间接寻址下两个observer的hard/diagnostic差异与合法realization false reject；
 - [ ] 对add2d做最小wrong-op、wrong-index、wrong-effect mutation sensitivity；
 - [ ] mutation只改受控Replay副本并重新compile/observe，不进入正式certificate；
@@ -136,6 +136,19 @@ Gate2(Source,R,RefEval(J))                # 三边
 - identity TIR Gate因多出allocation/loop/load-store结构拒绝；这不是per-kernel问题，而是通用编译职责：
   pure single-use J intermediate应沿boundary access composition融合，只有J storage/effect或observable sharing
   才授权target materialization。下一fresh run只升级这条J-derived编译契约。
+
+### 6.4 TileLang gather run-003：J-only正式闭合
+
+- fresh `gpt-5.6-sol/xhigh`，1次provider call；Replay episode 161.91 s，Gate1总计181.23 s；
+- Replay直接生成12行/297 bytes TileLang：`T.Kernel(256,threads=c0)`与融合后的
+  `p3[v2] = p0[p1[v2], p2[v2]]`，没有中间allocation、serial loop或额外target recipe；
+- Replay输入receipt为`replay-input.v4`/`replay-check.v17`，可见根仅`j,c,u_f`，
+  `pi_visible_to_replay=false`，且π、Source、Harness valuation、Gate observation、prior Replay均列为排除依赖；
+- TileLang TIR的interface、structure、topology、operation multiset全部hard PASS；PTX value/control/raw差异
+  只作为diagnostic，不参与TileLang认证；
+- Gate2的Source–Replay、Source–J、Replay–J三边均为exact PASS，f32 max abs error全部为0；
+- 全程`lift_agent_calls=0`。两次失败分别沉淀为output-domain canonical mapping与pure-intermediate
+  fusion两条通用J消费契约，没有增加kernel名称、Source matcher、历史winner或Gate-diff规则。
 
 ## 7. 最小实验输出
 
