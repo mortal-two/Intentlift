@@ -50,7 +50,7 @@ from .replay import (
 )
 
 
-CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v70"
+CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v71"
 
 _INITIAL_PROMPT = """You are the sole writer for one fresh source-blind IntentIR Replay episode.
 Work only under the isolated /workspace. input/ is immutable; output/, work/, and
@@ -81,6 +81,13 @@ the set an iteration/launch must enumerate. Its inequalities are not themselves 
 memory predicates. Only an authored access predicate, access-guard relation, or
 value/effect control authorizes a guarded access. Do not duplicate an exactly enumerated
 domain as an extra target `if`.
+
+Compile the J body value graph and `boundary_ownership` together. A pure intermediate
+with one consumer and no J storage object, boundary access/effect, or observable sharing
+is an SSA value relation, not an authorization to allocate and copy its full tensor.
+Fuse/compose it into its consumer and emit exactly the authored external accesses. A
+target buffer materialization is permitted only when J storage/effects or an unavoidable
+target construct requires one; tensor-shaped logical types alone are insufficient.
 
 Compiler-kind MaskC values are intentionally absent. Follow the binding mechanism in
 frontend.json exactly: the host supplies those anonymous slots during construction and

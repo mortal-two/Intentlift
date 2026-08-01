@@ -66,8 +66,11 @@ PUBLIC_FRONTEND_CONTEXT = {
             "it directly to the leading `T.Kernel` grid/program id in J axis "
             "order. Do not replace that program domain with a singleton grid plus "
             "`T.Parallel`; use structured iteration only for remaining logical "
-            "axes. The formal run binds that same parameterized source at the "
-            "Harness-held valuation."
+            "axes. For pure single-consumer J intermediates with no storage or "
+            "boundary effect, compose the boundary address directly; do not emit "
+            "`T.alloc_local` plus a copy loop merely because the logical type is "
+            "tensor-shaped. The formal run binds that same parameterized source "
+            "at the Harness-held valuation."
         ),
     },
     "cuda": {

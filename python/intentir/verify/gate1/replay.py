@@ -3172,6 +3172,13 @@ If an anonymous constexpr controls
 optional guard elision, keep the guarded and unguarded memory operations lexically
 inside their respective alternatives. An always-true comparison or mask is not an
 unguarded access: do not hoist one masked operation out of those alternatives.
+
+J body types describe logical values, not mandatory target allocations. Fuse a pure,
+single-consumer intermediate into its consumer when it has no J storage object,
+boundary access/effect, or observable sharing. In particular, compose its boundary
+address relation directly instead of allocating and copying a full logical tensor.
+Materialization requires an explicit J-owned reason or an unavoidable public target
+construct; shape alone is not one.
 """
     readme = """# IntentIR source-blind Replay input
 
