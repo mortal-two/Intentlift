@@ -410,6 +410,8 @@ def _semantic_tilelang_projection(
         "T.floor": "floor",
         "T.log": "log",
         "T.log2": "log",
+        "T.max": "max",
+        "T.min": "min",
         "T.rsqrt": "rsqrt",
         "T.sqrt": "sqrt",
         "T.sin": "sin",
