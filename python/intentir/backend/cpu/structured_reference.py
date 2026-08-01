@@ -2,8 +2,8 @@
 
 This is a Gate2 reference executor, not the production CPU backend and not a
 fallback for arbitrary IntentOps.  It accepts only a closed operation table,
-executes each structured loop over its complete logical trip axis as one
-conservative semantic step, and validates every declared input, carry, result,
+executes each structured loop over its complete logical trip axis using bounded
+J-type-derived scan slices, and validates every declared input, carry, result,
 and output type.  Its API deliberately has no C or pi parameter.
 """
 
@@ -31,6 +31,11 @@ if TYPE_CHECKING:
 
 
 STRUCTURED_CPU_REFERENCE_PROTOCOL = "intentir.j-structured-cpu-reference.v10"
+
+# This is an executor resource bound, not a semantic tile and not a C value.
+# A loop slice is chosen solely from exact J result types so no individual
+# trip-axis-bearing temporary exceeds this many bytes.
+_MAX_REFERENCE_TEMPORARY_BYTES = 128 * 1024 * 1024
 
 
 class StructuredReferenceUnsupportedError(CPUBackendUnsupportedError):
@@ -343,6 +348,7 @@ class _Evaluator:
         self.value_if_count = 0
         self.logical_loop_steps = 0
         self.zero_trip_loops = 0
+        self.max_scan_tile_elements = 0
 
     def _record_conditional_effect_stores(
         self,
@@ -964,30 +970,64 @@ class _Evaluator:
             )
             lhs_free = [label for label in lhs_labels if label not in contracted]
             rhs_free = [label for label in rhs_labels if label not in contracted]
-            direct_matrix_product = (
-                len(lhs_labels) == 2
-                and len(rhs_labels) == 2
-                and len(output_labels) == 2
-                and len(contracted) == 1
-                and len(lhs_free) == 1
-                and len(rhs_free) == 1
-                and set(output_labels) == {lhs_free[0], rhs_free[0]}
+            batch_labels = [
+                label
+                for label in output_labels
+                if label in lhs_labels and label in rhs_labels
+            ]
+            lhs_matrix_labels = [
+                label
+                for label in lhs_labels
+                if label not in contracted and label not in batch_labels
+            ]
+            rhs_matrix_labels = [
+                label
+                for label in rhs_labels
+                if label not in contracted and label not in batch_labels
+            ]
+            batched_matrix_product = (
+                len(contracted) == 1
+                and len(lhs_matrix_labels) == 1
+                and len(rhs_matrix_labels) == 1
+                and len(set(lhs_labels)) == len(lhs_labels)
+                and len(set(rhs_labels)) == len(rhs_labels)
+                and len(set(output_labels)) == len(output_labels)
+                and set(output_labels)
+                == set((*batch_labels, *lhs_matrix_labels, *rhs_matrix_labels))
             )
-            if direct_matrix_product:
+            if batched_matrix_product:
                 contraction_label = next(iter(contracted))
-                lhs_matrix = (
-                    cast_operands[0]
-                    if lhs_labels == lhs_free[0] + contraction_label
-                    else cast_operands[0].T
+                lhs_order = [
+                    *batch_labels,
+                    lhs_matrix_labels[0],
+                    contraction_label,
+                ]
+                rhs_order = [
+                    *batch_labels,
+                    contraction_label,
+                    rhs_matrix_labels[0],
+                ]
+                lhs_matrix = np.transpose(
+                    cast_operands[0],
+                    axes=tuple(lhs_labels.index(label) for label in lhs_order),
                 )
-                rhs_matrix = (
-                    cast_operands[1]
-                    if rhs_labels == contraction_label + rhs_free[0]
-                    else cast_operands[1].T
+                rhs_matrix = np.transpose(
+                    cast_operands[1],
+                    axes=tuple(rhs_labels.index(label) for label in rhs_order),
                 )
                 value = np.matmul(lhs_matrix, rhs_matrix)
-                if output_labels == rhs_free[0] + lhs_free[0]:
-                    value = value.T
+                result_order = [
+                    *batch_labels,
+                    lhs_matrix_labels[0],
+                    rhs_matrix_labels[0],
+                ]
+                if result_order != list(output_labels):
+                    value = np.transpose(
+                        value,
+                        axes=tuple(
+                            result_order.index(label) for label in output_labels
+                        ),
+                    )
             else:
                 value = np.einsum(
                     compact,
@@ -1228,6 +1268,62 @@ class _Evaluator:
             declared=declared,
         )
 
+    def _loop_scan_tile(self, op: IntentOp, trip_axis: str, extent: int) -> int:
+        """Choose a deterministic J-only scan tile under the memory bound."""
+
+        if extent <= 1:
+            return extent
+        if any(
+            state.type is not None and trip_axis in state.type.shape
+            for state in op.carry
+        ):
+            # A trip-shaped carry would require a separate, explicitly proved
+            # partition/merge denotation.  Keep the existing full-axis path.
+            return extent
+
+        tile = extent
+        candidate_names = {
+            scan.name for scan in op.scan
+        }
+        candidate_names.update(
+            name
+            for child in _walk_ops(op.body)
+            for name in _result_names(child)
+        )
+        for name in candidate_names:
+            value_type = self.value_types.get(name)
+            if value_type is None or trip_axis not in value_type.shape:
+                continue
+            if tuple(value_type.shape).count(trip_axis) != 1:
+                return extent
+            elements_per_trip = 1
+            for dimension in value_type.shape:
+                if dimension == trip_axis:
+                    continue
+                if isinstance(dimension, bool):
+                    raise ValueError(
+                        "structured loop type contains a boolean extent"
+                    )
+                if isinstance(dimension, int):
+                    dimension_extent = dimension
+                elif isinstance(dimension, str) and dimension in self.dims:
+                    dimension_extent = self.dims[dimension]
+                else:
+                    raise StructuredReferenceUnsupportedError(
+                        "structured loop cannot resolve a scan-tiled result type"
+                    )
+                elements_per_trip *= int(dimension_extent)
+            bytes_per_trip = max(
+                1,
+                elements_per_trip
+                * np.dtype(numpy_dtype(value_type.dtype)).itemsize,
+            )
+            tile = min(
+                tile,
+                max(1, _MAX_REFERENCE_TEMPORARY_BYTES // bytes_per_trip),
+            )
+        return max(1, tile)
+
     def _loop(
         self,
         op: IntentOp,
@@ -1279,7 +1375,7 @@ class _Evaluator:
             for state in op.carry
             if state.init_value is not None
         }
-        scan_values: dict[str, np.ndarray] = {}
+        scan_sources: list[tuple[Any, np.ndarray]] = []
         for scan in op.scan:
             try:
                 source = env[scan.source]
@@ -1293,9 +1389,7 @@ class _Evaluator:
                 raise ValueError(
                     "structured loop scan extent differs from semantic trip axis"
                 )
-            # No C is consulted: the complete logical axis is the one semantic
-            # slice.  This is conservative and value-deterministic.
-            scan_values[scan.name] = source
+            scan_sources.append((scan, source))
 
         self.loop_count += 1
         if extent == 0:
@@ -1306,22 +1400,39 @@ class _Evaluator:
             self.zero_trip_loops += 1
             final_carries = carries
         else:
-            local = dict(env)
-            local.update(scan_values)
-            local.update(carries)
-            local = self.sequence(op.body, local, allow_loop=False)
-            final_carries = {}
-            for state in op.carry:
-                if state.next_value not in local:
-                    raise ValueError(
-                        f"structured loop body did not define {state.next_value!r}"
-                    )
-                final_carries[state.body_argument] = self._validate_value(
-                    local[state.next_value],
-                    name=state.next_value,
-                    declared=self._carry_type(state),
-                )
-            self.logical_loop_steps += 1
+            tile = self._loop_scan_tile(op, trip_axis, extent)
+            self.max_scan_tile_elements = max(
+                self.max_scan_tile_elements, tile
+            )
+            original_extent = self.dims[trip_axis]
+            final_carries = dict(carries)
+            for start in range(0, extent, tile):
+                stop = min(extent, start + tile)
+                self.dims[trip_axis] = stop - start
+                try:
+                    local = dict(env)
+                    for scan, source in scan_sources:
+                        slices = [slice(None)] * source.ndim
+                        slices[scan.axis] = slice(start, stop)
+                        local[scan.name] = np.asarray(source[tuple(slices)])
+                    local.update(final_carries)
+                    local = self.sequence(op.body, local, allow_loop=False)
+                    next_carries: dict[str, np.ndarray] = {}
+                    for state in op.carry:
+                        if state.next_value not in local:
+                            raise ValueError(
+                                "structured loop body did not define "
+                                f"{state.next_value!r}"
+                            )
+                        next_carries[state.body_argument] = self._validate_value(
+                            local[state.next_value],
+                            name=state.next_value,
+                            declared=self._carry_type(state),
+                        )
+                    final_carries = next_carries
+                    self.logical_loop_steps += 1
+                finally:
+                    self.dims[trip_axis] = original_extent
 
         return {
             state.result_value: self._validate_value(
@@ -1501,7 +1612,7 @@ def execute_structured_reference(
         {
             "protocol": STRUCTURED_CPU_REFERENCE_PROTOCOL,
             "authority": "canonical_J_only",
-            "execution_mode": "full_logical_axis_conservative",
+            "execution_mode": "bounded_j_only_scan_tiles",
             "operation_count": evaluator.operation_count,
             "scan_count": evaluator.scan_count,
             "scatter_count": evaluator.scatter_count,
@@ -1509,6 +1620,7 @@ def execute_structured_reference(
             "effect_if_count": evaluator.effect_if_count,
             "value_if_count": evaluator.value_if_count,
             "logical_loop_step_count": evaluator.logical_loop_steps,
+            "max_scan_tile_elements": evaluator.max_scan_tile_elements,
             "zero_trip_loop_count": evaluator.zero_trip_loops,
             "access_guard_load_materialization_count": len(
                 evaluator.access_guard_loads

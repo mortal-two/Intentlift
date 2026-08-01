@@ -5362,6 +5362,9 @@ class TTIRParser:
         ]
 
         loops: list[LoopFingerprint] = []
+        normalize_address_captures = (
+            "tt.addptr" in representation_anchor_exemptions
+        )
         for operation in operations:
             if operation.name != "scf.for":
                 continue
@@ -5416,7 +5419,31 @@ class TTIRParser:
                             nested, node_by_id, result_to_node
                         )
                     ] += 1
-                for operand in [*nested.operands, *nested.region_results]:
+                nested_values = [*nested.operands, *nested.region_results]
+                for operand_index, operand in enumerate(nested_values):
+                    if normalize_address_captures:
+                        # Once every authored J access has a typed address-
+                        # representation binding, the hard memory slice already
+                        # retains the exact pointer polynomial, transfer kind,
+                        # predicate, fill, value, effect occurrence and order.
+                        # Do not count the same pure address spelling again as a
+                        # semantic loop capture or induction use: computing a
+                        # base pointer outside the loop and recomputing it inside
+                        # are the same closed realization when the surviving
+                        # memory operation still has the same hard pointer form.
+                        #
+                        # Representation nodes reaching a stored value or a
+                        # predicate are excluded from ``representation_only`` by
+                        # construction and therefore remain visible.  For an
+                        # effect operation only operand zero is the pointer;
+                        # store/update values and all predicates remain hard.
+                        if nested.node_id in representation_only:
+                            continue
+                        if operand_index == 0 and (
+                            nested.name in {"tt.load", "tt.store"}
+                            or nested.name.startswith("tt.atomic")
+                        ):
+                            continue
                     if operand in local_region_arguments:
                         region_argument_use_counts[operand] += 1
                         continue

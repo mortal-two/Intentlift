@@ -709,9 +709,12 @@ def _explicit_inout_poststate_reload(
     though Layer A directly connects each already-authored producer SSA value to
     its consumer.  This helper recognizes only one closed pair at a time: an
     inout handle, one unique matching producer store, identical coordinates and
-    predicate, direct producer/consumer dataflow, store-before-load effects in
-    one scope, and no intervening write to the same handle.  It never invents a
-    state edge or consults Harness, C, pi, or Source.
+    predicate, store-before-load effects in one scope, and no intervening write
+    to the same handle.  A node-bound reload must retain direct producer/consumer
+    dataflow.  A node-less reload is accepted only as an immediately adjacent
+    identity roundtrip whose stored full-tensor result is already authored by J;
+    it introduces no new semantic value.  The helper never invents a state edge
+    or consults Harness, C, pi, Source, or Replay.
     """
 
     j = elaborate_j(j)
@@ -720,7 +723,6 @@ def _explicit_inout_poststate_reload(
     if (
         access is None
         or access.kind.value != "load"
-        or access.node_ref is None
     ):
         return None
     tensor = access.tensor
@@ -759,10 +761,14 @@ def _explicit_inout_poststate_reload(
         return None
 
     nodes = _node_table(j)
-    consumer = nodes.get(access.node_ref)
-    if consumer is None:
+    consumer = (
+        nodes.get(access.node_ref) if access.node_ref is not None else None
+    )
+    if access.node_ref is not None and consumer is None:
         return None
-    dependencies = _operation_dependencies(consumer)
+    dependencies = (
+        _operation_dependencies(consumer) if consumer is not None else ()
+    )
 
     effects_by_access = {
         item.access_ref: item
@@ -804,11 +810,15 @@ def _explicit_inout_poststate_reload(
             or store_effect.node_ref != store.node_ref
         ):
             continue
-        produced_dependencies = [
-            dependency
-            for dependency in dependencies
-            if dependency in _result_names(producer)
-        ]
+        produced_dependencies = (
+            [
+                dependency
+                for dependency in dependencies
+                if dependency in _result_names(producer)
+            ]
+            if consumer is not None
+            else list(_result_names(producer))
+        )
         if len(produced_dependencies) != 1:
             continue
         store_index = effect_order.index(store_effect.effect_id)
@@ -838,6 +848,11 @@ def _explicit_inout_poststate_reload(
                 or load_effect.effect_id not in scope_effects
                 or scope_effects.index(store_effect.effect_id)
                 >= scope_effects.index(load_effect.effect_id)
+            ):
+                continue
+            if consumer is None and (
+                scope_effects.index(load_effect.effect_id)
+                != scope_effects.index(store_effect.effect_id) + 1
             ):
                 continue
         candidates.append((store.access_id, produced_dependencies[0]))
@@ -4818,15 +4833,17 @@ def _project_functional_boundary(
             poststate: str | None = None
             if access.tensor not in input_names:
                 raise ValueError("functional load is not a J input")
-            if (
-                op is not None
-                and access.tensor not in direct_logical_operand_sources(j, op)
-            ):
+            if op is None:
+                poststate = explicit_inout_poststate_reload_value(
+                    j, access.access_id
+                )
+            elif access.tensor not in direct_logical_operand_sources(j, op):
                 poststate = explicit_inout_poststate_reload_value(
                     j, access.access_id
                 )
                 if poststate is None:
                     raise ValueError("functional load is not a direct J operand")
+            if poststate is not None:
                 inout_poststate_reloads.add(
                     (access.access_id, access.tensor, poststate)
                 )
@@ -4837,6 +4854,7 @@ def _project_functional_boundary(
                 )
                 if (
                     len(loads_by_tensor[access.tensor]) != 1
+                    and poststate is None
                     and not has_authored_consumers
                 ):
                     raise ValueError(
@@ -4873,8 +4891,10 @@ def _project_functional_boundary(
                 constant_gathers.append(constant_gather)
             elif poststate is None:
                 whole_load_tensors.add(access.tensor)
-            if poststate is None:
-                loaded.add(access.tensor)
+            # A validated post-state reload still covers the logical inout
+            # tensor at the boundary; it is excluded only from the whole-input
+            # load projection, not from input-access coverage.
+            loaded.add(access.tensor)
             continue
 
         if access.tensor not in output_names:
@@ -4946,8 +4966,8 @@ def _project_functional_boundary(
                     )
                 else:
                     raise ValueError(
-                        "functional store is not produced by its J node or one "
-                        "unique enclosing loop carry"
+                        f"functional store {access.access_id!r} is not produced "
+                        "by its J node or one unique enclosing loop carry"
                     )
             if has_predicate_or_fill and (
                 op.type is None
