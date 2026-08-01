@@ -18,6 +18,7 @@ RV64GCV、VLEN=128，当前浮点工具链为 Clang/LLVM 17。CSV 一行对应�
 交替配对后的 `external / Full`，大于 1 表示 IntentIR 更快。六项几何平均分别为 `G_schedule=1.651×`、
 `G_full=4.940×`、`LLVM-RVV C / Full=1.859×`、`Best Native / Full=1.178×`。
 
-同目录的 `triton-cpu-rvv-portability.json` 是独立的迁移覆盖结果：Triton-CPU/RVV 已在 RVV4 真实执行
-vector-add 与 accepted SwiGLU 原始 Source，SwiGLU correctness 覆盖为 1/24。它尚无 paired cold-data
-latency，因而只用于 portability coverage 图，不混入上面的性能柱。
+同目录的 `triton-cpu-rvv-portability.json` 是迁移覆盖结果：Triton-CPU/RVV 已在 RVV4 真实执行
+vector-add 与 accepted SwiGLU 原始 Source。SwiGLU 目前同时具有 correctness 与正式 latency，覆盖均为
+1/24。`triton-cpu-rvv-swiglu-pair.{json,csv}` 可直接绘制自然 shape `[16384,11008]` 的两柱：IntentIR
+Full `5.403 s`、Triton-CPU/RVV `10.849 s`，IntentIR 快 `2.008×`。其余 23 项仍为 N/A。

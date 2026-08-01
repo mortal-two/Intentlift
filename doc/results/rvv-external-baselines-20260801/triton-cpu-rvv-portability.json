@@ -52,6 +52,41 @@
       "adapter": "strict memref-to-raw-kernel ABI bridge"
     }
   ],
-  "performance_bar_status": "not_measured",
-  "performance_bar_reason": "Same-source compilation and execution are established; no Triton latency is inserted until the natural-shape object is measured by the paired code-warm/data-cold runner."
+  "performance_bar_status": "measured",
+  "performance": {
+    "kernel": "swiglu",
+    "shape": [16384, 11008],
+    "dtype": "f32",
+    "regime": "code-warm/data-cold",
+    "comparison_protocol": "paired-alternating.v1",
+    "cold_iterations_per_batch": 16,
+    "batches": 7,
+    "intentir_full_latency_us": 5403437.062999999,
+    "triton_cpu_rvv_latency_us": 10849182.9925,
+    "triton_over_full": 2.0078299915418114,
+    "intentir_full_samples_us": [
+      5402477.0105,
+      5403306.684,
+      5404245.759500001,
+      5405267.450999999,
+      5404082.116,
+      5403437.062999999,
+      5402743.3434999995
+    ],
+    "triton_cpu_rvv_samples_us": [
+      11307923.3295,
+      10849182.9925,
+      10723294.3,
+      11707038.5715,
+      11588053.8485,
+      10688350.0635,
+      10700679.684
+    ],
+    "correctness": {
+      "intentir_full_max_abs_error": 0.0,
+      "triton_cpu_rvv_max_abs_error": 0.0,
+      "passed": true
+    },
+    "result_file": "doc/results/rvv-external-baselines-20260801/triton-cpu-rvv-swiglu-pair.json"
+  }
 }

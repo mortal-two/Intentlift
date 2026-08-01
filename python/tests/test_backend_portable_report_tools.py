@@ -42,6 +42,10 @@ rvv_runner = _load_tool(
     "intentir_rvv_target_runner_tool",
     "tools/run_rvv_benchmark_bundle.py",
 )
+rvv_pair = _load_tool(
+    "intentir_rvv_external_pair_tool",
+    "tools/remeasure_rvv_external_pair.py",
+)
 rvv_externalize = _load_tool(
     "intentir_rvv_externalize_payloads_tool",
     "tools/externalize_rvv_bundle_payloads.py",
@@ -467,6 +471,14 @@ def test_best_native_excludes_the_portability_compiler_bar() -> None:
     assert selected is not None
     assert selected["baseline_id"] == "expert_rvv"
     assert rvv_runner._select_best_native(records[:1]) is None
+
+
+def test_rvv_external_pair_requires_one_selected_record() -> None:
+    record = {"candidate_id": "winner"}
+
+    assert rvv_pair._only([record], label="winner") is record
+    with pytest.raises(ValueError, match="exactly one"):
+        rvv_pair._only([], label="winner")
 
 
 def test_triton_cpu_rvv_baseline_requires_a_prebuilt_kernel_object() -> None:

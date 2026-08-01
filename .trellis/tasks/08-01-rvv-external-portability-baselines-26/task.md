@@ -94,5 +94,6 @@ elementwise/reduction 子集。构建失败本身只说明当前工具链不支�
 - [x] xFormers RMSNorm 正式结果 Full/Schedule = 4.888×，相对 Expert RVV 为 1.109×、相对 ggml 为 2.465×；
 - [x] 六项正式作图子集已生成 JSON/CSV；几何平均 G_schedule=1.651×、G_full=4.940×、相对 Best Native=1.178×；
 - [x] Triton-CPU/RVV 锁定版本 LLVM/MLIR 已在 RVV4 构建；vector-add 与 accepted SwiGLU 原始 Source 均真实生成 RVV shared object 并通过 Q；
-- [x] runner 新增 strict prebuilt Triton object + ABI bridge 路径；Triton 不参与 Best Native，未配对测量前不产生 latency 柱；
+- [x] runner 新增 strict prebuilt Triton object + ABI bridge 路径，并增加只重测既有 Full winner 与指定 external 的 paired runner；
+- [x] accepted SwiGLU 自然 shape 的 Triton-CPU/RVV 正式结果为 `10.849 s`，配对 Full 为 `5.403 s`，IntentIR 快 `2.008×`；
 - [ ] 用新 external runner 继续补齐其余 accepted-J 主表并提交。
