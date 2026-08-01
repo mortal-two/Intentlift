@@ -117,6 +117,14 @@ def normalize_ttir_for_gate1(ttir: str, artifact: Gate1Artifact) -> NormalizedTT
     hard_relations: list[str] = []
     if artifact.pi.program_axes:
         hard_relations.append("program_axes")
+    if artifact.pi.program_bindings:
+        hard_relations.append("program_bindings")
+    if artifact.pi.iteration_bindings:
+        hard_relations.append("iteration_bindings")
+    if artifact.pi.control_bindings:
+        hard_relations.append("control_bindings")
+    if artifact.pi.materialization_bindings:
+        hard_relations.append("materialization_bindings")
     if bound_accesses and not collapse_addptr:
         hard_relations.append("access_representation_bindings")
     return NormalizedTTIR(
