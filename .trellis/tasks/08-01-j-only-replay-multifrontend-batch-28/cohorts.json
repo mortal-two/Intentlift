@@ -1,0 +1,99 @@
+{
+  "protocol": "intentir.j-only.multifrontend-cohorts.v1",
+  "dataset_root": "/home/kingdom/phdworks/Dataset/TianchenIR-MultiFrontend",
+  "counting": {
+    "cohort_count": 7,
+    "members_per_cohort": 10,
+    "membership_count": 70,
+    "unique_pair_count": 31,
+    "unique_frontend_run_count": 62,
+    "cross_cohort_overlap_allowed": true,
+    "within_cohort_duplicates_allowed": false
+  },
+  "cohorts": {
+    "g1_pointwise_selection": [
+      "add2d",
+      "relu2d",
+      "floor2d",
+      "exp2d",
+      "where2d",
+      "add_bias2d",
+      "clamp2d",
+      "rowmask_where2d",
+      "any_kernel_dim",
+      "copy2d_divmod"
+    ],
+    "g2_reduction_statistics_normalization": [
+      "row_sum",
+      "row_max",
+      "grouped_row_sum2d",
+      "softmax_inner",
+      "masked_softmax2d",
+      "groupnorm",
+      "layernorm",
+      "rms_norm2d",
+      "layer_norm_residual2d",
+      "rms_norm_residual2d"
+    ],
+    "g3_contraction_epilogue": [
+      "gemm",
+      "matmul_relu2d",
+      "matmul_bias_relu2d",
+      "matmul_fused_epilogue2d",
+      "mlp2d",
+      "add_bias2d",
+      "relu2d",
+      "transpose2d",
+      "copy2d_divmod",
+      "where2d"
+    ],
+    "g4_attention_masking": [
+      "_attn_fwd",
+      "flash_attention2d",
+      "masked_attention2d",
+      "masked_softmax2d",
+      "softmax_inner",
+      "row_sum",
+      "row_max",
+      "transpose2d",
+      "rowmask_where2d",
+      "any_kernel_dim"
+    ],
+    "g5_indexing_layout_image": [
+      "gather2d",
+      "transpose2d",
+      "copy2d_divmod",
+      "upsample_bicubic2d_aa",
+      "any_kernel_dim",
+      "rowmask_where2d",
+      "where2d",
+      "add2d",
+      "add_bias2d",
+      "clamp2d"
+    ],
+    "g6_fusion_composition": [
+      "layer_norm_residual2d",
+      "rms_norm_residual2d",
+      "matmul_fused_epilogue2d",
+      "matmul_bias_relu2d",
+      "matmul_relu2d",
+      "mlp2d",
+      "groupnorm",
+      "masked_attention2d",
+      "_attn_fwd",
+      "flash_attention2d"
+    ],
+    "g7_cross_feature_stress": [
+      "floor2d",
+      "exp2d",
+      "gather2d",
+      "grouped_row_sum2d",
+      "layernorm",
+      "rms_norm2d",
+      "gemm",
+      "mlp2d",
+      "masked_attention2d",
+      "upsample_bicubic2d_aa"
+    ]
+  }
+}
