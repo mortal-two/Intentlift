@@ -11,6 +11,10 @@ Gate1 与 three-leg Gate2；把这 62 份 accepted artifacts 匿名投影为 J+C
 CUDA/RVV backend 对 62/62 完成 Decode、Intent MLIR Emit、Contract Legal 与真实 target binary lower。
 新增 frontend 的 backend delta 为 0；唯一暴露的 `math.floor` feature gap 用一个 +31 LoC 的共享 CUDA
 consumer 修复，同时闭合 TileLang/CUDA 两份 floor artifact，无任何 per-kernel rule。
+随后在 exact Task28 Gate2 Q 上，匿名 J-only runtime 对 62/62 重新编译并执行 CUDA graph，全部与
+canonical RefJ 对齐。26 个 semantic-core exact pair 进一步产生 bit-identical Intent MLIR、CUDA
+cubin sequence、RVV object 与 runtime graph；5 个有 Source 依据的 non-exact pair 保留 target 差异但
+仍 5/5 双边执行闭合。
 
 ## 论文主表建议
 
@@ -23,14 +27,40 @@ consumer 修复，同时闭合 TileLang/CUDA 两份 floor artifact，无任何 p
 | CUDA real cubin lower | 31/31 | 31/31 | 31/31 both |
 | RVV Contract Legal | 31/31 | 31/31 | 31/31 both |
 | RVV real object lower | 31/31 | 31/31 | 31/31 both |
+| CUDA graph vs RefJ on exact accepted Q | 31/31 | 31/31 | 31/31 both |
+| Recompiled cubin digest equals Task30 | 31/31 | 31/31 | 31/31 both |
 | Frontend-specific backend LoC/rules | 0 / 0 | 0 / 0 | — |
 | Per-kernel backend rules | 0 | 0 | 0 |
 | Shared J-feature consumer delta | — | — | +31 LoC, `math.floor` CUDA |
+| Shared runtime ABI consumer delta | — | — | +35/-4, net +31 LoC, generic `i1/i8/i16` launch ABI |
 
 配套 correspondence 数字使用 full-31，而不是历史 Primary-20：signature-free semantic core 26/31、
 op-kind set 29/31、boundary 26/31、carrier-normalized buffer profile 27/31；raw full J 为 0/31，因为
 TileLang tensor ABI 与 CUDA pointer/runtime-scalar ABI 被诚实保留。换言之，复用不依赖强行让两个 J
 字节相同。
+
+## Runtime closure 与 correspondence 传递
+
+Task31 没有重新运行 Source 或 Replay。source-aware export 端只用于按 accepted `input_digest` 重建原
+Gate2 Q；独立 runtime consumer 的严格输入白名单仅含匿名 J+C snapshot、logical extents、Q arrays 与
+public comparison policy。consumer 在加载 Q 之前完成 J materialization 和 CUDA compilation，因此 Q、
+frontend label 或 case identity 都不能参与 target 选择。
+
+| J correspondence stratum | Pairs | Intent MLIR digest equal | CUDA cubin sequence equal | RVV object digest equal | Runtime graph equal | CUDA/RefJ both PASS |
+|---|---:|---:|---:|---:|---:|---:|
+| Semantic core exact | 26 | 26/26 | 26/26 | 26/26 | 26/26 | 26/26 |
+| Source-grounded non-exact | 5 | 0/5 | 0/5 | 0/5 | 0/5 | 5/5 |
+
+因此后端复用不是“所有前端 J 必须相同”：相同计算结构确定性地产生相同 target artifacts；真实 typed、
+boundary 或 ABI delta 则继续影响 target graph，但不要求 backend 按 frontend 分叉。62 个 artifacts 的
+82 个 outputs 全部与 RefJ 对齐；其中 52 个 artifacts 使用 default Q，10 个 contraction artifacts 使用
+预注册 TF32 tensor-core Q。重编译所得 cubin digest 对 Task30 为 62/62 identical，排除了“runtime
+悄悄换了一份 lower 结果”。
+
+Task31 还暴露一个共享 host-runtime 能力缺口：3 个含 rank-0 `i8` operand 的 CUDA-J artifact 需要
+exact-width scalar launch ABI。修复在通用 orchestrator 中同时支持 `i1/i8/i16`（+35/-4，net +31
+LoC），没有加入 frontend 或 kernel rule。另一个 rank-0 failure 属于实验 NPZ writer 的 shape
+serialization，修复也只在 evidence layer 保留 0-D shape。最终同一分母重跑为 62/62。
 
 ## 实验为什么有说服力
 
@@ -67,24 +97,32 @@ target feature gap  -> one shared backend consumer
 - 支持第二种 frontend 没有增加 backend code 或 per-kernel rule；
 - 一个新 J feature 只需要一次共享 target consumer 增量，并同时服务两个 frontend；
 - full-31 的 J correspondence/delta 与 backend reuse 是两组互补证据。
+- exact accepted Q 上，匿名 CUDA runtime 对 62/62 与 canonical RefJ 闭合；
+- 26 个 semantic-core exact pair 的 target-neutral IR、CUDA/RVV binary 与 graph 全部 digest-level
+  identical；5 个 non-exact pair 保留差异但仍全部正确执行。
 
 ## 不能写的 claim
 
 - 不能说本实验评价了自动 Lift：62 份 `(J,C,pi)` 是主 Codex 手工构造；
 - 不能把 generated CUDA 外推为所有 handwritten CUDA；
-- 不能把 binary generation 写成 runtime correctness；正确性证据仍来自 Task28 Gate1/Gate2；
-- 不能把本 Task 写成性能实验：没有对 62 个 binary 做 Q/D、执行或计时；
+- 不能把 Task30 的 binary generation 单独写成 runtime correctness；Task31 才提供 CUDA target--RefJ
+  的 Q/D runtime receipt，Source/Replay 行为闭合仍引用 Task28；
+- 不能把 Task31 的独立进程 absolute prepared-graph latency 写成 frontend speedup：没有 Source/Replay
+  baseline、没有锁 GPU clocks，也没有执行 RVV object；
 - 不能借用 24 个 Triton J 的 backend speedup 作为这 62 个 frontend artifacts 的性能数据；
 - 不能把 +31 shared feature LoC 隐藏后宣称“所有能力天然零修改”。
 
 ## 篇幅有限时怎么放
 
-正文只需主表、一段 input-isolation 说明、一个 `60/62 -> +31 shared LoC -> 62/62` callout。J 的五个
+正文只需主表、一段 input-isolation 说明、一个 `60/62 -> +31 shared LoC -> 62/62 lower` callout，以及
+一个 `26 exact -> identical artifacts / 5 non-exact -> distinct artifacts but runtime PASS` callout。J 的五个
 source-grounded non-exact pair 不必逐个展开；正文举 `groupnorm`（core exact、ABI 不同）和 `gather2d`
-（真实 boundary delta）两个例子即可，其余放 appendix/artifact。
+（真实 boundary delta）两个例子即可，其余 runtime timing 与 per-pair receipts 放 appendix/artifact。
 
 机器证据：
 
 - Task28 closure：`.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/results_current.json`；
 - Task29 full-31 correspondence：`.trellis/tasks/08-01-tilelang-cuda-paired-j-analysis-29/results_current.json`；
 - Task30 backend input/result：`.trellis/tasks/08-02-artifact-only-multifrontend-backend-reuse-30/`。
+- Task31 anonymous CUDA runtime/pair identity：
+  `.trellis/tasks/08-02-multifrontend-runtime-characterization-31/`。

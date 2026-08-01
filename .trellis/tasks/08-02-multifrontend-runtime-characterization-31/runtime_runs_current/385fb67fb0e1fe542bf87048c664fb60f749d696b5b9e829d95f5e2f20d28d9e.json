@@ -1,0 +1,248 @@
+{
+  "machine": {
+    "cuda_capability": [
+      12,
+      0
+    ],
+    "cuda_device": "NVIDIA GeForce RTX 5090 D",
+    "python": "3.10.12",
+    "torch": "2.10.0+cu130"
+  },
+  "protocol": "intentir.experiment.anonymous-j-runtime-result.v1",
+  "result_digest": "c5a9c16badb6dbb3671c15a84330b61925aae6853cf92a80e4e55bdd201d1059",
+  "run_id": "385fb67fb0e1fe542bf87048c664fb60f749d696b5b9e829d95f5e2f20d28d9e",
+  "stages": {
+    "benchmark": {
+      "median_us": 61.735163567893544,
+      "method": "triton.testing.do_bench event timing",
+      "prepared_no_allocation_no_sync": true,
+      "repeat_ms": 30,
+      "source_baseline_available": false,
+      "stage": "benchmark",
+      "status": "pass",
+      "warmup_ms": 10
+    },
+    "compile": {
+      "binaries": [
+        {
+          "binary_name": "scrc_j0_kernel",
+          "cubin_is_elf": true,
+          "cubin_sha256": "f5cc9147e5c883149762620dce621d9af49963fa6c3167f58727a809cea4262c",
+          "cubin_size_bytes": 6080,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_0",
+          "cubin_is_elf": true,
+          "cubin_sha256": "ba0516fae6e04a386acb80c60bffe94036524547280be5444d6fc7c12de670d8",
+          "cubin_size_bytes": 6848,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_1",
+          "cubin_is_elf": true,
+          "cubin_sha256": "1073c7c212388d93b07aaaa2a3d8972ca333f677b67fd7ec6a994618d550b5e1",
+          "cubin_size_bytes": 6264,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_2",
+          "cubin_is_elf": true,
+          "cubin_sha256": "8e257b868bc75cb2b75a5cd6a03ca65648ff49dcf187e481e2959569019953fc",
+          "cubin_size_bytes": 6392,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_3",
+          "cubin_is_elf": true,
+          "cubin_sha256": "da6372ccc9e9495967d837ffae0157c77481619195da602018abe98472174ec5",
+          "cubin_size_bytes": 5648,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_4",
+          "cubin_is_elf": true,
+          "cubin_sha256": "6b18111d1244f0a344e61d9ec8809b3a7ed038c0bcb0eeccda9d2eb1ec680ac5",
+          "cubin_size_bytes": 6344,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_5",
+          "cubin_is_elf": true,
+          "cubin_sha256": "58f35c379fdae42635dff0cfd185a50cf3f071beb96de5213e3f5c9900afbadc",
+          "cubin_size_bytes": 6528,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_6",
+          "cubin_is_elf": true,
+          "cubin_sha256": "a767681ab67e51e65fd9d579b9782a199baa179d90c6fac51bd9e6cef186b0bb",
+          "cubin_size_bytes": 6080,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_7",
+          "cubin_is_elf": true,
+          "cubin_sha256": "da6372ccc9e9495967d837ffae0157c77481619195da602018abe98472174ec5",
+          "cubin_size_bytes": 5648,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_8",
+          "cubin_is_elf": true,
+          "cubin_sha256": "b8b50355a0edec7f81868bfb151bcfa1c68ce97ac57a3f982891ff79c9967b08",
+          "cubin_size_bytes": 6344,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_9",
+          "cubin_is_elf": true,
+          "cubin_sha256": "f2a11f497529056e6909397d73a9569ecce32cb0cb331972293e572b4abb5191",
+          "cubin_size_bytes": 9192,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_10",
+          "cubin_is_elf": true,
+          "cubin_sha256": "f5cc9147e5c883149762620dce621d9af49963fa6c3167f58727a809cea4262c",
+          "cubin_size_bytes": 6080,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_11",
+          "cubin_is_elf": true,
+          "cubin_sha256": "6491e34d37f9ebabe2a6cbe00f58d3d2f7bf1599a98f411625ab59186ef16421",
+          "cubin_size_bytes": 6848,
+          "kernel_name": "scrc_j0_kernel"
+        }
+      ],
+      "elapsed_ms": 567.417137,
+      "intent_mlir_bytes": 1899,
+      "intent_mlir_sha256": "d56f14ad0bc91dbe0e03c051cd6c772e1b792543488ce1ea8200fbbf0cc07bcc",
+      "kernel_count": 13,
+      "materialization_form": "intentir.materialize.flat-graph.v1",
+      "q_values_loaded_before_compile": false,
+      "stage": "compile",
+      "status": "pass",
+      "total_cubin_size_bytes": 84296
+    },
+    "decode": {
+      "c_digest": "1ba74b1c943821ee444b268a3615943718a6e09caca77d7c15f578149e295be4",
+      "j_digest": "964b2428f2a5b87ccb8f031f205469cc60896c58e601cc56c853b6edef7c778a",
+      "policy_id": "intentir.gate2.default.v1",
+      "snapshot_digest": "5787a36758e665f463636e925f77cd1f67980593b31484c35e7ffe6bc66268a8",
+      "stage": "decode",
+      "status": "pass"
+    },
+    "execute_compare": {
+      "agreement": {
+        "left": "cuda_target",
+        "outputs": [
+          {
+            "atol": 1e-06,
+            "detail": "",
+            "equal_nan": false,
+            "equality_required": true,
+            "max_abs_error": 4.470348358154297e-08,
+            "output": "out0",
+            "passed": true,
+            "policy_id": "intentir.gate2.default.v1",
+            "relation_kind": "tolerance",
+            "rtol": 1e-05
+          }
+        ],
+        "passed": true,
+        "policy_id": "intentir.gate2.default.v1",
+        "right": "ref_j"
+      },
+      "elapsed_ms": 2054.453721,
+      "graph": {
+        "intermediate_buffer_count": 8,
+        "kernel_count": 13,
+        "launch_count": 13,
+        "output_count": 1
+      },
+      "outputs": {
+        "out0": {
+          "dtype": "float32",
+          "shape": [
+            1,
+            1,
+            16,
+            16
+          ]
+        }
+      },
+      "stage": "execute_compare",
+      "status": "pass"
+    },
+    "input": {
+      "input_count": 5,
+      "input_digest": "23b6e8ab71078d6d431cad2b138eaeb98be8154396a99171cfca1092575c410e",
+      "inputs": {
+        "t0": {
+          "dtype": "float32",
+          "shape": [
+            1,
+            1,
+            16,
+            16
+          ]
+        },
+        "t1": {
+          "dtype": "float32",
+          "shape": [
+            1,
+            1,
+            16,
+            16
+          ]
+        },
+        "t2": {
+          "dtype": "float32",
+          "shape": [
+            1,
+            1,
+            16,
+            16
+          ]
+        },
+        "t3": {
+          "dtype": "float32",
+          "shape": [
+            1,
+            1,
+            16,
+            16
+          ]
+        },
+        "t4": {
+          "dtype": "float32",
+          "shape": [
+            1
+          ]
+        }
+      },
+      "stage": "input",
+      "status": "pass"
+    },
+    "refj": {
+      "elapsed_ms": 4.200535,
+      "outputs": {
+        "out0": {
+          "dtype": "float32",
+          "shape": [
+            1,
+            1,
+            16,
+            16
+          ]
+        }
+      },
+      "stage": "refj",
+      "status": "pass",
+      "unsupported": false
+    }
+  },
+  "total_elapsed_ms": 2719.907916
+}

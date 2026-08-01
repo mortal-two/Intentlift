@@ -1,0 +1,250 @@
+{
+  "machine": {
+    "cuda_capability": [
+      12,
+      0
+    ],
+    "cuda_device": "NVIDIA GeForce RTX 5090 D",
+    "python": "3.10.12",
+    "torch": "2.10.0+cu130"
+  },
+  "protocol": "intentir.experiment.anonymous-j-runtime-result.v1",
+  "result_digest": "94faed5871ceabc6b247f8b65eb372f5b4235ecc6f43aece26149f6e217ad2ab",
+  "run_id": "822415c94751fd8f99086761120a407f4ff4c696b2abb42706c16d08e52df3b6",
+  "stages": {
+    "benchmark": {
+      "median_us": 91.75669048623793,
+      "method": "triton.testing.do_bench event timing",
+      "prepared_no_allocation_no_sync": true,
+      "repeat_ms": 30,
+      "source_baseline_available": false,
+      "stage": "benchmark",
+      "status": "pass",
+      "warmup_ms": 10
+    },
+    "compile": {
+      "binaries": [
+        {
+          "binary_name": "scrc_j0_kernel",
+          "cubin_is_elf": true,
+          "cubin_sha256": "c2cf4dcea91a5fc18b3f8842531dcb5e260fee144ca00c39d69e3f76b14b961e",
+          "cubin_size_bytes": 5536,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_0",
+          "cubin_is_elf": true,
+          "cubin_sha256": "6aba4e57b15aba0c6e8623285f5623eab57aa4bef07997a990daca794e79d474",
+          "cubin_size_bytes": 6360,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_1",
+          "cubin_is_elf": true,
+          "cubin_sha256": "db6343da236eb1fc02bc9718c1e24d7daa5329af6aab70b0daeee97ee33c87cd",
+          "cubin_size_bytes": 5856,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_2",
+          "cubin_is_elf": true,
+          "cubin_sha256": "4a3d33857a81a698923e72c700af9b1b94b3fc9ae828ddb9da8866ced9787c52",
+          "cubin_size_bytes": 5328,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_3",
+          "cubin_is_elf": true,
+          "cubin_sha256": "4a3d33857a81a698923e72c700af9b1b94b3fc9ae828ddb9da8866ced9787c52",
+          "cubin_size_bytes": 5328,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_4",
+          "cubin_is_elf": true,
+          "cubin_sha256": "00528275a33b8b858cccff46470b76d366278a5953a703e7c6ae725a53c24325",
+          "cubin_size_bytes": 5968,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_5",
+          "cubin_is_elf": true,
+          "cubin_sha256": "99b047ff23f0d752d6b8cfcd7293a61802411fd6473af5827d6c2b3a445da238",
+          "cubin_size_bytes": 5904,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_6",
+          "cubin_is_elf": true,
+          "cubin_sha256": "88d1b5b22973bfedb3e8ef7848d68b4141d37112b59dd207bf05855cd44f8bbc",
+          "cubin_size_bytes": 5480,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_7",
+          "cubin_is_elf": true,
+          "cubin_sha256": "f4267d8cea73764235bf13a5fd81fd1d3029b805b2934ad40863674ce255bff9",
+          "cubin_size_bytes": 6184,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_8",
+          "cubin_is_elf": true,
+          "cubin_sha256": "6d3fc0aa98cd5f4d9e736472b5091d15711f1d940319bf26903a7d75cb25d23c",
+          "cubin_size_bytes": 5864,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_9",
+          "cubin_is_elf": true,
+          "cubin_sha256": "0fea08bfa2424b003106a3c652e3b1aefa8b36416acff5da29363b5205e95f8c",
+          "cubin_size_bytes": 5536,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_10",
+          "cubin_is_elf": true,
+          "cubin_sha256": "88d1b5b22973bfedb3e8ef7848d68b4141d37112b59dd207bf05855cd44f8bbc",
+          "cubin_size_bytes": 5480,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_11",
+          "cubin_is_elf": true,
+          "cubin_sha256": "2f538da247dcaeb1e071ce004a5ce2bba86f9d741599ab9b175bfe7d886feaaf",
+          "cubin_size_bytes": 6184,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_12",
+          "cubin_is_elf": true,
+          "cubin_sha256": "3275ac21ff31cf295bf90f3f232b8a0f6b3ac22fac095555da15b2a5582adb4b",
+          "cubin_size_bytes": 8496,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_13",
+          "cubin_is_elf": true,
+          "cubin_sha256": "c2cf4dcea91a5fc18b3f8842531dcb5e260fee144ca00c39d69e3f76b14b961e",
+          "cubin_size_bytes": 5536,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_14",
+          "cubin_is_elf": true,
+          "cubin_sha256": "afb615f720e587d1144a1f1c7a101d28aff2d53c300a393cdf9cdb704a0a6cf3",
+          "cubin_size_bytes": 6496,
+          "kernel_name": "scrc_j0_kernel"
+        }
+      ],
+      "elapsed_ms": 573.760033,
+      "intent_mlir_bytes": 2241,
+      "intent_mlir_sha256": "c08498c1f97104dec57bc15af3519a7515312a6a4bf6ddf75c1dd667f8dc5f25",
+      "kernel_count": 16,
+      "materialization_form": "intentir.materialize.flat-graph.v1",
+      "q_values_loaded_before_compile": false,
+      "stage": "compile",
+      "status": "pass",
+      "total_cubin_size_bytes": 95536
+    },
+    "decode": {
+      "c_digest": "9b092a7d3e1ab0558405f299d4771174b15b043aa0084c4fb08f4af4f7a2dc38",
+      "j_digest": "826be808e843e61ad81658b1f3edc0152203ebd90a8e63b5ef5b451ca3d5517f",
+      "policy_id": "intentir.gate2.default.v1",
+      "snapshot_digest": "e52bc53ca5d7c00bc5fcff9afe607868a14b444f7bd3bf39be51d87e4fb510fc",
+      "stage": "decode",
+      "status": "pass"
+    },
+    "execute_compare": {
+      "agreement": {
+        "left": "cuda_target",
+        "outputs": [
+          {
+            "atol": 1e-06,
+            "detail": "",
+            "equal_nan": false,
+            "equality_required": true,
+            "max_abs_error": 4.470348358154297e-08,
+            "output": "out0",
+            "passed": true,
+            "policy_id": "intentir.gate2.default.v1",
+            "relation_kind": "tolerance",
+            "rtol": 1e-05
+          }
+        ],
+        "passed": true,
+        "policy_id": "intentir.gate2.default.v1",
+        "right": "ref_j"
+      },
+      "elapsed_ms": 1770.776618,
+      "graph": {
+        "intermediate_buffer_count": 11,
+        "kernel_count": 16,
+        "launch_count": 16,
+        "output_count": 1
+      },
+      "outputs": {
+        "out0": {
+          "dtype": "float32",
+          "shape": [
+            64,
+            64
+          ]
+        }
+      },
+      "stage": "execute_compare",
+      "status": "pass"
+    },
+    "input": {
+      "input_count": 4,
+      "input_digest": "36302eb44a4f0b29356cbaa7ed1fa5443d6f9901c46a4945609d872d8d855480",
+      "inputs": {
+        "t0": {
+          "dtype": "float32",
+          "shape": [
+            64,
+            64
+          ]
+        },
+        "t1": {
+          "dtype": "float32",
+          "shape": [
+            64,
+            64
+          ]
+        },
+        "t2": {
+          "dtype": "float32",
+          "shape": [
+            64,
+            64
+          ]
+        },
+        "t3": {
+          "dtype": "float32",
+          "shape": [
+            1
+          ]
+        }
+      },
+      "stage": "input",
+      "status": "pass"
+    },
+    "refj": {
+      "elapsed_ms": 4.382602,
+      "outputs": {
+        "out0": {
+          "dtype": "float32",
+          "shape": [
+            64,
+            64
+          ]
+        }
+      },
+      "stage": "refj",
+      "status": "pass",
+      "unsupported": false
+    }
+  },
+  "total_elapsed_ms": 2443.742844
+}

@@ -1,0 +1,269 @@
+{
+  "machine": {
+    "cuda_capability": [
+      12,
+      0
+    ],
+    "cuda_device": "NVIDIA GeForce RTX 5090 D",
+    "python": "3.10.12",
+    "torch": "2.10.0+cu130"
+  },
+  "protocol": "intentir.experiment.anonymous-j-runtime-result.v1",
+  "result_digest": "96985e68011b9d0fd5d071b612ab21cf5ff73d85a22caf1ee00f449f71190ffe",
+  "run_id": "7f9d06279318a0ee8b05ed564734f1aead7fd5f7d1acfcaf541774c3da1cea56",
+  "stages": {
+    "benchmark": {
+      "median_us": 28.552548168864966,
+      "method": "triton.testing.do_bench event timing",
+      "prepared_no_allocation_no_sync": true,
+      "repeat_ms": 30,
+      "source_baseline_available": false,
+      "stage": "benchmark",
+      "status": "pass",
+      "warmup_ms": 10
+    },
+    "compile": {
+      "binaries": [
+        {
+          "binary_name": "scrc_j0_kernel",
+          "cubin_is_elf": true,
+          "cubin_sha256": "88d1b5b22973bfedb3e8ef7848d68b4141d37112b59dd207bf05855cd44f8bbc",
+          "cubin_size_bytes": 5480,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_0",
+          "cubin_is_elf": true,
+          "cubin_sha256": "ea143cfe22a426573fa1aaad9bfb11d4a8c72d8700df831d531b93a120a32762",
+          "cubin_size_bytes": 6184,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_1",
+          "cubin_is_elf": true,
+          "cubin_sha256": "9cb5f1985585d64e85ea18128e8eb8121a863607ce7e9398a67d630d975e1b08",
+          "cubin_size_bytes": 5704,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_2",
+          "cubin_is_elf": true,
+          "cubin_sha256": "e4508b2353167c74f8d3ea6ab808245303b5e5f15791297e7e4116d9ff976a95",
+          "cubin_size_bytes": 5864,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_3",
+          "cubin_is_elf": true,
+          "cubin_sha256": "eef137dd2bf978df0a9c4d194c67c14f705f4da1b982b89da4533daaeb3602a6",
+          "cubin_size_bytes": 5536,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_4",
+          "cubin_is_elf": true,
+          "cubin_sha256": "88d1b5b22973bfedb3e8ef7848d68b4141d37112b59dd207bf05855cd44f8bbc",
+          "cubin_size_bytes": 5480,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_5",
+          "cubin_is_elf": true,
+          "cubin_sha256": "ea143cfe22a426573fa1aaad9bfb11d4a8c72d8700df831d531b93a120a32762",
+          "cubin_size_bytes": 6184,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_6",
+          "cubin_is_elf": true,
+          "cubin_sha256": "9cb5f1985585d64e85ea18128e8eb8121a863607ce7e9398a67d630d975e1b08",
+          "cubin_size_bytes": 5704,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_7",
+          "cubin_is_elf": true,
+          "cubin_sha256": "59d80e9b6fbc8b1e861ff79d02b0a98a8a1098a73189bd1f9e14422511f37aa9",
+          "cubin_size_bytes": 5704,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_8",
+          "cubin_is_elf": true,
+          "cubin_sha256": "8220ba77a4336e4d630e1ecd33e791d0396f42d275932fbb179e15dc5cc7cbbf",
+          "cubin_size_bytes": 5512,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_9",
+          "cubin_is_elf": true,
+          "cubin_sha256": "11656122f86343e814e348b1d134c2e18d232003bca3cb5a02a9e051aa5a5b30",
+          "cubin_size_bytes": 5856,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_10",
+          "cubin_is_elf": true,
+          "cubin_sha256": "9a360bfb9124c949b41d04e287e4416256d199ce2b92d2ce63b288a0dfdb1d1a",
+          "cubin_size_bytes": 5856,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_11",
+          "cubin_is_elf": true,
+          "cubin_sha256": "cca1a1f3b7341438ea71d2c39b9aba12d98d7be1f6608e6e32f48dbb985c9f4e",
+          "cubin_size_bytes": 5856,
+          "kernel_name": "scrc_j0_kernel"
+        }
+      ],
+      "elapsed_ms": 480.383495,
+      "intent_mlir_bytes": 1854,
+      "intent_mlir_sha256": "a37ef79130d34dd76da7e63df8b1eeace2f0167e22f9cae5cbd188ad06d52365",
+      "kernel_count": 13,
+      "materialization_form": "intentir.materialize.flat-graph.v1",
+      "q_values_loaded_before_compile": false,
+      "stage": "compile",
+      "status": "pass",
+      "total_cubin_size_bytes": 74920
+    },
+    "decode": {
+      "c_digest": "1ba74b1c943821ee444b268a3615943718a6e09caca77d7c15f578149e295be4",
+      "j_digest": "e974595c2bd44553f8f5caa4c992dc7accfd6a6ad125bac5df0c6cd7d2530ce7",
+      "policy_id": "intentir.gate2.default.v1",
+      "snapshot_digest": "ad55ad016349cc0259f8104d94648e0bf8ce183faf5faffcad6688f0def0abc1",
+      "stage": "decode",
+      "status": "pass"
+    },
+    "execute_compare": {
+      "agreement": {
+        "left": "cuda_target",
+        "outputs": [
+          {
+            "atol": 1e-06,
+            "detail": "",
+            "equal_nan": false,
+            "equality_required": true,
+            "max_abs_error": 1.7881393432617188e-07,
+            "output": "out0",
+            "passed": true,
+            "policy_id": "intentir.gate2.default.v1",
+            "relation_kind": "tolerance",
+            "rtol": 1e-05
+          },
+          {
+            "atol": 1e-06,
+            "detail": "",
+            "equal_nan": false,
+            "equality_required": true,
+            "max_abs_error": 0.0,
+            "output": "out1",
+            "passed": true,
+            "policy_id": "intentir.gate2.default.v1",
+            "relation_kind": "tolerance",
+            "rtol": 1e-05
+          },
+          {
+            "atol": 1e-06,
+            "detail": "",
+            "equal_nan": false,
+            "equality_required": true,
+            "max_abs_error": 4.76837158203125e-07,
+            "output": "out2",
+            "passed": true,
+            "policy_id": "intentir.gate2.default.v1",
+            "relation_kind": "tolerance",
+            "rtol": 1e-05
+          }
+        ],
+        "passed": true,
+        "policy_id": "intentir.gate2.default.v1",
+        "right": "ref_j"
+      },
+      "elapsed_ms": 2068.540619,
+      "graph": {
+        "intermediate_buffer_count": 9,
+        "kernel_count": 13,
+        "launch_count": 13,
+        "output_count": 3
+      },
+      "outputs": {
+        "out0": {
+          "dtype": "float32",
+          "shape": [
+            4,
+            16
+          ]
+        },
+        "out1": {
+          "dtype": "float32",
+          "shape": [
+            4
+          ]
+        },
+        "out2": {
+          "dtype": "float32",
+          "shape": [
+            4
+          ]
+        }
+      },
+      "stage": "execute_compare",
+      "status": "pass"
+    },
+    "input": {
+      "input_count": 3,
+      "input_digest": "6dd3ebac9af21516d73d52ea59f470bc5d81dccc48a872ddc5db20c4b530d1a3",
+      "inputs": {
+        "t0": {
+          "dtype": "float32",
+          "shape": [
+            4,
+            16
+          ]
+        },
+        "t1": {
+          "dtype": "float32",
+          "shape": [
+            16
+          ]
+        },
+        "t2": {
+          "dtype": "float32",
+          "shape": [
+            16
+          ]
+        }
+      },
+      "stage": "input",
+      "status": "pass"
+    },
+    "refj": {
+      "elapsed_ms": 488.849424,
+      "outputs": {
+        "out0": {
+          "dtype": "float32",
+          "shape": [
+            4,
+            16
+          ]
+        },
+        "out1": {
+          "dtype": "float32",
+          "shape": [
+            4
+          ]
+        },
+        "out2": {
+          "dtype": "float32",
+          "shape": [
+            4
+          ]
+        }
+      },
+      "stage": "refj",
+      "status": "pass",
+      "unsupported": false
+    }
+  },
+  "total_elapsed_ms": 3149.54111
+}
