@@ -19,7 +19,7 @@ import re
 from typing import Any, Mapping
 
 
-PTX_FINGERPRINT_SCHEMA = "cuda-ptx-semantic-effects-v7"
+PTX_FINGERPRINT_SCHEMA = "cuda-ptx-semantic-effects-v8"
 
 
 class PTXObservationError(ValueError):
@@ -47,7 +47,7 @@ _INLINE_REGISTER_DECL_RE = re.compile(
 )
 _OPCODE_RE = re.compile(
     r"^(?:(?P<predicate>@!?%[A-Za-z_][A-Za-z0-9_.$]*)\s+)?"
-    r"(?P<opcode>[A-Za-z][A-Za-z0-9_.]*)\s*(?P<operands>.*);$"
+    r"(?P<opcode>[A-Za-z][A-Za-z0-9_.:]*)\s*(?P<operands>.*);$"
 )
 _SPECIAL_REGISTERS = (
     "%clock",
@@ -221,6 +221,16 @@ def _statements(body: str) -> list[str]:
         # instruction is being accumulated may be an operand tuple such as
         # ``{%r1, %r2}`` and remain proof-relevant syntax.
         if line in {"{", "}"} and not current:
+            continue
+        # NVCC 12.8 also emits one-instruction inline scopes on a single line,
+        # for example ``{ cvt.rn.f16.f32 %rs1, %f1; }``.  At a statement
+        # boundary these outer braces are structural, whereas braces inside an
+        # accumulated instruction (such as ``{%r1, %r2}``) remain operands.
+        if not current and line.startswith("{"):
+            line = line[1:].lstrip()
+        if not current and line.endswith("}") and ";" in line:
+            line = line[:-1].rstrip()
+        if not line:
             continue
         if line.endswith(":"):
             if current:
@@ -517,7 +527,17 @@ def _semantic_memory_effects(
         if parts is None:
             continue
         predicate, opcode, _operands = parts
-        if not opcode.startswith(("ld.", "st.", "atom.", "red.", "suld.", "sust.")):
+        if not opcode.startswith(
+            (
+                "ld.",
+                "st.",
+                "atom.",
+                "red.",
+                "suld.",
+                "sust.",
+                "cp.async.bulk.tensor",
+            )
+        ):
             continue
         if predicate and predicate_truth is False:
             continue

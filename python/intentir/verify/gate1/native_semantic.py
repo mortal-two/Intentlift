@@ -25,7 +25,7 @@ from .ptx import PTXComparison, PTXDifference, PTXFingerprint, compare_ptx_finge
 from .tilelang import TileLangComparison, TileLangDifference, TileLangFingerprint, compare_tilelang_fingerprints
 
 
-NATIVE_JC_PROJECTION_PROTOCOL = "intentir.gate1.native-jc-semantic-projection.v1"
+NATIVE_JC_PROJECTION_PROTOCOL = "intentir.gate1.native-jc-semantic-projection.v2"
 
 _FLOAT_DTYPES = frozenset({"f16", "bf16", "f32", "f64"})
 _SENSITIVE_FAMILIES = frozenset(
@@ -165,6 +165,10 @@ def _opcode_families(fingerprint: PTXFingerprint) -> set[str]:
         floating = any(part in {"f16", "f32", "f64"} for part in parts)
         if base == "fma" and floating:
             families.update({"add", "mul"})
+        elif base == "mma" and floating:
+            # Tensor-core contraction is a fused multiply-accumulate family;
+            # its instruction spelling must not erase J's contraction.
+            families.update({"add", "mul"})
         elif base in {"add", "sub", "mul", "div", "max", "min"} and floating:
             families.add(base)
         elif base in {"neg"} and floating:
@@ -215,6 +219,10 @@ def _memory_kinds(fingerprint: PTXFingerprint) -> frozenset[str]:
         opcode = str(raw_opcode).lower()
         if opcode.startswith("ld.global"):
             result.add("load")
+        elif opcode.startswith("cp.async.bulk.tensor") and ".global" in opcode:
+            # TMA copies a logical global input into shared memory without an
+            # ld.global spelling.  The descriptor remains a Source realization.
+            result.add("load")
         elif opcode.startswith("st.global"):
             result.add("store")
         elif opcode.startswith("atom") or opcode.startswith("red"):
@@ -236,6 +244,14 @@ def _required_memory_kinds(artifact: Gate1Artifact) -> frozenset[str]:
 
 def _schedule_view(value: Any) -> tuple[tuple[str, str], ...]:
     return tuple(tuple(str(item) for item in row) for row in value)
+
+
+def _logical_interface(fingerprint: PTXFingerprint) -> tuple[Any, ...]:
+    """Remove target-physical PTX parameter storage from the J-owned ABI."""
+
+    return tuple(
+        row for row in fingerprint.interface if row and str(row[0]) != "ptx_abi"
+    )
 
 
 def _projection_checks(
@@ -265,7 +281,7 @@ def _projection_checks(
     replay_memory = _memory_kinds(replay)
     hard = {
         "schema": source.schema_version == replay.schema_version,
-        "interface": source.interface == replay.interface,
+        "interface": _logical_interface(source) == _logical_interface(replay),
         "target": source.target_view == replay.target_view,
         "schedule": _schedule_view(source.schedule_view) == _schedule_view(replay.schedule_view),
         "program_coordinates": (
