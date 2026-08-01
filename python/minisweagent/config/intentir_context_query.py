@@ -2086,6 +2086,87 @@ def _realization_ledger(input_root: Path) -> None:
         "atomic": len(re.findall(r'(?m)^\s*(?:%[^=]+?=\s*)?(?:"tt\.atomic[^\"]*"|tt\.atomic[A-Za-z0-9_.-]*)\b', text)),
         "addptr": len(re.findall(r'(?m)^\s*%[^=]+?=\s*(?:"tt\.addptr"|tt\.addptr)\b', text)),
     }
+    definition_pattern = re.compile(
+        r'^\s*(?P<result>%[A-Za-z0-9_.$-]+)\s*=\s*'
+        r'(?:"(?P<quoted>[A-Za-z0-9_.-]+)"|(?P<plain>[A-Za-z][A-Za-z0-9_.-]*))\b'
+        r'(?P<body>.*)$'
+    )
+    value_pattern = re.compile(r'%[A-Za-z0-9_.$-]+')
+    definitions: dict[str, dict[str, Any]] = {}
+    for line_number, line in enumerate(lines, start=1):
+        match = definition_pattern.search(line)
+        if match is None:
+            continue
+        definitions[match.group("result")] = {
+            "op": match.group("quoted") or match.group("plain"),
+            "operands": value_pattern.findall(match.group("body")),
+            "line": line_number,
+        }
+
+    address_passthrough = {
+        "tt.splat",
+        "tt.broadcast",
+        "tt.expand_dims",
+        "tt.reshape",
+        "tt.trans",
+    }
+
+    def address_chain(pointer: str) -> tuple[str, list[dict[str, Any]]]:
+        current = pointer
+        stages: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        while current not in seen:
+            seen.add(current)
+            definition = definitions.get(current)
+            if definition is None:
+                break
+            operation = str(definition["op"])
+            operands = definition["operands"]
+            if operation != "tt.addptr" and operation not in address_passthrough:
+                break
+            stages.append({"op": operation, "line": int(definition["line"])})
+            if not operands:
+                break
+            current = str(operands[0])
+        stages.reverse()
+        return current, stages
+
+    transfer_pattern = re.compile(
+        r'^\s*(?:%[A-Za-z0-9_.$-]+\s*=\s*)?'
+        r'(?:"(?P<quoted>tt\.(?:load|store|atomic[A-Za-z0-9_.-]*))"|'
+        r'(?P<plain>tt\.(?:load|store|atomic[A-Za-z0-9_.-]*)))\b'
+        r'(?P<body>.*)$'
+    )
+    memory_operations: list[dict[str, Any]] = []
+    for line_number, line in enumerate(lines, start=1):
+        match = transfer_pattern.search(line)
+        if match is None:
+            continue
+        operation = match.group("quoted") or match.group("plain")
+        operands = value_pattern.findall(match.group("body"))
+        if not operands:
+            continue
+        kind = (
+            "load"
+            if operation == "tt.load"
+            else "store"
+            if operation == "tt.store"
+            else "atomic"
+        )
+        pointer_root, stages = address_chain(operands[0])
+        masked = len(operands) >= 2 if kind == "load" else len(operands) >= 3
+        memory_operations.append(
+            {
+                "ordinal": len(memory_operations),
+                "kind": kind,
+                "line": line_number,
+                "pointer_root": pointer_root,
+                "address_stage_ops": [stage["op"] for stage in stages],
+                "address_stage_lines": [stage["line"] for stage in stages],
+                "addptr_depth": sum(stage["op"] == "tt.addptr" for stage in stages),
+                "mask_operand_present": masked,
+            }
+        )
     _emit_json(
         {
             "protocol": "intentir.lift-realization-ledger",
@@ -2093,6 +2174,7 @@ def _realization_ledger(input_root: Path) -> None:
             "loops": fingerprint.get("loops", []),
             "terminal_forks": fingerprint.get("terminal_forks", []),
             "memory_operation_counts": memory_counts,
+            "memory_operations": memory_operations,
             "harness_grid": {
                 key: harness.get(key)
                 for key in ("grid", "grid_contract", "grid_shape_coordinates")

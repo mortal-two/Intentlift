@@ -31,7 +31,10 @@ constructs or repairs semantic fields.
    existing J axes/values/accesses and any required attached C slot. It never
    contains physical SSA ids, formulas, regions, instances, routes, target recipes,
    numeric permission, free text, allowed diffs, or semantic exceptions. A row
-   whose fixed unary recognizer cannot prove remains hard.
+   whose fixed unary recognizer cannot prove remains hard. For access
+   representation, aggregate counts are insufficient: require a unique match
+   between an ordered ledger memory row and a current J access by pointer
+   root/tensor, transfer kind and ordinal.
 7. Floating arithmetic outputs normally use `result_relation=tolerance`; exact
    is reserved for contracts that truly require cross-backend exact equality.
 8. Run the static schema validator and `intentir_candidate_check` on the exact

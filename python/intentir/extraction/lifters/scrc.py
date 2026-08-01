@@ -1122,10 +1122,13 @@ the closed supplied relation families: program_bindings over J domain axes;
 iteration_bindings over J loop/domain axes plus an already attached C tile/mode;
 terminal control or materialization rows over existing J anchors; and access
 representation rows over existing J accesses. Program bindings name logical J
-axes, never physical x/y/z labels; the fixed unary recognizer discovers a unique
-arm-local realization or fails hard. Access representation may change only pointer
+axes, never physical x/y/z labels; a relation remains hard unless the active unary
+profile can independently recover its J binding in each arm. Access representation may change only pointer
 construction and preserves tensor, index polynomial, multiplicity, mask, value and
-effect. Pi cannot encode Source/Replay SSA ids, regions, instances, routes, order,
+effect. Counts alone never justify access bindings: use the realization ledger's
+ordered memory operations together with current J access attachments, and bind an
+access only when tensor root, transfer kind and ordinal correspondence are unique.
+Pi cannot encode Source/Replay SSA ids, regions, instances, routes, order,
 sharing, numeric permission, target recipes, free text, allowed diffs or semantic
 exceptions. Query the exact pi schema leaves and raw realization ledger rather than
 guessing fields. Never add a relation that is not directly grounded and bound.
