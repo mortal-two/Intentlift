@@ -862,35 +862,71 @@ def _measure(
     *,
     regime: str,
     eviction_buffer: Any | None,
-    warmup: int,
+    warmup: int | None,
+    warmup_ms: float | None,
     iterations: int,
     batches: int,
-) -> tuple[float, list[float], float]:
-    for _ in range(warmup):
+    timed_batch_ms: float | None,
+) -> tuple[float, list[float], float, int, list[int]]:
+    if warmup is not None and warmup_ms is not None:
+        raise ValueError("choose either fixed-count or time-budgeted warmup")
+    warmup_invocations = 0
+    warmup_deadline_ns = (
+        time.perf_counter_ns() + int(warmup_ms * 1_000_000)
+        if warmup_ms is not None and warmup_ms > 0
+        else None
+    )
+    while True:
+        if warmup is not None:
+            if warmup_invocations >= warmup:
+                break
+        elif warmup_deadline_ns is None or (
+            warmup_invocations > 0
+            and time.perf_counter_ns() >= warmup_deadline_ns
+        ):
+            break
         if regime == "cold-data":
             assert eviction_buffer is not None
             _evict(eviction_buffer, rotation.cursor)
         function(*rotation.next())
+        warmup_invocations += 1
     samples = []
     prep_samples = []
+    batch_invocation_counts = []
     for _ in range(batches):
         if regime == "cold-data":
             call_samples = []
+            timed_us = 0.0
             for iteration in range(iterations):
                 assert eviction_buffer is not None
                 prep_samples.append(_evict(eviction_buffer, iteration))
                 started = time.perf_counter_ns()
                 function(*rotation.next())
-                call_samples.append((time.perf_counter_ns() - started) / 1_000.0)
+                elapsed_us = (time.perf_counter_ns() - started) / 1_000.0
+                call_samples.append(elapsed_us)
+                timed_us += elapsed_us
+                if (
+                    timed_batch_ms is not None
+                    and timed_us >= timed_batch_ms * 1_000.0
+                ):
+                    break
             samples.append(float(statistics.median(call_samples)))
+            batch_invocation_counts.append(len(call_samples))
             continue
         started = time.perf_counter_ns()
         for _ in range(iterations):
             function(*rotation.next())
         elapsed = time.perf_counter_ns() - started
         samples.append(elapsed / iterations / 1_000.0)
+        batch_invocation_counts.append(iterations)
     prep_us = float(statistics.median(prep_samples)) if prep_samples else 0.0
-    return float(statistics.median(samples)), samples, prep_us
+    return (
+        float(statistics.median(samples)),
+        samples,
+        prep_us,
+        warmup_invocations,
+        batch_invocation_counts,
+    )
 
 
 def _bounded_candidate_orders(
@@ -1126,9 +1162,11 @@ def _one_kernel(
     max_replicas: int,
     search_budget: int,
     last_level_cache_bytes: int,
-    warmup: int,
+    warmup: int | None,
+    warmup_ms: float | None,
     iterations: int,
     batches: int,
+    timed_batch_ms: float | None,
     finalist_count: int,
     thread_count: int,
     measure_c_oracle: bool,
@@ -1348,14 +1386,22 @@ def _one_kernel(
                     )
                     continue
                 rotation = _ArgumentRotation(argument_sets)
-                latency, samples, prep_us = _measure(
+                (
+                    latency,
+                    samples,
+                    prep_us,
+                    warmup_invocations,
+                    ranking_invocations,
+                ) = _measure(
                     function,
                     rotation,
                     regime=regime,
                     eviction_buffer=eviction_buffer,
                     warmup=warmup,
+                    warmup_ms=warmup_ms,
                     iterations=iterations,
                     batches=1,
+                    timed_batch_ms=timed_batch_ms,
                 )
                 candidate_artifacts[candidate_id] = (library, function, rotation)
                 records.append(
@@ -1365,6 +1411,8 @@ def _one_kernel(
                         "latency_us": latency,
                         "initial_ranking_samples_us": samples,
                         "initial_data_prep_us_per_call": prep_us,
+                        "initial_warmup_invocations": warmup_invocations,
+                        "initial_ranking_invocations_per_batch": ranking_invocations,
                         "correctness": correctness,
                     }
                 )
@@ -1420,18 +1468,23 @@ def _one_kernel(
             candidate_id = item["candidate"]["candidate_id"]
             function = candidate_artifacts[candidate_id][1]
             rotation = candidate_artifacts[candidate_id][2]
-            latency, samples, prep_us = _measure(
+            latency, samples, prep_us, _, invocation_counts = _measure(
                 function,
                 rotation,
                 regime=regime,
                 eviction_buffer=eviction_buffer,
                 warmup=0,
+                warmup_ms=None,
                 iterations=iterations,
                 batches=1,
+                timed_batch_ms=timed_batch_ms,
             )
             assert len(samples) == 1
             fresh_samples[candidate_id].append(latency)
             item.setdefault("data_prep_samples_us", []).append(prep_us)
+            item.setdefault("selection_invocations_per_batch", []).extend(
+                invocation_counts
+            )
     for item in finalists:
         candidate_id = item["candidate"]["candidate_id"]
         samples = fresh_samples[candidate_id]
@@ -1493,14 +1546,16 @@ def _one_kernel(
             if round_index % 2:
                 pair = tuple(reversed(pair))
             for function, rotation, destination in pair:
-                latency_us, _, _ = _measure(
+                latency_us, _, _, _, _ = _measure(
                     function,
                     rotation,
                     regime=regime,
                     eviction_buffer=eviction_buffer,
                     warmup=0,
+                    warmup_ms=None,
                     iterations=iterations,
                     batches=1,
+                    timed_batch_ms=timed_batch_ms,
                 )
                 destination.append(latency_us)
         baseline_latency = float(statistics.median(baseline_samples))
@@ -1789,8 +1844,25 @@ def _one_kernel(
             },
             "timing": "pinned-process perf_counter_ns via ctypes C ABI",
             "comparison_protocol": "fresh-alternating-round-robin.v1",
-            "warmup": warmup,
+            "warmup": warmup if warmup is not None else 0,
+            "warmup_policy": (
+                "time_budget" if warmup_ms is not None else "fixed_iterations"
+            ),
+            "warmup_time_budget_ms": warmup_ms,
+            "warmup_actual_invocations": {
+                "minimum": min(
+                    item["initial_warmup_invocations"] for item in measured
+                ),
+                "median": statistics.median(
+                    item["initial_warmup_invocations"] for item in measured
+                ),
+                "maximum": max(
+                    item["initial_warmup_invocations"] for item in measured
+                ),
+            },
             "iterations": iterations,
+            "iterations_per_batch_cap": iterations,
+            "target_timed_ms_per_batch": timed_batch_ms,
             "batches": batches,
         },
     }
@@ -1831,9 +1903,28 @@ def _parser() -> argparse.ArgumentParser:
             "for the main three bars and candidates-to-95%% is always available"
         ),
     )
-    parser.add_argument("--warmup", type=int, default=50)
+    warmup = parser.add_mutually_exclusive_group()
+    warmup.add_argument(
+        "--warmup",
+        type=int,
+        help="compatibility mode: fixed warmup invocation count",
+    )
+    warmup.add_argument(
+        "--warmup-ms",
+        type=float,
+        help="untimed warmup time budget per candidate (default: 50 ms)",
+    )
     parser.add_argument("--iterations", type=int, default=1000)
     parser.add_argument("--cold-iterations", type=int, default=16)
+    parser.add_argument(
+        "--cold-batch-ms",
+        type=float,
+        default=200.0,
+        help=(
+            "target timed kernel duration per cold-data batch; "
+            "--cold-iterations remains the invocation cap"
+        ),
+    )
     parser.add_argument("--batches", type=int, default=7)
     parser.add_argument("--finalist-count", type=int, default=5)
     return parser
@@ -1841,6 +1932,10 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    warmup_iterations = args.warmup
+    warmup_ms = args.warmup_ms
+    if warmup_iterations is None and warmup_ms is None:
+        warmup_ms = 50.0
     if (
         args.native_baseline_sidecar is not None
         and args.external_baseline_sidecar is not None
@@ -1848,8 +1943,13 @@ def main(argv: list[str] | None = None) -> int:
         raise ValueError("use only one RVV external baseline sidecar option")
     if (args.ggml_root is None) != (args.ggml_lib_dir is None):
         raise ValueError("--ggml-root and --ggml-lib-dir must be provided together")
+    if warmup_iterations is not None and warmup_iterations < 0:
+        raise ValueError("fixed warmup count must be non-negative")
+    if warmup_ms is not None and warmup_ms < 0:
+        raise ValueError("warmup time budget must be non-negative")
+    if args.cold_batch_ms <= 0:
+        raise ValueError("cold-data batch time budget must be positive")
     if min(
-        args.warmup,
         args.iterations,
         args.cold_iterations,
         args.batches,
@@ -1916,9 +2016,13 @@ def main(argv: list[str] | None = None) -> int:
                 max_replicas=args.max_replicas,
                 search_budget=args.search_budget,
                 last_level_cache_bytes=last_level_cache_bytes,
-                warmup=args.warmup,
+                warmup=warmup_iterations,
+                warmup_ms=warmup_ms,
                 iterations=measured_iterations,
                 batches=args.batches,
+                timed_batch_ms=(
+                    args.cold_batch_ms if args.regime == "cold-data" else None
+                ),
                 finalist_count=args.finalist_count,
                 thread_count=args.threads,
                 measure_c_oracle=args.measure_c_oracle,
@@ -2030,14 +2134,25 @@ def main(argv: list[str] | None = None) -> int:
             "timer": "perf_counter_ns",
             "correctness_policy": bundle.get("correctness_policy"),
             "working_set_bytes": working_set_bytes,
-            "warmup_iterations": args.warmup,
+            "warmup_policy": (
+                "time_budget" if warmup_ms is not None else "fixed_iterations"
+            ),
+            "warmup_time_budget_ms": warmup_ms,
+            "warmup_fixed_iterations": warmup_iterations,
+            "warmup_iterations": (
+                warmup_iterations if warmup_iterations is not None else 0
+            ),
             "iterations_per_batch": measured_iterations,
+            "iterations_per_batch_cap": measured_iterations,
+            "target_timed_ms_per_batch": (
+                args.cold_batch_ms if args.regime == "cold-data" else None
+            ),
             "measurement_batches": args.batches,
             "detected_last_level_data_cache_bytes": last_level_cache_bytes,
             "cache_eviction_in_timed_region": False,
             "regime": args.regime,
             "working_set_mib": args.working_set_mib,
-            "warmup": args.warmup,
+            "warmup": warmup_iterations if warmup_iterations is not None else 0,
             "iterations": measured_iterations,
             "batches": args.batches,
             "finalist_count": args.finalist_count,

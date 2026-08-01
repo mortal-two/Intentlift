@@ -215,8 +215,10 @@ def main(argv: list[str] | None = None) -> int:
             regime="cold-data",
             eviction_buffer=eviction,
             warmup=args.warmup,
+            warmup_ms=None,
             iterations=1,
             batches=1,
+            timed_batch_ms=None,
         )
         runner._measure(
             external_function,
@@ -224,8 +226,10 @@ def main(argv: list[str] | None = None) -> int:
             regime="cold-data",
             eviction_buffer=eviction,
             warmup=args.warmup,
+            warmup_ms=None,
             iterations=1,
             batches=1,
+            timed_batch_ms=None,
         )
 
         samples = {"full": [], "external": []}
@@ -238,14 +242,16 @@ def main(argv: list[str] | None = None) -> int:
             if batch % 2:
                 pair.reverse()
             for name, function, rotation in pair:
-                latency, _raw, prep = runner._measure(
+                latency, _raw, prep, _, _ = runner._measure(
                     function,
                     rotation,
                     regime="cold-data",
                     eviction_buffer=eviction,
                     warmup=0,
+                    warmup_ms=None,
                     iterations=args.cold_iterations,
                     batches=1,
+                    timed_batch_ms=None,
                 )
                 samples[name].append(latency)
                 prep_samples[name].append(prep)

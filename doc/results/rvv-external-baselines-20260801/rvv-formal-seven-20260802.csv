@@ -1,0 +1,8 @@
+kernel,c_fixed_us,schedule_only_us,full_us,g_schedule,g_full,llvm_rvv_c_over_full,best_native_over_full,llvm_baseline_march_group
+tvd,494062.57,301694.86,46255.39,1.638,6.522,0.971,0.954,legacy-rv64gcv-zfh
+softmax,493062.53,311769.56,31646.82,1.581,9.852,7.599,1.617,legacy-rv64gcv-zfh
+xformers_rms_norm,2492980.84,527097.38,107831.15,4.730,4.888,1.647,1.109,legacy-rv64gcv-zfh
+flash_backward_preprocess,1913189.67,1286453.22,44713.90,1.487,28.771,2.490,1.634,legacy-rv64gcv-zfh
+llama4_rope,19520.9195,19020.2275,19020.2275,1.026324185659714,1.0,0.613698229010063,,current-rv64gcv-zfh-zvfh
+fused_add_rms_norm,157422.423,80358.769,37983.6245,1.958994954240775,2.1156161387389454,0.803134525265894,,current-rv64gcv-zfh-zvfh
+flash_layer_norm_1pass,2195898.883,1197061.515,497259.874,1.83440771880466,2.4073157268265724,0.20508321102746496,,current-rv64gcv-zfh-zvfh

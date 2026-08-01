@@ -706,6 +706,94 @@ def test_rvv_finalists_include_each_arm_winner_and_global_best() -> None:
     assert "other" in finalists
 
 
+def test_rvv_measure_uses_a_time_budget_for_long_candidate_warmup(
+    monkeypatch,
+) -> None:
+    ticks = iter(range(0, 10_000_000, 1_000_000))
+    monkeypatch.setattr(
+        rvv_runner.time,
+        "perf_counter_ns",
+        lambda: next(ticks),
+    )
+    calls = []
+
+    class Rotation:
+        cursor = 0
+
+        def next(self):
+            self.cursor += 1
+            return []
+
+    def function():
+        calls.append(None)
+
+    (
+        latency_us,
+        samples_us,
+        prep_us,
+        warmup_invocations,
+        invocation_counts,
+    ) = rvv_runner._measure(
+        function,
+        Rotation(),
+        regime="warm",
+        eviction_buffer=None,
+        warmup=None,
+        warmup_ms=2.0,
+        iterations=1,
+        batches=1,
+        timed_batch_ms=None,
+    )
+
+    assert warmup_invocations == 2
+    assert len(calls) == 3
+    assert latency_us == 1000.0
+    assert samples_us == [1000.0]
+    assert prep_us == 0.0
+    assert invocation_counts == [1]
+
+
+def test_rvv_cold_measurement_stops_at_the_per_batch_time_budget(
+    monkeypatch,
+) -> None:
+    ticks = iter(range(0, 20_000_000, 1_000_000))
+    monkeypatch.setattr(
+        rvv_runner.time,
+        "perf_counter_ns",
+        lambda: next(ticks),
+    )
+    monkeypatch.setattr(rvv_runner, "_evict", lambda _buffer, _fill: 0.0)
+    calls = []
+
+    class Rotation:
+        cursor = 0
+
+        def next(self):
+            self.cursor += 1
+            return []
+
+    def function():
+        calls.append(None)
+
+    latency_us, samples_us, prep_us, _, invocation_counts = rvv_runner._measure(
+        function,
+        Rotation(),
+        regime="cold-data",
+        eviction_buffer=object(),
+        warmup=0,
+        warmup_ms=None,
+        iterations=10,
+        batches=1,
+        timed_batch_ms=2.5,
+    )
+
+    assert len(calls) == 3
+    assert latency_us == 1000.0
+    assert samples_us == [1000.0]
+    assert prep_us == 0.0
+    assert invocation_counts == [3]
+
+
 def test_rvv_finalists_preserve_a_noisy_specialized_lowering_state() -> None:
     measured = [
         {"candidate": {"candidate_id": "generic-a"}, "latency_us": 2.0},
