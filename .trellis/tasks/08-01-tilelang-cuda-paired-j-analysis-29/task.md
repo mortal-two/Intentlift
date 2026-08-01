@@ -1,6 +1,6 @@
 # Task 29：TileLang / generated-CUDA 二十对 J 分层差异实验
 
-> 状态：`COHORT_FROZEN`（2026-08-01）  
+> 状态：`COMPLETE`（2026-08-01）
 > 上游证据：Task28 的 31/31 accepted same-origin pairs、62/62 frontend runs  
 > 目标：为论文 §5.1 / Fig.2(a) 生成可复现的跨前端 J correspondence/difference 数据
 
@@ -81,9 +81,24 @@ J-diff 不能替代 backend lower evidence；后端是否零修改消费及性�
 ## 6. 完成条件
 
 - [x] 冻结 20-pair selection 与规则；
-- [ ] 实现 deterministic pair analyzer；
-- [ ] 生成 primary-20 与 full-31 JSON/Markdown；
-- [ ] 逐项核验 exact accepted run provenance；
-- [ ] 形成论文可直接使用的实验解释与 claim boundary；
-- [ ] 提交并保持工作区 clean。
+- [x] 实现 deterministic pair analyzer；
+- [x] 生成 primary-20 与 full-31 JSON/Markdown；
+- [x] 逐项核验 exact accepted run provenance；
+- [x] 形成论文可直接使用的实验解释与 claim boundary；
+- [x] 提交并保持工作区 clean。
 
+## 7. 最终机器结果
+
+- Primary：20 unique pairs / 40 exact accepted frontend artifacts；
+- Robustness：31 unique pairs / 62 exact accepted frontend artifacts；
+- signature-free semantic core exact：15/20；full corpus 26/31；
+- Layer-A op-kind set exact：18/20；full corpus 29/31；
+- boundary exact：15/20；full corpus 26/31；
+- carrier-normalized typed buffer profile exact：16/20；full corpus 27/31；
+- raw full-J 与 raw signature exact 均为 0，因为 frontend identity 与 tensor/pointer ABI 被诚实保留；
+- C 与 compact pi：20/20；full corpus 31/31 exact；
+- 31 对全部存在 tensor-to-pointer carrier delta；27 对 CUDA ABI 有额外 runtime scalar；
+- 五个 semantic-core delta 均有 Source 依据：四个 i1/i8 typed carrier/cast，另一个是 CUDA gather
+  显式 bounds/zero-fill 与 TileLang in-bounds direct gather 的真实 boundary 差异；
+- 62 个 exact accepted Replay 均为每 run 一次 provider call；full corpus Gate1 median：TileLang
+  198.701 s、CUDA 128.694 s；Replay source median：TileLang 690 B、CUDA 916 B。
