@@ -56,7 +56,7 @@ from intentir.verify.gate2.native import (
     NativeTensorMapSpec,
 )
 from intentir.verify.gate2.orchestrate import Gate2Case, Gate2Suite
-from intentir.verify.gate2.policy import DEFAULT_GATE2_POLICY
+from intentir.verify.gate2.policy import DEFAULT_GATE2_POLICY, gate2_policy_for
 from intentir.verify.gate2.scalar import ScalarLoweringSpec
 from intentir.verify.scrc_runner import (
     HarnessBindingInstance,
@@ -65,10 +65,10 @@ from intentir.verify.scrc_runner import (
 )
 
 
-FRONTEND_DATASET_HARNESS_PROTOCOL = "intentir.scrc.frontend-dataset-harness.v4"
+FRONTEND_DATASET_HARNESS_PROTOCOL = "intentir.scrc.frontend-dataset-harness.v5"
 FRONTEND_DATASET_SOURCE_PROTOCOL = "intentir.scrc.frontend-source-projection.v1"
 FRONTEND_DATASET_PROJECTION_PROTOCOL = (
-    "intentir.scrc.frontend-dataset-harness-projection.v4"
+    "intentir.scrc.frontend-dataset-harness-projection.v5"
 )
 _DEFAULT_DATASET_DIMENSION = 4
 _DEFAULT_DATASET_BLOCK_1D = (16, 1, 1)
@@ -144,6 +144,7 @@ class FrontendDatasetHarness:
     tensor_map_sidecar_sha256: str = ""
     physical_block: tuple[int, int, int] | None = None
     dynamic_shared_memory_bytes: int = 0
+    gate2_policy: str = DEFAULT_GATE2_POLICY.policy_id
     protocol: str = FRONTEND_DATASET_HARNESS_PROTOCOL
 
     def __post_init__(self) -> None:
@@ -231,6 +232,7 @@ class FrontendDatasetHarness:
             or self.dynamic_shared_memory_bytes < 0
         ):
             raise ValueError("Dataset dynamic shared memory must be non-negative")
+        gate2_policy_for(self.gate2_policy)
         object.__setattr__(self, "dimensions", dimensions)
         object.__setattr__(self, "scalar_values", scalar_values)
         object.__setattr__(self, "grid_contract", contract)
@@ -269,6 +271,7 @@ class FrontendDatasetHarness:
             "tensor_map_sidecar_sha256": self.tensor_map_sidecar_sha256,
             "physical_block": list(self.physical_block) if self.physical_block else None,
             "dynamic_shared_memory_bytes": self.dynamic_shared_memory_bytes,
+            "gate2_policy": self.gate2_policy,
         }
 
 
@@ -791,9 +794,13 @@ def _metadata_parameters(
                 kind=kind,
                 dtype=(
                     _normalize_dataset_dtype(
-                        logical_rows_by_source[source_name].get("dtype")
+                        (
+                            logical_rows_by_source[source_name].get("dtype")
+                            if source_name in logical_rows_by_source
+                            else row.get("dtype")
+                        )
                     )
-                    if source_name in logical_rows_by_source
+                    if use_logical_interface or source_name in logical_rows_by_source
                     else str(row.get("dtype") or "")
                 ),
                 rank=int(row.get("rank", 0)),
@@ -1486,7 +1493,7 @@ def prepare_frontend_dataset_workload(
         kernel.symbol,
         kernel.location,
         f"{profile.profile_id}@{profile.profile_version}",
-        DEFAULT_GATE2_POLICY.policy_id,
+        adapter.gate2_policy,
     )
     request = SCRCRunRequest(
         SourceProgram(projection.code, gate_source),
@@ -1854,6 +1861,7 @@ def _descriptor_sha256(metadata: Mapping[str, Any]) -> str:
 @dataclass(frozen=True)
 class _DatasetTensorMapSidecar:
     cuda_arch: str
+    gate2_policy: str
     source_sha256: str
     dimensions: tuple[tuple[str, int], ...]
     grid_contract: tuple[str, str, str]
@@ -1872,6 +1880,7 @@ def _tensor_map_sidecars() -> Mapping[str, _DatasetTensorMapSidecar]:
     profile = payload.get("profile")
     expected_profile = {
         "cuda_arch": "sm_120a",
+        "gate2_policy": "intentir.gate2.tf32-tensorcore.v1",
         "descriptor_rank": 2,
         "element_strides": [1, 1],
         "interleave": "none",
@@ -1941,6 +1950,7 @@ def _tensor_map_sidecars() -> Mapping[str, _DatasetTensorMapSidecar]:
         ).hexdigest()
         result[case_id] = _DatasetTensorMapSidecar(
             str(profile["cuda_arch"]),
+            str(profile["gate2_policy"]),
             source_sha256,
             dimensions,
             grid_contract,  # type: ignore[arg-type]
@@ -2064,6 +2074,11 @@ def _project_tilelang_harness(
         source_sha256=hashlib.sha256(kernel.path.read_bytes()).hexdigest(),
         descriptor_sha256=_descriptor_sha256(companion.metadata),
         tensor_map_sidecar_sha256=sidecar.digest if sidecar is not None else "",
+        gate2_policy=(
+            sidecar.gate2_policy
+            if sidecar is not None
+            else DEFAULT_GATE2_POLICY.policy_id
+        ),
     )
 
 
@@ -2126,6 +2141,11 @@ def _project_cuda_harness(
         physical_block=sidecar.physical_block if sidecar is not None else None,
         dynamic_shared_memory_bytes=(
             sidecar.dynamic_shared_memory_bytes if sidecar is not None else 0
+        ),
+        gate2_policy=(
+            sidecar.gate2_policy
+            if sidecar is not None
+            else DEFAULT_GATE2_POLICY.policy_id
         ),
     )
 

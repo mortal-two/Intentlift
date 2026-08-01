@@ -76,17 +76,28 @@ def _recheck(case_id: str, semaphore: threading.Semaphore) -> dict[str, Any]:
     result = _execute_gate2(case_id, artifact, gate1, semaphore)
     elapsed_ms = (time.time() - started) * 1000.0
     payload = result.to_json()
+    policy_ids = sorted(
+        {
+            str(case.get("metadata", {}).get("comparison_policy", {}).get("policy_id"))
+            for case in payload.get("cases", [])
+            if isinstance(case, dict)
+            and isinstance(case.get("metadata"), dict)
+            and isinstance(case.get("metadata", {}).get("comparison_policy"), dict)
+        }
+        - {"None"}
+    )
     _write_json(old_path, payload)
     _write_json(
         run_dir / "gate2_isolation.json",
         {
-            "protocol": "intentir.experiment.gate2-process-isolation.v1",
+            "protocol": "intentir.experiment.gate2-process-isolation.v2",
             "case": case_id,
             "start_method": "spawn",
             "one_process_per_case": True,
             "exact_gate1_replay_reused": True,
             "replay_agent_calls": 0,
             "gate2_feedback_visible_to_replay": False,
+            "comparison_policy_ids": policy_ids,
             "elapsed_ms": elapsed_ms,
         },
     )
@@ -141,7 +152,7 @@ def main() -> int:
         rows.append(row)
         print(json.dumps(row, sort_keys=True, ensure_ascii=False), flush=True)
     report = {
-        "protocol": "intentir.experiment.gate2-isolated-recheck.v1",
+        "protocol": "intentir.experiment.gate2-isolated-recheck.v2",
         "selected": selected,
         "case_count": len(rows),
         "passed_count": sum(row["gate2_passed"] is True for row in rows),

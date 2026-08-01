@@ -203,6 +203,33 @@ DEFAULT_GATE2_POLICY = ComparisonPolicy.create(
 )
 
 
+TF32_TENSORCORE_GATE2_POLICY = ComparisonPolicy.create(
+    "intentir.gate2.tf32-tensorcore.v1",
+    (
+        ("bf16", NumericTolerance(2.0e-2, 2.0e-3)),
+        ("f16", NumericTolerance(1.0e-2, 1.0e-3)),
+        # TF32 tensor-core Sources retain an fp32 ABI/output while multiplying
+        # ten-bit mantissas.  The external Q, rather than J or Replay, owns this
+        # fixed symmetric numerical realization class.
+        ("f32", NumericTolerance(2.0e-2, 3.0e-3)),
+        ("f64", NumericTolerance(1.0e-12, 1.0e-12)),
+    ),
+)
+
+
+_GATE2_POLICIES = {
+    DEFAULT_GATE2_POLICY.policy_id: DEFAULT_GATE2_POLICY,
+    TF32_TENSORCORE_GATE2_POLICY.policy_id: TF32_TENSORCORE_GATE2_POLICY,
+}
+
+
+def gate2_policy_for(policy_id: str) -> ComparisonPolicy:
+    try:
+        return _GATE2_POLICIES[policy_id]
+    except KeyError as exc:
+        raise ComparisonPolicyError(f"unknown trusted Gate2 Q {policy_id!r}") from exc
+
+
 __all__ = [
     "CloseRule",
     "ComparisonPolicy",
@@ -210,5 +237,7 @@ __all__ = [
     "DEFAULT_GATE2_POLICY",
     "GATE2_POLICY_PROTOCOL",
     "NumericTolerance",
+    "TF32_TENSORCORE_GATE2_POLICY",
     "canonical_dtype",
+    "gate2_policy_for",
 ]

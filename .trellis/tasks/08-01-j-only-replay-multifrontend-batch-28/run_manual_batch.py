@@ -45,6 +45,7 @@ from intentir.verify.gate1.replay import (
 )
 from intentir.verify.gate2.native import CudaRunner, TileLangRunner
 from intentir.verify.gate2.orchestrate import Gate2Runner
+from intentir.verify.gate2.policy import gate2_policy_for
 from intentir.verify.frontend_workloads import build_frontend_dataset_gate2_suite
 from intentir.verify.scrc_workload_run import recheck_prepared_workload_gate1
 from intentir.verify.typecheck import type_check
@@ -163,7 +164,11 @@ def _execute_gate2_inline(
         replay_runner = TileLangRunner()
     adapter = NativeGate2ExecutionAdapter(
         prepared.request.frontend,
-        Gate2Runner(source_runner=source_runner, replay_runner=replay_runner),
+        Gate2Runner(
+            source_runner=source_runner,
+            replay_runner=replay_runner,
+            comparison_policy=gate2_policy_for(prepared.entry.q_policy),
+        ),
         lambda accepted, _gate1, _binding: build_frontend_dataset_gate2_suite(
             prepared, accepted
         ),

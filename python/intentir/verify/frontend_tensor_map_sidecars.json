@@ -2,6 +2,7 @@
   "protocol": "intentir.frontend-dataset.cuda-tensor-map-sidecars.v1",
   "profile": {
     "cuda_arch": "sm_120a",
+    "gate2_policy": "intentir.gate2.tf32-tensorcore.v1",
     "descriptor_rank": 2,
     "element_strides": [1, 1],
     "interleave": "none",
