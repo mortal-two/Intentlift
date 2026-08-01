@@ -1,35 +1,12 @@
 {
   "accepted": [
-    "tilelang:clamp2d"
+    "cuda:tilelang_any_kernel_dim"
   ],
   "accepted_count": 1,
   "gate2_workers": 1,
   "lift_agent_calls": 0,
   "protocol": "intentir.experiment.manual-batch-summary.v1",
   "results": [
-    {
-      "case": "tilelang:clamp2d",
-      "cohort_memberships": [
-        "g1_pointwise_selection",
-        "g5_indexing_layout_image"
-      ],
-      "frontend": "tilelang",
-      "gate1": "replay_closed",
-      "gate1_elapsed_ms": 201334.74588394165,
-      "gate2": "gate2_pass",
-      "gate2_elapsed_ms": 722.0413684844971,
-      "gate2_passed": true,
-      "gate2_status_counts": {
-        "gate2_pass": 1
-      },
-      "lift_agent_calls": 0,
-      "pi_visible_to_replay": false,
-      "protocol": "intentir.experiment.manual-batch-j-only.v3",
-      "replay_provider_calls": 1,
-      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/tilelang_clamp2d/run-004",
-      "total_elapsed_ms": 202422.993183136,
-      "typecheck": "pass"
-    },
     {
       "case": "cuda:tilelang_any_kernel_dim",
       "cohort_memberships": [
@@ -38,24 +15,25 @@
         "g5_indexing_layout_image"
       ],
       "frontend": "cuda",
-      "gate1": "no_closure",
-      "gate1_elapsed_ms": 85950.91772079468,
-      "gate2": null,
-      "gate2_elapsed_ms": 0.0,
-      "gate2_passed": null,
-      "gate2_status_counts": {},
+      "gate1": "replay_closed",
+      "gate1_elapsed_ms": 133521.17466926575,
+      "gate2": "gate2_pass",
+      "gate2_elapsed_ms": 7097.365617752075,
+      "gate2_passed": true,
+      "gate2_status_counts": {
+        "gate2_pass": 1
+      },
       "lift_agent_calls": 0,
       "pi_visible_to_replay": false,
       "protocol": "intentir.experiment.manual-batch-j-only.v3",
       "replay_provider_calls": 1,
-      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/cuda_tilelang_any_kernel_dim/run-004",
-      "total_elapsed_ms": 86258.25023651123,
+      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/cuda_tilelang_any_kernel_dim/run-006",
+      "total_elapsed_ms": 140735.2123260498,
       "typecheck": "pass"
     }
   ],
   "selected": [
-    "tilelang:clamp2d",
     "cuda:tilelang_any_kernel_dim"
   ],
-  "workers": 2
+  "workers": 1
 }

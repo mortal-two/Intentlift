@@ -344,7 +344,8 @@ def main() -> int:
         "lift_agent_calls": 0,
         "cases": preflight_rows,
     }
-    _write_json(TASK_ROOT / "preflight_g1.json", preflight_report)
+    preflight_name = "preflight_g1.json" if selected == list(CASE_IDS) else "preflight_latest.json"
+    _write_json(TASK_ROOT / preflight_name, preflight_report)
     if args.preflight_only:
         print(json.dumps(preflight_report, sort_keys=True, ensure_ascii=False))
         return 0 if preflight_report["all_typecheck_passed"] and preflight_report["all_j_only"] else 2

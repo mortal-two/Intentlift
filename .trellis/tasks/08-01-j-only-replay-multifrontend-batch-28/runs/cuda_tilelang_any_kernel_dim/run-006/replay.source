@@ -1,0 +1,9 @@
+extern "C" __global__ void scrc_k0(const float* p0, signed char* p1, int p2) {
+    float reduced = -__builtin_inff();
+    reduced = fmaxf(reduced, p0[blockIdx.x * 16 + threadIdx.x % 16]);
+    reduced = fmaxf(reduced, __shfl_xor_sync(0xffffffffu, reduced, 8));
+    reduced = fmaxf(reduced, __shfl_xor_sync(0xffffffffu, reduced, 4));
+    reduced = fmaxf(reduced, __shfl_xor_sync(0xffffffffu, reduced, 2));
+    reduced = fmaxf(reduced, __shfl_xor_sync(0xffffffffu, reduced, 1));
+    p1[blockIdx.x] = static_cast<signed char>(reduced != 0.0f);
+}
