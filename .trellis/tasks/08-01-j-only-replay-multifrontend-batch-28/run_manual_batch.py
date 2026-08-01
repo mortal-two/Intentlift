@@ -12,7 +12,16 @@ import time
 import traceback
 from typing import Any, Mapping
 
-from manual_g1_artifacts import CASE_BUILDERS, CASE_IDS, CASE_RECEIPTS
+from manual_g1_artifacts import (
+    CASE_BUILDERS as G1_CASE_BUILDERS,
+    CASE_IDS as G1_CASE_IDS,
+    CASE_RECEIPTS as G1_CASE_RECEIPTS,
+)
+from manual_g2_artifacts import (
+    CASE_BUILDERS as G2_CASE_BUILDERS,
+    CASE_IDS as G2_CASE_IDS,
+    CASE_RECEIPTS as G2_CASE_RECEIPTS,
+)
 from intentir.extraction.providers.provider import get_provider
 from intentir.verify.adapters import NativeGate2ExecutionAdapter
 from intentir.verify.gate1.cuda_compiler import CudaCompiler
@@ -31,6 +40,9 @@ from intentir.verify.workload_registry import prepare_registered_scrc_workload
 
 
 TASK_ROOT = Path(__file__).resolve().parent
+CASE_IDS = (*G1_CASE_IDS, *G2_CASE_IDS)
+CASE_BUILDERS = {**G1_CASE_BUILDERS, **G2_CASE_BUILDERS}
+CASE_RECEIPTS = {**G1_CASE_RECEIPTS, **G2_CASE_RECEIPTS}
 
 
 def _write_json(path: Path, value: Any) -> None:
@@ -305,18 +317,26 @@ def _run_one(
 
 def _select_cases(args: argparse.Namespace) -> list[str]:
     if args.all_g1:
+        return list(G1_CASE_IDS)
+    if args.all_g2:
+        return list(G2_CASE_IDS)
+    if args.all_authored:
         return list(CASE_IDS)
     if args.case:
         return list(dict.fromkeys(args.case))
     if args.preflight_only:
         return list(CASE_IDS)
-    raise SystemExit("select at least one --case or pass --all-g1")
+    raise SystemExit(
+        "select at least one --case or pass --all-g1/--all-g2/--all-authored"
+    )
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--case", action="append", choices=sorted(CASE_BUILDERS))
     parser.add_argument("--all-g1", action="store_true")
+    parser.add_argument("--all-g2", action="store_true")
+    parser.add_argument("--all-authored", action="store_true")
     parser.add_argument("--preflight-only", action="store_true")
     parser.add_argument("--provider", default=None)
     parser.add_argument("--effort", choices=("high", "xhigh"), default="xhigh")
@@ -344,7 +364,14 @@ def main() -> int:
         "lift_agent_calls": 0,
         "cases": preflight_rows,
     }
-    preflight_name = "preflight_g1.json" if selected == list(CASE_IDS) else "preflight_latest.json"
+    if selected == list(G1_CASE_IDS):
+        preflight_name = "preflight_g1.json"
+    elif selected == list(G2_CASE_IDS):
+        preflight_name = "preflight_g2.json"
+    elif selected == list(CASE_IDS):
+        preflight_name = "preflight_authored.json"
+    else:
+        preflight_name = "preflight_latest.json"
     _write_json(TASK_ROOT / preflight_name, preflight_report)
     if args.preflight_only:
         print(json.dumps(preflight_report, sort_keys=True, ensure_ascii=False))
