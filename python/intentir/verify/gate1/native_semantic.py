@@ -128,7 +128,10 @@ def _j_contract(artifact: Gate1Artifact) -> tuple[set[str], set[str], bool]:
             # requiring multiplication here would reject that valid lowering.
             required.add("add")
         elif name == "select":
-            required.add("select")
+            # Selection may compile to selp, a predicated move, or ordinary
+            # branch control.  It authorizes the sensitive family but cannot
+            # require one particular PTX/TIR instruction spelling.
+            allowed.add("select")
         elif name == "cast":
             operands = operation.get("operands", [])
             if (

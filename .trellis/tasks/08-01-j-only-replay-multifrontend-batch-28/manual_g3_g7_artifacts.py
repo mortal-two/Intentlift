@@ -445,20 +445,29 @@ def build_artifact(case_id: str) -> dict[str, Any]:
         raise KeyError(case_id)
     j = _J_BUILDERS[stem](frontend)
     j["signature"] = _signature(stem, frontend)
+    block_x = _BLOCK_X[stem]
+    c_slots = []
+    c_values: dict[str, Any] = {}
+    # The native Harness deliberately omits unit launch extents from its
+    # compiler schedule.  C must describe that exact sparse schedule rather
+    # than inventing a c0=1 slot that the Source never binds.
+    if block_x != 1:
+        c_slots.append(
+            {
+                "name": "c0",
+                "kind": "compiler",
+                "value_type": "i32",
+                "role": "launch_block_x",
+                "required": True,
+            }
+        )
+        c_values["c0"] = block_x
     return {
         "schema": ARTIFACT_SCHEMA,
         "j": j,
         "c": {
-            "slots": [
-                {
-                    "name": "c0",
-                    "kind": "compiler",
-                    "value_type": "i32",
-                    "role": "launch_block_x",
-                    "required": True,
-                }
-            ],
-            "values": {"c0": _BLOCK_X[stem]},
+            "slots": c_slots,
+            "values": c_values,
         },
         "pi": _compact_pi(stem),
     }

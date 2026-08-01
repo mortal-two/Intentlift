@@ -474,9 +474,27 @@ class _Evaluator:
         result = self._result_name(op)
         axes = self.broadcast_axes.get(result, {}).get(name, ())
         projected = value
-        for axis in sorted(axes):
-            if axis < 0 or axis > projected.ndim:
-                raise ValueError("structured broadcast axis is outside result rank")
+        if axes:
+            # BroadcastSpec axes identify target positions on which expansion
+            # is legal.  A size-one operand dimension may already occupy one
+            # such position, so only the missing positions are rank insertions.
+            # Reuse the canonical elaborator's unique alignment instead of
+            # treating every allowed axis as an ``expand_dims`` operation.
+            from intentir.frontend.emit_mlir import _broadcast_projection
+
+            declared = self._declared_type(result, op)
+            if declared is None:
+                raise StructuredReferenceUnsupportedError(
+                    "structured broadcast result lacks a declared type"
+                )
+            _shape, inserted_axes = _broadcast_projection(
+                list(value.shape),
+                axes,
+                list(declared[1]),
+            )
+        else:
+            inserted_axes = ()
+        for axis in inserted_axes:
             projected = np.expand_dims(projected, axis=axis)
         return projected
 

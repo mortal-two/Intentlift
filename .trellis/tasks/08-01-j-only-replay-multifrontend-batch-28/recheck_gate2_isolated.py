@@ -20,7 +20,7 @@ from intentir.verify.gate1.model import Gate1Artifact
 from intentir.verify.gate1.orchestrate import canonical_artifact_digest
 
 from manual_g2_artifacts import CASE_IDS as G2_CASE_IDS
-from run_manual_batch import TASK_ROOT, _execute_gate2, _write_json
+from run_manual_batch import CASE_IDS, TASK_ROOT, _execute_gate2, _write_json
 
 
 def _latest_gate1_closed_run(case_id: str) -> Path:
@@ -116,15 +116,21 @@ def _recheck(case_id: str, semaphore: threading.Semaphore) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--case", action="append", choices=sorted(G2_CASE_IDS))
+    parser.add_argument("--case", action="append", choices=sorted(CASE_IDS))
     parser.add_argument("--all-g2", action="store_true")
+    parser.add_argument("--all-authored", action="store_true")
     parser.add_argument("--gate2-workers", type=int, default=1)
     args = parser.parse_args()
     if args.gate2_workers < 1:
         parser.error("--gate2-workers must be positive")
-    selected = list(G2_CASE_IDS) if args.all_g2 else list(dict.fromkeys(args.case or ()))
+    if args.all_authored:
+        selected = list(CASE_IDS)
+    elif args.all_g2:
+        selected = list(G2_CASE_IDS)
+    else:
+        selected = list(dict.fromkeys(args.case or ()))
     if not selected:
-        parser.error("select --case or --all-g2")
+        parser.error("select --case, --all-g2, or --all-authored")
     semaphore = threading.Semaphore(args.gate2_workers)
     rows: list[dict[str, Any]] = []
     for case_id in selected:
