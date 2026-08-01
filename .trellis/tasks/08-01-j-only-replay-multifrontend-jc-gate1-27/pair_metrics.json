@@ -1,0 +1,134 @@
+{
+  "protocol": "intentir.experiment.multifrontend-add2d-pair.v1",
+  "status": "pair_closed",
+  "authoring": {
+    "artifact_author": "primary Codex agent",
+    "lift_agent_calls": 0,
+    "shared_mathematical_sections_equal": true,
+    "shared_mathematical_sections_bytes": 1484,
+    "shared_mathematical_sections_sha256": "c9d1d21d62f30ba86e248edd08f633382edb6a4f3d2d063ee824b5b8b7e0ba67",
+    "full_j_byte_identical": false,
+    "pi_byte_identical": true,
+    "pi_canonical_bytes": 95,
+    "pi_sha256": "4593222530fb5a5831eb334613bf5da363f9e1219f1dbca43e557f4617d27fd3"
+  },
+  "frontends": {
+    "tilelang": {
+      "case": "tilelang:add2d",
+      "run": "run-002",
+      "artifact_file_bytes": 4113,
+      "j_canonical_bytes": 1797,
+      "c_canonical_bytes": 123,
+      "abi": "three rank-2 tensor parameters",
+      "replay_model": "gpt-5.6-sol",
+      "replay_provider_calls": 1,
+      "replay_elapsed_ms": 158567.00400600675,
+      "replay_source_bytes": 323,
+      "replay_source_loc": 13,
+      "construction_tool_calls": 3,
+      "live_checkpoints": 2,
+      "pi_visible_to_replay": false,
+      "typecheck": "pass",
+      "gate1": {
+        "status": "replay_closed",
+        "observer": "tilelang-tir-semantic-structure-ptx-diagnostic-v5",
+        "normalizer": "intentir.gate1.jc-normalizer.v2",
+        "hard_pass": true,
+        "hard_fields": [
+          "interface",
+          "tir_operations",
+          "tir_structure",
+          "tir_topology",
+          "ptx.interface",
+          "ptx.schema",
+          "ptx.target",
+          "schema"
+        ],
+        "diagnostic_differences": 0
+      },
+      "gate2": {
+        "passed": true,
+        "case_count": 1,
+        "source_replay": true,
+        "source_j": true,
+        "replay_j": true,
+        "max_abs_error": 0.0
+      },
+      "timing_note": "Gate1/Gate2 wrapper wall times in summary.json are filesystem-mtime approximations because the first recorder version failed only after gate2.json was persisted; Replay elapsed is exact."
+    },
+    "cuda": {
+      "case": "cuda:tilelang_add2d",
+      "run": "run-002",
+      "artifact_file_bytes": 4291,
+      "j_canonical_bytes": 1887,
+      "c_canonical_bytes": 121,
+      "abi": "three rank-2 pointer parameters plus one i32 logical dimension",
+      "replay_model": "gpt-5.6-sol",
+      "replay_provider_calls": 1,
+      "replay_elapsed_ms": 96275.57039400563,
+      "replay_source_bytes": 385,
+      "replay_source_loc": 10,
+      "construction_tool_calls": 2,
+      "live_checkpoints": 1,
+      "pi_visible_to_replay": false,
+      "typecheck": "pass",
+      "gate1": {
+        "status": "replay_closed",
+        "observer": "cuda-ptx-semantic-effects-v6",
+        "normalizer": "intentir.gate1.jc-normalizer.v2",
+        "hard_pass": true,
+        "hard_fields": [
+          "address_coordinate_folds",
+          "collectives",
+          "control_flow",
+          "coordinate_uses",
+          "interface",
+          "memory_effects",
+          "schema",
+          "target",
+          "value_operations"
+        ],
+        "diagnostic_differences": 3,
+        "diagnostic_difference_fields": [
+          "raw_instruction_topology",
+          "raw_memory_effects",
+          "raw_opcode_multiset"
+        ]
+      },
+      "gate2": {
+        "passed": true,
+        "case_count": 1,
+        "source_replay": true,
+        "source_j": true,
+        "replay_j": true,
+        "max_abs_error": 0.0
+      },
+      "gate1_elapsed_ms": 100940.93632698059,
+      "gate2_elapsed_ms": 5245.482921600342
+    }
+  },
+  "engineering_scope": {
+    "kernel_specific_production_loc_added": 0,
+    "pair_bottleneck_generic_python_added": 122,
+    "pair_bottleneck_generic_python_deleted": 33,
+    "pair_bottleneck_generic_python_net": 89,
+    "experiment_only_authoring_loc": 282,
+    "experiment_only_runner_loc": 258,
+    "loc_note": "The large selective J-only core sync and pre-existing TileLang/PTX observers are not a marginal per-kernel frontend cost."
+  },
+  "claim_boundary": {
+    "supported": [
+      "case-level J-only replay sufficiency for one paired add2d kernel",
+      "independent TileLang-TIR and CUDA-semantic-PTX Gate1 closure",
+      "three-edge finite Gate2 closure for both frontends",
+      "zero kernel-specific production lowering rules for this pair"
+    ],
+    "not_supported": [
+      "J necessity or minimality",
+      "generalization beyond add2d",
+      "pi normalization benefit",
+      "generated-kernel performance equivalence",
+      "byte-identical full J across frontend ABIs"
+    ]
+  }
+}

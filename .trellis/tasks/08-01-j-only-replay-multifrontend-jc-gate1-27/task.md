@@ -1,6 +1,6 @@
 # Task 27：J-only Replay 与 CUDA/TileLang J/C Structural Gate1
 
-> 状态：`P3_ADD2D_REAL_EXECUTION`（2026-08-01）
+> 状态：`P3_ADD2D_PAIR_CLOSED`（2026-08-01）
 > 权威实施文档：
 > `doc/method/IntentIR_J-only_Replay与多前端JC结构Gate1最终实施_2026-08-01.md`。  
 > 前序 Task 26 已归档；其 π-fed Replay 代码与运行只作反例证据。
@@ -58,10 +58,10 @@ Gate2(Source,R,RefEval(J))                # 三边
 ## 5. P3：主代理直接作者化 add2d pair
 
 - [x] `tilelang:add2d`：主代理作者化→TypeCheck→fresh J-only Replay→Gate1→Gate2（run-002 全闭合）；
-- [ ] `cuda:tilelang_add2d`：同一完整流程；
-- [ ] 保存Source、Harness、candidate、作者化记录、Replay trajectory、compiler observation、Gate1、Gate2；
-- [ ] canonical比较两份accepted J/C：共同数学结构与真实frontend差异分别报告；
-- [ ] 确认两份Replay receipt均无π输入。
+- [x] `cuda:tilelang_add2d`：同一完整流程（run-002 全闭合）；
+- [x] 保存Source、Harness、candidate、作者化记录、Replay trajectory、compiler observation、Gate1、Gate2；
+- [x] canonical比较两份accepted J/C：共同数学结构与真实frontend差异分别报告；
+- [x] 确认两份Replay receipt均无π输入。
 
 ### 5.1 run-001 反例与机制修正
 
@@ -92,6 +92,14 @@ Gate2(Source,R,RefEval(J))                # 三边
   effects、control flow、coordinate uses四个hard类别拒绝；
 - 该失败不归因于 J 缺失，也不通过放松 semantic PTX observer解决；下一轮只澄清通用 ownership：
   `boundary.domains` 是迭代集合，只有 J access predicate/control 才授权 runtime guard。
+
+### 5.4 run-002 CUDA 真实闭合与 pair summary
+
+- fresh `gpt-5.6-sol/xhigh`，1次 provider call，Replay episode 96.28 s；
+- 首个385-byte checkpoint即 construction PASS，2次工具调用；
+- semantic PTX 的 ABI/value/memory/address/control/coordinate/target全部hard PASS；3项raw PTX差异仅诊断；
+- Gate2三边全部PASS，f32 max abs error均为0；
+- add2d pair机器指标见`pair_metrics.json`，论文解释与claim boundary见`report.md`。
 
 ## 6. P4：gather2d与Gate1价值
 

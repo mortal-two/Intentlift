@@ -173,6 +173,11 @@ valuation下直接枚举该域，Replay不得凭“防越界”新增 guarded ef
 value/memory/control/coordinate硬字段拒绝是预期行为。修复应进入 J→target 编译契约，而不是降低 PTX
 字段、暴露 C value或增加 per-kernel例外。
 
+fresh CUDA `run-002` 在同一 artifact、observer与Harness上验证了修正：Codex只消费
+`J+MaskC(C)+U_f`，生成10行直接 CUDA；semantic PTX 的 ABI、value/memory effects、address folds、
+control、coordinates与target全部hard PASS，raw PTX三项差异仅保留为diagnostic；有限隐藏输入的
+Source–Replay、Source–J、Replay–J三边均为0误差。至此 add2d pair 在两个独立 profile 上全部闭合。
+
 add2d 通过后，第二对使用 `tilelang:gather2d` / `cuda:tilelang_gather2d`。它们共享
 `M=64`、block `[128,1,1]`、grid `[256,1,1]`，但包含 data-dependent row/column 间接寻址，用来检验
 两种 observer 对合法 address realization 的误拒率。
