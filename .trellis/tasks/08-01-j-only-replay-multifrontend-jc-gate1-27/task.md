@@ -83,6 +83,16 @@ Gate2(Source,R,RefEval(J))                # 三边
 - 首版实验 runner 在 Gate2 已落盘后误读 suite `.status` 而抛异常；run-002 summary 对 wall time 明确标成
   filesystem-mtime approximation，runner 已改用 `.passed/.status_counts` 并增量保存 timing，未重跑或改写 Gate。
 
+### 5.3 run-001 CUDA 反例
+
+- fresh `gpt-5.6-sol/xhigh`，1次 provider call，Replay episode 91.18 s，首次 construction/submit均PASS；
+- agent 正确恢复两读、一加、一写，但把 J logical domain 错当成 runtime access predicate：加入
+  `if (blockIdx.x < p3)` 与 `threadIdx.x += blockDim.x` grid-stride loop；
+- PTX 因而增加 `ld.param p3`、`blockDim.x`、比较、逻辑谓词与分支；Gate1 在 value operations、memory
+  effects、control flow、coordinate uses四个hard类别拒绝；
+- 该失败不归因于 J 缺失，也不通过放松 semantic PTX observer解决；下一轮只澄清通用 ownership：
+  `boundary.domains` 是迭代集合，只有 J access predicate/control 才授权 runtime guard。
+
 ## 6. P4：gather2d与Gate1价值
 
 - [ ] add2d双闭合后运行TileLang/CUDA gather2d；

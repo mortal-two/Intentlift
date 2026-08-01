@@ -166,6 +166,13 @@ topology/operation multiset全部 hard PASS；随后有限隐藏输入上的 Sou
 三边均为0误差。Replay episode 从 baseline 的555.32 s降到158.57 s，construction tool calls从18降到3。
 这里的提升来自补全通用匿名编译槽 ABI，不来自 π、Source recipe、Gate反馈或放松 observer。
 
+CUDA `run-001` 暴露了第二个通用 ownership 歧义：Replay 一次即编译通过，但把 J logical domain 的
+上下界重复实现成 runtime `if`，并用 `blockDim.x` 写 grid-stride carrier。domain 定义的是待枚举集合，
+不是 access predicate；若 J access predicate/control 为空、chosen launch coordinates在固定 Harness
+valuation下直接枚举该域，Replay不得凭“防越界”新增 guarded effect。semantic PTX observer因此在
+value/memory/control/coordinate硬字段拒绝是预期行为。修复应进入 J→target 编译契约，而不是降低 PTX
+字段、暴露 C value或增加 per-kernel例外。
+
 add2d 通过后，第二对使用 `tilelang:gather2d` / `cuda:tilelang_gather2d`。它们共享
 `M=64`、block `[128,1,1]`、grid `[256,1,1]`，但包含 data-dependent row/column 间接寻址，用来检验
 两种 observer 对合法 address realization 的误拒率。
