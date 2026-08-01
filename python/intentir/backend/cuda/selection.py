@@ -113,6 +113,8 @@ class PassDescriptor:
     description: str
     scf_to_cf: bool = False
     required_markers: tuple[str, ...] = ()
+    expanded_only: bool = False
+    schedule: Mapping[str, int | bool | str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -188,6 +190,85 @@ DEFAULT_PASSES: tuple[PassDescriptor, ...] = (
         supported_chips=("sm_120a",),
         description="flat rank-4 FlashAttention forward MMA",
         scf_to_cf=True,
+    ),
+    *(
+        PassDescriptor(
+            fast_path_id="cuda.flash_forward.structured_scan.direct.v1",
+            pass_argument=(
+                "-convert-intent-flash-mma-to-gpu="
+                f"num-stages={stages} block-m={block_m} "
+                "certified-full-axis-only=true block-n=128 "
+                "materialize-tmp-roundtrip=true"
+            ),
+            supported_chips=_PORTABLE_BLOCK_CUDA_CHIPS,
+            description=(
+                "deterministic direct lowering of the certified structured "
+                "FlashAttention scan at its authored 128-key recurrence step"
+            ),
+            scf_to_cf=True,
+            schedule={
+                "tile_rows": block_m,
+                "tile_cols": 128,
+                "pipeline_stages": stages,
+                "num_warps": block_m // 16,
+                "direct_v_matrix_load": False,
+                "direct_v_row_padding": 0,
+                "materialize_tmp_roundtrip": True,
+                "paired_b_matrix_loads": False,
+                "vectorized_q_staging": False,
+                "stream_p_fragments": False,
+            },
+        )
+        for block_m in (64, 128, 32, 16)
+        for stages in (1, 2)
+    ),
+    *(
+        PassDescriptor(
+            fast_path_id="cuda.flash_forward.certified_full_axis.mma.v1",
+            pass_argument=(
+                "-convert-intent-flash-mma-to-gpu="
+                f"num-stages={stages} block-m={block_m} "
+                "certified-full-axis-only=true block-n=128 "
+                + ("direct-v-matrix-load=true " if direct_v else "")
+                + (
+                    f"direct-v-row-padding={direct_v_padding} "
+                    if direct_v_padding
+                    else ""
+                )
+                + ("paired-b-matrix-loads=true " if paired_b else "")
+                + ("vectorized-q-staging=true " if vector_q else "")
+                + "stream-p-fragments=true"
+            ),
+            supported_chips=_PORTABLE_BLOCK_CUDA_CHIPS,
+            description=(
+                "certified batch/head-explicit FlashAttention scan with "
+                "register-resident score/softmax/output state"
+            ),
+            scf_to_cf=True,
+            expanded_only=True,
+            schedule={
+                "tile_rows": block_m,
+                "tile_cols": 128,
+                "pipeline_stages": stages,
+                "num_warps": block_m // 16,
+                "direct_v_matrix_load": direct_v,
+                "direct_v_row_padding": direct_v_padding,
+                "materialize_tmp_roundtrip": False,
+                "paired_b_matrix_loads": paired_b,
+                "vectorized_q_staging": vector_q,
+                "stream_p_fragments": True,
+            },
+        )
+        for direct_v, paired_b, direct_v_padding in (
+            (False, False, 0),
+            (True, False, 0),
+            (True, False, 8),
+            (True, True, 0),
+            (True, True, 8),
+        )
+        for block_m in (64, 128, 32, 16)
+        for vector_q in (False, True)
+        for stages in (1, 2)
     ),
     PassDescriptor(
         fast_path_id="cuda.flash_backward.flat_rank4.mma.v1",
@@ -445,7 +526,9 @@ def _passes(
 ) -> tuple[PassDescriptor, ...]:
     selected = tuple(passes)
     if only_fast_path is None:
-        return selected
+        return tuple(
+            descriptor for descriptor in selected if not descriptor.expanded_only
+        )
     filtered = tuple(
         descriptor
         for descriptor in selected

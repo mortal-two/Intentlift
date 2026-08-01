@@ -195,6 +195,332 @@ def _shape(
     return tuple(result)
 
 
+def _const_value(operation: IntentOp | None, value: int) -> bool:
+    return bool(
+        operation is not None
+        and operation.op == "const"
+        and operation.attrs.get("value") == value
+    )
+
+
+def _commutative_operands(
+    operation: IntentOp | None,
+    fn: str,
+    lhs: str,
+    rhs: str,
+) -> bool:
+    operands = _binary_inputs(operation) if operation is not None else None
+    return bool(
+        operation is not None
+        and _fn(operation, fn)
+        and operands is not None
+        and {operands[0], operands[1]} == {lhs, rhs}
+    )
+
+
+def _interleaved_rotation_view(
+    j: SemanticArchive,
+    concrete_extents: Mapping[str, int],
+    inout: tuple[str, str],
+    tensors: Mapping[str, object],
+    operations: Mapping[str, IntentOp],
+    node_operations: Mapping[str, IntentOp],
+) -> PairedRotationView | None:
+    """Recognize the exact even/odd Llama-style paired rotation graph.
+
+    The projection is deliberately closed and structural: it verifies the
+    shared ``2*k``/``2*k+1`` index producers, both output equations for both
+    inout tensors, the angle planes and the dynamic imaginary sign.  It is not
+    selected by a kernel identifier or Source path.
+    """
+
+    if len(j.intent.body) != 38:
+        return None
+    tensor_map = {item.name: item for item in j.intent.inputs}
+    q_shape = _shape(tensor_map[inout[0]].shape, concrete_extents)
+    k_shape = _shape(tensor_map[inout[1]].shape, concrete_extents)
+    if (
+        q_shape is None
+        or k_shape is None
+        or len(q_shape) != 4
+        or len(k_shape) != 4
+        or q_shape[:2] != k_shape[:2]
+        or q_shape[3] != k_shape[3]
+        or q_shape[3] % 2
+    ):
+        return None
+    half = q_shape[3] // 2
+    remaining = [item for item in j.intent.inputs if item.name not in inout]
+    angle_candidates = [
+        item
+        for item in remaining
+        if _shape(item.shape, concrete_extents) == (q_shape[1], half, 2)
+        and item.dtype == tensor_map[inout[0]].dtype
+    ]
+    sign_candidates = [
+        item
+        for item in remaining
+        if _shape(item.shape, concrete_extents) == () and item.dtype == "f32"
+    ]
+    if len(angle_candidates) != 1 or len(sign_candidates) != 1:
+        return None
+    angle = angle_candidates[0].name
+    sign = sign_candidates[0].name
+
+    results = {
+        result: operation
+        for operation in j.intent.body
+        for result in _op_results(operation)
+    }
+    iotas = [operation for operation in j.intent.body if operation.op == "iota"]
+    if len(iotas) != 1 or not isinstance(iotas[0].result, str):
+        return None
+    pair = iotas[0].result
+    even_candidates = [
+        operation
+        for operation in j.intent.body
+        if _commutative_operands(
+            operation,
+            "mul",
+            pair,
+            next(
+                (
+                    result
+                    for result, producer in results.items()
+                    if _const_value(producer, 2)
+                ),
+                "",
+            ),
+        )
+    ]
+    if len(even_candidates) != 1 or not isinstance(even_candidates[0].result, str):
+        return None
+    even = even_candidates[0].result
+    one_values = {
+        result for result, producer in results.items() if _const_value(producer, 1)
+    }
+    odd_candidates = [
+        operation
+        for operation in j.intent.body
+        if isinstance(operation.result, str)
+        and operation.op == "map_binary"
+        and operation.attrs.get("fn") == "add"
+        and (operands := _binary_inputs(operation)) is not None
+        and even in operands
+        and any(value in operands for value in one_values)
+    ]
+    if len(odd_candidates) != 1:
+        return None
+    odd = odd_candidates[0].result
+    assert isinstance(odd, str)
+
+    angle_gathers = [
+        operation
+        for operation in j.intent.body
+        if operation.op == "gather"
+        and operation.operands
+        and operation.operands[0] == angle
+        and operation.attrs.get("axis") == 2
+        and operation.attrs.get("mode") == "take"
+    ]
+    if len(angle_gathers) != 2:
+        return None
+    cosine: str | None = None
+    sine_raw: str | None = None
+    for gather in angle_gathers:
+        if not isinstance(gather.result, str) or len(gather.operands) != 2:
+            return None
+        index = results.get(gather.operands[1])
+        if _const_value(index, 0):
+            cosine = gather.result
+        elif _const_value(index, 1):
+            sine_raw = gather.result
+    if cosine is None or sine_raw is None:
+        return None
+    sine_casts = [
+        operation
+        for operation in j.intent.body
+        if operation.op == "cast"
+        and operation.operands == [sine_raw]
+        and operation.attrs.get("to_dtype") == "f32"
+    ]
+    if len(sine_casts) != 1 or not isinstance(sine_casts[0].result, str):
+        return None
+    sine_scaled_candidates = [
+        operation
+        for operation in j.intent.body
+        if _commutative_operands(operation, "mul", sine_casts[0].result, sign)
+    ]
+    if len(sine_scaled_candidates) != 1 or not isinstance(
+        sine_scaled_candidates[0].result, str
+    ):
+        return None
+    sine_scaled = sine_scaled_candidates[0].result
+
+    authored = {item.access_id: item for item in j.boundary.accesses}
+    structured = j_elaboration(j).access_by_id
+    for data_ref in inout:
+        data_gathers = [
+            operation
+            for operation in j.intent.body
+            if operation.op == "gather"
+            and operation.operands
+            and operation.operands[0] == data_ref
+            and operation.attrs.get("axis") == 3
+            and operation.attrs.get("mode") == "take"
+        ]
+        if len(data_gathers) != 2:
+            return None
+        by_index = {
+            operation.operands[1]: operation.result for operation in data_gathers
+        }
+        even_value = by_index.get(even)
+        odd_value = by_index.get(odd)
+        if not isinstance(even_value, str) or not isinstance(odd_value, str):
+            return None
+        even_casts = [
+            operation
+            for operation in j.intent.body
+            if operation.op == "cast"
+            and operation.operands == [even_value]
+            and operation.attrs.get("to_dtype") == "f32"
+        ]
+        odd_casts = [
+            operation
+            for operation in j.intent.body
+            if operation.op == "cast"
+            and operation.operands == [odd_value]
+            and operation.attrs.get("to_dtype") == "f32"
+        ]
+        cosine_casts = [
+            operation
+            for operation in j.intent.body
+            if operation.op == "cast"
+            and operation.operands == [cosine]
+            and operation.attrs.get("to_dtype") == "f32"
+        ]
+        if len(even_casts) != 1 or len(odd_casts) != 1 or not cosine_casts:
+            return None
+        even_f32 = even_casts[0].result
+        odd_f32 = odd_casts[0].result
+        cosine_f32_values = {
+            operation.result
+            for operation in cosine_casts
+            if isinstance(operation.result, str)
+        }
+        if not isinstance(even_f32, str) or not isinstance(odd_f32, str) or not cosine_f32_values:
+            return None
+
+        low_cos = next(
+            (
+                operation.result
+                for operation in j.intent.body
+                if any(
+                    _commutative_operands(operation, "mul", even_f32, cosine_f32)
+                    for cosine_f32 in cosine_f32_values
+                )
+            ),
+            None,
+        )
+        high_sin = next(
+            (
+                operation.result
+                for operation in j.intent.body
+                if _commutative_operands(operation, "mul", odd_f32, sine_scaled)
+            ),
+            None,
+        )
+        high_cos = next(
+            (
+                operation.result
+                for operation in j.intent.body
+                if _commutative_operands(operation, "mul", odd_value, cosine)
+            ),
+            None,
+        )
+        low_sin = next(
+            (
+                operation.result
+                for operation in j.intent.body
+                if _commutative_operands(operation, "mul", even_f32, sine_scaled)
+            ),
+            None,
+        )
+        if not all(isinstance(item, str) for item in (low_cos, high_sin, high_cos, low_sin)):
+            return None
+        high_cos_casts = [
+            operation.result
+            for operation in j.intent.body
+            if operation.op == "cast"
+            and operation.operands == [high_cos]
+            and operation.attrs.get("to_dtype") == "f32"
+            and isinstance(operation.result, str)
+        ]
+        low_outputs = [
+            operation
+            for operation in j.intent.body
+            if operation.op == "map_binary"
+            and operation.attrs.get("fn") == "sub"
+            and _binary_inputs(operation) == (low_cos, high_sin)
+        ]
+        high_outputs = [
+            operation
+            for operation in j.intent.body
+            if operation.op == "map_binary"
+            and operation.attrs.get("fn") == "add"
+            and isinstance(operation.result, str)
+            and high_cos_casts
+            and _commutative_operands(
+                operation, "add", low_sin, high_cos_casts[0]
+            )
+        ]
+        if len(low_outputs) != 1 or len(high_outputs) != 1:
+            return None
+        low_cast = next(
+            (
+                operation
+                for operation in j.intent.body
+                if operation.op == "cast"
+                and operation.operands == [low_outputs[0].result]
+                and operation.attrs.get("to_dtype") == tensor_map[data_ref].dtype
+            ),
+            None,
+        )
+        high_cast = next(
+            (
+                operation
+                for operation in j.intent.body
+                if operation.op == "cast"
+                and operation.operands == [high_outputs[0].result]
+                and operation.attrs.get("to_dtype") == tensor_map[data_ref].dtype
+            ),
+            None,
+        )
+        if low_cast is None or high_cast is None:
+            return None
+        stored_nodes = {
+            access.node_ref
+            for access in j.boundary.accesses
+            if access.tensor == data_ref
+            and getattr(access.kind, "value", access.kind) == "store"
+        }
+        expected_nodes = {
+            node_ref
+            for node_ref, operation in node_operations.items()
+            if operation is low_cast or operation is high_cast
+        }
+        if stored_nodes != expected_nodes or len(stored_nodes) != 2:
+            return None
+        for access_id, parsed in structured.items():
+            access = authored[access_id]
+            if access.node_ref not in stored_nodes:
+                continue
+            if parsed.predicate is None or len(parsed.index.components) != 4:
+                return None
+
+    return PairedRotationView(inout, angle, sign, "interleaved")
+
+
 def _plane_sections(
     j: SemanticArchive,
     cosine: str,
@@ -296,6 +622,16 @@ def derive_paired_rotation_view(
         or q_shape[3] % 2 != 0
     ):
         return None
+    interleaved = _interleaved_rotation_view(
+        j,
+        concrete_extents,
+        inout,
+        tensors,
+        operations,
+        node_operations,
+    )
+    if interleaved is not None:
+        return interleaved
     last_dimension = tensors[inout[0]].shape[-1]
     if not isinstance(last_dimension, str) or tensors[inout[1]].shape[-1] != last_dimension:
         return None

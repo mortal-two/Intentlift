@@ -210,6 +210,39 @@ def LowerRowMaskToLoops : Pass<
   ];
 }
 
+def LowerPairedRotationToLoops : Pass<
+    "lower-paired-rotation-to-loops", "::mlir::ModuleOp"> {
+  let summary = "Lower a closed interleaved paired rotation to direct loops.";
+  let description = [{
+    Consumes the target-neutral paired-rotation view emitted only after the
+    accepted J proves the two in-place even/odd rotations and their exact angle
+    layout.  After bufferization, the exploded gather/cast/scatter graph is
+    replaced by direct SCF/memref loops.  The contiguous state keeps the pair
+    axis innermost; the head-angle-reuse state hoists each angle pair across all
+    query and key heads.  A fixed-vector state loads one contiguous 2W packet,
+    deinterleaves it with vector.shuffle, and writes one contiguous result packet;
+    the scalable state uses masked gather/scatter.  Matching is source-name and
+    target-name blind.
+  }];
+  let dependentDialects = [
+    "::mlir::arith::ArithDialect",
+    "::mlir::func::FuncDialect",
+    "::mlir::memref::MemRefDialect",
+    "::mlir::scf::SCFDialect",
+    "::mlir::vector::VectorDialect",
+  ];
+  let options = [
+    Option<"headAngleReuse", "head-angle-reuse", "bool", "false",
+           "Hoist each cosine/sine pair across all query and key heads">,
+    Option<"requireLowering", "require-lowering", "bool", "false",
+           "Fail when no exact closed interleaved paired rotation is lowered">,
+    Option<"vectorWidth", "vector-width", "unsigned", "1",
+           "Number of interleaved pairs handled per vector iteration">,
+    Option<"scalableVector", "scalable-vector", "bool", "false",
+           "Use a vector.vscale-derived interleaved-pair packet">,
+  ];
+}
+
 def LowerGatherChainToLoops : Pass<
     "lower-gather-chain-to-loops", "::mlir::ModuleOp"> {
   let summary = "Compose a typed two-level gather into direct indexed loads.";

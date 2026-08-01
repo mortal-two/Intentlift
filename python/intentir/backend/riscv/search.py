@@ -21,7 +21,7 @@ from intentir.backend.riscv.compile import (
 )
 
 
-RVV_SEARCH_PLAN_PROTOCOL = "intentir.backend.riscv.search-plan.v9"
+RVV_SEARCH_PLAN_PROTOCOL = "intentir.backend.riscv.search-plan.v10"
 RVV_C_PROJECTION_PROTOCOL = "intentir.backend.riscv.c-projection.v1"
 
 _PARALLEL_TILES = (1, 2, 4, 8, 16, 32, 64, 128)
@@ -91,6 +91,7 @@ def enumerate_riscv_candidates(
     enable_rowmask_zero_fill: bool = False,
     enable_composed_gather: bool = False,
     enable_sibling_output_fusion: bool = False,
+    enable_paired_rotation: bool = False,
 ) -> tuple[RiscvLoweringCandidate, ...]:
     """Build the target schedule/structure universe without reading C."""
 
@@ -109,6 +110,21 @@ def enumerate_riscv_candidates(
         transformations.append(
             RiscvTransformationState(True, fuse_sibling_outputs=True)
         )
+    if enable_paired_rotation:
+        # The contiguous direct loop is the canonical complete consumer of the
+        # closed paired-rotation view, not a Full-only optimization.  Full may
+        # additionally change loop topology by hoisting angles across heads.
+        transformations.append(
+            RiscvTransformationState(False, paired_rotation=True)
+        )
+        if enable_b_transformations:
+            transformations.append(
+                RiscvTransformationState(
+                    False,
+                    paired_rotation=True,
+                    paired_rotation_head_angle_reuse=True,
+                )
+            )
     if enable_reassociation:
         transformations.append(RiscvTransformationState(False, True, False))
         if enable_b_transformations:
@@ -143,6 +159,15 @@ def enumerate_riscv_candidates(
     candidates: list[RiscvLoweringCandidate] = []
     for transformation in transformations:
         for base_schedule in schedules:
+            if transformation.paired_rotation and (
+                base_schedule.parallel_tile != 0
+                or base_schedule.reduction_tile != 0
+                or (
+                    transformation.paired_rotation_head_angle_reuse
+                    and base_schedule.vectorize
+                )
+            ):
+                continue
             if transformation.rowmask_zero_fill and (
                 base_schedule.parallel_tile != 0
                 or base_schedule.reduction_tile != 0
@@ -752,7 +777,15 @@ def plan_riscv_search(
     )
     has_typed_rowmask = _has_typed_rowmask_graph(j_payload)
     has_typed_gather_chain = _has_typed_gather_chain(j_payload)
-    has_sibling_outputs = _has_two_public_outputs(j_payload) and not reduction_axes
+    has_paired_rotation = (
+        'intent.paired_rotation = "interleaved"' in state.base.intent_mlir
+        and "intentir.paired-last-axis-rotation.v1" in state.base.intent_mlir
+    )
+    has_sibling_outputs = (
+        _has_two_public_outputs(j_payload)
+        and not reduction_axes
+        and not has_paired_rotation
+    )
     projected_priors, ignored_priors, projection = _project_c_priors(state)
     raw_universe = enumerate_riscv_candidates(
         enable_b_transformations=enable_b_transformations,
@@ -760,6 +793,7 @@ def plan_riscv_search(
         enable_rowmask_zero_fill=has_typed_rowmask,
         enable_composed_gather=has_typed_gather_chain,
         enable_sibling_output_fusion=has_sibling_outputs,
+        enable_paired_rotation=has_paired_rotation,
     )
     minimum_reduction_tile = int(projection["vector_lanes"])
     subvector_reduction_schedules_rejected = sum(
@@ -798,15 +832,30 @@ def plan_riscv_search(
         item.candidate_id: _c_score(item.schedule, projected_priors)
         for item in universe
     }
-    canonical = tuple(
-        item
-        for item in universe
-        if not item.transformation.fuse_producers
-        and not item.transformation.reassociate_reductions
-        and not item.transformation.rowmask_zero_fill
-        and not item.transformation.composed_indexed_gather
-        and not item.transformation.fuse_sibling_outputs
-    )
+    if has_paired_rotation:
+        # Once the J has a closed interleaved paired view, carrying the exploded
+        # 215-op materialized graph as C-Fixed would recreate the invalid
+        # generic-fallback-vs-complete-consumer ablation.  Transport only the
+        # complete contiguous spine and its genuine head-reuse alternative.
+        universe = tuple(
+            item for item in universe if item.transformation.paired_rotation
+        )
+        canonical = tuple(
+            item
+            for item in universe
+            if not item.transformation.paired_rotation_head_angle_reuse
+        )
+    else:
+        canonical = tuple(
+            item
+            for item in universe
+            if not item.transformation.fuse_producers
+            and not item.transformation.reassociate_reductions
+            and not item.transformation.rowmask_zero_fill
+            and not item.transformation.composed_indexed_gather
+            and not item.transformation.fuse_sibling_outputs
+            and not item.transformation.paired_rotation
+        )
     alternative_states = tuple(
         dict.fromkeys(
             (
@@ -820,6 +869,8 @@ def plan_riscv_search(
                 item.transformation.fuse_sibling_outputs,
                 item.transformation.approximate_exp,
                 item.transformation.mixed_precision_dot_reduction,
+                item.transformation.paired_rotation,
+                item.transformation.paired_rotation_head_angle_reuse,
             )
             for item in universe
             if item not in canonical
@@ -840,6 +891,8 @@ def plan_riscv_search(
                 item.transformation.fuse_sibling_outputs,
                 item.transformation.approximate_exp,
                 item.transformation.mixed_precision_dot_reduction,
+                item.transformation.paired_rotation,
+                item.transformation.paired_rotation_head_angle_reuse,
             )
             == state_key
         )

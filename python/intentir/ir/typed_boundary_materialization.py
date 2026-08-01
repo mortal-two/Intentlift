@@ -418,6 +418,23 @@ def _int(expression: ContractExpr) -> int | None:
     return value if expression.op == "int" and isinstance(value, int) else None
 
 
+def _positive_axis_scale(expression: ContractExpr, axis_ref: str) -> int | None:
+    """Recognize ``axis`` or a positive integer multiple of one axis."""
+
+    if _ref(expression) == axis_ref:
+        return 1
+    if expression.op != "mul" or len(expression.args) != 2:
+        return None
+    lhs, rhs = expression.args
+    if _ref(lhs) == axis_ref:
+        scale = _int(rhs)
+    elif _ref(rhs) == axis_ref:
+        scale = _int(lhs)
+    else:
+        return None
+    return scale if scale is not None and scale > 0 else None
+
+
 def _is_full_domain_term(
     expression: ContractExpr,
     axis_extents: Mapping[str, int | str],
@@ -1154,30 +1171,56 @@ def materialize_typed_boundary(
                         f"store {access.access_id!r} remap needs one logical axis"
                     )
                 axis_ref = next(iter(axes))
-                lhs, rhs = component.args if component.op == "add" else (None, None)
-                if lhs is None or rhs is None:
+                scale = _positive_axis_scale(component, axis_ref)
+                offset_expression: ContractExpr | None = None
+                if scale is None and component.op == "add" and len(component.args) == 2:
+                    lhs, rhs = component.args
+                    lhs_scale = _positive_axis_scale(lhs, axis_ref)
+                    rhs_scale = _positive_axis_scale(rhs, axis_ref)
+                    if lhs_scale is not None and axis_ref not in rhs.references:
+                        scale, offset_expression = lhs_scale, rhs
+                    elif rhs_scale is not None and axis_ref not in lhs.references:
+                        scale, offset_expression = rhs_scale, lhs
+                if scale is None:
                     raise TypedBoundaryMaterializationError(
-                        f"store {access.access_id!r} remap must be axis plus offset"
+                        f"store {access.access_id!r} remap is not invertible affine"
                     )
-                if _ref(lhs) == axis_ref and axis_ref not in rhs.references:
-                    offset_expression = rhs
-                elif _ref(rhs) == axis_ref and axis_ref not in lhs.references:
-                    offset_expression = lhs
+                source_extent = axis_extents[axis_ref]
+                physical_extent = output.shape[position]
+                physical = builder.iota(physical_extent, f"store_{axis_ref}")
+                offset = (
+                    builder.emit(offset_expression)
+                    if offset_expression is not None
+                    else builder.constant(0)
+                )
+                shifted = builder.binary("sub", physical, offset, "i64")
+                if scale == 1:
+                    source_index = shifted
+                    aligned = None
                 else:
-                    raise TypedBoundaryMaterializationError(
-                        f"store {access.access_id!r} remap is not invertible"
+                    divisor = builder.constant(scale)
+                    source_index = builder.binary("div", shifted, divisor, "i64")
+                    quotient_product = builder.binary(
+                        "mul", source_index, divisor, "i64"
                     )
-                extent = axis_extents[axis_ref]
-                physical = builder.iota(extent, f"store_{axis_ref}")
-                offset = builder.emit(offset_expression)
-                source_index = builder.binary("sub", physical, offset, "i64")
+                    remainder = builder.binary(
+                        "sub", shifted, quotient_product, "i64"
+                    )
+                    aligned = builder.binary(
+                        "eq", remainder, builder.constant(0), "i1"
+                    )
                 axis_values[axis_ref] = source_index
                 builder.axis_values[axis_ref] = source_index
                 zero = builder.constant(0)
-                high = builder.constant(int(concrete_extents[extent]) if isinstance(extent, str) else int(extent))
+                high = builder.constant(
+                    int(concrete_extents[source_extent])
+                    if isinstance(source_extent, str)
+                    else int(source_extent)
+                )
                 lower_ok = builder.binary("ge", source_index, zero, "i1")
                 upper_ok = builder.binary("lt", source_index, high, "i1")
                 bounds = builder.binary("logical_and", lower_ok, upper_ok, "i1")
+                bounds = _combine_guard(aligned, bounds, builder)
                 safe_index = builder.select(bounds, source_index, zero)
                 gathered = fresh("store_inverse_gather")
                 node_id = f"typed_boundary:{access.access_id}:store_inverse"

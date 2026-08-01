@@ -6,6 +6,7 @@ add_mlir_library(MLIRIntentConversionCommon
   VectorizeLinalgMixedPrecisionDotReduction.cpp
   FuseLinalgSoftmax.cpp
   LowerRowMaskToLoops.cpp
+  LowerPairedRotationToLoops.cpp
   LowerGatherChainToLoops.cpp
   FuseLinalgSiblingOutputs.cpp
   ForwardBufferResultsToOutParams.cpp

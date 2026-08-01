@@ -1617,7 +1617,7 @@ struct PairedRotationLowering {
   bool requestPairedDirectPlane;
   std::string requestTanhApproximation;
 
-  enum class Layout { SharedPosition, ThreePlane };
+  enum class Layout { SharedPosition, ThreePlane, Interleaved };
   Layout layout = Layout::SharedPosition;
   unsigned qArg = 0, kArg = 0, cosineArg = 0, sineArg = 0;
   int64_t B = 0, S = 0, HQ = 0, HK = 0, D = 0, half = 0;
@@ -1702,8 +1702,6 @@ struct PairedRotationLowering {
         !cosineType.hasStaticShape() || !sineType.hasStaticShape() ||
         qType.getRank() != 4 || kType.getRank() != 4 ||
         qType.getElementType() != kType.getElementType() ||
-        qType.getElementType() != cosineType.getElementType() ||
-        qType.getElementType() != sineType.getElementType() ||
         !isa<Float16Type, BFloat16Type, Float32Type>(qType.getElementType()) ||
         fty.getResult(0) != qType || fty.getResult(1) != kType)
       return failure();
@@ -1740,9 +1738,22 @@ struct PairedRotationLowering {
       if (llvm::any_of(sections, [](int64_t value) { return value <= 0; }) ||
           sections[0] + sections[1] + sections[2] != half)
         return failure();
+    } else if (layoutAttr.getValue() == "interleaved") {
+      layout = Layout::Interleaved;
+      if (cosineType.getRank() != 3 ||
+          cosineType.getShape() != ArrayRef<int64_t>({S, half, 2}) ||
+          cosineType.getElementType() != qType.getElementType() ||
+          sineType.getRank() != 0 ||
+          !isa<Float32Type>(sineType.getElementType()) ||
+          fn->hasAttr("intent.paired_rotation_sections"))
+        return failure();
     } else {
       return failure();
     }
+    if (layout != Layout::Interleaved &&
+        (qType.getElementType() != cosineType.getElementType() ||
+         qType.getElementType() != sineType.getElementType()))
+      return failure();
     if (requestRowVectorWidth == 2 &&
         (layout != Layout::SharedPosition || half % 2 != 0 ||
          !isa<Float16Type, BFloat16Type>(qType.getElementType())))
@@ -1837,9 +1848,39 @@ struct PairedRotationLowering {
         location, builder.getFloatAttr(cast<FloatType>(storageType), 0.0));
   }
 
+  std::pair<Value, Value> pairCoordinates(OpBuilder &builder,
+                                          Location location,
+                                          Value pair) const {
+    if (layout != Layout::Interleaved) {
+      Value high = builder.create<arith::AddIOp>(
+          location, pair,
+          builder.create<arith::ConstantIndexOp>(location, half));
+      return {pair, high};
+    }
+    Value even = builder.create<arith::MulIOp>(
+        location, pair,
+        builder.create<arith::ConstantIndexOp>(location, 2));
+    Value odd = builder.create<arith::AddIOp>(
+        location, even, builder.create<arith::ConstantIndexOp>(location, 1));
+    return {even, odd};
+  }
+
   std::pair<Value, Value>
   loadAngles(OpBuilder &builder, Location location, Value cosine, Value sine,
              Value batch, Value sequence, Value pair) const {
+    if (layout == Layout::Interleaved) {
+      Value zero = builder.create<arith::ConstantIndexOp>(location, 0);
+      Value one = builder.create<arith::ConstantIndexOp>(location, 1);
+      Value c = builder.create<memref::LoadOp>(
+          location, cosine, ValueRange{sequence, pair, zero});
+      Value s = builder.create<memref::LoadOp>(
+          location, cosine, ValueRange{sequence, pair, one});
+      Value sign =
+          builder.create<memref::LoadOp>(location, sine, ValueRange{});
+      s = builder.create<arith::MulFOp>(location,
+                                        toCompute(builder, location, s), sign);
+      return {c, s};
+    }
     if (layout == Layout::SharedPosition) {
       Value zero = builder.create<arith::ConstantIndexOp>(location, 0);
       Value c = builder.create<memref::LoadOp>(
@@ -1916,7 +1957,6 @@ struct PairedRotationLowering {
   void emitTensorRotation(OpBuilder &builder, Location location, Value data,
                           Value cosine, Value sine, Value local,
                           int64_t heads) const {
-    Value cHalf = builder.create<arith::ConstantIndexOp>(location, half);
     Value cPairGroups = builder.create<arith::ConstantIndexOp>(
         location, half / requestRowVectorWidth);
     Value cHeads = builder.create<arith::ConstantIndexOp>(location, heads);
@@ -1952,34 +1992,33 @@ struct PairedRotationLowering {
                           cosineValues, sineValues);
       return;
     }
-    Value high = builder.create<arith::AddIOp>(location, pair, cHalf);
+    auto [low, high] = pairCoordinates(builder, location, pair);
 
     // Keep the canonical direct lowering's original operation order exactly:
     // data pair first, then angle loads.  Full-only reuse must not manufacture
     // a gain by perturbing the Schedule-Only spine.
     Value lowValue = builder.create<memref::LoadOp>(
-        location, data, ValueRange{batch, sequence, head, pair});
+        location, data, ValueRange{batch, sequence, head, low});
     Value highValue = builder.create<memref::LoadOp>(
         location, data, ValueRange{batch, sequence, head, high});
     auto [cosineValue, sineValue] =
         loadAngles(builder, location, cosine, sine, batch, sequence, pair);
-    emitRotationValues(builder, location, data, batch, sequence, head, pair,
+    emitRotationValues(builder, location, data, batch, sequence, head, low,
                        high, lowValue, highValue, cosineValue, sineValue);
   }
 
   void emitRotationAt(OpBuilder &builder, Location location, Value data,
                       Value batch, Value sequence, Value head, Value pair,
                       Value cosineValue, Value sineValue) const {
-    Value cHalf = builder.create<arith::ConstantIndexOp>(location, half);
-    Value high = builder.create<arith::AddIOp>(location, pair, cHalf);
+    auto [low, high] = pairCoordinates(builder, location, pair);
 
     // Both source values are in SSA before either store: this is the essential
     // in-place safety property opened by the paired B store partition.
     Value lowValue = builder.create<memref::LoadOp>(
-        location, data, ValueRange{batch, sequence, head, pair});
+        location, data, ValueRange{batch, sequence, head, low});
     Value highValue = builder.create<memref::LoadOp>(
         location, data, ValueRange{batch, sequence, head, high});
-    emitRotationValues(builder, location, data, batch, sequence, head, pair,
+    emitRotationValues(builder, location, data, batch, sequence, head, low,
                        high, lowValue, highValue, cosineValue, sineValue);
   }
 
@@ -1987,6 +2026,30 @@ struct PairedRotationLowering {
   computeRotationValues(OpBuilder &builder, Location location, Value lowValue,
                         Value highValue, Value cosineValue,
                         Value sineValue) const {
+    if (layout == Layout::Interleaved) {
+      Value lowF32 = toCompute(builder, location, lowValue);
+      Value highF32 = toCompute(builder, location, highValue);
+      Value cosineF32 = toCompute(builder, location, cosineValue);
+      Value sineF32 = toCompute(builder, location, sineValue);
+      Value lowProduct =
+          builder.create<arith::MulFOp>(location, lowF32, cosineF32);
+      Value highSin =
+          builder.create<arith::MulFOp>(location, highF32, sineF32);
+      Value rotatedLow = builder.create<arith::SubFOp>(
+          location, lowProduct, highSin);
+
+      // Preserve the accepted J's asymmetric evaluation contract: the odd*cos
+      // product is rounded in storage precision before it is extended and added
+      // to the f32 even*sin product.
+      Value highProductStorage = builder.create<arith::MulFOp>(
+          location, highValue, cosineValue);
+      Value lowSin =
+          builder.create<arith::MulFOp>(location, lowF32, sineF32);
+      Value rotatedHigh = builder.create<arith::AddFOp>(
+          location, toCompute(builder, location, highProductStorage), lowSin);
+      return {toStorage(builder, location, rotatedLow),
+              toStorage(builder, location, rotatedHigh)};
+    }
     Value lowProduct =
         typedMul(builder, location, lowValue, cosineValue);
     Value highSin = typedMul(builder, location, highValue, sineValue);

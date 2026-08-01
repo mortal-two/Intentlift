@@ -1169,6 +1169,58 @@ def ConvertIntentFlashMMAToGPU
            "is the CORRECTNESS extension (every key tile is still visited + "
            "masked; the STAGE=1 fully-masked-tile skip is not applied). "
            "R-FLASH-3 attention-coverage extension.">,
+    Option<"certifiedFullAxisOnly", "certified-full-axis-only", "bool",
+           /*default=*/"false",
+           "Require the exact batch/head-explicit full-axis graph materialized "
+           "from a certified prefix/loop/epilogue J. This structural-search "
+           "entry rejects the historical normalized loop and B=H=1 live graph "
+           "so DirectLower cannot silently acquire the fused topology.">,
+    Option<"blockM", "block-m", "unsigned", /*default=*/"64",
+           "Query rows assigned to one CTA. Must be a positive multiple of the "
+           "16-row MMA tile; changing it is a schedule choice and does not alter "
+           "the certified key-scan recurrence.">,
+    Option<"blockN", "block-n", "unsigned", /*default=*/"64",
+           "Key rows consumed by one semantic scan/update step. The certified "
+           "structured path requires this to equal intent.loop tile_hint; this "
+           "prevents a backend schedule tile from silently changing the authored "
+           "floating-point recurrence.">,
+    Option<"directVMatrixLoad", "direct-v-matrix-load", "bool",
+           /*default=*/"false",
+           "Use ldmatrix.trans to form the PV B operand directly from natural "
+           "shared V[key,feature]. False retains the canonical materialized V^T "
+           "buffer; true is a Full structural state that removes that buffer, "
+           "one complete shared-memory traversal and its barrier.">,
+    Option<"directVRowPadding", "direct-v-row-padding", "unsigned",
+           /*default=*/"0",
+           "Extra f16 elements in each natural shared V row when using the direct "
+           "ldmatrix.trans path. Legal values are 0 and 8. The padded state reuses "
+           "the proven Flash-backward D-stride padding mechanism to change the "
+           "shared-bank mapping without changing any J-visible value.">,
+    Option<"materializeTmpRoundtrip", "materialize-tmp-roundtrip", "bool",
+           /*default=*/"false",
+           "Retain the certified loop's observable TMP store/load materialization "
+           "at every recurrence step and before the output epilogue. DirectLower "
+           "uses true; Full may remove those round trips only as an explicitly "
+           "searched, Q/D-checked materialization state.">,
+    Option<"pairedBMatrixLoads", "paired-b-matrix-loads", "bool",
+           /*default=*/"false",
+           "Pack two adjacent n8 B fragments into one ldmatrix.x4 for both QK "
+           "and PV, then split the returned registers in SSA. This reuses the "
+           "validated attention-backward loader and is a Full instruction-layout "
+           "state; it requires direct-v-matrix-load.">,
+    Option<"vectorizedQStaging", "vectorized-q-staging", "bool",
+           /*default=*/"false",
+           "Stage Q to shared memory with 16-byte vector load/store packets. "
+           "False retains DirectLower's scalar canonical staging; true reuses "
+           "the validated wide transaction shape from Flash backward as a Full "
+           "instruction-layout state.">,
+    Option<"streamPFragments", "stream-p-fragments", "bool",
+           /*default=*/"false",
+           "Generate each two-n8 probability fragment after the row maximum is "
+           "known and consume it immediately in the corresponding PV MMA. "
+           "False retains DirectLower's whole-tile P register materialization; "
+           "true is a Full register-lifetime topology that preserves the authored "
+           "128-key recurrence while avoiding a whole P tile live across PV.">,
   ];
   let dependentDialects = [
     "::mlir::gpu::GPUDialect",

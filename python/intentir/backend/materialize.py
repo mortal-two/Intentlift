@@ -9,6 +9,7 @@ from typing import Any, Mapping
 from intentir.backend.protocol import BackendTarget
 from intentir.frontend.canonical_j import (
     LOGICAL_FULL_AXIS_STEP_MATERIALIZATION,
+    STRUCTURED_SCAN_LOOP_MATERIALIZATION,
     materialize_j_function,
 )
 from intentir.frontend.emit_mlir import emit_module
@@ -334,7 +335,11 @@ def materialize_j(
             logical.function,
             extents,
             consume_loop_storage=(
-                logical.form == LOGICAL_FULL_AXIS_STEP_MATERIALIZATION
+                logical.form
+                in {
+                    LOGICAL_FULL_AXIS_STEP_MATERIALIZATION,
+                    STRUCTURED_SCAN_LOOP_MATERIALIZATION,
+                }
             ),
         )
         predicated = None
@@ -353,7 +358,11 @@ def materialize_j(
             projection = project_contract_materialization(
                 canonical,
                 consume_loop_storage=(
-                    logical.form == LOGICAL_FULL_AXIS_STEP_MATERIALIZATION
+                    logical.form
+                    in {
+                        LOGICAL_FULL_AXIS_STEP_MATERIALIZATION,
+                        STRUCTURED_SCAN_LOOP_MATERIALIZATION,
+                    }
                 ),
             )
             function = logical.function
@@ -391,6 +400,7 @@ def materialize_j(
             value_dimension_equalities=value_dimension_equalities,
             inplace_outputs=inplace_outputs,
             paired_rotation=paired_rotation,
+            loop_schedule_tile=logical.loop_schedule_tile,
         )
     except (TypeError, ValueError, NotImplementedError) as exc:
         raise MaterializationError(

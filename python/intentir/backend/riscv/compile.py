@@ -76,6 +76,8 @@ class RiscvTransformationState:
     fuse_sibling_outputs: bool = False
     approximate_exp: bool = False
     mixed_precision_dot_reduction: bool = False
+    paired_rotation: bool = False
+    paired_rotation_head_angle_reuse: bool = False
 
     def __post_init__(self) -> None:
         if type(self.fuse_producers) is not bool:
@@ -98,6 +100,14 @@ class RiscvTransformationState:
             raise TypeError("approximate_exp must be bool")
         if type(self.mixed_precision_dot_reduction) is not bool:
             raise TypeError("mixed_precision_dot_reduction must be bool")
+        if type(self.paired_rotation) is not bool:
+            raise TypeError("paired_rotation must be bool")
+        if type(self.paired_rotation_head_angle_reuse) is not bool:
+            raise TypeError("paired_rotation_head_angle_reuse must be bool")
+        if self.paired_rotation_head_angle_reuse and not self.paired_rotation:
+            raise ValueError(
+                "paired-rotation head-angle reuse requires paired_rotation"
+            )
         if self.explicit_vector_reduction and not self.reassociate_reductions:
             raise ValueError(
                 "explicit float vector reduction requires the admitted "
@@ -185,9 +195,30 @@ class RiscvTransformationState:
                 "sibling-output fusion cannot be combined with a complete "
                 "specialized structural state"
             )
+        if self.paired_rotation and (
+            self.fuse_producers
+            or self.reassociate_reductions
+            or self.explicit_vector_reduction
+            or self.joint_vector_reduction
+            or self.fused_softmax
+            or self.rowmask_zero_fill
+            or self.composed_indexed_gather
+            or self.fuse_sibling_outputs
+            or self.approximate_exp
+            or self.mixed_precision_dot_reduction
+        ):
+            raise ValueError(
+                "paired rotation is a complete direct-loop structural state"
+            )
 
     @property
     def lowering_path_kind(self) -> str:
+        if self.paired_rotation:
+            return (
+                "paired_rotation_head_angle_reuse"
+                if self.paired_rotation_head_angle_reuse
+                else "paired_rotation_contiguous"
+            )
         if self.composed_indexed_gather:
             return "composed_indexed_gather"
         if self.rowmask_zero_fill:
@@ -215,7 +246,11 @@ class RiscvTransformationState:
     @property
     def transformation_trace(self) -> tuple[str, ...]:
         structural = (
-            "rvv.gather.composed_indexed.v1"
+            "rvv.elementwise.paired_rotation.head_angle_reuse.v1"
+            if self.paired_rotation_head_angle_reuse
+            else "rvv.elementwise.paired_rotation.contiguous.v1"
+            if self.paired_rotation
+            else "rvv.gather.composed_indexed.v1"
             if self.composed_indexed_gather
             else "rvv.elementwise.rowmask.zero_fill.v1"
             if self.rowmask_zero_fill
@@ -298,6 +333,10 @@ class RiscvTransformationState:
             "fuse_sibling_outputs": self.fuse_sibling_outputs,
             "approximate_exp": self.approximate_exp,
             "mixed_precision_dot_reduction": self.mixed_precision_dot_reduction,
+            "paired_rotation": self.paired_rotation,
+            "paired_rotation_head_angle_reuse": (
+                self.paired_rotation_head_angle_reuse
+            ),
             "transformation_trace": list(self.transformation_trace),
             "b_transformations": list(self.b_transformations),
             "required_b_capabilities": list(self.required_b_capabilities),
@@ -408,6 +447,12 @@ class RiscvLoweringCandidate:
                 if self.transformation.fuse_sibling_outputs
                 else ""
             )
+            + (
+                ".pairedrotation1.headreuse"
+                f"{int(self.transformation.paired_rotation_head_angle_reuse)}"
+                if self.transformation.paired_rotation
+                else ""
+            )
         )
 
     def _content(self) -> dict[str, Any]:
@@ -465,6 +510,10 @@ class RiscvTransformationRecord:
     composed_gather_vector_width: int = 0
     sibling_output_fusions: int = 0
     sibling_output_eliminated_traversals: int = 0
+    paired_rotation_lowerings: int = 0
+    paired_rotation_head_angle_reuses: int = 0
+    paired_rotation_vector_width: int = 0
+    paired_rotation_scalable: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -529,6 +578,12 @@ class RiscvTransformationRecord:
             "sibling_output_eliminated_traversals": (
                 self.sibling_output_eliminated_traversals
             ),
+            "paired_rotation_lowerings": self.paired_rotation_lowerings,
+            "paired_rotation_head_angle_reuses": (
+                self.paired_rotation_head_angle_reuses
+            ),
+            "paired_rotation_vector_width": self.paired_rotation_vector_width,
+            "paired_rotation_scalable": self.paired_rotation_scalable,
         }
 
 
@@ -949,7 +1004,25 @@ def _lower_to_llvm_ir(
         "--cse",
     ]
     bufferized = _run_text([MLIR_OPT, *buffer_front], stdin=structured)
-    if candidate.transformation.rowmask_zero_fill:
+    if candidate.transformation.paired_rotation:
+        specialized_buffer = _run_text(
+            [
+                INTENT_OPT,
+                (
+                    "-lower-paired-rotation-to-loops="
+                    "require-lowering=true head-angle-reuse="
+                    f"{'true' if candidate.transformation.paired_rotation_head_angle_reuse else 'false'} "
+                    "vector-width="
+                    f"{candidate.schedule.vector_lanes if candidate.schedule.vectorize else 1} "
+                    "scalable-vector="
+                    f"{'true' if candidate.schedule.scalable_vectorization else 'false'}"
+                ),
+                "-canonicalize",
+                "-cse",
+            ],
+            stdin=bufferized,
+        )
+    elif candidate.transformation.rowmask_zero_fill:
         rowmask_vector_width = 4 if schedule.vectorize else 1
         specialized_buffer = _run_text(
             [
@@ -1003,7 +1076,32 @@ def _lower_to_llvm_ir(
         composed_gather_vector_width=_module_i64_attr(
             specialized_buffer, "intent.rvv.composed_gather_vector_width"
         ),
+        paired_rotation_lowerings=_module_i64_attr(
+            specialized_buffer, "intent.rvv.paired_rotation_lowering_count"
+        ),
+        paired_rotation_head_angle_reuses=_module_i64_attr(
+            specialized_buffer,
+            "intent.rvv.paired_rotation_head_angle_reuse_count",
+        ),
+        paired_rotation_vector_width=_module_i64_attr(
+            specialized_buffer, "intent.rvv.paired_rotation_vector_width"
+        ),
+        paired_rotation_scalable=_module_i64_attr(
+            specialized_buffer, "intent.rvv.paired_rotation_scalable_count"
+        ),
     )
+    if candidate.transformation.paired_rotation and (
+        record.paired_rotation_lowerings != 1
+        or record.paired_rotation_head_angle_reuses
+        != int(candidate.transformation.paired_rotation_head_angle_reuse)
+        or record.paired_rotation_vector_width
+        != (candidate.schedule.vector_lanes if candidate.schedule.vectorize else 1)
+        or record.paired_rotation_scalable
+        != int(candidate.schedule.scalable_vectorization)
+    ):
+        raise RuntimeError(
+            "requested RVV paired rotation produced no exact direct-loop state"
+        )
     if candidate.transformation.rowmask_zero_fill and (
         record.rowmask_lowerings != 1
         or record.rowmask_zero_fills != 1
@@ -1070,6 +1168,10 @@ def _lower_to_llvm_ir(
                         and schedule.vectorize
                     )
                     or candidate.transformation.composed_indexed_gather
+                    or (
+                        candidate.transformation.paired_rotation
+                        and schedule.vectorize
+                    )
                 )
                 else []
             ),
@@ -1217,6 +1319,18 @@ def compile_riscv_object(
             "requested composed RVV gather produced no direct indexed vector "
             "state"
         )
+    if candidate.transformation.paired_rotation and (
+        transformation_record.paired_rotation_lowerings != 1
+        or transformation_record.paired_rotation_head_angle_reuses
+        != int(candidate.transformation.paired_rotation_head_angle_reuse)
+        or transformation_record.paired_rotation_vector_width
+        != (candidate.schedule.vector_lanes if candidate.schedule.vectorize else 1)
+        or transformation_record.paired_rotation_scalable
+        != int(candidate.schedule.scalable_vectorization)
+    ):
+        raise RuntimeError(
+            "requested RVV paired rotation produced no exact direct-loop state"
+        )
     schedule = candidate.schedule
     vector_shape_flags = (
         [
@@ -1284,10 +1398,15 @@ def compile_riscv_object(
             candidate.transformation.mixed_precision_dot_reduction
             and rvv_reduction_instruction_count < 1
         )
+        or (
+            candidate.transformation.paired_rotation
+            and schedule.vectorize
+            and rvv_instruction_count == 0
+        )
     ):
         raise RuntimeError(
             "requested explicit RVV vector state produced insufficient RVV "
-            "floating-point reduction instructions"
+            "target instructions"
         )
     scalable_vector_ir_count = len(re.findall(r"<vscale\s+x\s+", optimized))
     if schedule.scalable_vectorization and scalable_vector_ir_count == 0:

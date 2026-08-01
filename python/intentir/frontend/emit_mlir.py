@@ -848,7 +848,7 @@ def _function_attributes(
 
     if paired_rotation is not None:
         layout, input_indices, sections = paired_rotation
-        if layout not in {"shared_position", "three_plane"}:
+        if layout not in {"shared_position", "three_plane", "interleaved"}:
             raise ValueError("emit_mlir: unknown paired rotation layout")
         if (
             len(input_indices) != 4
@@ -869,7 +869,9 @@ def _function_attributes(
             ):
                 raise ValueError("emit_mlir: invalid three-plane sections")
         elif sections:
-            raise ValueError("emit_mlir: shared-position rotation has no sections")
+            raise ValueError(
+                "emit_mlir: non-three-plane rotation has no sections"
+            )
         arguments = ", ".join(str(item) for item in input_indices)
         attributes.extend(
             (
@@ -1247,6 +1249,7 @@ def _infer_body(
     fold: int,
     extents: dict[str, int] | None = None,
     broadcast_axes: BroadcastAxes | None = None,
+    loop_schedule_tile: int | None = None,
 ) -> None:
     for _ in range(len(body) + 2):
         changed = False
@@ -1301,7 +1304,7 @@ def _infer_body(
             if op.op == "loop":
                 if op.trip is None:
                     raise ValueError("emit_mlir: loop requires a semantic trip axis")
-                tile = _tile(op, extents or {}, None)
+                tile = _tile(op, extents or {}, loop_schedule_tile)
                 for scan in op.scan:
                     source_shape = env.get(scan.source)
                     if source_shape is None:
@@ -1336,12 +1339,15 @@ def _infer_body(
                             env[state.body_argument] = list(state_shape)
                             changed = True
                 before = dict(env)
+                body_extents = dict(extents or {})
+                body_extents[op.trip.axis] = tile
                 _infer_body(
                     op.body,
                     env,
                     fold,
-                    extents,
+                    body_extents,
                     broadcast_axes,
+                    loop_schedule_tile,
                 )
                 changed |= env != before
                 for state in op.carry:
@@ -1371,6 +1377,7 @@ def _infer_body(
                         fold,
                         extents,
                         broadcast_axes,
+                        loop_schedule_tile,
                     )
                     changed |= env != before
             sh = _infer_op(op, env, fold, extents, broadcast_axes)
@@ -1393,6 +1400,7 @@ class _Printer:
         dtypes: dict[str, str],
         broadcast_axes: BroadcastAxes | None = None,
         proven_index_bounds: IndexBoundsProjection | None = None,
+        loop_schedule_tile: int | None = None,
     ) -> None:
         self.lines: list[str] = []
         self._n = 0
@@ -1400,6 +1408,7 @@ class _Printer:
         self.dtypes = dtypes
         self.broadcast_axes = broadcast_axes or {}
         self.proven_index_bounds = proven_index_bounds or frozenset()
+        self.loop_schedule_tile = loop_schedule_tile
 
     def _ttn(self, name: str, env: dict[str, list[int]]) -> str:
         """Tensor type for one JSON value from the inferred dtype environment."""
@@ -1512,7 +1521,9 @@ class _Printer:
             if len(op.yields) != len(op.carry):
                 raise ValueError("emit_mlir: loop carry/yield arity mismatch")
             resolved_extents = dict(extents or {})
-            tile = _tile(op, resolved_extents, None)
+            tile = _tile(op, resolved_extents, self.loop_schedule_tile)
+            body_extents = dict(resolved_extents)
+            body_extents[op.trip.axis] = tile
             scan_values: list[str] = []
             scan_types: list[str] = []
             scan_axes: list[str] = []
@@ -1564,7 +1575,7 @@ class _Printer:
                     env,
                     fold,
                     indent=indent + "  ",
-                    extents=resolved_extents,
+                    extents=body_extents,
                     node_ref=(
                         f"{node_ref}.body[{child_index}]"
                         if node_ref is not None
@@ -2297,6 +2308,7 @@ def emit_module(
     inplace_outputs: Sequence[int] = (),
     paired_rotation: tuple[str, tuple[int, int, int, int], tuple[int, ...]]
     | None = None,
+    loop_schedule_tile: int | None = None,
 ) -> str:
     """A flat (loop-free) IntentFunction as an executable ``func.func``.
 
@@ -2346,10 +2358,22 @@ def emit_module(
                 "logical output shapes"
             )
         env[returned_value] = output_shape
-    _infer_body(fn.body, env, fold, extents, broadcast_axes)
+    _infer_body(
+        fn.body,
+        env,
+        fold,
+        extents,
+        broadcast_axes,
+        loop_schedule_tile,
+    )
 
     dtypes = _flat_dtypes(fn)
-    p = _Printer(dtypes, broadcast_axes, proven_index_bounds)
+    p = _Printer(
+        dtypes,
+        broadcast_axes,
+        proven_index_bounds,
+        loop_schedule_tile,
+    )
     args = [f"{p.arg(t.name)}: {p._ttn(t.name, env)}" for t in fn.inputs]
     for index, op in enumerate(fn.body):
         p.emit_op(

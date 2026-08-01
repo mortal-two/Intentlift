@@ -374,6 +374,36 @@ def _liger_rope() -> str:
     )
 
 
+def _llama4_rope() -> str:
+    return _source(
+        "M4 *q_d, M4 *k_d, M3 *freq_d, M0 *sign_d, M4 *qout_d, M4 *kout_d",
+        r"""
+  _Float16 *q=DATA(q_d,_Float16),*k=DATA(k_d,_Float16);
+  _Float16 *freq=DATA(freq_d,_Float16),*qo=DATA(qout_d,_Float16),*ko=DATA(kout_d,_Float16);
+  float sign=DATA(sign_d,float)[0];
+  int64_t b=q_d->sizes[0],seq=q_d->sizes[1],hq=q_d->sizes[2],hk=k_d->sizes[2];
+  int64_t d=q_d->sizes[3],half=d/2;
+  for(int64_t row=0;row<b*seq;row++){int64_t token=row%seq;
+    for(int64_t h=0;h<hq;h++)for(int64_t j=0;j<half;j++){
+      int64_t base=(row*hq+h)*d,angle=(token*half+j)*2;
+      _Float16 ae=q[base+2*j],ao=q[base+2*j+1],ch=freq[angle];
+      float sf=(float)freq[angle+1]*sign;
+      float low=(float)ae*(float)ch-(float)ao*sf;
+      _Float16 rounded=(_Float16)(ao*ch);
+      float high=(float)ae*sf+(float)rounded;
+      qo[base+2*j]=(_Float16)low;qo[base+2*j+1]=(_Float16)high;}
+    for(int64_t h=0;h<hk;h++)for(int64_t j=0;j<half;j++){
+      int64_t base=(row*hk+h)*d,angle=(token*half+j)*2;
+      _Float16 ae=k[base+2*j],ao=k[base+2*j+1],ch=freq[angle];
+      float sf=(float)freq[angle+1]*sign;
+      float low=(float)ae*(float)ch-(float)ao*sf;
+      _Float16 rounded=(_Float16)(ao*ch);
+      float high=(float)ae*sf+(float)rounded;
+      ko[base+2*j]=(_Float16)low;ko[base+2*j+1]=(_Float16)high;}}
+""",
+    )
+
+
 def _qwen2vl_mrope() -> str:
     return _source(
         "M4 *q_d, M4 *k_d, M4 *cos_d, M4 *sin_d, M4 *qout_d, M4 *kout_d",
@@ -606,6 +636,7 @@ _SOURCES = {
     "cross_entropy": _cross_entropy,
     "group_norm": _group_norm,
     "liger_rope": _liger_rope,
+    "llama4_rope": _llama4_rope,
     "qwen2vl_mrope": _qwen2vl_mrope,
     "flash_linear": _flash_linear,
     "gather2d": _gather2d,

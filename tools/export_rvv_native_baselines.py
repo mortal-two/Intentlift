@@ -44,6 +44,7 @@ DEFAULT_KERNELS = (
     "group_norm",
     "jsd",
     "liger_rope",
+    "llama4_rope",
     "qwen2vl_mrope",
     "tvd",
     "xformers_rms_norm",

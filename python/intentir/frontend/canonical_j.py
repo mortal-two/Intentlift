@@ -20,6 +20,25 @@ FLAT_MATERIALIZATION = "intentir.materialize.flat-graph.v1"
 LOGICAL_FULL_AXIS_STEP_MATERIALIZATION = (
     "intentir.materialize.logical-full-axis-step.v1"
 )
+STRUCTURED_SCAN_LOOP_MATERIALIZATION = (
+    "intentir.materialize.structured-scan-loop.v1"
+)
+_MAX_LOGICAL_SCAN_TEMPORARY_BYTES = 128 * 1024 * 1024
+_DTYPE_BYTES = {
+    "i1": 1,
+    "i8": 1,
+    "u8": 1,
+    "i16": 2,
+    "u16": 2,
+    "f16": 2,
+    "bf16": 2,
+    "i32": 4,
+    "u32": 4,
+    "f32": 4,
+    "i64": 8,
+    "u64": 8,
+    "f64": 8,
+}
 
 
 @dataclass(frozen=True)
@@ -38,6 +57,91 @@ class JFunctionMaterialization:
     function: IntentFunction
     form: str
     consumed_structures: tuple[str, ...] = ()
+    loop_schedule_tile: int | None = None
+
+
+def _logical_scan_tile(
+    j: SemanticArchive,
+    loop: IntentOp,
+    dims: Mapping[str, int],
+) -> int:
+    """Mirror the certified J-only bounded scan denotation for target MLIR."""
+
+    if loop.trip is None or loop.trip.axis not in dims:
+        raise ValueError("structured scan loop requires one resolved trip axis")
+    trip_axis = loop.trip.axis
+    extent = dims[trip_axis]
+    if isinstance(extent, bool) or not isinstance(extent, int) or extent <= 0:
+        return extent
+    if any(
+        state.type is not None and trip_axis in state.type.shape
+        for state in loop.carry
+    ):
+        return extent
+
+    value_types: dict[str, tuple[str, list[object]]] = {
+        tensor.name: (tensor.dtype, list(tensor.shape))
+        for tensor in [*j.intent.inputs, *j.intent.outputs]
+    }
+    for scan in loop.scan:
+        source = value_types.get(scan.source)
+        if source is not None:
+            value_types[scan.name] = source
+    for operation in _walk(loop.body):
+        results = (
+            operation.result
+            if isinstance(operation.result, list)
+            else [operation.result]
+        )
+        if operation.type is None:
+            continue
+        for result in results:
+            if isinstance(result, str):
+                value_types[result] = (
+                    operation.type["dtype"],
+                    list(operation.type.get("shape", [])),
+                )
+
+    candidate_names = {scan.name for scan in loop.scan}
+    candidate_names.update(
+        result
+        for operation in _walk(loop.body)
+        for result in (
+            operation.result
+            if isinstance(operation.result, list)
+            else [operation.result]
+        )
+        if isinstance(result, str)
+    )
+    tile = extent
+    for name in candidate_names:
+        value_type = value_types.get(name)
+        if value_type is None:
+            continue
+        dtype, shape = value_type
+        if trip_axis not in shape:
+            continue
+        if shape.count(trip_axis) != 1 or dtype not in _DTYPE_BYTES:
+            return extent
+        elements_per_trip = 1
+        for dimension in shape:
+            if dimension == trip_axis:
+                continue
+            if isinstance(dimension, bool):
+                raise ValueError("structured loop type contains a boolean extent")
+            if isinstance(dimension, int):
+                dimension_extent = dimension
+            elif isinstance(dimension, str) and dimension in dims:
+                dimension_extent = dims[dimension]
+            else:
+                raise ValueError("structured loop type contains an unresolved extent")
+            elements_per_trip *= int(dimension_extent)
+        bytes_per_trip = max(1, elements_per_trip * _DTYPE_BYTES[dtype])
+        tile = min(
+            tile,
+            max(1, _MAX_LOGICAL_SCAN_TEMPORARY_BYTES // bytes_per_trip),
+        )
+    return max(1, tile)
 
 
 def _walk(body: Sequence[IntentOp]) -> tuple[IntentOp, ...]:
@@ -137,9 +241,20 @@ def _logical_full_axis_step_function(
     represented without inventing an initializer or schedule.
     """
 
-    if len(j.intent.body) != 1 or j.intent.body[0].op != "loop":
+    loop_indices = [
+        index for index, operation in enumerate(j.intent.body) if operation.op == "loop"
+    ]
+    if len(loop_indices) != 1:
         return None
-    loop = j.intent.body[0]
+    loop_index = loop_indices[0]
+    outer_prefix = j.intent.body[:loop_index]
+    outer_suffix = j.intent.body[loop_index + 1 :]
+    if any(
+        operation.op == "loop"
+        for operation in _walk([*outer_prefix, *outer_suffix])
+    ):
+        return None
+    loop = j.intent.body[loop_index]
     if loop.trip is None or loop.trip.axis not in dims:
         raise ValueError("materialize J loop requires a resolved logical trip extent")
     extent = dims[loop.trip.axis]
@@ -178,7 +293,27 @@ def _logical_full_axis_step_function(
         for operation in _walk(loop.body)
         for operand in operation.operands
     }
-    prefix: list[IntentOp] = []
+    dominating_types: dict[str, tuple[str, list[object]]] = {
+        name: (tensor.dtype, list(tensor.shape)) for name, tensor in inputs.items()
+    }
+    for operation in _walk(outer_prefix):
+        results = (
+            operation.result
+            if isinstance(operation.result, list)
+            else [operation.result]
+        )
+        if any(isinstance(result, str) for result in results):
+            if operation.type is None or len(results) != 1:
+                return None
+            result = results[0]
+            if not isinstance(result, str):
+                return None
+            dominating_types[result] = (
+                operation.type["dtype"],
+                list(operation.type.get("shape", [])),
+            )
+
+    carry_prefix: list[IntentOp] = []
     for state in loop.carry:
         if state.type is None:
             return None
@@ -187,11 +322,11 @@ def _logical_full_axis_step_function(
             if state.body_argument in body_references:
                 return None
             continue
-        if isinstance(init, str) and init in inputs:
-            init_tensor = inputs[init]
+        if isinstance(init, str) and init in dominating_types:
+            init_dtype, init_shape = dominating_types[init]
             if (
-                init_tensor.dtype != state.type.dtype
-                or init_tensor.shape != state.type.shape
+                init_dtype != state.type.dtype
+                or init_shape != state.type.shape
             ):
                 raise ValueError(
                     "logical loop carry initializer type differs from its state type"
@@ -199,7 +334,7 @@ def _logical_full_axis_step_function(
             aliases[state.body_argument] = init
             continue
         if isinstance(init, bool) or isinstance(init, (int, float)):
-            prefix.append(
+            carry_prefix.append(
                 IntentOp(
                     op="const",
                     result=state.body_argument,
@@ -239,7 +374,11 @@ def _logical_full_axis_step_function(
             result.append(operation)
         return result
 
-    body = [*prefix, *substitute_body(loop.body)]
+    body = [
+        *substitute_body(outer_prefix),
+        *carry_prefix,
+        *substitute_body(loop.body),
+    ]
     result_to_next = {
         item.result_value: resolve(item.next_value) for item in loop.carry
     }
@@ -261,15 +400,26 @@ def _logical_full_axis_step_function(
             "logical loop body does not define next carry value(s): "
             + ", ".join(missing_next)
         )
+    aliases.update(result_to_next)
+    body.extend(substitute_body(outer_suffix))
+    produced = {
+        name
+        for operation in _walk(body)
+        for name in (
+            operation.result
+            if isinstance(operation.result, list)
+            else [operation.result]
+        )
+        if isinstance(name, str)
+    }
     returns: list[IntentReturn] = []
     for binding in j_elaboration(j).output_bindings:
-        if binding.value not in result_to_next:
+        value = resolve(binding.value)
+        if value not in produced:
             raise ValueError(
-                "logical loop output binding does not name a loop result"
+                "logical loop output binding does not name a materialized value"
             )
-        returns.append(
-            IntentReturn(binding.output, result_to_next[binding.value])
-        )
+        returns.append(IntentReturn(binding.output, value))
     return IntentFunction(
         name=j.intent.name,
         inputs=list(j.intent.inputs),
@@ -287,6 +437,39 @@ def materialize_j_function(
 
     j = elaborate_j(j)
     if any(op.op == "loop" for op in j.intent.body):
+        loops = [op for op in j.intent.body if op.op == "loop"]
+        if len(loops) != 1:
+            raise NotImplementedError(
+                "canonical materializer requires exactly one top-level loop"
+            )
+        tile = _logical_scan_tile(j, loops[0], dims)
+        extent = dims[loops[0].trip.axis] if loops[0].trip is not None else 0
+        if 0 < tile < extent:
+            if extent % tile != 0:
+                raise NotImplementedError(
+                    "structured scan materialization does not yet support a tail tile"
+                )
+            function = IntentFunction(
+                name=j.intent.name,
+                inputs=list(j.intent.inputs),
+                outputs=list(j.intent.outputs),
+                body=copy.deepcopy(j.intent.body),
+                returns=[
+                    IntentReturn(binding.output, binding.value)
+                    for binding in j_elaboration(j).output_bindings
+                ],
+            )
+            form = STRUCTURED_SCAN_LOOP_MATERIALIZATION
+            consumed = tuple(
+                f"loop:{op.node_id or 'anonymous'}:structured_scan_tile:{tile}"
+                for op in loops
+            )
+            return JFunctionMaterialization(
+                function,
+                form,
+                consumed,
+                loop_schedule_tile=tile,
+            )
         function = _logical_full_axis_step_function(j, dims)
         if function is None:
             raise NotImplementedError(
@@ -295,8 +478,7 @@ def materialize_j_function(
         form = LOGICAL_FULL_AXIS_STEP_MATERIALIZATION
         consumed = tuple(
             f"loop:{op.node_id or 'anonymous'}:logical_full_axis_step"
-            for op in j.intent.body
-            if op.op == "loop"
+            for op in loops
         )
     else:
         function, consumed = _canonical_return_function(j)
@@ -326,6 +508,7 @@ def materialize_j_module(
         broadcast_axes=broadcast_axes,
         proven_index_bounds=proven_index_bounds,
         value_dimension_equalities=value_dimension_equalities,
+        loop_schedule_tile=logical.loop_schedule_tile,
     )
     return JModuleMaterialization(
         mlir,

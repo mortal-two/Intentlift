@@ -17,6 +17,9 @@ from intentir.verify.workload_adapters import TritonWorkloadAdapter
 PRODUCTION_CASE_IDS: dict[str, str] = {
     "cross_entropy": "high_performance:liger_cross_entropy",
     "dyt": "high_performance:liger_dyt",
+    "flash_attention_forward": (
+        "high_performance:flash_attn.flash_attn_triton._fwd_kernel"
+    ),
     "flash_bwd_preprocess": (
         "high_performance:flash_attn.flash_attn_triton."
         "_bwd_preprocess_do_o_dot"
@@ -32,6 +35,7 @@ PRODUCTION_CASE_IDS: dict[str, str] = {
     "jsd": "high_performance:liger_jsd",
     "kl_div": "high_performance:liger_kl_div",
     "layer_norm": "high_performance:liger_layer_norm",
+    "llama4_rope": "high_performance:liger_llama4_rope",
     "liger_rope": "high_performance:liger_rope",
     "liger_rms_norm": "high_performance:liger_rms_norm",
     "masked_copy": "scrc_canary:masked_copy",
@@ -82,6 +86,7 @@ _CHANNELS = "channels"
 _CHANNELS_PER_GROUP = "channels_per_group"
 _MROPE_SECTION_T = "mrope_section_t"
 _MROPE_SECTION_H = "mrope_section_h"
+_ROTARY_PAIRS = "rotary_pairs"
 
 _PROFILE_EXTENTS: dict[str, dict[str, int]] = {
     PRODUCTION_WORKLOAD_PROFILE_SYMBOLIC_MEDIUM: {
@@ -116,6 +121,17 @@ _NATURAL_HEADLINE_EXTENTS: dict[str, dict[str, int]] = {
     "sparsemax": {_ROW: 2048, _FEATURE: 4096},
     "kl_div": {_ROW: 4096, _FEATURE: 4096},
     "poly_norm": {_ROW: 2048, _FEATURE: 4096},
+    "flash_attention_forward": {
+        # B*H*S=262144 makes the certified J-only 128 MiB scan bound select
+        # exactly the 128-key semantic slice used by the Source valuation.  This
+        # is also a model-scale 32-head attention workload rather than the old
+        # tiny B2/H8 smoke shape.
+        _BATCH: 8,
+        _HEADS: 32,
+        _SEQUENCE: 1024,
+        _PADDED_SEQUENCE: 1024,
+        _HEAD_DIM: 64,
+    },
     "flash_bwd_preprocess": {
         _BATCH: 4,
         _HEADS: 16,
@@ -149,6 +165,14 @@ _NATURAL_HEADLINE_EXTENTS: dict[str, dict[str, int]] = {
         _HEADS: 16,
         _KV_HEADS: 8,
         _HEAD_DIM: 64,
+    },
+    "llama4_rope": {
+        _BATCH: 8,
+        _SEQUENCE: 1024,
+        _HEADS: 8,
+        _KV_HEADS: 4,
+        _HEAD_DIM: 128,
+        _ROTARY_PAIRS: 64,
     },
     "qwen2vl_mrope": {
         _BATCH: 8,
@@ -291,6 +315,49 @@ _HARNESS_BINDINGS: dict[str, HarnessBindingSpec] = {
             GridBinding("preserve"),
         ),
         literal_constraints=("rows=2", "Alpha.elements=1"),
+    ),
+    "flash_attention_forward": HarnessBindingSpec(
+        buffer_axes=(
+            ("Q", _axes(_BATCH, _SEQUENCE, _HEADS, _HEAD_DIM)),
+            ("K", _axes(_BATCH, _SEQUENCE, _HEADS, _HEAD_DIM)),
+            ("V", _axes(_BATCH, _SEQUENCE, _HEADS, _HEAD_DIM)),
+            ("Bias", _axes(None)),
+            ("Out", _axes(_BATCH, _SEQUENCE, _HEADS, _HEAD_DIM)),
+            ("Lse", _axes(_BATCH, _HEADS, _PADDED_SEQUENCE)),
+            ("TMP", _axes(_BATCH, _HEADS, _PADDED_SEQUENCE)),
+        ),
+        scalars=(
+            ValueBinding("stride_qb", _SEQUENCE, factors=(_HEADS, _HEAD_DIM)),
+            ValueBinding("stride_qh", _HEAD_DIM),
+            ValueBinding("stride_qm", _HEADS, factors=(_HEAD_DIM,)),
+            ValueBinding("stride_kb", _SEQUENCE, factors=(_HEADS, _HEAD_DIM)),
+            ValueBinding("stride_kh", _HEAD_DIM),
+            ValueBinding("stride_kn", _HEADS, factors=(_HEAD_DIM,)),
+            ValueBinding("stride_vb", _SEQUENCE, factors=(_HEADS, _HEAD_DIM)),
+            ValueBinding("stride_vh", _HEAD_DIM),
+            ValueBinding("stride_vn", _HEADS, factors=(_HEAD_DIM,)),
+            ValueBinding("stride_ob", _SEQUENCE, factors=(_HEADS, _HEAD_DIM)),
+            ValueBinding("stride_oh", _HEAD_DIM),
+            ValueBinding("stride_om", _HEADS, factors=(_HEAD_DIM,)),
+            ValueBinding("nheads", _HEADS),
+            ValueBinding("seqlen_q", _SEQUENCE),
+            ValueBinding("seqlen_k", _SEQUENCE),
+            ValueBinding("seqlen_q_rounded", _PADDED_SEQUENCE),
+            ValueBinding("headdim", _HEAD_DIM),
+        ),
+        grid=(
+            GridBinding("ceil_div_extent_c", _SEQUENCE, "BLOCK_M"),
+            GridBinding("extent", _BATCH, factors=(_HEADS,)),
+        ),
+        literal_constraints=(
+            "BIAS_TYPE=none",
+            "IS_CAUSAL=false",
+            "EVEN_M/N/HEADDIM=true",
+        ),
+        grid_contract_override=(
+            "ceil_div(seqlen_q,BLOCK_M)",
+            "batch*nheads",
+        ),
     ),
     "flash_bwd_preprocess": HarnessBindingSpec(
         buffer_axes=(
@@ -524,6 +591,39 @@ _HARNESS_BINDINGS: dict[str, HarnessBindingSpec] = {
         literal_constraints=("cos_bs=1", "BACKWARD_PASS=false"),
         grid_contract_override=("bs*sl",),
     ),
+    "llama4_rope": HarnessBindingSpec(
+        buffer_axes=(
+            ("q_ptr", _axes(_BATCH, _SEQUENCE, _HEADS, _HEAD_DIM)),
+            ("k_ptr", _axes(_BATCH, _SEQUENCE, _KV_HEADS, _HEAD_DIM)),
+            ("freqs_complex_ptr", _axes(_SEQUENCE, _ROTARY_PAIRS, None)),
+        ),
+        scalars=(
+            ValueBinding("q_row_stride", _HEADS, factors=(_HEAD_DIM,)),
+            ValueBinding("k_row_stride", _KV_HEADS, factors=(_HEAD_DIM,)),
+            ValueBinding("q_head_stride", _HEAD_DIM),
+            ValueBinding("k_head_stride", _HEAD_DIM),
+            ValueBinding("freqs_row_stride", _HEAD_DIM),
+            ValueBinding("seq_len", _SEQUENCE),
+            ValueBinding("batch_size", _BATCH),
+        ),
+        semantic_constexprs=(
+            ValueBinding("head_dim_half", _ROTARY_PAIRS),
+            ValueBinding("n_q_heads", _HEADS),
+            ValueBinding("n_k_heads", _KV_HEADS),
+        ),
+        c_values=(
+            CBinding("BLOCK_SIZE", _ROTARY_PAIRS, "next_power_of_two"),
+        ),
+        grid=(
+            GridBinding("extent", _BATCH, factors=(_SEQUENCE,)),
+            GridBinding("extent", _HEADS),
+        ),
+        literal_constraints=("imag_sign=1", "n_q_heads>=n_k_heads"),
+        grid_contract_override=(
+            "batch_size*seq_len",
+            "max(n_q_heads,n_k_heads)",
+        ),
+    ),
     "liger_rms_norm": HarnessBindingSpec(
         buffer_axes=(
             ("Y_ptr", _axes(None, _FEATURE)),
@@ -706,6 +806,8 @@ _HARNESS_BINDINGS: dict[str, HarnessBindingSpec] = {
 _NATURAL_HARNESS_BINDINGS: dict[str, HarnessBindingSpec] = {
     "gather2d": _HARNESS_BINDINGS["gather2d"],
     "rowmask_where2d": _HARNESS_BINDINGS["rowmask_where2d"],
+    "flash_attention_forward": _HARNESS_BINDINGS["flash_attention_forward"],
+    "llama4_rope": _HARNESS_BINDINGS["llama4_rope"],
     "jsd": HarnessBindingSpec(
         buffer_axes=(
             ("X_ptr", _axes(_ROW, _FEATURE)),

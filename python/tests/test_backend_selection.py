@@ -146,7 +146,9 @@ def test_selector_falls_back_when_no_pass_consumes_the_graph(
 
     assert result.pipeline_kind == "generic"
     assert result.fast_path_id is None
-    assert len(result.attempts) == len(DEFAULT_PASSES)
+    assert len(result.attempts) == sum(
+        not descriptor.expanded_only for descriptor in DEFAULT_PASSES
+    )
     assert all(not attempt.direct_hit for attempt in result.attempts)
 
 

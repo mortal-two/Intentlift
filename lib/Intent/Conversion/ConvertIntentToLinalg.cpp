@@ -331,6 +331,60 @@ struct IotaLowering : OpRewritePattern<IotaOp> {
   }
 };
 
+/// Eliminate a full-cover identity scatter before lowering its index graph.
+///
+/// For an along-axis overwrite whose index is the right-aligned iota plus a
+/// zero splat, every source element is written exactly once to its own logical
+/// coordinate.  The functional result is therefore exactly `src`, independent
+/// of the old `data` value.  This canonical form occurs in certified graphs
+/// that expose an explicit padded-output update even when the active valuation
+/// has no padding.  Keep the proof deliberately narrow: last axis, identical
+/// static shapes, overwrite-only, and the literal zero+iota index construction.
+struct IdentityScatterLowering : OpRewritePattern<ScatterOp> {
+  explicit IdentityScatterLowering(MLIRContext *context)
+      : OpRewritePattern<ScatterOp>(context, PatternBenefit(2)) {}
+
+  LogicalResult matchAndRewrite(ScatterOp op,
+                                PatternRewriter &rewriter) const override {
+    if (op.getMode() != "along_axis" || op.getReduce() != "none")
+      return failure();
+    auto dataTy = dyn_cast<RankedTensorType>(op.getData().getType());
+    auto indexTy = dyn_cast<RankedTensorType>(op.getIndex().getType());
+    auto srcTy = dyn_cast<RankedTensorType>(op.getSrc().getType());
+    auto resultTy = dyn_cast<RankedTensorType>(op.getResult().getType());
+    if (!dataTy || !indexTy || !srcTy || !resultTy ||
+        !dataTy.hasStaticShape() || dataTy.getShape() != indexTy.getShape() ||
+        dataTy.getShape() != srcTy.getShape() ||
+        dataTy.getShape() != resultTy.getShape() || dataTy.getRank() == 0 ||
+        static_cast<int64_t>(op.getAxis()) != dataTy.getRank() - 1)
+      return failure();
+
+    auto add = op.getIndex().getDefiningOp<MapBinaryOp>();
+    if (!add || add.getFn() != "add")
+      return failure();
+    IotaOp iota = add.getLhs().getDefiningOp<IotaOp>();
+    Value zeroValue = add.getRhs();
+    if (!iota) {
+      iota = add.getRhs().getDefiningOp<IotaOp>();
+      zeroValue = add.getLhs();
+    }
+    auto iotaTy = iota ? dyn_cast<RankedTensorType>(iota.getResult().getType())
+                       : RankedTensorType();
+    auto zero = zeroValue.getDefiningOp<arith::ConstantOp>();
+    auto dense = zero ? dyn_cast<DenseElementsAttr>(zero.getValue())
+                      : DenseElementsAttr();
+    if (!iota || !iotaTy || iotaTy.getRank() != 1 ||
+        iotaTy.getDimSize(0) != dataTy.getDimSize(dataTy.getRank() - 1) ||
+        !dense || !dense.isSplat() ||
+        !isa<IntegerType>(dense.getElementType()) ||
+        !dense.getSplatValue<APInt>().isZero())
+      return failure();
+
+    rewriter.replaceOp(op, op.getSrc());
+    return success();
+  }
+};
+
 /// Build the linalg input indexing map for a (possibly broadcasting) operand
 /// against a result of rank `R`. Operand dims align right (numpy rules); a dim
 /// whose operand extent is 1 but result extent is >1 broadcasts (constant-0
@@ -1346,8 +1400,9 @@ struct ConvertIntentToLinalgPass
 
   void runOnOperation() override {
     RewritePatternSet patterns(&getContext());
-    patterns.add<IotaLowering, MapUnaryLowering, MapBinaryLowering, SelectLowering,
-                 GatherLowering, ScanLowering, ContractionLowering,
+    patterns.add<IotaLowering, IdentityScatterLowering, MapUnaryLowering,
+                 MapBinaryLowering, SelectLowering, GatherLowering,
+                 ScanLowering, ContractionLowering,
                  LoopLowering, CastLowering, TransposeLowering, ConcatLowering,
                  PadLowering>(
         &getContext());

@@ -239,6 +239,13 @@ def validate_j_inputs(
     for update in j.boundary.updates:
         if update.duplicate_policy is not DuplicatePolicy.FORBID:
             continue
+        if update.base not in j_inputs or update.indices not in j_inputs:
+            # As with index-bounds above, a functional update whose base/index
+            # values are produced inside A is not an invocation precondition.
+            # RefEval executes the scatter and its typed bounds relation; the
+            # target consumer must preserve the same update contract.  Only
+            # externally supplied update streams can be prevalidated here.
+            continue
         _base, groups = _active_update_groups(
             update, j_inputs, require_values=False
         )

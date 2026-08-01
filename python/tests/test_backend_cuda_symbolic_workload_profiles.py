@@ -420,6 +420,38 @@ def test_natural_flash_and_splitk_contiguous_stride_products_are_revalued():
     assert splitk.vararg_arity == 2
 
 
+def test_new_attention_and_llama4_rope_natural_profiles_are_model_scale():
+    flash = prepare_production_workload(
+        "flash_attention_forward",
+        profile=PRODUCTION_WORKLOAD_PROFILE_NATURAL_HEADLINE,
+    ).adapter
+    flash_shapes = {item.formal: item.shape for item in flash.buffers}
+    flash_scalars = {item.formal: item.value for item in flash.scalars}
+    assert flash_shapes["Q"] == (8, 1024, 32, 64)
+    assert flash_shapes["Lse"] == (8, 32, 1024)
+    assert flash_scalars["stride_qb"] == 1024 * 32 * 64
+    assert flash_scalars["stride_qm"] == 32 * 64
+    assert flash_scalars["seqlen_q"] == 1024
+    assert flash_scalars["headdim"] == 64
+    assert flash.grid == (8, 256)
+
+    rope = prepare_production_workload(
+        "llama4_rope",
+        profile=PRODUCTION_WORKLOAD_PROFILE_NATURAL_HEADLINE,
+    ).adapter
+    rope_shapes = {item.formal: item.shape for item in rope.buffers}
+    rope_scalars = {item.formal: item.value for item in rope.scalars}
+    rope_constexprs = dict(rope.semantic_constexprs)
+    assert rope_shapes["q_ptr"] == (8, 1024, 8, 128)
+    assert rope_shapes["k_ptr"] == (8, 1024, 4, 128)
+    assert rope_shapes["freqs_complex_ptr"] == (1024, 64, 2)
+    assert rope_scalars["q_row_stride"] == 8 * 128
+    assert rope_scalars["k_row_stride"] == 4 * 128
+    assert rope_constexprs["head_dim_half"] == 64
+    assert dict(rope.c_values)["BLOCK_SIZE"] == 64
+    assert rope.grid == (8 * 1024, 8)
+
+
 def test_natural_splitk_binds_h_and_g_to_their_physical_tensor_axes():
     snapshot, _ = load_production_snapshot(
         FRESH_SNAPSHOTS, "splitk_reduce_varargs"

@@ -12,7 +12,10 @@ from intentir.backend.protocol import (
     LoweringRequest,
 )
 from intentir.backend.materialize import MaterializedJ, materialize_j
-from intentir.frontend.canonical_j import LOGICAL_FULL_AXIS_STEP_MATERIALIZATION
+from intentir.frontend.canonical_j import (
+    LOGICAL_FULL_AXIS_STEP_MATERIALIZATION,
+    STRUCTURED_SCAN_LOOP_MATERIALIZATION,
+)
 from intentir.ir.dense_predicate_materialization import (
     BoundaryMaterializationProjection,
 )
@@ -197,6 +200,30 @@ def analyze_j_for_cuda(
         indices = tensor_by_name.get(item.indices)
         values = tensor_by_name.get(item.values)
         if base is None or indices is None or values is None:
+            # A functional scatter may update an internal SSA tensor rather than
+            # a boundary tensor.  Its complete update semantics are already
+            # represented by the Intent op when the authored Layer-B relation
+            # agrees exactly with the op: overwrite, no duplicate destination,
+            # and input order.  This is the form used by structured attention
+            # scratch/output materialization.  It needs no atomic permission and
+            # is independent of tensor rank; target lowering still has to consume
+            # the resulting scatter or replace the enclosing graph as a whole.
+            if (
+                op.op == "scatter"
+                and op.operands == [item.base, item.indices, item.values]
+                and op.attrs.get("axis") == item.axis
+                and op.attrs.get("mode", "along_axis") == "along_axis"
+                and op.attrs.get("reduce", "none") == "none"
+                and item.combiner is UpdateCombiner.OVERWRITE
+                and item.duplicate_policy is DuplicatePolicy.FORBID
+                and item.order is UpdateOrder.INPUT_ORDER
+            ):
+                consumed.append(
+                    "update:"
+                    f"{item.node_ref}:{item.combiner.value}:"
+                    f"{item.duplicate_policy.value}:{item.order.value}"
+                )
+                continue
             unsupported.append(f"update_internal_operand:{item.node_ref}")
             continue
         if not all(len(tensor.shape) == 2 for tensor in (base, indices, values)):
@@ -249,7 +276,11 @@ def analyze_j_for_cuda(
         )
         logical_loop_consumed = (
             materialization is not None
-            and materialization.form == LOGICAL_FULL_AXIS_STEP_MATERIALIZATION
+            and materialization.form
+            in {
+                LOGICAL_FULL_AXIS_STEP_MATERIALIZATION,
+                STRUCTURED_SCAN_LOOP_MATERIALIZATION,
+            }
         )
         if not (typed_loops_consumed or logical_loop_consumed):
             unsupported.append("semantic_recurrence_not_lowered_by_flat_cuda_path")

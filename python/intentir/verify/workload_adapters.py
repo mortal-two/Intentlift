@@ -730,9 +730,17 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
                 "Out", BufferRole.OUTPUT, "f16", (1, 128, 1, 64), "out"
             ),
             _buffer("Lse", BufferRole.OUTPUT, "f32", (1, 1, 128), "lse"),
-            # TMP is explicit source-ABI scratch storage. The captured symbol
-            # writes it, so the fixed invocation must supply writable storage.
-            _buffer("TMP", BufferRole.OUTPUT, "f32", (1, 1, 128), "tmp"),
+            # TMP is explicit source-ABI scratch storage.  The certified J
+            # models its store/load recurrence and therefore exposes it as an
+            # input/output tensor, even though each tile overwrites before use.
+            _buffer(
+                "TMP",
+                BufferRole.INOUT,
+                "f32",
+                (1, 1, 128),
+                "tmp",
+                BufferInitializer.ZEROS,
+            ),
         ),
         scalars=(
             _scalar("softmax_scale", "f32", 0.125),

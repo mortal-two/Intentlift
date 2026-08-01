@@ -908,7 +908,7 @@ def canonical_cuda_candidate(state: BackendSearchState) -> CudaSearchCandidate:
         path_kind,
         fast_path_id,
         descriptor.pass_argument,
-        {},
+        dict(descriptor.schedule),
         0.0,
         requested_trace=(fast_path_id,),
         requested_observation_class=ObservationClass.OBSERVATION_CHANGING,
@@ -924,6 +924,9 @@ _CUDA_ORDERING_PRIOR_ROLES = frozenset(
         "tile_output_axis0",
         "tile_output_axis1",
         "tile_contraction_axis",
+        "query_tile",
+        "key_tile",
+        "feature_tile",
         "launch_block_x",
     }
 )
@@ -1032,6 +1035,13 @@ def project_cuda_c_fixed_candidate(
             "num_warps": 4,
             "pipeline_stages": 3,
         }
+    elif projection_kind == "cuda.flash_forward.structured_scan.direct.v1":
+        fixed_default = {
+            "tile_rows": 64,
+            "tile_cols": 128,
+            "pipeline_stages": 1,
+            "num_warps": 4,
+        }
     else:
         fixed_default = {}
 
@@ -1067,6 +1077,10 @@ def project_cuda_c_fixed_candidate(
         elif prior.role == "tile_output_axis0" and "tile_rows" in available_keys:
             coordinate = "tile_rows"
         elif prior.role == "tile_output_axis1" and "tile_cols" in available_keys:
+            coordinate = "tile_cols"
+        elif prior.role == "query_tile" and "tile_rows" in available_keys:
+            coordinate = "tile_rows"
+        elif prior.role == "key_tile" and "tile_cols" in available_keys:
             coordinate = "tile_cols"
         elif (
             prior.role == "tile_contraction_axis" and "tile_k" in available_keys
@@ -1766,13 +1780,26 @@ def enumerate_cuda_candidates(
           for threads in (64, 128, 256)
           for width in (2, 4)),
     ]
+    has_paired_rotation = "intent.paired_rotation_version" in state.base_ir
+    has_three_plane_rotation = "intent.paired_rotation_sections" in state.base_ir
+    has_shared_position_rotation = (
+        'intent.paired_rotation = "shared_position"' in state.base_ir
+    )
+    if has_paired_rotation:
+        # The paired C++ consumer owns a deliberately smaller schedule domain
+        # than the generic elementwise path.  Filter it before budgeting so
+        # unsupported flatten/unroll/tile requests do not consume the complete
+        # Schedule-Only prefix and starve Full structural states.
+        elementwise_schedule_bases = [
+            ElementwiseSchedule(threads, False, width)
+            for threads in (32, 64, 128, 256, 512, 1024)
+            for width in ((1, 2) if has_shared_position_rotation else (1,))
+        ]
     approximation_modes = (
         ("stable-ex2", "native-ptx")
         if axes is None or axes.search_approximation
         else ("stable-ex2",)
     )
-    has_paired_rotation = "intent.paired_rotation_version" in state.base_ir
-    has_three_plane_rotation = "intent.paired_rotation_sections" in state.base_ir
     paired_head_group_modes = (
         (0, 2, 4, 8, 16)
         if has_paired_rotation
@@ -3079,7 +3106,7 @@ def enumerate_cuda_candidates(
                 path_kind,
                 descriptor.fast_path_id,
                 descriptor.pass_argument,
-                {},
+                dict(descriptor.schedule),
                 0.0,
                 requested_trace=(descriptor.fast_path_id,),
                 requested_observation_class=(

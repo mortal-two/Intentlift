@@ -52,6 +52,7 @@ from intentir.backend.portable_workload import encode_workload_recipe
 from intentir.backend.protocol import BackendTarget
 from intentir.backend.workload_cost import derive_j_workload_cost
 from intentir.ir.production_snapshot import load_production_snapshot
+from intentir.verify.gate1._triton_worker import _normalize_deprecated_triton_dot
 from intentir.verify.gate2.scalar import ScalarLoweringRunner
 from intentir.verify.scrc_workload_run import build_workload_jc_suite
 
@@ -282,7 +283,14 @@ def _entry(
         else:
             c_fixed_schedule_rejections.append(outcome["rejection"])
     if not concrete_schedule_spine:
-        raise RuntimeError(f"{name} has no compiler-formed canonical schedule")
+        reasons = "; ".join(
+            f"{item['candidate_id']}: {item['reason']}"
+            for item in c_fixed_schedule_rejections
+        )
+        raise RuntimeError(
+            f"{name} has no compiler-formed canonical schedule"
+            + (f": {reasons}" if reasons else "")
+        )
     c_fixed_candidate, c_fixed_projection = project_cuda_c_fixed_candidate(
         state,
         tuple(concrete_schedule_spine),
@@ -484,6 +492,7 @@ def _entry(
         }
     source = prepared.request.source.gate_source
     source_code, source_origin = source.read_code()
+    source_code, _compat = _normalize_deprecated_triton_dot(source_code)
     source_payload: dict[str, Any]
     if name in {"gather2d", "rowmask_where2d"}:
         tilelang_path = (
