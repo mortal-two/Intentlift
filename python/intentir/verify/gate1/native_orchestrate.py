@@ -14,6 +14,11 @@ from .cuda_compiler import (
 )
 from .model import Gate1Artifact, Gate1Status, ParameterKind
 from .normalize import NORMALIZER_PROTOCOL
+from .native_semantic import (
+    compare_cuda_jc,
+    compare_tilelang_jc,
+    semantic_normalization_receipt,
+)
 from .orchestrate import (
     Gate1ArmEvidence,
     Gate1Config,
@@ -58,6 +63,26 @@ def _identity_normalization(
         "idempotence_check": "passed",
         "unknown_atoms": "hard",
     }
+
+
+def _normalization_receipt(
+    artifact: Gate1Artifact,
+    *,
+    frontend: str,
+    observer_profile: str,
+    semantic_projection: bool,
+) -> dict[str, Any]:
+    if semantic_projection:
+        return semantic_normalization_receipt(
+            artifact,
+            frontend=frontend,
+            observer_profile=observer_profile,
+        )
+    return _identity_normalization(
+        artifact,
+        frontend=frontend,
+        observer_profile=observer_profile,
+    )
 
 
 def _dtype(value: str | None) -> str:
@@ -120,6 +145,64 @@ def _artifact_interface(
             }
         )
     return {"parameters": normalized}
+
+
+def _validate_compiled_interface(
+    artifact: Gate1Artifact,
+    observed: Mapping[str, Any],
+    *,
+    frontend: str,
+) -> None:
+    """Fail closed when compiled native ABI differs from exact J.signature.
+
+    The hard fingerprint interface is intentionally anonymous, but it must be
+    backed by the compiler-observed ABI rather than merely restating the Harness
+    case.  Symbol names and symbolic-dimension spellings are alpha-renamable;
+    kind, dtype, rank, mode, and every static extent are not.
+    """
+
+    raw_parameters = observed.get("parameters")
+    if not isinstance(raw_parameters, list):
+        raise ValueError(f"{frontend} compiler did not report a parameter interface")
+    signature = artifact.j.signature.parameters
+    if len(raw_parameters) != len(signature):
+        raise ValueError(f"{frontend} compiled parameter count differs from J.signature")
+    tensors = {
+        item.name: item for item in (*artifact.j.intent.inputs, *artifact.j.intent.outputs)
+    }
+    expected_kind = {
+        ParameterKind.POINTER: "pointer",
+        ParameterKind.TENSOR: "pointer",
+        ParameterKind.SCALAR: "scalar",
+        ParameterKind.OPAQUE: "opaque",
+    }
+    for index, (semantic, raw) in enumerate(zip(signature, raw_parameters, strict=True)):
+        if not isinstance(raw, Mapping):
+            raise ValueError(f"{frontend} compiled parameter {index} is not an object")
+        if semantic.kind is ParameterKind.CONSTEXPR:
+            raise ValueError(f"{frontend} compiled ABI may not expose J constexpr")
+        expected = expected_kind[semantic.kind]
+        if str(raw.get("kind")) != expected:
+            raise ValueError(f"{frontend} compiled parameter {index} kind differs from J.signature")
+        if _dtype(str(raw.get("dtype"))) != _dtype(semantic.dtype):
+            raise ValueError(f"{frontend} compiled parameter {index} dtype differs from J.signature")
+        if raw.get("mode") != semantic.mode.value:
+            raise ValueError(f"{frontend} compiled parameter {index} mode differs from J.signature")
+        raw_rank = raw.get("rank")
+        if semantic.rank is not None and raw_rank != semantic.rank:
+            raise ValueError(f"{frontend} compiled parameter {index} rank differs from J.signature")
+        tensor = tensors.get(str(semantic.logical_ref))
+        raw_shape = raw.get("shape")
+        if tensor is None or not isinstance(raw_shape, list):
+            continue
+        if len(raw_shape) != len(tensor.shape):
+            raise ValueError(f"{frontend} compiled parameter {index} shape rank differs from J")
+        for axis, (logical, physical) in enumerate(zip(tensor.shape, raw_shape, strict=True)):
+            if isinstance(logical, int) and physical != logical:
+                raise ValueError(
+                    f"{frontend} compiled parameter {index} static extent {axis} "
+                    "differs from J.signature"
+                )
 
 
 def _validate_schedule(artifact: Gate1Artifact, schedule: Mapping[str, Any]) -> None:
@@ -203,6 +286,7 @@ class CudaGate1Runner:
         self.writer = self.writers[0]
         self.masked_writer = masked_writer
         self.comparator = comparator or PTXComparator()
+        self._semantic_projection = comparator is None
 
     def _fingerprint(
         self,
@@ -212,6 +296,7 @@ class CudaGate1Runner:
     ) -> PTXFingerprint:
         if result.ptx is None or result.entry is None:
             raise ValueError("CUDA compile result lacks PTX/entry")
+        _validate_compiled_interface(artifact, result.interface, frontend="cuda")
         interface = _artifact_interface(artifact, case.parameters)
         return fingerprint_ptx(
             result.ptx,
@@ -281,7 +366,11 @@ class CudaGate1Runner:
                 f"Replay observation failed: {type(exc).__name__}: {exc}",
                 generation.attempts,
             )
-        comparison = self.comparator.compare(source_fingerprint, replay_fingerprint)
+        comparison = (
+            compare_cuda_jc(artifact, source_fingerprint, replay_fingerprint)
+            if self._semantic_projection
+            else self.comparator.compare(source_fingerprint, replay_fingerprint)
+        )
         return Gate1ArmEvidence(
             mode,
             generation,
@@ -289,10 +378,11 @@ class CudaGate1Runner:
             replay_fingerprint,
             comparison,
             physical_calls=generation.attempts,
-            normalization=_identity_normalization(
+            normalization=_normalization_receipt(
                 artifact,
                 frontend="cuda",
                 observer_profile=CUDA_OBSERVER_PROFILE.profile_version,
+                semantic_projection=self._semantic_projection,
             ),
         )
 
@@ -355,10 +445,11 @@ class CudaGate1Runner:
                 observer_profile=CUDA_OBSERVER_PROFILE,
                 normal_candidates=normal_candidates,
                 selected_normal_index=selected_normal_index,
-                source_normalization=_identity_normalization(
+                source_normalization=_normalization_receipt(
                     artifact,
                     frontend="cuda",
                     observer_profile=CUDA_OBSERVER_PROFILE.profile_version,
+                    semantic_projection=self._semantic_projection,
                 ),
             )
         masked_evidence = None
@@ -388,10 +479,11 @@ class CudaGate1Runner:
             masked_j_independent_writer=(
                 True if self.config.run_masked_j else None
             ),
-            source_normalization=_identity_normalization(
+            source_normalization=_normalization_receipt(
                 artifact,
                 frontend="cuda",
                 observer_profile=CUDA_OBSERVER_PROFILE.profile_version,
+                semantic_projection=self._semantic_projection,
             ),
         )
 
@@ -419,6 +511,7 @@ class TileLangGate1Runner:
         self.writer = self.writers[0]
         self.masked_writer = masked_writer
         self.comparator = comparator or TileLangComparator()
+        self._semantic_projection = comparator is None
 
     def _fingerprint(
         self,
@@ -428,6 +521,7 @@ class TileLangGate1Runner:
     ) -> TileLangFingerprint:
         if result.tir is None or result.ptx is None:
             raise ValueError("TileLang compile result lacks TIR/PTX")
+        _validate_compiled_interface(artifact, result.interface, frontend="tilelang")
         interface = _artifact_interface(artifact, case.parameters)
         return fingerprint_tilelang(
             result.tir,
@@ -481,7 +575,11 @@ class TileLangGate1Runner:
                 f"Replay observation failed: {type(exc).__name__}: {exc}",
                 generation.attempts,
             )
-        comparison = self.comparator.compare(source_fingerprint, replay_fingerprint)
+        comparison = (
+            compare_tilelang_jc(artifact, source_fingerprint, replay_fingerprint)
+            if self._semantic_projection
+            else self.comparator.compare(source_fingerprint, replay_fingerprint)
+        )
         return Gate1ArmEvidence(
             mode,
             generation,
@@ -489,10 +587,11 @@ class TileLangGate1Runner:
             replay_fingerprint,
             comparison,
             physical_calls=generation.attempts,
-            normalization=_identity_normalization(
+            normalization=_normalization_receipt(
                 artifact,
                 frontend="tilelang",
                 observer_profile=TILELANG_OBSERVER_PROFILE.profile_version,
+                semantic_projection=self._semantic_projection,
             ),
         )
 
@@ -555,10 +654,11 @@ class TileLangGate1Runner:
                 observer_profile=TILELANG_OBSERVER_PROFILE,
                 normal_candidates=normal_candidates,
                 selected_normal_index=selected_normal_index,
-                source_normalization=_identity_normalization(
+                source_normalization=_normalization_receipt(
                     artifact,
                     frontend="tilelang",
                     observer_profile=TILELANG_OBSERVER_PROFILE.profile_version,
+                    semantic_projection=self._semantic_projection,
                 ),
             )
         masked_evidence = None
@@ -588,10 +688,11 @@ class TileLangGate1Runner:
             masked_j_independent_writer=(
                 True if self.config.run_masked_j else None
             ),
-            source_normalization=_identity_normalization(
+            source_normalization=_normalization_receipt(
                 artifact,
                 frontend="tilelang",
                 observer_profile=TILELANG_OBSERVER_PROFILE.profile_version,
+                semantic_projection=self._semantic_projection,
             ),
         )
 

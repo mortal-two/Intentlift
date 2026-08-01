@@ -478,7 +478,11 @@ def _rmsnorm_j(*, residual: bool) -> dict[str, Any]:
     broadcasts.append({"operand": rstd, "node_ref": graph.node("vnorm"), "axes": [1]})
     graph.op("map_binary", ["vnorm", weight], out, "f32", ["x0", 64], attrs={"fn": "mul"})
     broadcasts.append({"operand": weight, "node_ref": graph.node(out), "axes": [0]})
-    accesses = [_access("a0", "load", "t0", "[k0, k1]", graph.node(data) if residual else graph.node("vsq"))]
+    # Each boundary load must anchor the operation whose direct J operand it
+    # reads.  In the residual form t0 is consumed directly by the first add;
+    # pointing at the later bias add would make RefEval reject an otherwise
+    # valid read as a synthesized/intermediate load.
+    accesses = [_access("a0", "load", "t0", "[k0, k1]", graph.node("vsum_input") if residual else graph.node("vsq"))]
     if residual:
         accesses.extend(
             [

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from .cute import CUTE_FINGERPRINT_SCHEMA
 from .model import Frontend
+from .native_semantic import NATIVE_JC_PROJECTION_PROTOCOL
 from .ptx import PTX_FINGERPRINT_SCHEMA
 from .tilelang import TILELANG_FINGERPRINT_SCHEMA
 from .ttir import TTIR_FINGERPRINT_SCHEMA
@@ -51,20 +52,20 @@ CUTE_OBSERVER_PROFILE = ObserverProfile(
 
 CUDA_OBSERVER_PROFILE = ObserverProfile(
     Frontend.CUDA,
-    "cuda_ptx_semantic_effects",
-    PTX_FINGERPRINT_SCHEMA,
+    "cuda_ptx_jc_semantic_projection",
+    f"{PTX_FINGERPRINT_SCHEMA}+jc-projection-v1",
     "ptx",
-    PTX_FINGERPRINT_SCHEMA,
-    "semantic_effects_with_raw_topology_diagnostic",
+    f"{PTX_FINGERPRINT_SCHEMA}+{NATIVE_JC_PROJECTION_PROTOCOL}",
+    "jc_semantic_projection_with_raw_ptx_topology_diagnostic",
 )
 
 TILELANG_OBSERVER_PROFILE = ObserverProfile(
     Frontend.TILELANG,
-    "tilelang_tir_semantic_structure",
-    TILELANG_FINGERPRINT_SCHEMA,
+    "tilelang_tir_jc_semantic_projection",
+    f"{TILELANG_FINGERPRINT_SCHEMA}+jc-projection-v1",
     "tir",
-    TILELANG_FINGERPRINT_SCHEMA,
-    "semantic_structure_with_ptx_diagnostic",
+    f"{TILELANG_FINGERPRINT_SCHEMA}+{NATIVE_JC_PROJECTION_PROTOCOL}",
+    "jc_semantic_projection_with_raw_tir_ptx_diagnostic",
 )
 
 _PROFILES = {

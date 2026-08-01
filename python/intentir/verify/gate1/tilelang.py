@@ -18,7 +18,7 @@ from .ptx import (
 )
 
 
-TILELANG_FINGERPRINT_SCHEMA = "tilelang-tir-semantic-structure-ptx-diagnostic-v5"
+TILELANG_FINGERPRINT_SCHEMA = "tilelang-tir-semantic-structure-ptx-diagnostic-v6"
 _T_OP_RE = re.compile(r"\bT\.([A-Za-z_][A-Za-z0-9_]*)")
 _SCHEDULE_ITERATORS = {
     "parallel",
@@ -368,6 +368,114 @@ def normalize_tilelang_tir_structure(tir: str) -> str:
     return ast.dump(normalized, annotate_fields=True, include_attributes=False)
 
 
+def _semantic_tilelang_projection(
+    tir: str,
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+    """Project public TIR semantics without consulting generated PTX.
+
+    TileLang's frontend boundary is TIR.  The projection therefore derives its
+    numerical vocabulary, global memory effect kinds, and program-coordinate
+    vocabulary directly from the normalized TIR AST.  PTX stays attached to the
+    fingerprint as lower-level diagnostic evidence only.
+
+    The numerical inventory is intentionally a set of broad families.  It does
+    not count instructions or temporary materializations, which are realization
+    choices rather than J-owned semantics.
+    """
+
+    normalized = _normalized_tilelang_tree(tir)
+    global_buffers: set[str] = set()
+    for node in ast.walk(normalized):
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and isinstance(node.value, ast.Call)
+            and _call_path(node.value.func) == "T.match_buffer"
+        ):
+            global_buffers.add(node.targets[0].id)
+
+    families: set[str] = set()
+    memory_kinds: set[str] = set()
+    program_coordinates: set[str] = set()
+    binary_families = {
+        ast.Add: "add",
+        ast.Sub: "sub",
+        ast.Mult: "mul",
+        ast.Div: "div",
+    }
+    unary_calls = {
+        "T.exp": "exp",
+        "T.exp2": "exp",
+        "T.floor": "floor",
+        "T.log": "log",
+        "T.log2": "log",
+        "T.rsqrt": "rsqrt",
+        "T.sqrt": "sqrt",
+        "T.sin": "sin",
+    }
+
+    def references_global_buffer(value: ast.AST) -> bool:
+        return any(
+            isinstance(item, ast.Name) and item.id in global_buffers
+            for item in ast.walk(value)
+        )
+
+    for node in ast.walk(normalized):
+        if isinstance(node, ast.BinOp):
+            family = binary_families.get(type(node.op))
+            if family is not None:
+                families.add(family)
+        elif isinstance(node, ast.IfExp):
+            families.add("select")
+        elif isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
+            if node.value.id not in global_buffers:
+                continue
+            if isinstance(node.ctx, ast.Load):
+                memory_kinds.add("load")
+            elif isinstance(node.ctx, (ast.Store, ast.Del)):
+                memory_kinds.add("store")
+        elif not isinstance(node, ast.Call):
+            continue
+
+        if not isinstance(node, ast.Call):
+            continue
+        path = _call_path(node.func)
+        family = unary_calls.get(str(path))
+        if family is not None:
+            families.add(family)
+        elif path in {"T.Select", "T.if_then_else"}:
+            families.add("select")
+        elif path in {"T.atomic_add", "T.atomic_max", "T.atomic_min"}:
+            memory_kinds.add("atomic")
+        elif path == "T.copy" and len(node.args) >= 2:
+            if references_global_buffer(node.args[0]):
+                memory_kinds.add("load")
+            if references_global_buffer(node.args[1]):
+                memory_kinds.add("store")
+        elif path == "T.reduce" and len(node.args) >= 3:
+            reducer = node.args[2]
+            if isinstance(reducer, ast.Constant) and isinstance(reducer.value, str):
+                if reducer.value == "sum":
+                    families.add("add")
+                elif reducer.value in {"max", "min"}:
+                    families.add(reducer.value)
+        elif path == "T.launch_thread" and node.args:
+            coordinate = node.args[0]
+            if (
+                isinstance(coordinate, ast.Constant)
+                and isinstance(coordinate.value, str)
+                and re.fullmatch(r"blockIdx\.[xyz]", coordinate.value)
+            ):
+                program_coordinates.add(coordinate.value)
+
+    return (
+        tuple(sorted(families)),
+        tuple(sorted(memory_kinds)),
+        tuple(sorted(program_coordinates)),
+    )
+
+
 @dataclass(frozen=True)
 class TileLangFingerprint:
     schema_version: str
@@ -375,6 +483,9 @@ class TileLangFingerprint:
     tir_op_multiset: tuple[tuple[str, int], ...]
     tir_structure: str
     interface: tuple[tuple[str, str], ...]
+    semantic_value_families: tuple[str, ...]
+    semantic_memory_effect_kinds: tuple[str, ...]
+    program_coordinates: tuple[str, ...]
     ptx: PTXFingerprint
     schedule_view: tuple[tuple[str, str], ...]
     digest: str
@@ -386,6 +497,9 @@ class TileLangFingerprint:
             "tir_op_multiset": [list(item) for item in self.tir_op_multiset],
             "tir_structure": self.tir_structure,
             "interface": [list(item) for item in self.interface],
+            "semantic_value_families": list(self.semantic_value_families),
+            "semantic_memory_effect_kinds": list(self.semantic_memory_effect_kinds),
+            "program_coordinates": list(self.program_coordinates),
             "ptx": self.ptx.to_dict(),
             "schedule_view": [list(item) for item in self.schedule_view],
             "digest": self.digest,
@@ -414,6 +528,9 @@ def fingerprint_tilelang(
             for key, value in (schedule or {}).items()
         )
     )
+    semantic_families, semantic_memory, program_coordinates = (
+        _semantic_tilelang_projection(tir)
+    )
     ptx_fingerprint = fingerprint_ptx(
         ptx,
         interface=interface,
@@ -425,6 +542,9 @@ def fingerprint_tilelang(
         "tir_ops": tir_ops,
         "tir_structure": tir_structure,
         "interface": interface_view,
+        "semantic_value_families": semantic_families,
+        "semantic_memory_effect_kinds": semantic_memory,
+        "program_coordinates": program_coordinates,
         "ptx": ptx_fingerprint.digest,
     }
     return TileLangFingerprint(
@@ -433,6 +553,9 @@ def fingerprint_tilelang(
         tuple(sorted(Counter(tir_ops).items())),
         tir_structure,
         interface_view,
+        semantic_families,
+        semantic_memory,
+        program_coordinates,
         ptx_fingerprint,
         schedule_view,
         _digest(payload),
