@@ -11,12 +11,11 @@
 4. [IntentIR / SCRC 最终数学、执行流程与论文表述](IntentIR_SCRC_最终数学与执行流程_2026-07-22.md)：是上述三份 SCRC 设计的数学与 claim 总述，统一 `TypeCheck` 所有权结论、observer-relative Gate1、外部比较政策 Q、Gate2 三条直接比较、instance-wise `c0` 与概率声明边界。它不增加第四个设计对象或新的运行阶段；若对象/schema/API 细节发生歧义，仍回到对应的三份核心设计修订。
 5. [J-Grounded、Q/D-Certified Lowering-State Search 后端最终设计](IntentIR_Contract_Preserving_Multi_Lowering_后端最终设计_2026-07-24.md)：定义 accepted J+C 的 pure core lowerer、Intent MLIR materialization、hard verifier、统一 Q/D search-and-closure controller、concrete lowering-state search 与实验设计；它不修改 SCRC 接受谓词或 J。文件名为保持既有链接稳定而保留旧名称。
 
-Replay子系统的当前权威增补为
-[共享J语义物化与π约束Replay编译Agent](IntentIR_共享J语义物化与pi约束Replay编译Agent最终设计_2026-07-31.md)。
-它不增加第六个数学对象：固定SemanticMaterializer把exact J确定性物化为只读、参数化的`S_J`；
-fresh source-blind Replay agent作为π约束下的完整编译器，自由编写、编译和重构一份完整Triton、CUDA
-或TileLang源码。宿主不填holes、不拼route、不提供target recipe；normal/masked分别从各自J物化，
-最终仍由TypeCheck、Gate1与三边Gate2认证。
+Replay/Gate1子系统的当前权威增补为
+[J-only Replay与多前端J/C Structural Gate1最终实施](method/IntentIR_J-only_Replay与多前端JC结构Gate1最终实施_2026-08-01.md)。
+Replay只消费`J+MaskC(C)+U_f`，π只供固定单臂Gate1 normalizer使用。TileLang与CUDA共享J/C/π
+ownership及Gate1数学，但分别在TIR与semantic PTX边界保守观察；最终仍由三边Gate2认证。被取代的
+π-fed Replay Compiler设计已移入archive。
 
 对应的 production 实现与实测记录：
 
@@ -28,7 +27,7 @@ fresh source-blind Replay agent作为π约束下的完整编译器，自由编�
 
 ```text
 Lift_H(S) -> (J,C,pi)
-Replay = W_f(J,pi,MaskC(C);U_f)
+Replay = W_f(J,MaskC(C);U_f)
 SCRC_CERTIFIED iff TypeCheck(J,C,pi) and Gate1 and Gate2
 ```
 

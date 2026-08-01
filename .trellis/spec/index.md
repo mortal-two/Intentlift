@@ -1,6 +1,6 @@
 # IntentIR 当前派生规范
 
-> 状态：2026-07-31 当前派生规范。
+> 状态：2026-08-01 当前派生规范。
 
 `.trellis/spec` 只把四份 SCRC 设计与第五份 production backend 设计投影为 schema、API、runner、
 lowering 和测试要求，不形成另一套设计。上位文档按作用域组合，不构成一条让旧 SCRC 文档覆盖
@@ -14,11 +14,9 @@ lowering 和测试要求，不形成另一套设计。上位文档按作用域�
   统一 SCRC 数学与 claim；
 - [Contract-Preserving Multi-Lowering 后端最终设计](../../doc/IntentIR_Contract_Preserving_Multi_Lowering_后端最终设计_2026-07-24.md)
   在服从前四份对象边界的条件下，权威定义 post-SCRC production backend；
-- [共享J语义物化与π约束Replay编译Agent](../../doc/IntentIR_共享J语义物化与pi约束Replay编译Agent最终设计_2026-07-31.md)
-  在不改变上述对象和认证公式的前提下，权威细化Replay作者化：固定SemanticMaterializer只把exact J
-  物化为只读、参数化、前端无关的`S_J`；fresh source-blind Replay agent完整理解`S_J+π`并自由编写
-  一份完整target source。宿主不做per-node hole/binding、route assembly或target recipe；normal与
-  masked分别从各自J fresh物化并物理隔离；
+- [J-only Replay与多前端J/C Structural Gate1](../../doc/method/IntentIR_J-only_Replay与多前端JC结构Gate1最终实施_2026-08-01.md)
+  权威细化Replay/Gate1：Replay只消费`J+MaskC(C)+U_f`；π只进入每前端固定、单臂、fail-closed
+  normalizer；TileLang/CUDA分别在TIR与semantic PTX边界观察；
 - 本目录只做上述权威文档的派生投影；Replay增补不增加新的数学对象。
 
 若派生规范与上位设计冲突，应修订派生规范；不得通过增加 interface artifact、hash gate、
