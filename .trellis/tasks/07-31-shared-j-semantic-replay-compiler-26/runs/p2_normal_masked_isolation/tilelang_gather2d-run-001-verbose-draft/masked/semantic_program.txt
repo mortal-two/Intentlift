@@ -1,0 +1,66 @@
+semantic_program scrc_k0 mode=masked
+schema intentir.replay.semantic-program.v2
+parameterized true
+
+dimensions:
+  <none>
+
+signature:
+  p0: input tensor dtype=f32 rank=2 logical_ref=t0
+  p1: input tensor dtype=i32 rank=1 logical_ref=t1
+  p2: input tensor dtype=i32 rank=1 logical_ref=t2
+  p3: output tensor dtype=f32 rank=1 logical_ref=t3
+
+inputs:
+  t0: tensor<<masked>["<masked>","<masked>"]>
+  t1: tensor<<masked>["<masked>"]>
+  t2: tensor<<masked>["<masked>"]>
+
+operations (declaration order):
+  [0] n0 @ body[0] in function: n0 = <masked>()
+      result_types [{"ref":"n0","type":null}]
+      boundary_relations {"accesses":[{"access_id":"a0","index_expression":"<masked>","kind":"<masked>","node_ref":"n0","tensor":"t1"},{"access_id":"a1","index_expression":"<masked>","kind":"<masked>","node_ref":"n0","tensor":"t0"}],"effects":[{"access_ref":"a0","effect_id":"e0","kind":"<masked>","node_ref":"n0","target":"t1"},{"access_ref":"a1","effect_id":"e1","kind":"<masked>","node_ref":"n0","target":"t0"}],"index_bounds":[{"axis":"<masked>","data":"t0","indices":"t1","node_ref":"n0"}]}
+      access_effect_chains [{"access":{"access_id":"a0","index_expression":"<masked>","kind":"<masked>","node_ref":"n0","tensor":"t1"},"effects":[{"access_ref":"a0","effect_id":"e0","kind":"<masked>","node_ref":"n0","target":"t1"}]},{"access":{"access_id":"a1","index_expression":"<masked>","kind":"<masked>","node_ref":"n0","tensor":"t0"},"effects":[{"access_ref":"a1","effect_id":"e1","kind":"<masked>","node_ref":"n0","target":"t0"}]}]
+  [1] n1 @ body[1] in function: n1 = <masked>()
+      result_types [{"ref":"n1","type":null}]
+      boundary_relations {"accesses":[{"access_id":"a2","index_expression":"<masked>","kind":"<masked>","node_ref":"n1","tensor":"t2"},{"access_id":"a3","index_expression":"<masked>","kind":"<masked>","node_ref":"n1","tensor":"t3"}],"effects":[{"access_ref":"a2","effect_id":"e2","kind":"<masked>","node_ref":"n1","target":"t2"},{"access_ref":"a3","effect_id":"e3","kind":"<masked>","node_ref":"n1","target":"t3"}],"index_bounds":[{"axis":"<masked>","data":"r0","indices":"t2","node_ref":"n1"}]}
+      access_effect_chains [{"access":{"access_id":"a2","index_expression":"<masked>","kind":"<masked>","node_ref":"n1","tensor":"t2"},"effects":[{"access_ref":"a2","effect_id":"e2","kind":"<masked>","node_ref":"n1","target":"t2"}]},{"access":{"access_id":"a3","index_expression":"<masked>","kind":"<masked>","node_ref":"n1","tensor":"t3"},"effects":[{"access_ref":"a3","effect_id":"e3","kind":"<masked>","node_ref":"n1","target":"t3"}]}]
+
+outputs:
+  t3: tensor<<masked>["<masked>"]> <- t3
+
+boundary (exact J relations):
+  access_guard_relations [0]
+  accesses [4]
+    [0] {"access_id":"a0","index_expression":"<masked>","kind":"<masked>","node_ref":"n0","tensor":"t1"}
+    [1] {"access_id":"a1","index_expression":"<masked>","kind":"<masked>","node_ref":"n0","tensor":"t0"}
+    [2] {"access_id":"a2","index_expression":"<masked>","kind":"<masked>","node_ref":"n1","tensor":"t2"}
+    [3] {"access_id":"a3","index_expression":"<masked>","kind":"<masked>","node_ref":"n1","tensor":"t3"}
+  aliases [0]
+  broadcasts [0]
+  consumer_extensions [0]
+  domains [3]
+    d0 = "<masked>"
+    d1 = "<masked>"
+    d2 = "<masked>"
+  effects [4]
+    [0] {"access_ref":"a0","effect_id":"e0","kind":"<masked>","node_ref":"n0","target":"t1"}
+    [1] {"access_ref":"a1","effect_id":"e1","kind":"<masked>","node_ref":"n0","target":"t0"}
+    [2] {"access_ref":"a2","effect_id":"e2","kind":"<masked>","node_ref":"n1","target":"t2"}
+    [3] {"access_ref":"a3","effect_id":"e3","kind":"<masked>","node_ref":"n1","target":"t3"}
+  index_bounds [2]
+    [0] {"axis":"<masked>","data":"t0","indices":"t1","node_ref":"n0"}
+    [1] {"axis":"<masked>","data":"r0","indices":"t2","node_ref":"n1"}
+  output_mappings [0]
+  realization_authorizations [0]
+  reductions [0]
+  result_relations [1]
+    [0] {"kind":"<masked>","output":"t3"}
+  updates [0]
+
+J-only contracts:
+  dimension_constraints ["<masked>"]
+  value_dimension_relations []
+  dimension_relations []
+  scopes [{"captures":[],"definitions":["t0","t1","t2","r0","t3"],"effects":["e0","e1","e2","e3"],"kind":"<masked>","parent_scope":null,"scope_id":"q0"}]
+  storage []

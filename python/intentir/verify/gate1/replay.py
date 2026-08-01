@@ -14,6 +14,10 @@ from intentir.extraction.providers.client import (
 )
 from intentir.extraction.providers.client import call_responses
 from intentir.extraction.providers.provider import ProviderConfig, get_provider
+from intentir.replay_compiler.packet import (
+    SemanticProgramMount,
+    build_semantic_program_mount,
+)
 
 from .codegen import extract_python_module
 from .compiler import (
@@ -54,7 +58,7 @@ from .ttir import (
 )
 
 
-MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v36"
+MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v37"
 MINISWE_REPLAY_TURN_TIMEOUT_SECONDS = 300.0
 MINISWE_REPLAY_XHIGH_TURN_TIMEOUT_SECONDS = 900.0
 RESPONSES_REPLAY_BACKEND = "openai.responses.intentir-replay.v1"
@@ -3069,7 +3073,13 @@ def _replay_input_files(
     *,
     frontend: Frontend,
     masked: bool,
-) -> tuple[dict[str, str], dict[str, Any], str]:
+    include_semantic_program: bool = True,
+) -> tuple[
+    dict[str, str],
+    dict[str, Any],
+    str,
+    SemanticProgramMount | None,
+]:
     """Build the complete, closed allowlist mounted for one agent episode."""
 
     instructions, user = build_rewriter_prompt(
@@ -3083,11 +3093,31 @@ def _replay_input_files(
         ensure_ascii=False,
         allow_nan=False,
     ) + "\n"
+    semantic_mount = (
+        build_semantic_program_mount(packet["j"], masked=masked)
+        if include_semantic_program
+        else None
+    )
+    semantic_input_clause = (
+        """
+- `semantic_program.txt`: parameterized, declaration-order typed `S_J`; read this
+  first to understand the complete J semantic program.
+- `semantic_program.json`: the same immutable `S_J` as an exact structured view.
+- `SEMANTIC_RECEIPT.json`: proof-irrelevant evidence that this episode freshly
+  derived `S_J` from its own exact J only. It is not a fourth artifact or Gate input.
+"""
+        if semantic_mount is not None
+        else """
+- This controlled baseline episode intentionally omits `S_J`; consume exact J
+  from `packet.json` directly.
+"""
+    )
     readme = """# IntentIR source-blind Replay input
 
 This is the complete immutable input allowlist for one fresh Replay episode.
 
 - `packet.json`: exactly source-isolated J + pi + MaskC(C) + U_f.
+""" + semantic_input_clause + """
 - `REPLAY_CONTRACT.md`: fixed public Replay construction contract.
 - `TOOL.md`: fixed bounded check and submission interface.
 - `intentir_packet_query`: bounded read-only packet inventory, exact authored
@@ -3097,6 +3127,11 @@ This is the complete immutable input allowlist for one fresh Replay episode.
 - `intentir_replay_inspect`: bounded syntax-only inventory of the writer's own
   current replay.source. It reads no packet or external evidence, performs no
   comparison, and never edits or generates source.
+
+`S_J` is only a deterministic read-only organization of this episode's exact J.
+It does not replace J, contain pi, choose a target instruction, or assemble source.
+For the masked arm it is freshly materialized from MaskJ(J); a normal `S_J` is
+never reused or mounted.
 
 No Source or source slice, Harness/compiler view, actual C values, real
 CompileCase/grid, Gate diff/TTIR, previous Replay, sibling trajectory, or
@@ -3249,71 +3284,16 @@ own TTIR/fingerprint for focused debugging. These callbacks take no host path an
 never expose Source, Source TTIR, Harness values, or Gate evidence. Read this file
 for usage instead of probing the fixed client with an unrecognized tool name.
 
-Codex Replay composer episodes install `work/replay_composer.py`, an agent-owned
-`work/build_replay.py` scaffold, and an empty `work/replay.composer.json`. The
-helper is syntax-only: it does not read `input/`, J, C, pi, compiler output, or Gate
-evidence. The low-friction path is to edit `work/build_replay.py` with its generic
-`line`, `block`, and `raw_block` constructors and run it. The equivalent JSON path
-is to edit the plan and run `python work/replay_composer.py render`. Both atomically
-write `output/replay.source` with the same closed grammar:
-
-```json
-{
-  "protocol": "intentir.replay.syntax-composer.v2",
-  "frontend": "triton",
-  "nodes": [
-    {"id": "import0", "kind": "line", "text": "import triton"},
-    {
-      "id": "fn0",
-      "kind": "block",
-      "header": "def scrc_k0(...):",
-      "children": [
-        {"id": "body0", "kind": "line", "text": "..."}
-      ]
-    },
-    {
-      "id": "raw0",
-      "kind": "raw_block",
-      "lines": ["# exact agent-authored escape line"]
-    }
-  ]
-}
-```
-
-Use frontend `triton`, `tilelang`, or `cuda`. Triton/TileLang blocks require an
-agent-authored header ending in `:`; CUDA blocks omit braces and the composer adds
-them. Node IDs are stable source-map handles. Full-plan edits are allowed. For a
-small insertion or replacement, write exactly one node object to
-`work/replay.composer.node.json`, then run one of:
-
-```text
-python work/replay_composer.py insert-before TARGET
-python work/replay_composer.py insert-after TARGET
-python work/replay_composer.py append-child BLOCK
-python work/replay_composer.py replace TARGET
-python work/replay_composer.py delete TARGET
-python work/replay_composer.py move-before NODE ANCHOR
-python work/replay_composer.py move-after NODE ANCHOR
-python work/replay_composer.py move-child NODE BLOCK
-```
-
-Every successful edit validates the complete tree and immediately renders exact
-Replay bytes. Replacement preserves the target ID; moves preserve the moved ID.
-Unknown syntax uses `raw_block`; direct editing of `output/replay.source` remains
-the unrestricted raw escape. `status`, `checkpoint`, and `rollback` are also
-available. The composer never chooses a target API, algorithm, expression, or
-realization and has no ReplayCheck, Gate, or certification authority.
 """
-    return (
-        {
-            "README.md": readme,
-            "packet.json": packet_text,
-            "REPLAY_CONTRACT.md": instructions + "\n",
-            "TOOL.md": tool,
-        },
-        packet,
-        instructions,
-    )
+    files = {
+        "README.md": readme,
+        "packet.json": packet_text,
+        "REPLAY_CONTRACT.md": instructions + "\n",
+        "TOOL.md": tool,
+    }
+    if semantic_mount is not None:
+        files.update(semantic_mount.files())
+    return files, packet, instructions, semantic_mount
 
 
 @dataclass
@@ -3462,7 +3442,7 @@ class MiniSWEReplayWriter:
                 else MINISWE_REPLAY_TURN_TIMEOUT_SECONDS
             )
             timeout = min(provider_timeout, turn_timeout)
-        files, packet, instructions = _replay_input_files(
+        files, packet, instructions, _semantic_mount = _replay_input_files(
             artifact,
             frontend=self.frontend,
             masked=masked,

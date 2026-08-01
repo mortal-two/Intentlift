@@ -92,16 +92,18 @@ def query_semantic_program(
                     selected.append([ordinal + 1, lines[ordinal]])
                     seen.add(ordinal)
         return {"token": token, "match_count": len(matches), "lines": selected}
-    if mode in {"op", "value", "region"}:
+    if mode in {"op", "contract", "value", "region"}:
         if len(arguments) != 2:
             raise SemanticQueryError(f"{mode} accepts exactly one REF")
         collection = {
             "op": "operations",
+            "contract": "operations",
             "value": "values",
             "region": "regions",
         }[mode]
         keys = {
             "op": ("node_ref", "path"),
+            "contract": ("node_ref", "path"),
             "value": ("ref",),
             "region": ("id",),
         }[mode]
@@ -112,6 +114,35 @@ def query_semantic_program(
         ]
         if not matches:
             raise SemanticQueryError(f"{mode} reference is absent")
+        if mode == "contract":
+            projected = []
+            for item in matches:
+                contract = item.get("semantic_contract")
+                contract_view = dict(contract) if isinstance(contract, Mapping) else {}
+                refs = contract_view.pop("boundary_relation_refs", {})
+                resolved: dict[str, Any] = {}
+                if isinstance(refs, Mapping):
+                    boundary = payload.get("boundary", {})
+                    for name, indexes in refs.items():
+                        table = boundary.get(name, []) if isinstance(boundary, Mapping) else []
+                        if isinstance(table, list) and isinstance(indexes, list):
+                            resolved[name] = [
+                                table[index]
+                                for index in indexes
+                                if isinstance(index, int) and 0 <= index < len(table)
+                            ]
+                contract_view["boundary_relations"] = resolved
+                projected.append({
+                    "node_ref": item.get("node_ref"),
+                    "path": item.get("path"),
+                    "op": item.get("op"),
+                    "operands": item.get("operands"),
+                    "results": item.get("results"),
+                    "operand_types": item.get("operand_types"),
+                    "result_types": item.get("result_types"),
+                    "semantic_contract": contract_view,
+                })
+            matches = projected
         return {"kind": mode, "ref": arguments[1], "items": matches[:8]}
     if mode == "path":
         if len(arguments) != 2:
@@ -130,7 +161,9 @@ def query_semantic_program(
             else:
                 raise SemanticQueryError("PATH is absent")
         return {"path": arguments[1], "value": value}
-    raise SemanticQueryError("mode must be summary/raw/find/op/value/region/path")
+    raise SemanticQueryError(
+        "mode must be summary/raw/find/op/contract/value/region/path"
+    )
 
 
 __all__ = ["SemanticQueryError", "query_semantic_program"]

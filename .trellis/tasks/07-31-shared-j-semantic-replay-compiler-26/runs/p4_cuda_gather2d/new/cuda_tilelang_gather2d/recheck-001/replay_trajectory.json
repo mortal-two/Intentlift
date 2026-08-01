@@ -1,0 +1,448 @@
+{
+  "backend": "openai.codex-cli.intentir-replay.v39",
+  "formal_ingress_recheck": true,
+  "fresh_session": true,
+  "isolation": {
+    "composer_episode_local": true,
+    "composer_reads_packet": false,
+    "input": "read-only",
+    "output_work_tmp": "write-only-scope",
+    "provider_secret_in_tool_env": false,
+    "semantic_program_fresh": true,
+    "semantic_program_j_only": true,
+    "semantic_program_read_only": true,
+    "source_blind": true,
+    "tool_network": "disabled"
+  },
+  "packet_queries": [],
+  "pi_min_ownership": {
+    "artifact_schema": "intentir.scrc.artifact.v13",
+    "claim_scope": "proof-irrelevant ownership receipt; it neither proves zero statistical information nor changes TypeCheck, Replay, Gate1, or Gate2 acceptance",
+    "masked_j": false,
+    "pi_authority": "J/C-dependent realization constraints only",
+    "pi_closed_fields": [
+      "instances",
+      "iterations",
+      "loop_carriers",
+      "order",
+      "participant_mappings",
+      "physical_iterations",
+      "physical_loop_carriers",
+      "program_axes",
+      "refinements",
+      "regions",
+      "route_extent_transforms",
+      "routes",
+      "sharing",
+      "terminal_controls"
+    ],
+    "protocol": "intentir.pi-min.ownership-receipt.v1",
+    "relation_counts": {
+      "instances": 13,
+      "iterations": 0,
+      "loop_carriers": 0,
+      "order": 3,
+      "participant_mappings": 0,
+      "physical_iterations": 0,
+      "physical_loop_carriers": 0,
+      "program_axes": 1,
+      "refinements": 0,
+      "regions": 2,
+      "route_extent_transforms": 0,
+      "routes": 13,
+      "sharing": 0,
+      "terminal_controls": 0
+    },
+    "semantic_authority": "J only",
+    "status": "pass",
+    "validation_basis": [
+      "canonical Gate1Artifact closed-schema decode",
+      "TypeCheck(J,C,pi)=PASS before Replay packet construction",
+      "closed source-isolated Replay payload grammar"
+    ]
+  },
+  "protocol": "intentir.codex-cli.agent-runtime.v3",
+  "replay_check": [
+    {
+      "diagnostics": [],
+      "source_sha256": "7db5c9f105c413e5dd004595a0d1b26a246d375caf6b150b126082e519538514",
+      "status": "pass",
+      "trigger": "host_post_turn"
+    }
+  ],
+  "replay_compile_check": [
+    {
+      "diagnostics": [],
+      "source_sha256": "7db5c9f105c413e5dd004595a0d1b26a246d375caf6b150b126082e519538514",
+      "status": "pass",
+      "trigger": "host_post_turn"
+    }
+  ],
+  "replay_obligation_audits": [
+    {
+      "broadcast_obligation_count": 0,
+      "cross_region_order_count": 0,
+      "identity_materialization_count": 0,
+      "lexical_region_count": 0,
+      "participant_mapping_count": 0,
+      "program_axis_count": 1,
+      "route_extent_transform_count": 0,
+      "source_sha256": "7db5c9f105c413e5dd004595a0d1b26a246d375caf6b150b126082e519538514"
+    }
+  ],
+  "replay_ttir_inspections": [],
+  "semantic_program": {
+    "artifact_or_gate_input": false,
+    "bytes": {
+      "j": 4216,
+      "semantic_program_json": 28183,
+      "semantic_program_text": 6594
+    },
+    "counts": {
+      "boundary_access_guard_relations": 0,
+      "boundary_accesses": 4,
+      "boundary_aliases": 0,
+      "boundary_broadcasts": 0,
+      "boundary_consumer_extensions": 0,
+      "boundary_domains": 3,
+      "boundary_effects": 4,
+      "boundary_index_bounds": 2,
+      "boundary_output_mappings": 0,
+      "boundary_realization_authorizations": 0,
+      "boundary_reductions": 0,
+      "boundary_result_relations": 1,
+      "boundary_updates": 0,
+      "dataflow_edges": 21,
+      "dimensions": 1,
+      "inputs": 4,
+      "node_semantic_contracts": 13,
+      "operations": 13,
+      "outputs": 1,
+      "regions": 1,
+      "values": 17
+    },
+    "excluded_dependencies": [
+      "pi",
+      "C valuation",
+      "Source",
+      "Gate observation",
+      "frontend identity",
+      "target API",
+      "historical Replay"
+    ],
+    "fresh_materialization": true,
+    "materializer": "intentir.replay.semantic-materializer.v2",
+    "mode": "normal",
+    "mounts": {
+      "SEMANTIC_RECEIPT.json": "read-only",
+      "semantic_program.json": "read-only",
+      "semantic_program.txt": "read-only"
+    },
+    "parameterized": true,
+    "production_input": false,
+    "proof_relevant": false,
+    "protocol": "intentir.replay.semantic-receipt.v1",
+    "read_only_mount": true,
+    "semantic_input": "exact J only",
+    "semantic_program_schema": "intentir.replay.semantic-program.v2",
+    "status": "pass"
+  },
+  "semantic_queries": [],
+  "syntax_composer": {
+    "builder_installed": false,
+    "installed": false,
+    "offer_mode": "off",
+    "protocol": "intentir.replay.syntax-composer.v2",
+    "selected_path": "raw_escape",
+    "status": "disabled",
+    "used": false
+  },
+  "thread_id": "019fb6d7-b14a-75b0-8f6c-26e55d58c193",
+  "thread_ids": [
+    "019fb6d7-b14a-75b0-8f6c-26e55d58c193"
+  ],
+  "timeout_events": [],
+  "tool_bridge": {
+    "authority": "diagnostic-only callbacks over exact host-read output bytes; no artifact or Replay field is generated or edited",
+    "calls": 2,
+    "protocol": "intentir.codex-cli.tool-bridge.v3",
+    "receipts": [
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 5.296947085298598,
+        "result_sha256": "211dfc42cca4dc3710a493ea8856eba6e412e18ce1c85e0c324e37c2d24b60da",
+        "status": "pass",
+        "tool": "replay_obligation_audit"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 409.61138694547117,
+        "result_sha256": "4d05f692b79a9dcd5053b7e593596bf0599aaff93a6291835d4506f614675eaa",
+        "status": "pass",
+        "tool": "submit_replay"
+      }
+    ],
+    "transport": "isolated_workspace_file_mailbox"
+  },
+  "turns": [
+    {
+      "elapsed_ms": 110904.86797899939,
+      "events": [
+        {
+          "thread_id": "019fb6d7-b14a-75b0-8f6c-26e55d58c193",
+          "type": "thread.started"
+        },
+        {
+          "type": "turn.started"
+        },
+        {
+          "item": {
+            "id": "item_0",
+            "text": "I’ll compile this from the semantic IR and exact placement ledger, write the complete replay, then run the mandatory audit and transactional submission until it passes. I’ll keep `output/` limited to `replay.source`.",
+            "type": "agent_message"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c \"sed -n '1,260p' input/semantic_program.txt && find output -maxdepth 1 -type f -print && sed -n '1,240p' input/TOOL.md\"",
+            "exit_code": null,
+            "id": "item_1",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "semantic_program scrc_intent0 mode=normal\nschema intentir.replay.semantic-program.v2\nparameterized true\nlogical_operations_imply_target_materialization false\nphysical_materialization_authority pi only\n\ndimensions:\n  x0: symbolic\n\nsignature:\n  p0: input tensor dtype=i32 rank=1 logical_ref=t0\n  p1: input tensor dtype=f32 rank=2 logical_ref=t1\n  p2: output tensor dtype=f32 rank=1 logical_ref=t4\n  p3: input tensor dtype=i32 rank=1 logical_ref=t2\n  p4: value scalar dtype=i32 rank=0 logical_ref=t3\n\ninputs:\n  t0: tensor<i32[256]>\n  t1: tensor<f32[\"x0\",64]>\n  t2: tensor<i32[256]>\n  t3: tensor<i32[]>\n\noperations (declaration order):\n  [0] n0 @ body[0] in function: v0 = const()\n      type {\"dtype\":\"i32\",\"shape\":[]}\n      attrs {\"dtype\":\"i32\",\"shape\":[],\"value\":0}\n      structure {\"id\":\"n0\"}\n      result_types [{\"ref\":\"v0\",\"type\":{\"dtype\":\"i32\",\"shape\":[]}}]\n  [1] n1 @ body[1] in function: v1 = map_binary(t0, v0)\n      type {\"dtype\":\"i1\",\"shape\":[256]}\n      attrs {\"fn\":\"ge\"}\n      structure {\"id\":\"n1\"}\n      operand_types [{\"ref\":\"t0\",\"type\":{\"dtype\":\"i32\",\"shape\":[256]}},{\"ref\":\"v0\",\"type\":{\"dtype\":\"i32\",\"shape\":[]}}]\n      result_types [{\"ref\":\"v1\",\"type\":{\"dtype\":\"i1\",\"shape\":[256]}}]\n  [2] n2 @ body[2] in function: v2 = const()\n      type {\"dtype\":\"i32\",\"shape\":[]}\n      attrs {\"dtype\":\"i32\",\"shape\":[],\"value\":64}\n      structure {\"id\":\"n2\"}\n      result_types [{\"ref\":\"v2\",\"type\":{\"dtype\":\"i32\",\"shape\":[]}}]\n  [3] n3 @ body[3] in function: v3 = map_binary(t0, v2)\n      type {\"dtype\":\"i1\",\"shape\":[256]}\n      attrs {\"fn\":\"lt\"}\n      structure {\"id\":\"n3\"}\n      operand_types [{\"ref\":\"t0\",\"type\":{\"dtype\":\"i32\",\"shape\":[256]}},{\"ref\":\"v2\",\"type\":{\"dtype\":\"i32\",\"shape\":[]}}]\n      result_types [{\"ref\":\"v3\",\"type\":{\"dtype\":\"i1\",\"shape\":[256]}}]\n  [4] n4 @ body[4] in function: v4 = map_binary(v1, v3)\n      type {\"dtype\":\"i1\",\"shape\":[256]}\n      attrs {\"fn\":\"logical_and\"}\n      structure {\"id\":\"n4\"}\n      operand_types [{\"ref\":\"v1\",\"type\":{\"dtype\":\"i1\",\"shape\":[256]}},{\"ref\":\"v3\",\"type\":{\"dtype\":\"i1\",\"shape\":[256]}}]\n      result_types [{\"ref\":\"v4\",\"type\":{\"dtype\":\"i1\",\"shape\":[256]}}]\n  [5] n5 @ body[5] in function: v5 = map_binary(t2, v0)\n      type {\"dtype\":\"i1\",\"shape\":[256]}\n      attrs {\"fn\":\"ge\"}\n      structure {\"id\":\"n5\"}\n      operand_types [{\"ref\":\"t2\",\"type\":{\"dtype\":\"i32\",\"shape\":[256]}},{\"ref\":\"v0\",\"type\":{\"dtype\":\"i32\",\"shape\":[]}}]\n      result_types [{\"ref\":\"v5\",\"type\":{\"dtype\":\"i1\",\"shape\":[256]}}]\n  [6] n6 @ body[6] in function: v6 = map_binary(v4, v5)\n      type {\"dtype\":\"i1\",\"shape\":[256]}\n      attrs {\"fn\":\"logical_and\"}\n      structure {\"id\":\"n6\"}\n      operand_types [{\"ref\":\"v4\",\"type\":{\"dtype\":\"i1\",\"shape\":[256]}},{\"ref\":\"v5\",\"type\":{\"dtype\":\"i1\",\"shape\":[256]}}]\n      result_types [{\"ref\":\"v6\",\"type\":{\"dtype\":\"i1\",\"shape\":[256]}}]\n  [7] n7 @ body[7] in function: v7 = map_binary(t2, t3)\n      type {\"dtype\":\"i1\",\"shape\":[256]}\n      attrs {\"fn\":\"lt\"}\n      structure {\"id\":\"n7\"}\n      operand_types [{\"ref\":\"t2\",\"type\":{\"dtype\":\"i32\",\"shape\":[256]}},{\"ref\":\"t3\",\"type\":{\"dtype\":\"i32\",\"shape\":[]}}]\n      result_types [{\"ref\":\"v7\",\"type\":{\"dtype\":\"i1\",\"shape\":[256]}}]\n  [8] n8 @ body[8] in function: v8 = map_binary(v6, v7)\n      type {\"dtype\":\"i1\",\"shape\":[256]}\n      attrs {\"fn\":\"logical_and\"}\n      structure {\"id\":\"n8\"}\n      operand_types [{\"ref\":\"v6\",\"type\":{\"dtype\":\"i1\",\"shape\":[256]}},{\"ref\":\"v7\",\"type\":{\"dtype\":\"i1\",\"shape\":[256]}}]\n      result_types [{\"ref\":\"v8\",\"type\":{\"dtype\":\"i1\",\"shape\":[256]}}]\n  [9] n9 @ body[9] in function: v9 = gather(t1, t2)\n      type {\"dtype\":\"f32\",\"shape\":[256,64]}\n      attrs {\"axis\":0,\"mode\":\"take\"}\n      structure {\"id\":\"n9\"}\n      operand_types [{\"ref\":\"t1\",\"type\":{\"dtype\":\"f32\",\"shape\":[\"x0\",64]}},{\"ref\":\"t2\",\"type\":{\"dtype\":\"i32\",\"shape\":[256]}}]\n      result_types [{\"ref\":\"v9\",\"type\":{\"dtype\":\"f32\",\"shape\":[256,64]}}]\n      accesses [{\"access_id\":\"a2\",\"fill_value\":0.0,\"index_expression\":\"[v14, v15]\",\"kind\":\"load\",\"node_ref\":\"n9\",\"predicate\":\"(0 <= v15) and (v15 < 64) and (0 <= v14) and (v14 < x0)\",\"tensor\":\"t1\"}]\n      effects [{\"access_ref\":\"a2\",\"effect_id\":\"e2\",\"kind\":\"read\",\"node_ref\":\"n9\",\"target\":\"t1\"}]\n      index_bounds [{\"axis\":0,\"data\":\"t1\",\"indices\":\"t2\",\"node_ref\":\"n9\"}]\n      access_effect_chains [{\"access_id\":\"a2\",\"effect_ids\":[\"e2\"]}]\n  [10] n10 @ body[10] in function: v10 = gather(v9, t0)\n      type {\"dtype\":\"f32\",\"shape\":[256]}\n      attrs {\"axis\":1,\"mode\":\"along_axis\"}\n      structure {\"id\":\"n10\"}\n      operand_types [{\"ref\":\"v9\",\"type\":{\"dtype\":\"f32\",\"shape\":[256,64]}},{\"ref\":\"t0\",\"type\":{\"dtype\":\"i32\",\"shape\":[256]}}]\n      result_types [{\"ref\":\"v10\",\"type\":{\"dtype\":\"f32\",\"shape\":[256]}}]\n      index_bounds [{\"axis\":1,\"data\":\"v9\",\"indices\":\"t0\",\"node_ref\":\"n10\"}]\n  [11] n11 @ body[11] in function: v11 = const()\n      type {\"dtype\":\"f32\",\"shape\":[]}\n      attrs {\"dtype\":\"f32\",\"shape\":[],\"value\":0.0}\n      structure {\"id\":\"n11\"}\n      result_types [{\"ref\":\"v11\",\"type\":{\"dtype\":\"f32\",\"shape\":[]}}]\n  [12] n12 @ body[12] in function: v12 = select(v8, v10, v11)\n      type {\"dtype\":\"f32\",\"shape\":[256]}\n      structure {\"id\":\"n12\"}\n      operand_types [{\"ref\":\"v8\",\"type\":{\"dtype\":\"i1\",\"shape\":[256]}},{\"ref\":\"v10\",\"type\":{\"dtype\":\"f32\",\"shape\":[256]}},{\"ref\":\"v11\",\"type\":{\"dtype\":\"f32\",\"shape\":[]}}]\n      result_types [{\"ref\":\"v12\",\"type\":{\"dtype\":\"f32\",\"shape\":[256]}}]\n      accesses [{\"access_id\":\"a3\",\"index_expression\":\"[v13]\",\"kind\":\"store\",\"node_ref\":\"n12\",\"tensor\":\"t4\"}]\n      effects [{\"access_ref\":\"a3\",\"effect_id\":\"e3\",\"kind\":\"write\",\"node_ref\":\"n12\",\"target\":\"t4\"}]\n      access_effect_chains [{\"access_id\":\"a3\",\"effect_ids\":[\"e3\"]}]\n\noutputs:\n  t4: tensor<f32[256]> <- t4\n\nglobal J-only contracts:\n  accesses [2]\n    [0] {\"access_id\":\"a0\",\"index_expression\":\"[v13]\",\"kind\":\"load\",\"tensor\":\"t2\"}\n    [1] {\"access_id\":\"a1\",\"index_expression\":\"[v13]\",\"kind\":\"load\",\"tensor\":\"t0\"}\n  domains [3]\n    d0 = \"(0 <= v13) and (v13 < 256)\"\n    d1 = \"(0 <= v14) and (v14 < x0)\"\n    d2 = \"(0 <= v15) and (v15 < 64)\"\n  effects [2]\n    [0] {\"access_ref\":\"a0\",\"effect_id\":\"e0\",\"kind\":\"read\",\"target\":\"t2\"}\n    [1] {\"access_ref\":\"a1\",\"effect_id\":\"e1\",\"kind\":\"read\",\"target\":\"t0\"}\n  result_relations [1]\n    [0] {\"kind\":\"exact\",\"output\":\"t4\"}\n\nJ-only contracts:\n  dimension_constraints [\"x0 >= 1\"]\n  value_dimension_relations [{\"dimension_ref\":\"x0\",\"relation\":\"eq\",\"value_ref\":\"t3\"}]\n  dimension_relations []\n  scopes [{\"captures\":[],\"definitions\":[\"t0\",\"t1\",\"t2\",\"t3\",\"v0\",\"v1\",\"v2\",\"v3\",\"v4\",\"v5\",\"v6\",\"v7\",\"v8\",\"v9\",\"v10\",\"v11\",\"v12\"],\"effects\":[\"e0\",\"e1\",\"e2\",\"e3\"],\"kind\":\"function\",\"parent_scope\":null,\"scope_id\":\"q0\"}]\n  storage []\n# Replay tool contract\n\nWrite exactly `/output/replay.source`. Run\n`intentir_replay_check /output/replay.source` for diagnostic ingress, then\n`intentir_replay_compile_check /output/replay.source` for the public synthetic\nconstruction-compile profile. Calls are audited telemetry and governed by the\nReplay episode's active wall time; submission independently rechecks changed\nexact bytes with both checks. Results contain only a closed\nprotocol/status/rule/path plus anonymous handles or line number. No Source,\nHarness value, actual C value, Gate1 observer, or execution oracle is run. The\ncompile profile is the public fixed synthetic profile in README.md. Neither\ncheck has Gate, semantic-membership, or certification authority. After exact\nbytes pass both construction checks, preserve the LLM owner's fallback choice with\n`intentir_replay_commit /output/replay.source`; restore only those bytes with\n`intentir_replay_rollback /output/replay.source`. Submit directly with\n`intentir_replay_submit /output/replay.source` or\n`intentir_replay_submit --committed`; no stdout marker is used. The writer\nindependently reruns the same\ncompiler-free ingress callable after submission, and formal Gate1 compiles c0.\n\nIn the isolated Codex workspace, invoke the equivalent closed callbacks as\n`python .agents/intentir_agent_tool.py replay_check` or\n`replay_compile_check`. After a successful public synthetic compile,\n`replay_ttir_inspect summary|raw|find|observer` exposes only the current Replay's\nown TTIR/fingerprint for focused debugging. These callbacks take no host path and\nnever expose Source, Source TTIR, Harness values, or Gate evidence. Read this file\nfor usage instead of probing the fixed client with an unrecognized tool name.\n\n",
+            "command": "/bin/bash -c \"sed -n '1,260p' input/semantic_program.txt && find output -maxdepth 1 -type f -print && sed -n '1,240p' input/TOOL.md\"",
+            "exit_code": 0,
+            "id": "item_1",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "id": "item_2",
+            "text": "The semantic program is a 256-lane indexed gather: load row indices and column indices, enforce both index bounds (including the symbolic row extent carried by `p4`), load `p1[row, col]` with zero fill, select zero for invalid lanes, and store 256 outputs. I’m now resolving the exact target, instance routes, and ordering so the physical spelling follows π rather than merely matching the math.",
+            "type": "agent_message"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c \"jq 'keys' input/packet.json && jq '.pi // .placement // .schedule // .J | keys' input/packet.json\"",
+            "exit_code": null,
+            "id": "item_3",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "[\n  \"c\",\n  \"j\",\n  \"pi\",\n  \"u_f\"\n]\n[\n  \"instances\",\n  \"iterations\",\n  \"loop_carriers\",\n  \"order\",\n  \"participant_mappings\",\n  \"physical_iterations\",\n  \"physical_loop_carriers\",\n  \"program_axes\",\n  \"refinements\",\n  \"regions\",\n  \"route_extent_transforms\",\n  \"routes\",\n  \"sharing\",\n  \"terminal_controls\"\n]\n",
+            "command": "/bin/bash -c \"jq 'keys' input/packet.json && jq '.pi // .placement // .schedule // .J | keys' input/packet.json\"",
+            "exit_code": 0,
+            "id": "item_3",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c \"jq '{pi:.pi,u_f:.u_f,c:.c}' input/packet.json\"",
+            "exit_code": null,
+            "id": "item_4",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "{\n  \"pi\": {\n    \"instances\": [\n      {\n        \"id\": \"i0\",\n        \"mechanism\": \"realize\",\n        \"region\": \"r1\",\n        \"semantic_ref\": \"d0\"\n      },\n      {\n        \"id\": \"i1\",\n        \"mechanism\": \"address_base\",\n        \"region\": \"r1\",\n        \"semantic_ref\": \"a0\"\n      },\n      {\n        \"id\": \"i2\",\n        \"mechanism\": \"transfer_direct\",\n        \"region\": \"r1\",\n        \"semantic_ref\": \"a0\"\n      },\n      {\n        \"id\": \"i3\",\n        \"mechanism\": \"address_base\",\n        \"region\": \"r1\",\n        \"semantic_ref\": \"a1\"\n      },\n      {\n        \"id\": \"i4\",\n        \"mechanism\": \"transfer_direct\",\n        \"region\": \"r1\",\n        \"semantic_ref\": \"a1\"\n      },\n      {\n        \"id\": \"i5\",\n        \"mechanism\": \"address_base\",\n        \"region\": \"r1\",\n        \"semantic_ref\": \"a2\"\n      },\n      {\n        \"id\": \"i6\",\n        \"mechanism\": \"transfer_direct\",\n        \"region\": \"r1\",\n        \"semantic_ref\": \"a2\"\n      },\n      {\n        \"id\": \"i7\",\n        \"mechanism\": \"address_base\",\n        \"region\": \"r1\",\n        \"semantic_ref\": \"a3\"\n      },\n      {\n        \"id\": \"i8\",\n        \"mechanism\": \"transfer_direct\",\n        \"region\": \"r1\",\n        \"semantic_ref\": \"a3\"\n      },\n      {\n        \"id\": \"i9\",\n        \"mechanism\": \"realize\",\n        \"region\": \"r1\",\n        \"semantic_ref\": \"p3\"\n      },\n      {\n        \"id\": \"i10\",\n        \"mechanism\": \"realize\",\n        \"region\": \"r1\",\n        \"semantic_ref\": \"p0\"\n      },\n      {\n        \"id\": \"i11\",\n        \"mechanism\": \"realize\",\n        \"region\": \"r1\",\n        \"semantic_ref\": \"p1\"\n      },\n      {\n        \"id\": \"i12\",\n        \"mechanism\": \"realize\",\n        \"region\": \"r1\",\n        \"semantic_ref\": \"p2\"\n      }\n    ],\n    \"iterations\": [],\n    \"loop_carriers\": [],\n    \"order\": [\n      {\n        \"after\": \"i4\",\n        \"before\": \"i2\"\n      },\n      {\n        \"after\": \"i6\",\n        \"before\": \"i4\"\n      },\n      {\n        \"after\": \"i8\",\n        \"before\": \"i6\"\n      }\n    ],\n    \"participant_mappings\": [],\n    \"physical_iterations\": [],\n    \"physical_loop_carriers\": [],\n    \"program_axes\": [\n      {\n        \"axis\": 0,\n        \"domain_ref\": \"d0\"\n      }\n    ],\n    \"refinements\": [],\n    \"regions\": [\n      {\n        \"id\": \"r0\",\n        \"parent\": null,\n        \"placement\": \"root\"\n      },\n      {\n        \"id\": \"r1\",\n        \"parent\": \"r0\",\n        \"placement\": \"program\"\n      }\n    ],\n    \"route_extent_transforms\": [],\n    \"routes\": [\n      {\n        \"slots\": [\n          0\n        ],\n        \"source\": \"i9\",\n        \"target\": \"i1\"\n      },\n      {\n        \"slots\": [\n          1\n        ],\n        \"source\": \"i0\",\n        \"target\": \"i1\"\n      },\n      {\n        \"slots\": [\n          0\n        ],\n        \"source\": \"i1\",\n        \"target\": \"i2\"\n      },\n      {\n        \"slots\": [\n          0\n        ],\n        \"source\": \"i10\",\n        \"target\": \"i3\"\n      },\n      {\n        \"slots\": [\n          1\n        ],\n        \"source\": \"i0\",\n        \"target\": \"i3\"\n      },\n      {\n        \"slots\": [\n          0\n        ],\n        \"source\": \"i3\",\n        \"target\": \"i4\"\n      },\n      {\n        \"slots\": [\n          0\n        ],\n        \"source\": \"i11\",\n        \"target\": \"i5\"\n      },\n      {\n        \"slots\": [\n          1\n        ],\n        \"source\": \"i2\",\n        \"target\": \"i5\"\n      },\n      {\n        \"slots\": [\n          2\n        ],\n        \"source\": \"i4\",\n        \"target\": \"i5\"\n      },\n      {\n        \"slots\": [\n          0\n        ],\n        \"source\": \"i5\",\n        \"target\": \"i6\"\n      },\n      {\n        \"slots\": [\n          0\n        ],\n        \"source\": \"i12\",\n        \"target\": \"i7\"\n      },\n      {\n        \"slots\": [\n          1\n        ],\n        \"source\": \"i0\",\n        \"target\": \"i7\"\n      },\n      {\n        \"slots\": [\n          0\n        ],\n        \"source\": \"i7\",\n        \"target\": \"i8\"\n      }\n    ],\n    \"sharing\": [],\n    \"terminal_controls\": []\n  },\n  \"u_f\": {\n    \"compile_entry_contract\": \"Return one standalone CUDA C++ translation unit containing exactly one `extern \\\"C\\\" __global__` kernel named `scrc_k0`. Its positional runtime parameters follow J.signature; C values are external schedule bindings and are not runtime parameters. A MaskC compiler slot with role `launch_block_x|y|z` is bound by the Harness launch: never name its c* handle in the kernel body or replace public `blockDim.x|y|z` with a guessed value. Use only public CUDA language constructs and intrinsics. Do not emit host code, launch syntax, file I/O, inline PTX, build directives, or `main`. A program-region domain path entering address_base maps to `blockIdx.x|y|z` only through its exact pi.program_axes axis binding; never assign axes by declaration order or instance multiplicity. A lane path maps to the authored participant topology using public `threadIdx`/`blockDim`. Only pi.iterations or pi.physical_iterations authorizes a serial loop. A J reduce fed by a lane-realized reduced domain remains a participant collective using public CUDA intrinsics; never make every thread traverse the whole logical axis. Preserve every distinct transfer, realization, region, sharing, and order stage. A boundary access without a predicate is unconditional and never authorizes an invented lane-leader guard. If an identity_materialization instance has its sole outgoing route into a synchronize instance that resolves to a J reduce, emit one explicit combine of the J-owned reducer identity with its incoming carrier before the downstream collective. Derive reducer, identity, and dtype only from J; do not replace this stage with a barrier or cast. Every pi.participant_mappings item is mandatory. Resolve its domain_instance through pi to the exact J domain; projection=cyclic maps the public threadIdx axis into that J-owned logical extent. extent_slot binds only the matching external blockDim axis: never name c*, guess its value, or replace the J extent with blockDim.\",\n    \"frontend\": \"cuda\",\n    \"protocol\": \"intentir.scrc.replay-input.v3\",\n    \"replay_function\": \"scrc_k0\",\n    \"retrieval_scope\": \"public CUDA C++ programming documentation and examples\",\n    \"tool_access\": [\n      \"public_document_lookup\"\n    ]\n  },\n  \"c\": {\n    \"slots\": [\n      {\n        \"kind\": \"compiler\",\n        \"name\": \"c0\",\n        \"required\": true,\n        \"role\": \"launch_block_x\",\n        \"value_type\": \"i32\"\n      }\n    ]\n  }\n}\n",
+            "command": "/bin/bash -c \"jq '{pi:.pi,u_f:.u_f,c:.c}' input/packet.json\"",
+            "exit_code": 0,
+            "id": "item_4",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c \"jq '{signature:.j.signature, operations:.j.body, boundary:.j.boundary, contracts:.j.contracts}' input/packet.json\"",
+            "exit_code": null,
+            "id": "item_5",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "{\n  \"signature\": {\n    \"parameters\": [\n      {\n        \"dtype\": \"i32\",\n        \"kind\": \"tensor\",\n        \"logical_ref\": \"t0\",\n        \"mode\": \"input\",\n        \"name\": \"p0\",\n        \"rank\": 1\n      },\n      {\n        \"dtype\": \"f32\",\n        \"kind\": \"tensor\",\n        \"logical_ref\": \"t1\",\n        \"mode\": \"input\",\n        \"name\": \"p1\",\n        \"rank\": 2\n      },\n      {\n        \"dtype\": \"f32\",\n        \"kind\": \"tensor\",\n        \"logical_ref\": \"t4\",\n        \"mode\": \"output\",\n        \"name\": \"p2\",\n        \"rank\": 1\n      },\n      {\n        \"dtype\": \"i32\",\n        \"kind\": \"tensor\",\n        \"logical_ref\": \"t2\",\n        \"mode\": \"input\",\n        \"name\": \"p3\",\n        \"rank\": 1\n      },\n      {\n        \"dtype\": \"i32\",\n        \"kind\": \"scalar\",\n        \"logical_ref\": \"t3\",\n        \"mode\": \"value\",\n        \"name\": \"p4\",\n        \"rank\": 0\n      }\n    ]\n  },\n  \"operations\": null,\n  \"boundary\": {\n    \"access_guard_relations\": [],\n    \"accesses\": [\n      {\n        \"access_id\": \"a0\",\n        \"index_expression\": \"[v13]\",\n        \"kind\": \"load\",\n        \"tensor\": \"t2\"\n      },\n      {\n        \"access_id\": \"a1\",\n        \"index_expression\": \"[v13]\",\n        \"kind\": \"load\",\n        \"tensor\": \"t0\"\n      },\n      {\n        \"access_id\": \"a2\",\n        \"fill_value\": 0,\n        \"index_expression\": \"[v14, v15]\",\n        \"kind\": \"load\",\n        \"node_ref\": \"n9\",\n        \"predicate\": \"(0 <= v15) and (v15 < 64) and (0 <= v14) and (v14 < x0)\",\n        \"tensor\": \"t1\"\n      },\n      {\n        \"access_id\": \"a3\",\n        \"index_expression\": \"[v13]\",\n        \"kind\": \"store\",\n        \"node_ref\": \"n12\",\n        \"tensor\": \"t4\"\n      }\n    ],\n    \"aliases\": [],\n    \"broadcasts\": [],\n    \"consumer_extensions\": [],\n    \"domains\": {\n      \"d0\": \"(0 <= v13) and (v13 < 256)\",\n      \"d1\": \"(0 <= v14) and (v14 < x0)\",\n      \"d2\": \"(0 <= v15) and (v15 < 64)\"\n    },\n    \"effects\": [\n      {\n        \"access_ref\": \"a0\",\n        \"effect_id\": \"e0\",\n        \"kind\": \"read\",\n        \"target\": \"t2\"\n      },\n      {\n        \"access_ref\": \"a1\",\n        \"effect_id\": \"e1\",\n        \"kind\": \"read\",\n        \"target\": \"t0\"\n      },\n      {\n        \"access_ref\": \"a2\",\n        \"effect_id\": \"e2\",\n        \"kind\": \"read\",\n        \"node_ref\": \"n9\",\n        \"target\": \"t1\"\n      },\n      {\n        \"access_ref\": \"a3\",\n        \"effect_id\": \"e3\",\n        \"kind\": \"write\",\n        \"node_ref\": \"n12\",\n        \"target\": \"t4\"\n      }\n    ],\n    \"index_bounds\": [\n      {\n        \"axis\": 0,\n        \"data\": \"t1\",\n        \"indices\": \"t2\",\n        \"node_ref\": \"n9\"\n      },\n      {\n        \"axis\": 1,\n        \"data\": \"v9\",\n        \"indices\": \"t0\",\n        \"node_ref\": \"n10\"\n      }\n    ],\n    \"output_mappings\": [],\n    \"realization_authorizations\": [],\n    \"reductions\": [],\n    \"result_relations\": [\n      {\n        \"kind\": \"exact\",\n        \"output\": \"t4\"\n      }\n    ],\n    \"updates\": []\n  },\n  \"contracts\": null\n}\n",
+            "command": "/bin/bash -c \"jq '{signature:.j.signature, operations:.j.body, boundary:.j.boundary, contracts:.j.contracts}' input/packet.json\"",
+            "exit_code": 0,
+            "id": "item_5",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c \"jq '.j | keys' input/packet.json && jq '.j.function // .j.program // .j' input/packet.json | sed -n '1,260p'\"",
+            "exit_code": null,
+            "id": "item_6",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "{\n  \"boundary\": {\n    \"access_guard_relations\": [],\n    \"accesses\": [\n      {\n        \"access_id\": \"a0\",\n        \"index_expression\": \"[v13]\",\n        \"kind\": \"load\",\n        \"tensor\": \"t2\"\n      },\n      {\n        \"access_id\": \"a1\",\n        \"index_expression\": \"[v13]\",\n        \"kind\": \"load\",\n        \"tensor\": \"t0\"\n      },\n      {\n        \"access_id\": \"a2\",\n        \"fill_value\": 0,\n        \"index_expression\": \"[v14, v15]\",\n        \"kind\": \"load\",\n        \"node_ref\": \"n9\",\n        \"predicate\": \"(0 <= v15) and (v15 < 64) and (0 <= v14) and (v14 < x0)\",\n        \"tensor\": \"t1\"\n      },\n      {\n        \"access_id\": \"a3\",\n        \"index_expression\": \"[v13]\",\n        \"kind\": \"store\",\n        \"node_ref\": \"n12\",\n        \"tensor\": \"t4\"\n      }\n    ],\n    \"aliases\": [],\n    \"broadcasts\": [],\n    \"consumer_extensions\": [],\n    \"domains\": {\n      \"d0\": \"(0 <= v13) and (v13 < 256)\",\n      \"d1\": \"(0 <= v14) and (v14 < x0)\",\n      \"d2\": \"(0 <= v15) and (v15 < 64)\"\n    },\n    \"effects\": [\n      {\n        \"access_ref\": \"a0\",\n        \"effect_id\": \"e0\",\n        \"kind\": \"read\",\n        \"target\": \"t2\"\n      },\n      {\n        \"access_ref\": \"a1\",\n        \"effect_id\": \"e1\",\n        \"kind\": \"read\",\n        \"target\": \"t0\"\n      },\n      {\n        \"access_ref\": \"a2\",\n        \"effect_id\": \"e2\",\n        \"kind\": \"read\",\n        \"node_ref\": \"n9\",\n        \"target\": \"t1\"\n      },\n      {\n        \"access_ref\": \"a3\",\n        \"effect_id\": \"e3\",\n        \"kind\": \"write\",\n        \"node_ref\": \"n12\",\n        \"target\": \"t4\"\n      }\n    ],\n    \"index_bounds\": [\n      {\n        \"axis\": 0,\n        \"data\": \"t1\",\n        \"indices\": \"t2\",\n        \"node_ref\": \"n9\"\n      },\n      {\n        \"axis\": 1,\n        \"data\": \"v9\",\n        \"indices\": \"t0\",\n        \"node_ref\": \"n10\"\n      }\n    ],\n    \"output_mappings\": [],\n    \"realization_authorizations\": [],\n    \"reductions\": [],\n    \"result_relations\": [\n      {\n        \"kind\": \"exact\",\n        \"output\": \"t4\"\n      }\n    ],\n    \"updates\": []\n  },\n  \"dimension_constraints\": [\n    \"x0 >= 1\"\n  ],\n  \"dimension_relations\": [],\n  \"intent\": {\n    \"intent_function\": {\n      \"body\": [\n        {\n          \"attrs\": {\n            \"dtype\": \"i32\",\n            \"shape\": [],\n            \"value\": 0\n          },\n          \"id\": \"n0\",\n          \"op\": \"const\",\n          \"result\": \"v0\",\n          \"type\": {\n            \"dtype\": \"i32\",\n            \"shape\": []\n          }\n        },\n        {\n          \"attrs\": {\n            \"fn\": \"ge\"\n          },\n          \"id\": \"n1\",\n          \"op\": \"map_binary\",\n          \"operands\": [\n            \"t0\",\n            \"v0\"\n          ],\n          \"result\": \"v1\",\n          \"type\": {\n            \"dtype\": \"i1\",\n            \"shape\": [\n              256\n            ]\n          }\n        },\n        {\n          \"attrs\": {\n            \"dtype\": \"i32\",\n            \"shape\": [],\n            \"value\": 64\n          },\n          \"id\": \"n2\",\n          \"op\": \"const\",\n          \"result\": \"v2\",\n          \"type\": {\n            \"dtype\": \"i32\",\n            \"shape\": []\n          }\n        },\n        {\n          \"attrs\": {\n            \"fn\": \"lt\"\n          },\n          \"id\": \"n3\",\n          \"op\": \"map_binary\",\n          \"operands\": [\n            \"t0\",\n            \"v2\"\n          ],\n          \"result\": \"v3\",\n          \"type\": {\n            \"dtype\": \"i1\",\n            \"shape\": [\n              256\n            ]\n          }\n        },\n        {\n          \"attrs\": {\n            \"fn\": \"logical_and\"\n          },\n          \"id\": \"n4\",\n          \"op\": \"map_binary\",\n          \"operands\": [\n            \"v1\",\n            \"v3\"\n          ],\n          \"result\": \"v4\",\n          \"type\": {\n            \"dtype\": \"i1\",\n            \"shape\": [\n              256\n            ]\n          }\n        },\n        {\n          \"attrs\": {\n            \"fn\": \"ge\"\n          },\n          \"id\": \"n5\",\n          \"op\": \"map_binary\",\n          \"operands\": [\n            \"t2\",\n            \"v0\"\n          ],\n          \"result\": \"v5\",\n          \"type\": {\n            \"dtype\": \"i1\",\n            \"shape\": [\n              256\n            ]\n          }\n        },\n        {\n          \"attrs\": {\n            \"fn\": \"logical_and\"\n          },\n          \"id\": \"n6\",\n          \"op\": \"map_binary\",\n          \"operands\": [\n            \"v4\",\n            \"v5\"\n          ],\n          \"result\": \"v6\",\n          \"type\": {\n            \"dtype\": \"i1\",\n            \"shape\": [\n              256\n            ]\n          }\n        },\n        {\n          \"attrs\": {\n            \"fn\": \"lt\"\n          },\n          \"id\": \"n7\",\n          \"op\": \"map_binary\",\n          \"operands\": [\n            \"t2\",\n            \"t3\"\n          ],\n          \"result\": \"v7\",\n          \"type\": {\n            \"dtype\": \"i1\",\n            \"shape\": [\n              256\n            ]\n          }\n        },\n        {\n          \"attrs\": {\n            \"fn\": \"logical_and\"\n          },\n          \"id\": \"n8\",\n          \"op\": \"map_binary\",\n          \"operands\": [\n            \"v6\",\n            \"v7\"\n          ],\n          \"result\": \"v8\",\n          \"type\": {\n            \"dtype\": \"i1\",\n            \"shape\": [\n              256\n            ]\n          }\n        },\n        {\n          \"attrs\": {\n            \"axis\": 0,\n            \"mode\": \"take\"\n          },\n",
+            "command": "/bin/bash -c \"jq '.j | keys' input/packet.json && jq '.j.function // .j.program // .j' input/packet.json | sed -n '1,260p'\"",
+            "exit_code": 0,
+            "id": "item_6",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "changes": [
+              {
+                "kind": "add",
+                "path": "/workspace/output/replay.source"
+              }
+            ],
+            "id": "item_7",
+            "status": "in_progress",
+            "type": "file_change"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "changes": [
+              {
+                "kind": "add",
+                "path": "/workspace/output/replay.source"
+              }
+            ],
+            "id": "item_7",
+            "status": "completed",
+            "type": "file_change"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "id": "item_8",
+            "text": "The complete CUDA replay is now written. Its statement order follows π’s chain exactly: row-index transfer → column-index transfer → guarded matrix transfer → unconditional output transfer. The scalar extent stays the existing `p4` carrier, and the only program coordinate is `blockIdx.x` from the authored axis-0 binding; no thread coordinate, loop, or extra carrier has been introduced.",
+            "type": "agent_message"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c \"sed -n '1,220p' output/replay.source && find output -maxdepth 1 -type f -printf '%f\\\\n' && python .agents/intentir_agent_tool.py replay_obligation_audit\"",
+            "exit_code": null,
+            "id": "item_9",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "{\"audit_required\": true, \"authority\": \"exact current Replay bytes plus exact source-isolated pi projection; no Source, Gate evidence, inference, mapping, diagnosis, repair, or acceptance decision\", \"broadcast_obligations\": [], \"cross_region_order\": [], \"identity_materializations\": [], \"lexical_regions\": [], \"participant_mappings\": [], \"program_axes\": [{\"axis\": 0, \"domain_ref\": \"d0\"}], \"protocol\": \"intentir.replay-obligation-audit.v5\", \"route_extent_transforms\": [], \"source_nonempty_lines\": [{\"indent\": 0, \"line\": 1, \"text\": \"extern \\\"C\\\" __global__ void scrc_k0(const int* p0,\"}, {\"indent\": 36, \"line\": 2, \"text\": \"const float* p1,\"}, {\"indent\": 36, \"line\": 3, \"text\": \"float* p2,\"}, {\"indent\": 36, \"line\": 4, \"text\": \"const int* p3,\"}, {\"indent\": 36, \"line\": 5, \"text\": \"int p4) {\"}, {\"indent\": 2, \"line\": 6, \"text\": \"const int index = static_cast<int>(blockIdx.x);\"}, {\"indent\": 2, \"line\": 7, \"text\": \"const int row = p3[index];\"}, {\"indent\": 2, \"line\": 8, \"text\": \"const int column = p0[index];\"}, {\"indent\": 2, \"line\": 10, \"text\": \"float gathered = 0.0f;\"}, {\"indent\": 2, \"line\": 11, \"text\": \"if (column >= 0 && column < 64 && row >= 0 && row < p4) {\"}, {\"indent\": 4, \"line\": 12, \"text\": \"gathered = p1[row * 64 + column];\"}, {\"indent\": 2, \"line\": 13, \"text\": \"}\"}, {\"indent\": 2, \"line\": 15, \"text\": \"p2[index] = gathered;\"}, {\"indent\": 0, \"line\": 16, \"text\": \"}\"}], \"source_sha256\": \"7db5c9f105c413e5dd004595a0d1b26a246d375caf6b150b126082e519538514\", \"status\": \"pass\"}\n",
+            "command": "/bin/bash -c \"sed -n '1,220p' output/replay.source && find output -maxdepth 1 -type f -printf '%f\\\\n' && python .agents/intentir_agent_tool.py replay_obligation_audit\"",
+            "exit_code": 0,
+            "id": "item_9",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "id": "item_10",
+            "text": "The byte-level obligation audit passes. I compared its numbered source against the ledger: the single program axis is realized on line 6, all special construction ledgers are empty, and the current bytes contain no unowned participant mapping, region nesting, broadcast, identity stage, or route transform. I’m submitting these exact audited bytes now.",
+            "type": "agent_message"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py submit_replay'",
+            "exit_code": null,
+            "id": "item_11",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "{\"authority\": \"diagnostic-only; no Replay source is generated or repaired\", \"compile\": {\"diagnostics\": [], \"protocol\": \"intentir.scrc.replay-check.v16\", \"status\": \"pass\"}, \"ingress\": {\"diagnostic_progress\": {\"authority\": \"mechanical episode-local observation only; it neither edits Replay nor changes ingress or Gate1 membership\", \"replay_source_changed_since_previous_check\": false, \"same_rule_path_streak\": 0}, \"diagnostics\": [], \"protocol\": \"intentir.scrc.replay-check.v16\", \"status\": \"pass\"}, \"phase\": \"compile\", \"protocol\": \"intentir.codex-cli.replay-submit.v1\", \"status\": \"pass\"}\n",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py submit_replay'",
+            "exit_code": 0,
+            "id": "item_11",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "id": "item_12",
+            "text": "Created [replay.source](/workspace/output/replay.source). The obligation audit, ingress check, and synthetic compile check all pass on the submitted bytes.",
+            "type": "agent_message"
+          },
+          "type": "item.completed"
+        },
+        {
+          "type": "turn.completed",
+          "usage": {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 107776,
+            "input_tokens": 155374,
+            "output_tokens": 2712,
+            "reasoning_output_tokens": 1625
+          }
+        }
+      ],
+      "model_segments": 5,
+      "protocol": "intentir.codex-cli.agent-runtime.v3",
+      "resumed": false,
+      "stderr": "Reading additional input from stdin...\n",
+      "thread_id": "019fb6d7-b14a-75b0-8f6c-26e55d58c193",
+      "tool_actions": 8,
+      "usage": {
+        "cache_write_input_tokens": 0,
+        "cached_input_tokens": 107776,
+        "input_tokens": 155374,
+        "output_tokens": 2712,
+        "reasoning_output_tokens": 1625
+      }
+    }
+  ]
+}

@@ -24,6 +24,8 @@ from intentir.extraction.providers.client import (
     XHIGH_RESPONSES_TIMEOUT_SECONDS,
 )
 from intentir.extraction.providers.provider import ProviderConfig, get_provider
+from intentir.replay_compiler.packet import SemanticProgramMount
+from intentir.replay_compiler.semantic_query import query_semantic_program
 from intentir.verify.gate1.compiler import KernelSource, TritonCompiler
 from intentir.verify.gate1.ttir import fingerprint_ttir
 
@@ -57,7 +59,7 @@ from .replay import (
 )
 
 
-CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v36"
+CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v40"
 PI_MIN_OWNERSHIP_RECEIPT_PROTOCOL = "intentir.pi-min.ownership-receipt.v1"
 
 _INITIAL_PROMPT = """You are the sole writer for one fresh source-blind IntentIR Replay episode.
@@ -65,16 +67,43 @@ Work only under the isolated /workspace. input/ is immutable; output/, work/, an
 tmp/ are writable. There is no Source, Harness/compiler view, actual C value, Gate
 result, earlier Replay, sibling state, repository, or network.
 
-Act like a coding agent. The exact source-blind packet is J + pi + MaskC(C) + public
-U_f in input/packet.json. Read that file once with ordinary file tools, form one
-coherent implementation, and write a complete output/replay.source early. Do not
-walk the packet one leaf at a time. The packet_query tool is only a fallback for one
-precise path or handle that remains unclear; do not begin with overview/requirements/
-realization query chains. input/REPLAY_CONTRACT.md is a public reference to inspect
-only when one exact rule is unclear. You choose source spelling and realization,
-but every semantic operation, operand edge, predicate, effect, ABI carrier, region,
-route, order, sharing, and time/control obligation must come from the packet. Do not
-guess a Source recipe or invent missing facts.
+Act like a compiler engineer using a read-only semantic IR. The exact source-blind
+packet is J + pi + MaskC(C) + public U_f in input/packet.json. When present,
+input/semantic_program.txt and input/semantic_program.json are the parameterized
+declaration-order `S_J = SemanticMaterialize(J)` derived only from this episode's
+exact J. Read semantic_program.txt first, then read/query exact J only for a detail
+that needs the authoritative representation. `S_J` is not a target skeleton,
+binding table, recipe, or fourth input; never modify it and never infer pi from it.
+Each operation's `operand_types`, `result_types`, and `semantic_contract` are exact
+J-only joins: use its axis roles, boundary relations, and access-to-effect chains
+instead of reconstructing those links from unrelated packet sections. Unscoped
+domain/result/authorization facts remain once under `global_contracts`. These joins
+make no target choice and do not weaken exact J as authority.
+
+J operations and values are a logical dataflow, not a demand for one target
+statement or local per node. Fuse, inline, duplicate, or explicitly materialize
+logical expressions only as permitted or required by pi occurrence, sharing,
+refinement, ordering, and region constraints. In particular, an S_J result name
+alone never authorizes an extra typed local, buffer, cast, or representation stage;
+pi is the sole physical-materialization authority.
+An `identity_materialization` refinement requires an explicit value or
+representation stage at its authored route, but does not by itself authorize a
+new buffer, fragment allocation, shared/local storage object, or copy. Prefer a
+typed scalar/value let when that exactly preserves the stage. Allocate target
+storage only when J.storage or an explicit pi storage/transfer mechanism requires
+that storage topology; otherwise an allocation invents realization not owned by
+the artifact.
+
+You are the complete target compiler, not a hole filler. Form one coherent global
+implementation and write a complete output/replay.source early. You may freely
+restructure that complete source, choose target instructions and maintain your own
+episode-local helpers under work/. Do not walk the packet one leaf at a time. The
+packet_query and semantic_query tools are fallbacks for one precise path or handle
+that remains unclear. input/REPLAY_CONTRACT.md is a public reference to inspect only
+when one exact rule is unclear. Every semantic operation, operand edge, predicate,
+effect and ABI carrier must come from J/S_J; every region, route, order, sharing and
+time/control obligation must come from pi. Do not guess a Source recipe or invent
+missing facts.
 
 Before writing, reconcile every declared J op occurrence (including fma), every
 boundary access/effect, every pi instance mechanism (including transfer_direct
@@ -223,7 +252,10 @@ def _pi_min_ownership_receipt(
         ),
     }
 def _replay_startup_context(
-    packet: Mapping[str, Any], *, composer_mode: str
+    packet: Mapping[str, Any],
+    *,
+    composer_mode: str,
+    semantic_mount: SemanticProgramMount | None,
 ) -> dict[str, Any]:
     """Return paths plus a proof-irrelevant index of the exact local packet."""
 
@@ -247,6 +279,15 @@ def _replay_startup_context(
             "host_check": "work/host_replay_check.json",
             **(
                 {
+                    "semantic_program_text": "input/semantic_program.txt",
+                    "semantic_program_json": "input/semantic_program.json",
+                    "semantic_receipt": "input/SEMANTIC_RECEIPT.json",
+                }
+                if semantic_mount is not None
+                else {}
+            ),
+            **(
+                {
                     "composer_tool": f"work/{REPLAY_COMPOSER_TOOL}",
                     "composer_builder": f"work/{REPLAY_COMPOSER_BUILDER}",
                     "composer_plan": f"work/{REPLAY_COMPOSER_PLAN}",
@@ -267,6 +308,29 @@ def _replay_startup_context(
                 "no packet read, semantic mapping, target recipe, or Gate authority"
             ),
         },
+        "semantic_program": (
+            {
+                "status": "mounted",
+                "mode": semantic_mount.program.mode,
+                "schema": semantic_mount.program.schema,
+                "parameterized": True,
+                "read_only": True,
+                "counts": dict(semantic_mount.program.counts),
+                "bytes": {
+                    "json": semantic_mount.program.json_bytes,
+                    "text": semantic_mount.program.text_bytes,
+                },
+                "authority": (
+                    "fresh deterministic organization of this episode's exact J "
+                    "only; no pi, target recipe, Source, Gate, or generation authority"
+                ),
+            }
+            if semantic_mount is not None
+            else {
+                "status": "disabled_controlled_baseline",
+                "authority": "exact J remains available in packet.json",
+            }
+        ),
         "critical_facts": _packet_critical_facts(packet),
         "authority": (
             "path, byte-count, and exact packet projection only; source-isolated "
@@ -292,7 +356,8 @@ class CodexCLIReplayWriter:
     context_rollover_input_tokens: int = 0
     repair_effort: str | None = None
     compile_checker: Callable[[str, Gate1Artifact, str], Any] | None = None
-    composer_mode: str = "available"
+    composer_mode: str = "off"
+    semantic_program_mode: str = "required"
     stop_requested: Callable[[], int | None] | None = field(
         default=None, repr=False
     )
@@ -317,6 +382,8 @@ class CodexCLIReplayWriter:
             raise ValueError("Replay context rollover token threshold cannot be negative")
         if self.composer_mode not in REPLAY_COMPOSER_MODES:
             raise ValueError("composer_mode must be off/available/preferred")
+        if self.semantic_program_mode not in {"off", "required"}:
+            raise ValueError("semantic_program_mode must be off or required")
         if self.frontend not in {
             Frontend.TRITON,
             Frontend.CUDA,
@@ -343,11 +410,14 @@ class CodexCLIReplayWriter:
                 if effective_effort.casefold() == "xhigh"
                 else DEFAULT_RESPONSES_TIMEOUT_SECONDS
             )
-        files, packet, instructions = _replay_input_files(
+        files, packet, instructions, semantic_mount = _replay_input_files(
             artifact,
             frontend=self.frontend,
             masked=masked,
+            include_semantic_program=self.semantic_program_mode == "required",
         )
+        if self.semantic_program_mode == "required" and semantic_mount is None:
+            raise RuntimeError("required S_J materialization was not mounted")
         function_name = str(packet["u_f"]["replay_function"])
 
         try:
@@ -382,6 +452,7 @@ class CodexCLIReplayWriter:
         obligation_audits: list[dict[str, Any]] = []
         ttir_inspections: list[dict[str, Any]] = []
         packet_queries: list[dict[str, Any]] = []
+        semantic_queries: list[dict[str, Any]] = []
         timeout_events: list[dict[str, Any]] = []
         composer_host_events: list[dict[str, Any]] = []
         source_text = ""
@@ -389,12 +460,25 @@ class CodexCLIReplayWriter:
         formal_compile = None
         last_checked_good: str | None = None
         startup_context = _replay_startup_context(
-            packet, composer_mode=self.composer_mode
+            packet,
+            composer_mode=self.composer_mode,
+            semantic_mount=semantic_mount,
         )
         pi_min_ownership = _pi_min_ownership_receipt(
             packet,
             artifact_schema=artifact.wire_schema,
             masked=masked,
+        )
+        semantic_receipt: Mapping[str, Any] = (
+            semantic_mount.receipt()
+            if semantic_mount is not None
+            else {
+                "protocol": "intentir.replay.semantic-receipt.v1",
+                "status": "disabled_controlled_baseline",
+                "mode": "masked" if masked else "normal",
+                "fresh_materialization": False,
+                "proof_relevant": False,
+            }
         )
         synthetic_compiler = (
             None
@@ -728,6 +812,29 @@ class CodexCLIReplayWriter:
                 ),
             }
 
+        def semantic_query_tool(arguments: tuple[str, ...]) -> Mapping[str, Any]:
+            """Project one bounded exact view from the immutable episode S_J."""
+
+            if semantic_mount is None:
+                return {
+                    "protocol": "intentir.codex-cli.replay-semantic-query.v1",
+                    "status": "unavailable",
+                    "query": list(arguments),
+                    "authority": "controlled exact-J baseline has no S_J mount",
+                }
+            value = query_semantic_program(semantic_mount.program, arguments)
+            semantic_queries.append({"query": list(arguments)})
+            return {
+                "protocol": "intentir.codex-cli.replay-semantic-query.v1",
+                "status": "pass",
+                "query": list(arguments),
+                "value": value,
+                "authority": (
+                    "bounded exact projection of this episode's immutable J-only "
+                    "S_J; no pi, Source, Gate, target lowering, generation, or repair"
+                ),
+            }
+
         def replay_ttir_inspect_tool(
             arguments: tuple[str, ...]
         ) -> Mapping[str, Any]:
@@ -891,6 +998,7 @@ class CodexCLIReplayWriter:
             },
             argument_handlers={
                 "packet_query": packet_query_tool,
+                "semantic_query": semantic_query_tool,
                 "replay_ttir_inspect": replay_ttir_inspect_tool,
             },
         )
@@ -1105,9 +1213,11 @@ class CodexCLIReplayWriter:
                 "replay_obligation_audits": obligation_audits,
                 "replay_ttir_inspections": ttir_inspections,
                 "packet_queries": packet_queries,
+                "semantic_queries": semantic_queries,
                 "timeout_events": timeout_events,
                 "syntax_composer": current_composer_evidence(),
                 "pi_min_ownership": pi_min_ownership,
+                "semantic_program": dict(semantic_receipt),
                 "tool_bridge": bridge.evidence,
                 "formal_ingress_recheck": True,
                 "isolation": {
@@ -1116,6 +1226,9 @@ class CodexCLIReplayWriter:
                     "output_work_tmp": "write-only-scope",
                     "tool_network": "disabled",
                     "provider_secret_in_tool_env": False,
+                    "semantic_program_read_only": semantic_mount is not None,
+                    "semantic_program_fresh": semantic_mount is not None,
+                    "semantic_program_j_only": semantic_mount is not None,
                     "composer_reads_packet": False,
                     "composer_episode_local": True,
                 },
@@ -1143,6 +1256,7 @@ class CodexCLIReplayWriter:
                     "formal_compile_recheck": True,
                     "syntax_composer": current_composer_evidence(),
                     "pi_min_ownership": pi_min_ownership,
+                    "semantic_program": dict(semantic_receipt),
                 }
             )
             generation = ReplayGeneration(
@@ -1184,9 +1298,11 @@ class CodexCLIReplayWriter:
                 "replay_obligation_audits": obligation_audits,
                 "replay_ttir_inspections": ttir_inspections,
                 "packet_queries": packet_queries,
+                "semantic_queries": semantic_queries,
                 "timeout_events": timeout_events,
                 "syntax_composer": current_composer_evidence(),
                 "pi_min_ownership": pi_min_ownership,
+                "semantic_program": dict(semantic_receipt),
                 "tool_bridge": bridge.evidence,
                 "failure_class": type(exc).__name__,
                 **(

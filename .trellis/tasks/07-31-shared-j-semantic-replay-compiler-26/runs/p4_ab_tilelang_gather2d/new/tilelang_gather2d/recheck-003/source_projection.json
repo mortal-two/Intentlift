@@ -1,0 +1,15 @@
+{
+  "constexpr_parameters": [],
+  "frontend": "tilelang",
+  "function": "main",
+  "origin_location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/gather2d.py",
+  "parameters": [
+    "inp_handle",
+    "row_idx_handle",
+    "col_idx_handle",
+    "out_handle"
+  ],
+  "protocol": "intentir.scrc.frontend-source-projection.v1",
+  "source_kind": "materialized_tir",
+  "source_location": "dataset://TianchenIR-MultiFrontend/tilelang/ops/gather2d.py"
+}

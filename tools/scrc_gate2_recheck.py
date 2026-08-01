@@ -16,16 +16,28 @@ if str(PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(PYTHON_ROOT))
 
 from intentir.ir.canonical_j import canonicalize_gate1_artifact
-from intentir.verify.adapters import BoundGate1Adapter
+from intentir.verify.adapters import (
+    BoundGate1Adapter,
+    NativeGate2ExecutionAdapter,
+)
 from intentir.verify.gate1.compiler import KernelSource, TritonCompiler
-from intentir.verify.gate1.model import Gate1Artifact
+from intentir.verify.gate1.cuda_compiler import CudaCompiler, CudaKernelSource
+from intentir.verify.gate1.frontend import frontend_gate1_capability
+from intentir.verify.gate1.model import Frontend, Gate1Artifact
 from intentir.verify.gate1.orchestrate import Gate1Config, Gate1Runner
 from intentir.verify.gate1.replay import StaticReplayWriter
+from intentir.verify.gate1.tilelang_compiler import (
+    TileLangCompiler,
+    TileLangKernelSource,
+)
+from intentir.verify.gate2.native import CudaRunner, TileLangRunner
 from intentir.verify.gate2.orchestrate import Gate2Runner
 from intentir.verify.scrc_workload_run import (
+    build_frontend_dataset_gate2_suite,
     build_workload_gate2_suite,
     validate_workload_gate1_recheck_parent,
 )
+from intentir.verify.workload_registry import prepare_registered_scrc_workload
 from intentir.verify.workload_adapters import (
     TRITON_WORKLOAD_ADAPTERS,
     prepare_triton_workload,
@@ -33,9 +45,7 @@ from intentir.verify.workload_adapters import (
 from intentir.verify.typecheck import type_check
 
 
-GATE2_CAPABILITY_RECHECK_PROTOCOL = (
-    "intentir.scrc.gate2-capability-recheck.v1"
-)
+GATE2_CAPABILITY_RECHECK_PROTOCOL = "intentir.scrc.gate2-capability-recheck.v2"
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -101,7 +111,7 @@ def _load_parented_artifact(
     return artifact, artifact_file, parent
 
 
-def _load_exact_replay(parent: Path) -> tuple[KernelSource, str]:
+def _load_exact_replay(parent: Path, frontend: Frontend) -> tuple[object, str]:
     _read_object(parent / "gate1.json", "gate1.json")
     receipt = _read_object(parent / "replay_receipt.json", "replay_receipt.json")
     function_name = receipt.get("function_name")
@@ -113,10 +123,14 @@ def _load_exact_replay(parent: Path) -> tuple[KernelSource, str]:
     except OSError as exc:
         raise ValueError(f"parent replay.py is unreadable: {exc}") from exc
     try:
-        replay = KernelSource.from_replay(
-            replay_code,
-            function_name,
-        )
+        if frontend is Frontend.TRITON:
+            replay = KernelSource.from_replay(replay_code, function_name)
+        elif frontend is Frontend.CUDA:
+            replay = CudaKernelSource.from_replay(replay_code, function_name)
+        elif frontend is Frontend.TILELANG:
+            replay = TileLangKernelSource.from_replay(replay_code, function_name)
+        else:
+            raise ValueError(f"unsupported Gate2 recheck frontend {frontend.value!r}")
     except ValueError as exc:
         raise ValueError(f"parent Replay is invalid: {exc}") from exc
     return replay, replay_code
@@ -179,14 +193,16 @@ def main(argv: list[str] | None = None) -> int:
             args.artifact, args.parent_evidence
         )
         artifact = canonicalize_gate1_artifact(artifact)
-        replay, replay_code = _load_exact_replay(parent)
         adapter = TRITON_WORKLOAD_ADAPTERS.get(args.case)
-        if adapter is None:
-            raise ValueError("case has no active Triton workload adapter")
-        prepared = prepare_triton_workload(
-            adapter,
-            dataset_root=args.dataset_root,
+        prepared = (
+            prepare_triton_workload(adapter, dataset_root=args.dataset_root)
+            if adapter is not None
+            else prepare_registered_scrc_workload(
+                args.case, dataset_root=args.dataset_root
+            )
         )
+        frontend = Frontend(prepared.entry.frontend)
+        replay, replay_code = _load_exact_replay(parent, frontend)
         validate_workload_gate1_recheck_parent(parent, prepared, artifact)
         recheck_dir = _next_recheck_dir(args.run_root, args.case)
         request_payload = {
@@ -198,6 +214,7 @@ def main(argv: list[str] | None = None) -> int:
             "reuses_exact_gate1_replay": True,
             "changes_parent_verdict": False,
             "case_id": args.case,
+            "frontend": frontend.value,
             "artifact": str(artifact_file),
             "parent_evidence": str(parent),
         }
@@ -214,27 +231,63 @@ def main(argv: list[str] | None = None) -> int:
         _write_json(recheck_dir / "typecheck.json", checked.to_json())
         if not checked.passed:
             raise ValueError("exact artifact no longer passes current TypeCheck")
-        gate1 = BoundGate1Adapter(
-            Gate1Runner(
+        static_writer = StaticReplayWriter(
+            replay_code,
+            model="exact-parent-replay",
+            frontend=frontend,
+        )
+        if frontend is Frontend.TRITON:
+            gate1_runner = Gate1Runner(
                 compiler=TritonCompiler(timeout=240.0),
-                writer=StaticReplayWriter(
-                    replay_code,
-                    model="exact-parent-replay",
-                ),
+                writer=static_writer,
                 config=Gate1Config(run_masked_j=False),
             )
-        ).run(artifact, prepared.request)
+        else:
+            compiler = (
+                CudaCompiler(timeout=240.0)
+                if frontend is Frontend.CUDA
+                else TileLangCompiler(timeout=240.0)
+            )
+            gate1_runner = frontend_gate1_capability(frontend).build_runner(
+                compiler=compiler,
+                writer=static_writer,
+                masked_writer=None,
+                config=Gate1Config(run_masked_j=False),
+            )
+        gate1 = BoundGate1Adapter(gate1_runner).run(artifact, prepared.request)
         _write_json(recheck_dir / "gate1.json", gate1.to_json())
 
         gate2_passed = False
         status_counts: dict[str, int] = {}
         if gate1.passed:
-            suite = build_workload_gate2_suite(prepared, artifact)
-            result = Gate2Runner().run_suite(
-                prepared.request.source.gate_source,
-                replay,
-                suite,
-            )
+            if frontend is Frontend.TRITON:
+                suite = build_workload_gate2_suite(prepared, artifact)  # type: ignore[arg-type]
+                result = Gate2Runner().run_suite(
+                    prepared.request.source.gate_source,
+                    replay,  # type: ignore[arg-type]
+                    suite,
+                )
+            else:
+                runner = Gate2Runner(
+                    source_runner=(
+                        CudaRunner(CudaCompiler(timeout=240.0))
+                        if frontend is Frontend.CUDA
+                        else TileLangRunner()
+                    ),
+                    replay_runner=(
+                        CudaRunner(CudaCompiler(timeout=240.0))
+                        if frontend is Frontend.CUDA
+                        else TileLangRunner()
+                    ),
+                )
+                adapter = NativeGate2ExecutionAdapter(
+                    frontend.value,
+                    runner,
+                    lambda accepted, _gate1, _binding: (
+                        build_frontend_dataset_gate2_suite(prepared, accepted)  # type: ignore[arg-type]
+                    ),
+                )
+                result = adapter.execute(artifact, gate1, prepared.request)
             gate2_payload = result.to_json()
             _write_json(recheck_dir / "gate2.json", gate2_payload)
             gate2_passed = bool(result.passed)

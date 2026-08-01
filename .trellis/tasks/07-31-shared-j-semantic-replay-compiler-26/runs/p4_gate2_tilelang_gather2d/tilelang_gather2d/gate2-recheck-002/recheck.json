@@ -1,0 +1,20 @@
+{
+  "artifact": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/07-31-shared-j-semantic-replay-compiler-26/runs/p4_maskj_tilelang_gather2d/tilelang_gather2d/recheck-001/artifact.json",
+  "capability_recheck": true,
+  "case_id": "tilelang:gather2d",
+  "changes_parent_verdict": false,
+  "evidence_path": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/07-31-shared-j-semantic-replay-compiler-26/runs/p4_gate2_tilelang_gather2d/tilelang_gather2d/gate2-recheck-002",
+  "frontend": "tilelang",
+  "gate1_passed": true,
+  "gate2_passed": true,
+  "model_calls": 0,
+  "parent_evidence": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/07-31-shared-j-semantic-replay-compiler-26/runs/p4_maskj_tilelang_gather2d/tilelang_gather2d/recheck-001",
+  "protocol": "intentir.scrc.gate2-capability-recheck.v2",
+  "reruns_current_gate1": true,
+  "reuses_exact_gate1_artifact": true,
+  "reuses_exact_gate1_replay": true,
+  "status": "scrc_certified",
+  "status_counts": {
+    "gate2_pass": 1
+  }
+}

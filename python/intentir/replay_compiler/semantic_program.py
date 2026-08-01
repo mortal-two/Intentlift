@@ -7,8 +7,8 @@ import json
 from typing import Any, Mapping
 
 
-SEMANTIC_PROGRAM_SCHEMA = "intentir.replay.semantic-program.v1"
-SEMANTIC_MATERIALIZER_PROTOCOL = "intentir.replay.semantic-materializer.v1"
+SEMANTIC_PROGRAM_SCHEMA = "intentir.replay.semantic-program.v2"
+SEMANTIC_MATERIALIZER_PROTOCOL = "intentir.replay.semantic-materializer.v2"
 SEMANTIC_RECEIPT_PROTOCOL = "intentir.replay.semantic-receipt.v1"
 
 

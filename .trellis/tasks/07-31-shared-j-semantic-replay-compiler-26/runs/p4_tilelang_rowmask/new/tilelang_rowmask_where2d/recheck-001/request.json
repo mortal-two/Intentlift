@@ -1,0 +1,30 @@
+{
+  "c0": {
+    "c0": 64
+  },
+  "case_id": "tilelang:rowmask_where2d",
+  "changes_prior_verdict": false,
+  "diagnostic_only": true,
+  "enters_gate2": false,
+  "frontend": "tilelang",
+  "grid": [
+    16,
+    1,
+    1
+  ],
+  "model": "gpt-5.6-sol",
+  "observer_profile": "tilelang_tir_semantic_structure@tilelang-tir-semantic-structure-ptx-diagnostic-v5",
+  "parent_evidence": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/archive/2026-07/07-31-j-driven-replay-composer-24/runs/tilelang_rowmask_where2d/run-001/attempt-02",
+  "protocol": "intentir.scrc.gate1-diagnostic-recheck.v1",
+  "provider": "gpt-5.6-sol",
+  "reasoning_effort": "high",
+  "replay_backend": "codex",
+  "replay_composer_mode": "off",
+  "replay_semantic_program_mode": "required",
+  "run_masked_j": false,
+  "source_to_opaque": {
+    "inp_handle": "p0",
+    "out_handle": "p2",
+    "row_mask_handle": "p1"
+  }
+}

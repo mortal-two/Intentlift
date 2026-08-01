@@ -37,8 +37,14 @@ REPLAY_TRANSACTION_PROTOCOL = "intentir.replay-transaction.v1"
 REPLAY_APPLY_PATCH_PROTOCOL = "intentir.replay-exact-text-patch.v1"
 REPLAY_DIRECT_SUBMIT_PROTOCOL = "intentir.replay-direct-submit.v1"
 MULTI_ACTION_PROTOCOL = "intentir.agent-multi-action.v1"
-REPLAY_INPUT_FILES = frozenset(
+REPLAY_BASE_INPUT_FILES = frozenset(
     {"README.md", "packet.json", "REPLAY_CONTRACT.md", "TOOL.md"}
+)
+REPLAY_INPUT_FILES = REPLAY_BASE_INPUT_FILES | frozenset(
+    {"semantic_program.json", "semantic_program.txt", "SEMANTIC_RECEIPT.json"}
+)
+REPLAY_INPUT_FILE_SETS = frozenset(
+    {REPLAY_BASE_INPUT_FILES, REPLAY_INPUT_FILES}
 )
 REPLAY_SANDBOX_PROTOCOL = "intentir.replay-busybox-empty-root.v1"
 REPLAY_SANDBOX_HOSTNAME = "intentir-replay"
@@ -2389,9 +2395,9 @@ class IntentIRReplayWorkspace:
 
     @classmethod
     def create(cls, files: Mapping[str, str | bytes]) -> "IntentIRReplayWorkspace":
-        if set(files) != REPLAY_INPUT_FILES:
+        if frozenset(files) not in REPLAY_INPUT_FILE_SETS:
             raise ValueError(
-                "Replay input must contain exactly the fixed allowlisted files"
+                "Replay input must contain one fixed baseline or J+S_J allowlist"
             )
         root = Path(tempfile.mkdtemp(prefix="intentir-replay-"))
         workspace = cls(
@@ -3017,11 +3023,15 @@ class IntentIRReplayEnvironment:
                 "test ! -e /lib64; test ! -e /usr/local; "
                 "for name in python python3 gcc g++ clang ld as nvcc ptxas "
                 "triton torch intentir; do ! command -v \"$name\"; done; "
-                "test \"$(find /input -type f | wc -l)\" -eq 4; "
-                "test \"$(find /input -type f | sed 's#^/input/##' | sort | "
-                "sha256sum | cut -d' ' -f1)\" = "
-                "$(printf '%s\\n' README.md REPLAY_CONTRACT.md TOOL.md "
-                "packet.json | sort | sha256sum | cut -d' ' -f1)"
+                "actual_names=$(find /input -type f | sed 's#^/input/##' | sort | "
+                "sha256sum | cut -d' ' -f1); "
+                "base_names=$(printf '%s\\n' README.md REPLAY_CONTRACT.md TOOL.md "
+                "packet.json | sort | sha256sum | cut -d' ' -f1); "
+                "semantic_names=$(printf '%s\\n' README.md REPLAY_CONTRACT.md "
+                "SEMANTIC_RECEIPT.json TOOL.md packet.json semantic_program.json "
+                "semantic_program.txt | sort | sha256sum | cut -d' ' -f1); "
+                "test \"$actual_names\" = \"$base_names\" || "
+                "test \"$actual_names\" = \"$semantic_names\""
             ),
         ]
         try:
@@ -3812,6 +3822,8 @@ __all__ = [
     "REPLAY_DIRECT_SUBMIT_PROTOCOL",
     "REPLAY_TRANSACTION_PROTOCOL",
     "REPLAY_INPUT_FILES",
+    "REPLAY_BASE_INPUT_FILES",
+    "REPLAY_INPUT_FILE_SETS",
     "IntentIRReplayEnvironment",
     "IntentIRReplayEnvironmentConfig",
     "IntentIRReplayWorkspace",

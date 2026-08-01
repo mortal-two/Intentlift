@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 from collections import Counter
+import copy
 from dataclasses import dataclass
 import hashlib
 import json
@@ -17,7 +18,7 @@ from .ptx import (
 )
 
 
-TILELANG_FINGERPRINT_SCHEMA = "tilelang-tir-semantic-structure-ptx-diagnostic-v4"
+TILELANG_FINGERPRINT_SCHEMA = "tilelang-tir-semantic-structure-ptx-diagnostic-v5"
 _T_OP_RE = re.compile(r"\bT\.([A-Za-z_][A-Za-z0-9_]*)")
 _SCHEDULE_ITERATORS = {
     "parallel",
@@ -48,8 +49,12 @@ def normalize_tilelang_tir_ops(tir: str) -> tuple[str, ...]:
 
     if not isinstance(tir, str) or not tir.strip():
         raise TileLangObservationError("TileLang TIR is empty")
+    # Use the same proof-irrelevant let/identifier normalization as the
+    # structural fingerprint so the operation inventory cannot reintroduce an
+    # ANF distinction that the structure deliberately quotients.
+    normalized_tir = ast.unparse(_normalized_tilelang_tree(tir))
     operations: list[str] = []
-    for raw in tir.splitlines():
+    for raw in normalized_tir.splitlines():
         line = raw.split("#", 1)[0]
         for match in _T_OP_RE.findall(line):
             # Loop spelling and zero-argument scalar declarations are
@@ -178,6 +183,137 @@ class _TIRAlphaNormalizer(ast.NodeTransformer):
         return node
 
 
+class _SingleUsePureLetNormalizer(ast.NodeTransformer):
+    """Quotient proof-irrelevant A-normal-form choices inside one basic block.
+
+    TileLang/TIR printers may retain a one-use scalar buffer read as an annotated
+    local or inline that same expression at its sole consumer.  Neither J nor pi
+    assigns ownership to this local spelling.  We remove only consecutive,
+    call-free, single-use assignments before their immediate consumer, so no
+    control boundary or intervening effect can be crossed.
+    """
+
+    @staticmethod
+    def _binding(statement: ast.stmt) -> tuple[str, ast.expr] | None:
+        if (
+            isinstance(statement, ast.AnnAssign)
+            and isinstance(statement.target, ast.Name)
+            and statement.value is not None
+        ):
+            name, value = statement.target.id, statement.value
+        elif (
+            isinstance(statement, ast.Assign)
+            and len(statement.targets) == 1
+            and isinstance(statement.targets[0], ast.Name)
+        ):
+            name, value = statement.targets[0].id, statement.value
+        else:
+            return None
+        if any(
+            isinstance(node, (ast.Call, ast.Await, ast.NamedExpr))
+            for node in ast.walk(value)
+        ):
+            return None
+        return name, value
+
+    @staticmethod
+    def _load_count(node: ast.AST, name: str) -> int:
+        return sum(
+            1
+            for item in ast.walk(node)
+            if isinstance(item, ast.Name)
+            and isinstance(item.ctx, ast.Load)
+            and item.id == name
+        )
+
+    @staticmethod
+    def _has_rebind(node: ast.AST, name: str) -> bool:
+        return any(
+            isinstance(item, ast.Name)
+            and isinstance(item.ctx, (ast.Store, ast.Del))
+            and item.id == name
+            for item in ast.walk(node)
+        )
+
+    @staticmethod
+    def _substitute(node: ast.AST, name: str, value: ast.expr) -> ast.AST:
+        class Substitution(ast.NodeTransformer):
+            def visit_Name(self, item: ast.Name) -> ast.AST:
+                if isinstance(item.ctx, ast.Load) and item.id == name:
+                    return ast.copy_location(copy.deepcopy(value), item)
+                return item
+
+        return Substitution().visit(node)
+
+    def _statement_list(self, statements: list[ast.stmt]) -> list[ast.stmt]:
+        visited = [self.visit(statement) for statement in statements]
+        result: list[ast.stmt] = []
+        index = 0
+        while index < len(visited):
+            run_end = index
+            bindings: list[tuple[ast.stmt, str, ast.expr]] = []
+            while run_end < len(visited):
+                binding = self._binding(visited[run_end])
+                if binding is None:
+                    break
+                bindings.append((visited[run_end], binding[0], binding[1]))
+                run_end += 1
+            if not bindings or run_end >= len(visited):
+                result.append(visited[index])
+                index += 1
+                continue
+
+            consumer = visited[run_end]
+            kept: list[ast.stmt] = []
+            for binding_index, (statement, name, value) in enumerate(bindings):
+                suffix: list[ast.AST] = [
+                    item[0] for item in bindings[binding_index + 1 :]
+                ] + [consumer]
+                uses = sum(self._load_count(item, name) for item in suffix)
+                rebound = any(self._has_rebind(item, name) for item in suffix)
+                if uses != 1 or rebound:
+                    kept.append(statement)
+                    continue
+                for later_index in range(binding_index + 1, len(bindings)):
+                    later_statement, later_name, later_value = bindings[later_index]
+                    later_statement = self._substitute(later_statement, name, value)
+                    refreshed = self._binding(later_statement)
+                    if refreshed is not None:
+                        later_name, later_value = refreshed
+                    bindings[later_index] = (
+                        later_statement,
+                        later_name,
+                        later_value,
+                    )
+                consumer = self._substitute(consumer, name, value)  # type: ignore[assignment]
+            result.extend(kept)
+            result.append(consumer)
+            index = run_end + 1
+        return result
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
+        node.body = self._statement_list(node.body)
+        return node
+
+    def visit_With(self, node: ast.With) -> ast.AST:
+        node.items = [self.visit(item) for item in node.items]  # type: ignore[list-item]
+        node.body = self._statement_list(node.body)
+        return node
+
+    def visit_For(self, node: ast.For) -> ast.AST:
+        node.target = self.visit(node.target)  # type: ignore[assignment]
+        node.iter = self.visit(node.iter)  # type: ignore[assignment]
+        node.body = self._statement_list(node.body)
+        node.orelse = self._statement_list(node.orelse)
+        return node
+
+    def visit_If(self, node: ast.If) -> ast.AST:
+        node.test = self.visit(node.test)  # type: ignore[assignment]
+        node.body = self._statement_list(node.body)
+        node.orelse = self._statement_list(node.orelse)
+        return node
+
+
 class _TIRSemanticNormalizer(_TIRAlphaNormalizer):
     """Erase only loop-schedule spellings, retaining bounds and loop bodies."""
 
@@ -193,6 +329,29 @@ class _TIRSemanticNormalizer(_TIRAlphaNormalizer):
                 iterator.func = ast.Name(id="range", ctx=ast.Load())
         return node
 
+    def visit_Call(self, node: ast.Call) -> ast.AST:
+        node = super().visit_Call(node)  # type: ignore[assignment]
+        path = _call_path(node.func)
+        if path in {"T.reads", "T.writes"}:
+            node.args = sorted(
+                node.args,
+                key=lambda item: ast.dump(
+                    item, annotate_fields=True, include_attributes=False
+                ),
+            )
+        return node
+
+
+def _normalized_tilelang_tree(tir: str) -> ast.AST:
+    try:
+        tree = ast.parse(tir)
+    except SyntaxError as exc:
+        raise TileLangObservationError(f"TileLang TIR is not parseable: {exc}") from exc
+    tree = _SingleUsePureLetNormalizer().visit(tree)
+    tree = _TIRSemanticNormalizer().visit(tree)
+    ast.fix_missing_locations(tree)
+    return tree
+
 
 def normalize_tilelang_tir_structure(tir: str) -> str:
     """Build an identifier-free structural AST for the public TIR program.
@@ -205,12 +364,7 @@ def normalize_tilelang_tir_structure(tir: str) -> str:
 
     if not isinstance(tir, str) or not tir.strip():
         raise TileLangObservationError("TileLang TIR is empty")
-    try:
-        tree = ast.parse(tir)
-    except SyntaxError as exc:
-        raise TileLangObservationError(f"TileLang TIR is not parseable: {exc}") from exc
-    normalized = _TIRSemanticNormalizer().visit(tree)
-    ast.fix_missing_locations(normalized)
+    normalized = _normalized_tilelang_tree(tir)
     return ast.dump(normalized, annotate_fields=True, include_attributes=False)
 
 

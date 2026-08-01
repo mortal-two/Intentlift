@@ -1,0 +1,402 @@
+{
+  "authority": {
+    "excluded": [
+      "pi",
+      "C valuation",
+      "Source",
+      "Gate observation",
+      "frontend identity",
+      "target API",
+      "historical Replay"
+    ],
+    "semantic_input": "exact J only"
+  },
+  "boundary": {
+    "access_guard_relations": [],
+    "accesses": [
+      {
+        "access_id": "a0",
+        "index_expression": "<masked>",
+        "kind": "<masked>",
+        "node_ref": "n0",
+        "tensor": "t1"
+      },
+      {
+        "access_id": "a1",
+        "index_expression": "<masked>",
+        "kind": "<masked>",
+        "node_ref": "n0",
+        "tensor": "t0"
+      },
+      {
+        "access_id": "a2",
+        "index_expression": "<masked>",
+        "kind": "<masked>",
+        "node_ref": "n1",
+        "tensor": "t2"
+      },
+      {
+        "access_id": "a3",
+        "index_expression": "<masked>",
+        "kind": "<masked>",
+        "node_ref": "n1",
+        "tensor": "t3"
+      }
+    ],
+    "aliases": [],
+    "broadcasts": [],
+    "consumer_extensions": [],
+    "domains": {
+      "d0": "<masked>",
+      "d1": "<masked>",
+      "d2": "<masked>"
+    },
+    "effects": [
+      {
+        "access_ref": "a0",
+        "effect_id": "e0",
+        "kind": "<masked>",
+        "node_ref": "n0",
+        "target": "t1"
+      },
+      {
+        "access_ref": "a1",
+        "effect_id": "e1",
+        "kind": "<masked>",
+        "node_ref": "n0",
+        "target": "t0"
+      },
+      {
+        "access_ref": "a2",
+        "effect_id": "e2",
+        "kind": "<masked>",
+        "node_ref": "n1",
+        "target": "t2"
+      },
+      {
+        "access_ref": "a3",
+        "effect_id": "e3",
+        "kind": "<masked>",
+        "node_ref": "n1",
+        "target": "t3"
+      }
+    ],
+    "index_bounds": [
+      {
+        "axis": "<masked>",
+        "data": "t0",
+        "indices": "t1",
+        "node_ref": "n0"
+      },
+      {
+        "axis": "<masked>",
+        "data": "r0",
+        "indices": "t2",
+        "node_ref": "n1"
+      }
+    ],
+    "output_mappings": [],
+    "realization_authorizations": [],
+    "reductions": [],
+    "result_relations": [
+      {
+        "kind": "<masked>",
+        "output": "t3"
+      }
+    ],
+    "updates": []
+  },
+  "dataflow": [],
+  "dimension_constraints": [
+    "<masked>"
+  ],
+  "dimension_relations": [],
+  "dimensions": [],
+  "function": {
+    "inputs": [
+      {
+        "dtype": "<masked>",
+        "name": "t0",
+        "shape": [
+          "<masked>",
+          "<masked>"
+        ]
+      },
+      {
+        "dtype": "<masked>",
+        "name": "t1",
+        "shape": [
+          "<masked>"
+        ]
+      },
+      {
+        "dtype": "<masked>",
+        "name": "t2",
+        "shape": [
+          "<masked>"
+        ]
+      }
+    ],
+    "name": "scrc_k0",
+    "outputs": [
+      {
+        "dtype": "<masked>",
+        "name": "t3",
+        "shape": [
+          "<masked>"
+        ],
+        "value_ref": "t3"
+      }
+    ],
+    "signature": {
+      "parameters": [
+        {
+          "dtype": "f32",
+          "kind": "tensor",
+          "logical_ref": "t0",
+          "mode": "input",
+          "name": "p0",
+          "rank": 2
+        },
+        {
+          "dtype": "i32",
+          "kind": "tensor",
+          "logical_ref": "t1",
+          "mode": "input",
+          "name": "p1",
+          "rank": 1
+        },
+        {
+          "dtype": "i32",
+          "kind": "tensor",
+          "logical_ref": "t2",
+          "mode": "input",
+          "name": "p2",
+          "rank": 1
+        },
+        {
+          "dtype": "f32",
+          "kind": "tensor",
+          "logical_ref": "t3",
+          "mode": "output",
+          "name": "p3",
+          "rank": 1
+        }
+      ]
+    }
+  },
+  "global_contracts": {
+    "aliases": [],
+    "domains": {
+      "d0": "<masked>",
+      "d1": "<masked>",
+      "d2": "<masked>"
+    },
+    "realization_authorizations": [],
+    "result_relations": [
+      {
+        "kind": "<masked>",
+        "output": "t3"
+      }
+    ]
+  },
+  "j_handle": "scrc_k0",
+  "materializer": "intentir.replay.semantic-materializer.v2",
+  "mode": "masked",
+  "operations": [
+    {
+      "attrs": {},
+      "child_regions": [],
+      "node_ref": "n0",
+      "op": "<masked>",
+      "operand_types": [],
+      "operands": [],
+      "ordinal": 0,
+      "path": "body[0]",
+      "region": "function",
+      "result_type": null,
+      "result_types": [
+        {
+          "ref": "n0",
+          "type": null
+        }
+      ],
+      "results": [
+        "n0"
+      ],
+      "semantic_contract": {
+        "access_effect_chains": [
+          {
+            "access_id": "a0",
+            "effect_ids": [
+              "e0"
+            ]
+          },
+          {
+            "access_id": "a1",
+            "effect_ids": [
+              "e1"
+            ]
+          }
+        ],
+        "axis_semantics": [],
+        "boundary_relation_refs": {
+          "accesses": [
+            0,
+            1
+          ],
+          "effects": [
+            0,
+            1
+          ],
+          "index_bounds": [
+            0
+          ]
+        }
+      },
+      "semantic_fields": {}
+    },
+    {
+      "attrs": {},
+      "child_regions": [],
+      "node_ref": "n1",
+      "op": "<masked>",
+      "operand_types": [],
+      "operands": [],
+      "ordinal": 1,
+      "path": "body[1]",
+      "region": "function",
+      "result_type": null,
+      "result_types": [
+        {
+          "ref": "n1",
+          "type": null
+        }
+      ],
+      "results": [
+        "n1"
+      ],
+      "semantic_contract": {
+        "access_effect_chains": [
+          {
+            "access_id": "a2",
+            "effect_ids": [
+              "e2"
+            ]
+          },
+          {
+            "access_id": "a3",
+            "effect_ids": [
+              "e3"
+            ]
+          }
+        ],
+        "axis_semantics": [],
+        "boundary_relation_refs": {
+          "accesses": [
+            2,
+            3
+          ],
+          "effects": [
+            2,
+            3
+          ],
+          "index_bounds": [
+            1
+          ]
+        }
+      },
+      "semantic_fields": {}
+    }
+  ],
+  "parameterized": true,
+  "regions": [
+    {
+      "id": "function",
+      "kind": "function",
+      "operations": [
+        "n0",
+        "n1"
+      ],
+      "owner": "scrc_k0",
+      "parent": null
+    }
+  ],
+  "schema": "intentir.replay.semantic-program.v2",
+  "scopes": [
+    {
+      "captures": [],
+      "definitions": [
+        "t0",
+        "t1",
+        "t2",
+        "r0",
+        "t3"
+      ],
+      "effects": [
+        "e0",
+        "e1",
+        "e2",
+        "e3"
+      ],
+      "kind": "<masked>",
+      "parent_scope": null,
+      "scope_id": "q0"
+    }
+  ],
+  "storage": [],
+  "value_dimension_relations": [],
+  "values": [
+    {
+      "definition": null,
+      "ref": "t0",
+      "role": "input",
+      "type": {
+        "dtype": "<masked>",
+        "shape": [
+          "<masked>",
+          "<masked>"
+        ]
+      },
+      "uses": []
+    },
+    {
+      "definition": null,
+      "ref": "t1",
+      "role": "input",
+      "type": {
+        "dtype": "<masked>",
+        "shape": [
+          "<masked>"
+        ]
+      },
+      "uses": []
+    },
+    {
+      "definition": null,
+      "ref": "t2",
+      "role": "input",
+      "type": {
+        "dtype": "<masked>",
+        "shape": [
+          "<masked>"
+        ]
+      },
+      "uses": []
+    },
+    {
+      "definition": "n0",
+      "ref": "n0",
+      "role": "operation_result",
+      "type": null,
+      "uses": []
+    },
+    {
+      "definition": "n1",
+      "ref": "n1",
+      "role": "operation_result",
+      "type": null,
+      "uses": []
+    }
+  ]
+}

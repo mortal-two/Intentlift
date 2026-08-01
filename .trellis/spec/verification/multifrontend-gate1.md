@@ -95,7 +95,12 @@ TileLang uses one authoritative view and one linked diagnostic view:
   buffer shapes, loop bounds, indices, operators, calls and control nesting;
   `serial`/`parallel`/`vectorized`/`unroll` iterator spellings normalize to one
   loop form only when the bound and body remain identical, because those
-  spellings are realization schedule rather than mathematical structure; and
+  spellings are realization schedule rather than mathematical structure;
+  active v5 additionally quotients a consecutive call-free scalar let when it
+  has exactly one use before the immediate consumer, and canonicalizes the
+  argument order of declarative `T.reads`/`T.writes` region sets.  It does not
+  cross a control/effect boundary and retains the substituted expression, so
+  load/store multiplicity, indices, operators and control remain hard; and
 - the same normalized PTX fingerprint used by native CUDA, retained for audit
   and a hard schema/ABI/target safety envelope, while exact instruction,
   multiplicity, memory, collective, control and coordinate topology is
@@ -105,10 +110,10 @@ TileLang closure is therefore decided at its TIR compiler boundary. PTX can
 explain a downstream lowering difference but cannot force two structurally equal
 TIR programs to reproduce backend unrolling, address spelling or instruction
 selection. The v3 structural AST replaces the former shallow operation-name
-list as the decisive evidence. It preserves loop count, nesting, bounds,
+list as the decisive evidence. The active v5 profile preserves loop count, nesting, bounds,
 indices, dataflow, operators and effects while erasing only iterator schedule
-spelling, so relaxing PTX does not weaken mathematical loop/index/dataflow
-coverage.
+spelling and proof-irrelevant single-use ANF choices, so relaxing PTX does not
+weaken mathematical loop/index/dataflow coverage.
 
 ## Replay safety and compiler isolation
 

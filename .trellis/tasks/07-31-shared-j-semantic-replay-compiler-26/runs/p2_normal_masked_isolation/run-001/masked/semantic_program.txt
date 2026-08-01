@@ -1,0 +1,50 @@
+semantic_program scrc_k0 mode=masked
+schema intentir.replay.semantic-program.v1
+parameterized true
+
+dimensions:
+  x0: symbolic
+
+signature:
+  p0: input tensor dtype=f32 rank=2 logical_ref=t0
+  p1: output tensor dtype=f32 rank=1 logical_ref=t1
+  p2: value scalar dtype=i32 rank=0 logical_ref=x0
+
+inputs:
+  t0: tensor<<masked>["<masked>","<masked>"]>
+
+operations (declaration order):
+  [0] n0 @ body[0] in function: n0 = <masked>()
+
+outputs:
+  t1: tensor<<masked>["<masked>"]> <- t1
+
+boundary (exact J relations):
+  access_guard_relations [0]
+  accesses [2]
+    [0] {"access_id":"a0","index_expression":"<masked>","kind":"<masked>","node_ref":"n0","tensor":"t0"}
+    [1] {"access_id":"a1","index_expression":"<masked>","kind":"<masked>","node_ref":"n0","tensor":"t1"}
+  aliases [0]
+  broadcasts [0]
+  consumer_extensions [0]
+  domains [2]
+    d0 = "<masked>"
+    d1 = "<masked>"
+  effects [2]
+    [0] {"access_ref":"a0","effect_id":"e0","kind":"<masked>","node_ref":"n0","target":"t0"}
+    [1] {"access_ref":"a1","effect_id":"e1","kind":"<masked>","node_ref":"n0","target":"t1"}
+  index_bounds [0]
+  output_mappings [0]
+  realization_authorizations [0]
+  reductions [1]
+    [0] {"identity":"<masked>","node_ref":"n0","tile_axis":"<masked>"}
+  result_relations [1]
+    [0] {"kind":"<masked>","output":"t1"}
+  updates [0]
+
+J-only contracts:
+  dimension_constraints ["<masked>"]
+  value_dimension_relations []
+  dimension_relations []
+  scopes [{"captures":[],"definitions":["t0","t1"],"effects":["e0","e1"],"kind":"<masked>","parent_scope":null,"scope_id":"q0"}]
+  storage []

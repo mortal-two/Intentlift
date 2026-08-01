@@ -1,0 +1,703 @@
+{
+  "authority": {
+    "excluded": [
+      "pi",
+      "C valuation",
+      "Source",
+      "Gate observation",
+      "frontend identity",
+      "target API",
+      "historical Replay"
+    ],
+    "semantic_input": "exact J only"
+  },
+  "boundary": {
+    "access_guard_relations": [],
+    "accesses": [
+      {
+        "access_id": "a0",
+        "index_expression": "[v2]",
+        "kind": "load",
+        "node_ref": "n0",
+        "tensor": "t1"
+      },
+      {
+        "access_id": "a1",
+        "index_expression": "[v3, v4]",
+        "kind": "load",
+        "node_ref": "n0",
+        "tensor": "t0"
+      },
+      {
+        "access_id": "a2",
+        "index_expression": "[v2]",
+        "kind": "load",
+        "node_ref": "n1",
+        "tensor": "t2"
+      },
+      {
+        "access_id": "a3",
+        "index_expression": "[v2]",
+        "kind": "store",
+        "node_ref": "n1",
+        "tensor": "t3"
+      }
+    ],
+    "aliases": [],
+    "broadcasts": [],
+    "consumer_extensions": [],
+    "domains": {
+      "d0": "(0 <= v2) and (v2 < 256)",
+      "d1": "(0 <= v3) and (v3 < x0)",
+      "d2": "(0 <= v4) and (v4 < 64)"
+    },
+    "effects": [
+      {
+        "access_ref": "a0",
+        "effect_id": "e0",
+        "kind": "read",
+        "node_ref": "n0",
+        "target": "t1"
+      },
+      {
+        "access_ref": "a1",
+        "effect_id": "e1",
+        "kind": "read",
+        "node_ref": "n0",
+        "target": "t0"
+      },
+      {
+        "access_ref": "a2",
+        "effect_id": "e2",
+        "kind": "read",
+        "node_ref": "n1",
+        "target": "t2"
+      },
+      {
+        "access_ref": "a3",
+        "effect_id": "e3",
+        "kind": "write",
+        "node_ref": "n1",
+        "target": "t3"
+      }
+    ],
+    "index_bounds": [
+      {
+        "axis": 0,
+        "data": "t0",
+        "indices": "t1",
+        "node_ref": "n0"
+      },
+      {
+        "axis": 1,
+        "data": "v0",
+        "indices": "t2",
+        "node_ref": "n1"
+      }
+    ],
+    "output_mappings": [],
+    "realization_authorizations": [],
+    "reductions": [],
+    "result_relations": [
+      {
+        "kind": "exact",
+        "output": "t3"
+      }
+    ],
+    "updates": []
+  },
+  "dataflow": [
+    {
+      "index": 0,
+      "kind": "operand",
+      "source": "t0",
+      "target": "n0"
+    },
+    {
+      "index": 1,
+      "kind": "operand",
+      "source": "t1",
+      "target": "n0"
+    },
+    {
+      "index": 0,
+      "kind": "operand",
+      "source": "v0",
+      "target": "n1"
+    },
+    {
+      "index": 1,
+      "kind": "operand",
+      "source": "t2",
+      "target": "n1"
+    }
+  ],
+  "dimension_constraints": [
+    "x0 > 0"
+  ],
+  "dimension_relations": [],
+  "dimensions": [
+    {
+      "kind": "symbolic",
+      "ref": "x0"
+    }
+  ],
+  "function": {
+    "inputs": [
+      {
+        "dtype": "f32",
+        "name": "t0",
+        "shape": [
+          "x0",
+          64
+        ]
+      },
+      {
+        "dtype": "i32",
+        "name": "t1",
+        "shape": [
+          256
+        ]
+      },
+      {
+        "dtype": "i32",
+        "name": "t2",
+        "shape": [
+          256
+        ]
+      }
+    ],
+    "name": "scrc_intent0",
+    "outputs": [
+      {
+        "dtype": "f32",
+        "name": "t3",
+        "shape": [
+          256
+        ],
+        "value_ref": "t3"
+      }
+    ],
+    "signature": {
+      "parameters": [
+        {
+          "dtype": "f32",
+          "kind": "tensor",
+          "logical_ref": "t0",
+          "mode": "input",
+          "name": "p0",
+          "rank": 2
+        },
+        {
+          "dtype": "i32",
+          "kind": "tensor",
+          "logical_ref": "t1",
+          "mode": "input",
+          "name": "p1",
+          "rank": 1
+        },
+        {
+          "dtype": "i32",
+          "kind": "tensor",
+          "logical_ref": "t2",
+          "mode": "input",
+          "name": "p2",
+          "rank": 1
+        },
+        {
+          "dtype": "f32",
+          "kind": "tensor",
+          "logical_ref": "t3",
+          "mode": "output",
+          "name": "p3",
+          "rank": 1
+        }
+      ]
+    }
+  },
+  "global_contracts": {
+    "aliases": [],
+    "domains": {
+      "d0": "(0 <= v2) and (v2 < 256)",
+      "d1": "(0 <= v3) and (v3 < x0)",
+      "d2": "(0 <= v4) and (v4 < 64)"
+    },
+    "realization_authorizations": [],
+    "result_relations": [
+      {
+        "kind": "exact",
+        "output": "t3"
+      }
+    ]
+  },
+  "j_handle": "scrc_j0",
+  "materializer": "intentir.replay.semantic-materializer.v2",
+  "mode": "normal",
+  "operations": [
+    {
+      "attrs": {
+        "axis": 0,
+        "mode": "take"
+      },
+      "child_regions": [],
+      "node_ref": "n0",
+      "op": "gather",
+      "operand_types": [
+        {
+          "ref": "t0",
+          "type": {
+            "dtype": "f32",
+            "shape": [
+              "x0",
+              64
+            ]
+          }
+        },
+        {
+          "ref": "t1",
+          "type": {
+            "dtype": "i32",
+            "shape": [
+              256
+            ]
+          }
+        }
+      ],
+      "operands": [
+        "t0",
+        "t1"
+      ],
+      "ordinal": 0,
+      "path": "body[0]",
+      "region": "function",
+      "result_type": {
+        "dtype": "f32",
+        "shape": [
+          256,
+          64
+        ]
+      },
+      "result_types": [
+        {
+          "ref": "v0",
+          "type": {
+            "dtype": "f32",
+            "shape": [
+              256,
+              64
+            ]
+          }
+        }
+      ],
+      "results": [
+        "v0"
+      ],
+      "semantic_contract": {
+        "access_effect_chains": [
+          {
+            "access": {
+              "access_id": "a0",
+              "index_expression": "[v2]",
+              "kind": "load",
+              "node_ref": "n0",
+              "tensor": "t1"
+            },
+            "effects": [
+              {
+                "access_ref": "a0",
+                "effect_id": "e0",
+                "kind": "read",
+                "node_ref": "n0",
+                "target": "t1"
+              }
+            ]
+          },
+          {
+            "access": {
+              "access_id": "a1",
+              "index_expression": "[v3, v4]",
+              "kind": "load",
+              "node_ref": "n0",
+              "tensor": "t0"
+            },
+            "effects": [
+              {
+                "access_ref": "a1",
+                "effect_id": "e1",
+                "kind": "read",
+                "node_ref": "n0",
+                "target": "t0"
+              }
+            ]
+          }
+        ],
+        "axis_semantics": [
+          {
+            "axes": [
+              {
+                "axis": 0,
+                "extent": "x0",
+                "role": "retained"
+              },
+              {
+                "axis": 1,
+                "extent": 64,
+                "role": "retained"
+              }
+            ],
+            "operand_index": 0,
+            "value_ref": "t0"
+          },
+          {
+            "axes": [
+              {
+                "axis": 0,
+                "extent": 256,
+                "role": "retained"
+              }
+            ],
+            "operand_index": 1,
+            "value_ref": "t1"
+          }
+        ],
+        "boundary_relations": {
+          "accesses": [
+            {
+              "access_id": "a0",
+              "index_expression": "[v2]",
+              "kind": "load",
+              "node_ref": "n0",
+              "tensor": "t1"
+            },
+            {
+              "access_id": "a1",
+              "index_expression": "[v3, v4]",
+              "kind": "load",
+              "node_ref": "n0",
+              "tensor": "t0"
+            }
+          ],
+          "effects": [
+            {
+              "access_ref": "a0",
+              "effect_id": "e0",
+              "kind": "read",
+              "node_ref": "n0",
+              "target": "t1"
+            },
+            {
+              "access_ref": "a1",
+              "effect_id": "e1",
+              "kind": "read",
+              "node_ref": "n0",
+              "target": "t0"
+            }
+          ],
+          "index_bounds": [
+            {
+              "axis": 0,
+              "data": "t0",
+              "indices": "t1",
+              "node_ref": "n0"
+            }
+          ]
+        }
+      },
+      "semantic_fields": {}
+    },
+    {
+      "attrs": {
+        "axis": 1,
+        "mode": "along_axis"
+      },
+      "child_regions": [],
+      "node_ref": "n1",
+      "op": "gather",
+      "operand_types": [
+        {
+          "ref": "v0",
+          "type": {
+            "dtype": "f32",
+            "shape": [
+              256,
+              64
+            ]
+          }
+        },
+        {
+          "ref": "t2",
+          "type": {
+            "dtype": "i32",
+            "shape": [
+              256
+            ]
+          }
+        }
+      ],
+      "operands": [
+        "v0",
+        "t2"
+      ],
+      "ordinal": 1,
+      "path": "body[1]",
+      "region": "function",
+      "result_type": {
+        "dtype": "f32",
+        "shape": [
+          256
+        ]
+      },
+      "result_types": [
+        {
+          "ref": "t3",
+          "type": {
+            "dtype": "f32",
+            "shape": [
+              256
+            ]
+          }
+        }
+      ],
+      "results": [
+        "t3"
+      ],
+      "semantic_contract": {
+        "access_effect_chains": [
+          {
+            "access": {
+              "access_id": "a2",
+              "index_expression": "[v2]",
+              "kind": "load",
+              "node_ref": "n1",
+              "tensor": "t2"
+            },
+            "effects": [
+              {
+                "access_ref": "a2",
+                "effect_id": "e2",
+                "kind": "read",
+                "node_ref": "n1",
+                "target": "t2"
+              }
+            ]
+          },
+          {
+            "access": {
+              "access_id": "a3",
+              "index_expression": "[v2]",
+              "kind": "store",
+              "node_ref": "n1",
+              "tensor": "t3"
+            },
+            "effects": [
+              {
+                "access_ref": "a3",
+                "effect_id": "e3",
+                "kind": "write",
+                "node_ref": "n1",
+                "target": "t3"
+              }
+            ]
+          }
+        ],
+        "axis_semantics": [
+          {
+            "axes": [
+              {
+                "axis": 0,
+                "extent": 256,
+                "role": "retained"
+              },
+              {
+                "axis": 1,
+                "extent": 64,
+                "role": "retained"
+              }
+            ],
+            "operand_index": 0,
+            "value_ref": "v0"
+          },
+          {
+            "axes": [
+              {
+                "axis": 0,
+                "extent": 256,
+                "role": "retained"
+              }
+            ],
+            "operand_index": 1,
+            "value_ref": "t2"
+          }
+        ],
+        "boundary_relations": {
+          "accesses": [
+            {
+              "access_id": "a2",
+              "index_expression": "[v2]",
+              "kind": "load",
+              "node_ref": "n1",
+              "tensor": "t2"
+            },
+            {
+              "access_id": "a3",
+              "index_expression": "[v2]",
+              "kind": "store",
+              "node_ref": "n1",
+              "tensor": "t3"
+            }
+          ],
+          "effects": [
+            {
+              "access_ref": "a2",
+              "effect_id": "e2",
+              "kind": "read",
+              "node_ref": "n1",
+              "target": "t2"
+            },
+            {
+              "access_ref": "a3",
+              "effect_id": "e3",
+              "kind": "write",
+              "node_ref": "n1",
+              "target": "t3"
+            }
+          ],
+          "index_bounds": [
+            {
+              "axis": 1,
+              "data": "v0",
+              "indices": "t2",
+              "node_ref": "n1"
+            }
+          ]
+        }
+      },
+      "semantic_fields": {}
+    }
+  ],
+  "parameterized": true,
+  "regions": [
+    {
+      "id": "function",
+      "kind": "function",
+      "operations": [
+        "n0",
+        "n1"
+      ],
+      "owner": "scrc_intent0",
+      "parent": null
+    }
+  ],
+  "schema": "intentir.replay.semantic-program.v2",
+  "scopes": [
+    {
+      "captures": [],
+      "definitions": [
+        "t0",
+        "t1",
+        "t2",
+        "v0",
+        "t3"
+      ],
+      "effects": [
+        "e0",
+        "e1",
+        "e2",
+        "e3"
+      ],
+      "kind": "function",
+      "parent_scope": null,
+      "scope_id": "q0"
+    }
+  ],
+  "storage": [],
+  "value_dimension_relations": [],
+  "values": [
+    {
+      "definition": null,
+      "ref": "t0",
+      "role": "input",
+      "type": {
+        "dtype": "f32",
+        "shape": [
+          "x0",
+          64
+        ]
+      },
+      "uses": [
+        {
+          "index": 0,
+          "kind": "operand",
+          "node_ref": "n0"
+        }
+      ]
+    },
+    {
+      "definition": null,
+      "ref": "t1",
+      "role": "input",
+      "type": {
+        "dtype": "i32",
+        "shape": [
+          256
+        ]
+      },
+      "uses": [
+        {
+          "index": 1,
+          "kind": "operand",
+          "node_ref": "n0"
+        }
+      ]
+    },
+    {
+      "definition": null,
+      "ref": "t2",
+      "role": "input",
+      "type": {
+        "dtype": "i32",
+        "shape": [
+          256
+        ]
+      },
+      "uses": [
+        {
+          "index": 1,
+          "kind": "operand",
+          "node_ref": "n1"
+        }
+      ]
+    },
+    {
+      "definition": "n0",
+      "ref": "v0",
+      "role": "operation_result",
+      "type": {
+        "dtype": "f32",
+        "shape": [
+          256,
+          64
+        ]
+      },
+      "uses": [
+        {
+          "index": 0,
+          "kind": "operand",
+          "node_ref": "n1"
+        }
+      ]
+    },
+    {
+      "definition": "n1",
+      "ref": "t3",
+      "role": "operation_result",
+      "type": {
+        "dtype": "f32",
+        "shape": [
+          256
+        ]
+      },
+      "uses": []
+    }
+  ]
+}

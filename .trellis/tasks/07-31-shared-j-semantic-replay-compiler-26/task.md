@@ -1,12 +1,18 @@
 # Task 26：共享J语义物化与π约束Replay编译Agent
 
-> 状态：`P1_SEMANTIC_MATERIALIZER_CORE_REAL_ARTIFACT_PASS`（2026-07-31）。
+> 状态：`SUPERSEDED_BY_J_ONLY_REPLAY_AND_JC_STRUCTURAL_GATE1`（2026-08-01）。
 >
 > 权威设计：
 > `doc/IntentIR_共享J语义物化与pi约束Replay编译Agent最终设计_2026-07-31.md`。
 >
 > Task 24/25及两版Composer设计已归档。Task 26不接管production backend；backend继续只消费
 > accepted `J+C`，Replay独有π约束不进入production lowering。
+>
+> 终止说明：本任务后续 P2--P4 曾把 π 继续挂载给 Replay Compiler Agent。真实
+> TileLang/CUDA 运行证明该路径可以闭合若干 case，但 Replay 会把 π 中欠定的 realization
+> constraint误解释为 target local/storage，并持续重新探索 frontend API。新方法已经裁决：Replay
+> 只消费 `J+MaskC(C)+U_f`；π 只供固定单臂 Gate1 normalizer 使用。本目录中的后续运行因此仅作
+> superseded 诊断证据，不构成新方法实验结果。
 
 ## 0. 任务目标
 

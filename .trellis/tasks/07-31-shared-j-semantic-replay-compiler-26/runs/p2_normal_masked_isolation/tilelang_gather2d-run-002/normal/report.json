@@ -1,0 +1,60 @@
+{
+  "arm": "normal",
+  "frontend": "tilelang",
+  "receipt": {
+    "artifact_or_gate_input": false,
+    "bytes": {
+      "j": 2385,
+      "semantic_program_json": 11091,
+      "semantic_program_text": 3297
+    },
+    "counts": {
+      "boundary_access_guard_relations": 0,
+      "boundary_accesses": 4,
+      "boundary_aliases": 0,
+      "boundary_broadcasts": 0,
+      "boundary_consumer_extensions": 0,
+      "boundary_domains": 3,
+      "boundary_effects": 4,
+      "boundary_index_bounds": 2,
+      "boundary_output_mappings": 0,
+      "boundary_realization_authorizations": 0,
+      "boundary_reductions": 0,
+      "boundary_result_relations": 1,
+      "boundary_updates": 0,
+      "dataflow_edges": 4,
+      "dimensions": 1,
+      "inputs": 3,
+      "node_semantic_contracts": 2,
+      "operations": 2,
+      "outputs": 1,
+      "regions": 1,
+      "values": 5
+    },
+    "excluded_dependencies": [
+      "pi",
+      "C valuation",
+      "Source",
+      "Gate observation",
+      "frontend identity",
+      "target API",
+      "historical Replay"
+    ],
+    "fresh_materialization": true,
+    "materializer": "intentir.replay.semantic-materializer.v2",
+    "mode": "normal",
+    "mounts": {
+      "SEMANTIC_RECEIPT.json": "read-only",
+      "semantic_program.json": "read-only",
+      "semantic_program.txt": "read-only"
+    },
+    "parameterized": true,
+    "production_input": false,
+    "proof_relevant": false,
+    "protocol": "intentir.replay.semantic-receipt.v1",
+    "read_only_mount": true,
+    "semantic_input": "exact J only",
+    "semantic_program_schema": "intentir.replay.semantic-program.v2",
+    "status": "pass"
+  }
+}

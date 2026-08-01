@@ -67,6 +67,23 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--replay-semantic-program-mode",
+        choices=("off", "required"),
+        default=None,
+        help=(
+            "Codex-only A/B switch: exact J directly (off) or exact J plus fresh "
+            "read-only parameterized S_J (required)"
+        ),
+    )
+    parser.add_argument(
+        "--run-masked-j",
+        action="store_true",
+        help=(
+            "after a closed fresh normal arm, run one independent fresh MaskJ "
+            "Replay episode; remains diagnostic-only and never enters Gate2"
+        ),
+    )
+    parser.add_argument(
         "--run-root",
         type=Path,
         default=Path("/tmp/intentir-scrc-task11/fixed-gate1-rechecks"),
@@ -121,8 +138,9 @@ def _load_parented_artifact(
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(sys.argv[1:] if argv is None else argv)
-    composer_mode = args.replay_composer_mode or (
-        "available" if args.replay_backend == "codex" else "off"
+    composer_mode = args.replay_composer_mode or "off"
+    semantic_program_mode = args.replay_semantic_program_mode or (
+        "required" if args.replay_backend in {"codex", "miniswe"} else "off"
     )
     if args.replay_backend != "codex" and composer_mode != "off":
         print(
@@ -165,6 +183,8 @@ def main(argv: list[str] | None = None) -> int:
             parent_evidence=parent,
             replay_backend=args.replay_backend,
             replay_composer_mode=composer_mode,
+            replay_semantic_program_mode=semantic_program_mode,
+            run_masked_j=args.run_masked_j,
         )
         result = recheck_prepared_workload_gate1(
             prepared,
@@ -173,6 +193,8 @@ def main(argv: list[str] | None = None) -> int:
             effort=args.effort,
             replay_backend=args.replay_backend,
             replay_composer_mode=composer_mode,
+            replay_semantic_program_mode=semantic_program_mode,
+            run_masked_j=args.run_masked_j,
         )
         save_workload_gate1_recheck(recheck_dir, prepared, result)
     except Exception as exc:
@@ -211,6 +233,13 @@ def main(argv: list[str] | None = None) -> int:
         "typecheck_status": result.typecheck.status.value,
         "replay_backend": args.replay_backend,
         "replay_composer_mode": composer_mode,
+        "replay_semantic_program_mode": semantic_program_mode,
+        "run_masked_j": args.run_masked_j,
+        "j_necessity_status": (
+            result.gate1.j_necessity_status.value
+            if result.gate1 is not None
+            else None
+        ),
         "status": status,
     }
     _emit(payload, output=args.output, json_mode=args.json)

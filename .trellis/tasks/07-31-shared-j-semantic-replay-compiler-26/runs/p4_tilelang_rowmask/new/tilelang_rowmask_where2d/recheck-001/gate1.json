@@ -1,0 +1,1010 @@
+{
+  "artifact_digest": "e28679173e6e5b653eaadbc96b5f948cfc7fa67a2cca700ba0d7cd408c0e5799",
+  "j_necessity_status": "inconclusive",
+  "llm_calls": {
+    "masked_j": 0,
+    "normal": 1
+  },
+  "masked_j": null,
+  "masked_j_isolation": {
+    "fresh_session_evidence": null,
+    "independent_writer": null,
+    "separate_generate_call": null
+  },
+  "normal": {
+    "comparison": {
+      "diagnostic_passes": {
+        "ptx.address_coordinate_folds": true,
+        "ptx.collectives": true,
+        "ptx.control_flow": true,
+        "ptx.coordinate_uses": true,
+        "ptx.interface": true,
+        "ptx.memory_effects": true,
+        "ptx.raw_instruction_topology": false,
+        "ptx.raw_memory_effects": true,
+        "ptx.raw_opcode_multiset": true,
+        "ptx.schema": true,
+        "ptx.target": true,
+        "ptx.value_operations": true
+      },
+      "differences": [
+        {
+          "category": "tir_structure",
+          "message": "TileLang tir_structure differs between Source and Replay",
+          "replay": "Module(body=[FunctionDef(name='tir_entry', args=arguments(posonlyargs=[], args=[arg(arg='p0', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load())), arg(arg='p1', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load())), arg(arg='p2', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[]), body=[Assign(targets=[Name(id='v0', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='int32', ctx=Load()), args=[], keywords=[])), Assign(targets=[Name(id='v1', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p0', ctx=Load()), Tuple(elts=[Name(id='v0', ctx=Load()), Constant(value=64)], ctx=Load())], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=64), Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v2', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p1', ctx=Load()), Tuple(elts=[Name(id='v0', ctx=Load())], ctx=Load()), Constant(value='bool')], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v3', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p2', ctx=Load()), Tuple(elts=[Name(id='v0', ctx=Load()), Constant(value=64)], ctx=Load())], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=64), Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v4', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='blockIdx.x'), Name(id='v0', ctx=Load())], keywords=[])), Assign(targets=[Name(id='v5', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.x'), Constant(value=64)], keywords=[])), Assign(targets=[Name(id='v6', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.y'), Constant(value=1)], keywords=[])), Assign(targets=[Name(id='v7', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.z'), Constant(value=1)], keywords=[])), With(items=[withitem(context_expr=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='block', ctx=Load()), args=[Constant(value='<block>')], keywords=[]))], body=[Expr(value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='reads', ctx=Load()), args=[Subscript(value=Name(id='v1', ctx=Load()), slice=Tuple(elts=[Name(id='v4', ctx=Load()), Slice(lower=Constant(value=0), upper=Constant(value=64))], ctx=Load()), ctx=Load()), Subscript(value=Name(id='v2', ctx=Load()), slice=Name(id='v4', ctx=Load()), ctx=Load())], keywords=[])), Expr(value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='writes', ctx=Load()), args=[Subscript(value=Name(id='v3', ctx=Load()), slice=Tuple(elts=[Name(id='v4', ctx=Load()), Slice(lower=Constant(value=0), upper=Constant(value=64))], ctx=Load()), ctx=Load())], keywords=[])), Assign(targets=[Name(id='v8', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='alloc_buffer', ctx=Load()), args=[Tuple(elts=[Constant(value=1)], ctx=Load()), Constant(value='bool')], keywords=[keyword(arg='scope', value=Constant(value='local.fragment'))])), Assign(targets=[Subscript(value=Name(id='v8', ctx=Load()), slice=Constant(value=0), ctx=Store())], value=Subscript(value=Name(id='v2', ctx=Load()), slice=Name(id='v4', ctx=Load()), ctx=Load())), AnnAssign(target=Name(id='v9', ctx=Store()), annotation=Attribute(value=Name(id='T', ctx=Load()), attr='float32', ctx=Load()), value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='Cast', ctx=Load()), args=[Constant(value='float32'), Subscript(value=Name(id='v8', ctx=Load()), slice=Constant(value=0), ctx=Load())], keywords=[]), simple=1), For(target=Name(id='v10', ctx=Store()), iter=Call(func=Name(id='range', ctx=Load()), args=[Constant(value=64)], keywords=[]), body=[Assign(targets=[Subscript(value=Name(id='v3', ctx=Load()), slice=Tuple(elts=[Name(id='v4', ctx=Load()), Name(id='v10', ctx=Load())], ctx=Load()), ctx=Store())], value=BinOp(left=Subscript(value=Name(id='v1', ctx=Load()), slice=Tuple(elts=[Name(id='v4', ctx=Load()), Name(id='v10', ctx=Load())], ctx=Load()), ctx=Load()), op=Mult(), right=Name(id='v9', ctx=Load())))], orelse=[])])], decorator_list=[Attribute(value=Name(id='T', ctx=Load()), attr='prim_func', ctx=Load())])], type_ignores=[])",
+          "source": "Module(body=[FunctionDef(name='tir_entry', args=arguments(posonlyargs=[], args=[arg(arg='p0', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load())), arg(arg='p1', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load())), arg(arg='p2', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[]), body=[Assign(targets=[Name(id='v0', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='int32', ctx=Load()), args=[], keywords=[])), Assign(targets=[Name(id='v1', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p0', ctx=Load()), Tuple(elts=[Name(id='v0', ctx=Load()), Constant(value=64)], ctx=Load())], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=64), Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v2', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p1', ctx=Load()), Tuple(elts=[Name(id='v0', ctx=Load())], ctx=Load()), Constant(value='bool')], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v3', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p2', ctx=Load()), Tuple(elts=[Name(id='v0', ctx=Load()), Constant(value=64)], ctx=Load())], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=64), Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v4', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='blockIdx.x'), Name(id='v0', ctx=Load())], keywords=[])), Assign(targets=[Name(id='v5', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.x'), Constant(value=64)], keywords=[])), Assign(targets=[Name(id='v6', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.y'), Constant(value=1)], keywords=[])), Assign(targets=[Name(id='v7', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.z'), Constant(value=1)], keywords=[])), With(items=[withitem(context_expr=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='block', ctx=Load()), args=[Constant(value='<block>')], keywords=[]))], body=[Expr(value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='reads', ctx=Load()), args=[Subscript(value=Name(id='v1', ctx=Load()), slice=Tuple(elts=[Name(id='v4', ctx=Load()), Slice(lower=Constant(value=0), upper=Constant(value=64))], ctx=Load()), ctx=Load()), Subscript(value=Name(id='v2', ctx=Load()), slice=Name(id='v4', ctx=Load()), ctx=Load())], keywords=[])), Expr(value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='writes', ctx=Load()), args=[Subscript(value=Name(id='v3', ctx=Load()), slice=Tuple(elts=[Name(id='v4', ctx=Load()), Slice(lower=Constant(value=0), upper=Constant(value=64))], ctx=Load()), ctx=Load())], keywords=[])), AnnAssign(target=Name(id='v8', ctx=Store()), annotation=Attribute(value=Name(id='T', ctx=Load()), attr='float32', ctx=Load()), value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='Cast', ctx=Load()), args=[Constant(value='float32'), Subscript(value=Name(id='v2', ctx=Load()), slice=Name(id='v4', ctx=Load()), ctx=Load())], keywords=[]), simple=1), For(target=Name(id='v9', ctx=Store()), iter=Call(func=Name(id='range', ctx=Load()), args=[Constant(value=64)], keywords=[]), body=[Assign(targets=[Subscript(value=Name(id='v3', ctx=Load()), slice=Tuple(elts=[Name(id='v4', ctx=Load()), Name(id='v9', ctx=Load())], ctx=Load()), ctx=Store())], value=BinOp(left=Subscript(value=Name(id='v1', ctx=Load()), slice=Tuple(elts=[Name(id='v4', ctx=Load()), Name(id='v9', ctx=Load())], ctx=Load()), ctx=Load()), op=Mult(), right=Name(id='v8', ctx=Load())))], orelse=[])])], decorator_list=[Attribute(value=Name(id='T', ctx=Load()), attr='prim_func', ctx=Load())])], type_ignores=[])"
+        },
+        {
+          "category": "tir_topology",
+          "message": "TileLang tir_topology differs between Source and Replay",
+          "replay": [
+            "T.prim_func",
+            "T.handle",
+            "T.handle",
+            "T.handle",
+            "T.match_buffer",
+            "T.match_buffer",
+            "T.match_buffer",
+            "T.launch_thread",
+            "T.launch_thread",
+            "T.launch_thread",
+            "T.launch_thread",
+            "T.block",
+            "T.reads",
+            "T.writes",
+            "T.alloc_buffer",
+            "T.float32",
+            "T.Cast",
+            "control.for"
+          ],
+          "source": [
+            "T.prim_func",
+            "T.handle",
+            "T.handle",
+            "T.handle",
+            "T.match_buffer",
+            "T.match_buffer",
+            "T.match_buffer",
+            "T.launch_thread",
+            "T.launch_thread",
+            "T.launch_thread",
+            "T.launch_thread",
+            "T.block",
+            "T.reads",
+            "T.writes",
+            "T.float32",
+            "T.Cast",
+            "control.for"
+          ]
+        },
+        {
+          "category": "tir_operations",
+          "message": "TileLang tir_operations differs between Source and Replay",
+          "replay": [
+            [
+              "T.Cast",
+              1
+            ],
+            [
+              "T.alloc_buffer",
+              1
+            ],
+            [
+              "T.block",
+              1
+            ],
+            [
+              "T.float32",
+              1
+            ],
+            [
+              "T.handle",
+              3
+            ],
+            [
+              "T.launch_thread",
+              4
+            ],
+            [
+              "T.match_buffer",
+              3
+            ],
+            [
+              "T.prim_func",
+              1
+            ],
+            [
+              "T.reads",
+              1
+            ],
+            [
+              "T.writes",
+              1
+            ],
+            [
+              "control.for",
+              1
+            ]
+          ],
+          "source": [
+            [
+              "T.Cast",
+              1
+            ],
+            [
+              "T.block",
+              1
+            ],
+            [
+              "T.float32",
+              1
+            ],
+            [
+              "T.handle",
+              3
+            ],
+            [
+              "T.launch_thread",
+              4
+            ],
+            [
+              "T.match_buffer",
+              3
+            ],
+            [
+              "T.prim_func",
+              1
+            ],
+            [
+              "T.reads",
+              1
+            ],
+            [
+              "T.writes",
+              1
+            ],
+            [
+              "control.for",
+              1
+            ]
+          ]
+        },
+        {
+          "category": "ptx.raw_instruction_topology",
+          "message": "PTX raw_instruction_topology differs between Source and Replay",
+          "replay": [
+            "ld.param.u64 %b640,[param0];",
+            "ld.param.u64 %b641,[param1];",
+            "ld.param.u64 %b642,[param2];",
+            "cvta.to.global.u64 %b643,%b642;",
+            "cvta.to.global.u64 %b644,%b640;",
+            "cvta.to.global.u64 %b645,%b641;",
+            "mov.u32 %b320,%ctaid.x;",
+            "cvt.u64.u32 %b646,%b320;",
+            "add.s64 %b647,%b645,%b646;",
+            "ld.global.nc.u8 %b160,[%b647];",
+            "setp.ne.s16 %pred0,%b160,0;",
+            "selp.f32 %f320,0f3F800000,0f00000000,%pred0;",
+            "mul.wide.u32 %b648,%b320,64;",
+            "mov.u32 %b321,%tid.x;",
+            "cvt.u64.u32 %b649,%b321;",
+            "or.b64 %b6410,%b648,%b649;",
+            "shl.b64 %b6411,%b6410,2;",
+            "add.s64 %b6412,%b644,%b6411;",
+            "ld.global.nc.f32 %f321,[%b6412];",
+            "mul.f32 %f322,%f321,%f320;",
+            "add.s64 %b6413,%b643,%b6411;",
+            "st.global.f32 [%b6413],%f322;",
+            "ret;"
+          ],
+          "source": [
+            "ld.param.u64 %b640,[param0];",
+            "ld.param.u64 %b641,[param1];",
+            "ld.param.u64 %b642,[param2];",
+            "cvta.to.global.u64 %b643,%b641;",
+            "cvta.to.global.u64 %b644,%b640;",
+            "cvta.to.global.u64 %b645,%b642;",
+            "mov.u32 %b320,%ctaid.x;",
+            "cvt.u64.u32 %b646,%b320;",
+            "add.s64 %b647,%b645,%b646;",
+            "ld.global.nc.u8 %b160,[%b647];",
+            "setp.ne.s16 %pred0,%b160,0;",
+            "selp.f32 %f320,0f3F800000,0f00000000,%pred0;",
+            "mul.wide.u32 %b648,%b320,64;",
+            "mov.u32 %b321,%tid.x;",
+            "cvt.u64.u32 %b649,%b321;",
+            "or.b64 %b6410,%b648,%b649;",
+            "shl.b64 %b6411,%b6410,2;",
+            "add.s64 %b6412,%b644,%b6411;",
+            "ld.global.nc.f32 %f321,[%b6412];",
+            "mul.f32 %f322,%f321,%f320;",
+            "add.s64 %b6413,%b643,%b6411;",
+            "st.global.f32 [%b6413],%f322;",
+            "ret;"
+          ]
+        }
+      ],
+      "hard_pass": false,
+      "hard_passes": {
+        "interface": true,
+        "ptx.interface": true,
+        "ptx.schema": true,
+        "ptx.target": true,
+        "schema": true,
+        "tir_operations": false,
+        "tir_structure": false,
+        "tir_topology": false
+      },
+      "primary_difference_category": "tir_structure",
+      "replay_digest": "1736809b56da05a9adb32ab021539d00e8784280fe63eefdd1527ba9dbaa5eab",
+      "source_digest": "1cf83aca4d99da6c284d46610446f2f29f4b07200f2ea802baa2cc7181178817"
+    },
+    "compile": {
+      "cache_key": "bf3d98feadbaafc30851b27279775657aff25f23332b5e64c2534c673938ef4b",
+      "compiler": {
+        "name": "tilelang",
+        "version": "0.1.8"
+      },
+      "cuda": "#include <tl_templates/cuda/gemm.h>\n#include <tl_templates/cuda/copy.h>\n#include <tl_templates/cuda/reduce.h>\n#include <tl_templates/cuda/ldsm.h>\n#include <tl_templates/cuda/threadblock_swizzle.h>\n#include <tl_templates/cuda/debug.h>\n#ifdef ENABLE_BF16\n#include <tl_templates/cuda/cuda_bf16_fallbacks.cuh>\n#endif\n\nextern \"C\" __global__ void scrc_k0_kernel(const float* __restrict__ p0, const signed char* __restrict__ p1, float* __restrict__ p2, int x0);\nextern \"C\" __global__ void __launch_bounds__(64, 1) scrc_k0_kernel(const float* __restrict__ p0, const signed char* __restrict__ p1, float* __restrict__ p2, int x0) {\n  signed char t1_fragment[1];\n  t1_fragment[0] = ((signed char)((bool)p1[((int64_t)((int)blockIdx.x))]));\n  float v0 = ((float)((bool)t1_fragment[0]));\n  p2[((((int64_t)((int)blockIdx.x)) * (int64_t)64) + ((int64_t)((int)threadIdx.x)))] = (p0[((((int64_t)((int)blockIdx.x)) * (int64_t)64) + ((int64_t)((int)threadIdx.x)))] * v0);\n}\n\n",
+      "diagnostic": "",
+      "elapsed_ms": 8060.2893609320745,
+      "interface": {
+        "parameters": [
+          {
+            "dtype": "float32",
+            "kind": "pointer",
+            "mode": "input",
+            "name": "p0",
+            "rank": 2,
+            "shape": [
+              "x0",
+              64
+            ]
+          },
+          {
+            "dtype": "bool",
+            "kind": "pointer",
+            "mode": "input",
+            "name": "p1",
+            "rank": 1,
+            "shape": [
+              "x0"
+            ]
+          },
+          {
+            "dtype": "float32",
+            "kind": "pointer",
+            "mode": "output",
+            "name": "p2",
+            "rank": 2,
+            "shape": [
+              "x0",
+              64
+            ]
+          }
+        ]
+      },
+      "ok": true,
+      "ptx": "//\n// Generated by NVIDIA NVVM Compiler\n//\n// Compiler Build ID: CL-35404655\n// Cuda compilation tools, release 12.8, V12.8.61\n// Based on NVVM 20.0.0\n//\n\n.version 8.7\n.target sm_120a\n.address_size 64\n\n\t// .globl\tscrc_k0_kernel\n.global .align 1 .b8 _ZN45_INTERNAL_37811d9e_14_tvm_kernels_cu_1b63e0854cute7productE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_37811d9e_14_tvm_kernels_cu_1b63e0854cute1_E[1];\n.global .align 1 .b8 _ZN45_INTERNAL_37811d9e_14_tvm_kernels_cu_1b63e0854cuda3std3__45__cpo5beginE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_37811d9e_14_tvm_kernels_cu_1b63e0854cuda3std3__45__cpo3endE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_37811d9e_14_tvm_kernels_cu_1b63e0854cuda3std3__45__cpo6cbeginE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_37811d9e_14_tvm_kernels_cu_1b63e0854cuda3std3__45__cpo4cendE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_37811d9e_14_tvm_kernels_cu_1b63e0854cuda3std3__419piecewise_constructE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_37811d9e_14_tvm_kernels_cu_1b63e0854cuda3std3__48in_placeE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_37811d9e_14_tvm_kernels_cu_1b63e0854cuda3std6ranges3__45__cpo4swapE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_37811d9e_14_tvm_kernels_cu_1b63e0854cuda3std6ranges3__45__cpo9iter_moveE[1];\n\n.visible .entry scrc_k0_kernel(\n\t.param .u64 scrc_k0_kernel_param_0,\n\t.param .u64 scrc_k0_kernel_param_1,\n\t.param .u64 scrc_k0_kernel_param_2,\n\t.param .u32 scrc_k0_kernel_param_3\n)\n.maxntid 64, 1, 1\n.minnctapersm 1\n{\n\t.reg .pred \t%p<2>;\n\t.reg .b16 \t%rs<3>;\n\t.reg .b32 \t%r<3>;\n\t.reg .f32 \t%f<4>;\n\t.reg .b64 \t%rd<15>;\n\t.loc\t1 12 0\n\n\tld.param.u64 \t%rd1, [scrc_k0_kernel_param_0];\n\tld.param.u64 \t%rd2, [scrc_k0_kernel_param_1];\n\tld.param.u64 \t%rd3, [scrc_k0_kernel_param_2];\n\t.loc\t1 14 3\n\tcvta.to.global.u64 \t%rd4, %rd3;\n\tcvta.to.global.u64 \t%rd5, %rd1;\n\tcvta.to.global.u64 \t%rd6, %rd2;\n\tmov.u32 \t%r1, %ctaid.x;\n\tcvt.u64.u32 \t%rd7, %r1;\n\tadd.s64 \t%rd8, %rd6, %rd7;\n\tld.global.nc.u8 \t%rs1, [%rd8];\n\tsetp.ne.s16 \t%p1, %rs1, 0;\n\t.loc\t1 15 3\n\tselp.f32 \t%f1, 0f3F800000, 0f00000000, %p1;\n\t.loc\t1 16 3\n\tmul.wide.u32 \t%rd9, %r1, 64;\n\tmov.u32 \t%r2, %tid.x;\n\tcvt.u64.u32 \t%rd10, %r2;\n\tor.b64  \t%rd11, %rd9, %rd10;\n\tshl.b64 \t%rd12, %rd11, 2;\n\tadd.s64 \t%rd13, %rd5, %rd12;\n\tld.global.nc.f32 \t%f2, [%rd13];\n\tmul.f32 \t%f3, %f2, %f1;\n\tadd.s64 \t%rd14, %rd4, %rd12;\n\tst.global.f32 \t[%rd14], %f3;\n\t.loc\t1 17 1\n\tret;\n\n}\n\t.file\t1 \"/tmp/tmplxwk13md/tvm_kernels.cu\"\n",
+      "target": {
+        "name": "cuda"
+      },
+      "tir": "# from tvm.script import tir as T\n\n@T.prim_func\ndef scrc_k0(p0_handle: T.handle, p1_handle: T.handle, p2_handle: T.handle):\n    x0 = T.int32()\n    p0 = T.match_buffer(p0_handle, (x0, 64), strides=(64, 1))\n    p1 = T.match_buffer(p1_handle, (x0,), \"bool\", strides=(1,))\n    p2 = T.match_buffer(p2_handle, (x0, 64), strides=(64, 1))\n    # with T.block(\"root\"):\n    bx = T.launch_thread(\"blockIdx.x\", x0)\n    tx = T.launch_thread(\"threadIdx.x\", 64)\n    ty = T.launch_thread(\"threadIdx.y\", 1)\n    tz = T.launch_thread(\"threadIdx.z\", 1)\n    with T.block(\"tilelang_root\"):\n        T.reads(p1[bx], p0[bx, 0:64])\n        T.writes(p2[bx, 0:64])\n        t1_fragment = T.alloc_buffer((1,), \"bool\", scope=\"local.fragment\")\n        t1_fragment[0] = p1[bx]\n        v0: T.float32 = T.Cast(\"float32\", t1_fragment[0])\n        for v2 in T.parallel(64):\n            p2[bx, v2] = p0[bx, v2] * v0"
+    },
+    "diagnostic": null,
+    "fingerprint": {
+      "digest": "1736809b56da05a9adb32ab021539d00e8784280fe63eefdd1527ba9dbaa5eab",
+      "interface": [
+        [
+          "parameters",
+          "[{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":0,\"rank\":2},{\"dtype\":\"i1\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":1,\"rank\":1},{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"output\",\"position\":2,\"rank\":2}]"
+        ]
+      ],
+      "ptx": {
+        "collectives": [],
+        "control_flow": [
+          "ret;"
+        ],
+        "coordinate_uses": [
+          "%ctaid.x",
+          "%tid.x"
+        ],
+        "digest": "222b345a85a98ace60769c482870fbec0753148b5d723dc2e1b68d13ac990d38",
+        "instructions": [
+          "ld.param.u64 %b640,[param0];",
+          "ld.param.u64 %b641,[param1];",
+          "ld.param.u64 %b642,[param2];",
+          "cvta.to.global.u64 %b643,%b642;",
+          "cvta.to.global.u64 %b644,%b640;",
+          "cvta.to.global.u64 %b645,%b641;",
+          "mov.u32 %b320,%ctaid.x;",
+          "cvt.u64.u32 %b646,%b320;",
+          "add.s64 %b647,%b645,%b646;",
+          "ld.global.nc.u8 %b160,[%b647];",
+          "setp.ne.s16 %pred0,%b160,0;",
+          "selp.f32 %f320,0f3F800000,0f00000000,%pred0;",
+          "mul.wide.u32 %b648,%b320,64;",
+          "mov.u32 %b321,%tid.x;",
+          "cvt.u64.u32 %b649,%b321;",
+          "or.b64 %b6410,%b648,%b649;",
+          "shl.b64 %b6411,%b6410,2;",
+          "add.s64 %b6412,%b644,%b6411;",
+          "ld.global.nc.f32 %f321,[%b6412];",
+          "mul.f32 %f322,%f321,%f320;",
+          "add.s64 %b6413,%b643,%b6411;",
+          "st.global.f32 [%b6413],%f322;",
+          "ret;"
+        ],
+        "interface": [
+          [
+            "parameters",
+            "[{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":0,\"rank\":2},{\"dtype\":\"i1\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":1,\"rank\":1},{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"output\",\"position\":2,\"rank\":2}]",
+            null
+          ],
+          [
+            "ptx_abi",
+            "[[\"\",\"u64\",null],[\"\",\"u64\",null],[\"\",\"u64\",null],[\"\",\"u32\",null]]",
+            null
+          ]
+        ],
+        "memory_effects": [
+          "ld.param.u64 %b640,[param0];",
+          "ld.param.u64 %b641,[param1];",
+          "ld.param.u64 %b642,[param2];",
+          "ld.global.nc.u8 %b160,[%b647];",
+          "ld.global.nc.f32 %f321,[%b6412];",
+          "st.global.f32 [%b6413],%f322;"
+        ],
+        "opcode_multiset": [
+          [
+            "add.s64",
+            3
+          ],
+          [
+            "cvt.u64.u32",
+            2
+          ],
+          [
+            "cvta.to.global.u64",
+            3
+          ],
+          [
+            "ld.global.nc.f32",
+            1
+          ],
+          [
+            "ld.global.nc.u8",
+            1
+          ],
+          [
+            "ld.param.u64",
+            3
+          ],
+          [
+            "mov.u32",
+            2
+          ],
+          [
+            "mul.f32",
+            1
+          ],
+          [
+            "mul.wide.u32",
+            1
+          ],
+          [
+            "or.b64",
+            1
+          ],
+          [
+            "ret;",
+            1
+          ],
+          [
+            "selp.f32",
+            1
+          ],
+          [
+            "setp.ne.s16",
+            1
+          ],
+          [
+            "shl.b64",
+            1
+          ],
+          [
+            "st.global.f32",
+            1
+          ]
+        ],
+        "schedule_view": [
+          [
+            "c0",
+            "64"
+          ]
+        ],
+        "schema_version": "cuda-ptx-semantic-effects-v6",
+        "semantic_address_coordinate_folds": [],
+        "semantic_memory_effects": [
+          [
+            "ld.global.b32",
+            1
+          ],
+          [
+            "ld.global.b8",
+            1
+          ],
+          [
+            "ld.param.b64",
+            3
+          ],
+          [
+            "st.global.b32",
+            1
+          ]
+        ],
+        "semantic_value_opcodes": [
+          [
+            "ld.global.b32",
+            1
+          ],
+          [
+            "ld.global.b8",
+            1
+          ],
+          [
+            "mul.f32",
+            1
+          ],
+          [
+            "selp.f32",
+            1
+          ],
+          [
+            "setp.ne.s16",
+            1
+          ]
+        ],
+        "target_view": [
+          [
+            "name",
+            "\"cuda\""
+          ]
+        ]
+      },
+      "schedule_view": [
+        [
+          "c0",
+          "64"
+        ]
+      ],
+      "schema_version": "tilelang-tir-semantic-structure-ptx-diagnostic-v5",
+      "tir_op_multiset": [
+        [
+          "T.Cast",
+          1
+        ],
+        [
+          "T.alloc_buffer",
+          1
+        ],
+        [
+          "T.block",
+          1
+        ],
+        [
+          "T.float32",
+          1
+        ],
+        [
+          "T.handle",
+          3
+        ],
+        [
+          "T.launch_thread",
+          4
+        ],
+        [
+          "T.match_buffer",
+          3
+        ],
+        [
+          "T.prim_func",
+          1
+        ],
+        [
+          "T.reads",
+          1
+        ],
+        [
+          "T.writes",
+          1
+        ],
+        [
+          "control.for",
+          1
+        ]
+      ],
+      "tir_ops": [
+        "T.prim_func",
+        "T.handle",
+        "T.handle",
+        "T.handle",
+        "T.match_buffer",
+        "T.match_buffer",
+        "T.match_buffer",
+        "T.launch_thread",
+        "T.launch_thread",
+        "T.launch_thread",
+        "T.launch_thread",
+        "T.block",
+        "T.reads",
+        "T.writes",
+        "T.alloc_buffer",
+        "T.float32",
+        "T.Cast",
+        "control.for"
+      ],
+      "tir_structure": "Module(body=[FunctionDef(name='tir_entry', args=arguments(posonlyargs=[], args=[arg(arg='p0', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load())), arg(arg='p1', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load())), arg(arg='p2', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[]), body=[Assign(targets=[Name(id='v0', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='int32', ctx=Load()), args=[], keywords=[])), Assign(targets=[Name(id='v1', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p0', ctx=Load()), Tuple(elts=[Name(id='v0', ctx=Load()), Constant(value=64)], ctx=Load())], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=64), Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v2', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p1', ctx=Load()), Tuple(elts=[Name(id='v0', ctx=Load())], ctx=Load()), Constant(value='bool')], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v3', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p2', ctx=Load()), Tuple(elts=[Name(id='v0', ctx=Load()), Constant(value=64)], ctx=Load())], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=64), Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v4', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='blockIdx.x'), Name(id='v0', ctx=Load())], keywords=[])), Assign(targets=[Name(id='v5', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.x'), Constant(value=64)], keywords=[])), Assign(targets=[Name(id='v6', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.y'), Constant(value=1)], keywords=[])), Assign(targets=[Name(id='v7', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.z'), Constant(value=1)], keywords=[])), With(items=[withitem(context_expr=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='block', ctx=Load()), args=[Constant(value='<block>')], keywords=[]))], body=[Expr(value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='reads', ctx=Load()), args=[Subscript(value=Name(id='v1', ctx=Load()), slice=Tuple(elts=[Name(id='v4', ctx=Load()), Slice(lower=Constant(value=0), upper=Constant(value=64))], ctx=Load()), ctx=Load()), Subscript(value=Name(id='v2', ctx=Load()), slice=Name(id='v4', ctx=Load()), ctx=Load())], keywords=[])), Expr(value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='writes', ctx=Load()), args=[Subscript(value=Name(id='v3', ctx=Load()), slice=Tuple(elts=[Name(id='v4', ctx=Load()), Slice(lower=Constant(value=0), upper=Constant(value=64))], ctx=Load()), ctx=Load())], keywords=[])), Assign(targets=[Name(id='v8', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='alloc_buffer', ctx=Load()), args=[Tuple(elts=[Constant(value=1)], ctx=Load()), Constant(value='bool')], keywords=[keyword(arg='scope', value=Constant(value='local.fragment'))])), Assign(targets=[Subscript(value=Name(id='v8', ctx=Load()), slice=Constant(value=0), ctx=Store())], value=Subscript(value=Name(id='v2', ctx=Load()), slice=Name(id='v4', ctx=Load()), ctx=Load())), AnnAssign(target=Name(id='v9', ctx=Store()), annotation=Attribute(value=Name(id='T', ctx=Load()), attr='float32', ctx=Load()), value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='Cast', ctx=Load()), args=[Constant(value='float32'), Subscript(value=Name(id='v8', ctx=Load()), slice=Constant(value=0), ctx=Load())], keywords=[]), simple=1), For(target=Name(id='v10', ctx=Store()), iter=Call(func=Name(id='range', ctx=Load()), args=[Constant(value=64)], keywords=[]), body=[Assign(targets=[Subscript(value=Name(id='v3', ctx=Load()), slice=Tuple(elts=[Name(id='v4', ctx=Load()), Name(id='v10', ctx=Load())], ctx=Load()), ctx=Store())], value=BinOp(left=Subscript(value=Name(id='v1', ctx=Load()), slice=Tuple(elts=[Name(id='v4', ctx=Load()), Name(id='v10', ctx=Load())], ctx=Load()), ctx=Load()), op=Mult(), right=Name(id='v9', ctx=Load())))], orelse=[])])], decorator_list=[Attribute(value=Name(id='T', ctx=Load()), attr='prim_func', ctx=Load())])], type_ignores=[])"
+    },
+    "generation": {
+      "attempts": 1,
+      "context_receipt": {
+        "backend_protocol": "openai.codex-cli.intentir-replay.v39",
+        "cli_turns": 1,
+        "context_rollover_input_tokens": 0,
+        "episode_wall_time_limit_seconds": 1200.0,
+        "formal_compile_recheck": true,
+        "formal_ingress_protocol": "intentir.scrc.replay-check.v16",
+        "fresh_session": true,
+        "model_segments_lower_bound": 11,
+        "pi_min_ownership": {
+          "artifact_schema": "intentir.scrc.artifact.v13",
+          "claim_scope": "proof-irrelevant ownership receipt; it neither proves zero statistical information nor changes TypeCheck, Replay, Gate1, or Gate2 acceptance",
+          "masked_j": false,
+          "pi_authority": "J/C-dependent realization constraints only",
+          "pi_closed_fields": [
+            "instances",
+            "iterations",
+            "loop_carriers",
+            "order",
+            "participant_mappings",
+            "physical_iterations",
+            "physical_loop_carriers",
+            "program_axes",
+            "refinements",
+            "regions",
+            "route_extent_transforms",
+            "routes",
+            "sharing",
+            "terminal_controls"
+          ],
+          "protocol": "intentir.pi-min.ownership-receipt.v1",
+          "relation_counts": {
+            "instances": 14,
+            "iterations": 0,
+            "loop_carriers": 0,
+            "order": 4,
+            "participant_mappings": 0,
+            "physical_iterations": 0,
+            "physical_loop_carriers": 0,
+            "program_axes": 1,
+            "refinements": 1,
+            "regions": 2,
+            "route_extent_transforms": 0,
+            "routes": 14,
+            "sharing": 2,
+            "terminal_controls": 0
+          },
+          "semantic_authority": "J only",
+          "status": "pass",
+          "validation_basis": [
+            "canonical Gate1Artifact closed-schema decode",
+            "TypeCheck(J,C,pi)=PASS before Replay packet construction",
+            "closed source-isolated Replay payload grammar"
+          ]
+        },
+        "replay_input_protocol": "intentir.scrc.replay-input.v3",
+        "retrieval_trace": [],
+        "semantic_program": {
+          "artifact_or_gate_input": false,
+          "bytes": {
+            "j": 1955,
+            "semantic_program_json": 8516,
+            "semantic_program_text": 2418
+          },
+          "counts": {
+            "boundary_access_guard_relations": 0,
+            "boundary_accesses": 3,
+            "boundary_aliases": 0,
+            "boundary_broadcasts": 1,
+            "boundary_consumer_extensions": 0,
+            "boundary_domains": 2,
+            "boundary_effects": 3,
+            "boundary_index_bounds": 0,
+            "boundary_output_mappings": 0,
+            "boundary_realization_authorizations": 0,
+            "boundary_reductions": 0,
+            "boundary_result_relations": 1,
+            "boundary_updates": 0,
+            "dataflow_edges": 3,
+            "dimensions": 1,
+            "inputs": 2,
+            "node_semantic_contracts": 2,
+            "operations": 2,
+            "outputs": 1,
+            "regions": 1,
+            "values": 4
+          },
+          "excluded_dependencies": [
+            "pi",
+            "C valuation",
+            "Source",
+            "Gate observation",
+            "frontend identity",
+            "target API",
+            "historical Replay"
+          ],
+          "fresh_materialization": true,
+          "materializer": "intentir.replay.semantic-materializer.v2",
+          "mode": "normal",
+          "mounts": {
+            "SEMANTIC_RECEIPT.json": "read-only",
+            "semantic_program.json": "read-only",
+            "semantic_program.txt": "read-only"
+          },
+          "parameterized": true,
+          "production_input": false,
+          "proof_relevant": false,
+          "protocol": "intentir.replay.semantic-receipt.v1",
+          "read_only_mount": true,
+          "semantic_input": "exact J only",
+          "semantic_program_schema": "intentir.replay.semantic-program.v2",
+          "status": "pass"
+        },
+        "syntax_composer": {
+          "builder_installed": false,
+          "installed": false,
+          "offer_mode": "off",
+          "protocol": "intentir.replay.syntax-composer.v2",
+          "selected_path": "raw_escape",
+          "status": "disabled",
+          "used": false
+        },
+        "thread_id": "019fb6d7-ce60-7683-a2a7-95f8e5352072",
+        "thread_ids": [
+          "019fb6d7-ce60-7683-a2a7-95f8e5352072"
+        ],
+        "tool_actions": 18
+      },
+      "elapsed_ms": 240734.23274303786,
+      "entry_function_name": null,
+      "function_name": "scrc_k0",
+      "model": "gpt-5.6-sol",
+      "response_id": "019fb6d7-ce60-7683-a2a7-95f8e5352072",
+      "response_model": "gpt-5.6-sol",
+      "usage": {
+        "cache_write_input_tokens": 0,
+        "cached_input_tokens": 386560,
+        "input_tokens": 428168,
+        "output_tokens": 6481,
+        "reasoning_output_tokens": 4179
+      }
+    },
+    "mode": "normal",
+    "physical_calls": 1
+  },
+  "normal_fanout": null,
+  "observer_profile": {
+    "canonicalization_version": "tilelang-tir-semantic-structure-ptx-diagnostic-v5",
+    "compiler_stage": "tir",
+    "evidence_class": "semantic_structure_with_ptx_diagnostic",
+    "frontend": "tilelang",
+    "profile_id": "tilelang_tir_semantic_structure",
+    "profile_version": "tilelang-tir-semantic-structure-ptx-diagnostic-v5"
+  },
+  "protocol": "llm_direct_pi_gate1_level2_v1",
+  "source_compile": {
+    "cache_key": "7c52f710c4e2aef91eb44630e72c7997acdf876d464c5b1dc39d595f545b7167",
+    "compiler": {
+      "name": "tilelang",
+      "version": "0.1.8"
+    },
+    "cuda": "#include <tl_templates/cuda/gemm.h>\n#include <tl_templates/cuda/copy.h>\n#include <tl_templates/cuda/reduce.h>\n#include <tl_templates/cuda/ldsm.h>\n#include <tl_templates/cuda/threadblock_swizzle.h>\n#include <tl_templates/cuda/debug.h>\n#ifdef ENABLE_BF16\n#include <tl_templates/cuda/cuda_bf16_fallbacks.cuh>\n#endif\n\nextern \"C\" __global__ void main_kernel(const float* __restrict__ inp, float* __restrict__ out, const signed char* __restrict__ row_mask, int M);\nextern \"C\" __global__ void __launch_bounds__(64, 1) main_kernel(const float* __restrict__ inp, float* __restrict__ out, const signed char* __restrict__ row_mask, int M) {\n  bool m = ((bool)row_mask[((int64_t)((int)blockIdx.x))]);\n  float mf = ((float)m);\n  out[((((int64_t)((int)blockIdx.x)) * (int64_t)64) + ((int64_t)((int)threadIdx.x)))] = (inp[((((int64_t)((int)blockIdx.x)) * (int64_t)64) + ((int64_t)((int)threadIdx.x)))] * mf);\n}\n\n",
+    "diagnostic": "",
+    "elapsed_ms": 5964.696555049159,
+    "interface": {
+      "parameters": [
+        {
+          "dtype": "float32",
+          "kind": "pointer",
+          "mode": "input",
+          "name": "inp",
+          "rank": 2,
+          "shape": [
+            "M",
+            64
+          ]
+        },
+        {
+          "dtype": "bool",
+          "kind": "pointer",
+          "mode": "input",
+          "name": "row_mask",
+          "rank": 1,
+          "shape": [
+            "M"
+          ]
+        },
+        {
+          "dtype": "float32",
+          "kind": "pointer",
+          "mode": "output",
+          "name": "out",
+          "rank": 2,
+          "shape": [
+            "M",
+            64
+          ]
+        }
+      ]
+    },
+    "ok": true,
+    "ptx": "//\n// Generated by NVIDIA NVVM Compiler\n//\n// Compiler Build ID: CL-35404655\n// Cuda compilation tools, release 12.8, V12.8.61\n// Based on NVVM 20.0.0\n//\n\n.version 8.7\n.target sm_120a\n.address_size 64\n\n\t// .globl\tmain_kernel\n.global .align 1 .b8 _ZN45_INTERNAL_f030fca2_14_tvm_kernels_cu_1b63e0854cute7productE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_f030fca2_14_tvm_kernels_cu_1b63e0854cute1_E[1];\n.global .align 1 .b8 _ZN45_INTERNAL_f030fca2_14_tvm_kernels_cu_1b63e0854cuda3std3__45__cpo5beginE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_f030fca2_14_tvm_kernels_cu_1b63e0854cuda3std3__45__cpo3endE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_f030fca2_14_tvm_kernels_cu_1b63e0854cuda3std3__45__cpo6cbeginE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_f030fca2_14_tvm_kernels_cu_1b63e0854cuda3std3__45__cpo4cendE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_f030fca2_14_tvm_kernels_cu_1b63e0854cuda3std3__419piecewise_constructE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_f030fca2_14_tvm_kernels_cu_1b63e0854cuda3std3__48in_placeE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_f030fca2_14_tvm_kernels_cu_1b63e0854cuda3std6ranges3__45__cpo4swapE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_f030fca2_14_tvm_kernels_cu_1b63e0854cuda3std6ranges3__45__cpo9iter_moveE[1];\n\n.visible .entry main_kernel(\n\t.param .u64 main_kernel_param_0,\n\t.param .u64 main_kernel_param_1,\n\t.param .u64 main_kernel_param_2,\n\t.param .u32 main_kernel_param_3\n)\n.maxntid 64, 1, 1\n.minnctapersm 1\n{\n\t.reg .pred \t%p<2>;\n\t.reg .b16 \t%rs<3>;\n\t.reg .b32 \t%r<3>;\n\t.reg .f32 \t%f<4>;\n\t.reg .b64 \t%rd<15>;\n\t.loc\t1 12 0\n\n\tld.param.u64 \t%rd1, [main_kernel_param_0];\n\tld.param.u64 \t%rd2, [main_kernel_param_1];\n\tld.param.u64 \t%rd3, [main_kernel_param_2];\n\t.loc\t1 13 3\n\tcvta.to.global.u64 \t%rd4, %rd2;\n\tcvta.to.global.u64 \t%rd5, %rd1;\n\tcvta.to.global.u64 \t%rd6, %rd3;\n\tmov.u32 \t%r1, %ctaid.x;\n\tcvt.u64.u32 \t%rd7, %r1;\n\tadd.s64 \t%rd8, %rd6, %rd7;\n\tld.global.nc.u8 \t%rs1, [%rd8];\n\tsetp.ne.s16 \t%p1, %rs1, 0;\n\t.loc\t1 14 3\n\tselp.f32 \t%f1, 0f3F800000, 0f00000000, %p1;\n\t.loc\t1 15 3\n\tmul.wide.u32 \t%rd9, %r1, 64;\n\tmov.u32 \t%r2, %tid.x;\n\tcvt.u64.u32 \t%rd10, %r2;\n\tor.b64  \t%rd11, %rd9, %rd10;\n\tshl.b64 \t%rd12, %rd11, 2;\n\tadd.s64 \t%rd13, %rd5, %rd12;\n\tld.global.nc.f32 \t%f2, [%rd13];\n\tmul.f32 \t%f3, %f2, %f1;\n\tadd.s64 \t%rd14, %rd4, %rd12;\n\tst.global.f32 \t[%rd14], %f3;\n\t.loc\t1 16 1\n\tret;\n\n}\n\t.file\t1 \"/tmp/tmpgos6ithn/tvm_kernels.cu\"\n",
+    "target": {
+      "name": "cuda"
+    },
+    "tir": "# from tvm.script import tir as T\n\n@T.prim_func\ndef main(inp_handle: T.handle, row_mask_handle: T.handle, out_handle: T.handle):\n    M = T.int32()\n    inp = T.match_buffer(inp_handle, (M, 64), strides=(64, 1))\n    row_mask = T.match_buffer(row_mask_handle, (M,), \"bool\", strides=(1,))\n    out = T.match_buffer(out_handle, (M, 64), strides=(64, 1))\n    # with T.block(\"root\"):\n    bx = T.launch_thread(\"blockIdx.x\", M)\n    tx = T.launch_thread(\"threadIdx.x\", 64)\n    ty = T.launch_thread(\"threadIdx.y\", 1)\n    tz = T.launch_thread(\"threadIdx.z\", 1)\n    with T.block(\"tilelang_root\"):\n        T.reads(row_mask[bx], inp[bx, 0:64])\n        T.writes(out[bx, 0:64])\n        m: T.bool = row_mask[bx]\n        mf: T.float32 = T.Cast(\"float32\", m)\n        for col in T.parallel(64):\n            out[bx, col] = inp[bx, col] * mf"
+  },
+  "source_fingerprint": {
+    "digest": "1cf83aca4d99da6c284d46610446f2f29f4b07200f2ea802baa2cc7181178817",
+    "interface": [
+      [
+        "parameters",
+        "[{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":0,\"rank\":2},{\"dtype\":\"i1\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":1,\"rank\":1},{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"output\",\"position\":2,\"rank\":2}]"
+      ]
+    ],
+    "ptx": {
+      "collectives": [],
+      "control_flow": [
+        "ret;"
+      ],
+      "coordinate_uses": [
+        "%ctaid.x",
+        "%tid.x"
+      ],
+      "digest": "d746f7b3cefcd319df363e3ca55e982a1c454c885ac526a88a0ff037314ba07c",
+      "instructions": [
+        "ld.param.u64 %b640,[param0];",
+        "ld.param.u64 %b641,[param1];",
+        "ld.param.u64 %b642,[param2];",
+        "cvta.to.global.u64 %b643,%b641;",
+        "cvta.to.global.u64 %b644,%b640;",
+        "cvta.to.global.u64 %b645,%b642;",
+        "mov.u32 %b320,%ctaid.x;",
+        "cvt.u64.u32 %b646,%b320;",
+        "add.s64 %b647,%b645,%b646;",
+        "ld.global.nc.u8 %b160,[%b647];",
+        "setp.ne.s16 %pred0,%b160,0;",
+        "selp.f32 %f320,0f3F800000,0f00000000,%pred0;",
+        "mul.wide.u32 %b648,%b320,64;",
+        "mov.u32 %b321,%tid.x;",
+        "cvt.u64.u32 %b649,%b321;",
+        "or.b64 %b6410,%b648,%b649;",
+        "shl.b64 %b6411,%b6410,2;",
+        "add.s64 %b6412,%b644,%b6411;",
+        "ld.global.nc.f32 %f321,[%b6412];",
+        "mul.f32 %f322,%f321,%f320;",
+        "add.s64 %b6413,%b643,%b6411;",
+        "st.global.f32 [%b6413],%f322;",
+        "ret;"
+      ],
+      "interface": [
+        [
+          "parameters",
+          "[{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":0,\"rank\":2},{\"dtype\":\"i1\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":1,\"rank\":1},{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"output\",\"position\":2,\"rank\":2}]",
+          null
+        ],
+        [
+          "ptx_abi",
+          "[[\"\",\"u64\",null],[\"\",\"u64\",null],[\"\",\"u64\",null],[\"\",\"u32\",null]]",
+          null
+        ]
+      ],
+      "memory_effects": [
+        "ld.param.u64 %b640,[param0];",
+        "ld.param.u64 %b641,[param1];",
+        "ld.param.u64 %b642,[param2];",
+        "ld.global.nc.u8 %b160,[%b647];",
+        "ld.global.nc.f32 %f321,[%b6412];",
+        "st.global.f32 [%b6413],%f322;"
+      ],
+      "opcode_multiset": [
+        [
+          "add.s64",
+          3
+        ],
+        [
+          "cvt.u64.u32",
+          2
+        ],
+        [
+          "cvta.to.global.u64",
+          3
+        ],
+        [
+          "ld.global.nc.f32",
+          1
+        ],
+        [
+          "ld.global.nc.u8",
+          1
+        ],
+        [
+          "ld.param.u64",
+          3
+        ],
+        [
+          "mov.u32",
+          2
+        ],
+        [
+          "mul.f32",
+          1
+        ],
+        [
+          "mul.wide.u32",
+          1
+        ],
+        [
+          "or.b64",
+          1
+        ],
+        [
+          "ret;",
+          1
+        ],
+        [
+          "selp.f32",
+          1
+        ],
+        [
+          "setp.ne.s16",
+          1
+        ],
+        [
+          "shl.b64",
+          1
+        ],
+        [
+          "st.global.f32",
+          1
+        ]
+      ],
+      "schedule_view": [
+        [
+          "c0",
+          "64"
+        ]
+      ],
+      "schema_version": "cuda-ptx-semantic-effects-v6",
+      "semantic_address_coordinate_folds": [],
+      "semantic_memory_effects": [
+        [
+          "ld.global.b32",
+          1
+        ],
+        [
+          "ld.global.b8",
+          1
+        ],
+        [
+          "ld.param.b64",
+          3
+        ],
+        [
+          "st.global.b32",
+          1
+        ]
+      ],
+      "semantic_value_opcodes": [
+        [
+          "ld.global.b32",
+          1
+        ],
+        [
+          "ld.global.b8",
+          1
+        ],
+        [
+          "mul.f32",
+          1
+        ],
+        [
+          "selp.f32",
+          1
+        ],
+        [
+          "setp.ne.s16",
+          1
+        ]
+      ],
+      "target_view": [
+        [
+          "name",
+          "\"cuda\""
+        ]
+      ]
+    },
+    "schedule_view": [
+      [
+        "c0",
+        "64"
+      ]
+    ],
+    "schema_version": "tilelang-tir-semantic-structure-ptx-diagnostic-v5",
+    "tir_op_multiset": [
+      [
+        "T.Cast",
+        1
+      ],
+      [
+        "T.block",
+        1
+      ],
+      [
+        "T.float32",
+        1
+      ],
+      [
+        "T.handle",
+        3
+      ],
+      [
+        "T.launch_thread",
+        4
+      ],
+      [
+        "T.match_buffer",
+        3
+      ],
+      [
+        "T.prim_func",
+        1
+      ],
+      [
+        "T.reads",
+        1
+      ],
+      [
+        "T.writes",
+        1
+      ],
+      [
+        "control.for",
+        1
+      ]
+    ],
+    "tir_ops": [
+      "T.prim_func",
+      "T.handle",
+      "T.handle",
+      "T.handle",
+      "T.match_buffer",
+      "T.match_buffer",
+      "T.match_buffer",
+      "T.launch_thread",
+      "T.launch_thread",
+      "T.launch_thread",
+      "T.launch_thread",
+      "T.block",
+      "T.reads",
+      "T.writes",
+      "T.float32",
+      "T.Cast",
+      "control.for"
+    ],
+    "tir_structure": "Module(body=[FunctionDef(name='tir_entry', args=arguments(posonlyargs=[], args=[arg(arg='p0', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load())), arg(arg='p1', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load())), arg(arg='p2', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[]), body=[Assign(targets=[Name(id='v0', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='int32', ctx=Load()), args=[], keywords=[])), Assign(targets=[Name(id='v1', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p0', ctx=Load()), Tuple(elts=[Name(id='v0', ctx=Load()), Constant(value=64)], ctx=Load())], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=64), Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v2', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p1', ctx=Load()), Tuple(elts=[Name(id='v0', ctx=Load())], ctx=Load()), Constant(value='bool')], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v3', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p2', ctx=Load()), Tuple(elts=[Name(id='v0', ctx=Load()), Constant(value=64)], ctx=Load())], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=64), Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v4', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='blockIdx.x'), Name(id='v0', ctx=Load())], keywords=[])), Assign(targets=[Name(id='v5', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.x'), Constant(value=64)], keywords=[])), Assign(targets=[Name(id='v6', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.y'), Constant(value=1)], keywords=[])), Assign(targets=[Name(id='v7', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.z'), Constant(value=1)], keywords=[])), With(items=[withitem(context_expr=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='block', ctx=Load()), args=[Constant(value='<block>')], keywords=[]))], body=[Expr(value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='reads', ctx=Load()), args=[Subscript(value=Name(id='v1', ctx=Load()), slice=Tuple(elts=[Name(id='v4', ctx=Load()), Slice(lower=Constant(value=0), upper=Constant(value=64))], ctx=Load()), ctx=Load()), Subscript(value=Name(id='v2', ctx=Load()), slice=Name(id='v4', ctx=Load()), ctx=Load())], keywords=[])), Expr(value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='writes', ctx=Load()), args=[Subscript(value=Name(id='v3', ctx=Load()), slice=Tuple(elts=[Name(id='v4', ctx=Load()), Slice(lower=Constant(value=0), upper=Constant(value=64))], ctx=Load()), ctx=Load())], keywords=[])), AnnAssign(target=Name(id='v8', ctx=Store()), annotation=Attribute(value=Name(id='T', ctx=Load()), attr='float32', ctx=Load()), value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='Cast', ctx=Load()), args=[Constant(value='float32'), Subscript(value=Name(id='v2', ctx=Load()), slice=Name(id='v4', ctx=Load()), ctx=Load())], keywords=[]), simple=1), For(target=Name(id='v9', ctx=Store()), iter=Call(func=Name(id='range', ctx=Load()), args=[Constant(value=64)], keywords=[]), body=[Assign(targets=[Subscript(value=Name(id='v3', ctx=Load()), slice=Tuple(elts=[Name(id='v4', ctx=Load()), Name(id='v9', ctx=Load())], ctx=Load()), ctx=Store())], value=BinOp(left=Subscript(value=Name(id='v1', ctx=Load()), slice=Tuple(elts=[Name(id='v4', ctx=Load()), Name(id='v9', ctx=Load())], ctx=Load()), ctx=Load()), op=Mult(), right=Name(id='v8', ctx=Load())))], orelse=[])])], decorator_list=[Attribute(value=Name(id='T', ctx=Load()), attr='prim_func', ctx=Load())])], type_ignores=[])"
+  },
+  "status": "no_closure"
+}

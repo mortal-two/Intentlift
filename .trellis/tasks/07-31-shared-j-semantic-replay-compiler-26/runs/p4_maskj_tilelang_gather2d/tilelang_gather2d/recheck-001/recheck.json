@@ -1,0 +1,17 @@
+{
+  "artifact_digest": "f87771214b95338e6a2fba93f8ed215dd3b85f19619b3a1a0e07675973562c78",
+  "artifact_schema": "intentir.scrc.artifact.v13",
+  "case_id": "tilelang:gather2d",
+  "changes_prior_verdict": false,
+  "diagnostic_only": true,
+  "enters_gate2": false,
+  "gate1_protocol": "llm_direct_pi_gate1_level2_v1",
+  "j_necessity_status": "proved",
+  "masked_j_calls": 1,
+  "parent_evidence": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/archive/2026-07/07-31-j-driven-replay-composer-24/runs/tilelang_gather2d/run-003/attempt-01",
+  "protocol": "intentir.scrc.gate1-diagnostic-recheck.v1",
+  "run_masked_j": true,
+  "status": "replay_closed",
+  "typecheck_protocol": "intentir.scrc.typecheck.v31",
+  "typecheck_status": "pass"
+}

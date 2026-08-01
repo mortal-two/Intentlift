@@ -36,6 +36,17 @@ _J_FIELDS = frozenset(
     }
 )
 _DIMENSION_REF = re.compile(r"x[0-9]+")
+_NODE_SCOPED_BOUNDARY_RELATIONS = (
+    "accesses",
+    "effects",
+    "reductions",
+    "updates",
+    "broadcasts",
+    "index_bounds",
+    "output_mappings",
+    "consumer_extensions",
+    "access_guard_relations",
+)
 
 
 class SemanticMaterializationError(ValueError):
@@ -132,6 +143,8 @@ def _render_text(payload: Mapping[str, Any]) -> str:
         f"semantic_program {function['name']} mode={payload['mode']}",
         f"schema {payload['schema']}",
         "parameterized true",
+        "logical_operations_imply_target_materialization false",
+        "physical_materialization_authority pi only",
         "",
         "dimensions:",
     ]
@@ -190,6 +203,35 @@ def _render_text(payload: Mapping[str, Any]) -> str:
             lines.append(
                 f"      structure {_inline(operation['semantic_fields'])}"
             )
+        if operation.get("operand_types"):
+            lines.append(f"      operand_types {_inline(operation['operand_types'])}")
+        if operation.get("result_types"):
+            lines.append(f"      result_types {_inline(operation['result_types'])}")
+        contract = operation.get("semantic_contract")
+        if isinstance(contract, Mapping):
+            axis_semantics = contract.get("axis_semantics")
+            if axis_semantics:
+                lines.append(f"      axis_semantics {_inline(axis_semantics)}")
+            relation_refs = contract.get("boundary_relation_refs")
+            if isinstance(relation_refs, Mapping):
+                for relation_name, relation_indexes in relation_refs.items():
+                    relation_table = payload["boundary"].get(relation_name, [])
+                    resolved = [
+                        relation_table[index]
+                        for index in relation_indexes
+                        if isinstance(relation_table, list)
+                        and isinstance(index, int)
+                        and 0 <= index < len(relation_table)
+                    ]
+                    if resolved:
+                        lines.append(
+                            f"      {relation_name} {_inline(resolved)}"
+                        )
+            access_effect_chains = contract.get("access_effect_chains")
+            if access_effect_chains:
+                lines.append(
+                    f"      access_effect_chains {_inline(access_effect_chains)}"
+                )
         if operation.get("child_regions"):
             lines.append(
                 "      child_regions " + ", ".join(operation["child_regions"])
@@ -206,10 +248,12 @@ def _render_text(payload: Mapping[str, Any]) -> str:
     if not function["outputs"]:
         lines.append("  <none>")
 
-    lines.extend(["", "boundary (exact J relations):"])
-    boundary = payload["boundary"]
-    for name in sorted(boundary):
-        value = boundary[name]
+    lines.extend(["", "global J-only contracts:"])
+    global_contracts = payload["global_contracts"]
+    for name in sorted(global_contracts):
+        value = global_contracts[name]
+        if value in ([], {}):
+            continue
         if isinstance(value, list):
             lines.append(f"  {name} [{len(value)}]")
             for index, item in enumerate(value):
@@ -526,6 +570,109 @@ def semantic_materialize(
     walk(body, "body", "function")
 
     boundary = _mapping(j_value["boundary"], "j.boundary")
+
+    # Build a node-local compiler view by exact reference joins only.  This is
+    # deliberately not target lowering: the records below are already authored
+    # in J, and grouping them by node/access/value removes repeated graph joins
+    # from every fresh Replay episode without adding a semantic decision.
+    node_relation_refs: dict[str, dict[str, list[int]]] = {}
+    for relation_name in _NODE_SCOPED_BOUNDARY_RELATIONS:
+        raw_relations = boundary.get(relation_name, [])
+        if not isinstance(raw_relations, list):
+            continue
+        for relation_index, relation in enumerate(raw_relations):
+            if not isinstance(relation, Mapping):
+                continue
+            node_ref = relation.get("node_ref")
+            if not isinstance(node_ref, str):
+                continue
+            node_relation_refs.setdefault(node_ref, {}).setdefault(
+                relation_name, []
+            ).append(relation_index)
+
+    value_types = {
+        str(value["ref"]): copy.deepcopy(value.get("type"))
+        for value in values.values()
+        if isinstance(value.get("ref"), str)
+    }
+    for operation in operations:
+        operands = operation["operands"]
+        results = operation["results"]
+        operation["operand_types"] = [
+            {"ref": ref, "type": copy.deepcopy(value_types.get(ref))}
+            for ref in operands
+        ]
+        operation["result_types"] = [
+            {"ref": ref, "type": copy.deepcopy(value_types.get(ref))}
+            for ref in results
+        ]
+        relation_refs = node_relation_refs.get(operation["node_ref"], {})
+        accesses = [
+            boundary["accesses"][index]
+            for index in relation_refs.get("accesses", [])
+        ]
+        effects = [
+            boundary["effects"][index]
+            for index in relation_refs.get("effects", [])
+        ]
+        access_effect_chains = []
+        for access in accesses:
+            access_id = access.get("access_id")
+            access_effect_chains.append(
+                {
+                    "access_id": access_id,
+                    "effect_ids": [
+                        effect.get("effect_id")
+                        for effect in effects
+                        if access_id is not None
+                        and effect.get("access_ref") == access_id
+                    ],
+                }
+            )
+
+        axis_semantics: list[dict[str, Any]] = []
+        attrs = operation.get("attrs")
+        reduction_axes = (
+            attrs.get("axes", [])
+            if operation["op"] == "reduce" and isinstance(attrs, Mapping)
+            else []
+        )
+        reduction_axis_set = {
+            axis
+            for axis in reduction_axes
+            if isinstance(axis, int) and not isinstance(axis, bool)
+        }
+        for operand_index, operand in enumerate(operation["operand_types"]):
+            if not reduction_axis_set:
+                break
+            operand_type = operand.get("type")
+            shape = operand_type.get("shape") if isinstance(operand_type, Mapping) else None
+            if not isinstance(shape, list):
+                continue
+            axis_semantics.append(
+                {
+                    "operand_index": operand_index,
+                    "value_ref": operand["ref"],
+                    "axes": [
+                        {
+                            "axis": axis,
+                            "extent": copy.deepcopy(extent),
+                            "role": (
+                                "reduction"
+                                if axis in reduction_axis_set
+                                else "retained"
+                            ),
+                        }
+                        for axis, extent in enumerate(shape)
+                    ],
+                }
+            )
+        operation["semantic_contract"] = {
+            "boundary_relation_refs": copy.deepcopy(relation_refs),
+            "access_effect_chains": access_effect_chains,
+            "axis_semantics": axis_semantics,
+        }
+
     output_mappings = boundary.get("output_mappings", [])
     mapping_by_output = {
         item.get("output"): item.get("value")
@@ -565,6 +712,9 @@ def semantic_materialize(
         "parameterized": True,
         "authority": {
             "semantic_input": "exact J only",
+            "logical_program_only": True,
+            "target_materialization_implied": False,
+            "physical_materialization_authority": "pi only",
             "excluded": [
                 "pi",
                 "C valuation",
@@ -588,6 +738,27 @@ def semantic_materialize(
         "values": list(values.values()),
         "dataflow": dataflow,
         "boundary": boundary,
+        "global_contracts": {
+            name: copy.deepcopy(
+                [
+                    item
+                    for item in value
+                    if not isinstance(item, Mapping)
+                    or not isinstance(item.get("node_ref"), str)
+                ]
+                if name in _NODE_SCOPED_BOUNDARY_RELATIONS
+                and isinstance(value, list)
+                else value
+            )
+            for name, value in boundary.items()
+            if name not in _NODE_SCOPED_BOUNDARY_RELATIONS
+            or not isinstance(value, list)
+            or any(
+                not isinstance(item, Mapping)
+                or not isinstance(item.get("node_ref"), str)
+                for item in value
+            )
+        },
         "scopes": _array(j_value["scopes"], "j.scopes"),
         "storage": _array(j_value["storage"], "j.storage"),
         "dimension_constraints": _array(
@@ -610,6 +781,7 @@ def semantic_materialize(
         "operations": len(operations),
         "values": len(values),
         "dataflow_edges": len(dataflow),
+        "node_semantic_contracts": len(operations),
         **{
             f"boundary_{name}": len(value)
             for name, value in boundary.items()

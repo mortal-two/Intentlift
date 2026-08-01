@@ -1,0 +1,531 @@
+{
+  "backend": "openai.codex-cli.intentir-replay.v37",
+  "formal_ingress_recheck": true,
+  "fresh_session": true,
+  "isolation": {
+    "composer_episode_local": true,
+    "composer_reads_packet": false,
+    "input": "read-only",
+    "output_work_tmp": "write-only-scope",
+    "provider_secret_in_tool_env": false,
+    "semantic_program_fresh": true,
+    "semantic_program_j_only": true,
+    "semantic_program_read_only": true,
+    "source_blind": true,
+    "tool_network": "disabled"
+  },
+  "packet_queries": [],
+  "pi_min_ownership": {
+    "artifact_schema": "intentir.scrc.artifact.v13",
+    "claim_scope": "proof-irrelevant ownership receipt; it neither proves zero statistical information nor changes TypeCheck, Replay, Gate1, or Gate2 acceptance",
+    "masked_j": false,
+    "pi_authority": "J/C-dependent realization constraints only",
+    "pi_closed_fields": [
+      "instances",
+      "iterations",
+      "loop_carriers",
+      "order",
+      "participant_mappings",
+      "physical_iterations",
+      "physical_loop_carriers",
+      "program_axes",
+      "refinements",
+      "regions",
+      "route_extent_transforms",
+      "routes",
+      "sharing",
+      "terminal_controls"
+    ],
+    "protocol": "intentir.pi-min.ownership-receipt.v1",
+    "relation_counts": {
+      "instances": 12,
+      "iterations": 0,
+      "loop_carriers": 0,
+      "order": 0,
+      "participant_mappings": 1,
+      "physical_iterations": 0,
+      "physical_loop_carriers": 0,
+      "program_axes": 1,
+      "refinements": 1,
+      "regions": 2,
+      "route_extent_transforms": 0,
+      "routes": 11,
+      "sharing": 0,
+      "terminal_controls": 0
+    },
+    "semantic_authority": "J only",
+    "status": "pass",
+    "validation_basis": [
+      "canonical Gate1Artifact closed-schema decode",
+      "TypeCheck(J,C,pi)=PASS before Replay packet construction",
+      "closed source-isolated Replay payload grammar"
+    ]
+  },
+  "protocol": "intentir.codex-cli.agent-runtime.v3",
+  "replay_check": [
+    {
+      "diagnostics": [],
+      "source_sha256": "e17db92f994610dae1d949e96759c04f5670afa0cd537ca11dcb5015d38b417f",
+      "status": "pass",
+      "trigger": "host_post_turn"
+    }
+  ],
+  "replay_compile_check": [
+    {
+      "diagnostics": [],
+      "source_sha256": "e17db92f994610dae1d949e96759c04f5670afa0cd537ca11dcb5015d38b417f",
+      "status": "pass",
+      "trigger": "host_post_turn"
+    }
+  ],
+  "replay_obligation_audits": [
+    {
+      "broadcast_obligation_count": 0,
+      "cross_region_order_count": 0,
+      "identity_materialization_count": 1,
+      "lexical_region_count": 0,
+      "participant_mapping_count": 1,
+      "program_axis_count": 1,
+      "route_extent_transform_count": 0,
+      "source_sha256": "48dfe28f5c4ad02cc6aba6ef7b58498db6d3aa5e839f56dd8f7aa44a5b290cbb"
+    },
+    {
+      "broadcast_obligation_count": 0,
+      "cross_region_order_count": 0,
+      "identity_materialization_count": 1,
+      "lexical_region_count": 0,
+      "participant_mapping_count": 1,
+      "program_axis_count": 1,
+      "route_extent_transform_count": 0,
+      "source_sha256": "e17db92f994610dae1d949e96759c04f5670afa0cd537ca11dcb5015d38b417f"
+    }
+  ],
+  "replay_ttir_inspections": [],
+  "semantic_program": {
+    "artifact_or_gate_input": false,
+    "bytes": {
+      "j": 1643,
+      "semantic_program_json": 4356,
+      "semantic_program_text": 1653
+    },
+    "counts": {
+      "boundary_access_guard_relations": 0,
+      "boundary_accesses": 2,
+      "boundary_aliases": 0,
+      "boundary_broadcasts": 0,
+      "boundary_consumer_extensions": 0,
+      "boundary_domains": 2,
+      "boundary_effects": 2,
+      "boundary_index_bounds": 0,
+      "boundary_output_mappings": 0,
+      "boundary_realization_authorizations": 0,
+      "boundary_reductions": 1,
+      "boundary_result_relations": 1,
+      "boundary_updates": 0,
+      "dataflow_edges": 1,
+      "dimensions": 1,
+      "inputs": 1,
+      "operations": 1,
+      "outputs": 1,
+      "regions": 1,
+      "values": 2
+    },
+    "excluded_dependencies": [
+      "pi",
+      "C valuation",
+      "Source",
+      "Gate observation",
+      "frontend identity",
+      "target API",
+      "historical Replay"
+    ],
+    "fresh_materialization": true,
+    "materializer": "intentir.replay.semantic-materializer.v1",
+    "mode": "normal",
+    "mounts": {
+      "SEMANTIC_RECEIPT.json": "read-only",
+      "semantic_program.json": "read-only",
+      "semantic_program.txt": "read-only"
+    },
+    "parameterized": true,
+    "production_input": false,
+    "proof_relevant": false,
+    "protocol": "intentir.replay.semantic-receipt.v1",
+    "read_only_mount": true,
+    "semantic_input": "exact J only",
+    "semantic_program_schema": "intentir.replay.semantic-program.v1",
+    "status": "pass"
+  },
+  "semantic_queries": [],
+  "syntax_composer": {
+    "builder_installed": false,
+    "installed": false,
+    "offer_mode": "off",
+    "protocol": "intentir.replay.syntax-composer.v2",
+    "selected_path": "raw_escape",
+    "status": "disabled",
+    "used": false
+  },
+  "thread_id": "019fb6a8-b420-7051-a7b0-bce4c90d1727",
+  "thread_ids": [
+    "019fb6a8-b420-7051-a7b0-bce4c90d1727"
+  ],
+  "timeout_events": [],
+  "tool_bridge": {
+    "authority": "diagnostic-only callbacks over exact host-read output bytes; no artifact or Replay field is generated or edited",
+    "calls": 4,
+    "protocol": "intentir.codex-cli.tool-bridge.v3",
+    "receipts": [
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 4.776492016389966,
+        "result_sha256": "71dfd8967bed2117032ed1f797de66a534cf0318ddcdd605d436c2b9f7b0406e",
+        "status": "pass",
+        "tool": "replay_obligation_audit"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 345.9591739811003,
+        "result_sha256": "cbe3890f068a4883a1b4646dd7970e15340eb8e3778d4ffeebd327710577c757",
+        "status": "fail",
+        "tool": "submit_replay"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 5.219327984377742,
+        "result_sha256": "fd963d596bcf0d24c61858fc005ca9777936999c95a3bac36e20554f4c36131a",
+        "status": "pass",
+        "tool": "replay_obligation_audit"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 402.4827009998262,
+        "result_sha256": "f361ff54c4674bff57d244cc2a8ec3fb25433f7011065e0e8b46142874a6da94",
+        "status": "pass",
+        "tool": "submit_replay"
+      }
+    ],
+    "transport": "isolated_workspace_file_mailbox"
+  },
+  "turns": [
+    {
+      "elapsed_ms": 151778.59094005544,
+      "events": [
+        {
+          "thread_id": "019fb6a8-b420-7051-a7b0-bce4c90d1727",
+          "type": "thread.started"
+        },
+        {
+          "type": "turn.started"
+        },
+        {
+          "item": {
+            "id": "item_0",
+            "text": "I’ll reconstruct the full program from the semantic declaration first, then reconcile the identity/transfer and participant ledgers against exact packet details. I’ll write the complete replay early, audit its exact bytes after every edit, and iterate through transactional submission until it passes.",
+            "type": "agent_message"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c \"sed -n '1,240p' input/semantic_program.txt\"",
+            "exit_code": null,
+            "id": "item_1",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "semantic_program scrc_intent0 mode=normal\nschema intentir.replay.semantic-program.v1\nparameterized true\n\ndimensions:\n  x0: symbolic\n\nsignature:\n  p0: input tensor dtype=f32 rank=2 logical_ref=t0\n  p1: output tensor dtype=f32 rank=1 logical_ref=t1\n  p2: value scalar dtype=i32 rank=0 logical_ref=x0\n\ninputs:\n  t0: tensor<f32[\"x0\",16]>\n\noperations (declaration order):\n  [0] n0 @ body[0] in function: t1 = reduce(t0)\n      type {\"dtype\":\"f32\",\"shape\":[\"x0\"]}\n      attrs {\"assoc\":\"float_nondeterministic\",\"axes\":[1],\"fn\":\"sum\"}\n\noutputs:\n  t1: tensor<f32[\"x0\"]> <- t1\n\nboundary (exact J relations):\n  access_guard_relations [0]\n  accesses [2]\n    [0] {\"access_id\":\"a0\",\"index_expression\":\"[v1, v2]\",\"kind\":\"load\",\"node_ref\":\"n0\",\"tensor\":\"t0\"}\n    [1] {\"access_id\":\"a1\",\"index_expression\":\"[v1]\",\"kind\":\"store\",\"node_ref\":\"n0\",\"tensor\":\"t1\"}\n  aliases [0]\n  broadcasts [0]\n  consumer_extensions [0]\n  domains [2]\n    d0 = \"(0 <= v1) and (v1 < x0)\"\n    d1 = \"(0 <= v2) and (v2 < 16)\"\n  effects [2]\n    [0] {\"access_ref\":\"a0\",\"effect_id\":\"e0\",\"kind\":\"read\",\"node_ref\":\"n0\",\"target\":\"t0\"}\n    [1] {\"access_ref\":\"a1\",\"effect_id\":\"e1\",\"kind\":\"write\",\"node_ref\":\"n0\",\"target\":\"t1\"}\n  index_bounds [0]\n  output_mappings [0]\n  realization_authorizations [0]\n  reductions [1]\n    [0] {\"identity\":0.0,\"node_ref\":\"n0\",\"tile_axis\":1}\n  result_relations [1]\n    [0] {\"kind\":\"tolerance\",\"output\":\"t1\"}\n  updates [0]\n\nJ-only contracts:\n  dimension_constraints [\"x0 >= 1\"]\n  value_dimension_relations []\n  dimension_relations []\n  scopes [{\"captures\":[],\"definitions\":[\"t0\",\"t1\"],\"effects\":[\"e0\",\"e1\"],\"kind\":\"function\",\"parent_scope\":null,\"scope_id\":\"q0\"}]\n  storage []\n",
+            "command": "/bin/bash -c \"sed -n '1,240p' input/semantic_program.txt\"",
+            "exit_code": 0,
+            "id": "item_1",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c \"python -m json.tool input/packet.json | sed -n '1,320p'\"",
+            "exit_code": null,
+            "id": "item_2",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "{\n    \"c\": {\n        \"slots\": [\n            {\n                \"kind\": \"compiler\",\n                \"name\": \"c0\",\n                \"required\": true,\n                \"role\": \"launch_block_x\",\n                \"value_type\": \"i32\"\n            }\n        ]\n    },\n    \"j\": {\n        \"boundary\": {\n            \"access_guard_relations\": [],\n            \"accesses\": [\n                {\n                    \"access_id\": \"a0\",\n                    \"index_expression\": \"[v1, v2]\",\n                    \"kind\": \"load\",\n                    \"node_ref\": \"n0\",\n                    \"tensor\": \"t0\"\n                },\n                {\n                    \"access_id\": \"a1\",\n                    \"index_expression\": \"[v1]\",\n                    \"kind\": \"store\",\n                    \"node_ref\": \"n0\",\n                    \"tensor\": \"t1\"\n                }\n            ],\n            \"aliases\": [],\n            \"broadcasts\": [],\n            \"consumer_extensions\": [],\n            \"domains\": {\n                \"d0\": \"(0 <= v1) and (v1 < x0)\",\n                \"d1\": \"(0 <= v2) and (v2 < 16)\"\n            },\n            \"effects\": [\n                {\n                    \"access_ref\": \"a0\",\n                    \"effect_id\": \"e0\",\n                    \"kind\": \"read\",\n                    \"node_ref\": \"n0\",\n                    \"target\": \"t0\"\n                },\n                {\n                    \"access_ref\": \"a1\",\n                    \"effect_id\": \"e1\",\n                    \"kind\": \"write\",\n                    \"node_ref\": \"n0\",\n                    \"target\": \"t1\"\n                }\n            ],\n            \"index_bounds\": [],\n            \"output_mappings\": [],\n            \"realization_authorizations\": [],\n            \"reductions\": [\n                {\n                    \"identity\": 0.0,\n                    \"node_ref\": \"n0\",\n                    \"tile_axis\": 1\n                }\n            ],\n            \"result_relations\": [\n                {\n                    \"kind\": \"tolerance\",\n                    \"output\": \"t1\"\n                }\n            ],\n            \"updates\": []\n        },\n        \"dimension_constraints\": [\n            \"x0 >= 1\"\n        ],\n        \"dimension_relations\": [],\n        \"intent\": {\n            \"intent_function\": {\n                \"body\": [\n                    {\n                        \"attrs\": {\n                            \"assoc\": \"float_nondeterministic\",\n                            \"axes\": [\n                                1\n                            ],\n                            \"fn\": \"sum\"\n                        },\n                        \"op\": \"reduce\",\n                        \"operands\": [\n                            \"t0\"\n                        ],\n                        \"result\": \"t1\",\n                        \"type\": {\n                            \"dtype\": \"f32\",\n                            \"shape\": [\n                                \"x0\"\n                            ]\n                        }\n                    }\n                ],\n                \"inputs\": [\n                    {\n                        \"dtype\": \"f32\",\n                        \"name\": \"t0\",\n                        \"shape\": [\n                            \"x0\",\n                            16\n                        ]\n                    }\n                ],\n                \"name\": \"scrc_intent0\",\n                \"outputs\": [\n                    {\n                        \"dtype\": \"f32\",\n                        \"name\": \"t1\",\n                        \"shape\": [\n                            \"x0\"\n                        ]\n                    }\n                ]\n            }\n        },\n        \"kernel_id\": \"scrc_j0\",\n        \"node_ids\": {\n            \"n0\": \"body[0]\"\n        },\n        \"scopes\": [\n            {\n                \"captures\": [],\n                \"definitions\": [\n                    \"t0\",\n                    \"t1\"\n                ],\n                \"effects\": [\n                    \"e0\",\n                    \"e1\"\n                ],\n                \"kind\": \"function\",\n                \"parent_scope\": null,\n                \"scope_id\": \"q0\"\n            }\n        ],\n        \"signature\": {\n            \"parameters\": [\n                {\n                    \"dtype\": \"f32\",\n                    \"kind\": \"tensor\",\n                    \"logical_ref\": \"t0\",\n                    \"mode\": \"input\",\n                    \"name\": \"p0\",\n                    \"rank\": 2\n                },\n                {\n                    \"dtype\": \"f32\",\n                    \"kind\": \"tensor\",\n                    \"logical_ref\": \"t1\",\n                    \"mode\": \"output\",\n                    \"name\": \"p1\",\n                    \"rank\": 1\n                },\n                {\n                    \"dtype\": \"i32\",\n                    \"kind\": \"scalar\",\n                    \"logical_ref\": \"x0\",\n                    \"mode\": \"value\",\n                    \"name\": \"p2\",\n                    \"rank\": 0\n                }\n            ]\n        },\n        \"storage\": [],\n        \"value_dimension_relations\": []\n    },\n    \"pi\": {\n        \"instances\": [\n            {\n                \"id\": \"i0\",\n                \"mechanism\": \"realize\",\n                \"region\": \"r0\",\n                \"semantic_ref\": \"p0\"\n            },\n            {\n                \"id\": \"i1\",\n                \"mechanism\": \"realize\",\n                \"region\": \"r0\",\n                \"semantic_ref\": \"p1\"\n            },\n            {\n                \"id\": \"i2\",\n                \"mechanism\": \"realize\",\n                \"region\": \"r1\",\n                \"semantic_ref\": \"d0\"\n            },\n            {\n                \"id\": \"i3\",\n                \"mechanism\": \"realize\",\n                \"region\": \"r1\",\n                \"semantic_ref\": \"d1\"\n            },\n            {\n                \"id\": \"i4\",\n                \"mechanism\": \"address_base\",\n                \"region\": \"r1\",\n                \"semantic_ref\": \"a0\"\n            },\n            {\n                \"id\": \"i5\",\n                \"mechanism\": \"address_lane\",\n                \"region\": \"r1\",\n                \"semantic_ref\": \"a0\"\n            },\n            {\n                \"id\": \"i6\",\n                \"mechanism\": \"transfer_direct\",\n                \"region\": \"r1\",\n                \"semantic_ref\": \"a0\"\n            },\n            {\n                \"id\": \"i7\",\n                \"mechanism\": \"realize\",\n                \"region\": \"r1\",\n                \"semantic_ref\": \"t0\"\n            },\n            {\n                \"id\": \"i8\",\n                \"mechanism\": \"synchronize\",\n                \"region\": \"r1\",\n                \"semantic_ref\": \"n0\"\n            },\n            {\n                \"id\": \"i9\",\n                \"mechanism\": \"realize\",\n                \"region\": \"r1\",\n                \"semantic_ref\": \"d0\"\n            },\n            {\n                \"id\": \"i10\",\n                \"mechanism\": \"address_base\",\n                \"region\": \"r1\",\n                \"semantic_ref\": \"a1\"\n            },\n            {\n                \"id\": \"i11\",\n                \"mechanism\": \"transfer_direct\",\n                \"region\": \"r1\",\n                \"semantic_ref\": \"a1\"\n            }\n        ],\n        \"iterations\": [],\n        \"loop_carriers\": [],\n        \"order\": [],\n        \"participant_mappings\": [\n            {\n                \"axis\": 0,\n                \"domain_instance\": \"i3\",\n                \"extent_slot\": \"c0\",\n                \"projection\": \"cyclic\"\n            }\n        ],\n        \"physical_iterations\": [],\n        \"physical_loop_carriers\": [],\n        \"program_axes\": [\n            {\n                \"axis\": 0,\n                \"domain_ref\": \"d0\"\n            }\n        ],\n        \"refinements\": [\n            {\n                \"auth_ref\": null,\n                \"instance\": \"i7\",\n                \"kind\": \"identity_materialization\"\n            }\n        ],\n        \"regions\": [\n            {\n                \"id\": \"r0\",\n                \"parent\": null,\n                \"placement\": \"root\"\n            },\n            {\n                \"id\": \"r1\",\n                \"parent\": \"r0\",\n                \"placement\": \"program\"\n            }\n        ],\n        \"route_extent_transforms\": [],\n        \"routes\": [\n            {\n                \"slots\": [\n                    0\n                ],\n                \"source\": \"i2\",\n                \"target\": \"i4\"\n            },\n            {\n                \"slots\": [\n                    0\n                ],\n                \"source\": \"i0\",\n                \"target\": \"i5\"\n            },\n            {\n                \"slots\": [\n                    1\n                ],\n                \"source\": \"i4\",\n                \"target\": \"i5\"\n            },\n            {\n                \"slots\": [\n                    2\n                ],\n                \"source\": \"i3\",\n                \"target\": \"i5\"\n            },\n            {\n                \"slots\": [\n                    0\n                ],\n",
+            "command": "/bin/bash -c \"python -m json.tool input/packet.json | sed -n '1,320p'\"",
+            "exit_code": 0,
+            "id": "item_2",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c \"python -m json.tool input/packet.json | sed -n '321,640p'; sed -n '1,280p' input/TOOL.md\"",
+            "exit_code": null,
+            "id": "item_3",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "                \"source\": \"i5\",\n                \"target\": \"i6\"\n            },\n            {\n                \"slots\": [\n                    0\n                ],\n                \"source\": \"i6\",\n                \"target\": \"i7\"\n            },\n            {\n                \"slots\": [\n                    0\n                ],\n                \"source\": \"i7\",\n                \"target\": \"i8\"\n            },\n            {\n                \"slots\": [\n                    0\n                ],\n                \"source\": \"i1\",\n                \"target\": \"i10\"\n            },\n            {\n                \"slots\": [\n                    1\n                ],\n                \"source\": \"i9\",\n                \"target\": \"i10\"\n            },\n            {\n                \"slots\": [\n                    0\n                ],\n                \"source\": \"i10\",\n                \"target\": \"i11\"\n            },\n            {\n                \"slots\": [\n                    1\n                ],\n                \"source\": \"i8\",\n                \"target\": \"i11\"\n            }\n        ],\n        \"sharing\": [],\n        \"terminal_controls\": []\n    },\n    \"u_f\": {\n        \"compile_entry_contract\": \"Return one standalone CUDA C++ translation unit containing exactly one `extern \\\"C\\\" __global__` kernel named `scrc_k0`. Its positional runtime parameters follow J.signature; C values are external schedule bindings and are not runtime parameters. A MaskC compiler slot with role `launch_block_x|y|z` is bound by the Harness launch: never name its c* handle in the kernel body or replace public `blockDim.x|y|z` with a guessed value. Use only public CUDA language constructs and intrinsics. Do not emit host code, launch syntax, file I/O, inline PTX, build directives, or `main`. A program-region domain path entering address_base maps to `blockIdx.x|y|z` only through its exact pi.program_axes axis binding; never assign axes by declaration order or instance multiplicity. A lane path maps to the authored participant topology using public `threadIdx`/`blockDim`. Only pi.iterations or pi.physical_iterations authorizes a serial loop. A J reduce fed by a lane-realized reduced domain remains a participant collective using public CUDA intrinsics; never make every thread traverse the whole logical axis. Preserve every distinct transfer, realization, region, sharing, and order stage. A boundary access without a predicate is unconditional and never authorizes an invented lane-leader guard. If an identity_materialization instance has its sole outgoing route into a synchronize instance that resolves to a J reduce, emit one explicit combine of the J-owned reducer identity with its incoming carrier before the downstream collective. Derive reducer, identity, and dtype only from J; do not replace this stage with a barrier or cast. Every pi.participant_mappings item is mandatory. Resolve its domain_instance through pi to the exact J domain; projection=cyclic maps the public threadIdx axis into that J-owned logical extent. extent_slot binds only the matching external blockDim axis: never name c*, guess its value, or replace the J extent with blockDim.\",\n        \"frontend\": \"cuda\",\n        \"protocol\": \"intentir.scrc.replay-input.v3\",\n        \"replay_function\": \"scrc_k0\",\n        \"retrieval_scope\": \"public CUDA C++ programming documentation and examples\",\n        \"tool_access\": [\n            \"public_document_lookup\"\n        ]\n    }\n}\n# Replay tool contract\n\nWrite exactly `/output/replay.source`. Run\n`intentir_replay_check /output/replay.source` for diagnostic ingress, then\n`intentir_replay_compile_check /output/replay.source` for the public synthetic\nconstruction-compile profile. Calls are audited telemetry and governed by the\nReplay episode's active wall time; submission independently rechecks changed\nexact bytes with both checks. Results contain only a closed\nprotocol/status/rule/path plus anonymous handles or line number. No Source,\nHarness value, actual C value, Gate1 observer, or execution oracle is run. The\ncompile profile is the public fixed synthetic profile in README.md. Neither\ncheck has Gate, semantic-membership, or certification authority. After exact\nbytes pass both construction checks, preserve the LLM owner's fallback choice with\n`intentir_replay_commit /output/replay.source`; restore only those bytes with\n`intentir_replay_rollback /output/replay.source`. Submit directly with\n`intentir_replay_submit /output/replay.source` or\n`intentir_replay_submit --committed`; no stdout marker is used. The writer\nindependently reruns the same\ncompiler-free ingress callable after submission, and formal Gate1 compiles c0.\n\nIn the isolated Codex workspace, invoke the equivalent closed callbacks as\n`python .agents/intentir_agent_tool.py replay_check` or\n`replay_compile_check`. After a successful public synthetic compile,\n`replay_ttir_inspect summary|raw|find|observer` exposes only the current Replay's\nown TTIR/fingerprint for focused debugging. These callbacks take no host path and\nnever expose Source, Source TTIR, Harness values, or Gate evidence. Read this file\nfor usage instead of probing the fixed client with an unrecognized tool name.\n\n",
+            "command": "/bin/bash -c \"python -m json.tool input/packet.json | sed -n '321,640p'; sed -n '1,280p' input/TOOL.md\"",
+            "exit_code": 0,
+            "id": "item_3",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "id": "item_4",
+            "text": "The packet resolves to one CUDA program region: `blockIdx.x` selects the unreduced `d0` row, while the sole cyclic participant mapping assigns `threadIdx.x` to reduced domain `d1` of extent 16. The load must remain direct and unconditional; its identity realization is an explicit `0.0f + loaded_value` immediately before the participant collective, and the collective result is directly stored by every participating thread because no leader predicate is authored.",
+            "type": "agent_message"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "changes": [
+              {
+                "kind": "add",
+                "path": "/workspace/output/replay.source"
+              }
+            ],
+            "id": "item_5",
+            "status": "in_progress",
+            "type": "file_change"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "changes": [
+              {
+                "kind": "add",
+                "path": "/workspace/output/replay.source"
+              }
+            ],
+            "id": "item_5",
+            "status": "completed",
+            "type": "file_change"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py replay_obligation_audit'",
+            "exit_code": null,
+            "id": "item_6",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "{\"audit_required\": true, \"authority\": \"exact current Replay bytes plus exact source-isolated pi projection; no Source, Gate evidence, inference, mapping, diagnosis, repair, or acceptance decision\", \"broadcast_obligations\": [], \"cross_region_order\": [], \"identity_materializations\": [{\"adjacent_transfer_instances\": [\"i6\"], \"adjacent_transfers\": [{\"boundary_access\": {\"access_id\": \"a0\", \"index_expression\": \"[v1, v2]\", \"kind\": \"load\", \"node_ref\": \"n0\", \"tensor\": \"t0\"}, \"direction\": \"into_materialization\", \"instance\": \"i6\", \"mechanism\": \"transfer_direct\", \"route\": {\"slots\": [0], \"source\": \"i6\", \"target\": \"i7\"}, \"semantic_ref\": \"a0\", \"tensor_type\": {\"dtype\": \"f32\", \"shape\": [\"x0\", 16]}}], \"incoming_routes\": [{\"slots\": [0], \"source\": \"i6\", \"target\": \"i7\"}], \"instance\": \"i7\", \"mechanism\": \"realize\", \"outgoing_routes\": [{\"slots\": [0], \"source\": \"i7\", \"target\": \"i8\"}], \"region\": \"r1\", \"semantic_ref\": \"t0\"}], \"lexical_regions\": [], \"participant_mappings\": [{\"axis\": 0, \"domain_instance\": \"i3\", \"extent_slot\": \"c0\", \"projection\": \"cyclic\"}], \"program_axes\": [{\"axis\": 0, \"domain_ref\": \"d0\"}], \"protocol\": \"intentir.replay-obligation-audit.v5\", \"route_extent_transforms\": [], \"source_nonempty_lines\": [{\"indent\": 0, \"line\": 1, \"text\": \"extern \\\"C\\\" __global__ void scrc_k0(const float* p0, float* p1, int p2) {\"}, {\"indent\": 2, \"line\": 2, \"text\": \"const int v1 = static_cast<int>(blockIdx.x);\"}, {\"indent\": 2, \"line\": 3, \"text\": \"const int v2 = static_cast<int>(threadIdx.x);\"}, {\"indent\": 2, \"line\": 4, \"text\": \"const float transferred_t0 = p0[v1 * 16 + v2];\"}, {\"indent\": 2, \"line\": 5, \"text\": \"const float realized_t0 = 0.0f + transferred_t0;\"}, {\"indent\": 2, \"line\": 6, \"text\": \"const float reduced_t1 = __reduce_add_sync(__activemask(), realized_t0);\"}, {\"indent\": 2, \"line\": 7, \"text\": \"p1[v1] = reduced_t1;\"}, {\"indent\": 0, \"line\": 8, \"text\": \"}\"}], \"source_sha256\": \"48dfe28f5c4ad02cc6aba6ef7b58498db6d3aa5e839f56dd8f7aa44a5b290cbb\", \"status\": \"pass\"}\n",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py replay_obligation_audit'",
+            "exit_code": 0,
+            "id": "item_6",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "id": "item_7",
+            "text": "The required byte audit matches the authored source: line 4 is the single direct `a0` transfer with `[v1,v2]`, line 5 is the distinct `t0` identity materialization, line 6 consumes it in the reduction collective, and line 7 is the single direct `a1` transfer. The program-axis and cyclic participant spellings also occur exactly once, with no extra loop, guard, barrier, or address path. I’m submitting these audited bytes now.",
+            "type": "agent_message"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py submit_replay'",
+            "exit_code": null,
+            "id": "item_8",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "{\"authority\": \"diagnostic-only; no Replay source is generated or repaired\", \"compile\": {\"diagnostics\": [{\"anonymous_handles\": [], \"line\": null, \"path\": \"<synthetic-frontend-compile> 1 error detected in the compilation of \\\"/tmp/intentir-cuda-gate1-31vzxftz/kernel.cu\\\".\", \"rule_code\": \"synthetic_frontend_compile_failed\"}], \"protocol\": \"intentir.scrc.replay-check.v16\", \"status\": \"fail\"}, \"ingress\": {\"diagnostic_progress\": {\"authority\": \"mechanical episode-local observation only; it neither edits Replay nor changes ingress or Gate1 membership\", \"replay_source_changed_since_previous_check\": false, \"same_rule_path_streak\": 0}, \"diagnostics\": [], \"protocol\": \"intentir.scrc.replay-check.v16\", \"status\": \"pass\"}, \"phase\": \"compile\", \"protocol\": \"intentir.codex-cli.replay-submit.v1\", \"status\": \"fail\"}\n",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py submit_replay'",
+            "exit_code": 1,
+            "id": "item_8",
+            "status": "failed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "id": "item_9",
+            "text": "Ingress accepts the construction, but the synthetic CUDA frontend rejects the translation unit without exposing a compiler diagnostic. The likely unsupported surface is the newer `__reduce_add_sync` intrinsic, so I’m checking the public replay contract only for the CUDA collective spelling constraints before replacing that one realization with an equivalent explicit shuffle collective.",
+            "type": "agent_message"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c \"rg -n -C 4 \\\"CUDA|__reduce|shuffle|shfl|collective|intrinsic|activemask\\\" input/REPLAY_CONTRACT.md input -g '*.md'\"",
+            "exit_code": null,
+            "id": "item_10",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "input/README.md-77-this relation from reduction shape or frontend convention.\ninput/README.md-78-\ninput/README.md-79-An `identity_materialization` refined instance whose sole outgoing route enters a\ninput/README.md-80-`synchronize` instance that resolves through exact J to a reduce denotes one\ninput/README.md:81:explicit pre-collective identity combine. Obtain the\ninput/README.md-82-reducer, typed identity, and carrier type only from J, combine that identity with\ninput/README.md-83-the incoming value once, and preserve the result as the input to the downstream\ninput/README.md-84-`synchronize` stage. Pi does not carry the operator or identity value. Do not\ninput/README.md-85-replace this compiler-visible stage with a cast, barrier, allocation, or inferred\n--\ninput/REPLAY_CONTRACT.md:1:You are the source-blind Replay LLM. Generate one complete, self-contained cuda public-frontend kernel module. You never see the source implementation. Consume J, pure C and pi directly; pi is topology, not semantic authority. Treat every pi instance, route, order edge, sharing relation, route extent transform, participant mapping, structured or physical iteration relation, physical carrier, representation refinement and region placement as required realization topology. Region placement is exact lexical scope: emit each compiler-visible instance in its declared region, keep a loop-region instance lexically inside that loop even when it is induction-invariant, and never hoist, sink, clone, or fold it across a region boundary. In every pi order item, the instance named by before must execute before the instance named by after, including across regions and observable effects. Resolve each refinement auth_ref only through the matching J realization_authorization, materialize it at the refined instance before routed consumers, and never infer, omit, move, or copy a sensitive conversion onto a sibling instance. A logical_ref=null p* may be read only when pi contains its anchored instance and a route from that instance to a realization consumer; otherwise it remains an unused ABI parameter. Multiple instances anchored to one handle are distinct source stages: do not collapse their chain, discard J/C dependencies, duplicate a shared producer, or invent an undocumented stage. Obtain the callable runtime ABI only from J.signature. Keep every MaskC(C) slot outside that runtime ABI and consume it only through the frontend-specific public schedule/launch contract in U_f. Obtain all logical operators, predicates, fills, constants, index relations and effects only from J. Preserve explicit J stages: reduce(sum) followed by division remains sum then division, never mean or a generated sum-of-ones count. Every J.boundary.broadcasts item applies only at its named consumer: keep the operand's closed type at its producer/access and materialize the declared axes with explicit public rank-lift operations before that consumer. Do not pre-expand the load/index shape or erase the stage through implicit broadcasting. Treat every J.value_dimension_relations item as an already J-certified precondition: relation=eq permits the declared integral rank-0 value_ref and dimension_ref to denote the same logical extent. Consume only the declared relation where J shapes, domains, predicates, or operators require it. Never infer, create, delete, repair, weaken, or strengthen a value/dimension relation from concrete values, parameter positions, C, pi, Harness conventions, or frontend behavior. Treat every J.dimension_relations item as an authored logical-dimension definition. Implement exactly identity/add_const/mul_const/ceil_div_const/round_up_const over its named x* handles wherever the graph, indices, predicates, or realization topology consume the derived extent. Never infer a relation from concrete shapes, C, pi, grid, or frontend rounding, and never replace an authored relation with the current valuation. A pi.program_axes item is the sole authority that maps one J domain_ref to physical program axis 0, 1, or 2. Preserve it exactly across repeated instances and never derive, reorder, or add axes from source spelling, declaration order, shapes, grid extents, C, or frontend conventions. A pi.participant_mappings item is the sole authority for cyclic physical participant projection. Resolve domain_instance to its exact J boundary one-axis zero-based domain and obtain the logical period only from its positive literal or declared x* upper extent; axis selects the public participant coordinate and extent_slot selects only the matching anonymous external launch extent. projection=cyclic denotes physical coordinate modulo the J-owned domain extent without carrying a Source formula or target spelling. Never infer it from a reduction, shape, C value, block size, frontend convention, or instance multiplicity. A boundary access with no predicate is unconditional: never derive a redundant mask from domains, grid extents, C, or defensive safety. Treat each J effect_if as effect control, not a value expression. Ordinarily emit one real runtime if with explicit positive and negative arms in the authored polarity, keep every arm-local operation/effect in authored order, and spell an authored empty arm explicitly. If and only if one pi.terminal_controls item names the two realize instances anchored to that effect_if's sibling arm scopes, emit the named terminal arm as one runtime if ending in a bare return and emit the named continuation arm immediately after it without an else; negate the condition exactly when the negative arm is terminal. The relation supplies only arm topology: never guess, copy, or change the J predicate, polarity, arm operations, or effects. Never lower effect_if to tl.where/select or execute either arm unconditionally under a mask. Treat each J value_if as pure value control, distinct from effect_if and select: emit one real runtime if with explicit polarity-preserving arms; each arm may use pure local temporaries but must finally assign its J yield to the same merge local. Never lower value_if to tl.where/select, effect_if, predicated unconditional computation, or compile-time control. For every pi.iterations rounded_extent_step relation, resolve its loop_instance to the J loop trip extent and tile_instance to the matching C slot; use lower 0, step equal to that C tile, and upper exactly ceil_div(trip extent, C tile) * C tile. Do not infer a bound from current shapes/values or invent another rounding formula. For every pi.route_extent_transforms item, resolve source to its anonymous required positive-integer C slot and apply the declared floor/ceil division by the literal divisor only at the named existing route target slot. This is a representation extent partition: do not turn it into J shape/domain/predicate semantics, apply it to another C use, or infer another transform. For every pi.physical_iterations relation, keep J's operation or boundary traversal logical while materializing the explicit physical loop from its same-subject C-attached axis, induction_basis, and direction. Preserve every pi.physical_loop_carriers init/state/next/result temporal stage; neither relation authorizes a new semantic operator or formula. Preserve same-region physical_loop_carriers declaration order as the shared carrier-tuple ordinal across init/state/next/result; do not sort it or treat it as event order. Do not output analysis, patches, placeholders, helper prose or markdown. Use only public frontend APIs and the canonical opaque handles in J.signature/MaskC(C). Pi graph reference contract: Pi has exactly two reference roles. instances[k].semantic_ref is an anchor into a declared anonymous J/C handle; J.signature handles are ordinary J handles and there is no interface namespace. It is not a pi graph node. instances[k].id declares the only pi graph-node namespace i0,i1,... in declaration order. Every routes source/target, order before/after, and sharing source/consumer must equal one already declared instance id i*. Edges never use raw t*/n*/a*/d*/e*/q*/b*/s*/v*/p*/c*/x* handles and never declare instances implicitly. To represent a p0 dependency on access a0, declare i0 anchored by p0 and i1 anchored by a0, then route i0 to i1; routing p0 to i1 is invalid. Multiple instances may share one semantic_ref when the source has multiple compiler-visible stages. Route slots are distinct, non-negative, target-local opaque input ordinals. An instance region is exact lexical realization scope, not an optimization hint or consumer membership. Replay emits every compiler-visible stage inside that exact region: a loop-region instance stays lexically inside its loop even when its operands are loop invariant, and a parent-region instance stays outside. Replay never hoists, sinks, clones, or folds a stage across a region boundary. program_axes binds each distinct J-domain program coordinate to one physical launch axis 0, 1, or 2. It is authored by Lift from the compiler-visible Source realization, is unique by both domain_ref and axis, and carries no grid extent, Source spelling, or frontend API. Repeated coordinate instances anchored to the same d* use that same bound axis. route_extent_transforms qualifies one existing route slot: a required positive-integer C extent reaches its attached J domain as floor_div/ceil_div by a literal divisor greater than one. It is representation-only and creates no J fact or Source/API spelling. Each participant_mappings entry has exactly domain_instance, axis, extent_slot, and projection=cyclic. domain_instance is one realize instance anchored to a one-axis zero-based J boundary domain on a lane/address path; that domain's upper extent is a positive literal or declared J x*; axis is a public physical participant axis; extent_slot is the matching anonymous external launch extent in C. Its closed denotation is the physical participant coordinate projected cyclically into the exact logical domain extent owned by J. It carries neither that extent nor a modulo expression, Source spelling, frontend API, target recipe, or C value. Each iterations entry relates one loop region to one instance anchored by its J loop and one instance anchored by the matching C tile slot. Its closed induction_basis records only whether the physical induction variable is measured in logical extent units, rounded extent units, or tile ordinals. The global source-neutral denotation is closed: extent_step means lower zero, upper equal to the J loop trip extent, and step equal to the matching C tile; rounded_extent_step means lower zero, upper equal to ceil_div(J loop trip extent, matching C tile) multiplied by that C tile, and step equal to the matching C tile; tile_ordinal means lower zero, upper equal to ceil_div of that J trip extent by that matching C tile, and unit step. Every frontend maps this same relation to its public constructs. The wire entry never carries a bound expression, value, operator, source fragment, or frontend API. Each declaration-ordered loop_carriers entry has exactly region, loop_instance, init, state, next, and result instance refs. Its global temporal denotation is state[0]=init, state[k+1]=next[k], result=state[T], including T=0. The temporal next-to-state edge and loop-exit result edge are not ordinary DAG routes and never carry an expression or frontend spelling. Each physical_iterations entry has exactly region, body_instance, tile_instance, induction_basis, and direction. body_instance anchors an existing non-loop J reduce/contraction or boundary access/domain with a closed dependent axis; tile_instance anchors one required positive C tile attached to that same semantic subject and axis. forward uses the corresponding zero-origin basis order; reverse visits that same closed basis in descending order. It never adds a J loop or carries bounds/formulas. Each physical_loop_carriers entry has exactly region, init, state, next, and result, with the same temporal denotation as loop_carriers, but its region is indexed by one physical_iterations relation rather than a structured J loop. For all physical_loop_carriers entries sharing one region, declaration order is the common carrier-tuple ordinal across init/state/next/result and must be preserved by Replay. It is not event execution order and does not replace explicit pi.order edges. terminal_controls has exactly terminal_instance and continuation_instance: distinct realize instances on sibling J effect_if arm scopes. It names which arm terminates and which continues; it carries no predicate, polarity, return, Source spelling, or API. Each reduction_linearization refinement has null auth_ref and refines one realize instance whose sole slot-0 route enters a J reduce realize instance. It denotes full-axis linearization before that consumer without carrying an axis, operator, value, or frontend API. An identity_materialization with one outgoing slot-0 route into a J reduce synchronize is a distinct pre-collective realize stage. It requires one explicit combine of the J-owned reducer identity with the incoming carrier before that synchronize; pi carries neither reducer, identity value, dtype, Source spelling, nor frontend API. Pi mechanism contract: Pi mechanism is one closed source-neutral event class. realize is a generic representation-only stage when no more specific class applies. One realize instance anchored directly to a J.signature handle or C slot may be discharged by that parameter binding and its direct routed use; it does not require an identity assignment. Multiple instances anchored to the same handle still denote distinct routed use-sites/stages. address_base is an independently compiler-visible, program-uniform pointer/base or integer base-address contribution before lane merge; Lift uses it only when that separate source stage exists. address_lane is the compiler-visible stage that forms the lane-varying contribution or final address. When routes contain address_base -> address_lane, Replay must materialize two distinct stages in that order and must not algebraically fold them into one flat vector offset. Pointer-operation count is determined only by source-neutral carrier routing and the carrier kind declared in J.signature. If a pointer/tensor carrier directly enters address_base, that base is a pointer/address operation and its route to address_lane requires a second pointer/address operation for the lane contribution. If the pointer/tensor carrier bypasses address_base and enters address_lane or the final address stage, while address_base receives only integer, domain, or C contributions, Replay merges the integer base and lane contributions before exactly one pointer/address operation. The address_base -> address_lane edge alone never decides between these cases. transfer_direct and transfer_async classify data movement after address formation; update_atomic and update_privatized classify physical update realization; synchronize classifies synchronization. Region placement='program' only scopes an instance to one program; it does not assert that a program/grid coordinate is read. A compiler-visible program/grid coordinate is a separate realization stage and requires its own realize instance and routes. Its source-neutral encoding is a realize instance anchored to the corresponding J domain in a program region whose scalar dependency path enters address_base before transfer; a domain/C dependency path entering address_lane is lane-varying instead. Replay must preserve this base-versus-lane distinction and U_f maps it to public frontend APIs. Program-axis identity follows the closed pi.program_axes binding of the J domain semantic_ref, not instance multiplicity: repeated program-coordinate instances on one d* remain distinct stages of the same bound axis. Replay must not infer an axis from declaration order, grid extent, instance multiplicity, or C. Integer coordinate arithmetic is a realize stage; address_base and address_lane classify where its program-uniform and lane-varying paths enter address formation rather than relabeling every arithmetic op. If Source visibly forms a separable program-uniform integer base and a lane offset, then merges them before its first pointer application, the program path still enters address_base and routes to address_lane while the pointer carrier bypasses address_base. Replay preserves both integer stages and uses one pointer/address operation at the lane/final stage. Only a Source with no separable program-uniform contribution uses a lone address_lane stage. Replay must not invent program_id, a grid offset, or an affine address stage from region placement, grid convention, or C alone. Address classes never carry an index/offset formula, constant, integer width, cast, dtype, shape, vector length, predicate, fill, frontend API, or logical access semantics. Return CUDA C++ source only.\n--\ninput/REPLAY_CONTRACT.md:1:You are the source-blind Replay LLM. Generate one complete, self-contained cuda public-frontend kernel module. You never see the source implementation. Consume J, pure C and pi directly; pi is topology, not semantic authority. Treat every pi instance, route, order edge, sharing relation, route extent transform, participant mapping, structured or physical iteration relation, physical carrier, representation refinement and region placement as required realization topology. Region placement is exact lexical scope: emit each compiler-visible instance in its declared region, keep a loop-region instance lexically inside that loop even when it is induction-invariant, and never hoist, sink, clone, or fold it across a region boundary. In every pi order item, the instance named by before must execute before the instance named by after, including across regions and observable effects. Resolve each refinement auth_ref only through the matching J realization_authorization, materialize it at the refined instance before routed consumers, and never infer, omit, move, or copy a sensitive conversion onto a sibling instance. A logical_ref=null p* may be read only when pi contains its anchored instance and a route from that instance to a realization consumer; otherwise it remains an unused ABI parameter. Multiple instances anchored to one handle are distinct source stages: do not collapse their chain, discard J/C dependencies, duplicate a shared producer, or invent an undocumented stage. Obtain the callable runtime ABI only from J.signature. Keep every MaskC(C) slot outside that runtime ABI and consume it only through the frontend-specific public schedule/launch contract in U_f. Obtain all logical operators, predicates, fills, constants, index relations and effects only from J. Preserve explicit J stages: reduce(sum) followed by division remains sum then division, never mean or a generated sum-of-ones count. Every J.boundary.broadcasts item applies only at its named consumer: keep the operand's closed type at its producer/access and materialize the declared axes with explicit public rank-lift operations before that consumer. Do not pre-expand the load/index shape or erase the stage through implicit broadcasting. Treat every J.value_dimension_relations item as an already J-certified precondition: relation=eq permits the declared integral rank-0 value_ref and dimension_ref to denote the same logical extent. Consume only the declared relation where J shapes, domains, predicates, or operators require it. Never infer, create, delete, repair, weaken, or strengthen a value/dimension relation from concrete values, parameter positions, C, pi, Harness conventions, or frontend behavior. Treat every J.dimension_relations item as an authored logical-dimension definition. Implement exactly identity/add_const/mul_const/ceil_div_const/round_up_const over its named x* handles wherever the graph, indices, predicates, or realization topology consume the derived extent. Never infer a relation from concrete shapes, C, pi, grid, or frontend rounding, and never replace an authored relation with the current valuation. A pi.program_axes item is the sole authority that maps one J domain_ref to physical program axis 0, 1, or 2. Preserve it exactly across repeated instances and never derive, reorder, or add axes from source spelling, declaration order, shapes, grid extents, C, or frontend conventions. A pi.participant_mappings item is the sole authority for cyclic physical participant projection. Resolve domain_instance to its exact J boundary one-axis zero-based domain and obtain the logical period only from its positive literal or declared x* upper extent; axis selects the public participant coordinate and extent_slot selects only the matching anonymous external launch extent. projection=cyclic denotes physical coordinate modulo the J-owned domain extent without carrying a Source formula or target spelling. Never infer it from a reduction, shape, C value, block size, frontend convention, or instance multiplicity. A boundary access with no predicate is unconditional: never derive a redundant mask from domains, grid extents, C, or defensive safety. Treat each J effect_if as effect control, not a value expression. Ordinarily emit one real runtime if with explicit positive and negative arms in the authored polarity, keep every arm-local operation/effect in authored order, and spell an authored empty arm explicitly. If and only if one pi.terminal_controls item names the two realize instances anchored to that effect_if's sibling arm scopes, emit the named terminal arm as one runtime if ending in a bare return and emit the named continuation arm immediately after it without an else; negate the condition exactly when the negative arm is terminal. The relation supplies only arm topology: never guess, copy, or change the J predicate, polarity, arm operations, or effects. Never lower effect_if to tl.where/select or execute either arm unconditionally under a mask. Treat each J value_if as pure value control, distinct from effect_if and select: emit one real runtime if with explicit polarity-preserving arms; each arm may use pure local temporaries but must finally assign its J yield to the same merge local. Never lower value_if to tl.where/select, effect_if, predicated unconditional computation, or compile-time control. For every pi.iterations rounded_extent_step relation, resolve its loop_instance to the J loop trip extent and tile_instance to the matching C slot; use lower 0, step equal to that C tile, and upper exactly ceil_div(trip extent, C tile) * C tile. Do not infer a bound from current shapes/values or invent another rounding formula. For every pi.route_extent_transforms item, resolve source to its anonymous required positive-integer C slot and apply the declared floor/ceil division by the literal divisor only at the named existing route target slot. This is a representation extent partition: do not turn it into J shape/domain/predicate semantics, apply it to another C use, or infer another transform. For every pi.physical_iterations relation, keep J's operation or boundary traversal logical while materializing the explicit physical loop from its same-subject C-attached axis, induction_basis, and direction. Preserve every pi.physical_loop_carriers init/state/next/result temporal stage; neither relation authorizes a new semantic operator or formula. Preserve same-region physical_loop_carriers declaration order as the shared carrier-tuple ordinal across init/state/next/result; do not sort it or treat it as event order. Do not output analysis, patches, placeholders, helper prose or markdown. Use only public frontend APIs and the canonical opaque handles in J.signature/MaskC(C). Pi graph reference contract: Pi has exactly two reference roles. instances[k].semantic_ref is an anchor into a declared anonymous J/C handle; J.signature handles are ordinary J handles and there is no interface namespace. It is not a pi graph node. instances[k].id declares the only pi graph-node namespace i0,i1,... in declaration order. Every routes source/target, order before/after, and sharing source/consumer must equal one already declared instance id i*. Edges never use raw t*/n*/a*/d*/e*/q*/b*/s*/v*/p*/c*/x* handles and never declare instances implicitly. To represent a p0 dependency on access a0, declare i0 anchored by p0 and i1 anchored by a0, then route i0 to i1; routing p0 to i1 is invalid. Multiple instances may share one semantic_ref when the source has multiple compiler-visible stages. Route slots are distinct, non-negative, target-local opaque input ordinals. An instance region is exact lexical realization scope, not an optimization hint or consumer membership. Replay emits every compiler-visible stage inside that exact region: a loop-region instance stays lexically inside its loop even when its operands are loop invariant, and a parent-region instance stays outside. Replay never hoists, sinks, clones, or folds a stage across a region boundary. program_axes binds each distinct J-domain program coordinate to one physical launch axis 0, 1, or 2. It is authored by Lift from the compiler-visible Source realization, is unique by both domain_ref and axis, and carries no grid extent, Source spelling, or frontend API. Repeated coordinate instances anchored to the same d* use that same bound axis. route_extent_transforms qualifies one existing route slot: a required positive-integer C extent reaches its attached J domain as floor_div/ceil_div by a literal divisor greater than one. It is representation-only and creates no J fact or Source/API spelling. Each participant_mappings entry has exactly domain_instance, axis, extent_slot, and projection=cyclic. domain_instance is one realize instance anchored to a one-axis zero-based J boundary domain on a lane/address path; that domain's upper extent is a positive literal or declared J x*; axis is a public physical participant axis; extent_slot is the matching anonymous external launch extent in C. Its closed denotation is the physical participant coordinate projected cyclically into the exact logical domain extent owned by J. It carries neither that extent nor a modulo expression, Source spelling, frontend API, target recipe, or C value. Each iterations entry relates one loop region to one instance anchored by its J loop and one instance anchored by the matching C tile slot. Its closed induction_basis records only whether the physical induction variable is measured in logical extent units, rounded extent units, or tile ordinals. The global source-neutral denotation is closed: extent_step means lower zero, upper equal to the J loop trip extent, and step equal to the matching C tile; rounded_extent_step means lower zero, upper equal to ceil_div(J loop trip extent, matching C tile) multiplied by that C tile, and step equal to the matching C tile; tile_ordinal means lower zero, upper equal to ceil_div of that J trip extent by that matching C tile, and unit step. Every frontend maps this same relation to its public constructs. The wire entry never carries a bound expression, value, operator, source fragment, or frontend API. Each declaration-ordered loop_carriers entry has exactly region, loop_instance, init, state, next, and result instance refs. Its global temporal denotation is state[0]=init, state[k+1]=next[k], result=state[T], including T=0. The temporal next-to-state edge and loop-exit result edge are not ordinary DAG routes and never carry an expression or frontend spelling. Each physical_iterations entry has exactly region, body_instance, tile_instance, induction_basis, and direction. body_instance anchors an existing non-loop J reduce/contraction or boundary access/domain with a closed dependent axis; tile_instance anchors one required positive C tile attached to that same semantic subject and axis. forward uses the corresponding zero-origin basis order; reverse visits that same closed basis in descending order. It never adds a J loop or carries bounds/formulas. Each physical_loop_carriers entry has exactly region, init, state, next, and result, with the same temporal denotation as loop_carriers, but its region is indexed by one physical_iterations relation rather than a structured J loop. For all physical_loop_carriers entries sharing one region, declaration order is the common carrier-tuple ordinal across init/state/next/result and must be preserved by Replay. It is not event execution order and does not replace explicit pi.order edges. terminal_controls has exactly terminal_instance and continuation_instance: distinct realize instances on sibling J effect_if arm scopes. It names which arm terminates and which continues; it carries no predicate, polarity, return, Source spelling, or API. Each reduction_linearization refinement has null auth_ref and refines one realize instance whose sole slot-0 route enters a J reduce realize instance. It denotes full-axis linearization before that consumer without carrying an axis, operator, value, or frontend API. An identity_materialization with one outgoing slot-0 route into a J reduce synchronize is a distinct pre-collective realize stage. It requires one explicit combine of the J-owned reducer identity with the incoming carrier before that synchronize; pi carries neither reducer, identity value, dtype, Source spelling, nor frontend API. Pi mechanism contract: Pi mechanism is one closed source-neutral event class. realize is a generic representation-only stage when no more specific class applies. One realize instance anchored directly to a J.signature handle or C slot may be discharged by that parameter binding and its direct routed use; it does not require an identity assignment. Multiple instances anchored to the same handle still denote distinct routed use-sites/stages. address_base is an independently compiler-visible, program-uniform pointer/base or integer base-address contribution before lane merge; Lift uses it only when that separate source stage exists. address_lane is the compiler-visible stage that forms the lane-varying contribution or final address. When routes contain address_base -> address_lane, Replay must materialize two distinct stages in that order and must not algebraically fold them into one flat vector offset. Pointer-operation count is determined only by source-neutral carrier routing and the carrier kind declared in J.signature. If a pointer/tensor carrier directly enters address_base, that base is a pointer/address operation and its route to address_lane requires a second pointer/address operation for the lane contribution. If the pointer/tensor carrier bypasses address_base and enters address_lane or the final address stage, while address_base receives only integer, domain, or C contributions, Replay merges the integer base and lane contributions before exactly one pointer/address operation. The address_base -> address_lane edge alone never decides between these cases. transfer_direct and transfer_async classify data movement after address formation; update_atomic and update_privatized classify physical update realization; synchronize classifies synchronization. Region placement='program' only scopes an instance to one program; it does not assert that a program/grid coordinate is read. A compiler-visible program/grid coordinate is a separate realization stage and requires its own realize instance and routes. Its source-neutral encoding is a realize instance anchored to the corresponding J domain in a program region whose scalar dependency path enters address_base before transfer; a domain/C dependency path entering address_lane is lane-varying instead. Replay must preserve this base-versus-lane distinction and U_f maps it to public frontend APIs. Program-axis identity follows the closed pi.program_axes binding of the J domain semantic_ref, not instance multiplicity: repeated program-coordinate instances on one d* remain distinct stages of the same bound axis. Replay must not infer an axis from declaration order, grid extent, instance multiplicity, or C. Integer coordinate arithmetic is a realize stage; address_base and address_lane classify where its program-uniform and lane-varying paths enter address formation rather than relabeling every arithmetic op. If Source visibly forms a separable program-uniform integer base and a lane offset, then merges them before its first pointer application, the program path still enters address_base and routes to address_lane while the pointer carrier bypasses address_base. Replay preserves both integer stages and uses one pointer/address operation at the lane/final stage. Only a Source with no separable program-uniform contribution uses a lone address_lane stage. Replay must not invent program_id, a grid offset, or an affine address stage from region placement, grid convention, or C alone. Address classes never carry an index/offset formula, constant, integer width, cast, dtype, shape, vector length, predicate, fill, frontend API, or logical access semantics. Return CUDA C++ source only.\n",
+            "command": "/bin/bash -c \"rg -n -C 4 \\\"CUDA|__reduce|shuffle|shfl|collective|intrinsic|activemask\\\" input/REPLAY_CONTRACT.md input -g '*.md'\"",
+            "exit_code": 0,
+            "id": "item_10",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "id": "item_11",
+            "text": "The focused contract check exposed two exact topology requirements that the first draft had compressed: cyclic projection must be `threadIdx.x` modulo the J-owned extent 16, and the two `d0` instances must remain separate input/output coordinate stages. I’m also replacing the unsupported reduction intrinsic with a four-step width-16 shuffle collective, while making the integer input base, lane address, and output base visibly distinct as required by their routes.",
+            "type": "agent_message"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "changes": [
+              {
+                "kind": "update",
+                "path": "/workspace/output/replay.source"
+              }
+            ],
+            "id": "item_12",
+            "status": "in_progress",
+            "type": "file_change"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "changes": [
+              {
+                "kind": "update",
+                "path": "/workspace/output/replay.source"
+              }
+            ],
+            "id": "item_12",
+            "status": "completed",
+            "type": "file_change"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py replay_obligation_audit'",
+            "exit_code": null,
+            "id": "item_13",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py replay_obligation_audit'",
+            "exit_code": 0,
+            "id": "item_13",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "aggregated_output": "",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py submit_replay'",
+            "exit_code": null,
+            "id": "item_14",
+            "status": "in_progress",
+            "type": "command_execution"
+          },
+          "type": "item.started"
+        },
+        {
+          "item": {
+            "aggregated_output": "{\"authority\": \"diagnostic-only; no Replay source is generated or repaired\", \"compile\": {\"diagnostics\": [], \"protocol\": \"intentir.scrc.replay-check.v16\", \"status\": \"pass\"}, \"ingress\": {\"diagnostic_progress\": {\"authority\": \"mechanical episode-local observation only; it neither edits Replay nor changes ingress or Gate1 membership\", \"replay_source_changed_since_previous_check\": true, \"same_rule_path_streak\": 0}, \"diagnostics\": [], \"protocol\": \"intentir.scrc.replay-check.v16\", \"status\": \"pass\"}, \"phase\": \"compile\", \"protocol\": \"intentir.codex-cli.replay-submit.v1\", \"status\": \"pass\"}\n",
+            "command": "/bin/bash -c 'python .agents/intentir_agent_tool.py submit_replay'",
+            "exit_code": 0,
+            "id": "item_14",
+            "status": "completed",
+            "type": "command_execution"
+          },
+          "type": "item.completed"
+        },
+        {
+          "item": {
+            "id": "item_15",
+            "text": "Completed [replay.source](/workspace/output/replay.source). The required obligation audit passed, followed by successful transactional ingress and synthetic CUDA compile checks.",
+            "type": "agent_message"
+          },
+          "type": "item.completed"
+        },
+        {
+          "type": "turn.completed",
+          "usage": {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 168192,
+            "input_tokens": 203923,
+            "output_tokens": 4115,
+            "reasoning_output_tokens": 2427
+          }
+        }
+      ],
+      "model_segments": 6,
+      "protocol": "intentir.codex-cli.agent-runtime.v3",
+      "resumed": false,
+      "stderr": "Reading additional input from stdin...\n",
+      "thread_id": "019fb6a8-b420-7051-a7b0-bce4c90d1727",
+      "tool_actions": 10,
+      "usage": {
+        "cache_write_input_tokens": 0,
+        "cached_input_tokens": 168192,
+        "input_tokens": 203923,
+        "output_tokens": 4115,
+        "reasoning_output_tokens": 2427
+      }
+    }
+  ]
+}

@@ -1,0 +1,208 @@
+{
+  "authority": {
+    "excluded": [
+      "pi",
+      "C valuation",
+      "Source",
+      "Gate observation",
+      "frontend identity",
+      "target API",
+      "historical Replay"
+    ],
+    "semantic_input": "exact J only"
+  },
+  "boundary": {
+    "access_guard_relations": [],
+    "accesses": [
+      {
+        "access_id": "a0",
+        "index_expression": "<masked>",
+        "kind": "<masked>",
+        "node_ref": "n0",
+        "tensor": "t0"
+      },
+      {
+        "access_id": "a1",
+        "index_expression": "<masked>",
+        "kind": "<masked>",
+        "node_ref": "n0",
+        "tensor": "t1"
+      }
+    ],
+    "aliases": [],
+    "broadcasts": [],
+    "consumer_extensions": [],
+    "domains": {
+      "d0": "<masked>",
+      "d1": "<masked>"
+    },
+    "effects": [
+      {
+        "access_ref": "a0",
+        "effect_id": "e0",
+        "kind": "<masked>",
+        "node_ref": "n0",
+        "target": "t0"
+      },
+      {
+        "access_ref": "a1",
+        "effect_id": "e1",
+        "kind": "<masked>",
+        "node_ref": "n0",
+        "target": "t1"
+      }
+    ],
+    "index_bounds": [],
+    "output_mappings": [],
+    "realization_authorizations": [],
+    "reductions": [
+      {
+        "identity": "<masked>",
+        "node_ref": "n0",
+        "tile_axis": "<masked>"
+      }
+    ],
+    "result_relations": [
+      {
+        "kind": "<masked>",
+        "output": "t1"
+      }
+    ],
+    "updates": []
+  },
+  "dataflow": [],
+  "dimension_constraints": [
+    "<masked>"
+  ],
+  "dimension_relations": [],
+  "dimensions": [
+    {
+      "kind": "symbolic",
+      "ref": "x0"
+    }
+  ],
+  "function": {
+    "inputs": [
+      {
+        "dtype": "<masked>",
+        "name": "t0",
+        "shape": [
+          "<masked>",
+          "<masked>"
+        ]
+      }
+    ],
+    "name": "scrc_k0",
+    "outputs": [
+      {
+        "dtype": "<masked>",
+        "name": "t1",
+        "shape": [
+          "<masked>"
+        ],
+        "value_ref": "t1"
+      }
+    ],
+    "signature": {
+      "parameters": [
+        {
+          "dtype": "f32",
+          "kind": "tensor",
+          "logical_ref": "t0",
+          "mode": "input",
+          "name": "p0",
+          "rank": 2
+        },
+        {
+          "dtype": "f32",
+          "kind": "tensor",
+          "logical_ref": "t1",
+          "mode": "output",
+          "name": "p1",
+          "rank": 1
+        },
+        {
+          "dtype": "i32",
+          "kind": "scalar",
+          "logical_ref": "x0",
+          "mode": "value",
+          "name": "p2",
+          "rank": 0
+        }
+      ]
+    }
+  },
+  "j_handle": "scrc_k0",
+  "materializer": "intentir.replay.semantic-materializer.v1",
+  "mode": "masked",
+  "operations": [
+    {
+      "attrs": {},
+      "child_regions": [],
+      "node_ref": "n0",
+      "op": "<masked>",
+      "operands": [],
+      "ordinal": 0,
+      "path": "body[0]",
+      "region": "function",
+      "result_type": null,
+      "results": [
+        "n0"
+      ],
+      "semantic_fields": {}
+    }
+  ],
+  "parameterized": true,
+  "regions": [
+    {
+      "id": "function",
+      "kind": "function",
+      "operations": [
+        "n0"
+      ],
+      "owner": "scrc_k0",
+      "parent": null
+    }
+  ],
+  "schema": "intentir.replay.semantic-program.v1",
+  "scopes": [
+    {
+      "captures": [],
+      "definitions": [
+        "t0",
+        "t1"
+      ],
+      "effects": [
+        "e0",
+        "e1"
+      ],
+      "kind": "<masked>",
+      "parent_scope": null,
+      "scope_id": "q0"
+    }
+  ],
+  "storage": [],
+  "value_dimension_relations": [],
+  "values": [
+    {
+      "definition": null,
+      "ref": "t0",
+      "role": "input",
+      "type": {
+        "dtype": "<masked>",
+        "shape": [
+          "<masked>",
+          "<masked>"
+        ]
+      },
+      "uses": []
+    },
+    {
+      "definition": "n0",
+      "ref": "n0",
+      "role": "operation_result",
+      "type": null,
+      "uses": []
+    }
+  ]
+}

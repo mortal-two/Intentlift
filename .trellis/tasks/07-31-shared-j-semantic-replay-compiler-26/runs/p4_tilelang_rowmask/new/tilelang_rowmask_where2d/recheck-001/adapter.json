@@ -1,0 +1,32 @@
+{
+  "block": [
+    64,
+    1,
+    1
+  ],
+  "case_id": "tilelang:rowmask_where2d",
+  "cuda_arch": "sm_120",
+  "descriptor_sha256": "f77b415aea6b424187599844fd005096f0baa698ba7a54ab8349197892fe2291",
+  "dimensions": {
+    "M": 16
+  },
+  "factory_kwargs": {
+    "n": 64,
+    "threads": 128
+  },
+  "frontend": "tilelang",
+  "grid": [
+    16,
+    1,
+    1
+  ],
+  "grid_contract": [
+    "M",
+    "1",
+    "1"
+  ],
+  "protocol": "intentir.scrc.frontend-dataset-harness.v3",
+  "scalar_values": {},
+  "seed": 282771488,
+  "source_sha256": "7d5e413869e6907e3509c30cc16a9552db7e9cc07f94caaf5cc46bbf5025d4df"
+}

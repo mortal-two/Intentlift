@@ -145,6 +145,7 @@ def _new_replay_writer(
     effort: str | None,
     frontend: Frontend = Frontend.TRITON,
     composer_mode: str = "off",
+    semantic_program_mode: str | None = None,
     stop_requested: Callable[[], int | None] | None = None,
 ) -> RecordedReplayWriter:
     """Create one writer for exactly one formal Gate1 round."""
@@ -163,16 +164,35 @@ def _new_replay_writer(
         return MiniSWEReplayWriter(**writer_kwargs)
     if replay_backend == "codex":
         writer_kwargs["composer_mode"] = composer_mode
+        writer_kwargs["semantic_program_mode"] = _resolved_semantic_program_mode(
+            replay_backend, semantic_program_mode
+        )
         return CodexCLIReplayWriter(**writer_kwargs)
     raise ValueError(f"unknown Replay backend: {replay_backend!r}")
 
 
 def _resolved_composer_mode(replay_backend: str, requested: str | None) -> str:
-    mode = requested or ("available" if replay_backend == "codex" else "off")
+    mode = requested or "off"
     if mode not in REPLAY_COMPOSER_MODES:
         raise ValueError("Replay composer mode must be off/available/preferred")
     if replay_backend != "codex" and mode != "off":
         raise ValueError("Replay composer is available only with the Codex backend")
+    return mode
+
+
+def _resolved_semantic_program_mode(
+    replay_backend: str,
+    requested: str | None,
+) -> str:
+    mode = requested or (
+        "required" if replay_backend in {"codex", "miniswe"} else "off"
+    )
+    if mode not in {"off", "required"}:
+        raise ValueError("Replay semantic-program mode must be off/required")
+    if replay_backend == "responses" and mode != "off":
+        raise ValueError("Responses Replay has no read-only S_J workspace mount")
+    if replay_backend == "miniswe" and mode != "required":
+        raise ValueError("MiniSWE Replay currently requires its fresh S_J mount")
     return mode
 
 
@@ -864,7 +884,7 @@ class WorkloadGate1Recheck:
     artifact_digest: str
     typecheck: TypeCheckReport
     gate1: Gate1ExecutionResult | None
-    replay_writer: RecordedReplayWriter | None
+    replay_writer: RecordedReplayEvidenceWriter | None
     protocol: str = GATE1_DIAGNOSTIC_RECHECK_PROTOCOL
     diagnostic_only: bool = True
 
@@ -896,8 +916,10 @@ def recheck_prepared_workload_gate1(
     effort: str | None = None,
     replay_backend: str = "responses",
     replay_composer_mode: str | None = None,
+    replay_semantic_program_mode: str | None = None,
+    run_masked_j: bool = False,
 ) -> WorkloadGate1Recheck:
-    """Re-run normal Gate1 for one fixed artifact without Lift or Gate2.
+    """Re-run Gate1 for one fixed artifact without Lift or Gate2.
 
     The input remains the ordinary ``Gate1Artifact``; this function creates no
     repair artifact or alternate certificate object.  Canonicalization and the
@@ -932,26 +954,47 @@ def recheck_prepared_workload_gate1(
         effort=effort,
         frontend=frontend,
         composer_mode=composer_mode,
+        semantic_program_mode=replay_semantic_program_mode,
+    )
+    masked_writer = (
+        _new_replay_writer(
+            replay_backend,
+            provider=provider,
+            effort=effort,
+            frontend=frontend,
+            composer_mode=composer_mode,
+            semantic_program_mode=replay_semantic_program_mode,
+        )
+        if run_masked_j
+        else None
+    )
+    writer_evidence: RecordedReplayEvidenceWriter = (
+        RecordedReplayWriterGroup((writer,), masked_writer)
+        if masked_writer is not None
+        else writer
     )
     gate1 = BoundGate1Adapter(
         _build_frontend_gate1_runner(
             frontend,
             compiler=_new_frontend_compiler(frontend),
             writer=writer,
-            masked_writer=None,
-            config=Gate1Config(run_masked_j=False),
+            masked_writer=masked_writer,
+            config=Gate1Config(run_masked_j=run_masked_j),
         )
     ).run(canonical, prepared.request)
     if gate1.artifact_digest != digest:
         raise RuntimeError("fixed-artifact Gate1 digest changed during recheck")
-    if gate1.masked_j is not None or gate1.masked_j_calls != 0:
-        raise RuntimeError("diagnostic Gate1 recheck must not run masked-J")
+    if run_masked_j:
+        if gate1.masked_j is None or gate1.masked_j_calls != 1:
+            raise RuntimeError("requested diagnostic Mask-J did not run exactly once")
+    elif gate1.masked_j is not None or gate1.masked_j_calls != 0:
+        raise RuntimeError("normal-only diagnostic Gate1 unexpectedly ran Mask-J")
     return WorkloadGate1Recheck(
         canonical,
         digest,
         checked,
         gate1,
-        writer,
+        writer_evidence,
     )
 
 
@@ -1404,6 +1447,8 @@ def initialize_workload_gate1_recheck_evidence(
     parent_evidence: str | Path,
     replay_backend: str = "responses",
     replay_composer_mode: str | None = None,
+    replay_semantic_program_mode: str | None = None,
+    run_masked_j: bool = False,
 ) -> None:
     """Initialize an immutable diagnostic recheck directory.
 
@@ -1420,6 +1465,9 @@ def initialize_workload_gate1_recheck_evidence(
         raise ValueError("Gate1 recheck evidence directory must be empty")
     composer_mode = _resolved_composer_mode(
         replay_backend, replay_composer_mode
+    )
+    semantic_program_mode = _resolved_semantic_program_mode(
+        replay_backend, replay_semantic_program_mode
     )
 
     (recheck_dir / "source.py").write_text(
@@ -1447,11 +1495,12 @@ def initialize_workload_gate1_recheck_evidence(
             "reasoning_effort": effort or provider.reasoning_effort,
             "replay_backend": replay_backend,
             "replay_composer_mode": composer_mode,
+            "replay_semantic_program_mode": semantic_program_mode,
             "frontend": prepared.entry.frontend,
             "observer_profile": prepared.entry.observer_profile,
             "c0": prepared.request.binding.values,
             "grid": list(prepared.adapter.grid),
-            "run_masked_j": False,
+            "run_masked_j": run_masked_j,
             "source_to_opaque": dict(prepared.source_to_opaque),
         },
     )
@@ -1652,13 +1701,26 @@ def save_workload_gate1_recheck(
     if result.gate1 is not None:
         _write_json(recheck_dir / "gate1.json", result.gate1.to_json())
 
-    records = (
-        tuple(result.replay_writer.records)
-        if result.replay_writer is not None
-        else ()
-    )
-    if len(records) > 1:
-        raise ValueError("normal-only Gate1 recheck produced multiple Replay records")
+    if isinstance(result.replay_writer, RecordedReplayWriterGroup):
+        records = tuple(
+            record
+            for writer in result.replay_writer.normal_writers
+            for record in writer.records
+        )
+        masked_records = (
+            tuple(result.replay_writer.masked_writer.records)
+            if result.replay_writer.masked_writer is not None
+            else ()
+        )
+    else:
+        records = (
+            tuple(result.replay_writer.records)
+            if result.replay_writer is not None
+            else ()
+        )
+        masked_records = ()
+    if len(records) > 1 or len(masked_records) > 1:
+        raise ValueError("fixed-artifact Gate1 recheck produced duplicate arm records")
     record: ReplayGeneration | ReplayAttempt | None = (
         records[0] if records else None
     )
@@ -1692,6 +1754,26 @@ def save_workload_gate1_recheck(
             },
         )
 
+    masked_record: ReplayGeneration | ReplayAttempt | None = (
+        masked_records[0] if masked_records else None
+    )
+    if masked_record is None and result.gate1 is not None and result.gate1.masked_j is not None:
+        masked_record = result.gate1.masked_j.generation
+    if isinstance(masked_record, ReplayGeneration):
+        _save_replay_record_evidence(
+            recheck_dir,
+            prefix="masked_j_replay",
+            exact_source_name="masked_j_replay.py",
+            record=masked_record,
+        )
+    elif isinstance(masked_record, ReplayAttempt):
+        _save_replay_record_evidence(
+            recheck_dir,
+            prefix="masked_j_replay",
+            exact_source_name="masked_j_replay_rejected.txt",
+            record=masked_record,
+        )
+
     status = (
         "typecheck_failed"
         if result.gate1 is None
@@ -1704,6 +1786,7 @@ def save_workload_gate1_recheck(
             "diagnostic_only": True,
             "enters_gate2": False,
             "changes_prior_verdict": False,
+            "run_masked_j": bool(request.get("run_masked_j")),
             "case_id": prepared.entry.case_id,
             "parent_evidence": request["parent_evidence"],
             "artifact_digest": result.artifact_digest,
@@ -1714,6 +1797,14 @@ def save_workload_gate1_recheck(
                 result.gate1.protocol if result.gate1 is not None else None
             ),
             "status": status,
+            "j_necessity_status": (
+                result.gate1.j_necessity_status.value
+                if result.gate1 is not None
+                else None
+            ),
+            "masked_j_calls": (
+                result.gate1.masked_j_calls if result.gate1 is not None else 0
+            ),
         },
     )
     (recheck_dir / "SUMMARY.md").write_text(
