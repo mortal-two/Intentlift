@@ -1,0 +1,31 @@
+{
+  "block": [
+    16,
+    1,
+    1
+  ],
+  "case_id": "cuda:tilelang_where2d",
+  "cuda_arch": "sm_120",
+  "descriptor_sha256": "7e3bd0c3438e3d85a400bdb7769f526778bf1820b535d93fb835f455dc6fa28e",
+  "dimensions": {
+    "M": 16
+  },
+  "factory_kwargs": {},
+  "frontend": "cuda",
+  "grid": [
+    16,
+    1,
+    1
+  ],
+  "grid_contract": [
+    "M",
+    "1",
+    "1"
+  ],
+  "protocol": "intentir.scrc.frontend-dataset-harness.v3",
+  "scalar_values": {
+    "M": 16
+  },
+  "seed": 1147994571,
+  "source_sha256": "2923448c53b3ae71fe9dcb7fa43086b847c20dd7b9ac731352cfb04cb017b5ba"
+}

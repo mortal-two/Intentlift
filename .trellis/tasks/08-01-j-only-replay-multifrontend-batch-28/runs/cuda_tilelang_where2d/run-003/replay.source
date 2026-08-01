@@ -1,0 +1,12 @@
+extern "C" __global__ void scrc_k0(const float* p0,
+                                    const float* p1,
+                                    float* p2,
+                                    int p3) {
+  const int v2 = static_cast<int>(blockIdx.x);
+  const int v3 = static_cast<int>(threadIdx.x);
+  const int index = v2 * 16 + v3;
+
+  const float t0_value = p0[index];
+  const float t1_value = p1[index];
+  p2[index] = (t1_value < t0_value) ? t0_value : t1_value;
+}

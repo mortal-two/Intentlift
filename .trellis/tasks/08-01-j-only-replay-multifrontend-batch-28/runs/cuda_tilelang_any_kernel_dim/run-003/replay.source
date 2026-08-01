@@ -1,0 +1,12 @@
+extern "C" __global__ void scrc_k0(const float* p0, signed char* p1, int p2) {
+    const int v4 = (int)blockIdx.x;
+    const int v5 = (int)threadIdx.x % 16;
+
+    float v0 = p0[v4 * 16 + v5];
+    v0 = fmaxf(v0, __shfl_xor_sync(0xffffffffu, v0, 8, 16));
+    v0 = fmaxf(v0, __shfl_xor_sync(0xffffffffu, v0, 4, 16));
+    v0 = fmaxf(v0, __shfl_xor_sync(0xffffffffu, v0, 2, 16));
+    v0 = fmaxf(v0, __shfl_xor_sync(0xffffffffu, v0, 1, 16));
+
+    p1[v4] = (signed char)(v0 != 0.0f);
+}

@@ -1,67 +1,15 @@
 {
   "accepted": [
-    "cuda:tilelang_add2d",
-    "cuda:tilelang_relu2d",
-    "cuda:tilelang_exp2d",
-    "tilelang:where2d",
-    "cuda:tilelang_add_bias2d",
-    "cuda:tilelang_clamp2d",
-    "tilelang:rowmask_where2d",
-    "cuda:tilelang_rowmask_where2d",
-    "tilelang:any_kernel_dim",
-    "tilelang:copy2d_divmod"
+    "tilelang:floor2d",
+    "cuda:tilelang_floor2d",
+    "cuda:tilelang_where2d",
+    "cuda:tilelang_copy2d_divmod"
   ],
-  "accepted_count": 10,
+  "accepted_count": 4,
   "gate2_workers": 1,
   "lift_agent_calls": 0,
   "protocol": "intentir.experiment.manual-batch-summary.v1",
   "results": [
-    {
-      "case": "cuda:tilelang_add2d",
-      "cohort_memberships": [
-        "g1_pointwise_selection",
-        "g5_indexing_layout_image"
-      ],
-      "frontend": "cuda",
-      "gate1": "replay_closed",
-      "gate1_elapsed_ms": 82818.97473335266,
-      "gate2": "gate2_pass",
-      "gate2_elapsed_ms": 3235.023021697998,
-      "gate2_passed": true,
-      "gate2_status_counts": {
-        "gate2_pass": 1
-      },
-      "lift_agent_calls": 0,
-      "pi_visible_to_replay": false,
-      "protocol": "intentir.experiment.manual-batch-j-only.v3",
-      "replay_provider_calls": 1,
-      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/cuda_tilelang_add2d/run-002",
-      "total_elapsed_ms": 86558.29524993896,
-      "typecheck": "pass"
-    },
-    {
-      "case": "cuda:tilelang_relu2d",
-      "cohort_memberships": [
-        "g1_pointwise_selection",
-        "g3_contraction_epilogue"
-      ],
-      "frontend": "cuda",
-      "gate1": "replay_closed",
-      "gate1_elapsed_ms": 101306.82373046875,
-      "gate2": "gate2_pass",
-      "gate2_elapsed_ms": 3280.332088470459,
-      "gate2_passed": true,
-      "gate2_status_counts": {
-        "gate2_pass": 1
-      },
-      "lift_agent_calls": 0,
-      "pi_visible_to_replay": false,
-      "protocol": "intentir.experiment.manual-batch-j-only.v3",
-      "replay_provider_calls": 1,
-      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/cuda_tilelang_relu2d/run-002",
-      "total_elapsed_ms": 105131.1616897583,
-      "typecheck": "pass"
-    },
     {
       "case": "tilelang:floor2d",
       "cohort_memberships": [
@@ -70,19 +18,19 @@
       ],
       "frontend": "tilelang",
       "gate1": "replay_closed",
-      "gate1_elapsed_ms": 121174.44610595703,
-      "gate2": "gate2_fail",
-      "gate2_elapsed_ms": 76.75409317016602,
-      "gate2_passed": false,
+      "gate1_elapsed_ms": 145071.7372894287,
+      "gate2": "gate2_pass",
+      "gate2_elapsed_ms": 478.8084030151367,
+      "gate2_passed": true,
       "gate2_status_counts": {
-        "execution_failed": 1
+        "gate2_pass": 1
       },
       "lift_agent_calls": 0,
       "pi_visible_to_replay": false,
       "protocol": "intentir.experiment.manual-batch-j-only.v3",
       "replay_provider_calls": 1,
-      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/tilelang_floor2d/run-002",
-      "total_elapsed_ms": 121856.24694824219,
+      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/tilelang_floor2d/run-003",
+      "total_elapsed_ms": 145967.3080444336,
       "typecheck": "pass"
     },
     {
@@ -93,32 +41,9 @@
       ],
       "frontend": "cuda",
       "gate1": "replay_closed",
-      "gate1_elapsed_ms": 75380.3460597992,
-      "gate2": "gate2_fail",
-      "gate2_elapsed_ms": 3384.3696117401123,
-      "gate2_passed": false,
-      "gate2_status_counts": {
-        "execution_failed": 1
-      },
-      "lift_agent_calls": 0,
-      "pi_visible_to_replay": false,
-      "protocol": "intentir.experiment.manual-batch-j-only.v3",
-      "replay_provider_calls": 1,
-      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/cuda_tilelang_floor2d/run-002",
-      "total_elapsed_ms": 79338.09304237366,
-      "typecheck": "pass"
-    },
-    {
-      "case": "cuda:tilelang_exp2d",
-      "cohort_memberships": [
-        "g1_pointwise_selection",
-        "g7_cross_feature_stress"
-      ],
-      "frontend": "cuda",
-      "gate1": "replay_closed",
-      "gate1_elapsed_ms": 88981.24122619629,
+      "gate1_elapsed_ms": 65132.13109970093,
       "gate2": "gate2_pass",
-      "gate2_elapsed_ms": 3274.705171585083,
+      "gate2_elapsed_ms": 3587.4669551849365,
       "gate2_passed": true,
       "gate2_status_counts": {
         "gate2_pass": 1
@@ -127,78 +52,8 @@
       "pi_visible_to_replay": false,
       "protocol": "intentir.experiment.manual-batch-j-only.v3",
       "replay_provider_calls": 1,
-      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/cuda_tilelang_exp2d/run-002",
-      "total_elapsed_ms": 92380.32245635986,
-      "typecheck": "pass"
-    },
-    {
-      "case": "tilelang:where2d",
-      "cohort_memberships": [
-        "g1_pointwise_selection",
-        "g3_contraction_epilogue",
-        "g5_indexing_layout_image"
-      ],
-      "frontend": "tilelang",
-      "gate1": "replay_closed",
-      "gate1_elapsed_ms": 197127.49218940735,
-      "gate2": "gate2_pass",
-      "gate2_elapsed_ms": 471.60911560058594,
-      "gate2_passed": true,
-      "gate2_status_counts": {
-        "gate2_pass": 1
-      },
-      "lift_agent_calls": 0,
-      "pi_visible_to_replay": false,
-      "protocol": "intentir.experiment.manual-batch-j-only.v3",
-      "replay_provider_calls": 1,
-      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/tilelang_where2d/run-002",
-      "total_elapsed_ms": 197735.520362854,
-      "typecheck": "pass"
-    },
-    {
-      "case": "cuda:tilelang_where2d",
-      "cohort_memberships": [
-        "g1_pointwise_selection",
-        "g3_contraction_epilogue",
-        "g5_indexing_layout_image"
-      ],
-      "frontend": "cuda",
-      "gate1": "no_closure",
-      "gate1_elapsed_ms": 79153.16200256348,
-      "gate2": null,
-      "gate2_elapsed_ms": 0.0,
-      "gate2_passed": null,
-      "gate2_status_counts": {},
-      "lift_agent_calls": 0,
-      "pi_visible_to_replay": false,
-      "protocol": "intentir.experiment.manual-batch-j-only.v3",
-      "replay_provider_calls": 1,
-      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/cuda_tilelang_where2d/run-002",
-      "total_elapsed_ms": 79273.52023124695,
-      "typecheck": "pass"
-    },
-    {
-      "case": "cuda:tilelang_add_bias2d",
-      "cohort_memberships": [
-        "g1_pointwise_selection",
-        "g3_contraction_epilogue",
-        "g5_indexing_layout_image"
-      ],
-      "frontend": "cuda",
-      "gate1": "replay_closed",
-      "gate1_elapsed_ms": 72706.04372024536,
-      "gate2": "gate2_pass",
-      "gate2_elapsed_ms": 3150.792121887207,
-      "gate2_passed": true,
-      "gate2_status_counts": {
-        "gate2_pass": 1
-      },
-      "lift_agent_calls": 0,
-      "pi_visible_to_replay": false,
-      "protocol": "intentir.experiment.manual-batch-j-only.v3",
-      "replay_provider_calls": 1,
-      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/cuda_tilelang_add_bias2d/run-002",
-      "total_elapsed_ms": 75976.33242607117,
+      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/cuda_tilelang_floor2d/run-003",
+      "total_elapsed_ms": 69068.1037902832,
       "typecheck": "pass"
     },
     {
@@ -209,7 +64,7 @@
       ],
       "frontend": "tilelang",
       "gate1": "no_closure",
-      "gate1_elapsed_ms": 186285.8955860138,
+      "gate1_elapsed_ms": 197080.20496368408,
       "gate2": null,
       "gate2_elapsed_ms": 0.0,
       "gate2_passed": null,
@@ -218,21 +73,22 @@
       "pi_visible_to_replay": false,
       "protocol": "intentir.experiment.manual-batch-j-only.v3",
       "replay_provider_calls": 1,
-      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/tilelang_clamp2d/run-002",
-      "total_elapsed_ms": 186431.05959892273,
+      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/tilelang_clamp2d/run-003",
+      "total_elapsed_ms": 197495.6226348877,
       "typecheck": "pass"
     },
     {
-      "case": "cuda:tilelang_clamp2d",
+      "case": "cuda:tilelang_where2d",
       "cohort_memberships": [
         "g1_pointwise_selection",
+        "g3_contraction_epilogue",
         "g5_indexing_layout_image"
       ],
       "frontend": "cuda",
       "gate1": "replay_closed",
-      "gate1_elapsed_ms": 112919.1083908081,
+      "gate1_elapsed_ms": 68692.07239151001,
       "gate2": "gate2_pass",
-      "gate2_elapsed_ms": 2946.247339248657,
+      "gate2_elapsed_ms": 2956.371068954468,
       "gate2_passed": true,
       "gate2_status_counts": {
         "gate2_pass": 1
@@ -241,80 +97,8 @@
       "pi_visible_to_replay": false,
       "protocol": "intentir.experiment.manual-batch-j-only.v3",
       "replay_provider_calls": 1,
-      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/cuda_tilelang_clamp2d/run-002",
-      "total_elapsed_ms": 115999.835729599,
-      "typecheck": "pass"
-    },
-    {
-      "case": "tilelang:rowmask_where2d",
-      "cohort_memberships": [
-        "g1_pointwise_selection",
-        "g4_attention_masking",
-        "g5_indexing_layout_image"
-      ],
-      "frontend": "tilelang",
-      "gate1": "replay_closed",
-      "gate1_elapsed_ms": 124973.68454933167,
-      "gate2": "gate2_pass",
-      "gate2_elapsed_ms": 456.2642574310303,
-      "gate2_passed": true,
-      "gate2_status_counts": {
-        "gate2_pass": 1
-      },
-      "lift_agent_calls": 0,
-      "pi_visible_to_replay": false,
-      "protocol": "intentir.experiment.manual-batch-j-only.v3",
-      "replay_provider_calls": 1,
-      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/tilelang_rowmask_where2d/run-002",
-      "total_elapsed_ms": 125555.75108528137,
-      "typecheck": "pass"
-    },
-    {
-      "case": "cuda:tilelang_rowmask_where2d",
-      "cohort_memberships": [
-        "g1_pointwise_selection",
-        "g4_attention_masking",
-        "g5_indexing_layout_image"
-      ],
-      "frontend": "cuda",
-      "gate1": "replay_closed",
-      "gate1_elapsed_ms": 117294.87180709839,
-      "gate2": "gate2_pass",
-      "gate2_elapsed_ms": 3713.495969772339,
-      "gate2_passed": true,
-      "gate2_status_counts": {
-        "gate2_pass": 1
-      },
-      "lift_agent_calls": 0,
-      "pi_visible_to_replay": false,
-      "protocol": "intentir.experiment.manual-batch-j-only.v3",
-      "replay_provider_calls": 1,
-      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/cuda_tilelang_rowmask_where2d/run-002",
-      "total_elapsed_ms": 121131.17098808289,
-      "typecheck": "pass"
-    },
-    {
-      "case": "tilelang:any_kernel_dim",
-      "cohort_memberships": [
-        "g1_pointwise_selection",
-        "g4_attention_masking",
-        "g5_indexing_layout_image"
-      ],
-      "frontend": "tilelang",
-      "gate1": "replay_closed",
-      "gate1_elapsed_ms": 171620.12457847595,
-      "gate2": "gate2_pass",
-      "gate2_elapsed_ms": 476.0017395019531,
-      "gate2_passed": true,
-      "gate2_status_counts": {
-        "gate2_pass": 1
-      },
-      "lift_agent_calls": 0,
-      "pi_visible_to_replay": false,
-      "protocol": "intentir.experiment.manual-batch-j-only.v3",
-      "replay_provider_calls": 1,
-      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/tilelang_any_kernel_dim/run-002",
-      "total_elapsed_ms": 172250.4518032074,
+      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/cuda_tilelang_where2d/run-003",
+      "total_elapsed_ms": 71770.59841156006,
       "typecheck": "pass"
     },
     {
@@ -326,7 +110,7 @@
       ],
       "frontend": "cuda",
       "gate1": "no_closure",
-      "gate1_elapsed_ms": 94986.25111579895,
+      "gate1_elapsed_ms": 128334.80834960938,
       "gate2": null,
       "gate2_elapsed_ms": 0.0,
       "gate2_passed": null,
@@ -335,32 +119,8 @@
       "pi_visible_to_replay": false,
       "protocol": "intentir.experiment.manual-batch-j-only.v3",
       "replay_provider_calls": 1,
-      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/cuda_tilelang_any_kernel_dim/run-002",
-      "total_elapsed_ms": 95106.95004463196,
-      "typecheck": "pass"
-    },
-    {
-      "case": "tilelang:copy2d_divmod",
-      "cohort_memberships": [
-        "g1_pointwise_selection",
-        "g3_contraction_epilogue",
-        "g5_indexing_layout_image"
-      ],
-      "frontend": "tilelang",
-      "gate1": "replay_closed",
-      "gate1_elapsed_ms": 114040.05527496338,
-      "gate2": "gate2_pass",
-      "gate2_elapsed_ms": 699.4683742523193,
-      "gate2_passed": true,
-      "gate2_status_counts": {
-        "gate2_pass": 1
-      },
-      "lift_agent_calls": 0,
-      "pi_visible_to_replay": false,
-      "protocol": "intentir.experiment.manual-batch-j-only.v3",
-      "replay_provider_calls": 1,
-      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/tilelang_copy2d_divmod/run-002",
-      "total_elapsed_ms": 114863.29650878906,
+      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/cuda_tilelang_any_kernel_dim/run-003",
+      "total_elapsed_ms": 128448.33207130432,
       "typecheck": "pass"
     },
     {
@@ -371,38 +131,30 @@
         "g5_indexing_layout_image"
       ],
       "frontend": "cuda",
-      "gate1": "no_closure",
-      "gate1_elapsed_ms": 88428.36904525757,
-      "gate2": null,
-      "gate2_elapsed_ms": 0.0,
-      "gate2_passed": null,
-      "gate2_status_counts": {},
+      "gate1": "replay_closed",
+      "gate1_elapsed_ms": 158240.92364311218,
+      "gate2": "gate2_pass",
+      "gate2_elapsed_ms": 3861.980438232422,
+      "gate2_passed": true,
+      "gate2_status_counts": {
+        "gate2_pass": 1
+      },
       "lift_agent_calls": 0,
       "pi_visible_to_replay": false,
       "protocol": "intentir.experiment.manual-batch-j-only.v3",
       "replay_provider_calls": 1,
-      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/cuda_tilelang_copy2d_divmod/run-002",
-      "total_elapsed_ms": 88548.70796203613,
+      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/cuda_tilelang_copy2d_divmod/run-003",
+      "total_elapsed_ms": 162210.94346046448,
       "typecheck": "pass"
     }
   ],
   "selected": [
-    "cuda:tilelang_add2d",
-    "cuda:tilelang_relu2d",
     "tilelang:floor2d",
     "cuda:tilelang_floor2d",
-    "cuda:tilelang_exp2d",
-    "tilelang:where2d",
-    "cuda:tilelang_where2d",
-    "cuda:tilelang_add_bias2d",
     "tilelang:clamp2d",
-    "cuda:tilelang_clamp2d",
-    "tilelang:rowmask_where2d",
-    "cuda:tilelang_rowmask_where2d",
-    "tilelang:any_kernel_dim",
+    "cuda:tilelang_where2d",
     "cuda:tilelang_any_kernel_dim",
-    "tilelang:copy2d_divmod",
     "cuda:tilelang_copy2d_divmod"
   ],
-  "workers": 4
+  "workers": 3
 }

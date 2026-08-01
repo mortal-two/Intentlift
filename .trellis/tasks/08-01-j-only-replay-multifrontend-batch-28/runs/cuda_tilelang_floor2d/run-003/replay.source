@@ -1,0 +1,4 @@
+extern "C" __global__ void scrc_k0(const float* p0, float* p1, int p2) {
+    int offset = static_cast<int>(blockIdx.x) * 16 + static_cast<int>(threadIdx.x);
+    p1[offset] = floorf(p0[offset]);
+}

@@ -1,0 +1,9 @@
+extern "C" __global__ void scrc_k0(const float* p0, float* p1, int p2) {
+    if (threadIdx.x / 16 == 0) {
+        const unsigned int v1 = blockIdx.x;
+        const unsigned int v2 = threadIdx.x % 16;
+        const unsigned long long offset =
+            static_cast<unsigned long long>(v1) * 16 + v2;
+        p1[offset] = p0[offset];
+    }
+}
