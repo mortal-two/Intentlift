@@ -1,0 +1,33 @@
+{
+  "block": [
+    128,
+    1,
+    1
+  ],
+  "case_id": "tilelang:copy2d_divmod",
+  "cuda_arch": "sm_120",
+  "descriptor_sha256": "5ec8abf77c5a02b42a9c4c96f5c047a45ca96c81c3718fe376dfb0c82da6254c",
+  "dimensions": {
+    "M": 16
+  },
+  "factory_kwargs": {
+    "block_n": 16,
+    "n": 16,
+    "threads": 128
+  },
+  "frontend": "tilelang",
+  "grid": [
+    16,
+    1,
+    1
+  ],
+  "grid_contract": [
+    "M",
+    "1",
+    "1"
+  ],
+  "protocol": "intentir.scrc.frontend-dataset-harness.v3",
+  "scalar_values": {},
+  "seed": 1708207909,
+  "source_sha256": "bbcc02d55ffdebc9e6c9770bf5d2ba3f0ec80f447375fa8e80e945a7552fcd84"
+}

@@ -1,0 +1,16 @@
+{
+  "artifact_author": "primary Codex agent",
+  "case": "cuda:tilelang_exp2d",
+  "cohort_memberships": [
+    "g1_pointwise_selection",
+    "g7_cross_feature_stress"
+  ],
+  "effort": "xhigh",
+  "frontend": "cuda",
+  "lift_agent_calls": 0,
+  "model": "gpt-5.6-sol",
+  "provider": "gpt-5.6-sol",
+  "replay_backend": "codex",
+  "replay_composer_mode": "off",
+  "run_masked_j": false
+}

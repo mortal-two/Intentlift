@@ -1,0 +1,21 @@
+extern "C" __global__ void scrc_k0(const float* p0, signed char* p1, int p2) {
+    __shared__ float reduction_values[16];
+
+    const unsigned int row = blockIdx.x;
+    const unsigned int lane = threadIdx.x;
+
+    reduction_values[lane] = p0[row * 16u + lane];
+    __syncthreads();
+
+    for (unsigned int stride = 8u; stride != 0u; stride >>= 1u) {
+        if (lane < stride) {
+            reduction_values[lane] =
+                fmaxf(reduction_values[lane], reduction_values[lane + stride]);
+        }
+        __syncthreads();
+    }
+
+    if (lane == 0u) {
+        p1[row] = static_cast<signed char>(reduction_values[0] != 0.0f);
+    }
+}

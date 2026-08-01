@@ -1,0 +1,8 @@
+extern "C" __global__ void scrc_k0(float* p0, float* p1, float* p2, int p3) {
+  int v2 = (int)blockIdx.x;
+  int v3 = (int)threadIdx.x;
+  int index = v2 * 16 + v3;
+  float t0_value = p0[index];
+  float t1_value = p1[index];
+  p2[index] = t0_value > t1_value ? t0_value : t1_value;
+}

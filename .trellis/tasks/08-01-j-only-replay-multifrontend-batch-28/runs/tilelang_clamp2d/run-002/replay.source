@@ -1,0 +1,19 @@
+import tilelang.language as T
+
+X0 = T.dynamic("x0")
+
+
+@T.prim_func
+def scrc_k0(
+    p0: T.Tensor((X0, 16), "float32"),
+    p1: T.Tensor((1,), "float32"),
+    p2: T.Tensor((1,), "float32"),
+    p3: T.Tensor((X0, 16), "float32"),
+):
+    with T.Kernel(X0, threads=c0) as v2:
+        p1_value = p1[0]
+        p2_value = p2[0]
+        for v3 in T.Parallel(16):
+            p0_value = p0[v2, v3]
+            max_value = T.max(p0_value, p1_value)
+            p3[v2, v3] = T.min(max_value, p2_value)

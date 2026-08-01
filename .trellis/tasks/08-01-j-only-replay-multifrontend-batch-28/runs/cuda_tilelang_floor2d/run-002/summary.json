@@ -1,0 +1,23 @@
+{
+  "case": "cuda:tilelang_floor2d",
+  "cohort_memberships": [
+    "g1_pointwise_selection",
+    "g7_cross_feature_stress"
+  ],
+  "frontend": "cuda",
+  "gate1": "replay_closed",
+  "gate1_elapsed_ms": 75380.3460597992,
+  "gate2": "gate2_fail",
+  "gate2_elapsed_ms": 3384.3696117401123,
+  "gate2_passed": false,
+  "gate2_status_counts": {
+    "execution_failed": 1
+  },
+  "lift_agent_calls": 0,
+  "pi_visible_to_replay": false,
+  "protocol": "intentir.experiment.manual-batch-j-only.v3",
+  "replay_provider_calls": 1,
+  "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/cuda_tilelang_floor2d/run-002",
+  "total_elapsed_ms": 79338.09304237366,
+  "typecheck": "pass"
+}

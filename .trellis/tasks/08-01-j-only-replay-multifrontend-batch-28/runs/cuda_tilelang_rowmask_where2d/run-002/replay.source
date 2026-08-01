@@ -1,0 +1,12 @@
+extern "C" __global__ void scrc_k0(const float* p0,
+                                    float* p1,
+                                    const signed char* p2,
+                                    int p3) {
+  const unsigned long long v3 =
+      static_cast<unsigned long long>(blockIdx.x);
+  const unsigned long long v4 =
+      static_cast<unsigned long long>(threadIdx.x);
+  const unsigned long long offset = v3 * 64ULL + v4;
+
+  p1[offset] = p0[offset] * static_cast<float>(static_cast<bool>(p2[v3]));
+}

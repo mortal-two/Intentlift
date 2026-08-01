@@ -1,0 +1,142 @@
+{
+  "c0": {
+    "c0": 16
+  },
+  "cases": [
+    {
+      "case_id": "finite-hidden-1",
+      "input_digest": "6713efc03d317ba36c6ef4530d21e3b7fdf9825f6752fd00d6d5e2d23e30951e",
+      "metadata": {
+        "adapter_protocol": "intentir.scrc.frontend-dataset-harness.v3",
+        "comparison_policy": {
+          "policy_id": "intentir.gate2.default.v1",
+          "protocol": "intentir.scrc.gate2-q.v1",
+          "tolerances": {
+            "bf16": {
+              "atol": 0.002,
+              "equal_nan": false,
+              "rtol": 0.02
+            },
+            "f16": {
+              "atol": 0.001,
+              "equal_nan": false,
+              "rtol": 0.01
+            },
+            "f32": {
+              "atol": 1e-06,
+              "equal_nan": false,
+              "rtol": 1e-05
+            },
+            "f64": {
+              "atol": 1e-12,
+              "equal_nan": false,
+              "rtol": 1e-12
+            }
+          }
+        },
+        "frontend": "tilelang",
+        "protocol": "source_replay_j_three_edges_q_v5",
+        "test_mode": "finite_hidden_after_gate1"
+      },
+      "reference": {
+        "error": "RuntimeError: intent-opt failed: <stdin>:4:13: error: 'intent.map_unary' op unknown fn 'floor'\n    %t1_1 = intent.map_unary %t0 {fn = \"floor\"} : (tensor<16x16xf32>) -> tensor<16x16xf32>\n            ^\n<stdin>:4:13: note: see current operation: %0 = \"intent.map_unary\"(%arg0) <{fn = \"floor\"}> : (tensor<16x16xf32>) -> tensor<16x16xf32>",
+        "leg": "j",
+        "metadata": {},
+        "ok": false,
+        "outputs": {},
+        "unsupported": false
+      },
+      "replay": {
+        "error": "",
+        "leg": "replay",
+        "metadata": {
+          "adapter_protocol": "intentir.scrc.frontend-dataset-harness.v3",
+          "block": [
+            16,
+            1,
+            1
+          ],
+          "dataset_case_id": "tilelang:floor2d",
+          "frontend": "tilelang",
+          "grid": [
+            16,
+            1,
+            1
+          ]
+        },
+        "ok": true,
+        "outputs": {
+          "output_p1": {
+            "dtype": "float32",
+            "shape": [
+              16,
+              16
+            ]
+          }
+        },
+        "unsupported": false
+      },
+      "replay_j": null,
+      "source": {
+        "error": "",
+        "leg": "source",
+        "metadata": {
+          "adapter_protocol": "intentir.scrc.frontend-dataset-harness.v3",
+          "block": [
+            16,
+            1,
+            1
+          ],
+          "dataset_case_id": "tilelang:floor2d",
+          "frontend": "tilelang",
+          "grid": [
+            16,
+            1,
+            1
+          ]
+        },
+        "ok": true,
+        "outputs": {
+          "output_p1": {
+            "dtype": "float32",
+            "shape": [
+              16,
+              16
+            ]
+          }
+        },
+        "unsupported": false
+      },
+      "source_j": null,
+      "source_replay": {
+        "left": "source",
+        "outputs": [
+          {
+            "atol": 1e-06,
+            "detail": "",
+            "equal_nan": false,
+            "equality_required": true,
+            "max_abs_error": 0.0,
+            "output": "output_p1",
+            "passed": true,
+            "policy_id": "intentir.gate2.default.v1",
+            "relation_kind": "tolerance",
+            "rtol": 1e-05
+          }
+        ],
+        "passed": true,
+        "policy_id": "intentir.gate2.default.v1",
+        "right": "replay"
+      },
+      "status": "execution_failed"
+    }
+  ],
+  "failed_case_ids": [
+    "finite-hidden-1"
+  ],
+  "passed": false,
+  "status_counts": {
+    "execution_failed": 1
+  },
+  "suite_id": "tilelang:floor2d"
+}

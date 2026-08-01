@@ -1,0 +1,6 @@
+extern "C" __global__ void scrc_k0(const float* p0, float* p1, int p2) {
+    const unsigned int v1 = blockIdx.x;
+    const unsigned int v2 = threadIdx.x;
+    const unsigned int offset = v1 * 16u + v2;
+    p1[offset] = floorf(p0[offset]);
+}

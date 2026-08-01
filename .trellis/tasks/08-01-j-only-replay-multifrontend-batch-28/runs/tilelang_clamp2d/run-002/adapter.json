@@ -1,0 +1,32 @@
+{
+  "block": [
+    16,
+    1,
+    1
+  ],
+  "case_id": "tilelang:clamp2d",
+  "cuda_arch": "sm_120",
+  "descriptor_sha256": "975befa8edf02c99f5de0ec7ad019b65311d629763c436287ce2e26cac0e8c53",
+  "dimensions": {
+    "M": 16
+  },
+  "factory_kwargs": {
+    "n": 16,
+    "threads": 128
+  },
+  "frontend": "tilelang",
+  "grid": [
+    16,
+    1,
+    1
+  ],
+  "grid_contract": [
+    "M",
+    "1",
+    "1"
+  ],
+  "protocol": "intentir.scrc.frontend-dataset-harness.v3",
+  "scalar_values": {},
+  "seed": 1184396355,
+  "source_sha256": "4827adb0216b757cffc5b23cb11f7255585c94c9c927ead9e633dfd4074e95fb"
+}
