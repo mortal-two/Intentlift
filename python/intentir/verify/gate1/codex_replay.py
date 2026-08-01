@@ -76,7 +76,11 @@ S_J and MaskC. Its dependency subsets are syntactic and neither select nor autho
 program axis, loop, lane, guard, or target API. Use it to avoid repeated JSON joins,
 then compile `boundary_ownership` as one whole-program contract. Preserve every
 authored access/effect and keep logical domain guards distinct from access-local
-predicates; you still own every target realization choice.
+predicates; you still own every target realization choice. Factor the exact J effect
+axes before choosing that realization: distinguish axes shared across affected tensors,
+tensor-specific alternatives, and axes with anonymous C tile attachments. A tile
+attachment permits local tiling but supplies no launch cardinality; never infer
+`program_id * tile` or an extra program axis from that attachment alone.
 
 Compile, inspect only your own Replay IR, and patch the complete program in this same
 episode. First run `replay_compile_check`; once construction passes, call

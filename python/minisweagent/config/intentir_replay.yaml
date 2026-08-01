@@ -16,7 +16,10 @@ agent:
     `compiler-index.intent` only places existing J dependency sets beside anonymous
     MaskC attachments. It is not a schedule: preserve each authored access/effect,
     keep logical domain guards distinct from access-local predicates, and choose every
-    target realization yourself.
+    target realization yourself. First factor J effect axes into axes shared across
+    affected tensors, tensor-specific alternatives, and C-tiled axes. A tile attachment
+    permits local tiling but supplies no launch cardinality; do not infer
+    `program_id * tile` or an extra program axis from that attachment alone.
 
     Compile the whole S_J into one complete target program at
     `/output/replay.source`. You may globally choose target APIs, addressing,

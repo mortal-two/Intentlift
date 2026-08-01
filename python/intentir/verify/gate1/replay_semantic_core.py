@@ -653,6 +653,10 @@ def materialize_replay_compiler_index(
         )
     value = {
         "protocol": REPLAY_COMPILER_INDEX_PROTOCOL,
+        "domain_axis_refs": copy.deepcopy(domain_axis_refs),
+        "tensor_axis_refs": copy.deepcopy(
+            ownership.get("shared_axis_refs_by_tensor", {})
+        ),
         "domain_dependency_subsets": copy.deepcopy(
             ownership.get("domain_dependency_subsets", [])
         ),
@@ -673,6 +677,10 @@ def materialize_replay_compiler_index(
         f"compiler_index {REPLAY_COMPILER_INDEX_PROTOCOL}",
         "authority exact_S_J_plus_MaskC_cross_reference; not_schedule; no_values; no_pi",
     ]
+    for name, refs in value["domain_axis_refs"].items():
+        lines.append(f"domain_axes {name} = " + _compact(refs))
+    for name, refs in value["tensor_axis_refs"].items():
+        lines.append(f"tensor_axes {name} = " + _compact(refs))
     for relation in value["domain_dependency_subsets"]:
         lines.append("domain_dependency_subset " + _compact(relation))
     lines.append(

@@ -3490,7 +3490,12 @@ MaskC attachments. A dependency subset is syntactic, not a schedule or proof of 
 containment. Use it to avoid reconstructing cross-references, then compile the complete
 `boundary_ownership` contract. Preserve every authored access/effect and keep logical
 domain guards distinct from access-local predicates; choose all target realization
-yourself from S_J and public frontend capabilities. If an anonymous constexpr controls
+yourself from S_J and public frontend capabilities. Before choosing program coordinates,
+factor the exact J effect axes into axes shared across affected tensors, tensor-specific
+alternatives, and axes carrying an anonymous C tile attachment. A tile attachment permits
+local tiling only; it does not reveal launch cardinality and by itself never justifies
+`program_id * tile`. Do not invent an extra program axis merely to place a tiled axis.
+If an anonymous constexpr controls
 optional guard elision, keep the guarded and unguarded memory operations lexically
 inside their respective alternatives. An always-true comparison or mask is not an
 unguarded access: do not hoist one masked operation out of those alternatives.
