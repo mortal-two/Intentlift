@@ -243,11 +243,12 @@ class PreparedLauncher:
     at ALL shapes, not just
     the GPU-bound large ones.
 
-    ``plan`` is the same launch-arg plan the flash kernels already build:
-    ``("ptr", input_index) | ("scale",) | ("f32", value) | ("i64", value)``.
+    ``plan`` is the same launch-arg plan the kernels already build: pointers,
+    dynamic scales, and fixed or input-backed scalar values using their exact
+    CUDA ABI width (``i1/i8/i16/i32/i64/f16/bf16/f32/f64``).
     ``launch(inputs, scale)`` refreshes the pointer slots from
     ``inputs[i].data_ptr()`` and any dynamic scale slot, then launches on
-    torch's current stream.  Fixed ``f32`` entries remain immutable.
+    torch's current stream.  Fixed scalar entries remain immutable.
     """
 
     def __init__(self, func, grid, block, plan, shared: int = 0):
@@ -279,6 +280,12 @@ class PreparedLauncher:
                 self._cells.append(ctypes.c_uint16(int(entry[1])))
             elif kind == "bf16":
                 self._cells.append(ctypes.c_uint16(int(entry[1])))
+            elif kind == "i1":
+                self._cells.append(ctypes.c_uint8(int(bool(entry[1]))))
+            elif kind == "i8":
+                self._cells.append(ctypes.c_int8(int(entry[1])))
+            elif kind == "i16":
+                self._cells.append(ctypes.c_int16(int(entry[1])))
             elif kind == "i64":
                 self._cells.append(ctypes.c_int64(int(entry[1])))
             elif kind == "i32":
@@ -286,6 +293,9 @@ class PreparedLauncher:
             elif kind.startswith("input_"):
                 scalar_kind = kind.removeprefix("input_")
                 cells = {
+                    "i1": ctypes.c_uint8,
+                    "i8": ctypes.c_int8,
+                    "i16": ctypes.c_int16,
                     "i32": ctypes.c_int32,
                     "i64": ctypes.c_int64,
                     "f16": ctypes.c_uint16,
@@ -1635,7 +1645,7 @@ def run_program(
     scalar_load_inputs: dict[str, int] = {}
     for match in re.finditer(
         r"(%\w+)\s*=\s*llvm\.load\s+(%\w+)\s*:\s*!llvm\.ptr\s*->\s*"
-        r"(i32|i64|f16|bf16|f32|f64)",
+        r"(i1|i8|i16|i32|i64|f16|bf16|f32|f64)",
         host.body_text,
     ):
         result_ssa, pointer_ssa = match.group(1), match.group(2)
@@ -1712,6 +1722,27 @@ def run_program(
                     else int(_loaded_input_scalar(op.ssa, torch.int64))
                 )
                 plan.append(("i64", value))
+            elif ty == "i1":
+                value = (
+                    int(bool(int(host.constants[op.ssa][0])))
+                    if op.ssa in host.constants
+                    else int(bool(_loaded_input_scalar(op.ssa, torch.bool)))
+                )
+                plan.append(("i1", value))
+            elif ty == "i8":
+                value = (
+                    int(host.constants[op.ssa][0])
+                    if op.ssa in host.constants
+                    else int(_loaded_input_scalar(op.ssa, torch.int8))
+                )
+                plan.append(("i8", value))
+            elif ty == "i16":
+                value = (
+                    int(host.constants[op.ssa][0])
+                    if op.ssa in host.constants
+                    else int(_loaded_input_scalar(op.ssa, torch.int16))
+                )
+                plan.append(("i16", value))
             elif ty == "i32":
                 value = (
                     int(host.constants[op.ssa][0])
