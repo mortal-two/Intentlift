@@ -1,6 +1,6 @@
 # Task 27：J-only Replay 与 CUDA/TileLang J/C Structural Gate1
 
-> 状态：`P4_TILELANG_GATHER_CLOSED`（2026-08-01）
+> 状态：`P4_GATHER_PAIR_CLOSED`（2026-08-01）
 > 权威实施文档：
 > `doc/method/IntentIR_J-only_Replay与多前端JC结构Gate1最终实施_2026-08-01.md`。  
 > 前序 Task 26 已归档；其 π-fed Replay 代码与运行只作反例证据。
@@ -103,8 +103,8 @@ Gate2(Source,R,RefEval(J))                # 三边
 
 ## 6. P4：gather2d与Gate1价值
 
-- [ ] add2d双闭合后运行TileLang/CUDA gather2d（TileLang run-003已全闭合；CUDA fresh Replay待运行）；
-- [ ] 报告间接寻址下两个observer的hard/diagnostic差异与合法realization false reject；
+- [x] add2d双闭合后运行TileLang/CUDA gather2d（TileLang run-003、CUDA run-002均全闭合）；
+- [x] 报告间接寻址下两个observer的hard/diagnostic差异与合法realization false reject；
 - [ ] 对add2d做最小wrong-op、wrong-index、wrong-effect mutation sensitivity；
 - [ ] mutation只改受控Replay副本并重新compile/observe，不进入正式certificate；
 - [ ] Gate1拒绝后不运行Gate2，统计提前拒绝成本。
@@ -161,6 +161,16 @@ Gate2(Source,R,RefEval(J))                # 三边
 - 归因不是J丢失数学/effect，也不能放松observer。通用缺口是CUDA U_f尚未明确：没有独立J-owned
   lane/participant axis时，`launch_block_*`仅是外部launch配置，`threadIdx`/`blockDim`不得进入J地址；
   下一fresh run只增加该source-neutral ownership契约。
+
+### 6.6 CUDA gather run-002：J-only正式闭合
+
+- fresh `gpt-5.6-sol/xhigh`，1次provider call；Replay episode 120.78 s，Gate1总计124.18 s；
+- 18行/426 bytes CUDA直接使用`blockIdx.x`，保留四个J-owned bounds、zero fill、两级间接寻址与store；
+- semantic PTX的interface、value operations、memory effects、address folds、control flow、coordinate uses、
+  target与schema全部hard PASS；3个raw PTX字段差异仅diagnostic；
+- Gate2的Source–Replay、Source–J、Replay–J三边均为exact PASS，f32 max abs error全部为0；
+- receipt为Replay backend v72，visible root仅`j,c,u_f`，`pi_visible_to_replay=false`，全程
+  `lift_agent_calls=0`；Gate1在run-001提前拒绝了真实错误坐标，run-002没有通过放松observer获得PASS。
 
 ## 7. 最小实验输出
 
