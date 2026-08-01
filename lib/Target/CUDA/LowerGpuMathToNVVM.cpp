@@ -1078,6 +1078,35 @@ struct FmaToLLVMIntrinsic : OpRewritePattern<math::FmaOp> {
   }
 };
 
+/// `math.floor %x : f32/f64` -> the exact native NVVM floor intrinsic.
+///
+/// The stock GPU conversion spells floor as a `__nv_floorf`/`__nv_floor`
+/// libdevice call.  This backend deliberately does not link libdevice into the
+/// integrated PTX serializer, so leaving that call unresolved makes ptxas reject
+/// an otherwise legal kernel.  NVVM exposes exact floor instructions directly;
+/// use the non-FTZ variants so NaN, infinities, signed zero, and subnormals keep
+/// the semantics of `math.floor`.
+struct FloorToNVVMIntrinsic : OpRewritePattern<math::FloorOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(math::FloorOp op,
+                                PatternRewriter &rewriter) const override {
+    Type type = op.getOperand().getType();
+    StringRef intrinsic;
+    if (isa<Float32Type>(type))
+      intrinsic = "llvm.nvvm.floor.f";
+    else if (isa<Float64Type>(type))
+      intrinsic = "llvm.nvvm.floor.d";
+    else
+      return rewriter.notifyMatchFailure(op, "operand is not scalar f32/f64");
+    auto floor = rewriter.create<LLVM::CallIntrinsicOp>(
+        op.getLoc(), type, rewriter.getStringAttr(intrinsic),
+        ValueRange{op.getOperand()});
+    rewriter.replaceOp(op, floor.getResults());
+    return success();
+  }
+};
+
 struct LowerGpuMathToNVVM
     : ::intent::impl::LowerGpuMathToNVVMBase<LowerGpuMathToNVVM> {
   using LowerGpuMathToNVVMBase::LowerGpuMathToNVVMBase;
@@ -1095,6 +1124,7 @@ struct LowerGpuMathToNVVM
                  PromoteHalfUnaryMath<math::SinOp>,
                  PromoteHalfUnaryMath<math::Exp2Op>,
                  PromoteHalfUnaryMath<math::AtanOp>,
+                 PromoteHalfUnaryMath<math::FloorOp>,
                  PromoteHalfUnaryMath<math::ErfOp>,
                  PromoteHalfBinaryMath<math::PowFOp>,
                  PromoteHalfBinaryMath<math::Atan2Op>, PromoteHalfFma>(
@@ -1114,6 +1144,7 @@ struct LowerGpuMathToNVVM
     patterns.add<ErfToPolynomial>(&getContext());
     patterns.add<PowFToLg2Ex2Approx>(&getContext());
     patterns.add<FmaToLLVMIntrinsic>(&getContext());
+    patterns.add<FloorToNVVMIntrinsic>(&getContext());
     patterns.add<UnaryToNVVMApprox<math::SqrtOp>>(&getContext(),
                                                   "llvm.nvvm.sqrt.approx.f");
     patterns.add<UnaryToNVVMApprox<math::RsqrtOp>>(&getContext(),
