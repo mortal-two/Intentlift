@@ -1,0 +1,359 @@
+{
+  "all_j_only": true,
+  "all_typecheck_passed": true,
+  "case_count": 20,
+  "cases": [
+    {
+      "case": "tilelang:add2d",
+      "cohort_memberships": [
+        "g1_pointwise_selection",
+        "g5_indexing_layout_image"
+      ],
+      "diagnostics": [],
+      "frontend": "tilelang",
+      "lift_agent_calls": 0,
+      "packet_root": [
+        "c",
+        "j",
+        "u_f"
+      ],
+      "pi_visible_to_replay": false,
+      "typecheck": "pass"
+    },
+    {
+      "case": "cuda:tilelang_add2d",
+      "cohort_memberships": [
+        "g1_pointwise_selection",
+        "g5_indexing_layout_image"
+      ],
+      "diagnostics": [],
+      "frontend": "cuda",
+      "lift_agent_calls": 0,
+      "packet_root": [
+        "c",
+        "j",
+        "u_f"
+      ],
+      "pi_visible_to_replay": false,
+      "typecheck": "pass"
+    },
+    {
+      "case": "tilelang:relu2d",
+      "cohort_memberships": [
+        "g1_pointwise_selection",
+        "g3_contraction_epilogue"
+      ],
+      "diagnostics": [],
+      "frontend": "tilelang",
+      "lift_agent_calls": 0,
+      "packet_root": [
+        "c",
+        "j",
+        "u_f"
+      ],
+      "pi_visible_to_replay": false,
+      "typecheck": "pass"
+    },
+    {
+      "case": "cuda:tilelang_relu2d",
+      "cohort_memberships": [
+        "g1_pointwise_selection",
+        "g3_contraction_epilogue"
+      ],
+      "diagnostics": [],
+      "frontend": "cuda",
+      "lift_agent_calls": 0,
+      "packet_root": [
+        "c",
+        "j",
+        "u_f"
+      ],
+      "pi_visible_to_replay": false,
+      "typecheck": "pass"
+    },
+    {
+      "case": "tilelang:floor2d",
+      "cohort_memberships": [
+        "g1_pointwise_selection",
+        "g7_cross_feature_stress"
+      ],
+      "diagnostics": [],
+      "frontend": "tilelang",
+      "lift_agent_calls": 0,
+      "packet_root": [
+        "c",
+        "j",
+        "u_f"
+      ],
+      "pi_visible_to_replay": false,
+      "typecheck": "pass"
+    },
+    {
+      "case": "cuda:tilelang_floor2d",
+      "cohort_memberships": [
+        "g1_pointwise_selection",
+        "g7_cross_feature_stress"
+      ],
+      "diagnostics": [],
+      "frontend": "cuda",
+      "lift_agent_calls": 0,
+      "packet_root": [
+        "c",
+        "j",
+        "u_f"
+      ],
+      "pi_visible_to_replay": false,
+      "typecheck": "pass"
+    },
+    {
+      "case": "tilelang:exp2d",
+      "cohort_memberships": [
+        "g1_pointwise_selection",
+        "g7_cross_feature_stress"
+      ],
+      "diagnostics": [],
+      "frontend": "tilelang",
+      "lift_agent_calls": 0,
+      "packet_root": [
+        "c",
+        "j",
+        "u_f"
+      ],
+      "pi_visible_to_replay": false,
+      "typecheck": "pass"
+    },
+    {
+      "case": "cuda:tilelang_exp2d",
+      "cohort_memberships": [
+        "g1_pointwise_selection",
+        "g7_cross_feature_stress"
+      ],
+      "diagnostics": [],
+      "frontend": "cuda",
+      "lift_agent_calls": 0,
+      "packet_root": [
+        "c",
+        "j",
+        "u_f"
+      ],
+      "pi_visible_to_replay": false,
+      "typecheck": "pass"
+    },
+    {
+      "case": "tilelang:where2d",
+      "cohort_memberships": [
+        "g1_pointwise_selection",
+        "g3_contraction_epilogue",
+        "g5_indexing_layout_image"
+      ],
+      "diagnostics": [],
+      "frontend": "tilelang",
+      "lift_agent_calls": 0,
+      "packet_root": [
+        "c",
+        "j",
+        "u_f"
+      ],
+      "pi_visible_to_replay": false,
+      "typecheck": "pass"
+    },
+    {
+      "case": "cuda:tilelang_where2d",
+      "cohort_memberships": [
+        "g1_pointwise_selection",
+        "g3_contraction_epilogue",
+        "g5_indexing_layout_image"
+      ],
+      "diagnostics": [],
+      "frontend": "cuda",
+      "lift_agent_calls": 0,
+      "packet_root": [
+        "c",
+        "j",
+        "u_f"
+      ],
+      "pi_visible_to_replay": false,
+      "typecheck": "pass"
+    },
+    {
+      "case": "tilelang:add_bias2d",
+      "cohort_memberships": [
+        "g1_pointwise_selection",
+        "g3_contraction_epilogue",
+        "g5_indexing_layout_image"
+      ],
+      "diagnostics": [],
+      "frontend": "tilelang",
+      "lift_agent_calls": 0,
+      "packet_root": [
+        "c",
+        "j",
+        "u_f"
+      ],
+      "pi_visible_to_replay": false,
+      "typecheck": "pass"
+    },
+    {
+      "case": "cuda:tilelang_add_bias2d",
+      "cohort_memberships": [
+        "g1_pointwise_selection",
+        "g3_contraction_epilogue",
+        "g5_indexing_layout_image"
+      ],
+      "diagnostics": [],
+      "frontend": "cuda",
+      "lift_agent_calls": 0,
+      "packet_root": [
+        "c",
+        "j",
+        "u_f"
+      ],
+      "pi_visible_to_replay": false,
+      "typecheck": "pass"
+    },
+    {
+      "case": "tilelang:clamp2d",
+      "cohort_memberships": [
+        "g1_pointwise_selection",
+        "g5_indexing_layout_image"
+      ],
+      "diagnostics": [],
+      "frontend": "tilelang",
+      "lift_agent_calls": 0,
+      "packet_root": [
+        "c",
+        "j",
+        "u_f"
+      ],
+      "pi_visible_to_replay": false,
+      "typecheck": "pass"
+    },
+    {
+      "case": "cuda:tilelang_clamp2d",
+      "cohort_memberships": [
+        "g1_pointwise_selection",
+        "g5_indexing_layout_image"
+      ],
+      "diagnostics": [],
+      "frontend": "cuda",
+      "lift_agent_calls": 0,
+      "packet_root": [
+        "c",
+        "j",
+        "u_f"
+      ],
+      "pi_visible_to_replay": false,
+      "typecheck": "pass"
+    },
+    {
+      "case": "tilelang:rowmask_where2d",
+      "cohort_memberships": [
+        "g1_pointwise_selection",
+        "g4_attention_masking",
+        "g5_indexing_layout_image"
+      ],
+      "diagnostics": [],
+      "frontend": "tilelang",
+      "lift_agent_calls": 0,
+      "packet_root": [
+        "c",
+        "j",
+        "u_f"
+      ],
+      "pi_visible_to_replay": false,
+      "typecheck": "pass"
+    },
+    {
+      "case": "cuda:tilelang_rowmask_where2d",
+      "cohort_memberships": [
+        "g1_pointwise_selection",
+        "g4_attention_masking",
+        "g5_indexing_layout_image"
+      ],
+      "diagnostics": [],
+      "frontend": "cuda",
+      "lift_agent_calls": 0,
+      "packet_root": [
+        "c",
+        "j",
+        "u_f"
+      ],
+      "pi_visible_to_replay": false,
+      "typecheck": "pass"
+    },
+    {
+      "case": "tilelang:any_kernel_dim",
+      "cohort_memberships": [
+        "g1_pointwise_selection",
+        "g4_attention_masking",
+        "g5_indexing_layout_image"
+      ],
+      "diagnostics": [],
+      "frontend": "tilelang",
+      "lift_agent_calls": 0,
+      "packet_root": [
+        "c",
+        "j",
+        "u_f"
+      ],
+      "pi_visible_to_replay": false,
+      "typecheck": "pass"
+    },
+    {
+      "case": "cuda:tilelang_any_kernel_dim",
+      "cohort_memberships": [
+        "g1_pointwise_selection",
+        "g4_attention_masking",
+        "g5_indexing_layout_image"
+      ],
+      "diagnostics": [],
+      "frontend": "cuda",
+      "lift_agent_calls": 0,
+      "packet_root": [
+        "c",
+        "j",
+        "u_f"
+      ],
+      "pi_visible_to_replay": false,
+      "typecheck": "pass"
+    },
+    {
+      "case": "tilelang:copy2d_divmod",
+      "cohort_memberships": [
+        "g1_pointwise_selection",
+        "g3_contraction_epilogue",
+        "g5_indexing_layout_image"
+      ],
+      "diagnostics": [],
+      "frontend": "tilelang",
+      "lift_agent_calls": 0,
+      "packet_root": [
+        "c",
+        "j",
+        "u_f"
+      ],
+      "pi_visible_to_replay": false,
+      "typecheck": "pass"
+    },
+    {
+      "case": "cuda:tilelang_copy2d_divmod",
+      "cohort_memberships": [
+        "g1_pointwise_selection",
+        "g3_contraction_epilogue",
+        "g5_indexing_layout_image"
+      ],
+      "diagnostics": [],
+      "frontend": "cuda",
+      "lift_agent_calls": 0,
+      "packet_root": [
+        "c",
+        "j",
+        "u_f"
+      ],
+      "pi_visible_to_replay": false,
+      "typecheck": "pass"
+    }
+  ],
+  "lift_agent_calls": 0,
+  "protocol": "intentir.experiment.manual-batch-preflight.v1"
+}

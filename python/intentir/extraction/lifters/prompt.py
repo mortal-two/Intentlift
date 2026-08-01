@@ -49,7 +49,7 @@ Atomic ops (each is one JSON object in a "body" list):
                 feeds select; count_nonzero = sum(cast(x!=0, i64)).)
      {"op":"map_binary","result":R,"operands":[A,B],"attrs":{"fn":F}}
   map_unary  : elementwise. fn in
-               {identity,exp,log,log2,sqrt,rsqrt,neg,recip,abs,tanh,sigmoid,
+               {identity,exp,log,log2,floor,sqrt,rsqrt,neg,recip,abs,tanh,sigmoid,
                 cos,sin,tan,exp2,atan,erf,isnan,isinf,isfinite,logical_not}.
                (isnan/isinf/isfinite produce i1 tensors -> feed select;
                 logical_not is i1->i1. identity returns its operand unchanged.)

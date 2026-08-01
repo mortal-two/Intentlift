@@ -110,6 +110,7 @@ _UNARY = {
     "identity": lambda value: value,
     "exp": np.exp,
     "log": np.log,
+    "floor": np.floor,
     "sqrt": np.sqrt,
     "rsqrt": lambda value: np.reciprocal(np.sqrt(value)),
     "neg": np.negative,

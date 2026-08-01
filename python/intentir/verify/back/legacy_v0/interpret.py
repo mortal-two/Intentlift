@@ -43,7 +43,8 @@ except Exception:  # pragma: no cover - scipy usually present
 
 _UNARY = {
     "identity": lambda x: x,
-    "exp": np.exp, "log": np.log, "log2": np.log2, "sqrt": np.sqrt,
+    "exp": np.exp, "log": np.log, "log2": np.log2, "floor": np.floor,
+    "sqrt": np.sqrt,
     "rsqrt": lambda x: np.reciprocal(np.sqrt(x)), "neg": np.negative,
     "recip": np.reciprocal, "abs": np.abs, "tanh": np.tanh,
     "sigmoid": lambda x: 1.0 / (1.0 + np.exp(-x)),

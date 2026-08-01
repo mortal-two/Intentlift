@@ -65,7 +65,7 @@ GLOBAL_SAFE_REFINEMENTS = frozenset(
 
 _MAP_UNARY_FNS = frozenset(
     {
-        "identity", "exp", "log", "log2", "neg", "abs", "sqrt", "rsqrt", "recip",
+        "identity", "exp", "log", "log2", "floor", "neg", "abs", "sqrt", "rsqrt", "recip",
         "tanh", "sigmoid", "cos", "sin", "tan", "exp2", "erf", "atan",
         "logical_not", "isnan", "isinf", "isfinite",
     }
