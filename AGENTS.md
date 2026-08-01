@@ -20,6 +20,8 @@
   only the current contract, unresolved blockers, next actions, and authoritative
   real-Kernel closure evidence. Replace stale current-state text instead of
   accumulating historical narratives; archive genuinely superseded material.
-- Measure progress by real TypeCheck/Gate1/Gate2 closure and the final task's
-  deliverables, never by a new protocol label, document, receipt format, mock
-  check, or implementation milestone.
+- Measure progress only by real Gate1 closure, all three Gate2 comparisons,
+  closed-Kernel count, and the final task's deliverables. TypeCheck is only a
+  mechanical prerequisite/diagnostic and must never be reported as progress.
+  Likewise, a new protocol label, document, receipt format, mock check, tool
+  call, or implementation milestone is not progress.
