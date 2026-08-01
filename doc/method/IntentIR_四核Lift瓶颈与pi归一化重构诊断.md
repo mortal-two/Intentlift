@@ -117,12 +117,18 @@ J 已表达：
 当前主要缺口：
 
 - Source 使用两个 program axes，Replay 候选曾生成额外 program coordinate；
-- π 虽记录 domain-to-axis rows，normalizer 不消费它；
+- 当前唯一 C slot `c0` 是 `BLOCK_SIZE=64`，已以 `tile_extent`
+  正确绑定到 rotary feature domain `d4/x4`，不是 C 缺失或错绑；
+- batch/sequence 分解、Q/K head guard、program-axis mapping 都不是新 C slot：前两者必须由
+  J 的 domain/predicate/access 拥有，后者是 π realization binding；
+- π 即使记录 domain-to-axis rows，当前 normalizer 也不消费它；
 - Gate1 因而把 `get_program_id`、`addptr` 数量与完整 address dataflow 当成 hard；
-- C 只有一个 tile slot，尚未与 program/domain realization 形成可消费的闭合关系。
+- Gate1 还观测到 Source/Replay 的 cast 数量与 pointer dataflow 差异，这是 J/Replay
+  fidelity 问题，不能用扩张 C 消除。
 
-本核更像“J 基本正确，Replay realization 与 Gate normalization 未闭合”，但仍需 Gate2
-证明数值结果，尤其是 casts 与 exact relation。
+本核的 C 应原样保留。它更像“J 核心基本合理，Replay fidelity 与 Gate
+normalization 未闭合”，但仍需 Gate2 证明数值结果，尤其是 casts 与 exact
+relation。
 
 ### 3.2 FlashAttention forward
 
@@ -139,7 +145,14 @@ J 已表达 online softmax 的核心结构：
 
 当前主要缺口：
 
-- C 记录 query/key tile，却没有形成 `J loop + logical domain + tile slot` 的直接消费关系；
+- `c0=BLOCK_HEADDIM` 绑到 feature domain `d3/x2`，`c4=BLOCK_M` 绑到 query
+  domain `d0/x0`，两者基本正确；
+- `c5=BLOCK_N` 虽已指向 key-axis loop `n3/x3`，却被写成
+  `reduction_tile_extent`；Source 实际用它作为 serial key-tile loop step，应改为
+  `tile_extent`，并由 `n3` 的 trip domain `d4/x3` 给出逻辑轴；
+- `EVEN_M`、`EVEN_N`、`EVEN_HEADDIM` 三个 specialization slot 尚未绑定 J
+  subject，应分别附着到 `d0/x0`、`d4/x3`、`d3/x2`；J 仍必须自己保留
+  完整 logical predicate/fill，不得依靠这三个 C 值恢复语义；
 - π 只有 program axes，没有 iteration、carrier 或 scratch materialization binding；
 - Source 的 tiled loop、pointer advance、scratch store/load 与 Replay 的合法替代实现产生大量 TTIR diff；
 - RefEval/functional probe 对非 direct-J-operand load 仍不能给出判定，这既可能是 boundary consumer
@@ -158,20 +171,35 @@ J 已表达 online softmax 的核心结构：
 - DQ inout update；
 - conditional dispatch 与多输出 effects。
 
-J 已表达主要 contractions、casts、DQ update、DK/DV outputs、一个 logical query recurrence 和
-effect control。该归纳在算法上是合理的，但比 forward 更难确认，因为 Source 的两个物理循环层次
-被归并为 semantic recurrence 加 tiling。
+J 已表达主要 contractions、casts、DQ update 与 DK/DV outputs，但最新可读候选中
+没有 structured loop/trip，因而尚未能确认 inner query-block 上的 DK/DV carried-state
+recurrence 已由 J 拥有。outer key-block 枚举可以是 domain/program realization，但 inner
+query recurrence 不能只靠 C/π 补成。
 
 当前明确缺口：
 
-- query/key tile C slots 缺少稳定的 subject_ref/axis_ref attachment；
-- π 只记录一个 program-axis row；
+- `c0=BLOCK_HEADDIM`、`c5=BLOCK_M`、`c6=BLOCK_N` 的值与 domain attachment
+  数值上合理；其中 `c5` 必须在 J 补出 inner semantic loop 后改绑到该 loop，
+  `c6` 可以继续附着到 key-output domain，因为 outer key-block 枚举可以只是该
+  domain 的 realization，不必伪造成第二条 semantic recurrence；
+- `c1=SEQUENCE_PARALLEL` 作为 implementation-selection C 的分类是合理的，其
+  `d4/x1` attachment 也可保留；真正缺口是 closed consumer 尚不能用该 slot
+  区分 key domain 的 serial outer iteration 与 program-axis distribution。这应由 π
+  iteration/program binding 引用 `c1`，而不是让 C 反向引用 π 中的物理 mapping；
+- `EVEN_M/N/HEADDIM` 可作为附着到对应 domain 的 specialization C，但 causal、
+  bias interpretation、logical guard、atomic/inout effect 必须由 J 的 predicate/access/effect
+  闭合，不能通过新增 C slot 隐藏；
+- π 没有可消费的 outer program/iteration、inner recurrence realization、pointer-only
+  carrier 与 terminal-control bindings；
 - 没有 relation 将 outer tiled iteration、inner recurrence、pointer-only carriers 与 terminal control
   锚定到 J loop/control；
 - Gate1 仍比较 Source helper inlining、physical loops、unused/used ABI、address and effect region topology；
 - Replay 本身还需要数分钟，并多次出现 compile/API 修复。
 
-静态判断：J 的数值核心“可能正确但证据不足”；C/π 明显不够，不能把当前失败全部归因给模型。
+静态判断：J 的局部数值图可能正确，但 inner recurrence 仍是 J-owned 明确缺口；
+C 则同时存在“已有 tile/mode 值基本正确”和“inner-loop attachment 与
+parallelization consumer 未闭合”两个事实。
+本核必须先修 J，之后重绑 C 并 fresh Replay，不是 π-only 修复。
 
 ### 3.4 xFormers SplitK forward
 
@@ -184,21 +212,59 @@ Source 的核心是：
 - split output 与可选 LSE；
 - 多种 specialization 下的 early exit、mask、paged/quantized branches。
 
-当前 J 已保留三状态 online recurrence、QK/exp/sum/PV、split outputs 与三条 program-axis rows，
-所以不能说模型完全没理解算法。
+历史候选已保留三状态 online recurrence、QK/exp/sum/PV 与 split outputs，所以不能
+说模型完全没理解算法。最新运行在形成可审计 artifact 前即是 infrastructure failure，
+因而下面的 C 裁决以 Source 和最近可读候选为依据，不把该次失败写成 C 证据。
 
 但当前 artifact 仍有明显风险：
 
-- 多个 C slots 没有 semantic attachment，仅以通用 role 保存；
-- split count、padded query capacity 等出现在 concrete output shapes，参数化身份尚未闭合；
+- `BLOCK_M` 是 query-domain tile，应作为 C `tile_extent` 附着到 J query domain；
+- `BLOCK_N` 是 split chunk 内部 key iteration 的 tile，应作为 C `tile_extent` 附着到
+  J key loop/domain；
+- `split_k` 同时决定 program axis 和可观察 output split dimension，因而必须参数化到 J，
+  不能作为 C；
+- `BLOCK_N_PER_SPLIT` 决定每个可观察 partial-output slice 对应的 key chunk
+  边界；对当前将 partial outputs 直接视为 Kernel outputs 的 J，它也必须由 J 的
+  split-partition relation 拥有，不能仅当作纯 tile C；
+- padded query capacity 只能在不改变 logical output domain 时作 representation capacity；如果它
+  出现在可观察 output shape，J 必须同时声明 logical extent 与 capacity/valid-domain 关系；
+- `num_warps/num_stages` 若只是 adapter/compiler launch context，应留在固定
+  frontend/Harness context；不能因 adapter 中有值就凭空生成 C slot；
 - π 没有 split-axis、mixed-radix、iteration、early-exit/control binding；
 - 当前 artifact 对复杂 specialization 的 boundary facts 只覆盖实际固定分支，尚不能证明所有
   representation-only constexpr 与语义参数的所有权划分正确；
 - 历史 Lift 反复出现 unknown logical refs、functional axis mismatch、C type/axis 与 runtime carrier
   ownership 错误。
 
-静态判断：online recurrence 核心合理，但 J boundary 参数化和 C/π 尚不成熟；四核中它最不能被称为
+静态判断：online recurrence 核心合理，但 split output/partition 是 J-owned boundary，
+`BLOCK_M/BLOCK_N` 才是纯 C tile；这一分界未闭合前，它最不能被称为
 “J 已正确，只差 normalizer”。
+
+### 3.5 四核 C 收尾裁决
+
+C 的修复不是增加 source recipe，而是把纯 implementation-selection coordinate 附着到它
+所作用的稳定 J subject/axis。统一判断为：
+
+| Kernel | C 现状 | 最小修复 | 是否改 J | Replay 处理 |
+|---|---|---|---|---|
+| Llama4 RoPE | `c0=BLOCK_SIZE -> d4/x4` 正确 | C 不改；修 Replay cast/address fidelity 与 π program binding | 仅在 J 确实缺 cast/predicate 时改 | π-only 可复用 R；J 改则 fresh |
+| Flash forward | feature/query tile 正确；key tile role 错；三个 EVEN slot 无 attachment | `c5` 改为 loop `tile_extent`；EVEN slots 附着 query/key/feature domains | 暂不改 recurrence J | C schema/attachment 改变后 fresh |
+| Flash full backward | tile/mode 值基本对；没有可附着的 inner loop，也没有 `SEQUENCE_PARALLEL` consumer | 先补 J inner recurrence anchor，再将 query tile 绑到该 loop；π 以 `c1+d4` 区分 serial/program realization | **需要** | fresh Lift + fresh Replay |
+| SplitK forward | 最新运行无可审 artifact；历史归类混合 split 语义与 tile | 只将 `BLOCK_M/BLOCK_N` 作 C；`split_k` 与 observable chunk partition 收回 J | **需要 boundary 参数化** | fresh Lift + fresh Replay |
+
+为避免再次出现 one-col 式错绑，Lift workspace 只需增加一个按需查询的非证明视图：
+
+```text
+anonymous coordinate q
+  -> raw SSA uses: loop-step / range-width / mask-bound / address-stride / launch-only
+
+current J
+  -> valid subject_ref and AxisRefs(subject_ref)
+```
+
+该视图不声称 q 属于 J/C/π，也不自动选择 subject。LLM 仍负责分类和绑定；
+fixed checker 只检查 handle、axis、role/type 与 dependent references 是否机械合法。正确性仍由
+fresh Replay、Gate1 与三边 Gate2 闭合，不新增 C composer 或自动所有权分类器。
 
 ## 4. one-col 辅助样本说明什么
 
