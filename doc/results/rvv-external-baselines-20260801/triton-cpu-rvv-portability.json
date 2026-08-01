@@ -50,9 +50,46 @@
       "rvv_vector_instruction_count": 19819,
       "shared_object_bytes": 544240,
       "adapter": "strict memref-to-raw-kernel ABI bridge"
+    },
+    {
+      "name": "softmax",
+      "status": "passed",
+      "same_source": true,
+      "shape": [2, 128],
+      "dtype": "f32",
+      "maximum_absolute_error": 9.458451851601657e-10,
+      "kernel_symbol": "_softmax_single_block_forward_kernel",
+      "rvv_vector_instruction_count": 207,
+      "shared_object_bytes": 13208
+    },
+    {
+      "name": "kl_div",
+      "status": "passed",
+      "same_source": true,
+      "shape": [2, 64],
+      "dtype": "f32",
+      "maximum_absolute_error": 3.2934735827439e-08,
+      "kernel_symbol": "_kldiv_kernel_forward",
+      "rvv_vector_instruction_count": 110,
+      "shared_object_bytes": 13192
+    },
+    {
+      "name": "flash_bwd_preprocess",
+      "status": "passed",
+      "same_source": true,
+      "shape": [1, 2, 33, 16],
+      "dtype": "f16->f32",
+      "maximum_absolute_error": 8.940696716308594e-08,
+      "kernel_symbol": "_bwd_preprocess_do_o_dot",
+      "rvv_vector_instruction_count": 68796,
+      "shared_object_bytes": 1226528
     }
   ],
   "performance_bar_status": "measured",
+  "measured_kernel_count": 4,
+  "accepted_kernel_count": 24,
+  "geomean_triton_over_full": 7.259296591935288,
+  "performance_table": "doc/results/rvv-external-baselines-20260801/triton-cpu-rvv-pairs.json",
   "performance": {
     "kernel": "swiglu",
     "shape": [16384, 11008],

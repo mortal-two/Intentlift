@@ -96,4 +96,5 @@ elementwise/reduction 子集。构建失败本身只说明当前工具链不支�
 - [x] Triton-CPU/RVV 锁定版本 LLVM/MLIR 已在 RVV4 构建；vector-add 与 accepted SwiGLU 原始 Source 均真实生成 RVV shared object 并通过 Q；
 - [x] runner 新增 strict prebuilt Triton object + ABI bridge 路径，并增加只重测既有 Full winner 与指定 external 的 paired runner；
 - [x] accepted SwiGLU 自然 shape 的 Triton-CPU/RVV 正式结果为 `10.849 s`，配对 Full 为 `5.403 s`，IntentIR 快 `2.008×`；
+- [x] Triton-CPU/RVV 横向扩到 Softmax、KLDiv、Flash preprocess；正式 `Triton/Full` 为 `11.647× / 1.369× / 86.736×`，四项几何平均 `7.259×`；
 - [ ] 用新 external runner 继续补齐其余 accepted-J 主表并提交。

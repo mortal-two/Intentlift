@@ -776,6 +776,7 @@ def _compile_external_baseline(
         "shares_intentir_candidate_or_object": False,
         "source_identity": record.get("source_identity"),
         "specialized_columns": record.get("specialized_columns"),
+        "specialization": record.get("specialization"),
     }
 
 

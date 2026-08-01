@@ -1,0 +1,9 @@
+kernel,extents,bar_id,display_name,latency_us,full_speedup_vs_bar
+swiglu,"{""x0"": 16384, ""x1"": 11008}",full,IntentIR Full,5403437.062999999,1.0
+swiglu,"{""x0"": 16384, ""x1"": 11008}",triton_cpu_rvv,Triton-CPU/RVV,10849182.9925,2.0078299915418114
+softmax,"{""x0"": 2048, ""x1"": 4096}",full,IntentIR Full,31602.461,1.0
+softmax,"{""x0"": 2048, ""x1"": 4096}",triton_cpu_rvv,Triton-CPU/RVV,368069.0645,11.646848152110685
+kl_div,"{""x0"": 4096, ""x1"": 4096}",full,IntentIR Full,421789.06200000003,1.0
+kl_div,"{""x0"": 4096, ""x1"": 4096}",triton_cpu_rvv,Triton-CPU/RVV,577481.9985,1.369125116146326
+flash_bwd_preprocess,"{""x0"": 4, ""x1"": 16, ""x2"": 8192, ""x3"": 128, ""x4"": 8192}",full,IntentIR Full,50371.323000000004,1.0
+flash_bwd_preprocess,"{""x0"": 4, ""x1"": 16, ""x2"": 8192, ""x3"": 128, ""x4"": 8192}",triton_cpu_rvv,Triton-CPU/RVV,4369009.9365,86.73605687307438

@@ -12,6 +12,9 @@ from intentir.backend.riscv.ggml_baselines import (
     maybe_ggml_rvv_baseline_records,
 )
 from intentir.backend.riscv.triton_cpu_baselines import (
+    flash_preprocess_triton_cpu_rvv_record,
+    kldiv_triton_cpu_rvv_record,
+    softmax_triton_cpu_rvv_record,
     swiglu_triton_cpu_rvv_record,
 )
 
@@ -138,3 +141,30 @@ def test_triton_cpu_swiglu_adapter_only_bridges_the_raw_kernel_abi() -> None:
     assert "expf(" not in record["source"]
     assert "tanhf(" not in record["source"]
     assert "cols != 11008" in record["source"]
+
+
+def test_triton_cpu_reduction_adapters_do_not_reimplement_the_math() -> None:
+    softmax = softmax_triton_cpu_rvv_record(
+        "/tmp/softmax.so", columns=4096, source_identity="softmax.py::kernel"
+    )
+    kldiv = kldiv_triton_cpu_rvv_record(
+        "/tmp/kldiv.so",
+        columns=4096,
+        epsilon=1.0e-6,
+        source_identity="kldiv.py::kernel",
+    )
+    flash = flash_preprocess_triton_cpu_rvv_record(
+        "/tmp/flash.so",
+        block_m=128,
+        block_head_dim=128,
+        source_identity="flash.py::kernel",
+    )
+
+    assert "extern void _softmax_single_block_forward_kernel" in softmax["source"]
+    assert "extern void _kldiv_kernel_forward" in kldiv["source"]
+    assert "extern void _bwd_preprocess_do_o_dot" in flash["source"]
+    for record in (softmax, kldiv, flash):
+        assert record["baseline_id"] == "triton_cpu_rvv"
+        assert "expf(" not in record["source"]
+        assert "logf(" not in record["source"]
+        assert record["specialization"]

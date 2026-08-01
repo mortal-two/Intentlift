@@ -46,6 +46,10 @@ rvv_pair = _load_tool(
     "intentir_rvv_external_pair_tool",
     "tools/remeasure_rvv_external_pair.py",
 )
+rvv_pair_table = _load_tool(
+    "intentir_rvv_external_pair_table_tool",
+    "tools/export_rvv_external_pair_table.py",
+)
 rvv_externalize = _load_tool(
     "intentir_rvv_externalize_payloads_tool",
     "tools/externalize_rvv_bundle_payloads.py",
@@ -479,6 +483,31 @@ def test_rvv_external_pair_requires_one_selected_record() -> None:
     assert rvv_pair._only([record], label="winner") is record
     with pytest.raises(ValueError, match="exactly one"):
         rvv_pair._only([], label="winner")
+
+
+def test_rvv_external_pair_table_preserves_bars_and_geomean() -> None:
+    def report(kernel: str, full_us: float, external_us: float) -> dict:
+        return {
+            "protocol": rvv_pair_table.PAIR_PROTOCOL,
+            "kernel": kernel,
+            "workload": {"extents": {"x0": 4}, "inputs": {}, "outputs": []},
+            "measurement": {"batches": 7},
+            "full": {"latency_us": full_us, "samples_us": [full_us]},
+            "external": {
+                "baseline_id": "triton_cpu_rvv",
+                "display_name": "Triton-CPU/RVV",
+                "latency_us": external_us,
+                "samples_us": [external_us],
+            },
+        }
+
+    table = rvv_pair_table.build_table(
+        [report("a", 1.0, 2.0), report("b", 2.0, 8.0)]
+    )
+
+    assert table["kernel_count"] == 2
+    assert table["geomean_external_over_full"] == pytest.approx(8.0**0.5)
+    assert len(table["bars"]) == 4
 
 
 def test_triton_cpu_rvv_baseline_requires_a_prebuilt_kernel_object() -> None:

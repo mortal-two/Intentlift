@@ -13,6 +13,9 @@ from intentir.backend.riscv.native_baselines import (
 )
 from intentir.backend.riscv.ggml_baselines import maybe_ggml_rvv_baseline_records
 from intentir.backend.riscv.triton_cpu_baselines import (
+    flash_preprocess_triton_cpu_rvv_record,
+    kldiv_triton_cpu_rvv_record,
+    softmax_triton_cpu_rvv_record,
     swiglu_triton_cpu_rvv_record,
 )
 
@@ -52,6 +55,17 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--triton-cpu-swiglu-library", type=Path)
     parser.add_argument("--triton-cpu-swiglu-columns", type=int, default=11008)
     parser.add_argument("--triton-cpu-swiglu-source", type=str)
+    parser.add_argument("--triton-cpu-softmax-library", type=Path)
+    parser.add_argument("--triton-cpu-softmax-columns", type=int, default=4096)
+    parser.add_argument("--triton-cpu-softmax-source", type=str)
+    parser.add_argument("--triton-cpu-kldiv-library", type=Path)
+    parser.add_argument("--triton-cpu-kldiv-columns", type=int, default=4096)
+    parser.add_argument("--triton-cpu-kldiv-epsilon", type=float, default=1.0e-6)
+    parser.add_argument("--triton-cpu-kldiv-source", type=str)
+    parser.add_argument("--triton-cpu-flash-preprocess-library", type=Path)
+    parser.add_argument("--triton-cpu-flash-preprocess-block-m", type=int, default=128)
+    parser.add_argument("--triton-cpu-flash-preprocess-block-d", type=int, default=128)
+    parser.add_argument("--triton-cpu-flash-preprocess-source", type=str)
     return parser
 
 
@@ -75,6 +89,50 @@ def main(argv: list[str] | None = None) -> int:
                     args.triton_cpu_swiglu_library,
                     columns=args.triton_cpu_swiglu_columns,
                     source_identity=args.triton_cpu_swiglu_source,
+                )
+            )
+        if kernel == "softmax" and args.triton_cpu_softmax_library is not None:
+            if not args.triton_cpu_softmax_source:
+                raise ValueError(
+                    "--triton-cpu-softmax-library requires "
+                    "--triton-cpu-softmax-source"
+                )
+            result.append(
+                softmax_triton_cpu_rvv_record(
+                    args.triton_cpu_softmax_library,
+                    columns=args.triton_cpu_softmax_columns,
+                    source_identity=args.triton_cpu_softmax_source,
+                )
+            )
+        if kernel == "kl_div" and args.triton_cpu_kldiv_library is not None:
+            if not args.triton_cpu_kldiv_source:
+                raise ValueError(
+                    "--triton-cpu-kldiv-library requires "
+                    "--triton-cpu-kldiv-source"
+                )
+            result.append(
+                kldiv_triton_cpu_rvv_record(
+                    args.triton_cpu_kldiv_library,
+                    columns=args.triton_cpu_kldiv_columns,
+                    epsilon=args.triton_cpu_kldiv_epsilon,
+                    source_identity=args.triton_cpu_kldiv_source,
+                )
+            )
+        if (
+            kernel == "flash_bwd_preprocess"
+            and args.triton_cpu_flash_preprocess_library is not None
+        ):
+            if not args.triton_cpu_flash_preprocess_source:
+                raise ValueError(
+                    "--triton-cpu-flash-preprocess-library requires "
+                    "--triton-cpu-flash-preprocess-source"
+                )
+            result.append(
+                flash_preprocess_triton_cpu_rvv_record(
+                    args.triton_cpu_flash_preprocess_library,
+                    block_m=args.triton_cpu_flash_preprocess_block_m,
+                    block_head_dim=args.triton_cpu_flash_preprocess_block_d,
+                    source_identity=args.triton_cpu_flash_preprocess_source,
                 )
             )
         return result
