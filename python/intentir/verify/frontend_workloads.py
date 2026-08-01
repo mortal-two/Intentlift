@@ -1,16 +1,17 @@
 """Prepared SCRC workloads for the external TileLang and CUDA Dataset.
 
 This module is the source-aware Harness boundary for non-Triton frontends.  It
-projects a real Dataset source into Lift material, preserves the original
+projects a real Dataset source into authoring material, preserves the original
 frontend object for Gate1/Gate2, and binds one concrete finite invocation.  It
-does not translate either frontend into J; Lift remains the only Source -> J
-producer and Replay remains source-blind.
+does not translate either frontend into J; J authorship stays outside the
+Harness and Replay remains source-blind.
 """
 
 from __future__ import annotations
 
 import ast
 from dataclasses import dataclass
+from functools import lru_cache
 import hashlib
 import importlib.util
 import json
@@ -52,6 +53,7 @@ from intentir.verify.gate2.native import (
     NativeArgument,
     NativeArgumentRole,
     NativeExecutionSpec,
+    NativeTensorMapSpec,
 )
 from intentir.verify.gate2.orchestrate import Gate2Case, Gate2Suite
 from intentir.verify.gate2.policy import DEFAULT_GATE2_POLICY
@@ -63,10 +65,10 @@ from intentir.verify.scrc_runner import (
 )
 
 
-FRONTEND_DATASET_HARNESS_PROTOCOL = "intentir.scrc.frontend-dataset-harness.v3"
+FRONTEND_DATASET_HARNESS_PROTOCOL = "intentir.scrc.frontend-dataset-harness.v4"
 FRONTEND_DATASET_SOURCE_PROTOCOL = "intentir.scrc.frontend-source-projection.v1"
 FRONTEND_DATASET_PROJECTION_PROTOCOL = (
-    "intentir.scrc.frontend-dataset-harness-projection.v3"
+    "intentir.scrc.frontend-dataset-harness-projection.v4"
 )
 _DEFAULT_DATASET_DIMENSION = 4
 _DEFAULT_DATASET_BLOCK_1D = (16, 1, 1)
@@ -75,6 +77,51 @@ _DEFAULT_DATASET_BLOCK_2D = (16, 16, 1)
 
 class FrontendDatasetCaseUnavailableError(ValueError):
     """The catalog entry is valid but needs an unsupported explicit sidecar."""
+
+
+@dataclass(frozen=True)
+class DatasetTensorMapDescriptor:
+    """Pinned logical-tensor to physical-CUtensorMap binding."""
+
+    parameter: str
+    semantic_name: str
+    logical_dtype: str
+    shape_contract: tuple[int | str, ...]
+    box_dim: tuple[int, int]
+    swizzle: str = "128b"
+
+    def __post_init__(self) -> None:
+        if not self.parameter.isidentifier() or not self.semantic_name.isidentifier():
+            raise ValueError("TensorMap sidecar names must be identifiers")
+        if self.logical_dtype not in {"f16", "bf16", "f32"}:
+            raise ValueError("TensorMap sidecar dtype is outside the native profile")
+        shape = tuple(self.shape_contract)
+        if len(shape) != 2 or any(
+            isinstance(value, bool)
+            or not (
+                (isinstance(value, int) and value > 0)
+                or (isinstance(value, str) and value.isidentifier())
+            )
+            for value in shape
+        ):
+            raise ValueError("TensorMap sidecar requires one positive rank-2 shape")
+        box = tuple(int(value) for value in self.box_dim)
+        if len(box) != 2 or any(value <= 0 for value in box):
+            raise ValueError("TensorMap sidecar box_dim must be positive rank-2")
+        if self.swizzle not in {"none", "32b", "64b", "128b"}:
+            raise ValueError("TensorMap sidecar swizzle is unsupported")
+        object.__setattr__(self, "shape_contract", shape)
+        object.__setattr__(self, "box_dim", box)
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "parameter": self.parameter,
+            "semantic_name": self.semantic_name,
+            "logical_dtype": self.logical_dtype,
+            "shape": list(self.shape_contract),
+            "box_dim": list(self.box_dim),
+            "swizzle": self.swizzle,
+        }
 
 
 @dataclass(frozen=True)
@@ -93,6 +140,10 @@ class FrontendDatasetHarness:
     cuda_arch: str = "sm_120"
     source_sha256: str = ""
     descriptor_sha256: str = ""
+    tensor_map_descriptors: tuple[DatasetTensorMapDescriptor, ...] = ()
+    tensor_map_sidecar_sha256: str = ""
+    physical_block: tuple[int, int, int] | None = None
+    dynamic_shared_memory_bytes: int = 0
     protocol: str = FRONTEND_DATASET_HARNESS_PROTOCOL
 
     def __post_init__(self) -> None:
@@ -154,10 +205,38 @@ class FrontendDatasetHarness:
             r"[0-9a-fA-F]{64}", self.descriptor_sha256
         ):
             raise ValueError("Dataset Harness descriptor SHA-256 is malformed")
+        descriptors = tuple(
+            item
+            if isinstance(item, DatasetTensorMapDescriptor)
+            else DatasetTensorMapDescriptor(**item)
+            for item in self.tensor_map_descriptors
+        )
+        if len({item.parameter for item in descriptors}) != len(descriptors):
+            raise ValueError("Dataset TensorMap sidecar parameters must be unique")
+        if descriptors and self.frontend != "cuda":
+            raise ValueError("only a CUDA Harness may expose TensorMap descriptors")
+        if descriptors and not self.tensor_map_sidecar_sha256:
+            raise ValueError("Dataset TensorMap descriptors require one sidecar digest")
+        if self.tensor_map_sidecar_sha256 and not re.fullmatch(
+            r"[0-9a-fA-F]{64}", self.tensor_map_sidecar_sha256
+        ):
+            raise ValueError("Dataset TensorMap sidecar SHA-256 is malformed")
+        physical_block = self.physical_block
+        if physical_block is not None:
+            physical_block = tuple(int(value) for value in physical_block)
+            if len(physical_block) != 3 or any(value <= 0 for value in physical_block):
+                raise ValueError("Dataset physical block must contain three positive extents")
+        if (
+            not isinstance(self.dynamic_shared_memory_bytes, int)
+            or self.dynamic_shared_memory_bytes < 0
+        ):
+            raise ValueError("Dataset dynamic shared memory must be non-negative")
         object.__setattr__(self, "dimensions", dimensions)
         object.__setattr__(self, "scalar_values", scalar_values)
         object.__setattr__(self, "grid_contract", contract)
         object.__setattr__(self, "factory_kwargs", kwargs)
+        object.__setattr__(self, "tensor_map_descriptors", descriptors)
+        object.__setattr__(self, "physical_block", physical_block)
 
     @property
     def dimension_map(self) -> dict[str, int]:
@@ -186,6 +265,10 @@ class FrontendDatasetHarness:
             "cuda_arch": self.cuda_arch,
             "source_sha256": self.source_sha256,
             "descriptor_sha256": self.descriptor_sha256,
+            "tensor_map_descriptors": [item.to_json() for item in self.tensor_map_descriptors],
+            "tensor_map_sidecar_sha256": self.tensor_map_sidecar_sha256,
+            "physical_block": list(self.physical_block) if self.physical_block else None,
+            "dynamic_shared_memory_bytes": self.dynamic_shared_memory_bytes,
         }
 
 
@@ -258,6 +341,7 @@ class DatasetRuntimeParameter:
     shape: tuple[int, ...] = ()
     value: bool | int | float | None = None
     shape_contract: tuple[int | str, ...] = ()
+    semantic_mode: str | None = None
 
     def __post_init__(self) -> None:
         if not self.source_name.isidentifier() or not self.semantic_name.isidentifier():
@@ -300,14 +384,19 @@ class DatasetRuntimeParameter:
                 or self.value is None
             ):
                 raise ValueError("Dataset scalar requires one fixed runtime value")
-        elif (
-            self.rank != 0
-            or shape
-            or shape_contract
-            or self.mode != "value"
-            or self.value is not None
-        ):
-            raise ValueError("Dataset opaque exposes only its public type")
+        else:
+            if (
+                self.rank != 2
+                or len(shape) != 2
+                or len(shape_contract) != 2
+                or any(value <= 0 for value in shape)
+                or self.mode != "value"
+                or self.value is not None
+                or self.semantic_mode != "input"
+            ):
+                raise ValueError(
+                    "Dataset opaque TensorMap requires one rank-2 logical input sidecar"
+                )
         object.__setattr__(self, "shape", shape)
         object.__setattr__(self, "shape_contract", shape_contract)
 
@@ -356,7 +445,53 @@ class DatasetRuntimeParameter:
             "shape": list(self.shape),
             "shape_contract": list(self.shape_contract),
             "value": self.value,
+            "semantic_mode": self.semantic_mode,
         }
+
+
+def _logical_abi_parameters(
+    parameters: tuple[DatasetRuntimeParameter, ...],
+    descriptors: tuple[DatasetTensorMapDescriptor, ...],
+) -> tuple[DatasetRuntimeParameter, ...]:
+    """Project physical TensorMap slots to the logical tensor ABI seen by J.
+
+    Source execution retains the original opaque parameters.  Gate1, the
+    compiler view, J, and Replay instead observe the logical tensors pinned by
+    the descriptor sidecar.  Parameter names and positions remain unchanged so
+    alpha-normalization and the Source-to-opaque mapping stay exact.
+    """
+
+    by_parameter = {item.parameter: item for item in descriptors}
+    consumed: set[str] = set()
+    result: list[DatasetRuntimeParameter] = []
+    for parameter in parameters:
+        if parameter.kind != "opaque":
+            result.append(parameter)
+            continue
+        descriptor = by_parameter.get(parameter.source_name)
+        if (
+            descriptor is None
+            or descriptor.semantic_name != parameter.semantic_name
+            or descriptor.shape_contract != parameter.shape_contract
+            or parameter.semantic_mode != "input"
+        ):
+            raise ValueError("TensorMap physical ABI lacks one exact logical projection")
+        consumed.add(parameter.source_name)
+        result.append(
+            DatasetRuntimeParameter(
+                parameter.source_name,
+                parameter.semantic_name,
+                "pointer",
+                descriptor.logical_dtype,
+                parameter.rank,
+                "input",
+                parameter.shape,
+                shape_contract=parameter.shape_contract,
+            )
+        )
+    if consumed != set(by_parameter):
+        raise ValueError("TensorMap logical ABI projection contains unused descriptors")
+    return tuple(result)
 
 
 @dataclass(frozen=True)
@@ -579,8 +714,18 @@ def _metadata_parameters(
     source_names: tuple[str, ...] | None = None,
     include_runtime_scalars: bool,
     use_logical_interface_dtypes: bool = False,
+    use_logical_interface: bool = False,
 ) -> tuple[DatasetRuntimeParameter, ...]:
-    rows = list(_ordered_abi_rows(metadata))
+    if use_logical_interface:
+        interface = metadata.get("interface")
+        raw_rows = interface.get("parameters") if isinstance(interface, Mapping) else None
+        if not isinstance(raw_rows, list) or not raw_rows or not all(
+            isinstance(item, Mapping) for item in raw_rows
+        ):
+            raise ValueError("TileLang Dataset metadata lacks a logical interface")
+        rows = list(raw_rows)
+    else:
+        rows = list(_ordered_abi_rows(metadata))
     if not include_runtime_scalars:
         rows = [item for item in rows if item.get("kind") == "pointer"]
     if source_names is not None:
@@ -590,7 +735,7 @@ def _metadata_parameters(
     else:
         source_rows = tuple((str(row.get("name") or ""), row) for row in rows)
     logical_rows_by_source: dict[str, Mapping[str, Any]] = {}
-    if use_logical_interface_dtypes:
+    if use_logical_interface_dtypes and not use_logical_interface:
         interface = metadata.get("interface")
         raw_logical_rows = (
             interface.get("parameters") if isinstance(interface, Mapping) else None
@@ -629,7 +774,7 @@ def _metadata_parameters(
         value = None
         shape: tuple[int, ...] = ()
         shape_contract: tuple[int | str, ...] = ()
-        if kind == "pointer":
+        if kind in {"pointer", "opaque"}:
             shape_contract = _source_shape_contract(row.get("shape"))
             shape = _resolve_shape(shape_contract, dimensions)
         elif kind == "scalar":
@@ -656,6 +801,11 @@ def _metadata_parameters(
                 shape=shape,
                 value=value,
                 shape_contract=shape_contract,
+                semantic_mode=(
+                    str(row.get("semantic_mode"))
+                    if row.get("semantic_mode") is not None
+                    else None
+                ),
             )
         )
     return tuple(result)
@@ -673,6 +823,8 @@ def _shape_coordinate_mapping(
 
     coordinates: dict[str, str] = {}
     for parameter in parameters:
+        # A physical opaque slot has no shape coordinate until the pinned
+        # sidecar projects it into the separate logical ABI view.
         if parameter.kind != "pointer":
             continue
         for extent in parameter.shape_contract:
@@ -1237,7 +1389,10 @@ def prepare_frontend_dataset_workload(
             scalars=adapter.scalar_map,
             source_names=projection.parameters,
             include_runtime_scalars=False,
-            use_logical_interface_dtypes=True,
+            use_logical_interface=True,
+        )
+        gate_parameters = _logical_abi_parameters(
+            parameters, adapter.tensor_map_descriptors
         )
         gate_source: Any = TileLangKernelSource.from_factory_file(
             kernel.path,
@@ -1245,7 +1400,7 @@ def prepare_frontend_dataset_workload(
             factory_kwargs=adapter.factory_kwarg_map,
         )
         gate_case: Any = TileLangCompileCase(
-            tuple(item.frontend_parameter() for item in parameters),
+            tuple(item.frontend_parameter() for item in gate_parameters),
             adapter.grid,
             adapter.block,
             opaque_schedule,
@@ -1260,6 +1415,9 @@ def prepare_frontend_dataset_workload(
             scalars=adapter.scalar_map,
             include_runtime_scalars=True,
         )
+        gate_parameters = _logical_abi_parameters(
+            parameters, adapter.tensor_map_descriptors
+        )
         projection = DatasetSourceProjection(
             code,
             kernel.symbol,
@@ -1270,7 +1428,7 @@ def prepare_frontend_dataset_workload(
         )
         gate_source = CudaKernelSource.from_file(kernel.path, kernel.symbol)
         gate_case = CudaCompileCase(
-            tuple(item.frontend_parameter() for item in parameters),
+            tuple(item.frontend_parameter() for item in gate_parameters),
             adapter.grid,
             adapter.block,
             opaque_schedule,
@@ -1284,8 +1442,13 @@ def prepare_frontend_dataset_workload(
         raise ValueError(
             f"Dataset invocation descriptor differs for {adapter.case_id}"
         )
+    launch_metadata = (
+        _metadata_with_tensor_map_launch(metadata, adapter.grid_contract)
+        if adapter.tensor_map_sidecar_sha256
+        else metadata
+    )
     discovered_grid, discovered_block, discovered_contract = _launch_from_metadata(
-        metadata, dimensions
+        launch_metadata, dimensions
     )
     if discovered_grid != adapter.grid or discovered_block != adapter.block:
         raise ValueError(
@@ -1293,12 +1456,12 @@ def prepare_frontend_dataset_workload(
         )
     if discovered_contract != adapter.grid_contract:
         raise ValueError("Dataset Harness grid contract differs from metadata")
-    shape_coordinates = _shape_coordinate_mapping(parameters)
+    shape_coordinates = _shape_coordinate_mapping(gate_parameters)
     compiler_view = SCRCCompilerView(
         schedule_values=source_schedule,
         compiler_slots=tuple(source_schedule),
         arguments=tuple(
-            item.compiler_argument(shape_coordinates) for item in parameters
+            item.compiler_argument(shape_coordinates) for item in gate_parameters
         ),
         grid=adapter.grid,
         grid_contract=adapter.grid_contract,
@@ -1375,16 +1538,24 @@ def _numpy_dtype(dtype: str) -> np.dtype[Any]:
 def _random_input(
     rng: np.random.Generator, parameter: DatasetRuntimeParameter
 ) -> np.ndarray:
-    dtype = _numpy_dtype(parameter.dtype)
+    return _random_array(rng, parameter.dtype, parameter.shape)
+
+
+def _random_array(
+    rng: np.random.Generator,
+    dtype_name: str,
+    shape: tuple[int, ...],
+) -> np.ndarray:
+    dtype = _numpy_dtype(dtype_name)
     if dtype.kind == "b":
-        return rng.integers(0, 2, size=parameter.shape).astype(dtype)
+        return rng.integers(0, 2, size=shape).astype(dtype)
     if dtype.kind in {"i", "u"}:
         # Non-negative bounded integer fixtures are valid arithmetic/mask data
         # and, unlike the old negative sample range, are also memory-safe for
         # index tensors.  This is dtype-level fixture policy; no parameter name
         # or kernel family is inspected.
-        return rng.integers(0, 4, size=parameter.shape).astype(dtype)
-    return rng.normal(0.0, 0.25, size=parameter.shape).astype(dtype)
+        return rng.integers(0, 4, size=shape).astype(dtype)
+    return rng.normal(0.0, 0.25, size=shape).astype(dtype)
 
 
 def _bind_shape(
@@ -1421,7 +1592,13 @@ def build_frontend_dataset_gate2_suite(
     dimensions: dict[str, int] = {}
     input_bindings: dict[str, str] = {}
     output_bindings: dict[str, str] = {}
+    # ``arguments`` is the logical ABI consumed by Replay.  Source arguments
+    # may replace selected logical inputs with physical CUtensorMap values.
     arguments: list[NativeArgument] = []
+    source_arguments: list[NativeArgument] = []
+    tensor_maps = {
+        item.parameter: item for item in prepared.adapter.tensor_map_descriptors
+    }
 
     for parameter in artifact.j.signature.parameters:
         binding = runtime.get(parameter.name)
@@ -1454,18 +1631,65 @@ def build_frontend_dataset_gate2_suite(
                     raise ValueError(
                         "J dimension-bound Dataset scalar is inconsistent"
                     )
+            native_scalar = NativeArgument(
+                NativeArgumentRole.SCALAR,
+                value_key=key,
+                dtype=binding.dtype,
+            )
+            arguments.append(native_scalar)
+            source_arguments.append(native_scalar)
+            continue
+        if parameter.kind is ParameterKind.OPAQUE:
+            raise ValueError(
+                "accepted J exposes a physical opaque ABI; TensorMap must be logicalized"
+            )
+        if parameter.kind not in {ParameterKind.POINTER, ParameterKind.TENSOR}:
+            raise ValueError("unsupported accepted J Dataset parameter kind")
+        if binding.kind == "opaque":
+            descriptor = tensor_maps.get(binding.source_name)
+            logical_ref = parameter.logical_ref
+            tensor = j_inputs.get(logical_ref)
+            if (
+                parameter.kind is not ParameterKind.POINTER
+                or parameter.mode is not ParameterMode.INPUT
+                or parameter.rank != 2
+                or descriptor is None
+                or descriptor.semantic_name != binding.semantic_name
+                or descriptor.shape_contract != binding.shape_contract
+                or tensor is None
+                or parameter.dtype != descriptor.logical_dtype
+                or tensor.dtype != descriptor.logical_dtype
+            ):
+                raise ValueError(
+                    "accepted J logical pointer differs from TensorMap sidecar"
+                )
+            _bind_shape(tensor.shape, binding.shape, dimensions)
+            key = f"input_{parameter.name}"
+            values[key] = _random_array(
+                rng, descriptor.logical_dtype, binding.shape
+            )
+            input_bindings[logical_ref] = key
             arguments.append(
                 NativeArgument(
-                    NativeArgumentRole.SCALAR,
+                    NativeArgumentRole.INPUT,
                     value_key=key,
-                    dtype=binding.dtype,
+                    dtype=descriptor.logical_dtype,
+                    shape=binding.shape,
+                )
+            )
+            source_arguments.append(
+                NativeArgument(
+                    NativeArgumentRole.TENSOR_MAP,
+                    value_key=key,
+                    dtype=descriptor.logical_dtype,
+                    shape=binding.shape,
+                    tensor_map=NativeTensorMapSpec(
+                        descriptor.box_dim,
+                        swizzle=descriptor.swizzle,
+                    ),
                 )
             )
             continue
-        if parameter.kind is ParameterKind.OPAQUE:
-            raise ValueError("opaque native Dataset arguments require an explicit sidecar")
-        if parameter.kind not in {ParameterKind.POINTER, ParameterKind.TENSOR}:
-            raise ValueError("unsupported accepted J Dataset parameter kind")
         if binding.kind != "pointer" or parameter.mode.value != binding.mode:
             raise ValueError("accepted J pointer mode differs from Dataset ABI")
         logical_ref = parameter.logical_ref
@@ -1523,6 +1747,7 @@ def build_frontend_dataset_gate2_suite(
                     output_key=output_key,
                 )
             )
+        source_arguments.append(arguments[-1])
     if set(input_bindings) != set(j_inputs):
         raise ValueError("Dataset Harness input bindings differ from accepted J")
     if set(output_bindings) != set(j_outputs):
@@ -1542,6 +1767,13 @@ def build_frontend_dataset_gate2_suite(
             "adapter_protocol": prepared.adapter.protocol,
             "dataset_case_id": prepared.adapter.case_id,
         },
+        source_arguments=tuple(source_arguments),
+        source_block=prepared.adapter.physical_block,
+        source_shared_mem=(
+            prepared.adapter.dynamic_shared_memory_bytes
+            if prepared.adapter.tensor_map_descriptors
+            else None
+        ),
     )
     output_keys = tuple(output_bindings[item.name] for item in artifact.j.intent.outputs)
     case = Gate2Case(
@@ -1619,6 +1851,157 @@ def _descriptor_sha256(metadata: Mapping[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+@dataclass(frozen=True)
+class _DatasetTensorMapSidecar:
+    cuda_arch: str
+    source_sha256: str
+    dimensions: tuple[tuple[str, int], ...]
+    grid_contract: tuple[str, str, str]
+    physical_block: tuple[int, int, int]
+    dynamic_shared_memory_bytes: int
+    descriptors: tuple[DatasetTensorMapDescriptor, ...]
+    digest: str
+
+
+@lru_cache(maxsize=1)
+def _tensor_map_sidecars() -> Mapping[str, _DatasetTensorMapSidecar]:
+    path = Path(__file__).with_name("frontend_tensor_map_sidecars.json")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("protocol") != "intentir.frontend-dataset.cuda-tensor-map-sidecars.v1":
+        raise ValueError("unsupported CUDA TensorMap sidecar protocol")
+    profile = payload.get("profile")
+    expected_profile = {
+        "cuda_arch": "sm_120a",
+        "descriptor_rank": 2,
+        "element_strides": [1, 1],
+        "interleave": "none",
+        "swizzle": "per_descriptor",
+        "l2_promotion": "128b",
+        "float_oob_fill": "none",
+    }
+    if profile != expected_profile:
+        raise ValueError("CUDA TensorMap sidecar profile differs from the closed runner")
+    raw_cases = payload.get("cases")
+    if not isinstance(raw_cases, Mapping):
+        raise ValueError("CUDA TensorMap sidecar cases must be an object")
+    result: dict[str, _DatasetTensorMapSidecar] = {}
+    for case_id, raw in raw_cases.items():
+        if not isinstance(case_id, str) or not case_id.startswith("cuda:"):
+            raise ValueError("CUDA TensorMap sidecar case id is malformed")
+        if not isinstance(raw, Mapping):
+            raise ValueError("CUDA TensorMap sidecar case must be an object")
+        source_sha256 = str(raw.get("source_sha256") or "")
+        if re.fullmatch(r"[0-9a-f]{64}", source_sha256) is None:
+            raise ValueError("CUDA TensorMap sidecar source digest is malformed")
+        raw_dimensions = raw.get("dimensions")
+        if not isinstance(raw_dimensions, Mapping):
+            raise ValueError("CUDA TensorMap sidecar dimensions must be an object")
+        dimensions = tuple(
+            sorted((str(name), int(value)) for name, value in raw_dimensions.items())
+        )
+        if any(not name.isidentifier() or value <= 0 for name, value in dimensions):
+            raise ValueError("CUDA TensorMap sidecar dimensions are malformed")
+        grid_contract = tuple(str(value) for value in raw.get("grid_contract", ()))
+        if len(grid_contract) != 3 or any(not value for value in grid_contract):
+            raise ValueError("CUDA TensorMap sidecar grid contract is malformed")
+        for expression in grid_contract:
+            _safe_integer_expression(expression, dict(dimensions))
+        physical_block = tuple(int(value) for value in raw.get("physical_block", ()))
+        if len(physical_block) != 3 or any(value <= 0 for value in physical_block):
+            raise ValueError("CUDA TensorMap sidecar physical block is malformed")
+        shared = raw.get("dynamic_shared_memory_bytes")
+        if isinstance(shared, bool) or not isinstance(shared, int) or shared < 0:
+            raise ValueError("CUDA TensorMap sidecar shared-memory size is malformed")
+        raw_descriptors = raw.get("descriptors")
+        if not isinstance(raw_descriptors, list) or not raw_descriptors:
+            raise ValueError("CUDA TensorMap sidecar requires descriptor rows")
+        descriptors = tuple(
+            DatasetTensorMapDescriptor(
+                parameter=str(item.get("parameter") or ""),
+                semantic_name=str(item.get("semantic_name") or ""),
+                logical_dtype=str(item.get("logical_dtype") or ""),
+                shape_contract=tuple(item.get("shape") or ()),
+                box_dim=tuple(item.get("box_dim") or ()),
+                swizzle=str(item.get("swizzle") or ""),
+            )
+            for item in raw_descriptors
+            if isinstance(item, Mapping)
+        )
+        if len(descriptors) != len(raw_descriptors):
+            raise ValueError("CUDA TensorMap sidecar descriptor row is malformed")
+        canonical = {"profile": profile, "case_id": case_id, "case": raw}
+        digest = hashlib.sha256(
+            json.dumps(
+                canonical,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+                allow_nan=False,
+            ).encode("utf-8")
+        ).hexdigest()
+        result[case_id] = _DatasetTensorMapSidecar(
+            str(profile["cuda_arch"]),
+            source_sha256,
+            dimensions,
+            grid_contract,  # type: ignore[arg-type]
+            physical_block,  # type: ignore[arg-type]
+            shared,
+            descriptors,
+            digest,
+        )
+    return result
+
+
+def _metadata_with_tensor_map_launch(
+    metadata: Mapping[str, Any],
+    grid_contract: tuple[str, str, str],
+) -> dict[str, Any]:
+    result = dict(metadata)
+    launch = dict(metadata.get("launch") or {})
+    for axis, expression in zip(("x", "y", "z"), grid_contract, strict=True):
+        launch[f"blockIdx.{axis}"] = expression
+    result["launch"] = launch
+    return result
+
+
+def _validate_tensor_map_sidecar(
+    kernel: FrontendDatasetKernel,
+    metadata: Mapping[str, Any],
+    sidecar: _DatasetTensorMapSidecar,
+) -> None:
+    actual_sha256 = hashlib.sha256(kernel.path.read_bytes()).hexdigest()
+    if actual_sha256 != sidecar.source_sha256:
+        raise ValueError("CUDA TensorMap sidecar source digest differs")
+    rows = [
+        row
+        for row in _ordered_abi_rows(metadata)
+        if str(row.get("kind")) == "opaque"
+    ]
+    descriptors = {item.parameter: item for item in sidecar.descriptors}
+    if {str(row.get("name")) for row in rows} != set(descriptors):
+        raise ValueError("CUDA TensorMap sidecar does not cover the opaque ABI")
+    interface = metadata.get("interface")
+    logical_rows = interface.get("parameters") if isinstance(interface, Mapping) else None
+    if not isinstance(logical_rows, list):
+        raise ValueError("CUDA TensorMap sidecar lacks a logical interface")
+    logical_by_name = {
+        str(row.get("name")): row for row in logical_rows if isinstance(row, Mapping)
+    }
+    for row in rows:
+        name = str(row.get("name"))
+        descriptor = descriptors[name]
+        semantic_name = str(row.get("semantic_name") or "")
+        logical = logical_by_name.get(semantic_name)
+        if (
+            descriptor.semantic_name != semantic_name
+            or descriptor.shape_contract != _source_shape_contract(row.get("shape"))
+            or logical is None
+            or descriptor.logical_dtype
+            != _normalize_dataset_dtype(logical.get("dtype"))
+        ):
+            raise ValueError("CUDA TensorMap sidecar differs from Dataset metadata")
+
+
 def _canonical_for_kernel(
     kernel: FrontendDatasetKernel,
     snapshots: Mapping[str, Mapping[str, int]],
@@ -1645,14 +2028,28 @@ def _project_tilelang_harness(
     rows = abi.get("parameters") if isinstance(abi, Mapping) else None
     if not isinstance(rows, list):
         raise ValueError("TileLang Dataset case lacks structured CUDA ABI metadata")
-    if any(isinstance(row, Mapping) and row.get("kind") == "opaque" for row in rows):
+    has_tensor_maps = any(
+        isinstance(row, Mapping) and row.get("kind") == "opaque" for row in rows
+    )
+    sidecar = _tensor_map_sidecars().get(companion.case_id) if has_tensor_maps else None
+    if has_tensor_maps and sidecar is None:
         raise FrontendDatasetCaseUnavailableError(
-            "TileLang Dataset opaque ABI requires an explicit descriptor sidecar"
+            "TileLang Dataset opaque companion lacks an explicit descriptor sidecar"
         )
+    if sidecar is not None:
+        _validate_tensor_map_sidecar(companion, companion.metadata, sidecar)
     factory_kwargs = _literal_factory_kwargs(kernel)
+    canonical_shapes = dict(_canonical_for_kernel(kernel, snapshots))
+    if sidecar is not None:
+        canonical_shapes.update(dict(sidecar.dimensions))
+    descriptor_metadata = (
+        _metadata_with_tensor_map_launch(companion.metadata, sidecar.grid_contract)
+        if sidecar is not None
+        else companion.metadata
+    )
     dimensions, grid, block, contract, _scalars = _dataset_descriptor_values(
-        companion.metadata,
-        canonical_shapes=_canonical_for_kernel(kernel, snapshots),
+        descriptor_metadata,
+        canonical_shapes=canonical_shapes,
     )
     return FrontendDatasetHarness(
         kernel.case_id,
@@ -1666,6 +2063,7 @@ def _project_tilelang_harness(
         factory_kwargs=factory_kwargs,
         source_sha256=hashlib.sha256(kernel.path.read_bytes()).hexdigest(),
         descriptor_sha256=_descriptor_sha256(companion.metadata),
+        tensor_map_sidecar_sha256=sidecar.digest if sidecar is not None else "",
     )
 
 
@@ -1679,19 +2077,37 @@ def _project_cuda_harness(
     rows = abi.get("parameters") if isinstance(abi, Mapping) else None
     if not isinstance(rows, list):
         raise ValueError("CUDA Dataset case lacks structured ABI metadata")
-    if any(isinstance(row, Mapping) and row.get("kind") == "opaque" for row in rows):
+    has_tensor_maps = any(
+        isinstance(row, Mapping) and row.get("kind") == "opaque" for row in rows
+    )
+    sidecar = _tensor_map_sidecars().get(kernel.case_id) if has_tensor_maps else None
+    if has_tensor_maps and sidecar is None:
         raise FrontendDatasetCaseUnavailableError(
-            "CUDA Dataset opaque ABI requires an explicit descriptor sidecar"
+            "CUDA Dataset opaque ABI lacks an explicit descriptor sidecar"
         )
+    if sidecar is not None:
+        _validate_tensor_map_sidecar(kernel, metadata, sidecar)
+    canonical_shapes = dict(_canonical_for_kernel(kernel, snapshots))
+    if sidecar is not None:
+        canonical_shapes.update(dict(sidecar.dimensions))
+    descriptor_metadata = (
+        _metadata_with_tensor_map_launch(metadata, sidecar.grid_contract)
+        if sidecar is not None
+        else metadata
+    )
     dimensions, grid, block, contract, scalar_values = _dataset_descriptor_values(
-        metadata,
-        canonical_shapes=_canonical_for_kernel(kernel, snapshots),
+        descriptor_metadata,
+        canonical_shapes=canonical_shapes,
     )
     target = metadata.get("target")
     arch = (
-        str(target.get("arch"))
-        if isinstance(target, Mapping) and target.get("arch")
-        else "sm_120"
+        sidecar.cuda_arch
+        if sidecar is not None
+        else (
+            str(target.get("arch"))
+            if isinstance(target, Mapping) and target.get("arch")
+            else "sm_120"
+        )
     )
     return FrontendDatasetHarness(
         kernel.case_id,
@@ -1705,6 +2121,12 @@ def _project_cuda_harness(
         cuda_arch=arch,
         source_sha256=hashlib.sha256(kernel.path.read_bytes()).hexdigest(),
         descriptor_sha256=_descriptor_sha256(metadata),
+        tensor_map_descriptors=sidecar.descriptors if sidecar is not None else (),
+        tensor_map_sidecar_sha256=sidecar.digest if sidecar is not None else "",
+        physical_block=sidecar.physical_block if sidecar is not None else None,
+        dynamic_shared_memory_bytes=(
+            sidecar.dynamic_shared_memory_bytes if sidecar is not None else 0
+        ),
     )
 
 

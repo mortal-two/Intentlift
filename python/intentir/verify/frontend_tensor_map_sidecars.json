@@ -1,0 +1,70 @@
+{
+  "protocol": "intentir.frontend-dataset.cuda-tensor-map-sidecars.v1",
+  "profile": {
+    "cuda_arch": "sm_120a",
+    "descriptor_rank": 2,
+    "element_strides": [1, 1],
+    "interleave": "none",
+    "swizzle": "per_descriptor",
+    "l2_promotion": "128b",
+    "float_oob_fill": "none"
+  },
+  "cases": {
+    "cuda:tilelang_gemm": {
+      "source_sha256": "3f599e3747b2a8eb59601d69e75d444dced4d7ab3de707acfda5334ab3a38ffe",
+      "dimensions": {"M": 128, "N": 128, "K": 32},
+      "grid_contract": ["(N + 127) // 128", "(M + 127) // 128", "1"],
+      "physical_block": [256, 1, 1],
+      "dynamic_shared_memory_bytes": 49152,
+      "descriptors": [
+        {"parameter": "A_desc", "semantic_name": "A", "logical_dtype": "f16", "shape": ["M", "K"], "box_dim": [32, 128], "swizzle": "64b"},
+        {"parameter": "B_desc", "semantic_name": "B", "logical_dtype": "f16", "shape": ["K", "N"], "box_dim": [64, 32], "swizzle": "128b"}
+      ]
+    },
+    "cuda:tilelang_matmul_relu2d": {
+      "source_sha256": "5e93ae69a23474c7f06e124910b0d2e15ec48f5795b71a3de22ec3abc69713c9",
+      "dimensions": {"M": 32, "N": 32, "K": 32},
+      "grid_contract": ["(N + 63) // 64", "(M + 63) // 64", "1"],
+      "physical_block": [256, 1, 1],
+      "dynamic_shared_memory_bytes": 32768,
+      "descriptors": [
+        {"parameter": "A_desc", "semantic_name": "A", "logical_dtype": "f32", "shape": ["M", "K"], "box_dim": [32, 64], "swizzle": "128b"},
+        {"parameter": "B_desc", "semantic_name": "B", "logical_dtype": "f32", "shape": ["K", "N"], "box_dim": [32, 32], "swizzle": "128b"}
+      ]
+    },
+    "cuda:tilelang_matmul_bias_relu2d": {
+      "source_sha256": "342b9fae68bdc05394fe5a5f8677bbacf45b0eb642cd490cb5723fdbec1f4f6b",
+      "dimensions": {"M": 32, "N": 32, "K": 32},
+      "grid_contract": ["(N + 63) // 64", "(M + 63) // 64", "1"],
+      "physical_block": [256, 1, 1],
+      "dynamic_shared_memory_bytes": 32768,
+      "descriptors": [
+        {"parameter": "A_desc", "semantic_name": "A", "logical_dtype": "f32", "shape": ["M", "K"], "box_dim": [32, 64], "swizzle": "128b"},
+        {"parameter": "B_desc", "semantic_name": "B", "logical_dtype": "f32", "shape": ["K", "N"], "box_dim": [32, 32], "swizzle": "128b"}
+      ]
+    },
+    "cuda:tilelang_matmul_fused_epilogue2d": {
+      "source_sha256": "0af31a550f445260460831ea58385108dbb271394d438c377991bb730f91520d",
+      "dimensions": {"M": 32, "N": 32, "K": 32},
+      "grid_contract": ["(N + 63) // 64", "(M + 63) // 64", "1"],
+      "physical_block": [256, 1, 1],
+      "dynamic_shared_memory_bytes": 32768,
+      "descriptors": [
+        {"parameter": "A_desc", "semantic_name": "A", "logical_dtype": "f32", "shape": ["M", "K"], "box_dim": [32, 64], "swizzle": "128b"},
+        {"parameter": "B_desc", "semantic_name": "B", "logical_dtype": "f32", "shape": ["K", "N"], "box_dim": [32, 32], "swizzle": "128b"}
+      ]
+    },
+    "cuda:tilelang_mlp2d": {
+      "source_sha256": "8188f722f8af89700c9a3d994311288320870be767fe45bf56978f6619802e2b",
+      "dimensions": {"M": 32, "N": 32, "K": 32, "H": 32},
+      "grid_contract": ["(N + 63) // 64", "(M + 63) // 64", "1"],
+      "physical_block": [256, 1, 1],
+      "dynamic_shared_memory_bytes": 65536,
+      "descriptors": [
+        {"parameter": "A_desc", "semantic_name": "A", "logical_dtype": "f32", "shape": ["M", "K"], "box_dim": [32, 64], "swizzle": "128b"},
+        {"parameter": "W1_desc", "semantic_name": "W1", "logical_dtype": "f32", "shape": ["K", "H"], "box_dim": [32, 32], "swizzle": "128b"},
+        {"parameter": "W2_desc", "semantic_name": "W2", "logical_dtype": "f32", "shape": ["H", "N"], "box_dim": [32, 64], "swizzle": "128b"}
+      ]
+    }
+  }
+}

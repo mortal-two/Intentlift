@@ -232,7 +232,11 @@ def _validate_schedule(
             raise ValueError("native launch-grid C slot must be compiler-kind")
         if slot.value_type.casefold() not in {"i1", "bool", "boolean"}:
             raise ValueError("native launch-grid C slot must be boolean")
-        observed[slot.name] = bool(case.grid[axis] != 1)
+        # The bit denotes that the coordinate is part of the authored launch
+        # topology, even when this finite valuation happens to bind its extent
+        # to one.  Gate1's compiled program-coordinate observation validates
+        # that the Source actually exposes the declared axis.
+        observed[slot.name] = True
     if artifact.c.values != observed:
         raise ValueError("frontend Harness schedule differs from the accepted C")
 

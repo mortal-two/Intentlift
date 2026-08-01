@@ -29,6 +29,11 @@ from manual_g3_g7_artifacts import (
     CASE_IDS as G3_G7_CASE_IDS,
     CASE_RECEIPTS as G3_G7_CASE_RECEIPTS,
 )
+from manual_descriptor_artifacts import (
+    CASE_BUILDERS as DESCRIPTOR_CASE_BUILDERS,
+    CASE_IDS as DESCRIPTOR_CASE_IDS,
+    CASE_RECEIPTS as DESCRIPTOR_CASE_RECEIPTS,
+)
 from intentir.extraction.providers.provider import get_provider
 from intentir.verify.adapters import NativeGate2ExecutionAdapter
 from intentir.verify.gate1.cuda_compiler import CudaCompiler
@@ -47,16 +52,18 @@ from intentir.verify.workload_registry import prepare_registered_scrc_workload
 
 
 TASK_ROOT = Path(__file__).resolve().parent
-CASE_IDS = (*G1_CASE_IDS, *G2_CASE_IDS, *G3_G7_CASE_IDS)
+CASE_IDS = (*G1_CASE_IDS, *G2_CASE_IDS, *G3_G7_CASE_IDS, *DESCRIPTOR_CASE_IDS)
 CASE_BUILDERS = {
     **G1_CASE_BUILDERS,
     **G2_CASE_BUILDERS,
     **G3_G7_CASE_BUILDERS,
+    **DESCRIPTOR_CASE_BUILDERS,
 }
 CASE_RECEIPTS = {
     **G1_CASE_RECEIPTS,
     **G2_CASE_RECEIPTS,
     **G3_G7_CASE_RECEIPTS,
+    **DESCRIPTOR_CASE_RECEIPTS,
 }
 
 
@@ -482,6 +489,8 @@ def _select_cases(args: argparse.Namespace) -> list[str]:
         return list(G2_CASE_IDS)
     if args.all_runnable_remaining:
         return list(G3_G7_CASE_IDS)
+    if args.all_descriptor_remaining:
+        return list(DESCRIPTOR_CASE_IDS)
     if args.all_authored:
         return list(CASE_IDS)
     if args.case:
@@ -490,7 +499,8 @@ def _select_cases(args: argparse.Namespace) -> list[str]:
         return list(CASE_IDS)
     raise SystemExit(
         "select at least one --case or pass "
-        "--all-g1/--all-g2/--all-runnable-remaining/--all-authored"
+        "--all-g1/--all-g2/--all-runnable-remaining/"
+        "--all-descriptor-remaining/--all-authored"
     )
 
 
@@ -500,6 +510,7 @@ def main() -> int:
     parser.add_argument("--all-g1", action="store_true")
     parser.add_argument("--all-g2", action="store_true")
     parser.add_argument("--all-runnable-remaining", action="store_true")
+    parser.add_argument("--all-descriptor-remaining", action="store_true")
     parser.add_argument("--all-authored", action="store_true")
     parser.add_argument("--preflight-only", action="store_true")
     parser.add_argument("--provider", default=None)
@@ -534,6 +545,8 @@ def main() -> int:
         preflight_name = "preflight_g2.json"
     elif selected == list(G3_G7_CASE_IDS):
         preflight_name = "preflight_g3_g7_runnable.json"
+    elif selected == list(DESCRIPTOR_CASE_IDS):
+        preflight_name = "preflight_descriptor_remaining.json"
     elif selected == list(CASE_IDS):
         preflight_name = "preflight_authored.json"
     else:

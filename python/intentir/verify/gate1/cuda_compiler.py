@@ -203,7 +203,11 @@ def _normalize_arch(raw: str) -> str:
     digits = "".join(character for character in value if character.isdigit())
     if not digits:
         raise ValueError("CUDA arch must contain a compute capability")
-    return f"sm_{digits}"
+    # CUDA's architecture-specific targets (for example sm_90a/sm_120a) are
+    # not aliases of their portable counterparts.  Instructions such as
+    # setmaxnreg are rejected when the trailing ``a`` is silently discarded.
+    suffix = "a" if value.endswith("a") else ""
+    return f"sm_{digits}{suffix}"
 
 
 def find_nvcc() -> str | None:
