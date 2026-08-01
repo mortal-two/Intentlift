@@ -1,9 +1,10 @@
-# TileLang / CUDA 二十对 J 差异与多前端实验定稿
+# TileLang / CUDA 三十一对 J 差异与多前端实验定稿
 
-> 日期：2026-08-01  
-> 状态：Task28 closure 与 Task29 paired-J analysis 已完成  
-> 主分析：20 个 unique same-origin pairs / 40 accepted artifacts  
-> Robustness：31 个 unique pairs / 62 accepted artifacts
+> 日期：2026-08-01
+> 状态：Task28 closure、Task29 paired-J analysis 与 Task30 backend reuse 已完成
+> 论文主分母：31 个 unique same-origin pairs / 62 accepted artifacts
+> 历史详细选择：20 pairs，仅用于旧版逐行分析，不作为正文分母
+> 文件名中的“二十对”仅为兼容既有引用而保留；正文与所有 aggregate 已统一为 full-31
 
 ## 1. 最终实验逻辑
 
@@ -25,23 +26,23 @@ CUDA Source     -> manual (J,C,pi) -> fresh J-only Replay
 2. 闭合后的 J 哪些层稳定、哪些差异有 Source 依据；
 3. 支持这些 frontend 需要多少 generic engineering，而不是多少 per-kernel recipe。
 
-Task28 的闭合分母始终是 31 pair / 62 frontend runs。Task29 冻结 20 对作为篇幅可控的详细主表，
-并对全部 31 对运行同一分析作为 robustness；20/20 不能重新包装成新的 closure success rate。
+Task28 的闭合分母与本文所有 aggregate 始终是 31 pair / 62 frontend runs。Task29 曾冻结 20 对作为
+篇幅可控的逐行选择；它现在只保留为历史分析便利，不作为论文主表、成功率或 robustness 对照。
 
 ## 2. Paired-J 结果
 
-| Metric | Primary 20 | Full 31 | 解释 |
-|---|---:|---:|---|
-| Independent accepted artifacts | 40/40 | 62/62 | 两个 frontend 各自 TypeCheck/Gate1/Gate2 |
-| Full canonical J exact | 0/20 | 0/31 | frontend identity 与 raw ABI 被保留；不是失败 |
-| Identity-normalized J exact（仍含 signature） | 0/20 | 0/31 | tensor 与 pointer signature 始终不同 |
-| Signature-free semantic core exact | 15/20 | 26/31 | 83.9% full-corpus exact |
-| Layer-A typed intent exact | 15/20 | 26/31 | 与 core delta 同一五对 |
-| Layer-A op-kind set exact | 18/20 | 29/31 | 93.5% 保留相同算子种类 |
-| Boundary exact | 15/20 | 26/31 | 五对保留 source-grounded boundary/typed delta |
-| Carrier-normalized typed buffer profile exact | 16/20 | 27/31 | 四对 i1↔i8 typed carrier 不同 |
-| C slots + values exact | 20/20 | 31/31 | generated CUDA 保留同一组 source choices |
-| Compact pi exact | 20/20 | 31/31 | 当前 program-axis witness 稳定 |
+| Metric | Full 31 | 解释 |
+|---|---:|---|
+| Independent accepted artifacts | 62/62 | 两个 frontend 各自 TypeCheck/Gate1/Gate2 |
+| Full canonical J exact | 0/31 | frontend identity 与 raw ABI 被保留；不是失败 |
+| Identity-normalized J exact（仍含 signature） | 0/31 | tensor 与 pointer signature 始终不同 |
+| Signature-free semantic core exact | 26/31 | 83.9% full-corpus exact |
+| Layer-A typed intent exact | 26/31 | 与 core delta 同一五对 |
+| Layer-A op-kind set exact | 29/31 | 93.5% 保留相同算子种类 |
+| Boundary exact | 26/31 | 五对保留 source-grounded boundary/typed delta |
+| Carrier-normalized typed buffer profile exact | 27/31 | 四对 i1↔i8 typed carrier 不同 |
+| C slots + values exact | 31/31 | generated CUDA 保留同一组 source choices |
+| Compact pi exact | 31/31 | 当前 program-axis witness 稳定 |
 
 这里的 `semantic core exact` 删除的只有 `kernel_id`、IntentFunction name、node-id spelling 和 raw
 signature；operator、operand、dtype、predicate、fill、access、effect、result relation、scope、storage 与
@@ -84,12 +85,10 @@ J/Replay 中，而 TileLang 使用自己的 TIR realization。
 
 ## 5. Replay 规模与成本
 
-| Evidence cohort | Frontend | Runs | Gate1 median | Gate1 mean | Replay bytes median | Provider calls |
-|---|---|---:|---:|---:|---:|---:|
-| Primary 20 | TileLang | 20 | 197.914 s | 250.386 s | 572 B | 20 |
-| Primary 20 | CUDA | 20 | 125.408 s | 127.758 s | 729 B | 20 |
-| Full 31 | TileLang | 31 | 198.701 s | 236.049 s | 690 B | 31 |
-| Full 31 | CUDA | 31 | 128.694 s | 129.945 s | 916 B | 31 |
+| Frontend | Runs | Gate1 median | Gate1 mean | Replay bytes median | Provider calls |
+|---|---:|---:|---:|---:|---:|
+| TileLang | 31 | 198.701 s | 236.049 s | 690 B | 31 |
+| CUDA | 31 | 128.694 s | 129.945 s | 916 B | 31 |
 
 62 个 accepted run 均为一次 physical provider call，Lift 调用为 0，pi 对 Replay 不可见。Replay source
 很小，但分钟级 wall time 仍然明显；因此论文可以声称 J-only Replay 能覆盖前端碎片化，不能声称该
@@ -117,12 +116,14 @@ agent path 已达到成熟编译器的编译速度。TileLang 与 CUDA 的时间
 
 ### 主表
 
-合并四块证据：
+合并六块证据：
 
 1. closure：31/31 pairs、62/62 frontend runs；
 2. correspondence：core 26/31、op-kind 29/31、boundary 26/31；
 3. frontend deltas：raw signature 0/31、tensor/pointer 31/31、extra CUDA scalar 27/31；
-4. engineering：最难增量 +701 generic net、+71 sidecar、0 kernel-specific lowering rules。
+4. backend reuse：CUDA/RVV 的 Decode、Emit、Legal、real Lower 均为 62/62；
+5. engineering：frontend-specific backend 0 LoC/0 rules；共享 `math.floor` CUDA consumer +31 LoC；
+6. frontend engineering：最难增量 +701 generic net、+71 sidecar、0 kernel-specific lowering rules。
 
 ### Fig.2(a)
 
@@ -137,31 +138,32 @@ CUDA pointer/scalar/semantic-PTX realization 不同。旁边用一个小 callout
 - J 仍诚实保留 Source-specific observable delta；
 - physical realization 不需要泄漏给 Replay 或 backend。
 
-## 8. 还缺什么数据
+## 8. 后端复用已补齐，仍缺什么数据
 
-按论文价值排序，接下来只补三项。
+Task30 已补齐原 P0。剩余工作按论文价值只保留 onboarding ownership 与 external-validity stress；不再扩
+重复 cohort。
 
-### P0：backend reuse matrix
+### P0（已完成）：backend reuse matrix
 
-对 Primary-20 的 40 份 exact accepted J，在
-`TianchenIR-backend-certified-j-search` 中记录：
+search-J backend 已合入当前分支，并对 full-31 的 62 份 exact accepted J 记录：
 
 ```text
 Decode / Emit Intent MLIR / Contract Legal / >=1 Lower State
 ```
 
-同时报告 frontend-specific backend LoC 与 per-kernel rule 数。正确 headline 是：
+backend process 只接收匿名 `ProductionSnapshot(J,C)` 与 logical extents，不接收 Source、pi、Replay、
+显式 frontend/case identity、Gate evidence 或历史 winner。J 自身仍诚实保留 tensor/pointer ABI；这里
+禁止的是 J 之外的 identity 旁路，而不是要求无法统计猜测 frontend。最终结果：
 
 ```text
-new frontend + existing J feature -> frontend-specific backend delta = 0
+Decode/Emit/CUDA Legal/CUDA cubin/RVV Legal/RVV object = 62/62
+frontend-specific backend delta = 0 LoC / 0 rules
+per-kernel backend recipe = 0
 ```
 
-若某个新 J feature unsupported，应单列一次 shared/target consumer delta，不能把 unsupported 写成成功，
-也不能按 TileLang/CUDA 增加分支。
-
-当前只读盘点发现后端仓库同步了 Task28 的 frontend closure receipts，但没有找到这 40 份 artifact 的
-`Decode/Emit/Legal/Lower` 汇总矩阵。frontend Gate1/Gate2 evidence 不能冒充 backend consumption，
-因此本项仍是真缺口。
+首次 CUDA Lower 为 60/62；两份 failure 是 TileLang/CUDA 的同一个 `math.floor` J feature，均报
+`__nv_floorf` unresolved。通用 NVIDIA math pass 增加 +31 LoC exact NVVM floor consumer 后，同一批固定
+输入达到 62/62。该增量按 shared J feature 报告，不伪装为零修改，也不归因给任一 frontend。
 
 ### P1：完整 onboarding ownership diff
 
@@ -185,8 +187,9 @@ catalog/descriptor validation，尚无 TypeCheck、Gate1、Gate2 或 SCRC closur
 它们列为 `prepare PASS / closure N/A`；若要主张 handwritten-CUDA external validity，必须另开正式
 J-only closure run。
 
-不再花时间扩更多重复 cohort、比较 raw PTX 文本、追求 full-J byte equality或重跑 Lift。当前最缺的
-不是更多前端 PASS 数，而是 backend zero-delta consumption 与完整 onboarding ownership 数据。
+不再花时间扩更多重复 cohort、比较 raw PTX 文本、追求 full-J byte equality或重跑 Lift。backend reuse
+已经补齐；当前真正仍缺的是可靠历史基线下的完整 onboarding ownership，以及可选的 handwritten-CUDA
+external-validity stress。
 
 ## 9. Threats and claim boundary
 
@@ -194,9 +197,11 @@ J-only closure run。
 2. generated CUDA 与 TileLang 同源，这使 paired difference 有控制变量优势，但限制了对独立 CUDA
    library 的外推；
 3. canonical structural exactness 是描述指标，不是语义等价证明；最终行为依据仍是三边 Gate2；
-4. Primary-20 在 closure 完成后冻结，因此不作为成功率预注册；full-31 robustness 防止差异统计只挑
-   容易相等的 pair；
-5. 当前结果不包含 backend lower/search 性能，不能从 J correspondence 直接推出 target reuse success。
+4. 论文 aggregate 与 backend reuse 全部使用 full-31；Primary-20 只保留为历史逐行选择，不进入正文
+   分母；
+5. Task30 证明真实 target binary generation，但没有执行这些 binary、运行 Q/D 或计时，不能把 62/62
+   Lower 写成 runtime correctness 或性能；
+6. 24 个 Triton J 的 backend speedup 与本 62 份多前端 artifacts 是不同实验，不能混用分母或数值。
 
 ## 10. 机器证据
 
@@ -206,4 +211,6 @@ J-only closure run。
 - Task29 full result：`.trellis/tasks/08-01-tilelang-cuda-paired-j-analysis-29/results_current.json`
 - Task29 readable table：`.trellis/tasks/08-01-tilelang-cuda-paired-j-analysis-29/results_current.md`
 - 五个真实 delta 的 Source 审计：`.trellis/tasks/08-01-tilelang-cuda-paired-j-analysis-29/source_delta_audit.md`
+- Task30 artifact-only backend reuse：`.trellis/tasks/08-02-artifact-only-multifrontend-backend-reuse-30/results_current.json`
+- Task30 backend exact receipts：`.trellis/tasks/08-02-artifact-only-multifrontend-backend-reuse-30/backend_results_current.json`
 - 每对 exact Source/J/Replay/Gate：Task28 `runs/*/run-*/`

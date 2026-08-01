@@ -1,0 +1,384 @@
+{
+  "backend_result_digest": "6bb166f8f4c478b7062167b219e467001264f5ba839b37dda667158a5149b2d8",
+  "cross_frontend_j": {
+    "boundary_exact": 26,
+    "buffer_profile_exact": 27,
+    "c_exact": 31,
+    "extra_cuda_scalar_pairs": 27,
+    "op_kind_set_exact": 29,
+    "pi_exact": 31,
+    "raw_full_j_exact": 0,
+    "semantic_core_exact": 26
+  },
+  "denominator": {
+    "cuda_artifacts": 31,
+    "frontend_artifacts": 62,
+    "primary20_used_as_denominator": false,
+    "same_origin_pairs": 31,
+    "tilelang_artifacts": 31
+  },
+  "failure_taxonomy": {},
+  "frontend_stage_pass_counts": {
+    "cuda": {
+      "cuda_legal": 31,
+      "cuda_lower": 31,
+      "decode": 31,
+      "emit": 31,
+      "rvv_legal": 31,
+      "rvv_lower": 31
+    },
+    "tilelang": {
+      "cuda_legal": 31,
+      "cuda_lower": 31,
+      "decode": 31,
+      "emit": 31,
+      "rvv_legal": 31,
+      "rvv_lower": 31
+    }
+  },
+  "input_digest": "d7cfa6ec230b458b4d96a6bcc6fda905bf84eafd1d40180252ad225ac7778903",
+  "lower_claim_boundary": {
+    "closure_evidence": "Task28 TypeCheck + frontend-specific Gate1 + three-leg Gate2",
+    "cuda": "real generic Intent-to-cubin lowering; no execution, Q/D, search, or timing claim",
+    "performance_claimed_for_this_cohort": false,
+    "rvv": "real C-Fixed Intent-to-RVV-object lowering; no execution, Q/D, or timing claim"
+  },
+  "machine": {
+    "cuda_bin": "/usr/local/cuda-12.8/bin",
+    "cuda_chip": "sm_120a",
+    "intent_opt": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/build/tools/intent-opt/intent-opt",
+    "mlir_opt": "/usr/lib/llvm-20/bin/mlir-opt",
+    "mlir_translate": "/usr/lib/llvm-20/bin/mlir-translate",
+    "pid": 627356,
+    "platform": "Linux-6.8.0-90-generic-x86_64-with-glibc2.35",
+    "python": "3.10.12",
+    "rvv_target": {
+      "architecture": "rv64gcv_zfh_zvfh",
+      "family": "riscv",
+      "features": [
+        "vlen128"
+      ]
+    },
+    "workers": 4
+  },
+  "pair_rows": [
+    {
+      "cuda_legal_both": true,
+      "cuda_lower_both": true,
+      "decode_both": true,
+      "emit_both": true,
+      "rvv_legal_both": true,
+      "rvv_lower_both": true,
+      "stem": "_attn_fwd"
+    },
+    {
+      "cuda_legal_both": true,
+      "cuda_lower_both": true,
+      "decode_both": true,
+      "emit_both": true,
+      "rvv_legal_both": true,
+      "rvv_lower_both": true,
+      "stem": "add2d"
+    },
+    {
+      "cuda_legal_both": true,
+      "cuda_lower_both": true,
+      "decode_both": true,
+      "emit_both": true,
+      "rvv_legal_both": true,
+      "rvv_lower_both": true,
+      "stem": "add_bias2d"
+    },
+    {
+      "cuda_legal_both": true,
+      "cuda_lower_both": true,
+      "decode_both": true,
+      "emit_both": true,
+      "rvv_legal_both": true,
+      "rvv_lower_both": true,
+      "stem": "any_kernel_dim"
+    },
+    {
+      "cuda_legal_both": true,
+      "cuda_lower_both": true,
+      "decode_both": true,
+      "emit_both": true,
+      "rvv_legal_both": true,
+      "rvv_lower_both": true,
+      "stem": "clamp2d"
+    },
+    {
+      "cuda_legal_both": true,
+      "cuda_lower_both": true,
+      "decode_both": true,
+      "emit_both": true,
+      "rvv_legal_both": true,
+      "rvv_lower_both": true,
+      "stem": "copy2d_divmod"
+    },
+    {
+      "cuda_legal_both": true,
+      "cuda_lower_both": true,
+      "decode_both": true,
+      "emit_both": true,
+      "rvv_legal_both": true,
+      "rvv_lower_both": true,
+      "stem": "exp2d"
+    },
+    {
+      "cuda_legal_both": true,
+      "cuda_lower_both": true,
+      "decode_both": true,
+      "emit_both": true,
+      "rvv_legal_both": true,
+      "rvv_lower_both": true,
+      "stem": "flash_attention2d"
+    },
+    {
+      "cuda_legal_both": true,
+      "cuda_lower_both": true,
+      "decode_both": true,
+      "emit_both": true,
+      "rvv_legal_both": true,
+      "rvv_lower_both": true,
+      "stem": "floor2d"
+    },
+    {
+      "cuda_legal_both": true,
+      "cuda_lower_both": true,
+      "decode_both": true,
+      "emit_both": true,
+      "rvv_legal_both": true,
+      "rvv_lower_both": true,
+      "stem": "gather2d"
+    },
+    {
+      "cuda_legal_both": true,
+      "cuda_lower_both": true,
+      "decode_both": true,
+      "emit_both": true,
+      "rvv_legal_both": true,
+      "rvv_lower_both": true,
+      "stem": "gemm"
+    },
+    {
+      "cuda_legal_both": true,
+      "cuda_lower_both": true,
+      "decode_both": true,
+      "emit_both": true,
+      "rvv_legal_both": true,
+      "rvv_lower_both": true,
+      "stem": "grouped_row_sum2d"
+    },
+    {
+      "cuda_legal_both": true,
+      "cuda_lower_both": true,
+      "decode_both": true,
+      "emit_both": true,
+      "rvv_legal_both": true,
+      "rvv_lower_both": true,
+      "stem": "groupnorm"
+    },
+    {
+      "cuda_legal_both": true,
+      "cuda_lower_both": true,
+      "decode_both": true,
+      "emit_both": true,
+      "rvv_legal_both": true,
+      "rvv_lower_both": true,
+      "stem": "layer_norm_residual2d"
+    },
+    {
+      "cuda_legal_both": true,
+      "cuda_lower_both": true,
+      "decode_both": true,
+      "emit_both": true,
+      "rvv_legal_both": true,
+      "rvv_lower_both": true,
+      "stem": "layernorm"
+    },
+    {
+      "cuda_legal_both": true,
+      "cuda_lower_both": true,
+      "decode_both": true,
+      "emit_both": true,
+      "rvv_legal_both": true,
+      "rvv_lower_both": true,
+      "stem": "masked_attention2d"
+    },
+    {
+      "cuda_legal_both": true,
+      "cuda_lower_both": true,
+      "decode_both": true,
+      "emit_both": true,
+      "rvv_legal_both": true,
+      "rvv_lower_both": true,
+      "stem": "masked_softmax2d"
+    },
+    {
+      "cuda_legal_both": true,
+      "cuda_lower_both": true,
+      "decode_both": true,
+      "emit_both": true,
+      "rvv_legal_both": true,
+      "rvv_lower_both": true,
+      "stem": "matmul_bias_relu2d"
+    },
+    {
+      "cuda_legal_both": true,
+      "cuda_lower_both": true,
+      "decode_both": true,
+      "emit_both": true,
+      "rvv_legal_both": true,
+      "rvv_lower_both": true,
+      "stem": "matmul_fused_epilogue2d"
+    },
+    {
+      "cuda_legal_both": true,
+      "cuda_lower_both": true,
+      "decode_both": true,
+      "emit_both": true,
+      "rvv_legal_both": true,
+      "rvv_lower_both": true,
+      "stem": "matmul_relu2d"
+    },
+    {
+      "cuda_legal_both": true,
+      "cuda_lower_both": true,
+      "decode_both": true,
+      "emit_both": true,
+      "rvv_legal_both": true,
+      "rvv_lower_both": true,
+      "stem": "mlp2d"
+    },
+    {
+      "cuda_legal_both": true,
+      "cuda_lower_both": true,
+      "decode_both": true,
+      "emit_both": true,
+      "rvv_legal_both": true,
+      "rvv_lower_both": true,
+      "stem": "relu2d"
+    },
+    {
+      "cuda_legal_both": true,
+      "cuda_lower_both": true,
+      "decode_both": true,
+      "emit_both": true,
+      "rvv_legal_both": true,
+      "rvv_lower_both": true,
+      "stem": "rms_norm2d"
+    },
+    {
+      "cuda_legal_both": true,
+      "cuda_lower_both": true,
+      "decode_both": true,
+      "emit_both": true,
+      "rvv_legal_both": true,
+      "rvv_lower_both": true,
+      "stem": "rms_norm_residual2d"
+    },
+    {
+      "cuda_legal_both": true,
+      "cuda_lower_both": true,
+      "decode_both": true,
+      "emit_both": true,
+      "rvv_legal_both": true,
+      "rvv_lower_both": true,
+      "stem": "row_max"
+    },
+    {
+      "cuda_legal_both": true,
+      "cuda_lower_both": true,
+      "decode_both": true,
+      "emit_both": true,
+      "rvv_legal_both": true,
+      "rvv_lower_both": true,
+      "stem": "row_sum"
+    },
+    {
+      "cuda_legal_both": true,
+      "cuda_lower_both": true,
+      "decode_both": true,
+      "emit_both": true,
+      "rvv_legal_both": true,
+      "rvv_lower_both": true,
+      "stem": "rowmask_where2d"
+    },
+    {
+      "cuda_legal_both": true,
+      "cuda_lower_both": true,
+      "decode_both": true,
+      "emit_both": true,
+      "rvv_legal_both": true,
+      "rvv_lower_both": true,
+      "stem": "softmax_inner"
+    },
+    {
+      "cuda_legal_both": true,
+      "cuda_lower_both": true,
+      "decode_both": true,
+      "emit_both": true,
+      "rvv_legal_both": true,
+      "rvv_lower_both": true,
+      "stem": "transpose2d"
+    },
+    {
+      "cuda_legal_both": true,
+      "cuda_lower_both": true,
+      "decode_both": true,
+      "emit_both": true,
+      "rvv_legal_both": true,
+      "rvv_lower_both": true,
+      "stem": "upsample_bicubic2d_aa"
+    },
+    {
+      "cuda_legal_both": true,
+      "cuda_lower_both": true,
+      "decode_both": true,
+      "emit_both": true,
+      "rvv_legal_both": true,
+      "rvv_lower_both": true,
+      "stem": "where2d"
+    }
+  ],
+  "pair_stage_pass_counts": {
+    "cuda_legal_both": 31,
+    "cuda_lower_both": 31,
+    "decode_both": 31,
+    "emit_both": 31,
+    "rvv_legal_both": 31,
+    "rvv_lower_both": 31
+  },
+  "protocol": "intentir.experiment.multifrontend-backend-reuse-summary.v1",
+  "provenance_digest": "f761bb776bc58014ae42707d035e5e73cc94fd294ccdedda98f86132a94f1817",
+  "reuse_claim": {
+    "backend_does_not_receive": [
+      "Source",
+      "pi",
+      "Replay",
+      "explicit frontend label",
+      "case_id",
+      "Gate evidence",
+      "historical winner"
+    ],
+    "backend_input": "anonymous content-addressed J+C plus logical extents",
+    "experiment_harness_is_not_backend": true,
+    "frontend_specific_backend_files": 0,
+    "frontend_specific_backend_loc": 0,
+    "frontend_specific_backend_rules": 0,
+    "initial_cuda_lower_artifacts_before_shared_fix": 60,
+    "initial_cuda_lower_failures_before_shared_fix": 2,
+    "initial_failure_diagnostic": "ptxas unresolved extern __nv_floorf",
+    "initial_failure_scope": "the TileLang and CUDA floor2d artifacts; same J feature",
+    "per_kernel_backend_rules": 0,
+    "production_backend_files_changed_after_sync": 1,
+    "search_j_sync_commit": "6d764cffde3829bce8498fcc63293488a2ab532d",
+    "shared_j_feature_backend_files": 1,
+    "shared_j_feature_consumer": "CUDA exact math.floor to native NVVM floor intrinsic",
+    "shared_j_feature_consumer_commit": "64317b5e62a04cd5a77a20de5e4fcbcb9f9cef47",
+    "shared_j_feature_consumer_loc": 31,
+    "shared_j_feature_rules": 1
+  },
+  "summary_digest": "8835e7510f7550f2b7675b1a2eafb855734eb3456f30f080341ca5ccbd27c734"
+}
