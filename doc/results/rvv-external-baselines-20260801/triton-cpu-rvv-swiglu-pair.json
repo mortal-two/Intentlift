@@ -1,0 +1,62 @@
+{
+  "protocol": "intentir.production.rvv-external-pair.v1",
+  "kernel": "swiglu",
+  "target": {
+    "host": "rvv4",
+    "arch": "rv64gcv",
+    "vlen_bits": 128,
+    "thread_count": 1,
+    "cpu": 2
+  },
+  "workload": {
+    "profile": "natural-headline-v1",
+    "shape": [16384, 11008],
+    "dtype": "f32",
+    "inputs": 3,
+    "outputs": 1
+  },
+  "measurement": {
+    "regime": "code-warm/data-cold",
+    "comparison_protocol": "paired-alternating.v1",
+    "warmup": 1,
+    "cold_iterations_per_batch": 16,
+    "batches": 7,
+    "eviction_bytes": 134217728,
+    "cache_eviction_in_timed_region": false
+  },
+  "bars": [
+    {
+      "bar_id": "full",
+      "display_name": "IntentIR Full",
+      "latency_us": 5403437.062999999,
+      "samples_us": [
+        5402477.0105,
+        5403306.684,
+        5404245.759500001,
+        5405267.450999999,
+        5404082.116,
+        5403437.062999999,
+        5402743.3434999995
+      ],
+      "maximum_absolute_error": 0.0
+    },
+    {
+      "bar_id": "triton_cpu_rvv",
+      "display_name": "Triton-CPU/RVV",
+      "latency_us": 10849182.9925,
+      "samples_us": [
+        11307923.3295,
+        10849182.9925,
+        10723294.3,
+        11707038.5715,
+        11588053.8485,
+        10688350.0635,
+        10700679.684
+      ],
+      "maximum_absolute_error": 0.0,
+      "source_identity": ".trellis/tasks/archive/2026-07/07-22-scrc-real-kernel-batch-03/runs/liger_swiglu/run-001/source.py::_swiglu_forward_kernel"
+    }
+  ],
+  "triton_over_full": 2.0078299915418114,
+  "intentir_speedup_over_triton": 2.0078299915418114
+}

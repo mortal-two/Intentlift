@@ -9,6 +9,7 @@ from typing import Any, Mapping
 from intentir.backend.protocol import BackendTarget
 from intentir.frontend.canonical_j import (
     LOGICAL_FULL_AXIS_STEP_MATERIALIZATION,
+    STRUCTURED_SCAN_LOOP_MATERIALIZATION,
     materialize_j_function,
 )
 from intentir.frontend.emit_mlir import emit_module
@@ -18,15 +19,21 @@ from intentir.ir.dense_predicate_materialization import (
     BoundaryMaterializationProjection,
     materialize_dense_load_predicates,
 )
+from intentir.ir.typed_boundary_materialization import (
+    TypedBoundaryMaterializationProjection,
+    materialize_typed_boundary,
+)
 from intentir.ir.contract_materialization import (
     ContractMaterializationProjection,
     project_contract_materialization,
 )
 from intentir.ir.model import IntentFunction, IntentOp
+from intentir.ir.paired_rotation import derive_paired_rotation_view
 from intentir.ir.value_dimension import resolve_value_dimension_equalities
 from intentir.verify.gate1.model import (
     ImplementationConfig,
     ParameterKind,
+    ParameterMode,
     SemanticArchive,
 )
 
@@ -47,7 +54,9 @@ class MaterializedJ:
     intent_mlir: str
     concrete_extents: tuple[tuple[str, int], ...]
     boundary_projection: (
-        ContractMaterializationProjection | BoundaryMaterializationProjection
+        ContractMaterializationProjection
+        | BoundaryMaterializationProjection
+        | TypedBoundaryMaterializationProjection
     )
     form: str
     consumed_structures: tuple[str, ...]
@@ -281,6 +290,24 @@ def _project_value_dimension_equalities(
     return tuple(projected)
 
 
+def _project_inplace_outputs(
+    j: SemanticArchive, function: IntentFunction
+) -> tuple[int, ...]:
+    """Map J-owned inout results back to their unchanged runtime inputs."""
+
+    inout_refs = {
+        item.logical_ref
+        for item in j.signature.parameters
+        if item.mode is ParameterMode.INOUT and item.logical_ref is not None
+    }
+    positions = {item.name: index for index, item in enumerate(function.inputs)}
+    projected = tuple(
+        positions.get(output.name, -1) if output.name in inout_refs else -1
+        for output in function.outputs
+    )
+    return projected if any(index >= 0 for index in projected) else ()
+
+
 def materialize_j(
     j: SemanticArchive,
     concrete_extents: Mapping[str, int],
@@ -305,18 +332,39 @@ def materialize_j(
     scalar_bindings = dict(constexpr_bindings or {})
     try:
         logical = materialize_j_function(canonical, extents)
-        predicated = materialize_dense_load_predicates(
+        typed_boundary = materialize_typed_boundary(
             canonical,
             logical.function,
+            extents,
+            consume_loop_storage=(
+                logical.form
+                in {
+                    LOGICAL_FULL_AXIS_STEP_MATERIALIZATION,
+                    STRUCTURED_SCAN_LOOP_MATERIALIZATION,
+                }
+            ),
         )
-        if predicated is not None:
+        predicated = None
+        if typed_boundary is not None:
+            projection = typed_boundary.projection
+            function = typed_boundary.function
+        else:
+            predicated = materialize_dense_load_predicates(
+                canonical,
+                logical.function,
+            )
+        if typed_boundary is None and predicated is not None:
             projection = predicated.projection
             function = predicated.function
-        else:
+        elif typed_boundary is None:
             projection = project_contract_materialization(
                 canonical,
                 consume_loop_storage=(
-                    logical.form == LOGICAL_FULL_AXIS_STEP_MATERIALIZATION
+                    logical.form
+                    in {
+                        LOGICAL_FULL_AXIS_STEP_MATERIALIZATION,
+                        STRUCTURED_SCAN_LOOP_MATERIALIZATION,
+                    }
                 ),
             )
             function = logical.function
@@ -331,12 +379,30 @@ def materialize_j(
             function,
             scalar_bindings,
         )
+        inplace_outputs = _project_inplace_outputs(canonical, function)
+        paired_rotation_view = derive_paired_rotation_view(
+            canonical,
+            extents,
+            scalar_bindings,
+        )
+        paired_rotation = (
+            None
+            if paired_rotation_view is None
+            else (
+                paired_rotation_view.layout,
+                paired_rotation_view.input_indices(function),
+                paired_rotation_view.sections,
+            )
+        )
         mlir = emit_module(
             function,
             extents,
             broadcast_axes=projection.emitter_broadcast_axes(),
             proven_index_bounds=projection.proven_index_bounds,
             value_dimension_equalities=value_dimension_equalities,
+            inplace_outputs=inplace_outputs,
+            paired_rotation=paired_rotation,
+            loop_schedule_tile=logical.loop_schedule_tile,
         )
     except (TypeError, ValueError, NotImplementedError) as exc:
         raise MaterializationError(

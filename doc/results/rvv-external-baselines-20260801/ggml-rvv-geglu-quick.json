@@ -1,0 +1,134 @@
+{
+  "protocol": "intentir.production.rvv-external-pair-table.v1",
+  "kernel_count": 1,
+  "comparison": "ggml CPU/RVV versus IntentIR Full",
+  "geomean_external_over_full": 1.170047838596034,
+  "rows": [
+    {
+      "kernel": "geglu",
+      "extents": {
+        "x0": 32768,
+        "x1": 11008
+      },
+      "inputs": {
+        "t0": {
+          "dtype": "f32",
+          "shape": [
+            32768,
+            11008
+          ]
+        },
+        "t1": {
+          "dtype": "f32",
+          "shape": [
+            32768,
+            11008
+          ]
+        }
+      },
+      "outputs": [
+        {
+          "dtype": "f32",
+          "name": "t2",
+          "shape": [
+            32768,
+            11008
+          ]
+        }
+      ],
+      "measurement": {
+        "regime": "code-warm/data-cold",
+        "comparison_protocol": "paired-alternating.v1",
+        "warmup": 1,
+        "cold_iterations_per_batch": 1,
+        "batches": 1,
+        "eviction_bytes": 134217728,
+        "cache_eviction_in_timed_region": false
+      },
+      "full": {
+        "candidate_id": "rvv.producer_consumer_fused.o3.vec0.vlen128.pt0.rt0.thr1",
+        "latency_us": 23437649.575,
+        "samples_us": [
+          23437649.575
+        ],
+        "correctness": [
+          {
+            "output": "t2",
+            "passed": true,
+            "max_abs_error": 5.960464477539063e-08,
+            "comparator_protocol": "intentir.backend.native-output-comparator.v1"
+          }
+        ]
+      },
+      "external": {
+        "protocol": "intentir.backend.riscv.external-baseline.v1",
+        "baseline_id": "ggml_rvv",
+        "display_name": "ggml CPU/RVV",
+        "kind": "mature_library",
+        "implementation": "ggml-cpu-rvv-prebuilt-graph-plan",
+        "symbol": "intentir_native_baseline",
+        "build_profile": "ggml-rvv-strict",
+        "compiler": "/usr/bin/clang++",
+        "compile_ms": 1508.075803,
+        "flags": [
+          "-shared",
+          "-O3",
+          "-std=c++17",
+          "-fPIC",
+          "-march=rv64gcv_zfh_zvfh",
+          "-fno-fast-math",
+          "-ffp-contract=off",
+          "/tmp/intentir-rvv-pair-nzwws2qi/external_ggml_rvv.cpp",
+          "-I/home/ubuntu/intentir-baselines/llama.cpp/ggml/include",
+          "-L/home/ubuntu/intentir-baselines/llama.cpp/build-rvv-float-only/bin",
+          "-Wl,-rpath,/home/ubuntu/intentir-baselines/llama.cpp/build-rvv-float-only/bin",
+          "-lggml-cpu",
+          "-lggml",
+          "-lggml-base"
+        ],
+        "strict_match": true,
+        "shares_intentir_candidate_or_object": false,
+        "source_identity": null,
+        "specialized_columns": null,
+        "specialization": null,
+        "latency_us": 27423171.227,
+        "samples_us": [
+          27423171.227
+        ],
+        "correctness": [
+          {
+            "output": "t2",
+            "passed": true,
+            "max_abs_error": 5.960464477539063e-08,
+            "comparator_protocol": "intentir.backend.native-output-comparator.v1"
+          }
+        ]
+      },
+      "external_over_full": 1.170047838596034
+    }
+  ],
+  "bars": [
+    {
+      "kernel": "geglu",
+      "extents": {
+        "x0": 32768,
+        "x1": 11008
+      },
+      "bar_id": "full",
+      "display_name": "IntentIR Full",
+      "latency_us": 23437649.575,
+      "full_speedup_vs_bar": 1.0
+    },
+    {
+      "kernel": "geglu",
+      "extents": {
+        "x0": 32768,
+        "x1": 11008
+      },
+      "bar_id": "ggml_rvv",
+      "display_name": "ggml CPU/RVV",
+      "latency_us": 27423171.227,
+      "full_speedup_vs_bar": 1.170047838596034
+    }
+  ]
+}

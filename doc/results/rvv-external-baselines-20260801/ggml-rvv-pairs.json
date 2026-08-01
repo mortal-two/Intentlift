@@ -1,0 +1,569 @@
+{
+  "protocol": "intentir.production.rvv-external-pair-table.v1",
+  "kernel_count": 4,
+  "comparison": "ggml CPU/RVV versus IntentIR Full",
+  "geomean_external_over_full": 1.0110041579830484,
+  "rows": [
+    {
+      "kernel": "swiglu",
+      "extents": {
+        "x0": 16384,
+        "x1": 11008
+      },
+      "inputs": {
+        "t0": {
+          "dtype": "f32",
+          "shape": [
+            16384,
+            11008
+          ]
+        },
+        "t1": {
+          "dtype": "f32",
+          "shape": [
+            16384,
+            11008
+          ]
+        },
+        "t2": {
+          "dtype": "f32",
+          "shape": []
+        }
+      },
+      "outputs": [
+        {
+          "dtype": "f32",
+          "name": "t3",
+          "shape": [
+            16384,
+            11008
+          ]
+        }
+      ],
+      "measurement": {
+        "regime": "code-warm/data-cold",
+        "comparison_protocol": "paired-alternating.v1",
+        "warmup": 1,
+        "cold_iterations_per_batch": 16,
+        "batches": 7,
+        "eviction_bytes": 134217728,
+        "cache_eviction_in_timed_region": false
+      },
+      "full": {
+        "candidate_id": "rvv.producer_consumer_fused.o3.vec1.vlen128.pt0.rt0.thr1",
+        "latency_us": 5405342.727,
+        "samples_us": [
+          5405593.222999999,
+          5406489.737,
+          5403081.366,
+          5404126.581,
+          5405064.7855,
+          5405342.727,
+          5406574.4925
+        ],
+        "correctness": [
+          {
+            "output": "t3",
+            "passed": true,
+            "max_abs_error": 0.0,
+            "comparator_protocol": "intentir.backend.native-output-comparator.v1"
+          }
+        ]
+      },
+      "external": {
+        "protocol": "intentir.backend.riscv.external-baseline.v1",
+        "baseline_id": "ggml_rvv",
+        "display_name": "ggml CPU/RVV",
+        "kind": "mature_library",
+        "implementation": "ggml-cpu-rvv-prebuilt-graph-plan",
+        "symbol": "intentir_native_baseline",
+        "build_profile": "ggml-rvv-strict",
+        "compiler": "/usr/bin/clang++",
+        "compile_ms": 1318.519379,
+        "flags": [
+          "-shared",
+          "-O3",
+          "-std=c++17",
+          "-fPIC",
+          "-march=rv64gcv_zfh_zvfh",
+          "-fno-fast-math",
+          "-ffp-contract=off",
+          "/tmp/intentir-rvv-pair-k_vm4rq0/external_ggml_rvv.cpp",
+          "-I/home/ubuntu/intentir-baselines/llama.cpp/ggml/include",
+          "-L/home/ubuntu/intentir-baselines/llama.cpp/build-rvv-float-only/bin",
+          "-Wl,-rpath,/home/ubuntu/intentir-baselines/llama.cpp/build-rvv-float-only/bin",
+          "-lggml-cpu",
+          "-lggml",
+          "-lggml-base"
+        ],
+        "strict_match": true,
+        "shares_intentir_candidate_or_object": false,
+        "source_identity": null,
+        "specialized_columns": null,
+        "specialization": null,
+        "latency_us": 1274646.074,
+        "samples_us": [
+          1275278.6945000002,
+          1274591.8415,
+          1274292.7094999999,
+          1274646.074,
+          1274763.084,
+          1274196.5215,
+          1324982.9419999998
+        ],
+        "correctness": [
+          {
+            "output": "t3",
+            "passed": true,
+            "max_abs_error": 1.1920928955078125e-07,
+            "comparator_protocol": "intentir.backend.native-output-comparator.v1"
+          }
+        ]
+      },
+      "external_over_full": 0.2358122580522173
+    },
+    {
+      "kernel": "dyt",
+      "extents": {
+        "x0": 4096,
+        "x1": 4096
+      },
+      "inputs": {
+        "t0": {
+          "dtype": "f32",
+          "shape": [
+            4096,
+            4096
+          ]
+        },
+        "t1": {
+          "dtype": "f32",
+          "shape": [
+            1
+          ]
+        },
+        "t2": {
+          "dtype": "f32",
+          "shape": [
+            4096
+          ]
+        },
+        "t3": {
+          "dtype": "f32",
+          "shape": [
+            4096
+          ]
+        }
+      },
+      "outputs": [
+        {
+          "dtype": "f32",
+          "name": "t4",
+          "shape": [
+            4096,
+            4096
+          ]
+        }
+      ],
+      "measurement": {
+        "regime": "code-warm/data-cold",
+        "comparison_protocol": "paired-alternating.v1",
+        "warmup": 1,
+        "cold_iterations_per_batch": 16,
+        "batches": 7,
+        "eviction_bytes": 134217728,
+        "cache_eviction_in_timed_region": false
+      },
+      "full": {
+        "candidate_id": "rvv.producer_consumer_fused.o3.vec0.vlen128.pt0.rt0.thr1",
+        "latency_us": 993034.8744999999,
+        "samples_us": [
+          993034.8744999999,
+          992974.754,
+          995905.4885,
+          996164.6395,
+          992881.824,
+          992978.9845,
+          994031.459
+        ],
+        "correctness": [
+          {
+            "output": "t4",
+            "passed": true,
+            "max_abs_error": 1.1920928955078125e-07,
+            "comparator_protocol": "intentir.backend.native-output-comparator.v1"
+          }
+        ]
+      },
+      "external": {
+        "protocol": "intentir.backend.riscv.external-baseline.v1",
+        "baseline_id": "ggml_rvv",
+        "display_name": "ggml CPU/RVV",
+        "kind": "mature_library",
+        "implementation": "ggml-cpu-rvv-prebuilt-graph-plan",
+        "symbol": "intentir_native_baseline",
+        "build_profile": "ggml-rvv-strict",
+        "compiler": "/usr/bin/clang++",
+        "compile_ms": 1316.047468,
+        "flags": [
+          "-shared",
+          "-O3",
+          "-std=c++17",
+          "-fPIC",
+          "-march=rv64gcv_zfh_zvfh",
+          "-fno-fast-math",
+          "-ffp-contract=off",
+          "/tmp/intentir-rvv-pair-t2rh12o9/external_ggml_rvv.cpp",
+          "-I/home/ubuntu/intentir-baselines/llama.cpp/ggml/include",
+          "-L/home/ubuntu/intentir-baselines/llama.cpp/build-rvv-float-only/bin",
+          "-Wl,-rpath,/home/ubuntu/intentir-baselines/llama.cpp/build-rvv-float-only/bin",
+          "-lggml-cpu",
+          "-lggml",
+          "-lggml-base"
+        ],
+        "strict_match": true,
+        "shares_intentir_candidate_or_object": false,
+        "source_identity": null,
+        "specialized_columns": null,
+        "specialization": null,
+        "latency_us": 1042566.4695,
+        "samples_us": [
+          1040712.971,
+          1045795.145,
+          1041519.135,
+          1044774.6195,
+          1040353.399,
+          1044562.6295,
+          1042566.4695
+        ],
+        "correctness": [
+          {
+            "output": "t4",
+            "passed": true,
+            "max_abs_error": 1.1920928955078125e-07,
+            "comparator_protocol": "intentir.backend.native-output-comparator.v1"
+          }
+        ]
+      },
+      "external_over_full": 1.049879008554397
+    },
+    {
+      "kernel": "softmax",
+      "extents": {
+        "x0": 2048,
+        "x1": 4096
+      },
+      "inputs": {
+        "t0": {
+          "dtype": "f32",
+          "shape": [
+            2048,
+            4096
+          ]
+        },
+        "t1": {
+          "dtype": "i32",
+          "shape": []
+        }
+      },
+      "outputs": [
+        {
+          "dtype": "f32",
+          "name": "t2",
+          "shape": [
+            2048,
+            4096
+          ]
+        }
+      ],
+      "measurement": {
+        "regime": "code-warm/data-cold",
+        "comparison_protocol": "paired-alternating.v1",
+        "warmup": 1,
+        "cold_iterations_per_batch": 16,
+        "batches": 7,
+        "eviction_bytes": 134217728,
+        "cache_eviction_in_timed_region": false
+      },
+      "full": {
+        "candidate_id": "rvv.fused_softmax_vector_approximate_exp.o3.vec1.vlen128.scalable0.lanes16.pt0.rt0.thr1.reassoc1.explicitvec0.jointvec0.fusedsoftmax1.approxexp1",
+        "latency_us": 31626.379,
+        "samples_us": [
+          31628.489,
+          31619.9885,
+          31634.029000000002,
+          31622.879,
+          31624.108500000002,
+          31628.919,
+          31626.379
+        ],
+        "correctness": [
+          {
+            "output": "t2",
+            "passed": true,
+            "max_abs_error": 2.5029294192790985e-09,
+            "comparator_protocol": "intentir.backend.native-output-comparator.v1"
+          }
+        ]
+      },
+      "external": {
+        "protocol": "intentir.backend.riscv.external-baseline.v1",
+        "baseline_id": "ggml_rvv",
+        "display_name": "ggml CPU/RVV",
+        "kind": "mature_library",
+        "implementation": "ggml-cpu-rvv-prebuilt-graph-plan",
+        "symbol": "intentir_native_baseline",
+        "build_profile": "ggml-rvv-strict",
+        "compiler": "/usr/bin/clang++",
+        "compile_ms": 1325.012183,
+        "flags": [
+          "-shared",
+          "-O3",
+          "-std=c++17",
+          "-fPIC",
+          "-march=rv64gcv_zfh_zvfh",
+          "-fno-fast-math",
+          "-ffp-contract=off",
+          "/tmp/intentir-rvv-pair-godzjok1/external_ggml_rvv.cpp",
+          "-I/home/ubuntu/intentir-baselines/llama.cpp/ggml/include",
+          "-L/home/ubuntu/intentir-baselines/llama.cpp/build-rvv-float-only/bin",
+          "-Wl,-rpath,/home/ubuntu/intentir-baselines/llama.cpp/build-rvv-float-only/bin",
+          "-lggml-cpu",
+          "-lggml",
+          "-lggml-base"
+        ],
+        "strict_match": true,
+        "shares_intentir_candidate_or_object": false,
+        "source_identity": null,
+        "specialized_columns": null,
+        "specialization": null,
+        "latency_us": 51139.091,
+        "samples_us": [
+          51162.761,
+          51139.091,
+          51148.761,
+          51138.8205,
+          51116.111,
+          51130.0805,
+          51139.121
+        ],
+        "correctness": [
+          {
+            "output": "t2",
+            "passed": true,
+            "max_abs_error": 2.2118911147117615e-09,
+            "comparator_protocol": "intentir.backend.native-output-comparator.v1"
+          }
+        ]
+      },
+      "external_over_full": 1.6169758479148055
+    },
+    {
+      "kernel": "xformers_rms_norm",
+      "extents": {
+        "x0": 4096,
+        "x1": 12288
+      },
+      "inputs": {
+        "t0": {
+          "dtype": "f32",
+          "shape": [
+            4096,
+            12288
+          ]
+        },
+        "t1": {
+          "dtype": "f32",
+          "shape": [
+            12288
+          ]
+        },
+        "t2": {
+          "dtype": "f32",
+          "shape": []
+        }
+      },
+      "outputs": [
+        {
+          "dtype": "f32",
+          "name": "t4",
+          "shape": [
+            4096,
+            12288
+          ]
+        }
+      ],
+      "measurement": {
+        "regime": "code-warm/data-cold",
+        "comparison_protocol": "paired-alternating.v1",
+        "warmup": 1,
+        "cold_iterations_per_batch": 16,
+        "batches": 7,
+        "eviction_bytes": 134217728,
+        "cache_eviction_in_timed_region": false
+      },
+      "full": {
+        "candidate_id": "rvv.producer_consumer_fused_vector_reduction.o3.vec1.vlen0.scalable1.lanes4.pt0.rt0.thr1.reassoc1.explicitvec1.jointvec0.fusedsoftmax0",
+        "latency_us": 101944.4805,
+        "samples_us": [
+          101899.95000000001,
+          101944.4805,
+          101939.1,
+          101939.82,
+          101957.46100000001,
+          101953.571,
+          102010.0405
+        ],
+        "correctness": [
+          {
+            "output": "t4",
+            "passed": true,
+            "max_abs_error": 7.152557373046875e-06,
+            "comparator_protocol": "intentir.backend.native-output-comparator.v1"
+          }
+        ]
+      },
+      "external": {
+        "protocol": "intentir.backend.riscv.external-baseline.v1",
+        "baseline_id": "ggml_rvv",
+        "display_name": "ggml CPU/RVV",
+        "kind": "mature_library",
+        "implementation": "ggml-cpu-rvv-prebuilt-graph-plan",
+        "symbol": "intentir_native_baseline",
+        "build_profile": "ggml-rvv-strict",
+        "compiler": "/usr/bin/clang++",
+        "compile_ms": 1362.55636,
+        "flags": [
+          "-shared",
+          "-O3",
+          "-std=c++17",
+          "-fPIC",
+          "-march=rv64gcv_zfh_zvfh",
+          "-fno-fast-math",
+          "-ffp-contract=off",
+          "/tmp/intentir-rvv-pair-33241b2o/external_ggml_rvv.cpp",
+          "-I/home/ubuntu/intentir-baselines/llama.cpp/ggml/include",
+          "-L/home/ubuntu/intentir-baselines/llama.cpp/build-rvv-float-only/bin",
+          "-Wl,-rpath,/home/ubuntu/intentir-baselines/llama.cpp/build-rvv-float-only/bin",
+          "-lggml-cpu",
+          "-lggml",
+          "-lggml-base"
+        ],
+        "strict_match": true,
+        "shares_intentir_candidate_or_object": false,
+        "source_identity": null,
+        "specialized_columns": null,
+        "specialization": null,
+        "latency_us": 266051.8735,
+        "samples_us": [
+          265565.1315,
+          266255.274,
+          266054.413,
+          266268.6945,
+          266051.8735,
+          265780.11199999996,
+          265964.4425
+        ],
+        "correctness": [
+          {
+            "output": "t4",
+            "passed": true,
+            "max_abs_error": 7.62939453125e-06,
+            "comparator_protocol": "intentir.backend.native-output-comparator.v1"
+          }
+        ]
+      },
+      "external_over_full": 2.6097722230287883
+    }
+  ],
+  "bars": [
+    {
+      "kernel": "swiglu",
+      "extents": {
+        "x0": 16384,
+        "x1": 11008
+      },
+      "bar_id": "full",
+      "display_name": "IntentIR Full",
+      "latency_us": 5405342.727,
+      "full_speedup_vs_bar": 1.0
+    },
+    {
+      "kernel": "swiglu",
+      "extents": {
+        "x0": 16384,
+        "x1": 11008
+      },
+      "bar_id": "ggml_rvv",
+      "display_name": "ggml CPU/RVV",
+      "latency_us": 1274646.074,
+      "full_speedup_vs_bar": 0.2358122580522173
+    },
+    {
+      "kernel": "dyt",
+      "extents": {
+        "x0": 4096,
+        "x1": 4096
+      },
+      "bar_id": "full",
+      "display_name": "IntentIR Full",
+      "latency_us": 993034.8744999999,
+      "full_speedup_vs_bar": 1.0
+    },
+    {
+      "kernel": "dyt",
+      "extents": {
+        "x0": 4096,
+        "x1": 4096
+      },
+      "bar_id": "ggml_rvv",
+      "display_name": "ggml CPU/RVV",
+      "latency_us": 1042566.4695,
+      "full_speedup_vs_bar": 1.049879008554397
+    },
+    {
+      "kernel": "softmax",
+      "extents": {
+        "x0": 2048,
+        "x1": 4096
+      },
+      "bar_id": "full",
+      "display_name": "IntentIR Full",
+      "latency_us": 31626.379,
+      "full_speedup_vs_bar": 1.0
+    },
+    {
+      "kernel": "softmax",
+      "extents": {
+        "x0": 2048,
+        "x1": 4096
+      },
+      "bar_id": "ggml_rvv",
+      "display_name": "ggml CPU/RVV",
+      "latency_us": 51139.091,
+      "full_speedup_vs_bar": 1.6169758479148055
+    },
+    {
+      "kernel": "xformers_rms_norm",
+      "extents": {
+        "x0": 4096,
+        "x1": 12288
+      },
+      "bar_id": "full",
+      "display_name": "IntentIR Full",
+      "latency_us": 101944.4805,
+      "full_speedup_vs_bar": 1.0
+    },
+    {
+      "kernel": "xformers_rms_norm",
+      "extents": {
+        "x0": 4096,
+        "x1": 12288
+      },
+      "bar_id": "ggml_rvv",
+      "display_name": "ggml CPU/RVV",
+      "latency_us": 266051.8735,
+      "full_speedup_vs_bar": 2.6097722230287883
+    }
+  ]
+}

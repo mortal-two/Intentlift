@@ -113,6 +113,8 @@ class PassDescriptor:
     description: str
     scf_to_cf: bool = False
     required_markers: tuple[str, ...] = ()
+    expanded_only: bool = False
+    schedule: Mapping[str, int | bool | str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -189,6 +191,85 @@ DEFAULT_PASSES: tuple[PassDescriptor, ...] = (
         description="flat rank-4 FlashAttention forward MMA",
         scf_to_cf=True,
     ),
+    *(
+        PassDescriptor(
+            fast_path_id="cuda.flash_forward.structured_scan.direct.v1",
+            pass_argument=(
+                "-convert-intent-flash-mma-to-gpu="
+                f"num-stages={stages} block-m={block_m} "
+                "certified-full-axis-only=true block-n=128 "
+                "materialize-tmp-roundtrip=true"
+            ),
+            supported_chips=_PORTABLE_BLOCK_CUDA_CHIPS,
+            description=(
+                "deterministic direct lowering of the certified structured "
+                "FlashAttention scan at its authored 128-key recurrence step"
+            ),
+            scf_to_cf=True,
+            schedule={
+                "tile_rows": block_m,
+                "tile_cols": 128,
+                "pipeline_stages": stages,
+                "num_warps": block_m // 16,
+                "direct_v_matrix_load": False,
+                "direct_v_row_padding": 0,
+                "materialize_tmp_roundtrip": True,
+                "paired_b_matrix_loads": False,
+                "vectorized_q_staging": False,
+                "stream_p_fragments": False,
+            },
+        )
+        for block_m in (64, 128, 32, 16)
+        for stages in (1, 2)
+    ),
+    *(
+        PassDescriptor(
+            fast_path_id="cuda.flash_forward.certified_full_axis.mma.v1",
+            pass_argument=(
+                "-convert-intent-flash-mma-to-gpu="
+                f"num-stages={stages} block-m={block_m} "
+                "certified-full-axis-only=true block-n=128 "
+                + ("direct-v-matrix-load=true " if direct_v else "")
+                + (
+                    f"direct-v-row-padding={direct_v_padding} "
+                    if direct_v_padding
+                    else ""
+                )
+                + ("paired-b-matrix-loads=true " if paired_b else "")
+                + ("vectorized-q-staging=true " if vector_q else "")
+                + "stream-p-fragments=true"
+            ),
+            supported_chips=_PORTABLE_BLOCK_CUDA_CHIPS,
+            description=(
+                "certified batch/head-explicit FlashAttention scan with "
+                "register-resident score/softmax/output state"
+            ),
+            scf_to_cf=True,
+            expanded_only=True,
+            schedule={
+                "tile_rows": block_m,
+                "tile_cols": 128,
+                "pipeline_stages": stages,
+                "num_warps": block_m // 16,
+                "direct_v_matrix_load": direct_v,
+                "direct_v_row_padding": direct_v_padding,
+                "materialize_tmp_roundtrip": False,
+                "paired_b_matrix_loads": paired_b,
+                "vectorized_q_staging": vector_q,
+                "stream_p_fragments": True,
+            },
+        )
+        for direct_v, paired_b, direct_v_padding in (
+            (False, False, 0),
+            (True, False, 0),
+            (True, False, 8),
+            (True, True, 0),
+            (True, True, 8),
+        )
+        for block_m in (64, 128, 32, 16)
+        for vector_q in (False, True)
+        for stages in (1, 2)
+    ),
     PassDescriptor(
         fast_path_id="cuda.flash_backward.flat_rank4.mma.v1",
         pass_argument=(
@@ -235,28 +316,28 @@ DEFAULT_PASSES: tuple[PassDescriptor, ...] = (
             "-convert-intent-contraction-to-gpu-mma=num-stages=5 "
             "block-m=16 block-n=32 block-k=32 smem-pad-k=8"
         ),
-        supported_chips=("sm_120a",),
+        supported_chips=_PORTABLE_BLOCK_CUDA_CHIPS,
         description="tuned f16/bf16 tensor-core contraction with f32 accumulate",
         scf_to_cf=True,
     ),
     PassDescriptor(
         fast_path_id="cuda.contraction.mma-warp-specialized.v1",
         pass_argument="-convert-intent-contraction-to-gpu-mma-ws",
-        supported_chips=("sm_120a",),
+        supported_chips=_PORTABLE_BLOCK_CUDA_CHIPS,
         description="warp-specialized tensor-core contraction",
         scf_to_cf=True,
     ),
     PassDescriptor(
         fast_path_id="cuda.contraction.mma-sync.v1",
         pass_argument="-convert-intent-contraction-to-gpu-mma",
-        supported_chips=("sm_120a",),
+        supported_chips=_PORTABLE_BLOCK_CUDA_CHIPS,
         description="tensor-core contraction",
         scf_to_cf=True,
     ),
     PassDescriptor(
         fast_path_id="cuda.contraction.tiled.v1",
         pass_argument="-convert-intent-contraction-to-gpu",
-        supported_chips=("sm_120a",),
+        supported_chips=_PORTABLE_BLOCK_CUDA_CHIPS,
         description="tiled-K contraction",
         scf_to_cf=True,
     ),
@@ -307,6 +388,18 @@ DEFAULT_PASSES: tuple[PassDescriptor, ...] = (
         description="complete static row-elementwise graph",
     ),
     PassDescriptor(
+        fast_path_id="cuda.elementwise.rowmask.zero-fill.v1",
+        pass_argument=(
+            "-convert-intent-elementwise-to-gpu=block-threads=64 "
+            "row-vector-width=1 row-mask-zero-fill=true "
+            "tanh-approximation=stable-ex2"
+        ),
+        supported_chips=_PORTABLE_BLOCK_CUDA_CHIPS,
+        description=(
+            "uniform row-mask branch that skips data loads for false rows"
+        ),
+    ),
+    PassDescriptor(
         fast_path_id="cuda.row_reduction.normalization_loss.read_once.v1",
         pass_argument=(
             "-convert-intent-row-reduction-to-gpu=block-threads=1024 "
@@ -314,6 +407,18 @@ DEFAULT_PASSES: tuple[PassDescriptor, ...] = (
         ),
         supported_chips=_PORTABLE_BLOCK_CUDA_CHIPS,
         description="row normalization/loss reduction graph",
+    ),
+    PassDescriptor(
+        fast_path_id="cuda.algebra.exp_shift_product_cancellation.v1",
+        pass_argument=(
+            "-convert-intent-elementwise-to-gpu=block-threads=256 "
+            "cancel-shifted-exp=true tanh-approximation=stable-ex2"
+        ),
+        supported_chips=_PORTABLE_BLOCK_CUDA_CHIPS,
+        description=(
+            "execution-domain exp(x-shift)*exp(shift) cancellation followed by "
+            "the ordinary elementwise MLIR lowering"
+        ),
     ),
     PassDescriptor(
         fast_path_id=(
@@ -333,8 +438,22 @@ DEFAULT_PASSES: tuple[PassDescriptor, ...] = (
     PassDescriptor(
         fast_path_id="cuda.gather-scatter.block.v1",
         pass_argument="-convert-intent-gather-to-gpu",
-        supported_chips=("sm_120a",),
-        description="data-dependent gather/scatter lowering",
+        supported_chips=_PORTABLE_BLOCK_CUDA_CHIPS,
+        description=(
+            "data-dependent gather/scatter lowering, including deterministic "
+            "eager evaluation of an admitted two-level gather"
+        ),
+    ),
+    PassDescriptor(
+        fast_path_id="cuda.gather-chain.composed-index.v1",
+        pass_argument=(
+            "-convert-intent-gather-to-gpu=compose-gather-chain=true"
+        ),
+        supported_chips=_PORTABLE_BLOCK_CUDA_CHIPS,
+        description=(
+            "compose two typed runtime gather index maps and eliminate the "
+            "intermediate gathered row"
+        ),
     ),
     PassDescriptor(
         fast_path_id="cuda.layout.block.v1",
@@ -407,7 +526,9 @@ def _passes(
 ) -> tuple[PassDescriptor, ...]:
     selected = tuple(passes)
     if only_fast_path is None:
-        return selected
+        return tuple(
+            descriptor for descriptor in selected if not descriptor.expanded_only
+        )
     filtered = tuple(
         descriptor
         for descriptor in selected

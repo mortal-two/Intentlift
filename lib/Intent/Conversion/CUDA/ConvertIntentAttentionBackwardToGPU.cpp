@@ -54,6 +54,8 @@
 
 #include "Intent/Conversion/CUDA/Passes.h"
 
+#include "FlashMMAFragments.h"
+
 #include "MapEmit.h"
 #include "Intent/IntentDialect.h"
 #include "Intent/IntentOps.h"
@@ -783,27 +785,15 @@ struct FlashBwdLowering {
     // registers into the two mma.sync B operands without generated code.
     auto ldBPair = [&](OpBuilder &nb, Value src, Value nBase,
                        Value kkBase) -> Value {
-      Value pairRowGroup = nb.create<arith::DivUIOp>(loc, laneDiv8, c2);
-      Value pairRowOff = nb.create<arith::MulIOp>(loc, pairRowGroup, c8);
-      Value row = nb.create<arith::AddIOp>(
-          loc, nBase, nb.create<arith::AddIOp>(loc, pairRowOff, laneMod8));
-      Value pairColGroup = nb.create<arith::RemUIOp>(loc, laneDiv8, c2);
-      Value pairColOff = nb.create<arith::MulIOp>(loc, pairColGroup, c8);
-      Value col = nb.create<arith::AddIOp>(loc, kkBase, pairColOff);
-      return nb.create<nvgpu::LdMatrixOp>(loc, bPairTy, src,
-                                          ValueRange{row, col},
-                                          /*transpose=*/false, /*numTiles=*/4);
+      return cuda_detail::loadMmaBPair(nb, loc, src, nBase, kkBase, laneDiv8,
+                                       laneMod8, c2, c8, bPairTy);
     };
     // B from a source stored [kk,n] (n contiguous): ldmatrix.trans -> [n,kk].
     // A lane reads 8 contiguous n at source row kk = kkBase + lane%16, col nBase.
     auto ldBTPair = [&](OpBuilder &nb, Value src, Value nBase,
                         Value kkBase) -> Value {
-      Value row = nb.create<arith::AddIOp>(loc, kkBase, laneMod16);
-      Value pairColOff = nb.create<arith::MulIOp>(loc, laneDiv16, c8);
-      Value col = nb.create<arith::AddIOp>(loc, nBase, pairColOff);
-      return nb.create<nvgpu::LdMatrixOp>(loc, bPairTy, src,
-                                          ValueRange{row, col},
-                                          /*transpose=*/true, /*numTiles=*/4);
+      return cuda_detail::loadMmaBTransposedPair(
+          nb, loc, src, nBase, kkBase, laneMod16, laneDiv16, c8, bPairTy);
     };
 
     // Generic warp mma: acc[j] += sum_ks A(ks) * B(j,ks), m16n8k16, over the
@@ -822,16 +812,9 @@ struct FlashBwdLowering {
         for (int64_t j = 0; j < nFrag; j += 2) {
           Value pair = loadBPair(nb, j, ks);
           for (int64_t half = 0; half < 2; ++half) {
-            Value bFrag = zeroBFrag;
-            for (int64_t i = 0; i < 2; ++i) {
-              for (int64_t jj = 0; jj < 2; ++jj) {
-                Value item = nb.create<vector::ExtractOp>(
-                    loc, pair,
-                    ArrayRef<int64_t>{half * 2 + i, jj});
-                bFrag = nb.create<vector::InsertOp>(
-                    loc, item, bFrag, ArrayRef<int64_t>{i, jj});
-              }
-            }
+            Value bFrag =
+                cuda_detail::extractMmaBPairHalf(nb, loc, pair, zeroBFrag,
+                                                 half);
             acc[j + half] = nb.create<nvgpu::MmaSyncOp>(
                 loc, aFrag, bFrag, acc[j + half], mmaShape);
           }

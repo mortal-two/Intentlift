@@ -15,6 +15,7 @@ import json
 import math
 import os
 import platform
+import re
 import shutil
 import statistics
 import subprocess
@@ -32,6 +33,13 @@ NATIVE_BASELINE_PROTOCOL = "intentir.backend.riscv.native-baseline.v1"
 NATIVE_BASELINE_SIDECAR_PROTOCOL = (
     "intentir.backend.riscv.native-baseline-sidecar.v1"
 )
+EXTERNAL_BASELINE_PROTOCOL = "intentir.backend.riscv.external-baseline.v1"
+EXTERNAL_BASELINE_SIDECAR_PROTOCOL = (
+    "intentir.backend.riscv.external-baseline-sidecar.v1"
+)
+_SAFE_BASELINE_ID = re.compile(r"^[a-z0-9][a-z0-9_]*$")
+_BEST_NATIVE_KINDS = frozenset({"expert_intrinsic", "mature_library"})
+RVV_TARGET_MARCH = "rv64gcv_zfh_zvfh"
 
 _NATIVE_COMPARATOR_SOURCE = r"""
 #include <math.h>
@@ -428,7 +436,7 @@ def _link_object(directory: Path, candidate: Mapping[str, Any]) -> Path:
         [
             "clang",
             "-shared",
-            "-march=rv64gcv_zfh",
+            f"-march={RVV_TARGET_MARCH}",
             "-fopenmp",
             str(object_path),
             "-lm",
@@ -458,6 +466,60 @@ def _validated_native_baseline(record: Any) -> Mapping[str, Any]:
     return record
 
 
+def _legacy_external_baseline(record: Any) -> dict[str, Any]:
+    native = _validated_native_baseline(record)
+    return {
+        "protocol": EXTERNAL_BASELINE_PROTOCOL,
+        "baseline_id": "llvm_rvv_c",
+        "display_name": "LLVM-RVV C",
+        "kind": "portable_compiler",
+        "symbol": native["symbol"],
+        "source": native["source"],
+        "language": "c",
+        "build_profile": "clang-rvv-c-strict",
+        "implementation": native.get("implementation"),
+        "strict_match": True,
+    }
+
+
+def _validated_external_baseline(record: Any) -> Mapping[str, Any]:
+    if not isinstance(record, Mapping):
+        raise RuntimeError("RVV external baseline record must be an object")
+    if record.get("protocol") == NATIVE_BASELINE_PROTOCOL:
+        return _legacy_external_baseline(record)
+    if record.get("protocol") != EXTERNAL_BASELINE_PROTOCOL:
+        raise RuntimeError("unsupported RVV external baseline protocol")
+    baseline_id = record.get("baseline_id")
+    if not isinstance(baseline_id, str) or _SAFE_BASELINE_ID.fullmatch(baseline_id) is None:
+        raise RuntimeError("RVV external baseline has an unsafe baseline_id")
+    for field in ("display_name", "kind", "symbol", "source", "implementation"):
+        if not isinstance(record.get(field), str) or not record[field].strip():
+            raise RuntimeError(f"RVV external baseline {baseline_id!r} lacks {field}")
+    if record.get("language") not in {"c", "c++"}:
+        raise RuntimeError(f"RVV external baseline {baseline_id!r} has invalid language")
+    if record.get("build_profile") not in {
+        "clang-rvv-c-strict",
+        "clang-rvv-intrinsic-strict",
+        "ggml-rvv-strict",
+        "triton-cpu-rvv-prebuilt-strict",
+    }:
+        raise RuntimeError(f"RVV external baseline {baseline_id!r} has invalid build profile")
+    if record.get("strict_match") is not True:
+        raise RuntimeError(f"RVV external baseline {baseline_id!r} is not a strict match")
+    if record.get("build_profile") == "triton-cpu-rvv-prebuilt-strict":
+        library = record.get("prebuilt_library")
+        if not isinstance(library, str) or not library:
+            raise RuntimeError(
+                f"RVV external baseline {baseline_id!r} lacks prebuilt_library"
+            )
+        source_identity = record.get("source_identity")
+        if not isinstance(source_identity, str) or not source_identity:
+            raise RuntimeError(
+                f"RVV external baseline {baseline_id!r} lacks source_identity"
+            )
+    return record
+
+
 def _load_native_baseline_sidecar(path: Path) -> dict[str, Mapping[str, Any]]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if payload.get("protocol") != NATIVE_BASELINE_SIDECAR_PROTOCOL:
@@ -470,6 +532,35 @@ def _load_native_baseline_sidecar(path: Path) -> dict[str, Mapping[str, Any]]:
         if not isinstance(kernel, str) or not kernel:
             raise ValueError("Native RVV baseline sidecar has an invalid kernel name")
         result[kernel] = _validated_native_baseline(record)
+    return result
+
+
+def _load_external_baseline_sidecar(
+    path: Path,
+) -> dict[str, tuple[Mapping[str, Any], ...]]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    protocol = payload.get("protocol")
+    if protocol == NATIVE_BASELINE_SIDECAR_PROTOCOL:
+        return {
+            kernel: (_legacy_external_baseline(record),)
+            for kernel, record in _load_native_baseline_sidecar(path).items()
+        }
+    if protocol != EXTERNAL_BASELINE_SIDECAR_PROTOCOL:
+        raise ValueError("unsupported RVV external baseline sidecar")
+    raw_baselines = payload.get("baselines")
+    if not isinstance(raw_baselines, Mapping):
+        raise ValueError("RVV external baseline sidecar lacks a baseline map")
+    result: dict[str, tuple[Mapping[str, Any], ...]] = {}
+    for kernel, records in raw_baselines.items():
+        if not isinstance(kernel, str) or not kernel:
+            raise ValueError("RVV external baseline sidecar has an invalid kernel name")
+        if not isinstance(records, list) or not records:
+            raise ValueError(f"RVV external baseline list for {kernel!r} is empty")
+        validated = tuple(_validated_external_baseline(record) for record in records)
+        ids = [record["baseline_id"] for record in validated]
+        if len(ids) != len(set(ids)):
+            raise ValueError(f"RVV external baseline IDs for {kernel!r} are duplicated")
+        result[kernel] = validated
     return result
 
 
@@ -489,6 +580,54 @@ def _attach_native_baselines(
     return result
 
 
+def _attach_external_baselines(
+    entries: list[Mapping[str, Any]],
+    sidecar: Mapping[str, tuple[Mapping[str, Any], ...]],
+) -> list[dict[str, Any]]:
+    result = []
+    for raw_entry in entries:
+        entry = dict(raw_entry)
+        kernel = entry.get("kernel")
+        if kernel in sidecar:
+            records = tuple(sidecar[kernel])
+        elif isinstance(entry.get("external_baselines"), list):
+            records = tuple(
+                _validated_external_baseline(record)
+                for record in entry["external_baselines"]
+            )
+        elif entry.get("native_baseline") is not None:
+            records = (_legacy_external_baseline(entry["native_baseline"]),)
+        else:
+            raise RuntimeError(
+                f"RVV entry {kernel!r} lacks an independent external baseline"
+            )
+        ids = [record["baseline_id"] for record in records]
+        if len(ids) != len(set(ids)):
+            raise RuntimeError(f"RVV entry {kernel!r} has duplicate external baseline IDs")
+        entry["external_baselines"] = list(records)
+        entry["baseline_policy"] = "external_rvv_and_refj"
+        result.append(entry)
+    return result
+
+
+def _select_best_native(
+    records: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Choose a target-native competitor, never the portability compiler bar."""
+
+    applicable = [
+        record
+        for record in records
+        if record.get("status") == "measured"
+        and record.get("kind") in _BEST_NATIVE_KINDS
+    ]
+    return (
+        min(applicable, key=lambda record: float(record["latency_us"]))
+        if applicable
+        else None
+    )
+
+
 def _compile_native_baseline(
     directory: Path, entry: Mapping[str, Any]
 ) -> tuple[Any, Any, dict[str, Any]]:
@@ -506,7 +645,7 @@ def _compile_native_baseline(
         "-shared",
         "-O3",
         "-fPIC",
-        "-march=rv64gcv_zfh",
+        f"-march={RVV_TARGET_MARCH}",
         "-fopenmp",
         "-fno-fast-math",
         "-ffp-contract=off",
@@ -529,6 +668,115 @@ def _compile_native_baseline(
         "compile_ms": (time.perf_counter_ns() - started) / 1_000_000.0,
         "flags": command[1:-3],
         "shares_intentir_candidate_or_object": False,
+    }
+
+
+def _compile_external_baseline(
+    directory: Path,
+    record: Mapping[str, Any],
+    *,
+    ggml_root: Path | None,
+    ggml_lib_dir: Path | None,
+) -> tuple[Any, Any, dict[str, Any]]:
+    record = _validated_external_baseline(record)
+    baseline_id = str(record["baseline_id"])
+    source_suffix = ".cpp" if record["language"] == "c++" else ".c"
+    source = directory / f"external_{baseline_id}{source_suffix}"
+    library_path = directory / f"external_{baseline_id}.so"
+    source.write_text(str(record["source"]), encoding="utf-8")
+    profile = str(record["build_profile"])
+    if profile == "triton-cpu-rvv-prebuilt-strict":
+        compiler = shutil.which("clang") or shutil.which("cc")
+        if compiler is None:
+            raise RuntimeError("Triton-CPU/RVV adapter requires target clang or cc")
+        prebuilt_library = Path(str(record["prebuilt_library"]))
+        if not prebuilt_library.is_file():
+            raise RuntimeError(
+                f"Triton-CPU/RVV object does not exist: {prebuilt_library}"
+            )
+        command = [
+            compiler,
+            "-shared",
+            "-O3",
+            "-fPIC",
+            f"-march={RVV_TARGET_MARCH}",
+            "-fno-fast-math",
+            "-ffp-contract=off",
+            str(source),
+            str(prebuilt_library),
+            f"-Wl,-rpath,{prebuilt_library.parent}",
+            "-lm",
+            "-o",
+            str(library_path),
+        ]
+    elif profile == "ggml-rvv-strict":
+        if ggml_root is None or ggml_lib_dir is None:
+            raise RuntimeError("ggml RVV baseline requires --ggml-root and --ggml-lib-dir")
+        compiler = shutil.which("clang++") or shutil.which("c++")
+        if compiler is None:
+            raise RuntimeError("ggml RVV baseline requires target clang++ or c++")
+        command = [
+            compiler,
+            "-shared",
+            "-O3",
+            "-std=c++17",
+            "-fPIC",
+            f"-march={RVV_TARGET_MARCH}",
+            "-fno-fast-math",
+            "-ffp-contract=off",
+            str(source),
+            f"-I{ggml_root / 'ggml' / 'include'}",
+            f"-L{ggml_lib_dir}",
+            f"-Wl,-rpath,{ggml_lib_dir}",
+            "-lggml-cpu",
+            "-lggml",
+            "-lggml-base",
+            "-lm",
+            "-o",
+            str(library_path),
+        ]
+    else:
+        compiler = shutil.which("clang") or shutil.which("cc")
+        if compiler is None:
+            raise RuntimeError("RVV external C baseline requires target clang or cc")
+        command = [
+            compiler,
+            "-shared",
+            "-O3",
+            "-fPIC",
+            f"-march={RVV_TARGET_MARCH}",
+            "-fopenmp",
+            "-fno-fast-math",
+            "-ffp-contract=off",
+            str(source),
+            "-lm",
+            "-o",
+            str(library_path),
+        ]
+    started = time.perf_counter_ns()
+    process = subprocess.run(command, capture_output=True, text=True, check=False)
+    if process.returncode != 0:
+        raise RuntimeError(
+            f"RVV external baseline {baseline_id!r} compilation failed: {process.stderr}"
+        )
+    library = ctypes.CDLL(str(library_path))
+    function = getattr(library, str(record["symbol"]))
+    return library, function, {
+        "protocol": EXTERNAL_BASELINE_PROTOCOL,
+        "baseline_id": baseline_id,
+        "display_name": record["display_name"],
+        "kind": record["kind"],
+        "implementation": record["implementation"],
+        "symbol": record["symbol"],
+        "build_profile": profile,
+        "compiler": compiler,
+        "compile_ms": (time.perf_counter_ns() - started) / 1_000_000.0,
+        "flags": command[1:-3],
+        "strict_match": True,
+        "shares_intentir_candidate_or_object": False,
+        "source_identity": record.get("source_identity"),
+        "specialized_columns": record.get("specialized_columns"),
+        "specialization": record.get("specialization"),
     }
 
 
@@ -651,14 +899,14 @@ def _bounded_candidate_orders(
     *,
     thread_count: int,
     measure_c_oracle: bool = False,
-) -> dict[str, list[str]]:
+) -> dict[str, Any]:
     """Select the exact bounded timing union before any candidate executes.
 
     C-Fixed owns exactly one target-projected state. Main Schedule-Only and
-    IntentIR evaluate their complete executable spaces. IntentIR interleaves
-    each ranked schedule across concrete lowering paths only to define the
-    bounded C-prior anytime prefix. The independent C table compares C/Erase-C
-    prefixes under the same caller-supplied budget.
+    IntentIR evaluate their complete executable spaces. The exported concrete
+    search plan already round-robin interleaves schedules across admitted MLIR
+    lowering states; the runner must preserve that order exactly. The bounded
+    prefixes define only the C-prior anytime table.
     """
 
     if search_budget <= 0:
@@ -707,31 +955,11 @@ def _bounded_candidate_orders(
         if actual_path != canonical_path:
             raise ValueError("RVV Schedule-Only escaped the canonical lowering path")
 
-    def schedule_key(candidate_id: str) -> tuple[tuple[str, Any], ...]:
-        candidate = candidate_by_id[candidate_id]["candidate"]
-        schedule = candidate.get("requested_schedule", candidate["schedule"])
-        return tuple(sorted(schedule.items()))
-
-    def interleave_paths(
-        schedule_order: list[str], full_order: list[str]
-    ) -> list[str]:
-        canonical_ids = set(schedule_order)
-        alternatives: dict[tuple[tuple[str, Any], ...], list[str]] = {}
-        for candidate_id in full_order:
-            if candidate_id in canonical_ids:
-                continue
-            alternatives.setdefault(schedule_key(candidate_id), []).append(candidate_id)
-        result: list[str] = []
-        for candidate_id in schedule_order:
-            result.append(candidate_id)
-            result.extend(alternatives.pop(schedule_key(candidate_id), ()))
-        for candidate_id in full_order:
-            if candidate_id not in result:
-                result.append(candidate_id)
-        return result
-
-    c_order = interleave_paths(c_schedule_order, c_order)
-    erase_order = interleave_paths(erase_schedule_order, erase_order)
+    # Do not reconstruct this order from schedule equality.  Specialized MLIR
+    # states deliberately have different schedule domains (for example the
+    # widening f16->f32 dot reduction has 16 fixed lanes or scalable VL), so a
+    # second interleaving here used to starve precisely those states from a
+    # finite budget.
     if [item for item in c_order if item in set(c_schedule_order)] != c_schedule_order:
         raise ValueError("RVV IntentIR C order changed the E2 schedule ranking")
     if [item for item in erase_order if item in set(erase_schedule_order)] != erase_schedule_order:
@@ -783,6 +1011,19 @@ def _bounded_candidate_orders(
         != 0
     ]
 
+    # A one-shot initial timing is only a coarse ranking sample.  Preserve one
+    # provisional winner per concrete transformation state for the fresh,
+    # alternating formal measurement; otherwise noise in one generic state can
+    # remove an entire lowering path before it receives a formal sample.
+    lowering_state_orders_by_key: dict[str, list[str]] = {}
+    for candidate_id in e3_evaluation:
+        transformation = candidate_by_id[candidate_id]["candidate"][
+            "transformation"
+        ]
+        state_key = json.dumps(transformation, sort_keys=True, separators=(",", ":"))
+        lowering_state_orders_by_key.setdefault(state_key, []).append(candidate_id)
+    lowering_state_orders = list(lowering_state_orders_by_key.values())
+
     timed = []
     seen = set()
     timed_source = tuple(candidate_by_id)
@@ -801,6 +1042,7 @@ def _bounded_candidate_orders(
         "e2_evaluation": e2_evaluation,
         "e3_evaluation": e3_evaluation,
         "schedule_only_retiled": schedule_only_retiled,
+        "lowering_state_orders": lowering_state_orders,
         "timed": timed,
     }
 
@@ -846,6 +1088,35 @@ def _finalist_candidate_ids(
     return result
 
 
+def _provisional_group_finalist_orders(
+    measured: list[dict[str, Any]],
+    groups: list[list[str]],
+    *,
+    per_group: int = 2,
+) -> list[list[str]]:
+    """Turn each state's top coarse samples into mandatory fresh measurements."""
+
+    if per_group <= 0:
+        raise ValueError("per-group RVV finalist count must be positive")
+    measured_by_id = {
+        item["candidate"]["candidate_id"]: item for item in measured
+    }
+    result: list[list[str]] = []
+    for group in groups:
+        available = sorted(
+            (
+                measured_by_id[candidate_id]
+                for candidate_id in group
+                if candidate_id in measured_by_id
+            ),
+            key=lambda item: item["latency_us"],
+        )
+        result.extend(
+            [[item["candidate"]["candidate_id"]] for item in available[:per_group]]
+        )
+    return result
+
+
 def _one_kernel(
     entry: Mapping[str, Any],
     *,
@@ -861,6 +1132,8 @@ def _one_kernel(
     finalist_count: int,
     thread_count: int,
     measure_c_oracle: bool,
+    ggml_root: Path | None,
+    ggml_lib_dir: Path | None,
 ) -> dict[str, Any]:
     logical_io = _logical_io_bytes(entry, payload_root)
     io_bytes = logical_io["boundary_io_bytes"]
@@ -943,50 +1216,82 @@ def _one_kernel(
 
     records = []
     candidate_artifacts: dict[str, tuple[Any, Any, _ArgumentRotation]] = {}
-    native_library: Any | None = None
-    native_function: Any | None = None
-    native_rotation: _ArgumentRotation | None = None
-    native_compile_record: dict[str, Any] | None = None
-    native_correctness: list[dict[str, Any]] = []
+    external_artifacts: list[dict[str, Any]] = []
+    external_baseline_records: list[dict[str, Any]] = []
     with tempfile.TemporaryDirectory(prefix="intentir-rvv-") as temporary:
         directory = Path(temporary)
         comparator = _NativeComparator(directory)
         comparator_record = comparator.record
-        native_library, native_function, native_compile_record = (
-            _compile_native_baseline(directory, entry)
-        )
-        native_function.argtypes = [
-            ctypes.POINTER(type(item)) for item in descriptors
-        ]
-        native_function.restype = None
-        native_function(*argument_sets[0])
-        native_passed = True
-        for spec, buffer in zip(entry["output_specs"], output_buffers, strict=True):
-            output_name = spec["name"]
-            expected, element_count, byte_count, dtype = expected_outputs[output_name]
-            agrees, max_error = comparator.close(
-                buffer,
-                expected,
-                byte_count=byte_count,
-                element_count=element_count,
-                dtype=dtype,
-                rule=entry["output_rules"][output_name],
-            )
-            native_correctness.append(
-                {
-                    "output": output_name,
-                    "passed": agrees,
-                    "max_abs_error": max_error,
-                    "comparator_protocol": NATIVE_COMPARATOR_PROTOCOL,
+        for raw_baseline in entry["external_baselines"]:
+            baseline = _validated_external_baseline(raw_baseline)
+            baseline_id = str(baseline["baseline_id"])
+            try:
+                library, function, compile_record = _compile_external_baseline(
+                    directory,
+                    baseline,
+                    ggml_root=ggml_root,
+                    ggml_lib_dir=ggml_lib_dir,
+                )
+                function.argtypes = [
+                    ctypes.POINTER(type(item)) for item in descriptors
+                ]
+                function.restype = None
+                function(*argument_sets[0])
+                correctness = []
+                passed = True
+                for spec, buffer in zip(
+                    entry["output_specs"], output_buffers, strict=True
+                ):
+                    output_name = spec["name"]
+                    expected, element_count, byte_count, dtype = expected_outputs[
+                        output_name
+                    ]
+                    agrees, max_error = comparator.close(
+                        buffer,
+                        expected,
+                        byte_count=byte_count,
+                        element_count=element_count,
+                        dtype=dtype,
+                        rule=entry["output_rules"][output_name],
+                    )
+                    correctness.append(
+                        {
+                            "output": output_name,
+                            "passed": agrees,
+                            "max_abs_error": max_error,
+                            "comparator_protocol": NATIVE_COMPARATOR_PROTOCOL,
+                        }
+                    )
+                    passed = passed and agrees
+                baseline_record = {
+                    **compile_record,
+                    "status": "ready" if passed else "incorrect",
+                    "correctness": correctness,
                 }
-            )
-            native_passed = native_passed and agrees
-        if not native_passed:
-            raise KernelFailure(
-                "independent Native RVV baseline differs from canonical J",
-                [{"native_baseline_correctness": native_correctness}],
-            )
-        native_rotation = _ArgumentRotation(argument_sets)
+                external_baseline_records.append(baseline_record)
+                if passed:
+                    external_artifacts.append(
+                        {
+                            "record": baseline_record,
+                            "library": library,
+                            "function": function,
+                            "rotation": _ArgumentRotation(argument_sets),
+                        }
+                    )
+            except Exception as error:
+                external_baseline_records.append(
+                    {
+                        "protocol": EXTERNAL_BASELINE_PROTOCOL,
+                        "baseline_id": baseline_id,
+                        "display_name": baseline.get("display_name"),
+                        "kind": baseline.get("kind"),
+                        "implementation": baseline.get("implementation"),
+                        "build_profile": baseline.get("build_profile"),
+                        "strict_match": True,
+                        "status": "failed",
+                        "error": f"{type(error).__name__}: {error}",
+                    }
+                )
         for candidate_id in ordered_ids:
             candidate = candidate_by_id[candidate_id]
             if candidate_id not in timed_ids:
@@ -1080,6 +1385,11 @@ def _one_kernel(
     # natural workloads from spending formal batches on every losing state,
     # while no arm can disappear merely because its provisional winner was not
     # globally top-k.
+    lowering_state_finalist_orders = _provisional_group_finalist_orders(
+        measured,
+        bounded_orders["lowering_state_orders"],
+        per_group=2,
+    )
     finalist_ids = _finalist_candidate_ids(
         measured,
         [
@@ -1090,6 +1400,7 @@ def _one_kernel(
             bounded_orders["erase_e3"],
             bounded_orders["no_retile"],
             bounded_orders["schedule_only_retiled"],
+            *lowering_state_finalist_orders,
         ],
         finalist_count,
     )
@@ -1165,56 +1476,59 @@ def _one_kernel(
     if c_fixed_id != c_fixed["candidate"]["candidate_id"]:
         raise KernelFailure("C-Fixed candidate selection changed", records)
 
-    assert native_function is not None
-    assert native_rotation is not None
-    native_samples: list[float] = []
-    intentir_native_pair_samples: list[float] = []
     e3_function = candidate_artifacts[e3["candidate"]["candidate_id"]][1]
     e3_rotation = candidate_artifacts[e3["candidate"]["candidate_id"]][2]
-    for round_index in range(batches):
-        if round_index % 2 == 0:
-            native_us, _, _ = _measure(
-                native_function,
-                native_rotation,
-                regime=regime,
-                eviction_buffer=eviction_buffer,
-                warmup=0,
-                iterations=iterations,
-                batches=1,
+    for artifact in external_artifacts:
+        baseline_samples: list[float] = []
+        full_pair_samples: list[float] = []
+        for round_index in range(batches):
+            pair = (
+                (
+                    artifact["function"],
+                    artifact["rotation"],
+                    baseline_samples,
+                ),
+                (e3_function, e3_rotation, full_pair_samples),
             )
-            intentir_us, _, _ = _measure(
-                e3_function,
-                e3_rotation,
-                regime=regime,
-                eviction_buffer=eviction_buffer,
-                warmup=0,
-                iterations=iterations,
-                batches=1,
-            )
-        else:
-            intentir_us, _, _ = _measure(
-                e3_function,
-                e3_rotation,
-                regime=regime,
-                eviction_buffer=eviction_buffer,
-                warmup=0,
-                iterations=iterations,
-                batches=1,
-            )
-            native_us, _, _ = _measure(
-                native_function,
-                native_rotation,
-                regime=regime,
-                eviction_buffer=eviction_buffer,
-                warmup=0,
-                iterations=iterations,
-                batches=1,
-            )
-        native_samples.append(native_us)
-        intentir_native_pair_samples.append(intentir_us)
-    native_latency = float(statistics.median(native_samples))
-    intentir_native_pair_latency = float(
-        statistics.median(intentir_native_pair_samples)
+            if round_index % 2:
+                pair = tuple(reversed(pair))
+            for function, rotation, destination in pair:
+                latency_us, _, _ = _measure(
+                    function,
+                    rotation,
+                    regime=regime,
+                    eviction_buffer=eviction_buffer,
+                    warmup=0,
+                    iterations=iterations,
+                    batches=1,
+                )
+                destination.append(latency_us)
+        baseline_latency = float(statistics.median(baseline_samples))
+        full_pair_latency = float(statistics.median(full_pair_samples))
+        artifact["record"].update(
+            {
+                "status": "measured",
+                "latency_us": baseline_latency,
+                "selection_samples_us": baseline_samples,
+                "full_paired_samples_us": full_pair_samples,
+                "full_paired_us": full_pair_latency,
+                "intentir_speedup": baseline_latency / full_pair_latency,
+                "comparison_protocol": "paired-alternating.v1",
+            }
+        )
+    measured_external = [
+        record
+        for record in external_baseline_records
+        if record.get("status") == "measured"
+    ]
+    best_external = _select_best_native(measured_external)
+    llvm_rvv_c = next(
+        (
+            record
+            for record in measured_external
+            if record.get("baseline_id") == "llvm_rvv_c"
+        ),
+        None,
     )
 
     oracle_complete = not any(
@@ -1262,25 +1576,52 @@ def _one_kernel(
         "extents": entry["extents"],
         "candidates": records,
         "winner": e3["candidate"],
-        "native_baseline": {
-            **(native_compile_record or {}),
-            "correctness": native_correctness,
-            "selection_samples_us": native_samples,
-            "intentir_paired_samples_us": intentir_native_pair_samples,
-            "comparison_protocol": "paired-alternating.v1",
-        },
+        "external_baselines": external_baseline_records,
+        "best_native_baseline": best_external,
+        "native_baseline": llvm_rvv_c,
         "performance": {
             "c_fixed_us": c_fixed["latency_us"],
             "schedule_only_us": e2["latency_us"],
-            "intentir_us": e3["latency_us"],
+            "full_us": e3["latency_us"],
             "g_schedule": c_fixed["latency_us"] / e2["latency_us"],
-            "g_lowering": e2["latency_us"] / e3["latency_us"],
-            "native_rvv_us": native_latency,
-            "intentir_paired_with_native_us": intentir_native_pair_latency,
-            "g_native": native_latency / intentir_native_pair_latency,
+            "g_full": e2["latency_us"] / e3["latency_us"],
+            "llvm_rvv_c_us": (
+                float(llvm_rvv_c["latency_us"]) if llvm_rvv_c is not None else None
+            ),
+            "best_native_us": (
+                float(best_external["latency_us"])
+                if best_external is not None
+                else None
+            ),
+            "best_native_baseline_id": (
+                best_external["baseline_id"] if best_external is not None else None
+            ),
+            "full_paired_with_best_native_us": (
+                float(best_external["full_paired_us"])
+                if best_external is not None
+                else None
+            ),
+            "g_best_native": (
+                float(best_external["intentir_speedup"])
+                if best_external is not None
+                else None
+            ),
+            "native_us": (
+                float(llvm_rvv_c["latency_us"]) if llvm_rvv_c is not None else None
+            ),
+            "full_paired_with_native_us": (
+                float(llvm_rvv_c["full_paired_us"])
+                if llvm_rvv_c is not None
+                else None
+            ),
+            "g_native": (
+                float(llvm_rvv_c["intentir_speedup"])
+                if llvm_rvv_c is not None
+                else None
+            ),
             "c_fixed_candidate_id": c_fixed_id,
             "schedule_only_winner_candidate_id": e2["candidate"]["candidate_id"],
-            "intentir_winner_candidate_id": e3["candidate"]["candidate_id"],
+            "full_winner_candidate_id": e3["candidate"]["candidate_id"],
         },
         "c_prior_efficiency": {
             "candidate_budget": search_budget,
@@ -1382,6 +1723,10 @@ def _one_kernel(
             ],
             "c_fixed_candidate_ids": bounded_orders["c_fixed"],
             "timed_candidate_ids": bounded_orders["timed"],
+            "fresh_remeasured_lowering_state_count": len(
+                bounded_orders["lowering_state_orders"]
+            ),
+            "fresh_remeasured_candidates_per_lowering_state": 2,
             "correctness_comparator": comparator_record,
         },
         "measurement_analysis": {
@@ -1457,8 +1802,15 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--native-baseline-sidecar",
         type=Path,
-        help="small independent Native RVV source map for pre-v4 experiment bundles",
+        help="legacy single Native RVV source map",
     )
+    parser.add_argument(
+        "--external-baseline-sidecar",
+        type=Path,
+        help="independent LLVM-RVV, Expert RVV, and library baseline source map",
+    )
+    parser.add_argument("--ggml-root", type=Path)
+    parser.add_argument("--ggml-lib-dir", type=Path)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--kernels", nargs="*")
     parser.add_argument("--cpu", type=int, default=0)
@@ -1489,6 +1841,13 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    if (
+        args.native_baseline_sidecar is not None
+        and args.external_baseline_sidecar is not None
+    ):
+        raise ValueError("use only one RVV external baseline sidecar option")
+    if (args.ggml_root is None) != (args.ggml_lib_dir is None):
+        raise ValueError("--ggml-root and --ggml-lib-dir must be provided together")
     if min(
         args.warmup,
         args.iterations,
@@ -1531,14 +1890,15 @@ def main(argv: list[str] | None = None) -> int:
         for item in bundle["kernels"]
         if not selected or item["kernel"] in selected
     ]
+    sidecar_path = args.external_baseline_sidecar or args.native_baseline_sidecar
     sidecar = (
-        _load_native_baseline_sidecar(args.native_baseline_sidecar)
-        if args.native_baseline_sidecar is not None
+        _load_external_baseline_sidecar(sidecar_path)
+        if sidecar_path is not None
         else {}
     )
-    entries = _attach_native_baselines(entries, sidecar)
+    entries = _attach_external_baselines(entries, sidecar)
     effective_baseline_policy = (
-        "native_rvv_and_refj" if entries else bundle.get("baseline_policy")
+        "external_rvv_and_refj" if entries else bundle.get("baseline_policy")
     )
     started = time.time_ns()
     kernels = []
@@ -1562,17 +1922,23 @@ def main(argv: list[str] | None = None) -> int:
                 finalist_count=args.finalist_count,
                 thread_count=args.threads,
                 measure_c_oracle=args.measure_c_oracle,
+                ggml_root=args.ggml_root,
+                ggml_lib_dir=args.ggml_lib_dir,
             )
             kernels.append(record)
             performance = record["performance"]
+            best_native_text = (
+                f"{performance['g_best_native']:.3f}x"
+                if performance["g_best_native"] is not None
+                else "N/A"
+            )
             print(
                 f"{entry['kernel']}: CF={performance['c_fixed_us']:.4f} us "
                 f"Schedule={performance['schedule_only_us']:.4f} us "
-                f"IntentIR={performance['intentir_us']:.4f} us "
+                f"Full={performance['full_us']:.4f} us "
                 f"G_schedule={performance['g_schedule']:.3f}x "
-                f"G_lowering={performance['g_lowering']:.3f}x "
-                f"G_native={performance['g_native']:.3f}x "
-                "C="
+                f"G_full={performance['g_full']:.3f}x "
+                f"G_best_native={best_native_text} C="
                 f"{record['c_prior_efficiency']['best_at_budget_c_over_erase_c_speedup']:.3f}x",
                 flush=True,
             )
@@ -1589,8 +1955,17 @@ def main(argv: list[str] | None = None) -> int:
                 flush=True,
             )
     schedule_speedups = [item["performance"]["g_schedule"] for item in kernels]
-    lowering_speedups = [item["performance"]["g_lowering"] for item in kernels]
-    native_speedups = [item["performance"]["g_native"] for item in kernels]
+    full_speedups = [item["performance"]["g_full"] for item in kernels]
+    llvm_rvv_c_speedups = [
+        item["performance"]["g_native"]
+        for item in kernels
+        if item["performance"]["g_native"] is not None
+    ]
+    best_native_speedups = [
+        item["performance"]["g_best_native"]
+        for item in kernels
+        if item["performance"]["g_best_native"] is not None
+    ]
     c_speedups = [
         item["c_prior_efficiency"]["best_at_budget_c_over_erase_c_speedup"]
         for item in kernels
@@ -1675,8 +2050,11 @@ def main(argv: list[str] | None = None) -> int:
             "successful": len(kernels),
             "failed": len(failures),
             "geomean_g_schedule": geomean(schedule_speedups),
-            "geomean_g_lowering": geomean(lowering_speedups),
-            "geomean_g_native": geomean(native_speedups),
+            "geomean_g_full": geomean(full_speedups),
+            "geomean_g_native": geomean(llvm_rvv_c_speedups),
+            "geomean_g_llvm_rvv_c": geomean(llvm_rvv_c_speedups),
+            "geomean_g_best_native": geomean(best_native_speedups),
+            "best_native_applicable_kernel_count": len(best_native_speedups),
         },
         "c_prior_efficiency_summary": {
             "geomean_best_at_budget_c_over_erase_c_speedup": geomean(

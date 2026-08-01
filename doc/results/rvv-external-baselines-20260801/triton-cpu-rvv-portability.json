@@ -1,0 +1,178 @@
+{
+  "protocol": "intentir.rvv.triton-cpu-portability.v1",
+  "target": {
+    "host": "rvv4",
+    "arch": "riscv64",
+    "vlen_bits": 128,
+    "thread_count": 1,
+    "system_compiler": "clang 17.0.6"
+  },
+  "toolchain": {
+    "triton_cpu_commit": "a00d6c44ec55906cf2e66107621265d410b5f6a0",
+    "llvm_commit": "62b7cf9623fc310525f39ed69aaecc318a909731",
+    "llvm_version": "23.0.0git",
+    "patch": "tools/rvv_external_patches/triton_cpu_riscv_probe.patch"
+  },
+  "probes": [
+    {
+      "name": "vector_add",
+      "status": "passed",
+      "same_source": true,
+      "shape": [64],
+      "dtype": "f32",
+      "maximum_absolute_error": 0.0,
+      "kernel_symbol": "vector_add",
+      "rvv_vector_instruction_count": 10,
+      "shared_object_bytes": 8520
+    },
+    {
+      "name": "swiglu",
+      "status": "passed",
+      "same_source": true,
+      "source": ".trellis/tasks/archive/2026-07/07-22-scrc-real-kernel-batch-03/runs/liger_swiglu/run-001/source.py::_swiglu_forward_kernel",
+      "shape": [2, 128],
+      "dtype": "f32",
+      "maximum_absolute_error": 8.235020040880947e-09,
+      "kernel_symbol": "_swiglu_forward_kernel",
+      "rvv_vector_instruction_count": 199,
+      "shared_object_bytes": 13376
+    },
+    {
+      "name": "swiglu_natural_columns",
+      "status": "passed",
+      "same_source": true,
+      "specialized_columns": 11008,
+      "block_size": 16384,
+      "correctness_shape": [2, 11008],
+      "dtype": "f32",
+      "maximum_absolute_error": 1.410154254477547e-08,
+      "kernel_symbol": "_swiglu_forward_kernel",
+      "rvv_vector_instruction_count": 19819,
+      "shared_object_bytes": 544240,
+      "adapter": "strict memref-to-raw-kernel ABI bridge"
+    },
+    {
+      "name": "softmax",
+      "status": "passed",
+      "same_source": true,
+      "shape": [2, 128],
+      "dtype": "f32",
+      "maximum_absolute_error": 9.458451851601657e-10,
+      "kernel_symbol": "_softmax_single_block_forward_kernel",
+      "rvv_vector_instruction_count": 207,
+      "shared_object_bytes": 13208
+    },
+    {
+      "name": "kl_div",
+      "status": "passed",
+      "same_source": true,
+      "shape": [2, 64],
+      "dtype": "f32",
+      "maximum_absolute_error": 3.2934735827439e-08,
+      "kernel_symbol": "_kldiv_kernel_forward",
+      "rvv_vector_instruction_count": 110,
+      "shared_object_bytes": 13192
+    },
+    {
+      "name": "flash_bwd_preprocess",
+      "status": "passed",
+      "same_source": true,
+      "shape": [1, 2, 33, 16],
+      "dtype": "f16->f32",
+      "maximum_absolute_error": 8.940696716308594e-08,
+      "kernel_symbol": "_bwd_preprocess_do_o_dot",
+      "rvv_vector_instruction_count": 68796,
+      "shared_object_bytes": 1226528
+    },
+    {
+      "name": "dyt",
+      "status": "passed",
+      "same_source": true,
+      "shape": [2, 127],
+      "dtype": "f32",
+      "maximum_absolute_error": 1.0885398027404847e-08,
+      "kernel_symbol": "_dyt_fwd_kernel",
+      "rvv_vector_instruction_count": 270,
+      "shared_object_bytes": 13016
+    },
+    {
+      "name": "geglu",
+      "status": "passed",
+      "same_source": true,
+      "shape": [2, 127],
+      "dtype": "f32",
+      "maximum_absolute_error": 4.6712127360626354e-09,
+      "kernel_symbol": "_geglu_tanh_forward_kernel",
+      "rvv_vector_instruction_count": 223,
+      "shared_object_bytes": 13000
+    },
+    {
+      "name": "liger_rms_norm",
+      "status": "passed",
+      "same_source": true,
+      "shape": [2, 127],
+      "dtype": "f32",
+      "observable_outputs": ["Y", "RSTD"],
+      "maximum_absolute_error": 5.668155820259813e-07,
+      "kernel_symbol": "_rms_norm_forward_kernel",
+      "rvv_vector_instruction_count": 80,
+      "shared_object_bytes": 8872
+    },
+    {
+      "name": "layer_norm",
+      "status": "passed",
+      "same_source": true,
+      "shape": [2, 127],
+      "dtype": "f32",
+      "observable_outputs": ["Y", "mean", "RSTD"],
+      "maximum_absolute_error": 2.262343603121053e-06,
+      "kernel_symbol": "_layer_norm_forward_kernel",
+      "rvv_vector_instruction_count": 141,
+      "shared_object_bytes": 8872
+    }
+  ],
+  "performance_bar_status": "measured",
+  "correctness_kernel_count": 8,
+  "measured_kernel_count": 7,
+  "formal_measured_kernel_count": 7,
+  "additional_natural_shape_quick_count": 1,
+  "accepted_kernel_count": 24,
+  "geomean_triton_over_full": 4.34928102871569,
+  "performance_table": "doc/results/rvv-external-baselines-20260801/triton-cpu-rvv-pairs.json",
+  "performance": {
+    "kernel": "swiglu",
+    "shape": [16384, 11008],
+    "dtype": "f32",
+    "regime": "code-warm/data-cold",
+    "comparison_protocol": "paired-alternating.v1",
+    "cold_iterations_per_batch": 16,
+    "batches": 7,
+    "intentir_full_latency_us": 5403437.062999999,
+    "triton_cpu_rvv_latency_us": 10849182.9925,
+    "triton_over_full": 2.0078299915418114,
+    "intentir_full_samples_us": [
+      5402477.0105,
+      5403306.684,
+      5404245.759500001,
+      5405267.450999999,
+      5404082.116,
+      5403437.062999999,
+      5402743.3434999995
+    ],
+    "triton_cpu_rvv_samples_us": [
+      11307923.3295,
+      10849182.9925,
+      10723294.3,
+      11707038.5715,
+      11588053.8485,
+      10688350.0635,
+      10700679.684
+    ],
+    "correctness": {
+      "intentir_full_max_abs_error": 0.0,
+      "triton_cpu_rvv_max_abs_error": 0.0,
+      "passed": true
+    },
+    "result_file": "doc/results/rvv-external-baselines-20260801/triton-cpu-rvv-swiglu-pair.json"
+  }
+}

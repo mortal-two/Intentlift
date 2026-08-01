@@ -1,0 +1,1564 @@
+{
+  "c": {
+    "slots": [
+      {
+        "axis_ref": "x2",
+        "kind": "constexpr",
+        "name": "c0",
+        "required": true,
+        "role": "tile_extent",
+        "subject_ref": "d0",
+        "value_type": "i32"
+      },
+      {
+        "axis_ref": "x4",
+        "kind": "constexpr",
+        "name": "c1",
+        "required": true,
+        "role": "tile_extent",
+        "subject_ref": "d1",
+        "value_type": "i32"
+      },
+      {
+        "axis_ref": "x3",
+        "kind": "constexpr",
+        "name": "c2",
+        "required": true,
+        "role": "vector_extent",
+        "subject_ref": "d0",
+        "value_type": "i32"
+      },
+      {
+        "kind": "constexpr",
+        "name": "c3",
+        "required": true,
+        "role": "worker_count",
+        "value_type": "i32"
+      }
+    ],
+    "values": {
+      "c0": 32,
+      "c1": 4,
+      "c2": 128,
+      "c3": 32
+    }
+  },
+  "c_digest": "fcf5a07f7345c0870367929e679939a53a1694be97b04e8285a5c42c0e2fe680",
+  "j": {
+    "boundary": {
+      "access_guard_relations": [],
+      "accesses": [
+        {
+          "access_id": "a0",
+          "fill_value": 0,
+          "index_expression": "[0, k9, k10, k11]",
+          "kind": "load",
+          "node_ref": "n5",
+          "predicate": "k11 < t5",
+          "tensor": "t2"
+        },
+        {
+          "access_id": "a1",
+          "fill_value": 0,
+          "index_expression": "[1, k9, k10, k11]",
+          "kind": "load",
+          "node_ref": "n7",
+          "predicate": "(t5 <= k11) and (k11 < (t5 + t6))",
+          "tensor": "t2"
+        },
+        {
+          "access_id": "a2",
+          "fill_value": 0,
+          "index_expression": "[2, k9, k10, k11]",
+          "kind": "load",
+          "node_ref": "n9",
+          "predicate": "((t5 + t6) <= k11) and (k11 < ceil_div(t4, 2))",
+          "tensor": "t2"
+        },
+        {
+          "access_id": "a3",
+          "fill_value": 0,
+          "index_expression": "[0, k9, k10, k11]",
+          "kind": "load",
+          "node_ref": "n13",
+          "predicate": "k11 < t5",
+          "tensor": "t3"
+        },
+        {
+          "access_id": "a4",
+          "fill_value": 0,
+          "index_expression": "[1, k9, k10, k11]",
+          "kind": "load",
+          "node_ref": "n15",
+          "predicate": "(t5 <= k11) and (k11 < (t5 + t6))",
+          "tensor": "t3"
+        },
+        {
+          "access_id": "a5",
+          "fill_value": 0,
+          "index_expression": "[2, k9, k10, k11]",
+          "kind": "load",
+          "node_ref": "n17",
+          "predicate": "((t5 + t6) <= k11) and (k11 < ceil_div(t4, 2))",
+          "tensor": "t3"
+        },
+        {
+          "access_id": "a6",
+          "fill_value": 0,
+          "index_expression": "[k0, k1, k2, k3]",
+          "kind": "load",
+          "node_ref": "n23",
+          "predicate": "(k2 < x2) and (k3 < ceil_div(t4, 2))",
+          "tensor": "t0"
+        },
+        {
+          "access_id": "a7",
+          "fill_value": 0,
+          "index_expression": "[k4, k5, k6, k7]",
+          "kind": "load",
+          "node_ref": "n32",
+          "predicate": "(k6 < x4) and (k7 < ceil_div(t4, 2))",
+          "tensor": "t1"
+        },
+        {
+          "access_id": "a8",
+          "fill_value": 0,
+          "index_expression": "[k0, k1, k2, (k3 + ceil_div(t4, 2))]",
+          "kind": "load",
+          "node_ref": "n24",
+          "predicate": "(k2 < x2) and (k3 < ceil_div(t4, 2))",
+          "tensor": "t0"
+        },
+        {
+          "access_id": "a9",
+          "fill_value": 0,
+          "index_expression": "[k4, k5, k6, (k7 + ceil_div(t4, 2))]",
+          "kind": "load",
+          "node_ref": "n33",
+          "predicate": "(k6 < x4) and (k7 < ceil_div(t4, 2))",
+          "tensor": "t1"
+        },
+        {
+          "access_id": "a10",
+          "index_expression": "[k0, k1, k2, k3]",
+          "kind": "store",
+          "node_ref": "n27",
+          "predicate": "(k2 < x2) and (k3 < ceil_div(t4, 2))",
+          "tensor": "t0"
+        },
+        {
+          "access_id": "a11",
+          "index_expression": "[k0, k1, k2, (k3 + ceil_div(t4, 2))]",
+          "kind": "store",
+          "node_ref": "n30",
+          "predicate": "(k2 < x2) and (k3 < ceil_div(t4, 2))",
+          "tensor": "t0"
+        },
+        {
+          "access_id": "a12",
+          "index_expression": "[k4, k5, k6, k7]",
+          "kind": "store",
+          "node_ref": "n36",
+          "predicate": "(k6 < x4) and (k7 < ceil_div(t4, 2))",
+          "tensor": "t1"
+        },
+        {
+          "access_id": "a13",
+          "index_expression": "[k4, k5, k6, (k7 + ceil_div(t4, 2))]",
+          "kind": "store",
+          "node_ref": "n39",
+          "predicate": "(k6 < x4) and (k7 < ceil_div(t4, 2))",
+          "tensor": "t1"
+        }
+      ],
+      "aliases": [],
+      "broadcasts": [
+        {
+          "axes": [
+            2
+          ],
+          "node_ref": "n25",
+          "operand": "v12"
+        },
+        {
+          "axes": [
+            2
+          ],
+          "node_ref": "n26",
+          "operand": "v20"
+        },
+        {
+          "axes": [
+            2
+          ],
+          "node_ref": "n28",
+          "operand": "v12"
+        },
+        {
+          "axes": [
+            2
+          ],
+          "node_ref": "n29",
+          "operand": "v20"
+        },
+        {
+          "axes": [
+            2
+          ],
+          "node_ref": "n34",
+          "operand": "v12"
+        },
+        {
+          "axes": [
+            2
+          ],
+          "node_ref": "n35",
+          "operand": "v20"
+        },
+        {
+          "axes": [
+            2
+          ],
+          "node_ref": "n37",
+          "operand": "v12"
+        },
+        {
+          "axes": [
+            2
+          ],
+          "node_ref": "n38",
+          "operand": "v20"
+        }
+      ],
+      "consumer_extensions": [],
+      "domains": {
+        "d0": "(0 <= k0) and (k0 < x0) and (0 <= k1) and (k1 < x1) and (0 <= k2) and (k2 < x2) and (0 <= k3) and (k3 < x3)",
+        "d1": "(0 <= k4) and (k4 < x0) and (0 <= k5) and (k5 < x1) and (0 <= k6) and (k6 < x4) and (0 <= k7) and (k7 < x3)",
+        "d2": "(0 <= k8) and (k8 < 3) and (0 <= k9) and (k9 < x0) and (0 <= k10) and (k10 < x1) and (0 <= k11) and (k11 < x3)"
+      },
+      "effects": [
+        {
+          "access_ref": "a0",
+          "effect_id": "e0",
+          "kind": "read",
+          "node_ref": "n5",
+          "target": "t2"
+        },
+        {
+          "access_ref": "a1",
+          "effect_id": "e1",
+          "kind": "read",
+          "node_ref": "n7",
+          "target": "t2"
+        },
+        {
+          "access_ref": "a2",
+          "effect_id": "e2",
+          "kind": "read",
+          "node_ref": "n9",
+          "target": "t2"
+        },
+        {
+          "access_ref": "a3",
+          "effect_id": "e3",
+          "kind": "read",
+          "node_ref": "n13",
+          "target": "t3"
+        },
+        {
+          "access_ref": "a4",
+          "effect_id": "e4",
+          "kind": "read",
+          "node_ref": "n15",
+          "target": "t3"
+        },
+        {
+          "access_ref": "a5",
+          "effect_id": "e5",
+          "kind": "read",
+          "node_ref": "n17",
+          "target": "t3"
+        },
+        {
+          "access_ref": "a6",
+          "effect_id": "e6",
+          "kind": "read",
+          "node_ref": "n23",
+          "target": "t0"
+        },
+        {
+          "access_ref": "a7",
+          "effect_id": "e7",
+          "kind": "read",
+          "node_ref": "n32",
+          "target": "t1"
+        },
+        {
+          "access_ref": "a8",
+          "effect_id": "e8",
+          "kind": "read",
+          "node_ref": "n24",
+          "target": "t0"
+        },
+        {
+          "access_ref": "a9",
+          "effect_id": "e9",
+          "kind": "read",
+          "node_ref": "n33",
+          "target": "t1"
+        },
+        {
+          "access_ref": "a10",
+          "effect_id": "e10",
+          "kind": "write",
+          "node_ref": "n27",
+          "target": "t0"
+        },
+        {
+          "access_ref": "a11",
+          "effect_id": "e11",
+          "kind": "write",
+          "node_ref": "n30",
+          "target": "t0"
+        },
+        {
+          "access_ref": "a12",
+          "effect_id": "e12",
+          "kind": "write",
+          "node_ref": "n36",
+          "target": "t1"
+        },
+        {
+          "access_ref": "a13",
+          "effect_id": "e13",
+          "kind": "write",
+          "node_ref": "n39",
+          "target": "t1"
+        }
+      ],
+      "index_bounds": [
+        {
+          "axis": 0,
+          "data": "t2",
+          "indices": "v0",
+          "node_ref": "n5"
+        },
+        {
+          "axis": 2,
+          "data": "v5",
+          "indices": "v3",
+          "node_ref": "n6"
+        },
+        {
+          "axis": 0,
+          "data": "t2",
+          "indices": "v1",
+          "node_ref": "n7"
+        },
+        {
+          "axis": 2,
+          "data": "v7",
+          "indices": "v3",
+          "node_ref": "n8"
+        },
+        {
+          "axis": 0,
+          "data": "t2",
+          "indices": "v2",
+          "node_ref": "n9"
+        },
+        {
+          "axis": 2,
+          "data": "v9",
+          "indices": "v3",
+          "node_ref": "n10"
+        },
+        {
+          "axis": 0,
+          "data": "t3",
+          "indices": "v0",
+          "node_ref": "n13"
+        },
+        {
+          "axis": 2,
+          "data": "v13",
+          "indices": "v3",
+          "node_ref": "n14"
+        },
+        {
+          "axis": 0,
+          "data": "t3",
+          "indices": "v1",
+          "node_ref": "n15"
+        },
+        {
+          "axis": 2,
+          "data": "v15",
+          "indices": "v3",
+          "node_ref": "n16"
+        },
+        {
+          "axis": 0,
+          "data": "t3",
+          "indices": "v2",
+          "node_ref": "n17"
+        },
+        {
+          "axis": 2,
+          "data": "v17",
+          "indices": "v3",
+          "node_ref": "n18"
+        },
+        {
+          "axis": 3,
+          "data": "t0",
+          "indices": "v3",
+          "node_ref": "n23"
+        },
+        {
+          "axis": 3,
+          "data": "t0",
+          "indices": "v22",
+          "node_ref": "n24"
+        },
+        {
+          "axis": 3,
+          "data": "t1",
+          "indices": "v3",
+          "node_ref": "n32"
+        },
+        {
+          "axis": 3,
+          "data": "t1",
+          "indices": "v22",
+          "node_ref": "n33"
+        }
+      ],
+      "output_mappings": [],
+      "realization_authorizations": [],
+      "reductions": [],
+      "result_relations": [
+        {
+          "kind": "tolerance",
+          "output": "t0"
+        },
+        {
+          "kind": "tolerance",
+          "output": "t1"
+        }
+      ],
+      "updates": []
+    },
+    "dimension_constraints": [
+      "x0 > 0",
+      "x1 > 0",
+      "x2 > 0",
+      "x3 > 0",
+      "x4 > 0"
+    ],
+    "intent": {
+      "intent_function": {
+        "body": [
+          {
+            "attrs": {
+              "dtype": "i32",
+              "shape": [],
+              "value": 0
+            },
+            "op": "const",
+            "result": "v0",
+            "type": {
+              "dtype": "i32",
+              "shape": []
+            }
+          },
+          {
+            "attrs": {
+              "dtype": "i32",
+              "shape": [],
+              "value": 1
+            },
+            "op": "const",
+            "result": "v1",
+            "type": {
+              "dtype": "i32",
+              "shape": []
+            }
+          },
+          {
+            "attrs": {
+              "dtype": "i32",
+              "shape": [],
+              "value": 2
+            },
+            "op": "const",
+            "result": "v2",
+            "type": {
+              "dtype": "i32",
+              "shape": []
+            }
+          },
+          {
+            "attrs": {
+              "dtype": "i32",
+              "n": "x3"
+            },
+            "op": "iota",
+            "result": "v3",
+            "type": {
+              "dtype": "i32",
+              "shape": [
+                "x3"
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "fn": "add"
+            },
+            "op": "map_binary",
+            "operands": [
+              "t5",
+              "t6"
+            ],
+            "result": "v4",
+            "type": {
+              "dtype": "i32",
+              "shape": []
+            }
+          },
+          {
+            "attrs": {
+              "axis": 0,
+              "mode": "take"
+            },
+            "op": "gather",
+            "operands": [
+              "t2",
+              "v0"
+            ],
+            "result": "v5",
+            "type": {
+              "dtype": "f16",
+              "shape": [
+                "x0",
+                "x1",
+                "x3"
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "axis": 2,
+              "mode": "take"
+            },
+            "op": "gather",
+            "operands": [
+              "v5",
+              "v3"
+            ],
+            "result": "v6",
+            "type": {
+              "dtype": "f16",
+              "shape": [
+                "x0",
+                "x1",
+                "x3"
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "axis": 0,
+              "mode": "take"
+            },
+            "op": "gather",
+            "operands": [
+              "t2",
+              "v1"
+            ],
+            "result": "v7",
+            "type": {
+              "dtype": "f16",
+              "shape": [
+                "x0",
+                "x1",
+                "x3"
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "axis": 2,
+              "mode": "take"
+            },
+            "op": "gather",
+            "operands": [
+              "v7",
+              "v3"
+            ],
+            "result": "v8",
+            "type": {
+              "dtype": "f16",
+              "shape": [
+                "x0",
+                "x1",
+                "x3"
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "axis": 0,
+              "mode": "take"
+            },
+            "op": "gather",
+            "operands": [
+              "t2",
+              "v2"
+            ],
+            "result": "v9",
+            "type": {
+              "dtype": "f16",
+              "shape": [
+                "x0",
+                "x1",
+                "x3"
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "axis": 2,
+              "mode": "take"
+            },
+            "op": "gather",
+            "operands": [
+              "v9",
+              "v3"
+            ],
+            "result": "v10",
+            "type": {
+              "dtype": "f16",
+              "shape": [
+                "x0",
+                "x1",
+                "x3"
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "fn": "add"
+            },
+            "op": "map_binary",
+            "operands": [
+              "v6",
+              "v8"
+            ],
+            "result": "v11",
+            "type": {
+              "dtype": "f16",
+              "shape": [
+                "x0",
+                "x1",
+                "x3"
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "fn": "add"
+            },
+            "op": "map_binary",
+            "operands": [
+              "v11",
+              "v10"
+            ],
+            "result": "v12",
+            "type": {
+              "dtype": "f16",
+              "shape": [
+                "x0",
+                "x1",
+                "x3"
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "axis": 0,
+              "mode": "take"
+            },
+            "op": "gather",
+            "operands": [
+              "t3",
+              "v0"
+            ],
+            "result": "v13",
+            "type": {
+              "dtype": "f16",
+              "shape": [
+                "x0",
+                "x1",
+                "x3"
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "axis": 2,
+              "mode": "take"
+            },
+            "op": "gather",
+            "operands": [
+              "v13",
+              "v3"
+            ],
+            "result": "v14",
+            "type": {
+              "dtype": "f16",
+              "shape": [
+                "x0",
+                "x1",
+                "x3"
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "axis": 0,
+              "mode": "take"
+            },
+            "op": "gather",
+            "operands": [
+              "t3",
+              "v1"
+            ],
+            "result": "v15",
+            "type": {
+              "dtype": "f16",
+              "shape": [
+                "x0",
+                "x1",
+                "x3"
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "axis": 2,
+              "mode": "take"
+            },
+            "op": "gather",
+            "operands": [
+              "v15",
+              "v3"
+            ],
+            "result": "v16",
+            "type": {
+              "dtype": "f16",
+              "shape": [
+                "x0",
+                "x1",
+                "x3"
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "axis": 0,
+              "mode": "take"
+            },
+            "op": "gather",
+            "operands": [
+              "t3",
+              "v2"
+            ],
+            "result": "v17",
+            "type": {
+              "dtype": "f16",
+              "shape": [
+                "x0",
+                "x1",
+                "x3"
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "axis": 2,
+              "mode": "take"
+            },
+            "op": "gather",
+            "operands": [
+              "v17",
+              "v3"
+            ],
+            "result": "v18",
+            "type": {
+              "dtype": "f16",
+              "shape": [
+                "x0",
+                "x1",
+                "x3"
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "fn": "add"
+            },
+            "op": "map_binary",
+            "operands": [
+              "v14",
+              "v16"
+            ],
+            "result": "v19",
+            "type": {
+              "dtype": "f16",
+              "shape": [
+                "x0",
+                "x1",
+                "x3"
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "fn": "add"
+            },
+            "op": "map_binary",
+            "operands": [
+              "v19",
+              "v18"
+            ],
+            "result": "v20",
+            "type": {
+              "dtype": "f16",
+              "shape": [
+                "x0",
+                "x1",
+                "x3"
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "fn": "div"
+            },
+            "op": "map_binary",
+            "operands": [
+              "t4",
+              "v2"
+            ],
+            "result": "v21",
+            "type": {
+              "dtype": "i32",
+              "shape": []
+            }
+          },
+          {
+            "attrs": {
+              "fn": "add"
+            },
+            "op": "map_binary",
+            "operands": [
+              "v3",
+              "v21"
+            ],
+            "result": "v22",
+            "type": {
+              "dtype": "i32",
+              "shape": [
+                "x3"
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "axis": 3,
+              "mode": "take"
+            },
+            "op": "gather",
+            "operands": [
+              "t0",
+              "v3"
+            ],
+            "result": "v23",
+            "type": {
+              "dtype": "f16",
+              "shape": [
+                "x0",
+                "x1",
+                "x2",
+                "x3"
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "axis": 3,
+              "mode": "take"
+            },
+            "op": "gather",
+            "operands": [
+              "t0",
+              "v22"
+            ],
+            "result": "v24",
+            "type": {
+              "dtype": "f16",
+              "shape": [
+                "x0",
+                "x1",
+                "x2",
+                "x3"
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "fn": "mul"
+            },
+            "op": "map_binary",
+            "operands": [
+              "v23",
+              "v12"
+            ],
+            "result": "v25",
+            "type": {
+              "dtype": "f16",
+              "shape": [
+                "x0",
+                "x1",
+                "x2",
+                "x3"
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "fn": "mul"
+            },
+            "op": "map_binary",
+            "operands": [
+              "v24",
+              "v20"
+            ],
+            "result": "v26",
+            "type": {
+              "dtype": "f16",
+              "shape": [
+                "x0",
+                "x1",
+                "x2",
+                "x3"
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "fn": "sub"
+            },
+            "op": "map_binary",
+            "operands": [
+              "v25",
+              "v26"
+            ],
+            "result": "v27",
+            "type": {
+              "dtype": "f16",
+              "shape": [
+                "x0",
+                "x1",
+                "x2",
+                "x3"
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "fn": "mul"
+            },
+            "op": "map_binary",
+            "operands": [
+              "v24",
+              "v12"
+            ],
+            "result": "v28",
+            "type": {
+              "dtype": "f16",
+              "shape": [
+                "x0",
+                "x1",
+                "x2",
+                "x3"
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "fn": "mul"
+            },
+            "op": "map_binary",
+            "operands": [
+              "v23",
+              "v20"
+            ],
+            "result": "v29",
+            "type": {
+              "dtype": "f16",
+              "shape": [
+                "x0",
+                "x1",
+                "x2",
+                "x3"
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "fn": "add"
+            },
+            "op": "map_binary",
+            "operands": [
+              "v28",
+              "v29"
+            ],
+            "result": "v30",
+            "type": {
+              "dtype": "f16",
+              "shape": [
+                "x0",
+                "x1",
+                "x2",
+                "x3"
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "axis": 3
+            },
+            "op": "concat",
+            "operands": [
+              "v27",
+              "v30"
+            ],
+            "result": "v31",
+            "type": {
+              "dtype": "f16",
+              "shape": [
+                "x0",
+                "x1",
+                "x2",
+                "x3"
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "axis": 3,
+              "mode": "take"
+            },
+            "op": "gather",
+            "operands": [
+              "t1",
+              "v3"
+            ],
+            "result": "v32",
+            "type": {
+              "dtype": "f16",
+              "shape": [
+                "x0",
+                "x1",
+                "x4",
+                "x3"
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "axis": 3,
+              "mode": "take"
+            },
+            "op": "gather",
+            "operands": [
+              "t1",
+              "v22"
+            ],
+            "result": "v33",
+            "type": {
+              "dtype": "f16",
+              "shape": [
+                "x0",
+                "x1",
+                "x4",
+                "x3"
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "fn": "mul"
+            },
+            "op": "map_binary",
+            "operands": [
+              "v32",
+              "v12"
+            ],
+            "result": "v34",
+            "type": {
+              "dtype": "f16",
+              "shape": [
+                "x0",
+                "x1",
+                "x4",
+                "x3"
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "fn": "mul"
+            },
+            "op": "map_binary",
+            "operands": [
+              "v33",
+              "v20"
+            ],
+            "result": "v35",
+            "type": {
+              "dtype": "f16",
+              "shape": [
+                "x0",
+                "x1",
+                "x4",
+                "x3"
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "fn": "sub"
+            },
+            "op": "map_binary",
+            "operands": [
+              "v34",
+              "v35"
+            ],
+            "result": "v36",
+            "type": {
+              "dtype": "f16",
+              "shape": [
+                "x0",
+                "x1",
+                "x4",
+                "x3"
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "fn": "mul"
+            },
+            "op": "map_binary",
+            "operands": [
+              "v33",
+              "v12"
+            ],
+            "result": "v37",
+            "type": {
+              "dtype": "f16",
+              "shape": [
+                "x0",
+                "x1",
+                "x4",
+                "x3"
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "fn": "mul"
+            },
+            "op": "map_binary",
+            "operands": [
+              "v32",
+              "v20"
+            ],
+            "result": "v38",
+            "type": {
+              "dtype": "f16",
+              "shape": [
+                "x0",
+                "x1",
+                "x4",
+                "x3"
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "fn": "add"
+            },
+            "op": "map_binary",
+            "operands": [
+              "v37",
+              "v38"
+            ],
+            "result": "v39",
+            "type": {
+              "dtype": "f16",
+              "shape": [
+                "x0",
+                "x1",
+                "x4",
+                "x3"
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "axis": 3
+            },
+            "op": "concat",
+            "operands": [
+              "v36",
+              "v39"
+            ],
+            "result": "v40",
+            "type": {
+              "dtype": "f16",
+              "shape": [
+                "x0",
+                "x1",
+                "x4",
+                "x3"
+              ]
+            }
+          }
+        ],
+        "inputs": [
+          {
+            "dtype": "f16",
+            "name": "t0",
+            "shape": [
+              "x0",
+              "x1",
+              "x2",
+              "x3"
+            ]
+          },
+          {
+            "dtype": "f16",
+            "name": "t1",
+            "shape": [
+              "x0",
+              "x1",
+              "x4",
+              "x3"
+            ]
+          },
+          {
+            "dtype": "f16",
+            "name": "t2",
+            "shape": [
+              3,
+              "x0",
+              "x1",
+              "x3"
+            ]
+          },
+          {
+            "dtype": "f16",
+            "name": "t3",
+            "shape": [
+              3,
+              "x0",
+              "x1",
+              "x3"
+            ]
+          },
+          {
+            "dtype": "i32",
+            "name": "t4",
+            "shape": []
+          },
+          {
+            "dtype": "i32",
+            "name": "t5",
+            "shape": []
+          },
+          {
+            "dtype": "i32",
+            "name": "t6",
+            "shape": []
+          }
+        ],
+        "name": "scrc_j0",
+        "outputs": [
+          {
+            "dtype": "f16",
+            "name": "t0",
+            "shape": [
+              "x0",
+              "x1",
+              "x2",
+              "x3"
+            ]
+          },
+          {
+            "dtype": "f16",
+            "name": "t1",
+            "shape": [
+              "x0",
+              "x1",
+              "x4",
+              "x3"
+            ]
+          }
+        ],
+        "returns": [
+          {
+            "output": "t0",
+            "value": "v31"
+          },
+          {
+            "output": "t1",
+            "value": "v40"
+          }
+        ]
+      }
+    },
+    "kernel_id": "scrc_k0",
+    "node_ids": {
+      "n0": "body[0]",
+      "n1": "body[1]",
+      "n10": "body[10]",
+      "n11": "body[11]",
+      "n12": "body[12]",
+      "n13": "body[13]",
+      "n14": "body[14]",
+      "n15": "body[15]",
+      "n16": "body[16]",
+      "n17": "body[17]",
+      "n18": "body[18]",
+      "n19": "body[19]",
+      "n2": "body[2]",
+      "n20": "body[20]",
+      "n21": "body[21]",
+      "n22": "body[22]",
+      "n23": "body[23]",
+      "n24": "body[24]",
+      "n25": "body[25]",
+      "n26": "body[26]",
+      "n27": "body[27]",
+      "n28": "body[28]",
+      "n29": "body[29]",
+      "n3": "body[3]",
+      "n30": "body[30]",
+      "n31": "body[31]",
+      "n32": "body[32]",
+      "n33": "body[33]",
+      "n34": "body[34]",
+      "n35": "body[35]",
+      "n36": "body[36]",
+      "n37": "body[37]",
+      "n38": "body[38]",
+      "n39": "body[39]",
+      "n4": "body[4]",
+      "n40": "body[40]",
+      "n5": "body[5]",
+      "n6": "body[6]",
+      "n7": "body[7]",
+      "n8": "body[8]",
+      "n9": "body[9]"
+    },
+    "scopes": [
+      {
+        "captures": [],
+        "definitions": [
+          "t0",
+          "t1",
+          "t2",
+          "t3",
+          "t4",
+          "t5",
+          "t6",
+          "v0",
+          "v1",
+          "v2",
+          "v3",
+          "v4",
+          "v5",
+          "v6",
+          "v7",
+          "v8",
+          "v9",
+          "v10",
+          "v11",
+          "v12",
+          "v13",
+          "v14",
+          "v15",
+          "v16",
+          "v17",
+          "v18",
+          "v19",
+          "v20",
+          "v21",
+          "v22",
+          "v23",
+          "v24",
+          "v25",
+          "v26",
+          "v27",
+          "v28",
+          "v29",
+          "v30",
+          "v31",
+          "v32",
+          "v33",
+          "v34",
+          "v35",
+          "v36",
+          "v37",
+          "v38",
+          "v39",
+          "v40"
+        ],
+        "effects": [
+          "e0",
+          "e1",
+          "e2",
+          "e3",
+          "e4",
+          "e5",
+          "e6",
+          "e7",
+          "e8",
+          "e9",
+          "e10",
+          "e11",
+          "e12",
+          "e13"
+        ],
+        "kind": "function",
+        "parent_scope": null,
+        "scope_id": "q0"
+      }
+    ],
+    "signature": {
+      "parameters": [
+        {
+          "dtype": "f16",
+          "kind": "tensor",
+          "logical_ref": "t0",
+          "mode": "inout",
+          "name": "p0",
+          "rank": 4
+        },
+        {
+          "dtype": "f16",
+          "kind": "tensor",
+          "logical_ref": "t1",
+          "mode": "inout",
+          "name": "p1",
+          "rank": 4
+        },
+        {
+          "dtype": "f16",
+          "kind": "tensor",
+          "logical_ref": "t2",
+          "mode": "input",
+          "name": "p2",
+          "rank": 4
+        },
+        {
+          "dtype": "f16",
+          "kind": "tensor",
+          "logical_ref": "t3",
+          "mode": "input",
+          "name": "p3",
+          "rank": 4
+        },
+        {
+          "dtype": "i32",
+          "kind": "scalar",
+          "logical_ref": "x1",
+          "mode": "value",
+          "name": "p4",
+          "rank": 0
+        },
+        {
+          "dtype": "i32",
+          "kind": "constexpr",
+          "logical_ref": "x0",
+          "mode": "value",
+          "name": "p5",
+          "rank": 0
+        },
+        {
+          "dtype": "i32",
+          "kind": "constexpr",
+          "logical_ref": "x2",
+          "mode": "value",
+          "name": "p6",
+          "rank": 0
+        },
+        {
+          "dtype": "i32",
+          "kind": "constexpr",
+          "logical_ref": "x4",
+          "mode": "value",
+          "name": "p7",
+          "rank": 0
+        },
+        {
+          "dtype": "i32",
+          "kind": "constexpr",
+          "logical_ref": "t4",
+          "mode": "value",
+          "name": "p8",
+          "rank": 0
+        },
+        {
+          "dtype": "i32",
+          "kind": "constexpr",
+          "logical_ref": "t5",
+          "mode": "value",
+          "name": "p9",
+          "rank": 0
+        },
+        {
+          "dtype": "i32",
+          "kind": "constexpr",
+          "logical_ref": "t6",
+          "mode": "value",
+          "name": "p10",
+          "rank": 0
+        },
+        {
+          "dtype": "i1",
+          "kind": "constexpr",
+          "mode": "value",
+          "name": "p11",
+          "rank": 0
+        }
+      ]
+    },
+    "storage": [],
+    "value_dimension_relations": [
+      {
+        "dimension_ref": "x3",
+        "relation": "eq",
+        "value_ref": "t4"
+      }
+    ]
+  },
+  "j_digest": "e49a7816a03573fd6466f34e3f453b46f9588715cfc5e52b2e1c19005a49390f",
+  "schema_version": "intentir.production.jc-snapshot.v1",
+  "snapshot_digest": "b294afd5495fb52547c37741cd849964e4e854ae2614fc5d3b61d57010135fff"
+}

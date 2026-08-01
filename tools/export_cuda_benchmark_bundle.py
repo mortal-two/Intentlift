@@ -23,6 +23,7 @@ from intentir.backend.cuda.portable_bundle import (
     encode_values,
 )
 from intentir.backend.cuda.production_cases import (
+    FORMAL_PRODUCTION_CASE_IDS,
     PRODUCTION_CASE_IDS,
     PRODUCTION_WORKLOAD_PROFILE_CLOSED,
     PRODUCTION_WORKLOAD_PROFILE_NATURAL_HEADLINE,
@@ -50,6 +51,7 @@ from intentir.backend.portable_workload import encode_workload_recipe
 from intentir.backend.protocol import BackendTarget
 from intentir.backend.workload_cost import derive_j_workload_cost
 from intentir.ir.production_snapshot import load_production_snapshot
+from intentir.verify.gate1._triton_worker import _normalize_deprecated_triton_dot
 from intentir.verify.gate2.scalar import ScalarLoweringRunner
 from intentir.verify.scrc_workload_run import build_workload_jc_suite
 
@@ -210,10 +212,6 @@ def _entry(
     )
 
     candidates_by_id = {item.candidate_id: item for item in seeded_candidates}
-    c_fixed_candidate, c_fixed_projection = project_cuda_c_fixed_candidate(
-        state,
-        tuple(candidates_by_id[item] for item in seeded_schedule_spine),
-    )
     compiled: dict[str, dict[str, Any]] = {}
 
     def compile_once(candidate: Any) -> dict[str, Any]:
@@ -253,6 +251,42 @@ def _entry(
             }
         compiled[candidate.candidate_id] = result
         return result
+
+    # Path admission proves that the registered C++ matcher recognizes J, but
+    # an exact schedule can still fail the hard target limits of that matcher.
+    # C-Fixed must therefore project C over the compiler-formed canonical
+    # schedules, not over requested states that never become executables.  This
+    # is hard admission only: no workload cost, profiler or timing participates.
+    concrete_schedule_spine = []
+    c_fixed_schedule_rejections: list[dict[str, Any]] = []
+    for candidate_id in seeded_schedule_spine:
+        candidate = candidates_by_id[candidate_id]
+        outcome = compile_once(candidate)
+        if outcome["status"] == "compiled_state":
+            concrete_schedule_spine.append(candidate)
+        else:
+            c_fixed_schedule_rejections.append(outcome["rejection"])
+    if not concrete_schedule_spine:
+        reasons = "; ".join(
+            f"{item['candidate_id']}: {item['reason']}"
+            for item in c_fixed_schedule_rejections
+        )
+        raise RuntimeError(
+            f"{name} has no compiler-formed canonical schedule"
+            + (f": {reasons}" if reasons else "")
+        )
+    c_fixed_candidate, c_fixed_projection = project_cuda_c_fixed_candidate(
+        state,
+        tuple(concrete_schedule_spine),
+    )
+    c_fixed_projection = {
+        **c_fixed_projection,
+        "exact_target_schedule_admission": True,
+        "rejected_requested_schedule_count": len(c_fixed_schedule_rejections),
+        "rejected_requested_schedule_ids": [
+            item["candidate_id"] for item in c_fixed_schedule_rejections
+        ],
+    }
 
     visit_budget = axes.candidate_budget if axes is not None else budget
 
@@ -427,12 +461,24 @@ def _entry(
         reference = ScalarLoweringRunner().run(case.refeval, case.values)
         if not reference.ok:
             raise RuntimeError(f"canonical J reference failed: {reference.error}")
+        else:
+            reference_outputs = reference.outputs
         workload_payload = {
             "values": encode_values(case.values),
-            "reference_outputs": encode_values(reference.outputs),
+            "reference_outputs": encode_values(reference_outputs),
         }
     source = prepared.request.source.gate_source
     source_code, source_origin = source.read_code()
+    source_code, _compat = _normalize_deprecated_triton_dot(source_code)
+    source_payload: dict[str, Any]
+    source_payload = {
+        "source_triton": {
+            "function": source.function,
+            "code": source_code,
+            "origin_at_export": source_origin,
+            "execution_spec": encode_triton_spec(case.triton),
+        }
+    }
     baseline_policy = str(workload_valuation["baseline_policy"])
     return {
         "kernel": name,
@@ -514,12 +560,7 @@ def _entry(
         "output_bindings": case.refeval.output_binding_map,
         "output_keys": list(case.output_keys),
         **workload_payload,
-        "source_triton": {
-            "function": source.function,
-            "code": source_code,
-            "origin_at_export": source_origin,
-            "execution_spec": encode_triton_spec(case.triton),
-        },
+        **source_payload,
         "candidates": admitted,
         "rejected_candidate_count": len(rejected),
         "rejected_candidates": rejected,
@@ -534,7 +575,7 @@ def _parser() -> argparse.ArgumentParser:
         "--kernels",
         nargs="*",
         choices=sorted(PRODUCTION_CASE_IDS),
-        default=sorted(PRODUCTION_CASE_IDS),
+        default=sorted(FORMAL_PRODUCTION_CASE_IDS),
     )
     parser.add_argument("--search-budget", type=int, default=96)
     parser.add_argument(

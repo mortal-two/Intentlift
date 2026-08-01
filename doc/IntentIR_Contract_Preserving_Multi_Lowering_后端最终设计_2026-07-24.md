@@ -7,6 +7,11 @@
 > registry key 或 emitter 概念；旧材料中的 `multi-lowering` 统一按本文定义解释为
 > **J-grounded structural/numeric lowering-state expansion with Q/D closure**。
 >
+> **2026-08-02 corpus 更新**：当前正式后端集合为 24 个 Triton 来源 accepted J（原 22 项加
+> Llama4 RoPE 与 FlashAttention forward）。此前误混入的两个 TileLang 样本已删除，不进入任何 aggregate；
+> 本文第 18.3 与 20.1 中的 fresh-14/legacy 数字保留为阶段历史，不再是当前论文分母。当前结果和剩余缺口以
+> [已通过24个J：后端与论文证据总览](已通过24个J_三目标后端总览_2026-08-02.md) 为准。
+>
 > 上位前端与认证设计：
 > [C：所有权、绑定、消费与三方验证](IntentIR_C_所有权_绑定_消费与三方验证设计_2026-07-22.md)、
 > [π：依赖类型实现见证与 Replay 安全](IntentIR_pi_依赖类型实现见证与Replay安全设计_2026-07-22.md)、

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from intentir.backend.workload_valuation import (
+    FORMAL_PRODUCTION_CASE_IDS,
     PRODUCTION_CASE_IDS,
     PRODUCTION_WORKLOAD_PROFILE_CLOSED,
     PRODUCTION_WORKLOAD_PROFILE_NATURAL_HEADLINE,
@@ -246,6 +247,7 @@ def constexpr_input_bindings(
 
 
 __all__ = [
+    "FORMAL_PRODUCTION_CASE_IDS",
     "PRODUCTION_CASE_IDS",
     "PRODUCTION_WORKLOAD_PROFILE_CLOSED",
     "PRODUCTION_WORKLOAD_PROFILE_NATURAL_HEADLINE",

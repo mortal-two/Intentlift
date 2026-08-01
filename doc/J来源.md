@@ -1,4 +1,4 @@
-  ## 已通过的 22 个 Kernel
+  ## 已通过并纳入当前后端正式集合的 24 个 Kernel
 
      #    Kernel                            正式证据 JSON
   ━━━━━  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -53,6 +53,10 @@
   ─────  ────────────────────────────────  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
     22    SplitK reduce，split=4/arity=4    /tmp/intentir-task15-v12-splitk-reduce-exact-current-gate1-gate2-20260730-01/
                                             xformers_ops_fmha_triton_splitk_kernels_splitk_reduce_varargs/gate2-recheck-001/recheck.json
+  ─────  ────────────────────────────────  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    23    Llama4 RoPE                       /tmp/intentir-rope-auto-certified-20260801-final/liger_llama4_rope/gate2-recheck-001/
+  ─────  ────────────────────────────────  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    24    FlashAttention forward            /tmp/intentir-flash-fwd-q-closure2-20260801/flash_attn_flash_attn_triton_fwd_kernel/gate2-recheck-001/
 
   Linear 有一份容易混淆的旧 artifact recheck，它是 gate2_failed，且明确写着 changes_parent_verdict=false，不能拿它代替上表的正式 winner：/tmp/intentir-task15-
   v12-linear-exact-current-gate1-gate2-20260730-01/flash_attn_ops_triton_linear_kernel_fwd/gate2-recheck-001/recheck.json。

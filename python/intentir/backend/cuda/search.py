@@ -12,7 +12,7 @@ import math
 import statistics
 import time
 from dataclasses import dataclass, replace
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Sequence
 
 import intentir.backend.cuda.compile as backend_compile
 from intentir.backend.cuda.pipeline import (
@@ -48,7 +48,7 @@ from .program import analyze_j_for_cuda
 from .selection import DEFAULT_PASSES, LoweringTarget, select_variant
 
 
-SEARCH_PROTOCOL = "intentir.backend.cuda.measured-search.v4"
+SEARCH_PROTOCOL = "intentir.backend.cuda.measured-search.v5"
 CONTRACT_VIEW_VERSION = "intentir.backend.cuda.contract-view.v2"
 
 B_TRANSFORM_EPILOGUE_LOAD_MOTION = (
@@ -58,6 +58,15 @@ B_TRANSFORM_RANK0_HOST_CAPTURE = "cuda.b.rank0_host_value_capture.v1"
 B_TRANSFORM_UNIFORM_HOST_CAPTURE = "cuda.b.uniform_host_value_capture.v1"
 LINALG_FUSED_FAST_PATH_ID = "cuda.linalg.elementwise-fused.v1"
 SPLITK_VARARGS_FAST_PATH_ID = "cuda.splitk.reduce-varargs.v1"
+DIRECT_CONTRACTION_FAST_PATH_ID = "cuda.contraction.tiled.v1"
+MMA_CONTRACTION_FAST_PATH_ID = "cuda.contraction.mma-sync.v1"
+TUNED_LINEAR_FAST_PATH_ID = "cuda.linear.f16_f32.bias_saved.mma_sync.v1"
+SHIFTED_EXP_CANCELLATION_FAST_PATH_ID = (
+    "cuda.algebra.exp_shift_product_cancellation.v1"
+)
+GATHER_FAST_PATH_ID = "cuda.gather-scatter.block.v1"
+GATHER_COMPOSED_FAST_PATH_ID = "cuda.gather-chain.composed-index.v1"
+ROWMASK_ZERO_FILL_FAST_PATH_ID = "cuda.elementwise.rowmask.zero-fill.v1"
 SEARCH_PARTITION_UNPARTITIONED = "unpartitioned"
 SEARCH_PARTITION_SCHEDULE_SPINE = "schedule_spine"
 SEARCH_PARTITION_EXPANDED = "expanded"
@@ -77,9 +86,13 @@ def _lowering_path_kind_for_fast_path(fast_path_id: str) -> str:
         ELEMENTWISE_FAST_PATH_ID: "elementwise",
         PADDED_ROW_FAST_PATH_ID: "padded_row_reduction",
         ROW_FAST_PATH_ID: "row_reduction",
+        SHIFTED_EXP_CANCELLATION_FAST_PATH_ID: "elementwise_shifted_exp",
         "cuda.row_scan.sparsemax.sorted_prefix.v1": "row_scan",
         "cuda.row_scan.sparsemax.sorted_prefix.execution_domain.v1": "row_scan",
         SPLITK_VARARGS_FAST_PATH_ID: "splitk_weighted_merge",
+        GATHER_FAST_PATH_ID: "gather",
+        GATHER_COMPOSED_FAST_PATH_ID: "gather_composed",
+        ROWMASK_ZERO_FILL_FAST_PATH_ID: "elementwise_rowmask_zero_fill",
     }
     # Unknown registered paths keep their exact compiler identity.  This avoids
     # inventing a semantic "family" or a kernel-name recipe merely to group
@@ -118,14 +131,40 @@ def schedule_only_cuda_path_identity(
 ) -> tuple[str, str | None]:
     """Choose the production canonical structure held fixed by CF/E2.
 
-    The fixed structure is the first compiler-admitted production path for the
-    graph.  For row reductions its standard collective is kept as
-    ``gpu.all_reduce``; IntentIR may later replace that collective with the
-    compact shuffle/shared topology without changing the read-once graph.
+    The fixed structure is the first complete, compiler-admitted production
+    lowering of J.  Complete N-D/index/broadcast consumption and the standard
+    read-once row graph belong to DirectLower rather than Full.  Optional host
+    capture, numeric evaluation, materialization, reduction topology and stage
+    changes remain disabled by the Schedule-Only axes and are opened by Full.
+
+    For row reductions the canonical collective remains ``gpu.all_reduce``;
+    Full may replace it with compact shuffle/shared, multi-accumulator,
+    multi-row or multi-stage states.  For paired rotation the canonical
+    elementwise pass is the direct consumer of the typed J graph; merely
+    avoiding the generic materialized fallback is not a Full contribution.
     """
 
     fast_path_id = derive_default_fast_path_id(state)
     if fast_path_id is None:
+        return "generic", None
+    # Tensor-core substitution changes the contraction implementation.  The
+    # direct contraction is the registered SIMT tiled path; Schedule-Only may
+    # tune that structure, while Full additionally opens MMA/Split-K states.
+    if fast_path_id.startswith("cuda.linear.") or ".mma" in fast_path_id:
+        selection = select_variant(
+            state.base_ir,
+            target=LoweringTarget(
+                backend="cuda",
+                chip=state.target.architecture,
+                features=frozenset(state.target.features),
+            ),
+            only_fast_path=DIRECT_CONTRACTION_FAST_PATH_ID,
+        )
+        if selection.fast_path_id is not None:
+            return (
+                _lowering_path_kind_for_fast_path(selection.fast_path_id),
+                selection.fast_path_id,
+            )
         return "generic", None
     return _lowering_path_kind_for_fast_path(fast_path_id), fast_path_id
 
@@ -835,15 +874,8 @@ def canonical_cuda_candidate(state: BackendSearchState) -> CudaSearchCandidate:
     """
 
     derive_cuda_contract_view(state)
-    selection = select_variant(
-        state.base_ir,
-        target=LoweringTarget(
-            backend="cuda",
-            chip=state.target.architecture,
-            features=frozenset(state.target.features),
-        ),
-    )
-    if selection.fast_path_id is None:
+    path_kind, fast_path_id = schedule_only_cuda_path_identity(state)
+    if fast_path_id is None:
         return CudaSearchCandidate(
             _candidate_id("generic", None, None),
             "generic",
@@ -854,20 +886,31 @@ def canonical_cuda_candidate(state: BackendSearchState) -> CudaSearchCandidate:
             requested_trace=("cuda.generic.intent_to_linalg.v1",),
             compiler_pipeline="generic_materialized",
         )
-    assert selection.pass_argument is not None
-    path_kind = _lowering_path_kind_for_fast_path(selection.fast_path_id)
+    descriptor = next(
+        (
+            item
+            for item in DEFAULT_PASSES
+            if item.fast_path_id == fast_path_id
+            and state.target.architecture in item.supported_chips
+        ),
+        None,
+    )
+    if descriptor is None:
+        raise CudaContractError(
+            f"canonical CUDA path {fast_path_id!r} is not registered for target"
+        )
     return CudaSearchCandidate(
         _candidate_id(
             path_kind,
-            selection.fast_path_id,
-            selection.pass_argument,
+            fast_path_id,
+            descriptor.pass_argument,
         ),
         path_kind,
-        selection.fast_path_id,
-        selection.pass_argument,
-        {},
+        fast_path_id,
+        descriptor.pass_argument,
+        dict(descriptor.schedule),
         0.0,
-        requested_trace=(selection.fast_path_id,),
+        requested_trace=(fast_path_id,),
         requested_observation_class=ObservationClass.OBSERVATION_CHANGING,
     )
 
@@ -878,6 +921,13 @@ _CUDA_ORDERING_PRIOR_ROLES = frozenset(
         "reduction_tile_extent",
         "execution_warps",
         "constexpr",
+        "tile_output_axis0",
+        "tile_output_axis1",
+        "tile_contraction_axis",
+        "query_tile",
+        "key_tile",
+        "feature_tile",
+        "launch_block_x",
     }
 )
 
@@ -975,6 +1025,23 @@ def project_cuda_c_fixed_candidate(
         }
     elif projection_kind == "linalg_fused":
         fixed_default = {"tile_width": 128}
+    elif projection_kind in {"gather", "gather_composed"}:
+        fixed_default = {"block_threads": 64}
+    elif projection_kind == DIRECT_CONTRACTION_FAST_PATH_ID:
+        fixed_default = {
+            "tile_rows": 64,
+            "tile_cols": 128,
+            "tile_k": 32,
+            "num_warps": 4,
+            "pipeline_stages": 3,
+        }
+    elif projection_kind == "cuda.flash_forward.structured_scan.direct.v1":
+        fixed_default = {
+            "tile_rows": 64,
+            "tile_cols": 128,
+            "pipeline_stages": 1,
+            "num_warps": 4,
+        }
     else:
         fixed_default = {}
 
@@ -1005,6 +1072,20 @@ def project_cuda_c_fixed_candidate(
             elif "block_threads" in available_keys:
                 coordinate = "block_threads"
                 projected_value *= 32.0
+        elif prior.role == "launch_block_x" and "block_threads" in available_keys:
+            coordinate = "block_threads"
+        elif prior.role == "tile_output_axis0" and "tile_rows" in available_keys:
+            coordinate = "tile_rows"
+        elif prior.role == "tile_output_axis1" and "tile_cols" in available_keys:
+            coordinate = "tile_cols"
+        elif prior.role == "query_tile" and "tile_rows" in available_keys:
+            coordinate = "tile_rows"
+        elif prior.role == "key_tile" and "tile_cols" in available_keys:
+            coordinate = "tile_cols"
+        elif (
+            prior.role == "tile_contraction_axis" and "tile_k" in available_keys
+        ):
+            coordinate = "tile_k"
         elif prior.role in {
             "tile_extent",
             "reduction_tile_extent",
@@ -1129,6 +1210,12 @@ def _c_score(
             if not values:
                 threads = positive_values(("block_threads",))
                 values = tuple(value / 32.0 for value in threads)
+        elif prior.role == "tile_output_axis0":
+            values = positive_values(("tile_rows",))
+        elif prior.role == "tile_output_axis1":
+            values = positive_values(("tile_cols",))
+        elif prior.role == "tile_contraction_axis":
+            values = positive_values(("tile_k",))
         elif prior.role in {
             "reduction_tile_extent",
             "tile_extent",
@@ -1219,9 +1306,17 @@ def _materialized_row_extents(
     legality remains in the target pass and every surviving state is compiled.
     """
 
+    extents = state.base.extents
+
+    def resolve_shape(shape: Sequence[int | str]) -> tuple[int | str, ...]:
+        return tuple(
+            extents.get(dim, dim) if isinstance(dim, str) else dim
+            for dim in shape
+        )
+
     shapes = [
-        *[tuple(item.shape) for item in state.base.j.intent.inputs],
-        *[tuple(item.shape) for item in state.base.j.intent.outputs],
+        *[resolve_shape(item.shape) for item in state.base.j.intent.inputs],
+        *[resolve_shape(item.shape) for item in state.base.j.intent.outputs],
     ]
     rank2 = [shape for shape in shapes if len(shape) == 2]
     concrete = [
@@ -1685,20 +1780,64 @@ def enumerate_cuda_candidates(
           for threads in (64, 128, 256)
           for width in (2, 4)),
     ]
+    has_paired_rotation = "intent.paired_rotation_version" in state.base_ir
+    has_three_plane_rotation = "intent.paired_rotation_sections" in state.base_ir
+    has_shared_position_rotation = (
+        'intent.paired_rotation = "shared_position"' in state.base_ir
+    )
+    if has_paired_rotation:
+        # The paired C++ consumer owns a deliberately smaller schedule domain
+        # than the generic elementwise path.  Filter it before budgeting so
+        # unsupported flatten/unroll/tile requests do not consume the complete
+        # Schedule-Only prefix and starve Full structural states.
+        elementwise_schedule_bases = [
+            ElementwiseSchedule(threads, False, width)
+            for threads in (32, 64, 128, 256, 512, 1024)
+            for width in ((1, 2) if has_shared_position_rotation else (1,))
+        ]
     approximation_modes = (
         ("stable-ex2", "native-ptx")
         if axes is None or axes.search_approximation
         else ("stable-ex2",)
+    )
+    paired_head_group_modes = (
+        (0, 2, 4, 8, 16)
+        if has_paired_rotation
+        and (axes is None or axes.search_structural_states)
+        else (0,)
+    )
+    paired_direct_plane_modes = (
+        (False, True)
+        if has_three_plane_rotation
+        and (axes is None or axes.search_structural_states)
+        else (False,)
     )
     elementwise_schedules = [
         replace(
             base,
             promote_uniform_scalars=promote,
             tanh_approximation=approximation,
+            paired_head_reuse=paired_head_group > 0,
+            paired_head_group_size=(
+                paired_head_group if paired_head_group > 0 else 4
+            ),
+            paired_direct_plane=paired_direct_plane,
         )
         for base in elementwise_schedule_bases
         for promote in ((False, True) if has_uniform_input else (False,))
         for approximation in approximation_modes
+        for paired_head_group in paired_head_group_modes
+        for paired_direct_plane in paired_direct_plane_modes
+        if not (paired_head_group > 0 or paired_direct_plane)
+        or (
+            not base.flatten_contiguous
+            and base.vector_width in {1, 2}
+            and (base.vector_width == 1 or not has_three_plane_rotation)
+            and (base.vector_width == 1 or not paired_direct_plane)
+            and base.grid_stride_unroll == 1
+            and base.logical_tile_elements == 0
+            and approximation == "stable-ex2"
+        )
     ]
     for schedule in elementwise_schedules:
         values = schedule.to_dict()
@@ -1736,12 +1875,116 @@ def enumerate_cuda_candidates(
                         if schedule.tanh_approximation == "native-ptx"
                         else ()
                     ),
+                    *(
+                        ("cuda.elementwise.paired_head_angle_reuse.request.v1",)
+                        if schedule.paired_head_reuse
+                        else ()
+                    ),
+                    *(
+                        ("cuda.elementwise.paired_direct_plane.request.v1",)
+                        if schedule.paired_direct_plane
+                        else ()
+                    ),
                     *transformations,
                 ),
                 (
                     ObservationClass.OBSERVATION_CHANGING
                     if schedule.tanh_approximation == "native-ptx"
                     else ObservationClass.HARD_PRESERVING
+                ),
+            )
+        )
+
+    # Full-only execution-domain row-mask topology.  The C++ matcher requires
+    # the exact cast(i1[M])->f32 and pointwise X[M,N]*mask[M] graph.  Skipping X
+    # loads on a false row changes NaN/Inf*0 behavior, so Q/D remains mandatory.
+    if axes is None or axes.search_structural_states:
+        for threads in (32, 64, 128, 256):
+            for flat_width in (0, 2, 4, 8):
+                flatten = flat_width > 0
+                logical_tiles = (0, 4096, 8192) if flatten else (0,)
+                for logical_tile in logical_tiles:
+                    pass_argument = (
+                        "-convert-intent-elementwise-to-gpu="
+                        f"block-threads={threads} row-vector-width=1 "
+                        "row-mask-zero-fill=true tanh-approximation=stable-ex2"
+                        + (
+                            " flatten-contiguous=true "
+                            f"flat-vector-width={flat_width} "
+                            f"logical-tile-elements={logical_tile}"
+                            if flatten
+                            else ""
+                        )
+                    )
+                    schedule = {
+                        "block_threads": threads,
+                        "vector_width": flat_width if flatten else 1,
+                        "row_mask_zero_fill": True,
+                        "flatten_contiguous": flatten,
+                        "logical_tile_elements": logical_tile,
+                    }
+                    specialized.append(
+                        CudaSearchCandidate(
+                            _candidate_id(
+                                "elementwise_rowmask_zero_fill",
+                                ROWMASK_ZERO_FILL_FAST_PATH_ID,
+                                pass_argument,
+                            ),
+                            "elementwise_rowmask_zero_fill",
+                            ROWMASK_ZERO_FILL_FAST_PATH_ID,
+                            pass_argument,
+                            schedule,
+                            _c_score(
+                                schedule,
+                                priors,
+                                elementwise_thread_hint=elementwise_thread_hint,
+                            ),
+                            requested_trace=(
+                                "cuda.elementwise.rowmask.zero-fill.v1",
+                                *(("cuda.elementwise.rowmask.flat-grid.v1",) if flatten else ()),
+                            ),
+                            requested_observation_class=(
+                                ObservationClass.OBSERVATION_CHANGING
+                            ),
+                        )
+                    )
+
+    # Full-only algebraic implementation state.  The C++ pass proves the exact
+    # exp(x-shift)*exp(shift) graph and requires cancellation to remove every
+    # live reduction before it delegates to the ordinary elementwise MLIR
+    # lowering.  The candidate remains observation-changing because floating
+    # overflow/rounding differs from the stabilized expression; Q/D, not this
+    # enumerator, decides whether the execution-domain result is admissible.
+    for threads in (128, 256, 512, 1024):
+        pass_argument = (
+            "-convert-intent-elementwise-to-gpu="
+            f"block-threads={threads} cancel-shifted-exp=true "
+            "tanh-approximation=stable-ex2"
+        )
+        values = {
+            "block_threads": threads,
+            "vector_width": 0,
+            "algebraic_exp_shift_cancellation": True,
+        }
+        specialized.append(
+            CudaSearchCandidate(
+                _candidate_id(
+                    "elementwise_shifted_exp",
+                    SHIFTED_EXP_CANCELLATION_FAST_PATH_ID,
+                    pass_argument,
+                ),
+                "elementwise_shifted_exp",
+                SHIFTED_EXP_CANCELLATION_FAST_PATH_ID,
+                pass_argument,
+                values,
+                _c_score(
+                    values,
+                    priors,
+                    elementwise_thread_hint=elementwise_thread_hint,
+                ),
+                requested_trace=(SHIFTED_EXP_CANCELLATION_FAST_PATH_ID,),
+                requested_observation_class=(
+                    ObservationClass.OBSERVATION_CHANGING
                 ),
             )
         )
@@ -2495,6 +2738,262 @@ def enumerate_cuda_candidates(
                         )
                     )
 
+    # Canonical contraction schedule spine.  Every state invokes the same WMMA
+    # C++ pass and changes only BM/BN/warps/pipeline depth; this is the exact
+    # C-Fixed -> Schedule-Only retile space.  Full separately admits the
+    # register-level mma.sync state below.
+    tensor_core_chips = {"sm_90a", "sm_120a"}
+    if state.target.architecture in tensor_core_chips:
+        for block_m in (16, 32, 64, 128):
+            for block_n in (32, 64, 128):
+                for pipeline_stages in (1, 2, 3, 4, 5):
+                    pass_argument = (
+                        "-convert-intent-contraction-to-gpu="
+                        f"num-stages={pipeline_stages} block-m={block_m} "
+                        f"block-n={block_n}"
+                    )
+                    schedule = {
+                        "tile_rows": block_m,
+                        "tile_cols": block_n,
+                        "tile_k": 32,
+                        "num_warps": block_m // 16,
+                        "pipeline_stages": pipeline_stages,
+                    }
+                    specialized.append(
+                        CudaSearchCandidate(
+                            _candidate_id(
+                                DIRECT_CONTRACTION_FAST_PATH_ID,
+                                DIRECT_CONTRACTION_FAST_PATH_ID,
+                                pass_argument,
+                            ),
+                            DIRECT_CONTRACTION_FAST_PATH_ID,
+                            DIRECT_CONTRACTION_FAST_PATH_ID,
+                            pass_argument,
+                            schedule,
+                            _c_score(schedule, priors),
+                            requested_trace=(DIRECT_CONTRACTION_FAST_PATH_ID,),
+                            requested_observation_class=(
+                                ObservationClass.OBSERVATION_CHANGING
+                            ),
+                        )
+                    )
+
+        # Full implementation state: known-layout register mma.sync plus its own
+        # independent schedule space.  The exact typed Flash Linear epilogue is
+        # kept in registers and writes both observable f16 outputs; the canonical
+        # WMMA spine above materializes the f32 block tile instead.
+        def append_mma_candidate(
+            block_m: int,
+            block_n: int,
+            block_k: int,
+            pipeline_stages: int,
+            smem_pad_k: int,
+            warps_n: int = 1,
+            group_m: int = 8,
+        ) -> None:
+            pass_argument = (
+                "-convert-intent-contraction-to-gpu-mma="
+                f"num-stages={pipeline_stages} block-m={block_m} "
+                f"block-n={block_n} block-k={block_k} "
+                f"smem-pad-k={smem_pad_k}"
+            )
+            if warps_n != 1:
+                pass_argument += f" warps-n={warps_n}"
+            if group_m != 8:
+                pass_argument += f" group-m={group_m}"
+            schedule = {
+                "tile_rows": block_m,
+                "tile_cols": block_n,
+                "tile_k": block_k,
+                "num_warps": (block_m // 16) * warps_n,
+                "warps_n": warps_n,
+                "group_m": group_m,
+                "pipeline_stages": pipeline_stages,
+                "smem_pad_k": smem_pad_k,
+            }
+            requested_trace = [MMA_CONTRACTION_FAST_PATH_ID]
+            if warps_n != 1:
+                requested_trace.append(
+                    "cuda.contraction.mma-sync.warp-n-partition.v1"
+                )
+            specialized.append(
+                CudaSearchCandidate(
+                    _candidate_id(
+                        MMA_CONTRACTION_FAST_PATH_ID,
+                        MMA_CONTRACTION_FAST_PATH_ID,
+                        pass_argument,
+                    ),
+                    MMA_CONTRACTION_FAST_PATH_ID,
+                    MMA_CONTRACTION_FAST_PATH_ID,
+                    pass_argument,
+                    schedule,
+                    _c_score(schedule, priors),
+                    requested_trace=tuple(requested_trace),
+                    requested_observation_class=(
+                        ObservationClass.OBSERVATION_CHANGING
+                    ),
+                )
+            )
+
+        # Give the register-pressure-reducing 2-D warp map an early, bounded
+        # lane.  It changes the tensor-core execution structure, while each
+        # point still computes the same typed contraction and epilogue.
+        group_m_mma_schedules = (
+            (64, 128, 64, 2, 8, 4, 1),
+            (64, 128, 64, 2, 8, 4, 2),
+            (64, 128, 64, 2, 8, 4, 4),
+            (64, 128, 64, 2, 8, 4, 16),
+            (64, 128, 64, 2, 8, 4, 32),
+            (64, 128, 64, 3, 16, 2, 16),
+            (64, 128, 64, 3, 16, 1, 16),
+        )
+        for config in group_m_mma_schedules:
+            append_mma_candidate(*config)
+
+        warp_n_mma_schedules = (
+            (64, 128, 96, 2, 0, 2),
+            (64, 128, 96, 2, 8, 2),
+            (64, 128, 96, 2, 16, 2),
+            (64, 128, 128, 2, 0, 2),
+            (64, 128, 128, 2, 0, 4),
+            (64, 128, 192, 1, 0, 2),
+            (64, 128, 192, 1, 8, 2),
+            (64, 128, 192, 1, 0, 4),
+            (64, 128, 192, 1, 8, 4),
+            (64, 128, 256, 1, 0, 2),
+            (64, 128, 256, 1, 0, 4),
+            (128, 128, 32, 2, 8, 2),
+            (128, 128, 32, 3, 8, 2),
+            (128, 128, 64, 1, 8, 2),
+            (128, 128, 64, 2, 8, 2),
+            (128, 128, 64, 2, 16, 2),
+            (128, 128, 64, 1, 8, 4),
+            (128, 128, 64, 2, 8, 4),
+            (128, 64, 64, 1, 8, 2),
+            (128, 64, 64, 2, 8, 2),
+            (128, 64, 64, 3, 8, 2),
+            (32, 128, 128, 1, 8, 8),
+            (32, 128, 128, 1, 16, 8),
+            (64, 128, 128, 1, 8, 8),
+            (64, 128, 128, 1, 16, 8),
+            (32, 128, 64, 2, 8, 2),
+            (32, 128, 64, 3, 8, 2),
+            (32, 128, 64, 2, 8, 4),
+            (64, 64, 64, 2, 8, 2),
+            (64, 64, 64, 3, 8, 2),
+            (64, 128, 32, 2, 8, 2),
+            (64, 128, 32, 4, 8, 2),
+            (64, 128, 64, 1, 8, 2),
+            (64, 128, 64, 2, 8, 2),
+            (64, 128, 64, 3, 8, 2),
+            (64, 128, 64, 3, 16, 2),
+            (64, 128, 64, 1, 8, 4),
+            (64, 128, 64, 2, 8, 4),
+            (64, 128, 64, 3, 8, 4),
+            (64, 128, 64, 3, 16, 4),
+        )
+        for config in warp_n_mma_schedules:
+            append_mma_candidate(*config)
+
+        mma_schedules = (
+            (16, 32, 32, 3, 8),
+            (16, 32, 32, 5, 8),
+            (32, 32, 32, 3, 8),
+            (32, 64, 32, 3, 8),
+            (32, 64, 64, 3, 8),
+            (32, 128, 32, 2, 8),
+            (32, 128, 64, 2, 8),
+            (32, 128, 64, 3, 8),
+            (64, 64, 32, 2, 8),
+            (64, 64, 32, 4, 8),
+            (64, 128, 32, 1, 8),
+            (64, 128, 32, 2, 8),
+            (64, 128, 32, 3, 8),
+            (64, 128, 32, 4, 8),
+            (64, 128, 64, 1, 0),
+            (64, 128, 64, 1, 8),
+            (64, 128, 64, 1, 16),
+            (64, 128, 64, 2, 0),
+            (64, 128, 64, 2, 8),
+            (64, 128, 64, 2, 16),
+            (64, 128, 64, 3, 0),
+            (64, 128, 64, 3, 8),
+            (64, 128, 64, 3, 16),
+            (64, 128, 128, 1, 0),
+            (64, 128, 128, 1, 8),
+            (64, 128, 128, 1, 16),
+            (128, 64, 32, 2, 8),
+            (128, 64, 64, 1, 8),
+            (128, 64, 64, 2, 8),
+            (128, 64, 128, 1, 8),
+            (128, 128, 32, 2, 8),
+            (128, 128, 64, 2, 8),
+        )
+        for block_m, block_n, block_k, pipeline_stages, smem_pad_k in mma_schedules:
+            append_mma_candidate(
+                block_m,
+                block_n,
+                block_k,
+                pipeline_stages,
+                smem_pad_k,
+            )
+
+        splitk_mma_schedules = (
+            (64, 128, 64, 2, 8, 4, 2),
+            (64, 128, 64, 3, 8, 4, 2),
+            (64, 128, 64, 2, 16, 4, 2),
+            (64, 128, 64, 2, 8, 4, 4),
+        )
+        for (
+            block_m,
+            block_n,
+            block_k,
+            pipeline_stages,
+            smem_pad_k,
+            warps_n,
+            split_k_parts,
+        ) in splitk_mma_schedules:
+            pass_argument = (
+                "-convert-intent-contraction-to-gpu-mma="
+                f"num-stages={pipeline_stages} block-m={block_m} "
+                f"block-n={block_n} block-k={block_k} "
+                f"smem-pad-k={smem_pad_k} warps-n={warps_n} "
+                f"split-k-parts={split_k_parts}"
+            )
+            schedule = {
+                "tile_rows": block_m,
+                "tile_cols": block_n,
+                "tile_k": block_k,
+                "num_warps": (block_m // 16) * warps_n,
+                "warps_n": warps_n,
+                "pipeline_stages": pipeline_stages,
+                "smem_pad_k": smem_pad_k,
+                "split_k_parts": split_k_parts,
+                "stage_count": 2,
+            }
+            specialized.append(
+                CudaSearchCandidate(
+                    _candidate_id(
+                        MMA_CONTRACTION_FAST_PATH_ID,
+                        MMA_CONTRACTION_FAST_PATH_ID,
+                        pass_argument,
+                    ),
+                    MMA_CONTRACTION_FAST_PATH_ID,
+                    MMA_CONTRACTION_FAST_PATH_ID,
+                    pass_argument,
+                    schedule,
+                    _c_score(schedule, priors),
+                    requested_trace=(
+                        MMA_CONTRACTION_FAST_PATH_ID,
+                        "cuda.contraction.mma-sync.warp-n-partition.v1",
+                        "cuda.contraction.split_k_partial_finalize.v1",
+                    ),
+                    requested_observation_class=(
+                        ObservationClass.OBSERVATION_CHANGING
+                    ),
+                )
+            )
+
     output_rank = max(
         (len(item.shape) for item in state.base.j.intent.outputs),
         default=1,
@@ -2525,6 +3024,51 @@ def enumerate_cuda_candidates(
             )
         )
 
+    # Runtime-index schedules.  The canonical descriptor evaluates a typed
+    # gather graph in its authored order; the composed descriptor is a distinct
+    # Full-only index/materialization topology admitted only when the C++ matcher
+    # consumes the complete two-level chain.
+    gather_descriptors = tuple(
+        item
+        for item in DEFAULT_PASSES
+        if item.fast_path_id in {GATHER_FAST_PATH_ID, GATHER_COMPOSED_FAST_PATH_ID}
+        and state.target.architecture in item.supported_chips
+    )
+    for descriptor in gather_descriptors:
+        composed = descriptor.fast_path_id == GATHER_COMPOSED_FAST_PATH_ID
+        if composed and axes is not None and not axes.search_structural_states:
+            continue
+        for threads in (32, 64, 128, 256):
+            pass_argument = (
+                "-convert-intent-gather-to-gpu="
+                f"block-threads={threads}"
+                + (" compose-gather-chain=true" if composed else "")
+            )
+            schedule = {
+                "block_threads": threads,
+                "compose_gather_chain": composed,
+            }
+            specialized.append(
+                CudaSearchCandidate(
+                    _candidate_id(
+                        _lowering_path_kind_for_fast_path(descriptor.fast_path_id),
+                        descriptor.fast_path_id,
+                        pass_argument,
+                    ),
+                    _lowering_path_kind_for_fast_path(descriptor.fast_path_id),
+                    descriptor.fast_path_id,
+                    pass_argument,
+                    schedule,
+                    _c_score(schedule, priors),
+                    requested_trace=(
+                        "cuda.gather-chain.composed-index.v1"
+                        if composed
+                        else "cuda.gather-chain.materialized-row.v1",
+                    ),
+                    requested_observation_class=ObservationClass.HARD_PRESERVING,
+                )
+            )
+
     # Every target-compatible C++ whole-graph pass is a real structural search
     # path.  The three high-volume paths above own schedule grids; all other
     # registered passes enter with their compiler default exactly once.  The
@@ -2535,6 +3079,13 @@ def enumerate_cuda_candidates(
         PADDED_ROW_FAST_PATH_ID,
         ROW_FAST_PATH_ID,
         SPLITK_VARARGS_FAST_PATH_ID,
+        DIRECT_CONTRACTION_FAST_PATH_ID,
+        MMA_CONTRACTION_FAST_PATH_ID,
+        TUNED_LINEAR_FAST_PATH_ID,
+        SHIFTED_EXP_CANCELLATION_FAST_PATH_ID,
+        GATHER_FAST_PATH_ID,
+        GATHER_COMPOSED_FAST_PATH_ID,
+        ROWMASK_ZERO_FILL_FAST_PATH_ID,
         *sorted_prefix_ids,
     }
     for descriptor in DEFAULT_PASSES:
@@ -2555,7 +3106,7 @@ def enumerate_cuda_candidates(
                 path_kind,
                 descriptor.fast_path_id,
                 descriptor.pass_argument,
-                {},
+                dict(descriptor.schedule),
                 0.0,
                 requested_trace=(descriptor.fast_path_id,),
                 requested_observation_class=(
@@ -2596,6 +3147,10 @@ def enumerate_cuda_candidates(
     # a finite budget.
     def search_lane(item: CudaSearchCandidate) -> str:
         local = "local" if item.b_transformations else "base"
+        if item.fast_path_id == SHIFTED_EXP_CANCELLATION_FAST_PATH_ID:
+            return "elementwise.shifted-exp-cancellation.base"
+        if int(item.schedule.get("split_k_parts", 1)) > 1:
+            return "contraction.split-k.base"
         if item.lowering_path_kind == "row_reduction":
             topology = (
                 "all_reduce"
@@ -2629,6 +3184,21 @@ def enumerate_cuda_candidates(
                 return f"row_reduction.{topology}.{numeric}.elide.{local}"
             return f"row_reduction.{topology}.{numeric}.{local}"
         if item.lowering_path_kind == "elementwise":
+            paired_head_reuse = bool(
+                item.schedule.get("paired_head_reuse", False)
+            )
+            paired_direct_plane = bool(
+                item.schedule.get("paired_direct_plane", False)
+            )
+            if paired_head_reuse or paired_direct_plane:
+                paired_state = (
+                    "head-reuse+direct-plane"
+                    if paired_head_reuse and paired_direct_plane
+                    else "head-reuse"
+                    if paired_head_reuse
+                    else "direct-plane"
+                )
+                return f"elementwise.paired-{paired_state}.{local}"
             approximation = str(
                 item.schedule.get("tanh_approximation", "stable-ex2")
             )
@@ -2651,6 +3221,11 @@ def enumerate_cuda_candidates(
         "elementwise.stable-ex2.base",
         "row_reduction.workgroup.plain.base",
         "padded_row_reduction.serial-row.scalar.lanes32.base",
+        "elementwise.paired-head-reuse.base",
+        "elementwise.paired-direct-plane.base",
+        "elementwise.paired-head-reuse+direct-plane.base",
+        "elementwise.shifted-exp-cancellation.base",
+        "contraction.split-k.base",
         "padded_row_reduction.serial-row.packet.lanes32.base",
         "padded_row_reduction.subgroup-feature.scalar.lanes32.base",
         "padded_row_reduction.subgroup-feature.packet.lanes16.base",
@@ -2827,6 +3402,19 @@ def enumerate_cuda_candidates(
             )
             return ("row_reduction", *choice) if any(choice) else None
         if item.lowering_path_kind == "elementwise":
+            paired_head_reuse = bool(
+                item.schedule.get("paired_head_reuse", False)
+            )
+            paired_direct_plane = bool(
+                item.schedule.get("paired_direct_plane", False)
+            )
+            if paired_head_reuse or paired_direct_plane:
+                return (
+                    "elementwise",
+                    "paired_rotation",
+                    paired_head_reuse,
+                    paired_direct_plane,
+                )
             approximation = str(
                 item.schedule.get("tanh_approximation", "stable-ex2")
             )

@@ -1,0 +1,1055 @@
+{
+  "protocol": "intentir.production.rvv-external-pair-table.v1",
+  "kernel_count": 7,
+  "comparison": "Triton-CPU/RVV versus IntentIR Full",
+  "geomean_external_over_full": 4.34928102871569,
+  "rows": [
+    {
+      "kernel": "swiglu",
+      "extents": {
+        "x0": 16384,
+        "x1": 11008
+      },
+      "inputs": {
+        "t0": {
+          "dtype": "f32",
+          "shape": [
+            16384,
+            11008
+          ]
+        },
+        "t1": {
+          "dtype": "f32",
+          "shape": [
+            16384,
+            11008
+          ]
+        },
+        "t2": {
+          "dtype": "f32",
+          "shape": []
+        }
+      },
+      "outputs": [
+        {
+          "dtype": "f32",
+          "name": "t3",
+          "shape": [
+            16384,
+            11008
+          ]
+        }
+      ],
+      "measurement": {
+        "regime": "code-warm/data-cold",
+        "comparison_protocol": "paired-alternating.v1",
+        "warmup": 1,
+        "cold_iterations_per_batch": 16,
+        "batches": 7,
+        "eviction_bytes": 134217728,
+        "cache_eviction_in_timed_region": false
+      },
+      "full": {
+        "candidate_id": "rvv.producer_consumer_fused.o3.vec1.vlen128.pt0.rt0.thr1",
+        "latency_us": 5403437.062999999,
+        "samples_us": [
+          5402477.0105,
+          5403306.684,
+          5404245.759500001,
+          5405267.450999999,
+          5404082.116,
+          5403437.062999999,
+          5402743.3434999995
+        ],
+        "correctness": [
+          {
+            "output": "t3",
+            "passed": true,
+            "max_abs_error": 0.0,
+            "comparator_protocol": "intentir.backend.native-output-comparator.v1"
+          }
+        ]
+      },
+      "external": {
+        "protocol": "intentir.backend.riscv.external-baseline.v1",
+        "baseline_id": "triton_cpu_rvv",
+        "display_name": "Triton-CPU/RVV",
+        "kind": "source_portability",
+        "implementation": "same-source-triton-cpu-rvv",
+        "symbol": "intentir_native_baseline",
+        "build_profile": "triton-cpu-rvv-prebuilt-strict",
+        "compiler": "/usr/bin/clang",
+        "compile_ms": 255.582565,
+        "flags": [
+          "-shared",
+          "-O3",
+          "-fPIC",
+          "-march=rv64gcv_zfh_zvfh",
+          "-fno-fast-math",
+          "-ffp-contract=off",
+          "/tmp/intentir-rvv-pair-9o5h854e/external_triton_cpu_rvv.c",
+          "/tmp/triton_cpu_rvv_swiglu_11008.so",
+          "-Wl,-rpath,/tmp"
+        ],
+        "strict_match": true,
+        "shares_intentir_candidate_or_object": false,
+        "source_identity": ".trellis/tasks/archive/2026-07/07-22-scrc-real-kernel-batch-03/runs/liger_swiglu/run-001/source.py::_swiglu_forward_kernel",
+        "specialized_columns": 11008,
+        "latency_us": 10849182.9925,
+        "samples_us": [
+          11307923.3295,
+          10849182.9925,
+          10723294.3,
+          11707038.5715,
+          11588053.8485,
+          10688350.0635,
+          10700679.684
+        ],
+        "correctness": [
+          {
+            "output": "t3",
+            "passed": true,
+            "max_abs_error": 0.0,
+            "comparator_protocol": "intentir.backend.native-output-comparator.v1"
+          }
+        ]
+      },
+      "external_over_full": 2.0078299915418114
+    },
+    {
+      "kernel": "softmax",
+      "extents": {
+        "x0": 2048,
+        "x1": 4096
+      },
+      "inputs": {
+        "t0": {
+          "dtype": "f32",
+          "shape": [
+            2048,
+            4096
+          ]
+        },
+        "t1": {
+          "dtype": "i32",
+          "shape": []
+        }
+      },
+      "outputs": [
+        {
+          "dtype": "f32",
+          "name": "t2",
+          "shape": [
+            2048,
+            4096
+          ]
+        }
+      ],
+      "measurement": {
+        "regime": "code-warm/data-cold",
+        "comparison_protocol": "paired-alternating.v1",
+        "warmup": 1,
+        "cold_iterations_per_batch": 16,
+        "batches": 7,
+        "eviction_bytes": 134217728,
+        "cache_eviction_in_timed_region": false
+      },
+      "full": {
+        "candidate_id": "rvv.fused_softmax_vector_approximate_exp.o3.vec1.vlen128.scalable0.lanes16.pt0.rt0.thr1.reassoc1.explicitvec0.jointvec0.fusedsoftmax1.approxexp1",
+        "latency_us": 31602.461,
+        "samples_us": [
+          31571.2915,
+          31573.091500000002,
+          31602.222,
+          31602.461,
+          31602.621,
+          31614.341999999997,
+          31607.680999999997
+        ],
+        "correctness": [
+          {
+            "output": "t2",
+            "passed": true,
+            "max_abs_error": 2.5029294192790985e-09,
+            "comparator_protocol": "intentir.backend.native-output-comparator.v1"
+          }
+        ]
+      },
+      "external": {
+        "protocol": "intentir.backend.riscv.external-baseline.v1",
+        "baseline_id": "triton_cpu_rvv",
+        "display_name": "Triton-CPU/RVV",
+        "kind": "source_portability",
+        "implementation": "same-source-triton-cpu-rvv",
+        "symbol": "intentir_native_baseline",
+        "build_profile": "triton-cpu-rvv-prebuilt-strict",
+        "compiler": "/usr/bin/clang",
+        "compile_ms": 251.246485,
+        "flags": [
+          "-shared",
+          "-O3",
+          "-fPIC",
+          "-march=rv64gcv_zfh_zvfh",
+          "-fno-fast-math",
+          "-ffp-contract=off",
+          "/tmp/intentir-rvv-pair-srkzb01i/external_triton_cpu_rvv.c",
+          "/tmp/triton_cpu_rvv_softmax_4096.so",
+          "-Wl,-rpath,/tmp"
+        ],
+        "strict_match": true,
+        "shares_intentir_candidate_or_object": false,
+        "source_identity": "/tmp/intentir-task14-wave2-ord08-14-terra-high-20260728/liger_softmax/fanout-001/candidate-03/source.py::_softmax_single_block_forward_kernel",
+        "specialized_columns": null,
+        "specialization": {
+          "columns": 4096,
+          "block_size": 4096
+        },
+        "latency_us": 368069.0645,
+        "samples_us": [
+          368069.0645,
+          367226.771,
+          368785.448,
+          367978.234,
+          367848.5235,
+          368170.8155,
+          368711.55700000003
+        ],
+        "correctness": [
+          {
+            "output": "t2",
+            "passed": true,
+            "max_abs_error": 2.153683453798294e-09,
+            "comparator_protocol": "intentir.backend.native-output-comparator.v1"
+          }
+        ]
+      },
+      "external_over_full": 11.646848152110685
+    },
+    {
+      "kernel": "kl_div",
+      "extents": {
+        "x0": 4096,
+        "x1": 4096
+      },
+      "inputs": {
+        "t0": {
+          "dtype": "f32",
+          "shape": [
+            4096,
+            4096
+          ]
+        },
+        "t1": {
+          "dtype": "f32",
+          "shape": [
+            4096,
+            4096
+          ]
+        }
+      },
+      "outputs": [
+        {
+          "dtype": "f32",
+          "name": "t2",
+          "shape": [
+            4096
+          ]
+        }
+      ],
+      "measurement": {
+        "regime": "code-warm/data-cold",
+        "comparison_protocol": "paired-alternating.v1",
+        "warmup": 1,
+        "cold_iterations_per_batch": 16,
+        "batches": 7,
+        "eviction_bytes": 134217728,
+        "cache_eviction_in_timed_region": false
+      },
+      "full": {
+        "candidate_id": "rvv.producer_consumer_fused.o3.vec0.vlen128.pt0.rt0.thr1",
+        "latency_us": 421789.06200000003,
+        "samples_us": [
+          421781.772,
+          421865.3325,
+          421720.162,
+          421721.81149999995,
+          421902.782,
+          421870.7325,
+          421789.06200000003
+        ],
+        "correctness": [
+          {
+            "output": "t2",
+            "passed": true,
+            "max_abs_error": 0.0,
+            "comparator_protocol": "intentir.backend.native-output-comparator.v1"
+          }
+        ]
+      },
+      "external": {
+        "protocol": "intentir.backend.riscv.external-baseline.v1",
+        "baseline_id": "triton_cpu_rvv",
+        "display_name": "Triton-CPU/RVV",
+        "kind": "source_portability",
+        "implementation": "same-source-triton-cpu-rvv",
+        "symbol": "intentir_native_baseline",
+        "build_profile": "triton-cpu-rvv-prebuilt-strict",
+        "compiler": "/usr/bin/clang",
+        "compile_ms": 253.276215,
+        "flags": [
+          "-shared",
+          "-O3",
+          "-fPIC",
+          "-march=rv64gcv_zfh_zvfh",
+          "-fno-fast-math",
+          "-ffp-contract=off",
+          "/tmp/intentir-rvv-pair-0gzl8lf_/external_triton_cpu_rvv.c",
+          "/tmp/triton_cpu_rvv_kldiv_logtarget_block64.so",
+          "-Wl,-rpath,/tmp"
+        ],
+        "strict_match": true,
+        "shares_intentir_candidate_or_object": false,
+        "source_identity": "/tmp/intentir-task14-wave2-ord08-14-terra-high-20260728/liger_kl_div/fanout-001/candidate-03/source.py::_kldiv_kernel_forward",
+        "specialized_columns": null,
+        "specialization": {
+          "columns": 4096,
+          "block_size": 64,
+          "epsilon": 1e-06,
+          "log_target": true,
+          "reduction": 3
+        },
+        "latency_us": 577481.9985,
+        "samples_us": [
+          576296.3729999999,
+          577218.497,
+          577481.9985,
+          577656.8289999999,
+          577778.0800000001,
+          577773.4199999999,
+          576436.834
+        ],
+        "correctness": [
+          {
+            "output": "t2",
+            "passed": true,
+            "max_abs_error": 0.0009765625,
+            "comparator_protocol": "intentir.backend.native-output-comparator.v1"
+          }
+        ]
+      },
+      "external_over_full": 1.369125116146326
+    },
+    {
+      "kernel": "flash_bwd_preprocess",
+      "extents": {
+        "x0": 4,
+        "x1": 16,
+        "x2": 8192,
+        "x3": 128,
+        "x4": 8192
+      },
+      "inputs": {
+        "t0": {
+          "dtype": "f16",
+          "shape": [
+            4,
+            16,
+            8192,
+            128
+          ]
+        },
+        "t1": {
+          "dtype": "f16",
+          "shape": [
+            4,
+            16,
+            8192,
+            128
+          ]
+        }
+      },
+      "outputs": [
+        {
+          "dtype": "f32",
+          "name": "t2",
+          "shape": [
+            4,
+            16,
+            8192
+          ]
+        }
+      ],
+      "measurement": {
+        "regime": "code-warm/data-cold",
+        "comparison_protocol": "paired-alternating.v1",
+        "warmup": 1,
+        "cold_iterations_per_batch": 16,
+        "batches": 7,
+        "eviction_bytes": 134217728,
+        "cache_eviction_in_timed_region": false
+      },
+      "full": {
+        "candidate_id": "rvv.mixed_precision_dot_vector_reduction.o3.vec1.vlen0.scalable1.lanes4.pt0.rt0.thr1.reassoc1.explicitvec0.jointvec0.fusedsoftmax0.approxexp0.mixeddot1",
+        "latency_us": 50371.323000000004,
+        "samples_us": [
+          47863.489499999996,
+          47866.319,
+          50396.763,
+          50371.323000000004,
+          50443.783500000005,
+          50461.3435,
+          47876.761
+        ],
+        "correctness": [
+          {
+            "output": "t2",
+            "passed": true,
+            "max_abs_error": 1.9073486328125e-06,
+            "comparator_protocol": "intentir.backend.native-output-comparator.v1"
+          }
+        ]
+      },
+      "external": {
+        "protocol": "intentir.backend.riscv.external-baseline.v1",
+        "baseline_id": "triton_cpu_rvv",
+        "display_name": "Triton-CPU/RVV",
+        "kind": "source_portability",
+        "implementation": "same-source-triton-cpu-rvv",
+        "symbol": "intentir_native_baseline",
+        "build_profile": "triton-cpu-rvv-prebuilt-strict",
+        "compiler": "/usr/bin/clang",
+        "compile_ms": 271.494721,
+        "flags": [
+          "-shared",
+          "-O3",
+          "-fPIC",
+          "-march=rv64gcv_zfh_zvfh",
+          "-fno-fast-math",
+          "-ffp-contract=off",
+          "/tmp/intentir-rvv-pair-7wt6qow_/external_triton_cpu_rvv.c",
+          "/tmp/triton_cpu_rvv_flash_preprocess_128x128.so",
+          "-Wl,-rpath,/tmp"
+        ],
+        "strict_match": true,
+        "shares_intentir_candidate_or_object": false,
+        "source_identity": "/tmp/intentir-task14-wave4-ord22-28-terra-high-20260728/flash_attn_flash_attn_triton_bwd_preprocess_do_o_dot/fanout-001/candidate-01/source.py::_bwd_preprocess_do_o_dot",
+        "specialized_columns": null,
+        "specialization": {
+          "block_m": 128,
+          "block_head_dim": 128
+        },
+        "latency_us": 4369009.9365,
+        "samples_us": [
+          4352856.958000001,
+          4359603.151000001,
+          4357230.2595,
+          5159874.429500001,
+          5154225.3925,
+          5148528.495,
+          4369009.9365
+        ],
+        "correctness": [
+          {
+            "output": "t2",
+            "passed": true,
+            "max_abs_error": 2.1457672119140625e-06,
+            "comparator_protocol": "intentir.backend.native-output-comparator.v1"
+          }
+        ]
+      },
+      "external_over_full": 86.73605687307438
+    },
+    {
+      "kernel": "dyt",
+      "extents": {
+        "x0": 4096,
+        "x1": 4096
+      },
+      "inputs": {
+        "t0": {
+          "dtype": "f32",
+          "shape": [
+            4096,
+            4096
+          ]
+        },
+        "t1": {
+          "dtype": "f32",
+          "shape": [
+            1
+          ]
+        },
+        "t2": {
+          "dtype": "f32",
+          "shape": [
+            4096
+          ]
+        },
+        "t3": {
+          "dtype": "f32",
+          "shape": [
+            4096
+          ]
+        }
+      },
+      "outputs": [
+        {
+          "dtype": "f32",
+          "name": "t4",
+          "shape": [
+            4096,
+            4096
+          ]
+        }
+      ],
+      "measurement": {
+        "regime": "code-warm/data-cold",
+        "comparison_protocol": "paired-alternating.v1",
+        "warmup": 1,
+        "cold_iterations_per_batch": 16,
+        "batches": 7,
+        "eviction_bytes": 134217728,
+        "cache_eviction_in_timed_region": false
+      },
+      "full": {
+        "candidate_id": "rvv.producer_consumer_fused.o3.vec0.vlen128.pt0.rt0.thr1",
+        "latency_us": 996395.7745,
+        "samples_us": [
+          997707.321,
+          996721.596,
+          996203.574,
+          992610.3765,
+          996395.7745,
+          995957.0525,
+          997082.2575000001
+        ],
+        "correctness": [
+          {
+            "output": "t4",
+            "passed": true,
+            "max_abs_error": 1.1920928955078125e-07,
+            "comparator_protocol": "intentir.backend.native-output-comparator.v1"
+          }
+        ]
+      },
+      "external": {
+        "protocol": "intentir.backend.riscv.external-baseline.v1",
+        "baseline_id": "triton_cpu_rvv",
+        "display_name": "Triton-CPU/RVV",
+        "kind": "source_portability",
+        "implementation": "same-source-triton-cpu-rvv",
+        "symbol": "intentir_native_baseline",
+        "build_profile": "triton-cpu-rvv-prebuilt-strict",
+        "compiler": "/usr/bin/clang",
+        "compile_ms": 261.491872,
+        "flags": [
+          "-shared",
+          "-O3",
+          "-fPIC",
+          "-march=rv64gcv_zfh_zvfh",
+          "-fno-fast-math",
+          "-ffp-contract=off",
+          "/tmp/intentir-rvv-pair-xcewgw4s/external_triton_cpu_rvv.c",
+          "/tmp/triton_cpu_rvv_dyt_4096_b128.so",
+          "-Wl,-rpath,/tmp"
+        ],
+        "strict_match": true,
+        "shares_intentir_candidate_or_object": false,
+        "source_identity": "accepted/liger_dyt/source.py::_dyt_fwd_kernel",
+        "specialized_columns": null,
+        "specialization": {
+          "columns": 4096,
+          "block_size": 128
+        },
+        "latency_us": 1237238.61,
+        "samples_us": [
+          1238869.4364999998,
+          1239615.9405,
+          1237238.61,
+          1237673.1515000002,
+          1237233.3995,
+          1234499.726,
+          1235771.2025
+        ],
+        "correctness": [
+          {
+            "output": "t4",
+            "passed": true,
+            "max_abs_error": 1.1920928955078125e-07,
+            "comparator_protocol": "intentir.backend.native-output-comparator.v1"
+          }
+        ]
+      },
+      "external_over_full": 1.2417140273611227
+    },
+    {
+      "kernel": "liger_rms_norm",
+      "extents": {
+        "x0": 2048,
+        "x1": 4096
+      },
+      "inputs": {
+        "t0": {
+          "dtype": "f32",
+          "shape": [
+            2048,
+            4096
+          ]
+        },
+        "t1": {
+          "dtype": "f32",
+          "shape": [
+            4096
+          ]
+        },
+        "t2": {
+          "dtype": "i32",
+          "shape": []
+        },
+        "t3": {
+          "dtype": "f32",
+          "shape": []
+        },
+        "t4": {
+          "dtype": "f32",
+          "shape": []
+        }
+      },
+      "outputs": [
+        {
+          "dtype": "f32",
+          "name": "t5",
+          "shape": [
+            2048,
+            4096
+          ]
+        },
+        {
+          "dtype": "f32",
+          "name": "t6",
+          "shape": [
+            2048
+          ]
+        }
+      ],
+      "measurement": {
+        "regime": "code-warm/data-cold",
+        "comparison_protocol": "paired-alternating.v1",
+        "warmup": 1,
+        "cold_iterations_per_batch": 16,
+        "batches": 7,
+        "eviction_bytes": 134217728,
+        "cache_eviction_in_timed_region": false
+      },
+      "full": {
+        "candidate_id": "rvv.producer_consumer_fused.o3.vec0.vlen128.pt0.rt0.thr1",
+        "latency_us": 26096.222999999998,
+        "samples_us": [
+          26281.184,
+          26265.714,
+          26089.203,
+          26097.743,
+          26082.542999999998,
+          26083.252999999997,
+          26096.222999999998
+        ],
+        "correctness": [
+          {
+            "output": "t5",
+            "passed": true,
+            "max_abs_error": 0.0,
+            "comparator_protocol": "intentir.backend.native-output-comparator.v1"
+          },
+          {
+            "output": "t6",
+            "passed": true,
+            "max_abs_error": 0.0,
+            "comparator_protocol": "intentir.backend.native-output-comparator.v1"
+          }
+        ]
+      },
+      "external": {
+        "protocol": "intentir.backend.riscv.external-baseline.v1",
+        "baseline_id": "triton_cpu_rvv",
+        "display_name": "Triton-CPU/RVV",
+        "kind": "source_portability",
+        "implementation": "same-source-triton-cpu-rvv",
+        "symbol": "intentir_native_baseline",
+        "build_profile": "triton-cpu-rvv-prebuilt-strict",
+        "compiler": "/usr/bin/clang",
+        "compile_ms": 282.31027,
+        "flags": [
+          "-shared",
+          "-O3",
+          "-fPIC",
+          "-march=rv64gcv_zfh_zvfh",
+          "-fno-fast-math",
+          "-ffp-contract=off",
+          "/tmp/intentir-rvv-pair-ay1r4x4s/external_triton_cpu_rvv.c",
+          "/tmp/triton_cpu_rvv_rms_4096.so",
+          "-Wl,-rpath,/tmp"
+        ],
+        "strict_match": true,
+        "shares_intentir_candidate_or_object": false,
+        "source_identity": "accepted/liger_rms_norm/source.py::_rms_norm_forward_kernel",
+        "specialized_columns": null,
+        "specialization": {
+          "columns": 4096,
+          "block_size": 4096,
+          "casting_mode": 0,
+          "elementwise_affine": true
+        },
+        "latency_us": 128059.4035,
+        "samples_us": [
+          127296.88949999999,
+          130062.613,
+          128031.1635,
+          128459.576,
+          128059.4035,
+          128304.735,
+          125950.6435
+        ],
+        "correctness": [
+          {
+            "output": "t5",
+            "passed": true,
+            "max_abs_error": 3.337860107421875e-06,
+            "comparator_protocol": "intentir.backend.native-output-comparator.v1"
+          },
+          {
+            "output": "t6",
+            "passed": true,
+            "max_abs_error": 7.152557373046875e-06,
+            "comparator_protocol": "intentir.backend.native-output-comparator.v1"
+          }
+        ]
+      },
+      "external_over_full": 4.907200689540399
+    },
+    {
+      "kernel": "layer_norm",
+      "extents": {
+        "x0": 4096,
+        "x1": 4096
+      },
+      "inputs": {
+        "t0": {
+          "dtype": "f32",
+          "shape": [
+            4096,
+            4096
+          ]
+        },
+        "t1": {
+          "dtype": "f32",
+          "shape": [
+            4096
+          ]
+        },
+        "t2": {
+          "dtype": "f32",
+          "shape": [
+            4096
+          ]
+        },
+        "t3": {
+          "dtype": "i32",
+          "shape": []
+        },
+        "t4": {
+          "dtype": "f32",
+          "shape": []
+        }
+      },
+      "outputs": [
+        {
+          "dtype": "f32",
+          "name": "t5",
+          "shape": [
+            4096,
+            4096
+          ]
+        },
+        {
+          "dtype": "f32",
+          "name": "t6",
+          "shape": [
+            4096
+          ]
+        },
+        {
+          "dtype": "f32",
+          "name": "t7",
+          "shape": [
+            4096
+          ]
+        }
+      ],
+      "measurement": {
+        "regime": "code-warm/data-cold",
+        "comparison_protocol": "paired-alternating.v1",
+        "warmup": 1,
+        "cold_iterations_per_batch": 16,
+        "batches": 7,
+        "eviction_bytes": 134217728,
+        "cache_eviction_in_timed_region": false
+      },
+      "full": {
+        "candidate_id": "rvv.producer_consumer_fused.o3.vec0.vlen128.pt0.rt0.thr1",
+        "latency_us": 197426.62,
+        "samples_us": [
+          197425.79100000003,
+          197411.4095,
+          197426.62,
+          197567.321,
+          197738.032,
+          197699.711,
+          193924.85450000002
+        ],
+        "correctness": [
+          {
+            "output": "t5",
+            "passed": true,
+            "max_abs_error": 0.0,
+            "comparator_protocol": "intentir.backend.native-output-comparator.v1"
+          },
+          {
+            "output": "t6",
+            "passed": true,
+            "max_abs_error": 0.0,
+            "comparator_protocol": "intentir.backend.native-output-comparator.v1"
+          },
+          {
+            "output": "t7",
+            "passed": true,
+            "max_abs_error": 0.0,
+            "comparator_protocol": "intentir.backend.native-output-comparator.v1"
+          }
+        ]
+      },
+      "external": {
+        "protocol": "intentir.backend.riscv.external-baseline.v1",
+        "baseline_id": "triton_cpu_rvv",
+        "display_name": "Triton-CPU/RVV",
+        "kind": "source_portability",
+        "implementation": "same-source-triton-cpu-rvv",
+        "symbol": "intentir_native_baseline",
+        "build_profile": "triton-cpu-rvv-prebuilt-strict",
+        "compiler": "/usr/bin/clang",
+        "compile_ms": 276.247181,
+        "flags": [
+          "-shared",
+          "-O3",
+          "-fPIC",
+          "-march=rv64gcv_zfh_zvfh",
+          "-fno-fast-math",
+          "-ffp-contract=off",
+          "/tmp/intentir-rvv-pair-0vkywngu/external_triton_cpu_rvv.c",
+          "/tmp/triton_cpu_rvv_layer_4096.so",
+          "-Wl,-rpath,/tmp"
+        ],
+        "strict_match": true,
+        "shares_intentir_candidate_or_object": false,
+        "source_identity": "accepted/layer_norm/source.py::_layer_norm_forward_kernel",
+        "specialized_columns": null,
+        "specialization": {
+          "columns": 4096,
+          "block_size": 4096
+        },
+        "latency_us": 343474.448,
+        "samples_us": [
+          343349.00800000003,
+          343695.419,
+          343474.448,
+          344178.772,
+          343377.868,
+          343947.4305,
+          327337.45200000005
+        ],
+        "correctness": [
+          {
+            "output": "t5",
+            "passed": true,
+            "max_abs_error": 3.5762786865234375e-06,
+            "comparator_protocol": "intentir.backend.native-output-comparator.v1"
+          },
+          {
+            "output": "t6",
+            "passed": true,
+            "max_abs_error": 3.259629011154175e-08,
+            "comparator_protocol": "intentir.backend.native-output-comparator.v1"
+          },
+          {
+            "output": "t7",
+            "passed": true,
+            "max_abs_error": 5.9604644775390625e-06,
+            "comparator_protocol": "intentir.backend.native-output-comparator.v1"
+          }
+        ]
+      },
+      "external_over_full": 1.73975752611274
+    }
+  ],
+  "bars": [
+    {
+      "kernel": "swiglu",
+      "extents": {
+        "x0": 16384,
+        "x1": 11008
+      },
+      "bar_id": "full",
+      "display_name": "IntentIR Full",
+      "latency_us": 5403437.062999999,
+      "full_speedup_vs_bar": 1.0
+    },
+    {
+      "kernel": "swiglu",
+      "extents": {
+        "x0": 16384,
+        "x1": 11008
+      },
+      "bar_id": "triton_cpu_rvv",
+      "display_name": "Triton-CPU/RVV",
+      "latency_us": 10849182.9925,
+      "full_speedup_vs_bar": 2.0078299915418114
+    },
+    {
+      "kernel": "softmax",
+      "extents": {
+        "x0": 2048,
+        "x1": 4096
+      },
+      "bar_id": "full",
+      "display_name": "IntentIR Full",
+      "latency_us": 31602.461,
+      "full_speedup_vs_bar": 1.0
+    },
+    {
+      "kernel": "softmax",
+      "extents": {
+        "x0": 2048,
+        "x1": 4096
+      },
+      "bar_id": "triton_cpu_rvv",
+      "display_name": "Triton-CPU/RVV",
+      "latency_us": 368069.0645,
+      "full_speedup_vs_bar": 11.646848152110685
+    },
+    {
+      "kernel": "kl_div",
+      "extents": {
+        "x0": 4096,
+        "x1": 4096
+      },
+      "bar_id": "full",
+      "display_name": "IntentIR Full",
+      "latency_us": 421789.06200000003,
+      "full_speedup_vs_bar": 1.0
+    },
+    {
+      "kernel": "kl_div",
+      "extents": {
+        "x0": 4096,
+        "x1": 4096
+      },
+      "bar_id": "triton_cpu_rvv",
+      "display_name": "Triton-CPU/RVV",
+      "latency_us": 577481.9985,
+      "full_speedup_vs_bar": 1.369125116146326
+    },
+    {
+      "kernel": "flash_bwd_preprocess",
+      "extents": {
+        "x0": 4,
+        "x1": 16,
+        "x2": 8192,
+        "x3": 128,
+        "x4": 8192
+      },
+      "bar_id": "full",
+      "display_name": "IntentIR Full",
+      "latency_us": 50371.323000000004,
+      "full_speedup_vs_bar": 1.0
+    },
+    {
+      "kernel": "flash_bwd_preprocess",
+      "extents": {
+        "x0": 4,
+        "x1": 16,
+        "x2": 8192,
+        "x3": 128,
+        "x4": 8192
+      },
+      "bar_id": "triton_cpu_rvv",
+      "display_name": "Triton-CPU/RVV",
+      "latency_us": 4369009.9365,
+      "full_speedup_vs_bar": 86.73605687307438
+    },
+    {
+      "kernel": "dyt",
+      "extents": {
+        "x0": 4096,
+        "x1": 4096
+      },
+      "bar_id": "full",
+      "display_name": "IntentIR Full",
+      "latency_us": 996395.7745,
+      "full_speedup_vs_bar": 1.0
+    },
+    {
+      "kernel": "dyt",
+      "extents": {
+        "x0": 4096,
+        "x1": 4096
+      },
+      "bar_id": "triton_cpu_rvv",
+      "display_name": "Triton-CPU/RVV",
+      "latency_us": 1237238.61,
+      "full_speedup_vs_bar": 1.2417140273611227
+    },
+    {
+      "kernel": "liger_rms_norm",
+      "extents": {
+        "x0": 2048,
+        "x1": 4096
+      },
+      "bar_id": "full",
+      "display_name": "IntentIR Full",
+      "latency_us": 26096.222999999998,
+      "full_speedup_vs_bar": 1.0
+    },
+    {
+      "kernel": "liger_rms_norm",
+      "extents": {
+        "x0": 2048,
+        "x1": 4096
+      },
+      "bar_id": "triton_cpu_rvv",
+      "display_name": "Triton-CPU/RVV",
+      "latency_us": 128059.4035,
+      "full_speedup_vs_bar": 4.907200689540399
+    },
+    {
+      "kernel": "layer_norm",
+      "extents": {
+        "x0": 4096,
+        "x1": 4096
+      },
+      "bar_id": "full",
+      "display_name": "IntentIR Full",
+      "latency_us": 197426.62,
+      "full_speedup_vs_bar": 1.0
+    },
+    {
+      "kernel": "layer_norm",
+      "extents": {
+        "x0": 4096,
+        "x1": 4096
+      },
+      "bar_id": "triton_cpu_rvv",
+      "display_name": "Triton-CPU/RVV",
+      "latency_us": 343474.448,
+      "full_speedup_vs_bar": 1.73975752611274
+    }
+  ]
+}

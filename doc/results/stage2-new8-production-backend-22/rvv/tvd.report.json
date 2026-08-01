@@ -1,0 +1,4050 @@
+{
+  "baseline_policy": "native_rvv_and_refj",
+  "bundle_protocol": "intentir.production.rvv-search-bundle.v4",
+  "c_prior_efficiency_summary": {
+    "geomean_best_at_budget_c_over_erase_c_speedup": 1.0,
+    "median_c_prior_candidates_to_95pct_of_final_best": 6,
+    "median_erase_c_candidates_to_95pct_of_final_best": 6,
+    "oracle_complete_kernel_count": 1
+  },
+  "created_unix_ns": 1785437946505016566,
+  "device": {
+    "cache": {
+      "last_level_data_cache_bytes": 67108864,
+      "levels": [
+        {
+          "coherency_line_bytes": 64,
+          "level": 1,
+          "size_bytes": 65536,
+          "type": "Data"
+        },
+        {
+          "coherency_line_bytes": 64,
+          "level": 1,
+          "size_bytes": 65536,
+          "type": "Instruction"
+        },
+        {
+          "coherency_line_bytes": 64,
+          "level": 2,
+          "size_bytes": 2097152,
+          "type": "Unified"
+        },
+        {
+          "coherency_line_bytes": 64,
+          "level": 3,
+          "size_bytes": 67108864,
+          "type": "Unified"
+        }
+      ]
+    },
+    "cpu_affinity": [
+      0
+    ],
+    "host": "localhost.localdomain",
+    "machine": "riscv64",
+    "parallel_runtime": "serial MLIR loops",
+    "python": "3.11.6",
+    "thread_count": 1,
+    "vlen_bits": 128
+  },
+  "elapsed_seconds": 174.521762164,
+  "experiment_spec_protocol": "intentir.backend.ablation-plan.v3",
+  "failures": [],
+  "kernels": [
+    {
+      "baseline_policy": "native_rvv_and_refj",
+      "c_prior_efficiency": {
+        "best_at_budget_c_over_erase_c_speedup": 1.0,
+        "budget_unit": "admitted_candidate",
+        "c_prior_best_us": 56346.699,
+        "c_prior_budget_winner_candidate_id": "rvv.producer_consumer_fused.o3.vec1.vlen0.scalable1.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+        "c_prior_candidates_to_95pct_of_final_best": 6,
+        "candidate_budget": 12,
+        "erase_c_best_us": 56346.699,
+        "erase_c_budget_winner_candidate_id": "rvv.producer_consumer_fused.o3.vec1.vlen0.scalable1.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+        "erase_c_candidates_to_95pct_of_final_best": 6,
+        "oracle_best_us": 56346.699,
+        "oracle_complete": true,
+        "unavailable_reason": null
+      },
+      "candidates": [
+        {
+          "candidate": {
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt4.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+            "lowering_path_kind": "materialized",
+            "object_size_bytes": 4424,
+            "python_target_kernel_emission": false,
+            "requested_schedule": {
+              "opt_level": 3,
+              "parallel_tile": 4,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "fixed",
+              "vectorize": true
+            },
+            "rvv_instruction_count": 43,
+            "rvv_reduction_instruction_count": 0,
+            "rvv_vsetvl_modes": [
+              "e32,m8"
+            ],
+            "scalable_vector_ir_count": 0,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 4,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "fixed",
+              "vectorize": true
+            },
+            "schedule_realization": {
+              "parallel_tile_applied": 4,
+              "reduction_tile_applied": 0,
+              "requested_equals_actual": true
+            },
+            "symbol": "scrc_j0",
+            "transformation": {
+              "b_transformations": [],
+              "explicit_vector_reduction": false,
+              "fuse_producers": false,
+              "fused_softmax": false,
+              "joint_vector_reduction": false,
+              "lowering_path_kind": "materialized",
+              "reassociate_reductions": false,
+              "required_b_capabilities": [],
+              "transformation_trace": [
+                "rvv.linalg.materialized.v1"
+              ]
+            },
+            "transformation_record": {
+              "explicit_vector_max_reductions": 0,
+              "explicit_vector_reduction_loops": 0,
+              "explicit_vector_reduction_scalable": 0,
+              "explicit_vector_reduction_width": 0,
+              "explicit_vector_reductions": 0,
+              "fused_producers": 0,
+              "fused_softmax_count": 0,
+              "fused_softmax_full_row_traversals": 0,
+              "fused_softmax_input_traversals": 0,
+              "fused_softmax_removed_materializations": 0,
+              "fused_softmax_scalable": 0,
+              "fused_softmax_scalar_reductions": 0,
+              "fused_softmax_vector_reductions": 0,
+              "fused_softmax_vector_width": 0,
+              "fusion_multi_use_rejections": 0,
+              "fusion_outer_parallel_only_ops": 0,
+              "generated_tile_loops": 10,
+              "joint_raw_moment_variances": 0,
+              "joint_vector_reduction_groups": 0,
+              "joint_vector_reduction_root_loads": 0,
+              "joint_vector_reductions": 0,
+              "linalg_ops_after": 14,
+              "linalg_ops_before": 14,
+              "linalg_tiled_ops": 5,
+              "openmp_parallel_ops": 0,
+              "parallel_tile_applied": 4,
+              "parallel_tile_requested": 4,
+              "reassociated_float_combines": 0,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0
+            },
+            "true_mlir_pipeline": true
+          },
+          "correctness": [
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t4",
+              "passed": true
+            },
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t5",
+              "passed": true
+            }
+          ],
+          "data_prep_samples_us": [
+            47078.916,
+            47034.316,
+            47048.616
+          ],
+          "initial_data_prep_us_per_call": 48494.263,
+          "initial_ranking_samples_us": [
+            586427.953
+          ],
+          "latency_us": 584868.125,
+          "logical_boundary_gbps": 0.45902352432011917,
+          "selection_protocol": "fresh-alternating-round-robin.v1",
+          "selection_samples_us": [
+            583611.36,
+            584868.125,
+            585824.05
+          ],
+          "status": "measured"
+        },
+        {
+          "candidate": {
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.producer_consumer_fused.o3.vec1.vlen128.scalable0.lanes4.pt4.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+            "lowering_path_kind": "producer_consumer_fused",
+            "object_size_bytes": 5008,
+            "python_target_kernel_emission": false,
+            "requested_schedule": {
+              "opt_level": 3,
+              "parallel_tile": 4,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "fixed",
+              "vectorize": true
+            },
+            "rvv_instruction_count": 297,
+            "rvv_reduction_instruction_count": 0,
+            "rvv_vsetvl_modes": [
+              "e32,m2",
+              "e32,m8",
+              "e8,mf2",
+              "e8,mf8"
+            ],
+            "scalable_vector_ir_count": 0,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 4,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "fixed",
+              "vectorize": true
+            },
+            "schedule_realization": {
+              "parallel_tile_applied": 4,
+              "reduction_tile_applied": 0,
+              "requested_equals_actual": true
+            },
+            "symbol": "scrc_j0",
+            "transformation": {
+              "b_transformations": [
+                "riscv.b.readonly_producer_consumer_fusion.v2"
+              ],
+              "explicit_vector_reduction": false,
+              "fuse_producers": true,
+              "fused_softmax": false,
+              "joint_vector_reduction": false,
+              "lowering_path_kind": "producer_consumer_fused",
+              "reassociate_reductions": false,
+              "required_b_capabilities": [
+                "b.readonly_nonalias_inputs.v1"
+              ],
+              "transformation_trace": [
+                "rvv.linalg.producer_consumer_fusion.v2"
+              ]
+            },
+            "transformation_record": {
+              "explicit_vector_max_reductions": 0,
+              "explicit_vector_reduction_loops": 0,
+              "explicit_vector_reduction_scalable": 0,
+              "explicit_vector_reduction_width": 0,
+              "explicit_vector_reductions": 0,
+              "fused_producers": 1,
+              "fused_softmax_count": 0,
+              "fused_softmax_full_row_traversals": 0,
+              "fused_softmax_input_traversals": 0,
+              "fused_softmax_removed_materializations": 0,
+              "fused_softmax_scalable": 0,
+              "fused_softmax_scalar_reductions": 0,
+              "fused_softmax_vector_reductions": 0,
+              "fused_softmax_vector_width": 0,
+              "fusion_multi_use_rejections": 0,
+              "fusion_outer_parallel_only_ops": 0,
+              "generated_tile_loops": 4,
+              "joint_raw_moment_variances": 0,
+              "joint_vector_reduction_groups": 0,
+              "joint_vector_reduction_root_loads": 0,
+              "joint_vector_reductions": 0,
+              "linalg_ops_after": 4,
+              "linalg_ops_before": 14,
+              "linalg_tiled_ops": 2,
+              "openmp_parallel_ops": 0,
+              "parallel_tile_applied": 4,
+              "parallel_tile_requested": 4,
+              "reassociated_float_combines": 0,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0
+            },
+            "true_mlir_pipeline": true
+          },
+          "correctness": [
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t4",
+              "passed": true
+            },
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t5",
+              "passed": true
+            }
+          ],
+          "initial_data_prep_us_per_call": 48438.443,
+          "initial_ranking_samples_us": [
+            231441.722
+          ],
+          "latency_us": 231441.722,
+          "status": "measured"
+        },
+        {
+          "candidate": {
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+            "lowering_path_kind": "materialized",
+            "object_size_bytes": 2720,
+            "python_target_kernel_emission": false,
+            "requested_schedule": {
+              "opt_level": 3,
+              "parallel_tile": 0,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "fixed",
+              "vectorize": true
+            },
+            "rvv_instruction_count": 59,
+            "rvv_reduction_instruction_count": 0,
+            "rvv_vsetvl_modes": [
+              "e32,m2",
+              "e64,m1",
+              "e64,m4",
+              "e8,mf2",
+              "e8,mf8"
+            ],
+            "scalable_vector_ir_count": 0,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 0,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "fixed",
+              "vectorize": true
+            },
+            "schedule_realization": {
+              "parallel_tile_applied": 0,
+              "reduction_tile_applied": 0,
+              "requested_equals_actual": true
+            },
+            "symbol": "scrc_j0",
+            "transformation": {
+              "b_transformations": [],
+              "explicit_vector_reduction": false,
+              "fuse_producers": false,
+              "fused_softmax": false,
+              "joint_vector_reduction": false,
+              "lowering_path_kind": "materialized",
+              "reassociate_reductions": false,
+              "required_b_capabilities": [],
+              "transformation_trace": [
+                "rvv.linalg.materialized.v1"
+              ]
+            },
+            "transformation_record": {
+              "explicit_vector_max_reductions": 0,
+              "explicit_vector_reduction_loops": 0,
+              "explicit_vector_reduction_scalable": 0,
+              "explicit_vector_reduction_width": 0,
+              "explicit_vector_reductions": 0,
+              "fused_producers": 0,
+              "fused_softmax_count": 0,
+              "fused_softmax_full_row_traversals": 0,
+              "fused_softmax_input_traversals": 0,
+              "fused_softmax_removed_materializations": 0,
+              "fused_softmax_scalable": 0,
+              "fused_softmax_scalar_reductions": 0,
+              "fused_softmax_vector_reductions": 0,
+              "fused_softmax_vector_width": 0,
+              "fusion_multi_use_rejections": 0,
+              "fusion_outer_parallel_only_ops": 0,
+              "generated_tile_loops": 0,
+              "joint_raw_moment_variances": 0,
+              "joint_vector_reduction_groups": 0,
+              "joint_vector_reduction_root_loads": 0,
+              "joint_vector_reductions": 0,
+              "linalg_ops_after": 14,
+              "linalg_ops_before": 14,
+              "linalg_tiled_ops": 0,
+              "openmp_parallel_ops": 0,
+              "parallel_tile_applied": 0,
+              "parallel_tile_requested": 0,
+              "reassociated_float_combines": 0,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0
+            },
+            "true_mlir_pipeline": true
+          },
+          "correctness": [
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t4",
+              "passed": true
+            },
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t5",
+              "passed": true
+            }
+          ],
+          "initial_data_prep_us_per_call": 48335.961,
+          "initial_ranking_samples_us": [
+            429627.152
+          ],
+          "latency_us": 429627.152,
+          "status": "measured"
+        },
+        {
+          "candidate": {
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.producer_consumer_fused.o3.vec1.vlen128.scalable0.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+            "lowering_path_kind": "producer_consumer_fused",
+            "object_size_bytes": 2032,
+            "python_target_kernel_emission": false,
+            "requested_schedule": {
+              "opt_level": 3,
+              "parallel_tile": 0,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "fixed",
+              "vectorize": true
+            },
+            "rvv_instruction_count": 56,
+            "rvv_reduction_instruction_count": 0,
+            "rvv_vsetvl_modes": [
+              "e32,m2"
+            ],
+            "scalable_vector_ir_count": 0,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 0,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "fixed",
+              "vectorize": true
+            },
+            "schedule_realization": {
+              "parallel_tile_applied": 0,
+              "reduction_tile_applied": 0,
+              "requested_equals_actual": true
+            },
+            "symbol": "scrc_j0",
+            "transformation": {
+              "b_transformations": [
+                "riscv.b.readonly_producer_consumer_fusion.v2"
+              ],
+              "explicit_vector_reduction": false,
+              "fuse_producers": true,
+              "fused_softmax": false,
+              "joint_vector_reduction": false,
+              "lowering_path_kind": "producer_consumer_fused",
+              "reassociate_reductions": false,
+              "required_b_capabilities": [
+                "b.readonly_nonalias_inputs.v1"
+              ],
+              "transformation_trace": [
+                "rvv.linalg.producer_consumer_fusion.v2"
+              ]
+            },
+            "transformation_record": {
+              "explicit_vector_max_reductions": 0,
+              "explicit_vector_reduction_loops": 0,
+              "explicit_vector_reduction_scalable": 0,
+              "explicit_vector_reduction_width": 0,
+              "explicit_vector_reductions": 0,
+              "fused_producers": 1,
+              "fused_softmax_count": 0,
+              "fused_softmax_full_row_traversals": 0,
+              "fused_softmax_input_traversals": 0,
+              "fused_softmax_removed_materializations": 0,
+              "fused_softmax_scalable": 0,
+              "fused_softmax_scalar_reductions": 0,
+              "fused_softmax_vector_reductions": 0,
+              "fused_softmax_vector_width": 0,
+              "fusion_multi_use_rejections": 0,
+              "fusion_outer_parallel_only_ops": 0,
+              "generated_tile_loops": 0,
+              "joint_raw_moment_variances": 0,
+              "joint_vector_reduction_groups": 0,
+              "joint_vector_reduction_root_loads": 0,
+              "joint_vector_reductions": 0,
+              "linalg_ops_after": 4,
+              "linalg_ops_before": 14,
+              "linalg_tiled_ops": 0,
+              "openmp_parallel_ops": 0,
+              "parallel_tile_applied": 0,
+              "parallel_tile_requested": 0,
+              "reassociated_float_combines": 0,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0
+            },
+            "true_mlir_pipeline": true
+          },
+          "correctness": [
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t4",
+              "passed": true
+            },
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t5",
+              "passed": true
+            }
+          ],
+          "initial_data_prep_us_per_call": 47050.456,
+          "initial_ranking_samples_us": [
+            353588.303
+          ],
+          "latency_us": 353588.303,
+          "status": "measured"
+        },
+        {
+          "candidate": {
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.materialized.o3.vec1.vlen0.scalable1.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+            "lowering_path_kind": "materialized",
+            "object_size_bytes": 2816,
+            "python_target_kernel_emission": false,
+            "requested_schedule": {
+              "opt_level": 3,
+              "parallel_tile": 0,
+              "reduction_tile": 0,
+              "scalable_vectorization": true,
+              "thread_count": 1,
+              "vector_bits": 0,
+              "vector_lanes": 4,
+              "vector_policy": "scalable",
+              "vectorize": true
+            },
+            "rvv_instruction_count": 48,
+            "rvv_reduction_instruction_count": 0,
+            "rvv_vsetvl_modes": [
+              "e32,m2",
+              "e64,m1",
+              "e64,m2",
+              "e64,m4",
+              "e8,mf2",
+              "e8,mf8"
+            ],
+            "scalable_vector_ir_count": 13,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 0,
+              "reduction_tile": 0,
+              "scalable_vectorization": true,
+              "thread_count": 1,
+              "vector_bits": 0,
+              "vector_lanes": 4,
+              "vector_policy": "scalable",
+              "vectorize": true
+            },
+            "schedule_realization": {
+              "parallel_tile_applied": 0,
+              "reduction_tile_applied": 0,
+              "requested_equals_actual": true
+            },
+            "symbol": "scrc_j0",
+            "transformation": {
+              "b_transformations": [],
+              "explicit_vector_reduction": false,
+              "fuse_producers": false,
+              "fused_softmax": false,
+              "joint_vector_reduction": false,
+              "lowering_path_kind": "materialized",
+              "reassociate_reductions": false,
+              "required_b_capabilities": [],
+              "transformation_trace": [
+                "rvv.linalg.materialized.v1"
+              ]
+            },
+            "transformation_record": {
+              "explicit_vector_max_reductions": 0,
+              "explicit_vector_reduction_loops": 0,
+              "explicit_vector_reduction_scalable": 0,
+              "explicit_vector_reduction_width": 0,
+              "explicit_vector_reductions": 0,
+              "fused_producers": 0,
+              "fused_softmax_count": 0,
+              "fused_softmax_full_row_traversals": 0,
+              "fused_softmax_input_traversals": 0,
+              "fused_softmax_removed_materializations": 0,
+              "fused_softmax_scalable": 0,
+              "fused_softmax_scalar_reductions": 0,
+              "fused_softmax_vector_reductions": 0,
+              "fused_softmax_vector_width": 0,
+              "fusion_multi_use_rejections": 0,
+              "fusion_outer_parallel_only_ops": 0,
+              "generated_tile_loops": 0,
+              "joint_raw_moment_variances": 0,
+              "joint_vector_reduction_groups": 0,
+              "joint_vector_reduction_root_loads": 0,
+              "joint_vector_reductions": 0,
+              "linalg_ops_after": 14,
+              "linalg_ops_before": 14,
+              "linalg_tiled_ops": 0,
+              "openmp_parallel_ops": 0,
+              "parallel_tile_applied": 0,
+              "parallel_tile_requested": 0,
+              "reassociated_float_combines": 0,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0
+            },
+            "true_mlir_pipeline": true
+          },
+          "correctness": [
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t4",
+              "passed": true
+            },
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t5",
+              "passed": true
+            }
+          ],
+          "data_prep_samples_us": [
+            47067.316,
+            47059.476,
+            47021.536
+          ],
+          "initial_data_prep_us_per_call": 47361.958,
+          "initial_ranking_samples_us": [
+            319604.608
+          ],
+          "latency_us": 322229.72,
+          "logical_boundary_gbps": 0.8331578725885372,
+          "selection_protocol": "fresh-alternating-round-robin.v1",
+          "selection_samples_us": [
+            322263.26,
+            322229.72,
+            321684.077
+          ],
+          "status": "measured"
+        },
+        {
+          "candidate": {
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.producer_consumer_fused.o3.vec1.vlen0.scalable1.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+            "lowering_path_kind": "producer_consumer_fused",
+            "object_size_bytes": 2216,
+            "python_target_kernel_emission": false,
+            "requested_schedule": {
+              "opt_level": 3,
+              "parallel_tile": 0,
+              "reduction_tile": 0,
+              "scalable_vectorization": true,
+              "thread_count": 1,
+              "vector_bits": 0,
+              "vector_lanes": 4,
+              "vector_policy": "scalable",
+              "vectorize": true
+            },
+            "rvv_instruction_count": 30,
+            "rvv_reduction_instruction_count": 0,
+            "rvv_vsetvl_modes": [
+              "e32,m2"
+            ],
+            "scalable_vector_ir_count": 40,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 0,
+              "reduction_tile": 0,
+              "scalable_vectorization": true,
+              "thread_count": 1,
+              "vector_bits": 0,
+              "vector_lanes": 4,
+              "vector_policy": "scalable",
+              "vectorize": true
+            },
+            "schedule_realization": {
+              "parallel_tile_applied": 0,
+              "reduction_tile_applied": 0,
+              "requested_equals_actual": true
+            },
+            "symbol": "scrc_j0",
+            "transformation": {
+              "b_transformations": [
+                "riscv.b.readonly_producer_consumer_fusion.v2"
+              ],
+              "explicit_vector_reduction": false,
+              "fuse_producers": true,
+              "fused_softmax": false,
+              "joint_vector_reduction": false,
+              "lowering_path_kind": "producer_consumer_fused",
+              "reassociate_reductions": false,
+              "required_b_capabilities": [
+                "b.readonly_nonalias_inputs.v1"
+              ],
+              "transformation_trace": [
+                "rvv.linalg.producer_consumer_fusion.v2"
+              ]
+            },
+            "transformation_record": {
+              "explicit_vector_max_reductions": 0,
+              "explicit_vector_reduction_loops": 0,
+              "explicit_vector_reduction_scalable": 0,
+              "explicit_vector_reduction_width": 0,
+              "explicit_vector_reductions": 0,
+              "fused_producers": 1,
+              "fused_softmax_count": 0,
+              "fused_softmax_full_row_traversals": 0,
+              "fused_softmax_input_traversals": 0,
+              "fused_softmax_removed_materializations": 0,
+              "fused_softmax_scalable": 0,
+              "fused_softmax_scalar_reductions": 0,
+              "fused_softmax_vector_reductions": 0,
+              "fused_softmax_vector_width": 0,
+              "fusion_multi_use_rejections": 0,
+              "fusion_outer_parallel_only_ops": 0,
+              "generated_tile_loops": 0,
+              "joint_raw_moment_variances": 0,
+              "joint_vector_reduction_groups": 0,
+              "joint_vector_reduction_root_loads": 0,
+              "joint_vector_reductions": 0,
+              "linalg_ops_after": 4,
+              "linalg_ops_before": 14,
+              "linalg_tiled_ops": 0,
+              "openmp_parallel_ops": 0,
+              "parallel_tile_applied": 0,
+              "parallel_tile_requested": 0,
+              "reassociated_float_combines": 0,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0
+            },
+            "true_mlir_pipeline": true
+          },
+          "correctness": [
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t4",
+              "passed": true
+            },
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t5",
+              "passed": true
+            }
+          ],
+          "data_prep_samples_us": [
+            47018.236,
+            47022.596,
+            47028.636
+          ],
+          "initial_data_prep_us_per_call": 47069.056,
+          "initial_ranking_samples_us": [
+            56317.878
+          ],
+          "latency_us": 56346.699,
+          "logical_boundary_gbps": 4.764577743942019,
+          "selection_protocol": "fresh-alternating-round-robin.v1",
+          "selection_samples_us": [
+            56346.699,
+            56314.579,
+            56423.199
+          ],
+          "status": "measured"
+        },
+        {
+          "candidate": {
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.materialized.o3.vec0.vlen128.scalable0.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+            "lowering_path_kind": "materialized",
+            "object_size_bytes": 2104,
+            "python_target_kernel_emission": false,
+            "requested_schedule": {
+              "opt_level": 3,
+              "parallel_tile": 0,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "scalar",
+              "vectorize": false
+            },
+            "rvv_instruction_count": 0,
+            "rvv_reduction_instruction_count": 0,
+            "rvv_vsetvl_modes": [],
+            "scalable_vector_ir_count": 0,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 0,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "scalar",
+              "vectorize": false
+            },
+            "schedule_realization": {
+              "parallel_tile_applied": 0,
+              "reduction_tile_applied": 0,
+              "requested_equals_actual": true
+            },
+            "symbol": "scrc_j0",
+            "transformation": {
+              "b_transformations": [],
+              "explicit_vector_reduction": false,
+              "fuse_producers": false,
+              "fused_softmax": false,
+              "joint_vector_reduction": false,
+              "lowering_path_kind": "materialized",
+              "reassociate_reductions": false,
+              "required_b_capabilities": [],
+              "transformation_trace": [
+                "rvv.linalg.materialized.v1"
+              ]
+            },
+            "transformation_record": {
+              "explicit_vector_max_reductions": 0,
+              "explicit_vector_reduction_loops": 0,
+              "explicit_vector_reduction_scalable": 0,
+              "explicit_vector_reduction_width": 0,
+              "explicit_vector_reductions": 0,
+              "fused_producers": 0,
+              "fused_softmax_count": 0,
+              "fused_softmax_full_row_traversals": 0,
+              "fused_softmax_input_traversals": 0,
+              "fused_softmax_removed_materializations": 0,
+              "fused_softmax_scalable": 0,
+              "fused_softmax_scalar_reductions": 0,
+              "fused_softmax_vector_reductions": 0,
+              "fused_softmax_vector_width": 0,
+              "fusion_multi_use_rejections": 0,
+              "fusion_outer_parallel_only_ops": 0,
+              "generated_tile_loops": 0,
+              "joint_raw_moment_variances": 0,
+              "joint_vector_reduction_groups": 0,
+              "joint_vector_reduction_root_loads": 0,
+              "joint_vector_reductions": 0,
+              "linalg_ops_after": 14,
+              "linalg_ops_before": 14,
+              "linalg_tiled_ops": 0,
+              "openmp_parallel_ops": 0,
+              "parallel_tile_applied": 0,
+              "parallel_tile_requested": 0,
+              "reassociated_float_combines": 0,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0
+            },
+            "true_mlir_pipeline": true
+          },
+          "correctness": [
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t4",
+              "passed": true
+            },
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t5",
+              "passed": true
+            }
+          ],
+          "initial_data_prep_us_per_call": 47052.616,
+          "initial_ranking_samples_us": [
+            371813.567
+          ],
+          "latency_us": 371813.567,
+          "status": "measured"
+        },
+        {
+          "candidate": {
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.producer_consumer_fused.o3.vec0.vlen128.scalable0.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+            "lowering_path_kind": "producer_consumer_fused",
+            "object_size_bytes": 1408,
+            "python_target_kernel_emission": false,
+            "requested_schedule": {
+              "opt_level": 3,
+              "parallel_tile": 0,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "scalar",
+              "vectorize": false
+            },
+            "rvv_instruction_count": 0,
+            "rvv_reduction_instruction_count": 0,
+            "rvv_vsetvl_modes": [],
+            "scalable_vector_ir_count": 0,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 0,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "scalar",
+              "vectorize": false
+            },
+            "schedule_realization": {
+              "parallel_tile_applied": 0,
+              "reduction_tile_applied": 0,
+              "requested_equals_actual": true
+            },
+            "symbol": "scrc_j0",
+            "transformation": {
+              "b_transformations": [
+                "riscv.b.readonly_producer_consumer_fusion.v2"
+              ],
+              "explicit_vector_reduction": false,
+              "fuse_producers": true,
+              "fused_softmax": false,
+              "joint_vector_reduction": false,
+              "lowering_path_kind": "producer_consumer_fused",
+              "reassociate_reductions": false,
+              "required_b_capabilities": [
+                "b.readonly_nonalias_inputs.v1"
+              ],
+              "transformation_trace": [
+                "rvv.linalg.producer_consumer_fusion.v2"
+              ]
+            },
+            "transformation_record": {
+              "explicit_vector_max_reductions": 0,
+              "explicit_vector_reduction_loops": 0,
+              "explicit_vector_reduction_scalable": 0,
+              "explicit_vector_reduction_width": 0,
+              "explicit_vector_reductions": 0,
+              "fused_producers": 1,
+              "fused_softmax_count": 0,
+              "fused_softmax_full_row_traversals": 0,
+              "fused_softmax_input_traversals": 0,
+              "fused_softmax_removed_materializations": 0,
+              "fused_softmax_scalable": 0,
+              "fused_softmax_scalar_reductions": 0,
+              "fused_softmax_vector_reductions": 0,
+              "fused_softmax_vector_width": 0,
+              "fusion_multi_use_rejections": 0,
+              "fusion_outer_parallel_only_ops": 0,
+              "generated_tile_loops": 0,
+              "joint_raw_moment_variances": 0,
+              "joint_vector_reduction_groups": 0,
+              "joint_vector_reduction_root_loads": 0,
+              "joint_vector_reductions": 0,
+              "linalg_ops_after": 4,
+              "linalg_ops_before": 14,
+              "linalg_tiled_ops": 0,
+              "openmp_parallel_ops": 0,
+              "parallel_tile_applied": 0,
+              "parallel_tile_requested": 0,
+              "reassociated_float_combines": 0,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0
+            },
+            "true_mlir_pipeline": true
+          },
+          "correctness": [
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t4",
+              "passed": true
+            },
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t5",
+              "passed": true
+            }
+          ],
+          "initial_data_prep_us_per_call": 47054.436,
+          "initial_ranking_samples_us": [
+            119097.767
+          ],
+          "latency_us": 119097.767,
+          "status": "measured"
+        },
+        {
+          "candidate": {
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt2.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+            "lowering_path_kind": "materialized",
+            "object_size_bytes": 3616,
+            "python_target_kernel_emission": false,
+            "requested_schedule": {
+              "opt_level": 3,
+              "parallel_tile": 2,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "fixed",
+              "vectorize": true
+            },
+            "rvv_instruction_count": 106,
+            "rvv_reduction_instruction_count": 0,
+            "rvv_vsetvl_modes": [
+              "e32,m2",
+              "e32,m4",
+              "e64,m1",
+              "e64,m4",
+              "e8,mf2",
+              "e8,mf8"
+            ],
+            "scalable_vector_ir_count": 0,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 2,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "fixed",
+              "vectorize": true
+            },
+            "schedule_realization": {
+              "parallel_tile_applied": 2,
+              "reduction_tile_applied": 0,
+              "requested_equals_actual": true
+            },
+            "symbol": "scrc_j0",
+            "transformation": {
+              "b_transformations": [],
+              "explicit_vector_reduction": false,
+              "fuse_producers": false,
+              "fused_softmax": false,
+              "joint_vector_reduction": false,
+              "lowering_path_kind": "materialized",
+              "reassociate_reductions": false,
+              "required_b_capabilities": [],
+              "transformation_trace": [
+                "rvv.linalg.materialized.v1"
+              ]
+            },
+            "transformation_record": {
+              "explicit_vector_max_reductions": 0,
+              "explicit_vector_reduction_loops": 0,
+              "explicit_vector_reduction_scalable": 0,
+              "explicit_vector_reduction_width": 0,
+              "explicit_vector_reductions": 0,
+              "fused_producers": 0,
+              "fused_softmax_count": 0,
+              "fused_softmax_full_row_traversals": 0,
+              "fused_softmax_input_traversals": 0,
+              "fused_softmax_removed_materializations": 0,
+              "fused_softmax_scalable": 0,
+              "fused_softmax_scalar_reductions": 0,
+              "fused_softmax_vector_reductions": 0,
+              "fused_softmax_vector_width": 0,
+              "fusion_multi_use_rejections": 0,
+              "fusion_outer_parallel_only_ops": 0,
+              "generated_tile_loops": 10,
+              "joint_raw_moment_variances": 0,
+              "joint_vector_reduction_groups": 0,
+              "joint_vector_reduction_root_loads": 0,
+              "joint_vector_reductions": 0,
+              "linalg_ops_after": 14,
+              "linalg_ops_before": 14,
+              "linalg_tiled_ops": 5,
+              "openmp_parallel_ops": 0,
+              "parallel_tile_applied": 2,
+              "parallel_tile_requested": 2,
+              "reassociated_float_combines": 0,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0
+            },
+            "true_mlir_pipeline": true
+          },
+          "correctness": [
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t4",
+              "passed": true
+            },
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t5",
+              "passed": true
+            }
+          ],
+          "data_prep_samples_us": [
+            47097.256,
+            47020.696,
+            47072.896
+          ],
+          "initial_data_prep_us_per_call": 47079.457,
+          "initial_ranking_samples_us": [
+            316294.592
+          ],
+          "latency_us": 334128.234,
+          "logical_boundary_gbps": 0.8034886031211598,
+          "selection_protocol": "fresh-alternating-round-robin.v1",
+          "selection_samples_us": [
+            333881.313,
+            334128.234,
+            338614.655
+          ],
+          "status": "measured"
+        },
+        {
+          "candidate": {
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.producer_consumer_fused.o3.vec1.vlen128.scalable0.lanes4.pt2.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+            "lowering_path_kind": "producer_consumer_fused",
+            "object_size_bytes": 3768,
+            "python_target_kernel_emission": false,
+            "requested_schedule": {
+              "opt_level": 3,
+              "parallel_tile": 2,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "fixed",
+              "vectorize": true
+            },
+            "rvv_instruction_count": 188,
+            "rvv_reduction_instruction_count": 0,
+            "rvv_vsetvl_modes": [
+              "e16,m2",
+              "e32,m2",
+              "e32,m4",
+              "e8,mf2",
+              "e8,mf8"
+            ],
+            "scalable_vector_ir_count": 0,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 2,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "fixed",
+              "vectorize": true
+            },
+            "schedule_realization": {
+              "parallel_tile_applied": 2,
+              "reduction_tile_applied": 0,
+              "requested_equals_actual": true
+            },
+            "symbol": "scrc_j0",
+            "transformation": {
+              "b_transformations": [
+                "riscv.b.readonly_producer_consumer_fusion.v2"
+              ],
+              "explicit_vector_reduction": false,
+              "fuse_producers": true,
+              "fused_softmax": false,
+              "joint_vector_reduction": false,
+              "lowering_path_kind": "producer_consumer_fused",
+              "reassociate_reductions": false,
+              "required_b_capabilities": [
+                "b.readonly_nonalias_inputs.v1"
+              ],
+              "transformation_trace": [
+                "rvv.linalg.producer_consumer_fusion.v2"
+              ]
+            },
+            "transformation_record": {
+              "explicit_vector_max_reductions": 0,
+              "explicit_vector_reduction_loops": 0,
+              "explicit_vector_reduction_scalable": 0,
+              "explicit_vector_reduction_width": 0,
+              "explicit_vector_reductions": 0,
+              "fused_producers": 1,
+              "fused_softmax_count": 0,
+              "fused_softmax_full_row_traversals": 0,
+              "fused_softmax_input_traversals": 0,
+              "fused_softmax_removed_materializations": 0,
+              "fused_softmax_scalable": 0,
+              "fused_softmax_scalar_reductions": 0,
+              "fused_softmax_vector_reductions": 0,
+              "fused_softmax_vector_width": 0,
+              "fusion_multi_use_rejections": 0,
+              "fusion_outer_parallel_only_ops": 0,
+              "generated_tile_loops": 4,
+              "joint_raw_moment_variances": 0,
+              "joint_vector_reduction_groups": 0,
+              "joint_vector_reduction_root_loads": 0,
+              "joint_vector_reductions": 0,
+              "linalg_ops_after": 4,
+              "linalg_ops_before": 14,
+              "linalg_tiled_ops": 2,
+              "openmp_parallel_ops": 0,
+              "parallel_tile_applied": 2,
+              "parallel_tile_requested": 2,
+              "reassociated_float_combines": 0,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0
+            },
+            "true_mlir_pipeline": true
+          },
+          "correctness": [
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t4",
+              "passed": true
+            },
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t5",
+              "passed": true
+            }
+          ],
+          "data_prep_samples_us": [
+            47017.776,
+            47071.236,
+            47045.156
+          ],
+          "initial_data_prep_us_per_call": 47095.816,
+          "initial_ranking_samples_us": [
+            84919.49
+          ],
+          "latency_us": 85063.251,
+          "logical_boundary_gbps": 3.1561011934519168,
+          "selection_protocol": "fresh-alternating-round-robin.v1",
+          "selection_samples_us": [
+            85172.291,
+            85063.251,
+            85003.45
+          ],
+          "status": "measured"
+        },
+        {
+          "candidate": {
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt8.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+            "lowering_path_kind": "materialized",
+            "object_size_bytes": 8736,
+            "python_target_kernel_emission": false,
+            "requested_schedule": {
+              "opt_level": 3,
+              "parallel_tile": 8,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "fixed",
+              "vectorize": true
+            },
+            "rvv_instruction_count": 89,
+            "rvv_reduction_instruction_count": 0,
+            "rvv_vsetvl_modes": [
+              "e16,m1",
+              "e32,m8",
+              "e64,m4",
+              "e64,m8",
+              "e8,m1",
+              "e8,mf2"
+            ],
+            "scalable_vector_ir_count": 0,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 8,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "fixed",
+              "vectorize": true
+            },
+            "schedule_realization": {
+              "parallel_tile_applied": 8,
+              "reduction_tile_applied": 0,
+              "requested_equals_actual": true
+            },
+            "symbol": "scrc_j0",
+            "transformation": {
+              "b_transformations": [],
+              "explicit_vector_reduction": false,
+              "fuse_producers": false,
+              "fused_softmax": false,
+              "joint_vector_reduction": false,
+              "lowering_path_kind": "materialized",
+              "reassociate_reductions": false,
+              "required_b_capabilities": [],
+              "transformation_trace": [
+                "rvv.linalg.materialized.v1"
+              ]
+            },
+            "transformation_record": {
+              "explicit_vector_max_reductions": 0,
+              "explicit_vector_reduction_loops": 0,
+              "explicit_vector_reduction_scalable": 0,
+              "explicit_vector_reduction_width": 0,
+              "explicit_vector_reductions": 0,
+              "fused_producers": 0,
+              "fused_softmax_count": 0,
+              "fused_softmax_full_row_traversals": 0,
+              "fused_softmax_input_traversals": 0,
+              "fused_softmax_removed_materializations": 0,
+              "fused_softmax_scalable": 0,
+              "fused_softmax_scalar_reductions": 0,
+              "fused_softmax_vector_reductions": 0,
+              "fused_softmax_vector_width": 0,
+              "fusion_multi_use_rejections": 0,
+              "fusion_outer_parallel_only_ops": 0,
+              "generated_tile_loops": 10,
+              "joint_raw_moment_variances": 0,
+              "joint_vector_reduction_groups": 0,
+              "joint_vector_reduction_root_loads": 0,
+              "joint_vector_reductions": 0,
+              "linalg_ops_after": 14,
+              "linalg_ops_before": 14,
+              "linalg_tiled_ops": 5,
+              "openmp_parallel_ops": 0,
+              "parallel_tile_applied": 8,
+              "parallel_tile_requested": 8,
+              "reassociated_float_combines": 0,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0
+            },
+            "true_mlir_pipeline": true
+          },
+          "correctness": [
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t4",
+              "passed": true
+            },
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t5",
+              "passed": true
+            }
+          ],
+          "initial_data_prep_us_per_call": 47044.816,
+          "initial_ranking_samples_us": [
+            1493028.795
+          ],
+          "latency_us": 1493028.795,
+          "status": "measured"
+        },
+        {
+          "candidate": {
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.producer_consumer_fused.o3.vec1.vlen128.scalable0.lanes4.pt8.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+            "lowering_path_kind": "producer_consumer_fused",
+            "object_size_bytes": 1952,
+            "python_target_kernel_emission": false,
+            "requested_schedule": {
+              "opt_level": 3,
+              "parallel_tile": 8,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "fixed",
+              "vectorize": true
+            },
+            "rvv_instruction_count": 0,
+            "rvv_reduction_instruction_count": 0,
+            "rvv_vsetvl_modes": [],
+            "scalable_vector_ir_count": 0,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 8,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "fixed",
+              "vectorize": true
+            },
+            "schedule_realization": {
+              "parallel_tile_applied": 8,
+              "reduction_tile_applied": 0,
+              "requested_equals_actual": true
+            },
+            "symbol": "scrc_j0",
+            "transformation": {
+              "b_transformations": [
+                "riscv.b.readonly_producer_consumer_fusion.v2"
+              ],
+              "explicit_vector_reduction": false,
+              "fuse_producers": true,
+              "fused_softmax": false,
+              "joint_vector_reduction": false,
+              "lowering_path_kind": "producer_consumer_fused",
+              "reassociate_reductions": false,
+              "required_b_capabilities": [
+                "b.readonly_nonalias_inputs.v1"
+              ],
+              "transformation_trace": [
+                "rvv.linalg.producer_consumer_fusion.v2"
+              ]
+            },
+            "transformation_record": {
+              "explicit_vector_max_reductions": 0,
+              "explicit_vector_reduction_loops": 0,
+              "explicit_vector_reduction_scalable": 0,
+              "explicit_vector_reduction_width": 0,
+              "explicit_vector_reductions": 0,
+              "fused_producers": 1,
+              "fused_softmax_count": 0,
+              "fused_softmax_full_row_traversals": 0,
+              "fused_softmax_input_traversals": 0,
+              "fused_softmax_removed_materializations": 0,
+              "fused_softmax_scalable": 0,
+              "fused_softmax_scalar_reductions": 0,
+              "fused_softmax_vector_reductions": 0,
+              "fused_softmax_vector_width": 0,
+              "fusion_multi_use_rejections": 0,
+              "fusion_outer_parallel_only_ops": 0,
+              "generated_tile_loops": 4,
+              "joint_raw_moment_variances": 0,
+              "joint_vector_reduction_groups": 0,
+              "joint_vector_reduction_root_loads": 0,
+              "joint_vector_reductions": 0,
+              "linalg_ops_after": 4,
+              "linalg_ops_before": 14,
+              "linalg_tiled_ops": 2,
+              "openmp_parallel_ops": 0,
+              "parallel_tile_applied": 8,
+              "parallel_tile_requested": 8,
+              "reassociated_float_combines": 0,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0
+            },
+            "true_mlir_pipeline": true
+          },
+          "correctness": [
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t4",
+              "passed": true
+            },
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t5",
+              "passed": true
+            }
+          ],
+          "initial_data_prep_us_per_call": 47051.016,
+          "initial_ranking_samples_us": [
+            827603.24
+          ],
+          "latency_us": 827603.24,
+          "status": "measured"
+        },
+        {
+          "candidate": {
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt1.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+            "lowering_path_kind": "materialized",
+            "object_size_bytes": 2632,
+            "python_target_kernel_emission": false,
+            "requested_schedule": {
+              "opt_level": 3,
+              "parallel_tile": 1,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "fixed",
+              "vectorize": true
+            },
+            "rvv_instruction_count": 59,
+            "rvv_reduction_instruction_count": 0,
+            "rvv_vsetvl_modes": [
+              "e32,m2",
+              "e64,m1",
+              "e64,m4",
+              "e8,mf2",
+              "e8,mf8"
+            ],
+            "scalable_vector_ir_count": 0,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 1,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "fixed",
+              "vectorize": true
+            },
+            "schedule_realization": {
+              "parallel_tile_applied": 1,
+              "reduction_tile_applied": 0,
+              "requested_equals_actual": true
+            },
+            "symbol": "scrc_j0",
+            "transformation": {
+              "b_transformations": [],
+              "explicit_vector_reduction": false,
+              "fuse_producers": false,
+              "fused_softmax": false,
+              "joint_vector_reduction": false,
+              "lowering_path_kind": "materialized",
+              "reassociate_reductions": false,
+              "required_b_capabilities": [],
+              "transformation_trace": [
+                "rvv.linalg.materialized.v1"
+              ]
+            },
+            "transformation_record": {
+              "explicit_vector_max_reductions": 0,
+              "explicit_vector_reduction_loops": 0,
+              "explicit_vector_reduction_scalable": 0,
+              "explicit_vector_reduction_width": 0,
+              "explicit_vector_reductions": 0,
+              "fused_producers": 0,
+              "fused_softmax_count": 0,
+              "fused_softmax_full_row_traversals": 0,
+              "fused_softmax_input_traversals": 0,
+              "fused_softmax_removed_materializations": 0,
+              "fused_softmax_scalable": 0,
+              "fused_softmax_scalar_reductions": 0,
+              "fused_softmax_vector_reductions": 0,
+              "fused_softmax_vector_width": 0,
+              "fusion_multi_use_rejections": 0,
+              "fusion_outer_parallel_only_ops": 0,
+              "generated_tile_loops": 10,
+              "joint_raw_moment_variances": 0,
+              "joint_vector_reduction_groups": 0,
+              "joint_vector_reduction_root_loads": 0,
+              "joint_vector_reductions": 0,
+              "linalg_ops_after": 14,
+              "linalg_ops_before": 14,
+              "linalg_tiled_ops": 5,
+              "openmp_parallel_ops": 0,
+              "parallel_tile_applied": 1,
+              "parallel_tile_requested": 1,
+              "reassociated_float_combines": 0,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0
+            },
+            "true_mlir_pipeline": true
+          },
+          "correctness": [
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t4",
+              "passed": true
+            },
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t5",
+              "passed": true
+            }
+          ],
+          "initial_data_prep_us_per_call": 47016.515,
+          "initial_ranking_samples_us": [
+            326483.319
+          ],
+          "latency_us": 326483.319,
+          "status": "measured"
+        },
+        {
+          "candidate": {
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.producer_consumer_fused.o3.vec1.vlen128.scalable0.lanes4.pt1.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+            "lowering_path_kind": "producer_consumer_fused",
+            "object_size_bytes": 2032,
+            "python_target_kernel_emission": false,
+            "requested_schedule": {
+              "opt_level": 3,
+              "parallel_tile": 1,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "fixed",
+              "vectorize": true
+            },
+            "rvv_instruction_count": 56,
+            "rvv_reduction_instruction_count": 0,
+            "rvv_vsetvl_modes": [
+              "e32,m2"
+            ],
+            "scalable_vector_ir_count": 0,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 1,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "fixed",
+              "vectorize": true
+            },
+            "schedule_realization": {
+              "parallel_tile_applied": 1,
+              "reduction_tile_applied": 0,
+              "requested_equals_actual": true
+            },
+            "symbol": "scrc_j0",
+            "transformation": {
+              "b_transformations": [
+                "riscv.b.readonly_producer_consumer_fusion.v2"
+              ],
+              "explicit_vector_reduction": false,
+              "fuse_producers": true,
+              "fused_softmax": false,
+              "joint_vector_reduction": false,
+              "lowering_path_kind": "producer_consumer_fused",
+              "reassociate_reductions": false,
+              "required_b_capabilities": [
+                "b.readonly_nonalias_inputs.v1"
+              ],
+              "transformation_trace": [
+                "rvv.linalg.producer_consumer_fusion.v2"
+              ]
+            },
+            "transformation_record": {
+              "explicit_vector_max_reductions": 0,
+              "explicit_vector_reduction_loops": 0,
+              "explicit_vector_reduction_scalable": 0,
+              "explicit_vector_reduction_width": 0,
+              "explicit_vector_reductions": 0,
+              "fused_producers": 1,
+              "fused_softmax_count": 0,
+              "fused_softmax_full_row_traversals": 0,
+              "fused_softmax_input_traversals": 0,
+              "fused_softmax_removed_materializations": 0,
+              "fused_softmax_scalable": 0,
+              "fused_softmax_scalar_reductions": 0,
+              "fused_softmax_vector_reductions": 0,
+              "fused_softmax_vector_width": 0,
+              "fusion_multi_use_rejections": 0,
+              "fusion_outer_parallel_only_ops": 0,
+              "generated_tile_loops": 4,
+              "joint_raw_moment_variances": 0,
+              "joint_vector_reduction_groups": 0,
+              "joint_vector_reduction_root_loads": 0,
+              "joint_vector_reductions": 0,
+              "linalg_ops_after": 4,
+              "linalg_ops_before": 14,
+              "linalg_tiled_ops": 2,
+              "openmp_parallel_ops": 0,
+              "parallel_tile_applied": 1,
+              "parallel_tile_requested": 1,
+              "reassociated_float_combines": 0,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0
+            },
+            "true_mlir_pipeline": true
+          },
+          "correctness": [
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t4",
+              "passed": true
+            },
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t5",
+              "passed": true
+            }
+          ],
+          "initial_data_prep_us_per_call": 47008.816,
+          "initial_ranking_samples_us": [
+            353511.364
+          ],
+          "latency_us": 353511.364,
+          "status": "measured"
+        },
+        {
+          "candidate": {
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt16.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+            "lowering_path_kind": "materialized",
+            "object_size_bytes": 9552,
+            "python_target_kernel_emission": false,
+            "requested_schedule": {
+              "opt_level": 3,
+              "parallel_tile": 16,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "fixed",
+              "vectorize": true
+            },
+            "rvv_instruction_count": 653,
+            "rvv_reduction_instruction_count": 0,
+            "rvv_vsetvl_modes": [
+              "e32,m2",
+              "e64,m1",
+              "e64,m4",
+              "e8,mf2"
+            ],
+            "scalable_vector_ir_count": 0,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 16,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "fixed",
+              "vectorize": true
+            },
+            "schedule_realization": {
+              "parallel_tile_applied": 16,
+              "reduction_tile_applied": 0,
+              "requested_equals_actual": true
+            },
+            "symbol": "scrc_j0",
+            "transformation": {
+              "b_transformations": [],
+              "explicit_vector_reduction": false,
+              "fuse_producers": false,
+              "fused_softmax": false,
+              "joint_vector_reduction": false,
+              "lowering_path_kind": "materialized",
+              "reassociate_reductions": false,
+              "required_b_capabilities": [],
+              "transformation_trace": [
+                "rvv.linalg.materialized.v1"
+              ]
+            },
+            "transformation_record": {
+              "explicit_vector_max_reductions": 0,
+              "explicit_vector_reduction_loops": 0,
+              "explicit_vector_reduction_scalable": 0,
+              "explicit_vector_reduction_width": 0,
+              "explicit_vector_reductions": 0,
+              "fused_producers": 0,
+              "fused_softmax_count": 0,
+              "fused_softmax_full_row_traversals": 0,
+              "fused_softmax_input_traversals": 0,
+              "fused_softmax_removed_materializations": 0,
+              "fused_softmax_scalable": 0,
+              "fused_softmax_scalar_reductions": 0,
+              "fused_softmax_vector_reductions": 0,
+              "fused_softmax_vector_width": 0,
+              "fusion_multi_use_rejections": 0,
+              "fusion_outer_parallel_only_ops": 0,
+              "generated_tile_loops": 10,
+              "joint_raw_moment_variances": 0,
+              "joint_vector_reduction_groups": 0,
+              "joint_vector_reduction_root_loads": 0,
+              "joint_vector_reductions": 0,
+              "linalg_ops_after": 14,
+              "linalg_ops_before": 14,
+              "linalg_tiled_ops": 5,
+              "openmp_parallel_ops": 0,
+              "parallel_tile_applied": 16,
+              "parallel_tile_requested": 16,
+              "reassociated_float_combines": 0,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0
+            },
+            "true_mlir_pipeline": true
+          },
+          "correctness": [
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t4",
+              "passed": true
+            },
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t5",
+              "passed": true
+            }
+          ],
+          "initial_data_prep_us_per_call": 47132.757,
+          "initial_ranking_samples_us": [
+            2471088.246
+          ],
+          "latency_us": 2471088.246,
+          "status": "measured"
+        },
+        {
+          "candidate": {
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.producer_consumer_fused.o3.vec1.vlen128.scalable0.lanes4.pt16.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+            "lowering_path_kind": "producer_consumer_fused",
+            "object_size_bytes": 3904,
+            "python_target_kernel_emission": false,
+            "requested_schedule": {
+              "opt_level": 3,
+              "parallel_tile": 16,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "fixed",
+              "vectorize": true
+            },
+            "rvv_instruction_count": 195,
+            "rvv_reduction_instruction_count": 0,
+            "rvv_vsetvl_modes": [
+              "e32,m2"
+            ],
+            "scalable_vector_ir_count": 0,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 16,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "fixed",
+              "vectorize": true
+            },
+            "schedule_realization": {
+              "parallel_tile_applied": 16,
+              "reduction_tile_applied": 0,
+              "requested_equals_actual": true
+            },
+            "symbol": "scrc_j0",
+            "transformation": {
+              "b_transformations": [
+                "riscv.b.readonly_producer_consumer_fusion.v2"
+              ],
+              "explicit_vector_reduction": false,
+              "fuse_producers": true,
+              "fused_softmax": false,
+              "joint_vector_reduction": false,
+              "lowering_path_kind": "producer_consumer_fused",
+              "reassociate_reductions": false,
+              "required_b_capabilities": [
+                "b.readonly_nonalias_inputs.v1"
+              ],
+              "transformation_trace": [
+                "rvv.linalg.producer_consumer_fusion.v2"
+              ]
+            },
+            "transformation_record": {
+              "explicit_vector_max_reductions": 0,
+              "explicit_vector_reduction_loops": 0,
+              "explicit_vector_reduction_scalable": 0,
+              "explicit_vector_reduction_width": 0,
+              "explicit_vector_reductions": 0,
+              "fused_producers": 1,
+              "fused_softmax_count": 0,
+              "fused_softmax_full_row_traversals": 0,
+              "fused_softmax_input_traversals": 0,
+              "fused_softmax_removed_materializations": 0,
+              "fused_softmax_scalable": 0,
+              "fused_softmax_scalar_reductions": 0,
+              "fused_softmax_vector_reductions": 0,
+              "fused_softmax_vector_width": 0,
+              "fusion_multi_use_rejections": 0,
+              "fusion_outer_parallel_only_ops": 0,
+              "generated_tile_loops": 4,
+              "joint_raw_moment_variances": 0,
+              "joint_vector_reduction_groups": 0,
+              "joint_vector_reduction_root_loads": 0,
+              "joint_vector_reductions": 0,
+              "linalg_ops_after": 4,
+              "linalg_ops_before": 14,
+              "linalg_tiled_ops": 2,
+              "openmp_parallel_ops": 0,
+              "parallel_tile_applied": 16,
+              "parallel_tile_requested": 16,
+              "reassociated_float_combines": 0,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0
+            },
+            "true_mlir_pipeline": true
+          },
+          "correctness": [
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t4",
+              "passed": true
+            },
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t5",
+              "passed": true
+            }
+          ],
+          "initial_data_prep_us_per_call": 47057.136,
+          "initial_ranking_samples_us": [
+            1238646.107
+          ],
+          "latency_us": 1238646.107,
+          "status": "measured"
+        },
+        {
+          "candidate": {
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.materialized.o3.vec1.vlen0.scalable1.lanes4.pt16.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+            "lowering_path_kind": "materialized",
+            "object_size_bytes": 5376,
+            "python_target_kernel_emission": false,
+            "requested_schedule": {
+              "opt_level": 3,
+              "parallel_tile": 16,
+              "reduction_tile": 0,
+              "scalable_vectorization": true,
+              "thread_count": 1,
+              "vector_bits": 0,
+              "vector_lanes": 4,
+              "vector_policy": "scalable",
+              "vectorize": true
+            },
+            "rvv_instruction_count": 163,
+            "rvv_reduction_instruction_count": 0,
+            "rvv_vsetvl_modes": [
+              "e32,m2"
+            ],
+            "scalable_vector_ir_count": 655,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 16,
+              "reduction_tile": 0,
+              "scalable_vectorization": true,
+              "thread_count": 1,
+              "vector_bits": 0,
+              "vector_lanes": 4,
+              "vector_policy": "scalable",
+              "vectorize": true
+            },
+            "schedule_realization": {
+              "parallel_tile_applied": 16,
+              "reduction_tile_applied": 0,
+              "requested_equals_actual": true
+            },
+            "symbol": "scrc_j0",
+            "transformation": {
+              "b_transformations": [],
+              "explicit_vector_reduction": false,
+              "fuse_producers": false,
+              "fused_softmax": false,
+              "joint_vector_reduction": false,
+              "lowering_path_kind": "materialized",
+              "reassociate_reductions": false,
+              "required_b_capabilities": [],
+              "transformation_trace": [
+                "rvv.linalg.materialized.v1"
+              ]
+            },
+            "transformation_record": {
+              "explicit_vector_max_reductions": 0,
+              "explicit_vector_reduction_loops": 0,
+              "explicit_vector_reduction_scalable": 0,
+              "explicit_vector_reduction_width": 0,
+              "explicit_vector_reductions": 0,
+              "fused_producers": 0,
+              "fused_softmax_count": 0,
+              "fused_softmax_full_row_traversals": 0,
+              "fused_softmax_input_traversals": 0,
+              "fused_softmax_removed_materializations": 0,
+              "fused_softmax_scalable": 0,
+              "fused_softmax_scalar_reductions": 0,
+              "fused_softmax_vector_reductions": 0,
+              "fused_softmax_vector_width": 0,
+              "fusion_multi_use_rejections": 0,
+              "fusion_outer_parallel_only_ops": 0,
+              "generated_tile_loops": 10,
+              "joint_raw_moment_variances": 0,
+              "joint_vector_reduction_groups": 0,
+              "joint_vector_reduction_root_loads": 0,
+              "joint_vector_reductions": 0,
+              "linalg_ops_after": 14,
+              "linalg_ops_before": 14,
+              "linalg_tiled_ops": 5,
+              "openmp_parallel_ops": 0,
+              "parallel_tile_applied": 16,
+              "parallel_tile_requested": 16,
+              "reassociated_float_combines": 0,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0
+            },
+            "true_mlir_pipeline": true
+          },
+          "correctness": [
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t4",
+              "passed": true
+            },
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t5",
+              "passed": true
+            }
+          ],
+          "initial_data_prep_us_per_call": 47061.436,
+          "initial_ranking_samples_us": [
+            2373856.18
+          ],
+          "latency_us": 2373856.18,
+          "status": "measured"
+        },
+        {
+          "candidate": {
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.producer_consumer_fused.o3.vec1.vlen0.scalable1.lanes4.pt16.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+            "lowering_path_kind": "producer_consumer_fused",
+            "object_size_bytes": 3960,
+            "python_target_kernel_emission": false,
+            "requested_schedule": {
+              "opt_level": 3,
+              "parallel_tile": 16,
+              "reduction_tile": 0,
+              "scalable_vectorization": true,
+              "thread_count": 1,
+              "vector_bits": 0,
+              "vector_lanes": 4,
+              "vector_policy": "scalable",
+              "vectorize": true
+            },
+            "rvv_instruction_count": 195,
+            "rvv_reduction_instruction_count": 0,
+            "rvv_vsetvl_modes": [
+              "e32,m2"
+            ],
+            "scalable_vector_ir_count": 712,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 16,
+              "reduction_tile": 0,
+              "scalable_vectorization": true,
+              "thread_count": 1,
+              "vector_bits": 0,
+              "vector_lanes": 4,
+              "vector_policy": "scalable",
+              "vectorize": true
+            },
+            "schedule_realization": {
+              "parallel_tile_applied": 16,
+              "reduction_tile_applied": 0,
+              "requested_equals_actual": true
+            },
+            "symbol": "scrc_j0",
+            "transformation": {
+              "b_transformations": [
+                "riscv.b.readonly_producer_consumer_fusion.v2"
+              ],
+              "explicit_vector_reduction": false,
+              "fuse_producers": true,
+              "fused_softmax": false,
+              "joint_vector_reduction": false,
+              "lowering_path_kind": "producer_consumer_fused",
+              "reassociate_reductions": false,
+              "required_b_capabilities": [
+                "b.readonly_nonalias_inputs.v1"
+              ],
+              "transformation_trace": [
+                "rvv.linalg.producer_consumer_fusion.v2"
+              ]
+            },
+            "transformation_record": {
+              "explicit_vector_max_reductions": 0,
+              "explicit_vector_reduction_loops": 0,
+              "explicit_vector_reduction_scalable": 0,
+              "explicit_vector_reduction_width": 0,
+              "explicit_vector_reductions": 0,
+              "fused_producers": 1,
+              "fused_softmax_count": 0,
+              "fused_softmax_full_row_traversals": 0,
+              "fused_softmax_input_traversals": 0,
+              "fused_softmax_removed_materializations": 0,
+              "fused_softmax_scalable": 0,
+              "fused_softmax_scalar_reductions": 0,
+              "fused_softmax_vector_reductions": 0,
+              "fused_softmax_vector_width": 0,
+              "fusion_multi_use_rejections": 0,
+              "fusion_outer_parallel_only_ops": 0,
+              "generated_tile_loops": 4,
+              "joint_raw_moment_variances": 0,
+              "joint_vector_reduction_groups": 0,
+              "joint_vector_reduction_root_loads": 0,
+              "joint_vector_reductions": 0,
+              "linalg_ops_after": 4,
+              "linalg_ops_before": 14,
+              "linalg_tiled_ops": 2,
+              "openmp_parallel_ops": 0,
+              "parallel_tile_applied": 16,
+              "parallel_tile_requested": 16,
+              "reassociated_float_combines": 0,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0
+            },
+            "true_mlir_pipeline": true
+          },
+          "correctness": [
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t4",
+              "passed": true
+            },
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t5",
+              "passed": true
+            }
+          ],
+          "initial_data_prep_us_per_call": 47068.176,
+          "initial_ranking_samples_us": [
+            1237622.323
+          ],
+          "latency_us": 1237622.323,
+          "status": "measured"
+        },
+        {
+          "candidate": {
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt32.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+            "lowering_path_kind": "materialized",
+            "object_size_bytes": 16328,
+            "python_target_kernel_emission": false,
+            "requested_schedule": {
+              "opt_level": 3,
+              "parallel_tile": 32,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "fixed",
+              "vectorize": true
+            },
+            "rvv_instruction_count": 1723,
+            "rvv_reduction_instruction_count": 0,
+            "rvv_vsetvl_modes": [
+              "e32,m2",
+              "e64,m1",
+              "e64,m4",
+              "e8,mf2"
+            ],
+            "scalable_vector_ir_count": 0,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 32,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "fixed",
+              "vectorize": true
+            },
+            "schedule_realization": {
+              "parallel_tile_applied": 32,
+              "reduction_tile_applied": 0,
+              "requested_equals_actual": true
+            },
+            "symbol": "scrc_j0",
+            "transformation": {
+              "b_transformations": [],
+              "explicit_vector_reduction": false,
+              "fuse_producers": false,
+              "fused_softmax": false,
+              "joint_vector_reduction": false,
+              "lowering_path_kind": "materialized",
+              "reassociate_reductions": false,
+              "required_b_capabilities": [],
+              "transformation_trace": [
+                "rvv.linalg.materialized.v1"
+              ]
+            },
+            "transformation_record": {
+              "explicit_vector_max_reductions": 0,
+              "explicit_vector_reduction_loops": 0,
+              "explicit_vector_reduction_scalable": 0,
+              "explicit_vector_reduction_width": 0,
+              "explicit_vector_reductions": 0,
+              "fused_producers": 0,
+              "fused_softmax_count": 0,
+              "fused_softmax_full_row_traversals": 0,
+              "fused_softmax_input_traversals": 0,
+              "fused_softmax_removed_materializations": 0,
+              "fused_softmax_scalable": 0,
+              "fused_softmax_scalar_reductions": 0,
+              "fused_softmax_vector_reductions": 0,
+              "fused_softmax_vector_width": 0,
+              "fusion_multi_use_rejections": 0,
+              "fusion_outer_parallel_only_ops": 0,
+              "generated_tile_loops": 10,
+              "joint_raw_moment_variances": 0,
+              "joint_vector_reduction_groups": 0,
+              "joint_vector_reduction_root_loads": 0,
+              "joint_vector_reductions": 0,
+              "linalg_ops_after": 14,
+              "linalg_ops_before": 14,
+              "linalg_tiled_ops": 5,
+              "openmp_parallel_ops": 0,
+              "parallel_tile_applied": 32,
+              "parallel_tile_requested": 32,
+              "reassociated_float_combines": 0,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0
+            },
+            "true_mlir_pipeline": true
+          },
+          "correctness": [
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t4",
+              "passed": true
+            },
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t5",
+              "passed": true
+            }
+          ],
+          "initial_data_prep_us_per_call": 47055.476,
+          "initial_ranking_samples_us": [
+            2506227.367
+          ],
+          "latency_us": 2506227.367,
+          "status": "measured"
+        },
+        {
+          "candidate": {
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.producer_consumer_fused.o3.vec1.vlen128.scalable0.lanes4.pt32.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+            "lowering_path_kind": "producer_consumer_fused",
+            "object_size_bytes": 3392,
+            "python_target_kernel_emission": false,
+            "requested_schedule": {
+              "opt_level": 3,
+              "parallel_tile": 32,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "fixed",
+              "vectorize": true
+            },
+            "rvv_instruction_count": 106,
+            "rvv_reduction_instruction_count": 0,
+            "rvv_vsetvl_modes": [
+              "e32,m2"
+            ],
+            "scalable_vector_ir_count": 0,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 32,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "fixed",
+              "vectorize": true
+            },
+            "schedule_realization": {
+              "parallel_tile_applied": 32,
+              "reduction_tile_applied": 0,
+              "requested_equals_actual": true
+            },
+            "symbol": "scrc_j0",
+            "transformation": {
+              "b_transformations": [
+                "riscv.b.readonly_producer_consumer_fusion.v2"
+              ],
+              "explicit_vector_reduction": false,
+              "fuse_producers": true,
+              "fused_softmax": false,
+              "joint_vector_reduction": false,
+              "lowering_path_kind": "producer_consumer_fused",
+              "reassociate_reductions": false,
+              "required_b_capabilities": [
+                "b.readonly_nonalias_inputs.v1"
+              ],
+              "transformation_trace": [
+                "rvv.linalg.producer_consumer_fusion.v2"
+              ]
+            },
+            "transformation_record": {
+              "explicit_vector_max_reductions": 0,
+              "explicit_vector_reduction_loops": 0,
+              "explicit_vector_reduction_scalable": 0,
+              "explicit_vector_reduction_width": 0,
+              "explicit_vector_reductions": 0,
+              "fused_producers": 1,
+              "fused_softmax_count": 0,
+              "fused_softmax_full_row_traversals": 0,
+              "fused_softmax_input_traversals": 0,
+              "fused_softmax_removed_materializations": 0,
+              "fused_softmax_scalable": 0,
+              "fused_softmax_scalar_reductions": 0,
+              "fused_softmax_vector_reductions": 0,
+              "fused_softmax_vector_width": 0,
+              "fusion_multi_use_rejections": 0,
+              "fusion_outer_parallel_only_ops": 0,
+              "generated_tile_loops": 4,
+              "joint_raw_moment_variances": 0,
+              "joint_vector_reduction_groups": 0,
+              "joint_vector_reduction_root_loads": 0,
+              "joint_vector_reductions": 0,
+              "linalg_ops_after": 4,
+              "linalg_ops_before": 14,
+              "linalg_tiled_ops": 2,
+              "openmp_parallel_ops": 0,
+              "parallel_tile_applied": 32,
+              "parallel_tile_requested": 32,
+              "reassociated_float_combines": 0,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0
+            },
+            "true_mlir_pipeline": true
+          },
+          "correctness": [
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t4",
+              "passed": true
+            },
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t5",
+              "passed": true
+            }
+          ],
+          "initial_data_prep_us_per_call": 47107.216,
+          "initial_ranking_samples_us": [
+            325774.396
+          ],
+          "latency_us": 325774.396,
+          "status": "measured"
+        },
+        {
+          "candidate": {
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt64.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+            "lowering_path_kind": "materialized",
+            "object_size_bytes": 3936,
+            "python_target_kernel_emission": false,
+            "requested_schedule": {
+              "opt_level": 3,
+              "parallel_tile": 64,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "fixed",
+              "vectorize": true
+            },
+            "rvv_instruction_count": 119,
+            "rvv_reduction_instruction_count": 0,
+            "rvv_vsetvl_modes": [
+              "e32,m2",
+              "e64,m1",
+              "e64,m4",
+              "e8,mf2",
+              "e8,mf8"
+            ],
+            "scalable_vector_ir_count": 0,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 64,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "fixed",
+              "vectorize": true
+            },
+            "schedule_realization": {
+              "parallel_tile_applied": 64,
+              "reduction_tile_applied": 0,
+              "requested_equals_actual": true
+            },
+            "symbol": "scrc_j0",
+            "transformation": {
+              "b_transformations": [],
+              "explicit_vector_reduction": false,
+              "fuse_producers": false,
+              "fused_softmax": false,
+              "joint_vector_reduction": false,
+              "lowering_path_kind": "materialized",
+              "reassociate_reductions": false,
+              "required_b_capabilities": [],
+              "transformation_trace": [
+                "rvv.linalg.materialized.v1"
+              ]
+            },
+            "transformation_record": {
+              "explicit_vector_max_reductions": 0,
+              "explicit_vector_reduction_loops": 0,
+              "explicit_vector_reduction_scalable": 0,
+              "explicit_vector_reduction_width": 0,
+              "explicit_vector_reductions": 0,
+              "fused_producers": 0,
+              "fused_softmax_count": 0,
+              "fused_softmax_full_row_traversals": 0,
+              "fused_softmax_input_traversals": 0,
+              "fused_softmax_removed_materializations": 0,
+              "fused_softmax_scalable": 0,
+              "fused_softmax_scalar_reductions": 0,
+              "fused_softmax_vector_reductions": 0,
+              "fused_softmax_vector_width": 0,
+              "fusion_multi_use_rejections": 0,
+              "fusion_outer_parallel_only_ops": 0,
+              "generated_tile_loops": 10,
+              "joint_raw_moment_variances": 0,
+              "joint_vector_reduction_groups": 0,
+              "joint_vector_reduction_root_loads": 0,
+              "joint_vector_reductions": 0,
+              "linalg_ops_after": 14,
+              "linalg_ops_before": 14,
+              "linalg_tiled_ops": 5,
+              "openmp_parallel_ops": 0,
+              "parallel_tile_applied": 64,
+              "parallel_tile_requested": 64,
+              "reassociated_float_combines": 0,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0
+            },
+            "true_mlir_pipeline": true
+          },
+          "correctness": [
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t4",
+              "passed": true
+            },
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t5",
+              "passed": true
+            }
+          ],
+          "initial_data_prep_us_per_call": 47066.256,
+          "initial_ranking_samples_us": [
+            569124.793
+          ],
+          "latency_us": 569124.793,
+          "status": "measured"
+        },
+        {
+          "candidate": {
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.producer_consumer_fused.o3.vec1.vlen128.scalable0.lanes4.pt64.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+            "lowering_path_kind": "producer_consumer_fused",
+            "object_size_bytes": 4016,
+            "python_target_kernel_emission": false,
+            "requested_schedule": {
+              "opt_level": 3,
+              "parallel_tile": 64,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "fixed",
+              "vectorize": true
+            },
+            "rvv_instruction_count": 206,
+            "rvv_reduction_instruction_count": 0,
+            "rvv_vsetvl_modes": [
+              "e32,m2"
+            ],
+            "scalable_vector_ir_count": 0,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 64,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "fixed",
+              "vectorize": true
+            },
+            "schedule_realization": {
+              "parallel_tile_applied": 64,
+              "reduction_tile_applied": 0,
+              "requested_equals_actual": true
+            },
+            "symbol": "scrc_j0",
+            "transformation": {
+              "b_transformations": [
+                "riscv.b.readonly_producer_consumer_fusion.v2"
+              ],
+              "explicit_vector_reduction": false,
+              "fuse_producers": true,
+              "fused_softmax": false,
+              "joint_vector_reduction": false,
+              "lowering_path_kind": "producer_consumer_fused",
+              "reassociate_reductions": false,
+              "required_b_capabilities": [
+                "b.readonly_nonalias_inputs.v1"
+              ],
+              "transformation_trace": [
+                "rvv.linalg.producer_consumer_fusion.v2"
+              ]
+            },
+            "transformation_record": {
+              "explicit_vector_max_reductions": 0,
+              "explicit_vector_reduction_loops": 0,
+              "explicit_vector_reduction_scalable": 0,
+              "explicit_vector_reduction_width": 0,
+              "explicit_vector_reductions": 0,
+              "fused_producers": 1,
+              "fused_softmax_count": 0,
+              "fused_softmax_full_row_traversals": 0,
+              "fused_softmax_input_traversals": 0,
+              "fused_softmax_removed_materializations": 0,
+              "fused_softmax_scalable": 0,
+              "fused_softmax_scalar_reductions": 0,
+              "fused_softmax_vector_reductions": 0,
+              "fused_softmax_vector_width": 0,
+              "fusion_multi_use_rejections": 0,
+              "fusion_outer_parallel_only_ops": 0,
+              "generated_tile_loops": 4,
+              "joint_raw_moment_variances": 0,
+              "joint_vector_reduction_groups": 0,
+              "joint_vector_reduction_root_loads": 0,
+              "joint_vector_reductions": 0,
+              "linalg_ops_after": 4,
+              "linalg_ops_before": 14,
+              "linalg_tiled_ops": 2,
+              "openmp_parallel_ops": 0,
+              "parallel_tile_applied": 64,
+              "parallel_tile_requested": 64,
+              "reassociated_float_combines": 0,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0
+            },
+            "true_mlir_pipeline": true
+          },
+          "correctness": [
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t4",
+              "passed": true
+            },
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t5",
+              "passed": true
+            }
+          ],
+          "initial_data_prep_us_per_call": 47051.516,
+          "initial_ranking_samples_us": [
+            281248.711
+          ],
+          "latency_us": 281248.711,
+          "status": "measured"
+        },
+        {
+          "candidate": {
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.materialized.o3.vec1.vlen0.scalable1.lanes4.pt64.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+            "lowering_path_kind": "materialized",
+            "object_size_bytes": 3448,
+            "python_target_kernel_emission": false,
+            "requested_schedule": {
+              "opt_level": 3,
+              "parallel_tile": 64,
+              "reduction_tile": 0,
+              "scalable_vectorization": true,
+              "thread_count": 1,
+              "vector_bits": 0,
+              "vector_lanes": 4,
+              "vector_policy": "scalable",
+              "vectorize": true
+            },
+            "rvv_instruction_count": 48,
+            "rvv_reduction_instruction_count": 0,
+            "rvv_vsetvl_modes": [
+              "e32,m2",
+              "e64,m1",
+              "e64,m2",
+              "e64,m4",
+              "e8,mf2",
+              "e8,mf8"
+            ],
+            "scalable_vector_ir_count": 13,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 64,
+              "reduction_tile": 0,
+              "scalable_vectorization": true,
+              "thread_count": 1,
+              "vector_bits": 0,
+              "vector_lanes": 4,
+              "vector_policy": "scalable",
+              "vectorize": true
+            },
+            "schedule_realization": {
+              "parallel_tile_applied": 64,
+              "reduction_tile_applied": 0,
+              "requested_equals_actual": true
+            },
+            "symbol": "scrc_j0",
+            "transformation": {
+              "b_transformations": [],
+              "explicit_vector_reduction": false,
+              "fuse_producers": false,
+              "fused_softmax": false,
+              "joint_vector_reduction": false,
+              "lowering_path_kind": "materialized",
+              "reassociate_reductions": false,
+              "required_b_capabilities": [],
+              "transformation_trace": [
+                "rvv.linalg.materialized.v1"
+              ]
+            },
+            "transformation_record": {
+              "explicit_vector_max_reductions": 0,
+              "explicit_vector_reduction_loops": 0,
+              "explicit_vector_reduction_scalable": 0,
+              "explicit_vector_reduction_width": 0,
+              "explicit_vector_reductions": 0,
+              "fused_producers": 0,
+              "fused_softmax_count": 0,
+              "fused_softmax_full_row_traversals": 0,
+              "fused_softmax_input_traversals": 0,
+              "fused_softmax_removed_materializations": 0,
+              "fused_softmax_scalable": 0,
+              "fused_softmax_scalar_reductions": 0,
+              "fused_softmax_vector_reductions": 0,
+              "fused_softmax_vector_width": 0,
+              "fusion_multi_use_rejections": 0,
+              "fusion_outer_parallel_only_ops": 0,
+              "generated_tile_loops": 10,
+              "joint_raw_moment_variances": 0,
+              "joint_vector_reduction_groups": 0,
+              "joint_vector_reduction_root_loads": 0,
+              "joint_vector_reductions": 0,
+              "linalg_ops_after": 14,
+              "linalg_ops_before": 14,
+              "linalg_tiled_ops": 5,
+              "openmp_parallel_ops": 0,
+              "parallel_tile_applied": 64,
+              "parallel_tile_requested": 64,
+              "reassociated_float_combines": 0,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0
+            },
+            "true_mlir_pipeline": true
+          },
+          "correctness": [
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t4",
+              "passed": true
+            },
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t5",
+              "passed": true
+            }
+          ],
+          "initial_data_prep_us_per_call": 47087.756,
+          "initial_ranking_samples_us": [
+            474536.179
+          ],
+          "latency_us": 474536.179,
+          "status": "measured"
+        },
+        {
+          "candidate": {
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.producer_consumer_fused.o3.vec1.vlen0.scalable1.lanes4.pt64.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+            "lowering_path_kind": "producer_consumer_fused",
+            "object_size_bytes": 2952,
+            "python_target_kernel_emission": false,
+            "requested_schedule": {
+              "opt_level": 3,
+              "parallel_tile": 64,
+              "reduction_tile": 0,
+              "scalable_vectorization": true,
+              "thread_count": 1,
+              "vector_bits": 0,
+              "vector_lanes": 4,
+              "vector_policy": "scalable",
+              "vectorize": true
+            },
+            "rvv_instruction_count": 30,
+            "rvv_reduction_instruction_count": 0,
+            "rvv_vsetvl_modes": [
+              "e32,m2"
+            ],
+            "scalable_vector_ir_count": 40,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 64,
+              "reduction_tile": 0,
+              "scalable_vectorization": true,
+              "thread_count": 1,
+              "vector_bits": 0,
+              "vector_lanes": 4,
+              "vector_policy": "scalable",
+              "vectorize": true
+            },
+            "schedule_realization": {
+              "parallel_tile_applied": 64,
+              "reduction_tile_applied": 0,
+              "requested_equals_actual": true
+            },
+            "symbol": "scrc_j0",
+            "transformation": {
+              "b_transformations": [
+                "riscv.b.readonly_producer_consumer_fusion.v2"
+              ],
+              "explicit_vector_reduction": false,
+              "fuse_producers": true,
+              "fused_softmax": false,
+              "joint_vector_reduction": false,
+              "lowering_path_kind": "producer_consumer_fused",
+              "reassociate_reductions": false,
+              "required_b_capabilities": [
+                "b.readonly_nonalias_inputs.v1"
+              ],
+              "transformation_trace": [
+                "rvv.linalg.producer_consumer_fusion.v2"
+              ]
+            },
+            "transformation_record": {
+              "explicit_vector_max_reductions": 0,
+              "explicit_vector_reduction_loops": 0,
+              "explicit_vector_reduction_scalable": 0,
+              "explicit_vector_reduction_width": 0,
+              "explicit_vector_reductions": 0,
+              "fused_producers": 1,
+              "fused_softmax_count": 0,
+              "fused_softmax_full_row_traversals": 0,
+              "fused_softmax_input_traversals": 0,
+              "fused_softmax_removed_materializations": 0,
+              "fused_softmax_scalable": 0,
+              "fused_softmax_scalar_reductions": 0,
+              "fused_softmax_vector_reductions": 0,
+              "fused_softmax_vector_width": 0,
+              "fusion_multi_use_rejections": 0,
+              "fusion_outer_parallel_only_ops": 0,
+              "generated_tile_loops": 4,
+              "joint_raw_moment_variances": 0,
+              "joint_vector_reduction_groups": 0,
+              "joint_vector_reduction_root_loads": 0,
+              "joint_vector_reductions": 0,
+              "linalg_ops_after": 4,
+              "linalg_ops_before": 14,
+              "linalg_tiled_ops": 2,
+              "openmp_parallel_ops": 0,
+              "parallel_tile_applied": 64,
+              "parallel_tile_requested": 64,
+              "reassociated_float_combines": 0,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0
+            },
+            "true_mlir_pipeline": true
+          },
+          "correctness": [
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t4",
+              "passed": true
+            },
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t5",
+              "passed": true
+            }
+          ],
+          "initial_data_prep_us_per_call": 47064.556,
+          "initial_ranking_samples_us": [
+            165330.799
+          ],
+          "latency_us": 165330.799,
+          "status": "measured"
+        },
+        {
+          "candidate": {
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt128.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+            "lowering_path_kind": "materialized",
+            "object_size_bytes": 4584,
+            "python_target_kernel_emission": false,
+            "requested_schedule": {
+              "opt_level": 3,
+              "parallel_tile": 128,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "fixed",
+              "vectorize": true
+            },
+            "rvv_instruction_count": 199,
+            "rvv_reduction_instruction_count": 0,
+            "rvv_vsetvl_modes": [
+              "e32,m2",
+              "e64,m1",
+              "e64,m4",
+              "e8,mf2",
+              "e8,mf8"
+            ],
+            "scalable_vector_ir_count": 0,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 128,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "fixed",
+              "vectorize": true
+            },
+            "schedule_realization": {
+              "parallel_tile_applied": 128,
+              "reduction_tile_applied": 0,
+              "requested_equals_actual": true
+            },
+            "symbol": "scrc_j0",
+            "transformation": {
+              "b_transformations": [],
+              "explicit_vector_reduction": false,
+              "fuse_producers": false,
+              "fused_softmax": false,
+              "joint_vector_reduction": false,
+              "lowering_path_kind": "materialized",
+              "reassociate_reductions": false,
+              "required_b_capabilities": [],
+              "transformation_trace": [
+                "rvv.linalg.materialized.v1"
+              ]
+            },
+            "transformation_record": {
+              "explicit_vector_max_reductions": 0,
+              "explicit_vector_reduction_loops": 0,
+              "explicit_vector_reduction_scalable": 0,
+              "explicit_vector_reduction_width": 0,
+              "explicit_vector_reductions": 0,
+              "fused_producers": 0,
+              "fused_softmax_count": 0,
+              "fused_softmax_full_row_traversals": 0,
+              "fused_softmax_input_traversals": 0,
+              "fused_softmax_removed_materializations": 0,
+              "fused_softmax_scalable": 0,
+              "fused_softmax_scalar_reductions": 0,
+              "fused_softmax_vector_reductions": 0,
+              "fused_softmax_vector_width": 0,
+              "fusion_multi_use_rejections": 0,
+              "fusion_outer_parallel_only_ops": 0,
+              "generated_tile_loops": 10,
+              "joint_raw_moment_variances": 0,
+              "joint_vector_reduction_groups": 0,
+              "joint_vector_reduction_root_loads": 0,
+              "joint_vector_reductions": 0,
+              "linalg_ops_after": 14,
+              "linalg_ops_before": 14,
+              "linalg_tiled_ops": 5,
+              "openmp_parallel_ops": 0,
+              "parallel_tile_applied": 128,
+              "parallel_tile_requested": 128,
+              "reassociated_float_combines": 0,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0
+            },
+            "true_mlir_pipeline": true
+          },
+          "correctness": [
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t4",
+              "passed": true
+            },
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t5",
+              "passed": true
+            }
+          ],
+          "initial_data_prep_us_per_call": 47019.856,
+          "initial_ranking_samples_us": [
+            497167.923
+          ],
+          "latency_us": 497167.923,
+          "status": "measured"
+        },
+        {
+          "candidate": {
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.producer_consumer_fused.o3.vec1.vlen128.scalable0.lanes4.pt128.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+            "lowering_path_kind": "producer_consumer_fused",
+            "object_size_bytes": 5592,
+            "python_target_kernel_emission": false,
+            "requested_schedule": {
+              "opt_level": 3,
+              "parallel_tile": 128,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "fixed",
+              "vectorize": true
+            },
+            "rvv_instruction_count": 434,
+            "rvv_reduction_instruction_count": 0,
+            "rvv_vsetvl_modes": [
+              "e32,m2"
+            ],
+            "scalable_vector_ir_count": 0,
+            "schedule": {
+              "opt_level": 3,
+              "parallel_tile": 128,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "fixed",
+              "vectorize": true
+            },
+            "schedule_realization": {
+              "parallel_tile_applied": 128,
+              "reduction_tile_applied": 0,
+              "requested_equals_actual": true
+            },
+            "symbol": "scrc_j0",
+            "transformation": {
+              "b_transformations": [
+                "riscv.b.readonly_producer_consumer_fusion.v2"
+              ],
+              "explicit_vector_reduction": false,
+              "fuse_producers": true,
+              "fused_softmax": false,
+              "joint_vector_reduction": false,
+              "lowering_path_kind": "producer_consumer_fused",
+              "reassociate_reductions": false,
+              "required_b_capabilities": [
+                "b.readonly_nonalias_inputs.v1"
+              ],
+              "transformation_trace": [
+                "rvv.linalg.producer_consumer_fusion.v2"
+              ]
+            },
+            "transformation_record": {
+              "explicit_vector_max_reductions": 0,
+              "explicit_vector_reduction_loops": 0,
+              "explicit_vector_reduction_scalable": 0,
+              "explicit_vector_reduction_width": 0,
+              "explicit_vector_reductions": 0,
+              "fused_producers": 1,
+              "fused_softmax_count": 0,
+              "fused_softmax_full_row_traversals": 0,
+              "fused_softmax_input_traversals": 0,
+              "fused_softmax_removed_materializations": 0,
+              "fused_softmax_scalable": 0,
+              "fused_softmax_scalar_reductions": 0,
+              "fused_softmax_vector_reductions": 0,
+              "fused_softmax_vector_width": 0,
+              "fusion_multi_use_rejections": 0,
+              "fusion_outer_parallel_only_ops": 0,
+              "generated_tile_loops": 4,
+              "joint_raw_moment_variances": 0,
+              "joint_vector_reduction_groups": 0,
+              "joint_vector_reduction_root_loads": 0,
+              "joint_vector_reductions": 0,
+              "linalg_ops_after": 4,
+              "linalg_ops_before": 14,
+              "linalg_tiled_ops": 2,
+              "openmp_parallel_ops": 0,
+              "parallel_tile_applied": 128,
+              "parallel_tile_requested": 128,
+              "reassociated_float_combines": 0,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0
+            },
+            "true_mlir_pipeline": true
+          },
+          "correctness": [
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t4",
+              "passed": true
+            },
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t5",
+              "passed": true
+            }
+          ],
+          "initial_data_prep_us_per_call": 47012.875,
+          "initial_ranking_samples_us": [
+            351515.594
+          ],
+          "latency_us": 351515.594,
+          "status": "measured"
+        },
+        {
+          "candidate": {
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.materialized.o2.vec1.vlen128.scalable0.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+            "lowering_path_kind": "materialized",
+            "object_size_bytes": 2720,
+            "python_target_kernel_emission": false,
+            "requested_schedule": {
+              "opt_level": 2,
+              "parallel_tile": 0,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "fixed",
+              "vectorize": true
+            },
+            "rvv_instruction_count": 59,
+            "rvv_reduction_instruction_count": 0,
+            "rvv_vsetvl_modes": [
+              "e32,m2",
+              "e64,m1",
+              "e64,m4",
+              "e8,mf2",
+              "e8,mf8"
+            ],
+            "scalable_vector_ir_count": 0,
+            "schedule": {
+              "opt_level": 2,
+              "parallel_tile": 0,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "fixed",
+              "vectorize": true
+            },
+            "schedule_realization": {
+              "parallel_tile_applied": 0,
+              "reduction_tile_applied": 0,
+              "requested_equals_actual": true
+            },
+            "symbol": "scrc_j0",
+            "transformation": {
+              "b_transformations": [],
+              "explicit_vector_reduction": false,
+              "fuse_producers": false,
+              "fused_softmax": false,
+              "joint_vector_reduction": false,
+              "lowering_path_kind": "materialized",
+              "reassociate_reductions": false,
+              "required_b_capabilities": [],
+              "transformation_trace": [
+                "rvv.linalg.materialized.v1"
+              ]
+            },
+            "transformation_record": {
+              "explicit_vector_max_reductions": 0,
+              "explicit_vector_reduction_loops": 0,
+              "explicit_vector_reduction_scalable": 0,
+              "explicit_vector_reduction_width": 0,
+              "explicit_vector_reductions": 0,
+              "fused_producers": 0,
+              "fused_softmax_count": 0,
+              "fused_softmax_full_row_traversals": 0,
+              "fused_softmax_input_traversals": 0,
+              "fused_softmax_removed_materializations": 0,
+              "fused_softmax_scalable": 0,
+              "fused_softmax_scalar_reductions": 0,
+              "fused_softmax_vector_reductions": 0,
+              "fused_softmax_vector_width": 0,
+              "fusion_multi_use_rejections": 0,
+              "fusion_outer_parallel_only_ops": 0,
+              "generated_tile_loops": 0,
+              "joint_raw_moment_variances": 0,
+              "joint_vector_reduction_groups": 0,
+              "joint_vector_reduction_root_loads": 0,
+              "joint_vector_reductions": 0,
+              "linalg_ops_after": 14,
+              "linalg_ops_before": 14,
+              "linalg_tiled_ops": 0,
+              "openmp_parallel_ops": 0,
+              "parallel_tile_applied": 0,
+              "parallel_tile_requested": 0,
+              "reassociated_float_combines": 0,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0
+            },
+            "true_mlir_pipeline": true
+          },
+          "correctness": [
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t4",
+              "passed": true
+            },
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t5",
+              "passed": true
+            }
+          ],
+          "initial_data_prep_us_per_call": 47089.776,
+          "initial_ranking_samples_us": [
+            422889.922
+          ],
+          "latency_us": 422889.922,
+          "status": "measured"
+        },
+        {
+          "candidate": {
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.producer_consumer_fused.o2.vec1.vlen128.scalable0.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+            "lowering_path_kind": "producer_consumer_fused",
+            "object_size_bytes": 2032,
+            "python_target_kernel_emission": false,
+            "requested_schedule": {
+              "opt_level": 2,
+              "parallel_tile": 0,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "fixed",
+              "vectorize": true
+            },
+            "rvv_instruction_count": 56,
+            "rvv_reduction_instruction_count": 0,
+            "rvv_vsetvl_modes": [
+              "e32,m2"
+            ],
+            "scalable_vector_ir_count": 0,
+            "schedule": {
+              "opt_level": 2,
+              "parallel_tile": 0,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "fixed",
+              "vectorize": true
+            },
+            "schedule_realization": {
+              "parallel_tile_applied": 0,
+              "reduction_tile_applied": 0,
+              "requested_equals_actual": true
+            },
+            "symbol": "scrc_j0",
+            "transformation": {
+              "b_transformations": [
+                "riscv.b.readonly_producer_consumer_fusion.v2"
+              ],
+              "explicit_vector_reduction": false,
+              "fuse_producers": true,
+              "fused_softmax": false,
+              "joint_vector_reduction": false,
+              "lowering_path_kind": "producer_consumer_fused",
+              "reassociate_reductions": false,
+              "required_b_capabilities": [
+                "b.readonly_nonalias_inputs.v1"
+              ],
+              "transformation_trace": [
+                "rvv.linalg.producer_consumer_fusion.v2"
+              ]
+            },
+            "transformation_record": {
+              "explicit_vector_max_reductions": 0,
+              "explicit_vector_reduction_loops": 0,
+              "explicit_vector_reduction_scalable": 0,
+              "explicit_vector_reduction_width": 0,
+              "explicit_vector_reductions": 0,
+              "fused_producers": 1,
+              "fused_softmax_count": 0,
+              "fused_softmax_full_row_traversals": 0,
+              "fused_softmax_input_traversals": 0,
+              "fused_softmax_removed_materializations": 0,
+              "fused_softmax_scalable": 0,
+              "fused_softmax_scalar_reductions": 0,
+              "fused_softmax_vector_reductions": 0,
+              "fused_softmax_vector_width": 0,
+              "fusion_multi_use_rejections": 0,
+              "fusion_outer_parallel_only_ops": 0,
+              "generated_tile_loops": 0,
+              "joint_raw_moment_variances": 0,
+              "joint_vector_reduction_groups": 0,
+              "joint_vector_reduction_root_loads": 0,
+              "joint_vector_reductions": 0,
+              "linalg_ops_after": 4,
+              "linalg_ops_before": 14,
+              "linalg_tiled_ops": 0,
+              "openmp_parallel_ops": 0,
+              "parallel_tile_applied": 0,
+              "parallel_tile_requested": 0,
+              "reassociated_float_combines": 0,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0
+            },
+            "true_mlir_pipeline": true
+          },
+          "correctness": [
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t4",
+              "passed": true
+            },
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t5",
+              "passed": true
+            }
+          ],
+          "initial_data_prep_us_per_call": 47031.616,
+          "initial_ranking_samples_us": [
+            353534.803
+          ],
+          "latency_us": 353534.803,
+          "status": "measured"
+        },
+        {
+          "candidate": {
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.materialized.o2.vec0.vlen128.scalable0.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+            "lowering_path_kind": "materialized",
+            "object_size_bytes": 2104,
+            "python_target_kernel_emission": false,
+            "requested_schedule": {
+              "opt_level": 2,
+              "parallel_tile": 0,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "scalar",
+              "vectorize": false
+            },
+            "rvv_instruction_count": 0,
+            "rvv_reduction_instruction_count": 0,
+            "rvv_vsetvl_modes": [],
+            "scalable_vector_ir_count": 0,
+            "schedule": {
+              "opt_level": 2,
+              "parallel_tile": 0,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "scalar",
+              "vectorize": false
+            },
+            "schedule_realization": {
+              "parallel_tile_applied": 0,
+              "reduction_tile_applied": 0,
+              "requested_equals_actual": true
+            },
+            "symbol": "scrc_j0",
+            "transformation": {
+              "b_transformations": [],
+              "explicit_vector_reduction": false,
+              "fuse_producers": false,
+              "fused_softmax": false,
+              "joint_vector_reduction": false,
+              "lowering_path_kind": "materialized",
+              "reassociate_reductions": false,
+              "required_b_capabilities": [],
+              "transformation_trace": [
+                "rvv.linalg.materialized.v1"
+              ]
+            },
+            "transformation_record": {
+              "explicit_vector_max_reductions": 0,
+              "explicit_vector_reduction_loops": 0,
+              "explicit_vector_reduction_scalable": 0,
+              "explicit_vector_reduction_width": 0,
+              "explicit_vector_reductions": 0,
+              "fused_producers": 0,
+              "fused_softmax_count": 0,
+              "fused_softmax_full_row_traversals": 0,
+              "fused_softmax_input_traversals": 0,
+              "fused_softmax_removed_materializations": 0,
+              "fused_softmax_scalable": 0,
+              "fused_softmax_scalar_reductions": 0,
+              "fused_softmax_vector_reductions": 0,
+              "fused_softmax_vector_width": 0,
+              "fusion_multi_use_rejections": 0,
+              "fusion_outer_parallel_only_ops": 0,
+              "generated_tile_loops": 0,
+              "joint_raw_moment_variances": 0,
+              "joint_vector_reduction_groups": 0,
+              "joint_vector_reduction_root_loads": 0,
+              "joint_vector_reductions": 0,
+              "linalg_ops_after": 14,
+              "linalg_ops_before": 14,
+              "linalg_tiled_ops": 0,
+              "openmp_parallel_ops": 0,
+              "parallel_tile_applied": 0,
+              "parallel_tile_requested": 0,
+              "reassociated_float_combines": 0,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0
+            },
+            "true_mlir_pipeline": true
+          },
+          "correctness": [
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t4",
+              "passed": true
+            },
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t5",
+              "passed": true
+            }
+          ],
+          "initial_data_prep_us_per_call": 47012.536,
+          "initial_ranking_samples_us": [
+            354455.148
+          ],
+          "latency_us": 354455.148,
+          "status": "measured"
+        },
+        {
+          "candidate": {
+            "c_interface_symbol": "_mlir_ciface_scrc_j0",
+            "candidate_id": "rvv.producer_consumer_fused.o2.vec0.vlen128.scalable0.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+            "lowering_path_kind": "producer_consumer_fused",
+            "object_size_bytes": 1408,
+            "python_target_kernel_emission": false,
+            "requested_schedule": {
+              "opt_level": 2,
+              "parallel_tile": 0,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "scalar",
+              "vectorize": false
+            },
+            "rvv_instruction_count": 0,
+            "rvv_reduction_instruction_count": 0,
+            "rvv_vsetvl_modes": [],
+            "scalable_vector_ir_count": 0,
+            "schedule": {
+              "opt_level": 2,
+              "parallel_tile": 0,
+              "reduction_tile": 0,
+              "scalable_vectorization": false,
+              "thread_count": 1,
+              "vector_bits": 128,
+              "vector_lanes": 4,
+              "vector_policy": "scalar",
+              "vectorize": false
+            },
+            "schedule_realization": {
+              "parallel_tile_applied": 0,
+              "reduction_tile_applied": 0,
+              "requested_equals_actual": true
+            },
+            "symbol": "scrc_j0",
+            "transformation": {
+              "b_transformations": [
+                "riscv.b.readonly_producer_consumer_fusion.v2"
+              ],
+              "explicit_vector_reduction": false,
+              "fuse_producers": true,
+              "fused_softmax": false,
+              "joint_vector_reduction": false,
+              "lowering_path_kind": "producer_consumer_fused",
+              "reassociate_reductions": false,
+              "required_b_capabilities": [
+                "b.readonly_nonalias_inputs.v1"
+              ],
+              "transformation_trace": [
+                "rvv.linalg.producer_consumer_fusion.v2"
+              ]
+            },
+            "transformation_record": {
+              "explicit_vector_max_reductions": 0,
+              "explicit_vector_reduction_loops": 0,
+              "explicit_vector_reduction_scalable": 0,
+              "explicit_vector_reduction_width": 0,
+              "explicit_vector_reductions": 0,
+              "fused_producers": 1,
+              "fused_softmax_count": 0,
+              "fused_softmax_full_row_traversals": 0,
+              "fused_softmax_input_traversals": 0,
+              "fused_softmax_removed_materializations": 0,
+              "fused_softmax_scalable": 0,
+              "fused_softmax_scalar_reductions": 0,
+              "fused_softmax_vector_reductions": 0,
+              "fused_softmax_vector_width": 0,
+              "fusion_multi_use_rejections": 0,
+              "fusion_outer_parallel_only_ops": 0,
+              "generated_tile_loops": 0,
+              "joint_raw_moment_variances": 0,
+              "joint_vector_reduction_groups": 0,
+              "joint_vector_reduction_root_loads": 0,
+              "joint_vector_reductions": 0,
+              "linalg_ops_after": 4,
+              "linalg_ops_before": 14,
+              "linalg_tiled_ops": 0,
+              "openmp_parallel_ops": 0,
+              "parallel_tile_applied": 0,
+              "parallel_tile_requested": 0,
+              "reassociated_float_combines": 0,
+              "reduction_tile_applied": 0,
+              "reduction_tile_requested": 0
+            },
+            "true_mlir_pipeline": true
+          },
+          "correctness": [
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t4",
+              "passed": true
+            },
+            {
+              "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+              "max_abs_error": 0.0,
+              "output": "t5",
+              "passed": true
+            }
+          ],
+          "initial_data_prep_us_per_call": 47008.416,
+          "initial_ranking_samples_us": [
+            119098.727
+          ],
+          "latency_us": 119098.727,
+          "status": "measured"
+        }
+      ],
+      "case_id": "high_performance:liger_tvd",
+      "contract_view": {
+        "capabilities": [
+          "b.rank0_readonly_host_capture.v1",
+          "b.readonly_nonalias_inputs.v1"
+        ],
+        "consumed": [
+          "access:a0:typed",
+          "access:a1:typed",
+          "access:a2:typed",
+          "access:a3:typed",
+          "contract_ir:typed",
+          "domain:d0:typed",
+          "effect:e0:read",
+          "effect:e1:read",
+          "effect:e2:write",
+          "effect:e3:write",
+          "loop:n0:logical_full_axis_step",
+          "result_relation:t4:tolerance",
+          "result_relation:t5:tolerance",
+          "scope:q0",
+          "scope:q1",
+          "storage:b0",
+          "storage:b1"
+        ],
+        "supported": true,
+        "target": {
+          "architecture": "rv64gcv_zfh",
+          "family": "riscv",
+          "features": [
+            "vlen128"
+          ]
+        },
+        "unsupported": [],
+        "version": "intentir.backend.riscv.contract-view.v1"
+      },
+      "extents": {
+        "x0": 4096,
+        "x1": 4096
+      },
+      "kernel": "tvd",
+      "measurement_analysis": {
+        "batches": 3,
+        "cache_regime": {
+          "achieved_working_set_bytes": 268468228,
+          "buffer_policy": "eviction-before-each-single-shot",
+          "data_prep_in_timed_region": false,
+          "eviction_bytes": 134217728,
+          "last_level_cache_bytes": 67108864,
+          "name": "cold-data",
+          "replicas": 1,
+          "requested_working_set_bytes": 134217728,
+          "streaming_target_achieved": null,
+          "working_set_exceeds_last_level_cache": true
+        },
+        "comparison_protocol": "fresh-alternating-round-robin.v1",
+        "iterations": 3,
+        "logical_io": {
+          "boundary_input_bytes": 134250500,
+          "boundary_io_bytes": 268468228,
+          "boundary_output_bytes": 134217728,
+          "e2_logical_boundary_gbps": 0.8331578725885372,
+          "e3_logical_boundary_gbps": 4.764577743942019,
+          "traffic_definition": "sum of certified boundary input and output payload bytes; not measured DRAM transactions"
+        },
+        "roofline_point": {
+          "arithmetic_intensity_flop_per_byte": 0.18747711926641838,
+          "e2_achieved_gflops": 0.1561980378470366,
+          "e3_achieved_gflops": 0.8932493099551404,
+          "hardware_counter_traffic": null,
+          "interpretation": "J-derived logical/minimum-traffic point",
+          "j_workload_cost": {
+            "arithmetic_intensity_flop_per_byte": 0.18747711926641838,
+            "boundary_input_bytes": 134250500,
+            "boundary_io_bytes": 268468228,
+            "boundary_output_bytes": 134217728,
+            "caveats": [
+              "boundary bytes exclude intermediate/cache-line/transaction traffic",
+              "one add/sub/mul/div counts as one FLOP; FMA would count as two",
+              "comparisons are reported separately from FLOPs"
+            ],
+            "comparison_ops": 16777216,
+            "complete": true,
+            "control_iterations": 4096,
+            "data_movement_elements": 0,
+            "dynamic_branches": 0,
+            "floating_point_ops": 50331650,
+            "integer_logic_ops": 0,
+            "protocol": "intentir.backend.j-workload-cost.v1",
+            "select_ops": 16777216,
+            "special_function_ops": 0,
+            "traffic_interpretation": "certified-boundary-logical-minimum",
+            "type_conversion_ops": 0,
+            "unsupported_semantic_ops": []
+          }
+        },
+        "timing": "pinned-process perf_counter_ns via ctypes C ABI",
+        "warmup": 3
+      },
+      "native_baseline": {
+        "comparison_protocol": "paired-alternating.v1",
+        "compile_ms": 689.625826,
+        "compiler": "/usr/bin/clang",
+        "correctness": [
+          {
+            "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+            "max_abs_error": 0.0,
+            "output": "t4",
+            "passed": true
+          },
+          {
+            "comparator_protocol": "intentir.backend.native-output-comparator.v1",
+            "max_abs_error": 0.0,
+            "output": "t5",
+            "passed": true
+          }
+        ],
+        "flags": [
+          "-shared",
+          "-O3",
+          "-fPIC",
+          "-march=rv64gcv_zfh",
+          "-fopenmp",
+          "-fno-fast-math",
+          "-ffp-contract=off",
+          "/tmp/intentir-rvv-9_2buph0/native_rvv_baseline.c"
+        ],
+        "full_paired_samples_us": [
+          56398.859,
+          56321.699,
+          56445.679
+        ],
+        "implementation": "independent-case-authored-c-rvv-openmp",
+        "protocol": "intentir.backend.riscv.native-baseline.v1",
+        "selection_samples_us": [
+          43817.502,
+          43937.121,
+          43736.301
+        ],
+        "shares_intentir_candidate_or_object": false,
+        "symbol": "intentir_native_baseline"
+      },
+      "performance": {
+        "c_fixed_candidate_id": "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt4.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+        "c_fixed_us": 584868.125,
+        "full_paired_with_native_us": 56398.859,
+        "full_us": 56346.699,
+        "full_winner_candidate_id": "rvv.producer_consumer_fused.o3.vec1.vlen0.scalable1.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+        "g_full": 5.718697381012506,
+        "g_native": 0.7769217813431297,
+        "g_schedule": 1.8150657394358287,
+        "native_us": 43817.502,
+        "schedule_only_us": 322229.72,
+        "schedule_only_winner_candidate_id": "rvv.materialized.o3.vec1.vlen0.scalable1.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0"
+      },
+      "search_execution": {
+        "active_e2_budget_candidate_ids": [
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt4.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen0.scalable1.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec0.vlen128.scalable0.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt2.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt8.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt1.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt16.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen0.scalable1.lanes4.pt16.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt32.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt64.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen0.scalable1.lanes4.pt64.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0"
+        ],
+        "active_e3_budget_candidate_ids": [
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt4.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.producer_consumer_fused.o3.vec1.vlen128.scalable0.lanes4.pt4.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.producer_consumer_fused.o3.vec1.vlen128.scalable0.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen0.scalable1.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.producer_consumer_fused.o3.vec1.vlen0.scalable1.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec0.vlen128.scalable0.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.producer_consumer_fused.o3.vec0.vlen128.scalable0.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt2.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.producer_consumer_fused.o3.vec1.vlen128.scalable0.lanes4.pt2.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt8.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.producer_consumer_fused.o3.vec1.vlen128.scalable0.lanes4.pt8.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0"
+        ],
+        "budget_unit": "admitted_candidate",
+        "c_fixed_candidate_ids": [
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt4.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0"
+        ],
+        "candidate_budget": 12,
+        "candidate_correctness_fail_count": 0,
+        "candidate_correctness_pass_count": 30,
+        "candidate_execution_failure_count": 0,
+        "correctness_comparator": {
+          "compares_all_output_elements": true,
+          "compiler": "clang -O3 -shared -fPIC",
+          "protocol": "intentir.backend.native-output-comparator.v1",
+          "python_elementwise_comparison": false
+        },
+        "e2_evaluation_candidate_ids": [
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt4.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen0.scalable1.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec0.vlen128.scalable0.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt2.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt8.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt1.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt16.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen0.scalable1.lanes4.pt16.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt32.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt64.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen0.scalable1.lanes4.pt64.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt128.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o2.vec1.vlen128.scalable0.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o2.vec0.vlen128.scalable0.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0"
+        ],
+        "e3_evaluation_candidate_ids": [
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt4.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.producer_consumer_fused.o3.vec1.vlen128.scalable0.lanes4.pt4.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.producer_consumer_fused.o3.vec1.vlen128.scalable0.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen0.scalable1.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.producer_consumer_fused.o3.vec1.vlen0.scalable1.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec0.vlen128.scalable0.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.producer_consumer_fused.o3.vec0.vlen128.scalable0.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt2.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.producer_consumer_fused.o3.vec1.vlen128.scalable0.lanes4.pt2.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt8.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.producer_consumer_fused.o3.vec1.vlen128.scalable0.lanes4.pt8.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt1.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.producer_consumer_fused.o3.vec1.vlen128.scalable0.lanes4.pt1.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt16.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.producer_consumer_fused.o3.vec1.vlen128.scalable0.lanes4.pt16.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen0.scalable1.lanes4.pt16.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.producer_consumer_fused.o3.vec1.vlen0.scalable1.lanes4.pt16.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt32.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.producer_consumer_fused.o3.vec1.vlen128.scalable0.lanes4.pt32.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt64.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.producer_consumer_fused.o3.vec1.vlen128.scalable0.lanes4.pt64.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen0.scalable1.lanes4.pt64.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.producer_consumer_fused.o3.vec1.vlen0.scalable1.lanes4.pt64.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt128.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.producer_consumer_fused.o3.vec1.vlen128.scalable0.lanes4.pt128.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o2.vec1.vlen128.scalable0.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.producer_consumer_fused.o2.vec1.vlen128.scalable0.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o2.vec0.vlen128.scalable0.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.producer_consumer_fused.o2.vec0.vlen128.scalable0.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0"
+        ],
+        "erase_c_e3_budget_candidate_ids": [
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.producer_consumer_fused.o3.vec1.vlen128.scalable0.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o2.vec1.vlen128.scalable0.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.producer_consumer_fused.o2.vec1.vlen128.scalable0.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen0.scalable1.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.producer_consumer_fused.o3.vec1.vlen0.scalable1.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec0.vlen128.scalable0.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.producer_consumer_fused.o3.vec0.vlen128.scalable0.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o2.vec0.vlen128.scalable0.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.producer_consumer_fused.o2.vec0.vlen128.scalable0.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt1.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.producer_consumer_fused.o3.vec1.vlen128.scalable0.lanes4.pt1.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0"
+        ],
+        "not_visited_candidate_count": 0,
+        "retiled_schedule_candidate_ids": [
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt4.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt2.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt8.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt1.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt16.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen0.scalable1.lanes4.pt16.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt32.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt64.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen0.scalable1.lanes4.pt64.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt128.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0"
+        ],
+        "timed_candidate_count": 30,
+        "timed_candidate_ids": [
+          "rvv.materialized.o2.vec0.vlen128.scalable0.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o2.vec1.vlen128.scalable0.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec0.vlen128.scalable0.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen0.scalable1.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen0.scalable1.lanes4.pt16.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen0.scalable1.lanes4.pt64.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt1.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt2.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt4.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt8.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt16.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt32.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt64.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt128.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.producer_consumer_fused.o2.vec0.vlen128.scalable0.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.producer_consumer_fused.o2.vec1.vlen128.scalable0.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.producer_consumer_fused.o3.vec0.vlen128.scalable0.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.producer_consumer_fused.o3.vec1.vlen0.scalable1.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.producer_consumer_fused.o3.vec1.vlen0.scalable1.lanes4.pt16.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.producer_consumer_fused.o3.vec1.vlen0.scalable1.lanes4.pt64.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.producer_consumer_fused.o3.vec1.vlen128.scalable0.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.producer_consumer_fused.o3.vec1.vlen128.scalable0.lanes4.pt1.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.producer_consumer_fused.o3.vec1.vlen128.scalable0.lanes4.pt2.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.producer_consumer_fused.o3.vec1.vlen128.scalable0.lanes4.pt4.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.producer_consumer_fused.o3.vec1.vlen128.scalable0.lanes4.pt8.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.producer_consumer_fused.o3.vec1.vlen128.scalable0.lanes4.pt16.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.producer_consumer_fused.o3.vec1.vlen128.scalable0.lanes4.pt32.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.producer_consumer_fused.o3.vec1.vlen128.scalable0.lanes4.pt64.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+          "rvv.producer_consumer_fused.o3.vec1.vlen128.scalable0.lanes4.pt128.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0"
+        ]
+      },
+      "supplementary_diagnostics": {
+        "b_transformation_wins": true,
+        "formal_role": "not_a_main_experiment_arm",
+        "intentir_over_c_fixed_speedup": 10.3798116904772,
+        "no_retile_schedule_us": 322229.72,
+        "no_retile_winner_candidate_id": "rvv.materialized.o3.vec1.vlen0.scalable1.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+        "retiled_over_c_fixed_speedup": 1.7504301207900916,
+        "retiled_over_no_retile_speedup": 0.9643893787197881,
+        "retiled_schedule_us": 334128.234,
+        "retiled_winner_candidate_id": "rvv.materialized.o3.vec1.vlen128.scalable0.lanes4.pt2.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0"
+      },
+      "winner": {
+        "c_interface_symbol": "_mlir_ciface_scrc_j0",
+        "candidate_id": "rvv.producer_consumer_fused.o3.vec1.vlen0.scalable1.lanes4.pt0.rt0.thr1.reassoc0.explicitvec0.jointvec0.fusedsoftmax0",
+        "lowering_path_kind": "producer_consumer_fused",
+        "object_size_bytes": 2216,
+        "python_target_kernel_emission": false,
+        "requested_schedule": {
+          "opt_level": 3,
+          "parallel_tile": 0,
+          "reduction_tile": 0,
+          "scalable_vectorization": true,
+          "thread_count": 1,
+          "vector_bits": 0,
+          "vector_lanes": 4,
+          "vector_policy": "scalable",
+          "vectorize": true
+        },
+        "rvv_instruction_count": 30,
+        "rvv_reduction_instruction_count": 0,
+        "rvv_vsetvl_modes": [
+          "e32,m2"
+        ],
+        "scalable_vector_ir_count": 40,
+        "schedule": {
+          "opt_level": 3,
+          "parallel_tile": 0,
+          "reduction_tile": 0,
+          "scalable_vectorization": true,
+          "thread_count": 1,
+          "vector_bits": 0,
+          "vector_lanes": 4,
+          "vector_policy": "scalable",
+          "vectorize": true
+        },
+        "schedule_realization": {
+          "parallel_tile_applied": 0,
+          "reduction_tile_applied": 0,
+          "requested_equals_actual": true
+        },
+        "symbol": "scrc_j0",
+        "transformation": {
+          "b_transformations": [
+            "riscv.b.readonly_producer_consumer_fusion.v2"
+          ],
+          "explicit_vector_reduction": false,
+          "fuse_producers": true,
+          "fused_softmax": false,
+          "joint_vector_reduction": false,
+          "lowering_path_kind": "producer_consumer_fused",
+          "reassociate_reductions": false,
+          "required_b_capabilities": [
+            "b.readonly_nonalias_inputs.v1"
+          ],
+          "transformation_trace": [
+            "rvv.linalg.producer_consumer_fusion.v2"
+          ]
+        },
+        "transformation_record": {
+          "explicit_vector_max_reductions": 0,
+          "explicit_vector_reduction_loops": 0,
+          "explicit_vector_reduction_scalable": 0,
+          "explicit_vector_reduction_width": 0,
+          "explicit_vector_reductions": 0,
+          "fused_producers": 1,
+          "fused_softmax_count": 0,
+          "fused_softmax_full_row_traversals": 0,
+          "fused_softmax_input_traversals": 0,
+          "fused_softmax_removed_materializations": 0,
+          "fused_softmax_scalable": 0,
+          "fused_softmax_scalar_reductions": 0,
+          "fused_softmax_vector_reductions": 0,
+          "fused_softmax_vector_width": 0,
+          "fusion_multi_use_rejections": 0,
+          "fusion_outer_parallel_only_ops": 0,
+          "generated_tile_loops": 0,
+          "joint_raw_moment_variances": 0,
+          "joint_vector_reduction_groups": 0,
+          "joint_vector_reduction_root_loads": 0,
+          "joint_vector_reductions": 0,
+          "linalg_ops_after": 4,
+          "linalg_ops_before": 14,
+          "linalg_tiled_ops": 0,
+          "openmp_parallel_ops": 0,
+          "parallel_tile_applied": 0,
+          "parallel_tile_requested": 0,
+          "reassociated_float_combines": 0,
+          "reduction_tile_applied": 0,
+          "reduction_tile_requested": 0
+        },
+        "true_mlir_pipeline": true
+      },
+      "workload_profile": "natural-headline-v1",
+      "workload_signature": {
+        "extents": {
+          "x0": 4096,
+          "x1": 4096
+        },
+        "inputs": {
+          "t0": {
+            "dtype": "f32",
+            "shape": [
+              4096,
+              4096
+            ]
+          },
+          "t1": {
+            "dtype": "f32",
+            "shape": [
+              4096,
+              4096
+            ]
+          },
+          "t2": {
+            "dtype": "i64",
+            "shape": [
+              4096
+            ]
+          },
+          "t3": {
+            "dtype": "f32",
+            "shape": []
+          }
+        },
+        "outputs": [
+          {
+            "dtype": "f32",
+            "name": "t4",
+            "shape": [
+              4096,
+              4096
+            ]
+          },
+          {
+            "dtype": "f32",
+            "name": "t5",
+            "shape": [
+              4096,
+              4096
+            ]
+          }
+        ]
+      },
+      "workload_valuation": {
+        "baseline_policy": "source_and_refj",
+        "j_unchanged": true,
+        "kind": "symbolic_extent_valuation",
+        "literal_constraints": [],
+        "profile": "natural-headline-v1",
+        "revalued_roles": [
+          "feature",
+          "row"
+        ],
+        "role_extents": {
+          "feature": 4096,
+          "row": 4096
+        },
+        "source_unavailable_reason": null,
+        "status": "applicable"
+      }
+    }
+  ],
+  "measurement": {
+    "batches": 3,
+    "cache_eviction_in_timed_region": false,
+    "correctness_policy": {
+      "policy_id": "intentir.gate2.default.v1",
+      "protocol": "intentir.scrc.gate2-q.v1",
+      "tolerances": {
+        "bf16": {
+          "atol": 0.002,
+          "equal_nan": false,
+          "rtol": 0.02
+        },
+        "f16": {
+          "atol": 0.001,
+          "equal_nan": false,
+          "rtol": 0.01
+        },
+        "f32": {
+          "atol": 1e-06,
+          "equal_nan": false,
+          "rtol": 1e-05
+        },
+        "f64": {
+          "atol": 1e-12,
+          "equal_nan": false,
+          "rtol": 1e-12
+        }
+      }
+    },
+    "data_regime": "cold-data",
+    "detected_last_level_data_cache_bytes": 67108864,
+    "effective_timing": "monotonic-clock-single-shot",
+    "finalist_count": 5,
+    "iterations": 3,
+    "iterations_per_batch": 3,
+    "measure_c_oracle": false,
+    "measurement_batches": 3,
+    "regime": "cold-data",
+    "search_budget": 12,
+    "thread_count": 1,
+    "timer": "perf_counter_ns",
+    "warmup": 3,
+    "warmup_iterations": 3,
+    "working_set_bytes": 134217728,
+    "working_set_mib": 128
+  },
+  "measurement_spec_protocol": "intentir.backend.performance-measurement.v1",
+  "protocol": "intentir.production.rvv-remote-performance.v6",
+  "summary": {
+    "failed": 0,
+    "geomean_g_full": 5.718697381012506,
+    "geomean_g_native": 0.7769217813431297,
+    "geomean_g_schedule": 1.8150657394358287,
+    "requested": 1,
+    "successful": 1
+  },
+  "target": {
+    "architecture": "rv64gcv_zfh",
+    "family": "riscv",
+    "features": [
+      "vlen128"
+    ]
+  },
+  "workload_profile": "natural-headline-v1"
+}

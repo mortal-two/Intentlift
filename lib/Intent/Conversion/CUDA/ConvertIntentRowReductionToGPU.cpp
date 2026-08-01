@@ -1133,6 +1133,33 @@ struct RowReductionLowering {
   /// contraction.  A right-aligned map/select broadcast into [M,N] is an
   /// equally strong proof of the trailing column axis.  This disambiguates
   /// equal M/N and B/G/N extents without relying on a kernel name.
+  bool isCoordinateCarrierShape(Value value, IotaRole role) {
+    auto type = dyn_cast<RankedTensorType>(value.getType());
+    if (!type || !type.hasStaticShape())
+      return false;
+    ArrayRef<int64_t> shape = type.getShape();
+    if (role == IotaRole::Column) {
+      if (shape.size() == 1)
+        return shape[0] == N;
+      if (shape.size() == 2)
+        return shape[1] == N &&
+               (shape[0] == 1 || shape[0] == groupedGroups || shape[0] == M);
+      return shape.size() == 3 && groupedBatch > 0 &&
+             shape == ArrayRef<int64_t>({groupedBatch, groupedGroups, N});
+    }
+    if (role == IotaRole::Group) {
+      if (groupedGroups <= 0)
+        return false;
+      if (shape.size() == 1)
+        return shape[0] == groupedGroups;
+      if (shape.size() == 2)
+        return shape[0] == groupedGroups && (shape[1] == 1 || shape[1] == N);
+      return shape.size() == 3 && groupedBatch > 0 &&
+             shape == ArrayRef<int64_t>({groupedBatch, groupedGroups, N});
+    }
+    return false;
+  }
+
   bool isProvablyCoordinate(Value value, IotaRole role) {
     if (role == IotaRole::Column && isTrailingColumnBroadcast(value, M, N))
       return true;
@@ -1148,10 +1175,27 @@ struct RowReductionLowering {
         if (castOp.getInput() != value)
           return false;
         next = castOp.getResult();
+      } else if (auto expand = dyn_cast<tensor::ExpandShapeOp>(user)) {
+        if (expand.getSrc() != value || !isUnitAxisExpansion(expand))
+          return false;
+        next = expand.getResult();
       } else if (auto binary = dyn_cast<MapBinaryOp>(user)) {
         if (binary.getLhs() != value && binary.getRhs() != value)
           return false;
         next = binary.getResult();
+      } else if (auto gather = dyn_cast<GatherOp>(user)) {
+        auto dataArg = dyn_cast<BlockArgument>(gather.getData());
+        auto indexType = dyn_cast<RankedTensorType>(gather.getIndex().getType());
+        auto resultType = dyn_cast<RankedTensorType>(gather.getResult().getType());
+        if (gather.getIndex() != value || !dataArg ||
+            dataArg.getArgNumber() >= argRoles.size() ||
+            argRoles[dataArg.getArgNumber()] != Role::ParamVector ||
+            gather.getMode() != "take" || gather.getAxis() != 0 ||
+            !hasProvenGatherBounds(gather) || !indexType || !resultType ||
+            indexType.getShape() != resultType.getShape() ||
+            !isCoordinateCarrierShape(value, role))
+          return false;
+        continue;
       } else if (auto contraction = dyn_cast<ContractionOp>(user)) {
         StringRef sub = contraction.getSubscripts();
         size_t arrow = sub.find("->");
@@ -1197,7 +1241,7 @@ struct RowReductionLowering {
         return false;
       }
       auto nextTy = dyn_cast<RankedTensorType>(next.getType());
-      if (!nextTy || nextTy.getRank() != 1 ||
+      if (!nextTy || !isCoordinateCarrierShape(next, role) ||
           !isProvablyCoordinate(next, role))
         return false;
     }
@@ -1773,7 +1817,29 @@ struct RowReductionLowering {
             gather.getMode() == "take" && gather.getAxis() == 0 &&
             dataTy.getRank() == 1 && hasProvenGatherBounds(gather) &&
             resultTy.getShape() == indexTy.getShape();
-        if (!rowGather && !parameterGather)
+        // A contract may make one scalar label a launch-uniform selector.  Keep
+        // that semantics instead of silently rewriting it to the more common
+        // per-row Y[bx] form: take Y[index] once, then reuse it in every row.
+        bool uniformRowIntGather =
+            dataArg && argRoles[dataArg.getArgNumber()] == Role::RowInt &&
+            gather.getMode() == "take" && gather.getAxis() == 0 &&
+            dataTy.getRank() == 1 && dataTy.getDimSize(0) == M &&
+            indexTy.getRank() == 0 && resultTy.getRank() == 0 &&
+            dataTy.getElementType() == resultTy.getElementType() &&
+            hasProvenGatherBounds(gather);
+        // Likewise, take X[:, index] is a per-row uniform value.  This is the
+        // scalar-index spelling of the already supported along_axis [M,1]
+        // gather, and is lowered to one X[bx,index] load per workgroup.
+        bool uniformRowFeatureGather =
+            dataArg && argRoles[dataArg.getArgNumber()] == Role::Row &&
+            gather.getMode() == "take" && gather.getAxis() == 1 &&
+            dataTy.getRank() == 2 && dataTy.getDimSize(0) == M &&
+            dataTy.getDimSize(1) == N && indexTy.getRank() == 0 &&
+            resultTy.getRank() == 1 && resultTy.getDimSize(0) == M &&
+            dataTy.getElementType() == resultTy.getElementType() &&
+            hasProvenGatherBounds(gather);
+        if (!rowGather && !parameterGather && !uniformRowIntGather &&
+            !uniformRowFeatureGather)
           return failure();
       } else if (auto concat = dyn_cast<ConcatOp>(&op)) {
         auto resultTy = cast<RankedTensorType>(concat.getResult().getType());
@@ -2048,8 +2114,7 @@ struct RowReductionLowering {
            (requestedPrefixThreads == 32 && T >= 64 &&
             T * static_cast<int64_t>(requestedRowsPerBlock) <= 1024));
       if (M % requestedRowsPerBlock != 0 || !crossReduces.empty() ||
-          groupedBatch != 0 || numGroups != 0 || flatSingletonRank4 ||
-          hasUnsupportedOutput || hasInplaceOutput ||
+          flatSingletonRank4 || hasUnsupportedOutput || hasInplaceOutput ||
           requestedReductionParts != 1)
         return failure();
       if (sortedPrefixWarpRows) {
@@ -2065,6 +2130,26 @@ struct RowReductionLowering {
       sched.blockX = T * requestedRowsPerBlock;
     }
 
+    // A conditional in-place RowOut (for example, preserve the aliased logits
+    // unless a scalar ignore predicate is true) needs scalar branch values at
+    // the write boundary.  The register-vector path packetizes the destination
+    // ABI and cannot currently represent that conditional alias store as one
+    // vector without changing the branch semantics.  Keep the row computation
+    // on the scalar packetization instead of admitting an IR that later fails
+    // verification with vector/scalar select operands.
+    bool hasConditionalInplaceRowOutput = false;
+    for (unsigned index = 0; index < outputVals.size(); ++index) {
+      if (inplaceArg[index] < 0 || outRoles[index] != ResultRole::RowOut)
+        continue;
+      Value value = outputVals[index];
+      while (auto transpose = value.getDefiningOp<TransposeOp>())
+        value = transpose.getInput();
+      if (value.getDefiningOp<SelectOp>()) {
+        hasConditionalInplaceRowOutput = true;
+        break;
+      }
+    }
+
     // Contiguous vector gate (register-tile path only): vector<4xf32> for
     // native f32 graphs, vector<4xf16/bf16> for mixed-precision storage.
     // Vectorization changes only the packetization of in-bounds Row/Col loads
@@ -2073,7 +2158,8 @@ struct RowReductionLowering {
     // lane, so column-varying control is not a reason to suppress packet I/O.
     // The no-tail/no-inactive-thread guards above are the memory-safety proof.
     // Every Row/Col ABI value and RowOut must share the selected storage type.
-    if (requestedVectorWidth != 1 && sched.kind == KRegister &&
+    if (requestedVectorWidth != 1 && !hasConditionalInplaceRowOutput &&
+        sched.kind == KRegister &&
         !hasInactiveFeatureThreads && !hasFeatureTail && numGroups == 0) {
       bool allVectorABIValuesF32 = true;
       for (unsigned index = 0; index < argRoles.size(); ++index)
@@ -2917,8 +3003,23 @@ struct RowReductionLowering {
                   loc, argMemref[gather.getData()], ValueRange{index});
               changed = true;
             }
-          } else if (dataArg && argRoles[dataArg.getArgNumber()] == Role::Row &&
-              isUniform(gather.getIndex()) && rowIndex) {
+          } else if (dataArg &&
+                     argRoles[dataArg.getArgNumber()] == Role::RowInt &&
+                     gather.getMode() == "take" && gather.getAxis() == 0 &&
+                     isUniform(gather.getIndex())) {
+            Value index = emitAt(b, loc, gather.getIndex(), 0);
+            index = emitSafeGatherIndex(b, loc, gather, index);
+            if (index) {
+              uniform[res] = b.create<memref::LoadOp>(
+                  loc, argMemref[gather.getData()], ValueRange{index});
+              changed = true;
+            }
+          } else if (dataArg &&
+                     argRoles[dataArg.getArgNumber()] == Role::Row &&
+                     (gather.getMode() == "take" ||
+                      gather.getMode() == "along_axis") &&
+                     gather.getAxis() == 1 &&
+                     isUniform(gather.getIndex()) && rowIndex) {
             Value index = emitAt(b, loc, gather.getIndex(), 0);
             index = emitSafeGatherIndex(b, loc, gather, index);
             if (index) {
@@ -5359,6 +5460,7 @@ struct RowReductionLowering {
     fn.erase();
     return success();
   }
+
 
   LogicalResult rewrite() {
     // Dispatch on the Schedule's fork decision (set in match()).

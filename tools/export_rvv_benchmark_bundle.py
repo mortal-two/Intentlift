@@ -38,11 +38,12 @@ from intentir.ir.production_snapshot import load_production_snapshot
 from intentir.verify.gate1.model import ResultRelationKind
 from intentir.verify.gate2.policy import DEFAULT_GATE2_POLICY
 from intentir.verify.gate2.scalar import ScalarLoweringRunner
+from intentir.verify.gate2.triton import PreparedTritonInvocation
 from intentir.verify.scrc_workload_run import build_workload_jc_suite
 
 
 BUNDLE_PROTOCOL = "intentir.production.rvv-search-bundle.v4"
-TARGET = BackendTarget("riscv", "rv64gcv_zfh", ("vlen128",))
+TARGET = BackendTarget("riscv", "rv64gcv_zfh_zvfh", ("vlen128",))
 
 
 def _shape(shape: list[int | str], dims: dict[str, int]) -> list[int]:
@@ -67,6 +68,47 @@ def _output_rules(snapshot: Any, comparison_policy: Any) -> dict[str, Any]:
             ),
         }
     return result
+
+
+def _canonical_reference_outputs(
+    prepared: Any,
+    case: Any,
+) -> tuple[dict[str, Any], str, str | None]:
+    """Build target-independent Q data from RefJ, or the same closed Source.
+
+    A few accepted legacy artifacts still exceed the old functional-boundary
+    projector at a natural valuation even though their Source/J closure and
+    real target lowering are valid.  That projector is being replaced by the
+    shared typed ContractExpr semantics.  Until then, use the original closed
+    Source only as an offline correctness oracle; RVV target code, search and
+    timing remain entirely MLIR/native.
+    """
+
+    reference = ScalarLoweringRunner().run(case.refeval, case.values)
+    if reference.ok:
+        return dict(reference.outputs), "refj", None
+    source_program = prepared.request.source.gate_source
+    try:
+        with PreparedTritonInvocation(
+            source_program,
+            case.triton,
+            case.values,
+        ) as invocation:
+            invocation.reset_mutable_inputs()
+            invocation.launch()
+            outputs = invocation.copied_outputs()
+    except Exception as error:
+        raise RuntimeError(
+            f"canonical J reference failed: {reference.error}; "
+            f"closed Source fallback failed: {type(error).__name__}: {error}"
+        ) from error
+    required = set(case.refeval.output_binding_map.values())
+    if not required.issubset(outputs):
+        raise RuntimeError(
+            "closed Source fallback omitted canonical output bindings: "
+            + ", ".join(sorted(required - set(outputs)))
+        )
+    return outputs, "source", reference.error
 
 
 def _entry(
@@ -186,9 +228,17 @@ def _entry(
     )
     c_fixed_candidate_id = search_plan.c_fixed_candidate_id
     if c_fixed_candidate_id not in available_ids:
+        c_fixed_rejection = next(
+            (
+                item["reason"]
+                for item in rejected
+                if item["candidate_id"] == c_fixed_candidate_id
+            ),
+            "candidate was not present in the compiled universe",
+        )
         raise RuntimeError(
             "mechanical RVV C-Fixed projection did not compile; refusing to "
-            "substitute another schedule"
+            f"substitute another schedule: {c_fixed_rejection}"
         )
     candidate_by_id = {
         item["candidate"]["candidate_id"]: item["candidate"] for item in candidates
@@ -206,9 +256,9 @@ def _entry(
         for candidate_id in schedule_only_ids
     ):
         raise AssertionError("Schedule-Only escaped the canonical lowering path")
-    reference = ScalarLoweringRunner().run(case.refeval, case.values)
-    if not reference.ok:
-        raise RuntimeError(f"canonical J reference failed: {reference.error}")
+    reference_outputs, reference_kind, canonical_j_reference_error = (
+        _canonical_reference_outputs(prepared, case)
+    )
     return {
         "kernel": name,
         "case_id": PRODUCTION_CASE_IDS[name],
@@ -218,6 +268,8 @@ def _entry(
         # RVV has no Triton Source executable.  Use a separately authored native
         # implementation that shares inputs/ABI but no IntentIR lowering state.
         "baseline_policy": "native_rvv_and_refj",
+        "target_reference": reference_kind,
+        "canonical_j_reference_error": canonical_j_reference_error,
         "native_baseline": native_rvv_baseline_record(name),
         "snapshot_path": str(path),
         "materialization": materialized.to_record(),
@@ -245,7 +297,7 @@ def _entry(
         ],
         "output_rules": _output_rules(snapshot, comparison_policy),
         "values": encode_values(case.values),
-        "reference_outputs": encode_values(reference.outputs),
+        "reference_outputs": encode_values(reference_outputs),
         "search_plan": search_plan.to_record(),
         "concrete_search_plan": {
             "candidate_universe_count": len(candidates),

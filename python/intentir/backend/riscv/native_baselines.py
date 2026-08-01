@@ -1,8 +1,14 @@
-"""Independent target-native baselines for the Fresh14 RVV experiment.
+"""Independent LLVM-RVV C and explicit-intrinsic external baselines.
 
 These sources are deliberately case-authored and do not consume IntentIR MLIR,
 search candidates, schedules, or target objects.  They share only the public
 contiguous memref ABI and workload tensors with the backend measurement.
+
+The historical ``native`` baseline is scalar C compiled by Clang/LLVM with RVV
+enabled.  It is therefore reported as ``LLVM-RVV C`` rather than being
+misrepresented as a library or hand-vectorized implementation.  A smaller
+strictly matching subset additionally exposes explicit, VLEN-agnostic RVV
+intrinsics as an expert-target baseline.
 """
 
 from __future__ import annotations
@@ -13,6 +19,12 @@ NATIVE_RVV_BASELINE_SIDECAR_PROTOCOL = (
     "intentir.backend.riscv.native-baseline-sidecar.v1"
 )
 NATIVE_RVV_SYMBOL = "intentir_native_baseline"
+EXTERNAL_RVV_BASELINE_PROTOCOL = "intentir.backend.riscv.external-baseline.v1"
+EXTERNAL_RVV_BASELINE_SIDECAR_PROTOCOL = (
+    "intentir.backend.riscv.external-baseline-sidecar.v1"
+)
+LLVM_RVV_C_BASELINE_ID = "llvm_rvv_c"
+EXPERT_RVV_BASELINE_ID = "expert_rvv"
 
 
 _PREAMBLE = r"""
@@ -209,9 +221,13 @@ def _flash_bwd_preprocess() -> str:
         "M4 *a_d, M4 *b_d, M3 *out_d",
         r"""
   _Float16 *a=DATA(a_d,_Float16),*b=DATA(b_d,_Float16);float *out=DATA(out_d,float);
-  int64_t rows=a_d->sizes[0]*a_d->sizes[1]*a_d->sizes[2],d=a_d->sizes[3];
+  int64_t groups=a_d->sizes[0]*a_d->sizes[1],rows=a_d->sizes[2],d=a_d->sizes[3];
+  int64_t padded=out_d->sizes[2];
   #pragma omp parallel for schedule(static)
-  for(int64_t i=0;i<rows;i++){float s=0.0f;for(int64_t j=0;j<d;j++)s+=(float)a[i*d+j]*(float)b[i*d+j];out[i]=s;}
+  for(int64_t g=0;g<groups;g++){for(int64_t i=0;i<rows;i++){float s=0.0f;
+      int64_t row=g*rows+i;for(int64_t j=0;j<d;j++)s+=(float)a[row*d+j]*(float)b[row*d+j];
+      out[g*padded+i]=s;}
+    for(int64_t i=rows;i<padded;i++)out[g*padded+i]=0.0f;}
 """,
     )
 
@@ -258,6 +274,281 @@ def _flash_layer_norm() -> str:
     )
 
 
+def _jsd() -> str:
+    return _source(
+        "M2 *logp_d, M2 *logq_d, M1 *labels_d, M0 *denom_d, M2 *loss_d, M2 *dx_d",
+        r"""
+  float *logp=DATA(logp_d,float),*logq=DATA(logq_d,float);
+  float *loss=DATA(loss_d,float),*dx=DATA(dx_d,float);
+  int32_t denom_i=DATA(denom_d,int32_t)[0];float denom=(float)denom_i;
+  int64_t m=logp_d->sizes[0],n=logp_d->sizes[1];(void)labels_d;
+  #pragma omp parallel for schedule(static)
+  for(int64_t i=0;i<m;i++){float mx=-INFINITY;
+    for(int64_t j=0;j<n;j++){int64_t k=i*n+j;mx=fmaxf(mx,fmaxf(logp[k],logq[k]));}
+    for(int64_t j=0;j<n;j++){int64_t k=i*n+j;float p=expf(logp[k]-mx)*expf(mx);float q=expf(logq[k]-mx)*expf(mx);
+      float wp=0.5f*p,wq=0.5f*q,mix=wp+wq,logmix=logf(mix);
+      loss[k]=(wq*logq[k]+wp*logp[k]-mix*logmix)/denom;
+      dx[k]=wp*(logp[k]-logmix)/denom;}}
+""",
+    )
+
+
+def _tvd() -> str:
+    return _source(
+        "M2 *a_d, M2 *b_d, M1 *labels_d, M0 *scale_d, M2 *loss_d, M2 *grad_d",
+        r"""
+  float *a=DATA(a_d,float),*b=DATA(b_d,float),scale=DATA(scale_d,float)[0];
+  float *loss=DATA(loss_d,float),*grad=DATA(grad_d,float);(void)labels_d;
+  int64_t total=a_d->sizes[0]*a_d->sizes[1];
+  #pragma omp parallel for schedule(static)
+  for(int64_t k=0;k<total;k++){loss[k]=0.5f*fabsf(a[k]-b[k]);grad[k]=(a[k]>b[k]?0.5f:-0.5f)*scale;}
+""",
+    )
+
+
+def _xformers_rms_norm() -> str:
+    return _source(
+        "M2 *x_d, M1 *w_d, M0 *eps_d, M2 *y_d",
+        r"""
+  float *x=DATA(x_d,float),*w=DATA(w_d,float),eps=DATA(eps_d,float)[0],*y=DATA(y_d,float);
+  int64_t m=x_d->sizes[0],n=x_d->sizes[1];
+  #pragma omp parallel for schedule(static)
+  for(int64_t i=0;i<m;i++){float sumsq=0.0f;for(int64_t j=0;j<n;j++){float v=x[i*n+j];sumsq+=v*v;}
+    float r=1.0f/sqrtf(sumsq/(float)n+eps);for(int64_t j=0;j<n;j++)y[i*n+j]=x[i*n+j]*r*w[j];}
+""",
+    )
+
+
+def _cross_entropy() -> str:
+    return _source(
+        "M2 *logits_d, M1 *labels_d, M1 *weight_d, M1 *zloss_d, M1 *accuracy_d, M1 *predicted_d, M0 *denom_d, M0 *ignore_d, M2 *logits_out_d, M1 *loss_d",
+        r"""
+  float *x=DATA(logits_d,float),*out=DATA(logits_out_d,float),*loss=DATA(loss_d,float);
+  int64_t *labels=DATA(labels_d,int64_t);float denom=DATA(denom_d,float)[0];int64_t ignore=DATA(ignore_d,int64_t)[0];
+  int64_t m=logits_d->sizes[0],n=logits_d->sizes[1];
+  (void)weight_d;(void)zloss_d;(void)accuracy_d;(void)predicted_d;
+  #pragma omp parallel for schedule(static)
+  for(int64_t i=0;i<m;i++){int64_t label=labels[i];
+    if(label==ignore){for(int64_t j=0;j<n;j++)out[i*n+j]=0.0f;loss[i]=0.0f;continue;}
+    float mx=-INFINITY;for(int64_t j=0;j<n;j++){float v=x[i*n+j];out[i*n+j]=v;if(v>mx)mx=v;}
+    float sum=0.0f;for(int64_t j=0;j<n;j++)sum+=expf(x[i*n+j]-mx);
+    loss[i]=(mx+logf(sum)-x[i*n+label])/denom;}
+""",
+    )
+
+
+def _group_norm() -> str:
+    return _source(
+        "M3 *x_d, M1 *weight_d, M1 *bias_d, M0 *hidden_d, M0 *channels_d, M0 *eps_d, M3 *y_d, M2 *mean_d, M2 *rstd_d",
+        r"""
+  float *x=DATA(x_d,float),*w=DATA(weight_d,float),*bias=DATA(bias_d,float),*y=DATA(y_d,float);
+  float *mean=DATA(mean_d,float),*rstd=DATA(rstd_d,float),eps=DATA(eps_d,float)[0];
+  int32_t hidden_i=DATA(hidden_d,int32_t)[0],channels_i=DATA(channels_d,int32_t)[0];
+  int64_t batch=x_d->sizes[0],groups=x_d->sizes[1],width=x_d->sizes[2];
+  int64_t hidden=hidden_i<width?hidden_i:width,channels=channels_i,spatial=hidden/channels;
+  #pragma omp parallel for schedule(static)
+  for(int64_t row=0;row<batch*groups;row++){float sum=0.0f,sumsq=0.0f;
+    for(int64_t j=0;j<hidden;j++){float v=x[row*width+j];sum+=v;sumsq+=v*v;}
+    float mu=sum/(float)hidden,var=sumsq/(float)hidden-mu*mu,rr=1.0f/sqrtf(var+eps);mean[row]=mu;rstd[row]=rr;
+    int64_t group=row%groups;for(int64_t j=0;j<hidden;j++){int64_t channel=group*channels+j/spatial;
+      y[row*width+j]=(x[row*width+j]-mu)*rr*w[channel]+bias[channel];}
+    for(int64_t j=hidden;j<width;j++)y[row*width+j]=0.0f;}
+""",
+    )
+
+
+def _liger_rope() -> str:
+    return _source(
+        "M4 *q_d, M4 *k_d, M3 *cos_d, M3 *sin_d, M4 *qout_d, M4 *kout_d",
+        r"""
+  _Float16 *q=DATA(q_d,_Float16),*k=DATA(k_d,_Float16),*c=DATA(cos_d,_Float16),*s=DATA(sin_d,_Float16);
+  _Float16 *qo=DATA(qout_d,_Float16),*ko=DATA(kout_d,_Float16);
+  int64_t b=q_d->sizes[0],seq=q_d->sizes[1],hq=q_d->sizes[2],hk=k_d->sizes[2],d=q_d->sizes[3],half=d/2;
+  #pragma omp parallel for schedule(static)
+  for(int64_t row=0;row<b*seq;row++){int64_t token=row%seq;
+    for(int64_t h=0;h<hq;h++)for(int64_t j=0;j<half;j++){int64_t base=(row*hq+h)*d;float cv=(float)c[token*d+j],sv=(float)s[token*d+j];
+      float a=(float)q[base+j],z=(float)q[base+half+j];qo[base+j]=(_Float16)(a*cv-z*sv);qo[base+half+j]=(_Float16)(z*cv+a*sv);}
+    for(int64_t h=0;h<hk;h++)for(int64_t j=0;j<half;j++){int64_t base=(row*hk+h)*d;float cv=(float)c[token*d+j],sv=(float)s[token*d+j];
+      float a=(float)k[base+j],z=(float)k[base+half+j];ko[base+j]=(_Float16)(a*cv-z*sv);ko[base+half+j]=(_Float16)(z*cv+a*sv);}}
+""",
+    )
+
+
+def _llama4_rope() -> str:
+    return _source(
+        "M4 *q_d, M4 *k_d, M3 *freq_d, M0 *sign_d, M4 *qout_d, M4 *kout_d",
+        r"""
+  _Float16 *q=DATA(q_d,_Float16),*k=DATA(k_d,_Float16);
+  _Float16 *freq=DATA(freq_d,_Float16),*qo=DATA(qout_d,_Float16),*ko=DATA(kout_d,_Float16);
+  float sign=DATA(sign_d,float)[0];
+  int64_t b=q_d->sizes[0],seq=q_d->sizes[1],hq=q_d->sizes[2],hk=k_d->sizes[2];
+  int64_t d=q_d->sizes[3],half=d/2;
+  for(int64_t row=0;row<b*seq;row++){int64_t token=row%seq;
+    for(int64_t h=0;h<hq;h++)for(int64_t j=0;j<half;j++){
+      int64_t base=(row*hq+h)*d,angle=(token*half+j)*2;
+      _Float16 ae=q[base+2*j],ao=q[base+2*j+1],ch=freq[angle];
+      float sf=(float)freq[angle+1]*sign;
+      float low=(float)ae*(float)ch-(float)ao*sf;
+      _Float16 rounded=(_Float16)(ao*ch);
+      float high=(float)ae*sf+(float)rounded;
+      qo[base+2*j]=(_Float16)low;qo[base+2*j+1]=(_Float16)high;}
+    for(int64_t h=0;h<hk;h++)for(int64_t j=0;j<half;j++){
+      int64_t base=(row*hk+h)*d,angle=(token*half+j)*2;
+      _Float16 ae=k[base+2*j],ao=k[base+2*j+1],ch=freq[angle];
+      float sf=(float)freq[angle+1]*sign;
+      float low=(float)ae*(float)ch-(float)ao*sf;
+      _Float16 rounded=(_Float16)(ao*ch);
+      float high=(float)ae*sf+(float)rounded;
+      ko[base+2*j]=(_Float16)low;ko[base+2*j+1]=(_Float16)high;}}
+""",
+    )
+
+
+def _qwen2vl_mrope() -> str:
+    return _source(
+        "M4 *q_d, M4 *k_d, M4 *cos_d, M4 *sin_d, M4 *qout_d, M4 *kout_d",
+        r"""
+  _Float16 *q=DATA(q_d,_Float16),*k=DATA(k_d,_Float16),*c=DATA(cos_d,_Float16),*s=DATA(sin_d,_Float16);
+  _Float16 *qo=DATA(qout_d,_Float16),*ko=DATA(kout_d,_Float16);
+  int64_t b=q_d->sizes[0],seq=q_d->sizes[1],hq=q_d->sizes[2],hk=k_d->sizes[2],d=q_d->sizes[3],half=d/2;
+  #pragma omp parallel for schedule(static)
+  for(int64_t row=0;row<b*seq;row++){int64_t batch=row/seq,token=row%seq;
+    for(int64_t j=0;j<half;j++){int64_t plane=j<16?0:(j<40?1:2);int64_t ci=((plane*b+batch)*seq+token)*d+j;
+      float cv=(float)c[ci],sv=(float)s[ci];
+      for(int64_t h=0;h<hq;h++){int64_t base=(row*hq+h)*d;float a=(float)q[base+j],z=(float)q[base+half+j];
+        qo[base+j]=(_Float16)(a*cv-z*sv);qo[base+half+j]=(_Float16)(z*cv+a*sv);}
+      for(int64_t h=0;h<hk;h++){int64_t base=(row*hk+h)*d;float a=(float)k[base+j],z=(float)k[base+half+j];
+        ko[base+j]=(_Float16)(a*cv-z*sv);ko[base+half+j]=(_Float16)(z*cv+a*sv);}}}
+""",
+    )
+
+
+def _flash_linear() -> str:
+    return _source(
+        "M2 *a_d, M2 *b_d, M1 *bias_d, M2 *out_d, M2 *act_d",
+        r"""
+  _Float16 *a=DATA(a_d,_Float16),*b=DATA(b_d,_Float16),*bias=DATA(bias_d,_Float16);
+  _Float16 *out=DATA(out_d,_Float16),*act=DATA(act_d,_Float16);
+  int64_t m=a_d->sizes[0],kdim=a_d->sizes[1],n=b_d->sizes[0];
+  #pragma omp parallel for schedule(static)
+  for(int64_t i=0;i<m;i++)for(int64_t j=0;j<n;j++){float acc=(float)bias[j];
+    for(int64_t k=0;k<kdim;k++)acc+=(float)a[i*kdim+k]*(float)b[j*kdim+k];
+    _Float16 value=(_Float16)acc;out[i*n+j]=value;act[i*n+j]=value;}
+""",
+    )
+
+
+def _expert_xformers_rms_norm() -> str:
+    return _source(
+        "M2 *x_d, M1 *w_d, M0 *eps_d, M2 *y_d",
+        r"""
+  float *x=DATA(x_d,float),*w=DATA(w_d,float),eps=DATA(eps_d,float)[0],*y=DATA(y_d,float);
+  int64_t m=x_d->sizes[0],n=x_d->sizes[1];
+  for(int64_t i=0;i<m;i++){float sumsq=0.0f;int64_t j=0;
+    while(j<n){size_t vl=__riscv_vsetvl_e32m1((size_t)(n-j));
+      vfloat32m1_t value=__riscv_vle32_v_f32m1(x+i*n+j,vl);
+      vfloat32m1_t square=__riscv_vfmul_vv_f32m1(value,value,vl);
+      vfloat32m1_t seed=__riscv_vfmv_v_f_f32m1(0.0f,vl);
+      vfloat32m1_t reduced=__riscv_vfredosum_vs_f32m1_f32m1(square,seed,vl);
+      sumsq+=__riscv_vfmv_f_s_f32m1_f32(reduced);j+=(int64_t)vl;}
+    float scale=1.0f/sqrtf(sumsq/(float)n+eps);j=0;
+    while(j<n){size_t vl=__riscv_vsetvl_e32m1((size_t)(n-j));
+      vfloat32m1_t value=__riscv_vle32_v_f32m1(x+i*n+j,vl);
+      vfloat32m1_t weight=__riscv_vle32_v_f32m1(w+j,vl);
+      value=__riscv_vfmul_vv_f32m1(value,weight,vl);
+      value=__riscv_vfmul_vf_f32m1(value,scale,vl);
+      __riscv_vse32_v_f32m1(y+i*n+j,value,vl);j+=(int64_t)vl;}
+  }
+""",
+    )
+
+
+def _expert_layer_norm() -> str:
+    return _source(
+        "M2 *x_d, M1 *w_d, M1 *b_d, M0 *n_d, M0 *eps_d, M2 *y_d, M1 *mean_d, M1 *rstd_d",
+        r"""
+  float *x=DATA(x_d,float),*w=DATA(w_d,float),*b=DATA(b_d,float),*y=DATA(y_d,float);
+  float *mean=DATA(mean_d,float),*rstd=DATA(rstd_d,float);
+  int32_t requested=DATA(n_d,int32_t)[0];float eps=DATA(eps_d,float)[0];
+  int64_t rows=x_d->sizes[0],width=x_d->sizes[1],n=requested<width?requested:width;
+  for(int64_t i=0;i<rows;i++){float sum=0.0f;int64_t j=0;
+    while(j<n){size_t vl=__riscv_vsetvl_e32m1((size_t)(n-j));
+      vfloat32m1_t value=__riscv_vle32_v_f32m1(x+i*width+j,vl);
+      vfloat32m1_t seed=__riscv_vfmv_v_f_f32m1(0.0f,vl);
+      vfloat32m1_t reduced=__riscv_vfredosum_vs_f32m1_f32m1(value,seed,vl);
+      sum+=__riscv_vfmv_f_s_f32m1_f32(reduced);j+=(int64_t)vl;}
+    float mu=sum/(float)n,var=0.0f;j=0;
+    while(j<n){size_t vl=__riscv_vsetvl_e32m1((size_t)(n-j));
+      vfloat32m1_t value=__riscv_vle32_v_f32m1(x+i*width+j,vl);
+      value=__riscv_vfsub_vf_f32m1(value,mu,vl);
+      vfloat32m1_t square=__riscv_vfmul_vv_f32m1(value,value,vl);
+      vfloat32m1_t seed=__riscv_vfmv_v_f_f32m1(0.0f,vl);
+      vfloat32m1_t reduced=__riscv_vfredosum_vs_f32m1_f32m1(square,seed,vl);
+      var+=__riscv_vfmv_f_s_f32m1_f32(reduced);j+=(int64_t)vl;}
+    float scale=1.0f/sqrtf(var/(float)n+eps);mean[i]=mu;rstd[i]=scale;j=0;
+    while(j<n){size_t vl=__riscv_vsetvl_e32m1((size_t)(n-j));
+      vfloat32m1_t value=__riscv_vle32_v_f32m1(x+i*width+j,vl);
+      vfloat32m1_t weight=__riscv_vle32_v_f32m1(w+j,vl);
+      vfloat32m1_t bias=__riscv_vle32_v_f32m1(b+j,vl);
+      value=__riscv_vfsub_vf_f32m1(value,mu,vl);
+      value=__riscv_vfmul_vf_f32m1(value,scale,vl);
+      value=__riscv_vfmul_vv_f32m1(value,weight,vl);
+      value=__riscv_vfadd_vv_f32m1(value,bias,vl);
+      __riscv_vse32_v_f32m1(y+i*width+j,value,vl);j+=(int64_t)vl;}
+  }
+""",
+    )
+
+
+def _expert_flash_bwd_preprocess() -> str:
+    return _source(
+        "M4 *a_d, M4 *b_d, M3 *out_d",
+        r"""
+  _Float16 *a=DATA(a_d,_Float16),*b=DATA(b_d,_Float16);float *out=DATA(out_d,float);
+  int64_t groups=a_d->sizes[0]*a_d->sizes[1],rows=a_d->sizes[2],width=a_d->sizes[3];
+  int64_t padded=out_d->sizes[2];
+  for(int64_t g=0;g<groups;g++){for(int64_t i=0;i<rows;i++){float sum=0.0f;int64_t j=0;
+    int64_t row=g*rows+i;
+    while(j<width){size_t vl=__riscv_vsetvl_e16m1((size_t)(width-j));
+      vfloat16m1_t half_a=__riscv_vle16_v_f16m1(a+row*width+j,vl);
+      vfloat16m1_t half_b=__riscv_vle16_v_f16m1(b+row*width+j,vl);
+      vfloat32m2_t value_a=__riscv_vfwcvt_f_f_v_f32m2(half_a,vl);
+      vfloat32m2_t value_b=__riscv_vfwcvt_f_f_v_f32m2(half_b,vl);
+      vfloat32m2_t product=__riscv_vfmul_vv_f32m2(value_a,value_b,vl);
+      vfloat32m1_t seed=__riscv_vfmv_v_f_f32m1(0.0f,vl);
+      vfloat32m1_t reduced=__riscv_vfredosum_vs_f32m2_f32m1(product,seed,vl);
+      sum+=__riscv_vfmv_f_s_f32m1_f32(reduced);j+=(int64_t)vl;}
+    out[g*padded+i]=sum;}
+    for(int64_t i=rows;i<padded;i++)out[g*padded+i]=0.0f;}
+""",
+    )
+
+
+def _expert_tvd() -> str:
+    return _source(
+        "M2 *a_d, M2 *b_d, M1 *labels_d, M0 *scale_d, M2 *loss_d, M2 *grad_d",
+        r"""
+  float *a=DATA(a_d,float),*b=DATA(b_d,float),scale=DATA(scale_d,float)[0];
+  float *loss=DATA(loss_d,float),*grad=DATA(grad_d,float);(void)labels_d;
+  int64_t total=a_d->sizes[0]*a_d->sizes[1],k=0;
+  while(k<total){size_t vl=__riscv_vsetvl_e32m1((size_t)(total-k));
+    vfloat32m1_t va=__riscv_vle32_v_f32m1(a+k,vl);
+    vfloat32m1_t vb=__riscv_vle32_v_f32m1(b+k,vl);
+    vfloat32m1_t diff=__riscv_vfsub_vv_f32m1(va,vb,vl);
+    vfloat32m1_t magnitude=__riscv_vfabs_v_f32m1(diff,vl);
+    magnitude=__riscv_vfmul_vf_f32m1(magnitude,0.5f,vl);
+    vbool32_t positive=__riscv_vmflt_vv_f32m1_b32(vb,va,vl);
+    vfloat32m1_t negative_value=__riscv_vfmv_v_f_f32m1(-0.5f*scale,vl);
+    vfloat32m1_t positive_value=__riscv_vfmv_v_f_f32m1(0.5f*scale,vl);
+    vfloat32m1_t gradient=__riscv_vmerge_vvm_f32m1(
+        negative_value,positive_value,positive,vl);
+    __riscv_vse32_v_f32m1(loss+k,magnitude,vl);
+    __riscv_vse32_v_f32m1(grad+k,gradient,vl);k+=(int64_t)vl;
+  }
+""",
+    )
+
+
 _SOURCES = {
     "dyt": _dyt,
     "swiglu": _swiglu,
@@ -273,6 +564,22 @@ _SOURCES = {
     "flash_bwd_preprocess": _flash_bwd_preprocess,
     "splitk_reduce_varargs": _splitk,
     "flash_layer_norm_1pass": _flash_layer_norm,
+    "jsd": _jsd,
+    "tvd": _tvd,
+    "xformers_rms_norm": _xformers_rms_norm,
+    "cross_entropy": _cross_entropy,
+    "group_norm": _group_norm,
+    "liger_rope": _liger_rope,
+    "llama4_rope": _llama4_rope,
+    "qwen2vl_mrope": _qwen2vl_mrope,
+    "flash_linear": _flash_linear,
+}
+
+_EXPERT_SOURCES = {
+    "flash_bwd_preprocess": _expert_flash_bwd_preprocess,
+    "layer_norm": _expert_layer_norm,
+    "tvd": _expert_tvd,
+    "xformers_rms_norm": _expert_xformers_rms_norm,
 }
 
 
@@ -285,13 +592,78 @@ def native_rvv_baseline_record(kernel: str) -> dict[str, str]:
         "protocol": NATIVE_RVV_BASELINE_PROTOCOL,
         "symbol": NATIVE_RVV_SYMBOL,
         "source": source,
-        "implementation": "independent-case-authored-c-rvv-openmp",
+        "implementation": "independent-case-authored-c-llvm-rvv-autovectorized",
     }
+
+
+def _external_record(
+    *,
+    baseline_id: str,
+    display_name: str,
+    kind: str,
+    source: str,
+    implementation: str,
+    build_profile: str,
+    language: str = "c",
+) -> dict[str, object]:
+    return {
+        "protocol": EXTERNAL_RVV_BASELINE_PROTOCOL,
+        "baseline_id": baseline_id,
+        "display_name": display_name,
+        "kind": kind,
+        "symbol": NATIVE_RVV_SYMBOL,
+        "source": source,
+        "language": language,
+        "build_profile": build_profile,
+        "implementation": implementation,
+        "strict_match": True,
+    }
+
+
+def llvm_rvv_c_baseline_record(kernel: str) -> dict[str, object]:
+    native = native_rvv_baseline_record(kernel)
+    return _external_record(
+        baseline_id=LLVM_RVV_C_BASELINE_ID,
+        display_name="LLVM-RVV C",
+        kind="portable_compiler",
+        source=str(native["source"]),
+        implementation=str(native["implementation"]),
+        build_profile="clang-rvv-c-strict",
+    )
+
+
+def expert_rvv_baseline_record(kernel: str) -> dict[str, object]:
+    try:
+        source = _EXPERT_SOURCES[kernel]()
+    except KeyError as exc:
+        raise ValueError(f"no explicit-intrinsic RVV baseline for {kernel!r}") from exc
+    return _external_record(
+        baseline_id=EXPERT_RVV_BASELINE_ID,
+        display_name="Expert RVV",
+        kind="expert_intrinsic",
+        source=source,
+        implementation="independent-vlen-agnostic-rvv-intrinsics",
+        build_profile="clang-rvv-intrinsic-strict",
+    )
+
+
+def external_rvv_baseline_records(kernel: str) -> tuple[dict[str, object], ...]:
+    records = [llvm_rvv_c_baseline_record(kernel)]
+    if kernel in _EXPERT_SOURCES:
+        records.append(expert_rvv_baseline_record(kernel))
+    return tuple(records)
 
 
 __all__ = [
     "NATIVE_RVV_BASELINE_PROTOCOL",
     "NATIVE_RVV_BASELINE_SIDECAR_PROTOCOL",
     "NATIVE_RVV_SYMBOL",
+    "EXTERNAL_RVV_BASELINE_PROTOCOL",
+    "EXTERNAL_RVV_BASELINE_SIDECAR_PROTOCOL",
+    "LLVM_RVV_C_BASELINE_ID",
+    "EXPERT_RVV_BASELINE_ID",
+    "expert_rvv_baseline_record",
+    "external_rvv_baseline_records",
+    "llvm_rvv_c_baseline_record",
     "native_rvv_baseline_record",
 ]
