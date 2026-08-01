@@ -1,0 +1,37 @@
+extern "C" __global__ void scrc_k0(
+    const float* p0,
+    const float* p1,
+    float* p2,
+    const float* p3,
+    int p4,
+    int p5,
+    int p6) {
+  const int v4 = static_cast<int>(blockIdx.x);
+  const int v5 = static_cast<int>(blockIdx.y);
+  const int v6 = static_cast<int>(threadIdx.x);
+
+  __shared__ float reduction_values[1024];
+
+  float product = 0.0f;
+  if (v6 < p4) {
+    product = p0[v4 * p4 + v6] * p1[v6 * p6 + v5];
+  }
+  reduction_values[v6] = 0.0f + product;
+  __syncthreads();
+
+  int active = static_cast<int>(blockDim.x);
+  while (active > 1) {
+    const int upper = (active + 1) / 2;
+    if (v6 < active - upper) {
+      reduction_values[v6] =
+          reduction_values[v6] + reduction_values[v6 + upper];
+    }
+    __syncthreads();
+    active = upper;
+  }
+
+  if (v6 == 0) {
+    const float biased = reduction_values[0] + p3[v5];
+    p2[v4 * p6 + v5] = fmaxf(biased, 0.0f);
+  }
+}

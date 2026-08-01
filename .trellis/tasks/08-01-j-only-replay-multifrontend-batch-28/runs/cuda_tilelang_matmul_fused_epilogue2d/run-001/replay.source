@@ -1,0 +1,43 @@
+extern "C" __global__ void scrc_k0(
+    const float* p0,
+    const float* p1,
+    float* p2,
+    const float* p3,
+    const signed char* p4,
+    const signed char* p5,
+    int p6,
+    int p7,
+    int p8) {
+  const unsigned int v7 = blockIdx.x;
+  const unsigned int v8 = blockIdx.y;
+  const unsigned int v9 = threadIdx.x;
+
+  float contribution = 0.0f;
+  if (v9 < static_cast<unsigned int>(p6)) {
+    contribution +=
+        p0[v7 * static_cast<unsigned int>(p6) + v9] *
+        p1[v9 * static_cast<unsigned int>(p8) + v8];
+  }
+
+  __shared__ float partial[1024];
+  partial[v9] = contribution;
+  __syncthreads();
+
+  unsigned int active = blockDim.x;
+  while (active > 1) {
+    const unsigned int upper = (active + 1) >> 1;
+    if (v9 < (active >> 1)) {
+      partial[v9] += partial[v9 + upper];
+    }
+    __syncthreads();
+    active = upper;
+  }
+
+  if (v9 == 0) {
+    const float biased = partial[0] + p3[v8];
+    const bool enabled = static_cast<bool>(p5[v7]) &&
+                         static_cast<bool>(p4[v8]);
+    const float mask = static_cast<float>(enabled);
+    p2[v7 * static_cast<unsigned int>(p8) + v8] = biased * mask;
+  }
+}

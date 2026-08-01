@@ -1,0 +1,33 @@
+import tilelang.language as T
+
+X0 = T.dynamic("x0")
+X1_1 = T.dynamic("x1_1")
+X2_1 = T.dynamic("x2_1")
+
+
+@T.prim_func
+def scrc_k0(
+    p0: T.Tensor((X0, X1_1), "float32"),
+    p1: T.Tensor((X1_1, X2_1), "float32"),
+    p2: T.Tensor((X2_1,), "float32"),
+    p3: T.Tensor((X0,), "bool"),
+    p4: T.Tensor((X2_1,), "bool"),
+    p5: T.Tensor((X0, X2_1), "float32"),
+):
+    with T.Kernel(X0, threads=c0) as v5:
+        lhs = T.alloc_fragment((1,), "float32")
+        rhs = T.alloc_fragment((1,), "float32")
+        products = T.alloc_fragment((1,), "float32")
+        contraction = T.alloc_fragment((1,), "float32")
+        row_enabled = T.bool(p3[v5])
+        for v6 in T.serial(X2_1):
+            bias = T.float32(p2[v6])
+            feature_enabled = T.bool(p4[v6])
+            contraction[0] = T.float32(0)
+            for v7 in T.serial(X1_1):
+                T.copy(p0[v5, v7], lhs[0])
+                T.copy(p1[v7, v6], rhs[0])
+                products[0] = lhs[0] * rhs[0]
+                T.reduce(products, contraction, "sum", dim=0, clear=False)
+            enabled = T.And(row_enabled, feature_enabled)
+            p5[v5, v6] = (contraction[0] + bias) * T.float32(enabled)

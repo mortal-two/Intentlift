@@ -1,0 +1,21 @@
+{
+  "case": "tilelang:gemm",
+  "cohort_memberships": [
+    "g3_contraction_epilogue",
+    "g7_cross_feature_stress"
+  ],
+  "frontend": "tilelang",
+  "gate1": "no_closure",
+  "gate1_elapsed_ms": 6270.517826080322,
+  "gate2": null,
+  "gate2_elapsed_ms": 0.0,
+  "gate2_passed": null,
+  "gate2_status_counts": {},
+  "lift_agent_calls": 0,
+  "pi_visible_to_replay": false,
+  "protocol": "intentir.experiment.manual-batch-j-only.v3",
+  "replay_provider_calls": 0,
+  "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/tilelang_gemm/run-001",
+  "total_elapsed_ms": 7188.183784484863,
+  "typecheck": "pass"
+}

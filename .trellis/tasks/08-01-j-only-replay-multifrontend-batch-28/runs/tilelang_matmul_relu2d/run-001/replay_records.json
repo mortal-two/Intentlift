@@ -1,0 +1,349 @@
+[
+  {
+    "attempts": 1,
+    "backend_protocol": "openai.codex-cli.intentir-replay.v76",
+    "context_receipt": {
+      "backend_protocol": "openai.codex-cli.intentir-replay.v76",
+      "cli_turns": 1,
+      "context_rollover_input_tokens": 0,
+      "episode_wall_time_limit_seconds": 7200.0,
+      "excluded_dependencies": [
+        "pi",
+        "Source",
+        "Harness valuation",
+        "Gate observation",
+        "prior Replay"
+      ],
+      "formal_compile_recheck": true,
+      "formal_ingress_protocol": "intentir.scrc.replay-check.v17",
+      "fresh_session": true,
+      "model_segments_lower_bound": 1,
+      "pi_visible_to_replay": false,
+      "replay_input_protocol": "intentir.scrc.replay-input.v4",
+      "retrieval_trace": [],
+      "thread_id": "019fbd55-dd5b-7ab0-ba8e-43962123b996",
+      "thread_ids": [
+        "019fbd55-dd5b-7ab0-ba8e-43962123b996"
+      ],
+      "tool_actions": 0,
+      "visible_packet_components": [
+        "c",
+        "j",
+        "u_f"
+      ]
+    },
+    "elapsed_ms": 403788.63926103804,
+    "entry_function_name": null,
+    "function_name": "scrc_k0",
+    "kind": "generation",
+    "model": "gpt-5.6-sol",
+    "physical_provider_calls": 1,
+    "response_id": "019fbd55-dd5b-7ab0-ba8e-43962123b996",
+    "response_model": "gpt-5.6-sol",
+    "trajectory": {
+      "accepted_submission_interrupts": [
+        {
+          "elapsed_ms": 403788.63926103804,
+          "recovery": "exact_checkpoint_restored",
+          "thread_id": "019fbd55-dd5b-7ab0-ba8e-43962123b996"
+        }
+      ],
+      "backend": "openai.codex-cli.intentir-replay.v76",
+      "diagnostic_ready_interrupts": [],
+      "explicit_submission_accepted": true,
+      "formal_ingress_recheck": true,
+      "fresh_session": true,
+      "isolation": {
+        "input": "read-only",
+        "output_work_tmp": "write-only-scope",
+        "provider_secret_in_tool_env": false,
+        "source_blind": true,
+        "tool_network": "disabled"
+      },
+      "live_checkpoint": [
+        {
+          "accepted": false,
+          "checkpoint_only": true,
+          "replay_bytes": 877,
+          "status": "fail"
+        },
+        {
+          "accepted": false,
+          "checkpoint_only": true,
+          "replay_bytes": 877,
+          "status": "fail"
+        },
+        {
+          "accepted": false,
+          "checkpoint_only": true,
+          "replay_bytes": 882,
+          "status": "fail"
+        },
+        {
+          "accepted": false,
+          "checkpoint_only": true,
+          "replay_bytes": 777,
+          "status": "fail"
+        },
+        {
+          "accepted": false,
+          "checkpoint_only": true,
+          "replay_bytes": 773,
+          "status": "fail"
+        },
+        {
+          "accepted": false,
+          "checkpoint_only": true,
+          "replay_bytes": 794,
+          "status": "fail"
+        },
+        {
+          "accepted": true,
+          "checkpoint_only": true,
+          "replay_bytes": 804,
+          "status": "pass"
+        }
+      ],
+      "packet_queries": [],
+      "protocol": "intentir.codex-cli.agent-runtime.v5",
+      "replay_check": [
+        {
+          "diagnostics": [
+            {
+              "anonymous_handles": [],
+              "line": 3,
+              "path": "<line:3>",
+              "rule_code": "tilelang_module_binding_requires_uppercase_literal_or_T_dynamic"
+            }
+          ],
+          "status": "fail",
+          "trigger": "live_checkpoint"
+        },
+        {
+          "diagnostics": [],
+          "status": "pass",
+          "trigger": "live_checkpoint"
+        },
+        {
+          "diagnostics": [],
+          "status": "pass",
+          "trigger": "live_checkpoint"
+        },
+        {
+          "diagnostics": [],
+          "status": "pass",
+          "trigger": "live_checkpoint"
+        },
+        {
+          "diagnostics": [],
+          "status": "pass",
+          "trigger": "live_checkpoint"
+        },
+        {
+          "diagnostics": [],
+          "status": "pass",
+          "trigger": "live_checkpoint"
+        },
+        {
+          "diagnostics": [],
+          "status": "pass",
+          "trigger": "live_checkpoint"
+        },
+        {
+          "diagnostics": [],
+          "status": "pass",
+          "trigger": "host_accepted_submission_restore"
+        }
+      ],
+      "replay_compile_check": [
+        {
+          "diagnostics": [
+            {
+              "anonymous_handles": [],
+              "line": null,
+              "path": "<synthetic-frontend-compile> ValueError: Cannot convert to BufferLoad: products[0:x1_1]",
+              "rule_code": "synthetic_frontend_compile_failed"
+            }
+          ],
+          "status": "fail",
+          "trigger": "live_checkpoint"
+        },
+        {
+          "diagnostics": [
+            {
+              "anonymous_handles": [],
+              "line": null,
+              "path": "<synthetic-frontend-compile> ValueError: Cannot convert to BufferLoad: products[0, 0:x1_1]",
+              "rule_code": "synthetic_frontend_compile_failed"
+            }
+          ],
+          "status": "fail",
+          "trigger": "live_checkpoint"
+        },
+        {
+          "diagnostics": [
+            {
+              "anonymous_handles": [],
+              "line": null,
+              "path": "<synthetic-frontend-compile> tvm.error.InternalError: bad optional access",
+              "rule_code": "synthetic_frontend_compile_failed"
+            }
+          ],
+          "status": "fail",
+          "trigger": "live_checkpoint"
+        },
+        {
+          "diagnostics": [
+            {
+              "anonymous_handles": [],
+              "line": null,
+              "path": "<synthetic-frontend-compile> tvm.error.InternalError: bad optional access",
+              "rule_code": "synthetic_frontend_compile_failed"
+            }
+          ],
+          "status": "fail",
+          "trigger": "live_checkpoint"
+        },
+        {
+          "diagnostics": [
+            {
+              "anonymous_handles": [],
+              "line": null,
+              "path": "<synthetic-frontend-compile> tvm.error.InternalError: Check failed: (pci != nullptr) is false: Can not use non-constant range to iterate over a fragment/local buffer. Non-constant shape expr is: x1_1 - 1 + 1. This is possibly because you use symbolic shape when accessing a fragment/local buffer.",
+              "rule_code": "synthetic_frontend_compile_failed"
+            }
+          ],
+          "status": "fail",
+          "trigger": "live_checkpoint"
+        },
+        {
+          "diagnostics": [],
+          "status": "pass",
+          "trigger": "live_checkpoint"
+        },
+        {
+          "diagnostics": [],
+          "status": "pass",
+          "trigger": "host_accepted_submission_restore"
+        }
+      ],
+      "replay_input": {
+        "authority": "path and byte-count receipt only; exact source-isolated packet bytes remain in input/packet.json and no code or schedule is generated",
+        "compiler_index_json_bytes": 657,
+        "compiler_index_text_bytes": 498,
+        "excluded_dependencies": [
+          "pi",
+          "Source",
+          "Harness valuation",
+          "Gate observation",
+          "prior Replay"
+        ],
+        "packet_bytes": 7479,
+        "paths": {
+          "compiler_index": "input/compiler-index.intent",
+          "compiler_index_json": "input/compiler-index.json",
+          "frontend": "input/frontend.json",
+          "host_check": "work/host_replay_check.json",
+          "mask_c": "input/mask-c.json",
+          "packet": "input/packet.json",
+          "public_contract": "input/REPLAY_CONTRACT.md",
+          "replay": "output/replay.source",
+          "semantic_program": "input/semantic-program.intent",
+          "semantic_program_json": "input/semantic-program.json",
+          "tool_contract": "input/TOOL.md"
+        },
+        "pi_visible_to_replay": false,
+        "protocol": "intentir.scrc.replay-startup-view.v6",
+        "semantic_program_json_bytes": 6132,
+        "semantic_program_text_bytes": 2875,
+        "visible_packet_components": [
+          "c",
+          "j",
+          "u_f"
+        ]
+      },
+      "replay_ttir_inspections": [],
+      "semantic_queries": [],
+      "thread_id": "019fbd55-dd5b-7ab0-ba8e-43962123b996",
+      "thread_ids": [
+        "019fbd55-dd5b-7ab0-ba8e-43962123b996"
+      ],
+      "timeout_events": [],
+      "tool_bridge": {
+        "authority": "closed allowlisted workspace callbacks; each handler response declares its own authority, and the mailbox transport performs no semantic inference, lowering, repair, Gate, or certification",
+        "calls": 8,
+        "protocol": "intentir.codex-cli.tool-bridge.v3",
+        "receipts": [
+          {
+            "argument_count": 0,
+            "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "elapsed_ms": 4.366473061963916,
+            "result_sha256": "25828c4679e0a0aedd42be98354c6263176c2e51f635372008b5056a29a57c05",
+            "status": "fail",
+            "tool": "replay_compile_check"
+          },
+          {
+            "argument_count": 0,
+            "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "elapsed_ms": 3322.0794779481366,
+            "result_sha256": "5935c0cfe2641a0f63835b00fe0cc6fd2709388de9800d45c6f869b1f93f4e9c",
+            "status": "fail",
+            "tool": "replay_compile_check"
+          },
+          {
+            "argument_count": 0,
+            "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "elapsed_ms": 6305.282740970142,
+            "result_sha256": "c6d439ad593bfc2637fd5f8ddabaa883bc85dce4a9792615d69d99a7894c50fd",
+            "status": "fail",
+            "tool": "replay_compile_check"
+          },
+          {
+            "argument_count": 0,
+            "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "elapsed_ms": 4694.332455983385,
+            "result_sha256": "fcfa4c68cdfe14dfdd97be082fbd7e3a2f9ec90227134c6c3f2337e967b13669",
+            "status": "fail",
+            "tool": "replay_compile_check"
+          },
+          {
+            "argument_count": 0,
+            "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "elapsed_ms": 5025.670294999145,
+            "result_sha256": "59cc3046f94dbcc4f95f0f07f555f968483fecec64704c6166925824359b7d82",
+            "status": "fail",
+            "tool": "replay_compile_check"
+          },
+          {
+            "argument_count": 0,
+            "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "elapsed_ms": 5974.538749083877,
+            "result_sha256": "676dcbfc9141612b6185dbfe3480343c8017bd7184152cc91dd95dd02622ccb7",
+            "status": "fail",
+            "tool": "replay_compile_check"
+          },
+          {
+            "argument_count": 0,
+            "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "elapsed_ms": 12933.495723060332,
+            "result_sha256": "5a8d7820ec27cc45b2dd0d1721ba9ed1e04f2d91c3f512c0dcde8c8310df9a0c",
+            "status": "pass",
+            "tool": "replay_compile_check"
+          },
+          {
+            "argument_count": 0,
+            "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "elapsed_ms": 5632.354388944805,
+            "result_sha256": "b5bad8dcc79a023f73210da5f6ddfbb693310b516b18ba5d2b160260bc06b141",
+            "status": "pass",
+            "tool": "submit_replay"
+          }
+        ],
+        "transport": "isolated_workspace_file_mailbox"
+      },
+      "turns": []
+    },
+    "transport_retries": 0,
+    "usage": {}
+  }
+]

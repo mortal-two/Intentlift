@@ -1,0 +1,44 @@
+{
+  "block": [
+    128,
+    1,
+    1
+  ],
+  "case_id": "tilelang:gemm",
+  "cuda_arch": "sm_120",
+  "descriptor_sha256": "84e671c6cbc9dcd74b63d45af57a8c1b8985621e71edb7ec03e0e7b345698f5f",
+  "dimensions": {
+    "K": 32,
+    "M": 128,
+    "N": 128
+  },
+  "dynamic_shared_memory_bytes": 0,
+  "factory_kwargs": {
+    "accum_dtype": "float32",
+    "block_k": 32,
+    "block_m": 128,
+    "block_n": 128,
+    "in_dtype": "float16",
+    "num_stages": 3,
+    "out_dtype": "float16",
+    "threads": 128
+  },
+  "frontend": "tilelang",
+  "grid": [
+    1,
+    1,
+    1
+  ],
+  "grid_contract": [
+    "(N + 127) // 128",
+    "(M + 127) // 128",
+    "1"
+  ],
+  "physical_block": null,
+  "protocol": "intentir.scrc.frontend-dataset-harness.v4",
+  "scalar_values": {},
+  "seed": 1527153803,
+  "source_sha256": "d7b84a7da49406b08048cb60c4f22b4afcafac219755173db68b3b9b8f76c3a5",
+  "tensor_map_descriptors": [],
+  "tensor_map_sidecar_sha256": "eda3fdaec391b7cd2070d6b86f1606aa007225c2ead1dbb5148e37708f710ac3"
+}

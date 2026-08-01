@@ -1,0 +1,33 @@
+import tilelang.language as T
+
+X0 = T.dynamic("x0")
+X1_1 = T.dynamic("x1_1")
+X2_1 = T.dynamic("x2_1")
+X3_1 = T.dynamic("x3_1")
+
+
+@T.prim_func
+def scrc_k0(
+    p0: T.Tensor((X0, X1_1), "float32"),
+    p1: T.Tensor((X1_1, X2_1), "float32"),
+    p2: T.Tensor((X2_1,), "float32"),
+    p3: T.Tensor((X2_1, X3_1), "float32"),
+    p4: T.Tensor((X3_1,), "float32"),
+    p5: T.Tensor((X0, X3_1), "float32"),
+):
+    with T.Kernel(X0, threads=c0) as v6:
+        inner_value = T.alloc_fragment((1,), "float32")
+        outer_value = T.alloc_fragment((1,), "float32")
+        for v7 in T.serial(X3_1):
+            output_bias = T.float32(p4[v7])
+            T.clear(outer_value)
+            for v9 in T.serial(X2_1):
+                hidden_bias = T.float32(p2[v9])
+                T.clear(inner_value)
+                for v8 in T.serial(X1_1):
+                    inner_value[0] += p0[v6, v8] * p1[v8, v9]
+                hidden_added = T.float32(inner_value[0] + hidden_bias)
+                hidden_value = T.float32(T.max(hidden_added, T.float32(0.0)))
+                outer_value[0] += hidden_value * p3[v9, v7]
+            output_value = T.float32(outer_value[0] + output_bias)
+            p5[v6, v7] = output_value

@@ -1,0 +1,53 @@
+extern "C" __global__ void scrc_k0(
+    const float* p0,
+    float* p1,
+    const float* p2,
+    const float* p3,
+    const float* p4,
+    const float* p5,
+    int p6,
+    int p7,
+    int p8,
+    int p9) {
+  __shared__ float partial[1024];
+
+  const int m = static_cast<int>(blockIdx.x);
+  const int h = static_cast<int>(threadIdx.x);
+
+  float activated = 0.0f;
+  if (h < p6) {
+    float inner = 0.0f;
+    for (int k = 0; k < p7; ++k) {
+      inner += p0[static_cast<long long>(m) * p7 + k] *
+               p2[static_cast<long long>(k) * p6 + h];
+    }
+    inner += p4[h];
+    activated = fmaxf(inner, 0.0f);
+  }
+
+  for (int n = 0; n < p9; ++n) {
+    float contribution = 0.0f;
+    if (h < p6) {
+      contribution +=
+          activated * p3[static_cast<long long>(h) * p9 + n];
+    }
+    partial[h] = contribution;
+    __syncthreads();
+
+    for (unsigned int stride = 1;
+         stride < static_cast<unsigned int>(blockDim.x);
+         stride <<= 1) {
+      const unsigned int index =
+          2u * stride * static_cast<unsigned int>(threadIdx.x);
+      if (index + stride < static_cast<unsigned int>(blockDim.x)) {
+        partial[index] += partial[index + stride];
+      }
+      __syncthreads();
+    }
+
+    if (h == 0) {
+      p1[static_cast<long long>(m) * p9 + n] = partial[0] + p5[n];
+    }
+    __syncthreads();
+  }
+}

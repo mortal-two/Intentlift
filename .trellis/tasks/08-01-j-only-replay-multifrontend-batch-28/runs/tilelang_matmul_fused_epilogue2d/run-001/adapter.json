@@ -1,0 +1,41 @@
+{
+  "block": [
+    128,
+    1,
+    1
+  ],
+  "case_id": "tilelang:matmul_fused_epilogue2d",
+  "cuda_arch": "sm_120",
+  "descriptor_sha256": "a2e2221f08e18cb9d4ef1bed71b014f96f8cf536ce316e523854f83ebd0cdd10",
+  "dimensions": {
+    "K": 32,
+    "M": 32,
+    "N": 32
+  },
+  "dynamic_shared_memory_bytes": 0,
+  "factory_kwargs": {
+    "block_k": 32,
+    "block_m": 64,
+    "block_n": 64,
+    "num_stages": 2,
+    "threads": 128
+  },
+  "frontend": "tilelang",
+  "grid": [
+    1,
+    1,
+    1
+  ],
+  "grid_contract": [
+    "(N + 63) // 64",
+    "(M + 63) // 64",
+    "1"
+  ],
+  "physical_block": null,
+  "protocol": "intentir.scrc.frontend-dataset-harness.v4",
+  "scalar_values": {},
+  "seed": 1674670608,
+  "source_sha256": "1ee48fde84beac17224054641536a21265e70f11844ed9773a12dc9a8d1e2593",
+  "tensor_map_descriptors": [],
+  "tensor_map_sidecar_sha256": "af8d069bd3c5e21658d123483e13a25e42df5883a990b32bad6d3efa6e78c369"
+}

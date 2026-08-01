@@ -1,0 +1,27 @@
+import tilelang.language as T
+
+X0 = T.dynamic("x0")
+X1_1 = T.dynamic("x1_1")
+X2_1 = T.dynamic("x2_1")
+
+
+@T.prim_func
+def scrc_k0(
+    p0: T.Tensor((X0, X1_1), "float32"),
+    p1: T.Tensor((X1_1, X2_1), "float32"),
+    p2: T.Tensor((X0, X2_1), "float32"),
+):
+    with T.Kernel(X0, threads=c0) as v3:
+        for v4 in T.serial(X2_1):
+            lhs = T.alloc_fragment((1,), "float32")
+            rhs = T.alloc_fragment((1,), "float32")
+            reduced = T.alloc_fragment((1,), "float32")
+
+            T.clear(reduced)
+            for v5 in T.serial(X1_1):
+                T.copy(p0[v3, v5 : v5 + 1], lhs)
+                T.copy(p1[v5 : v5 + 1, v4], rhs)
+                reduced[0] += lhs[0] * rhs[0]
+
+            result: T.float32 = T.max(reduced[0], T.float32(0.0))
+            p2[v3, v4] = result
