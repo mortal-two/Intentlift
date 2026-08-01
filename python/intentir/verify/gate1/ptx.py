@@ -19,7 +19,7 @@ import re
 from typing import Any, Mapping
 
 
-PTX_FINGERPRINT_SCHEMA = "cuda-ptx-semantic-effects-v6"
+PTX_FINGERPRINT_SCHEMA = "cuda-ptx-semantic-effects-v7"
 
 
 class PTXObservationError(ValueError):
@@ -964,11 +964,22 @@ def fingerprint_ptx(
         for item in instructions
         if item.endswith(":") or _opcode(item).startswith(("bra", "brx", "call", "ret", "exit"))
     )
+    # Coordinate usage is a vocabulary of physical participants, not an
+    # execution-order trace.  The instruction stream and register allocator may
+    # mention `%tid` before `%ctaid` in one otherwise equivalent address
+    # construction.  Address-coordinate folds, semantic memory effects, and
+    # value dataflow retain the ordering-sensitive obligations; this field only
+    # records which special coordinates are present, in one deterministic order.
     coordinates = tuple(
-        token
-        for item in instructions
-        for token in _REGISTER_RE.findall(item)
-        if _is_special_register(token)
+        sorted(
+            (
+                token
+                for item in instructions
+                for token in _REGISTER_RE.findall(item)
+                if _is_special_register(token)
+            ),
+            key=lambda token: (token.split(".", 1)[0], token),
+        )
     )
     target_view = tuple(
         sorted(
