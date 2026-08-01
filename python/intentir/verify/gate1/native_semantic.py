@@ -139,7 +139,10 @@ def _j_contract(artifact: Gate1Artifact) -> tuple[set[str], set[str], bool]:
                 # A boolean-to-numeric blend may remain arithmetic or become a
                 # target select; both are representations of the same J cast.
                 allowed.add("select")
-        elif name in {"const", "iota"}:
+        elif name in {"const", "gather", "iota", "transpose"}:
+            # Pure data-movement nodes carry no floating opcode family of their
+            # own.  Their exact tensor types/ABI/program axes remain J-owned,
+            # while Gate2 evaluates the authored indexing/permutation semantics.
             continue
         elif name is not None:
             unsupported = True
