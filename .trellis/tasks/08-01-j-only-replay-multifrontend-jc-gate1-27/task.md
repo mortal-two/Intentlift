@@ -128,6 +128,15 @@ Gate2(Source,R,RefEval(J))                # 三边
   canonical mapping：首个output-covering J domain直接成为`T.Kernel` program grid，不能改成singleton grid
   下的parallel loop。该规则进入公开`U_f`，不读取π、Source、C value或Gate diff。
 
+### 6.3 TileLang gather run-002：program mapping修复后暴露pure-intermediate物化
+
+- fresh Replay已采用`T.Kernel(256,threads=c0)`，证明canonical output-domain mapping生效；
+- 但它把两级逻辑gather逐级lower为`T.alloc_local(64)`、serial copy、再按column读取；
+- J的中间值无storage、无boundary effect且只有一个consumer，Source TIR直接融合为`inp[row,col]`；
+- identity TIR Gate因多出allocation/loop/load-store结构拒绝；这不是per-kernel问题，而是通用编译职责：
+  pure single-use J intermediate应沿boundary access composition融合，只有J storage/effect或observable sharing
+  才授权target materialization。下一fresh run只升级这条J-derived编译契约。
+
 ## 7. 最小实验输出
 
 每个fresh正式case记录：

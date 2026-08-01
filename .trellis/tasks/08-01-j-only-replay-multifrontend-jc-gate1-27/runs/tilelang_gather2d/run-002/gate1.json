@@ -1,0 +1,2564 @@
+{
+  "artifact_digest": "8b058873826e3b4035aeeab7b7dc40fa95fd33752079be14e98e5535f0f24c2c",
+  "j_necessity_status": "inconclusive",
+  "llm_calls": {
+    "masked_j": 0,
+    "normal": 1
+  },
+  "masked_j": null,
+  "masked_j_isolation": {
+    "fresh_session_evidence": null,
+    "independent_writer": null,
+    "separate_generate_call": null
+  },
+  "normal": {
+    "comparison": {
+      "diagnostic_passes": {
+        "ptx.address_coordinate_folds": true,
+        "ptx.collectives": true,
+        "ptx.control_flow": false,
+        "ptx.coordinate_uses": true,
+        "ptx.interface": true,
+        "ptx.memory_effects": false,
+        "ptx.raw_instruction_topology": false,
+        "ptx.raw_memory_effects": false,
+        "ptx.raw_opcode_multiset": false,
+        "ptx.schema": true,
+        "ptx.target": true,
+        "ptx.value_operations": false
+      },
+      "differences": [
+        {
+          "category": "tir_structure",
+          "message": "TileLang tir_structure differs between Source and Replay",
+          "replay": "Module(body=[FunctionDef(name='tir_entry', args=arguments(posonlyargs=[], args=[arg(arg='p0', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load())), arg(arg='p1', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load())), arg(arg='p2', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load())), arg(arg='p3', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[]), body=[Assign(targets=[Name(id='v0', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='int32', ctx=Load()), args=[], keywords=[])), Assign(targets=[Name(id='v1', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p0', ctx=Load()), Tuple(elts=[Name(id='v0', ctx=Load()), Constant(value=64)], ctx=Load())], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=64), Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v2', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p1', ctx=Load()), Tuple(elts=[Constant(value=256)], ctx=Load()), Constant(value='int32')], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v3', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p2', ctx=Load()), Tuple(elts=[Constant(value=256)], ctx=Load()), Constant(value='int32')], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v4', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p3', ctx=Load()), Tuple(elts=[Constant(value=256)], ctx=Load())], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v5', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='blockIdx.x'), Constant(value=256)], keywords=[])), Assign(targets=[Name(id='v6', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.x'), Constant(value=128)], keywords=[])), Assign(targets=[Name(id='v7', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.y'), Constant(value=1)], keywords=[])), Assign(targets=[Name(id='v8', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.z'), Constant(value=1)], keywords=[])), With(items=[withitem(context_expr=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='block', ctx=Load()), args=[Constant(value='<block>')], keywords=[]))], body=[Expr(value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='reads', ctx=Load()), args=[Subscript(value=Name(id='v1', ctx=Load()), slice=Tuple(elts=[Subscript(value=Name(id='v2', ctx=Load()), slice=Name(id='v5', ctx=Load()), ctx=Load()), Slice(lower=Constant(value=0), upper=Constant(value=64))], ctx=Load()), ctx=Load()), Subscript(value=Name(id='v2', ctx=Load()), slice=Name(id='v5', ctx=Load()), ctx=Load()), Subscript(value=Name(id='v3', ctx=Load()), slice=Name(id='v5', ctx=Load()), ctx=Load())], keywords=[])), Expr(value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='writes', ctx=Load()), args=[Subscript(value=Name(id='v4', ctx=Load()), slice=Name(id='v5', ctx=Load()), ctx=Load())], keywords=[])), Assign(targets=[Name(id='v9', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='alloc_buffer', ctx=Load()), args=[Tuple(elts=[Constant(value=64)], ctx=Load())], keywords=[keyword(arg='scope', value=Constant(value='local'))])), For(target=Name(id='v10', ctx=Store()), iter=Call(func=Name(id='range', ctx=Load()), args=[Constant(value=64)], keywords=[]), body=[Assign(targets=[Subscript(value=Name(id='v9', ctx=Load()), slice=Name(id='v10', ctx=Load()), ctx=Store())], value=Subscript(value=Name(id='v1', ctx=Load()), slice=Tuple(elts=[Subscript(value=Name(id='v2', ctx=Load()), slice=Name(id='v5', ctx=Load()), ctx=Load()), Name(id='v10', ctx=Load())], ctx=Load()), ctx=Load()))], orelse=[]), Assign(targets=[Subscript(value=Name(id='v4', ctx=Load()), slice=Name(id='v5', ctx=Load()), ctx=Store())], value=Subscript(value=Name(id='v9', ctx=Load()), slice=Subscript(value=Name(id='v3', ctx=Load()), slice=Name(id='v5', ctx=Load()), ctx=Load()), ctx=Load()))])], decorator_list=[Attribute(value=Name(id='T', ctx=Load()), attr='prim_func', ctx=Load())])], type_ignores=[])",
+          "source": "Module(body=[FunctionDef(name='tir_entry', args=arguments(posonlyargs=[], args=[arg(arg='p0', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load())), arg(arg='p1', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load())), arg(arg='p2', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load())), arg(arg='p3', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[]), body=[Assign(targets=[Name(id='v0', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='int32', ctx=Load()), args=[], keywords=[])), Assign(targets=[Name(id='v1', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p0', ctx=Load()), Tuple(elts=[Name(id='v0', ctx=Load()), Constant(value=64)], ctx=Load())], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=64), Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v2', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p1', ctx=Load()), Tuple(elts=[Constant(value=256)], ctx=Load()), Constant(value='int32')], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v3', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p2', ctx=Load()), Tuple(elts=[Constant(value=256)], ctx=Load()), Constant(value='int32')], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v4', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p3', ctx=Load()), Tuple(elts=[Constant(value=256)], ctx=Load())], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v5', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='blockIdx.x'), Constant(value=256)], keywords=[])), Assign(targets=[Name(id='v6', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.x'), Constant(value=128)], keywords=[])), Assign(targets=[Name(id='v7', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.y'), Constant(value=1)], keywords=[])), Assign(targets=[Name(id='v8', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.z'), Constant(value=1)], keywords=[])), With(items=[withitem(context_expr=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='block', ctx=Load()), args=[Constant(value='<block>')], keywords=[]))], body=[Expr(value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='reads', ctx=Load()), args=[Subscript(value=Name(id='v1', ctx=Load()), slice=Tuple(elts=[Subscript(value=Name(id='v2', ctx=Load()), slice=Name(id='v5', ctx=Load()), ctx=Load()), Subscript(value=Name(id='v3', ctx=Load()), slice=Name(id='v5', ctx=Load()), ctx=Load())], ctx=Load()), ctx=Load()), Subscript(value=Name(id='v2', ctx=Load()), slice=Name(id='v5', ctx=Load()), ctx=Load()), Subscript(value=Name(id='v3', ctx=Load()), slice=Name(id='v5', ctx=Load()), ctx=Load())], keywords=[])), Expr(value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='writes', ctx=Load()), args=[Subscript(value=Name(id='v4', ctx=Load()), slice=Name(id='v5', ctx=Load()), ctx=Load())], keywords=[])), Assign(targets=[Subscript(value=Name(id='v4', ctx=Load()), slice=Name(id='v5', ctx=Load()), ctx=Store())], value=Subscript(value=Name(id='v1', ctx=Load()), slice=Tuple(elts=[Subscript(value=Name(id='v2', ctx=Load()), slice=Name(id='v5', ctx=Load()), ctx=Load()), Subscript(value=Name(id='v3', ctx=Load()), slice=Name(id='v5', ctx=Load()), ctx=Load())], ctx=Load()), ctx=Load()))])], decorator_list=[Attribute(value=Name(id='T', ctx=Load()), attr='prim_func', ctx=Load())])], type_ignores=[])"
+        },
+        {
+          "category": "tir_topology",
+          "message": "TileLang tir_topology differs between Source and Replay",
+          "replay": [
+            "T.prim_func",
+            "T.handle",
+            "T.handle",
+            "T.handle",
+            "T.handle",
+            "T.match_buffer",
+            "T.match_buffer",
+            "T.match_buffer",
+            "T.match_buffer",
+            "T.launch_thread",
+            "T.launch_thread",
+            "T.launch_thread",
+            "T.launch_thread",
+            "T.block",
+            "T.reads",
+            "T.writes",
+            "T.alloc_buffer",
+            "control.for"
+          ],
+          "source": [
+            "T.prim_func",
+            "T.handle",
+            "T.handle",
+            "T.handle",
+            "T.handle",
+            "T.match_buffer",
+            "T.match_buffer",
+            "T.match_buffer",
+            "T.match_buffer",
+            "T.launch_thread",
+            "T.launch_thread",
+            "T.launch_thread",
+            "T.launch_thread",
+            "T.block",
+            "T.reads",
+            "T.writes"
+          ]
+        },
+        {
+          "category": "tir_operations",
+          "message": "TileLang tir_operations differs between Source and Replay",
+          "replay": [
+            [
+              "T.alloc_buffer",
+              1
+            ],
+            [
+              "T.block",
+              1
+            ],
+            [
+              "T.handle",
+              4
+            ],
+            [
+              "T.launch_thread",
+              4
+            ],
+            [
+              "T.match_buffer",
+              4
+            ],
+            [
+              "T.prim_func",
+              1
+            ],
+            [
+              "T.reads",
+              1
+            ],
+            [
+              "T.writes",
+              1
+            ],
+            [
+              "control.for",
+              1
+            ]
+          ],
+          "source": [
+            [
+              "T.block",
+              1
+            ],
+            [
+              "T.handle",
+              4
+            ],
+            [
+              "T.launch_thread",
+              4
+            ],
+            [
+              "T.match_buffer",
+              4
+            ],
+            [
+              "T.prim_func",
+              1
+            ],
+            [
+              "T.reads",
+              1
+            ],
+            [
+              "T.writes",
+              1
+            ]
+          ]
+        },
+        {
+          "category": "ptx.value_operations",
+          "message": "PTX value_operations differs between Source and Replay",
+          "replay": [
+            [
+              "and.pred",
+              1
+            ],
+            [
+              "ld.global.b32",
+              65
+            ],
+            [
+              "ld.local.b32",
+              1
+            ],
+            [
+              "ld.param.b32",
+              1
+            ],
+            [
+              "mov.b32",
+              1
+            ],
+            [
+              "not.pred",
+              1
+            ],
+            [
+              "setp.ge.s32",
+              2
+            ],
+            [
+              "setp.gt.s32",
+              1
+            ],
+            [
+              "setp.lt.s32",
+              2
+            ]
+          ],
+          "source": [
+            [
+              "ld.global.b32",
+              3
+            ],
+            [
+              "ld.param.b32",
+              1
+            ],
+            [
+              "or.pred",
+              2
+            ],
+            [
+              "setp.ge.s32",
+              1
+            ],
+            [
+              "setp.gt.u32",
+              1
+            ],
+            [
+              "setp.lt.s32",
+              1
+            ]
+          ]
+        },
+        {
+          "category": "ptx.memory_effects",
+          "message": "PTX memory_effects differs between Source and Replay",
+          "replay": [
+            [
+              "ld.global.b32",
+              66
+            ],
+            [
+              "ld.local.b32",
+              1
+            ],
+            [
+              "ld.param.b32",
+              1
+            ],
+            [
+              "ld.param.b64",
+              4
+            ],
+            [
+              "st.global.b32",
+              1
+            ],
+            [
+              "st.local.b32",
+              65
+            ]
+          ],
+          "source": [
+            [
+              "ld.global.b32",
+              3
+            ],
+            [
+              "ld.param.b32",
+              1
+            ],
+            [
+              "ld.param.b64",
+              4
+            ],
+            [
+              "st.global.b32",
+              1
+            ]
+          ]
+        },
+        {
+          "category": "ptx.control_flow",
+          "message": "PTX control_flow differs between Source and Replay",
+          "replay": [
+            "@%pred0 bra L0;",
+            "@%pred1 bra L1;",
+            "L1:",
+            "@%pred2 bra L2;",
+            "bra.uni L2;",
+            "L0:",
+            "L2:",
+            "@%pred6 bra L3;",
+            "L3:",
+            "@%pred6 bra L4;",
+            "L4:",
+            "@%pred6 bra L5;",
+            "L5:",
+            "@%pred6 bra L6;",
+            "L6:",
+            "@%pred6 bra L7;",
+            "L7:",
+            "@%pred6 bra L8;",
+            "L8:",
+            "@%pred6 bra L9;",
+            "L9:",
+            "@%pred6 bra L10;",
+            "L10:",
+            "@%pred6 bra L11;",
+            "L11:",
+            "@%pred6 bra L12;",
+            "L12:",
+            "@%pred6 bra L13;",
+            "L13:",
+            "@%pred6 bra L14;",
+            "L14:",
+            "@%pred6 bra L15;",
+            "L15:",
+            "@%pred6 bra L16;",
+            "L16:",
+            "@%pred6 bra L17;",
+            "L17:",
+            "@%pred6 bra L18;",
+            "L18:",
+            "@%pred6 bra L19;",
+            "L19:",
+            "@%pred6 bra L20;",
+            "L20:",
+            "@%pred6 bra L21;",
+            "L21:",
+            "@%pred6 bra L22;",
+            "L22:",
+            "@%pred6 bra L23;",
+            "L23:",
+            "@%pred6 bra L24;",
+            "L24:",
+            "@%pred6 bra L25;",
+            "L25:",
+            "@%pred6 bra L26;",
+            "L26:",
+            "@%pred6 bra L27;",
+            "L27:",
+            "@%pred6 bra L28;",
+            "L28:",
+            "@%pred6 bra L29;",
+            "L29:",
+            "@%pred6 bra L30;",
+            "L30:",
+            "@%pred6 bra L31;",
+            "L31:",
+            "@%pred6 bra L32;",
+            "L32:",
+            "@%pred6 bra L33;",
+            "L33:",
+            "@%pred6 bra L34;",
+            "L34:",
+            "@%pred6 bra L35;",
+            "L35:",
+            "@%pred6 bra L36;",
+            "L36:",
+            "@%pred6 bra L37;",
+            "L37:",
+            "@%pred6 bra L38;",
+            "L38:",
+            "@%pred6 bra L39;",
+            "L39:",
+            "@%pred6 bra L40;",
+            "L40:",
+            "@%pred6 bra L41;",
+            "L41:",
+            "@%pred6 bra L42;",
+            "L42:",
+            "@%pred6 bra L43;",
+            "L43:",
+            "@%pred6 bra L44;",
+            "L44:",
+            "@%pred6 bra L45;",
+            "L45:",
+            "@%pred6 bra L46;",
+            "L46:",
+            "@%pred6 bra L47;",
+            "L47:",
+            "@%pred6 bra L48;",
+            "L48:",
+            "@%pred6 bra L49;",
+            "L49:",
+            "@%pred6 bra L50;",
+            "L50:",
+            "@%pred6 bra L51;",
+            "L51:",
+            "@%pred6 bra L52;",
+            "L52:",
+            "@%pred6 bra L53;",
+            "L53:",
+            "@%pred6 bra L54;",
+            "L54:",
+            "@%pred6 bra L55;",
+            "L55:",
+            "@%pred6 bra L56;",
+            "L56:",
+            "@%pred6 bra L57;",
+            "L57:",
+            "@%pred6 bra L58;",
+            "L58:",
+            "@%pred6 bra L59;",
+            "L59:",
+            "@%pred6 bra L60;",
+            "L60:",
+            "@%pred6 bra L61;",
+            "L61:",
+            "@%pred6 bra L62;",
+            "L62:",
+            "@%pred6 bra L63;",
+            "L63:",
+            "@%pred6 bra L64;",
+            "L64:",
+            "ret;"
+          ],
+          "source": [
+            "@%pred4 bra L0;",
+            "L0:",
+            "ret;"
+          ]
+        },
+        {
+          "category": "ptx.raw_instruction_topology",
+          "message": "PTX raw_instruction_topology differs between Source and Replay",
+          "replay": [
+            "mov.u64 %b640,__local_depot0;",
+            "ld.param.u64 %b641,[param0];",
+            "ld.param.u64 %b642,[param1];",
+            "ld.param.u64 %b643,[param2];",
+            "ld.param.u64 %b644,[param3];",
+            "ld.param.u32 %b320,[param4];",
+            "cvta.to.global.u64 %b645,%b641;",
+            "cvta.to.global.u64 %b646,%b642;",
+            "add.u64 %b647,%b640,0;",
+            "mov.u32 %b321,%ctaid.x;",
+            "cvt.u64.u32 %b648,%b321;",
+            "mul.wide.u32 %b649,%b321,4;",
+            "add.s64 %b6410,%b646,%b649;",
+            "ld.global.nc.u32 %b322,[%b6410];",
+            "setp.lt.s32 %pred0,%b322,0;",
+            "mul.wide.u32 %b6411,%b322,256;",
+            "add.s64 %b6412,%b645,%b6411;",
+            "mov.f32 %f320,0f00000000;",
+            "@%pred0 bra L0;",
+            "setp.ge.s32 %pred1,%b322,%b320;",
+            "mov.f32 %f321,0f00000000;",
+            "@%pred1 bra L1;",
+            "ld.global.nc.f32 %f321,[%b6412];",
+            "L1:",
+            "setp.ge.s32 %pred2,%b322,%b320;",
+            "st.local.f32 [%b647],%f321;",
+            "@%pred2 bra L2;",
+            "ld.global.nc.f32 %f320,[%b6412+4];",
+            "bra.uni L2;",
+            "L0:",
+            "mov.b32 %b323,0;",
+            "st.local.u32 [%b647],%b323;",
+            "L2:",
+            "setp.gt.s32 %pred3,%b322,-1;",
+            "st.local.f32 [%b647+4],%f320;",
+            "setp.lt.s32 %pred4,%b322,%b320;",
+            "and.pred %pred5,%pred3,%pred4;",
+            "mov.f32 %f322,0f00000000;",
+            "not.pred %pred6,%pred5;",
+            "@%pred6 bra L3;",
+            "ld.global.nc.f32 %f322,[%b6412+8];",
+            "L3:",
+            "st.local.f32 [%b647+8],%f322;",
+            "mov.f32 %f323,0f00000000;",
+            "@%pred6 bra L4;",
+            "ld.global.nc.f32 %f323,[%b6412+12];",
+            "L4:",
+            "st.local.f32 [%b647+12],%f323;",
+            "mov.f32 %f324,0f00000000;",
+            "@%pred6 bra L5;",
+            "ld.global.nc.f32 %f324,[%b6412+16];",
+            "L5:",
+            "st.local.f32 [%b647+16],%f324;",
+            "mov.f32 %f325,0f00000000;",
+            "@%pred6 bra L6;",
+            "ld.global.nc.f32 %f325,[%b6412+20];",
+            "L6:",
+            "st.local.f32 [%b647+20],%f325;",
+            "mov.f32 %f326,0f00000000;",
+            "@%pred6 bra L7;",
+            "ld.global.nc.f32 %f326,[%b6412+24];",
+            "L7:",
+            "st.local.f32 [%b647+24],%f326;",
+            "mov.f32 %f327,0f00000000;",
+            "@%pred6 bra L8;",
+            "ld.global.nc.f32 %f327,[%b6412+28];",
+            "L8:",
+            "st.local.f32 [%b647+28],%f327;",
+            "mov.f32 %f328,0f00000000;",
+            "@%pred6 bra L9;",
+            "ld.global.nc.f32 %f328,[%b6412+32];",
+            "L9:",
+            "st.local.f32 [%b647+32],%f328;",
+            "mov.f32 %f329,0f00000000;",
+            "@%pred6 bra L10;",
+            "ld.global.nc.f32 %f329,[%b6412+36];",
+            "L10:",
+            "st.local.f32 [%b647+36],%f329;",
+            "mov.f32 %f3210,0f00000000;",
+            "@%pred6 bra L11;",
+            "ld.global.nc.f32 %f3210,[%b6412+40];",
+            "L11:",
+            "st.local.f32 [%b647+40],%f3210;",
+            "mov.f32 %f3211,0f00000000;",
+            "@%pred6 bra L12;",
+            "ld.global.nc.f32 %f3211,[%b6412+44];",
+            "L12:",
+            "st.local.f32 [%b647+44],%f3211;",
+            "mov.f32 %f3212,0f00000000;",
+            "@%pred6 bra L13;",
+            "ld.global.nc.f32 %f3212,[%b6412+48];",
+            "L13:",
+            "st.local.f32 [%b647+48],%f3212;",
+            "mov.f32 %f3213,0f00000000;",
+            "@%pred6 bra L14;",
+            "ld.global.nc.f32 %f3213,[%b6412+52];",
+            "L14:",
+            "st.local.f32 [%b647+52],%f3213;",
+            "mov.f32 %f3214,0f00000000;",
+            "@%pred6 bra L15;",
+            "ld.global.nc.f32 %f3214,[%b6412+56];",
+            "L15:",
+            "st.local.f32 [%b647+56],%f3214;",
+            "mov.f32 %f3215,0f00000000;",
+            "@%pred6 bra L16;",
+            "ld.global.nc.f32 %f3215,[%b6412+60];",
+            "L16:",
+            "st.local.f32 [%b647+60],%f3215;",
+            "mov.f32 %f3216,0f00000000;",
+            "@%pred6 bra L17;",
+            "ld.global.nc.f32 %f3216,[%b6412+64];",
+            "L17:",
+            "st.local.f32 [%b647+64],%f3216;",
+            "mov.f32 %f3217,0f00000000;",
+            "@%pred6 bra L18;",
+            "ld.global.nc.f32 %f3217,[%b6412+68];",
+            "L18:",
+            "st.local.f32 [%b647+68],%f3217;",
+            "mov.f32 %f3218,0f00000000;",
+            "@%pred6 bra L19;",
+            "ld.global.nc.f32 %f3218,[%b6412+72];",
+            "L19:",
+            "st.local.f32 [%b647+72],%f3218;",
+            "mov.f32 %f3219,0f00000000;",
+            "@%pred6 bra L20;",
+            "ld.global.nc.f32 %f3219,[%b6412+76];",
+            "L20:",
+            "st.local.f32 [%b647+76],%f3219;",
+            "mov.f32 %f3220,0f00000000;",
+            "@%pred6 bra L21;",
+            "ld.global.nc.f32 %f3220,[%b6412+80];",
+            "L21:",
+            "st.local.f32 [%b647+80],%f3220;",
+            "mov.f32 %f3221,0f00000000;",
+            "@%pred6 bra L22;",
+            "ld.global.nc.f32 %f3221,[%b6412+84];",
+            "L22:",
+            "st.local.f32 [%b647+84],%f3221;",
+            "mov.f32 %f3222,0f00000000;",
+            "@%pred6 bra L23;",
+            "ld.global.nc.f32 %f3222,[%b6412+88];",
+            "L23:",
+            "st.local.f32 [%b647+88],%f3222;",
+            "mov.f32 %f3223,0f00000000;",
+            "@%pred6 bra L24;",
+            "ld.global.nc.f32 %f3223,[%b6412+92];",
+            "L24:",
+            "st.local.f32 [%b647+92],%f3223;",
+            "mov.f32 %f3224,0f00000000;",
+            "@%pred6 bra L25;",
+            "ld.global.nc.f32 %f3224,[%b6412+96];",
+            "L25:",
+            "st.local.f32 [%b647+96],%f3224;",
+            "mov.f32 %f3225,0f00000000;",
+            "@%pred6 bra L26;",
+            "ld.global.nc.f32 %f3225,[%b6412+100];",
+            "L26:",
+            "st.local.f32 [%b647+100],%f3225;",
+            "mov.f32 %f3226,0f00000000;",
+            "@%pred6 bra L27;",
+            "ld.global.nc.f32 %f3226,[%b6412+104];",
+            "L27:",
+            "st.local.f32 [%b647+104],%f3226;",
+            "mov.f32 %f3227,0f00000000;",
+            "@%pred6 bra L28;",
+            "ld.global.nc.f32 %f3227,[%b6412+108];",
+            "L28:",
+            "st.local.f32 [%b647+108],%f3227;",
+            "mov.f32 %f3228,0f00000000;",
+            "@%pred6 bra L29;",
+            "ld.global.nc.f32 %f3228,[%b6412+112];",
+            "L29:",
+            "st.local.f32 [%b647+112],%f3228;",
+            "mov.f32 %f3229,0f00000000;",
+            "@%pred6 bra L30;",
+            "ld.global.nc.f32 %f3229,[%b6412+116];",
+            "L30:",
+            "st.local.f32 [%b647+116],%f3229;",
+            "mov.f32 %f3230,0f00000000;",
+            "@%pred6 bra L31;",
+            "ld.global.nc.f32 %f3230,[%b6412+120];",
+            "L31:",
+            "st.local.f32 [%b647+120],%f3230;",
+            "mov.f32 %f3231,0f00000000;",
+            "@%pred6 bra L32;",
+            "ld.global.nc.f32 %f3231,[%b6412+124];",
+            "L32:",
+            "st.local.f32 [%b647+124],%f3231;",
+            "mov.f32 %f3232,0f00000000;",
+            "@%pred6 bra L33;",
+            "ld.global.nc.f32 %f3232,[%b6412+128];",
+            "L33:",
+            "st.local.f32 [%b647+128],%f3232;",
+            "mov.f32 %f3233,0f00000000;",
+            "@%pred6 bra L34;",
+            "ld.global.nc.f32 %f3233,[%b6412+132];",
+            "L34:",
+            "st.local.f32 [%b647+132],%f3233;",
+            "mov.f32 %f3234,0f00000000;",
+            "@%pred6 bra L35;",
+            "ld.global.nc.f32 %f3234,[%b6412+136];",
+            "L35:",
+            "st.local.f32 [%b647+136],%f3234;",
+            "mov.f32 %f3235,0f00000000;",
+            "@%pred6 bra L36;",
+            "ld.global.nc.f32 %f3235,[%b6412+140];",
+            "L36:",
+            "st.local.f32 [%b647+140],%f3235;",
+            "mov.f32 %f3236,0f00000000;",
+            "@%pred6 bra L37;",
+            "ld.global.nc.f32 %f3236,[%b6412+144];",
+            "L37:",
+            "st.local.f32 [%b647+144],%f3236;",
+            "mov.f32 %f3237,0f00000000;",
+            "@%pred6 bra L38;",
+            "ld.global.nc.f32 %f3237,[%b6412+148];",
+            "L38:",
+            "st.local.f32 [%b647+148],%f3237;",
+            "mov.f32 %f3238,0f00000000;",
+            "@%pred6 bra L39;",
+            "ld.global.nc.f32 %f3238,[%b6412+152];",
+            "L39:",
+            "st.local.f32 [%b647+152],%f3238;",
+            "mov.f32 %f3239,0f00000000;",
+            "@%pred6 bra L40;",
+            "ld.global.nc.f32 %f3239,[%b6412+156];",
+            "L40:",
+            "st.local.f32 [%b647+156],%f3239;",
+            "mov.f32 %f3240,0f00000000;",
+            "@%pred6 bra L41;",
+            "ld.global.nc.f32 %f3240,[%b6412+160];",
+            "L41:",
+            "st.local.f32 [%b647+160],%f3240;",
+            "mov.f32 %f3241,0f00000000;",
+            "@%pred6 bra L42;",
+            "ld.global.nc.f32 %f3241,[%b6412+164];",
+            "L42:",
+            "st.local.f32 [%b647+164],%f3241;",
+            "mov.f32 %f3242,0f00000000;",
+            "@%pred6 bra L43;",
+            "ld.global.nc.f32 %f3242,[%b6412+168];",
+            "L43:",
+            "st.local.f32 [%b647+168],%f3242;",
+            "mov.f32 %f3243,0f00000000;",
+            "@%pred6 bra L44;",
+            "ld.global.nc.f32 %f3243,[%b6412+172];",
+            "L44:",
+            "st.local.f32 [%b647+172],%f3243;",
+            "mov.f32 %f3244,0f00000000;",
+            "@%pred6 bra L45;",
+            "ld.global.nc.f32 %f3244,[%b6412+176];",
+            "L45:",
+            "st.local.f32 [%b647+176],%f3244;",
+            "mov.f32 %f3245,0f00000000;",
+            "@%pred6 bra L46;",
+            "ld.global.nc.f32 %f3245,[%b6412+180];",
+            "L46:",
+            "st.local.f32 [%b647+180],%f3245;",
+            "mov.f32 %f3246,0f00000000;",
+            "@%pred6 bra L47;",
+            "ld.global.nc.f32 %f3246,[%b6412+184];",
+            "L47:",
+            "st.local.f32 [%b647+184],%f3246;",
+            "mov.f32 %f3247,0f00000000;",
+            "@%pred6 bra L48;",
+            "ld.global.nc.f32 %f3247,[%b6412+188];",
+            "L48:",
+            "st.local.f32 [%b647+188],%f3247;",
+            "mov.f32 %f3248,0f00000000;",
+            "@%pred6 bra L49;",
+            "ld.global.nc.f32 %f3248,[%b6412+192];",
+            "L49:",
+            "st.local.f32 [%b647+192],%f3248;",
+            "mov.f32 %f3249,0f00000000;",
+            "@%pred6 bra L50;",
+            "ld.global.nc.f32 %f3249,[%b6412+196];",
+            "L50:",
+            "st.local.f32 [%b647+196],%f3249;",
+            "mov.f32 %f3250,0f00000000;",
+            "@%pred6 bra L51;",
+            "ld.global.nc.f32 %f3250,[%b6412+200];",
+            "L51:",
+            "st.local.f32 [%b647+200],%f3250;",
+            "mov.f32 %f3251,0f00000000;",
+            "@%pred6 bra L52;",
+            "ld.global.nc.f32 %f3251,[%b6412+204];",
+            "L52:",
+            "st.local.f32 [%b647+204],%f3251;",
+            "mov.f32 %f3252,0f00000000;",
+            "@%pred6 bra L53;",
+            "ld.global.nc.f32 %f3252,[%b6412+208];",
+            "L53:",
+            "st.local.f32 [%b647+208],%f3252;",
+            "mov.f32 %f3253,0f00000000;",
+            "@%pred6 bra L54;",
+            "ld.global.nc.f32 %f3253,[%b6412+212];",
+            "L54:",
+            "st.local.f32 [%b647+212],%f3253;",
+            "mov.f32 %f3254,0f00000000;",
+            "@%pred6 bra L55;",
+            "ld.global.nc.f32 %f3254,[%b6412+216];",
+            "L55:",
+            "st.local.f32 [%b647+216],%f3254;",
+            "mov.f32 %f3255,0f00000000;",
+            "@%pred6 bra L56;",
+            "ld.global.nc.f32 %f3255,[%b6412+220];",
+            "L56:",
+            "st.local.f32 [%b647+220],%f3255;",
+            "mov.f32 %f3256,0f00000000;",
+            "@%pred6 bra L57;",
+            "ld.global.nc.f32 %f3256,[%b6412+224];",
+            "L57:",
+            "st.local.f32 [%b647+224],%f3256;",
+            "mov.f32 %f3257,0f00000000;",
+            "@%pred6 bra L58;",
+            "ld.global.nc.f32 %f3257,[%b6412+228];",
+            "L58:",
+            "st.local.f32 [%b647+228],%f3257;",
+            "mov.f32 %f3258,0f00000000;",
+            "@%pred6 bra L59;",
+            "ld.global.nc.f32 %f3258,[%b6412+232];",
+            "L59:",
+            "st.local.f32 [%b647+232],%f3258;",
+            "mov.f32 %f3259,0f00000000;",
+            "@%pred6 bra L60;",
+            "ld.global.nc.f32 %f3259,[%b6412+236];",
+            "L60:",
+            "st.local.f32 [%b647+236],%f3259;",
+            "mov.f32 %f3260,0f00000000;",
+            "@%pred6 bra L61;",
+            "ld.global.nc.f32 %f3260,[%b6412+240];",
+            "L61:",
+            "st.local.f32 [%b647+240],%f3260;",
+            "mov.f32 %f3261,0f00000000;",
+            "@%pred6 bra L62;",
+            "ld.global.nc.f32 %f3261,[%b6412+244];",
+            "L62:",
+            "st.local.f32 [%b647+244],%f3261;",
+            "mov.f32 %f3262,0f00000000;",
+            "@%pred6 bra L63;",
+            "ld.global.nc.f32 %f3262,[%b6412+248];",
+            "L63:",
+            "st.local.f32 [%b647+248],%f3262;",
+            "mov.f32 %f3263,0f00000000;",
+            "@%pred6 bra L64;",
+            "ld.global.nc.f32 %f3263,[%b6412+252];",
+            "L64:",
+            "st.local.f32 [%b647+252],%f3263;",
+            "cvta.to.global.u64 %b6413,%b643;",
+            "cvta.to.global.u64 %b6414,%b644;",
+            "shl.b64 %b6415,%b648,2;",
+            "add.s64 %b6416,%b6413,%b6415;",
+            "ld.global.nc.u32 %b324,[%b6416];",
+            "mul.wide.s32 %b6417,%b324,4;",
+            "add.s64 %b6418,%b647,%b6417;",
+            "ld.local.f32 %f3264,[%b6418];",
+            "add.s64 %b6419,%b6414,%b6415;",
+            "st.global.f32 [%b6419],%f3264;",
+            "ret;"
+          ],
+          "source": [
+            "ld.param.u64 %b640,[param0];",
+            "ld.param.u64 %b641,[param1];",
+            "ld.param.u64 %b642,[param2];",
+            "ld.param.u64 %b643,[param3];",
+            "ld.param.u32 %b320,[param4];",
+            "cvta.to.global.u64 %b644,%b640;",
+            "cvta.to.global.u64 %b645,%b643;",
+            "mov.u32 %b321,%ctaid.x;",
+            "cvt.u64.u32 %b646,%b321;",
+            "mul.wide.u32 %b647,%b321,4;",
+            "add.s64 %b648,%b645,%b647;",
+            "ld.global.nc.u32 %b322,[%b648];",
+            "add.s64 %b649,%b644,%b647;",
+            "ld.global.nc.u32 %b323,[%b649];",
+            "setp.gt.u32 %pred0,%b323,63;",
+            "setp.lt.s32 %pred1,%b322,0;",
+            "or.pred %pred2,%pred0,%pred1;",
+            "setp.ge.s32 %pred3,%b322,%b320;",
+            "mov.f32 %f320,0f00000000;",
+            "or.pred %pred4,%pred2,%pred3;",
+            "@%pred4 bra L0;",
+            "cvta.to.global.u64 %b6410,%b641;",
+            "mul.wide.u32 %b6411,%b322,64;",
+            "cvt.u64.u32 %b6412,%b323;",
+            "add.s64 %b6413,%b6411,%b6412;",
+            "shl.b64 %b6414,%b6413,2;",
+            "add.s64 %b6415,%b6410,%b6414;",
+            "ld.global.nc.f32 %f320,[%b6415];",
+            "L0:",
+            "cvta.to.global.u64 %b6416,%b642;",
+            "shl.b64 %b6417,%b646,2;",
+            "add.s64 %b6418,%b6416,%b6417;",
+            "st.global.f32 [%b6418],%f320;",
+            "ret;"
+          ]
+        },
+        {
+          "category": "ptx.raw_opcode_multiset",
+          "message": "PTX raw_opcode_multiset differs between Source and Replay",
+          "replay": [
+            [
+              "add.s64",
+              5
+            ],
+            [
+              "add.u64",
+              1
+            ],
+            [
+              "and.pred",
+              1
+            ],
+            [
+              "bra",
+              65
+            ],
+            [
+              "bra.uni",
+              1
+            ],
+            [
+              "cvt.u64.u32",
+              1
+            ],
+            [
+              "cvta.to.global.u64",
+              4
+            ],
+            [
+              "ld.global.nc.f32",
+              64
+            ],
+            [
+              "ld.global.nc.u32",
+              2
+            ],
+            [
+              "ld.local.f32",
+              1
+            ],
+            [
+              "ld.param.u32",
+              1
+            ],
+            [
+              "ld.param.u64",
+              4
+            ],
+            [
+              "mov.b32",
+              1
+            ],
+            [
+              "mov.f32",
+              64
+            ],
+            [
+              "mov.u32",
+              1
+            ],
+            [
+              "mov.u64",
+              1
+            ],
+            [
+              "mul.wide.s32",
+              1
+            ],
+            [
+              "mul.wide.u32",
+              2
+            ],
+            [
+              "not.pred",
+              1
+            ],
+            [
+              "ret;",
+              1
+            ],
+            [
+              "setp.ge.s32",
+              2
+            ],
+            [
+              "setp.gt.s32",
+              1
+            ],
+            [
+              "setp.lt.s32",
+              2
+            ],
+            [
+              "shl.b64",
+              1
+            ],
+            [
+              "st.global.f32",
+              1
+            ],
+            [
+              "st.local.f32",
+              64
+            ],
+            [
+              "st.local.u32",
+              1
+            ]
+          ],
+          "source": [
+            [
+              "add.s64",
+              5
+            ],
+            [
+              "bra",
+              1
+            ],
+            [
+              "cvt.u64.u32",
+              2
+            ],
+            [
+              "cvta.to.global.u64",
+              4
+            ],
+            [
+              "ld.global.nc.f32",
+              1
+            ],
+            [
+              "ld.global.nc.u32",
+              2
+            ],
+            [
+              "ld.param.u32",
+              1
+            ],
+            [
+              "ld.param.u64",
+              4
+            ],
+            [
+              "mov.f32",
+              1
+            ],
+            [
+              "mov.u32",
+              1
+            ],
+            [
+              "mul.wide.u32",
+              2
+            ],
+            [
+              "or.pred",
+              2
+            ],
+            [
+              "ret;",
+              1
+            ],
+            [
+              "setp.ge.s32",
+              1
+            ],
+            [
+              "setp.gt.u32",
+              1
+            ],
+            [
+              "setp.lt.s32",
+              1
+            ],
+            [
+              "shl.b64",
+              2
+            ],
+            [
+              "st.global.f32",
+              1
+            ]
+          ]
+        },
+        {
+          "category": "ptx.raw_memory_effects",
+          "message": "PTX raw_memory_effects differs between Source and Replay",
+          "replay": [
+            "ld.param.u64 %b641,[param0];",
+            "ld.param.u64 %b642,[param1];",
+            "ld.param.u64 %b643,[param2];",
+            "ld.param.u64 %b644,[param3];",
+            "ld.param.u32 %b320,[param4];",
+            "ld.global.nc.u32 %b322,[%b6410];",
+            "ld.global.nc.f32 %f321,[%b6412];",
+            "st.local.f32 [%b647],%f321;",
+            "ld.global.nc.f32 %f320,[%b6412+4];",
+            "st.local.u32 [%b647],%b323;",
+            "st.local.f32 [%b647+4],%f320;",
+            "ld.global.nc.f32 %f322,[%b6412+8];",
+            "st.local.f32 [%b647+8],%f322;",
+            "ld.global.nc.f32 %f323,[%b6412+12];",
+            "st.local.f32 [%b647+12],%f323;",
+            "ld.global.nc.f32 %f324,[%b6412+16];",
+            "st.local.f32 [%b647+16],%f324;",
+            "ld.global.nc.f32 %f325,[%b6412+20];",
+            "st.local.f32 [%b647+20],%f325;",
+            "ld.global.nc.f32 %f326,[%b6412+24];",
+            "st.local.f32 [%b647+24],%f326;",
+            "ld.global.nc.f32 %f327,[%b6412+28];",
+            "st.local.f32 [%b647+28],%f327;",
+            "ld.global.nc.f32 %f328,[%b6412+32];",
+            "st.local.f32 [%b647+32],%f328;",
+            "ld.global.nc.f32 %f329,[%b6412+36];",
+            "st.local.f32 [%b647+36],%f329;",
+            "ld.global.nc.f32 %f3210,[%b6412+40];",
+            "st.local.f32 [%b647+40],%f3210;",
+            "ld.global.nc.f32 %f3211,[%b6412+44];",
+            "st.local.f32 [%b647+44],%f3211;",
+            "ld.global.nc.f32 %f3212,[%b6412+48];",
+            "st.local.f32 [%b647+48],%f3212;",
+            "ld.global.nc.f32 %f3213,[%b6412+52];",
+            "st.local.f32 [%b647+52],%f3213;",
+            "ld.global.nc.f32 %f3214,[%b6412+56];",
+            "st.local.f32 [%b647+56],%f3214;",
+            "ld.global.nc.f32 %f3215,[%b6412+60];",
+            "st.local.f32 [%b647+60],%f3215;",
+            "ld.global.nc.f32 %f3216,[%b6412+64];",
+            "st.local.f32 [%b647+64],%f3216;",
+            "ld.global.nc.f32 %f3217,[%b6412+68];",
+            "st.local.f32 [%b647+68],%f3217;",
+            "ld.global.nc.f32 %f3218,[%b6412+72];",
+            "st.local.f32 [%b647+72],%f3218;",
+            "ld.global.nc.f32 %f3219,[%b6412+76];",
+            "st.local.f32 [%b647+76],%f3219;",
+            "ld.global.nc.f32 %f3220,[%b6412+80];",
+            "st.local.f32 [%b647+80],%f3220;",
+            "ld.global.nc.f32 %f3221,[%b6412+84];",
+            "st.local.f32 [%b647+84],%f3221;",
+            "ld.global.nc.f32 %f3222,[%b6412+88];",
+            "st.local.f32 [%b647+88],%f3222;",
+            "ld.global.nc.f32 %f3223,[%b6412+92];",
+            "st.local.f32 [%b647+92],%f3223;",
+            "ld.global.nc.f32 %f3224,[%b6412+96];",
+            "st.local.f32 [%b647+96],%f3224;",
+            "ld.global.nc.f32 %f3225,[%b6412+100];",
+            "st.local.f32 [%b647+100],%f3225;",
+            "ld.global.nc.f32 %f3226,[%b6412+104];",
+            "st.local.f32 [%b647+104],%f3226;",
+            "ld.global.nc.f32 %f3227,[%b6412+108];",
+            "st.local.f32 [%b647+108],%f3227;",
+            "ld.global.nc.f32 %f3228,[%b6412+112];",
+            "st.local.f32 [%b647+112],%f3228;",
+            "ld.global.nc.f32 %f3229,[%b6412+116];",
+            "st.local.f32 [%b647+116],%f3229;",
+            "ld.global.nc.f32 %f3230,[%b6412+120];",
+            "st.local.f32 [%b647+120],%f3230;",
+            "ld.global.nc.f32 %f3231,[%b6412+124];",
+            "st.local.f32 [%b647+124],%f3231;",
+            "ld.global.nc.f32 %f3232,[%b6412+128];",
+            "st.local.f32 [%b647+128],%f3232;",
+            "ld.global.nc.f32 %f3233,[%b6412+132];",
+            "st.local.f32 [%b647+132],%f3233;",
+            "ld.global.nc.f32 %f3234,[%b6412+136];",
+            "st.local.f32 [%b647+136],%f3234;",
+            "ld.global.nc.f32 %f3235,[%b6412+140];",
+            "st.local.f32 [%b647+140],%f3235;",
+            "ld.global.nc.f32 %f3236,[%b6412+144];",
+            "st.local.f32 [%b647+144],%f3236;",
+            "ld.global.nc.f32 %f3237,[%b6412+148];",
+            "st.local.f32 [%b647+148],%f3237;",
+            "ld.global.nc.f32 %f3238,[%b6412+152];",
+            "st.local.f32 [%b647+152],%f3238;",
+            "ld.global.nc.f32 %f3239,[%b6412+156];",
+            "st.local.f32 [%b647+156],%f3239;",
+            "ld.global.nc.f32 %f3240,[%b6412+160];",
+            "st.local.f32 [%b647+160],%f3240;",
+            "ld.global.nc.f32 %f3241,[%b6412+164];",
+            "st.local.f32 [%b647+164],%f3241;",
+            "ld.global.nc.f32 %f3242,[%b6412+168];",
+            "st.local.f32 [%b647+168],%f3242;",
+            "ld.global.nc.f32 %f3243,[%b6412+172];",
+            "st.local.f32 [%b647+172],%f3243;",
+            "ld.global.nc.f32 %f3244,[%b6412+176];",
+            "st.local.f32 [%b647+176],%f3244;",
+            "ld.global.nc.f32 %f3245,[%b6412+180];",
+            "st.local.f32 [%b647+180],%f3245;",
+            "ld.global.nc.f32 %f3246,[%b6412+184];",
+            "st.local.f32 [%b647+184],%f3246;",
+            "ld.global.nc.f32 %f3247,[%b6412+188];",
+            "st.local.f32 [%b647+188],%f3247;",
+            "ld.global.nc.f32 %f3248,[%b6412+192];",
+            "st.local.f32 [%b647+192],%f3248;",
+            "ld.global.nc.f32 %f3249,[%b6412+196];",
+            "st.local.f32 [%b647+196],%f3249;",
+            "ld.global.nc.f32 %f3250,[%b6412+200];",
+            "st.local.f32 [%b647+200],%f3250;",
+            "ld.global.nc.f32 %f3251,[%b6412+204];",
+            "st.local.f32 [%b647+204],%f3251;",
+            "ld.global.nc.f32 %f3252,[%b6412+208];",
+            "st.local.f32 [%b647+208],%f3252;",
+            "ld.global.nc.f32 %f3253,[%b6412+212];",
+            "st.local.f32 [%b647+212],%f3253;",
+            "ld.global.nc.f32 %f3254,[%b6412+216];",
+            "st.local.f32 [%b647+216],%f3254;",
+            "ld.global.nc.f32 %f3255,[%b6412+220];",
+            "st.local.f32 [%b647+220],%f3255;",
+            "ld.global.nc.f32 %f3256,[%b6412+224];",
+            "st.local.f32 [%b647+224],%f3256;",
+            "ld.global.nc.f32 %f3257,[%b6412+228];",
+            "st.local.f32 [%b647+228],%f3257;",
+            "ld.global.nc.f32 %f3258,[%b6412+232];",
+            "st.local.f32 [%b647+232],%f3258;",
+            "ld.global.nc.f32 %f3259,[%b6412+236];",
+            "st.local.f32 [%b647+236],%f3259;",
+            "ld.global.nc.f32 %f3260,[%b6412+240];",
+            "st.local.f32 [%b647+240],%f3260;",
+            "ld.global.nc.f32 %f3261,[%b6412+244];",
+            "st.local.f32 [%b647+244],%f3261;",
+            "ld.global.nc.f32 %f3262,[%b6412+248];",
+            "st.local.f32 [%b647+248],%f3262;",
+            "ld.global.nc.f32 %f3263,[%b6412+252];",
+            "st.local.f32 [%b647+252],%f3263;",
+            "ld.global.nc.u32 %b324,[%b6416];",
+            "ld.local.f32 %f3264,[%b6418];",
+            "st.global.f32 [%b6419],%f3264;"
+          ],
+          "source": [
+            "ld.param.u64 %b640,[param0];",
+            "ld.param.u64 %b641,[param1];",
+            "ld.param.u64 %b642,[param2];",
+            "ld.param.u64 %b643,[param3];",
+            "ld.param.u32 %b320,[param4];",
+            "ld.global.nc.u32 %b322,[%b648];",
+            "ld.global.nc.u32 %b323,[%b649];",
+            "ld.global.nc.f32 %f320,[%b6415];",
+            "st.global.f32 [%b6418],%f320;"
+          ]
+        }
+      ],
+      "hard_pass": false,
+      "hard_passes": {
+        "interface": true,
+        "ptx.interface": true,
+        "ptx.schema": true,
+        "ptx.target": true,
+        "schema": true,
+        "tir_operations": false,
+        "tir_structure": false,
+        "tir_topology": false
+      },
+      "primary_difference_category": "tir_structure",
+      "replay_digest": "4aa2ea68cb367acd7167874bb2e35243eb388c5af72f1565afb67f040ca49c06",
+      "source_digest": "0d19f6d76d56824bade396ebe6fbba980fe3c82f75d041238eb5d4332af9936b"
+    },
+    "compile": {
+      "cache_key": "772b31b7c4c9fe503c5bfd2a05c408b0f5170b775bffcccbdb1ddf4151609ad0",
+      "compiler": {
+        "name": "tilelang",
+        "version": "0.1.8"
+      },
+      "cuda": "#include <tl_templates/cuda/gemm.h>\n#include <tl_templates/cuda/copy.h>\n#include <tl_templates/cuda/reduce.h>\n#include <tl_templates/cuda/ldsm.h>\n#include <tl_templates/cuda/threadblock_swizzle.h>\n#include <tl_templates/cuda/debug.h>\n#ifdef ENABLE_BF16\n#include <tl_templates/cuda/cuda_bf16_fallbacks.cuh>\n#endif\n\nextern \"C\" __global__ void scrc_k0_kernel(const float* __restrict__ p0, const int* __restrict__ p1, const int* __restrict__ p2, float* __restrict__ p3, int x0);\nextern \"C\" __global__ void __launch_bounds__(128, 1) scrc_k0_kernel(const float* __restrict__ p0, const int* __restrict__ p1, const int* __restrict__ p2, float* __restrict__ p3, int x0) {\n  float v0[64];\n  for (int v4 = 0; v4 < 64; ++v4) {\n    float condval;\n    if (((0 <= p1[((int)blockIdx.x)]) && (p1[((int)blockIdx.x)] < x0))) {\n      condval = p0[((((int64_t)p1[((int64_t)((int)blockIdx.x))]) * (int64_t)64) + ((int64_t)v4))];\n    } else {\n      condval = 0x0p+0f/*0.000000e+00*/;\n    }\n    v0[v4] = condval;\n  }\n  p3[((int)blockIdx.x)] = v0[p2[((int64_t)((int)blockIdx.x))]];\n}\n\n",
+      "diagnostic": "",
+      "elapsed_ms": 6750.704005011357,
+      "interface": {
+        "parameters": [
+          {
+            "dtype": "float32",
+            "kind": "pointer",
+            "mode": "input",
+            "name": "p0",
+            "rank": 2,
+            "shape": [
+              "x0",
+              64
+            ]
+          },
+          {
+            "dtype": "int32",
+            "kind": "pointer",
+            "mode": "input",
+            "name": "p1",
+            "rank": 1,
+            "shape": [
+              256
+            ]
+          },
+          {
+            "dtype": "int32",
+            "kind": "pointer",
+            "mode": "input",
+            "name": "p2",
+            "rank": 1,
+            "shape": [
+              256
+            ]
+          },
+          {
+            "dtype": "float32",
+            "kind": "pointer",
+            "mode": "output",
+            "name": "p3",
+            "rank": 1,
+            "shape": [
+              256
+            ]
+          }
+        ]
+      },
+      "ok": true,
+      "ptx": "//\n// Generated by NVIDIA NVVM Compiler\n//\n// Compiler Build ID: CL-35404655\n// Cuda compilation tools, release 12.8, V12.8.61\n// Based on NVVM 20.0.0\n//\n\n.version 8.7\n.target sm_120a\n.address_size 64\n\n\t// .globl\tscrc_k0_kernel\n.global .align 1 .b8 _ZN45_INTERNAL_0dda89b6_14_tvm_kernels_cu_1b63e0854cute7productE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_0dda89b6_14_tvm_kernels_cu_1b63e0854cute1_E[1];\n.global .align 1 .b8 _ZN45_INTERNAL_0dda89b6_14_tvm_kernels_cu_1b63e0854cuda3std3__45__cpo5beginE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_0dda89b6_14_tvm_kernels_cu_1b63e0854cuda3std3__45__cpo3endE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_0dda89b6_14_tvm_kernels_cu_1b63e0854cuda3std3__45__cpo6cbeginE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_0dda89b6_14_tvm_kernels_cu_1b63e0854cuda3std3__45__cpo4cendE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_0dda89b6_14_tvm_kernels_cu_1b63e0854cuda3std3__419piecewise_constructE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_0dda89b6_14_tvm_kernels_cu_1b63e0854cuda3std3__48in_placeE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_0dda89b6_14_tvm_kernels_cu_1b63e0854cuda3std6ranges3__45__cpo4swapE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_0dda89b6_14_tvm_kernels_cu_1b63e0854cuda3std6ranges3__45__cpo9iter_moveE[1];\n\n.visible .entry scrc_k0_kernel(\n\t.param .u64 scrc_k0_kernel_param_0,\n\t.param .u64 scrc_k0_kernel_param_1,\n\t.param .u64 scrc_k0_kernel_param_2,\n\t.param .u64 scrc_k0_kernel_param_3,\n\t.param .u32 scrc_k0_kernel_param_4\n)\n.maxntid 128, 1, 1\n.minnctapersm 1\n{\n\t.local .align 16 .b8 \t__local_depot0[256];\n\t.reg .b64 \t%SP;\n\t.reg .b64 \t%SPL;\n\t.reg .pred \t%p<69>;\n\t.reg .b32 \t%r<6>;\n\t.reg .f32 \t%f<260>;\n\t.reg .b64 \t%rd<21>;\n\t.loc\t1 12 0\n\n\tmov.u64 \t%SPL, __local_depot0;\n\tld.param.u64 \t%rd6, [scrc_k0_kernel_param_0];\n\tld.param.u64 \t%rd7, [scrc_k0_kernel_param_1];\n\tld.param.u64 \t%rd4, [scrc_k0_kernel_param_2];\n\tld.param.u64 \t%rd5, [scrc_k0_kernel_param_3];\n\tld.param.u32 \t%r2, [scrc_k0_kernel_param_4];\n\tcvta.to.global.u64 \t%rd8, %rd6;\n\tcvta.to.global.u64 \t%rd9, %rd7;\n\t.loc\t1 14 3\n\tadd.u64 \t%rd1, %SPL, 0;\n\tmov.u32 \t%r3, %ctaid.x;\n\tcvt.u64.u32 \t%rd2, %r3;\n\tmul.wide.u32 \t%rd11, %r3, 4;\n\tadd.s64 \t%rd12, %rd9, %rd11;\n\tld.global.nc.u32 \t%r1, [%rd12];\n\tsetp.lt.s32 \t%p2, %r1, 0;\n\t.loc\t1 17 7\n\tmul.wide.u32 \t%rd13, %r1, 256;\n\tadd.s64 \t%rd3, %rd8, %rd13;\n\t.loc\t1 21 5\n\tmov.f32 \t%f197, 0f00000000;\n\t.loc\t1 16 5\n\t@%p2 bra \t$L__BB0_5;\n\t.loc\t1 16 5\n\tsetp.ge.s32 \t%p3, %r1, %r2;\n\tmov.f32 \t%f196, 0f00000000;\n\t@%p3 bra \t$L__BB0_3;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f196, [%rd3];\n$L__BB0_3:\n\t.loc\t1 16 5\n\tsetp.ge.s32 \t%p4, %r1, %r2;\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1], %f196;\n\t.loc\t1 16 5\n\t@%p4 bra \t$L__BB0_6;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f197, [%rd3+4];\n\tbra.uni \t$L__BB0_6;\n$L__BB0_5:\n\t.loc\t1 0 7\n\tmov.b32 \t%r4, 0;\n\t.loc\t1 21 5\n\tst.local.u32 \t[%rd1], %r4;\n$L__BB0_6:\n\t.loc\t1 0 5\n\tsetp.gt.s32 \t%p5, %r1, -1;\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+4], %f197;\n\t.loc\t1 16 5\n\tsetp.lt.s32 \t%p6, %r1, %r2;\n\tand.pred  \t%p1, %p5, %p6;\n\tmov.f32 \t%f198, 0f00000000;\n\tnot.pred \t%p7, %p1;\n\t@%p7 bra \t$L__BB0_8;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f198, [%rd3+8];\n$L__BB0_8:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+8], %f198;\n\tmov.f32 \t%f199, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_10;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f199, [%rd3+12];\n$L__BB0_10:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+12], %f199;\n\tmov.f32 \t%f200, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_12;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f200, [%rd3+16];\n$L__BB0_12:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+16], %f200;\n\tmov.f32 \t%f201, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_14;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f201, [%rd3+20];\n$L__BB0_14:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+20], %f201;\n\tmov.f32 \t%f202, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_16;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f202, [%rd3+24];\n$L__BB0_16:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+24], %f202;\n\tmov.f32 \t%f203, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_18;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f203, [%rd3+28];\n$L__BB0_18:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+28], %f203;\n\tmov.f32 \t%f204, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_20;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f204, [%rd3+32];\n$L__BB0_20:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+32], %f204;\n\tmov.f32 \t%f205, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_22;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f205, [%rd3+36];\n$L__BB0_22:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+36], %f205;\n\tmov.f32 \t%f206, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_24;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f206, [%rd3+40];\n$L__BB0_24:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+40], %f206;\n\tmov.f32 \t%f207, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_26;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f207, [%rd3+44];\n$L__BB0_26:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+44], %f207;\n\tmov.f32 \t%f208, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_28;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f208, [%rd3+48];\n$L__BB0_28:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+48], %f208;\n\tmov.f32 \t%f209, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_30;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f209, [%rd3+52];\n$L__BB0_30:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+52], %f209;\n\tmov.f32 \t%f210, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_32;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f210, [%rd3+56];\n$L__BB0_32:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+56], %f210;\n\tmov.f32 \t%f211, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_34;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f211, [%rd3+60];\n$L__BB0_34:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+60], %f211;\n\tmov.f32 \t%f212, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_36;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f212, [%rd3+64];\n$L__BB0_36:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+64], %f212;\n\tmov.f32 \t%f213, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_38;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f213, [%rd3+68];\n$L__BB0_38:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+68], %f213;\n\tmov.f32 \t%f214, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_40;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f214, [%rd3+72];\n$L__BB0_40:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+72], %f214;\n\tmov.f32 \t%f215, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_42;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f215, [%rd3+76];\n$L__BB0_42:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+76], %f215;\n\tmov.f32 \t%f216, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_44;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f216, [%rd3+80];\n$L__BB0_44:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+80], %f216;\n\tmov.f32 \t%f217, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_46;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f217, [%rd3+84];\n$L__BB0_46:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+84], %f217;\n\tmov.f32 \t%f218, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_48;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f218, [%rd3+88];\n$L__BB0_48:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+88], %f218;\n\tmov.f32 \t%f219, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_50;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f219, [%rd3+92];\n$L__BB0_50:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+92], %f219;\n\tmov.f32 \t%f220, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_52;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f220, [%rd3+96];\n$L__BB0_52:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+96], %f220;\n\tmov.f32 \t%f221, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_54;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f221, [%rd3+100];\n$L__BB0_54:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+100], %f221;\n\tmov.f32 \t%f222, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_56;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f222, [%rd3+104];\n$L__BB0_56:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+104], %f222;\n\tmov.f32 \t%f223, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_58;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f223, [%rd3+108];\n$L__BB0_58:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+108], %f223;\n\tmov.f32 \t%f224, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_60;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f224, [%rd3+112];\n$L__BB0_60:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+112], %f224;\n\tmov.f32 \t%f225, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_62;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f225, [%rd3+116];\n$L__BB0_62:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+116], %f225;\n\tmov.f32 \t%f226, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_64;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f226, [%rd3+120];\n$L__BB0_64:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+120], %f226;\n\tmov.f32 \t%f227, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_66;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f227, [%rd3+124];\n$L__BB0_66:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+124], %f227;\n\tmov.f32 \t%f228, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_68;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f228, [%rd3+128];\n$L__BB0_68:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+128], %f228;\n\tmov.f32 \t%f229, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_70;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f229, [%rd3+132];\n$L__BB0_70:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+132], %f229;\n\tmov.f32 \t%f230, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_72;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f230, [%rd3+136];\n$L__BB0_72:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+136], %f230;\n\tmov.f32 \t%f231, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_74;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f231, [%rd3+140];\n$L__BB0_74:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+140], %f231;\n\tmov.f32 \t%f232, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_76;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f232, [%rd3+144];\n$L__BB0_76:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+144], %f232;\n\tmov.f32 \t%f233, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_78;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f233, [%rd3+148];\n$L__BB0_78:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+148], %f233;\n\tmov.f32 \t%f234, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_80;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f234, [%rd3+152];\n$L__BB0_80:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+152], %f234;\n\tmov.f32 \t%f235, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_82;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f235, [%rd3+156];\n$L__BB0_82:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+156], %f235;\n\tmov.f32 \t%f236, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_84;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f236, [%rd3+160];\n$L__BB0_84:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+160], %f236;\n\tmov.f32 \t%f237, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_86;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f237, [%rd3+164];\n$L__BB0_86:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+164], %f237;\n\tmov.f32 \t%f238, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_88;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f238, [%rd3+168];\n$L__BB0_88:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+168], %f238;\n\tmov.f32 \t%f239, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_90;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f239, [%rd3+172];\n$L__BB0_90:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+172], %f239;\n\tmov.f32 \t%f240, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_92;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f240, [%rd3+176];\n$L__BB0_92:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+176], %f240;\n\tmov.f32 \t%f241, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_94;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f241, [%rd3+180];\n$L__BB0_94:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+180], %f241;\n\tmov.f32 \t%f242, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_96;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f242, [%rd3+184];\n$L__BB0_96:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+184], %f242;\n\tmov.f32 \t%f243, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_98;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f243, [%rd3+188];\n$L__BB0_98:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+188], %f243;\n\tmov.f32 \t%f244, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_100;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f244, [%rd3+192];\n$L__BB0_100:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+192], %f244;\n\tmov.f32 \t%f245, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_102;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f245, [%rd3+196];\n$L__BB0_102:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+196], %f245;\n\tmov.f32 \t%f246, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_104;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f246, [%rd3+200];\n$L__BB0_104:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+200], %f246;\n\tmov.f32 \t%f247, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_106;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f247, [%rd3+204];\n$L__BB0_106:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+204], %f247;\n\tmov.f32 \t%f248, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_108;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f248, [%rd3+208];\n$L__BB0_108:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+208], %f248;\n\tmov.f32 \t%f249, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_110;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f249, [%rd3+212];\n$L__BB0_110:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+212], %f249;\n\tmov.f32 \t%f250, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_112;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f250, [%rd3+216];\n$L__BB0_112:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+216], %f250;\n\tmov.f32 \t%f251, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_114;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f251, [%rd3+220];\n$L__BB0_114:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+220], %f251;\n\tmov.f32 \t%f252, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_116;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f252, [%rd3+224];\n$L__BB0_116:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+224], %f252;\n\tmov.f32 \t%f253, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_118;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f253, [%rd3+228];\n$L__BB0_118:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+228], %f253;\n\tmov.f32 \t%f254, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_120;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f254, [%rd3+232];\n$L__BB0_120:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+232], %f254;\n\tmov.f32 \t%f255, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_122;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f255, [%rd3+236];\n$L__BB0_122:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+236], %f255;\n\tmov.f32 \t%f256, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_124;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f256, [%rd3+240];\n$L__BB0_124:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+240], %f256;\n\tmov.f32 \t%f257, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_126;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f257, [%rd3+244];\n$L__BB0_126:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+244], %f257;\n\tmov.f32 \t%f258, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_128;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f258, [%rd3+248];\n$L__BB0_128:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+248], %f258;\n\tmov.f32 \t%f259, 0f00000000;\n\t.loc\t1 16 5\n\t@%p7 bra \t$L__BB0_130;\n\t.loc\t1 17 7\n\tld.global.nc.f32 \t%f259, [%rd3+252];\n$L__BB0_130:\n\t.loc\t1 21 5\n\tst.local.f32 \t[%rd1+252], %f259;\n\tcvta.to.global.u64 \t%rd14, %rd4;\n\tcvta.to.global.u64 \t%rd15, %rd5;\n\t.loc\t1 23 3\n\tshl.b64 \t%rd16, %rd2, 2;\n\tadd.s64 \t%rd17, %rd14, %rd16;\n\tld.global.nc.u32 \t%r5, [%rd17];\n\tmul.wide.s32 \t%rd18, %r5, 4;\n\tadd.s64 \t%rd19, %rd1, %rd18;\n\tld.local.f32 \t%f194, [%rd19];\n\tadd.s64 \t%rd20, %rd15, %rd16;\n\tst.global.f32 \t[%rd20], %f194;\n\t.loc\t1 24 1\n\tret;\n\n}\n\t.file\t1 \"/tmp/tmpyfhd5oqo/tvm_kernels.cu\"\n",
+      "target": {
+        "name": "cuda"
+      },
+      "tir": "# from tvm.script import tir as T\n\n@T.prim_func\ndef scrc_k0(p0_handle: T.handle, p1_handle: T.handle, p2_handle: T.handle, p3_handle: T.handle):\n    x0 = T.int32()\n    p0 = T.match_buffer(p0_handle, (x0, 64), strides=(64, 1))\n    p1 = T.match_buffer(p1_handle, (256,), \"int32\", strides=(1,))\n    p2 = T.match_buffer(p2_handle, (256,), \"int32\", strides=(1,))\n    p3 = T.match_buffer(p3_handle, (256,), strides=(1,))\n    # with T.block(\"root\"):\n    bx = T.launch_thread(\"blockIdx.x\", 256)\n    tx = T.launch_thread(\"threadIdx.x\", 128)\n    ty = T.launch_thread(\"threadIdx.y\", 1)\n    tz = T.launch_thread(\"threadIdx.z\", 1)\n    with T.block(\"tilelang_root\"):\n        T.reads(p0[p1[bx], 0:64], p1[bx], p2[bx])\n        T.writes(p3[bx])\n        v0 = T.alloc_buffer((64,), scope=\"local\")\n        for v4 in range(64):\n            v0[v4] = p0[p1[bx], v4]\n        p3[bx] = v0[p2[bx]]"
+    },
+    "diagnostic": null,
+    "fingerprint": {
+      "digest": "4aa2ea68cb367acd7167874bb2e35243eb388c5af72f1565afb67f040ca49c06",
+      "interface": [
+        [
+          "parameters",
+          "[{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":0,\"rank\":2},{\"dtype\":\"i32\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":1,\"rank\":1},{\"dtype\":\"i32\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":2,\"rank\":1},{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"output\",\"position\":3,\"rank\":1}]"
+        ]
+      ],
+      "ptx": {
+        "collectives": [],
+        "control_flow": [
+          "@%pred0 bra L0;",
+          "@%pred1 bra L1;",
+          "L1:",
+          "@%pred2 bra L2;",
+          "bra.uni L2;",
+          "L0:",
+          "L2:",
+          "@%pred6 bra L3;",
+          "L3:",
+          "@%pred6 bra L4;",
+          "L4:",
+          "@%pred6 bra L5;",
+          "L5:",
+          "@%pred6 bra L6;",
+          "L6:",
+          "@%pred6 bra L7;",
+          "L7:",
+          "@%pred6 bra L8;",
+          "L8:",
+          "@%pred6 bra L9;",
+          "L9:",
+          "@%pred6 bra L10;",
+          "L10:",
+          "@%pred6 bra L11;",
+          "L11:",
+          "@%pred6 bra L12;",
+          "L12:",
+          "@%pred6 bra L13;",
+          "L13:",
+          "@%pred6 bra L14;",
+          "L14:",
+          "@%pred6 bra L15;",
+          "L15:",
+          "@%pred6 bra L16;",
+          "L16:",
+          "@%pred6 bra L17;",
+          "L17:",
+          "@%pred6 bra L18;",
+          "L18:",
+          "@%pred6 bra L19;",
+          "L19:",
+          "@%pred6 bra L20;",
+          "L20:",
+          "@%pred6 bra L21;",
+          "L21:",
+          "@%pred6 bra L22;",
+          "L22:",
+          "@%pred6 bra L23;",
+          "L23:",
+          "@%pred6 bra L24;",
+          "L24:",
+          "@%pred6 bra L25;",
+          "L25:",
+          "@%pred6 bra L26;",
+          "L26:",
+          "@%pred6 bra L27;",
+          "L27:",
+          "@%pred6 bra L28;",
+          "L28:",
+          "@%pred6 bra L29;",
+          "L29:",
+          "@%pred6 bra L30;",
+          "L30:",
+          "@%pred6 bra L31;",
+          "L31:",
+          "@%pred6 bra L32;",
+          "L32:",
+          "@%pred6 bra L33;",
+          "L33:",
+          "@%pred6 bra L34;",
+          "L34:",
+          "@%pred6 bra L35;",
+          "L35:",
+          "@%pred6 bra L36;",
+          "L36:",
+          "@%pred6 bra L37;",
+          "L37:",
+          "@%pred6 bra L38;",
+          "L38:",
+          "@%pred6 bra L39;",
+          "L39:",
+          "@%pred6 bra L40;",
+          "L40:",
+          "@%pred6 bra L41;",
+          "L41:",
+          "@%pred6 bra L42;",
+          "L42:",
+          "@%pred6 bra L43;",
+          "L43:",
+          "@%pred6 bra L44;",
+          "L44:",
+          "@%pred6 bra L45;",
+          "L45:",
+          "@%pred6 bra L46;",
+          "L46:",
+          "@%pred6 bra L47;",
+          "L47:",
+          "@%pred6 bra L48;",
+          "L48:",
+          "@%pred6 bra L49;",
+          "L49:",
+          "@%pred6 bra L50;",
+          "L50:",
+          "@%pred6 bra L51;",
+          "L51:",
+          "@%pred6 bra L52;",
+          "L52:",
+          "@%pred6 bra L53;",
+          "L53:",
+          "@%pred6 bra L54;",
+          "L54:",
+          "@%pred6 bra L55;",
+          "L55:",
+          "@%pred6 bra L56;",
+          "L56:",
+          "@%pred6 bra L57;",
+          "L57:",
+          "@%pred6 bra L58;",
+          "L58:",
+          "@%pred6 bra L59;",
+          "L59:",
+          "@%pred6 bra L60;",
+          "L60:",
+          "@%pred6 bra L61;",
+          "L61:",
+          "@%pred6 bra L62;",
+          "L62:",
+          "@%pred6 bra L63;",
+          "L63:",
+          "@%pred6 bra L64;",
+          "L64:",
+          "ret;"
+        ],
+        "coordinate_uses": [
+          "%ctaid.x"
+        ],
+        "digest": "51a510e7700656207808de9c748227320b327ae7313f2855e3b5cf5bb9a11328",
+        "instructions": [
+          "mov.u64 %b640,__local_depot0;",
+          "ld.param.u64 %b641,[param0];",
+          "ld.param.u64 %b642,[param1];",
+          "ld.param.u64 %b643,[param2];",
+          "ld.param.u64 %b644,[param3];",
+          "ld.param.u32 %b320,[param4];",
+          "cvta.to.global.u64 %b645,%b641;",
+          "cvta.to.global.u64 %b646,%b642;",
+          "add.u64 %b647,%b640,0;",
+          "mov.u32 %b321,%ctaid.x;",
+          "cvt.u64.u32 %b648,%b321;",
+          "mul.wide.u32 %b649,%b321,4;",
+          "add.s64 %b6410,%b646,%b649;",
+          "ld.global.nc.u32 %b322,[%b6410];",
+          "setp.lt.s32 %pred0,%b322,0;",
+          "mul.wide.u32 %b6411,%b322,256;",
+          "add.s64 %b6412,%b645,%b6411;",
+          "mov.f32 %f320,0f00000000;",
+          "@%pred0 bra L0;",
+          "setp.ge.s32 %pred1,%b322,%b320;",
+          "mov.f32 %f321,0f00000000;",
+          "@%pred1 bra L1;",
+          "ld.global.nc.f32 %f321,[%b6412];",
+          "L1:",
+          "setp.ge.s32 %pred2,%b322,%b320;",
+          "st.local.f32 [%b647],%f321;",
+          "@%pred2 bra L2;",
+          "ld.global.nc.f32 %f320,[%b6412+4];",
+          "bra.uni L2;",
+          "L0:",
+          "mov.b32 %b323,0;",
+          "st.local.u32 [%b647],%b323;",
+          "L2:",
+          "setp.gt.s32 %pred3,%b322,-1;",
+          "st.local.f32 [%b647+4],%f320;",
+          "setp.lt.s32 %pred4,%b322,%b320;",
+          "and.pred %pred5,%pred3,%pred4;",
+          "mov.f32 %f322,0f00000000;",
+          "not.pred %pred6,%pred5;",
+          "@%pred6 bra L3;",
+          "ld.global.nc.f32 %f322,[%b6412+8];",
+          "L3:",
+          "st.local.f32 [%b647+8],%f322;",
+          "mov.f32 %f323,0f00000000;",
+          "@%pred6 bra L4;",
+          "ld.global.nc.f32 %f323,[%b6412+12];",
+          "L4:",
+          "st.local.f32 [%b647+12],%f323;",
+          "mov.f32 %f324,0f00000000;",
+          "@%pred6 bra L5;",
+          "ld.global.nc.f32 %f324,[%b6412+16];",
+          "L5:",
+          "st.local.f32 [%b647+16],%f324;",
+          "mov.f32 %f325,0f00000000;",
+          "@%pred6 bra L6;",
+          "ld.global.nc.f32 %f325,[%b6412+20];",
+          "L6:",
+          "st.local.f32 [%b647+20],%f325;",
+          "mov.f32 %f326,0f00000000;",
+          "@%pred6 bra L7;",
+          "ld.global.nc.f32 %f326,[%b6412+24];",
+          "L7:",
+          "st.local.f32 [%b647+24],%f326;",
+          "mov.f32 %f327,0f00000000;",
+          "@%pred6 bra L8;",
+          "ld.global.nc.f32 %f327,[%b6412+28];",
+          "L8:",
+          "st.local.f32 [%b647+28],%f327;",
+          "mov.f32 %f328,0f00000000;",
+          "@%pred6 bra L9;",
+          "ld.global.nc.f32 %f328,[%b6412+32];",
+          "L9:",
+          "st.local.f32 [%b647+32],%f328;",
+          "mov.f32 %f329,0f00000000;",
+          "@%pred6 bra L10;",
+          "ld.global.nc.f32 %f329,[%b6412+36];",
+          "L10:",
+          "st.local.f32 [%b647+36],%f329;",
+          "mov.f32 %f3210,0f00000000;",
+          "@%pred6 bra L11;",
+          "ld.global.nc.f32 %f3210,[%b6412+40];",
+          "L11:",
+          "st.local.f32 [%b647+40],%f3210;",
+          "mov.f32 %f3211,0f00000000;",
+          "@%pred6 bra L12;",
+          "ld.global.nc.f32 %f3211,[%b6412+44];",
+          "L12:",
+          "st.local.f32 [%b647+44],%f3211;",
+          "mov.f32 %f3212,0f00000000;",
+          "@%pred6 bra L13;",
+          "ld.global.nc.f32 %f3212,[%b6412+48];",
+          "L13:",
+          "st.local.f32 [%b647+48],%f3212;",
+          "mov.f32 %f3213,0f00000000;",
+          "@%pred6 bra L14;",
+          "ld.global.nc.f32 %f3213,[%b6412+52];",
+          "L14:",
+          "st.local.f32 [%b647+52],%f3213;",
+          "mov.f32 %f3214,0f00000000;",
+          "@%pred6 bra L15;",
+          "ld.global.nc.f32 %f3214,[%b6412+56];",
+          "L15:",
+          "st.local.f32 [%b647+56],%f3214;",
+          "mov.f32 %f3215,0f00000000;",
+          "@%pred6 bra L16;",
+          "ld.global.nc.f32 %f3215,[%b6412+60];",
+          "L16:",
+          "st.local.f32 [%b647+60],%f3215;",
+          "mov.f32 %f3216,0f00000000;",
+          "@%pred6 bra L17;",
+          "ld.global.nc.f32 %f3216,[%b6412+64];",
+          "L17:",
+          "st.local.f32 [%b647+64],%f3216;",
+          "mov.f32 %f3217,0f00000000;",
+          "@%pred6 bra L18;",
+          "ld.global.nc.f32 %f3217,[%b6412+68];",
+          "L18:",
+          "st.local.f32 [%b647+68],%f3217;",
+          "mov.f32 %f3218,0f00000000;",
+          "@%pred6 bra L19;",
+          "ld.global.nc.f32 %f3218,[%b6412+72];",
+          "L19:",
+          "st.local.f32 [%b647+72],%f3218;",
+          "mov.f32 %f3219,0f00000000;",
+          "@%pred6 bra L20;",
+          "ld.global.nc.f32 %f3219,[%b6412+76];",
+          "L20:",
+          "st.local.f32 [%b647+76],%f3219;",
+          "mov.f32 %f3220,0f00000000;",
+          "@%pred6 bra L21;",
+          "ld.global.nc.f32 %f3220,[%b6412+80];",
+          "L21:",
+          "st.local.f32 [%b647+80],%f3220;",
+          "mov.f32 %f3221,0f00000000;",
+          "@%pred6 bra L22;",
+          "ld.global.nc.f32 %f3221,[%b6412+84];",
+          "L22:",
+          "st.local.f32 [%b647+84],%f3221;",
+          "mov.f32 %f3222,0f00000000;",
+          "@%pred6 bra L23;",
+          "ld.global.nc.f32 %f3222,[%b6412+88];",
+          "L23:",
+          "st.local.f32 [%b647+88],%f3222;",
+          "mov.f32 %f3223,0f00000000;",
+          "@%pred6 bra L24;",
+          "ld.global.nc.f32 %f3223,[%b6412+92];",
+          "L24:",
+          "st.local.f32 [%b647+92],%f3223;",
+          "mov.f32 %f3224,0f00000000;",
+          "@%pred6 bra L25;",
+          "ld.global.nc.f32 %f3224,[%b6412+96];",
+          "L25:",
+          "st.local.f32 [%b647+96],%f3224;",
+          "mov.f32 %f3225,0f00000000;",
+          "@%pred6 bra L26;",
+          "ld.global.nc.f32 %f3225,[%b6412+100];",
+          "L26:",
+          "st.local.f32 [%b647+100],%f3225;",
+          "mov.f32 %f3226,0f00000000;",
+          "@%pred6 bra L27;",
+          "ld.global.nc.f32 %f3226,[%b6412+104];",
+          "L27:",
+          "st.local.f32 [%b647+104],%f3226;",
+          "mov.f32 %f3227,0f00000000;",
+          "@%pred6 bra L28;",
+          "ld.global.nc.f32 %f3227,[%b6412+108];",
+          "L28:",
+          "st.local.f32 [%b647+108],%f3227;",
+          "mov.f32 %f3228,0f00000000;",
+          "@%pred6 bra L29;",
+          "ld.global.nc.f32 %f3228,[%b6412+112];",
+          "L29:",
+          "st.local.f32 [%b647+112],%f3228;",
+          "mov.f32 %f3229,0f00000000;",
+          "@%pred6 bra L30;",
+          "ld.global.nc.f32 %f3229,[%b6412+116];",
+          "L30:",
+          "st.local.f32 [%b647+116],%f3229;",
+          "mov.f32 %f3230,0f00000000;",
+          "@%pred6 bra L31;",
+          "ld.global.nc.f32 %f3230,[%b6412+120];",
+          "L31:",
+          "st.local.f32 [%b647+120],%f3230;",
+          "mov.f32 %f3231,0f00000000;",
+          "@%pred6 bra L32;",
+          "ld.global.nc.f32 %f3231,[%b6412+124];",
+          "L32:",
+          "st.local.f32 [%b647+124],%f3231;",
+          "mov.f32 %f3232,0f00000000;",
+          "@%pred6 bra L33;",
+          "ld.global.nc.f32 %f3232,[%b6412+128];",
+          "L33:",
+          "st.local.f32 [%b647+128],%f3232;",
+          "mov.f32 %f3233,0f00000000;",
+          "@%pred6 bra L34;",
+          "ld.global.nc.f32 %f3233,[%b6412+132];",
+          "L34:",
+          "st.local.f32 [%b647+132],%f3233;",
+          "mov.f32 %f3234,0f00000000;",
+          "@%pred6 bra L35;",
+          "ld.global.nc.f32 %f3234,[%b6412+136];",
+          "L35:",
+          "st.local.f32 [%b647+136],%f3234;",
+          "mov.f32 %f3235,0f00000000;",
+          "@%pred6 bra L36;",
+          "ld.global.nc.f32 %f3235,[%b6412+140];",
+          "L36:",
+          "st.local.f32 [%b647+140],%f3235;",
+          "mov.f32 %f3236,0f00000000;",
+          "@%pred6 bra L37;",
+          "ld.global.nc.f32 %f3236,[%b6412+144];",
+          "L37:",
+          "st.local.f32 [%b647+144],%f3236;",
+          "mov.f32 %f3237,0f00000000;",
+          "@%pred6 bra L38;",
+          "ld.global.nc.f32 %f3237,[%b6412+148];",
+          "L38:",
+          "st.local.f32 [%b647+148],%f3237;",
+          "mov.f32 %f3238,0f00000000;",
+          "@%pred6 bra L39;",
+          "ld.global.nc.f32 %f3238,[%b6412+152];",
+          "L39:",
+          "st.local.f32 [%b647+152],%f3238;",
+          "mov.f32 %f3239,0f00000000;",
+          "@%pred6 bra L40;",
+          "ld.global.nc.f32 %f3239,[%b6412+156];",
+          "L40:",
+          "st.local.f32 [%b647+156],%f3239;",
+          "mov.f32 %f3240,0f00000000;",
+          "@%pred6 bra L41;",
+          "ld.global.nc.f32 %f3240,[%b6412+160];",
+          "L41:",
+          "st.local.f32 [%b647+160],%f3240;",
+          "mov.f32 %f3241,0f00000000;",
+          "@%pred6 bra L42;",
+          "ld.global.nc.f32 %f3241,[%b6412+164];",
+          "L42:",
+          "st.local.f32 [%b647+164],%f3241;",
+          "mov.f32 %f3242,0f00000000;",
+          "@%pred6 bra L43;",
+          "ld.global.nc.f32 %f3242,[%b6412+168];",
+          "L43:",
+          "st.local.f32 [%b647+168],%f3242;",
+          "mov.f32 %f3243,0f00000000;",
+          "@%pred6 bra L44;",
+          "ld.global.nc.f32 %f3243,[%b6412+172];",
+          "L44:",
+          "st.local.f32 [%b647+172],%f3243;",
+          "mov.f32 %f3244,0f00000000;",
+          "@%pred6 bra L45;",
+          "ld.global.nc.f32 %f3244,[%b6412+176];",
+          "L45:",
+          "st.local.f32 [%b647+176],%f3244;",
+          "mov.f32 %f3245,0f00000000;",
+          "@%pred6 bra L46;",
+          "ld.global.nc.f32 %f3245,[%b6412+180];",
+          "L46:",
+          "st.local.f32 [%b647+180],%f3245;",
+          "mov.f32 %f3246,0f00000000;",
+          "@%pred6 bra L47;",
+          "ld.global.nc.f32 %f3246,[%b6412+184];",
+          "L47:",
+          "st.local.f32 [%b647+184],%f3246;",
+          "mov.f32 %f3247,0f00000000;",
+          "@%pred6 bra L48;",
+          "ld.global.nc.f32 %f3247,[%b6412+188];",
+          "L48:",
+          "st.local.f32 [%b647+188],%f3247;",
+          "mov.f32 %f3248,0f00000000;",
+          "@%pred6 bra L49;",
+          "ld.global.nc.f32 %f3248,[%b6412+192];",
+          "L49:",
+          "st.local.f32 [%b647+192],%f3248;",
+          "mov.f32 %f3249,0f00000000;",
+          "@%pred6 bra L50;",
+          "ld.global.nc.f32 %f3249,[%b6412+196];",
+          "L50:",
+          "st.local.f32 [%b647+196],%f3249;",
+          "mov.f32 %f3250,0f00000000;",
+          "@%pred6 bra L51;",
+          "ld.global.nc.f32 %f3250,[%b6412+200];",
+          "L51:",
+          "st.local.f32 [%b647+200],%f3250;",
+          "mov.f32 %f3251,0f00000000;",
+          "@%pred6 bra L52;",
+          "ld.global.nc.f32 %f3251,[%b6412+204];",
+          "L52:",
+          "st.local.f32 [%b647+204],%f3251;",
+          "mov.f32 %f3252,0f00000000;",
+          "@%pred6 bra L53;",
+          "ld.global.nc.f32 %f3252,[%b6412+208];",
+          "L53:",
+          "st.local.f32 [%b647+208],%f3252;",
+          "mov.f32 %f3253,0f00000000;",
+          "@%pred6 bra L54;",
+          "ld.global.nc.f32 %f3253,[%b6412+212];",
+          "L54:",
+          "st.local.f32 [%b647+212],%f3253;",
+          "mov.f32 %f3254,0f00000000;",
+          "@%pred6 bra L55;",
+          "ld.global.nc.f32 %f3254,[%b6412+216];",
+          "L55:",
+          "st.local.f32 [%b647+216],%f3254;",
+          "mov.f32 %f3255,0f00000000;",
+          "@%pred6 bra L56;",
+          "ld.global.nc.f32 %f3255,[%b6412+220];",
+          "L56:",
+          "st.local.f32 [%b647+220],%f3255;",
+          "mov.f32 %f3256,0f00000000;",
+          "@%pred6 bra L57;",
+          "ld.global.nc.f32 %f3256,[%b6412+224];",
+          "L57:",
+          "st.local.f32 [%b647+224],%f3256;",
+          "mov.f32 %f3257,0f00000000;",
+          "@%pred6 bra L58;",
+          "ld.global.nc.f32 %f3257,[%b6412+228];",
+          "L58:",
+          "st.local.f32 [%b647+228],%f3257;",
+          "mov.f32 %f3258,0f00000000;",
+          "@%pred6 bra L59;",
+          "ld.global.nc.f32 %f3258,[%b6412+232];",
+          "L59:",
+          "st.local.f32 [%b647+232],%f3258;",
+          "mov.f32 %f3259,0f00000000;",
+          "@%pred6 bra L60;",
+          "ld.global.nc.f32 %f3259,[%b6412+236];",
+          "L60:",
+          "st.local.f32 [%b647+236],%f3259;",
+          "mov.f32 %f3260,0f00000000;",
+          "@%pred6 bra L61;",
+          "ld.global.nc.f32 %f3260,[%b6412+240];",
+          "L61:",
+          "st.local.f32 [%b647+240],%f3260;",
+          "mov.f32 %f3261,0f00000000;",
+          "@%pred6 bra L62;",
+          "ld.global.nc.f32 %f3261,[%b6412+244];",
+          "L62:",
+          "st.local.f32 [%b647+244],%f3261;",
+          "mov.f32 %f3262,0f00000000;",
+          "@%pred6 bra L63;",
+          "ld.global.nc.f32 %f3262,[%b6412+248];",
+          "L63:",
+          "st.local.f32 [%b647+248],%f3262;",
+          "mov.f32 %f3263,0f00000000;",
+          "@%pred6 bra L64;",
+          "ld.global.nc.f32 %f3263,[%b6412+252];",
+          "L64:",
+          "st.local.f32 [%b647+252],%f3263;",
+          "cvta.to.global.u64 %b6413,%b643;",
+          "cvta.to.global.u64 %b6414,%b644;",
+          "shl.b64 %b6415,%b648,2;",
+          "add.s64 %b6416,%b6413,%b6415;",
+          "ld.global.nc.u32 %b324,[%b6416];",
+          "mul.wide.s32 %b6417,%b324,4;",
+          "add.s64 %b6418,%b647,%b6417;",
+          "ld.local.f32 %f3264,[%b6418];",
+          "add.s64 %b6419,%b6414,%b6415;",
+          "st.global.f32 [%b6419],%f3264;",
+          "ret;"
+        ],
+        "interface": [
+          [
+            "parameters",
+            "[{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":0,\"rank\":2},{\"dtype\":\"i32\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":1,\"rank\":1},{\"dtype\":\"i32\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":2,\"rank\":1},{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"output\",\"position\":3,\"rank\":1}]",
+            null
+          ],
+          [
+            "ptx_abi",
+            "[[\"\",\"u64\",null],[\"\",\"u64\",null],[\"\",\"u64\",null],[\"\",\"u64\",null],[\"\",\"u32\",null]]",
+            null
+          ]
+        ],
+        "memory_effects": [
+          "ld.param.u64 %b641,[param0];",
+          "ld.param.u64 %b642,[param1];",
+          "ld.param.u64 %b643,[param2];",
+          "ld.param.u64 %b644,[param3];",
+          "ld.param.u32 %b320,[param4];",
+          "ld.global.nc.u32 %b322,[%b6410];",
+          "ld.global.nc.f32 %f321,[%b6412];",
+          "st.local.f32 [%b647],%f321;",
+          "ld.global.nc.f32 %f320,[%b6412+4];",
+          "st.local.u32 [%b647],%b323;",
+          "st.local.f32 [%b647+4],%f320;",
+          "ld.global.nc.f32 %f322,[%b6412+8];",
+          "st.local.f32 [%b647+8],%f322;",
+          "ld.global.nc.f32 %f323,[%b6412+12];",
+          "st.local.f32 [%b647+12],%f323;",
+          "ld.global.nc.f32 %f324,[%b6412+16];",
+          "st.local.f32 [%b647+16],%f324;",
+          "ld.global.nc.f32 %f325,[%b6412+20];",
+          "st.local.f32 [%b647+20],%f325;",
+          "ld.global.nc.f32 %f326,[%b6412+24];",
+          "st.local.f32 [%b647+24],%f326;",
+          "ld.global.nc.f32 %f327,[%b6412+28];",
+          "st.local.f32 [%b647+28],%f327;",
+          "ld.global.nc.f32 %f328,[%b6412+32];",
+          "st.local.f32 [%b647+32],%f328;",
+          "ld.global.nc.f32 %f329,[%b6412+36];",
+          "st.local.f32 [%b647+36],%f329;",
+          "ld.global.nc.f32 %f3210,[%b6412+40];",
+          "st.local.f32 [%b647+40],%f3210;",
+          "ld.global.nc.f32 %f3211,[%b6412+44];",
+          "st.local.f32 [%b647+44],%f3211;",
+          "ld.global.nc.f32 %f3212,[%b6412+48];",
+          "st.local.f32 [%b647+48],%f3212;",
+          "ld.global.nc.f32 %f3213,[%b6412+52];",
+          "st.local.f32 [%b647+52],%f3213;",
+          "ld.global.nc.f32 %f3214,[%b6412+56];",
+          "st.local.f32 [%b647+56],%f3214;",
+          "ld.global.nc.f32 %f3215,[%b6412+60];",
+          "st.local.f32 [%b647+60],%f3215;",
+          "ld.global.nc.f32 %f3216,[%b6412+64];",
+          "st.local.f32 [%b647+64],%f3216;",
+          "ld.global.nc.f32 %f3217,[%b6412+68];",
+          "st.local.f32 [%b647+68],%f3217;",
+          "ld.global.nc.f32 %f3218,[%b6412+72];",
+          "st.local.f32 [%b647+72],%f3218;",
+          "ld.global.nc.f32 %f3219,[%b6412+76];",
+          "st.local.f32 [%b647+76],%f3219;",
+          "ld.global.nc.f32 %f3220,[%b6412+80];",
+          "st.local.f32 [%b647+80],%f3220;",
+          "ld.global.nc.f32 %f3221,[%b6412+84];",
+          "st.local.f32 [%b647+84],%f3221;",
+          "ld.global.nc.f32 %f3222,[%b6412+88];",
+          "st.local.f32 [%b647+88],%f3222;",
+          "ld.global.nc.f32 %f3223,[%b6412+92];",
+          "st.local.f32 [%b647+92],%f3223;",
+          "ld.global.nc.f32 %f3224,[%b6412+96];",
+          "st.local.f32 [%b647+96],%f3224;",
+          "ld.global.nc.f32 %f3225,[%b6412+100];",
+          "st.local.f32 [%b647+100],%f3225;",
+          "ld.global.nc.f32 %f3226,[%b6412+104];",
+          "st.local.f32 [%b647+104],%f3226;",
+          "ld.global.nc.f32 %f3227,[%b6412+108];",
+          "st.local.f32 [%b647+108],%f3227;",
+          "ld.global.nc.f32 %f3228,[%b6412+112];",
+          "st.local.f32 [%b647+112],%f3228;",
+          "ld.global.nc.f32 %f3229,[%b6412+116];",
+          "st.local.f32 [%b647+116],%f3229;",
+          "ld.global.nc.f32 %f3230,[%b6412+120];",
+          "st.local.f32 [%b647+120],%f3230;",
+          "ld.global.nc.f32 %f3231,[%b6412+124];",
+          "st.local.f32 [%b647+124],%f3231;",
+          "ld.global.nc.f32 %f3232,[%b6412+128];",
+          "st.local.f32 [%b647+128],%f3232;",
+          "ld.global.nc.f32 %f3233,[%b6412+132];",
+          "st.local.f32 [%b647+132],%f3233;",
+          "ld.global.nc.f32 %f3234,[%b6412+136];",
+          "st.local.f32 [%b647+136],%f3234;",
+          "ld.global.nc.f32 %f3235,[%b6412+140];",
+          "st.local.f32 [%b647+140],%f3235;",
+          "ld.global.nc.f32 %f3236,[%b6412+144];",
+          "st.local.f32 [%b647+144],%f3236;",
+          "ld.global.nc.f32 %f3237,[%b6412+148];",
+          "st.local.f32 [%b647+148],%f3237;",
+          "ld.global.nc.f32 %f3238,[%b6412+152];",
+          "st.local.f32 [%b647+152],%f3238;",
+          "ld.global.nc.f32 %f3239,[%b6412+156];",
+          "st.local.f32 [%b647+156],%f3239;",
+          "ld.global.nc.f32 %f3240,[%b6412+160];",
+          "st.local.f32 [%b647+160],%f3240;",
+          "ld.global.nc.f32 %f3241,[%b6412+164];",
+          "st.local.f32 [%b647+164],%f3241;",
+          "ld.global.nc.f32 %f3242,[%b6412+168];",
+          "st.local.f32 [%b647+168],%f3242;",
+          "ld.global.nc.f32 %f3243,[%b6412+172];",
+          "st.local.f32 [%b647+172],%f3243;",
+          "ld.global.nc.f32 %f3244,[%b6412+176];",
+          "st.local.f32 [%b647+176],%f3244;",
+          "ld.global.nc.f32 %f3245,[%b6412+180];",
+          "st.local.f32 [%b647+180],%f3245;",
+          "ld.global.nc.f32 %f3246,[%b6412+184];",
+          "st.local.f32 [%b647+184],%f3246;",
+          "ld.global.nc.f32 %f3247,[%b6412+188];",
+          "st.local.f32 [%b647+188],%f3247;",
+          "ld.global.nc.f32 %f3248,[%b6412+192];",
+          "st.local.f32 [%b647+192],%f3248;",
+          "ld.global.nc.f32 %f3249,[%b6412+196];",
+          "st.local.f32 [%b647+196],%f3249;",
+          "ld.global.nc.f32 %f3250,[%b6412+200];",
+          "st.local.f32 [%b647+200],%f3250;",
+          "ld.global.nc.f32 %f3251,[%b6412+204];",
+          "st.local.f32 [%b647+204],%f3251;",
+          "ld.global.nc.f32 %f3252,[%b6412+208];",
+          "st.local.f32 [%b647+208],%f3252;",
+          "ld.global.nc.f32 %f3253,[%b6412+212];",
+          "st.local.f32 [%b647+212],%f3253;",
+          "ld.global.nc.f32 %f3254,[%b6412+216];",
+          "st.local.f32 [%b647+216],%f3254;",
+          "ld.global.nc.f32 %f3255,[%b6412+220];",
+          "st.local.f32 [%b647+220],%f3255;",
+          "ld.global.nc.f32 %f3256,[%b6412+224];",
+          "st.local.f32 [%b647+224],%f3256;",
+          "ld.global.nc.f32 %f3257,[%b6412+228];",
+          "st.local.f32 [%b647+228],%f3257;",
+          "ld.global.nc.f32 %f3258,[%b6412+232];",
+          "st.local.f32 [%b647+232],%f3258;",
+          "ld.global.nc.f32 %f3259,[%b6412+236];",
+          "st.local.f32 [%b647+236],%f3259;",
+          "ld.global.nc.f32 %f3260,[%b6412+240];",
+          "st.local.f32 [%b647+240],%f3260;",
+          "ld.global.nc.f32 %f3261,[%b6412+244];",
+          "st.local.f32 [%b647+244],%f3261;",
+          "ld.global.nc.f32 %f3262,[%b6412+248];",
+          "st.local.f32 [%b647+248],%f3262;",
+          "ld.global.nc.f32 %f3263,[%b6412+252];",
+          "st.local.f32 [%b647+252],%f3263;",
+          "ld.global.nc.u32 %b324,[%b6416];",
+          "ld.local.f32 %f3264,[%b6418];",
+          "st.global.f32 [%b6419],%f3264;"
+        ],
+        "opcode_multiset": [
+          [
+            "add.s64",
+            5
+          ],
+          [
+            "add.u64",
+            1
+          ],
+          [
+            "and.pred",
+            1
+          ],
+          [
+            "bra",
+            65
+          ],
+          [
+            "bra.uni",
+            1
+          ],
+          [
+            "cvt.u64.u32",
+            1
+          ],
+          [
+            "cvta.to.global.u64",
+            4
+          ],
+          [
+            "ld.global.nc.f32",
+            64
+          ],
+          [
+            "ld.global.nc.u32",
+            2
+          ],
+          [
+            "ld.local.f32",
+            1
+          ],
+          [
+            "ld.param.u32",
+            1
+          ],
+          [
+            "ld.param.u64",
+            4
+          ],
+          [
+            "mov.b32",
+            1
+          ],
+          [
+            "mov.f32",
+            64
+          ],
+          [
+            "mov.u32",
+            1
+          ],
+          [
+            "mov.u64",
+            1
+          ],
+          [
+            "mul.wide.s32",
+            1
+          ],
+          [
+            "mul.wide.u32",
+            2
+          ],
+          [
+            "not.pred",
+            1
+          ],
+          [
+            "ret;",
+            1
+          ],
+          [
+            "setp.ge.s32",
+            2
+          ],
+          [
+            "setp.gt.s32",
+            1
+          ],
+          [
+            "setp.lt.s32",
+            2
+          ],
+          [
+            "shl.b64",
+            1
+          ],
+          [
+            "st.global.f32",
+            1
+          ],
+          [
+            "st.local.f32",
+            64
+          ],
+          [
+            "st.local.u32",
+            1
+          ]
+        ],
+        "schedule_view": [
+          [
+            "c0",
+            "128"
+          ]
+        ],
+        "schema_version": "cuda-ptx-semantic-effects-v6",
+        "semantic_address_coordinate_folds": [],
+        "semantic_memory_effects": [
+          [
+            "ld.global.b32",
+            66
+          ],
+          [
+            "ld.local.b32",
+            1
+          ],
+          [
+            "ld.param.b32",
+            1
+          ],
+          [
+            "ld.param.b64",
+            4
+          ],
+          [
+            "st.global.b32",
+            1
+          ],
+          [
+            "st.local.b32",
+            65
+          ]
+        ],
+        "semantic_value_opcodes": [
+          [
+            "and.pred",
+            1
+          ],
+          [
+            "ld.global.b32",
+            65
+          ],
+          [
+            "ld.local.b32",
+            1
+          ],
+          [
+            "ld.param.b32",
+            1
+          ],
+          [
+            "mov.b32",
+            1
+          ],
+          [
+            "not.pred",
+            1
+          ],
+          [
+            "setp.ge.s32",
+            2
+          ],
+          [
+            "setp.gt.s32",
+            1
+          ],
+          [
+            "setp.lt.s32",
+            2
+          ]
+        ],
+        "target_view": [
+          [
+            "name",
+            "\"cuda\""
+          ]
+        ]
+      },
+      "schedule_view": [
+        [
+          "c0",
+          "128"
+        ]
+      ],
+      "schema_version": "tilelang-tir-semantic-structure-ptx-diagnostic-v5",
+      "tir_op_multiset": [
+        [
+          "T.alloc_buffer",
+          1
+        ],
+        [
+          "T.block",
+          1
+        ],
+        [
+          "T.handle",
+          4
+        ],
+        [
+          "T.launch_thread",
+          4
+        ],
+        [
+          "T.match_buffer",
+          4
+        ],
+        [
+          "T.prim_func",
+          1
+        ],
+        [
+          "T.reads",
+          1
+        ],
+        [
+          "T.writes",
+          1
+        ],
+        [
+          "control.for",
+          1
+        ]
+      ],
+      "tir_ops": [
+        "T.prim_func",
+        "T.handle",
+        "T.handle",
+        "T.handle",
+        "T.handle",
+        "T.match_buffer",
+        "T.match_buffer",
+        "T.match_buffer",
+        "T.match_buffer",
+        "T.launch_thread",
+        "T.launch_thread",
+        "T.launch_thread",
+        "T.launch_thread",
+        "T.block",
+        "T.reads",
+        "T.writes",
+        "T.alloc_buffer",
+        "control.for"
+      ],
+      "tir_structure": "Module(body=[FunctionDef(name='tir_entry', args=arguments(posonlyargs=[], args=[arg(arg='p0', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load())), arg(arg='p1', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load())), arg(arg='p2', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load())), arg(arg='p3', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[]), body=[Assign(targets=[Name(id='v0', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='int32', ctx=Load()), args=[], keywords=[])), Assign(targets=[Name(id='v1', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p0', ctx=Load()), Tuple(elts=[Name(id='v0', ctx=Load()), Constant(value=64)], ctx=Load())], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=64), Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v2', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p1', ctx=Load()), Tuple(elts=[Constant(value=256)], ctx=Load()), Constant(value='int32')], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v3', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p2', ctx=Load()), Tuple(elts=[Constant(value=256)], ctx=Load()), Constant(value='int32')], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v4', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p3', ctx=Load()), Tuple(elts=[Constant(value=256)], ctx=Load())], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v5', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='blockIdx.x'), Constant(value=256)], keywords=[])), Assign(targets=[Name(id='v6', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.x'), Constant(value=128)], keywords=[])), Assign(targets=[Name(id='v7', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.y'), Constant(value=1)], keywords=[])), Assign(targets=[Name(id='v8', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.z'), Constant(value=1)], keywords=[])), With(items=[withitem(context_expr=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='block', ctx=Load()), args=[Constant(value='<block>')], keywords=[]))], body=[Expr(value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='reads', ctx=Load()), args=[Subscript(value=Name(id='v1', ctx=Load()), slice=Tuple(elts=[Subscript(value=Name(id='v2', ctx=Load()), slice=Name(id='v5', ctx=Load()), ctx=Load()), Slice(lower=Constant(value=0), upper=Constant(value=64))], ctx=Load()), ctx=Load()), Subscript(value=Name(id='v2', ctx=Load()), slice=Name(id='v5', ctx=Load()), ctx=Load()), Subscript(value=Name(id='v3', ctx=Load()), slice=Name(id='v5', ctx=Load()), ctx=Load())], keywords=[])), Expr(value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='writes', ctx=Load()), args=[Subscript(value=Name(id='v4', ctx=Load()), slice=Name(id='v5', ctx=Load()), ctx=Load())], keywords=[])), Assign(targets=[Name(id='v9', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='alloc_buffer', ctx=Load()), args=[Tuple(elts=[Constant(value=64)], ctx=Load())], keywords=[keyword(arg='scope', value=Constant(value='local'))])), For(target=Name(id='v10', ctx=Store()), iter=Call(func=Name(id='range', ctx=Load()), args=[Constant(value=64)], keywords=[]), body=[Assign(targets=[Subscript(value=Name(id='v9', ctx=Load()), slice=Name(id='v10', ctx=Load()), ctx=Store())], value=Subscript(value=Name(id='v1', ctx=Load()), slice=Tuple(elts=[Subscript(value=Name(id='v2', ctx=Load()), slice=Name(id='v5', ctx=Load()), ctx=Load()), Name(id='v10', ctx=Load())], ctx=Load()), ctx=Load()))], orelse=[]), Assign(targets=[Subscript(value=Name(id='v4', ctx=Load()), slice=Name(id='v5', ctx=Load()), ctx=Store())], value=Subscript(value=Name(id='v9', ctx=Load()), slice=Subscript(value=Name(id='v3', ctx=Load()), slice=Name(id='v5', ctx=Load()), ctx=Load()), ctx=Load()))])], decorator_list=[Attribute(value=Name(id='T', ctx=Load()), attr='prim_func', ctx=Load())])], type_ignores=[])"
+    },
+    "generation": {
+      "attempts": 1,
+      "context_receipt": {
+        "backend_protocol": "openai.codex-cli.intentir-replay.v70",
+        "cli_turns": 1,
+        "context_rollover_input_tokens": 0,
+        "episode_wall_time_limit_seconds": 7200.0,
+        "excluded_dependencies": [
+          "pi",
+          "Source",
+          "Harness valuation",
+          "Gate observation",
+          "prior Replay"
+        ],
+        "formal_compile_recheck": true,
+        "formal_ingress_protocol": "intentir.scrc.replay-check.v17",
+        "fresh_session": true,
+        "model_segments_lower_bound": 1,
+        "pi_visible_to_replay": false,
+        "replay_input_protocol": "intentir.scrc.replay-input.v4",
+        "retrieval_trace": [],
+        "thread_id": "019fbbc6-2089-7951-ac0f-07891ea3d054",
+        "thread_ids": [
+          "019fbbc6-2089-7951-ac0f-07891ea3d054"
+        ],
+        "tool_actions": 0,
+        "visible_packet_components": [
+          "c",
+          "j",
+          "u_f"
+        ]
+      },
+      "elapsed_ms": 225745.376938954,
+      "entry_function_name": null,
+      "function_name": "scrc_k0",
+      "model": "gpt-5.6-sol",
+      "response_id": "019fbbc6-2089-7951-ac0f-07891ea3d054",
+      "response_model": "gpt-5.6-sol",
+      "usage": {}
+    },
+    "mode": "normal",
+    "normalization": {
+      "active_rules": [],
+      "frontend": "tilelang",
+      "hard_preservation_check": "passed",
+      "hard_relations": [
+        "program_axes"
+      ],
+      "idempotence_check": "passed",
+      "observer_profile": "tilelang-tir-semantic-structure-ptx-diagnostic-v5",
+      "peer_observation_visible": false,
+      "profile_ok": true,
+      "protocol": "intentir.gate1.jc-normalizer.v2",
+      "transformed_occurrences": 0,
+      "unary": true,
+      "unknown_atoms": "hard"
+    },
+    "physical_calls": 1
+  },
+  "normal_fanout": null,
+  "observer_profile": {
+    "canonicalization_version": "tilelang-tir-semantic-structure-ptx-diagnostic-v5",
+    "compiler_stage": "tir",
+    "evidence_class": "semantic_structure_with_ptx_diagnostic",
+    "frontend": "tilelang",
+    "profile_id": "tilelang_tir_semantic_structure",
+    "profile_version": "tilelang-tir-semantic-structure-ptx-diagnostic-v5"
+  },
+  "protocol": "intentir.j-only-replay.jc-structural-gate1.v2",
+  "source_compile": {
+    "cache_key": "7d8fbe47b97942982dadf595f3d54382acd7c3df6c273d7e823d8ea9f318ee17",
+    "compiler": {
+      "name": "tilelang",
+      "version": "0.1.8"
+    },
+    "cuda": "#include <tl_templates/cuda/gemm.h>\n#include <tl_templates/cuda/copy.h>\n#include <tl_templates/cuda/reduce.h>\n#include <tl_templates/cuda/ldsm.h>\n#include <tl_templates/cuda/threadblock_swizzle.h>\n#include <tl_templates/cuda/debug.h>\n#ifdef ENABLE_BF16\n#include <tl_templates/cuda/cuda_bf16_fallbacks.cuh>\n#endif\n\nextern \"C\" __global__ void main_kernel(const int* __restrict__ col_idx, const float* __restrict__ inp, float* __restrict__ out, const int* __restrict__ row_idx, int M);\nextern \"C\" __global__ void __launch_bounds__(128, 1) main_kernel(const int* __restrict__ col_idx, const float* __restrict__ inp, float* __restrict__ out, const int* __restrict__ row_idx, int M) {\n  int r = row_idx[((int)blockIdx.x)];\n  int c = col_idx[((int)blockIdx.x)];\n  float condval;\n  if (((((0 <= c) && (c < 64)) && (0 <= r)) && (r < M))) {\n    condval = inp[((((int64_t)r) * (int64_t)64) + ((int64_t)c))];\n  } else {\n    condval = 0x0p+0f/*0.000000e+00*/;\n  }\n  out[((int)blockIdx.x)] = condval;\n}\n\n",
+    "diagnostic": "",
+    "elapsed_ms": 4848.844903986901,
+    "interface": {
+      "parameters": [
+        {
+          "dtype": "float32",
+          "kind": "pointer",
+          "mode": "input",
+          "name": "inp",
+          "rank": 2,
+          "shape": [
+            "M",
+            64
+          ]
+        },
+        {
+          "dtype": "int32",
+          "kind": "pointer",
+          "mode": "input",
+          "name": "row_idx",
+          "rank": 1,
+          "shape": [
+            256
+          ]
+        },
+        {
+          "dtype": "int32",
+          "kind": "pointer",
+          "mode": "input",
+          "name": "col_idx",
+          "rank": 1,
+          "shape": [
+            256
+          ]
+        },
+        {
+          "dtype": "float32",
+          "kind": "pointer",
+          "mode": "output",
+          "name": "out",
+          "rank": 1,
+          "shape": [
+            256
+          ]
+        }
+      ]
+    },
+    "ok": true,
+    "ptx": "//\n// Generated by NVIDIA NVVM Compiler\n//\n// Compiler Build ID: CL-35404655\n// Cuda compilation tools, release 12.8, V12.8.61\n// Based on NVVM 20.0.0\n//\n\n.version 8.7\n.target sm_120a\n.address_size 64\n\n\t// .globl\tmain_kernel\n.global .align 1 .b8 _ZN45_INTERNAL_02f9ba6d_14_tvm_kernels_cu_1b63e0854cute7productE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_02f9ba6d_14_tvm_kernels_cu_1b63e0854cute1_E[1];\n.global .align 1 .b8 _ZN45_INTERNAL_02f9ba6d_14_tvm_kernels_cu_1b63e0854cuda3std3__45__cpo5beginE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_02f9ba6d_14_tvm_kernels_cu_1b63e0854cuda3std3__45__cpo3endE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_02f9ba6d_14_tvm_kernels_cu_1b63e0854cuda3std3__45__cpo6cbeginE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_02f9ba6d_14_tvm_kernels_cu_1b63e0854cuda3std3__45__cpo4cendE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_02f9ba6d_14_tvm_kernels_cu_1b63e0854cuda3std3__419piecewise_constructE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_02f9ba6d_14_tvm_kernels_cu_1b63e0854cuda3std3__48in_placeE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_02f9ba6d_14_tvm_kernels_cu_1b63e0854cuda3std6ranges3__45__cpo4swapE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_02f9ba6d_14_tvm_kernels_cu_1b63e0854cuda3std6ranges3__45__cpo9iter_moveE[1];\n\n.visible .entry main_kernel(\n\t.param .u64 main_kernel_param_0,\n\t.param .u64 main_kernel_param_1,\n\t.param .u64 main_kernel_param_2,\n\t.param .u64 main_kernel_param_3,\n\t.param .u32 main_kernel_param_4\n)\n.maxntid 128, 1, 1\n.minnctapersm 1\n{\n\t.reg .pred \t%p<6>;\n\t.reg .b32 \t%r<7>;\n\t.reg .f32 \t%f<5>;\n\t.reg .b64 \t%rd<20>;\n\t.loc\t1 12 0\n\n\tld.param.u64 \t%rd4, [main_kernel_param_0];\n\tld.param.u64 \t%rd2, [main_kernel_param_1];\n\tld.param.u64 \t%rd3, [main_kernel_param_2];\n\tld.param.u64 \t%rd5, [main_kernel_param_3];\n\tld.param.u32 \t%r3, [main_kernel_param_4];\n\t.loc\t1 13 3\n\tcvta.to.global.u64 \t%rd6, %rd4;\n\tcvta.to.global.u64 \t%rd7, %rd5;\n\tmov.u32 \t%r5, %ctaid.x;\n\tcvt.u64.u32 \t%rd1, %r5;\n\tmul.wide.u32 \t%rd8, %r5, 4;\n\tadd.s64 \t%rd9, %rd7, %rd8;\n\tld.global.nc.u32 \t%r6, [%rd9];\n\t.loc\t1 14 3\n\tadd.s64 \t%rd10, %rd6, %rd8;\n\tld.global.nc.u32 \t%r2, [%rd10];\n\t.loc\t1 16 3\n\tsetp.gt.u32 \t%p1, %r2, 63;\n\tsetp.lt.s32 \t%p2, %r6, 0;\n\tor.pred  \t%p3, %p1, %p2;\n\tsetp.ge.s32 \t%p4, %r6, %r3;\n\tmov.f32 \t%f4, 0f00000000;\n\tor.pred  \t%p5, %p3, %p4;\n\t@%p5 bra \t$L__BB0_2;\n\t.loc\t1 13 3\n\tcvta.to.global.u64 \t%rd11, %rd2;\n\t.loc\t1 17 5\n\tmul.wide.u32 \t%rd12, %r6, 64;\n\tcvt.u64.u32 \t%rd13, %r2;\n\tadd.s64 \t%rd14, %rd12, %rd13;\n\tshl.b64 \t%rd15, %rd14, 2;\n\tadd.s64 \t%rd16, %rd11, %rd15;\n\tld.global.nc.f32 \t%f4, [%rd16];\n$L__BB0_2:\n\t.loc\t1 13 3\n\tcvta.to.global.u64 \t%rd17, %rd3;\n\t.loc\t1 21 3\n\tshl.b64 \t%rd18, %rd1, 2;\n\tadd.s64 \t%rd19, %rd17, %rd18;\n\tst.global.f32 \t[%rd19], %f4;\n\t.loc\t1 22 1\n\tret;\n\n}\n\t.file\t1 \"/tmp/tmp0tl1kaud/tvm_kernels.cu\"\n",
+    "target": {
+      "name": "cuda"
+    },
+    "tir": "# from tvm.script import tir as T\n\n@T.prim_func\ndef main(inp_handle: T.handle, row_idx_handle: T.handle, col_idx_handle: T.handle, out_handle: T.handle):\n    M = T.int32()\n    inp = T.match_buffer(inp_handle, (M, 64), strides=(64, 1))\n    row_idx = T.match_buffer(row_idx_handle, (256,), \"int32\", strides=(1,))\n    col_idx = T.match_buffer(col_idx_handle, (256,), \"int32\", strides=(1,))\n    out = T.match_buffer(out_handle, (256,), strides=(1,))\n    # with T.block(\"root\"):\n    bx = T.launch_thread(\"blockIdx.x\", 256)\n    tx = T.launch_thread(\"threadIdx.x\", 128)\n    ty = T.launch_thread(\"threadIdx.y\", 1)\n    tz = T.launch_thread(\"threadIdx.z\", 1)\n    with T.block(\"tilelang_root\"):\n        T.reads(row_idx[bx], col_idx[bx], inp[row_idx[bx], col_idx[bx]])\n        T.writes(out[bx])\n        r: T.int32 = row_idx[bx]\n        c: T.int32 = col_idx[bx]\n        out[bx] = inp[r, c]"
+  },
+  "source_fingerprint": {
+    "digest": "0d19f6d76d56824bade396ebe6fbba980fe3c82f75d041238eb5d4332af9936b",
+    "interface": [
+      [
+        "parameters",
+        "[{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":0,\"rank\":2},{\"dtype\":\"i32\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":1,\"rank\":1},{\"dtype\":\"i32\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":2,\"rank\":1},{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"output\",\"position\":3,\"rank\":1}]"
+      ]
+    ],
+    "ptx": {
+      "collectives": [],
+      "control_flow": [
+        "@%pred4 bra L0;",
+        "L0:",
+        "ret;"
+      ],
+      "coordinate_uses": [
+        "%ctaid.x"
+      ],
+      "digest": "b2a2d5eef7414b48076fcca4cad98a1a7adadd799438d2e6b60cfca1f3799986",
+      "instructions": [
+        "ld.param.u64 %b640,[param0];",
+        "ld.param.u64 %b641,[param1];",
+        "ld.param.u64 %b642,[param2];",
+        "ld.param.u64 %b643,[param3];",
+        "ld.param.u32 %b320,[param4];",
+        "cvta.to.global.u64 %b644,%b640;",
+        "cvta.to.global.u64 %b645,%b643;",
+        "mov.u32 %b321,%ctaid.x;",
+        "cvt.u64.u32 %b646,%b321;",
+        "mul.wide.u32 %b647,%b321,4;",
+        "add.s64 %b648,%b645,%b647;",
+        "ld.global.nc.u32 %b322,[%b648];",
+        "add.s64 %b649,%b644,%b647;",
+        "ld.global.nc.u32 %b323,[%b649];",
+        "setp.gt.u32 %pred0,%b323,63;",
+        "setp.lt.s32 %pred1,%b322,0;",
+        "or.pred %pred2,%pred0,%pred1;",
+        "setp.ge.s32 %pred3,%b322,%b320;",
+        "mov.f32 %f320,0f00000000;",
+        "or.pred %pred4,%pred2,%pred3;",
+        "@%pred4 bra L0;",
+        "cvta.to.global.u64 %b6410,%b641;",
+        "mul.wide.u32 %b6411,%b322,64;",
+        "cvt.u64.u32 %b6412,%b323;",
+        "add.s64 %b6413,%b6411,%b6412;",
+        "shl.b64 %b6414,%b6413,2;",
+        "add.s64 %b6415,%b6410,%b6414;",
+        "ld.global.nc.f32 %f320,[%b6415];",
+        "L0:",
+        "cvta.to.global.u64 %b6416,%b642;",
+        "shl.b64 %b6417,%b646,2;",
+        "add.s64 %b6418,%b6416,%b6417;",
+        "st.global.f32 [%b6418],%f320;",
+        "ret;"
+      ],
+      "interface": [
+        [
+          "parameters",
+          "[{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":0,\"rank\":2},{\"dtype\":\"i32\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":1,\"rank\":1},{\"dtype\":\"i32\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":2,\"rank\":1},{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"output\",\"position\":3,\"rank\":1}]",
+          null
+        ],
+        [
+          "ptx_abi",
+          "[[\"\",\"u64\",null],[\"\",\"u64\",null],[\"\",\"u64\",null],[\"\",\"u64\",null],[\"\",\"u32\",null]]",
+          null
+        ]
+      ],
+      "memory_effects": [
+        "ld.param.u64 %b640,[param0];",
+        "ld.param.u64 %b641,[param1];",
+        "ld.param.u64 %b642,[param2];",
+        "ld.param.u64 %b643,[param3];",
+        "ld.param.u32 %b320,[param4];",
+        "ld.global.nc.u32 %b322,[%b648];",
+        "ld.global.nc.u32 %b323,[%b649];",
+        "ld.global.nc.f32 %f320,[%b6415];",
+        "st.global.f32 [%b6418],%f320;"
+      ],
+      "opcode_multiset": [
+        [
+          "add.s64",
+          5
+        ],
+        [
+          "bra",
+          1
+        ],
+        [
+          "cvt.u64.u32",
+          2
+        ],
+        [
+          "cvta.to.global.u64",
+          4
+        ],
+        [
+          "ld.global.nc.f32",
+          1
+        ],
+        [
+          "ld.global.nc.u32",
+          2
+        ],
+        [
+          "ld.param.u32",
+          1
+        ],
+        [
+          "ld.param.u64",
+          4
+        ],
+        [
+          "mov.f32",
+          1
+        ],
+        [
+          "mov.u32",
+          1
+        ],
+        [
+          "mul.wide.u32",
+          2
+        ],
+        [
+          "or.pred",
+          2
+        ],
+        [
+          "ret;",
+          1
+        ],
+        [
+          "setp.ge.s32",
+          1
+        ],
+        [
+          "setp.gt.u32",
+          1
+        ],
+        [
+          "setp.lt.s32",
+          1
+        ],
+        [
+          "shl.b64",
+          2
+        ],
+        [
+          "st.global.f32",
+          1
+        ]
+      ],
+      "schedule_view": [
+        [
+          "c0",
+          "128"
+        ]
+      ],
+      "schema_version": "cuda-ptx-semantic-effects-v6",
+      "semantic_address_coordinate_folds": [],
+      "semantic_memory_effects": [
+        [
+          "ld.global.b32",
+          3
+        ],
+        [
+          "ld.param.b32",
+          1
+        ],
+        [
+          "ld.param.b64",
+          4
+        ],
+        [
+          "st.global.b32",
+          1
+        ]
+      ],
+      "semantic_value_opcodes": [
+        [
+          "ld.global.b32",
+          3
+        ],
+        [
+          "ld.param.b32",
+          1
+        ],
+        [
+          "or.pred",
+          2
+        ],
+        [
+          "setp.ge.s32",
+          1
+        ],
+        [
+          "setp.gt.u32",
+          1
+        ],
+        [
+          "setp.lt.s32",
+          1
+        ]
+      ],
+      "target_view": [
+        [
+          "name",
+          "\"cuda\""
+        ]
+      ]
+    },
+    "schedule_view": [
+      [
+        "c0",
+        "128"
+      ]
+    ],
+    "schema_version": "tilelang-tir-semantic-structure-ptx-diagnostic-v5",
+    "tir_op_multiset": [
+      [
+        "T.block",
+        1
+      ],
+      [
+        "T.handle",
+        4
+      ],
+      [
+        "T.launch_thread",
+        4
+      ],
+      [
+        "T.match_buffer",
+        4
+      ],
+      [
+        "T.prim_func",
+        1
+      ],
+      [
+        "T.reads",
+        1
+      ],
+      [
+        "T.writes",
+        1
+      ]
+    ],
+    "tir_ops": [
+      "T.prim_func",
+      "T.handle",
+      "T.handle",
+      "T.handle",
+      "T.handle",
+      "T.match_buffer",
+      "T.match_buffer",
+      "T.match_buffer",
+      "T.match_buffer",
+      "T.launch_thread",
+      "T.launch_thread",
+      "T.launch_thread",
+      "T.launch_thread",
+      "T.block",
+      "T.reads",
+      "T.writes"
+    ],
+    "tir_structure": "Module(body=[FunctionDef(name='tir_entry', args=arguments(posonlyargs=[], args=[arg(arg='p0', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load())), arg(arg='p1', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load())), arg(arg='p2', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load())), arg(arg='p3', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[]), body=[Assign(targets=[Name(id='v0', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='int32', ctx=Load()), args=[], keywords=[])), Assign(targets=[Name(id='v1', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p0', ctx=Load()), Tuple(elts=[Name(id='v0', ctx=Load()), Constant(value=64)], ctx=Load())], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=64), Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v2', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p1', ctx=Load()), Tuple(elts=[Constant(value=256)], ctx=Load()), Constant(value='int32')], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v3', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p2', ctx=Load()), Tuple(elts=[Constant(value=256)], ctx=Load()), Constant(value='int32')], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v4', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p3', ctx=Load()), Tuple(elts=[Constant(value=256)], ctx=Load())], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v5', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='blockIdx.x'), Constant(value=256)], keywords=[])), Assign(targets=[Name(id='v6', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.x'), Constant(value=128)], keywords=[])), Assign(targets=[Name(id='v7', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.y'), Constant(value=1)], keywords=[])), Assign(targets=[Name(id='v8', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.z'), Constant(value=1)], keywords=[])), With(items=[withitem(context_expr=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='block', ctx=Load()), args=[Constant(value='<block>')], keywords=[]))], body=[Expr(value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='reads', ctx=Load()), args=[Subscript(value=Name(id='v1', ctx=Load()), slice=Tuple(elts=[Subscript(value=Name(id='v2', ctx=Load()), slice=Name(id='v5', ctx=Load()), ctx=Load()), Subscript(value=Name(id='v3', ctx=Load()), slice=Name(id='v5', ctx=Load()), ctx=Load())], ctx=Load()), ctx=Load()), Subscript(value=Name(id='v2', ctx=Load()), slice=Name(id='v5', ctx=Load()), ctx=Load()), Subscript(value=Name(id='v3', ctx=Load()), slice=Name(id='v5', ctx=Load()), ctx=Load())], keywords=[])), Expr(value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='writes', ctx=Load()), args=[Subscript(value=Name(id='v4', ctx=Load()), slice=Name(id='v5', ctx=Load()), ctx=Load())], keywords=[])), Assign(targets=[Subscript(value=Name(id='v4', ctx=Load()), slice=Name(id='v5', ctx=Load()), ctx=Store())], value=Subscript(value=Name(id='v1', ctx=Load()), slice=Tuple(elts=[Subscript(value=Name(id='v2', ctx=Load()), slice=Name(id='v5', ctx=Load()), ctx=Load()), Subscript(value=Name(id='v3', ctx=Load()), slice=Name(id='v5', ctx=Load()), ctx=Load())], ctx=Load()), ctx=Load()))])], decorator_list=[Attribute(value=Name(id='T', ctx=Load()), attr='prim_func', ctx=Load())])], type_ignores=[])"
+  },
+  "source_normalization": {
+    "active_rules": [],
+    "frontend": "tilelang",
+    "hard_preservation_check": "passed",
+    "hard_relations": [
+      "program_axes"
+    ],
+    "idempotence_check": "passed",
+    "observer_profile": "tilelang-tir-semantic-structure-ptx-diagnostic-v5",
+    "peer_observation_visible": false,
+    "profile_ok": true,
+    "protocol": "intentir.gate1.jc-normalizer.v2",
+    "transformed_occurrences": 0,
+    "unary": true,
+    "unknown_atoms": "hard"
+  },
+  "status": "no_closure"
+}
