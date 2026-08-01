@@ -1,0 +1,15 @@
+import tilelang.language as T
+
+X0 = T.dynamic("x0")
+
+@T.prim_func
+def scrc_k0(
+    p0: T.Tensor((X0, 16), "float32"),
+    p1: T.Tensor((X0,), "bool"),
+):
+    with T.Kernel(X0, threads=c0) as v3:
+        vmax = T.alloc_local((1,), "float32")
+        vmax[0] = -T.infinity("float32")
+        for v4 in T.serial(16):
+            vmax[0] = T.max(vmax[0], p0[v3, v4])
+        p1[v3] = vmax[0] != T.float32(0.0)

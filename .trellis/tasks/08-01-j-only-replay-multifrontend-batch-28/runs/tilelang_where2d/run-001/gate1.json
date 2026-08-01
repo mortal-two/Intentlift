@@ -1,0 +1,1874 @@
+{
+  "artifact_digest": "018e1f6d87c80c0fbd5ce888fa2f5c98bb746a67caabf3aaa43d4f8a1e1f766f",
+  "j_necessity_status": "inconclusive",
+  "llm_calls": {
+    "masked_j": 0,
+    "normal": 1
+  },
+  "masked_j": null,
+  "masked_j_isolation": {
+    "fresh_session_evidence": null,
+    "independent_writer": null,
+    "separate_generate_call": null
+  },
+  "normal": {
+    "comparison": {
+      "diagnostic_passes": {
+        "ptx.address_coordinate_folds": true,
+        "ptx.collectives": true,
+        "ptx.control_flow": false,
+        "ptx.coordinate_uses": false,
+        "ptx.interface": false,
+        "ptx.memory_effects": false,
+        "ptx.raw_instruction_topology": false,
+        "ptx.raw_memory_effects": false,
+        "ptx.raw_opcode_multiset": false,
+        "ptx.schema": true,
+        "ptx.target": true,
+        "ptx.value_operations": false
+      },
+      "differences": [
+        {
+          "category": "tir_structure",
+          "message": "TileLang tir_structure differs between Source and Replay",
+          "replay": "Module(body=[FunctionDef(name='tir_entry', args=arguments(posonlyargs=[], args=[arg(arg='p0', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load())), arg(arg='p1', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load())), arg(arg='p2', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[]), body=[Assign(targets=[Name(id='v0', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='int32', ctx=Load()), args=[], keywords=[])), Assign(targets=[Name(id='v1', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p0', ctx=Load()), Tuple(elts=[Name(id='v0', ctx=Load()), Constant(value=16)], ctx=Load())], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=16), Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v2', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='int32', ctx=Load()), args=[], keywords=[])), Assign(targets=[Name(id='v3', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p1', ctx=Load()), Tuple(elts=[Name(id='v2', ctx=Load()), Constant(value=16)], ctx=Load())], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=16), Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v4', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='int32', ctx=Load()), args=[], keywords=[])), Assign(targets=[Name(id='v5', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p2', ctx=Load()), Tuple(elts=[Name(id='v4', ctx=Load()), Constant(value=16)], ctx=Load())], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=16), Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v6', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='blockIdx.x'), Name(id='v0', ctx=Load())], keywords=[])), Assign(targets=[Name(id='v7', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.x'), Constant(value=16)], keywords=[])), Assign(targets=[Name(id='v8', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.y'), Constant(value=1)], keywords=[])), Assign(targets=[Name(id='v9', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.z'), Constant(value=1)], keywords=[])), With(items=[withitem(context_expr=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='block', ctx=Load()), args=[Constant(value='<block>')], keywords=[]))], body=[Expr(value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='reads', ctx=Load()), args=[Subscript(value=Name(id='v1', ctx=Load()), slice=Tuple(elts=[Name(id='v6', ctx=Load()), Slice(lower=Constant(value=0), upper=Constant(value=16))], ctx=Load()), ctx=Load()), Subscript(value=Name(id='v3', ctx=Load()), slice=Tuple(elts=[Name(id='v6', ctx=Load()), Slice(lower=Constant(value=0), upper=Constant(value=16))], ctx=Load()), ctx=Load())], keywords=[])), Expr(value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='writes', ctx=Load()), args=[Subscript(value=Name(id='v5', ctx=Load()), slice=Tuple(elts=[Name(id='v6', ctx=Load()), Slice(lower=Constant(value=0), upper=Constant(value=16))], ctx=Load()), ctx=Load())], keywords=[])), For(target=Name(id='v10', ctx=Store()), iter=Call(func=Name(id='range', ctx=Load()), args=[Constant(value=16)], keywords=[]), body=[Assign(targets=[Subscript(value=Name(id='v5', ctx=Load()), slice=Tuple(elts=[Name(id='v6', ctx=Load()), Name(id='v10', ctx=Load())], ctx=Load()), ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='if_then_else', ctx=Load()), args=[Compare(left=Subscript(value=Name(id='v1', ctx=Load()), slice=Tuple(elts=[Name(id='v6', ctx=Load()), Name(id='v10', ctx=Load())], ctx=Load()), ctx=Load()), ops=[Gt()], comparators=[Subscript(value=Name(id='v3', ctx=Load()), slice=Tuple(elts=[Name(id='v6', ctx=Load()), Name(id='v10', ctx=Load())], ctx=Load()), ctx=Load())]), Subscript(value=Name(id='v1', ctx=Load()), slice=Tuple(elts=[Name(id='v6', ctx=Load()), Name(id='v10', ctx=Load())], ctx=Load()), ctx=Load()), Subscript(value=Name(id='v3', ctx=Load()), slice=Tuple(elts=[Name(id='v6', ctx=Load()), Name(id='v10', ctx=Load())], ctx=Load()), ctx=Load())], keywords=[]))], orelse=[])])], decorator_list=[Attribute(value=Name(id='T', ctx=Load()), attr='prim_func', ctx=Load())])], type_ignores=[])",
+          "source": "Module(body=[FunctionDef(name='tir_entry', args=arguments(posonlyargs=[], args=[arg(arg='p0', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load())), arg(arg='p1', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load())), arg(arg='p2', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[]), body=[Assign(targets=[Name(id='v0', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='int32', ctx=Load()), args=[], keywords=[])), Assign(targets=[Name(id='v1', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p0', ctx=Load()), Tuple(elts=[Name(id='v0', ctx=Load()), Constant(value=16)], ctx=Load())], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=16), Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v2', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p1', ctx=Load()), Tuple(elts=[Name(id='v0', ctx=Load()), Constant(value=16)], ctx=Load())], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=16), Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v3', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p2', ctx=Load()), Tuple(elts=[Name(id='v0', ctx=Load()), Constant(value=16)], ctx=Load())], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=16), Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v4', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='blockIdx.x'), Name(id='v0', ctx=Load())], keywords=[])), Assign(targets=[Name(id='v5', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.x'), Constant(value=16)], keywords=[])), Assign(targets=[Name(id='v6', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.y'), Constant(value=1)], keywords=[])), Assign(targets=[Name(id='v7', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.z'), Constant(value=1)], keywords=[])), With(items=[withitem(context_expr=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='block', ctx=Load()), args=[Constant(value='<block>')], keywords=[]))], body=[Expr(value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='reads', ctx=Load()), args=[Subscript(value=Name(id='v1', ctx=Load()), slice=Tuple(elts=[Name(id='v4', ctx=Load()), Slice(lower=Constant(value=0), upper=Constant(value=16))], ctx=Load()), ctx=Load()), Subscript(value=Name(id='v2', ctx=Load()), slice=Tuple(elts=[Name(id='v4', ctx=Load()), Slice(lower=Constant(value=0), upper=Constant(value=16))], ctx=Load()), ctx=Load())], keywords=[])), Expr(value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='writes', ctx=Load()), args=[Subscript(value=Name(id='v3', ctx=Load()), slice=Tuple(elts=[Name(id='v4', ctx=Load()), Slice(lower=Constant(value=0), upper=Constant(value=16))], ctx=Load()), ctx=Load())], keywords=[])), For(target=Name(id='v8', ctx=Store()), iter=Call(func=Name(id='range', ctx=Load()), args=[Constant(value=16)], keywords=[]), body=[AnnAssign(target=Name(id='v9', ctx=Store()), annotation=Attribute(value=Name(id='T', ctx=Load()), attr='float32', ctx=Load()), value=Subscript(value=Name(id='v1', ctx=Load()), slice=Tuple(elts=[Name(id='v4', ctx=Load()), Name(id='v8', ctx=Load())], ctx=Load()), ctx=Load()), simple=1), AnnAssign(target=Name(id='v10', ctx=Store()), annotation=Attribute(value=Name(id='T', ctx=Load()), attr='float32', ctx=Load()), value=Subscript(value=Name(id='v2', ctx=Load()), slice=Tuple(elts=[Name(id='v4', ctx=Load()), Name(id='v8', ctx=Load())], ctx=Load()), ctx=Load()), simple=1), Assign(targets=[Subscript(value=Name(id='v3', ctx=Load()), slice=Tuple(elts=[Name(id='v4', ctx=Load()), Name(id='v8', ctx=Load())], ctx=Load()), ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='if_then_else', ctx=Load()), args=[Compare(left=Name(id='v9', ctx=Load()), ops=[Gt()], comparators=[Name(id='v10', ctx=Load())]), Name(id='v9', ctx=Load()), Name(id='v10', ctx=Load())], keywords=[]))], orelse=[])])], decorator_list=[Attribute(value=Name(id='T', ctx=Load()), attr='prim_func', ctx=Load())])], type_ignores=[])"
+        },
+        {
+          "category": "tir_topology",
+          "message": "TileLang tir_topology differs between Source and Replay",
+          "replay": [
+            "T.prim_func",
+            "T.handle",
+            "T.handle",
+            "T.handle",
+            "T.match_buffer",
+            "T.match_buffer",
+            "T.match_buffer",
+            "T.launch_thread",
+            "T.launch_thread",
+            "T.launch_thread",
+            "T.launch_thread",
+            "T.block",
+            "T.reads",
+            "T.writes",
+            "control.for",
+            "T.if_then_else"
+          ],
+          "source": [
+            "T.prim_func",
+            "T.handle",
+            "T.handle",
+            "T.handle",
+            "T.match_buffer",
+            "T.match_buffer",
+            "T.match_buffer",
+            "T.launch_thread",
+            "T.launch_thread",
+            "T.launch_thread",
+            "T.launch_thread",
+            "T.block",
+            "T.reads",
+            "T.writes",
+            "control.for",
+            "T.float32",
+            "T.float32",
+            "T.if_then_else"
+          ]
+        },
+        {
+          "category": "tir_operations",
+          "message": "TileLang tir_operations differs between Source and Replay",
+          "replay": [
+            [
+              "T.block",
+              1
+            ],
+            [
+              "T.handle",
+              3
+            ],
+            [
+              "T.if_then_else",
+              1
+            ],
+            [
+              "T.launch_thread",
+              4
+            ],
+            [
+              "T.match_buffer",
+              3
+            ],
+            [
+              "T.prim_func",
+              1
+            ],
+            [
+              "T.reads",
+              1
+            ],
+            [
+              "T.writes",
+              1
+            ],
+            [
+              "control.for",
+              1
+            ]
+          ],
+          "source": [
+            [
+              "T.block",
+              1
+            ],
+            [
+              "T.float32",
+              2
+            ],
+            [
+              "T.handle",
+              3
+            ],
+            [
+              "T.if_then_else",
+              1
+            ],
+            [
+              "T.launch_thread",
+              4
+            ],
+            [
+              "T.match_buffer",
+              3
+            ],
+            [
+              "T.prim_func",
+              1
+            ],
+            [
+              "T.reads",
+              1
+            ],
+            [
+              "T.writes",
+              1
+            ],
+            [
+              "control.for",
+              1
+            ]
+          ]
+        },
+        {
+          "category": "ptx.interface",
+          "message": "PTX interface differs between Source and Replay",
+          "replay": [
+            [
+              "parameters",
+              "[{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":0,\"rank\":2},{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":1,\"rank\":2},{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"output\",\"position\":2,\"rank\":2}]",
+              null
+            ],
+            [
+              "ptx_abi",
+              "[[\"\",\"u64\",null],[\"\",\"u64\",null],[\"\",\"u64\",null],[\"\",\"u32\",null],[\"\",\"u32\",null],[\"\",\"u32\",null]]",
+              null
+            ]
+          ],
+          "source": [
+            [
+              "parameters",
+              "[{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":0,\"rank\":2},{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":1,\"rank\":2},{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"output\",\"position\":2,\"rank\":2}]",
+              null
+            ],
+            [
+              "ptx_abi",
+              "[[\"\",\"u64\",null],[\"\",\"u64\",null],[\"\",\"u64\",null],[\"\",\"u32\",null]]",
+              null
+            ]
+          ]
+        },
+        {
+          "category": "ptx.value_operations",
+          "message": "PTX value_operations differs between Source and Replay",
+          "replay": [
+            [
+              "ld.global.b32",
+              48
+            ],
+            [
+              "ld.param.b32",
+              2
+            ],
+            [
+              "mov.u32",
+              1
+            ],
+            [
+              "or.pred",
+              16
+            ],
+            [
+              "setp.ge.s32",
+              33
+            ],
+            [
+              "setp.lt.f32",
+              16
+            ]
+          ],
+          "source": [
+            [
+              "ld.global.b32",
+              2
+            ],
+            [
+              "selp.f32",
+              1
+            ],
+            [
+              "setp.lt.f32",
+              1
+            ]
+          ]
+        },
+        {
+          "category": "ptx.memory_effects",
+          "message": "PTX memory_effects differs between Source and Replay",
+          "replay": [
+            [
+              "ld.global.b32",
+              48
+            ],
+            [
+              "ld.param.b32",
+              2
+            ],
+            [
+              "ld.param.b64",
+              3
+            ],
+            [
+              "st.global.b32",
+              16
+            ]
+          ],
+          "source": [
+            [
+              "ld.global.b32",
+              2
+            ],
+            [
+              "ld.param.b64",
+              3
+            ],
+            [
+              "st.global.b32",
+              1
+            ]
+          ]
+        },
+        {
+          "category": "ptx.control_flow",
+          "message": "PTX control_flow differs between Source and Replay",
+          "replay": [
+            "@%pred0 bra L0;",
+            "@%pred1 bra L1;",
+            "L1:",
+            "@%pred4 bra L2;",
+            "L2:",
+            "@%pred5 bra L3;",
+            "L3:",
+            "@%pred8 bra L4;",
+            "L4:",
+            "@%pred9 bra L5;",
+            "L5:",
+            "@%pred12 bra L6;",
+            "L6:",
+            "@%pred13 bra L7;",
+            "L7:",
+            "@%pred16 bra L8;",
+            "L8:",
+            "@%pred17 bra L9;",
+            "L9:",
+            "@%pred20 bra L10;",
+            "L10:",
+            "@%pred21 bra L11;",
+            "L11:",
+            "@%pred24 bra L12;",
+            "L12:",
+            "@%pred25 bra L13;",
+            "L13:",
+            "@%pred28 bra L14;",
+            "L14:",
+            "@%pred29 bra L15;",
+            "L15:",
+            "@%pred32 bra L16;",
+            "L16:",
+            "@%pred33 bra L17;",
+            "L17:",
+            "@%pred36 bra L18;",
+            "L18:",
+            "@%pred37 bra L19;",
+            "L19:",
+            "@%pred40 bra L20;",
+            "L20:",
+            "@%pred41 bra L21;",
+            "L21:",
+            "@%pred44 bra L22;",
+            "L22:",
+            "@%pred45 bra L23;",
+            "L23:",
+            "@%pred48 bra L24;",
+            "L24:",
+            "@%pred49 bra L25;",
+            "L25:",
+            "@%pred52 bra L26;",
+            "L26:",
+            "@%pred53 bra L27;",
+            "L27:",
+            "@%pred56 bra L28;",
+            "L28:",
+            "@%pred57 bra L29;",
+            "L29:",
+            "@%pred60 bra L30;",
+            "L30:",
+            "@%pred61 bra L31;",
+            "L31:",
+            "@%pred64 bra L32;",
+            "L32:",
+            "L0:",
+            "ret;"
+          ],
+          "source": [
+            "ret;"
+          ]
+        },
+        {
+          "category": "ptx.coordinate_uses",
+          "message": "PTX coordinate_uses differs between Source and Replay",
+          "replay": [
+            "%ctaid.x"
+          ],
+          "source": [
+            "%ctaid.x",
+            "%tid.x"
+          ]
+        },
+        {
+          "category": "ptx.raw_instruction_topology",
+          "message": "PTX raw_instruction_topology differs between Source and Replay",
+          "replay": [
+            "ld.param.u64 %b640,[param0];",
+            "ld.param.u64 %b641,[param1];",
+            "ld.param.u64 %b642,[param2];",
+            "ld.param.u32 %b320,[param4];",
+            "ld.param.u32 %b321,[param5];",
+            "mov.u32 %b322,%ctaid.x;",
+            "setp.ge.s32 %pred0,%b322,%b320;",
+            "@%pred0 bra L0;",
+            "cvta.to.global.u64 %b643,%b641;",
+            "setp.ge.s32 %pred1,%b322,%b321;",
+            "mul.wide.u32 %b644,%b322,16;",
+            "shl.b64 %b645,%b644,2;",
+            "add.s64 %b646,%b643,%b645;",
+            "mov.f32 %f320,0f00000000;",
+            "@%pred1 bra L1;",
+            "ld.global.nc.f32 %f320,[%b646];",
+            "L1:",
+            "setp.ge.s32 %pred2,%b322,%b321;",
+            "cvta.to.global.u64 %b647,%b640;",
+            "add.s64 %b648,%b647,%b645;",
+            "ld.global.nc.f32 %f321,[%b648];",
+            "setp.lt.f32 %pred3,%f320,%f321;",
+            "or.pred %pred4,%pred3,%pred2;",
+            "selp.f32 %f322,%f321,0f00000000,%pred3;",
+            "@%pred4 bra L2;",
+            "ld.global.nc.f32 %f322,[%b646];",
+            "L2:",
+            "setp.ge.s32 %pred5,%b322,%b321;",
+            "cvta.to.global.u64 %b649,%b642;",
+            "add.s64 %b6410,%b649,%b645;",
+            "st.global.f32 [%b6410],%f322;",
+            "mov.f32 %f323,0f00000000;",
+            "@%pred5 bra L3;",
+            "ld.global.nc.f32 %f323,[%b646+4];",
+            "L3:",
+            "setp.ge.s32 %pred6,%b322,%b321;",
+            "ld.global.nc.f32 %f324,[%b648+4];",
+            "setp.lt.f32 %pred7,%f323,%f324;",
+            "or.pred %pred8,%pred7,%pred6;",
+            "selp.f32 %f325,%f324,0f00000000,%pred7;",
+            "@%pred8 bra L4;",
+            "ld.global.nc.f32 %f325,[%b646+4];",
+            "L4:",
+            "setp.ge.s32 %pred9,%b322,%b321;",
+            "st.global.f32 [%b6410+4],%f325;",
+            "mov.f32 %f326,0f00000000;",
+            "@%pred9 bra L5;",
+            "ld.global.nc.f32 %f326,[%b646+8];",
+            "L5:",
+            "setp.ge.s32 %pred10,%b322,%b321;",
+            "ld.global.nc.f32 %f327,[%b648+8];",
+            "setp.lt.f32 %pred11,%f326,%f327;",
+            "or.pred %pred12,%pred11,%pred10;",
+            "selp.f32 %f328,%f327,0f00000000,%pred11;",
+            "@%pred12 bra L6;",
+            "ld.global.nc.f32 %f328,[%b646+8];",
+            "L6:",
+            "setp.ge.s32 %pred13,%b322,%b321;",
+            "st.global.f32 [%b6410+8],%f328;",
+            "mov.f32 %f329,0f00000000;",
+            "@%pred13 bra L7;",
+            "ld.global.nc.f32 %f329,[%b646+12];",
+            "L7:",
+            "setp.ge.s32 %pred14,%b322,%b321;",
+            "ld.global.nc.f32 %f3210,[%b648+12];",
+            "setp.lt.f32 %pred15,%f329,%f3210;",
+            "or.pred %pred16,%pred15,%pred14;",
+            "selp.f32 %f3211,%f3210,0f00000000,%pred15;",
+            "@%pred16 bra L8;",
+            "ld.global.nc.f32 %f3211,[%b646+12];",
+            "L8:",
+            "setp.ge.s32 %pred17,%b322,%b321;",
+            "st.global.f32 [%b6410+12],%f3211;",
+            "mov.f32 %f3212,0f00000000;",
+            "@%pred17 bra L9;",
+            "ld.global.nc.f32 %f3212,[%b646+16];",
+            "L9:",
+            "setp.ge.s32 %pred18,%b322,%b321;",
+            "ld.global.nc.f32 %f3213,[%b648+16];",
+            "setp.lt.f32 %pred19,%f3212,%f3213;",
+            "or.pred %pred20,%pred19,%pred18;",
+            "selp.f32 %f3214,%f3213,0f00000000,%pred19;",
+            "@%pred20 bra L10;",
+            "ld.global.nc.f32 %f3214,[%b646+16];",
+            "L10:",
+            "setp.ge.s32 %pred21,%b322,%b321;",
+            "st.global.f32 [%b6410+16],%f3214;",
+            "mov.f32 %f3215,0f00000000;",
+            "@%pred21 bra L11;",
+            "ld.global.nc.f32 %f3215,[%b646+20];",
+            "L11:",
+            "setp.ge.s32 %pred22,%b322,%b321;",
+            "ld.global.nc.f32 %f3216,[%b648+20];",
+            "setp.lt.f32 %pred23,%f3215,%f3216;",
+            "or.pred %pred24,%pred23,%pred22;",
+            "selp.f32 %f3217,%f3216,0f00000000,%pred23;",
+            "@%pred24 bra L12;",
+            "ld.global.nc.f32 %f3217,[%b646+20];",
+            "L12:",
+            "setp.ge.s32 %pred25,%b322,%b321;",
+            "st.global.f32 [%b6410+20],%f3217;",
+            "mov.f32 %f3218,0f00000000;",
+            "@%pred25 bra L13;",
+            "ld.global.nc.f32 %f3218,[%b646+24];",
+            "L13:",
+            "setp.ge.s32 %pred26,%b322,%b321;",
+            "ld.global.nc.f32 %f3219,[%b648+24];",
+            "setp.lt.f32 %pred27,%f3218,%f3219;",
+            "or.pred %pred28,%pred27,%pred26;",
+            "selp.f32 %f3220,%f3219,0f00000000,%pred27;",
+            "@%pred28 bra L14;",
+            "ld.global.nc.f32 %f3220,[%b646+24];",
+            "L14:",
+            "setp.ge.s32 %pred29,%b322,%b321;",
+            "st.global.f32 [%b6410+24],%f3220;",
+            "mov.f32 %f3221,0f00000000;",
+            "@%pred29 bra L15;",
+            "ld.global.nc.f32 %f3221,[%b646+28];",
+            "L15:",
+            "setp.ge.s32 %pred30,%b322,%b321;",
+            "ld.global.nc.f32 %f3222,[%b648+28];",
+            "setp.lt.f32 %pred31,%f3221,%f3222;",
+            "or.pred %pred32,%pred31,%pred30;",
+            "selp.f32 %f3223,%f3222,0f00000000,%pred31;",
+            "@%pred32 bra L16;",
+            "ld.global.nc.f32 %f3223,[%b646+28];",
+            "L16:",
+            "setp.ge.s32 %pred33,%b322,%b321;",
+            "st.global.f32 [%b6410+28],%f3223;",
+            "mov.f32 %f3224,0f00000000;",
+            "@%pred33 bra L17;",
+            "ld.global.nc.f32 %f3224,[%b646+32];",
+            "L17:",
+            "setp.ge.s32 %pred34,%b322,%b321;",
+            "ld.global.nc.f32 %f3225,[%b648+32];",
+            "setp.lt.f32 %pred35,%f3224,%f3225;",
+            "or.pred %pred36,%pred35,%pred34;",
+            "selp.f32 %f3226,%f3225,0f00000000,%pred35;",
+            "@%pred36 bra L18;",
+            "ld.global.nc.f32 %f3226,[%b646+32];",
+            "L18:",
+            "setp.ge.s32 %pred37,%b322,%b321;",
+            "st.global.f32 [%b6410+32],%f3226;",
+            "mov.f32 %f3227,0f00000000;",
+            "@%pred37 bra L19;",
+            "ld.global.nc.f32 %f3227,[%b646+36];",
+            "L19:",
+            "setp.ge.s32 %pred38,%b322,%b321;",
+            "ld.global.nc.f32 %f3228,[%b648+36];",
+            "setp.lt.f32 %pred39,%f3227,%f3228;",
+            "or.pred %pred40,%pred39,%pred38;",
+            "selp.f32 %f3229,%f3228,0f00000000,%pred39;",
+            "@%pred40 bra L20;",
+            "ld.global.nc.f32 %f3229,[%b646+36];",
+            "L20:",
+            "setp.ge.s32 %pred41,%b322,%b321;",
+            "st.global.f32 [%b6410+36],%f3229;",
+            "mov.f32 %f3230,0f00000000;",
+            "@%pred41 bra L21;",
+            "ld.global.nc.f32 %f3230,[%b646+40];",
+            "L21:",
+            "setp.ge.s32 %pred42,%b322,%b321;",
+            "ld.global.nc.f32 %f3231,[%b648+40];",
+            "setp.lt.f32 %pred43,%f3230,%f3231;",
+            "or.pred %pred44,%pred43,%pred42;",
+            "selp.f32 %f3232,%f3231,0f00000000,%pred43;",
+            "@%pred44 bra L22;",
+            "ld.global.nc.f32 %f3232,[%b646+40];",
+            "L22:",
+            "setp.ge.s32 %pred45,%b322,%b321;",
+            "st.global.f32 [%b6410+40],%f3232;",
+            "mov.f32 %f3233,0f00000000;",
+            "@%pred45 bra L23;",
+            "ld.global.nc.f32 %f3233,[%b646+44];",
+            "L23:",
+            "setp.ge.s32 %pred46,%b322,%b321;",
+            "ld.global.nc.f32 %f3234,[%b648+44];",
+            "setp.lt.f32 %pred47,%f3233,%f3234;",
+            "or.pred %pred48,%pred47,%pred46;",
+            "selp.f32 %f3235,%f3234,0f00000000,%pred47;",
+            "@%pred48 bra L24;",
+            "ld.global.nc.f32 %f3235,[%b646+44];",
+            "L24:",
+            "setp.ge.s32 %pred49,%b322,%b321;",
+            "st.global.f32 [%b6410+44],%f3235;",
+            "mov.f32 %f3236,0f00000000;",
+            "@%pred49 bra L25;",
+            "ld.global.nc.f32 %f3236,[%b646+48];",
+            "L25:",
+            "setp.ge.s32 %pred50,%b322,%b321;",
+            "ld.global.nc.f32 %f3237,[%b648+48];",
+            "setp.lt.f32 %pred51,%f3236,%f3237;",
+            "or.pred %pred52,%pred51,%pred50;",
+            "selp.f32 %f3238,%f3237,0f00000000,%pred51;",
+            "@%pred52 bra L26;",
+            "ld.global.nc.f32 %f3238,[%b646+48];",
+            "L26:",
+            "setp.ge.s32 %pred53,%b322,%b321;",
+            "st.global.f32 [%b6410+48],%f3238;",
+            "mov.f32 %f3239,0f00000000;",
+            "@%pred53 bra L27;",
+            "ld.global.nc.f32 %f3239,[%b646+52];",
+            "L27:",
+            "setp.ge.s32 %pred54,%b322,%b321;",
+            "ld.global.nc.f32 %f3240,[%b648+52];",
+            "setp.lt.f32 %pred55,%f3239,%f3240;",
+            "or.pred %pred56,%pred55,%pred54;",
+            "selp.f32 %f3241,%f3240,0f00000000,%pred55;",
+            "@%pred56 bra L28;",
+            "ld.global.nc.f32 %f3241,[%b646+52];",
+            "L28:",
+            "setp.ge.s32 %pred57,%b322,%b321;",
+            "st.global.f32 [%b6410+52],%f3241;",
+            "mov.f32 %f3242,0f00000000;",
+            "@%pred57 bra L29;",
+            "ld.global.nc.f32 %f3242,[%b646+56];",
+            "L29:",
+            "setp.ge.s32 %pred58,%b322,%b321;",
+            "ld.global.nc.f32 %f3243,[%b648+56];",
+            "setp.lt.f32 %pred59,%f3242,%f3243;",
+            "or.pred %pred60,%pred59,%pred58;",
+            "selp.f32 %f3244,%f3243,0f00000000,%pred59;",
+            "@%pred60 bra L30;",
+            "ld.global.nc.f32 %f3244,[%b646+56];",
+            "L30:",
+            "setp.ge.s32 %pred61,%b322,%b321;",
+            "st.global.f32 [%b6410+56],%f3244;",
+            "mov.f32 %f3245,0f00000000;",
+            "@%pred61 bra L31;",
+            "ld.global.nc.f32 %f3245,[%b646+60];",
+            "L31:",
+            "setp.ge.s32 %pred62,%b322,%b321;",
+            "ld.global.nc.f32 %f3246,[%b648+60];",
+            "setp.lt.f32 %pred63,%f3245,%f3246;",
+            "or.pred %pred64,%pred63,%pred62;",
+            "selp.f32 %f3247,%f3246,0f00000000,%pred63;",
+            "@%pred64 bra L32;",
+            "ld.global.nc.f32 %f3247,[%b646+60];",
+            "L32:",
+            "st.global.f32 [%b6410+60],%f3247;",
+            "L0:",
+            "ret;"
+          ],
+          "source": [
+            "ld.param.u64 %b640,[param0];",
+            "ld.param.u64 %b641,[param1];",
+            "ld.param.u64 %b642,[param2];",
+            "cvta.to.global.u64 %b643,%b642;",
+            "cvta.to.global.u64 %b644,%b641;",
+            "cvta.to.global.u64 %b645,%b640;",
+            "mov.u32 %b320,%ctaid.x;",
+            "mul.wide.u32 %b646,%b320,16;",
+            "mov.u32 %b321,%tid.x;",
+            "cvt.u64.u32 %b647,%b321;",
+            "or.b64 %b648,%b646,%b647;",
+            "shl.b64 %b649,%b648,2;",
+            "add.s64 %b6410,%b645,%b649;",
+            "ld.global.nc.f32 %f320,[%b6410];",
+            "add.s64 %b6411,%b644,%b649;",
+            "ld.global.nc.f32 %f321,[%b6411];",
+            "setp.lt.f32 %pred0,%f321,%f320;",
+            "selp.f32 %f322,%f320,%f321,%pred0;",
+            "add.s64 %b6412,%b643,%b649;",
+            "st.global.f32 [%b6412],%f322;",
+            "ret;"
+          ]
+        },
+        {
+          "category": "ptx.raw_opcode_multiset",
+          "message": "PTX raw_opcode_multiset differs between Source and Replay",
+          "replay": [
+            [
+              "add.s64",
+              3
+            ],
+            [
+              "bra",
+              33
+            ],
+            [
+              "cvta.to.global.u64",
+              3
+            ],
+            [
+              "ld.global.nc.f32",
+              48
+            ],
+            [
+              "ld.param.u32",
+              2
+            ],
+            [
+              "ld.param.u64",
+              3
+            ],
+            [
+              "mov.f32",
+              16
+            ],
+            [
+              "mov.u32",
+              1
+            ],
+            [
+              "mul.wide.u32",
+              1
+            ],
+            [
+              "or.pred",
+              16
+            ],
+            [
+              "ret;",
+              1
+            ],
+            [
+              "selp.f32",
+              16
+            ],
+            [
+              "setp.ge.s32",
+              33
+            ],
+            [
+              "setp.lt.f32",
+              16
+            ],
+            [
+              "shl.b64",
+              1
+            ],
+            [
+              "st.global.f32",
+              16
+            ]
+          ],
+          "source": [
+            [
+              "add.s64",
+              3
+            ],
+            [
+              "cvt.u64.u32",
+              1
+            ],
+            [
+              "cvta.to.global.u64",
+              3
+            ],
+            [
+              "ld.global.nc.f32",
+              2
+            ],
+            [
+              "ld.param.u64",
+              3
+            ],
+            [
+              "mov.u32",
+              2
+            ],
+            [
+              "mul.wide.u32",
+              1
+            ],
+            [
+              "or.b64",
+              1
+            ],
+            [
+              "ret;",
+              1
+            ],
+            [
+              "selp.f32",
+              1
+            ],
+            [
+              "setp.lt.f32",
+              1
+            ],
+            [
+              "shl.b64",
+              1
+            ],
+            [
+              "st.global.f32",
+              1
+            ]
+          ]
+        },
+        {
+          "category": "ptx.raw_memory_effects",
+          "message": "PTX raw_memory_effects differs between Source and Replay",
+          "replay": [
+            "ld.param.u64 %b640,[param0];",
+            "ld.param.u64 %b641,[param1];",
+            "ld.param.u64 %b642,[param2];",
+            "ld.param.u32 %b320,[param4];",
+            "ld.param.u32 %b321,[param5];",
+            "ld.global.nc.f32 %f320,[%b646];",
+            "ld.global.nc.f32 %f321,[%b648];",
+            "ld.global.nc.f32 %f322,[%b646];",
+            "st.global.f32 [%b6410],%f322;",
+            "ld.global.nc.f32 %f323,[%b646+4];",
+            "ld.global.nc.f32 %f324,[%b648+4];",
+            "ld.global.nc.f32 %f325,[%b646+4];",
+            "st.global.f32 [%b6410+4],%f325;",
+            "ld.global.nc.f32 %f326,[%b646+8];",
+            "ld.global.nc.f32 %f327,[%b648+8];",
+            "ld.global.nc.f32 %f328,[%b646+8];",
+            "st.global.f32 [%b6410+8],%f328;",
+            "ld.global.nc.f32 %f329,[%b646+12];",
+            "ld.global.nc.f32 %f3210,[%b648+12];",
+            "ld.global.nc.f32 %f3211,[%b646+12];",
+            "st.global.f32 [%b6410+12],%f3211;",
+            "ld.global.nc.f32 %f3212,[%b646+16];",
+            "ld.global.nc.f32 %f3213,[%b648+16];",
+            "ld.global.nc.f32 %f3214,[%b646+16];",
+            "st.global.f32 [%b6410+16],%f3214;",
+            "ld.global.nc.f32 %f3215,[%b646+20];",
+            "ld.global.nc.f32 %f3216,[%b648+20];",
+            "ld.global.nc.f32 %f3217,[%b646+20];",
+            "st.global.f32 [%b6410+20],%f3217;",
+            "ld.global.nc.f32 %f3218,[%b646+24];",
+            "ld.global.nc.f32 %f3219,[%b648+24];",
+            "ld.global.nc.f32 %f3220,[%b646+24];",
+            "st.global.f32 [%b6410+24],%f3220;",
+            "ld.global.nc.f32 %f3221,[%b646+28];",
+            "ld.global.nc.f32 %f3222,[%b648+28];",
+            "ld.global.nc.f32 %f3223,[%b646+28];",
+            "st.global.f32 [%b6410+28],%f3223;",
+            "ld.global.nc.f32 %f3224,[%b646+32];",
+            "ld.global.nc.f32 %f3225,[%b648+32];",
+            "ld.global.nc.f32 %f3226,[%b646+32];",
+            "st.global.f32 [%b6410+32],%f3226;",
+            "ld.global.nc.f32 %f3227,[%b646+36];",
+            "ld.global.nc.f32 %f3228,[%b648+36];",
+            "ld.global.nc.f32 %f3229,[%b646+36];",
+            "st.global.f32 [%b6410+36],%f3229;",
+            "ld.global.nc.f32 %f3230,[%b646+40];",
+            "ld.global.nc.f32 %f3231,[%b648+40];",
+            "ld.global.nc.f32 %f3232,[%b646+40];",
+            "st.global.f32 [%b6410+40],%f3232;",
+            "ld.global.nc.f32 %f3233,[%b646+44];",
+            "ld.global.nc.f32 %f3234,[%b648+44];",
+            "ld.global.nc.f32 %f3235,[%b646+44];",
+            "st.global.f32 [%b6410+44],%f3235;",
+            "ld.global.nc.f32 %f3236,[%b646+48];",
+            "ld.global.nc.f32 %f3237,[%b648+48];",
+            "ld.global.nc.f32 %f3238,[%b646+48];",
+            "st.global.f32 [%b6410+48],%f3238;",
+            "ld.global.nc.f32 %f3239,[%b646+52];",
+            "ld.global.nc.f32 %f3240,[%b648+52];",
+            "ld.global.nc.f32 %f3241,[%b646+52];",
+            "st.global.f32 [%b6410+52],%f3241;",
+            "ld.global.nc.f32 %f3242,[%b646+56];",
+            "ld.global.nc.f32 %f3243,[%b648+56];",
+            "ld.global.nc.f32 %f3244,[%b646+56];",
+            "st.global.f32 [%b6410+56],%f3244;",
+            "ld.global.nc.f32 %f3245,[%b646+60];",
+            "ld.global.nc.f32 %f3246,[%b648+60];",
+            "ld.global.nc.f32 %f3247,[%b646+60];",
+            "st.global.f32 [%b6410+60],%f3247;"
+          ],
+          "source": [
+            "ld.param.u64 %b640,[param0];",
+            "ld.param.u64 %b641,[param1];",
+            "ld.param.u64 %b642,[param2];",
+            "ld.global.nc.f32 %f320,[%b6410];",
+            "ld.global.nc.f32 %f321,[%b6411];",
+            "st.global.f32 [%b6412],%f322;"
+          ]
+        }
+      ],
+      "hard_pass": false,
+      "hard_passes": {
+        "interface": true,
+        "ptx.interface": false,
+        "ptx.schema": true,
+        "ptx.target": true,
+        "schema": true,
+        "tir_operations": false,
+        "tir_structure": false,
+        "tir_topology": false
+      },
+      "primary_difference_category": "tir_structure",
+      "replay_digest": "980d3e474fe71f4a09cdad562a1a6b512f9f2de3fdd2c430c371272fe770872e",
+      "source_digest": "d4089935401df14380f481085f8602805f37f774223a3db778a6a1f965ebd26a"
+    },
+    "compile": {
+      "cache_key": "e557c545ef62ac468660028628c9e721540fd5bbd3d6cabda62b4ff80429116c",
+      "compiler": {
+        "name": "tilelang",
+        "version": "0.1.8"
+      },
+      "cuda": "#include <tl_templates/cuda/gemm.h>\n#include <tl_templates/cuda/copy.h>\n#include <tl_templates/cuda/reduce.h>\n#include <tl_templates/cuda/ldsm.h>\n#include <tl_templates/cuda/threadblock_swizzle.h>\n#include <tl_templates/cuda/debug.h>\n#ifdef ENABLE_BF16\n#include <tl_templates/cuda/cuda_bf16_fallbacks.cuh>\n#endif\n\nextern \"C\" __global__ void scrc_k0_kernel(const float* __restrict__ p0, const float* __restrict__ p1, float* __restrict__ p2, int x0, int x0_1, int x0_2);\nextern \"C\" __global__ void __launch_bounds__(16, 1) scrc_k0_kernel(const float* __restrict__ p0, const float* __restrict__ p1, float* __restrict__ p2, int x0, int x0_1, int x0_2) {\n  if (((int)blockIdx.x) < x0_1) {\n    for (int v3 = 0; v3 < 16; ++v3) {\n      float condval_1;\n      if ((((int)blockIdx.x) < x0_2)) {\n        condval_1 = p1[((((int64_t)((int)blockIdx.x)) * (int64_t)16) + ((int64_t)v3))];\n      } else {\n        condval_1 = 0x0p+0f/*0.000000e+00*/;\n      }\n      float condval;\n      if ((condval_1 < p0[((((int64_t)((int)blockIdx.x)) * (int64_t)16) + ((int64_t)v3))])) {\n        condval = p0[((((int64_t)((int)blockIdx.x)) * (int64_t)16) + ((int64_t)v3))];\n      } else {\n        float condval_2;\n        if ((((int)blockIdx.x) < x0_2)) {\n          condval_2 = p1[((((int64_t)((int)blockIdx.x)) * (int64_t)16) + ((int64_t)v3))];\n        } else {\n          condval_2 = 0x0p+0f/*0.000000e+00*/;\n        }\n        condval = condval_2;\n      }\n      p2[((((int64_t)((int)blockIdx.x)) * (int64_t)16) + ((int64_t)v3))] = condval;\n    }\n  }\n}\n\n",
+      "diagnostic": "",
+      "elapsed_ms": 6380.568947992288,
+      "interface": {
+        "parameters": [
+          {
+            "dtype": "float32",
+            "kind": "pointer",
+            "mode": "input",
+            "name": "p0",
+            "rank": 2,
+            "shape": [
+              "x0",
+              16
+            ]
+          },
+          {
+            "dtype": "float32",
+            "kind": "pointer",
+            "mode": "input",
+            "name": "p1",
+            "rank": 2,
+            "shape": [
+              "x0",
+              16
+            ]
+          },
+          {
+            "dtype": "float32",
+            "kind": "pointer",
+            "mode": "output",
+            "name": "p2",
+            "rank": 2,
+            "shape": [
+              "x0",
+              16
+            ]
+          }
+        ]
+      },
+      "ok": true,
+      "ptx": "//\n// Generated by NVIDIA NVVM Compiler\n//\n// Compiler Build ID: CL-35404655\n// Cuda compilation tools, release 12.8, V12.8.61\n// Based on NVVM 20.0.0\n//\n\n.version 8.7\n.target sm_120a\n.address_size 64\n\n\t// .globl\tscrc_k0_kernel\n.global .align 1 .b8 _ZN45_INTERNAL_b767755c_14_tvm_kernels_cu_1b63e0854cute7productE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_b767755c_14_tvm_kernels_cu_1b63e0854cute1_E[1];\n.global .align 1 .b8 _ZN45_INTERNAL_b767755c_14_tvm_kernels_cu_1b63e0854cuda3std3__45__cpo5beginE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_b767755c_14_tvm_kernels_cu_1b63e0854cuda3std3__45__cpo3endE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_b767755c_14_tvm_kernels_cu_1b63e0854cuda3std3__45__cpo6cbeginE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_b767755c_14_tvm_kernels_cu_1b63e0854cuda3std3__45__cpo4cendE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_b767755c_14_tvm_kernels_cu_1b63e0854cuda3std3__419piecewise_constructE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_b767755c_14_tvm_kernels_cu_1b63e0854cuda3std3__48in_placeE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_b767755c_14_tvm_kernels_cu_1b63e0854cuda3std6ranges3__45__cpo4swapE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_b767755c_14_tvm_kernels_cu_1b63e0854cuda3std6ranges3__45__cpo9iter_moveE[1];\n\n.visible .entry scrc_k0_kernel(\n\t.param .u64 scrc_k0_kernel_param_0,\n\t.param .u64 scrc_k0_kernel_param_1,\n\t.param .u64 scrc_k0_kernel_param_2,\n\t.param .u32 scrc_k0_kernel_param_3,\n\t.param .u32 scrc_k0_kernel_param_4,\n\t.param .u32 scrc_k0_kernel_param_5\n)\n.maxntid 16, 1, 1\n.minnctapersm 1\n{\n\t.reg .pred \t%p<66>;\n\t.reg .b32 \t%r<4>;\n\t.reg .f32 \t%f<145>;\n\t.reg .b64 \t%rd<14>;\n\t.loc\t1 12 0\n\n\tld.param.u64 \t%rd5, [scrc_k0_kernel_param_0];\n\tld.param.u64 \t%rd6, [scrc_k0_kernel_param_1];\n\tld.param.u64 \t%rd7, [scrc_k0_kernel_param_2];\n\tld.param.u32 \t%r3, [scrc_k0_kernel_param_4];\n\tld.param.u32 \t%r2, [scrc_k0_kernel_param_5];\n\t.loc\t1 13 3\n\tmov.u32 \t%r1, %ctaid.x;\n\tsetp.ge.s32 \t%p1, %r1, %r3;\n\t@%p1 bra \t$L__BB0_66;\n\t.loc\t1 13 3\n\tcvta.to.global.u64 \t%rd8, %rd6;\n\tsetp.ge.s32 \t%p2, %r1, %r2;\n\tmul.wide.u32 \t%rd1, %r1, 16;\n\t.loc\t1 17 9\n\tshl.b64 \t%rd9, %rd1, 2;\n\tadd.s64 \t%rd2, %rd8, %rd9;\n\tmov.f32 \t%f113, 0f00000000;\n\t.loc\t1 16 7\n\t@%p2 bra \t$L__BB0_3;\n\t.loc\t1 17 9\n\tld.global.nc.f32 \t%f113, [%rd2];\n$L__BB0_3:\n\t.loc\t1 0 9\n\tsetp.ge.s32 \t%p3, %r1, %r2;\n\t.loc\t1 13 3\n\tcvta.to.global.u64 \t%rd10, %rd5;\n\t.loc\t1 22 7\n\tadd.s64 \t%rd3, %rd10, %rd9;\n\tld.global.nc.f32 \t%f82, [%rd3];\n\tsetp.lt.f32 \t%p4, %f113, %f82;\n\tor.pred  \t%p5, %p4, %p3;\n\tselp.f32 \t%f114, %f82, 0f00000000, %p4;\n\t@%p5 bra \t$L__BB0_5;\n\t.loc\t1 27 11\n\tld.global.nc.f32 \t%f114, [%rd2];\n$L__BB0_5:\n\t.loc\t1 0 11\n\tsetp.ge.s32 \t%p6, %r1, %r2;\n\t.loc\t1 13 3\n\tcvta.to.global.u64 \t%rd12, %rd7;\n\t.loc\t1 33 7\n\tadd.s64 \t%rd4, %rd12, %rd9;\n\tst.global.f32 \t[%rd4], %f114;\n\tmov.f32 \t%f115, 0f00000000;\n\t.loc\t1 16 7\n\t@%p6 bra \t$L__BB0_7;\n\t.loc\t1 17 9\n\tld.global.nc.f32 \t%f115, [%rd2+4];\n$L__BB0_7:\n\t.loc\t1 0 9\n\tsetp.ge.s32 \t%p7, %r1, %r2;\n\t.loc\t1 22 7\n\tld.global.nc.f32 \t%f84, [%rd3+4];\n\tsetp.lt.f32 \t%p8, %f115, %f84;\n\tor.pred  \t%p9, %p8, %p7;\n\tselp.f32 \t%f116, %f84, 0f00000000, %p8;\n\t@%p9 bra \t$L__BB0_9;\n\t.loc\t1 27 11\n\tld.global.nc.f32 \t%f116, [%rd2+4];\n$L__BB0_9:\n\t.loc\t1 0 11\n\tsetp.ge.s32 \t%p10, %r1, %r2;\n\t.loc\t1 33 7\n\tst.global.f32 \t[%rd4+4], %f116;\n\tmov.f32 \t%f117, 0f00000000;\n\t.loc\t1 16 7\n\t@%p10 bra \t$L__BB0_11;\n\t.loc\t1 17 9\n\tld.global.nc.f32 \t%f117, [%rd2+8];\n$L__BB0_11:\n\t.loc\t1 0 9\n\tsetp.ge.s32 \t%p11, %r1, %r2;\n\t.loc\t1 22 7\n\tld.global.nc.f32 \t%f86, [%rd3+8];\n\tsetp.lt.f32 \t%p12, %f117, %f86;\n\tor.pred  \t%p13, %p12, %p11;\n\tselp.f32 \t%f118, %f86, 0f00000000, %p12;\n\t@%p13 bra \t$L__BB0_13;\n\t.loc\t1 27 11\n\tld.global.nc.f32 \t%f118, [%rd2+8];\n$L__BB0_13:\n\t.loc\t1 0 11\n\tsetp.ge.s32 \t%p14, %r1, %r2;\n\t.loc\t1 33 7\n\tst.global.f32 \t[%rd4+8], %f118;\n\tmov.f32 \t%f119, 0f00000000;\n\t.loc\t1 16 7\n\t@%p14 bra \t$L__BB0_15;\n\t.loc\t1 17 9\n\tld.global.nc.f32 \t%f119, [%rd2+12];\n$L__BB0_15:\n\t.loc\t1 0 9\n\tsetp.ge.s32 \t%p15, %r1, %r2;\n\t.loc\t1 22 7\n\tld.global.nc.f32 \t%f88, [%rd3+12];\n\tsetp.lt.f32 \t%p16, %f119, %f88;\n\tor.pred  \t%p17, %p16, %p15;\n\tselp.f32 \t%f120, %f88, 0f00000000, %p16;\n\t@%p17 bra \t$L__BB0_17;\n\t.loc\t1 27 11\n\tld.global.nc.f32 \t%f120, [%rd2+12];\n$L__BB0_17:\n\t.loc\t1 0 11\n\tsetp.ge.s32 \t%p18, %r1, %r2;\n\t.loc\t1 33 7\n\tst.global.f32 \t[%rd4+12], %f120;\n\tmov.f32 \t%f121, 0f00000000;\n\t.loc\t1 16 7\n\t@%p18 bra \t$L__BB0_19;\n\t.loc\t1 17 9\n\tld.global.nc.f32 \t%f121, [%rd2+16];\n$L__BB0_19:\n\t.loc\t1 0 9\n\tsetp.ge.s32 \t%p19, %r1, %r2;\n\t.loc\t1 22 7\n\tld.global.nc.f32 \t%f90, [%rd3+16];\n\tsetp.lt.f32 \t%p20, %f121, %f90;\n\tor.pred  \t%p21, %p20, %p19;\n\tselp.f32 \t%f122, %f90, 0f00000000, %p20;\n\t@%p21 bra \t$L__BB0_21;\n\t.loc\t1 27 11\n\tld.global.nc.f32 \t%f122, [%rd2+16];\n$L__BB0_21:\n\t.loc\t1 0 11\n\tsetp.ge.s32 \t%p22, %r1, %r2;\n\t.loc\t1 33 7\n\tst.global.f32 \t[%rd4+16], %f122;\n\tmov.f32 \t%f123, 0f00000000;\n\t.loc\t1 16 7\n\t@%p22 bra \t$L__BB0_23;\n\t.loc\t1 17 9\n\tld.global.nc.f32 \t%f123, [%rd2+20];\n$L__BB0_23:\n\t.loc\t1 0 9\n\tsetp.ge.s32 \t%p23, %r1, %r2;\n\t.loc\t1 22 7\n\tld.global.nc.f32 \t%f92, [%rd3+20];\n\tsetp.lt.f32 \t%p24, %f123, %f92;\n\tor.pred  \t%p25, %p24, %p23;\n\tselp.f32 \t%f124, %f92, 0f00000000, %p24;\n\t@%p25 bra \t$L__BB0_25;\n\t.loc\t1 27 11\n\tld.global.nc.f32 \t%f124, [%rd2+20];\n$L__BB0_25:\n\t.loc\t1 0 11\n\tsetp.ge.s32 \t%p26, %r1, %r2;\n\t.loc\t1 33 7\n\tst.global.f32 \t[%rd4+20], %f124;\n\tmov.f32 \t%f125, 0f00000000;\n\t.loc\t1 16 7\n\t@%p26 bra \t$L__BB0_27;\n\t.loc\t1 17 9\n\tld.global.nc.f32 \t%f125, [%rd2+24];\n$L__BB0_27:\n\t.loc\t1 0 9\n\tsetp.ge.s32 \t%p27, %r1, %r2;\n\t.loc\t1 22 7\n\tld.global.nc.f32 \t%f94, [%rd3+24];\n\tsetp.lt.f32 \t%p28, %f125, %f94;\n\tor.pred  \t%p29, %p28, %p27;\n\tselp.f32 \t%f126, %f94, 0f00000000, %p28;\n\t@%p29 bra \t$L__BB0_29;\n\t.loc\t1 27 11\n\tld.global.nc.f32 \t%f126, [%rd2+24];\n$L__BB0_29:\n\t.loc\t1 0 11\n\tsetp.ge.s32 \t%p30, %r1, %r2;\n\t.loc\t1 33 7\n\tst.global.f32 \t[%rd4+24], %f126;\n\tmov.f32 \t%f127, 0f00000000;\n\t.loc\t1 16 7\n\t@%p30 bra \t$L__BB0_31;\n\t.loc\t1 17 9\n\tld.global.nc.f32 \t%f127, [%rd2+28];\n$L__BB0_31:\n\t.loc\t1 0 9\n\tsetp.ge.s32 \t%p31, %r1, %r2;\n\t.loc\t1 22 7\n\tld.global.nc.f32 \t%f96, [%rd3+28];\n\tsetp.lt.f32 \t%p32, %f127, %f96;\n\tor.pred  \t%p33, %p32, %p31;\n\tselp.f32 \t%f128, %f96, 0f00000000, %p32;\n\t@%p33 bra \t$L__BB0_33;\n\t.loc\t1 27 11\n\tld.global.nc.f32 \t%f128, [%rd2+28];\n$L__BB0_33:\n\t.loc\t1 0 11\n\tsetp.ge.s32 \t%p34, %r1, %r2;\n\t.loc\t1 33 7\n\tst.global.f32 \t[%rd4+28], %f128;\n\tmov.f32 \t%f129, 0f00000000;\n\t.loc\t1 16 7\n\t@%p34 bra \t$L__BB0_35;\n\t.loc\t1 17 9\n\tld.global.nc.f32 \t%f129, [%rd2+32];\n$L__BB0_35:\n\t.loc\t1 0 9\n\tsetp.ge.s32 \t%p35, %r1, %r2;\n\t.loc\t1 22 7\n\tld.global.nc.f32 \t%f98, [%rd3+32];\n\tsetp.lt.f32 \t%p36, %f129, %f98;\n\tor.pred  \t%p37, %p36, %p35;\n\tselp.f32 \t%f130, %f98, 0f00000000, %p36;\n\t@%p37 bra \t$L__BB0_37;\n\t.loc\t1 27 11\n\tld.global.nc.f32 \t%f130, [%rd2+32];\n$L__BB0_37:\n\t.loc\t1 0 11\n\tsetp.ge.s32 \t%p38, %r1, %r2;\n\t.loc\t1 33 7\n\tst.global.f32 \t[%rd4+32], %f130;\n\tmov.f32 \t%f131, 0f00000000;\n\t.loc\t1 16 7\n\t@%p38 bra \t$L__BB0_39;\n\t.loc\t1 17 9\n\tld.global.nc.f32 \t%f131, [%rd2+36];\n$L__BB0_39:\n\t.loc\t1 0 9\n\tsetp.ge.s32 \t%p39, %r1, %r2;\n\t.loc\t1 22 7\n\tld.global.nc.f32 \t%f100, [%rd3+36];\n\tsetp.lt.f32 \t%p40, %f131, %f100;\n\tor.pred  \t%p41, %p40, %p39;\n\tselp.f32 \t%f132, %f100, 0f00000000, %p40;\n\t@%p41 bra \t$L__BB0_41;\n\t.loc\t1 27 11\n\tld.global.nc.f32 \t%f132, [%rd2+36];\n$L__BB0_41:\n\t.loc\t1 0 11\n\tsetp.ge.s32 \t%p42, %r1, %r2;\n\t.loc\t1 33 7\n\tst.global.f32 \t[%rd4+36], %f132;\n\tmov.f32 \t%f133, 0f00000000;\n\t.loc\t1 16 7\n\t@%p42 bra \t$L__BB0_43;\n\t.loc\t1 17 9\n\tld.global.nc.f32 \t%f133, [%rd2+40];\n$L__BB0_43:\n\t.loc\t1 0 9\n\tsetp.ge.s32 \t%p43, %r1, %r2;\n\t.loc\t1 22 7\n\tld.global.nc.f32 \t%f102, [%rd3+40];\n\tsetp.lt.f32 \t%p44, %f133, %f102;\n\tor.pred  \t%p45, %p44, %p43;\n\tselp.f32 \t%f134, %f102, 0f00000000, %p44;\n\t@%p45 bra \t$L__BB0_45;\n\t.loc\t1 27 11\n\tld.global.nc.f32 \t%f134, [%rd2+40];\n$L__BB0_45:\n\t.loc\t1 0 11\n\tsetp.ge.s32 \t%p46, %r1, %r2;\n\t.loc\t1 33 7\n\tst.global.f32 \t[%rd4+40], %f134;\n\tmov.f32 \t%f135, 0f00000000;\n\t.loc\t1 16 7\n\t@%p46 bra \t$L__BB0_47;\n\t.loc\t1 17 9\n\tld.global.nc.f32 \t%f135, [%rd2+44];\n$L__BB0_47:\n\t.loc\t1 0 9\n\tsetp.ge.s32 \t%p47, %r1, %r2;\n\t.loc\t1 22 7\n\tld.global.nc.f32 \t%f104, [%rd3+44];\n\tsetp.lt.f32 \t%p48, %f135, %f104;\n\tor.pred  \t%p49, %p48, %p47;\n\tselp.f32 \t%f136, %f104, 0f00000000, %p48;\n\t@%p49 bra \t$L__BB0_49;\n\t.loc\t1 27 11\n\tld.global.nc.f32 \t%f136, [%rd2+44];\n$L__BB0_49:\n\t.loc\t1 0 11\n\tsetp.ge.s32 \t%p50, %r1, %r2;\n\t.loc\t1 33 7\n\tst.global.f32 \t[%rd4+44], %f136;\n\tmov.f32 \t%f137, 0f00000000;\n\t.loc\t1 16 7\n\t@%p50 bra \t$L__BB0_51;\n\t.loc\t1 17 9\n\tld.global.nc.f32 \t%f137, [%rd2+48];\n$L__BB0_51:\n\t.loc\t1 0 9\n\tsetp.ge.s32 \t%p51, %r1, %r2;\n\t.loc\t1 22 7\n\tld.global.nc.f32 \t%f106, [%rd3+48];\n\tsetp.lt.f32 \t%p52, %f137, %f106;\n\tor.pred  \t%p53, %p52, %p51;\n\tselp.f32 \t%f138, %f106, 0f00000000, %p52;\n\t@%p53 bra \t$L__BB0_53;\n\t.loc\t1 27 11\n\tld.global.nc.f32 \t%f138, [%rd2+48];\n$L__BB0_53:\n\t.loc\t1 0 11\n\tsetp.ge.s32 \t%p54, %r1, %r2;\n\t.loc\t1 33 7\n\tst.global.f32 \t[%rd4+48], %f138;\n\tmov.f32 \t%f139, 0f00000000;\n\t.loc\t1 16 7\n\t@%p54 bra \t$L__BB0_55;\n\t.loc\t1 17 9\n\tld.global.nc.f32 \t%f139, [%rd2+52];\n$L__BB0_55:\n\t.loc\t1 0 9\n\tsetp.ge.s32 \t%p55, %r1, %r2;\n\t.loc\t1 22 7\n\tld.global.nc.f32 \t%f108, [%rd3+52];\n\tsetp.lt.f32 \t%p56, %f139, %f108;\n\tor.pred  \t%p57, %p56, %p55;\n\tselp.f32 \t%f140, %f108, 0f00000000, %p56;\n\t@%p57 bra \t$L__BB0_57;\n\t.loc\t1 27 11\n\tld.global.nc.f32 \t%f140, [%rd2+52];\n$L__BB0_57:\n\t.loc\t1 0 11\n\tsetp.ge.s32 \t%p58, %r1, %r2;\n\t.loc\t1 33 7\n\tst.global.f32 \t[%rd4+52], %f140;\n\tmov.f32 \t%f141, 0f00000000;\n\t.loc\t1 16 7\n\t@%p58 bra \t$L__BB0_59;\n\t.loc\t1 17 9\n\tld.global.nc.f32 \t%f141, [%rd2+56];\n$L__BB0_59:\n\t.loc\t1 0 9\n\tsetp.ge.s32 \t%p59, %r1, %r2;\n\t.loc\t1 22 7\n\tld.global.nc.f32 \t%f110, [%rd3+56];\n\tsetp.lt.f32 \t%p60, %f141, %f110;\n\tor.pred  \t%p61, %p60, %p59;\n\tselp.f32 \t%f142, %f110, 0f00000000, %p60;\n\t@%p61 bra \t$L__BB0_61;\n\t.loc\t1 27 11\n\tld.global.nc.f32 \t%f142, [%rd2+56];\n$L__BB0_61:\n\t.loc\t1 0 11\n\tsetp.ge.s32 \t%p62, %r1, %r2;\n\t.loc\t1 33 7\n\tst.global.f32 \t[%rd4+56], %f142;\n\tmov.f32 \t%f143, 0f00000000;\n\t.loc\t1 16 7\n\t@%p62 bra \t$L__BB0_63;\n\t.loc\t1 17 9\n\tld.global.nc.f32 \t%f143, [%rd2+60];\n$L__BB0_63:\n\t.loc\t1 0 9\n\tsetp.ge.s32 \t%p63, %r1, %r2;\n\t.loc\t1 22 7\n\tld.global.nc.f32 \t%f112, [%rd3+60];\n\tsetp.lt.f32 \t%p64, %f143, %f112;\n\tor.pred  \t%p65, %p64, %p63;\n\tselp.f32 \t%f144, %f112, 0f00000000, %p64;\n\t@%p65 bra \t$L__BB0_65;\n\t.loc\t1 27 11\n\tld.global.nc.f32 \t%f144, [%rd2+60];\n$L__BB0_65:\n\t.loc\t1 33 7\n\tst.global.f32 \t[%rd4+60], %f144;\n$L__BB0_66:\n\t.loc\t1 36 1\n\tret;\n\n}\n\t.file\t1 \"/tmp/tmpsm4f0z79/tvm_kernels.cu\"\n",
+      "target": {
+        "name": "cuda"
+      },
+      "tir": "# from tvm.script import tir as T\n\n@T.prim_func\ndef scrc_k0(p0_handle: T.handle, p1_handle: T.handle, p2_handle: T.handle):\n    x0 = T.int32()\n    p0 = T.match_buffer(p0_handle, (x0, 16), strides=(16, 1))\n    x0_1 = T.int32()\n    p1 = T.match_buffer(p1_handle, (x0_1, 16), strides=(16, 1))\n    x0_2 = T.int32()\n    p2 = T.match_buffer(p2_handle, (x0_2, 16), strides=(16, 1))\n    # with T.block(\"root\"):\n    bx = T.launch_thread(\"blockIdx.x\", x0)\n    tx = T.launch_thread(\"threadIdx.x\", 16)\n    ty = T.launch_thread(\"threadIdx.y\", 1)\n    tz = T.launch_thread(\"threadIdx.z\", 1)\n    with T.block(\"tilelang_root\"):\n        T.reads(p0[bx, 0:16], p1[bx, 0:16])\n        T.writes(p2[bx, 0:16])\n        for v3 in range(16):\n            p2[bx, v3] = T.if_then_else(p0[bx, v3] > p1[bx, v3], p0[bx, v3], p1[bx, v3])"
+    },
+    "diagnostic": null,
+    "fingerprint": {
+      "digest": "980d3e474fe71f4a09cdad562a1a6b512f9f2de3fdd2c430c371272fe770872e",
+      "interface": [
+        [
+          "parameters",
+          "[{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":0,\"rank\":2},{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":1,\"rank\":2},{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"output\",\"position\":2,\"rank\":2}]"
+        ]
+      ],
+      "ptx": {
+        "collectives": [],
+        "control_flow": [
+          "@%pred0 bra L0;",
+          "@%pred1 bra L1;",
+          "L1:",
+          "@%pred4 bra L2;",
+          "L2:",
+          "@%pred5 bra L3;",
+          "L3:",
+          "@%pred8 bra L4;",
+          "L4:",
+          "@%pred9 bra L5;",
+          "L5:",
+          "@%pred12 bra L6;",
+          "L6:",
+          "@%pred13 bra L7;",
+          "L7:",
+          "@%pred16 bra L8;",
+          "L8:",
+          "@%pred17 bra L9;",
+          "L9:",
+          "@%pred20 bra L10;",
+          "L10:",
+          "@%pred21 bra L11;",
+          "L11:",
+          "@%pred24 bra L12;",
+          "L12:",
+          "@%pred25 bra L13;",
+          "L13:",
+          "@%pred28 bra L14;",
+          "L14:",
+          "@%pred29 bra L15;",
+          "L15:",
+          "@%pred32 bra L16;",
+          "L16:",
+          "@%pred33 bra L17;",
+          "L17:",
+          "@%pred36 bra L18;",
+          "L18:",
+          "@%pred37 bra L19;",
+          "L19:",
+          "@%pred40 bra L20;",
+          "L20:",
+          "@%pred41 bra L21;",
+          "L21:",
+          "@%pred44 bra L22;",
+          "L22:",
+          "@%pred45 bra L23;",
+          "L23:",
+          "@%pred48 bra L24;",
+          "L24:",
+          "@%pred49 bra L25;",
+          "L25:",
+          "@%pred52 bra L26;",
+          "L26:",
+          "@%pred53 bra L27;",
+          "L27:",
+          "@%pred56 bra L28;",
+          "L28:",
+          "@%pred57 bra L29;",
+          "L29:",
+          "@%pred60 bra L30;",
+          "L30:",
+          "@%pred61 bra L31;",
+          "L31:",
+          "@%pred64 bra L32;",
+          "L32:",
+          "L0:",
+          "ret;"
+        ],
+        "coordinate_uses": [
+          "%ctaid.x"
+        ],
+        "digest": "6d283655852c57bf29a394de22827a78e799b0f1387ef7a425b4aa97be16760e",
+        "instructions": [
+          "ld.param.u64 %b640,[param0];",
+          "ld.param.u64 %b641,[param1];",
+          "ld.param.u64 %b642,[param2];",
+          "ld.param.u32 %b320,[param4];",
+          "ld.param.u32 %b321,[param5];",
+          "mov.u32 %b322,%ctaid.x;",
+          "setp.ge.s32 %pred0,%b322,%b320;",
+          "@%pred0 bra L0;",
+          "cvta.to.global.u64 %b643,%b641;",
+          "setp.ge.s32 %pred1,%b322,%b321;",
+          "mul.wide.u32 %b644,%b322,16;",
+          "shl.b64 %b645,%b644,2;",
+          "add.s64 %b646,%b643,%b645;",
+          "mov.f32 %f320,0f00000000;",
+          "@%pred1 bra L1;",
+          "ld.global.nc.f32 %f320,[%b646];",
+          "L1:",
+          "setp.ge.s32 %pred2,%b322,%b321;",
+          "cvta.to.global.u64 %b647,%b640;",
+          "add.s64 %b648,%b647,%b645;",
+          "ld.global.nc.f32 %f321,[%b648];",
+          "setp.lt.f32 %pred3,%f320,%f321;",
+          "or.pred %pred4,%pred3,%pred2;",
+          "selp.f32 %f322,%f321,0f00000000,%pred3;",
+          "@%pred4 bra L2;",
+          "ld.global.nc.f32 %f322,[%b646];",
+          "L2:",
+          "setp.ge.s32 %pred5,%b322,%b321;",
+          "cvta.to.global.u64 %b649,%b642;",
+          "add.s64 %b6410,%b649,%b645;",
+          "st.global.f32 [%b6410],%f322;",
+          "mov.f32 %f323,0f00000000;",
+          "@%pred5 bra L3;",
+          "ld.global.nc.f32 %f323,[%b646+4];",
+          "L3:",
+          "setp.ge.s32 %pred6,%b322,%b321;",
+          "ld.global.nc.f32 %f324,[%b648+4];",
+          "setp.lt.f32 %pred7,%f323,%f324;",
+          "or.pred %pred8,%pred7,%pred6;",
+          "selp.f32 %f325,%f324,0f00000000,%pred7;",
+          "@%pred8 bra L4;",
+          "ld.global.nc.f32 %f325,[%b646+4];",
+          "L4:",
+          "setp.ge.s32 %pred9,%b322,%b321;",
+          "st.global.f32 [%b6410+4],%f325;",
+          "mov.f32 %f326,0f00000000;",
+          "@%pred9 bra L5;",
+          "ld.global.nc.f32 %f326,[%b646+8];",
+          "L5:",
+          "setp.ge.s32 %pred10,%b322,%b321;",
+          "ld.global.nc.f32 %f327,[%b648+8];",
+          "setp.lt.f32 %pred11,%f326,%f327;",
+          "or.pred %pred12,%pred11,%pred10;",
+          "selp.f32 %f328,%f327,0f00000000,%pred11;",
+          "@%pred12 bra L6;",
+          "ld.global.nc.f32 %f328,[%b646+8];",
+          "L6:",
+          "setp.ge.s32 %pred13,%b322,%b321;",
+          "st.global.f32 [%b6410+8],%f328;",
+          "mov.f32 %f329,0f00000000;",
+          "@%pred13 bra L7;",
+          "ld.global.nc.f32 %f329,[%b646+12];",
+          "L7:",
+          "setp.ge.s32 %pred14,%b322,%b321;",
+          "ld.global.nc.f32 %f3210,[%b648+12];",
+          "setp.lt.f32 %pred15,%f329,%f3210;",
+          "or.pred %pred16,%pred15,%pred14;",
+          "selp.f32 %f3211,%f3210,0f00000000,%pred15;",
+          "@%pred16 bra L8;",
+          "ld.global.nc.f32 %f3211,[%b646+12];",
+          "L8:",
+          "setp.ge.s32 %pred17,%b322,%b321;",
+          "st.global.f32 [%b6410+12],%f3211;",
+          "mov.f32 %f3212,0f00000000;",
+          "@%pred17 bra L9;",
+          "ld.global.nc.f32 %f3212,[%b646+16];",
+          "L9:",
+          "setp.ge.s32 %pred18,%b322,%b321;",
+          "ld.global.nc.f32 %f3213,[%b648+16];",
+          "setp.lt.f32 %pred19,%f3212,%f3213;",
+          "or.pred %pred20,%pred19,%pred18;",
+          "selp.f32 %f3214,%f3213,0f00000000,%pred19;",
+          "@%pred20 bra L10;",
+          "ld.global.nc.f32 %f3214,[%b646+16];",
+          "L10:",
+          "setp.ge.s32 %pred21,%b322,%b321;",
+          "st.global.f32 [%b6410+16],%f3214;",
+          "mov.f32 %f3215,0f00000000;",
+          "@%pred21 bra L11;",
+          "ld.global.nc.f32 %f3215,[%b646+20];",
+          "L11:",
+          "setp.ge.s32 %pred22,%b322,%b321;",
+          "ld.global.nc.f32 %f3216,[%b648+20];",
+          "setp.lt.f32 %pred23,%f3215,%f3216;",
+          "or.pred %pred24,%pred23,%pred22;",
+          "selp.f32 %f3217,%f3216,0f00000000,%pred23;",
+          "@%pred24 bra L12;",
+          "ld.global.nc.f32 %f3217,[%b646+20];",
+          "L12:",
+          "setp.ge.s32 %pred25,%b322,%b321;",
+          "st.global.f32 [%b6410+20],%f3217;",
+          "mov.f32 %f3218,0f00000000;",
+          "@%pred25 bra L13;",
+          "ld.global.nc.f32 %f3218,[%b646+24];",
+          "L13:",
+          "setp.ge.s32 %pred26,%b322,%b321;",
+          "ld.global.nc.f32 %f3219,[%b648+24];",
+          "setp.lt.f32 %pred27,%f3218,%f3219;",
+          "or.pred %pred28,%pred27,%pred26;",
+          "selp.f32 %f3220,%f3219,0f00000000,%pred27;",
+          "@%pred28 bra L14;",
+          "ld.global.nc.f32 %f3220,[%b646+24];",
+          "L14:",
+          "setp.ge.s32 %pred29,%b322,%b321;",
+          "st.global.f32 [%b6410+24],%f3220;",
+          "mov.f32 %f3221,0f00000000;",
+          "@%pred29 bra L15;",
+          "ld.global.nc.f32 %f3221,[%b646+28];",
+          "L15:",
+          "setp.ge.s32 %pred30,%b322,%b321;",
+          "ld.global.nc.f32 %f3222,[%b648+28];",
+          "setp.lt.f32 %pred31,%f3221,%f3222;",
+          "or.pred %pred32,%pred31,%pred30;",
+          "selp.f32 %f3223,%f3222,0f00000000,%pred31;",
+          "@%pred32 bra L16;",
+          "ld.global.nc.f32 %f3223,[%b646+28];",
+          "L16:",
+          "setp.ge.s32 %pred33,%b322,%b321;",
+          "st.global.f32 [%b6410+28],%f3223;",
+          "mov.f32 %f3224,0f00000000;",
+          "@%pred33 bra L17;",
+          "ld.global.nc.f32 %f3224,[%b646+32];",
+          "L17:",
+          "setp.ge.s32 %pred34,%b322,%b321;",
+          "ld.global.nc.f32 %f3225,[%b648+32];",
+          "setp.lt.f32 %pred35,%f3224,%f3225;",
+          "or.pred %pred36,%pred35,%pred34;",
+          "selp.f32 %f3226,%f3225,0f00000000,%pred35;",
+          "@%pred36 bra L18;",
+          "ld.global.nc.f32 %f3226,[%b646+32];",
+          "L18:",
+          "setp.ge.s32 %pred37,%b322,%b321;",
+          "st.global.f32 [%b6410+32],%f3226;",
+          "mov.f32 %f3227,0f00000000;",
+          "@%pred37 bra L19;",
+          "ld.global.nc.f32 %f3227,[%b646+36];",
+          "L19:",
+          "setp.ge.s32 %pred38,%b322,%b321;",
+          "ld.global.nc.f32 %f3228,[%b648+36];",
+          "setp.lt.f32 %pred39,%f3227,%f3228;",
+          "or.pred %pred40,%pred39,%pred38;",
+          "selp.f32 %f3229,%f3228,0f00000000,%pred39;",
+          "@%pred40 bra L20;",
+          "ld.global.nc.f32 %f3229,[%b646+36];",
+          "L20:",
+          "setp.ge.s32 %pred41,%b322,%b321;",
+          "st.global.f32 [%b6410+36],%f3229;",
+          "mov.f32 %f3230,0f00000000;",
+          "@%pred41 bra L21;",
+          "ld.global.nc.f32 %f3230,[%b646+40];",
+          "L21:",
+          "setp.ge.s32 %pred42,%b322,%b321;",
+          "ld.global.nc.f32 %f3231,[%b648+40];",
+          "setp.lt.f32 %pred43,%f3230,%f3231;",
+          "or.pred %pred44,%pred43,%pred42;",
+          "selp.f32 %f3232,%f3231,0f00000000,%pred43;",
+          "@%pred44 bra L22;",
+          "ld.global.nc.f32 %f3232,[%b646+40];",
+          "L22:",
+          "setp.ge.s32 %pred45,%b322,%b321;",
+          "st.global.f32 [%b6410+40],%f3232;",
+          "mov.f32 %f3233,0f00000000;",
+          "@%pred45 bra L23;",
+          "ld.global.nc.f32 %f3233,[%b646+44];",
+          "L23:",
+          "setp.ge.s32 %pred46,%b322,%b321;",
+          "ld.global.nc.f32 %f3234,[%b648+44];",
+          "setp.lt.f32 %pred47,%f3233,%f3234;",
+          "or.pred %pred48,%pred47,%pred46;",
+          "selp.f32 %f3235,%f3234,0f00000000,%pred47;",
+          "@%pred48 bra L24;",
+          "ld.global.nc.f32 %f3235,[%b646+44];",
+          "L24:",
+          "setp.ge.s32 %pred49,%b322,%b321;",
+          "st.global.f32 [%b6410+44],%f3235;",
+          "mov.f32 %f3236,0f00000000;",
+          "@%pred49 bra L25;",
+          "ld.global.nc.f32 %f3236,[%b646+48];",
+          "L25:",
+          "setp.ge.s32 %pred50,%b322,%b321;",
+          "ld.global.nc.f32 %f3237,[%b648+48];",
+          "setp.lt.f32 %pred51,%f3236,%f3237;",
+          "or.pred %pred52,%pred51,%pred50;",
+          "selp.f32 %f3238,%f3237,0f00000000,%pred51;",
+          "@%pred52 bra L26;",
+          "ld.global.nc.f32 %f3238,[%b646+48];",
+          "L26:",
+          "setp.ge.s32 %pred53,%b322,%b321;",
+          "st.global.f32 [%b6410+48],%f3238;",
+          "mov.f32 %f3239,0f00000000;",
+          "@%pred53 bra L27;",
+          "ld.global.nc.f32 %f3239,[%b646+52];",
+          "L27:",
+          "setp.ge.s32 %pred54,%b322,%b321;",
+          "ld.global.nc.f32 %f3240,[%b648+52];",
+          "setp.lt.f32 %pred55,%f3239,%f3240;",
+          "or.pred %pred56,%pred55,%pred54;",
+          "selp.f32 %f3241,%f3240,0f00000000,%pred55;",
+          "@%pred56 bra L28;",
+          "ld.global.nc.f32 %f3241,[%b646+52];",
+          "L28:",
+          "setp.ge.s32 %pred57,%b322,%b321;",
+          "st.global.f32 [%b6410+52],%f3241;",
+          "mov.f32 %f3242,0f00000000;",
+          "@%pred57 bra L29;",
+          "ld.global.nc.f32 %f3242,[%b646+56];",
+          "L29:",
+          "setp.ge.s32 %pred58,%b322,%b321;",
+          "ld.global.nc.f32 %f3243,[%b648+56];",
+          "setp.lt.f32 %pred59,%f3242,%f3243;",
+          "or.pred %pred60,%pred59,%pred58;",
+          "selp.f32 %f3244,%f3243,0f00000000,%pred59;",
+          "@%pred60 bra L30;",
+          "ld.global.nc.f32 %f3244,[%b646+56];",
+          "L30:",
+          "setp.ge.s32 %pred61,%b322,%b321;",
+          "st.global.f32 [%b6410+56],%f3244;",
+          "mov.f32 %f3245,0f00000000;",
+          "@%pred61 bra L31;",
+          "ld.global.nc.f32 %f3245,[%b646+60];",
+          "L31:",
+          "setp.ge.s32 %pred62,%b322,%b321;",
+          "ld.global.nc.f32 %f3246,[%b648+60];",
+          "setp.lt.f32 %pred63,%f3245,%f3246;",
+          "or.pred %pred64,%pred63,%pred62;",
+          "selp.f32 %f3247,%f3246,0f00000000,%pred63;",
+          "@%pred64 bra L32;",
+          "ld.global.nc.f32 %f3247,[%b646+60];",
+          "L32:",
+          "st.global.f32 [%b6410+60],%f3247;",
+          "L0:",
+          "ret;"
+        ],
+        "interface": [
+          [
+            "parameters",
+            "[{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":0,\"rank\":2},{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":1,\"rank\":2},{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"output\",\"position\":2,\"rank\":2}]",
+            null
+          ],
+          [
+            "ptx_abi",
+            "[[\"\",\"u64\",null],[\"\",\"u64\",null],[\"\",\"u64\",null],[\"\",\"u32\",null],[\"\",\"u32\",null],[\"\",\"u32\",null]]",
+            null
+          ]
+        ],
+        "memory_effects": [
+          "ld.param.u64 %b640,[param0];",
+          "ld.param.u64 %b641,[param1];",
+          "ld.param.u64 %b642,[param2];",
+          "ld.param.u32 %b320,[param4];",
+          "ld.param.u32 %b321,[param5];",
+          "ld.global.nc.f32 %f320,[%b646];",
+          "ld.global.nc.f32 %f321,[%b648];",
+          "ld.global.nc.f32 %f322,[%b646];",
+          "st.global.f32 [%b6410],%f322;",
+          "ld.global.nc.f32 %f323,[%b646+4];",
+          "ld.global.nc.f32 %f324,[%b648+4];",
+          "ld.global.nc.f32 %f325,[%b646+4];",
+          "st.global.f32 [%b6410+4],%f325;",
+          "ld.global.nc.f32 %f326,[%b646+8];",
+          "ld.global.nc.f32 %f327,[%b648+8];",
+          "ld.global.nc.f32 %f328,[%b646+8];",
+          "st.global.f32 [%b6410+8],%f328;",
+          "ld.global.nc.f32 %f329,[%b646+12];",
+          "ld.global.nc.f32 %f3210,[%b648+12];",
+          "ld.global.nc.f32 %f3211,[%b646+12];",
+          "st.global.f32 [%b6410+12],%f3211;",
+          "ld.global.nc.f32 %f3212,[%b646+16];",
+          "ld.global.nc.f32 %f3213,[%b648+16];",
+          "ld.global.nc.f32 %f3214,[%b646+16];",
+          "st.global.f32 [%b6410+16],%f3214;",
+          "ld.global.nc.f32 %f3215,[%b646+20];",
+          "ld.global.nc.f32 %f3216,[%b648+20];",
+          "ld.global.nc.f32 %f3217,[%b646+20];",
+          "st.global.f32 [%b6410+20],%f3217;",
+          "ld.global.nc.f32 %f3218,[%b646+24];",
+          "ld.global.nc.f32 %f3219,[%b648+24];",
+          "ld.global.nc.f32 %f3220,[%b646+24];",
+          "st.global.f32 [%b6410+24],%f3220;",
+          "ld.global.nc.f32 %f3221,[%b646+28];",
+          "ld.global.nc.f32 %f3222,[%b648+28];",
+          "ld.global.nc.f32 %f3223,[%b646+28];",
+          "st.global.f32 [%b6410+28],%f3223;",
+          "ld.global.nc.f32 %f3224,[%b646+32];",
+          "ld.global.nc.f32 %f3225,[%b648+32];",
+          "ld.global.nc.f32 %f3226,[%b646+32];",
+          "st.global.f32 [%b6410+32],%f3226;",
+          "ld.global.nc.f32 %f3227,[%b646+36];",
+          "ld.global.nc.f32 %f3228,[%b648+36];",
+          "ld.global.nc.f32 %f3229,[%b646+36];",
+          "st.global.f32 [%b6410+36],%f3229;",
+          "ld.global.nc.f32 %f3230,[%b646+40];",
+          "ld.global.nc.f32 %f3231,[%b648+40];",
+          "ld.global.nc.f32 %f3232,[%b646+40];",
+          "st.global.f32 [%b6410+40],%f3232;",
+          "ld.global.nc.f32 %f3233,[%b646+44];",
+          "ld.global.nc.f32 %f3234,[%b648+44];",
+          "ld.global.nc.f32 %f3235,[%b646+44];",
+          "st.global.f32 [%b6410+44],%f3235;",
+          "ld.global.nc.f32 %f3236,[%b646+48];",
+          "ld.global.nc.f32 %f3237,[%b648+48];",
+          "ld.global.nc.f32 %f3238,[%b646+48];",
+          "st.global.f32 [%b6410+48],%f3238;",
+          "ld.global.nc.f32 %f3239,[%b646+52];",
+          "ld.global.nc.f32 %f3240,[%b648+52];",
+          "ld.global.nc.f32 %f3241,[%b646+52];",
+          "st.global.f32 [%b6410+52],%f3241;",
+          "ld.global.nc.f32 %f3242,[%b646+56];",
+          "ld.global.nc.f32 %f3243,[%b648+56];",
+          "ld.global.nc.f32 %f3244,[%b646+56];",
+          "st.global.f32 [%b6410+56],%f3244;",
+          "ld.global.nc.f32 %f3245,[%b646+60];",
+          "ld.global.nc.f32 %f3246,[%b648+60];",
+          "ld.global.nc.f32 %f3247,[%b646+60];",
+          "st.global.f32 [%b6410+60],%f3247;"
+        ],
+        "opcode_multiset": [
+          [
+            "add.s64",
+            3
+          ],
+          [
+            "bra",
+            33
+          ],
+          [
+            "cvta.to.global.u64",
+            3
+          ],
+          [
+            "ld.global.nc.f32",
+            48
+          ],
+          [
+            "ld.param.u32",
+            2
+          ],
+          [
+            "ld.param.u64",
+            3
+          ],
+          [
+            "mov.f32",
+            16
+          ],
+          [
+            "mov.u32",
+            1
+          ],
+          [
+            "mul.wide.u32",
+            1
+          ],
+          [
+            "or.pred",
+            16
+          ],
+          [
+            "ret;",
+            1
+          ],
+          [
+            "selp.f32",
+            16
+          ],
+          [
+            "setp.ge.s32",
+            33
+          ],
+          [
+            "setp.lt.f32",
+            16
+          ],
+          [
+            "shl.b64",
+            1
+          ],
+          [
+            "st.global.f32",
+            16
+          ]
+        ],
+        "schedule_view": [
+          [
+            "c0",
+            "16"
+          ]
+        ],
+        "schema_version": "cuda-ptx-semantic-effects-v6",
+        "semantic_address_coordinate_folds": [],
+        "semantic_memory_effects": [
+          [
+            "ld.global.b32",
+            48
+          ],
+          [
+            "ld.param.b32",
+            2
+          ],
+          [
+            "ld.param.b64",
+            3
+          ],
+          [
+            "st.global.b32",
+            16
+          ]
+        ],
+        "semantic_value_opcodes": [
+          [
+            "ld.global.b32",
+            48
+          ],
+          [
+            "ld.param.b32",
+            2
+          ],
+          [
+            "mov.u32",
+            1
+          ],
+          [
+            "or.pred",
+            16
+          ],
+          [
+            "setp.ge.s32",
+            33
+          ],
+          [
+            "setp.lt.f32",
+            16
+          ]
+        ],
+        "target_view": [
+          [
+            "name",
+            "\"cuda\""
+          ]
+        ]
+      },
+      "schedule_view": [
+        [
+          "c0",
+          "16"
+        ]
+      ],
+      "schema_version": "tilelang-tir-semantic-structure-ptx-diagnostic-v5",
+      "tir_op_multiset": [
+        [
+          "T.block",
+          1
+        ],
+        [
+          "T.handle",
+          3
+        ],
+        [
+          "T.if_then_else",
+          1
+        ],
+        [
+          "T.launch_thread",
+          4
+        ],
+        [
+          "T.match_buffer",
+          3
+        ],
+        [
+          "T.prim_func",
+          1
+        ],
+        [
+          "T.reads",
+          1
+        ],
+        [
+          "T.writes",
+          1
+        ],
+        [
+          "control.for",
+          1
+        ]
+      ],
+      "tir_ops": [
+        "T.prim_func",
+        "T.handle",
+        "T.handle",
+        "T.handle",
+        "T.match_buffer",
+        "T.match_buffer",
+        "T.match_buffer",
+        "T.launch_thread",
+        "T.launch_thread",
+        "T.launch_thread",
+        "T.launch_thread",
+        "T.block",
+        "T.reads",
+        "T.writes",
+        "control.for",
+        "T.if_then_else"
+      ],
+      "tir_structure": "Module(body=[FunctionDef(name='tir_entry', args=arguments(posonlyargs=[], args=[arg(arg='p0', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load())), arg(arg='p1', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load())), arg(arg='p2', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[]), body=[Assign(targets=[Name(id='v0', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='int32', ctx=Load()), args=[], keywords=[])), Assign(targets=[Name(id='v1', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p0', ctx=Load()), Tuple(elts=[Name(id='v0', ctx=Load()), Constant(value=16)], ctx=Load())], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=16), Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v2', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='int32', ctx=Load()), args=[], keywords=[])), Assign(targets=[Name(id='v3', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p1', ctx=Load()), Tuple(elts=[Name(id='v2', ctx=Load()), Constant(value=16)], ctx=Load())], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=16), Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v4', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='int32', ctx=Load()), args=[], keywords=[])), Assign(targets=[Name(id='v5', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p2', ctx=Load()), Tuple(elts=[Name(id='v4', ctx=Load()), Constant(value=16)], ctx=Load())], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=16), Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v6', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='blockIdx.x'), Name(id='v0', ctx=Load())], keywords=[])), Assign(targets=[Name(id='v7', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.x'), Constant(value=16)], keywords=[])), Assign(targets=[Name(id='v8', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.y'), Constant(value=1)], keywords=[])), Assign(targets=[Name(id='v9', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.z'), Constant(value=1)], keywords=[])), With(items=[withitem(context_expr=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='block', ctx=Load()), args=[Constant(value='<block>')], keywords=[]))], body=[Expr(value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='reads', ctx=Load()), args=[Subscript(value=Name(id='v1', ctx=Load()), slice=Tuple(elts=[Name(id='v6', ctx=Load()), Slice(lower=Constant(value=0), upper=Constant(value=16))], ctx=Load()), ctx=Load()), Subscript(value=Name(id='v3', ctx=Load()), slice=Tuple(elts=[Name(id='v6', ctx=Load()), Slice(lower=Constant(value=0), upper=Constant(value=16))], ctx=Load()), ctx=Load())], keywords=[])), Expr(value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='writes', ctx=Load()), args=[Subscript(value=Name(id='v5', ctx=Load()), slice=Tuple(elts=[Name(id='v6', ctx=Load()), Slice(lower=Constant(value=0), upper=Constant(value=16))], ctx=Load()), ctx=Load())], keywords=[])), For(target=Name(id='v10', ctx=Store()), iter=Call(func=Name(id='range', ctx=Load()), args=[Constant(value=16)], keywords=[]), body=[Assign(targets=[Subscript(value=Name(id='v5', ctx=Load()), slice=Tuple(elts=[Name(id='v6', ctx=Load()), Name(id='v10', ctx=Load())], ctx=Load()), ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='if_then_else', ctx=Load()), args=[Compare(left=Subscript(value=Name(id='v1', ctx=Load()), slice=Tuple(elts=[Name(id='v6', ctx=Load()), Name(id='v10', ctx=Load())], ctx=Load()), ctx=Load()), ops=[Gt()], comparators=[Subscript(value=Name(id='v3', ctx=Load()), slice=Tuple(elts=[Name(id='v6', ctx=Load()), Name(id='v10', ctx=Load())], ctx=Load()), ctx=Load())]), Subscript(value=Name(id='v1', ctx=Load()), slice=Tuple(elts=[Name(id='v6', ctx=Load()), Name(id='v10', ctx=Load())], ctx=Load()), ctx=Load()), Subscript(value=Name(id='v3', ctx=Load()), slice=Tuple(elts=[Name(id='v6', ctx=Load()), Name(id='v10', ctx=Load())], ctx=Load()), ctx=Load())], keywords=[]))], orelse=[])])], decorator_list=[Attribute(value=Name(id='T', ctx=Load()), attr='prim_func', ctx=Load())])], type_ignores=[])"
+    },
+    "generation": {
+      "attempts": 1,
+      "context_receipt": {
+        "backend_protocol": "openai.codex-cli.intentir-replay.v72",
+        "cli_turns": 1,
+        "context_rollover_input_tokens": 0,
+        "episode_wall_time_limit_seconds": 7200.0,
+        "excluded_dependencies": [
+          "pi",
+          "Source",
+          "Harness valuation",
+          "Gate observation",
+          "prior Replay"
+        ],
+        "formal_compile_recheck": true,
+        "formal_ingress_protocol": "intentir.scrc.replay-check.v17",
+        "fresh_session": true,
+        "model_segments_lower_bound": 1,
+        "pi_visible_to_replay": false,
+        "replay_input_protocol": "intentir.scrc.replay-input.v4",
+        "retrieval_trace": [],
+        "thread_id": "019fbc4e-d805-7742-9fd7-4c0f59a7ae42",
+        "thread_ids": [
+          "019fbc4e-d805-7742-9fd7-4c0f59a7ae42"
+        ],
+        "tool_actions": 0,
+        "visible_packet_components": [
+          "c",
+          "j",
+          "u_f"
+        ]
+      },
+      "elapsed_ms": 125239.32319902815,
+      "entry_function_name": null,
+      "function_name": "scrc_k0",
+      "model": "gpt-5.6-sol",
+      "response_id": "019fbc4e-d805-7742-9fd7-4c0f59a7ae42",
+      "response_model": "gpt-5.6-sol",
+      "usage": {}
+    },
+    "mode": "normal",
+    "normalization": {
+      "active_rules": [],
+      "frontend": "tilelang",
+      "hard_preservation_check": "passed",
+      "hard_relations": [
+        "program_axes"
+      ],
+      "idempotence_check": "passed",
+      "observer_profile": "tilelang-tir-semantic-structure-ptx-diagnostic-v5",
+      "peer_observation_visible": false,
+      "profile_ok": true,
+      "protocol": "intentir.gate1.jc-normalizer.v2",
+      "transformed_occurrences": 0,
+      "unary": true,
+      "unknown_atoms": "hard"
+    },
+    "physical_calls": 1
+  },
+  "normal_fanout": null,
+  "observer_profile": {
+    "canonicalization_version": "tilelang-tir-semantic-structure-ptx-diagnostic-v5",
+    "compiler_stage": "tir",
+    "evidence_class": "semantic_structure_with_ptx_diagnostic",
+    "frontend": "tilelang",
+    "profile_id": "tilelang_tir_semantic_structure",
+    "profile_version": "tilelang-tir-semantic-structure-ptx-diagnostic-v5"
+  },
+  "protocol": "intentir.j-only-replay.jc-structural-gate1.v2",
+  "source_compile": {
+    "cache_key": "2018733b34e29704a93975d343a1e060747d3fed246bcbb16595382ca1489c4d",
+    "compiler": {
+      "name": "tilelang",
+      "version": "0.1.8"
+    },
+    "cuda": "#include <tl_templates/cuda/gemm.h>\n#include <tl_templates/cuda/copy.h>\n#include <tl_templates/cuda/reduce.h>\n#include <tl_templates/cuda/ldsm.h>\n#include <tl_templates/cuda/threadblock_swizzle.h>\n#include <tl_templates/cuda/debug.h>\n#ifdef ENABLE_BF16\n#include <tl_templates/cuda/cuda_bf16_fallbacks.cuh>\n#endif\n\nextern \"C\" __global__ void main_kernel(const float* __restrict__ A, const float* __restrict__ B, float* __restrict__ C, int M);\nextern \"C\" __global__ void __launch_bounds__(16, 1) main_kernel(const float* __restrict__ A, const float* __restrict__ B, float* __restrict__ C, int M) {\n  float a = A[((((int64_t)((int)blockIdx.x)) * (int64_t)16) + ((int64_t)((int)threadIdx.x)))];\n  float b = B[((((int64_t)((int)blockIdx.x)) * (int64_t)16) + ((int64_t)((int)threadIdx.x)))];\n  float condval;\n  if ((b < a)) {\n    condval = a;\n  } else {\n    condval = b;\n  }\n  C[((((int64_t)((int)blockIdx.x)) * (int64_t)16) + ((int64_t)((int)threadIdx.x)))] = condval;\n}\n\n",
+    "diagnostic": "",
+    "elapsed_ms": 3735.982013051398,
+    "interface": {
+      "parameters": [
+        {
+          "dtype": "float32",
+          "kind": "pointer",
+          "mode": "input",
+          "name": "A",
+          "rank": 2,
+          "shape": [
+            "M",
+            16
+          ]
+        },
+        {
+          "dtype": "float32",
+          "kind": "pointer",
+          "mode": "input",
+          "name": "B",
+          "rank": 2,
+          "shape": [
+            "M",
+            16
+          ]
+        },
+        {
+          "dtype": "float32",
+          "kind": "pointer",
+          "mode": "output",
+          "name": "C",
+          "rank": 2,
+          "shape": [
+            "M",
+            16
+          ]
+        }
+      ]
+    },
+    "ok": true,
+    "ptx": "//\n// Generated by NVIDIA NVVM Compiler\n//\n// Compiler Build ID: CL-35404655\n// Cuda compilation tools, release 12.8, V12.8.61\n// Based on NVVM 20.0.0\n//\n\n.version 8.7\n.target sm_120a\n.address_size 64\n\n\t// .globl\tmain_kernel\n.global .align 1 .b8 _ZN45_INTERNAL_96ed3eea_14_tvm_kernels_cu_1b63e0854cute7productE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_96ed3eea_14_tvm_kernels_cu_1b63e0854cute1_E[1];\n.global .align 1 .b8 _ZN45_INTERNAL_96ed3eea_14_tvm_kernels_cu_1b63e0854cuda3std3__45__cpo5beginE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_96ed3eea_14_tvm_kernels_cu_1b63e0854cuda3std3__45__cpo3endE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_96ed3eea_14_tvm_kernels_cu_1b63e0854cuda3std3__45__cpo6cbeginE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_96ed3eea_14_tvm_kernels_cu_1b63e0854cuda3std3__45__cpo4cendE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_96ed3eea_14_tvm_kernels_cu_1b63e0854cuda3std3__419piecewise_constructE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_96ed3eea_14_tvm_kernels_cu_1b63e0854cuda3std3__48in_placeE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_96ed3eea_14_tvm_kernels_cu_1b63e0854cuda3std6ranges3__45__cpo4swapE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_96ed3eea_14_tvm_kernels_cu_1b63e0854cuda3std6ranges3__45__cpo9iter_moveE[1];\n\n.visible .entry main_kernel(\n\t.param .u64 main_kernel_param_0,\n\t.param .u64 main_kernel_param_1,\n\t.param .u64 main_kernel_param_2,\n\t.param .u32 main_kernel_param_3\n)\n.maxntid 16, 1, 1\n.minnctapersm 1\n{\n\t.reg .pred \t%p<2>;\n\t.reg .b32 \t%r<3>;\n\t.reg .f32 \t%f<4>;\n\t.reg .b64 \t%rd<14>;\n\t.loc\t1 12 0\n\n\tld.param.u64 \t%rd1, [main_kernel_param_0];\n\tld.param.u64 \t%rd2, [main_kernel_param_1];\n\tld.param.u64 \t%rd3, [main_kernel_param_2];\n\t.loc\t1 13 3\n\tcvta.to.global.u64 \t%rd4, %rd3;\n\tcvta.to.global.u64 \t%rd5, %rd2;\n\tcvta.to.global.u64 \t%rd6, %rd1;\n\tmov.u32 \t%r1, %ctaid.x;\n\tmul.wide.u32 \t%rd7, %r1, 16;\n\tmov.u32 \t%r2, %tid.x;\n\tcvt.u64.u32 \t%rd8, %r2;\n\tor.b64  \t%rd9, %rd7, %rd8;\n\tshl.b64 \t%rd10, %rd9, 2;\n\tadd.s64 \t%rd11, %rd6, %rd10;\n\tld.global.nc.f32 \t%f1, [%rd11];\n\t.loc\t1 14 3\n\tadd.s64 \t%rd12, %rd5, %rd10;\n\tld.global.nc.f32 \t%f2, [%rd12];\n\t.loc\t1 16 3\n\tsetp.lt.f32 \t%p1, %f2, %f1;\n\t.loc\t1 0 0\n\tselp.f32 \t%f3, %f1, %f2, %p1;\n\t.loc\t1 21 3\n\tadd.s64 \t%rd13, %rd4, %rd10;\n\tst.global.f32 \t[%rd13], %f3;\n\t.loc\t1 22 1\n\tret;\n\n}\n\t.file\t1 \"/tmp/tmpie_9byyc/tvm_kernels.cu\"\n",
+    "target": {
+      "name": "cuda"
+    },
+    "tir": "# from tvm.script import tir as T\n\n@T.prim_func\ndef main(A_handle: T.handle, B_handle: T.handle, C_handle: T.handle):\n    M = T.int32()\n    A = T.match_buffer(A_handle, (M, 16), strides=(16, 1))\n    B = T.match_buffer(B_handle, (M, 16), strides=(16, 1))\n    C = T.match_buffer(C_handle, (M, 16), strides=(16, 1))\n    # with T.block(\"root\"):\n    bx = T.launch_thread(\"blockIdx.x\", M)\n    tx = T.launch_thread(\"threadIdx.x\", 16)\n    ty = T.launch_thread(\"threadIdx.y\", 1)\n    tz = T.launch_thread(\"threadIdx.z\", 1)\n    with T.block(\"tilelang_root\"):\n        T.reads(A[bx, 0:16], B[bx, 0:16])\n        T.writes(C[bx, 0:16])\n        for col in T.parallel(16):\n            a: T.float32 = A[bx, col]\n            b: T.float32 = B[bx, col]\n            C[bx, col] = T.if_then_else(a > b, a, b)"
+  },
+  "source_fingerprint": {
+    "digest": "d4089935401df14380f481085f8602805f37f774223a3db778a6a1f965ebd26a",
+    "interface": [
+      [
+        "parameters",
+        "[{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":0,\"rank\":2},{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":1,\"rank\":2},{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"output\",\"position\":2,\"rank\":2}]"
+      ]
+    ],
+    "ptx": {
+      "collectives": [],
+      "control_flow": [
+        "ret;"
+      ],
+      "coordinate_uses": [
+        "%ctaid.x",
+        "%tid.x"
+      ],
+      "digest": "d8b52fcd2b3dcaa778d14b2769a60b4570c4aa6be6b578a995cbdad179f38ba6",
+      "instructions": [
+        "ld.param.u64 %b640,[param0];",
+        "ld.param.u64 %b641,[param1];",
+        "ld.param.u64 %b642,[param2];",
+        "cvta.to.global.u64 %b643,%b642;",
+        "cvta.to.global.u64 %b644,%b641;",
+        "cvta.to.global.u64 %b645,%b640;",
+        "mov.u32 %b320,%ctaid.x;",
+        "mul.wide.u32 %b646,%b320,16;",
+        "mov.u32 %b321,%tid.x;",
+        "cvt.u64.u32 %b647,%b321;",
+        "or.b64 %b648,%b646,%b647;",
+        "shl.b64 %b649,%b648,2;",
+        "add.s64 %b6410,%b645,%b649;",
+        "ld.global.nc.f32 %f320,[%b6410];",
+        "add.s64 %b6411,%b644,%b649;",
+        "ld.global.nc.f32 %f321,[%b6411];",
+        "setp.lt.f32 %pred0,%f321,%f320;",
+        "selp.f32 %f322,%f320,%f321,%pred0;",
+        "add.s64 %b6412,%b643,%b649;",
+        "st.global.f32 [%b6412],%f322;",
+        "ret;"
+      ],
+      "interface": [
+        [
+          "parameters",
+          "[{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":0,\"rank\":2},{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":1,\"rank\":2},{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"output\",\"position\":2,\"rank\":2}]",
+          null
+        ],
+        [
+          "ptx_abi",
+          "[[\"\",\"u64\",null],[\"\",\"u64\",null],[\"\",\"u64\",null],[\"\",\"u32\",null]]",
+          null
+        ]
+      ],
+      "memory_effects": [
+        "ld.param.u64 %b640,[param0];",
+        "ld.param.u64 %b641,[param1];",
+        "ld.param.u64 %b642,[param2];",
+        "ld.global.nc.f32 %f320,[%b6410];",
+        "ld.global.nc.f32 %f321,[%b6411];",
+        "st.global.f32 [%b6412],%f322;"
+      ],
+      "opcode_multiset": [
+        [
+          "add.s64",
+          3
+        ],
+        [
+          "cvt.u64.u32",
+          1
+        ],
+        [
+          "cvta.to.global.u64",
+          3
+        ],
+        [
+          "ld.global.nc.f32",
+          2
+        ],
+        [
+          "ld.param.u64",
+          3
+        ],
+        [
+          "mov.u32",
+          2
+        ],
+        [
+          "mul.wide.u32",
+          1
+        ],
+        [
+          "or.b64",
+          1
+        ],
+        [
+          "ret;",
+          1
+        ],
+        [
+          "selp.f32",
+          1
+        ],
+        [
+          "setp.lt.f32",
+          1
+        ],
+        [
+          "shl.b64",
+          1
+        ],
+        [
+          "st.global.f32",
+          1
+        ]
+      ],
+      "schedule_view": [
+        [
+          "c0",
+          "16"
+        ]
+      ],
+      "schema_version": "cuda-ptx-semantic-effects-v6",
+      "semantic_address_coordinate_folds": [],
+      "semantic_memory_effects": [
+        [
+          "ld.global.b32",
+          2
+        ],
+        [
+          "ld.param.b64",
+          3
+        ],
+        [
+          "st.global.b32",
+          1
+        ]
+      ],
+      "semantic_value_opcodes": [
+        [
+          "ld.global.b32",
+          2
+        ],
+        [
+          "selp.f32",
+          1
+        ],
+        [
+          "setp.lt.f32",
+          1
+        ]
+      ],
+      "target_view": [
+        [
+          "name",
+          "\"cuda\""
+        ]
+      ]
+    },
+    "schedule_view": [
+      [
+        "c0",
+        "16"
+      ]
+    ],
+    "schema_version": "tilelang-tir-semantic-structure-ptx-diagnostic-v5",
+    "tir_op_multiset": [
+      [
+        "T.block",
+        1
+      ],
+      [
+        "T.float32",
+        2
+      ],
+      [
+        "T.handle",
+        3
+      ],
+      [
+        "T.if_then_else",
+        1
+      ],
+      [
+        "T.launch_thread",
+        4
+      ],
+      [
+        "T.match_buffer",
+        3
+      ],
+      [
+        "T.prim_func",
+        1
+      ],
+      [
+        "T.reads",
+        1
+      ],
+      [
+        "T.writes",
+        1
+      ],
+      [
+        "control.for",
+        1
+      ]
+    ],
+    "tir_ops": [
+      "T.prim_func",
+      "T.handle",
+      "T.handle",
+      "T.handle",
+      "T.match_buffer",
+      "T.match_buffer",
+      "T.match_buffer",
+      "T.launch_thread",
+      "T.launch_thread",
+      "T.launch_thread",
+      "T.launch_thread",
+      "T.block",
+      "T.reads",
+      "T.writes",
+      "control.for",
+      "T.float32",
+      "T.float32",
+      "T.if_then_else"
+    ],
+    "tir_structure": "Module(body=[FunctionDef(name='tir_entry', args=arguments(posonlyargs=[], args=[arg(arg='p0', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load())), arg(arg='p1', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load())), arg(arg='p2', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[]), body=[Assign(targets=[Name(id='v0', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='int32', ctx=Load()), args=[], keywords=[])), Assign(targets=[Name(id='v1', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p0', ctx=Load()), Tuple(elts=[Name(id='v0', ctx=Load()), Constant(value=16)], ctx=Load())], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=16), Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v2', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p1', ctx=Load()), Tuple(elts=[Name(id='v0', ctx=Load()), Constant(value=16)], ctx=Load())], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=16), Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v3', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p2', ctx=Load()), Tuple(elts=[Name(id='v0', ctx=Load()), Constant(value=16)], ctx=Load())], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=16), Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v4', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='blockIdx.x'), Name(id='v0', ctx=Load())], keywords=[])), Assign(targets=[Name(id='v5', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.x'), Constant(value=16)], keywords=[])), Assign(targets=[Name(id='v6', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.y'), Constant(value=1)], keywords=[])), Assign(targets=[Name(id='v7', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.z'), Constant(value=1)], keywords=[])), With(items=[withitem(context_expr=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='block', ctx=Load()), args=[Constant(value='<block>')], keywords=[]))], body=[Expr(value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='reads', ctx=Load()), args=[Subscript(value=Name(id='v1', ctx=Load()), slice=Tuple(elts=[Name(id='v4', ctx=Load()), Slice(lower=Constant(value=0), upper=Constant(value=16))], ctx=Load()), ctx=Load()), Subscript(value=Name(id='v2', ctx=Load()), slice=Tuple(elts=[Name(id='v4', ctx=Load()), Slice(lower=Constant(value=0), upper=Constant(value=16))], ctx=Load()), ctx=Load())], keywords=[])), Expr(value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='writes', ctx=Load()), args=[Subscript(value=Name(id='v3', ctx=Load()), slice=Tuple(elts=[Name(id='v4', ctx=Load()), Slice(lower=Constant(value=0), upper=Constant(value=16))], ctx=Load()), ctx=Load())], keywords=[])), For(target=Name(id='v8', ctx=Store()), iter=Call(func=Name(id='range', ctx=Load()), args=[Constant(value=16)], keywords=[]), body=[AnnAssign(target=Name(id='v9', ctx=Store()), annotation=Attribute(value=Name(id='T', ctx=Load()), attr='float32', ctx=Load()), value=Subscript(value=Name(id='v1', ctx=Load()), slice=Tuple(elts=[Name(id='v4', ctx=Load()), Name(id='v8', ctx=Load())], ctx=Load()), ctx=Load()), simple=1), AnnAssign(target=Name(id='v10', ctx=Store()), annotation=Attribute(value=Name(id='T', ctx=Load()), attr='float32', ctx=Load()), value=Subscript(value=Name(id='v2', ctx=Load()), slice=Tuple(elts=[Name(id='v4', ctx=Load()), Name(id='v8', ctx=Load())], ctx=Load()), ctx=Load()), simple=1), Assign(targets=[Subscript(value=Name(id='v3', ctx=Load()), slice=Tuple(elts=[Name(id='v4', ctx=Load()), Name(id='v8', ctx=Load())], ctx=Load()), ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='if_then_else', ctx=Load()), args=[Compare(left=Name(id='v9', ctx=Load()), ops=[Gt()], comparators=[Name(id='v10', ctx=Load())]), Name(id='v9', ctx=Load()), Name(id='v10', ctx=Load())], keywords=[]))], orelse=[])])], decorator_list=[Attribute(value=Name(id='T', ctx=Load()), attr='prim_func', ctx=Load())])], type_ignores=[])"
+  },
+  "source_normalization": {
+    "active_rules": [],
+    "frontend": "tilelang",
+    "hard_preservation_check": "passed",
+    "hard_relations": [
+      "program_axes"
+    ],
+    "idempotence_check": "passed",
+    "observer_profile": "tilelang-tir-semantic-structure-ptx-diagnostic-v5",
+    "peer_observation_visible": false,
+    "profile_ok": true,
+    "protocol": "intentir.gate1.jc-normalizer.v2",
+    "transformed_occurrences": 0,
+    "unary": true,
+    "unknown_atoms": "hard"
+  },
+  "status": "no_closure"
+}

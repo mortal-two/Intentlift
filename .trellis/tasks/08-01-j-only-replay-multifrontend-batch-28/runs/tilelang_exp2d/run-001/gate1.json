@@ -1,0 +1,1654 @@
+{
+  "artifact_digest": "dec8a8550b4dd031d0c4d02397eb48d5eddaa2d9181ce1bce2ef052821fb1fa5",
+  "j_necessity_status": "inconclusive",
+  "llm_calls": {
+    "masked_j": 0,
+    "normal": 1
+  },
+  "masked_j": null,
+  "masked_j_isolation": {
+    "fresh_session_evidence": null,
+    "independent_writer": null,
+    "separate_generate_call": null
+  },
+  "normal": {
+    "comparison": {
+      "diagnostic_passes": {
+        "ptx.address_coordinate_folds": true,
+        "ptx.collectives": true,
+        "ptx.control_flow": true,
+        "ptx.coordinate_uses": false,
+        "ptx.interface": true,
+        "ptx.memory_effects": false,
+        "ptx.raw_instruction_topology": false,
+        "ptx.raw_memory_effects": false,
+        "ptx.raw_opcode_multiset": false,
+        "ptx.schema": true,
+        "ptx.target": true,
+        "ptx.value_operations": false
+      },
+      "differences": [
+        {
+          "category": "ptx.value_operations",
+          "message": "PTX value_operations differs between Source and Replay",
+          "replay": [
+            [
+              "add.f32",
+              16
+            ],
+            [
+              "cvt.sat.f32.f32",
+              16
+            ],
+            [
+              "ex2.approx.ftz.f32",
+              16
+            ],
+            [
+              "fma.rm.f32",
+              16
+            ],
+            [
+              "fma.rn.f32",
+              48
+            ],
+            [
+              "ld.global.b32",
+              16
+            ],
+            [
+              "mov.b32",
+              32
+            ],
+            [
+              "mov.f32",
+              2
+            ],
+            [
+              "mul.f32",
+              16
+            ],
+            [
+              "neg.f32",
+              16
+            ],
+            [
+              "shl.b32",
+              16
+            ]
+          ],
+          "source": [
+            [
+              "add.f32",
+              1
+            ],
+            [
+              "cvt.sat.f32.f32",
+              1
+            ],
+            [
+              "ex2.approx.ftz.f32",
+              1
+            ],
+            [
+              "fma.rm.f32",
+              1
+            ],
+            [
+              "fma.rn.f32",
+              3
+            ],
+            [
+              "ld.global.b32",
+              1
+            ],
+            [
+              "mov.b32",
+              2
+            ],
+            [
+              "mov.f32",
+              2
+            ],
+            [
+              "mul.f32",
+              1
+            ],
+            [
+              "neg.f32",
+              1
+            ],
+            [
+              "shl.b32",
+              1
+            ]
+          ]
+        },
+        {
+          "category": "ptx.memory_effects",
+          "message": "PTX memory_effects differs between Source and Replay",
+          "replay": [
+            [
+              "ld.global.b32",
+              16
+            ],
+            [
+              "ld.param.b64",
+              2
+            ],
+            [
+              "st.global.b32",
+              16
+            ]
+          ],
+          "source": [
+            [
+              "ld.global.b32",
+              1
+            ],
+            [
+              "ld.param.b64",
+              2
+            ],
+            [
+              "st.global.b32",
+              1
+            ]
+          ]
+        },
+        {
+          "category": "ptx.coordinate_uses",
+          "message": "PTX coordinate_uses differs between Source and Replay",
+          "replay": [
+            "%ctaid.x"
+          ],
+          "source": [
+            "%ctaid.x",
+            "%tid.x"
+          ]
+        },
+        {
+          "category": "ptx.raw_instruction_topology",
+          "message": "PTX raw_instruction_topology differs between Source and Replay",
+          "replay": [
+            "ld.param.u64 %b640,[param0];",
+            "ld.param.u64 %b641,[param1];",
+            "mov.u32 %b320,%ctaid.x;",
+            "mul.wide.u32 %b642,%b320,16;",
+            "cvta.to.global.u64 %b643,%b640;",
+            "cvta.to.global.u64 %b644,%b641;",
+            "shl.b64 %b645,%b642,2;",
+            "add.s64 %b646,%b643,%b645;",
+            "ld.global.nc.f32 %f320,[%b646];",
+            "fma.rn.f32 %f321,%f320,0f3BBB989D,0f3F000000;",
+            "cvt.sat.f32.f32 %f322,%f321;",
+            "mov.f32 %f323,0f4B400001;",
+            "mov.f32 %f324,0f437C0000;",
+            "fma.rm.f32 %f325,%f322,%f324,%f323;",
+            "add.f32 %f326,%f325,0fCB40007F;",
+            "neg.f32 %f327,%f326;",
+            "fma.rn.f32 %f328,%f320,0f3FB8AA3B,%f327;",
+            "fma.rn.f32 %f329,%f320,0f32A57060,%f328;",
+            "mov.b32 %b321,%f325;",
+            "shl.b32 %b322,%b321,23;",
+            "mov.b32 %f3210,%b322;",
+            "ex2.approx.ftz.f32 %f3211,%f329;",
+            "mul.f32 %f3212,%f3211,%f3210;",
+            "add.s64 %b647,%b644,%b645;",
+            "st.global.f32 [%b647],%f3212;",
+            "ld.global.nc.f32 %f3213,[%b646+4];",
+            "fma.rn.f32 %f3214,%f3213,0f3BBB989D,0f3F000000;",
+            "cvt.sat.f32.f32 %f3215,%f3214;",
+            "fma.rm.f32 %f3216,%f3215,%f324,%f323;",
+            "add.f32 %f3217,%f3216,0fCB40007F;",
+            "neg.f32 %f3218,%f3217;",
+            "fma.rn.f32 %f3219,%f3213,0f3FB8AA3B,%f3218;",
+            "fma.rn.f32 %f3220,%f3213,0f32A57060,%f3219;",
+            "mov.b32 %b323,%f3216;",
+            "shl.b32 %b324,%b323,23;",
+            "mov.b32 %f3221,%b324;",
+            "ex2.approx.ftz.f32 %f3222,%f3220;",
+            "mul.f32 %f3223,%f3222,%f3221;",
+            "st.global.f32 [%b647+4],%f3223;",
+            "ld.global.nc.f32 %f3224,[%b646+8];",
+            "fma.rn.f32 %f3225,%f3224,0f3BBB989D,0f3F000000;",
+            "cvt.sat.f32.f32 %f3226,%f3225;",
+            "fma.rm.f32 %f3227,%f3226,%f324,%f323;",
+            "add.f32 %f3228,%f3227,0fCB40007F;",
+            "neg.f32 %f3229,%f3228;",
+            "fma.rn.f32 %f3230,%f3224,0f3FB8AA3B,%f3229;",
+            "fma.rn.f32 %f3231,%f3224,0f32A57060,%f3230;",
+            "mov.b32 %b325,%f3227;",
+            "shl.b32 %b326,%b325,23;",
+            "mov.b32 %f3232,%b326;",
+            "ex2.approx.ftz.f32 %f3233,%f3231;",
+            "mul.f32 %f3234,%f3233,%f3232;",
+            "st.global.f32 [%b647+8],%f3234;",
+            "ld.global.nc.f32 %f3235,[%b646+12];",
+            "fma.rn.f32 %f3236,%f3235,0f3BBB989D,0f3F000000;",
+            "cvt.sat.f32.f32 %f3237,%f3236;",
+            "fma.rm.f32 %f3238,%f3237,%f324,%f323;",
+            "add.f32 %f3239,%f3238,0fCB40007F;",
+            "neg.f32 %f3240,%f3239;",
+            "fma.rn.f32 %f3241,%f3235,0f3FB8AA3B,%f3240;",
+            "fma.rn.f32 %f3242,%f3235,0f32A57060,%f3241;",
+            "mov.b32 %b327,%f3238;",
+            "shl.b32 %b328,%b327,23;",
+            "mov.b32 %f3243,%b328;",
+            "ex2.approx.ftz.f32 %f3244,%f3242;",
+            "mul.f32 %f3245,%f3244,%f3243;",
+            "st.global.f32 [%b647+12],%f3245;",
+            "ld.global.nc.f32 %f3246,[%b646+16];",
+            "fma.rn.f32 %f3247,%f3246,0f3BBB989D,0f3F000000;",
+            "cvt.sat.f32.f32 %f3248,%f3247;",
+            "fma.rm.f32 %f3249,%f3248,%f324,%f323;",
+            "add.f32 %f3250,%f3249,0fCB40007F;",
+            "neg.f32 %f3251,%f3250;",
+            "fma.rn.f32 %f3252,%f3246,0f3FB8AA3B,%f3251;",
+            "fma.rn.f32 %f3253,%f3246,0f32A57060,%f3252;",
+            "mov.b32 %b329,%f3249;",
+            "shl.b32 %b3210,%b329,23;",
+            "mov.b32 %f3254,%b3210;",
+            "ex2.approx.ftz.f32 %f3255,%f3253;",
+            "mul.f32 %f3256,%f3255,%f3254;",
+            "st.global.f32 [%b647+16],%f3256;",
+            "ld.global.nc.f32 %f3257,[%b646+20];",
+            "fma.rn.f32 %f3258,%f3257,0f3BBB989D,0f3F000000;",
+            "cvt.sat.f32.f32 %f3259,%f3258;",
+            "fma.rm.f32 %f3260,%f3259,%f324,%f323;",
+            "add.f32 %f3261,%f3260,0fCB40007F;",
+            "neg.f32 %f3262,%f3261;",
+            "fma.rn.f32 %f3263,%f3257,0f3FB8AA3B,%f3262;",
+            "fma.rn.f32 %f3264,%f3257,0f32A57060,%f3263;",
+            "mov.b32 %b3211,%f3260;",
+            "shl.b32 %b3212,%b3211,23;",
+            "mov.b32 %f3265,%b3212;",
+            "ex2.approx.ftz.f32 %f3266,%f3264;",
+            "mul.f32 %f3267,%f3266,%f3265;",
+            "st.global.f32 [%b647+20],%f3267;",
+            "ld.global.nc.f32 %f3268,[%b646+24];",
+            "fma.rn.f32 %f3269,%f3268,0f3BBB989D,0f3F000000;",
+            "cvt.sat.f32.f32 %f3270,%f3269;",
+            "fma.rm.f32 %f3271,%f3270,%f324,%f323;",
+            "add.f32 %f3272,%f3271,0fCB40007F;",
+            "neg.f32 %f3273,%f3272;",
+            "fma.rn.f32 %f3274,%f3268,0f3FB8AA3B,%f3273;",
+            "fma.rn.f32 %f3275,%f3268,0f32A57060,%f3274;",
+            "mov.b32 %b3213,%f3271;",
+            "shl.b32 %b3214,%b3213,23;",
+            "mov.b32 %f3276,%b3214;",
+            "ex2.approx.ftz.f32 %f3277,%f3275;",
+            "mul.f32 %f3278,%f3277,%f3276;",
+            "st.global.f32 [%b647+24],%f3278;",
+            "ld.global.nc.f32 %f3279,[%b646+28];",
+            "fma.rn.f32 %f3280,%f3279,0f3BBB989D,0f3F000000;",
+            "cvt.sat.f32.f32 %f3281,%f3280;",
+            "fma.rm.f32 %f3282,%f3281,%f324,%f323;",
+            "add.f32 %f3283,%f3282,0fCB40007F;",
+            "neg.f32 %f3284,%f3283;",
+            "fma.rn.f32 %f3285,%f3279,0f3FB8AA3B,%f3284;",
+            "fma.rn.f32 %f3286,%f3279,0f32A57060,%f3285;",
+            "mov.b32 %b3215,%f3282;",
+            "shl.b32 %b3216,%b3215,23;",
+            "mov.b32 %f3287,%b3216;",
+            "ex2.approx.ftz.f32 %f3288,%f3286;",
+            "mul.f32 %f3289,%f3288,%f3287;",
+            "st.global.f32 [%b647+28],%f3289;",
+            "ld.global.nc.f32 %f3290,[%b646+32];",
+            "fma.rn.f32 %f3291,%f3290,0f3BBB989D,0f3F000000;",
+            "cvt.sat.f32.f32 %f3292,%f3291;",
+            "fma.rm.f32 %f3293,%f3292,%f324,%f323;",
+            "add.f32 %f3294,%f3293,0fCB40007F;",
+            "neg.f32 %f3295,%f3294;",
+            "fma.rn.f32 %f3296,%f3290,0f3FB8AA3B,%f3295;",
+            "fma.rn.f32 %f3297,%f3290,0f32A57060,%f3296;",
+            "mov.b32 %b3217,%f3293;",
+            "shl.b32 %b3218,%b3217,23;",
+            "mov.b32 %f3298,%b3218;",
+            "ex2.approx.ftz.f32 %f3299,%f3297;",
+            "mul.f32 %f32100,%f3299,%f3298;",
+            "st.global.f32 [%b647+32],%f32100;",
+            "ld.global.nc.f32 %f32101,[%b646+36];",
+            "fma.rn.f32 %f32102,%f32101,0f3BBB989D,0f3F000000;",
+            "cvt.sat.f32.f32 %f32103,%f32102;",
+            "fma.rm.f32 %f32104,%f32103,%f324,%f323;",
+            "add.f32 %f32105,%f32104,0fCB40007F;",
+            "neg.f32 %f32106,%f32105;",
+            "fma.rn.f32 %f32107,%f32101,0f3FB8AA3B,%f32106;",
+            "fma.rn.f32 %f32108,%f32101,0f32A57060,%f32107;",
+            "mov.b32 %b3219,%f32104;",
+            "shl.b32 %b3220,%b3219,23;",
+            "mov.b32 %f32109,%b3220;",
+            "ex2.approx.ftz.f32 %f32110,%f32108;",
+            "mul.f32 %f32111,%f32110,%f32109;",
+            "st.global.f32 [%b647+36],%f32111;",
+            "ld.global.nc.f32 %f32112,[%b646+40];",
+            "fma.rn.f32 %f32113,%f32112,0f3BBB989D,0f3F000000;",
+            "cvt.sat.f32.f32 %f32114,%f32113;",
+            "fma.rm.f32 %f32115,%f32114,%f324,%f323;",
+            "add.f32 %f32116,%f32115,0fCB40007F;",
+            "neg.f32 %f32117,%f32116;",
+            "fma.rn.f32 %f32118,%f32112,0f3FB8AA3B,%f32117;",
+            "fma.rn.f32 %f32119,%f32112,0f32A57060,%f32118;",
+            "mov.b32 %b3221,%f32115;",
+            "shl.b32 %b3222,%b3221,23;",
+            "mov.b32 %f32120,%b3222;",
+            "ex2.approx.ftz.f32 %f32121,%f32119;",
+            "mul.f32 %f32122,%f32121,%f32120;",
+            "st.global.f32 [%b647+40],%f32122;",
+            "ld.global.nc.f32 %f32123,[%b646+44];",
+            "fma.rn.f32 %f32124,%f32123,0f3BBB989D,0f3F000000;",
+            "cvt.sat.f32.f32 %f32125,%f32124;",
+            "fma.rm.f32 %f32126,%f32125,%f324,%f323;",
+            "add.f32 %f32127,%f32126,0fCB40007F;",
+            "neg.f32 %f32128,%f32127;",
+            "fma.rn.f32 %f32129,%f32123,0f3FB8AA3B,%f32128;",
+            "fma.rn.f32 %f32130,%f32123,0f32A57060,%f32129;",
+            "mov.b32 %b3223,%f32126;",
+            "shl.b32 %b3224,%b3223,23;",
+            "mov.b32 %f32131,%b3224;",
+            "ex2.approx.ftz.f32 %f32132,%f32130;",
+            "mul.f32 %f32133,%f32132,%f32131;",
+            "st.global.f32 [%b647+44],%f32133;",
+            "ld.global.nc.f32 %f32134,[%b646+48];",
+            "fma.rn.f32 %f32135,%f32134,0f3BBB989D,0f3F000000;",
+            "cvt.sat.f32.f32 %f32136,%f32135;",
+            "fma.rm.f32 %f32137,%f32136,%f324,%f323;",
+            "add.f32 %f32138,%f32137,0fCB40007F;",
+            "neg.f32 %f32139,%f32138;",
+            "fma.rn.f32 %f32140,%f32134,0f3FB8AA3B,%f32139;",
+            "fma.rn.f32 %f32141,%f32134,0f32A57060,%f32140;",
+            "mov.b32 %b3225,%f32137;",
+            "shl.b32 %b3226,%b3225,23;",
+            "mov.b32 %f32142,%b3226;",
+            "ex2.approx.ftz.f32 %f32143,%f32141;",
+            "mul.f32 %f32144,%f32143,%f32142;",
+            "st.global.f32 [%b647+48],%f32144;",
+            "ld.global.nc.f32 %f32145,[%b646+52];",
+            "fma.rn.f32 %f32146,%f32145,0f3BBB989D,0f3F000000;",
+            "cvt.sat.f32.f32 %f32147,%f32146;",
+            "fma.rm.f32 %f32148,%f32147,%f324,%f323;",
+            "add.f32 %f32149,%f32148,0fCB40007F;",
+            "neg.f32 %f32150,%f32149;",
+            "fma.rn.f32 %f32151,%f32145,0f3FB8AA3B,%f32150;",
+            "fma.rn.f32 %f32152,%f32145,0f32A57060,%f32151;",
+            "mov.b32 %b3227,%f32148;",
+            "shl.b32 %b3228,%b3227,23;",
+            "mov.b32 %f32153,%b3228;",
+            "ex2.approx.ftz.f32 %f32154,%f32152;",
+            "mul.f32 %f32155,%f32154,%f32153;",
+            "st.global.f32 [%b647+52],%f32155;",
+            "ld.global.nc.f32 %f32156,[%b646+56];",
+            "fma.rn.f32 %f32157,%f32156,0f3BBB989D,0f3F000000;",
+            "cvt.sat.f32.f32 %f32158,%f32157;",
+            "fma.rm.f32 %f32159,%f32158,%f324,%f323;",
+            "add.f32 %f32160,%f32159,0fCB40007F;",
+            "neg.f32 %f32161,%f32160;",
+            "fma.rn.f32 %f32162,%f32156,0f3FB8AA3B,%f32161;",
+            "fma.rn.f32 %f32163,%f32156,0f32A57060,%f32162;",
+            "mov.b32 %b3229,%f32159;",
+            "shl.b32 %b3230,%b3229,23;",
+            "mov.b32 %f32164,%b3230;",
+            "ex2.approx.ftz.f32 %f32165,%f32163;",
+            "mul.f32 %f32166,%f32165,%f32164;",
+            "st.global.f32 [%b647+56],%f32166;",
+            "ld.global.nc.f32 %f32167,[%b646+60];",
+            "fma.rn.f32 %f32168,%f32167,0f3BBB989D,0f3F000000;",
+            "cvt.sat.f32.f32 %f32169,%f32168;",
+            "fma.rm.f32 %f32170,%f32169,%f324,%f323;",
+            "add.f32 %f32171,%f32170,0fCB40007F;",
+            "neg.f32 %f32172,%f32171;",
+            "fma.rn.f32 %f32173,%f32167,0f3FB8AA3B,%f32172;",
+            "fma.rn.f32 %f32174,%f32167,0f32A57060,%f32173;",
+            "mov.b32 %b3231,%f32170;",
+            "shl.b32 %b3232,%b3231,23;",
+            "mov.b32 %f32175,%b3232;",
+            "ex2.approx.ftz.f32 %f32176,%f32174;",
+            "mul.f32 %f32177,%f32176,%f32175;",
+            "st.global.f32 [%b647+60],%f32177;",
+            "ret;"
+          ],
+          "source": [
+            "ld.param.u64 %b640,[param0];",
+            "ld.param.u64 %b641,[param1];",
+            "cvta.to.global.u64 %b642,%b641;",
+            "cvta.to.global.u64 %b643,%b640;",
+            "mov.u32 %b320,%ctaid.x;",
+            "mul.wide.u32 %b644,%b320,16;",
+            "mov.u32 %b321,%tid.x;",
+            "cvt.u64.u32 %b645,%b321;",
+            "or.b64 %b646,%b644,%b645;",
+            "shl.b64 %b647,%b646,2;",
+            "add.s64 %b648,%b643,%b647;",
+            "ld.global.nc.f32 %f320,[%b648];",
+            "fma.rn.f32 %f321,%f320,0f3BBB989D,0f3F000000;",
+            "cvt.sat.f32.f32 %f322,%f321;",
+            "mov.f32 %f323,0f4B400001;",
+            "mov.f32 %f324,0f437C0000;",
+            "fma.rm.f32 %f325,%f322,%f324,%f323;",
+            "add.f32 %f326,%f325,0fCB40007F;",
+            "neg.f32 %f327,%f326;",
+            "fma.rn.f32 %f328,%f320,0f3FB8AA3B,%f327;",
+            "fma.rn.f32 %f329,%f320,0f32A57060,%f328;",
+            "mov.b32 %b322,%f325;",
+            "shl.b32 %b323,%b322,23;",
+            "mov.b32 %f3210,%b323;",
+            "ex2.approx.ftz.f32 %f3211,%f329;",
+            "mul.f32 %f3212,%f3211,%f3210;",
+            "add.s64 %b649,%b642,%b647;",
+            "st.global.f32 [%b649],%f3212;",
+            "ret;"
+          ]
+        },
+        {
+          "category": "ptx.raw_opcode_multiset",
+          "message": "PTX raw_opcode_multiset differs between Source and Replay",
+          "replay": [
+            [
+              "add.f32",
+              16
+            ],
+            [
+              "add.s64",
+              2
+            ],
+            [
+              "cvt.sat.f32.f32",
+              16
+            ],
+            [
+              "cvta.to.global.u64",
+              2
+            ],
+            [
+              "ex2.approx.ftz.f32",
+              16
+            ],
+            [
+              "fma.rm.f32",
+              16
+            ],
+            [
+              "fma.rn.f32",
+              48
+            ],
+            [
+              "ld.global.nc.f32",
+              16
+            ],
+            [
+              "ld.param.u64",
+              2
+            ],
+            [
+              "mov.b32",
+              32
+            ],
+            [
+              "mov.f32",
+              2
+            ],
+            [
+              "mov.u32",
+              1
+            ],
+            [
+              "mul.f32",
+              16
+            ],
+            [
+              "mul.wide.u32",
+              1
+            ],
+            [
+              "neg.f32",
+              16
+            ],
+            [
+              "ret;",
+              1
+            ],
+            [
+              "shl.b32",
+              16
+            ],
+            [
+              "shl.b64",
+              1
+            ],
+            [
+              "st.global.f32",
+              16
+            ]
+          ],
+          "source": [
+            [
+              "add.f32",
+              1
+            ],
+            [
+              "add.s64",
+              2
+            ],
+            [
+              "cvt.sat.f32.f32",
+              1
+            ],
+            [
+              "cvt.u64.u32",
+              1
+            ],
+            [
+              "cvta.to.global.u64",
+              2
+            ],
+            [
+              "ex2.approx.ftz.f32",
+              1
+            ],
+            [
+              "fma.rm.f32",
+              1
+            ],
+            [
+              "fma.rn.f32",
+              3
+            ],
+            [
+              "ld.global.nc.f32",
+              1
+            ],
+            [
+              "ld.param.u64",
+              2
+            ],
+            [
+              "mov.b32",
+              2
+            ],
+            [
+              "mov.f32",
+              2
+            ],
+            [
+              "mov.u32",
+              2
+            ],
+            [
+              "mul.f32",
+              1
+            ],
+            [
+              "mul.wide.u32",
+              1
+            ],
+            [
+              "neg.f32",
+              1
+            ],
+            [
+              "or.b64",
+              1
+            ],
+            [
+              "ret;",
+              1
+            ],
+            [
+              "shl.b32",
+              1
+            ],
+            [
+              "shl.b64",
+              1
+            ],
+            [
+              "st.global.f32",
+              1
+            ]
+          ]
+        },
+        {
+          "category": "ptx.raw_memory_effects",
+          "message": "PTX raw_memory_effects differs between Source and Replay",
+          "replay": [
+            "ld.param.u64 %b640,[param0];",
+            "ld.param.u64 %b641,[param1];",
+            "ld.global.nc.f32 %f320,[%b646];",
+            "st.global.f32 [%b647],%f3212;",
+            "ld.global.nc.f32 %f3213,[%b646+4];",
+            "st.global.f32 [%b647+4],%f3223;",
+            "ld.global.nc.f32 %f3224,[%b646+8];",
+            "st.global.f32 [%b647+8],%f3234;",
+            "ld.global.nc.f32 %f3235,[%b646+12];",
+            "st.global.f32 [%b647+12],%f3245;",
+            "ld.global.nc.f32 %f3246,[%b646+16];",
+            "st.global.f32 [%b647+16],%f3256;",
+            "ld.global.nc.f32 %f3257,[%b646+20];",
+            "st.global.f32 [%b647+20],%f3267;",
+            "ld.global.nc.f32 %f3268,[%b646+24];",
+            "st.global.f32 [%b647+24],%f3278;",
+            "ld.global.nc.f32 %f3279,[%b646+28];",
+            "st.global.f32 [%b647+28],%f3289;",
+            "ld.global.nc.f32 %f3290,[%b646+32];",
+            "st.global.f32 [%b647+32],%f32100;",
+            "ld.global.nc.f32 %f32101,[%b646+36];",
+            "st.global.f32 [%b647+36],%f32111;",
+            "ld.global.nc.f32 %f32112,[%b646+40];",
+            "st.global.f32 [%b647+40],%f32122;",
+            "ld.global.nc.f32 %f32123,[%b646+44];",
+            "st.global.f32 [%b647+44],%f32133;",
+            "ld.global.nc.f32 %f32134,[%b646+48];",
+            "st.global.f32 [%b647+48],%f32144;",
+            "ld.global.nc.f32 %f32145,[%b646+52];",
+            "st.global.f32 [%b647+52],%f32155;",
+            "ld.global.nc.f32 %f32156,[%b646+56];",
+            "st.global.f32 [%b647+56],%f32166;",
+            "ld.global.nc.f32 %f32167,[%b646+60];",
+            "st.global.f32 [%b647+60],%f32177;"
+          ],
+          "source": [
+            "ld.param.u64 %b640,[param0];",
+            "ld.param.u64 %b641,[param1];",
+            "ld.global.nc.f32 %f320,[%b648];",
+            "st.global.f32 [%b649],%f3212;"
+          ]
+        }
+      ],
+      "hard_pass": true,
+      "hard_passes": {
+        "interface": true,
+        "ptx.interface": true,
+        "ptx.schema": true,
+        "ptx.target": true,
+        "schema": true,
+        "tir_operations": true,
+        "tir_structure": true,
+        "tir_topology": true
+      },
+      "primary_difference_category": null,
+      "replay_digest": "22852b5c3fb2837a678ed896030b8a052f53f156f896d4b1a5fb768f66cbcd06",
+      "source_digest": "60ceac0669b34bc2212bc415fb1be6ccad7c34103b094a2d240ca7401ed96e59"
+    },
+    "compile": {
+      "cache_key": "6080261d98d4a42562e26c675327c32a2a41162706c54600b9ccf9c3ff9c32bf",
+      "compiler": {
+        "name": "tilelang",
+        "version": "0.1.8"
+      },
+      "cuda": "#include <tl_templates/cuda/gemm.h>\n#include <tl_templates/cuda/copy.h>\n#include <tl_templates/cuda/reduce.h>\n#include <tl_templates/cuda/ldsm.h>\n#include <tl_templates/cuda/threadblock_swizzle.h>\n#include <tl_templates/cuda/debug.h>\n#ifdef ENABLE_BF16\n#include <tl_templates/cuda/cuda_bf16_fallbacks.cuh>\n#endif\n\nextern \"C\" __global__ void scrc_k0_kernel(const float* __restrict__ p0, float* __restrict__ p1, int x0);\nextern \"C\" __global__ void __launch_bounds__(16, 1) scrc_k0_kernel(const float* __restrict__ p0, float* __restrict__ p1, int x0) {\n  for (int v2 = 0; v2 < 16; ++v2) {\n    p1[((((int64_t)((int)blockIdx.x)) * (int64_t)16) + ((int64_t)v2))] = expf(p0[((((int64_t)((int)blockIdx.x)) * (int64_t)16) + ((int64_t)v2))]);\n  }\n}\n\n",
+      "diagnostic": "",
+      "elapsed_ms": 7080.958848004229,
+      "interface": {
+        "parameters": [
+          {
+            "dtype": "float32",
+            "kind": "pointer",
+            "mode": "input",
+            "name": "p0",
+            "rank": 2,
+            "shape": [
+              "x0",
+              16
+            ]
+          },
+          {
+            "dtype": "float32",
+            "kind": "pointer",
+            "mode": "output",
+            "name": "p1",
+            "rank": 2,
+            "shape": [
+              "x0",
+              16
+            ]
+          }
+        ]
+      },
+      "ok": true,
+      "ptx": "//\n// Generated by NVIDIA NVVM Compiler\n//\n// Compiler Build ID: CL-35404655\n// Cuda compilation tools, release 12.8, V12.8.61\n// Based on NVVM 20.0.0\n//\n\n.version 8.7\n.target sm_120a\n.address_size 64\n\n\t// .globl\tscrc_k0_kernel\n.global .align 1 .b8 _ZN45_INTERNAL_23d00c93_14_tvm_kernels_cu_1b63e0854cute7productE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_23d00c93_14_tvm_kernels_cu_1b63e0854cute1_E[1];\n.global .align 1 .b8 _ZN45_INTERNAL_23d00c93_14_tvm_kernels_cu_1b63e0854cuda3std3__45__cpo5beginE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_23d00c93_14_tvm_kernels_cu_1b63e0854cuda3std3__45__cpo3endE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_23d00c93_14_tvm_kernels_cu_1b63e0854cuda3std3__45__cpo6cbeginE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_23d00c93_14_tvm_kernels_cu_1b63e0854cuda3std3__45__cpo4cendE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_23d00c93_14_tvm_kernels_cu_1b63e0854cuda3std3__419piecewise_constructE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_23d00c93_14_tvm_kernels_cu_1b63e0854cuda3std3__48in_placeE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_23d00c93_14_tvm_kernels_cu_1b63e0854cuda3std6ranges3__45__cpo4swapE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_23d00c93_14_tvm_kernels_cu_1b63e0854cuda3std6ranges3__45__cpo9iter_moveE[1];\n\n.visible .entry scrc_k0_kernel(\n\t.param .u64 scrc_k0_kernel_param_0,\n\t.param .u64 scrc_k0_kernel_param_1,\n\t.param .u32 scrc_k0_kernel_param_2\n)\n.maxntid 16, 1, 1\n.minnctapersm 1\n{\n\t.reg .b32 \t%r<34>;\n\t.reg .f32 \t%f<179>;\n\t.reg .b64 \t%rd<9>;\n\t.loc\t1 12 0\n\n\tld.param.u64 \t%rd1, [scrc_k0_kernel_param_0];\n\tld.param.u64 \t%rd2, [scrc_k0_kernel_param_1];\n\tmov.u32 \t%r1, %ctaid.x;\n\tmul.wide.u32 \t%rd3, %r1, 16;\n\t.loc\t1 13 3\n\tcvta.to.global.u64 \t%rd4, %rd1;\n\tcvta.to.global.u64 \t%rd5, %rd2;\n\t.loc\t1 14 5\n\tshl.b64 \t%rd6, %rd3, 2;\n\tadd.s64 \t%rd7, %rd4, %rd6;\n\tld.global.nc.f32 \t%f1, [%rd7];\n\tfma.rn.f32 \t%f2, %f1, 0f3BBB989D, 0f3F000000;\n\tcvt.sat.f32.f32 \t%f3, %f2;\n\tmov.f32 \t%f4, 0f4B400001;\n\tmov.f32 \t%f5, 0f437C0000;\n\tfma.rm.f32 \t%f6, %f3, %f5, %f4;\n\tadd.f32 \t%f7, %f6, 0fCB40007F;\n\tneg.f32 \t%f8, %f7;\n\tfma.rn.f32 \t%f9, %f1, 0f3FB8AA3B, %f8;\n\tfma.rn.f32 \t%f10, %f1, 0f32A57060, %f9;\n\tmov.b32 \t%r2, %f6;\n\tshl.b32 \t%r3, %r2, 23;\n\tmov.b32 \t%f11, %r3;\n\tex2.approx.ftz.f32 \t%f12, %f10;\n\tmul.f32 \t%f13, %f12, %f11;\n\tadd.s64 \t%rd8, %rd5, %rd6;\n\tst.global.f32 \t[%rd8], %f13;\n\tld.global.nc.f32 \t%f14, [%rd7+4];\n\tfma.rn.f32 \t%f15, %f14, 0f3BBB989D, 0f3F000000;\n\tcvt.sat.f32.f32 \t%f16, %f15;\n\tfma.rm.f32 \t%f17, %f16, %f5, %f4;\n\tadd.f32 \t%f18, %f17, 0fCB40007F;\n\tneg.f32 \t%f19, %f18;\n\tfma.rn.f32 \t%f20, %f14, 0f3FB8AA3B, %f19;\n\tfma.rn.f32 \t%f21, %f14, 0f32A57060, %f20;\n\tmov.b32 \t%r4, %f17;\n\tshl.b32 \t%r5, %r4, 23;\n\tmov.b32 \t%f22, %r5;\n\tex2.approx.ftz.f32 \t%f23, %f21;\n\tmul.f32 \t%f24, %f23, %f22;\n\tst.global.f32 \t[%rd8+4], %f24;\n\tld.global.nc.f32 \t%f25, [%rd7+8];\n\tfma.rn.f32 \t%f26, %f25, 0f3BBB989D, 0f3F000000;\n\tcvt.sat.f32.f32 \t%f27, %f26;\n\tfma.rm.f32 \t%f28, %f27, %f5, %f4;\n\tadd.f32 \t%f29, %f28, 0fCB40007F;\n\tneg.f32 \t%f30, %f29;\n\tfma.rn.f32 \t%f31, %f25, 0f3FB8AA3B, %f30;\n\tfma.rn.f32 \t%f32, %f25, 0f32A57060, %f31;\n\tmov.b32 \t%r6, %f28;\n\tshl.b32 \t%r7, %r6, 23;\n\tmov.b32 \t%f33, %r7;\n\tex2.approx.ftz.f32 \t%f34, %f32;\n\tmul.f32 \t%f35, %f34, %f33;\n\tst.global.f32 \t[%rd8+8], %f35;\n\tld.global.nc.f32 \t%f36, [%rd7+12];\n\tfma.rn.f32 \t%f37, %f36, 0f3BBB989D, 0f3F000000;\n\tcvt.sat.f32.f32 \t%f38, %f37;\n\tfma.rm.f32 \t%f39, %f38, %f5, %f4;\n\tadd.f32 \t%f40, %f39, 0fCB40007F;\n\tneg.f32 \t%f41, %f40;\n\tfma.rn.f32 \t%f42, %f36, 0f3FB8AA3B, %f41;\n\tfma.rn.f32 \t%f43, %f36, 0f32A57060, %f42;\n\tmov.b32 \t%r8, %f39;\n\tshl.b32 \t%r9, %r8, 23;\n\tmov.b32 \t%f44, %r9;\n\tex2.approx.ftz.f32 \t%f45, %f43;\n\tmul.f32 \t%f46, %f45, %f44;\n\tst.global.f32 \t[%rd8+12], %f46;\n\tld.global.nc.f32 \t%f47, [%rd7+16];\n\tfma.rn.f32 \t%f48, %f47, 0f3BBB989D, 0f3F000000;\n\tcvt.sat.f32.f32 \t%f49, %f48;\n\tfma.rm.f32 \t%f50, %f49, %f5, %f4;\n\tadd.f32 \t%f51, %f50, 0fCB40007F;\n\tneg.f32 \t%f52, %f51;\n\tfma.rn.f32 \t%f53, %f47, 0f3FB8AA3B, %f52;\n\tfma.rn.f32 \t%f54, %f47, 0f32A57060, %f53;\n\tmov.b32 \t%r10, %f50;\n\tshl.b32 \t%r11, %r10, 23;\n\tmov.b32 \t%f55, %r11;\n\tex2.approx.ftz.f32 \t%f56, %f54;\n\tmul.f32 \t%f57, %f56, %f55;\n\tst.global.f32 \t[%rd8+16], %f57;\n\tld.global.nc.f32 \t%f58, [%rd7+20];\n\tfma.rn.f32 \t%f59, %f58, 0f3BBB989D, 0f3F000000;\n\tcvt.sat.f32.f32 \t%f60, %f59;\n\tfma.rm.f32 \t%f61, %f60, %f5, %f4;\n\tadd.f32 \t%f62, %f61, 0fCB40007F;\n\tneg.f32 \t%f63, %f62;\n\tfma.rn.f32 \t%f64, %f58, 0f3FB8AA3B, %f63;\n\tfma.rn.f32 \t%f65, %f58, 0f32A57060, %f64;\n\tmov.b32 \t%r12, %f61;\n\tshl.b32 \t%r13, %r12, 23;\n\tmov.b32 \t%f66, %r13;\n\tex2.approx.ftz.f32 \t%f67, %f65;\n\tmul.f32 \t%f68, %f67, %f66;\n\tst.global.f32 \t[%rd8+20], %f68;\n\tld.global.nc.f32 \t%f69, [%rd7+24];\n\tfma.rn.f32 \t%f70, %f69, 0f3BBB989D, 0f3F000000;\n\tcvt.sat.f32.f32 \t%f71, %f70;\n\tfma.rm.f32 \t%f72, %f71, %f5, %f4;\n\tadd.f32 \t%f73, %f72, 0fCB40007F;\n\tneg.f32 \t%f74, %f73;\n\tfma.rn.f32 \t%f75, %f69, 0f3FB8AA3B, %f74;\n\tfma.rn.f32 \t%f76, %f69, 0f32A57060, %f75;\n\tmov.b32 \t%r14, %f72;\n\tshl.b32 \t%r15, %r14, 23;\n\tmov.b32 \t%f77, %r15;\n\tex2.approx.ftz.f32 \t%f78, %f76;\n\tmul.f32 \t%f79, %f78, %f77;\n\tst.global.f32 \t[%rd8+24], %f79;\n\tld.global.nc.f32 \t%f80, [%rd7+28];\n\tfma.rn.f32 \t%f81, %f80, 0f3BBB989D, 0f3F000000;\n\tcvt.sat.f32.f32 \t%f82, %f81;\n\tfma.rm.f32 \t%f83, %f82, %f5, %f4;\n\tadd.f32 \t%f84, %f83, 0fCB40007F;\n\tneg.f32 \t%f85, %f84;\n\tfma.rn.f32 \t%f86, %f80, 0f3FB8AA3B, %f85;\n\tfma.rn.f32 \t%f87, %f80, 0f32A57060, %f86;\n\tmov.b32 \t%r16, %f83;\n\tshl.b32 \t%r17, %r16, 23;\n\tmov.b32 \t%f88, %r17;\n\tex2.approx.ftz.f32 \t%f89, %f87;\n\tmul.f32 \t%f90, %f89, %f88;\n\tst.global.f32 \t[%rd8+28], %f90;\n\tld.global.nc.f32 \t%f91, [%rd7+32];\n\tfma.rn.f32 \t%f92, %f91, 0f3BBB989D, 0f3F000000;\n\tcvt.sat.f32.f32 \t%f93, %f92;\n\tfma.rm.f32 \t%f94, %f93, %f5, %f4;\n\tadd.f32 \t%f95, %f94, 0fCB40007F;\n\tneg.f32 \t%f96, %f95;\n\tfma.rn.f32 \t%f97, %f91, 0f3FB8AA3B, %f96;\n\tfma.rn.f32 \t%f98, %f91, 0f32A57060, %f97;\n\tmov.b32 \t%r18, %f94;\n\tshl.b32 \t%r19, %r18, 23;\n\tmov.b32 \t%f99, %r19;\n\tex2.approx.ftz.f32 \t%f100, %f98;\n\tmul.f32 \t%f101, %f100, %f99;\n\tst.global.f32 \t[%rd8+32], %f101;\n\tld.global.nc.f32 \t%f102, [%rd7+36];\n\tfma.rn.f32 \t%f103, %f102, 0f3BBB989D, 0f3F000000;\n\tcvt.sat.f32.f32 \t%f104, %f103;\n\tfma.rm.f32 \t%f105, %f104, %f5, %f4;\n\tadd.f32 \t%f106, %f105, 0fCB40007F;\n\tneg.f32 \t%f107, %f106;\n\tfma.rn.f32 \t%f108, %f102, 0f3FB8AA3B, %f107;\n\tfma.rn.f32 \t%f109, %f102, 0f32A57060, %f108;\n\tmov.b32 \t%r20, %f105;\n\tshl.b32 \t%r21, %r20, 23;\n\tmov.b32 \t%f110, %r21;\n\tex2.approx.ftz.f32 \t%f111, %f109;\n\tmul.f32 \t%f112, %f111, %f110;\n\tst.global.f32 \t[%rd8+36], %f112;\n\tld.global.nc.f32 \t%f113, [%rd7+40];\n\tfma.rn.f32 \t%f114, %f113, 0f3BBB989D, 0f3F000000;\n\tcvt.sat.f32.f32 \t%f115, %f114;\n\tfma.rm.f32 \t%f116, %f115, %f5, %f4;\n\tadd.f32 \t%f117, %f116, 0fCB40007F;\n\tneg.f32 \t%f118, %f117;\n\tfma.rn.f32 \t%f119, %f113, 0f3FB8AA3B, %f118;\n\tfma.rn.f32 \t%f120, %f113, 0f32A57060, %f119;\n\tmov.b32 \t%r22, %f116;\n\tshl.b32 \t%r23, %r22, 23;\n\tmov.b32 \t%f121, %r23;\n\tex2.approx.ftz.f32 \t%f122, %f120;\n\tmul.f32 \t%f123, %f122, %f121;\n\tst.global.f32 \t[%rd8+40], %f123;\n\tld.global.nc.f32 \t%f124, [%rd7+44];\n\tfma.rn.f32 \t%f125, %f124, 0f3BBB989D, 0f3F000000;\n\tcvt.sat.f32.f32 \t%f126, %f125;\n\tfma.rm.f32 \t%f127, %f126, %f5, %f4;\n\tadd.f32 \t%f128, %f127, 0fCB40007F;\n\tneg.f32 \t%f129, %f128;\n\tfma.rn.f32 \t%f130, %f124, 0f3FB8AA3B, %f129;\n\tfma.rn.f32 \t%f131, %f124, 0f32A57060, %f130;\n\tmov.b32 \t%r24, %f127;\n\tshl.b32 \t%r25, %r24, 23;\n\tmov.b32 \t%f132, %r25;\n\tex2.approx.ftz.f32 \t%f133, %f131;\n\tmul.f32 \t%f134, %f133, %f132;\n\tst.global.f32 \t[%rd8+44], %f134;\n\tld.global.nc.f32 \t%f135, [%rd7+48];\n\tfma.rn.f32 \t%f136, %f135, 0f3BBB989D, 0f3F000000;\n\tcvt.sat.f32.f32 \t%f137, %f136;\n\tfma.rm.f32 \t%f138, %f137, %f5, %f4;\n\tadd.f32 \t%f139, %f138, 0fCB40007F;\n\tneg.f32 \t%f140, %f139;\n\tfma.rn.f32 \t%f141, %f135, 0f3FB8AA3B, %f140;\n\tfma.rn.f32 \t%f142, %f135, 0f32A57060, %f141;\n\tmov.b32 \t%r26, %f138;\n\tshl.b32 \t%r27, %r26, 23;\n\tmov.b32 \t%f143, %r27;\n\tex2.approx.ftz.f32 \t%f144, %f142;\n\tmul.f32 \t%f145, %f144, %f143;\n\tst.global.f32 \t[%rd8+48], %f145;\n\tld.global.nc.f32 \t%f146, [%rd7+52];\n\tfma.rn.f32 \t%f147, %f146, 0f3BBB989D, 0f3F000000;\n\tcvt.sat.f32.f32 \t%f148, %f147;\n\tfma.rm.f32 \t%f149, %f148, %f5, %f4;\n\tadd.f32 \t%f150, %f149, 0fCB40007F;\n\tneg.f32 \t%f151, %f150;\n\tfma.rn.f32 \t%f152, %f146, 0f3FB8AA3B, %f151;\n\tfma.rn.f32 \t%f153, %f146, 0f32A57060, %f152;\n\tmov.b32 \t%r28, %f149;\n\tshl.b32 \t%r29, %r28, 23;\n\tmov.b32 \t%f154, %r29;\n\tex2.approx.ftz.f32 \t%f155, %f153;\n\tmul.f32 \t%f156, %f155, %f154;\n\tst.global.f32 \t[%rd8+52], %f156;\n\tld.global.nc.f32 \t%f157, [%rd7+56];\n\tfma.rn.f32 \t%f158, %f157, 0f3BBB989D, 0f3F000000;\n\tcvt.sat.f32.f32 \t%f159, %f158;\n\tfma.rm.f32 \t%f160, %f159, %f5, %f4;\n\tadd.f32 \t%f161, %f160, 0fCB40007F;\n\tneg.f32 \t%f162, %f161;\n\tfma.rn.f32 \t%f163, %f157, 0f3FB8AA3B, %f162;\n\tfma.rn.f32 \t%f164, %f157, 0f32A57060, %f163;\n\tmov.b32 \t%r30, %f160;\n\tshl.b32 \t%r31, %r30, 23;\n\tmov.b32 \t%f165, %r31;\n\tex2.approx.ftz.f32 \t%f166, %f164;\n\tmul.f32 \t%f167, %f166, %f165;\n\tst.global.f32 \t[%rd8+56], %f167;\n\tld.global.nc.f32 \t%f168, [%rd7+60];\n\tfma.rn.f32 \t%f169, %f168, 0f3BBB989D, 0f3F000000;\n\tcvt.sat.f32.f32 \t%f170, %f169;\n\tfma.rm.f32 \t%f171, %f170, %f5, %f4;\n\tadd.f32 \t%f172, %f171, 0fCB40007F;\n\tneg.f32 \t%f173, %f172;\n\tfma.rn.f32 \t%f174, %f168, 0f3FB8AA3B, %f173;\n\tfma.rn.f32 \t%f175, %f168, 0f32A57060, %f174;\n\tmov.b32 \t%r32, %f171;\n\tshl.b32 \t%r33, %r32, 23;\n\tmov.b32 \t%f176, %r33;\n\tex2.approx.ftz.f32 \t%f177, %f175;\n\tmul.f32 \t%f178, %f177, %f176;\n\tst.global.f32 \t[%rd8+60], %f178;\n\t.loc\t1 16 1\n\tret;\n\n}\n\t.file\t1 \"/tmp/tmp93gbox2l/tvm_kernels.cu\"\n",
+      "target": {
+        "name": "cuda"
+      },
+      "tir": "# from tvm.script import tir as T\n\n@T.prim_func\ndef scrc_k0(p0_handle: T.handle, p1_handle: T.handle):\n    x0 = T.int32()\n    p0 = T.match_buffer(p0_handle, (x0, 16), strides=(16, 1))\n    p1 = T.match_buffer(p1_handle, (x0, 16), strides=(16, 1))\n    # with T.block(\"root\"):\n    bx = T.launch_thread(\"blockIdx.x\", x0)\n    tx = T.launch_thread(\"threadIdx.x\", 16)\n    ty = T.launch_thread(\"threadIdx.y\", 1)\n    tz = T.launch_thread(\"threadIdx.z\", 1)\n    with T.block(\"tilelang_root\"):\n        T.reads(p0[bx, 0:16])\n        T.writes(p1[bx, 0:16])\n        for v2 in range(16):\n            p1[bx, v2] = T.exp(p0[bx, v2])"
+    },
+    "diagnostic": null,
+    "fingerprint": {
+      "digest": "22852b5c3fb2837a678ed896030b8a052f53f156f896d4b1a5fb768f66cbcd06",
+      "interface": [
+        [
+          "parameters",
+          "[{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":0,\"rank\":2},{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"output\",\"position\":1,\"rank\":2}]"
+        ]
+      ],
+      "ptx": {
+        "collectives": [],
+        "control_flow": [
+          "ret;"
+        ],
+        "coordinate_uses": [
+          "%ctaid.x"
+        ],
+        "digest": "e4abee19a1ddbe4a4b085ffe72953d369b95239c8bcb0ff7db84655942447f68",
+        "instructions": [
+          "ld.param.u64 %b640,[param0];",
+          "ld.param.u64 %b641,[param1];",
+          "mov.u32 %b320,%ctaid.x;",
+          "mul.wide.u32 %b642,%b320,16;",
+          "cvta.to.global.u64 %b643,%b640;",
+          "cvta.to.global.u64 %b644,%b641;",
+          "shl.b64 %b645,%b642,2;",
+          "add.s64 %b646,%b643,%b645;",
+          "ld.global.nc.f32 %f320,[%b646];",
+          "fma.rn.f32 %f321,%f320,0f3BBB989D,0f3F000000;",
+          "cvt.sat.f32.f32 %f322,%f321;",
+          "mov.f32 %f323,0f4B400001;",
+          "mov.f32 %f324,0f437C0000;",
+          "fma.rm.f32 %f325,%f322,%f324,%f323;",
+          "add.f32 %f326,%f325,0fCB40007F;",
+          "neg.f32 %f327,%f326;",
+          "fma.rn.f32 %f328,%f320,0f3FB8AA3B,%f327;",
+          "fma.rn.f32 %f329,%f320,0f32A57060,%f328;",
+          "mov.b32 %b321,%f325;",
+          "shl.b32 %b322,%b321,23;",
+          "mov.b32 %f3210,%b322;",
+          "ex2.approx.ftz.f32 %f3211,%f329;",
+          "mul.f32 %f3212,%f3211,%f3210;",
+          "add.s64 %b647,%b644,%b645;",
+          "st.global.f32 [%b647],%f3212;",
+          "ld.global.nc.f32 %f3213,[%b646+4];",
+          "fma.rn.f32 %f3214,%f3213,0f3BBB989D,0f3F000000;",
+          "cvt.sat.f32.f32 %f3215,%f3214;",
+          "fma.rm.f32 %f3216,%f3215,%f324,%f323;",
+          "add.f32 %f3217,%f3216,0fCB40007F;",
+          "neg.f32 %f3218,%f3217;",
+          "fma.rn.f32 %f3219,%f3213,0f3FB8AA3B,%f3218;",
+          "fma.rn.f32 %f3220,%f3213,0f32A57060,%f3219;",
+          "mov.b32 %b323,%f3216;",
+          "shl.b32 %b324,%b323,23;",
+          "mov.b32 %f3221,%b324;",
+          "ex2.approx.ftz.f32 %f3222,%f3220;",
+          "mul.f32 %f3223,%f3222,%f3221;",
+          "st.global.f32 [%b647+4],%f3223;",
+          "ld.global.nc.f32 %f3224,[%b646+8];",
+          "fma.rn.f32 %f3225,%f3224,0f3BBB989D,0f3F000000;",
+          "cvt.sat.f32.f32 %f3226,%f3225;",
+          "fma.rm.f32 %f3227,%f3226,%f324,%f323;",
+          "add.f32 %f3228,%f3227,0fCB40007F;",
+          "neg.f32 %f3229,%f3228;",
+          "fma.rn.f32 %f3230,%f3224,0f3FB8AA3B,%f3229;",
+          "fma.rn.f32 %f3231,%f3224,0f32A57060,%f3230;",
+          "mov.b32 %b325,%f3227;",
+          "shl.b32 %b326,%b325,23;",
+          "mov.b32 %f3232,%b326;",
+          "ex2.approx.ftz.f32 %f3233,%f3231;",
+          "mul.f32 %f3234,%f3233,%f3232;",
+          "st.global.f32 [%b647+8],%f3234;",
+          "ld.global.nc.f32 %f3235,[%b646+12];",
+          "fma.rn.f32 %f3236,%f3235,0f3BBB989D,0f3F000000;",
+          "cvt.sat.f32.f32 %f3237,%f3236;",
+          "fma.rm.f32 %f3238,%f3237,%f324,%f323;",
+          "add.f32 %f3239,%f3238,0fCB40007F;",
+          "neg.f32 %f3240,%f3239;",
+          "fma.rn.f32 %f3241,%f3235,0f3FB8AA3B,%f3240;",
+          "fma.rn.f32 %f3242,%f3235,0f32A57060,%f3241;",
+          "mov.b32 %b327,%f3238;",
+          "shl.b32 %b328,%b327,23;",
+          "mov.b32 %f3243,%b328;",
+          "ex2.approx.ftz.f32 %f3244,%f3242;",
+          "mul.f32 %f3245,%f3244,%f3243;",
+          "st.global.f32 [%b647+12],%f3245;",
+          "ld.global.nc.f32 %f3246,[%b646+16];",
+          "fma.rn.f32 %f3247,%f3246,0f3BBB989D,0f3F000000;",
+          "cvt.sat.f32.f32 %f3248,%f3247;",
+          "fma.rm.f32 %f3249,%f3248,%f324,%f323;",
+          "add.f32 %f3250,%f3249,0fCB40007F;",
+          "neg.f32 %f3251,%f3250;",
+          "fma.rn.f32 %f3252,%f3246,0f3FB8AA3B,%f3251;",
+          "fma.rn.f32 %f3253,%f3246,0f32A57060,%f3252;",
+          "mov.b32 %b329,%f3249;",
+          "shl.b32 %b3210,%b329,23;",
+          "mov.b32 %f3254,%b3210;",
+          "ex2.approx.ftz.f32 %f3255,%f3253;",
+          "mul.f32 %f3256,%f3255,%f3254;",
+          "st.global.f32 [%b647+16],%f3256;",
+          "ld.global.nc.f32 %f3257,[%b646+20];",
+          "fma.rn.f32 %f3258,%f3257,0f3BBB989D,0f3F000000;",
+          "cvt.sat.f32.f32 %f3259,%f3258;",
+          "fma.rm.f32 %f3260,%f3259,%f324,%f323;",
+          "add.f32 %f3261,%f3260,0fCB40007F;",
+          "neg.f32 %f3262,%f3261;",
+          "fma.rn.f32 %f3263,%f3257,0f3FB8AA3B,%f3262;",
+          "fma.rn.f32 %f3264,%f3257,0f32A57060,%f3263;",
+          "mov.b32 %b3211,%f3260;",
+          "shl.b32 %b3212,%b3211,23;",
+          "mov.b32 %f3265,%b3212;",
+          "ex2.approx.ftz.f32 %f3266,%f3264;",
+          "mul.f32 %f3267,%f3266,%f3265;",
+          "st.global.f32 [%b647+20],%f3267;",
+          "ld.global.nc.f32 %f3268,[%b646+24];",
+          "fma.rn.f32 %f3269,%f3268,0f3BBB989D,0f3F000000;",
+          "cvt.sat.f32.f32 %f3270,%f3269;",
+          "fma.rm.f32 %f3271,%f3270,%f324,%f323;",
+          "add.f32 %f3272,%f3271,0fCB40007F;",
+          "neg.f32 %f3273,%f3272;",
+          "fma.rn.f32 %f3274,%f3268,0f3FB8AA3B,%f3273;",
+          "fma.rn.f32 %f3275,%f3268,0f32A57060,%f3274;",
+          "mov.b32 %b3213,%f3271;",
+          "shl.b32 %b3214,%b3213,23;",
+          "mov.b32 %f3276,%b3214;",
+          "ex2.approx.ftz.f32 %f3277,%f3275;",
+          "mul.f32 %f3278,%f3277,%f3276;",
+          "st.global.f32 [%b647+24],%f3278;",
+          "ld.global.nc.f32 %f3279,[%b646+28];",
+          "fma.rn.f32 %f3280,%f3279,0f3BBB989D,0f3F000000;",
+          "cvt.sat.f32.f32 %f3281,%f3280;",
+          "fma.rm.f32 %f3282,%f3281,%f324,%f323;",
+          "add.f32 %f3283,%f3282,0fCB40007F;",
+          "neg.f32 %f3284,%f3283;",
+          "fma.rn.f32 %f3285,%f3279,0f3FB8AA3B,%f3284;",
+          "fma.rn.f32 %f3286,%f3279,0f32A57060,%f3285;",
+          "mov.b32 %b3215,%f3282;",
+          "shl.b32 %b3216,%b3215,23;",
+          "mov.b32 %f3287,%b3216;",
+          "ex2.approx.ftz.f32 %f3288,%f3286;",
+          "mul.f32 %f3289,%f3288,%f3287;",
+          "st.global.f32 [%b647+28],%f3289;",
+          "ld.global.nc.f32 %f3290,[%b646+32];",
+          "fma.rn.f32 %f3291,%f3290,0f3BBB989D,0f3F000000;",
+          "cvt.sat.f32.f32 %f3292,%f3291;",
+          "fma.rm.f32 %f3293,%f3292,%f324,%f323;",
+          "add.f32 %f3294,%f3293,0fCB40007F;",
+          "neg.f32 %f3295,%f3294;",
+          "fma.rn.f32 %f3296,%f3290,0f3FB8AA3B,%f3295;",
+          "fma.rn.f32 %f3297,%f3290,0f32A57060,%f3296;",
+          "mov.b32 %b3217,%f3293;",
+          "shl.b32 %b3218,%b3217,23;",
+          "mov.b32 %f3298,%b3218;",
+          "ex2.approx.ftz.f32 %f3299,%f3297;",
+          "mul.f32 %f32100,%f3299,%f3298;",
+          "st.global.f32 [%b647+32],%f32100;",
+          "ld.global.nc.f32 %f32101,[%b646+36];",
+          "fma.rn.f32 %f32102,%f32101,0f3BBB989D,0f3F000000;",
+          "cvt.sat.f32.f32 %f32103,%f32102;",
+          "fma.rm.f32 %f32104,%f32103,%f324,%f323;",
+          "add.f32 %f32105,%f32104,0fCB40007F;",
+          "neg.f32 %f32106,%f32105;",
+          "fma.rn.f32 %f32107,%f32101,0f3FB8AA3B,%f32106;",
+          "fma.rn.f32 %f32108,%f32101,0f32A57060,%f32107;",
+          "mov.b32 %b3219,%f32104;",
+          "shl.b32 %b3220,%b3219,23;",
+          "mov.b32 %f32109,%b3220;",
+          "ex2.approx.ftz.f32 %f32110,%f32108;",
+          "mul.f32 %f32111,%f32110,%f32109;",
+          "st.global.f32 [%b647+36],%f32111;",
+          "ld.global.nc.f32 %f32112,[%b646+40];",
+          "fma.rn.f32 %f32113,%f32112,0f3BBB989D,0f3F000000;",
+          "cvt.sat.f32.f32 %f32114,%f32113;",
+          "fma.rm.f32 %f32115,%f32114,%f324,%f323;",
+          "add.f32 %f32116,%f32115,0fCB40007F;",
+          "neg.f32 %f32117,%f32116;",
+          "fma.rn.f32 %f32118,%f32112,0f3FB8AA3B,%f32117;",
+          "fma.rn.f32 %f32119,%f32112,0f32A57060,%f32118;",
+          "mov.b32 %b3221,%f32115;",
+          "shl.b32 %b3222,%b3221,23;",
+          "mov.b32 %f32120,%b3222;",
+          "ex2.approx.ftz.f32 %f32121,%f32119;",
+          "mul.f32 %f32122,%f32121,%f32120;",
+          "st.global.f32 [%b647+40],%f32122;",
+          "ld.global.nc.f32 %f32123,[%b646+44];",
+          "fma.rn.f32 %f32124,%f32123,0f3BBB989D,0f3F000000;",
+          "cvt.sat.f32.f32 %f32125,%f32124;",
+          "fma.rm.f32 %f32126,%f32125,%f324,%f323;",
+          "add.f32 %f32127,%f32126,0fCB40007F;",
+          "neg.f32 %f32128,%f32127;",
+          "fma.rn.f32 %f32129,%f32123,0f3FB8AA3B,%f32128;",
+          "fma.rn.f32 %f32130,%f32123,0f32A57060,%f32129;",
+          "mov.b32 %b3223,%f32126;",
+          "shl.b32 %b3224,%b3223,23;",
+          "mov.b32 %f32131,%b3224;",
+          "ex2.approx.ftz.f32 %f32132,%f32130;",
+          "mul.f32 %f32133,%f32132,%f32131;",
+          "st.global.f32 [%b647+44],%f32133;",
+          "ld.global.nc.f32 %f32134,[%b646+48];",
+          "fma.rn.f32 %f32135,%f32134,0f3BBB989D,0f3F000000;",
+          "cvt.sat.f32.f32 %f32136,%f32135;",
+          "fma.rm.f32 %f32137,%f32136,%f324,%f323;",
+          "add.f32 %f32138,%f32137,0fCB40007F;",
+          "neg.f32 %f32139,%f32138;",
+          "fma.rn.f32 %f32140,%f32134,0f3FB8AA3B,%f32139;",
+          "fma.rn.f32 %f32141,%f32134,0f32A57060,%f32140;",
+          "mov.b32 %b3225,%f32137;",
+          "shl.b32 %b3226,%b3225,23;",
+          "mov.b32 %f32142,%b3226;",
+          "ex2.approx.ftz.f32 %f32143,%f32141;",
+          "mul.f32 %f32144,%f32143,%f32142;",
+          "st.global.f32 [%b647+48],%f32144;",
+          "ld.global.nc.f32 %f32145,[%b646+52];",
+          "fma.rn.f32 %f32146,%f32145,0f3BBB989D,0f3F000000;",
+          "cvt.sat.f32.f32 %f32147,%f32146;",
+          "fma.rm.f32 %f32148,%f32147,%f324,%f323;",
+          "add.f32 %f32149,%f32148,0fCB40007F;",
+          "neg.f32 %f32150,%f32149;",
+          "fma.rn.f32 %f32151,%f32145,0f3FB8AA3B,%f32150;",
+          "fma.rn.f32 %f32152,%f32145,0f32A57060,%f32151;",
+          "mov.b32 %b3227,%f32148;",
+          "shl.b32 %b3228,%b3227,23;",
+          "mov.b32 %f32153,%b3228;",
+          "ex2.approx.ftz.f32 %f32154,%f32152;",
+          "mul.f32 %f32155,%f32154,%f32153;",
+          "st.global.f32 [%b647+52],%f32155;",
+          "ld.global.nc.f32 %f32156,[%b646+56];",
+          "fma.rn.f32 %f32157,%f32156,0f3BBB989D,0f3F000000;",
+          "cvt.sat.f32.f32 %f32158,%f32157;",
+          "fma.rm.f32 %f32159,%f32158,%f324,%f323;",
+          "add.f32 %f32160,%f32159,0fCB40007F;",
+          "neg.f32 %f32161,%f32160;",
+          "fma.rn.f32 %f32162,%f32156,0f3FB8AA3B,%f32161;",
+          "fma.rn.f32 %f32163,%f32156,0f32A57060,%f32162;",
+          "mov.b32 %b3229,%f32159;",
+          "shl.b32 %b3230,%b3229,23;",
+          "mov.b32 %f32164,%b3230;",
+          "ex2.approx.ftz.f32 %f32165,%f32163;",
+          "mul.f32 %f32166,%f32165,%f32164;",
+          "st.global.f32 [%b647+56],%f32166;",
+          "ld.global.nc.f32 %f32167,[%b646+60];",
+          "fma.rn.f32 %f32168,%f32167,0f3BBB989D,0f3F000000;",
+          "cvt.sat.f32.f32 %f32169,%f32168;",
+          "fma.rm.f32 %f32170,%f32169,%f324,%f323;",
+          "add.f32 %f32171,%f32170,0fCB40007F;",
+          "neg.f32 %f32172,%f32171;",
+          "fma.rn.f32 %f32173,%f32167,0f3FB8AA3B,%f32172;",
+          "fma.rn.f32 %f32174,%f32167,0f32A57060,%f32173;",
+          "mov.b32 %b3231,%f32170;",
+          "shl.b32 %b3232,%b3231,23;",
+          "mov.b32 %f32175,%b3232;",
+          "ex2.approx.ftz.f32 %f32176,%f32174;",
+          "mul.f32 %f32177,%f32176,%f32175;",
+          "st.global.f32 [%b647+60],%f32177;",
+          "ret;"
+        ],
+        "interface": [
+          [
+            "parameters",
+            "[{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":0,\"rank\":2},{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"output\",\"position\":1,\"rank\":2}]",
+            null
+          ],
+          [
+            "ptx_abi",
+            "[[\"\",\"u64\",null],[\"\",\"u64\",null],[\"\",\"u32\",null]]",
+            null
+          ]
+        ],
+        "memory_effects": [
+          "ld.param.u64 %b640,[param0];",
+          "ld.param.u64 %b641,[param1];",
+          "ld.global.nc.f32 %f320,[%b646];",
+          "st.global.f32 [%b647],%f3212;",
+          "ld.global.nc.f32 %f3213,[%b646+4];",
+          "st.global.f32 [%b647+4],%f3223;",
+          "ld.global.nc.f32 %f3224,[%b646+8];",
+          "st.global.f32 [%b647+8],%f3234;",
+          "ld.global.nc.f32 %f3235,[%b646+12];",
+          "st.global.f32 [%b647+12],%f3245;",
+          "ld.global.nc.f32 %f3246,[%b646+16];",
+          "st.global.f32 [%b647+16],%f3256;",
+          "ld.global.nc.f32 %f3257,[%b646+20];",
+          "st.global.f32 [%b647+20],%f3267;",
+          "ld.global.nc.f32 %f3268,[%b646+24];",
+          "st.global.f32 [%b647+24],%f3278;",
+          "ld.global.nc.f32 %f3279,[%b646+28];",
+          "st.global.f32 [%b647+28],%f3289;",
+          "ld.global.nc.f32 %f3290,[%b646+32];",
+          "st.global.f32 [%b647+32],%f32100;",
+          "ld.global.nc.f32 %f32101,[%b646+36];",
+          "st.global.f32 [%b647+36],%f32111;",
+          "ld.global.nc.f32 %f32112,[%b646+40];",
+          "st.global.f32 [%b647+40],%f32122;",
+          "ld.global.nc.f32 %f32123,[%b646+44];",
+          "st.global.f32 [%b647+44],%f32133;",
+          "ld.global.nc.f32 %f32134,[%b646+48];",
+          "st.global.f32 [%b647+48],%f32144;",
+          "ld.global.nc.f32 %f32145,[%b646+52];",
+          "st.global.f32 [%b647+52],%f32155;",
+          "ld.global.nc.f32 %f32156,[%b646+56];",
+          "st.global.f32 [%b647+56],%f32166;",
+          "ld.global.nc.f32 %f32167,[%b646+60];",
+          "st.global.f32 [%b647+60],%f32177;"
+        ],
+        "opcode_multiset": [
+          [
+            "add.f32",
+            16
+          ],
+          [
+            "add.s64",
+            2
+          ],
+          [
+            "cvt.sat.f32.f32",
+            16
+          ],
+          [
+            "cvta.to.global.u64",
+            2
+          ],
+          [
+            "ex2.approx.ftz.f32",
+            16
+          ],
+          [
+            "fma.rm.f32",
+            16
+          ],
+          [
+            "fma.rn.f32",
+            48
+          ],
+          [
+            "ld.global.nc.f32",
+            16
+          ],
+          [
+            "ld.param.u64",
+            2
+          ],
+          [
+            "mov.b32",
+            32
+          ],
+          [
+            "mov.f32",
+            2
+          ],
+          [
+            "mov.u32",
+            1
+          ],
+          [
+            "mul.f32",
+            16
+          ],
+          [
+            "mul.wide.u32",
+            1
+          ],
+          [
+            "neg.f32",
+            16
+          ],
+          [
+            "ret;",
+            1
+          ],
+          [
+            "shl.b32",
+            16
+          ],
+          [
+            "shl.b64",
+            1
+          ],
+          [
+            "st.global.f32",
+            16
+          ]
+        ],
+        "schedule_view": [
+          [
+            "c0",
+            "16"
+          ]
+        ],
+        "schema_version": "cuda-ptx-semantic-effects-v6",
+        "semantic_address_coordinate_folds": [],
+        "semantic_memory_effects": [
+          [
+            "ld.global.b32",
+            16
+          ],
+          [
+            "ld.param.b64",
+            2
+          ],
+          [
+            "st.global.b32",
+            16
+          ]
+        ],
+        "semantic_value_opcodes": [
+          [
+            "add.f32",
+            16
+          ],
+          [
+            "cvt.sat.f32.f32",
+            16
+          ],
+          [
+            "ex2.approx.ftz.f32",
+            16
+          ],
+          [
+            "fma.rm.f32",
+            16
+          ],
+          [
+            "fma.rn.f32",
+            48
+          ],
+          [
+            "ld.global.b32",
+            16
+          ],
+          [
+            "mov.b32",
+            32
+          ],
+          [
+            "mov.f32",
+            2
+          ],
+          [
+            "mul.f32",
+            16
+          ],
+          [
+            "neg.f32",
+            16
+          ],
+          [
+            "shl.b32",
+            16
+          ]
+        ],
+        "target_view": [
+          [
+            "name",
+            "\"cuda\""
+          ]
+        ]
+      },
+      "schedule_view": [
+        [
+          "c0",
+          "16"
+        ]
+      ],
+      "schema_version": "tilelang-tir-semantic-structure-ptx-diagnostic-v5",
+      "tir_op_multiset": [
+        [
+          "T.block",
+          1
+        ],
+        [
+          "T.exp",
+          1
+        ],
+        [
+          "T.handle",
+          2
+        ],
+        [
+          "T.launch_thread",
+          4
+        ],
+        [
+          "T.match_buffer",
+          2
+        ],
+        [
+          "T.prim_func",
+          1
+        ],
+        [
+          "T.reads",
+          1
+        ],
+        [
+          "T.writes",
+          1
+        ],
+        [
+          "control.for",
+          1
+        ]
+      ],
+      "tir_ops": [
+        "T.prim_func",
+        "T.handle",
+        "T.handle",
+        "T.match_buffer",
+        "T.match_buffer",
+        "T.launch_thread",
+        "T.launch_thread",
+        "T.launch_thread",
+        "T.launch_thread",
+        "T.block",
+        "T.reads",
+        "T.writes",
+        "control.for",
+        "T.exp"
+      ],
+      "tir_structure": "Module(body=[FunctionDef(name='tir_entry', args=arguments(posonlyargs=[], args=[arg(arg='p0', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load())), arg(arg='p1', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[]), body=[Assign(targets=[Name(id='v0', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='int32', ctx=Load()), args=[], keywords=[])), Assign(targets=[Name(id='v1', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p0', ctx=Load()), Tuple(elts=[Name(id='v0', ctx=Load()), Constant(value=16)], ctx=Load())], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=16), Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v2', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p1', ctx=Load()), Tuple(elts=[Name(id='v0', ctx=Load()), Constant(value=16)], ctx=Load())], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=16), Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v3', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='blockIdx.x'), Name(id='v0', ctx=Load())], keywords=[])), Assign(targets=[Name(id='v4', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.x'), Constant(value=16)], keywords=[])), Assign(targets=[Name(id='v5', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.y'), Constant(value=1)], keywords=[])), Assign(targets=[Name(id='v6', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.z'), Constant(value=1)], keywords=[])), With(items=[withitem(context_expr=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='block', ctx=Load()), args=[Constant(value='<block>')], keywords=[]))], body=[Expr(value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='reads', ctx=Load()), args=[Subscript(value=Name(id='v1', ctx=Load()), slice=Tuple(elts=[Name(id='v3', ctx=Load()), Slice(lower=Constant(value=0), upper=Constant(value=16))], ctx=Load()), ctx=Load())], keywords=[])), Expr(value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='writes', ctx=Load()), args=[Subscript(value=Name(id='v2', ctx=Load()), slice=Tuple(elts=[Name(id='v3', ctx=Load()), Slice(lower=Constant(value=0), upper=Constant(value=16))], ctx=Load()), ctx=Load())], keywords=[])), For(target=Name(id='v7', ctx=Store()), iter=Call(func=Name(id='range', ctx=Load()), args=[Constant(value=16)], keywords=[]), body=[Assign(targets=[Subscript(value=Name(id='v2', ctx=Load()), slice=Tuple(elts=[Name(id='v3', ctx=Load()), Name(id='v7', ctx=Load())], ctx=Load()), ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='exp', ctx=Load()), args=[Subscript(value=Name(id='v1', ctx=Load()), slice=Tuple(elts=[Name(id='v3', ctx=Load()), Name(id='v7', ctx=Load())], ctx=Load()), ctx=Load())], keywords=[]))], orelse=[])])], decorator_list=[Attribute(value=Name(id='T', ctx=Load()), attr='prim_func', ctx=Load())])], type_ignores=[])"
+    },
+    "generation": {
+      "attempts": 1,
+      "context_receipt": {
+        "backend_protocol": "openai.codex-cli.intentir-replay.v72",
+        "cli_turns": 1,
+        "context_rollover_input_tokens": 0,
+        "episode_wall_time_limit_seconds": 7200.0,
+        "excluded_dependencies": [
+          "pi",
+          "Source",
+          "Harness valuation",
+          "Gate observation",
+          "prior Replay"
+        ],
+        "formal_compile_recheck": true,
+        "formal_ingress_protocol": "intentir.scrc.replay-check.v17",
+        "fresh_session": true,
+        "model_segments_lower_bound": 1,
+        "pi_visible_to_replay": false,
+        "replay_input_protocol": "intentir.scrc.replay-input.v4",
+        "retrieval_trace": [],
+        "thread_id": "019fbc4e-1d7f-7293-941d-e2d6675a09e5",
+        "thread_ids": [
+          "019fbc4e-1d7f-7293-941d-e2d6675a09e5"
+        ],
+        "tool_actions": 0,
+        "visible_packet_components": [
+          "c",
+          "j",
+          "u_f"
+        ]
+      },
+      "elapsed_ms": 156245.92118093278,
+      "entry_function_name": null,
+      "function_name": "scrc_k0",
+      "model": "gpt-5.6-sol",
+      "response_id": "019fbc4e-1d7f-7293-941d-e2d6675a09e5",
+      "response_model": "gpt-5.6-sol",
+      "usage": {}
+    },
+    "mode": "normal",
+    "normalization": {
+      "active_rules": [],
+      "frontend": "tilelang",
+      "hard_preservation_check": "passed",
+      "hard_relations": [
+        "program_axes"
+      ],
+      "idempotence_check": "passed",
+      "observer_profile": "tilelang-tir-semantic-structure-ptx-diagnostic-v5",
+      "peer_observation_visible": false,
+      "profile_ok": true,
+      "protocol": "intentir.gate1.jc-normalizer.v2",
+      "transformed_occurrences": 0,
+      "unary": true,
+      "unknown_atoms": "hard"
+    },
+    "physical_calls": 1
+  },
+  "normal_fanout": null,
+  "observer_profile": {
+    "canonicalization_version": "tilelang-tir-semantic-structure-ptx-diagnostic-v5",
+    "compiler_stage": "tir",
+    "evidence_class": "semantic_structure_with_ptx_diagnostic",
+    "frontend": "tilelang",
+    "profile_id": "tilelang_tir_semantic_structure",
+    "profile_version": "tilelang-tir-semantic-structure-ptx-diagnostic-v5"
+  },
+  "protocol": "intentir.j-only-replay.jc-structural-gate1.v2",
+  "source_compile": {
+    "cache_key": "81fc8951812d3f7af0735044c96a3f4b41c6b8bcc54b9a8f0ba7dfd3b8801988",
+    "compiler": {
+      "name": "tilelang",
+      "version": "0.1.8"
+    },
+    "cuda": "#include <tl_templates/cuda/gemm.h>\n#include <tl_templates/cuda/copy.h>\n#include <tl_templates/cuda/reduce.h>\n#include <tl_templates/cuda/ldsm.h>\n#include <tl_templates/cuda/threadblock_swizzle.h>\n#include <tl_templates/cuda/debug.h>\n#ifdef ENABLE_BF16\n#include <tl_templates/cuda/cuda_bf16_fallbacks.cuh>\n#endif\n\nextern \"C\" __global__ void main_kernel(const float* __restrict__ inp, float* __restrict__ out, int M);\nextern \"C\" __global__ void __launch_bounds__(16, 1) main_kernel(const float* __restrict__ inp, float* __restrict__ out, int M) {\n  out[((((int64_t)((int)blockIdx.x)) * (int64_t)16) + ((int64_t)((int)threadIdx.x)))] = expf(inp[((((int64_t)((int)blockIdx.x)) * (int64_t)16) + ((int64_t)((int)threadIdx.x)))]);\n}\n\n",
+    "diagnostic": "",
+    "elapsed_ms": 4555.6499370140955,
+    "interface": {
+      "parameters": [
+        {
+          "dtype": "float32",
+          "kind": "pointer",
+          "mode": "input",
+          "name": "inp",
+          "rank": 2,
+          "shape": [
+            "M",
+            16
+          ]
+        },
+        {
+          "dtype": "float32",
+          "kind": "pointer",
+          "mode": "output",
+          "name": "out",
+          "rank": 2,
+          "shape": [
+            "M",
+            16
+          ]
+        }
+      ]
+    },
+    "ok": true,
+    "ptx": "//\n// Generated by NVIDIA NVVM Compiler\n//\n// Compiler Build ID: CL-35404655\n// Cuda compilation tools, release 12.8, V12.8.61\n// Based on NVVM 20.0.0\n//\n\n.version 8.7\n.target sm_120a\n.address_size 64\n\n\t// .globl\tmain_kernel\n.global .align 1 .b8 _ZN45_INTERNAL_bc47b6ae_14_tvm_kernels_cu_1b63e0854cute7productE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_bc47b6ae_14_tvm_kernels_cu_1b63e0854cute1_E[1];\n.global .align 1 .b8 _ZN45_INTERNAL_bc47b6ae_14_tvm_kernels_cu_1b63e0854cuda3std3__45__cpo5beginE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_bc47b6ae_14_tvm_kernels_cu_1b63e0854cuda3std3__45__cpo3endE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_bc47b6ae_14_tvm_kernels_cu_1b63e0854cuda3std3__45__cpo6cbeginE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_bc47b6ae_14_tvm_kernels_cu_1b63e0854cuda3std3__45__cpo4cendE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_bc47b6ae_14_tvm_kernels_cu_1b63e0854cuda3std3__419piecewise_constructE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_bc47b6ae_14_tvm_kernels_cu_1b63e0854cuda3std3__48in_placeE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_bc47b6ae_14_tvm_kernels_cu_1b63e0854cuda3std6ranges3__45__cpo4swapE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_bc47b6ae_14_tvm_kernels_cu_1b63e0854cuda3std6ranges3__45__cpo9iter_moveE[1];\n\n.visible .entry main_kernel(\n\t.param .u64 main_kernel_param_0,\n\t.param .u64 main_kernel_param_1,\n\t.param .u32 main_kernel_param_2\n)\n.maxntid 16, 1, 1\n.minnctapersm 1\n{\n\t.reg .b32 \t%r<5>;\n\t.reg .f32 \t%f<14>;\n\t.reg .b64 \t%rd<11>;\n\t.loc\t1 12 0\n\n\tld.param.u64 \t%rd1, [main_kernel_param_0];\n\tld.param.u64 \t%rd2, [main_kernel_param_1];\n\t.loc\t1 13 3\n\tcvta.to.global.u64 \t%rd3, %rd2;\n\tcvta.to.global.u64 \t%rd4, %rd1;\n\tmov.u32 \t%r1, %ctaid.x;\n\tmul.wide.u32 \t%rd5, %r1, 16;\n\tmov.u32 \t%r2, %tid.x;\n\tcvt.u64.u32 \t%rd6, %r2;\n\tor.b64  \t%rd7, %rd5, %rd6;\n\tshl.b64 \t%rd8, %rd7, 2;\n\tadd.s64 \t%rd9, %rd4, %rd8;\n\tld.global.nc.f32 \t%f1, [%rd9];\n\tfma.rn.f32 \t%f2, %f1, 0f3BBB989D, 0f3F000000;\n\tcvt.sat.f32.f32 \t%f3, %f2;\n\tmov.f32 \t%f4, 0f4B400001;\n\tmov.f32 \t%f5, 0f437C0000;\n\tfma.rm.f32 \t%f6, %f3, %f5, %f4;\n\tadd.f32 \t%f7, %f6, 0fCB40007F;\n\tneg.f32 \t%f8, %f7;\n\tfma.rn.f32 \t%f9, %f1, 0f3FB8AA3B, %f8;\n\tfma.rn.f32 \t%f10, %f1, 0f32A57060, %f9;\n\tmov.b32 \t%r3, %f6;\n\tshl.b32 \t%r4, %r3, 23;\n\tmov.b32 \t%f11, %r4;\n\tex2.approx.ftz.f32 \t%f12, %f10;\n\tmul.f32 \t%f13, %f12, %f11;\n\tadd.s64 \t%rd10, %rd3, %rd8;\n\tst.global.f32 \t[%rd10], %f13;\n\t.loc\t1 14 1\n\tret;\n\n}\n\t.file\t1 \"/tmp/tmpm1dwszrm/tvm_kernels.cu\"\n",
+    "target": {
+      "name": "cuda"
+    },
+    "tir": "# from tvm.script import tir as T\n\n@T.prim_func\ndef main(inp_handle: T.handle, out_handle: T.handle):\n    M = T.int32()\n    inp = T.match_buffer(inp_handle, (M, 16), strides=(16, 1))\n    out = T.match_buffer(out_handle, (M, 16), strides=(16, 1))\n    # with T.block(\"root\"):\n    bx = T.launch_thread(\"blockIdx.x\", M)\n    tx = T.launch_thread(\"threadIdx.x\", 16)\n    ty = T.launch_thread(\"threadIdx.y\", 1)\n    tz = T.launch_thread(\"threadIdx.z\", 1)\n    with T.block(\"tilelang_root\"):\n        T.reads(inp[bx, 0:16])\n        T.writes(out[bx, 0:16])\n        for col in T.parallel(16):\n            out[bx, col] = T.exp(inp[bx, col])"
+  },
+  "source_fingerprint": {
+    "digest": "60ceac0669b34bc2212bc415fb1be6ccad7c34103b094a2d240ca7401ed96e59",
+    "interface": [
+      [
+        "parameters",
+        "[{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":0,\"rank\":2},{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"output\",\"position\":1,\"rank\":2}]"
+      ]
+    ],
+    "ptx": {
+      "collectives": [],
+      "control_flow": [
+        "ret;"
+      ],
+      "coordinate_uses": [
+        "%ctaid.x",
+        "%tid.x"
+      ],
+      "digest": "63da9a369b577bbb2cbd83cca7acef4bd4bdbd19bb688f04f35eb21730b74331",
+      "instructions": [
+        "ld.param.u64 %b640,[param0];",
+        "ld.param.u64 %b641,[param1];",
+        "cvta.to.global.u64 %b642,%b641;",
+        "cvta.to.global.u64 %b643,%b640;",
+        "mov.u32 %b320,%ctaid.x;",
+        "mul.wide.u32 %b644,%b320,16;",
+        "mov.u32 %b321,%tid.x;",
+        "cvt.u64.u32 %b645,%b321;",
+        "or.b64 %b646,%b644,%b645;",
+        "shl.b64 %b647,%b646,2;",
+        "add.s64 %b648,%b643,%b647;",
+        "ld.global.nc.f32 %f320,[%b648];",
+        "fma.rn.f32 %f321,%f320,0f3BBB989D,0f3F000000;",
+        "cvt.sat.f32.f32 %f322,%f321;",
+        "mov.f32 %f323,0f4B400001;",
+        "mov.f32 %f324,0f437C0000;",
+        "fma.rm.f32 %f325,%f322,%f324,%f323;",
+        "add.f32 %f326,%f325,0fCB40007F;",
+        "neg.f32 %f327,%f326;",
+        "fma.rn.f32 %f328,%f320,0f3FB8AA3B,%f327;",
+        "fma.rn.f32 %f329,%f320,0f32A57060,%f328;",
+        "mov.b32 %b322,%f325;",
+        "shl.b32 %b323,%b322,23;",
+        "mov.b32 %f3210,%b323;",
+        "ex2.approx.ftz.f32 %f3211,%f329;",
+        "mul.f32 %f3212,%f3211,%f3210;",
+        "add.s64 %b649,%b642,%b647;",
+        "st.global.f32 [%b649],%f3212;",
+        "ret;"
+      ],
+      "interface": [
+        [
+          "parameters",
+          "[{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":0,\"rank\":2},{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"output\",\"position\":1,\"rank\":2}]",
+          null
+        ],
+        [
+          "ptx_abi",
+          "[[\"\",\"u64\",null],[\"\",\"u64\",null],[\"\",\"u32\",null]]",
+          null
+        ]
+      ],
+      "memory_effects": [
+        "ld.param.u64 %b640,[param0];",
+        "ld.param.u64 %b641,[param1];",
+        "ld.global.nc.f32 %f320,[%b648];",
+        "st.global.f32 [%b649],%f3212;"
+      ],
+      "opcode_multiset": [
+        [
+          "add.f32",
+          1
+        ],
+        [
+          "add.s64",
+          2
+        ],
+        [
+          "cvt.sat.f32.f32",
+          1
+        ],
+        [
+          "cvt.u64.u32",
+          1
+        ],
+        [
+          "cvta.to.global.u64",
+          2
+        ],
+        [
+          "ex2.approx.ftz.f32",
+          1
+        ],
+        [
+          "fma.rm.f32",
+          1
+        ],
+        [
+          "fma.rn.f32",
+          3
+        ],
+        [
+          "ld.global.nc.f32",
+          1
+        ],
+        [
+          "ld.param.u64",
+          2
+        ],
+        [
+          "mov.b32",
+          2
+        ],
+        [
+          "mov.f32",
+          2
+        ],
+        [
+          "mov.u32",
+          2
+        ],
+        [
+          "mul.f32",
+          1
+        ],
+        [
+          "mul.wide.u32",
+          1
+        ],
+        [
+          "neg.f32",
+          1
+        ],
+        [
+          "or.b64",
+          1
+        ],
+        [
+          "ret;",
+          1
+        ],
+        [
+          "shl.b32",
+          1
+        ],
+        [
+          "shl.b64",
+          1
+        ],
+        [
+          "st.global.f32",
+          1
+        ]
+      ],
+      "schedule_view": [
+        [
+          "c0",
+          "16"
+        ]
+      ],
+      "schema_version": "cuda-ptx-semantic-effects-v6",
+      "semantic_address_coordinate_folds": [],
+      "semantic_memory_effects": [
+        [
+          "ld.global.b32",
+          1
+        ],
+        [
+          "ld.param.b64",
+          2
+        ],
+        [
+          "st.global.b32",
+          1
+        ]
+      ],
+      "semantic_value_opcodes": [
+        [
+          "add.f32",
+          1
+        ],
+        [
+          "cvt.sat.f32.f32",
+          1
+        ],
+        [
+          "ex2.approx.ftz.f32",
+          1
+        ],
+        [
+          "fma.rm.f32",
+          1
+        ],
+        [
+          "fma.rn.f32",
+          3
+        ],
+        [
+          "ld.global.b32",
+          1
+        ],
+        [
+          "mov.b32",
+          2
+        ],
+        [
+          "mov.f32",
+          2
+        ],
+        [
+          "mul.f32",
+          1
+        ],
+        [
+          "neg.f32",
+          1
+        ],
+        [
+          "shl.b32",
+          1
+        ]
+      ],
+      "target_view": [
+        [
+          "name",
+          "\"cuda\""
+        ]
+      ]
+    },
+    "schedule_view": [
+      [
+        "c0",
+        "16"
+      ]
+    ],
+    "schema_version": "tilelang-tir-semantic-structure-ptx-diagnostic-v5",
+    "tir_op_multiset": [
+      [
+        "T.block",
+        1
+      ],
+      [
+        "T.exp",
+        1
+      ],
+      [
+        "T.handle",
+        2
+      ],
+      [
+        "T.launch_thread",
+        4
+      ],
+      [
+        "T.match_buffer",
+        2
+      ],
+      [
+        "T.prim_func",
+        1
+      ],
+      [
+        "T.reads",
+        1
+      ],
+      [
+        "T.writes",
+        1
+      ],
+      [
+        "control.for",
+        1
+      ]
+    ],
+    "tir_ops": [
+      "T.prim_func",
+      "T.handle",
+      "T.handle",
+      "T.match_buffer",
+      "T.match_buffer",
+      "T.launch_thread",
+      "T.launch_thread",
+      "T.launch_thread",
+      "T.launch_thread",
+      "T.block",
+      "T.reads",
+      "T.writes",
+      "control.for",
+      "T.exp"
+    ],
+    "tir_structure": "Module(body=[FunctionDef(name='tir_entry', args=arguments(posonlyargs=[], args=[arg(arg='p0', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load())), arg(arg='p1', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[]), body=[Assign(targets=[Name(id='v0', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='int32', ctx=Load()), args=[], keywords=[])), Assign(targets=[Name(id='v1', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p0', ctx=Load()), Tuple(elts=[Name(id='v0', ctx=Load()), Constant(value=16)], ctx=Load())], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=16), Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v2', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p1', ctx=Load()), Tuple(elts=[Name(id='v0', ctx=Load()), Constant(value=16)], ctx=Load())], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=16), Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v3', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='blockIdx.x'), Name(id='v0', ctx=Load())], keywords=[])), Assign(targets=[Name(id='v4', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.x'), Constant(value=16)], keywords=[])), Assign(targets=[Name(id='v5', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.y'), Constant(value=1)], keywords=[])), Assign(targets=[Name(id='v6', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.z'), Constant(value=1)], keywords=[])), With(items=[withitem(context_expr=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='block', ctx=Load()), args=[Constant(value='<block>')], keywords=[]))], body=[Expr(value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='reads', ctx=Load()), args=[Subscript(value=Name(id='v1', ctx=Load()), slice=Tuple(elts=[Name(id='v3', ctx=Load()), Slice(lower=Constant(value=0), upper=Constant(value=16))], ctx=Load()), ctx=Load())], keywords=[])), Expr(value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='writes', ctx=Load()), args=[Subscript(value=Name(id='v2', ctx=Load()), slice=Tuple(elts=[Name(id='v3', ctx=Load()), Slice(lower=Constant(value=0), upper=Constant(value=16))], ctx=Load()), ctx=Load())], keywords=[])), For(target=Name(id='v7', ctx=Store()), iter=Call(func=Name(id='range', ctx=Load()), args=[Constant(value=16)], keywords=[]), body=[Assign(targets=[Subscript(value=Name(id='v2', ctx=Load()), slice=Tuple(elts=[Name(id='v3', ctx=Load()), Name(id='v7', ctx=Load())], ctx=Load()), ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='exp', ctx=Load()), args=[Subscript(value=Name(id='v1', ctx=Load()), slice=Tuple(elts=[Name(id='v3', ctx=Load()), Name(id='v7', ctx=Load())], ctx=Load()), ctx=Load())], keywords=[]))], orelse=[])])], decorator_list=[Attribute(value=Name(id='T', ctx=Load()), attr='prim_func', ctx=Load())])], type_ignores=[])"
+  },
+  "source_normalization": {
+    "active_rules": [],
+    "frontend": "tilelang",
+    "hard_preservation_check": "passed",
+    "hard_relations": [
+      "program_axes"
+    ],
+    "idempotence_check": "passed",
+    "observer_profile": "tilelang-tir-semantic-structure-ptx-diagnostic-v5",
+    "peer_observation_visible": false,
+    "profile_ok": true,
+    "protocol": "intentir.gate1.jc-normalizer.v2",
+    "transformed_occurrences": 0,
+    "unary": true,
+    "unknown_atoms": "hard"
+  },
+  "status": "replay_closed"
+}

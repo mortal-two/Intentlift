@@ -1,0 +1,15 @@
+extern "C" __global__ void scrc_k0(const float* p0,
+                                     const float* p1,
+                                     const float* p2,
+                                     float* p3,
+                                     int p4) {
+  const int v2 = static_cast<int>(blockIdx.x);
+  const float t1_value = p2[0];
+  const float t2_value = p0[0];
+
+  for (int v3 = 0; v3 < 16; ++v3) {
+    const int offset = v2 * 16 + v3;
+    const float v0 = fmaxf(p1[offset], t1_value);
+    p3[offset] = fminf(v0, t2_value);
+  }
+}

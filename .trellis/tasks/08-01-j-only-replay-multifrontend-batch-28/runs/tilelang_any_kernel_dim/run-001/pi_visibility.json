@@ -1,0 +1,25 @@
+{
+  "gate_visible_to_replay": false,
+  "packet_root": [
+    "c",
+    "j",
+    "u_f"
+  ],
+  "packet_sha256": "cead658368973db9ca9ff3a5c74d8b41a8e9ddd15acf3ec79127fc51c20af037",
+  "pi_key_paths": [],
+  "pi_visible_to_replay": false,
+  "protocol": "intentir.experiment.replay-input-visibility.v1",
+  "source_visible_to_replay": false,
+  "workspace_files": [
+    "README.md",
+    "REPLAY_CONTRACT.md",
+    "TOOL.md",
+    "compiler-index.intent",
+    "compiler-index.json",
+    "frontend.json",
+    "mask-c.json",
+    "packet.json",
+    "semantic-program.intent",
+    "semantic-program.json"
+  ]
+}

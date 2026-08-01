@@ -1,0 +1,8 @@
+extern "C" __global__ void scrc_k0(const float* p0, float* p1, int p2) {
+  const long long v1 = static_cast<long long>(blockIdx.x);
+  const long long row_offset = v1 * 16;
+
+  for (int v2 = 0; v2 < 16; ++v2) {
+    p1[row_offset + v2] = p0[row_offset + v2];
+  }
+}

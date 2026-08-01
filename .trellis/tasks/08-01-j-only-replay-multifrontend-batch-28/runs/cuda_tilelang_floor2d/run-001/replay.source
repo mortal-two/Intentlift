@@ -1,0 +1,11 @@
+#include <math.h>
+
+extern "C" __global__ void scrc_k0(const float* p0, float* p1, int p2) {
+    const unsigned long long row = static_cast<unsigned long long>(blockIdx.x);
+    const unsigned long long base = row * 16ULL;
+
+    for (int column = 0; column < 16; ++column) {
+        const unsigned long long offset = base + static_cast<unsigned long long>(column);
+        p1[offset] = floorf(p0[offset]);
+    }
+}

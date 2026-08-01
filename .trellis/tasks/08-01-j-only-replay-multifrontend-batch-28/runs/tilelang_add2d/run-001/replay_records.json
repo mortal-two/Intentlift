@@ -1,0 +1,244 @@
+[
+  {
+    "attempts": 1,
+    "backend_protocol": "openai.codex-cli.intentir-replay.v72",
+    "context_receipt": {
+      "backend_protocol": "openai.codex-cli.intentir-replay.v72",
+      "cli_turns": 1,
+      "context_rollover_input_tokens": 0,
+      "episode_wall_time_limit_seconds": 7200.0,
+      "excluded_dependencies": [
+        "pi",
+        "Source",
+        "Harness valuation",
+        "Gate observation",
+        "prior Replay"
+      ],
+      "formal_compile_recheck": true,
+      "formal_ingress_protocol": "intentir.scrc.replay-check.v17",
+      "fresh_session": true,
+      "model_segments_lower_bound": 1,
+      "pi_visible_to_replay": false,
+      "replay_input_protocol": "intentir.scrc.replay-input.v4",
+      "retrieval_trace": [],
+      "thread_id": "019fbc4b-f0e9-72b1-a187-a3a3582182ba",
+      "thread_ids": [
+        "019fbc4b-f0e9-72b1-a187-a3a3582182ba"
+      ],
+      "tool_actions": 0,
+      "visible_packet_components": [
+        "c",
+        "j",
+        "u_f"
+      ]
+    },
+    "elapsed_ms": 173561.84311397374,
+    "entry_function_name": null,
+    "function_name": "scrc_k0",
+    "kind": "generation",
+    "model": "gpt-5.6-sol",
+    "physical_provider_calls": 1,
+    "response_id": "019fbc4b-f0e9-72b1-a187-a3a3582182ba",
+    "response_model": "gpt-5.6-sol",
+    "trajectory": {
+      "accepted_submission_interrupts": [
+        {
+          "elapsed_ms": 173561.84311397374,
+          "recovery": "exact_checkpoint_restored",
+          "thread_id": "019fbc4b-f0e9-72b1-a187-a3a3582182ba"
+        }
+      ],
+      "backend": "openai.codex-cli.intentir-replay.v72",
+      "diagnostic_ready_interrupts": [],
+      "explicit_submission_accepted": true,
+      "formal_ingress_recheck": true,
+      "fresh_session": true,
+      "isolation": {
+        "input": "read-only",
+        "output_work_tmp": "write-only-scope",
+        "provider_secret_in_tool_env": false,
+        "source_blind": true,
+        "tool_network": "disabled"
+      },
+      "live_checkpoint": [
+        {
+          "accepted": false,
+          "checkpoint_only": true,
+          "replay_bytes": 323,
+          "status": "fail"
+        },
+        {
+          "accepted": false,
+          "checkpoint_only": true,
+          "replay_bytes": 322,
+          "status": "fail"
+        },
+        {
+          "accepted": true,
+          "checkpoint_only": true,
+          "replay_bytes": 322,
+          "status": "pass"
+        }
+      ],
+      "packet_queries": [
+        {
+          "query": [
+            "abi",
+            "0",
+            "48"
+          ]
+        }
+      ],
+      "protocol": "intentir.codex-cli.agent-runtime.v5",
+      "replay_check": [
+        {
+          "diagnostics": [
+            {
+              "anonymous_handles": [],
+              "line": 3,
+              "path": "<line:3>",
+              "rule_code": "tilelang_module_binding_requires_uppercase_literal_or_T_dynamic"
+            }
+          ],
+          "status": "fail",
+          "trigger": "live_checkpoint"
+        },
+        {
+          "diagnostics": [
+            {
+              "anonymous_handles": [],
+              "line": 3,
+              "path": "<line:3>",
+              "rule_code": "tilelang_module_binding_requires_uppercase_literal_or_T_dynamic"
+            }
+          ],
+          "status": "fail",
+          "trigger": "live_checkpoint"
+        },
+        {
+          "diagnostics": [],
+          "status": "pass",
+          "trigger": "live_checkpoint"
+        },
+        {
+          "diagnostics": [],
+          "status": "pass",
+          "trigger": "host_accepted_submission_restore"
+        }
+      ],
+      "replay_compile_check": [
+        {
+          "diagnostics": [],
+          "status": "pass",
+          "trigger": "live_checkpoint"
+        },
+        {
+          "diagnostics": [],
+          "status": "pass",
+          "trigger": "host_accepted_submission_restore"
+        }
+      ],
+      "replay_input": {
+        "authority": "path and byte-count receipt only; exact source-isolated packet bytes remain in input/packet.json and no code or schedule is generated",
+        "compiler_index_json_bytes": 528,
+        "compiler_index_text_bytes": 346,
+        "excluded_dependencies": [
+          "pi",
+          "Source",
+          "Harness valuation",
+          "Gate observation",
+          "prior Replay"
+        ],
+        "packet_bytes": 3681,
+        "paths": {
+          "compiler_index": "input/compiler-index.intent",
+          "compiler_index_json": "input/compiler-index.json",
+          "frontend": "input/frontend.json",
+          "host_check": "work/host_replay_check.json",
+          "mask_c": "input/mask-c.json",
+          "packet": "input/packet.json",
+          "public_contract": "input/REPLAY_CONTRACT.md",
+          "replay": "output/replay.source",
+          "semantic_program": "input/semantic-program.intent",
+          "semantic_program_json": "input/semantic-program.json",
+          "tool_contract": "input/TOOL.md"
+        },
+        "pi_visible_to_replay": false,
+        "protocol": "intentir.scrc.replay-startup-view.v6",
+        "semantic_program_json_bytes": 5053,
+        "semantic_program_text_bytes": 2443,
+        "visible_packet_components": [
+          "c",
+          "j",
+          "u_f"
+        ]
+      },
+      "replay_ttir_inspections": [],
+      "semantic_queries": [],
+      "thread_id": "019fbc4b-f0e9-72b1-a187-a3a3582182ba",
+      "thread_ids": [
+        "019fbc4b-f0e9-72b1-a187-a3a3582182ba"
+      ],
+      "timeout_events": [],
+      "tool_bridge": {
+        "authority": "closed allowlisted workspace callbacks; each handler response declares its own authority, and the mailbox transport performs no semantic inference, lowering, repair, Gate, or certification",
+        "calls": 6,
+        "protocol": "intentir.codex-cli.tool-bridge.v3",
+        "receipts": [
+          {
+            "argument_count": 3,
+            "arguments_sha256": "451889f14360aac2f0682588478a669d6643adbcba59e14c48ff395d42bf15ad",
+            "elapsed_ms": 3.4950129920616746,
+            "result_sha256": "1e39dcb383e99127dfccb9f5cbd3654b9165b37e9d52aea7cbc973fb3bdcf7a4",
+            "status": "pass",
+            "tool": "packet_query"
+          },
+          {
+            "argument_count": 0,
+            "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "elapsed_ms": 3.0137799913063645,
+            "result_sha256": "7ff356cc1d6a00ea0bcd36e1fcfdbbc7e3eca5fb4cda6fb07cbdb85b3ba228c2",
+            "status": "fail",
+            "tool": "<invalid>"
+          },
+          {
+            "argument_count": 0,
+            "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "elapsed_ms": 3.972500911913812,
+            "result_sha256": "82794b8f5a4205cf66df2e7963c68dec4c88327550423e0b69200e7fc0699e74",
+            "status": "fail",
+            "tool": "replay_compile_check"
+          },
+          {
+            "argument_count": 0,
+            "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "elapsed_ms": 4.114947048947215,
+            "result_sha256": "f357127d4a9d27ac15f6ab523b1a7fc7254271691e6d67b576b195a0b74a9e1e",
+            "status": "fail",
+            "tool": "replay_compile_check"
+          },
+          {
+            "argument_count": 0,
+            "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "elapsed_ms": 12470.224415999837,
+            "result_sha256": "d032701b865531560c82dd5f87767b6fa544278262072943e6288b0c176e0db4",
+            "status": "pass",
+            "tool": "replay_compile_check"
+          },
+          {
+            "argument_count": 0,
+            "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "elapsed_ms": 4962.232711957768,
+            "result_sha256": "eade241b2d53564037e5fcc054d247fe0c038ab46d16011237c46f026706b51d",
+            "status": "pass",
+            "tool": "submit_replay"
+          }
+        ],
+        "transport": "isolated_workspace_file_mailbox"
+      },
+      "turns": []
+    },
+    "transport_retries": 0,
+    "usage": {}
+  }
+]

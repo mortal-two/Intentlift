@@ -1,0 +1,18 @@
+{
+  "case": "tilelang:add_bias2d",
+  "cohort_memberships": [
+    "g1_pointwise_selection",
+    "g3_contraction_epilogue",
+    "g5_indexing_layout_image"
+  ],
+  "diagnostics": [],
+  "frontend": "tilelang",
+  "lift_agent_calls": 0,
+  "packet_root": [
+    "c",
+    "j",
+    "u_f"
+  ],
+  "pi_visible_to_replay": false,
+  "typecheck": "pass"
+}

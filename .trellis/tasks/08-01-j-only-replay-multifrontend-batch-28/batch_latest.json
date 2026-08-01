@@ -1,0 +1,475 @@
+{
+  "accepted": [
+    "tilelang:add2d",
+    "tilelang:relu2d",
+    "tilelang:exp2d",
+    "tilelang:add_bias2d"
+  ],
+  "accepted_count": 4,
+  "gate2_workers": 1,
+  "lift_agent_calls": 0,
+  "protocol": "intentir.experiment.manual-batch-summary.v1",
+  "results": [
+    {
+      "case": "tilelang:add2d",
+      "cohort_memberships": [
+        "g1_pointwise_selection",
+        "g5_indexing_layout_image"
+      ],
+      "frontend": "tilelang",
+      "gate1": "replay_closed",
+      "gate1_elapsed_ms": 190874.4819164276,
+      "gate2": "gate2_pass",
+      "gate2_elapsed_ms": 443.7899589538574,
+      "gate2_passed": true,
+      "gate2_status_counts": {
+        "gate2_pass": 1
+      },
+      "lift_agent_calls": 0,
+      "pi_visible_to_replay": false,
+      "protocol": "intentir.experiment.manual-batch-j-only.v3",
+      "replay_provider_calls": 1,
+      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/tilelang_add2d/run-001",
+      "total_elapsed_ms": 191919.57831382751,
+      "typecheck": "pass"
+    },
+    {
+      "case": "cuda:tilelang_add2d",
+      "cohort_memberships": [
+        "g1_pointwise_selection",
+        "g5_indexing_layout_image"
+      ],
+      "frontend": "cuda",
+      "gate1": "no_closure",
+      "gate1_elapsed_ms": 54853.01160812378,
+      "gate2": null,
+      "gate2_elapsed_ms": 0.0,
+      "gate2_passed": null,
+      "gate2_status_counts": {},
+      "lift_agent_calls": 0,
+      "pi_visible_to_replay": false,
+      "protocol": "intentir.experiment.manual-batch-j-only.v3",
+      "replay_provider_calls": 1,
+      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/cuda_tilelang_add2d/run-001",
+      "total_elapsed_ms": 55527.94575691223,
+      "typecheck": "pass"
+    },
+    {
+      "case": "tilelang:relu2d",
+      "cohort_memberships": [
+        "g1_pointwise_selection",
+        "g3_contraction_epilogue"
+      ],
+      "frontend": "tilelang",
+      "gate1": "replay_closed",
+      "gate1_elapsed_ms": 180947.2439289093,
+      "gate2": "gate2_pass",
+      "gate2_elapsed_ms": 605.1626205444336,
+      "gate2_passed": true,
+      "gate2_status_counts": {
+        "gate2_pass": 1
+      },
+      "lift_agent_calls": 0,
+      "pi_visible_to_replay": false,
+      "protocol": "intentir.experiment.manual-batch-j-only.v3",
+      "replay_provider_calls": 1,
+      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/tilelang_relu2d/run-001",
+      "total_elapsed_ms": 182221.78387641907,
+      "typecheck": "pass"
+    },
+    {
+      "case": "cuda:tilelang_relu2d",
+      "cohort_memberships": [
+        "g1_pointwise_selection",
+        "g3_contraction_epilogue"
+      ],
+      "frontend": "cuda",
+      "gate1": "no_closure",
+      "gate1_elapsed_ms": 63441.561222076416,
+      "gate2": null,
+      "gate2_elapsed_ms": 0.0,
+      "gate2_passed": null,
+      "gate2_status_counts": {},
+      "lift_agent_calls": 0,
+      "pi_visible_to_replay": false,
+      "protocol": "intentir.experiment.manual-batch-j-only.v3",
+      "replay_provider_calls": 1,
+      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/cuda_tilelang_relu2d/run-001",
+      "total_elapsed_ms": 63960.19268035889,
+      "typecheck": "pass"
+    },
+    {
+      "case": "tilelang:floor2d",
+      "cohort_memberships": [
+        "g1_pointwise_selection",
+        "g7_cross_feature_stress"
+      ],
+      "frontend": "tilelang",
+      "gate1": "no_closure",
+      "gate1_elapsed_ms": 217346.86636924744,
+      "gate2": null,
+      "gate2_elapsed_ms": 0.0,
+      "gate2_passed": null,
+      "gate2_status_counts": {},
+      "lift_agent_calls": 0,
+      "pi_visible_to_replay": false,
+      "protocol": "intentir.experiment.manual-batch-j-only.v3",
+      "replay_provider_calls": 1,
+      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/tilelang_floor2d/run-001",
+      "total_elapsed_ms": 217497.78270721436,
+      "typecheck": "pass"
+    },
+    {
+      "case": "cuda:tilelang_floor2d",
+      "cohort_memberships": [
+        "g1_pointwise_selection",
+        "g7_cross_feature_stress"
+      ],
+      "frontend": "cuda",
+      "gate1": "no_closure",
+      "gate1_elapsed_ms": 79108.731508255,
+      "gate2": null,
+      "gate2_elapsed_ms": 0.0,
+      "gate2_passed": null,
+      "gate2_status_counts": {},
+      "lift_agent_calls": 0,
+      "pi_visible_to_replay": false,
+      "protocol": "intentir.experiment.manual-batch-j-only.v3",
+      "replay_provider_calls": 1,
+      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/cuda_tilelang_floor2d/run-001",
+      "total_elapsed_ms": 79234.43722724915,
+      "typecheck": "pass"
+    },
+    {
+      "case": "tilelang:exp2d",
+      "cohort_memberships": [
+        "g1_pointwise_selection",
+        "g7_cross_feature_stress"
+      ],
+      "frontend": "tilelang",
+      "gate1": "replay_closed",
+      "gate1_elapsed_ms": 174353.62672805786,
+      "gate2": "gate2_pass",
+      "gate2_elapsed_ms": 488.36708068847656,
+      "gate2_passed": true,
+      "gate2_status_counts": {
+        "gate2_pass": 1
+      },
+      "lift_agent_calls": 0,
+      "pi_visible_to_replay": false,
+      "protocol": "intentir.experiment.manual-batch-j-only.v3",
+      "replay_provider_calls": 1,
+      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/tilelang_exp2d/run-001",
+      "total_elapsed_ms": 174967.35429763794,
+      "typecheck": "pass"
+    },
+    {
+      "case": "cuda:tilelang_exp2d",
+      "cohort_memberships": [
+        "g1_pointwise_selection",
+        "g7_cross_feature_stress"
+      ],
+      "frontend": "cuda",
+      "gate1": "no_closure",
+      "gate1_elapsed_ms": 91651.94535255432,
+      "gate2": null,
+      "gate2_elapsed_ms": 0.0,
+      "gate2_passed": null,
+      "gate2_status_counts": {},
+      "lift_agent_calls": 0,
+      "pi_visible_to_replay": false,
+      "protocol": "intentir.experiment.manual-batch-j-only.v3",
+      "replay_provider_calls": 1,
+      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/cuda_tilelang_exp2d/run-001",
+      "total_elapsed_ms": 91717.75841712952,
+      "typecheck": "pass"
+    },
+    {
+      "case": "tilelang:where2d",
+      "cohort_memberships": [
+        "g1_pointwise_selection",
+        "g3_contraction_epilogue",
+        "g5_indexing_layout_image"
+      ],
+      "frontend": "tilelang",
+      "gate1": "no_closure",
+      "gate1_elapsed_ms": 140226.0229587555,
+      "gate2": null,
+      "gate2_elapsed_ms": 0.0,
+      "gate2_passed": null,
+      "gate2_status_counts": {},
+      "lift_agent_calls": 0,
+      "pi_visible_to_replay": false,
+      "protocol": "intentir.experiment.manual-batch-j-only.v3",
+      "replay_provider_calls": 1,
+      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/tilelang_where2d/run-001",
+      "total_elapsed_ms": 140308.0644607544,
+      "typecheck": "pass"
+    },
+    {
+      "case": "cuda:tilelang_where2d",
+      "cohort_memberships": [
+        "g1_pointwise_selection",
+        "g3_contraction_epilogue",
+        "g5_indexing_layout_image"
+      ],
+      "frontend": "cuda",
+      "gate1": "no_closure",
+      "gate1_elapsed_ms": 69215.20256996155,
+      "gate2": null,
+      "gate2_elapsed_ms": 0.0,
+      "gate2_passed": null,
+      "gate2_status_counts": {},
+      "lift_agent_calls": 0,
+      "pi_visible_to_replay": false,
+      "protocol": "intentir.experiment.manual-batch-j-only.v3",
+      "replay_provider_calls": 1,
+      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/cuda_tilelang_where2d/run-001",
+      "total_elapsed_ms": 69291.907787323,
+      "typecheck": "pass"
+    },
+    {
+      "case": "tilelang:add_bias2d",
+      "cohort_memberships": [
+        "g1_pointwise_selection",
+        "g3_contraction_epilogue",
+        "g5_indexing_layout_image"
+      ],
+      "frontend": "tilelang",
+      "gate1": "replay_closed",
+      "gate1_elapsed_ms": 249228.71661186218,
+      "gate2": "gate2_pass",
+      "gate2_elapsed_ms": 477.4963855743408,
+      "gate2_passed": true,
+      "gate2_status_counts": {
+        "gate2_pass": 1
+      },
+      "lift_agent_calls": 0,
+      "pi_visible_to_replay": false,
+      "protocol": "intentir.experiment.manual-batch-j-only.v3",
+      "replay_provider_calls": 1,
+      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/tilelang_add_bias2d/run-001",
+      "total_elapsed_ms": 249825.2251148224,
+      "typecheck": "pass"
+    },
+    {
+      "case": "cuda:tilelang_add_bias2d",
+      "cohort_memberships": [
+        "g1_pointwise_selection",
+        "g3_contraction_epilogue",
+        "g5_indexing_layout_image"
+      ],
+      "frontend": "cuda",
+      "gate1": "no_closure",
+      "gate1_elapsed_ms": 89232.42616653442,
+      "gate2": null,
+      "gate2_elapsed_ms": 0.0,
+      "gate2_passed": null,
+      "gate2_status_counts": {},
+      "lift_agent_calls": 0,
+      "pi_visible_to_replay": false,
+      "protocol": "intentir.experiment.manual-batch-j-only.v3",
+      "replay_provider_calls": 1,
+      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/cuda_tilelang_add_bias2d/run-001",
+      "total_elapsed_ms": 89342.94295310974,
+      "typecheck": "pass"
+    },
+    {
+      "case": "tilelang:clamp2d",
+      "cohort_memberships": [
+        "g1_pointwise_selection",
+        "g5_indexing_layout_image"
+      ],
+      "frontend": "tilelang",
+      "gate1": "no_closure",
+      "gate1_elapsed_ms": 223522.30405807495,
+      "gate2": null,
+      "gate2_elapsed_ms": 0.0,
+      "gate2_passed": null,
+      "gate2_status_counts": {},
+      "lift_agent_calls": 0,
+      "pi_visible_to_replay": false,
+      "protocol": "intentir.experiment.manual-batch-j-only.v3",
+      "replay_provider_calls": 1,
+      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/tilelang_clamp2d/run-001",
+      "total_elapsed_ms": 223599.5910167694,
+      "typecheck": "pass"
+    },
+    {
+      "case": "cuda:tilelang_clamp2d",
+      "cohort_memberships": [
+        "g1_pointwise_selection",
+        "g5_indexing_layout_image"
+      ],
+      "frontend": "cuda",
+      "gate1": "no_closure",
+      "gate1_elapsed_ms": 78550.07719993591,
+      "gate2": null,
+      "gate2_elapsed_ms": 0.0,
+      "gate2_passed": null,
+      "gate2_status_counts": {},
+      "lift_agent_calls": 0,
+      "pi_visible_to_replay": false,
+      "protocol": "intentir.experiment.manual-batch-j-only.v3",
+      "replay_provider_calls": 1,
+      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/cuda_tilelang_clamp2d/run-001",
+      "total_elapsed_ms": 78679.97026443481,
+      "typecheck": "pass"
+    },
+    {
+      "case": "tilelang:rowmask_where2d",
+      "cohort_memberships": [
+        "g1_pointwise_selection",
+        "g4_attention_masking",
+        "g5_indexing_layout_image"
+      ],
+      "frontend": "tilelang",
+      "gate1": "no_closure",
+      "gate1_elapsed_ms": 213821.82717323303,
+      "gate2": null,
+      "gate2_elapsed_ms": 0.0,
+      "gate2_passed": null,
+      "gate2_status_counts": {},
+      "lift_agent_calls": 0,
+      "pi_visible_to_replay": false,
+      "protocol": "intentir.experiment.manual-batch-j-only.v3",
+      "replay_provider_calls": 1,
+      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/tilelang_rowmask_where2d/run-001",
+      "total_elapsed_ms": 213966.33744239807,
+      "typecheck": "pass"
+    },
+    {
+      "case": "cuda:tilelang_rowmask_where2d",
+      "cohort_memberships": [
+        "g1_pointwise_selection",
+        "g4_attention_masking",
+        "g5_indexing_layout_image"
+      ],
+      "frontend": "cuda",
+      "gate1": "no_closure",
+      "gate1_elapsed_ms": 96529.04987335205,
+      "gate2": null,
+      "gate2_elapsed_ms": 0.0,
+      "gate2_passed": null,
+      "gate2_status_counts": {},
+      "lift_agent_calls": 0,
+      "pi_visible_to_replay": false,
+      "protocol": "intentir.experiment.manual-batch-j-only.v3",
+      "replay_provider_calls": 1,
+      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/cuda_tilelang_rowmask_where2d/run-001",
+      "total_elapsed_ms": 96655.71284294128,
+      "typecheck": "pass"
+    },
+    {
+      "case": "tilelang:any_kernel_dim",
+      "cohort_memberships": [
+        "g1_pointwise_selection",
+        "g4_attention_masking",
+        "g5_indexing_layout_image"
+      ],
+      "frontend": "tilelang",
+      "gate1": "no_closure",
+      "gate1_elapsed_ms": 243937.35432624817,
+      "gate2": null,
+      "gate2_elapsed_ms": 0.0,
+      "gate2_passed": null,
+      "gate2_status_counts": {},
+      "lift_agent_calls": 0,
+      "pi_visible_to_replay": false,
+      "protocol": "intentir.experiment.manual-batch-j-only.v3",
+      "replay_provider_calls": 1,
+      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/tilelang_any_kernel_dim/run-001",
+      "total_elapsed_ms": 244018.46146583557,
+      "typecheck": "pass"
+    },
+    {
+      "case": "cuda:tilelang_any_kernel_dim",
+      "cohort_memberships": [
+        "g1_pointwise_selection",
+        "g4_attention_masking",
+        "g5_indexing_layout_image"
+      ],
+      "frontend": "cuda",
+      "gate1": "no_closure",
+      "gate1_elapsed_ms": 74642.35806465149,
+      "gate2": null,
+      "gate2_elapsed_ms": 0.0,
+      "gate2_passed": null,
+      "gate2_status_counts": {},
+      "lift_agent_calls": 0,
+      "pi_visible_to_replay": false,
+      "protocol": "intentir.experiment.manual-batch-j-only.v3",
+      "replay_provider_calls": 1,
+      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/cuda_tilelang_any_kernel_dim/run-001",
+      "total_elapsed_ms": 74763.72146606445,
+      "typecheck": "pass"
+    },
+    {
+      "case": "tilelang:copy2d_divmod",
+      "cohort_memberships": [
+        "g1_pointwise_selection",
+        "g3_contraction_epilogue",
+        "g5_indexing_layout_image"
+      ],
+      "frontend": "tilelang",
+      "gate1": "no_closure",
+      "gate1_elapsed_ms": 249295.12071609497,
+      "gate2": null,
+      "gate2_elapsed_ms": 0.0,
+      "gate2_passed": null,
+      "gate2_status_counts": {},
+      "lift_agent_calls": 0,
+      "pi_visible_to_replay": false,
+      "protocol": "intentir.experiment.manual-batch-j-only.v3",
+      "replay_provider_calls": 1,
+      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/tilelang_copy2d_divmod/run-001",
+      "total_elapsed_ms": 249519.1729068756,
+      "typecheck": "pass"
+    },
+    {
+      "case": "cuda:tilelang_copy2d_divmod",
+      "cohort_memberships": [
+        "g1_pointwise_selection",
+        "g3_contraction_epilogue",
+        "g5_indexing_layout_image"
+      ],
+      "frontend": "cuda",
+      "gate1": "no_closure",
+      "gate1_elapsed_ms": 92475.23427009583,
+      "gate2": null,
+      "gate2_elapsed_ms": 0.0,
+      "gate2_passed": null,
+      "gate2_status_counts": {},
+      "lift_agent_calls": 0,
+      "pi_visible_to_replay": false,
+      "protocol": "intentir.experiment.manual-batch-j-only.v3",
+      "replay_provider_calls": 1,
+      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/cuda_tilelang_copy2d_divmod/run-001",
+      "total_elapsed_ms": 92595.51620483398,
+      "typecheck": "pass"
+    }
+  ],
+  "selected": [
+    "tilelang:add2d",
+    "cuda:tilelang_add2d",
+    "tilelang:relu2d",
+    "cuda:tilelang_relu2d",
+    "tilelang:floor2d",
+    "cuda:tilelang_floor2d",
+    "tilelang:exp2d",
+    "cuda:tilelang_exp2d",
+    "tilelang:where2d",
+    "cuda:tilelang_where2d",
+    "tilelang:add_bias2d",
+    "cuda:tilelang_add_bias2d",
+    "tilelang:clamp2d",
+    "cuda:tilelang_clamp2d",
+    "tilelang:rowmask_where2d",
+    "cuda:tilelang_rowmask_where2d",
+    "tilelang:any_kernel_dim",
+    "cuda:tilelang_any_kernel_dim",
+    "tilelang:copy2d_divmod",
+    "cuda:tilelang_copy2d_divmod"
+  ],
+  "workers": 4
+}
