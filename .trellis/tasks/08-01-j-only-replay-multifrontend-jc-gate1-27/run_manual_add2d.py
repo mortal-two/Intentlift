@@ -1,4 +1,4 @@
-"""Run the real J-only Replay/Gate workflow for one manually authored add2d case."""
+"""Run the real J-only Replay/Gate workflow for one manual paired case."""
 
 from __future__ import annotations
 
@@ -13,6 +13,11 @@ from manual_add2d_artifacts import (
     cuda_add2d_artifact,
     paired_authoring_receipt,
     tilelang_add2d_artifact,
+)
+from manual_gather2d_artifacts import (
+    cuda_gather2d_artifact,
+    paired_gather_authoring_receipt,
+    tilelang_gather2d_artifact,
 )
 from intentir.extraction.providers.provider import get_provider
 from intentir.verify.adapters import NativeGate2ExecutionAdapter
@@ -33,6 +38,14 @@ from intentir.verify.workload_registry import prepare_registered_scrc_workload
 CASE_BUILDERS = {
     "tilelang:add2d": tilelang_add2d_artifact,
     "cuda:tilelang_add2d": cuda_add2d_artifact,
+    "tilelang:gather2d": tilelang_gather2d_artifact,
+    "cuda:tilelang_gather2d": cuda_gather2d_artifact,
+}
+CASE_RECEIPTS = {
+    "tilelang:add2d": paired_authoring_receipt,
+    "cuda:tilelang_add2d": paired_authoring_receipt,
+    "tilelang:gather2d": paired_gather_authoring_receipt,
+    "cuda:tilelang_gather2d": paired_gather_authoring_receipt,
 }
 
 
@@ -154,7 +167,7 @@ def main() -> int:
     )
     _write_json(run_dir / "adapter.json", prepared.adapter.to_json())
     _write_json(run_dir / "artifact.json", artifact.to_json())
-    _write_json(run_dir / "authoring.json", paired_authoring_receipt())
+    _write_json(run_dir / "authoring.json", CASE_RECEIPTS[args.case]())
     _write_json(run_dir / "pi_visibility.json", visibility)
     _write_json(
         run_dir / "request.json",
@@ -233,7 +246,7 @@ def main() -> int:
         gate2_status_counts = dict(gate2.status_counts)
 
     summary = {
-        "protocol": "intentir.experiment.manual-add2d-j-only.v1",
+        "protocol": "intentir.experiment.manual-paired-j-only.v2",
         "case": args.case,
         "frontend": frontend.value,
         "typecheck": recheck.typecheck.status.value,

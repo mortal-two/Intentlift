@@ -103,11 +103,21 @@ Gate2(Source,R,RefEval(J))                # 三边
 
 ## 6. P4：gather2d与Gate1价值
 
-- [ ] add2d双闭合后运行TileLang/CUDA gather2d；
+- [ ] add2d双闭合后运行TileLang/CUDA gather2d（两份手工 artifact 已 TypeCheck PASS，fresh Replay待运行）；
 - [ ] 报告间接寻址下两个observer的hard/diagnostic差异与合法realization false reject；
 - [ ] 对add2d做最小wrong-op、wrong-index、wrong-effect mutation sensitivity；
 - [ ] mutation只改受控Replay副本并重新compile/observe，不进入正式certificate；
 - [ ] Gate1拒绝后不运行Gate2，统计提前拒绝成本。
+
+### 6.1 gather2d 手工作者化 checkpoint
+
+- 主代理直接读取当前注册 Source/Harness：`M=64`、logical length 256、column extent 64、`c0=128`；
+- TileLang J：两级 typed gather + 两个 index_bounds，无 runtime guard；
+- CUDA J：相同间接寻址核心，额外保留 Source 的 row/col bounds、zero fill与select；
+- 两份 current v13 artifact decode + TypeCheck一次PASS；canonical bytes分别2696/4381；
+- host侧非正式可闭合性预检：参数化 target source在synthetic与formal compile均PASS；TileLang TIR hard全PASS，
+  CUDA semantic PTX hard全PASS；该预检不进入正式certificate；
+- `lift_agent_calls=0`，历史artifact只用于核对wire语法，不作为正式输入。
 
 ## 7. 最小实验输出
 
