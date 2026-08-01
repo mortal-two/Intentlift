@@ -1,0 +1,630 @@
+{
+  "machine": {
+    "cuda_capability": [
+      12,
+      0
+    ],
+    "cuda_device": "NVIDIA GeForce RTX 5090 D",
+    "python": "3.10.12",
+    "torch": "2.10.0+cu130"
+  },
+  "protocol": "intentir.experiment.anonymous-j-multiq-result.v1",
+  "q_cases": [
+    {
+      "q_id": "560f1cff87a144cbf3b4800f5a77fa836004cc4202827b942ba2a32c6dab4b00",
+      "stages": {
+        "execute_compare": {
+          "agreement": {
+            "left": "cuda_target",
+            "outputs": [
+              {
+                "atol": 1e-06,
+                "detail": "",
+                "equal_nan": false,
+                "equality_required": true,
+                "max_abs_error": 2.9802322387695312e-08,
+                "output": "out0",
+                "passed": true,
+                "policy_id": "intentir.gate2.default.v1",
+                "relation_kind": "tolerance",
+                "rtol": 1e-05
+              }
+            ],
+            "passed": true,
+            "policy_id": "intentir.gate2.default.v1",
+            "right": "ref_j"
+          },
+          "elapsed_ms": 2100.067395,
+          "graph": {
+            "intermediate_buffer_count": 11,
+            "kernel_count": 16,
+            "launch_count": 16,
+            "output_count": 1
+          },
+          "outputs": {
+            "out0": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            }
+          },
+          "stage": "execute_compare",
+          "status": "pass"
+        },
+        "input": {
+          "input_digest": "635a9b75f10601e71cad18f1dd319329f2bd459b6b33b9221c13fc681a7bb497",
+          "inputs": {
+            "t0": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            },
+            "t1": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            },
+            "t2": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            },
+            "t3": {
+              "dtype": "float32",
+              "shape": [
+                1
+              ]
+            }
+          },
+          "stage": "input",
+          "status": "pass"
+        },
+        "refj": {
+          "elapsed_ms": 4.55051,
+          "outputs": {
+            "out0": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            }
+          },
+          "stage": "refj",
+          "status": "pass"
+        }
+      },
+      "total_elapsed_ms": 2105.937465
+    },
+    {
+      "q_id": "8622fedf93da602de98698b5f4e15804536145fc97add4ee3f13fc01eaad5ba6",
+      "stages": {
+        "execute_compare": {
+          "agreement": {
+            "left": "cuda_target",
+            "outputs": [
+              {
+                "atol": 1e-06,
+                "detail": "",
+                "equal_nan": false,
+                "equality_required": true,
+                "max_abs_error": 2.9802322387695312e-08,
+                "output": "out0",
+                "passed": true,
+                "policy_id": "intentir.gate2.default.v1",
+                "relation_kind": "tolerance",
+                "rtol": 1e-05
+              }
+            ],
+            "passed": true,
+            "policy_id": "intentir.gate2.default.v1",
+            "right": "ref_j"
+          },
+          "elapsed_ms": 7.256171,
+          "graph": {
+            "intermediate_buffer_count": 11,
+            "kernel_count": 16,
+            "launch_count": 16,
+            "output_count": 1
+          },
+          "outputs": {
+            "out0": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            }
+          },
+          "stage": "execute_compare",
+          "status": "pass"
+        },
+        "input": {
+          "input_digest": "9b4870a3a8e724e4fbcbdff841fd1c3edc962b1556728f85e8f061358880652a",
+          "inputs": {
+            "t0": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            },
+            "t1": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            },
+            "t2": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            },
+            "t3": {
+              "dtype": "float32",
+              "shape": [
+                1
+              ]
+            }
+          },
+          "stage": "input",
+          "status": "pass"
+        },
+        "refj": {
+          "elapsed_ms": 4.323788,
+          "outputs": {
+            "out0": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            }
+          },
+          "stage": "refj",
+          "status": "pass"
+        }
+      },
+      "total_elapsed_ms": 12.549326
+    },
+    {
+      "q_id": "ae440a0e5bedd3c776d73464d52a5890b794ff25e4cbf879e1a8739128a88592",
+      "stages": {
+        "execute_compare": {
+          "agreement": {
+            "left": "cuda_target",
+            "outputs": [
+              {
+                "atol": 1e-06,
+                "detail": "",
+                "equal_nan": false,
+                "equality_required": true,
+                "max_abs_error": 4.470348358154297e-08,
+                "output": "out0",
+                "passed": true,
+                "policy_id": "intentir.gate2.default.v1",
+                "relation_kind": "tolerance",
+                "rtol": 1e-05
+              }
+            ],
+            "passed": true,
+            "policy_id": "intentir.gate2.default.v1",
+            "right": "ref_j"
+          },
+          "elapsed_ms": 7.095706,
+          "graph": {
+            "intermediate_buffer_count": 11,
+            "kernel_count": 16,
+            "launch_count": 16,
+            "output_count": 1
+          },
+          "outputs": {
+            "out0": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            }
+          },
+          "stage": "execute_compare",
+          "status": "pass"
+        },
+        "input": {
+          "input_digest": "ff0bcdcf147d9b546033c8bd0e85869c5995b24fc1f5eb1b8fed2b5c656c5d40",
+          "inputs": {
+            "t0": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            },
+            "t1": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            },
+            "t2": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            },
+            "t3": {
+              "dtype": "float32",
+              "shape": [
+                1
+              ]
+            }
+          },
+          "stage": "input",
+          "status": "pass"
+        },
+        "refj": {
+          "elapsed_ms": 4.199944,
+          "outputs": {
+            "out0": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            }
+          },
+          "stage": "refj",
+          "status": "pass"
+        }
+      },
+      "total_elapsed_ms": 11.940213
+    },
+    {
+      "q_id": "29f764195bf87f7ccdcea6b833aa80491460e991a4adbcfea5f61210f93c5e13",
+      "stages": {
+        "execute_compare": {
+          "agreement": {
+            "left": "cuda_target",
+            "outputs": [
+              {
+                "atol": 1e-06,
+                "detail": "",
+                "equal_nan": false,
+                "equality_required": true,
+                "max_abs_error": 3.958120942115784e-08,
+                "output": "out0",
+                "passed": true,
+                "policy_id": "intentir.gate2.default.v1",
+                "relation_kind": "tolerance",
+                "rtol": 1e-05
+              }
+            ],
+            "passed": true,
+            "policy_id": "intentir.gate2.default.v1",
+            "right": "ref_j"
+          },
+          "elapsed_ms": 7.578253,
+          "graph": {
+            "intermediate_buffer_count": 11,
+            "kernel_count": 16,
+            "launch_count": 16,
+            "output_count": 1
+          },
+          "outputs": {
+            "out0": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            }
+          },
+          "stage": "execute_compare",
+          "status": "pass"
+        },
+        "input": {
+          "input_digest": "7d171fba8b95df3b5fed0a846834e02daf6fae27ab520bfa5e778d2e12f74c59",
+          "inputs": {
+            "t0": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            },
+            "t1": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            },
+            "t2": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            },
+            "t3": {
+              "dtype": "float32",
+              "shape": [
+                1
+              ]
+            }
+          },
+          "stage": "input",
+          "status": "pass"
+        },
+        "refj": {
+          "elapsed_ms": 4.012814,
+          "outputs": {
+            "out0": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            }
+          },
+          "stage": "refj",
+          "status": "pass"
+        }
+      },
+      "total_elapsed_ms": 12.212603
+    },
+    {
+      "q_id": "3802ea2854af970caa3cf5f86293915ea67120f49ba95459ef79f49765a3c118",
+      "stages": {
+        "execute_compare": {
+          "agreement": {
+            "left": "cuda_target",
+            "outputs": [
+              {
+                "atol": 1e-06,
+                "detail": "",
+                "equal_nan": false,
+                "equality_required": true,
+                "max_abs_error": 2.9802322387695312e-08,
+                "output": "out0",
+                "passed": true,
+                "policy_id": "intentir.gate2.default.v1",
+                "relation_kind": "tolerance",
+                "rtol": 1e-05
+              }
+            ],
+            "passed": true,
+            "policy_id": "intentir.gate2.default.v1",
+            "right": "ref_j"
+          },
+          "elapsed_ms": 7.20733,
+          "graph": {
+            "intermediate_buffer_count": 11,
+            "kernel_count": 16,
+            "launch_count": 16,
+            "output_count": 1
+          },
+          "outputs": {
+            "out0": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            }
+          },
+          "stage": "execute_compare",
+          "status": "pass"
+        },
+        "input": {
+          "input_digest": "f078b78a268331d46d4aefe7d1a7a917774b41cc6ab47c6988cdc32de5a24a7a",
+          "inputs": {
+            "t0": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            },
+            "t1": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            },
+            "t2": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            },
+            "t3": {
+              "dtype": "float32",
+              "shape": [
+                1
+              ]
+            }
+          },
+          "stage": "input",
+          "status": "pass"
+        },
+        "refj": {
+          "elapsed_ms": 3.951949,
+          "outputs": {
+            "out0": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            }
+          },
+          "stage": "refj",
+          "status": "pass"
+        }
+      },
+      "total_elapsed_ms": 11.759955
+    }
+  ],
+  "result_digest": "85ac995913af6f639e7a6ea1ce478e32facee558c3e74852fd7eda4d2cbed6b2",
+  "run_id": "af5f47d3ceeabeb10190bc317575a1d72a9e4d581d337be2a8aebe4412c27730",
+  "stages": {
+    "compile": {
+      "binaries": [
+        {
+          "binary_name": "scrc_j0_kernel",
+          "cubin_is_elf": true,
+          "cubin_sha256": "0529a549e74536512d65ec3fe891271608e4bf0a9dcdf69d64f26d8559759901",
+          "cubin_size_bytes": 5536,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_0",
+          "cubin_is_elf": true,
+          "cubin_sha256": "27dc5c57ad4bd44ac7f37b86b8d0dafb8960fdacfece550cf3ed1d13ea7bfaa2",
+          "cubin_size_bytes": 6360,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_1",
+          "cubin_is_elf": true,
+          "cubin_sha256": "1b35f61cb0f141ac7e5d2b81f77f5f0b340d8d0600376d03c0f95ecfc0869c49",
+          "cubin_size_bytes": 5856,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_2",
+          "cubin_is_elf": true,
+          "cubin_sha256": "4a3d33857a81a698923e72c700af9b1b94b3fc9ae828ddb9da8866ced9787c52",
+          "cubin_size_bytes": 5328,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_3",
+          "cubin_is_elf": true,
+          "cubin_sha256": "4a3d33857a81a698923e72c700af9b1b94b3fc9ae828ddb9da8866ced9787c52",
+          "cubin_size_bytes": 5328,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_4",
+          "cubin_is_elf": true,
+          "cubin_sha256": "113e4b3f56aaab971b0f2078ead67caf7e8e7d85a040f2171f3a789432bc63d8",
+          "cubin_size_bytes": 5968,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_5",
+          "cubin_is_elf": true,
+          "cubin_sha256": "4e3f0a85cde6c840fd485aa214f50aaee5817816ccf7312c115f1e88b1618e6d",
+          "cubin_size_bytes": 5904,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_6",
+          "cubin_is_elf": true,
+          "cubin_sha256": "88d1b5b22973bfedb3e8ef7848d68b4141d37112b59dd207bf05855cd44f8bbc",
+          "cubin_size_bytes": 5480,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_7",
+          "cubin_is_elf": true,
+          "cubin_sha256": "daf1fb24bd1f52a00759ef582f13fbefcc81489f68cfad057f735e44a78e5a62",
+          "cubin_size_bytes": 6184,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_8",
+          "cubin_is_elf": true,
+          "cubin_sha256": "e4508b2353167c74f8d3ea6ab808245303b5e5f15791297e7e4116d9ff976a95",
+          "cubin_size_bytes": 5864,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_9",
+          "cubin_is_elf": true,
+          "cubin_sha256": "1afcd61393ac4940d0a10718d3d1b5cabfdfebe7b568c6ec0d43407868a67bc2",
+          "cubin_size_bytes": 5536,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_10",
+          "cubin_is_elf": true,
+          "cubin_sha256": "88d1b5b22973bfedb3e8ef7848d68b4141d37112b59dd207bf05855cd44f8bbc",
+          "cubin_size_bytes": 5480,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_11",
+          "cubin_is_elf": true,
+          "cubin_sha256": "ea143cfe22a426573fa1aaad9bfb11d4a8c72d8700df831d531b93a120a32762",
+          "cubin_size_bytes": 6184,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_12",
+          "cubin_is_elf": true,
+          "cubin_sha256": "3720cf8679f22dd9272a16356c00114ca8a5cd7adcc7a7c9e8b47b63e57a4cef",
+          "cubin_size_bytes": 8496,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_13",
+          "cubin_is_elf": true,
+          "cubin_sha256": "0529a549e74536512d65ec3fe891271608e4bf0a9dcdf69d64f26d8559759901",
+          "cubin_size_bytes": 5536,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_14",
+          "cubin_is_elf": true,
+          "cubin_sha256": "ad54c6342d2d2f18fb9f1704af6523e8db25120ac4d56dfae1f95c6336433da7",
+          "cubin_size_bytes": 6496,
+          "kernel_name": "scrc_j0_kernel"
+        }
+      ],
+      "elapsed_ms": 520.448952,
+      "intent_mlir_sha256": "75ed9d3981c476bacc4f8b49978b1d4c435b35fb684336e84711b3e4646e76b7",
+      "kernel_count": 16,
+      "materialization_form": "intentir.materialize.flat-graph.v1",
+      "program_compile_count": 1,
+      "q_values_loaded_before_compile": false,
+      "stage": "compile",
+      "status": "pass",
+      "total_cubin_size_bytes": 95536
+    },
+    "decode": {
+      "c_digest": "9b092a7d3e1ab0558405f299d4771174b15b043aa0084c4fb08f4af4f7a2dc38",
+      "j_digest": "92e8f73572d0b7f0346cdaed637bbb35e40cf3155eb11d095724c9cca691e12d",
+      "policy_id": "intentir.gate2.default.v1",
+      "q_case_count": 5,
+      "snapshot_digest": "816e1e8e69fd339116ad6a52c5a9b760b6e9171362b33de0680b20c11f40e0e4",
+      "stage": "decode",
+      "status": "pass"
+    },
+    "multiq": {
+      "prepared_graph_bind_count": 5,
+      "q_case_count": 5,
+      "q_pass_count": 5,
+      "stage": "multiq",
+      "status": "pass"
+    }
+  },
+  "total_elapsed_ms": 2681.21398
+}

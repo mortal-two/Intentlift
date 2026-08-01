@@ -1,0 +1,630 @@
+{
+  "machine": {
+    "cuda_capability": [
+      12,
+      0
+    ],
+    "cuda_device": "NVIDIA GeForce RTX 5090 D",
+    "python": "3.10.12",
+    "torch": "2.10.0+cu130"
+  },
+  "protocol": "intentir.experiment.anonymous-j-multiq-result.v1",
+  "q_cases": [
+    {
+      "q_id": "aa33db96ee20edbabfa1b6dd6dbce47b2c99773329da827cdeca4612e6784c50",
+      "stages": {
+        "execute_compare": {
+          "agreement": {
+            "left": "cuda_target",
+            "outputs": [
+              {
+                "atol": 1e-06,
+                "detail": "",
+                "equal_nan": false,
+                "equality_required": true,
+                "max_abs_error": 2.9802322387695312e-08,
+                "output": "out0",
+                "passed": true,
+                "policy_id": "intentir.gate2.default.v1",
+                "relation_kind": "tolerance",
+                "rtol": 1e-05
+              }
+            ],
+            "passed": true,
+            "policy_id": "intentir.gate2.default.v1",
+            "right": "ref_j"
+          },
+          "elapsed_ms": 1869.790355,
+          "graph": {
+            "intermediate_buffer_count": 11,
+            "kernel_count": 16,
+            "launch_count": 16,
+            "output_count": 1
+          },
+          "outputs": {
+            "out0": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            }
+          },
+          "stage": "execute_compare",
+          "status": "pass"
+        },
+        "input": {
+          "input_digest": "e8048bd77b61c9e745bfe8da3c415cca73ab44fdf4f3eb45a9c97ebc7e94cd5b",
+          "inputs": {
+            "t0": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            },
+            "t1": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            },
+            "t2": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            },
+            "t3": {
+              "dtype": "float32",
+              "shape": [
+                1
+              ]
+            }
+          },
+          "stage": "input",
+          "status": "pass"
+        },
+        "refj": {
+          "elapsed_ms": 4.494283,
+          "outputs": {
+            "out0": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            }
+          },
+          "stage": "refj",
+          "status": "pass"
+        }
+      },
+      "total_elapsed_ms": 1875.68695
+    },
+    {
+      "q_id": "d8b951b4d00445bed1804bd1933519b952d4da7df58a68554dbfe8c68f5e355d",
+      "stages": {
+        "execute_compare": {
+          "agreement": {
+            "left": "cuda_target",
+            "outputs": [
+              {
+                "atol": 1e-06,
+                "detail": "",
+                "equal_nan": false,
+                "equality_required": true,
+                "max_abs_error": 5.960464477539063e-08,
+                "output": "out0",
+                "passed": true,
+                "policy_id": "intentir.gate2.default.v1",
+                "relation_kind": "tolerance",
+                "rtol": 1e-05
+              }
+            ],
+            "passed": true,
+            "policy_id": "intentir.gate2.default.v1",
+            "right": "ref_j"
+          },
+          "elapsed_ms": 13.641368,
+          "graph": {
+            "intermediate_buffer_count": 11,
+            "kernel_count": 16,
+            "launch_count": 16,
+            "output_count": 1
+          },
+          "outputs": {
+            "out0": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            }
+          },
+          "stage": "execute_compare",
+          "status": "pass"
+        },
+        "input": {
+          "input_digest": "625e8f9b6e32c69a44735e2f61444c997d021e9fdfed7c104e73310699335a96",
+          "inputs": {
+            "t0": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            },
+            "t1": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            },
+            "t2": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            },
+            "t3": {
+              "dtype": "float32",
+              "shape": [
+                1
+              ]
+            }
+          },
+          "stage": "input",
+          "status": "pass"
+        },
+        "refj": {
+          "elapsed_ms": 7.87029,
+          "outputs": {
+            "out0": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            }
+          },
+          "stage": "refj",
+          "status": "pass"
+        }
+      },
+      "total_elapsed_ms": 23.357542
+    },
+    {
+      "q_id": "209c5cd4de1874402805b907b752838b8fd67c332f2c2f28dcaf5603bdb3a996",
+      "stages": {
+        "execute_compare": {
+          "agreement": {
+            "left": "cuda_target",
+            "outputs": [
+              {
+                "atol": 1e-06,
+                "detail": "",
+                "equal_nan": false,
+                "equality_required": true,
+                "max_abs_error": 5.960464477539063e-08,
+                "output": "out0",
+                "passed": true,
+                "policy_id": "intentir.gate2.default.v1",
+                "relation_kind": "tolerance",
+                "rtol": 1e-05
+              }
+            ],
+            "passed": true,
+            "policy_id": "intentir.gate2.default.v1",
+            "right": "ref_j"
+          },
+          "elapsed_ms": 13.43857,
+          "graph": {
+            "intermediate_buffer_count": 11,
+            "kernel_count": 16,
+            "launch_count": 16,
+            "output_count": 1
+          },
+          "outputs": {
+            "out0": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            }
+          },
+          "stage": "execute_compare",
+          "status": "pass"
+        },
+        "input": {
+          "input_digest": "107042c3674e153991401523cbb95587ebcf8b116b64fa32ea14debba4359dd1",
+          "inputs": {
+            "t0": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            },
+            "t1": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            },
+            "t2": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            },
+            "t3": {
+              "dtype": "float32",
+              "shape": [
+                1
+              ]
+            }
+          },
+          "stage": "input",
+          "status": "pass"
+        },
+        "refj": {
+          "elapsed_ms": 7.484969,
+          "outputs": {
+            "out0": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            }
+          },
+          "stage": "refj",
+          "status": "pass"
+        }
+      },
+      "total_elapsed_ms": 22.161152
+    },
+    {
+      "q_id": "79e9fc1a3d0da0da30e8bd3db2deb678b984930ed22b1dce24f56f8c8ade8d34",
+      "stages": {
+        "execute_compare": {
+          "agreement": {
+            "left": "cuda_target",
+            "outputs": [
+              {
+                "atol": 1e-06,
+                "detail": "",
+                "equal_nan": false,
+                "equality_required": true,
+                "max_abs_error": 2.9802322387695312e-08,
+                "output": "out0",
+                "passed": true,
+                "policy_id": "intentir.gate2.default.v1",
+                "relation_kind": "tolerance",
+                "rtol": 1e-05
+              }
+            ],
+            "passed": true,
+            "policy_id": "intentir.gate2.default.v1",
+            "right": "ref_j"
+          },
+          "elapsed_ms": 14.411873,
+          "graph": {
+            "intermediate_buffer_count": 11,
+            "kernel_count": 16,
+            "launch_count": 16,
+            "output_count": 1
+          },
+          "outputs": {
+            "out0": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            }
+          },
+          "stage": "execute_compare",
+          "status": "pass"
+        },
+        "input": {
+          "input_digest": "f3cdfe3ce870aeedca72eece8fddc3c794ade49c6f74b11173821232558f94c6",
+          "inputs": {
+            "t0": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            },
+            "t1": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            },
+            "t2": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            },
+            "t3": {
+              "dtype": "float32",
+              "shape": [
+                1
+              ]
+            }
+          },
+          "stage": "input",
+          "status": "pass"
+        },
+        "refj": {
+          "elapsed_ms": 7.264631,
+          "outputs": {
+            "out0": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            }
+          },
+          "stage": "refj",
+          "status": "pass"
+        }
+      },
+      "total_elapsed_ms": 22.882099
+    },
+    {
+      "q_id": "acbae274356a5a1c31d0ed340b4557e8d4d665b30adbd07a8b315026bdbaa944",
+      "stages": {
+        "execute_compare": {
+          "agreement": {
+            "left": "cuda_target",
+            "outputs": [
+              {
+                "atol": 1e-06,
+                "detail": "",
+                "equal_nan": false,
+                "equality_required": true,
+                "max_abs_error": 5.960464477539063e-08,
+                "output": "out0",
+                "passed": true,
+                "policy_id": "intentir.gate2.default.v1",
+                "relation_kind": "tolerance",
+                "rtol": 1e-05
+              }
+            ],
+            "passed": true,
+            "policy_id": "intentir.gate2.default.v1",
+            "right": "ref_j"
+          },
+          "elapsed_ms": 13.686888,
+          "graph": {
+            "intermediate_buffer_count": 11,
+            "kernel_count": 16,
+            "launch_count": 16,
+            "output_count": 1
+          },
+          "outputs": {
+            "out0": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            }
+          },
+          "stage": "execute_compare",
+          "status": "pass"
+        },
+        "input": {
+          "input_digest": "54cdc1e542c1024cf3287e59423d59981466cd5e4ac370fd18ef42bfaebac924",
+          "inputs": {
+            "t0": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            },
+            "t1": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            },
+            "t2": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            },
+            "t3": {
+              "dtype": "float32",
+              "shape": [
+                1
+              ]
+            }
+          },
+          "stage": "input",
+          "status": "pass"
+        },
+        "refj": {
+          "elapsed_ms": 7.266896,
+          "outputs": {
+            "out0": {
+              "dtype": "float32",
+              "shape": [
+                16,
+                16
+              ]
+            }
+          },
+          "stage": "refj",
+          "status": "pass"
+        }
+      },
+      "total_elapsed_ms": 22.15228
+    }
+  ],
+  "result_digest": "a93a623940da16196ec2d35b336cd7a62f416b8e0cef958938d74efcfa1a52b9",
+  "run_id": "fcdcb57cca106f868c103d103f5b0b12f89af5ed3c599146c2d863579408e02c",
+  "stages": {
+    "compile": {
+      "binaries": [
+        {
+          "binary_name": "scrc_j0_kernel",
+          "cubin_is_elf": true,
+          "cubin_sha256": "0529a549e74536512d65ec3fe891271608e4bf0a9dcdf69d64f26d8559759901",
+          "cubin_size_bytes": 5536,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_0",
+          "cubin_is_elf": true,
+          "cubin_sha256": "27dc5c57ad4bd44ac7f37b86b8d0dafb8960fdacfece550cf3ed1d13ea7bfaa2",
+          "cubin_size_bytes": 6360,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_1",
+          "cubin_is_elf": true,
+          "cubin_sha256": "1b35f61cb0f141ac7e5d2b81f77f5f0b340d8d0600376d03c0f95ecfc0869c49",
+          "cubin_size_bytes": 5856,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_2",
+          "cubin_is_elf": true,
+          "cubin_sha256": "4a3d33857a81a698923e72c700af9b1b94b3fc9ae828ddb9da8866ced9787c52",
+          "cubin_size_bytes": 5328,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_3",
+          "cubin_is_elf": true,
+          "cubin_sha256": "4a3d33857a81a698923e72c700af9b1b94b3fc9ae828ddb9da8866ced9787c52",
+          "cubin_size_bytes": 5328,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_4",
+          "cubin_is_elf": true,
+          "cubin_sha256": "113e4b3f56aaab971b0f2078ead67caf7e8e7d85a040f2171f3a789432bc63d8",
+          "cubin_size_bytes": 5968,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_5",
+          "cubin_is_elf": true,
+          "cubin_sha256": "4e3f0a85cde6c840fd485aa214f50aaee5817816ccf7312c115f1e88b1618e6d",
+          "cubin_size_bytes": 5904,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_6",
+          "cubin_is_elf": true,
+          "cubin_sha256": "88d1b5b22973bfedb3e8ef7848d68b4141d37112b59dd207bf05855cd44f8bbc",
+          "cubin_size_bytes": 5480,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_7",
+          "cubin_is_elf": true,
+          "cubin_sha256": "daf1fb24bd1f52a00759ef582f13fbefcc81489f68cfad057f735e44a78e5a62",
+          "cubin_size_bytes": 6184,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_8",
+          "cubin_is_elf": true,
+          "cubin_sha256": "e4508b2353167c74f8d3ea6ab808245303b5e5f15791297e7e4116d9ff976a95",
+          "cubin_size_bytes": 5864,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_9",
+          "cubin_is_elf": true,
+          "cubin_sha256": "1afcd61393ac4940d0a10718d3d1b5cabfdfebe7b568c6ec0d43407868a67bc2",
+          "cubin_size_bytes": 5536,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_10",
+          "cubin_is_elf": true,
+          "cubin_sha256": "88d1b5b22973bfedb3e8ef7848d68b4141d37112b59dd207bf05855cd44f8bbc",
+          "cubin_size_bytes": 5480,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_11",
+          "cubin_is_elf": true,
+          "cubin_sha256": "ea143cfe22a426573fa1aaad9bfb11d4a8c72d8700df831d531b93a120a32762",
+          "cubin_size_bytes": 6184,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_12",
+          "cubin_is_elf": true,
+          "cubin_sha256": "3720cf8679f22dd9272a16356c00114ca8a5cd7adcc7a7c9e8b47b63e57a4cef",
+          "cubin_size_bytes": 8496,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_13",
+          "cubin_is_elf": true,
+          "cubin_sha256": "0529a549e74536512d65ec3fe891271608e4bf0a9dcdf69d64f26d8559759901",
+          "cubin_size_bytes": 5536,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_14",
+          "cubin_is_elf": true,
+          "cubin_sha256": "ad54c6342d2d2f18fb9f1704af6523e8db25120ac4d56dfae1f95c6336433da7",
+          "cubin_size_bytes": 6496,
+          "kernel_name": "scrc_j0_kernel"
+        }
+      ],
+      "elapsed_ms": 563.78085,
+      "intent_mlir_sha256": "75ed9d3981c476bacc4f8b49978b1d4c435b35fb684336e84711b3e4646e76b7",
+      "kernel_count": 16,
+      "materialization_form": "intentir.materialize.flat-graph.v1",
+      "program_compile_count": 1,
+      "q_values_loaded_before_compile": false,
+      "stage": "compile",
+      "status": "pass",
+      "total_cubin_size_bytes": 95536
+    },
+    "decode": {
+      "c_digest": "9b092a7d3e1ab0558405f299d4771174b15b043aa0084c4fb08f4af4f7a2dc38",
+      "j_digest": "72a0a5ccd46f979e10f9bd4d36301b6414e21a3613a560b461d4ced82e51969b",
+      "policy_id": "intentir.gate2.default.v1",
+      "q_case_count": 5,
+      "snapshot_digest": "d293450a7eefbe829c2d93e66e29df3a70b777ea7aa78a2bad77ccaa62dc05ab",
+      "stage": "decode",
+      "status": "pass"
+    },
+    "multiq": {
+      "prepared_graph_bind_count": 5,
+      "q_case_count": 5,
+      "q_pass_count": 5,
+      "stage": "multiq",
+      "status": "pass"
+    }
+  },
+  "total_elapsed_ms": 2536.348508
+}

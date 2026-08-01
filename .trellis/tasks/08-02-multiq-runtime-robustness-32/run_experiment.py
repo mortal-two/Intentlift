@@ -295,6 +295,8 @@ def export_inputs() -> dict[str, Any]:
             if set(logical_values) != expected_inputs:
                 raise ValueError(f"Task32 logical values differ from J inputs: {run_id}")
             logical_digest = gate2_input_digest(logical_values)
+            if ordinal == 0 and logical_digest != base["input_digest"]:
+                raise ValueError(f"Task32 accepted Q differs from Task31: {run_id}")
             logical_digests.append(logical_digest)
             value_path = VALUES_DIR / f"{qid}.npz"
             _write_deterministic_npz(value_path, logical_values)
@@ -524,6 +526,16 @@ def summarize() -> dict[str, Any]:
             item["cubin_sha256"] for item in compile_stage.get("binaries", [])
         ]
         artifact_pass = result.get("stages", {}).get("multiq", {}).get("status") == "pass"
+        accepted_q_id = next(
+            item["q_id"] for item in source["q_cases"] if item["ordinal"] == 0
+        )
+        accepted_q_result = next(
+            item for item in result.get("q_cases", []) if item["q_id"] == accepted_q_id
+        )
+        accepted_execute = accepted_q_result.get("stages", {}).get(
+            "execute_compare", {}
+        )
+        task31_execute = task31_by_id[run_id]["stages"]["execute_compare"]
         artifact_rows.append(
             {
                 "run_id": run_id,
@@ -539,6 +551,11 @@ def summarize() -> dict[str, Any]:
                     and compile_stage.get("q_values_loaded_before_compile") is False
                 ),
                 "task31_cubin_sequence_equal": new_cubins == old_cubins,
+                "task31_accepted_q_receipt_equal": (
+                    accepted_execute.get("agreement") == task31_execute.get("agreement")
+                    and accepted_execute.get("graph") == task31_execute.get("graph")
+                    and accepted_execute.get("outputs") == task31_execute.get("outputs")
+                ),
                 "all_five_inputs_distinct": source["all_five_inputs_distinct"],
             }
         )
@@ -674,6 +691,9 @@ def summarize() -> dict[str, Any]:
             "task31_cubin_sequence_identity": sum(
                 row["task31_cubin_sequence_equal"] for row in artifact_rows
             ),
+            "task31_accepted_q_receipt_identity": sum(
+                row["task31_accepted_q_receipt_equal"] for row in artifact_rows
+            ),
             "artifacts_all_five_q_pass": sum(
                 row["artifact_pass"] for row in artifact_rows
             ),
@@ -760,6 +780,7 @@ def _write_markdown(result: Mapping[str, Any]) -> None:
         "|---|---:|",
         f"| Compile-once receipts | {runtime['artifact_compile_once_receipts']}/62 |",
         f"| Cubin sequence identical to Task31 | {runtime['task31_cubin_sequence_identity']}/62 |",
+        f"| Accepted-Q agreement/graph/output receipt identical to Task31 | {runtime['task31_accepted_q_receipt_identity']}/62 |",
         f"| Artifacts passing all five Q | {runtime['artifacts_all_five_q_pass']}/62 |",
         f"| Pairs passing all ten frontend-Q evaluations | {runtime['pairs_all_ten_evaluations_pass']}/31 |",
         f"| Artifact-Q evaluations | {runtime['q_evaluations_pass']}/{denominator['artifact_q_evaluations']} |",
@@ -768,7 +789,7 @@ def _write_markdown(result: Mapping[str, Any]) -> None:
         "",
         "## By Q provenance",
         "",
-        "| Q set | Evaluations | Q pass | Outputs pass | Max abs error median / p95 / max |",
+        "| Q set | Evaluations | Q pass | Outputs pass | Tolerance-output max abs error median / p95 / max |",
         "|---|---:|---:|---:|---:|",
     ]
     for kind in ("accepted", "robustness"):
@@ -782,9 +803,25 @@ def _write_markdown(result: Mapping[str, Any]) -> None:
     lines.extend(
         [
             "",
+            "## By frontend provenance",
+            "",
+            "| Frontend | Artifacts | Q evaluations | Q pass | Output pass | Max observed abs error |",
+            "|---|---:|---:|---:|---:|---:|",
+        ]
+    )
+    for frontend in ("tilelang", "cuda"):
+        row = result["frontend_metrics"][frontend]
+        lines.append(
+            f"| {frontend} | 31 | {row['q_evaluations']} | {row['q_pass']} | "
+            f"{row['output_pass']}/{row['output_comparisons']} | "
+            f"{_fmt(row['max_abs_error']['max'])} |"
+        )
+    lines.extend(
+        [
+            "",
             "## By numeric policy",
             "",
-            "| Policy | Q evaluations | Outputs | Exact / tolerance | Pass | Max observed abs error |",
+            "| Policy | Q evaluations | Outputs | Exact / tolerance | Pass | Max observed tolerance-output abs error |",
             "|---|---:|---:|---:|---:|---:|",
         ]
     )

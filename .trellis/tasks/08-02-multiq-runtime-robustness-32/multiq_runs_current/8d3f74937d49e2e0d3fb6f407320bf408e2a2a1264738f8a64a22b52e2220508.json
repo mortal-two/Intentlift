@@ -1,0 +1,474 @@
+{
+  "machine": {
+    "cuda_capability": [
+      12,
+      0
+    ],
+    "cuda_device": "NVIDIA GeForce RTX 5090 D",
+    "python": "3.10.12",
+    "torch": "2.10.0+cu130"
+  },
+  "protocol": "intentir.experiment.anonymous-j-multiq-result.v1",
+  "q_cases": [
+    {
+      "q_id": "bb60c40256d1ac36eceb2c0f82269aca89b93ed1650ae6062bc2f6eef7d8dd65",
+      "stages": {
+        "execute_compare": {
+          "agreement": {
+            "left": "cuda_target",
+            "outputs": [
+              {
+                "atol": 0.003,
+                "detail": "",
+                "equal_nan": false,
+                "equality_required": true,
+                "max_abs_error": 1.1920928955078125e-07,
+                "output": "out0",
+                "passed": true,
+                "policy_id": "intentir.gate2.tf32-tensorcore.v1",
+                "relation_kind": "tolerance",
+                "rtol": 0.02
+              }
+            ],
+            "passed": true,
+            "policy_id": "intentir.gate2.tf32-tensorcore.v1",
+            "right": "ref_j"
+          },
+          "elapsed_ms": 2000.461276,
+          "graph": {
+            "intermediate_buffer_count": 1,
+            "kernel_count": 3,
+            "launch_count": 3,
+            "output_count": 1
+          },
+          "outputs": {
+            "out0": {
+              "dtype": "float32",
+              "shape": [
+                32,
+                32
+              ]
+            }
+          },
+          "stage": "execute_compare",
+          "status": "pass"
+        },
+        "input": {
+          "input_digest": "4dd0568dbe5deb201ac47d7f8d070ff2680ecbc89c08987f5e01cad2d13f816f",
+          "inputs": {
+            "t0": {
+              "dtype": "float32",
+              "shape": [
+                32,
+                32
+              ]
+            },
+            "t1": {
+              "dtype": "float32",
+              "shape": [
+                32,
+                32
+              ]
+            }
+          },
+          "stage": "input",
+          "status": "pass"
+        },
+        "refj": {
+          "elapsed_ms": 2.412651,
+          "outputs": {
+            "out0": {
+              "dtype": "float32",
+              "shape": [
+                32,
+                32
+              ]
+            }
+          },
+          "stage": "refj",
+          "status": "pass"
+        }
+      },
+      "total_elapsed_ms": 2004.467441
+    },
+    {
+      "q_id": "f70e7eff8ee8815cba0420d3602208a212c6099765ac308aff08a1ad4b6f1b4d",
+      "stages": {
+        "execute_compare": {
+          "agreement": {
+            "left": "cuda_target",
+            "outputs": [
+              {
+                "atol": 0.003,
+                "detail": "",
+                "equal_nan": false,
+                "equality_required": true,
+                "max_abs_error": 1.4901161193847656e-07,
+                "output": "out0",
+                "passed": true,
+                "policy_id": "intentir.gate2.tf32-tensorcore.v1",
+                "relation_kind": "tolerance",
+                "rtol": 0.02
+              }
+            ],
+            "passed": true,
+            "policy_id": "intentir.gate2.tf32-tensorcore.v1",
+            "right": "ref_j"
+          },
+          "elapsed_ms": 3.886695,
+          "graph": {
+            "intermediate_buffer_count": 1,
+            "kernel_count": 3,
+            "launch_count": 3,
+            "output_count": 1
+          },
+          "outputs": {
+            "out0": {
+              "dtype": "float32",
+              "shape": [
+                32,
+                32
+              ]
+            }
+          },
+          "stage": "execute_compare",
+          "status": "pass"
+        },
+        "input": {
+          "input_digest": "d6731c1644ef4408ebf019d32483e631a8d950ec0d315da66f85d3ba171ae71a",
+          "inputs": {
+            "t0": {
+              "dtype": "float32",
+              "shape": [
+                32,
+                32
+              ]
+            },
+            "t1": {
+              "dtype": "float32",
+              "shape": [
+                32,
+                32
+              ]
+            }
+          },
+          "stage": "input",
+          "status": "pass"
+        },
+        "refj": {
+          "elapsed_ms": 4.470203,
+          "outputs": {
+            "out0": {
+              "dtype": "float32",
+              "shape": [
+                32,
+                32
+              ]
+            }
+          },
+          "stage": "refj",
+          "status": "pass"
+        }
+      },
+      "total_elapsed_ms": 9.79613
+    },
+    {
+      "q_id": "9247b629996a70968d7082ef1fccea8baf1691d7671ba915400d34b8ba32ffd3",
+      "stages": {
+        "execute_compare": {
+          "agreement": {
+            "left": "cuda_target",
+            "outputs": [
+              {
+                "atol": 0.003,
+                "detail": "",
+                "equal_nan": false,
+                "equality_required": true,
+                "max_abs_error": 1.1920928955078125e-07,
+                "output": "out0",
+                "passed": true,
+                "policy_id": "intentir.gate2.tf32-tensorcore.v1",
+                "relation_kind": "tolerance",
+                "rtol": 0.02
+              }
+            ],
+            "passed": true,
+            "policy_id": "intentir.gate2.tf32-tensorcore.v1",
+            "right": "ref_j"
+          },
+          "elapsed_ms": 3.712931,
+          "graph": {
+            "intermediate_buffer_count": 1,
+            "kernel_count": 3,
+            "launch_count": 3,
+            "output_count": 1
+          },
+          "outputs": {
+            "out0": {
+              "dtype": "float32",
+              "shape": [
+                32,
+                32
+              ]
+            }
+          },
+          "stage": "execute_compare",
+          "status": "pass"
+        },
+        "input": {
+          "input_digest": "92358dce0729aa3c1bccb9d26cecd5d295f7d776121c95157e913b13175157ef",
+          "inputs": {
+            "t0": {
+              "dtype": "float32",
+              "shape": [
+                32,
+                32
+              ]
+            },
+            "t1": {
+              "dtype": "float32",
+              "shape": [
+                32,
+                32
+              ]
+            }
+          },
+          "stage": "input",
+          "status": "pass"
+        },
+        "refj": {
+          "elapsed_ms": 4.016203,
+          "outputs": {
+            "out0": {
+              "dtype": "float32",
+              "shape": [
+                32,
+                32
+              ]
+            }
+          },
+          "stage": "refj",
+          "status": "pass"
+        }
+      },
+      "total_elapsed_ms": 8.857679
+    },
+    {
+      "q_id": "a91714489e3a7958313d51d2297533a51e64e90ad46bf21b362e494ac46b9c4c",
+      "stages": {
+        "execute_compare": {
+          "agreement": {
+            "left": "cuda_target",
+            "outputs": [
+              {
+                "atol": 0.003,
+                "detail": "",
+                "equal_nan": false,
+                "equality_required": true,
+                "max_abs_error": 1.7881393432617188e-07,
+                "output": "out0",
+                "passed": true,
+                "policy_id": "intentir.gate2.tf32-tensorcore.v1",
+                "relation_kind": "tolerance",
+                "rtol": 0.02
+              }
+            ],
+            "passed": true,
+            "policy_id": "intentir.gate2.tf32-tensorcore.v1",
+            "right": "ref_j"
+          },
+          "elapsed_ms": 3.724113,
+          "graph": {
+            "intermediate_buffer_count": 1,
+            "kernel_count": 3,
+            "launch_count": 3,
+            "output_count": 1
+          },
+          "outputs": {
+            "out0": {
+              "dtype": "float32",
+              "shape": [
+                32,
+                32
+              ]
+            }
+          },
+          "stage": "execute_compare",
+          "status": "pass"
+        },
+        "input": {
+          "input_digest": "d5273ce1da4115d2d5917636d59fd2dc4bb047c64ef9ab8513684cff1f6b3a78",
+          "inputs": {
+            "t0": {
+              "dtype": "float32",
+              "shape": [
+                32,
+                32
+              ]
+            },
+            "t1": {
+              "dtype": "float32",
+              "shape": [
+                32,
+                32
+              ]
+            }
+          },
+          "stage": "input",
+          "status": "pass"
+        },
+        "refj": {
+          "elapsed_ms": 4.021999,
+          "outputs": {
+            "out0": {
+              "dtype": "float32",
+              "shape": [
+                32,
+                32
+              ]
+            }
+          },
+          "stage": "refj",
+          "status": "pass"
+        }
+      },
+      "total_elapsed_ms": 8.854524
+    },
+    {
+      "q_id": "48ea888d7c1491c20c5c3049c92187c51ab8cb04904292ef564e2c735c582d0c",
+      "stages": {
+        "execute_compare": {
+          "agreement": {
+            "left": "cuda_target",
+            "outputs": [
+              {
+                "atol": 0.003,
+                "detail": "",
+                "equal_nan": false,
+                "equality_required": true,
+                "max_abs_error": 1.7881393432617188e-07,
+                "output": "out0",
+                "passed": true,
+                "policy_id": "intentir.gate2.tf32-tensorcore.v1",
+                "relation_kind": "tolerance",
+                "rtol": 0.02
+              }
+            ],
+            "passed": true,
+            "policy_id": "intentir.gate2.tf32-tensorcore.v1",
+            "right": "ref_j"
+          },
+          "elapsed_ms": 3.676609,
+          "graph": {
+            "intermediate_buffer_count": 1,
+            "kernel_count": 3,
+            "launch_count": 3,
+            "output_count": 1
+          },
+          "outputs": {
+            "out0": {
+              "dtype": "float32",
+              "shape": [
+                32,
+                32
+              ]
+            }
+          },
+          "stage": "execute_compare",
+          "status": "pass"
+        },
+        "input": {
+          "input_digest": "705011b83eea3079a7da08ed1d7e82caaf9faf2b09796aa8dab17e06e79e7045",
+          "inputs": {
+            "t0": {
+              "dtype": "float32",
+              "shape": [
+                32,
+                32
+              ]
+            },
+            "t1": {
+              "dtype": "float32",
+              "shape": [
+                32,
+                32
+              ]
+            }
+          },
+          "stage": "input",
+          "status": "pass"
+        },
+        "refj": {
+          "elapsed_ms": 4.184547,
+          "outputs": {
+            "out0": {
+              "dtype": "float32",
+              "shape": [
+                32,
+                32
+              ]
+            }
+          },
+          "stage": "refj",
+          "status": "pass"
+        }
+      },
+      "total_elapsed_ms": 8.961178
+    }
+  ],
+  "result_digest": "b3ff8ccd8d791f36e1ebcc867be00a33dfce7675bfc683be293c36c6e22ae30e",
+  "run_id": "8d3f74937d49e2e0d3fb6f407320bf408e2a2a1264738f8a64a22b52e2220508",
+  "stages": {
+    "compile": {
+      "binaries": [
+        {
+          "binary_name": "scrc_j0_kernel",
+          "cubin_is_elf": true,
+          "cubin_sha256": "1449a019af7a8a285797f10d5aa5eb9d4b0ab88e5723f356a69e5f3344f3138e",
+          "cubin_size_bytes": 5536,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_0",
+          "cubin_is_elf": true,
+          "cubin_sha256": "f2f63a3cdbfcf09bc4a0d72a62ac85faf15b3a56f7d310276a585fdd331b55a5",
+          "cubin_size_bytes": 6496,
+          "kernel_name": "scrc_j0_kernel"
+        },
+        {
+          "binary_name": "scrc_j0_kernel_1",
+          "cubin_is_elf": true,
+          "cubin_sha256": "fb3cb5f1a7e0a33305bf4532c2a181c46add6ebaa876808e5ddbaf734a133442",
+          "cubin_size_bytes": 5856,
+          "kernel_name": "scrc_j0_kernel"
+        }
+      ],
+      "elapsed_ms": 251.676338,
+      "intent_mlir_sha256": "3861ae803ed8d7bfdc5d164c7247bad3834757bbd5ef4bfe1544234ad10a207e",
+      "kernel_count": 3,
+      "materialization_form": "intentir.materialize.flat-graph.v1",
+      "program_compile_count": 1,
+      "q_values_loaded_before_compile": false,
+      "stage": "compile",
+      "status": "pass",
+      "total_cubin_size_bytes": 17888
+    },
+    "decode": {
+      "c_digest": "50d315c3220bca22890c64e44d0c3d3ba23c7a9949e0cf66a3b3df480728572a",
+      "j_digest": "98d5af7e41c37247a38fa14476cb2d48d0a7d2b1a72aa30814f11f183d9cc8d4",
+      "policy_id": "intentir.gate2.tf32-tensorcore.v1",
+      "q_case_count": 5,
+      "snapshot_digest": "7ece2fa7332cbb3947378cc9f2659d0acdd3745874231b3292a3ac886be10f9d",
+      "stage": "decode",
+      "status": "pass"
+    },
+    "multiq": {
+      "prepared_graph_bind_count": 5,
+      "q_case_count": 5,
+      "q_pass_count": 5,
+      "stage": "multiq",
+      "status": "pass"
+    }
+  },
+  "total_elapsed_ms": 2296.171996
+}

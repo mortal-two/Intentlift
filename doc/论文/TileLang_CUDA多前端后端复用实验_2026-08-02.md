@@ -15,6 +15,8 @@ consumer 修复，同时闭合 TileLang/CUDA 两份 floor artifact，无任何 p
 canonical RefJ 对齐。26 个 semantic-core exact pair 进一步产生 bit-identical Intent MLIR、CUDA
 cubin sequence、RVV object 与 runtime graph；5 个有 Source 依据的 non-exact pair 保留 target 差异但
 仍 5/5 双边执行闭合。
+在此基础上，Task32 又在任何结果产生前为每份 artifact 冻结四个新 Q；固定 62 份 J/C 与 extents、
+每份只编译一次，最终 310/310 artifact-Q executions 和 410/410 output comparisons 全部闭合。
 
 ## 论文主表建议
 
@@ -28,6 +30,7 @@ cubin sequence、RVV object 与 runtime graph；5 个有 Source 依据的 non-ex
 | RVV Contract Legal | 31/31 | 31/31 | 31/31 both |
 | RVV real object lower | 31/31 | 31/31 | 31/31 both |
 | CUDA graph vs RefJ on exact accepted Q | 31/31 | 31/31 | 31/31 both |
+| Compile-once, five-Q CUDA vs RefJ | 155/155 | 155/155 | 31/31 pairs all 10 pass |
 | Recompiled cubin digest equals Task30 | 31/31 | 31/31 | 31/31 both |
 | Frontend-specific backend LoC/rules | 0 / 0 | 0 / 0 | — |
 | Per-kernel backend rules | 0 | 0 | 0 |
@@ -61,6 +64,25 @@ Task31 还暴露一个共享 host-runtime 能力缺口：3 个含 rank-0 `i8` op
 exact-width scalar launch ABI。修复在通用 orchestrator 中同时支持 `i1/i8/i16`（+35/-4，net +31
 LoC），没有加入 frontend 或 kernel rule。另一个 rank-0 failure 属于实验 NPZ writer 的 shape
 serialization，修复也只在 evidence layer 保留 0-D shape。最终同一分母重跑为 62/62。
+
+Task32 将单-Q 结果扩展为预注册 value robustness。每份 artifact 固定一个 Task31 accepted Q 与四个
+`SHA256(run_id, ordinal)` 派生 seed；schedule `6e06e3d...a269c8f3` 在 export/runtime 前单独提交，
+且不按 RefJ/CUDA result 换 seed。anonymous consumer 在打开任何 Q 文件前只编译一次 exact J，五次
+evaluation 只重新绑定同一 cubin graph：
+
+| Evidence | Result |
+|---|---:|
+| Compile-once / Task31 cubin identity | 62/62 / 62/62 |
+| Five distinct logical Q per artifact | 62/62 |
+| Artifact-Q evaluations | 310/310 PASS |
+| Output comparisons | 410/410 PASS |
+| TileLang / CUDA provenance | 155/155 / 155/155 Q PASS |
+| Semantic-core exact / non-exact | 260/260 / 50/50 Q PASS |
+
+其中 accepted Q 的 82/82 outputs 与 Task31 receipt 逐 artifact 完全相同；248 个新 Q 的 328/328
+outputs 也全部通过。default policy 覆盖 260 Q / 360 outputs，最大观测绝对误差 `1.9073e-6`；TF32
+policy 覆盖 50 Q / 50 outputs，最大值 `4.7684e-7`。Task32 没有产生新的 production、frontend 或
+per-kernel rule。
 
 ## 实验为什么有说服力
 
@@ -100,6 +122,8 @@ target feature gap  -> one shared backend consumer
 - exact accepted Q 上，匿名 CUDA runtime 对 62/62 与 canonical RefJ 闭合；
 - 26 个 semantic-core exact pair 的 target-neutral IR、CUDA/RVV binary 与 graph 全部 digest-level
   identical；5 个 non-exact pair 保留差异但仍全部正确执行。
+- 预注册四个新 Q 后，62 个 exact J compile once 并完成 310/310 CUDA--RefJ evaluations、410/410
+  output comparisons；两种 frontend provenance 各为 155/155。
 
 ## 不能写的 claim
 
@@ -109,6 +133,8 @@ target feature gap  -> one shared backend consumer
   的 Q/D runtime receipt，Source/Replay 行为闭合仍引用 Task28；
 - 不能把 Task31 的独立进程 absolute prepared-graph latency 写成 frontend speedup：没有 Source/Replay
   baseline、没有锁 GPU clocks，也没有执行 RVV object；
+- 不能把 Task32 写成 shape robustness、任意输入域或 Source correctness；它只改变 fixed extents 内的
+  values，runtime edge 仍是 CUDA target--RefJ；
 - 不能借用 24 个 Triton J 的 backend speedup 作为这 62 个 frontend artifacts 的性能数据；
 - 不能把 +31 shared feature LoC 隐藏后宣称“所有能力天然零修改”。
 
@@ -116,7 +142,8 @@ target feature gap  -> one shared backend consumer
 
 正文只需主表、一段 input-isolation 说明、一个 `60/62 -> +31 shared LoC -> 62/62 lower` callout，以及
 一个 `26 exact -> identical artifacts / 5 non-exact -> distinct artifacts but runtime PASS` callout。J 的五个
-source-grounded non-exact pair 不必逐个展开；正文举 `groupnorm`（core exact、ABI 不同）和 `gather2d`
+source-grounded non-exact pair 不必逐个展开；若篇幅允许再加 `62 J × 5 Q = 310/310` 一行。正文举
+`groupnorm`（core exact、ABI 不同）和 `gather2d`
 （真实 boundary delta）两个例子即可，其余 runtime timing 与 per-pair receipts 放 appendix/artifact。
 
 机器证据：
@@ -126,3 +153,5 @@ source-grounded non-exact pair 不必逐个展开；正文举 `groupnorm`（core
 - Task30 backend input/result：`.trellis/tasks/08-02-artifact-only-multifrontend-backend-reuse-30/`。
 - Task31 anonymous CUDA runtime/pair identity：
   `.trellis/tasks/08-02-multifrontend-runtime-characterization-31/`。
+- Task32 pre-registered multi-Q robustness：
+  `.trellis/tasks/08-02-multiq-runtime-robustness-32/`。

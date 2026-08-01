@@ -1,6 +1,6 @@
 # Task 32：预注册 Multi-Q J-only Runtime 鲁棒性
 
-> 状态：`IN_PROGRESS`（2026-08-02）
+> 状态：`COMPLETE`（2026-08-02）
 > 上游：Task31 31 pairs / 62 artifacts / exact accepted Q runtime 62/62
 > 冻结 Q schedule：`6e06e3d7f4ae19da3174e0c0aecf89c5105bc79818e3fc49e5e0d083a269c8f3`
 
@@ -90,13 +90,56 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=python python \
   --phase summarize
 ```
 
-## 7. 完成条件
+## 7. 最终机器结果
+
+| Evidence | Result |
+|---|---:|
+| Compile-once receipts | 62/62 |
+| Cubin sequence identical to Task31 | 62/62 |
+| Accepted-Q agreement/graph/output receipt identical to Task31 | 62/62 |
+| Artifacts passing all five Q | 62/62 |
+| Pairs passing all ten frontend-Q evaluations | 31/31 |
+| Artifact-Q evaluations | 310/310 |
+| Output comparisons | 410/410 |
+| Artifacts with five distinct logical Q | 62/62 |
+| Globally unique logical input digests | 310/310 |
+
+两种 frontend provenance 各自为 31 artifacts、155/155 Q、205/205 outputs PASS。accepted Q 为
+62/62 evaluations、82/82 outputs；四个新 Q 合计 248/248 evaluations、328/328 outputs。
+
+| Policy | Q evaluations | Outputs | Exact / tolerance outputs | PASS | Max observed abs error |
+|---|---:|---:|---:|---:|---:|
+| default v1 | 260 | 360 | 40 / 320 | 360/360 | `1.9073486328125e-6` |
+| TF32 tensor-core v1 | 50 | 50 | 0 / 50 | 50/50 | `4.76837158203125e-7` |
+
+accepted tolerance outputs 的 max-abs-error median/p95/max 为
+`2.6077e-8 / 5.6028e-7 / 1.9073e-6`；248 个新 Q 为
+`2.9802e-8 / 7.7486e-7 / 1.9073e-6`。新输入没有导致误差数量级漂移或 policy-specific failure。
+
+J correspondence 分层也全部闭合：semantic-core exact 26 pairs 的 260/260 Q、360/360 outputs PASS；
+source-grounded non-exact 5 pairs 的 50/50 Q、50/50 outputs PASS。Task32 没有修改 production code，
+新增 frontend-specific/per-kernel rule 均为 0。
+
+## 8. 机器证据
+
+- `q_schedule_current.json`：在任何 export/runtime 前冻结的 310-Q schedule；
+- `multiq_inputs_current.json`：anonymous consumer 的 exact-whitelist manifest；
+- `multiq_values_current/*.npz`：310 份 byte-stable Q；
+- `multiq_provenance_current.json`：consumer 不可见的 frontend/case/seed 后处理映射；
+- `multiq_runs_current/*.json`：62 个独立 compile-once + five-Q receipt；
+- `multiq_runtime_results_current.json`：全量 runtime batch；
+- `results_current.json` / `results_current.md`：论文汇总。
+
+最终 summary digest：
+`350054dea4f239baf424c7e5d29f925cb440a8e03161333af8e1ddbcda607bc2`。
+
+## 9. 完成条件
 
 - [x] 在 export/runtime 前冻结 62 × 5 schedule；
-- [ ] 导出 310 份 deterministic Q，分母与 digest 自洽；
-- [ ] 62 个 artifact 均 compile once；
-- [ ] 310 次真实 RefJ/CUDA execution 全量记录；
-- [ ] accepted/new、policy、frontend、J-stratum 分层完整；
-- [ ] failure 不筛选、不换 seed；
-- [ ] 论文只采用机器结果支持的 value-robustness claim；
-- [ ] 最终 commit 后工作区干净。
+- [x] 导出 310 份 deterministic Q，分母与 digest 自洽；
+- [x] 62 个 artifact 均 compile once；
+- [x] 310 次真实 RefJ/CUDA execution 全量记录；
+- [x] accepted/new、policy、frontend、J-stratum 分层完整；
+- [x] failure 不筛选、不换 seed；
+- [x] 论文只采用机器结果支持的 value-robustness claim；
+- [x] 最终 commit 后工作区干净。

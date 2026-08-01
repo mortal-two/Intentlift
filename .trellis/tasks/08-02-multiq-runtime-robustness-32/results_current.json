@@ -1,0 +1,415 @@
+{
+  "claim_boundary": {
+    "performance_claimed": false,
+    "replay_executed_in_task32": false,
+    "runtime_edge": "CUDA target versus canonical RefJ on one accepted plus four pre-registered value sets per exact J",
+    "rvv_runtime_executed": false,
+    "seeds_selected_using_runtime_results": false,
+    "shape_robustness_claimed": false,
+    "source_executed_in_task32": false,
+    "value_robustness_within_fixed_extents": true
+  },
+  "denominator": {
+    "accepted_q_evaluations": 62,
+    "artifact_q_evaluations": 310,
+    "frontend_artifacts": 62,
+    "new_robustness_q_evaluations": 248,
+    "q_per_artifact": 5,
+    "same_origin_pairs": 31
+  },
+  "execution_environment": {
+    "cuda_capability": [
+      12,
+      0
+    ],
+    "cuda_device": "NVIDIA GeForce RTX 5090 D",
+    "python": "3.10.12",
+    "torch": "2.10.0+cu130"
+  },
+  "failure_taxonomy": {},
+  "frontend_metrics": {
+    "cuda": {
+      "exact_outputs": 20,
+      "max_abs_error": {
+        "count": 185,
+        "max": 1.9073486328125e-06,
+        "mean": 1.4897133852984455e-07,
+        "median": 2.9802322387695312e-08,
+        "p95": 6.675720214843709e-07,
+        "p99": 1.1920928955078125e-06
+      },
+      "output_comparisons": 205,
+      "output_pass": 205,
+      "q_evaluations": 155,
+      "q_pass": 155,
+      "tolerance_outputs": 185
+    },
+    "tilelang": {
+      "exact_outputs": 20,
+      "max_abs_error": {
+        "count": 185,
+        "max": 1.9073486328125e-06,
+        "mean": 1.4414104658204155e-07,
+        "median": 1.4901161193847656e-08,
+        "p95": 6.675720214843709e-07,
+        "p99": 1.1062622070312467e-06
+      },
+      "output_comparisons": 205,
+      "output_pass": 205,
+      "q_evaluations": 155,
+      "q_pass": 155,
+      "tolerance_outputs": 185
+    }
+  },
+  "input_diversity": {
+    "artifacts_with_five_distinct_q": 62,
+    "unique_logical_input_digests": 310
+  },
+  "manifest_digest": "2fe771c71603b00262682c2bb8b299adca8ec26b9cb244544fba0d68343f6184",
+  "pair_metrics": {
+    "all_pairs": {
+      "pair_count": 31,
+      "pairs_all_ten_evaluations_pass": 31
+    },
+    "semantic_core_exact": {
+      "artifact_count": 52,
+      "exact_outputs": 20,
+      "max_abs_error": {
+        "count": 340,
+        "max": 1.9073486328125e-06,
+        "mean": 1.5524736441233578e-07,
+        "median": 2.9802322387695312e-08,
+        "p95": 9.5367431640625e-07,
+        "p99": 1.1920928955078125e-06
+      },
+      "output_comparisons": 360,
+      "output_pass": 360,
+      "pair_count": 26,
+      "pairs_all_ten_evaluations_pass": 26,
+      "q_evaluations": 260,
+      "q_pass": 260,
+      "tolerance_outputs": 340
+    },
+    "semantic_core_nonexact": {
+      "artifact_count": 10,
+      "exact_outputs": 20,
+      "max_abs_error": {
+        "count": 30,
+        "max": 2.384185791015625e-07,
+        "mean": 4.805624485015869e-08,
+        "median": 7.450580596923828e-09,
+        "p95": 1.5199184417724592e-07,
+        "p99": 2.2113323211669927e-07
+      },
+      "output_comparisons": 50,
+      "output_pass": 50,
+      "pair_count": 5,
+      "pairs_all_ten_evaluations_pass": 5,
+      "q_evaluations": 50,
+      "q_pass": 50,
+      "tolerance_outputs": 30
+    }
+  },
+  "pair_rows": [
+    {
+      "both_artifacts_all_five_pass": true,
+      "both_compile_once": true,
+      "both_task31_cubin_stable": true,
+      "semantic_core_exact": true,
+      "stem": "_attn_fwd"
+    },
+    {
+      "both_artifacts_all_five_pass": true,
+      "both_compile_once": true,
+      "both_task31_cubin_stable": true,
+      "semantic_core_exact": true,
+      "stem": "add2d"
+    },
+    {
+      "both_artifacts_all_five_pass": true,
+      "both_compile_once": true,
+      "both_task31_cubin_stable": true,
+      "semantic_core_exact": true,
+      "stem": "add_bias2d"
+    },
+    {
+      "both_artifacts_all_five_pass": true,
+      "both_compile_once": true,
+      "both_task31_cubin_stable": true,
+      "semantic_core_exact": false,
+      "stem": "any_kernel_dim"
+    },
+    {
+      "both_artifacts_all_five_pass": true,
+      "both_compile_once": true,
+      "both_task31_cubin_stable": true,
+      "semantic_core_exact": true,
+      "stem": "clamp2d"
+    },
+    {
+      "both_artifacts_all_five_pass": true,
+      "both_compile_once": true,
+      "both_task31_cubin_stable": true,
+      "semantic_core_exact": true,
+      "stem": "copy2d_divmod"
+    },
+    {
+      "both_artifacts_all_five_pass": true,
+      "both_compile_once": true,
+      "both_task31_cubin_stable": true,
+      "semantic_core_exact": true,
+      "stem": "exp2d"
+    },
+    {
+      "both_artifacts_all_five_pass": true,
+      "both_compile_once": true,
+      "both_task31_cubin_stable": true,
+      "semantic_core_exact": true,
+      "stem": "flash_attention2d"
+    },
+    {
+      "both_artifacts_all_five_pass": true,
+      "both_compile_once": true,
+      "both_task31_cubin_stable": true,
+      "semantic_core_exact": true,
+      "stem": "floor2d"
+    },
+    {
+      "both_artifacts_all_five_pass": true,
+      "both_compile_once": true,
+      "both_task31_cubin_stable": true,
+      "semantic_core_exact": false,
+      "stem": "gather2d"
+    },
+    {
+      "both_artifacts_all_five_pass": true,
+      "both_compile_once": true,
+      "both_task31_cubin_stable": true,
+      "semantic_core_exact": true,
+      "stem": "gemm"
+    },
+    {
+      "both_artifacts_all_five_pass": true,
+      "both_compile_once": true,
+      "both_task31_cubin_stable": true,
+      "semantic_core_exact": true,
+      "stem": "grouped_row_sum2d"
+    },
+    {
+      "both_artifacts_all_five_pass": true,
+      "both_compile_once": true,
+      "both_task31_cubin_stable": true,
+      "semantic_core_exact": true,
+      "stem": "groupnorm"
+    },
+    {
+      "both_artifacts_all_five_pass": true,
+      "both_compile_once": true,
+      "both_task31_cubin_stable": true,
+      "semantic_core_exact": true,
+      "stem": "layer_norm_residual2d"
+    },
+    {
+      "both_artifacts_all_five_pass": true,
+      "both_compile_once": true,
+      "both_task31_cubin_stable": true,
+      "semantic_core_exact": true,
+      "stem": "layernorm"
+    },
+    {
+      "both_artifacts_all_five_pass": true,
+      "both_compile_once": true,
+      "both_task31_cubin_stable": true,
+      "semantic_core_exact": true,
+      "stem": "masked_attention2d"
+    },
+    {
+      "both_artifacts_all_five_pass": true,
+      "both_compile_once": true,
+      "both_task31_cubin_stable": true,
+      "semantic_core_exact": false,
+      "stem": "masked_softmax2d"
+    },
+    {
+      "both_artifacts_all_five_pass": true,
+      "both_compile_once": true,
+      "both_task31_cubin_stable": true,
+      "semantic_core_exact": true,
+      "stem": "matmul_bias_relu2d"
+    },
+    {
+      "both_artifacts_all_five_pass": true,
+      "both_compile_once": true,
+      "both_task31_cubin_stable": true,
+      "semantic_core_exact": false,
+      "stem": "matmul_fused_epilogue2d"
+    },
+    {
+      "both_artifacts_all_five_pass": true,
+      "both_compile_once": true,
+      "both_task31_cubin_stable": true,
+      "semantic_core_exact": true,
+      "stem": "matmul_relu2d"
+    },
+    {
+      "both_artifacts_all_five_pass": true,
+      "both_compile_once": true,
+      "both_task31_cubin_stable": true,
+      "semantic_core_exact": true,
+      "stem": "mlp2d"
+    },
+    {
+      "both_artifacts_all_five_pass": true,
+      "both_compile_once": true,
+      "both_task31_cubin_stable": true,
+      "semantic_core_exact": true,
+      "stem": "relu2d"
+    },
+    {
+      "both_artifacts_all_five_pass": true,
+      "both_compile_once": true,
+      "both_task31_cubin_stable": true,
+      "semantic_core_exact": true,
+      "stem": "rms_norm2d"
+    },
+    {
+      "both_artifacts_all_five_pass": true,
+      "both_compile_once": true,
+      "both_task31_cubin_stable": true,
+      "semantic_core_exact": true,
+      "stem": "rms_norm_residual2d"
+    },
+    {
+      "both_artifacts_all_five_pass": true,
+      "both_compile_once": true,
+      "both_task31_cubin_stable": true,
+      "semantic_core_exact": true,
+      "stem": "row_max"
+    },
+    {
+      "both_artifacts_all_five_pass": true,
+      "both_compile_once": true,
+      "both_task31_cubin_stable": true,
+      "semantic_core_exact": true,
+      "stem": "row_sum"
+    },
+    {
+      "both_artifacts_all_five_pass": true,
+      "both_compile_once": true,
+      "both_task31_cubin_stable": true,
+      "semantic_core_exact": false,
+      "stem": "rowmask_where2d"
+    },
+    {
+      "both_artifacts_all_five_pass": true,
+      "both_compile_once": true,
+      "both_task31_cubin_stable": true,
+      "semantic_core_exact": true,
+      "stem": "softmax_inner"
+    },
+    {
+      "both_artifacts_all_five_pass": true,
+      "both_compile_once": true,
+      "both_task31_cubin_stable": true,
+      "semantic_core_exact": true,
+      "stem": "transpose2d"
+    },
+    {
+      "both_artifacts_all_five_pass": true,
+      "both_compile_once": true,
+      "both_task31_cubin_stable": true,
+      "semantic_core_exact": true,
+      "stem": "upsample_bicubic2d_aa"
+    },
+    {
+      "both_artifacts_all_five_pass": true,
+      "both_compile_once": true,
+      "both_task31_cubin_stable": true,
+      "semantic_core_exact": true,
+      "stem": "where2d"
+    }
+  ],
+  "policy_metrics": {
+    "intentir.gate2.default.v1": {
+      "exact_outputs": 40,
+      "max_abs_error": {
+        "count": 320,
+        "max": 1.9073486328125e-06,
+        "mean": 1.4661491150036453e-07,
+        "median": 1.0244548320770264e-08,
+        "p95": 9.5367431640625e-07,
+        "p99": 1.1920928955078125e-06
+      },
+      "output_comparisons": 360,
+      "output_pass": 360,
+      "q_evaluations": 260,
+      "q_pass": 260,
+      "tolerance_outputs": 320
+    },
+    "intentir.gate2.tf32-tensorcore.v1": {
+      "exact_outputs": 0,
+      "max_abs_error": {
+        "count": 50,
+        "max": 4.76837158203125e-07,
+        "mean": 1.4618039131164552e-07,
+        "median": 1.1920928955078125e-07,
+        "p95": 2.384185791015625e-07,
+        "p99": 4.76837158203125e-07
+      },
+      "output_comparisons": 50,
+      "output_pass": 50,
+      "q_evaluations": 50,
+      "q_pass": 50,
+      "tolerance_outputs": 50
+    }
+  },
+  "protocol": "intentir.experiment.multiq-runtime-robustness.v1",
+  "provenance_digest": "810de0b7d6b751303b6954a6c4724c5271dd62af7d342b4fb9869c3ca7173ef3",
+  "q_kind_metrics": {
+    "accepted": {
+      "exact_outputs": 8,
+      "max_abs_error": {
+        "count": 74,
+        "max": 1.9073486328125e-06,
+        "mean": 1.463686694970002e-07,
+        "median": 2.60770320892334e-08,
+        "p95": 5.602836608886705e-07,
+        "p99": 1.2111663818359337e-06
+      },
+      "output_comparisons": 82,
+      "output_pass": 82,
+      "q_evaluations": 62,
+      "q_pass": 62,
+      "tolerance_outputs": 74
+    },
+    "robustness": {
+      "exact_outputs": 32,
+      "max_abs_error": {
+        "count": 296,
+        "max": 1.9073486328125e-06,
+        "mean": 1.4660307332067877e-07,
+        "median": 2.9802322387695312e-08,
+        "p95": 7.748603820800781e-07,
+        "p99": 1.1920928955078125e-06
+      },
+      "output_comparisons": 328,
+      "output_pass": 328,
+      "q_evaluations": 248,
+      "q_pass": 248,
+      "tolerance_outputs": 296
+    }
+  },
+  "runtime_correctness": {
+    "artifact_compile_once_receipts": 62,
+    "artifacts_all_five_q_pass": 62,
+    "output_comparisons_pass": 410,
+    "pairs_all_ten_evaluations_pass": 31,
+    "q_evaluations_pass": 310,
+    "task31_accepted_q_receipt_identity": 62,
+    "task31_cubin_sequence_identity": 62
+  },
+  "runtime_result_digest": "eafaec928bbc5cd0f38022d05a8919c8393bdd51e7641ea4b6037b21212b1362",
+  "schedule_digest": "6e06e3d7f4ae19da3174e0c0aecf89c5105bc79818e3fc49e5e0d083a269c8f3",
+  "summary_digest": "350054dea4f239baf424c7e5d29f925cb440a8e03161333af8e1ddbcda607bc2",
+  "task31_runtime_result_digest": "73bec2a5d10f74029a5b8964520a2d61d272589ffd16106ae671bed64d8d9a78"
+}
