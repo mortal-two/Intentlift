@@ -50,7 +50,7 @@ from .replay import (
 )
 
 
-CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v71"
+CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v72"
 
 _INITIAL_PROMPT = """You are the sole writer for one fresh source-blind IntentIR Replay episode.
 Work only under the isolated /workspace. input/ is immutable; output/, work/, and
@@ -97,7 +97,10 @@ add J-absent predicates, carriers, or effects. Prefer the smallest direct loweri
 the complete J contract and add target control only when J or the chosen public target
 construct actually requires it. When frontend.json declares a fixed canonical domain
 mapping for its structural observer, follow that J-derived mapping exactly; do not swap
-it for a schedule-equivalent loop/program decomposition.
+it for a schedule-equivalent loop/program decomposition. A launch coordinate is itself
+an address dependency: a hidden compiler launch slot does not authorize a new logical
+lane. Do not introduce a target lane/thread coordinate into a J-owned address unless a
+distinct lane-varying J boundary axis authorizes it.
 
 Compile, inspect only your own Replay IR when the frontend supports that tool, and patch
 the complete program in this same episode. First run `replay_compile_check`, then follow
